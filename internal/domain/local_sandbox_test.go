@@ -30,6 +30,25 @@ func TestValidateLocalSandbox(t *testing.T) {
 	}
 }
 
+func TestLocalRepositoryPath(t *testing.T) {
+	profile := SandboxProfile{RepositoryPaths: map[string]string{"repo-1": " /srv/service "}}
+	for _, tc := range []struct {
+		profile  SandboxProfile
+		id, name string
+		want     string
+	}{
+		{profile, "repo-1", "service", "/srv/service"},
+		{profile, "repo-2", "group/web", "~/.loopforge/local/web"},
+		{SandboxProfile{BaseDir: "/data/src"}, "repo-2", "web", "/data/src/web"},
+		{SandboxProfile{}, "repo-3", ".hidden", "~/.loopforge/local/repo-3"},
+		{SandboxProfile{}, "..", "..", ""},
+	} {
+		if got := tc.profile.LocalRepositoryPath(tc.id, tc.name); got != tc.want {
+			t.Errorf("LocalRepositoryPath(%q, %q) = %q, want %q", tc.id, tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestWorkflowSandboxRejectsOnlyLocal(t *testing.T) {
 	for _, driver := range []string{SandboxDriverDocker, SandboxDriverNative, SandboxDriverSeatbelt, SandboxDriverBwrap} {
 		if err := ValidateWorkflowSandbox(SandboxProfile{ID: "p", Driver: driver}); err != nil {

@@ -40,7 +40,7 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 	if fixed := strings.TrimSpace(s.SandboxProfileID); fixed != "" {
 		fmt.Fprintf(&b, "\n\n用户已在高级设置中指定运行环境 %s，不要填 sandboxProfileId。", fixed)
 	} else {
-		b.WriteString("\n\n可选运行环境（sandboxProfileId，按要做的事需要的语言、工具链选择，拿不准用 generic-docker；local 直接在本机的项目仓库 worktree 中工作，没有隔离，只在用户要求时使用）：")
+		b.WriteString("\n\n可选运行环境（sandboxProfileId，按要做的事需要的语言、工具链选择，拿不准用 generic-docker；local 直接在用户的执行机器上工作、按需从本机主仓库切 git worktree，没有隔离，只在用户要求时使用）：")
 		conv, _ := h.repo.AssistantSession(s.ChatOwnerID, s.ChatSessionID)
 		for _, profile := range h.repo.ConversationSandboxes(s.ProjectID) {
 			if localSandboxOwner(h.repo, profile, s.UserID) != nil || localSandboxRunner(h.repo, profile, conv.Execution().RunnerID) != nil {
@@ -73,6 +73,7 @@ type workspaceRepositoryHint struct {
 	CloneURL      string `json:"cloneUrl,omitempty"`
 	WebURL        string `json:"webUrl,omitempty"`
 	DefaultBranch string `json:"defaultBranch,omitempty"`
+	LocalPath     string `json:"localPath,omitempty"`
 }
 
 func projectRepositoryHints(all []domain.Repository, projectID string) []workspaceRepositoryHint {
@@ -194,7 +195,9 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 	default:
 		fmt.Fprintf(&notice, "已切回运行环境 %s 中本对话之前开过的工作区 %s。", run.WorkflowSnapshot.SandboxProfileID, run.ID)
 	}
-	if run.IsWorkspace() && bound.Created && len(run.RepositoryContexts()) == 0 {
+	if run.IsLocalWorkspace() && bound.Created {
+		notice.WriteString("工作区是执行机器上的空白目录，没有隔离。需要项目仓库时，按仓库清单里的 localPath 从本机主仓库切 git worktree，不要 clone 到工作区。")
+	} else if run.IsWorkspace() && bound.Created && len(run.RepositoryContexts()) == 0 {
 		notice.WriteString("工作区已提供空白可写目录，可创建文件、运行命令和预览。有仓库相关任务时，用 git clone 拉取所需仓库。")
 	}
 	if previous, ok := h.repo.RunState(bound.Previous); ok {

@@ -4064,7 +4064,8 @@ components:
         Execution environment for SOP runs and conversation workspaces. SOPs use docker or native;
         the built-in shared generic-docker profile is the default. driver=local is for conversation
         workspaces only: it is bound to one execution machine (runnerId), owned by that machine's
-        owner, and opens git worktrees of the machine's checkouts without isolation.
+        owner, and works on that machine without isolation, adding git worktrees of its checkouts
+        as a conversation needs them.
       properties:
         id: {type: string}
         name: {type: string}

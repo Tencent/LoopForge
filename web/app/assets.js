@@ -338,9 +338,9 @@ function sandboxSetupHTML(a){const driver=sandboxDriverOption(a.driver);return `
   <div data-sandbox-drivers="local">
     ${assetFieldLabel('执行机器','只能选你自己的执行机器；对话固定在这台机器上时才能使用这个沙箱。')}
     <select name="runnerId" class="asset-select" aria-label="执行机器">${localSandboxRunnerOptions(a.runnerId||'')}</select>
-    ${assetFieldLabel('基础目录','执行机器上的绝对路径或 ~/ 开头的路径。没有配置路径的仓库会 clone 到这里的同名目录。留空使用 ~/.loopforge/local。','assetLocalBaseDir')}
+    ${assetFieldLabel('基础目录','执行机器上的绝对路径或 ~/ 开头的路径。没有配置路径的仓库第一次用到时 clone 到这里的同名目录。留空使用 ~/.loopforge/local。','assetLocalBaseDir')}
     <input id="assetLocalBaseDir" name="baseDir" class="asset-input is-mono" value="${escapeHTML(a.baseDir||'')}" placeholder="~/.loopforge/local">
-    ${assetFieldLabel('仓库路径','填执行机器上已有的仓库目录，工作区从这里切出 git worktree。平台只在其中 fetch 并新增 worktree 和工作分支，不改动已检出的文件。')}
+    ${assetFieldLabel('仓库路径','填执行机器上已有的仓库目录。对话用到这个仓库时，Agent 从这里切出 git worktree，只在其中 fetch 并新增 worktree 和工作分支，不改动已检出的文件。')}
     ${localSandboxRepoPathsHTML(a)}
   </div>
   ${assetFieldLabel('环境变量','JSON 对象，叠加到沙箱基础环境并随资产保存；不要在这里保存凭证。平台凭证、HOME/TMPDIR 和遥测变量优先级更高。')}

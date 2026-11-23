@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -167,11 +168,11 @@ type SandboxProfile struct {
 	// RunnerID binds a local sandbox to one execution machine; only its owner
 	// may configure or use the sandbox.
 	RunnerID string `json:"runnerId,omitempty"`
-	// BaseDir holds the main checkouts a local sandbox clones for repositories
-	// without a path in RepositoryPaths. Empty uses LocalSandboxDefaultBaseDir.
+	// BaseDir holds the main checkouts of repositories without a path in
+	// RepositoryPaths. Empty uses LocalSandboxDefaultBaseDir.
 	BaseDir string `json:"baseDir,omitempty"`
 	// RepositoryPaths maps a repository ID to an existing checkout on the
-	// bound machine; workspaces are linked worktrees of that checkout.
+	// bound machine; workspaces add linked worktrees of that checkout.
 	RepositoryPaths map[string]string `json:"repositoryPaths,omitempty"`
 }
 
@@ -246,6 +247,26 @@ func RunnerSandbox(profile SandboxProfile) *RunnerSandboxSpec {
 
 // LocalSandboxDefaultBaseDir is expanded against the runner user's HOME.
 const LocalSandboxDefaultBaseDir = "~/.loopforge/local"
+
+// LocalRepositoryPath is the main checkout a local workspace adds the
+// repository's worktrees from: its configured path, or <base dir>/<name>.
+// Empty means the repository has no name usable as a directory.
+func (p SandboxProfile) LocalRepositoryPath(repositoryID, name string) string {
+	if configured := strings.TrimSpace(p.RepositoryPaths[repositoryID]); configured != "" {
+		return configured
+	}
+	base := strings.TrimSpace(p.BaseDir)
+	if base == "" {
+		base = LocalSandboxDefaultBaseDir
+	}
+	for _, candidate := range []string{name, repositoryID} {
+		dir := path.Base(path.Clean(strings.TrimSpace(candidate)))
+		if dir != "." && dir != ".." && dir != "/" && !strings.HasPrefix(dir, ".") {
+			return path.Join(base, dir)
+		}
+	}
+	return ""
+}
 
 // Sandbox drivers. Profiles store local, native or docker; native is the OS
 // lightweight process sandbox and resolves on the executing machine to

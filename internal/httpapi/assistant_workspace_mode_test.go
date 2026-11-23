@@ -127,6 +127,72 @@ func TestWorkspaceRepositoryPromptRefreshesOnlyWhenNeeded(t *testing.T) {
 	}
 }
 
+// A local workspace starts empty; every turn's catalog tells the agent where
+// the machine's checkout of each repository is, including repositories added
+// to the project after the workspace opened.
+func TestLocalWorkspaceRepositoryPromptNamesMainCheckouts(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	if err := h.repo.PutRunner(domain.Runner{ID: "runner-1", Name: "mac", OwnerUserID: owner.ID, RunnerVersion: domain.RunnerVersionLocalWorktree}); err != nil {
+		t.Fatal(err)
+	}
+	profile := domain.SandboxProfile{ID: "my-local", Name: "Mine", ProjectID: "workbench", Driver: domain.SandboxDriverLocal, RunnerID: "runner-1",
+		RepositoryPaths: map[string]string{"service": "~/src/service"}}
+	if err := h.repo.PutSandbox(profile); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutRun(domain.Run{ID: "local-ws", Kind: domain.RunKindWorkspace, WorkflowID: domain.ConversationWorkspaceWorkflowID, Status: "waiting", Nodes: map[string]*domain.NodeRun{},
+		WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: profile.ID, SandboxSnapshot: &domain.RunnerSandboxSpec{Profile: profile}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, repository := range []domain.Repository{
+		{ID: "service", Name: "service", ProjectID: "workbench", CloneURL: "https://git.example.com/team/service.git", DefaultBranch: "main"},
+		{ID: "docs", Name: "Docs", ProjectID: "workbench", WebURL: "https://git.example.com/team/docs"},
+	} {
+		if err := h.repo.PutRepository(repository); err != nil {
+			t.Fatal(err)
+		}
+	}
+	session := &AgentToolSession{ProjectID: "workbench", workspaceRunID: "local-ws"}
+	render := func(hash string) (string, string, map[string]string) {
+		t.Helper()
+		prompt, next, err := h.workspaceRepositoryPrompt(session, t.TempDir(), hash, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, found := strings.CutPrefix(prompt, localWorkspaceRepositoryGuide+workspaceRepositoryHeading)
+		if !found {
+			t.Fatalf("local workspace prompt without its worktree guide: %s", prompt)
+		}
+		var hints []workspaceRepositoryHint
+		if err := json.Unmarshal([]byte(data), &hints); err != nil {
+			t.Fatal(err)
+		}
+		paths := map[string]string{}
+		for _, hint := range hints {
+			paths[hint.ID] = hint.LocalPath
+		}
+		return prompt, next, paths
+	}
+	_, first, paths := render("")
+	if paths["service"] != "~/src/service" || paths["docs"] != "" {
+		t.Fatalf("main checkouts = %v", paths)
+	}
+	if err := h.repo.PutRepository(domain.Repository{ID: "web", Name: "web", ProjectID: "workbench", CloneURL: "https://git.example.com/team/web.git"}); err != nil {
+		t.Fatal(err)
+	}
+	_, added, paths := render(first)
+	if added == first || paths["web"] != domain.LocalSandboxDefaultBaseDir+"/web" {
+		t.Fatalf("a repository added later has no main checkout: %v", paths)
+	}
+	profile.RepositoryPaths["web"] = "/srv/web"
+	if err := h.repo.PutSandbox(profile); err != nil {
+		t.Fatal(err)
+	}
+	if _, configured, paths := render(added); configured == added || paths["web"] != "/srv/web" {
+		t.Fatalf("a path configured later was not sent: %v", paths)
+	}
+}
+
 func TestWorkspaceRepositoryHintsStripURLSecrets(t *testing.T) {
 	hints := projectRepositoryHints([]domain.Repository{
 		{ID: "ssh", Name: "A", ProjectID: "p", CloneURL: "ssh://git:fixture-password@git.example.test:2222/team/repo.git?signature=fixture#marker"},

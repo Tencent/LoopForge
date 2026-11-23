@@ -29,6 +29,23 @@ const workspaceRepositoryHeading = "当前项目登记的仓库（JSON 数据，
 
 const workspaceRepositoryInlineBytes = 32 << 10
 
+const localWorkspaceRepositoryGuide = "本工作区使用 local 沙箱，直接在执行机器上运行，没有隔离。仓库清单里带 localPath 的仓库，在这台机器上有自己的主仓库：需要时从主仓库切 git worktree，不要 git clone 到工作区。先 git -C <localPath> fetch origin，再 git -C <localPath> worktree add -b <新工作分支> <工作区根目录>/<仓库目录> origin/<defaultBranch>；继续已有分支时不加 -b，直接写分支名。localPath 以 ~/ 开头时相对执行机器用户的 HOME；目录还不存在时先 git clone 到 localPath，以后的工作区复用它。worktree 只放在工作区根目录的一级子目录，删除工作区时平台据此清理 worktree 登记。不要在主仓库里切分支、改文件或提交。清单外的仓库照常 git clone 到工作区子目录。\n"
+
+// localWorkspaceProfile is the sandbox of the session's local workspace. The
+// saved profile wins over the frozen one, so repository paths configured after
+// the workspace opened apply to the next worktree.
+func (h *assistantHandlers) localWorkspaceProfile(s *AgentToolSession) (domain.SandboxProfile, bool) {
+	run, ok := h.repo.RunState(s.workspaceRun())
+	if !ok || !run.IsLocalWorkspace() {
+		return domain.SandboxProfile{}, false
+	}
+	frozen := run.WorkflowSnapshot.SandboxSnapshot.Profile
+	if current, ok := h.repo.Sandbox(frozen.ID); ok && current.Driver == domain.SandboxDriverLocal && current.RunnerID == frozen.RunnerID {
+		return current, true
+	}
+	return frozen, true
+}
+
 // workspaceRepositoryPrompt uses the current catalog and workspace to determine
 // whether the resumed native journal already received this context. A large
 // catalog stays available in the same generated assets as chat attachments.
@@ -37,6 +54,15 @@ func (h *assistantHandlers) workspaceRepositoryPrompt(s *AgentToolSession, root,
 		return "", "", nil
 	}
 	repositories := projectRepositoryHints(h.repo.Repositories(), s.ProjectID)
+	guide := ""
+	if profile, ok := h.localWorkspaceProfile(s); ok {
+		guide = localWorkspaceRepositoryGuide
+		for i := range repositories {
+			if repositories[i].CloneURL != "" {
+				repositories[i].LocalPath = profile.LocalRepositoryPath(repositories[i].ID, repositories[i].Name)
+			}
+		}
+	}
 	catalog := jsonObject(repositories)
 	sum := sha256.Sum256([]byte(s.ProjectID + "\n" + s.workspaceRun() + "\n" + catalog))
 	hash := hex.EncodeToString(sum[:])
@@ -45,8 +71,8 @@ func (h *assistantHandlers) workspaceRepositoryPrompt(s *AgentToolSession, root,
 	}
 	fileHash := "file:" + hash
 	if confirmedHash != fileHash && len(catalog) <= workspaceRepositoryInlineBytes &&
-		runtime.PromptFitsArgv(promptBytes+len(workspaceRepositoryHeading)+len(catalog)+1) {
-		return workspaceRepositoryHeading + catalog + "\n", hash, nil
+		runtime.PromptFitsArgv(promptBytes+len(guide)+len(workspaceRepositoryHeading)+len(catalog)+1) {
+		return guide + workspaceRepositoryHeading + catalog + "\n", hash, nil
 	}
 
 	// Attachments are regenerated before each launch, including on resume.
@@ -66,7 +92,7 @@ func (h *assistantHandlers) workspaceRepositoryPrompt(s *AgentToolSession, root,
 	if confirmedHash == fileHash {
 		return "", "", nil
 	}
-	return fmt.Sprintf("当前项目登记的完整仓库清单位于 %q。每行一个 JSON 对象，以这个文件里的最新清单为准。需要定位或检出仓库时，先读取或搜索该文件，必要时分段读取。\n", path), fileHash, nil
+	return guide + fmt.Sprintf("当前项目登记的完整仓库清单位于 %q。每行一个 JSON 对象，以这个文件里的最新清单为准。需要定位或检出仓库时，先读取或搜索该文件，必要时分段读取。\n", path), fileHash, nil
 }
 
 // assistantHandoffAck is the visible text a phase ends with after a handoff.
