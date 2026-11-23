@@ -605,8 +605,12 @@
       return;
     }
     if (!data || !data.configured) {
+      const otherAccount = data && data.reason === 'account_not_managed';
+      const note = otherAccount
+        ? '这个连接使用 WeKnora 里的另一个账号接入。平台只保存内置管理员账号的登录密码，无法查看该账号的密码；请在控制台用下面对应的账号登录，或让该账号管理员重置密码。'
+        : '平台没有保存这个连接的登录密码。外部 WeKnora 请使用接入时填写的管理员账号；内置实例需要配置 LOOPFORGE_WEKNORA_ADMIN_PASSWORD，或完成一次自动初始化。';
       openKBDrawer('WeKnora 控制台登录凭据', `
-        <p class="kb-muted">平台没有保存这个连接的登录密码。外部 WeKnora 请使用接入时填写的管理员账号；内置实例需要配置 LOOPFORGE_WEKNORA_ADMIN_PASSWORD，或完成一次自动初始化。</p>
+        <p class="kb-muted">${note}</p>
         ${email ? `<div class="kb-cred-row"><span>登录邮箱</span><code data-i18n-data>${kbEsc(email)}</code></div>` : ''}
       `, openLink);
       return;

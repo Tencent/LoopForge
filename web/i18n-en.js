@@ -462,6 +462,7 @@ Object.assign(window.LF_I18N_EN, {
   "登录凭据": "Console sign-in",
   "WeKnora 控制台登录凭据": "WeKnora console sign-in",
   "平台没有保存这个连接的登录密码。外部 WeKnora 请使用接入时填写的管理员账号；内置实例需要配置 LOOPFORGE_WEKNORA_ADMIN_PASSWORD，或完成一次自动初始化。": "This connection's console password isn't stored here. For an external WeKnora, use the admin account you entered when linking it; the built-in instance needs LOOPFORGE_WEKNORA_ADMIN_PASSWORD or one automatic setup run.",
+  "这个连接使用 WeKnora 里的另一个账号接入。平台只保存内置管理员账号的登录密码，无法查看该账号的密码；请在控制台用下面对应的账号登录，或让该账号管理员重置密码。": "This connection signs in with another account on the same WeKnora instance. The platform only stores the built-in administrator's password, so it can't reveal this account's; sign in to the console with the account below, or have its administrator reset the password.",
   "登录密码": "Sign-in password",
   "复制密码": "Copy password",
   "显示": "Show",

@@ -636,6 +636,7 @@ type WeKnoraConsoleLogin struct {
 	Password   string `json:"password,omitempty"`
 	Source     string `json:"source,omitempty"`
 	UIURL      string `json:"uiUrl,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // ManagedWeKnoraConsole returns the console sign-in for the managed WeKnora
@@ -673,10 +674,17 @@ func (s *Service) ManagedWeKnoraConsole(connID string) WeKnoraConsoleLogin {
 	if !matched {
 		return out
 	}
+	managedEmail := managedWeKnoraConsoleEmail()
 	if account == "" {
-		account = "admin@loopforge.local"
+		account = managedEmail
 	}
 	out.Email = account
+	// 同一个实例可以被多个账号接入，平台只知道内置管理员账号的密码。
+	// 其他账号的密码在链接时就已丢弃，不能拿管理员密码去配对。
+	if !strings.EqualFold(account, managedEmail) {
+		out.Reason = "account_not_managed"
+		return out
+	}
 	if password := strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_ADMIN_PASSWORD")); password != "" {
 		out.Password, out.Source = password, "environment"
 	} else if password := strings.TrimSpace(s.store.ManagedWeKnoraAdminPassword()); password != "" {
@@ -684,6 +692,14 @@ func (s *Service) ManagedWeKnoraConsole(connID string) WeKnoraConsoleLogin {
 	}
 	out.Configured = out.Password != ""
 	return out
+}
+
+// managedWeKnoraConsoleEmail 是内置实例初始化时注册的管理员账号。
+func managedWeKnoraConsoleEmail() string {
+	if email := strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_ADMIN_EMAIL")); email != "" {
+		return email
+	}
+	return "admin@loopforge.local"
 }
 
 func sameWeKnoraConsoleURL(a, b string) bool {

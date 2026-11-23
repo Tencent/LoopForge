@@ -120,6 +120,7 @@ func TestManagedWeKnoraConsoleRequiresManagedInstance(t *testing.T) {
 func TestManagedWeKnoraConsoleURLComparison(t *testing.T) {
 	t.Setenv("LOOPFORGE_WEKNORA_URL", "HTTP://WeKnora-App:8080")
 	t.Setenv("LOOPFORGE_WEKNORA_ADMIN_PASSWORD", "env-pass")
+	t.Setenv("LOOPFORGE_WEKNORA_ADMIN_EMAIL", "kb-admin@example.com")
 
 	store := newFakeStore()
 	store.settings = domain.KnowledgeSettings{
@@ -142,5 +143,25 @@ func TestManagedWeKnoraConsoleURLComparison(t *testing.T) {
 	store.settings.Connections[0].URL = "http://weknora-app:8080/tenant"
 	if login := svc.ManagedWeKnoraConsole("wk-1"); login.Configured {
 		t.Fatalf("different path must not match: %+v", login)
+	}
+}
+
+func TestManagedWeKnoraConsoleRefusesOtherAccount(t *testing.T) {
+	t.Setenv("LOOPFORGE_WEKNORA_URL", "http://weknora-app:8080")
+	t.Setenv("LOOPFORGE_WEKNORA_ADMIN_PASSWORD", "env-pass")
+	t.Setenv("LOOPFORGE_WEKNORA_ADMIN_EMAIL", "")
+
+	store := newFakeStore()
+	store.settings = consoleTestSettings()
+	// 同一个实例上的第二个账号：地址相同，但密码不是平台初始化时设置的那个。
+	store.settings.Connections[1].URL = "http://weknora-app:8080"
+	svc := newTestService(store, &fakeUpstream{})
+
+	login := svc.ManagedWeKnoraConsole("wk-ext")
+	if login.Configured || login.Password != "" {
+		t.Fatalf("another account's connection must not borrow the admin password: %+v", login)
+	}
+	if login.Reason != "account_not_managed" || login.Email != "ops@example.com" {
+		t.Fatalf("expected an account mismatch with the account shown: %+v", login)
 	}
 }

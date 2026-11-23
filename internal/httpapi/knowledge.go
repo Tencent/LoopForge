@@ -215,7 +215,10 @@ func (h *knowledgeHandlers) weKnoraConsoleCredentials(c *gin.Context) {
 		UIURL:      login.UIURL,
 	}
 	if !login.Configured {
-		view.Reason = "not_managed"
+		view.Reason = login.Reason
+		if view.Reason == "" {
+			view.Reason = "not_managed"
+		}
 		c.JSON(http.StatusOK, view)
 		return
 	}
