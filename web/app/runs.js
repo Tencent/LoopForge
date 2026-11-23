@@ -1599,7 +1599,7 @@ async function previewArtifact(run,artifactId,opener){
         const url=URL.createObjectURL(blob);
         const a=document.createElement('a');
         a.href=url;
-        a.download=artifact.name || 'artifact.txt';
+        a.download=artifact.path?.split(/[\\/]/).at(-1) || artifact.name || 'artifact.txt';
         a.click();
         URL.revokeObjectURL(url);
       };
