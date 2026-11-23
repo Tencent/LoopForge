@@ -71,11 +71,10 @@ type assistantApprovalReviewCandidate struct {
 type approvalActionSource string
 
 const (
-	approvalSourceUnknown          approvalActionSource = ""
-	approvalSourceBuiltinPlatform  approvalActionSource = "builtin_platform"
-	approvalSourceBuiltinWorkspace approvalActionSource = "builtin_workspace"
-	approvalSourceExternalMCP      approvalActionSource = "external_mcp"
-	approvalSourceNativeCommand    approvalActionSource = "native_command"
+	approvalSourceUnknown         approvalActionSource = ""
+	approvalSourceBuiltinPlatform approvalActionSource = "builtin_platform"
+	approvalSourceExternalMCP     approvalActionSource = "external_mcp"
+	approvalSourceNativeCommand   approvalActionSource = "native_command"
 )
 
 type approvalActionSourceKey struct{}
@@ -117,11 +116,14 @@ const (
 	// assistantApprovalMaxMessages caps how many recent user messages from the
 	// current actor are forwarded as authorization evidence (reasoning-blind:
 	// assistant prose and other participants' messages are excluded).
-	assistantApprovalMaxMessages = 6
+	assistantApprovalMaxMessages = 24
 	// assistantApprovalMaxMessageRunes caps each forwarded actor message.
-	assistantApprovalMaxMessageRunes = 1000
-	// assistantApprovalMaxPayloadBytes bounds the compacted JSON sent to the reviewer.
-	assistantApprovalMaxPayloadBytes = 32 << 10
+	assistantApprovalMaxMessageRunes = 4000
+	// assistantApprovalMaxPayloadBytes bounds the JSON sent to the reviewer.
+	assistantApprovalMaxPayloadBytes = 96 << 10
+	// assistantApprovalMaxTimeout bounds one approval review (including slow
+	// reasoning models) so a hung upstream never leaks goroutines or hooks.
+	assistantApprovalMaxTimeout = 5 * time.Minute
 )
 
 // approvalReviewInput builds the action-independent, reasoning-blind review
@@ -130,12 +132,19 @@ const (
 // they neither burn tokens nor act as indirect prompt-injection vectors.
 func approvalReviewInput(req assistantRequest, user domain.User) assistantApprovalInput {
 	input := assistantApprovalInput{ActorID: user.ID, ProjectID: req.ProjectID, RunID: req.RunID}
+	multiParticipant := req.RunID != ""
+	for _, message := range req.Messages {
+		if message.Role == "user" && message.AuthorID != 0 && message.AuthorID != user.ID {
+			multiParticipant = true
+			break
+		}
+	}
 	var actorMessages []assistantMessage
 	for _, message := range req.Messages {
 		if message.Role != "user" {
 			continue
 		}
-		if message.AuthorID != 0 && message.AuthorID != user.ID {
+		if message.AuthorID != user.ID && (message.AuthorID != 0 || multiParticipant) {
 			input.OtherParticipants = true
 			continue
 		}
@@ -303,10 +312,9 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 		notify(assistantStreamEvent{Kind: "status", Text: "帮我批准：" + state, Detail: label + " · " + result.Rationale})
 	}
 	return func(ctx context.Context, tool, description string, args map[string]any) assistantApprovalReview {
-		if fast, ok := h.evaluateApprovalFastPath(ctx, tool, args); ok {
-			stateMu.Lock()
-			consecutiveDenies = 0
-			stateMu.Unlock()
+		if fast, ok := h.evaluateApprovalFastPath(ctx, user, tool, args); ok {
+			// Fast-path allow never resets consecutiveDenies so a trivial
+			// comment cannot be used to defeat the denial circuit breaker.
 			emitDecision(fast)
 			return fast
 		}
@@ -348,18 +356,15 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 				Model:     assistantApprovalPolicyModel,
 				Rationale: "待审查操作参数超过安全审查大小上限，已停止本次自动审批",
 			}
-			stateMu.Lock()
-			consecutiveDenies++
-			stateMu.Unlock()
 			emitDecision(oversized)
 			return oversized
 		}
 		action = fitted
 		var result assistantApprovalReview
-		// Do not impose an artificial short deadline on model inference: slow
-		// reasoning models (e.g. hy4std) may stream for >30s, and cutting them
-		// off causes false refusals. Explicit turn/request cancellation on ctx
-		// still stops the review immediately.
+		// Bound each approval review at 5 minutes so slow reasoning models have
+		// plenty of headroom while a hung upstream can never stall forever.
+		ctx, cancel := context.WithTimeout(ctx, assistantApprovalMaxTimeout)
+		defer cancel()
 		for _, candidate := range active {
 			if ctx.Err() != nil {
 				break
@@ -402,7 +407,7 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 			case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
 				result = assistantApprovalReview{Outcome: "unavailable", Model: candidate.Model, Rationale: "自动审批已取消，操作未执行"}
 			case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded):
-				result = assistantApprovalReview{Outcome: "unavailable", Model: candidate.Model, Rationale: "审查模型 " + candidate.Model + " 响应超时，操作未执行"}
+				result = assistantApprovalReview{Outcome: "unavailable", Model: candidate.Model, Rationale: "审查模型 " + candidate.Model + " 超过 5 分钟未响应，操作未执行"}
 			case errors.As(err, &fatalErr):
 				result = assistantApprovalReview{
 					Outcome:   "unavailable",
@@ -416,16 +421,17 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 		if result.Outcome == "" || errors.Is(ctx.Err(), context.Canceled) {
 			result = assistantApprovalReview{Outcome: "unavailable", Rationale: "自动审批已取消，操作未执行"}
 		} else if ctx.Err() != nil && result.Rationale == "" {
-			result = assistantApprovalReview{Outcome: "unavailable", Rationale: "自动审批已结束，操作未执行"}
+			result = assistantApprovalReview{Outcome: "unavailable", Rationale: "自动审批超时，操作未执行"}
 		}
 		stateMu.Lock()
-		if result.allows() {
+		switch {
+		case result.allows():
 			consecutiveDenies = 0
-		} else {
+		case result.Outcome == "deny":
+			// Only real AI denials count toward the circuit breaker; transient
+			// unavailable outcomes must not trigger a misleading high-risk deny.
 			consecutiveDenies++
-			if result.Outcome == "deny" {
-				deniedCache[fp] = result
-			}
+			deniedCache[fp] = result
 		}
 		stateMu.Unlock()
 		emitDecision(result)

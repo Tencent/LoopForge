@@ -168,9 +168,9 @@ func (s *AgentToolSession) nativeReview(ctx context.Context, wait time.Duration,
 			parent = context.Background()
 		}
 		go func() {
-			// Follow the turn's context with no artificial review deadline so
-			// slow reasoning models are not cut off; stopping the turn cancels it.
-			item.result = review(parent)
+			ctx, cancel := context.WithTimeout(parent, nativeReviewBudget)
+			defer cancel()
+			item.result = review(ctx)
 			close(item.done)
 		}()
 	}

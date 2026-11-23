@@ -99,9 +99,9 @@ type assistantHandlers struct {
 	active        sync.Map
 	sourceRoot    string
 	api           http.Handler
-	generate     func(context.Context, string, domain.User) (string, error)
-	review       func(context.Context, assistantApprovalInput, domain.User, string) (assistantApprovalReview, error)
-	titleSummary func(context.Context, domain.User, string) (string, error)
+	generate      func(context.Context, string, domain.User) (string, error)
+	review        func(context.Context, assistantApprovalInput, domain.User, string) (assistantApprovalReview, error)
+	titleSummary  func(context.Context, domain.User, string) (string, error)
 	// attachmentSweepWake nudges the background sweep after a deletion
 	// queues files; nil when no sweeper runs (tests sweep directly).
 	attachmentSweepWake chan struct{}

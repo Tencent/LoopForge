@@ -7,8 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"path"
 	"strings"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 )
@@ -17,216 +17,63 @@ const (
 	assistantApprovalRuleModel            = "rule"
 	assistantApprovalPolicyModel          = "policy"
 	assistantApprovalMaxConsecutiveDenies = 3
+	assistantApprovalCommentFastMaxRunes  = 500
 )
 
 // evaluateApprovalFastPath settles strictly safe, low-risk, reversible built-in
-// actions with zero LLM tokens before invoking the review model. It verifies
-// the action's gateway origin so an external MCP tool sharing a built-in name
-// can never bypass AI review, and it never hard-denies.
-func (h *assistantHandlers) evaluateApprovalFastPath(ctx context.Context, tool string, args map[string]any) (assistantApprovalReview, bool) {
+// platform comments with zero LLM tokens before invoking the review model. It
+// verifies gateway origin so external MCP tools can never bypass AI review,
+// requires short plain-text comments free of links or secrets, and never
+// hard-denies.
+func (h *assistantHandlers) evaluateApprovalFastPath(ctx context.Context, user domain.User, tool string, args map[string]any) (assistantApprovalReview, bool) {
 	tool = strings.TrimSpace(tool)
-	source := approvalActionSourceFrom(ctx)
-	switch source {
-	case approvalSourceBuiltinPlatform:
-		if tool == "issues_comments_add" {
-			return assistantApprovalReview{
-				Outcome:           "allow",
-				RiskLevel:         "low",
-				UserAuthorization: "high",
-				Model:             assistantApprovalRuleModel,
-				Rationale:         "项目内常规评论写入，范围明确且可逆",
-			}, true
-		}
-	case approvalSourceBuiltinWorkspace:
-		switch tool {
-		case "workbench_workspace_command":
-			cmd := approvalNestedArgString(args, "command")
-			if approvalCommandSafeReadOrTest(cmd) {
-				return assistantApprovalReview{
-					Outcome:           "allow",
-					RiskLevel:         "low",
-					UserAuthorization: "high",
-					Model:             assistantApprovalRuleModel,
-					Rationale:         "工作区只读检查或本地测试命令，无外部副作用",
-				}, true
-			}
-		case "workbench_workspace_write":
-			target := approvalNestedArgString(args, "path")
-			if approvalWorkspaceWriteSafePath(target) {
-				return assistantApprovalReview{
-					Outcome:           "allow",
-					RiskLevel:         "low",
-					UserAuthorization: "high",
-					Model:             assistantApprovalRuleModel,
-					Rationale:         "工作区内常规源码或文档修改，影响局限于工作区",
-				}, true
-			}
-		}
+	if approvalActionSourceFrom(ctx) != approvalSourceBuiltinPlatform || tool != "issues_comments_add" {
+		return assistantApprovalReview{}, false
 	}
-	return assistantApprovalReview{}, false
+	if !approvalCommentFastPathSafe(args, user) {
+		return assistantApprovalReview{}, false
+	}
+	return assistantApprovalReview{
+		Outcome:           "allow",
+		RiskLevel:         "low",
+		UserAuthorization: "high",
+		Model:             assistantApprovalRuleModel,
+		Rationale:         "项目内简短纯文本评论写入，范围明确且无外链或敏感内容",
+	}, true
 }
 
-func approvalNestedArgString(args map[string]any, key string) string {
-	if args == nil {
-		return ""
-	}
-	if s, ok := args[key].(string); ok && strings.TrimSpace(s) != "" {
-		return strings.TrimSpace(s)
-	}
-	if nested, ok := args["arguments"].(map[string]any); ok {
-		if s, ok := nested[key].(string); ok {
-			return strings.TrimSpace(s)
-		}
-	}
-	return ""
-}
-
-func approvalCommandSafeReadOrTest(command string) bool {
-	cmd := strings.TrimSpace(command)
-	if cmd == "" {
+func approvalCommentFastPathSafe(args map[string]any, user domain.User) bool {
+	if len(args) == 0 {
 		return false
 	}
-	for _, meta := range []string{"\n", "\r", "\x00", ";", "&&", "||", "|", "`", "$(", ">", "<", "&", "\\"} {
-		if strings.Contains(cmd, meta) {
+	normalized, ok := normalizeApprovalForRedaction(args).(map[string]any)
+	if !ok {
+		return false
+	}
+	bodyMap, ok := normalized["body"].(map[string]any)
+	if !ok {
+		return false
+	}
+	text, _ := bodyMap["body"].(string)
+	if strings.TrimSpace(text) == "" {
+		text, _ = bodyMap["content"].(string)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" || utf8.RuneCountInString(text) > assistantApprovalCommentFastMaxRunes {
+		return false
+	}
+	lower := strings.ToLower(text)
+	for _, scheme := range []string{"http://", "https://", "ftp://", "mailto:"} {
+		if strings.Contains(lower, scheme) {
 			return false
 		}
 	}
-	lower := strings.ToLower(cmd)
-	for _, sensitive := range []string{".env", "id_rsa", "id_ed25519", "/etc/", "/proc/", "/sys/", "..", "secret", "token", "credential", "passwd", "shadow"} {
-		if strings.Contains(lower, sensitive) {
-			return false
-		}
-	}
-	fields := strings.Fields(cmd)
-	if len(fields) == 0 {
+	if redactSecretValues(redactAgentToolResult(text, user)) != text {
 		return false
 	}
-	switch fields[0] {
-	case "pwd":
-		return len(fields) == 1
-	case "ls":
-		for _, arg := range fields[1:] {
-			if strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "~") {
-				return false
-			}
-		}
-		return true
-	case "git":
-		if len(fields) < 2 {
-			return false
-		}
-		for _, arg := range fields[2:] {
-			low := strings.ToLower(arg)
-			if low == "-c" || strings.HasPrefix(low, "--exec-path") || strings.HasPrefix(low, "--git-dir") ||
-				strings.HasPrefix(low, "--work-tree") || strings.HasPrefix(low, "--output") || low == "-o" {
-				return false
-			}
-		}
-		switch fields[1] {
-		case "status", "diff", "log", "show", "rev-parse":
-			return true
-		case "branch":
-			for _, arg := range fields[2:] {
-				switch arg {
-				case "--show-current", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--list":
-				default:
-					return false
-				}
-			}
-			return true
-		}
-	case "go":
-		if len(fields) < 2 {
-			return false
-		}
-		for _, arg := range fields[2:] {
-			low := strings.ToLower(arg)
-			if strings.HasPrefix(low, "-exec") || strings.HasPrefix(low, "-toolexec") {
-				return false
-			}
-		}
-		switch fields[1] {
-		case "test", "vet", "list", "version", "build":
-			return true
-		}
-	case "npm", "pnpm", "yarn":
-		if len(fields) < 2 {
-			return false
-		}
-		for _, arg := range fields[2:] {
-			low := strings.ToLower(arg)
-			if low == "--eval" || low == "-e" {
-				return false
-			}
-		}
-		if fields[1] == "test" {
-			return true
-		}
-		if fields[1] == "run" && len(fields) >= 3 {
-			switch fields[2] {
-			case "test", "lint", "check", "build", "typecheck":
-				return true
-			}
-		}
-	case "pytest":
-		return true
-	case "cargo":
-		if len(fields) >= 2 && (fields[1] == "test" || fields[1] == "check") {
-			return true
-		}
-	}
-	return false
-}
-
-var approvalSensitiveWriteNames = map[string]bool{
-	"dockerfile":        true,
-	"makefile":          true,
-	"justfile":          true,
-	"procfile":          true,
-	"package.json":      true,
-	"package-lock.json": true,
-	"pnpm-lock.yaml":    true,
-	"yarn.lock":         true,
-	"go.mod":            true,
-	"go.sum":            true,
-	"compose.yaml":      true,
-	"compose.yml":       true,
-	"docker-compose.yaml": true,
-	"docker-compose.yml":  true,
-}
-
-var approvalSensitiveWriteExts = map[string]bool{
-	".sh": true, ".bash": true, ".zsh": true, ".fish": true,
-	".ps1": true, ".bat": true, ".cmd": true,
-	".pem": true, ".key": true, ".p12": true, ".pfx": true, ".crt": true, ".cer": true, ".env": true,
-}
-
-func approvalWorkspaceWriteSafePath(raw string) bool {
-	target := strings.TrimSpace(raw)
-	if target == "" || strings.ContainsAny(target, "\x00\n\r") {
-		return false
-	}
-	normalized := strings.ReplaceAll(target, "\\", "/")
-	if strings.HasPrefix(normalized, "/") {
-		return false
-	}
-	cleaned := path.Clean(normalized)
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
-		return false
-	}
-	for _, seg := range strings.Split(cleaned, "/") {
-		if seg == "" || seg == "." || seg == ".." || strings.HasPrefix(seg, ".") {
-			return false
-		}
-	}
-	base := strings.ToLower(path.Base(cleaned))
-	if approvalSensitiveWriteNames[base] || strings.HasPrefix(base, "dockerfile.") || strings.HasPrefix(base, "compose.") || strings.HasPrefix(base, "docker-compose.") {
-		return false
-	}
-	if approvalSensitiveWriteExts[strings.ToLower(path.Ext(base))] {
-		return false
-	}
-	return true
+	var hidden []string
+	redactJSONStrings(normalized, user, "", &hidden)
+	return len(hidden) == 0
 }
 
 // redactApprovalArguments preserves every non-secret execution argument

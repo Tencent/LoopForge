@@ -617,9 +617,9 @@ func TestApprovalHTTPEgressAndRedirectProtection(t *testing.T) {
 		_ = ln.Close()
 
 		cases := []struct {
-			name    string
-			addrs   []netip.Addr
-			wantIP  string
+			name   string
+			addrs  []netip.Addr
+			wantIP string
 		}{
 			{
 				name:   "serial_ipv4_refused_then_private_blocked",
@@ -666,6 +666,33 @@ func TestApprovalHTTPEgressAndRedirectProtection(t *testing.T) {
 					t.Fatalf("multi-address dial must surface policy block for %s without CLI fallback: err=%v cliCalls=%d", tc.wantIP, err, cliCalls)
 				}
 			})
+		}
+	})
+
+	t.Run("requires_https_for_public_ips_even_when_private_cidr_allowlisted", func(t *testing.T) {
+		allowPrivate := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+		var policyErr errApprovalPolicyBlocked
+		// Plaintext HTTP to public IP must be rejected even if an internal CIDR is allowlisted.
+		err := checkApprovalEgressAddress("93.184.216.34:80", allowPrivate, true)
+		if !errors.As(err, &policyErr) || !strings.Contains(policyErr.Error(), "https://") {
+			t.Fatalf("expected plaintext HTTP block on public IP, got %v", err)
+		}
+		// HTTPS to public IP is allowed.
+		if err := checkApprovalEgressAddress("93.184.216.34:443", allowPrivate, false); err != nil {
+			t.Fatalf("expected HTTPS to public IP allowed, got %v", err)
+		}
+		// Plaintext HTTP to explicitly allowlisted internal gateway IP is allowed.
+		if err := checkApprovalEgressAddress("10.1.2.3:8080", allowPrivate, true); err != nil {
+			t.Fatalf("expected allowlisted internal HTTP allowed, got %v", err)
+		}
+		// Preferences validation rejects http:// when allowlist env is unset, allows it when set.
+		t.Setenv(approvalEgressAllowCIDRsEnv, "")
+		if err := validateApprovalReviewBaseURL("http://gateway.example.com/v1"); err == nil || !strings.Contains(err.Error(), "https://") {
+			t.Fatalf("expected http:// Base URL rejected without allowlist, got %v", err)
+		}
+		t.Setenv(approvalEgressAllowCIDRsEnv, "10.0.0.0/8")
+		if err := validateApprovalReviewBaseURL("http://internal-gw.local/v1"); err != nil {
+			t.Fatalf("expected http:// Base URL allowed with allowlist, got %v", err)
 		}
 	})
 }

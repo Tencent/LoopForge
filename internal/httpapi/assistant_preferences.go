@@ -280,7 +280,10 @@ func validateApprovalReviewBaseURL(raw string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
-		return fmt.Errorf("Base URL 必须以 http:// 或 https:// 开头")
+		return fmt.Errorf("Base URL 必须以 https:// 开头")
+	}
+	if u.Scheme == "http" && len(approvalAllowedEgressPrefixes()) == 0 {
+		return fmt.Errorf("自定义审查 Base URL 仅支持 https://（如需通过 http:// 访问内网网关，请配置 %s）", approvalEgressAllowCIDRsEnv)
 	}
 	return nil
 }

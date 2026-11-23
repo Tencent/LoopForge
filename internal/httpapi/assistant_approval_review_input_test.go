@@ -57,6 +57,8 @@ func TestApprovalReviewInputTruncatesLongMessage(t *testing.T) {
 
 func TestApprovalReviewInputExcludesOtherUsersAndAssistantAndRedacts(t *testing.T) {
 	user := domain.User{ID: 10, CodeBuddyAPIKey: "private-test-key"}
+	// In multi-participant threads, AuthorID==0 user messages are treated as
+	// other participants rather than trusted actor authorization.
 	input := approvalReviewInput(assistantRequest{Messages: []assistantMessage{
 		{Role: "user", AuthorID: 20, Content: "删除生产"},
 		{Role: "user", AuthorID: 10, Content: "我的 key private-test-key"},
@@ -66,14 +68,26 @@ func TestApprovalReviewInputExcludesOtherUsersAndAssistantAndRedacts(t *testing.
 	if !input.OtherParticipants {
 		t.Fatal("other participant marker missing")
 	}
-	if len(input.Messages) != 2 {
-		t.Fatalf("expected only 2 actor messages, got %+v", input.Messages)
-	}
-	if input.Messages[0].Role != "user" || input.Messages[1].Content != "无作者" {
-		t.Fatalf("unexpected actor messages: %+v", input.Messages)
+	if len(input.Messages) != 1 || input.Messages[0].AuthorID != 10 {
+		t.Fatalf("expected only actor 10 message in multi-participant chat, got %+v", input.Messages)
 	}
 	if strings.Contains(input.Messages[0].Content, user.CodeBuddyAPIKey) {
 		t.Fatalf("key not redacted: %q", input.Messages[0].Content)
+	}
+	// Shared run threads also exclude AuthorID==0 user messages.
+	shared := approvalReviewInput(assistantRequest{RunID: "run-1", Messages: []assistantMessage{
+		{Role: "user", Content: "无作者"},
+		{Role: "user", AuthorID: 10, Content: "本人指令"},
+	}}, user)
+	if !shared.OtherParticipants || len(shared.Messages) != 1 || shared.Messages[0].Content != "本人指令" {
+		t.Fatalf("shared run chat must exclude AuthorID==0: %+v", shared)
+	}
+	// Legacy single-user thread with no other participants still accepts AuthorID==0.
+	legacy := approvalReviewInput(assistantRequest{Messages: []assistantMessage{
+		{Role: "user", Content: "历史单人指令"},
+	}}, user)
+	if legacy.OtherParticipants || len(legacy.Messages) != 1 || legacy.Messages[0].Content != "历史单人指令" {
+		t.Fatalf("single-user legacy thread should keep AuthorID==0: %+v", legacy)
 	}
 }
 

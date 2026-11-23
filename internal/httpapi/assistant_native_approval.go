@@ -304,6 +304,11 @@ func nativeReviewRefusal(review assistantApprovalReview) string {
 	return "帮我批准：审查拒绝了本次外部写入（" + reason + "），操作未执行；不要换一种方式重试，先告诉用户原因"
 }
 
+// nativeReviewBudget bounds one background review. The reviewer stops at 5
+// minutes itself; the extra margin covers CLI teardown and stays below the
+// hook's 570-second hard ceiling.
+const nativeReviewBudget = assistantApprovalMaxTimeout + 15*time.Second
+
 // nativeReviewPoll is how long one hook request waits for the verdict before
 // answering pending, below the hook's 20-second request timeout.
 const nativeReviewPoll = 10 * time.Second

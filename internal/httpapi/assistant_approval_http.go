@@ -43,24 +43,37 @@ func newApprovalEgressClient(timeout time.Duration) *http.Client {
 	return newApprovalEgressClientWithResolver(timeout, approvalAllowedEgressPrefixes(), nil)
 }
 
-func newApprovalEgressClientWithResolver(timeout time.Duration, allowed []netip.Prefix, resolver *net.Resolver) *http.Client {
-	transport := &http.Transport{
-		Proxy:               nil,
-		DialContext:         approvalEgressDialContext(allowed, resolver),
-		TLSHandshakeTimeout: 10 * time.Second,
-		DisableKeepAlives:   true,
+type approvalPlaintextHTTPKey struct{}
+
+type approvalEgressTransport struct {
+	base http.RoundTripper
+}
+
+func (t approvalEgressTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL != nil && strings.EqualFold(req.URL.Scheme, "http") {
+		req = req.Clone(context.WithValue(req.Context(), approvalPlaintextHTTPKey{}, true))
 	}
-	client := &http.Client{
-		Transport: transport,
+	return t.base.RoundTrip(req)
+}
+
+func newApprovalEgressClientWithResolver(timeout time.Duration, allowed []netip.Prefix, resolver *net.Resolver) *http.Client {
+	if timeout <= 0 {
+		timeout = assistantApprovalMaxTimeout
+	}
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           approvalEgressDialContext(allowed, resolver),
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: timeout,
+		DisableKeepAlives:     true,
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: approvalEgressTransport{base: transport},
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	if timeout > 0 {
-		transport.ResponseHeaderTimeout = timeout
-		client.Timeout = timeout
-	}
-	return client
 }
 
 // approvalEgressDialContext enforces checkApprovalEgressAddress on every
@@ -71,13 +84,14 @@ func newApprovalEgressClientWithResolver(timeout time.Duration, allowed []netip.
 // policy-blocked host as an ordinary failure and fall back to a local CLI.
 func approvalEgressDialContext(allowed []netip.Prefix, resolver *net.Resolver) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		plaintextHTTP, _ := ctx.Value(approvalPlaintextHTTPKey{}).(bool)
 		var mu sync.Mutex
 		var blocked error
 		dialer := &net.Dialer{
 			Timeout:  10 * time.Second,
 			Resolver: resolver,
 			Control: func(_, address string, _ syscall.RawConn) error {
-				err := checkApprovalEgressAddress(address, allowed)
+				err := checkApprovalEgressAddress(address, allowed, plaintextHTTP)
 				if err != nil {
 					mu.Lock()
 					if blocked == nil {
@@ -112,7 +126,7 @@ func approvalAllowedEgressPrefixes() []netip.Prefix {
 	return out
 }
 
-func checkApprovalEgressAddress(address string, allowed []netip.Prefix) error {
+func checkApprovalEgressAddress(address string, allowed []netip.Prefix, plaintextHTTP bool) error {
 	ap, err := netip.ParseAddrPort(address)
 	if err != nil {
 		return errApprovalPolicyBlocked{msg: fmt.Sprintf("审查接口连接地址无效 %q", address)}
@@ -125,6 +139,9 @@ func checkApprovalEgressAddress(address string, allowed []netip.Prefix) error {
 	}
 	if !approvalIsPublicIP(ip) {
 		return errApprovalPolicyBlocked{msg: fmt.Sprintf("审查接口不允许访问私有或本地地址 %s（如需访问内网网关，请配置 %s）", ip, approvalEgressAllowCIDRsEnv)}
+	}
+	if plaintextHTTP {
+		return errApprovalPolicyBlocked{msg: fmt.Sprintf("审查接口对公网地址 %s 仅允许使用 https://（如需通过 http:// 访问内网网关，请配置 %s）", ip, approvalEgressAllowCIDRsEnv)}
 	}
 	return nil
 }
@@ -455,9 +472,9 @@ func postApprovalHTTP(ctx context.Context, target approvalHTTPTarget, payload ma
 		default:
 			req.Header.Set("Authorization", "Bearer "+target.APIKey)
 		}
-		// Pass 0 so dial/TLS timeouts still guard dead hosts while inference
-		// follows req.Context() with no artificial response timeout.
-		client := approvalHTTPClientFactory(0)
+		// Bound direct HTTP inference at assistantApprovalMaxTimeout (5m) so
+		// slow reasoning models succeed without leaking hung connections.
+		client := approvalHTTPClientFactory(assistantApprovalMaxTimeout)
 		resp, err := client.Do(req)
 		if err != nil {
 			var policyErr errApprovalPolicyBlocked
