@@ -755,6 +755,9 @@ func (r *CatalogRepo) DeleteScheduleJob(id string) error {
 		if err := tx.Where("job_id = ?", id).Delete(&scheduleJobExecutionStatRow{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("job_id = ?", id).Delete(&scheduleJobExecutionCountedRow{}).Error; err != nil {
+			return err
+		}
 		return tx.Table("schedule_jobs").Where("id = ?", id).Delete(nil).Error
 	})
 }

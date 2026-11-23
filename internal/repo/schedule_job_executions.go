@@ -31,8 +31,8 @@ func (r *CatalogRepo) PutScheduleJobExecution(e domain.ScheduleJobExecution) err
 		e.ID = domain.ScheduleJobExecutionID(e.TraceID)
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		// One execution is written in order by the scheduler that runs it, so
-		// its previous status cannot change under us.
+		// Retained legacy terminal rows have already been counted even if the
+		// counting-key table was just added. Keys protect pruned rows as well.
 		var prior []string
 		if err := tx.Model(&scheduleJobExecutionRow{}).Where("id = ?", e.ID).Pluck("status", &prior).Error; err != nil {
 			return err
@@ -50,16 +50,23 @@ func (r *CatalogRepo) PutScheduleJobExecution(e domain.ScheduleJobExecution) err
 		}); err != nil {
 			return err
 		}
-		if e.Finished() && !(existing && (domain.ScheduleJobExecution{Status: prior[0]}).Finished()) {
-			if err := countScheduleJobExecution(tx, e); err != nil {
+		now := time.Now().UTC()
+		if e.Finished() {
+			alreadyCounted := existing && (domain.ScheduleJobExecution{Status: prior[0]}).Finished()
+			if err := countScheduleJobExecutionOnce(tx, e, alreadyCounted, now); err != nil {
 				return err
 			}
 		}
 		if existing {
 			return nil
 		}
-		if err := tx.Where("job_id = ? AND bucket_hour < ?", e.JobID, time.Now().UTC().Add(-scheduleExecutionStatsRetention)).
+		cutoff := now.Add(-scheduleExecutionStatsRetention)
+		if err := tx.Where("job_id = ? AND bucket_hour < ?", e.JobID, cutoff).
 			Delete(&scheduleJobExecutionStatRow{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("job_id = ? AND bucket_hour < ?", e.JobID, cutoff).
+			Delete(&scheduleJobExecutionCountedRow{}).Error; err != nil {
 			return err
 		}
 		// Pruning on every insert keeps a job at most one row over the cap, so

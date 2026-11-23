@@ -295,6 +295,16 @@ type scheduleJobExecutionStatRow struct {
 
 func (scheduleJobExecutionStatRow) TableName() string { return "schedule_job_execution_stats" }
 
+// Counting keys outlive the bounded execution history, for as long as its
+// hourly statistics. Their primary key makes terminal replay counting atomic.
+type scheduleJobExecutionCountedRow struct {
+	ExecutionID string    `gorm:"column:execution_id;primaryKey;size:80"`
+	JobID       string    `gorm:"column:job_id;size:64;not null;index:idx_schedule_execution_counted_job_bucket,priority:1"`
+	BucketHour  time.Time `gorm:"column:bucket_hour;not null;index:idx_schedule_execution_counted_job_bucket,priority:2"`
+}
+
+func (scheduleJobExecutionCountedRow) TableName() string { return "schedule_job_execution_counted" }
+
 type sharedScheduleVersionRow struct {
 	ID           string     `gorm:"column:id;primaryKey;size:64"`
 	SharedTaskID string     `gorm:"column:shared_task_id;size:64;uniqueIndex:idx_shared_schedule_version"`
@@ -764,7 +774,7 @@ func allModels() []any {
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
 		dockerfileRow{}, environmentRow{}, sandboxRow{},
-		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
+		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, scheduleJobExecutionCountedRow{}, sharedScheduleVersionRow{},
 		issueRow{}, issueCommentRow{}, taskRow{},
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
