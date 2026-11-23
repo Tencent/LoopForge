@@ -1738,9 +1738,10 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		}
 	}
 	execute := req.Execute
+	acp, _ := command.Stdin.(*assistantACP)
 	if execute == nil {
 		execute = runtime.ExecuteLocalCommand
-		if acp, ok := command.Stdin.(*assistantACP); ok {
+		if acp != nil {
 			// Pass the fd directly so os/exec has no stdin copier waiting
 			// for another frame if the CLI exits before its ACP response.
 			command.Stdin = acp.input
@@ -1750,7 +1751,13 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		}
 	}
 	attempt.phase("execution")
-	_, err = execute(ctx, workspace, command, inv.credentials, sink)
+	if acp != nil {
+		_, err = acp.execute(ctx, func(execCtx context.Context) (string, error) {
+			return execute(execCtx, workspace, command, inv.credentials, sink)
+		})
+	} else {
+		_, err = execute(ctx, workspace, command, inv.credentials, sink)
+	}
 	attempt.exited(err)
 	if err == nil {
 		attempt.phase("protocol")

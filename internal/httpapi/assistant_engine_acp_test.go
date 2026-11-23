@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAssistantACPConversationInput(t *testing.T) {
@@ -47,7 +50,10 @@ func TestAssistantACPConversationInput(t *testing.T) {
 				if err := json.Unmarshal(read(2, "session/new"), &params); err != nil || params.Cwd != cwd {
 					t.Fatalf("new session working directory = %q, want %q: %v", params.Cwd, cwd, err)
 				}
-				acp.translate(`{"jsonrpc":"2.0","id":2,"result":{"sessionId":"new-session"}}`)
+				init := acp.translate(`{"jsonrpc":"2.0","id":2,"result":{"sessionId":"new-session","models":{"currentModelId":"cursor-model"}}}`)
+				if !strings.Contains(strings.Join(init, "\n"), `"model":"cursor-model"`) {
+					t.Fatalf("missing model information: %v", init)
+				}
 			} else {
 				session = resume
 				if params := read(2, "session/load"); !strings.Contains(string(params), `"sessionId":"old-session"`) {
@@ -69,11 +75,58 @@ func TestAssistantACPConversationInput(t *testing.T) {
 			if result := read(4, ""); !strings.Contains(string(result), `"outcome":"cancelled"`) {
 				t.Fatalf("unhandled permission must not be granted: %s", result)
 			}
-			acp.translate(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"` + session + `","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"received"}}}}`)
-			result := strings.Join(acp.translate(`{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`), "\n")
-			if !strings.Contains(result, `"result":"received"`) || !strings.Contains(result, `"session_id":"`+session+`"`) {
-				t.Fatalf("unexpected translated result: %s", result)
+			for _, chunk := range []string{"> Auto ro", "uted to GPT-5.6 Luna\n\n", "received"} {
+				encoded, _ := json.Marshal(chunk)
+				lines := acp.translate(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"` + session + `","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":` + string(encoded) + `}}}}`)
+				if chunk != "received" && len(lines) != 0 {
+					t.Fatalf("routing notice leaked into the answer stream: %v", lines)
+				}
+			}
+			lines := acp.translate(`{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`)
+			var result struct {
+				Result    string `json:"result"`
+				SessionID string `json:"session_id"`
+			}
+			if len(lines) == 0 || json.Unmarshal([]byte(lines[len(lines)-1]), &result) != nil ||
+				trimAssistantReplyText(result.Result) != "received" || result.SessionID != session {
+				t.Fatalf("unexpected translated result: %v", lines)
 			}
 		})
+	}
+}
+
+func TestAssistantACPStopsCLIThatLingersAfterReply(t *testing.T) {
+	acp, err := newAssistantACP(t.TempDir(), "prompt", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer acp.close()
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	_, err = acp.execute(ctx, func(execCtx context.Context) (string, error) {
+		acp.translate(`{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`)
+		<-execCtx.Done()
+		return "", execCtx.Err()
+	})
+	if err != nil || ctx.Err() != nil {
+		t.Fatalf("completed turn did not release the CLI: %v, %v", err, ctx.Err())
+	}
+}
+
+func TestAssistantACPRespectsUserCancellation(t *testing.T) {
+	acp, err := newAssistantACP(t.TempDir(), "prompt", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer acp.close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	_, err = acp.execute(ctx, func(execCtx context.Context) (string, error) {
+		cancel()
+		<-execCtx.Done()
+		return "", execCtx.Err()
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("user cancellation was lost: %v", err)
 	}
 }

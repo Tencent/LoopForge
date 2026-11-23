@@ -376,10 +376,9 @@ func conversationAssetPath(root, target string) error {
 	return nil
 }
 
-// conversationTerminalResultDrain is how long a CLI may linger after its
-// stream-json terminal result. ExecutorRunner uses the same window before it
-// stops hook processes that outlive the protocol result.
-const conversationTerminalResultDrain = 2500 * time.Millisecond
+// ConversationTerminalResultDrain gives a CLI time to flush its output and
+// session journal after its protocol result, before the process is stopped.
+const ConversationTerminalResultDrain = 2500 * time.Millisecond
 
 // conversationStdoutTerminal reports a Claude-style stream-json result frame,
 // which Cursor, CodeBuddy and the other agent CLIs emit when the turn is over.
@@ -758,7 +757,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		go func() {
 			select {
 			case <-terminalResult:
-				timer := time.NewTimer(conversationTerminalResultDrain)
+				timer := time.NewTimer(ConversationTerminalResultDrain)
 				defer timer.Stop()
 				select {
 				case <-timer.C:

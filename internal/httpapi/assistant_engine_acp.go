@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"agentflow/internal/runtime"
 )
@@ -66,12 +69,14 @@ func (a *assistantInteractiveInput) enqueue(data []byte) {
 // whose one-shot print mode takes its prompt only on the command line.
 type assistantACP struct {
 	*assistantInteractiveInput
-	cwd     string
-	prompt  string
-	resume  string
-	session string
-	text    strings.Builder
-	stream  runtime.ClaudeStream
+	cwd      string
+	prompt   string
+	resume   string
+	session  string
+	text     strings.Builder
+	stream   runtime.ClaudeStream
+	routes   runtime.CursorRouteFilter
+	finished chan struct{}
 }
 
 func newAssistantACP(cwd, prompt, resume string) (*assistantACP, error) {
@@ -83,7 +88,7 @@ func newAssistantACP(cwd, prompt, resume string) (*assistantACP, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &assistantACP{assistantInteractiveInput: input, cwd: cwd, prompt: prompt, resume: resume}
+	a := &assistantACP{assistantInteractiveInput: input, cwd: cwd, prompt: prompt, resume: resume, finished: make(chan struct{})}
 	a.request(1, "initialize", map[string]any{
 		"protocolVersion": 1, "clientCapabilities": map[string]any{},
 		"clientInfo": map[string]string{"name": "LoopForge", "version": "1"},
@@ -108,9 +113,44 @@ func (a *assistantACP) request(id int, method string, params map[string]any) {
 	a.send(map[string]any{"id": id, "method": method, "params": params})
 }
 
-func (a *assistantACP) fail(message string) []string {
+func (a *assistantACP) result(text string, failed bool) []string {
 	a.closeWriter()
-	return a.stream.Result(message, true)
+	out := a.stream.Result(text, failed)
+	close(a.finished)
+	return out
+}
+
+func (a *assistantACP) answer(text string) []string {
+	a.text.WriteString(text)
+	return a.stream.Delta("acp-answer", "text", text)
+}
+
+var errAssistantACPFinished = errors.New("ACP turn finished")
+
+// ACP processes can stay alive after stdin closes. Give the CLI time to flush
+// its journal, then stop it through the same execution context as user stops.
+func (a *assistantACP) execute(ctx context.Context, run func(context.Context) (string, error)) (string, error) {
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	go func() {
+		select {
+		case <-runCtx.Done():
+			return
+		case <-a.finished:
+		}
+		timer := time.NewTimer(runtime.ConversationTerminalResultDrain)
+		defer timer.Stop()
+		select {
+		case <-runCtx.Done():
+		case <-timer.C:
+			cancel(errAssistantACPFinished)
+		}
+	}()
+	out, err := run(runCtx)
+	if context.Cause(runCtx) == errAssistantACPFinished {
+		return out, nil
+	}
+	return out, err
 }
 
 func (a *assistantACP) translate(line string) []string {
@@ -158,7 +198,7 @@ func (a *assistantACP) translate(line string) []string {
 		if string(message.ID) == "2" && a.resume != "" && (message.Error.Code == -32002 || missing) {
 			text = "No conversation found with session ID: " + a.resume
 		}
-		return a.fail(text)
+		return a.result(text, true)
 	}
 	switch string(message.ID) {
 	case "1":
@@ -169,14 +209,14 @@ func (a *assistantACP) translate(line string) []string {
 			} `json:"agentCapabilities"`
 		}
 		if json.Unmarshal(message.Result, &result) != nil || result.ProtocolVersion != 1 {
-			return a.fail("CLI 返回了不支持的 ACP 协议版本")
+			return a.result("CLI 返回了不支持的 ACP 协议版本", true)
 		}
 		params := map[string]any{"cwd": a.cwd, "mcpServers": []any{}}
 		if a.resume == "" {
 			a.request(2, "session/new", params)
 		} else {
 			if !result.AgentCapabilities.LoadSession {
-				return a.fail("此 CLI 版本不支持通过 ACP 继续会话")
+				return a.result("此 CLI 版本不支持通过 ACP 继续会话", true)
 			}
 			params["sessionId"] = a.resume
 			a.request(2, "session/load", params)
@@ -184,30 +224,33 @@ func (a *assistantACP) translate(line string) []string {
 	case "2":
 		var result struct {
 			SessionID string `json:"sessionId"`
+			Models    struct {
+				CurrentModelID string `json:"currentModelId"`
+			} `json:"models"`
 		}
 		if json.Unmarshal(message.Result, &result) != nil {
-			return a.fail("ACP 返回了无效的会话信息")
+			return a.result("ACP 返回了无效的会话信息", true)
 		}
 		a.session = result.SessionID
 		if a.session == "" {
 			a.session = a.resume
 		}
 		if !agentCLISessionValid(a.session) {
-			return a.fail("ACP 返回了无效的会话编号")
+			return a.result("ACP 返回了无效的会话编号", true)
 		}
 		a.request(3, "session/prompt", map[string]any{
 			"sessionId": a.session, "prompt": []map[string]string{{"type": "text", "text": a.prompt}},
 		})
-		return a.stream.Init(a.session, "")
+		return a.stream.Init(a.session, result.Models.CurrentModelID)
 	case "3":
-		a.closeWriter()
 		var result struct {
 			StopReason string `json:"stopReason"`
 		}
 		if json.Unmarshal(message.Result, &result) != nil || result.StopReason != "end_turn" {
-			return a.fail("ACP 会话未完成：" + result.StopReason)
+			return a.result("ACP 会话未完成："+result.StopReason, true)
 		}
-		return a.stream.Result(a.text.String(), false)
+		out := a.answer(a.routes.Finish())
+		return append(out, a.result(a.text.String(), false)...)
 	}
 	return nil
 }
@@ -235,8 +278,7 @@ func (a *assistantACP) update(data json.RawMessage) []string {
 	switch u.Kind {
 	case "agent_message_chunk":
 		if u.Content.Type == "text" {
-			a.text.WriteString(u.Content.Text)
-			return a.stream.Delta("acp-answer", "text", u.Content.Text)
+			return a.answer(a.routes.Feed(u.Content.Text))
 		}
 	case "agent_thought_chunk":
 		return a.stream.Delta("acp-thinking", "thinking", u.Content.Text)
