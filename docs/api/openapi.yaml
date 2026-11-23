@@ -1367,6 +1367,111 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/projects/{projectId}/join-requests:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [Projects]
+      operationId: createProjectJoinRequest
+      description: Ask to join a project. One pending request per user and project; owners, members and open projects (no owner and no members) are refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: {type: string, enum: [member, viewer], default: member}
+                reason: {type: string, maxLength: 500}
+      responses:
+        "200": {$ref: "#/components/responses/ProjectJoinRequest"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Already a member or a pending request exists}
+  /api/project-join-requests:
+    get:
+      tags: [Projects]
+      operationId: listProjectJoinRequests
+      description: The caller's own requests plus every request of projects the caller owns or maintains (platform admins see all), newest first.
+      parameters:
+        - name: projectId
+          in: query
+          schema: {type: string}
+        - name: status
+          in: query
+          schema: {type: string, enum: [pending, approved, rejected, withdrawn]}
+      responses:
+        "200":
+          description: Join requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/ProjectJoinRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /api/project-join-requests/{requestId}/approve:
+    parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    post:
+      tags: [Projects]
+      operationId: approveProjectJoinRequest
+      description: Approve a pending request and add the applicant as a member; project owner, maintainer or platform admin.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum: [maintainer, member, viewer]
+                  description: Granted role; defaults to the requested role. Only owners and platform admins grant maintainer.
+      responses:
+        "200": {$ref: "#/components/responses/ProjectJoinRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Request is no longer pending}
+  /api/project-join-requests/{requestId}/reject:
+    parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    post:
+      tags: [Projects]
+      operationId: rejectProjectJoinRequest
+      description: Reject a pending request; project owner, maintainer or platform admin.
+      responses:
+        "200": {$ref: "#/components/responses/ProjectJoinRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Request is no longer pending}
+  /api/project-join-requests/{requestId}/withdraw:
+    parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    post:
+      tags: [Projects]
+      operationId: withdrawProjectJoinRequest
+      description: Withdraw the caller's own pending request.
+      responses:
+        "200": {$ref: "#/components/responses/ProjectJoinRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Request is no longer pending}
   /api/repositories:
     get:
       tags: [Repositories]
@@ -4104,6 +4209,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Project"
+    ProjectJoinRequest:
+      description: Project join request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProjectJoinRequest"
     ProjectList:
       description: Project list
       content:
@@ -4460,6 +4571,23 @@ components:
         role:
           type: string
           enum: [maintainer, member, viewer]
+    ProjectJoinRequest:
+      type: object
+      required: [id, projectId, userId, role, status]
+      properties:
+        id: {type: integer, format: int64}
+        projectId: {type: string}
+        userId: {type: integer, format: int64}
+        role:
+          type: string
+          enum: [maintainer, member, viewer]
+          description: Requested role while pending, granted role once approved.
+        reason: {type: string}
+        status: {type: string, enum: [pending, approved, rejected, withdrawn]}
+        reviewerId: {type: integer, format: int64}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        reviewedAt: {type: string, format: date-time}
     PlatformAccount:
       type: object
       properties:

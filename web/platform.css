@@ -892,6 +892,14 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .pa-sw-hex{margin-left:4px;color:var(--muted);font-size:12px}
 .pa-member-row{padding:12px 0}
 .pa-rows>.pa-member-row{grid-template-columns:30px 84px minmax(220px,1fr) 28px}
+.pa-join-row{display:grid;grid-template-columns:30px 84px minmax(0,1fr) auto;gap:8px;align-items:center;padding:12px 0}
+.pa-rows>.pa-join-row+.pa-join-row{border-top:1px solid var(--line)}
+.pa-join-m{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pa-join-m b{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-join-m small{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-join-acts{display:flex;gap:6px}
+.pa-join-state{display:inline-flex;align-items:center;gap:6px}
+.pa-join-btn,.pa-join-state{flex:none}
 .pa-rows>.member-row+.member-row{border-top:1px solid var(--line)}
 .pa-rows>.member-row.owner-row{margin:12px 0;padding:10px 8px}
 .pa-rows-empty{padding:20px 0;color:var(--muted-2);font-size:13px;text-align:center}
@@ -2076,7 +2084,7 @@ html[data-theme="dark"] .edge-delete-btn:hover path{stroke:#ffffff !important}
   .ap-card{flex-direction:column}
   .ap-actions{width:100%}
   .runs-layout{grid-template-columns:1fr}
-  .member-row,.dimension-row,.pa-rows>.pa-member-row{grid-template-columns:30px 1fr}
+  .member-row,.dimension-row,.pa-rows>.pa-member-row,.pa-join-row{grid-template-columns:30px 1fr}
   .project-context-bar{flex-wrap:wrap;gap:12px}
   .project-context-metrics{order:3;width:100%;height:auto}
   .project-context-metrics>div,.project-context-metrics>button{flex:1}

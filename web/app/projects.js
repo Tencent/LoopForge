@@ -124,12 +124,13 @@ function projectCardHTML(p,ctx={}){
     ?`<span class="pa-fact" title="${def?'默认仓库':'已绑定仓库，未设默认'}">${paIcon('repo',12)}<span>${escapeHTML((def||repos[0]).name||'仓库')}${repos.length>1?` +${repos.length-1}`:''}</span></span>`
     :`<span class="pa-fact warn">${paIcon('alert',12)}<span>未绑定代码仓库</span></span>`;
   const sop=ctx.workflowName?ctx.workflowName(p.workflowId):'';
+  const join=projectJoinCardHTML(p);
   const avatars=people.slice(0,3).map(id=>{const u=userById(id);return `<span class="pa-av" title="${escapeHTML(u?userDisplay(u):String(id))}">${userAvatarHTML(u||id,48)}</span>`}).join('')+(people.length>3?`<span class="pa-av more">+${people.length-3}</span>`:'');
   return `<article class="pa-card" tabindex="0" role="link" data-project-open="${escapeHTML(p.id)}" aria-label="打开项目 ${escapeHTML(p.name||p.id)}">
     <div class="pa-card-top"><span class="pa-mark" style="background:${safeColor(p.color)}">${escapeHTML(key.slice(0,2).toUpperCase())}</span><div class="pa-card-m"><h3><span title="${escapeHTML(p.name||'')}">${escapeHTML(p.name||p.id)}</span>${p.id===ctx.currentId?'<span class="pa-chip cur">当前</span>':''}</h3><div class="pa-card-sub" title="${escapeHTML(p.id)} · ${escapeHTML(p.key||'')}">${escapeHTML(p.id)} · ${escapeHTML(p.key||'—')}</div></div><span class="pa-go">${paIcon('arrow',16)}</span></div>
     <p class="pa-card-desc${p.description?'':' none'}">${escapeHTML(p.description||'暂无项目说明')}</p>
-    <div class="pa-facts">${repoFact}${sop?`<span class="pa-fact" title="默认 SOP">${paIcon('flow',12)}<span>${escapeHTML(sop)}</span></span>`:''}${p.tapdWorkspaceId?`<span class="pa-fact" title="TAPD Workspace ${escapeHTML(p.tapdWorkspaceId)}">${paIcon('tapd',12)}<span>TAPD</span></span>`:''}</div>
-    <div class="pa-card-foot"><div class="pa-avs">${avatars}</div><div class="pa-stats"><span><b>${issues.length}</b> 需求</span>${active?`<span class="pa-live"><i></i><b>${active}</b> 推进中</span>`:''}</div></div>
+    <div class="pa-facts">${repoFact}${sop?`<span class="pa-fact" title="默认 SOP">${paIcon('flow',12)}<span>${escapeHTML(sop)}</span></span>`:''}${p.tapdWorkspaceId?`<span class="pa-fact" title="TAPD Workspace ${escapeHTML(p.tapdWorkspaceId)}">${paIcon('tapd',12)}<span>TAPD</span></span>`:''}${join.fact}</div>
+    <div class="pa-card-foot"><div class="pa-avs">${avatars}</div><div class="pa-stats"><span><b>${issues.length}</b> 需求</span>${active?`<span class="pa-live"><i></i><b>${active}</b> 推进中</span>`:''}</div>${join.action}</div>
   </article>`;
 }
 function projectAdminEmptyHTML(icon,title,text,action){return `<div class="pa-empty"><div class="pa-empty-ic">${paIcon(icon,22)}</div><b>${title}</b><p>${text}</p>${action||''}</div>`}
@@ -144,7 +145,10 @@ function renderProjectList(){
   if(!projects.length)host.innerHTML=projectAdminEmptyHTML('repo','还没有项目','项目是需求、仓库与团队的统一边界，先创建第一个项目。','<button type="button" class="button primary" data-project-new>＋ 新建项目</button>');
   else if(!list.length)host.innerHTML=projectAdminEmptyHTML('search','没有匹配的项目','换个关键词试试，或者新建一个项目。','<button type="button" class="button ghost" data-project-clear>清除筛选</button>');
   else host.innerHTML=`<div class="pa-grid">${list.map(p=>projectCardHTML(p,{repos,issues:state.data.issues||[],currentId:state.projectFilter,workflowName:projectWorkflowName})).join('')}</div>`;
-  host.querySelectorAll('[data-project-open]').forEach(card=>{card.onclick=()=>openProjectAdminDetail(card.dataset.projectOpen);card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openProjectAdminDetail(card.dataset.projectOpen)}}});
+  host.querySelectorAll('[data-project-open]').forEach(card=>{card.onclick=()=>openProjectAdminDetail(card.dataset.projectOpen);card.onkeydown=e=>{if(e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openProjectAdminDetail(card.dataset.projectOpen)}}});
+  host.querySelectorAll('[data-project-join]').forEach(b=>b.onclick=e=>{e.stopPropagation();applyProjectJoin(b.dataset.projectJoin)});
+  host.querySelectorAll('[data-project-join-withdraw]').forEach(b=>b.onclick=e=>{e.stopPropagation();withdrawProjectJoin(Number(b.dataset.projectJoinWithdraw))});
+  loadProjectJoinRequests();
   host.querySelectorAll('[data-project-new]').forEach(b=>b.onclick=()=>openProjectWizard());
   host.querySelectorAll('[data-project-clear]').forEach(b=>b.onclick=()=>{state.projectAdminQuery='';state.projectAdminFilter='all';if(search)search.value='';renderProjectList()});
 }
@@ -191,7 +195,8 @@ function projectAdminFormHTML(d,ctx){
   const owner=userById(d.ownerId);
   const members=(d.members||[]).map((m,i)=>{const u=userById(m.userId);return `<div class="member-row pa-member-row" data-member-row="${i}"><span class="member-avatar">${userAvatarHTML(u,48)}</span><select class="select member-role" data-m="role" aria-label="成员角色">${PROJECT_MEMBER_ROLES.map(r=>`<option value="${r.id}"${projectMemberRole(m.role)===r.id?' selected':''}>${r.label}</option>`).join('')}</select>${userCombobox(`member-${i}`,m.userId,'请选择项目成员','data-m="userId"')}<button type="button" data-remove-member="${i}" title="移除成员" aria-label="移除成员">×</button></div>`}).join('');
   const memberPanel=paSection('负责人','Owner 是项目的默认责任人，接收需要介入的通知。',`<div class="pa-rows"><div class="member-row owner-row pa-member-row"><span class="member-avatar owner">${userAvatarHTML(owner,48)}</span><span class="member-kind owner">Owner</span>${userCombobox('ownerId',d.ownerId,'请选择项目 Owner')}<span></span></div></div>`)
-    +paSection('成员','维护者和成员可推进需求、修改项目内角色与 SOP；维护者还能管理通知机器人和上报数据源；只读成员只能查看。',`<div class="pa-rows" id="memberRows">${members||'<div class="pa-rows-empty">还没有其他成员</div>'}</div>`,'<button id="addMember" type="button" class="button ghost small">＋ 添加成员</button>');
+    +paSection('成员','维护者和成员可推进需求、修改项目内角色与 SOP；维护者还能管理通知机器人和上报数据源；只读成员只能查看。',`<div class="pa-rows" id="memberRows">${members||'<div class="pa-rows-empty">还没有其他成员</div>'}</div>`,'<button id="addMember" type="button" class="button ghost small">＋ 添加成员</button>')
+    +(saved&&canReviewProjectJoin(saved)?paSection('加入申请','通过后申请人立即成为项目成员；通过前可调整授予的角色。',`<div class="pa-rows" data-pa-join-box>${projectJoinRowsHTML(saved)}</div>`):'');
   const configured=!!(saved?.tapdWorkspaceId||saved?.tapdIterationId);
   const tapdPanel=(tapdIntegrationAvailable(saved)?paSection('TAPD 需求池','配置后可在需求页从 TAPD 导入需求，澄清结论会回写到 TAPD 单。',`<div class="pa-rows">
       ${paRow('Workspace ID','TAPD 项目 URL 中 /tapd_fe/ 后的数字。',`<input class="pa-input mono" name="tapdWorkspaceId" value="${escapeHTML(d.tapdWorkspaceId||'')}" placeholder="例如 20375341" spellcheck="false">`)}
@@ -331,6 +336,8 @@ function bindProjectAdminForm(form){
     const edit=t.closest('[data-repo-edit]');if(edit){if(typeof openRepoDrawer==='function')openRepoDrawer(edit.dataset.repoEdit);return}
     const del=t.closest('[data-repo-delete]');if(del){deleteProjectRepository(del.dataset.repoDelete);return}
     const pdel=t.closest('[data-project-delete]');if(pdel){deleteProjectAdmin(pdel.dataset.projectDelete);return}
+    const jok=t.closest('[data-join-approve]');if(jok){reviewProjectJoin(Number(jok.dataset.joinApprove),true,jok.closest('[data-join-row]')?.querySelector('[data-join-role]')?.value);return}
+    const jno=t.closest('[data-join-reject]');if(jno){reviewProjectJoin(Number(jno.dataset.joinReject),false);return}
     const rm=t.closest('[data-remove-member]');if(rm){captureProjectAdminForm();state.projectDraft.members.splice(+rm.dataset.removeMember,1);renderProjectDetail({force:true});return}
     if(t.closest('#addMember')){captureProjectAdminForm();state.projectDraft.members.push({userId:0,role:'member'});renderProjectDetail({force:true});setTimeout(()=>form.querySelector('#memberRows [data-member-row]:last-child [data-user-combobox-trigger]')?.click(),0)}
   });
@@ -359,6 +366,7 @@ function renderProjectDetail(opt={}){
     bindProjectAdminForm(form);bindUserSearches(form);
   }
   syncProjectIdentity();renderProjectAdminHead();
+  if(!creating)loadProjectJoinRequests();
   if(!PROJECT_ADMIN_TABS.some(t=>t.id===state.projectAdminTab)||creating&&state.projectAdminTab!=='basic')state.projectAdminTab='basic';
   form.querySelectorAll('[data-pa-panel]').forEach(p=>p.hidden=p.dataset.paPanel!==state.projectAdminTab);
   syncProjectAdminTabs();syncProjectAdminSaveBar();
@@ -432,6 +440,84 @@ function refreshProjectAdminRepos(focusRepoId){
   const form=$('#projectAdminForm');if(!form)return;
   const btn=(focusRepoId&&[...form.querySelectorAll('[data-repo-edit]')].find(b=>b.dataset.repoEdit===focusRepoId))||form.querySelector('[data-repo-add]');
   btn?.focus?.();
+}
+// Join requests: non-members apply from the project card; the owner, maintainers and platform admins review them in 项目成员.
+function projectJoinOpen(p){return !Number(p?.ownerId)&&!(p?.members||[]).length}
+function projectHasUser(p,uid){uid=Number(uid)||0;return !!uid&&(Number(p?.ownerId)===uid||(p?.members||[]).some(m=>Number(m.userId)===uid))}
+function canReviewProjectJoin(p){
+  if(!p||!state.authRequired)return false;
+  if(isPlatformAdmin())return true;
+  const uid=Number(state.currentUser?.id)||0;
+  return !!uid&&(Number(p.ownerId)===uid||(p.members||[]).some(m=>Number(m.userId)===uid&&projectMemberRole(m.role)==='maintainer'));
+}
+function canGrantProjectMaintainer(p){return isPlatformAdmin()||Number(p?.ownerId)===Number(state.currentUser?.id)}
+function projectJoinRequestsFor(projectId,status){return (state.projectJoinRequests||[]).filter(r=>r.projectId===projectId&&(!status||r.status===status))}
+function projectJoinCardHTML(p){
+  const uid=Number(state.currentUser?.id)||0;
+  if(!state.authRequired||!uid||state.currentUser?.isGuest)return {fact:'',action:''};
+  if(projectHasUser(p,uid)||isPlatformAdmin()){
+    const n=canReviewProjectJoin(p)?projectJoinRequestsFor(p.id,'pending').length:0;
+    return {fact:n?`<span class="pa-fact warn" title="待审批的加入申请">${paIcon('user',12)}<span>${n} 个加入申请</span></span>`:'',action:''};
+  }
+  if(projectJoinOpen(p))return {fact:'',action:''};
+  const mine=projectJoinRequestsFor(p.id,'pending').find(r=>Number(r.userId)===uid);
+  if(mine)return {fact:'',action:`<span class="pa-join-state"><span class="pa-chip">申请中</span><button type="button" class="pa-link" data-project-join-withdraw="${mine.id}">撤回</button></span>`};
+  return {fact:'',action:`<button type="button" class="button ghost small pa-join-btn" data-project-join="${escapeHTML(p.id)}">申请加入</button>`};
+}
+function projectJoinRowsHTML(p){
+  const rows=projectJoinRequestsFor(p.id,'pending');
+  if(!rows.length)return '<div class="pa-rows-empty">暂无待审批的申请</div>';
+  const roles=PROJECT_MEMBER_ROLES.filter(r=>r.id!=='maintainer'||canGrantProjectMaintainer(p));
+  return rows.map(r=>{const u=userById(r.userId),role=projectMemberRole(r.role);return `<div class="pa-join-row" data-join-row="${r.id}"><span class="member-avatar">${userAvatarHTML(u||r.userId,48)}</span><select class="select member-role" data-join-role aria-label="授予角色">${roles.map(o=>`<option value="${o.id}"${o.id===role?' selected':''}>${o.label}</option>`).join('')}</select><div class="pa-join-m"><b>${escapeHTML(u?userDisplay(u):`用户 ${r.userId}`)}</b><small>${escapeHTML(r.reason||'未填写申请理由')} · ${escapeHTML(relativeTime(r.createdAt))}</small></div><span class="pa-join-acts"><button type="button" class="button primary small" data-join-approve="${r.id}">通过</button><button type="button" class="button ghost small" data-join-reject="${r.id}">拒绝</button></span></div>`}).join('');
+}
+function syncProjectJoinBox(){
+  const box=$('#projectAdminForm [data-pa-join-box]'),p=(state.data.projects||[]).find(x=>x.id===state.projectAdminDetailId);
+  if(!box||!p)return;
+  box.innerHTML=projectJoinRowsHTML(p);
+}
+async function loadProjectJoinRequests(force){
+  if(!state.authRequired||!state.currentUser||state.currentUser.isGuest)return;
+  if(!force&&state.projectJoinLoadedAt&&Date.now()-state.projectJoinLoadedAt<30000)return;
+  state.projectJoinLoadedAt=Date.now();
+  try{state.projectJoinRequests=await api('/api/project-join-requests')||[]}catch{return}
+  if(activeViewName()!=='projects')return;
+  if(state.projectAdminDetailId)syncProjectJoinBox();else renderProjectList();
+}
+async function applyProjectJoin(projectId){
+  const p=(state.data.projects||[]).find(x=>x.id===projectId);if(!p)return;
+  const reason=await afPrompt({title:`申请加入「${p.name||p.id}」`,message:'项目 Owner 或维护者通过后，你会以成员身份加入，可以查看和推进项目内的需求。',label:'申请理由（可选）',multiline:true,placeholder:'例如：负责登录模块的前端开发',confirmText:'提交申请'});
+  if(reason==null)return;
+  try{
+    const created=await api('/api/projects/'+encodeURIComponent(p.id)+'/join-requests',{method:'POST',body:JSON.stringify({reason:String(reason).trim()})});
+    state.projectJoinRequests=[created,...(state.projectJoinRequests||[]).filter(r=>r.id!==created.id)];
+    renderProjectList();toast('已提交加入申请，等待项目 Owner 或维护者审批','ok');
+  }catch(err){toast(err.message,'err');loadProjectJoinRequests(true)}
+}
+async function withdrawProjectJoin(id){
+  try{
+    const updated=await api(`/api/project-join-requests/${id}/withdraw`,{method:'POST'});
+    state.projectJoinRequests=(state.projectJoinRequests||[]).map(r=>r.id===id?updated:r);
+    renderProjectList();toast('已撤回加入申请','ok');
+  }catch(err){toast(err.message,'err');loadProjectJoinRequests(true)}
+}
+// Approval writes the member server-side; mirror it into the open draft so a later save does not drop the new member.
+async function reviewProjectJoin(id,approve,role){
+  try{
+    const updated=await api(`/api/project-join-requests/${id}/${approve?'approve':'reject'}`,{method:'POST',body:JSON.stringify(approve?{role:projectMemberRole(role)}:{})});
+    state.projectJoinRequests=(state.projectJoinRequests||[]).map(r=>r.id===id?updated:r);
+    if(approve){
+      const fresh=await api('/api/projects/'+encodeURIComponent(updated.projectId)).catch(()=>null);
+      if(fresh?.id)state.data.projects=(state.data.projects||[]).map(p=>p.id===fresh.id?fresh:p);
+      const member={userId:Number(updated.userId),role:projectMemberRole(updated.role)};
+      for(const d of [state.projectDraft,state.projectDraftBase]){
+        if(d&&state.projectDraftFor===updated.projectId&&Number(d.ownerId)!==member.userId&&!(d.members||[]).some(m=>Number(m.userId)===member.userId))(d.members||(d.members=[])).push({...member});
+      }
+      renderProjectDetail({force:true});
+    }
+    syncProjectJoinBox();
+    const u=userById(updated.userId);
+    toast(approve?`已通过，${u?userDisplay(u):'申请人'}已加入项目`:'已拒绝该申请','ok');
+  }catch(err){toast(err.message,'err');loadProjectJoinRequests(true)}
 }
 function canDeleteProject(project){
   if(!project?.id)return false;

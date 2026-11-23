@@ -52,7 +52,7 @@ const ctx = {
   knownTime:v=>{const d=v?new Date(v):null;return d&&d.getFullYear()>1970?d:null},
   relativeTime:()=>"3 天前",
   defaultRunEval:()=>({enabled:true}),
-  isPlatformAdmin:()=>true,
+  isPlatformAdmin:()=>ctx.platformAdmin!==false,
   toast:(m,t)=>notices.push(m),
   renderAll:()=>{},
   localStorage:{setItem(){}},
@@ -172,6 +172,35 @@ same(draft.members.map(m=>m.role),["member","member","member","member"],"missing
   assert.match(html,/data-member-row="1"[^]*?<option value="viewer" selected>只读/);
   const changed=ctx.clone(d);changed.members[0].role="member";
   assert.equal(ctx.projectDraftDirty(changed,d),true,"changing a role marks the draft dirty");
+}
+
+// Join requests: entry on the card for outsiders, review rows for owners and maintainers.
+{
+  ctx.platformAdmin=false;ctx.state.authRequired=true;
+  const outsider={id:"team",key:"TM",name:"Team",ownerId:2,members:[{userId:3,role:"member"}],workflowId:"wf"};
+  const open={id:"open",key:"OP",name:"Open",ownerId:0,members:[],workflowId:"wf"};
+  ctx.state.projectJoinRequests=[];
+  assert.match(ctx.projectCardHTML(outsider,{}),/data-project-join="team"[^>]*>申请加入/,"outsiders can apply");
+  assert.doesNotMatch(ctx.projectCardHTML(open,{}),/data-project-join/,"open projects need no request");
+  assert.doesNotMatch(ctx.projectCardHTML(projects[2],{}),/data-project-join/,"members do not apply");
+  ctx.state.projectJoinRequests=[{id:7,projectId:"team",userId:1,role:"member",status:"pending",createdAt:new Date().toISOString()}];
+  const pendingCard=ctx.projectCardHTML(outsider,{});
+  assert.match(pendingCard,/申请中[^]*data-project-join-withdraw="7"/);
+  assert.doesNotMatch(pendingCard,/data-project-join="/);
+
+  ctx.state.projectJoinRequests=[{id:8,projectId:"agentflow",userId:5,role:"member",reason:"做前端",status:"pending",createdAt:new Date().toISOString()},{id:9,projectId:"agentflow",userId:4,role:"member",status:"rejected"}];
+  assert.equal(ctx.canReviewProjectJoin(projects[0]),true,"owner reviews");
+  assert.equal(ctx.canReviewProjectJoin(projects[2]),false,"plain members do not review");
+  assert.equal(ctx.canReviewProjectJoin({ownerId:2,members:[{userId:1,role:"maintainer"}]}),true,"maintainers review");
+  assert.match(ctx.projectCardHTML(projects[0],{}),/1 个加入申请/,"reviewers see the pending count");
+  const rows=ctx.projectJoinRowsHTML(projects[0]);
+  assert.equal((rows.match(/data-join-row=/g)||[]).length,1,"only pending requests are listed");
+  assert.match(rows,/做前端[^]*data-join-approve="8"[^]*data-join-reject="8"/);
+  assert.match(rows,/<option value="maintainer"/,"owners may grant maintainer");
+  assert.doesNotMatch(ctx.projectJoinRowsHTML({id:"agentflow",ownerId:2,members:[{userId:1,role:"maintainer"}]}),/value="maintainer"/,"maintainers cannot grant maintainer");
+  assert.match(ctx.projectAdminFormHTML(ctx.projectDraftFrom(projects[0]),{creating:false,custom:false,repos:[],saved:projects[0]}),/加入申请[^]*data-pa-join-box/);
+  assert.doesNotMatch(ctx.projectAdminFormHTML(ctx.projectDraftFrom(projects[2]),{creating:false,custom:false,repos:[],saved:projects[2]}),/data-pa-join-box/);
+  ctx.platformAdmin=undefined;ctx.state.authRequired=false;
 }
 const edit=ctx.projectAdminFormHTML(draft,{creating:false,custom:false,repos:repositories.slice(0,2),saved:projects[0]});
 assert.equal((edit.match(/data-pa-panel="/g)||[]).length,4);
@@ -313,5 +342,19 @@ assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
   ctx.state.projectDraft.defaultRepositoryId="r3";
   ctx.syncProjectDraftDefaultRepo("web-console","","r9");
   assert.equal(ctx.state.projectDraft.defaultRepositoryId,"r3");
+  // Approving mirrors the new member into the open draft so a later save keeps them.
+  {
+    const api=ctx.api,calls=[];
+    ctx.api=async(url,init)=>{calls.push({url,body:init&&init.body?JSON.parse(init.body):null});if(url.endsWith("/approve"))return {id:8,projectId:"agentflow",userId:5,role:"viewer",status:"approved"};if(url==="/api/projects/agentflow")return {...projects[0],members:[...projects[0].members]};return null};
+    const base={...projects[0],members:[{userId:2},{userId:3}]};
+    ctx.state.projectDraft=ctx.projectDraftFrom(base);ctx.state.projectDraftBase=ctx.projectDraftFrom(base);ctx.state.projectDraftFor="agentflow";
+    ctx.state.projectJoinRequests=[{id:8,projectId:"agentflow",userId:5,role:"member",status:"pending"}];
+    await ctx.reviewProjectJoin(8,true,"viewer");
+    same(calls[0],{url:"/api/project-join-requests/8/approve",body:{role:"viewer"}});
+    same(ctx.state.projectDraft.members.map(m=>[m.userId,m.role]),[[2,"member"],[3,"member"],[5,"viewer"]]);
+    assert.equal(ctx.projectDraftDirty(ctx.state.projectDraft,ctx.state.projectDraftBase),false,"approval does not mark the draft dirty");
+    assert.equal(ctx.state.projectJoinRequests[0].status,"approved");
+    ctx.api=api;
+  }
   console.log("project admin layout passed");
 })().catch(err=>{console.error(err);process.exitCode=1;});
