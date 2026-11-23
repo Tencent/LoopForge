@@ -70,7 +70,7 @@ func PublicOperations() []Operation {
 		{Name: "executors_list", Description: "List executor definitions", Method: "GET", Path: "/api/executors", ReadOnly: true},
 		{Name: "executor_models_list", Description: "List the selectable model IDs, default model and reasoning-effort levels of each built-in CLI. Use a listed id as an Agent's model.", Method: "GET", Path: "/api/executor-models", ReadOnly: true},
 		{Name: "sandboxes_list", Description: "List sandbox profiles with their Dockerfile (docker) or install script (native)", Method: "GET", Path: "/api/sandboxes", ReadOnly: true},
-		{Name: "sandboxes_save", Description: "Create or update a sandbox profile. A docker sandbox carries dockerfile {content, files}; a native sandbox may carry install {script, pathEntries, variables}", Method: "PUT", Path: "/api/sandboxes"},
+		{Name: "sandboxes_save", Description: "Create or update a sandbox profile. A docker sandbox carries dockerfile {content, files}; a native sandbox carries only environment variables", Method: "PUT", Path: "/api/sandboxes"},
 		{Name: "sandboxes_delete", Description: "Delete a sandbox profile that is not shared and not referenced by any workflow", Method: "DELETE", Path: "/api/sandboxes"},
 		{Name: "workflows_list", Description: "List SOP workflow definitions. Query: projectId (that project's SOPs plus generic templates), q (match id/name/description). Always pass projectId when a project is known.", Method: "GET", Path: "/api/workflows", ReadOnly: true},
 		{Name: "workflows_save", Description: "Create or update an SOP workflow", Method: "PUT", Path: "/api/workflows"},
