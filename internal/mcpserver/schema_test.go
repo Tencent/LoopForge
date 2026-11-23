@@ -57,3 +57,16 @@ func TestPublicRepositoryToolSupportsGitHub(t *testing.T) {
 	}
 	t.Fatal("repositories_save is missing")
 }
+
+func TestValidateImportRepositoryBranchMap(t *testing.T) {
+	op := application.Operation{Method: "POST", Path: "/api/issues/import-tapd"}
+	branches := map[string]any{"repo": 12.0}
+	input := map[string]any{"body": map[string]any{"projectId": "p", "url": "https://example.org/issue", "repositoryBranches": branches}}
+	if err := ValidateToolInput(op, input); err == nil || !strings.Contains(err.Error(), "repositoryBranches.repo") {
+		t.Fatalf("invalid branch map was not diagnosed: %v", err)
+	}
+	branches["repo"] = "main"
+	if err := ValidateToolInput(op, input); err != nil {
+		t.Fatal(err)
+	}
+}

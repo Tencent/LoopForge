@@ -197,6 +197,16 @@ func validateInputValue(schema map[string]any, value any, path string) error {
 				}
 			}
 		}
+		if extra, ok := schema["additionalProperties"].(map[string]any); ok {
+			properties := contractObject(schema["properties"])
+			for name, v := range fields {
+				if _, declared := properties[name]; !declared {
+					if err := validateInputValue(extra, v, path+"."+name); err != nil {
+						return err
+					}
+				}
+			}
+		}
 	case "array":
 		if items, ok := value.([]any); ok {
 			for i, item := range items {
