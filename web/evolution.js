@@ -1,4 +1,4 @@
-// 进化中心：具体报错列表与记录弹窗；提案、资产、样本沿用 kb-* 面板与抽屉。
+// 改进与验证：具体报错列表与记录弹窗；提案、资产、样本沿用 kb-* 面板与抽屉。
 // 依赖 app.js 与 knowledge.js 的公共状态、API 和组件。
 const evo={tab:'issues',projectId:null,overview:null,findings:null,samples:null,error:'',seq:0,poll:0,busy:new Set(),drawerProposal:null,stage:'',filter:{kind:'',q:'',status:'open',sort:'value',days:''},changes:{q:'',status:'all',page:0},list:{status:'active',page:0},groups:{},modal:null,page:0,selected:new Set(),diagnosing:false,lastCheck:null,checkError:''};
 
@@ -151,7 +151,7 @@ async function renderEvolutionView(){
   if(!root)return;
   if(evo.projectId!==null&&evo.projectId!==evoProjectId()){evoDispose();evo.overview=null;evo.findings=null;evo.samples=null;evo.list={status:'active',page:0};evo.lastCheck=null;evo.checkError='';evo.tab='issues';if(evoActive())history.replaceState(null,'','#/evolution')}
   evo.projectId=evoProjectId();
-  if(!evo.projectId){evo.overview=null;evoRenderMetrics();root.innerHTML='<div class="kb-empty">请先在顶部选择一个项目，进化中心按项目诊断角色与规则</div>';return}
+  if(!evo.projectId){evo.overview=null;evoRenderMetrics();root.innerHTML='<div class="kb-empty">请先在顶部选择项目</div>';return}
   if(!evo.overview)root.innerHTML='<div class="kb-empty">正在读取进化概览…</div>';
   await evoRefresh();
   if(evoActive()){evoRender();evoApplyRoute()}
@@ -244,7 +244,7 @@ function evoRender(){
   const focused=document.activeElement?.closest?.('#evolutionBody')?document.activeElement.dataset.evoKey:'';
   if(['assets','samples'].includes(evo.tab)){
     const tabs=[['assets','角色与规则'],['samples','固定验证样本']];
-    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ 进化中心</button><h2 class="evo-settings-title">进化设置</h2><div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
+    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ 改进与验证</button><h2 class="evo-settings-title">进化设置</h2><div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
   }else root.innerHTML=evoUnifiedListHTML();
   evoHomeSyncChecking();
   window.AgentFlowHarnessIcons?.hydrate(root);
@@ -526,7 +526,7 @@ function evoMountDetail(title,openerKey,row=null){
   evoCloseFinding(false);if(evoDrawerOwned())evoDrawerClose();
   const m={row,openerKey,routeKey:openerKey,projectId:evo.projectId,status:'',page:0,data:null,evidence:null,evidenceCache:new Map(),compareFilter:'all',viewOpen:[]};evo.modal=m;
   $('#evoPageHead').hidden=true;$('#evoMetrics').hidden=true;
-  $('#evolutionBody').innerHTML=`<section id="evoDetailPage" aria-labelledby="evoFindingTitle"><button type="button" class="evo-back" data-evo-list-back>‹ 进化中心</button><header class="evo-detail-head"><div class="evo-review-identity"><span id="evoDetailGlyph" class="evo-review-glyph"></span><div><h1 id="evoFindingTitle" tabindex="-1">${escapeHTML(title)}</h1><div id="evoDetailObject" class="evo-detail-object"></div></div></div><div id="evoDetailActions" class="evo-detail-actions"></div></header><div id="evoDetailBody" class="evo-detail-grid"><div class="kb-empty">正在读取…</div></div></section>`;
+  $('#evolutionBody').innerHTML=`<section id="evoDetailPage" aria-labelledby="evoFindingTitle"><button type="button" class="evo-back" data-evo-list-back>‹ 改进与验证</button><header class="evo-detail-head"><div class="evo-review-identity"><span id="evoDetailGlyph" class="evo-review-glyph"></span><div><h1 id="evoFindingTitle" tabindex="-1">${escapeHTML(title)}</h1><div id="evoDetailObject" class="evo-detail-object"></div></div></div><div id="evoDetailActions" class="evo-detail-actions"></div></header><div id="evoDetailBody" class="evo-detail-grid"><div class="kb-empty">正在读取…</div></div></section>`;
   $('#evoFindingTitle').focus({preventScroll:true});
   return m;
 }
@@ -1306,7 +1306,7 @@ function evoDecorateRunDetail(host,r){
   if((r.executionContext?.evolutionCanaryIds||[]).length)host.querySelector('.run-header-meta')?.insertAdjacentHTML('afterbegin','<span class="run-meta-chip evo-replay-chip" title="本次运行参与进化试用：受试资产使用修改稿正文，结果计入试用对比">进化试用</span>');
   if(!['succeeded','failed','cancelled'].includes(r.status)||!r.executionContext?.projectId)return;
   const actions=host.querySelector('.run-header-actions');if(!actions)return;
-  actions.insertAdjacentHTML('afterbegin',`<button class="button ghost small" data-evo-feedback="${escapeHTML(r.id)}" title="把问题反馈给进化中心，参与角色与规则的诊断">反馈问题</button><button class="button ghost small" data-evo-pin="${escapeHTML(r.id)}" title="每次进化提案都会回放这次运行">钉为回归样本</button>`);
+  actions.insertAdjacentHTML('afterbegin',`<button class="button ghost small" data-evo-feedback="${escapeHTML(r.id)}" title="把问题反馈给改进与验证，参与角色与规则的诊断">反馈问题</button><button class="button ghost small" data-evo-pin="${escapeHTML(r.id)}" title="每次进化提案都会回放这次运行">钉为回归样本</button>`);
   actions.querySelector('[data-evo-feedback]')?.addEventListener('click',async ev=>{
     const btn=ev.currentTarget,nodeId=state.selectedRunNode||'';
     const detail=await afPrompt({title:'反馈问题',message:'请写清预期结果、实际结果和需要改进的地方。提交后会整理为关联角色的问题。',defaultValue:'',multiline:true});
@@ -1318,10 +1318,10 @@ function evoDecorateRunDetail(host,r){
       if(btn.isConnected){
         host.querySelector('.evo-feedback-result')?.remove();
         const notice=document.createElement('div');notice.className='evo-feedback-result';notice.setAttribute('role','status');
-        notice.innerHTML=`<span>${escapeHTML(result.message||'反馈已保存，请在进化中心检查最近运行后查看。')}</span>${result.findingId?'<button type="button">查看问题 ↗</button>':''}`;
+        notice.innerHTML=`<span>${escapeHTML(result.message||'反馈已保存，请在改进与验证检查最近运行后查看。')}</span>${result.findingId?'<button type="button">查看问题 ↗</button>':''}`;
         notice.querySelector('button')?.addEventListener('click',()=>evoOpenFeedbackFinding(result));host.prepend(notice);
       }
-      toast(result.findingId?'反馈已加入进化中心':'反馈已保存，详见提示','ok');
+      toast(result.findingId?'反馈已加入改进与验证':'反馈已保存，详见提示','ok');
     }catch(err){toast(err.message,'err')}
     finally{btn.disabled=false}
   });
@@ -1340,7 +1340,7 @@ async function evoOpenFeedbackFinding(result){
   const pid=result.projectId;
   if(state.projectFilter!==pid){
     const picker=$('#projectSwitcher');
-    if(!picker?.onchange||![...picker.options].some(o=>o.value===pid))return toast('请先选择该运行所属项目，再打开进化中心','warn');
+    if(!picker?.onchange||![...picker.options].some(o=>o.value===pid))return toast('请先选择该运行所属项目，再打开改进与验证','warn');
     await picker.onchange({target:{value:pid}});
     if(state.projectFilter!==pid)return;
   }

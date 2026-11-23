@@ -18,7 +18,7 @@ test('feedback keeps its selected node and links to its actual problem without a
   const detail='预期有 reason 字段，实际产物缺少 reason。';
   const finding={id:'feedback-finding',projectId:'project-1',assetKind:'agent',assetId:'role',assetName:'日志分析',status:'open',sampleRunIds:['feedback-run'],triage:{verdict:'watch'},clusters:[{id:'feedback-cluster',kind:'user_feedback',label:detail,runs:1}]};
   const app=await loadApp({routes:[
-    {method:'POST',path:'/api/runs/feedback-run/feedback',body:{projectId:'project-1',findingId:finding.id,clusterId:'feedback-cluster',message:'反馈已加入进化中心。'}},
+    {method:'POST',path:'/api/runs/feedback-run/feedback',body:{projectId:'project-1',findingId:finding.id,clusterId:'feedback-cluster',message:'反馈已加入改进与验证。'}},
     {method:'GET',path:'/api/evolution/overview?projectId=project-1',body:{health:[],queue:[]}},
     {method:'GET',path:'/api/evolution/findings?projectId=project-1',body:[finding]},
     {method:'GET',path:'/api/evolution/findings/feedback-finding/runs?cluster=feedback-cluster',body:{items:[],complete:true,total:0}},
@@ -29,7 +29,7 @@ test('feedback keeps its selected node and links to its actual problem without a
   submit(app,detail);await settle(5);
   const request=app.router.calls.find(c=>c.path==='/api/runs/feedback-run/feedback');
   assert.deepEqual(request.body,{nodeId:'code',detail});
-  assert.match(host.querySelector('.evo-feedback-result').textContent,/已加入进化中心/);
+  assert.match(host.querySelector('.evo-feedback-result').textContent,/已加入改进与验证/);
   host.querySelector('.evo-feedback-result button').click();await settle(8);
   assert.equal(app.window.location.hash,'#/evolution/findings/feedback-finding/feedback-cluster');
   assert.match(app.document.querySelector('#evoStoryProblems').textContent,/缺少 reason/);

@@ -317,13 +317,13 @@ Logo 默认 64px，小屏或短屏为 52px；标题为 36px，小屏为 30px。�
 
 响应式与动效：宽度 <1080px 时连接双栏上下堆叠、指标卡 2×2；<640px 时指标卡单列、输入行上下堆叠、隐藏来源占比条。减少动态效果时抽屉、开关和标签指示层直接呈现；悬停只改颜色，不改尺寸和位置。
 
-## 进化中心
+## 改进与验证
 
-设置区的进化中心（`#evolutionView`，导航图标 Harness `sparkles`）以「发生了什么问题 → 改了哪个对象 → 改动是否有效」为主线，沿用知识中心的页头、下划线标签、面板与 Harness 设计令牌。首页按角色或规则聚合当前改进；进入独立详情页后，同页呈现逐行指令差异、输入输出变化和整份修改的验证。策略、趋势及详细处理过程收进次级入口。
+设置区的改进与验证（`#evolutionView`，导航图标 Harness `sparkles`）以「发生了什么问题 → 改了哪个对象 → 改动是否有效」为主线，沿用知识中心的页头、下划线标签、面板与 Harness 设计令牌。首页按角色或规则聚合当前改进；进入独立详情页后，同页呈现逐行指令差异、输入输出变化和整份修改的验证。策略、趋势及详细处理过程收进次级入口。
 
 | 区域 | 约定 |
 | --- | --- |
-| 页头 | `.kb-head` 的 H1「进化中心」下说明可查看运行问题和角色／规则修改。右侧进化设置、刷新与「检查最近运行」保留各自用途，刷新不发起诊断。 |
+| 页头 | `.kb-head` 只显示 H1「改进与验证」。右侧进化设置、刷新与「检查最近运行」保留各自用途，刷新不发起诊断。 |
 | 列表摘要 | `#evoMetrics` 留空；各对象行直接显示当前状态、短问题和历史验证改善 / 退化数。曾发布的修改与当前生效版本分开表达，当前版本以详情页异步核对为准 |
 | 首页 | 保留「待跟进 / 全部记录」和分页。每行先显示具体问题、涉及的角色或规则，再用一句话呈现改动和真实验证结果，行尾显示状态与可查看的内容。 |
 | 空状态与检查 | 无记录时隐藏筛选，主区显示「查看运行」。检查次数只在状态行显示一次。区分没有运行、没有待处理问题和检查失败；切项目隔离旧结果。 |
@@ -498,7 +498,7 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 | `web/app/hui-select.js` | Harness Selector（原地与触发器两种模式），以及共用的 `HuiPopover`（浮层互斥与定位）和 `HuiAuto`（自动增强与移除清理） |
 | `web/app/business-domains.js`、`web/app/business-harness.css` | 业务领域报表页的模板（`businessReportHTML`）、图表 option（`businessDeliveryOption` 等）、`biz-` 图表挂载与释放、静态 SVG 导出与 Harness 样式 |
 | `web/knowledge.js`、`web/knowledge.css` | 知识中心的概览指标（`kbMetricsHTML`）、四个标签的面板与行模板（`kbPanel`、`kbRow`、`kbBadge`）、通用右侧抽屉 |
-| `web/evolution.js`、`web/evolution.css`、`web/app/evolution-{review,story,home}.*`、`web/app/evolution-simple.js`、`internal/httpapi/evolution*.go` | 进化中心按对象聚合列表；详情同页呈现问题 / 指令节选、同输入结果图、整份历史验证。可选 review 元数据从改进器生成并核对原文片段，旧提案回退到真实 diff；小型 JSON 产物受身份、大小、超时和旧响应保护。完整原文与证据按需展开；版本核对后开放试用与发布，版本、回滚和后续队列沿用真实接口。 |
+| `web/evolution.js`、`web/evolution.css`、`web/app/evolution-{review,story,home}.*`、`web/app/evolution-simple.js`、`internal/httpapi/evolution*.go` | 改进与验证按对象聚合列表；详情同页呈现问题 / 指令节选、同输入结果图、整份历史验证。可选 review 元数据从改进器生成并核对原文片段，旧提案回退到真实 diff；小型 JSON 产物受身份、大小、超时和旧响应保护。完整原文与证据按需展开；版本核对后开放试用与发布，版本、回滚和后续队列沿用真实接口。 |
 | `web/app/runs.js`、`web/product-v4.css`（运行记录列表区段） | 运行记录列表的面板、标签计数、状态徽标和行模板 |
 | `web/app.js`（视图切换）、`web/product-v4.css`（`.page-context`） | 按视图是否自带页头切换 `body.view-has-heading`，隐藏重复的顶栏标题 |
 | `web/app/assistant-settings.js`、`web/app/assistant-settings.css` | AI 助手设置页的开关、自定义规则与保存 |

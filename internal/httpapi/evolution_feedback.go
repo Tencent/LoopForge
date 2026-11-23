@@ -24,7 +24,7 @@ func (h *evolutionHandlers) feedbackFinding(run domain.Run, sig domain.EvoSignal
 		return out
 	}
 	if !domain.TerminalRunStatus(run.Status) {
-		out.Message = "反馈已保存。运行结束后可在进化中心检查最近运行。"
+		out.Message = "反馈已保存。运行结束后可在改进与验证检查最近运行。"
 		return out
 	}
 	node, ok := evolution.FeedbackNode(run, sig.NodeID)
@@ -77,11 +77,11 @@ func (h *evolutionHandlers) feedbackFinding(run domain.Run, sig domain.EvoSignal
 		}
 		saved, err := h.saveDiagnosedFinding(f, h.repo.EvoFindings(sig.ProjectID, domain.EvoFindingOpen, domain.EvoFindingProposed), h.repo.EvoQueue(sig.ProjectID))
 		if err != nil {
-			out.Message = "反馈已保存，整理问题暂未完成。请稍后在进化中心检查最近运行。"
+			out.Message = "反馈已保存，整理问题暂未完成。请稍后在改进与验证检查最近运行。"
 			return out
 		}
 		out.FindingID = saved.ID
-		out.Message = "反馈已加入进化中心。"
+		out.Message = "反馈已加入改进与验证。"
 		for _, cluster := range saved.Clusters {
 			if cluster.Kind != evolution.SignalUserFeedback || cluster.NodeID != node.ID {
 				continue
@@ -94,7 +94,7 @@ func (h *evolutionHandlers) feedbackFinding(run domain.Run, sig domain.EvoSignal
 		}
 		return out
 	}
-	out.Message = "反馈已保存，暂未能关联到当前角色问题。请在进化中心检查最近运行。"
+	out.Message = "反馈已保存，暂未能关联到当前角色问题。请在改进与验证检查最近运行。"
 	return out
 }
 

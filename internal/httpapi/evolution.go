@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// evolutionHandlers serves the 进化中心: diagnosis findings, proposals with
+// evolutionHandlers serves the 改进与验证: diagnosis findings, proposals with
 // replay validation, release / reject / rollback of role prompts and rules,
 // autonomy policies, run feedback and pinned regression samples.
 type evolutionHandlers struct {
@@ -107,7 +107,7 @@ func (h *evolutionHandlers) requireProjectReader(c *gin.Context, projectID strin
 			return true
 		}
 	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "只有项目成员可以查看该项目的进化中心"})
+	c.JSON(http.StatusForbidden, gin.H{"error": "只有项目成员可以查看该项目的改进与验证"})
 	return false
 }
 
