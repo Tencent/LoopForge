@@ -171,7 +171,7 @@ func cvSPreviewService(t *testing.T) (*Service, *repo.Store) {
 	}
 	t.Cleanup(st.Close)
 	svc := NewService(st, nil, Config{
-		PublicScheme: "https", PublicHost: "preview.example",
+		PublicScheme: "https", PublicHost: "preview.example", FrameAncestors: "https://studio.example",
 		MaxFiles: 20, MaxCompressed: 1 << 20, MaxExpanded: 1 << 20,
 		DefaultRetention: time.Hour, FinalizationTimeout: time.Minute, SessionTTL: time.Minute,
 	})
@@ -463,7 +463,7 @@ func TestPreviewArchiveAndServe(t *testing.T) {
 	if preserved, _ := st.Preview(preview.ID); preserved.Status != domain.PreviewReady {
 		t.Fatalf("ready preview was skipped: %#v", preserved)
 	}
-	_, publicURL, err := svc.CreateSession(ready, httptest.NewRequest("GET", "https://preview.example/", nil), "")
+	_, publicURL, err := svc.CreateSession(ready, httptest.NewRequest("GET", "https://studio.example/", nil), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,7 +723,7 @@ func TestPreviewSessionsAndDelete(t *testing.T) {
 	if err := st.PutPreview(preview); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest("GET", "http://internal/x", nil)
+	req := httptest.NewRequest("GET", "http://studio.example/x", nil)
 	if _, _, err := svc.CreateSession(domain.RunPreview{Status: domain.PreviewPending}, req, ""); err == nil {
 		t.Fatal("pending preview session created")
 	}
@@ -809,7 +809,7 @@ func TestPreviewReconcileAndHelpers(t *testing.T) {
 		t.Fatal("run without static contract finalized")
 	}
 	fallback := NewService(st, nil, Config{})
-	if got := fallback.PublicURL(strings.Repeat("a", 32), nil); !strings.HasPrefix(got, "https://127.0.0.1/") {
+	if got := fallback.PublicURL(strings.Repeat("a", 32), nil); got != "" {
 		t.Fatalf("fallback public URL = %q", got)
 	}
 	now := time.Now().UTC()
@@ -847,7 +847,7 @@ func TestPreviewReconcileAndHelpers(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://host.example/x", nil)
 	req.Host = "host.example"
 	other := NewService(st, nil, Config{})
-	if got := other.PublicURL("t", req); got != "http://host.example/preview/t/" {
+	if got := other.PublicURL("t", req); got != "" {
 		t.Fatalf("public URL = %q", got)
 	}
 }

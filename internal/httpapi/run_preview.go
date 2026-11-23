@@ -5,6 +5,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"strings"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/preview"
@@ -19,6 +20,10 @@ type previewsHandlers struct {
 	*deps
 }
 
+const reservedPreviewHostNotice = "This hostname is reserved for previews by AGENTFLOW_PREVIEW_PUBLIC_URL; studio pages and APIs are not served here.\n" +
+	"Online previews stay disabled until AGENTFLOW_PREVIEW_FRAME_ANCESTORS lists the exact studio origins.\n" +
+	"If this is the studio, set AGENTFLOW_PREVIEW_PUBLIC_URL to a dedicated preview hostname, or list this origin in AGENTFLOW_PREVIEW_FRAME_ANCESTORS.\n"
+
 func (h *previewsHandlers) previewHost() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		svc := h.engine.Preview()
@@ -27,9 +32,21 @@ func (h *previewsHandlers) previewHost() gin.HandlerFunc {
 			return
 		}
 		if _, _, ok := preview.ParsePreviewPath(c.Request.URL.Path); !ok {
-			if target, stray := svc.StrayNavigationTarget(c.Request); stray {
+			if target, stray := svc.StrayNavigationTarget(c.Request); svc.IsPreviewHost(c.Request) && stray {
 				c.Redirect(http.StatusSeeOther, target)
 				c.Abort()
+				return
+			}
+			if svc.IsPreviewHost(c.Request) && svc.IsolationError() != nil {
+				// Still reserved, but explain it: an operator who pointed this
+				// variable at the studio must see why every page is missing.
+				c.String(http.StatusNotFound, reservedPreviewHostNotice)
+				c.Abort()
+				return
+			}
+			if svc.IsPreviewHost(c.Request) || strings.HasPrefix(c.Request.URL.Path, preview.HTTPPathPrefix) {
+				// The preview hostname must never expose the studio or its APIs.
+				c.AbortWithStatus(http.StatusNotFound)
 				return
 			}
 			c.Next()
@@ -129,11 +146,8 @@ func (h *previewsHandlers) runPreviewSession(c *gin.Context) {
 	}
 	session, url, err := svc.CreateSession(p, c.Request, backendURL)
 	if err != nil {
-		status := http.StatusConflict
-		if errors.Is(err, domain.ErrInvalidPreviewBackendURL) {
-			status = http.StatusBadRequest
-		}
-		c.JSON(status, map[string]string{"error": err.Error()})
+		status, body := previewErrorResponse(err)
+		c.JSON(status, body)
 		return
 	}
 	c.JSON(http.StatusOK, map[string]any{
@@ -169,11 +183,8 @@ func (h *previewsHandlers) updatePreviewBackend(c *gin.Context) {
 	}
 	updated, err := svc.SetPreviewBackend(p.ID, body.BackendURL)
 	if err != nil {
-		status := http.StatusConflict
-		if errors.Is(err, domain.ErrInvalidPreviewBackendURL) {
-			status = http.StatusBadRequest
-		}
-		c.JSON(status, map[string]string{"error": err.Error()})
+		status, body := previewErrorResponse(err)
+		c.JSON(status, body)
 		return
 	}
 	resp := map[string]any{
@@ -189,6 +200,9 @@ func (h *previewsHandlers) updatePreviewBackend(c *gin.Context) {
 				"backendUrl": session.BackendURL,
 				"expiresAt":  session.ExpiresAt,
 			}
+		} else {
+			// The backend was saved; tell the studio why no session followed.
+			_, resp["sessionError"] = previewErrorResponse(err)
 		}
 	}
 	c.JSON(http.StatusOK, resp)
@@ -219,6 +233,22 @@ func (h *previewsHandlers) deletePreview(c *gin.Context) {
 		return
 	}
 	respond(c, svc.DeletePreview(p))
+}
+
+// previewErrorResponse maps session and backend failures to a status and a
+// stable code, so the studio can explain the fix while keeping the archive's
+// download and backend actions available.
+func previewErrorResponse(err error) (int, gin.H) {
+	switch {
+	case errors.Is(err, preview.ErrStudioBackend):
+		return http.StatusBadRequest, gin.H{"error": err.Error(), "code": "preview_backend_on_studio"}
+	case errors.Is(err, domain.ErrInvalidPreviewBackendURL):
+		return http.StatusBadRequest, gin.H{"error": err.Error()}
+	case errors.Is(err, preview.ErrIsolatedOriginRequired):
+		return http.StatusConflict, gin.H{"error": err.Error(), "code": "preview_isolation_required"}
+	default:
+		return http.StatusConflict, gin.H{"error": err.Error()}
+	}
 }
 
 func publicPreview(p domain.RunPreview) map[string]any {
