@@ -211,9 +211,15 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 		return assistantCLIInvocation{}, err
 	}
 	sessionID := assistantClaudeSessionID(o.SessionID)
+	maxTurns := nativeAssistantUnlimitedTurns
+	settingSources := "user"
+	if o.ReviewOnly {
+		maxTurns = "1"
+		settingSources = ""
+	}
 	argv := []string{o.Bin, "-p", "--verbose", "--output-format", "stream-json", "--include-partial-messages",
-		"--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", o.SystemPrompt,
-		"--mcp-config", mcpPath, "--strict-mcp-config", "--settings", settingsPath, "--setting-sources", "user",
+		"--max-turns", maxTurns, "--system-prompt", o.SystemPrompt,
+		"--mcp-config", mcpPath, "--strict-mcp-config", "--settings", settingsPath, "--setting-sources", settingSources,
 		"--permission-mode", "bypassPermissions"}
 	if o.Model != "" {
 		argv = append(argv, "--model", o.Model)

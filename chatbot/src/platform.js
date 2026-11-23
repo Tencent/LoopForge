@@ -61,7 +61,10 @@ export const actionName = (tool) => {
 export const visibleSidebarArtifact = (a) =>
   !a.draft ||
   !!definitionTarget(a) ||
-  (!a.draft.saved && !a.draft.resolved && !a.draft.inherited);
+  (!a.draft.saved &&
+    !a.draft.resolved &&
+    !a.draft.inherited &&
+    a.draft.decision !== "rejected");
 
 export function definitionTarget(artifact, projectId = "") {
   if (!["sop", "role"].includes(artifact?.kind)) return null;
