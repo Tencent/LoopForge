@@ -1,16 +1,19 @@
 // Package gitegress bounds the control plane's connections to Git hosts,
 // including token verification, PR discovery and host key discovery. A user can
 // name any host, so a request only connects to public addresses unless an
-// operator allows a private network. Workspace traffic never passes here.
+// administrator authorizes an HTTPS host or an operator allows a network.
+// Workspace traffic never passes here.
 package gitegress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -20,7 +23,20 @@ import (
 // even though they are not public, for example an internal GitLab.
 const AllowCIDRsEnv = "AGENTFLOW_GIT_EGRESS_ALLOW_CIDRS"
 
-const timeout = 30 * time.Second
+const (
+	timeout        = 30 * time.Second
+	connectTimeout = 10 * time.Second
+)
+
+var (
+	ErrNonPublicAddress    = errors.New("git egress: address is not public")
+	ErrHTTPSAddressChanged = errors.New("git egress: HTTPS address is outside the host authorization")
+	ErrHTTPSHostLookup     = errors.New("git egress: could not load HTTPS host authorization")
+)
+
+// HTTPSHostLookup resolves a host:port to its approved addresses. A nil result
+// means the endpoint uses the default egress policy.
+type HTTPSHostLookup func(context.Context, string) ([]netip.Addr, error)
 
 var nonPublic = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
@@ -37,10 +53,22 @@ var nonPublic = []netip.Prefix{
 // Redirects are returned to the caller instead of followed, and no proxy is
 // used because a proxy would connect on the client's behalf. Clients do not
 // keep connections, so each call follows the current allow list.
-func Client() *http.Client {
+func Client(lookup HTTPSHostLookup) *http.Client {
+	dial := DialContext
+	if lookup != nil {
+		dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+			ctx, cancel := context.WithTimeout(ctx, connectTimeout)
+			defer cancel()
+			approved, err := lookup(ctx, address)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrHTTPSHostLookup, err)
+			}
+			return newDialer(approved).DialContext(ctx, network, address)
+		}
+	}
 	transport := &http.Transport{
 		Proxy:                 nil,
-		DialContext:           newDialer().DialContext,
+		DialContext:           dial,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 20 * time.Second,
 		DisableKeepAlives:     true,
@@ -56,32 +84,38 @@ func Client() *http.Client {
 
 // DialContext applies the Git egress policy to the address selected by DNS.
 func DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	return newDialer().DialContext(ctx, network, address)
+	return newDialer(nil).DialContext(ctx, network, address)
 }
 
-func newDialer() *net.Dialer {
+func newDialer(approved []netip.Addr) *net.Dialer {
 	allowed := allowedPrefixes()
 	return &net.Dialer{
-		Timeout: 10 * time.Second,
+		Timeout: connectTimeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
-			return checkAddress(address, allowed)
+			return checkAddress(address, allowed, approved)
 		},
 	}
 }
 
-func checkAddress(address string, allowed []netip.Prefix) error {
+func checkAddress(address string, allowed []netip.Prefix, approved []netip.Addr) error {
 	ap, err := netip.ParseAddrPort(address)
 	if err != nil {
 		return fmt.Errorf("git egress: unexpected address %q", address)
 	}
 	ip := ap.Addr().Unmap()
+	if approved != nil {
+		if slices.Contains(approved, ip) {
+			return nil
+		}
+		return ErrHTTPSAddressChanged
+	}
 	for _, prefix := range allowed {
 		if prefix.Contains(ip) {
 			return nil
 		}
 	}
 	if !public(ip) {
-		return fmt.Errorf("git egress: %s is not a public address; allow it in %s", ip, AllowCIDRsEnv)
+		return fmt.Errorf("%w: %s; allow it in %s", ErrNonPublicAddress, ip, AllowCIDRsEnv)
 	}
 	return nil
 }

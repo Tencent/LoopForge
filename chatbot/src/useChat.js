@@ -1361,7 +1361,7 @@ export function useChat() {
       let stored = await api(sessionPath(id));
       let reply = JSON.parse(stored.messages[messageIndex].content);
       let draft = reply.drafts[draftIndex];
-      if (draft.saved || draft.inherited) return null;
+      if (draft.saved || draft.inherited || draft.decision === "rejected") return null;
       if (generation?.status === "running")
         throw Error("请等待回复结束后再确认操作。");
       if (draft.proposal && !draft.decision) {

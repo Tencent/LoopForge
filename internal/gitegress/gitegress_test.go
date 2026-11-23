@@ -1,6 +1,9 @@
 package gitegress
 
 import (
+	"context"
+	"crypto/tls"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -18,13 +21,13 @@ func TestClientRefusesNonPublicAddressesUnlessAllowed(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv(AllowCIDRsEnv, "")
-	if res, err := Client().Get(srv.URL); err == nil {
+	if res, err := Client(nil).Get(srv.URL); err == nil {
 		res.Body.Close()
 		t.Fatal("loopback must be refused without an allow list")
 	}
 
 	t.Setenv(AllowCIDRsEnv, "10.0.0.0/8, 127.0.0.0/8")
-	res, err := Client().Get(srv.URL + "/redirect")
+	res, err := Client(nil).Get(srv.URL + "/redirect")
 	if err != nil {
 		t.Fatalf("allowed network: %v", err)
 	}
@@ -56,7 +59,56 @@ func TestPublicAddressClassification(t *testing.T) {
 			t.Errorf("public(%s) = %v, want %v", raw, got, want)
 		}
 	}
-	if err := checkAddress("[::ffff:127.0.0.1]:443", nil); err == nil {
+	if err := checkAddress("[::ffff:127.0.0.1]:443", nil, nil); err == nil {
 		t.Error("an IPv4-mapped loopback address must be refused")
+	}
+}
+
+func TestHTTPSClientEnforcesCurrentHostAuthorizationBeforeTLS(t *testing.T) {
+	t.Setenv(AllowCIDRsEnv, "")
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	target := srv.Listener.Addr().String()
+	var approved []netip.Addr
+	lookup := func(_ context.Context, address string) ([]netip.Addr, error) {
+		if address == target {
+			return approved, nil
+		}
+		return nil, nil
+	}
+	client := Client(lookup)
+	if _, err := client.Get(srv.URL); !errors.Is(err, ErrNonPublicAddress) {
+		t.Fatalf("unregistered private host: %v", err)
+	}
+
+	t.Setenv(AllowCIDRsEnv, "127.0.0.1/32")
+	approved = []netip.Addr{netip.MustParseAddr("10.1.2.3")}
+	if _, err := client.Get(srv.URL); !errors.Is(err, ErrHTTPSAddressChanged) {
+		t.Fatalf("registered host must use its approved addresses: %v", err)
+	}
+	t.Setenv(AllowCIDRsEnv, "")
+	approved = []netip.Addr{netip.MustParseAddrPort(target).Addr()}
+	var certificateError *tls.CertificateVerificationError
+	if _, err := client.Get(srv.URL); !errors.As(err, &certificateError) {
+		t.Fatalf("address authorization must still require TLS verification: %v", err)
+	}
+
+	client = Client(lookup)
+	client.Transport.(*http.Transport).TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	res, err := client.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("approved host: HTTP %d", res.StatusCode)
+	}
+
+	approved = nil
+	if _, err := client.Get(srv.URL); !errors.Is(err, ErrNonPublicAddress) {
+		t.Fatalf("revoked host authorization: %v", err)
 	}
 }

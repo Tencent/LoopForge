@@ -253,7 +253,7 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 		}
 		review, done, ok := s.nativeReview(ctx, nativeReviewPoll, id, nativeApprovalPhase(string(action.Input)), func(reviewCtx context.Context) assistantApprovalReview {
 			args := map[string]any{"tool": action.Name, "input": action.Input, "runId": s.workspaceRun()}
-			return reviewAssistantAction(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
+			return reviewAssistantAction(withApprovalActionSource(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), approvalSourceNativeCommand), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
 		})
 		switch {
 		case !ok:
@@ -291,19 +291,23 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 // The reviewer's own texts for an unavailable review still mention a manual
 // confirmation used by platform drafts; native commands have none.
 func nativeReviewRefusal(review assistantApprovalReview) string {
+	reason := strings.TrimSpace(review.Rationale)
 	if review.Outcome != "allow" && review.Outcome != "deny" {
+		if reason != "" && !strings.Contains(reason, "手动确认") {
+			return "帮我批准：自动审查暂不可用（" + reason + "），已拒绝本次外部写入，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
+		}
 		return "帮我批准：自动审查暂不可用，已拒绝本次外部写入，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
 	}
-	reason := strings.TrimSpace(review.Rationale)
 	if reason == "" {
 		reason = "审查未通过"
 	}
 	return "帮我批准：审查拒绝了本次外部写入（" + reason + "），操作未执行；不要换一种方式重试，先告诉用户原因"
 }
 
-// nativeReviewBudget bounds one background review. The reviewer stops at 60
-// seconds itself; the margin only covers starting its CLI.
-const nativeReviewBudget = 90 * time.Second
+// nativeReviewBudget bounds one background review. The reviewer stops at 5
+// minutes itself; the extra margin covers CLI teardown and stays below the
+// hook's 570-second hard ceiling.
+const nativeReviewBudget = assistantApprovalMaxTimeout + 15*time.Second
 
 // nativeReviewPoll is how long one hook request waits for the verdict before
 // answering pending, below the hook's 20-second request timeout.

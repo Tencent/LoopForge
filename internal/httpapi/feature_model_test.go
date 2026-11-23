@@ -92,6 +92,7 @@ func TestFeatureModelsWithoutCodeBuddy(t *testing.T) {
 	mcp := httptest.NewServer(router)
 	t.Cleanup(mcp.Close)
 	t.Setenv("AGENTFLOW_AGENT_TOOL_GATEWAY_URL", mcp.URL)
+	t.Setenv(approvalEgressAllowCIDRsEnv, "127.0.0.1/32,::1/128")
 	assistant := &assistantHandlers{deps: d, identities: &botIdentityHandlers{deps: d}}
 	stream := &streamHandlers{deps: d}
 	const project = "cli-acceptance"

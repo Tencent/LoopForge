@@ -61,13 +61,13 @@ func terminalToolDescriptors(mode AgentToolMode, exec assistantExecMode) []agent
 }
 
 // submitAssistantReplyDescription 按会话执行模式描述 drafts 的用途：
-// confirm 全部走草稿；assisted 审查未通过时转草稿；auto 完全不用草稿。
+// confirm 全部走草稿；assisted 由 AI 终审不走草稿；auto 完全不用草稿。
 // 工具描述是模型选择直连写入还是提交草稿的关键信号，必须与网关的
 // 写入拦截策略一致。
 func submitAssistantReplyDescription(exec assistantExecMode) string {
 	switch {
 	case exec.ReviewWrites:
-		return "仅用本工具提交需要用户确认的写入草稿，成功后本轮结束。当前为帮我批准模式：直接调用平台写入工具，独立 AI 审查具体操作和对话授权，通过后执行；未批准或审查不可用时才放入 drafts（每轮最多 1 个，含完整参数）供用户确认。不要绕过审查，不接受空 drafts 或进度占位回复。"
+		return "本工具仅用于提交待确认写入草稿，成功后立即结束本轮。当前为帮我批准模式，平台写入工具直接调用并由独立 AI 审查后直接决定放行或拒绝，无需人工审批；不要调用本工具，完成操作或收到拒绝后直接用自然语言向用户汇总结果或说明原因。"
 	case exec.AutoWrite && !exec.ConfirmDangerous:
 		return "本工具仅用于提交待确认写入草稿，成功后立即结束本轮。当前为完全权限模式，平台写入工具已授权直接调用执行；完成全部操作后用自然语言汇总实际结果，不要调用本工具，不接受空 drafts 或进度占位回复。"
 	case exec.AutoWrite && exec.ConfirmDangerous:
@@ -124,7 +124,7 @@ func submitAssistantReplySchema(exec assistantExecMode) map[string]any {
 		"query": map[string]any{"type": "object"},
 		"body":  map[string]any{},
 	}
-	if !exec.AutoWrite || exec.ReviewWrites {
+	if !exec.AutoWrite {
 		draft["proposal"] = assistantProposalSchema()
 	}
 	return map[string]any{
