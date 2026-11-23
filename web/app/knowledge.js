@@ -505,6 +505,107 @@
     }
   }
 
+  // 免密进入控制台：向平台换一张一次性票据，交给 WeKnora 前端容器上的同源
+  // 桥接页（loopforge-sso.html）在 :18081 写入登录态，因此同一实例上切换账号
+  // 时也会自动覆盖上一次的 weknora_token，而不是沿用旧账号。
+  function kbConsoleSSOTarget(conn) {
+    const base = resolveWeKnoraConsoleURL(kbState.settings, conn);
+    if (!base) return '';
+    try {
+      const u = new URL(base);
+      u.pathname = '/loopforge-sso.html';
+      u.search = '';
+      u.hash = '';
+      return u.toString();
+    } catch {
+      return '';
+    }
+  }
+
+  // 登录后落到当前选中的知识库；不知道库 ID 时退到知识库列表。
+  function kbConsoleNextPath(sourceId) {
+    const idx = String(sourceId || '').indexOf('::');
+    const kbId = idx > 0 ? String(sourceId).slice(idx + 2) : '';
+    return kbId ? `/platform/knowledge-bases/${encodeURIComponent(kbId)}` : '/platform/knowledge-bases';
+  }
+
+  function kbConsoleFallbackReason(reason) {
+    if (reason === 'external_instance') return '外部 WeKnora 实例没有同源桥接页，请在该控制台用对应账号登录';
+    if (reason === 'account_not_managed' || reason === 'password_not_configured') {
+      return '平台还没有保存该账号的登录密码，请先在「登录凭据」里填写并保存';
+    }
+    if (reason === 'provider_not_weknora') return '当前知识库不是 WeKnora，无法打开控制台';
+    return '';
+  }
+
+  // 预开窗口已经在手时直接导航它；异步返回后再 window.open 会被浏览器当成弹窗拦截。
+  function kbOpenConsoleFallback(win, consoleHref) {
+    if (win && !win.closed) {
+      try {
+        win.location.replace(consoleHref);
+        return;
+      } catch {
+        // 落到下面的兜底
+      }
+    }
+    window.open(consoleHref, '_blank', 'noopener');
+  }
+
+  async function openWeKnoraConsole(conn) {
+    const consoleHref = resolveWeKnoraConsoleURL(kbState.settings, conn);
+    if (!consoleHref) return;
+    const ssoBase = kbConsoleSSOTarget(conn);
+    // 没有可用的桥接地址时直接打开控制台，由使用者手动登录。
+    if (!ssoBase) {
+      window.open(consoleHref, '_blank', 'noopener');
+      return;
+    }
+    // 预开窗口：等异步请求回来再 window.open 会被浏览器当成弹窗拦截。
+    const win = window.open('about:blank', '_blank');
+    if (win) {
+      win.opener = null;
+      try { win.document.title = '正在进入 WeKnora 控制台…'; } catch { /* 跨源或尚未就绪时忽略 */ }
+    }
+    // 票据绑定的是浏览器实际发起兑换的来源，即控制台源（:18081），
+    // 不是平台源；两者混用会让兑换被 403 拒绝。
+    const consoleOrigin = new URL(ssoBase).origin;
+    let res = null;
+    try {
+      res = await kbAPI('/api/knowledge/weknora/console-sso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connectionId: conn?.id || '',
+          consoleOrigin
+        })
+      });
+    } catch (err) {
+      kbOpenConsoleFallback(win, consoleHref);
+      kbToast((err && err.message) || '免密进入失败，请在控制台手动登录', true);
+      return;
+    }
+    if (res && res.supported && res.ticket && win) {
+      const next = kbConsoleNextPath(kbState.selectedSourceId);
+      // api 让桥接页知道回哪个平台兑换；桥接页会校验其主机名与控制台一致。
+      win.location.replace(
+        `${ssoBase}#ticket=${encodeURIComponent(res.ticket)}` +
+        `&api=${encodeURIComponent(window.location.origin)}` +
+        `&next=${encodeURIComponent(next)}`
+      );
+      return;
+    }
+    kbOpenConsoleFallback(win, consoleHref);
+    const hint = kbConsoleFallbackReason(res && res.reason);
+    if (hint) kbToast(hint);
+  }
+
+  // 抽屉里的「打开 WeKnora 控制台」按钮由脚本绑定，避免每次渲染各写一遍。
+  function kbBindConsoleOpen(conn) {
+    document.querySelectorAll('#kbDrawer [data-kb-console-open]').forEach(btn => {
+      btn.addEventListener('click', () => openWeKnoraConsole(conn));
+    });
+  }
+
   function kbDrawerFocusables(drawer) {
     return drawer.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
   }
@@ -576,7 +677,7 @@
     const epoch = ++kbCredEpoch;
     const consoleHref = resolveWeKnoraConsoleURL(kbState.settings, conn);
     const openLink = consoleHref
-      ? `<a class="kb-btn primary" href="${kbEsc(consoleHref)}" target="_blank" rel="noopener">打开 WeKnora 控制台 ↗</a>`
+      ? '<button type="button" class="kb-btn primary" data-kb-console-open>打开 WeKnora 控制台 ↗</button>'
       : '';
     let data = null;
     let error = null;
@@ -602,24 +703,59 @@
         <p class="kb-muted kb-cred-error">读取登录凭据失败：${kbEsc(error.message || '未知错误')}</p>
         <p class="kb-muted">${kbEsc(hint)}</p>
       `, openLink);
+      kbBindConsoleOpen(conn);
       return;
     }
     if (!data || !data.configured) {
       const otherAccount = data && data.reason === 'account_not_managed';
       const note = otherAccount
-        ? '这个连接使用 WeKnora 里的另一个账号接入。平台只保存内置管理员账号的登录密码，无法查看该账号的密码；请在控制台用下面对应的账号登录，或让该账号管理员重置密码。'
-        : '平台没有保存这个连接的登录密码。外部 WeKnora 请使用接入时填写的管理员账号；内置实例需要配置 LOOPFORGE_WEKNORA_ADMIN_PASSWORD，或完成一次自动初始化。';
+        ? '这个连接使用 WeKnora 里的另一个账号接入。填写该账号的密码并保存后，管理员就能在这里查看并登录；平台不会自动猜到它。'
+        : '平台还没有保存这个连接的登录密码。填写一次并保存后，管理员可以在平台内查看；外部实例同样支持。';
       openKBDrawer('WeKnora 控制台登录凭据', `
         <p class="kb-muted">${note}</p>
         ${email ? `<div class="kb-cred-row"><span>登录邮箱</span><code data-i18n-data>${kbEsc(email)}</code></div>` : ''}
+        <div class="kb-field">
+          <label for="kbConsoleCredPass">该账号的控制台密码</label>
+          <input id="kbConsoleCredPass" type="password" class="kb-input" placeholder="••••••••">
+        </div>
+        <p class="kb-muted">保存前会先用该账号真实登录一次校验；密码加密后仅平台管理员可见。</p>
+        <div class="kb-toolbar">
+          <button type="button" class="kb-btn primary" id="kbConsoleCredSave">校验并保存密码</button>
+        </div>
       `, openLink);
+      kbBindConsoleOpen(conn);
+      const saveBtn = document.getElementById('kbConsoleCredSave');
+      saveBtn?.addEventListener('click', async () => {
+        const pass = document.getElementById('kbConsoleCredPass')?.value || '';
+        if (!pass.trim()) {
+          kbToast('请先填写该账号的控制台密码', true);
+          return;
+        }
+        saveBtn.disabled = true;
+        saveBtn.textContent = '正在校验…';
+        try {
+          await kbAPI('/api/knowledge/weknora/console-credentials', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ connectionId: conn?.id || '', password: pass })
+          });
+          kbToast('控制台密码已保存');
+          await openKBConsoleCredentials(conn);
+        } catch (err) {
+          kbToast(err.message || '保存失败', true);
+          saveBtn.disabled = false;
+          saveBtn.textContent = '校验并保存密码';
+        }
+      });
       return;
     }
     const password = data.password || '';
     openKBDrawer('WeKnora 控制台登录凭据', `
       <p class="kb-muted">仅平台管理员可见。${data.source === 'environment'
         ? '密码来自部署环境变量 LOOPFORGE_WEKNORA_ADMIN_PASSWORD。'
-        : '密码在首次自动初始化时生成，并保存在平台配置中。'}</p>
+        : data.source === 'connection'
+          ? '密码由管理员为该连接保存，保存在平台配置中。'
+          : '密码在首次自动初始化时生成，并保存在平台配置中。'}</p>
       <div class="kb-cred-row">
         <span>登录邮箱</span>
         <code data-i18n-data>${kbEsc(email)}</code>
@@ -633,6 +769,7 @@
       </div>
       <p class="kb-muted">若在 WeKnora 里改过密码，这里显示的值会失效；请同步修改 WeKnora 账号、.env 与平台配置。</p>
     `, openLink);
+    kbBindConsoleOpen(conn);
     document.getElementById('kbConsoleCredCopyEmail')?.addEventListener('click', () => kbCopyText(email, '邮箱已复制'));
     const valueEl = document.getElementById('kbConsoleCredValue');
     const toggleBtn = document.getElementById('kbConsoleCredToggle');
@@ -2108,7 +2245,7 @@
             <button type="button" class="kb-btn" id="kbEditSourceBtn"${kbGateAttrs(manageGate)}>编辑知识库</button>
             <button type="button" class="kb-btn danger-outline" id="kbDeleteSourceBtn"${kbGateAttrs(manageGate)}>删除知识库</button>
             ${consoleCredHTML}
-            ${consoleHref ? `<a class="kb-btn" href="${kbEsc(consoleHref)}" target="_blank" rel="noopener">高级配置 ↗</a>` : ''}
+            ${consoleHref ? '<button type="button" class="kb-btn" id="kbConsoleOpenBtn">高级配置 ↗</button>' : ''}
           </div>
         </div>
         <div class="kb-toolbar" style="margin-bottom:12px">
@@ -2170,6 +2307,7 @@
       container.querySelector('#kbEditSourceBtn')?.addEventListener('click', () => openKBEditDrawer(selected));
       container.querySelector('#kbDeleteSourceBtn')?.addEventListener('click', () => kbDeleteSource(selected));
       container.querySelector('#kbConsoleCredBtn')?.addEventListener('click', () => openKBConsoleCredentials(resolveConnectionForSource(selected.id)));
+      container.querySelector('#kbConsoleOpenBtn')?.addEventListener('click', () => openWeKnoraConsole(resolveConnectionForSource(selected.id)));
     }
 
     const runDocSearch = async () => {
@@ -2490,6 +2628,9 @@
             <label for="kbExtPass">WeKnora 登录密码</label>
             <input id="kbExtPass" type="password" class="kb-input" placeholder="••••••••">
           </div>
+          <div class="kb-field" style="grid-column:1 / -1">
+            <label class="kb-check-chip"><input type="checkbox" id="kbExtSavePass" checked> <span>记住该账号的控制台密码（加密保存，仅平台管理员可见）</span></label>
+          </div>
           <div class="kb-toolbar" style="grid-column:1 / -1">
             <button type="button" class="kb-btn primary" id="kbProvisionExternalBtn">一键链接并追加保存</button>
           </div>
@@ -2622,6 +2763,7 @@
             token: container.querySelector('#kbExtToken')?.value || '',
             email: container.querySelector('#kbExtEmail')?.value || '',
             password: container.querySelector('#kbExtPass')?.value || '',
+            saveConsolePassword: !!container.querySelector('#kbExtSavePass')?.checked,
             writeEnabled: true
           })
         });

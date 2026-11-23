@@ -24,6 +24,7 @@ type fakeStore struct {
 	workflows         []domain.WorkflowDefinition
 	candidates        []domain.KnowledgeCandidate
 	deletedConnToks   []string
+	consoleSecrets    map[string]string
 	managedPass       string
 	mutateErr         error
 }
@@ -91,6 +92,26 @@ func (f *fakeStore) DeleteKnowledgeConnectionToken(connID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deletedConnToks = append(f.deletedConnToks, connID)
+	return nil
+}
+func (f *fakeStore) PutKnowledgeConnectionConsoleSecret(connID, sealed string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.consoleSecrets == nil {
+		f.consoleSecrets = map[string]string{}
+	}
+	f.consoleSecrets[connID] = sealed
+	return nil
+}
+func (f *fakeStore) KnowledgeConnectionConsoleSecret(connID string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.consoleSecrets[connID]
+}
+func (f *fakeStore) DeleteKnowledgeConnectionConsoleSecret(connID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.consoleSecrets, connID)
 	return nil
 }
 func (f *fakeStore) ManagedWeKnoraAdminPassword() string {

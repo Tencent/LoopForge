@@ -207,7 +207,34 @@ func (h *knowledgeHandlers) weKnoraConsoleCredentials(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以查看 WeKnora 控制台登录凭据"})
 		return
 	}
-	login := h.svc.ManagedWeKnoraConsole(strings.TrimSpace(c.Query("connectionId")))
+	h.writeWeKnoraConsoleCredentials(c, strings.TrimSpace(c.Query("connectionId")), "reveal")
+}
+
+// 路由: g.POST("/api/knowledge/weknora/console-credentials", h.saveWeKnoraConsoleCredentials)
+//
+// 管理员为某个连接补录控制台密码（已有连接当时没有保存）。密码先到 WeKnora
+// 登录校验，成功后才加密写入平台配置。
+func (h *knowledgeHandlers) saveWeKnoraConsoleCredentials(c *gin.Context) {
+	if !h.canManage(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以保存 WeKnora 控制台登录凭据"})
+		return
+	}
+	var input struct {
+		ConnectionID string `json:"connectionId"`
+		Password     string `json:"password"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	if err := h.svc.SaveWeKnoraConsolePassword(c.Request.Context(), input.ConnectionID, input.Password); err != nil {
+		respond(c, err)
+		return
+	}
+	h.writeWeKnoraConsoleCredentials(c, input.ConnectionID, "save")
+}
+
+func (h *knowledgeHandlers) writeWeKnoraConsoleCredentials(c *gin.Context, connID, action string) {
+	login := h.svc.ManagedWeKnoraConsole(connID)
 	c.Header("Cache-Control", "no-store")
 	view := weKnoraConsoleCredentialsView{
 		Configured: login.Configured,
@@ -225,11 +252,56 @@ func (h *knowledgeHandlers) weKnoraConsoleCredentials(c *gin.Context) {
 	view.Password = login.Password
 	view.Source = login.Source
 	slog.InfoContext(c.Request.Context(), "knowledge console credentials",
-		"event", "knowledge.console.credentials.reveal",
+		"event", "knowledge.console.credentials."+action,
 		"actor", h.actor(c.Request),
 		"source", login.Source,
 	)
 	c.JSON(http.StatusOK, view)
+}
+
+// 路由: g.POST("/api/knowledge/weknora/console-sso", h.weKnoraConsoleSSO)
+//
+// 平台管理员点击「高级配置」时签发一次性票据。票据本身不含凭据，兑换时
+// 由 WeKnora 前端容器上的同源桥接页完成登录态写入。
+func (h *knowledgeHandlers) weKnoraConsoleSSO(c *gin.Context) {
+	if !h.canManage(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以免密进入 WeKnora 控制台"})
+		return
+	}
+	var input struct {
+		ConnectionID  string `json:"connectionId"`
+		ConsoleOrigin string `json:"consoleOrigin"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	res, err := h.svc.IssueWeKnoraConsoleSSO(c.Request.Context(), input.ConnectionID, input.ConsoleOrigin)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, res)
+}
+
+// 路由: g.POST("/api/knowledge/weknora/console-sso/redeem", h.redeemWeKnoraConsoleSSO)
+//
+// 桥接页在 WeKnora 控制台源下调用，因此跨源是设计的一部分：票据一次性、
+// 60 秒过期且绑定签发时的来源，cors() 只对这条路径放行跨源请求。
+func (h *knowledgeHandlers) redeemWeKnoraConsoleSSO(c *gin.Context) {
+	var input struct {
+		Ticket string `json:"ticket"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	payload, err := knowledge.RedeemWeKnoraConsoleSSO(input.Ticket, c.GetHeader("Origin"))
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
 }
 
 // 路由: g.DELETE("/api/knowledge/connections/:id", h.deleteConnection)

@@ -283,6 +283,47 @@ func (r *KnowledgeRepo) DeleteKnowledgeConnectionToken(connID string) error {
 	return r.DB.Where("id = ?", "kbconn:"+connID).Delete(&knowledgeSettingsRow{}).Error
 }
 
+// PutKnowledgeConnectionConsoleSecret stores the sealed console password for a
+// connection. It lives in its own kbconsole:<id> row so KnowledgeSettings never
+// reads it into an API payload; only the admin-only reveal endpoint decrypts it.
+func (r *KnowledgeRepo) PutKnowledgeConnectionConsoleSecret(connID, sealed string) error {
+	connID = strings.TrimSpace(connID)
+	sealed = strings.TrimSpace(sealed)
+	if connID == "" || sealed == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	row := knowledgeSettingsRow{ID: "kbconsole:" + connID, Token: &sealed, Updated: &now}
+	return r.DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"token", "updated_at"}),
+	}).Create(&row).Error
+}
+
+// KnowledgeConnectionConsoleSecret returns the sealed console password for a
+// connection, or "" when none was saved.
+func (r *KnowledgeRepo) KnowledgeConnectionConsoleSecret(connID string) string {
+	connID = strings.TrimSpace(connID)
+	if connID == "" {
+		return ""
+	}
+	var row knowledgeSettingsRow
+	if err := r.DB.Where("id = ?", "kbconsole:"+connID).Take(&row).Error; err != nil || row.Token == nil {
+		return ""
+	}
+	return strings.TrimSpace(*row.Token)
+}
+
+// DeleteKnowledgeConnectionConsoleSecret removes the saved console password of
+// a deleted connection.
+func (r *KnowledgeRepo) DeleteKnowledgeConnectionConsoleSecret(connID string) error {
+	connID = strings.TrimSpace(connID)
+	if connID == "" {
+		return nil
+	}
+	return r.DB.Where("id = ?", "kbconsole:"+connID).Delete(&knowledgeSettingsRow{}).Error
+}
+
 // ManagedWeKnoraAdminPassword returns the internally generated admin password
 // for managed WeKnora instances, if one has been persisted.
 func (r *KnowledgeRepo) ManagedWeKnoraAdminPassword() string {

@@ -504,6 +504,14 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/knowledge/check", api.know.check)
 	g.POST("/api/knowledge/weknora/provision", api.know.provisionWeKnora)
 	g.GET("/api/knowledge/weknora/console-credentials", api.know.weKnoraConsoleCredentials)
+	g.POST("/api/knowledge/weknora/console-credentials", api.know.saveWeKnoraConsoleCredentials)
+	g.POST("/api/knowledge/weknora/console-sso", api.know.weKnoraConsoleSSO)
+	g.POST("/api/knowledge/weknora/console-sso/redeem", api.know.redeemWeKnoraConsoleSSO)
+	// 桥接页在 WeKnora 控制台源下发起 JSON POST，浏览器会先发预检；gin 默认
+	// 不响应未注册的 OPTIONS，必须显式注册，否则浏览器直接拦掉兑换请求。
+	g.OPTIONS("/api/knowledge/weknora/console-sso/redeem", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
 	g.DELETE("/api/knowledge/connections/:id", api.know.deleteConnection)
 	g.GET("/api/knowledge/connections/:id/capabilities", api.know.connectionCapabilities)
 	g.POST("/api/knowledge/reference-check", api.know.checkReferences)

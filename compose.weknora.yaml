@@ -108,6 +108,9 @@ services:
     image: wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}
     ports:
       - "${WEKNORA_BIND:-${LOOPFORGE_BIND:-0.0.0.0}}:${WEKNORA_UI_PORT:-18081}:80"
+    volumes:
+      # 平台签发票据后，由这个同源静态页完成登录态写入（不修改上游镜像）。
+      - ./deploy/weknora/loopforge-sso.html:/usr/share/nginx/html/loopforge-sso.html:ro
     environment:
       APP_HOST: weknora-app
       APP_PORT: 8080

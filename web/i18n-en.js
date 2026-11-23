@@ -480,5 +480,31 @@ Object.assign(window.LF_I18N_EN, {
   "请稍后重试，或到「高级配置」中直接登录。": "Try again shortly, or sign in directly from Advanced settings.",
   "未知错误": "Unknown error",
   "复制": "Copy",
-  "只有平台管理员可以查看 WeKnora 控制台登录凭据": "Only platform administrators can view the WeKnora console sign-in."
+  "只有平台管理员可以查看 WeKnora 控制台登录凭据": "Only platform administrators can view the WeKnora console sign-in.",
+  "正在进入 WeKnora 控制台…": "Opening the WeKnora console…",
+  "免密进入失败，请在控制台手动登录": "Passwordless sign-in failed; sign in to the console manually",
+  "外部 WeKnora 实例没有同源桥接页，请在该控制台用对应账号登录": "External WeKnora instances have no same-origin bridge page; sign in there with the matching account",
+  "平台还没有保存该账号的登录密码，请先在「登录凭据」里填写并保存": "This account's console password isn't stored yet; fill it in under \"Console sign-in\" and save",
+  "当前知识库不是 WeKnora，无法打开控制台": "This knowledge base is not WeKnora, so its console can't be opened",
+  "只有平台管理员可以免密进入 WeKnora 控制台": "Only platform administrators can open the WeKnora console without a password",
+  "WeKnora 登录失败，请检查该账号的登录密码": "WeKnora sign-in failed; check that account's console password",
+  "生成一次性登录票据失败": "Couldn't create a one-time sign-in ticket",
+  "登录票据已失效，请回到平台重新打开控制台": "The sign-in ticket has expired; open the console from the platform again",
+  "登录请求来源无效": "The sign-in request came from an invalid origin",
+  "控制台来源无效": "The console origin is invalid",
+  "连接不存在": "Connection not found"
+});
+
+Object.assign(window.LF_I18N_EN, {
+  "记住该账号的控制台密码（加密保存，仅平台管理员可见）": "Remember this account's console password (encrypted, visible to platform admins only)",
+  "这个连接使用 WeKnora 里的另一个账号接入。填写该账号的密码并保存后，管理员就能在这里查看并登录；平台不会自动猜到它。": "This connection uses another account on WeKnora. Save that account's password once and admins can view it and sign in here; the platform cannot guess it.",
+  "平台还没有保存这个连接的登录密码。填写一次并保存后，管理员可以在平台内查看；外部实例同样支持。": "No console password is stored for this connection yet. Save it once and admins can view it here — external instances work the same way.",
+  "该账号的控制台密码": "This account's console password",
+  "保存前会先用该账号真实登录一次校验；密码加密后仅平台管理员可见。": "The password is verified with a real WeKnora sign-in before it is saved; it is encrypted and visible to platform admins only.",
+  "校验并保存密码": "Verify and save password",
+  "请先填写该账号的控制台密码": "Enter this account's console password first",
+  "正在校验…": "Verifying…",
+  "控制台密码已保存": "Console password saved",
+  "保存失败": "Couldn't save",
+  "密码由管理员为该连接保存，保存在平台配置中。": "Saved by an admin for this connection and kept in the platform configuration."
 });

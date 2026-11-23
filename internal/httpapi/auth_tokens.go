@@ -80,7 +80,10 @@ func protectedAccessPath(path string) bool {
 	switch path {
 	// gongfeng/start checks the session itself so a signed-out browser
 	// gets a page that says so, not a bare JSON 401.
-	case "/api/health", "/api/auth/password", "/api/auth/setup", "/api/auth/register", "/api/auth/current", "/api/auth/exchange", "/api/auth/logout", "/api/auth/local", "/api/auth/photo", "/api/auth/gongfeng/start", "/api/auth/gongfeng/callback":
+	case "/api/health", "/api/auth/password", "/api/auth/setup", "/api/auth/register", "/api/auth/current", "/api/auth/exchange", "/api/auth/logout", "/api/auth/local", "/api/auth/photo", "/api/auth/gongfeng/start", "/api/auth/gongfeng/callback",
+		// 一次性票据兑换由 WeKnora 控制台源上的桥接页发起，票据本身就是凭据；
+		// 签发接口仍然要求平台管理员登录。
+		"/api/knowledge/weknora/console-sso/redeem":
 		return false
 	default:
 		if strings.HasPrefix(path, "/api/auth/photo/") {

@@ -25,6 +25,10 @@ type Store interface {
 	MutateKnowledgeSettings(func(*domain.KnowledgeSettings) bool) error
 	MutateKnowledgeSettingsIfFresh(func(*domain.KnowledgeSettings) (bool, error)) (bool, error)
 	DeleteKnowledgeConnectionToken(connID string) error
+	// 控制台密码单独加密保存；KnowledgeSettings 永远不会带出它。
+	PutKnowledgeConnectionConsoleSecret(connID, sealed string) error
+	KnowledgeConnectionConsoleSecret(connID string) string
+	DeleteKnowledgeConnectionConsoleSecret(connID string) error
 	ManagedWeKnoraAdminPassword() string
 	PutManagedWeKnoraAdminPassword(password string) error
 	KnowledgeSubmissions(projectID, status string, limit int) []domain.KnowledgeSubmission

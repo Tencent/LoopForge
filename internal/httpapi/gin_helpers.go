@@ -109,15 +109,24 @@ func cors() gin.HandlerFunc {
 		origin := c.GetHeader("Origin")
 		if origin != "" {
 			u, err := url.Parse(origin)
-			if err != nil || !strings.EqualFold(u.Host, c.Request.Host) {
+			// 一次性票据兑换由 WeKnora 控制台源（:18081）上的桥接页发起，
+			// 跨源是设计的一部分：票据单次有效、60 秒过期且绑定签发来源，
+			// 其余路径的跨源请求仍然一律拒绝。
+			crossOriginSSO := c.Request.URL.Path == "/api/knowledge/weknora/console-sso/redeem"
+			if err != nil || (!strings.EqualFold(u.Host, c.Request.Host) && !crossOriginSSO) {
 				c.JSON(http.StatusForbidden, map[string]string{"error": "cross-origin request denied"})
 				c.Abort()
 				return
 			}
+			methods := "GET,PUT,POST,PATCH,DELETE,OPTIONS"
+			if crossOriginSSO {
+				// 桥接页只做一次 JSON POST，收窄方法列表，减少该路径的跨源暴露面。
+				methods = "POST, OPTIONS"
+			}
 			c.Header("Vary", "Origin")
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Headers", "Content-Type")
-			c.Header("Access-Control-Allow-Methods", "GET,PUT,POST,PATCH,DELETE,OPTIONS")
+			c.Header("Access-Control-Allow-Methods", methods)
 		}
 		if c.Request.Method == http.MethodOptions {
 			c.Writer.WriteHeader(204)

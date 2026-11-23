@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -66,14 +67,18 @@ func freshInstallSettings(cur domain.KnowledgeSettings) bool {
 }
 
 type WeKnoraProvisionInput struct {
-	Mode         string `json:"mode"` // "managed" | "external"
-	Name         string `json:"name"`
-	URL          string `json:"url"`
-	Token        string `json:"token"`
-	Email        string `json:"email"`
-	Password     string `json:"password"`
-	WriteEnabled bool   `json:"writeEnabled"`
-	OnlyIfFresh  bool   `json:"onlyIfFresh,omitempty"`
+	Mode     string `json:"mode"` // "managed" | "external"
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	Token    string `json:"token"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	// SaveConsolePassword keeps the password entered for an external connection
+	// so the admin can reveal it again from the console sign-in drawer. Only
+	// used with mode=external; managed instances already have a stored password.
+	SaveConsolePassword bool `json:"saveConsolePassword,omitempty"`
+	WriteEnabled        bool `json:"writeEnabled"`
+	OnlyIfFresh         bool `json:"onlyIfFresh,omitempty"`
 }
 
 type WeKnoraProvisionResult struct {
@@ -190,6 +195,8 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 		beforeConns          []domain.KnowledgeConnection
 		afterConns           []domain.KnowledgeConnection
 		migratedLegacyConnID string
+		savedConnID          string
+		staleSecretConnID    string
 		claimed              bool
 	)
 	applyMutation := func(current *domain.KnowledgeSettings) bool {
@@ -216,17 +223,24 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 		updatedExisting := false
 		for i := range conns {
 			if conns[i].URL == targetURL && conns[i].Name == connName {
+				prevAccount := strings.TrimSpace(conns[i].Account)
 				conns[i].Token = apiKey
 				conns[i].Account = firstNonEmpty(account, conns[i].Account)
 				conns[i].Provider = domain.KnowledgeProviderWeKnora
 				conns[i].Enabled = true
+				// 账号换了（含原连接没记录账号的情况），旧密码不能继续沿用。
+				if account != "" && !strings.EqualFold(prevAccount, account) {
+					staleSecretConnID = conns[i].ID
+				}
+				savedConnID = conns[i].ID
 				updatedExisting = true
 				break
 			}
 		}
 		if !updatedExisting {
+			savedConnID = "wk-" + randomHex(4)
 			conns = append(conns, domain.KnowledgeConnection{
-				ID:       "wk-" + randomHex(4),
+				ID:       savedConnID,
 				Name:     connName,
 				Account:  account,
 				Provider: domain.KnowledgeProviderWeKnora,
@@ -294,6 +308,34 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 	if migratedLegacyConnID != "" {
 		s.migrateLegacySubmissionSources(migratedLegacyConnID)
 	}
+	// 账号被改写时，旧的密码密文必须先清掉，避免抽屉展示“新账号 + 旧密码”。
+	if staleSecretConnID != "" {
+		if err := s.store.DeleteKnowledgeConnectionConsoleSecret(staleSecretConnID); err != nil {
+			slog.WarnContext(ctx, "stale console secret not deleted",
+				"connectionId", staleSecretConnID, "error", err)
+		}
+	}
+	// 建连时输入的密码默认立即丢弃；管理员显式勾选后，只在登录校验通过后
+	// 加密保存，供控制台登录抽屉再次查看。保存失败不影响连接本身。
+	if input.SaveConsolePassword && mode == "external" && strings.TrimSpace(input.Password) != "" {
+		switch {
+		case strings.TrimSpace(account) == "":
+			slog.WarnContext(ctx, "knowledge console password not saved",
+				"connectionId", savedConnID, "reason", "account_missing")
+			msg += "；未填写账号，控制台密码未保存"
+		default:
+			if err := verifyWeKnoraLogin(ctx, targetURL, account, input.Password); err != nil {
+				// 上游错误可能回显密码，这里只记录连接 ID。
+				slog.WarnContext(ctx, "knowledge console password not verified",
+					"connectionId", savedConnID)
+				msg += "；账号密码未通过登录校验，控制台密码未保存"
+			} else if err := s.saveConnectionConsoleSecret(savedConnID, account, input.Password); err != nil {
+				slog.WarnContext(ctx, "knowledge console password not saved",
+					"connectionId", savedConnID, "error", err)
+				msg += "；控制台密码保存失败"
+			}
+		}
+	}
 	saved := s.store.KnowledgeSettings()
 	return WeKnoraProvisionResult{
 		Settings: saved.Public(),
@@ -328,8 +370,17 @@ func (s *Service) DeleteConnection(connID, actor string) (domain.KnowledgeSettin
 		return current, err
 	}
 	s.capabilities.invalidate(connID)
+	// 两行密文都要清掉；任一失败不影响另一行，返回第一个错误便于重试（两次
+	// 删除都是幂等的）。
+	var cleanupErr error
 	if err := s.store.DeleteKnowledgeConnectionToken(connID); err != nil {
-		return current, err
+		cleanupErr = err
+	}
+	if err := s.store.DeleteKnowledgeConnectionConsoleSecret(connID); err != nil && cleanupErr == nil {
+		cleanupErr = err
+	}
+	if cleanupErr != nil {
+		return current, cleanupErr
 	}
 	return s.store.KnowledgeSettings(), nil
 }
@@ -428,6 +479,70 @@ func settingsForConnection(base domain.KnowledgeSettings, conn domain.KnowledgeC
 	return out
 }
 
+type weKnoraLoginSession struct {
+	Token    string
+	TenantID uint64
+}
+
+// loginWeKnora performs a console/API login. It is shared by API-key bootstrap
+// and by the admin "save console password" validation, so both paths accept
+// exactly the same credentials.
+func loginWeKnora(ctx context.Context, hc *http.Client, baseURL, email, password string) (weKnoraLoginSession, error) {
+	loginBody, _ := json.Marshal(map[string]string{
+		"email":    email,
+		"password": password,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/auth/login", bytes.NewReader(loginBody))
+	if err != nil {
+		return weKnoraLoginSession{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := hc.Do(req)
+	if err != nil {
+		return weKnoraLoginSession{}, err
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// 上游错误体可能回显提交的密码，任何向外传播的文本都要先脱敏。
+		return weKnoraLoginSession{}, fmt.Errorf("%s", redactSecrets(parseWeKnoraError(resp.StatusCode, raw).Error(), password))
+	}
+	var loginOut struct {
+		Success bool   `json:"success"`
+		Token   string `json:"token"`
+		Message string `json:"message"`
+		User    *struct {
+			TenantID uint64 `json:"tenant_id"`
+		} `json:"user"`
+		ActiveTenant *struct {
+			ID uint64 `json:"id"`
+		} `json:"active_tenant"`
+	}
+	if err := json.Unmarshal(raw, &loginOut); err != nil {
+		return weKnoraLoginSession{}, err
+	}
+	if !loginOut.Success || strings.TrimSpace(loginOut.Token) == "" {
+		msg := redactSecrets(firstNonEmpty(loginOut.Message, "未返回 token"), password)
+		return weKnoraLoginSession{}, fmt.Errorf("WeKnora 登录失败：%s", msg)
+	}
+	out := weKnoraLoginSession{Token: strings.TrimSpace(loginOut.Token)}
+	if loginOut.ActiveTenant != nil && loginOut.ActiveTenant.ID > 0 {
+		out.TenantID = loginOut.ActiveTenant.ID
+	} else if loginOut.User != nil && loginOut.User.TenantID > 0 {
+		out.TenantID = loginOut.User.TenantID
+	}
+	if out.TenantID == 0 {
+		return weKnoraLoginSession{}, fmt.Errorf("WeKnora 登录响应缺少 tenant_id")
+	}
+	return out, nil
+}
+
+func verifyWeKnoraLogin(ctx context.Context, baseURL, email, password string) error {
+	hc := &http.Client{Timeout: 20 * time.Second}
+	_, err := loginWeKnora(ctx, hc, NormalizeWeKnoraBaseURL(baseURL), strings.TrimSpace(email), password)
+	return err
+}
+
 // BootstrapWeKnoraAPIKey registers (if username is non-empty and account does not
 // exist yet), logs in, and issues a full_access tenant API key.
 func BootstrapWeKnoraAPIKey(ctx context.Context, baseURL, email, password, username string) (string, error) {
@@ -450,61 +565,21 @@ func BootstrapWeKnoraAPIKey(ctx context.Context, baseURL, email, password, usern
 		}
 	}
 
-	loginBody, _ := json.Marshal(map[string]string{
-		"email":    email,
-		"password": password,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/auth/login", bytes.NewReader(loginBody))
+	session, err := loginWeKnora(ctx, hc, baseURL, email, password)
 	if err != nil {
 		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := hc.Do(req)
-	if err != nil {
-		return "", err
-	}
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", parseWeKnoraError(resp.StatusCode, raw)
-	}
-	var loginOut struct {
-		Success bool   `json:"success"`
-		Token   string `json:"token"`
-		Message string `json:"message"`
-		User    *struct {
-			TenantID uint64 `json:"tenant_id"`
-		} `json:"user"`
-		ActiveTenant *struct {
-			ID uint64 `json:"id"`
-		} `json:"active_tenant"`
-	}
-	if err := json.Unmarshal(raw, &loginOut); err != nil {
-		return "", err
-	}
-	if !loginOut.Success || strings.TrimSpace(loginOut.Token) == "" {
-		return "", fmt.Errorf("WeKnora 登录失败：%s", firstNonEmpty(loginOut.Message, "未返回 token"))
-	}
-	var tenantID uint64
-	if loginOut.ActiveTenant != nil && loginOut.ActiveTenant.ID > 0 {
-		tenantID = loginOut.ActiveTenant.ID
-	} else if loginOut.User != nil && loginOut.User.TenantID > 0 {
-		tenantID = loginOut.User.TenantID
-	}
-	if tenantID == 0 {
-		return "", fmt.Errorf("WeKnora 登录响应缺少 tenant_id")
 	}
 
 	keyBody, _ := json.Marshal(map[string]any{
 		"name":        "loopforge-kb",
 		"full_access": true,
 	})
-	keyReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/api/v1/tenants/%d/api-keys", baseURL, tenantID), bytes.NewReader(keyBody))
+	keyReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/api/v1/tenants/%d/api-keys", baseURL, session.TenantID), bytes.NewReader(keyBody))
 	if err != nil {
 		return "", err
 	}
 	keyReq.Header.Set("Content-Type", "application/json")
-	keyReq.Header.Set("Authorization", "Bearer "+loginOut.Token)
+	keyReq.Header.Set("Authorization", "Bearer "+session.Token)
 	keyResp, err := hc.Do(keyReq)
 	if err != nil {
 		return "", err
@@ -639,49 +714,83 @@ type WeKnoraConsoleLogin struct {
 	Reason     string `json:"reason,omitempty"`
 }
 
-// ManagedWeKnoraConsole returns the console sign-in for the managed WeKnora
-// instance, and nothing for an arbitrary external connection. connID scopes the
-// lookup to one connection: an empty or "default" id means the top-level
-// settings, so a connection pointed at another host can never borrow the
-// managed instance's password.
+// consoleLoginTarget 是控制台凭据所属的配置行：顶层设置（default）或某个连接。
+type consoleLoginTarget struct {
+	ID      string
+	URL     string
+	Account string
+}
+
+func consoleLoginTargetFor(settings domain.KnowledgeSettings, connID string) (consoleLoginTarget, bool) {
+	connID = strings.TrimSpace(connID)
+	if connID == "" || connID == "default" {
+		if strings.TrimSpace(settings.URL) == "" {
+			return consoleLoginTarget{}, false
+		}
+		return consoleLoginTarget{ID: "default", URL: settings.URL}, true
+	}
+	for _, conn := range settings.Connections {
+		if conn.ID == connID {
+			return consoleLoginTarget{ID: conn.ID, URL: conn.URL, Account: conn.Account}, true
+		}
+	}
+	return consoleLoginTarget{}, false
+}
+
+// ManagedWeKnoraConsole returns the console sign-in for one connection, or for
+// the top-level settings when connID is empty. A password the administrator
+// saved for that connection wins; otherwise only the platform-managed instance
+// and its built-in administrator account can fall back to the deployment
+// password.
 func (s *Service) ManagedWeKnoraConsole(connID string) WeKnoraConsoleLogin {
 	out := WeKnoraConsoleLogin{UIURL: strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_UI_URL"))}
 	settings := s.Settings()
 	if settings.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
 		return out
 	}
-	baseURL := strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL"))
-	if baseURL == "" {
-		// 没有内置实例配置时，平台不掌握任何控制台密码。
+	target, ok := consoleLoginTargetFor(settings, connID)
+	if !ok {
 		return out
 	}
-	connID = strings.TrimSpace(connID)
-	var account string
-	matched := false
-	if connID == "" || connID == "default" {
-		matched = sameWeKnoraConsoleURL(settings.URL, baseURL)
-	} else {
-		for _, conn := range settings.Connections {
-			if conn.ID != connID {
-				continue
+	out.Email = strings.TrimSpace(target.Account)
+
+	// 1) 管理员为该连接保存/补录的密码优先：它对同一实例上的其他账号与外部
+	// 实例都有效，且不依赖内置实例的环境变量。
+	if sealed := s.store.KnowledgeConnectionConsoleSecret(target.ID); sealed != "" {
+		if plain, err := openConsoleSecret(target.ID, sealed); err == nil {
+			var saved storedConsoleSecret
+			if json.Unmarshal([]byte(plain), &saved) == nil && strings.TrimSpace(saved.Password) != "" {
+				savedAccount := strings.TrimSpace(saved.Account)
+				connAccount := strings.TrimSpace(target.Account)
+				// 连接已换成别的账号：旧密文属于旧账号，既不能使用也不能继续保存，
+				// 否则免密进入会用错身份登录。
+				if savedAccount != "" && connAccount != "" && !strings.EqualFold(savedAccount, connAccount) {
+					slog.Warn("knowledge console secret account mismatch", "connectionId", target.ID)
+					if derr := s.store.DeleteKnowledgeConnectionConsoleSecret(target.ID); derr != nil {
+						slog.Warn("knowledge console secret cleanup failed", "connectionId", target.ID, "error", derr)
+					}
+				} else {
+					out.Email = firstNonEmpty(savedAccount, out.Email)
+					out.Password, out.Source, out.Configured = saved.Password, "connection", true
+					return out
+				}
 			}
-			if sameWeKnoraConsoleURL(conn.URL, baseURL) {
-				account, matched = strings.TrimSpace(conn.Account), true
-			}
-			break
+		} else {
+			slog.Warn("knowledge console secret decrypt failed", "connectionId", target.ID, "error", err)
 		}
 	}
-	if !matched {
+
+	// 2) 只有内置实例 + 内置管理员账号才回退到平台初始化时掌握的密码。
+	baseURL := strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL"))
+	if baseURL == "" || !sameWeKnoraConsoleURL(target.URL, baseURL) {
 		return out
 	}
 	managedEmail := managedWeKnoraConsoleEmail()
-	if account == "" {
-		account = managedEmail
+	if out.Email == "" {
+		out.Email = managedEmail
 	}
-	out.Email = account
-	// 同一个实例可以被多个账号接入，平台只知道内置管理员账号的密码。
-	// 其他账号的密码在链接时就已丢弃，不能拿管理员密码去配对。
-	if !strings.EqualFold(account, managedEmail) {
+	// 同一个实例可以被多个账号接入：不能拿管理员密码去配对别的账号。
+	if !strings.EqualFold(out.Email, managedEmail) {
 		out.Reason = "account_not_managed"
 		return out
 	}
@@ -692,6 +801,76 @@ func (s *Service) ManagedWeKnoraConsole(connID string) WeKnoraConsoleLogin {
 	}
 	out.Configured = out.Password != ""
 	return out
+}
+
+// saveConnectionConsoleSecret seals account+password for one connection. It does
+// not validate the credentials; SaveWeKnoraConsolePassword does that first.
+func (s *Service) saveConnectionConsoleSecret(connID, account, password string) error {
+	connID = strings.TrimSpace(connID)
+	account = strings.TrimSpace(account)
+	// 密码原文可能合法地以空格开头/结尾，只用 TrimSpace 判断是否为空。
+	if connID == "" || account == "" || strings.TrimSpace(password) == "" {
+		return errors.New("缺少连接、账号或密码")
+	}
+	raw, err := json.Marshal(storedConsoleSecret{Account: account, Password: password})
+	if err != nil {
+		return err
+	}
+	sealed, err := sealConsoleSecret(connID, string(raw))
+	if err != nil {
+		return err
+	}
+	return s.store.PutKnowledgeConnectionConsoleSecret(connID, sealed)
+}
+
+// SaveWeKnoraConsolePassword verifies a connection's console password by logging
+// in to its WeKnora instance, then stores it sealed for the admin-only drawer.
+func (s *Service) SaveWeKnoraConsolePassword(ctx context.Context, connID, password string) error {
+	if strings.TrimSpace(password) == "" {
+		return apperr.New(apperr.Invalid, "请填写该账号的控制台密码")
+	}
+	settings := s.Settings()
+	if settings.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
+		return apperr.New(apperr.Invalid, "当前知识库不是 WeKnora，无法保存控制台密码")
+	}
+	target, ok := consoleLoginTargetFor(settings, connID)
+	if !ok {
+		return apperr.New(apperr.NotFound, "连接不存在")
+	}
+	// 只有内置实例的连接才能借用内置管理员账号；外部实例缺账号时不能瞎猜。
+	account := strings.TrimSpace(target.Account)
+	if account == "" && isManagedConsoleURL(target.URL) {
+		account = managedWeKnoraConsoleEmail()
+	}
+	if account == "" {
+		return apperr.New(apperr.Invalid, "该连接没有保存账号，请先补全账号后再保存密码")
+	}
+	baseURL, err := ValidateOutboundWeKnoraURL(target.URL)
+	if err != nil {
+		return apperr.New(apperr.Invalid, "连接地址不可用："+err.Error())
+	}
+	if err := verifyWeKnoraLogin(ctx, baseURL, account, password); err != nil {
+		// 上游可能回显提交的密码，错误内容一律不进入响应或日志。
+		slog.WarnContext(ctx, "knowledge console password verification failed", "connectionId", target.ID)
+		return apperr.New(apperr.Upstream, "WeKnora 登录校验失败，请确认账号与密码")
+	}
+	// 网络校验期间连接可能被删除或改指向，落库前再确认一次。
+	latest, ok := consoleLoginTargetFor(s.Settings(), target.ID)
+	if !ok || !sameWeKnoraConsoleURL(latest.URL, target.URL) ||
+		!strings.EqualFold(strings.TrimSpace(latest.Account), strings.TrimSpace(target.Account)) {
+		return apperr.New(apperr.NotFound, "连接已变更，请刷新后重试")
+	}
+	if err := s.saveConnectionConsoleSecret(target.ID, account, password); err != nil {
+		return apperr.New(apperr.Invalid, "控制台密码保存失败："+err.Error())
+	}
+	return nil
+}
+
+// isManagedConsoleURL reports whether a connection points at the platform-managed
+// WeKnora instance, the only case where the built-in admin account may be assumed.
+func isManagedConsoleURL(raw string) bool {
+	baseURL := strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL"))
+	return baseURL != "" && sameWeKnoraConsoleURL(raw, baseURL)
 }
 
 // managedWeKnoraConsoleEmail 是内置实例初始化时注册的管理员账号。

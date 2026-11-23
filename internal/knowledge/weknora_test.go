@@ -306,6 +306,7 @@ func TestActiveConnections_AllDisabledDoesNotFallThrough(t *testing.T) {
 }
 
 func TestScopedSource_DeleteConnBlocksCrossConnAndConflictOnPublish(t *testing.T) {
+	t.Setenv("LOOPFORGE_KNOWLEDGE_SECRET_KEY", "unit-test-key")
 	var srvBRequests atomic.Int32
 	srvB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/knowledge-bases" && r.Method == http.MethodGet {
@@ -353,6 +354,9 @@ func TestScopedSource_DeleteConnBlocksCrossConnAndConflictOnPublish(t *testing.T
 		t.Fatalf("expected 2 connections after upgrade, got %d", len(prov.Settings.Connections))
 	}
 	connAID := prov.Settings.Connections[0].ID
+	if err := svc.saveConnectionConsoleSecret(connAID, "admin@loopforge.local", "conn-a-pass"); err != nil {
+		t.Fatalf("saveConnectionConsoleSecret: %v", err)
+	}
 	scopedA := connAID + "::kb-a1"
 
 	// Verify single->multi migration prefixed DefaultSources, ProjectSources, and pending submission.
@@ -375,6 +379,9 @@ func TestScopedSource_DeleteConnBlocksCrossConnAndConflictOnPublish(t *testing.T
 	}
 	if len(store.deletedConnToks) != 1 || store.deletedConnToks[0] != connAID {
 		t.Fatalf("expected kbconn token deleted for %q, got %#v", connAID, store.deletedConnToks)
+	}
+	if got := store.KnowledgeConnectionConsoleSecret(connAID); got != "" {
+		t.Fatalf("expected the console secret to be deleted with %q, got %q", connAID, got)
 	}
 
 	// Search on Connection A's bound source must fail as Unavailable with 0 requests to B.
