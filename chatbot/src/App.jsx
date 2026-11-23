@@ -306,7 +306,7 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
 function readIssueMention() {
   const params = new URLSearchParams(location.search);
   const issueId = params.get("mentionIssue") || "";
-  return issueId ? { issueId, projectId: params.get("projectId") || "" } : null;
+  return issueId ? { issueId, projectId: params.get("projectId") || "", mentionBoundSop: params.get("mentionBoundSop") === "1" } : null;
 }
 
 export default function App() {
@@ -654,7 +654,7 @@ export default function App() {
       if (!issueId || !projectId) return;
       chat.startProjectDraft(projectId);
       setIssueDraft({ issueId, projectId });
-      setIssueMention({ issueId, projectId });
+      setIssueMention({ issueId, projectId, mentionBoundSop: event.data.mentionBoundSop === true });
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
@@ -681,9 +681,16 @@ export default function App() {
           name: issue.title || issue.id,
           projectId: issue.projectId,
         };
-        const value = insertMention("", { start: 0, end: 0 }, ref);
+        const refs = [ref];
+        if (issueMention.mentionBoundSop && issue.workflowId && issue.sopMode !== "none") {
+          refs.push({ type: "sop", id: issue.workflowId, name: issue.workflowName || issue.workflowId, projectId: issue.projectId });
+        }
+        let value = { text: "", caret: 0 };
+        for (const reference of refs) {
+          value = insertMention(value.text, { start: value.caret, end: value.caret }, reference);
+        }
         setText(value.text);
-        setReferences([ref]);
+        setReferences(refs);
         setMention(null);
         const editor = input.current;
         requestAnimationFrame(() => {
@@ -700,6 +707,7 @@ export default function App() {
         setIssueMention(null);
         const url = new URL(location.href);
         url.searchParams.delete("mentionIssue");
+        url.searchParams.delete("mentionBoundSop");
         history.replaceState({}, "", url);
       });
     return () => {

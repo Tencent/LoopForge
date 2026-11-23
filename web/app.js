@@ -1531,9 +1531,10 @@ function postPendingChatIssueMention(frame){
   frame.contentWindow?.postMessage({type:'agentflow-chat-mention-issue',...pendingChatIssueMention},location.origin);
   pendingChatIssueMention=null;
 }
-function openIssueInChat(issue){
+function openIssueInChat(issue,mentionBoundSop=false){
   if(!issue?.id||!issue.projectId)return;
   pendingChatIssueMention={issueId:issue.id,projectId:issue.projectId};
+  if(mentionBoundSop)pendingChatIssueMention.mentionBoundSop=true;
   localStorage.setItem('agentflow.activeProject',issue.projectId);
   const url=new URL(location.href);
   ['chatSession','chatIssue'].forEach(key=>url.searchParams.delete(key));
@@ -1640,7 +1641,7 @@ function mountNativeChat(){
     const mention=pendingChatIssueMention;
     pendingChatIssueMention=null;
     frame.src=mention
-      ?'/chatbot/?projectId='+encodeURIComponent(mention.projectId)+'&mentionIssue='+encodeURIComponent(mention.issueId)
+      ?'/chatbot/?projectId='+encodeURIComponent(mention.projectId)+'&mentionIssue='+encodeURIComponent(mention.issueId)+(mention.mentionBoundSop?'&mentionBoundSop=1':'')
       :'/chatbot/?projectId='+encodeURIComponent(projectId)+(sessionId?'&session='+encodeURIComponent(sessionId):issueId?'&issueId='+encodeURIComponent(issueId):'')+(quickAccess?'&quickAccess=1':'');
   }
   postNativeChatProject(frame);
