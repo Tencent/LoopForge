@@ -249,18 +249,39 @@ async function removeRunner(runnerId){
 }
 // Mirrors domain.Runner.DefaultSelectionBlocker so the page and
 // PUT /api/runners/default refuse the same machines with the same reason.
+function runnerSemanticVersion(value){
+  // Match golang.org/x/mod/semver, including v1/v1.2 shorthand only without suffixes.
+  const match=String(value||'').trim().replace(/^v/,'').match(/^(0|[1-9]\d*)(?:\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?)?)?$/);
+  if(!match)return null;
+  const pre=match[4]?match[4].split('.'):[];
+  if(pre.some(part=>/^\d+$/.test(part)&&part.length>1&&part[0]==='0'))return null;
+  return {core:[match[1],match[2]||'0',match[3]||'0'],pre};
+}
 function runnerVersionAtLeast(have,want){
-  const parse=v=>{const parts=String(v||'').trim().replace(/^v/,'').split('.');return parts.every(p=>/^\d+$/.test(p))?parts.map(Number):null};
-  const h=parse(have),w=parse(want);
-  if(!w)return true;
+  const h=runnerSemanticVersion(have),w=runnerSemanticVersion(want);
+  if(!w)return false;
   if(!h)return false;
-  for(let i=0;i<w.length;i++){const hv=h[i]||0;if(hv!==w[i])return hv>w[i]}
-  return true;
+  // Compare numeric strings without Number's integer precision limit.
+  const numeric=(a,b)=>a.length!==b.length?a.length-b.length:a===b?0:a>b?1:-1;
+  for(let i=0;i<3;i++){const c=numeric(h.core[i],w.core[i]);if(c)return c>0}
+  if(!h.pre.length||!w.pre.length)return !h.pre.length;
+  for(let i=0;i<Math.min(h.pre.length,w.pre.length);i++){
+    const a=h.pre[i],b=w.pre[i];
+    if(a===b)continue;
+    const an=/^\d+$/.test(a),bn=/^\d+$/.test(b);
+    if(an&&bn)return numeric(a,b)>0;
+    if(an!==bn)return !an;
+    return a>b;
+  }
+  return h.pre.length>=w.pre.length;
 }
 function runnerDefaultBlocker(r){
   if(r.status!=='online')return '机器离线';
   const min=state.minRunnerVersion||'';
-  if(min&&!runnerVersionAtLeast(r.runnerVersion,min))return `执行机器版本 ${r.runnerVersion||'未知'} 过低，需升级至 ${min} 及以上`;
+  if(min&&!runnerVersionAtLeast(r.runnerVersion,min)){
+    if(!runnerSemanticVersion(r.runnerVersion))return `无法判断执行机器版本 ${r.runnerVersion||'未知'} 的兼容性，请确认版本（需 ${min} 及以上）`;
+    return `执行机器版本 ${r.runnerVersion||'未知'} 过低，需升级至 ${min} 及以上`;
+  }
   return '';
 }
 async function setDefaultRunner(runnerId){

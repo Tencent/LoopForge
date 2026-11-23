@@ -3,9 +3,10 @@ package domain
 import (
 	"fmt"
 	"path"
-	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 // Runner connection model (docs: cli-connect.md).
@@ -113,6 +114,9 @@ func (r Runner) DefaultSelectionBlocker() string {
 		version := strings.TrimSpace(r.RunnerVersion)
 		if version == "" {
 			version = "未知"
+		}
+		if !semver.IsValid(runnerSemanticVersion(r.RunnerVersion)) {
+			return fmt.Sprintf("无法判断执行机器版本 %s 的兼容性，请确认版本（需 %s 及以上才能设为默认）", version, RunnerVersionDefaultSelection)
 		}
 		return fmt.Sprintf("执行机器版本 %s 过低，需升级至 %s 及以上才能设为默认", version, RunnerVersionDefaultSelection)
 	}
@@ -247,35 +251,15 @@ func (r Runner) SupportsReportedOutputs() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionReportedOutputs)
 }
 
-// versionAtLeast compares dotted numeric versions; malformed input is older.
+func runnerSemanticVersion(version string) string {
+	return "v" + strings.TrimPrefix(strings.TrimSpace(version), "v")
+}
+
+// versionAtLeast ignores semantic-version build metadata and orders prereleases
+// below the corresponding release. Unknown versions never enable a capability.
 func versionAtLeast(have, want string) bool {
-	parse := func(v string) ([]int, bool) {
-		parts := strings.Split(strings.TrimPrefix(strings.TrimSpace(v), "v"), ".")
-		out := make([]int, len(parts))
-		for i, part := range parts {
-			n, err := strconv.Atoi(part)
-			if err != nil {
-				return nil, false
-			}
-			out[i] = n
-		}
-		return out, true
-	}
-	h, ok := parse(have)
-	if !ok {
-		return false
-	}
-	w, _ := parse(want)
-	for i := 0; i < len(w); i++ {
-		hv := 0
-		if i < len(h) {
-			hv = h[i]
-		}
-		if hv != w[i] {
-			return hv > w[i]
-		}
-	}
-	return true
+	h, w := runnerSemanticVersion(have), runnerSemanticVersion(want)
+	return semver.IsValid(h) && semver.IsValid(w) && semver.Compare(h, w) >= 0
 }
 
 // SupportsProvider reports whether the runner last reported a runtime for the
