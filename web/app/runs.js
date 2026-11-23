@@ -296,7 +296,7 @@ function renderRuns(){
 function showRunDetail(id){
   if(!id)return;
   stopQueuedRunRefresh();
-  if(state.selectedRun!==id){stopLiveRun();stopPreviewPoll();state.runWorkspace=null}
+  if(state.selectedRun!==id){stopLiveRun();stopPreviewPoll();stopRunEvalStream();state.runWorkspace=null}
   state.selectedRun=id;
   syncRunHash(id);
   $('#runsView')?.classList.add('detail-open');

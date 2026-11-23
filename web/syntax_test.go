@@ -1099,8 +1099,17 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 			t.Fatalf("requirement composer behavior is missing %q", want)
 		}
 	}
+	composerJS, err := os.ReadFile("app/composer.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{`查看完整度详情`, `准入线`, `没有固定轮数`} {
+		if strings.Contains(composer, gone) || strings.Contains(string(composerJS), gone) {
+			t.Fatalf("requirement composer must not keep %q", gone)
+		}
+	}
 	for _, gone := range []string{
-		`查看完整度详情`, `准入线`, `composerAssessmentView`, `invalidateRequirementAnalysis`, `没有固定轮数`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`,
+		`composerAssessmentView`, `invalidateRequirementAnalysis`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`,
 		`function goReqStep(`, `function startReqClarify(`, `function sendChatClarify(`, `function pickReqOption(`, `function submitReqAnswers(`, `function reclarifyRequirement(`, `'/api/chat-clarify'`,
 	} {
 		if strings.Contains(code, gone) {

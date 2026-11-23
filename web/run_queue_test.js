@@ -84,8 +84,23 @@ async function main() {
   assert.equal(race.state.runStream,streamB);assert.deepEqual(raceCalls,[]);assert.equal(race.state.activeRun.id,'b');assert.equal(race.state.data.runs[0].status,'queued');
 
   for (const name of ['showRunDetail','selectRun']) {
-    const streams=[],context={state:{data:{runs:[]}},$:()=>({hidden:false,classList:{add:()=>{}},dataset:{}}),document:{querySelector:()=>({setAttribute:()=>{}})},stopQueuedRunRefresh:()=>{},stopLiveRun:()=>{},stopPreviewPoll:()=>{},syncRunHash:()=>{},api:async()=>({id:'r',status:'queued'}),shouldPatchRunLive:()=>false,renderRunDetail:()=>{},renderRuns:()=>{},startLiveRun:id=>streams.push(id),toast:()=>{}};
-    load(context,['loadRunMachineMetadata',name]);context[name]('r');await flush();assert.deepEqual(streams,['r'],name);
+    const streams=[];
+    let evaluationClosed=false;
+    const context={
+      state:{selectedRun:'previous',data:{runs:[]}},
+      runEvalStream:{source:{close:()=>{evaluationClosed=true}}},
+      $:()=>({hidden:false,classList:{add:()=>{}},dataset:{}}),
+      document:{querySelector:()=>({setAttribute:()=>{}})},
+      stopQueuedRunRefresh:()=>{},stopLiveRun:()=>{},stopPreviewPoll:()=>{},syncRunHash:()=>{},
+      api:async()=>({id:'r',status:'queued'}),shouldPatchRunLive:()=>false,
+      renderRunDetail:()=>{},renderRuns:()=>{},startLiveRun:id=>streams.push(id),toast:()=>{},
+    };
+    load(context,['loadRunMachineMetadata','stopRunEvalStream',name]);
+    context[name]('r');
+    await flush();
+    assert.deepEqual(streams,['r'],name);
+    assert.equal(evaluationClosed,true,name);
+    assert.equal(context.runEvalStream,null,name);
   }
   const liveState={selectedRun:'r',data:{runs:[]}},intervals=new Map();let timer=0,status='queued',applied=[];
   const polling={state:liveState,api:async()=>({id:'r',status}),setInterval:fn=>{intervals.set(++timer,fn);return timer},clearInterval:id=>intervals.delete(id),patchCachedRun:()=>{},applyRunPayload:r=>applied.push(r.status),refreshRunPagesDelta:async()=>{},renderRuns:()=>{},renderIssueDetailTab:()=>{}};
