@@ -278,12 +278,15 @@ async function runnerRuntimeRequest(runnerId,provider,status){
     toast(`${runnerCLILabels[provider]||provider} 已${status==='online'?'启用':'停用'}`,'ok');refreshRunners(true);
   }catch(err){toast(err.message);refreshRunners(true)}
 }
+function saveRunnerRuntimeAuth(runnerId,provider,authMode){
+  return api('/api/runners/runtimes',{method:'PUT',body:JSON.stringify({runnerId,provider,authMode})});
+}
 async function setRunnerRuntimeAuth(runnerId,provider,authMode){
   const key=`${runnerId}|${provider}`;
   runnerAuthChanges.set(key,authMode);
   renderRunnersView();
   try{
-    await api('/api/runners/runtimes',{method:'PUT',body:JSON.stringify({runnerId,provider,authMode})});
+    await saveRunnerRuntimeAuth(runnerId,provider,authMode);
     const ready=runnerPersonalCredentialConfigured(provider);
     toast(authMode==='personal'?(ready?'将使用「个人配置」中的 API Key':'已切换，请先到「个人配置」补充该 CLI 的 API Key'):'将使用这台机器上已登录的 CLI 账号',ready||authMode!=='personal'?'ok':undefined);
   }catch(err){toast(err.message,'err')}
@@ -306,6 +309,51 @@ async function testRunnerRuntime(runnerId,provider){
     runnerRuntimeTests.delete(key);
     renderRunnersView();
   }
+}
+
+async function loadRunnerCodexSettings(host,userId){
+  if(!host||!userId)return;
+  try{
+    const {runner}=await api('/api/runners/default',{silent:true});
+    if(host.isConnected&&Number(runner?.ownerUserId)===Number(userId))renderRunnerCodexSettings(host,runner);
+  }catch{}
+}
+function renderRunnerCodexSettings(host,runner){
+  const runtime=runner.runtimes?.find(item=>item.provider==='codex');
+  if(!runtime)return;
+  const mode=runnerRuntimeAuthMode(runtime),local=mode==='local';
+  const online=runner.status==='online'&&runtime.status==='online';
+  host.hidden=false;
+  host.innerHTML=`<div class="credential-editor-form is-detail">
+    <label class="credential-field"><span>Codex · 默认执行机器<em>${escapeHTML(runner.name||runner.id)}</em></span><div class="credential-input is-plain is-select">${runnerAuthHTML(runtime,runner.id+'|codex',false,false)}</div></label>
+    ${local?`<div class="credential-bar">
+      <button type="button" class="credential-btn secondary credential-ink" data-codex-act="test"${online?'':' disabled'}>${credentialGlyph('flask',14)}<span>测试连接</span></button>
+      <button type="button" class="credential-btn secondary credential-ink" data-codex-act="models" aria-haspopup="dialog">${credentialGlyph('layers',14)}<span>模型列表</span></button>
+    </div>`:''}
+  </div>`;
+  const select=host.querySelector('[data-runner-auth]');
+  select.onchange=async()=>{
+    select.disabled=true;
+    try{
+      const updated=await saveRunnerRuntimeAuth(runner.id,'codex',select.value);
+      if(host.isConnected){
+        renderRunnerCodexSettings(host,updated);
+        host.querySelector('[data-runner-auth]')?.focus({preventScroll:true});
+      }
+      toast('Codex 认证方式已保存','ok');
+    }catch(err){
+      select.value=mode;
+      select.disabled=false;
+      toast(err.message,'err');
+    }
+  };
+  host.querySelector('[data-codex-act="models"]')?.addEventListener('click',()=>showRunnerModels(runner,runtime));
+  host.querySelector('[data-codex-act="test"]')?.addEventListener('click',event=>{
+    const button=event.currentTarget;
+    setCredentialButtonBusy(button,'测试中');
+    void testRunnerRuntime(runner.id,'codex').finally(()=>setCredentialButtonBusy(button,''));
+  });
+  hydrateCredentialIcons(host);
 }
 
 function closeRunnerRuntimeMenu(restoreFocus=false){

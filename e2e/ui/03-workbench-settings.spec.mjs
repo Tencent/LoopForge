@@ -156,6 +156,23 @@ test('personal credentials: the add wizard validates, saves write-only, and the 
   expect(errors).toEqual([]);
 });
 
+test('personal credentials: an owned Codex Runner exposes account login and its model editor', async ({ page, identity }) => {
+  const { runner, online } = await get('/api/runners/default');
+  const codex = runner?.runtimes?.find(runtime => runtime.provider === 'codex');
+  test.skip(!online || runner?.ownerUserId !== identity.user.id || codex?.status !== 'online' || codex.authMode === 'personal', 'requires an owned online Codex Runner in account login mode');
+
+  const errors = watchErrors(page);
+  await openView(page, 'settings');
+  const subscription = page.locator('[data-credential-codex-subscription]');
+  await expect(subscription).toContainText(runner.name || runner.id);
+  await expect(subscription.getByLabel('Codex 认证方式')).toHaveValue('local');
+  await subscription.getByRole('button', { name: '模型列表', exact: true }).click();
+  const dialog = page.locator('#confirmModal');
+  await expect(dialog).toContainText('使用这台机器的账号登录');
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  expect(errors).toEqual([]);
+});
+
 test('personal credentials: the 代码仓库 row opens read-only and swaps in the token form on demand', async ({ page, identity }) => {
   const me = identity.user;
   test.skip(!(await userById(me.id))?.gitHubCredentialConfigured, 'the token owner has no 工蜂 Git Token configured');

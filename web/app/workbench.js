@@ -82,7 +82,7 @@ const CREDENTIAL_KINDS=[
     placeholder:'请输入 Codex API Key',
     extra:{name:'codexBaseUrl',label:'Base URL',placeholder:'https://api.openai.com/v1',url:true,clearWithKey:true},
     models:{name:'codexModels',engine:'codex',endpoint:'/models'},
-    impact:'以 Codex 运行的 SOP 节点将无法执行，Base URL 与模型目录一并清空。'},
+    impact:'使用此 Key 的 Codex 对话与 SOP 将失去授权。'},
   {key:'claudeCodeApiKey',group:'model',name:'Claude Code',short:'Claude Code API Key',logo:'claude',monochrome:true,
     use:'AI 对话选择 Claude 执行器，以及以 Claude Code 运行的 SOP 节点',
     description:'AI 对话切换到 Claude Code 后可选用模型目录里的模型，SOP 在执行机器上以 Claude Code 运行的节点也使用它。目录为空时，未填 Base URL 使用 Claude Code 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
@@ -356,10 +356,11 @@ function credentialCatalogProbeHTML(catalog,kind){
   const probe=catalog.probe,current=new Set(readCredentialCatalog(catalog).map(model=>model.id)),followAll=!current.size;
   const items=probe.models.map(model=>{
     const listed=current.has(model.id),checked=followAll||listed;
-    return `<label class="credential-catalog-pick" data-pick="${escapeHTML((model.id+' '+(model.name||'')).toLowerCase())}"><input type="checkbox" value="${escapeHTML(model.id)}"${checked?' checked':''}><code>${escapeHTML(model.id)}</code>${model.name&&model.name!==model.id?`<small>${escapeHTML(model.name)}</small>`:''}${listed?'<em>已在目录</em>':''}</label>`;
+    const note=probe.savedOnly?.has(model.id)?'目录已保存 · CLI 未列出':listed?'已在目录':'';
+    return `<label class="credential-catalog-pick" data-pick="${escapeHTML((model.id+' '+(model.name||'')).toLowerCase())}"><input type="checkbox" value="${escapeHTML(model.id)}"${checked?' checked':''}><code>${escapeHTML(model.id)}</code>${model.name&&model.name!==model.id?`<small>${escapeHTML(model.name)}</small>`:''}${note?`<em>${note}</em>`:''}</label>`;
   }).join('');
   const protocol=catalog.closest('.credential-editor-form')?.querySelector('select[name="protocol"]')?.value||catalog.dataset.catalogProtocol;
-  const sources={builtin:'CLI 内置模型',official:'来自官方服务',runner:'来自这台机器的账号登录'};
+  const sources={builtin:'CLI 内置模型',official:'来自官方服务',runner:'此执行机器的 CLI 返回'};
   const source=sources[probe.source]||`来自 Base URL 的 ${escapeHTML(credentialModelsEndpoint(kind,protocol))}`;
   return `<div class="credential-catalog-probe-top"><span class="credential-input is-plain is-search">${credentialGlyph('search',14)}<input data-catalog-search placeholder="搜索模型" aria-label="搜索模型" autocomplete="off" spellcheck="false"></span><span class="credential-catalog-picked" data-catalog-picked></span><button type="button" class="credential-btn link credential-ink" data-catalog-act="toggle-all">全选</button></div>
     <div class="credential-catalog-probe-list" role="group" aria-label="可用模型">${items}</div>
@@ -419,6 +420,11 @@ async function probeCredentialCatalog(row,catalog,button,connectOnly=false){
     catalog.dataset.catalogSource=source;
     credentialCatalogChanged(catalog);
     if(cleared.length)announceCredentialCatalog(catalog,'Base URL 已更换，原模型目录已清空，保存后生效');
+  }
+  if(result.source==='runner'&&kind.models.engine==='codex'){
+    const fetched=new Set(result.models.map(model=>model.id));
+    const savedOnly=credentialCatalogModels(credentialValue(credentialUser(),kind.models.name)).filter(model=>!fetched.has(model.id));
+    result={...result,models:[...result.models,...savedOnly],savedOnly:new Set(savedOnly.map(model=>model.id))};
   }
   catalog.probe=result;
   panel.innerHTML=credentialCatalogProbeHTML(catalog,kind);
@@ -593,7 +599,7 @@ function credentialClearPayload(kind){
   }
   const payload={[kind.key+'Clear']:true};
   if(kind.extra?.clearWithKey)payload[kind.extra.name]='';
-  if(kind.models)payload[kind.models.name]=[];
+  if(kind.models&&kind.key!=='codexApiKey')payload[kind.models.name]=[];
   return payload;
 }
 function gitTokenVerifyFor(user){return state.gitTokenVerify&&Number(state.gitTokenVerify.userId)===Number(user?.id)?state.gitTokenVerify:null}
@@ -770,7 +776,7 @@ function credentialGroupHTML(group,user){
           <small id="credentialSubscriptionHelp">Claude Code、Codex 和 Antigravity 可用账号登录</small>
         </span>
         <span class="credential-row-end credential-row-action"><span id="credentialSubscriptionAction">配置执行机器</span>${credentialGlyph('arrow-right',14)}</span>
-      </a>`}
+      </a><div class="credential-codex-subscription" data-credential-codex-subscription hidden></div>`}
     </div>
   </section>`;
 }
@@ -979,6 +985,7 @@ function renderCredentialPanel(){
   hydrateCredentialIcons(panel);
   void loadCredentialGitRows(panel,user);
   void loadCredentialDefaults(panel);
+  void loadRunnerCodexSettings(panel.querySelector('[data-credential-codex-subscription]'),user.id);
 }
 function renderCredentialGitGroup(panel=$('#credentialPanel'),user=credentialUser()){
   const group=panel?.querySelector('[data-credential-group="platform"]');
