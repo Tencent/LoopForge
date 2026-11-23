@@ -39,6 +39,7 @@
     'admin:kb.create': '创建知识库',
     'admin:kb.update': '更新知识库',
     'admin:kb.delete': '删除知识库',
+    'admin:model.create': '配置向量模型',
     'admin:conn.probe': '探测连接',
     'admin:conn.provision': '自动初始化 WeKnora',
     'admin:conn.remove': '移除连接',
@@ -570,6 +571,7 @@
   // 整页加载与文档列表各自维护单调序号：晚到的旧响应直接丢弃，避免 A 库内容覆盖 B 库。
   let kbViewEpoch = 0;
   let kbDocsEpoch = 0;
+  let kbAutoProvisionAttempted = false;
 
   async function loadKnowledgeView() {
     const root = document.getElementById('knowledgeRoot');
@@ -580,8 +582,38 @@
     try {
       const pid = encodeURIComponent(kbProjectId());
       // canWrite 与后端写接口同源：按当前项目计算，切换项目刷新时同步更新。
-      const settings = await kbAPI('/api/knowledge/settings?projectId=' + pid);
+      let settings = await kbAPI('/api/knowledge/settings?projectId=' + pid);
       if (epoch !== kbViewEpoch) return;
+      if (
+        !kbAutoProvisionAttempted &&
+        settings &&
+        !settings.ready &&
+        settings.canManage &&
+        settings.detectedWeKnoraUrl &&
+        !settings.updatedAt &&
+        !settings.updatedBy &&
+        !settings.url &&
+        !settings.tokenConfigured &&
+        !(settings.connections && settings.connections.length)
+      ) {
+        kbAutoProvisionAttempted = true;
+        try {
+          await kbAPI('/api/knowledge/weknora/provision', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mode: 'managed',
+              name: '内置 WeKnora',
+              writeEnabled: true,
+              onlyIfFresh: true
+            })
+          });
+          settings = await kbAPI('/api/knowledge/settings?projectId=' + pid);
+          if (epoch !== kbViewEpoch) return;
+        } catch {
+          // 首次自动绑定失败时不阻断页面加载，管理员仍可在接入配置页手动重试。
+        }
+      }
       kbState.settings = settings;
       // Agent 检索开关（ready）不等于人用管理面开关：只要存在已配置连接就保留管理入口。
       const canBrowse = !!kbState.settings.ready || kbHasConfiguredConnections();
@@ -841,7 +873,8 @@
     }
   }
 
-  function openKBCreateDrawer() {
+  function openKBCreateDrawer(opts) {
+    const forceExpandEmb = !!(opts && opts.expandEmbedding);
     if (!kbCanWrite()) {
       kbToast(kbCanWriteReason(), true);
       return;
@@ -873,6 +906,39 @@
         <input class="kb-input" id="kbCreateDesc" maxlength="400" placeholder="可选，说明该知识库的用途">
       </div>
       ${kbModelFieldHTML('kbCreateEmbedding', '向量模型（Embedding）', '手动填写 Embedding 模型 ID')}
+      <div class="kb-toolbar" style="margin:-4px 0 8px;justify-content:space-between">
+        <span class="kb-muted" id="kbCreateEmbConfigHint">尚未配置向量模型？可直接在此一键添加</span>
+        <button type="button" class="kb-btn xs" id="kbToggleEmbConfigBtn">配置向量模型</button>
+      </div>
+      <div class="kb-panel" id="kbCreateEmbConfigBox" hidden style="margin-bottom:12px;padding:12px">
+        <div style="font-weight:600;margin-bottom:8px">内置向量模型配置（Embedding）</div>
+        <div class="kb-field">
+          <label for="kbEmbSource">模型来源</label>
+          <select class="kb-input" id="kbEmbSource">
+            <option value="remote">OpenAI 兼容接口（Remote API）</option>
+            <option value="local">本地 Ollama（Local）</option>
+          </select>
+        </div>
+        <div class="kb-field">
+          <label for="kbEmbName">模型名称（Model Name）</label>
+          <input class="kb-input" id="kbEmbName" maxlength="160" placeholder="例如：text-embedding-3-small 或 bge-m3">
+        </div>
+        <div class="kb-field" id="kbEmbBaseUrlWrap">
+          <label for="kbEmbBaseUrl">API Base URL</label>
+          <input class="kb-input" id="kbEmbBaseUrl" maxlength="300" placeholder="例如：https://api.openai.com/v1">
+        </div>
+        <div class="kb-field" id="kbEmbApiKeyWrap">
+          <label for="kbEmbApiKey">API Key</label>
+          <input class="kb-input" id="kbEmbApiKey" type="password" maxlength="300" placeholder="选填，远端接口密钥">
+        </div>
+        <div class="kb-field">
+          <label for="kbEmbDims">向量维度（可选）</label>
+          <input class="kb-input" id="kbEmbDims" type="number" min="0" max="16384" placeholder="例如：1536 或 1024（可留空）">
+        </div>
+        <div class="kb-toolbar" style="justify-content:flex-end">
+          <button type="button" class="kb-btn sm primary" id="kbSaveEmbModelBtn">保存并选用该向量模型</button>
+        </div>
+      </div>
       ${kbModelFieldHTML('kbCreateSummary', '摘要模型（KnowledgeQA）', '手动填写 KnowledgeQA 模型 ID')}
       <p class="kb-muted" id="kbCreateModelNote">正在加载该连接的模型列表…</p>
     `, `<button type="button" class="kb-btn" data-kb-drawer-close>取消</button>
@@ -885,9 +951,26 @@
     const embManual = drawer.querySelector('#kbCreateEmbeddingManual');
     const sumSelect = drawer.querySelector('#kbCreateSummary');
     const sumManual = drawer.querySelector('#kbCreateSummaryManual');
+    const embConfigBox = drawer.querySelector('#kbCreateEmbConfigBox');
+    const toggleEmbBtn = drawer.querySelector('#kbToggleEmbConfigBtn');
+    const embSourceSel = drawer.querySelector('#kbEmbSource');
+    const embBaseUrlWrap = drawer.querySelector('#kbEmbBaseUrlWrap');
+    const embApiKeyWrap = drawer.querySelector('#kbEmbApiKeyWrap');
+    const saveEmbBtn = drawer.querySelector('#kbSaveEmbModelBtn');
     let modelSeq = 0;
     let embCountState = 0;
-    const syncModels = async () => {
+    const syncEmbSourceFields = () => {
+      const isLocal = embSourceSel && embSourceSel.value === 'local';
+      if (embBaseUrlWrap) embBaseUrlWrap.hidden = !!isLocal;
+      if (embApiKeyWrap) embApiKeyWrap.hidden = !!isLocal;
+    };
+    embSourceSel?.addEventListener('change', syncEmbSourceFields);
+    syncEmbSourceFields();
+    toggleEmbBtn?.addEventListener('click', () => {
+      if (!embConfigBox) return;
+      embConfigBox.hidden = !embConfigBox.hidden;
+    });
+    const syncModels = async (preferModelId) => {
       const mine = ++modelSeq;
       const cid = connSelect ? connSelect.value : '';
       if (note) note.textContent = '正在加载该连接的模型列表…';
@@ -896,6 +979,12 @@
       const embCount = kbFillModelSelect(embSelect, embManual, res.models, 'Embedding', true);
       const sumCount = kbFillModelSelect(sumSelect, sumManual, res.models, 'KnowledgeQA');
       embCountState = embCount;
+      if (preferModelId && embSelect) {
+        embSelect.value = preferModelId;
+      }
+      if (embConfigBox && (forceExpandEmb || (!res.error && embCount === 0))) {
+        embConfigBox.hidden = false;
+      }
       if (!note) return;
       if (res.error) {
         embCountState = 0;
@@ -903,7 +992,7 @@
         if (embManual) embManual.hidden = false;
         if (sumManual) sumManual.hidden = false;
       } else if (!embCount) {
-        note.textContent = kbLfText('远端暂无可选模型（留空由远端默认处理），可手动填写 Embedding 模型 ID。', 'The remote side has no selectable models (leave blank to let the remote decide), or enter an embedding model ID manually.');
+        note.textContent = kbLfText('当前 WeKnora 尚未配置向量模型（Embedding），请在上方直接填写并保存向量模型后再创建知识库。', 'No embedding model is configured in WeKnora yet. Fill in and save an embedding model above before creating a knowledge base.');
       } else {
         note.textContent = kbLfText(
           `已加载模型：Embedding ${embCount} 个 · KnowledgeQA ${sumCount} 个；向量模型必选，摘要模型可留空使用上游默认。`,
@@ -911,6 +1000,41 @@
         );
       }
     };
+    saveEmbBtn?.addEventListener('click', async () => {
+      const cid = connSelect ? String(connSelect.value || '').trim() : '';
+      const source = embSourceSel ? String(embSourceSel.value || 'remote') : 'remote';
+      const modelName = String(drawer.querySelector('#kbEmbName')?.value || '').trim();
+      const baseURL = String(drawer.querySelector('#kbEmbBaseUrl')?.value || '').trim();
+      const apiKey = String(drawer.querySelector('#kbEmbApiKey')?.value || '').trim();
+      const dims = Number(drawer.querySelector('#kbEmbDims')?.value || 0) || 0;
+      if (!cid) { kbToast('请选择目标连接', true); return; }
+      if (!modelName) { kbToast('请填写向量模型名称', true); return; }
+      if (source === 'remote' && !baseURL) { kbToast('请填写向量模型 API Base URL', true); return; }
+      saveEmbBtn.disabled = true;
+      try {
+        const created = await kbAPI('/api/knowledge/models?projectId=' + encodeURIComponent(kbProjectId()), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connectionId: cid,
+            name: modelName,
+            type: 'Embedding',
+            source: source,
+            baseUrl: source === 'remote' ? baseURL : '',
+            apiKey: source === 'remote' ? apiKey : '',
+            embeddingDimensions: dims > 0 ? dims : 0
+          })
+        });
+        delete kbState.modelsByConn[cid];
+        if (embConfigBox) embConfigBox.hidden = true;
+        kbToast('向量模型已配置');
+        await syncModels(created && created.id ? created.id : '');
+      } catch (err) {
+        kbToastError(err, cid);
+      } finally {
+        saveEmbBtn.disabled = false;
+      }
+    });
     connSelect?.addEventListener('change', () => {
       kbOperationConnId = String(connSelect.value || '');
       syncModels();
@@ -1896,6 +2020,7 @@
           ${capsHTML}
           <div class="kb-toolbar" style="margin-bottom:12px">
             <button type="button" class="kb-btn" id="kbCreateSourceBtn" ${createDenied ? `disabled title="${kbEsc(createReason)}"` : ''}>新建知识库</button>
+            <button type="button" class="kb-btn" id="kbOpenEmbConfigBtn" ${createDenied ? `disabled title="${kbEsc(createReason)}"` : ''}>配置向量模型</button>
           </div>
           <div class="kb-source-list">${sourcesHTML}</div>
         </div>
@@ -1903,7 +2028,8 @@
       </div>
     `;
 
-    container.querySelector('#kbCreateSourceBtn')?.addEventListener('click', openKBCreateDrawer);
+    container.querySelector('#kbCreateSourceBtn')?.addEventListener('click', () => openKBCreateDrawer());
+    container.querySelector('#kbOpenEmbConfigBtn')?.addEventListener('click', () => openKBCreateDrawer({ expandEmbedding: true }));
     container.querySelector('#kbConnFilter')?.addEventListener('change', async e => {
       kbState.connectionFilter = e.target.value || '';
       kbState.docKeyword = '';

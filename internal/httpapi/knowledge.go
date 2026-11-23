@@ -368,6 +368,24 @@ func (h *knowledgeHandlers) models(c *gin.Context) {
 	render(c, list, err)
 }
 
+// 路由: g.POST("/api/knowledge/models", h.createModel)
+func (h *knowledgeHandlers) createModel(c *gin.Context) {
+	projectID, ok := h.requireKnowledgeWriter(c)
+	if !ok {
+		return
+	}
+	var input knowledge.WeKnoraCreateModelInput
+	if !decode(c, &input) {
+		return
+	}
+	if input.ConnectionID == "" {
+		input.ConnectionID = strings.TrimSpace(c.Query("connectionId"))
+	}
+	model, err := h.svc.CreateWeKnoraModel(c.Request.Context(), input)
+	h.auditWrite(c, "model.create", input.ConnectionID, auditTarget(model.ID, strings.TrimSpace(input.Name)), projectID, err)
+	render(c, model, err)
+}
+
 // 路由: g.POST("/api/knowledge/sources", h.createSource)
 func (h *knowledgeHandlers) createSource(c *gin.Context) {
 	projectID, ok := h.requireKnowledgeWriter(c)

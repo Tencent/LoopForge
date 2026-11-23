@@ -153,11 +153,11 @@ compose_files=(compose.yaml)
 if [[ "${LOOPFORGE_BUILD_FROM_SOURCE:-0}" == 1 ]]; then
   compose_files+=(compose.dev.yaml)
 fi
-if [[ "${LOOPFORGE_WITH_WEKNORA:-0}" == 1 ]]; then
+if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 ]]; then
   compose_files+=(compose.weknora.yaml)
 fi
 target_compose=$(IFS=:; echo "${compose_files[*]}")
-if [[ "$target_compose" != "compose.yaml" && "${COMPOSE_FILE:-}" != "$target_compose" ]]; then
+if [[ "${COMPOSE_FILE:-compose.yaml}" != "$target_compose" ]]; then
   # Persisted because sudo-run Compose only reads .env; later plain compose commands keep the stack.
   python3 - "$target_compose" <<'PY'
 import pathlib,re,sys
@@ -169,7 +169,7 @@ PY
 fi
 
 compose_profiles=(--profile platform)
-if [[ "${LOOPFORGE_WITH_WEKNORA:-0}" == 1 ]]; then
+if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 ]]; then
   compose_profiles+=(--profile weknora)
 fi
 
@@ -188,7 +188,7 @@ if [[ "${LOOPFORGE_BUILD_FROM_SOURCE:-0}" != 1 ]]; then
     step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
     docker_access compose "${compose_profiles[@]}" pull --policy "$pull_policy" platform mysql
   fi
-  if [[ "${LOOPFORGE_WITH_WEKNORA:-0}" == 1 ]]; then
+  if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 ]]; then
     step 'Pulling WeKnora knowledge base images'
     docker_access compose "${compose_profiles[@]}" pull --policy "$pull_policy" weknora-postgres weknora-redis weknora-docreader weknora-app weknora-frontend
   fi
@@ -204,7 +204,7 @@ else
   mysql_pull=$!
   docker_access compose "${compose_profiles[@]}" build platform
   wait "$mysql_pull" || true
-  if [[ "${LOOPFORGE_WITH_WEKNORA:-0}" == 1 ]]; then
+  if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 ]]; then
     step 'Pulling WeKnora knowledge base images'
     docker_access compose "${compose_profiles[@]}" pull --policy missing weknora-postgres weknora-redis weknora-docreader weknora-app weknora-frontend
   fi

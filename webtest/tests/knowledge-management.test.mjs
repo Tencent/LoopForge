@@ -1590,3 +1590,70 @@ test('手工文档正文回退：分块分页被截断时禁用保存，不覆�
   await settle(4);
   assert.equal(callsTo(app, 'PUT', DOC_PATH('doc-trunc')).length, 0, '禁用后不发送保存请求');
 });
+
+test('内置向量模型配置：无 Embedding 模型时新建知识库自动展开配置表单并保存选用', async (t) => {
+  let models = [
+    { id: 'sum-1', name: 'gpt-4o-mini', type: 'KnowledgeQA' },
+  ];
+  const app = await loadApp({
+    routes: ROUTES([
+      {
+        method: 'GET',
+        path: /^\/api\/knowledge\/models/,
+        body: () => models,
+      },
+      {
+        method: 'POST',
+        path: /^\/api\/knowledge\/models/,
+        body: (_url, init) => {
+          const payload = JSON.parse(init?.body || '{}');
+          const created = {
+            id: 'emb-new-1',
+            name: payload.name || 'text-embedding-3-small',
+            type: 'Embedding',
+            source: payload.source || 'remote',
+          };
+          models = [created, ...models];
+          return created;
+        },
+      },
+    ]),
+  });
+  t.after(app.close);
+  const { document } = app;
+  app.evaluate("switchView('knowledge')");
+  await settle(10);
+
+  document.querySelector('#kbCreateSourceBtn').click();
+  await settle(10);
+
+  const embBox = document.querySelector('#kbCreateEmbConfigBox');
+  assert.ok(embBox && !embBox.hidden, '无 Embedding 模型时自动展开内置向量模型配置表单');
+  assert.match(document.querySelector('#kbCreateModelNote').textContent, /尚未配置向量模型/);
+
+  const nameInput = document.querySelector('#kbEmbName');
+  const urlInput = document.querySelector('#kbEmbBaseUrl');
+  const keyInput = document.querySelector('#kbEmbApiKey');
+  const dimsInput = document.querySelector('#kbEmbDims');
+  nameInput.value = 'text-embedding-3-small';
+  urlInput.value = 'https://api.openai.com/v1';
+  keyInput.value = 'sk-test-123';
+  dimsInput.value = '1536';
+
+  document.querySelector('#kbSaveEmbModelBtn').click();
+  await settle(12);
+
+  const postCalls = callsTo(app, 'POST', '/api/knowledge/models');
+  assert.equal(postCalls.length, 1, '调用 POST /api/knowledge/models 创建向量模型');
+  assert.equal(postCalls[0].body.connectionId, 'conn-a');
+  assert.equal(postCalls[0].body.name, 'text-embedding-3-small');
+  assert.equal(postCalls[0].body.type, 'Embedding');
+  assert.equal(postCalls[0].body.source, 'remote');
+  assert.equal(postCalls[0].body.baseUrl, 'https://api.openai.com/v1');
+  assert.equal(postCalls[0].body.apiKey, 'sk-test-123');
+  assert.equal(postCalls[0].body.embeddingDimensions, 1536);
+
+  assert.equal(embBox.hidden, true, '保存成功后收起配置表单');
+  const embSelect = document.querySelector('#kbCreateEmbedding');
+  assert.equal(embSelect.value, 'emb-new-1', '新建的 Embedding 模型自动被选中');
+});

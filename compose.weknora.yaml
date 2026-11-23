@@ -1,12 +1,14 @@
-# Optional WeKnora knowledge base stack layered on compose.yaml:
-#   ./start.sh --with-weknora
-#   ./start.sh dev --with-weknora
+# Optional WeKnora knowledge base stack layered on compose.yaml (enabled by default):
+#   ./start.sh
+#   ./start.sh dev
+#   ./start.sh --without-weknora
 #   docker compose -f compose.yaml -f compose.weknora.yaml --profile platform --profile weknora up -d
 services:
   platform:
     environment:
       LOOPFORGE_WEKNORA_URL: ${LOOPFORGE_WEKNORA_URL:-http://weknora-app:8080}
       LOOPFORGE_WEKNORA_UI_URL: ${LOOPFORGE_WEKNORA_UI_URL:-http://localhost:${WEKNORA_UI_PORT:-18081}}
+      LOOPFORGE_WEKNORA_ADMIN_PASSWORD: ${LOOPFORGE_WEKNORA_ADMIN_PASSWORD:-}
 
   weknora-postgres:
     profiles: [weknora]

@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
+	"sync"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -193,5 +196,189 @@ func TestSourcesExcludesDisabledConnections(t *testing.T) {
 	up := &fakeUpstream{sources: []Source{{ID: "kb-1"}}}
 	if _, err := newTestService(store, up).Sources(context.Background(), ""); err == nil {
 		t.Fatal("default Sources() must not browse disabled connections")
+	}
+}
+
+func TestEnsureDefaultManagedWeKnoraAutoProvisionsOnFreshInstall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/api/v1/auth/register":
+			_, _ = w.Write([]byte(`{"success":true}`))
+		case "/api/v1/auth/login":
+			_, _ = w.Write([]byte(`{"success":true,"token":"jwt-1","active_tenant":{"id":10000}}`))
+		case "/api/v1/tenants/10000/api-keys":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"token":"sk-auto-managed"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("LOOPFORGE_WEKNORA_URL", srv.URL)
+	t.Setenv("LOOPFORGE_WEKNORA_ADMIN_PASSWORD", "test-pass-123")
+
+	store := newFakeStore()
+	up := &fakeUpstream{sources: []Source{{ID: "kb-1", Name: "Default KB"}}}
+	svc := newTestService(store, up)
+
+	settings, ok := svc.EnsureDefaultManagedWeKnora(context.Background())
+	if !ok {
+		t.Fatal("expected EnsureDefaultManagedWeKnora to auto-provision on fresh install")
+	}
+	if !settings.Ready() || len(settings.Connections) != 1 {
+		t.Fatalf("expected 1 ready connection, got ready=%v conns=%d", settings.Ready(), len(settings.Connections))
+	}
+	if settings.Connections[0].Name != "内置 WeKnora" || !settings.Connections[0].Enabled || !settings.WriteEnabled {
+		t.Fatalf("unexpected connection/settings: conn=%+v writeEnabled=%v", settings.Connections[0], settings.WriteEnabled)
+	}
+
+	// Second call must be a no-op once configured.
+	if _, ok := svc.EnsureDefaultManagedWeKnora(context.Background()); ok {
+		t.Fatal("expected EnsureDefaultManagedWeKnora to be a no-op after initial provision")
+	}
+
+	// If an administrator explicitly cleared connections (UpdatedBy != ""), do not override.
+	store.settings = domain.KnowledgeSettings{UpdatedBy: "admin"}
+	if _, ok := svc.EnsureDefaultManagedWeKnora(context.Background()); ok {
+		t.Fatal("expected EnsureDefaultManagedWeKnora to respect admin-touched settings")
+	}
+}
+
+func TestCreateWeKnoraModelCreatesEmbeddingModel(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/models":
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":"emb-1","name":"text-embedding-3-small","type":"Embedding","source":"remote"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":1003,"message":"not found"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled:      true,
+		WriteEnabled: true,
+		Provider:     "weknora",
+		Connections: []domain.KnowledgeConnection{
+			{ID: "wk-1", Name: "内置 WeKnora", Provider: "weknora", URL: srv.URL, Token: "sk-1", Enabled: true},
+		},
+	}
+	svc := newTestService(store, &fakeUpstream{})
+	model, err := svc.CreateWeKnoraModel(context.Background(), WeKnoraCreateModelInput{
+		ConnectionID:        "wk-1",
+		Name:                "text-embedding-3-small",
+		Type:                "Embedding",
+		Source:              "remote",
+		BaseURL:             "https://api.openai.com/v1",
+		APIKey:              "sk-openai",
+		EmbeddingDimensions: 1536,
+	})
+	if err != nil {
+		t.Fatalf("CreateWeKnoraModel() error = %v", err)
+	}
+	if model.ID != "emb-1" || model.Type != "Embedding" {
+		t.Fatalf("unexpected model: %+v", model)
+	}
+	params, _ := gotBody["parameters"].(map[string]any)
+	if gotBody["name"] != "text-embedding-3-small" || gotBody["type"] != "Embedding" || params["base_url"] != "https://api.openai.com/v1" {
+		t.Fatalf("unexpected upstream payload: %+v", gotBody)
+	}
+}
+
+func TestEnsureDefaultManagedWeKnoraDoesNotOverwriteConcurrentAdminClearAndMultiReplica(t *testing.T) {
+	var apiKeyCreates int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/api/v1/auth/register":
+			_, _ = w.Write([]byte(`{"success":true}`))
+		case "/api/v1/auth/login":
+			_, _ = w.Write([]byte(`{"success":true,"token":"jwt-1","active_tenant":{"id":10000}}`))
+		case "/api/v1/tenants/10000/api-keys":
+			mu.Lock()
+			apiKeyCreates++
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"success":true,"data":{"token":"sk-auto-managed"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("LOOPFORGE_WEKNORA_URL", srv.URL)
+	t.Setenv("LOOPFORGE_WEKNORA_ADMIN_PASSWORD", "test-pass-123")
+
+	// 1. Multi-replica concurrent OnlyIfFresh calls on a brand-new store:
+	// only ONE replica wins the fresh-install row lock and creates an API key on WeKnora (no orphan keys).
+	store := newFakeStore()
+	up := &fakeUpstream{}
+	replicaA := newTestService(store, up)
+	replicaB := newTestService(store, up)
+
+	var wg sync.WaitGroup
+	var resA, resB WeKnoraProvisionResult
+	var errA, errB error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		resA, errA = replicaA.ProvisionWeKnora(context.Background(), WeKnoraProvisionInput{
+			Mode: "managed", Name: "内置 WeKnora", WriteEnabled: true, OnlyIfFresh: true,
+		}, "system:auto-weknora")
+	}()
+	go func() {
+		defer wg.Done()
+		resB, errB = replicaB.ProvisionWeKnora(context.Background(), WeKnoraProvisionInput{
+			Mode: "managed", Name: "内置 WeKnora", WriteEnabled: true, OnlyIfFresh: true,
+		}, "system:auto-weknora")
+	}()
+	wg.Wait()
+
+	if errA != nil || errB != nil {
+		t.Fatalf("ProvisionWeKnora(OnlyIfFresh) errors: errA=%v errB=%v", errA, errB)
+	}
+	if resA.Claimed == resB.Claimed {
+		t.Fatalf("expected exactly one replica to claim fresh install (resA.Claimed=%v resB.Claimed=%v)", resA.Claimed, resB.Claimed)
+	}
+	if apiKeyCreates != 1 {
+		t.Fatalf("expected exactly 1 WeKnora API key creation across replicas, got %d", apiKeyCreates)
+	}
+
+	// 2. Administrator deletes the connection and clears settings (even in local mode where actor == "" or UpdatedBy == ""):
+	// subsequent OnlyIfFresh / EnsureDefaultManagedWeKnora calls must NEVER re-inject the connection.
+	for _, conn := range store.KnowledgeSettings().Connections {
+		if _, err := replicaA.DeleteConnection(conn.ID, ""); err != nil {
+			t.Fatalf("DeleteConnection(%s) error = %v", conn.ID, err)
+		}
+	}
+	if _, err := replicaA.UpdateSettings(SettingsInput{Enabled: false, ClearToken: true}, ""); err != nil {
+		t.Fatalf("UpdateSettings(clear) error = %v", err)
+	}
+	afterClear := store.KnowledgeSettings()
+	if len(afterClear.Connections) != 0 || afterClear.Enabled {
+		t.Fatalf("expected empty disabled connections after admin clear, got %+v", afterClear)
+	}
+	if _, claimed := replicaB.EnsureDefaultManagedWeKnora(context.Background()); claimed {
+		t.Fatalf("expected EnsureDefaultManagedWeKnora not to claim after admin cleared connections")
+	}
+	resAfterClear, err := replicaB.ProvisionWeKnora(context.Background(), WeKnoraProvisionInput{
+		Mode: "managed", Name: "内置 WeKnora", WriteEnabled: true, OnlyIfFresh: true,
+	}, "system:auto-weknora")
+	if err != nil || resAfterClear.Claimed {
+		t.Fatalf("expected ProvisionWeKnora(OnlyIfFresh) not to overwrite cleared settings: claimed=%v err=%v", resAfterClear.Claimed, err)
+	}
+	if apiKeyCreates != 1 {
+		t.Fatalf("expected no additional WeKnora API key creation after admin clear, got %d", apiKeyCreates)
 	}
 }

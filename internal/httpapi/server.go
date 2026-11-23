@@ -508,6 +508,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/knowledge/reference-check", api.know.checkReferences)
 	g.GET("/api/knowledge/reference-options", api.know.referenceOptions)
 	g.GET("/api/knowledge/models", api.know.models)
+	g.POST("/api/knowledge/models", api.know.createModel)
 	g.GET("/api/knowledge/sources", api.know.sources)
 	g.POST("/api/knowledge/sources", api.know.createSource)
 	g.GET("/api/knowledge/sources/:id", api.know.source)

@@ -23,6 +23,7 @@ type Store interface {
 	// MutateKnowledgeSettings applies an in-place change to the latest stored
 	// settings inside a transaction; mutate returns true when it changed them.
 	MutateKnowledgeSettings(func(*domain.KnowledgeSettings) bool) error
+	MutateKnowledgeSettingsIfFresh(func(*domain.KnowledgeSettings) (bool, error)) (bool, error)
 	DeleteKnowledgeConnectionToken(connID string) error
 	ManagedWeKnoraAdminPassword() string
 	PutManagedWeKnoraAdminPassword(password string) error
@@ -726,6 +727,26 @@ func (s *Service) WeKnoraModels(ctx context.Context, connectionID string) ([]WeK
 		return nil, apperr.New(apperr.Upstream, "获取 WeKnora 模型列表失败："+err.Error())
 	}
 	return models, nil
+}
+
+func (s *Service) CreateWeKnoraModel(ctx context.Context, input WeKnoraCreateModelInput) (WeKnoraModel, error) {
+	_, conn, wc, err := s.resolveExplicitWeKnoraConnection(input.ConnectionID)
+	if err != nil {
+		return WeKnoraModel{}, err
+	}
+	if strings.TrimSpace(input.Name) == "" {
+		return WeKnoraModel{}, apperr.New(apperr.Invalid, "模型名称不能为空")
+	}
+	if err := s.requireCapability(ctx, conn, wc, domain.CapKBManage); err != nil {
+		return WeKnoraModel{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	model, err := wc.CreateModel(ctx, input)
+	if err != nil {
+		return WeKnoraModel{}, s.managementError(conn, domain.CapKBManage, "创建 WeKnora 模型", err)
+	}
+	return model, nil
 }
 
 func (s *Service) CreateWeKnoraKB(ctx context.Context, projectID string, input WeKnoraCreateKBInput) (weKnoraKB, error) {

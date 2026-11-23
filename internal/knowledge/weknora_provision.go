@@ -13,11 +13,57 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 )
+
+var defaultManagedWeKnoraMu sync.Mutex
+
+// EnsureDefaultManagedWeKnora auto-provisions the built-in WeKnora connection
+// when LOOPFORGE_WEKNORA_URL is configured and KnowledgeSettings have never
+// been configured or touched by an administrator. The final persistence goes
+// through Store.MutateKnowledgeSettings (SELECT ... FOR UPDATE in MySQL) with
+// OnlyIfFresh=true so a concurrent admin edit or multi-replica race can never
+// overwrite modified settings.
+func (s *Service) EnsureDefaultManagedWeKnora(ctx context.Context) (domain.KnowledgeSettings, bool) {
+	if strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL")) == "" {
+		return s.Settings(), false
+	}
+	cur := s.Settings()
+	if !freshInstallSettings(cur) {
+		return cur, false
+	}
+	defaultManagedWeKnoraMu.Lock()
+	defer defaultManagedWeKnoraMu.Unlock()
+	cur = s.Settings()
+	if !freshInstallSettings(cur) {
+		return cur, false
+	}
+	pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	res, err := s.ProvisionWeKnora(pctx, WeKnoraProvisionInput{
+		Mode:         "managed",
+		Name:         "内置 WeKnora",
+		WriteEnabled: true,
+		OnlyIfFresh:  true,
+	}, "system:auto-weknora")
+	if err != nil || !res.Claimed {
+		return s.Settings(), false
+	}
+	return s.Settings(), true
+}
+
+func freshInstallSettings(cur domain.KnowledgeSettings) bool {
+	return cur.UpdatedAt.IsZero() &&
+		strings.TrimSpace(cur.UpdatedBy) == "" &&
+		len(cur.Connections) == 0 &&
+		strings.TrimSpace(cur.URL) == "" &&
+		strings.TrimSpace(cur.Token) == "" &&
+		!cur.TokenConfigured
+}
 
 type WeKnoraProvisionInput struct {
 	Mode         string `json:"mode"` // "managed" | "external"
@@ -27,12 +73,14 @@ type WeKnoraProvisionInput struct {
 	Email        string `json:"email"`
 	Password     string `json:"password"`
 	WriteEnabled bool   `json:"writeEnabled"`
+	OnlyIfFresh  bool   `json:"onlyIfFresh,omitempty"`
 }
 
 type WeKnoraProvisionResult struct {
 	Settings domain.KnowledgeSettings `json:"settings"`
 	UIURL    string                   `json:"uiUrl,omitempty"`
 	Message  string                   `json:"message"`
+	Claimed  bool                     `json:"claimed,omitempty"`
 }
 
 // ProvisionWeKnora either starts a managed WeKnora stack in the current Docker
@@ -44,159 +92,205 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 		mode = "external"
 	}
 
-	var targetURL, apiKey, uiURL, msg string
-	switch mode {
-	case "managed":
-		network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK"))
-		if network == "" {
-			network = "loopforge_default"
-		}
-		baseURL := strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL"))
-		if baseURL == "" {
-			baseURL = "http://weknora-app:8080"
-		}
-		validated, err := ValidateOutboundWeKnoraURL(baseURL)
-		if err != nil {
-			return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, err.Error())
-		}
-		baseURL = validated
-		uiURL = strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_UI_URL"))
-		if uiURL == "" {
-			uiURL = "http://localhost:18081"
-		}
-
-		if err := ensureManagedWeKnoraContainers(ctx, network, baseURL); err != nil {
-			return WeKnoraProvisionResult{}, apperr.New(apperr.Upstream, err.Error())
-		}
-		email := firstNonEmpty(strings.TrimSpace(input.Email), "admin@loopforge.local")
-		password := strings.TrimSpace(input.Password)
-		if password == "" {
-			password = strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_ADMIN_PASSWORD"))
-		}
-		if password == "" {
-			password = strings.TrimSpace(s.store.ManagedWeKnoraAdminPassword())
-		}
-		if password == "" {
-			password = generateManagedWeKnoraPassword()
-			if err := s.store.PutManagedWeKnoraAdminPassword(password); err != nil {
-				return WeKnoraProvisionResult{}, err
+	var targetURL, apiKey, uiURL, msg, account, connName string
+	bootstrap := func() error {
+		switch mode {
+		case "managed":
+			network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK"))
+			if network == "" {
+				network = "loopforge_default"
 			}
-		}
-		key, err := BootstrapWeKnoraAPIKey(ctx, baseURL, email, password, "loopforge")
-		if err != nil {
-			return WeKnoraProvisionResult{}, apperr.New(apperr.Upstream, "自动初始化 WeKnora API Key 失败："+err.Error())
-		}
-		targetURL = baseURL
-		apiKey = key
-		msg = "已启动内置 WeKnora 实例并自动写入知识中心配置"
-
-	case "external":
-		validated, err := ValidateOutboundWeKnoraURL(input.URL)
-		if err != nil {
-			if errors.Is(err, ErrNotConfigured) {
-				return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, "请填写已有 WeKnora 服务地址")
+			baseURL := strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL"))
+			if baseURL == "" {
+				baseURL = "http://weknora-app:8080"
 			}
-			return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, err.Error())
-		}
-		targetURL = validated
-		if tok := strings.TrimSpace(input.Token); tok != "" {
-			apiKey = stripBearer(tok)
-		} else if strings.TrimSpace(input.Email) != "" && strings.TrimSpace(input.Password) != "" {
-			key, err := BootstrapWeKnoraAPIKey(ctx, targetURL, strings.TrimSpace(input.Email), input.Password, "")
+			validated, err := ValidateOutboundWeKnoraURL(baseURL)
 			if err != nil {
-				return WeKnoraProvisionResult{}, apperr.New(apperr.Upstream, "登录 WeKnora 获取 API Key 失败："+err.Error())
+				return apperr.New(apperr.Invalid, err.Error())
 			}
+			baseURL = validated
+			uiURL = strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_UI_URL"))
+			if uiURL == "" {
+				uiURL = "http://localhost:18081"
+			}
+
+			if err := ensureManagedWeKnoraContainers(ctx, network, baseURL); err != nil {
+				return apperr.New(apperr.Upstream, err.Error())
+			}
+			email := firstNonEmpty(strings.TrimSpace(input.Email), "admin@loopforge.local")
+			password := strings.TrimSpace(input.Password)
+			if password == "" {
+				password = strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_ADMIN_PASSWORD"))
+			}
+			if password == "" {
+				password = strings.TrimSpace(s.store.ManagedWeKnoraAdminPassword())
+			}
+			if password == "" {
+				password = generateManagedWeKnoraPassword()
+				if err := s.store.PutManagedWeKnoraAdminPassword(password); err != nil {
+					return err
+				}
+			}
+			key, err := BootstrapWeKnoraAPIKey(ctx, baseURL, email, password, "loopforge")
+			if err != nil {
+				return apperr.New(apperr.Upstream, "自动初始化 WeKnora API Key 失败："+err.Error())
+			}
+			targetURL = baseURL
 			apiKey = key
-		} else {
-			return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, "请填写 API Key，或填写 WeKnora 账号密码以自动获取")
-		}
-		check := s.CheckWithProvider(ctx, domain.KnowledgeProviderWeKnora, targetURL, apiKey)
-		if !check.OK {
-			return WeKnoraProvisionResult{}, apperr.New(apperr.Upstream, "连接 WeKnora 失败："+check.Error)
-		}
-		msg = "已成功链接外部 WeKnora 实例并保存配置"
+			msg = "已启动内置 WeKnora 实例并自动写入知识中心配置"
 
-	default:
-		return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, "无效的接入模式（仅支持 managed 或 external）")
+		case "external":
+			validated, err := ValidateOutboundWeKnoraURL(input.URL)
+			if err != nil {
+				if errors.Is(err, ErrNotConfigured) {
+					return apperr.New(apperr.Invalid, "请填写已有 WeKnora 服务地址")
+				}
+				return apperr.New(apperr.Invalid, err.Error())
+			}
+			targetURL = validated
+			if tok := strings.TrimSpace(input.Token); tok != "" {
+				apiKey = stripBearer(tok)
+			} else if strings.TrimSpace(input.Email) != "" && strings.TrimSpace(input.Password) != "" {
+				key, err := BootstrapWeKnoraAPIKey(ctx, targetURL, strings.TrimSpace(input.Email), input.Password, "")
+				if err != nil {
+					return apperr.New(apperr.Upstream, "登录 WeKnora 获取 API Key 失败："+err.Error())
+				}
+				apiKey = key
+			} else {
+				return apperr.New(apperr.Invalid, "请填写 API Key，或填写 WeKnora 账号密码以自动获取")
+			}
+			check := s.CheckWithProvider(ctx, domain.KnowledgeProviderWeKnora, targetURL, apiKey)
+			if !check.OK {
+				return apperr.New(apperr.Upstream, "连接 WeKnora 失败："+check.Error)
+			}
+			msg = "已成功链接外部 WeKnora 实例并保存配置"
+
+		default:
+			return apperr.New(apperr.Invalid, "无效的接入模式（仅支持 managed 或 external）")
+		}
+
+		account = strings.TrimSpace(input.Email)
+		if mode == "managed" && account == "" {
+			account = "admin@loopforge.local"
+		}
+		connName = strings.TrimSpace(input.Name)
+		if connName == "" {
+			if mode == "managed" {
+				connName = "内置 WeKnora"
+			} else if account != "" {
+				connName = account
+			} else {
+				connName = targetURL
+			}
+		}
+		return nil
 	}
 
-	account := strings.TrimSpace(input.Email)
-	if mode == "managed" && account == "" {
-		account = "admin@loopforge.local"
-	}
-	connName := strings.TrimSpace(input.Name)
-	if connName == "" {
-		if mode == "managed" {
-			connName = "内置 WeKnora"
-		} else if account != "" {
-			connName = account
-		} else {
-			connName = targetURL
+	var (
+		beforeConns          []domain.KnowledgeConnection
+		afterConns           []domain.KnowledgeConnection
+		migratedLegacyConnID string
+		claimed              bool
+	)
+	applyMutation := func(current *domain.KnowledgeSettings) bool {
+		if input.OnlyIfFresh && !freshInstallSettings(*current) {
+			return false
 		}
+		beforeConns = append([]domain.KnowledgeConnection(nil), current.Connections...)
+		conns := make([]domain.KnowledgeConnection, 0, len(current.Connections)+1)
+		migratedLegacyConnID = ""
+		if len(current.Connections) > 0 {
+			conns = append(conns, current.Connections...)
+		} else if strings.TrimSpace(current.URL) != "" && (strings.TrimSpace(current.Token) != "" || current.TokenConfigured) {
+			migratedLegacyConnID = "conn-" + randomHex(4)
+			conns = append(conns, domain.KnowledgeConnection{
+				ID:       migratedLegacyConnID,
+				Name:     firstNonEmpty(current.URL, "默认连接"),
+				Provider: current.EffectiveProvider(),
+				URL:      current.URL,
+				Token:    current.Token,
+				Enabled:  true,
+			})
+		}
+
+		updatedExisting := false
+		for i := range conns {
+			if conns[i].URL == targetURL && conns[i].Name == connName {
+				conns[i].Token = apiKey
+				conns[i].Account = firstNonEmpty(account, conns[i].Account)
+				conns[i].Provider = domain.KnowledgeProviderWeKnora
+				conns[i].Enabled = true
+				updatedExisting = true
+				break
+			}
+		}
+		if !updatedExisting {
+			conns = append(conns, domain.KnowledgeConnection{
+				ID:       "wk-" + randomHex(4),
+				Name:     connName,
+				Account:  account,
+				Provider: domain.KnowledgeProviderWeKnora,
+				URL:      targetURL,
+				Token:    apiKey,
+				Enabled:  true,
+			})
+		}
+
+		defaultSources := current.DefaultSources
+		projectSources := current.ProjectSources
+		if migratedLegacyConnID != "" {
+			defaultSources = prefixBareSources(defaultSources, migratedLegacyConnID)
+			projectSources = prefixBareProjectSources(projectSources, migratedLegacyConnID)
+		}
+
+		*current = domain.KnowledgeSettings{
+			Provider:       domain.KnowledgeProviderWeKnora,
+			Enabled:        true,
+			WriteEnabled:   input.WriteEnabled || current.WriteEnabled,
+			URL:            conns[0].URL,
+			Token:          conns[0].Token,
+			Connections:    conns,
+			DefaultSources: defaultSources,
+			ProjectSources: projectSources,
+			UpdatedBy:      actor,
+		}
+		afterConns = append([]domain.KnowledgeConnection(nil), conns...)
+		claimed = true
+		return true
 	}
 
-	current := s.store.KnowledgeSettings()
-	conns := make([]domain.KnowledgeConnection, 0, len(current.Connections)+1)
-	migratedLegacyConnID := ""
-	if len(current.Connections) > 0 {
-		conns = append(conns, current.Connections...)
-	} else if strings.TrimSpace(current.URL) != "" && strings.TrimSpace(current.Token) != "" {
-		migratedLegacyConnID = "conn-" + randomHex(4)
-		conns = append(conns, domain.KnowledgeConnection{
-			ID:       migratedLegacyConnID,
-			Name:     firstNonEmpty(current.URL, "默认连接"),
-			Provider: current.EffectiveProvider(),
-			URL:      current.URL,
-			Token:    current.Token,
-			Enabled:  true,
+	var err error
+	if input.OnlyIfFresh {
+		// Serialize first-install bootstrap under the fresh-install row lock so
+		// concurrent replicas do not create duplicate orphan API keys on WeKnora
+		// and never overwrite an admin who cleared connections.
+		claimed, err = s.store.MutateKnowledgeSettingsIfFresh(func(current *domain.KnowledgeSettings) (bool, error) {
+			if !freshInstallSettings(*current) {
+				return false, nil
+			}
+			if bErr := bootstrap(); bErr != nil {
+				return false, bErr
+			}
+			return applyMutation(current), nil
 		})
-	}
-
-	updatedExisting := false
-	for i := range conns {
-		if conns[i].URL == targetURL && conns[i].Name == connName {
-			conns[i].Token = apiKey
-			conns[i].Account = firstNonEmpty(account, conns[i].Account)
-			conns[i].Provider = domain.KnowledgeProviderWeKnora
-			conns[i].Enabled = true
-			updatedExisting = true
-			break
+	} else {
+		if err = bootstrap(); err == nil {
+			err = s.store.MutateKnowledgeSettings(applyMutation)
 		}
 	}
-	if !updatedExisting {
-		conns = append(conns, domain.KnowledgeConnection{
-			ID:       "wk-" + randomHex(4),
-			Name:     connName,
-			Account:  account,
-			Provider: domain.KnowledgeProviderWeKnora,
-			URL:      targetURL,
-			Token:    apiKey,
-			Enabled:  true,
-		})
-	}
-
-	defaultSources := current.DefaultSources
-	projectSources := current.ProjectSources
-	if migratedLegacyConnID != "" {
-		defaultSources = prefixBareSources(defaultSources, migratedLegacyConnID)
-		projectSources = prefixBareProjectSources(projectSources, migratedLegacyConnID)
-	}
-
-	next := domain.KnowledgeSettings{
-		Provider:       domain.KnowledgeProviderWeKnora,
-		Enabled:        true,
-		WriteEnabled:   input.WriteEnabled || current.WriteEnabled,
-		URL:            conns[0].URL,
-		Token:          conns[0].Token,
-		Connections:    conns,
-		DefaultSources: defaultSources,
-		ProjectSources: projectSources,
-		UpdatedBy:      actor,
-	}
-	if err := s.store.PutKnowledgeSettings(next); err != nil {
+	if err != nil {
 		return WeKnoraProvisionResult{}, err
 	}
-	s.invalidateChangedConnectionCapabilities(current.Connections, next.Connections)
+	if !claimed {
+		saved := s.store.KnowledgeSettings()
+		return WeKnoraProvisionResult{
+			Settings: saved.Public(),
+			UIURL:    uiURL,
+			Message:  "知识中心配置已存在，跳过默认初始化",
+			Claimed:  false,
+		}, nil
+	}
+	s.invalidateChangedConnectionCapabilities(beforeConns, afterConns)
 	if migratedLegacyConnID != "" {
 		s.migrateLegacySubmissionSources(migratedLegacyConnID)
 	}
@@ -205,6 +299,7 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 		Settings: saved.Public(),
 		UIURL:    uiURL,
 		Message:  msg,
+		Claimed:  true,
 	}, nil
 }
 

@@ -190,9 +190,25 @@ type weKnoraKB struct {
 }
 
 type WeKnoraModel struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Type string `json:"type"` // Embedding | KnowledgeQA
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name,omitempty"`
+	Type        string `json:"type"` // Embedding | KnowledgeQA
+	Source      string `json:"source,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type WeKnoraCreateModelInput struct {
+	ConnectionID        string `json:"connectionId,omitempty"`
+	Name                string `json:"name"`
+	DisplayName         string `json:"displayName,omitempty"`
+	Type                string `json:"type"`   // Embedding | KnowledgeQA
+	Source              string `json:"source"` // remote | local
+	Provider            string `json:"provider,omitempty"`
+	BaseURL             string `json:"baseUrl,omitempty"`
+	APIKey              string `json:"apiKey,omitempty"`
+	EmbeddingDimensions int    `json:"embeddingDimensions,omitempty"`
+	Description         string `json:"description,omitempty"`
 }
 
 type WeKnoraCreateKBInput struct {
@@ -812,6 +828,50 @@ func (c *WeKnoraClient) ListModels(ctx context.Context) ([]WeKnoraModel, error) 
 	}
 	if env.Data == nil {
 		return []WeKnoraModel{}, nil
+	}
+	return env.Data, nil
+}
+
+func (c *WeKnoraClient) CreateModel(ctx context.Context, input WeKnoraCreateModelInput) (WeKnoraModel, error) {
+	modelType := strings.TrimSpace(input.Type)
+	if modelType == "" {
+		modelType = "Embedding"
+	}
+	source := strings.TrimSpace(input.Source)
+	if source == "" {
+		source = "remote"
+	}
+	params := map[string]any{}
+	if v := strings.TrimSpace(input.BaseURL); v != "" {
+		params["base_url"] = v
+	}
+	if v := strings.TrimSpace(input.APIKey); v != "" {
+		params["api_key"] = v
+	}
+	if v := strings.TrimSpace(input.Provider); v != "" {
+		params["provider"] = v
+	}
+	if input.EmbeddingDimensions > 0 {
+		params["embedding_dimensions"] = input.EmbeddingDimensions
+	}
+	displayName := strings.TrimSpace(input.DisplayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(input.Name)
+	}
+	payload := map[string]any{
+		"name":         strings.TrimSpace(input.Name),
+		"display_name": displayName,
+		"type":         modelType,
+		"source":       source,
+		"description":  strings.TrimSpace(input.Description),
+		"parameters":   params,
+	}
+	var env struct {
+		Success bool         `json:"success"`
+		Data    WeKnoraModel `json:"data"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/models", payload, &env); err != nil {
+		return WeKnoraModel{}, err
 	}
 	return env.Data, nil
 }

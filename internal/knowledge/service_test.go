@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,43 +14,93 @@ import (
 )
 
 type fakeStore struct {
-	settings        domain.KnowledgeSettings
-	submissions     map[string]domain.KnowledgeSubmission
-	artifacts       map[string]domain.Artifact
-	runs            map[string]domain.Run
-	agents          []domain.AgentDefinition
-	workflows       []domain.WorkflowDefinition
-	candidates      []domain.KnowledgeCandidate
-	deletedConnToks []string
-	managedPass     string
-	mutateErr       error
+	mu                sync.Mutex
+	settings          domain.KnowledgeSettings
+	settingsPersisted bool
+	submissions       map[string]domain.KnowledgeSubmission
+	artifacts         map[string]domain.Artifact
+	runs              map[string]domain.Run
+	agents            []domain.AgentDefinition
+	workflows         []domain.WorkflowDefinition
+	candidates        []domain.KnowledgeCandidate
+	deletedConnToks   []string
+	managedPass       string
+	mutateErr         error
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{submissions: map[string]domain.KnowledgeSubmission{}, artifacts: map[string]domain.Artifact{}, runs: map[string]domain.Run{}}
 }
 
-func (f *fakeStore) KnowledgeSettings() domain.KnowledgeSettings { return f.settings }
+func (f *fakeStore) KnowledgeSettings() domain.KnowledgeSettings {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.settings
+	out.Connections = append([]domain.KnowledgeConnection(nil), f.settings.Connections...)
+	return out
+}
 func (f *fakeStore) PutKnowledgeSettings(s domain.KnowledgeSettings) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s.Connections = append([]domain.KnowledgeConnection(nil), s.Connections...)
+	if s.UpdatedAt.IsZero() {
+		s.UpdatedAt = time.Now().UTC()
+	}
 	f.settings = s
+	f.settingsPersisted = true
 	return nil
 }
 func (f *fakeStore) MutateKnowledgeSettings(mutate func(*domain.KnowledgeSettings) bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.mutateErr != nil {
 		return f.mutateErr
 	}
-	if !mutate(&f.settings) {
+	cur := f.settings
+	cur.Connections = append([]domain.KnowledgeConnection(nil), f.settings.Connections...)
+	if !mutate(&cur) {
 		return nil
 	}
-	f.settings.UpdatedAt = time.Now().UTC()
+	cur.UpdatedAt = time.Now().UTC()
+	f.settings = cur
+	f.settingsPersisted = true
 	return nil
 }
+func (f *fakeStore) MutateKnowledgeSettingsIfFresh(mutate func(*domain.KnowledgeSettings) (bool, error)) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.mutateErr != nil {
+		return false, f.mutateErr
+	}
+	cur := f.settings
+	cur.Connections = append([]domain.KnowledgeConnection(nil), f.settings.Connections...)
+	if f.settingsPersisted || !cur.UpdatedAt.IsZero() || strings.TrimSpace(cur.UpdatedBy) != "" ||
+		len(cur.Connections) > 0 || strings.TrimSpace(cur.URL) != "" || strings.TrimSpace(cur.Token) != "" || cur.TokenConfigured {
+		return false, nil
+	}
+	ok, err := mutate(&cur)
+	if err != nil || !ok {
+		return false, err
+	}
+	cur.UpdatedAt = time.Now().UTC()
+	f.settings = cur
+	f.settingsPersisted = true
+	return true, nil
+}
 func (f *fakeStore) DeleteKnowledgeConnectionToken(connID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.deletedConnToks = append(f.deletedConnToks, connID)
 	return nil
 }
-func (f *fakeStore) ManagedWeKnoraAdminPassword() string { return f.managedPass }
+func (f *fakeStore) ManagedWeKnoraAdminPassword() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.managedPass
+}
 func (f *fakeStore) PutManagedWeKnoraAdminPassword(p string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.managedPass = p
 	return nil
 }

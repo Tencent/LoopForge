@@ -29,14 +29,27 @@ compose() {
   docker_access compose "${profiles[@]}" "$@"
 }
 
-with_weknora=0
+with_weknora="${LOOPFORGE_WITH_WEKNORA:-}"
+if [[ -z "$with_weknora" ]]; then
+  if grep -q '^LOOPFORGE_WITH_WEKNORA=0' .env 2>/dev/null; then
+    with_weknora=0
+  else
+    with_weknora=1
+  fi
+fi
 args=()
 for arg in "$@"; do
-  if [[ "$arg" == "--with-weknora" ]]; then
-    with_weknora=1
-  else
-    args+=("$arg")
-  fi
+  case "$arg" in
+    --with-weknora)
+      with_weknora=1
+      ;;
+    --without-weknora|--no-weknora)
+      with_weknora=0
+      ;;
+    *)
+      args+=("$arg")
+      ;;
+  esac
 done
 set -- "${args[@]}"
 
@@ -51,7 +64,7 @@ import pathlib,re
 p=pathlib.Path('.env')
 p.write_text(re.sub(r'(?m)^COMPOSE_FILE=.*\n?','',p.read_text()))
 PY
-    COMPOSE_FILE=compose.yaml bash scripts/install.sh
+    LOOPFORGE_WITH_WEKNORA="$with_weknora" COMPOSE_FILE=compose.yaml bash scripts/install.sh
     ;;
   pull)
     # An empty MIRROR keeps the original refresh. A registry host pulls the pinned

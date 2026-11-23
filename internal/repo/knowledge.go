@@ -15,6 +15,7 @@ import (
 const (
 	knowledgeSettingsID         = "default"
 	knowledgeManagedBootstrapID = "kbbootstrap:managed"
+	knowledgeBootstrapLockID    = "kbbootstrap:lock"
 )
 
 // KnowledgeRepo owns the upstream knowledge base connection and the review
@@ -120,8 +121,13 @@ func (r *KnowledgeRepo) MutateKnowledgeSettings(mutate func(*domain.KnowledgeSet
 		default:
 			return err
 		}
-		settings.Token = ""
-		settings.TokenConfigured = false
+		legacyRowToken := ""
+		if row.Token != nil {
+			legacyRowToken = strings.TrimSpace(*row.Token)
+		}
+		hasLegacyToken := legacyRowToken != ""
+		settings.Token = legacyRowToken
+		settings.TokenConfigured = hasLegacyToken
 		for i := range settings.Connections {
 			settings.Connections[i].Token = ""
 			settings.Connections[i].TokenConfigured = false
@@ -130,16 +136,142 @@ func (r *KnowledgeRepo) MutateKnowledgeSettings(mutate func(*domain.KnowledgeSet
 			return nil
 		}
 		now := time.Now().UTC()
+		legacyToken := strings.TrimSpace(settings.Token)
+		settings.Token = ""
+		settings.TokenConfigured = false
 		settings.UpdatedAt = now
+		connTokens := map[string]string{}
+		for i := range settings.Connections {
+			if tok := strings.TrimSpace(settings.Connections[i].Token); tok != "" {
+				connTokens[settings.Connections[i].ID] = tok
+			}
+			settings.Connections[i].Token = ""
+			settings.Connections[i].TokenConfigured = false
+		}
 		payload, err := json.Marshal(settings)
 		if err != nil {
 			return err
 		}
-		return tx.Clauses(clause.OnConflict{
+		upRow := knowledgeSettingsRow{ID: knowledgeSettingsID, Payload: payload, Updated: &now}
+		cols := []string{"payload", "updated_at"}
+		if legacyToken != "" {
+			upRow.Token = &legacyToken
+			cols = append(cols, "token")
+		}
+		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"payload", "updated_at"}),
-		}).Create(&knowledgeSettingsRow{ID: knowledgeSettingsID, Payload: payload, Updated: &now}).Error
+			DoUpdates: clause.AssignmentColumns(cols),
+		}).Create(&upRow).Error; err != nil {
+			return err
+		}
+		for id, tok := range connTokens {
+			t := tok
+			cRow := knowledgeSettingsRow{ID: "kbconn:" + id, Token: &t, Updated: &now}
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "id"}},
+				DoUpdates: clause.AssignmentColumns([]string{"token", "updated_at"}),
+			}).Create(&cRow).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	})
+}
+
+// MutateKnowledgeSettingsIfFresh serializes first-install initialization across
+// processes/replicas using a row lock and invokes mutate only when the
+// knowledge_settings row has never been persisted or modified. Because mutate
+// runs only for the single winning fresh install check, concurrent replicas do
+// not mint duplicate orphan API keys on WeKnora, and an admin who later clears
+// all connections (leaving an existing row with UpdatedAt set) is never
+// overwritten.
+func (r *KnowledgeRepo) MutateKnowledgeSettingsIfFresh(mutate func(*domain.KnowledgeSettings) (bool, error)) (bool, error) {
+	var claimed bool
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		lockRow := knowledgeSettingsRow{ID: knowledgeBootstrapLockID, Payload: []byte("{}")}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoNothing: true,
+		}).Create(&lockRow).Error; err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", knowledgeBootstrapLockID).Take(&lockRow).Error; err != nil {
+			return err
+		}
+
+		var row knowledgeSettingsRow
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", knowledgeSettingsID).Take(&row).Error
+		var settings domain.KnowledgeSettings
+		rowExists := false
+		switch {
+		case err == nil:
+			rowExists = true
+			if err := json.Unmarshal(row.Payload, &settings); err != nil {
+				return err
+			}
+			if row.Updated != nil && settings.UpdatedAt.IsZero() {
+				settings.UpdatedAt = *row.Updated
+			}
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			// Truly fresh install: no settings row exists yet.
+		default:
+			return err
+		}
+		hasLegacyToken := row.Token != nil && strings.TrimSpace(*row.Token) != ""
+		if rowExists || !settings.UpdatedAt.IsZero() || strings.TrimSpace(settings.UpdatedBy) != "" ||
+			len(settings.Connections) > 0 || strings.TrimSpace(settings.URL) != "" || hasLegacyToken {
+			return nil
+		}
+
+		ok, err := mutate(&settings)
+		if err != nil || !ok {
+			return err
+		}
+		now := time.Now().UTC()
+		legacyToken := strings.TrimSpace(settings.Token)
+		settings.Token = ""
+		settings.TokenConfigured = false
+		settings.UpdatedAt = now
+		connTokens := map[string]string{}
+		for i := range settings.Connections {
+			if tok := strings.TrimSpace(settings.Connections[i].Token); tok != "" {
+				connTokens[settings.Connections[i].ID] = tok
+			}
+			settings.Connections[i].Token = ""
+			settings.Connections[i].TokenConfigured = false
+		}
+		payload, err := json.Marshal(settings)
+		if err != nil {
+			return err
+		}
+		upRow := knowledgeSettingsRow{ID: knowledgeSettingsID, Payload: payload, Updated: &now}
+		cols := []string{"payload", "updated_at"}
+		if legacyToken != "" {
+			upRow.Token = &legacyToken
+			cols = append(cols, "token")
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoUpdates: clause.AssignmentColumns(cols),
+		}).Create(&upRow).Error; err != nil {
+			return err
+		}
+		for id, tok := range connTokens {
+			t := tok
+			cRow := knowledgeSettingsRow{ID: "kbconn:" + id, Token: &t, Updated: &now}
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "id"}},
+				DoUpdates: clause.AssignmentColumns([]string{"token", "updated_at"}),
+			}).Create(&cRow).Error; err != nil {
+				return err
+			}
+		}
+		claimed = true
+		return nil
+	})
+	return claimed, err
 }
 
 // DeleteKnowledgeConnectionToken removes the stored token row for a deleted connection.

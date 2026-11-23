@@ -80,7 +80,9 @@ func decode(c *gin.Context, v any) bool {
 // decodeLimit binds the JSON request body with an explicit size limit.
 func decodeLimit(c *gin.Context, v any, limit int64) bool {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
-	if err := json.NewDecoder(c.Request.Body).Decode(v); err != nil {
+	dec := json.NewDecoder(c.Request.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return false
 	}
@@ -90,7 +92,9 @@ func decodeLimit(c *gin.Context, v any, limit int64) bool {
 // decodeOptional behaves like decode but tolerates an empty body.
 func decodeOptional(c *gin.Context, v any) bool {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
-	err := json.NewDecoder(c.Request.Body).Decode(v)
+	dec := json.NewDecoder(c.Request.Body)
+	dec.DisallowUnknownFields()
+	err := dec.Decode(v)
 	if err == nil || err == io.EOF {
 		return true
 	}
