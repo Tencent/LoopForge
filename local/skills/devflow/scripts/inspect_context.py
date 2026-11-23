@@ -28,7 +28,7 @@ def discover(root: Path, names: tuple, max_depth: int = 4) -> list:
         ]
         for name in files:
             if name in names:
-                found.append(str((current_path / name).relative_to(root)))
+                found.append((current_path / name).relative_to(root).as_posix())
     return sorted(set(found))
 
 
