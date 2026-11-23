@@ -88,11 +88,14 @@ test('Git HTTPS credentials are managed per host with write-only tokens and veri
   assert.equal(app.evaluate('state.currentUser.gitHttpCredentialsConfigured'), true);
 });
 
-test('an authorized HTTPS instance needs only a personal token', async (t) => {
+test('an authorized IPv6 HTTPS instance needs only a personal token', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const endpoint = '/api/users/1/git-http-credentials';
-  const instance = { host: 'gitlab.corp.example:8443', platform: 'gitlab' };
+  const instance = { host: '[fd00::2]:8443', platform: 'gitlab' };
+  assert.equal(app.evaluate("LoopForgeGitHTTPSHost('FD00::0443')"), '[fd00::443]');
+  assert.equal(app.evaluate("LoopForgeGitHTTPS('https://[FD00:0::2]:8443/team/app.git').host"), instance.host);
+  assert.equal(app.evaluate("LoopForgeGitHTTPS('https://[::ffff:10.0.0.1]/team/app.git')"), null);
   app.router.get('/api/git-https-hosts', [instance]);
   app.router.get(endpoint, []);
   app.router.put(endpoint, [{ ...instance, id: 'instance-token', name: instance.host }]);

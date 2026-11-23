@@ -4487,7 +4487,10 @@ components:
       type: object
       required: [host, platform]
       properties:
-        host: {type: string, example: "gitlab.example.org:8443"}
+        host:
+          type: string
+          example: "[fd00::2]:8443"
+          description: Git hostname or IPv6 address. An IPv6 address with a port uses brackets.
         platform: {type: string, enum: [github, gitlab, other]}
     PlatformGitHTTPSHost:
       allOf:

@@ -1,13 +1,5 @@
 const GIT_HTTP_PLATFORMS = [['github', 'GitHub / GitHub Enterprise'], ['gitlab', 'GitLab'], ['other', '其他平台']];
 
-// Mirrors gitwork.HTTPSHostScope closely enough to prefill the form; the server
-// remains the authority on what a host scope is.
-function gitHTTPHostScope(raw) {
-  let host = String(raw || '').trim().toLowerCase().replace(/^https:\/\//, '').replace(/\/$/, '');
-  if (host.endsWith(':443')) host = host.slice(0, -4);
-  return host;
-}
-
 function gitHTTPDefaultUsername(platform) {
   return platform === 'gitlab' ? 'oauth2' : 'x-access-token';
 }
@@ -47,7 +39,7 @@ function openGitHTTPCredentials(options = {}) {
           <select name="instance" class="git-http-select"></select>
         </div>
       </label>
-      ${credentialFieldHTML({label:'HTTPS 主机', name:'host', type:'text', placeholder:'github.com 或 gitlab.example.org:8443', hint:'只填主机名，可附带端口；令牌只提供给这台主机。'})}
+      ${credentialFieldHTML({label:'HTTPS 主机', name:'host', type:'text', placeholder:'github.com 或 gitlab.example.org:8443', hint:'填写域名或 IPv6 地址。IPv6 带端口时写作 [fd00::2]:8443。'})}
       <label class="credential-field">
         <span>平台</span>
         <div class="credential-input is-plain">
@@ -211,7 +203,7 @@ function openGitHTTPCredentials(options = {}) {
   };
   host.addEventListener('change', () => {
     if (editing) return;
-    const scope = gitHTTPHostScope(host.value);
+    const scope = globalThis.LoopForgeGitHTTPSHost(host.value);
     if (scope === 'github.com') platform.value = 'github';
     else if (/(^|\.)gitlab\./.test(scope)) platform.value = 'gitlab';
     username.placeholder = gitHTTPDefaultUsername(platform.value);
@@ -226,7 +218,7 @@ function openGitHTTPCredentials(options = {}) {
     const body = selected ? {
       host:selected.host, platform:selected.platform, name:selected.host.slice(0, 80), token:token.value,
     } : {
-      host:host.value, platform:platform.value, name:name.value.trim() || gitHTTPHostScope(host.value),
+      host:host.value, platform:platform.value, name:name.value.trim() || globalThis.LoopForgeGitHTTPSHost(host.value),
       username:username.value.trim() || (editing ? '' : gitHTTPDefaultUsername(platform.value)),
       token:token.value,
     };

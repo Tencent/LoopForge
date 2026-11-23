@@ -139,3 +139,69 @@ func TestPlatformGitHTTPSHostAuthorization(t *testing.T) {
 	}
 	checkAddresses(host, nil)
 }
+
+func TestPlatformGitHTTPSIPv6Authorization(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	admin := cvBNewHTTPFixture(t)
+	if _, err := admin.s.GrantPlatformAdmin(admin.user.LoginName); err != nil {
+		t.Fatal(err)
+	}
+	member := admin
+	if err := member.s.PutUser(domain.User{LoginName: "ipv6-git-member"}); err != nil {
+		t.Fatal(err)
+	}
+	member.user, _ = member.s.UserByLoginName("ipv6-git-member")
+
+	const endpoint = "/api/platform/git-https-hosts"
+	const scope = "[fd00::2]:8443"
+	const expanded = "[FD00:0:0:0:0:0:0:2]:8443"
+	wantIP := netip.MustParseAddr("fd00::2")
+	for input, wantScope := range map[string]string{"fd00::2": "[fd00::2]", "https://" + expanded + "/": scope} {
+		resp := cvBRequest(t, admin, http.MethodPost, endpoint+"/preview", map[string]string{"host": input, "platform": "gitlab"}, true)
+		var preview repo.PlatformGitHTTPSHost
+		if resp.Code != http.StatusOK || json.Unmarshal(resp.Body.Bytes(), &preview) != nil ||
+			preview.Host != wantScope || !slices.Equal(preview.Addresses, []netip.Addr{wantIP}) {
+			t.Fatalf("preview %s: HTTP %d %s", input, resp.Code, resp.Body)
+		}
+	}
+	for _, input := range []map[string]any{
+		{"host": scope, "platform": "gitlab", "addresses": []string{"fd00::3"}},
+		{"host": "fe80::2", "platform": "gitlab", "addresses": []string{"fe80::2"}},
+		{"host": "::1", "platform": "gitlab", "addresses": []string{"::1"}},
+	} {
+		for _, path := range []string{endpoint, endpoint + "/preview"} {
+			if resp := cvBRequest(t, admin, http.MethodPost, path, input, true); resp.Code != http.StatusBadRequest {
+				t.Fatalf("invalid IPv6 authorization at %s: HTTP %d %s", path, resp.Code, resp.Body)
+			}
+		}
+	}
+	if resp := cvBRequest(t, admin, http.MethodPost, endpoint, repo.PlatformGitHTTPSHost{
+		Host: expanded, Platform: "gitlab", Addresses: []netip.Addr{wantIP},
+	}, true); resp.Code != http.StatusCreated {
+		t.Fatalf("save IPv6 authorization: HTTP %d %s", resp.Code, resp.Body)
+	}
+	if got, err := admin.s.PlatformGitHTTPSAddresses(t.Context(), expanded); err != nil || !slices.Equal(got, []netip.Addr{wantIP}) {
+		t.Fatalf("load IPv6 authorization: %v %v", got, err)
+	}
+	if got, err := admin.s.PlatformGitHTTPSAddresses(t.Context(), "[fd00::2]:443"); err != nil || got != nil {
+		t.Fatalf("different port got IPv6 authorization: %v %v", got, err)
+	}
+	if resp := cvBRequest(t, member, http.MethodGet, "/api/git-https-hosts", nil, true); resp.Code != http.StatusOK ||
+		resp.Body.String() != `[{"host":"[fd00::2]:8443","platform":"gitlab"}]` {
+		t.Fatalf("IPv6 instance choice: HTTP %d %s", resp.Code, resp.Body)
+	}
+
+	path := "/api/users/" + strconv.FormatInt(member.user.ID, 10) + "/git-http-credentials"
+	if resp := cvBRequest(t, member, http.MethodPut, path, map[string]string{
+		"host": expanded, "platform": "gitlab", "name": "IPv6 GitLab", "token": "fake-ipv6-token",
+	}, true); resp.Code != http.StatusOK {
+		t.Fatalf("save IPv6 credential: HTTP %d %s", resp.Code, resp.Body)
+	}
+	if cred, ok := admin.s.GitHTTPCredentialForHost(t.Context(), member.user.ID, scope); !ok ||
+		cred.Host != scope || cred.Token != "fake-ipv6-token" || cred.APIBase() != "https://[fd00::2]:8443/api/v4" {
+		t.Fatalf("wrong IPv6 credential: %+v (found %v)", cred.GitHTTPCredential, ok)
+	}
+	if _, ok := admin.s.GitHTTPCredentialForHost(t.Context(), member.user.ID, "fd00::2"); ok {
+		t.Fatal("IPv6 credential was returned for another port")
+	}
+}

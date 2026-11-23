@@ -5,9 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"agentflow/internal/domain"
@@ -74,7 +74,7 @@ func readGitHTTPSHost(c *gin.Context) (repo.PlatformGitHTTPSHost, bool) {
 	return entry, true
 }
 
-func approvedGitHTTPSAddresses(addresses []netip.Addr) ([]netip.Addr, error) {
+func approvedGitHTTPSAddresses(host string, addresses []netip.Addr) ([]netip.Addr, error) {
 	if len(addresses) == 0 {
 		return nil, errors.New("请确认该 Git 主机允许连接的 IP 地址")
 	}
@@ -86,7 +86,12 @@ func approvedGitHTTPSAddresses(addresses []netip.Addr) ([]netip.Addr, error) {
 		addresses[i] = ip
 	}
 	slices.SortFunc(addresses, netip.Addr.Compare)
-	return slices.Compact(addresses), nil
+	addresses = slices.Compact(addresses)
+	if literal, err := netip.ParseAddr((&url.URL{Host: host}).Hostname()); err == nil &&
+		(len(addresses) != 1 || addresses[0] != literal) {
+		return nil, errors.New("IPv6 主机只能授权其自身地址")
+	}
+	return addresses, nil
 }
 
 func (h *httpsHostTrustHandlers) preview(c *gin.Context) {
@@ -100,14 +105,18 @@ func (h *httpsHostTrustHandlers) preview(c *gin.Context) {
 	status := http.StatusBadRequest
 	var err error
 	if entry.Addresses == nil {
-		status = http.StatusBadGateway
-		hostname, _, _ := strings.Cut(entry.Host, ":")
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-		defer cancel()
-		entry.Addresses, err = h.lookupIP(ctx, "ip", hostname)
+		hostname := (&url.URL{Host: entry.Host}).Hostname()
+		if literal, parseErr := netip.ParseAddr(hostname); parseErr == nil {
+			entry.Addresses = []netip.Addr{literal}
+		} else {
+			status = http.StatusBadGateway
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+			defer cancel()
+			entry.Addresses, err = h.lookupIP(ctx, "ip", hostname)
+		}
 	}
 	if err == nil {
-		entry.Addresses, err = approvedGitHTTPSAddresses(entry.Addresses)
+		entry.Addresses, err = approvedGitHTTPSAddresses(entry.Host, entry.Addresses)
 	}
 	if err != nil {
 		message := err.Error()
@@ -129,7 +138,7 @@ func (h *httpsHostTrustHandlers) save(c *gin.Context) {
 	if !ok {
 		return
 	}
-	addresses, err := approvedGitHTTPSAddresses(entry.Addresses)
+	addresses, err := approvedGitHTTPSAddresses(entry.Host, entry.Addresses)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

@@ -355,6 +355,7 @@ func TestTurnEndRegistersMergeRequestsOnOtherHosts(t *testing.T) {
 	for _, c := range []struct{ dir, remote string }{
 		{"app", "git@gitlab.example.org:group/sub/app.git"},
 		{"svc", "https://ghe.example.com/team/svc.git"},
+		{"app-ipv6", "https://[fd00:0:0:0:0:0:0:2]:8443/group/app.git"},
 		{"other", "https://gitlab.unasked.example/x/y.git"},
 	} {
 		dir := filepath.Join(en.RunWorkspace("ws-1"), c.dir)
@@ -376,6 +377,10 @@ func TestTurnEndRegistersMergeRequestsOnOtherHosts(t *testing.T) {
 			fmt.Fprint(w, `{"id":42}`)
 		case r.Header.Get("PRIVATE-TOKEN") == "gl-token" && r.URL.EscapedPath() == "/gitlab/projects/group%2Fsub%2Fapp/merge_requests" && r.URL.Query().Get("author_id") == "42":
 			fmt.Fprintf(w, `[{"iid":3,"web_url":"https://gitlab.example.org/group/sub/app/-/merge_requests/3","title":"GitLab 修复","state":"opened","created_at":%q,"sha":%q,"target_branch":"main"}]`, soon, heads[0])
+		case r.Header.Get("PRIVATE-TOKEN") == "gl-ipv6-token" && r.URL.Path == "/gitlab-ipv6/user":
+			fmt.Fprint(w, `{"id":43}`)
+		case r.Header.Get("PRIVATE-TOKEN") == "gl-ipv6-token" && r.URL.EscapedPath() == "/gitlab-ipv6/projects/group%2Fapp/merge_requests" && r.URL.Query().Get("author_id") == "43":
+			fmt.Fprintf(w, `[{"iid":5,"web_url":"https://gitlab.alias.example.org/group/app/-/merge_requests/5","title":"GitLab IPv6 修复","state":"opened","created_at":%q,"sha":%q,"target_branch":"main"}]`, soon, heads[2])
 		case r.Header.Get("Authorization") == "Bearer ghe-token" && r.URL.Path == "/ghe/user":
 			fmt.Fprint(w, `{"login":"alice"}`)
 		case r.Header.Get("Authorization") == "Bearer ghe-token" && r.URL.Path == "/ghe/repos/team/svc/pulls":
@@ -388,6 +393,9 @@ func TestTurnEndRegistersMergeRequestsOnOtherHosts(t *testing.T) {
 	defer srv.Close()
 	base, client := gitHostAPIBase, gitHostClient
 	gitHostAPIBase = func(cred domain.GitHTTPCredential) string {
+		if cred.Host == "[fd00::2]:8443" {
+			return srv.URL + "/gitlab-ipv6"
+		}
 		if cred.Platform == domain.GitPlatformGitLab {
 			return srv.URL + "/gitlab"
 		}
@@ -397,6 +405,7 @@ func TestTurnEndRegistersMergeRequestsOnOtherHosts(t *testing.T) {
 	t.Cleanup(func() { gitHostAPIBase, gitHostClient = base, client })
 	for _, c := range []struct{ host, platform, token string }{
 		{"gitlab.example.org", domain.GitPlatformGitLab, "gl-token"},
+		{"[fd00::2]:8443", domain.GitPlatformGitLab, "gl-ipv6-token"},
 		{"ghe.example.com", domain.GitPlatformGitHub, "ghe-token"},
 		{"gitlab.unasked.example", domain.GitPlatformGitLab, "unasked-token"},
 	} {
@@ -409,11 +418,12 @@ func TestTurnEndRegistersMergeRequestsOnOtherHosts(t *testing.T) {
 	}
 	s.workspaceRunID = "ws-1"
 	s.rememberGitCredential("gitlab.example.org", domain.GitPlatformGitLab, domain.GitTokenHTTPUser, "gl-token")
+	s.rememberGitCredential("[fd00::2]:8443", domain.GitPlatformGitLab, domain.GitTokenHTTPUser, "gl-ipv6-token")
 	s.rememberGitCredential("ghe.example.com", domain.GitPlatformGitHub, domain.GitTokenHTTPUser, "ghe-token")
 
 	h := &assistantHandlers{deps: gateway.deps}
 	note := h.registerTurnDeliveries(context.Background(), s)
-	if !strings.Contains(note, "MR !3") || !strings.Contains(note, "PR #4") {
+	if !strings.Contains(note, "MR !3") || !strings.Contains(note, "PR #4") || !strings.Contains(note, "MR !5") {
 		t.Fatalf("note = %q", note)
 	}
 	stored, _ := st.RunState("ws-1")
@@ -422,10 +432,16 @@ func TestTurnEndRegistersMergeRequestsOnOtherHosts(t *testing.T) {
 	for _, mr := range issue.DeliveryMRList() {
 		got[mr.Project] = mr.IID
 	}
-	if len(got) != 2 || got["gitlab:gitlab.example.org/group/sub/app"] != 3 || got["ghe:ghe.example.com/team/svc"] != 4 {
+	const ipv6Project = "gitlab:[fd00::2]:8443/group/app"
+	if len(got) != 3 || got["gitlab:gitlab.example.org/group/sub/app"] != 3 ||
+		got["ghe:ghe.example.com/team/svc"] != 4 || got[ipv6Project] != 5 {
 		t.Fatalf("delivery = %+v", issue.DeliveryMRList())
 	}
-	keys := []domain.MRDeliveryKey{{Project: "gitlab:gitlab.example.org/group/sub/app", IID: 3}, {Project: "ghe:ghe.example.com/team/svc", IID: 4}}
+	keys := []domain.MRDeliveryKey{
+		{Project: "gitlab:gitlab.example.org/group/sub/app", IID: 3},
+		{Project: "ghe:ghe.example.com/team/svc", IID: 4},
+		{Project: ipv6Project, IID: 5},
+	}
 	for key, state := range st.MRDeliveryStatesMap(keys) {
 		if state.RegisteredBy != s.UserID || state.IssueID != issue.ID {
 			t.Fatalf("%v state = %+v", key, state)

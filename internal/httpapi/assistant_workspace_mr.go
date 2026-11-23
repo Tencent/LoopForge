@@ -329,10 +329,19 @@ func workspaceMergeRequests(ctx context.Context, client *http.Client, cred domai
 			continue
 		}
 		for _, mr := range list {
-			if mr.CreatedAt.Before(since) || !heads[mr.SHA] || mr.State == "closed" || mr.State == "locked" || !sameDeliveryHost(mr.WebURL, cred.Host) {
+			if mr.CreatedAt.Before(since) || !heads[mr.SHA] || mr.State == "closed" || mr.State == "locked" {
 				continue
 			}
-			p := workspacePull{Number: mr.IID, URL: mr.WebURL, Title: mr.Title, Body: mr.Description, State: mr.State, MergedAt: mr.MergedAt, CreatedAt: mr.CreatedAt, mergeRequest: true}
+			link := mr.WebURL
+			if strings.HasPrefix(cred.Host, "[") {
+				// GitLab can return its configured DNS name when reached by IP.
+				// Use the queried project and IPv6 credential for later tracking.
+				link = domain.GongfengMRURL(domain.MRProjectGitLab+cred.Host+"/"+repo, mr.IID)
+			}
+			if !sameDeliveryHost(link, cred.Host) {
+				continue
+			}
+			p := workspacePull{Number: mr.IID, URL: link, Title: mr.Title, Body: mr.Description, State: mr.State, MergedAt: mr.MergedAt, CreatedAt: mr.CreatedAt, mergeRequest: true}
 			p.Head.SHA, p.Base.Ref = mr.SHA, mr.TargetBranch
 			out = append(out, p)
 		}
@@ -347,7 +356,11 @@ func sameDeliveryHost(link, host string) bool {
 		return false
 	}
 	u, err := url.Parse(link)
-	return err == nil && strings.EqualFold(strings.TrimSuffix(u.Host, ":443"), host)
+	if err != nil {
+		return false
+	}
+	scope, err := gitwork.HTTPSHostScope("https://" + u.Host)
+	return err == nil && scope == host
 }
 
 func gitHostGet(ctx context.Context, client *http.Client, cred domain.GitHTTPCredentialSecret, path string, out any) error {

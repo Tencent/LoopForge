@@ -14,7 +14,7 @@ function platformHTTPSHostTrustHTML() {
         <label class="platform-field">
           <span>${lfT('HTTPS 主机', 'HTTPS host')}</span>
           <input name="host" placeholder="gitlab.example.org:8443" maxlength="260" required spellcheck="false">
-          <small class="platform-field-hint">${lfT('省略端口时使用 443。', 'The default port is 443.')}</small>
+          <small class="platform-field-hint">${lfT('省略端口时使用 443。IPv6 带端口时写作 [fd00::2]:8443。', 'The default port is 443. Use [fd00::2]:8443 to specify a port with IPv6.')}</small>
         </label>
         <label class="platform-field">
           <span>${lfT('托管平台', 'Git provider')}</span>

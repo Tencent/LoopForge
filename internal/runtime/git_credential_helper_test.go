@@ -90,6 +90,8 @@ func TestCLIShimHost(t *testing.T) {
 		{name: "gh", origin: "https://ghe.example.com/org/app.git", want: "ghe.example.com"},
 		{name: "glab", origin: "git@gitlab.example.org:group/app.git", want: "gitlab.example.org"},
 		{name: "glab", origin: "https://gitlab.example.org:8443/group/app.git", want: "gitlab.example.org:8443"},
+		{name: "glab", origin: "https://[FD00:0:0::2]:8443/group/app.git", want: "[fd00::2]:8443"},
+		{name: "glab", args: []string{"mr", "list", "--repo", "[FD00:0:0::2]:8443/group/app"}, want: "[fd00::2]:8443"},
 		{name: "gh", env: map[string]string{"GH_HOST": "GHE.example.com"}, origin: "https://github.com/o/r", want: "ghe.example.com"},
 		{name: "glab", env: map[string]string{"GITLAB_HOST": "https://gitlab.example.org"}, want: "gitlab.example.org"},
 		{name: "glab", env: map[string]string{"GL_HOST": "gl.example.org"}, want: "gl.example.org"},
