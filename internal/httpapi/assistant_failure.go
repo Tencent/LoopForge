@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -27,9 +28,12 @@ func assistantCLIMaxTurns(text string) bool {
 // Keep their terminal cause even when the process itself exits successfully.
 func assistantCLIStreamFailure(line string) error {
 	var event struct {
-		Type    string          `json:"type"`
-		Error   json.RawMessage `json:"error"`
-		Message struct {
+		Type              string          `json:"type"`
+		Error             json.RawMessage `json:"error"`
+		APIErrorStatus    int             `json:"api_error_status"`
+		IsAPIErrorMessage bool            `json:"is_api_error_message"`
+		IsError           bool            `json:"is_error"`
+		Message           struct {
 			Content []struct {
 				Text string `json:"text"`
 			} `json:"content"`
@@ -37,6 +41,11 @@ func assistantCLIStreamFailure(line string) error {
 	}
 	if json.Unmarshal([]byte(line), &event) != nil {
 		return nil
+	}
+	// Claude Code writes provider failures to stdout even when it exits nonzero.
+	apiFailure := event.Type == "assistant" && event.IsAPIErrorMessage || event.Type == "result" && event.IsError
+	if apiFailure && (event.APIErrorStatus == http.StatusUnauthorized || event.APIErrorStatus == http.StatusForbidden) {
+		return fmt.Errorf("HTTP %d: provider rejected the configured credentials", event.APIErrorStatus)
 	}
 	if event.Type == "assistant" {
 		for _, block := range event.Message.Content {
