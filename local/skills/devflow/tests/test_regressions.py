@@ -34,6 +34,18 @@ def run_script(name, *args, check=True):
 
 
 class MarkdownRegressionTests(unittest.TestCase):
+    def test_example_tasks_do_not_satisfy_pending_work(self):
+        example = "### 任务 T1：实现功能\n- 状态： `pending`\n- 目标文件： `src/app.py`"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "execution-plan.md"
+            path.write_text(
+                f"## 执行任务\n```markdown\n{example}\n```\n## 附录\n{example}\n",
+                encoding="utf-8",
+            )
+            errors, metrics = validate_execution_plan(path, require_pending=True)
+            self.assertEqual(0, metrics["pending"])
+            self.assertTrue(any("没有状态为" in error for error in errors))
+
     def test_code_comment_is_not_a_heading(self):
         text = """## 验证与验收
 

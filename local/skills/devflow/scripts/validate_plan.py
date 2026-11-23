@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Dict, List
 
-from validate_artifacts import find_section, sections, validate_file
+from validate_artifacts import find_section, markdown_headings, sections, validate_file
 
 
 HEADINGS: Dict[str, List[str]] = {
@@ -56,11 +56,13 @@ def validate_execution_plan(plan: Path, require_pending: bool = False) -> tuple:
     if not re.findall(r"`([^`\n]+)`", scope_body):
         errors.append(f"{label}: 上下文与范围中没有明确的目标文件或目录")
 
-    task_matches = list(re.finditer(r"^###\s+任务\s+[^\n]+$", text, re.MULTILINE))
+    task_section = found["tasks"][1] if found["tasks"] else ""
+    headings = [heading for heading in markdown_headings(task_section) if heading[2] <= 3]
     tasks = []
-    for index, match in enumerate(task_matches):
-        end = task_matches[index + 1].start() if index + 1 < len(task_matches) else len(text)
-        tasks.append((match.group(0), text[match.end():end]))
+    for index, (_, content_start, level, title) in enumerate(headings):
+        if level == 3 and re.match(r"任务\s+\S", title):
+            end = headings[index + 1][0] if index + 1 < len(headings) else len(task_section)
+            tasks.append((title, task_section[content_start:end]))
     if not tasks:
         errors.append(f"{label}: 执行任务中没有符合模板的 `### 任务 <ID>：<名称>`")
     for title, body in tasks:
