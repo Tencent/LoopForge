@@ -1016,17 +1016,22 @@ function bind(){
     }else switchView(btn.dataset.view);
   });
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
-  $('#settingsSidebarExpand')?.addEventListener('click',()=>{
+  $('#settingsSidebarExpand')?.addEventListener('click',event=>{
+    const opener=event.currentTarget;
     cancelSettingsRouteTransition();
     setSettingsSidebarExpanded(true);
-    requestAnimationFrame(()=>{
-      // Wait for the sidebar's descendants to inherit the restored visibility.
-      requestAnimationFrame(()=>{
-        if(settingsSidebarExpanded()&&document.activeElement===document.body){
-          $('#settingsSidebarToggle')?.focus({preventScroll:true});
-        }
-      });
-    });
+    const toggle=$('#settingsSidebarToggle');
+    if(!toggle)return;
+    const view=activeViewName();
+    const deadline=performance.now()+1000;
+    function restoreFocus(){
+      const active=document.activeElement;
+      if(!settingsSidebarExpanded()||activeViewName()!==view||(active!==document.body&&active!==opener))return;
+      // Visibility can lag behind the sidebar state, even with reduced motion.
+      toggle.focus({preventScroll:true});
+      if(document.activeElement!==toggle&&performance.now()<deadline)requestAnimationFrame(restoreFocus);
+    }
+    requestAnimationFrame(restoreFocus);
   });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
