@@ -3,6 +3,8 @@ import argparse
 import json
 import shlex
 from pathlib import Path
+
+from inspect_context import INSTRUCTIONS
 from typing import List
 
 from agent_registry import ROLES, STAGE_ROLES, role_body
@@ -111,7 +113,7 @@ def build_prompt(
     handoff = compact_handoff(stage, artifact_root, upstream)
     project_root = Path(state["project_root"])
     project_instructions = [
-        project_root / name for name in ("AGENTS.md", "CLAUDE.md", ".cursorrules")
+        project_root / name for name in INSTRUCTIONS
         if (project_root / name).is_file()
     ]
     lines = [

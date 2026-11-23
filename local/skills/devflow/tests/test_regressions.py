@@ -199,7 +199,11 @@ class ContextAndPromptTests(unittest.TestCase):
                     "DESIGN": {"prepared_at": "now", "artifacts": []},
                 },
             }
+            (root / ".github").mkdir()
+            instructions = root / ".github/copilot-instructions.md"
+            instructions.write_text("Project constraints", encoding="utf-8")
             prompt = build_prompt(state, "DESIGN", "设计功能", [])
+            self.assertIn(str(instructions), prompt)
             self.assertIn("validate_plan.py", prompt)
             self.assertIn("--require-pending", prompt)
             self.assertIn("由当前执行者修改产物并重试", prompt)
