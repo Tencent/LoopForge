@@ -35,46 +35,49 @@ func TestConversationNativeCacheLinksDoNotBlockNextTurn(t *testing.T) {
 	}
 }
 
-func TestConversationAssetResetHandlesInstalledSkillLink(t *testing.T) {
-	root := t.TempDir()
-	skills := filepath.Join(root, "home", ".agents", "skills")
-	installed := filepath.Join(root, "ws", ".agents", "skills", "installed")
-	for _, dir := range []string{skills, installed} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	skillFile := filepath.Join(installed, "SKILL.md")
-	if err := os.WriteFile(skillFile, []byte("Installed skill"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	target, err := filepath.Rel(skills, installed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, filepath.Join(skills, "installed")); err != nil {
-		t.Fatal(err)
-	}
+func TestConversationAssetCleanupHandlesStaleLinks(t *testing.T) {
+	for _, operation := range []string{"resetAssets", "discard"} {
+		t.Run(operation, func(t *testing.T) {
+			dir := t.TempDir()
+			root := filepath.Join(dir, "conversation")
+			original := filepath.Join(dir, "original.md")
+			if err := os.WriteFile(original, []byte("Original asset"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, tree := range conversationAssetTrees {
+				assetDir := filepath.Join(root, tree)
+				if err := os.MkdirAll(assetDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(original, filepath.Join(assetDir, "stale.md")); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	pool := &ConversationProcessPool{}
-	for _, operation := range []string{"prepare", "resetAssets"} {
-		if _, err := pool.Handle(t.Context(), root, "", nil, ConversationProcessRequest{Operation: operation}, nil); err != nil {
-			t.Fatalf("%s failed with an installed skill link: %v", operation, err)
-		}
-	}
-	if _, err := os.Lstat(skills); !os.IsNotExist(err) {
-		t.Fatalf("generated skill tree was not reset: %v", err)
-	}
-	if data, err := os.ReadFile(skillFile); err != nil || string(data) != "Installed skill" {
-		t.Fatalf("asset reset changed the installed skill target: %q %v", data, err)
-	}
-	if err := os.Symlink(installed, skills); err != nil {
-		t.Fatal(err)
-	}
-	for _, operation := range []string{"prepare", "resetAssets"} {
-		if _, err := pool.Handle(t.Context(), root, "", nil, ConversationProcessRequest{Operation: operation}, nil); err == nil {
-			t.Fatalf("%s accepted a symlink at the skill tree root", operation)
-		}
+			pool := &ConversationProcessPool{}
+			if _, err := pool.Handle(t.Context(), root, "", nil, ConversationProcessRequest{Operation: "prepare"}, nil); err != nil {
+				t.Fatalf("prepare failed with stale asset links: %v", err)
+			}
+			if _, err := pool.Handle(t.Context(), root, "", nil, ConversationProcessRequest{Operation: "sync"}, nil); err == nil {
+				t.Fatal("sync accepted links before asset cleanup")
+			}
+			if _, err := pool.Handle(t.Context(), root, "", nil, ConversationProcessRequest{Operation: operation, Transient: operation == "discard"}, nil); err != nil {
+				t.Fatalf("%s failed with stale asset links: %v", operation, err)
+			}
+			for _, tree := range conversationAssetTrees {
+				if _, err := os.Lstat(filepath.Join(root, tree)); !os.IsNotExist(err) {
+					t.Fatalf("%s did not remove generated tree %s: %v", operation, tree, err)
+				}
+			}
+			if operation == "discard" {
+				if _, err := os.Lstat(root); !os.IsNotExist(err) {
+					t.Fatalf("transient conversation root survived discard: %v", err)
+				}
+			}
+			if data, err := os.ReadFile(original); err != nil || string(data) != "Original asset" {
+				t.Fatalf("asset cleanup changed the link target: %q %v", data, err)
+			}
+		})
 	}
 }
 
@@ -95,6 +98,11 @@ func TestConversationPlatformPathsRejectLinks(t *testing.T) {
 			}
 			if err := ValidateConversationRoot(root); err == nil {
 				t.Fatal("platform accepted a symlink on a materialization path")
+			}
+			if rel != "home/.agents/skills/x/run.sh" {
+				if err := ValidateConversationRoot(root, conversationAssetTrees...); err == nil {
+					t.Fatal("asset refresh accepted a symlink outside the disposable tree contents")
+				}
 			}
 		})
 	}

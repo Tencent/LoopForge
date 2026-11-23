@@ -12,7 +12,6 @@ import (
 	"syscall"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/runtime"
 )
 
 var (
@@ -57,7 +56,7 @@ func assistantMessageHashes(messages []assistantMessage) []string {
 
 func openAssistantNativeSession(req assistantRequest, saved domain.AssistantSession, user domain.User, sourceRoot string) (*assistantNativeSession, error) {
 	root := assistantSharedSessionRoot(saved.ID)
-	if err := runtime.ValidateConversationRoot(root, assistantConversationSkillTree(req.Model)); err != nil {
+	if err := validateConversationAssetRefresh(root, assistantConversationAssetHome(req.Model)); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {

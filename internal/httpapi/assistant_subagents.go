@@ -176,18 +176,22 @@ func subagentRolePrompt(prompt string) string {
 
 var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
-func assistantConversationSkillTree(model string) string {
+func assistantConversationAssetHome(model string) string {
 	engine, _ := assistantModelEngine(model)
 	configDir := assistantEngineConfigDir(engine)
 	switch {
 	case engine == runtime.AgentCLIPi:
-		configDir = filepath.Join(".pi", "agent")
+		configDir = ".pi/agent"
 	case engine == runtime.AgentCLIAntigravity:
-		configDir = filepath.Join(".gemini", "config")
+		configDir = ".gemini/config"
 	case runtime.IsAgentCLI(engine):
 		configDir = ".agents"
 	}
-	return filepath.ToSlash(filepath.Join("home", configDir, "skills"))
+	return path.Join("home", configDir)
+}
+
+func validateConversationAssetRefresh(root, assetHome string) error {
+	return runtime.ValidateConversationRoot(root, "attachments", path.Join(assetHome, "skills"), path.Join(assetHome, "agents"))
 }
 
 // writeConversationAssets rewrites the conversation's CLI home each turn:
@@ -200,8 +204,8 @@ func assistantConversationSkillTree(model string) string {
 // with no project, no shared skills and no mentioned roles gets empty
 // directories.
 func (h *assistantHandlers) writeConversationAssets(root string, req assistantRequest) error {
-	skillTree := assistantConversationSkillTree(req.Model)
-	if err := runtime.ValidateConversationRoot(root, skillTree); err != nil {
+	assetHome := assistantConversationAssetHome(req.Model)
+	if err := validateConversationAssetRefresh(root, assetHome); err != nil {
 		return err
 	}
 	if err := writeConversationAttachments(root, req); err != nil {
@@ -265,10 +269,10 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 	if req.workspaceMode {
 		writer = runtime.WriteSkillTree
 	}
-	if _, err := writer(filepath.Join(root, skillTree), skills, files); err != nil {
+	if _, err := writer(filepath.Join(root, assetHome, "skills"), skills, files); err != nil {
 		return err
 	}
-	agents := filepath.Join(root, filepath.Dir(skillTree), "agents")
+	agents := filepath.Join(root, assetHome, "agents")
 	if err := os.RemoveAll(agents); err != nil {
 		return err
 	}

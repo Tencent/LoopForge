@@ -468,7 +468,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	// Every conversation runs in its own CLI root; shared ones switch to the
 	// native session root below. The root's home also carries the skills.
 	cliRoot := assistantConversationRoot(ownerID, req.SessionID)
-	if err := runtime.ValidateConversationRoot(cliRoot, assistantConversationSkillTree(req.Model)); err != nil {
+	if err := validateConversationAssetRefresh(cliRoot, assistantConversationAssetHome(req.Model)); err != nil {
 		fail(409, err.Error())
 		return
 	}
