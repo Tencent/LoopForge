@@ -156,9 +156,13 @@ func (i RemoteInvoker) Invoke(ctx context.Context, op application.Operation, inp
 		return InvokeResult{}, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	const maxResponseBytes = 32 << 20
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return InvokeResult{}, err
+	}
+	if len(raw) > maxResponseBytes {
+		return InvokeResult{}, errors.New("LoopForge API response exceeds 32 MiB")
 	}
 	return InvokeResult{Status: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Body: raw}, nil
 }

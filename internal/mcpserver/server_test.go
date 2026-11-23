@@ -226,3 +226,18 @@ func TestLocalInvokerForwardsIncomingAuth(t *testing.T) {
 		t.Fatalf("Authorization = %q, want forwarded bearer", gotAuth)
 	}
 }
+
+func TestOversizedRemoteResponseReportsFailure(t *testing.T) {
+	chunk := strings.Repeat("x", 1<<20)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for i := 0; i < 32; i++ {
+			io.WriteString(w, chunk)
+		}
+		io.WriteString(w, "!")
+	}))
+	defer backend.Close()
+	_, err := (RemoteInvoker{BaseURL: backend.URL}).Invoke(context.Background(), application.Operation{Method: "GET", Path: "/logs"}, ToolInput{})
+	if err == nil || !strings.Contains(err.Error(), "32 MiB") {
+		t.Fatalf("oversized response returned as complete: %v", err)
+	}
+}
