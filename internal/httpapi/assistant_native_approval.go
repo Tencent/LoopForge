@@ -291,19 +291,18 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 // The reviewer's own texts for an unavailable review still mention a manual
 // confirmation used by platform drafts; native commands have none.
 func nativeReviewRefusal(review assistantApprovalReview) string {
+	reason := strings.TrimSpace(review.Rationale)
 	if review.Outcome != "allow" && review.Outcome != "deny" {
+		if reason != "" && !strings.Contains(reason, "手动确认") {
+			return "帮我批准：自动审查暂不可用（" + reason + "），已拒绝本次外部写入，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
+		}
 		return "帮我批准：自动审查暂不可用，已拒绝本次外部写入，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
 	}
-	reason := strings.TrimSpace(review.Rationale)
 	if reason == "" {
 		reason = "审查未通过"
 	}
 	return "帮我批准：审查拒绝了本次外部写入（" + reason + "），操作未执行；不要换一种方式重试，先告诉用户原因"
 }
-
-// nativeReviewBudget bounds one background review. The reviewer stops at 60
-// seconds itself; the margin only covers starting its CLI.
-const nativeReviewBudget = 90 * time.Second
 
 // nativeReviewPoll is how long one hook request waits for the verdict before
 // answering pending, below the hook's 20-second request timeout.

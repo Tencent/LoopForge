@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -393,5 +394,53 @@ func TestAssistedModeBlocksSubmitAssistantReplyTool(t *testing.T) {
 	}
 	if res["isError"] != true {
 		t.Fatalf("assisted mode must reject submit_assistant_reply: %#v", res)
+	}
+}
+
+func TestApprovalReviewHasNoArtificialTimeoutAndRespectsParentCancel(t *testing.T) {
+	// Neither single-candidate ("follow") nor multi-candidate reviews should
+	// impose an artificial short deadline that kills slow reasoning models.
+	user := domain.User{ID: 1, CodeBuddyAPIKey: "cb-key"}
+	h := &assistantHandlers{}
+	h.review = func(ctx context.Context, _ assistantApprovalInput, _ domain.User, _ string) (assistantApprovalReview, error) {
+		if _, hasDeadline := ctx.Deadline(); hasDeadline {
+			t.Fatal("review context must not impose an artificial timeout when parent has none")
+		}
+		return assistantApprovalReview{Outcome: "allow", RiskLevel: "low", UserAuthorization: "high", Rationale: "已核对"}, nil
+	}
+	reviewer := h.approvalReviewer(assistantRequest{Model: "hy4std"}, user, nil)
+	res := reviewer(context.Background(), "native_Bash", "工作区命令", map[string]any{"command": "git push"})
+	if !res.allows() {
+		t.Fatalf("expected allow, got %+v", res)
+	}
+
+	// Explicit parent cancellation stops the review and surfaces the reason.
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	h.review = func(ctx context.Context, _ assistantApprovalInput, _ domain.User, _ string) (assistantApprovalReview, error) {
+		cancel()
+		<-ctx.Done()
+		return assistantApprovalReview{}, ctx.Err()
+	}
+	res = reviewer(cancelCtx, "native_Bash", "工作区命令", map[string]any{"command": "git push"})
+	if res.allows() || res.Outcome != "unavailable" || !strings.Contains(res.Rationale, "已取消") {
+		t.Fatalf("canceled review should report cancellation, got %+v", res)
+	}
+	msg := nativeReviewRefusal(res)
+	if !strings.Contains(msg, "已取消") {
+		t.Fatalf("nativeReviewRefusal must surface unavailable rationale, got %q", msg)
+	}
+
+	// Direct HTTP client for approval inference keeps TCP/TLS connect bounds
+	// without setting an artificial overall/response-header cutoff.
+	client := newApprovalEgressClient(0)
+	if client.Timeout != 0 {
+		t.Fatalf("approval HTTP inference client timeout = %v, want 0", client.Timeout)
+	}
+	if tr, ok := client.Transport.(*http.Transport); !ok || tr.ResponseHeaderTimeout != 0 {
+		t.Fatalf("approval HTTP inference ResponseHeaderTimeout should be 0, got %+v", client.Transport)
+	}
+	probeClient := newApprovalEgressClient(10 * time.Second)
+	if probeClient.Timeout != 10*time.Second {
+		t.Fatalf("probe HTTP client timeout = %v, want 10s", probeClient.Timeout)
 	}
 }

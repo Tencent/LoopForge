@@ -44,23 +44,23 @@ func newApprovalEgressClient(timeout time.Duration) *http.Client {
 }
 
 func newApprovalEgressClientWithResolver(timeout time.Duration, allowed []netip.Prefix, resolver *net.Resolver) *http.Client {
-	if timeout <= 0 {
-		timeout = 25 * time.Second
-	}
 	transport := &http.Transport{
-		Proxy:                 nil,
-		DialContext:           approvalEgressDialContext(allowed, resolver),
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: timeout,
-		DisableKeepAlives:     true,
+		Proxy:               nil,
+		DialContext:         approvalEgressDialContext(allowed, resolver),
+		TLSHandshakeTimeout: 10 * time.Second,
+		DisableKeepAlives:   true,
 	}
-	return &http.Client{
-		Timeout:   timeout,
+	client := &http.Client{
 		Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
+	if timeout > 0 {
+		transport.ResponseHeaderTimeout = timeout
+		client.Timeout = timeout
+	}
+	return client
 }
 
 // approvalEgressDialContext enforces checkApprovalEgressAddress on every
@@ -455,7 +455,9 @@ func postApprovalHTTP(ctx context.Context, target approvalHTTPTarget, payload ma
 		default:
 			req.Header.Set("Authorization", "Bearer "+target.APIKey)
 		}
-		client := approvalHTTPClientFactory(25 * time.Second)
+		// Pass 0 so dial/TLS timeouts still guard dead hosts while inference
+		// follows req.Context() with no artificial response timeout.
+		client := approvalHTTPClientFactory(0)
 		resp, err := client.Do(req)
 		if err != nil {
 			var policyErr errApprovalPolicyBlocked
