@@ -1,5 +1,6 @@
 /* External-write approval cards at the end of the live reply (Harness UI
- * panel language). Colours come from --hui-* tokens only. */
+ * panel language). Every colour comes from a --hui-* token so light and dark
+ * themes stay consistent; this file declares none of them. */
 .native-approvals {
   display: flex;
   flex-direction: column;
@@ -7,27 +8,74 @@
   width: 100%;
   margin: 12px 0 20px;
 }
+/* A waiting card is a plain panel: surface, hairline border, rounded corners.
+ * No coloured edge or gradient, the badge carries the state. */
 .native-approval {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   padding: 16px 18px;
   background: var(--hui-surface);
   border: 1px solid var(--hui-border);
   border-radius: 14px;
   box-shadow: var(--hui-panel-shadow);
 }
-.native-approval-title {
+.native-approval-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--hui-text);
-  font-size: 14px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
-.native-approval-title svg {
-  color: var(--hui-warn);
+.native-approval-badge {
   flex: none;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--hui-warn);
+  background: var(--hui-soft);
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 999px;
 }
-.native-approval pre {
+.native-approval-summary {
+  min-width: 0;
+  font-size: 14px;
+  color: var(--hui-text);
+  overflow-wrap: anywhere;
+}
+.native-approval-kind {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--hui-secondary);
+  border: 1px solid var(--hui-border);
+  border-radius: 6px;
+}
+.native-approval-meta {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--hui-secondary);
+}
+.native-approval-tool {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--hui-mono);
+}
+.native-approval-wait {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.native-approval-input {
+  max-width: 100%;
   max-height: 180px;
-  margin: 10px 0 0;
+  margin: 0;
   padding: 10px 12px;
   overflow: auto;
   white-space: pre-wrap;
@@ -37,24 +85,44 @@
   border: 1px solid var(--hui-border);
   border-radius: 8px;
 }
-.native-approval p {
-  margin: 10px 0 0;
+.native-approval-hidden {
+  margin: 0;
   font-size: 12px;
+  color: var(--hui-tertiary);
+}
+.native-approval-risk {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--hui-secondary);
+}
+.native-approval-risk > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hui-warn);
 }
 .native-approval-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 12px;
 }
+/* The width is reserved so a decision in flight does not shift the buttons. */
 .native-approval-actions button {
+  min-width: 72px;
   padding: 7px 12px;
-  color: inherit;
+  font-size: 13px;
+  color: var(--hui-text);
   background: transparent;
   border: 1px solid var(--hui-border);
   border-radius: 7px;
   cursor: pointer;
+}
+.native-approval-actions button.is-deny {
+  color: var(--hui-error);
+  border-color: var(--hui-error);
 }
 .native-approval-actions button.primary {
   color: var(--hui-on-accent);
@@ -64,4 +132,31 @@
 .native-approval-actions button:disabled {
   opacity: 0.6;
   cursor: default;
+}
+/* No minute count here: it would drift from the server's approval timeout. */
+.native-approval-expiry {
+  margin: 0;
+  font-size: 11px;
+  color: var(--hui-tertiary);
+}
+.native-approval-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--hui-error);
+}
+.native-approval-expired {
+  margin: 0;
+  font-size: 12px;
+  color: var(--hui-secondary);
+}
+@media (max-width: 560px) {
+  .native-approval {
+    padding: 12px;
+  }
+  .native-approval-actions {
+    flex-wrap: wrap;
+  }
+  .native-approval-input {
+    max-width: 100%;
+  }
 }
