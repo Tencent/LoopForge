@@ -163,6 +163,34 @@ func TestConversationSandboxPreferenceGuidesTheAgent(t *testing.T) {
 	}
 }
 
+func TestConversationWorkspaceReusesDefaultSandboxAliases(t *testing.T) {
+	h, _, s := chatSandboxFixture(t)
+	gateway := agentToolGateway{deps: h.deps}
+	s.SandboxProfileID = "GENERIC-DOCKER"
+	open := func(choice workspaceOpenChoice) conversationWorkspaceBinding {
+		t.Helper()
+		bound, err := gateway.bindConversationWorkspace(t.Context(), s, choice)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bound
+	}
+	first := open(workspaceOpenChoice{})
+	if !first.Created || first.Run.WorkflowSnapshot.SandboxProfileID != repo.DefaultSandboxProfileID {
+		t.Fatalf("initial workspace = %+v", first)
+	}
+	if next := open(workspaceOpenChoice{}); !next.Reused || next.Run.ID != first.Run.ID {
+		t.Fatalf("default alias opened another workspace: %+v", next)
+	}
+	s.workspaceRunID = ""
+	if next := open(workspaceOpenChoice{}); next.Created || next.Run.ID != first.Run.ID {
+		t.Fatalf("default alias did not find the previous workspace: %+v", next)
+	}
+	if next := open(workspaceOpenChoice{SandboxID: s.SandboxProfileID, WorkspaceRunID: first.Run.ID}); !next.Reused || next.Run.ID != first.Run.ID {
+		t.Fatalf("explicit alias did not rejoin the workspace: %+v", next)
+	}
+}
+
 func TestConversationSandboxHTTPValidatesScopeAndLocks(t *testing.T) {
 	h, user, s := chatSandboxFixture(t)
 	selectEnvironment := func(id string, actor domain.User) int {
@@ -176,6 +204,12 @@ func TestConversationSandboxHTTPValidatesScopeAndLocks(t *testing.T) {
 		if got := selectEnvironment(id, user); got != want {
 			t.Errorf("%s: got %d want %d", id, got, want)
 		}
+	}
+	if code := selectEnvironment("GENERIC-DOCKER", user); code != 200 {
+		t.Fatalf("default alias: %d", code)
+	}
+	if saved, _ := h.repo.AssistantSession(user.ID, s.ChatSessionID); saved.SandboxProfileID != repo.DefaultSandboxProfileID {
+		t.Fatalf("saved default alias remains noncanonical: %q", saved.SandboxProfileID)
 	}
 	other := user
 	other.ID += 100

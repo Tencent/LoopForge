@@ -252,7 +252,7 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 		fmt.Fprintf(&notice, "已在运行环境 %s 中为本对话新开工作区。", run.WorkflowSnapshot.SandboxProfileID)
 	case bound.Reused:
 		notice.WriteString("继续使用本对话当前的工作区。")
-		if choice.SandboxID != "" && choice.SandboxID != run.WorkflowSnapshot.SandboxProfileID {
+		if choice.SandboxID != "" && !h.workspaceSandboxIDsMatch(choice.SandboxID, run.WorkflowSnapshot.SandboxProfileID) {
 			notice.WriteString("本次选择的环境没有生效。")
 		}
 	default:
@@ -462,7 +462,7 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 		if err != nil {
 			return binding, err
 		}
-		if choice.SandboxID != "" && target.WorkflowSnapshot.SandboxProfileID != "" && choice.SandboxID != target.WorkflowSnapshot.SandboxProfileID {
+		if choice.SandboxID != "" && target.WorkflowSnapshot.SandboxProfileID != "" && !h.workspaceSandboxIDsMatch(choice.SandboxID, target.WorkflowSnapshot.SandboxProfileID) {
 			return binding, fmt.Errorf("接入已有工作区 %s 时沿用其原本冻结的沙箱环境 %s，不能同时切换到 %s", target.ID, target.WorkflowSnapshot.SandboxProfileID, choice.SandboxID)
 		}
 		binding.Run = target
@@ -474,7 +474,7 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 		reuse := false
 		if s.workspaceRunID != "" {
 			run, ok := h.repo.RunState(s.workspaceRunID)
-			if ok && conversationMayBind(conv, run, s.ProjectID) && (wanted == "" || wanted == run.WorkflowSnapshot.SandboxProfileID || !run.IsWorkspace() && choice.SandboxID == "") {
+			if ok && conversationMayBind(conv, run, s.ProjectID) && (wanted == "" || h.workspaceSandboxIDsMatch(wanted, run.WorkflowSnapshot.SandboxProfileID) || !run.IsWorkspace() && choice.SandboxID == "") {
 				binding.Run, reuse = run, true
 			}
 		}
@@ -551,11 +551,25 @@ func (h *agentToolGateway) ownConversationWorkspace(conv domain.AssistantSession
 	own := ownWorkspaceRunIDs(conv)
 	for i := len(own) - 1; i >= 0; i-- {
 		run, ok := h.repo.RunState(own[i])
-		if ok && run.WorkflowSnapshot.SandboxProfileID == sandboxID && conversationMayBind(conv, run, projectID) {
+		if ok && conversationMayBind(conv, run, projectID) && h.workspaceSandboxIDsMatch(sandboxID, run.WorkflowSnapshot.SandboxProfileID) {
 			return run, true
 		}
 	}
 	return domain.Run{}, false
+}
+
+// Older conversations and frozen workspaces may still spell the platform
+// default with an equivalent ID. It identifies a single workspace sandbox.
+func (h *agentToolGateway) workspaceSandboxIDsMatch(a, b string) bool {
+	if a == b {
+		return true
+	}
+	for _, id := range []string{a, b} {
+		if reserved, err := h.repo.IsReservedSandboxID(id); err != nil || !reserved {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *agentToolGateway) startConversationWorkspace(s *AgentToolSession, conv domain.AssistantSession, sandboxID string) (domain.Run, error) {
