@@ -272,11 +272,31 @@ func TestConversationAssetsResetChmodAndRejectSymlink(t *testing.T) {
 	if err := syncFile("attachments/a/source.pdf", binary, 0600); err != nil {
 		t.Fatal(err)
 	}
+	prepared, err := p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "prepare"}, nil)
+	if err != nil || !prepared.PromptInputFiles {
+		t.Fatalf("runner must advertise staged prompt inputs: %v", err)
+	}
+	sourceRoot := t.TempDir()
+	promptPath := filepath.Join(root, "prompt-input", "turn-1", "prompt-1.md")
+	if _, err := p.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "sync", SourceRoot: sourceRoot, Files: []ConversationFile{{
+			Path: "prompt-input/turn-1/prompt-1.md", Rewrite: true, Mode: 0600,
+			Data: []byte("Read " + filepath.Join(sourceRoot, "attachments", "source.txt")),
+		}},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(promptPath); err != nil || string(data) != "Read "+filepath.Join(root, "attachments", "source.txt") {
+		t.Fatalf("prompt input references were not relocated: %q, %v", data, err)
+	}
 	if _, err := p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "resetAssets"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, rel)); !os.IsNotExist(err) {
 		t.Fatal("removed skill retained")
+	}
+	if _, err := os.Stat(promptPath); !os.IsNotExist(err) {
+		t.Fatalf("staged prompt survived asset reset: %v", err)
 	}
 	if b, err := os.ReadFile(native); err != nil || string(b) != "native" {
 		t.Fatal("native transcript changed")

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,13 +55,40 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 			return assistantCLIInvocation{}, err
 		}
 	}
-	command := runtime.AgentCLICommand(kind, runtime.AgentCLICommandOptions{
+	command, input, err := runtime.StageAgentCLIConversationCommand(o.Root, kind, runtime.AgentCLICommandOptions{
 		Binary: o.Bin, Model: o.Model, Effort: o.Effort, Resume: resume, Prompt: o.Prompt,
 		SystemPrompt: o.SystemPrompt, SystemPromptFile: systemFile, Chat: true, Workspace: o.Workspace, AgentFile: agentFile,
 		RunnerLogin: o.RunnerLogin, ImagePaths: o.ImagePaths, ImageInput: o.ImageInput,
 	})
+	if err != nil {
+		return assistantCLIInvocation{}, err
+	}
 	command.CredentialBindings = []runtime.CredentialBinding{runtime.BindAgentCLI}
 	translate := runtime.NewAgentCLITranslator(kind)
+	var interactive *assistantInteractiveInput
+	if input.ACPPrompt != "" {
+		acp, err := newAssistantACP(filepath.Join(o.Root, "ws"), input.ACPPrompt, resume)
+		if err != nil {
+			input.Close()
+			return assistantCLIInvocation{}, err
+		}
+		interactive = acp.assistantInteractiveInput
+		command.Stdin, translate = acp, acp.translate
+	} else if kind == runtime.AgentCLIAntigravity && command.Stdin != nil {
+		// The NDJSON session ends on EOF. Keep it open until its first result.
+		frame, err := io.ReadAll(command.Stdin)
+		if err != nil {
+			input.Close()
+			return assistantCLIInvocation{}, err
+		}
+		interactive, err = newAssistantInteractiveInput()
+		if err != nil {
+			input.Close()
+			return assistantCLIInvocation{}, err
+		}
+		interactive.enqueue(frame)
+		command.Stdin = interactive.input
+	}
 	native := ""
 	return assistantCLIInvocation{
 		command:     command,
@@ -69,7 +97,11 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 		translate: func(line string) []string {
 			out := translate(line)
 			for i, translated := range out {
-				out[i] = assistantAgentCLILine(kind, translated, &native)
+				var finished bool
+				out[i], finished = assistantAgentCLILine(kind, translated, &native)
+				if finished && kind == runtime.AgentCLIAntigravity && interactive != nil {
+					interactive.closeWriter()
+				}
 				if !o.ReviewOnly && agentCLISessionValid(native) {
 					_ = writeAgentCLISession(o.Root, kind, o.SessionID, native)
 				}
@@ -77,6 +109,10 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 			return out
 		},
 		finish: func(ok bool) {
+			defer input.Close()
+			if interactive != nil {
+				defer interactive.close()
+			}
 			if !o.ReviewOnly && agentCLISessionValid(native) {
 				_ = writeAgentCLISession(o.Root, kind, o.SessionID, native)
 			}
@@ -88,7 +124,7 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 // and turns a failed result into an error line: the pipeline reports error
 // lines (and recognises a rejected key in them), while a failed result would
 // read as an empty reply.
-func assistantAgentCLILine(kind, line string, native *string) string {
+func assistantAgentCLILine(kind, line string, native *string) (string, bool) {
 	var event struct {
 		Type      string `json:"type"`
 		SessionID string `json:"session_id"`
@@ -96,19 +132,19 @@ func assistantAgentCLILine(kind, line string, native *string) string {
 		Result    string `json:"result"`
 	}
 	if json.Unmarshal([]byte(line), &event) != nil {
-		return line
+		return line, false
 	}
 	if id := strings.TrimSpace(event.SessionID); id != "" {
 		*native = id
 	}
 	if event.Type != "result" || !event.IsError {
-		return line
+		return line, event.Type == "result"
 	}
 	message := strings.TrimSpace(event.Result)
 	if message == "" {
 		message = assistantEngineLabel(kind) + " 本轮执行失败"
 	}
-	return codexLine(map[string]any{"type": "error", "error": message, "session_id": *native})
+	return codexLine(map[string]any{"type": "error", "error": message, "session_id": *native}), true
 }
 
 // agent-cli-sessions.json maps "<kind>:<chat session>" onto the CLI's own

@@ -1740,6 +1740,11 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	execute := req.Execute
 	if execute == nil {
 		execute = runtime.ExecuteLocalCommand
+		if acp, ok := command.Stdin.(*assistantACP); ok {
+			// Pass the fd directly so os/exec has no stdin copier waiting
+			// for another frame if the CLI exits before its ACP response.
+			command.Stdin = acp.input
+		}
 		if attempt != nil {
 			defer runtime.ObserveCLIVersion(ctx, nil, engine, bin, attempt.recordCLIVersion)()
 		}

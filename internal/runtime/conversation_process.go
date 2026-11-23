@@ -71,15 +71,17 @@ func ConversationCommandFor(command CommandSpec, credentials RunCredentials) *Co
 }
 
 type ConversationProcessResult struct {
-	Root          string                  `json:"root,omitempty"`
-	ID            string                  `json:"id,omitempty"`
-	Events        []domain.TelemetryEvent `json:"events,omitempty"`
-	Sequence      int64                   `json:"sequence,omitempty"`
-	Done          bool                    `json:"done,omitempty"`
-	Error         string                  `json:"error,omitempty"`
-	NotStarted    bool                    `json:"notStarted,omitempty"`
-	CLIVersion    string                  `json:"cliVersion,omitempty"`
-	VersionSource string                  `json:"versionSource,omitempty"`
+	Root             string                  `json:"root,omitempty"`
+	WorkingDir       string                  `json:"workingDir,omitempty"`
+	PromptInputFiles bool                    `json:"promptInputFiles,omitempty"`
+	ID               string                  `json:"id,omitempty"`
+	Events           []domain.TelemetryEvent `json:"events,omitempty"`
+	Sequence         int64                   `json:"sequence,omitempty"`
+	Done             bool                    `json:"done,omitempty"`
+	Error            string                  `json:"error,omitempty"`
+	NotStarted       bool                    `json:"notStarted,omitempty"`
+	CLIVersion       string                  `json:"cliVersion,omitempty"`
+	VersionSource    string                  `json:"versionSource,omitempty"`
 	// GitScrubbed names the Git credentials the agent wrote by hand that were
 	// removed when a workspace CLI finished; it never holds their values.
 	GitScrubbed []string `json:"gitScrubbed,omitempty"`
@@ -212,7 +214,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		}
 	}
 	if req.Operation == "prepare" {
-		return ConversationProcessResult{Root: root, RemovedSkillLinks: removedSkillLinks}, nil
+		return ConversationProcessResult{Root: root, PromptInputFiles: true, RemovedSkillLinks: removedSkillLinks}, nil
 	}
 	if req.Operation == "resetAssets" {
 		for _, dir := range conversationAssetTrees {
@@ -480,6 +482,9 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	var stopAfterTerminalResult atomic.Bool
 	finish := func(runErr error, notStarted bool) {
 		cancel()
+		if req.SourceRoot != "" && req.SourceRoot != root {
+			_ = os.RemoveAll(filepath.Join(root, conversationPromptInputDir))
+		}
 		// Cancellation can skip the shell EXIT trap. Clean ephemeral ZCode
 		// credentials before publishing completion or releasing this root.
 		credentialCleanupErr := cleanupConversationCredentialFiles(root, req.Command.Provider)
@@ -602,6 +607,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	command = WithCommandEnvironment(command, env)
 	command = command.WithPrivateHomeDir(filepath.Join(root, "home"))
 	command.AgentCLI.SystemPromptFile = conversationRemap(command.AgentCLI.SystemPromptFile, req.SourceRoot, root)
+	command.AgentCLI.PromptFile = conversationRemap(command.AgentCLI.PromptFile, req.SourceRoot, root)
 	command.WorkingDir = filepath.Join(root, "ws")
 	if spec != nil && spec.Profile.Driver == domain.SandboxDriverSeatbelt {
 		// macOS seatbelt has no mount namespace to map <root>/ws onto the run
@@ -805,7 +811,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			_, runErr = ExecuteLocalCommand(procCtx, filepath.Join(root, "ws"), command, req.Command.Credentials, sink)
 		}
 	}()
-	return ConversationProcessResult{Root: root, ID: id}, nil
+	return ConversationProcessResult{Root: root, WorkingDir: command.WorkingDir, ID: id}, nil
 }
 
 // scrubConversationGitSecrets cleans the HOMEs a workspace CLI used (the
