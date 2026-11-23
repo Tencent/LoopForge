@@ -46,6 +46,10 @@ type assistantEngineInvocationOpts struct {
 	ReviewOnly bool
 	ReportOnly bool
 	User       runtime.ProviderCredential
+	// Models is the model catalog written for a CLI that falls back to its
+	// own metadata for an unknown model. Codex uses it so a model served by
+	// another gateway keeps its real context window.
+	Models []runtime.CodexModel
 }
 
 func assistantEngineConfigDir(engine string) string {
