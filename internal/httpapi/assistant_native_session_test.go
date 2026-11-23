@@ -369,12 +369,73 @@ func TestSharedNativeSessionFencesAStaleWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writer.Close()
+	link := filepath.Join(writer.root, "home", ".agents", "skills", "waiting")
+	if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("original", link); err != nil {
+		t.Fatal(err)
+	}
 	messages := append(append([]assistantMessage(nil), session.Messages...), assistantMessage{Role: "user", Content: "不能抢写"})
 	body, _ := json.Marshal(assistantRequest{ProjectID: session.ProjectID, RunID: session.RunID, SessionID: session.ID, Messages: messages})
 	c, w := workbenchContext(b, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
 	(&assistantHandlers{deps: h.deps}).chat(c)
-	if w.Code != 409 || len(calls()) != 1 {
-		t.Fatalf("stale writer was not fenced: %d", w.Code)
+	if w.Code != 409 || len(calls()) != 1 || !strings.Contains(w.Body.String(), "SHARED_SESSION_BUSY") || !strings.Contains(w.Body.String(), "另一进程中生成") {
+		t.Fatalf("stale writer was not fenced or reported accurately: %d %s", w.Code, w.Body.String())
+	}
+	if target, err := os.Readlink(link); err != nil || target != "original" {
+		t.Fatalf("losing turn modified the locked conversation: %q %v", target, err)
+	}
+}
+
+func TestSharedNativeSessionContinuesAfterSkillInstallSymlink(t *testing.T) {
+	h, a, b, _, session := sharedWorkbenchFixture(t)
+	_, calls := nativeCLIRecorder(t)
+	session = sendNativeTurn(t, h, a, session, "安装技能")
+	root := assistantSharedSessionRoot(session.ID)
+	const skillPath = "home/.agents/skills/@publisher/design/SKILL.md"
+	const linkPath = "home/.agents/skills/design"
+	skill := filepath.Join(root, skillPath)
+	if err := os.MkdirAll(filepath.Dir(skill), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skill, []byte("installed skill"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("@publisher/design", filepath.Join(root, linkPath)); err != nil {
+		t.Fatal(err)
+	}
+	session = sendNativeTurn(t, h, b, session, "继续上次的工作")
+	recorded := calls()
+	if len(recorded) != 2 || recorded[1].flag("--resume") != recorded[0].flag("--session-id") {
+		t.Fatalf("turn did not resume the original native session: %+v", recorded)
+	}
+	if data, err := os.ReadFile(skill); err != nil || string(data) != "installed skill" {
+		t.Fatalf("skill files changed: %q %v", data, err)
+	}
+	reply := session.Messages[len(session.Messages)-1]
+	for _, event := range reply.Activity {
+		if event.Kind == "status" && strings.Contains(event.Text, linkPath) && strings.Contains(event.Text, "符号链接") {
+			return
+		}
+	}
+	t.Fatalf("turn did not record which link was removed: %+v", reply.Activity)
+}
+
+func TestSharedNativeSessionReportsCacheReadFailure(t *testing.T) {
+	h, a, _, _, session := sharedWorkbenchFixture(t)
+	_, calls := nativeCLIRecorder(t)
+	root := assistantSharedSessionRoot(session.ID)
+	if err := os.MkdirAll(filepath.Join(root, "session.json"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	messages := append(session.Messages, assistantMessage{Role: "user", Content: "继续"})
+	body, _ := json.Marshal(assistantRequest{ProjectID: session.ProjectID, RunID: session.RunID, SessionID: session.ID, Messages: messages})
+	c, w := workbenchContext(a, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
+	h.chat(c)
+	got := w.Body.String()
+	if w.Code != 500 || len(calls()) > 0 || !strings.Contains(got, "CONVERSATION_STATE_ERROR") || !strings.Contains(got, "读取共享会话缓存") || !strings.Contains(got, "session.json") || !strings.Contains(got, "is a directory") || strings.Contains(got, root) {
+		t.Fatalf("cache read failure lost its specific cause: %d %s", w.Code, got)
 	}
 }
 
