@@ -2,6 +2,15 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## 0.4.2 — Conversation recovery and assisted approvals
+
+- Existing conversations can resume after a skill installation leaves an unsupported symbolic link in their managed skill directory. The platform and Runner remove these links during asset preparation, record the cleanup in the turn activity, and report filesystem failures separately from session locks (#1261).
+- In `Assisted` (「帮我批准」) mode, AI review makes the final decision. An unavailable review blocks the action. The reviewer can follow the conversation's CLI and model, use another configured CLI and model, or use a standalone API (#1216).
+
+**Upgrading from v0.4.1.** Check out `v0.4.2` and run `./start.sh pull` for a Compose installation. The platform adds the new approval review columns on startup. For workspaces on remote execution machines, update the connected Runner from its machine card after upgrading the platform, then start a new turn in the affected conversation. See the [Runner update instructions](docs/conversation-native-cli.md).
+
+For a direct upgrade from `v0.4.0`, follow the [GitHub credential migration instructions](docs/deployment.md#migrating-existing-github-credentials) before starting the new version.
+
 ## 0.4.1 — Git and MCP credentials, SOP orchestration and conversation workspaces
 
 - Configure HTTPS Git credentials per host, authorize the IP addresses of self-hosted HTTPS Git servers, and distribute trusted SSH host keys to execution machines. MCP servers, market items and SOP nodes can use configured credentials.
