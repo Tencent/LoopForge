@@ -94,3 +94,47 @@ test('bot pure helpers enforce permissions, filtering, and status labels', async
   assert.match(values.target, /Alice/);
   assert.equal(values.allowed, true);
 });
+
+test('bot interaction history ignores an older response after switching back to a bot', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const bots = [
+    { id: 'bot-a', projectId: 'project-1', ownerId: 'user-1', name: 'Release Bot' },
+    { id: 'bot-b', projectId: 'project-1', ownerId: 'user-1', name: 'Support Bot' },
+  ];
+  const history = (content) => ({
+    connection: { state: 'connected' }, conversations: [],
+    messages: [{ createdAt: '2026-10-20T10:00:00Z', senderId: 'alice', status: 'replied', content }],
+  });
+  const releaseRequests = [];
+  app.router.get('/api/notification-bots', bots);
+  app.router.get('/api/notification-deliveries', []);
+  app.router.get('/api/notification-bots/bot-a/interactions',
+    () => new Promise(resolve => releaseRequests.push(resolve)));
+  app.router.get('/api/notification-bots/bot-b/interactions', history('Support message'));
+
+  await app.evaluate('loadBots()');
+  const host = app.document.querySelector('#botsContent');
+  host.querySelector('[data-bot-tab="records"]').click();
+  host.querySelector('[data-bot-records="interactions"]').click();
+
+  const chooseBot = (id) => {
+    const select = host.querySelector('#botInteractionBot');
+    select.value = id;
+    select.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  };
+  chooseBot('bot-b');
+  await settle(4);
+  assert.match(host.textContent, /Support message/);
+  chooseBot('bot-a');
+  assert.equal(releaseRequests.length, 2);
+
+  releaseRequests[1](history('New release message'));
+  await settle(4);
+  assert.match(host.textContent, /New release message/);
+
+  releaseRequests[0](history('Older release message'));
+  await settle(4);
+  assert.match(host.textContent, /New release message/);
+  assert.doesNotMatch(host.textContent, /Older release message/);
+});
