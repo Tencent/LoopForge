@@ -127,42 +127,6 @@ func TestWorkspaceRepositoryPromptRefreshesOnlyWhenNeeded(t *testing.T) {
 	}
 }
 
-// A native workspace starts empty; every turn's catalog tells the agent to
-// clone from the execution machine's repository cache.
-func TestNativeWorkspaceRepositoryPromptGuidesCacheClones(t *testing.T) {
-	h, _ := workbenchFixture(t)
-	for id, driver := range map[string]string{"native-ws": domain.SandboxDriverNative, "docker-ws": domain.SandboxDriverDocker} {
-		profile := domain.SandboxProfile{ID: id, Name: id, ProjectID: "workbench", Driver: driver}
-		if err := h.repo.PutRun(domain.Run{ID: id, Kind: domain.RunKindWorkspace, WorkflowID: domain.ConversationWorkspaceWorkflowID, Status: "waiting", Nodes: map[string]*domain.NodeRun{},
-			WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: id, SandboxSnapshot: &domain.RunnerSandboxSpec{Profile: profile}}}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := h.repo.PutRepository(domain.Repository{ID: "service", Name: "service", ProjectID: "workbench", CloneURL: "https://git.example.com/team/service.git", DefaultBranch: "main"}); err != nil {
-		t.Fatal(err)
-	}
-	render := func(run string) string {
-		t.Helper()
-		prompt, _, err := h.workspaceRepositoryPrompt(&AgentToolSession{ProjectID: "workbench", workspaceRunID: run}, t.TempDir(), "", 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return prompt
-	}
-	native := render("native-ws")
-	data, found := strings.CutPrefix(native, nativeWorkspaceRepositoryGuide+workspaceRepositoryHeading)
-	if !found || !strings.Contains(nativeWorkspaceRepositoryGuide, "git clone --shared") {
-		t.Fatalf("native workspace prompt without its cache guide: %s", native)
-	}
-	var hints []workspaceRepositoryHint
-	if err := json.Unmarshal([]byte(data), &hints); err != nil || len(hints) != 1 || hints[0].ID != "service" {
-		t.Fatalf("native workspace catalog = %s %v", data, err)
-	}
-	if docker := render("docker-ws"); strings.Contains(docker, nativeWorkspaceRepositoryGuide) || !strings.HasPrefix(docker, workspaceRepositoryHeading) {
-		t.Fatalf("docker workspace received the cache guide: %s", docker)
-	}
-}
-
 func TestWorkspaceRepositoryHintsStripURLSecrets(t *testing.T) {
 	hints := projectRepositoryHints([]domain.Repository{
 		{ID: "ssh", Name: "A", ProjectID: "p", CloneURL: "ssh://git:fixture-password@git.example.test:2222/team/repo.git?signature=fixture#marker"},
@@ -546,12 +510,12 @@ func TestNativeExternalWriteClassifier(t *testing.T) {
 func TestRuntimeModeHandoffPublishesToLiveGeneration(t *testing.T) {
 	recorder := newAssistantGenerationRecorder(domain.AssistantGeneration{ID: "mode-stream", Status: "running"})
 	defer recorder.close()
-	recorder.sink("runtime_mode", map[string]string{"mode": domain.AssistantModeWorkspace})
-	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace {
-		t.Fatal("handoff mode not published")
+	recorder.sink("runtime_mode", map[string]string{"mode": domain.AssistantModeWorkspace, "workspaceRunId": "workspace-2"})
+	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace || got.WorkspaceRunID != "workspace-2" {
+		t.Fatalf("handoff = %q in %q", got.RuntimeMode, got.WorkspaceRunID)
 	}
-	recorder.sink("runtime_mode", map[string]string{"mode": "invalid"})
-	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace {
+	recorder.sink("runtime_mode", map[string]string{"mode": "invalid", "workspaceRunId": "unbound"})
+	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace || got.WorkspaceRunID != "workspace-2" {
 		t.Fatal("invalid mode accepted")
 	}
 }

@@ -10,15 +10,16 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
-	"agentflow/internal/procwatch"
 )
 
 func TestWithRepositoryCacheForOnlyNativeDrivers(t *testing.T) {
 	previous := RepositoryCacheRoot()
 	t.Cleanup(func() { repositoryCacheRoot.Store(previous) })
-	SetRepositoryCacheRoot(t.TempDir())
+	if err := SetRepositoryCacheRoot(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	root := RepositoryCacheRoot()
-	if filepath.Base(root) != RepositoryCacheDir {
+	if !strings.HasPrefix(root, "/tmp/.loopforge-repository-cache-") {
 		t.Fatalf("cache root = %q", root)
 	}
 	for driver, want := range map[string]string{
@@ -31,47 +32,35 @@ func TestWithRepositoryCacheForOnlyNativeDrivers(t *testing.T) {
 	}
 }
 
-func repositoryCacheTestGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
-	out, err := cmd.CombinedOutput()
+// Seatbelt allows ordinary host temporary files, but Git caches are host-only.
+func TestSeatbeltHidesRepositoryCache(t *testing.T) {
+	binary, err := exec.LookPath("sandbox-exec")
 	if err != nil {
-		t.Fatalf("git %v: %v %s", args, err, out)
+		t.Skip("seatbelt unavailable")
 	}
-	return strings.TrimSpace(string(out))
-}
-
-// A checkpoint must restore on a machine without this cache, so the shared
-// clones in a workspace take their borrowed objects along first.
-func TestDissociateSharedClonesCopiesBorrowedObjects(t *testing.T) {
-	origin := t.TempDir()
-	repositoryCacheTestGit(t, origin, "init", "-q", "-b", "main")
-	if err := os.WriteFile(filepath.Join(origin, "a.txt"), []byte("a"), 0o600); err != nil {
+	previous := RepositoryCacheRoot()
+	t.Cleanup(func() { repositoryCacheRoot.Store(previous) })
+	workspace := t.TempDir()
+	if err := SetRepositoryCacheRoot(workspace); err != nil {
 		t.Fatal(err)
 	}
-	repositoryCacheTestGit(t, origin, "add", "a.txt")
-	repositoryCacheTestGit(t, origin, "commit", "-q", "-m", "a")
-	head := repositoryCacheTestGit(t, origin, "rev-parse", "HEAD")
-	cache, workspace := t.TempDir(), t.TempDir()
-	checkout := filepath.Join(workspace, "service")
-	if err := os.Mkdir(checkout, 0o700); err != nil {
+	root := RepositoryCacheRoot()
+	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := gitwork.CloneFromRepositoryCache(context.Background(), cache, "service", origin, "", checkout, procwatch.Options{}); err != nil {
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	fixture := filepath.Join(root, "fixture")
+	if err := os.WriteFile(fixture, []byte("repository cache fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := dissociateSharedClones(context.Background(), workspace); err != nil {
+	profile, err := seatbeltProfileCommand(workspace, SandboxRequirements{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(checkout, ".git", "objects", "info", "alternates")); !os.IsNotExist(err) {
-		t.Fatalf("alternates kept: %v", err)
+	if result, err := exec.Command(binary, "-p", profile, "/bin/cat", "/dev/null").CombinedOutput(); err != nil {
+		t.Fatalf("seatbelt profile does not start: %v (%s)", err, result)
 	}
-	if err := os.RemoveAll(cache); err != nil {
-		t.Fatal(err)
+	if err := exec.Command(binary, "-p", profile, "/bin/cat", fixture).Run(); err == nil {
+		t.Fatal("sandbox could read host repository cache")
 	}
-	if got := repositoryCacheTestGit(t, checkout, "rev-parse", "HEAD^{tree}"); got == "" {
-		t.Fatal("checkout lost its objects")
-	}
-	repositoryCacheTestGit(t, checkout, "cat-file", "-e", head)
 }

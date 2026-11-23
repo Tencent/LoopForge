@@ -133,7 +133,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	runtime.SetRepositoryCacheRoot(root)
+	if err := runtime.SetRepositoryCacheRoot(root); err != nil {
+		log.Printf("repository cache disabled: %v", err)
+	}
 	s, err := repo.Open(strings.TrimSpace(*mysqlDSN))
 	if err != nil {
 		log.Fatal(err)

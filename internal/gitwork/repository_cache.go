@@ -14,14 +14,11 @@ import (
 	"agentflow/internal/procwatch"
 )
 
-// RepositoryCacheEnv names the repository cache root inside a native sandbox.
-const RepositoryCacheEnv = "LOOPFORGE_REPOSITORY_CACHE"
-
 type repositoryCacheKey struct{}
 
 // WithRepositoryCache lets clones in ctx start from the bare repository cache
-// under root. Only workspaces that see the host filesystem (native sandboxes)
-// may use it: a shared clone refers to the cache's objects by host path.
+// under root. The host fetches and copies reachable objects before running
+// commands in the sandbox.
 func WithRepositoryCache(ctx context.Context, root string) context.Context {
 	if strings.TrimSpace(root) == "" {
 		return ctx
@@ -47,35 +44,22 @@ func RepositoryCachePath(root, repositoryID string) string {
 	return filepath.Join(root, id+".git")
 }
 
-// RefreshRepositoryCache creates or fetches the bare cache of repositoryID
-// from remote and returns its path. Branches mirror the remote's heads; the
-// cache never runs gc, because shared clones borrow its objects.
-func RefreshRepositoryCache(ctx context.Context, root, repositoryID, remote string, watch procwatch.Options) (string, error) {
-	dir := RepositoryCachePath(root, repositoryID)
-	if dir == "" {
-		return "", fmt.Errorf("仓库 %q 不能用作缓存目录名", repositoryID)
-	}
-	if err := ValidateRemoteURL(remote, true); err != nil {
-		return "", err
-	}
-	unlock, err := lockRepositoryCache(ctx, dir)
-	if err != nil {
-		return "", err
-	}
-	defer unlock()
-	return dir, refreshLockedCache(ctx, dir, remote, watch)
-}
-
-// CloneFromRepositoryCache refreshes the cache, then makes the empty
-// workspace a shared clone of it whose origin is remote again. branch empty
-// checks out the remote's default branch. On failure workspace is emptied
-// again, ready for a full clone.
-func CloneFromRepositoryCache(ctx context.Context, root, repositoryID, remote, branch, workspace string, watch procwatch.Options) (err error) {
+// CloneFromRepositoryCache authenticates to the remote and makes an
+// independent checkout of branch using the refreshed cache as the transport.
+// The destination must be empty. The cache is never needed at runtime.
+func CloneFromRepositoryCache(ctx context.Context, root, repositoryID, remote, branch, workspace string, singleBranch bool, watch procwatch.Options) (err error) {
 	dir := RepositoryCachePath(root, repositoryID)
 	if dir == "" {
 		return fmt.Errorf("仓库 %q 不能用作缓存目录名", repositoryID)
 	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return fmt.Errorf("repository cache checkout requires a ref")
+	}
 	if err := ValidateRemoteURL(remote, true); err != nil {
+		return err
+	}
+	if err := requireEmptyCloneDirectory(workspace); err != nil {
 		return err
 	}
 	unlock, err := lockRepositoryCache(ctx, dir)
@@ -86,14 +70,20 @@ func CloneFromRepositoryCache(ctx context.Context, root, repositoryID, remote, b
 	if err := refreshLockedCache(ctx, dir, remote, watch); err != nil {
 		return err
 	}
+	if err := requireEmptyCloneDirectory(workspace); err != nil {
+		return err
+	}
 	defer func() {
 		if err != nil {
 			_ = emptyDirectory(workspace)
 		}
 	}()
-	args := []string{"clone", "--quiet", "--shared"}
-	if branch = strings.TrimSpace(branch); branch != "" {
-		args = append(args, "--branch", branch)
+
+	// Use Git's transport so the worktree gets its own objects and only
+	// reaches the refs advertised in the authenticated fetch.
+	args := []string{"clone", "--quiet", "--no-local", "--branch", branch}
+	if singleBranch {
+		args = append(args, "--single-branch")
 	}
 	if err := localGit(ctx, "-C", workspace, append(args, "--", dir, ".")...); err != nil {
 		return err
@@ -102,36 +92,52 @@ func CloneFromRepositoryCache(ctx context.Context, root, repositoryID, remote, b
 }
 
 func refreshLockedCache(ctx context.Context, dir, remote string, watch procwatch.Options) error {
-	if out, err := exec.CommandContext(ctx, "git", "--git-dir", dir, "rev-parse", "--is-bare-repository").Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
-		if err := os.RemoveAll(dir); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
-			return err
-		}
-		tmp, err := os.MkdirTemp(filepath.Dir(dir), filepath.Base(dir)+".tmp-")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(tmp)
-		if _, err := Watch(ctx, filepath.Dir(dir), watch, "clone", "--bare", "--progress", "--", remote, tmp); err != nil {
-			return fmt.Errorf("git clone --bare: %w", err)
-		}
-		// Name the bare Git directory explicitly for hosts with
-		// safe.bareRepository=explicit.
-		for _, setting := range [][2]string{{"gc.auto", "0"}, {"maintenance.auto", "false"}, {"gc.pruneExpire", "never"}, {"fetch.prune", "false"}} {
-			if err := localGit(ctx, "--git-dir", tmp, "config", setting[0], setting[1]); err != nil {
-				return err
-			}
-		}
-		return os.Rename(tmp, dir)
-	}
-	if err := localGit(ctx, "--git-dir", dir, "remote", "set-url", "origin", remote); err != nil {
+	configured, err := localGitOutput(ctx, "--git-dir", dir, "config", "--local", "--get", "remote.origin.url")
+	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if err != nil || configured != remote {
+		return replaceLockedCache(ctx, dir, remote, watch)
 	}
 	watch.Label = strings.Replace(watch.Label, "克隆", "更新", 1)
 	if _, err := Watch(ctx, dir, watch, "-C", dir, "fetch", "--progress", "--prune", "--force", "--", remote, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"); err != nil {
 		return fmt.Errorf("git fetch: %w", err)
+	}
+	return nil
+}
+
+func replaceLockedCache(ctx context.Context, dir, remote string, watch procwatch.Options) error {
+	staging, err := os.MkdirTemp(filepath.Dir(dir), filepath.Base(dir)+".tmp-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(staging)
+	if _, err := Watch(ctx, filepath.Dir(dir), watch, "clone", "--bare", "--no-local", "--progress", "--", remote, staging); err != nil {
+		return fmt.Errorf("git clone --bare: %w", err)
+	}
+	// Use an explicit Git directory for hosts with safe.bareRepository=explicit.
+	if err := localGit(ctx, "--git-dir", staging, "config", "gc.auto", "0"); err != nil {
+		return err
+	}
+	if err := localGit(ctx, "--git-dir", staging, "config", "maintenance.auto", "false"); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	return os.Rename(staging, dir)
+}
+
+func requireEmptyCloneDirectory(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("repository checkout directory is not empty")
 	}
 	return nil
 }
@@ -152,12 +158,21 @@ func emptyDirectory(dir string) error {
 }
 
 func localGit(ctx context.Context, dirOption, dir string, args ...string) error {
+	_, err := localGitOutput(ctx, dirOption, dir, args...)
+	return err
+}
+
+func localGitOutput(ctx context.Context, dirOption, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{dirOption, dir}, args...)...)
 	cmd.Env = WithEnvValue(Env(""), "GIT_CONFIG_NOSYSTEM", "1")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git %s: %w (%s)", args[0], err, strings.TrimSpace(string(out)))
+	cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_GLOBAL", os.DevNull)
+	cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_PARAMETERS", "")
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w (%s)", args[0], err, text)
 	}
-	return nil
+	return text, nil
 }
 
 func lockRepositoryCache(ctx context.Context, dir string) (func(), error) {

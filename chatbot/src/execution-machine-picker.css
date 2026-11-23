@@ -21,12 +21,20 @@
   font: inherit;
   cursor: pointer;
 }
+.machine-labels {
+  display: grid;
+  min-width: 0;
+}
 .machine-picker > span,
-.machine-fixed > span {
+.machine-labels > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.machine-sandbox {
+  color: var(--navigation-secondary, var(--muted));
+  line-height: 1.15;
 }
 .machine-context .machine-picker:hover,
 .machine-context .machine-picker[aria-expanded="true"] {
@@ -46,6 +54,9 @@
   margin-right: 6px;
   font-size: 11px;
 }
+.header-actions .machine-context.has-sandbox {
+  max-width: 200px;
+}
 .composer-context > .machine-context {
   flex-shrink: 1;
   min-width: 65px;
@@ -54,7 +65,8 @@
   .machine-context {
     max-width: 145px;
   }
-  .header-actions .machine-context {
+  .header-actions .machine-context,
+  .header-actions .machine-context.has-sandbox {
     max-width: 110px;
   }
 }

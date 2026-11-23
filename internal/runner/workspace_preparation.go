@@ -92,7 +92,6 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 	if err := checkoutInvocationRepositories(cacheCtx, root, request.PreparationInvocation, request.RefreshCleanRepositories); err != nil {
 		return runnerWorkspaceError(fmt.Errorf("prepare workspace repositories: %w", err))
 	}
-	warmRepositoryCaches(cacheCtx, request.PreparationInvocation)
 	sb, release, err := d.acquireTaskSandbox(ctx, task)
 	if err != nil {
 		return runnerWorkspaceError(err)

@@ -28,6 +28,9 @@ func (e *Engine) workspaceSandboxProfile(run domain.Run) (domain.SandboxProfile,
 			return profile, runtime.SandboxResources{}, err
 		}
 	}
+	if err := domain.ValidateFrozenSandbox(spec.Profile); err != nil {
+		return domain.SandboxProfile{}, runtime.SandboxResources{}, err
+	}
 	return spec.Profile, sandboxResourcesFromSnapshot(spec), nil
 }
 
@@ -150,9 +153,6 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	credentials := e.resolveRunCredentials(run)
 	invocation := &domain.RunnerInvocation{}
 	bindRunnerRepositories(invocation, run, credentials.GitUserName, credentials.GitUserEmail)
-	if request.Operation == domain.RunnerWorkspaceOperationPrepare {
-		invocation.CacheRepositories = e.workspaceCacheRepositories(run)
-	}
 	invocation.GitSSHUserID = 0
 	invocation.GitHTTPUserID = 0
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)

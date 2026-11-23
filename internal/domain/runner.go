@@ -148,9 +148,8 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionCodeBuddyBaseURL)
 }
 
-// RunnerVersionRepositoryCache is the first runner that checks repositories
-// of native workspaces out as shared clones of its repository cache and warms
-// that cache when a conversation workspace opens. Older runners clone fully.
+// RunnerVersionRepositoryCache is the first runner that reuses a host cache
+// when checking out repositories for a native workspace. Older runners clone fully.
 const RunnerVersionRepositoryCache = "0.12.0"
 
 func (r Runner) SupportsSharedPush() bool {
@@ -572,10 +571,6 @@ type RunnerInvocation struct {
 	// Repositories lists every repository the run touches (multi-repository
 	// support). Each entry checks out into its Dir under the task workspace.
 	Repositories []RunnerRepository `json:"repositories,omitempty"`
-	// CacheRepositories are only fetched into the runner's repository cache,
-	// never checked out: the repositories an Agent in a native conversation
-	// workspace may clone later.
-	CacheRepositories []RunnerRepository `json:"cacheRepositories,omitempty"`
 }
 
 // RunnerRepository describes the checkout a runner machine should create.
@@ -626,11 +621,6 @@ func (inv *RunnerInvocation) GitSSHRemotes() []string {
 		}
 		if len(inv.Repositories) == 0 && inv.Repository != nil && inv.Repository.UseSSH {
 			remotes = append(remotes, inv.Repository.CloneURL)
-		}
-		for _, repository := range inv.CacheRepositories {
-			if repository.UseSSH {
-				remotes = append(remotes, repository.CloneURL)
-			}
 		}
 	}
 	return remotes

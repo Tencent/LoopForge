@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
 import { SelectMenu } from "./ui";
 import { executionLocked } from "./execution-target";
+import { sandboxDriverLabel } from "./SandboxPicker";
 import "./execution-machine-picker.css";
 
 export default function ExecutionMachinePicker({ chat, onManage }) {
@@ -46,12 +47,22 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
   const title = locked
     ? loadError || `当前会话执行机器：${label}。会话已绑定，后续运行始终使用此机器。`
     : chat.machineError || "选择执行机器，发送首条消息后固定";
+  const sandbox = chat.workspaceSandbox;
+  const sandboxLabel = sandbox?.id
+    ? `${sandboxDriverLabel(sandbox.driver) || "未知类型"}-${sandbox.id}`
+    : "";
 
   if (locked)
     return (
-      <span className="machine-context machine-fixed" title={title}>
+      <span
+        className={`machine-context machine-fixed${sandboxLabel ? " has-sandbox" : ""}`}
+        title={sandboxLabel ? `${title}\n当前工作区沙箱 ${sandboxLabel}` : title}
+      >
         <HarnessIcon name="server" size={13} interactive={false} />
-        <span>{label}</span>
+        <span className="machine-labels">
+          <span>{label}</span>
+          {sandboxLabel ? <span className="machine-sandbox">{sandboxLabel}</span> : null}
+        </span>
         <HarnessIcon name="lock" size={11} interactive={false} />
       </span>
     );

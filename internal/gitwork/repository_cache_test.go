@@ -2,6 +2,7 @@ package gitwork
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +48,7 @@ func TestRepositoryCachePathRejectsUnsafeIDs(t *testing.T) {
 	}
 }
 
-func TestCloneFromRepositoryCacheSharesObjectsAndKeepsOrigin(t *testing.T) {
+func TestCloneFromRepositoryCacheKeepsAnIndependentCheckout(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "gitconfig")
 	if err := os.WriteFile(config, []byte("[safe]\n\tbareRepository = explicit\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -64,7 +65,7 @@ func TestCloneFromRepositoryCacheSharesObjectsAndKeepsOrigin(t *testing.T) {
 	ctx := context.Background()
 
 	workspace := t.TempDir()
-	if err := CloneFromRepositoryCache(ctx, root, "service", remote, "", workspace, procwatch.Options{}); err != nil {
+	if err := CloneFromRepositoryCache(ctx, root, "service", remote, "main", workspace, true, procwatch.Options{}); err != nil {
 		t.Fatal(err)
 	}
 	cache := filepath.Join(root, "service.git")
@@ -77,14 +78,13 @@ func TestCloneFromRepositoryCacheSharesObjectsAndKeepsOrigin(t *testing.T) {
 	if url := cacheTestGit(t, workspace, "remote", "get-url", "origin"); url != remote {
 		t.Fatalf("clone origin = %q, want the repository remote", url)
 	}
-	alternates, err := os.ReadFile(filepath.Join(workspace, ".git", "objects", "info", "alternates"))
-	if err != nil || !strings.Contains(string(alternates), cache) {
-		t.Fatalf("clone does not borrow the cache objects: %q %v", alternates, err)
+	if _, err := os.Stat(filepath.Join(workspace, ".git", "objects", "info", "alternates")); !os.IsNotExist(err) {
+		t.Fatalf("checkout should have its own objects: %v", err)
 	}
 
 	next := cacheTestCommit(t, origin, "c.txt")
 	branchWorkspace := t.TempDir()
-	if err := CloneFromRepositoryCache(ctx, root, "service", remote, "feature", branchWorkspace, procwatch.Options{}); err != nil {
+	if err := CloneFromRepositoryCache(ctx, root, "service", remote, "feature", branchWorkspace, true, procwatch.Options{}); err != nil {
 		t.Fatal(err)
 	}
 	if head := cacheTestGit(t, branchWorkspace, "rev-parse", "HEAD"); head != feature {
@@ -93,9 +93,26 @@ func TestCloneFromRepositoryCacheSharesObjectsAndKeepsOrigin(t *testing.T) {
 	if got := cacheTestGit(t, cache, "--git-dir=.", "rev-parse", "refs/heads/main"); got != next {
 		t.Fatalf("cache main = %s, want the fetched %s", got, next)
 	}
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	err := CloneFromRepositoryCache(cancelled, root, "service", remote, "main", t.TempDir(), false, procwatch.Options{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled checkout error = %v", err)
+	}
+	if got := cacheTestGit(t, cache, "--git-dir=.", "rev-parse", "refs/heads/main"); got != next {
+		t.Fatalf("cancelled checkout changed the cache: %q", got)
+	}
+
+	// The checkout can be used on a different machine without this cache.
+	if err := os.RemoveAll(cache); err != nil {
+		t.Fatal(err)
+	}
+	cacheTestGit(t, workspace, "fsck", "--full")
+	cacheTestGit(t, branchWorkspace, "fsck", "--full")
 }
 
-func TestRefreshRepositoryCacheReplacesABrokenCache(t *testing.T) {
+func TestCloneFromRepositoryCacheReplacesABrokenCache(t *testing.T) {
 	origin := t.TempDir()
 	cacheTestGit(t, origin, "init", "-q", "-b", "main")
 	head := cacheTestCommit(t, origin, "a.txt")
@@ -106,8 +123,8 @@ func TestRefreshRepositoryCacheReplacesABrokenCache(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "service.git", "junk"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	dir, err := RefreshRepositoryCache(context.Background(), root, "service", "file://"+origin, procwatch.Options{})
-	if err != nil {
+	dir := RepositoryCachePath(root, "service")
+	if err := CloneFromRepositoryCache(context.Background(), root, "service", "file://"+origin, "main", t.TempDir(), false, procwatch.Options{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := cacheTestGit(t, dir, "--git-dir=.", "rev-parse", "refs/heads/main"); got != head {
@@ -116,7 +133,15 @@ func TestRefreshRepositoryCacheReplacesABrokenCache(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "junk")); !os.IsNotExist(err) {
 		t.Fatalf("broken cache content kept: %v", err)
 	}
-	if _, err := RefreshRepositoryCache(context.Background(), root, "../x", "file://"+origin, procwatch.Options{}); err == nil {
-		t.Fatal("unsafe repository ID accepted")
+	workspace := t.TempDir()
+	file := filepath.Join(workspace, "notes")
+	if err := os.WriteFile(file, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CloneFromRepositoryCache(context.Background(), root, "service", "file://"+origin, "main", workspace, false, procwatch.Options{}); err == nil {
+		t.Fatal("nonempty workspace accepted for clone")
+	}
+	if content, err := os.ReadFile(file); err != nil || string(content) != "keep" {
+		t.Fatalf("existing workspace file was changed: %q %v", content, err)
 	}
 }

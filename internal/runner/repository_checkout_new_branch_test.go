@@ -30,9 +30,8 @@ func TestCloneRepositoryCreatesOnlyNewWorkBranch(t *testing.T) {
 	}
 }
 
-// A native workspace's checkout is a shared clone of this machine's
-// repository cache. A branch the repository lacks still fails after the
-// full-clone fallback.
+// The runner uses its cache and produces an independent checkout. A branch
+// the repository lacks still fails after the direct clone fallback.
 func TestCloneRepositoryStartsFromRepositoryCache(t *testing.T) {
 	remote := bareRemoteWithBaseline(t)
 	root := t.TempDir()
@@ -42,9 +41,11 @@ func TestCloneRepositoryStartsFromRepositoryCache(t *testing.T) {
 	if err := cloneRepository(ctx, workspace, repo); err != nil {
 		t.Fatal(err)
 	}
-	alternates, err := os.ReadFile(filepath.Join(workspace, ".git", "objects", "info", "alternates"))
-	if err != nil || !strings.Contains(string(alternates), filepath.Join(root, "repo.git")) {
-		t.Fatalf("checkout does not borrow the cache objects: %q %v", alternates, err)
+	if _, err := os.Stat(filepath.Join(root, "repo.git", "objects")); err != nil {
+		t.Fatalf("host cache was not used: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".git", "objects", "info", "alternates")); !os.IsNotExist(err) {
+		t.Fatalf("checkout depends on the host cache: %v", err)
 	}
 	if origin := runGitT(t, workspace, "remote", "get-url", "origin"); origin != remote {
 		t.Fatalf("origin = %q, want %q", origin, remote)

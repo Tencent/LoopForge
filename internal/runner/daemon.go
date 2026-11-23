@@ -135,7 +135,9 @@ func New(cfg Config) (*Daemon, error) {
 		host, _ := os.Hostname()
 		cfg.Name = host
 	}
-	runtime.SetRepositoryCacheRoot(cfg.DefaultWorkspaceRoot)
+	if err := runtime.SetRepositoryCacheRoot(cfg.DefaultWorkspaceRoot); err != nil {
+		log.Printf("repository cache disabled: %v", err)
+	}
 	return &Daemon{cfg: cfg, client: NewClient(cfg.ServerURL), executor: runtime.NewExecutorRunner(),
 		controls: map[string]chan string{}, pendingControls: map[string]string{}, heartbeatWake: make(chan struct{}, 1)}, nil
 }

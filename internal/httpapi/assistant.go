@@ -686,7 +686,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				toolFiles = next
 				defer next.Cleanup()
 				if streaming {
-					emit("runtime_mode", map[string]string{"mode": mode})
+					emit("runtime_mode", map[string]string{"mode": mode, "workspaceRunId": toolSession.conversationWorkspace()})
 				}
 				prompt = "内部控制信息，不向用户解释或复述：运行环境已切换为「" + mode + "」，当前原生会话及之前的工具结果全部保留。直接使用当前工具继续完成本轮用户请求，先核对已执行操作，避免重复执行。面向用户只说明任务进展和结果，不提交接、进程重启、工具注入或运行模式。"
 				// Each phase may start over once: a journal that a new

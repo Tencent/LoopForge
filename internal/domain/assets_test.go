@@ -40,24 +40,6 @@ func TestRunnerSandboxNamesTheRecipeAfterTheSandbox(t *testing.T) {
 	}
 }
 
-func TestIsNativeWorkspace(t *testing.T) {
-	native := &RunnerSandboxSpec{Profile: SandboxProfile{Driver: SandboxDriverNative}}
-	for _, tc := range []struct {
-		run  Run
-		want bool
-	}{
-		{Run{Kind: RunKindWorkspace, WorkflowSnapshot: WorkflowDefinition{SandboxSnapshot: native}}, true},
-		{Run{Kind: RunKindWorkspace, WorkflowSnapshot: WorkflowDefinition{SandboxSnapshot: &RunnerSandboxSpec{Profile: SandboxProfile{Driver: SandboxDriverBwrap}}}}, true},
-		{Run{Kind: RunKindWorkspace, WorkflowSnapshot: WorkflowDefinition{SandboxSnapshot: &RunnerSandboxSpec{Profile: SandboxProfile{Driver: SandboxDriverDocker}}}}, false},
-		{Run{Kind: RunKindWorkspace}, false},
-		{Run{WorkflowSnapshot: WorkflowDefinition{SandboxSnapshot: native}}, false},
-	} {
-		if got := tc.run.IsNativeWorkspace(); got != tc.want {
-			t.Errorf("IsNativeWorkspace(%+v) = %v", tc.run, got)
-		}
-	}
-}
-
 func TestValidateMCPPathEntries(t *testing.T) {
 	valid := MCPServerDefinition{ID: "custom", Name: "Custom", Transport: "stdio", Command: "zg", PathEntries: []string{"tools/bin"}}
 	if err := ValidateMCPServer(valid); err != nil {

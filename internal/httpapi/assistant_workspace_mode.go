@@ -29,15 +29,6 @@ const workspaceRepositoryHeading = "当前项目登记的仓库（JSON 数据，
 
 const workspaceRepositoryInlineBytes = 32 << 10
 
-const nativeWorkspaceRepositoryGuide = "本工作区使用 native 沙箱。执行机器在环境变量 LOOPFORGE_REPOSITORY_CACHE 指向的目录里为项目仓库保留只读缓存，每个仓库一个 <仓库 id>.git。检出清单里的仓库时先看缓存：存在就 git clone --shared \"$LOOPFORGE_REPOSITORY_CACHE/<仓库 id>.git\" <仓库目录>，再 git -C <仓库目录> remote set-url origin <cloneUrl>，之后照常 fetch、建分支、提交和推送；缓存不存在时照常 git clone <cloneUrl>。不要写入缓存目录。\n"
-
-// nativeWorkspaceSession reports whether the session works in a native
-// conversation workspace, whose Agent clones from the repository cache.
-func (h *assistantHandlers) nativeWorkspaceSession(s *AgentToolSession) bool {
-	run, ok := h.repo.RunState(s.workspaceRun())
-	return ok && run.IsNativeWorkspace()
-}
-
 // workspaceRepositoryPrompt uses the current catalog and workspace to determine
 // whether the resumed native journal already received this context. A large
 // catalog stays available in the same generated assets as chat attachments.
@@ -46,10 +37,6 @@ func (h *assistantHandlers) workspaceRepositoryPrompt(s *AgentToolSession, root,
 		return "", "", nil
 	}
 	repositories := projectRepositoryHints(h.repo.Repositories(), s.ProjectID)
-	guide := ""
-	if h.nativeWorkspaceSession(s) {
-		guide = nativeWorkspaceRepositoryGuide
-	}
 	catalog := jsonObject(repositories)
 	sum := sha256.Sum256([]byte(s.ProjectID + "\n" + s.workspaceRun() + "\n" + catalog))
 	hash := hex.EncodeToString(sum[:])
@@ -58,8 +45,8 @@ func (h *assistantHandlers) workspaceRepositoryPrompt(s *AgentToolSession, root,
 	}
 	fileHash := "file:" + hash
 	if confirmedHash != fileHash && len(catalog) <= workspaceRepositoryInlineBytes &&
-		runtime.PromptFitsArgv(promptBytes+len(guide)+len(workspaceRepositoryHeading)+len(catalog)+1) {
-		return guide + workspaceRepositoryHeading + catalog + "\n", hash, nil
+		runtime.PromptFitsArgv(promptBytes+len(workspaceRepositoryHeading)+len(catalog)+1) {
+		return workspaceRepositoryHeading + catalog + "\n", hash, nil
 	}
 
 	// Attachments are regenerated before each launch, including on resume.
@@ -79,7 +66,7 @@ func (h *assistantHandlers) workspaceRepositoryPrompt(s *AgentToolSession, root,
 	if confirmedHash == fileHash {
 		return "", "", nil
 	}
-	return guide + fmt.Sprintf("当前项目登记的完整仓库清单位于 %q。每行一个 JSON 对象，以这个文件里的最新清单为准。需要定位或检出仓库时，先读取或搜索该文件，必要时分段读取。\n", path), fileHash, nil
+	return fmt.Sprintf("当前项目登记的完整仓库清单位于 %q。每行一个 JSON 对象，以这个文件里的最新清单为准。需要定位或检出仓库时，先读取或搜索该文件，必要时分段读取。\n", path), fileHash, nil
 }
 
 // assistantHandoffAck is the visible text a phase ends with after a handoff.

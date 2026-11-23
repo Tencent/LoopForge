@@ -241,9 +241,7 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 	default:
 		fmt.Fprintf(&notice, "已切回运行环境 %s 中本对话之前开过的工作区 %s。", run.WorkflowSnapshot.SandboxProfileID, run.ID)
 	}
-	if run.IsNativeWorkspace() && bound.Created {
-		notice.WriteString("工作区已提供空白可写目录，可创建文件、运行命令和预览。有仓库相关任务时，先从执行机器的仓库缓存 git clone --shared，没有缓存再 git clone。")
-	} else if run.IsWorkspace() && bound.Created && len(run.RepositoryContexts()) == 0 {
+	if run.IsWorkspace() && bound.Created && len(run.RepositoryContexts()) == 0 {
 		notice.WriteString("工作区已提供空白可写目录，可创建文件、运行命令和预览。有仓库相关任务时，用 git clone 拉取所需仓库。")
 	}
 	if previous, ok := h.repo.RunState(bound.Previous); ok {

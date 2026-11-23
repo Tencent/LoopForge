@@ -115,6 +115,26 @@ describe("execution machine picker", () => {
     expect(screen.queryByText("开发 Mac")).not.toBeInTheDocument();
   });
 
+  test("labels the bound workspace with its actual sandbox type and ID", () => {
+    const chat = fixture({
+      session: { workspaceRunId: "workspace-1", executionTarget: { pool: "cloud" } },
+      sandboxProfileId: "preferred",
+      workspaceSandbox: { id: "mac-tools", driver: "seatbelt" },
+    });
+    const { rerender } = render(<ExecutionMachinePicker chat={chat} />);
+    const machine = screen.getByText("LoopForge 云端").closest(".machine-fixed");
+    expect(machine).toHaveTextContent("系统轻量隔离-mac-tools");
+    expect(machine).toHaveAttribute("title", expect.stringContaining("系统轻量隔离-mac-tools"));
+    expect(machine).not.toHaveTextContent("preferred");
+
+    rerender(<ExecutionMachinePicker chat={{ ...chat, workspaceSandbox: { id: "generic-docker", driver: "docker" } }} />);
+    expect(machine).toHaveTextContent("Docker-generic-docker");
+    expect(machine).not.toHaveTextContent("mac-tools");
+
+    rerender(<ExecutionMachinePicker chat={{ ...chat, workspaceSandbox: null }} />);
+    expect(machine.querySelector(".machine-sandbox")).toBeNull();
+  });
+
   test.each(["busy", "machineSaving", "readOnly", "local"])(
     "disables changes when %s",
     (flag) => {

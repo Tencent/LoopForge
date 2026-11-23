@@ -32,6 +32,18 @@ func completedPreparationRun(t *testing.T, e *Engine, id string) domain.Run {
 	return run
 }
 
+func TestWorkspacePreparationRejectsFrozenLocalSandbox(t *testing.T) {
+	e, _ := cvEEngine(t)
+	run := domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{
+		SandboxSnapshot: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{
+			ID: "previous-sandbox", Driver: domain.SandboxDriverLocal,
+		}},
+	}}
+	if _, _, err := e.workspaceSandboxProfile(run); err == nil || !strings.Contains(err.Error(), "重新发起") {
+		t.Fatalf("frozen local sandbox accepted for workspace operations: %v", err)
+	}
+}
+
 func TestPreparedWorkspaceRequestScopesTerminalGitCredentials(t *testing.T) {
 	e, st := cvEEngine(t)
 	runner := cvERunner(t, e, "terminal-git", domain.RunnerStatusOnline)

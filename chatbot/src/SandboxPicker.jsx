@@ -9,6 +9,12 @@ const SANDBOX_KIND_LABELS = {
   native: "系统轻量隔离",
 };
 
+export function sandboxDriverLabel(driver) {
+  if (driver === "" || driver === "docker") return SANDBOX_KIND_LABELS.docker;
+  if (["native", "seatbelt", "bwrap"].includes(driver)) return SANDBOX_KIND_LABELS.native;
+  return driver;
+}
+
 function sandboxKind(sandbox) {
   return !sandbox.driver || sandbox.driver === "docker" ? "docker" : "native";
 }

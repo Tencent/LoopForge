@@ -16,7 +16,6 @@ import (
 	"syscall"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/gitwork"
 )
 
 func appendEnvironment(base []string, overlays ...map[string]string) []string {
@@ -187,9 +186,6 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 	}
 	cmd.Dir = s.workspace
 	cmd.Env = appendEnvironment(base, s.profile.Environment, command.environment)
-	if cache := RepositoryCacheRoot(); cache != "" {
-		cmd.Env = upsertEnv(cmd.Env, gitwork.RepositoryCacheEnv, cache)
-	}
 	cmd.Stdin = command.Stdin
 	if command.WorkingDir != "" {
 		cmd.Env = upsertEnv(cmd.Env, "PWD", command.WorkingDir)
@@ -409,6 +405,9 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements) 
 			}
 		}
 	}
+	// The cache is private to the host side even when a sandbox has access
+	// to the host's temporary directory.
+	b.WriteString(`(deny file-read* file-write* (regex #"^(/private)?/tmp/[.]loopforge-repository-cache-[0-9]+(/|$)"))` + "\n")
 	return b.String(), nil
 }
 
@@ -513,10 +512,6 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]str
 		"--chdir", root,
 		"--proc", "/proc",
 		"--dev-bind", "/dev", "/dev",
-	}
-	if cache := RepositoryCacheRoot(); cache != "" {
-		// Shared clones read their objects here, even below the private /tmp.
-		args = append(args, "--ro-bind-try", cache, cache)
 	}
 	if conversation := requirements.ConversationRoot; conversation != "" {
 		// Same layout as the Docker workspace: the native CLI keeps its HOME

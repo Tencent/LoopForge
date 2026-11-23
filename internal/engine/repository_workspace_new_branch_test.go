@@ -158,8 +158,8 @@ func TestResumeRejectsRemoteBranchCreatedElsewhere(t *testing.T) {
 	}
 }
 
-// A native workspace checks its repositories out as shared clones of the
-// repository cache, with origin still pointing at the repository.
+// The host cache produces an independent checkout with the same branch scope
+// as the normal platform clone.
 func TestPrepareRepositoryClonesFromRepositoryCache(t *testing.T) {
 	remote := newBranchRemote(t)
 	root := t.TempDir()
@@ -169,9 +169,11 @@ func TestPrepareRepositoryClonesFromRepositoryCache(t *testing.T) {
 	if err := prepareRepository(ctx, workspace, create); err != nil {
 		t.Fatal(err)
 	}
-	alternates, err := os.ReadFile(filepath.Join(workspace, ".git", "objects", "info", "alternates"))
-	if err != nil || !strings.Contains(string(alternates), filepath.Join(root, "repo.git")) {
-		t.Fatalf("checkout does not borrow the cache objects: %q %v", alternates, err)
+	if _, err := os.Stat(filepath.Join(root, "repo.git", "objects")); err != nil {
+		t.Fatalf("host cache was not used: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".git", "objects", "info", "alternates")); !os.IsNotExist(err) {
+		t.Fatalf("checkout depends on the host cache: %v", err)
 	}
 	if origin, _ := gitC(ctx, workspace, "remote", "get-url", "origin"); strings.TrimSpace(origin) != remote {
 		t.Fatalf("origin = %q, want %q", origin, remote)
@@ -179,7 +181,7 @@ func TestPrepareRepositoryClonesFromRepositoryCache(t *testing.T) {
 	if branch, _ := gitC(ctx, workspace, "branch", "--show-current"); strings.TrimSpace(branch) != create.WorkBranch {
 		t.Fatalf("work branch = %q", branch)
 	}
-	if _, ok := gitRevParse(ctx, workspace, "origin/feature/existing"); !ok {
-		t.Fatal("remote branches missing from the shared clone")
+	if _, ok := gitRevParse(ctx, workspace, "origin/feature/existing"); ok {
+		t.Fatal("platform checkout fetched branches outside its requested ref")
 	}
 }
