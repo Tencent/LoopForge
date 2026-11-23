@@ -650,13 +650,18 @@ export function useChat() {
   }
   const runnerId = composerRunnerId(session);
   const runner = executionMachines.machines.find(machine => machine.id === runnerId && machine.ownerUserId === user?.id);
+  const checkServerCLI = executionMachines.machinesReady && !runnerId &&
+    !session?.executionTarget?.runnerId && !session?.runId && session?.runtimeMode !== "workspace";
   const availableExecutors = EXECUTORS.flatMap(item => {
     const local = ["codex", "claude-code", "agy"].includes(item.id) &&
       runner?.runtimes?.some(runtime => runtime.provider === item.id && runtime.authMode !== "personal");
     if (local) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
-    const configured = catalogEngines.find(engine => engine.id === item.id)?.configured ??
-      personalEngineConfigured(user, item.id);
-    return configured || (item.id === "codebuddy" && sponsoredModel) ? [item] : [];
+    const option = catalogEngines.find(engine => engine.id === item.id);
+    const configured = option?.configured ?? personalEngineConfigured(user, item.id);
+    if (!configured && !(item.id === "codebuddy" && sponsoredModel)) return [];
+    return [checkServerCLI && option?.serverMissing
+      ? { ...item, detail: "平台服务器未安装 CLI" }
+      : item];
   });
   // Drafts can use any available executor. A recorded conversation keeps its
   // executor even if its authentication changes.
@@ -667,6 +672,9 @@ export function useChat() {
     (session?.executionTarget?.pool === "runner" && !executionMachines.machinesReady));
   const executor = keepSessionExecutor || !user || user.isGuest ? selection.executor :
     (preferred || availableExecutor(selection.executor) || availableExecutors[0])?.id || "";
+  const missingServerCLI = checkServerCLI
+    ? catalogEngines.find(item => item.id === executor && item.serverMissing)
+    : undefined;
   const { model, effort } = executor === selection.executor ? selection : { model: null, effort: null };
   function resolveComposerModel(
     { executor, model, effort }, conversation, draft,
@@ -1060,7 +1068,7 @@ export function useChat() {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }
-    if (!executor) return false;
+    if (!executor || missingServerCLI) return false;
     const currentProjectId = sessionRef.current?.projectId || "";
     const approval = fromQueue
       ? queuedApproval({ approvalMode, approvalUserId, approvalProjectId }, user?.id, currentProjectId)
@@ -1617,6 +1625,7 @@ export function useChat() {
     models: executorModels,
     executor,
     executors: user ? availableExecutors : [],
+    missingServerCLI,
     setExecutor: chooseExecutor,
     sessions,
     session,

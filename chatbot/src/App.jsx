@@ -55,10 +55,10 @@ import { openCredentialSettings } from "./credentials";
 import { groupSessionHistory, scheduledSession, sessionProjectName } from "./session-history.js";
 import { runSessionState, sessionReplyStatus, sessionTooltip, sidebarReplyStatus } from "./session-status.js";
 import { unreadReply, useReadReplies } from "./session-unread.js";
-import MentionPicker from "./MentionPicker";
+import ReferenceInput from "./ReferenceInput";
 import Participants, { Avatar, authorFor } from "./Participants";
 import IssueContext from "./IssueContext";
-import { mentionAt, insertMention } from "./mentions.js";
+import { insertMention } from "./mentions.js";
 import { elementTitle } from "./element-context.js";
 import HarnessIcon from "./HarnessIcon";
 import QueuedMessages from "./QueuedMessages";
@@ -366,9 +366,9 @@ export default function App() {
     chat.newChat();
   }
   const input = useRef(),
+    referenceInput = useRef(),
     sessionPress = useRef(null),
     sessionClickSuppressed = useRef(null),
-    mentionPicker = useRef(),
     projectPicker = useRef(null),
     headerProjectPicker = useRef(null),
     fileInput = useRef(),
@@ -685,11 +685,13 @@ export default function App() {
         setText(value.text);
         setReferences([ref]);
         setMention(null);
+        const editor = input.current;
         requestAnimationFrame(() => {
           // Preserve the user’s focus if they interacted during the handoff.
-          if (draftReady.current !== draftKey || document.activeElement !== focusBeforeHandoff) return;
-          input.current?.focus();
-          input.current?.setSelectionRange(value.caret, value.caret);
+          if (draftReady.current !== draftKey || !editor?.isConnected || editor.value !== value.text) return;
+          if (document.activeElement !== focusBeforeHandoff) return;
+          editor.focus();
+          editor.setSelectionRange(value.caret, value.caret);
         });
       })
       .catch((e) => current && chat.setError(e.message))
@@ -1000,18 +1002,6 @@ export default function App() {
       setUploading(false);
     }
   }
-  function openReferences() {
-    const caret = input.current?.selectionStart ?? text.length;
-    setMention(
-      mentionAt(text, caret, references) || {
-        start: caret,
-        end: caret,
-        query: "",
-      },
-    );
-    closeMenu();
-    input.current?.focus();
-  }
   // addElementReference takes an element picked in the native preview: it
   // rides along as a reference chip, without a token in the text.
   function addElementReference(ref) {
@@ -1021,27 +1011,6 @@ export default function App() {
     }
     setReferences((old) => [...old, ref]);
     requestAnimationFrame(() => input.current?.focus());
-  }
-  function addReference(ref) {
-    if (
-      references.length >= 12 &&
-      !references.some((x) => x.type === ref.type && x.id === ref.id)
-    ) {
-      chat.setError("每轮最多引用 12 个对象。");
-      return;
-    }
-    const value = insertMention(text, mention, ref);
-    setText(value.text);
-    setReferences((old) =>
-      old.some((x) => x.type === ref.type && x.id === ref.id)
-        ? old
-        : [...old, ref],
-    );
-    setMention(null);
-    requestAnimationFrame(() => {
-      input.current?.focus();
-      input.current?.setSelectionRange(value.caret, value.caret);
-    });
   }
   const sidebarSections = splitSidebarSections(chat.sessions, chat.projects, {
     archived,
@@ -1897,6 +1866,19 @@ export default function App() {
                 </IconButton>
               </div>
             ) : null}
+            {chat.missingServerCLI && !chat.busy && !chat.error && !chat.readOnly ? (
+              <div className="runtime-cli-notice" role="status">
+                <HarnessIcon name="terminal" size={16} aria-hidden="true" />
+                <span>{chat.missingServerCLI.name} 未安装在平台服务器上。{chat.missingServerCLI.serverInstallable ? "" : "请联系管理员安装。"}</span>
+                {chat.missingServerCLI.serverInstallable ? (
+                  <CLIInstallAction
+                    key={chat.missingServerCLI.id}
+                    executor={{ engine: chat.missingServerCLI.id, label: chat.missingServerCLI.name }}
+                    onResult={() => chat.refreshCredentials()}
+                  />
+                ) : null}
+              </div>
+            ) : null}
             {needsExecutor ? (
               <div className="credential-notice" role="status">
                 <HarnessIcon name="terminal" size={16} aria-hidden="true" />
@@ -1983,22 +1965,7 @@ export default function App() {
                   onSendNow={chat.sendNow}
                 />
                 <div className="composer">
-                  <MentionPicker
-                    ref={mentionPicker}
-                    key={chat.projectId}
-                    projectId={chat.projectId}
-                    trigger={mention}
-                    editor={input}
-                    onSelect={addReference}
-                    onClose={() => setMention(null)}
-                    issueId={chat.issueId}
-                    canManageIssue={!!chat.projectId && !chat.busy && (!chat.activeId || !!chat.session) && !chat.session?.shared && !chat.readOnly}
-                    onManageIssue={() => {
-                      setMention(null);
-                      setIssueContextOpen(true);
-                    }}
-                  />
-                  {attachments.length || pendingAttachments.length || references.length ? (
+                  {attachments.length || pendingAttachments.length ? (
                     <div className="composer-attachments">
                       {pendingAttachments.map((a) => (
                         <span
@@ -2059,109 +2026,51 @@ export default function App() {
                           </span>
                         );
                       })}
-                      {references.map((ref) => (
-                        <span
-                          key={ref.type + ref.id}
-                          className={`composer-attachment-file${ref.type === "element" ? " is-element" : ""}`}
-                          title={ref.type === "element" ? elementTitle(ref) : undefined}
-                        >
-                          {ref.type === "element" ? (
-                            <HarnessIcon name="crosshair" size={13} />
-                          ) : (
-                            "@"
-                          )}
-                          {ref.name || ref.id}
-                          <button
-                            aria-label={`移除引用 ${ref.name || ref.id}`}
-                            onClick={() => {
-                              setReferences((old) =>
-                                old.filter(
-                                  (x) => x.id !== ref.id || x.type !== ref.type,
-                                ),
-                              );
-                              setText((old) =>
-                                old.replace(`@${ref.name || ref.id} `, ""),
-                              );
-                              setMention(null);
-                            }}
-                          >
-                            <HarnessIcon name="close" size={13} />
-                          </button>
-                        </span>
-                      ))}
                     </div>
                   ) : null}
-                  <textarea
-                    ref={input}
-                    aria-label="消息"
-                    rows={2}
-                    placeholder={
-                      chat.activeId
-                        ? "告诉我接下来想做点什么"
-                        : "聊聊你的想法，或交给我一件事"
-                    }
-                    value={text}
-                    aria-expanded={!!mention}
-                    onChange={(e) => {
-                      setText(e.target.value);
-                      setReferences((old) =>
-                        old.filter(
-                          (ref) =>
-                            !text.includes(`@${ref.name || ref.id}`) ||
-                            e.target.value.includes(`@${ref.name || ref.id}`),
-                        ),
-                      );
-                      setMention(
-                        e.nativeEvent.isComposing
-                          ? null
-                          : mentionAt(
-                              e.target.value,
-                              e.target.selectionStart,
-                              references,
-                            ),
-                      );
-                      e.target.style.height = "auto";
-                      e.target.style.height =
-                        Math.min(e.target.scrollHeight, 220) + "px";
+                  <ReferenceInput
+                    ref={referenceInput}
+                    editorRef={input}
+                    projectId={chat.projectId}
+                    text={text}
+                    references={references}
+                    mention={mention}
+                    onMentionChange={setMention}
+                    onChange={({ text: nextText, references: nextReferences }) => {
+                      setText(nextText);
+                      setReferences(nextReferences);
                     }}
-                    onCompositionEnd={(e) =>
-                      setMention(
-                        mentionAt(
-                          e.target.value,
-                          e.target.selectionStart,
-                          references,
-                        ),
-                      )
-                    }
-                    onClick={(e) =>
-                      setMention(
-                        mentionAt(
-                          e.target.value,
-                          e.target.selectionStart,
-                          references,
-                        ),
-                      )
-                    }
-                    onPaste={(e) => {
-                      const files = [...e.clipboardData.items]
-                        .filter((i) => i.kind === "file")
-                        .map((i) => i.getAsFile())
-                        .filter(Boolean);
-                      if (files.length) {
-                        e.preventDefault();
-                        void upload(files);
-                      }
+                    onError={(message) => chat.setError(message)}
+                    issueId={chat.issueId}
+                    canManageIssue={!!chat.projectId && !chat.busy && (!chat.activeId || !!chat.session) && !chat.session?.shared && !chat.readOnly}
+                    onManageIssue={() => {
+                      setMention(null);
+                      setIssueContextOpen(true);
                     }}
-                    onKeyDown={(e) => {
-                      if (mention && mentionPicker.current?.keyDown(e)) return;
-                      if (
-                        e.key === "Enter" &&
-                        !e.shiftKey &&
-                        !e.nativeEvent.isComposing
-                      ) {
-                        e.preventDefault();
-                        void submit();
-                      }
+                    textareaProps={{
+                      "aria-label": "消息",
+                      rows: 2,
+                      placeholder: chat.activeId ? "告诉我接下来想做点什么" : "聊聊你的想法，或交给我一件事",
+                      onInput: (e) => {
+                        e.target.style.height = "auto";
+                        e.target.style.height = Math.min(e.target.scrollHeight, 220) + "px";
+                      },
+                      onPaste: (e) => {
+                        const files = [...e.clipboardData.items]
+                          .filter((i) => i.kind === "file")
+                          .map((i) => i.getAsFile())
+                          .filter(Boolean);
+                        if (files.length) {
+                          e.preventDefault();
+                          void upload(files);
+                        }
+                      },
+                      onKeyDown: (e) => {
+                        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                          e.preventDefault();
+                          void submit();
+                        }
+                      },
                     }}
                   />
                   <footer className="composer-toolbar">
@@ -2193,7 +2102,10 @@ export default function App() {
                             <HarnessIcon name="paperclip" size={15} />
                             上传图片或文件
                           </button>
-                          <button role="menuitem" onClick={openReferences}>
+                          <button role="menuitem" onClick={() => {
+                            referenceInput.current?.openReferences();
+                            closeMenu();
+                          }}>
                             <HarnessIcon name="connector" size={15} />
                             引用项目资产
                           </button>
@@ -2292,6 +2204,7 @@ export default function App() {
                         disabled={
                           !chat.ready ||
                           !hasComposerExecutor ||
+                          !!chat.missingServerCLI ||
                           chat.submitting ||
                           chat.machineSaving ||
                           composerLoading ||

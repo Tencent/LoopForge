@@ -255,7 +255,7 @@ function credentialCatalogHTML(kind,user,{runnerLogin=false,label='模型目录'
   const copy=credentialCatalogCopy(mode,kind);
   return `<section class="credential-catalog" data-credential-catalog data-catalog-engine="${escapeHTML(kind.models.engine)}" data-catalog-mode="${mode}" data-catalog-protocol="${escapeHTML(protocol)}" data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
     <div class="credential-catalog-body" data-catalog-body>
-    <div class="credential-catalog-head"><div>${label?`<b>${escapeHTML(label)}</b>`:''}<small data-catalog-count>${credentialCatalogCountText(models.length)}</small></div><div><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="probe">${credentialGlyph('download',14)}<span>获取可用模型</span></button><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="add"><span class="credential-turn">${credentialGlyph('plus',14)}</span><span>添加模型</span></button></div></div>
+    <div class="credential-catalog-head"><div>${label?`<b>${escapeHTML(label)}</b>`:''}<small data-catalog-count>${credentialCatalogCountText(models.length)}</small></div><div>${runnerLogin?'':'<button type="button" class="credential-btn secondary credential-ink" data-catalog-act="connection">测试连接</button>'}<button type="button" class="credential-btn secondary credential-ink" data-catalog-act="probe">${credentialGlyph('download',14)}<span>获取可用模型</span></button><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="add"><span class="credential-turn">${credentialGlyph('plus',14)}</span><span>添加模型</span></button></div></div>
     <div class="credential-catalog-probe" data-catalog-probe hidden></div>
     <ol class="credential-catalog-list" data-catalog-list${empty?' hidden':''}>${models.map(model=>credentialCatalogRowHTML(model,kind.models.engine)).join('')}</ol>
     <div class="credential-catalog-empty" data-catalog-empty${empty?'':' hidden'}>${credentialGlyph('layers',16)}<div><b data-catalog-empty-title>${escapeHTML(copy.title)}</b><small data-catalog-empty-detail>${credentialCatalogDetailHTML(mode,kind,protocol)}</small></div></div>
@@ -390,16 +390,17 @@ function closeCredentialCatalogProbe(catalog){
   catalog.probeToken=(catalog.probeToken||0)+1;catalog.probe=null;
   panel.hidden=true;panel.innerHTML='';
 }
-async function probeCredentialCatalog(row,catalog,button){
+async function probeCredentialCatalog(row,catalog,button,connectOnly=false){
   const kind=credentialKind(row.dataset.credentialRow),form=row.querySelector('.credential-editor-form'),panel=catalog.querySelector('[data-catalog-probe]');
   const extra=form?.querySelector('input[name="baseUrl"], input[name="extra"]'),secret=form?.querySelector('[name="secret"]')?.value.trim()||'',protocol=form?.querySelector('select[name="protocol"]')?.value,environment=form?.querySelector('select[name="extra"]')?.value;
   const extraError=extra?(extra.name==='baseUrl'?credentialBaseURLError(extra.value):credentialExtraError(kind,extra.value,protocol)):'';
   if(extraError){toast(extraError,'err');extra.focus();return}
   const token=(catalog.probeToken||0)+1;catalog.probeToken=token;catalog.probe=null;
   panel.hidden=false;
-  panel.innerHTML=`<p class="credential-vline is-info" role="status">${credentialSpinner(13)}正在获取可用模型…</p>`;
+  panel.innerHTML=`<p class="credential-vline is-info" role="status">${credentialSpinner(13)}${connectOnly?'正在测试连接…':'正在获取可用模型…'}</p>`;
   hydrateCredentialIcons(panel);
-  setCredentialButtonBusy(button,'获取中');
+  setCredentialButtonBusy(button,connectOnly?'测试中':'获取中');
+  const started=performance.now();
   let result;
   try{
     result=catalog.probeModels?await catalog.probeModels():await api(`/api/users/${state.currentUser.id}/cli-models/probe`,{method:'POST',body:JSON.stringify({
@@ -409,6 +410,14 @@ async function probeCredentialCatalog(row,catalog,button){
   catch(err){result={error:err.message}}
   finally{setCredentialButtonBusy(button,'')}
   if(catalog.probeToken!==token||!catalog.isConnected)return;
+  if(connectOnly){
+    const tone=result?.connected?'ok':result?.error?'err':'warn';
+    const detail=result?.connected
+      ?`${lfT('连接成功','Connected')} · ${Math.round(performance.now()-started)} ms${result.error?` · ${result.error}`:''}`
+      :result?.error||'此执行器可读取模型目录，请发起一次对话验证模型服务。';
+    panel.innerHTML=`<div class="credential-catalog-probe-fail"><p class="credential-vline is-${tone}" role="status">${escapeHTML(detail)}</p><button type="button" class="credential-btn ghost credential-ink" data-catalog-act="probe-close">关闭</button></div>`;
+    return;
+  }
   if(result?.error||!result?.models?.length){
     panel.innerHTML=`<div class="credential-catalog-probe-fail"><p class="credential-vline is-err" role="alert">${credentialGlyph('alert',13)}${escapeHTML(result?.error||'服务没有返回可用模型')}</p><div><button type="button" class="credential-btn ghost credential-ink" data-catalog-act="probe-close">关闭</button><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="probe">${credentialGlyph('refresh',13)}<span>重试</span></button></div></div>`;
     hydrateCredentialIcons(panel);
@@ -472,6 +481,7 @@ function credentialCatalogAction(action,row,catalog,button){
     catalog.querySelector('[data-catalog-act="add"]')?.focus({preventScroll:true});
     return;
   }
+  if(action==='connection')return probeCredentialCatalog(row,catalog,button,true);
   if(action==='probe')return probeCredentialCatalog(row,catalog,catalog.querySelector('[data-catalog-act="probe"]'));
   if(action==='probe-close'){closeCredentialCatalogProbe(catalog);catalog.querySelector('[data-catalog-act="probe"]')?.focus({preventScroll:true});return}
   if(action==='toggle-all')return toggleCredentialCatalogProbe(catalog);
@@ -753,6 +763,11 @@ function credentialEditorHTML(kind,user){
     </div>
   </div>`;
 }
+function credentialRuntimeStatus(kind) {
+  const engine=kind.models?.engine;
+  const option=credentialUI().catalog?.engines?.find(item=>item.id===engine);
+  return option?.serverMissing?'<small class="credential-runtime-status">平台服务器未安装 CLI</small>':'';
+}
 function credentialRowMainHTML(kind,user){
   const managed=!!kind.dialog,on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key,status=credentialStatus(kind,user);
   const end=on&&!managed
@@ -762,7 +777,7 @@ function credentialRowMainHTML(kind,user){
   const preferred=credentialDefaultsExecutor(credentialUI().catalog);
   const executor=on&&kind.models?.engine;
   const active=executor&&executor===preferred?.id;
-  return `<div class="credential-row-main credential-ink"${interaction}>${credentialLogo(kind,on?'':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}${active?'<span class="credential-default-badge">默认</span>':''}</b><small>${credentialSubline(kind,user)}</small></div><div class="credential-row-end">${end}</div></div>`;
+  return `<div class="credential-row-main credential-ink"${interaction}>${credentialLogo(kind,on?'':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}${active?'<span class="credential-default-badge">默认</span>':''}</b><small>${credentialSubline(kind,user)}</small>${credentialRuntimeStatus(kind)}</div><div class="credential-row-end">${end}</div></div>`;
 }
 function credentialRowHTML(kind,user){
   const on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key;
@@ -962,21 +977,22 @@ function paintCredentialDefaults(host,catalog){
 async function loadCredentialDefaults(panel){
   const host=panel.querySelector('[data-credential-defaults]');
   const models=window.AgentFlowAssistantModels;
-  if(!host||!models)return;
+  if(!models||!state.currentUser?.id||state.currentUser.isGuest)return;
   const ui=credentialUI();
   try{
     const catalog=await models.fetchCatalog();
-    if(!host.isConnected||credentialUI()!==ui)return;
+    if(!panel.isConnected||credentialUI()!==ui)return;
     ui.catalog=catalog;
     state.data.assistantDefaults=catalog.preferences||{};
+    CREDENTIAL_KINDS.filter(kind=>kind.group==='model').forEach(kind=>repaintCredentialRow(kind.key));
+    if(!host?.isConnected)return;
     if(!credentialDefaultsExecutor(catalog)){
       host.querySelector('.credential-default-status').textContent='当前账号暂无可用执行器';
       return;
     }
     paintCredentialDefaults(host,catalog);
-    CREDENTIAL_KINDS.filter(kind=>kind.group==='model').forEach(kind=>repaintCredentialRow(kind.key));
   }catch(error){
-    if(host.isConnected){const status=host.querySelector('.credential-default-status');if(status)status.textContent=error.message}
+    if(host?.isConnected){const status=host.querySelector('.credential-default-status');if(status)status.textContent=error.message}
   }
 }
 async function saveCredentialDefaults(form,host){
@@ -1523,13 +1539,17 @@ function credentialWizardStepTwoHTML(kind){
   // The network environment decides where the key comes from, so it is chosen first.
   const baseField=kind.baseURL?credentialBaseURLFieldHTML(wizard.baseUrl):'';
   const fields=(kind.extra?.options?extraField+secretField:secretField+extraField+protocolField)+baseField;
+  const runtimeNotice=kind.agentCli==='zcode'?`<div class="credential-note credential-runtime-note" data-credential-runtime role="status">
+    ${credentialGlyph('info',14)}<span><b>需要预装 ZCode CLI</b><span>请确认所选执行机器或 Docker 工作区镜像已安装官方 CLI。</span></span>
+  </div>`:'';
   if(isDirectExecutorForm(wizard)){
     const error=wizard.error?`<p class="credential-vline is-err" role="alert">${escapeHTML(wizard.error)}</p>`:'';
     return `<div class="credential-direct-heading">${credentialLogo(kind)}<h3>新增 ${escapeHTML(kind.name)}</h3></div>
+      ${runtimeNotice || credentialRuntimeStatus(kind)}
       <fieldset class="credential-fields"${wizard.saving?' disabled':''}>${fields}</fieldset>
       <details class="credential-direct-help"><summary>如何获取密钥</summary><ol class="credential-guide">${guide}</ol></details>${error}`;
   }
-  return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>${github?'使用访问令牌':'配置 '+escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${methods}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
+  return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>${github?'使用访问令牌':'配置 '+escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${runtimeNotice}${methods}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
     ${fields}
   </div>`;
 }
@@ -1577,6 +1597,19 @@ function paintCredentialWizard(direction){
   if(old&&direction){old.className=`credential-pane is-leaving ${direction>0?'is-forward':'is-back'}`;old.querySelectorAll('input,textarea').forEach(input=>{input.value=''});setTimeout(()=>old.remove(),180)}
   else old?.remove();
   body.append(pane);
+  const runtimeNotice=pane.querySelector('[data-credential-runtime]');
+  if(runtimeNotice)api('/api/assistant/cli-install?engine=zcode',{silent:true}).then(({status})=>{
+    const heading=runtimeNotice.querySelector('b'),detail=heading.nextElementSibling;
+    if(status==='installed'){
+      heading.textContent='平台服务器已检测到 ZCode CLI';
+      detail.textContent='使用独立执行机器或 Docker 工作区时，请确认该环境也已预装。';
+    }
+    if(status==='missing'){
+      runtimeNotice.classList.add('is-warn');
+      heading.textContent='平台服务器缺少 ZCode CLI';
+      detail.textContent='请管理员在任务所用环境安装官方 CLI，并将 zcode 加入 PATH。';
+    }
+  }).catch(()=>{});
   const secretInput=pane.querySelector('[name="secret"]');if(secretInput)secretInput.value=wizard.secret||'';
   if(before&&direction){body.style.height=before+'px';requestAnimationFrame(()=>{body.style.height=pane.offsetHeight+'px';setTimeout(()=>{body.style.height=''},300)})}
   scrim.querySelectorAll('.credential-dots span').forEach((dot,index)=>{dot.className=wizard.done||index+1<wizard.step?'is-done':index+1===wizard.step?'is-current':''});
@@ -2426,6 +2459,11 @@ function renderUserProfilePopover() {
   const isGuest = !user || user.isGuest;
   const displayName = user?.chineseName || user?.loginName || '访客';
   const initial = (displayName[0] || '访').toUpperCase();
+  const version = document.querySelector('meta[name="loopforge-release-version"]')?.content;
+  const build = $('.loopforge-build');
+  const versionRow = version || build ? `<div class="upp-build" title="${escapeHTML(build?.title||'')}">
+    <span>${version?'版本':'构建'}</span><code>${escapeHTML(version||build.textContent)}${version&&build?` · ${escapeHTML(build.textContent)}`:''}</code>
+  </div>` : '';
   let authErr = null;
   try { authErr = sessionStorage.getItem('agentflow_auth_err'); } catch (_) {}
 
@@ -2453,6 +2491,7 @@ function renderUserProfilePopover() {
       </div>
       <div class="upp-divider"></div>
       ${themeSegmentHTML()}
+      ${versionRow}
       <div class="upp-footer">
         <button id="uppLoginBtn" class="button small primary upp-full-btn" type="button">通过账号登录</button>
       </div>
@@ -2503,6 +2542,7 @@ function renderUserProfilePopover() {
       </div>
       <div class="upp-divider"></div>
       ${themeSegmentHTML()}
+      ${versionRow}
       <div class="upp-footer">
         <button id="uppLogoutBtn" class="button small ghost upp-btn-danger upp-full-btn" type="button" title="退出当前登录">退出登录</button>
       </div>

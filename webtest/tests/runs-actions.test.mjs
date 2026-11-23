@@ -155,10 +155,37 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   const applyCall = app.router.calls.find(c => c.path.endsWith('/eval/apply'));
   assert.deepEqual(applyCall.body.recommendationIds, ['rec-1']);
   await app.evaluate(`previewArtifact(state.activeRun,'art-1')`);
-  assert.equal(app.document.querySelector('#artifactModal').classList.contains('open'), true);
+  const artifactModal = app.document.querySelector('#artifactModal');
+  assert.equal(artifactModal.open, true);
   assert.match(app.document.querySelector('#artifactPreview').textContent, /Report/);
+  Object.defineProperty(app.window, 'isSecureContext', { value: true });
+  const copyArtifact = artifactModal.querySelector('[data-copy-artifact]');
+  await copyArtifact.onclick();
+  assert.match(artifactModal.querySelector('.toast-item-msg').textContent, /产物内容已复制到剪贴板/);
+  const writeText = app.window.navigator.clipboard.writeText;
+  const execCommand = app.document.execCommand;
+  let fallbackText;
+  app.window.navigator.clipboard.writeText = async () => { throw new Error('Clipboard unavailable'); };
+  app.document.execCommand = command => {
+    fallbackText = artifactModal.querySelector('textarea')?.value;
+    return command === 'copy';
+  };
+  copyArtifact.focus();
+  try {
+    await copyArtifact.onclick();
+    assert.match(fallbackText, /# Report/);
+    assert.equal(artifactModal.querySelector('textarea'), null);
+    assert.equal(app.document.activeElement, copyArtifact);
+  } finally {
+    app.window.navigator.clipboard.writeText = writeText;
+    app.document.execCommand = execCommand;
+  }
   app.document.querySelector('#artifactPreview [data-mode="source"]')?.click();
   assert.match(app.document.querySelector('#artifactPreview .artifact-content').textContent, /console\.log/);
+  artifactModal.close();
+  assert.equal(artifactModal.querySelector('.toast-item'), null);
+  app.evaluate(`toast('Outside artifact preview')`);
+  assert.match(app.document.querySelector('#toastContainer').textContent, /Outside artifact preview/);
   app.evaluate(`
     const pane=document.createElement('div');
     pane.innerHTML='<button data-preview-download>Download</button><button data-preview-refresh></button><button data-preview-copy></button><button data-preview-open></button><button data-preview-backend-edit></button>';

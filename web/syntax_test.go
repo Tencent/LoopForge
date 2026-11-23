@@ -1445,6 +1445,7 @@ assert.ok(!code.includes('function obsQuality('));
 eval(code.slice(code.indexOf('function obsTrendGrain(){'), code.indexOf('function ensureObsUserFilter')));
 function formatTokens(n){return String(n)}
 function escapeHTML(s){return String(s)}
+function lfT(zh){return zh}
 assert.equal(obsWeekLabel('2026-W37'), '9/7–9/13');
 assert.equal(obsTrendLabel({date:'2026-09-16'}), '09/16');
 assert.equal(obsTrendValue({tokens:10,runs:2,issues:3,costUsd:1.5},'issues'), 3);
@@ -2793,7 +2794,7 @@ func TestApprovalBadgeRefreshesOutsideApprovals(t *testing.T) {
 		"app/runs.js":   "state.data.runs=list;updateApprovalBadge();renderRuns();",
 		"app/sops.js":   "state.data.runs=runs;updateApprovalBadge();renderSOPCatalog()",
 	} {
-		if !strings.Contains(read(file), want) {
+		if !strings.Contains(strings.Join(strings.Fields(read(file)), ""), want) {
 			t.Fatalf("%s must refresh the approval badge after loading runs: missing %q", file, want)
 		}
 	}

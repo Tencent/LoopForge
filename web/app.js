@@ -108,7 +108,7 @@ async function api(path, options={}) {
 }
 const toastActions=new Map();
 function toast(message, type='info', duration=2600){
-  const container=$('#toastContainer');
+  const container=$('#artifactModal[open] #artifactToastContainer')||$('#toastContainer');
   const legacy=$('#toast');
   if(!container&&legacy){
     const kind=type==='ok'||type==='err'?type:'info';
@@ -228,7 +228,7 @@ function afNextDialog(){
   };
 }
 function afDialogFocusables(modal){
-  return [...modal.querySelectorAll('button,input,textarea,select,[tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&!el.closest('[hidden]')&&el.tabIndex!==-1&&el.getClientRects().length);
+  return [...modal.querySelectorAll('a[href],button,input,textarea,select,[tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&!el.closest('[hidden]')&&el.tabIndex!==-1&&el.getClientRects().length);
 }
 function bindConfirmModal(modal){
   if(!modal||modal.dataset.dialogBound)return;
@@ -922,8 +922,7 @@ async function boot(){
   if(isGuest&&state.authRequired){location.replace('/login.html');return}
   renderUserBadge();
 
-  const view=restoredView();
-  const shell = await api('/api/bootstrap', {silent: view==='runs'});
+  const shell = await api('/api/bootstrap', {silent: restoredView()==='runs'});
   state.data = Object.assign(state.data, shell);
   const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');
   state.projectFilter=(state.data.projects||[]).some(p=>p.id===savedProject)?savedProject:defaultProjectId(state.data.projects,state.currentUser?.id);
@@ -963,6 +962,7 @@ async function boot(){
       if(id){const url=new URL(location.href);url.searchParams.set('chatSession',id);history.replaceState({},'',url);const frame=$('#chatNextFrame');if(frame){frame.dataset.src='';mountNativeChat()}}
     }
   });
+  const view=restoredView();
   if(view==='projects')syncProjectAdminRouteState();
   renderAll();
   if(view==='settings'&&routePart(1)==='executors')gotoCredential('executors');
@@ -1016,6 +1016,18 @@ function bind(){
     }else switchView(btn.dataset.view);
   });
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
+  $('#settingsSidebarExpand')?.addEventListener('click',()=>{
+    cancelSettingsRouteTransition();
+    setSettingsSidebarExpanded(true);
+    requestAnimationFrame(()=>{
+      // Wait for the sidebar's descendants to inherit the restored visibility.
+      requestAnimationFrame(()=>{
+        if(settingsSidebarExpanded()&&document.activeElement===document.body){
+          $('#settingsSidebarToggle')?.focus({preventScroll:true});
+        }
+      });
+    });
+  });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
       event.preventDefault();event.stopImmediatePropagation();
@@ -1136,7 +1148,7 @@ function bind(){
     if(previewBtn){
       e.preventDefault();
       if(previewBtn.disabled)return;
-      openSkillFilePreview(selectedSkill(), previewBtn.getAttribute('data-skill-file-preview'));
+      openSkillFilePreview(selectedSkill(), previewBtn.getAttribute('data-skill-file-preview'), previewBtn);
       return;
     }
     const delBtn=e.target.closest('[data-skill-file-del]');
@@ -1293,7 +1305,7 @@ function bind(){
   $$('.sync-close').forEach(b=>b.onclick=()=>$('#syncModal').classList.remove('open'));
   $$('.schedule-close').forEach(b=>b.onclick=closeScheduleJobModal);
   $('#syncAutoEnabledInline').onchange=e=>{$('#syncAutoEnabled').checked=e.target.checked;saveSyncConfig()};
-  $$('.artifact-close').forEach(b=>b.onclick=()=>$('#artifactModal').classList.remove('open'));
+  bindArtifactPreview();
   $$('.modal').forEach(modal=>modal.addEventListener('pointerdown',e=>{
     if(e.target!==modal)return;
     if(modal.id==='requirementModal')return;
@@ -1302,6 +1314,7 @@ function bind(){
     modal.classList.remove('open');
   }));
   document.addEventListener('keydown',e=>{
+    if($('#artifactModal').open)return;
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommandPalette();return}
     if(!$('#commandPalette').hidden){
       if(e.key==='Escape'){closeCommandPalette();return}
@@ -1311,7 +1324,6 @@ function bind(){
     }
     if(e.key==='Escape'){
       if(flowDesignerEscape(e))return;
-      if($('#artifactModal')?.classList.contains('open')){$('#artifactModal').classList.remove('open');return}
       if(state.drawerOpen)return closeIssueDrawer();
       if($('#requirementModal')?.classList.contains('open')){
         if(!$('#reqRepoPopover')?.hidden){toggleReqRepoPopover(false);return}
@@ -1558,7 +1570,7 @@ function mountNativeChat(){
         const url=new URL(location.href);
         if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');
         url.searchParams.delete('chatIssue');
-        if(activeViewName()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
+        if(activeViewName()==='collaboration'&&restoredView()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
         history.replaceState({},'',url);
       }
       if(message.type==='agentflow-chat-project'){
@@ -1786,6 +1798,8 @@ function setSettingsSidebarExpanded(expanded){
     toggle.setAttribute('aria-label',open?'收起设置导航':'展开设置导航');
     toggle.title=open?'收起设置导航':'展开设置导航';
   }
+  const reopen=$('#settingsSidebarExpand');
+  if(reopen)reopen.hidden=!managing||open;
   const mobileToggle=$('.collab-rail-toggle');
   if(mobileToggle){
     mobileToggle.setAttribute('aria-expanded',String(open));
@@ -1793,7 +1807,8 @@ function setSettingsSidebarExpanded(expanded){
   }
   const sidebar=$('#settingsSidebar');
   if(!open&&sidebar?.contains(document.activeElement)){
-    const focusTarget=managing&&mobileToggle?.getClientRects().length?mobileToggle:settingsEntry;
+    const focusTarget=managing&&reopen?.getClientRects().length
+      ?reopen:managing&&mobileToggle?.getClientRects().length?mobileToggle:settingsEntry;
     focusTarget?.focus({preventScroll:true});
   }
   if(sidebar){
