@@ -62,6 +62,33 @@ test('run detail loads logs, telemetry, preview, workspace, evaluation, and chil
   assert.match(app.document.querySelector('#runsView').textContent, /Implemented|Strong result|Report|2400|2\.4k/i);
 });
 
+test('live run redraw keeps the reading position only for the same node output', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    const report = 'Report line\\n'.repeat(100);
+    const run = {...state.data.runs[0], status:'running', workflowSnapshot:state.data.workflows[0],
+      nodes:{'node-1':{status:'succeeded', output:report}, 'node-2':{status:'running', output:report}}};
+    state.selectedRun = run.id;
+    state.selectedRunNode = 'node-1';
+    applyRunPayload(run);
+  `);
+  const output = () => app.document.querySelector('#runDetail .node-output pre');
+  output().scrollTop = 320;
+  app.evaluate(`
+    run.nodes['node-2'].status = 'succeeded';
+    applyRunPayload({...run, status:'succeeded'});
+  `);
+  assert.equal(output().scrollTop, 320);
+
+  app.evaluate("state.selectedRunNode='node-2'; renderRunDetail(state.activeRun)");
+  assert.equal(output().scrollTop, 0, 'switching nodes resets even for identical text');
+
+  output().scrollTop = 120;
+  app.evaluate("run.nodes['node-2'].output='Updated report'; applyRunPayload(state.activeRun)");
+  assert.equal(output().scrollTop, 0, 'replaced output starts at the top');
+});
+
 test('run detail node topology renders an icon glyph instead of undefined', async (t) => {
   const app = await loadApp();
   t.after(app.close);
