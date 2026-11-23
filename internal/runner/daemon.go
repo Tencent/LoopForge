@@ -784,7 +784,7 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		}
 		command = runtime.WithCommandEnvironment(command, env)
 		command.Argv = runtime.BindMCPCallArgv(sandbox, command.Argv)
-		gitEnv, closeGit, err := runtime.RunGitEnvironment(ctx, sandbox, workspace, invocationGitCredentials(task.Invocation))
+		gitEnv, closeGit, err := runtime.RunGitEnvironment(ctx, sandbox, workspace, invocationGitCredentials(task.Invocation), command.Provider)
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
 		}
@@ -959,7 +959,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		commandEnv[key] = value
 	}
 	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindGit) {
-		gitEnv, closeGit, gitErr := runtime.RunGitEnvironment(ctx, sandbox, workspace, invocationGitCredentials(inv))
+		gitEnv, closeGit, gitErr := runtime.RunGitEnvironment(ctx, sandbox, workspace, invocationGitCredentials(inv), prepared.Command.Provider)
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
 		}
@@ -970,7 +970,11 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		}
 		defer cleanup()
 		if prepared.Command.Provider == "codex" {
-			argv = runtime.CodexRunGitArgv(argv, gitEnv)
+			var nativeWorkspace string
+			if sandbox == nil {
+				nativeWorkspace = workspace
+			}
+			argv = runtime.CodexRunGitArgv(argv, gitEnv, nativeWorkspace)
 		}
 		for key, value := range gitEnv {
 			commandEnv[key] = value

@@ -3,12 +3,16 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
 
 	"agentflow/internal/domain"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 type codexProvider struct{ baseProvider }
@@ -138,7 +142,7 @@ func codexIsolationEnvKey(key string) bool {
 
 // CodexRunGitArgv lets a SOP tool shell inherit its live Git binding by name.
 // The per-command relay URL must stay out of argv and persisted Codex config.
-func CodexRunGitArgv(argv []string, gitEnv map[string]string) []string {
+func CodexRunGitArgv(argv []string, gitEnv map[string]string, nativeWorkspace string) []string {
 	if len(argv) < 2 || gitEnv[SessionGatewayEnv] == "" || gitEnv[GitHostsEnv] == "" {
 		return argv
 	}
@@ -156,6 +160,9 @@ func CodexRunGitArgv(argv []string, gitEnv map[string]string) []string {
 				allowed = append(allowed, key)
 			}
 		}
+	}
+	if nativeWorkspace != "" && !hasArg(argv[:len(argv)-1], "--ignore-user-config") {
+		allowed = append(allowed, nativeCodexShellSetKeys(nativeWorkspace)...)
 	}
 	// SSH appends one URL rewrite per remote after the HTTPS helper entries.
 	count, _ := strconv.Atoi(gitEnv["GIT_CONFIG_COUNT"])
@@ -176,6 +183,40 @@ func CodexRunGitArgv(argv []string, gitEnv map[string]string) []string {
 		"-c", "shell_environment_policy.ignore_default_excludes=true",
 		"-c", "shell_environment_policy.include_only="+string(names))
 	return append(out, argv[len(argv)-1])
+}
+
+// Native runner invocations use the user's Codex home. Codex applies
+// include_only after set, including overrides it loaded from config.toml.
+func nativeCodexShellSetKeys(workspace string) []string {
+	home := os.Getenv("CODEX_HOME")
+	if home == "" {
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			return nil
+		}
+		home = filepath.Join(userHome, ".codex")
+	}
+	if !filepath.IsAbs(home) {
+		home = filepath.Join(workspace, home)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		return nil
+	}
+	var config map[string]any
+	if toml.Unmarshal(data, &config) != nil {
+		return nil // Codex reports invalid configuration at startup.
+	}
+	policy, _ := config["shell_environment_policy"].(map[string]any)
+	set, _ := policy["set"].(map[string]any)
+	var names []string
+	for key, value := range set {
+		if _, ok := value.(string); ok && codexIsolationEnvKey(key) && !strings.ContainsAny(key, "*?[]") {
+			names = append(names, key)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (codexProvider) Protocol(ex domain.ExecutorDefinition, sink EventSink) *protocolAdapter {

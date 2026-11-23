@@ -177,3 +177,82 @@ func TestCodexSOPGitBindingKeepsHelperInToolShell(t *testing.T) {
 		t.Fatal("unconfigured host obtained a Git credential")
 	}
 }
+
+func TestCodexSOPGitIdentityPreservesSystemConfig(t *testing.T) {
+	system := filepath.Join(t.TempDir(), "company defaults")
+	if err := os.WriteFile(system, []byte("[http]\n\tsslCAInfo = /fixture/company.pem\n[user]\n\tname = Image User\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_SYSTEM", system)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "0")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
+
+	workspace := t.TempDir()
+	creds := RunCredentials{GitHTTPCredentials: testHTTPSCredentials("fixture"), GitUserName: "SOP User"}
+	env, stop, err := RunGitEnvironment(t.Context(), nil, workspace, creds, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	t.Setenv("GIT_CONFIG_SYSTEM", env["GIT_CONFIG_SYSTEM"])
+	testRuntimeGit(t, workspace, "init", "-q")
+	if got := testRuntimeGit(t, workspace, "config", "--get", "http.sslCAInfo"); got != "/fixture/company.pem" {
+		t.Fatalf("system CA = %q", got)
+	}
+	if got := testRuntimeGit(t, workspace, "config", "--get", "user.name"); got != "SOP User" {
+		t.Fatalf("default identity = %q", got)
+	}
+	for _, scope := range []string{"--global", "--local"} {
+		testRuntimeGit(t, workspace, "config", scope, "user.name", scope+" user")
+		if got := testRuntimeGit(t, workspace, "config", "--get", "user.name"); got != scope+" user" {
+			t.Fatalf("%s identity = %q", scope, got)
+		}
+	}
+}
+
+func TestCodexSOPGitPreservesNativeRunnerShellSet(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", filepath.Base(home))
+	const config = `[shell_environment_policy.set]
+BUILD_PROFILE = "integration-fixture"
+"CMAKE_FLAGS" = "-DOPTION=ON"
+"BUILD_*" = "wildcard"
+CODEX_API_KEY = "private-fixture"
+[shell_environment_policy.Set]
+NOT_EXPLICIT = "ignored-by-codex"
+`
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{SessionGatewayEnv: "fixture-relay", GitHostsEnv: "git.example.com=other"}
+	for _, tc := range []struct {
+		workspace string
+		args      []string
+		wantBuild bool
+	}{
+		{filepath.Dir(home), []string{"codex", "exec", "prompt"}, true},
+		{"", []string{"codex", "exec", "prompt"}, false},
+		{filepath.Dir(home), []string{"codex", "exec", "--ignore-user-config", "prompt"}, false},
+	} {
+		args := CodexRunGitArgv(tc.args, env, tc.workspace)
+		var names []string
+		for _, arg := range args {
+			if raw, ok := strings.CutPrefix(arg, "shell_environment_policy.include_only="); ok {
+				if err := json.Unmarshal([]byte(raw), &names); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if strings.Contains(arg, "integration-fixture") || strings.Contains(arg, "private-fixture") {
+				t.Fatal("Codex config value reached argv")
+			}
+		}
+		for _, key := range []string{"BUILD_PROFILE", "CMAKE_FLAGS"} {
+			if slices.Contains(names, key) != tc.wantBuild {
+				t.Errorf("workspace=%q args=%v: unexpected inheritance of %s", tc.workspace, tc.args, key)
+			}
+		}
+		if slices.Contains(names, "CODEX_API_KEY") || slices.Contains(names, "BUILD_*") || slices.Contains(names, "NOT_EXPLICIT") {
+			t.Fatal("unexpected inherited secret or wildcard")
+		}
+	}
+}

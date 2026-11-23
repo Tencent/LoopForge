@@ -37,7 +37,7 @@ func bindCommandGitTransport(ctx context.Context, sandbox Sandbox, workspace str
 	}
 	stop, err := BindGitSSH(ctx, sandbox, filepath.Clean(workspace), command.environment, credentials.GitSSHKeys)
 	if err == nil && command.Provider == "codex" {
-		command.Argv = CodexRunGitArgv(command.Argv, command.environment)
+		command.Argv = CodexRunGitArgv(command.Argv, command.environment, "")
 	}
 	return stop, err
 }

@@ -219,7 +219,7 @@ func TestDockerHelperBindingWaitsForTheRunnerArtifact(t *testing.T) {
 			var err error
 			if use == "git" {
 				env := map[string]string{SessionGatewayEnv: "http://fixture.invalid"}
-				err = bindWorkspaceGitEnvironment(ctx, sb, workspace, env, RunCredentials{GitHTTPHosts: map[string]string{"git.fixture.invalid": "other"}})
+				err = bindWorkspaceGitEnvironment(ctx, sb, workspace, env, RunCredentials{GitHTTPHosts: map[string]string{"git.fixture.invalid": "other"}}, "")
 			} else {
 				_, err = PrepareMCPCall(ctx, sb, workspace, nil)
 			}

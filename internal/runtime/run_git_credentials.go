@@ -79,7 +79,7 @@ func prepareRunGitBinding(ctx context.Context, sandbox Sandbox, command CommandS
 
 // RunGitEnvironment is the same short-lived binding for runner processes
 // whose provider credentials have already been prepared by the daemon.
-func RunGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, credentials RunCredentials) (map[string]string, func(), error) {
+func RunGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, credentials RunCredentials, provider string) (map[string]string, func(), error) {
 	command, closeRelay, err := prepareRunGitBinding(ctx, sandbox, CommandSpec{CredentialBindings: []CredentialBinding{BindGit}}, credentials)
 	if err != nil {
 		return nil, closeRelay, err
@@ -89,7 +89,7 @@ func RunGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, c
 	for _, key := range workspaceGitSecretEnvironment {
 		env[key] = ""
 	}
-	if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, env, credentials); err != nil {
+	if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, env, credentials, provider); err != nil {
 		closeRelay()
 		return nil, func() {}, err
 	}

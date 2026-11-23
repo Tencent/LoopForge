@@ -226,7 +226,7 @@ func TestEnvironmentIdentityGitAndMCPHeaders(t *testing.T) {
 		t.Fatal("unsupported identity accepted")
 	}
 	provideDockerHelperFixture(t)
-	env, closeGit, err := RunGitEnvironment(context.Background(), local, workspace, RunCredentials{GitHTTPCredentials: testHTTPSCredentials("secret")})
+	env, closeGit, err := RunGitEnvironment(context.Background(), local, workspace, RunCredentials{GitHTTPCredentials: testHTTPSCredentials("secret")}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestEnvironmentIdentityGitAndMCPHeaders(t *testing.T) {
 	if env["AGENTFLOW_GIT_TOKEN"] != "" || env[SessionGatewayEnv] == "" {
 		t.Fatal("tokens must be fetched through the relay")
 	}
-	env, closeDocker, err := RunGitEnvironment(context.Background(), &dockerSandbox{}, workspace, RunCredentials{GitHTTPCredentials: testHTTPSCredentials("token")})
+	env, closeDocker, err := RunGitEnvironment(context.Background(), &dockerSandbox{}, workspace, RunCredentials{GitHTTPCredentials: testHTTPSCredentials("token")}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestEnvironmentIdentityGitAndMCPHeaders(t *testing.T) {
 	if !strings.Contains(env["GIT_CONFIG_VALUE_1"], "/workspace/") {
 		t.Fatal("Docker helper must be inside the workspace")
 	}
-	env, closeEmpty, err := RunGitEnvironment(context.Background(), nil, workspace, RunCredentials{})
+	env, closeEmpty, err := RunGitEnvironment(context.Background(), nil, workspace, RunCredentials{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
