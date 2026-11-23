@@ -104,7 +104,7 @@ async function loadPlatformSSHHosts(host){
           <button type="button" class="button ghost small danger" data-ssh-host-remove="${index}">${lfT('移除','Remove')}</button>
         </div>
       </div>`).join(''):`<p class="prop-hint">${lfT('尚未登记 Git SSH 主机。','No Git SSH hosts registered.')}</p>`;
-    setPlatformTabCount(host,'sshTrust',host.querySelectorAll('[data-git-host-entry]').length);
+    setPlatformTabCount(host,'gitHostTrust',host.querySelectorAll('[data-git-host-entry]').length);
   };
 
   const refresh=async()=>{

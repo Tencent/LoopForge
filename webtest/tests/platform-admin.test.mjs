@@ -43,7 +43,7 @@ test('platform admin panel loads metrics, searches, filters, grants, revokes, an
   assert.equal(app.evaluate(`state.currentView`), 'agents');
 });
 
-test('platform admin page separates accounts, admins, shared keys and SSH host trust', async (t) => {
+test('platform admin page separates accounts, admins, shared keys and Git host trust', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
@@ -55,7 +55,7 @@ test('platform admin page separates accounts, admins, shared keys and SSH host t
   const host = app.document.querySelector('#platformAdminPanel');
   const panel = (id) => host.querySelector(`[data-platform-panel="${id}"]`);
   const tab = (id) => host.querySelector(`[data-platform-tab="${id}"]`);
-  const shown = () => ['accounts', 'admins', 'sharedKey', 'sshTrust'].filter((id) => !panel(id).hidden);
+  const shown = () => ['accounts', 'admins', 'sharedKey', 'gitHostTrust'].filter((id) => !panel(id).hidden);
 
   assert.deepEqual(shown(), ['accounts'], 'accounts open first');
   assert.equal(tab('accounts').getAttribute('aria-selected'), 'true');
@@ -69,8 +69,8 @@ test('platform admin page separates accounts, admins, shared keys and SSH host t
   assert.deepEqual(shown(), ['sharedKey']);
   assert.equal(tab('accounts').getAttribute('aria-selected'), 'false');
   host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-  assert.deepEqual(shown(), ['sshTrust']);
-  assert.ok(panel('sshTrust').querySelector('#platformSSHHostTrustCard'));
+  assert.deepEqual(shown(), ['gitHostTrust']);
+  assert.ok(panel('gitHostTrust').querySelector('#platformSSHHostTrustCard'));
   host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   assert.deepEqual(shown(), ['accounts'], 'arrow keys wrap around');
   host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
@@ -112,7 +112,7 @@ test('platform admins can read a host key and save it only after confirming its 
   app.router.delete(invalidEndpoint, null, 204);
   app.evaluate(`renderPlatformAdminPanel()`);
   const card = app.document.querySelector('#platformSSHHostTrustCard');
-  app.document.querySelector('[data-platform-tab="sshTrust"]').click();
+  app.document.querySelector('[data-platform-tab="gitHostTrust"]').click();
   await settle(8);
 
   const row = host => [...card.querySelectorAll('.platform-admin-row')].find(item => item.textContent.includes(host));
@@ -313,14 +313,16 @@ test('platform admins authorize HTTPS addresses in the Git host trust tab', asyn
   app.router.put(path, { ...updated, revision: 'second' });
   app.router.delete(path, null, 204);
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}; renderPlatformAdminPanel()`);
-  app.document.querySelector('[data-platform-tab="sshTrust"]').click();
+  const trustTab = app.document.querySelector('[data-platform-tab="gitHostTrust"]');
+  trustTab.click();
   await settle(6);
 
-  const panel = app.document.querySelector('#platformPanel-sshTrust');
+  const panel = app.document.querySelector('#platformPanel-gitHostTrust');
   assert.ok(panel.querySelector('#platformSSHHostTrustCard'));
   const card = panel.querySelector('#platformHTTPSHostTrustCard');
   card.querySelector('[data-https-host-add]').click();
   const form = card.querySelector('form');
+  assert.match(form.elements.host.closest('label').textContent, /IPv4 服务器请填域名，在「手动编辑地址」里填 IPv4/);
   form.elements.host.value = proposed.host;
   const resolve = form.querySelector('button[type="submit"]');
   resolve.click();
@@ -337,6 +339,7 @@ test('platform admins authorize HTTPS addresses in the Git host trust tab', asyn
   assert.deepEqual(app.router.calls.find(call => call.method === 'POST' && call.path === endpoint).body, proposed);
   const list = card.querySelector('[data-https-host-list]');
   assert.match(list.textContent, /gitlab\.corp\.example:8443/);
+  assert.equal(trustTab.querySelector('[data-platform-tab-count]').textContent, '1');
 
   card.querySelector('[data-https-host-edit]').click();
   assert.equal(form.querySelector('details').open, true);

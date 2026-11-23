@@ -150,7 +150,7 @@ func (h *assistantHandlers) registerTurnDeliveries(ctx context.Context, s *Agent
 		}
 		var found []workspacePull
 		if cred.Platform == domain.GitPlatformGitLab {
-			found, err = workspaceMergeRequests(ctx, client, cred, repos[host], heads, run.CreatedAt)
+			found, err = h.workspaceMergeRequests(ctx, client, cred, repos[host], heads, run.CreatedAt)
 		} else {
 			found, err = workspacePulls(ctx, client, cred, repos[host], heads, run.CreatedAt)
 		}
@@ -300,7 +300,12 @@ func workspacePulls(ctx context.Context, client *http.Client, cred domain.GitHTT
 
 // workspaceMergeRequests is workspacePulls for GitLab: MRs in repos
 // (group/…/repo) the token's user authored since the given time.
-func workspaceMergeRequests(ctx context.Context, client *http.Client, cred domain.GitHTTPCredentialSecret, repos []string, heads map[string]bool, since time.Time) ([]workspacePull, error) {
+func (h *assistantHandlers) workspaceMergeRequests(ctx context.Context, client *http.Client, cred domain.GitHTTPCredentialSecret, repos []string, heads map[string]bool, since time.Time) ([]workspacePull, error) {
+	approvedAddresses, err := h.repo.PlatformGitHTTPSAddresses(ctx, cred.Host)
+	if err != nil {
+		return nil, fmt.Errorf("load Git HTTPS host authorization: %w", err)
+	}
+
 	var user struct {
 		ID int64 `json:"id"`
 	}
@@ -310,6 +315,7 @@ func workspaceMergeRequests(ctx context.Context, client *http.Client, cred domai
 	if user.ID <= 0 {
 		return nil, errors.New("GitLab did not return the token's user")
 	}
+	ipv6Host := strings.HasPrefix(cred.Host, "[")
 	out := []workspacePull{}
 	for _, repo := range repos {
 		var list []struct {
@@ -333,12 +339,15 @@ func workspaceMergeRequests(ctx context.Context, client *http.Client, cred domai
 				continue
 			}
 			link := mr.WebURL
-			if strings.HasPrefix(cred.Host, "[") {
-				// GitLab can return its configured DNS name when reached by IP.
-				// Use the queried project and IPv6 credential for later tracking.
+			matchesHost := sameDeliveryHost(link, cred.Host)
+			if ipv6Host || (len(approvedAddresses) != 0 && !matchesHost) {
+				// GitLab can advertise a different host or port in web_url.
+				// Keep tracking on the endpoint and project that were queried.
 				link = domain.GongfengMRURL(domain.MRProjectGitLab+cred.Host+"/"+repo, mr.IID)
+				matchesHost = sameDeliveryHost(link, cred.Host)
 			}
-			if !sameDeliveryHost(link, cred.Host) {
+			if !matchesHost {
+				log.Printf("skip merge request !%d from %s/%s: web link is invalid or uses a different endpoint", mr.IID, cred.Host, repo)
 				continue
 			}
 			p := workspacePull{Number: mr.IID, URL: link, Title: mr.Title, Body: mr.Description, State: mr.State, MergedAt: mr.MergedAt, CreatedAt: mr.CreatedAt, mergeRequest: true}

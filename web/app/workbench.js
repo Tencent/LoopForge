@@ -1654,7 +1654,7 @@ const PLATFORM_TABS=[
   {id:'accounts',zh:'成员账号',en:'Accounts'},
   {id:'admins',zh:'平台管理员',en:'Admins'},
   {id:'sharedKey',zh:'共享 CodeBuddy Key',en:'Shared CodeBuddy Key'},
-  {id:'sshTrust',zh:'Git 主机信任',en:'Git Host Trust'},
+  {id:'gitHostTrust',zh:'Git 主机信任',en:'Git Host Trust'},
 ];
 function platformTabsHTML(active){
   return `<div class="pa-tabs-wrap platform-tabs-wrap"><div class="pa-tabs platform-tabs" id="platformTabs" role="tablist" aria-label="平台管理分区">${PLATFORM_TABS.map(t=>{
@@ -1823,7 +1823,7 @@ function renderPlatformAdminPanel(){
     </div>
     `)}
     ${platformTabPanel('sharedKey',tab,platformSharedKeyHTML())}
-    ${platformTabPanel('sshTrust',tab,platformSSHHostTrustHTML()+platformHTTPSHostTrustHTML())}
+    ${platformTabPanel('gitHostTrust',tab,platformSSHHostTrustHTML()+platformHTTPSHostTrustHTML())}
   `;
   bindPlatformTabs(host);
   loadPlatformAccounts(host);

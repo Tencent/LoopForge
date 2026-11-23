@@ -14,7 +14,10 @@ function platformHTTPSHostTrustHTML() {
         <label class="platform-field">
           <span>${lfT('HTTPS 主机', 'HTTPS host')}</span>
           <input name="host" placeholder="gitlab.example.org:8443" maxlength="260" required spellcheck="false">
-          <small class="platform-field-hint">${lfT('省略端口时使用 443。IPv6 带端口时写作 [fd00::2]:8443。', 'The default port is 443. Use [fd00::2]:8443 to specify a port with IPv6.')}</small>
+          <small class="platform-field-hint">${lfT(
+            '填写域名或 IPv6。默认端口为 443，IPv6 带端口用 [fd00::2]:8443。IPv4 服务器请填域名，在「手动编辑地址」里填 IPv4。',
+            'Enter a hostname or IPv6 address. Port 443 is the default. Use [fd00::2]:8443 for IPv6 with a port. For an IPv4 server, enter its hostname and put the IP under Edit addresses manually.',
+          )}</small>
         </label>
         <label class="platform-field">
           <span>${lfT('托管平台', 'Git provider')}</span>
@@ -86,7 +89,7 @@ async function loadPlatformHTTPSHosts(host) {
           <button type="button" class="button ghost small danger" data-https-host-remove="${index}">${lfT('撤销授权', 'Revoke')}</button>
         </div>
       </div>`).join('') : `<p class="prop-hint">${lfT('尚未授权 Git HTTPS 主机。', 'No Git HTTPS hosts are authorized.')}</p>`;
-    setPlatformTabCount(host, 'sshTrust', host.querySelectorAll('[data-git-host-entry]').length);
+    setPlatformTabCount(host, 'gitHostTrust', host.querySelectorAll('[data-git-host-entry]').length);
   }
 
   async function refresh() {
