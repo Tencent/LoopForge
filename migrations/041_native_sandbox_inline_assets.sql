@@ -24,6 +24,7 @@
 -- Missing legacy tables are treated as empty so the migration can be repeated.
 -- Docker images are keyed by the Dockerfile content and are reused.
 -- Apply manually to existing databases before starting the upgraded platform.
+-- For Compose, use ./start.sh migrate-sandboxes with the old platform stopped.
 
 SET NAMES utf8mb4;
 

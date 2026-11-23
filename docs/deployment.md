@@ -65,7 +65,7 @@ Run it as the installation owner, including an ordinary Linux user. If that user
 
 `compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.1`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
-To upgrade, update the checkout first, then refresh the containers:
+To upgrade, update the checkout first, apply any required upgrade migrations, then refresh the containers. For the sandbox catalog upgrade, follow [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets).
 
 ```bash
 git fetch --tags && git checkout vX.Y.Z
@@ -205,11 +205,14 @@ For an external MySQL deployment, review that migration and check column existen
 
 ### Migrating existing sandboxes to inline assets
 
-Before starting the upgraded platform, stop the old platform and any other processes using the database. Keep MySQL running, back up the database and manually apply `migrations/041_native_sandbox_inline_assets.sql`. For Compose installations, run:
+Check out the upgraded release and stop the old platform and any other processes using the database. Back up the database while MySQL remains running. For Compose installations, apply the migration with these commands.
 
 ```bash
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/041_native_sandbox_inline_assets.sql
+./start.sh stop platform
+./start.sh migrate-sandboxes
 ```
+
+Once the migration succeeds, start the upgraded platform with `./start.sh pull` for a published release or `./start.sh dev` for a source build. For external MySQL deployments, apply `migrations/041_native_sandbox_inline_assets.sql` directly before starting the upgraded platform.
 
 The migration copies Dockerfiles into sandboxes, converts local sandboxes to native, drops the legacy Dockerfile and environment tables and includes the built-in Dockerfile fix from `031_generic_backend_openssh.sql`. Fresh installations seed the new sandbox format directly.
 
