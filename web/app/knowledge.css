@@ -383,6 +383,34 @@
   gap: 8px;
 }
 
+/* 控制台登录凭据：标签 + 可复制的值 + 操作按钮 */
+#kbDrawer .kb-cred-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#kbDrawer .kb-cred-row > span:first-child {
+  min-width: 72px;
+  color: var(--hui-secondary);
+  font-size: 13px;
+}
+
+#kbDrawer .kb-cred-row code {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--hui-border);
+  background: var(--hui-surface-subtle, rgba(15, 23, 42, .03));
+  font-family: var(--hui-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+#kbDrawer .kb-cred-error {
+  color: var(--hui-error);
+}
+
 #kbDrawer .kb-doc-pre {
   margin: 0;
   padding: 12px;

@@ -110,6 +110,18 @@ type knowledgeSettingsView struct {
 	WeKnoraUIURL       string `json:"weKnoraUiUrl,omitempty"`
 }
 
+// weKnoraConsoleCredentialsView carries the console sign-in only for the
+// platform-managed WeKnora instance; it is served to platform administrators on
+// demand instead of riding along with /api/knowledge/settings.
+type weKnoraConsoleCredentialsView struct {
+	Configured bool   `json:"configured"`
+	Email      string `json:"email,omitempty"`
+	Password   string `json:"password,omitempty"`
+	Source     string `json:"source,omitempty"`
+	UIURL      string `json:"uiUrl,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+}
+
 // 路由: g.GET("/api/knowledge/settings", h.settings)
 //
 //	g.PUT("/api/knowledge/settings", h.settings)
@@ -187,6 +199,34 @@ func (h *knowledgeHandlers) provisionWeKnora(c *gin.Context) {
 	}
 	res, err := h.svc.ProvisionWeKnora(c.Request.Context(), input, h.actor(c.Request))
 	render(c, res, err)
+}
+
+// 路由: g.GET("/api/knowledge/weknora/console-credentials", h.weKnoraConsoleCredentials)
+func (h *knowledgeHandlers) weKnoraConsoleCredentials(c *gin.Context) {
+	if !h.canManage(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以查看 WeKnora 控制台登录凭据"})
+		return
+	}
+	login := h.svc.ManagedWeKnoraConsole(strings.TrimSpace(c.Query("connectionId")))
+	c.Header("Cache-Control", "no-store")
+	view := weKnoraConsoleCredentialsView{
+		Configured: login.Configured,
+		Email:      login.Email,
+		UIURL:      login.UIURL,
+	}
+	if !login.Configured {
+		view.Reason = "not_managed"
+		c.JSON(http.StatusOK, view)
+		return
+	}
+	view.Password = login.Password
+	view.Source = login.Source
+	slog.InfoContext(c.Request.Context(), "knowledge console credentials",
+		"event", "knowledge.console.credentials.reveal",
+		"actor", h.actor(c.Request),
+		"source", login.Source,
+	)
+	c.JSON(http.StatusOK, view)
 }
 
 // 路由: g.DELETE("/api/knowledge/connections/:id", h.deleteConnection)

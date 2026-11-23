@@ -627,6 +627,69 @@ func ensureManagedWeKnoraContainers(ctx context.Context, network, baseURL string
 	return fmt.Errorf("等待内置 WeKnora 服务就绪超时（%s）", baseURL)
 }
 
+// WeKnoraConsoleLogin is the sign-in the platform uses for the WeKnora
+// console. Only the instance the platform bootstrapped has a password the
+// platform knows; an externally linked WeKnora keeps its credentials upstream.
+type WeKnoraConsoleLogin struct {
+	Configured bool   `json:"configured"`
+	Email      string `json:"email,omitempty"`
+	Password   string `json:"password,omitempty"`
+	Source     string `json:"source,omitempty"`
+	UIURL      string `json:"uiUrl,omitempty"`
+}
+
+// ManagedWeKnoraConsole returns the console sign-in for the managed WeKnora
+// instance, and nothing for an arbitrary external connection. connID scopes the
+// lookup to one connection: an empty or "default" id means the top-level
+// settings, so a connection pointed at another host can never borrow the
+// managed instance's password.
+func (s *Service) ManagedWeKnoraConsole(connID string) WeKnoraConsoleLogin {
+	out := WeKnoraConsoleLogin{UIURL: strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_UI_URL"))}
+	settings := s.Settings()
+	if settings.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
+		return out
+	}
+	baseURL := strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL"))
+	if baseURL == "" {
+		// 没有内置实例配置时，平台不掌握任何控制台密码。
+		return out
+	}
+	connID = strings.TrimSpace(connID)
+	var account string
+	matched := false
+	if connID == "" || connID == "default" {
+		matched = sameWeKnoraConsoleURL(settings.URL, baseURL)
+	} else {
+		for _, conn := range settings.Connections {
+			if conn.ID != connID {
+				continue
+			}
+			if sameWeKnoraConsoleURL(conn.URL, baseURL) {
+				account, matched = strings.TrimSpace(conn.Account), true
+			}
+			break
+		}
+	}
+	if !matched {
+		return out
+	}
+	if account == "" {
+		account = "admin@loopforge.local"
+	}
+	out.Email = account
+	if password := strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_ADMIN_PASSWORD")); password != "" {
+		out.Password, out.Source = password, "environment"
+	} else if password := strings.TrimSpace(s.store.ManagedWeKnoraAdminPassword()); password != "" {
+		out.Password, out.Source = password, "generated"
+	}
+	out.Configured = out.Password != ""
+	return out
+}
+
+func sameWeKnoraConsoleURL(a, b string) bool {
+	return strings.EqualFold(strings.TrimRight(strings.TrimSpace(a), "/"), strings.TrimRight(strings.TrimSpace(b), "/"))
+}
+
 func randomHex(nBytes int) string {
 	b := make([]byte, nBytes)
 	_, _ = rand.Read(b)

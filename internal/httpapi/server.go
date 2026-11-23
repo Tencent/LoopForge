@@ -503,6 +503,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/knowledge/settings", api.know.settings)
 	g.POST("/api/knowledge/check", api.know.check)
 	g.POST("/api/knowledge/weknora/provision", api.know.provisionWeKnora)
+	g.GET("/api/knowledge/weknora/console-credentials", api.know.weKnoraConsoleCredentials)
 	g.DELETE("/api/knowledge/connections/:id", api.know.deleteConnection)
 	g.GET("/api/knowledge/connections/:id/capabilities", api.know.connectionCapabilities)
 	g.POST("/api/knowledge/reference-check", api.know.checkReferences)

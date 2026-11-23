@@ -457,3 +457,27 @@ Object.assign(window.LF_I18N_EN, {
   "请填写向量模型 API Base URL": "Enter the embedding model API Base URL",
   "向量模型已配置": "Embedding model configured"
 });
+
+Object.assign(window.LF_I18N_EN, {
+  "登录凭据": "Console sign-in",
+  "WeKnora 控制台登录凭据": "WeKnora console sign-in",
+  "平台没有保存这个连接的登录密码。外部 WeKnora 请使用接入时填写的管理员账号；内置实例需要配置 LOOPFORGE_WEKNORA_ADMIN_PASSWORD，或完成一次自动初始化。": "This connection's console password isn't stored here. For an external WeKnora, use the admin account you entered when linking it; the built-in instance needs LOOPFORGE_WEKNORA_ADMIN_PASSWORD or one automatic setup run.",
+  "登录密码": "Sign-in password",
+  "复制密码": "Copy password",
+  "显示": "Show",
+  "隐藏": "Hide",
+  "密码已复制": "Password copied",
+  "邮箱已复制": "Email copied",
+  "复制失败，请手动选择文本复制": "Copy failed — select the text and copy it manually",
+  "仅平台管理员可见。密码来自部署环境变量 LOOPFORGE_WEKNORA_ADMIN_PASSWORD。": "Visible to platform administrators only. The password comes from the deployment's LOOPFORGE_WEKNORA_ADMIN_PASSWORD environment variable.",
+  "仅平台管理员可见。密码在首次自动初始化时生成，并保存在平台配置中。": "Visible to platform administrators only. The password was generated during first-time setup and is kept in the platform configuration.",
+  "若在 WeKnora 里改过密码，这里显示的值会失效；请同步修改 WeKnora 账号、.env 与平台配置。": "If you changed the password inside WeKnora, this value is stale; update the WeKnora account, .env and platform configuration together.",
+  "打开 WeKnora 控制台 ↗": "Open WeKnora console ↗",
+  "读取登录凭据失败": "Couldn't read the console sign-in",
+  "登录状态已失效，请重新登录后再试。": "Your session has expired — sign in again and retry.",
+  "只有平台管理员可以查看登录凭据。": "Only platform administrators can view the sign-in.",
+  "请稍后重试，或到「高级配置」中直接登录。": "Try again shortly, or sign in directly from Advanced settings.",
+  "未知错误": "Unknown error",
+  "复制": "Copy",
+  "只有平台管理员可以查看 WeKnora 控制台登录凭据": "Only platform administrators can view the WeKnora console sign-in."
+});

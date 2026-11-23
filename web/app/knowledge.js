@@ -568,6 +568,116 @@
     if (first && typeof first.focus === 'function') first.focus();
   }
 
+  // 控制台凭据：只对平台管理员展示内置 WeKnora 实例的登录账号。
+  // 外部连接的密码平台从未保存，这里明确说明而不是猜测。
+  let kbCredEpoch = 0;
+
+  async function openKBConsoleCredentials(conn) {
+    const epoch = ++kbCredEpoch;
+    const consoleHref = resolveWeKnoraConsoleURL(kbState.settings, conn);
+    const openLink = consoleHref
+      ? `<a class="kb-btn primary" href="${kbEsc(consoleHref)}" target="_blank" rel="noopener">打开 WeKnora 控制台 ↗</a>`
+      : '';
+    let data = null;
+    let error = null;
+    try {
+      const credPath = conn?.id
+        ? `/api/knowledge/weknora/console-credentials?connectionId=${encodeURIComponent(conn.id)}`
+        : '/api/knowledge/weknora/console-credentials';
+      data = await kbAPI(credPath);
+    } catch (err) {
+      error = err || { message: '' };
+    }
+    // 连续点击时只采用最后一次请求的结果。
+    if (epoch !== kbCredEpoch) return;
+    const email = (data && data.email) || conn?.account || '';
+    if (error) {
+      const status = Number(error.httpStatus) || 0;
+      const hint = status === 401
+        ? '登录状态已失效，请重新登录后再试。'
+        : status === 403
+          ? '只有平台管理员可以查看登录凭据。'
+          : '请稍后重试，或到「高级配置」中直接登录。';
+      openKBDrawer('WeKnora 控制台登录凭据', `
+        <p class="kb-muted kb-cred-error">读取登录凭据失败：${kbEsc(error.message || '未知错误')}</p>
+        <p class="kb-muted">${kbEsc(hint)}</p>
+      `, openLink);
+      return;
+    }
+    if (!data || !data.configured) {
+      openKBDrawer('WeKnora 控制台登录凭据', `
+        <p class="kb-muted">平台没有保存这个连接的登录密码。外部 WeKnora 请使用接入时填写的管理员账号；内置实例需要配置 LOOPFORGE_WEKNORA_ADMIN_PASSWORD，或完成一次自动初始化。</p>
+        ${email ? `<div class="kb-cred-row"><span>登录邮箱</span><code data-i18n-data>${kbEsc(email)}</code></div>` : ''}
+      `, openLink);
+      return;
+    }
+    const password = data.password || '';
+    openKBDrawer('WeKnora 控制台登录凭据', `
+      <p class="kb-muted">仅平台管理员可见。${data.source === 'environment'
+        ? '密码来自部署环境变量 LOOPFORGE_WEKNORA_ADMIN_PASSWORD。'
+        : '密码在首次自动初始化时生成，并保存在平台配置中。'}</p>
+      <div class="kb-cred-row">
+        <span>登录邮箱</span>
+        <code data-i18n-data>${kbEsc(email)}</code>
+        <button type="button" class="kb-btn xs" id="kbConsoleCredCopyEmail">复制</button>
+      </div>
+      <div class="kb-cred-row">
+        <span>登录密码</span>
+        <code id="kbConsoleCredValue" data-revealed="0">••••••••••</code>
+        <button type="button" class="kb-btn xs" id="kbConsoleCredToggle">显示</button>
+        <button type="button" class="kb-btn xs" id="kbConsoleCredCopy">复制密码</button>
+      </div>
+      <p class="kb-muted">若在 WeKnora 里改过密码，这里显示的值会失效；请同步修改 WeKnora 账号、.env 与平台配置。</p>
+    `, openLink);
+    document.getElementById('kbConsoleCredCopyEmail')?.addEventListener('click', () => kbCopyText(email, '邮箱已复制'));
+    const valueEl = document.getElementById('kbConsoleCredValue');
+    const toggleBtn = document.getElementById('kbConsoleCredToggle');
+    toggleBtn?.addEventListener('click', () => {
+      const revealed = valueEl?.dataset.revealed === '1';
+      if (valueEl) {
+        valueEl.textContent = revealed ? '••••••••••' : password;
+        valueEl.dataset.revealed = revealed ? '0' : '1';
+      }
+      if (toggleBtn) toggleBtn.textContent = revealed ? kbLfText('显示', 'Show') : kbLfText('隐藏', 'Hide');
+    });
+    document.getElementById('kbConsoleCredCopy')?.addEventListener('click', () => kbCopyText(password, '密码已复制'));
+  }
+
+  // 平台多用 http 内网地址访问，navigator.clipboard 在非安全上下文不可用，
+  // 因此保留 textarea + execCommand 的兜底。
+  function kbCopyText(value, okMsg) {
+    if (!value) return;
+    const failMsg = '复制失败，请手动选择文本复制';
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(value)
+        .then(() => kbToast(okMsg))
+        .catch(() => {
+          const ok = kbFallbackCopy(value);
+          kbToast(ok ? okMsg : failMsg, !ok);
+        });
+      return;
+    }
+    const ok = kbFallbackCopy(value);
+    kbToast(ok ? okMsg : failMsg, !ok);
+  }
+
+  function kbFallbackCopy(value) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch { ok = false; }
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch {
+      return false;
+    }
+  }
+
   // 整页加载与文档列表各自维护单调序号：晚到的旧响应直接丢弃，避免 A 库内容覆盖 B 库。
   let kbViewEpoch = 0;
   let kbDocsEpoch = 0;
@@ -1978,6 +2088,10 @@
         ? resolveWeKnoraConsoleURL(kbState.settings, selectedConn)
         : '';
       const connAccount = selectedConn?.account || '';
+      // 登录凭据只给平台管理员：外部 WeKnora 的密码平台从不保存，抽屉里会说明。
+      const consoleCredHTML = consoleHref && kbState.settings?.canManage
+        ? '<button type="button" class="kb-btn" id="kbConsoleCredBtn">登录凭据</button>'
+        : '';
       const selectedTitle = cleanSourceName(selected.name || selected.id);
       rightHTML = `
         <div class="kb-panel-head">
@@ -1989,6 +2103,7 @@
             <button type="button" class="kb-btn primary" id="kbImportDocBtn"${kbGateAttrs(docGate)}>导入文档</button>
             <button type="button" class="kb-btn" id="kbEditSourceBtn"${kbGateAttrs(manageGate)}>编辑知识库</button>
             <button type="button" class="kb-btn danger-outline" id="kbDeleteSourceBtn"${kbGateAttrs(manageGate)}>删除知识库</button>
+            ${consoleCredHTML}
             ${consoleHref ? `<a class="kb-btn" href="${kbEsc(consoleHref)}" target="_blank" rel="noopener">高级配置 ↗</a>` : ''}
           </div>
         </div>
@@ -2050,6 +2165,7 @@
       container.querySelector('#kbImportDocBtn')?.addEventListener('click', () => openKBImportDrawer(selected));
       container.querySelector('#kbEditSourceBtn')?.addEventListener('click', () => openKBEditDrawer(selected));
       container.querySelector('#kbDeleteSourceBtn')?.addEventListener('click', () => kbDeleteSource(selected));
+      container.querySelector('#kbConsoleCredBtn')?.addEventListener('click', () => openKBConsoleCredentials(resolveConnectionForSource(selected.id)));
     }
 
     const runDocSearch = async () => {

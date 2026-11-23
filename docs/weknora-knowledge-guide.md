@@ -11,7 +11,7 @@
 ### 方式 A：新建内置 WeKnora 实例（单机一键开启）
 1. 在 **「快速接入 WeKnora（一键开启）」** 卡片中，选择 **`新建内置 WeKnora 实例`**；
 2. 点击 **`一键启动并接入 WeKnora`**；
-3. 系统会自动在同 Docker 网络拉起内置 WeKnora 服务（端口 `18080` / 控制台 `18081`），完成默认空间初始化（默认账号：`admin@loopforge.local` / `LoopForge@2026!`）并自动签发 `X-API-Key` 写入知识中心。
+3. 系统会自动在同 Docker 网络拉起内置 WeKnora 服务（端口 `18080` / 控制台 `18081`），完成默认空间初始化（默认账号：`admin@loopforge.local`，密码取部署环境变量 `LOOPFORGE_WEKNORA_ADMIN_PASSWORD`；未设置时才是 `LoopForge@2026!`）并自动签发 `X-API-Key` 写入知识中心。控制台登录凭据可在知识中心「登录凭据」中查看。
 
 ### 方式 B：链接已有 WeKnora 实例（支持多空间 / 跨节点部署）
 1. 选择 **`链接已有 WeKnora 实例`**；
