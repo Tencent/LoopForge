@@ -48,6 +48,11 @@ func TestRepositoryCachePathRejectsUnsafeIDs(t *testing.T) {
 }
 
 func TestCloneFromRepositoryCacheSharesObjectsAndKeepsOrigin(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(config, []byte("[safe]\n\tbareRepository = explicit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
 	origin := t.TempDir()
 	cacheTestGit(t, origin, "init", "-q", "-b", "main")
 	first := cacheTestCommit(t, origin, "a.txt")
@@ -63,7 +68,7 @@ func TestCloneFromRepositoryCacheSharesObjectsAndKeepsOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := filepath.Join(root, "service.git")
-	if got := cacheTestGit(t, cache, "config", "gc.auto"); got != "0" {
+	if got := cacheTestGit(t, cache, "--git-dir=.", "config", "gc.auto"); got != "0" {
 		t.Fatalf("cache gc.auto = %q", got)
 	}
 	if head := cacheTestGit(t, workspace, "rev-parse", "HEAD"); head != first {
@@ -85,7 +90,7 @@ func TestCloneFromRepositoryCacheSharesObjectsAndKeepsOrigin(t *testing.T) {
 	if head := cacheTestGit(t, branchWorkspace, "rev-parse", "HEAD"); head != feature {
 		t.Fatalf("branch clone HEAD = %s, want %s", head, feature)
 	}
-	if got := cacheTestGit(t, cache, "rev-parse", "refs/heads/main"); got != next {
+	if got := cacheTestGit(t, cache, "--git-dir=.", "rev-parse", "refs/heads/main"); got != next {
 		t.Fatalf("cache main = %s, want the fetched %s", got, next)
 	}
 }
@@ -105,7 +110,7 @@ func TestRefreshRepositoryCacheReplacesABrokenCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cacheTestGit(t, dir, "rev-parse", "refs/heads/main"); got != head {
+	if got := cacheTestGit(t, dir, "--git-dir=.", "rev-parse", "refs/heads/main"); got != head {
 		t.Fatalf("cache main = %s, want %s", got, head)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "junk")); !os.IsNotExist(err) {

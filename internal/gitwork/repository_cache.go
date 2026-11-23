@@ -95,10 +95,10 @@ func CloneFromRepositoryCache(ctx context.Context, root, repositoryID, remote, b
 	if branch = strings.TrimSpace(branch); branch != "" {
 		args = append(args, "--branch", branch)
 	}
-	if err := localGit(ctx, workspace, append(args, "--", dir, ".")...); err != nil {
+	if err := localGit(ctx, "-C", workspace, append(args, "--", dir, ".")...); err != nil {
 		return err
 	}
-	return localGit(ctx, workspace, "remote", "set-url", "origin", remote)
+	return localGit(ctx, "-C", workspace, "remote", "set-url", "origin", remote)
 }
 
 func refreshLockedCache(ctx context.Context, dir, remote string, watch procwatch.Options) error {
@@ -117,14 +117,16 @@ func refreshLockedCache(ctx context.Context, dir, remote string, watch procwatch
 		if _, err := Watch(ctx, filepath.Dir(dir), watch, "clone", "--bare", "--progress", "--", remote, tmp); err != nil {
 			return fmt.Errorf("git clone --bare: %w", err)
 		}
+		// Name the bare Git directory explicitly for hosts with
+		// safe.bareRepository=explicit.
 		for _, setting := range [][2]string{{"gc.auto", "0"}, {"maintenance.auto", "false"}, {"gc.pruneExpire", "never"}, {"fetch.prune", "false"}} {
-			if err := localGit(ctx, tmp, "config", setting[0], setting[1]); err != nil {
+			if err := localGit(ctx, "--git-dir", tmp, "config", setting[0], setting[1]); err != nil {
 				return err
 			}
 		}
 		return os.Rename(tmp, dir)
 	}
-	if err := localGit(ctx, dir, "remote", "set-url", "origin", remote); err != nil {
+	if err := localGit(ctx, "--git-dir", dir, "remote", "set-url", "origin", remote); err != nil {
 		return err
 	}
 	watch.Label = strings.Replace(watch.Label, "克隆", "更新", 1)
@@ -149,8 +151,8 @@ func emptyDirectory(dir string) error {
 	return nil
 }
 
-func localGit(ctx context.Context, dir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+func localGit(ctx context.Context, dirOption, dir string, args ...string) error {
+	cmd := exec.CommandContext(ctx, "git", append([]string{dirOption, dir}, args...)...)
 	cmd.Env = WithEnvValue(Env(""), "GIT_CONFIG_NOSYSTEM", "1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git %s: %w (%s)", args[0], err, strings.TrimSpace(string(out)))
