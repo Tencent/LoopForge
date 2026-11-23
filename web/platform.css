@@ -2344,6 +2344,7 @@ html[data-theme="dark"] .credential-add-panel img.hui-select-option-brand.is-mon
 .credential-subscription:hover .credential-row-action{color:var(--hui-accent-hover)}
 .credential-subscription .credential-logo{color:var(--hui-muted)}
 .credential-subscription .credential-row-who small{display:block;line-height:1.45;white-space:normal}
+.credential-codex-subscription{padding:4px 0 12px}
 .credential-default-feedback{margin-left:auto;color:var(--hui-success);font-size:12px;font-weight:500}
 .credential-default-status{margin:0;color:var(--hui-secondary);font-size:13px}
 .credential-default-form fieldset{min-width:0;margin:0;padding:0;border:0}
