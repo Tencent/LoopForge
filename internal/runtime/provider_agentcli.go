@@ -3,6 +3,7 @@ package runtime
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -106,7 +107,7 @@ type AgentCLICommandOptions struct {
 	AgentFile string
 }
 
-// AgentCLICommand builds the argv of an agent CLI turn; the caller adds
+// AgentCLICommand builds the command for an agent CLI turn; the caller adds
 // credential bindings and the HOME policy.
 func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	binary := strings.TrimSpace(o.Binary)
@@ -125,6 +126,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	}
 	extra := append([]string{}, o.Extra...)
 	var argv []string
+	var stdin io.Reader
 	readOnly := o.Chat && !o.Workspace
 	options := AgentCLIOptions{Model: model, Effort: effort, ReadOnly: readOnly}
 	switch kind {
@@ -239,7 +241,13 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if resume != "" {
 			argv = append(argv, "--session-id", resume)
 		}
-		argv = append(append(argv, extra...), prompt)
+		argv = append(argv, extra...)
+		if PromptFitsArgv(len(prompt)) {
+			argv = append(argv, prompt)
+		} else {
+			// Headless dsh reads the task from stdin when the positional task is omitted.
+			stdin = strings.NewReader(prompt)
+		}
 	case AgentCLIZCode:
 		disallowed := zcodeSOPDisallowedTools
 		if readOnly {
@@ -254,7 +262,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		}
 		argv = append(argv, extra...)
 	}
-	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
+	return CommandSpec{Argv: argv, Stdin: stdin, Provider: kind, AgentCLI: options}
 }
 
 // AgyModelEfforts returns the separate effort choices for Gemini API models.
