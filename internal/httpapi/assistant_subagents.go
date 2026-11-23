@@ -176,6 +176,20 @@ func subagentRolePrompt(prompt string) string {
 
 var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
+func assistantConversationSkillTree(model string) string {
+	engine, _ := assistantModelEngine(model)
+	configDir := assistantEngineConfigDir(engine)
+	switch {
+	case engine == runtime.AgentCLIPi:
+		configDir = filepath.Join(".pi", "agent")
+	case engine == runtime.AgentCLIAntigravity:
+		configDir = filepath.Join(".gemini", "config")
+	case runtime.IsAgentCLI(engine):
+		configDir = ".agents"
+	}
+	return filepath.ToSlash(filepath.Join("home", configDir, "skills"))
+}
+
 // writeConversationAssets rewrites the conversation's CLI home each turn:
 // skills holds the project's own skills and the shared skills, plus those of
 // its roles and the mentioned ones, and agents holds one subagent per role,
@@ -186,7 +200,8 @@ var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 // with no project, no shared skills and no mentioned roles gets empty
 // directories.
 func (h *assistantHandlers) writeConversationAssets(root string, req assistantRequest) error {
-	if err := runtime.ValidateConversationRoot(root); err != nil {
+	skillTree := assistantConversationSkillTree(req.Model)
+	if err := runtime.ValidateConversationRoot(root, skillTree); err != nil {
 		return err
 	}
 	if err := writeConversationAttachments(root, req); err != nil {
@@ -246,25 +261,14 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 		skill.FileRefs = nil
 		add(skill, contents)
 	}
-	engine, _ := assistantModelEngine(req.Model)
-	home := filepath.Join(root, "home", assistantEngineConfigDir(engine))
-	if runtime.IsAgentCLI(engine) {
-		home = filepath.Join(root, "home", ".agents")
-	}
-	if engine == runtime.AgentCLIPi {
-		home = filepath.Join(root, "home", ".pi", "agent")
-	}
-	if engine == runtime.AgentCLIAntigravity {
-		home = filepath.Join(root, "home", ".gemini", "config")
-	}
 	writer := runtime.WriteInertSkillTree
 	if req.workspaceMode {
 		writer = runtime.WriteSkillTree
 	}
-	if _, err := writer(filepath.Join(home, "skills"), skills, files); err != nil {
+	if _, err := writer(filepath.Join(root, skillTree), skills, files); err != nil {
 		return err
 	}
-	agents := filepath.Join(home, "agents")
+	agents := filepath.Join(root, filepath.Dir(skillTree), "agents")
 	if err := os.RemoveAll(agents); err != nil {
 		return err
 	}

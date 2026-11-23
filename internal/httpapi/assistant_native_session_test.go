@@ -378,6 +378,49 @@ func TestSharedNativeSessionFencesAStaleWriter(t *testing.T) {
 	}
 }
 
+func TestSharedNativeSessionResumesAfterSkillInstallLink(t *testing.T) {
+	h, a, b, _, session := sharedWorkbenchFixture(t)
+	_, calls := nativeCLIRecorder(t)
+	skill := domain.SkillDefinition{ID: "review", Name: "Review", ProjectID: session.ProjectID, Content: "Review the changes."}
+	if err := h.repo.PutSkill(skill); err != nil {
+		t.Fatal(err)
+	}
+	session = sendNativeTurn(t, h, a, session, "Use the review skill")
+	root := assistantSharedSessionRoot(session.ID)
+	skillTree := filepath.Join(root, "home", ".codebuddy", "skills")
+	installed := filepath.Join(root, "ws", ".agents", "skills", "installed")
+	if err := os.MkdirAll(installed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	skillFile := filepath.Join(installed, "SKILL.md")
+	if err := os.WriteFile(skillFile, []byte("Installed skill"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target, err := filepath.Rel(skillTree, installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(skillTree, "installed")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	sendNativeTurn(t, h, b, session, "Continue the review")
+	got := calls()
+	if len(got) != 2 || got[0].flag("--session-id") == "" || got[1].flag("--resume") != got[0].flag("--session-id") {
+		t.Fatal("the next turn did not resume the native session")
+	}
+	if data, err := os.ReadFile(skillFile); err != nil || string(data) != "Installed skill" {
+		t.Fatalf("refresh changed the installed skill target: %q %v", data, err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("generated skill tree still contains the old alias: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(skillTree, skill.ID, "SKILL.md")); err != nil || !strings.Contains(string(data), skill.Content) {
+		t.Fatalf("project skill was not rebuilt: %q %v", data, err)
+	}
+}
+
 func TestSharedDirectChatExcludesOtherHandlersAndBackgroundGenerations(t *testing.T) {
 	h, a, b, _, session := sharedWorkbenchFixture(t)
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})

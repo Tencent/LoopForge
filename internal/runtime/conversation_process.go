@@ -188,7 +188,13 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		if active {
 			return ConversationProcessResult{}, fmt.Errorf("会话原生进程仍在运行，不能替换资产或启动新进程")
 		}
-		if err = ValidateConversationRoot(root); err != nil {
+		var refreshedSkillTrees []string
+		if req.Operation == "prepare" || req.Operation == "resetAssets" {
+			// Prepare does not read skill files, and reset removes these trees
+			// wholesale before sync writes any assets.
+			refreshedSkillTrees = conversationSkillTrees
+		}
+		if err = ValidateConversationRoot(root, refreshedSkillTrees...); err != nil {
 			return ConversationProcessResult{}, err
 		}
 		if req.Operation == "discard" {

@@ -35,6 +35,49 @@ func TestConversationNativeCacheLinksDoNotBlockNextTurn(t *testing.T) {
 	}
 }
 
+func TestConversationAssetResetHandlesInstalledSkillLink(t *testing.T) {
+	root := t.TempDir()
+	skills := filepath.Join(root, "home", ".agents", "skills")
+	installed := filepath.Join(root, "ws", ".agents", "skills", "installed")
+	for _, dir := range []string{skills, installed} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	skillFile := filepath.Join(installed, "SKILL.md")
+	if err := os.WriteFile(skillFile, []byte("Installed skill"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target, err := filepath.Rel(skills, installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(skills, "installed")); err != nil {
+		t.Fatal(err)
+	}
+
+	pool := &ConversationProcessPool{}
+	for _, operation := range []string{"prepare", "resetAssets"} {
+		if _, err := pool.Handle(t.Context(), root, "", nil, ConversationProcessRequest{Operation: operation}, nil); err != nil {
+			t.Fatalf("%s failed with an installed skill link: %v", operation, err)
+		}
+	}
+	if _, err := os.Lstat(skills); !os.IsNotExist(err) {
+		t.Fatalf("generated skill tree was not reset: %v", err)
+	}
+	if data, err := os.ReadFile(skillFile); err != nil || string(data) != "Installed skill" {
+		t.Fatalf("asset reset changed the installed skill target: %q %v", data, err)
+	}
+	if err := os.Symlink(installed, skills); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []string{"prepare", "resetAssets"} {
+		if _, err := pool.Handle(t.Context(), root, "", nil, ConversationProcessRequest{Operation: operation}, nil); err == nil {
+			t.Fatalf("%s accepted a symlink at the skill tree root", operation)
+		}
+	}
+}
+
 func TestConversationPlatformPathsRejectLinks(t *testing.T) {
 	paths := []string{"home", "ws", "attachments", "session.json", "session.lock", "codex-threads.json", "agent-cli-sessions.json", "native-approval.py", "current-settings.json", "home/tmp", "home/.codebuddy", "home/.config", "home/.config/opencode/plugins", "home/.agents/skills/x/run.sh"}
 	paths = append(paths, conversationAssetTrees...)

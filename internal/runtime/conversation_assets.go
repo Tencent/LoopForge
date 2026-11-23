@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
 // Only inspect paths used by platform-side materialization. Native CLIs own
 // their logs and caches (including debug/latest links); WalkDir never follows
 // those links, and the platform does not read or write through them.
-func ValidateConversationRoot(root string) error {
+// A skill refresh also skips the contents of the managed skill trees it will
+// replace wholesale. The directory and its ancestors are still checked.
+func ValidateConversationRoot(root string, refreshedSkillTrees ...string) error {
 	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if os.IsNotExist(err) && path == root {
 			return nil
@@ -32,7 +35,8 @@ func ValidateConversationRoot(root string) error {
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("会话状态包含符号链接，拒绝宿主访问：%s", path)
 		}
-		if entry.IsDir() && path == filepath.Join(root, "ws") {
+		refreshingSkills := slices.Contains(conversationSkillTrees, rel) && slices.Contains(refreshedSkillTrees, rel)
+		if entry.IsDir() && (rel == "ws" || refreshingSkills) {
 			return filepath.SkipDir
 		}
 		return nil
@@ -71,15 +75,14 @@ var conversationManagedFiles = []string{
 	"home/.zcode/v2", "home/.codex/auth.json", "home/.claude/.credentials.json",
 }
 
+var conversationSkillTrees = []string{
+	"home/.codebuddy/skills", "home/.claude/skills", "home/.codex/skills",
+	"home/.agents/skills", "home/.pi/agent/skills", "home/.gemini/config/skills",
+}
+
 // Only platform-generated inputs travel to the execution host. Native
 // transcripts, session maps, locks and provider credentials never do.
-var conversationAssetTrees = []string{
-	"home/.codebuddy/skills", "home/.codebuddy/agents",
-	"home/.claude/skills", "home/.claude/agents",
-	"home/.codex/skills", "home/.agents/skills", "home/.pi/agent/skills",
-	"home/.gemini/config/skills",
-	"attachments",
-}
+var conversationAssetTrees = append([]string{"home/.codebuddy/agents", "home/.claude/agents", "attachments"}, conversationSkillTrees...)
 
 var conversationAssetFiles = []string{
 	"current-mcp.json", "current-settings.json", "claude-mcp.json", "claude-settings.json", "mcp.json", "codex-native-guard.py", "kimi-agent.md",
