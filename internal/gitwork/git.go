@@ -9,11 +9,17 @@ import (
 	"strings"
 
 	"agentflow/internal/procwatch"
+	"agentflow/internal/workspaceprep"
 )
 
 // Run executes git with the context's host-scoped credential helper or SSH
 // key. Output is trimmed and redacted; on failure it is part of the error.
 func Run(ctx context.Context, workspace string, args ...string) (string, error) {
+	// Fetch output is progress, unlike commands such as diff or ls-remote
+	// whose complete stdout is data consumed by callers.
+	if workspaceprep.Enabled(ctx) && gitCommandName(args) == "fetch" {
+		return Watch(ctx, workspace, procwatch.Options{Stage: "branch", Label: "更新仓库分支"}, args...)
+	}
 	token := TokenFrom(ctx)
 	sshEnv, cleanup, err := sshCommandEnvironment(ctx, args)
 	if err != nil {
@@ -62,8 +68,14 @@ func Watch(ctx context.Context, workspace string, opts procwatch.Options, args .
 		return "", err
 	}
 	defer closeHome()
-	opts.Redact = func(line string) string { return redactContextGitSecrets(ctx, Redact(line, token)) }
-	text, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd {
+	redact := opts.Redact
+	opts.Redact = func(line string) string {
+		if redact != nil {
+			line = redact(line)
+		}
+		return workspaceprep.Sanitize(redactContextGitSecrets(ctx, Redact(line, token)))
+	}
+	text, err := procwatch.Run(workspaceprep.Observe(ctx), func(ctx context.Context) *exec.Cmd {
 		cmd := command(ctx, workspace, sshEnv, args)
 		if home != "" {
 			cmd.Env = WithEnvValue(cmd.Env, "HOME", home)
@@ -82,6 +94,9 @@ func command(ctx context.Context, workspace string, sshEnv map[string]string, ar
 	authArgs := scopedHTTPAuthArgs(credential)
 	cmd := exec.CommandContext(ctx, "git", append(authArgs, args...)...)
 	cmd.Dir = dir
+	if workspaceprep.Enabled(ctx) {
+		procwatch.Configure(cmd)
+	}
 	cmd.Env = WithEnvValue(Env(""), "PWD", dir)
 	if len(sshEnv) == 0 {
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_GLOBAL", os.DevNull)
@@ -109,6 +124,17 @@ func command(ctx context.Context, workspace string, sshEnv map[string]string, ar
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CEILING_DIRECTORIES", filepath.Dir(absolute))
 	}
 	return cmd
+}
+
+func gitCommandName(args []string) string {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-C" || args[i] == "-c" {
+			i++
+			continue
+		}
+		return args[i]
+	}
+	return ""
 }
 
 // C runs `git -C workspace args...`.

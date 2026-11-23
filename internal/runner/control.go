@@ -12,6 +12,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
+	"agentflow/internal/workspaceprep"
 
 	"github.com/gorilla/websocket"
 )
@@ -39,6 +40,7 @@ type controlMessage struct {
 	RequestID          string                              `json:"requestId,omitempty"`
 	WorkspaceRequest   *domain.RunnerWorkspaceRequest      `json:"workspaceRequest,omitempty"`
 	WorkspaceResponse  *domain.RunnerWorkspaceResponse     `json:"workspaceResponse,omitempty"`
+	WorkspaceProgress  *domain.WorkspaceOpening            `json:"workspaceProgress,omitempty"`
 	ObserveImageBuild  bool                                `json:"observeImageBuild,omitempty"`
 	ImageBuildProgress *domain.WorkspaceImageBuildProgress `json:"imageBuildProgress,omitempty"`
 }
@@ -183,6 +185,13 @@ func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) e
 					delete(workspaceCancels, message.RequestID)
 					workspaceCancelMu.Unlock()
 				}()
+				if request := message.WorkspaceRequest; request.Operation == domain.RunnerWorkspaceOperationPrepare && request.RunKind == domain.RunKindWorkspace {
+					requestCtx = workspaceprep.WithSink(requestCtx, func(progress domain.WorkspaceOpening) {
+						if err := writeMessage(controlMessage{Type: "workspace.progress", RequestID: message.RequestID, WorkspaceProgress: &progress}); err != nil {
+							stopRequest()
+						}
+					})
+				}
 				var response domain.RunnerWorkspaceResponse
 				var startUpdate func()
 				if message.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationMaintenance {

@@ -73,6 +73,12 @@ func TestMaterializeConversationWorkspaceReportsSlowCloneProgress(t *testing.T) 
 	go func() {
 		for ctx.Err() == nil {
 			if events := runEvents(e, run.ID, "workspace.clone."); len(events) >= 2 {
+				view, _ := e.repo.RunView(run.ID)
+				opening := view.LatestWorkspaceOpening()
+				if opening == nil || !strings.Contains(opening.Output, "KiB/s") {
+					time.Sleep(20 * time.Millisecond)
+					continue
+				}
 				during <- events
 				time.Sleep(300 * time.Millisecond) // let the counter redraw a few times
 				cancel()
@@ -100,6 +106,10 @@ func TestMaterializeConversationWorkspaceReportsSlowCloneProgress(t *testing.T) 
 	// progress instead of every redraw.
 	if n := strings.Count(err.Error(), "Receiving objects"); n != 1 {
 		t.Fatalf("error repeats the progress counter %d times: %v", n, err)
+	}
+	view, _ := e.repo.RunView(run.ID)
+	if opening := view.LatestWorkspaceOpening(); opening == nil || opening.State != "failed" || opening.Phase != "clone" {
+		t.Fatalf("opening failure lost: %+v", opening)
 	}
 }
 

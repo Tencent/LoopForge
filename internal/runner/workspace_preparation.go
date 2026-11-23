@@ -12,6 +12,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
+	"agentflow/internal/workspaceprep"
 )
 
 // A workspace request is authenticated by the control plane, which supplies
@@ -91,16 +92,37 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation, request.RefreshCleanRepositories); err != nil {
 		return runnerWorkspaceError(fmt.Errorf("prepare workspace repositories: %w", err))
 	}
-	sb, release, err := d.acquireTaskSandbox(ctx, task)
+	var execution runtime.Sandbox
+	var release func()
+	err = workspaceprep.Do(ctx, "build", "正在准备沙箱环境", func(ctx context.Context) error {
+		sb, free, err := d.acquireTaskSandbox(ctx, task)
+		if err != nil {
+			return err
+		}
+		release = free
+		execution, err = d.workspaceExecutionSandbox(ctx, sb, request)
+		if err != nil {
+			return err
+		}
+		// Docker acquisition is lazy. Materialize the execution environment here
+		// so image builds use the build deadline, before initialization starts
+		// its separate, shorter deadline in EnsureWorkspacePreparation.
+		_, err = runtime.SandboxEnvironmentIdentity(ctx, execution)
+		return err
+	})
+	if release != nil {
+		defer release()
+	}
 	if err != nil {
 		return runnerWorkspaceError(err)
 	}
-	defer release()
-	execution, err := d.workspaceExecutionSandbox(ctx, sb, request)
-	if err != nil {
-		return runnerWorkspaceError(err)
-	}
-	status, err := runtime.EnsureWorkspacePreparation(ctx, execution, *request.Workflow, request.Repositories, nil)
+	var status runtime.WorkspacePreparationStatus
+	err = workspaceprep.Do(ctx, "prepare", "正在初始化工作区", func(ctx context.Context) error {
+		var err error
+		status, err = runtime.EnsureWorkspacePreparation(ctx, execution, *request.Workflow, request.Repositories, nil)
+		return err
+	})
+
 	if err != nil {
 		return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
 	}
