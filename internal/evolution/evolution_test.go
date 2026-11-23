@@ -290,6 +290,11 @@ func TestParseCandidate(t *testing.T) {
 	if c, err := ParseCandidate(raw); err != nil || c.Content != "工作领域：评审。\n\t- 必须检查 \"端到端\" 用例\r\n- 缺失即 REJECT" || c.Rationale != "第一行\n第二行" {
 		t.Fatalf("raw newlines inside strings should be tolerated: %+v %v", c, err)
 	}
+	raw = `{"title":"修正定位策略","rationale":"原策略取第一条以 "ERROR/FAIL" 开头的行, 会误判","content":"取最后一条 "FAIL:" 行，再看 "ERROR"。","review":{"problem":"定位错行","changes":[{"title":"改为取末条","before":"","after":"取最后一条 "FAIL:" 行"}]}}`
+	if c, err := ParseCandidate(raw); err != nil || c.Content != `取最后一条 "FAIL:" 行，再看 "ERROR"。` ||
+		c.Rationale != `原策略取第一条以 "ERROR/FAIL" 开头的行, 会误判` || c.Review == nil || c.Review.Changes[0].After != `取最后一条 "FAIL:" 行` {
+		t.Fatalf("unescaped quotes inside strings should be tolerated: %+v %v", c, err)
+	}
 	for _, raw := range []string{"", "no json", `{"title":"t","content":"  "}`, `{"title":`} {
 		if _, err := ParseCandidate(raw); err == nil {
 			t.Fatalf("expected error for %q", raw)

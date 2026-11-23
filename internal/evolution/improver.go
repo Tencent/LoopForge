@@ -111,9 +111,10 @@ func ParseCandidate(raw string) (Candidate, error) {
 		Review    json.RawMessage `json:"review"`
 	}
 	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		// Models often put literal newlines or tabs inside the long
-		// "content" string; escape them and try once more.
-		if retryErr := json.Unmarshal([]byte(escapeRawControlInStrings(body)), &payload); retryErr != nil {
+		// Models often put literal newlines, tabs or unescaped quotes
+		// (e.g. 以 "ERROR" 开头) inside the long "content" string; repair
+		// them and try once more.
+		if retryErr := json.Unmarshal([]byte(repairJSONStrings(body)), &payload); retryErr != nil {
 			return Candidate{}, fmt.Errorf("改进器返回的 JSON 无法解析：%w", err)
 		}
 	}
@@ -176,13 +177,15 @@ func CandidateReview(c Candidate, base string, evidence []Evidence) *domain.EvoC
 	return review
 }
 
-// escapeRawControlInStrings escapes control characters that appear inside
-// JSON string literals, leaving structure and existing escapes untouched.
-func escapeRawControlInStrings(body string) string {
+// repairJSONStrings escapes control characters and stray quotes that appear
+// inside JSON string literals, leaving structure and existing escapes
+// untouched. A quote inside a string only terminates it when the following
+// text looks like JSON structure.
+func repairJSONStrings(body string) string {
 	var b strings.Builder
 	b.Grow(len(body) + 16)
 	inString, escaped := false, false
-	for _, r := range body {
+	for i, r := range body {
 		if !inString {
 			if r == '"' {
 				inString = true
@@ -197,9 +200,11 @@ func escapeRawControlInStrings(body string) string {
 		case r == '\\':
 			escaped = true
 			b.WriteRune(r)
-		case r == '"':
+		case r == '"' && closesJSONString(body[i+1:]):
 			inString = false
 			b.WriteRune(r)
+		case r == '"':
+			b.WriteString(`\"`)
 		case r == '\n':
 			b.WriteString(`\n`)
 		case r == '\r':
@@ -213,6 +218,24 @@ func escapeRawControlInStrings(body string) string {
 		}
 	}
 	return b.String()
+}
+
+func closesJSONString(rest string) bool {
+	rest = strings.TrimLeft(rest, " \t\r\n")
+	if rest == "" {
+		return true
+	}
+	switch rest[0] {
+	case ':':
+		return true
+	case ',':
+		next := strings.TrimLeft(rest[1:], " \t\r\n")
+		return next != "" && strings.ContainsRune(`"{[`, rune(next[0]))
+	case '}', ']':
+		next := strings.TrimLeft(rest[1:], " \t\r\n")
+		return next == "" || strings.ContainsRune(`,}]`, rune(next[0]))
+	}
+	return false
 }
 
 var placeholderPattern = regexp.MustCompile(`\{\{[a-zA-Z_]+\}\}`)
