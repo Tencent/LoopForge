@@ -1,5 +1,5 @@
 // Studio catalog lifecycles: rules, skills (+files), MCP servers (+files),
-// Sandboxes (with their Dockerfile or install script), agents (+revisions/clone) and SOPs
+// Sandboxes (a Dockerfile for docker, environment variables for native), agents (+revisions/clone) and SOPs
 // (+publish/revisions/clone/template adoption). Every object lives in the
 // dedicated e2e project and is deleted afterwards.
 import { test, before, after } from 'node:test';
@@ -94,7 +94,7 @@ test('MCP market lists installable servers', async () => {
   assert.ok(list(market).length > 0 || Object.keys(market).length > 0);
 });
 
-test('sandbox CRUD stores its own Dockerfile and install script', async () => {
+test('sandbox CRUD stores its own Dockerfile, or only environment variables for native', async () => {
   const sandbox = ids.sandbox = uid('sbx');
   const native = uid('sbx-native');
   track(`sandbox ${sandbox}`, () => del(`/api/sandboxes?id=${sandbox}`));
@@ -102,12 +102,14 @@ test('sandbox CRUD stores its own Dockerfile and install script', async () => {
 
   await put('/api/sandboxes', { id: sandbox, name: 'E2E 沙箱', projectId: P, driver: 'docker', dockerfile: { content: 'FROM alpine:3.20\n' }, readOnlyRootFS: false });
   await api('PUT', '/api/sandboxes', { id: uid('sbx-bad'), name: 'bad', projectId: P, driver: 'docker', dockerfile: { content: '' } }, { expect: 400 });
-  await put('/api/sandboxes', { id: native, name: 'E2E 环境', projectId: P, driver: 'native', install: { script: 'echo ok', pathEntries: ['bin'], variables: { E2E_FLAG: '1' } } });
-  await api('PUT', '/api/sandboxes', { id: uid('sbx-bad'), name: 'bad', projectId: P, driver: 'native', install: { variables: { 'A=B': '1' } } }, { expect: 400 });
+  await put('/api/sandboxes', { id: native, name: 'E2E 环境', projectId: P, driver: 'native', environment: { E2E_FLAG: '1' }, install: { script: 'echo ignored' } });
+  await api('PUT', '/api/sandboxes', { id: uid('sbx-bad'), name: 'bad', projectId: P, driver: 'native', environment: { 'A=B': '1' } }, { expect: 400 });
+  await api('PUT', '/api/sandboxes', { id: uid('sbx-bad'), name: 'bad', projectId: P, driver: 'local' }, { expect: 400 });
 
   const saved = list(await get('/api/sandboxes'));
   assert.equal(saved.find(s => s.id === sandbox)?.dockerfile?.content, 'FROM alpine:3.20\n');
-  assert.deepEqual(saved.find(s => s.id === native)?.install, { script: 'echo ok', pathEntries: ['bin'], variables: { E2E_FLAG: '1' } });
+  assert.deepEqual(saved.find(s => s.id === native)?.environment, { E2E_FLAG: '1' });
+  assert.equal(saved.find(s => s.id === native)?.install, undefined);
   await api('GET', '/api/dockerfiles', undefined, { expect: 404 });
   await api('GET', '/api/environments', undefined, { expect: 404 });
 
