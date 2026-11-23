@@ -1613,6 +1613,7 @@ export function useChat() {
     workspaceExecution,
     workspaceExecutionError,
     ...executionMachines,
+    conversationRunnerId: runnerId,
     selectSandbox,
     models: executorModels,
     executor,

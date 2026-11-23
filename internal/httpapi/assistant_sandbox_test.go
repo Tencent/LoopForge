@@ -14,6 +14,7 @@ import (
 	"agentflow/internal/application"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -90,6 +91,53 @@ func TestConversationSandboxSelectionFreezesIndependentWorkspace(t *testing.T) {
 	override, _, err := open("shared")
 	if err != nil || override.WorkflowSnapshot.SandboxProfileID != "business" {
 		t.Fatalf("user selection ignored: %v", err)
+	}
+}
+
+// The preferred sandbox kind in the AI assistant settings leads the choices
+// and opens when the agent names no environment; it never overrides an
+// explicit choice.
+func TestConversationSandboxPreferenceGuidesTheAgent(t *testing.T) {
+	h, user, s := chatSandboxFixture(t)
+	gateway := agentToolGateway{deps: h.deps}
+	prefer := func(driver string) int {
+		t.Helper()
+		c, rec := workbenchContext(user, "PUT", "/api/assistant/preferences", bytes.NewBufferString(`{"workspaceDriver":"`+driver+`"}`))
+		h.preferences(c)
+		return rec.Code
+	}
+	if code := prefer("seatbelt"); code != 400 {
+		t.Fatalf("unknown workspace driver accepted: %d", code)
+	}
+	description := gateway.workspaceOpenDescriptorFor(s).Description
+	if !strings.Contains(description, "拿不准用 generic-docker") || strings.Contains(description, "倾向") {
+		t.Fatalf("no preference still steers the agent: %s", description)
+	}
+	if code := prefer("native"); code != 200 {
+		t.Fatalf("save preference: %d", code)
+	}
+	description = gateway.workspaceOpenDescriptorFor(s).Description
+	native := repo.TestNativeSandboxID
+	if !strings.Contains(description, "倾向 native 沙箱") || !strings.Contains(description, "没有特殊要求时用 "+native) ||
+		strings.Index(description, "- "+native+"：") > strings.Index(description, "- business：") {
+		t.Fatalf("preferred sandbox not offered first: %s", description)
+	}
+	bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{})
+	if err != nil || bound.Run.WorkflowSnapshot.SandboxProfileID != native {
+		t.Fatalf("default environment ignores the preference: %+v %v", bound.Run.WorkflowSnapshot, err)
+	}
+	s.ChatSessionID, s.workspaceRunID = "explicit-chat", ""
+	_ = h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: s.ChatSessionID, ProjectID: s.ProjectID})
+	bound, err = gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: "business"})
+	if err != nil || bound.Run.WorkflowSnapshot.SandboxProfileID != "business" {
+		t.Fatalf("the agent's explicit choice was overridden: %+v %v", bound.Run.WorkflowSnapshot, err)
+	}
+	// No local sandbox is available here, so the preference falls back.
+	if code := prefer("local"); code != 200 {
+		t.Fatalf("save preference: %d", code)
+	}
+	if description := gateway.workspaceOpenDescriptorFor(s).Description; !strings.Contains(description, "拿不准用 generic-docker") {
+		t.Fatalf("an unavailable preferred kind still steers the agent: %s", description)
 	}
 }
 

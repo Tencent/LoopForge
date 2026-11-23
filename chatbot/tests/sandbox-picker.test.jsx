@@ -36,6 +36,20 @@ describe("conversation environment selection", () => {
     expect(missing).toMatchObject({ value: "deleted", disabled: true });
   });
 
+  test("lists native sandboxes and the user's local sandbox on its own machine", () => {
+    const rows = [
+      { id: "mine", name: "我的 Mac", projectId: "p", driver: "local", runnerId: "mac" },
+      { id: "peer", name: "同事的机器", projectId: "p", driver: "local", runnerId: "peer-mac" },
+      { id: "light", name: "轻量沙箱", projectId: "p", driver: "native" },
+      ...sandboxes,
+    ];
+    const machines = [{ id: "mac", ownerUserId: 7 }, { id: "peer-mac", ownerUserId: 8 }];
+    const values = (access) => conversationSandboxOptions(rows, project, "", access).map((o) => o.value);
+    expect(values({ userId: 7, runnerId: "mac", machines })).toEqual(["", "business", "shared", "light", "mine"]);
+    expect(values({ userId: 7, runnerId: "", machines })).toEqual(["", "business", "shared", "light"]);
+    expect(values({ userId: 8, runnerId: "mac", machines })).toEqual(["", "business", "shared", "light"]);
+  });
+
   test("a task conversation shows the task environment", () => {
     render(<SandboxPicker chat={{
       projectId: "p", projects: [project],
@@ -62,7 +76,7 @@ describe("conversation environment selection", () => {
     trigger.getBoundingClientRect = () => ({top:500,bottom:528,left:200,right:450,width:250,height:28});
     const user = userEvent.setup();
     await user.click(trigger);
-    await user.click(screen.getByRole("option", { name: "PHP 业务环境" }));
+    await user.click(screen.getByRole("option", { name: /^PHP 业务环境/ }));
     expect(select).toHaveBeenCalledWith("business");
   });
 });

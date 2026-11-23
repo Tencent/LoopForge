@@ -3,13 +3,33 @@ import { SelectMenu } from "./ui";
 import HarnessIcon from "./HarnessIcon";
 import "./sandbox-picker.css";
 
-export function conversationSandboxOptions(sandboxes, project, selected = "") {
-  const available = (sandboxes || []).filter(
-    (s) => s.driver === "docker" && (s.projectId === project?.id || s.shared),
-  );
+const SANDBOX_KINDS = ["docker", "native", "local"];
+const SANDBOX_KIND_LABELS = {
+  docker: "Docker 容器",
+  native: "native 轻量隔离",
+  local: "local · 本机，无隔离",
+};
+
+function sandboxKind(sandbox) {
+  if (!sandbox.driver || sandbox.driver === "docker") return "docker";
+  return sandbox.driver === "local" ? "local" : "native";
+}
+
+// A local sandbox opens only on the machine it is bound to, for that
+// machine's owner.
+function localSandboxUsable(sandbox, access) {
+  const machine = (access.machines || []).find((m) => m.id === sandbox.runnerId);
+  return !!access.userId && !!sandbox.runnerId && sandbox.runnerId === access.runnerId && machine?.ownerUserId === access.userId;
+}
+
+export function conversationSandboxOptions(sandboxes, project, selected = "", access = {}) {
+  const available = (sandboxes || [])
+    .filter((s) => (s.projectId === project?.id || s.shared) &&
+      (sandboxKind(s) !== "local" || localSandboxUsable(s, access)))
+    .sort((a, b) => SANDBOX_KINDS.indexOf(sandboxKind(a)) - SANDBOX_KINDS.indexOf(sandboxKind(b)));
   const options = [
     { value: "", label: "由 Agent 选择" },
-    ...available.map((s) => ({ value: s.id, label: s.name || s.id })),
+    ...available.map((s) => ({ value: s.id, label: s.name || s.id, kind: sandboxKind(s) })),
   ];
   if (selected && !available.some((s) => s.id === selected)) {
     options.push({
@@ -49,6 +69,7 @@ export default function SandboxPicker({ chat, onCreate }) {
     chat.sandboxes,
     project,
     chat.sandboxProfileId,
+    { userId: chat.user?.id, runnerId: chat.conversationRunnerId, machines: chat.machines },
   );
   const label =
     options.find((o) => o.value === chat.sandboxProfileId)?.label ||
@@ -58,7 +79,7 @@ export default function SandboxPicker({ chat, onCreate }) {
     .map((o) => ({
       id: o.value,
       label: o.label,
-      description: o.value ? "" : "按要改的代码自动选择，拿不准时用平台通用 Docker",
+      description: o.value ? SANDBOX_KIND_LABELS[o.kind] : "按 AI 助手设置里倾向的沙箱和任务需要自动选择",
       icon: o.value ? "terminal" : "folder",
     }));
   return (

@@ -1,14 +1,15 @@
-// AI 助手设置：生成中消息的发送方式、主动派发与每轮自定义规则。只对当前用户生效。
+// AI 助手设置：生成中消息的发送方式、主动派发、对话工作区倾向与每轮自定义规则。只对当前用户生效。
 const ASSISTANT_RULES_MAX=4000;
+const ASSISTANT_WORKSPACE_DRIVERS=[['','由 Agent 选择'],['docker','Docker 沙箱'],['native','native 沙箱'],['local','local 沙箱']];
 const assistantPrefsUI={saved:null,loading:false,saving:false,error:''};
 
 function assistantPrefsSignedIn(){return !!state.currentUser&&!state.currentUser.isGuest}
 function assistantPrefsForm(){return document.querySelector('#assistantPrefsForm')}
-function assistantPrefsDraft(form){return {proactiveRoles:form.proactiveRoles.checked,proactiveSops:form.proactiveSops.checked,steerOnSend:form.messageDuringGeneration.value==='steer',instructions:form.instructions.value.trim()}}
+function assistantPrefsDraft(form){return {proactiveRoles:form.proactiveRoles.checked,proactiveSops:form.proactiveSops.checked,steerOnSend:form.messageDuringGeneration.value==='steer',workspaceDriver:form.workspaceDriver.value,instructions:form.instructions.value.trim()}}
 function assistantPrefsDirty(form){
  const saved=assistantPrefsUI.saved;if(!saved||!form)return false;
  const draft=assistantPrefsDraft(form);
- return draft.proactiveRoles!==!!saved.proactiveRoles||draft.proactiveSops!==!!saved.proactiveSops||draft.steerOnSend!==!!saved.steerOnSend||draft.instructions!==(saved.instructions||'');
+ return draft.proactiveRoles!==!!saved.proactiveRoles||draft.proactiveSops!==!!saved.proactiveSops||draft.steerOnSend!==!!saved.steerOnSend||draft.workspaceDriver!==(saved.workspaceDriver||'')||draft.instructions!==(saved.instructions||'');
 }
 function assistantPrefsSwitchRow(name,title,help,on){
  return `<label class="asst-switch-row"><span><b>${title}</b><small>${help}</small></span><input type="checkbox" role="switch" name="${name}" ${on?'checked':''}></label>`;
@@ -25,6 +26,10 @@ function assistantPrefsFormHTML(p){
     ${assistantPrefsSwitchRow('proactiveRoles','主动派角色','整件事是某个角色的本职（如独立评审、整套测试），或改了高风险代码需要复核时，直接交给这个角色。',p.proactiveRoles)}
     ${assistantPrefsSwitchRow('proactiveSops','主动走 SOP','遇到要落到仓库的新需求时，先交给项目里用途对得上的 SOP，而不是自己直接改代码。',p.proactiveSops)}
    </div></section>
+  <section class="asst-panel"><header class="asst-panel-head"><h2>对话工作区</h2><p>会话里没有固定运行环境时，AI 助手自己选择在哪类沙箱里打开工作区。</p></header>
+   <div class="asst-rows"><label class="asst-switch-row" for="assistantPrefsWorkspaceDriver"><span><b>倾向的沙箱</b><small>没有特殊要求时优先用这一类；任务需要的语言或工具链只有其他环境具备时仍会换。local 只在你有绑定到当前执行机器的 local 沙箱时生效。</small></span>
+    <select id="assistantPrefsWorkspaceDriver" class="input" name="workspaceDriver">${ASSISTANT_WORKSPACE_DRIVERS.map(([value,label])=>`<option value="${value}" ${(p.workspaceDriver||'')===value?'selected':''}>${label}</option>`).join('')}</select>
+   </label></div></section>
   <section class="asst-panel"><header class="asst-panel-head"><h2>自定义规则</h2><p>每轮对话都会带上这些规则，适合写你的习惯和偏好；不会越过审批模式和平台规则。</p></header>
    <label class="asst-rules-label" for="assistantPrefsRules">规则</label>
    <textarea id="assistantPrefsRules" class="input asst-rules" name="instructions" rows="8" maxlength="${ASSISTANT_RULES_MAX}" placeholder="例如：回复先给结论再给细节；改代码前先说明要改哪些文件；不要自动发起 MR。">${escapeHTML(rules)}</textarea>

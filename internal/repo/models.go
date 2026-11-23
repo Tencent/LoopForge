@@ -574,14 +574,16 @@ type userRunnerPrefRow struct {
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
 
-// assistantPreferenceRow: a missing row means switches are off and messages queue.
+// assistantPreferenceRow: a missing row means switches are off, messages queue
+// and the agent picks conversation workspace sandboxes itself.
 type assistantPreferenceRow struct {
-	UserID         int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
-	ProactiveRoles bool       `gorm:"column:proactive_roles;not null;default:false"`
-	ProactiveSOPs  bool       `gorm:"column:proactive_sops;not null;default:false"`
-	SteerOnSend    bool       `gorm:"column:steer_on_send;not null;default:false"`
-	Instructions   string     `gorm:"column:instructions;type:text"`
-	UpdatedAt      *time.Time `gorm:"column:updated_at"`
+	UserID          int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	ProactiveRoles  bool       `gorm:"column:proactive_roles;not null;default:false"`
+	ProactiveSOPs   bool       `gorm:"column:proactive_sops;not null;default:false"`
+	SteerOnSend     bool       `gorm:"column:steer_on_send;not null;default:false"`
+	WorkspaceDriver string     `gorm:"column:workspace_driver;type:varchar(16);not null;default:''"`
+	Instructions    string     `gorm:"column:instructions;type:text"`
+	UpdatedAt       *time.Time `gorm:"column:updated_at"`
 }
 
 func (assistantPreferenceRow) TableName() string { return "assistant_preferences" }
