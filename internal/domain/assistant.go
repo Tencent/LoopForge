@@ -90,6 +90,7 @@ type AssistantReference struct {
 	Name        string `json:"name,omitempty"`
 	ProjectID   string `json:"projectId,omitempty"`
 	ProjectName string `json:"projectName,omitempty"`
+	Unavailable bool   `json:"unavailable,omitempty"` // Display status for an unresolved scheduled reference.
 	// Element describes a page element the user picked in the native
 	// preview (Type "element"); it is the user's own context, not an object
 	// the platform looks up.

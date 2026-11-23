@@ -466,3 +466,34 @@ test("structured references deduplicate and stop at twelve while plain @ stays t
     host.remove();
   }
 });
+
+test("scheduled editor shows and removes an unavailable reference without changing the prompt", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const unavailable = { type: "issue", id: "deleted-issue", unavailable: true };
+  const text = "查看旧需求并使用 @测试流程";
+  const onChange = vi.fn();
+  let editor;
+  act(() => {
+    editor = mountPromptEditor(host, {
+      value: { projectId: "project-a", text, references: [unavailable, skill] },
+      onChange,
+    });
+  });
+  try {
+    const ui = within(host.shadowRoot);
+    expect(ui.getByText(/已失效.*deleted-issue/)).toBeInTheDocument();
+    const remove = ui.getByRole("button", { name: "移除失效引用 deleted-issue" });
+    expect(
+      ui.queryByRole("button", { name: "移除引用 测试流程" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(remove);
+    expect(onChange).toHaveBeenCalledWith({ text, references: [skill] });
+    expect(
+      ui.queryByRole("button", { name: /移除失效引用/ }),
+    ).not.toBeInTheDocument();
+  } finally {
+    act(() => editor.destroy());
+    host.remove();
+  }
+});

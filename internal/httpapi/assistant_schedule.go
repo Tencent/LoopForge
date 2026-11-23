@@ -202,46 +202,54 @@ func (h *assistantHandlers) normalizeScheduledReferencesIn(ctx context.Context, 
 func (h *assistantHandlers) scheduledMessageReferences(projectID string, refs []domain.AssistantReference) ([]domain.AssistantReference, error) {
 	out := make([]domain.AssistantReference, 0, len(refs))
 	for _, ref := range refs {
-		canonical, _, err := h.workbenchReference(ref, projectID)
+		resolved, err := h.scheduledMessageReference(projectID, ref)
 		if err != nil {
 			return nil, err
 		}
-		ownerProject := projectID
-		switch ref.Type {
-		case "issue":
-			if v, ok := h.repo.Issue(ref.ID); ok {
-				ownerProject = v.ProjectID
-			}
-		case "run":
-			if v, ok := h.repo.RunState(ref.ID); ok {
-				ownerProject = v.ExecutionContext.ProjectID
-			}
-		case "repository":
-			if v, ok := h.repo.Repository(ref.ID); ok {
-				ownerProject = v.ProjectID
-			}
-		case "agent":
-			if v, ok := h.repo.Agent(ref.ID); ok && v.Shared {
-				ownerProject = v.ProjectID
-			}
-		case "skill":
-			if v, ok := h.repo.Skill(ref.ID); ok && v.Shared {
-				ownerProject = v.ProjectID
-			}
-		case "sop":
-			if v, ok := h.repo.Workflow(ref.ID); ok && (v.Shared || v.Generic) {
-				if v.ProjectID != "" {
-					ownerProject = v.ProjectID
-				}
-			}
-		}
-		canonical.ProjectID = ownerProject
-		if p, ok := h.repo.Project(ownerProject); ok {
-			canonical.ProjectName = p.Name
-		}
-		out = append(out, canonical)
+		out = append(out, resolved)
 	}
 	return out, nil
+}
+
+func (h *assistantHandlers) scheduledMessageReference(projectID string, ref domain.AssistantReference) (domain.AssistantReference, error) {
+	canonical, _, err := h.workbenchReference(ref, projectID)
+	if err != nil {
+		return domain.AssistantReference{}, err
+	}
+	ownerProject := projectID
+	switch ref.Type {
+	case "issue":
+		if v, ok := h.repo.Issue(ref.ID); ok {
+			ownerProject = v.ProjectID
+		}
+	case "run":
+		if v, ok := h.repo.RunState(ref.ID); ok {
+			ownerProject = v.ExecutionContext.ProjectID
+		}
+	case "repository":
+		if v, ok := h.repo.Repository(ref.ID); ok {
+			ownerProject = v.ProjectID
+		}
+	case "agent":
+		if v, ok := h.repo.Agent(ref.ID); ok && v.Shared {
+			ownerProject = v.ProjectID
+		}
+	case "skill":
+		if v, ok := h.repo.Skill(ref.ID); ok && v.Shared {
+			ownerProject = v.ProjectID
+		}
+	case "sop":
+		if v, ok := h.repo.Workflow(ref.ID); ok && (v.Shared || v.Generic) {
+			if v.ProjectID != "" {
+				ownerProject = v.ProjectID
+			}
+		}
+	}
+	canonical.ProjectID = ownerProject
+	if p, ok := h.repo.Project(ownerProject); ok {
+		canonical.ProjectName = p.Name
+	}
+	return canonical, nil
 }
 
 // scheduleJobAssistantUser picks the saved run-as member, or the project or
