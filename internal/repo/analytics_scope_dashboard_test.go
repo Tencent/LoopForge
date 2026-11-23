@@ -72,6 +72,9 @@ func TestAnalyticsGroupedDashboardHonorsPersonalAndProjectScope(t *testing.T) {
 		if len(got.Dashboard.Trend) != 1 || got.Dashboard.Trend[0].Date != "2026-11-22" || got.ActivityTrend[0].Date != "2026-11-22" {
 			t.Fatalf("embedded buckets must match existing overview: %+v / %+v", got.Dashboard.Trend, got.ActivityTrend)
 		}
+		if p := got.Dashboard.Trend[0]; p.SOPRuns != tc.runs || p.SucceededRuns != tc.runs || p.HumanRuns != tc.runs {
+			t.Fatalf("period cohorts must follow personal/project scope: %+v", p)
+		}
 		if tc.user == "7" && (len(got.Dashboard.HumanNodes) != 1 || got.Dashboard.HumanNodes[0].Key != "scope-a/scope-a") {
 			t.Fatalf("personal node scope: %+v", got.Dashboard.HumanNodes)
 		}

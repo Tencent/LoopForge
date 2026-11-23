@@ -85,7 +85,7 @@ function obsPeriodKey(){
   if(obsTrendGrain()==='all')return '';
   const key=String(state.obsPeriodKey||'').trim();
   if(key)return key;
-  const dates=[...(state.analytics?.trend||[]),...(state.analytics?.activityTrend||[])].map(p=>p.date).filter(Boolean).sort();
+  const dates=[...(state.analytics?.trend||[]),...(state.analytics?.activityTrend||[]),...(state.analytics?.dashboard?.trend||[])].map(p=>p.date).filter(Boolean).sort();
   return dates.length?dates[dates.length-1]:obsDefaultPeriodKey();
 }
 function obsPeriodRange(key,grain){
@@ -225,7 +225,7 @@ function obsShiftPeriod(step){
   setObsPeriod(next);
 }
 function obsPeriodChoices(){
-  const keys=new Set([...(state.analytics?.trend||[]),...(state.analytics?.activityTrend||[])].map(t=>t.date).filter(Boolean));
+  const keys=new Set([...(state.analytics?.trend||[]),...(state.analytics?.activityTrend||[]),...(state.analytics?.dashboard?.trend||[])].map(t=>t.date).filter(Boolean));
   keys.add(obsPeriodKey()||obsDefaultPeriodKey());
   keys.add(obsDefaultPeriodKey());
   return [...keys].sort();
@@ -369,6 +369,7 @@ async function obsLoadAnalytics(){
   try{
     const snapshot=await api('/api/analytics'+query,{silent:true});
     if(request!==obsAnalyticsRequest||context!==obsAnalyticsContext(analyticsQuery()))return;
+    if(snapshot.dataErrors?.length)throw new Error(lfT('统计数据加载失败','Unable to load analytics'));
     state.analytics=snapshot;state.obsAnalyticsFull=!overview;state.obsAnalyticsDataContext=context;
   }catch(e){
     if(request===obsAnalyticsRequest){state.obsAnalyticsError=e.message||lfT('统计加载失败','Unable to load analytics');toast(state.obsAnalyticsError)}
@@ -461,13 +462,6 @@ function obsFilterBar(){
   const sourceChoices=[['','全部来源'],['local','本地'],['github','GitHub']];
   const sources=sourceChoices.map(([v,l])=>`<option value="${v}" ${(state.obsSourceFilter||'')===v?'selected':''}>${l}</option>`).join('');
   const grain=obsTrendGrain();
-  const periodHint=grain==='all'
-    ?lfT('当前看全部历史，趋势按月聚合，点一个月可下钻。','The trend groups all history by month. Select a month for details.')
-    :lfT('上方数字和 Loop 指标只含所选时段。点趋势图或用两侧箭头换一天、一周或一月。','The totals and Loop metrics cover the selected period. Use the chart or arrows to change the period.');
-  const scopeHint=scope==='project'
-    ?lfT(`项目指标 = 顶栏当前项目「${projectName}」全部成员的运行、Token 和交付，不是全平台汇总。`,`Project metrics cover runs, tokens and deliveries by members of "${projectName}".`)
-    :lfT(`个人指标 = 责任人在当前项目「${projectName}」里的执行。一人多项目时，下方「各项目」看他在其他项目的量，不会加进上面的 KPI。`,`Personal metrics cover the selected owner's activity in "${projectName}". See By project for their activity in other projects.`);
-  const hint=[scopeHint,periodHint].join(lfT('',' '));
   const userFilter=scope==='user'?`<select id="obsUserFilter" data-obs-select data-icon="user" aria-label="责任人">${userOptions.join('')}</select>`:'';
   const originFilter=`<select id="obsOriginFilter" data-obs-select data-icon="run-live" aria-label="执行">${originChoices.map(([v,l])=>`<option value="${v}" ${(state.obsOriginFilter||'')===v?'selected':''}>${l}</option>`).join('')}</select>`;
   const sourceFilter=`<select id="obsSourceFilter" data-obs-select data-icon="connector" aria-label="需求来源">${sources}</select>`;
@@ -483,7 +477,7 @@ function obsFilterBar(){
     chips.push(`<span class="obs-chip">${escapeHTML(range?range.label:obsRangeCaption())}${clear('period','回到全部')}</span>`);
   }
   const manage=obsCanManageSources()?`<button class="obs-btn ghost" id="obsManageSources" type="button" title="外部数据源" aria-label="外部数据源">${obsIcon('integration')}<span>外部数据源</span></button>`:'';
-  return `<div class="obs-fbar"><div class="obs-fbar-row">${obsSeg('data-obs-scope',[['user','个人',0,'','user'],['project','项目',0,'','users']],scope)}${userFilter}${originFilter}${sourceFilter}<span class="obs-sp"></span>${obsSeg('data-obs-grain',[['all','全部'],['day','日'],['week','周'],['month','月']],grain)}${obsPeriodPicker()}${manage}</div><div class="obs-scopeline"><span>统计范围</span>${chips.join('')}<span class="obs-info" tabindex="0">${obsIcon('info',13)}口径说明<span class="obs-tip" role="tooltip">${escapeHTML(hint)}</span></span></div></div>`;
+  return `<div class="obs-fbar"><div class="obs-fbar-row">${obsSeg('data-obs-scope',[['user','个人',0,'','user'],['project','项目',0,'','users']],scope)}${userFilter}${originFilter}${sourceFilter}<span class="obs-sp"></span>${obsSeg('data-obs-grain',[['all','全部'],['day','日'],['week','周'],['month','月']],grain)}${obsPeriodPicker()}${manage}</div><div class="obs-scopeline">${chips.join('')}</div></div>`;
 }
 function obsFilteredRuns(){
   let runs=scopedRuns(state.data.runs||[]);
@@ -560,6 +554,8 @@ function renderObservability(){
   const compatible=obsAnalyticsMatchesCurrent();
   const summary=compatible?(state.analytics?.summary||{}):{};
   $('#obsLiveState').classList.toggle('active',((summary.activeRuns||0)+(summary.waitingRuns||0))>0);
+  $('#obsLiveState').classList.toggle('is-error',!!state.obsAnalyticsError);
+  $('#obsLiveState').innerHTML='<i></i>'+escapeHTML(state.obsAnalyticsError?lfT('加载失败','Load failed'):state.obsAnalyticsLoading?lfT('加载中','Loading'):lfT('数据就绪','Data ready'));
   const badge=$('#obsDeliveryCount');
   if(badge){const n=compatible?(state.analytics?.delivery?.issues||0):0;badge.hidden=!n;badge.textContent=n?lfT(`${n} 单`,`${n} ${n===1?'item':'items'}`):''}
   const reopen=obsExpandState?.key||'';
@@ -570,7 +566,7 @@ function renderObservability(){
   const tab=state.obsTab;
   {
     const ready=compatible&&state.analytics&&(tab!=='delivery'||state.obsAnalyticsFull);
-    const html=!ready?`<div class="detail-empty"${state.obsAnalyticsError?' role="alert"':''}>${escapeHTML(state.obsAnalyticsError||(state.obsAnalyticsLoading?lfT('正在加载统计数据…','Loading analytics…'):lfT('暂无统计数据','No analytics available')))}</div>`:(tab==='delivery'?obsDelivery():obsOverview());
+    const html=state.obsAnalyticsError||!ready?`<div class="detail-empty"${state.obsAnalyticsError?' role="alert"':''}>${escapeHTML(state.obsAnalyticsError||(state.obsAnalyticsLoading?lfT('正在加载统计数据…','Loading analytics…'):lfT('暂无统计数据','No analytics available')))}</div>`:(tab==='delivery'?obsDelivery():obsOverview());
     host.innerHTML=`<div class="obs-pane active">${obsFilterBar()}${html}</div>`;
     state.obsSelects=obsEnhanceSelects(host);
     host.querySelectorAll('[data-obs-scope]').forEach(b=>b.onclick=()=>setObsScope(b.dataset.obsScope));
@@ -585,7 +581,7 @@ function renderObservability(){
     const obsSourceSel=host.querySelector('#obsSourceFilter');if(obsSourceSel)obsSourceSel.onchange=()=>{state.obsSourceFilter=obsSourceSel.value;resetListPages('obs-');applyObsFilter()};
   }
   const exportButton=$('#exportObsReport');
-  if(exportButton)exportButton.disabled=!compatible||!state.analytics||!!state.obsAnalyticsLoading;
+  if(exportButton)exportButton.disabled=!compatible||!state.analytics||!!state.obsAnalyticsLoading||!!state.obsAnalyticsError;
   host.setAttribute('aria-busy',String(!!state.obsAnalyticsLoading));
   obsBindActions(host);
   bindPager(host);
@@ -1040,17 +1036,8 @@ function obsSourceLabel(s){return s==='gongfeng'?'工蜂':s==='tapd'?'TAPD':s===
 function obsCategoryLabel(k){return ({requirement:'需求开发',bugfix:'Bug 修复',refactor:'技术优化',other:'其他'}[k])||k||'未分类'}
 function obsTraceLabel(t){return [t.origin==='external'?'外部 · '+t.workflowName:obsSourceLabel(t.issueSource||'local'),t.externalId||t.issueId||t.runId].filter(Boolean).join(' ')}
 function obsOverview(){
-  const view=obsScopedView();
-  obsCardBuilders={trend:obsTrendCard,breakdown:obsBreakdownCard,quality:obsQualityCard,heat:obsHeatCard,detail:obsDetailCard,...(typeof obsHumanTrendCard==='function'?{human:obsHumanTrendCard}:{})};
-  const heat=obsHeatCard();
-  return `${obsInsights(view,'usage')}
-  ${obsActivityKpis()}
-  ${obsUsageKpis(view)}
-  ${typeof obsHumanTrendCard==='function'?obsHumanTrendCard():''}
-  ${obsTrendCard()}
-  <div class="obs-grid2">${obsBreakdownCard()}${obsQualityCard()}</div>
-  ${heat}
-  ${obsDetailCard()}`;
+  obsCardBuilders={summary:obsSummaryCard,vibe:obsVibeCard,human:obsHumanTrendCard};
+  return `<div class="obs-summary-layout">${obsSummaryCard()}<div class="obs-summary-pair">${obsVibeCard()}${obsHumanTrendCard()}</div>${obsSummaryCostCard()}</div>`;
 }
 function obsActivityView(){
   const a=state.analytics||{};

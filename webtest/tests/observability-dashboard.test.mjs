@@ -6,7 +6,7 @@ function snapshot(user='') {
   const count=user==='7'?1:user==='8'?2:3;
   return {
     dashboard:{sopRuns:count,succeededRuns:count,failedRuns:0,humanRuns:1,deliveredIssues:count,
-      trend:[{date:'2026-11',sopRuns:count}],humanNodes:[{key:'flow/review',name:'Review'},{key:'flow/test',name:'Test'}],
+      trend:[{date:'2026-11',sopRuns:count,succeededRuns:count,humanRuns:1,sopDelivered:count}],humanNodes:[{key:'flow/review',name:'Review'},{key:'flow/test',name:'Test'}],
       humanTrend:[{date:'2026-11',node:'flow/review',approvals:count,rejections:0,retries:1},{date:'2026-11',node:'flow/test',approvals:1,rejections:1,retries:0}]},
     summary:{totalRuns:count,succeededRuns:count,failedRuns:0,qualityRuns:count,successRate:100,totalTokens:count*1000,totalCostCny:count*7,conversationWorkspaces:count,conversationTokens:count*100},
     activity:{sessions:count,collaborativeSessions:1,requirements:count,sopRuns:count,sessionUsage:{tokens:count*200,reportedReplies:count},collaborativeUsage:{tokens:100,reportedReplies:1}},
@@ -26,7 +26,8 @@ function prepare(app) {
     state.obsTrendGrain='all';state.obsTab='overview';
   `);
 }
-const activityText=app=>[...app.document.querySelectorAll('.obs-kg')].find(el=>el.querySelector('h4')?.textContent.includes('Vibe Coding'))?.textContent||'';
+const activityText=app=>app.document.querySelector('[data-obs-card="vibe"]')?.textContent||'';
+const stat=(app,key)=>app.document.querySelector(`[data-obs-stat="${key}"] .num`)?.textContent;
 
 test('grouped design keeps personal/project and owner filters, with all metrics scoped together', async t => {
   const app=await loadApp();t.after(app.close);prepare(app);
@@ -38,9 +39,14 @@ test('grouped design keeps personal/project and owner filters, with all metrics 
   assert.equal(app.evaluate('state.analytics.summary.totalCostCny'),7);
   assert.match(activityText(app),/Vibe Coding|会话数/);
   assert.ok(app.document.querySelector('[data-obs-card="human"]'));
+  assert.deepEqual([...app.document.querySelectorAll('#obsBody [data-obs-card]')].map(el=>el.dataset.obsCard),['summary','vibe','human','cost']);
+  assert.equal(app.document.querySelectorAll('#obsBody .obs-kpi').length,9);
+  assert.equal(app.document.querySelectorAll('#obsBody .obs-kpi-foot, #obsBody .obs-info, #obsBody .obs-card-heading p').length,0);
+  assert.equal(stat(app,'delivered'),'1');assert.equal(stat(app,'sop-success'),'100%');
   const project=app.document.querySelector('[data-obs-scope="project"]');project.click();await settle(8);
   assert.equal(app.evaluate('state.analytics.summary.totalCostCny'),21);
   assert.equal(app.evaluate('state.analytics.activity.sessions'),3);
+  assert.equal(stat(app,'delivered'),'3');assert.equal(stat(app,'human-rate'),'33%');
   assert.equal(app.document.querySelector('#obsUserFilter'),null);
   assert.ok(app.document.querySelector('[data-obs-scope="project"].active'));
   assert.match(app.document.querySelector('.obs-scopeline').textContent,/全部成员/);
@@ -52,6 +58,7 @@ test('grouped design keeps personal/project and owner filters, with all metrics 
   chooseOption(owner,'8');await settle(8);
   assert.equal(app.evaluate('state.analytics.summary.totalCostCny'),14);
   assert.equal(app.evaluate('state.analytics.activity.sessions'),2);
+  assert.equal(stat(app,'sessions'),'2');assert.equal(stat(app,'cost'),'¥14.00');
   call=app.router.calls.filter(c=>c.path==='/api/analytics'&&c.url.searchParams.has('projectId')).at(-1);
   assert.equal(call.url.searchParams.get('userId'),'8');
   assert.match(app.document.querySelector('.obs-scopeline').textContent,/bob/);
@@ -93,6 +100,38 @@ test('late personal results cannot overwrite project metrics or a newly selected
   assert.equal(app.evaluate('state.analytics.summary.totalCostCny'),14);
   assert.equal(app.document.querySelector('#obsUserFilter').value,'8');
   assert.match(app.evaluate('buildObsReportHTML()'),/bob/);
+});
+
+test('overview ratios use the selected period cohort and remain independent of the selected human node', async t => {
+  const app=await loadApp();t.after(app.close);prepare(app);
+  const data=snapshot('7');
+  data.dashboard={...data.dashboard,sopRuns:10,succeededRuns:7,failedRuns:3,humanRuns:6,deliveredIssues:8,
+    trend:[{date:'2026-10',sopRuns:8,succeededRuns:7,failedRuns:1,humanRuns:6,sopDelivered:7},
+      {date:'2026-11',sopRuns:2,succeededRuns:0,failedRuns:2,humanRuns:0,vibeDelivered:1}]};
+  app.evaluate(`state.analytics=${JSON.stringify(data)};state.obsTrendGrain='month';state.obsPeriodKey='2026-11';renderObservability()`);
+  assert.equal(stat(app,'delivered'),'1');assert.equal(stat(app,'sop-success'),'0%');assert.equal(stat(app,'human-rate'),'0%');
+  chooseOption(app.document.querySelector('#obsHumanNode'),'flow/review');
+  assert.equal(stat(app,'human-rate'),'0%');
+  app.evaluate(`state.obsPeriodKey='2026-10';renderObservability()`);
+  assert.equal(stat(app,'delivered'),'7');assert.equal(stat(app,'sop-success'),'88%');assert.equal(stat(app,'human-rate'),'75%');
+  app.evaluate(`state.obsPeriodKey='2026-12';renderObservability()`);
+  assert.equal(stat(app,'delivered'),'0');assert.equal(stat(app,'sop-success'),'—');assert.equal(stat(app,'human-rate'),'—');
+});
+
+test('partial query failures are surfaced instead of showing zero metrics, and real empty data stays compact', async t => {
+  const app=await loadApp();t.after(app.close);prepare(app);
+  app.router.get(/^\/api\/analytics\?/,()=>({...snapshot(),dataErrors:['delivery read failed']}));
+  await app.evaluate('refreshObs()');
+  assert.match(app.document.querySelector('#obsBody [role="alert"]').textContent,/加载失败/);
+  assert.match(app.document.querySelector('#obsLiveState').textContent,/加载失败/);
+  assert.equal(app.document.querySelector('#obsBody [data-obs-stat]'),null);
+  assert.equal(app.document.querySelector('#exportObsReport').disabled,true);
+  const empty={dashboard:{sopRuns:0,deliveredIssues:0,trend:[],humanNodes:[],humanTrend:[]},summary:{},activity:{},trend:[],activityTrend:[],runTraces:[]};
+  app.router.get(/^\/api\/analytics\?/,empty);await app.evaluate('refreshObs()');
+  assert.equal(app.document.querySelector('#obsBody [role="alert"]'),null);
+  assert.equal(stat(app,'sessions'),'0');assert.equal(stat(app,'sop-success'),'—');assert.equal(stat(app,'human-rate'),'—');
+  assert.equal(app.document.querySelectorAll('#obsBody [data-obs-chart][data-empty="1"]').length,3);
+  assert.doesNotMatch(app.document.querySelector('#obsBody').textContent,/NaN|Infinity|输入 0 \/ 输出 0/);
 });
 
 test('opening delivery while a scope change loads requests the full data for the new scope', async t => {

@@ -55,8 +55,10 @@ func (r *AnalyticsRepo) analyticsDashboard(filter domain.AnalyticsFilter, runs [
 		switch run.Status {
 		case "succeeded":
 			d.SucceededRuns++
+			point(date).SucceededRuns++
 		case "failed":
 			d.FailedRuns++
+			point(date).FailedRuns++
 		}
 		if run.Status == "succeeded" || run.Status == "failed" || run.Status == "cancelled" {
 			durations = append(durations, runExecutionDuration(run))
@@ -114,6 +116,9 @@ func (r *AnalyticsRepo) analyticsDashboard(filter domain.AnalyticsFilter, runs [
 		}
 	}
 	d.HumanRuns = len(affected)
+	for id := range affected {
+		point(bucket(byID[id].CreatedAt)).HumanRuns++
+	}
 	d.P95ExecutionDurationMs = percentile(durations, 95)
 	if err := r.analyticsDashboardDeliveries(filter, issues, func(at time.Time, sop bool) {
 		d.DeliveredIssues++

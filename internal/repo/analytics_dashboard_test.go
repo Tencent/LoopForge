@@ -98,6 +98,9 @@ func TestAnalyticsDashboardCohorts(t *testing.T) {
 	if len(d.Trend) != 1 || d.Trend[0].Date != "2026-11-23" || len(got.ActivityTrend) != 1 || got.ActivityTrend[0].Date != "2026-11-23" {
 		t.Fatalf("time zone: %+v / %+v", d.Trend, got.ActivityTrend)
 	}
+	if p := d.Trend[0]; p.SOPRuns != 2 || p.SucceededRuns != 1 || p.FailedRuns != 1 || p.HumanRuns != 1 {
+		t.Fatalf("period quality and intervention rates must exclude child SOPs and deduplicate decisions: %+v", p)
+	}
 	if len(d.HumanTrend) != 1 || d.HumanTrend[0].Approvals != 4 || d.HumanTrend[0].Rejections != 2 || d.HumanTrend[0].Retries != 4 {
 		t.Fatalf("human events: %+v", d.HumanTrend)
 	}

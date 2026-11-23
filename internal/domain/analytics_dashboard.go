@@ -21,6 +21,9 @@ type AnalyticsDashboard struct {
 type AnalyticsDashboardPoint struct {
 	Date          string `json:"date"`
 	SOPRuns       int    `json:"sopRuns"`
+	SucceededRuns int    `json:"succeededRuns"`
+	FailedRuns    int    `json:"failedRuns"`
+	HumanRuns     int    `json:"humanRuns"`
 	SOPDelivered  int    `json:"sopDelivered"`
 	VibeDelivered int    `json:"vibeDelivered"`
 }
