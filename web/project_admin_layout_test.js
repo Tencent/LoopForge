@@ -161,6 +161,18 @@ same(vm.runInContext("PROJECT_ADMIN_TABS.map(t=>t.id)",ctx),["basic","repos","me
 const draft=ctx.projectDraftFrom(projects[0]);
 same(draft.members.map(m=>m.userId),[2,3,4,5]);
 same([...ctx.projectPeopleIds(draft)],[1,2,3,4,5]);
+same(draft.members.map(m=>m.role),["member","member","member","member"],"missing roles default to member");
+{
+  const roled={...projects[0],members:[{userId:2,role:"maintainer"},{userId:3,role:"Viewer"},{userId:4,role:"bogus"}]};
+  const d=ctx.projectDraftFrom(roled);
+  same(d.members.map(m=>m.role),["maintainer","viewer","member"],"draft keeps saved roles");
+  same(ctx.buildProjectPayload(roled,{members:d.members}).members.map(m=>m.role),["maintainer","viewer","member"],"saving keeps member roles");
+  const html=ctx.projectAdminFormHTML(d,{creating:false,custom:false,repos:[],saved:roled});
+  assert.match(html,/data-member-row="0"[^]*?<option value="maintainer" selected>维护者/);
+  assert.match(html,/data-member-row="1"[^]*?<option value="viewer" selected>只读/);
+  const changed=ctx.clone(d);changed.members[0].role="member";
+  assert.equal(ctx.projectDraftDirty(changed,d),true,"changing a role marks the draft dirty");
+}
 const edit=ctx.projectAdminFormHTML(draft,{creating:false,custom:false,repos:repositories.slice(0,2),saved:projects[0]});
 assert.equal((edit.match(/data-pa-panel="/g)||[]).length,4);
 assert.match(edit,/name="id" value="agentflow" required readonly/);

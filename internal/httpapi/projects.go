@@ -102,7 +102,13 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			}
 		}
 		seenMembers := map[int64]bool{}
-		for _, member := range v.Members {
+		for i, member := range v.Members {
+			role, ok := domain.NormalizeProjectMemberRole(member.Role)
+			if !ok {
+				c.JSON(400, map[string]string{"error": "project member role must be maintainer, member or viewer"})
+				return
+			}
+			v.Members[i].Role = role
 			if member.UserID <= 0 || seenMembers[member.UserID] {
 				c.JSON(400, map[string]string{"error": "project members must reference unique existing users"})
 				return

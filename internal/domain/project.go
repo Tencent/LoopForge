@@ -65,6 +65,25 @@ type ProjectMember struct {
 	Role   string `json:"role"` // maintainer, member, viewer
 }
 
+const (
+	ProjectRoleMaintainer = "maintainer"
+	ProjectRoleMember     = "member"
+	ProjectRoleViewer     = "viewer"
+)
+
+// NormalizeProjectMemberRole maps an empty role to member and reports whether
+// the role is one of maintainer, member or viewer.
+func NormalizeProjectMemberRole(role string) (string, bool) {
+	switch r := strings.ToLower(strings.TrimSpace(role)); r {
+	case "":
+		return ProjectRoleMember, true
+	case ProjectRoleMaintainer, ProjectRoleMember, ProjectRoleViewer:
+		return r, true
+	default:
+		return r, false
+	}
+}
+
 // RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.
 const RepositoryProviderSSH = "ssh"
 
