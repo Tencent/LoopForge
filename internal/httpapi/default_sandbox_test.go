@@ -63,3 +63,28 @@ func TestDefaultSandboxWithoutCatalogRowsSupportsSOPCreation(t *testing.T) {
 		t.Fatalf("API requests seeded rows: rows=%d err=%v", count, err)
 	}
 }
+
+func TestOnlyPlatformAdminsMayWriteDefaultSandbox(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	f := cvBNewHTTPFixture(t)
+	if err := f.s.PutProject(domain.Project{ID: "platform", Name: "Named platform", OwnerID: f.user.ID}); err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{
+		"id": "GENERIC-DOCKER", "name": "Project override", "projectId": "platform", "driver": "native", "shared": true,
+	}
+	rec := cvBRequest(t, f, http.MethodPut, "/api/sandboxes", body, true)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("project owner could modify the platform default: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := f.s.GrantPlatformAdmin(f.user.LoginName); err != nil {
+		t.Fatal(err)
+	}
+	rec = cvBRequest(t, f, http.MethodPut, "/api/sandboxes", body, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("platform admin could not configure the default: %d %s", rec.Code, rec.Body.String())
+	}
+	if profile, ok := f.s.Sandbox(repo.DefaultSandboxProfileID); !ok || profile.Driver != domain.SandboxDriverNative {
+		t.Fatalf("platform override was not saved under the canonical ID: %+v", profile)
+	}
+}

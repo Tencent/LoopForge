@@ -9,8 +9,8 @@ import (
 
 // Each SOP checks only its own assets at admission. A parent node binding
 // authorizes traversal, not access to another project's private dependencies.
-// The sandbox carries its own Dockerfile or install script, so checking the
-// sandbox covers its recipe.
+// The sandbox carries its own Dockerfile or environment variables, so checking
+// the sandbox covers its configuration.
 func (e *Engine) validateSharedScheduleWorkflow(wf domain.WorkflowDefinition, projectID string, profile domain.SandboxProfile) error {
 	if err := sharedScheduleAssetVisible(projectID, "SOP", wf.ProjectID, wf.Shared || wf.Generic); err != nil {
 		return err

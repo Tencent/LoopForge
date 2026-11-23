@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
 )
@@ -152,6 +153,9 @@ func (d deps) assetOwner(kind, id string) (project string, global bool, found bo
 		v, ok := d.repo.Skill(id)
 		return v.ProjectID, v.ProjectID == "", ok
 	case "sandboxes":
+		if strings.EqualFold(id, repo.DefaultSandboxProfileID) {
+			return "", true, true
+		}
 		v, ok := d.repo.Sandbox(id)
 		return v.ProjectID, v.ProjectID == "", ok
 	case "mcp-servers":

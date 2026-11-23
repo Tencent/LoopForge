@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -268,6 +269,9 @@ func BuiltInExecutorForKind(kind string) (domain.ExecutorDefinition, bool) {
 
 func (r *CatalogRepo) Sandboxes() []domain.SandboxProfile {
 	profiles := payloadList[domain.SandboxProfile](r.DB, "sandboxes", "")
+	profiles = slices.DeleteFunc(profiles, func(profile domain.SandboxProfile) bool {
+		return isDefaultSandboxID(profile.ID) && !platformSandboxOwner(profile.ProjectID)
+	})
 	for i := range profiles {
 		profiles[i] = platformSandboxProfile(profiles[i])
 	}
@@ -283,18 +287,36 @@ func (r *CatalogRepo) Sandboxes() []domain.SandboxProfile {
 }
 
 func (r *CatalogRepo) Sandbox(id string) (domain.SandboxProfile, bool) {
+	isDefault := isDefaultSandboxID(id)
+	if isDefault {
+		id = DefaultSandboxProfileID
+	}
 	var profile domain.SandboxProfile
 	var row payloadRow
 	err := r.DB.Table("sandboxes").Where("id = ?", id).Take(&row).Error
 	// A missing row may use the built-in default. Database failures or invalid
 	// stored configuration must not silently switch a run's execution policy.
-	if errors.Is(err, gorm.ErrRecordNotFound) && id == DefaultSandboxProfileID {
+	if errors.Is(err, gorm.ErrRecordNotFound) && isDefault {
 		return GenericDockerSandbox(), true
 	}
 	if err != nil || json.Unmarshal(row.Payload, &profile) != nil {
 		return domain.SandboxProfile{}, false
 	}
+	if isDefault && !platformSandboxOwner(profile.ProjectID) {
+		// An installation that has yet to apply migration 041 may still have
+		// a project profile using this ID. It cannot replace the platform default.
+		return GenericDockerSandbox(), true
+	}
 	return platformSandboxProfile(profile), true
+}
+
+func isDefaultSandboxID(id string) bool {
+	return strings.EqualFold(strings.TrimSpace(id), DefaultSandboxProfileID)
+}
+
+// Stored platform defaults are projectless, including operator overrides.
+func platformSandboxOwner(projectID string) bool {
+	return projectID == ""
 }
 
 // platformSandboxProfile keeps the built-in generic Docker sandbox shared:
@@ -302,7 +324,9 @@ func (r *CatalogRepo) Sandbox(id string) (domain.SandboxProfile, bool) {
 // the shared flag would otherwise hide it from every project. A row still
 // marked local reads as native, never as the runtime's unisolated driver.
 func platformSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfile {
-	if profile.ID == GenericDockerSandboxID {
+	if isDefaultSandboxID(profile.ID) && platformSandboxOwner(profile.ProjectID) {
+		profile.ID = DefaultSandboxProfileID
+		profile.ProjectID = "platform"
 		profile.Shared = true
 	}
 	if strings.TrimSpace(profile.Driver) == domain.SandboxDriverLocal {
@@ -314,6 +338,12 @@ func platformSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfile
 func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
 		return errors.New("sandbox id and name are required")
+	}
+	if isDefaultSandboxID(v.ID) {
+		if v.ProjectID != "" && v.ProjectID != "platform" {
+			return fmt.Errorf("沙箱标识 %s 保留给平台默认沙箱", DefaultSandboxProfileID)
+		}
+		v.ID, v.ProjectID = DefaultSandboxProfileID, ""
 	}
 	if err := domain.ValidateEnvironmentVariables(v.Environment); err != nil {
 		return fmt.Errorf("sandbox environment: %w", err)
@@ -331,7 +361,7 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 }
 
 func (r *CatalogRepo) DeleteSandbox(id string) error {
-	if id == DefaultSandboxProfileID {
+	if isDefaultSandboxID(id) {
 		return errors.New("默认运行沙箱不能删除；可编辑配置或新建其他沙箱")
 	}
 	if _, ok := r.Sandbox(id); !ok {

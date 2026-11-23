@@ -93,6 +93,38 @@ func TestDefaultSandboxDoesNotMaskCorruptConfigurationOrDatabaseFailure(t *testi
 	}
 }
 
+func TestProjectSandboxCannotReplacePlatformDefault(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	configured := domain.SandboxProfile{ID: "GENERIC-DOCKER", Name: "Project sandbox", ProjectID: "other", Driver: domain.SandboxDriverNative}
+	if err := s.PutSandbox(configured); err == nil {
+		t.Fatal("a project was allowed to claim the default ID")
+	}
+	// Simulate an existing row on an installation that still needs migration.
+	configured.ID, configured.ProjectID = DefaultSandboxProfileID, "platform"
+	if err := upsert(s.DB, "sandboxes", map[string]any{"id": configured.ID, "name": configured.Name, "payload": mustJSON(configured)}); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := s.Sandbox(DefaultSandboxProfileID); !ok || got.Driver != domain.SandboxDriverDocker {
+		t.Fatalf("project-owned row replaced the built-in default: %+v", got)
+	}
+	count := 0
+	for _, profile := range s.Sandboxes() {
+		if profile.ID == DefaultSandboxProfileID {
+			count++
+			if profile.Driver != domain.SandboxDriverDocker {
+				t.Fatalf("catalog exposed the legacy project row as the default: %+v", profile)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("catalog listed %d platform defaults", count)
+	}
+}
+
 // The public catalog seed stored generic-docker without the shared flag; it is
 // still the platform fallback for conversation workspaces in every project.
 func TestSeededGenericDockerSandboxIsSharedForConversations(t *testing.T) {

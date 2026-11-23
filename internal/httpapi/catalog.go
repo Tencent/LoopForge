@@ -824,6 +824,9 @@ func (h *catalogHandlers) sandboxes(c *gin.Context) {
 		var v domain.SandboxProfile
 		if decode(c, &v) {
 			v.ID, v.ProjectID = strings.TrimSpace(v.ID), strings.TrimSpace(v.ProjectID)
+			if strings.EqualFold(v.ID, repo.DefaultSandboxProfileID) {
+				v.ID = repo.DefaultSandboxProfileID
+			}
 			if err := h.validateEnvironmentAsset(v.ID, v.Name, v.ProjectID, "沙箱"); err != nil {
 				respond(c, err)
 				return
