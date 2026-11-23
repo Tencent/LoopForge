@@ -13,7 +13,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -114,19 +116,54 @@ func createBwrap(id, workspace string, profile domain.SandboxProfile, requiremen
 	return createProcessSandbox("bwrap", "linux", "Linux", "bwrap", id, workspace, profile, requirements)
 }
 
-// NativeSandboxAvailable checks the host OS and executable for the requested
-// process sandbox. Conversation defaults use it before selecting a profile.
+var nativeSandboxProbe struct {
+	sync.Mutex
+	binary    string
+	expires   time.Time
+	available bool
+}
+
+// NativeSandboxAvailable checks that the host can launch the requested
+// process sandbox. A binary alone is insufficient when user namespaces are
+// disabled. Cache the probe briefly for workspace choices and heartbeats.
 func NativeSandboxAvailable(driver string) bool {
-	switch driver, _ := domain.ResolveSandboxDriver(driver, goruntime.GOOS); driver {
+	driver, err := domain.ResolveSandboxDriver(driver, goruntime.GOOS)
+	if err != nil {
+		return false
+	}
+	var binary string
+	switch driver {
 	case domain.SandboxDriverSeatbelt:
-		_, err := processSandboxBinary("seatbelt", "darwin", "macOS", "sandbox-exec")
-		return err == nil
+		binary, err = processSandboxBinary("seatbelt", "darwin", "macOS", "sandbox-exec")
 	case domain.SandboxDriverBwrap:
-		_, err := processSandboxBinary("bwrap", "linux", "Linux", "bwrap")
-		return err == nil
+		binary, err = processSandboxBinary("bwrap", "linux", "Linux", "bwrap")
 	default:
 		return false
 	}
+	if err != nil {
+		return false
+	}
+	nativeSandboxProbe.Lock()
+	defer nativeSandboxProbe.Unlock()
+	if nativeSandboxProbe.binary != binary || time.Now().After(nativeSandboxProbe.expires) {
+		nativeSandboxProbe.binary = binary
+		nativeSandboxProbe.available = probeNativeSandbox(driver, binary)
+		nativeSandboxProbe.expires = time.Now().Add(30 * time.Second)
+	}
+	return nativeSandboxProbe.available
+}
+
+func probeNativeSandbox(driver, binary string) bool {
+	workspace, err := os.MkdirTemp("", "loopforge-native-probe-")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(workspace)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	sandbox := processSandbox{workspace: workspace, driver: driver, binary: binary}
+	cmd, err := sandbox.command(ctx, CommandSpec{Argv: []string{"/usr/bin/true"}, OwnProcessGroup: true}, nil)
+	return err == nil && cmd.Run() == nil
 }
 
 // createProcessSandbox builds a processSandbox for driver once the host runs

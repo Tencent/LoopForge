@@ -2,11 +2,54 @@ package runtime
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
 )
+
+func TestNativeSandboxAvailabilityRequiresSuccessfulLaunch(t *testing.T) {
+	var binary string
+	switch goruntime.GOOS {
+	case "darwin":
+		binary = "sandbox-exec"
+	case "linux":
+		binary = "bwrap"
+	default:
+		t.Skip("native sandbox probe requires macOS or Linux")
+	}
+	t.Run("blocked runtime", func(t *testing.T) {
+		dir := t.TempDir()
+		marker := filepath.Join(dir, "probe.log")
+		t.Setenv("PATH", dir)
+		// The executable exists but fails to start the sandbox.
+		script := "#!/bin/sh\necho probe >> '" + marker + "'\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(dir, binary), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			if NativeSandboxAvailable(domain.SandboxDriverNative) {
+				t.Fatal("failed probe reported a usable sandbox")
+			}
+		}
+		if got, err := os.ReadFile(marker); err != nil || string(got) != "probe\n" {
+			t.Fatalf("probe was not executed once: %q, %v", got, err)
+		}
+	})
+	t.Run("usable runtime", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("PATH", dir)
+		if err := os.WriteFile(filepath.Join(dir, binary), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if !NativeSandboxAvailable(domain.SandboxDriverNative) {
+			t.Fatal("successful probe did not report a usable sandbox")
+		}
+	})
+}
 
 func TestCreateDriverSandboxLocal(t *testing.T) {
 	workspace := t.TempDir()

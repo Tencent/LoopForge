@@ -217,7 +217,7 @@ func TestWorkspacePreparationDirectValidationAndRemoteStates(t *testing.T) {
 	if _, _, err := e.workspaceSandboxProfile(domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "missing"}}); err == nil {
 		t.Fatal("missing sandbox profile accepted")
 	}
-	snapshot := &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "snapshot", Name: "Snapshot", Driver: "local"}}
+	snapshot := &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "snapshot", Name: "Snapshot", Driver: domain.SandboxDriverNative}}
 	if profile, _, err := e.workspaceSandboxProfile(domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{SandboxSnapshot: snapshot}}); err != nil || profile.ID != "snapshot" {
 		t.Fatalf("snapshot profile=%+v err=%v", profile, err)
 	}
