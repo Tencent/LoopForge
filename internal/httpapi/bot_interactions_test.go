@@ -38,6 +38,17 @@ func botFixture(t *testing.T) (*repo.Store, *assistantHandlers, domain.Notificat
 	return s, h, bot
 }
 func TestBotUsesBoundSenderIdentityAutoModeAndSharedChatContext(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "")
+	stubCLIModelDiscovery(t)
+	discoveries := 0
+	discoverCLIModels = func(_ context.Context, environment, key string) []string {
+		discoveries++
+		if key != "other-key" || environment != "ioa" {
+			t.Fatal("model discovery did not use the sender's credentials")
+		}
+		return []string{"sender-model"}
+	}
 	s, h, bot := botFixture(t)
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		if user.ID != 43 || user.CodeBuddyAPIKey != "other-key" || user.CodeBuddyInternetEnvironment != "ioa" {
@@ -60,14 +71,23 @@ func TestBotUsesBoundSenderIdentityAutoModeAndSharedChatContext(t *testing.T) {
 		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{Message: "查询完成 other-key"}})
 		return "", context.Canceled
 	}
-	reply, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "session", ChatID: "new-group", ChatType: "group"}, []domain.BotInteraction{{SenderID: "first-member", Content: "历史提问", Reply: "历史回复"}}, domain.BotInteraction{SenderID: "new-wecom-user", Content: "现在有什么进展"})
-	if err != nil || reply != "查询完成 [redacted]" {
-		t.Fatal(reply, err)
+	for _, model := range []string{"", assistantDefaultModel, "sender-model"} {
+		bot.Model = model
+		reply, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "session", ChatID: "new-group", ChatType: "group"}, []domain.BotInteraction{{SenderID: "first-member", Content: "历史提问", Reply: "历史回复"}}, domain.BotInteraction{SenderID: "new-wecom-user", Content: "现在有什么进展"})
+		if err != nil || reply != "查询完成 [redacted]" {
+			t.Fatalf("model %q: reply = %q, error = %v", model, reply, err)
+		}
+		if model != "sender-model" && discoveries != 0 {
+			t.Fatal("the CLI default should work with a cold cache")
+		}
+	}
+	if discoveries != 1 {
+		t.Fatalf("expected discovery for the concrete model, got %d", discoveries)
 	}
 	// No fallback to the Bot owner when the sender has a different identity.
 	bot.InteractionEnabled = false
 	s.SaveNotificationBot(bot, "")
-	if _, err = h.botExecutionUser(bot, "new-wecom-user"); err == nil {
+	if _, err := h.botExecutionUser(bot, "new-wecom-user"); err == nil {
 		t.Fatal("disabled Bot executed")
 	}
 }
@@ -132,7 +152,7 @@ func TestBotMissingSubmissionRetriesOnlyTerminalStep(t *testing.T) {
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		calls++
 		if calls == 1 {
-			return "查询结果已经准备好，但未提交终态", nil
+			return "请稍等，我正在查询项目的运行记录。", nil
 		}
 		if strings.Contains(prompt, "原始查询标记") || !strings.Contains(prompt, "不要重新查询") {
 			t.Fatal("retry restarted task", prompt)

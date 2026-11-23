@@ -135,7 +135,15 @@ func TestNotificationBotAPIAuthBindingAndSecrets(t *testing.T) {
 		t.Fatal("model update lost target")
 	}
 	if rsp = request("owner", "PUT", "/bots/"+bot.ID, `{"name":"Bot","botId":"wecom","enabled":true,"model":"unknown-model"}`); rsp.Code != 400 {
-		t.Fatal("invalid model accepted")
+		t.Fatal("invalid legacy model accepted")
+	}
+	rsp = request("owner", "PUT", "/bots/"+bot.ID, `{"name":"Bot","botId":"wecom","enabled":true,"model":"codex:custom-model"}`)
+	if rsp.Code != 200 {
+		t.Fatalf("CLI-prefixed model rejected: %s", rsp.Body.String())
+	}
+	bot, _ = s.NotificationBot(bot.ID)
+	if bot.Model != "codex:custom-model" || bot.Target == nil {
+		t.Fatal("CLI model update lost selection or target")
 	}
 	rsp = request("owner", "POST", "/bots/"+bot.ID+"/test", "")
 	if rsp.Code != 200 || provider.sent != 1 {

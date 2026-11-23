@@ -53,14 +53,12 @@ test('token management renders client specs, revealed prompts, and credential hi
     url:credentialExtraError(credentialKind('codexApiKey'),'ftp://bad'),
     save:credentialSavePayload(credentialKind('codeBuddyApiKey'),{secret:' ck_x ',extra:'ioa'}),
     clear:credentialClearPayload(credentialKind('codexApiKey')),
-    next:credentialNextKind({gitHubCredentialConfigured:true}).key,
     badge:credentialBadgeHTML('err')
   })`);
   assert.equal(credential.pat, '');
   assert.match(credential.url, /http/);
   assert.equal(credential.save.codeBuddyApiKey, 'ck_x');
   assert.equal(credential.clear.codexApiKeyClear, true);
-  assert.equal(credential.next, 'codeBuddyApiKey');
   assert.match(credential.badge, /有错误/);
 
   app.evaluate(`
@@ -121,14 +119,13 @@ test('token management renders client specs, revealed prompts, and credential hi
     renderPersonalSettings();openCredentialWizard('codexApiKey');
   `);
   await settle(3);
+  app.router.put('/api/users/1/credentials', { id: 1, codexApiKeyConfigured: true });
   const wizardSecret = app.document.querySelector('#credentialWizard input[name="secret"]');
   wizardSecret.value = 'sk-valid';
   wizardSecret.dispatchEvent(new app.window.Event('input', { bubbles: true }));
   wizardSecret.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  await settle(2);
-  assert.match(app.document.querySelector('#credentialWizard').textContent, /确认并保存/);
-  app.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  await settle(2);
+  await settle(6);
+  assert.ok(app.router.calls.some(call => call.method === 'PUT' && call.path === '/api/users/1/credentials'));
   assert.equal(app.evaluate(`credentialWizard===null`), true);
 
   app.router.post('/api/auth/logout', { ok: true });

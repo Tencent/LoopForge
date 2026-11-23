@@ -354,7 +354,7 @@ function deliveryMRLinked(i){return deliveryMRList(i).length>0}
 function pendingDeliveryMRCount(i){return deliveryMRList(i).filter(m=>['opened','reopened'].includes(String(m.state||'').toLowerCase())).length}
 // 多仓库交付每个仓库一个 MR；旧数据只有 deliveryMrUrl。
 function deliveryMRList(i){
-  const withRef=m=>{const hit=String(m.url).match(/git\.example\.com\/(.+?)(?:\/-)?\/merge_requests\/(\d+)/);return{...m,project:m.project||hit?.[1]||'',iid:m.iid||Number(hit?.[2])||0}};
+  const withRef=m=>{const hit=String(m.url).match(/^https?:\/\/[^/]+\/(.+?)(?:\/-)?\/merge_requests\/(\d+)/);return{...m,project:m.project||hit?.[1]||'',iid:m.iid||Number(hit?.[2])||0}};
   const list=(i?.deliveryMrs||[]).filter(m=>String(m?.url||'').trim());
   if(list.length)return list.map(withRef);
   const url=String(i?.deliveryMrUrl||'').trim();

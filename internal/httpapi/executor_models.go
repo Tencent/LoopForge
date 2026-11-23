@@ -126,17 +126,16 @@ func effortOptions(levels []string) []executorEffortOption {
 	return options
 }
 
-// executorModelCatalogs returns the fixed per-CLI catalog. The CodeBuddy list
-// reuses the assistant catalog so the wizard, AI 助手 and 澄清 stay in sync.
-func executorModelCatalogs(kimiBaseURL string) map[string]executorModelCatalog {
+// executorModelCatalogs returns built-in options plus the caller's CodeBuddy
+// catalog.
+func executorModelCatalogs(kimiBaseURL string, codebuddy assistantModelCatalog) map[string]executorModelCatalog {
 	codebuddyModels := make([]executorModelInfo, 0)
-	known := assistantKnownCatalog()
-	for _, model := range selectableCodeBuddyModels(known.Models) {
+	for _, model := range selectableCodeBuddyModels(codebuddy.Models) {
 		codebuddyModels = append(codebuddyModels, executorModelInfo{ID: model.ID, Name: model.Name, Credits: model.Credits})
 	}
 	catalogs := map[string]executorModelCatalog{
 		"codebuddy": {
-			Default: known.Default,
+			Default: codebuddy.Default,
 			Models:  codebuddyModels,
 			Efforts: effortOptions(domain.ExecutorEffortLevels["codebuddy"]),
 		},
@@ -214,18 +213,18 @@ func cursorCatalogModels() []executorModelInfo {
 func (h *catalogHandlers) executorModels(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	if c.Query("builtin") == "1" {
-		c.JSON(http.StatusOK, executorModelCatalogs(""))
+		c.JSON(http.StatusOK, executorModelCatalogs("", loadAssistantModels("", "")))
 		return
 	}
 	var user domain.User
 	if current, ok := h.requestUser(c.Request, true); ok {
 		if stored, found := h.repo.User(current.ID); found {
 			user = stored
-			refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
+			refreshOfficialCodeBuddyModels(c.Request.Context(), user)
 		}
 	}
 	_, kimiBaseURL := assistantEngineCredential(user, runtime.AgentCLIKimi)
-	catalogs := executorModelCatalogs(kimiBaseURL)
+	catalogs := executorModelCatalogs(kimiBaseURL, loadAssistantModels(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey))
 	if antigravityUsesCustomEndpoint(user) {
 		catalog := catalogs[runtime.AgentCLIAntigravity]
 		catalog.Models = []executorModelInfo{}

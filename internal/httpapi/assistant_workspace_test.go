@@ -91,6 +91,7 @@ func TestMainBotAttachesWorkspaceFilesToReply(t *testing.T) {
 	}
 	write("demo.html", "<h1>v1</h1>")
 	write("docs/notes.md", "# 说明")
+	write("report.py", "print('工单日报')\n")
 	write("logo.png", "not really an image")
 	write("blob.html", "a\x00b")
 	a.deps.engine = en
@@ -127,6 +128,9 @@ func TestMainBotAttachesWorkspaceFilesToReply(t *testing.T) {
 	if _, err := attach(s, "docs/notes.md"); err != nil {
 		t.Fatal(err)
 	}
+	if raw, err := attach(s, "report.py"); err != nil || !strings.Contains(raw, `"attached":"report.py"`) {
+		t.Fatalf("attach Python source raw=%s err=%v", raw, err)
+	}
 	participant := &AgentToolSession{Mode: AgentToolAssistant, RuntimeMode: domain.AssistantModeWorkspace, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: peer.ID, User: peer}
 	if _, err := attach(participant, "docs/notes.md"); err != nil || len(participant.takeReplyFiles()) != 1 {
 		t.Fatalf("project participant could not attach a shared workspace file: %v", err)
@@ -135,8 +139,11 @@ func TestMainBotAttachesWorkspaceFilesToReply(t *testing.T) {
 		t.Fatalf("attach host workspace path raw=%s err=%v", raw, err)
 	}
 	files := s.takeReplyFiles()
-	if len(files) != 2 || files[0].Name != "demo.html" || files[0].MimeType != "text/html" || files[1].Name != "notes.md" || files[1].MimeType != "text/markdown" {
+	if len(files) != 3 || files[0].Name != "demo.html" || files[0].MimeType != "text/html" || files[1].Name != "notes.md" || files[1].MimeType != "text/markdown" {
 		t.Fatalf("reply files=%+v", files)
+	}
+	if file := files[2]; file.Name != "report.py" || file.MimeType != "text/plain" || string(file.Data) != "print('工单日报')\n" {
+		t.Fatalf("Python attachment=%+v", file)
 	}
 	if body := string(files[0].Data); !strings.Contains(body, "v2") || strings.Contains(body, "gt-secret-attach-value") {
 		t.Fatalf("attached content not current or not redacted: %q", body)
@@ -145,7 +152,7 @@ func TestMainBotAttachesWorkspaceFilesToReply(t *testing.T) {
 		t.Fatal("reply files must be handed over once")
 	}
 	saved := saveAgentReplyFiles(owner.ID, files, s.ProjectID)
-	if len(saved) != 2 {
+	if len(saved) != 3 {
 		t.Fatalf("saved=%+v", saved)
 	}
 	record, _, err := loadWorkbenchAttachment(owner.ID, saved[0].ID)

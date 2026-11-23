@@ -9,7 +9,7 @@ import HarnessIcon from "./HarnessIcon";
 import { readThemePreference, resolveTheme } from "./theme.js";
 import { conversationEngine, defaultEngine, engineBrand, engineModels, engineOfModel } from "./engines.js";
 import {
-  CONTEXT, DRAFT, END, MODEL_KEY, NEW_CONVERSATION, PLACE, READY, REPLY, RESET, SURFACE,
+  CONFIGURE_ROLE, CONTEXT, DRAFT, END, MODEL_KEY, NEW_CONVERSATION, PLACE, READY, REPLY, RESET, SURFACE,
   beginOnCanvas, designerParams, draftSummary, latestSession, postToCanvas, replyDraft, scenarioPage,
 } from "./sop-designer.js";
 import "./sop-designer.css";
@@ -50,7 +50,7 @@ function enginesOf(catalog) {
   return ids.map((id) => ({ id, name: id === defaultEngine ? "CodeBuddy" : id, configured: true }));
 }
 
-function DraftNote({ draft, onPlace }) {
+function DraftNote({ draft, onPlace, onConfigureRole }) {
   return (
     <div className="sop-designer-draft">
       <div className="sop-designer-draft-title">
@@ -61,6 +61,11 @@ function DraftNote({ draft, onPlace }) {
         <ul className="sop-designer-warnings">
           {draft.warnings.map((warning) => <li key={warning}>{warning}</li>)}
         </ul>
+      ) : null}
+      {onConfigureRole ? (
+        <button type="button" className="sop-designer-place" onClick={() => onConfigureRole(draft)}>
+          配置并创建角色
+        </button>
       ) : null}
       {onPlace ? (
         <button type="button" className="sop-designer-place" onClick={() => onPlace(draft)}>
@@ -137,7 +142,12 @@ export default function SopDesigner({ search = location.search, canvas = window.
   // Fall back to the catalog default once it loads.
   useEffect(() => {
     if (!catalog.models?.length || catalog.models.some((m) => m.id === model)) return;
-    setModel(catalog.default || catalog.models[0]?.id || "");
+    const preferredEngine = catalog.preferences?.executor;
+    const preferredModel = catalog.preferences?.model;
+    const preferred = modelsFor(catalog, preferredEngine).find((m) =>
+      m.id === preferredModel || m.id === preferredEngine + ":" + preferredModel);
+    const configured = new Set(enginesOf(catalog).filter((item) => item.configured !== false).map((item) => item.id));
+    setModel(preferred?.id || catalog.models.find((m) => configured.has(m.engine || defaultEngine))?.id || catalog.models[0].id);
   }, [catalog, model]);
 
   useEffect(() => {
@@ -205,8 +215,15 @@ export default function SopDesigner({ search = location.search, canvas = window.
       settled = g.id;
       source?.close();
       source = null;
-      const stored = await api(sessionPath(sessionId));
+      const stored = await api(sessionPath(sessionId)).catch((e) => {
+        if (e.status !== 404) throw e;
+        return null;
+      });
       if (cancelled) return;
+      if (!stored) {
+        startOver();
+        return;
+      }
       setSession(stored);
       setLive(empty);
       if (!mine) return;
@@ -258,6 +275,7 @@ export default function SopDesigner({ search = location.search, canvas = window.
   }, [session?.messages?.length, live.answer, live.activity?.length]);
 
   function startOver() {
+    owned.current.clear();
     setSession(null);
     setSessionId("");
     setGeneration(null);
@@ -283,22 +301,34 @@ export default function SopDesigner({ search = location.search, canvas = window.
     }
     setError("");
     setStarting(true);
+    let canvasRequested = false;
     try {
+      let stored = null;
+      if (sessionId) {
+        stored = await api(sessionPath(sessionId)).catch((e) => {
+          if (e.status !== 404) throw e;
+          return null;
+        });
+        if (currentContext.current !== context) return;
+        if (!stored) startOver();
+      }
+      canvasRequested = true;
       const begun = await beginOnCanvas(canvas);
       if (currentContext.current !== context) return;
       if (!begun.ok) throw new Error(begun.error || "画布暂时不能编排");
       // A conversation stays on one CLI; another CLI starts a new one and
       // keeps the canvas.
-      const locked = session ? conversationEngine(session.messages, catalog.models, session.executor) : "";
-      const id = sessionId && (!locked || locked === engine) ? sessionId : newId();
+      const locked = stored ? conversationEngine(stored.messages, catalog.models, stored.executor) : "";
+      const base = stored && (!locked || locked === engine) ? stored : null;
+      const id = base?.id || newId();
       const message = { role: "user", content, createdAt: new Date().toISOString() };
-      const base = id === sessionId ? session : null;
       const g = await write("/api/assistant/generations", {
         surface: SURFACE,
         projectId: begun.projectId || context.projectId,
         sessionId: id,
         model,
         approvalMode: "confirm",
+        requireExactModel: !!model,
         workflowId: begun.workflowId ?? context.workflowId,
         canvas: begun.canvas ?? null,
         messages: [message],
@@ -313,7 +343,7 @@ export default function SopDesigner({ search = location.search, canvas = window.
     } catch (e) {
       if (currentContext.current !== context) return;
       setError(e.message);
-      postToCanvas(END, { error: e.message }, canvas);
+      if (canvasRequested) postToCanvas(END, { error: e.message }, canvas);
     } finally {
       if (currentContext.current === context) setStarting(false);
     }
@@ -336,7 +366,7 @@ export default function SopDesigner({ search = location.search, canvas = window.
         {!messages.length && !running ? (
           <div className="sop-designer-intro">
             <h3>您好，我是 <em>AI 编排助手</em></h3>
-            <p>画布是空的，就描述要搭的流程。画布上已经有流程时，直接说改哪一步，我只改你说的地方。</p>
+            <p>描述要创建的流程，或指出现有流程中需要调整的步骤。</p>
             <div className="sop-designer-suggest-head">
               <span>可以试试这些场景：</span>
               <button type="button" onClick={() => setPage((n) => n + 1)}>换一批</button>
@@ -357,7 +387,11 @@ export default function SopDesigner({ search = location.search, canvas = window.
             <div key={index} className="sop-designer-message assistant">
               <ReplyTimeline steps={message.activity || []} startedAt={message.startedAt} finishedAt={message.createdAt} />
               <RichContent message={message} projectId={context.projectId} />
-              {draft ? <DraftNote draft={draft} onPlace={busy ? null : (d) => postToCanvas(PLACE, { draft: d.body }, canvas)} /> : null}
+              {draft ? <DraftNote
+                draft={draft}
+                onPlace={!busy && draft.tool === "workflows_save" ? (d) => postToCanvas(PLACE, { draft: d.body }, canvas) : null}
+                onConfigureRole={!busy && draft.tool === "agents_save" ? (d) => postToCanvas(CONFIGURE_ROLE, { ...context, role: d.body }, canvas) : null}
+              /> : null}
             </div>
           );
         })}

@@ -387,6 +387,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	if session.Mode == AgentToolAssistant && session.ExecMode.ReviewWrites {
 		ctx = withAssistantApprovalReviewer(ctx, session.approvalReviewer)
 	}
+	if tool.Kind == "clarify-source" {
+		return readClarifySource(session, tool.Name, args)
+	}
 	if tool.Kind == "workspace" {
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}
@@ -407,6 +410,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		}
 		if session.Mode == AgentToolScheduled {
 			ctx = withAssistantExecMode(ctx, session.ExecMode)
+		}
+		if scope := scheduledAssetsFrom(session.ctx); scope.Version.ID != "" {
+			ctx = context.WithValue(ctx, scheduledAssetsKey{}, scope)
 		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}
 		if session.canOpenConversationWorkspace() {

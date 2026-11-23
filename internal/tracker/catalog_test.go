@@ -49,14 +49,14 @@ func TestBindTrackerMCPPrefersCatalogHeadersOverEnvToken(t *testing.T) {
 		URL:       "https://mcp-gateway.example.com/gongfeng",
 		Headers:   map[string]string{"Authorization": "Bearer catalog-pat"},
 	}}
-	gf := bindTrackerMCP("gongfeng", cfg, servers, "expired-env-token", "Bearer expired-oauth")
+	gf := bindTrackerMCP("gongfeng", cfg, servers, "expired-env-token")
 	if gf.Source != "catalog:gongfeng-delivery" {
 		t.Fatalf("gongfeng source=%q", gf.Source)
 	}
 	if gf.Headers["Authorization"] != "Bearer catalog-pat" {
 		t.Fatalf("gongfeng auth=%q", gf.Headers["Authorization"])
 	}
-	tapd := bindTrackerMCP("tapd", cfg, servers, "expired-env-token", "Bearer expired-oauth")
+	tapd := bindTrackerMCP("tapd", cfg, servers, "expired-env-token")
 	if tapd.Source != "catalog:gongfeng-delivery+tapd-url" {
 		t.Fatalf("tapd source=%q", tapd.Source)
 	}
@@ -74,7 +74,7 @@ func TestBindTrackerMCPUsesDedicatedTAPDCatalog(t *testing.T) {
 		{ID: "gongfeng-delivery", Transport: "http", URL: "https://mcp-gateway.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer gf"}},
 		{ID: "tapd-delivery", Transport: "http", URL: "https://mcp-gateway.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer tapd"}},
 	}
-	got := bindTrackerMCP("tapd", cfg, servers, "env", "")
+	got := bindTrackerMCP("tapd", cfg, servers, "env")
 	if got.Source != "catalog:tapd-delivery" || got.Headers["Authorization"] != "Bearer tapd" {
 		t.Fatalf("got %+v", got)
 	}
@@ -82,15 +82,15 @@ func TestBindTrackerMCPUsesDedicatedTAPDCatalog(t *testing.T) {
 
 func TestBindTrackerMCPFallsBackWhenCatalogMissing(t *testing.T) {
 	cfg := domain.SyncConfig{GongfengMCPURL: "https://mcp-gateway.example.com/gongfeng"}
-	got := bindTrackerMCP("gongfeng", cfg, nil, "env-token", "")
+	got := bindTrackerMCP("gongfeng", cfg, nil, "env-token")
 	if got.Source != "env:AGENTFLOW_MCP_TOKEN" {
 		t.Fatalf("source=%q", got.Source)
 	}
 	if got.Headers["Authorization"] != "Bearer env-token" {
 		t.Fatalf("auth=%q", got.Headers["Authorization"])
 	}
-	got = bindTrackerMCP("gongfeng", cfg, nil, "", "Bearer oauth")
-	if got.Source != "codebuddy:mcp.json" || !strings.Contains(got.Headers["Authorization"], "oauth") {
+	got = bindTrackerMCP("gongfeng", cfg, nil, "")
+	if got.Source != "none" || got.Headers["Authorization"] != "" {
 		t.Fatalf("got %+v", got)
 	}
 }

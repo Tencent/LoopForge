@@ -6,6 +6,8 @@
 // that payload into file rows and line-by-line hunks so the panel can render
 // the same changes the agent made without re-reading tool arguments.
 
+import "../../web/app/git-ssh.js";
+
 const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/;
 
 const STATUS = {
@@ -252,15 +254,18 @@ export function branchCompareUrl(repository) {
     return same
       ? `https://github.com/${github}/tree/${refPath(work)}`
       : `https://github.com/${github}/compare/${refPath(base)}...${refPath(work)}`;
-  const path = gongfengProjectPath(repository?.cloneUrl);
-  if (!path) return "";
-  if (same) return `https://git.example.com/${path}/-/tree/${refPath(work)}`;
-  return `https://git.example.com/${path}/-/compare/${refPath(base)}...${refPath(work)}`;
+  const address = repository?.webUrl || repository?.cloneUrl;
+  let host = "";
+  if (repository?.provider === "gongfeng") {
+    const raw = String(address || "");
+    try { host = new URL(raw).host; } catch { host = /^git@([^:]+):/.exec(raw)?.[1] || ""; }
+  }
+  const managed = globalThis.LoopForgeGongfengRepository(address, host);
+  if (!managed) return "";
+  if (same) return `${managed.webUrl}/-/tree/${refPath(work)}`;
+  return `${managed.webUrl}/-/compare/${refPath(base)}...${refPath(work)}`;
 }
 
-// Only github.com and the legacy git.example.com remotes get a link: the
-// token rules in the platform are scoped to those hosts, and other hosts may
-// not render the same URL shape.
 export function githubRepoPath(remote) {
   const raw = String(remote || "").trim();
   const match =
@@ -270,10 +275,5 @@ export function githubRepoPath(remote) {
 }
 
 export function gongfengProjectPath(remote) {
-  const raw = String(remote || "").trim();
-  const match =
-    /^(?:git@|ssh:\/\/git@)git\.example\.com[:/](.+)$/.exec(raw) ||
-    /^https?:\/\/git\.example\.com\/(.+)$/.exec(raw);
-  if (!match) return "";
-  return match[1].replace(/\.git$/, "").replace(/^\/+|\/+$/g, "");
+  return globalThis.LoopForgeGongfengRepository(remote)?.project || "";
 }

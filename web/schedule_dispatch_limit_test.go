@@ -15,6 +15,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const code = fs.readFileSync('app/sync-schedule.js', 'utf8');
 const html = fs.readFileSync('index.html', 'utf8');
+assert.match(html, /id="schedulePromptEditor"/);
+assert.match(html, /data-schedule-reference-editor/);
 const input = html.match(/<input[^>]*name="maxDispatch"[^>]*>/)[0];
 assert.ok(input.includes('type="number"') && input.includes('min="1"') && input.includes('max="10"'));
 assert.ok(!input.includes('required'), 'dispatch limit must be optional');
@@ -33,8 +35,10 @@ global.renderScheduleJobs=()=>{};
 global.api=async (path,options)=>{saved=JSON.parse(options.body); return {...saved,id:'job'}};
 global.notificationPayload=()=>[];
 global.scheduleNotificationBindings=[];
+global.scheduleAssistantReferences=[];
 global.scheduleModalVersion=0;
 global.closeScheduleJobModal=()=>{};
+eval(code.slice(code.indexOf('function scheduleReferenceIdentity('),code.indexOf('function syncSchedulePromptEditor(')));
 eval(code.slice(code.indexOf('async function saveScheduleJob('),code.indexOf('function scheduleJobOutcomeToast(')));
 async function submit(value) {
   saved=undefined; error=undefined; form.elements.maxDispatch.value=value;
@@ -54,6 +58,9 @@ async function submit(value) {
   form.elements.jobKind.value='assistant';
   form.elements.assistantPrompt.value='report';
   assert.ok(!Object.hasOwn(await submit('3'),'maxDispatch'), 'AI jobs must not include the dispatch limit');
+  global.scheduleAssistantReferences=[{type:'skill',id:'s1',name:'技能'}];
+  const aiPayload=await submit('');
+  assert.deepEqual(aiPayload.references,[{type:'skill',id:'s1'}]);
 })().catch(error=>{console.error(error);process.exit(1)});
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
