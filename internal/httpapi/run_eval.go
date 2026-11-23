@@ -190,6 +190,9 @@ func (h *runsHandlers) streamRunEval(c *gin.Context) {
 	c.Status(http.StatusOK)
 	for _, ev := range replay {
 		writeSSE(c, ev.Type, ev.Payload)
+		if ev.Type == "done" || ev.Type == "error" {
+			return
+		}
 	}
 	notify := c.Request.Context().Done()
 	for {
@@ -439,6 +442,8 @@ func (h *runsHandlers) runEvalJob(ctx context.Context, job *runEvalJob, rec doma
 		hub.mu.Unlock()
 	}()
 	hub := h.evalHub()
+	emit := func(event string, payload any) { job.publish(event, payload) }
+	emitRunEvalStage(emit, "queued", "评测已提交，正在等待执行")
 	select {
 	case hub.tokens <- struct{}{}:
 		defer func() { <-hub.tokens }()
@@ -447,8 +452,7 @@ func (h *runsHandlers) runEvalJob(ctx context.Context, job *runEvalJob, rec doma
 		job.publish("error", map[string]string{"error": "评测排队超时"})
 		return
 	}
-	emit := func(event string, payload any) { job.publish(event, payload) }
-	emit("thought", map[string]string{"kind": "thinking", "text": "正在整理本次 SOP 轨迹…"})
+	emitRunEvalStage(emit, "collecting", "正在整理本次 SOP 轨迹")
 	exec := currentRunEvalExec()
 	if exec == nil {
 		exec = h.executeRunEval
@@ -482,24 +486,22 @@ func (h *runsHandlers) executeRunEval(ctx context.Context, rec domain.RunEvalRec
 	facts := runeval.BuildFacts(run, catalog)
 	rec.Facts = facts
 	_ = h.repo.PutRunEval(rec)
-	emit("thought", map[string]string{"kind": "thinking", "text": "正在用 " + rec.Model + " 评测…"})
 	system, prompt := runeval.BuildPrompt(rec.Policy, facts)
-	raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{Prompt: prompt, Model: rec.Model, SystemPrompt: system, UserID: user.ID, ReviewOnly: true}, user, func(ev assistantStreamEvent) {
-		if emit == nil {
-			return
-		}
-		if text := strings.TrimSpace(ev.Text); text != "" {
-			emit("thought", map[string]string{"kind": ev.Kind, "text": text})
-		}
-	})
+	emitRunEvalStage(emit, "evaluating", "正在用 "+rec.Model+" 分析并评分")
+	raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{Prompt: prompt, Model: rec.Model, SystemPrompt: system, UserID: user.ID, ReviewOnly: true}, user, nil)
 	if err != nil {
 		return domain.RunEvalResult{}, err
 	}
+	emitRunEvalStage(emit, "validating", "正在校验评分并保存报告")
 	result, err := runeval.ParseModelResult(raw, rec.Policy)
 	if err != nil {
 		return domain.RunEvalResult{}, err
 	}
 	return result, nil
+}
+
+func emitRunEvalStage(emit func(string, any), stage, text string) {
+	emit("thought", map[string]string{"kind": "thinking", "stage": stage, "text": text})
 }
 
 func (h *runsHandlers) failRunEval(rec domain.RunEvalRecord, message string) {

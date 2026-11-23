@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -328,7 +329,7 @@ func TestRunEvalLiveStreamAndPersistenceErrors(t *testing.T) {
 	}
 	h := &runsHandlers{deps: &deps{repo: f.s}, evalJobs: newRunEvalHub()}
 	job := &runEvalJob{runID: run.ID, evalID: "eval", subs: map[chan runEvalJobEvent]struct{}{}, done: make(chan struct{})}
-	job.publish("thought", map[string]string{"text": "replay"})
+	emitRunEvalStage(job.publish, "collecting", "正在整理本次 SOP 轨迹")
 	h.evalJobs.jobs[run.ID] = job
 	router := gin.New()
 	router.GET("/api/runs/:id/eval/stream", h.streamRunEval)
@@ -353,6 +354,10 @@ func TestRunEvalLiveStreamAndPersistenceErrors(t *testing.T) {
 	case rec := <-done:
 		if rec.Code != http.StatusOK {
 			t.Fatalf("live eval stream = %d: %s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"stage":"collecting"`) || !strings.Contains(body, "event: done") {
+			t.Fatalf("missing eval stage or completion: %s", body)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("live eval stream did not finish")
