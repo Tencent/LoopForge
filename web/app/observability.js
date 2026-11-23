@@ -593,6 +593,7 @@ function renderObservability(){
 function obsBindActions(root){
   if(typeof obsBindHumanTrendActions==='function')obsBindHumanTrendActions(root);
   if(typeof obsBindTokenActions==='function')obsBindTokenActions(root);
+  if(typeof obsBindVibeActions==='function')obsBindVibeActions(root);
   root.querySelectorAll('[data-obs-metric]').forEach(b=>b.onclick=()=>setObsTrendMetric(b.dataset.obsMetric));
   root.querySelectorAll('[data-obs-period]').forEach(el=>el.onclick=e=>{e.stopPropagation();const key=el.dataset.obsPeriod;if(key)obsSelectTrendPeriod(key)});
   root.querySelectorAll('[data-open-run]').forEach(b=>b.onclick=e=>{if(e.target.closest&&e.target.closest('a'))return;obsCollapse();openRunFromId(b.dataset.openRun)});

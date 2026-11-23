@@ -63,3 +63,10 @@
 #obsExpand .obs-summary-cost .obs-kpi+.obs-kpi{border-left:1px solid var(--hui-border)}
 #obsExpand .obs-summary-cost .obs-kpi-label{color:var(--hui-muted);font-size:12px}
 #obsExpand .obs-summary-cost .obs-kpi-value .num{color:var(--hui-text);font-weight:650;font-variant-numeric:tabular-nums}
+:is(#observabilityView,#obsExpand) :is(.obs-human-controls,.obs-sop-values,.obs-vibe-legend)[hidden]{display:none!important}
+:is(#observabilityView,#obsExpand) .obs-human-controls{justify-content:flex-start}
+#obsExpand .obs-sop-values .obs-kpi{display:flex;flex-direction:column;min-width:0;padding:4px 14px}
+#obsExpand .obs-sop-values .obs-kpi:first-child{padding-left:0}
+#obsExpand .obs-sop-values .obs-kpi+.obs-kpi{border-left:1px solid var(--hui-border)}
+#obsExpand .obs-sop-values .obs-kpi-label{color:var(--hui-muted);font-size:12px}
+#obsExpand .obs-sop-values .obs-kpi-value .num{color:var(--hui-text);font-size:24px;font-weight:650}

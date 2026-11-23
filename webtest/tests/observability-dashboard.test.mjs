@@ -7,7 +7,8 @@ function snapshot(user='') {
   return {
     tokenUsage:(user?[{date:'2026-11-22',userId:user,model:'model-'+user,tokens:count*1000}]:[{date:'2026-11-22',userId:'7',model:'model-7',tokens:1000},{date:'2026-11-23',userId:'8',model:'model-8',tokens:2000}]),
     dashboard:{sopRuns:count,succeededRuns:count,failedRuns:0,humanRuns:1,deliveredIssues:count,
-      trend:[{date:'2026-11',sopRuns:count,succeededRuns:count,humanRuns:1,sopDelivered:count}],humanNodes:[{key:'flow/review',name:'Review'},{key:'flow/test',name:'Test'}],
+      coding:{issues:count+1,withMr:count,delivered:count-1},performance:{measuredRuns:count,averageExecutionDurationMs:count*2000,p95ExecutionDurationMs:count*8000,toolCallsSucceeded:count*3,toolCallsFailed:1},
+      trend:[{date:'2026-11',sopRuns:count,succeededRuns:count,humanRuns:1,sopDelivered:count,coding:{issues:count+1,withMr:count,delivered:count-1},performance:{measuredRuns:count,averageExecutionDurationMs:count*2000,p95ExecutionDurationMs:count*8000,toolCallsSucceeded:count*3,toolCallsFailed:1}}],humanNodes:[{key:'flow/review',name:'Review'},{key:'flow/test',name:'Test'}],
       humanTrend:[{date:'2026-11',node:'flow/review',approvals:count,rejections:0,retries:1},{date:'2026-11',node:'flow/test',approvals:1,rejections:1,retries:0}]},
     summary:{totalRuns:count,succeededRuns:count,failedRuns:0,qualityRuns:count,successRate:100,totalTokens:count*1000,totalCostCny:count*7,conversationWorkspaces:count,conversationTokens:count*100},
     activity:{sessions:count,collaborativeSessions:1,requirements:count,sopRuns:count,sessionUsage:{tokens:count*200,reportedReplies:count},collaborativeUsage:{tokens:100,reportedReplies:1}},
@@ -24,7 +25,7 @@ function prepare(app) {
     state.data.users=[state.currentUser,{id:8,loginName:'bob'}];
     state.data.projects[0].ownerId=7;
     state.obsScope='user';state.obsUserFilter='';state.obsUserFilterReady=false;
-    state.obsTrendGrain='all';state.obsTab='overview';
+    state.obsTrendGrain='all';state.obsTab='overview';state.obsVibeView='activity';state.obsSOPView='human';
   `);
 }
 const activityText=app=>app.document.querySelector('[data-obs-card="vibe"]')?.textContent||'';
@@ -106,6 +107,38 @@ test('late personal results cannot overwrite project metrics or a newly selected
   assert.equal(app.evaluate('state.analytics.summary.totalCostCny'),14);
   assert.equal(app.document.querySelector('#obsUserFilter').value,'8');
   assert.match(app.evaluate('buildObsReportHTML()'),/bob/);
+});
+
+test('coding outcomes and SOP performance remain in existing cards and follow owner and period filters', async t => {
+  const app=await loadApp();t.after(app.close);prepare(app);
+  app.router.get(/^\/api\/analytics\?/,call=>snapshot(call.url.searchParams.get('userId')||''));
+  await app.evaluate('refreshObs()');
+  assert.equal(stat(app,'session-tokens'),'200');
+  const vibe=app.document.querySelector('[data-obs-card="vibe"]'),sop=app.document.querySelector('[data-obs-card="human"]');
+  vibe.querySelector('[data-obs-vibe-view="outcomes"]').click();
+  assert.equal(app.document.querySelector('[data-obs-card="vibe"]'),vibe);
+  assert.equal(stat(app,'coding-issues'),'2');assert.equal(stat(app,'coding-pr'),'1');assert.equal(stat(app,'coding-delivered'),'0');
+  assert.equal(vibe.querySelector('.obs-vibe-legend').hidden,true);
+  sop.querySelector('[data-obs-sop-view="performance"]').click();
+  assert.equal(app.document.querySelector('[data-obs-card="human"]'),sop);
+  assert.equal(sop.querySelector('.obs-human-controls').hidden,true);
+  assert.equal(stat(app,'sop-runs'),'1');assert.equal(stat(app,'sop-duration'),'2.0s');assert.equal(stat(app,'tool-success'),'75%');
+  assert.equal(app.document.querySelectorAll('#obsBody [data-obs-card]').length,4);
+  await app.evaluate(`setObsScope('project')`);
+  assert.equal(stat(app,'coding-issues'),'4');assert.equal(stat(app,'coding-pr'),'3');assert.equal(stat(app,'tool-success'),'90%');
+  const data=snapshot();data.dashboard.trend=[
+    {date:'2026-10',sopRuns:2,coding:{issues:5,withMr:4,delivered:3},performance:{measuredRuns:2,averageExecutionDurationMs:4000,p95ExecutionDurationMs:9000,toolCallsSucceeded:2,toolCallsFailed:2}},
+    {date:'2026-11',sopRuns:1,coding:{issues:2,withMr:1,delivered:0},performance:{measuredRuns:0,toolCallsSucceeded:0,toolCallsFailed:1}},
+  ];
+  app.evaluate(`state.analytics=${JSON.stringify(data)};state.obsTrendGrain='month';state.obsPeriodKey='2026-10';renderObservability()`);
+  assert.equal(stat(app,'coding-issues'),'5');assert.equal(stat(app,'coding-delivered'),'3');assert.equal(stat(app,'sop-duration'),'4.0s');assert.equal(stat(app,'tool-success'),'50%');
+  app.evaluate(`state.obsPeriodKey='2026-11';renderObservability()`);
+  assert.equal(stat(app,'coding-issues'),'2');assert.equal(stat(app,'sop-duration'),'—');assert.equal(stat(app,'tool-success'),'0%');
+  const points=app.evaluate(`obsPerformanceOption(state.analytics.dashboard.trend,{theme:OBS_THEME_PRESETS.light,reduced:true}).series[0].data`);
+  assert.equal(points[0],4000);assert.equal(points[1],null,'missing duration samples must not become a fast zero-duration run');
+  app.evaluate(`state.obsPeriodKey='2026-12';renderObservability()`);
+  assert.equal(stat(app,'coding-issues'),'0');assert.equal(stat(app,'sop-duration'),'—');assert.equal(stat(app,'tool-success'),'—');
+  assert.doesNotMatch(app.document.querySelector('#obsBody').textContent,/NaN|Infinity/);
 });
 
 test('overview ratios use the selected period cohort and remain independent of the selected human node', async t => {

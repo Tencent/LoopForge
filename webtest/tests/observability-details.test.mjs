@@ -248,7 +248,7 @@ test('conversation activity cards show counts, collaboration share, periods with
   const metric = key => group().querySelector(`[data-obs-stat="${key}"] .num`).textContent;
   assert.ok(group(), 'the activity group appears on the usage page');
   assert.deepEqual([...group().querySelectorAll('.obs-kpi-label')].map(el => el.textContent),
-    ['会话数', '协作会话', '创建需求', '编码工作区']);
+    ['会话数', '协作会话', '会话 Token', '编码工作区']);
   assert.equal(metric('sessions'),'3');assert.equal(metric('collaborative'),'2');
   assert.equal(group().querySelector('.obs-kpi-foot'),null);
   assert.match(app.evaluate('obsActivityUsageCard(state.analytics.activity,false).value'), /6\.0k/);

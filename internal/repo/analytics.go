@@ -485,7 +485,18 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	// Tool outcome and human-decision facts live in append-only event tables,
 	// not in Run summary columns. Load only matching tool-finish telemetry and
 	// compact control events, then join them back to each auditable Run row.
-	signals, signalErr := r.analyticsRunSignals(includedRunIDs)
+	signalRunIDs := includedRunIDs
+	dashboardRuns := platformRuns
+	if out.Dashboard != nil {
+		var err error
+		dashboardRuns, err = r.analyticsDashboardSignalRuns(platformRuns, filter, issuesByID)
+		if err != nil {
+			out.DataErrors = append(out.DataErrors, "子流程统计读取失败")
+			return out
+		}
+		signalRunIDs = analyticsDashboardSignalIDs(dashboardRuns, filter, issuesByID, signalRunIDs)
+	}
+	signals, signalErr := r.analyticsRunSignals(signalRunIDs)
 	if signalErr != nil {
 		out.DataErrors = append(out.DataErrors, "人工介入统计读取失败")
 		return out
@@ -619,7 +630,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	out.MRMerges, out.Summary.MergedMRsMissingTime = merged, missingMergeTime
 	out.Summary.MergedMRs = len(out.MRMerges)
 	if out.Dashboard != nil {
-		if err := r.analyticsDashboard(filter, platformRuns, issuesByID, workflowDefs, signals, &out); err != nil {
+		if err := r.analyticsDashboard(filter, dashboardRuns, issuesByID, workflowDefs, signals, &out); err != nil {
 			out.DataErrors = append(out.DataErrors, "统计趋势读取失败")
 			return out
 		}

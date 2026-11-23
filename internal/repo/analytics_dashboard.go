@@ -40,12 +40,21 @@ func (r *AnalyticsRepo) analyticsDashboard(filter domain.AnalyticsFilter, runs [
 		byID[run.ID] = run
 	}
 	var durations []int64
+	periodDurations := map[string][]int64{}
+	coding := map[string]map[string]bool{}
+	codingIssues := map[string]bool{}
 	for _, run := range runs {
 		issue := issues[strings.TrimSpace(run.ExecutionContext.IssueID)]
-		if run.IsWorkspace() || run.HistoricalGroup() || run.ExecutionContext.ParentRunID != "" ||
-			!analyticsRunInWindow(run, filter) || !analyticsRunMatchesUser(run, filter.UserID, issue) ||
-			!analyticsIssueMatchesSource(issue, filter.IssueSource) ||
-			(filter.RequirementsOnly && !analyticsIsRequirementIssue(issue)) {
+		if run.IsWorkspace() && issue.ID != "" && analyticsRunInWindow(run, filter) &&
+			analyticsRunMatchesUser(run, filter.UserID, issue) && analyticsIssueMatchesSource(issue, filter.IssueSource) &&
+			(!filter.RequirementsOnly || analyticsIsRequirementIssue(issue)) {
+			date := bucket(run.CreatedAt)
+			if coding[date] == nil {
+				coding[date] = map[string]bool{}
+			}
+			coding[date][issue.ID], codingIssues[issue.ID] = true, true
+		}
+		if !analyticsSOPCohortRun(run, filter, issue) {
 			continue
 		}
 		d.SOPRuns++
@@ -61,7 +70,10 @@ func (r *AnalyticsRepo) analyticsDashboard(filter domain.AnalyticsFilter, runs [
 			point(date).FailedRuns++
 		}
 		if run.Status == "succeeded" || run.Status == "failed" || run.Status == "cancelled" {
-			durations = append(durations, runExecutionDuration(run))
+			if elapsed := runExecutionDuration(run); elapsed > 0 {
+				durations = append(durations, elapsed)
+				periodDurations[date] = append(periodDurations[date], elapsed)
+			}
 		}
 	}
 	// A child SOP's decisions belong to its top-level cohort, without adding a
@@ -82,6 +94,10 @@ func (r *AnalyticsRepo) analyticsDashboard(filter domain.AnalyticsFilter, runs [
 		}
 		date := bucket(root.CreatedAt)
 		signal := signals[run.ID]
+		d.Performance.ToolCallsSucceeded += signal.toolSucceeded
+		d.Performance.ToolCallsFailed += signal.toolFailed
+		point(date).Performance.ToolCallsSucceeded += signal.toolSucceeded
+		point(date).Performance.ToolCallsFailed += signal.toolFailed
 		if signal.interventions > 0 {
 			affected[root.ID] = true
 		}
@@ -120,6 +136,22 @@ func (r *AnalyticsRepo) analyticsDashboard(filter domain.AnalyticsFilter, runs [
 		point(bucket(byID[id].CreatedAt)).HumanRuns++
 	}
 	d.P95ExecutionDurationMs = percentile(durations, 95)
+	applyAnalyticsSOPDurations(&d.Performance, durations)
+	for date, values := range periodDurations {
+		applyAnalyticsSOPDurations(&point(date).Performance, values)
+	}
+	codingStates, err := r.analyticsCodingStates(codingIssues, issues)
+	if err != nil {
+		return err
+	}
+	for id := range codingIssues {
+		addAnalyticsCodingOutcome(&d.Coding, codingStates[id])
+	}
+	for date, ids := range coding {
+		for id := range ids {
+			addAnalyticsCodingOutcome(&point(date).Coding, codingStates[id])
+		}
+	}
 	if err := r.analyticsDashboardDeliveries(filter, issues, func(at time.Time, sop bool) {
 		d.DeliveredIssues++
 		p := point(bucket(at))

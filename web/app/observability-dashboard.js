@@ -7,7 +7,7 @@ function obsSummaryStats(){
   return {...point,delivered:Number(point.sopDelivered||0)+Number(point.vibeDelivered||0)};
 }
 function obsSummaryValues(items,klass=''){
-  return `<div class="obs-summary-values ${klass}">${items.map(([key,label,value])=>`<div class="obs-kpi" data-obs-stat="${key}"><div class="obs-kpi-label">${escapeHTML(label)}</div><div class="obs-kpi-value"><b class="num" data-obs-count>${escapeHTML(value)}</b></div></div>`).join('')}</div>`;
+  return `<div class="obs-summary-values ${klass}">${items.map(([key,label,value,tip])=>`<div class="obs-kpi" data-obs-stat="${key}"${tip?` title="${escapeHTML(tip)}" tabindex="0"`:''}><div class="obs-kpi-label">${escapeHTML(label)}</div><div class="obs-kpi-value"><b class="num" data-obs-count>${escapeHTML(value)}</b></div></div>`).join('')}</div>`;
 }
 function obsSummaryLegend(kind){
   return `<div class="obs-human-legend">${obsDashboardSeries(kind,[]).map((s,i)=>`<span><i class="${i===1?'blue':i===2?'amber':''}"></i>${escapeHTML(s.name)}</span>`).join('')}</div>`;
@@ -24,17 +24,57 @@ function obsSummaryCard(){
   return obsCard('summary',lfT('总览','Overview'),'', '',`<div class="obs-summary-overview">${metrics}<div>${obsChartSlot('dashboard-delivery',spec,156)}${obsSummaryLegend('delivery')}</div></div>`);
 }
 function obsVibeCard(){
+  const spec=obsVibeSpec(),tabs=obsSeg('data-obs-vibe-view',[['activity',lfT('会话','Conversations')],['outcomes',lfT('产出','Outcomes')]],obsVibeView(),true);
+  return obsCard('vibe','Vibe Coding','',tabs,`<div class="obs-vibe-values">${obsVibeValues()}</div>${obsChartSlot('dashboard-vibe',spec,192)}<div class="obs-vibe-legend"${obsVibeView()==='outcomes'?' hidden':''}>${obsSummaryLegend('vibe')}</div>`);
+}
+function obsVibeView(){return state.obsVibeView==='outcomes'?'outcomes':'activity'}
+function obsCodingStats(){
+  const stats=obsSummaryStats();
+  if(stats?.coding)return stats.coding;
+  if(obsTrendGrain()!=='all')return {issues:obsScopedView().conversationIssues,withMr:null,delivered:null};
+  const summary=state.analytics?.summary||{};
+  return {issues:summary.conversationIssues||0,withMr:summary.conversationIssuesWithMr,delivered:summary.conversationIssuesDelivered};
+}
+function obsVibeValues(){
+  if(obsVibeView()==='outcomes'){
+    const coding=obsCodingStats(),n=key=>coding[key]==null?'—':String(coding[key]);
+    return obsSummaryValues([
+      ['coding-issues',lfT('编码需求','Coding issues'),n('issues')],
+      ['coding-pr',lfT('已提 PR 需求','Issues with PRs'),n('withMr')],
+      ['coding-delivered',lfT('已交付需求','Delivered issues'),n('delivered')],
+    ]);
+  }
   const activity=obsActivityView(),view=obsScopedView();
   const n=key=>activity?String(activity[key]||0):'—';
-  const metrics=obsSummaryValues([
+  return obsSummaryValues([
     ['sessions',lfT('会话数','Sessions'),n('sessions')],
     ['collaborative',lfT('协作会话','Collaborative sessions'),n('collaborativeSessions')],
-    ['requirements',lfT('创建需求','Requirements created'),n('requirements')],
+    ['session-tokens',lfT('会话 Token','Conversation tokens'),obsActivityUsageCard(activity,false).value],
     ['workspaces',lfT('编码工作区','Coding workspaces'),String(view.conversationWorkspaces||0)],
   ],'is-vibe');
+}
+function obsCodingRows(){const coding=obsCodingStats();return [
+  {name:lfT('编码需求','Coding issues'),value:coding.issues||0},
+  {name:lfT('已提 PR','With PRs'),value:coding.withMr||0},
+  {name:lfT('已交付','Delivered'),value:coding.delivered||0},
+]}
+function obsCodingOption(rows,opts){
+  const o=obsChartOpts(opts),t=o.theme;
+  return obsChartBase(o,{
+    grid:{left:6,right:48,top:10,bottom:10,containLabel:true},xAxis:obsValueAxis(t,String,{min:0,show:false}),
+    yAxis:{type:'category',inverse:true,data:rows.map(r=>r.name),axisLine:{show:false},axisTick:{show:false},axisLabel:{color:t.muted,fontSize:12}},
+    tooltip:{...obsTooltipBase(t),trigger:'item',formatter:p=>obsTooltipRows(rows[p.dataIndex]?.name||'',[[lfT('需求数','Issues'),String(rows[p.dataIndex]?.value||0)],[lfT('占编码需求','Share of coding issues'),(rows[0]?.value?(rows[p.dataIndex]?.value||0)*100/rows[0].value:0).toFixed(1)+'%']])},
+    series:[{type:'bar',barMaxWidth:22,showBackground:true,backgroundStyle:{color:t.panel2},data:rows.map((r,i)=>({value:r.value,itemStyle:{color:i===2?t.c1:t.c2}})),label:{show:true,position:'right',color:t.text,fontSize:13},animationDurationUpdate:o.reduced?0:350}],
+  });
+}
+function obsVibeSpec(){
+  if(obsVibeView()==='outcomes'){
+    const rows=obsCodingRows(),coding=obsCodingStats(),available=coding.withMr!=null&&coding.delivered!=null;
+    return {empty:!rows[0].value||!available,emptyText:lfT('暂无编码产出统计','No coding outcomes'),option:(theme,reduced)=>obsCodingOption(rows,{theme:obsDashboardPalette(theme),reduced}),fallback:()=>`<div class="obs-token-table"><table class="obs-table"><thead><tr><th>${lfT('阶段','Stage')}</th><th>${lfT('需求数','Issues')}</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${escapeHTML(r.name)}</td><td>${r.value}</td></tr>`).join('')}</tbody></table></div>`};
+  }
   const points=obsTrendWindow(state.analytics?.activityTrend||[]),spec=obsDashboardSpec('vibe',points);
   spec.empty=!points.some(p=>p.sessions||p.collaborativeSessions);spec.emptyText=lfT('暂无会话','No sessions');
-  return obsCard('vibe','Vibe Coding','','',metrics+obsChartSlot('dashboard-vibe',spec,192)+obsSummaryLegend('vibe'));
+  return spec;
 }
 function obsSummaryCostCard(){
   const view=obsScopedView();
@@ -111,31 +151,93 @@ function obsHumanTrendCard(){
   const metric=obsSeg('data-obs-human-metric',[
     ['normalized',lfT('每百次运行','Per 100 runs')],['count',lfT('介入次数','Decisions')],
   ],state.obsDashboardMetric||'normalized',true);
-  const points=obsHumanPoints(),spec=obsDashboardSpec('human',points);spec.empty=!points.some(p=>p.sopRuns);spec.emptyText=lfT('暂无 SOP 运行','No SOP runs');
-  return obsCard('human',lfT('SOP 人工介入点趋势','SOP intervention trend'),'',`<div class="obs-human-controls">${node}${metric}</div>`,obsChartSlot('dashboard-human',spec,244)+obsSummaryLegend('human'),{expand:true});
+  const performance=obsSOPView()==='performance',tabs=obsSeg('data-obs-sop-view',[['human',lfT('人工介入','Interventions')],['performance',lfT('执行效率','Performance')]],obsSOPView(),true);
+  return obsCard('human',performance?lfT('SOP 执行效率','SOP performance'):lfT('SOP 人工介入点趋势','SOP intervention trend'),'',tabs,`<div class="obs-human-controls"${performance?' hidden':''}>${node}${metric}</div><div class="obs-sop-values"${performance?'':' hidden'}>${performance?obsSOPValues():''}</div>${obsChartSlot('dashboard-human',obsSOPSpec(),196)}<div class="obs-sop-legend">${obsSOPLegend()}</div>`,{expand:true});
+}
+function obsSOPView(){return state.obsSOPView==='performance'?'performance':'human'}
+function obsSOPValues(){
+  const stats=obsSummaryStats(),p=stats?.performance||{},ok=Number(p.toolCallsSucceeded||0),bad=Number(p.toolCallsFailed||0);
+  return obsSummaryValues([
+    ['sop-runs',lfT('SOP 运行','SOP runs'),stats?String(stats.sopRuns||0):'—',stats?lfT(`成功 ${stats.succeededRuns||0} / 失败 ${stats.failedRuns||0}`,`${stats.succeededRuns||0} succeeded / ${stats.failedRuns||0} failed`):''],
+    ['sop-duration',lfT('平均执行耗时','Mean execution time'),p.measuredRuns?duration(p.averageExecutionDurationMs):'—',p.measuredRuns?`P95 ${duration(p.p95ExecutionDurationMs)}`:''],
+    ['tool-success',lfT('工具成功率','Tool success rate'),ok+bad?Math.round(ok*100/(ok+bad))+'%':'—',ok+bad?lfT(`成功 ${ok} / 失败 ${bad}`,`${ok} succeeded / ${bad} failed`):''],
+  ]);
+}
+function obsSOPLegend(){
+  return obsSOPView()==='human'?obsSummaryLegend('human'):`<div class="obs-human-legend"><span><i></i>${lfT('平均执行耗时','Mean execution time')}</span><span><i class="blue"></i>${lfT('P95 执行耗时','P95 execution time')}</span></div>`;
+}
+function obsPerformanceOption(points,opts){
+  const o=obsChartOpts(opts),t=o.theme;
+  return obsChartBase(o,{
+    grid:{left:6,right:12,top:18,bottom:6,containLabel:true},xAxis:obsCategoryAxis(t,points.map(obsTrendLabel),{boundaryGap:false}),
+    yAxis:obsValueAxis(t,v=>v?duration(v):'0',{min:0}),
+    tooltip:{...obsTooltipBase(t),trigger:'axis',formatter:params=>{
+      const point=points[params?.[0]?.dataIndex];if(!point)return '';
+      const p=point.performance||{},ok=Number(p.toolCallsSucceeded||0),bad=Number(p.toolCallsFailed||0);
+      return obsTooltipRows(point.date,[[lfT('平均执行耗时','Mean execution time'),p.measuredRuns?duration(p.averageExecutionDurationMs):'—'],['P95',p.measuredRuns?duration(p.p95ExecutionDurationMs):'—'],[lfT('有耗时记录的运行','Measured runs'),String(p.measuredRuns||0)],[lfT('工具成功率','Tool success rate'),ok+bad?(ok*100/(ok+bad)).toFixed(1)+'%':'—']]);
+    }},
+    series:[['averageExecutionDurationMs',lfT('平均执行耗时','Mean execution time'),t.c1],['p95ExecutionDurationMs','P95',t.c2]].map(([key,name,color])=>({id:key,name,type:'line',data:points.map(p=>p.performance?.measuredRuns?Number(p.performance[key]||0):null),connectNulls:false,itemStyle:{color},lineStyle:{color,width:2,type:key==='p95ExecutionDurationMs'?'dashed':'solid'},symbol:'circle',symbolSize:4,animationDurationUpdate:o.reduced?0:350})),
+  });
+}
+function obsSOPSpec(){
+  if(obsSOPView()==='performance'){
+    const points=obsTrendWindow(state.analytics?.dashboard?.trend||[]);
+    return {empty:!points.some(p=>p.performance?.measuredRuns),emptyText:lfT('暂无执行耗时记录','No execution timings'),option:(theme,reduced)=>obsPerformanceOption(points,{theme:obsDashboardPalette(theme),reduced}),fallback:()=>obsPerformanceFallback(points)};
+  }
+  const points=obsHumanPoints(),spec=obsDashboardSpec('human',points);spec.empty=!points.some(p=>p.sopRuns);spec.emptyText=lfT('暂无 SOP 运行','No SOP runs');return spec;
+}
+function obsPerformanceFallback(points){
+  return `<div class="obs-token-table"><table class="obs-table"><thead><tr><th>${lfT('日期','Date')}</th><th>${lfT('平均执行','Mean')}</th><th>P95</th></tr></thead><tbody>${points.map(p=>`<tr><td>${escapeHTML(p.date)}</td><td>${p.performance?.measuredRuns?duration(p.performance.averageExecutionDurationMs):'—'}</td><td>${p.performance?.measuredRuns?duration(p.performance.p95ExecutionDurationMs):'—'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function obsUpdatePanelChart(card,key,spec,height){
+  obsChartSpecs[key]=spec;
+  const entry=obsChartEntry(key),el=card.querySelector(`[data-obs-chart="${key}"]`);
+  if(entry&&entry.el===el&&!spec.empty){
+    for(const name of Object.keys(entry.spec.on||{}))entry.chart.off(name);
+    entry.spec=spec;entry.chart.setOption(spec.option(obsEChartsTheme(),obsReducedMotion()),{notMerge:true});obsBindChartEvents(entry);
+  }
+  else {
+    obsDisposeCharts(el);const template=document.createElement('template');template.innerHTML=obsChartSlot(key,spec,height);el.replaceWith(template.content.firstElementChild);
+  }
+  obsMountCharts(card);
 }
 function obsUpdateHumanTrend(card){
-  const points=obsHumanPoints(),key='dashboard-human',spec=obsDashboardSpec('human',points);
-  spec.empty=!points.some(p=>p.sopRuns);spec.emptyText=lfT('暂无 SOP 运行','No SOP runs');obsChartSpecs[key]=spec;
-  const entry=obsChartEntry(key),el=card.querySelector('[data-obs-chart="dashboard-human"]');
   card.querySelectorAll('[data-obs-human-metric]').forEach(b=>{
     const active=b.dataset.obsHumanMetric===(state.obsDashboardMetric||'normalized');
     b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));
   });
-  if(entry&&entry.el===el){entry.spec=spec;entry.chart.setOption(spec.option(obsEChartsTheme(),obsReducedMotion()),{replaceMerge:['series']})}
-  else if(el?.classList.contains('is-fallback'))obsChartFallback(el,spec);
-  else obsMountCharts(card);
+  obsUpdatePanelChart(card,'dashboard-human',obsSOPSpec(),196);
 }
 function obsBindHumanTrendActions(root){
   const cards=[...root.querySelectorAll('[data-obs-card="human"]')];
   if(root.matches?.('[data-obs-card="human"]'))cards.push(root);
   cards.forEach(card=>{
+    card.querySelectorAll('[data-obs-sop-view]').forEach(button=>{button.setAttribute('aria-pressed',String(button.dataset.obsSopView===obsSOPView()));button.onclick=()=>{
+      state.obsSOPView=button.dataset.obsSopView;const performance=obsSOPView()==='performance';
+      card.querySelectorAll('[data-obs-sop-view]').forEach(b=>{const active=b.dataset.obsSopView===obsSOPView();b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active))});
+      card.querySelector('h3').textContent=performance?lfT('SOP 执行效率','SOP performance'):lfT('SOP 人工介入点趋势','SOP intervention trend');
+      card.querySelector('.obs-human-controls').hidden=performance;
+      const values=card.querySelector('.obs-sop-values');values.hidden=!performance;values.innerHTML=performance?obsSOPValues():'';
+      card.querySelector('.obs-sop-legend').innerHTML=obsSOPLegend();obsUpdateHumanTrend(card);
+    }});
     const select=card.querySelector('#obsHumanNode');
     if(select)select.onchange=()=>{state.obsDashboardNode=select.value;obsUpdateHumanTrend(card)};
     card.querySelectorAll('[data-obs-human-metric]').forEach(b=>{
       b.setAttribute('aria-pressed',String(b.dataset.obsHumanMetric===(state.obsDashboardMetric||'normalized')));
       b.onclick=()=>{state.obsDashboardMetric=b.dataset.obsHumanMetric;obsUpdateHumanTrend(card)};
     });
+  });
+}
+
+function obsBindVibeActions(root){
+  root.querySelectorAll('[data-obs-vibe-view]').forEach(button=>{
+    button.setAttribute('aria-pressed',String(button.dataset.obsVibeView===obsVibeView()));
+    button.onclick=()=>{
+      state.obsVibeView=button.dataset.obsVibeView;const card=button.closest('[data-obs-card="vibe"]');
+      card.querySelectorAll('[data-obs-vibe-view]').forEach(b=>{const active=b.dataset.obsVibeView===obsVibeView();b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active))});
+      card.querySelector('.obs-vibe-values').innerHTML=obsVibeValues();card.querySelector('.obs-vibe-legend').hidden=obsVibeView()==='outcomes';
+      obsUpdatePanelChart(card,'dashboard-vibe',obsVibeSpec(),192);
+    };
   });
 }
 

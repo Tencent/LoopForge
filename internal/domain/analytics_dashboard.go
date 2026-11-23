@@ -4,6 +4,9 @@ package domain
 // interventions describe top-level internal SOPs; delivery uses the first
 // observed merge to a repository's default branch, independently of run dates.
 type AnalyticsDashboard struct {
+	Coding      AnalyticsCodingOutcome  `json:"coding"`
+	Performance AnalyticsSOPPerformance `json:"performance"`
+
 	SOPRuns                int                          `json:"sopRuns"`
 	SucceededRuns          int                          `json:"succeededRuns"`
 	FailedRuns             int                          `json:"failedRuns"`
@@ -19,6 +22,9 @@ type AnalyticsDashboard struct {
 }
 
 type AnalyticsDashboardPoint struct {
+	Coding      AnalyticsCodingOutcome  `json:"coding"`
+	Performance AnalyticsSOPPerformance `json:"performance"`
+
 	Date          string `json:"date"`
 	SOPRuns       int    `json:"sopRuns"`
 	SucceededRuns int    `json:"succeededRuns"`
@@ -26,6 +32,22 @@ type AnalyticsDashboardPoint struct {
 	HumanRuns     int    `json:"humanRuns"`
 	SOPDelivered  int    `json:"sopDelivered"`
 	VibeDelivered int    `json:"vibeDelivered"`
+}
+
+// Coding outcomes describe the current PR/delivery state of distinct issues
+// linked to coding workspaces created in this cohort, not all created issues.
+type AnalyticsCodingOutcome struct {
+	Issues    int `json:"issues"`
+	WithMR    int `json:"withMr"`
+	Delivered int `json:"delivered"`
+}
+
+type AnalyticsSOPPerformance struct {
+	MeasuredRuns               int   `json:"measuredRuns"`
+	AverageExecutionDurationMs int64 `json:"averageExecutionDurationMs"`
+	P95ExecutionDurationMs     int64 `json:"p95ExecutionDurationMs"`
+	ToolCallsSucceeded         int   `json:"toolCallsSucceeded"`
+	ToolCallsFailed            int   `json:"toolCallsFailed"`
 }
 
 type AnalyticsHumanCounts struct {
