@@ -253,3 +253,35 @@ test("leaving the conversation clears the cards and the pending request", async 
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test.each(["conversation", "generation"])("a late decision from the previous %s leaves the current approval alone", async (scope) => {
+  const first = { ...chat, generation: { id: "turn1" } };
+  const second = scope === "conversation"
+    ? { ...first, session: { id: "chat2" } }
+    : { ...first, generation: { id: "turn2" } };
+  const next = { ...item, id: "a2", input: { command: "git push origin next" } };
+  let rejectPrevious;
+  let finishCurrent;
+  apiMock.mockResolvedValue([item]);
+  writeMock
+    .mockImplementationOnce(() => new Promise((_, reject) => { rejectPrevious = reject; }))
+    .mockImplementationOnce(() => new Promise((resolve) => { finishCurrent = resolve; }));
+  const view = render(<Probe chat={first} />);
+  await settle();
+  fireEvent.click(screen.getByRole("button", { name: "批准本次操作" }));
+
+  apiMock.mockResolvedValue([next]);
+  view.rerender(<Probe chat={second} />);
+  await settle();
+  await advance(1000);
+  fireEvent.click(screen.getByRole("button", { name: "批准本次操作" }));
+  await act(async () => {
+    rejectPrevious(Object.assign(new Error("上一次审批已失效"), { status: 409 }));
+  });
+
+  expect(screen.getByRole("button", { name: "批准本次操作" })).toBeDisabled();
+  expect(screen.queryByText("上一次审批已失效")).toBeNull();
+  expect(screen.getByText("git push origin next")).toBeInTheDocument();
+  await act(async () => { finishCurrent({}); });
+  expect(cardCount()).toBe(0);
+});

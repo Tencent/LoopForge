@@ -33,68 +33,53 @@ const byCreatedAt = (a, b) =>
 export function useNativeApprovals(chat) {
   const id = chat?.session?.id;
   const userId = chat?.user?.id;
+  const generationId = chat?.generation?.id;
   const enabled = Boolean(id) && !chat?.local && !chat?.readOnly && Boolean(chat?.busy);
   const [items, setItems] = useState([]);
   const [saving, setSaving] = useState("");
   const [loadError, setLoadError] = useState("");
   const [decideError, setDecideError] = useState("");
   const [expired, setExpired] = useState("");
-  // A decision can overtake a request that was already in flight: that older
-  // answer must not bring a decided card back. Later answers are still trusted,
-  // so a card the server still reports simply reappears.
-  const decidedAt = useRef(new Map());
-  // Switching conversations drops the previous one's cards and notices. An
-  // "approval expired" line is only true of the turn it was raised in, so the
-  // turn ending, another conversation or a fresh pending write all clear it.
-  const openSession = useRef(id);
+  const activeTurn = useRef(null);
   useEffect(() => {
-    if (openSession.current === id) return;
-    openSession.current = id;
-    decidedAt.current = new Map();
+    // Approval requests and notices belong to this speaker's current turn.
     setExpired("");
-    // Another conversation has its own pending writes; none of this one's
-    // cards or errors may survive the switch.
     setItems((old) => (old.length ? [] : old));
     setSaving("");
     setLoadError("");
     setDecideError("");
-  }, [id]);
-  useEffect(() => {
-    if (!enabled) {
-      setItems((old) => (old.length ? [] : old));
-      setSaving("");
-      setLoadError("");
-      setDecideError("");
-      setExpired("");
-      return undefined;
-    }
-    let closed = false;
+    if (!enabled) return undefined;
+
+    // A poll started before a decision must not bring its card back.
+    const turn = { decidedAt: new Map() };
+    activeTurn.current = turn;
     async function refresh() {
       const startedAt = Date.now();
       try {
         const result = await api(`${sessionPath(id)}/native-approvals`);
-        if (closed) return;
+        if (activeTurn.current !== turn) return;
         const mine = (Array.isArray(result) ? result : [])
           .filter((item) => item.actorId === userId)
-          .filter((item) => !(decidedAt.current.get(item.id) >= startedAt))
+          .filter((item) => !(turn.decidedAt.get(item.id) >= startedAt))
           .sort(byCreatedAt);
         if (mine.length) setExpired("");
         setItems((old) => (isSame(old, mine) ? old : mine));
         setLoadError("");
       } catch (e) {
-        if (!closed) setLoadError(e.message || "获取待审批操作失败");
+        if (activeTurn.current === turn) setLoadError(e.message || "获取待审批操作失败");
       }
     }
     void refresh();
     const timer = setInterval(refresh, APPROVAL_POLL_MS);
     return () => {
-      closed = true;
+      activeTurn.current = null;
       clearInterval(timer);
     };
-  }, [id, enabled, userId]);
+  }, [id, enabled, userId, generationId]);
   const decide = useCallback(
     async (item, decision) => {
-      if (!item?.id || !id) return;
+      const turn = activeTurn.current;
+      if (!item?.id || !turn) return;
       setSaving(item.id);
       setDecideError("");
       setExpired("");
@@ -102,19 +87,23 @@ export function useNativeApprovals(chat) {
         await write(`${sessionPath(id)}/native-approvals/${encodeURIComponent(item.id)}`, {
           decision,
         });
-        decidedAt.current.set(item.id, Date.now());
+        if (activeTurn.current !== turn) return;
+        turn.decidedAt.set(item.id, Date.now());
         setItems((old) => old.filter((row) => row.id !== item.id));
       } catch (e) {
+        if (activeTurn.current !== turn) return;
         if (e?.status === 409) {
           // The turn this card belonged to is over; the approval cannot apply.
-          decidedAt.current.set(item.id, Date.now());
+          turn.decidedAt.set(item.id, Date.now());
           setExpired(e.message || "本轮已结束，审批已失效");
           setItems((old) => old.filter((row) => row.id !== item.id));
         } else {
           setDecideError(e?.message || "审批失败，请重试");
         }
       } finally {
-        setSaving("");
+        if (activeTurn.current === turn) {
+          setSaving((current) => current === item.id ? "" : current);
+        }
       }
     },
     [id],
