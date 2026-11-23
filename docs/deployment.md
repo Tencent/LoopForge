@@ -101,7 +101,7 @@ Enterprise authentication gateways can sign users in by header with `AGENTFLOW_T
 
 The platform exposes a built-in default sandbox (`generic-docker`, built from its own Dockerfile) even when the catalog SQL has not been installed. It is an in-memory fallback and does not insert database rows. An existing saved `generic-docker` profile takes priority, including its configured driver and environment. The default cannot be deleted; edit its configuration or create another profile to change how tasks run. SOPs that do not choose a sandbox run in it. The full installer still imports starter SOPs and the welcome project; the seeded `generic-docker` Dockerfile matches the platform image, so Compose sandboxes reuse `AGENTFLOW_ISOLATED_IMAGE` instead of building. Without the catalog SQL, the first run builds the built-in Dockerfile once.
 
-`native` sandboxes run on whichever machine executes the work, whether a user's execution machine, a cloud runner or the platform host, with that machine's own toolchains and only their environment variables; there are no install scripts. Each machine keeps a repository cache under its workspace root (`.repository-cache/<repository id>.git`), refreshed outside the sandbox, and checks repositories of native workspaces out as `git clone --shared` from it; Docker sandboxes keep full clones. The Compose platform image has no bwrap, so run native work on Runners or a natively installed platform; see [conversation workspaces](conversation-workspaces.md#仓库缓存). The `local` sandbox type is removed: `migrations/040_native_sandbox_inline_assets.sql` turns existing local sandboxes into native ones and moves the built-in SOPs that used the old shared `local` profile to `generic-docker`.
+`native` sandboxes run on whichever machine executes the work, whether a user's execution machine, a cloud runner or the platform host, with that machine's own toolchains and only their environment variables; there are no install scripts. Each machine keeps a repository cache under its workspace root (`.repository-cache/<repository id>.git`), refreshed outside the sandbox, and checks repositories of native workspaces out as `git clone --shared` from it; Docker sandboxes keep full clones. The Compose platform image has no bwrap, so run native work on Runners or a natively installed platform; see [conversation workspaces](conversation-workspaces.md#仓库缓存). The `local` sandbox type is removed: `migrations/041_native_sandbox_inline_assets.sql` turns existing local sandboxes into native ones and moves the built-in SOPs that used the old shared `local` profile to `generic-docker`.
 
 For native services running as an ordinary host user, default/root Docker images run with that service user's UID/GID so private workspaces remain accessible without relaxing their permissions or adding capabilities. Images that explicitly select a non-root user retain that identity; operators must arrange compatible bind-mount ownership for those images.
 
@@ -189,7 +189,7 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 ## Observability schema
 
-After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog, the built-in catalog rewrites from `033_generic_sop_mr_node.sql` and `038_generic_sop_host_credentials.sql`, and `040_native_sandbox_inline_assets.sql`, which applies the `031_generic_backend_openssh.sql` update, moves Dockerfiles into their sandboxes, turns local sandboxes into native ones and drops install scripts, in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in SOP graphs the new code ships. Application startup does not run data migrations.
+After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog, the built-in catalog rewrites from `033_generic_sop_mr_node.sql` and `038_generic_sop_host_credentials.sql`, in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in SOP graphs the new code ships. Application startup does not run data migrations.
 
 For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly.
 
@@ -199,9 +199,19 @@ For an external MySQL deployment, review that migration and check column existen
 
 | Kind | Example | What an operator does |
 | --- | --- | --- |
-| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql`, `040_native_sandbox_inline_assets.sql` (which carries the `031_generic_backend_openssh.sql` update) | Nothing; the script above covers it |
-| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
+| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
+| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql`, `041_native_sandbox_inline_assets.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
+
+### Migrating existing sandboxes to inline assets
+
+Before starting the upgraded platform, stop the old platform and any other processes using the database. Keep MySQL running, back up the database and manually apply `migrations/041_native_sandbox_inline_assets.sql`. For Compose installations, run:
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/041_native_sandbox_inline_assets.sql
+```
+
+The migration copies Dockerfiles into sandboxes, converts local sandboxes to native, drops the legacy Dockerfile and environment tables and includes the built-in Dockerfile fix from `031_generic_backend_openssh.sql`. Fresh installations seed the new sandbox format directly.
 
 ## Updating existing public SOPs
 

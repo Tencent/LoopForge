@@ -60,7 +60,7 @@ Docker 与 bwrap 下两种模式的 CLI 都在 `<会话根>/ws` 运行（工作�
 - **对话工作区**：打开时仍是空目录。平台在打开时让执行机器在后台预热项目仓库的缓存（同一份缓存 5 分钟内最多一次）。每轮发给 Agent 的仓库清单前附一段说明：先从 `$LOOPFORGE_REPOSITORY_CACHE/<仓库 id>.git` `git clone --shared`，再 `git remote set-url origin <cloneUrl>`；缓存不存在时照常 clone。缓存目录在沙箱里只读。
 - **快照与删除**：保存工作区快照前，平台把共享克隆借用的对象复制进来（`git repack -a -d` 后删除 alternates），快照在没有这份缓存的机器上也能恢复。删除工作区只删除工作区目录，缓存留在机器上供之后使用。
 
-local 沙箱类型已移除。`migrations/040_native_sandbox_inline_assets.sql` 把现有 local 沙箱改成 native（丢弃绑定的执行机器、基础目录和仓库路径），删除环境安装脚本和 native 沙箱环境变量里的 `PATH`，并把引用旧 local 沙箱的内置 SOP 改到 `generic-docker`（部署时由安装脚本执行，手动部署需要自己运行）。尚未迁移的 local 行读出时按 native 处理；冻结了 local 沙箱的旧运行会提示改用 native 后重新发起。
+local 沙箱类型已移除。`migrations/041_native_sandbox_inline_assets.sql` 把现有 local 沙箱改成 native（丢弃绑定的执行机器、基础目录和仓库路径），删除环境安装脚本和 native 沙箱环境变量里的 `PATH`，并把引用旧 local 沙箱的内置 SOP 改到 `generic-docker`。现有部署在启动新版本前手动执行此迁移。尚未迁移的 local 行读出时按 native 处理；冻结了 local 沙箱的旧运行会提示改用 native 后重新发起。
 
 `PUT /api/assistant/sessions/{id}/sandbox` 接受 `{ "sandboxProfileId": "id 或空字符串" }`，具备项目访问权限的会话参与者均可调用；生成期间和任务会话拒绝变更。已有工作区不受影响，新选择只用于之后新开的工作区。普通会话创建时也可以提交 `sandboxProfileId`，后续普通会话保存不能覆盖已保存的选择或伪造工作区绑定。
 

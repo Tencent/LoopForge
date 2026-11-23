@@ -35,7 +35,7 @@ class InstallerTests(unittest.TestCase):
         for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh', 'install-schema-extensions.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
-        for name in ('001_run_obs_generated_columns.sql', '033_generic_sop_mr_node.sql', '038_generic_sop_host_credentials.sql', '040_native_sandbox_inline_assets.sql'):
+        for name in ('001_run_obs_generated_columns.sql', '033_generic_sop_mr_node.sql', '038_generic_sop_host_credentials.sql', '041_native_sandbox_inline_assets.sql'):
             (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
         (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
         (self.root / 'mock').mkdir()
@@ -461,6 +461,7 @@ esac
         self.assertIn('ALTER TABLE run_telemetry', sql)
         self.assertIn('ALTER TABLE run_logs', sql)
         self.assertIn('INSERT IGNORE', sql)
+        self.assertNotIn('DROP TABLE IF EXISTS dockerfiles', sql)
         # The 「发起 MR」 node of the code delivery SOPs is replayed too, instead
         # of waiting for an operator to run migration 033 by hand.
         self.assertIn('JSON_ARRAY_APPEND', sql)

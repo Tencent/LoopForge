@@ -9,8 +9,8 @@
 --
 -- 1. Each docker sandbox copies the Dockerfile it referenced.
 -- 2. A Dockerfile no docker sandbox used becomes a docker sandbox, keeping its
---    name, project and sharing. The sandbox takes the Dockerfile's ID, or the
---    ID with a "-docker" suffix when a sandbox already has it.
+--    name, project and sharing. It keeps the Dockerfile ID when available, then
+--    tries a "-docker" suffix and finally a derived ID if the suffix is taken.
 -- 3. Each local sandbox becomes a native sandbox: its execution machine,
 --    checkout directory and repository paths are dropped, and it keeps its
 --    environment variables.
@@ -21,11 +21,9 @@
 --    generic-docker, and a 「对话工作区」 preference for local becomes native.
 -- 6. The legacy tables are dropped.
 --
--- The tables are created first when missing, so the script also runs cleanly
--- on a fresh database and when run again. Docker images are keyed by the
--- Dockerfile content and are reused.
--- scripts/install-schema-extensions.sh runs this on install and on
--- ./start.sh pull.
+-- Missing legacy tables are treated as empty so the migration can be repeated.
+-- Docker images are keyed by the Dockerfile content and are reused.
+-- Apply manually to existing databases before starting the upgraded platform.
 
 SET NAMES utf8mb4;
 
@@ -45,6 +43,23 @@ CREATE TABLE IF NOT EXISTS environments (
   PRIMARY KEY (`id`)
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Keep the additive DDL outside the data transaction. Startup AutoMigrate
+-- also adds this column. Older schemas may have no preference table.
+SET @assistant_preferences_exists = EXISTS (
+  SELECT 1 FROM information_schema.tables
+  WHERE table_schema = DATABASE() AND table_name = 'assistant_preferences');
+SET @assistant_workspace_driver_sql = IF(
+  @assistant_preferences_exists AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'assistant_preferences' AND column_name = 'workspace_driver'),
+  'ALTER TABLE assistant_preferences ADD COLUMN workspace_driver VARCHAR(16) NOT NULL DEFAULT ''''',
+  'DO 0');
+PREPARE assistant_workspace_driver_stmt FROM @assistant_workspace_driver_sql;
+EXECUTE assistant_workspace_driver_stmt;
+DEALLOCATE PREPARE assistant_workspace_driver_stmt;
+
+START TRANSACTION;
+
 -- The openssh-client fix of 031, for installs that copy an unmodified
 -- generic-backend Dockerfile.
 UPDATE dockerfiles
@@ -63,7 +78,7 @@ WHERE JSON_UNQUOTE(JSON_EXTRACT(s.payload, '$.driver')) = 'docker'
   AND JSON_EXTRACT(s.payload, '$.dockerfile') IS NULL;
 
 -- 2. Wrap unused Dockerfiles as sandboxes of their own.
-INSERT IGNORE INTO sandboxes (`id`, `name`, `payload`)
+INSERT INTO sandboxes (`id`, `name`, `payload`)
 SELECT w.sid, d.name, JSON_MERGE_PATCH(
   JSON_OBJECT('id', w.sid, 'name', d.name, 'driver', 'docker', 'readOnlyRootFS', false,
     'dockerfile', JSON_MERGE_PATCH(
@@ -73,9 +88,17 @@ SELECT w.sid, d.name, JSON_MERGE_PATCH(
   JSON_OBJECT('shared', IF(JSON_EXTRACT(d.payload, '$.shared') = true, CAST('true' AS JSON), NULL)))
 FROM dockerfiles d
 JOIN (
-  SELECT d2.id AS did,
-    IF(EXISTS (SELECT 1 FROM sandboxes x WHERE x.id = d2.id COLLATE utf8mb4_unicode_ci), CONCAT(LEFT(d2.id, 57), '-docker'), d2.id) AS sid
-  FROM dockerfiles d2
+  SELECT legacy.id AS did,
+    CASE
+      WHEN NOT EXISTS (SELECT 1 FROM sandboxes s WHERE s.id = legacy.id COLLATE utf8mb4_unicode_ci)
+        THEN legacy.id
+      WHEN CHAR_LENGTH(legacy.id) <= 57
+        AND NOT EXISTS (SELECT 1 FROM sandboxes s WHERE s.id = CONCAT(legacy.id, '-docker') COLLATE utf8mb4_unicode_ci)
+        AND NOT EXISTS (SELECT 1 FROM dockerfiles d WHERE d.id = CONCAT(legacy.id, '-docker') COLLATE utf8mb4_unicode_ci)
+        THEN CONCAT(legacy.id, '-docker')
+      ELSE CONCAT('dockerfile-', LEFT(SHA2(legacy.id, 256), 53))
+    END AS sid
+  FROM dockerfiles legacy
 ) w ON w.did = d.id
 WHERE NOT EXISTS (
   SELECT 1 FROM sandboxes s
@@ -113,19 +136,17 @@ SET payload = JSON_SET(payload, '$.sandboxProfileId', 'generic-docker')
 WHERE id IN ('welcome-workflow', 'scheduled-baseline-align')
   AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.sandboxProfileId')), '') IN ('', 'local');
 
--- Startup AutoMigrate also adds this column; it is added here for
--- deployments that apply DDL by hand.
-SET @assistant_workspace_driver_ddl = IF(
- (SELECT COUNT(*) FROM information_schema.tables
-  WHERE table_schema=DATABASE() AND table_name='assistant_preferences')=0,
- 'SELECT 1',
- IF((SELECT COUNT(*) FROM information_schema.columns
-     WHERE table_schema=DATABASE() AND table_name='assistant_preferences' AND column_name='workspace_driver')=0,
-  'ALTER TABLE assistant_preferences ADD COLUMN workspace_driver VARCHAR(16) NOT NULL DEFAULT ''''',
-  'UPDATE assistant_preferences SET workspace_driver = ''native'' WHERE workspace_driver = ''local'''));
-PREPARE assistant_workspace_driver_stmt FROM @assistant_workspace_driver_ddl;
+SET @assistant_workspace_driver_sql = IF(@assistant_preferences_exists,
+  'UPDATE assistant_preferences SET workspace_driver = ''native'' WHERE workspace_driver = ''local''',
+  'DO 0');
+PREPARE assistant_workspace_driver_stmt FROM @assistant_workspace_driver_sql;
 EXECUTE assistant_workspace_driver_stmt;
 DEALLOCATE PREPARE assistant_workspace_driver_stmt;
+
+-- Mark the Dockerfiles as copied in the same transaction as the new payloads.
+-- A retry after COMMIT but before DROP will not make a sandbox for them again.
+DELETE FROM dockerfiles;
+COMMIT;
 
 -- 6. Drop the legacy tables.
 DROP TABLE IF EXISTS dockerfiles, environments;

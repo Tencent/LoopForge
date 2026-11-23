@@ -3,10 +3,8 @@
 # AutoMigrate cannot create: the generated columns from migration 001, the
 # INSERT IGNORE starter catalog, the 「发起 MR」 node of the built-in code delivery
 # SOPs from migration 033, the MR roles' Git credential instructions from
-# migration 038, and migration 040, which moves Dockerfiles into their
-# sandboxes, turns local sandboxes into native ones and drops install scripts
-# (it carries the built-in Dockerfile update of migration 031). All steps are safe to repeat, so the installer and
-# `./start.sh pull` run it after the platform is healthy.
+# migration 038. The installer and `./start.sh pull` replay these steps
+# after the platform is healthy.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/docker-access.sh
@@ -19,5 +17,4 @@ fi
 cat migrations/seed/*.sql \
   migrations/033_generic_sop_mr_node.sql \
   migrations/038_generic_sop_host_credentials.sql \
-  migrations/040_native_sandbox_inline_assets.sql \
   | docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge'

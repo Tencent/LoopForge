@@ -24,7 +24,7 @@ function flag(name, fallback) {
 
 const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(2, 14);
 
-// SOPs cannot use local sandboxes; ensureProject provisions this one.
+// ensureProject provisions this native sandbox for SOP tests.
 export const defaultSandbox = 'e2e-native';
 
 export const cfg = {
