@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -205,28 +204,6 @@ func TestWorkspacePreparationDoesNotReadOutsideState(t *testing.T) {
 	if state := ReadWorkspacePreparationStatus(workspace); state.Status != "unprepared" {
 		t.Fatalf("read outside state: %#v", state)
 	}
-}
-
-func TestEnvironmentInstallRejectsSymlinkStamp(t *testing.T) {
-	workspace := t.TempDir()
-	root := filepath.Join(workspace, ".agentflow", "environment", "env")
-	if err := os.MkdirAll(root, 0700); err != nil {
-		t.Fatal(err)
-	}
-	victim := filepath.Join(t.TempDir(), "keep")
-	putSecurityFixture(t, victim, "keep")
-	if err := os.Symlink(victim, filepath.Join(root, installStampName)); err != nil {
-		t.Fatal(err)
-	}
-	sb := &provisionSandbox{workspace: workspace}
-	activated := activatedEnvironment{Root: root, InstallRel: "install.sh", InstallScript: "echo bad"}
-	if err := runEnvironmentInstall(context.Background(), sb, activated); err == nil {
-		t.Fatal("symlink accepted")
-	}
-	if sb.commands != 0 {
-		t.Fatal("installation ran before validating marker")
-	}
-	checkSecurityFixture(t, victim, "keep")
 }
 
 func TestTerminalHomeCleanupRestrictsLegacyPaths(t *testing.T) {

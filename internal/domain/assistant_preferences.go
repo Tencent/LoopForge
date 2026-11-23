@@ -17,10 +17,23 @@ const AssistantPreferencesInstructionsMax = 4000
 // hands work to roles and SOPs more readily (off by default), and extra
 // rules added to every turn. SteerOnSend interrupts a running reply when
 // sending a message; the default queues it until the reply finishes.
+// WorkspaceDriver is the sandbox driver Main Bot prefers when it opens a
+// conversation workspace itself; empty leaves the choice to the agent.
 type AssistantPreferences struct {
-	ProactiveRoles bool      `json:"proactiveRoles"`
-	ProactiveSOPs  bool      `json:"proactiveSops"`
-	SteerOnSend    bool      `json:"steerOnSend"`
-	Instructions   string    `json:"instructions"`
-	UpdatedAt      time.Time `json:"updatedAt,omitempty"`
+	ProactiveRoles  bool      `json:"proactiveRoles"`
+	ProactiveSOPs   bool      `json:"proactiveSops"`
+	SteerOnSend     bool      `json:"steerOnSend"`
+	WorkspaceDriver string    `json:"workspaceDriver"`
+	Instructions    string    `json:"instructions"`
+	UpdatedAt       time.Time `json:"updatedAt,omitempty"`
+}
+
+// ValidAssistantWorkspaceDriver accepts the drivers a conversation workspace
+// can prefer, and empty for no preference.
+func ValidAssistantWorkspaceDriver(driver string) bool {
+	switch driver {
+	case "", SandboxDriverDocker, SandboxDriverNative:
+		return true
+	}
+	return false
 }

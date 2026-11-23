@@ -567,9 +567,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			if spec.Dockerfile != nil {
 				resources.Dockerfile = *spec.Dockerfile
 			}
-			if spec.Environment != nil {
-				resources.Environment = *spec.Environment
-			}
 			sb, err = OpenRemoteSandbox(procCtx, "conversation-"+id, workspace, spec.Profile, SandboxRequirements{ConversationRoot: root}, resources)
 			if sb != nil {
 				release = func() { _ = sb.Close(context.Background()) }

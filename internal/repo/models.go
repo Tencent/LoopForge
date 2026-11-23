@@ -197,24 +197,6 @@ type executorRow struct {
 
 func (executorRow) TableName() string { return "executors" }
 
-type dockerfileRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Name    string     `gorm:"column:name;size:255"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (dockerfileRow) TableName() string { return "dockerfiles" }
-
-type environmentRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Name    string     `gorm:"column:name;size:255"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (environmentRow) TableName() string { return "environments" }
-
 type sandboxRow struct {
 	ID      string `gorm:"column:id;primaryKey;size:64"`
 	Name    string `gorm:"column:name;size:255"`
@@ -592,14 +574,16 @@ type userRunnerPrefRow struct {
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
 
-// assistantPreferenceRow: a missing row means switches are off and messages queue.
+// assistantPreferenceRow: a missing row means switches are off, messages queue
+// and the agent picks conversation workspace sandboxes itself.
 type assistantPreferenceRow struct {
-	UserID         int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
-	ProactiveRoles bool       `gorm:"column:proactive_roles;not null;default:false"`
-	ProactiveSOPs  bool       `gorm:"column:proactive_sops;not null;default:false"`
-	SteerOnSend    bool       `gorm:"column:steer_on_send;not null;default:false"`
-	Instructions   string     `gorm:"column:instructions;type:text"`
-	UpdatedAt      *time.Time `gorm:"column:updated_at"`
+	UserID          int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	ProactiveRoles  bool       `gorm:"column:proactive_roles;not null;default:false"`
+	ProactiveSOPs   bool       `gorm:"column:proactive_sops;not null;default:false"`
+	SteerOnSend     bool       `gorm:"column:steer_on_send;not null;default:false"`
+	WorkspaceDriver string     `gorm:"column:workspace_driver;type:varchar(16);not null;default:''"`
+	Instructions    string     `gorm:"column:instructions;type:text"`
+	UpdatedAt       *time.Time `gorm:"column:updated_at"`
 }
 
 func (assistantPreferenceRow) TableName() string { return "assistant_preferences" }
@@ -763,7 +747,7 @@ func allModels() []any {
 		insightSourceRow{}, insightExecutionRow{},
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
-		dockerfileRow{}, environmentRow{}, sandboxRow{},
+		sandboxRow{},
 		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
 		issueRow{}, issueCommentRow{}, taskRow{},
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},

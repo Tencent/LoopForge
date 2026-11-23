@@ -2,43 +2,11 @@ package runtime
 
 import (
 	"context"
-	"reflect"
 	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
 )
-
-func TestOverlayEnvironmentEmptyOverlayKeepsEnv(t *testing.T) {
-	env := map[string]string{"A": "1"}
-	got := overlayEnvironment(env, nil)
-	if !reflect.DeepEqual(got, env) {
-		t.Fatalf("overlayEnvironment(env, nil) = %v, want %v", got, env)
-	}
-	if got := overlayEnvironment(nil, map[string]string{}); got != nil {
-		t.Fatalf("empty overlay must keep nil env, got %v", got)
-	}
-}
-
-func TestOverlayEnvironmentProfileWinsExceptPath(t *testing.T) {
-	env := map[string]string{"PATH": "/profile/bin", "LANG": "profile", "ONLY_PROFILE": "p"}
-	overlay := map[string]string{"PATH": "/overlay/bin:/usr/bin", "LANG": "overlay", "ONLY_OVERLAY": "o"}
-	got := overlayEnvironment(env, overlay)
-	want := map[string]string{"PATH": "/overlay/bin:/usr/bin", "LANG": "profile", "ONLY_PROFILE": "p", "ONLY_OVERLAY": "o"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("overlayEnvironment = %v, want %v", got, want)
-	}
-	if env["PATH"] != "/profile/bin" {
-		t.Fatalf("input env must not be mutated, got %v", env)
-	}
-}
-
-func TestOverlayEnvironmentEmptyOverlayPathKeepsProfilePath(t *testing.T) {
-	got := overlayEnvironment(map[string]string{"PATH": "/profile/bin"}, map[string]string{"PATH": "", "X": "1"})
-	if got["PATH"] != "/profile/bin" || got["X"] != "1" {
-		t.Fatalf("overlayEnvironment = %v", got)
-	}
-}
 
 func TestCreateDriverSandboxLocal(t *testing.T) {
 	workspace := t.TempDir()

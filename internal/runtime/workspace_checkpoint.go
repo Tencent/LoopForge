@@ -117,6 +117,9 @@ func CreateWorkspaceCheckpointToContext(ctx context.Context, root string, destin
 	if !info.IsDir() {
 		return fmt.Errorf("workspace is not a directory")
 	}
+	if err := dissociateSharedClones(ctx, root); err != nil {
+		return err
+	}
 	base, err := os.OpenRoot(root)
 	if err != nil {
 		return err

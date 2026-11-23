@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"fmt"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,11 @@ func (h *assistantHandlers) preferences(c *gin.Context) {
 	}
 	if utf8.RuneCountInString(body.Instructions) > domain.AssistantPreferencesInstructionsMax {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("自定义规则最多 %d 字", domain.AssistantPreferencesInstructionsMax)})
+		return
+	}
+	body.WorkspaceDriver = strings.TrimSpace(body.WorkspaceDriver)
+	if !domain.ValidAssistantWorkspaceDriver(body.WorkspaceDriver) {
+		c.JSON(400, gin.H{"error": "对话工作区倾向只能是 docker、native 或留空"})
 		return
 	}
 	saved, err := h.repo.PutAssistantPreferences(user.ID, body)

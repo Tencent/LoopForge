@@ -61,6 +61,20 @@ const ConversationWorkspaceWorkflowID = "conversation-workspace"
 // IsWorkspace distinguishes an on-demand chat workspace from a scheduled SOP.
 func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
 
+// IsNativeWorkspace identifies a conversation workspace in a native sandbox,
+// whose Agent clones repositories from the execution machine's cache.
+func (r Run) IsNativeWorkspace() bool {
+	snapshot := r.WorkflowSnapshot.SandboxSnapshot
+	if !r.IsWorkspace() || snapshot == nil {
+		return false
+	}
+	switch snapshot.Profile.Driver {
+	case SandboxDriverNative, SandboxDriverSeatbelt, SandboxDriverBwrap:
+		return true
+	}
+	return false
+}
+
 // IsPersonalWorkspace identifies a workspace whose access is scoped to its owner.
 func (r Run) IsPersonalWorkspace() bool {
 	return r.IsWorkspace() && r.ExecutionContext.ProjectID == ""

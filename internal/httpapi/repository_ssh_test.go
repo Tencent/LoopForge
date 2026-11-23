@@ -71,7 +71,7 @@ func TestSSHRepositoryCheckoutAndDelivery(t *testing.T) {
 	rc := domain.RepositoryContext{RepositoryID: repository.ID, Name: repository.Name, Provider: repository.Provider, CloneURL: remote, WebURL: repository.WebURL, BaseBranch: "main", DefaultBranch: "main", WorkBranch: "feature/ssh-test", CreateNewWorkBranch: true, WorkspaceDir: "app"}
 	run := domain.Run{
 		ID: "run-git-ssh", Kind: domain.RunKindWorkspace, Status: "waiting",
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "local"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "test-native"},
 		ExecutionContext: domain.TelemetryContext{ProjectID: "platform", ResponsibleUserID: f.user.ID},
 		Repositories:     []domain.RepositoryContext{rc}, Nodes: map[string]*domain.NodeRun{},
 	}

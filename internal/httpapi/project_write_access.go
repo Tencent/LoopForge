@@ -151,12 +151,6 @@ func (d deps) assetOwner(kind, id string) (project string, global bool, found bo
 	case "skills":
 		v, ok := d.repo.Skill(id)
 		return v.ProjectID, v.ProjectID == "", ok
-	case "dockerfiles":
-		v, ok := d.repo.Dockerfile(id)
-		return v.ProjectID, v.ProjectID == "", ok
-	case "environments":
-		v, ok := d.repo.Environment(id)
-		return v.ProjectID, v.ProjectID == "", ok
 	case "sandboxes":
 		v, ok := d.repo.Sandbox(id)
 		return v.ProjectID, v.ProjectID == "", ok
@@ -234,7 +228,7 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 	}
 	kind := strings.TrimPrefix(path, "/api/")
 	switch kind {
-	case "rules", "skills", "dockerfiles", "environments", "sandboxes", "mcp-servers", "schedule-jobs":
+	case "rules", "skills", "sandboxes", "mcp-servers", "schedule-jobs":
 	default:
 		return true
 	}

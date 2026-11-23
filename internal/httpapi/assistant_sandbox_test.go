@@ -14,6 +14,7 @@ import (
 	"agentflow/internal/application"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -23,13 +24,11 @@ func chatSandboxFixture(t *testing.T) (*assistantHandlers, domain.User, *AgentTo
 	t.Helper()
 	h, user := workbenchFixture(t)
 	h.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))
-	if err := h.repo.PutDockerfile(domain.DockerfileDefinition{ID: "chat-df", Name: "Business image", ProjectID: "workbench", Content: "FROM alpine:3.20\n"}); err != nil {
-		t.Fatal(err)
-	}
+	recipe := &domain.SandboxDockerfile{Content: "FROM alpine:3.20\n"}
 	for _, profile := range []domain.SandboxProfile{
-		{ID: "business", Name: "Business", ProjectID: "workbench", Driver: "docker", DockerfileID: "chat-df"},
-		{ID: "shared", Name: "Shared", ProjectID: "other", Shared: true, Driver: "docker", DockerfileID: "chat-df"},
-		{ID: "private", Name: "Private", ProjectID: "other", Driver: "docker", DockerfileID: "chat-df"},
+		{ID: "business", Name: "Business", ProjectID: "workbench", Driver: "docker", Dockerfile: recipe},
+		{ID: "shared", Name: "Shared", ProjectID: "other", Shared: true, Driver: "docker", Dockerfile: recipe},
+		{ID: "private", Name: "Private", ProjectID: "other", Driver: "docker", Dockerfile: recipe},
 	} {
 		if err := h.repo.PutSandbox(profile); err != nil {
 			t.Fatal(err)
@@ -70,9 +69,9 @@ func TestConversationSandboxSelectionFreezesIndependentWorkspace(t *testing.T) {
 		t.Fatalf("wrong environment: %+v", run.WorkflowSnapshot.SandboxSnapshot)
 	}
 	frozen := run.WorkflowSnapshot.SandboxSnapshot.Dockerfile.Content
-	df, _ := h.repo.Dockerfile("chat-df")
-	df.Content = "FROM busybox:1.36\n"
-	_ = h.repo.PutDockerfile(df)
+	business, _ := h.repo.Sandbox("business")
+	business.Dockerfile = &domain.SandboxDockerfile{Content: "FROM busybox:1.36\n"}
+	_ = h.repo.PutSandbox(business)
 	again, reused, err := open("")
 	if err != nil || !reused || again.ID != run.ID || again.WorkflowSnapshot.SandboxProfileID != "business" || again.WorkflowSnapshot.SandboxSnapshot.Dockerfile.Content != frozen {
 		t.Fatalf("frozen environment changed: %+v %v", again, err)
@@ -92,6 +91,49 @@ func TestConversationSandboxSelectionFreezesIndependentWorkspace(t *testing.T) {
 	override, _, err := open("shared")
 	if err != nil || override.WorkflowSnapshot.SandboxProfileID != "business" {
 		t.Fatalf("user selection ignored: %v", err)
+	}
+}
+
+// The preferred sandbox kind in the AI assistant settings leads the choices
+// and opens when the agent names no environment; it never overrides an
+// explicit choice.
+func TestConversationSandboxPreferenceGuidesTheAgent(t *testing.T) {
+	h, user, s := chatSandboxFixture(t)
+	gateway := agentToolGateway{deps: h.deps}
+	prefer := func(driver string) int {
+		t.Helper()
+		c, rec := workbenchContext(user, "PUT", "/api/assistant/preferences", bytes.NewBufferString(`{"workspaceDriver":"`+driver+`"}`))
+		h.preferences(c)
+		return rec.Code
+	}
+	if code := prefer("seatbelt"); code != 400 {
+		t.Fatalf("unknown workspace driver accepted: %d", code)
+	}
+	description := gateway.workspaceOpenDescriptorFor(s).Description
+	if !strings.Contains(description, "拿不准用 generic-docker") || strings.Contains(description, "倾向") {
+		t.Fatalf("no preference still steers the agent: %s", description)
+	}
+	if code := prefer("native"); code != 200 {
+		t.Fatalf("save preference: %d", code)
+	}
+	description = gateway.workspaceOpenDescriptorFor(s).Description
+	native := repo.TestNativeSandboxID
+	if !strings.Contains(description, "倾向 native 沙箱") || !strings.Contains(description, "没有特殊要求时用 "+native) ||
+		strings.Index(description, "- "+native+"：") > strings.Index(description, "- business：") {
+		t.Fatalf("preferred sandbox not offered first: %s", description)
+	}
+	bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{})
+	if err != nil || bound.Run.WorkflowSnapshot.SandboxProfileID != native {
+		t.Fatalf("default environment ignores the preference: %+v %v", bound.Run.WorkflowSnapshot, err)
+	}
+	s.ChatSessionID, s.workspaceRunID = "explicit-chat", ""
+	_ = h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: s.ChatSessionID, ProjectID: s.ProjectID})
+	bound, err = gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: "business"})
+	if err != nil || bound.Run.WorkflowSnapshot.SandboxProfileID != "business" {
+		t.Fatalf("the agent's explicit choice was overridden: %+v %v", bound.Run.WorkflowSnapshot, err)
+	}
+	if code := prefer("local"); code != 400 {
+		t.Fatalf("the removed local kind accepted as a preference: %d", code)
 	}
 }
 

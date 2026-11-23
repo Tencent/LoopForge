@@ -14,7 +14,7 @@ import (
 func TestLifecycleResetSettleAndForceTerminate(t *testing.T) {
 	script := domain.WorkflowNode{ID: "script", Type: "script"}
 	agent := domain.WorkflowNode{ID: "agent", Type: "agent"}
-	wf := domain.WorkflowDefinition{ID: "wf", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{script, agent}}
+	wf := domain.WorkflowDefinition{ID: "wf", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{script, agent}}
 	run := domain.Run{ID: "life", Status: "running", WorkflowSnapshot: wf, Nodes: map[string]*domain.NodeRun{
 		"script": {NodeID: "script", Status: "running", Attempt: 2, SessionID: "script-session"},
 		"agent":  {NodeID: "agent", Status: "pending_input", Attempt: 1, SessionID: "agent-session"},

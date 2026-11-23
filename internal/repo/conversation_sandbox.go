@@ -22,11 +22,8 @@ func (r *CatalogRepo) ConversationSandbox(projectID, id string) (domain.SandboxP
 	}
 	switch profile.Driver {
 	case domain.SandboxDriverDocker:
-		if profile.DockerfileID == "" {
-			return domain.SandboxProfile{}, fmt.Errorf("Docker 沙箱需要配置 Dockerfile")
-		}
-		if _, ok := r.Dockerfile(profile.DockerfileID); !ok {
-			return domain.SandboxProfile{}, fmt.Errorf("沙箱的 Dockerfile 不存在，请联系项目 Owner 更新运行环境")
+		if profile.Dockerfile == nil || strings.TrimSpace(profile.Dockerfile.Content) == "" {
+			return domain.SandboxProfile{}, fmt.Errorf("Docker 沙箱 %s 没有 Dockerfile，请联系项目 Owner 更新沙箱配置", profile.ID)
 		}
 	case domain.SandboxDriverNative, domain.SandboxDriverSeatbelt, domain.SandboxDriverBwrap:
 	default:

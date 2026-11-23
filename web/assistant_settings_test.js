@@ -22,12 +22,18 @@ assert.match(html, /id="assistantPrefsSave" disabled/);
 assert.match(html, /<option value="queue" selected>排队<\/option>/, 'queue remains the default');
 assert.match(mb.assistantPrefsFormHTML({ steerOnSend: true }), /<option value="steer" selected>立即发送<\/option>/);
 
-const form = { proactiveRoles: { checked: true }, proactiveSops: { checked: false }, messageDuringGeneration: { value: 'queue' }, instructions: { value: '  先给结论  ' } };
+assert.match(html, /<option value="" selected>由 Agent 选择<\/option>/, 'the agent picks the sandbox by default');
+assert.match(mb.assistantPrefsFormHTML({ workspaceDriver: 'native' }), /<option value="native" selected>native 沙箱<\/option>/);
+
+const form = { proactiveRoles: { checked: true }, proactiveSops: { checked: false }, messageDuringGeneration: { value: 'queue' }, workspaceDriver: { value: '' }, instructions: { value: '  先给结论  ' } };
 mb.assistantPrefsUI.saved = { proactiveRoles: true, proactiveSops: false, instructions: '先给结论' };
 assert.equal(mb.assistantPrefsDirty(form), false, 'surrounding whitespace is not a change');
 form.messageDuringGeneration.value = 'steer';
 assert.equal(mb.assistantPrefsDirty(form), true, 'send behavior changes must be saved');
 form.messageDuringGeneration.value = 'queue';
+form.workspaceDriver.value = 'native';
+assert.equal(mb.assistantPrefsDirty(form), true, 'a sandbox preference change must be saved');
+form.workspaceDriver.value = '';
 form.proactiveSops.checked = true;
 assert.equal(mb.assistantPrefsDirty(form), true);
 form.proactiveSops.checked = false;

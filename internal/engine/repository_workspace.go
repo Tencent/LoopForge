@@ -149,6 +149,9 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	}
 	baseBranch := repositoryBaseBranch(repository)
 	clone := func(branch string, useReference bool) error {
+		if useReference && cloneFromRepositoryCache(ctx, workspace, repository, branch) {
+			return nil
+		}
 		// --progress: without a terminal git prints nothing until it finishes,
 		// which is what made a slow clone indistinguishable from a hung one.
 		args := []string{"clone", "--progress", "--no-hardlinks", "--single-branch", "--branch", branch}

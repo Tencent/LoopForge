@@ -13,19 +13,22 @@ import (
 )
 
 func (e *Engine) workspaceSandboxProfile(run domain.Run) (domain.SandboxProfile, runtime.SandboxResources, error) {
-	if spec := run.WorkflowSnapshot.SandboxSnapshot; spec != nil {
-		return spec.Profile, sandboxResourcesFromSnapshot(spec), nil
+	spec := run.WorkflowSnapshot.SandboxSnapshot
+	if spec == nil {
+		id := strings.TrimSpace(run.WorkflowSnapshot.SandboxProfileID)
+		if id == "" {
+			id = repo.DefaultSandboxProfileID
+		}
+		profile, ok := e.repo.Sandbox(id)
+		if !ok {
+			return profile, runtime.SandboxResources{}, fmt.Errorf("sandbox profile %q not found", id)
+		}
+		var err error
+		if spec, err = resolveSandbox(profile); err != nil {
+			return profile, runtime.SandboxResources{}, err
+		}
 	}
-	id := strings.TrimSpace(run.WorkflowSnapshot.SandboxProfileID)
-	if id == "" {
-		id = "local"
-	}
-	profile, ok := e.repo.Sandbox(id)
-	if !ok {
-		return profile, runtime.SandboxResources{}, fmt.Errorf("sandbox profile %q not found", id)
-	}
-	resources, err := resolveSandboxResources(e.repo, profile)
-	return profile, resources, err
+	return spec.Profile, sandboxResourcesFromSnapshot(spec), nil
 }
 
 // acquireConversationEnvironment does not acquire or steal the SOP scheduler
@@ -147,6 +150,9 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	credentials := e.resolveRunCredentials(run)
 	invocation := &domain.RunnerInvocation{}
 	bindRunnerRepositories(invocation, run, credentials.GitUserName, credentials.GitUserEmail)
+	if request.Operation == domain.RunnerWorkspaceOperationPrepare {
+		invocation.CacheRepositories = e.workspaceCacheRepositories(run)
+	}
 	invocation.GitSSHUserID = 0
 	invocation.GitHTTPUserID = 0
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)

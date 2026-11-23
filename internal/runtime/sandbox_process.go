@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 func appendEnvironment(base []string, overlays ...map[string]string) []string {
@@ -186,6 +187,9 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 	}
 	cmd.Dir = s.workspace
 	cmd.Env = appendEnvironment(base, s.profile.Environment, command.environment)
+	if cache := RepositoryCacheRoot(); cache != "" {
+		cmd.Env = upsertEnv(cmd.Env, gitwork.RepositoryCacheEnv, cache)
+	}
 	cmd.Stdin = command.Stdin
 	if command.WorkingDir != "" {
 		cmd.Env = upsertEnv(cmd.Env, "PWD", command.WorkingDir)
@@ -502,11 +506,17 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]str
 		"--die-with-parent", "--new-session",
 		"--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
 		"--ro-bind", "/", "/",
+		// The private /tmp comes before the workspace bind, or it would hide a
+		// workspace under the host /tmp.
+		"--tmpfs", "/tmp",
 		"--bind", root, root,
 		"--chdir", root,
-		"--tmpfs", "/tmp",
 		"--proc", "/proc",
 		"--dev-bind", "/dev", "/dev",
+	}
+	if cache := RepositoryCacheRoot(); cache != "" {
+		// Shared clones read their objects here, even below the private /tmp.
+		args = append(args, "--ro-bind-try", cache, cache)
 	}
 	if conversation := requirements.ConversationRoot; conversation != "" {
 		// Same layout as the Docker workspace: the native CLI keeps its HOME

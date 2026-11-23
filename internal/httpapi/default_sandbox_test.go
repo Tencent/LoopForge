@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 func TestProjectEnvironmentAssetsIncludeSharedGlobalDefaults(t *testing.T) {
@@ -42,17 +43,17 @@ func TestDefaultSandboxWithoutCatalogRowsSupportsSOPCreation(t *testing.T) {
 	var catalog struct {
 		Sandboxes []domain.SandboxProfile `json:"sandboxes"`
 	}
-	if bootstrap.Code != http.StatusOK || json.Unmarshal(bootstrap.Body.Bytes(), &catalog) != nil || len(catalog.Sandboxes) != 1 || catalog.Sandboxes[0].ID != "local" {
+	if bootstrap.Code != http.StatusOK || json.Unmarshal(bootstrap.Body.Bytes(), &catalog) != nil || len(catalog.Sandboxes) != 1 || catalog.Sandboxes[0].ID != repo.GenericDockerSandboxID {
 		t.Fatalf("bootstrap does not expose the default: %d %s", bootstrap.Code, bootstrap.Body.String())
 	}
 	listed := cvBRequest(t, f, http.MethodGet, "/api/sandboxes?projectId="+projectID, nil, true)
 	var profiles []domain.SandboxProfile
-	if listed.Code != http.StatusOK || json.Unmarshal(listed.Body.Bytes(), &profiles) != nil || len(profiles) != 1 || profiles[0].ID != "local" {
+	if listed.Code != http.StatusOK || json.Unmarshal(listed.Body.Bytes(), &profiles) != nil || len(profiles) != 1 || profiles[0].ID != repo.GenericDockerSandboxID {
 		t.Fatalf("project cannot select the default: %d %s", listed.Code, listed.Body.String())
 	}
 	created := cvBRequest(t, f, http.MethodPut, "/api/workflows", map[string]any{
 		"id": "builtin-default-sop", "name": "Blank SOP", "projectId": projectID,
-		"status": "draft", "sandboxProfileId": "local", "nodes": []any{}, "edges": []any{},
+		"status": "draft", "sandboxProfileId": repo.GenericDockerSandboxID, "nodes": []any{}, "edges": []any{},
 	}, true)
 	if created.Code != http.StatusOK {
 		t.Fatalf("blank SOP creation failed: %d %s", created.Code, created.Body.String())
