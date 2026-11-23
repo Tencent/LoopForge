@@ -56,7 +56,7 @@ func TestConversationSandboxSelectionFreezesIndependentWorkspace(t *testing.T) {
 		t.Fatalf("another project's private sandbox accepted: %v", err)
 	}
 	description := gateway.workspaceOpenDescriptorFor(s).Description
-	if !strings.Contains(description, "business：Business") || !strings.Contains(description, "shared：Shared") || strings.Contains(description, "private") || !strings.Contains(description, "- web") {
+	if !strings.Contains(description, "business：Business") || !strings.Contains(description, "shared：Shared") || strings.Contains(description, "private") || !strings.Contains(description, `"name":"web"`) {
 		t.Fatalf("choices not offered to the model: %s", description)
 	}
 	run, reused, err := open("business")

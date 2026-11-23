@@ -6,8 +6,10 @@ import (
 	"agentflow/internal/runtime"
 	"context"
 
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -29,6 +31,56 @@ func completedPreparationRun(t *testing.T, e *Engine, id string) domain.Run {
 	}
 	return run
 }
+
+func TestPreparedWorkspaceRequestScopesTerminalGitCredentials(t *testing.T) {
+	e, st := cvEEngine(t)
+	runner := cvERunner(t, e, "terminal-git", domain.RunnerStatusOnline)
+	run := cvERunnerRun("terminal-git-run", runner.ID)
+	run.ExecutionContext.ResponsibleUserID = 101
+	const ownerID = 102
+	const preparationHost = "prepare.example.invalid"
+	const terminalHost = "terminal.example.invalid"
+	for userID, host := range map[int64]string{run.ExecutionContext.ResponsibleUserID: preparationHost, ownerID: terminalHost} {
+		credential := domain.GitHTTPCredentialSecret{
+			GitHTTPCredential: domain.GitHTTPCredential{Host: host, Name: host, Platform: domain.GitPlatformOther},
+			Token:             "fixture-credential",
+		}
+		if err := st.SaveGitHTTPCredential(userID, "", credential); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tt := range []struct {
+		name, operation, terminalOperation string
+		ownerID                            int64
+		preparationHosts, terminalHosts    []string
+	}{
+		{name: "prepare", operation: domain.RunnerWorkspaceOperationPrepare, preparationHosts: []string{preparationHost}},
+		{name: "open", operation: domain.RunnerWorkspaceOperationTerminal, terminalOperation: "open", ownerID: ownerID, preparationHosts: []string{preparationHost}, terminalHosts: []string{terminalHost}},
+		{name: "open without credentials", operation: domain.RunnerWorkspaceOperationTerminal, terminalOperation: "open", ownerID: 103, preparationHosts: []string{preparationHost}},
+		{name: "input", operation: domain.RunnerWorkspaceOperationTerminal, terminalOperation: "input", ownerID: ownerID},
+		{name: "status", operation: domain.RunnerWorkspaceOperationPreparationStatus},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			request := domain.RunnerWorkspaceRequest{Operation: tt.operation, TerminalOwner: tt.ownerID}
+			if tt.terminalOperation != "" {
+				request.Terminal = &domain.WorkspaceTerminalRequest{Operation: tt.terminalOperation}
+			}
+			request, err := e.preparedWorkspaceRequest(run, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			preparation := request.PreparationInvocation.GitHTTPCredentials
+			terminal := request.TerminalGitHTTPCredentials
+			if !slices.Equal(slices.Collect(maps.Keys(preparation)), tt.preparationHosts) {
+				t.Fatal("preparation credentials do not match the run's responsible user")
+			}
+			if !slices.Equal(slices.Collect(maps.Keys(terminal)), tt.terminalHosts) {
+				t.Fatal("terminal credentials do not match the terminal owner")
+			}
+		})
+	}
+}
+
 func TestWorkspacePreparationNormalOrderAndFlaggedRetryAlwaysExecutes(t *testing.T) {
 	t.Parallel()
 	st, err := repo.OpenTest()

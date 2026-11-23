@@ -78,6 +78,9 @@ func main() {
 	if runtime.RunMCPCallCLI(os.Args[1:]) {
 		return
 	}
+	if runtime.RunGitHelperCLI(os.Args[1:]) {
+		return
+	}
 	addr := flag.String("addr", "", "HTTP listen address; overrides AGENTFLOW_HTTP_PORT")
 	workspaces := flag.String("workspaces", "", "sandbox workspace root")
 	workerConcurrency := flag.Int("worker-concurrency", 8, "maximum concurrent node sandboxes for this worker")
@@ -89,7 +92,7 @@ func main() {
 	mysqlDSN := flag.String("mysql-dsn", "", "MySQL DSN; overrides AGENTFLOW_MYSQL_DSN. MySQL is the only data source.")
 	roleFlag := flag.String("role", "", "process role: api, worker, or all (default all)")
 	cliAction := flag.String("cli-action", "", "local managed CLI administration: status, update, or rollback; exits without starting services")
-	cliProvider := flag.String("cli-provider", "", "provider for CLI rollback: codex, codebuddy, or claude-code")
+	cliProvider := flag.String("cli-provider", "", "managed CLI provider to roll back")
 	cliTimeout := flag.Duration("cli-timeout", 80*time.Minute, "total managed CLI operation timeout")
 	browserImage := flag.Bool("browser-image", false, "build or pull the agent browser sidecar image, print its name and exit")
 	flag.Parse()

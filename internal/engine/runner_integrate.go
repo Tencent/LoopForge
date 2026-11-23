@@ -22,7 +22,7 @@ const integrationTaskNode = "_integrate"
 func (e *Engine) integrateOnRunner(ctx context.Context, runner domain.Runner, run domain.Run, rc domain.RepositoryContext, pushIntegrate bool) ([]string, error) {
 	invocation := &domain.RunnerInvocation{RunID: run.ID, NodeID: integrationTaskNode}
 	identity := gitIdentityFrom(ctx)
-	bindRunnerRepositories(invocation, run, gitTokenFrom(ctx), identity.name, identity.email)
+	bindRunnerRepositories(invocation, run, identity.name, identity.email)
 	invocation.Repository = nil
 	var target *domain.RunnerRepository
 	for i := range invocation.Repositories {

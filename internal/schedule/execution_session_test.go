@@ -24,11 +24,11 @@ func TestInterruptedExecutionKeepsItsConversation(t *testing.T) {
 	}
 	svc := New(st, tracker.NewService(), nil)
 	opened, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	svc.SetAssistantSessionPrep(func(job domain.ScheduleJob, report func(string)) (string, string, error) {
+	svc.SetAssistantSessionPrep(func(job domain.ScheduleJob, report func(string)) (AssistantRunResult, error) {
 		report("chat-live")
 		close(opened)
 		<-release
-		return "", "chat-live", nil
+		return AssistantRunResult{SessionID: "chat-live"}, nil
 	})
 	claimed, err := svc.claim("job")
 	if err != nil {

@@ -43,6 +43,8 @@ test('schedule form switches job kind and timing and sends validated assistant a
     f.elements.scheduleMode.value='cron';syncScheduleJobTiming();
   })()`);
   const form = app.document.querySelector('#scheduleJobForm');
+  assert.equal(form.elements.timeoutMinutes.placeholder, '30');
+  assert.equal(form.elements.timeoutMinutes.disabled, false);
   assert.equal(form.elements.workflowId.required, false);
   assert.equal(form.elements.assistantPrompt.required, true);
   assert.equal(form.elements.intervalSec.hidden, true);
@@ -53,6 +55,10 @@ test('schedule form switches job kind and timing and sends validated assistant a
   form.elements.assistantPrompt.value = 'Summarize failures';
   form.elements.assistantModel.value = 'glm-test';
   form.elements.cron.value = '0 9 * * 1-5';
+  form.elements.timeoutMinutes.value = '241';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  assert.equal(app.router.calls.some(c => c.method === 'POST' && c.path === '/api/schedule-jobs'), false);
+  form.elements.timeoutMinutes.value = '75';
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(4);
   const aiCall = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/schedule-jobs');
@@ -60,6 +66,9 @@ test('schedule form switches job kind and timing and sends validated assistant a
   assert.equal(aiCall.body.assistantPrompt, 'Summarize failures');
   assert.equal(aiCall.body.cron, '0 9 * * 1-5');
   assert.equal(aiCall.body.workflowId, '');
+  assert.equal(aiCall.body.timeoutMinutes, 75);
+  app.evaluate(`fillScheduleJobForm(state.data.scheduleJobs.find(j => j.id==='new-ai'))`);
+  assert.equal(form.elements.timeoutMinutes.value, '75');
 
   app.evaluate(`(() => {
     fillScheduleJobForm({});
@@ -80,6 +89,8 @@ test('schedule form switches job kind and timing and sends validated assistant a
   assert.equal(calls[1].body.intervalSec, 3600);
   assert.deepEqual(calls[1].body.issueStatuses, ['todo']);
   assert.equal(calls[1].body.maxDispatch, 3);
+  assert.equal(form.elements.timeoutMinutes.disabled, true);
+  assert.equal(calls[1].body.timeoutMinutes, undefined);
   assert.match(app.document.querySelector('#scheduleJobList').textContent, /每小时/);
 });
 
@@ -254,8 +265,7 @@ test('an AI job runs with the saver\'s key without asking whose key to use', asy
   const form = app.document.querySelector('#scheduleJobForm');
   assert.equal(form.elements.runAs, undefined, 'there is no run-as picker');
   assert.equal(app.document.querySelector('#scheduleRunAsHint'), null);
-  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /保存人的 Key/);
-  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /平台共享 Key/);
+  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /保存人的身份/);
   form.elements.name.value = 'Mine';
   form.elements.assistantPrompt.value = 'check';
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -391,7 +401,7 @@ test('AI schedule navigation separates existing tasks and preserves editor kind 
   assert.equal(form.elements.jobKind.value, 'assistant');
   assert.equal(app.document.querySelector('#scheduleModalTitle').textContent, 'AI 定时任务');
   assert.match(app.document.querySelector('#scheduleModalHint').textContent, /完全权限/);
-  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /保存人的 Key.*平台共享 Key/);
+  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /保存人的身份/);
   assert.doesNotMatch(app.document.querySelector('#aiScheduleRuntimeHint').textContent, /不直接运行|不会派发/);
   assert.equal(app.document.querySelector('#scheduleJobList').hidden, true);
   app.evaluate('resetScheduleJobForm()');
@@ -538,19 +548,19 @@ test('late save responses cannot close a newly opened editor',async t=>{
  assert.equal(form.querySelector('[type=submit]').disabled,false);
 });
 
-test('AI schedule model picker narrows models to the chosen CLI and keeps a saved CLI model', async (t) => {
+test('AI schedule model picker includes account login CLI models and keeps a saved CLI model', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.get('/api/assistant/models', () => ({
-    default: 'glm-test',
+  app.router.get('/api/assistant/models', call => ({
+    default: 'default',
     models: [
       { id: 'glm-test', name: 'GLM Test', family: 'glm' },
       { id: 'claude-test', name: 'Claude Test', family: 'claude' },
-      { id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', family: 'gpt', engine: 'codex' },
+      ...(call.search === '?schedule=1' ? [{ id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', family: 'gpt', engine: 'codex' }] : []),
     ],
     engines: [
       { id: 'codebuddy', name: 'CodeBuddy', configured: true },
-      { id: 'codex', name: 'Codex', configured: true },
+      { id: 'codex', name: 'Codex', configured: call.search === '?schedule=1' },
       { id: 'claude-code', name: 'Claude Code', configured: false },
     ],
   }));
@@ -563,9 +573,9 @@ test('AI schedule model picker narrows models to the chosen CLI and keeps a save
   const doc = app.document;
   const form = doc.querySelector('#scheduleJobForm');
   const engine = doc.querySelector('#scheduleEngine');
-  assert.deepEqual([...engine.options].map(o => [o.value, o.disabled]), [['codebuddy', false], ['codex', false], ['claude-code', true]]);
-  assert.match(engine.options[2].textContent, /未配置 Key/);
+  assert.deepEqual([...engine.options].map(o => [o.value, o.disabled]), [['codebuddy', false], ['codex', false]]);
   assert.equal(engine.value, 'codebuddy');
+  assert.equal(form.elements.assistantModel.value, 'glm-test');
 
   const toggle = doc.querySelector('#scheduleModelPicker [data-model-toggle]');
   const menu = doc.querySelector('#scheduleModelPicker .ai-model-menu');
@@ -579,6 +589,7 @@ test('AI schedule model picker narrows models to the chosen CLI and keeps a save
   engine.value = 'codex';
   engine.dispatchEvent(new app.window.Event('change'));
   assert.equal(form.elements.assistantModel.value, 'codex:gpt-6-sol');
+  assert.equal(toggle.querySelector('[data-model-label]').textContent, 'GPT-6-Sol');
   toggle.click();
   assert.deepEqual([...menu.querySelectorAll('.ai-model-option')].map(o => o.dataset.id), ['codex:gpt-6-sol']);
   menu.querySelector('.ai-model-option').click();
@@ -593,6 +604,16 @@ test('AI schedule model picker narrows models to the chosen CLI and keeps a save
   assert.equal(engine.value, 'claude-code');
   assert.equal(engine.selectedOptions[0].disabled, false);
   assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
-  assert.match(doc.querySelector('#scheduleModelHint').textContent, /所选 CLI/);
-  assert.match(doc.querySelector('#scheduleModelHint').textContent, /保存人.*平台共享 Key/);
+
+  app.router.get('/api/assistant/models', {
+    default: 'default',
+    models: [{ id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', engine: 'codex' }],
+    engines: [
+      { id: 'codebuddy', name: 'CodeBuddy', configured: false },
+      { id: 'codex', name: 'Codex', configured: true },
+    ],
+  });
+  await app.evaluate("openScheduleJobModal('assistant')");
+  assert.equal(engine.value, 'codex');
+  assert.equal(form.elements.assistantModel.value, 'codex:gpt-6-sol');
 });

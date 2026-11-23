@@ -359,7 +359,7 @@ func TestAlignIntegrateBaselinePushesCleanMerge(t *testing.T) {
 		BaseBranch:      "agentflow/integration",
 		IntegrateBranch: "agentflow/integration",
 		DefaultBranch:   "master",
-	}, "", nil); err != nil {
+	}, testRunCredentials(""), nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := exec.Command("git", "--git-dir", remote, "cat-file", "-e", "agentflow/integration:mainline.txt").CombinedOutput(); err != nil {
@@ -404,7 +404,7 @@ func TestAlignIntegrateBaselineReportsConflictWithoutPush(t *testing.T) {
 		BaseBranch:      "agentflow/integration",
 		IntegrateBranch: "agentflow/integration",
 		DefaultBranch:   "master",
-	}, "", nil)
+	}, testRunCredentials(""), nil)
 	var conflict *AlignConflictError
 	if err == nil || !errors.As(err, &conflict) || len(conflict.Files) == 0 {
 		t.Fatalf("expected AlignConflictError, got %v", err)
@@ -422,7 +422,7 @@ func TestAlignIntegrateBaselineNoopsWithoutRemote(t *testing.T) {
 		BaseBranch:      "agentflow/integration",
 		IntegrateBranch: "agentflow/integration",
 		DefaultBranch:   "master",
-	}, "", nil); err != nil {
+	}, testRunCredentials(""), nil); err != nil {
 		t.Fatalf("empty clone URL must skip align: %v", err)
 	}
 }

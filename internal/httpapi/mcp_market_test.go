@@ -292,3 +292,33 @@ func TestMCPMarketIconsAreLocalAndEmbedded(t *testing.T) {
 		t.Fatalf("expected local icons, got %d", withIcon)
 	}
 }
+
+func TestMCPMarketInstallCarriesCredentialKind(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.PutProject(domain.Project{ID: "platform", Name: "Platform"}); err != nil {
+		t.Fatal(err)
+	}
+	// Register a credential-authenticated market item (package globals are
+	// the catalog seam); restore the real catalog afterwards.
+	previous := mcpMarketItems
+	mcpMarketItems = append(append([]mcpMarketItem(nil), previous...), mcpMarketItem{
+		ID: "corp-gateway", Name: "Corp Gateway", URL: "https://gateway.internal/mcp",
+		Transport: "http", AuthType: "credential", CredentialKind: "corp-gateway", Official: true,
+	})
+	t.Cleanup(func() { mcpMarketItems = previous })
+
+	server, created, err := installMarketMCP(st, "corp-gateway", "platform")
+	if err != nil || !created {
+		t.Fatalf("installMarketMCP = %v, %v", created, err)
+	}
+	if server.AuthType != "credential" || server.CredentialKind != "corp-gateway" {
+		t.Fatalf("installed server = %+v", server)
+	}
+	if server.Transport != "http" {
+		t.Fatalf("transport = %q", server.Transport)
+	}
+}

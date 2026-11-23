@@ -6,6 +6,7 @@ import (
 	"agentflow/internal/runtime"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,12 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 		return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid conversation process request"}
 	}
 	root := filepath.Join(d.cfg.DefaultWorkspaceRoot, ".conversations", req.SessionKey)
+	if req.Transient {
+		if request.RunID != "" {
+			return domain.RunnerWorkspaceResponse{Status: 400, Error: "transient processes cannot use a run workspace"}
+		}
+		root = filepath.Join(d.cfg.DefaultWorkspaceRoot, ".conversations", ".transient", req.SessionKey)
+	}
 	workspace := ""
 	if request.RunID != "" {
 		var err error
@@ -112,7 +119,12 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 	}
 	result, err := d.conversationProcesses.Handle(ctx, root, workspace, request.Sandbox, req, forward, factory)
 	if err != nil {
-		return runnerWorkspaceError(err)
+		response := runnerWorkspaceError(err)
+		var stateErr *runtime.ConversationStateError
+		if errors.As(err, &stateErr) {
+			response.Code = domain.WorkspaceErrorConversationState
+		}
+		return response
 	}
 	return runnerWorkspacePayload(result)
 }

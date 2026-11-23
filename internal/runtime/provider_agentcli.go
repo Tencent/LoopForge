@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -73,6 +74,7 @@ func (p agentCLIProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 		Binary: in.Executor.Binary, Model: in.Executor.Model, Effort: in.Executor.Effort,
 		Resume: in.Options.ResumeSessionID, Prompt: positionalPrompt(in),
 		SystemPrompt: in.Compiled.SystemPrompt, SystemPromptFile: systemFile, Extra: in.Executor.Args,
+		RunnerLogin: in.Options.RunnerLogin,
 	})
 	command.CredentialBindings = []CredentialBinding{BindAgentCLI, BindGit, BindMCP}
 	command.PrivateHome = true
@@ -86,6 +88,10 @@ type AgentCLICommandOptions struct {
 	// Resume is the CLI's own session ID to continue; empty starts one.
 	Resume string
 	Prompt string
+	// ImagePaths are already staged in the conversation's attachment directory.
+	ImagePaths []string
+	// Historical images remain available through the session journal or path.
+	ImageInput bool
 	// SystemPrompt is the system prompt body; SystemPromptFile is the same
 	// text as a path the process can read.
 	SystemPrompt, SystemPromptFile string
@@ -93,8 +99,9 @@ type AgentCLICommandOptions struct {
 	// Chat runs the CLI for AI 对话 on the control plane: MCP tools stay
 	// available, shell, file writes and web access do not. The MCP
 	// configuration (WriteAgentCLIMCPConfig ReadOnly) completes the policy.
-	Chat      bool
-	Workspace bool
+	Chat        bool
+	Workspace   bool
+	RunnerLogin bool
 	// AgentFile is Kimi Code's chat agent definition (WriteKimiChatAgent).
 	AgentFile string
 }
@@ -119,7 +126,11 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	extra := append([]string{}, o.Extra...)
 	var argv []string
 	readOnly := o.Chat && !o.Workspace
-	options := AgentCLIOptions{Model: model, ReadOnly: readOnly}
+	options := AgentCLIOptions{Model: model, Effort: effort, ReadOnly: readOnly}
+	switch kind {
+	case AgentCLIOpenCode, AgentCLIPi, AgentCLIKimi, AgentCLIDeepSeek:
+		options.ImageInput = o.ImageInput || len(o.ImagePaths) > 0
+	}
 	switch kind {
 	case AgentCLIOpenCode:
 		argv = []string{binary, "run", "--format", "json", "--thinking"}
@@ -133,7 +144,15 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--variant", effort)
 		}
 		options.SystemPromptFile = o.SystemPromptFile
-		argv = append(append(argv, extra...), prompt)
+		argv = append(argv, extra...)
+		if len(o.ImagePaths) > 0 {
+			for _, path := range o.ImagePaths {
+				argv = append(argv, "--file", path)
+			}
+			// --file accepts an array. Keep the prompt out of that array.
+			argv = append(argv, "--")
+		}
+		argv = append(argv, prompt)
 	case AgentCLICursor:
 		// Chat relies on the deny rules of .cursor/cli-config.json; --force
 		// still approves the MCP tools.
@@ -142,7 +161,6 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			// ApplyAgentCLICredential re-resolves this against the owner's
 			// saved catalog, which only the credential carries.
 			argv = append(argv, "--model", CursorModelID(model, effort, nil))
-			options.Effort = effort
 		}
 		if resume != "" {
 			argv = append(argv, "--resume", resume)
@@ -152,6 +170,9 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		// Chat deny rules travel as --settings (ApplyAgentCLICredential);
 		// they hold even with --dangerously-skip-permissions.
 		argv = []string{binary, "--output-format", "stream-json", "--dangerously-skip-permissions", "--disable-slash-commands"}
+		if family := agyClaudeFamily(model); o.RunnerLogin && family != "" && slices.Contains(AgyAccountModelEfforts(family), effort) {
+			model, effort = family+"-"+effort, ""
+		}
 		if model != "" && AgyModelEfforts(model) == nil {
 			effort = ""
 		}
@@ -202,7 +223,13 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if readOnly {
 			argv = append(argv, "--exclude-tools", "bash,edit,write")
 		}
-		argv = append(append(argv, extra...), prompt)
+		argv = append(argv, extra...)
+		if len(o.ImagePaths) > 0 {
+			for _, path := range o.ImagePaths {
+				argv = append(argv, "@"+path)
+			}
+		}
+		argv = append(argv, prompt)
 	case AgentCLIDeepSeek:
 		mode := "danger-full-access"
 		if readOnly {
@@ -222,16 +249,26 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if resume != "" {
 			argv = append(argv, "--resume", resume)
 		}
+		for _, path := range o.ImagePaths {
+			argv = append(argv, "--attach", path)
+		}
 		argv = append(argv, extra...)
 	}
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
 }
 
-// AgyModelEfforts lists the efforts agy accepts for a model, weakest first.
-// Only its Gemini models take --effort; agy rejects the flag for any other
-// model a Base URL serves ("--effort is not supported for model …").
+// AgyModelEfforts returns the separate effort choices for Gemini API models.
 func AgyModelEfforts(model string) []string {
-	if strings.HasPrefix(strings.TrimSpace(model), "gemini-") {
+	model, _ = SplitAgyModelEffort(strings.TrimSpace(model))
+	switch model {
+	case "gemini-4-neon", "gemini-4-hydrogen":
+		return []string{"low", "medium", "high", "xhigh"}
+	case "gemini-4-carbon", "gemini-4-argon", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash":
+		return []string{"low", "medium", "high"}
+	case "gemini-3.1-pro", "gemini-3.1-pro-preview":
+		return []string{"low", "high"}
+	}
+	if strings.HasPrefix(model, "gemini-") && !strings.HasPrefix(model, "gemini-pro-orchestrator") {
 		return domain.ExecutorEffortLevels[AgentCLIAntigravity]
 	}
 	return nil
@@ -244,10 +281,8 @@ func agyModelForEffort(model, effort string) string {
 	if effort == "" {
 		return model
 	}
-	for _, level := range domain.ExecutorEffortLevels[AgentCLIAntigravity] {
-		if base, ok := strings.CutSuffix(model, "-"+level); ok {
-			return base + "-" + effort
-		}
+	if base, existing := SplitAgyModelEffort(model); existing != "" {
+		return base + "-" + effort
 	}
 	return model
 }

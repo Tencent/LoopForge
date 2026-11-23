@@ -2,8 +2,11 @@ package runner
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +19,39 @@ import (
 	flowruntime "agentflow/internal/runtime"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/crypto/ssh"
 )
+
+func TestClaimSSHKnownHostsFitsAfterLegacyPayload(t *testing.T) {
+	response := struct {
+		Task domain.RunnerTask `json:"task"`
+	}{Task: domain.RunnerTask{ID: "large-ssh-task"}}
+	empty, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Task.Prompt = strings.Repeat("x", (8<<20)-len(empty)-32)
+	const pin = "[gitlab.example.org]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n"
+	response.Task.GitSSHKnownHosts = &domain.GitSSHKnownHosts{Entries: pin}
+	body, err := json.Marshal(response)
+	if err != nil || len(body) <= 8<<20 {
+		t.Fatalf("claim response is %d bytes: %v", len(body), err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			SupportsGitSSHKnownHosts bool `json:"supportsGitSshKnownHosts"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !req.SupportsGitSSHKnownHosts {
+			t.Errorf("claim did not advertise SSH host pin support: %v", err)
+		}
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	task, claimed, err := NewClient(server.URL).Claim(t.Context(), ClaimRequest{AvailableRuntimes: []string{"mock"}})
+	if err != nil || !claimed || task.GitSSHKnownHosts == nil || task.GitSSHKnownHosts.Entries != pin {
+		t.Fatalf("claim did not decode the extended response, claimed = %v, err = %v", claimed, err)
+	}
+}
 
 func TestPreviewArchiveSuccessAndFailures(t *testing.T) {
 	var uploaded []byte
@@ -81,6 +116,10 @@ func TestClientOpenControlWebSocketBranches(t *testing.T) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+			if r.Header.Get(domain.RunnerSSHHostKeyProbeHeader) != "1" {
+				http.Error(w, "missing SSH host key probe support", http.StatusBadRequest)
+				return
+			}
 			conn, err := upgrader.Upgrade(w, r, nil)
 			if err == nil {
 				_ = conn.Close()
@@ -105,6 +144,57 @@ func TestClientOpenControlWebSocketBranches(t *testing.T) {
 	}
 	if _, err := NewClient("://bad").OpenControl(context.Background()); err == nil {
 		t.Fatal("invalid URL accepted")
+	}
+}
+
+func TestRunnerProbesSSHHostBeforeAuthentication(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated := false
+	config := &ssh.ServerConfig{
+		NoClientAuth: true,
+		NoClientAuthCallback: func(ssh.ConnMetadata) (*ssh.Permissions, error) {
+			authenticated = true
+			return nil, nil
+		},
+	}
+	config.AddHostKey(signer)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		raw, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer raw.Close()
+		_ = raw.SetDeadline(time.Now().Add(5 * time.Second))
+		if conn, _, _, err := ssh.NewServerConn(raw, config); err == nil {
+			_ = conn.Close()
+		}
+	}()
+	d := &Daemon{}
+	response := d.readRunnerWorkspace(t.Context(), domain.RunnerWorkspaceRequest{
+		Operation: domain.RunnerWorkspaceOperationSSHHostKeyProbe, SSHHostKeyAddress: listener.Addr().String(),
+	})
+	var observed string
+	if response.Status != http.StatusOK || json.Unmarshal(response.Payload, &observed) != nil ||
+		observed != strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))) {
+		t.Fatalf("SSH host key probe = %+v", response)
+	}
+	<-done
+	if authenticated {
+		t.Fatal("SSH host key probe attempted to log in")
 	}
 }
 
@@ -182,8 +272,8 @@ func TestRunnerCredentialArtifactAndRepositoryHelpers(t *testing.T) {
 		t.Fatalf("artifacts=%v", artifacts)
 	}
 	contexts := invocationRepositoryContexts(inv)
-	if len(contexts) != 1 || contexts[0].WorkspaceDir != "repo" || invocationGitToken(inv) != "token" {
-		t.Fatalf("contexts=%+v token=%q", contexts, invocationGitToken(inv))
+	if len(contexts) != 1 || contexts[0].WorkspaceDir != "repo" || len(invocationGitCredentials(inv).GitHTTPCredentials) != 0 {
+		t.Fatalf("contexts=%+v credentials=%v", contexts, invocationGitCredentials(inv).GitHTTPCredentials)
 	}
 	legacy := &domain.RunnerInvocation{Repository: &domain.RunnerRepository{RepositoryID: "legacy", Dir: "."}}
 	if len(invocationRepositoryContexts(legacy)) != 1 {

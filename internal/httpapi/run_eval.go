@@ -94,8 +94,19 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 		return
 	}
 	user, ok := h.repo.User(current.ID)
-	if !ok || strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": "请先在个人配置中配置自己的 CodeBuddy API Key"})
+	if !ok {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "当前用户不可用"})
+		return
+	}
+	var req struct {
+		Model string `json:"model"`
+	}
+	if c.Request.ContentLength != 0 && !decode(c, &req) {
+		return
+	}
+	model, err := resolveFeatureModel(user, req.Model)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if rec, busy := h.repo.ActiveRunEval(id); busy {
@@ -110,20 +121,6 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 		// The row was saved as running, then startup failed before a job existed.
 		h.failRunEval(rec, "上次评测没有真正启动")
 	}
-	var req struct {
-		Model string `json:"model"`
-	}
-	if c.Request.ContentLength > 0 && !decode(c, &req) {
-		return
-	}
-	// Run evals run on CodeBuddy only: refuse a "codex:…" id instead of
-	// silently evaluating with the CodeBuddy default.
-	if engine, _ := assistantModelEngine(req.Model); engine != assistantEngineCodeBuddy {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": "运行评测目前只支持 CodeBuddy 模型，请改选 CodeBuddy 模型"})
-		return
-	}
-	catalog := loadAssistantModels(c.Request.Context(), user.CodeBuddyInternetEnvironment)
-	model := assistantAllowedModel(req.Model, catalog)
 	project, _ := h.repo.Project(run.ExecutionContext.ProjectID)
 	rec := domain.RunEvalRecord{
 		ID:        "eval-" + randomID(),
@@ -487,7 +484,7 @@ func (h *runsHandlers) executeRunEval(ctx context.Context, rec domain.RunEvalRec
 	_ = h.repo.PutRunEval(rec)
 	emit("thought", map[string]string{"kind": "thinking", "text": "正在用 " + rec.Model + " 评测…"})
 	system, prompt := runeval.BuildPrompt(rec.Policy, facts)
-	raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{Prompt: prompt, Model: rec.Model, SystemPrompt: system, UserID: user.ID}, user, func(ev assistantStreamEvent) {
+	raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{Prompt: prompt, Model: rec.Model, SystemPrompt: system, UserID: user.ID, ReviewOnly: true}, user, func(ev assistantStreamEvent) {
 		if emit == nil {
 			return
 		}

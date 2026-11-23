@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {signInUnconfigured, appReady, switchProject, chat, openHome, fitsFrame} from './helpers.mjs';
+import {signInUnconfigured, appReady, switchProject, chat, openHome, openExecutorSetup, fitsFrame} from './helpers.mjs';
 
 // Default journeys use an account with no model key, joined to the welcome
 // project. New self-registered accounts join it automatically. The real-model
@@ -78,14 +78,21 @@ test('sending without a model key is refused before any request, with a way to c
   const frame=chat(page);
   const text='No key yet: this must be refused before any model runs.';
   await input.fill(text);
-  await frame.locator('.send-button').click();
-  const configure=frame.getByRole('button',{name:'去配置 CodeBuddy API Key'});
-  await expect(configure).toBeVisible();
+  const send=frame.locator('.send-button');
+  const notice=frame.locator('.credential-notice');
+  await expect(notice).toBeVisible();
+  const chooser=await notice.getByRole('button',{name:'新增执行器',exact:true}).isVisible();
+  if(chooser)await expect(send).toBeDisabled();
+  else await send.click();
   await expect(input).toHaveValue(text);
   expect(writes).toBe(0);
-  await configure.click();
-  await expect(page).toHaveURL(/#\/settings/);
-  await expect(page.locator('#credentialWizard .credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+  if(chooser){
+    await openExecutorSetup(page);
+  }else{
+    await frame.getByRole('button',{name:'去配置 CodeBuddy API Key',exact:true}).click();
+    await expect(page).toHaveURL(/#\/settings/);
+    await expect(page.locator('#credentialWizard .credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+  }
   await page.keyboard.press('Escape');
 });
 
@@ -160,16 +167,30 @@ for(const variant of [
       const response=await saved;expect(response.ok()).toBe(true);repositoryId=(await response.json()).id;
       await expect.poll(async()=>(await page.request.get(`/api/projects/${projectId}`).then(r=>r.json())).defaultRepositoryId).toBe(repositoryId);
       await expect(modal.locator('#repositoryCredentialHint')).toHaveAttribute('data-configured','false');
-      // The token link leaves the modal for the GitHub token step of the credential wizard.
+      // The token link opens credentials for any HTTPS host.
+      // first-run also runs this journey against the pinned published release.
+      const hostCredentials=await page.evaluate(()=>typeof openGitHTTPCredentials==='function');
       await modal.locator('[data-repository-configure-token]').click();
       await expect(modal).not.toHaveClass(/open/);
-      await expect(page).toHaveURL(/#\/settings/);
-      const wizard=page.locator('#credentialWizard');
-      await expect(wizard.getByRole('tab',{name:'GitHub 授权'})).toHaveAttribute('aria-selected','true');
-      await expect(wizard.locator('input[name="secret"]')).toHaveCount(0);
-      await wizard.getByRole('tab',{name:'访问令牌'}).click();
-      await expect(wizard.locator('.credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
-      await expect(wizard).toContainText('GitHub');
+      if(hostCredentials){
+        const credentials=page.locator('#gitHTTPCredentialDialog');
+        await expect(credentials).toBeVisible();
+        await credentials.locator('[data-http-cred-add]').click();
+        await expect(credentials.locator('input[name="host"]')).toBeFocused();
+        await expect(credentials.locator('input[name="token"]')).toBeVisible();
+        await expect(credentials.locator('[name="exposeToWorkspace"]')).toHaveCount(0);
+        await expect(credentials.locator('#gitHTTPCredentialPlatformHint')).toContainText(variant.lang==='en'?'merge status':'合并状态');
+        const platform=credentials.locator('select[name="platform"]');
+        await platform.click();
+        const options=credentials.getByRole('listbox');
+        await options.getByRole('option',{name:'GitLab',exact:true}).click();
+        await expect(platform).toHaveValue('gitlab');
+        await expect(credentials.locator('input[name="username"]')).toHaveAttribute('placeholder','oauth2');
+        await platform.press('ArrowDown');
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await expect(platform).toHaveValue('other');
+      }else await expect(page.locator('#credentialWizard')).toBeVisible();
       await page.keyboard.press('Escape');
     }finally{
       const restore=await page.request.put('/api/projects',{data:project});expect(restore.ok()).toBe(true);

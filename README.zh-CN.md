@@ -7,7 +7,6 @@
 
 <p align="center">
   <a href="https://github.com/Tencent/LoopForge/actions/workflows/platform.yml"><img src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/platform.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
-  <a href="https://www.npmjs.com/package/loopforge-cli"><img src="https://img.shields.io/npm/v/loopforge-cli?label=loopforge-cli&color=7b61ff&style=flat-square" alt="npm loopforge-cli"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7b61ff?style=flat-square" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/自主部署-Docker-526ce8?style=flat-square&logo=docker&logoColor=white" alt="Docker 自主部署">
   <a href="https://github.com/Tencent/LoopForge/stargazers"><img src="https://img.shields.io/github/stars/Tencent/LoopForge?style=flat-square&color=f59e0b" alt="GitHub stars"></a>
@@ -26,7 +25,7 @@
   <a href="#快速开始">快速开始</a> ·
   <a href="#sop-如何运行">SOP</a> ·
   <a href="#功能一览">功能</a> ·
-  <a href="#loopforge-local">本地版</a> ·
+  <a href="#loopforge-local">本地版（旧版）</a> ·
   <a href="#常见问题">FAQ</a> ·
   <a href="#文档">文档</a>
 </p>
@@ -65,7 +64,7 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 - **可重复。** 同一条 SOP、同样的阶段、同样的检查，每个需求都一样。内置后端、前端、缺陷修复、产品方案四类 SOP 可直接起步。
 - **角色分离。** 方案、实现、评审、测试各有独立的角色提示词、执行器、模型、规则、Skills 和 MCP 工具；同一个角色既能做 SOP 节点，也能在对话中作为子 Agent 调用。
-- **人在回路。** 在关键节点设置人工审批：看完报告再放行，或打回到指定环节返工。
+- **人在回路之上。** Agent 自主运行，你负责监督：随时暂停、引导或接管；需要人拍板的地方由人工关口拦下，看完报告再放行，或打回到指定环节返工。
 - **可观测、可续跑。** 节点状态、工具轨迹、日志和产物集中呈现；支持暂停、重试失败步骤、从任意节点重跑。
 - **技术栈和服务器都是你的。** 执行器支持 10 种编程 Agent CLI，从 CodeBuddy、Codex、Claude Code 到 OpenCode、Cursor CLI 等；工具接入 GitHub、Skills、MCP；运行环境可选 Docker 沙箱或你自己的机器。
 
@@ -81,10 +80,12 @@ cd LoopForge
 
 `./start.sh` 直接拉取 `compose.yaml` 中 pin 的 GHCR 发布镜像，不在本地构建（`bash scripts/install.sh` 效果相同）。安装流程会创建 MySQL 和平台服务，生成配置与会话密钥，并导入内置沙箱、通用 SOP 和体验项目；无需在宿主机安装 Go 或 Node.js。模型 API Key 和 GitHub 授权在启动后由用户配置。用 `./start.sh logs`、`stop`、`restart`、`pull` 管理服务；需要从源码构建时用 `./start.sh dev`。
 
-国内拉取 `ghcr.io` 经常中断。把 `MIRROR` 设成可以替换 `ghcr.io` 的镜像站主机名，`./start.sh` 会用它拉取，再改回 `compose.yaml` 里的原名。设置 `MIRROR` 表示信任该主机，因为下载结果会被标成官方镜像名。发布说明里有 digest，可用 `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` 核对，`@` 后面的摘要应一致。不设置时仍直接从 `ghcr.io` 拉取。`compose.yaml` 不用改。升级时带上同一个变量执行 `./start.sh pull`。南京大学的 GHCR 镜像站是 [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr)。Docker 引擎里的 `registry-mirrors`（包括 `https://docker.nju.edu.cn`）只加速 Docker Hub，不能填在这里。
+国内拉取 `ghcr.io` 经常中断。`./start.sh` 和 `./start.sh pull` 会并行探测 `ghcr.io` 与南京大学镜像 [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr)。只有先从 ghcr.io 拿到 manifest 摘要，且南京返回同一摘要时，才按这个摘要拉取并改回 `compose.yaml` 里的原名；这表示信任该主机，因为下载结果会被标成官方镜像名。拿不到官方摘要、摘要不一致，或镜像拉取失败时，仍走 `ghcr.io`。`MIRROR=ghcr.io` 固定走官方源，`MIRROR=ghcr.nju.edu.cn` 固定走南京，选择不会写入 `.env`。发布说明里有 digest，可用 `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` 核对，`@` 后面的摘要应一致。`compose.yaml` 不用改。Docker 引擎里的 `registry-mirrors`（包括 `https://docker.nju.edu.cn`）只加速 Docker Hub，不能填在 `MIRROR` 里。
 
 ```bash
-MIRROR=ghcr.nju.edu.cn ./start.sh
+./start.sh
+MIRROR=ghcr.io ./start.sh
+MIRROR=ghcr.nju.edu.cn ./start.sh pull
 ```
 
 打开安装脚本输出的地址创建账号，第一个账号自动成为管理员。服务默认监听 `0.0.0.0:8090`；在云主机上，安装脚本会从云厂商的元数据服务读取公网 IP 并直接打印出来，放通安全组端口即可访问，或配置 HTTPS 反向代理；管理员账号创建前，建议只允许你的 IP 访问。首页的「快速接入」会带你配置模型凭据、绑定仓库并选好默认 SOP。
@@ -112,11 +113,11 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
 
 <br>
 
-- **执行器。** 在首页输入框旁从 10 种 CLI 中选择一种，再选择模型。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清、通知 AI 汇总、Bot 回复和运行评测目前使用 CodeBuddy，这些入口的模型列表只列 CodeBuddy 模型，服务端收到其他 CLI 的模型会直接拒绝并说明原因，不会悄悄换成 CodeBuddy；定时助手任务使用任务所选的执行器。
+- **执行器。** 首页对话、需求澄清、Bot 回复、通知汇报、运行评测和静态预览均可选择 CLI 与模型。每个 SOP 角色可以独立选择 CLI，内置模板仍默认使用 CodeBuddy。定时提示词使用任务所选的 CLI。将使用中的流程配置为其他 CLI 后，平台可在未安装 CodeBuddy、未配置其 Key 的环境中运行。[部署与升级说明](docs/deployment.md#choosing-an-executor)
 
   | 执行器 | 凭据 | 安装方式 |
   | --- | --- | --- |
-  | **CodeBuddy** | 个人 Key，或管理员配置的平台共享 Key（覆盖对话和 SOP 运行） | Docker 镜像内置 |
+  | **CodeBuddy** | 个人 Key，或管理员配置的平台共享 Key（覆盖对话和 SOP 运行） | 默认内置，源码构建时可省略 |
   | **Codex** | 个人 Key；已连接的执行机器可使用本机登录 | Docker 镜像内置 |
   | **Claude Code** | 个人 Key；已连接的执行机器可使用本机登录 | 首次使用时从 npm 安装并缓存 |
   | **OpenCode · Kimi Code · Pi** | 仅个人 Key | 首次使用时从 npm 安装并缓存 |
@@ -125,6 +126,7 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
   | **ZCode** | 仅个人 Key | 未内置，需安装到服务或执行机器的 PATH 中 |
 
   Claude Code 之后的 7 种 Agent CLI 每次运行都在私有 HOME 目录里生成模型和 MCP 配置，因此始终使用需求责任人在个人设置中填写的 Key 和 Base URL，即使在已连接的执行机器上也一样。团队推广时，每位成员需要各自配置凭据。首次安装需要能访问 npm 或对应厂商；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
+- **企业微信通知。** 从本 Dockerfile 构建的平台镜像内置 `wecom-cli`，发布镜像将在下个版本包含它；原生部署需要另行安装，详见[部署指南](docs/deployment.md#native-development)。
 - **GitHub 可选。** 所有内置通用 SOP 都可以不绑定仓库运行：产品方案交付文档，前后端新项目在任务工作区交付源码；缺陷修复仍需提供待修代码和复现材料。需要修改已有代码或提交 PR 时再绑定仓库。
 - **交付到仓库。** 在个人设置中点击「连接 GitHub」，用设备码授权后选择自己的仓库（已内置 LoopForge 授权应用，无需申请 PAT，仍可手动填写 PAT），再配置执行器凭据（或绑定本机执行机器），之后既可以运行一条项目 SOP，也可以直接让 Main Bot 修改代码并提交 PR/MR。
 - **沙箱。** 默认 Compose 安装中，SOP 运行和对话工作区都使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；默认沙箱复用已安装的运行镜像，安装后无需再构建；自定义 Dockerfile 仍单独构建。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
@@ -192,23 +194,11 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
 
 ## LoopForge Local
 
-不想部署服务端？**LoopForge Local** 把内置交付工作流直接带进你正在用的编程助手：
+> **旧版（Legacy）。** 已发布的 LoopForge Local（`loopforge-cli`）版本仍可安装。[Local 使用指南](docs/local/usage.zh-CN.md)介绍如何安装固定版本、继续使用既有工作流并保留产物。
 
-```bash
-# 在目标项目目录中执行，例如安装到 Claude Code
-npx -y loopforge-cli@latest install claude
-```
+要在编码 Agent 中使用平台项目和 SOP，请[通过 MCP 将 CodeBuddy 接入 LoopForge 实例](docs/local/usage.zh-CN.md#通过-mcp-连接-loopforge)。Local 仍可在编码 Agent 中独立运行内置工作流，无需启动 LoopForge 服务端。
 
-然后在 Claude Code 中运行 `/start-devflow "<你的需求>"`。
-
-| 宿主 | 支持情况 |
-| --- | --- |
-| Claude Code · CodeBuddy · Codex · Cursor | Classic（默认）与 Portable 版 |
-| Pi | Portable 版 |
-
-各宿主的入口见[本地使用指南](docs/local/usage.zh-CN.md)，版本差异见[版本说明](docs/local/editions.md)，源码位于 [`local/`](local/)。Local 目前运行内置工作流；平台 SOP 导出后在本地独立执行是后续方向，尚未实现。
-
-| | 平台版 | Local |
+| | 平台版 | Local（旧版） |
 | --- | --- | --- |
 | 适合 | 团队共享对话工作区、SOP、审批与运行记录 | 个人开发者在 IDE / CLI 中使用 |
 | 依赖 | Docker + Python 3 | Node.js 20+、Python 3.8+ 和一个编程助手 |
@@ -241,7 +231,7 @@ LoopForge 不替代它们，而是编排它们。每个 Agent 步骤和每轮对
 | --- | --- |
 | 部署、账号、执行机器与凭据 | [部署指南](docs/deployment.md) |
 | 对话工作区、AI 定时任务与 Token 成本口径 | [对话工作区](docs/conversation-workspaces.md) · [AI 定时任务](docs/ai-scheduled-task-capabilities.md) · [Token 成本统计](docs/token-pricing.md) |
-| 本地工作流的安装、使用与版本选择 | [LoopForge Local](docs/local/usage.zh-CN.md) · [版本差异](docs/local/editions.md) |
+| 继续使用 Local 旧版工作流 | [LoopForge Local](docs/local/usage.zh-CN.md) · [版本差异](docs/local/editions.md) |
 | 扩展平台或接入 HTTP / MCP API | [架构](docs/architecture.md) · [API 参考](docs/api/README.md) · [共享定时任务 API](docs/api/shared-schedules.md) |
 | 参与前端开发 | [前端设计约定](design.md) |
 | 功能覆盖与发布就绪情况 | [实测记录](docs/validation.md) · [验收矩阵](docs/testing/acceptance-matrix.md) · [发布评审](docs/release-readiness.md) |

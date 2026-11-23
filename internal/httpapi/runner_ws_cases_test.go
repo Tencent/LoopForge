@@ -157,5 +157,5 @@ func TestRunnerControlHubErrorAndBufferBranches(t *testing.T) {
 	hub.sendControl(buffered.runnerID, "task", "cancel", 1)
 	close(buffered.done)
 
-	hub.resolveWorkspace("missing", domain.RunnerWorkspaceResponse{})
+	hub.resolveWorkspace(nil, "missing", domain.RunnerWorkspaceResponse{})
 }

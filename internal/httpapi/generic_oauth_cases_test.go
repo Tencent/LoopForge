@@ -86,6 +86,7 @@ func TestGongfengOAuthValidationBranches(t *testing.T) {
 	cvBGongfengCallRound2(t, h.gongfengOAuthStart, "/api/auth/gongfeng/start", http.StatusServiceUnavailable)
 	cvBGongfengCallRound2(t, h.gongfengOAuthCallback, "/api/auth/gongfeng/callback", http.StatusServiceUnavailable)
 
+	t.Setenv("AGENTFLOW_GONGFENG_HOST", "git.review.test")
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_ID", "id")
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_SECRET", "secret")
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_REDIRECT_URI", "http://example.test/callback")

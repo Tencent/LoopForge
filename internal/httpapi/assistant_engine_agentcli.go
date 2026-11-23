@@ -57,6 +57,7 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 	command := runtime.AgentCLICommand(kind, runtime.AgentCLICommandOptions{
 		Binary: o.Bin, Model: o.Model, Effort: o.Effort, Resume: resume, Prompt: o.Prompt,
 		SystemPrompt: o.SystemPrompt, SystemPromptFile: systemFile, Chat: true, Workspace: o.Workspace, AgentFile: agentFile,
+		RunnerLogin: o.RunnerLogin, ImagePaths: o.ImagePaths, ImageInput: o.ImageInput,
 	})
 	command.CredentialBindings = []runtime.CredentialBinding{runtime.BindAgentCLI}
 	translate := runtime.NewAgentCLITranslator(kind)
@@ -69,14 +70,14 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 			out := translate(line)
 			for i, translated := range out {
 				out[i] = assistantAgentCLILine(kind, translated, &native)
-				if agentCLISessionValid(native) {
+				if !o.ReviewOnly && agentCLISessionValid(native) {
 					_ = writeAgentCLISession(o.Root, kind, o.SessionID, native)
 				}
 			}
 			return out
 		},
 		finish: func(ok bool) {
-			if agentCLISessionValid(native) {
+			if !o.ReviewOnly && agentCLISessionValid(native) {
 				_ = writeAgentCLISession(o.Root, kind, o.SessionID, native)
 			}
 		},

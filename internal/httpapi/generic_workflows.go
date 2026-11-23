@@ -21,14 +21,13 @@ func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinitio
 	if _, found := h.repo.Project(projectID); !found {
 		return domain.WorkflowDefinition{}, errors.New("目标项目不存在，请刷新后重新选择")
 	}
+	if template.SandboxProfileID == "" {
+		return domain.WorkflowDefinition{}, errors.New("当前项目没有可用沙箱，请先在「沙箱管理」创建或共享一个沙箱")
+	}
 	if err := ensureDefaultProjectMCPs(h.repo, projectID); err != nil {
 		return domain.WorkflowDefinition{}, fmt.Errorf("安装默认 MCP: %w", err)
 	}
 	h.configureSync(h.repo.SyncConfig())
-	sandboxID := h.genericTemplateSandbox(template.SandboxProfileID, projectID)
-	if sandboxID == "" {
-		return domain.WorkflowDefinition{}, errors.New("当前项目没有可用沙箱，请先在「沙箱管理」创建或共享一个沙箱")
-	}
 	agents, err := h.cloneGenericTemplateAgents(template.ID, projectID)
 	if err != nil {
 		return domain.WorkflowDefinition{}, err
@@ -51,7 +50,6 @@ func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinitio
 		adopted.SOPLane = domain.InferSOPLane(template)
 	}
 	adopted.CreatedAt, adopted.UpdatedAt = time.Time{}, time.Time{}
-	adopted.SandboxProfileID = sandboxID
 	for index := range adopted.Nodes {
 		if target, ok := agents[adopted.Nodes[index].AgentID]; ok {
 			adopted.Nodes[index].AgentID = target

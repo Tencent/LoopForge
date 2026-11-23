@@ -68,11 +68,25 @@ test('flow editor handles artifact/list editors and saves workflow changes', asy
   assert.equal(app.evaluate(`state.workflowDirty`), false);
 });
 
-test('flow preview properties update model and SPA fallback in observable state', async (t) => {
+test('flow preview properties persist the CLI, model and SPA fallback', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.evaluate(`switchView('flow');addNode('preview',{at:{x:200,y:100}});renderProperties()`);
+  app.router.get('/api/executor-models', {
+    codebuddy: {models:[{id:'deepseek-v4.1-flash',name:'DeepSeek Flash'}]},
+    codex: {models:[{id:'preview-model',name:'Preview model'},{id:'preview-other',name:'Other model'}]},
+    claude: {models:[]},
+  });
+  app.evaluate(`state.data.executors=[{id:'codebuddy',name:'CodeBuddy'},{id:'codex',name:'Codex'}];switchView('flow');addNode('preview',{at:{x:200,y:100}});renderProperties()`);
+  await app.evaluate('loadExecutorModelCatalogs()');
+  const executor = app.document.querySelector('#previewNodeExecutor');
+  assert.equal(executor.value, '');
+  assert.equal(app.evaluate('state.workflow.preview.executorId'), '');
+  assert.equal(app.document.querySelector('#previewNodeModel').disabled, true);
+  executor.value = 'codex';
+  executor.dispatchEvent(new app.window.Event('change'));
   const model = app.document.querySelector('#previewNodeModel');
+  assert.equal(model.value, 'preview-model');
+  assert.deepEqual([...model.options].map(option => option.value), ['preview-model', 'preview-other']);
   model.value = model.options[model.options.length - 1].value;
   model.dispatchEvent(new app.window.Event('change'));
   const spa = app.document.querySelector('#previewNodeSpa');
@@ -80,7 +94,9 @@ test('flow preview properties update model and SPA fallback in observable state'
   spa.dispatchEvent(new app.window.Event('change'));
   assert.equal(app.evaluate(`state.workflow.preview.model`), model.value);
   assert.equal(app.evaluate(`state.workflow.preview.spaFallback`), false);
-  assert.match(app.document.querySelector('#properties').textContent, /CodeBuddy 模型/);
+  assert.equal(app.evaluate(`state.workflow.preview.executorId`), 'codex');
+  assert.equal(app.evaluate(`state.workflow.nodes.find(n=>isPreviewBuildNode(n.id)).executorId`), 'codex');
+  assert.equal(model.value, 'preview-other');
 });
 
 test('SOP wizard creates a workflow and publish/delete actions send expected requests', async (t) => {

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 	"strings"
 
 	"agentflow/internal/application"
+	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/mcpserver"
 )
@@ -42,10 +42,25 @@ func (s *AgentToolSession) conversationWorkspace() string {
 	return s.workspaceRunID
 }
 
-// Project access is checked at the conversation entry point. The storage owner
-// does not limit which participants can use the conversation workspace.
+// Project participants share one workspace binding. A personal conversation
+// uses its owner's binding.
 func (s *AgentToolSession) canOpenConversationWorkspace() bool {
-	return s.RunID == "" && strings.TrimSpace(s.ProjectID) != "" && s.ChatSessionID != ""
+	return s.RunID == "" && s.ChatSessionID != "" &&
+		(s.ProjectID != "" || s.UserID > 0 && s.ChatOwnerID == s.UserID)
+}
+
+func (h *agentToolGateway) mayUseWorkspace(s *AgentToolSession, run domain.Run) bool {
+	if run.ExecutionContext.ProjectID != s.ProjectID || s.User.ID != s.UserID {
+		return false
+	}
+	if !run.IsPersonalWorkspace() {
+		return true
+	}
+	if !s.canOpenConversationWorkspace() {
+		return false
+	}
+	conv, ok := h.repo.AssistantSession(s.UserID, s.ChatSessionID)
+	return ok && conv.WorkspaceRunID == run.ID && conversationMayBind(conv, run, s.ProjectID)
 }
 
 func mainBotWorkspaceTools(s *AgentToolSession) []agentToolDescriptor {
@@ -90,7 +105,7 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 		return "", fmt.Errorf("本对话还没有工作区：先调用 workbench_workspace_open 打开一个")
 	}
 	run, ok := h.repo.RunState(runID)
-	if !ok || run.ExecutionContext.ProjectID != s.ProjectID || s.User.ID != s.UserID {
+	if !ok || !h.mayUseWorkspace(s, run) {
 		return "", errAgentToolForbidden
 	}
 	if engine.WorkspaceRunID(run) != run.ID {
@@ -148,6 +163,7 @@ func (h *agentToolGateway) mainBotWorkspaceLease(ctx context.Context, s *AgentTo
 	if h.engine == nil {
 		return ctx, nil, release, nil
 	}
+	ctx = withAssistantDockerBuildProgress(ctx, s)
 	if s.workspaceTurn != nil {
 		ctx, err := s.workspaceTurn.lease(ctx, runID)
 		if err != nil {
@@ -213,7 +229,7 @@ func (e *mainBotWorkspaceError) Error() string { return e.body }
 var workspaceAttachmentTypes = map[string]string{
 	".html": "text/html", ".htm": "text/html",
 	".md": "text/markdown", ".markdown": "text/markdown",
-	".txt": "text/plain", ".log": "text/plain",
+	".txt": "text/plain", ".log": "text/plain", ".py": "text/plain",
 	".csv": "text/csv", ".yaml": "text/yaml", ".yml": "text/yaml",
 	".json": "application/json", ".xml": "application/xml",
 }
@@ -237,7 +253,7 @@ func (h *agentToolGateway) attachWorkspaceFile(ctx context.Context, s *AgentTool
 	name := pathpkg.Base(strings.ReplaceAll(rel, "\\", "/"))
 	mimeType := workspaceAttachmentTypes[strings.ToLower(pathpkg.Ext(name))]
 	if mimeType == "" {
-		return "", fmt.Errorf("path 只能是文本文件（html、md、txt、log、csv、yaml、json、xml）；要给用户看页面效果，用 workbench_browser_screenshot 截图")
+		return "", fmt.Errorf("path 只能是文本文件（html、md、txt、log、py、csv、yaml、json、xml）；要给用户看页面效果，用 workbench_browser_screenshot 截图")
 	}
 	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: "GET", Path: "/api/runs/{id}/workspace/file"}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: map[string]string{"path": rel}})
 	if err != nil {

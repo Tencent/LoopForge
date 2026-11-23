@@ -84,7 +84,14 @@ type ScheduleJob struct {
 	IntervalSec     int    `json:"intervalSec"`
 	Cron            string `json:"cron,omitempty"`
 	AssistantPrompt string `json:"assistantPrompt,omitempty"`
-	AssistantModel  string `json:"assistantModel,omitempty"`
+	// References are project assets selected for an AI scheduled task. The
+	// executor resolves them at run time so edits to the referenced assets are
+	// reflected on the next run.
+	References     []AssistantReference `json:"references,omitempty"`
+	AssistantModel string               `json:"assistantModel,omitempty"`
+	// TimeoutMinutes bounds one AI execution, including tool calls and SOP waits.
+	// Zero uses the default for jobs saved before this field existed.
+	TimeoutMinutes int `json:"timeoutMinutes,omitempty"`
 	// SessionMode picks the Studio conversation an AI job runs in: empty opens
 	// a new conversation for every execution; "fixed" keeps continuing
 	// FixedSessionID.
@@ -98,10 +105,9 @@ type ScheduleJob struct {
 	// first fixed-mode execution and cleared when the mode leaves "fixed".
 	FixedSessionID string `json:"fixedSessionId,omitempty"`
 	OwnerUserID    int64  `json:"ownerUserId,omitempty"`
-	// RunAsUserID is server-managed: the user whose keys run an AI job, set to
-	// whoever last saved it. Zero (jobs saved before the binding, or without a
-	// signed-in user) runs it with the project owner's keys. RunAsName is for
-	// display.
+	// RunAsUserID is server-managed: the user whose credentials run an AI job,
+	// set to whoever last saved it. Zero keeps the legacy project-owner
+	// selection. RunAsName is for display.
 	RunAsUserID          int64     `json:"runAsUserId,omitempty"`
 	RunAsName            string    `json:"runAsName,omitempty"`
 	LastRunAt            time.Time `json:"lastRunAt,omitempty"`

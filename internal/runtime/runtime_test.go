@@ -819,7 +819,7 @@ func TestLightweightSandboxSmoke(t *testing.T) {
 		t.Fatal(createErr)
 	}
 	allowed := `test "$HOME" != "` + stateHome + `" && test -w "$HOME" && f=$(mktemp) && printf ok > "$f" && printf ok > /dev/null && printf ok > workspace-write.txt`
-	command, err := bindCommand(sb, workspace, CommandSpec{Argv: []string{fakeCodeBuddy, "-lc", allowed}, Provider: "codebuddy", PrivateHome: true}, RunCredentials{})
+	command, err := bindCommand(t.Context(), sb, workspace, CommandSpec{Argv: []string{fakeCodeBuddy, "-lc", allowed}, Provider: "codebuddy", PrivateHome: true}, RunCredentials{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1325,45 +1325,30 @@ func TestRunSandboxBindsCodeBuddyCredentialOnlyToTargetProcess(t *testing.T) {
 	}
 }
 
-func TestRunSandboxBindsGitAskPassForVerification(t *testing.T) {
-	root := t.TempDir()
-	manager := NewManager(root)
-	sandbox, err := manager.AcquireRun(context.Background(), "run-git-askpass", domain.SandboxProfile{ID: "local", Driver: "local"}, SandboxRequirements{}, RunCredentials{
-		GitToken: "proj_git_token",
-	}, SandboxResources{})
+func TestRunSandboxBindsHostCredentialHelperForVerification(t *testing.T) {
+	manager := NewManager(t.TempDir())
+	sb, err := manager.AcquireRun(context.Background(), "helper-verification", domain.SandboxProfile{ID: "local", Driver: "local"}, SandboxRequirements{}, RunCredentials{GitHTTPCredentials: testHTTPSCredentials("proj_git_token")}, SandboxResources{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sandbox.Close(context.Background())
-
-	output, err := sandbox.Exec(context.Background(), CommandSpec{
-		Argv:               []string{"sh", "-lc", `printf '%s\n' "$GIT_ASKPASS"; test -x "$GIT_ASKPASS"; "$GIT_ASKPASS" "Username for 'https://git.example.com':"; "$GIT_ASKPASS" "Password for 'https://git.example.com':"`},
-		Provider:           "verification",
-		CredentialBindings: []CredentialBinding{BindGit},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
+	defer sb.Close(context.Background())
+	script := `import os,subprocess
+assert not os.getenv('GIT_ASKPASS') and not os.getenv('AGENTFLOW_GIT_TOKEN')
+p=subprocess.run(['git','credential','fill'],input='protocol=https\nhost=git.example.com\n\n',text=True,capture_output=True,check=True)
+c=dict(l.split('=',1)for l in p.stdout.splitlines()if '='in l)
+assert c['password']=='proj_git_token'
+print('HELPER_VERIFIED')`
+	out, err := sb.Exec(context.Background(), CommandSpec{Argv: []string{"python3", "-c", script}, CredentialBindings: []CredentialBinding{BindGit}}, nil)
+	if err != nil || !strings.Contains(out, "HELPER_VERIFIED") {
+		t.Fatalf("helper: %v %s", err, out)
 	}
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("askpass output = %q", output)
-	}
-	if !strings.HasSuffix(lines[0], filepath.Join(".agentflow", "runtime", "git-askpass")) {
-		t.Fatalf("GIT_ASKPASS = %q", lines[0])
-	}
-	if lines[1] != "private" || lines[2] != "proj_git_token" {
-		t.Fatalf("askpass answers = %q %q", lines[1], lines[2])
-	}
-	plain, err := sandbox.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-lc", `printf '%s|%s' "$GIT_ASKPASS" "$AGENTFLOW_GIT_TOKEN"`}, Provider: "verification"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(plain) != "|" {
-		t.Fatalf("git credential leaked to unbound child: %q", plain)
+	plain, err := sb.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-c", `printf '%s|%s' "$GIT_ASKPASS" "$AGENTFLOW_GIT_TOKEN"`}}, nil)
+	if err != nil || strings.TrimSpace(plain) != "|" {
+		t.Fatalf("unbound command received credentials: %v %s", err, plain)
 	}
 }
 
-func TestVerificationGitLSRemoteAskPassAgainstHTTP401(t *testing.T) {
+func TestVerificationGitCredentialIsNotSentToHTTPRemote(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -1394,7 +1379,7 @@ func TestVerificationGitLSRemoteAskPassAgainstHTTP401(t *testing.T) {
 	}
 	manager := NewManager(root)
 	sandbox, err := manager.AcquireRun(context.Background(), "run-git-401", domain.SandboxProfile{ID: "local", Driver: "local"}, SandboxRequirements{}, RunCredentials{
-		GitToken: "proj_git_token",
+		GitHTTPCredentials: testHTTPSCredentials("proj_git_token"),
 	}, SandboxResources{})
 	if err != nil {
 		t.Fatal(err)
@@ -1435,8 +1420,8 @@ func TestVerificationGitLSRemoteAskPassAgainstHTTP401(t *testing.T) {
 			"GIT_CONFIG_NOSYSTEM": "1",
 		},
 	}, nil)
-	if !authorized.Load() {
-		t.Fatalf("GIT_ASKPASS did not send Basic auth; err=%v out=%q", withErr, with)
+	if authorized.Load() || withErr == nil {
+		t.Fatalf("HTTPS token must not authenticate plain HTTP; err=%v out=%q", withErr, with)
 	}
 }
 

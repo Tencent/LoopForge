@@ -85,17 +85,17 @@ func TestRunnerCallbacksPathsBindingsAndReconnect(t *testing.T) {
 	run := domain.Run{
 		Repository: domain.RepositoryContext{RepositoryID: "legacy", CloneURL: "https://legacy", BaseBranch: "main", WorkBranch: "work"},
 	}
-	bindRunnerRepositories(invocation, run, "token", " Name ", " mail ")
-	if invocation.Repository == nil || invocation.Repository.GitToken != "token" || invocation.GitUserName != "Name" {
+	bindRunnerRepositories(invocation, run, " Name ", " mail ")
+	if invocation.Repository == nil || invocation.Repository.GitToken != "" || invocation.GitUserName != "Name" {
 		t.Fatalf("legacy binding = %+v", invocation)
 	}
 	invocation = &domain.RunnerInvocation{}
 	run.Repositories = []domain.RepositoryContext{{RepositoryID: "one", CloneURL: "https://one", WorkspaceDir: "one"}, {RepositoryID: "skip"}}
-	bindRunnerRepositories(invocation, run, "token", "", "")
+	bindRunnerRepositories(invocation, run, "", "")
 	if len(invocation.Repositories) != 1 || invocation.Repositories[0].Dir != "one" {
 		t.Fatalf("bindings = %+v", invocation.Repositories)
 	}
-	bindRunnerRepositories(nil, run, "", "", "")
+	bindRunnerRepositories(nil, run, "", "")
 
 	if err := e.requireRunnerProvider("missing", "codex"); err == nil {
 		t.Fatal("missing runner accepted")

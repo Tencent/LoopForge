@@ -230,13 +230,20 @@ test('SOP with active references cannot be deleted; deleting a missing SOP is 40
   await api('DELETE', '/api/workflows/e2e-auto-does-not-exist', undefined, { expect: 404 });
 });
 
-test('repository registration parses Gongfeng links and validates input', async () => {
+test('repository registration parses known hosts and generic HTTPS Git URLs', async () => {
   const id = uid('repo');
   track(`repository ${id}`, () => del(`/api/repositories?id=${id}`));
   const saved = await post('/api/repositories', { id, projectId: P, repoUrl: 'https://git.example.com/example/agent-flow' });
   assert.equal(saved.gongfengProjectId, 'example/agent-flow');
   assert.equal(saved.name, 'agent-flow');
   assert.equal((await get(`/api/repositories/${id}`)).projectId, P);
-  await api('POST', '/api/repositories', { projectId: P, repoUrl: 'https://gitlab.invalid/foo/bar' }, { expect: 400 });
+  const genericId = uid('repo-https');
+  track(`repository ${genericId}`, () => del(`/api/repositories?id=${genericId}`));
+  const generic = await post('/api/repositories', { id: genericId, projectId: P, repoUrl: 'https://gitlab.invalid/foo/bar' });
+  assert.equal(generic.provider, 'https');
+  assert.equal(generic.cloneUrl, 'https://gitlab.invalid/foo/bar');
+  assert.equal(generic.gongfengProjectId, '');
+  assert.equal(generic.name, 'bar');
+  await api('POST', '/api/repositories', { projectId: P, repoUrl: 'https://user:token@gitlab.invalid/foo/bar' }, { expect: 400 });
   await api('POST', '/api/repositories', { projectId: 'e2e-no-such-project', gongfengProjectId: 'a/b' }, { expect: 400 });
 });
