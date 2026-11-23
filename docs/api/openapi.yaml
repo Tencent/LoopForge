@@ -1041,6 +1041,117 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "412": {description: The registration has changed or been removed}
         "428": {description: The current registration revision is required}
+  /api/git-https-hosts:
+    get:
+      tags: [Repositories]
+      operationId: listGitHTTPSHostChoices
+      summary: List authorized HTTPS Git instances for the signed-in user
+      responses:
+        "200":
+          description: Host and provider options for personal access tokens
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/GitHTTPSHostChoice"}}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/platform/git-https-hosts:
+    get:
+      tags: [Repositories]
+      operationId: listPlatformGitHTTPSHosts
+      summary: List Git HTTPS host authorizations
+      responses:
+        "200":
+          description: Host authorizations and approved addresses
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      tags: [Repositories]
+      operationId: createPlatformGitHTTPSHost
+      summary: Authorize a Git HTTPS host and its confirmed addresses
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}
+      responses:
+        "201":
+          description: Saved authorization
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}
+        "400": {description: Invalid host or addresses}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {description: The host and port are already authorized}
+  /api/platform/git-https-hosts/preview:
+    post:
+      tags: [Repositories]
+      operationId: previewPlatformGitHTTPSHost
+      summary: Review assigned or resolved IP addresses for a Git HTTPS host
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/GitHTTPSHostChoice"
+                - type: object
+                  properties:
+                    addresses:
+                      type: array
+                      minItems: 1
+                      items: {type: string}
+                      description: IP addresses to validate for review. Omit to resolve the hostname with DNS.
+      responses:
+        "200":
+          description: Normalized host, provider, and IP addresses
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}
+        "400": {description: Invalid host, provider, or supplied addresses}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "502": {description: No valid addresses could be resolved}
+  /api/platform/git-https-hosts/{host}:
+    parameters:
+      - {name: host, in: path, required: true, schema: {type: string}, example: "gitlab.example.org:8443"}
+      - name: If-Match
+        in: header
+        required: true
+        schema: {type: string}
+        description: Quote the revision returned when the authorization was read or saved.
+    put:
+      tags: [Repositories]
+      operationId: updatePlatformGitHTTPSHost
+      summary: Update the provider and approved addresses of a Git HTTPS host
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [platform, addresses]
+              properties:
+                platform: {type: string, enum: [github, gitlab, other]}
+                addresses: {type: array, minItems: 1, items: {type: string}}
+      responses:
+        "200":
+          description: Updated authorization
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}
+        "400": {description: Invalid addresses or revision}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412": {description: The authorization has changed or been removed}
+        "428": {description: The current authorization revision is required}
+    delete:
+      tags: [Repositories]
+      operationId: deletePlatformGitHTTPSHost
+      summary: Revoke a platform Git HTTPS host authorization
+      responses:
+        "204": {description: Authorization removed}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412": {description: The authorization has changed or been removed}
+        "428": {description: The current authorization revision is required}
   /api/business-domains:
     get:
       tags: [BusinessDomains]
@@ -4372,6 +4483,27 @@ components:
         invalid: {type: boolean, readOnly: true, description: Set on a stored record with an invalid hostname or public keys. The list omits its key contents.}
         invalidHost: {type: boolean, readOnly: true, description: The stored hostname does not identify a canonical SSH endpoint. Remove this record before registering the correct host.}
         revision: {type: string, readOnly: true, description: Opaque revision for conditional updates and removals.}
+    GitHTTPSHostChoice:
+      type: object
+      required: [host, platform]
+      properties:
+        host:
+          type: string
+          example: "[fd00::2]:8443"
+          description: Git hostname or IPv6 address. An IPv6 address with a port uses brackets.
+        platform: {type: string, enum: [github, gitlab, other]}
+    PlatformGitHTTPSHost:
+      allOf:
+        - $ref: "#/components/schemas/GitHTTPSHostChoice"
+        - type: object
+          required: [addresses]
+          properties:
+            addresses:
+              type: array
+              minItems: 1
+              items: {type: string}
+              description: Approved IPv4 or IPv6 addresses for the host.
+            revision: {type: string, readOnly: true, description: Opaque revision for conditional updates and removals.}
     PlatformCodeBuddyKey:
       type: object
       properties:

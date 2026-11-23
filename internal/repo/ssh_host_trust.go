@@ -22,7 +22,7 @@ var ErrPlatformGitSSHHostChanged = errors.New("platform Git SSH host trust chang
 
 // Use the primary-key lookup and compare both strings byte-for-byte, even
 // when the database collation considers distinct legacy values equivalent.
-const platformGitSSHHostRevisionWhere = "host = ? AND HEX(host) = HEX(?) AND HEX(revision) = HEX(?)"
+const platformGitHostRevisionWhere = "host = ? AND HEX(host) = HEX(?) AND HEX(revision) = HEX(?)"
 
 type PlatformGitSSHHost struct {
 	Host       string `json:"host" gorm:"type:varchar(260);primaryKey"`
@@ -46,7 +46,7 @@ func (r *SSHHostTrustRepo) CreatePlatformGitSSHHost(ctx context.Context, entry *
 func (r *SSHHostTrustRepo) UpdatePlatformGitSSHHost(ctx context.Context, entry *PlatformGitSSHHost, expectedRevision string) error {
 	nextRevision := rand.Text()
 	result := r.DB.WithContext(ctx).Model(&PlatformGitSSHHost{}).
-		Where(platformGitSSHHostRevisionWhere, entry.Host, entry.Host, expectedRevision).
+		Where(platformGitHostRevisionWhere, entry.Host, entry.Host, expectedRevision).
 		Updates(map[string]any{"public_keys": entry.PublicKeys, "revision": nextRevision})
 	if result.Error != nil {
 		return result.Error
@@ -60,7 +60,7 @@ func (r *SSHHostTrustRepo) UpdatePlatformGitSSHHost(ctx context.Context, entry *
 
 func (r *SSHHostTrustRepo) DeletePlatformGitSSHHost(ctx context.Context, host, expectedRevision string) error {
 	result := r.DB.WithContext(ctx).
-		Where(platformGitSSHHostRevisionWhere, host, host, expectedRevision).
+		Where(platformGitHostRevisionWhere, host, host, expectedRevision).
 		Delete(&PlatformGitSSHHost{})
 	if result.Error != nil {
 		return result.Error

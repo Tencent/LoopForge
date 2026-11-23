@@ -27,7 +27,7 @@ function platformSSHHostTrustHTML(){
           <button type="button" class="button ghost" data-ssh-host-cancel>${lfT('取消','Cancel')}</button>
           <button type="submit" class="button primary" data-ssh-host-probe>${lfT('读取公钥并核对指纹','Read key and review fingerprint')}</button>
         </div>
-        <details class="platform-ssh-host-manual">
+        <details class="platform-host-manual">
           <summary>${lfT('手动录入公钥','Enter public keys manually')}</summary>
           <label class="platform-field">
             <span>${lfT('服务器主机公钥','Server host public keys')}</span>
@@ -91,9 +91,8 @@ async function loadPlatformSSHHosts(host){
     for(const button of list.querySelectorAll('button'))button.disabled=value;
   };
   const render=()=>{
-    setPlatformTabCount(host,'sshTrust',entries.length);
     list.innerHTML=entries.length?entries.map((entry,index)=>`
-      <div class="platform-admin-row">
+      <div class="platform-admin-row" data-git-host-entry>
         <div class="platform-admin-info platform-ssh-host-info" data-i18n-skip>
           <strong>${escapeHTML(entry.host||lfT('空主机名','Empty hostname'))}</strong>
           ${entry.invalid
@@ -105,6 +104,7 @@ async function loadPlatformSSHHosts(host){
           <button type="button" class="button ghost small danger" data-ssh-host-remove="${index}">${lfT('移除','Remove')}</button>
         </div>
       </div>`).join(''):`<p class="prop-hint">${lfT('尚未登记 Git SSH 主机。','No Git SSH hosts registered.')}</p>`;
+    setPlatformTabCount(host,'gitHostTrust',host.querySelectorAll('[data-git-host-entry]').length);
   };
 
   const refresh=async()=>{

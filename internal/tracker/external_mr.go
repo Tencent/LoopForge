@@ -53,7 +53,7 @@ func (s *Service) refreshExternalDelivery(store MRDeliveryStore, row domain.MRDe
 			TargetBranch string     `json:"target_branch"`
 			MergedAt     *time.Time `json:"merged_at"`
 		}
-		if err := s.gitHostGet(ctx, cred, "/projects/"+url.PathEscape(path)+"/merge_requests/"+strconv.Itoa(row.MRIID), &mr); err != nil {
+		if err := s.gitHostGet(ctx, store.PlatformGitHTTPSAddresses, cred, "/projects/"+url.PathEscape(path)+"/merge_requests/"+strconv.Itoa(row.MRIID), &mr); err != nil {
 			return false, err
 		}
 		if mr.State == "locked" {
@@ -65,7 +65,7 @@ func (s *Service) refreshExternalDelivery(store MRDeliveryStore, row domain.MRDe
 		}
 	} else {
 		var p githubPull
-		if err := s.gitHostGet(ctx, cred, "/repos/"+path+"/pulls/"+strconv.Itoa(row.MRIID), &p); err != nil {
+		if err := s.gitHostGet(ctx, store.PlatformGitHTTPSAddresses, cred, "/repos/"+path+"/pulls/"+strconv.Itoa(row.MRIID), &p); err != nil {
 			return false, err
 		}
 		d := p.delivery(row.MRProject)
@@ -77,8 +77,8 @@ func (s *Service) refreshExternalDelivery(store MRDeliveryStore, row domain.MRDe
 	return true, store.UpdateMRDeliveryState(row.MRProject, row.MRIID, state, target, mergedAt, time.Now().UTC())
 }
 
-func (s *Service) gitHostGet(ctx context.Context, cred domain.GitHTTPCredentialSecret, path string, out any) error {
-	base, client := cred.APIBase(), gitegress.Client()
+func (s *Service) gitHostGet(ctx context.Context, lookup gitegress.HTTPSHostLookup, cred domain.GitHTTPCredentialSecret, path string, out any) error {
+	base, client := cred.APIBase(), gitegress.Client(lookup)
 	if cred.Host == "github.com" && s.githubAPIBase != "" {
 		base, client = s.githubAPIBase, http.DefaultClient
 	}
@@ -99,7 +99,7 @@ func (s *Service) gitHostGet(ctx context.Context, cred domain.GitHTTPCredentialS
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s request failed", cred.Host)
+		return fmt.Errorf("%s request failed: %w", cred.Host, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {

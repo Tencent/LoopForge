@@ -187,6 +187,7 @@ type Store struct {
 	*SpacesRepo
 	*KnowledgeRepo
 	*SSHHostTrustRepo
+	*HTTPSHostTrustRepo
 	*NotificationsRepo
 	*BotInteractionsRepo
 }
@@ -219,6 +220,7 @@ func newStore(db *gorm.DB) *Store {
 	s.SpacesRepo = &SpacesRepo{deps: d}
 	s.KnowledgeRepo = &KnowledgeRepo{deps: d}
 	s.SSHHostTrustRepo = &SSHHostTrustRepo{deps: d}
+	s.HTTPSHostTrustRepo = &HTTPSHostTrustRepo{deps: d}
 	return s
 }
 

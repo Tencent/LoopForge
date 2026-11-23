@@ -1,10 +1,12 @@
 package tracker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -28,6 +30,10 @@ type fakeMRDeliveryStore struct {
 		mergedAt     time.Time
 		checkedAt    time.Time
 	}
+}
+
+func (f *fakeMRDeliveryStore) PlatformGitHTTPSAddresses(context.Context, string) ([]netip.Addr, error) {
+	return nil, nil
 }
 
 func (f *fakeMRDeliveryStore) DiscoverMRDeliveryStatesFromArtifacts() error {
