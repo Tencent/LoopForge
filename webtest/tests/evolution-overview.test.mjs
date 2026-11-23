@@ -111,7 +111,7 @@ test('asset grouping deduplicates proposal appearances and merges findings witho
 });
 
 
-test('empty home explains explicit diagnosis results and opens a read-only verification guide', async t => {
+test('empty home explains explicit diagnosis results without a verification guide', async t => {
   const app = await loadApp({routes:[
     {method:'GET',path:'/api/evolution/overview?projectId=project-1',body:{health:[],queue:[]}},
     {method:'GET',path:'/api/evolution/findings?projectId=project-1',body:[]},
@@ -122,18 +122,8 @@ test('empty home explains explicit diagnosis results and opens a read-only verif
   assert.match($('#evolutionBody').textContent,/暂无改进记录/);
   assert.equal($('.evo-home-columns'),null);
   assert.equal($('.evo-home-tabs'),null);
-  assert.equal(app.document.querySelectorAll('[data-evo-home-guide]').length,1);
+  assert.equal($('[data-evo-home-guide]'),null);
   assert.equal($('.evo-home-empty [data-evo-home-check]'),null);
-  $('[data-evo-home-guide]').click(); await settle(2);
-  assert.match($('#kbDrawerBody').textContent,/evidence.line = 4/);
-  assert.match($('#kbDrawerBody').textContent,/不是当前项目的运行结果/);
-  assert.equal(app.router.calls.some(c=>c.method!=='GET'),false);
-  let copied;
-  app.window.navigator.clipboard.writeText=async text=>{copied=JSON.parse(text)};
-  $('[data-evo-home-copy]').click();await settle(2);
-  assert.equal(copied.caseId,'combined');
-  assert.equal(copied.lines.length,4);
-  $('#kbDrawerClose').click();
   $('#evoDiagnose').click(); await settle(6);
   assert.match($('#evolutionBody').textContent,/当前项目没有可分析的运行/);
   assert.match($('.evo-home-check-note').textContent,/0 次运行/);

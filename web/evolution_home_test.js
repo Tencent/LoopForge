@@ -9,7 +9,7 @@ const {createDOM}=require('./hui_fake_dom');
   w.state={projectFilter:'p'};w.relativeTime=()=> '刚刚';w.toast=()=>{};
   w.kbBadge=(text,tone)=>`<span class="badge ${tone}">${text}</span>`;
   for(const file of ['evolution.js','app/evolution-simple.js','app/evolution-review.js','app/evolution-story.js','app/evolution-home.js'])dom.load(path.join(__dirname,file));
-  const api=dom.run('({evo,evoHomeHTML,evoHomeGuideHTML,evoDiagnose})');
+  const api=dom.run('({evo,evoHomeHTML,evoDiagnose})');
   const evo=api.evo;evo.projectId='p';evo.overview={health:[]};evo.findings=[];
   let html=api.evoHomeHTML();dom.html(html);
   assert.match(html,/暂无改进记录/);
@@ -39,11 +39,8 @@ const {createDOM}=require('./hui_fake_dom');
   evo.list={status:'active',page:0};html=api.evoHomeHTML();
   assert.match(html,/查看全部 1 条/);
   evo.list.status='all';assert.match(api.evoHomeHTML(),/data-evo-asset-group/);
-  const guide=api.evoHomeGuideHTML();
-  assert.match(guide,/验收目标，不是当前项目的运行结果/);
-  assert.match(guide,/evidence.line = 4/);
 
-  // A check is an explicit write; refresh and the guide must not silently run it.
+  // A check is an explicit write; refresh must not silently run it.
   dom.html('<section id="evolutionView" class="active"><div id="evoPageHead"><button id="evoDiagnose"><span data-evo-check-label></span></button></div><div id="evoMetrics"></div><div id="evolutionBody"><button data-evo-home-check></button></div></section>');
   evo.overview={health:[]};evo.findings=[];evo.list={status:'active',page:0};evo.lastCheck=null;
   let resolve,writes=0;

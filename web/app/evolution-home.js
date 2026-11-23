@@ -63,15 +63,9 @@ function evoHomeHTML(){
   const pager=pages>1?`<footer class="evo-list-footer"><span>当前载入 ${list.length} 项</span><nav aria-label="改进分页"><button type="button" data-evo-unified-page="${evo.list.page-1}"${evo.list.page?'':' disabled'}>上一页</button><span>${evo.list.page+1}/${pages}</span><button type="button" data-evo-unified-page="${evo.list.page+1}"${evo.list.page+1<pages?'':' disabled'}>下一页</button></nav></footer>`:'';
   return `<div class="evo-home">${error}${checkNote}${toolbar}<section id="evoUnifiedList" class="evo-home-list" aria-label="问题、修改与验证">${rows?`<div class="evo-home-columns" aria-hidden="true"><span>问题 / 对象</span><span>修改</span><span>验证结果</span><span>下一步</span></div>${rows}`:empty}</section>${pager}</div>`;
 }
-const EVO_HOME_EXAMPLE={caseId:'combined',lines:['ERROR fetch timed out; retrying','INFO fetch completed','ERROR go test exited 1','--- FAIL: TestRunLeaseRecovery (0.01s)']};
-function evoHomeGuideHTML(){
-  return `<div class="evo-home-guide"><ol><li><h3>保留改前结果</h3><p>在测试项目运行旧角色：错误样例应失败，正常样例应通过。把正常运行钉为回归样本。</p></li><li><h3>对比同一输入</h3><p>回到进化中心，检查最近运行 → 打开问题 → 开始修改。等待历史验证，逐条核对原结果和修改稿结果。</p></li><li><h3>验证新的输入</h3><p>小范围试用通过并发布后，用同一条 SOP 新建运行，检查产物。每次新建 Run；节点重试不算新的试用样本。</p></li></ol><section class="evo-home-example"><header><h3>示例：日志错误行定位</h3>${evoHomeButton('复制输入','data-evo-home-copy')}</header><p>下面是验收目标，不是当前项目的运行结果。请用配置了日志定位角色和独立行号门禁的测试 SOP 执行。</p><pre>${escapeHTML(JSON.stringify(EVO_HOME_EXAMPLE,null,2))}</pre><div class="evo-home-example-target"><span>旧策略：选首条 ERROR<b>第 1 行</b></span>${evoReviewIcon('arrow-right')}<span>正确策略：跳过恢复与摘要<b>第 4 行</b></span></div><p>检查产物中的 evidence.line = 4，evidence.text 与第 4 行完全一致，category = test。只看到绿色“成功”还不够。</p></section><details><summary>试用和回滚怎么验</summary><p>试用选择 50% / 每组 5 次，在测试项目重复新建正常样例，直到原版和试用版各至少 5 次。这里验证分组和推进；质量改善还需核对错误样例。</p><p>发布后重新运行错误样例和新的组合样例。回滚到原正文后，应新增回滚版本；旧缺陷应能复现，正常样例继续通过。</p></details></div>`;
-}
-document.addEventListener('click',async event=>{
-  const button=event.target.closest?.('[data-evo-home-check],[data-evo-home-runs],[data-evo-home-guide],[data-evo-home-copy]');
+document.addEventListener('click',event=>{
+  const button=event.target.closest?.('[data-evo-home-check],[data-evo-home-runs]');
   if(!button||button.disabled||!evoActive())return;
   if(button.hasAttribute('data-evo-home-check'))return evoDiagnose(button);
-  if(button.hasAttribute('data-evo-home-runs'))return switchView('runs');
-  if(button.hasAttribute('data-evo-home-guide')){evoDrawerOpen('验证改进效果','从原结果、回放到新运行',evoHomeGuideHTML(),'',{wide:true,opener:button});window.AgentFlowHarnessIcons?.hydrate($('#kbDrawer'));return}
-  try{await navigator.clipboard.writeText(JSON.stringify(EVO_HOME_EXAMPLE,null,2));toast('已复制示例输入','ok')}catch{toast('复制失败，请选中示例输入手动复制','err')}
+  switchView('runs');
 });
