@@ -243,6 +243,40 @@ test('running node activity keeps its DOM and motion across streamed text update
   assert.equal(activity.querySelector('b').textContent, next, 'completed activity remains readable');
 });
 
+test('live rework clears the previous attempt output in the node inspector', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.activeRun={...state.data.runs[0],status:'waiting',
+      workflowSnapshot:structuredClone(state.data.workflows[0]),artifacts:[],
+      nodes:{'node-1':{status:'succeeded',attempt:1,output:'First draft'},
+             'node-2':{status:'waiting_approval',attempt:1}}};
+    state.selectedRun=state.activeRun.id;state.selectedRunNode='node-1';
+    renderRunDetail(state.activeRun);startLiveRun(state.activeRun.id);
+  `);
+  const output = () => app.document.querySelector('#runDetail .node-output');
+  assert.equal(output().querySelector('pre').textContent, 'First draft');
+
+  const stream = app.evaluate('state.runStream');
+  stream.emit({ run: { id: 'run-1', status: 'running', nodes: {
+    'node-1': { nodeId: 'node-1', status: 'pending', attempt: 1, reworkCount: 1, feedback: 'Revise draft' },
+    'node-2': { nodeId: 'node-2', status: 'pending', attempt: 1, reworkCount: 0 },
+  } } }, 'run');
+
+  assert.equal(output().querySelector('pre'), null);
+  assert.ok(output().classList.contains('empty'));
+
+  stream.emit({ run: { id: 'run-1', status: 'running', nodes: {
+    'node-1': { nodeId: 'node-1', status: 'succeeded', attempt: 2, reworkCount: 1, output: 'Revised draft' },
+  } } }, 'run');
+  assert.equal(output().querySelector('pre').textContent, 'Revised draft');
+
+  stream.emit({ run: { id: 'run-1', status: 'running', nodes: {
+    'node-1': { nodeId: 'node-1', status: 'running', attempt: 3, reworkCount: 2 },
+  } } }, 'run');
+  assert.ok(output().classList.contains('empty'), 'a newer attempt also clears output if no pending update arrives');
+});
+
 test('terminal, human-waiting, paused and cancelling runs stop inspector motion', async (t) => {
   const app = await loadApp();
   t.after(app.close);
