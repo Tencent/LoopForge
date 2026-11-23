@@ -47,6 +47,8 @@ func botNodeAnswerText(text string) (answer string, pick int, ok bool) {
 type botNodeQuestion struct {
 	delivery domain.NotificationDelivery
 	question string
+	// open: the node still asks the question at the notified attempt.
+	open bool
 }
 
 // botDeliveryInChat reports whether a delivery was sent to this
@@ -65,6 +67,19 @@ func botDeliveryInChat(d domain.NotificationDelivery, conv domain.BotConversatio
 // botOpenNodeQuestions lists the questions sent to this conversation whose
 // node still waits at the notified attempt, oldest first.
 func (h *assistantHandlers) botOpenNodeQuestions(bot domain.NotificationBot, conv domain.BotConversation, sender string) []botNodeQuestion {
+	var open []botNodeQuestion
+	for _, q := range h.botChatNodeQuestions(bot, conv, sender) {
+		if q.open {
+			open = append(open, q)
+		}
+	}
+	return open
+}
+
+// botChatNodeQuestions lists the waiting-node messages sent to this
+// conversation within the window, oldest first, answered or not. The
+// question of an answered one is read from the message when it carries it.
+func (h *assistantHandlers) botChatNodeQuestions(bot domain.NotificationBot, conv domain.BotConversation, sender string) []botNodeQuestion {
 	targets := []string{conv.ChatID}
 	if conv.ChatType != "group" && sender != conv.ChatID {
 		targets = append(targets, sender)
@@ -80,7 +95,7 @@ func (h *assistantHandlers) botOpenNodeQuestions(bot domain.NotificationBot, con
 		deliveries = append(deliveries, items...)
 	}
 	seen := map[string]bool{}
-	var open []botNodeQuestion
+	var all []botNodeQuestion
 	for _, d := range deliveries {
 		key := fmt.Sprintf("%s/%s/%d/%d", d.RunID, d.NodeID, d.Attempt, d.ReworkCount)
 		if seen[key] {
@@ -88,23 +103,39 @@ func (h *assistantHandlers) botOpenNodeQuestions(bot domain.NotificationBot, con
 		}
 		seen[key] = true
 		run, ok := h.repo.RunState(d.RunID)
-		if !ok || run.ExecutionContext.ProjectID != bot.ProjectID || domain.TerminalRunStatus(run.Status) || run.CancelRequested {
+		if !ok || run.ExecutionContext.ProjectID != bot.ProjectID {
 			continue
 		}
-		nr := run.Nodes[d.NodeID]
-		if question := nr.Question(); question != "" && nr.Attempt == d.Attempt && nr.ReworkCount == d.ReworkCount {
-			open = append(open, botNodeQuestion{delivery: d, question: question})
+		q := botNodeQuestion{delivery: d, question: botDeliveryQuestion(d.Content)}
+		if botNodeQuestionStale(run, d) == "" {
+			if question := run.Nodes[d.NodeID].Question(); question != "" {
+				q.question, q.open = question, true
+			}
 		}
+		all = append(all, q)
 	}
-	return open
+	return all
+}
+
+// botDeliveryQuestion reads the "问题：" line of a node-question message.
+func botDeliveryQuestion(content string) string {
+	_, rest, found := strings.Cut(content, "\n问题：")
+	if !found {
+		return ""
+	}
+	line, _, _ := strings.Cut(rest, "\n")
+	return strings.TrimSpace(line)
 }
 
 // botQuotedNodeQuestion finds the waiting-node message a chat message
 // quotes: a Feishu reply names the message (a pushed delivery, or a WeCom
-// card); a WeCom quote only carries the text, matched against the open
-// questions by the whole message, then the whole question, then its
-// beginning. A quote matching several questions at the same level is
-// ambiguous: no delivery is returned and the sender picks one by number.
+// card); a WeCom quote only carries the text, matched against the
+// questions sent to the conversation, answered ones included, by the whole
+// message, then the whole question, then its beginning. A quote of an
+// answered question finds that question, so the answer is refused as stale
+// rather than given to another one. A quote matching several questions at
+// the same level is ambiguous: no delivery is returned and the sender picks
+// one by number.
 func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction) (d domain.NotificationDelivery, quoted, ambiguous bool) {
 	if item.ReplyTo != "" {
 		d, ok := h.repo.NotificationDeliveryByPlatformMessage(bot.ID, item.ReplyTo)
@@ -124,22 +155,23 @@ func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, co
 	if quote == "" {
 		return d, false, false
 	}
-	open := h.botOpenNodeQuestions(bot, conv, item.SenderID)
+	sent := h.botChatNodeQuestions(bot, conv, item.SenderID)
 	for _, quotes := range []func(botNodeQuestion) bool{
 		func(q botNodeQuestion) bool {
 			content := strings.TrimSpace(q.delivery.Content)
 			return content != "" && strings.Contains(quote, content)
 		},
 		func(q botNodeQuestion) bool {
-			return strings.Contains(quote, strings.TrimSpace(domain.NotificationText(q.question, 1200)))
+			question := strings.TrimSpace(domain.NotificationText(q.question, 1200))
+			return question != "" && strings.Contains(quote, question)
 		},
 		func(q botNodeQuestion) bool {
 			prefix := []rune(strings.TrimSpace(q.question))
-			return strings.Contains(quote, string(prefix[:min(len(prefix), 15)]))
+			return len(prefix) > 0 && strings.Contains(quote, string(prefix[:min(len(prefix), 15)]))
 		},
 	} {
 		var hits []botNodeQuestion
-		for _, q := range open {
+		for _, q := range sent {
 			if quotes(q) {
 				hits = append(hits, q)
 			}

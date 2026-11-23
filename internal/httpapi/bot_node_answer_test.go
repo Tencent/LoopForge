@@ -340,6 +340,17 @@ func TestWeComQuoteAnswersTheQuotedOfSimilarQuestions(t *testing.T) {
 	if f.node("run-q1").Feedback != "" || !strings.Contains(f.node("run-q2").Feedback, "都要") {
 		t.Fatalf("first = %+v second = %+v", f.node("run-q1"), f.node("run-q2"))
 	}
+	// Quoting the answered second question again is refused as stale; it
+	// does not fall through to the first question sharing its beginning.
+	if reply := ask("msg-wecom-again", second.Content); !strings.Contains(reply, "答案未提交") || strings.Contains(reply, "已把答案提交") {
+		t.Fatalf("quote of answered question = %q", reply)
+	}
+	if reply := ask("msg-wecom-prefix-again", "问题："+nodeQuestionText); strings.Contains(reply, "已把答案提交") {
+		t.Fatalf("prefix quote after an answer = %q", reply)
+	}
+	if f.node("run-q1").Feedback != "" {
+		t.Fatalf("first node got another question's answer: %+v", f.node("run-q1"))
+	}
 }
 
 // Ordinary messages are not answers.
