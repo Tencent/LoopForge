@@ -333,6 +333,21 @@ describe("knowledge citations & two-layer summary", () => {
     expect(summary.referencedDocs.find((d) => d.title === "候选二.md")?.used).toBe(false);
     expect(summary.usedDocs).toHaveLength(2);
     expect(summary.byCiteId.get("r_legacy_multi")?.citeIndex).toBe(2);
+
+    const fileNameSummary = buildKnowledgeSummary([
+      {
+        id: "r_fn_1",
+        serverId: "agentflow-knowledge",
+        tool: "read_document",
+        status: "hit",
+        evidences: [
+          { id: "ev_fn_1", sourceName: "loopforge-knowledge", documentId: "d1", title: "我是谁", fileName: "我是谁.md", locator: "#chunk-0", cited: true },
+          { id: "ev_fn_2", sourceName: "loopforge-knowledge", documentId: "d2", title: "部署规范", fileName: "deploy.pdf", locator: "#chunk-1", cited: false },
+        ],
+      },
+    ], ["见 [[knowledge:ev_fn_1]]"]);
+    expect(fileNameSummary.usedDocs[0].label).toBe("我是谁.md");
+    expect(fileNameSummary.referencedDocs[1].label).toBe("部署规范 (deploy.pdf)");
   });
 
   test("ignores markers inside code blocks/inline code and formats clean copy text & streaming mask", () => {

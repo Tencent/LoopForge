@@ -489,6 +489,8 @@ Object.assign(window.LF_I18N_EN, {
   "检索词": "Query",
   "检索命中": "Retrieved",
   "提示": "Notice",
+  "知识库：": "KB: ",
+  "片段：": "Chunk: ",
   "（已引用）": " (cited)",
   "收起": "Collapse"
 });

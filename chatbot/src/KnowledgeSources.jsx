@@ -12,8 +12,8 @@ function formatDocMeta(doc, useCitedLocators = false) {
       : doc.locators
     : doc.locators;
   const parts = [];
-  if (source && source !== doc.label) parts.push(source);
-  if (locators?.length) parts.push(locators.join("、"));
+  if (source && source !== doc.label) parts.push(`知识库：${source}`);
+  if (locators?.length) parts.push(`片段：${locators.join("、")}`);
   return parts.join(" · ");
 }
 
@@ -110,7 +110,8 @@ export default function KnowledgeSources({
                   <span className="knowledge-doc-index">[{doc.citeIndex}]</span>
                   <span className="knowledge-doc-main">
                     <span className="knowledge-doc-name" title={doc.label}>
-                      {doc.label}
+                      <HarnessIcon name="doc" size={12} interactive={false} />
+                      <span>{doc.label}</span>
                     </span>
                     {meta ? (
                       <span className="knowledge-doc-meta" title={meta}>
@@ -149,7 +150,8 @@ export default function KnowledgeSources({
                 <li key={doc.key} className="knowledge-doc-row">
                   <span className="knowledge-doc-main">
                     <span className="knowledge-doc-name" title={doc.label}>
-                      {doc.label}
+                      <HarnessIcon name="doc" size={12} interactive={false} />
+                      <span>{doc.label}</span>
                     </span>
                     {meta ? (
                       <span className="knowledge-doc-meta" title={meta}>

@@ -480,20 +480,32 @@ function summarizeRunKnowledgeReads(reads=[],texts=[],artifacts=[],opts={}){
   const mergeCitedIn=(dst,arr)=>{
     for(const item of arr||[]){const s=String(item||'').trim();if(s&&!dst.includes(s))dst.push(s)}
   };
+  const docLabel=item=>{
+    const title=String(item?.title||'').trim(),fileName=String(item?.fileName||'').trim(),docId=String(item?.documentId||'').trim();
+    const base=fileName.replace(/\.[^./\\]+$/,'');
+    if(fileName&&title){
+      if(title.toLowerCase()===fileName.toLowerCase()||title.toLowerCase()===base.toLowerCase())return fileName;
+      return `${title} (${fileName})`;
+    }
+    if(fileName)return fileName;
+    if(title)return title;
+    if(docId)return docId.split('/').filter(Boolean).at(-1)||docId;
+    return String(item?.sourceId||item?.id||'').trim();
+  };
   const upsertDoc=cand=>{
     const key=docKey(cand);
     if(!key)return null;
     const prev=docMap.get(key);
     if(!prev){
-      const next={key,order:orderCounter++,id:cand.id||'',label:cand.label||cand.id||'知识库文档',title:cand.title||'',documentId:cand.documentId||'',sourceId:cand.sourceId||'',sourceName:cand.sourceName||'',serverId:cand.serverId||'',locators:cand.locator?[cand.locator]:[],citedLocators:cand.used&&cand.locator?[cand.locator]:[],used:!!cand.used,readFull:!!cand.readFull,citeIndex:0,citedIn:[]};
+      const next={key,order:orderCounter++,id:cand.id||'',label:cand.label||cand.id||'知识库文档',title:cand.title||'',fileName:cand.fileName||'',documentId:cand.documentId||'',sourceId:cand.sourceId||'',sourceName:cand.sourceName||'',serverId:cand.serverId||'',locators:cand.locator?[cand.locator]:[],citedLocators:cand.used&&cand.locator?[cand.locator]:[],used:!!cand.used,readFull:!!cand.readFull,citeIndex:0,citedIn:[]};
       mergeCitedIn(next.citedIn,cand.citedIn);
       docMap.set(key,next);
       return next;
     }
-    if(!prev.title&&cand.title){
-      prev.title=cand.title;
-      if(!prev.label||prev.label===prev.documentId||prev.label===prev.sourceId||prev.label===prev.id)prev.label=cand.title;
-    }
+    if(!prev.title&&cand.title)prev.title=cand.title;
+    if(!prev.fileName&&cand.fileName)prev.fileName=cand.fileName;
+    const upgraded=docLabel(prev);
+    if(upgraded)prev.label=upgraded;
     prev.documentId=prev.documentId||cand.documentId||'';
     prev.sourceId=prev.sourceId||cand.sourceId||'';
     prev.sourceName=prev.sourceName||cand.sourceName||'';
@@ -545,8 +557,8 @@ function summarizeRunKnowledgeReads(reads=[],texts=[],artifacts=[],opts={}){
       evidences.forEach((ev,idx)=>{
         if(!ev)return;
         const used=evUsedFlags[idx]||singleUnambiguous;
-        const label=String(ev.title||ev.documentId||ev.sourceId||ev.id||read.tool||'知识库文档').trim();
-        const doc=upsertDoc({id:ev.id||read.id||'',label,title:ev.title||'',documentId:ev.documentId||'',sourceId:ev.sourceId||'',sourceName:ev.sourceName||'',serverId:read.serverId||'',locator:ev.locator||'',used,readFull,citedIn:used?(Array.isArray(ev.citedIn)&&ev.citedIn.length?ev.citedIn:(singleUnambiguous?read.citedIn:[])):[]});
+        const label=docLabel(ev)||String(ev.id||read.tool||'知识库文档').trim();
+        const doc=upsertDoc({id:ev.id||read.id||'',label,title:ev.title||'',fileName:ev.fileName||'',documentId:ev.documentId||'',sourceId:ev.sourceId||'',sourceName:ev.sourceName||'',serverId:read.serverId||'',locator:ev.locator||'',used,readFull,citedIn:used?(Array.isArray(ev.citedIn)&&ev.citedIn.length?ev.citedIn:(singleUnambiguous?read.citedIn:[])):[]});
         if(doc&&used){
           if(ev.id&&evUsedFlags[idx])recordCite(ev.id,doc.key,ev.locator||'',true);
           if(singleUnambiguous&&read.id)recordCite(read.id,doc.key,ev.locator||'',true);
@@ -741,8 +753,8 @@ function runKBDocMetaText(doc,useCitedLocators=false){
   const src=doc.sourceName||doc.sourceId;
   const locs=useCitedLocators?(doc.citedLocators?.length?doc.citedLocators:doc.locators):doc.locators;
   const parts=[];
-  if(src&&src!==doc.label)parts.push(src);
-  if(locs?.length)parts.push(locs.join('、'));
+  if(src&&src!==doc.label)parts.push(`知识库：${src}`);
+  if(locs?.length)parts.push(`片段：${locs.join('、')}`);
   return parts.join(' · ');
 }
 function nodeKnowledgeCardHTML(nr,nodeArtifacts=[],precomputedSummary=null){

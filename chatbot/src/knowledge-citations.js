@@ -260,9 +260,23 @@ export function extractCitedIdsInOrder(texts = []) {
 }
 
 export function knowledgeDocLabel(item) {
-  return String(
-    item?.title || item?.documentId || item?.sourceId || item?.id || "",
-  ).trim();
+  const title = String(item?.title || "").trim();
+  const fileName = String(item?.fileName || "").trim();
+  const docId = String(item?.documentId || "").trim();
+  const base = fileName.replace(/\.[^./\\]+$/, "");
+  if (fileName && title) {
+    if (
+      title.toLowerCase() === fileName.toLowerCase() ||
+      title.toLowerCase() === base.toLowerCase()
+    ) {
+      return fileName;
+    }
+    return `${title} (${fileName})`;
+  }
+  if (fileName) return fileName;
+  if (title) return title;
+  if (docId) return docId.split("/").filter(Boolean).at(-1) || docId;
+  return String(item?.sourceId || item?.id || "").trim();
 }
 
 function docIdentityKey(doc) {
@@ -332,6 +346,7 @@ export function buildKnowledgeSummary(
         id: candidate.id || "",
         label: candidate.label || candidate.id || "知识库文档",
         title: candidate.title || "",
+        fileName: candidate.fileName || "",
         documentId: candidate.documentId || "",
         sourceId: candidate.sourceId || "",
         sourceName: candidate.sourceName || "",
@@ -348,15 +363,12 @@ export function buildKnowledgeSummary(
     }
     if (!prev.title && candidate.title) {
       prev.title = candidate.title;
-      if (
-        !prev.label ||
-        prev.label === prev.documentId ||
-        prev.label === prev.sourceId ||
-        prev.label === prev.id
-      ) {
-        prev.label = candidate.title;
-      }
     }
+    if (!prev.fileName && candidate.fileName) {
+      prev.fileName = candidate.fileName;
+    }
+    const upgraded = knowledgeDocLabel(prev);
+    if (upgraded) prev.label = upgraded;
     prev.documentId = prev.documentId || candidate.documentId || "";
     prev.sourceId = prev.sourceId || candidate.sourceId || "";
     prev.sourceName = prev.sourceName || candidate.sourceName || "";
@@ -427,6 +439,7 @@ export function buildKnowledgeSummary(
           id: ev.id || read.id || "",
           label,
           title: ev.title || "",
+          fileName: ev.fileName || "",
           documentId: ev.documentId || "",
           sourceId: ev.sourceId || "",
           sourceName: ev.sourceName || "",

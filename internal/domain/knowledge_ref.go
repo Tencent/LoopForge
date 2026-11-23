@@ -101,6 +101,7 @@ type KnowledgeEvidence struct {
 	SourceName   string   `json:"sourceName,omitempty"`
 	DocumentID   string   `json:"documentId,omitempty"`
 	Title        string   `json:"title,omitempty"`
+	FileName     string   `json:"fileName,omitempty"`
 	Locator      string   `json:"locator,omitempty"`
 	Cited        bool     `json:"cited,omitempty"`
 	CitedIn      []string `json:"citedIn,omitempty"`

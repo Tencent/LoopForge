@@ -48,6 +48,7 @@ type SearchHit struct {
 	Commit     string  `json:"commit"`
 	Path       string  `json:"path"`
 	Title      string  `json:"title,omitempty"`
+	FileName   string  `json:"file_name,omitempty"`
 	Heading    string  `json:"heading,omitempty"`
 	ChunkIndex *int    `json:"chunk_index,omitempty"`
 	StartLine  int     `json:"start_line"`

@@ -397,6 +397,7 @@ func (s *Service) ExecuteSearch(ctx context.Context, projectID, query string, so
 						SourceName: kbNames[h.SourceKBID],
 						Path:       scopedDoc,
 						Title:      title,
+						FileName:   strings.TrimSpace(h.KnowledgeFilename),
 						ChunkIndex: &ci,
 						StartLine:  h.StartAt,
 						EndLine:    h.EndAt,
@@ -727,6 +728,9 @@ func (s *Service) ExecuteReadDocument(ctx context.Context, projectID, docID, sou
 	}
 	if title := firstNonEmpty(docMeta.Title, docMeta.FileName); title != "" {
 		payload["title"] = title
+	}
+	if fn := strings.TrimSpace(docMeta.FileName); fn != "" {
+		payload["file_name"] = fn
 	}
 	if rawKB := strings.TrimSpace(docMeta.KnowledgeBaseID); rawKB != "" {
 		payload["knowledge_base_id"] = EncodeScopedSourceID(settings, conn.ID, rawKB)

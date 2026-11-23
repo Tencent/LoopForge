@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -210,7 +211,13 @@ func knowledgeReadResultWithMeta(serverID, tool, text string, hits int, execStat
 			b.WriteString(text)
 			b.WriteString("\n证据引用编号（若回答采用对应内容，请在引用处紧跟输出 [[knowledge:<id>]] 标记，勿放入反引号）：")
 			for _, ev := range read.Evidences {
-				label := firstNonEmpty(ev.Title, ev.DocumentID, ev.SourceID)
+				label := firstNonEmpty(ev.FileName, ev.Title, ev.DocumentID, ev.SourceID)
+				if ev.Title != "" && ev.FileName != "" && !strings.EqualFold(ev.Title, ev.FileName) {
+					base := strings.TrimSuffix(ev.FileName, filepath.Ext(ev.FileName))
+					if !strings.EqualFold(ev.Title, base) {
+						label = ev.Title + " (" + ev.FileName + ")"
+					}
+				}
 				if ev.SourceName != "" && ev.SourceName != label {
 					label = ev.SourceName + " / " + label
 				}
@@ -245,6 +252,7 @@ type knowledgeParentMeta struct {
 	sourceName string
 	docID      string
 	title      string
+	fileName   string
 }
 
 func extractKnowledgeMetaFromMap(m map[string]any) knowledgeParentMeta {
@@ -270,7 +278,8 @@ func extractKnowledgeMetaFromMap(m map[string]any) knowledgeParentMeta {
 		sourceID:   sourceID,
 		sourceName: strVal("source_name", "knowledge_base_name", "kb_name"),
 		docID:      docID,
-		title:      strVal("title", "knowledge_title", "document_title", "doc_title", "file_name", "filename", "doc_name", "name"),
+		title:      strVal("title", "knowledge_title", "document_title", "doc_title", "name"),
+		fileName:   strVal("file_name", "filename", "doc_name"),
 	}
 }
 
@@ -281,6 +290,7 @@ func mergeKnowledgeMeta(parent, self knowledgeParentMeta) knowledgeParentMeta {
 		sourceName: firstNonEmpty(self.sourceName, parent.sourceName),
 		docID:      firstNonEmpty(self.docID, parent.docID),
 		title:      firstNonEmpty(self.title, parent.title),
+		fileName:   firstNonEmpty(self.fileName, parent.fileName),
 	}
 }
 
@@ -417,10 +427,11 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 						SourceName:   clipCatalogText(mergedMeta.sourceName, 120),
 						DocumentID:   mergedMeta.docID,
 						Title:        clipCatalogText(mergedMeta.title, 120),
+						FileName:     clipCatalogText(mergedMeta.fileName, 120),
 						Locator:      summarizeChunksLocator(chunks),
 					}
 					*evidences = append(*evidences, ev)
-					if label := firstNonEmpty(ev.Title, ev.DocumentID, ev.SourceID); label != "" {
+					if label := firstNonEmpty(ev.FileName, ev.Title, ev.DocumentID, ev.SourceID); label != "" {
 						addTarget(label)
 					}
 					return len(chunks)
@@ -480,7 +491,7 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 
 func buildKnowledgeEvidenceFromMap(m map[string]any, idx int, evPrefix string, parent knowledgeParentMeta) (domain.KnowledgeEvidence, bool) {
 	meta := mergeKnowledgeMeta(parent, extractKnowledgeMetaFromMap(m))
-	if meta.title == "" && meta.docID == "" && meta.sourceID == "" {
+	if meta.title == "" && meta.fileName == "" && meta.docID == "" && meta.sourceID == "" {
 		return domain.KnowledgeEvidence{}, false
 	}
 	locator := ""
@@ -506,6 +517,7 @@ func buildKnowledgeEvidenceFromMap(m map[string]any, idx int, evPrefix string, p
 		SourceName:   clipCatalogText(meta.sourceName, 120),
 		DocumentID:   meta.docID,
 		Title:        clipCatalogText(meta.title, 120),
+		FileName:     clipCatalogText(meta.fileName, 120),
 		Locator:      locator,
 	}, true
 }
