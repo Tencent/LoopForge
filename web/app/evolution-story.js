@@ -69,7 +69,7 @@ function evoStoryDetailHTML(m,p){
       <div class="evo-story-evidence-grid">
         <section class="evo-story-section evo-story-behavior">
           <header class="evo-story-section-head">
-            <h2>${evoReviewIcon('workflow')}输入与结果对比</h2>
+            <h2>${evoReviewIcon('workflow')}输出前后对比</h2>
           </header>
           <p id="evoStorySelectedSample" class="evo-story-selected-sample" hidden></p>
           <div id="evoStoryBehavior" aria-live="polite">
