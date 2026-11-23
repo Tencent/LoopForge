@@ -2,9 +2,12 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -70,4 +73,84 @@ func testHTTPSCredentials(token string) map[string]domain.GitHTTPExecutionCreden
 		result[host] = domain.GitHTTPExecutionCredential{GitHTTPCredential: domain.GitHTTPCredential{Host: host, Username: username, Platform: domain.GitPlatformGitHub}, Token: token}
 	}
 	return result
+}
+
+func TestCodexSOPGitBindingKeepsHelperInToolShell(t *testing.T) {
+	workspace := t.TempDir()
+	sandbox := &localSandbox{workspace: workspace}
+	const token = "fixture-sop-token"
+	credentials := RunCredentials{GitHTTPCredentials: testHTTPSCredentials(token)}
+	command := CommandSpec{
+		Provider: "codex", Argv: withCodexIsolationEnv([]string{"codex", "exec", "prompt"}, map[string]string{
+			"ZDOTDIR": "/fixture/zdot", SessionGatewayEnv: "stale-profile-gateway", GitHostsEnv: "stale-profile-hosts",
+		}),
+		CredentialBindings: []CredentialBinding{BindGit},
+	}
+	withoutGit, err := bindCommand(t.Context(), sandbox, workspace, command, RunCredentials{})
+	if err != nil || !slices.Equal(withoutGit.Argv, command.Argv) {
+		t.Fatalf("Codex policy changed without HTTPS credentials: %v", err)
+	}
+	prepared, closeRelay, err := prepareRunGitBinding(t.Context(), sandbox, command, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeRelay()
+	credentials.GitHTTPHosts = runGitHosts(credentials)
+	bound, err := bindCommand(t.Context(), sandbox, workspace, prepared, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation := prepared
+	conversation.CredentialBindings = []CredentialBinding{BindGitWorkspace}
+	workspaceCommand, err := bindCommand(t.Context(), sandbox, workspace, conversation, credentials)
+	if err != nil || !slices.Equal(workspaceCommand.Argv, command.Argv) {
+		t.Fatalf("conversation Git binding changed Codex arguments: %v", err)
+	}
+	var names []string
+	for _, arg := range bound.Argv {
+		if raw, ok := strings.CutPrefix(arg, "shell_environment_policy.include_only="); ok {
+			if err := json.Unmarshal([]byte(raw), &names); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if strings.Contains(arg, token) || strings.Contains(arg, "stale-profile-") || strings.Contains(arg, bound.environment[SessionGatewayEnv]) {
+			t.Fatal("credential or relay URL in Codex arguments")
+		}
+	}
+	if !slices.Contains(names, "ZDOTDIR") || !slices.Contains(names, "PATH") || !containsArgPair(bound.Argv, "-c", `shell_environment_policy.inherit="all"`) {
+		t.Fatalf("missing Codex shell configuration: %v", names)
+	}
+	for _, key := range names {
+		if strings.ContainsAny(key, "*?[]") || key == "CODEX_API_KEY" || key == "GITHUB_TOKEN" {
+			t.Fatalf("unexpected inherited environment key %q", key)
+		}
+	}
+	// Use only the names Codex will pass to Git, including the empty helper
+	// reset. A pre-existing repository helper must not answer for another host.
+	git := func(input string, args ...string) ([]byte, error) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workspace
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "GIT_CONFIG_NOSYSTEM=1"}
+		for _, key := range names {
+			if value, ok := bound.environment[key]; ok {
+				cmd.Env = append(cmd.Env, key+"="+value)
+			}
+		}
+		cmd.Stdin = strings.NewReader(input)
+		return cmd.Output()
+	}
+	if _, err := git("", "init", "-q"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git("", "config", "credential.helper", "!echo username=stale; echo password=stale"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := git("protocol=https\nhost=git.example.com\n\n", "credential", "fill")
+	if err != nil || !strings.Contains(string(got), "password="+token) {
+		t.Fatalf("configured host did not get its SOP credential: %v", err)
+	}
+	got, err = git("protocol=https\nhost=unconfigured.invalid\n\n", "credential", "fill")
+	if err == nil || strings.Contains(string(got), "password=") {
+		t.Fatal("unconfigured host obtained a Git credential")
+	}
 }
