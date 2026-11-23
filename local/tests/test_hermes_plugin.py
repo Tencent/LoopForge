@@ -47,7 +47,10 @@ class HermesPluginTests(unittest.TestCase):
             try:
                 started = module._handle("start add tests")
                 self.assertIn("LoopForge task initialized", started)
-                status = module._handle("status")
+                for request in ("整理需求", "生成报告"):
+                    self.assertIn("initialized", module._handle("start " + request))
+                self.assertEqual(3, len(list((project / "artifacts").glob("*/workflow-state.json"))))
+                status = module._handle("status add-tests")
                 self.assertIn("Task: add-tests", status)
                 result = module._handle("result")
                 self.assertIn("- workflow-state.json", result)
