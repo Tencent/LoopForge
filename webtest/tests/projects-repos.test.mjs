@@ -120,6 +120,48 @@ test('repository drawer detects Git SSH URLs and persists a default repository',
   assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/repositories'));
 });
 
+test('repository drawer saves a self-managed GitLab URL with its host-scoped identity', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.post('/api/repositories', (call) => ({ ...call.body, id: 'repo-gl' }));
+  app.router.put('/api/projects', (call) => call.body);
+  app.evaluate(`
+    state.projectAdminDetailId='project-1';
+    state.projectDraftFor='project-1';
+    state.projectDraft=projectDraftFrom(state.data.projects[0]);
+    state.projectDraftBase=clone(state.projectDraft);
+    state.data.repositories=[];
+    openRepoDrawer('');
+  `);
+  const form = app.document.querySelector('#repoDrawerForm');
+  const input = (value) => {
+    form.elements.repoUrl.value = value;
+    form.elements.repoUrl.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  };
+  // A prefixed identity is the escape hatch for public self-hosted instances.
+  input('gitlab:gitlab.example.test/group/repo');
+  await settle(4);
+  assert.equal(app.document.querySelector('#repoDrawerDetectPath').textContent, 'gitlab:gitlab.example.test/group/repo');
+  assert.equal(form.elements.name.value, 'repo');
+  // An internal HTTPS URL is accepted without the prefix and keeps its host.
+  input('https://172.20.0.10/team/svc.git');
+  await settle(4);
+  assert.equal(app.document.querySelector('#repoDrawerDetectPath').textContent, 'gitlab:172.20.0.10/team/svc');
+  form.elements.defaultBranch.value = 'main';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(8);
+  const create = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/repositories');
+  assert.equal(create.body.provider, 'gitlab');
+  assert.equal(create.body.gongfengProjectId, 'gitlab:172.20.0.10/team/svc');
+  assert.equal(create.body.webUrl, 'https://172.20.0.10/team/svc');
+  assert.equal(create.body.cloneUrl, 'https://172.20.0.10/team/svc.git');
+  // A public domain without the prefix stays a plain Git HTTPS remote rather
+  // than being guessed as GitLab; the prefixed identity is the opt-in.
+  input('https://gitlab.example.test/group/repo');
+  await settle(4);
+  assert.equal(app.evaluate(`parseGongfengRepoURL('https://gitlab.example.test/group/repo')?.provider`), 'https');
+});
+
 test('project owner deletes a project from its danger zone and the list moves on', async (t) => {
   const app = await loadApp();
   t.after(app.close);

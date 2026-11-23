@@ -29,6 +29,9 @@ func (s *Service) EnsureAndMergeBranchMR(project, sourceBranch, targetBranch, ti
 	if strings.HasPrefix(project, "github:") {
 		return s.githubMergeBranch(project, sourceBranch, targetBranch, title, description)
 	}
+	if strings.HasPrefix(project, "gitlab:") {
+		return s.gitlabMergeBranch(project, sourceBranch, targetBranch, title, description)
+	}
 	project = strings.TrimSpace(project)
 	src := strings.TrimSpace(sourceBranch)
 	tgt := strings.TrimSpace(targetBranch)
@@ -141,6 +144,9 @@ func (s *Service) FindBranchMR(project, sourceBranch string) (domain.DeliveryMR,
 	if strings.HasPrefix(project, "github:") {
 		return s.githubFindBranch(project, sourceBranch)
 	}
+	if strings.HasPrefix(project, "gitlab:") {
+		return s.gitlabFindBranch(project, sourceBranch)
+	}
 	project = strings.TrimSpace(project)
 	src := strings.TrimSpace(sourceBranch)
 	if project == "" || src == "" {
@@ -200,6 +206,17 @@ func (s *Service) FindBranchMRsInto(q domain.BranchMRQuery) ([]domain.DeliveryMR
 			return nil, fmt.Errorf("以%s查询 GitHub 失败：%w", identity, err)
 		}
 		return githubPullsInto(pulls, project, src, target), nil
+	}
+	if strings.HasPrefix(project, "gitlab:") {
+		g, err := s.gitlabClient(project)
+		if err != nil {
+			return nil, err
+		}
+		list, err := g.listMRs(src, target)
+		if err != nil {
+			return nil, err
+		}
+		return list, nil
 	}
 	client, source, err := s.gongfengClientForRun(project, q)
 	if err != nil {

@@ -563,8 +563,14 @@ function parseGitHubRepo(raw) {
 }
 
 // Explicit SSH keeps its transport. Managed HTTPS links use the configured host.
+/**
+ * GitLab 自托管主机（gitlab:<host>/<path> 或内网裸 URL）优先于工蜂与通用 HTTPS，
+ * 让向导也能绑定与 web 控制台一致的主机级仓库标识。
+ * --- @ty.aicoding@1795420649000 ---
+ */
 export function parseGongfengRepo(raw, host = "") {
   return globalThis.LoopForgeGitSSH(raw) ||
+    globalThis.LoopForgeGitLab?.(raw) ||
     globalThis.LoopForgeGongfengRepository(raw, host) ||
     globalThis.LoopForgeGitHTTPS(raw) ||
     parseGitHubRepo(raw);

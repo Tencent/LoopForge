@@ -543,12 +543,18 @@ function issueFromForm(){
 // 将完整的仓库链接和克隆地址解析成统一的仓库信息。
 // repoDisplayPath shows host/path for a parsed repository, e.g. github.com/owner/name.
 function repoDisplayPath(info,fallback=''){return info?.provider==='ssh'?(info.project||info.cloneUrl||fallback):info?.webUrl?String(info.webUrl).replace(/^https?:\/\//,''):String(fallback||'')}
+// repoProviderLabel 为解析后的仓库选择展示标签，自托管 GitLab 单独标 GitLab。
+// --- @ty.aicoding@1795420649000 ---
 function repoProviderLabel(info){
-  const labels={ssh:'Git SSH',https:'Git HTTPS',github:'GitHub',gongfeng:'工蜂'};
+  const labels={ssh:'Git SSH',https:'Git HTTPS',github:'GitHub',gitlab:'GitLab',gongfeng:'工蜂'};
   return labels[info?.provider]||'Git';
 }
+// parseGongfengRepoURL 按 SSH → GitLab → 工蜂 → 通用 HTTPS → GitHub 的顺序解析，
+// 与后端仓储校验的优先级保持一致。
+// --- @ty.aicoding@1795420649000 ---
 function parseGongfengRepoURL(raw){
   const sshInfo=globalThis.LoopForgeGitSSH?.(raw);if(sshInfo)return sshInfo;
+  const gitlab=globalThis.LoopForgeGitLab?.(raw);if(gitlab)return gitlab;
   const managed=globalThis.LoopForgeGongfengRepository?.(raw,state.data?.gongfengHost);if(managed)return managed;
   const httpsInfo=globalThis.LoopForgeGitHTTPS?.(raw);if(httpsInfo)return httpsInfo;
   let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com(?::22)?\/)/,'https://github.com/');

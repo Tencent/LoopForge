@@ -163,6 +163,11 @@ func (s *Service) syncMRDeliveryStates(store MRDeliveryStore) {
 	}
 }
 
+/**
+ * MR 交付状态同步：按 MR 标识前缀分发到 GitHub / 外部主机（GHE、自托管
+ * GitLab）/ 工蜂 MCP 三条刷新与发现路径。
+ * --- @ty.aicoding@1795419690999 ---
+ */
 func (s *Service) discoverPromoteMRs(store MRDeliveryStore) {
 	if s == nil || store == nil {
 		return
@@ -170,7 +175,8 @@ func (s *Service) discoverPromoteMRs(store MRDeliveryStore) {
 	now := time.Now().UTC()
 	for _, repo := range store.Repositories() {
 		project := strings.TrimSpace(repo.GongfengProjectID)
-		if strings.HasPrefix(project, "github:") {
+		// github: 与 gitlab: 仓库走各自的 HTTP 适配器，不能落到工蜂 MCP 发现路径。
+		if strings.HasPrefix(project, "github:") || strings.HasPrefix(project, "gitlab:") {
 			continue
 		}
 		def := strings.TrimSpace(repo.DefaultBranch)

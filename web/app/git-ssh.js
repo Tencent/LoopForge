@@ -54,6 +54,41 @@ globalThis.LoopForgeGitHTTPS = function parseHTTPSRepository(raw) {
   }catch{return null}
 };
 
+// Self-managed GitLab keeps the host inside the project identity so several
+// instances can coexist: "gitlab:<host>/<group>/<repo>". Bare URLs are only
+// recognised for private/internal hosts, matching the server's trust rule;
+// a public self-hosted instance must paste the explicit prefix.
+/**
+ * --- @ty.aicoding@1795420649000 ---
+ */
+globalThis.LoopForgeGitLab = function parseGitLabRepository(raw) {
+  const address = String(raw || '').trim().replace(/^['"]|['"]$/g, '').replace(/^git clone /, '').replace(/^['"]|['"]$/g, '').split(/\s+/)[0];
+  if (!address || /[\s"'<>\\?#]/.test(address)) return null;
+  const build = (scheme, host, path) => {
+    let clean = path.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '');
+    // Drop a sub-page suffix (merge request, tree view, issue...) before taking the repo path.
+    for (const marker of ['/-/', '/tree/', '/blob/', '/commit/', '/commits/', '/merge_requests/', '/issues/', '/snippets/', '/wikis/', '/releases/', '/tags/']) {
+      const at = clean.indexOf(marker);
+      if (at > 0) clean = clean.slice(0, at);
+    }
+    if (!/^[a-z0-9][a-z0-9._-]*(?::[0-9]+)?$/i.test(host)) return null;
+    const parts = clean.split('/');
+    if (parts.length < 2 || parts.some(part => !/^[a-z0-9_.~-]+$/i.test(part) || part === '.' || part === '..')) return null;
+    const base = `${scheme}://${host.toLowerCase()}/${parts.join('/')}`;
+    return { provider: 'gitlab', project: `gitlab:${host.toLowerCase()}/${parts.join('/')}`, name: parts.at(-1), webUrl: base, cloneUrl: base + '.git' };
+  };
+  const prefixed = /^gitlab:([^/]+)\/(.+)$/i.exec(address);
+  if (prefixed) return build('https', prefixed[1], prefixed[2]);
+  const url = /^(https?):\/\/([^/]+)\/(.+)$/i.exec(address);
+  if (!url) return null;
+  const scheme = url[1].toLowerCase(), host = url[2].toLowerCase();
+  if (host.includes('@') || /[\s\\]/.test(host)) return null;
+  const hostname = host.replace(/:[0-9]+$/, '');
+  if (['github.com', 'git.example.com'].includes(hostname)) return null;
+  const internal = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(hostname) || /\.(internal|local)$/i.test(hostname);
+  return internal ? build(scheme, host, url[3]) : null;
+};
+
 // The managed host is supplied by the deployment. Explicit old links remain
 // readable so existing repositories can be opened and edited.
 globalThis.LoopForgeGongfengRepository = function parseManagedRepository(raw, host = '') {
