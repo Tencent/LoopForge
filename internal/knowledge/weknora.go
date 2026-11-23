@@ -908,6 +908,22 @@ func (c *WeKnoraClient) PatchKnowledgeBase(ctx context.Context, kbID string, nam
 	return env.Data, nil
 }
 
+// PatchKnowledgeBaseEmbeddingModel binds an Embedding model onto a legacy
+// knowledge base whose embedding_model_id is still empty.
+func (c *WeKnoraClient) PatchKnowledgeBaseEmbeddingModel(ctx context.Context, kbID, embeddingModelID string) (weKnoraKB, error) {
+	payload := map[string]any{
+		"embedding_model_id": strings.TrimSpace(embeddingModelID),
+	}
+	var env struct {
+		Success bool      `json:"success"`
+		Data    weKnoraKB `json:"data"`
+	}
+	if err := c.doJSON(ctx, http.MethodPatch, "/api/v1/knowledge-bases/"+url.PathEscape(strings.TrimSpace(kbID)), payload, &env); err != nil {
+		return weKnoraKB{}, err
+	}
+	return env.Data, nil
+}
+
 // UpdateKnowledgeBase replaces both editable fields; callers with partial
 // input use PatchKnowledgeBase with nil for the untouched field.
 func (c *WeKnoraClient) UpdateKnowledgeBase(ctx context.Context, kbID, name, description string) (weKnoraKB, error) {

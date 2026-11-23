@@ -490,6 +490,7 @@ func (s *Service) UploadDocumentReader(ctx context.Context, projectID, connectio
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*CallTimeout)
 	defer cancel()
+	s.ensureWeKnoraKBEmbeddingModel(ctx, wc, rawKBID)
 	doc, err := wc.UploadDocument(ctx, rawKBID, filename, r)
 	if err != nil {
 		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "上传文档", err)
@@ -933,6 +934,7 @@ func (s *Service) CreateWeKnoraURLDoc(ctx context.Context, projectID, connection
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*CallTimeout)
 	defer cancel()
+	s.ensureWeKnoraKBEmbeddingModel(ctx, wc, rawKBID)
 	doc, err := wc.CreateDocumentFromURL(ctx, rawKBID, rawURL)
 	if err != nil {
 		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "URL 导入", err)
@@ -953,6 +955,9 @@ func (s *Service) CreateWeKnoraManualDoc(ctx context.Context, projectID, connect
 	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
+	if publish {
+		s.ensureWeKnoraKBEmbeddingModel(ctx, wc, rawKBID)
+	}
 	doc, err := wc.CreateManualDocument(ctx, rawKBID, title, content, publish)
 	if err != nil {
 		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "创建文档", err)
@@ -1000,6 +1005,11 @@ func (s *Service) UpdateWeKnoraManualDoc(ctx context.Context, projectID, connect
 	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
+	if publish {
+		if rawKBID, kbErr := wc.GetDocumentKBID(ctx, rawDocID); kbErr == nil && rawKBID != "" {
+			s.ensureWeKnoraKBEmbeddingModel(ctx, wc, rawKBID)
+		}
+	}
 	doc, err := wc.UpdateManualDocument(ctx, rawDocID, title, content, publish)
 	if err != nil {
 		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "更新文档", err)
@@ -1014,10 +1024,42 @@ func (s *Service) ReparseWeKnoraDoc(ctx context.Context, projectID, connectionID
 	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
+	if rawKBID, kbErr := wc.GetDocumentKBID(ctx, rawDocID); kbErr == nil && rawKBID != "" {
+		s.ensureWeKnoraKBEmbeddingModel(ctx, wc, rawKBID)
+	}
 	if err := wc.ReparseDocument(ctx, rawDocID); err != nil {
 		return s.managementError(conn, domain.CapReparse, "触发重解析", err)
 	}
 	return nil
+}
+
+// ensureWeKnoraKBEmbeddingModel best-effort repairs a legacy knowledge base
+// whose embedding_model_id is empty by binding the first active Embedding model
+// configured on the same WeKnora tenant before document indexing starts.
+func (s *Service) ensureWeKnoraKBEmbeddingModel(ctx context.Context, wc *WeKnoraClient, rawKBID string) {
+	rawKBID = strings.TrimSpace(rawKBID)
+	if wc == nil || rawKBID == "" {
+		return
+	}
+	kb, err := wc.GetKnowledgeBase(ctx, rawKBID)
+	if err != nil || strings.TrimSpace(kb.EmbeddingModelID) != "" {
+		return
+	}
+	models, err := wc.ListModels(ctx)
+	if err != nil {
+		return
+	}
+	for _, m := range models {
+		id := strings.TrimSpace(m.ID)
+		if id == "" {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(m.Type), "Embedding") {
+			continue
+		}
+		_, _ = wc.PatchKnowledgeBaseEmbeddingModel(ctx, rawKBID, id)
+		return
+	}
 }
 
 func (s *Service) DeleteWeKnoraDoc(ctx context.Context, projectID, connectionID, docID string) error {

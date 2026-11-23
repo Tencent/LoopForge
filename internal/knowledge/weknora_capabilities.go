@@ -26,6 +26,10 @@ const (
 	// weknoraCapabilityUnknownTTL is the shorter TTL used when any probe was
 	// inconclusive, so a recovering upstream is retried sooner.
 	weknoraCapabilityUnknownTTL = time.Minute
+	// weknoraCapabilityUnavailableTTL is the short retry TTL used when a probe
+	// returned a denial (such as a transient upstream 401 while WeKnora's DB is
+	// reconnecting), so a healthy connection self-heals within seconds.
+	weknoraCapabilityUnavailableTTL = 15 * time.Second
 	// weknoraCapabilityProbeTimeout bounds a single dry-run request.
 	weknoraCapabilityProbeTimeout = 10 * time.Second
 	// capabilityUnsupportedProviderReason is returned for MCP-only providers.
@@ -386,10 +390,19 @@ func (c *capabilityCache) rememberLocked(key, fingerprint string, generation uin
 }
 
 func (c *capabilityCache) ttlFor(caps domain.ConnectionCapabilities) time.Duration {
+	hasUnavailable := false
 	for _, status := range caps.Capabilities {
-		if status.Status == domain.CapabilityUnknown {
+		switch status.Status {
+		case domain.CapabilityUnavailable:
+			if status.Reason != capabilityUnsupportedProviderReason {
+				hasUnavailable = true
+			}
+		case domain.CapabilityUnknown:
 			return weknoraCapabilityUnknownTTL
 		}
+	}
+	if hasUnavailable {
+		return weknoraCapabilityUnavailableTTL
 	}
 	return c.ttl
 }

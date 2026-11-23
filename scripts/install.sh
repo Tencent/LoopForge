@@ -169,7 +169,55 @@ PY
 fi
 
 compose_profiles=(--profile platform)
-if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 ]]; then
+reuse_existing_weknora=0
+reconcile_existing_weknora() {
+  [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 ]] || return 0
+  local project_name="${COMPOSE_PROJECT_NAME:-loopforge}"
+  local net_name="${project_name}_default"
+  local existing_app=""
+  while IFS='|' read -r cname cimage cproject cports; do
+    [[ -z "$cname" ]] && continue
+    [[ "$cproject" == "$project_name" ]] && continue
+    if [[ "$cname" == *weknora-app* || "$cimage" == *weknora-app* || "$cports" == *":${WEKNORA_APP_PORT:-18080}->8080/tcp"* ]]; then
+      existing_app="$cname"
+      break
+    fi
+  done < <(docker_access ps --format '{{.Names}}|{{.Image}}|{{.Label "com.docker.compose.project"}}|{{.Ports}}' 2>/dev/null || true)
+
+  [[ -n "$existing_app" ]] || return 0
+  reuse_existing_weknora=1
+  step "Detected existing WeKnora instance ($existing_app); reusing it and skipping duplicate WeKnora containers"
+
+  # Remove any duplicate WeKnora containers belonging to this compose project so
+  # they cannot hijack weknora-postgres / weknora-redis DNS aliases on the shared network.
+  local dup
+  for dup in $(docker_access ps -a --filter "label=com.docker.compose.project=${project_name}" --format '{{.Names}}' 2>/dev/null | grep -E 'weknora-(postgres|redis|docreader|app|frontend)' || true); do
+    docker_access rm -f "$dup" >/dev/null 2>&1 || true
+  done
+}
+
+bridge_existing_weknora_network() {
+  [[ "$reuse_existing_weknora" == 1 ]] || return 0
+  local project_name="${COMPOSE_PROJECT_NAME:-loopforge}"
+  local net_name="${project_name}_default"
+  docker_access network inspect "$net_name" >/dev/null 2>&1 || return 0
+  local cname role alias_name
+  while IFS= read -r cname; do
+    [[ -z "$cname" ]] && continue
+    alias_name=""
+    for role in weknora-postgres weknora-redis weknora-docreader weknora-app weknora-frontend; do
+      if [[ "$cname" == *"$role"* ]]; then
+        alias_name="$role"
+        break
+      fi
+    done
+    [[ -n "$alias_name" ]] || continue
+    docker_access network connect --alias "$alias_name" "$net_name" "$cname" >/dev/null 2>&1 || true
+  done < <(docker_access ps --format '{{.Names}}' 2>/dev/null || true)
+}
+
+reconcile_existing_weknora
+if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 && "$reuse_existing_weknora" != 1 ]]; then
   compose_profiles+=(--profile weknora)
 fi
 
@@ -188,7 +236,7 @@ if [[ "${LOOPFORGE_BUILD_FROM_SOURCE:-0}" != 1 ]]; then
     step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
     docker_access compose "${compose_profiles[@]}" pull --policy "$pull_policy" platform mysql
   fi
-  if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 ]]; then
+  if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 && "$reuse_existing_weknora" != 1 ]]; then
     step 'Pulling WeKnora knowledge base images'
     docker_access compose "${compose_profiles[@]}" pull --policy "$pull_policy" weknora-postgres weknora-redis weknora-docreader weknora-app weknora-frontend
   fi
@@ -204,13 +252,14 @@ else
   mysql_pull=$!
   docker_access compose "${compose_profiles[@]}" build platform
   wait "$mysql_pull" || true
-  if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 ]]; then
+  if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 && "$reuse_existing_weknora" != 1 ]]; then
     step 'Pulling WeKnora knowledge base images'
     docker_access compose "${compose_profiles[@]}" pull --policy missing weknora-postgres weknora-redis weknora-docreader weknora-app weknora-frontend
   fi
   step 'Starting LoopForge'
   docker_access compose "${compose_profiles[@]}" up -d --no-build --wait --wait-timeout 180
 fi
+bridge_existing_weknora_network
 step 'Installing the schema extensions and the starter catalog'
 bash scripts/install-schema-extensions.sh
 

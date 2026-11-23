@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -380,5 +383,122 @@ func TestEnsureDefaultManagedWeKnoraDoesNotOverwriteConcurrentAdminClearAndMulti
 	}
 	if apiKeyCreates != 1 {
 		t.Fatalf("expected no additional WeKnora API key creation after admin clear, got %d", apiKeyCreates)
+	}
+}
+
+func TestCapabilityCacheUnavailableUsesShortRetryTTL(t *testing.T) {
+	cache := newCapabilityCache()
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	cache.now = func() time.Time { return now }
+
+	conn := domain.KnowledgeConnection{
+		ID:       "wk-builtin",
+		Provider: domain.KnowledgeProviderWeKnora,
+		URL:      "http://weknora-app:8080",
+		Token:    "sk-test",
+		Enabled:  true,
+	}
+	calls := 0
+	probe := func(_ context.Context) domain.ConnectionCapabilities {
+		calls++
+		if calls == 1 {
+			return capabilitiesWithReason(domain.CapabilityUnavailable, "上游拒绝该操作（HTTP 401），连接凭据缺少对应权限")
+		}
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	}
+
+	first := cache.get(context.Background(), conn, probe)
+	if got := first.Capabilities[domain.CapKBManage].Status; got != domain.CapabilityUnavailable {
+		t.Fatalf("first probe status = %q, want unavailable", got)
+	}
+	// Within 15s the cached unavailable verdict is reused.
+	now = now.Add(10 * time.Second)
+	_ = cache.get(context.Background(), conn, probe)
+	if calls != 1 {
+		t.Fatalf("calls after 10s = %d, want 1", calls)
+	}
+	// After 16s (< 5m full TTL) the unavailable entry expires and self-heals to available.
+	now = now.Add(6 * time.Second)
+	healed := cache.get(context.Background(), conn, probe)
+	if calls != 2 {
+		t.Fatalf("calls after 16s = %d, want 2", calls)
+	}
+	if got := healed.Capabilities[domain.CapKBManage].Status; got != domain.CapabilityAvailable {
+		t.Fatalf("healed probe status = %q, want available", got)
+	}
+}
+
+func TestLegacyKBAutoBindsEmbeddingModelOnWriteOrReparse(t *testing.T) {
+	var mu sync.Mutex
+	boundEmbeddingID := ""
+	reparseCalled := false
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Sentinel capability probes return structured 404 -> available.
+		if strings.Contains(r.URL.Path, weknoraSentinelID) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"success":false,"error":{"code":1003,"message":"not found"}}`))
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge/doc-1":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":"doc-1","knowledge_base_id":"kb-legacy","title":"Legacy Doc","parse_status":"failed"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge-bases/kb-legacy":
+			mu.Lock()
+			emb := boundEmbeddingID
+			mu.Unlock()
+			_, _ = fmt.Fprintf(w, `{"success":true,"data":{"id":"kb-legacy","name":"Legacy KB","embedding_model_id":%q}}`, emb)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/models":
+			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"emb-model-1","name":"gemini-embedding-001","type":"Embedding","status":"active"}]}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/knowledge-bases/kb-legacy":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			if v, ok := body["embedding_model_id"].(string); ok {
+				boundEmbeddingID = v
+			}
+			emb := boundEmbeddingID
+			mu.Unlock()
+			_, _ = fmt.Fprintf(w, `{"success":true,"data":{"id":"kb-legacy","name":"Legacy KB","embedding_model_id":%q}}`, emb)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/knowledge/doc-1/reparse":
+			mu.Lock()
+			reparseCalled = true
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"success":true}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"success":false,"error":{"code":1003,"message":"not found"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("LOOPFORGE_ALLOW_PRIVATE_URLS", "1")
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled:  true,
+		Provider: domain.KnowledgeProviderWeKnora,
+		Connections: []domain.KnowledgeConnection{{
+			ID:       "wk-1",
+			Name:     "Built-in",
+			Provider: domain.KnowledgeProviderWeKnora,
+			URL:      srv.URL,
+			Token:    "sk-test",
+			Enabled:  true,
+		}},
+	}
+	svc := newTestService(store, &fakeUpstream{})
+	if err := svc.ReparseWeKnoraDoc(context.Background(), "", "wk-1", "wk-1::doc-1"); err != nil {
+		t.Fatalf("ReparseWeKnoraDoc() error = %v", err)
+	}
+	mu.Lock()
+	gotEmb := boundEmbeddingID
+	gotReparse := reparseCalled
+	mu.Unlock()
+	if gotEmb != "emb-model-1" {
+		t.Fatalf("boundEmbeddingID = %q, want %q", gotEmb, "emb-model-1")
+	}
+	if !gotReparse {
+		t.Fatalf("expected reparse endpoint to be called after auto-binding embedding model")
 	}
 }
