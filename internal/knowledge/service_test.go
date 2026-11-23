@@ -22,6 +22,7 @@ type fakeStore struct {
 	candidates      []domain.KnowledgeCandidate
 	deletedConnToks []string
 	managedPass     string
+	mutateErr       error
 }
 
 func newFakeStore() *fakeStore {
@@ -31,6 +32,16 @@ func newFakeStore() *fakeStore {
 func (f *fakeStore) KnowledgeSettings() domain.KnowledgeSettings { return f.settings }
 func (f *fakeStore) PutKnowledgeSettings(s domain.KnowledgeSettings) error {
 	f.settings = s
+	return nil
+}
+func (f *fakeStore) MutateKnowledgeSettings(mutate func(*domain.KnowledgeSettings) bool) error {
+	if f.mutateErr != nil {
+		return f.mutateErr
+	}
+	if !mutate(&f.settings) {
+		return nil
+	}
+	f.settings.UpdatedAt = time.Now().UTC()
 	return nil
 }
 func (f *fakeStore) DeleteKnowledgeConnectionToken(connID string) error {

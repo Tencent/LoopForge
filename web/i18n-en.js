@@ -422,3 +422,19 @@ Object.assign(window.LF_I18N_EN, {
   "当前没有已启用的连接，知识库列表需启用连接后加载；下方仍可新建并管理知识库。": "No connection is enabled, so the knowledge base list cannot load until one is enabled; you can still create and manage knowledge bases below.",
   "当前没有已启用的连接，检索调试需先在「接入配置与用量」启用连接。": "No connection is enabled; enable one under \"Access configuration & usage\" before debugging retrieval."
 });
+
+// 知识库前后端契约对齐（Step 3：权限/状态机/审计展示）
+Object.assign(window.LF_I18N_EN, {
+  "自动初始化 WeKnora": "Auto-initialize WeKnora",
+  "索引收尾中": "Finalizing index",
+  "删除中": "Deleting",
+  "当前账号在该项目没有知识库写权限（需项目写成员或平台管理员）": "This account has no knowledge base write permission in this project (project writer or platform admin required)",
+  "没有可新建知识库的 WeKnora 连接，请先在「接入配置与用量」添加或启用连接": "No WeKnora connection can create knowledge bases; add or enable a connection under \"Access configuration & usage\" first",
+  "远端暂无可选模型（留空由远端默认处理），可手动填写 Embedding 模型 ID。": "The remote side has no selectable models (leave blank to let the remote decide), or enter an embedding model ID manually.",
+  "请选择向量模型（Embedding）": "Select an embedding model",
+  "已提交删除任务，正在后台清理索引": "Deletion task submitted; index cleanup is running in the background",
+  "没有可新建知识库的 WeKnora 连接（需已配置且具备库管理能力）": "No WeKnora connection can create knowledge bases (a configured connection with knowledge base management capability is required)",
+  "当前连接均已停用，可在上方选择具体已停用连接进行预配置，或前往接入配置启用。": "All connections are currently disabled. Pick a specific disabled connection above to configure it in advance, or enable one under access configuration.",
+  "查询 / 目标": "Query / Target",
+  "未能读取原文，已禁用保存以避免空正文覆盖；请检查连接权限或稍后重试。": "Unable to read the original text, so saving is disabled to avoid overwriting it with an empty body. Check the connection permission or try again later."
+});

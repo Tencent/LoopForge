@@ -103,6 +103,7 @@ type knowledgeSettingsView struct {
 	domain.KnowledgeSettings
 	Ready              bool   `json:"ready"`
 	CanManage          bool   `json:"canManage"`
+	CanWrite           bool   `json:"canWrite"`
 	ProxyPath          string `json:"proxyPath"`
 	UsageRule          string `json:"usageRule"`
 	DetectedWeKnoraURL string `json:"detectedWeKnoraUrl,omitempty"`
@@ -134,6 +135,7 @@ func (h *knowledgeHandlers) settings(c *gin.Context) {
 		KnowledgeSettings:  current.Public(),
 		Ready:              current.Ready(),
 		CanManage:          h.canManage(c.Request),
+		CanWrite:           h.canWriteKnowledge(c, c.Query("projectId")),
 		ProxyPath:          knowledge.ProxyPath,
 		UsageRule:          knowledge.UsageRule().Content,
 		DetectedWeKnoraURL: strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL")),
@@ -203,50 +205,21 @@ func (h *knowledgeHandlers) deleteConnection(c *gin.Context) {
 
 // 路由: g.GET("/api/knowledge/sources", h.sources)
 func (h *knowledgeHandlers) sources(c *gin.Context) {
-	list, err := h.svc.Sources(c.Request.Context(), c.Query("projectId"))
-	if err != nil {
-		respond(c, err)
-		return
-	}
+	ctx := c.Request.Context()
+	projectID := c.Query("projectId")
+	var (
+		list []knowledge.SourceView
+		err  error
+	)
 	if connID := strings.TrimSpace(c.Query("connectionId")); connID != "" {
-		if !h.knownConnection(connID) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "指定的知识库连接不存在"})
-			return
-		}
-		filtered := make([]knowledge.SourceView, 0, len(list))
-		for _, item := range list {
-			if scopedSourceInConnection(item.ID, connID) {
-				filtered = append(filtered, item)
-			}
-		}
-		list = filtered
+		// An explicit connection may be disabled: the console still manages it,
+		// while the default view and the Agent/MCP runtime only use active
+		// connections.
+		list, err = h.svc.SourcesForConnection(ctx, projectID, connID)
+	} else {
+		list, err = h.svc.Sources(ctx, projectID)
 	}
-	c.JSON(http.StatusOK, list)
-}
-
-// knownConnection reports whether connectionID names a configured connection or
-// the legacy top-level connection.
-func (h *knowledgeHandlers) knownConnection(connectionID string) bool {
-	conns := h.svc.Settings().Connections
-	if connectionID == "default" {
-		// The legacy top-level connection only exists without explicit ones.
-		return len(conns) == 0
-	}
-	for _, conn := range conns {
-		if conn.ID == connectionID {
-			return true
-		}
-	}
-	return false
-}
-
-// scopedSourceInConnection matches a source ID against an explicit connection:
-// multi-connection sources carry a "connID::" prefix, legacy ones do not.
-func scopedSourceInConnection(sourceID, connectionID string) bool {
-	if connectionID == "" || connectionID == "default" {
-		return !strings.Contains(sourceID, "::")
-	}
-	return strings.HasPrefix(sourceID, connectionID+"::")
+	render(c, list, err)
 }
 
 // scopedConnectionID prefers the explicit connectionId query parameter, then
@@ -366,6 +339,27 @@ func (h *knowledgeHandlers) requireKnowledgeWriter(c *gin.Context) (string, bool
 		return "", false
 	}
 	return "", true
+}
+
+// canWriteKnowledge reports whether the caller may mutate knowledge resources
+// for projectID without writing a response. It mirrors requireKnowledgeWriter
+// so the console's write gate cannot drift from the API gate.
+func (h *knowledgeHandlers) canWriteKnowledge(c *gin.Context, projectID string) bool {
+	if !authRequired() {
+		return true
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return h.canManage(c.Request)
+	}
+	user, ok := h.requestUser(c.Request, true)
+	if !ok || h.isPlatformAdmin(c.Request) {
+		return true
+	}
+	if user == nil {
+		return false
+	}
+	return h.projectWriterAllowed(c, projectID, user.ID)
 }
 
 // 路由: g.GET("/api/knowledge/models", h.models)

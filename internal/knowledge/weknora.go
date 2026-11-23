@@ -133,6 +133,41 @@ type WeKnoraDocument struct {
 	ErrorMessage    string `json:"error_message,omitempty"`
 	CreatedAt       string `json:"created_at,omitempty"`
 	UpdatedAt       string `json:"updated_at,omitempty"`
+	// Metadata carries the Markdown body and publish state of manual
+	// documents. It is decoded only by the single-document detail view and
+	// stripped from list and mutation responses.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+}
+
+// WeKnoraManualMetadata mirrors the Metadata payload WeKnora stores for
+// documents created from Markdown/text. Uploaded files carry no body there.
+type WeKnoraManualMetadata struct {
+	Content string `json:"content"`
+	Format  string `json:"format"`
+	Status  string `json:"status"`
+}
+
+// ManualMetadata decodes a manual document's Markdown body and publish state
+// ("draft" or "publish"). Uploaded files and undecodable payloads return empty
+// strings so callers fall back to the preview/chunk path.
+func (d WeKnoraDocument) ManualMetadata() (content, status string) {
+	raw := bytes.TrimSpace(d.Metadata)
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", ""
+	}
+	// Some deployments serialize metadata as a JSON string rather than object.
+	if raw[0] == '"' {
+		var inner string
+		if err := json.Unmarshal(raw, &inner); err != nil {
+			return "", ""
+		}
+		raw = []byte(inner)
+	}
+	var meta WeKnoraManualMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return "", ""
+	}
+	return meta.Content, strings.ToLower(strings.TrimSpace(meta.Status))
 }
 
 type WeKnoraDocumentPage struct {

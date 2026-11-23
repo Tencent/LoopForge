@@ -99,6 +99,49 @@ func (r *KnowledgeRepo) PutKnowledgeSettings(settings domain.KnowledgeSettings) 
 	return nil
 }
 
+// MutateKnowledgeSettings reads the latest persisted settings inside a
+// transaction, applies mutate, and writes the payload back when mutate reports
+// a change. Allow-list updates therefore cannot overwrite a concurrent
+// create/delete or an admin edit made from an older snapshot. Token columns are
+// never touched here.
+func (r *KnowledgeRepo) MutateKnowledgeSettings(mutate func(*domain.KnowledgeSettings) bool) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row knowledgeSettingsRow
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", knowledgeSettingsID).Take(&row).Error
+		var settings domain.KnowledgeSettings
+		switch {
+		case err == nil:
+			if err := json.Unmarshal(row.Payload, &settings); err != nil {
+				return err
+			}
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			// No stored settings yet; mutate decides whether to create them.
+		default:
+			return err
+		}
+		settings.Token = ""
+		settings.TokenConfigured = false
+		for i := range settings.Connections {
+			settings.Connections[i].Token = ""
+			settings.Connections[i].TokenConfigured = false
+		}
+		if !mutate(&settings) {
+			return nil
+		}
+		now := time.Now().UTC()
+		settings.UpdatedAt = now
+		payload, err := json.Marshal(settings)
+		if err != nil {
+			return err
+		}
+		return tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"payload", "updated_at"}),
+		}).Create(&knowledgeSettingsRow{ID: knowledgeSettingsID, Payload: payload, Updated: &now}).Error
+	})
+}
+
 // DeleteKnowledgeConnectionToken removes the stored token row for a deleted connection.
 func (r *KnowledgeRepo) DeleteKnowledgeConnectionToken(connID string) error {
 	connID = strings.TrimSpace(connID)

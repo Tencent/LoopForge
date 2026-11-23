@@ -40,6 +40,7 @@
     'admin:kb.update': '更新知识库',
     'admin:kb.delete': '删除知识库',
     'admin:conn.probe': '探测连接',
+    'admin:conn.provision': '自动初始化 WeKnora',
     'admin:conn.remove': '移除连接',
     'admin:doc.upload': '上传文档',
     'admin:doc.url': '链接导入文档',
@@ -65,6 +66,9 @@
   // 聚合 preview_download；键存在但状态为 unknown 时不得回退。
   const kbCapabilityPresent = {};
   let kbRenderTimer = 0;
+  // 文档解析/删除的中间态：命中时 4s 轮询刷新文档列表，直到收敛到终态。
+  const KB_POLL_STATUSES = ['pending', 'queued', 'processing', 'parsing', 'finalizing', 'deleting'];
+  let kbDocsPollTimer = 0;
 
   // 文档详情抽屉状态：分段视图、分块分页、预览 blob 与手工文档编辑。
   const kbDocView = {
@@ -107,6 +111,11 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  // 动态文案跟随界面语言：lfT 由 i18n.js 注入，缺失时保留中文。
+  function kbLfText(zh, en) {
+    return typeof window.lfT === 'function' ? window.lfT(zh, en) : zh;
   }
 
   function kbToast(msg, isError) {
@@ -381,7 +390,8 @@
   }
 
   function kbEnsureConnectionCapabilities() {
-    kbConnections().forEach(c => {
+    // 含单连接 legacy 合成的 {id:'default'}：否则 legacy 模式永远探测不到能力。
+    kbConfiguredConnections().forEach(c => {
       if (!c || !c.id || kbCapabilityProbed[c.id] || kbCapabilityFetching[c.id]) return;
       loadConnectionCapabilities(c.id).then(() => {
         if (kbState.tab === 'settings' || kbState.tab === 'sources') scheduleKBRender();
@@ -421,6 +431,47 @@
 
   function isWeKnora() {
     return (kbState.settings && (kbState.settings.provider || 'lightcloud')) === 'weknora';
+  }
+
+  function kbConnectionById(connId) {
+    const id = String(connId || '');
+    if (!id) return null;
+    return kbConnections().find(c => c.id === id) || kbConfiguredConnections().find(c => c.id === id) || null;
+  }
+
+  // 按连接判定引擎：连接未写 provider 时继承顶层配置，与后端 EffectiveProvider 一致。
+  // 单连接 legacy 的 {id:'default'} 走同一回退，因此能力探测与建库抽屉都能用。
+  function kbConnProvider(connId) {
+    const conn = kbConnectionById(connId);
+    const provider = (conn && conn.provider) || (kbState.settings && kbState.settings.provider) || 'lightcloud';
+    return String(provider).toLowerCase();
+  }
+
+  function isConnWeKnora(connId) {
+    return kbConnProvider(connId) === 'weknora';
+  }
+
+  function isSourceWeKnora(src) {
+    if (!src) return false;
+    return isConnWeKnora(resolveExplicitConnectionId(src.id));
+  }
+
+  // 写权限：优先用后端与 requireKnowledgeWriter 同源透传的 canWrite；
+  // 旧后端无该字段时按 bots.js 的同一判定思路回退，最后退到 canManage。
+  function kbCanWrite() {
+    const s = kbState.settings || {};
+    if (s.canWrite === true || s.canWrite === false) return s.canWrite;
+    if (typeof state === 'undefined' || !state || !state.authRequired || !state.currentUser) return true;
+    if (typeof isPlatformAdmin === 'function' && isPlatformAdmin()) return true;
+    const project = typeof currentProject === 'function' ? currentProject() : null;
+    if (!project) return !!s.canManage;
+    const user = Number(state.currentUser.id);
+    if (Number(project.ownerId) === user) return true;
+    return (project.members || []).some(m => Number(m.userId) === user && m.role !== 'viewer');
+  }
+
+  function kbCanWriteReason() {
+    return '当前账号在该项目没有知识库写权限（需项目写成员或平台管理员）';
   }
 
   function resolveConnectionForSource(sourceId) {
@@ -528,7 +579,8 @@
     renderKnowledgeShell();
     try {
       const pid = encodeURIComponent(kbProjectId());
-      const settings = await kbAPI('/api/knowledge/settings');
+      // canWrite 与后端写接口同源：按当前项目计算，切换项目刷新时同步更新。
+      const settings = await kbAPI('/api/knowledge/settings?projectId=' + pid);
       if (epoch !== kbViewEpoch) return;
       kbState.settings = settings;
       // Agent 检索开关（ready）不等于人用管理面开关：只要存在已配置连接就保留管理入口。
@@ -551,7 +603,7 @@
           const firstAllowed = kbState.sources.find(s => s.allowed) || kbState.sources[0];
           kbState.selectedSourceId = firstAllowed ? firstAllowed.id : '';
         }
-        if (kbState.selectedSourceId && isWeKnora()) {
+        if (kbState.selectedSourceId && isSourceWeKnora({ id: kbState.selectedSourceId })) {
           await loadSelectedDocuments();
         }
       } else {
@@ -575,7 +627,7 @@
   async function loadSelectedDocuments() {
     const epoch = ++kbDocsEpoch;
     const sourceId = String(kbState.selectedSourceId || '');
-    if (!sourceId || !isWeKnora()) {
+    if (!sourceId || !isSourceWeKnora({ id: sourceId })) {
       kbState.docs = null;
       return;
     }
@@ -594,10 +646,25 @@
       const res = await kbAPI(`/api/knowledge/sources/${encodeURIComponent(sourceId)}/documents?${q.toString()}`);
       if (epoch !== kbDocsEpoch) return;
       kbState.docs = res;
+      kbScheduleDocsPoll();
     } catch (err) {
       if (epoch !== kbDocsEpoch) return;
       kbState.docs = { error: err.message, documents: [], total: 0 };
     }
+  }
+
+  // 列表存在 pending/queued/processing/parsing/finalizing/deleting 时每 4s 刷新一次。
+  function kbScheduleDocsPoll() {
+    if (kbDocsPollTimer) return;
+    const docs = (kbState.docs && kbState.docs.documents) || [];
+    const pending = docs.some(d => KB_POLL_STATUSES.indexOf(String((d && (d.parse_status || d.status)) || '').toLowerCase()) >= 0);
+    if (!pending) return;
+    kbDocsPollTimer = window.setTimeout(async () => {
+      kbDocsPollTimer = 0;
+      if (kbState.tab !== 'sources') return;
+      await loadSelectedDocuments();
+      renderKnowledgeShell();
+    }, 4000);
   }
 
   function cleanSourceName(name) {
@@ -614,6 +681,10 @@
     }
     if (s === 'rejected') return `<span class="hui-badge" data-tone="error"${tip}>已驳回</span>`;
     if (s === 'processing') return `<span class="hui-badge" data-tone="warn"${tip}>解析中</span>`;
+    if (s === 'finalizing') return `<span class="hui-badge" data-tone="info"${tip}>索引收尾中</span>`;
+    if (s === 'deleting') return `<span class="hui-badge" data-tone="warn"${tip}>删除中</span>`;
+    if (s === 'draft') return `<span class="hui-badge" data-tone="neutral"${tip}>草稿</span>`;
+    if (s === 'cancelled') return `<span class="hui-badge" data-tone="neutral"${tip}>已取消</span>`;
     if (s === 'pending') return `<span class="hui-badge" data-tone="warn"${tip}>${status === 'pending' ? '排队中' : kbEsc(status)}</span>`;
     return `<span class="hui-badge" data-tone="muted"${tip}>${kbEsc(status || '-')}</span>`;
   }
@@ -624,7 +695,7 @@
     const s = kbState.settings || {};
     const pendingSubs = kbState.submissions.filter(x => x.status === 'pending').length;
     const allowedCount = kbState.sources.filter(x => x.allowed).length;
-    const engineLabel = isWeKnora() ? 'WeKnora' : 'LightCloud KB';
+    const engineLabel = (isConnWeKnora(kbActiveConnId()) || (!kbState.sources.length && isWeKnora())) ? 'WeKnora' : 'LightCloud KB';
 
     const descEl = document.getElementById('kbHeadDesc');
     if (descEl) {
@@ -678,7 +749,9 @@
     const selected = kbState.sources.find(s => s.id === kbState.selectedSourceId);
     if (selected) return resolveExplicitConnectionId(selected.id);
     const conns = kbConnections();
-    return conns.length === 1 ? (conns[0].id || '') : '';
+    if (conns.length === 1) return conns[0].id || '';
+    const configured = kbConfiguredConnections();
+    return configured.length === 1 ? (configured[0].id || '') : '';
   }
 
   function kbConnLabel(conn) {
@@ -711,6 +784,17 @@
     return gate.disabled ? ` disabled title="${kbEsc(gate.reason)}"` : '';
   }
 
+  // 写操作门禁：项目写权限 + 连接能力位联合判定，任一不足都给出可读原因。
+  function kbWriteGate(connId, cap, what) {
+    if (!kbCanWrite()) return { disabled: true, reason: kbCanWriteReason() };
+    return kbGate(connId, cap, what);
+  }
+
+  // 可建库连接：已配置 + WeKnora 引擎 + 库管理能力未判定为不可用。
+  function kbCreatableWeKnoraConnections() {
+    return kbConfiguredConnections().filter(c => c && c.id && isConnWeKnora(c.id) && kbCapabilityAllowed(c.id, 'kb_manage'));
+  }
+
   function kbModelFieldHTML(id, label, manualHint) {
     return `<div class="kb-field">
       <label for="${id}">${label}</label>
@@ -720,11 +804,15 @@
   }
 
   // 按 WeKnora 模型类型（Embedding / KnowledgeQA）拆分下拉；空列表时回退到手工输入。
-  function kbFillModelSelect(select, manual, models, type) {
+  // required=true（新建库的 Embedding）时：列表非空则移除空选项并默认选中第一个；
+  // 列表为空或加载失败时保留空选项，由远端默认处理。编辑抽屉不传 required。
+  function kbFillModelSelect(select, manual, models, type, required) {
     const list = (models || []).filter(m => String(m.type || '').toLowerCase() === type.toLowerCase());
+    const mandatory = !!required && list.length > 0;
     if (select) {
-      select.innerHTML = '<option value="">使用上游默认</option>' + list.map(m =>
+      select.innerHTML = (mandatory ? '' : '<option value="">使用上游默认</option>') + list.map(m =>
         `<option value="${kbEsc(m.id)}">${kbEsc(m.name || m.id)}</option>`).join('');
+      select.dataset.required = mandatory ? '1' : '';
     }
     if (manual) {
       manual.hidden = list.length > 0;
@@ -754,12 +842,19 @@
   }
 
   function openKBCreateDrawer() {
-    const conns = kbConnections();
-    if (!conns.length) {
-      kbToast('请先在「接入配置与用量」中添加知识库连接', true);
+    if (!kbCanWrite()) {
+      kbToast(kbCanWriteReason(), true);
       return;
     }
-    const connId = kbActiveConnId() || conns[0].id || '';
+    const conns = kbCreatableWeKnoraConnections();
+    if (!conns.length) {
+      kbToast('没有可新建知识库的 WeKnora 连接，请先在「接入配置与用量」添加或启用连接', true);
+      return;
+    }
+    // 默认选中当前筛选连接（可建库时），否则首个可建库的 WeKnora 连接。
+    const preferred = kbState.connectionFilter ? conns.find(c => c.id === kbState.connectionFilter) : null;
+    const active = conns.find(c => c.id === kbActiveConnId());
+    const connId = (preferred || active || conns[0]).id || '';
     kbOperationConnId = connId;
     const options = conns.map(c => (
       `<option value="${kbEsc(c.id)}" ${c.id === connId ? 'selected' : ''}>${kbEsc(kbConnLabel(c))}</option>`
@@ -791,23 +886,29 @@
     const sumSelect = drawer.querySelector('#kbCreateSummary');
     const sumManual = drawer.querySelector('#kbCreateSummaryManual');
     let modelSeq = 0;
+    let embCountState = 0;
     const syncModels = async () => {
       const mine = ++modelSeq;
       const cid = connSelect ? connSelect.value : '';
       if (note) note.textContent = '正在加载该连接的模型列表…';
       const res = await kbLoadModels(cid);
       if (mine !== modelSeq || !document.contains(drawer)) return;
-      const embCount = kbFillModelSelect(embSelect, embManual, res.models, 'Embedding');
+      const embCount = kbFillModelSelect(embSelect, embManual, res.models, 'Embedding', true);
       const sumCount = kbFillModelSelect(sumSelect, sumManual, res.models, 'KnowledgeQA');
+      embCountState = embCount;
       if (!note) return;
       if (res.error) {
-        note.textContent = '模型列表加载失败：' + res.error + '，可直接填写模型 ID。';
+        embCountState = 0;
+        note.textContent = kbLfText('模型列表加载失败：' + res.error + '，可直接填写模型 ID。', 'Failed to load models: ' + res.error + '. Enter a model ID manually.');
         if (embManual) embManual.hidden = false;
         if (sumManual) sumManual.hidden = false;
-      } else if (!embCount && !sumCount) {
-        note.textContent = '该连接未返回可用模型，可手动填写模型 ID（留空则使用上游默认）。';
+      } else if (!embCount) {
+        note.textContent = kbLfText('远端暂无可选模型（留空由远端默认处理），可手动填写 Embedding 模型 ID。', 'The remote side has no selectable models (leave blank to let the remote decide), or enter an embedding model ID manually.');
       } else {
-        note.textContent = `已加载模型：Embedding ${embCount} 个 · KnowledgeQA ${sumCount} 个，可留空使用上游默认。`;
+        note.textContent = kbLfText(
+          `已加载模型：Embedding ${embCount} 个 · KnowledgeQA ${sumCount} 个；向量模型必选，摘要模型可留空使用上游默认。`,
+          `Models loaded: ${embCount} embedding · ${sumCount} KnowledgeQA. An embedding model is required; the summary model may stay blank to use the upstream default.`
+        );
       }
     };
     connSelect?.addEventListener('change', () => {
@@ -823,8 +924,14 @@
       const description = String(drawer.querySelector('#kbCreateDesc')?.value || '').trim();
       if (!cid) { kbToast('请选择目标连接', true); return; }
       if (!name) { kbToast('请填写知识库名称', true); return; }
+      if (!kbCanWrite()) { kbToast(kbCanWriteReason(), true); return; }
       if (!kbCapabilityAllowed(cid, 'kb_manage')) {
         kbToast(kbCapabilityReason(cid, 'kb_manage') || '当前连接缺少库管理能力', true);
+        return;
+      }
+      const embeddingModelID = kbPickModel(embManual, embSelect);
+      if (embCountState > 0 && !embeddingModelID) {
+        kbToast('请选择向量模型（Embedding）', true);
         return;
       }
       submit.disabled = true;
@@ -836,7 +943,7 @@
             connectionId: cid,
             name: name,
             description: description,
-            embedding_model_id: kbPickModel(embManual, embSelect),
+            embedding_model_id: embeddingModelID,
             summary_model_id: kbPickModel(sumManual, sumSelect)
           })
         });
@@ -853,6 +960,7 @@
   }
 
   async function openKBEditDrawer(src) {
+    if (!kbCanWrite()) { kbToast(kbCanWriteReason(), true); return; }
     const connId = resolveExplicitConnectionId(src.id);
     kbOperationConnId = connId;
     let detail = null;
@@ -908,6 +1016,7 @@
 
   async function kbDeleteSource(src) {
     const connId = resolveExplicitConnectionId(src.id);
+    if (!kbCanWrite()) { kbToast(kbCanWriteReason(), true); return; }
     if (!kbCapabilityAllowed(connId, 'kb_manage')) {
       kbToast(kbCapabilityReason(connId, 'kb_manage') || '当前连接缺少库管理能力', true);
       return;
@@ -935,6 +1044,7 @@
 
   async function kbDeleteDoc(docId, title) {
     const connId = resolveExplicitConnectionId(docId);
+    if (!kbCanWrite()) { kbToast(kbCanWriteReason(), true); return; }
     if (!kbCapabilityAllowed(connId, 'doc_write')) {
       kbToast(kbCapabilityReason(connId, 'doc_write') || '当前连接缺少文档写入能力', true);
       return;
@@ -951,8 +1061,11 @@
     try {
       await kbAPI('/api/knowledge/documents/' + encodeURIComponent(docId) + '?' + kbConnQuery(connId), { method: 'DELETE' });
       if (kbState.docPage > 1 && (kbState.docs?.documents || []).length <= 1) kbState.docPage -= 1;
-      kbToast('文档已删除');
+      // WeKnora 删除是异步入队：文档仍在列表里说明后台还在清理索引，保持轮询。
       await loadSelectedDocuments();
+      const still = ((kbState.docs && kbState.docs.documents) || []).some(d => String(d.id) === String(docId));
+      kbToast(still ? '已提交删除任务，正在后台清理索引' : '文档已删除');
+      if (still) kbScheduleDocsPoll();
       renderKnowledgeShell();
     } catch (err) {
       kbToastError(err, connId);
@@ -961,6 +1074,7 @@
 
   async function kbReparseDoc(docId) {
     const connId = resolveExplicitConnectionId(docId);
+    if (!kbCanWrite()) { kbToast(kbCanWriteReason(), true); return; }
     if (!kbCapabilityAllowed(connId, 'reparse')) {
       kbToast(kbCapabilityReason(connId, 'reparse') || '当前连接缺少重解析能力', true);
       return;
@@ -978,6 +1092,7 @@
   function openKBImportDrawer(src) {
     const connId = resolveExplicitConnectionId(src.id);
     kbOperationConnId = connId;
+    if (!kbCanWrite()) { kbToast(kbCanWriteReason(), true); return; }
     if (!kbCapabilityAllowed(connId, 'doc_write')) {
       kbToast(kbCapabilityReason(connId, 'doc_write') || '当前连接缺少文档写入能力', true);
       return;
@@ -1214,8 +1329,11 @@
     renderKBDocBody();
     await kbLoadDocDetail();
     if (kbDocView.docId !== id) return;
+    // 首次打开时按远端 publishStatus 同步「保存后立即发布」，此后用户的勾选不被覆盖。
+    const publishStatus = String(kbDocField(kbDocView.detail, 'publishStatus', 'publish_status') || '').toLowerCase();
+    if (publishStatus) kbDocView.editPublish = publishStatus !== 'draft';
     const manual = kbDocIsManual(kbDocView.detail);
-    const canEdit = manual && kbCapabilityAllowed(connId, 'doc_write');
+    const canEdit = manual && kbCanWrite() && kbCapabilityAllowed(connId, 'doc_write');
     if (initialView === 'edit' && canEdit) {
       kbDocView.view = 'edit';
     } else if (kbCapabilityAllowed(connId, 'chunk_read')) {
@@ -1402,23 +1520,47 @@
       renderKBDocBody();
       return;
     }
+    // 详情接口缺 content（旧版 WeKnora）：依次回退 /preview、分块拼接；
+    // 两者都取不到时进入 failed 并禁用保存，避免空正文覆盖原文。
     kbDocView.editContentState = 'loading';
     renderKBDocBody();
-    try {
-      const res = await fetch('/api/knowledge/documents/' + encodeURIComponent(id) + '/preview?' + kbConnQuery(kbDocView.connId));
-      if (kbDocView.docId !== id) return;
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      if (kbPreviewKind(res.headers.get('content-type')) !== 'text') throw new Error('unsupported preview');
-      const text = await res.text();
-      if (kbDocView.docId !== id) return;
-      kbDocView.editContent = text;
-      kbDocView.editContentState = 'ready';
-    } catch {
-      if (kbDocView.docId !== id) return;
-      kbDocView.editContentState = 'failed';
-    } finally {
-      if (kbDocView.docId === id) renderKBDocBody();
+    let text = '';
+    if (kbCapabilityAllowed(kbDocView.connId, 'preview')) {
+      try {
+        const res = await fetch('/api/knowledge/documents/' + encodeURIComponent(id) + '/preview?' + kbConnQuery(kbDocView.connId));
+        if (kbDocView.docId !== id) return;
+        if (res.ok && kbPreviewKind(res.headers.get('content-type')) === 'text') text = await res.text();
+      } catch {}
     }
+    if (!text && kbDocView.docId === id && kbCapabilityAllowed(kbDocView.connId, 'chunk_read')) {
+      try { text = await kbLoadDocEditChunks(id); } catch {}
+    }
+    if (kbDocView.docId !== id) return;
+    kbDocView.editContent = text;
+    kbDocView.editContentState = text ? 'ready' : 'failed';
+    renderKBDocBody();
+  }
+
+  // 手工文档无内联正文且预览不可用时的最后回退：按分页拉取分块并拼接。
+  async function kbLoadDocEditChunks(id) {
+    const parts = [];
+    let page = 1;
+    for (;;) {
+      const q = kbConnQuery(kbDocView.connId, { page: String(page), pageSize: '50' });
+      const res = await fetch('/api/knowledge/documents/' + encodeURIComponent(id) + '/chunks?' + q);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const chunks = (data && data.chunks) || [];
+      chunks.forEach(chunk => { if (chunk && chunk.content) parts.push(chunk.content); });
+      const total = Number((data && data.total) || 0);
+      const size = Number((data && data.pageSize) || 50) || 50;
+      if (!chunks.length || page * size >= total) break;
+      // 已知还有分页却达到上限：宁可失败并禁用保存，也不能拿截断正文覆盖原文。
+      if (page >= 20) throw new Error('chunks truncated at page ' + page);
+      page += 1;
+    }
+    if (!parts.length) throw new Error('empty chunks');
+    return parts.join('\n\n');
   }
 
   function kbSwitchDocView(view) {
@@ -1487,7 +1629,7 @@
       <div class="kb-field">
         <label for="kbDocEditContent">Markdown 正文</label>
         <textarea class="kb-input" id="kbDocEditContent" rows="14" ${loading ? 'disabled' : ''} placeholder="${loading ? '正在加载原文…' : '# 标题&#10;正文…'}">${kbEsc(kbDocView.editContent || '')}</textarea>
-        ${failed ? '<small class="kb-muted">未能读取原文，保存将以下方内容覆盖现有正文，请谨慎操作。</small>' : ''}
+        ${failed ? '<small class="kb-muted">未能读取原文，已禁用保存以避免空正文覆盖；请检查连接权限或稍后重试。</small>' : ''}
       </div>
       <label class="kb-check-chip">
         <input type="checkbox" role="switch" id="kbDocEditPublish" ${kbDocView.editPublish ? 'checked' : ''}>
@@ -1495,7 +1637,7 @@
       </label>
       <p class="kb-muted">保存会替换文档正文并触发重新解析。</p>
       <div class="kb-toolbar">
-        <button type="button" class="kb-btn primary" id="kbDocSaveBtn" ${loading ? 'disabled' : ''}>保存文档</button>
+        <button type="button" class="kb-btn primary" id="kbDocSaveBtn" ${loading || failed ? 'disabled' : ''}>保存文档</button>
       </div>`;
   }
 
@@ -1512,7 +1654,7 @@
     const segs = [];
     if (kbCapabilityAllowed(connId, 'chunk_read')) segs.push({ key: 'chunks', label: '分块' });
     if (kbCapabilityAllowed(connId, 'preview')) segs.push({ key: 'preview', label: '原文预览' });
-    if (manual && kbCapabilityAllowed(connId, 'doc_write')) segs.push({ key: 'edit', label: '编辑文档' });
+    if (manual && kbCanWrite() && kbCapabilityAllowed(connId, 'doc_write')) segs.push({ key: 'edit', label: '编辑文档' });
     if (segs.length && !segs.some(s => s.key === kbDocView.view)) {
       kbDocView.view = segs[0].key;
       kbReleasePreviewURL();
@@ -1572,6 +1714,7 @@
     const host = document.getElementById('kbDocBody');
     if (!host || !kbDocView.docId) return;
     const connId = kbDocView.connId;
+    if (!kbCanWrite()) { kbToast(kbCanWriteReason(), true); return; }
     if (!kbCapabilityAllowed(connId, 'doc_write')) {
       kbToast(kbCapabilityReason(connId, 'doc_write') || '当前连接缺少文档写入能力', true);
       return;
@@ -1625,9 +1768,17 @@
           ${kbCapabilityBadges(activeConnId)}
         </div>`
       : '';
-    const createGate = kbGate(activeConnId, 'kb_manage', '库管理');
-    const createDenied = !kbState.settings.canManage || createGate.disabled;
-    const createReason = !kbState.settings.canManage ? '仅平台管理员或项目写成员可新建知识库' : createGate.reason;
+    const creatableConns = kbCreatableWeKnoraConnections();
+    const createGate = creatableConns.length
+      ? { disabled: false, reason: '' }
+      : kbGate(activeConnId, 'kb_manage', '库管理');
+    const createDenied = !kbCanWrite() || createGate.disabled;
+    const createReason = !kbCanWrite()
+      ? kbCanWriteReason()
+      : (createGate.reason || '没有可新建知识库的 WeKnora 连接（需已配置且具备库管理能力）');
+    const allDisabledHint = (!kbState.settings?.ready && kbHasConfiguredConnections() && !kbState.connectionFilter)
+      ? '<p class="kb-muted">当前连接均已停用，可在上方选择具体已停用连接进行预配置，或前往接入配置启用。</p>'
+      : '';
     const sourcesHTML = kbState.sources.length
       ? kbState.sources.map(src => {
         const conn = resolveConnectionForSource(src.id);
@@ -1647,23 +1798,27 @@
         </button>
       `;
       }).join('')
-      : `<p class="kb-muted">${kbState.settings?.ready ? '暂无上游知识库。' : '当前没有已启用的连接，知识库列表需启用连接后加载；下方仍可新建并管理知识库。'}</p>`;
+      : `<p class="kb-muted">${kbState.settings?.ready ? '暂无上游知识库。' : '当前没有已启用的连接，知识库列表需启用连接后加载；下方仍可新建并管理知识库。'}</p>${allDisabledHint}`;
 
     const selected = kbState.sources.find(s => s.id === kbState.selectedSourceId);
     let rightHTML = '<p class="kb-muted">请从左侧选择一个知识库。</p>';
-    if (selected && !isWeKnora()) {
+    if (selected && !isSourceWeKnora(selected)) {
       rightHTML = `<p class="kb-muted">当前为 LightCloud KB 引擎，请使用「排障调试」按路径检索并查看原文。</p>`;
-    } else if (selected && isWeKnora()) {
+    } else if (selected && isSourceWeKnora(selected)) {
       const connId = resolveExplicitConnectionId(selected.id);
       const docs = kbState.docs?.documents || [];
       const page = Math.max(1, kbState.docPage || 1);
       const pageSize = 20;
       const total = Number(kbState.docs?.total || docs.length || 0);
       const pages = Math.max(1, Math.ceil(total / pageSize));
-      const docGate = kbGate(connId, 'doc_write', '文档写入');
-      const manageGate = kbGate(connId, 'kb_manage', '库管理');
-      const reparseGate = kbGate(connId, 'reparse', '重解析');
+      const docGate = kbWriteGate(connId, 'doc_write', '文档写入');
+      const manageGate = kbWriteGate(connId, 'kb_manage', '库管理');
+      const reparseGate = kbWriteGate(connId, 'reparse', '重解析');
       const downloadGate = kbGate(connId, 'download', '下载');
+      // 「查看」负责打开文档抽屉（默认分块），只要任一内容视图可用就放行；
+      // preview 端点被拒时只隐藏抽屉内的原文预览页签。
+      const canOpenDoc = ['chunk_read', 'preview', 'doc_write'].some(cap => kbCapabilityAllowed(connId, cap));
+      const previewGate = canOpenDoc ? { disabled: false, reason: '' } : kbGate(connId, 'preview', '预览');
       const rows = docs.length ? docs.map(d => {
         const docTitle = d.title || d.file_name || d.id;
         const manualDoc = String(d.type || '').toLowerCase() === 'manual';
@@ -1682,7 +1837,7 @@
           <td class="kb-muted">${kbEsc((d.updated_at || d.created_at || '').slice(0, 19).replace('T', ' '))}</td>
           <td>
             <div class="kb-row-actions">
-              <button type="button" class="kb-btn xs" data-kb-preview-doc="${kbEsc(d.id)}" data-kb-doc-title="${kbEsc(docTitle)}">查看</button>
+              <button type="button" class="kb-btn xs" data-kb-preview-doc="${kbEsc(d.id)}" data-kb-doc-title="${kbEsc(docTitle)}"${kbGateAttrs(previewGate)}>查看</button>
               ${editAction}
               <button type="button" class="kb-btn xs" data-kb-reparse-doc="${kbEsc(d.id)}"${kbGateAttrs(reparseGate)}>重解析</button>
               ${downloadAction}
@@ -2040,15 +2195,18 @@
       <tr><td>${kbEsc(a.name)}</td><td class="kb-muted">${kbEsc((a.workflows || []).join('、') || '-')}</td></tr>
     `).join('') || '<tr><td colspan="2" class="kb-muted">暂无开启团队知识库的角色</td></tr>';
 
-    const activityRows = (kbState.usage?.activity || []).slice(0, 20).map(act => `
+    const activityRows = (kbState.usage?.activity || []).slice(0, 20).map(act => {
+      const admin = String(act.tool || '').indexOf('admin:') === 0;
+      return `
       <tr>
         <td>${kbAuditTool(act.tool)}</td>
         <td class="kb-muted">${kbEsc(act.query || '-')}</td>
-        <td>${act.hits}</td>
+        <td>${admin ? '—' : kbEsc(act.hits)}</td>
         <td>${act.ok ? '<span class="hui-badge" data-tone="success">成功</span>' : '<span class="hui-badge" data-tone="error">失败</span>'}</td>
-        <td class="kb-muted">${act.latencyMs} ms</td>
+        <td class="kb-muted">${admin ? '—' : kbEsc(act.latencyMs) + ' ms'}</td>
       </tr>
-    `).join('') || '<tr><td colspan="5" class="kb-muted">暂无代理检索记录</td></tr>';
+    `;
+    }).join('') || '<tr><td colspan="5" class="kb-muted">暂无代理检索记录</td></tr>';
 
     container.innerHTML = `
       ${s.canManage ? `
@@ -2170,7 +2328,7 @@
           <tbody>${agentsRows}</tbody>
         </table>
         <table class="kb-table">
-          <thead><tr><th>工具</th><th>检索词</th><th>命中</th><th>结果</th><th>耗时</th></tr></thead>
+          <thead><tr><th colspan="2">查询 / 目标</th><th>命中</th><th>结果</th><th>耗时</th></tr></thead>
           <tbody>${activityRows}</tbody>
         </table>
       </div>

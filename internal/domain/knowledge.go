@@ -138,10 +138,19 @@ func (s KnowledgeSettings) ActiveConnections() []KnowledgeConnection {
 	}
 	if len(s.Connections) > 0 {
 		out := make([]KnowledgeConnection, 0, len(s.Connections))
+		// A connection without an explicit provider inherits the top-level one,
+		// the same way Public() and CheckConnection() resolve it. Without this
+		// inheritance the fingerprint and HasWeKnoraConnection judge inherited
+		// WeKnora connections as lightcloud.
+		topProvider := s.EffectiveProvider()
 		for _, c := range s.Connections {
-			if c.Enabled && strings.TrimSpace(c.URL) != "" && strings.TrimSpace(c.Token) != "" {
-				out = append(out, c)
+			if !c.Enabled || strings.TrimSpace(c.URL) == "" || strings.TrimSpace(c.Token) == "" {
+				continue
 			}
+			if strings.TrimSpace(c.Provider) == "" {
+				c.Provider = topProvider
+			}
+			out = append(out, c)
 		}
 		return out
 	}
@@ -285,6 +294,11 @@ type KnowledgeDocumentDetail struct {
 	ErrorMessage    string `json:"errorMessage,omitempty"`
 	CreatedAt       string `json:"createdAt,omitempty"`
 	UpdatedAt       string `json:"updatedAt,omitempty"`
+	// Content and PublishStatus are filled for manual (Markdown/text) WeKnora
+	// documents whose body lives in Knowledge.Metadata. They are empty for
+	// uploaded files, where the body is only reachable through preview.
+	Content       string `json:"content,omitempty"`
+	PublishStatus string `json:"publishStatus,omitempty"`
 }
 
 // KnowledgeChunk is one parsed passage of a document.

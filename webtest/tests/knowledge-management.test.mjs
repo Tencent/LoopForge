@@ -70,7 +70,11 @@ const ROUTES = (extra = []) => [
   { method: 'GET', path: /^\/api\/knowledge\/connections\/conn-a\/capabilities$/, body: capabilities() },
   { method: 'GET', path: /^\/api\/knowledge\/connections\/conn-b\/capabilities$/, body: { error: 'not found' }, status: 404 },
   { method: 'GET', path: '/api/knowledge/settings', body: settingsFixture() },
-  { method: 'GET', path: '/api/knowledge/sources', body: SOURCES },
+  // 默认列表只返回启用连接的知识库；显式 ?connectionId= 才允许查看已停用连接。
+  { method: 'GET', path: /^\/api\/knowledge\/sources(\?|$)/, body: (call) =>
+    call.url.searchParams.get('connectionId') === CONN_B
+      ? [{ id: SRC_B, name: '测试库', doc_count: 3, allowed: true }]
+      : [{ id: SRC_A, name: '[研发空间] 产品手册', doc_count: 45, allowed: true }] },
   { method: 'GET', path: /^\/api\/knowledge\/usage/, body: { searches: 3, fetches: 2, agents: [{ name: 'SRE', workflows: ['wf-1', 'wf-2'] }, { name: 'QA', workflows: [] }], activity: [] } },
   { method: 'GET', path: /^\/api\/knowledge\/candidates/, body: [] },
   { method: 'GET', path: '/api/knowledge/submissions', body: [] },
@@ -108,7 +112,11 @@ async function openDoc(app, id) {
 }
 
 test('知识库工作区：连接能力徽标、连接筛选与文档列表分页', async (t) => {
-  const app = await openKnowledge(t, ROUTES());
+  // 本用例聚焦徽标/分页/作用域前缀：两个连接都返回同一份知识库列表，
+  // 让已选中的 conn-a 知识库在切到 conn-b 筛选后仍然存在（前缀优先）。
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: /^\/api\/knowledge\/sources(\?|$)/, body: SOURCES },
+  ]));
   const { document } = app;
   const pid = app.evaluate('state.projectFilter');
 
@@ -423,9 +431,12 @@ test('知识库 CRUD：模型分流、显式 connectionId、PATCH 404 回退 PUT
   assert.equal(drawer.hidden, false);
   assert.match(document.querySelector('#kbCreateModelNote').textContent, /Embedding 1 个 · KnowledgeQA 1 个/);
   const embSelect = document.querySelector('#kbCreateEmbedding');
-  assert.equal(embSelect.options.length, 2);
+  // Embedding 列表非空时必选并默认选中第一个，不再保留「使用上游默认」空选项。
+  assert.equal(embSelect.options.length, 1);
+  assert.equal(embSelect.value, 'm-emb');
+  assert.equal(embSelect.dataset.required, '1');
+  assert.equal(embSelect.querySelector('option[value=""]'), null);
   assert.equal(document.querySelector('#kbCreateEmbeddingManual').hidden, true);
-  chooseOption(embSelect, 'm-emb');
   chooseOption(document.querySelector('#kbCreateSummary'), 'm-qa');
 
   // 缺名称不提交。
@@ -688,6 +699,7 @@ test('接入配置页：连接探测、移除、一键接入、审计标签与�
     agents: [{ name: 'SRE', workflows: ['wf-1', 'wf-2'] }, { name: 'QA', workflows: [] }],
     activity: [
       { tool: 'admin:kb.create', query: '创建知识库', hits: 0, ok: true, latencyMs: 12 },
+      { tool: 'admin:conn.provision', query: 'wk-provision', hits: 0, ok: true, latencyMs: 9 },
       { tool: 'admin:unknown.action', query: '未知动作', hits: 1, ok: false, latencyMs: 30 },
       { tool: 'knowledge_search', query: '部署', hits: 3, ok: true, latencyMs: 40 },
     ],
@@ -709,6 +721,22 @@ test('接入配置页：连接探测、移除、一键接入、审计标签与�
   assert.equal(auditBadge.title, 'admin:kb.create');
   assert.ok([...document.querySelectorAll('#kbTabBody .hui-badge')].some((el) => el.textContent === 'admin:unknown.action'));
   assert.match(document.querySelector('#kbTabBody').textContent, /knowledge_search/);
+
+  // 活动表：查询/目标表头，admin:* 的命中与耗时以 — 占位。
+  const activityTable = [...document.querySelectorAll('#kbTabBody table')]
+    .find((tbl) => /查询 \/ 目标/.test(tbl.querySelector('thead')?.textContent || ''));
+  assert.ok(activityTable, '活动表表头为「查询 / 目标」');
+  const provisionBadge = [...activityTable.querySelectorAll('.hui-badge')]
+    .find((el) => el.textContent === '自动初始化 WeKnora');
+  assert.ok(provisionBadge, 'admin:conn.provision 渲染为可读标签');
+  assert.equal(provisionBadge.title, 'admin:conn.provision');
+  const provisionRow = provisionBadge.closest('tr');
+  assert.equal(provisionRow.children[2].textContent.trim(), '—', '管理审计不计命中');
+  assert.equal(provisionRow.children[4].textContent.trim(), '—', '管理审计不计耗时');
+  const searchRow = [...activityTable.querySelectorAll('tbody tr')]
+    .find((tr) => tr.textContent.includes('knowledge_search'));
+  assert.equal(searchRow.children[2].textContent.trim(), '3', '检索行保留命中数');
+  assert.match(searchRow.children[4].textContent, /40 ms/);
 
   // 探测成功：POST body 携带 connectionId，能力徽标刷新。
   document.querySelector(`[data-kb-probe-conn="${CONN_A}"]`).click();
@@ -953,15 +981,15 @@ test('降级路径：未就绪自动跳转配置页、LightCloud 引擎与无管
   doc2.querySelector('#kbCreateSourceBtn').click();
   await settle(4);
   assert.equal(doc2.querySelector('#kbDrawer').hidden, true);
-  assert.match(lastToast(light).m, /请先在「接入配置与用量」中添加知识库连接/);
+  assert.match(lastToast(light).m, /没有可新建知识库的 WeKnora 连接，请先在「接入配置与用量」添加或启用连接/);
   assert.equal(light.router.calls.filter((call) => call.path.endsWith('/documents')).length, 0, 'LightCloud 不请求文档列表');
 
   const readonly = await openKnowledge(t, ROUTES([
-    { method: 'GET', path: '/api/knowledge/settings', body: settingsFixture({ canManage: false }) },
+    { method: 'GET', path: '/api/knowledge/settings', body: settingsFixture({ canManage: false, canWrite: false }) },
   ]));
   const doc3 = readonly.document;
   assert.equal(doc3.querySelector('#kbCreateSourceBtn').disabled, true, '无管理权限禁用新建');
-  assert.match(doc3.querySelector('#kbCreateSourceBtn').title, /仅平台管理员或项目写成员/);
+  assert.match(doc3.querySelector('#kbCreateSourceBtn').title, /没有知识库写权限/);
   doc3.querySelector('[data-kb-tab="settings"]').click();
   await settle(6);
   assert.match(doc3.querySelector('#kbTabBody').textContent, /仅平台管理员可修改接入配置/);
@@ -1076,6 +1104,8 @@ test('文档列表乱序响应：慢的旧知识库不覆盖当前选择', async
   const slow = new Promise((resolve) => { releaseSlow = resolve; });
   let aCalls = 0;
   const app = await openKnowledge(t, ROUTES([
+    // 本用例聚焦乱序响应，知识库列表桩保留两库（不受默认「仅启用连接」限制）。
+    { method: 'GET', path: /^\/api\/knowledge\/sources(\?|$)/, body: SOURCES },
     { method: 'GET', path: /^\/api\/knowledge\/sources\/[^/]+\/documents/, body: async (call) => {
       if (call.url.searchParams.get('connectionId') === CONN_B) {
         return { documents: [{ id: `${CONN_B}::doc-b`, title: 'B 库文档', type: 'file', parse_status: 'completed' }], total: 1, page: 1, pageSize: 20 };
@@ -1231,6 +1261,8 @@ test('legacy 能力接口 404 后：预览 503 只禁用预览，不连带禁用
 
 test('普通抽屉降级：错误不带 connectionId 时不记到上一个文档连接', async (t) => {
   const app = await openKnowledge(t, ROUTES([
+    // 本用例需要切到停用连接的 B 库，列表桩保留两库。
+    { method: 'GET', path: /^\/api\/knowledge\/sources(\?|$)/, body: SOURCES },
     { method: 'POST', path: /^\/api\/knowledge\/sources\/[^/]+\/url/, status: 503, body: { error: '缺少写入权限', message: '缺少写入权限', code: 'capability_unavailable', capability: 'doc_write', reason: '无权限' } },
   ]));
   const { document } = app;
@@ -1300,7 +1332,10 @@ test('端点级能力：旧后端未返回端点键时回退聚合 preview_downl
 test('在途 503 无 connectionId：按请求发起连接降级，不污染随后打开的 B 连接抽屉', async (t) => {
   let releaseDelete;
   const deleteGate = new Promise((resolve) => { releaseDelete = resolve; });
-  const app = await openKnowledge(t, ROUTES());
+  // 本用例需要切到停用连接的 B 库，列表桩保留两库。
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: /^\/api\/knowledge\/sources(\?|$)/, body: SOURCES },
+  ]));
   app.router.route('DELETE', /\/api\/knowledge\/documents\/.*doc-1/, async () => {
     await deleteGate;
     return {
@@ -1349,7 +1384,10 @@ test('在途 503 无 connectionId：按请求发起连接降级，不污染随�
 test('在途预览 503 无 connectionId：切走后仍按发起连接降级，不污染 B 连接', async (t) => {
   let releasePreview;
   const previewGate = new Promise((resolve) => { releasePreview = resolve; });
-  const app = await openKnowledge(t, ROUTES());
+  // 本用例需要切到停用连接的 B 库，列表桩保留两库。
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: /^\/api\/knowledge\/sources(\?|$)/, body: SOURCES },
+  ]));
   app.router.route('GET', /\/api\/knowledge\/documents\/.*doc-1\/preview/, async () => {
     await previewGate;
     return {
@@ -1388,4 +1426,167 @@ test('在途预览 503 无 connectionId：切走后仍按发起连接降级，�
   await settle(10);
   const badge = [...document.querySelectorAll('.kb-cap-bar .hui-badge')].find((el) => el.textContent === '预览下载');
   assert.equal(badge.getAttribute('data-tone'), 'error', 'A 的 preview_download 被降级');
+});
+
+test('写权限门禁与停用连接显式浏览：Writer 可写、Viewer 全禁用', async (t) => {
+  const routes = (settings) => ROUTES([
+    { method: 'GET', path: /^\/api\/knowledge\/sources(\?|$)/, body: (call) =>
+      call.url.searchParams.get('connectionId') === CONN_B
+        ? [{ id: SRC_B, name: '测试库', doc_count: 3, allowed: true }]
+        : [{ id: SRC_A, name: '产品手册', doc_count: 45, allowed: true }] },
+    { method: 'GET', path: '/api/knowledge/settings', body: settingsFixture(settings) },
+  ]);
+
+  // 项目 Writer：canManage=false 但 canWrite=true，写按钮全部可用。
+  const writer = await openKnowledge(t, routes({ canManage: false, canWrite: true }));
+  const wdoc = writer.document;
+
+  // 默认视图不传 connectionId，只返回启用连接的知识库。
+  const sourcesCalls = () => writer.router.calls
+    .filter((call) => call.method === 'GET' && call.path === '/api/knowledge/sources');
+  const defaultCall = sourcesCalls().at(-1);
+  assert.equal(param(defaultCall, 'connectionId'), null, '默认列表不指定连接');
+  assert.match(wdoc.querySelector('#kbTabBody').textContent, /产品手册/);
+  assert.doesNotMatch(wdoc.querySelector('#kbTabBody').textContent, /测试库/);
+
+  const createBtn = wdoc.querySelector('#kbCreateSourceBtn');
+  assert.equal(createBtn.disabled, false, '项目 Writer 可新建知识库');
+  assert.equal(wdoc.querySelector('#kbImportDocBtn').disabled, false);
+  assert.equal(wdoc.querySelector('#kbEditSourceBtn').disabled, false);
+  assert.equal(wdoc.querySelector('#kbDeleteSourceBtn').disabled, false);
+  assert.equal(wdoc.querySelector(`[data-kb-edit-doc="${DOC('doc-1')}"]`).disabled, false);
+
+  // 显式切到已停用连接：请求带 connectionId，列表返回该连接的知识库。
+  chooseOption(wdoc.querySelector('#kbConnFilter'), CONN_B);
+  await settle(12);
+  assert.equal(param(sourcesCalls().at(-1), 'connectionId'), CONN_B);
+  assert.match(wdoc.querySelector('#kbTabBody').textContent, /测试库/);
+  chooseOption(wdoc.querySelector('#kbConnFilter'), '');
+  await settle(12);
+
+  // 只读 Viewer：canWrite=false，所有写入口禁用且给出原因。
+  const viewer = await openKnowledge(t, routes({ canManage: false, canWrite: false }));
+  const vdoc = viewer.document;
+  const vCreate = vdoc.querySelector('#kbCreateSourceBtn');
+  assert.equal(vCreate.disabled, true, 'Viewer 不可新建知识库');
+  assert.match(vCreate.title, /没有知识库写权限/);
+  assert.equal(vdoc.querySelector('#kbImportDocBtn').disabled, true);
+  assert.equal(vdoc.querySelector('#kbEditSourceBtn').disabled, true);
+  assert.equal(vdoc.querySelector('#kbDeleteSourceBtn').disabled, true);
+  assert.equal(vdoc.querySelector(`[data-kb-edit-doc="${DOC('doc-1')}"]`)?.disabled, true, 'Viewer 不可编辑文档');
+  assert.equal(vdoc.querySelector(`[data-kb-reparse-doc="${DOC('doc-1')}"]`).disabled, true, 'Viewer 不可重解析');
+  assert.equal(vdoc.querySelector(`[data-kb-delete-doc="${DOC('doc-1')}"]`).disabled, true, 'Viewer 不可删除文档');
+  assert.equal(docRow(viewer, DOC('doc-1')).disabled, false, '只读仍可查看文档');
+
+  // 点击被禁用的新建按钮不打开抽屉、不发请求。
+  vCreate.click();
+  await settle(4);
+  assert.equal(vdoc.querySelector('#kbDrawer').hidden, true);
+  assert.equal(callsTo(viewer, 'POST', '/api/knowledge/sources').length, 0);
+
+  // 「查看」抽屉内的编辑页签同样受写权限约束：Viewer 只能看，没有编辑入口。
+  await openDoc(viewer, DOC('doc-1'));
+  assert.equal(vdoc.querySelector('#kbDrawer [data-kb-doc-view="edit"]'), null, 'Viewer 查看抽屉无编辑页签');
+  assert.match(vdoc.querySelector('#kbDrawer').textContent, /分块|原文预览/);
+  vdoc.querySelector('[data-kb-drawer-close]').click();
+  await settle(2);
+});
+
+test('端点能力拆分：预览可用而下载不可用时只禁用下载', async (t) => {
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: /^\/api\/knowledge\/connections\/conn-a\/capabilities$/, body: capabilities({ preview: 'available', download: 'unavailable' }) },
+  ]));
+  const { document } = app;
+
+  const viewBtn = docRow(app, DOC('doc-1'));
+  assert.equal(viewBtn.disabled, false, '预览可用时「查看」保持可用');
+
+  const download = [...document.querySelectorAll('.kb-row-actions span[aria-disabled="true"]')]
+    .find((el) => el.textContent === '下载');
+  assert.ok(download, '下载不可用时渲染为禁用占位');
+  assert.match(download.title, /下载/);
+  assert.equal(document.querySelector('.kb-row-actions a[href*="/download?"]'), null, '不生成裸 503 下载链接');
+});
+
+test('手工草稿与解析中间态：正文/发布状态回显、徽标与自动轮询收敛', async (t) => {
+  let docLoads = 0;
+  const app = await loadApp({ routes: ROUTES([
+    { method: 'GET', path: /^\/api\/knowledge\/sources\/[^/]+\/documents/, body: () => {
+      docLoads += 1;
+      return docLoads === 1
+        ? { documents: [
+            { id: DOC('doc-draft'), title: '草稿文档', type: 'manual', parse_status: 'draft' },
+            { id: DOC('doc-fin'), title: '收尾文档', type: 'file', parse_status: 'finalizing' },
+            { id: DOC('doc-del'), title: '删除文档', type: 'file', parse_status: 'deleting' },
+          ], total: 3, page: 1, pageSize: 20 }
+        : { documents: [{ id: DOC('doc-draft'), title: '草稿文档', type: 'manual', parse_status: 'draft' }], total: 1, page: 1, pageSize: 20 };
+    } },
+    { method: 'GET', path: docRoute('doc-draft'), body: { id: DOC('doc-draft'), title: '草稿文档', type: 'manual', parse_status: 'draft', content: '# 草稿正文\n\n第二段', publishStatus: 'draft' } },
+    { method: 'GET', path: docRoute('doc-draft', '/chunks'), body: { chunks: [], total: 0, page: 1, pageSize: 10 } },
+  ]) });
+  t.after(app.close);
+  const { document } = app;
+  app.evaluate('window.__kbToasts = []; window.__origToast = toast; toast = (m, k) => window.__kbToasts.push({ m, k });');
+  // 把 4s 轮询压缩到 150ms（远大于首屏 settle，避免抢在断言前刷新）。
+  app.evaluate('window.__pollScheduled = 0; window.__origSetTimeout = window.setTimeout; window.setTimeout = function (fn, ms, ...rest) { if (ms === 4000) { window.__pollScheduled += 1; ms = 150; } return window.__origSetTimeout(fn, ms, ...rest); };');
+  app.evaluate("switchView('knowledge')");
+  await settle(10);
+
+  const firstText = document.querySelector('#kbTabBody').textContent;
+  assert.match(firstText, /草稿/);
+  assert.match(firstText, /索引收尾中/);
+  assert.match(firstText, /删除中/);
+  const tones = [...document.querySelectorAll('.kb-table tbody .hui-badge')].map((el) => el.dataset.tone);
+  assert.deepEqual(tones, ['neutral', 'info', 'warn']);
+
+  assert.equal(app.evaluate('window.__pollScheduled'), 1, '中间态安排一次 4s 轮询');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await settle(10);
+  assert.ok(docLoads >= 2, '轮询刷新文档列表');
+  assert.doesNotMatch(document.querySelector('#kbTabBody').textContent, /索引收尾中/, '收敛后不再渲染中间态');
+
+  // 手工草稿：详情返回 content + publishStatus=draft，编辑精确回显且不默认勾选发布。
+  await openDoc(app, DOC('doc-draft'));
+  document.querySelector('[data-kb-doc-view="edit"]').click();
+  await settle(6);
+  assert.equal(document.querySelector('#kbDocEditContent').value, '# 草稿正文\n\n第二段');
+  assert.equal(document.querySelector('#kbDocEditPublish').checked, false, '草稿不默认勾选发布');
+  assert.equal(callsTo(app, 'GET', DOC_PATH('doc-draft') + '/preview').length, 0, '有内联正文时不请求 /preview');
+});
+
+test('手工文档正文回退：分块分页被截断时禁用保存，不覆盖原文', async (t) => {
+  const id = DOC('doc-trunc');
+  const app = await loadApp({ routes: ROUTES([
+    {
+      method: 'GET',
+      path: /^\/api\/knowledge\/sources\/[^/]+\/documents/,
+      body: { documents: [{ id, title: '超长手册', type: 'manual', parse_status: 'completed' }], total: 1, page: 1, pageSize: 20 },
+    },
+    { method: 'GET', path: docRoute('doc-trunc'), body: { id, title: '超长手册', type: 'manual', parse_status: 'completed' } },
+    { method: 'GET', path: docRoute('doc-trunc', '/preview'), body: { error: 'unavailable' }, status: 503 },
+    {
+      method: 'GET',
+      path: docRoute('doc-trunc', '/chunks'),
+      body: {
+        chunks: Array.from({ length: 50 }, (_, i) => ({ chunkIndex: i, content: 'chunk ' + i })),
+        total: 1200,
+        page: 1,
+        pageSize: 50,
+      },
+    },
+  ]) });
+  t.after(app.close);
+  const { document } = app;
+  app.evaluate("switchView('knowledge')");
+  await settle(10);
+  await openDoc(app, id);
+  document.querySelector('[data-kb-doc-view="edit"]').click();
+  await settle(60);
+
+  assert.match(document.querySelector('#kbDocBody').textContent, /未能读取原文/);
+  const save = document.querySelector('#kbDocSaveBtn');
+  assert.equal(save.disabled, true, '正文不完整时不得保存');
+  save.click();
+  await settle(4);
+  assert.equal(callsTo(app, 'PUT', DOC_PATH('doc-trunc')).length, 0, '禁用后不发送保存请求');
 });

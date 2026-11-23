@@ -20,6 +20,9 @@ const CallTimeout = 30 * time.Second
 type Store interface {
 	KnowledgeSettings() domain.KnowledgeSettings
 	PutKnowledgeSettings(domain.KnowledgeSettings) error
+	// MutateKnowledgeSettings applies an in-place change to the latest stored
+	// settings inside a transaction; mutate returns true when it changed them.
+	MutateKnowledgeSettings(func(*domain.KnowledgeSettings) bool) error
 	DeleteKnowledgeConnectionToken(connID string) error
 	ManagedWeKnoraAdminPassword() string
 	PutManagedWeKnoraAdminPassword(password string) error
@@ -313,6 +316,35 @@ func (s *Service) connectionCapabilities(ctx context.Context, conn domain.Knowle
 type SourceView struct {
 	Source
 	Allowed bool `json:"allowed"`
+}
+
+// SourcesForConnection lists the knowledge bases of exactly one configured
+// connection, including a disabled one, so the console can still manage a
+// paused connection explicitly. The project allow-list still applies: a
+// disabled connection is manageable, not an authorization bypass.
+func (s *Service) SourcesForConnection(ctx context.Context, projectID, connectionID string) ([]SourceView, error) {
+	settings, conn, _, err := s.resolveExplicitWeKnoraConnection(connectionID)
+	if err != nil {
+		return nil, err
+	}
+	client, err := s.dial(settingsForConnection(settings, conn))
+	if err != nil {
+		return nil, apperr.New(apperr.Unavailable, err.Error())
+	}
+	cctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	list, err := client.ListSources(cctx)
+	cancel()
+	if err != nil {
+		return nil, apperr.New(apperr.Upstream, "知识库不可达："+err.Error())
+	}
+	allowed := settings.SourcesForProject(projectID)
+	out := make([]SourceView, 0, len(list))
+	for _, src := range list {
+		scopedID := EncodeScopedSourceID(settings, conn.ID, src.ID)
+		src.ID = scopedID
+		out = append(out, SourceView{Source: src, Allowed: SourceAllowed(allowed, scopedID)})
+	}
+	return out, nil
 }
 
 // Sources lists upstream sources across all active connections, marking which ones projectID may read.
@@ -673,6 +705,9 @@ func scopeWeKnoraDoc(settings domain.KnowledgeSettings, connID string, doc WeKno
 	if strings.TrimSpace(doc.KnowledgeBaseID) != "" {
 		doc.KnowledgeBaseID = EncodeScopedSourceID(settings, connID, doc.KnowledgeBaseID)
 	}
+	// The manual body can be large and is only needed by the detail endpoint;
+	// list and mutation responses stay small.
+	doc.Metadata = nil
 	return doc
 }
 
@@ -711,14 +746,46 @@ func (s *Service) CreateWeKnoraKB(ctx context.Context, projectID string, input W
 		return weKnoraKB{}, s.managementError(conn, domain.CapKBManage, "创建知识库", err)
 	}
 	kb.ID = EncodeScopedSourceID(settings, conn.ID, kb.ID)
-	// If this project has an explicit allowlist, auto-authorize the newly created KB for it.
-	if pid := strings.TrimSpace(projectID); pid != "" {
-		if list, ok := settings.ProjectSources[pid]; ok && len(list) > 0 && !slices.Contains(list, kb.ID) {
-			settings.ProjectSources[pid] = append(list, kb.ID)
-			_ = s.store.PutKnowledgeSettings(settings)
-		}
+	if err := s.authorizeCreatedKB(projectID, kb.ID); err != nil {
+		// The upstream create already succeeded; report a partial failure with
+		// the new id so the caller can grant access instead of retrying blindly.
+		return weKnoraKB{}, apperr.New(apperr.Upstream, "知识库已在上游创建（"+kb.ID+"），但授权白名单保存失败，请稍后在接入配置中手动授权："+err.Error()).With("id", kb.ID)
 	}
 	return kb, nil
+}
+
+// authorizeCreatedKB adds a freshly created upstream KB to the restricted
+// allow-list that applies to projectID (or to DefaultSources for global
+// creation) so the creator is not denied immediately after a successful
+// create. The mutation re-reads the latest settings inside a transaction, so a
+// concurrent create/delete or an admin edit cannot be overwritten. Empty lists
+// mean "unrestricted" and need no entry.
+func (s *Service) authorizeCreatedKB(projectID, scopedID string) error {
+	pid := strings.TrimSpace(projectID)
+	return s.store.MutateKnowledgeSettings(func(cur *domain.KnowledgeSettings) bool {
+		if pid != "" {
+			allowed := cur.SourcesForProject(pid)
+			if len(allowed) == 0 || slices.Contains(allowed, scopedID) {
+				return false
+			}
+			if cur.ProjectSources == nil {
+				cur.ProjectSources = make(map[string][]string)
+			}
+			base := cur.ProjectSources[pid]
+			if len(base) == 0 {
+				// The project inherited DefaultSources; materialize its own
+				// entry so only this project gains the new KB.
+				base = slices.Clone(cur.DefaultSources)
+			}
+			cur.ProjectSources[pid] = append(base, scopedID)
+			return true
+		}
+		if len(cur.DefaultSources) == 0 || slices.Contains(cur.DefaultSources, scopedID) {
+			return false
+		}
+		cur.DefaultSources = append(slices.Clone(cur.DefaultSources), scopedID)
+		return true
+	})
 }
 
 // GetWeKnoraKB returns the management detail of one knowledge base.
@@ -778,7 +845,7 @@ func (s *Service) PatchWeKnoraKB(ctx context.Context, projectID, connectionID, k
 }
 
 func (s *Service) DeleteWeKnoraKB(ctx context.Context, projectID, connectionID, kbID string) error {
-	_, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, kbID)
+	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, kbID)
 	if err != nil {
 		return err
 	}
@@ -790,7 +857,46 @@ func (s *Service) DeleteWeKnoraKB(ctx context.Context, projectID, connectionID, 
 	if err := wc.DeleteKnowledgeBase(ctx, rawKBID); err != nil {
 		return s.managementError(conn, domain.CapKBManage, "删除知识库", err)
 	}
+	scopedID := EncodeScopedSourceID(settings, conn.ID, rawKBID)
+	if err := s.pruneSourceAllowlists(scopedID); err != nil {
+		// The upstream delete already happened; surface the stale local grant
+		// instead of silently keeping (or losing) it.
+		return apperr.New(apperr.Upstream, "知识库已在上游删除（"+scopedID+"），但本地授权白名单清理失败，请稍后在接入配置中手动处理："+err.Error()).With("id", scopedID)
+	}
 	return nil
+}
+
+// pruneSourceAllowlists drops a deleted knowledge base from project and default
+// allow-lists. A list is left untouched when removing the id would empty it:
+// SourceAllowed treats len == 0 as unrestricted, so clearing the last entry
+// would widen access to every source instead of narrowing it.
+func (s *Service) pruneSourceAllowlists(scopedID string) error {
+	return s.store.MutateKnowledgeSettings(func(settings *domain.KnowledgeSettings) bool {
+		changed := false
+		for pid, list := range settings.ProjectSources {
+			remaining := withoutSource(list, scopedID)
+			if len(remaining) == len(list) || len(remaining) == 0 {
+				continue
+			}
+			settings.ProjectSources[pid] = remaining
+			changed = true
+		}
+		if remaining := withoutSource(settings.DefaultSources, scopedID); len(remaining) != len(settings.DefaultSources) && len(remaining) > 0 {
+			settings.DefaultSources = remaining
+			changed = true
+		}
+		return changed
+	})
+}
+
+func withoutSource(list []string, target string) []string {
+	out := make([]string, 0, len(list))
+	for _, id := range list {
+		if id != target {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (s *Service) CreateWeKnoraURLDoc(ctx context.Context, projectID, connectionID, kbID, rawURL string) (WeKnoraDocument, error) {
@@ -849,6 +955,7 @@ func (s *Service) GetWeKnoraDocument(ctx context.Context, projectID, connectionI
 	if err != nil {
 		return domain.KnowledgeDocumentDetail{}, apperr.New(apperr.Upstream, "获取文档详情失败："+err.Error())
 	}
+	content, publishStatus := doc.ManualMetadata()
 	return domain.KnowledgeDocumentDetail{
 		ID:              EncodeScopedSourceID(settings, conn.ID, doc.ID),
 		KnowledgeBaseID: EncodeScopedSourceID(settings, conn.ID, doc.KnowledgeBaseID),
@@ -860,6 +967,8 @@ func (s *Service) GetWeKnoraDocument(ctx context.Context, projectID, connectionI
 		ErrorMessage:    doc.ErrorMessage,
 		CreatedAt:       doc.CreatedAt,
 		UpdatedAt:       doc.UpdatedAt,
+		Content:         content,
+		PublishStatus:   publishStatus,
 	}, nil
 }
 
