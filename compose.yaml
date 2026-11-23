@@ -7,7 +7,18 @@ services:
       MYSQL_USER: loopforge
       MYSQL_PASSWORD: ${LOOPFORGE_DB_PASSWORD:?Run scripts/configure.sh first}
       MYSQL_ROOT_PASSWORD: ${LOOPFORGE_DB_ROOT_PASSWORD:?Run scripts/configure.sh first}
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    # The platform keeps writing checkpoint, telemetry and log rows, and every
+    # write is logged. These flags rotate each binary log file at 64 MiB and
+    # expire files after 24 hours; they do not cap total disk use, which still
+    # follows the write rate over the retention window, so a sustained write
+    # storm can fill the volume before its logs expire. Raise or drop the flags
+    # when point-in-time recovery or replication is required, or use
+    # --skip-log-bin on a single-node deployment that needs neither.
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --binlog-expire-logs-seconds=86400
+      - --max-binlog-size=67108864
     ports:
       - "127.0.0.1:${LOOPFORGE_MYSQL_PORT:-33315}:3306"
     volumes:

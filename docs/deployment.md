@@ -65,6 +65,18 @@ Run it as the installation owner, including an ordinary Linux user. If that user
 
 `compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.2`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
+The bundled `mysql:8.4` rotates and expires its binary log: `compose.yaml` starts it with `--max-binlog-size=67108864` (a log file is rotated at 64 MiB) and `--binlog-expire-logs-seconds=86400` (log files are removed once they are 24 hours old). These settings bound the size of one file and the retention age; they do not cap total disk use, which still follows the write rate over the retention window, so a sustained write storm can fill `loopforge_mysql-data` before its logs expire. Deployments that need point-in-time recovery or replication can raise those values or remove the two flags; single-node evaluation installations that need neither can pass `--skip-log-bin` to stop binary logging entirely.
+
+For a disposable single-node deployment (no point-in-time recovery and no replicas), an older Compose stack with accumulated logs can rotate and purge them:
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -u root -e "FLUSH BINARY LOGS"'
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -u root -e "PURGE BINARY LOGS BEFORE NOW()"'
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -u root -e "SET PERSIST binlog_expire_logs_seconds=86400"'
+```
+
+`PURGE BINARY LOGS BEFORE NOW()` deletes recovery history, so it is only safe when that history is not needed. When point-in-time recovery or replication matters, take and verify a backup first and purge only logs older than it (for example `PURGE BINARY LOGS TO '<first log written after the backup>'`); on a replication source, check `SHOW REPLICA STATUS` and the position of every replica, including offline replicas, before removing a file a replica still needs. `SET PERSIST binlog_expire_logs_seconds=86400` keeps the 24-hour retention across restarts.
+
 To upgrade, update the checkout first, then refresh the containers:
 
 ```bash
