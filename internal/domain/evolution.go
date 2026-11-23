@@ -267,6 +267,22 @@ type EvoReplaySummary struct {
 	Verdict   string `json:"verdict,omitempty"`
 }
 
+// EvoChangeReview explains a proposal without replacing its original diff or
+// replay evidence. Before/After are excerpts checked against the two bodies.
+type EvoChangeReview struct {
+	Problem string           `json:"problem"`
+	Reason  string           `json:"reason"`
+	Changes []EvoChangePoint `json:"changes,omitempty"`
+}
+
+type EvoChangePoint struct {
+	Title        string   `json:"title"`
+	Reason       string   `json:"reason,omitempty"`
+	Before       string   `json:"before"`
+	After        string   `json:"after"`
+	SourceRunIDs []string `json:"sourceRunIds,omitempty"`
+}
+
 // EvoProposal is a candidate change to one asset.
 type EvoProposal struct {
 	ID               string           `json:"id"`
@@ -277,6 +293,7 @@ type EvoProposal struct {
 	AssetName        string           `json:"assetName,omitempty"`
 	Title            string           `json:"title"`
 	Rationale        string           `json:"rationale,omitempty"`
+	Review           *EvoChangeReview `json:"review,omitempty"`
 	BaseContent      string           `json:"baseContent"`
 	BaseHash         string           `json:"baseHash"`
 	BaseVersion      int              `json:"baseVersion,omitempty"`

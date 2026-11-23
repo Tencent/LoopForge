@@ -24,9 +24,10 @@ type Evidence struct {
 
 // Candidate is the improver's proposed body.
 type Candidate struct {
-	Title     string `json:"title"`
-	Rationale string `json:"rationale"`
-	Content   string `json:"content"`
+	Title     string                  `json:"title"`
+	Rationale string                  `json:"rationale"`
+	Content   string                  `json:"content"`
+	Review    *domain.EvoChangeReview `json:"review,omitempty"`
 }
 
 const maxCandidateBytes = 60000
@@ -77,8 +78,9 @@ func BuildImproverPrompt(kind, name, content string, finding domain.EvoFinding, 
 	b.WriteString("3. 不要针对单个样本写死具体文件名、ID、分支名或答案；写成可泛化的做法。\n")
 	b.WriteString("4. 不得加入：放宽安全/权限/审批要求、跳过门禁、伪造结果、调用外部写操作的指示。\n")
 	b.WriteString("只输出一个 JSON 对象，不要 Markdown 代码块：\n")
-	b.WriteString(`{"title":"一句话说明改了什么","rationale":"为什么这样改能修好这些失败、为什么不会影响其他场景","content":"改进后的完整正文"}` + "\n")
+	b.WriteString(`{"title":"24字以内说明改了什么","rationale":"修改理由和适用边界","content":"改进后的完整正文","review":{"problem":"24字以内说明用户遇到的问题","reason":"70字以内解释问题原因和修改目的，不承诺已修复","changes":[{"title":"20字以内的改动要点","reason":"60字以内说明为什么改","before":"从当前正文原样摘取的连续片段","after":"从新正文原样摘取的连续片段","sourceRunIds":["关联的失败样本 runId"]}]}}` + "\n")
 	b.WriteString("content 必须是完整替换后的正文，而不是 diff。\n")
+	b.WriteString("review 供用户审查：changes 最多 3 项；before/after 各不超过 160 字，必须逐字来自对应正文，不使用省略号拼接。纯新增可令 before 为空，纯删除可令 after 为空。sourceRunIds 只能引用本次给出的失败样本；不要编造验证成绩、线上效果或修改了权限等未经验证的结论。\n")
 	var p strings.Builder
 	p.WriteString(fmt.Sprintf("资产类型：%s\n资产名称：%s\n\n## 当前正文\n\n%s\n\n", label, firstText(name, finding.AssetID), content))
 	p.WriteString("## 诊断结论\n\n" + finding.Title + "\n")
@@ -102,13 +104,23 @@ func ParseCandidate(raw string) (Candidate, error) {
 	if body == "" {
 		return Candidate{}, fmt.Errorf("改进器没有返回 JSON")
 	}
-	var c Candidate
-	if err := json.Unmarshal([]byte(body), &c); err != nil {
+	var payload struct {
+		Title     string          `json:"title"`
+		Rationale string          `json:"rationale"`
+		Content   string          `json:"content"`
+		Review    json.RawMessage `json:"review"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
 		// Models often put literal newlines or tabs inside the long
 		// "content" string; escape them and try once more.
-		if retryErr := json.Unmarshal([]byte(escapeRawControlInStrings(body)), &c); retryErr != nil {
+		if retryErr := json.Unmarshal([]byte(escapeRawControlInStrings(body)), &payload); retryErr != nil {
 			return Candidate{}, fmt.Errorf("改进器返回的 JSON 无法解析：%w", err)
 		}
+	}
+	c := Candidate{Title: payload.Title, Rationale: payload.Rationale, Content: payload.Content}
+	var review domain.EvoChangeReview
+	if len(payload.Review) > 0 && string(payload.Review) != "null" && json.Unmarshal(payload.Review, &review) == nil {
+		c.Review = &review
 	}
 	c.Title = strings.TrimSpace(c.Title)
 	c.Rationale = strings.TrimSpace(c.Rationale)
@@ -120,6 +132,48 @@ func ParseCandidate(raw string) (Candidate, error) {
 		c.Title = "改进正文"
 	}
 	return c, nil
+}
+
+// CandidateReview drops unsupported excerpts and foreign run references. Old
+// improvers may omit review entirely; explanation metadata never blocks a fix.
+func CandidateReview(c Candidate, base string, evidence []Evidence) *domain.EvoChangeReview {
+	if c.Review == nil {
+		return nil
+	}
+	allowed := make(map[string]bool, len(evidence))
+	for _, ev := range evidence {
+		allowed[ev.RunID] = ev.RunID != ""
+	}
+	review := &domain.EvoChangeReview{
+		Problem: domain.TrimEvoText(c.Review.Problem, 40),
+		Reason:  domain.TrimEvoText(c.Review.Reason, 100),
+	}
+	for _, change := range c.Review.Changes {
+		before, after := strings.TrimSpace(change.Before), strings.TrimSpace(change.After)
+		if before == after || len([]rune(before)) > 160 || len([]rune(after)) > 160 ||
+			(before != "" && !strings.Contains(base, before)) || (after != "" && !strings.Contains(c.Content, after)) {
+			continue
+		}
+		point := domain.EvoChangePoint{Title: domain.TrimEvoText(change.Title, 30), Reason: domain.TrimEvoText(change.Reason, 80), Before: before, After: after}
+		if point.Title == "" {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, id := range change.SourceRunIDs {
+			if allowed[id] && !seen[id] {
+				point.SourceRunIDs = append(point.SourceRunIDs, id)
+				seen[id] = true
+			}
+		}
+		review.Changes = append(review.Changes, point)
+		if len(review.Changes) == 3 {
+			break
+		}
+	}
+	if review.Problem == "" && review.Reason == "" && len(review.Changes) == 0 {
+		return nil
+	}
+	return review
 }
 
 // escapeRawControlInStrings escapes control characters that appear inside

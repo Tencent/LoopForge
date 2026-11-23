@@ -23,21 +23,23 @@ function evoOpenAssetGroup(key){
   if(evo.modal)evo.modal.openerKey=group.key;
 }
 function evoGroupFacts(group){
-  const n=group.issues.length,queued=group.queue.length;
-  return `${n?`${n} 类关联问题`:'未关联问题样本'}${queued?` · ${queued} 项后续改进排队`:''}${group.proposals.length>1?` · ${group.proposals.length-1} 次历史尝试`:''}`;
+  const current=group.issues.filter(r=>!group.p||r.f.id===group.p.findingId||r.f.proposalId===group.p.id),runs=new Set();
+  for(const r of current){for(const x of r.c.occurrences||[])if(x.runId)runs.add(x.runId);for(const x of r.f.sampleRunIds||[])runs.add(x)}
+  const queued=group.queue.length;
+  return `${runs.size?`${runs.size} 条问题运行`:current.length?`${current.length} 条问题线索`:'未关联问题样本'}${queued?` · 后续建议 ${queued}`:''}${group.proposals.length>1?` · 历史尝试 ${group.proposals.length-1}`:''}`;
 }
 function evoOpenQueue(kind,id){
   const group=evoGroupForAsset({assetKind:kind,assetId:id}),items=evoAssetQueue(kind,id),busy=group?.proposals.some(evoOccupiesAsset),level=evoLevelOf(kind,id),key=evoAssetKey(kind,id);
   const pending=[...new Map((group?.issues||[]).filter(r=>r.f.status==='open'&&!r.f.proposalId&&!items.some(q=>q.findingId===r.f.id)).map(r=>[r.f.id,r])).values()];
-  const body=`<p class="evo-panel-lead">同一角色或规则只处理一项当前改进。相关问题合并；后续改进等当前修改、验证、灰度与发布后观察结束。</p>${pending.map(r=>`<section class="evo-queue-item"><h3>${escapeHTML(r.title)}</h3><button type="button" class="kb-btn small" data-evo-propose="${escapeHTML(r.f.id)}"${level<2?' disabled':''}>${busy?'加入后续改进':'开始修改'}</button></section>`).join('')}${items.map((q,i)=>`<section class="evo-queue-item"><h3>${i+1}. ${escapeHTML(q.title||'后续改进')}</h3><p>尚未生成候选。开始时按最新正文重新生成并验证。</p><button type="button" class="kb-btn small" data-evo-queue-start="${escapeHTML(q.id)}"${busy||level<2?' disabled':''}>开始这项改进</button><button type="button" class="kb-btn quiet small" data-evo-queue-reject="${escapeHTML(q.id)}">取消排队</button></section>`).join('')||'<p class="evo-muted">暂无排队的改进。</p>'}${group?.proposals.length>1?`<h3>历史尝试与冲突候选</h3>${group.proposals.map(p=>`<button type="button" class="kb-btn small" data-evo-proposal="${escapeHTML(p.id)}">${escapeHTML(p.title||p.id)} · ${escapeHTML(evoChangeState(p).label)}</button>`).join('')}`:''}<p class="evo-muted">结束当前改进不会自动开始下一项。L3 仅自动推进当前候选的试用、发布与退化回滚。</p>`;
+  const body=`<p class="evo-panel-lead">同一角色或规则只处理一项当前改进。相关问题合并；后续改进等当前修改、验证、灰度与发布后观察结束。</p>${pending.map(r=>`<section class="evo-queue-item"><h3>${escapeHTML(r.title)}</h3><button type="button" class="kb-btn small" data-evo-propose="${escapeHTML(r.f.id)}"${level<2?' disabled':''}>${busy?'加入后续改进':'开始修改'}</button></section>`).join('')}${items.map((q,i)=>`<section class="evo-queue-item"><h3>${i+1}. ${escapeHTML(q.title||'后续改进')}</h3><p>尚未生成修改稿。开始时按最新正文重新生成并验证。</p><button type="button" class="kb-btn small" data-evo-queue-start="${escapeHTML(q.id)}"${busy||level<2?' disabled':''}>开始这项改进</button><button type="button" class="kb-btn quiet small" data-evo-queue-reject="${escapeHTML(q.id)}">取消排队</button></section>`).join('')||'<p class="evo-muted">暂无排队的改进。</p>'}${group?.proposals.length>1?`<h3>历史尝试与冲突修改稿</h3>${group.proposals.map(p=>`<button type="button" class="kb-btn small" data-evo-proposal="${escapeHTML(p.id)}">${escapeHTML(p.title||p.id)} · ${escapeHTML(evoChangeState(p).label)}</button>`).join('')}`:''}<p class="evo-muted">结束当前改进不会自动开始下一项。L3 仅自动推进当前修改稿的试用、发布与退化回滚。</p>`;
   evoDrawerOpen(group?.asset.assetName||id,'后续改进与处理规则',body,'',{openerKey:`asset:${key}`,wide:true});
 }
 async function evoQueueAction(id,start,btn){
   const context={pid:evo.projectId,detail:evo.modal},seq=kb.drawer.seq;
-  if(!await afConfirm({title:start?'开始排队改进':'取消排队',message:start?'将读取当前最新正文，重新生成候选并执行历史验证，不直接使用旧候选。':'这项尚未生成候选的改进将退出队列。'}))return;
+  if(!await afConfirm({title:start?'开始排队改进':'取消排队',message:start?'将读取当前最新正文，重新生成修改稿并执行历史验证，不直接使用旧修改稿。':'这项尚未生成修改稿的改进将退出队列。'}))return;
   if(context.pid!==evoProjectId()||!evoActive()||kb.drawer.seq!==seq)return;
   btn.disabled=true;
-  try{const result=await api(`/api/evolution/queue/${encodeURIComponent(id)}/${start?'start':'reject'}`,{method:'POST',body:'{}'});toast(start?'已开始生成新的候选':'已取消排队','ok');if(kb.drawer.seq===seq)evoDrawerClose();await evoAfterChange(start?result.id:'',context)}catch(err){toast(err.message,'err');btn.disabled=false}
+  try{const result=await api(`/api/evolution/queue/${encodeURIComponent(id)}/${start?'start':'reject'}`,{method:'POST',body:'{}'});toast(start?'已开始生成新的修改稿':'已取消排队','ok');if(kb.drawer.seq===seq)evoDrawerClose();await evoAfterChange(start?result.id:'',context)}catch(err){toast(err.message,'err');btn.disabled=false}
 }
 async function evoAdjustTraffic(id,btn){
   const context={pid:evo.projectId,detail:evo.modal},p=context.detail?.proposal,percent=Number($('#evoTrafficPercent')?.value);

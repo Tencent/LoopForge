@@ -192,7 +192,7 @@ func TestEvolutionProposalReplayReleaseRollback(t *testing.T) {
 		if user.CodeBuddyAPIKey == "" {
 			t.Errorf("improver must run with the requester's own key")
 		}
-		return `{"title":"补充自测要求","rationale":"失败都缺少自测","content":"原始正文：请完成开发任务并自测。\n提交前必须运行单元测试。` + evoTestCandidateMark + `"}`, nil
+		return `{"title":"补充自测要求","rationale":"失败都缺少自测","content":"原始正文：请完成开发任务并自测。\n提交前必须运行单元测试。` + evoTestCandidateMark + `","review":{"problem":"提交前缺少自测","reason":"增加测试步骤","changes":[{"title":"提交前执行测试","before":"","after":"提交前必须运行单元测试。","sourceRunIds":["evo-src-fail-1","evo-src-ok"]}]}}`, nil
 	})
 	t.Cleanup(func() { setEvoImproveForTest(nil) })
 
@@ -211,6 +211,14 @@ func TestEvolutionProposalReplayReleaseRollback(t *testing.T) {
 	p := env.waitProposal(t, created.ID, domain.EvoProposalPending, domain.EvoProposalFailed)
 	if p.Status != domain.EvoProposalPending || !p.Summary.Passed || p.Summary.Fixed != 2 || p.Summary.Unchanged != 1 {
 		t.Fatalf("proposal should pass replay: status=%s error=%q summary=%+v", p.Status, p.Error, p.Summary)
+	}
+	if p.Review == nil || len(p.Review.Changes) != 1 || p.Review.Changes[0].After != "提交前必须运行单元测试。" {
+		t.Fatalf("grounded review must survive proposal storage: %+v", p.Review)
+	}
+	for _, id := range p.Review.Changes[0].SourceRunIDs {
+		if id == "evo-src-ok" {
+			t.Fatal("review must not link a regression sample the improver never saw")
+		}
 	}
 	mu.Lock()
 	prompt := seenPrompt

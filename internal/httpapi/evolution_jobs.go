@@ -197,6 +197,7 @@ func (h *evolutionHandlers) runProposalJob(p domain.EvoProposal, finding domain.
 		p = current
 	}
 	p.Title, p.Rationale, p.CandidateContent = candidate.Title, candidate.Rationale, candidate.Content
+	p.Review = evolution.CandidateReview(candidate, p.BaseContent, evidence)
 	p.ExpectedReplays = len(plans)
 	p.Status = domain.EvoProposalValidating
 	if err := h.repo.PutEvoProposal(p); err != nil {

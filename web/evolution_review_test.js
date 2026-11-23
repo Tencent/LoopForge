@@ -9,7 +9,7 @@ const { createDOM } = require('./hui_fake_dom');
   w.escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   w.state = {projectFilter:'review-test'};
   w.kbBadge = (label, tone) => `<span class="${tone}">${label}</span>`;
-  for (const file of ['evolution.js','app/evolution-simple.js','app/evolution-review.js']) dom.load(path.join(__dirname, file));
+  for (const file of ['evolution.js','app/evolution-simple.js','app/evolution-review.js','app/evolution-story.js']) dom.load(path.join(__dirname, file));
   const api = dom.run('({evo,evoReviewScoreHTML,evoReviewReplayTable,evoReviewChangeHTML,evoReviewJSONChanges,evoReviewTrialHTML,evoLoadLiveVersion,evoStartCanary})');
   const finishedAt = '2026-11-23T00:00:00Z';
   const replays = [
