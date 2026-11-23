@@ -1502,7 +1502,7 @@ small {
   color: var(--muted);
   font-size: 11px;
 }
-.credential-notice {
+:is(.credential-notice, .runtime-cli-notice) {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1515,18 +1515,18 @@ small {
   font-size: 13px;
   line-height: 1.5;
 }
-[data-theme="dark"] .credential-notice {
+[data-theme="dark"] :is(.credential-notice, .runtime-cli-notice) {
   border-color: #5a4a22;
   background: #2b2513;
   color: #e8cf8c;
 }
-.credential-notice > svg {
+:is(.credential-notice, .runtime-cli-notice) > svg {
   flex: none;
 }
-.credential-notice > span {
+:is(.credential-notice, .runtime-cli-notice) > span {
   flex: 1;
 }
-.credential-notice button {
+:is(.credential-notice, .runtime-cli-notice) button {
   flex: none;
   height: 30px;
   padding: 0 10px;
@@ -1538,7 +1538,7 @@ small {
   font-weight: 500;
   cursor: pointer;
 }
-.credential-notice button:hover {
+:is(.credential-notice, .runtime-cli-notice) button:hover {
   background: var(--hover);
 }
 .info-card {

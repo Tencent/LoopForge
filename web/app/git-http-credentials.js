@@ -1,13 +1,5 @@
 const GIT_HTTP_PLATFORMS = [['github', 'GitHub / GitHub Enterprise'], ['gitlab', 'GitLab'], ['other', '其他平台']];
 
-// Mirrors gitwork.HTTPSHostScope closely enough to prefill the form; the server
-// remains the authority on what a host scope is.
-function gitHTTPHostScope(raw) {
-  let host = String(raw || '').trim().toLowerCase().replace(/^https:\/\//, '').replace(/\/$/, '');
-  if (host.endsWith(':443')) host = host.slice(0, -4);
-  return host;
-}
-
 function gitHTTPDefaultUsername(platform) {
   return platform === 'gitlab' ? 'oauth2' : 'x-access-token';
 }
@@ -21,6 +13,7 @@ function openGitHTTPCredentials(options = {}) {
   const opener = document.activeElement;
   const endpoint = `/api/users/${encodeURIComponent(user.id)}/git-http-credentials`;
   let creds = [];
+  let instances = [];
   let editing = null;
   let deleting = '';
   let busy = false;
@@ -40,7 +33,13 @@ function openGitHTTPCredentials(options = {}) {
     <button type="button" class="credential-btn primary" data-http-cred-add disabled>添加令牌</button>
     <form class="git-ssh-key-form" hidden>
       <h3></h3>
-      ${credentialFieldHTML({label:'HTTPS 主机', name:'host', type:'text', placeholder:'github.com 或 gitlab.example.org:8443', hint:'只填主机名，可附带端口；令牌只提供给这台主机。'})}
+      <label class="credential-field" data-git-https-instance hidden>
+        <span>${lfT('Git 实例', 'Git instance')}</span>
+        <div class="credential-input is-plain">
+          <select name="instance" class="git-http-select"></select>
+        </div>
+      </label>
+      ${credentialFieldHTML({label:'HTTPS 主机', name:'host', type:'text', placeholder:'github.com 或 gitlab.example.org:8443', hint:'填写域名或 IPv6 地址。IPv6 带端口时写作 [fd00::2]:8443。'})}
       <label class="credential-field">
         <span>平台</span>
         <div class="credential-input is-plain">
@@ -64,8 +63,11 @@ function openGitHTTPCredentials(options = {}) {
   const add = dialog.querySelector('[data-http-cred-add]');
   const form = dialog.querySelector('form');
   const field = key => form.elements.namedItem(key);
-  const [host, platform, name, username, token] = ['host', 'platform', 'name', 'username', 'token'].map(field);
-  host.maxLength = 255;
+  const [instance, host, platform, name, username, token] = ['instance', 'host', 'platform', 'name', 'username', 'token'].map(field);
+  const instanceField = instance.closest('.credential-field');
+  const manualFields = [host, platform, name, username].map(input => input.closest('.credential-field'));
+  const submit = form.querySelector('button[type="submit"]');
+  host.maxLength = 260;
   name.maxLength = 80;
   username.maxLength = 128;
   token.maxLength = 4096;
@@ -104,6 +106,14 @@ function openGitHTTPCredentials(options = {}) {
     form.hidden = false;
     add.hidden = true;
     form.querySelector('h3').textContent = cred ? '编辑令牌' : '添加令牌';
+    const choices = cred ? [] : instances.filter(item =>
+      (!options.platform || item.platform === options.platform) && !creds.some(saved => saved.host === item.host));
+    instanceField.hidden = !choices.length;
+    instance.innerHTML = choices.length ? `
+      <option value="" disabled selected>${lfT('选择实例', 'Select an instance')}</option>
+      ${choices.map(item => `<option value="${escapeHTML(item.host)}">${escapeHTML(item.host)}</option>`).join('')}
+      <option value="@manual">${lfT('手动输入 HTTPS 主机', 'Enter an HTTPS host')}</option>` : '';
+    updateInstanceFields();
     host.value = cred?.host || '';
     host.readOnly = !!cred;
     platform.value = cred?.platform || options.platform || 'github';
@@ -113,7 +123,15 @@ function openGitHTTPCredentials(options = {}) {
     username.placeholder = gitHTTPDefaultUsername(platform.value);
     token.required = !cred;
     token.placeholder = cred ? '留空保留现有令牌' : '粘贴个人访问令牌';
-    (cred ? name : host).focus();
+    (cred ? name : instanceField.hidden ? host : instance).focus();
+  }
+
+  function updateInstanceFields() {
+    const manual = instanceField.hidden || instance.value === '@manual';
+    manualFields.forEach(label => { label.hidden = !manual; });
+    host.required = manual;
+    instance.required = !instanceField.hidden;
+    submit.disabled = busy || (!manual && !instance.value);
   }
 
   function closeForm() {
@@ -127,7 +145,7 @@ function openGitHTTPCredentials(options = {}) {
   function setBusy(on) {
     busy = on;
     dialog.toggleAttribute('aria-busy', on);
-    form.querySelector('button[type="submit"]').disabled = on;
+    updateInstanceFields();
   }
 
   async function request(method, body, id) {
@@ -185,18 +203,23 @@ function openGitHTTPCredentials(options = {}) {
   };
   host.addEventListener('change', () => {
     if (editing) return;
-    const scope = gitHTTPHostScope(host.value);
+    const scope = globalThis.LoopForgeGitHTTPSHost(host.value);
     if (scope === 'github.com') platform.value = 'github';
     else if (/(^|\.)gitlab\./.test(scope)) platform.value = 'gitlab';
     username.placeholder = gitHTTPDefaultUsername(platform.value);
     name.placeholder = scope || '例如 公司 GitLab';
   });
   platform.addEventListener('change', () => { username.placeholder = gitHTTPDefaultUsername(platform.value); });
+  instance.addEventListener('change', updateInstanceFields);
   form.onsubmit = event => {
     event.preventDefault();
-    const body = {
-      host:host.value, platform:platform.value, name:name.value.trim() || gitHTTPHostScope(host.value),
-      username:username.value.trim() || gitHTTPDefaultUsername(platform.value),
+    if (submit.disabled) return;
+    const selected = instanceField.hidden ? null : instances.find(item => item.host === instance.value);
+    const body = selected ? {
+      host:selected.host, platform:selected.platform, name:selected.host.slice(0, 80), token:token.value,
+    } : {
+      host:host.value, platform:platform.value, name:name.value.trim() || globalThis.LoopForgeGitHTTPSHost(host.value),
+      username:username.value.trim() || (editing ? '' : gitHTTPDefaultUsername(platform.value)),
       token:token.value,
     };
     if (editing) body.id = editing.id;
@@ -214,9 +237,13 @@ function openGitHTTPCredentials(options = {}) {
   document.body.append(dialog);
   dialog.showModal();
   hydrateCredentialIcons(dialog);
-  api(endpoint, {silent:true}).then(items => {
+  Promise.all([
+    api(endpoint, {silent:true}),
+    api('/api/git-https-hosts', {silent:true}).catch(() => []),
+  ]).then(([items, choices]) => {
     if (!dialog.open) return;
     creds = Array.isArray(items) ? items : [];
+    instances = Array.isArray(choices) ? choices : [];
     add.disabled = false;
     setStatus(creds.length ? '' : '还没有配置 Git 访问令牌');
     renderList();

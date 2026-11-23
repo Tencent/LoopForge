@@ -180,9 +180,12 @@ test('generic workflow hydration, project switching, flow routes, and shell keyb
   assert.equal(app.document.querySelector('#commandPalette').hidden, true);
 
   const modal = app.document.querySelector('#artifactModal');
-  modal.classList.add('open');
-  modal.dispatchEvent(new app.window.Event('pointerdown', { bubbles: true }));
-  assert.equal(modal.classList.contains('open'), false);
+  modal.getBoundingClientRect = () => ({ left: 100, top: 100, right: 500, bottom: 500 });
+  modal.showModal();
+  modal.dispatchEvent(new app.window.MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }));
+  assert.equal(modal.open, true);
+  modal.dispatchEvent(new app.window.MouseEvent('pointerdown', { bubbles: true, clientX: 50, clientY: 50 }));
+  assert.equal(modal.open, false);
 
   const resize = app.document.querySelector('.sidebar-resize');
   resize.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));

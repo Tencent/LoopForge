@@ -261,6 +261,8 @@ function fireVisible(ctx) {
   const funnel = ctx.obsFunnelStats(stages);
   assert.equal(funnel.worst, 2);
   assert.equal(Math.round(funnel.stages[1].conv), 80);
+  assert.equal(Math.round(funnel.stages[1].drop), 20);
+  assert.equal(ctx.obsFunnelStats([{ value: 1 }, { value: 0 }]).stages[1].drop, 100);
   assert.equal(funnel.stages[2].lost, 6);
   assert.equal(ctx.obsFunnelOption(stages, opts).series[0].data.length, 4);
 

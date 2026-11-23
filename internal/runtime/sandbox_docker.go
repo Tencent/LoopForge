@@ -287,7 +287,7 @@ func (s *dockerSandbox) onDemandCLIPath(ctx context.Context, command CommandSpec
 		return "", nil
 	}
 	spec, ok := onDemandCLICatalog()[command.Provider]
-	if !ok || spec.Bundled || spec.Script != "" || command.Argv[0] != spec.Binary {
+	if !ok || spec.Bundled || spec.InstallerURL != "" || command.Argv[0] != spec.Binary {
 		return "", nil
 	}
 	if spec.Engine == "claude-code" {
