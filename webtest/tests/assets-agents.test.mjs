@@ -36,7 +36,7 @@ test('asset catalog filters, opens, marks dirty, shares, saves, and deletes asse
   assert.equal(app.evaluate(`state.data.rules.some(x=>x.id==='rule-1')`), false);
 });
 
-test('sandbox form saves its own Dockerfile or install script', async (t) => {
+test('sandbox form saves its own Dockerfile, or only environment variables for native', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.router.put(/^\/api\/sandboxes$/, (call) => ({ status: 200, body: call.body }));
@@ -44,12 +44,14 @@ test('sandbox form saves its own Dockerfile or install script', async (t) => {
   let form = app.document.querySelector('#assetForm');
   const readOnlyHelp = form.querySelector('.field-help[aria-label="容器根文件系统只读说明"]');
   const dockerFields = form.elements.readOnlyRootFS.closest('[data-sandbox-drivers="docker"]');
-  const nativeFields = form.elements.installScript.closest('[data-sandbox-drivers="native"]');
+  const nativeFields = form.querySelector('[data-sandbox-drivers="native"]');
+  assert.deepEqual([...form.elements.driver.options].map((o) => [o.value, o.textContent]), [['docker', 'Docker'], ['native', '系统轻量隔离']]);
   assert.equal(dockerFields.hidden, false, 'a new sandbox starts as docker');
   assert.equal(nativeFields.hidden, true);
   chooseOption(form.elements.driver, 'native');
   assert.deepEqual([dockerFields.hidden, nativeFields.hidden], [true, false]);
-  assert.match(nativeFields.querySelector('[data-sandbox-prefix-hint]')?.textContent ?? '', /\$PREFIX 是这个沙箱专属的工具目录，位于工作区的 \.agentflow\/environment\/<沙箱标识>/);
+  assert.match(nativeFields.textContent, /系统轻量隔离直接使用执行机器上已安装的语言和工具/);
+  assert.equal(form.elements.installScript, undefined);
   chooseOption(form.elements.driver, 'docker');
   assert.deepEqual([dockerFields.hidden, nativeFields.hidden], [false, true]);
   readOnlyHelp.click();
@@ -63,7 +65,6 @@ test('sandbox form saves its own Dockerfile or install script', async (t) => {
   form.elements.environment.value = '{"CI":"1"}';
   form.elements.dockerfileContent.value = 'FROM node:22\nCOPY packages.txt /tmp/\n';
   form.elements.dockerfileFiles.value = '{"packages.txt":"git"}';
-  form.elements.installScript.value = 'ignored for docker';
   form.elements.readOnlyRootFS.checked = true;
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(2);
@@ -77,17 +78,16 @@ test('sandbox form saves its own Dockerfile or install script', async (t) => {
   app.evaluate(`state.selectedAsset='__new__';state.assetDetailKey='';renderAssets()`);
   form = app.document.querySelector('#assetForm');
   chooseOption(form.elements.driver, 'native');
-  assert.equal(form.elements.installScript.closest('[data-sandbox-drivers="native"]').hidden, false);
+  assert.equal(form.querySelector('[data-sandbox-drivers="native"]').hidden, false);
   form.elements.id.value = 'native-new';
   form.elements.name.value = 'Node tools';
-  form.elements.installScript.value = 'npm ci';
-  form.elements.installPathEntries.value = ['bin', 'tools/bin'].join('\n');
-  form.elements.installVariables.value = '{"NODE_ENV":"test"}';
+  form.elements.environment.value = '{"JAVA_HOME":"/opt/jdk"}';
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(2);
   const native = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').at(-1).body;
   assert.equal(native.driver, 'native');
-  assert.deepEqual(native.install, { script: 'npm ci', pathEntries: ['bin', 'tools/bin'], variables: { NODE_ENV: 'test' } });
+  assert.deepEqual(native.environment, { JAVA_HOME: '/opt/jdk' });
+  assert.equal(native.install, undefined);
   assert.equal(native.dockerfile, undefined);
 });
 

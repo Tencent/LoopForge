@@ -145,7 +145,7 @@ Object.assign(window.LF_I18N_EN,{
 "没有特殊要求时优先用这一类；任务需要的语言或工具链只有其他环境具备时仍会换。":"Used first unless the task needs something else. The assistant still switches when only another environment has the language or toolchain the task needs.",
 "由 Agent 选择":"Let the agent choose",
 "Docker 沙箱":"Docker sandbox",
-"native 沙箱":"native sandbox",
+"系统轻量隔离":"Lightweight system isolation",
 "自定义规则":"Custom rules",
 "每轮对话都会带上这些规则，适合写你的习惯和偏好；不会越过审批模式和平台规则。":"These rules go with every turn. Use them for your habits and preferences. They do not override approval mode or platform rules.",
 "规则":"Rules",
@@ -334,4 +334,10 @@ Object.assign(window.LF_I18N_EN, {
   "选择日期": "Select date",
   "选择月份": "Select month",
   "选择周": "Select week",
+});
+
+Object.assign(window.LF_I18N_EN, {
+  "隔离方式、Dockerfile 与环境变量": "Isolation, Dockerfile and environment variables",
+  "Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。": "Docker runs in an OCI container. Lightweight system isolation picks seatbelt (macOS) or bwrap (Linux) from the execution machine's OS, and runs on a user's execution machine, a cloud Runner or the platform host.",
+  "系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。": "Lightweight system isolation uses the languages and tools installed on the execution machine. System directories are read-only and only the workspace is writable. Put settings such as JAVA_HOME or a proxy in the environment variables below. Repositories are shared clones of the execution machine's repository cache, so they are not downloaded again.",
 });

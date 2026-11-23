@@ -23,7 +23,7 @@ assert.match(html, /<option value="queue" selected>排队<\/option>/, 'queue rem
 assert.match(mb.assistantPrefsFormHTML({ steerOnSend: true }), /<option value="steer" selected>立即发送<\/option>/);
 
 assert.match(html, /<option value="" selected>由 Agent 选择<\/option>/, 'the agent picks the sandbox by default');
-assert.match(mb.assistantPrefsFormHTML({ workspaceDriver: 'native' }), /<option value="native" selected>native 沙箱<\/option>/);
+assert.match(mb.assistantPrefsFormHTML({ workspaceDriver: 'native' }), /<option value="native" selected>系统轻量隔离<\/option>/);
 
 const form = { proactiveRoles: { checked: true }, proactiveSops: { checked: false }, messageDuringGeneration: { value: 'queue' }, workspaceDriver: { value: '' }, instructions: { value: '  先给结论  ' } };
 mb.assistantPrefsUI.saved = { proactiveRoles: true, proactiveSops: false, instructions: '先给结论' };

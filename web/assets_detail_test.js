@@ -129,8 +129,9 @@ head = ctx.assetDetailHeadHTML(ctx.state.data.sandboxes[0], {});
 assert.ok(head.includes('内置沙箱 generic-docker 不能删除'), 'builtin reason');
 assert.ok(ctx.assetOverviewCardHTML(ctx.state.data.sandboxes[0]).includes('<dt>类型</dt><dd>内置</dd>'));
 assert.ok(ctx.assetCardHTML({ id: 'd', projectId: 'p1', driver: 'docker', dockerfile: { content: 'FROM x\nRUN y\n' } }).includes('Dockerfile 2 行'));
-assert.ok(ctx.assetCardHTML({ id: 'n', projectId: 'p1', driver: 'seatbelt' }).includes('native'));
-assert.ok(ctx.assetCardHTML({ id: 'l', projectId: 'p1', driver: 'local' }).includes('native'), 'an unmigrated local row reads as native');
+assert.ok(ctx.assetCardHTML({ id: 'd', projectId: 'p1', driver: 'docker' }).includes('Docker'));
+assert.ok(ctx.assetCardHTML({ id: 'n', projectId: 'p1', driver: 'seatbelt' }).includes('系统轻量隔离'));
+assert.ok(ctx.assetCardHTML({ id: 'l', projectId: 'p1', driver: 'local' }).includes('系统轻量隔离'), 'an unmigrated local row reads as native');
 
 reset('skills', {});
 ctx.state.selectedAsset = '__new__';

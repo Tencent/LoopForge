@@ -5,8 +5,8 @@ import "./sandbox-picker.css";
 
 const SANDBOX_KINDS = ["docker", "native"];
 const SANDBOX_KIND_LABELS = {
-  docker: "Docker 容器",
-  native: "native 轻量隔离",
+  docker: "Docker",
+  native: "系统轻量隔离",
 };
 
 function sandboxKind(sandbox) {

@@ -30,7 +30,7 @@ function assetMetaHTML(a){
     if(src){const latest=assetSkillLatest(src);meta.push(latest&&latest!==src.version?`<span class="hui-badge" data-tone="warn" data-size="sm"><span class="hui-lamp"><i></i></span><span class="hui-badge-label">SkillHub v${escapeHTML(src.version)} · 可更新</span></span>`:`<span class="hui-badge" data-tone="accent" data-size="sm">${huiIcon('sparkles')}<span class="hui-badge-label">SkillHub v${escapeHTML(src.version)}</span></span>`)}
   }
   if(state.assetType==='sandboxes'){
-    const driver=sandboxDriverOption(a.driver);meta.push(item('server',driver));
+    const driver=sandboxDriverOption(a.driver);meta.push(item('server',sandboxDriverLabel(driver)));
     if(driver==='docker'&&a.dockerfile?.content)meta.push(item('layers',`Dockerfile ${a.dockerfile.content.trimEnd().split('\n').length} 行`));
   }
   const refs=assetReferenceNames(a).length;
@@ -299,14 +299,15 @@ function bindRuleGlobalPicker(a){const host=$('#ruleSOPPicker');if(!host)return;
 // seatbelt / bwrap are the per-OS forms of native; rows saved before the merge still carry them.
 // Rows saved as local before it was removed read as native.
 function sandboxDriverOption(driver){return ['seatbelt','bwrap','native','local'].includes(driver)?'native':'docker'}
+function sandboxDriverLabel(driver){return sandboxDriverOption(driver)==='native'?'系统轻量隔离':'Docker'}
 function syncSandboxDriverFields(select){const driver=select?.value||'docker';select?.form?.querySelectorAll('[data-sandbox-drivers]').forEach(el=>{el.hidden=!el.dataset.sandboxDrivers.split(' ').includes(driver)})}
 function resolveAssetSaveIdentity(items,selectedID,requestedID){if(selectedID!=='__new__'){const existing=(items||[]).find(item=>item.id===selectedID);return existing?{id:existing.id,existing,created:false}:{error:'选中的资产已不存在，请刷新后重试'}}if((items||[]).some(item=>item.id===requestedID))return {error:'该标识已存在，请换一个标识，或回到列表打开已有资产修改'};return {id:requestedID,existing:null,created:true}}
 function assetPaneTabs(type=state.assetType){return ({rules:[['edit','编辑'],['preview','预览']],skills:[['files','文件']],sandboxes:[['setup','配置']]})[type]||[['edit','编辑']]}
 function assetPaneHint(type=state.assetType){return ({rules:'支持 Markdown',skills:'每次上传都会完整替换现有文件',sandboxes:'隔离方式决定沙箱在哪里、怎样执行'})[type]||''}
 function assetFieldLabel(text,help,forId=''){return `<div class="asset-field-label">${forId?`<label for="${forId}">${escapeHTML(text)}</label>`:`<span>${escapeHTML(text)}</span>`}${help?`<button type="button" class="field-help" aria-label="${escapeHTML(text)}说明" title="${escapeHTML(help)}">?</button>`:''}</div>`}
 function sandboxSetupHTML(a){const driver=sandboxDriverOption(a.driver);return `<div class="sandbox-setup">
-  ${assetFieldLabel('隔离方式','docker 在 OCI 容器里执行；native 按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
-  <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>docker（OCI 容器）</option><option value="native" ${driver==='native'?'selected':''}>native（系统轻量隔离）</option></select>
+  ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
+  <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>
   <div data-sandbox-drivers="docker">
     ${assetFieldLabel('Dockerfile','保存在这个沙箱里。沙箱初始化时用它 docker build 出镜像；内容相同的沙箱共用同一个镜像。不要指向仓库目录或现成镜像名。','assetDockerfile')}
     <textarea id="assetDockerfile" name="dockerfileContent" class="asset-editor" rows="14" spellcheck="false" placeholder="FROM node:22-bookworm-slim">${escapeHTML(a.dockerfile?.content||'')}</textarea>
@@ -321,7 +322,7 @@ function sandboxSetupHTML(a){const driver=sandboxDriverOption(a.driver);return `
     </div>
   </div>
   <div data-sandbox-drivers="native">
-    <div class="asset-field-hint">native 沙箱直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。</div>
+    <div class="asset-field-hint">系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。</div>
   </div>
   ${assetFieldLabel('环境变量','JSON 对象，叠加到沙箱基础环境并随资产保存；不要在这里保存凭证。平台凭证、HOME/TMPDIR 和遥测变量优先级更高。')}
   <textarea name="environment" class="asset-editor is-env" rows="4" placeholder='{"NAME":"value"}'>${escapeHTML(JSON.stringify(a.environment||{},null,2))}</textarea>

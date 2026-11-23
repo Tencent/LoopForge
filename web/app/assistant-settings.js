@@ -1,6 +1,6 @@
 // AI 助手设置：生成中消息的发送方式、主动派发、对话工作区倾向与每轮自定义规则。只对当前用户生效。
 const ASSISTANT_RULES_MAX=4000;
-const ASSISTANT_WORKSPACE_DRIVERS=[['','由 Agent 选择'],['docker','Docker 沙箱'],['native','native 沙箱']];
+const ASSISTANT_WORKSPACE_DRIVERS=[['','由 Agent 选择'],['docker','Docker'],['native','系统轻量隔离']];
 const assistantPrefsUI={saved:null,loading:false,saving:false,error:''};
 
 function assistantPrefsSignedIn(){return !!state.currentUser&&!state.currentUser.isGuest}

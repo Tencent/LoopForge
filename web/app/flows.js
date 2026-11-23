@@ -1153,8 +1153,7 @@ function sopSandboxChoices(){
   return (state.data.sandboxes||[]).filter(s=>s.id&&catalogVisible(s.projectId,s.shared));
 }
 function defaultSOPSandbox(choices=sopSandboxChoices(),preferredId){
-  const isolated=choices.filter(s=>sandboxDriverOption(s.driver)!=='local');
-  return isolated.find(s=>s.id===preferredId)||isolated.find(s=>catalogOwned(s.projectId))||isolated[0];
+  return choices.find(s=>s.id===preferredId)||choices.find(s=>catalogOwned(s.projectId))||choices[0];
 }
 function syncSOPSandboxSelection(){
   const select=$('#sopCreateSandbox'),template=(state.data.workflows||[]).find(w=>w.id===state.sopTemplate);
