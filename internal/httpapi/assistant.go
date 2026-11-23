@@ -360,6 +360,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.Notify = func(kind string, value any) {
 			if emit != nil {
 				emit(kind, value)
+			} else if event, ok := value.(assistantStreamEvent); kind == "thought" && ok {
+				activity.add(publicAssistantEvent(event, user))
 			}
 		}
 		sess.mu.Lock()
@@ -463,13 +465,20 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 		c.JSON(status, payload)
 	}
+	failSetup := func(err error) {
+		status, _ := assistantGenerationFailure(modelCtx, err)
+		failure := assistantDiagnosticsFrom(modelCtx).fail(modelCtx, err, user)
+		fail(status, failure.Message)
+	}
 	var nativeSession *assistantNativeSession
 	// Every conversation runs in its own CLI root; shared ones switch to the
 	// native session root below. The root's home also carries the skills.
 	cliRoot := assistantConversationRoot(ownerID, req.SessionID)
-	if err := runtime.ValidateConversationRoot(cliRoot); err != nil {
-		fail(409, err.Error())
-		return
+	if !shared {
+		if _, err := runtime.ConversationSkillLinks(cliRoot); err != nil {
+			failSetup(err)
+			return
+		}
 	}
 	nativeContinuationReady := false
 	var turnUsage assistantTurnUsage
@@ -508,7 +517,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			var err error
 			nativeSession, err = openAssistantNativeSession(req, saved, user, sourceRoot)
 			if err != nil {
-				fail(409, "共享会话缓存不可用或正在使用，请稍后重试")
+				failSetup(err)
 				return
 			}
 			defer nativeSession.Close()
@@ -521,7 +530,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				turn = h.turnPrompt(req, sourceRoot, false)
 			}
 			if err = nativeSession.begin(); err != nil {
-				fail(500, "无法保存共享会话缓存")
+				failSetup(err)
 				return
 			}
 			cliRoot = nativeSession.root
@@ -545,12 +554,15 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			// drains output and lets each CLI commit tool results to its native
 			// journal before the next process is allowed to resume that journal.
 			restarted := false
+			reportSkillLinks := func(paths []string) {
+				reportRemovedConversationSkillLinks(ctx, u, paths, toolSession.Notify)
+			}
 			for switches := 0; switches < 8; switches++ {
 				if !resume {
 					workspaceRepositoryHash = ""
 				}
 				req.workspaceMode = toolSession.RuntimeMode == domain.AssistantModeWorkspace
-				if err := h.writeConversationAssets(cliRoot, req); err != nil {
+				if err := h.writeConversationAssets(cliRoot, req, reportSkillLinks); err != nil {
 					return "", err
 				}
 				mcp, settings, err := stageConversationToolFiles(cliRoot, toolFiles)
