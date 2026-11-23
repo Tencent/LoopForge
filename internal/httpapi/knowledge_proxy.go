@@ -81,7 +81,7 @@ func (h *knowledgeHandlers) proxyMCP(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": knowledge.ErrNotConfigured.Error()})
 		return
 	}
-	if claims.Ref != nil {
+	if claims.Ref != nil || (claims.RunID != "" && claims.NodeID != "") {
 		run, ok := h.repo.RunState(claims.RunID)
 		nr := run.Nodes[claims.NodeID]
 		if !ok || nr == nil || nr.Status != "running" || nr.Attempt != claims.Attempt || run.ExecutionContext.ProjectID != claims.ProjectID || run.ExecutionContext.ResponsibleUserID != claims.UserID {
@@ -121,13 +121,13 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 	}
 	switch request.Method {
 	case "initialize":
-		instructions := "团队知识库（只读）。先 kb_search 检索，再用 kb_fetch 读原文；引用时附上 citation。"
+		instructions := "团队知识库（只读）。先 kb_search 检索，再用 kb_fetch 读原文；采用结论时请在引用处紧跟输出工具返回中的 [[knowledge:<id>]] 标记（勿放入反引号）。"
 		if knowledge.HasWeKnoraConnection(settings) {
-			instructions = "团队知识库（WeKnora，只读）。先 list_knowledge_bases 或 search_knowledge 检索，再用 read_document 读原文；引用时附上原文出处。"
+			instructions = "团队知识库（WeKnora，只读）。先 list_knowledge_bases 或 search_knowledge 检索，再用 read_document 读原文；采用结论时请在引用处紧跟输出工具返回中的 [[knowledge:<id>]] 标记（勿放入反引号）。"
 		}
 		if claims.Ref != nil && claims.Ref.ServerID != domain.KnowledgeMCPServerID {
 			serverName, _ := knowledgeServerMeta(h.deps, claims.Ref.ServerID)
-			instructions = "用户为当前 SOP 节点绑定的只读知识服务（" + serverName + "）。请优先使用本服务的检索与文档读取工具核实团队规范、架构、接口与排障资料，引用时附上原文出处和 [[knowledge:<id>]] 标记。"
+			instructions = "用户为当前 SOP 节点绑定的只读知识服务（" + serverName + "）。请优先使用本服务的检索与文档读取工具核实团队规范、架构、接口与排障资料，采用结论时请在引用处紧跟输出工具返回中的 [[knowledge:<id>]] 标记（勿放入反引号）。"
 		}
 		return reply(map[string]any{
 			"protocolVersion": agentToolProtocolVersion(request.Params),
@@ -204,7 +204,7 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 			activity.Error = truncateRunes(err.Error(), 200)
 		}
 		h.activity.add(activity)
-		if claims.Ref != nil && h.engine != nil {
+		if claims.RunID != "" && claims.NodeID != "" && h.engine != nil {
 			read, result := knowledgeReadResultWithMeta(serverID, name, text, hits, execRes.Status, execRes.Warning, domain.KnowledgeCallOriginModelTool, err)
 			text = result
 			read.Query = query

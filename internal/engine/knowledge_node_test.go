@@ -4,8 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/repo"
 )
 
@@ -138,5 +140,146 @@ func TestMarkKnowledgeReadsCitedEvidenceGranularity(t *testing.T) {
 	}
 	if reads[3].Cited || reads[4].Cited {
 		t.Fatalf("expected empty and unavailable reads not to be cited: %+v", reads)
+	}
+}
+
+func TestResolveNodeAssetsRoleKnowledgeBasePropagatesRunClaims(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "test-secret-key")
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if err := store.PutKnowledgeSettings(domain.KnowledgeSettings{
+		Enabled: true,
+		URL:     "https://kb.invalid/mcp",
+		Token:   "tok",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := &Engine{repo: store}
+	run := domain.Run{
+		ID: "run-role-kb",
+		ExecutionContext: domain.TelemetryContext{
+			ProjectID:         "default",
+			ResponsibleUserID: 7,
+		},
+		Nodes: map[string]*domain.NodeRun{
+			"n1": {NodeID: "n1", Attempt: 3},
+		},
+	}
+	node := domain.WorkflowNode{ID: "n1", Type: "agent"}
+	agent := domain.AgentDefinition{ID: "dev", Name: "Dev", KnowledgeBase: true}
+
+	bundle := eng.resolveNodeAssets(context.Background(), agent, run, "wf-1", node)
+	var found bool
+	for _, srv := range bundle.MCPServers {
+		if srv.ID == domain.KnowledgeMCPServerID {
+			found = true
+			tok := strings.TrimPrefix(srv.Headers["Authorization"], "Bearer ")
+			if !strings.HasPrefix(tok, "afkb1.") {
+				t.Fatalf("expected afkb1 proxy token header, got %+v", srv.Headers)
+			}
+			claims, err := knowledge.VerifyProxyToken(store.KnowledgeSettings(), tok, time.Now())
+			if err != nil {
+				t.Fatalf("VerifyProxyToken: %v", err)
+			}
+			if claims.RunID != "run-role-kb" || claims.NodeID != "n1" || claims.Attempt != 3 {
+				t.Fatalf("unexpected proxy claims: %+v", claims)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s server in bundle, got %+v", domain.KnowledgeMCPServerID, bundle.MCPServers)
+	}
+	if !strings.Contains(domain.KnowledgeLookupInstruction, "[[knowledge:<id>]]") {
+		t.Fatalf("KnowledgeLookupInstruction must instruct [[knowledge:<id>]] markers")
+	}
+}
+
+func TestRecordKnowledgeReadRequiresRunningNodeAndCurrentAttempt(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	run := domain.Run{
+		ID:     "run-rec-guard",
+		Status: "running",
+		Nodes: map[string]*domain.NodeRun{
+			"n1": {NodeID: "n1", Status: "running", Attempt: 2},
+			"n2": {NodeID: "n2", Status: "succeeded", Attempt: 1},
+		},
+	}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	eng := &Engine{repo: store}
+
+	eng.RecordKnowledgeRead(run.ID, "n1", domain.KnowledgeRead{ID: "stale", Attempt: 1, Status: domain.KnowledgeStatusHit})
+	eng.RecordKnowledgeRead(run.ID, "n1", domain.KnowledgeRead{ID: "current", Attempt: 2, Status: domain.KnowledgeStatusHit})
+	eng.RecordKnowledgeRead(run.ID, "n2", domain.KnowledgeRead{ID: "not-running", Attempt: 1, Status: domain.KnowledgeStatusHit})
+
+	saved, ok := store.RunState(run.ID)
+	if !ok {
+		t.Fatal("missing saved run")
+	}
+	if len(saved.Nodes["n1"].KnowledgeReads) != 1 || saved.Nodes["n1"].KnowledgeReads[0].ID != "current" {
+		t.Fatalf("expected only current running attempt read recorded on n1, got %+v", saved.Nodes["n1"].KnowledgeReads)
+	}
+	if len(saved.Nodes["n2"].KnowledgeReads) != 0 {
+		t.Fatalf("expected non-running node n2 to reject late read, got %+v", saved.Nodes["n2"].KnowledgeReads)
+	}
+}
+
+func TestMarkNodeKnowledgeReadsOnFailurePreservesFrozenArtifactCitations(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	run := domain.Run{
+		ID:         "run-fail-cite",
+		Generation: 3,
+		Status:     "running",
+		Nodes: map[string]*domain.NodeRun{
+			"n1": {
+				NodeID:  "n1",
+				Status:  "running",
+				Attempt: 1,
+				KnowledgeReads: []domain.KnowledgeRead{{
+					ID:     "kr-1",
+					Attempt: 1,
+					Status: domain.KnowledgeStatusHit,
+					Evidences: []domain.KnowledgeEvidence{
+						{ID: "ev_1", Title: "OutDoc"},
+						{ID: "ev_2", Title: "ArtDoc"},
+					},
+				}},
+			},
+		},
+	}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	eng := &Engine{repo: store}
+	frozen := []domain.Artifact{{Name: "partial.md", Path: "partial.md", Content: "局部交付物 [[knowledge:ev_2]]"}}
+	eng.markNodeKnowledgeReads(run.ID, "n1", 3, 1, "失败前输出 [[knowledge:ev_1]]", frozen)
+
+	saved, _ := store.RunState(run.ID)
+	nr := saved.Nodes["n1"]
+	if !nr.KnowledgeReads[0].Cited {
+		t.Fatalf("expected kr-1 cited before failNode")
+	}
+	evs := nr.KnowledgeReads[0].Evidences
+	if !evs[0].Cited || len(evs[0].CitedIn) != 1 || evs[0].CitedIn[0] != "节点输出" {
+		t.Fatalf("unexpected ev_1 state: %+v", evs[0])
+	}
+	if !evs[1].Cited || len(evs[1].CitedIn) != 1 || evs[1].CitedIn[0] != "partial.md" {
+		t.Fatalf("unexpected ev_2 state: %+v", evs[1])
 	}
 }

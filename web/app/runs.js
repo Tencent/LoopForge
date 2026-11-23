@@ -373,6 +373,444 @@ function logLineHTML(l){
 }
 function isHookAdapter(adapter){return adapter==='agent-hooks-v1'||adapter==='codebuddy-hooks-v1'}
 function hookTraceDetails(e){const a=e.attributes||{},facts=[["ID",a.hookId],["事件",a.hook],["仓库",a.repositoryName||a.repositoryDir||a.repositoryId],["阶段",a.executionPhase],["语言",a.language],["Matcher",a.matcher],["耗时",a.durationMs!=null?`${a.durationMs} ms`:""],["退出码",a.exitCode!=null?String(a.exitCode):""]].filter(x=>x[1]!==''&&x[1]!=null);return `${facts.length?`<dl class="hook-trace-facts">${facts.map(([k,v])=>`<div><dt>${k}</dt><dd>${escapeHTML(v)}</dd></div>`).join('')}</dl>`:''}${a.stdout?`<details class="hook-trace-output"><summary>stdout</summary><pre>${escapeHTML(a.stdout)}</pre></details>`:''}${a.stderr?`<details class="hook-trace-output error"><summary>stderr</summary><pre>${escapeHTML(a.stderr)}</pre></details>`:''}`}
+const RUN_KB_CATALOG_TOOLS=new Set(['list_knowledge_bases','kb_list_sources','list_documents','kb_get_source']);
+const RUN_KB_READ_TOOLS=new Set(['read_document','kb_fetch']);
+function isKnowledgeCatalogTool(tool){return RUN_KB_CATALOG_TOOLS.has(String(tool||'').trim())}
+function isKnowledgeReadTool(tool){return RUN_KB_READ_TOOLS.has(String(tool||'').trim())}
+function nodeKnowledgeReadsForAttempt(nr){
+  const all=Array.isArray(nr?.knowledgeReads)?nr.knowledgeReads:[];
+  const attempt=Number(nr?.attempt||0);
+  if(attempt>0&&all.some(r=>Number(r?.attempt||0)>0)){
+    return all.filter(r=>Number(r?.attempt||0)===attempt);
+  }
+  return all;
+}
+function artifactKnowledgeReads(run,artifact){
+  const all=Array.isArray(run?.nodes?.[artifact?.nodeId]?.knowledgeReads)?run.nodes[artifact.nodeId].knowledgeReads:[];
+  const attempt=Number(artifact?.attempt||0);
+  if(attempt>0&&all.some(r=>Number(r?.attempt||0)>0)){
+    return all.filter(r=>Number(r?.attempt||0)===attempt);
+  }
+  return all;
+}
+function nodeKnowledgeSignature(nr){
+  const reads=nodeKnowledgeReadsForAttempt(nr);
+  const body=reads.map(r=>`${r.id||''}:${r.status||''}:${r.cited?1:0}:${(r.evidences||[]).length}:${(r.evidences||[]).filter(e=>e?.cited).length}:${(r.citedIn||[]).length}`).join('|');
+  return `${Number(nr?.attempt||0)}::${body}`;
+}
+function stripRunInlineCodeSpans(line){
+  if(!line.includes('`'))return line;
+  let out='';
+  for(let i=0;i<line.length;){
+    if(line[i]!=='`'){out+=line[i++];continue}
+    let tickLen=0;
+    while(i+tickLen<line.length&&line[i+tickLen]==='`')tickLen++;
+    let closeIdx=-1;
+    for(let j=i+tickLen;j<line.length;){
+      if(line[j]!=='`'){j++;continue}
+      let closeLen=0;
+      while(j+closeLen<line.length&&line[j+closeLen]==='`')closeLen++;
+      if(closeLen===tickLen){closeIdx=j+closeLen;break}
+      j+=closeLen;
+    }
+    if(closeIdx>=0){out+=' ';i=closeIdx}else{out+=line.slice(i,i+tickLen);i+=tickLen}
+  }
+  return out;
+}
+function stripRunMarkdownCode(text=''){
+  const raw=String(text||'');
+  if(!raw.includes('`')&&!raw.includes('~'))return raw;
+  const lines=raw.split('\n'),out=[];
+  let fenceChar='',fenceLen=0;
+  for(const line of lines){
+    const trimmed=line.replace(/^ +/,'');
+    const leadingSpaces=line.length-trimmed.length;
+    if(!fenceChar){
+      if(leadingSpaces<=3&&trimmed.length>=3&&(trimmed[0]==='`'||trimmed[0]==='~')){
+        const ch=trimmed[0];
+        let cnt=0;
+        while(cnt<trimmed.length&&trimmed[cnt]===ch)cnt++;
+        if(cnt>=3&&(ch==='~'||!trimmed.slice(cnt).includes('`'))){fenceChar=ch;fenceLen=cnt;continue}
+      }
+      out.push(stripRunInlineCodeSpans(line));
+    }else if(leadingSpaces<=3&&trimmed.length>=fenceLen&&trimmed[0]===fenceChar){
+      let cnt=0;
+      while(cnt<trimmed.length&&trimmed[cnt]===fenceChar)cnt++;
+      if(cnt>=fenceLen&&trimmed.slice(cnt).trim()===''){fenceChar='';fenceLen=0}
+    }
+  }
+  return out.join('\n');
+}
+function extractKnowledgeCiteIdsInOrder(texts=[]){
+  const seen=new Set(),ordered=[];
+  const re=/\[\[knowledge:([A-Za-z0-9_.-]+)\]\]/g;
+  for(const raw of texts){
+    const rawStr=String(raw||'');
+    if(!rawStr.includes('[[knowledge:'))continue;
+    const s=stripRunMarkdownCode(rawStr);
+    if(!s.includes('[[knowledge:'))continue;
+    re.lastIndex=0;
+    let m;
+    while((m=re.exec(s))!==null){
+      if(m[1]&&!seen.has(m[1])){seen.add(m[1]);ordered.push(m[1])}
+    }
+  }
+  return ordered;
+}
+function summarizeRunKnowledgeReads(reads=[],texts=[],artifacts=[],opts={}){
+  const list=Array.isArray(reads)?reads:[];
+  if(!list.length)return{usedDocs:[],referencedDocs:[],byCiteId:new Map(),callCount:0,hasContentCalls:false,hasCatalogOnly:false,hasUnavailableCalls:false,allContentFailed:false,hasUnstructuredOnly:false};
+  const live=!!opts?.live,scopeToTexts=!!opts?.scopeToTexts;
+  const textList=Array.isArray(texts)?texts:[texts];
+  const allTexts=[...textList,...(artifacts||[]).map(a=>a?.content||'')];
+  const appearanceIds=extractKnowledgeCiteIdsInOrder(allTexts);
+  const appearanceSet=new Set(appearanceIds);
+  let hasContentCalls=false,hasCatalogCalls=false,orderCounter=0;
+  const contentReads=[];
+  const docMap=new Map(),citeEntries=new Map();
+  const docKey=d=>{
+    const primary=d.documentId||d.title||d.sourceId||d.label||d.id;
+    const p=String(primary||'').trim().toLowerCase();
+    if(!p)return '';
+    const srv=String(d.serverId||'').trim().toLowerCase();
+    const src=String(d.sourceId||'').trim().toLowerCase();
+    const srcPart=src&&src!==p?src:'';
+    return `${srv}::${srcPart}::${p}`;
+  };
+  const mergeCitedIn=(dst,arr)=>{
+    for(const item of arr||[]){const s=String(item||'').trim();if(s&&!dst.includes(s))dst.push(s)}
+  };
+  const upsertDoc=cand=>{
+    const key=docKey(cand);
+    if(!key)return null;
+    const prev=docMap.get(key);
+    if(!prev){
+      const next={key,order:orderCounter++,id:cand.id||'',label:cand.label||cand.id||'知识库文档',title:cand.title||'',documentId:cand.documentId||'',sourceId:cand.sourceId||'',sourceName:cand.sourceName||'',serverId:cand.serverId||'',locators:cand.locator?[cand.locator]:[],citedLocators:cand.used&&cand.locator?[cand.locator]:[],used:!!cand.used,readFull:!!cand.readFull,citeIndex:0,citedIn:[]};
+      mergeCitedIn(next.citedIn,cand.citedIn);
+      docMap.set(key,next);
+      return next;
+    }
+    if(!prev.title&&cand.title){
+      prev.title=cand.title;
+      if(!prev.label||prev.label===prev.documentId||prev.label===prev.sourceId||prev.label===prev.id)prev.label=cand.title;
+    }
+    prev.documentId=prev.documentId||cand.documentId||'';
+    prev.sourceId=prev.sourceId||cand.sourceId||'';
+    prev.sourceName=prev.sourceName||cand.sourceName||'';
+    prev.serverId=prev.serverId||cand.serverId||'';
+    if(!prev.label&&cand.label)prev.label=cand.label;
+    if(cand.locator&&!prev.locators.includes(cand.locator))prev.locators.push(cand.locator);
+    if(cand.used&&cand.locator&&!prev.citedLocators.includes(cand.locator))prev.citedLocators.push(cand.locator);
+    mergeCitedIn(prev.citedIn,cand.citedIn);
+    prev.used=prev.used||!!cand.used;
+    prev.readFull=prev.readFull||!!cand.readFull;
+    return prev;
+  };
+  const recordCite=(citeId,key,locator,exact)=>{
+    const id=String(citeId||'').trim();
+    if(!id||!key)return;
+    const prev=citeEntries.get(id);
+    if(!prev||(exact&&!prev.exact))citeEntries.set(id,{docKey:key,locator:locator||'',exact:!!exact});
+  };
+  const callLabel=(read)=>{
+    const tool=String(read?.tool||'').trim()||'知识库检索';
+    const q=String(read?.query||'').trim();
+    return q?`${tool} ("${q}")`:(tool||read?.serverId||'知识库检索结果');
+  };
+  const isEvUsed=ev=>{
+    if(!ev)return false;
+    const id=String(ev.id||'').trim();
+    if(scopeToTexts)return !!(id&&appearanceSet.has(id));
+    if(live)return !!(ev.cited||(id&&appearanceSet.has(id)));
+    return !!ev.cited;
+  };
+  const isCallCited=read=>{
+    const id=String(read?.id||'').trim();
+    if(scopeToTexts)return !!(id&&appearanceSet.has(id));
+    if(live)return !!(read?.cited||(id&&appearanceSet.has(id)));
+    return !!read?.cited;
+  };
+  for(const read of list){
+    if(!read)continue;
+    if(isKnowledgeCatalogTool(read.tool)){hasCatalogCalls=true;continue}
+    hasContentCalls=true;
+    contentReads.push(read);
+    const readFull=isKnowledgeReadTool(read.tool);
+    const callCited=isCallCited(read);
+    const evidences=Array.isArray(read.evidences)?read.evidences:[];
+    if(evidences.length){
+      const evUsedFlags=evidences.map(ev=>isEvUsed(ev));
+      const hasEvCited=evUsedFlags.some(Boolean);
+      const singleUnambiguous=!hasEvCited&&callCited&&evidences.length===1;
+      evidences.forEach((ev,idx)=>{
+        if(!ev)return;
+        const used=evUsedFlags[idx]||singleUnambiguous;
+        const label=String(ev.title||ev.documentId||ev.sourceId||ev.id||read.tool||'知识库文档').trim();
+        const doc=upsertDoc({id:ev.id||read.id||'',label,title:ev.title||'',documentId:ev.documentId||'',sourceId:ev.sourceId||'',sourceName:ev.sourceName||'',serverId:read.serverId||'',locator:ev.locator||'',used,readFull,citedIn:used?(Array.isArray(ev.citedIn)&&ev.citedIn.length?ev.citedIn:(singleUnambiguous?read.citedIn:[])):[]});
+        if(doc&&used){
+          if(ev.id&&evUsedFlags[idx])recordCite(ev.id,doc.key,ev.locator||'',true);
+          if(singleUnambiguous&&read.id)recordCite(read.id,doc.key,ev.locator||'',true);
+        }
+      });
+      if(!hasEvCited&&callCited&&evidences.length>1&&read.id){
+        const callDoc=upsertDoc({id:read.id,documentId:`call:${read.id}`,label:callLabel(read),title:'',sourceId:'',sourceName:'',serverId:read.serverId||'',used:true,readFull,citedIn:read.citedIn});
+        if(callDoc)recordCite(read.id,callDoc.key,'',true);
+      }
+      continue;
+    }
+    const targets=(Array.isArray(read.targets)?read.targets:[]).map(t=>String(t||'').trim()).filter(Boolean);
+    if(targets.length){
+      const singleTarget=callCited&&targets.length===1;
+      let first=null;
+      for(const label of targets){
+        const doc=upsertDoc({id:read.id||label,label,title:label,sourceId:'',sourceName:'',serverId:read.serverId||'',used:singleTarget,readFull,citedIn:singleTarget?read.citedIn:[]});
+        if(!first)first=doc;
+      }
+      if(callCited&&read.id){
+        if(singleTarget&&first)recordCite(read.id,first.key,'',true);
+        else{
+          const callDoc=upsertDoc({id:read.id,documentId:`call:${read.id}`,label:callLabel(read),title:'',sourceId:'',sourceName:'',serverId:read.serverId||'',used:true,readFull,citedIn:read.citedIn});
+          if(callDoc)recordCite(read.id,callDoc.key,'',true);
+        }
+      }
+      continue;
+    }
+    if(callCited){
+      const doc=upsertDoc({id:read.id||'',documentId:read.id?`call:${read.id}`:'',label:callLabel(read),title:read.query||'',sourceId:'',sourceName:'',serverId:read.serverId||'',used:true,readFull,citedIn:read.citedIn});
+      if(doc&&read.id)recordCite(read.id,doc.key,'',true);
+    }
+  }
+  const usedDocs=[];
+  let nextIdx=1;
+  for(const cid of appearanceIds){
+    const entry=citeEntries.get(cid);
+    if(!entry)continue;
+    const doc=docMap.get(entry.docKey);
+    if(doc&&doc.used&&!doc.citeIndex){doc.citeIndex=nextIdx++;usedDocs.push(doc)}
+  }
+  for(const doc of docMap.values()){
+    if(doc.used&&!doc.citeIndex){doc.citeIndex=nextIdx++;usedDocs.push(doc)}
+  }
+  const byCiteId=new Map();
+  for(const [cid,entry] of citeEntries.entries()){
+    const doc=docMap.get(entry.docKey);
+    if(doc&&doc.citeIndex){
+      const activeLocs=doc.citedLocators?.length?doc.citedLocators:doc.locators;
+      byCiteId.set(cid,{citeIndex:doc.citeIndex,doc,locator:entry.locator||activeLocs?.[0]||''});
+      const marker=`[[knowledge:${cid}]]`;
+      if(textList.some(t=>String(t||'').includes(marker))&&!doc.citedIn.includes('节点输出'))doc.citedIn.push('节点输出');
+      for(const art of artifacts||[]){
+        const name=art?.path||art?.name;
+        if(name&&String(art?.content||'').includes(marker)&&!doc.citedIn.includes(name))doc.citedIn.push(name);
+      }
+    }
+  }
+  const referencedDocs=[...docMap.values()].sort((a,b)=>{
+    if(a.used!==b.used)return a.used?-1:1;
+    if(a.used&&b.used)return a.citeIndex-b.citeIndex;
+    if(a.readFull!==b.readFull)return a.readFull?-1:1;
+    return a.order-b.order;
+  });
+  const hasUnavailableCalls=contentReads.some(r=>r.status==='unavailable');
+  const allContentFailed=hasContentCalls&&contentReads.every(r=>r.status==='unavailable');
+  const hasUnstructuredOnly=hasContentCalls&&referencedDocs.length===0&&contentReads.some(r=>r.status==='unstructured');
+  return{usedDocs,referencedDocs,byCiteId,callCount:list.length,hasContentCalls,hasCatalogOnly:hasCatalogCalls&&!hasContentCalls,hasUnavailableCalls,allContentFailed,hasUnstructuredOnly};
+}
+function runKBCiteButtonHTML(citeId,summary,hasReads){
+  if(!hasReads)return escapeHTML(`[[knowledge:${citeId}]]`);
+  const tr=(zh,en)=>(window.lfT?window.lfT(zh,en):zh);
+  const entry=summary?.byCiteId?.get(citeId);
+  if(!entry)return `<span class="run-kb-cite is-unresolved" title="${escapeHTML(tr('未匹配到有效知识库证据','No matching knowledge evidence'))}">?</span>`;
+  const tip=[entry.doc.sourceName||entry.doc.sourceId,entry.doc.label,entry.locator].filter(Boolean).join(' · ');
+  return `<button type="button" class="run-kb-cite" data-kb-cite="${entry.citeIndex}" title="${escapeHTML(tip||entry.doc.label)}" aria-label="${escapeHTML(tr(`引用 [${entry.citeIndex}] ${entry.doc.label}`,`Citation [${entry.citeIndex}] ${entry.doc.label}`))}">${entry.citeIndex}</button>`;
+}
+function formatPlainTextWithKnowledgeCitations(text,summary,hasReads){
+  const raw=String(text||'');
+  if(!hasReads||!raw.includes('[[knowledge:'))return escapeHTML(raw);
+  const re=/\[\[knowledge:([A-Za-z0-9_.-]+)\]\]/g;
+  let out='',last=0,m;
+  while((m=re.exec(raw))!==null){
+    if(m.index>last)out+=escapeHTML(raw.slice(last,m.index));
+    out+=runKBCiteButtonHTML(m[1],summary,true);
+    last=m.index+m[0].length;
+  }
+  if(last<raw.length)out+=escapeHTML(raw.slice(last));
+  return out;
+}
+function replaceRunCiteMarkersOutsideCode(raw,replacer){
+  if(!raw.includes('[[knowledge:'))return raw;
+  const replaceSegment=seg=>{
+    if(!seg.includes('[[knowledge:'))return seg;
+    if(!seg.includes('`'))return replacer(seg);
+    let out='',plainStart=0;
+    for(let i=0;i<seg.length;){
+      if(seg[i]!=='`'){i++;continue}
+      let tickLen=0;
+      while(i+tickLen<seg.length&&seg[i+tickLen]==='`')tickLen++;
+      let closeIdx=-1;
+      for(let j=i+tickLen;j<seg.length;){
+        if(seg[j]!=='`'){j++;continue}
+        let closeLen=0;
+        while(j+closeLen<seg.length&&seg[j+closeLen]==='`')closeLen++;
+        if(closeLen===tickLen){closeIdx=j+closeLen;break}
+        j+=closeLen;
+      }
+      if(closeIdx>=0){out+=replacer(seg.slice(plainStart,i));out+=seg.slice(i,closeIdx);i=closeIdx;plainStart=i}
+      else i+=tickLen;
+    }
+    out+=replacer(seg.slice(plainStart));
+    return out;
+  };
+  const lines=raw.split('\n'),out=[];
+  let fenceChar='',fenceLen=0;
+  for(const line of lines){
+    const trimmed=line.replace(/^ +/,''),leadingSpaces=line.length-trimmed.length;
+    if(!fenceChar){
+      if(leadingSpaces<=3&&trimmed.length>=3&&(trimmed[0]==='`'||trimmed[0]==='~')){
+        const ch=trimmed[0];let cnt=0;
+        while(cnt<trimmed.length&&trimmed[cnt]===ch)cnt++;
+        if(cnt>=3&&(ch==='~'||!trimmed.slice(cnt).includes('`'))){fenceChar=ch;fenceLen=cnt;out.push(line);continue}
+      }
+      out.push(replaceSegment(line));
+    }else{
+      out.push(line);
+      if(leadingSpaces<=3&&trimmed.length>=fenceLen&&trimmed[0]===fenceChar){
+        let cnt=0;while(cnt<trimmed.length&&trimmed[cnt]===fenceChar)cnt++;
+        if(cnt>=fenceLen&&trimmed.slice(cnt).trim()===''){fenceChar='';fenceLen=0}
+      }
+    }
+  }
+  return out.join('\n');
+}
+function formatRunTextForCopy(text,summary,hasReads){
+  const raw=String(text||'');
+  if(!hasReads||!raw.includes('[[knowledge:'))return raw;
+  const refsSeen=new Set();
+  const formatted=replaceRunCiteMarkersOutsideCode(raw,seg=>seg.replace(/([ \t]*)\[\[knowledge:([A-Za-z0-9_.-]+)\]\]/g,(_,lead,id)=>{
+    const entry=summary?.byCiteId?.get(id);
+    if(!entry)return '';
+    refsSeen.add(entry.citeIndex);
+    return `${lead}[${entry.citeIndex}]`;
+  }));
+  const used=(summary?.usedDocs||[]).filter(d=>refsSeen.has(d.citeIndex));
+  if(!used.length)return formatted;
+  const tr=(zh,en)=>(window.lfT?window.lfT(zh,en):zh);
+  const lines=used.map(d=>{
+    const meta=runKBDocMetaText(d,true);
+    return meta?`[${d.citeIndex}] ${d.label} (${meta})`:`[${d.citeIndex}] ${d.label}`;
+  });
+  return `${formatted}\n\n${tr('参考来源','References')}:\n${lines.join('\n')}`;
+}
+function renderMarkdownWithKnowledgeCitations(content,summary,hasReads){
+  const raw=String(content||'');
+  if(!hasReads||!raw.includes('[[knowledge:'))return renderMarkdown(raw);
+  let prefix='LFKBCITETOKEN';
+  while(raw.includes(prefix))prefix+='X';
+  const tokens=[];
+  const masked=raw.replace(/\[\[knowledge:([A-Za-z0-9_.-]+)\]\]/g,(full,id)=>{
+    const idx=tokens.length;
+    tokens.push({full,id});
+    return `${prefix}${idx}END`;
+  });
+  const html=renderMarkdown(masked);
+  const skipRe=/(<pre\b[^>]*>[\s\S]*?<\/pre>|<code\b[^>]*>[\s\S]*?<\/code>|<a\b[^>]*>[\s\S]*?<\/a>|<[^>]+>)/gi;
+  const tokRe=new RegExp(`${prefix}(\\d+)END`,'g');
+  let out='',last=0,seg;
+  while((seg=skipRe.exec(html))!==null){
+    if(seg.index>last){
+      out+=html.slice(last,seg.index).replace(tokRe,(m,i)=>{
+        const entry=tokens[Number(i)];
+        return entry?runKBCiteButtonHTML(entry.id,summary,true):m;
+      });
+    }
+    out+=seg[0].replace(tokRe,(m,i)=>{
+      const entry=tokens[Number(i)];
+      return entry?escapeHTML(entry.full):m;
+    });
+    last=seg.index+seg[0].length;
+  }
+  if(last<html.length){
+    out+=html.slice(last).replace(tokRe,(m,i)=>{
+      const entry=tokens[Number(i)];
+      return entry?runKBCiteButtonHTML(entry.id,summary,true):m;
+    });
+  }
+  return out;
+}
+function runKBDocMetaText(doc,useCitedLocators=false){
+  const src=doc.sourceName||doc.sourceId;
+  const locs=useCitedLocators?(doc.citedLocators?.length?doc.citedLocators:doc.locators):doc.locators;
+  const parts=[];
+  if(src&&src!==doc.label)parts.push(src);
+  if(locs?.length)parts.push(locs.join('、'));
+  return parts.join(' · ');
+}
+function nodeKnowledgeCardHTML(nr,nodeArtifacts=[],precomputedSummary=null){
+  const reads=nodeKnowledgeReadsForAttempt(nr);
+  if(!reads.length)return '';
+  const summary=precomputedSummary||summarizeRunKnowledgeReads(reads,[displayNodeOutput(nr?.output||'')],nodeArtifacts,{live:nr?.status==='running'});
+  const {usedDocs,referencedDocs,hasCatalogOnly,allContentFailed,hasUnstructuredOnly}=summary;
+  const usedHTML=usedDocs.length?`<ol class="run-kb-list">${usedDocs.map(doc=>{
+    const meta=runKBDocMetaText(doc,true);
+    return `<li class="run-kb-item is-used-row" data-kb-doc-index="${doc.citeIndex}"><span class="run-kb-index">[${doc.citeIndex}]</span><div class="run-kb-doc"><strong data-i18n-data title="${escapeHTML(doc.label)}">${escapeHTML(doc.label)}</strong>${meta?`<small data-i18n-data title="${escapeHTML(meta)}">${escapeHTML(meta)}</small>`:''}${doc.citedIn?.length?`<small class="run-kb-cited-in"><span>引用位置：</span><span data-i18n-data>${escapeHTML(doc.citedIn.join('、'))}</span></small>`:''}</div>${doc.readFull?'<span class="hui-badge" data-size="sm" data-tone="info">已读正文</span>':''}</li>`;
+  }).join('')}</ol>`:`<p class="run-kb-empty">${allContentFailed?'知识库检索调用失败，未能获取可用文档':referencedDocs.length?'未显式标注具体引用文档（以下为本轮检索/读取的候选文档）':hasUnstructuredOnly?'已检索到非结构化内容，未显式标注引用文档':hasCatalogOnly?'仅执行了知识库目录查询，未读取具体文档':'本次检索未命中可用文档'}</p>`;
+  const limit=6;
+  const hiddenCount=Math.max(0,referencedDocs.length-limit);
+  const refsHTML=referencedDocs.length?`<div class="run-kb-section"><div class="run-kb-label"><span>本轮检索/读取文档</span> (${referencedDocs.length})</div><ul class="run-kb-list">${referencedDocs.map((doc,idx)=>{
+    const meta=runKBDocMetaText(doc,false);
+    const tone=doc.used?'success':doc.readFull?'info':'neutral';
+    const badge=doc.used?`[${doc.citeIndex}] 已用于回答`:doc.readFull?'已读正文 · 未引用':'仅检索未采用';
+    return `<li class="run-kb-item${idx>=limit?' is-extra':''}"${idx>=limit?' hidden':''}><div class="run-kb-doc"><strong data-i18n-data title="${escapeHTML(doc.label)}">${escapeHTML(doc.label)}</strong>${meta?`<small data-i18n-data title="${escapeHTML(meta)}">${escapeHTML(meta)}</small>`:''}</div><span class="hui-badge" data-size="sm" data-tone="${tone}">${escapeHTML(badge)}</span></li>`;
+  }).join('')}</ul>${hiddenCount?`<button type="button" class="run-kb-more" data-kb-toggle-refs="0" data-kb-hidden-count="${hiddenCount}"><span>展开其余</span> ${hiddenCount} 篇</button>`:''}</div>`:'';
+  const traceHTML=`<details class="run-kb-trace"><summary>检索调用明细 · ${reads.length}</summary>${reads.map(read=>{
+    const citedEvs=(read.evidences||[]).filter(ev=>ev?.cited);
+    const evPart=citedEvs.length?`<span>引用</span> ${citedEvs.length} 条`:read.evidences?.length?`<span>命中</span> ${read.evidences.length} 条`:read.targets?.length?`<span>命中：</span><span data-i18n-data>${escapeHTML(read.targets.join('、'))}</span>`:'';
+    const head=[read.serverId,read.query?`${read.tool} ("${read.query}")`:read.tool].filter(Boolean).join(' · ');
+    const segs=[`<span data-i18n-data>${escapeHTML(head)}</span>`];
+    if(evPart)segs.push(evPart);
+    if(read.status)segs.push(`<span data-i18n-data>${escapeHTML(read.status)}</span>`);
+    if(read.cited)segs.push('<span>回答已引用</span>');
+    if(read.warning)segs.push(`<span data-i18n-data>${escapeHTML(read.warning)}</span>`);
+    return `<p>${segs.join(' · ')}</p>`;
+  }).join('')}</details>`;
+  return `<section class="run-kb-card" aria-label="知识库来源"><header class="run-kb-head"><b>知识库来源</b><span>实际使用 ${usedDocs.length} 篇 · 检索读取 ${referencedDocs.length} 篇</span></header><div class="run-kb-section"><div class="run-kb-label">实际用于回答/产出</div>${usedHTML}</div>${refsHTML}${traceHTML}</section>`;
+}
+function artifactKnowledgeFooterHTML(reads,summary){
+  if(!reads?.length)return '';
+  const {usedDocs,referencedDocs,allContentFailed,hasUnstructuredOnly}=summary;
+  const body=usedDocs.length?`<ol class="run-kb-list">${usedDocs.map(doc=>{
+    const meta=runKBDocMetaText(doc,true);
+    return `<li class="run-kb-item is-used-row" data-kb-doc-index="${doc.citeIndex}"><span class="run-kb-index">[${doc.citeIndex}]</span><div class="run-kb-doc"><strong data-i18n-data>${escapeHTML(doc.label)}</strong>${meta?`<small data-i18n-data>${escapeHTML(meta)}</small>`:''}</div></li>`;
+  }).join('')}</ol>`:`<p class="run-kb-empty">${allContentFailed?'知识库检索调用失败，未能获取可用文档':referencedDocs.length?`本产物未显式标注引用标记 · 本轮共检索 ${referencedDocs.length} 篇`:hasUnstructuredOnly?'已检索到非结构化内容，未显式标注引用文档':'本轮检索未命中可用文档'}</p>`;
+  return `<section class="run-kb-artifact-cites" aria-label="产物引用来源"><header class="run-kb-head"><b>知识库引用来源</b><span>实际使用 ${usedDocs.length} 篇 · 检索读取 ${referencedDocs.length} 篇</span></header>${body}</section>`;
+}
+function bindKnowledgeCiteInteractions(host){
+  if(!host)return;
+  const tr=(zh,en)=>(window.lfT?window.lfT(zh,en):zh);
+  host.querySelectorAll('[data-kb-cite]').forEach(btn=>{
+    btn.onclick=()=>{
+      const idx=btn.dataset.kbCite;
+      const target=host.querySelector(`[data-kb-doc-index="${CSS.escape(String(idx))}"]`);
+      if(!target)return;
+      host.querySelectorAll('.run-kb-item.is-highlighted').forEach(el=>el.classList.remove('is-highlighted'));
+      target.classList.add('is-highlighted');
+      target.scrollIntoView?.({behavior:'smooth',block:'nearest'});
+      window.clearTimeout(host._kbHighlightTimer);
+      host._kbHighlightTimer=window.setTimeout(()=>target.classList.remove('is-highlighted'),2000);
+    };
+  });
+  host.querySelectorAll('[data-kb-toggle-refs]').forEach(btn=>{
+    btn.onclick=()=>{
+      const expanded=btn.dataset.kbToggleRefs==='1';
+      const next=!expanded;
+      btn.dataset.kbToggleRefs=next?'1':'0';
+      const sec=btn.closest('.run-kb-section');
+      sec?.querySelectorAll('.run-kb-item.is-extra').forEach(el=>{el.hidden=!next});
+      const cnt=btn.dataset.kbHiddenCount||'0';
+      btn.textContent=next?tr('收起','Collapse'):tr(`展开其余 ${cnt} 篇`,`Show ${cnt} more docs`);
+    };
+  });
+}
 function knowledgeArtifactCitations(event){
   if(event.name!=='knowledge.call')return '';
   const readId=event.attributes?.knowledgeReadId;
@@ -383,21 +821,29 @@ function knowledgeArtifactCitations(event){
   const evidences=Array.isArray(read?.evidences)?read.evidences:[];
   const hits=event.attributes?.hits;
   const parts=[];
-  if(read?.status)parts.push(`状态：${escapeHTML(read.status)}`);
-  if(query)parts.push(`检索词：${escapeHTML(query)}`);
+  if(read?.status)parts.push(`<span>状态：</span><span data-i18n-data>${escapeHTML(read.status)}</span>`);
+  if(query)parts.push(`<span>检索词：</span><span data-i18n-data>${escapeHTML(query)}</span>`);
+  const formatEv=ev=>{
+    const name=ev.title||ev.documentId||ev.sourceId||ev.id;
+    const label=ev.sourceName&&ev.sourceName!==name?`${ev.sourceName} / ${name}`:name;
+    return `<span data-i18n-data>${escapeHTML(label)}</span>`;
+  };
   if(evidences.length){
     const citedEvs=evidences.filter(ev=>ev.cited);
-    const list=(citedEvs.length?citedEvs:evidences).slice(0,5).map(ev=>{
-      const label=escapeHTML(ev.title||ev.documentId||ev.sourceId||ev.id);
-      return ev.cited?`${label}（已引用）`:label;
-    });
-    parts.push(`证据：${list.join('、')}`);
+    if(citedEvs.length){
+      parts.push(`<span>实际使用：</span>${citedEvs.slice(0,5).map(ev=>{
+        const where=ev.citedIn?.length?` (<span data-i18n-data>${escapeHTML(ev.citedIn.join('、'))}</span>)`:'';
+        return formatEv(ev)+where;
+      }).join('、')}`);
+    }
+    const retrievedList=evidences.slice(0,5).map(ev=>ev.cited?`${formatEv(ev)}<span>（已引用）</span>`:formatEv(ev));
+    parts.push(`<span>检索命中：</span>${retrievedList.join('、')}`);
   }else if(targets.length){
-    parts.push(`命中：${targets.map(t=>escapeHTML(t)).join('、')}`);
+    parts.push(`<span>检索命中：</span><span data-i18n-data>${escapeHTML(targets.join('、'))}</span>`);
   }else if(typeof hits==='number'&&hits>0){
     parts.push(`命中 ${hits} 条`);
   }
-  if(read?.warning)parts.push(`提示：${escapeHTML(read.warning)}`);
+  if(read?.warning)parts.push(`<span>提示：</span><span data-i18n-data>${escapeHTML(read.warning)}</span>`);
   const markers=[...(readId?[`[[knowledge:${readId}]]`]:[]),...evidences.map(ev=>`[[knowledge:${ev.id}]]`)];
   const artifacts=markers.length?(state.activeRun?.artifacts||[]).filter(a=>a.nodeId===event.nodeId && a.attempt===event.attributes.attempt && markers.some(m=>a.content?.includes(m))):[];
   if(artifacts.length)parts.push('产物已引用 · '+artifacts.map(a=>escapeHTML(a.name)).join('、'));
@@ -572,8 +1018,10 @@ function inspectorNeedsRefresh(host,r){
   }
   const output=host.querySelector('.node-output');
   if(nr.output&&(!output||output.classList.contains('empty')))return true;
-  if(nr.output){const pre=output.querySelector('pre');if(pre&&pre.textContent!==displayNodeOutput(nr.output))return true}
+  if(nr.output){const pre=output.querySelector('pre');if(pre&&(pre.dataset.outputRaw??pre.textContent)!==displayNodeOutput(nr.output))return true}
   if(!nr.output&&output&&!output.classList.contains('empty'))return true;
+  const inspector=host.querySelector('.node-inspector');
+  if(inspector&&(inspector.dataset.kbSig||'')!==nodeKnowledgeSignature(nr))return true;
   const arts=(r.artifacts||[]).filter(a=>a.nodeId===selected);
   if(arts.length!==host.querySelectorAll('.node-artifact-card').length)return true;
   const hasCallout=Boolean(host.querySelector('.approval-callout,.node-decision,.node-error'));
@@ -1231,7 +1679,13 @@ function renderRunDetail(r){
   const runTabs=['overview:概览','trace:实时轨迹','logs:Worker日志','workspace:工作区'];
   if(previewEnabled)runTabs.push('preview:前端预览');
   runTabs.push('eval:智能评测');
-  host.innerHTML=`<div class="run-detail-main"><header class="run-detail-header"><div class="run-detail-topbar"><button class="button ghost small run-back-inline" data-run-back>← 返回运行列表</button><div class="run-breadcrumb"><span>${issueRef}</span><i>›</i><span>${escapeHTML(wf.name)}</span></div>${r.executionContext?.parentRunId?`<button class="button ghost small" data-open-parent-run="${escapeHTML(r.executionContext.parentRunId)}">↑ 返回父 SOP 运行</button>`:''}<div class="run-header-actions">${issueId?`<button class="button primary small" data-open-issue="${escapeHTML(issueId)}">打开需求</button>`:''}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}<button class="button ghost small" data-open-flow>查看流程定义</button>${['queued','running','waiting'].includes(r.status)?'<button class="button danger-outline small" data-cancel-run>取消运行</button>':'<button class="button danger-outline small" data-delete-run>删除记录</button>'}</div></div><div class="run-header-main"><div><h2>${escapeHTML(ctx.issue?.title||wf.name)}</h2><p>${escapeHTML(r.input||'无运行输入')}</p></div><div class="run-status-wrap">${workspaceRestoreButtonHTML()}<span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span>${r.status==='failed'&&!gongfengIssueClosed(ctx.issue)?'<button class="button primary small" data-resume-run>↻ 重试运行</button>':''}${canManuallyPassFailedNode(r)&&!gongfengIssueClosed(ctx.issue)?`<button class="button ghost small" data-pass-node="${escapeHTML(r.id)}" data-node="${escapeHTML(failedNodeId(r))}">手动通过</button>`:''}</div></div><div class="run-header-meta"><span class="run-meta-chip run-id-chip" title="${escapeHTML(r.id)}">Run <code>${escapeHTML(r.id.slice(-12))}</code><button type="button" class="run-id-copy" data-copy-run title="复制完整 Run ID" aria-label="复制 Run ID"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5H5.5"/></svg></button></span>${runModeChipHTML(r,wf)}${runExecutionChipHTML(r)}<span class="run-meta-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>启动于 ${new Date(r.createdAt).toLocaleString()}</span><span class="run-meta-chip" title="${escapeHTML(runTimingTitle(r))}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>执行 ${runElapsed(r)}${runWallNote(r)}</span></div></header><div class="run-section-label"><b>执行详情</b><div class="run-section-label-actions"><button class="button ghost small" data-export-logs title="下载本次运行全部节点的 Worker 日志">导出全部日志</button><div class="run-tabs" role="tablist">${runTabs.map(t=>{const[k,label]=t.split(':');return `<button class="run-tab ${runDetailTab===k?'active':''}" data-run-tab="${k}">${label}</button>`}).join('')}</div></div></div><div class="run-pane" data-run-pane="overview" ${runDetailTab==='overview'?'':'hidden'}><section class="run-context-grid">${runProgressCellHTML(r,wf,progress,graphNodes)}<div data-run-usage>${liveUsageHTML(r)}</div><div><span>交付物</span><b>${(r.artifacts||[]).length} 个不可变快照</b><small>按节点和尝试次数保留版本</small></div></section></section>${alignPanelHTML}${runIsGroupMode(r)?`<details class="run-sop-snapshot"><summary><div><b>已冷冻 SOP 快照</b><span>历史协作 · ${graphNodes.length} 个节点可展开审计</span></div></summary>`:''}<section class="run-graph-section"><div class="section-heading"><div><h3>节点执行拓扑</h3><span>点击节点查看该节点的输出、产物和执行事件</span></div><div class="graph-legend"><span><i class="succeeded"></i>完成</span><span><i class="running"></i>运行中</span><span><i class="waiting_approval"></i>待审批</span><span><i></i>未开始</span></div></div><div class="run-graph">${graphNodes.map((n,index)=>{const gv=graphNodeView(r,n.id),meta=nodeMeta(n),arts=(r.artifacts||[]).filter(a=>a.nodeId===n.id).length;return `${index?'<span class="graph-arrow">→</span>':''}<button class="graph-node ${gv.cls} ${state.selectedRunNode===n.id?'selected':''}" data-run-node="${escapeHTML(n.id)}"><span class="node-icon ${meta.kind}">${runNodeIcon(meta.kind)}</span><div><b>${escapeHTML(n.name)}</b><small>${escapeHTML(gv.text)}</small></div>${arts?`<em>${arts} 产物</em>`:''}</button>`}).join('')}</div></section><div class="node-drilldown"><section class="node-inspector"><div class="section-heading"><div class="node-inspector-title"><h3>${escapeHTML(selected?.name||'节点详情')}</h3><span class="node-activity-inline${inspectorRunning?' is-running':''}" ${nr.activity?'':'hidden'}>当前活动：<b>${escapeHTML(nr.activity||'')}</b></span><span class="node-inspector-model">${escapeHTML(nr.provider||'未分配')}${nr.model?` · ${escapeHTML(nr.model)}`:''}</span></div><span class="status node-inspector-status ${nr.status||'pending'}${inspectorRunning?' is-running':''}">${statusText(nr.status)||'待执行'}</span></div><div class="node-facts"><div><span>执行次数</span><b>${nr.attempt||0}</b></div><div><span>返工</span><b>${nr.reworkCount||0}</b></div><div><span>Token</span><b>${formatTokens(nr.usage?.totalTokens)}</b></div><div><span>工具调用</span><b>${nr.toolCalls||0}</b></div></div>${childSOPPanelHTML(r,selected?.id)}${gateResultCardHTML(nr)}${canRerunFromHere(r,selected?.id)?`<div class="node-rerun-row"><button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(selected.id)}">从这里重跑</button><small>保留上游结果，从本节点及下游重跑</small></div>`:''}${nr.output?`<div class="node-output"><div><b>节点输出</b><button data-copy-output>复制</button></div><pre>${escapeHTML(displayNodeOutput(nr.output))}</pre></div>`:'<div class="node-output empty"><b>节点输出</b><p>节点完成后，结构化输出会显示在这里。</p></div>'}<div class="runtime-details"><span>Sandbox <code>${escapeHTML(nr.sandboxId||'—')}</code></span><span>Session <code>${escapeHTML(nr.sessionId||'—')}</code></span></div></section><section class="node-artifacts"><div class="section-heading"><div><h3>节点交付物</h3><span>${nodeArtifacts.length} 个版本</span></div></div><div class="node-artifact-list">${nodeArtifacts.map(a=>`<button class="node-artifact-card" data-artifact="${escapeHTML(a.id)}"><span class="artifact-file-icon">${a.mediaType==='application/json'?'{}':'MD'}</span><div><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB · ${(a.sha256||'').slice(0,10)}</small></div><i>预览 ›</i></button>`).join('')||'<div class="empty-inline"><span>◇</span><p>此节点还没有登记交付物</p></div>'}</div></section></div>${runIsGroupMode(r)?'</details>':''}</div><div class="run-pane" data-run-pane="trace" ${runDetailTab==='trace'?'':'hidden'}><section class="trace-section"><div class="section-heading"><div><h3>${telemetrySectionTitle(telAdapter)}</h3><span>${telPage?`${telemetry.length} 条已加载`:'加载最近 100 条'}</span></div><div class="trace-heading-actions">${telemetrySourceTabs(telAdapter,'data-tel-adapter')}${telPage?.hasMore?`<button class="button ghost small" data-tel-more>加载更早的 100 条</button>`:''}</div></div><div class="telemetry-feed">${telPage?([...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`):'<div class="empty-inline"><p>正在加载轨迹…</p></div>'}</div></section></div><div class="run-pane" data-run-pane="logs" ${runDetailTab==='logs'?'':'hidden'}><section class="worker-log-section"><div class="section-heading"><div><h3>Worker 日志</h3><span>${logPage?`${visibleWorkerLogs(logPage.items).length} 条调用`:(logBusy?'正在接收…':'实时加载最近调用')}</span></div><div class="worker-log-heading-actions">${logPage?.hasMore?`<button class="button ghost small" data-logs-more>加载更早的 100 条</button>`:''}</div></div><div class="worker-log-feed">${logPage?(visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>'):'<div class="empty-inline"><p>正在加载 Worker 实时日志…</p></div>'}</div></section></div></div>`;  host.querySelector('.run-detail-main')?.insertAdjacentHTML('beforeend',`<div class="run-pane" data-run-pane="workspace" ${runDetailTab==='workspace'?'':'hidden'}>${workspacePaneHTML(r)}</div>${previewEnabled?`<div class="run-pane" data-run-pane="preview" ${runDetailTab==='preview'?'':'hidden'}>${previewPaneHTML(r)}</div>`:''}<div class="run-pane" data-run-pane="eval" ${runDetailTab==='eval'?'':'hidden'}>${runEvalPaneHTML(r)}</div>`);
+  const nodeOutputText=nr.output?displayNodeOutput(nr.output):'';
+  const nodeKBReads=nodeKnowledgeReadsForAttempt(nr);
+  const nodeKBSummary=nodeKBReads.length?summarizeRunKnowledgeReads(nodeKBReads,[nodeOutputText],nodeArtifacts,{live:nr.status==='running'}):null;
+  const nodeOutputHTML=nodeKBReads.length?formatPlainTextWithKnowledgeCitations(nodeOutputText,nodeKBSummary,true):escapeHTML(nodeOutputText);
+  const nodeKBHTML=nodeKnowledgeCardHTML(nr,nodeArtifacts,nodeKBSummary);
+  const nodeKBSig=nodeKnowledgeSignature(nr);
+  host.innerHTML=`<div class="run-detail-main"><header class="run-detail-header"><div class="run-detail-topbar"><button class="button ghost small run-back-inline" data-run-back>← 返回运行列表</button><div class="run-breadcrumb"><span>${issueRef}</span><i>›</i><span>${escapeHTML(wf.name)}</span></div>${r.executionContext?.parentRunId?`<button class="button ghost small" data-open-parent-run="${escapeHTML(r.executionContext.parentRunId)}">↑ 返回父 SOP 运行</button>`:''}<div class="run-header-actions">${issueId?`<button class="button primary small" data-open-issue="${escapeHTML(issueId)}">打开需求</button>`:''}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}<button class="button ghost small" data-open-flow>查看流程定义</button>${['queued','running','waiting'].includes(r.status)?'<button class="button danger-outline small" data-cancel-run>取消运行</button>':'<button class="button danger-outline small" data-delete-run>删除记录</button>'}</div></div><div class="run-header-main"><div><h2>${escapeHTML(ctx.issue?.title||wf.name)}</h2><p>${escapeHTML(r.input||'无运行输入')}</p></div><div class="run-status-wrap">${workspaceRestoreButtonHTML()}<span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span>${r.status==='failed'&&!gongfengIssueClosed(ctx.issue)?'<button class="button primary small" data-resume-run>↻ 重试运行</button>':''}${canManuallyPassFailedNode(r)&&!gongfengIssueClosed(ctx.issue)?`<button class="button ghost small" data-pass-node="${escapeHTML(r.id)}" data-node="${escapeHTML(failedNodeId(r))}">手动通过</button>`:''}</div></div><div class="run-header-meta"><span class="run-meta-chip run-id-chip" title="${escapeHTML(r.id)}">Run <code>${escapeHTML(r.id.slice(-12))}</code><button type="button" class="run-id-copy" data-copy-run title="复制完整 Run ID" aria-label="复制 Run ID"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5H5.5"/></svg></button></span>${runModeChipHTML(r,wf)}${runExecutionChipHTML(r)}<span class="run-meta-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>启动于 ${new Date(r.createdAt).toLocaleString()}</span><span class="run-meta-chip" title="${escapeHTML(runTimingTitle(r))}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>执行 ${runElapsed(r)}${runWallNote(r)}</span></div></header><div class="run-section-label"><b>执行详情</b><div class="run-section-label-actions"><button class="button ghost small" data-export-logs title="下载本次运行全部节点的 Worker 日志">导出全部日志</button><div class="run-tabs" role="tablist">${runTabs.map(t=>{const[k,label]=t.split(':');return `<button class="run-tab ${runDetailTab===k?'active':''}" data-run-tab="${k}">${label}</button>`}).join('')}</div></div></div><div class="run-pane" data-run-pane="overview" ${runDetailTab==='overview'?'':'hidden'}><section class="run-context-grid">${runProgressCellHTML(r,wf,progress,graphNodes)}<div data-run-usage>${liveUsageHTML(r)}</div><div><span>交付物</span><b>${(r.artifacts||[]).length} 个不可变快照</b><small>按节点和尝试次数保留版本</small></div></section></section>${alignPanelHTML}${runIsGroupMode(r)?`<details class="run-sop-snapshot"><summary><div><b>已冷冻 SOP 快照</b><span>历史协作 · ${graphNodes.length} 个节点可展开审计</span></div></summary>`:''}<section class="run-graph-section"><div class="section-heading"><div><h3>节点执行拓扑</h3><span>点击节点查看该节点的输出、产物和执行事件</span></div><div class="graph-legend"><span><i class="succeeded"></i>完成</span><span><i class="running"></i>运行中</span><span><i class="waiting_approval"></i>待审批</span><span><i></i>未开始</span></div></div><div class="run-graph">${graphNodes.map((n,index)=>{const gv=graphNodeView(r,n.id),meta=nodeMeta(n),arts=(r.artifacts||[]).filter(a=>a.nodeId===n.id).length;return `${index?'<span class="graph-arrow">→</span>':''}<button class="graph-node ${gv.cls} ${state.selectedRunNode===n.id?'selected':''}" data-run-node="${escapeHTML(n.id)}"><span class="node-icon ${meta.kind}">${runNodeIcon(meta.kind)}</span><div><b>${escapeHTML(n.name)}</b><small>${escapeHTML(gv.text)}</small></div>${arts?`<em>${arts} 产物</em>`:''}</button>`}).join('')}</div></section><div class="node-drilldown"><section class="node-inspector" data-kb-sig="${escapeHTML(nodeKBSig)}"><div class="section-heading"><div class="node-inspector-title"><h3>${escapeHTML(selected?.name||'节点详情')}</h3><span class="node-activity-inline${inspectorRunning?' is-running':''}" ${nr.activity?'':'hidden'}>当前活动：<b>${escapeHTML(nr.activity||'')}</b></span><span class="node-inspector-model">${escapeHTML(nr.provider||'未分配')}${nr.model?` · ${escapeHTML(nr.model)}`:''}</span></div><span class="status node-inspector-status ${nr.status||'pending'}${inspectorRunning?' is-running':''}">${statusText(nr.status)||'待执行'}</span></div><div class="node-facts"><div><span>执行次数</span><b>${nr.attempt||0}</b></div><div><span>返工</span><b>${nr.reworkCount||0}</b></div><div><span>Token</span><b>${formatTokens(nr.usage?.totalTokens)}</b></div><div><span>工具调用</span><b>${nr.toolCalls||0}</b></div></div>${childSOPPanelHTML(r,selected?.id)}${gateResultCardHTML(nr)}${nodeKBHTML}${canRerunFromHere(r,selected?.id)?`<div class="node-rerun-row"><button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(selected.id)}">从这里重跑</button><small>保留上游结果，从本节点及下游重跑</small></div>`:''}${nr.output?`<div class="node-output"><div><b>节点输出</b><button data-copy-output>复制</button></div><pre data-output-raw="${escapeHTML(nodeOutputText)}">${nodeOutputHTML}</pre></div>`:'<div class="node-output empty"><b>节点输出</b><p>节点完成后，结构化输出会显示在这里。</p></div>'}<div class="runtime-details"><span>Sandbox <code>${escapeHTML(nr.sandboxId||'—')}</code></span><span>Session <code>${escapeHTML(nr.sessionId||'—')}</code></span></div></section><section class="node-artifacts"><div class="section-heading"><div><h3>节点交付物</h3><span>${nodeArtifacts.length} 个版本</span></div></div><div class="node-artifact-list">${nodeArtifacts.map(a=>`<button class="node-artifact-card" data-artifact="${escapeHTML(a.id)}"><span class="artifact-file-icon">${a.mediaType==='application/json'?'{}':'MD'}</span><div><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB · ${(a.sha256||'').slice(0,10)}</small></div><i>预览 ›</i></button>`).join('')||'<div class="empty-inline"><span>◇</span><p>此节点还没有登记交付物</p></div>'}</div></section></div>${runIsGroupMode(r)?'</details>':''}</div><div class="run-pane" data-run-pane="trace" ${runDetailTab==='trace'?'':'hidden'}><section class="trace-section"><div class="section-heading"><div><h3>${telemetrySectionTitle(telAdapter)}</h3><span>${telPage?`${telemetry.length} 条已加载`:'加载最近 100 条'}</span></div><div class="trace-heading-actions">${telemetrySourceTabs(telAdapter,'data-tel-adapter')}${telPage?.hasMore?`<button class="button ghost small" data-tel-more>加载更早的 100 条</button>`:''}</div></div><div class="telemetry-feed">${telPage?([...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`):'<div class="empty-inline"><p>正在加载轨迹…</p></div>'}</div></section></div><div class="run-pane" data-run-pane="logs" ${runDetailTab==='logs'?'':'hidden'}><section class="worker-log-section"><div class="section-heading"><div><h3>Worker 日志</h3><span>${logPage?`${visibleWorkerLogs(logPage.items).length} 条调用`:(logBusy?'正在接收…':'实时加载最近调用')}</span></div><div class="worker-log-heading-actions">${logPage?.hasMore?`<button class="button ghost small" data-logs-more>加载更早的 100 条</button>`:''}</div></div><div class="worker-log-feed">${logPage?(visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>'):'<div class="empty-inline"><p>正在加载 Worker 实时日志…</p></div>'}</div></section></div></div>`;  host.querySelector('.run-detail-main')?.insertAdjacentHTML('beforeend',`<div class="run-pane" data-run-pane="workspace" ${runDetailTab==='workspace'?'':'hidden'}>${workspacePaneHTML(r)}</div>${previewEnabled?`<div class="run-pane" data-run-pane="preview" ${runDetailTab==='preview'?'':'hidden'}>${previewPaneHTML(r)}</div>`:''}<div class="run-pane" data-run-pane="eval" ${runDetailTab==='eval'?'':'hidden'}>${runEvalPaneHTML(r)}</div>`);
   if(keepFrame){const fresh=host.querySelector('iframe[data-vscode-frame]');if(fresh)fresh.replaceWith(existingFrame);}
   if(keepPreview){const fresh=host.querySelector('iframe[data-preview-frame]');if(fresh)fresh.replaceWith(existingPreviewFrame);}
   const headerActions=host.querySelector('.run-header-actions');if(r.status==='running'&&headerActions)headerActions.querySelector('[data-cancel-run]')?.insertAdjacentHTML('beforebegin','<button class="button ghost small" data-pause-run>暂停运行</button>');
@@ -1264,7 +1718,7 @@ function renderRunDetail(r){
   const graph=host.querySelector('.run-graph');if(graph){graph.querySelectorAll('.graph-arrow').forEach(arrow=>arrow.remove());const stages=workflowStages(runIsGroupMode(r)?{...wf,nodes:graphNodes}:wf);graph.classList.add('is-staged');stages.forEach((stage,index)=>{const column=document.createElement('div');column.className='graph-stage'+(stage.length>1?' is-parallel':'');const caption=document.createElement('span');caption.className='graph-stage-label';const captionName=document.createElement('span');captionName.className='graph-stage-name';captionName.textContent=`阶段 ${index+1}${stage.length>1?` · 并行 ${stage.length}`:''}`;caption.append(captionName);const stageTime=stageTimeLabel(r,stage);if(stageTime){const stageTimeEl=document.createElement('em');stageTimeEl.className='graph-stage-time';stageTimeEl.textContent=stageTime;caption.append(stageTimeEl)}column.append(caption);for(const node of stage){const button=graph.querySelector(`[data-run-node="${CSS.escape(node.id)}"]`),parents=(wf.edges||[]).filter(edge=>edge.target===node.id).map(edge=>nodes.find(item=>item.id===edge.source)?.name).filter(Boolean);if(!button)continue;if(parents.length)button.querySelector('small').append(` · 上游 ${parents.join('、')}`);column.append(button)}if(column.children.length>1)graph.append(column)})}
   host.querySelector('[data-run-back]')?.addEventListener('click',()=>showRunList());
   bindRunDetailTabs(r,host);
-  host.querySelectorAll('[data-run-node]').forEach(b=>b.onclick=()=>selectRunNode(b.dataset.runNode));host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.onclick=()=>{if((state.runTelemetryAdapter||'live')===b.dataset.telAdapter)return;state.runTelemetryAdapter=b.dataset.telAdapter;state.runTelemetry=null;renderRunDetail(state.activeRun||r)});host.querySelector('[data-logs-load]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,false));host.querySelector('[data-logs-more]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,true));host.querySelector('[data-tel-load]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,false));host.querySelector('[data-tel-more]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,true));host.querySelector('[data-open-issue]')?.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();openIssueDetail(ev.currentTarget.dataset.openIssue||issueId,'sop')});host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode(state.activeRun||r,b.dataset.rerunFromHere));host.querySelector('[data-copy-run]')?.addEventListener('click',()=>copyText(r.id,'Run ID 已复制'));host.querySelector('[data-export-logs]')?.addEventListener('click',()=>downloadRunLogs(r.id));host.querySelector('[data-copy-output]')?.addEventListener('click',()=>copyText(displayNodeOutput(nr.output),'节点输出已复制'));host.querySelector('[data-open-flow]')?.addEventListener('click',()=>{state.workflow=clone(state.data.workflows.find(w=>w.id===r.workflowId)||wf);state.selectedNode=selected?.id||null;switchView('flow');renderAll()});host.querySelector('[data-cancel-run]')?.addEventListener('click',async ()=>{if(await afConfirm({title:'取消运行确认',message:r.status==='queued'?'确定取消排队？此运行将不会启动，之后可删除记录。':'确定取消这次运行？正在执行的节点会被终止。',confirmText:r.status==='queued'?'取消排队':'确认取消',isDanger:true}))runAction(r.id,'cancel',{})});host.querySelector('[data-delete-run]')?.addEventListener('click',()=>deleteRun(r.id));host.querySelectorAll('[data-resume-run]').forEach(b=>b.addEventListener('click',ev=>resumeRun(b.dataset.resumeRun||r.id,ev.currentTarget)));host.querySelectorAll('[data-pass-node]').forEach(b=>b.onclick=()=>passFailedNode(b.dataset.passNode,b.dataset.node,b));host.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>previewArtifact(state.activeRun||r,b.dataset.artifact));host.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>runAction(r.id,'approve',withHumanContext({nodeId:b.dataset.approve,context:readHumanContext(b)})));host.querySelectorAll('[data-reject]').forEach(b=>b.onclick=async ()=>{const reason=await afPrompt({title:'打回返工',message:'请输入打回原因：',defaultValue:'验证未通过，请修复后重新提交'});if(reason!==null&&reason!==undefined)runAction(r.id,'reject',withHumanContext({nodeId:b.dataset.reject,targetId:b.dataset.target,reason,context:readHumanContext(b)}))});host.querySelectorAll('[data-retry-node]').forEach(b=>b.onclick=()=>retryWaitingNode(r.id,b.dataset.retryNode,b));host.querySelectorAll('[data-decline-retry]').forEach(b=>b.onclick=()=>declineRetry(r.id,b.dataset.declineRetry));host.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
+  host.querySelectorAll('[data-run-node]').forEach(b=>b.onclick=()=>selectRunNode(b.dataset.runNode));host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.onclick=()=>{if((state.runTelemetryAdapter||'live')===b.dataset.telAdapter)return;state.runTelemetryAdapter=b.dataset.telAdapter;state.runTelemetry=null;renderRunDetail(state.activeRun||r)});host.querySelector('[data-logs-load]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,false));host.querySelector('[data-logs-more]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,true));host.querySelector('[data-tel-load]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,false));host.querySelector('[data-tel-more]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,true));host.querySelector('[data-open-issue]')?.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();openIssueDetail(ev.currentTarget.dataset.openIssue||issueId,'sop')});host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode(state.activeRun||r,b.dataset.rerunFromHere));host.querySelector('[data-copy-run]')?.addEventListener('click',()=>copyText(r.id,'Run ID 已复制'));host.querySelector('[data-export-logs]')?.addEventListener('click',()=>downloadRunLogs(r.id));host.querySelector('[data-copy-output]')?.addEventListener('click',()=>copyText(nodeKBSummary?formatRunTextForCopy(displayNodeOutput(nr.output),nodeKBSummary,true):displayNodeOutput(nr.output),'节点输出已复制'));host.querySelector('[data-open-flow]')?.addEventListener('click',()=>{state.workflow=clone(state.data.workflows.find(w=>w.id===r.workflowId)||wf);state.selectedNode=selected?.id||null;switchView('flow');renderAll()});host.querySelector('[data-cancel-run]')?.addEventListener('click',async ()=>{if(await afConfirm({title:'取消运行确认',message:r.status==='queued'?'确定取消排队？此运行将不会启动，之后可删除记录。':'确定取消这次运行？正在执行的节点会被终止。',confirmText:r.status==='queued'?'取消排队':'确认取消',isDanger:true}))runAction(r.id,'cancel',{})});host.querySelector('[data-delete-run]')?.addEventListener('click',()=>deleteRun(r.id));host.querySelectorAll('[data-resume-run]').forEach(b=>b.addEventListener('click',ev=>resumeRun(b.dataset.resumeRun||r.id,ev.currentTarget)));host.querySelectorAll('[data-pass-node]').forEach(b=>b.onclick=()=>passFailedNode(b.dataset.passNode,b.dataset.node,b));host.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>previewArtifact(state.activeRun||r,b.dataset.artifact));host.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>runAction(r.id,'approve',withHumanContext({nodeId:b.dataset.approve,context:readHumanContext(b)})));host.querySelectorAll('[data-reject]').forEach(b=>b.onclick=async ()=>{const reason=await afPrompt({title:'打回返工',message:'请输入打回原因：',defaultValue:'验证未通过，请修复后重新提交'});if(reason!==null&&reason!==undefined)runAction(r.id,'reject',withHumanContext({nodeId:b.dataset.reject,targetId:b.dataset.target,reason,context:readHumanContext(b)}))});host.querySelectorAll('[data-retry-node]').forEach(b=>b.onclick=()=>retryWaitingNode(r.id,b.dataset.retryNode,b));host.querySelectorAll('[data-decline-retry]').forEach(b=>b.onclick=()=>declineRetry(r.id,b.dataset.declineRetry));host.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
   host.querySelector('[data-pause-run]')?.addEventListener('click',()=>pauseRun(r.id));bindPausedResumeActions(host);host.querySelectorAll('[data-refresh-run-sop]').forEach(b=>b.onclick=()=>refreshRunSOP(b.dataset.refreshRunSop));
   host.dataset.runId=r.id;host.dataset.nodeId=state.selectedRunNode||'';host.dataset.controlSignature=runControlSignature(r);
   paintRunActivationProgress(r.id);
@@ -1279,6 +1733,7 @@ function renderRunDetail(r){
   ensureRunPages(pg.runId,pg.nodeId);
   bindChildSOPActions(host,r,pg);
   bindRunEvalPane(r,host);
+  bindKnowledgeCiteInteractions(host);
   if(runDetailTab==='eval')loadRunEval(r.id);
 }
 function fallbackCopyText(value){const ta=document.createElement('textarea');ta.value=value;ta.setAttribute('readonly','');ta.style.cssText='position:fixed;top:-9999px;left:-9999px';document.body.appendChild(ta);ta.select();let ok=false;try{ok=document.execCommand('copy')}catch(e){ok=false}document.body.removeChild(ta);return ok}
@@ -1476,9 +1931,13 @@ async function previewArtifact(run,artifactId){
     if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const content=await res.text();
     const isMd=isMarkdownArtifact(artifact, content);
+    const artReads=artifactKnowledgeReads(run, artifact);
+    const artSummary=artReads.length?summarizeRunKnowledgeReads(artReads,[],[{name:artifact.name,path:artifact.path,content}],{scopeToTexts:true}):null;
     let viewMode=isMd?'preview':'source';
 
     function renderModal(){
+      const previewHTML=artReads.length?renderMarkdownWithKnowledgeCitations(content,artSummary,true):renderMarkdown(content);
+      const footerHTML=artReads.length?artifactKnowledgeFooterHTML(artReads,artSummary):'';
       host.innerHTML=`
         <div class="artifact-preview-head">
           <div class="artifact-preview-head-left">
@@ -1515,9 +1974,11 @@ async function previewArtifact(run,artifactId){
           </div>
         </div>
         <div class="artifact-body">
-          ${viewMode==='preview' ? `<div class="markdown-body">${renderMarkdown(content)}</div>` : `<pre class="artifact-content">${escapeHTML(content)}</pre>`}
+          ${viewMode==='preview' ? `<div class="markdown-body">${previewHTML}</div>${footerHTML}` : `<pre class="artifact-content">${escapeHTML(content)}</pre>`}
         </div>
       `;
+
+      bindKnowledgeCiteInteractions(host);
 
       host.querySelectorAll('.artifact-mode-btn').forEach(btn=>{
         btn.onclick=()=>{
@@ -1526,7 +1987,7 @@ async function previewArtifact(run,artifactId){
         };
       });
 
-      host.querySelector('[data-copy-artifact]').onclick=()=>copyText(content, '产物内容已复制到剪贴板');
+      host.querySelector('[data-copy-artifact]').onclick=()=>copyText(viewMode==='preview'&&isMd&&artReads.length?formatRunTextForCopy(content,artSummary,true):content, '产物内容已复制到剪贴板');
 
       host.querySelector('[data-download-artifact]').onclick=()=>{
         const blob=new Blob([content], {type: artifact.mediaType || 'text/plain'});

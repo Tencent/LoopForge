@@ -167,6 +167,16 @@ func (e *Engine) resolveNodeAssets(ctx context.Context, agent domain.AgentDefini
 	if nr := run.Nodes[node.ID]; nr != nil {
 		attempt = nr.Attempt
 	}
+	if agent.KnowledgeBase && !selected[domain.KnowledgeMCPServerID] && run.ID != "" && node.ID != "" {
+		if s, ok := e.knowledgeMCPServer(knowledge.ProxyClaims{ProjectID: project, UserID: uid, AgentID: agent.ID, RunID: run.ID, NodeID: node.ID, Attempt: attempt}); ok {
+			for i, srv := range bundle.MCPServers {
+				if srv.ID == domain.KnowledgeMCPServerID {
+					bundle.MCPServers[i] = s
+					break
+				}
+			}
+		}
+	}
 	var attached []domain.MCPServerDefinition
 	for _, ref := range node.KnowledgeRefs {
 		s, ok := e.knowledgeMCPServer(knowledge.ProxyClaims{ProjectID: project, UserID: uid, AgentID: agent.ID, RunID: run.ID, NodeID: node.ID, Attempt: attempt, Ref: &ref})

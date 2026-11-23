@@ -13,13 +13,12 @@ const usageRuleContent = `# 知识库使用规范
 本角色已接入团队知识库（MCP：` + domain.KnowledgeMCPServerID + `，只读）。
 
 ## 先查再做
-- 动手前先用 kb_search 检索与任务相关的已有知识：排障手册、业务规范、历史方案、接口约定。
-- 命中后用 kb_fetch 按 source + path + 行号读取原文，不要只凭摘要下结论。
-- kb_list_sources 可查看当前项目可用的知识库来源；检索默认覆盖全部已授权来源。
+- 动手前先按可用工具检索与任务相关的已有知识：WeKnora 连接使用 search_knowledge / read_document / list_knowledge_bases，LightCloud 连接使用 kb_search / kb_fetch / kb_list_sources。
+- 命中后务必读取原文后再下结论，不要只凭摘要臆断。
 - 结果 degraded=true 表示语义检索降级为词法检索，可换关键词或更短的词再搜一次。
 
 ## 引用出处
-- 采用知识库内容时，在产物中附上结果里的 citation（形如 source@commit:path#L10-L20）。
+- 节点输出或交付产物采用了知识库内容时，必须在引用处紧跟输出工具返回中的 [[knowledge:<id>]] 标记（界面会自动渲染为数字角标）；严禁将标记放入反引号或代码块中，严禁加空格或合并多个 ID。
 - 知识库没有覆盖的内容要明确说明"知识库未收录"，不要编造出处。
 
 ## 沉淀新知识

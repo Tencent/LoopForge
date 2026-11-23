@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"agentflow/internal/apperr"
@@ -52,6 +53,16 @@ type Upstream interface {
 	WriteDocument(ctx context.Context, source, path, content string) (WriteResult, error)
 }
 
+type kbNamesCacheEntry struct {
+	names     map[string]string
+	expiresAt time.Time
+}
+
+type docMetaCacheEntry struct {
+	doc       WeKnoraDocument
+	expiresAt time.Time
+}
+
 // Service holds the 知识库 business rules: settings validation, source
 // scoping, and the review queue that writes distilled knowledge upstream.
 type Service struct {
@@ -60,6 +71,93 @@ type Service struct {
 	now          func() time.Time
 	newID        func() string
 	capabilities *capabilityCache
+	kbNamesMu    sync.Mutex
+	kbNames      map[string]kbNamesCacheEntry
+	docMetaMu    sync.Mutex
+	docMeta      map[string]docMetaCacheEntry
+}
+
+func (s *Service) invalidateMetadataCache() {
+	if s == nil {
+		return
+	}
+	s.kbNamesMu.Lock()
+	s.kbNames = nil
+	s.kbNamesMu.Unlock()
+	s.docMetaMu.Lock()
+	s.docMeta = nil
+	s.docMetaMu.Unlock()
+}
+
+func (s *Service) weKnoraKBNames(ctx context.Context, conn domain.KnowledgeConnection, wc *WeKnoraClient) map[string]string {
+	names, _ := s.weKnoraKBNamesDetailed(ctx, conn, wc)
+	return names
+}
+
+func (s *Service) weKnoraKBNamesDetailed(ctx context.Context, conn domain.KnowledgeConnection, wc *WeKnoraClient) (map[string]string, bool) {
+	if s == nil || wc == nil {
+		return nil, false
+	}
+	key := capabilityFingerprint(conn)
+	now := s.now()
+	s.kbNamesMu.Lock()
+	if s.kbNames != nil {
+		if entry, ok := s.kbNames[key]; ok && now.Before(entry.expiresAt) {
+			s.kbNamesMu.Unlock()
+			return entry.names, true
+		}
+	}
+	s.kbNamesMu.Unlock()
+
+	kbs, err := wc.ListKnowledgeBases(ctx)
+	if err != nil {
+		return nil, false
+	}
+	names := make(map[string]string, len(kbs))
+	for _, kb := range kbs {
+		if id := strings.TrimSpace(kb.ID); id != "" {
+			names[id] = strings.TrimSpace(kb.Name)
+		}
+	}
+	s.kbNamesMu.Lock()
+	if s.kbNames == nil || len(s.kbNames) >= 64 {
+		s.kbNames = make(map[string]kbNamesCacheEntry)
+	}
+	s.kbNames[key] = kbNamesCacheEntry{names: names, expiresAt: now.Add(60 * time.Second)}
+	s.kbNamesMu.Unlock()
+	return names, true
+}
+
+func (s *Service) weKnoraDocMeta(ctx context.Context, conn domain.KnowledgeConnection, wc *WeKnoraClient, rawDocID string) (WeKnoraDocument, error) {
+	if wc == nil {
+		return WeKnoraDocument{}, apperr.New(apperr.Unavailable, "当前连接不支持读取文档元信息")
+	}
+	rawDocID = strings.TrimSpace(rawDocID)
+	key := capabilityFingerprint(conn) + "|" + rawDocID
+	now := s.now()
+	if s != nil {
+		s.docMetaMu.Lock()
+		if s.docMeta != nil {
+			if entry, ok := s.docMeta[key]; ok && now.Before(entry.expiresAt) {
+				s.docMetaMu.Unlock()
+				return entry.doc, nil
+			}
+		}
+		s.docMetaMu.Unlock()
+	}
+	doc, err := wc.GetKnowledge(ctx, rawDocID)
+	if err != nil {
+		return WeKnoraDocument{}, err
+	}
+	if s != nil {
+		s.docMetaMu.Lock()
+		if s.docMeta == nil || len(s.docMeta) >= 256 {
+			s.docMeta = make(map[string]docMetaCacheEntry)
+		}
+		s.docMeta[key] = docMetaCacheEntry{doc: doc, expiresAt: now.Add(60 * time.Second)}
+		s.docMetaMu.Unlock()
+	}
+	return doc, nil
 }
 
 func NewService(store Store, newID func() string) *Service {
@@ -135,6 +233,7 @@ func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.Know
 		return current, err
 	}
 	s.invalidateChangedConnectionCapabilities(before, next.Connections)
+	s.invalidateMetadataCache()
 	return s.store.KnowledgeSettings(), nil
 }
 
@@ -772,6 +871,7 @@ func (s *Service) CreateWeKnoraKB(ctx context.Context, projectID string, input W
 		return weKnoraKB{}, s.managementError(conn, domain.CapKBManage, "创建知识库", err)
 	}
 	kb.ID = EncodeScopedSourceID(settings, conn.ID, kb.ID)
+	s.invalidateMetadataCache()
 	if err := s.authorizeCreatedKB(projectID, kb.ID); err != nil {
 		// The upstream create already succeeded; report a partial failure with
 		// the new id so the caller can grant access instead of retrying blindly.
@@ -848,6 +948,7 @@ func (s *Service) UpdateWeKnoraKB(ctx context.Context, projectID, connectionID, 
 		return weKnoraKB{}, s.managementError(conn, domain.CapKBManage, "更新知识库", err)
 	}
 	kb.ID = EncodeScopedSourceID(settings, conn.ID, kb.ID)
+	s.invalidateMetadataCache()
 	return kb, nil
 }
 
@@ -867,6 +968,7 @@ func (s *Service) PatchWeKnoraKB(ctx context.Context, projectID, connectionID, k
 		return weKnoraKB{}, s.managementError(conn, domain.CapKBManage, "更新知识库", err)
 	}
 	kb.ID = EncodeScopedSourceID(settings, conn.ID, kb.ID)
+	s.invalidateMetadataCache()
 	return kb, nil
 }
 
@@ -883,6 +985,7 @@ func (s *Service) DeleteWeKnoraKB(ctx context.Context, projectID, connectionID, 
 	if err := wc.DeleteKnowledgeBase(ctx, rawKBID); err != nil {
 		return s.managementError(conn, domain.CapKBManage, "删除知识库", err)
 	}
+	s.invalidateMetadataCache()
 	scopedID := EncodeScopedSourceID(settings, conn.ID, rawKBID)
 	if err := s.pruneSourceAllowlists(scopedID); err != nil {
 		// The upstream delete already happened; surface the stale local grant
@@ -943,6 +1046,7 @@ func (s *Service) CreateWeKnoraURLDoc(ctx context.Context, projectID, connection
 	if err != nil {
 		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "URL 导入", err)
 	}
+	s.invalidateMetadataCache()
 	return scopeWeKnoraDoc(settings, conn.ID, doc), nil
 }
 
@@ -966,6 +1070,7 @@ func (s *Service) CreateWeKnoraManualDoc(ctx context.Context, projectID, connect
 	if err != nil {
 		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "创建文档", err)
 	}
+	s.invalidateMetadataCache()
 	return scopeWeKnoraDoc(settings, conn.ID, doc), nil
 }
 
@@ -1018,6 +1123,7 @@ func (s *Service) UpdateWeKnoraManualDoc(ctx context.Context, projectID, connect
 	if err != nil {
 		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "更新文档", err)
 	}
+	s.invalidateMetadataCache()
 	return scopeWeKnoraDoc(settings, conn.ID, doc), nil
 }
 
@@ -1076,6 +1182,7 @@ func (s *Service) DeleteWeKnoraDoc(ctx context.Context, projectID, connectionID,
 	if err := wc.DeleteDocument(ctx, rawDocID); err != nil {
 		return s.managementError(conn, domain.CapDocWrite, "删除文档", err)
 	}
+	s.invalidateMetadataCache()
 	return nil
 }
 

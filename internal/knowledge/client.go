@@ -43,16 +43,18 @@ type Source struct {
 }
 
 type SearchHit struct {
-	Source    string  `json:"source"`
-	Commit    string  `json:"commit"`
-	Path      string  `json:"path"`
-	Title     string  `json:"title,omitempty"`
-	Heading   string  `json:"heading,omitempty"`
-	StartLine int     `json:"start_line"`
-	EndLine   int     `json:"end_line"`
-	Snippet   string  `json:"snippet"`
-	Score     float64 `json:"score"`
-	Citation  string  `json:"citation"`
+	Source     string  `json:"source"`
+	SourceName string  `json:"source_name,omitempty"`
+	Commit     string  `json:"commit"`
+	Path       string  `json:"path"`
+	Title      string  `json:"title,omitempty"`
+	Heading    string  `json:"heading,omitempty"`
+	ChunkIndex *int    `json:"chunk_index,omitempty"`
+	StartLine  int     `json:"start_line"`
+	EndLine    int     `json:"end_line"`
+	Snippet    string  `json:"snippet"`
+	Score      float64 `json:"score"`
+	Citation   string  `json:"citation"`
 }
 
 type SearchResult struct {

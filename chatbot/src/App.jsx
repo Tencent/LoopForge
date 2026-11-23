@@ -40,6 +40,11 @@ import {
   ArtifactPreview,
   ImageLightbox,
 } from "./RichContent";
+import KnowledgeSources from "./KnowledgeSources";
+import {
+  buildKnowledgeSummary,
+  formatTextForCopy,
+} from "./knowledge-citations.js";
 import { DraftCard } from "./SidePanel";
 import ArtifactPanel from "./ArtifactPanel";
 import { useWorkspaceChanges } from "./useWorkspaceChanges";
@@ -207,7 +212,17 @@ function MessageTime({ messages, index }) {
 function copiedReply(message, generation, live) {
   const steps = activityForReply(message, generation, live);
   const text = parseReply(message).message;
-  return hasTextSegments(steps) ? finalReply(text, steps) : text;
+  const reply = hasTextSegments(steps) ? finalReply(text, steps) : text;
+  if (message?.knowledgeReads?.length > 0) {
+    const narrationTexts = steps
+      .filter((s) => s.kind === "text" && s.text)
+      .map((s) => s.text);
+    return formatTextForCopy(reply, message.knowledgeReads, [
+      ...narrationTexts,
+      reply,
+    ]);
+  }
+  return reply;
 }
 function ReplyHeading({ message, steps }) {
   return (
@@ -226,6 +241,30 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
   const answer = hasTextSegments(steps)
     ? finalReply(reply.message, steps)
     : message;
+  const answerText = typeof answer === "string" ? answer : visibleText(answer);
+  const hasReads =
+    Array.isArray(message.knowledgeReads) && message.knowledgeReads.length > 0;
+  const knowledgeSummary = useMemo(() => {
+    if (!hasReads) return null;
+    const narrationTexts = steps
+      .filter((s) => s.kind === "text" && s.text)
+      .map((s) => s.text);
+    return buildKnowledgeSummary(message.knowledgeReads, [
+      ...narrationTexts,
+      answerText,
+    ]);
+  }, [hasReads, message.knowledgeReads, steps, answerText]);
+  const [highlightedCite, setHighlightedCite] = useState(null);
+  const sourcesRef = useRef(null);
+  const highlightTimer = useRef(null);
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
+  const handleCitationClick = useCallback((citeIndex) => {
+    setHighlightedCite(citeIndex);
+    window.clearTimeout(highlightTimer.current);
+    highlightTimer.current = window.setTimeout(() => setHighlightedCite(null), 2000);
+    const row = sourcesRef.current?.querySelector?.(`[data-cite-index="${citeIndex}"]`);
+    row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, []);
   return (
     <>
       {hasTextSegments(steps) ? (
@@ -233,14 +272,30 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
           steps={steps}
           startedAt={message.startedAt}
           finishedAt={message.createdAt}
+          knowledgeReads={message.knowledgeReads}
+          knowledgeSummary={knowledgeSummary}
+          onCitationClick={handleCitationClick}
         />
       ) : (
         <ReplyHeading message={message} steps={steps} />
       )}
       <div className="message-body">
-        <RichContent message={answer} assets={assets} projectId={projectId} />
+        <RichContent
+          message={answer}
+          assets={assets}
+          projectId={projectId}
+          knowledgeReads={message.knowledgeReads}
+          knowledgeSummary={knowledgeSummary}
+          onCitationClick={handleCitationClick}
+        />
       </div>
-      {message.knowledgeReads?.length > 0 && <details className="knowledge-reads"><summary>知识库调用 · {message.knowledgeReads.length}</summary>{message.knowledgeReads.map(read=>{const citedEvs=(read.evidences||[]).filter(ev=>ev.cited);const evText=citedEvs.length?`引用：${citedEvs.map(ev=>ev.title||ev.documentId||ev.sourceId||ev.id).join("、")}`:(read.targets?.length?`命中：${read.targets.join("、")}`:"");return <p key={read.id}>{[read.serverId,read.query?`${read.tool} ("${read.query}")`:read.tool,evText,read.status,read.cited?"回答已引用":"",read.warning].filter(Boolean).join(" · ")}</p>;})}</details>}
+      <KnowledgeSources
+        knowledgeReads={message.knowledgeReads}
+        text={answerText}
+        summary={knowledgeSummary}
+        highlightedIndex={highlightedCite}
+        containerRef={sourcesRef}
+      />
       {message.failure && message.generationId && !local ? (
         <GenerationDiagnostics sessionId={sessionId} generationId={message.generationId} failure={message.failure} onCLIInstall={onCLIInstall} readOnly={readOnly} />
       ) : message.unfinished ? (
@@ -251,7 +306,7 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
     </>
   );
 }
-function LiveMessage({ live, generation, finished = false, local = false, readOnly = false }) {
+function LiveMessage({ live, generation, finished = false, local = false, readOnly = false, hasKnowledgeRefs = false }) {
   const steps = live.activity || [];
   const textual = hasTextSegments(steps);
   // A streamed paragraph followed by tool calls stays in the process above;
@@ -275,6 +330,8 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
           finishedAt={generation?.updatedAt}
           live={!finished}
           interrupted={finished}
+          citationsEnabled={hasKnowledgeRefs}
+          streaming={!finished}
         />
       ) : (
         <div className="reply-heading">
@@ -284,10 +341,20 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
             finishedAt={generation?.updatedAt}
             live={!finished}
             interrupted={finished}
+            citationProps={{
+              citationsEnabled: hasKnowledgeRefs,
+              streaming: !finished,
+            }}
           />
         </div>
       )}
-      {answer ? <RichContent message={answer} /> : null}
+      {answer ? (
+        <RichContent
+          message={answer}
+          citationsEnabled={hasKnowledgeRefs}
+          streaming={!finished}
+        />
+      ) : null}
       {!finished && !local && !readOnly && generation?.id ? <GenerationDiagnostics sessionId={generation.sessionId} generationId={generation.id} compact /> : null}
       {finished ? (
         <p className="reply-stopped">
@@ -1731,7 +1798,7 @@ export default function App() {
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
-                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} />
+                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} hasKnowledgeRefs={Boolean(chat.knowledgeRefs?.length)} />
               ) : chat.generation &&
                 !generationStored(messages, chat.generation) &&
                 !["completed", "running"].includes(chat.generation.status) &&
@@ -1743,6 +1810,7 @@ export default function App() {
                   finished
                   local={chat.local}
                   readOnly={chat.readOnly}
+                  hasKnowledgeRefs={Boolean(chat.knowledgeRefs?.length)}
                 />
               ) : null}
               <NativeApprovalPanel chat={chat} onChange={() => {

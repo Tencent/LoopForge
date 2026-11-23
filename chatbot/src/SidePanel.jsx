@@ -539,7 +539,11 @@ export default function SidePanel({
             <button className="back-link" onClick={() => setSelected(null)}>
               ← 所有产物
             </button>
-            <ArtifactPreview artifact={selected} />
+            <ArtifactPreview
+              artifact={selected}
+              knowledgeReads={selected.knowledgeReads || []}
+              attempt={selected.attempt}
+            />
             {selected.draft ? (
               <DraftCard
                 artifact={selected}

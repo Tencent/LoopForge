@@ -356,7 +356,26 @@ func (s *Service) ExecuteSearch(ctx context.Context, projectID, query string, so
 		cctx, cancel := context.WithTimeout(ctx, CallTimeout)
 		if conn.EffectiveProvider() == domain.KnowledgeProviderWeKnora {
 			if wc, ok := client.(*WeKnoraClient); ok {
+				var kbNames map[string]string
+				if len(rawIDs) == 0 {
+					if names, gotNames := s.weKnoraKBNamesDetailed(cctx, conn, wc); gotNames {
+						kbNames = names
+						if len(names) == 0 {
+							cancel()
+							succeededConns++
+							continue
+						}
+						rawIDs = make([]string, 0, len(names))
+						for id := range names {
+							rawIDs = append(rawIDs, id)
+						}
+						sort.Strings(rawIDs)
+					}
+				}
 				hits, kbErrs, searchErr := wc.HybridSearchDetailed(cctx, query, rawIDs, limit)
+				if kbNames == nil && searchErr == nil && len(hits) > 0 {
+					kbNames = s.weKnoraKBNames(cctx, conn, wc)
+				}
 				cancel()
 				if searchErr != nil {
 					partialErrors = append(partialErrors, fmt.Sprintf("连接 %s: %v", connDisplayName(conn), searchErr))
@@ -372,15 +391,18 @@ func (s *Service) ExecuteSearch(ctx context.Context, projectID, query string, so
 					scopedKB := EncodeScopedSourceID(settings, conn.ID, h.SourceKBID)
 					scopedDoc := EncodeScopedSourceID(settings, conn.ID, h.KnowledgeID)
 					title := firstNonEmpty(h.KnowledgeTitle, h.KnowledgeFilename, h.KnowledgeID)
+					ci := h.ChunkIndex
 					merged = append(merged, SearchHit{
-						Source:    scopedKB,
-						Path:      scopedDoc,
-						Title:     title,
-						StartLine: h.StartAt,
-						EndLine:   h.EndAt,
-						Snippet:   h.Content,
-						Score:     h.Score,
-						Citation:  fmt.Sprintf("%s#%s (chunk %d)", scopedKB, scopedDoc, h.ChunkIndex),
+						Source:     scopedKB,
+						SourceName: kbNames[h.SourceKBID],
+						Path:       scopedDoc,
+						Title:      title,
+						ChunkIndex: &ci,
+						StartLine:  h.StartAt,
+						EndLine:    h.EndAt,
+						Snippet:    h.Content,
+						Score:      h.Score,
+						Citation:   fmt.Sprintf("%s#%s (chunk %d)", scopedKB, scopedDoc, h.ChunkIndex),
 					})
 				}
 				continue
@@ -624,15 +646,19 @@ func (s *Service) ExecuteReadDocument(ctx context.Context, projectID, docID, sou
 
 	cctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
+	var docMeta WeKnoraDocument
 	if len(allowed) > 0 {
-		kbID, err := wc.GetDocumentKBID(cctx, rawDocID)
+		doc, err := s.weKnoraDocMeta(cctx, conn, wc, rawDocID)
 		if err != nil {
 			return ExecutionResult{Status: domain.KnowledgeStatusUnavailable}, err
 		}
-		scopedKB := EncodeScopedSourceID(settings, conn.ID, kbID)
+		docMeta = doc
+		scopedKB := EncodeScopedSourceID(settings, conn.ID, strings.TrimSpace(doc.KnowledgeBaseID))
 		if !SourceAllowed(allowed, scopedKB) {
 			return ExecutionResult{Status: domain.KnowledgeStatusUnavailable}, fmt.Errorf("文档 %q 所属知识库 %q 不在当前项目的授权范围", docID, scopedKB)
 		}
+	} else if doc, metaErr := s.weKnoraDocMeta(cctx, conn, wc, rawDocID); metaErr == nil {
+		docMeta = doc
 	}
 
 	if offset < 0 {
@@ -692,13 +718,25 @@ func (s *Service) ExecuteReadDocument(ctx context.Context, projectID, docID, sou
 	if len(collected) == 0 {
 		status = domain.KnowledgeStatusEmpty
 	}
-	raw, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"knowledge_id": docID,
 		"total":        total,
 		"offset":       offset,
 		"limit":        limit,
 		"chunks":       collected,
-	})
+	}
+	if title := firstNonEmpty(docMeta.Title, docMeta.FileName); title != "" {
+		payload["title"] = title
+	}
+	if rawKB := strings.TrimSpace(docMeta.KnowledgeBaseID); rawKB != "" {
+		payload["knowledge_base_id"] = EncodeScopedSourceID(settings, conn.ID, rawKB)
+		if len(collected) > 0 {
+			if kbNames := s.weKnoraKBNames(cctx, conn, wc); kbNames[rawKB] != "" {
+				payload["knowledge_base_name"] = kbNames[rawKB]
+			}
+		}
+	}
+	raw, err := json.Marshal(payload)
 	return ExecutionResult{
 		Status:    status,
 		Text:      string(raw),

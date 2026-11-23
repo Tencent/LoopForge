@@ -271,11 +271,17 @@ function ActivityGroup({ block, live, interrupted, expandAll }) {
     </div>
   );
 }
-function Narration({ blocks, live, interrupted, expandAll = false }) {
+function Narration({
+  blocks,
+  live,
+  interrupted,
+  expandAll = false,
+  citationProps = null,
+}) {
   return blocks.map((block) =>
     block.type === "text" ? (
       <div key={block.id} className="reply-trace-text">
-        <RichContent message={block.text} />
+        <RichContent message={block.text} {...citationProps} />
       </div>
     ) : (
       <ActivityGroup
@@ -294,6 +300,11 @@ export function ReplyTimeline({
   finishedAt,
   live = false,
   interrupted = false,
+  knowledgeReads = null,
+  knowledgeSummary = null,
+  citationsEnabled = false,
+  streaming = false,
+  onCitationClick = null,
 }) {
   return (
     <div className="reply-heading">
@@ -304,6 +315,13 @@ export function ReplyTimeline({
         live={live}
         interrupted={interrupted}
         narration={traceBlocks(steps, { live })}
+        citationProps={{
+          knowledgeReads,
+          knowledgeSummary,
+          citationsEnabled,
+          streaming,
+          onCitationClick,
+        }}
       />
     </div>
   );
@@ -320,6 +338,7 @@ export default function ActivityTrace({
   live = false,
   interrupted = false,
   narration = null,
+  citationProps = null,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(Date.now);
@@ -352,7 +371,12 @@ export default function ActivityTrace({
         {divider}
         <div className="execution-body" aria-label="执行过程">
           {blocks.length ? (
-            <Narration blocks={blocks} live interrupted={interrupted} />
+            <Narration
+              blocks={blocks}
+              live
+              interrupted={interrupted}
+              citationProps={citationProps}
+            />
           ) : (
             <span className="execution-current" data-kind="status">
               <LoaderCircle size={15} strokeWidth={1.7} aria-hidden="true" />
@@ -388,6 +412,7 @@ export default function ActivityTrace({
               live={false}
               interrupted={interrupted}
               expandAll
+              citationProps={citationProps}
             />
           ) : (
             <p className="execution-empty">这条历史回复未保存执行过程。</p>

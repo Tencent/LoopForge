@@ -107,7 +107,10 @@ func callKnowledgeReferenceWithOrigin(ctx context.Context, d *deps, project stri
 			if callErr != nil {
 				return knowledge.ExecutionResult{Status: domain.KnowledgeStatusUnavailable}, knowledgeCallError(callErr)
 			}
-			trimmed := truncateRunes(strings.TrimSpace(text), 32000)
+			trimmed := strings.TrimSpace(text)
+			if origin == domain.KnowledgeCallOriginCatalogProbe {
+				trimmed = truncateRunes(trimmed, 32000)
+			}
 			_, hits := extractKnowledgeResultMeta(trimmed)
 			return knowledge.ExecutionResult{Text: trimmed, Hits: hits}, nil
 		}
@@ -115,7 +118,11 @@ func callKnowledgeReferenceWithOrigin(ctx context.Context, d *deps, project stri
 		if !settings.Ready() {
 			return knowledge.ExecutionResult{Status: domain.KnowledgeStatusUnavailable}, knowledge.ErrNotConfigured
 		}
-		res, execErr := knowledge.NewService(d.repo, nil).ExecuteTool(ctx, project, name, args, knowledge.ExecuteOptions{ScopeOverride: ref.Sources})
+		svc := d.knowledgeSvc
+		if svc == nil {
+			svc = knowledge.NewService(d.repo, nil)
+		}
+		res, execErr := svc.ExecuteTool(ctx, project, name, args, knowledge.ExecuteOptions{ScopeOverride: ref.Sources})
 		if origin == domain.KnowledgeCallOriginCatalogProbe {
 			log.Printf("knowledge-call origin=%s project=%s server=%s tool=%s status=%s ok=%t latency=%dms", origin, project, ref.ServerID, name, res.Status, execErr == nil, time.Since(started).Milliseconds())
 		}
@@ -163,17 +170,20 @@ func knowledgeReadResultWithMeta(serverID, tool, text string, hits int, execStat
 		return read, text
 	}
 
-	targets, evidences, isJSON, jsonListCount := extractKnowledgeEvidences(text)
+	evPrefix := knowledgeEvidenceIDPrefix(read.ID)
+	targets, evidences, isJSON, jsonListCount := extractKnowledgeEvidences(text, evPrefix)
 	read.Targets = targets
 	read.Evidences = evidences
 
 	switch {
 	case execStatus == domain.KnowledgeStatusUnavailable:
 		read.Status = domain.KnowledgeStatusUnavailable
+		read.Evidences = nil
 	case execStatus == domain.KnowledgeStatusPartial:
 		read.Status = domain.KnowledgeStatusPartial
 	case execStatus == domain.KnowledgeStatusEmpty:
 		read.Status = domain.KnowledgeStatusEmpty
+		read.Evidences = nil
 	case isJSON && jsonListCount == 0:
 		read.Status = domain.KnowledgeStatusEmpty
 		read.Evidences = nil
@@ -185,13 +195,25 @@ func knowledgeReadResultWithMeta(serverID, tool, text string, hits int, execStat
 		read.Status = domain.KnowledgeStatusHit
 	}
 
+	if serverID != domain.KnowledgeMCPServerID {
+		text = truncateRunes(strings.TrimSpace(text), 32000)
+	}
+
+	if domain.IsKnowledgeCatalogTool(tool) {
+		read.Evidences = nil
+		return read, text
+	}
+
 	if domain.IsKnowledgeCitableStatus(read.Status) {
 		if len(read.Evidences) > 0 {
 			var b strings.Builder
 			b.WriteString(text)
-			b.WriteString("\n证据引用编号（若输出采用对应内容，请在引用处附上原文出处和对应标记）：")
+			b.WriteString("\n证据引用编号（若回答采用对应内容，请在引用处紧跟输出 [[knowledge:<id>]] 标记，勿放入反引号）：")
 			for _, ev := range read.Evidences {
 				label := firstNonEmpty(ev.Title, ev.DocumentID, ev.SourceID)
+				if ev.SourceName != "" && ev.SourceName != label {
+					label = ev.SourceName + " / " + label
+				}
 				if ev.Locator != "" {
 					fmt.Fprintf(&b, "\n- [[knowledge:%s]] %s (%s)", ev.ID, label, ev.Locator)
 				} else {
@@ -200,13 +222,85 @@ func knowledgeReadResultWithMeta(serverID, tool, text string, hits int, execStat
 			}
 			text = b.String()
 		} else {
-			text += "\n若输出引用本次结果，请附上原文出处和 [[knowledge:" + read.ID + "]]。"
+			text += "\n若输出引用本次结果，请紧跟附上 [[knowledge:" + read.ID + "]] 标记（勿放入反引号）。"
 		}
 	}
 	return read, text
 }
 
-func extractKnowledgeEvidences(raw string) ([]string, []domain.KnowledgeEvidence, bool, int) {
+func knowledgeEvidenceIDPrefix(readID string) string {
+	readID = strings.ToLower(strings.TrimSpace(readID))
+	if readID == "" {
+		return "ev"
+	}
+	if len(readID) > 6 {
+		readID = readID[:6]
+	}
+	return "ev_" + readID
+}
+
+type knowledgeParentMeta struct {
+	connID     string
+	sourceID   string
+	sourceName string
+	docID      string
+	title      string
+}
+
+func extractKnowledgeMetaFromMap(m map[string]any) knowledgeParentMeta {
+	strVal := func(keys ...string) string {
+		for _, k := range keys {
+			if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+		return ""
+	}
+	sourceID := strVal("source", "source_id", "knowledge_base_id", "kb_id")
+	docID := strVal("document_id", "doc_id", "knowledge_id", "path", "uri", "id")
+	connID := strVal("connection_id", "connectionId")
+	if connID == "" && strings.Contains(sourceID, "::") {
+		connID, _, _ = strings.Cut(sourceID, "::")
+	}
+	if connID == "" && strings.Contains(docID, "::") {
+		connID, _, _ = strings.Cut(docID, "::")
+	}
+	return knowledgeParentMeta{
+		connID:     connID,
+		sourceID:   sourceID,
+		sourceName: strVal("source_name", "knowledge_base_name", "kb_name"),
+		docID:      docID,
+		title:      strVal("title", "knowledge_title", "document_title", "doc_title", "file_name", "filename", "doc_name", "name"),
+	}
+}
+
+func mergeKnowledgeMeta(parent, self knowledgeParentMeta) knowledgeParentMeta {
+	return knowledgeParentMeta{
+		connID:     firstNonEmpty(self.connID, parent.connID),
+		sourceID:   firstNonEmpty(self.sourceID, parent.sourceID),
+		sourceName: firstNonEmpty(self.sourceName, parent.sourceName),
+		docID:      firstNonEmpty(self.docID, parent.docID),
+		title:      firstNonEmpty(self.title, parent.title),
+	}
+}
+
+func jsonIntVal(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	case json.Number:
+		if i, err := n.Int64(); err == nil {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func extractKnowledgeEvidences(raw, evPrefix string) ([]string, []domain.KnowledgeEvidence, bool, int) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil, false, -1
@@ -227,7 +321,7 @@ func extractKnowledgeEvidences(raw string) ([]string, []domain.KnowledgeEvidence
 	var parsed any
 	if json.Unmarshal([]byte(raw), &parsed) == nil {
 		var evidences []domain.KnowledgeEvidence
-		listCount := collectKnowledgeEvidencesFromJSON(parsed, addTarget, &evidences)
+		listCount := collectKnowledgeEvidencesFromJSON(parsed, addTarget, &evidences, evPrefix, knowledgeParentMeta{})
 		return targets, evidences, true, listCount
 	}
 
@@ -243,14 +337,102 @@ func extractKnowledgeEvidences(raw string) ([]string, []domain.KnowledgeEvidence
 	return targets, nil, false, -1
 }
 
-func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences *[]domain.KnowledgeEvidence) int {
+func summarizeChunksLocator(chunks []any) string {
+	var minIdx, maxIdx int64
+	hasIdx := false
+	for _, item := range chunks {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		idx, ok := jsonIntVal(m["chunk_index"])
+		if !ok {
+			continue
+		}
+		if !hasIdx {
+			minIdx, maxIdx, hasIdx = idx, idx, true
+			continue
+		}
+		if idx < minIdx {
+			minIdx = idx
+		}
+		if idx > maxIdx {
+			maxIdx = idx
+		}
+	}
+	if !hasIdx {
+		return ""
+	}
+	if minIdx == maxIdx {
+		return fmt.Sprintf("#chunk-%d", minIdx)
+	}
+	return fmt.Sprintf("#chunk-%d..#chunk-%d", minIdx, maxIdx)
+}
+
+func hasExplicitDocParentMeta(m map[string]any) bool {
+	for _, k := range []string{
+		"document_id", "doc_id", "knowledge_id", "path", "uri",
+		"title", "knowledge_title", "document_title", "doc_title", "file_name", "filename", "doc_name",
+	} {
+		if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func chunksCarryDocIdentity(chunks []any) bool {
+	for _, item := range chunks {
+		m, ok := item.(map[string]any)
+		if ok && hasExplicitDocParentMeta(m) {
+			return true
+		}
+	}
+	return false
+}
+
+func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences *[]domain.KnowledgeEvidence, evPrefix string, parent knowledgeParentMeta) int {
+	if strings.TrimSpace(evPrefix) == "" {
+		evPrefix = "ev"
+	}
 	switch x := v.(type) {
 	case []any:
 		for _, item := range x {
-			collectKnowledgeEvidencesFromJSON(item, addTarget, evidences)
+			collectKnowledgeEvidencesFromJSON(item, addTarget, evidences, evPrefix, parent)
 		}
 		return len(x)
 	case map[string]any:
+		selfMeta := extractKnowledgeMetaFromMap(x)
+		mergedMeta := mergeKnowledgeMeta(parent, selfMeta)
+		if chunksRaw, hasChunks := x["chunks"]; hasChunks && hasExplicitDocParentMeta(x) {
+			if chunks, isArr := chunksRaw.([]any); isArr {
+				if len(chunks) == 0 {
+					return 0
+				}
+				if !chunksCarryDocIdentity(chunks) {
+					ev := domain.KnowledgeEvidence{
+						ID:           fmt.Sprintf("%s_%d", evPrefix, len(*evidences)+1),
+						ConnectionID: mergedMeta.connID,
+						SourceID:     mergedMeta.sourceID,
+						SourceName:   clipCatalogText(mergedMeta.sourceName, 120),
+						DocumentID:   mergedMeta.docID,
+						Title:        clipCatalogText(mergedMeta.title, 120),
+						Locator:      summarizeChunksLocator(chunks),
+					}
+					*evidences = append(*evidences, ev)
+					if label := firstNonEmpty(ev.Title, ev.DocumentID, ev.SourceID); label != "" {
+						addTarget(label)
+					}
+					return len(chunks)
+				}
+			}
+		}
+
+		childParent := knowledgeParentMeta{
+			connID:     mergedMeta.connID,
+			sourceID:   mergedMeta.sourceID,
+			sourceName: mergedMeta.sourceName,
+		}
 		containerKeys := []string{"results", "documents", "chunks", "items", "knowledge_bases", "sources", "pages", "hits"}
 		listCount := -1
 		for _, key := range containerKeys {
@@ -260,7 +442,7 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 						listCount = len(arr)
 					}
 					for _, item := range arr {
-						collectKnowledgeEvidencesFromJSON(item, addTarget, evidences)
+						collectKnowledgeEvidencesFromJSON(item, addTarget, evidences, evPrefix, childParent)
 					}
 				}
 			}
@@ -272,10 +454,10 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 					listCount = len(d)
 				}
 				for _, item := range d {
-					collectKnowledgeEvidencesFromJSON(item, addTarget, evidences)
+					collectKnowledgeEvidencesFromJSON(item, addTarget, evidences, evPrefix, childParent)
 				}
 			case map[string]any:
-				subCount := collectKnowledgeEvidencesFromJSON(d, addTarget, evidences)
+				subCount := collectKnowledgeEvidencesFromJSON(d, addTarget, evidences, evPrefix, mergedMeta)
 				if listCount < 0 && subCount >= 0 {
 					listCount = subCount
 				}
@@ -284,7 +466,7 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 		if listCount >= 0 {
 			return listCount
 		}
-		ev, ok := buildKnowledgeEvidenceFromMap(x, len(*evidences)+1)
+		ev, ok := buildKnowledgeEvidenceFromMap(x, len(*evidences)+1, evPrefix, parent)
 		if ok {
 			*evidences = append(*evidences, ev)
 			if label := firstNonEmpty(ev.Title, ev.DocumentID, ev.SourceID); label != "" {
@@ -296,41 +478,34 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 	return -1
 }
 
-func buildKnowledgeEvidenceFromMap(m map[string]any, idx int) (domain.KnowledgeEvidence, bool) {
-	strVal := func(keys ...string) string {
-		for _, k := range keys {
-			if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
-				return strings.TrimSpace(s)
-			}
-		}
-		return ""
-	}
-	title := strVal("title", "knowledge_title", "document_title", "doc_title", "file_name", "filename", "doc_name", "name")
-	docID := strVal("document_id", "doc_id", "knowledge_id", "path", "uri", "id")
-	sourceID := strVal("source", "source_id", "knowledge_base_id", "kb_id")
-	connID := strVal("connection_id", "connectionId")
-	if connID == "" && strings.Contains(sourceID, "::") {
-		connID, _, _ = strings.Cut(sourceID, "::")
-	}
-	if title == "" && docID == "" && sourceID == "" {
+func buildKnowledgeEvidenceFromMap(m map[string]any, idx int, evPrefix string, parent knowledgeParentMeta) (domain.KnowledgeEvidence, bool) {
+	meta := mergeKnowledgeMeta(parent, extractKnowledgeMetaFromMap(m))
+	if meta.title == "" && meta.docID == "" && meta.sourceID == "" {
 		return domain.KnowledgeEvidence{}, false
 	}
-	locator := strVal("locator")
+	locator := ""
+	if s, ok := m["locator"].(string); ok && strings.TrimSpace(s) != "" {
+		locator = strings.TrimSpace(s)
+	}
 	if locator == "" {
-		if start, okS := m["start_line"]; okS {
-			if end, okE := m["end_line"]; okE {
-				locator = fmt.Sprintf("L%v-L%v", start, end)
+		if chunkIdx, okC := jsonIntVal(m["chunk_index"]); okC {
+			locator = fmt.Sprintf("#chunk-%d", chunkIdx)
+		} else if start, okS := jsonIntVal(m["start_line"]); okS {
+			if end, okE := jsonIntVal(m["end_line"]); okE && (start > 0 || end > 0) {
+				locator = fmt.Sprintf("L%d-L%d", start, end)
 			}
-		} else if chunkIdx, okC := m["chunk_index"]; okC {
-			locator = fmt.Sprintf("#chunk-%v", chunkIdx)
 		}
 	}
+	if strings.TrimSpace(evPrefix) == "" {
+		evPrefix = "ev"
+	}
 	return domain.KnowledgeEvidence{
-		ID:           fmt.Sprintf("ev_%d", idx),
-		ConnectionID: connID,
-		SourceID:     sourceID,
-		DocumentID:   docID,
-		Title:        clipCatalogText(title, 120),
+		ID:           fmt.Sprintf("%s_%d", evPrefix, idx),
+		ConnectionID: meta.connID,
+		SourceID:     meta.sourceID,
+		SourceName:   clipCatalogText(meta.sourceName, 120),
+		DocumentID:   meta.docID,
+		Title:        clipCatalogText(meta.title, 120),
 		Locator:      locator,
 	}, true
 }

@@ -1765,3 +1765,184 @@ func TestValidateOutboundWeKnoraURLRejectsQuery(t *testing.T) {
 		t.Fatalf("normalized URL = %q", got)
 	}
 }
+
+func TestExecuteSearchAndReadDocument_EnrichesTitleAndKBMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge-bases":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data":    []map[string]any{{"id": "kb-1", "name": "研发规范库"}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/knowledge-bases/kb-1/hybrid-search":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": []map[string]any{{
+					"id":             "chunk-1",
+					"knowledge_id":   "doc-1",
+					"knowledge_title": "部署规范.md",
+					"chunk_index":    2,
+					"content":        "端口 8080",
+					"score":          0.91,
+				}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge/doc-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"id":                "doc-1",
+					"knowledge_base_id": "kb-1",
+					"title":             "部署规范.md",
+					"file_name":         "deploy.md",
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/chunks/doc-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"total":   1,
+				"data": []map[string]any{{
+					"id":          "chunk-1",
+					"chunk_index": 2,
+					"content":     "端口 8080",
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled:        true,
+		DefaultSources: []string{"wk-1::kb-1"},
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Name: "WK", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok", Enabled: true,
+		}},
+	}
+	svc := NewService(store, nil)
+
+	out, _, err := svc.ExecuteSearch(context.Background(), "p1", "端口", []string{"wk-1::kb-1"}, 5, ExecuteOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSearch: %v", err)
+	}
+	if len(out.Result.Results) != 1 {
+		t.Fatalf("expected 1 hit, got %+v", out.Result.Results)
+	}
+	hit := out.Result.Results[0]
+	if hit.SourceName != "研发规范库" || hit.ChunkIndex == nil || *hit.ChunkIndex != 2 {
+		t.Fatalf("expected SourceName=研发规范库 and ChunkIndex=2, got %+v", hit)
+	}
+
+	readRes, err := svc.ExecuteReadDocument(context.Background(), "p1", "wk-1::doc-1", "", 0, 20, 0, 0, "", false, ExecuteOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteReadDocument: %v", err)
+	}
+	var payload struct {
+		KnowledgeID       string `json:"knowledge_id"`
+		Title             string `json:"title"`
+		KnowledgeBaseID   string `json:"knowledge_base_id"`
+		KnowledgeBaseName string `json:"knowledge_base_name"`
+	}
+	if err := json.Unmarshal([]byte(readRes.Text), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Title != "部署规范.md" || payload.KnowledgeBaseID != "wk-1::kb-1" || payload.KnowledgeBaseName != "研发规范库" {
+		t.Fatalf("unexpected read_document payload metadata: %+v", payload)
+	}
+}
+
+func TestWeKnoraKBNamesFingerprintDocMetaCacheAndSingleSearchList(t *testing.T) {
+	var kbListCalls atomic.Int32
+	var docMetaCalls atomic.Int32
+	var chunkCalls atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge-bases":
+			kbListCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data":    []map[string]any{{"id": "kb-1", "name": "架构库"}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/knowledge-bases/kb-1/hybrid-search":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": []map[string]any{{
+					"id":              "c1",
+					"knowledge_id":    "doc-1",
+					"knowledge_title": "架构.md",
+					"chunk_index":     0,
+					"content":         "内容",
+					"score":           0.9,
+				}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge/doc-1":
+			docMetaCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"id":                "doc-1",
+					"knowledge_base_id": "kb-1",
+					"title":             "架构.md",
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/chunks/doc-1":
+			chunkCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"total":   1,
+				"data":    []map[string]any{{"id": "c1", "chunk_index": 0, "content": "正文"}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	settings := domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Name: "WK", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok-1", Enabled: true,
+		}},
+	}
+	store.settings = settings
+	svc := NewService(store, nil)
+
+	// Empty sources ExecuteSearch should list knowledge bases once (via weKnoraKBNamesDetailed).
+	if _, _, err := svc.ExecuteSearch(context.Background(), "p1", "架构", nil, 5, ExecuteOptions{}); err != nil {
+		t.Fatalf("ExecuteSearch: %v", err)
+	}
+	if got := kbListCalls.Load(); got != 1 {
+		t.Fatalf("kbListCalls after ExecuteSearch(empty sources) = %d, want 1", got)
+	}
+
+	// ExecuteReadDocument caches docMeta across repeated chunk reads.
+	for i := 0; i < 2; i++ {
+		if _, err := svc.ExecuteReadDocument(context.Background(), "p1", "wk-1::doc-1", "", 0, 10, 0, 0, "", false, ExecuteOptions{}); err != nil {
+			t.Fatalf("ExecuteReadDocument[%d]: %v", i, err)
+		}
+	}
+	if got := docMetaCalls.Load(); got != 1 || chunkCalls.Load() != 2 {
+		t.Fatalf("docMetaCalls=%d chunkCalls=%d, want 1 and 2", got, chunkCalls.Load())
+	}
+
+	// Changing token (capability fingerprint) via UpdateSettings must invalidate both caches.
+	if _, err := svc.UpdateSettings(SettingsInput{
+		Provider: domain.KnowledgeProviderWeKnora,
+		Enabled:  true,
+		URL:      srv.URL,
+		Token:    "tok-2",
+	}, "tester"); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+	if _, err := svc.ExecuteReadDocument(context.Background(), "p1", "wk-1::doc-1", "", 0, 10, 0, 0, "", false, ExecuteOptions{}); err != nil {
+		t.Fatalf("ExecuteReadDocument after UpdateSettings: %v", err)
+	}
+	if got := docMetaCalls.Load(); got != 2 {
+		t.Fatalf("docMetaCalls after UpdateSettings = %d, want 2", got)
+	}
+}

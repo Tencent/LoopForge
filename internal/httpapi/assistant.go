@@ -51,6 +51,7 @@ type assistantReply struct {
 	Message        string                       `json:"message"`
 	Drafts         []assistantDraft             `json:"drafts"`
 	Sources        []assistantSource            `json:"sources,omitempty"`
+	KnowledgeReads []domain.KnowledgeRead       `json:"knowledgeReads,omitempty"`
 	Images         []domain.AssistantAttachment `json:"images,omitempty"`
 	SessionID      string                       `json:"sessionId,omitempty"`
 }
@@ -505,6 +506,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				if len(toolSession.KnowledgeRefs) > 0 {
 					if kbCtx := knowledgeReferencePromptContext(ctx, h.deps, req.ProjectID, u.ID, toolSession.KnowledgeRefs); kbCtx != "" {
 						system += "\n" + kbCtx
+						if resume || req.workspaceMode {
+							prompt = kbCtx + "\n" + prompt
+						}
 					}
 				}
 				prompt += conversationAttachmentNote(cliRoot, req)
@@ -759,6 +763,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				}
 				toolSession.mu.Unlock()
 			}
+			reply.KnowledgeReads = reads
 			stored = append(stored, assistantMessage{KnowledgeReads: reads, Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images, GenerationID: assistantControlScopeFrom(modelCtx).GenerationID})
 			conversation := assistantConversation{Shared: shared, ID: req.SessionID, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: stored}
 			if toolSession != nil {

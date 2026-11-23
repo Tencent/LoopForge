@@ -980,7 +980,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	}
 	e.attachLoopRetro(runID, node.ID, retroWorkspace, lastIteration, err, failedAction)
 	if err != nil {
-		e.freezeAvailableArtifacts(runID, effectiveNode, sb.Workspace(), reported, output)
+		frozen := e.freezeAvailableArtifacts(runID, effectiveNode, sb.Workspace(), reported, output)
 		if ctx.Err() != nil || runtime.IsSandboxInterrupt(err) {
 			if ctx.Err() == nil {
 				e.requeueInterruptedNode(runID, node.ID, executionAttempt, executionGeneration)
@@ -994,6 +994,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "对话轮次用尽，等待确认是否重试", time.Now().UTC()
+				markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, frozen)
 				e.event(r, node.ID, "agent.turns.exhausted", "对话轮次已用尽，请确认是否重试本节点")
 			})
 			return
@@ -1005,6 +1006,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "等待人工确认", time.Now().UTC()
+				markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, frozen)
 				message := "Agent 请求人工确认"
 				if nr.GateResult != nil && strings.TrimSpace(nr.GateResult.ActionRequired) != "" {
 					message += "：" + nr.GateResult.ActionRequired
@@ -1022,10 +1024,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.FinishedAt = output, err.Error(), "waiting_approval", time.Now().UTC()
+				markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, frozen)
 				e.event(r, node.ID, "agent.loop.exhausted", "Agent 自修正次数已耗尽，转人工判断："+err.Error())
 			})
 			return
 		}
+		e.markNodeKnowledgeReads(runID, node.ID, executionGeneration, executionAttempt, output, frozen)
 		failNode(err, failedAction == "reject" || (failedAction == "" && allowRejectOnFailure(node, err, gateRejected)))
 		return
 	}
@@ -1042,6 +1046,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	current, _ = e.repo.RunState(runID)
 	artifacts, err := collectArtifactsMode(outputs, current, effectiveNode, output, false)
 	if err != nil {
+		e.markNodeKnowledgeReads(runID, node.ID, executionGeneration, executionAttempt, output, nil)
 		failNode(fmt.Errorf("artifact contract: %w", err), nodeRejects(node))
 		return
 	}
@@ -1171,17 +1176,34 @@ func lostCLISession(output string, err error) bool {
 		strings.Contains(msg, "conversation does not exist")
 }
 
+func (e *Engine) markNodeKnowledgeReads(runID, nodeID string, generation, attempt int, output string, artifacts []domain.Artifact) {
+	e.updateRun(runID, func(r *domain.Run) {
+		nr := r.Nodes[nodeID]
+		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
+			return
+		}
+		if nr.Output == "" && output != "" {
+			nr.Output = output
+		}
+		markKnowledgeReadsCited(nr.KnowledgeReads, attempt, output, artifacts)
+	})
+}
+
 func markKnowledgeReadsCited(reads []domain.KnowledgeRead, attempt int, output string, artifacts []domain.Artifact) {
-	contents := make([]string, 0, 1+len(artifacts))
-	contents = append(contents, output)
+	sources := make([]domain.KnowledgeCitationSource, 0, 1+len(artifacts))
+	sources = append(sources, domain.KnowledgeCitationSource{Label: "节点输出", Content: output})
 	for _, artifact := range artifacts {
-		contents = append(contents, artifact.Content)
+		label := strings.TrimSpace(artifact.Path)
+		if label == "" {
+			label = strings.TrimSpace(artifact.Name)
+		}
+		sources = append(sources, domain.KnowledgeCitationSource{Label: label, Content: artifact.Content})
 	}
 	for i := range reads {
 		if reads[i].Attempt != attempt {
 			continue
 		}
-		domain.MarkKnowledgeReadCited(&reads[i], contents...)
+		domain.MarkKnowledgeReadCitedSources(&reads[i], sources)
 	}
 }
 

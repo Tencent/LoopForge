@@ -98,7 +98,7 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 			prefix[i].Content = string(raw)
 		}
 	}
-	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, Title: "分支 · " + truncateRunes(edited.Content, 28)}
+	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, KnowledgeRefs: append([]domain.KnowledgeRef(nil), source.KnowledgeRefs...), KnowledgeRestricted: source.KnowledgeRestricted, Title: "分支 · " + truncateRunes(edited.Content, 28)}
 	if branch.RootSessionID == "" {
 		branch.RootSessionID = source.ID
 	}

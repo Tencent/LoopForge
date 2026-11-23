@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
+	"unicode/utf8"
+
+	"github.com/gin-gonic/gin"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/knowledge"
@@ -539,10 +544,14 @@ func TestKnowledgeReadResultEvidencesAndFiveStates(t *testing.T) {
 	if len(hitRead.Evidences) != 10 {
 		t.Fatalf("len(Evidences) = %d, want 10", len(hitRead.Evidences))
 	}
-	if !strings.Contains(hitText, "[[knowledge:ev_2]]") {
-		t.Fatalf("expected [[knowledge:ev_2]] marker in output text:\n%s", hitText)
+	evID2 := hitRead.Evidences[1].ID
+	if !strings.HasPrefix(evID2, "ev_") || !strings.HasSuffix(evID2, "_2") {
+		t.Fatalf("unexpected evidence[1].ID = %q", evID2)
 	}
-	domain.MarkKnowledgeReadCited(&hitRead, "结论参考 [[knowledge:ev_2]]")
+	if !strings.Contains(hitText, "[[knowledge:"+evID2+"]]") {
+		t.Fatalf("expected [[knowledge:%s]] marker in output text:\n%s", evID2, hitText)
+	}
+	domain.MarkKnowledgeReadCited(&hitRead, "结论参考 [[knowledge:"+evID2+"]]")
 	if !hitRead.Cited {
 		t.Fatal("expected read.Cited = true")
 	}
@@ -669,5 +678,296 @@ func TestKnowledgeCatalogCacheInvalidationAndSingleflight(t *testing.T) {
 	keyRevoked := knowledgeCatalogCacheKey(d, "chat", "default", 1, []domain.KnowledgeRef{{ServerID: domain.KnowledgeMCPServerID, Mode: "all"}})
 	if keyRevoked == keyScoped {
 		t.Fatal("expected cache key to change after revoking project scope / disabling connection")
+	}
+}
+
+func TestKnowledgeReadResultUniqueEvidenceIDsAndMetadata(t *testing.T) {
+	// 1. Two sequential calls in one turn must produce distinct evidence IDs so citing
+	//    call 2 does not mark call 1 as cited.
+	rawSearch1, _ := json.Marshal(map[string]any{
+		"results": []map[string]any{{
+			"source":      "conn1::kb1",
+			"source_name": "架构知识库",
+			"path":        "conn1::doc-a",
+			"title":       "架构规范.md",
+			"chunk_index": 3,
+			"start_line":  0,
+			"end_line":    0,
+		}},
+	})
+	read1, _ := knowledgeReadResult(domain.KnowledgeMCPServerID, "search_knowledge", string(rawSearch1), 1, nil)
+	if len(read1.Evidences) != 1 {
+		t.Fatalf("len(read1.Evidences) = %d, want 1", len(read1.Evidences))
+	}
+	if read1.Evidences[0].SourceName != "架构知识库" || read1.Evidences[0].Locator != "#chunk-3" {
+		t.Fatalf("unexpected search evidence metadata: %+v", read1.Evidences[0])
+	}
+
+	rawDoc2, _ := json.Marshal(map[string]any{
+		"knowledge_id":        "conn1::doc-b",
+		"title":               "部署手册.md",
+		"knowledge_base_id":   "conn1::kb2",
+		"knowledge_base_name": "运维手册库",
+		"chunks": []map[string]any{
+			{"id": "chunk-uuid-1", "chunk_index": 2, "content": "step 1"},
+			{"id": "chunk-uuid-2", "chunk_index": 3, "content": "step 2"},
+			{"id": "chunk-uuid-3", "chunk_index": 4, "content": "step 3"},
+		},
+	})
+	read2, text2 := knowledgeReadResult(domain.KnowledgeMCPServerID, "read_document", string(rawDoc2), 3, nil)
+	if len(read2.Evidences) != 1 {
+		t.Fatalf("read_document chunks must aggregate into 1 doc evidence, got %+v", read2.Evidences)
+	}
+	ev2 := read2.Evidences[0]
+	if ev2.DocumentID != "conn1::doc-b" || ev2.Title != "部署手册.md" || ev2.SourceID != "conn1::kb2" || ev2.SourceName != "运维手册库" || ev2.Locator != "#chunk-2..#chunk-4" {
+		t.Fatalf("unexpected read_document evidence: %+v", ev2)
+	}
+	if ev2.ID == read1.Evidences[0].ID {
+		t.Fatalf("evidence IDs collided across calls: %q", ev2.ID)
+	}
+	if !strings.Contains(text2, "运维手册库 / 部署手册.md (#chunk-2..#chunk-4)") {
+		t.Fatalf("expected readable source + title + chunk range in tool text:\n%s", text2)
+	}
+
+	answer := "按部署手册执行 [[knowledge:" + ev2.ID + "]]"
+	domain.MarkKnowledgeReadCited(&read1, answer)
+	domain.MarkKnowledgeReadCited(&read2, answer)
+	if read1.Cited || read1.Evidences[0].Cited {
+		t.Fatalf("read1 must not be marked cited when only read2 was cited: %+v", read1)
+	}
+	if !read2.Cited || !read2.Evidences[0].Cited {
+		t.Fatalf("read2 must be marked cited: %+v", read2)
+	}
+
+	// 2. Catalog tools must not produce citable evidences or [[knowledge:...]] prompts.
+	for _, tool := range []string{"list_knowledge_bases", "list_documents", knowledge.ToolListSources} {
+		rawCat, _ := json.Marshal(map[string]any{"documents": []map[string]any{{"id": "d1", "title": "不应作为证据"}}})
+		catRead, catText := knowledgeReadResult(domain.KnowledgeMCPServerID, tool, string(rawCat), 1, nil)
+		if len(catRead.Evidences) != 0 {
+			t.Fatalf("catalog tool %s must not attach Evidences, got %+v", tool, catRead.Evidences)
+		}
+		if strings.Contains(catText, "[[knowledge:") {
+			t.Fatalf("catalog tool %s must not append citation prompt: %q", tool, catText)
+		}
+	}
+}
+
+func TestKnowledgeReadResultExternalUntruncatedEvidenceAndUnavailable(t *testing.T) {
+	padding := strings.Repeat("a", 33000)
+	longJSON, _ := json.Marshal(map[string]any{
+		"results": []map[string]any{{
+			"document_id": "ext-doc-long",
+			"title":       "超长外部文档.md",
+			"snippet":     padding,
+		}},
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var rpc struct {
+			ID     any    `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch rpc.Method {
+		case "initialize":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{"protocolVersion": "2024-11-05"}})
+		case "notifications/initialized":
+			w.WriteHeader(204)
+		case "tools/list":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{
+				"tools": []map[string]any{{"name": "search_ext", "annotations": map[string]any{"readOnlyHint": true}}},
+			}})
+		case "tools/call":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{
+				"content": []map[string]any{{"type": "text", "text": string(longJSON)}},
+			}})
+		}
+	}))
+	defer srv.Close()
+
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.PutMCPServer(domain.MCPServerDefinition{
+		ID: "ext-long", Name: "Long KB", Scope: "project", ProjectID: "default", Transport: "http", URL: srv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := &deps{repo: store}
+	ref := domain.KnowledgeRef{ServerID: "ext-long", Mode: "all"}
+	res, err := callKnowledgeReferenceWithOrigin(context.Background(), d, "default", 1, ref, "search_ext", map[string]any{"query": "test"}, domain.KnowledgeCallOriginModelTool)
+	if err != nil {
+		t.Fatalf("callKnowledgeReferenceWithOrigin: %v", err)
+	}
+	if utf8.RuneCountInString(res.Text) <= 32000 {
+		t.Fatalf("expected raw model-tool result to stay untruncated for JSON parsing, len=%d", utf8.RuneCountInString(res.Text))
+	}
+	read, promptText := knowledgeReadResultWithMeta("ext-long", "search_ext", res.Text, res.Hits, res.Status, res.Warning, domain.KnowledgeCallOriginModelTool, nil)
+	if read.Status != domain.KnowledgeStatusHit || len(read.Evidences) != 1 || read.Evidences[0].Title != "超长外部文档.md" {
+		t.Fatalf("expected full-JSON evidence extraction before truncation, got %+v", read)
+	}
+	if utf8.RuneCountInString(promptText) > 32500 {
+		t.Fatalf("expected truncated promptText for external server, got runes=%d", utf8.RuneCountInString(promptText))
+	}
+	if !strings.Contains(promptText, "勿放入反引号") {
+		t.Fatalf("expected promptText to forbid backticks: %q", promptText)
+	}
+
+	unavailRead, _ := knowledgeReadResultWithMeta("ext-long", "search_ext", `{"results":[{"document_id":"d1","title":"X"}]}`, 1, domain.KnowledgeStatusUnavailable, "down", domain.KnowledgeCallOriginModelTool, nil)
+	if unavailRead.Status != domain.KnowledgeStatusUnavailable || len(unavailRead.Evidences) != 0 {
+		t.Fatalf("expected unavailable status to clear evidences, got %+v", unavailRead)
+	}
+}
+
+func TestExtractKnowledgeEvidencesMultiDocVsSingleDocChunks(t *testing.T) {
+	multiDocChunks, _ := json.Marshal(map[string]any{
+		"id":   "resp-wrapper",
+		"name": "wrapper",
+		"chunks": []map[string]any{
+			{"document_id": "doc-1", "title": "文档一.md", "chunk_index": 0},
+			{"document_id": "doc-2", "title": "文档二.md", "chunk_index": 1},
+		},
+	})
+	_, evs, _, _ := extractKnowledgeEvidences(string(multiDocChunks), "")
+	if len(evs) != 2 || evs[0].ID != "ev_1" || evs[1].ID != "ev_2" || evs[0].Title != "文档一.md" || evs[1].Title != "文档二.md" {
+		t.Fatalf("expected multi-doc chunks split into 2 evidences with fallback ev_ prefix, got %+v", evs)
+	}
+
+	// Even if parent has knowledge_id, chunks that carry explicit doc identity must not collapse.
+	mixedChunks, _ := json.Marshal(map[string]any{
+		"knowledge_id": "parent-k",
+		"chunks": []map[string]any{
+			{"document_id": "doc-a", "title": "A", "chunk_index": 0},
+			{"document_id": "doc-b", "title": "B", "chunk_index": 1},
+		},
+	})
+	_, mixedEvs, _, _ := extractKnowledgeEvidences(string(mixedChunks), "ev_mix")
+	if len(mixedEvs) != 2 {
+		t.Fatalf("expected chunks carrying doc identity to emit 2 evidences, got %+v", mixedEvs)
+	}
+}
+
+func TestRunTelemetryAndClipRunTextKnowledgeEdges(t *testing.T) {
+	ev := domain.TelemetryEvent{
+		Name: "knowledge.call",
+		Attributes: map[string]any{
+			"knowledgeReadId": "kr-1",
+			"attempt":         1,
+			"query":           "端口",
+			"targets":         []string{"部署规范.md"},
+			"hits":            2,
+			"origin":          domain.KnowledgeCallOriginModelTool,
+			"largeSecretBlob": "should-be-dropped",
+		},
+	}
+	slimmed := slimTelemetryEvent(ev)
+	for _, keep := range []string{"knowledgeReadId", "attempt", "query", "targets", "hits", "origin"} {
+		if _, ok := slimmed.Attributes[keep]; !ok {
+			t.Fatalf("expected %q preserved on slim knowledge.call telemetry: %+v", keep, slimmed.Attributes)
+		}
+	}
+	if _, leaked := slimmed.Attributes["largeSecretBlob"]; leaked {
+		t.Fatalf("expected unlisted attribute dropped: %+v", slimmed.Attributes)
+	}
+
+	sample := strings.Repeat("中", 10) + " [[knowledge:ev_abc_1]] 后缀"
+	clipped := clipRunText(sample, 20)
+	if !utf8.ValidString(clipped) {
+		t.Fatalf("clipped text invalid UTF-8: %q", clipped)
+	}
+	if strings.Contains(clipped, "[[knowledge:") && !strings.Contains(clipped, "]]") {
+		t.Fatalf("clipRunText must not leave half-clipped citation marker: %q", clipped)
+	}
+}
+
+func TestChatSessionKnowledgeForkPromptAndUnfinishedEdges(t *testing.T) {
+	msgs := []assistantMessage{{
+		Role:           "assistant",
+		Content:        `{"message":"ok"}`,
+		KnowledgeReads: []domain.KnowledgeRead{{ID: "kr-prompt", Status: domain.KnowledgeStatusHit}},
+	}}
+	forPrompt := assistantPromptMessages(msgs)
+	if len(forPrompt[0].KnowledgeReads) != 0 {
+		t.Fatalf("assistantPromptMessages must clear KnowledgeReads, got %+v", forPrompt[0].KnowledgeReads)
+	}
+
+	h, a, b, _, s := sharedWorkbenchFixture(t)
+	wantRefs := []domain.KnowledgeRef{{ServerID: "wk-1", Mode: "allowlist", Sources: []string{"wk-1::kb1"}}}
+	s.Messages = append(s.Messages, domain.AssistantMessage{Role: "user", Content: "原始问题"})
+	if err := h.repo.PutAssistantSession(a.ID, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.SetAssistantSessionKnowledge(a.ID, s.ID, wantRefs); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = h.repo.AssistantSession(a.ID, s.ID)
+	body, _ := json.Marshal(gin.H{"messageIndex": 1, "content": "分叉问题", "updatedAt": s.UpdatedAt})
+	c, w := workbenchContext(b, "POST", "/", bytes.NewBuffer(body))
+	c.Params = gin.Params{{Key: "id", Value: s.ID}}
+	h.forkSession(c)
+	if w.Code != 201 {
+		t.Fatalf("forkSession HTTP %d: %s", w.Code, w.Body.String())
+	}
+	var branch domain.AssistantSession
+	if err := json.Unmarshal(w.Body.Bytes(), &branch); err != nil {
+		t.Fatal(err)
+	}
+	if !branch.KnowledgeRestricted || !reflect.DeepEqual(branch.KnowledgeRefs, wantRefs) {
+		t.Fatalf("forked branch lost KB config: restricted=%v refs=%+v", branch.KnowledgeRestricted, branch.KnowledgeRefs)
+	}
+
+	g := domain.AssistantGeneration{
+		ID:        "gen-stop",
+		StartedAt: time.Now().UTC(),
+		Error:     "生成已停止",
+		Stream: &domain.AssistantStreamSnapshot{
+			Answer: "半截回答 [[knowledge:ev_1]] 与 `[[knowledge:ev_code]]`",
+			Activity: []domain.AssistantActivityEvent{
+				{Kind: "text", Text: "步骤说明 [[knowledge:ev_2]]"},
+			},
+		},
+	}
+	stoppedMsg, ok := turnTranscriptMessage(g, "model-x", true)
+	if !ok {
+		t.Fatal("expected transcript message")
+	}
+	if strings.Contains(stoppedMsg.Content, "[[knowledge:ev_1]]") {
+		t.Fatalf("expected unresolved citation stripped from stopped reply content: %s", stoppedMsg.Content)
+	}
+	if !strings.Contains(stoppedMsg.Content, "`[[knowledge:ev_code]]`") {
+		t.Fatalf("expected inline code citation preserved: %s", stoppedMsg.Content)
+	}
+	if strings.Contains(stoppedMsg.Activity[0].Text, "[[knowledge:ev_2]]") {
+		t.Fatalf("expected unresolved citation stripped from stopped narration: %s", stoppedMsg.Activity[0].Text)
+	}
+
+	// proxyMCP must enforce running-node & attempt guard when RunID+NodeID are claimed even with Ref == nil.
+	settings := domain.KnowledgeSettings{Enabled: true, URL: "https://kb.invalid/mcp", Token: "proxy-secret"}
+	_ = h.repo.PutKnowledgeSettings(settings)
+	_ = h.repo.PutRun(domain.Run{
+		ID:               "run-proxy-guard",
+		Status:           "succeeded",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "default", ResponsibleUserID: 7},
+		Nodes:            map[string]*domain.NodeRun{"n1": {NodeID: "n1", Status: "succeeded", Attempt: 1}},
+	})
+	tok, err := knowledge.SignProxyToken(settings, knowledge.ProxyClaims{
+		RunID: "run-proxy-guard", NodeID: "n1", Attempt: 1, ProjectID: "default", UserID: 7,
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	gc, _ := gin.CreateTestContext(rec)
+	gc.Request = httptest.NewRequest(http.MethodPost, knowledge.ProxyPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	gc.Request.Header.Set("Authorization", "Bearer "+tok)
+	kh := &knowledgeHandlers{deps: &deps{repo: h.repo}}
+	kh.proxyMCP(gc)
+	if rec.Code != 403 {
+		t.Fatalf("expected non-running node role proxy token rejected with 403, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }

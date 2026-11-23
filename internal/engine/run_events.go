@@ -289,7 +289,7 @@ func appendControlTelemetry(r *domain.Run, nodeID, name, message string) {
 
 func (e *Engine) RecordKnowledgeRead(runID, nodeID string, read domain.KnowledgeRead) {
 	e.updateRun(runID, func(r *domain.Run) {
-		if node := r.Nodes[nodeID]; node != nil && node.Attempt == read.Attempt {
+		if node := r.Nodes[nodeID]; node != nil && node.Status == "running" && node.Attempt == read.Attempt {
 			node.KnowledgeReads = append(node.KnowledgeReads, read)
 		}
 	})

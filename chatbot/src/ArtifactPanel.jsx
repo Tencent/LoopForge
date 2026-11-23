@@ -661,7 +661,17 @@ export default function ArtifactPanel({
               ) : selected.kind === "operation" ? (
                 <OperationPreview artifact={selected} runs={runs} />
               ) : (
-                <ArtifactPreview artifact={selected} />
+                <ArtifactPreview
+                  artifact={selected}
+                  knowledgeReads={
+                    selected.knowledgeReads ||
+                    (selected.nodeId
+                      ? runs?.find((r) => r.nodes?.[selected.nodeId]?.knowledgeReads?.length)
+                          ?.nodes?.[selected.nodeId]?.knowledgeReads || []
+                      : [])
+                  }
+                  attempt={selected.attempt}
+                />
               )}
               {selected.draft ? (
                 <DraftCard

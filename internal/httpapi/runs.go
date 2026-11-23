@@ -462,6 +462,15 @@ func slimTelemetryEvent(e domain.TelemetryEvent) domain.TelemetryEvent {
 		}
 		e.Attributes = safe
 		e.Source = domain.TelemetrySource{Layer: e.Source.Layer, Adapter: e.Source.Adapter, Provider: e.Source.Provider, Protocol: e.Source.Protocol}
+	} else if e.Name == "knowledge.call" {
+		safe := map[string]any{}
+		for _, key := range []string{"knowledgeReadId", "attempt", "query", "targets", "hits", "origin"} {
+			if value, ok := e.Attributes[key]; ok {
+				safe[key] = value
+			}
+		}
+		e.Attributes = safe
+		e.Source = domain.TelemetrySource{Adapter: e.Source.Adapter, Protocol: e.Source.Protocol}
 	} else {
 		e.Attributes = nil
 		e.Source = domain.TelemetrySource{Adapter: e.Source.Adapter, Protocol: e.Source.Protocol}
@@ -488,10 +497,20 @@ func logDumpNodeLabel(nodeID string) string {
 }
 
 func clipRunText(value string, n int) string {
-	if len(value) <= n {
+	if n <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= n {
 		return value
 	}
-	return value[:n] + "…"
+	clipped := string(runes[:n])
+	if openIdx := strings.LastIndex(clipped, "[[knowledge:"); openIdx >= 0 {
+		if !strings.Contains(clipped[openIdx:], "]]") {
+			clipped = strings.TrimRight(clipped[:openIdx], " \t")
+		}
+	}
+	return clipped + "…"
 }
 
 func decisionExpectation(nodeID string, expected *domain.NodeDecisionExpectation) []engine.NodeExpectation {

@@ -305,6 +305,7 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 		}, nil
 	}
 	s.invalidateChangedConnectionCapabilities(beforeConns, afterConns)
+	s.invalidateMetadataCache()
 	if migratedLegacyConnID != "" {
 		s.migrateLegacySubmissionSources(migratedLegacyConnID)
 	}
@@ -370,6 +371,7 @@ func (s *Service) DeleteConnection(connID, actor string) (domain.KnowledgeSettin
 		return current, err
 	}
 	s.capabilities.invalidate(connID)
+	s.invalidateMetadataCache()
 	// 两行密文都要清掉；任一失败不影响另一行，返回第一个错误便于重试（两次
 	// 删除都是幂等的）。
 	var cleanupErr error
