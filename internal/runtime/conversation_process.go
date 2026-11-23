@@ -160,6 +160,9 @@ type conversationProcess struct {
 	notStarted    bool
 	cliVersion    string
 	versionSource string
+	// workspace replaces <root>/ws in stdin under seatbelt, which has no mount
+	// namespace to map that path onto the run workspace.
+	workspace string
 	// gitScrubbed is set with done, under mu.
 	gitScrubbed []string
 }
@@ -274,7 +277,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	switch req.Operation {
 	case "write":
 		proc.mu.Lock()
-		input := proc.input
+		input, workspace := proc.input, proc.workspace
 		proc.mu.Unlock()
 		if input == nil {
 			return ConversationProcessResult{}, fmt.Errorf("process has no stdin")
@@ -291,7 +294,11 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 				err = nil
 			}
 		} else {
-			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
+			data := conversationRemap(req.Data, req.SourceRoot, root)
+			if workspace != "" {
+				data = strings.ReplaceAll(data, filepath.Join(root, "ws"), workspace)
+			}
+			_, err = io.WriteString(input, data)
 		}
 		return ConversationProcessResult{}, err
 	case "stop":
@@ -601,6 +608,11 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			command.WorkingDir = sb.Workspace()
 		case strings.TrimSpace(workspace) != "":
 			command.WorkingDir = workspace
+		}
+		if command.WorkingDir != filepath.Join(root, "ws") {
+			proc.mu.Lock()
+			proc.workspace = command.WorkingDir
+			proc.mu.Unlock()
 		}
 	}
 	command.OwnProcessGroup = true
