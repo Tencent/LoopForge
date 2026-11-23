@@ -14,6 +14,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 // A conversation workspace is an environment, not a checkout: Main Bot picks
@@ -81,6 +82,22 @@ func conversationSandboxKind(profile domain.SandboxProfile) string {
 // that kind.
 func (h *agentToolGateway) conversationSandboxChoices(s *AgentToolSession) ([]domain.SandboxProfile, string) {
 	choices := h.repo.ConversationSandboxes(s.ProjectID)
+	nativeAvailable := runtime.NativeSandboxAvailable
+	if s.ExecutionRunnerID != "" {
+		runner, _ := h.repo.Runner(s.ExecutionRunnerID)
+		targetOS := strings.ToLower(strings.TrimSpace(runner.OS))
+		nativeAvailable = func(driver string) bool {
+			if targetOS == "" {
+				return true // Older runners may omit their OS.
+			}
+			driver, err := domain.ResolveSandboxDriver(driver, targetOS)
+			return err == nil && (driver == domain.SandboxDriverSeatbelt && targetOS == "darwin" ||
+				driver == domain.SandboxDriverBwrap && targetOS == "linux")
+		}
+	}
+	choices = slices.DeleteFunc(choices, func(profile domain.SandboxProfile) bool {
+		return conversationSandboxKind(profile) == domain.SandboxDriverNative && !nativeAvailable(profile.Driver)
+	})
 	prefer := h.repo.AssistantPreferences(s.UserID).WorkspaceDriver
 	if prefer == "" {
 		return choices, ""

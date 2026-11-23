@@ -114,17 +114,40 @@ func createBwrap(id, workspace string, profile domain.SandboxProfile, requiremen
 	return createProcessSandbox("bwrap", "linux", "Linux", "bwrap", id, workspace, profile, requirements)
 }
 
+// NativeSandboxAvailable checks the host OS and executable for the requested
+// process sandbox. Conversation defaults use it before selecting a profile.
+func NativeSandboxAvailable(driver string) bool {
+	switch driver, _ := domain.ResolveSandboxDriver(driver, goruntime.GOOS); driver {
+	case domain.SandboxDriverSeatbelt:
+		_, err := processSandboxBinary("seatbelt", "darwin", "macOS", "sandbox-exec")
+		return err == nil
+	case domain.SandboxDriverBwrap:
+		_, err := processSandboxBinary("bwrap", "linux", "Linux", "bwrap")
+		return err == nil
+	default:
+		return false
+	}
+}
+
 // createProcessSandbox builds a processSandbox for driver once the host runs
 // requiredOS (named osName in errors) and binaryName is on PATH.
 func createProcessSandbox(driver, requiredOS, osName, binaryName, id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
+	binary, err := processSandboxBinary(driver, requiredOS, osName, binaryName)
+	if err != nil {
+		return nil, err
+	}
+	return &processSandbox{id: id, workspace: workspace, driver: driver, profile: profile, requirements: requirements, binary: binary}, nil
+}
+
+func processSandboxBinary(driver, requiredOS, osName, binaryName string) (string, error) {
 	if goruntime.GOOS != requiredOS {
-		return nil, fmt.Errorf("%s sandbox requires %s", driver, osName)
+		return "", fmt.Errorf("%s sandbox requires %s", driver, osName)
 	}
 	binary, err := exec.LookPath(binaryName)
 	if err != nil {
-		return nil, fmt.Errorf("%s sandbox unavailable: %w", driver, err)
+		return "", fmt.Errorf("%s sandbox unavailable: %w", driver, err)
 	}
-	return &processSandbox{id: id, workspace: workspace, driver: driver, profile: profile, requirements: requirements, binary: binary}, nil
+	return binary, nil
 }
 
 func (s *processSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {

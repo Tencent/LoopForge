@@ -115,24 +115,32 @@ describe("execution machine picker", () => {
     expect(screen.queryByText("开发 Mac")).not.toBeInTheDocument();
   });
 
-  test("labels the bound workspace with its actual sandbox type and ID", () => {
+  test("shows an SVG and ID for the actual sandbox and opens its full label", async () => {
     const chat = fixture({
       session: { workspaceRunId: "workspace-1", executionTarget: { pool: "cloud" } },
       sandboxProfileId: "preferred",
       workspaceSandbox: { id: "mac-tools", driver: "seatbelt" },
     });
     const { rerender } = render(<ExecutionMachinePicker chat={chat} />);
-    const machine = screen.getByText("LoopForge 云端").closest(".machine-fixed");
-    expect(machine).toHaveTextContent("系统轻量隔离-mac-tools");
-    expect(machine).toHaveAttribute("title", expect.stringContaining("系统轻量隔离-mac-tools"));
-    expect(machine).not.toHaveTextContent("preferred");
+    const native = screen.getByRole("button", { name: "工作区沙箱 系统轻量隔离-mac-tools" });
+    expect(native).toHaveTextContent("mac-tools");
+    expect(native.querySelector("svg")).toHaveAttribute("data-icon", "sandbox-shield");
+    expect(native).toHaveAttribute("title", "系统轻量隔离-mac-tools");
+    const user = userEvent.setup();
+    native.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("dialog", { name: "工作区沙箱" })).toHaveTextContent("系统轻量隔离-mac-tools");
+    await user.keyboard("{Escape}");
+    expect(native).toHaveFocus();
 
     rerender(<ExecutionMachinePicker chat={{ ...chat, workspaceSandbox: { id: "generic-docker", driver: "docker" } }} />);
-    expect(machine).toHaveTextContent("Docker-generic-docker");
-    expect(machine).not.toHaveTextContent("mac-tools");
+    const docker = screen.getByRole("button", { name: "工作区沙箱 Docker-generic-docker" });
+    expect(docker).toHaveTextContent("generic-docker");
+    expect(docker.querySelector("svg")).toHaveAttribute("data-icon", "sandbox-container");
+    expect(screen.queryByRole("button", { name: /mac-tools|preferred/ })).not.toBeInTheDocument();
 
     rerender(<ExecutionMachinePicker chat={{ ...chat, workspaceSandbox: null }} />);
-    expect(machine.querySelector(".machine-sandbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: /工作区沙箱/ })).not.toBeInTheDocument();
   });
 
   test.each(["busy", "machineSaving", "readOnly", "local"])(

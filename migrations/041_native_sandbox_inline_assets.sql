@@ -143,7 +143,7 @@ SET s.payload = JSON_SET(s.payload, '$.environment', JSON_MERGE_PATCH(
       COLUMNS (variable_name TEXT PATH '$')) vars
     WHERE BINARY vars.variable_name <> 'PATH'
       AND NOT REGEXP_LIKE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, CONCAT('$.variables.', JSON_QUOTE(vars.variable_name)))),
-        '[$][{]?(PREFIX|AGENTFLOW_ENVIRONMENT_ROOT)', 'c')
+        '[$](PREFIX|AGENTFLOW_ENVIRONMENT_ROOT|[{](PREFIX|AGENTFLOW_ENVIRONMENT_ROOT)[}])', 'c')
   ), JSON_OBJECT()),
   IF(JSON_TYPE(JSON_EXTRACT(s.payload, '$.environment')) = 'OBJECT',
     JSON_EXTRACT(s.payload, '$.environment'), JSON_OBJECT())))
@@ -167,28 +167,66 @@ UPDATE sandboxes
 SET payload = JSON_REMOVE(payload, '$.environmentId')
 WHERE JSON_CONTAINS_PATH(payload, 'one', '$.environmentId');
 
--- 5. Workflows that relied on the old default now use the Docker default.
--- Older workflow shapes also carried the profile on nodes. Update those
--- alongside the workflow field so they still agree when the catalog reads it.
-UPDATE workflows w
-SET w.payload = JSON_SET(
+-- 5. Move the old default in current SOPs and in their restorable revisions.
+-- Stage both shapes together so the same checks apply to nested legacy nodes.
+DROP TEMPORARY TABLE IF EXISTS workflow_sandbox_upgrade;
+CREATE TEMPORARY TABLE workflow_sandbox_upgrade (
+  workflow_id VARCHAR(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  revision_id VARCHAR(128) COLLATE utf8mb4_unicode_ci NULL,
+  definition JSON NOT NULL,
+  KEY (workflow_id),
+  KEY (revision_id)
+) DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO workflow_sandbox_upgrade (workflow_id, definition)
+SELECT id, payload FROM workflows
+WHERE @replace_stock_local_default AND JSON_TYPE(payload) = 'OBJECT';
+
+SET @definition_revisions_exists = EXISTS (
+  SELECT 1 FROM information_schema.tables
+  WHERE table_schema = DATABASE() AND table_name = 'definition_revisions');
+SET @stage_workflow_revisions_sql = IF(@definition_revisions_exists AND @replace_stock_local_default,
+  'INSERT INTO workflow_sandbox_upgrade (workflow_id, revision_id, definition)
+   SELECT entity_id, id, JSON_EXTRACT(payload, ''$.payload'') FROM definition_revisions
+   WHERE kind = ''workflow'' AND JSON_TYPE(JSON_EXTRACT(payload, ''$.payload'')) = ''OBJECT''',
+  'DO 0');
+PREPARE stage_workflow_revisions_stmt FROM @stage_workflow_revisions_sql;
+EXECUTE stage_workflow_revisions_stmt;
+DEALLOCATE PREPARE stage_workflow_revisions_stmt;
+
+DELETE m FROM workflow_sandbox_upgrade m
+WHERE COALESCE(JSON_UNQUOTE(JSON_EXTRACT(m.definition, '$.sandboxProfileId')), '') NOT IN ('', 'local')
+   OR EXISTS (
+     SELECT 1
+     FROM JSON_TABLE(m.definition, '$.nodes[*]' COLUMNS (sandbox_id TEXT PATH '$.sandboxProfileId')) n
+     WHERE COALESCE(n.sandbox_id, '') NOT IN ('', 'local'));
+
+UPDATE workflow_sandbox_upgrade m
+SET m.definition = JSON_SET(
   CASE
-    WHEN JSON_SEARCH(w.payload, 'one', 'local', NULL, '$.nodes[*].sandboxProfileId') IS NULL THEN w.payload
-    ELSE JSON_SET(w.payload, '$.nodes', (
+    WHEN JSON_SEARCH(m.definition, 'one', 'local', NULL, '$.nodes[*].sandboxProfileId') IS NULL THEN m.definition
+    ELSE JSON_SET(m.definition, '$.nodes', (
       SELECT JSON_ARRAYAGG(
         IF(JSON_UNQUOTE(JSON_EXTRACT(n.node, '$.sandboxProfileId')) = 'local',
           JSON_SET(n.node, '$.sandboxProfileId', 'generic-docker'), n.node)
       ) OVER (ORDER BY n.position ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
-      FROM JSON_TABLE(w.payload, '$.nodes[*]' COLUMNS (position FOR ORDINALITY, node JSON PATH '$')) n
+      FROM JSON_TABLE(m.definition, '$.nodes[*]' COLUMNS (position FOR ORDINALITY, node JSON PATH '$')) n
       LIMIT 1))
   END,
-  '$.sandboxProfileId', 'generic-docker')
-WHERE (w.id IN ('welcome-workflow', 'scheduled-baseline-align') OR @replace_stock_local_default)
-  AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(w.payload, '$.sandboxProfileId')), '') IN ('', 'local')
-  AND NOT EXISTS (
-    SELECT 1
-    FROM JSON_TABLE(w.payload, '$.nodes[*]' COLUMNS (sandbox_id TEXT PATH '$.sandboxProfileId')) n
-    WHERE COALESCE(n.sandbox_id, '') NOT IN ('', 'local'));
+  '$.sandboxProfileId', 'generic-docker');
+
+UPDATE workflows w JOIN workflow_sandbox_upgrade m
+  ON m.revision_id IS NULL AND m.workflow_id = w.id COLLATE utf8mb4_unicode_ci
+SET w.payload = m.definition;
+
+SET @update_workflow_revisions_sql = IF(@definition_revisions_exists AND @replace_stock_local_default,
+  'UPDATE definition_revisions r JOIN workflow_sandbox_upgrade m ON m.revision_id = r.id COLLATE utf8mb4_unicode_ci
+   SET r.payload = JSON_SET(r.payload, ''$.payload'', m.definition)',
+  'DO 0');
+PREPARE update_workflow_revisions_stmt FROM @update_workflow_revisions_sql;
+EXECUTE update_workflow_revisions_stmt;
+DEALLOCATE PREPARE update_workflow_revisions_stmt;
+DROP TEMPORARY TABLE workflow_sandbox_upgrade;
 
 SET @assistant_workspace_driver_sql = IF(@assistant_preferences_exists,
   'UPDATE assistant_preferences SET workspace_driver = ''native'' WHERE workspace_driver = ''local''',

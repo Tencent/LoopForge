@@ -847,7 +847,24 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			available, err := h.repo.RunnerTaskAvailable(runner.ID, input.AvailableRuntimes)
 			return domain.RunnerTask{}, available, err
 		}
-		return h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, time.Now().UTC(), runnerTaskLeaseTTL)
+		for {
+			task, claimed, err := h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, time.Now().UTC(), runnerTaskLeaseTTL)
+			if err != nil || !claimed || task.RunID == "" || task.Action != "" || task.Sandbox == nil {
+				return task, claimed, err
+			}
+			if err := domain.ValidateFrozenSandbox(task.Sandbox.Profile); err != nil {
+				// A task queued before the upgrade still carries its old
+				// profile. Finish it without sending it to an older runner.
+				if finishErr := h.repo.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskFailed, nil, "", err.Error(), nil, nil, time.Now().UTC()); finishErr != nil {
+					return domain.RunnerTask{}, false, finishErr
+				}
+				if ctxErr := c.Request.Context().Err(); ctxErr != nil {
+					return domain.RunnerTask{}, false, ctxErr
+				}
+				continue
+			}
+			return task, true, nil
+		}
 	}
 	respond := func(task domain.RunnerTask) {
 		if input.Preflight {

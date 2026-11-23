@@ -656,7 +656,7 @@ func (h *scheduleHandlers) ensureBaselineAlignWorkflow(_ domain.ScheduleJob) boo
 		return false
 	}
 	if wf, ok := h.repo.Workflow(engine.BaselineAlignWorkflowID); ok {
-		if wf.Version >= baselineAlignWorkflowVersion && alignWorkflowUsesPlatformAgent(wf) && wf.SandboxProfileID == repo.DefaultSandboxProfileID {
+		if wf.Version >= baselineAlignWorkflowVersion && alignWorkflowUsesPlatformAgent(wf) {
 			return true
 		}
 	}

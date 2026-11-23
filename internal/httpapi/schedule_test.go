@@ -480,6 +480,16 @@ func TestEnsureBaselineAlignWorkflowUsesPlatformAgentNotProjectFixer(t *testing.
 	if !ok || !agent.Shared || len(agent.Verification) != 0 || len(agent.Hooks) != 0 {
 		t.Fatalf("platform align agent = %+v", agent)
 	}
+	wf.SandboxProfileID = repo.TestNativeSandboxID
+	if err := st.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	if !h.ensureBaselineAlignWorkflow(domain.ScheduleJob{}) {
+		t.Fatal("existing align workflow was rejected")
+	}
+	if saved, _ := st.Workflow(wf.ID); saved.SandboxProfileID != repo.TestNativeSandboxID {
+		t.Fatalf("explicit align sandbox was overwritten: %q", saved.SandboxProfileID)
+	}
 }
 
 func TestEnsureBaselineAlignWorkflowUpgradesExistingRevision(t *testing.T) {

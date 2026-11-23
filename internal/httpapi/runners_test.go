@@ -531,6 +531,38 @@ func TestRunnerSessionRequiredForTaskAPI(t *testing.T) {
 	}
 }
 
+func TestRunnerClaimRejectsQueuedFrozenLocalSandbox(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	h := New(st, engine.New(st, runtime.NewManager(t.TempDir())), tracker.NewService(), "", "")
+	runnerID, session := registerTestRunner(t, h)
+	for i, driver := range []string{domain.SandboxDriverLocal, domain.SandboxDriverNative} {
+		task := domain.RunnerTask{
+			ID: driver, RunID: "run-" + driver, RunnerID: runnerID, Provider: "mock", Command: "true",
+			Sandbox:   &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: driver, Driver: driver}},
+			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Second),
+		}
+		if err := st.PutRunnerTask(task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := requestWithHeaders(t, h, http.MethodPost, "/api/runners/tasks/claim", map[string]any{
+		"availableRuntimes": []string{"mock"}, "capacity": 1, "noWait": true,
+	}, map[string]string{"Authorization": "Bearer " + session})
+	var response struct {
+		Task domain.RunnerTask `json:"task"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &response) != nil || response.Task.ID != domain.SandboxDriverNative {
+		t.Fatalf("claim returned %d: %s", rec.Code, rec.Body.String())
+	}
+	if old, _ := st.RunnerTask(domain.SandboxDriverLocal); old.Status != domain.RunnerTaskFailed || !strings.Contains(old.Error, "已移除的 local") {
+		t.Fatalf("legacy task status = %q, error = %q", old.Status, old.Error)
+	}
+}
+
 func TestRunnerTaskClaimLongPollWaitsForNewTask(t *testing.T) {
 	h := newRunnerTestServer(t)
 	_, session := registerTestRunner(t, h)

@@ -116,6 +116,14 @@ func TestConversationSandboxPreferenceGuidesTheAgent(t *testing.T) {
 	if code := prefer("native"); code != 200 {
 		t.Fatalf("save preference: %d", code)
 	}
+	s.ExecutionRunnerID = "sandbox-preference-runner"
+	if err := h.repo.PutRunner(domain.Runner{ID: s.ExecutionRunnerID, OS: "darwin", RunnerVersion: domain.RunnerVersionConversationWorkspace}); err != nil {
+		t.Fatal(err)
+	}
+	target := &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: s.ExecutionRunnerID}
+	if err := h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: s.ChatSessionID, ProjectID: s.ProjectID, ExecutionTarget: target}); err != nil {
+		t.Fatal(err)
+	}
 	description = gateway.workspaceOpenDescriptorFor(s).Description
 	native := repo.TestNativeSandboxID
 	if !strings.Contains(description, "倾向 native 沙箱") || !strings.Contains(description, "没有特殊要求时用 "+native) ||
@@ -127,13 +135,25 @@ func TestConversationSandboxPreferenceGuidesTheAgent(t *testing.T) {
 		t.Fatalf("default environment ignores the preference: %+v %v", bound.Run.WorkflowSnapshot, err)
 	}
 	s.ChatSessionID, s.workspaceRunID = "explicit-chat", ""
-	_ = h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: s.ChatSessionID, ProjectID: s.ProjectID})
+	if err := h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: s.ChatSessionID, ProjectID: s.ProjectID, ExecutionTarget: target}); err != nil {
+		t.Fatal(err)
+	}
 	bound, err = gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: "business"})
 	if err != nil || bound.Run.WorkflowSnapshot.SandboxProfileID != "business" {
 		t.Fatalf("the agent's explicit choice was overridden: %+v %v", bound.Run.WorkflowSnapshot, err)
 	}
 	if code := prefer("local"); code != 400 {
 		t.Fatalf("the removed local kind accepted as a preference: %d", code)
+	}
+	t.Setenv("PATH", t.TempDir()) // A Compose installation lacks a native sandbox binary.
+	s.ExecutionRunnerID = ""
+	s.ChatSessionID, s.workspaceRunID = "docker-fallback-chat", ""
+	if err := h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: s.ChatSessionID, ProjectID: s.ProjectID}); err != nil {
+		t.Fatal(err)
+	}
+	bound, err = gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{})
+	if err != nil || bound.Run.WorkflowSnapshot.SandboxProfileID != repo.DefaultSandboxProfileID {
+		t.Fatalf("native preference on an unsupported host = %+v, %v", bound.Run.WorkflowSnapshot, err)
 	}
 }
 

@@ -1268,8 +1268,13 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	watch := runnerCloneWatch(repo)
 	// The platform cannot see this host's output yet; the operator can.
 	ctx = procwatch.WithObserver(ctx, func(event procwatch.Event) { log.Printf("runner checkout: %s", event.Message) })
-	if !cloneFromRepositoryCache(repositoryGitContext(ctx, *repo), workspace, repo, watch) {
-		tail, err := gitwork.Watch(repositoryGitContext(ctx, *repo), workspace, watch, args...)
+	gitCtx := repositoryGitContext(ctx, *repo)
+	cached, err := cloneFromRepositoryCache(gitCtx, workspace, repo, watch)
+	if err != nil {
+		return err
+	}
+	if !cached {
+		tail, err := gitwork.Watch(gitCtx, workspace, watch, args...)
 		if err != nil {
 			return fmt.Errorf("git clone %s: %w (%s)", domain.StripURLCredentials(repo.CloneURL), err, cloneOutput([]byte(tail), repo.GitToken))
 		}

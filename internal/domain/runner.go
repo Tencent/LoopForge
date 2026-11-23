@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
 	"strconv"
@@ -445,6 +446,42 @@ type RunnerSandboxSpec struct {
 	Requirements *RunnerSandboxRequirements `json:"requirements,omitempty"`
 	Profile      SandboxProfile             `json:"profile"`
 	Dockerfile   *DockerfileDefinition      `json:"dockerfile,omitempty"`
+}
+
+// UnmarshalJSON carries ordinary variables forward from frozen environment
+// assets on historical runs and queued tasks. Asset installation paths no
+// longer exist, and inline values retain their precedence.
+func (s *RunnerSandboxSpec) UnmarshalJSON(raw []byte) error {
+	type frozenSpec RunnerSandboxSpec
+	var payload struct {
+		frozenSpec
+		Environment struct {
+			ID        string            `json:"id"`
+			Variables map[string]string `json:"variables"`
+		} `json:"environment"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return err
+	}
+	*s = RunnerSandboxSpec(payload.frozenSpec)
+	driver := strings.TrimSpace(s.Profile.Driver)
+	if !ConversationSandboxDriver(driver) || driver == SandboxDriverDocker || strings.TrimSpace(payload.Environment.ID) == "" {
+		return nil
+	}
+	for key, value := range payload.Environment.Variables {
+		if key == "PATH" || strings.Contains(value, "$PREFIX") || strings.Contains(value, "${PREFIX}") ||
+			strings.Contains(value, "$AGENTFLOW_ENVIRONMENT_ROOT") || strings.Contains(value, "${AGENTFLOW_ENVIRONMENT_ROOT}") {
+			continue
+		}
+		if _, exists := s.Profile.Environment[key]; exists {
+			continue
+		}
+		if s.Profile.Environment == nil {
+			s.Profile.Environment = make(map[string]string)
+		}
+		s.Profile.Environment[key] = value
+	}
+	return nil
 }
 
 // PublicRunnerTask strips task-scoped credentials from management responses.
