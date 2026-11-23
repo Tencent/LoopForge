@@ -11,6 +11,7 @@
 -- 2. A Dockerfile no docker sandbox used becomes a docker sandbox, keeping its
 --    name, project and sharing. It keeps the Dockerfile ID when available, then
 --    tries a "-docker" suffix and finally a derived ID if the suffix is taken.
+--    Built-in sandbox IDs are reserved even without a catalog row.
 -- 3. Each local sandbox becomes a native sandbox: its execution machine,
 --    checkout directory and repository paths are dropped, and it keeps its
 --    environment variables.
@@ -107,9 +108,11 @@ FROM dockerfiles d
 JOIN (
   SELECT legacy.id AS did,
     CASE
-      WHEN NOT EXISTS (SELECT 1 FROM sandboxes s WHERE s.id = legacy.id COLLATE utf8mb4_unicode_ci)
+      WHEN legacy.id COLLATE utf8mb4_unicode_ci NOT IN ('generic-docker', 'local')
+        AND NOT EXISTS (SELECT 1 FROM sandboxes s WHERE s.id = legacy.id COLLATE utf8mb4_unicode_ci)
         THEN legacy.id
       WHEN CHAR_LENGTH(legacy.id) <= 57
+        AND CONCAT(legacy.id, '-docker') COLLATE utf8mb4_unicode_ci <> 'generic-docker'
         AND NOT EXISTS (SELECT 1 FROM sandboxes s WHERE s.id = CONCAT(legacy.id, '-docker') COLLATE utf8mb4_unicode_ci)
         AND NOT EXISTS (SELECT 1 FROM dockerfiles d WHERE d.id = CONCAT(legacy.id, '-docker') COLLATE utf8mb4_unicode_ci)
         THEN CONCAT(legacy.id, '-docker')

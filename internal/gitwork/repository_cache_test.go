@@ -147,6 +147,27 @@ func TestCloneFromRepositoryCacheReplacesABrokenCache(t *testing.T) {
 	}
 }
 
+func TestRepositoryCacheRefreshFollowsRemoteDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	root, origin := t.TempDir(), t.TempDir()
+	cacheTestGit(t, origin, "init", "-q", "-b", "previous")
+	cacheTestCommit(t, origin, "a.txt")
+	remote := "file://" + origin
+	clone := func(workspace string) {
+		t.Helper()
+		if err := CloneFromRepositoryCache(ctx, root, "service", remote, "previous", workspace, false, procwatch.Options{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clone(t.TempDir())
+	cacheTestGit(t, origin, "checkout", "-q", "-b", "new-default")
+	workspace := t.TempDir()
+	clone(workspace)
+	if head := cacheTestGit(t, workspace, "symbolic-ref", "refs/remotes/origin/HEAD"); head != "refs/remotes/origin/new-default" {
+		t.Fatalf("origin/HEAD = %q, want the new default", head)
+	}
+}
+
 func TestRepositoryCacheCheckoutUsesOneTimeout(t *testing.T) {
 	ctx := context.Background()
 	root, origin := t.TempDir(), t.TempDir()

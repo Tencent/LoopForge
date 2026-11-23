@@ -112,7 +112,24 @@ func refreshLockedCache(ctx context.Context, dir, remote string, watch procwatch
 	if _, err := Watch(ctx, dir, watch, "-C", dir, "fetch", "--progress", "--prune", "--force", "--", remote, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"); err != nil {
 		return fmt.Errorf("git fetch: %w", err)
 	}
-	return nil
+	// Fetch updates refs but leaves the bare repository's symbolic HEAD intact.
+	// The subsequent clone uses it to construct origin/HEAD.
+	advertised, err := Watch(ctx, dir, watch, "-C", dir, "ls-remote", "--symref", "--", remote, "HEAD")
+	if err != nil {
+		return fmt.Errorf("git ls-remote HEAD: %w", err)
+	}
+	for _, line := range strings.Split(advertised, "\n") {
+		head, ok := strings.CutSuffix(line, "\tHEAD")
+		if !ok || !strings.HasPrefix(head, "ref: refs/heads/") {
+			continue
+		}
+		ref := strings.TrimPrefix(head, "ref: ")
+		if err := localGit(ctx, "--git-dir", dir, "show-ref", "--verify", "--quiet", ref); err != nil {
+			return err
+		}
+		return localGit(ctx, "--git-dir", dir, "symbolic-ref", "HEAD", ref)
+	}
+	return fmt.Errorf("remote does not advertise a symbolic HEAD")
 }
 
 func replaceLockedCache(ctx context.Context, dir, remote string, watch procwatch.Options) error {
