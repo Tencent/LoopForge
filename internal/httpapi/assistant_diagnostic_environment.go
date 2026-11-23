@@ -33,6 +33,13 @@ func assistantDiagnosticEnvironment() domain.AssistantDiagnosticEnvironment {
 			}
 		}
 	}
+	// Release images carry the tag and commit separately from Go's VCS info.
+	if version := buildReleaseVersion(); version != "" {
+		e.PlatformVersion = version
+	}
+	if _, revision := buildCommit(); revision != "" {
+		e.Revision = revision
+	}
 	return e
 }
 
