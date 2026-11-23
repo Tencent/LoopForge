@@ -146,10 +146,10 @@ func (h *usersHandlers) verifyGitHTTPCredential(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
-	c.JSON(http.StatusOK, verifyGitHTTPToken(ctx, cred))
+	c.JSON(http.StatusOK, verifyGitHTTPToken(ctx, cred, gitHTTPVerifyClient(h.repo.PlatformGitHTTPSAddresses)))
 }
 
-func verifyGitHTTPToken(ctx context.Context, cred domain.GitHTTPCredentialSecret) gitTokenVerifyResult {
+func verifyGitHTTPToken(ctx context.Context, cred domain.GitHTTPCredentialSecret, client *http.Client) gitTokenVerifyResult {
 	if cred.Managed {
 		return verifyGongfengToken(ctx, cred.Token)
 	}
@@ -165,8 +165,15 @@ func verifyGitHTTPToken(ctx context.Context, cred domain.GitHTTPCredentialSecret
 	if cred.Platform == domain.GitPlatformGitHub {
 		req.Header.Set("Accept", "application/vnd.github+json")
 	}
-	res, err := gitHTTPVerifyClient().Do(req)
-	if err != nil {
+	res, err := client.Do(req)
+	switch {
+	case errors.Is(err, gitegress.ErrNonPublicAddress):
+		return gitTokenVerifyResult{Error: "此 Git HTTPS 主机尚未授权，请联系平台管理员在「Git 主机信任」中登记。"}
+	case errors.Is(err, gitegress.ErrHTTPSAddressChanged):
+		return gitTokenVerifyResult{Error: "Git 主机解析地址已变更，请联系平台管理员更新该主机的 HTTPS 授权。"}
+	case errors.Is(err, gitegress.ErrHTTPSHostLookup):
+		return gitTokenVerifyResult{Error: "暂时无法读取 Git 主机授权，请稍后重试。"}
+	case err != nil:
 		return gitTokenVerifyResult{Error: fmt.Sprintf("无法连接 %s：%v", cred.Host, err)}
 	}
 	defer res.Body.Close()

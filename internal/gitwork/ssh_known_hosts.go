@@ -162,7 +162,7 @@ func sshHostKeys(ctx context.Context, remotes []SSHRemote) ([]byte, error) {
 			keys = localPins.keys
 		}
 		if len(keys) == 0 && len(defaults.keys) == 0 {
-			return nil, fmt.Errorf("SSH 主机 %s 未获信任。请平台管理员在「平台管理 → Git SSH 主机信任」核验并登记公钥，部署也可通过 %s 配置", endpoint, SSHKnownHostsEnv)
+			return nil, fmt.Errorf("SSH 主机 %s 未获信任。请平台管理员在「平台管理 → Git 主机信任」核验并登记公钥，部署也可通过 %s 配置", endpoint, SSHKnownHostsEnv)
 		}
 		pinned = append(pinned, keys...)
 		bundled = append(bundled, defaults.revocations...)

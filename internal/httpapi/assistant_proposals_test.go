@@ -260,14 +260,12 @@ func TestSOPDraftsNeedAProposalUnlessTheUserAskedForTheSOP(t *testing.T) {
 	create := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"title":"t","workflowId":"delivery"}`)}
 	update := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"id":"i1","title":"t","workflowId":"delivery"}`)}
 
-	// The AI 助手 switches are off: a SOP Main Bot picks itself still asks.
+	// The AI 助手 switches are off: in confirm mode a SOP Main Bot picks itself asks.
 	seed(domain.AssistantMessage{Role: "user", Content: "积分转赠这个需求帮我推进一下"})
-	for _, exec := range []assistantExecMode{{}, {AutoWrite: true, ReviewWrites: true}} {
-		session.ExecMode = exec
-		for _, d := range []assistantDraft{dispatch, create} {
-			if err := vet(d); err == nil || !strings.Contains(err.Error(), "proposal") {
-				t.Fatalf("%+v: %s without a proposal passed: %v", exec, d.Tool, err)
-			}
+	session.ExecMode = assistantExecMode{}
+	for _, d := range []assistantDraft{dispatch, create} {
+		if err := vet(d); err == nil || !strings.Contains(err.Error(), "proposal") {
+			t.Fatalf("%+v: %s without a proposal passed: %v", session.ExecMode, d.Tool, err)
 		}
 	}
 	if err := vet(update); err != nil {
@@ -276,9 +274,11 @@ func TestSOPDraftsNeedAProposalUnlessTheUserAskedForTheSOP(t *testing.T) {
 	if err := vet(sopDraft("i1", "start")); err != nil {
 		t.Fatal(err)
 	}
-	session.ExecMode = assistantExecMode{AutoWrite: true}
-	if err := vet(dispatch); err != nil {
-		t.Fatalf("full access starts a SOP without asking: %v", err)
+	for _, exec := range []assistantExecMode{{AutoWrite: true}, {AutoWrite: true, ReviewWrites: true}} {
+		session.ExecMode = exec
+		if err := vet(dispatch); err != nil {
+			t.Fatalf("%+v starts a SOP without human proposal drafts: %v", exec, err)
+		}
 	}
 	session.ExecMode = assistantExecMode{}
 
@@ -368,8 +368,8 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 
 	for _, exec := range []assistantExecMode{{}, {AutoWrite: true, ReviewWrites: true}, {AutoWrite: true}} {
 		schema, _ := json.Marshal(submitAssistantReplySchema(exec))
-		if got, want := strings.Contains(string(schema), `"proposal"`), !exec.AutoWrite || exec.ReviewWrites; got != want {
-			t.Fatalf("%+v: schema offers proposal=%v", exec, got)
+		if got, want := strings.Contains(string(schema), `"proposal"`), !exec.AutoWrite; got != want {
+			t.Fatalf("%+v: schema offers proposal=%v want=%v", exec, got, want)
 		}
 		if strings.Contains(string(schema), `"subagent_dispatch"`) {
 			t.Fatalf("%+v: schema offers a role dispatch draft", exec)
@@ -383,8 +383,8 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Both off: roles as before; a SOP Main Bot picks itself still asks
-	// outside full access.
+	// Both off: roles as before; confirm asks via proposal drafts, assisted
+	// reviews directly by AI without drafts, auto starts directly.
 	for _, mode := range []string{AssistantApprovalConfirm, AssistantApprovalAssisted, AssistantApprovalAuto} {
 		req := contextFor(mode)
 		if len(req.roles) != 1 || !strings.Contains(req.contextText, asBefore) {
@@ -395,7 +395,7 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 				t.Fatalf("%s with both off adds %q: %s", mode, unwanted, req.contextText)
 			}
 		}
-		if got := strings.Contains(req.contextText, askSOP); got != (mode != AssistantApprovalAuto) {
+		if got := strings.Contains(req.contextText, askSOP); got != (mode == AssistantApprovalConfirm) {
 			t.Fatalf("%s with both off: asks before a SOP=%v", mode, got)
 		}
 		if got := strings.Contains(req.contextText, "当前是帮我批准"); got != (mode == AssistantApprovalAssisted) {
@@ -403,11 +403,62 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 		}
 	}
 
-	code, saved := put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"instructions":"  回复先给结论  "}`)
-	if code != 200 || !saved.ProactiveRoles || saved.ProactiveSOPs || !saved.SteerOnSend || saved.Instructions != "回复先给结论" {
-		t.Fatalf("saved=%d %+v", code, saved)
+	if code, _ := put(`{"approvalReviewModel":"unknowncli:foo"}`); code != 400 {
+		t.Fatalf("unknown cli prefix accepted: %d", code)
+	}
+	if code, _ := put(`{"approvalReviewModel":"claude-code:bad model"}`); code != 400 {
+		t.Fatalf("invalid model id accepted: %d", code)
+	}
+	if code, _ := put(`{"approvalReviewMode":"cli","approvalReviewModel":""}`); code != 400 {
+		t.Fatalf("empty cli model accepted: %d", code)
+	}
+	if code, _ := put(`{"approvalReviewMode":"api","approvalReviewApi":{"protocol":"chat","model":"hy4"}}`); code != 400 {
+		t.Fatalf("api mode without key accepted: %d", code)
+	}
+	if code, _ := put(`{"approvalReviewMode":"api","approvalReviewApi":{"protocol":"bogus","model":"hy4","apiKey":"sk-secret"}}`); code != 400 {
+		t.Fatalf("api mode with invalid protocol accepted: %d", code)
+	}
+	if code, _ := put(`{"approvalReviewMode":"api","approvalReviewApi":{"protocol":"chat","baseUrl":"ftp://bad.example","model":"hy4","apiKey":"sk-secret"}}`); code != 400 {
+		t.Fatalf("api mode with invalid baseUrl accepted: %d", code)
+	}
+	code, saved := put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"gemini","baseUrl":"https://generativelanguage.googleapis.com","model":"gemini-2.5-flash","apiKey":"sk-review-secret"},"instructions":"  回复先给结论  "}`)
+	if code != 200 || !saved.SteerOnSend || saved.ApprovalReviewMode != domain.ApprovalReviewModeAPI || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.APIKey != "" || saved.ApprovalReviewAPI.Model != "gemini-2.5-flash" {
+		t.Fatalf("saved api=%d %+v", code, saved)
+	}
+	// Cross-origin Base URL change without a new apiKey must be rejected and preserve original stored config.
+	if code, _ = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"chat","baseUrl":"https://gateway.example.com/v1","model":"gpt-4.1-mini"},"instructions":"回复先给结论"}`); code != 400 {
+		t.Fatalf("cross-origin api update without key accepted: %d", code)
+	}
+	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.BaseURL != "https://generativelanguage.googleapis.com" || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
+		t.Fatalf("rejected cross-origin update mutated stored api: %+v", stored.ApprovalReviewAPI)
+	}
+	// Same-origin update (path or model change, or official empty baseUrl on same origin) preserves stored key.
+	code, saved = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"gemini","baseUrl":"","model":"gemini-2.5-pro"},"instructions":"回复先给结论"}`)
+	if code != 200 || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.APIKey != "" || saved.ApprovalReviewAPI.Model != "gemini-2.5-pro" {
+		t.Fatalf("same-origin api update=%d %+v", code, saved)
+	}
+	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
+		t.Fatalf("stored key lost on same-origin update: %+v", stored.ApprovalReviewAPI)
+	}
+	// Legacy PUT omitting approvalReview* fields must preserve saved API review settings and key.
+	code, saved = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"instructions":"回复先给结论"}`)
+	if code != 200 || saved.ApprovalReviewMode != domain.ApprovalReviewModeAPI || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.Model != "gemini-2.5-pro" {
+		t.Fatalf("legacy PUT should preserve saved API review settings: code=%d %+v", code, saved)
+	}
+	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
+		t.Fatalf("legacy PUT dropped stored api key: %+v", stored.ApprovalReviewAPI)
 	}
 	c, rec := workbenchContext(u, "GET", "/api/assistant/preferences", &bytes.Buffer{})
+	h.preferences(c)
+	if strings.Contains(rec.Body.String(), "sk-review-secret") || !strings.Contains(rec.Body.String(), `"apiKeyConfigured":true`) {
+		t.Fatalf("get leaked or dropped key flag: %s", rec.Body.String())
+	}
+	// Switching to CLI mode works cleanly while preserving steerOnSend.
+	code, saved = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewModel":"  claude-code:claude-haiku-4-5  ","instructions":"  回复先给结论  "}`)
+	if code != 200 || !saved.ProactiveRoles || saved.ProactiveSOPs || !saved.SteerOnSend || saved.ApprovalReviewMode != domain.ApprovalReviewModeCLI || saved.ApprovalReviewModel != "claude-code:claude-haiku-4-5" || saved.Instructions != "回复先给结论" {
+		t.Fatalf("saved=%d %+v", code, saved)
+	}
+	c, rec = workbenchContext(u, "GET", "/api/assistant/preferences", &bytes.Buffer{})
 	h.preferences(c)
 	if !strings.Contains(rec.Body.String(), `"proactiveRoles":true`) || !strings.Contains(rec.Body.String(), `"steerOnSend":true`) {
 		t.Fatalf("get=%s", rec.Body.String())
@@ -427,8 +478,14 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 		}
 	}
 
-	if code, _ := put(`{"proactiveSops":true}`); code != 200 {
-		t.Fatalf("SOPs on=%d", code)
+	// Legacy PUT while in CLI mode also preserves CLI mode & model; explicit "follow" switches back.
+	code, saved = put(`{"proactiveSops":true}`)
+	if code != 200 || saved.ApprovalReviewMode != domain.ApprovalReviewModeCLI || saved.ApprovalReviewModel != "claude-code:claude-haiku-4-5" {
+		t.Fatalf("legacy PUT should preserve CLI review settings: code=%d %+v", code, saved)
+	}
+	code, saved = put(`{"proactiveSops":true,"approvalReviewMode":"follow"}`)
+	if code != 200 || saved.ApprovalReviewMode != domain.ApprovalReviewModeFollow {
+		t.Fatalf("explicit follow switch failed: code=%d %+v", code, saved)
 	}
 	if req := contextFor(AssistantApprovalAuto); !strings.Contains(req.contextText, "- 走 SOP：") || !strings.Contains(req.contextText, "当前是完全权限：走 SOP 时直接调用写入工具") || strings.Contains(req.contextText, askSOP) {
 		t.Fatalf("full access with SOPs on: %s", req.contextText)
