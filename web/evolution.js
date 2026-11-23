@@ -1,6 +1,6 @@
 // 进化中心：具体报错列表与记录弹窗；提案、资产、样本沿用 kb-* 面板与抽屉。
 // 依赖 app.js 与 knowledge.js 的公共状态、API 和组件。
-const evo={tab:'issues',projectId:null,overview:null,findings:null,samples:null,error:'',seq:0,poll:0,busy:new Set(),drawerProposal:null,stage:'',filter:{kind:'',q:'',status:'open',sort:'value',days:''},changes:{q:'',status:'all',page:0},list:{status:'active',page:0},groups:{},modal:null,page:0,selected:new Set(),diagnosing:false};
+const evo={tab:'issues',projectId:null,overview:null,findings:null,samples:null,error:'',seq:0,poll:0,busy:new Set(),drawerProposal:null,stage:'',filter:{kind:'',q:'',status:'open',sort:'value',days:''},changes:{q:'',status:'all',page:0},list:{status:'active',page:0},groups:{},modal:null,page:0,selected:new Set(),diagnosing:false,lastCheck:null,checkError:''};
 
 const EVO_LEVELS=[[0,'L0 关闭','不诊断、不生成提案'],[1,'L1 只报告','只诊断出问题，不生成修改稿'],[2,'L2 提案回放','生成修改稿并回放验证；试用、发布、回滚都由人确认'],[3,'L3 自动','回放通过后自动试用，试用通过自动发布，发布后变差自动回滚']];
 const EVO_PROPOSAL_STATUS={drafting:['生成中','warn'],validating:['回放中','warn'],pending:['待确认','ok'],canary:['试用中','warn'],released:['已发布','ok'],rejected:['已驳回',''],failed:['未通过','err'],rolled_back:['已回滚','']};
@@ -139,7 +139,7 @@ function evoDiffHTML(oldText,newText,fullContext=false,compact=false,changesOnly
 async function renderEvolutionView(){
   const root=$('#evolutionBody');
   if(!root)return;
-  if(evo.projectId!==null&&evo.projectId!==evoProjectId()){evoDispose();evo.overview=null;evo.findings=null;evo.samples=null;evo.list={status:'active',page:0};evo.tab='issues';if(evoActive())history.replaceState(null,'','#/evolution')}
+  if(evo.projectId!==null&&evo.projectId!==evoProjectId()){evoDispose();evo.overview=null;evo.findings=null;evo.samples=null;evo.list={status:'active',page:0};evo.lastCheck=null;evo.checkError='';evo.tab='issues';if(evoActive())history.replaceState(null,'','#/evolution')}
   evo.projectId=evoProjectId();
   if(!evo.projectId){evo.overview=null;evoRenderMetrics();root.innerHTML='<div class="kb-empty">请先在顶部选择一个项目，进化中心按项目诊断角色与规则</div>';return}
   if(!evo.overview)root.innerHTML='<div class="kb-empty">正在读取进化概览…</div>';
@@ -236,6 +236,8 @@ function evoRender(){
     const tabs=[['assets','角色与规则'],['samples','固定验证样本']];
     root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ 进化中心</button><h2 class="evo-settings-title">进化设置</h2><div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
   }else root.innerHTML=evoUnifiedListHTML();
+  evoHomeSyncChecking();
+  window.AgentFlowHarnessIcons?.hydrate(root);
   if(focused)root.querySelector(`[data-evo-key="${CSS.escape(focused)}"]`)?.focus({preventScroll:true});
 }
 function evoUnifiedRows(){return evoAssetGroups()}
@@ -305,21 +307,7 @@ function evoListProblem(row){
   const kind=r.c.kind||r.f.signals?.[0]?.kind;
   return {title:evoProblemText(raw),kind:verification?'验收检查未通过':EVO_SIGNALS[kind]||(r.f.clusters?.length?'问题线索':'反馈 / 问题线索')};
 }
-function evoUnifiedListHTML(){
-  const all=evoUnifiedRows(),tabs=[['active','需关注'],['todo','待处理'],['doing','进行中'],['done','已归档'],['all','全部记录']];
-  const matches=(r,k)=>k==='all'||(k==='active'?evoListCategory(r)!=='done':evoListCategory(r)===k);
-  const list=all.filter(r=>matches(r,evo.list.status)),pages=Math.max(1,Math.ceil(list.length/10));
-  const priority=row=>row.p?.watch?.status==='degraded'||row.p?.summary?.regressed>0?0:evoListCategory(row)==='todo'?1:2;
-  list.sort((a,b)=>priority(a)-priority(b));
-  evo.list.page=Math.min(Math.max(0,evo.list.page),pages-1);
-  const rows=list.slice(evo.list.page*10,(evo.list.page+1)*10).map(row=>{
-    const {p,key,asset}=row,s=evoListProgress(row);
-    const open=`data-evo-asset-group="${escapeHTML(key)}"`,facts=evoGroupFacts(row);
-    const effect=p?.summary?.finished?`<span class="evo-story-list-effect"><span>历史验证 ${p.summary.finished}/${p.summary.total||p.replays?.length||0}</span><span class="evo-good">改善 ${p.summary.fixed||0}</span><span class="${p.summary.regressed?'evo-bad':''}">退化 ${p.summary.regressed||0}</span></span>`:'';
-    return `<button type="button" class="evo-list-row" ${open} data-evo-key="${escapeHTML(key)}"><span class="evo-list-problem"><b>${escapeHTML(asset.assetName||asset.assetId||'未知对象')}</b><span class="evo-list-context">${escapeHTML(evoKindLabel(asset.assetKind))} · ${escapeHTML(facts)}</span></span><span class="evo-list-impact"><b data-tooltip="${escapeHTML(row.title)}">${escapeHTML(evoStoryBrief(p?.review?.problem||row.title,64))}</b>${effect||`<small>${p?'当前改进':'待处理问题'}${row.conflict?' · 检测到并行冲突':''}</small>`}</span><span class="evo-list-progress"><span class="evo-list-state tone-${row.conflict?'error':s.tone}">${escapeHTML(row.conflict?'存在并行冲突':s.label)}</span><small>${escapeHTML(s.note)}</small></span>${evoIcon('chevron')}</button>`;
-  }).join('');
-  return `<div class="evo-list-filters" role="group" aria-label="筛选问题">${tabs.map(([k,t])=>`<button type="button" data-evo-list-status="${k}" data-evo-key="filter:${k}" aria-pressed="${evo.list.status===k}">${t}<span>${all.filter(r=>matches(r,k)).length}</span></button>`).join('')}</div><section id="evoUnifiedList" class="evo-unified-list" aria-label="问题与修改"><div class="evo-list-columns" aria-hidden="true"><span>涉及角色 / 规则</span><span>改了什么</span><span>当前进展</span><span></span></div>${rows||`<div class="kb-empty">${evo.list.status==='active'?'目前没有需要关注的记录，可切换“全部记录”查看历史。':'此筛选下暂无记录。'}</div>`}</section><p class="evo-list-explanation">每个角色或规则只展示一项当前改进；关联问题与历史尝试合并，后续改进排队。点击查看修改摘要、进度与灰度。</p>${pages>1?`<footer class="evo-list-footer"><span>${list.length} 项</span><nav aria-label="问题分页"><button type="button" data-evo-unified-page="${evo.list.page-1}"${evo.list.page===0?' disabled':''}>上一页</button><span>${evo.list.page+1} / ${pages}</span><button type="button" data-evo-unified-page="${evo.list.page+1}"${evo.list.page===pages-1?' disabled':''}>下一页</button></nav></footer>`:''}`;
-}
+function evoUnifiedListHTML(){return evoHomeHTML()}
 
 // ---------- 问题队列：按判定分组，组内按修复价值排序 ----------
 function evoGroupHTML(key,title,hint,count,open,body,opt={}){
@@ -1123,15 +1111,15 @@ async function evoDiagnose(btn){
   if(!evo.projectId)return toast('请先选择项目','warn');
   if(evo.diagnosing)return;
   const pid=evo.projectId;evo.diagnosing=true;
-  document.querySelectorAll('#evoDiagnose,[data-evo-rediagnose]').forEach(b=>b.disabled=true);
+  evo.checkError='';evoHomeSyncChecking();
   if(btn)btn.disabled=true;
   try{
     const res=await api('/api/evolution/diagnose',{method:'POST',body:JSON.stringify({projectId:pid})});
     const fix=(res.findings||[]).filter(f=>f.triage?.verdict==='fix').length;
     toast(`诊断完成：${res.runs||0} 次运行，${(res.findings||[]).length} 个问题，其中 ${fix} 个值得修复${res.archived?`，自动归档 ${res.archived} 个`:''}`,'ok');
-    if(pid===evoProjectId()){evo.selected.clear();await evoAfterChange()}
-  }catch(err){toast(err.message,'err')}
-  finally{evo.diagnosing=false;document.querySelectorAll('#evoDiagnose,[data-evo-rediagnose]').forEach(b=>b.disabled=false);if(btn)btn.disabled=false}
+    if(pid===evoProjectId()){evo.lastCheck={projectId:pid,runs:res.runs||0,findings:(res.findings||[]).length,at:new Date().toISOString()};evo.selected.clear();await evoAfterChange()}
+  }catch(err){if(pid===evoProjectId()){evo.checkError=err.message;if(!evo.modal)evoRender()}toast(err.message,'err')}
+  finally{evo.diagnosing=false;evoHomeSyncChecking();if(btn?.isConnected)btn.disabled=false}
 }
 async function evoReload(btn){
   if(!evo.projectId)return toast('请先选择项目','warn');

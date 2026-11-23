@@ -325,7 +325,8 @@ Logo 默认 64px，小屏或短屏为 52px；标题为 36px，小屏为 30px。�
 | --- | --- |
 | 页头 | `.kb-head`：H1「进化中心」，说明「找到反复出错的原因，看清每一次修改」。右侧进化设置、独立刷新与紫色「检查最近运行」按钮。刷新不发起诊断，检查防重复提交；进行中的修改每 15s 刷新列表 |
 | 列表摘要 | `#evoMetrics` 留空；各对象行直接显示当前状态、短问题和历史验证改善 / 退化数。曾发布的修改与当前生效版本分开表达，当前版本以详情页异步核对为准 |
-| 首页 | 对象列表按需关注、待处理、进行中、已归档、全部记录筛选，支持每页 10 条分页。每行保留简短问题、去重后的问题运行数、后续建议数和历史改善 / 退化数。角色与规则、固定验证样本位于进化设置；统计趋势折叠放入设置 |
+| 首页 | 对象列表仅保留「待跟进 / 全部记录」，支持每页 10 条分页并标明当前载入范围。四列为问题 / 对象、修改、验证结果、下一步；修改列展示真实节选与短理由，验证列区分历史回放和真实试用 / 发布后观察。角色与规则、固定验证样本位于进化设置；统计趋势折叠放入设置 |
+| 空状态与检查 | 无记录时隐藏筛选与表头，显示「查看运行 / 检查最近运行」和三步路径。显式检查后保留该项目本次检查运行数、问题数和时间；区分没有运行与未发现问题。检查失败单独显示，不伪装成空结果；刷新不触发检查，切项目隔离旧结果。如何验证入口打开可复制示例输入的指南，验收目标不冒充实测结果 |
 | 问题与修改 | 同一角色或规则聚合当前问题、修改和后续建议；终态失败、门禁等重复信号不冒充独立问题数。当前修改只关联自身 finding / proposal 的问题；后续建议单列，不混入当前验证 |
 | 修改详情页 | `#evoDetailPage` 的页头显示对象、版本及当前可用操作。五步进度条后依次显示「问题与修改」「输入与结果对比」「历史验证」；主内容始终同页可见。完整指令 diff、来源记录与诊断默认折叠。切项目、返回列表和旧响应隔离保留 |
 | 问题与指令节选 | 左侧选择诊断 / 留出问题样例，右侧显示短问题、修改理由及改前 / 修改稿节选。新生成的可选 review 元数据最多三项；before / after 必须存在于对应正文，sourceRunIds 只允许诊断证据。旧提案回退到真实 diff 节选和原有理由；完整 diff 始终可打开。统一称「修改稿」 |
@@ -496,7 +497,7 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 | `web/app/hui-select.js` | Harness Selector（原地与触发器两种模式），以及共用的 `HuiPopover`（浮层互斥与定位）和 `HuiAuto`（自动增强与移除清理） |
 | `web/app/business-domains.js`、`web/app/business-harness.css` | 业务领域报表页的模板（`businessReportHTML`）、图表 option（`businessDeliveryOption` 等）、`biz-` 图表挂载与释放、静态 SVG 导出与 Harness 样式 |
 | `web/knowledge.js`、`web/knowledge.css` | 知识中心的概览指标（`kbMetricsHTML`）、四个标签的面板与行模板（`kbPanel`、`kbRow`、`kbBadge`）、通用右侧抽屉 |
-| `web/evolution.js`、`web/evolution.css`、`web/app/evolution-{review,story}.*`、`web/app/evolution-simple.js`、`internal/httpapi/evolution*.go` | 进化中心按对象聚合列表；详情同页呈现问题 / 指令节选、同输入结果图、整份历史验证。可选 review 元数据从改进器生成并核对原文片段，旧提案回退到真实 diff；小型 JSON 产物受身份、大小、超时和旧响应保护。完整原文与证据按需展开；版本核对后开放试用与发布，版本、回滚和后续队列沿用真实接口。 |
+| `web/evolution.js`、`web/evolution.css`、`web/app/evolution-{review,story,home}.*`、`web/app/evolution-simple.js`、`internal/httpapi/evolution*.go` | 进化中心按对象聚合列表；详情同页呈现问题 / 指令节选、同输入结果图、整份历史验证。可选 review 元数据从改进器生成并核对原文片段，旧提案回退到真实 diff；小型 JSON 产物受身份、大小、超时和旧响应保护。完整原文与证据按需展开；版本核对后开放试用与发布，版本、回滚和后续队列沿用真实接口。 |
 | `web/app/runs.js`、`web/product-v4.css`（运行记录列表区段） | 运行记录列表的面板、标签计数、状态徽标和行模板 |
 | `web/app.js`（视图切换）、`web/product-v4.css`（`.page-context`） | 按视图是否自带页头切换 `body.view-has-heading`，隐藏重复的顶栏标题 |
 | `web/app/assistant-settings.js`、`web/app/assistant-settings.css` | AI 助手设置页的开关、自定义规则与保存 |

@@ -24,29 +24,28 @@ test('unified list paginates, preserves filter and page on return, and keeps dia
   ] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app);
-  assert.match($('[data-evo-asset-group="asset:agent:a"]').textContent, /12 类关联问题/);
+  assert.match($('[data-evo-asset-group="asset:agent:a"]').textContent, /1 条问题运行/);
   assert.equal($('#evoMetrics').textContent, '');
   assert.match($('[data-evo-list-status="all"]').textContent, /全部记录13/);
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 10);
+  assert.equal(app.document.querySelectorAll('.evo-home-row').length, 10);
   assert.equal($('#evolutionBody input'), null);
   assert.equal($('#evolutionBody select'), null);
   assert.equal($('#evolutionBody [role="tab"]'), null);
   const trend = app.evaluate('evoOverviewTrend(evoIssueRows())');
   assert.equal(trend.points.reduce((sum, p) => sum + p.value, 0), 1);
   $('[data-evo-unified-page="1"]').click();
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 3);
+  assert.equal(app.document.querySelectorAll('.evo-home-row').length, 3);
   $('[data-evo-asset-group="asset:agent:a-11"]').click(); await settle(4);
   assert.match(app.window.location.hash, /findings\/f-11\/c-11/);
   assert.ok($('#evoDetailPage'));
   $('[data-evo-list-back]').click(); await settle(5);
   assert.equal(app.window.location.hash, '#/evolution');
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 3);
+  assert.equal(app.document.querySelectorAll('.evo-home-row').length, 3);
   assert.equal(app.document.activeElement.dataset.evoAssetGroup, 'asset:agent:a-11');
-  $('[data-evo-list-status="doing"]').click();
-  assert.match($('#evoUnifiedList').textContent, /此筛选下暂无记录/);
-  assert.equal(app.document.activeElement.dataset.evoListStatus, 'doing');
+  assert.equal(app.document.querySelectorAll('.evo-home-tabs button').length, 2);
+  assert.equal($('[data-evo-list-status="doing"]'), null);
   $('[data-evo-list-status="all"]').click();
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 10);
+  assert.equal(app.document.querySelectorAll('.evo-home-row').length, 10);
 });
 
 test('refresh does not diagnose and repeated diagnosis is guarded; legacy diagnosis is kept in details', async t => {
@@ -70,9 +69,10 @@ test('refresh does not diagnose and repeated diagnosis is guarded; legacy diagno
   resolve({ findings: [], runs: 3 }); await settle(5);
   assert.equal($('#evoDiagnose').disabled, false);
   $('[data-evo-asset-group="asset:agent:a"]').click(); await settle(3);
-  $('[data-evo-inspect="records"]').click(); await settle(2);
-  assert.match($('#evoFindingTitle').textContent, /Old failure/);
-  assert.ok($('#evoDetailPage [data-evo-rediagnose]'));
+  assert.match($('#evoFindingTitle').textContent, /Reviewer/);
+  $('#evoSourceDetails').open = true;
+  $('#evoDiagnosisDetails').open = true;
+  assert.match($('#evoDiagnosisDetails').textContent, /旧版诊断/);
 });
 
 test('read errors expose retry without disguising failed requests as empty results', async t => {
@@ -81,7 +81,7 @@ test('read errors expose retry without disguising failed requests as empty resul
   assert.match(app.document.querySelector('#evolutionBody').textContent, /读取失败.*temporary failure/);
   app.router.get('/api/evolution/overview?projectId=project-1', overview);
   app.document.querySelector('[data-evo-reload]').click(); await settle(5);
-  assert.ok(app.document.querySelector('.evo-list-row'));
+  assert.ok(app.document.querySelector('.evo-home-row'));
 });
 
 test('asset grouping deduplicates proposal appearances and merges findings without merging different asset kinds', async t => {
@@ -100,12 +100,48 @@ test('asset grouping deduplicates proposal appearances and merges findings witho
   await open(app);
   assert.equal(app.document.querySelectorAll('[data-evo-asset-group]').length, 2);
   assert.match($('[data-evo-list-status="all"]').textContent, /全部记录2/);
-  assert.match($('[data-evo-asset-group="asset:agent:a"]').textContent, /14 类关联问题.*1 项后续改进排队.*1 次历史尝试.*当前修改/s);
-  assert.match($('[data-evo-asset-group="asset:rule:a"]').textContent, /同名规则.*1 类关联问题/);
+  assert.match($('[data-evo-asset-group="asset:agent:a"]').textContent, /1 条问题运行.*后续建议 1.*历史尝试 1.*当前修改/s);
+  assert.match($('[data-evo-asset-group="asset:rule:a"]').textContent, /同名规则.*1 条问题线索/);
   assert.equal(app.router.calls.some(c => c.path.startsWith('/api/runs/') || c.path === '/api/evolution/proposals/p-grouped'), false);
   $('[data-evo-asset-group="asset:agent:a"]').click(); await settle(5);
-  $('[data-evo-inspect="records"]').click(); await settle(2);
-  assert.equal(app.document.querySelectorAll('[data-evo-related-finding]').length, 14);
+  assert.equal(app.document.querySelectorAll('#evoProblemRecords [data-evo-related-finding]').length, 12);
+  assert.equal($('#evoProblemRecords [data-evo-related-finding="f-second"]'), null);
   assert.equal($('[data-evo-related-finding="f-rule"]'), null);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
+});
+
+
+test('empty home explains explicit diagnosis results and opens a read-only verification guide', async t => {
+  const app = await loadApp({routes:[
+    {method:'GET',path:'/api/evolution/overview?projectId=project-1',body:{health:[],queue:[]}},
+    {method:'GET',path:'/api/evolution/findings?projectId=project-1',body:[]},
+    {method:'POST',path:'/api/evolution/diagnose',body:{runs:0,findings:[]}},
+  ]}); t.after(app.close);
+  const $ = s => app.document.querySelector(s);
+  await open(app);
+  assert.match($('#evolutionBody').textContent,/暂无改进记录/);
+  assert.equal($('.evo-home-columns'),null);
+  assert.equal($('.evo-home-tabs'),null);
+  $('[data-evo-home-guide]').click(); await settle(2);
+  assert.match($('#kbDrawerBody').textContent,/evidence.line = 4/);
+  assert.match($('#kbDrawerBody').textContent,/不是当前项目的运行结果/);
+  assert.equal(app.router.calls.some(c=>c.method!=='GET'),false);
+  let copied;
+  app.window.navigator.clipboard.writeText=async text=>{copied=JSON.parse(text)};
+  $('[data-evo-home-copy]').click();await settle(2);
+  assert.equal(copied.caseId,'combined');
+  assert.equal(copied.lines.length,4);
+  $('#kbDrawerClose').click();
+  $('[data-evo-home-check]').click(); await settle(6);
+  assert.match($('#evolutionBody').textContent,/当前项目没有可分析的运行/);
+  assert.match($('.evo-home-check-note').textContent,/0 次运行/);
+  app.router.post('/api/evolution/diagnose',{runs:4,findings:[]});
+  $('[data-evo-home-check]').click(); await settle(6);
+  assert.match($('#evolutionBody').textContent,/本次检查未发现问题/);
+  assert.match($('.evo-home-check-note').textContent,/4 次运行/);
+  $('#evoRefresh').click(); await settle(4);
+  assert.equal(app.router.calls.filter(c=>c.method==='POST'&&c.path.endsWith('/diagnose')).length,2,'refresh must not diagnose');
+  $('[data-evo-home-runs]').click();await settle(3);
+  assert.ok($('#runsView').classList.contains('active'));
+  assert.equal(app.evaluate('state.projectFilter'),'project-1');
 });
