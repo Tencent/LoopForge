@@ -494,7 +494,7 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 | `web/app/hui-select.js` | Harness Selector（原地与触发器两种模式），以及共用的 `HuiPopover`（浮层互斥与定位）和 `HuiAuto`（自动增强与移除清理） |
 | `web/app/business-domains.js`、`web/app/business-harness.css` | 业务领域报表页的模板（`businessReportHTML`）、图表 option（`businessDeliveryOption` 等）、`biz-` 图表挂载与释放、静态 SVG 导出与 Harness 样式 |
 | `web/knowledge.js`、`web/knowledge.css` | 知识中心的概览指标（`kbMetricsHTML`）、四个标签的面板与行模板（`kbPanel`、`kbRow`、`kbBadge`）、通用右侧抽屉 |
-| `web/evolution.js`、`web/evolution.css`、`internal/httpapi/evolution*.go` | 进化中心的看板、提案 / 版本抽屉、正文 diff（`evoLineDiff`）、策略分段，以及运行详情页的反馈 / 钉选入口（`evoDecorateRunDetail`）；后端 `/api/evolution/*` 接口与回放监视器 |
+| `web/evolution.js`、`web/evolution.css`、`web/app/evolution-review.*`、`web/app/evolution-simple.js`、`internal/httpapi/evolution*.go` | 进化中心按对象聚合列表；详情使用「问题 / 修改 / 验证」标签与两栏审查布局，左侧真实正文红删绿增，右侧逐条回放和运行证据。长正文默认收起，可展开原文；评分图标区分一次成功、返工成功、失败与未完成。版本核对后才开放试用与发布；试用、版本和后续队列沿用真实接口。 |
 | `web/app/runs.js`、`web/product-v4.css`（运行记录列表区段） | 运行记录列表的面板、标签计数、状态徽标和行模板 |
 | `web/app.js`（视图切换）、`web/product-v4.css`（`.page-context`） | 按视图是否自带页头切换 `body.view-has-heading`，隐藏重复的顶栏标题 |
 | `web/app/assistant-settings.js`、`web/app/assistant-settings.css` | AI 助手设置页的开关、自定义规则与保存 |
