@@ -25,7 +25,7 @@ func (r *AnalyticsRepo) analyticsActivity(filter domain.AnalyticsFilter, issues 
 		}
 		count(&out.Activity)
 		bucketAt := at.UTC()
-		if out.Dashboard != nil {
+		if filter.Scope == "dashboard" {
 			bucketAt = at.In(analyticsWeekHourLocation(filter.TimeZone))
 		}
 		key := analyticsTrendBucket(bucketAt, filter.Grain)

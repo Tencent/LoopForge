@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chooseOption, loadApp, settle } from '../lib/load-app.mjs';
 
-test('observability exposes one dashboard without category tabs', async (t) => {
+test('observability tabs only expose usage and delivery views', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`
@@ -14,7 +14,7 @@ test('observability exposes one dashboard without category tabs', async (t) => {
   assert.equal(app.evaluate(`state.obsTab`), 'overview');
   assert.equal(app.evaluate(`obsNormalizeTab('delivery')`), 'delivery');
   assert.equal(app.evaluate(`obsNormalizeTab('anything-else')`), 'overview');
-  assert.deepEqual([...app.document.querySelectorAll('[data-obs-tab]')].map(b => b.dataset.obsTab), []);
+  assert.deepEqual([...app.document.querySelectorAll('[data-obs-tab]')].map(b => b.dataset.obsTab), ['overview', 'delivery']);
   assert.equal(app.evaluate(`obsDetailScope()`), 'overview');
   assert.equal(app.evaluate(`typeof refreshSkillhubEfficiency`), 'undefined');
 });

@@ -17,6 +17,9 @@ type AnalyticsFilter struct {
 	// Scope "overview" skips delivery scans and detailed breakdowns. "dashboard"
 	// also includes compact delivery and intervention cohorts without write paths.
 	Scope string
+	// IncludeDashboard adds intervention aggregates to the existing detailed
+	// overview/full response, preserving its legacy time buckets and indexes.
+	IncludeDashboard bool
 	// UserID keeps runs whose responsible executor or linked issue assignee matches.
 	UserID string
 	// IssueSource keeps only runs/deliveries whose issue comes from a source: local, gongfeng, tapd.

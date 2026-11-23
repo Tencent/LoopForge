@@ -18,6 +18,11 @@ func (r *AnalyticsRepo) analyticsDashboard(filter domain.AnalyticsFilter, runs [
 		return nil
 	}
 	zone := analyticsWeekHourLocation(filter.TimeZone)
+	if filter.Scope != "dashboard" {
+		// Match the existing overview/activity chart buckets when embedded in
+		// that response. The compact dashboard retains its requested time zone.
+		zone = time.UTC
+	}
 	bucket := func(at time.Time) string { return analyticsTrendBucket(at.In(zone), filter.Grain) }
 	points := map[string]*domain.AnalyticsDashboardPoint{}
 	point := func(date string) *domain.AnalyticsDashboardPoint {

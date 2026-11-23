@@ -345,25 +345,42 @@ function setObsScope(scope){
     state.obsUserFilter=state.obsUserSaved||(state.currentUser&&!state.currentUser.isGuest&&state.currentUser.id?String(state.currentUser.id):'');
   }
   resetListPages('obs-');
-  applyObsFilter();
+  return applyObsFilter();
 }
 async function switchObsTab(tab){
-  tab=obsNormalizeTab(tab);
-  state.obsTab=tab;
-  $$('#obsTabs .obs-tab').forEach(x=>x.classList.toggle('active',x.dataset.obsTab===tab));
-  if(tab==='delivery'&&!state.obsAnalyticsFull){
-    const host=$('#obsBody');
-    if(host)host.innerHTML=`<div class="obs-pane active"><div class="detail-empty">正在加载交付数据…</div></div>`;
-    try{
-      state.analytics=await api('/api/analytics'+analyticsQuery({overview:false}),{silent:true});
-      state.obsAnalyticsFull=true;
-    }catch(e){toast(e.message)}
-  }
+  state.obsTab=obsNormalizeTab(tab);
+  if(state.obsTab==='delivery'&&(!state.obsAnalyticsFull||!obsAnalyticsMatchesCurrent()||state.obsAnalyticsLoading))return obsLoadAnalytics();
   renderObservability();
 }
-async function refreshObs(){
-  return obsLoadDashboard();
+function obsAnalyticsContext(query){
+  const params=new URLSearchParams(String(query||'').replace(/^\?/,''));
+  params.delete('scope');params.delete('dashboard');params.sort();
+  return params.toString();
 }
+function obsAnalyticsMatchesCurrent(){
+  return state.obsAnalyticsDataContext==null||state.obsAnalyticsDataContext===obsAnalyticsContext(analyticsQuery());
+}
+let obsAnalyticsRequest=0;
+async function obsLoadAnalytics(){
+  ensureObsUserFilter();
+  const request=++obsAnalyticsRequest,overview=state.obsTab!=='delivery',query=analyticsQuery({overview}),context=obsAnalyticsContext(query);
+  state.obsAnalyticsLoading=true;state.obsAnalyticsError='';
+  renderObservability();
+  try{
+    const snapshot=await api('/api/analytics'+query,{silent:true});
+    if(request!==obsAnalyticsRequest||context!==obsAnalyticsContext(analyticsQuery()))return;
+    state.analytics=snapshot;state.obsAnalyticsFull=!overview;state.obsAnalyticsDataContext=context;
+  }catch(e){
+    if(request===obsAnalyticsRequest){state.obsAnalyticsError=e.message||lfT('统计加载失败','Unable to load analytics');toast(state.obsAnalyticsError)}
+  }finally{
+    if(request===obsAnalyticsRequest){
+      state.obsAnalyticsLoading=false;renderObservability();
+      const captured=obsAnalyticsContext(analyticsQuery({overview:true,crossProject:true}));
+      refreshObsCrossProject().then(()=>{if(request===obsAnalyticsRequest&&captured===obsAnalyticsContext(analyticsQuery({overview:true,crossProject:true}))&&activeViewName()==='observability')renderObservability()});
+    }
+  }
+}
+async function refreshObs(){return obsLoadAnalytics()}
 
 function runCost(r){return Number((state.analytics?.runTraces||[]).find(t=>t.runId===r.id)?.costCny||0)}
 function runTokens(r){return Number(r.usage?.totalTokens||0)}
@@ -377,6 +394,7 @@ function analyticsQuery(opts){
     if(base)parts.push(base);
   }
   if(opts.overview)parts.push('scope=overview');
+  if(!opts.crossProject)parts.push('dashboard=1');
   if(obsScope()==='user'&&state.obsUserFilter)parts.push('userId='+encodeURIComponent(state.obsUserFilter));
   if(state.obsOriginFilter)parts.push('origin='+encodeURIComponent(state.obsOriginFilter));
   if(state.obsSourceFilter)parts.push('issueSource='+encodeURIComponent(state.obsSourceFilter));
@@ -387,22 +405,15 @@ function analyticsQuery(opts){
 }
 async function refreshObsCrossProject(){
   if(obsScope()!=='user'||!state.obsUserFilter){state.obsCrossProject=null;return}
+  const query=analyticsQuery({overview:true,crossProject:true});
   try{
-    state.obsCrossProject=await api('/api/analytics'+analyticsQuery({overview:true,crossProject:true}),{silent:true});
-  }catch(e){state.obsCrossProject=null}
+    const snapshot=await api('/api/analytics'+query,{silent:true});
+    if(obsScope()==='user'&&query===analyticsQuery({overview:true,crossProject:true}))state.obsCrossProject=snapshot;
+  }catch(e){if(query===analyticsQuery({overview:true,crossProject:true}))state.obsCrossProject=null}
 }
-async function applyObsFilter(){
-  try{
-    const overview=state.obsTab!=='delivery';
-    const [analytics]=await Promise.all([
-      api('/api/analytics'+analyticsQuery({overview}),{silent:true}),
-    ]);
-    state.analytics=analytics;
-    state.obsAnalyticsFull=!overview;
-  }catch(e){toast(e.message)}
-  renderObservability();
-  refreshObsCrossProject().then(()=>{if(activeViewName()==='observability')renderObservability()});
-}
+
+async function applyObsFilter(){return obsLoadAnalytics()}
+
 function obsUserName(id){
   if(!id||id==='unassigned')return '未分配';
   const user=userById(id);
@@ -541,10 +552,50 @@ let obsCardBuilders={};
 let obsExpandState=null;
 function obsChartFormatters(theme,reduced){return {theme,reduced,fmtTokens:formatTokens,fmtCost:v=>'¥'+Number(v||0).toFixed(2),label:obsTrendLabel}}
 function renderObservability(){
-  obsRenderDashboard();
+  ensureObsUserFilter();
+  renderObsTabs();
+  const host=$('#obsBody');if(!host)return;
+  state.obsTab=obsNormalizeTab(state.obsTab);
+  $$('#obsTabs .obs-tab').forEach(b=>b.classList.toggle('active',b.dataset.obsTab===state.obsTab));
+  const compatible=obsAnalyticsMatchesCurrent();
+  const summary=compatible?(state.analytics?.summary||{}):{};
+  $('#obsLiveState').classList.toggle('active',((summary.activeRuns||0)+(summary.waitingRuns||0))>0);
+  const badge=$('#obsDeliveryCount');
+  if(badge){const n=compatible?(state.analytics?.delivery?.issues||0):0;badge.hidden=!n;badge.textContent=n?lfT(`${n} 单`,`${n} ${n===1?'item':'items'}`):''}
+  const reopen=obsExpandState?.key||'';
+  if(reopen)obsCollapse({silent:true});
+  obsDisposeCharts(host);
+  obsDisposeSelects();
+  obsCardBuilders={};
+  const tab=state.obsTab;
+  {
+    const ready=compatible&&state.analytics&&(tab!=='delivery'||state.obsAnalyticsFull);
+    const html=!ready?`<div class="detail-empty"${state.obsAnalyticsError?' role="alert"':''}>${escapeHTML(state.obsAnalyticsError||(state.obsAnalyticsLoading?lfT('正在加载统计数据…','Loading analytics…'):lfT('暂无统计数据','No analytics available')))}</div>`:(tab==='delivery'?obsDelivery():obsOverview());
+    host.innerHTML=`<div class="obs-pane active">${obsFilterBar()}${html}</div>`;
+    state.obsSelects=obsEnhanceSelects(host);
+    host.querySelectorAll('[data-obs-scope]').forEach(b=>b.onclick=()=>setObsScope(b.dataset.obsScope));
+    host.querySelectorAll('[data-obs-grain]').forEach(b=>b.onclick=()=>setObsTrendGrain(b.dataset.obsGrain));
+    host.querySelectorAll('[data-obs-period-step]').forEach(b=>b.onclick=()=>obsShiftPeriod(Number(b.dataset.obsPeriodStep)));
+    const periodInput=host.querySelector('#obsPeriodInput');
+    if(periodInput)periodInput.onchange=()=>setObsPeriod(periodInput.value);
+    const userSelect=host.querySelector('#obsUserFilter');
+    if(userSelect)userSelect.onchange=()=>{state.obsUserFilter=userSelect.value||'';resetListPages('obs-');applyObsFilter()};
+    const originSelect=host.querySelector('#obsOriginFilter');if(originSelect)originSelect.onchange=()=>{state.obsOriginFilter=originSelect.value;resetListPages('obs-');applyObsFilter()};
+    const sourceButton=host.querySelector('#obsManageSources');if(sourceButton)sourceButton.onclick=openObsSources;
+    const obsSourceSel=host.querySelector('#obsSourceFilter');if(obsSourceSel)obsSourceSel.onchange=()=>{state.obsSourceFilter=obsSourceSel.value;resetListPages('obs-');applyObsFilter()};
+  }
+  const exportButton=$('#exportObsReport');
+  if(exportButton)exportButton.disabled=!compatible||!state.analytics||!!state.obsAnalyticsLoading;
+  host.setAttribute('aria-busy',String(!!state.obsAnalyticsLoading));
+  obsBindActions(host);
+  bindPager(host);
+  obsHydrateIcons(host);
+  obsMountCharts(host);
+  if(reopen){const card=host.querySelector(`[data-obs-card="${reopen}"]`);if(card)obsExpand(card,{silent:true})}
 }
 // obsBindActions 绑定卡片内的交互；卡片局部重渲染后会对新节点重新调用。
 function obsBindActions(root){
+  if(typeof obsBindHumanTrendActions==='function')obsBindHumanTrendActions(root);
   root.querySelectorAll('[data-obs-metric]').forEach(b=>b.onclick=()=>setObsTrendMetric(b.dataset.obsMetric));
   root.querySelectorAll('[data-obs-period]').forEach(el=>el.onclick=e=>{e.stopPropagation();const key=el.dataset.obsPeriod;if(key)obsSelectTrendPeriod(key)});
   root.querySelectorAll('[data-open-run]').forEach(b=>b.onclick=e=>{if(e.target.closest&&e.target.closest('a'))return;obsCollapse();openRunFromId(b.dataset.openRun)});
@@ -990,11 +1041,12 @@ function obsCategoryLabel(k){return ({requirement:'需求开发',bugfix:'Bug 修
 function obsTraceLabel(t){return [t.origin==='external'?'外部 · '+t.workflowName:obsSourceLabel(t.issueSource||'local'),t.externalId||t.issueId||t.runId].filter(Boolean).join(' ')}
 function obsOverview(){
   const view=obsScopedView();
-  obsCardBuilders={trend:obsTrendCard,breakdown:obsBreakdownCard,quality:obsQualityCard,heat:obsHeatCard,detail:obsDetailCard};
+  obsCardBuilders={trend:obsTrendCard,breakdown:obsBreakdownCard,quality:obsQualityCard,heat:obsHeatCard,detail:obsDetailCard,...(typeof obsHumanTrendCard==='function'?{human:obsHumanTrendCard}:{})};
   const heat=obsHeatCard();
   return `${obsInsights(view,'usage')}
   ${obsActivityKpis()}
   ${obsUsageKpis(view)}
+  ${typeof obsHumanTrendCard==='function'?obsHumanTrendCard():''}
   ${obsTrendCard()}
   <div class="obs-grid2">${obsBreakdownCard()}${obsQualityCard()}</div>
   ${heat}
@@ -1480,12 +1532,14 @@ function obsReportTable(title,headers,rows){
   return `<section class="block"><h2>${title}</h2><table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></section>`;
 }
 async function exportObsReport(){
-  if(state.obsDashboardSnapshot?.dashboard)return exportObsDashboardReport();
   ensureObsUserFilter();
+  const context=obsAnalyticsContext(analyticsQuery()),period=obsPeriodKey();
   toast('正在生成报告…');
   try{
     if(!state.obsAnalyticsFull){
-      state.analytics=await api('/api/analytics'+analyticsQuery({overview:false}),{silent:true});
+      const snapshot=await api('/api/analytics'+analyticsQuery({overview:false}),{silent:true});
+      if(context!==obsAnalyticsContext(analyticsQuery())||period!==obsPeriodKey()){toast(lfT('统计范围已切换，请重新导出','The analytics scope changed. Export again.'));return}
+      state.analytics=snapshot;state.obsAnalyticsDataContext=context;
       state.obsAnalyticsFull=true;
     }
     const html=buildObsReportHTML();

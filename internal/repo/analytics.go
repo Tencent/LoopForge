@@ -73,7 +73,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		Summary:  domain.AnalyticsSummary{GeneratedAt: now},
 		Coverage: domain.AnalyticsCoverage{AdapterEvents: map[string]int{}, LogLevels: map[string]int{}},
 	}
-	if filter.Scope == "dashboard" {
+	if filter.Scope == "dashboard" || filter.IncludeDashboard {
 		out.Dashboard = &domain.AnalyticsDashboard{}
 	}
 	defer applyAnalyticsCNY(&out)
@@ -643,7 +643,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 			out.Delivery.Issues = countDeliveryGroups(filter, platformRuns, issuesByID)
 		}
 		out.Summary.InProgressIssues = countInProgressIssues(issueList, filter)
-		if out.Dashboard != nil {
+		if filter.Scope == "dashboard" {
 			// The compact page consumes aggregates, not trace IDs, MR links or
 			// per-person / per-model detail. Keep legacy overview unchanged.
 			out.RunTraces, out.MRMerges, out.Trend, out.WeekHour = nil, nil, nil, nil

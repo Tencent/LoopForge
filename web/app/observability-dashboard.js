@@ -1,51 +1,4 @@
-// Compact analytics dashboard. Detailed report builders remain in observability.js.
-function obsDashboardDays(){return ['7','14','30','all'].includes(String(state.obsDashboardDays))?String(state.obsDashboardDays):'14'}
-function obsDashboardWindow(now=new Date()){
-  if(obsDashboardDays()==='all')return {from:null,to:null};
-  const to=new Date(now),from=new Date(now);
-  to.setHours(23,59,59,999);from.setHours(0,0,0,0);from.setDate(from.getDate()-Number(obsDashboardDays())+1);
-  return {from,to};
-}
-function obsDashboardQuery(window){
-  const p=new URLSearchParams(projectQuery().replace(/^\?/,''));
-  p.set('scope','dashboard');p.set('grain',obsDashboardDays()==='all'?'month':'day');p.set('tz',obsTimeZone());
-  if(window.from)p.set('from',window.from.toISOString());
-  if(window.to)p.set('to',window.to.toISOString());
-  return '?'+p.toString();
-}
-let obsDashboardRequest=0;
-async function obsLoadDashboard(){
-  const ticket=++obsDashboardRequest,window=obsDashboardWindow(),query=obsDashboardQuery(window);
-  state.obsDashboardLoading=true;state.obsDashboardError='';
-  if(state.obsDashboardQuery!==query)state.obsDashboardSnapshot=null;
-  renderObservability();
-  try{
-    const snapshot=await api('/api/analytics'+query,{silent:true});
-    if(ticket!==obsDashboardRequest||query!==obsDashboardQuery(window))return;
-    if(!snapshot.dashboard)throw new Error(lfT('统计数据暂不可用','Analytics are unavailable'));
-    state.analytics=snapshot;state.obsDashboardSnapshot=snapshot;state.obsDashboardQuery=query;state.obsDashboardWindow=window;
-  }catch(e){if(ticket===obsDashboardRequest)state.obsDashboardError=e.message||lfT('统计加载失败','Unable to load analytics')}
-  finally{if(ticket===obsDashboardRequest){state.obsDashboardLoading=false;renderObservability()}}
-}
-function obsDashboardDates(snapshot){
-  const win=state.obsDashboardWindow||obsDashboardWindow();
-  if(obsDashboardDays()==='all')return [...new Set([...(snapshot.dashboard?.trend||[]),...(snapshot.activityTrend||[])].map(p=>p.date))].sort();
-  const dates=[];const end=win.to||new Date();
-  for(let at=new Date(win.from||end);at<=end;at.setDate(at.getDate()+1))dates.push(at.getFullYear()+'-'+String(at.getMonth()+1).padStart(2,'0')+'-'+String(at.getDate()).padStart(2,'0'));
-  return dates;
-}
-function obsDashboardPoints(snapshot){
-  const trend=new Map((snapshot.dashboard?.trend||[]).map(p=>[p.date,p]));
-  const activity=new Map((snapshot.activityTrend||[]).map(p=>[p.date,p]));
-  const humans=new Map();
-  for(const p of snapshot.dashboard?.humanTrend||[]){
-    if(state.obsDashboardNode&&p.node!==state.obsDashboardNode)continue;
-    const row=humans.get(p.date)||{approvals:0,rejections:0,retries:0};
-    for(const key of ['approvals','rejections','retries'])row[key]+=Number(p[key]||0);
-    humans.set(p.date,row);
-  }
-  return obsDashboardDates(snapshot).map(date=>({date,...trend.get(date),sessions:Number(activity.get(date)?.sessions||0),collaborativeSessions:Number(activity.get(date)?.collaborativeSessions||0),...humans.get(date)}));
-}
+// Intervention chart additions to the existing grouped analytics page.
 function obsDashboardSeries(kind,points,metric){
   const defs=kind==='delivery'?[[lfT('SOP 交付','SOP deliveries'),'sopDelivered'],[lfT('Vibe Coding 交付','Vibe Coding deliveries'),'vibeDelivered']]:kind==='vibe'?[[lfT('会话','Sessions'),'sessions'],[lfT('协作会话','Collaborative sessions'),'collaborativeSessions']]:[[lfT('审批 / 放行','Approved / passed'),'approvals'],[lfT('驳回','Rejected'),'rejections'],[lfT('重试 / 拒绝续跑','Retry / declined'),'retries']];
   return defs.map(([name,key])=>({name,key,values:points.map(p=>kind==='human'&&metric!=='count'?(p.sopRuns?Number(p[key]||0)*100/p.sopRuns:0):Number(p[key]||0))}));
@@ -87,102 +40,55 @@ function obsDashboardFallback(kind,points){
   return html+'</svg>';
 }
 function obsDashboardSpec(kind,points){return {option:(theme,reduced)=>obsDashboardOption(kind,points,{theme:obsDashboardPalette(theme),reduced,metric:state.obsDashboardMetric}),fallback:()=>obsDashboardFallback(kind,points)}}
-function obsDashboardSkeleton(){
-  const tr=(zh,en)=>lfT(zh,en),metric=(key,label)=>`<div class="od-kpi"><span>${label}</span><b class="num" data-od-number="${key}">—</b></div>`;
-  const legend=(color,label,key)=>`<span><i class="od-dot ${color}"></i>${label}${key?` <b class="num" data-od-number="${key}">—</b>`:''}</span>`;
-  return `<div class="obs-dashboard">
-    <div class="od-toolbar"><select id="obsDashboardProject" data-obs-select aria-label="${tr('项目','Project')}"></select><select id="obsDashboardRange" data-obs-select aria-label="${tr('时间范围','Date range')}">${[['7',tr('近 7 天','Last 7 days')],['14',tr('近 14 天','Last 14 days')],['30',tr('近 30 天','Last 30 days')],['all',tr('全部时间','All time')]].map(([key,label])=>`<option value="${key}">${label}</option>`).join('')}</select>${obsCanManageSources()?`<button type="button" class="obs-btn ghost od-sources" id="obsManageSources" aria-label="${tr('外部数据源','External sources')}" title="${tr('外部数据源','External sources')}">${obsIcon('integration')}</button>`:''}</div>
-    <div class="od-error" role="alert" hidden></div>
-    <div class="od-kpis">${metric('delivered',tr('已交付需求','Delivered issues'))}${metric('success',tr('SOP 成功率','SOP success rate'))}${metric('humanRate',tr('SOP 人工介入率','SOP intervention rate'))}</div>
-    <div class="od-grid">
-      <section class="od-panel"><header class="od-head"><h2>${tr('交付趋势','Delivery trend')}</h2></header><div class="od-legend">${legend('', 'SOP','sopDelivered')}${legend('blue','Vibe Coding','vibeDelivered')}</div>${obsChartSlot('dashboard-delivery',{},245)}</section>
-      <section class="od-panel"><header class="od-head"><h2>Vibe Coding</h2></header><div class="od-vibe">${metric('sessions',tr('会话','Sessions'))}${metric('collaboration',tr('协作会话','Collaborative sessions'))}${metric('members',tr('活跃成员','Active members'))}${metric('workspaces',tr('编码工作区','Coding workspaces'))}</div><div class="od-legend">${legend('blue',tr('会话','Sessions'))}${legend('dash',tr('协作会话','Collaborative sessions'))}</div>${obsChartSlot('dashboard-vibe',{},180)}</section>
-    </div>
-    <div class="od-grid od-bottom">
-      <section class="od-panel"><header class="od-head"><h2>${tr('SOP 人工介入趋势','SOP intervention trend')}</h2><select id="obsDashboardNode" data-obs-select aria-label="${tr('人工介入节点','Intervention node')}"></select></header><div class="od-sop"><span>${tr('SOP 运行','SOP runs')} <b class="num" data-od-number="runs">—</b></span><span>${tr('P95 执行耗时','P95 execution time')} <b class="num" data-od-number="p95">—</b></span></div><div class="od-metrics" role="group" aria-label="${tr('人工介入口径','Intervention measure')}"><button type="button" data-od-metric="normalized">${tr('每百次运行','Per 100 runs')}</button><button type="button" data-od-metric="count">${tr('介入次数','Decisions')}</button></div>${obsChartSlot('dashboard-human',{},210)}<div class="od-legend od-human-legend">${legend('',tr('审批 / 放行','Approved / passed'))}${legend('blue',tr('驳回','Rejected'))}${legend('amber',tr('重试 / 拒绝续跑','Retry / declined'))}</div></section>
-      <section class="od-panel od-cost"><header class="od-head"><h2>${tr('费用与用量','Cost & usage')}</h2></header><span class="od-label" data-od-cost-label>${tr('已识别费用','Identified cost')}</span><b class="od-cost-value num" data-od-number="cost">—</b><div class="od-token"><span>${tr('执行 Token','Execution tokens')}</span><b class="num" data-od-number="tokens">—</b></div></section>
-    </div>
-  </div>`;
-}
-function obsDashboardNumber(el,value,format=String){
-  if(!el)return;
-  const text=value==null?'—':format(value);
-  if(el.dataset.odFinal===text)return;
-  el.dataset.odFinal=text;
-  if(el._odFrame)cancelAnimationFrame(el._odFrame);
-  const previous=Number(el.dataset.odValue)||0;el.dataset.odValue=String(value??0);el.setAttribute('aria-label',text);
-  if(value==null||!Number.isFinite(value)||obsReducedMotion()||Math.abs(value-previous)<.001){el.textContent=text;return}
-  const start=performance.now();
-  const tick=now=>{if(!el.isConnected)return;const progress=Math.min(1,(now-start)/350);el.textContent=progress===1?text:format(previous+(value-previous)*(1-(1-progress)**3));if(progress<1)el._odFrame=requestAnimationFrame(tick)};
-  el._odFrame=requestAnimationFrame(tick);
-}
-function obsRenderDashboard(){
-  const host=$('#obsBody');if(!host)return;
-  const snapshot=state.obsDashboardSnapshot,d=snapshot?.dashboard,a=snapshot?.activity||{},summary=snapshot?.summary||{};
-  if(!host.querySelector('.obs-dashboard')){obsDisposeCharts(host);obsDisposeSelects();host.innerHTML=obsDashboardSkeleton();obsHydrateIcons(host)}
-  const root=host.querySelector('.obs-dashboard');root.setAttribute('aria-busy',String(!!state.obsDashboardLoading));
-  const refresh=$('#refreshObs'),exportButton=$('#exportObsReport');
-  if(refresh)refresh.disabled=!!state.obsDashboardLoading;
-  if(exportButton)exportButton.disabled=!d||!!state.obsDashboardLoading;
-  const projects=state.data.projects||[],project=root.querySelector('#obsDashboardProject');
-  const optionHTML=projects.map(p=>`<option value="${escapeHTML(p.id)}">${escapeHTML(p.name||p.id)}</option>`).join('');
-  if(project.innerHTML!==optionHTML)project.innerHTML=optionHTML;
-  project.value=state.projectFilter||'';project.onchange=()=>{const picker=$('#projectSwitcher');picker.value=project.value;picker.dispatchEvent(new Event('change',{bubbles:true}))};
-  const range=root.querySelector('#obsDashboardRange');range.value=obsDashboardDays();range.onchange=()=>{state.obsDashboardDays=range.value;state.obsDashboardWindow=null;obsLoadDashboard()};
-  const error=root.querySelector('.od-error');error.hidden=!state.obsDashboardError;error.textContent=state.obsDashboardError||'';
-  const metrics={delivered:d?.deliveredIssues,success:d&&d.succeededRuns+d.failedRuns?d.succeededRuns*100/(d.succeededRuns+d.failedRuns):null,humanRate:d?.sopRuns?d.humanRuns*100/d.sopRuns:null,sopDelivered:d?.sopDeliveredIssues,vibeDelivered:d?.vibeDeliveredIssues,sessions:d?a.sessions||0:null,collaboration:d?a.collaborativeSessions||0:null,members:d?.activeMembers,workspaces:d?summary.conversationWorkspaces||0:null,runs:d?.sopRuns,p95:d?.p95ExecutionDurationMs||null,cost:d?summary.totalCostCny||0:null,tokens:d?summary.totalTokens||0:null};
-  for(const [key,value] of Object.entries(metrics)){
-    const format=key==='success'||key==='humanRate'?n=>n.toFixed(1)+'%':key==='p95'?duration:key==='cost'?n=>'¥'+n.toFixed(2):key==='tokens'?formatTokens:n=>Math.round(n).toLocaleString();
-    obsDashboardNumber(root.querySelector(`[data-od-number="${key}"]`),value,format);
-  }
-  const costLabel=root.querySelector('[data-od-cost-label]');costLabel.textContent=d&&obsCostUnknown(summary)&&!(summary.totalCostCny>0)?lfT('费用未识别','Cost unknown'):lfT('已识别费用','Identified cost');
-  if(d&&obsCostUnknown(summary)&&!(summary.totalCostCny>0))obsDashboardNumber(root.querySelector('[data-od-number="cost"]'),null);
-  const node=root.querySelector('#obsDashboardNode'),nodes=d?.humanNodes||[];
-  if(!nodes.some(n=>n.key===state.obsDashboardNode))state.obsDashboardNode='';
-  const nodeHTML=`<option value="">${lfT('全部节点','All nodes')}</option>`+nodes.map(n=>`<option value="${escapeHTML(n.key)}">${escapeHTML(n.name)}</option>`).join('');
-  if(node.innerHTML!==nodeHTML)node.innerHTML=nodeHTML;node.value=state.obsDashboardNode||'';
-  node.onchange=()=>{state.obsDashboardNode=node.value;obsRenderDashboard()};
-  root.querySelectorAll('[data-od-metric]').forEach(b=>{b.setAttribute('aria-pressed',String((state.obsDashboardMetric||'normalized')===b.dataset.odMetric));b.onclick=()=>{state.obsDashboardMetric=b.dataset.odMetric;obsRenderDashboard()}});
-  const sources=root.querySelector('#obsManageSources');if(sources)sources.onclick=openObsSources;
-  const points=snapshot?obsDashboardPoints(snapshot):[];
-  for(const kind of ['delivery','vibe','human']){
-    const key='dashboard-'+kind,spec=obsDashboardSpec(kind,points),el=root.querySelector(`[data-obs-chart="${key}"]`);
-    obsChartSpecs[key]=spec;
-    const entry=obsChartEntry(key);
-    if(entry&&entry.el===el){entry.spec=spec;entry.chart.setOption(spec.option(obsEChartsTheme(),obsReducedMotion()),{replaceMerge:['series']})}
-    else if(el.classList.contains('is-fallback'))obsChartFallback(el,spec);
-  }
-  obsMountCharts(root);
-}
 
-async function exportObsDashboardReport(){
-  const source=document.querySelector('#obsBody .obs-dashboard');
-  if(!source||!state.obsDashboardSnapshot?.dashboard)return;
-  try{
-    const clone=source.cloneNode(true),points=obsDashboardPoints(state.obsDashboardSnapshot),metric=state.obsDashboardMetric||'normalized',theme=obsDashboardPalette(obsEChartsTheme());
-    const title=lfT('研发效能','Engineering analytics')+' · '+(currentProject()?.name||'LoopForge');
-    clone.querySelectorAll('[data-od-number]').forEach(el=>{el.textContent=el.dataset.odFinal||'—'});
-    for(const select of clone.querySelectorAll('select')){
-      const value=document.createElement('span');value.textContent=source.querySelector('#'+select.id)?.selectedOptions?.[0]?.textContent||'';select.replaceWith(value);
-    }
-    const ec=await obsEnsureECharts();
-    for(const slot of clone.querySelectorAll('[data-obs-chart]')){
-      const key=slot.dataset.obsChart,spec=obsChartSpecs[key];
-      if(ec&&spec){
-        const chart=ec.init(null,null,{renderer:'svg',ssr:true,width:580,height:235});
-        try{chart.setOption(obsDashboardOption(key.replace('dashboard-',''),points,{theme,reduced:true,metric}));slot.innerHTML=chart.renderToSVGString();slot.querySelector('svg')?.setAttribute('width','100%')}
-        finally{chart.dispose()}
-      }else slot.innerHTML=spec?.fallback?.()||'';
-    }
-    clone.querySelectorAll('button').forEach(b=>b.remove());
-    clone.querySelector('.od-error')?.remove();
-    clone.removeAttribute('aria-busy');
-    const css=[...document.styleSheets].find(s=>s.href?.includes('/app/observability-dashboard.css'));
-    const rules=css?[...css.cssRules].map(r=>r.cssText).join('\n'):'';
-    const computed=getComputedStyle(document.documentElement);
-    const tokens=['surface','text','muted','border','border-strong','accent','accent-soft','info','warn','soft','sans','ease-flow'].map(k=>'--hui-'+k+':'+computed.getPropertyValue('--hui-'+k)+';').join('');
-    const html=`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHTML(title)}</title><style>:root{${tokens}}*{box-sizing:border-box}body{margin:0;padding:24px;font:14px/1.5 var(--hui-sans);background:var(--hui-surface);color:var(--hui-text)}#observabilityView{max-width:1100px;margin:auto}.obs-chart svg{max-width:100%}${rules}#observabilityView .obs-dashboard *{animation:none!important;transition:none!important}</style></head><body><section id="observabilityView"><h1>${escapeHTML(title)}</h1>${clone.outerHTML}</section></body></html>`;
-    const link=document.createElement('a'),url=URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8'}));
-    link.href=url;link.download='LoopForge-analytics-'+new Date().toISOString().slice(0,10)+'.html';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
-  }catch(e){toast(e.message||lfT('导出失败','Export failed'),'err')}
+function obsHumanPoints(){
+  const snapshot=state.analytics||{},d=snapshot.dashboard;
+  if(!d)return [];
+  const base=new Map((d.trend||[]).map(p=>[p.date,p]));
+  for(const p of snapshot.trend||[])if(!base.has(p.date))base.set(p.date,{date:p.date,sopRuns:0});
+  const counts=new Map();
+  for(const p of d.humanTrend||[]){
+    if(state.obsDashboardNode&&p.node!==state.obsDashboardNode)continue;
+    const row=counts.get(p.date)||{approvals:0,rejections:0,retries:0};
+    for(const key of ['approvals','rejections','retries'])row[key]+=Number(p[key]||0);
+    counts.set(p.date,row);
+  }
+  return obsTrendWindow([...base.values()].sort((a,b)=>a.date.localeCompare(b.date))).map(p=>({...p,...counts.get(p.date)}));
+}
+function obsHumanTrendCard(){
+  const d=state.analytics?.dashboard;
+  if(!d)return '';
+  const nodes=d.humanNodes||[];
+  if(!nodes.some(n=>n.key===state.obsDashboardNode))state.obsDashboardNode='';
+  const node=`<select id="obsHumanNode" data-obs-select aria-label="${lfT('人工介入节点','Intervention node')}"><option value="">${lfT('全部节点','All nodes')}</option>${nodes.map(n=>`<option value="${escapeHTML(n.key)}"${n.key===state.obsDashboardNode?' selected':''}>${escapeHTML(n.name)}</option>`).join('')}</select>`;
+  const metric=obsSeg('data-obs-human-metric',[
+    ['normalized',lfT('每百次运行','Per 100 runs')],['count',lfT('介入次数','Decisions')],
+  ],state.obsDashboardMetric||'normalized',true);
+  const points=obsHumanPoints(),spec=obsDashboardSpec('human',points);spec.empty=!points.length;
+  const legend=`<div class="obs-human-legend"><span><i></i>${lfT('审批 / 放行','Approved / passed')}</span><span><i class="blue"></i>${lfT('驳回','Rejected')}</span><span><i class="amber"></i>${lfT('重试 / 拒绝续跑','Retry / declined')}</span></div>`;
+  return obsCard('human',lfT('SOP 人工介入点趋势','SOP intervention trend'),'',`<div class="obs-human-controls">${node}${metric}</div>`,obsChartSlot('dashboard-human',spec,240)+legend,{expand:true});
+}
+function obsUpdateHumanTrend(card){
+  const points=obsHumanPoints(),key='dashboard-human',spec=obsDashboardSpec('human',points);
+  spec.empty=!points.length;obsChartSpecs[key]=spec;
+  const entry=obsChartEntry(key),el=card.querySelector('[data-obs-chart="dashboard-human"]');
+  card.querySelectorAll('[data-obs-human-metric]').forEach(b=>{
+    const active=b.dataset.obsHumanMetric===(state.obsDashboardMetric||'normalized');
+    b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));
+  });
+  if(entry&&entry.el===el){entry.spec=spec;entry.chart.setOption(spec.option(obsEChartsTheme(),obsReducedMotion()),{replaceMerge:['series']})}
+  else if(el?.classList.contains('is-fallback'))obsChartFallback(el,spec);
+  else obsMountCharts(card);
+}
+function obsBindHumanTrendActions(root){
+  const cards=[...root.querySelectorAll('[data-obs-card="human"]')];
+  if(root.matches?.('[data-obs-card="human"]'))cards.push(root);
+  cards.forEach(card=>{
+    const select=card.querySelector('#obsHumanNode');
+    if(select)select.onchange=()=>{state.obsDashboardNode=select.value;obsUpdateHumanTrend(card)};
+    card.querySelectorAll('[data-obs-human-metric]').forEach(b=>{
+      b.setAttribute('aria-pressed',String(b.dataset.obsHumanMetric===(state.obsDashboardMetric||'normalized')));
+      b.onclick=()=>{state.obsDashboardMetric=b.dataset.obsHumanMetric;obsUpdateHumanTrend(card)};
+    });
+  });
 }
