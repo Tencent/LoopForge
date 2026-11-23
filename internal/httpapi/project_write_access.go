@@ -157,7 +157,7 @@ func (d deps) assetOwner(kind, id string) (project string, global bool, found bo
 			return "", true, true
 		}
 		v, ok := d.repo.Sandbox(id)
-		return v.ProjectID, v.ProjectID == "", ok
+		return v.ProjectID, v.ProjectID == "" || v.ID == repo.DefaultSandboxProfileID, ok
 	case "mcp-servers":
 		v, ok := d.repo.MCPServer(id)
 		return v.ProjectID, v.ProjectID == "" && v.Scope != "personal", ok
@@ -246,6 +246,16 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 	}
 	peekJSON(c, &body)
 	id, project := strings.TrimSpace(body.ID), strings.TrimSpace(body.ProjectID)
+	if kind == "sandboxes" {
+		reserved, err := d.repo.IsReservedSandboxID(id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return false
+		}
+		if reserved && !d.requirePlatformAdmin(c) {
+			return false
+		}
+	}
 	if !d.allowStoredAsset(c, kind, id) {
 		return false
 	}

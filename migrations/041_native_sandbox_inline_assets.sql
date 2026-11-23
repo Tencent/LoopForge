@@ -83,10 +83,12 @@ SET @replace_stock_local_default = NOT EXISTS (
 -- unseeded installation. Reserve it for the platform and keep the project
 -- profile (including its sharing policy) under a fresh ID. Rewrite explicit
 -- references before making generic-docker the default for old SOPs.
-SET @legacy_generic_sandbox_id = IF(EXISTS (
-  SELECT 1 FROM sandboxes
+SET @legacy_generic_sandbox_project = (
+  SELECT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.projectId')) FROM sandboxes
   WHERE id COLLATE utf8mb4_unicode_ci = 'generic-docker'
-    AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.projectId')), '') <> ''),
+    AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.projectId')), '') <> ''
+  LIMIT 1);
+SET @legacy_generic_sandbox_id = IF(@legacy_generic_sandbox_project IS NOT NULL,
   CONCAT('sandbox-', REPLACE(UUID(), '-', '')), NULL);
 SET @rewrite_sandbox_references = @replace_stock_local_default OR @legacy_generic_sandbox_id IS NOT NULL;
 
@@ -230,17 +232,17 @@ DEALLOCATE PREPARE stage_workflow_revisions_stmt;
 UPDATE workflow_sandbox_upgrade m
 SET m.old_sandbox_id = CASE
   WHEN @legacy_generic_sandbox_id IS NOT NULL AND (
-    LOWER(JSON_UNQUOTE(JSON_EXTRACT(m.definition, '$.sandboxProfileId'))) = 'generic-docker'
+    JSON_UNQUOTE(JSON_EXTRACT(m.definition, '$.sandboxProfileId')) COLLATE utf8mb4_unicode_ci = 'generic-docker'
     OR (COALESCE(JSON_UNQUOTE(JSON_EXTRACT(m.definition, '$.sandboxProfileId')), '') = ''
       AND EXISTS (
         SELECT 1 FROM JSON_TABLE(m.definition, '$.nodes[*]' COLUMNS (sandbox_id TEXT PATH '$.sandboxProfileId')) n
-        WHERE LOWER(n.sandbox_id) = 'generic-docker')))
+        WHERE n.sandbox_id COLLATE utf8mb4_unicode_ci = 'generic-docker')))
     THEN 'generic-docker'
   WHEN @replace_stock_local_default
-    AND COALESCE(LOWER(JSON_UNQUOTE(JSON_EXTRACT(m.definition, '$.sandboxProfileId'))), '') IN ('', 'local')
+    AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(m.definition, '$.sandboxProfileId')), '') COLLATE utf8mb4_unicode_ci IN ('', 'local')
     AND NOT EXISTS (
       SELECT 1 FROM JSON_TABLE(m.definition, '$.nodes[*]' COLUMNS (sandbox_id TEXT PATH '$.sandboxProfileId')) n
-      WHERE COALESCE(LOWER(n.sandbox_id), '') NOT IN ('', 'local'))
+      WHERE COALESCE(n.sandbox_id, '') COLLATE utf8mb4_unicode_ci NOT IN ('', 'local'))
     THEN 'local'
 END;
 
@@ -251,10 +253,10 @@ SET m.definition = JSON_SET(
   CASE
     WHEN NOT EXISTS (
       SELECT 1 FROM JSON_TABLE(m.definition, '$.nodes[*]' COLUMNS (sandbox_id TEXT PATH '$.sandboxProfileId')) n
-      WHERE LOWER(n.sandbox_id) = m.old_sandbox_id) THEN m.definition
+      WHERE n.sandbox_id COLLATE utf8mb4_unicode_ci = m.old_sandbox_id) THEN m.definition
     ELSE JSON_SET(m.definition, '$.nodes', (
       SELECT JSON_ARRAYAGG(
-        IF(LOWER(JSON_UNQUOTE(JSON_EXTRACT(n.node, '$.sandboxProfileId'))) = m.old_sandbox_id,
+        IF(JSON_UNQUOTE(JSON_EXTRACT(n.node, '$.sandboxProfileId')) COLLATE utf8mb4_unicode_ci = m.old_sandbox_id,
           JSON_SET(n.node, '$.sandboxProfileId', IF(m.old_sandbox_id = 'local', 'generic-docker', @legacy_generic_sandbox_id)),
           n.node)
       ) OVER (ORDER BY n.position ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
@@ -286,13 +288,42 @@ EXECUTE update_workflow_revisions_stmt;
 DEALLOCATE PREPARE update_workflow_revisions_stmt;
 DROP TEMPORARY TABLE workflow_sandbox_upgrade;
 
+-- Keep the fixed selection, catalog ID and frozen workspace identity aligned.
+-- A previously frozen platform profile can share the old ID and keeps its
+-- identity and selection. Only the moved project's profile changes ID.
+SET @run_snapshot_exists = EXISTS (
+  SELECT 1 FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'runs' AND column_name = 'snapshot');
+SET @update_run_sandbox_sql = IF(@run_snapshot_exists AND @legacy_generic_sandbox_id IS NOT NULL,
+  'UPDATE runs
+   SET snapshot = CASE
+     WHEN JSON_TYPE(JSON_EXTRACT(snapshot, ''$.sandboxSnapshot.profile'')) = ''OBJECT''
+       THEN JSON_SET(snapshot, ''$.sandboxProfileId'', @legacy_generic_sandbox_id,
+         ''$.sandboxSnapshot.profile.id'', @legacy_generic_sandbox_id)
+     ELSE JSON_SET(snapshot, ''$.sandboxProfileId'', @legacy_generic_sandbox_id)
+   END
+   WHERE JSON_UNQUOTE(JSON_EXTRACT(snapshot, ''$.sandboxProfileId'')) COLLATE utf8mb4_unicode_ci = ''generic-docker''
+     AND (COALESCE(JSON_TYPE(JSON_EXTRACT(snapshot, ''$.sandboxSnapshot'')), ''NULL'') = ''NULL''
+       OR (JSON_UNQUOTE(JSON_EXTRACT(snapshot, ''$.sandboxSnapshot.profile.id'')) COLLATE utf8mb4_unicode_ci = ''generic-docker''
+         AND JSON_UNQUOTE(JSON_EXTRACT(snapshot, ''$.sandboxSnapshot.profile.projectId'')) = @legacy_generic_sandbox_project))',
+  'DO 0');
+PREPARE update_run_sandbox_stmt FROM @update_run_sandbox_sql;
+EXECUTE update_run_sandbox_stmt;
+DEALLOCATE PREPARE update_run_sandbox_stmt;
+
 SET @assistant_sessions_exists = EXISTS (
   SELECT 1 FROM information_schema.tables
   WHERE table_schema = DATABASE() AND table_name = 'assistant_sessions');
 SET @update_assistant_sandbox_sql = IF(@assistant_sessions_exists AND @legacy_generic_sandbox_id IS NOT NULL,
-  'UPDATE assistant_sessions
-   SET payload = JSON_SET(payload, ''$.sandboxProfileId'', @legacy_generic_sandbox_id)
-   WHERE LOWER(JSON_UNQUOTE(JSON_EXTRACT(payload, ''$.sandboxProfileId''))) = ''generic-docker''',
+  CONCAT('UPDATE assistant_sessions a ',
+    IF(@run_snapshot_exists,
+      'LEFT JOIN runs r ON r.id COLLATE utf8mb4_unicode_ci = JSON_UNQUOTE(JSON_EXTRACT(a.payload, ''$.workspaceRunId'')) COLLATE utf8mb4_unicode_ci ',
+      ''),
+    'SET a.payload = JSON_SET(a.payload, ''$.sandboxProfileId'', @legacy_generic_sandbox_id)
+     WHERE JSON_UNQUOTE(JSON_EXTRACT(a.payload, ''$.sandboxProfileId'')) COLLATE utf8mb4_unicode_ci = ''generic-docker''',
+    IF(@run_snapshot_exists,
+      ' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(r.snapshot, ''$.sandboxProfileId'')), '''') COLLATE utf8mb4_unicode_ci <> ''generic-docker''',
+      '')),
   'DO 0');
 PREPARE update_assistant_sandbox_stmt FROM @update_assistant_sandbox_sql;
 EXECUTE update_assistant_sandbox_stmt;

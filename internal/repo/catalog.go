@@ -292,26 +292,50 @@ func (r *CatalogRepo) Sandbox(id string) (domain.SandboxProfile, bool) {
 		id = DefaultSandboxProfileID
 	}
 	var profile domain.SandboxProfile
-	var row payloadRow
-	err := r.DB.Table("sandboxes").Where("id = ?", id).Take(&row).Error
+	var row struct {
+		Payload         []byte
+		PlatformDefault bool
+	}
+	err := r.DB.Table("sandboxes").Select("payload, id = ? AS platform_default", DefaultSandboxProfileID).
+		Where("id = ?", id).Take(&row).Error
 	// A missing row may use the built-in default. Database failures or invalid
 	// stored configuration must not silently switch a run's execution policy.
-	if errors.Is(err, gorm.ErrRecordNotFound) && isDefault {
-		return GenericDockerSandbox(), true
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if reserved, err := r.IsReservedSandboxID(id); err == nil && reserved {
+			return GenericDockerSandbox(), true
+		}
+		return domain.SandboxProfile{}, false
 	}
 	if err != nil || json.Unmarshal(row.Payload, &profile) != nil {
 		return domain.SandboxProfile{}, false
 	}
-	if isDefault && !platformSandboxOwner(profile.ProjectID) {
-		// An installation that has yet to apply migration 041 may still have
-		// a project profile using this ID. It cannot replace the platform default.
-		return GenericDockerSandbox(), true
+	if isDefault || row.PlatformDefault {
+		if !platformSandboxOwner(profile.ProjectID) {
+			// A project profile on an installation awaiting migration cannot
+			// replace the platform-wide default.
+			return GenericDockerSandbox(), true
+		}
+		profile.ID = DefaultSandboxProfileID
 	}
 	return platformSandboxProfile(profile), true
 }
 
 func isDefaultSandboxID(id string) bool {
 	return strings.EqualFold(strings.TrimSpace(id), DefaultSandboxProfileID)
+}
+
+// IsReservedSandboxID recognizes the default ID and its MySQL equivalents.
+// The catalog uses utf8mb4_unicode_ci for its primary keys.
+func (r *CatalogRepo) IsReservedSandboxID(id string) (bool, error) {
+	if isDefaultSandboxID(id) {
+		return true, nil
+	}
+	if id == "" || !r.isMySQL() {
+		return false, nil
+	}
+	var reserved bool
+	err := r.DB.Raw("SELECT CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci = ?", id, DefaultSandboxProfileID).Scan(&reserved).Error
+	return reserved, err
 }
 
 // Stored platform defaults are projectless, including operator overrides.
@@ -339,7 +363,11 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
 		return errors.New("sandbox id and name are required")
 	}
-	if isDefaultSandboxID(v.ID) {
+	reserved, err := r.IsReservedSandboxID(v.ID)
+	if err != nil {
+		return err
+	}
+	if reserved {
 		if v.ProjectID != "" && v.ProjectID != "platform" {
 			return fmt.Errorf("沙箱标识 %s 保留给平台默认沙箱", DefaultSandboxProfileID)
 		}
@@ -361,7 +389,11 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 }
 
 func (r *CatalogRepo) DeleteSandbox(id string) error {
-	if isDefaultSandboxID(id) {
+	reserved, err := r.IsReservedSandboxID(id)
+	if err != nil {
+		return err
+	}
+	if reserved {
 		return errors.New("默认运行沙箱不能删除；可编辑配置或新建其他沙箱")
 	}
 	if _, ok := r.Sandbox(id); !ok {

@@ -1,12 +1,36 @@
 package repo
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
 )
+
+func TestMySQLReservedSandboxIDUsesCatalogCollation(t *testing.T) {
+	dsn := os.Getenv("AGENTFLOW_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("AGENTFLOW_TEST_MYSQL_DSN is not set")
+	}
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	const alias = "genéric-docker"
+	if reserved, err := s.IsReservedSandboxID(alias); err != nil || !reserved {
+		t.Fatalf("default alias = %t, error = %v", reserved, err)
+	}
+	if profile, ok := s.Sandbox(alias); !ok || profile.ID != DefaultSandboxProfileID {
+		t.Fatalf("default alias did not resolve to the canonical ID: %+v", profile)
+	}
+	profile := domain.SandboxProfile{ID: alias, Name: "Project alias", ProjectID: "other", Driver: domain.SandboxDriverNative}
+	if err := s.PutSandbox(profile); err == nil {
+		t.Fatal("a project was allowed to claim the MySQL-equivalent ID")
+	}
+}
 
 func TestDefaultSandboxWithoutSeedDoesNotWriteRows(t *testing.T) {
 	s, err := OpenTest()
