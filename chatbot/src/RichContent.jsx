@@ -460,13 +460,19 @@ export function RichContent({
     ids.forEach((id, idx) => map.set(id, idx + 1));
     return map;
   }, [enableCites, hasReads, text]);
-  const plugins = useMemo(
-    () =>
-      enableCites
-        ? [remarkGfm, remarkWorkspaceLinks, remarkKnowledgeCitations]
-        : [remarkGfm, remarkWorkspaceLinks],
-    [enableCites],
-  );
+  const plugins = useMemo(() => {
+    if (!enableCites) return [remarkGfm, remarkWorkspaceLinks];
+    const resolveDocKey = (citeId) => {
+      const entry = knowledgeSummary?.byCiteId?.get(citeId);
+      if (entry?.citeIndex) return `cite:${entry.citeIndex}`;
+      return `id:${citeId}`;
+    };
+    return [
+      remarkGfm,
+      remarkWorkspaceLinks,
+      [remarkKnowledgeCitations, { resolveDocKey }],
+    ];
+  }, [enableCites, knowledgeSummary]);
   const contextValue = useMemo(
     () => ({
       assets,

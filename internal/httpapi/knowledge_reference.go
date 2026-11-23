@@ -209,7 +209,7 @@ func knowledgeReadResultWithMeta(serverID, tool, text string, hits int, execStat
 		if len(read.Evidences) > 0 {
 			var b strings.Builder
 			b.WriteString(text)
-			b.WriteString("\n证据引用编号（若回答采用对应内容，请在引用处紧跟输出 [[knowledge:<id>]] 标记，勿放入反引号）：")
+			b.WriteString("\n证据引用编号（凡回答采用以下某篇文档的事实，必须在该句末尾紧跟输出对应的 [[knowledge:<id>]] 标记，实际引用多篇时须分别或共同标出、切勿漏标；分条陈述不同知识库/文档时每条只标当前条所属的 ID、切勿把其他条目的 ID 混标到当前条，勿放入反引号）：")
 			for _, ev := range read.Evidences {
 				label := firstNonEmpty(ev.FileName, ev.Title, ev.DocumentID, ev.SourceID)
 				if ev.Title != "" && ev.FileName != "" && !strings.EqualFold(ev.Title, ev.FileName) {
@@ -218,8 +218,9 @@ func knowledgeReadResultWithMeta(serverID, tool, text string, hits int, execStat
 						label = ev.Title + " (" + ev.FileName + ")"
 					}
 				}
-				if ev.SourceName != "" && ev.SourceName != label {
-					label = ev.SourceName + " / " + label
+				sourceLabel := firstNonEmpty(ev.SourceName, ev.SourceID)
+				if sourceLabel != "" && sourceLabel != label {
+					label = "[知识库: " + sourceLabel + "] " + sourceLabel + " / " + label
 				}
 				if ev.Locator != "" {
 					fmt.Fprintf(&b, "\n- [[knowledge:%s]] %s (%s)", ev.ID, label, ev.Locator)

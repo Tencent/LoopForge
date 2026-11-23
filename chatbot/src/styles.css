@@ -2744,6 +2744,28 @@ button.knowledge-cite-sup:hover {
   gap: 8px;
   flex-wrap: wrap;
 }
+.knowledge-sources-toggle {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.knowledge-sources-toggle:hover .knowledge-sources-counts {
+  color: var(--text);
+}
+.knowledge-sources-chevron {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.knowledge-sources-chevron.is-open {
+  transform: rotate(90deg);
+}
 .knowledge-sources-title {
   display: inline-flex;
   align-items: center;

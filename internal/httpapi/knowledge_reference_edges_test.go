@@ -725,8 +725,20 @@ func TestKnowledgeReadResultUniqueEvidenceIDsAndMetadata(t *testing.T) {
 	if ev2.ID == read1.Evidences[0].ID {
 		t.Fatalf("evidence IDs collided across calls: %q", ev2.ID)
 	}
-	if !strings.Contains(text2, "运维手册库 / 部署手册.md (#chunk-2..#chunk-4)") {
+	if !strings.Contains(text2, "[知识库: 运维手册库] 运维手册库 / 部署手册.md (#chunk-2..#chunk-4)") {
 		t.Fatalf("expected readable source + title + chunk range in tool text:\n%s", text2)
+	}
+
+	// Fallback to SourceID when SourceName is empty so same-titled documents across KBs still show KB identity.
+	rawNoName, _ := json.Marshal(map[string]any{
+		"knowledge_id":      "conn1::doc-whoami",
+		"title":             "我是谁.md",
+		"knowledge_base_id": "vpcdns",
+		"chunks":            []map[string]any{{"id": "c1", "chunk_index": 0, "content": "wangxm"}},
+	})
+	_, textNoName := knowledgeReadResult(domain.KnowledgeMCPServerID, "read_document", string(rawNoName), 1, nil)
+	if !strings.Contains(textNoName, "[知识库: vpcdns] vpcdns / 我是谁.md (#chunk-0)") {
+		t.Fatalf("expected SourceID fallback in citation prompt:\n%s", textNoName)
 	}
 
 	answer := "按部署手册执行 [[knowledge:" + ev2.ID + "]]"
