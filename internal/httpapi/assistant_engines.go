@@ -24,10 +24,8 @@ import (
 	"agentflow/internal/runtime"
 )
 
-// AI 对话 runs on CodeBuddy by default. A model ID prefixed with another CLI
-// ("codex:", "claude-code:" or an agent CLI kind such as "opencode:") runs the
-// turn on that CLI with the caller's own key and Base URL from 个人配置; the
-// part after the prefix is passed to the CLI as-is.
+// The assistant stores CLI-prefixed model IDs. Bare concrete IDs from older
+// CodeBuddy sessions retain the CodeBuddy interpretation.
 const (
 	assistantEngineCodeBuddy = "codebuddy"
 	assistantEngineCodex     = "codex"
@@ -41,6 +39,9 @@ func assistantCLIEngines() []string {
 
 func assistantModelEngine(id string) (engine, model string) {
 	id = strings.TrimSpace(id)
+	if rest, ok := strings.CutPrefix(id, assistantEngineCodeBuddy+":"); ok {
+		return assistantEngineCodeBuddy, strings.TrimSpace(rest)
+	}
 	for _, engine := range assistantCLIEngines() {
 		if rest, ok := strings.CutPrefix(id, engine+":"); ok {
 			return engine, strings.TrimSpace(rest)
@@ -55,7 +56,11 @@ type assistantEngineOption struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	Configured bool   `json:"configured"`
+	Personal   bool   `json:"personal"`
 	Credential string `json:"credential"`
+	// Missing and installable are reported only for a cloud chat hosted by this platform.
+	ServerMissing     bool `json:"serverMissing,omitempty"`
+	ServerInstallable bool `json:"serverInstallable,omitempty"`
 }
 
 // assistantEngineCredentialField is the 个人配置 field that enables a CLI.
@@ -83,6 +88,7 @@ func assistantEngineOptions(user domain.User, sponsored bool) []assistantEngineO
 			ID:         engine,
 			Name:       assistantEngineLabel(engine),
 			Configured: key != "" || (engine == assistantEngineCodeBuddy && sponsored),
+			Personal:   key != "",
 			Credential: assistantEngineCredentialField(engine),
 		})
 	}
@@ -108,7 +114,7 @@ func assistantEngineCredential(user domain.User, engine string) (apiKey, baseURL
 	case assistantEngineClaude:
 		return strings.TrimSpace(user.ClaudeCodeAPIKey), strings.TrimSpace(user.ClaudeCodeBaseURL)
 	case assistantEngineCodeBuddy:
-		return strings.TrimSpace(user.CodeBuddyAPIKey), ""
+		return strings.TrimSpace(user.CodeBuddyAPIKey), strings.TrimSpace(user.CodeBuddyBaseURL)
 	}
 	cred := user.AgentCLICredentials[engine]
 	if runtime.IsAgentCLI(engine) && engine != runtime.AgentCLICursor {
@@ -132,6 +138,11 @@ func assistantEngineAnthropicModels(engine, protocol string) bool {
 	return engine == assistantEngineClaude || protocol == runtime.AgentCLIProtocolMessages
 }
 
+func antigravityUsesCustomEndpoint(user domain.User) bool {
+	_, baseURL := assistantEngineCredential(user, runtime.AgentCLIAntigravity)
+	return baseURL != "" || assistantEngineProtocol(user, runtime.AgentCLIAntigravity) == runtime.AgentCLIProtocolChat
+}
+
 func assistantEngineCustomModels(user domain.User, engine string) []domain.CLIModel {
 	switch engine {
 	case assistantEngineCodeBuddy:
@@ -152,7 +163,7 @@ func assistantEngineBuiltinModels(engine string) []assistantDiscoveredModel {
 		catalogKey = "claude"
 	}
 	var out []assistantDiscoveredModel
-	for _, model := range executorModelCatalogs()[catalogKey].Models {
+	for _, model := range executorModelCatalogs("", assistantFixedCatalog())[catalogKey].Models {
 		out = append(out, assistantDiscoveredModel{ID: model.ID, Name: model.Name})
 	}
 	return out
@@ -161,7 +172,7 @@ func assistantEngineBuiltinModels(engine string) []assistantDiscoveredModel {
 // assistantValidEngineModel guards model IDs that reach a CLI argument or a
 // TOML config override.
 func assistantValidEngineModel(model string) bool {
-	if model == "" || len(model) > 128 {
+	if model == "" || len(model) > 128 || strings.HasPrefix(model, "-") {
 		return false
 	}
 	for _, r := range model {
@@ -246,30 +257,26 @@ func assistantEngineMissingKey(engine string) string {
 }
 
 // assistantTurnUser checks personal credentials or the chosen runner login.
-// Non-CodeBuddy turns can still borrow a CodeBuddy key for approval reviews.
 func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string, runnerLogin bool) (domain.User, string, string) {
 	engine, id := assistantModelEngine(model)
 	if engine != assistantEngineCodeBuddy {
-		if runnerLogin {
-			if id == "" {
-				id = "default"
-			}
-			if !assistantValidEngineModel(id) {
-				return stored, "", "模型 ID 无效"
-			}
-			model = engine + ":" + id
-		} else if key, _ := assistantEngineCredential(stored, engine); key == "" {
+		if id == "" {
+			id = assistantDefaultModel
+		}
+		if !assistantValidEngineModel(id) {
+			return stored, "", "模型 ID 无效"
+		}
+		if key, _ := assistantEngineCredential(stored, engine); !runnerLogin && key == "" {
 			return stored, "", assistantEngineMissingKey(engine)
 		}
-		user, _, _ := h.assistantChatUser(stored)
-		return user, model, ""
+		return stored, engine + ":" + id, ""
 	}
 	user, shared, ok := h.assistantChatUser(stored)
 	if !ok {
 		return stored, "", "请先在个人配置中配置自己的 CodeBuddy API Key"
 	}
 	if len(shared) > 0 {
-		forced, allowed := assistantSponsoredModelFor(shared, model)
+		forced, allowed := assistantSponsoredModelFor(shared, id)
 		if !allowed {
 			return stored, "", errAssistantSponsoredModel(shared)
 		}
@@ -285,7 +292,7 @@ func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string, 
 func assistantAllowedUserModel(id string, catalog assistantModelCatalog, user domain.User) string {
 	engine, model := assistantModelEngine(id)
 	if engine == assistantEngineCodeBuddy {
-		return assistantAllowedModel(id, catalog)
+		return assistantAllowedModel(model, catalog)
 	}
 	if key, _ := assistantEngineCredential(user, engine); key == "" || !assistantValidEngineModel(model) {
 		return catalog.Default
@@ -293,16 +300,28 @@ func assistantAllowedUserModel(id string, catalog assistantModelCatalog, user do
 	return engine + ":" + model
 }
 
-// assistantScheduledModel normalizes the model of an AI scheduled task on
-// save. The run uses the project owner's keys and CodeBuddy environment, not
-// the editor's, so a well-formed model is kept as-is; it is checked against
-// the owner's account when it runs (see scheduledRunModel).
+func assistantTurnCatalogModel(requested string, catalog assistantModelCatalog, user domain.User, exact bool) (string, error) {
+	model := assistantAllowedUserModel(requested, catalog, user)
+	engine, id := assistantModelEngine(requested)
+	useDefault := id == "" || id == assistantDefaultModel ||
+		(engine == assistantEngineCodeBuddy && codeBuddyIsDefaultModel(id))
+	if exact && !useDefault {
+		selectedEngine, selectedID := assistantModelEngine(model)
+		if selectedEngine != engine || selectedID != id {
+			return "", fmt.Errorf("模型 %s 已不在当前目录，请重新选择模型", id)
+		}
+	}
+	return model, nil
+}
+
+// assistantScheduledModel normalizes a scheduled model without replacing a
+// well-formed selection. The account bound to the task validates it at run time.
 func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 	engine, model := assistantModelEngine(id)
-	if engine != assistantEngineCodeBuddy && assistantValidEngineModel(model) {
-		return engine + ":" + model
-	}
-	if engine == assistantEngineCodeBuddy && assistantValidEngineModel(model) {
+	if assistantValidEngineModel(model) {
+		if engine != assistantEngineCodeBuddy || model == assistantDefaultModel && assistantModelHasEnginePrefix(id) {
+			return engine + ":" + model
+		}
 		return model
 	}
 	return assistantAllowedModel(id, catalog)
@@ -310,62 +329,75 @@ func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 
 // assistantDiscoveredModelsFor resolves the model list shared by the chat
 // composer and role editor. A saved catalog takes precedence over discovery.
-func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine string) []assistantDiscoveredModel {
+// The second result reports whether Cursor is refreshing its automatic catalog.
+func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine string) ([]assistantDiscoveredModel, bool) {
 	key, baseURL := assistantEngineCredential(user, engine)
 	protocol := assistantEngineProtocol(user, engine)
 	listed := assistantSavedModels(user, engine)
-	if len(listed) == 0 && key != "" && baseURL != "" && protocol != runtime.AgentCLIProtocolGemini {
-		listed = cachedAssistantEngineDiscovery(ctx, assistantEngineAnthropicModels(engine, protocol), key, baseURL)
+	if len(listed) == 0 && key != "" && baseURL != "" {
+		if assistantEngineAnthropicModels(engine, protocol) {
+			protocol = runtime.AgentCLIProtocolMessages
+		}
+		listed = cachedAssistantEngineDiscovery(ctx, protocol, key, baseURL)
 	}
 	if engine == runtime.AgentCLICursor && key != "" && !user.AgentCLICredentials[engine].ModelsCustomized {
-		if fresh := cachedCursorModels(key); len(fresh) > 0 {
+		fresh, pending := cachedCursorModels(key)
+		if len(fresh) > 0 {
 			listed = fresh
 		}
+		return listed, pending
 	}
-	return listed
+	return listed, false
 }
 
 func assistantSavedModels(user domain.User, engine string) []assistantDiscoveredModel {
 	var listed []assistantDiscoveredModel
 	for _, model := range assistantEngineCustomModels(user, engine) {
-		if assistantValidEngineModel(model.ID) {
-			listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
+		if model.ID != assistantDefaultModel && assistantValidEngineModel(model.ID) {
+			listed = append(listed, assistantDiscoveredModel{
+				ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort,
+				ReasoningEfforts: model.ReasoningEfforts, DiscoveredReasoningEfforts: model.DiscoveredReasoningEfforts,
+			})
 		}
 	}
 	return listed
 }
 
-func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin map[string]bool) []assistantModel {
-	var out []assistantModel
+func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin map[string]bool) (models []assistantModel, cursorModelsPending bool) {
 	for _, engine := range assistantCLIEngines() {
-		key, _ := assistantEngineCredential(user, engine)
+		key, baseURL := assistantEngineCredential(user, engine)
 		listed := assistantSavedModels(user, engine)
 		if key == "" && !runnerLogin[engine] && len(listed) == 0 {
 			continue
 		}
 		if !runnerLogin[engine] {
-			listed = assistantDiscoveredModelsFor(ctx, user, engine)
+			var pending bool
+			listed, pending = assistantDiscoveredModelsFor(ctx, user, engine)
+			cursorModelsPending = cursorModelsPending || pending
 		}
-		if len(listed) == 0 {
+		if len(listed) == 0 && (engine != runtime.AgentCLIAntigravity || runnerLogin[engine] || !antigravityUsesCustomEndpoint(user)) {
 			listed = assistantEngineBuiltinModels(engine)
 		}
 		catalog := cliModelsOf(listed)
 		for _, model := range listed {
+			if model.ID == assistantDefaultModel {
+				continue
+			}
 			name := strings.TrimSpace(model.Name)
 			if name == "" {
 				name = model.ID
 			}
 			id := engine + ":" + model.ID
-			out = append(out, assistantModel{
+			models = append(models, assistantModel{
 				ID:      id,
 				Name:    name,
-				Family:  assistantModelFamily(model.ID),
+				Family:  assistantModelFamily(model.ID, engine),
 				Engine:  engine,
-				Efforts: assistantModelEffortsIn(id, catalog),
+				Efforts: assistantModelEffortsForBaseURL(id, catalog, baseURL),
 			})
 		}
 	}
-	return out
+	return models, cursorModelsPending
 }
 
 type assistantDiscoveredModel struct {
@@ -373,8 +405,10 @@ type assistantDiscoveredModel struct {
 	Name string
 	// Efforts and DefaultEffort describe a Cursor family folded out of the
 	// CLI's list (domain.CLIModel).
-	Efforts       map[string]string
-	DefaultEffort string
+	Efforts                    map[string]string
+	DefaultEffort              string
+	ReasoningEfforts           *[]string
+	DiscoveredReasoningEfforts *[]string
 }
 
 type assistantDiscoveryEntry struct {
@@ -395,9 +429,27 @@ var (
 	assistantEngineDiscover = discoverAssistantEngineModels
 )
 
-func cachedAssistantEngineDiscovery(ctx context.Context, anthropic bool, apiKey, baseURL string) []assistantDiscoveredModel {
-	sum := sha256.Sum256([]byte(fmt.Sprint(anthropic) + "\x00" + baseURL + "\x00" + apiKey))
-	cacheKey := hex.EncodeToString(sum[:])
+func assistantDiscoveryKey(protocol, apiKey, baseURL string) string {
+	sum := sha256.Sum256([]byte(protocol + "\x00" + baseURL + "\x00" + apiKey))
+	return hex.EncodeToString(sum[:])
+}
+
+func invalidateAssistantEngineDiscoveryCache(user domain.User) {
+	for _, engine := range assistantCLIEngines() {
+		key, baseURL := assistantEngineCredential(user, engine)
+		if key == "" || baseURL == "" {
+			continue
+		}
+		protocol := assistantEngineProtocol(user, engine)
+		if assistantEngineAnthropicModels(engine, protocol) {
+			protocol = runtime.AgentCLIProtocolMessages
+		}
+		assistantDiscoveryCache.Delete(assistantDiscoveryKey(protocol, key, baseURL))
+	}
+}
+
+func cachedAssistantEngineDiscovery(ctx context.Context, protocol, apiKey, baseURL string) []assistantDiscoveredModel {
+	cacheKey := assistantDiscoveryKey(protocol, apiKey, baseURL)
 	now := time.Now()
 	if cached, ok := assistantDiscoveryCache.Load(cacheKey); ok {
 		if entry := cached.(assistantDiscoveryEntry); now.Before(entry.expires) {
@@ -406,7 +458,13 @@ func cachedAssistantEngineDiscovery(ctx context.Context, anthropic bool, apiKey,
 	}
 	ctx, cancel := context.WithTimeout(ctx, assistantDiscoveryTimeout)
 	defer cancel()
-	models, err := assistantEngineDiscover(ctx, anthropic, apiKey, baseURL)
+	var models []assistantDiscoveredModel
+	var err error
+	if protocol == runtime.AgentCLIProtocolGemini {
+		models, err = discoverGeminiModels(ctx, apiKey, baseURL)
+	} else {
+		models, err = assistantEngineDiscover(ctx, protocol == runtime.AgentCLIProtocolMessages, apiKey, baseURL)
+	}
 	ttl := assistantDiscoveryTTL
 	if err != nil || len(models) == 0 {
 		models, ttl = nil, assistantDiscoveryFailureTTL
@@ -424,24 +482,26 @@ var (
 
 // cachedCursorModels lists the models the key's Cursor plan offers. The CLI
 // takes seconds, so a miss answers with the built-in catalog (nil) while a
-// background refresh fills the cache; a stale list is served meanwhile.
-func cachedCursorModels(apiKey string) []assistantDiscoveredModel {
+// background refresh fills the cache. The second result identifies snapshots
+// that should be fetched again after discovery completes.
+func cachedCursorModels(apiKey string) ([]assistantDiscoveredModel, bool) {
 	sum := sha256.Sum256([]byte("cursor\x00" + apiKey))
 	cacheKey := hex.EncodeToString(sum[:])
 	var stale []assistantDiscoveredModel
 	if cached, ok := assistantCursorModelsCache.Load(cacheKey); ok {
 		entry := cached.(assistantDiscoveryEntry)
 		if time.Now().Before(entry.expires) {
-			return entry.models
+			return entry.models, false
 		}
 		stale = entry.models
 	}
 	if _, running := assistantCursorModelsInflight.LoadOrStore(cacheKey, true); !running {
+		discover := assistantCursorModels
 		go func() {
 			defer assistantCursorModelsInflight.Delete(cacheKey)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			found, err := assistantCursorModels(ctx, apiKey)
+			found, err := discover(ctx, apiKey)
 			var models []assistantDiscoveredModel
 			for _, model := range found {
 				if assistantValidEngineModel(model.ID) && len(models) < assistantDiscoveryMaxModels {
@@ -455,7 +515,7 @@ func cachedCursorModels(apiKey string) []assistantDiscoveredModel {
 			assistantCursorModelsCache.Store(cacheKey, assistantDiscoveryEntry{models: models, expires: time.Now().Add(ttl)})
 		}()
 	}
-	return stale
+	return stale, true
 }
 
 // saveCursorCatalog keeps the user's freshly listed Cursor models, folded
@@ -471,7 +531,7 @@ func (h *assistantHandlers) saveCursorCatalog(user domain.User) {
 	if key == "" {
 		return
 	}
-	fresh := cachedCursorModels(key)
+	fresh, _ := cachedCursorModels(key)
 	if len(fresh) == 0 {
 		return
 	}
@@ -498,9 +558,20 @@ func cursorCatalogEqual(a, b []domain.CLIModel) bool {
 // /v1) and {base}/v1/models for Anthropic ones. Gateways answer both with
 // {"data":[{"id":…,"display_name"|"name":…}]}.
 func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, baseURL string) ([]assistantDiscoveredModel, error) {
+	return discoverAssistantEngineModelsWithClient(ctx, http.DefaultClient, anthropic, apiKey, baseURL)
+}
+
+func discoverAssistantEngineModelsWithClient(ctx context.Context, client *http.Client, anthropic bool, apiKey, baseURL string) ([]assistantDiscoveredModel, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
 	endpoint := strings.TrimRight(baseURL, "/")
 	if anthropic {
-		endpoint += "/v1/models"
+		if strings.HasSuffix(endpoint, "/v1") {
+			endpoint += "/models"
+		} else {
+			endpoint += "/v1/models"
+		}
 	} else {
 		endpoint += "/models"
 	}
@@ -529,13 +600,17 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 		} else {
 			req.Header.Set("x-api-key", apiKey)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			var urlErr *url.Error
 			if errors.As(err, &urlErr) {
 				err = urlErr.Err
 			}
 			return nil, fmt.Errorf("无法连接 %s：%w", endpoint, err)
+		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			resp.Body.Close()
+			return nil, fmt.Errorf("%s 返回重定向 HTTP %d，已拒绝跟随跳转", endpoint, resp.StatusCode)
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
@@ -551,9 +626,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 		}
 		var payload struct {
 			Data []struct {
-				ID          string `json:"id"`
-				Name        string `json:"name"`
-				DisplayName string `json:"display_name"`
+				ID                        string    `json:"id"`
+				Name                      string    `json:"name"`
+				DisplayName               string    `json:"display_name"`
+				ReasoningEfforts          *[]string `json:"reasoningEfforts"`
+				SupportedReasoningEfforts *[]string `json:"supported_reasoning_efforts"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
@@ -571,7 +648,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 			if name == "" {
 				name = strings.TrimSpace(item.Name)
 			}
-			out = append(out, assistantDiscoveredModel{ID: id, Name: truncateRunes(name, 64)})
+			efforts := item.ReasoningEfforts
+			if efforts == nil {
+				efforts = item.SupportedReasoningEfforts
+			}
+			out = append(out, assistantDiscoveredModel{ID: id, Name: truncateRunes(name, 64), DiscoveredReasoningEfforts: efforts})
 			if len(out) == assistantDiscoveryMaxModels {
 				break
 			}
@@ -581,16 +662,41 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 	return nil, lastErr
 }
 
+func discoverApprovalReviewAPIModels(ctx context.Context, protocol, apiKey, baseURL string) ([]assistantDiscoveredModel, error) {
+	baseURL = strings.TrimSpace(baseURL)
+	client := approvalHTTPClientFactory(10 * time.Second)
+	switch protocol {
+	case runtime.AgentCLIProtocolMessages:
+		if baseURL == "" {
+			baseURL = assistantAnthropicAPIBase
+		}
+		return discoverAssistantEngineModelsWithClient(ctx, client, true, apiKey, baseURL)
+	case runtime.AgentCLIProtocolChat, runtime.AgentCLIProtocolResponses:
+		if baseURL == "" {
+			baseURL = "https://api.openai.com/v1"
+		}
+		return discoverAssistantEngineModelsWithClient(ctx, client, false, apiKey, baseURL)
+	case runtime.AgentCLIProtocolGemini:
+		if baseURL == "" {
+			baseURL = "https://generativelanguage.googleapis.com"
+		}
+		return discoverGeminiModelsWithClient(ctx, client, apiKey, baseURL)
+	default:
+		return nil, fmt.Errorf("不支持的接口协议：%s", protocol)
+	}
+}
+
 // assistantEngineState records which CLI holds a personal conversation's
 // native transcript. A turn on another CLI cannot resume it: it starts a new
 // CLI session from the full transcript, so switching back never continues a
 // transcript that misses the turns in between.
 type assistantEngineState struct {
 	// Edited history starts a new journal once; errors resume that revision.
-	HistoryRevision int    `json:"historyRevision,omitempty"`
-	Engine          string `json:"engine"`
-	SessionID       string `json:"sessionId"`
-	Unstarted       bool   `json:"unstarted,omitempty"`
+	HistoryRevision         int    `json:"historyRevision,omitempty"`
+	Engine                  string `json:"engine"`
+	SessionID               string `json:"sessionId"`
+	Unstarted               bool   `json:"unstarted,omitempty"`
+	WorkspaceRepositoryHash string `json:"workspaceRepositoryHash,omitempty"`
 }
 
 func readAssistantEngineState(root string) assistantEngineState {
@@ -613,11 +719,30 @@ func writeAssistantEngineState(root string, state assistantEngineState) error {
 	return os.WriteFile(filepath.Join(root, "engine.json"), data, 0o600)
 }
 
+// assistantChatRequestModel keeps an existing conversation's model when
+// omitted, or chooses a personal CLI for a new conversation with no selection.
+func (h *assistantHandlers) assistantChatRequestModel(req assistantRequest, saved domain.AssistantSession, user domain.User) string {
+	if strings.TrimSpace(req.Executor) == "" && assistantModelUnspecified(req.Model) {
+		if saved.Model != "" || saved.Executor != "" {
+			return assistantRequestModel(saved.Executor, saved.Model)
+		}
+		if preferred := personalDefaultModel(user); preferred != "" {
+			return preferred
+		}
+		if _, _, codeBuddyAvailable := h.assistantChatUser(user); !codeBuddyAvailable {
+			if model, err := resolveFeatureModel(user, ""); err == nil {
+				return model
+			}
+		}
+	}
+	return assistantRequestModel(req.Executor, req.Model)
+}
+
 // assistantRequestModel maps a legacy executor field onto the model prefix
 // the conversation engines use. A model that already names its CLI is kept.
 func assistantRequestModel(executor, model string) string {
 	model = strings.TrimSpace(model)
-	if engine, _ := assistantModelEngine(model); engine != assistantEngineCodeBuddy {
+	if assistantModelHasEnginePrefix(model) {
 		return model
 	}
 	switch assistantExecutor(executor) {

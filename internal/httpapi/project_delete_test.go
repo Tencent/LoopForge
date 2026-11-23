@@ -113,7 +113,7 @@ func TestProjectDeleteArchivesAndRestores(t *testing.T) {
 
 func TestAssistantTurnContextNamesTheChatProject(t *testing.T) {
 	inProject := assistantTurnContext(assistantRequest{ProjectID: "skillhub"})
-	for _, want := range []string{"本对话属于项目 skillhub", "不要说没有选中项目", "不归属当前项目", "projects_delete", "git.example.com/projects/new"} {
+	for _, want := range []string{"本对话属于项目 skillhub", "不要说没有选中项目", "不归属当前项目", "projects_delete", "提供完整仓库地址", "repositories_save"} {
 		if !strings.Contains(inProject, want) {
 			t.Errorf("project chat context missing %q", want)
 		}

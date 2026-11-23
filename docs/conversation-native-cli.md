@@ -10,6 +10,8 @@
 
 原生 HOME 和工作目录路径在模式间保持稳定。配置、技能、可执行资产与二进制附件由平台准备；原生会话日志保留在执行机器，错误或取消后继续原会话。远程 Runner 通过已认证的控制连接同步资产、运行 CLI 和转发会话工具请求，不在持久任务行中保存进程输入或密钥。
 
+会话支持 PNG、JPEG、WebP 和 GIF 图片输入。CodeBuddy、Codex、Claude Code、OpenCode、Pi 和 ZCode 在当前用户消息中接收原生图片。ZCode 通过 `--attach` 传图，已验证 CLI 0.17.1。Kimi Code 用 `ReadMediaFile`，DeepSeek Harness 用 `read_image` 读取会话目录中的附件。Claude Code 使用 Runner 登录时，如果内嵌图片的消息超过桥接输入帧上限，会通过 `Read` 读取附件路径。识别需要所选模型支持视觉输入，或由 CLI 提供识图能力。续聊只内嵌当轮新增的图片，历史附件仍保留在会话目录中。远程 OpenCode、Pi、Kimi Code 和 DeepSeek Harness 的自定义模型配置由 Runner 生成，使用这些 CLI 传图时需要更新 Runner。
+
 ZCode 恢复时通过官方会话协议应用当前选择的模型，再启动原生 prompt 命令；保留同一 session 和历史，不直接改写 CLI 数据库。协议不兼容或模型不可用时中止，保留日志供重试。
 
 工作区是独立沙箱，沙箱内的原生文件、补丁和命令（编辑、构建、测试等）在三种审批模式下都直接执行，不做人工确认或独立模型审查。越过沙箱、写入外部系统的命令才按审批模式处理：`git push`；`gh pr|issue|release|repo|… create/merge/close/comment/edit/review/delete…`；`gh api` 带写方法或 `-f/-F/--input`；`curl` 带 `-X POST/PUT/PATCH/DELETE`、`-d/--data*`、`-F/--form`、`-T`、`--json`，`wget --post-*`；`npm/pnpm/yarn/bun/poetry/cargo publish`、`twine upload`、`gem push`；`docker/podman push`；`kubectl apply/delete/…`、`helm install/upgrade/…`、`terraform apply/destroy`。识别看工具输入里的 `command/cmd/args/script` 等字段，与 CLI 的工具名无关。这是防误操作的护栏，不是安全边界：脚本自己联网写入不会被识别。
@@ -22,15 +24,19 @@ ZCode 恢复时通过官方会话协议应用当前选择的模型，再启动�
 
 Runner 需要 0.10.1 或以上版本，该版本支持取消后台导出并释放工作区锁。Docker 镜像优先使用已安装的 CLI；支持官方安装器的 CLI 缺失时自动安装。ZCode 没有独立 npm 包，须在执行机器及工作区镜像内预装官方 CLI 并加入 PATH，缺失时明确报错。原生工具调用围栏与进程生命周期管理依赖 Python3。每个 Docker 会话阶段使用独立的 Linux 子进程收养进程，结束或取消时回收其全部后代，包含另建进程组的原生命令；不影响容器里的其他命令。平台会在启动前检查依赖，固定安装步骤以容器 root 用户在 `/` 中运行，实际 CLI 保留工作区的容器用户；无法准备时中止，不降级绕过调用围栏。建议在受控工作区镜像中预安装 CLI 和依赖。
 
-个人执行机器可为 Codex 和 Claude Code 选择「账号登录」。Runner 0.10.2 起，对话按所绑定机器的认证设置启动 CLI。在运行 Runner 的系统账户下登录后，Codex 读取 `CODEX_HOME` 下的 `auth.json`，Claude Code 读取 `CLAUDE_CONFIG_DIR` 下的 `.credentials.json` 或 Runner 环境中的 `CLAUDE_CODE_OAUTH_TOKEN`。登录状态仅在该执行机器上使用。每次运行把登录文件复制进隔离的 CLI home，结束后删除；CLI 在运行中刷新了 token（Codex、Claude Code 的 refresh token 会轮换）时，删除前按内容做比较并交换写回 Runner 账户的原文件：原文件在此期间未被改动、且刷新后的文件仍是同一账号（顶层字段一致，Codex 的 `tokens.account_id` 相同）才写回，否则保留宿主机上的版本。仍需直接通过 CLI 管理登录和续期。仅存于系统钥匙串的登录需要改用 CLI 支持的文件式登录或 API Key。设置页在 CLI 行的「更多」菜单提供「测试」，按当前认证方式在该机器上发送一次短模型请求。
+个人执行机器可为 Codex、Claude Code 和 Antigravity 选择「账号登录」，对话按所绑定机器的认证设置启动 CLI。在运行 Runner 的系统账户下登录后，Codex 读取 `CODEX_HOME` 下的 `auth.json`，Claude Code 读取 `CLAUDE_CONFIG_DIR` 下的 `.credentials.json` 或 Runner 环境中的 `CLAUDE_CODE_OAUTH_TOKEN`。Codex、Claude Code 仅存于系统钥匙串的登录需要改用 CLI 支持的文件式登录或 API Key；Antigravity 的凭据库支持见下文。
+
+登录状态仅在该执行机器上使用。每次运行把登录文件复制进隔离的 CLI HOME，结束后删除；CLI 刷新 token 后，Runner 在源内容未改变时保存回原来源。当前格式与账号字段比较属于本地检查，不能证明整套 token 的服务端归属；完整的写回归属验证另行加固。设置页在 CLI 行的「更多」菜单提供「测试」，按当前认证方式在该机器上发送一次短模型请求。
 
 SOP 的 native 和 Docker 沙箱也使用所选 Runner 的认证设置。每次 CLI 调用都在节点的独立 HOME 中使用临时登录文件，结束后清理该文件，会话可在同一节点续接。
 
 Runner 0.10.2 起，机器卡片可检查并手动安装平台提供的 Runner 构建。更新在机器空闲时应用。自行安装的 CLI 如提供非交互更新命令，可以在 CLI 菜单中直接执行更新。托管安装使用托管更新。如果 CLI 无法自更新，界面会提示按原安装方式更新。
 
-CLI 菜单中的「模型列表」与个人配置共用当前用户的模型目录。可以获取、筛选、添加、重命名和排序模型。保存后，AI 对话和角色编辑器使用该目录。API Key 模式通过个人配置里的 Key 与服务地址获取模型，留空地址时使用 CLI 的官方服务。Codex 和 Claude Code 的账号登录模式从所选机器查询，需要 Runner 0.10.2 或以上版本。
+CLI 菜单中的「模型列表」与个人配置共用当前用户的模型目录。可以获取、筛选、添加、重命名和排序模型。保存后，AI 对话和角色编辑器使用该目录。API Key 模式通过个人配置里的 Key 与服务地址获取模型，留空地址时使用 CLI 的官方服务。Codex、Claude Code 和 Antigravity 的账号登录模式从所选机器查询。
 
-其他 CLI 使用个人配置中保存的 API Key。Antigravity 将本机登录保存在系统凭据库中，LoopForge 沙箱目前无法复用。请在个人配置中填写 Gemini API Key，用量按 Gemini API 单独计费。详见 [Antigravity CLI 认证](https://antigravity.google/docs/install?tab=cli)和 [Gemini API 计费](https://ai.google.dev/gemini-api/docs/billing)。
+Antigravity 的账号登录读取运行 Runner 的系统账号已有的凭据库或远程会话认证文件。对话工作区和 SOP 的 native、Docker 沙箱使用私有 HOME 中的认证副本，由官方 CLI 自动刷新，结束时保存回原来源并清理副本。Docker 镜像需要安装官方 agy CLI。共享对话中，只有机器所有者发言时使用该登录。实测版本为 agy 1.5.10。
+
+其他 CLI 使用个人配置中保存的 API Key。Antigravity 也可切换为 API Key，读取个人配置里的 Gemini API Key，用量按 Gemini API 单独计费。详见 [Antigravity CLI 认证](https://antigravity.google/docs/install?tab=cli)和 [Gemini API 计费](https://ai.google.dev/gemini-api/docs/billing)。
 
 ZCode 可通过 GLM Coding Plan 的 API Key 和套餐专用端点使用订阅额度。Start Plan 的额度需要登录 ZCode 账号，无法通过 API Key 使用。详见 [ZCode 模型配置](https://zcode.z.ai/cn/docs/configuration)。
 

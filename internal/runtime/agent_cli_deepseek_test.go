@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -67,5 +68,71 @@ func TestApplyDeepSeekCredentialRejectsShortArgv(t *testing.T) {
 	_, _, err := ApplyAgentCLICredential(AgentCLIDeepSeek, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: "m"}, HostAgentCLIHome(t.TempDir()), "/h", []string{"dsh"})
 	if err == nil || err.Error() != "invalid DeepSeek Harness invocation" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestApplyDeepSeekCredentialSetsTurnEffort(t *testing.T) {
+	home := t.TempDir()
+	for _, tc := range []struct {
+		baseURL, effort string
+		provider        string
+		want            any
+	}{
+		{"", "none", "deepseek-official", "off"},
+		{"", "max", "deepseek-official", "max"},
+		{"", "", "deepseek-official", "high"},
+		{"https://gw.example/v1", "max", "agentflow-reasoning", "max"},
+		{"https://gw.example/v1", "", "agentflow", nil},
+	} {
+		command := AgentCLICommand(AgentCLIDeepSeek, AgentCLICommandOptions{Model: "deepseek-flash", Effort: tc.effort, Resume: "session", Prompt: "probe"})
+		if _, _, err := ApplyAgentCLICredential(AgentCLIDeepSeek, ProviderCredential{APIKey: "k", BaseURL: tc.baseURL},
+			command.AgentCLI, HostAgentCLIHome(home), home, command.Argv); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(home, ".dsh", "agentflow-model.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var patch []struct {
+			ID     string         `json:"id"`
+			Config map[string]any `json:"config"`
+		}
+		if err = json.Unmarshal(data, &patch); err != nil || len(patch) == 0 {
+			t.Fatalf("invalid model patch: %s (%v)", data, err)
+		}
+		selection := patch[len(patch)-1]
+		if selection.ID != "agent-default-model" || selection.Config["provider"] != tc.provider || selection.Config["reasoningEffort"] != tc.want {
+			t.Errorf("base %q and effort %q: wrong model selection in %s", tc.baseURL, tc.effort, data)
+		}
+	}
+}
+
+func TestDeepSeekHarnessZhipuFlashOutputLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name, baseURL, model, protocol string
+		limit                          bool
+	}{
+		{"Zhipu Flash", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash-250414", AgentCLIProtocolChat, true},
+		{"another model", "https://open.bigmodel.cn/api/paas/v4", "glm-4.7-flash", AgentCLIProtocolChat, false},
+		{"custom gateway", "https://open.bigmodel.cn.example.com/v1", "glm-4-flash-250414", AgentCLIProtocolChat, false},
+		{"different protocol", "https://open.bigmodel.cn/api/anthropic", "glm-4-flash-250414", AgentCLIProtocolMessages, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			_, _, err := ApplyAgentCLICredential(AgentCLIDeepSeek, ProviderCredential{
+				APIKey: "fixture", BaseURL: tc.baseURL, Protocol: tc.protocol,
+			}, AgentCLIOptions{Model: tc.model}, HostAgentCLIHome(home), "/home",
+				[]string{"dsh", "--profile", "headless", "--json", "fixture"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			patch, err := os.ReadFile(filepath.Join(home, ".dsh", "agentflow-model.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(patch), `"maxTokens": 16384`); got != tc.limit {
+				t.Fatalf("model patch has output limit=%v, want %v", got, tc.limit)
+			}
+		})
 	}
 }

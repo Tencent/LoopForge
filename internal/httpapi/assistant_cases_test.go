@@ -193,7 +193,7 @@ func TestAssistantTaskHandlersAndExecution(t *testing.T) {
 	}
 	noKey := user
 	noKey.CodeBuddyAPIKey = ""
-	if err := h.executeAssistantTask(context.Background(), noKey, &task); err == nil || !strings.Contains(task.LastError, "API Key") {
+	if err := h.executeAssistantTask(context.Background(), noKey, &task); err == nil || task.LastError != errFeatureCredentials.Error() {
 		t.Fatalf("missing key = %v %+v", err, task)
 	}
 }
@@ -224,7 +224,7 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 	seeded, err := SeedAssistantAcceptance(st, AssistantAcceptanceIdentity{
 		LoginName: "accept-user", CodeBuddyAPIKey: "cb", GitToken: "git",
 	})
-	if err != nil || seeded.ChineseName != "accept-user" || seeded.GitToken != "git" {
+	if err != nil || seeded.ChineseName != "accept-user" || !seeded.GitHubCredentialConfigured || seeded.GitToken != "" {
 		t.Fatalf("seeded = %+v, %v", seeded, err)
 	}
 	if _, ok := st.Project(assistantAcceptanceProjectID); !ok {

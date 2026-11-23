@@ -11,6 +11,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 const gitTokenEnv = gitwork.TokenEnv
@@ -22,23 +23,29 @@ type gitIdentity struct {
 	email string
 }
 
-func withGitToken(ctx context.Context, token string) context.Context {
-	return gitwork.WithToken(ctx, token)
+func (e *Engine) withSSHKnownHosts(ctx context.Context) context.Context {
+	return gitwork.WithSSHKnownHostsLookup(ctx, e.repo.PlatformSSHKnownHosts)
 }
 
-func gitTokenFrom(ctx context.Context) string { return gitwork.TokenFrom(ctx) }
-
 func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext) context.Context {
-	if repository.Provider == domain.RepositoryProviderSSH {
+	if repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(repository.CloneURL) {
 		return gitwork.WithSSHRemote(ctx, repository.CloneURL)
 	}
-	return ctx
+	return gitwork.WithHTTPRemote(ctx, repository.CloneURL)
+}
+
+func withRunGitCredentials(ctx context.Context, credentials runtime.RunCredentials) context.Context {
+	hosts := map[string]gitwork.HTTPCredential{}
+	for host, credential := range credentials.GitHTTPCredentials {
+		hosts[host] = gitwork.HTTPCredential{Username: credential.GitUsername(), Token: credential.Token}
+	}
+	return gitwork.WithHTTPCredentials(ctx, hosts)
 }
 
 func sshRepositoryURLs(repositories []domain.RepositoryContext) []string {
 	var urls []string
 	for _, repository := range repositories {
-		if repository.Provider == domain.RepositoryProviderSSH {
+		if repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(repository.CloneURL) {
 			urls = append(urls, repository.CloneURL)
 		}
 	}
@@ -46,10 +53,9 @@ func sshRepositoryURLs(repositories []domain.RepositoryContext) []string {
 }
 
 func cloneRemoteForGit(ctx context.Context, remote string) string {
-	if gitwork.UsesSSH(ctx) {
-		return remote
-	}
-	return gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx))
+	// The command-scoped credential helper authenticates HTTPS. Keep tokens
+	// out of clone arguments and the origin URL written by Git.
+	return remote
 }
 
 func withGitIdentity(ctx context.Context, name, email string) context.Context {
@@ -104,9 +110,11 @@ func applyWorkspaceGitIdentity(ctx context.Context, workspace string) error {
 	return nil
 }
 
-func resolveGitToken(s *repo.Store, userID int64) string {
+func resolveGitHubToken(s *repo.Store, userID int64) string {
 	if s != nil && userID > 0 {
-		return s.GitCredential(context.Background(), userID)
+		if credential, ok := s.GitHTTPCredentialForHost(context.Background(), userID, "github.com"); ok {
+			return credential.Token
+		}
 	}
 	return ""
 }
@@ -116,7 +124,7 @@ var (
 	gitAuthFailure    = regexp.MustCompile(`(?i)could not read Username|Authentication failed|HTTP Basic: Access denied|requested URL returned error: 40[13]|Invalid username or password`)
 )
 
-const gitTokenFixHint = "请责任人到「个人配置 → GitHub Git Token」配置：打开 https://github.com/settings/tokens 新建令牌，为目标仓库授予 Contents 和 Pull requests 的读写权限，复制后粘贴并点校验，然后重试本节点"
+const gitTokenFixHint = "请责任人到「个人配置 → Git 访问令牌」为仓库的准确主机配置 HTTPS 令牌，并填写该平台要求的用户名、确认仓库权限，然后重试本节点"
 
 // explainGitAuthFailure says what to fix when git rejects the clone or push.
 // SOP runs use the responsible user's Git Token, which git's own

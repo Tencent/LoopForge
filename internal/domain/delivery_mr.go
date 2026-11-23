@@ -48,7 +48,13 @@ func GongfengMRURL(project string, iid int) string {
 	if strings.HasPrefix(project, "github:") {
 		return fmt.Sprintf("https://github.com/%s/pull/%d", strings.TrimPrefix(project, "github:"), iid)
 	}
-	return fmt.Sprintf("https://git.example.com/%s/-/merge_requests/%d", project, iid)
+	if platform, host, path, ok := ExternalMRProject(project); ok {
+		if platform == GitPlatformGitHub {
+			return fmt.Sprintf("https://%s/%s/pull/%d", host, path, iid)
+		}
+		return fmt.Sprintf("https://%s/%s/-/merge_requests/%d", host, path, iid)
+	}
+	return fmt.Sprintf("https://%s/%s/-/merge_requests/%d", GongfengRepositoryHost(), project, iid)
 }
 
 // AggregateDeliveryMRState folds per-MR states into the work item label state.
@@ -109,7 +115,7 @@ func (i Issue) DeliveryMRList() []DeliveryMR {
 		return nil
 	}
 	mr := DeliveryMR{URL: url, State: strings.TrimSpace(i.DeliveryMRState)}
-	if project, iid, _, ok := ParseGongfengMR(url); ok {
+	if project, iid, _, ok := ParseDeliveryMRURL(url); ok {
 		mr.Project, mr.IID = project, iid
 	}
 	return []DeliveryMR{mr}
@@ -167,7 +173,7 @@ func (i *Issue) SetDeliveryMRState(url, state string) bool {
 	list := i.DeliveryMRList()
 	if len(list) == 0 {
 		mr := DeliveryMR{URL: url, State: state}
-		if project, iid, _, ok := ParseGongfengMR(url); ok {
+		if project, iid, _, ok := ParseDeliveryMRURL(url); ok {
 			mr.Project, mr.IID = project, iid
 		}
 		i.SetDeliveryMRs([]DeliveryMR{mr})
@@ -214,7 +220,7 @@ func ResolveRunDeliveryMRs(run Run, byBranch func(RepositoryContext) (DeliveryMR
 		}
 		for _, obs := range run.Telemetry {
 			if url, ok := obs.Attributes["url"].(string); ok {
-				if project, iid, parsed, ok := ParseGongfengMR(url); ok {
+				if project, iid, parsed, ok := ParseDeliveryMRURL(url); ok {
 					add(DeliveryMR{Project: project, IID: iid, URL: parsed})
 				}
 			}

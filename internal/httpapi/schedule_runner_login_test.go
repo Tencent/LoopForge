@@ -20,6 +20,12 @@ import (
 )
 
 func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
+	for _, cliEngine := range []string{assistantEngineClaude, runtime.AgentCLIAntigravity} {
+		t.Run(cliEngine, func(t *testing.T) { testScheduleJobUsesSaversDefaultRunnerLogin(t, cliEngine) })
+	}
+}
+
+func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string) {
 	t.Setenv("TMPDIR", t.TempDir())
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "schedule-runner-login-test")
@@ -30,9 +36,13 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 	}
 	saver, _ := st.UserByLoginName("schedule-runner-saver")
 	joinScheduledProject(t, st, "workbench", saver.ID)
+	issue := domain.Issue{ID: "runner-schedule-reference", ProjectID: "workbench", Title: "Current scheduled asset", Description: "Inspect this asset"}
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
 	machine := domain.Runner{ID: "saver-machine", OwnerUserID: saver.ID, Status: domain.RunnerStatusOnline,
 		RunnerVersion: domain.RunnerVersionCLISettings, Runtimes: []domain.RunnerRuntime{
-			{Provider: assistantEngineClaude, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
+			{Provider: cliEngine, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
 		},
 	}
 	foreign := machine
@@ -51,7 +61,8 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	body := domain.ScheduleJob{
 		ID: "runner-login-job", ProjectID: "workbench", Name: "巡检", SkipDispatch: true, AssistantPrompt: "检查",
-		AssistantModel: "claude-code:opus", RunAsUserID: owner.ID, IntervalSec: 3600, Enabled: true,
+		AssistantModel: cliEngine + ":default", RunAsUserID: owner.ID, IntervalSec: 3600, Enabled: true,
+		References: []domain.AssistantReference{{Type: "issue", ID: issue.ID, Name: "Forged asset title"}},
 	}
 	setDefault(foreign.ID)
 	if code := scheduleAuthzStatus(t, server, saver, http.MethodPut, "/api/schedule-jobs", body); code != http.StatusBadRequest {
@@ -73,11 +84,11 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &catalog); err != nil {
 			t.Fatal(err)
 		}
-		hasClaude := slices.ContainsFunc(catalog.Models, func(m assistantModel) bool {
-			return m.Engine == assistantEngineClaude
+		hasEngine := slices.ContainsFunc(catalog.Models, func(m assistantModel) bool {
+			return m.Engine == cliEngine
 		})
-		if rec.Code != http.StatusOK || hasClaude != test.want {
-			t.Fatalf("catalog %q lists keyless Claude models = %v, status = %d", test.query, hasClaude, rec.Code)
+		if rec.Code != http.StatusOK || hasEngine != test.want {
+			t.Fatalf("catalog %q lists keyless %s models = %v, status = %d", test.query, cliEngine, hasEngine, rec.Code)
 		}
 	}
 
@@ -108,18 +119,28 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 			result := runtime.ConversationProcessResult{ID: req.ID}
 			switch req.Operation {
 			case "start":
-				if req.Command == nil || !req.Command.RunnerLogin || req.Command.Credentials.ClaudeCode.APIKey != "" {
+				if req.Command == nil || !req.Command.RunnerLogin || req.Command.Credentials.ClaudeCode.APIKey != "" || req.Command.Credentials.AgentCLI[cliEngine].APIKey != "" {
 					t.Fatal("scheduled turn did not request CLI account login")
+				}
+				prompt := strings.Join(req.Command.Argv, " ")
+				if !strings.Contains(prompt, issue.Title) || strings.Contains(prompt, "Forged asset title") {
+					t.Fatal("runner prompt did not resolve the scheduled asset")
 				}
 				launched = true
 			case "poll":
 				result.Events = []domain.TelemetryEvent{{Name: "process.stdout", Message: `{"type":"result","result":"巡检完成"}`}}
+				if cliEngine == runtime.AgentCLIAntigravity {
+					result.Events = []domain.TelemetryEvent{
+						{Name: "process.stdout", Message: `{"event":"init","conversation_id":"schedule-agy","init":{"model":"gemini-4-hydrogen-high"}}`},
+						{Name: "process.stdout", Message: `{"event":"result","result":{"status":"SUCCESS","response":"巡检完成"}}`},
+					}
+				}
 				result.Sequence, result.Done = 1, true
 			case "stop":
 				result.Done = true
 			}
 			raw, _ := json.Marshal(result)
-			h.runnerControls.resolveWorkspace(msg.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: raw})
+			h.runnerControls.resolveWorkspace(conn, msg.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: raw})
 		case result := <-done:
 			if result.err != nil || result.message != "巡检完成" || !launched {
 				t.Fatalf("scheduled run = %q, %v, launched = %v", result.message, result.err, launched)
@@ -134,6 +155,18 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 	if len(sessions) != 1 || sessions[0].UserID != saver.ID || sessions[0].Execution().RunnerID != machine.ID || !sessions[0].ExecutionLocked() {
 		t.Fatal("scheduled session did not retain the saver and their machine")
 	}
+	conversation, ok := st.AssistantSession(saver.ID, sessions[0].ID)
+	if !ok || len(conversation.Messages) != 2 {
+		t.Fatal("scheduled runner conversation was not saved")
+	}
+	refs := conversation.Messages[0].References
+	if len(refs) != 1 || refs[0].ID != issue.ID || refs[0].Name != issue.Title {
+		t.Fatalf("runner session references = %+v", refs)
+	}
+	issue.Title = "Updated scheduled asset"
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
 	machine.Status = domain.RunnerStatusOffline
 	if err := st.PutRunner(machine); err != nil {
 		t.Fatal(err)
@@ -141,18 +174,29 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 	const saverKey = "saver-test-key"
 	keyAttempts := 0
 	var keyError error
-	h.generate = func(_ context.Context, _ string, actor domain.User) (string, error) {
+	h.generate = func(_ context.Context, prompt string, actor domain.User) (string, error) {
 		keyAttempts++
-		if actor.ID != saver.ID || actor.ClaudeCodeAPIKey != saverKey {
+		if !strings.Contains(prompt, issue.Title) || strings.Contains(prompt, "Forged asset title") {
+			t.Fatal("API Key fallback did not resolve the latest scheduled asset")
+		}
+		key := actor.ClaudeCodeAPIKey
+		if cliEngine == runtime.AgentCLIAntigravity {
+			key = actor.AgentCLICredentials[cliEngine].APIKey
+		}
+		if actor.ID != saver.ID || key != saverKey {
 			return "", errors.New("fallback used the wrong credentials")
 		}
 		return "云端巡检完成", keyError
 	}
-	if _, err := h.prepareScheduleJob(saved); err == nil || !strings.Contains(err.Error(), "已离线。未配置 Claude Code API Key") || keyAttempts != 0 {
+	if _, err := h.prepareScheduleJob(saved); err == nil || !strings.Contains(err.Error(), "已离线。未配置 "+assistantEngineLabel(cliEngine)+" API Key") || keyAttempts != 0 {
 		t.Fatalf("offline runner without a key = %v, attempts = %d", err, keyAttempts)
 	}
 
-	if _, err := st.UpdateUserCredentials(saver.ID, repo.UserCredentialUpdate{ClaudeCodeAPIKey: saverKey}); err != nil {
+	update := repo.UserCredentialUpdate{ClaudeCodeAPIKey: saverKey}
+	if cliEngine == runtime.AgentCLIAntigravity {
+		update = repo.UserCredentialUpdate{AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{cliEngine: {APIKey: saverKey}}}
+	}
+	if _, err := st.UpdateUserCredentials(saver.ID, update); err != nil {
 		t.Fatal(err)
 	}
 	if message, err := h.prepareScheduleJob(saved); err != nil || message != "云端巡检完成" || keyAttempts != 1 {
@@ -168,9 +212,9 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 		t.Fatal("offline fallback did not run the same model and user in the cloud")
 	}
 
-	keyError = assistantCredentialError{engine: assistantEngineClaude}
+	keyError = assistantCredentialError{engine: cliEngine}
 	if _, err := h.prepareScheduleJob(saved); err == nil || !strings.Contains(err.Error(), "已离线") ||
-		!strings.Contains(err.Error(), "Claude Code 拒绝了你的 API Key") || keyAttempts != 2 {
+		!strings.Contains(err.Error(), assistantEngineLabel(cliEngine)+" 拒绝了你的 API Key") || keyAttempts != 2 {
 		t.Fatalf("offline fallback with rejected key = %v, attempts = %d", err, keyAttempts)
 	}
 

@@ -13,6 +13,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/mcpclient"
 	"agentflow/internal/mcpserver"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
 
@@ -71,6 +72,9 @@ func assistantPlatformServer(server string) bool {
 }
 
 func (h *assistantHandlers) dispatchAssistantMCPCall(ctx context.Context, user domain.User, projectID string, call assistantMCPCall) (string, error) {
+	if err := h.validateScheduledAssets(ctx, projectID); err != nil {
+		return "", err
+	}
 	if h != nil && h.repo != nil {
 		if _, ok := h.lookupAssistantMCP(projectID, user.ID, call.Server); ok {
 			return h.callAssistantMCP(user, projectID, call)
@@ -92,6 +96,9 @@ func (h *assistantHandlers) dispatchAssistantMCPCall(ctx context.Context, user d
 func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user domain.User, projectID string, call assistantMCPCall) (string, error) {
 	if h == nil || h.api == nil {
 		return "", fmt.Errorf("未连接数据源")
+	}
+	if err := h.validateScheduledAssets(ctx, projectID); err != nil {
+		return "", err
 	}
 	tool := strings.TrimSpace(call.Tool)
 	if tool == "" || tool == "tools/list" {
@@ -133,6 +140,14 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	}
 	ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(user))
 	input := assistantToolInput(call)
+	if scope := scheduledAssetsFrom(ctx); scope.Version.ID != "" && op.Name == "runs_start" {
+		if body, ok := input.Body.(map[string]any); ok {
+			if id, _ := body["projectId"].(string); id != "" && id != projectID {
+				return "", fmt.Errorf("只能在当前项目启动 SOP")
+			}
+			body["projectId"] = projectID
+		}
+	}
 	if op.Name == "runs_control_get" {
 		run, ok := h.repo.RunState(input.Path["id"])
 		if !ok || run.ExecutionContext.ProjectID != projectID {
@@ -177,7 +192,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	}
 	if !op.ReadOnly && mode.ReviewWrites {
 		// Review the final merged payload immediately before the real handler.
-		review := reviewAssistantAction(ctx, op.Name, op.Description, map[string]any{"path": input.Path, "query": input.Query, "body": input.Body})
+		review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceBuiltinPlatform), op.Name, op.Description, map[string]any{"path": input.Path, "query": input.Query, "body": input.Body})
 		if !review.allows() {
 			return "", assistantReviewRefusal(op.Name, review)
 		}
@@ -195,7 +210,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	}
 	// Conversations legitimately belong to a project other than the current one;
 	// the handler already scopes them by owner / shared run / membership.
-	if !assistantSessionReadOperation(op.Name) {
+	if !assistantSessionReadOperation(op.Name) && !scheduledAssetRead(ctx, projectID, op.Name, input.Path["id"]) {
 		if err := assistantRejectForeignProject(projectID, result.Body); err != nil {
 			return "", err
 		}
@@ -342,7 +357,7 @@ func (h *assistantHandlers) callAssistantMCPContext(ctx context.Context, user do
 	if transport != "http" && transport != "sse" {
 		return "", fmt.Errorf("%s 是 %s MCP，助手只代调当前项目的 HTTP MCP（如项目安装的 GitHub HTTP MCP），不能启动 stdio 命令", server.Name, transport)
 	}
-	bound, err := bindAssistantMCP(server, user)
+	bound, err := bindAssistantMCP(h.repo, server, user)
 	if err != nil {
 		return "", err
 	}
@@ -380,12 +395,28 @@ func (h *assistantHandlers) lookupAssistantMCP(projectID string, userID int64, r
 	return domain.MCPServerDefinition{}, false
 }
 
-func bindAssistantMCP(server domain.MCPServerDefinition, user domain.User) (domain.MCPServerDefinition, error) {
+func bindAssistantMCP(st *repo.Store, server domain.MCPServerDefinition, user domain.User) (domain.MCPServerDefinition, error) {
 	bundle := domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{server}}
 	var githubErr error
-	bundle, githubErr = runtime.BindGitHubMCPHeaders(bundle, user.GitToken, true)
+	githubToken := ""
+	if st != nil {
+		if credential, ok := st.GitHTTPCredentialForHost(context.Background(), user.ID, "github.com"); ok {
+			githubToken = credential.Token
+		}
+	}
+	bundle, githubErr = runtime.BindGitHubMCPHeaders(bundle, githubToken, true)
 	if githubErr != nil {
 		return domain.MCPServerDefinition{}, githubErr
+	}
+	// Credential-authenticated MCP servers resolve the responsible user's
+	// saved credential (RunCredentials.Extra) here — this entry point serves
+	// both tool discovery and actual calls.
+	bundle, _, credErr := runtime.BindCredentialMCPHeaders(bundle, runtime.ExtraRunCredentials(user.ID), true)
+	if credErr != nil {
+		return domain.MCPServerDefinition{}, credErr
+	}
+	if len(bundle.MCPServers) == 0 {
+		return domain.MCPServerDefinition{}, fmt.Errorf("MCP %s 未绑定任何凭证", server.Name)
 	}
 	server = bundle.MCPServers[0]
 	headers, err := runtime.ResolveMCPHeaders(server)
@@ -403,7 +434,12 @@ func redactAssistantSecrets(text string, user domain.User) string {
 			text = strings.ReplaceAll(text, secret, "[redacted]")
 		}
 	}
-	return text
+	for _, credential := range runtime.AgentCLIUserCredentials(user) {
+		if key := strings.TrimSpace(credential.APIKey); key != "" {
+			text = strings.ReplaceAll(text, key, "[redacted]")
+		}
+	}
+	return gitSecretRedactions.redact(text, "[redacted]")
 }
 
 // assistantSessionReadOperation marks read-only platform tools that return

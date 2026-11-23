@@ -85,7 +85,15 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			respond(c, err)
 			return
 		}
-		c.JSON(200, runSummaries(runs))
+		user, authenticated := h.requestUser(r, true)
+		visible := runs[:0]
+		for _, run := range runs {
+			if run.IsPersonalWorkspace() && (!authenticated || user.ID <= 0 || user.ID != run.ExecutionContext.ResponsibleUserID) {
+				continue
+			}
+			visible = append(visible, run)
+		}
+		c.JSON(200, runSummaries(visible))
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -111,6 +119,15 @@ func (h *runsHandlers) runs(c *gin.Context) {
 		if workflow, ok := h.repo.Workflow(strings.TrimSpace(req.WorkflowID)); ok && !workflow.Shared && !workflow.Generic {
 			workflowProject = workflow.ProjectID
 		}
+		scope := scheduledAssetsFrom(r.Context())
+		scopedWorkflow := scope.Version.ID != "" && scope.ProjectID == req.ProjectID && scope.Version.HasAsset("sop", strings.TrimSpace(req.WorkflowID))
+		if scopedWorkflow {
+			if err := h.repo.ValidateSharedScheduleAssets(scope.Version); err != nil {
+				respond(c, err)
+				return
+			}
+			workflowProject = ""
+		}
 		if !h.requireProjectWriter(c, req.ProjectID, workflowProject) {
 			return
 		}
@@ -134,7 +151,11 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			}
 			repositories = []domain.RepositoryContext{repositoryRunContext(repoDef)}
 		}
-		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: responsibleUserID})
+		executionContext := domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: responsibleUserID}
+		if scopedWorkflow {
+			executionContext.SharedScheduleID, executionContext.SharedScheduleVersion = scope.Version.ID, scope.Version.Version
+		}
+		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, executionContext)
 		if err != nil {
 			respond(c, err)
 			return

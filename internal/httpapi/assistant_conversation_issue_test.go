@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitegress"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
@@ -305,9 +307,15 @@ func TestTurnEndRegistersWorkspacePullRequests(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	base := githubAPIBase
-	githubAPIBase = srv.URL
-	t.Cleanup(func() { githubAPIBase = base })
+	base, client := githubAPIBase, gitHostClient
+	githubAPIBase, gitHostClient = srv.URL, func(gitegress.HTTPSHostLookup) *http.Client { return srv.Client() }
+	t.Cleanup(func() { githubAPIBase, gitHostClient = base, client })
+	if err := st.SaveGitHTTPCredential(s.UserID, "", domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Platform: domain.GitPlatformGitHub, Host: "github.com"},
+		Token:             "gh-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	h := &assistantHandlers{deps: gateway.deps}
 	if note := h.registerTurnDeliveries(context.Background(), s); note != "" {
@@ -315,9 +323,9 @@ func TestTurnEndRegistersWorkspacePullRequests(t *testing.T) {
 	}
 	s.workspaceRunID = "ws-1"
 	if note := h.registerTurnDeliveries(context.Background(), s); note != "" {
-		t.Fatalf("a speaker without a Git token registered %q", note)
+		t.Fatalf("a turn that fetched no Git token registered %q", note)
 	}
-	s.User.GitToken = "gh-token"
+	s.rememberGitCredential("github.com", domain.GitPlatformGitHub, domain.GitTokenHTTPUser, "gh-token")
 	note := h.registerTurnDeliveries(context.Background(), s)
 	if !strings.Contains(note, "PR #9") || strings.Contains(note, "#8") || strings.Contains(note, "#7") || strings.Contains(note, "#5") || !strings.Contains(note, "新建需求") {
 		t.Fatalf("note = %q", note)
@@ -329,5 +337,146 @@ func TestTurnEndRegistersWorkspacePullRequests(t *testing.T) {
 	}
 	if again := h.registerTurnDeliveries(context.Background(), s); again != "" {
 		t.Fatalf("a registered PR was registered again: %q", again)
+	}
+	if states := st.MRDeliveryStatesMap([]domain.MRDeliveryKey{{Project: "github:acme/web", IID: 9}}); states[domain.MRDeliveryKey{Project: "github:acme/web", IID: 9}].RegisteredBy != s.UserID {
+		t.Fatalf("registered_by = %+v", states)
+	}
+}
+
+// GitLab MRs and GitHub Enterprise PRs on hosts the turn fetched a token for
+// are registered under host-qualified keys; a host that was not asked is not.
+func TestTurnEndRegistersMergeRequestsOnOtherHosts(t *testing.T) {
+	gateway, s, st := conversationIssueFixture(t)
+	en := engine.New(st, runtime.NewManager(t.TempDir()))
+	gateway.deps.engine = en
+	if err := st.DB.Table("runs").Where("id = ?", "ws-1").Update("created_at", time.Now().Add(-time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	const authorizedDNSHost = "gitlab.example.org:8443"
+	heads := map[string]string{}
+	for _, c := range []struct{ dir, remote string }{
+		{"app", "git@gitlab.example.org:group/sub/app.git"},
+		{"svc", "https://ghe.example.com/team/svc.git"},
+		{"app-ipv6", "https://[fd00:0:0:0:0:0:0:2]:8443/group/app.git"},
+		{"app-proxy", "https://" + authorizedDNSHost + "/group/app.git"},
+		{"other", "https://gitlab.unasked.example/x/y.git"},
+	} {
+		dir := filepath.Join(en.RunWorkspace("ws-1"), c.dir)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", c.dir}, {"remote", "add", "origin", c.remote}} {
+			if out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v %s", args, err, out)
+			}
+		}
+		out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		heads[c.dir] = strings.TrimSpace(string(out))
+	}
+	soon := time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Header.Get("PRIVATE-TOKEN") == "gl-token" && r.URL.Path == "/gitlab/user":
+			fmt.Fprint(w, `{"id":42}`)
+		case r.Header.Get("PRIVATE-TOKEN") == "gl-token" && r.URL.EscapedPath() == "/gitlab/projects/group%2Fsub%2Fapp/merge_requests" && r.URL.Query().Get("author_id") == "42":
+			fmt.Fprintf(w, `[
+				{"iid":3,"web_url":"https://gitlab.example.org/group/sub/app/-/merge_requests/3","title":"GitLab 修复","state":"opened","created_at":%[1]q,"sha":%[2]q,"target_branch":"main"},
+				{"iid":7,"web_url":"https://gitlab.alias.example.org/group/sub/app/-/merge_requests/7","title":"GitLab 未授权入口","state":"opened","created_at":%[1]q,"sha":%[2]q,"target_branch":"main"}
+			]`, soon, heads["app"])
+		case r.Header.Get("PRIVATE-TOKEN") == "gl-ipv6-token" && r.URL.Path == "/gitlab-ipv6/user":
+			fmt.Fprint(w, `{"id":43}`)
+		case r.Header.Get("PRIVATE-TOKEN") == "gl-ipv6-token" && r.URL.EscapedPath() == "/gitlab-ipv6/projects/group%2Fapp/merge_requests" && r.URL.Query().Get("author_id") == "43":
+			fmt.Fprintf(w, `[{"iid":5,"web_url":"https://gitlab.alias.example.org/group/app/-/merge_requests/5","title":"GitLab IPv6 修复","state":"opened","created_at":%q,"sha":%q,"target_branch":"main"}]`, soon, heads["app-ipv6"])
+		case r.Header.Get("PRIVATE-TOKEN") == "gl-proxy-token" && r.URL.Path == "/gitlab-proxy/user":
+			fmt.Fprint(w, `{"id":44}`)
+		case r.Header.Get("PRIVATE-TOKEN") == "gl-proxy-token" && r.URL.EscapedPath() == "/gitlab-proxy/projects/group%2Fapp/merge_requests" && r.URL.Query().Get("author_id") == "44":
+			fmt.Fprintf(w, `[{"iid":6,"web_url":"https://gitlab.example.org/group/app/-/merge_requests/6","title":"GitLab 代理入口","state":"opened","created_at":%q,"sha":%q,"target_branch":"main"}]`, soon, heads["app-proxy"])
+		case r.Header.Get("Authorization") == "Bearer ghe-token" && r.URL.Path == "/ghe/user":
+			fmt.Fprint(w, `{"login":"alice"}`)
+		case r.Header.Get("Authorization") == "Bearer ghe-token" && r.URL.Path == "/ghe/repos/team/svc/pulls":
+			fmt.Fprintf(w, `[{"number":4,"html_url":"https://ghe.example.com/team/svc/pull/4","title":"GHE 修复","state":"open","created_at":%q,"user":{"login":"alice"},"head":{"sha":%q},"base":{"ref":"main"}}]`, soon, heads["svc"])
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	base, client := gitHostAPIBase, gitHostClient
+	gitHostAPIBase = func(cred domain.GitHTTPCredential) string {
+		switch cred.Host {
+		case "[fd00::2]:8443":
+			return srv.URL + "/gitlab-ipv6"
+		case authorizedDNSHost:
+			return srv.URL + "/gitlab-proxy"
+		}
+		if cred.Platform == domain.GitPlatformGitLab {
+			return srv.URL + "/gitlab"
+		}
+		return srv.URL + "/ghe"
+	}
+	gitHostClient = func(gitegress.HTTPSHostLookup) *http.Client { return srv.Client() }
+	t.Cleanup(func() { gitHostAPIBase, gitHostClient = base, client })
+	if err := st.CreatePlatformGitHTTPSHost(t.Context(), &repo.PlatformGitHTTPSHost{
+		Host: authorizedDNSHost, Platform: domain.GitPlatformGitLab, Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.10")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ host, platform, token string }{
+		{"gitlab.example.org", domain.GitPlatformGitLab, "gl-token"},
+		{"[fd00::2]:8443", domain.GitPlatformGitLab, "gl-ipv6-token"},
+		{authorizedDNSHost, domain.GitPlatformGitLab, "gl-proxy-token"},
+		{"ghe.example.com", domain.GitPlatformGitHub, "ghe-token"},
+		{"gitlab.unasked.example", domain.GitPlatformGitLab, "unasked-token"},
+	} {
+		if err := st.SaveGitHTTPCredential(s.UserID, "", domain.GitHTTPCredentialSecret{
+			GitHTTPCredential: domain.GitHTTPCredential{Name: c.host, Platform: c.platform, Host: c.host},
+			Token:             c.token,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.workspaceRunID = "ws-1"
+	s.rememberGitCredential("gitlab.example.org", domain.GitPlatformGitLab, domain.GitTokenHTTPUser, "gl-token")
+	s.rememberGitCredential("[fd00::2]:8443", domain.GitPlatformGitLab, domain.GitTokenHTTPUser, "gl-ipv6-token")
+	s.rememberGitCredential(authorizedDNSHost, domain.GitPlatformGitLab, domain.GitTokenHTTPUser, "gl-proxy-token")
+	s.rememberGitCredential("ghe.example.com", domain.GitPlatformGitHub, domain.GitTokenHTTPUser, "ghe-token")
+
+	h := &assistantHandlers{deps: gateway.deps}
+	note := h.registerTurnDeliveries(context.Background(), s)
+	const proxyMRURL = "https://" + authorizedDNSHost + "/group/app/-/merge_requests/6"
+	if !strings.Contains(note, "MR !3") || !strings.Contains(note, "PR #4") || !strings.Contains(note, "MR !5") ||
+		!strings.Contains(note, "[MR !6]("+proxyMRURL+")") || strings.Contains(note, "MR !7") {
+		t.Fatalf("note = %q", note)
+	}
+	stored, _ := st.RunState("ws-1")
+	issue, _ := st.Issue(stored.ExecutionContext.IssueID)
+	got := map[string]int{}
+	for _, mr := range issue.DeliveryMRList() {
+		got[mr.Project] = mr.IID
+	}
+	const ipv6Project = "gitlab:[fd00::2]:8443/group/app"
+	const proxyProject = "gitlab:" + authorizedDNSHost + "/group/app"
+	if len(got) != 4 || got["gitlab:gitlab.example.org/group/sub/app"] != 3 ||
+		got["ghe:ghe.example.com/team/svc"] != 4 || got[ipv6Project] != 5 || got[proxyProject] != 6 {
+		t.Fatalf("delivery = %+v", issue.DeliveryMRList())
+	}
+	keys := []domain.MRDeliveryKey{
+		{Project: "gitlab:gitlab.example.org/group/sub/app", IID: 3},
+		{Project: "ghe:ghe.example.com/team/svc", IID: 4},
+		{Project: ipv6Project, IID: 5},
+		{Project: proxyProject, IID: 6},
+	}
+	states := st.MRDeliveryStatesMap(keys)
+	for _, key := range keys {
+		state := states[key]
+		if state.RegisteredBy != s.UserID || state.IssueID != issue.ID {
+			t.Fatalf("%v state = %+v", key, state)
+		}
+	}
+	if state := states[domain.MRDeliveryKey{Project: proxyProject, IID: 6}]; state.MRURL != proxyMRURL {
+		t.Fatalf("proxy MR state = %+v", state)
 	}
 }

@@ -144,12 +144,12 @@ func TestAssistantTurnContextStatesBeijingTimeAndProjectSwitching(t *testing.T) 
 
 func TestSystemPromptRecommendsTheGenericSOPs(t *testing.T) {
 	prompt := assistantSystemPromptText()
-	for _, want := range []string{"generic-product-delivery", "generic-frontend-delivery", "generic-backend-delivery", "主动推荐", "右上角的项目名称"} {
+	for _, want := range []string{"generic-product-delivery", "generic-frontend-delivery", "generic-backend-delivery", "主动推荐"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("system prompt missing %q", want)
 		}
 	}
-	if strings.Contains(prompt, "请用户在输入框上方选择项目") {
-		t.Error("system prompt still points at the hidden composer picker")
+	if !strings.Contains(prompt, "个人对话与项目对话都可直接打开工作区") || strings.Contains(prompt, "因而没有 workbench_workspace_open") {
+		t.Error("system prompt must support workspaces in personal conversations")
 	}
 }

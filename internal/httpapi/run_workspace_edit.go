@@ -3,6 +3,7 @@ package httpapi
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
@@ -134,6 +135,9 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 // from the task panel: platform admins, the project owner, anyone on an
 // unowned project without members, and non-viewer project members.
 func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, userID int64) bool {
+	if run.IsPersonalWorkspace() {
+		return userID > 0 && userID == run.ExecutionContext.ResponsibleUserID
+	}
 	if h.isPlatformAdmin(r) {
 		return true
 	}
@@ -190,6 +194,19 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 	}
 	var result any
 	launch := func() error {
+		ctx := c.Request.Context()
+		var credentials runtime.TerminalGitCredentials
+		if req.Operation == "open" {
+			if runnerID == "" && !remoteHost {
+				credentials = h.engine.WorkspaceTerminalGitCredentials(ctx, run, user)
+			}
+			var preparationKeys map[string]string
+			if trustedRequest.PreparationInvocation != nil {
+				preparationKeys = trustedRequest.PreparationInvocation.GitSSHKeys
+			}
+			ctx = gitwork.WithSSHKnownHostsLookup(ctx, h.repo.PlatformSSHKnownHosts)
+			ctx = gitwork.SnapshotSSHKnownHostsLookup(ctx, credentials.SSHKeys, trustedRequest.TerminalGitSSHKeys, preparationKeys)
+		}
 		return h.withWorkspaceWriter(c, run.ID, user, func(locked domain.Run) error {
 			req.ExpiresAt = locked.WorkspaceEditUntil
 			trustedRequest.RunID = runnerWorkspaceRunID(locked)
@@ -201,7 +218,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 				if h.runnerControls == nil {
 					return fmt.Errorf("执行端未连接")
 				}
-				ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
 
 				response, err := h.runnerControls.requestWorkspace(ctx, runnerID, trustedRequest)
@@ -230,7 +247,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 				result = json.RawMessage(response.Payload)
 				return nil
 			}
-			r, err := h.engine.HandlePreparedWorkspaceTerminal(c.Request.Context(), run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req, user)
+			r, err := h.engine.HandlePreparedWorkspaceTerminal(ctx, run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req, credentials)
 			result = r
 			return err
 		})
@@ -292,7 +309,7 @@ func (h *runsHandlers) withWorkspaceWriter(c *gin.Context, runID string, user in
 		}()
 	}
 	if h.engine != nil {
-		if err := h.engine.EnsureConversationWorkspace(ctx, runID, token); err != nil {
+		if _, err := h.engine.PrepareConversationWorkspace(ctx, runID, token); err != nil {
 			return err
 		}
 	}

@@ -53,7 +53,7 @@ func appendEnvironment(base []string, overlays ...map[string]string) []string {
 
 func controlledBaseEnvironment(base []string) []string {
 	blocked := []string{
-		"CODEBUDDY_API_KEY=",
+		"CODEBUDDY_API_KEY=", "CODEBUDDY_BASE_URL=",
 		"OPENAI_API_KEY=", "CODEX_API_KEY=", "OPENAI_BASE_URL=",
 		"ANTHROPIC_API_KEY=", "ANTHROPIC_AUTH_TOKEN=", "ANTHROPIC_BASE_URL=",
 		"CLAUDE_CODE_OAUTH_TOKEN=", "CODEX_HOME=", "CLAUDE_CONFIG_DIR=",
@@ -132,7 +132,7 @@ func (s *processSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	if err != nil {
 		return "", err
 	}
-	return runCommand(cmd, sink)
+	return runCommand(cmd, sink, command)
 }
 
 func (s *processSandbox) command(ctx context.Context, command CommandSpec, base []string) (*exec.Cmd, error) {
@@ -146,6 +146,13 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 		if err != nil {
 			return nil, err
 		}
+		if command.runnerLogin != nil {
+			for _, path := range command.runnerLogin.protected {
+				for _, variant := range seatbeltPathVariants(path) {
+					profile += fmt.Sprintf("\n(deny file-read* file-write* (subpath %s))\n", strconv.Quote(variant))
+				}
+			}
+		}
 		args := append([]string{"-p", profile}, command.Argv...)
 		cmd = exec.CommandContext(ctx, s.binary, args...)
 	case "bwrap":
@@ -153,7 +160,22 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 		if err != nil {
 			return nil, err
 		}
-		args = bwrapPrivateBinds(args, command.privateBinds)
+		args = bwrapPrivateBinds(args, command.privateBinds, command.managedCLIInstall)
+		if command.runnerLogin != nil {
+			// Hide host sources and the private journal after all other binds.
+			// The managed CLI uses only its own private HOME and host callback.
+			masks := append([]string(nil), args[:len(args)-1]...)
+			for _, path := range command.runnerLogin.protected {
+				if info, err := os.Stat(path); err == nil {
+					if info.IsDir() {
+						masks = append(masks, "--tmpfs", path, "--remount-ro", path)
+					} else {
+						masks = append(masks, "--ro-bind", "/dev/null", path)
+					}
+				}
+			}
+			args = append(masks, "--")
+		}
 		if command.WorkingDir != "" {
 			args = bwrapChdir(args, command.WorkingDir)
 		}
@@ -445,13 +467,16 @@ func ensureBunFSMountPoint() bool {
 // bwrapPrivateBinds adds per-process binds before the "--" that ends the
 // bwrap options. They come after --tmpfs /tmp, so a directory under the host
 // /tmp is visible to this process only.
-func bwrapPrivateBinds(args, binds []string) []string {
-	if len(binds) == 0 || len(args) == 0 || args[len(args)-1] != "--" {
+func bwrapPrivateBinds(args, binds []string, managedInstall string) []string {
+	if (len(binds) == 0 && managedInstall == "") || len(args) == 0 || args[len(args)-1] != "--" {
 		return args
 	}
 	out := append([]string{}, args[:len(args)-1]...)
 	for _, dir := range binds {
 		out = append(out, "--bind", dir, dir)
+	}
+	if managedInstall != "" {
+		out = append(out, "--ro-bind", managedInstall, managedInstall)
 	}
 	return append(out, "--")
 }
@@ -487,6 +512,9 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]str
 		// Same layout as the Docker workspace: the native CLI keeps its HOME
 		// and cwd (<root>/ws, here the run workspace) across both modes.
 		args = append(args, "--bind", filepath.Join(conversation, "home"), filepath.Join(conversation, "home"), "--bind", root, filepath.Join(conversation, "ws"))
+		// The private /tmp can hide generated attachments under a conversation root.
+		attachments := filepath.Join(conversation, "attachments")
+		args = append(args, "--ro-bind-try", attachments, attachments)
 		// The approval hooks stay read-only, as in the Docker workspace.
 		parents, files, err := conversationGuardPaths(conversation)
 		if err != nil {

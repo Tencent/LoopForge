@@ -70,7 +70,8 @@ func (h *assistantHandlers) workbenchReference(ref domain.AssistantReference, pr
 			break
 		}
 		ref.Name = v.Title
-		data = gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID}
+		data = gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID,
+			"repositoryId": v.RepositoryID, "repositoryIds": v.RepositoryIDs}
 	case "sop":
 		v, ok := h.repo.Workflow(ref.ID)
 		if !ok || !(v.Generic && project != "" || allowed(v.ProjectID, v.Shared)) {
@@ -181,14 +182,31 @@ var errForeignReference = fmt.Errorf("只能引用当前项目的需求、角色
 
 var errNotProjectMember = fmt.Errorf("你还不是这个项目的成员，不能在项目里对话。可以把项目切换为「个人对话」直接聊，或请项目 Owner 把你加入项目")
 
-func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
-	if !h.workbenchProjectAllowed(c, req.ProjectID, user.ID) {
+func (h *assistantHandlers) authorizeWorkbenchTurn(c *gin.Context, req *assistantRequest, userID int64) error {
+	if !h.workbenchProjectAllowed(c, req.ProjectID, userID) {
 		return errNotProjectMember
 	}
 	if req.SessionID != "" {
-		if old, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && old.ProjectID != req.ProjectID {
+		if old, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, userID), req.SessionID); ok && old.ProjectID != req.ProjectID {
 			return fmt.Errorf("会话属于其他项目，请新建会话")
 		}
+	}
+	return nil
+}
+
+func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
+	if err := h.authorizeWorkbenchTurn(c, req, user.ID); err != nil {
+		return err
+	}
+	return h.buildWorkbenchContext(c, req, user)
+}
+
+func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
+	if req.sopDesigner() {
+		return h.prepareSOPDesignerContext(c, req, user)
+	}
+	if err := h.validateScheduledAssets(c.Request.Context(), req.ProjectID); err != nil {
+		return err
 	}
 	// Existing personal attachments remain usable when an unassigned conversation
 	// is explicitly bound to an authorized project. Never infer another user's files.
@@ -406,7 +424,7 @@ func (h *assistantHandlers) workbenchReferences(c *gin.Context) {
 	var task *domain.Run
 	if runID := strings.TrimSpace(c.Query("runId")); runID != "" {
 		r, exists := h.repo.RunState(runID)
-		if !exists || r.ExecutionContext.ProjectID != project || !h.workbenchProjectAllowed(c, r.ExecutionContext.ProjectID, u.ID) {
+		if !exists || r.IsPersonalWorkspace() || r.ExecutionContext.ProjectID != project || !h.workbenchProjectAllowed(c, r.ExecutionContext.ProjectID, u.ID) {
 			c.JSON(403, gin.H{"error": "无权访问任务"})
 			return
 		}
@@ -1298,7 +1316,7 @@ func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user dom
 	if b.Len() == 0 {
 		return ""
 	}
-	b.WriteString("按用户这条消息实际要处理的事决定（@ 只是线索）：只在要看或改代码、跑命令时才进入工作区；工作区按运行环境区分，当前环境合适就直接用，需要别的语言或工具链再传 sandboxProfileId 切换，并在里面自己 git clone 仓库和切换分支。要直接恢复并接着某次 SOP 运行的现场继续干活（保留未推送修改和产物，或改完后回 SOP 重跑测试节点/继续执行），打开工作区时传入该 SOP 的 workspaceRunId（与当前对话在同一执行机器时直接复用原工作区，已回收时自动恢复快照；不在同一执行机器时如实告知用户需要在哪台执行机器下新建对话）。")
+	b.WriteString("按用户这条消息实际要处理的事决定（@ 只是线索）：只在要看或改代码、跑命令时才进入工作区；工作区按运行环境区分，当前环境合适就直接用，需要别的语言或工具链再传 sandboxProfileId 切换。创建文件和运行命令可直接在工作区完成。需要已有仓库时在工作区内自行 git clone 和切换分支。要直接恢复并接着某次 SOP 运行的现场继续干活（保留未推送修改和产物，或改完后回 SOP 重跑测试节点/继续执行），打开工作区时传入该 SOP 的 workspaceRunId（与当前对话在同一执行机器时直接复用原工作区，已回收时自动恢复快照；不在同一执行机器时如实告知用户需要在哪台执行机器下新建对话）。")
 	return b.String()
 }
 
@@ -1342,7 +1360,9 @@ func (h *assistantHandlers) linkMentionedIssue(req *assistantRequest, user domai
 	}
 	ownerID := assistantStorageOwner(h.repo, req.SessionID, user.ID)
 	session, ok := h.repo.AssistantSession(ownerID, req.SessionID)
-	if !ok || session.Shared || session.RunID != "" || session.IssueID != "" {
+	// Scheduled references belong to each execution and must not become a
+	// persistent issue binding when a fixed session is reused.
+	if !ok || session.Shared || session.Source == domain.AssistantSourceScheduled || session.RunID != "" || session.IssueID != "" {
 		return ""
 	}
 	issueID := ""

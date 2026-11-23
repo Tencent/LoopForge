@@ -1,18 +1,15 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"runtime/debug"
 	"strings"
 	"time"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/managedcli"
 )
 
 var assistantDiagnosticInstance = domain.AssistantDiagnosticEnvironment{
@@ -39,43 +36,11 @@ func assistantDiagnosticEnvironment() domain.AssistantDiagnosticEnvironment {
 	return e
 }
 
-var diagnosticVersion = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$`)
-
-// Read installation metadata rather than launching a second CLI process. A
-// version probe can itself hang or mutate a continuation cache. The native
-// handshake can fill the version later when installation metadata is absent.
-func assistantDiagnosticCLIVersion(engine, bin string) (version, source string) {
-	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" {
-		if inventory, err := managedcli.ReadInventory(root); err == nil {
-			if install, ok := inventory[engine]; ok && install.Binary == bin && diagnosticVersion.MatchString(install.Version) {
-				return install.Version, "managed_inventory"
-			}
-		}
-	}
-	packages := map[string]string{"codex": "@openai/codex", "codebuddy": "@tencent-ai/codebuddy-code", "claude-code": "@anthropic-ai/claude-code"}
-	resolved, err := filepath.EvalSymlinks(bin)
-	if err == nil && packages[engine] != "" {
-		for dir, depth := filepath.Dir(resolved), 0; depth < 5; dir, depth = filepath.Dir(dir), depth+1 {
-			info, err := os.Stat(filepath.Join(dir, "package.json"))
-			if err != nil || info.Size() > 64<<10 {
-				continue
-			}
-			raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
-			var pkg struct{ Name, Version string }
-			if err == nil && json.Unmarshal(raw, &pkg) == nil && pkg.Name == packages[engine] && diagnosticVersion.MatchString(pkg.Version) {
-				return pkg.Version, "package_metadata"
-			}
-		}
-	}
-	return "", "not_reported"
-}
-
 func (a *assistantDiagnosticAttempt) configure(bin string, req assistantCLIRequest) {
 	if a == nil {
 		return
 	}
 	engine, _ := assistantModelEngine(assistantRequestModel(req.Executor, req.Model))
-	version, source := assistantDiagnosticCLIVersion(engine, bin)
 	endpoint, protocol := "", "stream-json"
 	switch engine {
 	case "codex":
@@ -109,15 +74,15 @@ func (a *assistantDiagnosticAttempt) configure(bin string, req assistantCLIReque
 	if engine == "claude-code" {
 		key = "AGENTFLOW_CLAUDE_BIN"
 	}
-	if strings.TrimSpace(os.Getenv(key)) == bin {
-		binarySource = "explicit_override"
-	} else if source == "managed_inventory" {
-		binarySource = "managed_inventory"
-	} else if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" && strings.HasPrefix(bin, filepath.Clean(root)+string(filepath.Separator)) {
-		binarySource = "managed_inventory"
+	if !req.RemoteBinary {
+		if strings.TrimSpace(os.Getenv(key)) == bin {
+			binarySource = "explicit_override"
+		} else if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" && strings.HasPrefix(bin, filepath.Clean(root)+string(filepath.Separator)) {
+			binarySource = "managed_inventory"
+		}
 	}
 	a.update(func(attempt *domain.AssistantCLIAttempt) {
-		attempt.CLIVersion, attempt.VersionSource = version, source
+		attempt.VersionSource = "not_reported"
 		attempt.BinarySource = binarySource
 		attempt.Endpoint = sanitizeAssistantDiagnostic(endpoint, a.user, 300)
 		attempt.Protocol = sanitizeAssistantDiagnostic(protocol, a.user, 80)

@@ -17,7 +17,7 @@ type mcpBinding struct {
 	Source  string
 }
 
-func bindTrackerMCP(kind string, cfg domain.SyncConfig, servers []domain.MCPServerDefinition, envToken, codebuddyAuth string) mcpBinding {
+func bindTrackerMCP(kind string, cfg domain.SyncConfig, servers []domain.MCPServerDefinition, envToken string) mcpBinding {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	cfgURL := strings.TrimSpace(cfg.GongfengMCPURL)
 	exact := []string{"gongfeng-delivery", "gongfeng"}
@@ -59,12 +59,13 @@ func bindTrackerMCP(kind string, cfg domain.SyncConfig, servers []domain.MCPServ
 		return out
 	}
 	if !headerHas(out.Headers, "Authorization") {
-		out.Headers = applyAuthFallback(out.Headers, envToken, codebuddyAuth)
+		token := strings.TrimSpace(envToken)
+		if token != "" {
+			out.Headers["Authorization"] = bearerHeader(token)
+		}
 		if out.Source == "" {
-			if strings.TrimSpace(envToken) != "" {
+			if token != "" {
 				out.Source = "env:AGENTFLOW_MCP_TOKEN"
-			} else if strings.TrimSpace(codebuddyAuth) != "" {
-				out.Source = "codebuddy:mcp.json"
 			} else {
 				out.Source = "none"
 			}
@@ -97,7 +98,7 @@ func bindProjectUserTrackerMCP(kind string, cfg domain.SyncConfig, servers []dom
 			projectServers = append(projectServers, server)
 		}
 	}
-	binding := bindTrackerMCP(kind, cfg, projectServers, "", "")
+	binding := bindTrackerMCP(kind, cfg, projectServers, "")
 	if strings.TrimSpace(binding.URL) == "" {
 		return binding, fmt.Errorf("项目 %s 未配置 %s MCP 地址", projectID, trackerDisplayName(kind))
 	}
@@ -166,26 +167,6 @@ func findCatalogHTTP(servers []domain.MCPServerDefinition, exactIDs, needles []s
 		return domain.MCPServerDefinition{}, false
 	}
 	return matches[0], true
-}
-
-func applyAuthFallback(hdrs map[string]string, envToken, codebuddyAuth string) map[string]string {
-	out := hdrs
-	if out == nil {
-		out = map[string]string{}
-	} else {
-		out = maps.Clone(out)
-	}
-	if headerHas(out, "Authorization") {
-		return out
-	}
-	if token := strings.TrimSpace(envToken); token != "" {
-		out["Authorization"] = bearerHeader(token)
-		return out
-	}
-	if auth := strings.TrimSpace(codebuddyAuth); auth != "" {
-		out["Authorization"] = bearerHeader(auth)
-	}
-	return out
 }
 
 func bearerHeader(value string) string {

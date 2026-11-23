@@ -1,3 +1,4 @@
+@import "./reference-input.css";
 :root {
   font-family:
     ui-sans-serif,
@@ -591,18 +592,70 @@ small {
   flex-direction: column;
 }
 .message-scroll {
+  --message-scrollbar-thumb: color-mix(in srgb, var(--muted) 28%, transparent);
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
-  scrollbar-width: thin;
   scroll-behavior: auto;
+}
+.message-scroll:hover,
+.message-scroll:focus-within {
+  --message-scrollbar-thumb: color-mix(in srgb, var(--muted) 46%, transparent);
+}
+/* Chrome 121+ ignores ::-webkit-scrollbar once scrollbar-width/color is set. */
+@supports not selector(::-webkit-scrollbar) {
+  .message-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--muted) 28%, transparent) transparent;
+  }
+  .message-scroll:hover,
+  .message-scroll:focus-within {
+    scrollbar-color: color-mix(in srgb, var(--muted) 46%, transparent) transparent;
+  }
+}
+.message-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.message-scroll::-webkit-scrollbar-track,
+.message-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.message-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.message-scroll::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: var(--message-scrollbar-thumb);
+}
+.message-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--muted) 58%, transparent);
 }
 .message-column {
   width: 100%;
   max-width: var(--chat-column-width);
   margin: auto;
   padding: 42px 24px 50px;
+}
+.message-history-more {
+  display: block;
+  margin: 0 auto 16px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.message-history-more:hover,
+.message-history-more:focus-visible {
+  background: var(--hover);
+  color: var(--text);
 }
 .message {
   position: relative;
@@ -1084,98 +1137,6 @@ small {
   color: #a7a7aa;
   line-height: 1;
 }
-.composer textarea {
-  resize: none;
-  display: block;
-  border: 0;
-  background: none;
-  width: 100%;
-  font-size: var(--chat-font-size);
-  font-weight: var(--chat-font-weight);
-  line-height: var(--chat-line-height);
-  color: var(--text);
-  min-height: 75px;
-  max-height: 220px;
-  padding: 13px 14px 8px;
-  outline: 0;
-}
-.composer textarea::placeholder {
-  color: #96969b;
-}
-.mention-picker {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  max-height: min(440px, calc(100dvh - 120px));
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--surface);
-  box-shadow: 0 12px 40px #00000018;
-  padding: 8px;
-  color: var(--text);
-}
-.mention-picker > header {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px 12px;
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-}
-.mention-picker input {
-  min-width: 0;
-  flex: 1;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  outline: none;
-  font-size: 13px;
-}
-.mention-close {
-  font-size: 12px;
-}
-.mention-options {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding-top: 5px;
-}
-.mention-options > [role="option"] {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 9px;
-  text-align: left;
-}
-.mention-options > [aria-selected="true"] {
-  background: var(--subtle);
-}
-.mention-options > button > span {
-  flex: 1;
-  min-width: 0;
-}
-.mention-options strong,
-.mention-options small {
-  display: block;
-  overflow-wrap: anywhere;
-}
-.mention-options strong {
-  font-size: 13px;
-  font-weight: 500;
-}
-.mention-options small {
-  font-size: 11px;
-  margin-top: 4px;
-  color: var(--muted);
-}
 .operation-summary {
   margin: 10px 0 14px;
   font-size: 13px;
@@ -1371,39 +1332,6 @@ small {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.composer-attachments {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  padding: 9px 12px 0;
-  gap: 8px;
-}
-.composer-attachment-file {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 4px 5px;
-  font-size: 11px;
-  background: var(--subtle);
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-.composer-attachment-name {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.composer-attachment-file small {
-  flex: none;
-  font-size: 10px;
-  color: var(--muted);
-}
-.composer-attachment-file > button {
-  display: flex;
-  padding: 0 0 0 4px;
-}
 .composer-attachment-thumb {
   position: relative;
   display: inline-flex;
@@ -1574,36 +1502,44 @@ small {
   color: var(--muted);
   font-size: 11px;
 }
-.credential-notice {
+:is(.credential-notice, .runtime-cli-notice) {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 10px;
-  padding: 9px 11px;
+  padding: 8px 10px 8px 12px;
   border: 1px solid #f3e2b8;
   border-radius: 10px;
   background: #fffbf0;
   color: #7a5a12;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
 }
-.credential-notice > span {
-  flex: 1;
-}
-.credential-notice button {
-  height: 26px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--surface);
-  font-size: 12px;
-  cursor: pointer;
-}
-[data-theme="dark"] .credential-notice {
+[data-theme="dark"] :is(.credential-notice, .runtime-cli-notice) {
   border-color: #5a4a22;
   background: #2b2513;
   color: #e8cf8c;
+}
+:is(.credential-notice, .runtime-cli-notice) > svg {
+  flex: none;
+}
+:is(.credential-notice, .runtime-cli-notice) > span {
+  flex: 1;
+}
+:is(.credential-notice, .runtime-cli-notice) button {
+  flex: none;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+:is(.credential-notice, .runtime-cli-notice) button:hover {
+  background: var(--hover);
 }
 .info-card {
   position: absolute;

@@ -43,9 +43,27 @@ func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	if sb.ID() != "cvR-run" || sb.Workspace() != workspace || sb.Driver() != "docker" {
 		t.Fatalf("sandbox=%+v", sb)
 	}
-	out, err := sb.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-lc", "echo ok"}, environment: map[string]string{"B": "2"}}, nil)
+	const extraValue = "test-extra-credential"
+	command, err := bindCommand(t.Context(), sb, workspace, CommandSpec{
+		Argv:               []string{"sh", "-lc", "echo ok"},
+		CredentialBindings: []CredentialBinding{BindExtra},
+		ExtraCredentialEnv: map[string]string{"DEPLOYMENT_VALUE": "registry"},
+		environment:        map[string]string{"B": "2"},
+	}, RunCredentials{Extra: map[string]string{"registry": extraValue}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started string
+	out, err := sb.Exec(context.Background(), command, func(event domain.TelemetryEvent) {
+		if event.Name == "process.started" {
+			started = event.Message
+		}
+	})
 	if err != nil || !strings.Contains(out, "/workspace") {
 		t.Fatalf("exec=%q err=%v", out, err)
+	}
+	if strings.Contains(started, extraValue) || !strings.Contains(started, "DEPLOYMENT_VALUE=<redacted>") || !strings.Contains(started, "B=2") {
+		t.Fatalf("process.started must redact the extra credential and keep ordinary environment variables: %q", started)
 	}
 	if !sb.started || sb.builtImage == "" {
 		t.Fatalf("sandbox did not start: %+v", sb)
@@ -62,6 +80,61 @@ func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	}
 	if err := sb.Close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDockerSandboxUsesRelayNetworkOnlyWhenRequested(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		privateHome        bool
+		conversation       bool
+		runnerLoginRelay   bool
+		invalidRelayConfig bool
+		wantNetwork        string
+	}{
+		{name: "SOP with private home", privateHome: true, wantNetwork: "sop-network"},
+		{name: "SOP ignores invalid conversation settings", privateHome: true, invalidRelayConfig: true, wantNetwork: "sop-network"},
+		{name: "conversation", conversation: true, wantNetwork: "chat-network"},
+		{name: "Codex login relay", runnerLoginRelay: true, wantNetwork: "chat-network"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			cvRInstallFakeDocker(t, workspace)
+			argsFile := filepath.Join(t.TempDir(), "create-args")
+			t.Setenv("CVR_DOCKER_CREATE_ARGS", argsFile)
+			t.Setenv("AGENTFLOW_DOCKER_NETWORK", "sop-network")
+			t.Setenv("AGENTFLOW_CONVERSATION_DOCKER_NETWORK", "chat-network")
+			host := "host.docker.internal"
+			if tc.invalidRelayConfig {
+				host = "invalid/relay"
+			}
+			t.Setenv("AGENTFLOW_CONVERSATION_RELAY_HOST", host)
+			requirements := SandboxRequirements{PrivateHome: tc.privateHome, RunnerLoginRelay: tc.runnerLoginRelay}
+			if tc.conversation {
+				requirements.ConversationRoot = t.TempDir()
+			}
+			ctx := context.Background()
+			sandbox, err := createDocker(ctx, "network-policy", workspace, domain.SandboxProfile{Driver: "docker"}, requirements, domain.DockerfileDefinition{Content: "FROM scratch"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sandbox.Close(ctx)
+			if err := sandbox.(*dockerSandbox).BindWorkspace(ctx); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := string(data)
+			if strings.Count(args, "\n--network\n") != 1 || !strings.Contains(args, "\n--network\n"+tc.wantNetwork+"\n") {
+				t.Fatalf("docker create used the wrong network: %s", args)
+			}
+			usesGateway := strings.Contains(args, "\n--add-host\nhost.docker.internal:host-gateway\n")
+			if usesGateway != (tc.conversation || tc.runnerLoginRelay) {
+				t.Fatalf("docker create host gateway = %v for %s", usesGateway, tc.name)
+			}
+		})
 	}
 }
 
@@ -306,6 +379,9 @@ case "$*" in
   "ps -aq --filter "*) echo id1; exit 0 ;;
   "inspect "*) exit 1 ;;
   "exec "*) echo /workspace; exit 0 ;;
+  "create "*)
+    if [ -n "${CVR_DOCKER_CREATE_ARGS:-}" ]; then printf '%s\n' "$@" > "$CVR_DOCKER_CREATE_ARGS"; fi
+    exit 0 ;;
   *) exit 0 ;;
 esac
 `

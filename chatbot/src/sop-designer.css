@@ -1,0 +1,183 @@
+/* SOP designer surface: the AI orchestrator inside the SOP canvas side panel.
+   Messages, activity, pickers and the composer reuse the workbench styles;
+   this file only lays them out for the narrow panel. */
+.sop-designer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+  color: var(--text);
+}
+.sop-designer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 18px 14px 8px;
+  scrollbar-width: thin;
+  overflow-wrap: anywhere;
+}
+.sop-designer-intro h3 {
+  margin: 4px 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.sop-designer-intro em {
+  font-style: normal;
+  color: var(--hui-accent, var(--accent));
+}
+.sop-designer-intro p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.sop-designer-suggest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 22px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.sop-designer-suggest-head button,
+.sop-designer-place {
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.sop-designer-suggest-head button:hover,
+.sop-designer-place:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.sop-designer-suggest {
+  display: grid;
+  gap: 8px;
+}
+.sop-designer-suggest button {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+.sop-designer-suggest button:hover {
+  background: var(--hover);
+}
+.sop-designer-message {
+  margin-bottom: 16px;
+}
+.sop-designer-message.user {
+  text-align: right;
+}
+.sop-designer-message .markdown {
+  font-size: 13.5px;
+}
+.sop-designer-draft {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+.sop-designer-draft-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.sop-designer-warnings {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--hui-warn, #b7791f);
+  line-height: 1.6;
+}
+.sop-designer-place {
+  margin-top: 6px;
+  padding-left: 0;
+}
+.sop-designer-error {
+  margin: 0 0 12px;
+  color: var(--hui-error, #d14343);
+  font-size: 12.5px;
+}
+.sop-designer-composer {
+  flex: none;
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+.sop-designer-composer .composer {
+  border-radius: 12px;
+}
+.sop-designer-composer .composer textarea {
+  min-height: 64px;
+  max-height: 180px;
+  padding: 10px 12px 6px;
+  font-size: 13.5px;
+}
+.sop-designer-composer .composer-toolbar {
+  padding: 0 6px 6px;
+  min-width: 0;
+}
+.sop-designer-composer > small {
+  display: block;
+  margin: 8px 2px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+/* The panel is narrower than the container query that lets the workbench
+   toolbar wrap; keep send/stop on the row and shrink the picker labels. */
+.sop-designer-composer .composer-toolbar {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+.sop-designer-composer .composer-toolbar > .permission-picker-anchor {
+  flex: none;
+}
+.sop-designer-composer .composer-toolbar > .menu-anchor.model-picker-anchor {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.sop-designer-composer .composer-toolbar button.permission-selector,
+.sop-designer-composer .composer-toolbar .model-picker {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.sop-designer-composer .composer-toolbar button.permission-selector > span,
+.sop-designer-composer .composer-toolbar .model-picker-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sop-designer-composer .composer-toolbar .send-button {
+  flex: none;
+}
+.sop-designer-composer .composer-toolbar button.permission-selector {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+/* The studio's floating feedback button sits over the panel's bottom-right
+   corner; keep the send button and the note clear of it. */
+.sop-designer-composer {
+  padding-bottom: 22px;
+}
+.sop-designer-composer > small {
+  padding-right: 40px;
+}

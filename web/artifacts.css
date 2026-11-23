@@ -9,15 +9,21 @@
 .empty-artifacts{padding:18px;color:var(--muted-2);font-size:11px}
 
 /* 产物预览弹窗 */
-.artifact-preview-modal{width:min(1060px,95vw);max-height:90vh;height:86vh;display:flex!important;flex-direction:column!important;overflow:hidden!important;padding:0!important;border-radius:16px;background:var(--panel);color:var(--text);border:1px solid var(--line-strong);position:relative}
+.artifact-preview-modal{width:min(1060px,95vw);max-width:95vw;max-height:90vh;height:86vh;padding:0;overflow:hidden;border-radius:16px;background:var(--panel);color:var(--text);border:1px solid var(--line-strong)}
+.artifact-preview-modal[open]{display:flex;flex-direction:column}
+.artifact-preview-modal::backdrop{background:rgba(3,7,17,.62);backdrop-filter:blur(4px)}
+.artifact-preview-modal > .toast-container{position:absolute;inset:auto 16px 16px auto;max-width:calc(100% - 32px)}
+.artifact-preview-modal .toast-item{min-width:min(260px,100%);max-width:min(400px,100%)}
 #artifactPreview{display:flex!important;flex-direction:column!important;flex:1 1 0%!important;min-height:0!important;height:100%!important;width:100%!important;overflow:hidden!important}
 .artifact-preview-head{flex:0 0 auto!important;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px;border-bottom:1px solid var(--line);background:var(--panel-2);backdrop-filter:blur(12px)}
+.artifact-preview-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex:1;min-width:0}
 .artifact-preview-head-left{display:flex;align-items:center;gap:12px;min-width:0}
 .artifact-preview-icon{width:36px;height:36px;border-radius:9px;background:rgba(91,140,255,.15);border:1px solid rgba(91,140,255,.3);color:var(--blue);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0}
 .artifact-preview-titles{min-width:0}
 .artifact-preview-head h2{margin:0 0 2px;font-size:17px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
 .artifact-preview-sub{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .artifact-preview-head-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.artifact-close.button.small{width:32px;height:32px;padding:0;font-size:20px;line-height:1;flex:none}
 .artifact-preview-toolbar{flex:0 0 auto!important;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 24px;border-bottom:1px solid var(--line);background:var(--bg-soft);font-size:11px}
 .artifact-toolbar-left{display:flex;align-items:center;gap:8px}
 .artifact-view-mode{display:inline-flex;padding:2px;border-radius:7px;background:rgba(148,163,184,.15);border:1px solid var(--line)}
@@ -31,6 +37,11 @@
 .artifact-body{flex:1 1 0%!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important;padding:24px 28px;background:var(--panel);color:var(--text);overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .artifact-content{margin:0;padding:0;white-space:pre-wrap;word-break:break-word;font:12px/1.7 var(--mono);color:var(--text)}
 .artifact-loading{padding:60px 0;text-align:center;color:var(--muted-2);font-size:13px}
+@media(max-width:600px){
+  .artifact-preview-head,.artifact-preview-heading{gap:8px}
+  .artifact-preview-head,.artifact-preview-toolbar{padding-inline:12px}
+  .artifact-preview-toolbar,.artifact-toolbar-left{flex-wrap:wrap}
+}
 
 /* Markdown 渲染样式体系 */
 .markdown-body{font-size:13px;line-height:1.75;color:var(--text);word-break:break-word}

@@ -48,6 +48,22 @@ function scheduleExecDurationLabel(ms){
   return `${Math.floor(s/3600)} 小时 ${Math.floor(s%3600/60)} 分`;
 }
 function scheduleExecShortTrace(trace){return String(trace||'').slice(-8)}
+function scheduleExecTokenNumber(value){const n=Number(value);return Number.isFinite(n)&&n>0?Math.floor(n):0}
+function scheduleExecTokenLabel(value){return scheduleExecTokenNumber(value).toLocaleString('zh-CN')}
+function scheduleExecUsageTotal(e){return e?.usage?scheduleExecTokenNumber(e.usage.totalTokens)||scheduleExecTokenNumber(e.usage.inputTokens)+scheduleExecTokenNumber(e.usage.outputTokens):null}
+function scheduleExecTokenCellHTML(e){
+  const total=scheduleExecUsageTotal(e);
+  if(total===null)return `<span class="muted">${e.jobKind==='assistant'?(e.status==='running'?'待统计':'未上报'):'—'}</span>`;
+  const u=e.usage;
+  const parts=[`输入 ${scheduleExecTokenLabel(u.inputTokens)}`,`输出 ${scheduleExecTokenLabel(u.outputTokens)}`,`缓存读 ${scheduleExecTokenLabel(u.cacheReadTokens)}`,`缓存写 ${scheduleExecTokenLabel(u.cacheWriteTokens)}`];
+  return `<span title="${escapeHTML(parts.join(' · '))}">${scheduleExecTokenLabel(total)}</span>`;
+}
+function scheduleExecUsageDetailHTML(e){
+  if(!e.usage)return '';
+  const u=e.usage;
+  const field=(label,value)=>`<div><dt>${label}</dt><dd>${scheduleExecTokenLabel(value)}</dd></div>`;
+  return `<div><dt>模型</dt><dd>${escapeHTML(e.model||'未上报')}</dd></div>${field('Token 总量',scheduleExecUsageTotal(e))}${field('输入 Token',u.inputTokens)}${field('输出 Token',u.outputTokens)}${field('缓存读 Token',u.cacheReadTokens)}${field('缓存写 Token',u.cacheWriteTokens)}`;
+}
 function scheduleExecTimeLabel(value){
   const d=knownTime(value);if(!d)return '—';
   const p=n=>String(n).padStart(2,'0');
@@ -57,7 +73,7 @@ function scheduleExecDayStart(ms){const d=new Date(ms);d.setHours(0,0,0,0);retur
 // The server counts windows; this only turns one into the four metrics.
 function scheduleExecWindow(w){
   const finished=Number(w?.finished)||0,success=Number(w?.success)||0;
-  return {total:Number(w?.total)||0,success,failed:Number(w?.failed)||0,running:Number(w?.running)||0,rate:finished?Math.round(success/finished*100):null,avgMs:Number(w?.avgMs)||0};
+  return {total:Number(w?.total)||0,success,failed:Number(w?.failed)||0,running:Number(w?.running)||0,rate:finished?Math.round(success/finished*100):null,avgMs:Number(w?.avgMs)||0,metered:Number(w?.metered)||0,tokens:scheduleExecTokenNumber(w?.tokens?.total)};
 }
 // "today" starts at local midnight; 7d/30d count back from now.
 function scheduleExecSince(range,now=scheduleExecNow()){
@@ -119,9 +135,9 @@ function scheduleExecMetricsHTML(overview){
   const c=scheduleExecWindow(overview?.current),p=scheduleExecWindow(overview?.previous);
   const cell=(tone,icon,label,value,delta)=>`<div class="sched-exec-metric" data-tone="${tone}"><span class="sched-exec-metric-icon" aria-hidden="true">${scheduleExecIcon(icon,18)}</span><div class="sched-exec-metric-body"><span>${label}</span><b>${value}</b>${delta}</div></div>`;
   return cell('accent','layers','执行次数',c.total,c.total||p.total?scheduleExecDeltaHTML(c.total,p.total):'<small class="sched-exec-delta" data-trend="flat">最近 7 天无执行</small>')
-    +cell('success','check','成功率',c.rate===null?'—':`${c.rate}%`,scheduleExecDeltaHTML(c.rate,p.rate,{unit:'pp'}))
-    +cell('error','close','失败次数',c.failed,c.total||p.total?scheduleExecDeltaHTML(c.failed,p.failed,{lowerIsBetter:true}):'<small class="sched-exec-delta" data-trend="flat">—</small>')
-    +cell('info','priority-bolt','平均耗时',c.avgMs?scheduleExecDurationLabel(c.avgMs):'—',c.avgMs&&p.avgMs?scheduleExecDeltaHTML(Math.round(c.avgMs),Math.round(p.avgMs),{lowerIsBetter:true}):'<small class="sched-exec-delta" data-trend="flat">已结束的执行</small>');
+    +cell('success','check','成功率',c.rate===null?'—':`${c.rate}%`,`<small class="sched-exec-outcomes"><span>成功 ${c.success} 次</span><span${c.failed>0?' class="has-failures"':''}>失败 ${c.failed} 次</span></small>`)
+    +cell('info','priority-bolt','平均耗时',c.avgMs?scheduleExecDurationLabel(c.avgMs):'—',c.avgMs&&p.avgMs?scheduleExecDeltaHTML(Math.round(c.avgMs),Math.round(p.avgMs),{lowerIsBetter:true}):'<small class="sched-exec-delta" data-trend="flat">已结束的执行</small>')
+    +cell('accent','layers','Token 总消耗',c.metered?scheduleExecTokenLabel(c.tokens):'—',`<small class="sched-exec-delta" data-trend="flat">${c.metered} 次已上报 · 最近 7 天</small>`);
 }
 // Same link shape as issueConversationURL: the Studio frame opens chatSession.
 function scheduleExecConversationURL(e){
@@ -156,7 +172,7 @@ function scheduleExecDetailHTML(e,detailId){
   const runs=(e.runs||[]).filter(r=>r.runId);
   const runLinks=runs.length?`<div class="sched-exec-runs">${runs.map(r=>`<button type="button" class="sched-exec-run" data-open-exec-run="${escapeHTML(r.runId)}" title="打开运行 ${escapeHTML(r.runId)}">${scheduleExecIcon('workflow',12)}${escapeHTML(r.issueTitle||r.issueId||r.runId)}</button>`).join('')}</div>`:'';
   const finished=knownTime(e.finishedAt);
-  return `<tr class="sched-exec-detail" id="${detailId}" ${scheduleExecExpanded.has(e.id)?'':'hidden'}><td colspan="7"><div class="sched-exec-detail-body"><dl class="sched-exec-fields">${field('触发方式',escapeHTML(scheduleExecTriggerLabel(e.triggerOrigin)))}${field('开始时间',escapeHTML(scheduleExecTimeLabel(e.startedAt)))}${field('结束时间',finished?escapeHTML(scheduleExecTimeLabel(e.finishedAt)):'')}${field('耗时',e.status==='running'?'进行中':escapeHTML(scheduleExecDurationLabel(e.durationMs)))}${field('Trace ID',e.traceId?`<code>${escapeHTML(e.traceId)}</code>`:'')}${assistant?'':field('候选 / 启动',`${Number(e.pulled)||0} / ${Number(e.dispatched)||0}`)}</dl>${error?`<div class="sched-exec-detail-text is-error"><b>错误</b><pre>${escapeHTML(error)}</pre></div>`:''}${!error&&assistant&&e.assistantMessage?`<div class="sched-exec-detail-text"><b>AI 回复</b><pre>${escapeHTML(e.assistantMessage)}</pre></div>`:''}${runLinks?`<div class="sched-exec-detail-text"><b>派发运行</b>${runLinks}</div>`:''}</div></td></tr>`;
+  return `<tr class="sched-exec-detail" id="${detailId}" ${scheduleExecExpanded.has(e.id)?'':'hidden'}><td colspan="8"><div class="sched-exec-detail-body"><dl class="sched-exec-fields">${field('触发方式',escapeHTML(scheduleExecTriggerLabel(e.triggerOrigin)))}${field('开始时间',escapeHTML(scheduleExecTimeLabel(e.startedAt)))}${field('结束时间',finished?escapeHTML(scheduleExecTimeLabel(e.finishedAt)):'')}${field('耗时',e.status==='running'?'进行中':escapeHTML(scheduleExecDurationLabel(e.durationMs)))}${field('Trace ID',e.traceId?`<code>${escapeHTML(e.traceId)}</code>`:'')}${assistant?'':field('候选 / 启动',`${Number(e.pulled)||0} / ${Number(e.dispatched)||0}`)}${scheduleExecUsageDetailHTML(e)}</dl>${error?`<div class="sched-exec-detail-text is-error"><b>错误</b><pre>${escapeHTML(error)}</pre></div>`:''}${!error&&assistant&&e.assistantMessage?`<div class="sched-exec-detail-text"><b>AI 回复</b><pre>${escapeHTML(e.assistantMessage)}</pre></div>`:''}${runLinks?`<div class="sched-exec-detail-text"><b>派发运行</b>${runLinks}</div>`:''}</div></td></tr>`;
 }
 // Every row has the same two action slots, so ⋯ lines up down the column:
 // the primary slot says why there is nothing to open instead of vanishing.
@@ -175,10 +191,10 @@ function scheduleExecRowHTML(e){
   const assistant=e.jobKind==='assistant',open=scheduleExecExpanded.has(e.id);
   const detailId=`sched-exec-detail-${String(e.id).replace(/[^A-Za-z0-9_-]/g,'')}`;
   const trace=e.traceId?`<button type="button" class="sched-exec-copy sched-exec-trace" data-copy-trace="${escapeHTML(e.traceId)}" aria-label="复制 Trace ID 与排障信息：${escapeHTML(e.traceId)}" title="复制 Trace ID 与排障信息（${escapeHTML(e.traceId)}），可直接发给 AI 助手排查"><code>${escapeHTML(scheduleExecShortTrace(e.traceId))}</code>${scheduleExecIcon('copy',13)}</button>`:'<span class="muted">—</span>';
-  return `<tr class="sched-exec-row${open?' is-open':''}" data-status="${escapeHTML(e.status||'')}" data-exec-id="${escapeHTML(e.id)}"><td class="sched-exec-toggle-cell"><button type="button" class="sched-exec-toggle" data-exec-toggle="${escapeHTML(e.id)}" aria-expanded="${open}" aria-controls="${detailId}" aria-label="${open?'收起':'展开'}详情">${scheduleExecIcon('chevron-right')}</button></td><td>${scheduleExecBadgeHTML(e)}</td><td class="sched-exec-main"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${assistant?'AI':'触发'}</span><span class="sched-exec-name" title="${escapeHTML(e.jobName||e.jobId)}">${escapeHTML(e.jobName||e.jobId)}</span></b>${scheduleExecSummaryLine(e)}</td><td class="sched-exec-time" title="${escapeHTML(scheduleExecTriggerLabel(e.triggerOrigin))}">${escapeHTML(scheduleExecTimeLabel(e.startedAt))}</td><td class="sched-exec-duration">${e.status==='running'?'进行中':escapeHTML(scheduleExecDurationLabel(e.durationMs))}</td><td class="sched-exec-trace-cell">${trace}</td><td class="sched-exec-actions"><div class="sched-exec-action-slots">${scheduleExecPrimaryActionHTML(e)}${scheduleExecRowMenuHTML(e)||'<span class="sched-exec-more-slot" aria-hidden="true"></span>'}</div></td></tr>${scheduleExecDetailHTML(e,detailId)}`;
+  return `<tr class="sched-exec-row${open?' is-open':''}" data-status="${escapeHTML(e.status||'')}" data-exec-id="${escapeHTML(e.id)}"><td class="sched-exec-toggle-cell"><button type="button" class="sched-exec-toggle" data-exec-toggle="${escapeHTML(e.id)}" aria-expanded="${open}" aria-controls="${detailId}" aria-label="${open?'收起':'展开'}详情">${scheduleExecIcon('chevron-right')}</button></td><td>${scheduleExecBadgeHTML(e)}</td><td class="sched-exec-main"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${assistant?'AI':'触发'}</span><span class="sched-exec-name" title="${escapeHTML(e.jobName||e.jobId)}">${escapeHTML(e.jobName||e.jobId)}</span></b>${scheduleExecSummaryLine(e)}</td><td class="sched-exec-time" title="${escapeHTML(scheduleExecTriggerLabel(e.triggerOrigin))}">${escapeHTML(scheduleExecTimeLabel(e.startedAt))}</td><td class="sched-exec-duration">${e.status==='running'?'进行中':escapeHTML(scheduleExecDurationLabel(e.durationMs))}</td><td class="sched-exec-tokens">${scheduleExecTokenCellHTML(e)}</td><td class="sched-exec-trace-cell">${trace}</td><td class="sched-exec-actions"><div class="sched-exec-action-slots">${scheduleExecPrimaryActionHTML(e)}${scheduleExecRowMenuHTML(e)||'<span class="sched-exec-more-slot" aria-hidden="true"></span>'}</div></td></tr>${scheduleExecDetailHTML(e,detailId)}`;
 }
 function scheduleExecTableHTML(rows){
-  return `<table class="sched-exec-table"><thead><tr><th scope="col" class="sched-exec-toggle-cell" aria-label="展开详情"></th><th scope="col">状态</th><th scope="col">任务名称</th><th scope="col">触发时间</th><th scope="col"><span class="sched-exec-th-hint" title="从开始到结束的时长；进行中的执行不计">耗时${scheduleExecIcon('info',12)}</span></th><th scope="col">Trace ID</th><th scope="col" class="sched-exec-actions">操作</th></tr></thead><tbody>${rows.map(scheduleExecRowHTML).join('')}</tbody></table>`;
+  return `<table class="sched-exec-table"><thead><tr><th scope="col" class="sched-exec-toggle-cell" aria-label="展开详情"></th><th scope="col">状态</th><th scope="col">任务名称</th><th scope="col">触发时间</th><th scope="col"><span class="sched-exec-th-hint" title="从开始到结束的时长；进行中的执行不计">耗时${scheduleExecIcon('info',12)}</span></th><th scope="col"><span class="sched-exec-th-hint" title="本次 AI 调用上报的总量，包含重试；不含下游 SOP，缓存明细不重复计入">Token${scheduleExecIcon('info',12)}</span></th><th scope="col">Trace ID</th><th scope="col" class="sched-exec-actions">操作</th></tr></thead><tbody>${rows.map(scheduleExecRowHTML).join('')}</tbody></table>`;
 }
 // Page buttons: first, last, and the current page ±1, with gaps as "…".
 function scheduleExecPageList(page,pages){
@@ -251,7 +267,7 @@ function renderScheduleExecutions(){
   list.querySelector('[data-reset-exec]')?.addEventListener('click',resetScheduleExecFilters);
   bindScheduleExecList(list);
   bindScheduleExecPager(pager);
-  $('#scheduleExecFootnote').textContent=empty?'':'列表保留每个任务最近 200 次执行；概览按全部执行统计，不受保留条数限制。';
+  $('#scheduleExecFootnote').textContent=empty?'':'列表保留每个任务最近 200 次执行；概览按全部执行统计，不受保留条数限制。Token 只计本次 AI 调用（含重试），不含下游 SOP；缓存明细不重复计入总量。';
   window.AgentFlowHarnessIcons?.hydrate(panel);
   if(focusKey){
     const host=focusKey==='execPage'?pager:list;

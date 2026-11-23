@@ -1,13 +1,19 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 )
 
 func TestRuntimeModeSwitchDoesNotNarrateInternalHandoff(t *testing.T) {
@@ -40,6 +46,196 @@ func TestRuntimeModeSwitchDoesNotNarrateInternalHandoff(t *testing.T) {
 	s.requestMode("")
 	if !filter.visible(s, assistantStreamEvent{Kind: "tool", ID: "native-write", Tool: "Write"}) || !filter.visible(s, assistantStreamEvent{Kind: "toolDone", ID: "native-write"}) {
 		t.Fatal("new phase native operation hidden")
+	}
+}
+
+func TestWorkspaceRepositoryPromptRefreshesOnlyWhenNeeded(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	if err := h.repo.PutProject(domain.Project{ID: "another-project", Name: "Another project", OwnerID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, repository := range []domain.Repository{
+		{ID: "other-repo", Name: "Other project repo", ProjectID: "another-project", CloneURL: "https://git.example.com/other/repo.git"},
+		{ID: "old-repo", Name: "Old repo", ProjectID: "workbench", CloneURL: "https://old-user:fixture-password@git.example.com/team/old.git?signature=clone-query-fixture#clone-fragment-fixture", DefaultBranch: "develop"},
+	} {
+		if err := h.repo.PutRepository(repository); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	session := &AgentToolSession{ProjectID: "workbench", workspaceRunID: "first-workspace"}
+	root := t.TempDir()
+	render := func(s *AgentToolSession, hash string) (string, string) {
+		t.Helper()
+		prompt, next, err := h.workspaceRepositoryPrompt(s, root, hash, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return prompt, next
+	}
+	repositories := func(prompt string) []workspaceRepositoryHint {
+		t.Helper()
+		data, found := strings.CutPrefix(prompt, workspaceRepositoryHeading)
+		if !found {
+			t.Fatalf("missing repository context: %s", prompt)
+		}
+		var hints []workspaceRepositoryHint
+		if err := json.Unmarshal([]byte(data), &hints); err != nil {
+			t.Fatal(err)
+		}
+		return hints
+	}
+	prompt, firstHash := render(session, "")
+	got := repositories(prompt)
+	want := workspaceRepositoryHint{ID: "old-repo", Name: "Old repo", CloneURL: "https://git.example.com/team/old.git", DefaultBranch: "develop"}
+	if firstHash == "" || len(got) != 1 || got[0] != want {
+		t.Fatalf("unexpected project repository context: %+v", got)
+	}
+	if prompt, hash := render(session, firstHash); prompt != "" || hash != "" {
+		t.Fatal("an unchanged catalog was sent again")
+	}
+	if err := h.repo.DeleteRepository("other-repo"); err != nil {
+		t.Fatal(err)
+	}
+	if prompt, hash := render(session, firstHash); prompt != "" || hash != "" {
+		t.Fatal("another project's change refreshed the catalog")
+	}
+	if err := h.repo.PutRepository(domain.Repository{ID: "new-repo", Name: "New repo", ProjectID: "workbench", CloneURL: "git@git.example.com:team/new.git"}); err != nil {
+		t.Fatal(err)
+	}
+	prompt, updatedHash := render(session, firstHash)
+	got = repositories(prompt)
+	if updatedHash == "" || updatedHash == firstHash || len(got) != 2 || got[0].ID != "new-repo" || got[1] != want {
+		t.Fatalf("did not send the full updated catalog: %+v", got)
+	}
+	session.workspaceRunID = "second-workspace"
+	prompt, switchedHash := render(session, updatedHash)
+	if switchedHash == "" || switchedHash == updatedHash || len(repositories(prompt)) != 2 {
+		t.Fatal("the new workspace did not receive its catalog")
+	}
+	for _, id := range []string{"old-repo", "new-repo"} {
+		if err := h.repo.DeleteRepository(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prompt, emptyHash := render(session, switchedHash)
+	if emptyHash == "" || emptyHash == switchedHash || prompt != workspaceRepositoryHeading+"[]\n" {
+		t.Fatal("removing all repositories did not clear the catalog")
+	}
+	if prompt, hash := render(&AgentToolSession{}, ""); prompt != "" || hash != "" {
+		t.Fatal("personal workspace received project data")
+	}
+}
+
+func TestWorkspaceRepositoryHintsStripURLSecrets(t *testing.T) {
+	hints := projectRepositoryHints([]domain.Repository{
+		{ID: "ssh", Name: "A", ProjectID: "p", CloneURL: "ssh://git:fixture-password@git.example.test:2222/team/repo.git?signature=fixture#marker"},
+		{ID: "web", Name: "B", ProjectID: "p", WebURL: "https://fixture-user@git.example.test/team/repo%20name?signature=fixture#marker"},
+		{ID: "scp", Name: "C", ProjectID: "p", CloneURL: "git@git.example.test:team/repo.git"},
+	}, "p")
+	if len(hints) != 3 || hints[0].CloneURL != "ssh://git@git.example.test:2222/team/repo.git" ||
+		hints[1].WebURL != "https://git.example.test/team/repo%20name" ||
+		hints[2].CloneURL != "git@git.example.test:team/repo.git" {
+		t.Fatalf("unexpected URLs in model data: %+v", hints)
+	}
+}
+
+func TestWorkspaceRepositoryHintsPreserveGitPaths(t *testing.T) {
+	for _, path := range []string{
+		"/srv/repos/billing#core.git",
+		"./billing?core.git",
+		"file:///srv/repos/billing#core?.git",
+		"git@git.example.test://srv/repos/billing#core?.git",
+	} {
+		hints := projectRepositoryHints([]domain.Repository{
+			{ID: "billing", Name: "Billing", ProjectID: "p", CloneURL: path},
+		}, "p")
+		if len(hints) != 1 || hints[0].CloneURL != path {
+			t.Errorf("catalog changed Git path %q: %+v", path, hints)
+		}
+	}
+}
+
+func TestLargeWorkspaceRepositoryCatalogReachableOnResumeAndRebuild(t *testing.T) {
+	h, _ := workbenchFixture(t)
+	for i := range 1000 {
+		suffix := fmt.Sprintf("%04d", i)
+		if err := h.repo.PutRepository(domain.Repository{
+			ID: "repo-" + suffix, Name: "collaboration-component-" + suffix, ProjectID: "workbench",
+			CloneURL:      "https://git.example.test/tools/collaboration-platform/component-" + suffix + ".git?signature=fixture",
+			DefaultBranch: "main",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if size := len(jsonObject(projectRepositoryHints(h.repo.Repositories(), "workbench"))); size < 128<<10 {
+		t.Fatalf("fixture is too small to exercise the Linux argument limit: %d", size)
+	}
+	root := t.TempDir()
+	rel := "attachments/workspace-repositories.jsonl"
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	s := &AgentToolSession{ProjectID: "workbench", workspaceRunID: "workspace"}
+	const turn = "读取目标仓库，然后告诉我当前分支"
+	render := func(known string, count int) (string, string) {
+		t.Helper()
+		if err := writeConversationAttachments(root, assistantRequest{}); err != nil {
+			t.Fatal(err)
+		}
+		prompt, next, err := h.workspaceRepositoryPrompt(s, root, known, len(turn))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		if len(lines) != count || strings.Contains(string(data), "signature=") {
+			t.Fatalf("staged catalog contains %d entries or an unsanitized URL", len(lines))
+		}
+		for _, line := range lines {
+			var hint workspaceRepositoryHint
+			if err := json.Unmarshal([]byte(line), &hint); err != nil || hint.CloneURL == "" {
+				t.Fatalf("invalid staged catalog entry: %v", err)
+			}
+		}
+		return prompt, next
+	}
+
+	prompt, first := render("", 1000)
+	if first == "" || !strings.Contains(prompt, path) {
+		t.Fatal("first entry did not provide the staged catalog")
+	}
+	binary, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{runtime.AgentCLICursor, runtime.AgentCLIPi, runtime.AgentCLIAntigravity} {
+		command := runtime.AgentCLICommand(kind, runtime.AgentCLICommandOptions{
+			Binary: binary, Prompt: prompt + turn, Chat: true, Workspace: true,
+		})
+		if err := exec.Command(command.Argv[0], command.Argv[1:]...).Run(); err != nil {
+			t.Fatalf("%s could not start with a file-backed catalog: %v", kind, err)
+		}
+	}
+	files, err := conversationInputFiles(root)
+	if err != nil || len(files) != 1 || files[0].Path != rel || files[0].Rewrite {
+		t.Fatalf("catalog not transferable as a runner attachment: %v", err)
+	}
+	if prompt, hash := render(first, 1000); prompt != "" || hash != "" {
+		t.Fatal("an unchanged catalog was sent again")
+	}
+	if err := h.repo.PutRepository(domain.Repository{
+		ID: "new-repo", Name: "New repo", ProjectID: "workbench", CloneURL: "https://git.example.test/team/new.git",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prompt, refreshed := render(first, 1001)
+	if refreshed == "" || refreshed == first || !strings.Contains(prompt, path) {
+		t.Fatal("catalog refresh did not provide the updated file")
+	}
+	if prompt, rebuilt := render("", 1001); rebuilt != refreshed || !strings.Contains(prompt, path) {
+		t.Fatal("native-session rebuild did not resend the file reference")
 	}
 }
 
@@ -120,6 +316,9 @@ func TestNativeApprovalAllowsPlatformReadsAndRejectsEffects(t *testing.T) {
 	s := &AgentToolSession{UserID: a.ID, User: a, ChatOwnerID: a.ID, ChatSessionID: conv.ID, RuntimeMode: domain.AssistantModePlatform, ctx: context.Background()}
 	if result := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"Read","input":{"path":"SKILL.md"}}`)); !result.Allow {
 		t.Fatal("platform skill read denied")
+	}
+	if result := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"ReadMediaFile","input":{"path":"attachments/example/image.png"}}`)); !result.Allow {
+		t.Fatalf("platform media read denied: %s", result.Reason)
 	}
 	if result := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"Bash","input":{"command":"echo unsafe"}}`)); result.Allow {
 		t.Fatal("platform native shell permitted")
@@ -286,6 +485,11 @@ func TestNativeExternalWriteClassifier(t *testing.T) {
 		`{"command":["bash","-lc","gh pr create --title x"]}`:             "GitHub CLI 写操作",
 		`{"cmd":"gh api repos/a/b/pulls -f title=x"}`:                     "GitHub API 写请求",
 		`{"command":"gh api -X DELETE repos/a/b/git/refs/heads/x"}`:       "GitHub API 写请求",
+		`{"command":"glab mr create --fill"}`:                             "GitLab CLI 写操作",
+		`{"command":"glab api -X PUT projects/1/merge_requests/2/merge"}`: "GitLab API 写请求",
+		`{"command":"tea pulls create --title x"}`:                        "Gitea CLI 写操作",
+		`{"command":"tea comment 3 'lgtm'"}`:                              "Gitea CLI 写操作",
+		`{"command":"glab mr view 2 && tea pulls list"}`:                  "",
 		`{"command":"curl -sS --data '{}' https://api.example.com"}`:      "HTTP 写请求",
 		`{"command":"npm publish --access public"}`:                       "发布软件包",
 		`{"command":"docker push ghcr.io/a/b:1"}`:                         "推送镜像",

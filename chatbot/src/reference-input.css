@@ -1,0 +1,126 @@
+/* Shared conversation and scheduled-prompt input styles. */
+.composer textarea {
+  resize: none;
+  display: block;
+  border: 0;
+  background: none;
+  width: 100%;
+  font-size: var(--chat-font-size);
+  font-weight: var(--chat-font-weight);
+  line-height: var(--chat-line-height);
+  color: var(--text);
+  min-height: 75px;
+  max-height: 220px;
+  padding: 13px 14px 8px;
+  outline: 0;
+}
+.composer textarea::placeholder {
+  color: #96969b;
+}
+.mention-picker {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  max-height: min(440px, calc(100dvh - 120px));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 12px 40px #00000018;
+  padding: 8px;
+  color: var(--text);
+}
+.mention-picker > header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.mention-picker input {
+  min-width: 0;
+  flex: 1;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 13px;
+}
+.mention-close {
+  font-size: 12px;
+}
+.mention-options {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-top: 5px;
+}
+.mention-options > [role="option"] {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  text-align: left;
+}
+.mention-options > [aria-selected="true"] {
+  background: var(--subtle);
+}
+.mention-options > button > span {
+  flex: 1;
+  min-width: 0;
+}
+.mention-options strong,
+.mention-options small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.mention-options strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.mention-options small {
+  font-size: 11px;
+  margin-top: 4px;
+  color: var(--muted);
+}
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  padding: 9px 12px 0;
+  gap: 8px;
+}
+.composer-attachment-file {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 5px;
+  font-size: 11px;
+  background: var(--subtle);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.composer-attachment-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.composer-attachment-file small {
+  flex: none;
+  font-size: 10px;
+  color: var(--muted);
+}
+.composer-attachment-file > button {
+  display: flex;
+  padding: 0 0 0 4px;
+}

@@ -26,7 +26,6 @@
 .sop-message-compose .sop-notification-example>div:first-child{flex-wrap:wrap}
 @media(max-width:850px){.sop-message-compose{grid-template-columns:1fr}}
 
-.bot-model-field .ai-model-menu{position:fixed;right:auto;bottom:auto;min-width:0;max-width:calc(100vw - 24px);z-index:100}
 
 /* Bot management (#botsView): one integrated panel, guided editor and records.
  * --hui-* tokens, buttons, badges, panel and inputs come from app/harness-ui.css. Motion only references the --bot-* tokens below. */
@@ -170,13 +169,12 @@
 @keyframes bot-draw{from{stroke-dashoffset:1}}
 .bot-step-fold{position:relative}
 .bot-fields{display:grid;grid-template-columns:1fr 1fr;gap:16px 18px;max-width:820px}
-.bot-fields label{display:flex;flex-direction:column;gap:6px;min-width:0;color:var(--hui-secondary);font-size:12px;font-weight:500}
+.bot-fields :is(label,.bot-model-field){display:flex;flex-direction:column;gap:6px;min-width:0;color:var(--hui-secondary);font-size:12px;font-weight:500}
 .bot-fields label small{color:var(--hui-tertiary);font-weight:400;line-height:1.6}
 .bot-fields .bot-check{flex-direction:row;align-items:center;gap:10px;color:var(--hui-text);font-size:13px;font-weight:400;cursor:pointer}
 #botsContent fieldset{border:0;padding:0;margin:0;min-width:0}
 #botsContent .input{box-sizing:border-box;height:36px;min-height:36px;padding:0 11px;font:400 13px var(--hui-sans)}
 #botsContent .input[aria-invalid="true"]{border-color:var(--bot-err)}
-#botsContent .bot-model-field .ai-model-toggle{min-height:36px;border-color:var(--hui-border-strong);border-radius:8px;background:var(--hui-surface)}
 #botsContent .select{box-sizing:border-box;height:32px;padding:0 10px;font-size:13px;line-height:30px}
 .bot-shake{animation:bot-shake var(--bot-t-shake) var(--bot-ease-ui)}
 @keyframes bot-shake{20%,60%{transform:translateX(-4px)}40%,80%{transform:translateX(4px)}}

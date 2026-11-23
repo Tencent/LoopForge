@@ -41,8 +41,9 @@ test('runner card offers the short authentication labels with a separate explana
   const select = app.document.querySelector('[data-runner-auth="runner-cb|codex"]');
   assert.deepEqual([...select.options].map(option=>option.textContent), ['账号登录', 'API Key']);
   app.document.querySelector('[data-runner-auth-help]').click();
-  assert.match(app.document.querySelector('#confirmMessage').textContent, /Claude Code 和 Codex.*已有登录/);
+  assert.match(app.document.querySelector('#confirmMessage').textContent, /Claude Code、Codex 和 Antigravity.*已有登录.*native、Docker 沙箱/);
   assert.match(app.document.querySelector('#confirmMessage').textContent, /当前发言人的 Key/);
+  assert.match(app.document.querySelector('#confirmMessage').textContent, /Gemini API Key 按 API 单独计费/);
 });
 
 test('runner card indicates a missing CodeBuddy key on its single-line label', async (t) => {
@@ -54,7 +55,7 @@ test('runner card indicates a missing CodeBuddy key on its single-line label', a
   assert.equal(el.classList.contains('missing'), false);
 });
 
-test('only Claude Code and Codex offer account login and API Key rows explain their credentials', async (t) => {
+test('Claude Code, Codex and Antigravity offer account login and API Key rows explain their credentials', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   renderCodeBuddyRow(app, {});
@@ -68,15 +69,15 @@ test('only Claude Code and Codex offer account login and API Key rows explain th
     renderRunnersView();
   `);
   const choices = [...app.document.querySelectorAll('[data-runner-auth]')];
-  assert.deepEqual(choices.map(select => select.dataset.runnerAuth), ['runner-cb|codex', 'runner-cb|claude-code']);
+  assert.deepEqual(choices.map(select => select.dataset.runnerAuth), ['runner-cb|codex', 'runner-cb|claude-code', 'runner-cb|agy']);
+  assert.equal(app.document.querySelector('.runner-runtime-icon.agy img')?.getAttribute('src'), '/images/credentials/antigravity.svg');
   for (const select of choices) {
     assert.deepEqual([...select.options].map(option => option.textContent), ['账号登录', 'API Key']);
   }
   const help = [...app.document.querySelectorAll('[data-runner-key-help]')];
-  assert.deepEqual(help.map(button => button.dataset.runnerKeyHelp), ['codebuddy', 'cursor', 'agy', 'zcode']);
+  assert.deepEqual(help.map(button => button.dataset.runnerKeyHelp), ['codebuddy', 'cursor', 'zcode']);
   const commonHelp = /支持 API Key.*订阅套餐.*计入对应的套餐额度.*个人配置/;
   const providerHelp = {
-    agy: /系统凭据库.*Gemini API Key.*单独计费/,
     zcode: /GLM Coding Plan.*订阅额度.*Start Plan.*无法通过 API Key 使用/,
   };
   for (const button of help) {

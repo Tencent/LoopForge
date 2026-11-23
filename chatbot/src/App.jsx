@@ -11,6 +11,7 @@ import NativeApprovalPanel from "./NativeApprovalPanel";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
+import MessageHistory from "./MessageHistory";
 import GenerationDiagnostics from "./GenerationDiagnostics";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
@@ -50,14 +51,14 @@ import { reconcileOperation, visibleSidebarArtifact } from "./platform.js";
 import { isGeneratedArtifact, shouldRevealArtifactPanel } from "./artifact-autoreveal.js";
 import { IconButton, Dialog, Menu, SelectMenu, CredentialAction } from "./ui";
 import { CLIInstallAction } from "./cli-install.jsx";
-import { credentialHint, openCredentialSettings } from "./credentials";
+import { openCredentialSettings } from "./credentials";
 import { groupSessionHistory, scheduledSession, sessionProjectName } from "./session-history.js";
 import { runSessionState, sessionReplyStatus, sessionTooltip, sidebarReplyStatus } from "./session-status.js";
 import { unreadReply, useReadReplies } from "./session-unread.js";
-import MentionPicker from "./MentionPicker";
+import ReferenceInput from "./ReferenceInput";
 import Participants, { Avatar, authorFor } from "./Participants";
 import IssueContext from "./IssueContext";
-import { mentionAt, insertMention } from "./mentions.js";
+import { insertMention } from "./mentions.js";
 import { elementTitle } from "./element-context.js";
 import HarnessIcon from "./HarnessIcon";
 import QueuedMessages from "./QueuedMessages";
@@ -75,8 +76,9 @@ import { usePanelPresence } from "./usePanelPresence";
 import HomeWelcome from "./HomeWelcome";
 import ModelPicker from "./ModelPicker";
 import ModelProviderIcon, { hasProviderLogo } from "./ModelProviderIcon";
-import PermissionPicker, { rememberApprovalMode, storedApprovalMode } from "./PermissionPicker";
-import { conversationEngine, engineBrand } from "./engines.js";
+import PermissionPicker, { normalizeApprovalMode } from "./PermissionPicker";
+import { useComposerOptions } from "./composer-preferences.js";
+import { EXECUTORS, conversationEngine, engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
@@ -96,6 +98,10 @@ const THEME_OPTIONS = [
   { value: "system", label: "跟随系统" },
 ];
 const environmentVisibilityKey = "agentflow.native-chat.environmentVisibility.v1";
+const sessionApprovalScope = ({ id, projectId }) => `approval.session:${JSON.stringify([id, projectId || ""])}`;
+const draftApprovalScope = (slot, projectId) =>
+  slot.startsWith("issue:") ? `approval.${JSON.stringify([slot, projectId])}` : `approval.${slot}`;
+const draftSnapshot = ({ text, attachments, references }) => JSON.stringify({ text, attachments, references });
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
 const sidebarLayoutVersion = "grasp-reference-v3";
@@ -342,16 +348,11 @@ export default function App() {
     [repositorySelections, setRepositorySelections] = useState({}),
     [uploading, setUploading] = useState(false),
     [runsRefresh, setRunsRefresh] = useState(0),
-    [approval, setApprovalState] = useState(storedApprovalMode),
     [quickAccessOpen, setQuickAccessOpen] = useState(
       () => new URLSearchParams(location.search).get("quickAccess") === "1",
     ),
     [theme, setTheme] = useState(() => readThemePreference(localStorage)),
     [environmentVisibility, setEnvironmentVisibility] = useState(() => readJSON(environmentVisibilityKey, {}));
-  function setApproval(value) {
-    setApprovalState(value);
-    rememberApprovalMode(value);
-  }
   const environmentPreferenceOwner = String(chat.user?.id || "guest");
   const showEnvironmentPicker = environmentVisibility[environmentPreferenceOwner] === true;
   function changeEnvironmentVisibility(visible) {
@@ -365,22 +366,68 @@ export default function App() {
     chat.newChat();
   }
   const input = useRef(),
+    referenceInput = useRef(),
     sessionPress = useRef(null),
     sessionClickSuppressed = useRef(null),
-    mentionPicker = useRef(),
     projectPicker = useRef(null),
     headerProjectPicker = useRef(null),
     fileInput = useRef(),
     scroll = useRef(),
     follow = useRef(true),
     draftReady = useRef(null),
+    draftOrigin = useRef(null),
+    savingDraftApproval = useRef(null),
     previousArtifacts = useRef({ id: null, ids: new Set(), baselined: false }),
     dialogInput = useRef(),
     composerPreviews = useRef(new Map());
   // A requirement handed over by the workbench drafts in its own slot so the
   // project's unsent new-conversation draft and attachments stay untouched.
   const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
-  const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || newDraftSlot}`;
+  const draftKeyPrefix = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.`;
+  const draftKey = draftKeyPrefix + (chat.activeId || newDraftSlot);
+  const visibleDraft = useRef(null);
+  visibleDraft.current = { key: draftKey, text, attachments, references };
+  const approvalOwner = realChat.user?.isGuest ? "guest" : realChat.user?.id;
+  const { readOptions: readApproval, saveOptions: saveApproval } = useComposerOptions(approvalOwner);
+  const approvalScope = chat.activeId
+    ? chat.session?.id === chat.activeId && sessionApprovalScope(chat.session)
+    : draftApprovalScope(newDraftSlot, chat.projectId);
+  const approval = normalizeApprovalMode((approvalScope && readApproval(approvalScope).mode) || (!chat.activeId && chat.defaultApproval));
+  function setApproval(value) {
+    if (!approvalScope) return;
+    const mode = normalizeApprovalMode(value);
+    const saving = savingDraftApproval.current;
+    if (saving?.scope === approvalScope && saving.owner === approvalOwner &&
+        draftSnapshot(visibleDraft.current) === saving.snapshot) saving.mode = mode;
+    saveApproval(approvalScope, { mode });
+  }
+  function clearDraftApproval(scope, mode) {
+    if (readApproval(scope).mode === mode) saveApproval(scope, null);
+  }
+  function persistDraft(key, draft) {
+    try {
+      localStorage.setItem(key, JSON.stringify(draft));
+    } catch {
+      chat.setError("浏览器存储空间不足，草稿仍保留在当前页面。请移除较大的附件后重试。");
+    }
+  }
+  function clearDraftIfUnchanged(key, snapshot) {
+    const visible = visibleDraft.current;
+    const inComposer = visible.key === key && draftReady.current === key;
+    const stored = readJSON(key, null);
+    if ((inComposer && draftSnapshot(visible) !== snapshot) ||
+        (stored && draftSnapshot(stored) !== snapshot)) return false;
+    try { localStorage.removeItem(key); } catch {}
+    if (inComposer) {
+      draftOrigin.current = null;
+      setMention(null);
+      setText("");
+      setAttachments([]);
+      setReferences([]);
+      if (input.current) input.current.style.height = "";
+    }
+    return true;
+  }
   useEffect(() => {
     if (!chat.activeId) return;
     setIssueDraft(null);
@@ -440,15 +487,17 @@ export default function App() {
     [],
   );
   useEffect(() => setIssueContextOpen(false), [chat.activeId, chat.projectId]);
+  const historyReferences = useMemo(
+    () => chat.session?.messages?.flatMap((message) => message.references || []) || [],
+    [chat.session?.messages],
+  );
   const operationContext = {
     projects: chat.projects,
     projectId: chat.projectId,
     issueId: chat.issueId,
     runId: chat.session?.runId,
     onLinkIssue: chat.linkIssue,
-    references:
-      chat.session?.messages?.flatMap((message) => message.references || []) ||
-      [],
+    references: historyReferences,
     repositorySelections,
     onRepositorySelection: (id, ids, projectId) =>
       setRepositorySelections((old) => ({ ...old, [id]: { ids, projectId } })),
@@ -460,9 +509,14 @@ export default function App() {
     chat.projects.find((p) => p.id === chat.projectId)?.name ||
     (chat.projectId && (chat.session?.projectName || chat.projectId)) ||
     "个人对话";
-  const selectedModel = chat.models.find((m) => m.id === chat.model);
+  const sessionLoading = !!chat.activeId && chat.session?.id !== chat.activeId;
+  const composerLoading = sessionLoading || chat.replyStatePending;
+  const hasComposerExecutor = !!chat.executor || chat.local;
+  const needsExecutor = chat.ready && chat.user && !chat.user.isGuest && !chat.readOnly &&
+    !hasComposerExecutor && !composerLoading && (chat.machinesReady || chat.machineError);
+  const selectedModel = chat.models.find((m) => m.id === chat.model) || (!chat.local ? chat.modelDetails : null);
   const modelLabel =
-    selectedModel?.name?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
+    (hasComposerExecutor && (selectedModel?.name || chat.model)?.replace(/^Claude-/, "").replace(/^GPT-/, "")) || "模型";
   // The CLI switch is only for a conversation that has not started. A reply
   // in flight, or one already saved, keeps that CLI; another CLI needs a new chat.
   const lockedExecutorId = chat.session
@@ -470,7 +524,7 @@ export default function App() {
       (chat.busy ? chat.executor : "")
     : "";
   const pinnedExecutor = lockedExecutorId
-    ? (chat.executors || []).find((item) => item.id === lockedExecutorId)
+    ? EXECUTORS.find((item) => item.id === lockedExecutorId)
     : undefined;
   const projectOptions = projectPickerOptions(
     chat.projects,
@@ -516,6 +570,14 @@ export default function App() {
       return;
     }
     if (starter.prompt) useStarter(starter.prompt);
+  }
+  function closeQuickAccess() {
+    setQuickAccessOpen(false);
+    if (window.parent !== window) return;
+    const url = new URL(location.href);
+    if (!url.searchParams.has("quickAccess")) return;
+    url.searchParams.delete("quickAccess");
+    history.replaceState(history.state, "", url);
   }
   useEffect(() => {
     const wide = sidebarViewport().matchMedia("(min-width:1001px)");
@@ -563,18 +625,15 @@ export default function App() {
     setText(value.text || "");
     setAttachments(value.attachments || []);
     setReferences(value.references || []);
+    draftOrigin.current = value.copiedFrom || null;
     draftReady.current = draftKey;
   }, [draftKey, chat.user?.id]);
   useEffect(() => {
     if (!chat.user || draftReady.current !== draftKey) return;
-    try {
-      localStorage.setItem(
-        draftKey,
-        JSON.stringify({ text, attachments, references }),
-      );
-    } catch {
-      chat.setError("浏览器存储空间不足，草稿仍保留在当前页面。请移除较大的附件后重试。");
-    }
+    persistDraft(draftKey, {
+      text, attachments, references,
+      ...(draftOrigin.current && { copiedFrom: draftOrigin.current }),
+    });
   }, [text, attachments, references, draftKey, chat.user?.id]);
   // A requirement handed over by the workbench ("创建并去对话澄清") opens a
   // new conversation with the requirement already @-mentioned. It waits for
@@ -583,9 +642,13 @@ export default function App() {
     const listener = (event) => {
       if (
         event.source !== window.parent ||
-        event.origin !== location.origin ||
-        event.data?.type !== "agentflow-chat-mention-issue"
+        event.origin !== location.origin
       ) return;
+      if (event.data?.type === "agentflow-chat-resume-quick-access") {
+        setQuickAccessOpen(true);
+        return;
+      }
+      if (event.data?.type !== "agentflow-chat-mention-issue") return;
       const issueId = String(event.data.issueId || "");
       const projectId = String(event.data.projectId || "");
       if (!issueId || !projectId) return;
@@ -606,6 +669,7 @@ export default function App() {
       draftReady.current !== draftKey
     ) return;
     let current = true;
+    const focusBeforeHandoff = document.activeElement;
     api(`/api/issues/${encodeURIComponent(issueMention.issueId)}`)
       .then((data) => {
         if (!current) return;
@@ -621,9 +685,13 @@ export default function App() {
         setText(value.text);
         setReferences([ref]);
         setMention(null);
+        const editor = input.current;
         requestAnimationFrame(() => {
-          input.current?.focus();
-          input.current?.setSelectionRange(value.caret, value.caret);
+          // Preserve the user’s focus if they interacted during the handoff.
+          if (draftReady.current !== draftKey || !editor?.isConnected || editor.value !== value.text) return;
+          if (document.activeElement !== focusBeforeHandoff) return;
+          editor.focus();
+          editor.setSelectionRange(value.caret, value.caret);
         });
       })
       .catch((e) => current && chat.setError(e.message))
@@ -696,6 +764,7 @@ export default function App() {
     if (follow.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [
+    chat.activeId,
     chat.session?.messages?.length,
     chat.live.answer,
     chat.live.thinking,
@@ -765,26 +834,71 @@ export default function App() {
     closeMenu();
   }
   async function submit() {
-    if (uploading) return;
+    if (!hasComposerExecutor || uploading || composerLoading || draftReady.current !== draftKey ||
+        (!chat.activeId && savingDraftApproval.current)) return;
     follow.current = true;
+    const snapshot = draftSnapshot({ text, attachments, references });
+    const draftApproval = chat.activeId ? null : { owner: approvalOwner, scope: approvalScope, mode: approval, snapshot };
+    const copiedFrom = draftOrigin.current;
+    if (draftApproval) savingDraftApproval.current = draftApproval;
+    let savedDraftKey, savedApprovalMode;
+    const onSessionCreated = draftApproval ? (saved) => {
+      savedDraftKey = draftKeyPrefix + saved.id;
+      savedApprovalMode = draftApproval.mode;
+      saveApproval(sessionApprovalScope(saved), { mode: savedApprovalMode });
+    } : undefined;
     const ok = await chat.send({
       text,
       attachments,
       references,
       approvalMode: approval,
+      onSessionCreated,
+      isDraftActive: draftApproval ? () => visibleDraft.current.key === draftKey &&
+        draftSnapshot(visibleDraft.current) === snapshot : undefined,
+    }).finally(() => {
+      if (savingDraftApproval.current === draftApproval) savingDraftApproval.current = null;
     });
+    const visible = visibleDraft.current;
     if (ok) {
-      setMention(null);
-      setText("");
-      setAttachments([]);
-      for (const a of attachments) releaseComposerPreview(a.id);
-      setReferences([]);
-      localStorage.removeItem(draftKey);
-      if (input.current) input.current.style.height = "";
-    } else {
-      // A failed first message may already have opened a new conversation,
-      // which loads that conversation's (empty) draft. Keep what was typed.
-      setText((current) => current || text);
+      const clearedDraft = clearDraftIfUnchanged(draftKey, snapshot);
+      if (clearedDraft && savedDraftKey) clearDraftApproval(draftApproval.scope, savedApprovalMode);
+      let clearedVisible = clearedDraft && visible.key === draftKey;
+      if (copiedFrom?.snapshot === snapshot && /^(new|issue):/.test(copiedFrom.slot)) {
+        const originKey = draftKeyPrefix + copiedFrom.slot;
+        if (clearDraftIfUnchanged(originKey, snapshot)) {
+          if (copiedFrom.approvalScope) clearDraftApproval(copiedFrom.approvalScope, copiedFrom.mode);
+          clearedVisible ||= visible.key === originKey;
+        }
+      }
+      if (!clearedDraft && copiedFrom) {
+        // A newer draft can share this slot. Retire the consumed copy's
+        // linkage while keeping the newer draft itself.
+        const origin = JSON.stringify(copiedFrom);
+        if (visible.key === draftKey && JSON.stringify(draftOrigin.current) === origin)
+          draftOrigin.current = null;
+        const stored = readJSON(draftKey, null);
+        if (stored && JSON.stringify(stored.copiedFrom) === origin) {
+          const { text, attachments, references } = stored;
+          persistDraft(draftKey, { text, attachments, references });
+        }
+      }
+      for (const attachment of attachments) {
+        if (clearedVisible || !visible.attachments.some((current) => current.id === attachment.id))
+          releaseComposerPreview(attachment.id);
+      }
+    } else if (visible.key === savedDraftKey && draftReady.current === savedDraftKey &&
+        !visible.text && !visible.attachments.length && !visible.references.length) {
+      // The session was saved but the first message was rejected. Keep its
+      // content in the visible conversation so the user can retry.
+      draftOrigin.current = {
+        slot: newDraftSlot,
+        approvalScope: draftApproval.scope,
+        mode: savedApprovalMode,
+        snapshot,
+      };
+      setText(text);
+      setAttachments(attachments);
+      setReferences(references);
     }
   }
   function editQueued(item) {
@@ -888,18 +1002,6 @@ export default function App() {
       setUploading(false);
     }
   }
-  function openReferences() {
-    const caret = input.current?.selectionStart ?? text.length;
-    setMention(
-      mentionAt(text, caret, references) || {
-        start: caret,
-        end: caret,
-        query: "",
-      },
-    );
-    closeMenu();
-    input.current?.focus();
-  }
   // addElementReference takes an element picked in the native preview: it
   // rides along as a reference chip, without a token in the text.
   function addElementReference(ref) {
@@ -909,27 +1011,6 @@ export default function App() {
     }
     setReferences((old) => [...old, ref]);
     requestAnimationFrame(() => input.current?.focus());
-  }
-  function addReference(ref) {
-    if (
-      references.length >= 12 &&
-      !references.some((x) => x.type === ref.type && x.id === ref.id)
-    ) {
-      chat.setError("每轮最多引用 12 个对象。");
-      return;
-    }
-    const value = insertMention(text, mention, ref);
-    setText(value.text);
-    setReferences((old) =>
-      old.some((x) => x.type === ref.type && x.id === ref.id)
-        ? old
-        : [...old, ref],
-    );
-    setMention(null);
-    requestAnimationFrame(() => {
-      input.current?.focus();
-      input.current?.setSelectionRange(value.caret, value.caret);
-    });
   }
   const sidebarSections = splitSidebarSections(chat.sessions, chat.projects, {
     archived,
@@ -1554,20 +1635,13 @@ export default function App() {
         className={`conversation-main ${!chat.activeId ? "empty-conversation" : ""}`}
       >
         {chat.activeId ? (
-          <div
-            className="message-scroll"
-            ref={scroll}
-            onScroll={(e) => {
-              const el = e.currentTarget;
-              follow.current =
-                el.scrollHeight - el.scrollTop - el.clientHeight < 110;
-            }}
-          >
-            <div className="message-column">
-              {!chat.session && !chat.error ? (
-                <div className="loading-session">正在恢复对话…</div>
-              ) : null}
-              {messages.map((message, index) =>
+          <MessageHistory
+            key={chat.activeId}
+            messages={messages}
+            scroll={scroll}
+            follow={follow}
+            loading={!chat.session && !chat.error}
+            renderMessage={(message, index) =>
                 isProposalTimeout(message, messages[index - 1]) ? null : confirmationCaption(message, messages[index - 1]) ? (
                   <div
                     key={index}
@@ -1720,14 +1794,15 @@ export default function App() {
                             )}
                             label="复制回复"
                           />
-                          <MessageInfo message={message} />
+                          <MessageInfo message={message} sessionExecutor={chat.session?.executor} />
                           {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
                         </div>
                       </>
                     ) : null}
                   </article>
-                ),
-              )}
+                )
+            }
+          >
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
@@ -1775,8 +1850,7 @@ export default function App() {
                     ?.focus();
                 }}
               />
-            </div>
-          </div>
+          </MessageHistory>
         ) : (
           <HomeWelcome />
         )}
@@ -1792,29 +1866,28 @@ export default function App() {
                 </IconButton>
               </div>
             ) : null}
-            {chat.ready &&
-            !chat.local &&
-            chat.user &&
-            !chat.user.isGuest &&
-            !chat.user.codeBuddyApiKeyConfigured &&
-            !chat.sponsoredModel &&
-            chat.executor === "codebuddy" &&
-            !chat.readOnly &&
-            credentialHint(chat.error)?.field !== "codeBuddyApiKey" ? (
+            {chat.missingServerCLI && !chat.busy && !chat.error && !chat.readOnly ? (
+              <div className="runtime-cli-notice" role="status">
+                <HarnessIcon name="terminal" size={16} aria-hidden="true" />
+                <span>{chat.missingServerCLI.name} 未安装在平台服务器上。{chat.missingServerCLI.serverInstallable ? "" : "请联系管理员安装。"}</span>
+                {chat.missingServerCLI.serverInstallable ? (
+                  <CLIInstallAction
+                    key={chat.missingServerCLI.id}
+                    executor={{ engine: chat.missingServerCLI.id, label: chat.missingServerCLI.name }}
+                    onResult={() => chat.refreshCredentials()}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+            {needsExecutor ? (
               <div className="credential-notice" role="status">
-                <HarnessIcon name="key" size={15} aria-hidden="true" />
-                <span>
-                  当前执行器 CodeBuddy 需要先配置 CodeBuddy API Key。
-                  {chat.user.codexApiKeyConfigured ||
-                  chat.user.claudeCodeApiKeyConfigured
-                    ? "你已配置 Codex / Claude Code Key，也可以在输入框下方把执行器切换过去。"
-                    : ""}
-                </span>
+                <HarnessIcon name="terminal" size={16} aria-hidden="true" />
+                <span>添加一个执行器即可开始对话</span>
                 <button
                   type="button"
-                  onClick={() => openCredentialSettings("codeBuddyApiKey")}
+                  onClick={() => openCredentialSettings("executors")}
                 >
-                  去配置
+                  新增执行器
                 </button>
               </div>
             ) : null}
@@ -1892,22 +1965,7 @@ export default function App() {
                   onSendNow={chat.sendNow}
                 />
                 <div className="composer">
-                  <MentionPicker
-                    ref={mentionPicker}
-                    key={chat.projectId}
-                    projectId={chat.projectId}
-                    trigger={mention}
-                    editor={input}
-                    onSelect={addReference}
-                    onClose={() => setMention(null)}
-                    issueId={chat.issueId}
-                    canManageIssue={!!chat.projectId && !chat.busy && (!chat.activeId || !!chat.session) && !chat.session?.shared && !chat.readOnly}
-                    onManageIssue={() => {
-                      setMention(null);
-                      setIssueContextOpen(true);
-                    }}
-                  />
-                  {attachments.length || pendingAttachments.length || references.length ? (
+                  {attachments.length || pendingAttachments.length ? (
                     <div className="composer-attachments">
                       {pendingAttachments.map((a) => (
                         <span
@@ -1968,109 +2026,51 @@ export default function App() {
                           </span>
                         );
                       })}
-                      {references.map((ref) => (
-                        <span
-                          key={ref.type + ref.id}
-                          className={`composer-attachment-file${ref.type === "element" ? " is-element" : ""}`}
-                          title={ref.type === "element" ? elementTitle(ref) : undefined}
-                        >
-                          {ref.type === "element" ? (
-                            <HarnessIcon name="crosshair" size={13} />
-                          ) : (
-                            "@"
-                          )}
-                          {ref.name || ref.id}
-                          <button
-                            aria-label={`移除引用 ${ref.name || ref.id}`}
-                            onClick={() => {
-                              setReferences((old) =>
-                                old.filter(
-                                  (x) => x.id !== ref.id || x.type !== ref.type,
-                                ),
-                              );
-                              setText((old) =>
-                                old.replace(`@${ref.name || ref.id} `, ""),
-                              );
-                              setMention(null);
-                            }}
-                          >
-                            <HarnessIcon name="close" size={13} />
-                          </button>
-                        </span>
-                      ))}
                     </div>
                   ) : null}
-                  <textarea
-                    ref={input}
-                    aria-label="消息"
-                    rows={2}
-                    placeholder={
-                      chat.activeId
-                        ? "告诉我接下来想做点什么"
-                        : "聊聊你的想法，或交给我一件事"
-                    }
-                    value={text}
-                    aria-expanded={!!mention}
-                    onChange={(e) => {
-                      setText(e.target.value);
-                      setReferences((old) =>
-                        old.filter(
-                          (ref) =>
-                            !text.includes(`@${ref.name || ref.id}`) ||
-                            e.target.value.includes(`@${ref.name || ref.id}`),
-                        ),
-                      );
-                      setMention(
-                        e.nativeEvent.isComposing
-                          ? null
-                          : mentionAt(
-                              e.target.value,
-                              e.target.selectionStart,
-                              references,
-                            ),
-                      );
-                      e.target.style.height = "auto";
-                      e.target.style.height =
-                        Math.min(e.target.scrollHeight, 220) + "px";
+                  <ReferenceInput
+                    ref={referenceInput}
+                    editorRef={input}
+                    projectId={chat.projectId}
+                    text={text}
+                    references={references}
+                    mention={mention}
+                    onMentionChange={setMention}
+                    onChange={({ text: nextText, references: nextReferences }) => {
+                      setText(nextText);
+                      setReferences(nextReferences);
                     }}
-                    onCompositionEnd={(e) =>
-                      setMention(
-                        mentionAt(
-                          e.target.value,
-                          e.target.selectionStart,
-                          references,
-                        ),
-                      )
-                    }
-                    onClick={(e) =>
-                      setMention(
-                        mentionAt(
-                          e.target.value,
-                          e.target.selectionStart,
-                          references,
-                        ),
-                      )
-                    }
-                    onPaste={(e) => {
-                      const files = [...e.clipboardData.items]
-                        .filter((i) => i.kind === "file")
-                        .map((i) => i.getAsFile())
-                        .filter(Boolean);
-                      if (files.length) {
-                        e.preventDefault();
-                        void upload(files);
-                      }
+                    onError={(message) => chat.setError(message)}
+                    issueId={chat.issueId}
+                    canManageIssue={!!chat.projectId && !chat.busy && (!chat.activeId || !!chat.session) && !chat.session?.shared && !chat.readOnly}
+                    onManageIssue={() => {
+                      setMention(null);
+                      setIssueContextOpen(true);
                     }}
-                    onKeyDown={(e) => {
-                      if (mention && mentionPicker.current?.keyDown(e)) return;
-                      if (
-                        e.key === "Enter" &&
-                        !e.shiftKey &&
-                        !e.nativeEvent.isComposing
-                      ) {
-                        e.preventDefault();
-                        void submit();
-                      }
+                    textareaProps={{
+                      "aria-label": "消息",
+                      rows: 2,
+                      placeholder: chat.activeId ? "告诉我接下来想做点什么" : "聊聊你的想法，或交给我一件事",
+                      onInput: (e) => {
+                        e.target.style.height = "auto";
+                        e.target.style.height = Math.min(e.target.scrollHeight, 220) + "px";
+                      },
+                      onPaste: (e) => {
+                        const files = [...e.clipboardData.items]
+                          .filter((i) => i.kind === "file")
+                          .map((i) => i.getAsFile())
+                          .filter(Boolean);
+                        if (files.length) {
+                          e.preventDefault();
+                          void upload(files);
+                        }
+                      },
+                      onKeyDown: (e) => {
+                        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                          e.preventDefault();
+                          void submit();
+                        }
+                      },
                     }}
                   />
                   <footer className="composer-toolbar">
@@ -2102,7 +2102,10 @@ export default function App() {
                             <HarnessIcon name="paperclip" size={15} />
                             上传图片或文件
                           </button>
-                          <button role="menuitem" onClick={openReferences}>
+                          <button role="menuitem" onClick={() => {
+                            referenceInput.current?.openReferences();
+                            closeMenu();
+                          }}>
                             <HarnessIcon name="connector" size={15} />
                             引用项目资产
                           </button>
@@ -2126,9 +2129,10 @@ export default function App() {
                         e.target.value = "";
                       }}
                     />
-                    {chat.executors.length > 1 && !pinnedExecutor ? (
+                    {hasComposerExecutor && chat.executors.length > 0 && !pinnedExecutor && !chat.submitting ? (
                       <PermissionPicker
                         label="CLI"
+                        disabled={composerLoading}
                         options={chat.executors.map((executor) => {
                           const brand = engineBrand(executor.id);
                           return {
@@ -2148,7 +2152,8 @@ export default function App() {
                       />
                     ) : null}
                     <ModelPicker
-                      models={chat.models}
+                      models={hasComposerExecutor ? chat.models : []}
+                      disabled={composerLoading || !hasComposerExecutor}
                       value={chat.model}
                       label={modelLabel}
                       open={menu?.type === "model"}
@@ -2160,6 +2165,7 @@ export default function App() {
                     />
                     <PermissionPicker
                       label="思考强度"
+                      disabled={composerLoading || !hasComposerExecutor}
                       options={effortOptions(selectedModel)}
                       value={chat.effort}
                       onSelect={chat.setEffort}
@@ -2167,6 +2173,7 @@ export default function App() {
                       onOpenChange={(open) => setMenu(open ? { type: "effort" } : null)}
                     />
                     <PermissionPicker
+                      disabled={sessionLoading}
                       value={approval}
                       onSelect={setApproval}
                       open={menu?.type === "approval"}
@@ -2196,9 +2203,11 @@ export default function App() {
                         title={chat.busy ? "当前回复结束后自动发送" : undefined}
                         disabled={
                           !chat.ready ||
+                          !hasComposerExecutor ||
+                          !!chat.missingServerCLI ||
                           chat.submitting ||
                           chat.machineSaving ||
-                          (chat.activeId && chat.session?.id !== chat.activeId) ||
+                          composerLoading ||
                           (!text.trim() && !attachments.length) ||
                           uploading
                         }
@@ -2329,7 +2338,8 @@ export default function App() {
                       );
                       if (stored) {
                         closeDialog();
-                        await chat.regenerate(stored, approval);
+                        const mode = normalizeApprovalMode(readApproval(sessionApprovalScope(stored)).mode);
+                        await chat.regenerate(stored, mode);
                       }
                     }
                   }}
@@ -2495,9 +2505,9 @@ export default function App() {
         defaultModel={chat.model}
         sponsoredModel={chat.sponsoredModel}
         sponsoredModels={chat.sponsoredModels}
-        onClose={() => setQuickAccessOpen(false)}
+        onClose={closeQuickAccess}
         onOpenView={(view) => navigate(view)}
-        onCredentialsSaved={chat.refreshUser}
+        onCredentialsSaved={chat.refreshCredentials}
         onCompleted={async (nextProjectId) => {
           await chat.refresh();
           if (nextProjectId) await chat.selectProject(nextProjectId);

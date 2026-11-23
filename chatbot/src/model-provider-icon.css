@@ -19,6 +19,12 @@
   height: var(--provider-artwork-size);
   overflow: hidden;
 }
+.model-provider-icon > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
 /* The official blossom contains generous padding in its original viewBox. */
 .model-provider-icon[data-model-provider="openai"] {
   --provider-artwork-size: 140%;
