@@ -473,9 +473,11 @@ def command_prepare(args: argparse.Namespace) -> int:
     artifact_root = Path(data["artifacts_dir"])
     include_design_context = bool(data.get("requires_design_artifacts", False))
     required = required_artifacts(args.stage, include_design_context)
-    baseline = {relative: file_digest(artifact_root / relative) for relative in required}
-    if args.stage == "DESIGN" and include_design_context:
-        baseline["__design_context__"] = tree_digest(artifact_root / "02-design/design-context")
+    baseline = stage.get("artifact_baseline")
+    if not stage.get("prepared_at") or not isinstance(baseline, dict):
+        baseline = {relative: file_digest(artifact_root / relative) for relative in required}
+        if args.stage == "DESIGN" and include_design_context:
+            baseline["__design_context__"] = tree_digest(artifact_root / "02-design/design-context")
     created = materialize_stage(args.stage, artifact_root, include_design_context)
     stage.update(artifact_baseline=baseline, prepared_at=stamp)
     data["updated_at"] = stamp
