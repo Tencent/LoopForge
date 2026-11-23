@@ -65,6 +65,8 @@ Run it as the installation owner, including an ordinary Linux user. If that user
 
 `compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.2`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
+Both the bundled `mysql` and the `platform` service run with `restart: unless-stopped`, so after a Docker daemon or host restart the stack comes back by itself and the platform no longer loops on an unavailable database. Stop a service explicitly with `docker compose stop` when you want it to stay down.
+
 To upgrade, update the checkout first, then refresh the containers:
 
 ```bash
