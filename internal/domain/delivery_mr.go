@@ -54,7 +54,7 @@ func GongfengMRURL(project string, iid int) string {
 		}
 		return fmt.Sprintf("https://%s/%s/-/merge_requests/%d", host, path, iid)
 	}
-	return fmt.Sprintf("https://git.example.com/%s/-/merge_requests/%d", project, iid)
+	return fmt.Sprintf("https://%s/%s/-/merge_requests/%d", GongfengRepositoryHost(), project, iid)
 }
 
 // AggregateDeliveryMRState folds per-MR states into the work item label state.

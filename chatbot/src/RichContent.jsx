@@ -3,6 +3,7 @@ import React, {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -348,19 +349,22 @@ const markdownComponents = {
     </div>
   ),
 };
-export function RichContent({ message, assets = [], projectId = "" }) {
+const emptyAssets = [];
+export function RichContent({ message, assets = emptyAssets, projectId = "" }) {
   const text = typeof message === "string" ? message : visibleText(message);
+  const context = useMemo(() => ({ assets, projectId }), [assets, projectId]);
+  const markdown = useMemo(() => (
+    <Markdown
+      remarkPlugins={[remarkGfm, remarkWorkspaceLinks]}
+      components={markdownComponents}
+      urlTransform={markdownURL}
+    >
+      {text}
+    </Markdown>
+  ), [text]);
   return (
-    <MarkdownAssets.Provider value={{ assets, projectId }}>
-      <div className="markdown">
-        <Markdown
-          remarkPlugins={[remarkGfm, remarkWorkspaceLinks]}
-          components={markdownComponents}
-          urlTransform={markdownURL}
-        >
-          {text}
-        </Markdown>
-      </div>
+    <MarkdownAssets.Provider value={context}>
+      <div className="markdown">{markdown}</div>
     </MarkdownAssets.Provider>
   );
 }
@@ -459,11 +463,15 @@ export function Attachment({ attachment, sessionId, onOpen }) {
         // The card shows no caption, so the hover title names the file.
         title={
           image
-            ? `${attachment.name}\n${failed ? "单击在产物栏打开" : "单击在产物栏打开，双击查看大图"}`
+            ? `${attachment.name}\n${failed ? "单击在产物栏打开" : "单击查看大图"}`
             : undefined
         }
         onClick={(e) => {
           if (continuesRetry(e)) return;
+          if (image && !failed) {
+            setZoom(true);
+            return;
+          }
           onOpen({
             ...attachment,
             url,
@@ -471,13 +479,6 @@ export function Attachment({ attachment, sessionId, onOpen }) {
             source: "会话附件",
           });
         }}
-        onDoubleClick={
-          image && !failed
-            ? (e) => {
-                if (!continuesRetry(e)) setZoom(true);
-              }
-            : undefined
-        }
       >
         {image ? (
           <span

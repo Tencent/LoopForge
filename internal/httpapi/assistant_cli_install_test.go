@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,6 +55,16 @@ func hostHas(binary string) bool {
 	return false
 }
 
+// withoutGlobalCLIs hides the global install locations from
+// resolveAssistantEngineBin for one test, so a CLI preinstalled on the host
+// (the platform image ships dsh in /usr/local/bin) does not look installed.
+func withoutGlobalCLIs(t *testing.T) {
+	t.Helper()
+	saved := assistantCLIGlobalDirs
+	assistantCLIGlobalDirs = nil
+	t.Cleanup(func() { assistantCLIGlobalDirs = saved })
+}
+
 func TestInstallCLIRequiresLoginAndAllowlist(t *testing.T) {
 	h := &assistantHandlers{deps: &deps{}}
 	rec := postCLIInstall(t, h, nil, `{"engine":"opencode"}`)
@@ -67,6 +78,34 @@ func TestInstallCLIRequiresLoginAndAllowlist(t *testing.T) {
 	}
 	if assistantInstallEngine("claude") != "claude-code" {
 		t.Fatal("claude alias")
+	}
+}
+
+func TestZCodeCLIStatusCanBeCheckedButNotInstalled(t *testing.T) {
+	withoutGlobalCLIs(t)
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
+	t.Setenv("AGENTFLOW_ZCODE_BIN", "")
+	h := &assistantHandlers{deps: &deps{}}
+	user := domainUserToAuth(domain.User{ID: 1, LoginName: "lab"})
+
+	rec := getCLIInstall(t, h, user, "zcode")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"missing"`) {
+		t.Fatalf("missing ZCode: %d %s", rec.Code, rec.Body.String())
+	}
+	bin := filepath.Join(t.TempDir(), "zcode")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_ZCODE_BIN", bin)
+	rec = getCLIInstall(t, h, user, "zcode")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"installed"`) {
+		t.Fatalf("installed ZCode: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = postCLIInstall(t, h, user, `{"engine":"zcode"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("automatic ZCode install unexpectedly enabled: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -165,6 +204,7 @@ chmod 755 "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 
 func TestInstallStatusSurvivesAReload(t *testing.T) {
 	resetCLIInstallJobs(t)
+	withoutGlobalCLIs(t)
 	root := t.TempDir()
 	npm := t.TempDir()
 	script := `#!/bin/sh
@@ -182,7 +222,18 @@ chmod 755 "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 	if err := os.WriteFile(filepath.Join(npm, "npm"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", npm+string(os.PathListSeparator)+"/usr/bin:/bin")
+	// Expose only the shell utilities used by the fake npm. A real dsh in
+	// any host binary directory must not satisfy the reload's status probe.
+	for _, name := range []string{"sleep", "mkdir", "chmod"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(path, filepath.Join(npm, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", npm)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
 	t.Setenv("AGENTFLOW_DSH_BIN", "")

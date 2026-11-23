@@ -197,7 +197,7 @@ func fakeRunnerConnection(t *testing.T, hub *runnerControlHub, runnerID string, 
 			select {
 			case message := <-conn.send:
 				if message.Type == "workspace.request" && message.WorkspaceRequest != nil {
-					hub.resolveWorkspace(message.RequestID, answer(*message.WorkspaceRequest))
+					hub.resolveWorkspace(conn, message.RequestID, answer(*message.WorkspaceRequest))
 				}
 			case <-conn.done:
 				return

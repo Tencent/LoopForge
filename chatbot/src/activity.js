@@ -185,14 +185,19 @@ export function hasTextSegments(steps = []) {
 function replyFold(text) {
   return String(text || "").replace(/\s+/g, "");
 }
+function trimReplyText(text) {
+  // Leading spaces on a nonblank line can start an indented code block.
+  return text.replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd();
+}
+function replyParagraphs(text) {
+  return text.split(/\n{2,}/).filter((part) => part.trim());
+}
 // A finished reply sometimes stores the last paragraph twice: once from the
 // stream and again from the CLI result. Distinct paragraphs stay.
 function dropRepeatedReply(text) {
-  let parts = String(text || "")
-    .trim()
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const original = trimReplyText(String(text || ""));
+  let parts = replyParagraphs(original);
+  const originalCount = parts.length;
   while (parts.length >= 2 && replyFold(parts.at(-1)) === replyFold(parts.at(-2))) {
     parts.pop();
   }
@@ -202,19 +207,11 @@ function dropRepeatedReply(text) {
     const right = replyFold(parts.slice(mid).join("\n\n"));
     if (left && left === right) parts = parts.slice(0, mid);
   }
-  return parts.join("\n\n");
+  return parts.length === originalCount ? original : parts.join("\n\n");
 }
 function replyTail(text, head) {
   if (!text || !head || !text.startsWith(head)) return "";
-  return text.slice(head.length).trim();
-}
-function lastParagraph(text) {
-  const parts = String(text || "")
-    .trim()
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  return parts.at(-1) || "";
+  return trimReplyText(text.slice(head.length));
 }
 // Same letters with different spaces: keep the copy Markdown can still parse.
 function richerFold(primary, alternate) {
@@ -227,9 +224,9 @@ export function finalReply(full, steps = []) {
   const parts = steps.filter((step) => step.kind === "text" && step.text?.trim());
   const text = dropRepeatedReply(full || "");
   if (!parts.length) return text;
-  const last = parts.at(-1).text.trim();
+  const last = trimReplyText(parts.at(-1).text);
   if (!text) return last;
-  const covered = parts.map((step) => step.text.trim()).join("\n\n");
+  const covered = parts.map((step) => trimReplyText(step.text)).join("\n\n");
   const same =
     replyFold(text) === replyFold(covered) || replyFold(text) === replyFold(last);
   if (text === covered || text.startsWith(`${covered}\n`) || same) {
@@ -240,7 +237,7 @@ export function finalReply(full, steps = []) {
       replyFold(suffix) === replyFold(covered)
     ) {
       if (replyFold(text) === replyFold(last)) return richerFold(last, text);
-      const tail = lastParagraph(text);
+      const tail = replyParagraphs(text).at(-1) || "";
       if (replyFold(tail) === replyFold(last)) return richerFold(last, tail);
       return last;
     }
@@ -470,6 +467,8 @@ export function activityFace(step) {
     return { kind: "verify", busy: "正在提交节点结果", done: "已提交节点结果" };
   if (/workbench_workspace_open/.test(name))
     return { kind: "workflow", busy: "正在打开工作区", done: "已打开工作区" };
+  if (name === "workspace_docker_build")
+    return { kind: "workflow", busy: "正在构建 Docker 镜像", done: "已构建 Docker 镜像" };
   if (/workbench_delivery_register/.test(name))
     return { kind: "workflow", busy: "正在登记交付", done: "已登记交付" };
   if (/workbench_publish_artifact/.test(name))
@@ -581,7 +580,9 @@ export function activityTarget(step) {
   }
   if (typeof detail !== "string") return "";
   detail = detail.split("\n")[0].trim();
-  if (/mcp__|agentflow__/.test(detail)) return "";
+  // Docker build progress already carries a display label from the runtime.
+  if (step.tool !== "workspace_docker_build" && /mcp__|agentflow__/.test(detail))
+    return "";
   const kind = activityFace(step).kind;
   if (["read", "edit"].includes(kind) && !/\s/.test(detail))
     return detail.split(/[\\/]/).filter(Boolean).at(-1) || detail;

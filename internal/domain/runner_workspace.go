@@ -33,12 +33,17 @@ const (
 	RunnerWorkspaceOperationCheckouts         = "checkouts"
 	RunnerWorkspaceOperationMaintenance       = "maintenance"
 	RunnerWorkspaceOperationLoginModels       = "login_models"
+	RunnerWorkspaceOperationSSHHostKeyProbe   = "ssh_host_key_probe"
 	RunnerWorkspaceOperationConversationCLI   = "conversation_process"
 )
 
 // RunnerSSHKnownHostsWireLimit is the encoded allowance for the optional
 // known_hosts field in a runner task claim.
 const RunnerSSHKnownHostsWireLimit = 1 << 20
+
+// RunnerSSHHostKeyProbeHeader advertises host key discovery on the authenticated
+// control connection. Older runners can still receive and use known_hosts pins.
+const RunnerSSHHostKeyProbeHeader = "X-AgentFlow-SSH-Host-Key-Probe"
 
 // GitSSHKnownHosts carries the platform's scoped SSH host keys over an
 // authenticated runner transport. Configuration errors are also sent so the
@@ -53,10 +58,14 @@ type GitSSHKnownHosts struct {
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
-	Maintenance   *RunnerMaintenanceRequest `json:"maintenance,omitempty"`
-	ModelProvider string                    `json:"modelProvider,omitempty"`
-	Conversation  json.RawMessage           `json:"conversation,omitempty"`
-	RunKind       string                    `json:"runKind,omitempty"`
+	Maintenance       *RunnerMaintenanceRequest `json:"maintenance,omitempty"`
+	ModelProvider     string                    `json:"modelProvider,omitempty"`
+	SSHHostKeyAddress string                    `json:"sshHostKeyAddress,omitempty"`
+	// SSHHostKeyOwnerID accompanies probes across platform handover. The
+	// control hub checks it against the socket and clears it before sending.
+	SSHHostKeyOwnerID int64           `json:"sshHostKeyOwnerId,omitempty"`
+	Conversation      json.RawMessage `json:"conversation,omitempty"`
+	RunKind           string          `json:"runKind,omitempty"`
 	// ConcurrentEdit marks a person editing from the IDE: the runner writes and
 	// opens terminals beside running tasks instead of waiting for their fence.
 	ConcurrentEdit     bool                         `json:"concurrentEdit,omitempty"`
@@ -122,12 +131,27 @@ type RunnerToolResponse struct {
 	Error string          `json:"error,omitempty"`
 }
 
+// WorkspaceImageBuildProgress reports a build step without including Docker
+// output, Dockerfile arguments, or environment variables.
+type WorkspaceImageBuildProgress struct {
+	ID     string `json:"id"`
+	Step   string `json:"step,omitempty"`
+	Done   bool   `json:"done,omitempty"`
+	Failed bool   `json:"failed,omitempty"`
+}
+
 type WorkspaceCheckpointTransfer struct {
 	ID     string `json:"id,omitempty"`
 	Size   int64  `json:"size,omitempty"`
 	SHA256 string `json:"sha256,omitempty"`
 	Offset int64  `json:"offset,omitempty"`
 	Data   []byte `json:"data,omitempty"`
+}
+
+// IsCancelableRunnerWorkspaceOperation identifies synchronous requests that
+// hold a workspace fence. Conversation processes have their own stop protocol.
+func IsCancelableRunnerWorkspaceOperation(op string) bool {
+	return IsWorkspaceCheckpointTransferOperation(op) || op == RunnerWorkspaceOperationCheckpoint || op == RunnerWorkspaceOperationPrepare
 }
 
 func IsWorkspaceCheckpointTransferOperation(op string) bool {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -78,10 +79,14 @@ type AgentToolSession struct {
 	SandboxProfileID string
 	// workspaceRunID is the one workspace an ordinary conversation is bound
 	// to: one it opened itself, or the SOP run of an issue.
-	workspaceRunID   string
-	workspaceMu      sync.Mutex
-	workspaceTurn    *assistantWorkspaceTurn
-	SpaceID          string
+	workspaceRunID string
+	workspaceMu    sync.Mutex
+	workspaceTurn  *assistantWorkspaceTurn
+	SpaceID        string
+	Surface        string // entry of the turn; see sopDesigner
+	// DesignerCanvas is the canvas a designer turn edits; operations in its
+	// workflows_save draft are applied to it.
+	DesignerCanvas   json.RawMessage
 	ControlScope     assistantControlScope
 	ExpiresAt        time.Time
 	MCPServers       []domain.MCPServerDefinition
@@ -93,6 +98,7 @@ type AgentToolSession struct {
 	Final            chan AgentTerminalResult
 
 	mu           sync.Mutex
+	clarifyRepos map[string]string // read-only analysis checkouts for this turn
 	catalog      []agentToolDescriptor
 	terminalOnly bool
 	runIDs       []string
@@ -548,4 +554,10 @@ func (s *AgentToolSession) diagnostics() *assistantDiagnosticsCollector {
 		return nil
 	}
 	return assistantDiagnosticsFrom(s.ctx)
+}
+
+// sopDesigner reports a SOP designer turn: read-only platform tools plus one
+// workflows_save draft, no workspace, browser or external MCP.
+func (s *AgentToolSession) sopDesigner() bool {
+	return s != nil && s.Surface == assistantSurfaceSOPDesigner
 }

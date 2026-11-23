@@ -83,7 +83,8 @@ exit 35
 `)
 			bash := writeScript(t, `#!/bin/sh
 echo "installer invoked"
-test "$(cat "$1")" = complete
+for installer do :; done
+test "$(cat "$installer")" = complete
 `)
 			for name, script := range map[string]string{"curl": curl, "bash": bash} {
 				if err := os.Symlink(script, filepath.Join(bin, name)); err != nil {
@@ -91,7 +92,7 @@ test "$(cat "$1")" = complete
 				}
 			}
 
-			output, err := exec.Command("sh", "-ec", conversationScriptInstaller(agyInstallerURL)).CombinedOutput()
+			output, err := exec.Command("sh", "-ec", scriptCLIInstaller(agyInstallerURL)).CombinedOutput()
 			if strings.Count(string(output), "download attempted") != 2 {
 				t.Fatalf("installer download did not retry once: %s", output)
 			}

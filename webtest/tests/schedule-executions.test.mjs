@@ -122,7 +122,10 @@ test('execution dashboard lists history with metrics, filters and copyable trace
   const metrics = app.document.querySelector('#scheduleExecMetrics').textContent;
   assert.match(metrics, /执行次数\s*2/);
   assert.match(metrics, /成功率\s*50%/);
-  assert.match(metrics, /失败次数\s*1/);
+  assert.equal(app.document.querySelectorAll('#scheduleExecMetrics .sched-exec-metric').length, 4);
+  const successCard = app.document.querySelectorAll('#scheduleExecMetrics .sched-exec-metric')[1];
+  assert.match(successCard.textContent, /成功率\s*50%\s*成功 1 次\s*失败 1 次/);
+  assert.match(successCard.querySelector('.has-failures').textContent, /失败 1 次/);
   assert.match(rows[1].textContent, /候选 3 · 启动 1 · 登录页改版/);
   assert.match(rows[1].textContent, /1 分 30 秒/);
 
@@ -249,9 +252,9 @@ test('the overview comes from the server and the table filters and pages there',
 
   const metric = (tone) => doc.querySelector(`#scheduleExecMetrics [data-tone="${tone}"]`);
   assert.match(metric('accent').textContent, /执行次数\s*12\s*较上周 \+50%/);
-  assert.match(metric('success').textContent, /成功率\s*83%\s*较上周 \+33pp/);
-  assert.match(metric('error').textContent, /失败次数\s*2\s*较上周 −50%/);
-  assert.equal(metric('error').querySelector('.sched-exec-delta').dataset.good, 'true', 'fewer failures read as good');
+  assert.match(metric('success').textContent, /成功率\s*83%\s*成功 10 次\s*失败 2 次/);
+  assert.equal(metric('error'), null, 'failure counts share the success-rate card');
+  assert.match(metric('success').querySelector('.has-failures').textContent, /失败 2 次/);
   assert.match(metric('info').textContent, /平均耗时\s*1 分 0 秒\s*较上周 −50%/);
   assert.equal(doc.querySelector('#scheduleExecTrend'), null, 'the overview has no trend chart');
   assert.match(doc.querySelector('#scheduleExecFootnote').textContent, /不受保留条数限制/);
@@ -356,4 +359,28 @@ test('execution dashboard reports empty, error and duration states', async (t) =
   assert.equal(app.evaluate(`scheduleExecDurationLabel(42000)`), '42 秒');
   assert.equal(app.evaluate(`scheduleExecDurationLabel(7380000)`), '2 小时 3 分');
   assert.equal(app.evaluate(`scheduleExecTriggerLabel('manual_run')`), '手动运行');
+});
+
+test('token metrics use server windows and execution rows expose per-run usage', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const overview = { current: { total: 200, finished: 200, success: 190, failed: 10, metered: 100, tokens: { total: 150000 }, avgTokens: 1500 } };
+  const html = app.evaluate(`scheduleExecMetricsHTML(${JSON.stringify(overview)})`);
+  assert.match(html, /Token 总消耗.*150,000.*100 次已上报/s);
+  assert.equal((html.match(/class="sched-exec-metric"/g) || []).length, 4);
+  assert.match(html, /执行次数.*成功率.*95%.*成功 190 次.*失败 10 次.*平均耗时.*Token 总消耗/s);
+  assert.doesNotMatch(html, /平均 Token|失败次数/);
+  const noFailures = app.evaluate(`scheduleExecMetricsHTML({current:{total:2,finished:2,success:2,failed:0}})`);
+  assert.match(noFailures, /成功率.*100%.*成功 2 次.*失败 0 次/s);
+  assert.doesNotMatch(noFailures, /has-failures/);
+  const e = { id: 'usage', jobKind: 'assistant', status: 'success', model: '<model>', usage: { inputTokens: 1000, outputTokens: 200, totalTokens: 1500, cacheReadTokens: 800, cacheWriteTokens: 50 } };
+  assert.match(app.evaluate(`scheduleExecTokenCellHTML(${JSON.stringify(e)})`), />1,500</);
+  const detail = app.evaluate(`scheduleExecDetailHTML(${JSON.stringify(e)}, 'usage-detail')`);
+  assert.match(detail, /colspan="8"/);
+  assert.match(detail, /Token 总量.*1,500.*输入 Token.*1,000.*输出 Token.*200.*缓存读 Token.*800.*缓存写 Token.*50/s);
+  assert.match(detail, /&lt;model&gt;/);
+  assert.equal(app.evaluate(`scheduleExecUsageTotal({usage:{inputTokens:10,outputTokens:20}})`), 30);
+  assert.match(app.evaluate(`scheduleExecTokenCellHTML({jobKind:'assistant',status:'success'})`), /未上报/);
+  assert.match(app.evaluate(`scheduleExecTokenCellHTML({jobKind:'assistant',status:'running'})`), /待统计/);
+  assert.match(app.evaluate(`scheduleExecMetricsHTML({current:{total:10}})`), /Token 总消耗.*—/s);
 });

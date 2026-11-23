@@ -44,6 +44,7 @@ func (h *assistantHandlers) assistantChatUser(user domain.User) (chatUser domain
 		return user, nil, false
 	}
 	user.CodeBuddyAPIKey = key.APIKey
+	user.CodeBuddyBaseURL = ""
 	user.CodeBuddyInternetEnvironment = key.InternetEnvironment
 	user.CodeBuddyModels = nil
 	return user, key.Models, true
@@ -72,9 +73,9 @@ func (h *assistantHandlers) usesSharedKey(user domain.User) bool {
 func (h *assistantHandlers) chatCatalog(ctx context.Context, user domain.User) assistantModelCatalog {
 	key, shared := h.assistantSharedKey()
 	if !shared || !h.usesSharedKey(user) {
-		return withCodeBuddyPersonalModels(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil), user)
+		return withCodeBuddyPersonalModels(ctx, assistantChatCatalog(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, nil), user)
 	}
-	return restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, key.Models), key.Models)
+	return restrictAssistantCatalog(assistantChatCatalog(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, key.Models), key.Models)
 }
 
 // turnCatalog is chatCatalog for a turn on model. The CodeBuddy model list is
@@ -87,12 +88,10 @@ func (h *assistantHandlers) turnCatalog(ctx context.Context, user domain.User, m
 	if model == "" || assistantCatalogLists(catalog, model) {
 		return catalog
 	}
-	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
+	refreshOfficialCodeBuddyModels(ctx, user)
 	catalog = h.chatCatalog(ctx, user)
 	if !assistantCatalogLists(catalog, model) {
-		// The list is fresh (or discovery failed) and still lacks the model:
-		// the turn falls back to the default, so leave a trace of why.
-		log.Printf("assistant model %q is not offered to user %d; the turn runs on %q", model, user.ID, catalog.Default)
+		log.Printf("assistant model %q is not offered to user %d after catalog refresh", model, user.ID)
 	}
 	return catalog
 }

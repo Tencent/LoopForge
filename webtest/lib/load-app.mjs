@@ -144,7 +144,7 @@ export function sampleBootstrap() {
       { workflowId: workflow.id, total: 4, succeeded: 3, failed: 1 },
     ], rules: [asset('rule-1', 'Code style')], skills: [asset('skill-1', 'Testing')],
     dockerfiles: [asset('docker-1', 'Node image')], environments: [asset('env-1', 'Node setup')],
-    sandboxes: [asset('sandbox-1', 'Restricted')], mcpServers: [
+    sandboxes: [{ ...asset('sandbox-1', 'Restricted'), driver: 'docker', dockerfileId: 'docker-1' }], mcpServers: [
       { id: 'mcp-1', projectId: project.id, name: 'Filesystem', command: 'npx', args: ['server'], enabled: true },
     ], executors: [{ id: 'runner-1', name: 'Linux Runner', status: 'online', maxConcurrent: 2 }],
     runners: [{ id: 'runner-1', name: 'Linux Runner', status: 'online', maxConcurrent: 2 }],

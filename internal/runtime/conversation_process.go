@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"agentflow/internal/domain"
@@ -42,6 +43,8 @@ type ConversationProcessRequest struct {
 	After      int64                `json:"after,omitempty"`
 	Gateway    string               `json:"gateway,omitempty"`
 	Token      string               `json:"token,omitempty"`
+
+	ReportVersion bool `json:"reportVersion,omitempty"`
 }
 
 type ConversationFile struct {
@@ -68,13 +71,15 @@ func ConversationCommandFor(command CommandSpec, credentials RunCredentials) *Co
 }
 
 type ConversationProcessResult struct {
-	Root       string                  `json:"root,omitempty"`
-	ID         string                  `json:"id,omitempty"`
-	Events     []domain.TelemetryEvent `json:"events,omitempty"`
-	Sequence   int64                   `json:"sequence,omitempty"`
-	Done       bool                    `json:"done,omitempty"`
-	Error      string                  `json:"error,omitempty"`
-	NotStarted bool                    `json:"notStarted,omitempty"`
+	Root          string                  `json:"root,omitempty"`
+	ID            string                  `json:"id,omitempty"`
+	Events        []domain.TelemetryEvent `json:"events,omitempty"`
+	Sequence      int64                   `json:"sequence,omitempty"`
+	Done          bool                    `json:"done,omitempty"`
+	Error         string                  `json:"error,omitempty"`
+	NotStarted    bool                    `json:"notStarted,omitempty"`
+	CLIVersion    string                  `json:"cliVersion,omitempty"`
+	VersionSource string                  `json:"versionSource,omitempty"`
 	// GitScrubbed names the Git credentials the agent wrote by hand that were
 	// removed when a workspace CLI finished; it never holds their values.
 	GitScrubbed []string `json:"gitScrubbed,omitempty"`
@@ -139,20 +144,22 @@ func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (
 }
 
 type conversationProcess struct {
-	mu         sync.Mutex
-	cancel     context.CancelFunc
-	input      *os.File
-	events     []domain.TelemetryEvent
-	base       int64
-	done       bool
-	err        string
-	wake       chan struct{}
-	lastPoll   time.Time
-	closeRelay func()
-	finished   chan struct{}
-	root       string
-	bytes      int
-	notStarted bool
+	mu            sync.Mutex
+	cancel        context.CancelFunc
+	input         *os.File
+	events        []domain.TelemetryEvent
+	base          int64
+	done          bool
+	err           string
+	wake          chan struct{}
+	lastPoll      time.Time
+	closeRelay    func()
+	finished      chan struct{}
+	root          string
+	bytes         int
+	notStarted    bool
+	cliVersion    string
+	versionSource string
 	// gitScrubbed is set with done, under mu.
 	gitScrubbed []string
 }
@@ -279,6 +286,10 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		defer stopWrite()
 		if req.EOF {
 			err = input.Close()
+			// A short-lived CLI can exit before the client relays its final EOF.
+			if errors.Is(err, os.ErrClosed) || errors.Is(err, io.ErrClosedPipe) {
+				err = nil
+			}
 		} else {
 			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
 		}
@@ -328,7 +339,11 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		proc.events = proc.events[ack:]
 		proc.base = req.After
 		n := min(len(proc.events), 256)
-		result := ConversationProcessResult{ID: req.ID, Events: append([]domain.TelemetryEvent(nil), proc.events[:n]...), Sequence: proc.base + int64(n), Done: proc.done && n == len(proc.events), Error: proc.err, NotStarted: proc.notStarted}
+		result := ConversationProcessResult{
+			ID: req.ID, Events: append([]domain.TelemetryEvent(nil), proc.events[:n]...), Sequence: proc.base + int64(n),
+			Done: proc.done && n == len(proc.events), Error: proc.err, NotStarted: proc.notStarted,
+			CLIVersion: proc.cliVersion, VersionSource: proc.versionSource,
+		}
 		if result.Done {
 			result.GitScrubbed = append([]string(nil), proc.gitScrubbed...)
 		}
@@ -350,6 +365,24 @@ func conversationAssetPath(root, target string) error {
 		}
 	}
 	return nil
+}
+
+// conversationTerminalResultDrain is how long a CLI may linger after its
+// stream-json terminal result. ExecutorRunner uses the same window before it
+// stops hook processes that outlive the protocol result.
+const conversationTerminalResultDrain = 2500 * time.Millisecond
+
+// conversationStdoutTerminal reports a Claude-style stream-json result frame,
+// which Cursor, CodeBuddy and the other agent CLIs emit when the turn is over.
+func conversationStdoutTerminal(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" || line[0] != '{' {
+		return false
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(line), &event) == nil && event.Type == "result"
 }
 
 // IDs are generated before dispatch, so cancellation can address a start whose
@@ -435,6 +468,9 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	var release func()
 	var stdin io.Closer
 	var cleanupLogin func() error
+	// Set once a terminal result line has been followed by the drain window
+	// and this process is stopped so a lingering CLI cannot pin the turn.
+	var stopAfterTerminalResult atomic.Bool
 	finish := func(runErr error, notStarted bool) {
 		cancel()
 		// Cancellation can skip the shell EXIT trap. Clean ephemeral ZCode
@@ -465,6 +501,12 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			proc.notStarted = notStarted
 		}
 		proc.gitScrubbed = gitScrubbed
+		// The process was stopped because its protocol already emitted a
+		// terminal result. The kill is not a failed turn; the result line is.
+		if runErr != nil && stopAfterTerminalResult.Load() {
+			runErr = nil
+			notStarted = false
+		}
 		if runErr != nil && proc.err == "" {
 			proc.err = runErr.Error()
 			proc.notStarted = notStarted
@@ -615,6 +657,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 		command.Argv[0] = binary
 	}
+	cliBinary := command.Argv[0]
 	bindSandbox := sb
 	bindWorkspace := filepath.Join(root, "ws")
 	if bindSandbox == nil {
@@ -643,6 +686,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 	}
 	nativeArgv := append([]string(nil), command.Argv...)
+	command = withBwrapManagedCLI(command, sandboxDriver(bindSandbox))
 	command, err = bindCommand(procCtx, bindSandbox, bindWorkspace, command, req.Command.Credentials)
 	if err != nil {
 		return ConversationProcessResult{}, err
@@ -692,6 +736,28 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				}
 			}
 		}()
+		// Hook interpreters and browser helpers can keep the CLI alive after
+		// it has already emitted its terminal result. Same drain as
+		// ExecutorRunner: let the trailing output land, then stop the process
+		// so the turn can be marked finished and a queued follow-up can send.
+		terminalResult := make(chan struct{})
+		var terminalOnce sync.Once
+		go func() {
+			select {
+			case <-terminalResult:
+				timer := time.NewTimer(conversationTerminalResultDrain)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+					stopAfterTerminalResult.Store(true)
+					cancel()
+				case <-watchDone:
+				case <-procCtx.Done():
+				}
+			case <-watchDone:
+			case <-procCtx.Done():
+			}
+		}()
 		sink := func(ev domain.TelemetryEvent) {
 			if ev.Name != "process.stdout" && ev.Name != "process.stderr" {
 				return
@@ -705,10 +771,26 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				cancel()
 			}
 			proc.mu.Unlock()
+			if ev.Name == "process.stdout" && conversationStdoutTerminal(ev.Message) {
+				terminalOnce.Do(func() { close(terminalResult) })
+			}
 			select {
 			case proc.wake <- struct{}{}:
 			default:
 			}
+		}
+		if req.ReportVersion {
+			defer ObserveCLIVersion(procCtx, sb, command.Provider, cliBinary, func(version, source string) {
+				proc.mu.Lock()
+				if !proc.done {
+					proc.cliVersion, proc.versionSource = version, source
+				}
+				proc.mu.Unlock()
+				select {
+				case proc.wake <- struct{}{}:
+				default:
+				}
+			})()
 		}
 		if sb != nil {
 			_, runErr = WithSandboxCredentials(sb, req.Command.Credentials).Exec(procCtx, command, sink)

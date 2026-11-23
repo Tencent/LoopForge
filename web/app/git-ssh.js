@@ -53,3 +53,34 @@ globalThis.LoopForgeGitHTTPS = function parseHTTPSRepository(raw) {
     return {provider:'https',host,project:host+'/'+parts.join('/').replace(/\.git$/,''),name,cloneUrl,webUrl:cloneUrl.replace(/\.git$/,'')};
   }catch{return null}
 };
+
+// The managed host is supplied by the deployment. Explicit old links remain
+// readable so existing repositories can be opened and edited.
+globalThis.LoopForgeGongfengRepository = function parseManagedRepository(raw, host = '') {
+  const legacyHost = 'git.example.com';
+  const managedHost = host || legacyHost;
+  let value = String(raw || '').trim().replace(/^['"]+|['"]+$/g, '');
+  if (/^git\s+clone\s+/i.test(value)) {
+    value = value.replace(/^git\s+clone\s+/i, '').split(/\s+/)[0].replace(/^['"]+|['"]+$/g, '');
+  }
+  if (!value || /[\s"'<>\\?#]/.test(value)) return null;
+  const ssh = /^(?:git@|ssh:\/\/git@)/i.test(value);
+  const remote = value.replace(/^(?:https?:\/\/|ssh:\/\/)?(?:git@)?/i, '');
+  const lower = remote.toLowerCase();
+  const matched = [managedHost.toLowerCase(), legacyHost].find(candidate =>
+    lower.startsWith(candidate + '/') || lower.startsWith(candidate + ':'));
+  if (!matched) return null;
+  const separator = remote[matched.length];
+  let path = remote.slice(matched.length + 1);
+  if (separator === ':') path = path.replace(/^\d+\//, '');
+  for (const marker of ['/-/', '/tree/', '/blob/', '/commit/', '/commits/', '/merge_requests/', '/issues/', '/snippets/', '/wikis/', '/releases/', '/tags/']) {
+    const at = path.indexOf(marker);
+    if (at !== -1) path = path.slice(0, at);
+  }
+  path = path.replace(/\/+$/, '').replace(/\.git$/i, '');
+  const segments = path.split('/');
+  if (segments.length < 2 || path.includes('..') || segments.some(segment => !segment)) return null;
+  const webUrl = `https://${managedHost}/${path}`;
+  const cloneUrl = ssh && !managedHost.includes(':') ? `git@${managedHost}:${path}.git` : webUrl + '.git';
+  return {provider:'gongfeng', project:path, name:segments.at(-1), webUrl, cloneUrl};
+};

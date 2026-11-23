@@ -25,7 +25,7 @@ func resolveCodeBuddyCredential(s *repo.Store, userID int64) runtime.CodeBuddyCr
 		return runtime.CodeBuddyCredential{}
 	}
 	if strings.TrimSpace(user.CodeBuddyAPIKey) != "" {
-		return runtime.CodeBuddyCredential{APIKey: user.CodeBuddyAPIKey, InternetEnvironment: user.CodeBuddyInternetEnvironment}
+		return runtime.CodeBuddyUserCredential(user)
 	}
 	shared, ok := s.SharedCodeBuddyKey()
 	if !ok || (shared.SponsorID != 0 && shared.SponsorID == user.ID) {

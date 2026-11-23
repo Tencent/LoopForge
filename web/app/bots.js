@@ -1,27 +1,8 @@
 function loadBotModels(){return window.AgentFlowAssistantModels?.load?.()||Promise.resolve()}
-function botModelPickerHTML(bot){return `<div class="schedule-model-field bot-model-field" id="botModelPicker"><input type="hidden" name="model" value="${escapeHTML(bot.model||'default')}"><button type="button" class="ai-model-toggle" data-model-toggle aria-label="AI 模型（CodeBuddy）" aria-haspopup="listbox" aria-expanded="false"><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox" aria-label="CodeBuddy 模型"></div></div>`}
-function closeBotModelPicker(){const picker=document.querySelector('#botModelPicker');if(!picker)return;picker.querySelector('.ai-model-menu').hidden=true;picker.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false')}
-function bindBotModelPicker(host){
- const picker=host.querySelector('#botModelPicker'),models=window.AgentFlowAssistantModels;
- if(!picker||!models)return;
- const toggle=picker.querySelector('[data-model-toggle]'),menu=picker.querySelector('.ai-model-menu'),value=picker.querySelector('[name="model"]');
- models.paint(toggle,value.value);
- toggle.onclick=event=>{
-  event.stopPropagation();if(toggle.disabled||toggle.closest('fieldset')?.disabled)return;
-  const open=menu.hidden;closeBotModelPicker();if(!open)return;
-  models.renderCodeBuddyList(menu,value.value,id=>{value.value=id;models.paint(toggle,id);captureBotDraft(host);closeBotModelPicker()});
-  const rect=toggle.getBoundingClientRect(),width=Math.min(Math.max(rect.width,320),window.innerWidth-24),height=Math.min(320,window.innerHeight-24),below=window.innerHeight-rect.bottom-12,above=rect.top-12;
-  menu.style.width=width+'px';menu.style.left=Math.max(12,Math.min(rect.left,window.innerWidth-width-12))+'px';
-  const down=below>=Math.min(height,above);const available=down?below:above;
-  menu.style.maxHeight=Math.min(height,available)+'px';menu.style.top=(down?rect.bottom+6:Math.max(12,rect.top-Math.min(height,available)-6))+'px';
-  menu.hidden=false;toggle.setAttribute('aria-expanded','true');
- };
- host.querySelector('fieldset').onscroll=closeBotModelPicker;
- if(!bindBotModelPicker.docBound){bindBotModelPicker.docBound=true;document.addEventListener('click',event=>{if(!event.target.closest('#botModelPicker'))closeBotModelPicker()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeBotModelPicker()});window.addEventListener('resize',closeBotModelPicker)}
-}
+function botModelPickerHTML(){return `<div class="feature-model-picker" id="botModelPicker">${globalThis.AgentFlowAssistantModels?.featurePickerHTML('model')||''}</div>`}
 // Project-scoped enterprise chat notifications.
 const botUI={projectId:'',items:[],deliveries:[],selected:null,sessions:[],query:'',loading:false,error:'',busy:false,busyAction:'',revision:0,tab:'list',step:1,recordsTab:'deliveries',interactionBotId:'',interaction:null,interactionLoading:false,interactionError:'',testResult:'',flashId:'',motion:null,animations:[],shownCount:null,shownError:'',watchTimer:0,watchCount:0,deletingId:''};
-const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选择接收会话'],[3,'发送测试']],BOT_DEFAULT_MODEL='glm-5.3-flash-ioa';
+const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选择接收会话'],[3,'发送测试']];
 // In-progress states breathe; terminal states stay still.
 const BOT_LIVE_STATES=['pending','sending','connecting','reconnecting','queued','running','ready'];
 const BOT_CONNECTION={connected:['已连接','success'],connecting:['连接中','info'],reconnecting:['重连中','info'],error:['连接异常','error'],offline:['未连接','neutral']};
@@ -39,7 +20,12 @@ function canManageBot(bot){
 function botStepAllowed(bot,step){return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&!!bot?.target&&!bot._targetChanged)}
 function botStepDone(bot,step){return step===1?!!bot?.id:step===2?botStepAllowed(bot,3):false}
 function botStoredBot(bot){return bot?.id?botUI.items.find(b=>b.id===bot.id):null}
-function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||(bot.model||BOT_DEFAULT_MODEL)!==(stored.model||BOT_DEFAULT_MODEL)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled}
+function botCredentialsDirty(bot){
+ const stored=botStoredBot(bot);
+ if(!stored)return !!bot;
+ const modelID=value=>(value||'').replace(/^codebuddy:/,'');
+ return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||modelID(bot.model)!==modelID(stored.model)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled;
+}
 
 function botIcon(name){return `<span class="bot-icon" data-bot-icon="${name}" aria-hidden="true"></span>`}
 // Harness StatusBadge: in-progress states breathe, settled states carry a glyph so colour is never the only cue.
@@ -75,7 +61,8 @@ function botPanelHeadHTML(){
 function botTargetHTML(target){return target?`<span class="bot-target"><span class="bot-chip">${botTypeLabel(target.type)}</span><span class="bot-target-name">${escapeHTML(target.name)}</span></span>`:'<span class="bot-target is-empty">尚未选择接收会话</span>'}
 function botRowHTML(bot){
  const id=escapeHTML(bot.id),name=escapeHTML(bot.name),manage=canManageBot(bot),target=botTargetHTML(bot.target);
- const sub=escapeHTML(bot.model||BOT_DEFAULT_MODEL)+(bot.interactionEnabled?' · 已启用对话':'');
+ const model=globalThis.AgentFlowAssistantModels?.concreteModelId(bot.model)??bot.model;
+ const sub=[escapeHTML(model||''),bot.interactionEnabled?'已启用对话':''].filter(Boolean).join(' · ');
  return `<tr data-bot-row="${id}"><td><div class="bot-row-main"><span class="bot-glyph">${botIcon('robot')}</span><span class="bot-row-text"><b class="bot-row-name">${name}</b><small class="bot-row-sub">${sub}</small><small class="bot-row-target">${target}</small></span></div></td><td class="bot-col-target">${target}</td><td>${botEnabledBadge(bot.enabled)}</td><td class="bot-col-sub">${botHealthBadge(bot.health)}</td><td class="bot-col-actions"><div class="bot-row-actions"><button type="button" class="hui-icon-btn" data-bot-edit="${id}" aria-label="编辑 ${name}" title="编辑">${botIcon('edit')}</button>${manage?`<button type="button" class="hui-icon-btn is-danger" data-bot-delete="${id}" aria-label="删除 ${name}" title="删除">${botIcon('trash')}</button>`:''}</div></td></tr>`;
 }
 function botListHTML(items){
@@ -97,7 +84,7 @@ function botEditTabHTML(bot){
  return `<div class="bot-editor">${botStepsHTML(bot,step)}<div class="bot-step-fold"><div class="bot-step-pane" data-bot-pane="${step}">${pane}</div></div>${!manage?'<p class="muted bot-hint">仅创建者或项目管理员可修改凭据和接收目标。</p>':''}</div>`;
 }
 function botCredentialPaneHTML(bot,manage){
- return `<form id="botForm" novalidate><fieldset ${!manage||botUI.busy?'disabled':''}><div class="bot-fields"><label>名称<input class="input" name="name" required maxlength="80" value="${escapeHTML(bot.name)}" placeholder="例如：研发进展通知"></label><label>Bot ID<input class="input" name="botId" required maxlength="191" value="${escapeHTML(bot.botId)}" autocomplete="off" placeholder="企业微信智能机器人 Bot ID"></label><label>Secret<input class="input" name="secret" type="password" value="${escapeHTML(bot._secret||'')}" maxlength="512" ${bot.id?'':'required'} autocomplete="new-password" placeholder="${bot.secretConfigured?'已配置 · 留空保留，填写则替换':'填写机器人 Secret'}"></label><label>AI 模型（CodeBuddy）${botModelPickerHTML(bot)}<small class="muted">用于对话和完成汇报；对话使用发送者绑定的平台账号凭据，SOP 汇报使用本次执行者凭据。</small></label><label class="bot-check"><input name="enabled" type="checkbox" role="switch" ${bot.enabled?'checked':''}>启用此 Bot</label><label class="bot-check"><input name="interactionEnabled" type="checkbox" role="switch" ${bot.interactionEnabled?'checked':''}>启用对话（自动执行）</label></div><p class="muted bot-hint">首次对话请按 Bot 提示关联平台账号；新单聊和群聊会自动建立上下文。发送 /new 或“开启新会话”开始新的对话。</p><div class="bot-save-row"><button type="submit" class="button primary">${botBusyLabel('save','','保存并下一步','保存中…')}</button></div></fieldset></form>`;
+ return `<form id="botForm" novalidate><fieldset ${!manage||botUI.busy?'disabled':''}><div class="bot-fields"><label>名称<input class="input" name="name" required maxlength="80" value="${escapeHTML(bot.name)}" placeholder="例如：研发进展通知"></label><label>Bot ID<input class="input" name="botId" required maxlength="191" value="${escapeHTML(bot.botId)}" autocomplete="off" placeholder="企业微信智能机器人 Bot ID"></label><label>Secret<input class="input" name="secret" type="password" value="${escapeHTML(bot._secret||'')}" maxlength="512" ${bot.id?'':'required'} autocomplete="new-password" placeholder="${bot.secretConfigured?'已配置 · 留空保留，填写则替换':'填写机器人 Secret'}"></label><div class="bot-model-field"><span>执行器与模型</span>${botModelPickerHTML()}</div><label class="bot-check"><input name="enabled" type="checkbox" role="switch" ${bot.enabled?'checked':''}>启用此 Bot</label><label class="bot-check"><input name="interactionEnabled" type="checkbox" role="switch" ${bot.interactionEnabled?'checked':''}>启用对话（自动执行）</label></div><p class="muted bot-hint">首次对话请按 Bot 提示关联平台账号；新单聊和群聊会自动建立上下文。发送 /new 或“开启新会话”开始新的对话。</p><div class="bot-save-row"><button type="submit" class="button primary">${botBusyLabel('save','','保存并下一步','保存中…')}</button></div></fieldset></form>`;
 }
 function botTargetPaneHTML(bot,manage){
  const changed=!!bot._targetChanged;
@@ -119,7 +106,7 @@ function botRecordsHTML(){
  const deliveries=botUI.recordsTab!=='interactions';
  return `<div class="bot-subbar">${botRecordTabsHTML(botUI.recordsTab)}${deliveries?'<span class="bot-subbar-hint">保留最近 100 条</span>':''}</div><div class="bot-record-pane">${deliveries?botDeliveryHTML():botInteractionPanelHTML()}</div>`;
 }
-function botDeliveryExtraHTML(item){return `${item.reportModel?`<small class="bot-source-label">CodeBuddy · ${escapeHTML(item.reportModel)}</small>`:''}${item.reportError?`<small class="bot-record-error">${escapeHTML(item.reportError)}</small>`:''}${item.lastError?`<small class="bot-record-error">${escapeHTML(item.lastError)}</small>`:''}`}
+function botDeliveryExtraHTML(item){return `${item.reportModel?`<small class="bot-source-label">${escapeHTML(item.reportModel)}</small>`:''}${item.reportError?`<small class="bot-record-error">${escapeHTML(item.reportError)}</small>`:''}${item.lastError?`<small class="bot-record-error">${escapeHTML(item.lastError)}</small>`:''}`}
 function botDeliveryActionHTML(item){const bot=botUI.items.find(b=>b.id===item.botId);return ['failed','awaiting_authorization','target_unavailable'].includes(item.status)&&item.contentSource!=='invalid'&&bot&&canManageBot(bot)?`<button type="button" class="button small hui-btn-soft" data-delivery-retry="${escapeHTML(item.id)}">${botIcon('refresh')}重试</button>`:''}
 function botDeliveryHTML(){
  if(!botUI.deliveries.length)return '<p class="bot-empty">暂无发送记录。Agent 节点触发通知后，会在这里展示发送状态。</p>';
@@ -315,19 +302,28 @@ function bindBots(host){
  host.querySelector('#botInteractionBot')?.addEventListener('change',event=>{botUI.interactionBotId=event.target.value;botUI.interaction=null;botMotion('entries');loadBotInteractions();renderBots()});
  host.querySelector('#botRefreshInteractions')?.addEventListener('click',()=>{loadBotInteractions();renderBots()});
 }
-function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;botUI.selected.name=form.elements.name.value;botUI.selected.botId=form.elements.botId.value;botUI.selected.enabled=form.elements.enabled.checked;botUI.selected.model=form.elements.model.value;botUI.selected.interactionEnabled=form.elements.interactionEnabled.checked;botUI.selected._secret=form.elements.secret.value}
+function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;botUI.selected.name=form.elements.name.value;botUI.selected.botId=form.elements.botId.value;botUI.selected.enabled=form.elements.enabled.checked;botUI.selected.model=form.elements.model?.value||botUI.selected.model||'';botUI.selected.interactionEnabled=form.elements.interactionEnabled.checked;botUI.selected._secret=form.elements.secret.value}
 function botSaveSelected(saved){const index=botUI.items.findIndex(b=>b.id===saved.id);if(index<0)botUI.items.push(saved);else botUI.items[index]=saved;botUI.selected=structuredClone(saved);botUI.error='';nodeBotCache.delete(botUI.projectId)}
 function bindBotEditor(host){
  host.querySelector('#botDelete')?.addEventListener('click',()=>botDelete(botStoredBot(botUI.selected)||botUI.selected,null));
  const form=host.querySelector('#botForm');
  if(form){
-  bindBotModelPicker(host);
+  const ready=window.AgentFlowAssistantModels?.bindFeaturePicker(form.querySelector('#botModelPicker'),{
+    model:botUI.selected?.model,keepSaved:true,readOnly:form.querySelector('fieldset').disabled
+  });
   form.oninput=event=>{event.target.removeAttribute?.('aria-invalid');captureBotDraft(host)};form.onchange=()=>captureBotDraft(host);
   form.onsubmit=async event=>{
-   event.preventDefault();if(botUI.busy)return;captureBotDraft(host);
+   event.preventDefault();
+   await ready;
+   if(!form.isConnected||botUI.busy)return;
+   captureBotDraft(host);
    const bot=botUI.selected,projectId=botUI.projectId,revision=botUI.revision,creating=!bot.id;
    const missing=['name','botId',...(creating?['secret']:[])].map(name=>form.elements[name]).filter(input=>!input.value.trim());
    if(missing.length){botShake(missing);toast(creating?'请填写名称、Bot ID 和 Secret':'请填写名称和 Bot ID','warn');return}
+   if(bot.interactionEnabled&&!botStoredBot(bot)?.interactionEnabled&&!window.AgentFlowAssistantModels?.concreteModelId(bot.model)){
+    form.querySelector('#botModelPicker [data-feature-model]')?.focus();
+    toast('请先选择模型','warn');return;
+   }
    const payload={projectId,name:bot.name,botId:bot.botId,enabled:bot.enabled,model:bot.model,interactionEnabled:bot.interactionEnabled,secret:form.elements.secret.value};
    if(bot.id&&!payload.secret&&bot.botId===botStoredBot(bot)?.botId&&bot._targetChanged)payload.targetId=bot.target?.id||'';
    if(bot._targetChanged&&(payload.secret||!bot.id)){toast('请先保存凭据，再刷新并选择目标','warn');return}

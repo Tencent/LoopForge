@@ -31,6 +31,14 @@ CREATE TABLE IF NOT EXISTS schedule_job_execution_stats (
   failed BIGINT NOT NULL DEFAULT 0,
   timed BIGINT NOT NULL DEFAULT 0,
   duration_ms BIGINT NOT NULL DEFAULT 0,
+  metered BIGINT NOT NULL DEFAULT 0,
+  tokens_total BIGINT NOT NULL DEFAULT 0,
+  tokens_input BIGINT NOT NULL DEFAULT 0,
+  tokens_output BIGINT NOT NULL DEFAULT 0,
+  tokens_cache_read BIGINT NOT NULL DEFAULT 0,
+  tokens_cache_write BIGINT NOT NULL DEFAULT 0,
+  priced BIGINT NOT NULL DEFAULT 0,
+  cost_usd DOUBLE NOT NULL DEFAULT 0,
   PRIMARY KEY (job_id, bucket_hour),
   INDEX idx_schedule_job_execution_stats_project (project_id)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

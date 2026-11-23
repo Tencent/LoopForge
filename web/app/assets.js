@@ -54,7 +54,9 @@ function renderAssetGrid(){
   const items=assetFilteredItems();
   const count=$('#assetCount');if(count)count.innerHTML=`${scope==='shared'?'共享':'本项目'}${escapeHTML(assetKindLabel())}<b>${items.length}</b>`;
   list.innerHTML=items.map(assetCardHTML).join('')||assetGridEmptyHTML();
-  list.querySelector('[data-empty-new]')?.addEventListener('click',()=>openAssetDetail('__new__'));
+  const emptyAction=list.querySelector('[data-empty-new]');
+  if($('#newAsset'))$('#newAsset').hidden=scope!=='project'||!!emptyAction;
+  emptyAction?.addEventListener('click',()=>openAssetDetail('__new__'));
   list.querySelectorAll('[data-asset-id]').forEach(card=>{
     card.onclick=()=>openAssetDetail(card.dataset.assetId);
     card.onkeydown=e=>{if(e.key==='Enter'&&e.target===card){e.preventDefault();openAssetDetail(card.dataset.assetId)}};
@@ -652,25 +654,29 @@ async function deleteSkillFile(path){
     toast('文件已删除','ok');
   }catch(err){toast(err.message,'err')}
 }
-async function openSkillFilePreview(skill, path){
+async function openSkillFilePreview(skill, path, opener){
   if(!path)return toast('无法预览：缺少文件路径','err');
   if(!skill)return toast('无法预览：未选中技能','err');
   const ref=(skill.fileRefs||[]).find(r=>r.path===path)||{};
   const url=`/api/skills/${encodeURIComponent(skill.id)}/files/${path.split('/').map(encodeURIComponent).join('/')}`;
   const host=$('#artifactPreview');
   if(!host)return toast('预览窗口不可用','err');
-  host.innerHTML='<div class="artifact-loading">正在加载文件…</div>';
-  $('#artifactModal').classList.add('open');
+  const signal=openArtifactPreview({
+    title:path.split('/').pop(),icon:skillFileIcon(path),details:[path],
+    url,action:'下载',download:true,loading:'正在加载文件…',opener,
+  });
   try{
-    const res=await fetch(url);
+    const res=await fetch(url,{signal});
     if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const blob=await res.blob();
     const ext=(path.split('.').pop()||'').toLowerCase();
     const isImg=['png','jpg','jpeg','gif','webp','svg'].includes(ext);
     const isMd=['md','markdown'].includes(ext);
     let viewMode=isMd?'preview':'source';
-    const objectURL=URL.createObjectURL(blob);
     const text=isImg?'':await blob.text();
+    if(signal.aborted)return;
+    const objectURL=isImg?URL.createObjectURL(blob):'';
+    if(objectURL)signal.addEventListener('abort',()=>URL.revokeObjectURL(objectURL),{once:true});
     const lang=skillFileLang(path);
     function renderModal(){
       const body=isImg
@@ -678,11 +684,16 @@ async function openSkillFilePreview(skill, path){
         : viewMode==='preview'
           ? `<div class="artifact-body"><div class="markdown-body">${renderMarkdown(text)}</div></div>`
           : `<div class="artifact-body"><pre class="artifact-content">${highlightCode(text, lang)}</pre></div>`;
-      host.innerHTML=`<div class="artifact-preview-head"><div class="artifact-preview-head-left"><span class="artifact-preview-icon">${skillFileIcon(path)}</span><div class="artifact-preview-titles"><h2>${escapeHTML(path.split('/').pop())}</h2><div class="artifact-preview-sub"><span>${escapeHTML(path)}</span></div></div></div><div class="artifact-preview-head-actions"><a class="button ghost small" href="${url}" download>下载</a></div></div><div class="artifact-preview-toolbar"><div class="artifact-toolbar-left">${isMd?`<div class="artifact-view-mode"><button type="button" class="artifact-mode-btn ${viewMode==='preview'?'active':''}" data-mode="preview">渲染预览</button><button type="button" class="artifact-mode-btn ${viewMode==='source'?'active':''}" data-mode="source">源码</button></div>`:''}<div class="artifact-evidence-badges"><span>SHA-256: <code>${escapeHTML((ref.sha256||'—').slice(0,16))}${(ref.sha256||'').length>16?'…':''}</code></span><span>${fmtBytes(ref.size||blob.size||0)}</span></div></div></div>${body}`;
-      host.querySelectorAll('.artifact-mode-btn').forEach(btn=>btn.onclick=()=>{viewMode=btn.dataset.mode;renderModal()});
+      host.innerHTML=`<div class="artifact-preview-toolbar"><div class="artifact-toolbar-left">${isMd?`<div class="artifact-view-mode"><button type="button" class="artifact-mode-btn ${viewMode==='preview'?'active':''}" data-mode="preview">渲染预览</button><button type="button" class="artifact-mode-btn ${viewMode==='source'?'active':''}" data-mode="source">源码</button></div>`:''}<div class="artifact-evidence-badges"><span>SHA-256: <code>${escapeHTML((ref.sha256||'—').slice(0,16))}${(ref.sha256||'').length>16?'…':''}</code></span><span>${fmtBytes(ref.size||blob.size||0)}</span></div></div></div>${body}`;
+      host.querySelectorAll('.artifact-mode-btn').forEach(btn=>btn.onclick=()=>{
+        viewMode=btn.dataset.mode;
+        renderModal();
+        host.querySelector('.artifact-mode-btn.active').focus();
+      });
     }
     renderModal();
   }catch(err){
+    if(signal.aborted)return;
     host.innerHTML=`<div class="artifact-loading">预览失败：${escapeHTML(err.message)}</div>`;
     toast(err.message,'err');
   }

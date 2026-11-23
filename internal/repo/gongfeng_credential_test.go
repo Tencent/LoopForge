@@ -13,6 +13,7 @@ import (
 )
 
 func TestGongfengOAuthSurvivesLoginAndRefreshes(t *testing.T) {
+	t.Setenv("AGENTFLOW_GONGFENG_HOST", "git.review.test")
 	st, err := OpenTest()
 	if err != nil {
 		t.Fatal(err)

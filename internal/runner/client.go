@@ -273,6 +273,7 @@ func (c *Client) OpenControl(ctx context.Context) (*websocket.Conn, error) {
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/runners/connect"
 	header := http.Header{}
+	header.Set(domain.RunnerSSHHostKeyProbeHeader, "1")
 	if session := c.sessionToken(); session != "" {
 		header.Set("Authorization", "Bearer "+session)
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"agentflow/internal/gitwork"
+	"agentflow/internal/gongfeng"
 
 	"github.com/gin-gonic/gin"
 )
@@ -22,7 +23,7 @@ import (
 // 不带令牌访问 /personal_access_tokens/self 返回 401，说明端点存在。
 // 工蜂对能用的个人访问令牌也会在这个端点返回 404，不能据此判定令牌类型。
 // 只有 /user 里的 private_token 与所填令牌相同，才是不能克隆仓库的私人令牌。
-var gongfengAPIBase = "https://git.example.com/api/v3"
+var gongfengAPIBase string
 
 var requiredGitTokenScopes = []string{"read_repository", "write_repository"}
 
@@ -118,10 +119,20 @@ func verifyGongfengToken(ctx context.Context, token string) gitTokenVerifyResult
 // 该端点对有效个人访问令牌也会返回 404。这时退回 /user：私人令牌会原样出现在
 // private_token 字段里，应拒绝；其余能通过 /user 的令牌按 master 一样视为有效。
 func gongfengTokenSelf(ctx context.Context, token string) ([]string, string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := gongfengDo(ctx, client, gongfengAPIBase+"/personal_access_tokens/self", token)
+	base := gongfengAPIBase
+	if base == "" {
+		base = gongfeng.ConfigFromEnv().APIBase
+	}
+	if base == "" {
+		return nil, "", errors.New("服务端未配置工蜂主机，无法校验工蜂令牌")
+	}
+	client := &http.Client{
+		Timeout:       10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := gongfengDo(ctx, client, base+"/personal_access_tokens/self", token)
 	if err != nil {
-		return nil, "", fmt.Errorf("无法连接工蜂（git.example.com）：%v", err)
+		return nil, "", fmt.Errorf("无法连接工蜂：%w", err)
 	}
 	defer resp.Body.Close()
 	var info struct {
@@ -133,7 +144,7 @@ func gongfengTokenSelf(ctx context.Context, token string) ([]string, string, err
 		} `json:"user"`
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		login, err := gongfengTokenUser(ctx, client, token)
+		login, err := gongfengTokenUser(ctx, client, base, token)
 		if err != nil {
 			return nil, "", err
 		}
@@ -154,10 +165,10 @@ func gongfengTokenSelf(ctx context.Context, token string) ([]string, string, err
 	return info.Scopes, info.User.Username, nil
 }
 
-func gongfengTokenUser(ctx context.Context, client *http.Client, token string) (string, error) {
-	resp, err := gongfengDo(ctx, client, gongfengAPIBase+"/user", token)
+func gongfengTokenUser(ctx context.Context, client *http.Client, base, token string) (string, error) {
+	resp, err := gongfengDo(ctx, client, base+"/user", token)
 	if err != nil {
-		return "", fmt.Errorf("无法连接工蜂（git.example.com）：%v", err)
+		return "", fmt.Errorf("无法连接工蜂：%w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
