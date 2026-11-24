@@ -517,13 +517,20 @@ func actorLabel(user *auth.User) (string, int64) {
 	}
 }
 
+// recordIssueOperation appends one audit entry. Actor is always the platform
+// account whose permissions were used; a call made for a chat turn also
+// records the IM sender that asked for it (see botChatActor).
 func (h issuesHandlers) recordIssueOperation(c *gin.Context, issue *domain.Issue, action, detail string) {
 	if issue == nil {
 		return
 	}
 	user, _ := h.requestUser(c.Request, true)
 	actor, id := actorLabel(user)
-	issue.AppendOperation(domain.IssueOperation{Actor: actor, ActorUserID: id, Action: action, Detail: detail})
+	op := domain.IssueOperation{Actor: actor, ActorUserID: id, Action: action, Detail: detail}
+	if chat, ok := botChatActorFrom(c.Request.Context()); ok {
+		op.ActorChannel, op.ActorSender = chat.Channel, chat.SenderID
+	}
+	issue.AppendOperation(op)
 }
 
 func (h issuesHandlers) appendStoredOperation(c *gin.Context, issueID, action, detail string) (domain.Issue, error) {

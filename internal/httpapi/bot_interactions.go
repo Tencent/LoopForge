@@ -94,6 +94,9 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	if err != nil {
 		return "绑定的平台账号不可用或已失去项目权限，请在平台检查配置。", nil
 	}
+	// Writes this turn makes run as user; the audit trail also names the IM
+	// sender that asked for them.
+	ctx = withBotChatActor(ctx, bot.ChannelKind(), item.SenderID)
 	model, err := resolveFeatureModel(user, bot.Model)
 	if err != nil {
 		if errors.Is(err, errFeatureModel) {

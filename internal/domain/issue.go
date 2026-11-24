@@ -96,8 +96,15 @@ type IssueOperation struct {
 	At          time.Time `json:"at"`
 	Actor       string    `json:"actor,omitempty"`
 	ActorUserID int64     `json:"actorUserId,omitempty"`
-	Action      string    `json:"action"`
-	Detail      string    `json:"detail,omitempty"`
+	// ActorChannel and ActorSender name the IM identity that asked for the
+	// action when it came from a chat Bot: the channel kind (wecom, feishu,
+	// dingtalk) and the sender ID in that channel. Actor stays the platform
+	// account the sender is bound to and the one whose permissions were used.
+	// Both are empty for actions taken on the platform itself.
+	ActorChannel string `json:"actorChannel,omitempty"`
+	ActorSender  string `json:"actorSender,omitempty"`
+	Action       string `json:"action"`
+	Detail       string `json:"detail,omitempty"`
 }
 
 // AppendOperation records an action and keeps the newest 200 entries.
