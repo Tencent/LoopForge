@@ -41,8 +41,12 @@ func applyMessageUsage(run *domain.Run, nr *domain.NodeRun, sessionID, parentID 
 		nr.UsagePending = map[string]domain.TokenUsage{}
 	}
 	key := messageUsageKey(sessionID, parentID)
-	delta := subUsage(snap, nr.UsageStreamCursors[key])
-	nr.UsageStreamCursors[key] = snap
+	cursor := nr.UsageStreamCursors[key]
+	delta := subUsage(snap, cursor)
+	// Later message deltas may omit input/cache fields from message_start.
+	// Retain each token counter's high-water mark until the next message.
+	addUsage(&cursor, delta)
+	nr.UsageStreamCursors[key] = cursor
 	pending := nr.UsagePending[sessionID]
 	addUsage(&pending, delta)
 	nr.UsagePending[sessionID] = pending

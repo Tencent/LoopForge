@@ -16,9 +16,17 @@ func TestMessageUsageSurvivesInterruptedSOP(t *testing.T) {
 		for _, tc := range []struct {
 			name, streamSession, final string
 			wantInput, wantOutput      int64
+			startUsage, onlyStart      bool
+			repeatFields               bool
+			wantRead, wantWrite        int64
 			wantCost                   float64
 		}{
 			{name: "interrupted before result", streamSession: "s1", wantOutput: 13},
+			{name: "interrupted after message start", streamSession: "s1", startUsage: true, onlyStart: true, wantInput: 120, wantRead: 512, wantWrite: 32},
+			{name: "interrupted after output delta", streamSession: "s1", startUsage: true, wantInput: 120, wantOutput: 13, wantRead: 512, wantWrite: 32},
+			{name: "partial deltas preserve message start usage", streamSession: "s1", startUsage: true, repeatFields: true, wantInput: 120, wantOutput: 13, wantRead: 512, wantWrite: 32},
+			{name: "missing final usage preserves message start", streamSession: "s1", startUsage: true, final: `{"type":"result","session_id":"s1","is_error":true}`, wantInput: 120, wantOutput: 13, wantRead: 512, wantWrite: 32},
+			{name: "final settles message start usage", streamSession: "s1", startUsage: true, final: `{"type":"result","session_id":"s1","usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":256,"cache_creation_input_tokens":16}}`, wantInput: 100, wantOutput: 10, wantRead: 256, wantWrite: 16},
 			{name: "result has no token usage", streamSession: "s1", final: `{"type":"result","session_id":"s1","is_error":true}`, wantOutput: 13},
 			{name: "final replaces provisional usage", streamSession: "s1", final: `{"type":"result","session_id":"s1","usage":{"input_tokens":100,"output_tokens":10}}`, wantInput: 100, wantOutput: 10},
 			{name: "explicit final zero", streamSession: "s1", final: `{"type":"result","session_id":"s1","usage":{}}`},
@@ -37,9 +45,23 @@ func TestMessageUsageSurvivesInterruptedSOP(t *testing.T) {
 					event.ID = ""
 					e.applyObservation(&run, "work", event)
 				})
-				frame, _ := json.Marshal(map[string]any{"type": "stream_event", "session_id": tc.streamSession, "event": map[string]any{"type": "message_delta", "usage": map[string]int{"output_tokens": 13}}})
-				for range 2 {
+				startUsage := map[string]int{"input_tokens": 120, "cache_read_input_tokens": 512, "cache_creation_input_tokens": 32}
+				if tc.startUsage {
+					frame, _ := json.Marshal(map[string]any{"type": "stream_event", "session_id": tc.streamSession, "event": map[string]any{"type": "message_start", "message": map[string]any{"usage": startUsage}}})
 					observer.Handle(domain.TelemetryEvent{Name: "process.stdout", Message: string(frame)})
+				}
+				frame, _ := json.Marshal(map[string]any{"type": "stream_event", "session_id": tc.streamSession, "event": map[string]any{"type": "message_delta", "usage": map[string]int{"output_tokens": 13}}})
+				if !tc.onlyStart {
+					for range 2 {
+						observer.Handle(domain.TelemetryEvent{Name: "process.stdout", Message: string(frame)})
+					}
+					if tc.repeatFields {
+						// Repeated input/cache fields after output-only deltas must
+						// not rebill the start or erase the observed output cursor.
+						partial, _ := json.Marshal(map[string]any{"type": "stream_event", "session_id": tc.streamSession, "event": map[string]any{"type": "message_delta", "usage": startUsage}})
+						observer.Handle(domain.TelemetryEvent{Name: "process.stdout", Message: string(partial)})
+						observer.Handle(domain.TelemetryEvent{Name: "process.stdout", Message: string(frame)})
+					}
 				}
 				if tc.final != "" {
 					observer.Handle(domain.TelemetryEvent{Name: "process.stdout", Message: tc.final})
@@ -54,7 +76,7 @@ func TestMessageUsageSurvivesInterruptedSOP(t *testing.T) {
 					t.Fatal("failed run was not stored")
 				}
 				for _, usage := range []domain.TokenUsage{stored.Usage, stored.Nodes["work"].Usage} {
-					if usage.InputTokens != tc.wantInput || usage.OutputTokens != tc.wantOutput || usage.TotalTokens != tc.wantInput+tc.wantOutput || usage.CostUSD != tc.wantCost {
+					if usage.InputTokens != tc.wantInput || usage.OutputTokens != tc.wantOutput || usage.CacheReadTokens != tc.wantRead || usage.CacheWriteTokens != tc.wantWrite || usage.TotalTokens != tc.wantInput+tc.wantOutput || usage.CostUSD != tc.wantCost {
 						t.Fatalf("observed usage was lost or counted twice: %+v", usage)
 					}
 				}

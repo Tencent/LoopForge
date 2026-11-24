@@ -302,6 +302,7 @@ func (a *protocolAdapter) handleAnthropicEvent(event map[string]any, sessionID, 
 	case "message_start":
 		message, _ := event["message"].(map[string]any)
 		a.emit(domain.TelemetryEvent{Category: "model", Name: "model.request", Phase: "start", Message: "model generation started", Model: stringValue(message["model"]), SessionID: sessionID, ParentID: parentID})
+		a.emitAnthropicUsage(message["usage"], sessionID, parentID)
 	case "content_block_start":
 		block, _ := event["content_block"].(map[string]any)
 		if stringValue(block["type"]) == "tool_use" {
@@ -334,9 +335,13 @@ func (a *protocolAdapter) handleAnthropicEvent(event map[string]any, sessionID, 
 		}
 		a.emit(domain.TelemetryEvent{Category: "model", Name: "model.request", Phase: "finish", Message: "model generation finished", SessionID: sessionID, ParentID: parentID})
 	case "message_delta":
-		if usage := tokenUsage(event["usage"]); usage.InputTokens+usage.OutputTokens+usage.CacheReadTokens+usage.CacheWriteTokens > 0 {
-			a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.update", Phase: "progress", SessionID: sessionID, ParentID: parentID, Usage: &usage})
-		}
+		a.emitAnthropicUsage(event["usage"], sessionID, parentID)
+	}
+}
+
+func (a *protocolAdapter) emitAnthropicUsage(value any, sessionID, parentID string) {
+	if usage := tokenUsage(value); usage.InputTokens+usage.OutputTokens+usage.CacheReadTokens+usage.CacheWriteTokens+usage.ReasoningTokens > 0 {
+		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.update", Phase: "progress", SessionID: sessionID, ParentID: parentID, Usage: &usage})
 	}
 }
 
