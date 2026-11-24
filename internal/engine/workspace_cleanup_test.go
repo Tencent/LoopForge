@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -202,5 +203,111 @@ func TestCompletedConversationSavesBeforeReclamationEvenWhenNotArchived(t *testi
 	got, _ = s.RunState(r.ID)
 	if got.WorkspaceCleanedAt.IsZero() {
 		t.Fatal("archived workspace was never reclaimed")
+	}
+}
+
+func TestCommittedCleanupClaimReclaimsCheckoutAfterRestart(t *testing.T) {
+	t.Parallel()
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	root := t.TempDir()
+	run := domain.Run{ID: "crash-window-run", Status: "succeeded", Nodes: map[string]*domain.NodeRun{}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	crashed := New(store, runtime.NewManager(root))
+	checkout := crashed.RunWorkspace(run.ID)
+	orphan := crashed.RunWorkspace("unregistered-orphan")
+	for _, dir := range []string{checkout, orphan} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "big.bin"), make([]byte, 1<<20), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The claim commits, then the process stops before DestroyRun.
+	if claimed, err := store.ClaimRunWorkspaceCleanup(run.ID, time.Now().UTC()); err != nil || !claimed {
+		t.Fatalf("claim cleanup: %v %v", claimed, err)
+	}
+
+	restarted := New(store, runtime.NewManager(root))
+	for range 3 {
+		restarted.reconcileTerminalWorkspaceCleanup()
+		restarted.reclaimSandboxes()
+	}
+	if _, err := os.Stat(checkout); !os.IsNotExist(err) {
+		t.Fatalf("checkout_exists=%v after restart sweeps", err == nil)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("unregistered orphan remained: %v", err)
+	}
+}
+
+func TestCleanedWorkspaceLeftoverKeepsCheckpointLifecycle(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	future, past := now.Add(time.Hour), now.Add(-time.Hour)
+	for _, scenario := range []struct {
+		name       string
+		status     string
+		cleaned    bool
+		checkpoint *repo.WorkspaceCheckpoint
+		lock       bool
+		removed    bool
+	}{
+		{name: "legacy claim without retry", status: "succeeded", cleaned: true, removed: true,
+			checkpoint: &repo.WorkspaceCheckpoint{SavedAt: &past, SHA256: "saved", LeaseToken: "old", LeaseUntil: &past}},
+		{name: "uncleaned failed run", status: "failed"},
+		{name: "cleaned run executing again", status: "running", cleaned: true},
+		{name: "pending cleanup retry", status: "succeeded", cleaned: true,
+			checkpoint: &repo.WorkspaceCheckpoint{SavedAt: &past, SHA256: "saved", CleanupRetryAt: &future}},
+		{name: "active restore lease", status: "succeeded", cleaned: true,
+			checkpoint: &repo.WorkspaceCheckpoint{SavedAt: &past, SHA256: "saved", LeaseToken: "restore", LeaseUntil: &future, RestoreStatus: "restoring"}},
+		{name: "restore holding checkpoint lock", status: "succeeded", cleaned: true, lock: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(store.Close)
+			e := New(store, runtime.NewManager(t.TempDir()))
+			run := domain.Run{ID: "leftover-run", Status: scenario.status, Nodes: map[string]*domain.NodeRun{}}
+			if scenario.cleaned {
+				run.WorkspaceCleanedAt = past
+			}
+			if err := store.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			if scenario.checkpoint != nil {
+				row := *scenario.checkpoint
+				row.RunID, row.LastUsedAt = run.ID, past
+				if err := store.DB.Create(&row).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			checkout := e.RunWorkspace(run.ID)
+			if err := os.MkdirAll(checkout, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if scenario.lock {
+				release, err := e.tryLockCheckpointWorkspace(run.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer release()
+			}
+			e.reconcileTerminalWorkspaceCleanup()
+			e.reclaimSandboxes()
+			_, err = os.Stat(checkout)
+			if removed := os.IsNotExist(err); removed != scenario.removed {
+				t.Fatalf("checkout removed=%v, want %v (%v)", removed, scenario.removed, err)
+			}
+		})
 	}
 }

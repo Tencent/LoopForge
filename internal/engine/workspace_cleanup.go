@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -290,8 +291,11 @@ func (e *Engine) reconcileClaimedWorkspaceCleanup(run domain.Run, runnerID strin
 		}
 	}
 	checkpoint, ok := e.repo.WorkspaceCheckpoint(run.ID)
-	if !ok || checkpoint.CleanupRetryAt == nil || checkpoint.CleanupDeferred(now) ||
-		checkpoint.LeaseUntil != nil && !now.After(*checkpoint.LeaseUntil) {
+	if !ok || checkpoint.CleanupRetryAt == nil {
+		e.reclaimCleanedWorkspaceLeftover(run)
+		return
+	}
+	if checkpoint.CleanupDeferred(now) || checkpoint.LeaseUntil != nil && !now.After(*checkpoint.LeaseUntil) {
 		return
 	}
 
@@ -316,6 +320,43 @@ func (e *Engine) reconcileClaimedWorkspaceCleanup(run domain.Run, runnerID strin
 	}
 	if err := e.repo.ResolveCheckpointWorkspaceCleanup(run, *checkpoint.CleanupRetryAt, now, observed); err != nil {
 		log.Printf("recheck workspace cleanup %s: %v", run.ID, err)
+	}
+}
+
+// reclaimCleanedWorkspaceLeftover removes a checkout that survived a committed
+// cleanup claim, e.g. when the process stopped before DestroyRun. The orphan
+// sweep keeps registered runs, so this is the only path that frees it.
+func (e *Engine) reclaimCleanedWorkspaceLeftover(expected domain.Run) {
+	root := e.sandboxes.RunWorkspace(expected.ID)
+	if root == "" || e.foreignWorkspaceBind(expected) {
+		return
+	}
+	if _, err := os.Lstat(root); err != nil {
+		return
+	}
+	// A restore holds this lock until its binding is published.
+	release, err := e.tryLockCheckpointWorkspace(expected.ID)
+	if err != nil {
+		return
+	}
+	defer release()
+	run, ok := e.repo.RunState(expected.ID)
+	if !ok || run.WorkspaceCleanedAt.IsZero() || !run.WorkspaceCleanedAt.Equal(expected.WorkspaceCleanedAt) ||
+		run.Revision != expected.Revision || run.WorkspaceHost != expected.WorkspaceHost || run.WorkspaceRoot != expected.WorkspaceRoot ||
+		run.Status == "running" || run.Status == "queued" || run.HasActiveNode() || e.workspaceTerminals.HasRunScope(run.ID) ||
+		e.WorkspaceActive != nil && e.WorkspaceActive(run) || e.conversationGenerationRunning(run) {
+		return
+	}
+	if checkpoint, ok := e.repo.WorkspaceCheckpoint(run.ID); ok &&
+		(checkpoint.CleanupRetryAt != nil || checkpoint.LeaseUntil != nil && !checkpoint.LeaseUntil.Before(time.Now())) {
+		return
+	}
+	if err := e.releaseRunEnvironment(run.ID, true); err != nil {
+		log.Printf("reclaim leftover workspace %s: %v", run.ID, err)
+		return
+	}
+	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
+		log.Printf("reclaimed leftover workspace of cleaned run %s", run.ID)
 	}
 }
 
