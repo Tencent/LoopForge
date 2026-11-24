@@ -19,6 +19,7 @@ type BotChatOrigin struct {
 	ChatType       string    `json:"chatType"`
 	ChatID         string    `json:"-"`
 	SenderID       string    `json:"-"`
+	UserID         int64     `json:"-"`
 	IssueID        string    `json:"issueId,omitempty"`
 	RunID          string    `json:"runId,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`

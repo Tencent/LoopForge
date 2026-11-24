@@ -423,6 +423,24 @@ func TestNotificationCardTaskBranches(t *testing.T) {
 	if got, err := svc.NotificationCardTask(bot, interaction, conv); err != nil || got.ID != delivery.ID {
 		t.Fatalf("card task = %#v, %v", got, err)
 	}
+	delivery.DeliveryGeneration++
+	if err := st.DB.Save(&delivery).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.NotificationCardTask(bot, interaction, conv); err != nil {
+		t.Fatalf("previously sent legacy card = %v", err)
+	}
+	newCard := domain.BotInteraction{ID: notificationInteractionID(bot.ID, "notification", delivery), BotID: bot.ID, CardTaskID: "task-2", Status: domain.BotReplied}
+	if err := st.DB.Create(&newCard).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.NotificationCardTask(bot, interaction, conv); !errors.Is(err, ErrCardExpired) {
+		t.Fatalf("superseded card = %v", err)
+	}
+	interaction.CardTaskID = newCard.CardTaskID
+	if _, err := svc.NotificationCardTask(bot, interaction, conv); err != nil {
+		t.Fatalf("resent card = %v", err)
+	}
 	interaction.CardTaskID = "wrong"
 	if _, err := svc.NotificationCardTask(bot, interaction, conv); !errors.Is(err, ErrCardExpired) {
 		t.Fatalf("wrong task = %v", err)

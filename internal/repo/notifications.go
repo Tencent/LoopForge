@@ -656,6 +656,9 @@ func (r *NotificationsRepo) enqueueOriginNotification(tx *gorm.DB, run domain.Ru
 		}
 	}
 	item := domain.NotificationDelivery{ProjectID: projectID, BotID: bot.ID, RunID: run.ID, EventType: trigger, SourceType: "run", SourceID: run.ID, SourceName: run.WorkflowSnapshot.Name, Origin: domain.NotificationOriginChat, TargetID: target, TargetType: targetType, TargetName: targetName, WaitingPolicy: "actionable"}
+	if targetType == "single" {
+		item.OriginUserID = origin.UserID
+	}
 	template, question := originTemplates[kind], ""
 	if event.NodeID != "" {
 		item.NodeID, item.SourceName = event.NodeID, node.Name

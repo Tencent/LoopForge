@@ -878,7 +878,7 @@ func (h *assistantHandlers) botClarifySave(ctx context.Context, bot domain.Notif
 		lines = append(lines, writeBack)
 	}
 	if start {
-		origin := domain.BotChatOrigin{ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: sess.ConversationID, ChatType: sess.ChatType, ChatID: sess.ChatID, SenderID: sess.StarterSender}
+		origin := domain.BotChatOrigin{ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: sess.ConversationID, ChatType: sess.ChatType, ChatID: sess.ChatID, SenderID: sess.StarterSender, UserID: sess.StarterUserID}
 		h.recordBotOrigin(origin, true, saved.ID)
 		runID, err := h.dispatchBotIssue(withBotStartOrigin(ctx, origin), user, bot.ProjectID, saved.ID)
 		if err != nil {

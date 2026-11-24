@@ -223,7 +223,7 @@ func (s *Service) clarifySaver(bot domain.NotificationBot, sess domain.BotClarif
 // result. A retry of the delivery re-sends a failed message.
 func (s *Service) SendChatPost(ctx context.Context, bot domain.NotificationBot, delivery domain.NotificationDelivery, text string) error {
 	text = domain.NotificationText(text, 16000)
-	item := domain.BotInteraction{ID: repo.BotMessageID(bot.ID, "chat-post:"+delivery.ID), BotID: bot.ID, ProjectID: bot.ProjectID, SenderID: delivery.TargetID, Action: ActionChatPost, DeliveryID: delivery.ID, Content: text, ContentLength: len([]rune(text)), MsgType: "text", SendRoute: repo.BotSendRoutePushChat}
+	item := domain.BotInteraction{ID: notificationInteractionID(bot.ID, ActionChatPost, delivery), BotID: bot.ID, ProjectID: bot.ProjectID, SenderID: delivery.TargetID, Action: ActionChatPost, DeliveryID: delivery.ID, Content: text, ContentLength: len([]rune(text)), MsgType: "text", SendRoute: repo.BotSendRoutePushChat}
 	if _, err := s.Store.EnqueueBotInteraction(item, delivery.TargetType, delivery.TargetID); err != nil {
 		return err
 	}

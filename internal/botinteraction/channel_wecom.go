@@ -2,7 +2,6 @@ package botinteraction
 
 import (
 	"agentflow/internal/domain"
-	"agentflow/internal/repo"
 	"context"
 	"encoding/json"
 	"errors"
@@ -238,8 +237,8 @@ func (s *Service) wecomFrame(ctx context.Context, bot domain.NotificationBot, f 
 	// task to its frozen recipient; group callbacks still require matching chatid.
 	if ev.Action != "" && ev.ChatType == "single" {
 		delivery, e := s.Store.NotificationDelivery(ev.DeliveryID)
-		card, cardErr := s.Store.BotInteraction(repo.BotMessageID(bot.ID, "notification:"+ev.DeliveryID))
-		if e == nil && cardErr == nil && delivery.BotID == bot.ID && delivery.ProjectID == bot.ProjectID && delivery.TargetType == "single" && card.CardTaskID == ev.CardTaskID {
+		if e == nil && delivery.BotID == bot.ID && delivery.ProjectID == bot.ProjectID && delivery.TargetType == "single" &&
+			s.notificationCardTaskMatches(bot.ID, delivery, ev.CardTaskID) {
 			ev.ChatID = delivery.TargetID
 		}
 	}

@@ -422,16 +422,28 @@ func (r *BotInteractionsRepo) FinishBotSend(id string, lease BotLease, policy Bo
 			return ErrBotLeaseLost
 		}
 		updates := map[string]any{"send_lease_until_us": 0}
+		// SendAttempts includes the current attempt. The remaining earlier
+		// attempts were either counted as undelivered or may have gone out.
+		priorSendUnknown := item.SendAttempts > item.UndeliveredRetries+1
 		switch out.Outcome {
 		case "delivered":
 			updates["status"], updates["platform_message_id"], updates["receipt_source"] = domain.BotReplied, out.PlatformMessageID, "platform"
 			updates["terminal_reason"], updates["reply_route"] = "", clearedRoute(item.ReplyRoute)
 		case "rejected":
-			updates["status"], updates["terminal_reason"], updates["last_error"] = domain.BotReplyFailed, "rejected", truncateBotDetail(out.Detail)
+			if priorSendUnknown {
+				return r.resolveUnknown(tx, &item, now, BotSendPolicy{}, out.Detail+"，此前发送结果待核对")
+			}
+			reason := "rejected"
+			if out.Code == domain.BotTerminalTargetUnavailable || out.Code == domain.BotTerminalNotificationExpired {
+				reason = out.Code
+			}
+			updates["status"], updates["terminal_reason"], updates["last_error"] = domain.BotReplyFailed, reason, truncateBotDetail(out.Detail)
 		case "not_delivered":
 			if item.UndeliveredRetries < BotUndeliveredMaxRetries {
 				updates["status"], updates["next_send_at_us"] = domain.BotReady, now+botBackoffUS(item.UndeliveredRetries)
 				updates["undelivered_retries"], updates["last_error"] = item.UndeliveredRetries+1, truncateBotDetail(out.Detail)
+			} else if priorSendUnknown {
+				return r.resolveUnknown(tx, &item, now, BotSendPolicy{}, out.Detail+"，此前发送结果待核对")
 			} else {
 				updates["status"], updates["terminal_reason"], updates["last_error"] = domain.BotReplyFailed, "undelivered_exhausted", truncateBotDetail("多次发送未成功："+out.Detail)
 			}

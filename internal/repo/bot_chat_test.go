@@ -257,7 +257,7 @@ func TestWeComRunOriginTargetsTheConversation(t *testing.T) {
 	if err := s.SaveNotificationBot(bot, "not-a-real-secret"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordBotChatOrigin(domain.BotChatOrigin{ConfigID: bot.ID, ProjectID: "p-w", ConversationID: "conv-w", ChatType: "single", ChatID: "zhangsan", SenderID: "zhangsan", RunID: "run-w"}); err != nil {
+	if err := s.RecordBotChatOrigin(domain.BotChatOrigin{ConfigID: bot.ID, ProjectID: "p-w", ConversationID: "conv-w", ChatType: "single", ChatID: "zhangsan", SenderID: "zhangsan", UserID: 42, RunID: "run-w"}); err != nil {
 		t.Fatal(err)
 	}
 	run := domain.Run{ID: "run-w", Status: "succeeded", ExecutionContext: domain.TelemetryContext{ProjectID: "p-w"}, WorkflowSnapshot: domain.WorkflowDefinition{Name: "交付"}, Events: []domain.RunEvent{{ID: "w1", Type: "run.succeeded", Timestamp: time.Now().UTC()}}}
@@ -265,7 +265,7 @@ func TestWeComRunOriginTargetsTheConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, _ := s.NotificationDeliveries("p-w")
-	if len(items) != 1 || items[0].Origin != domain.NotificationOriginChat || items[0].TargetID != "zhangsan" || items[0].TargetType != "single" {
+	if len(items) != 1 || items[0].Origin != domain.NotificationOriginChat || items[0].TargetID != "zhangsan" || items[0].TargetType != "single" || items[0].OriginUserID != 42 {
 		t.Fatalf("deliveries = %+v", items)
 	}
 }

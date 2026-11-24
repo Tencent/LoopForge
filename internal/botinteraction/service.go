@@ -295,19 +295,10 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 			return err
 		}
 		if item.Action == "notification" {
-			if err = s.processCard(ctx, item, lease, conn, conv, policy); err != nil {
+			if err = s.processCard(ctx, current, item, lease, conn, conv, policy); err != nil {
 				return err
 			}
 			continue
-		}
-		if item.Action == "notification_details" {
-			delivery, lookupErr := s.Store.NotificationDelivery(item.DeliveryID)
-			if lookupErr != nil || len(ActionsForDelivery(s.Store, delivery)) == 0 {
-				if err = s.Store.ExpireBotCard(item.ID); err != nil {
-					return err
-				}
-				continue
-			}
 		}
 		if item.Status == domain.BotRunning {
 			if err = s.runTurn(ctx, current, item, lease, conn, conv); err != nil {
@@ -326,6 +317,11 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 			}
 		}
 		err = s.deliver(ctx, item.ID, lease, policy, func(ctx context.Context, sending domain.BotInteraction) SendResult {
+			if sending.Action == ActionChatPost || sending.Action == "notification_details" {
+				if rejection := s.notificationSendRejection(current, sending, conv); rejection != nil {
+					return *rejection
+				}
+			}
 			var card *PushCard
 			if current.ChannelKind() == domain.BotChannelFeishu {
 				if sending.Action == "" {
@@ -450,7 +446,7 @@ func (s *Service) runTurn(ctx context.Context, bot domain.NotificationBot, item 
 
 // processCard sends a WeCom notification card through the delivery state
 // machine, or expires it when the node no longer waits.
-func (s *Service) processCard(ctx context.Context, item *domain.BotInteraction, lease repo.BotLease, conn Conn, conv domain.BotConversation, policy repo.BotSendPolicy) error {
+func (s *Service) processCard(ctx context.Context, bot domain.NotificationBot, item *domain.BotInteraction, lease repo.BotLease, conn Conn, conv domain.BotConversation, policy repo.BotSendPolicy) error {
 	delivery, lookupErr := s.Store.NotificationDelivery(item.DeliveryID)
 	if lookupErr != nil || len(ActionsForDelivery(s.Store, delivery)) == 0 {
 		return s.Store.ExpireBotCard(item.ID)
@@ -475,7 +471,10 @@ func (s *Service) processCard(ctx context.Context, item *domain.BotInteraction, 
 	if err := s.Store.SetBotCardTaskID(item.ID, lease, taskID); err != nil {
 		return err
 	}
-	return s.deliver(ctx, item.ID, lease, policy, func(ctx context.Context, _ domain.BotInteraction) SendResult {
+	return s.deliver(ctx, item.ID, lease, policy, func(ctx context.Context, sending domain.BotInteraction) SendResult {
+		if rejection := s.notificationSendRejection(bot, sending, conv); rejection != nil {
+			return *rejection
+		}
 		return cards.sendCard(ctx, conv.ChatID, card)
 	})
 }

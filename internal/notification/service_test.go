@@ -366,9 +366,16 @@ func TestWeComOriginDeliveryUsesTheLiveConnection(t *testing.T) {
 	if got, _ = svc.Store.NotificationDelivery(item.ID); got.Status != "sent" || provider.sent != 0 {
 		t.Fatalf("with chat = %+v sent=%d", got, provider.sent)
 	}
-	post, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "chat-post:"+item.ID))
+	rows, err := svc.Store.BotInteractionRecords(bot.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var post domain.BotInteraction
+	for _, row := range rows {
+		if row.DeliveryID == item.ID && row.Action == botinteraction.ActionChatPost {
+			post = row
+			break
+		}
 	}
 	conv, _ := svc.Store.BotConversation(post.ConversationID)
 	if post.Action != botinteraction.ActionChatPost || post.DeliveryID != item.ID || post.SendRoute != repo.BotSendRoutePushChat || conv.ChatType != "group" || conv.ChatID != "wr_group" || !strings.Contains(post.Content, "SOP 已完成") {
@@ -436,6 +443,16 @@ func TestWeComOriginDeliveryFollowsTheSendResult(t *testing.T) {
 	}
 	if got := process(domain.BotReplyUnknown); got.Status != "send_unknown" {
 		t.Fatalf("unconfirmed send = %+v", got)
+	}
+	if err := svc.Store.RetryNotification(item.ProjectID, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := process(domain.BotReplied); got.Status != "sent" || got.DeliveryGeneration != 1 {
+		t.Fatalf("manual resend = %+v", got)
+	}
+	original, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "chat-post:"+item.ID))
+	if err != nil || original.Status != domain.BotReplyUnknown {
+		t.Fatalf("original interaction = %+v, %v", original, err)
 	}
 }
 

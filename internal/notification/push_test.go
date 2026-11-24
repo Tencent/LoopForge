@@ -251,6 +251,22 @@ func TestPushOutcomesFollowChannelIdempotency(t *testing.T) {
 			t.Fatalf("past the window = %+v pushes %d", item, fake.count()-trials)
 		}
 	})
+	t.Run("feishu rejected retry keeps unknown for review", func(t *testing.T) {
+		svc, fake, bot := pushFixture(t, domain.BotChannelFeishu)
+		bot = verifyTarget(t, svc, bot)
+		putPushRun(t, svc, bot, "run.succeeded")
+		fake.results = []botinteraction.SendResult{{Outcome: botinteraction.Unknown}, {Outcome: botinteraction.Rejected}}
+		drain(t, svc)
+		item := deliveries(t, svc)["succeeded"]
+		forceDue(t, svc, item.ID)
+		drain(t, svc)
+		if got := deliveries(t, svc)["succeeded"]; got.Status != "send_unknown" || got.SendStartedAtUS != item.SendStartedAtUS {
+			t.Fatalf("after rejected retry = %+v", got)
+		}
+		if err := svc.Store.ConfirmNotificationReceived(item.ProjectID, item.ID, 42); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("dingtalk unknown stops for review and can be confirmed", func(t *testing.T) {
 		svc, fake, bot := pushFixture(t, domain.BotChannelDingTalk)
 		bot = verifyTarget(t, svc, bot)

@@ -34,6 +34,12 @@ const (
 	BotCancelled    = "cancelled"
 )
 
+// Terminal reasons for queued notifications refused before the platform call.
+const (
+	BotTerminalTargetUnavailable   = "target_unavailable"
+	BotTerminalNotificationExpired = "notification_expired"
+)
+
 type BotConversation struct {
 	ID        string    `json:"id" gorm:"primaryKey;size:64"`
 	BotID     string    `json:"botId" gorm:"index;size:191"`

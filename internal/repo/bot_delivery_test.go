@@ -219,6 +219,21 @@ func TestBotDeliveryIdempotentRetryInsideWindowKeepsKey(t *testing.T) {
 	}
 }
 
+func TestFeishuReplyRejectedRetryKeepsUnknown(t *testing.T) {
+	f := newDeliveryFixture(t, domain.BotChannelFeishu)
+	item := f.ready("first reply")
+	if got := f.send(item.ID, "unknown"); got.Status != domain.BotReady {
+		t.Fatalf("first send = %+v", got)
+	}
+	f.advance(10 * time.Second)
+	if got := f.send(item.ID, "rejected"); got.Status != domain.BotReplyUnknown {
+		t.Fatalf("rejected retry = %+v", got)
+	}
+	if _, err := f.s.ConfirmBotInteraction(item.ID, 42, "confirm"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBotDeliveryCrashDuringSendRecoversAfterSendLease(t *testing.T) {
 	f := newDeliveryFixture(t, domain.BotChannelWeCom)
 	item := f.ready("c")

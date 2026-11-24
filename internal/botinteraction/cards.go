@@ -111,7 +111,7 @@ func (s *Service) QueueNotificationCard(ctx context.Context, bot domain.Notifica
 	}
 	card := notificationCard(run, item, actions, content)
 	if detail := notificationCardDetails(run, item, content, detailsURL...); detail != "" {
-		_, err := s.Store.EnqueueBotInteraction(domain.BotInteraction{ID: repo.BotMessageID(bot.ID, "notification-details:"+item.ID), BotID: bot.ID, Action: "notification_details", DeliveryID: item.ID, Content: detail}, item.TargetType, item.TargetID)
+		_, err := s.Store.EnqueueBotInteraction(domain.BotInteraction{ID: notificationInteractionID(bot.ID, "notification_details", item), BotID: bot.ID, Action: "notification_details", DeliveryID: item.ID, Content: detail}, item.TargetType, item.TargetID)
 		if err != nil {
 			return err
 		}
@@ -120,7 +120,7 @@ func (s *Service) QueueNotificationCard(ctx context.Context, bot domain.Notifica
 		card["jump_list"] = []map[string]any{{"type": 1, "title": "查看详情", "url": detailsURL[0]}}
 	}
 	data, _ := json.Marshal(card)
-	id := repo.BotMessageID(bot.ID, "notification:"+item.ID)
+	id := notificationInteractionID(bot.ID, "notification", item)
 	_, err := s.Store.EnqueueBotInteraction(domain.BotInteraction{ID: id, BotID: bot.ID, Action: "notification", DeliveryID: item.ID, Content: content, Quote: string(data)}, item.TargetType, item.TargetID)
 	if err != nil {
 		return err
@@ -146,6 +146,12 @@ func (s *Service) waitSent(ctx context.Context, id, what string) (domain.BotInte
 		}
 		switch record.Status {
 		case domain.BotReplyFailed:
+			switch record.TerminalReason {
+			case domain.BotTerminalTargetUnavailable:
+				return record, ErrWeComOriginUnavailable
+			case domain.BotTerminalNotificationExpired:
+				return record, ErrCardExpired
+			}
 			return record, errors.New("企业微信" + what + "发送失败，请检查会话和 Bot 授权")
 		case domain.BotReplyUnknown:
 			return record, ErrCardDeliveryUnknown
@@ -166,11 +172,8 @@ func (s *Service) NotificationCardTask(bot domain.NotificationBot, item domain.B
 	if err != nil || delivery.BotID != bot.ID || delivery.ProjectID != bot.ProjectID {
 		return delivery, ErrCardExpired
 	}
-	if item.CardTaskID != "" {
-		card, cardErr := s.Store.BotInteraction(repo.BotMessageID(bot.ID, "notification:"+delivery.ID))
-		if cardErr != nil || card.CardTaskID != item.CardTaskID {
-			return delivery, ErrCardExpired
-		}
+	if item.CardTaskID != "" && !s.notificationCardTaskMatches(bot.ID, delivery, item.CardTaskID) {
+		return delivery, ErrCardExpired
 	}
 	if delivery.TargetID != conv.ChatID || delivery.TargetType != conv.ChatType || time.Since(delivery.CreatedAt) > 24*time.Hour {
 		return delivery, ErrCardExpired

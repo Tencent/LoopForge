@@ -128,7 +128,7 @@ func (h *assistantHandlers) botDraftOrigin(draft domain.BotPendingDraft) (domain
 	if err != nil || conv.BotID != draft.ConfigID {
 		return domain.BotChatOrigin{}, false
 	}
-	return domain.BotChatOrigin{ConfigID: draft.ConfigID, ProjectID: draft.ProjectID, ConversationID: conv.ID, ChatType: conv.ChatType, ChatID: conv.ChatID, SenderID: draft.SenderID}, true
+	return domain.BotChatOrigin{ConfigID: draft.ConfigID, ProjectID: draft.ProjectID, ConversationID: conv.ID, ChatType: conv.ChatType, ChatID: conv.ChatID, SenderID: draft.SenderID, UserID: draft.UserID}, true
 }
 
 // recordBotOrigin remembers that a requirement came from a chat, so that

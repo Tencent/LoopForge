@@ -20,6 +20,7 @@ type botChatOriginRow struct {
 	ChatType       string    `gorm:"size:16"`
 	ChatID         string    `gorm:"size:191"`
 	SenderID       string    `gorm:"size:191"`
+	UserID         int64     `gorm:"not null;default:0"`
 	IssueID        string    `gorm:"size:191;index"`
 	RunID          string    `gorm:"size:191;index"`
 	CreatedAt      time.Time `gorm:"index:idx_bot_chat_origin_conv,priority:2"`
@@ -28,7 +29,7 @@ type botChatOriginRow struct {
 func (botChatOriginRow) TableName() string { return "bot_chat_origins" }
 
 func (row botChatOriginRow) origin() domain.BotChatOrigin {
-	return domain.BotChatOrigin{ID: row.ID, ConfigID: row.ConfigID, ProjectID: row.ProjectID, ConversationID: row.ConversationID, ChatType: row.ChatType, ChatID: row.ChatID, SenderID: row.SenderID, IssueID: row.IssueID, RunID: row.RunID, CreatedAt: row.CreatedAt}
+	return domain.BotChatOrigin{ID: row.ID, ConfigID: row.ConfigID, ProjectID: row.ProjectID, ConversationID: row.ConversationID, ChatType: row.ChatType, ChatID: row.ChatID, SenderID: row.SenderID, UserID: row.UserID, IssueID: row.IssueID, RunID: row.RunID, CreatedAt: row.CreatedAt}
 }
 
 // RecordBotChatOrigin stores where a run or a requirement came from. The
@@ -39,13 +40,13 @@ func (r *AssistantRepo) RecordBotChatOrigin(o domain.BotChatOrigin) error {
 	if o.ConfigID == "" || o.ConversationID == "" || (o.RunID == "" && o.IssueID == "") {
 		return nil
 	}
-	row := botChatOriginRow{ConfigID: o.ConfigID, ProjectID: o.ProjectID, ConversationID: o.ConversationID, ChatType: o.ChatType, ChatID: o.ChatID, SenderID: o.SenderID, IssueID: o.IssueID, RunID: o.RunID, CreatedAt: time.Now().UTC()}
+	row := botChatOriginRow{ConfigID: o.ConfigID, ProjectID: o.ProjectID, ConversationID: o.ConversationID, ChatType: o.ChatType, ChatID: o.ChatID, SenderID: o.SenderID, UserID: o.UserID, IssueID: o.IssueID, RunID: o.RunID, CreatedAt: time.Now().UTC()}
 	if o.RunID != "" {
 		row.ID = hexSHA256("run\x00" + o.RunID)
 		return r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error
 	}
 	row.ID = BotIssueOriginID(o.ConversationID, o.IssueID)
-	return r.DB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoUpdates: clause.AssignmentColumns([]string{"created_at", "sender_id"})}).Create(&row).Error
+	return r.DB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoUpdates: clause.AssignmentColumns([]string{"created_at", "sender_id", "user_id"})}).Create(&row).Error
 }
 
 // BotIssueOriginID is the ID of the origin row of a requirement in a

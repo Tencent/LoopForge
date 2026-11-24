@@ -47,28 +47,6 @@ func (s *Service) pushTargets(bot domain.NotificationBot) ([]domain.BotChat, err
 	return s.Store.BotPushTargets(bot)
 }
 
-// projectVisible reports whether a platform user may read the project the
-// notification belongs to (owner, any member, or platform administrator).
-func (s *Service) projectVisible(projectID string, userID int64) bool {
-	user, ok := s.Store.User(userID)
-	if !ok {
-		return false
-	}
-	project, ok := s.Store.Project(projectID)
-	if !ok {
-		return false
-	}
-	if project.OwnerID == user.ID || s.Store.IsPlatformAdmin(user.LoginName) {
-		return true
-	}
-	for _, member := range project.Members {
-		if member.UserID == user.ID {
-			return true
-		}
-	}
-	return false
-}
-
 // checkPushTarget re-reads the target binding before every send.
 func (s *Service) checkPushTarget(bot domain.NotificationBot, sender string, requireVerified bool) (domain.BotUserBinding, error) {
 	if bot.TenantState != domain.BotTenantLocked {
@@ -81,7 +59,7 @@ func (s *Service) checkPushTarget(bot domain.NotificationBot, sender string, req
 	if requireVerified && binding.TargetVerifiedAt == nil {
 		return binding, ErrPushTargetUnverified
 	}
-	if !s.projectVisible(bot.ProjectID, binding.UserID) {
+	if !botinteraction.ProjectVisible(s.Store, bot.ProjectID, binding.UserID) {
 		return binding, errors.New("接收成员的平台账号已没有该项目的权限")
 	}
 	return binding, nil
@@ -196,6 +174,9 @@ func (s *Service) processPush(ctx context.Context, item *domain.NotificationDeli
 		}
 		return done(repo.NotificationPushResult{Status: "pending", Detail: res.SafeDetail, Next: retryAt, KeepStarted: resumed})
 	case botinteraction.Rejected:
+		if resumed {
+			return done(repo.NotificationPushResult{Status: "send_unknown", Detail: "此前发送结果未知，重试请求被拒绝，请核对后确认收到或再次发送"})
+		}
 		status := "failed"
 		if res.Code == "invalid_staff" || res.Code == "target_missing" {
 			status = "target_unavailable"

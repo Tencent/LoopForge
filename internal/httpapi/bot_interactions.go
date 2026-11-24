@@ -123,7 +123,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 		execMode, approval = assistantExecModeForApproval(AssistantApprovalConfirm), AssistantApprovalConfirm
 	} else {
 		// Writes run in this turn: runs they start report back to this chat.
-		ctx = withBotStartOrigin(ctx, domain.BotChatOrigin{ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: conv.ID, ChatType: conv.ChatType, ChatID: conv.ChatID, SenderID: item.SenderID})
+		ctx = withBotStartOrigin(ctx, domain.BotChatOrigin{ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: conv.ID, ChatType: conv.ChatType, ChatID: conv.ChatID, SenderID: item.SenderID, UserID: user.ID})
 	}
 	modelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

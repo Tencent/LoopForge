@@ -221,6 +221,8 @@ type NotificationDelivery struct {
 	// was started from (no SOP binding needed); TargetType is then "group"
 	// for a group chat.
 	Origin string `json:"origin,omitempty" gorm:"size:16"`
+	// OriginUserID is the account bound to the private chat when the run started.
+	OriginUserID int64 `json:"-" gorm:"not null;default:0"`
 }
 
 func (NotificationDelivery) TableName() string { return "notification_deliveries" }
