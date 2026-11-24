@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -48,8 +47,6 @@ func botNodeAnswerText(text string) (answer string, pick int, ok bool) {
 type botNodeQuestion struct {
 	delivery domain.NotificationDelivery
 	question string
-	// open: the node still asks the question at the notified attempt.
-	open bool
 }
 
 // botDeliveryInChat reports whether a delivery was sent to this
@@ -65,22 +62,9 @@ func botDeliveryInChat(d domain.NotificationDelivery, conv domain.BotConversatio
 	return d.TargetID == conv.ChatID || d.TargetID == sender
 }
 
-// botOpenNodeQuestions lists the questions sent to this conversation whose
-// node still waits at the notified attempt, oldest first.
+// botOpenNodeQuestions lists questions from this conversation whose nodes
+// still wait at the notified attempt, oldest first.
 func (h *assistantHandlers) botOpenNodeQuestions(bot domain.NotificationBot, conv domain.BotConversation, sender string) []botNodeQuestion {
-	var open []botNodeQuestion
-	for _, q := range h.botChatNodeQuestions(bot, conv, sender) {
-		if q.open {
-			open = append(open, q)
-		}
-	}
-	return open
-}
-
-// botChatNodeQuestions lists the waiting-node messages sent to this
-// conversation within the window, oldest first, answered or not. The
-// question of an answered one is read from the message when it carries it.
-func (h *assistantHandlers) botChatNodeQuestions(bot domain.NotificationBot, conv domain.BotConversation, sender string) []botNodeQuestion {
 	targets := []string{conv.ChatID}
 	if conv.ChatType != "group" && sender != conv.ChatID {
 		targets = append(targets, sender)
@@ -96,7 +80,7 @@ func (h *assistantHandlers) botChatNodeQuestions(bot domain.NotificationBot, con
 		deliveries = append(deliveries, items...)
 	}
 	seen := map[string]bool{}
-	var all []botNodeQuestion
+	var open []botNodeQuestion
 	for _, d := range deliveries {
 		key := fmt.Sprintf("%s/%s/%d/%d", d.RunID, d.NodeID, d.Attempt, d.ReworkCount)
 		if seen[key] {
@@ -107,68 +91,19 @@ func (h *assistantHandlers) botChatNodeQuestions(bot domain.NotificationBot, con
 		if !ok || run.ExecutionContext.ProjectID != bot.ProjectID {
 			continue
 		}
-		q := botNodeQuestion{delivery: d, question: botDeliveryQuestion(d.Content)}
-		if botNodeQuestionStale(run, d) == "" {
-			if question := run.Nodes[d.NodeID].Question(); question != "" {
-				q.question, q.open = question, true
-			}
+		if botNodeQuestionStale(run, d) != "" {
+			continue
 		}
-		all = append(all, q)
+		if question := run.Nodes[d.NodeID].Question(); question != "" {
+			open = append(open, botNodeQuestion{delivery: d, question: question})
+		}
 	}
-	return all
+	return open
 }
 
-// botDeliveryQuestion extracts the complete question, including any line
-// breaks, before the generated answer hint or details link.
-func botDeliveryQuestion(content string) string {
-	_, question, found := strings.Cut("\n"+content, "\n问题：")
-	if !found {
-		return ""
-	}
-	if hint := strings.LastIndex(question, "\n回答方式："); hint >= 0 {
-		question = question[:hint]
-	} else {
-		question, _, _ = strings.Cut(question, "\n查看详情：")
-	}
-	return strings.TrimSpace(question)
-}
-
-// botQuotedRun restores the stored URL marker in a rendered quote and
-// returns the run named by the generated details link.
-func botQuotedRun(quote string) (runID, storedQuote string) {
-	const details = "\n查看详情："
-	message := "\n" + quote
-	offset := strings.LastIndex(message, details)
-	question := strings.Index(message, "\n问题：")
-	hint := strings.LastIndex(message, "\n回答方式：")
-	// A details line between the question and hint belongs to the question.
-	if question >= 0 && question < offset && offset < hint {
-		offset = strings.LastIndex(message[:question], details)
-	}
-	if offset < 0 {
-		return "", quote
-	}
-	start := offset + len(details)
-	line, _, _ := strings.Cut(message[start:], "\n")
-	link, err := url.Parse(strings.TrimSpace(line))
-	if err != nil || (link.Scheme != "http" && link.Scheme != "https") || link.Hostname() == "" {
-		return "", quote
-	}
-	id, ok := strings.CutPrefix(link.EscapedFragment(), "/runs/")
-	if !ok || id == "" || strings.ContainsAny(id, "/?#") {
-		return "", quote
-	}
-	runID, err = url.PathUnescape(id)
-	if err != nil {
-		return "", quote
-	}
-	return runID, message[1:start] + domain.NotificationURLMarker + message[start+len(line):]
-}
-
-// botQuotedNodeQuestion locates a quoted delivery by platform message ID or
-// by the complete message or question text. Exact text matches include
-// answered questions so they can be refused as stale. A details link limits
-// matches to its run. A missing match there or a prefix match needs a number.
+// botQuotedNodeQuestion accepts only a platform message ID or a WeCom
+// delivery reference as the identity of a quoted question. Old WeCom
+// notifications can still prompt for an explicit numbered answer.
 func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction) (d domain.NotificationDelivery, quoted, needsPick bool) {
 	if item.ReplyTo != "" {
 		d, ok := h.repo.NotificationDeliveryByPlatformMessage(bot.ID, item.ReplyTo)
@@ -184,46 +119,34 @@ func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, co
 		}
 		return d, d.ProjectID == bot.ProjectID && botDeliveryInChat(d, conv, item.SenderID), false
 	}
-	quote := strings.TrimSpace(strings.ReplaceAll(item.Quote, "\r\n", "\n"))
+	quote := strings.TrimSpace(item.Quote)
 	if quote == "" {
 		return d, false, false
 	}
-	question := botDeliveryQuestion(quote)
-	var runID string
-	if question == "" {
-		question = quote
-	} else {
-		runID, quote = botQuotedRun(quote)
+	line, _, _ := strings.Cut(quote, "\n")
+	if id, found := strings.CutPrefix(line, botinteraction.WeComNodeQuestionRefPrefix); found {
+		id = strings.TrimSpace(id)
+		if id == "" || len(id) > 64 {
+			return d, false, true
+		}
+		d, err := h.repo.NotificationDelivery(id)
+		if err != nil || d.BotID != bot.ID || d.ProjectID != bot.ProjectID || !botDeliveryInChat(d, conv, item.SenderID) {
+			return d, false, true
+		}
+		switch d.Status {
+		case "sending", "sent", "send_unknown":
+			return d, true, false
+		default:
+			return d, false, true
+		}
 	}
-	sent := h.botChatNodeQuestions(bot, conv, item.SenderID)
-	for _, quotes := range []func(botNodeQuestion) bool{
-		func(q botNodeQuestion) bool {
-			return quote == strings.TrimSpace(q.delivery.Content)
-		},
-		func(q botNodeQuestion) bool {
-			return question == domain.NotificationText(q.question, 1200)
-		},
-	} {
-		var hits []botNodeQuestion
-		for _, q := range sent {
-			if (runID == "" || q.delivery.RunID == runID) && quotes(q) {
-				hits = append(hits, q)
-			}
-		}
-		switch len(hits) {
-		case 0:
-			continue
-		case 1:
-			return hits[0].delivery, true, false
-		}
+	if strings.Contains(quote, domain.NodeAnswerHint(domain.BotChannelWeCom, conv.ChatType)) {
 		return d, false, true
 	}
-	if runID != "" {
-		return d, false, true
-	}
-	for _, q := range sent {
-		prefix := []rune(strings.TrimSpace(q.question))
-		if len(prefix) > 0 && strings.HasPrefix(question, string(prefix[:min(len(prefix), 15)])) {
+	text := strings.TrimSpace(strings.TrimPrefix(quote, "问题："))
+	for _, q := range h.botOpenNodeQuestions(bot, conv, item.SenderID) {
+		prefix := []rune(q.question)
+		if strings.HasPrefix(text, string(prefix[:min(len(prefix), 15)])) {
 			return d, false, true
 		}
 	}

@@ -527,6 +527,9 @@ func TestWeComNodeQuestionIsSentAsText(t *testing.T) {
 		t.Fatalf("binding %v %v sent=%d %q", ok, err, provider.sent, provider.content)
 	}
 	items, _ := svc.Store.NotificationDeliveries("p")
+	if !strings.HasPrefix(provider.content, botinteraction.WeComNodeQuestionRefPrefix+items[0].ID+"\n") {
+		t.Fatalf("binding question is missing its delivery reference: %q", provider.content)
+	}
 	if _, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "notification:"+items[0].ID)); err == nil {
 		t.Fatal("a card was queued for the question")
 	}
@@ -541,7 +544,9 @@ func TestWeComNodeQuestionIsSentAsText(t *testing.T) {
 		t.Fatalf("origin %v %v", ok, err)
 	}
 	post, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "chat-post:"+origin.ID))
-	if err != nil || post.Action != botinteraction.ActionChatPost || !strings.Contains(post.Content, "问题：登录要不要支持邮箱？") {
+	if err != nil || post.Action != botinteraction.ActionChatPost ||
+		!strings.HasPrefix(post.Content, botinteraction.WeComNodeQuestionRefPrefix+origin.ID+"\n") ||
+		!strings.Contains(post.Content, "问题：登录要不要支持邮箱？") {
 		t.Fatalf("origin post = %+v %v", post, err)
 	}
 }

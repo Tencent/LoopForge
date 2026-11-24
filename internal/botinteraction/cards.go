@@ -87,17 +87,19 @@ func (s *Service) NodeQuestion(item domain.NotificationDelivery) string {
 	return nr.Question()
 }
 
-// WithNodeQuestion adds the question and how to answer it to a WeCom
-// message: template cards have no text input, so a node question is sent as
-// text that can be quoted.
-func WithNodeQuestion(content, question, chatType string) string {
+// WeComNodeQuestionRefPrefix marks the delivery ID on the first line.
+const WeComNodeQuestionRefPrefix = "问题引用："
+
+// WithNodeQuestion prepares the WeCom text, including the delivery reference
+// that identifies the exact node attempt when the message is quoted.
+func WithNodeQuestion(content, question string, delivery domain.NotificationDelivery) string {
 	if !strings.Contains(content, question) {
 		content = strings.TrimRight(content, "\n") + "\n问题：" + domain.NotificationText(question, 1200)
 	}
 	if !strings.Contains(content, "回答方式：") {
-		content += "\n" + domain.NodeAnswerHint(domain.BotChannelWeCom, chatType)
+		content += "\n" + domain.NodeAnswerHint(domain.BotChannelWeCom, delivery.TargetType)
 	}
-	return content
+	return WeComNodeQuestionRefPrefix + delivery.ID + "\n" + content
 }
 
 func (s *Service) QueueNotificationCard(ctx context.Context, bot domain.NotificationBot, item domain.NotificationDelivery, content string, detailsURL ...string) error {

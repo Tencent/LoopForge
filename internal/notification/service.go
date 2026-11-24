@@ -131,7 +131,7 @@ func (s *Service) send(ctx context.Context, bot domain.NotificationBot, targetID
 	}
 	if len(delivery) > 0 && s.Interactions != nil {
 		if question := s.Interactions.NodeQuestion(delivery[0]); question != "" {
-			return s.Provider.Send(ctx, bot.BotID, secret, targetID, botinteraction.WithNodeQuestion(content, question, delivery[0].TargetType))
+			return s.Provider.Send(ctx, bot.BotID, secret, targetID, botinteraction.WithNodeQuestion(content, question, delivery[0]))
 		}
 	}
 	if len(delivery) > 0 && bot.InteractionEnabled && s.Interactions != nil && delivery[0].NodeID != "" && delivery[0].TargetType != "" && (delivery[0].EventType == "waiting" || delivery[0].EventType == "failed") {
@@ -162,7 +162,7 @@ func (s *Service) sendWeComOrigin(ctx context.Context, bot domain.NotificationBo
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	if question := s.Interactions.NodeQuestion(item); question != "" {
-		return s.Interactions.SendChatPost(ctx, bot, item, botinteraction.WithNodeQuestion(content, question, item.TargetType))
+		return s.Interactions.SendChatPost(ctx, bot, item, botinteraction.WithNodeQuestion(content, question, item))
 	}
 	if item.NodeID != "" && (item.EventType == "waiting" || item.EventType == "failed") {
 		return s.Interactions.QueueNotificationCard(ctx, bot, item, content, s.runURL(item.RunID))

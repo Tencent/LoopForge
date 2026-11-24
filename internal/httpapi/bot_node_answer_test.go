@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/repo"
@@ -292,15 +293,20 @@ func TestFeishuCardAnswerReachesTheNode(t *testing.T) {
 	}
 }
 
-// A live WeCom quote contains the rendered details link. Its complete
-// question can still be identified even when it spans several lines.
+func weComNodeQuestionQuote(delivery domain.NotificationDelivery, question string) string {
+	content := strings.ReplaceAll(delivery.Content, domain.NotificationURLMarker, "https://platform.example/#/runs/"+delivery.RunID)
+	return botinteraction.WithNodeQuestion(content, question, delivery)
+}
+
+// A delivery reference identifies one node even when another run asks the
+// same question and WeCom only returns the quoted text.
 func TestWeComQuoteAnswersNodeQuestion(t *testing.T) {
 	f := newNodeQuestionFixture(t, domain.BotChannelWeCom)
 	question := nodeQuestionText + "\n邮箱需要验证吗？"
 	f.ask("run-other", question)
 	f.ask("run-q", question)
 	sent := f.question("run-q")
-	quote := strings.ReplaceAll(sent.Content, domain.NotificationURLMarker, "https://platform.example/#/runs/run-q")
+	quote := weComNodeQuestionQuote(sent, question)
 	item := domain.BotInteraction{ID: "msg-wecom-quote", BotID: f.bot.ID, ConversationID: f.conv.ID, SenderID: "ou-member", Content: "@Bot 都要", Quote: quote}
 	reply, err := f.h.generateBotReply(context.Background(), f.bot, f.conv, nil, item)
 	if err != nil || !strings.Contains(reply, "已把答案提交") {
@@ -318,15 +324,16 @@ func TestWeComQuoteAnswersNodeQuestion(t *testing.T) {
 	}
 }
 
-// A WeCom quote goes to the question it quotes in full, not the first one
-// sharing its beginning; a quote matching several questions asks for a
-// number and answers none.
+// A partial quote prompts for a number. A referenced delivery can be
+// answered once even when another question shares its opening text.
 func TestWeComQuoteAnswersTheQuotedOfSimilarQuestions(t *testing.T) {
 	f := newNodeQuestionFixture(t, domain.BotChannelWeCom)
 	f.ask("run-q1", nodeQuestionText+"邮箱需要验证吗？")
 	f.question("run-q1")
-	f.ask("run-q2", nodeQuestionText+"第三方登录要不要？")
+	secondQuestion := nodeQuestionText + "第三方登录要不要？"
+	f.ask("run-q2", secondQuestion)
 	second := f.question("run-q2")
+	secondQuote := weComNodeQuestionQuote(second, secondQuestion)
 	if !strings.Contains(second.Content, "第三方登录") {
 		t.Fatalf("second question content = %q", second.Content)
 	}
@@ -344,7 +351,7 @@ func TestWeComQuoteAnswersTheQuotedOfSimilarQuestions(t *testing.T) {
 	if f.node("run-q1").Feedback != "" || f.node("run-q2").Feedback != "" {
 		t.Fatal("ambiguous quote answered a node")
 	}
-	if reply := ask("msg-wecom-second", second.Content); !strings.Contains(reply, "已把答案提交") {
+	if reply := ask("msg-wecom-second", secondQuote); !strings.Contains(reply, "已把答案提交") {
 		t.Fatalf("reply = %q", reply)
 	}
 	if f.node("run-q1").Feedback != "" || !strings.Contains(f.node("run-q2").Feedback, "都要") {
@@ -352,7 +359,7 @@ func TestWeComQuoteAnswersTheQuotedOfSimilarQuestions(t *testing.T) {
 	}
 	// Quoting the answered second question again is refused as stale; it
 	// does not fall through to the first question sharing its beginning.
-	if reply := ask("msg-wecom-again", second.Content); !strings.Contains(reply, "答案未提交") || strings.Contains(reply, "已把答案提交") {
+	if reply := ask("msg-wecom-again", secondQuote); !strings.Contains(reply, "答案未提交") || strings.Contains(reply, "已把答案提交") {
 		t.Fatalf("quote of answered question = %q", reply)
 	}
 	if reply := ask("msg-wecom-prefix-again", "问题："+nodeQuestionText); strings.Contains(reply, "已把答案提交") {
@@ -407,6 +414,92 @@ func TestWeComQuoteOfAnOldQuestionRequiresANumber(t *testing.T) {
 				t.Fatalf("current question did not receive the numbered answer: %+v", node)
 			}
 		})
+	}
+}
+
+func TestWeComQuoteOfAnotherNodeInTheSameRunRequiresANumber(t *testing.T) {
+	f := newNodeQuestionFixture(t, domain.BotChannelWeCom)
+	f.ask("run-q", nodeQuestionText)
+	old := f.question("run-q")
+	if reply := f.say("ou-member", "回答：支持邮箱"); !strings.Contains(reply, "已把答案提交") {
+		t.Fatalf("answer old question = %q", reply)
+	}
+	if err := f.s.DB.Model(&domain.NotificationDelivery{}).Where("id = ?", old.ID).
+		Update("created_at", time.Now().UTC().Add(-botNodeQuestionWindow-time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	run, _ := f.s.RunState("run-q")
+	run.Status = "waiting"
+	run.WorkflowSnapshot.Nodes = append(run.WorkflowSnapshot.Nodes, domain.WorkflowNode{ID: "check", Name: "验收核对", Type: "agent"})
+	run.Nodes["check"] = &domain.NodeRun{NodeID: "check", Status: "waiting_approval", Attempt: 1, Activity: "等待人工确认",
+		GateResult: &domain.GateResult{Decision: "human", ActionRequired: nodeQuestionText}}
+	run.Events = append(run.Events, domain.RunEvent{ID: "run-q-check", NodeID: "check", Type: "gate.waiting", Timestamp: time.Now().UTC()})
+	if err := f.s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	current := f.question(run.ID)
+	if current.NodeID != "check" || !strings.Contains(current.Content, "验收核对") {
+		t.Fatalf("current question = %+v", current)
+	}
+
+	item := domain.BotInteraction{SenderID: "ou-member", Content: "@Bot 补充需求定型的问题",
+		Quote: strings.ReplaceAll(old.Content, domain.NotificationURLMarker, "https://platform.example/#/runs/run-q")}
+	if reply, handled := f.h.botNodeAnswer(context.Background(), f.bot, f.conv, item); !handled || !strings.Contains(reply, "回答 序号：你的答案") {
+		t.Fatalf("old question quote = %q, handled = %v", reply, handled)
+	}
+	item.Quote = weComNodeQuestionQuote(old, nodeQuestionText)
+	if reply, handled := f.h.botNodeAnswer(context.Background(), f.bot, f.conv, item); !handled || !strings.Contains(reply, "答案未提交") {
+		t.Fatalf("old delivery reference = %q, handled = %v", reply, handled)
+	}
+	item.Quote = weComNodeQuestionQuote(current, nodeQuestionText)
+	otherChat := f.conv
+	otherChat.ChatID = "another-group"
+	if reply, handled := f.h.botNodeAnswer(context.Background(), f.bot, otherChat, item); !handled || !strings.Contains(reply, "答案未提交") {
+		t.Fatalf("delivery from another conversation = %q, handled = %v", reply, handled)
+	}
+	run, _ = f.s.RunState(run.ID)
+	if node := run.Nodes["check"]; node.Status != "waiting_approval" || node.Feedback != "" {
+		t.Fatalf("another node changed: %+v", node)
+	}
+	item.Content = "@Bot 提交验收答案"
+	if reply, handled := f.h.botNodeAnswer(context.Background(), f.bot, f.conv, item); !handled || !strings.Contains(reply, "已把答案提交给「验收核对」") {
+		t.Fatalf("current delivery reference = %q, handled = %v", reply, handled)
+	}
+}
+
+func TestWeComQuoteOfPreviousAttemptCannotAnswerTheCurrentAttempt(t *testing.T) {
+	f := newNodeQuestionFixture(t, domain.BotChannelWeCom)
+	f.ask("run-q", nodeQuestionText)
+	old := f.question("run-q")
+	if reply := f.say("ou-member", "回答：支持邮箱"); !strings.Contains(reply, "已把答案提交") {
+		t.Fatalf("first attempt answer = %q", reply)
+	}
+
+	run, _ := f.s.RunState("run-q")
+	run.Status = "waiting"
+	run.Nodes["define"] = &domain.NodeRun{NodeID: "define", Status: "waiting_approval", Attempt: 2, Activity: "等待人工确认",
+		GateResult: &domain.GateResult{Decision: "human", ActionRequired: nodeQuestionText}}
+	run.Events = append(run.Events, domain.RunEvent{ID: "run-q-second", NodeID: "define", Type: "gate.waiting", Timestamp: time.Now().UTC()})
+	if err := f.s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	current := f.question(run.ID)
+	if current.ID == old.ID || current.Attempt != 2 {
+		t.Fatalf("second delivery = %+v", current)
+	}
+
+	item := domain.BotInteraction{SenderID: "ou-member", Content: "@Bot 补充上一次的答案",
+		Quote: weComNodeQuestionQuote(old, nodeQuestionText)}
+	if reply, handled := f.h.botNodeAnswer(context.Background(), f.bot, f.conv, item); !handled || !strings.Contains(reply, "答案未提交") {
+		t.Fatalf("previous attempt quote = %q, handled = %v", reply, handled)
+	}
+	if node := f.node(run.ID); node.Status != "waiting_approval" || node.Feedback != "" {
+		t.Fatalf("second attempt changed: %+v", node)
+	}
+	item.Content, item.Quote = "@Bot 只支持手机号", weComNodeQuestionQuote(current, nodeQuestionText)
+	if reply, handled := f.h.botNodeAnswer(context.Background(), f.bot, f.conv, item); !handled || !strings.Contains(reply, "已把答案提交") {
+		t.Fatalf("current attempt quote = %q, handled = %v", reply, handled)
 	}
 }
 
