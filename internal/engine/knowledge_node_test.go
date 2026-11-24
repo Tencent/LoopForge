@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +13,7 @@ import (
 	"agentflow/internal/repo"
 )
 
-func TestResolveNodeAssetsInjectsKnowledgeRuleAndCatalog(t *testing.T) {
+func TestResolveNodeAssetsInjectsUserConnectorCatalogAndEnforcesOwnerIsolation(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "test-secret-key")
 	store, err := repo.OpenTest()
 	if err != nil {
@@ -19,72 +21,90 @@ func TestResolveNodeAssetsInjectsKnowledgeRuleAndCatalog(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.PutMCPServer(domain.MCPServerDefinition{
-		ID:          "weknora-1",
-		Name:        "Engineering KB",
-		Description: "VPC DNS 与排障文档",
-		Scope:       "project",
-		ProjectID:   "default",
-		Transport:   "http",
-		URL:         "https://kb.invalid/mcp",
-	}); err != nil {
+	wkServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/knowledge-bases":
+			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"kb-vpc","name":"VPC DNS","knowledge_count":1}]}`))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/knowledge-bases/kb-vpc/knowledge"):
+			_, _ = w.Write([]byte(`{"success":true,"total":1,"data":[{"id":"doc-1","knowledge_base_id":"kb-vpc","title":"vpcdns-test","file_name":"vpcdns-test.md"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer wkServer.Close()
+
+	svc := knowledge.NewService(store, nil)
+	exec := knowledge.NewExecutor(svc)
+	eng := &Engine{repo: store}
+	eng.ConfigureKnowledge(exec)
+
+	connU1, err := svc.CreateConnector(context.Background(), 1, domainConnectorWeKnora("用户1知识库", wkServer.URL, "k1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	connU2, err := svc.CreateConnector(context.Background(), 2, domainConnectorWeKnora("用户2知识库", wkServer.URL, "k2"))
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	eng := &Engine{repo: store}
-	eng.BuildKnowledgeCatalog = func(ctx context.Context, projectID string, userID int64, refs []domain.KnowledgeRef) string {
-		return "<bound_knowledge_bases>\n  <kb id=\"weknora-1\" name=\"Engineering KB\"><sample_documents>- vpcdns-test.md</sample_documents></kb>\n</bound_knowledge_bases>"
-	}
-
-	run := domain.Run{
-		ID: "run-1",
-		ExecutionContext: domain.TelemetryContext{
-			ProjectID:         "default",
-			ResponsibleUserID: 1,
-		},
-		Nodes: map[string]*domain.NodeRun{
-			"n1": {NodeID: "n1", Attempt: 1},
-		},
-	}
+	agent := domain.AgentDefinition{ID: "dev", Name: "Dev"}
 	node := domain.WorkflowNode{
-		ID:   "n1",
-		Type: "agent",
-		KnowledgeRefs: []domain.KnowledgeRef{
-			{ServerID: "weknora-1", Mode: "all"},
-		},
-	}
-	agent := domain.AgentDefinition{ID: "dev", Name: "Dev", MCPServers: []string{"weknora-1"}}
-
-	bundle := eng.resolveNodeAssets(context.Background(), agent, run, "wf-1", node)
-	if len(bundle.MCPServers) != 1 || bundle.MCPServers[0].ID != domain.KnowledgeMCPServerID+"-weknora-1" {
-		t.Fatalf("unexpected MCPServers: %+v", bundle.MCPServers)
+		ID:            "n1",
+		Type:          "agent",
+		KnowledgeRefs: []domain.KnowledgeRef{{ConnectorID: connU1.ID, Mode: "all"}},
 	}
 
+	// 1. User 1 runs the SOP: connU1 is bound and L0 catalog probes vpcdns-test.md.
+	runU1 := domain.Run{
+		ID:               "run-u1",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "default", ResponsibleUserID: 1},
+		Nodes:            map[string]*domain.NodeRun{"n1": {NodeID: "n1", Attempt: 1}},
+	}
+	bundle1 := eng.resolveNodeAssets(context.Background(), agent, runU1, "wf-1", node)
+	wantServerID := domain.KnowledgeMCPServerID + "-" + connU1.ID
+	if len(bundle1.MCPServers) != 1 || bundle1.MCPServers[0].ID != wantServerID {
+		t.Fatalf("unexpected MCPServers for user 1: %+v", bundle1.MCPServers)
+	}
 	var ruleContent string
-	for _, r := range bundle.Rules {
+	for _, r := range bundle1.Rules {
 		if r.ID == domain.SOPKnowledgeUsageRuleID {
 			ruleContent = r.Content
 			break
 		}
 	}
-	for _, want := range []string{domain.SOPKnowledgeLookupInstruction, "vpcdns-test.md"} {
+	for _, want := range []string{domain.SOPKnowledgeLookupInstruction, "vpcdns-test.md", "mcp__" + wantServerID + "__search_knowledge"} {
 		if !strings.Contains(ruleContent, want) {
 			t.Fatalf("expected rule content containing %q, got:\n%s", want, ruleContent)
 		}
 	}
 
-	// Fallback when BuildKnowledgeCatalog is nil.
-	eng.BuildKnowledgeCatalog = nil
-	fallbackBundle := eng.resolveNodeAssets(context.Background(), agent, run, "wf-1", node)
-	var fallbackContent string
-	for _, r := range fallbackBundle.Rules {
-		if r.ID == domain.SOPKnowledgeUsageRuleID {
-			fallbackContent = r.Content
-			break
-		}
+	// 2. User 2 runs the SAME workflow without overriding refs: User 1's connector MUST NOT be injected!
+	runU2 := domain.Run{
+		ID:               "run-u2",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "default", ResponsibleUserID: 2},
+		Nodes:            map[string]*domain.NodeRun{"n1": {NodeID: "n1", Attempt: 1}},
 	}
-	if !strings.Contains(fallbackContent, `tools="mcp__agentflow-knowledge-weknora-1__*"`) {
-		t.Fatalf("expected fallback catalog with mcp tool wildcard, got:\n%s", fallbackContent)
+	bundle2 := eng.resolveNodeAssets(context.Background(), agent, runU2, "wf-1", node)
+	if len(bundle2.MCPServers) != 0 {
+		t.Fatalf("cross-user leakage: user 2 got user 1's MCP servers %+v", bundle2.MCPServers)
+	}
+
+	// 3. User 2 overrides refs at Run launch with their own connector: connU2 IS injected.
+	override := []domain.KnowledgeRef{{ConnectorID: connU2.ID, Mode: "allowlist", Sources: []string{"kb-vpc"}}}
+	runU2.ExecutionContext.KnowledgeRefs = &override
+	bundle2Override := eng.resolveNodeAssets(context.Background(), agent, runU2, "wf-1", node)
+	if len(bundle2Override.MCPServers) != 1 || bundle2Override.MCPServers[0].ID != domain.KnowledgeMCPServerID+"-"+connU2.ID {
+		t.Fatalf("expected user 2's overridden connector, got %+v", bundle2Override.MCPServers)
+	}
+}
+
+func domainConnectorWeKnora(name, endpoint, tok string) knowledge.ConnectorInput {
+	return knowledge.ConnectorInput{
+		Name:     name,
+		Type:     domain.ConnectorTypeWeKnora,
+		Endpoint: endpoint,
+		Secret:   domain.KnowledgeConnectorSecret{Token: tok},
 	}
 }
 
@@ -151,10 +171,30 @@ func TestResolveNodeAssetsRoleKnowledgeBasePropagatesRunClaims(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.PutKnowledgeSettings(domain.KnowledgeSettings{
-		Enabled: true,
-		URL:     "https://kb.invalid/mcp",
-		Token:   "tok",
+	svc := knowledge.NewService(store, nil)
+	connU7, err := svc.CreateConnector(context.Background(), 7, knowledge.ConnectorInput{
+		Name:     "User7 MCP",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: "https://kb.invalid/mcp",
+		Secret:   domain.KnowledgeConnectorSecret{Token: "tok"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Disabled connector and other user's connector must both be excluded.
+	disabled := false
+	if _, err := svc.CreateConnector(context.Background(), 7, knowledge.ConnectorInput{
+		Name:     "User7 Disabled",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: "https://disabled.invalid/mcp",
+		Enabled:  &disabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateConnector(context.Background(), 8, knowledge.ConnectorInput{
+		Name:     "User8 MCP",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: "https://other.invalid/mcp",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -174,25 +214,20 @@ func TestResolveNodeAssetsRoleKnowledgeBasePropagatesRunClaims(t *testing.T) {
 	agent := domain.AgentDefinition{ID: "dev", Name: "Dev", KnowledgeBase: true}
 
 	bundle := eng.resolveNodeAssets(context.Background(), agent, run, "wf-1", node)
-	var found bool
-	for _, srv := range bundle.MCPServers {
-		if srv.ID == domain.KnowledgeMCPServerID {
-			found = true
-			tok := strings.TrimPrefix(srv.Headers["Authorization"], "Bearer ")
-			if !strings.HasPrefix(tok, "afkb1.") {
-				t.Fatalf("expected afkb1 proxy token header, got %+v", srv.Headers)
-			}
-			claims, err := knowledge.VerifyProxyToken(store.KnowledgeSettings(), tok, time.Now())
-			if err != nil {
-				t.Fatalf("VerifyProxyToken: %v", err)
-			}
-			if claims.RunID != "run-role-kb" || claims.NodeID != "n1" || claims.Attempt != 3 {
-				t.Fatalf("unexpected proxy claims: %+v", claims)
-			}
-		}
+	wantID := domain.KnowledgeMCPServerID + "-" + connU7.ID
+	if len(bundle.MCPServers) != 1 || bundle.MCPServers[0].ID != wantID {
+		t.Fatalf("expected only user 7's enabled connector %s, got %+v", wantID, bundle.MCPServers)
 	}
-	if !found {
-		t.Fatalf("expected %s server in bundle, got %+v", domain.KnowledgeMCPServerID, bundle.MCPServers)
+	tok := strings.TrimPrefix(bundle.MCPServers[0].Headers["Authorization"], "Bearer ")
+	if !strings.HasPrefix(tok, "afkb1.") {
+		t.Fatalf("expected afkb1 proxy token header, got %+v", bundle.MCPServers[0].Headers)
+	}
+	claims, err := knowledge.VerifyProxyToken(tok, time.Now())
+	if err != nil {
+		t.Fatalf("VerifyProxyToken: %v", err)
+	}
+	if claims.RunID != "run-role-kb" || claims.NodeID != "n1" || claims.Attempt != 3 || claims.UserID != 7 || claims.Ref == nil || claims.Ref.ConnectorID != connU7.ID {
+		t.Fatalf("unexpected proxy claims: %+v", claims)
 	}
 	if !strings.Contains(domain.KnowledgeLookupInstruction, "[[knowledge:<id>]]") {
 		t.Fatalf("KnowledgeLookupInstruction must instruct [[knowledge:<id>]] markers")
@@ -252,9 +287,9 @@ func TestMarkNodeKnowledgeReadsOnFailurePreservesFrozenArtifactCitations(t *test
 				Status:  "running",
 				Attempt: 1,
 				KnowledgeReads: []domain.KnowledgeRead{{
-					ID:     "kr-1",
+					ID:      "kr-1",
 					Attempt: 1,
-					Status: domain.KnowledgeStatusHit,
+					Status:  domain.KnowledgeStatusHit,
 					Evidences: []domain.KnowledgeEvidence{
 						{ID: "ev_1", Title: "OutDoc"},
 						{ID: "ev_2", Title: "ArtDoc"},

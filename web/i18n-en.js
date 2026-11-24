@@ -543,5 +543,14 @@ Object.assign(window.LF_I18N_EN, {
   "正在校验…": "Verifying…",
   "控制台密码已保存": "Console password saved",
   "保存失败": "Couldn't save",
-  "密码由管理员为该连接保存，保存在平台配置中。": "Saved by an admin for this connection and kept in the platform configuration."
+  "密码由管理员为该连接保存，保存在平台配置中。": "Saved by an admin for this connection and kept in the platform configuration.",
+  "我的知识库": "My knowledge",
+  "＋ 添加连接器": "+ Add connector",
+  "添加连接器": "Add connector",
+  "编辑连接器": "Edit connector",
+  "测试连接": "Test connection",
+  "查看子库": "View sources",
+  "关联我的知识库": "Link my knowledge",
+  "恢复默认": "Reset to default",
+  "默认按节点或角色配置": "Uses node or role defaults"
 });

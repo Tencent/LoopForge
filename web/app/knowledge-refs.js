@@ -1,5 +1,6 @@
-// Both the SOP editor and the conversation composer use the same selection UI.
+// Both the SOP editor / run modal and the conversation composer use the same selection UI.
 window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save) {
+  const getRefId = r => String(r?.connectorId || r?.mcpServerId || '').trim();
   const parseSourceDisplay = (rawName, rawId) => {
     const text = String(rawName || rawId || '').trim();
     const m = text.match(/^\[([^\]]+)\]\s*(.+)$/);
@@ -13,13 +14,13 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
   const head = document.createElement('div');
   head.className = 'kr-head';
   const title = document.createElement('h3');
-  title.textContent = '关联知识库';
+  title.textContent = '关联我的知识库';
   const lead = document.createElement('p');
   lead.className = 'kr-lead';
-  lead.textContent = '选择当前对话或节点可检索的知识库。';
+  lead.textContent = '选择当前对话、节点或本次运行可只读检索的个人知识库连接器。';
   const sublead = document.createElement('p');
   sublead.className = 'kr-sublead';
-  sublead.textContent = '可用范围取决于当前账号权限，仅启用服务声明为只读的工具。';
+  sublead.textContent = '仅展示你本人已启用的连接器；凭证加密托管在服务端，不会进入执行沙箱，且只放行只读工具。';
   head.append(title, lead, sublead);
 
   const list = document.createElement('div');
@@ -50,7 +51,8 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
 
   const readers = [];
   const load = async path => {
-    const response = await fetch(path + (path.includes('?') ? '&' : '?') + 'projectId=' + encodeURIComponent(project));
+    const sep = project ? (path.includes('?') ? '&' : '?') + 'projectId=' + encodeURIComponent(project) : '';
+    const response = await fetch(path + sep);
     if (!response.ok) throw new Error('知识库列表加载失败');
     return response.json();
   };
@@ -68,11 +70,13 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
   };
 
   try {
-    status.textContent = '正在加载可用知识服务…';
-    const options = await load('/api/knowledge/reference-options');
+    status.textContent = '正在加载你的知识库连接器…';
+    const rawOptions = await load('/api/knowledge/reference-options');
+    const options = Array.isArray(rawOptions) ? [...rawOptions] : [];
     for (const ref of (refs || [])) {
-      if (!options.some(s => s.id === ref.mcpServerId)) {
-        options.push({ id: ref.mcpServerId, name: ref.mcpServerId + '（已失效）', missing: true });
+      const rid = getRefId(ref);
+      if (rid && !options.some(s => s.id === rid)) {
+        options.push({ id: rid, name: rid + '（已失效或无权限）', missing: true });
       }
     }
 
@@ -86,12 +90,12 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
       srvTitle.className = 'kr-service-title';
       const enabled = document.createElement('input');
       enabled.type = 'checkbox';
-      const previous = (refs || []).find(r => r.mcpServerId === s.id);
+      const previous = (refs || []).find(r => getRefId(r) === s.id);
       enabled.checked = !!previous;
       srvTitle.append(enabled, document.createTextNode(s.name || s.id));
       const srvId = document.createElement('span');
       srvId.className = 'kr-service-id';
-      if (s.id !== 'agentflow-knowledge') srvId.textContent = s.id;
+      srvId.textContent = s.typeName ? `${s.typeName} · ${s.id}` : s.id;
       srvHead.append(srvTitle, srvId);
       card.append(srvHead);
 
@@ -105,9 +109,9 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
       scopeLabel.textContent = '可检索范围';
       const mode = document.createElement('select');
       mode.className = 'kr-control';
-      mode.add(new Option('当前身份可读的全部来源', 'all'));
-      mode.add(new Option('仅指定来源', 'allowlist'));
-      mode.value = previous?.sources?.length ? 'allowlist' : 'all';
+      mode.add(new Option('该连接器可读的全部来源', 'all'));
+      mode.add(new Option('仅指定子知识库', 'allowlist'));
+      mode.value = (previous?.mode === 'allowlist' || previous?.sources?.length) ? 'allowlist' : 'all';
       scopeField.append(scopeLabel, mode);
 
       const allowField = document.createElement('div');
@@ -116,7 +120,7 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
       allowLabelRow.className = 'kr-label-row';
       const allowLabel = document.createElement('span');
       allowLabel.className = 'kr-label';
-      allowLabel.textContent = '选择知识库';
+      allowLabel.textContent = '选择子知识库';
       const allowCount = document.createElement('span');
       allowCount.className = 'kr-count';
       allowLabelRow.append(allowLabel, allowCount);
@@ -137,7 +141,7 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
 
       allowField.append(allowLabelRow, choices, adv);
 
-      const canScope = !!(s.scoped || previous?.sources?.length);
+      const canScope = s.scoped !== false || !!(previous?.sources?.length);
       if (canScope) body.append(scopeField, allowField);
       card.append(body);
       list.append(card);
@@ -156,10 +160,10 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
         });
         if (mode.value === 'allowlist') {
           if (ids.size === 0) {
-            allowCount.textContent = '请选择至少一个知识库';
+            allowCount.textContent = '请选择至少一个子知识库';
             allowCount.className = 'kr-count warn';
           } else {
-            allowCount.textContent = `已选 ${ids.size} 个知识库`;
+            allowCount.textContent = `已选 ${ids.size} 个子知识库`;
             allowCount.className = 'kr-count ok';
           }
         } else {
@@ -178,14 +182,17 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
 
         if (showAllow && !loaded && !s.missing) {
           loaded = true;
-          choices.innerHTML = '<div class="kr-source-row"><span class="kr-source-meta">正在加载知识库列表…</span></div>';
+          choices.innerHTML = '<div class="kr-source-row"><span class="kr-source-meta">正在加载子知识库列表…</span></div>';
           try {
-            const available = await load('/api/knowledge/reference-options?sources=true');
+            const response = await fetch(`/api/knowledge/connectors/${encodeURIComponent(s.id)}/sources`);
+            if (!response.ok) throw new Error('子知识库列表加载失败');
+            const available = await response.json();
+            const items = Array.isArray(available) ? available : [];
             choices.innerHTML = '';
-            if (!available.length) {
-              choices.innerHTML = '<div class="kr-source-row"><span class="kr-source-meta">暂无可用知识库</span></div>';
+            if (!items.length) {
+              choices.innerHTML = '<div class="kr-source-row"><span class="kr-source-meta">该连接器未返回可细分列表，可改选「全部来源」</span></div>';
             }
-            for (const source of available) {
+            for (const source of items) {
               const info = parseSourceDisplay(source.name, source.id);
               const row = document.createElement('label');
               row.className = 'kr-source-row';
@@ -228,19 +235,33 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
       readers.push(silent => {
         if (!enabled.checked) return null;
         if (s.missing) {
-          if (silent) return { error: '请移除已失效服务' };
-          throw new Error('请移除已失效服务：' + s.name);
+          if (silent) return { error: '请移除已失效连接器' };
+          throw new Error('请移除已失效连接器：' + s.name);
         }
         const selected = mode.value === 'allowlist' ? [...selectedSet()] : [];
         if (mode.value === 'allowlist' && !selected.length) {
-          if (silent) return { error: '请选择至少一个知识库' };
-          throw new Error(`请为「${s.name || s.id}」选择至少一个知识库`);
+          if (silent) return { error: '请选择至少一个子知识库' };
+          throw new Error(`请为「${s.name || s.id}」选择至少一个子知识库`);
         }
-        return { mcpServerId: s.id, mode: mode.value, sources: selected };
+        return { connectorId: s.id, mode: mode.value, sources: selected };
       });
     }
 
-    status.textContent = options.length ? '' : '当前项目没有可用的知识服务。';
+    if (options.length) {
+      status.textContent = '';
+    } else {
+      status.textContent = '你还没有可用的个人知识库连接器。';
+      const goBtn = document.createElement('button');
+      goBtn.type = 'button';
+      goBtn.className = 'button ghost small kr-goto-kb';
+      goBtn.textContent = '去「我的知识库」添加连接器';
+      goBtn.onclick = () => {
+        dialog.close();
+        if (typeof window.switchView === 'function') window.switchView('knowledge');
+        else window.location.assign('/#knowledge');
+      };
+      list.append(goBtn);
+    }
     refreshApplyState();
 
     apply.onclick = async () => {
@@ -249,10 +270,11 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
       status.textContent = '正在校验并保存…';
       try {
         const nextRefs = readers.map(read => read(false)).filter(Boolean);
-        const response = await fetch('/api/knowledge/reference-check?projectId=' + encodeURIComponent(project), {
+        const sep = project ? '?projectId=' + encodeURIComponent(project) : '';
+        const response = await fetch('/api/knowledge/reference-check' + sep, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ knowledgeRefs: nextRefs })
+          body: JSON.stringify({ knowledgeRefs: nextRefs }),
         });
         if (!response.ok) throw new Error((await response.json()).error || '引用校验失败');
         await save(nextRefs);

@@ -41,9 +41,10 @@ type deps struct {
 	engine       *engine.Engine
 	sync         *tracker.Service
 	schedule     *schedule.Service
-	authClient   *auth.Client
-	knowledgeSvc *knowledge.Service
-	api          http.Handler
+	authClient    *auth.Client
+	knowledgeSvc  *knowledge.Service
+	knowledgeExec *knowledge.Executor
+	api           http.Handler
 	// passwordAttempts is this server's brute-force budget (auth_password.go).
 	passwordAttempts *passwordLimiter
 }
@@ -124,7 +125,8 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 
 func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
 	knowledgeSvc := knowledge.NewService(s, randomID)
-	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), knowledgeSvc: knowledgeSvc, passwordAttempts: newPasswordLimiter()}
+	knowledgeExec := knowledge.NewExecutor(knowledgeSvc)
+	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), knowledgeSvc: knowledgeSvc, knowledgeExec: knowledgeExec, passwordAttempts: newPasswordLimiter()}
 	if trustGatewayIdentityHeaders() && strings.TrimSpace(os.Getenv("AGENTFLOW_IDENTITY_HEADER_SECRET")) == "" {
 		log.Printf("warning: AGENTFLOW_TRUST_IDENTITY_HEADERS is on without AGENTFLOW_IDENTITY_HEADER_SECRET; any loopback caller without forwarding headers, including a proxy that passes client headers through, can sign in as any user")
 	}
@@ -150,9 +152,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		e.WorkspaceCheckpointTransport = func(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
 			return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
 		}
-		e.BuildKnowledgeCatalog = func(ctx context.Context, projectID string, userID int64, refs []domain.KnowledgeRef) string {
-			return buildSOPKnowledgeCatalogXML(ctx, d, projectID, userID, refs)
-		}
+		e.ConfigureKnowledge(knowledgeExec)
 	}
 	api := &Server{
 		deps:            d,
@@ -177,7 +177,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		know:            &knowledgeHandlers{deps: d, svc: knowledgeSvc, activity: &knowledgeActivityLog{}},
+		know:            &knowledgeHandlers{deps: d, svc: knowledgeSvc, exec: knowledgeExec, activity: &knowledgeActivityLog{}},
 		feedback:        &feedbackHandlers{deps: d},
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
@@ -500,54 +500,18 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/page-feedback/:id", api.feedback.detail)
 	g.GET("/api/page-feedback/:id/images/:imageId", api.feedback.image)
 
-	// --- knowledge base ---
-	g.GET("/api/knowledge/settings", api.know.settings)
-	g.PUT("/api/knowledge/settings", api.know.settings)
-	g.POST("/api/knowledge/check", api.know.check)
-	g.POST("/api/knowledge/weknora/provision", api.know.provisionWeKnora)
-	g.GET("/api/knowledge/weknora/console-credentials", api.know.weKnoraConsoleCredentials)
-	g.POST("/api/knowledge/weknora/console-credentials", api.know.saveWeKnoraConsoleCredentials)
-	g.POST("/api/knowledge/weknora/console-sso", api.know.weKnoraConsoleSSO)
-	g.POST("/api/knowledge/weknora/console-sso/redeem", api.know.redeemWeKnoraConsoleSSO)
-	// 桥接页在 WeKnora 控制台源下发起 JSON POST，浏览器会先发预检；gin 默认
-	// 不响应未注册的 OPTIONS，必须显式注册，否则浏览器直接拦掉兑换请求。
-	g.OPTIONS("/api/knowledge/weknora/console-sso/redeem", func(c *gin.Context) {
-		c.Status(http.StatusNoContent)
-	})
-	g.DELETE("/api/knowledge/connections/:id", api.know.deleteConnection)
-	g.GET("/api/knowledge/connections/:id/capabilities", api.know.connectionCapabilities)
+	// --- knowledge connectors (per-user read-only sources) ---
+	g.GET("/api/knowledge/connector-types", api.know.connectorTypes)
+	g.GET("/api/knowledge/connectors", api.know.listConnectors)
+	g.POST("/api/knowledge/connectors", api.know.createConnector)
+	g.POST("/api/knowledge/connectors/check", api.know.checkConnector)
+	g.GET("/api/knowledge/connectors/:id", api.know.getConnector)
+	g.PUT("/api/knowledge/connectors/:id", api.know.updateConnector)
+	g.DELETE("/api/knowledge/connectors/:id", api.know.deleteConnector)
+	g.POST("/api/knowledge/connectors/:id/check", api.know.checkConnectorByID)
+	g.GET("/api/knowledge/connectors/:id/sources", api.know.connectorSources)
 	g.POST("/api/knowledge/reference-check", api.know.checkReferences)
 	g.GET("/api/knowledge/reference-options", api.know.referenceOptions)
-	g.GET("/api/knowledge/models", api.know.models)
-	g.POST("/api/knowledge/models", api.know.createModel)
-	g.GET("/api/knowledge/sources", api.know.sources)
-	g.POST("/api/knowledge/sources", api.know.createSource)
-	g.GET("/api/knowledge/sources/:id", api.know.source)
-	g.PUT("/api/knowledge/sources/:id", api.know.updateSource)
-	g.PATCH("/api/knowledge/sources/:id", api.know.patchSource)
-	g.DELETE("/api/knowledge/sources/:id", api.know.deleteSource)
-	g.GET("/api/knowledge/sources/:id/documents", api.know.documents)
-	g.POST("/api/knowledge/sources/:id/upload", api.know.upload)
-	g.POST("/api/knowledge/sources/:id/url", api.know.createFromURL)
-	g.POST("/api/knowledge/sources/:id/manual", api.know.createManual)
-	g.GET("/api/knowledge/documents/:docId", api.know.documentDetail)
-	g.GET("/api/knowledge/documents/:docId/chunks", api.know.documentChunks)
-	g.GET("/api/knowledge/documents/:docId/preview", api.know.documentPreview)
-	g.GET("/api/knowledge/documents/:docId/download", api.know.documentDownload)
-	g.PUT("/api/knowledge/documents/:docId", api.know.updateDocument)
-	g.POST("/api/knowledge/documents/:docId/reparse", api.know.reparseDocument)
-	g.DELETE("/api/knowledge/documents/:docId", api.know.deleteDocument)
-	g.POST("/api/knowledge/search", api.know.search)
-	g.GET("/api/knowledge/document", api.know.document)
-	g.GET("/api/knowledge/usage", api.know.usage)
-	g.GET("/api/knowledge/candidates", api.know.candidates)
-	g.GET("/api/knowledge/submissions", api.know.submissions)
-	g.POST("/api/knowledge/submissions", api.know.submissions)
-	g.GET("/api/knowledge/submissions/:id", api.know.submission)
-	g.PUT("/api/knowledge/submissions/:id", api.know.submission)
-	g.DELETE("/api/knowledge/submissions/:id", api.know.submission)
-	g.POST("/api/knowledge/submissions/:id/publish", api.know.publish)
-	g.POST("/api/knowledge/submissions/:id/reject", api.know.reject)
 
 	// --- runs ---
 	g.GET("/api/runs", api.runs.runs)

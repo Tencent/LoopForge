@@ -2,95 +2,96 @@ package httpapi
 
 import (
 	"context"
-	"errors"
-	"io"
-	"log/slog"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
-	"time"
 
+	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 	"agentflow/internal/knowledge"
 
 	"github.com/gin-gonic/gin"
 )
 
-// knowledgeHandlers exposes the 知识库 module over HTTP: upstream connection
-// settings, trial search, node usage, the agent-facing read-only proxy
-// (knowledge_proxy.go), and the review queue. Business rules live in
-// knowledge.Service; handlers only do auth, decoding and rendering.
+// knowledgeHandlers exposes user-owned personal knowledge connectors over HTTP
+// plus the agent-facing stateless read-only proxy (knowledge_proxy.go).
 type knowledgeHandlers struct {
 	*deps
 	svc      *knowledge.Service
+	exec     *knowledge.Executor
 	activity *knowledgeActivityLog
 }
 
-func (h *knowledgeHandlers) canManage(r *http.Request) bool {
-	return !authRequired() || h.isPlatformAdmin(r)
+func (h *knowledgeHandlers) service() *knowledge.Service {
+	if h != nil && h.svc != nil {
+		return h.svc
+	}
+	if h != nil && h.deps != nil {
+		return h.deps.knowledgeService()
+	}
+	return nil
 }
 
-func (h *knowledgeHandlers) actor(r *http.Request) string {
-	if user, ok := h.requestUser(r, true); ok && user != nil && user.LoginName != "" {
-		return user.LoginName
+func (h *knowledgeHandlers) executor() *knowledge.Executor {
+	if h != nil && h.exec != nil {
+		return h.exec
 	}
-	return "local"
+	if h != nil && h.deps != nil {
+		return h.deps.executor()
+	}
+	return nil
 }
 
-// auditWrite records one management mutation on both the structured log and
-// the usage activity feed, so operators can see who changed what upstream.
-func (h *knowledgeHandlers) auditWrite(c *gin.Context, action, connID, targetID, projectID string, err error) {
-	status := "ok"
-	if err != nil {
-		status = "failed"
+func (h *knowledgeHandlers) ownerUserID(c *gin.Context) (int64, bool) {
+	if h != nil && h.deps != nil {
+		if user, ok := h.requestUser(c.Request, true); ok && user != nil && user.ID > 0 {
+			return user.ID, true
+		}
 	}
-	actor := h.actor(c.Request)
-	attrs := []any{
-		"event", "knowledge.management.audit",
-		"actor", actor,
-		"actorId", actor,
-		"actorUsername", actor,
-		"projectId", projectID,
-		"connectionId", connID,
-		"action", action,
-		"targetId", targetID,
-		"status", status,
+	if !authRequired() {
+		return 0, true
 	}
-	if err != nil {
-		attrs = append(attrs, "error", err.Error())
-		slog.WarnContext(c.Request.Context(), "knowledge management audit", attrs...)
-	} else {
-		slog.InfoContext(c.Request.Context(), "knowledge management audit", attrs...)
-	}
-	h.activity.add(knowledgeActivity{
-		ServerID:  connID,
-		Origin:    "admin_console",
-		At:        time.Now().UTC(),
-		Tool:      "admin:" + action,
-		ProjectID: projectID,
-		Query:     targetID,
-		OK:        err == nil,
-		Error:     errorText(err),
-	})
+	c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+	return 0, false
 }
 
-func errorText(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
+type connectorRequestPayload struct {
+	ID          string                           `json:"id,omitempty"`
+	ConnectorID string                           `json:"connectorId,omitempty"`
+	Name        string                           `json:"name"`
+	Type        string                           `json:"type"`
+	Endpoint    string                           `json:"endpoint"`
+	Config      *domain.KnowledgeConnectorConfig `json:"config,omitempty"`
+	Secret      domain.KnowledgeConnectorSecret  `json:"secret,omitempty"`
+	Token       string                           `json:"token,omitempty"`
+	Headers     map[string]string                `json:"headers,omitempty"`
+	AuthType    string                           `json:"authType,omitempty"`
+	ClearSecret bool                             `json:"clearSecret,omitempty"`
+	Enabled     *bool                            `json:"enabled,omitempty"`
 }
 
-// auditTarget names the created resource, or the addressed parent on failure.
-func auditTarget(created, fallback string) string {
-	if created = strings.TrimSpace(created); created != "" {
-		return created
+func (p connectorRequestPayload) toInput() knowledge.ConnectorInput {
+	secret := p.Secret
+	if strings.TrimSpace(secret.AuthType) == "" && strings.TrimSpace(p.AuthType) != "" {
+		secret.AuthType = strings.TrimSpace(p.AuthType)
 	}
-	return fallback
+	if strings.TrimSpace(secret.Token) == "" && strings.TrimSpace(p.Token) != "" {
+		secret.Token = strings.TrimSpace(p.Token)
+	}
+	if len(secret.Headers) == 0 && len(p.Headers) > 0 {
+		secret.Headers = p.Headers
+	}
+	return knowledge.ConnectorInput{
+		ID:          strings.TrimSpace(p.ID),
+		Name:        p.Name,
+		Type:        p.Type,
+		Endpoint:    p.Endpoint,
+		Config:      p.Config,
+		Secret:      secret,
+		ClearSecret: p.ClearSecret,
+		Enabled:     p.Enabled,
+	}
 }
 
-// render writes value on success or the mapped error otherwise.
 func render[T any](c *gin.Context, value T, err error) {
 	if err != nil {
 		respond(c, err)
@@ -99,749 +100,203 @@ func render[T any](c *gin.Context, value T, err error) {
 	c.JSON(http.StatusOK, value)
 }
 
-type knowledgeSettingsView struct {
-	domain.KnowledgeSettings
-	Ready              bool   `json:"ready"`
-	CanManage          bool   `json:"canManage"`
-	CanWrite           bool   `json:"canWrite"`
-	ProxyPath          string `json:"proxyPath"`
-	UsageRule          string `json:"usageRule"`
-	DetectedWeKnoraURL string `json:"detectedWeKnoraUrl,omitempty"`
-	WeKnoraUIURL       string `json:"weKnoraUiUrl,omitempty"`
+// 路由: GET /api/knowledge/connector-types
+func (h *knowledgeHandlers) connectorTypes(c *gin.Context) {
+	c.JSON(http.StatusOK, h.service().ConnectorTypes())
 }
 
-// weKnoraConsoleCredentialsView carries the console sign-in only for the
-// platform-managed WeKnora instance; it is served to platform administrators on
-// demand instead of riding along with /api/knowledge/settings.
-type weKnoraConsoleCredentialsView struct {
-	Configured bool   `json:"configured"`
-	Email      string `json:"email,omitempty"`
-	Password   string `json:"password,omitempty"`
-	Source     string `json:"source,omitempty"`
-	UIURL      string `json:"uiUrl,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+// 路由: GET /api/knowledge/connectors
+func (h *knowledgeHandlers) listConnectors(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	items := h.service().ListConnectors(uid)
+	if items == nil {
+		items = []domain.KnowledgeConnector{}
+	}
+	c.JSON(http.StatusOK, items)
 }
 
-// 路由: g.GET("/api/knowledge/settings", h.settings)
+// 路由: POST /api/knowledge/connectors
+func (h *knowledgeHandlers) createConnector(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	var payload connectorRequestPayload
+	if !decode(c, &payload) {
+		return
+	}
+	created, err := h.service().CreateConnector(c.Request.Context(), uid, payload.toInput())
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, created)
+}
+
+// 路由: GET /api/knowledge/connectors/:id
+func (h *knowledgeHandlers) getConnector(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	item, found := h.service().GetConnector(uid, c.Param("id"))
+	if !found {
+		respond(c, apperr.New(apperr.NotFound, knowledge.ErrConnectorNotFound.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
+// 路由: PUT /api/knowledge/connectors/:id
+func (h *knowledgeHandlers) updateConnector(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	var payload connectorRequestPayload
+	if !decode(c, &payload) {
+		return
+	}
+	updated, err := h.service().UpdateConnector(c.Request.Context(), uid, c.Param("id"), payload.toInput())
+	render(c, updated, err)
+}
+
+// 路由: DELETE /api/knowledge/connectors/:id
+func (h *knowledgeHandlers) deleteConnector(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	if err := h.service().DeleteConnector(uid, c.Param("id")); err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// 路由: POST /api/knowledge/connectors/check
+func (h *knowledgeHandlers) checkConnector(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	var payload connectorRequestPayload
+	if !decodeOptional(c, &payload) {
+		return
+	}
+	connID := strings.TrimSpace(payload.ConnectorID)
+	if connID == "" {
+		connID = strings.TrimSpace(payload.ID)
+	}
+	input := payload.toInput()
+	c.JSON(http.StatusOK, h.service().CheckConnector(c.Request.Context(), uid, connID, &input))
+}
+
+// 路由: POST /api/knowledge/connectors/:id/check
+func (h *knowledgeHandlers) checkConnectorByID(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	var payload connectorRequestPayload
+	if !decodeOptional(c, &payload) {
+		return
+	}
+	input := payload.toInput()
+	c.JSON(http.StatusOK, h.service().CheckConnector(c.Request.Context(), uid, c.Param("id"), &input))
+}
+
+// 路由: GET /api/knowledge/connectors/:id/sources
+func (h *knowledgeHandlers) connectorSources(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	sources, err := h.service().ListConnectorSources(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	if sources == nil {
+		sources = []knowledge.Source{}
+	}
+	c.JSON(http.StatusOK, sources)
+}
+
+// referenceOptions lists the current user's enabled connectors, optionally
+// expanding sub-sources for ?connectorId=<id> or ?sources=true.
 //
-//	g.PUT("/api/knowledge/settings", h.settings)
-func (h *knowledgeHandlers) settings(c *gin.Context) {
-	current := h.svc.Settings()
-	if c.Request.Method == http.MethodPut {
-		if !h.canManage(c.Request) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以修改知识库接入配置"})
-			return
-		}
-		var input knowledge.SettingsInput
-		if !decode(c, &input) {
-			return
-		}
-		saved, err := h.svc.UpdateSettings(input, h.actor(c.Request))
-		if err != nil {
-			respond(c, err)
-			return
-		}
-		current = saved
-	}
-	c.JSON(http.StatusOK, knowledgeSettingsView{
-		KnowledgeSettings:  current.Public(),
-		Ready:              current.Ready(),
-		CanManage:          h.canManage(c.Request),
-		CanWrite:           h.canWriteKnowledge(c, c.Query("projectId")),
-		ProxyPath:          knowledge.ProxyPath,
-		UsageRule:          knowledge.UsageRule().Content,
-		DetectedWeKnoraURL: strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL")),
-		WeKnoraUIURL:       strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_UI_URL")),
-	})
-}
-
-// 路由: g.POST("/api/knowledge/check", h.check)
-func (h *knowledgeHandlers) check(c *gin.Context) {
-	if !h.canManage(c.Request) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以检查知识库连接"})
-		return
-	}
-	var input struct {
-		Provider     string `json:"provider"`
-		URL          string `json:"url"`
-		Token        string `json:"token"`
-		ConnectionID string `json:"connectionId"`
-	}
-	if !decodeOptional(c, &input) {
-		return
-	}
-	c.JSON(http.StatusOK, h.svc.CheckConnection(c.Request.Context(), input.ConnectionID, input.Provider, input.URL, input.Token))
-}
-
-// 路由: g.GET("/api/knowledge/connections/:id/capabilities", h.connectionCapabilities)
-func (h *knowledgeHandlers) connectionCapabilities(c *gin.Context) {
-	refresh := strings.TrimSpace(c.Query("refresh"))
-	force := refresh == "1" || strings.EqualFold(refresh, "true")
-	// 强制刷新会让缓存与在途探测失效并立刻重发 6 个上游探针，只有能做接入
-	// 配置的平台管理员才允许放大这一次调用；普通登录用户仍可读缓存结果。
-	if force && !h.canManage(c.Request) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以强制刷新知识库连接能力"})
-		return
-	}
-	caps, err := h.svc.WeKnoraCapabilities(c.Request.Context(), c.Param("id"), force)
-	render(c, caps, err)
-}
-
-// 路由: g.POST("/api/knowledge/weknora/provision", h.provisionWeKnora)
-func (h *knowledgeHandlers) provisionWeKnora(c *gin.Context) {
-	if !h.canManage(c.Request) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以启用或配置 WeKnora 实例"})
-		return
-	}
-	var input knowledge.WeKnoraProvisionInput
-	if !decode(c, &input) {
-		return
-	}
-	res, err := h.svc.ProvisionWeKnora(c.Request.Context(), input, h.actor(c.Request))
-	render(c, res, err)
-}
-
-// 路由: g.GET("/api/knowledge/weknora/console-credentials", h.weKnoraConsoleCredentials)
-func (h *knowledgeHandlers) weKnoraConsoleCredentials(c *gin.Context) {
-	if !h.canManage(c.Request) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以查看 WeKnora 控制台登录凭据"})
-		return
-	}
-	h.writeWeKnoraConsoleCredentials(c, strings.TrimSpace(c.Query("connectionId")), "reveal")
-}
-
-// 路由: g.POST("/api/knowledge/weknora/console-credentials", h.saveWeKnoraConsoleCredentials)
-//
-// 管理员为某个连接补录控制台密码（已有连接当时没有保存）。密码先到 WeKnora
-// 登录校验，成功后才加密写入平台配置。
-func (h *knowledgeHandlers) saveWeKnoraConsoleCredentials(c *gin.Context) {
-	if !h.canManage(c.Request) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以保存 WeKnora 控制台登录凭据"})
-		return
-	}
-	var input struct {
-		ConnectionID string `json:"connectionId"`
-		Password     string `json:"password"`
-	}
-	if !decode(c, &input) {
-		return
-	}
-	if err := h.svc.SaveWeKnoraConsolePassword(c.Request.Context(), input.ConnectionID, input.Password); err != nil {
-		respond(c, err)
-		return
-	}
-	h.writeWeKnoraConsoleCredentials(c, input.ConnectionID, "save")
-}
-
-func (h *knowledgeHandlers) writeWeKnoraConsoleCredentials(c *gin.Context, connID, action string) {
-	login := h.svc.ManagedWeKnoraConsole(connID)
-	c.Header("Cache-Control", "no-store")
-	view := weKnoraConsoleCredentialsView{
-		Configured: login.Configured,
-		Email:      login.Email,
-		UIURL:      login.UIURL,
-	}
-	if !login.Configured {
-		view.Reason = login.Reason
-		if view.Reason == "" {
-			view.Reason = "not_managed"
-		}
-		c.JSON(http.StatusOK, view)
-		return
-	}
-	view.Password = login.Password
-	view.Source = login.Source
-	slog.InfoContext(c.Request.Context(), "knowledge console credentials",
-		"event", "knowledge.console.credentials."+action,
-		"actor", h.actor(c.Request),
-		"source", login.Source,
-	)
-	c.JSON(http.StatusOK, view)
-}
-
-// 路由: g.POST("/api/knowledge/weknora/console-sso", h.weKnoraConsoleSSO)
-//
-// 平台管理员点击「高级配置」时签发一次性票据。票据本身不含凭据，兑换时
-// 由 WeKnora 前端容器上的同源桥接页完成登录态写入。
-func (h *knowledgeHandlers) weKnoraConsoleSSO(c *gin.Context) {
-	if !h.canManage(c.Request) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以免密进入 WeKnora 控制台"})
-		return
-	}
-	var input struct {
-		ConnectionID  string `json:"connectionId"`
-		ConsoleOrigin string `json:"consoleOrigin"`
-	}
-	if !decode(c, &input) {
-		return
-	}
-	res, err := h.svc.IssueWeKnoraConsoleSSO(c.Request.Context(), input.ConnectionID, input.ConsoleOrigin)
-	if err != nil {
-		respond(c, err)
-		return
-	}
-	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusOK, res)
-}
-
-// 路由: g.POST("/api/knowledge/weknora/console-sso/redeem", h.redeemWeKnoraConsoleSSO)
-//
-// 桥接页在 WeKnora 控制台源下调用，因此跨源是设计的一部分：票据一次性、
-// 60 秒过期且绑定签发时的来源，cors() 只对这条路径放行跨源请求。
-func (h *knowledgeHandlers) redeemWeKnoraConsoleSSO(c *gin.Context) {
-	var input struct {
-		Ticket string `json:"ticket"`
-	}
-	if !decode(c, &input) {
-		return
-	}
-	payload, err := knowledge.RedeemWeKnoraConsoleSSO(input.Ticket, c.GetHeader("Origin"))
-	if err != nil {
-		respond(c, err)
-		return
-	}
-	c.Header("Cache-Control", "no-store")
-	c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
-}
-
-// 路由: g.DELETE("/api/knowledge/connections/:id", h.deleteConnection)
-func (h *knowledgeHandlers) deleteConnection(c *gin.Context) {
-	if !h.canManage(c.Request) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以删除知识库连接"})
-		return
-	}
-	saved, err := h.svc.DeleteConnection(c.Param("id"), h.actor(c.Request))
-	if err != nil {
-		respond(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, saved.Public())
-}
-
-// 路由: g.GET("/api/knowledge/sources", h.sources)
-func (h *knowledgeHandlers) sources(c *gin.Context) {
-	ctx := c.Request.Context()
-	projectID := c.Query("projectId")
-	var (
-		list []knowledge.SourceView
-		err  error
-	)
-	if connID := strings.TrimSpace(c.Query("connectionId")); connID != "" {
-		// An explicit connection may be disabled: the console still manages it,
-		// while the default view and the Agent/MCP runtime only use active
-		// connections.
-		list, err = h.svc.SourcesForConnection(ctx, projectID, connID)
-	} else {
-		list, err = h.svc.Sources(ctx, projectID)
-	}
-	render(c, list, err)
-}
-
-// scopedConnectionID prefers the explicit connectionId query parameter, then
-// the "connID::" prefix of a composite path ID, so audits name the connection.
-func scopedConnectionID(connectionID, pathID string) string {
-	if connectionID = strings.TrimSpace(connectionID); connectionID != "" {
-		return connectionID
-	}
-	if idx := strings.Index(pathID, "::"); idx > 0 {
-		return pathID[:idx]
-	}
-	return ""
-}
-
-// 路由: g.GET("/api/knowledge/sources/:id", h.source)
-func (h *knowledgeHandlers) source(c *gin.Context) {
-	kb, err := h.svc.GetWeKnoraKB(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("id"))
-	render(c, kb, err)
-}
-
-// 路由: g.POST("/api/knowledge/search", h.search)
-func (h *knowledgeHandlers) search(c *gin.Context) {
-	var input struct {
-		Query     string   `json:"query"`
-		ProjectID string   `json:"projectId"`
-		Sources   []string `json:"sources"`
-	}
-	if !decode(c, &input) {
-		return
-	}
-	out, err := h.svc.Search(c.Request.Context(), input.ProjectID, input.Query, input.Sources)
-	render(c, out, err)
-}
-
-// 路由: g.GET("/api/knowledge/document", h.document)
-func (h *knowledgeHandlers) document(c *gin.Context) {
-	start, _ := strconv.Atoi(c.Query("start"))
-	end, _ := strconv.Atoi(c.Query("end"))
-	doc, err := h.svc.Document(c.Request.Context(), c.Query("projectId"), c.Query("source"), c.Query("path"), start, end)
-	render(c, doc, err)
-}
-
-// 路由: g.GET("/api/knowledge/sources/:id/documents", h.documents)
-func (h *knowledgeHandlers) documents(c *gin.Context) {
-	page, _ := strconv.Atoi(c.Query("page"))
-	pageSize, _ := strconv.Atoi(c.Query("pageSize"))
-	out, err := h.svc.Documents(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("id"), c.Query("keyword"), page, pageSize)
-	render(c, out, err)
-}
-
-// 路由: g.GET("/api/knowledge/documents/:docId", h.documentDetail)
-func (h *knowledgeHandlers) documentDetail(c *gin.Context) {
-	doc, err := h.svc.GetWeKnoraDocument(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("docId"))
-	render(c, doc, err)
-}
-
-// 路由: g.GET("/api/knowledge/documents/:docId/chunks", h.documentChunks)
-func (h *knowledgeHandlers) documentChunks(c *gin.Context) {
-	page, _ := strconv.Atoi(c.Query("page"))
-	pageSize, _ := strconv.Atoi(c.Query("pageSize"))
-	out, err := h.svc.ListWeKnoraChunks(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("docId"), page, pageSize)
-	render(c, out, err)
-}
-
-// 路由: g.GET("/api/knowledge/documents/:docId/preview", h.documentPreview)
-func (h *knowledgeHandlers) documentPreview(c *gin.Context) {
-	h.streamDocument(c, h.svc.OpenWeKnoraPreview)
-}
-
-// 路由: g.GET("/api/knowledge/documents/:docId/download", h.documentDownload)
-func (h *knowledgeHandlers) documentDownload(c *gin.Context) {
-	h.streamDocument(c, h.svc.OpenWeKnoraDownload)
-}
-
-type documentOpener func(context.Context, string, string, string) (*knowledge.StreamResponse, error)
-
-// streamDocument forwards an upstream document body verbatim. The client has
-// already downgraded dangerous MIME types; these headers additionally stop a
-// stored HTML/SVG file from being sniffed or cached by the browser, and the
-// exact Content-Length survives because gzip is skipped for these paths.
-func (h *knowledgeHandlers) streamDocument(c *gin.Context, open documentOpener) {
-	res, err := open(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("docId"))
-	if err != nil {
-		respond(c, err)
-		return
-	}
-	defer res.Body.Close()
-	contentType := strings.TrimSpace(res.ContentType)
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	c.Header("Content-Type", contentType)
-	if res.ContentLength > 0 {
-		c.Header("Content-Length", strconv.FormatInt(res.ContentLength, 10))
-	}
-	if res.ContentDisposition != "" {
-		c.Header("Content-Disposition", res.ContentDisposition)
-	}
-	c.Header("Cache-Control", "private, no-store")
-	c.Header("X-Content-Type-Options", "nosniff")
-	c.Status(http.StatusOK)
-	if _, err := io.Copy(c.Writer, res.Body); err != nil {
-		slog.WarnContext(c.Request.Context(), "knowledge document stream interrupted", "docId", c.Param("docId"), "error", err)
-	}
-}
-
-func (h *knowledgeHandlers) requireKnowledgeWriter(c *gin.Context) (string, bool) {
-	projectID := strings.TrimSpace(c.Query("projectId"))
-	if projectID != "" {
-		if !h.requireProjectWriter(c, projectID) {
-			return "", false
-		}
-		return projectID, true
-	}
-	if !h.canManage(c.Request) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员或项目成员可以执行该操作"})
-		return "", false
-	}
-	return "", true
-}
-
-// canWriteKnowledge reports whether the caller may mutate knowledge resources
-// for projectID without writing a response. It mirrors requireKnowledgeWriter
-// so the console's write gate cannot drift from the API gate.
-func (h *knowledgeHandlers) canWriteKnowledge(c *gin.Context, projectID string) bool {
-	if !authRequired() {
-		return true
-	}
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
-		return h.canManage(c.Request)
-	}
-	user, ok := h.requestUser(c.Request, true)
-	if !ok || h.isPlatformAdmin(c.Request) {
-		return true
-	}
-	if user == nil {
-		return false
-	}
-	return h.projectWriterAllowed(c, projectID, user.ID)
-}
-
-// 路由: g.GET("/api/knowledge/models", h.models)
-func (h *knowledgeHandlers) models(c *gin.Context) {
-	list, err := h.svc.WeKnoraModels(c.Request.Context(), c.Query("connectionId"))
-	render(c, list, err)
-}
-
-// 路由: g.POST("/api/knowledge/models", h.createModel)
-func (h *knowledgeHandlers) createModel(c *gin.Context) {
-	projectID, ok := h.requireKnowledgeWriter(c)
-	if !ok {
-		return
-	}
-	var input knowledge.WeKnoraCreateModelInput
-	if !decode(c, &input) {
-		return
-	}
-	if input.ConnectionID == "" {
-		input.ConnectionID = strings.TrimSpace(c.Query("connectionId"))
-	}
-	model, err := h.svc.CreateWeKnoraModel(c.Request.Context(), input)
-	h.auditWrite(c, "model.create", input.ConnectionID, auditTarget(model.ID, strings.TrimSpace(input.Name)), projectID, err)
-	render(c, model, err)
-}
-
-// 路由: g.POST("/api/knowledge/sources", h.createSource)
-func (h *knowledgeHandlers) createSource(c *gin.Context) {
-	projectID, ok := h.requireKnowledgeWriter(c)
-	if !ok {
-		return
-	}
-	var input knowledge.WeKnoraCreateKBInput
-	if !decode(c, &input) {
-		return
-	}
-	kb, err := h.svc.CreateWeKnoraKB(c.Request.Context(), projectID, input)
-	h.auditWrite(c, "kb.create", input.ConnectionID, auditTarget(kb.ID, strings.TrimSpace(input.Name)), projectID, err)
-	render(c, kb, err)
-}
-
-// 路由: g.PUT("/api/knowledge/sources/:id", h.updateSource)
-func (h *knowledgeHandlers) updateSource(c *gin.Context) {
-	projectID, ok := h.requireKnowledgeWriter(c)
-	if !ok {
-		return
-	}
-	var input struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-	}
-	if !decode(c, &input) {
-		return
-	}
-	kb, err := h.svc.UpdateWeKnoraKB(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.Name, input.Description)
-	h.auditWrite(c, "kb.update", scopedConnectionID(c.Query("connectionId"), c.Param("id")), c.Param("id"), projectID, err)
-	render(c, kb, err)
-}
-
-// 路由: g.DELETE("/api/knowledge/sources/:id", h.deleteSource)
-func (h *knowledgeHandlers) deleteSource(c *gin.Context) {
-	projectID, ok := h.requireKnowledgeWriter(c)
-	if !ok {
-		return
-	}
-	err := h.svc.DeleteWeKnoraKB(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"))
-	h.auditWrite(c, "kb.delete", scopedConnectionID(c.Query("connectionId"), c.Param("id")), c.Param("id"), projectID, err)
-	if err != nil {
-		respond(c, err)
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
-// 路由: g.PATCH("/api/knowledge/sources/:id", h.patchSource)
-func (h *knowledgeHandlers) patchSource(c *gin.Context) {
-	projectID, ok := h.requireKnowledgeWriter(c)
-	if !ok {
-		return
-	}
-	var input struct {
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
-	}
-	if !decodeOptional(c, &input) {
-		return
-	}
-	if input.Name == nil && input.Description == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请至少提供 name 或 description 之一"})
-		return
-	}
-	kb, err := h.svc.PatchWeKnoraKB(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.Name, input.Description)
-	h.auditWrite(c, "kb.update", scopedConnectionID(c.Query("connectionId"), c.Param("id")), c.Param("id"), projectID, err)
-	render(c, kb, err)
-}
-
-// 路由: g.POST("/api/knowledge/sources/:id/url", h.createFromURL)
-func (h *knowledgeHandlers) createFromURL(c *gin.Context) {
-	projectID, ok := h.requireKnowledgeWriter(c)
-	if !ok {
-		return
-	}
-	var input struct {
-		URL string `json:"url"`
-	}
-	if !decode(c, &input) {
-		return
-	}
-	doc, err := h.svc.CreateWeKnoraURLDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.URL)
-	h.auditWrite(c, "doc.url", scopedConnectionID(c.Query("connectionId"), c.Param("id")), auditTarget(doc.ID, c.Param("id")), projectID, err)
-	render(c, doc, err)
-}
-
-// 路由: g.POST("/api/knowledge/sources/:id/manual", h.createManual)
-func (h *knowledgeHandlers) createManual(c *gin.Context) {
-	projectID, ok := h.requireKnowledgeWriter(c)
-	if !ok {
-		return
-	}
-	var input struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
-		Publish bool   `json:"publish"`
-	}
-	if !decode(c, &input) {
-		return
-	}
-	doc, err := h.svc.CreateWeKnoraManualDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.Title, input.Content, input.Publish)
-	h.auditWrite(c, "doc.create", scopedConnectionID(c.Query("connectionId"), c.Param("id")), auditTarget(doc.ID, c.Param("id")), projectID, err)
-	render(c, doc, err)
-}
-
-// 路由: g.PUT("/api/knowledge/documents/:docId", h.updateDocument)
-func (h *knowledgeHandlers) updateDocument(c *gin.Context) {
-	projectID, ok := h.requireKnowledgeWriter(c)
-	if !ok {
-		return
-	}
-	var input struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
-		Publish bool   `json:"publish"`
-	}
-	if !decode(c, &input) {
-		return
-	}
-	doc, err := h.svc.UpdateWeKnoraManualDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId"), input.Title, input.Content, input.Publish)
-	h.auditWrite(c, "doc.update", scopedConnectionID(c.Query("connectionId"), c.Param("docId")), c.Param("docId"), projectID, err)
-	render(c, doc, err)
-}
-
-// 路由: g.POST("/api/knowledge/documents/:docId/reparse", h.reparseDocument)
-func (h *knowledgeHandlers) reparseDocument(c *gin.Context) {
-	projectID, ok := h.requireKnowledgeWriter(c)
-	if !ok {
-		return
-	}
-	err := h.svc.ReparseWeKnoraDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId"))
-	h.auditWrite(c, "doc.reparse", scopedConnectionID(c.Query("connectionId"), c.Param("docId")), c.Param("docId"), projectID, err)
-	if err != nil {
-		respond(c, err)
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
-// 路由: g.DELETE("/api/knowledge/documents/:docId", h.deleteDocument)
-func (h *knowledgeHandlers) deleteDocument(c *gin.Context) {
-	projectID, ok := h.requireKnowledgeWriter(c)
-	if !ok {
-		return
-	}
-	err := h.svc.DeleteWeKnoraDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId"))
-	h.auditWrite(c, "doc.delete", scopedConnectionID(c.Query("connectionId"), c.Param("docId")), c.Param("docId"), projectID, err)
-	if err != nil {
-		respond(c, err)
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
-const (
-	maxKnowledgeUpload = 50 << 20
-	// knowledgeUploadEnvelope leaves room for multipart boundaries and field
-	// headers, so a file at the exact limit is not rejected by framing bytes.
-	// The contract is one file plus a short filename; a longer envelope is
-	// rejected rather than risking a false 413.
-	knowledgeUploadEnvelope = 1 << 20
-)
-
-// 路由: g.POST("/api/knowledge/sources/:id/upload", h.upload)
-func (h *knowledgeHandlers) upload(c *gin.Context) {
-	projectID := strings.TrimSpace(c.Query("projectId"))
-	if projectID != "" {
-		if !h.requireProjectWriter(c, projectID) {
-			return
-		}
-	} else if !h.canManage(c.Request) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员或项目成员可以上传文档"})
-		return
-	}
-	connID := scopedConnectionID(c.Query("connectionId"), c.Param("id"))
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxKnowledgeUpload+knowledgeUploadEnvelope)
-	fileHeader, err := c.FormFile("file")
-	if err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件超过 50MB 上限"})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要上传的文件（字段名 file）"})
-		return
-	}
-	if fileHeader.Size > maxKnowledgeUpload {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件超过 50MB 上限"})
-		return
-	}
-	f, err := fileHeader.Open()
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无法读取上传文件"})
-		return
-	}
-	defer f.Close()
-	// The multipart file streams straight into the upstream request: no full
-	// buffering, so a 50MB document costs no 50MB of heap.
-	doc, err := h.svc.UploadDocumentReader(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), fileHeader.Filename, f)
-	h.auditWrite(c, "doc.upload", connID, auditTarget(doc.ID, c.Param("id")), projectID, err)
-	render(c, doc, err)
-}
-
-// 路由: g.GET("/api/knowledge/usage", h.usage)
-func (h *knowledgeHandlers) usage(c *gin.Context) {
-	projectID := c.Query("projectId")
-	agents, total := h.svc.Usage(projectID)
-	activity := make([]knowledgeActivity, 0)
-	for _, item := range h.activity.recent() {
-		if projectID == "" || item.ProjectID == projectID {
-			activity = append(activity, item)
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{"agents": agents, "totalAgents": total, "activity": activity})
-}
-
-// 路由: g.GET("/api/knowledge/candidates", h.candidates)
-func (h *knowledgeHandlers) candidates(c *gin.Context) {
-	c.JSON(http.StatusOK, h.svc.Candidates(c.Query("projectId")))
-}
-
-// 路由: g.GET("/api/knowledge/submissions", h.submissions)
-//
-//	g.POST("/api/knowledge/submissions", h.submissions)
-func (h *knowledgeHandlers) submissions(c *gin.Context) {
-	if c.Request.Method == http.MethodGet {
-		c.JSON(http.StatusOK, h.svc.Submissions(c.Query("projectId"), c.Query("status")))
-		return
-	}
-	var input knowledge.SubmissionInput
-	if !decode(c, &input) {
-		return
-	}
-	item, err := h.svc.Submit(input, h.actor(c.Request))
-	render(c, item, err)
-}
-
-// 路由: g.GET("/api/knowledge/submissions/:id", h.submission)
-//
-//	g.PUT("/api/knowledge/submissions/:id", h.submission)
-//	g.DELETE("/api/knowledge/submissions/:id", h.submission)
-func (h *knowledgeHandlers) submission(c *gin.Context) {
-	id := c.Param("id")
-	switch c.Request.Method {
-	case http.MethodGet:
-		item, err := h.svc.Submission(id)
-		render(c, item, err)
-	case http.MethodDelete:
-		respond(c, h.svc.Delete(id))
-	case http.MethodPut:
-		if _, err := h.svc.Submission(id); err != nil {
-			respond(c, err)
-			return
-		}
-		var input knowledge.SubmissionEdit
-		if !decode(c, &input) {
-			return
-		}
-		item, err := h.svc.Edit(id, input)
-		render(c, item, err)
-	default:
-		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed"})
-	}
-}
-
-// 路由: g.POST("/api/knowledge/submissions/:id/publish", h.publish)
-func (h *knowledgeHandlers) publish(c *gin.Context) {
-	item, err := h.svc.Publish(c.Request.Context(), c.Param("id"), h.actor(c.Request))
-	render(c, item, err)
-}
-
-// 路由: g.POST("/api/knowledge/submissions/:id/reject", h.reject)
-func (h *knowledgeHandlers) reject(c *gin.Context) {
-	if _, err := h.svc.Submission(c.Param("id")); err != nil {
-		respond(c, err)
-		return
-	}
-	var input struct {
-		ReviewNote string `json:"reviewNote"`
-	}
-	if !decodeOptional(c, &input) {
-		return
-	}
-	item, err := h.svc.Reject(c.Param("id"), input.ReviewNote, h.actor(c.Request))
-	render(c, item, err)
-}
-
-// referenceOptions returns only identifiers and display names to the editor.
+// 路由: GET /api/knowledge/reference-options
 func (h *knowledgeHandlers) referenceOptions(c *gin.Context) {
-	user, ok := h.requestUser(c.Request, true)
+	uid, ok := h.ownerUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "请先登录"})
 		return
 	}
-	project := c.Query("projectId")
-	if project == "" {
-		c.JSON(400, gin.H{"error": "请选择项目"})
-		return
+	svc := h.service()
+	typeMeta := map[string]domain.ConnectorTypeMeta{}
+	for _, m := range svc.ConnectorTypes() {
+		typeMeta[m.Type] = m
 	}
-	if !h.requireProjectWriter(c, project) {
-		return
-	}
-	if c.Query("sources") == "true" {
-		items, err := h.svc.Sources(c.Request.Context(), project)
-		if err != nil {
-			render(c, items, err)
+
+	if targetID := strings.TrimSpace(c.Query("connectorId")); targetID != "" && c.Query("sources") == "true" {
+		conn, found := svc.GetConnector(uid, targetID)
+		if !found || !conn.Enabled {
+			respond(c, apperr.New(apperr.NotFound, knowledge.ErrConnectorNotFound.Error()))
 			return
 		}
-		allowed := []gin.H{}
-		for _, s := range items {
-			if s.Allowed {
-				allowed = append(allowed, gin.H{"id": s.ID, "name": s.Name})
+		sources, err := svc.ListConnectorSources(c.Request.Context(), uid, targetID)
+		if err != nil {
+			respond(c, err)
+			return
+		}
+		out := make([]gin.H, 0, len(sources))
+		for _, s := range sources {
+			out = append(out, gin.H{"id": s.ID, "name": s.Name, "description": s.Description, "docCount": s.DocCount})
+		}
+		c.JSON(http.StatusOK, out)
+		return
+	}
+
+	wantSources := c.Query("sources") == "true"
+	connectors := svc.ListConnectors(uid)
+	options := make([]gin.H, 0, len(connectors))
+	for _, conn := range connectors {
+		if !conn.Enabled {
+			continue
+		}
+		meta := typeMeta[conn.Type]
+		item := gin.H{
+			"id":               conn.ID,
+			"name":             conn.Name,
+			"type":             conn.Type,
+			"typeName":         meta.Name,
+			"endpoint":         conn.Endpoint,
+			"scoped":           meta.SupportsSubSources,
+			"secretConfigured": conn.SecretConfigured,
+		}
+		if wantSources && meta.SupportsSubSources {
+			if sources, err := svc.ListConnectorSources(c.Request.Context(), uid, conn.ID); err == nil {
+				srcList := make([]gin.H, 0, len(sources))
+				for _, s := range sources {
+					srcList = append(srcList, gin.H{"id": s.ID, "name": s.Name, "description": s.Description, "docCount": s.DocCount})
+				}
+				item["sources"] = srcList
 			}
 		}
-		c.JSON(200, allowed)
-		return
+		options = append(options, item)
 	}
-	options := []gin.H{}
-	if ks := h.repo.KnowledgeSettings(); ks.Ready() {
-		label := "团队知识库"
-		if ks.EffectiveProvider() == domain.KnowledgeProviderWeKnora {
-			label = "团队知识库（WeKnora）"
-		}
-		options = append(options, gin.H{"id": domain.KnowledgeMCPServerID, "name": label, "scoped": true})
-	}
-	for _, s := range assistantOutboundMCPServers(h.repo.MCPServers(), project, user.ID) {
-		if s.Transport == "http" && s.ID != domain.KnowledgeMCPServerID {
-			options = append(options, gin.H{"id": s.ID, "name": s.Name})
-		}
-	}
-	c.JSON(200, options)
+	c.JSON(http.StatusOK, options)
 }
 
+// 路由: POST /api/knowledge/reference-check
 func (h *knowledgeHandlers) checkReferences(c *gin.Context) {
-	user, ok := h.requestUser(c.Request, true)
+	uid, ok := h.ownerUserID(c)
 	if !ok {
-		c.JSON(401, gin.H{"error": "请先登录"})
 		return
 	}
-	project := c.Query("projectId")
 	var body struct {
 		Refs []domain.KnowledgeRef `json:"knowledgeRefs"`
 	}
@@ -849,42 +304,46 @@ func (h *knowledgeHandlers) checkReferences(c *gin.Context) {
 		return
 	}
 	if err := domain.ValidateKnowledgeRefs(body.Refs); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), knowledge.CallTimeout)
 	defer cancel()
+	exec := h.executor()
+	svc := h.service()
 	for _, ref := range body.Refs {
 		if ctx.Err() != nil {
-			c.JSON(504, gin.H{"error": "知识服务探测超时"})
+			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "知识服务探测超时"})
 			return
 		}
-		tools, _, err := referenceTools(ctx, h.deps, project, user.ID, ref)
+		_, tools, err := exec.ReferenceTools(ctx, uid, ref)
 		if err != nil {
-			c.JSON(400, gin.H{"error": ref.ServerID + "：" + err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": ref.ConnectorID + "：" + err.Error()})
 			return
 		}
 		if len(tools) == 0 {
-			c.JSON(400, gin.H{"error": ref.ServerID + "：未发现声明为只读的工具，请检查端点的工具配置"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": ref.ConnectorID + "：未发现声明为只读的工具，请检查端点的工具配置"})
 			return
 		}
-		if ref.ServerID == domain.KnowledgeMCPServerID && len(ref.Sources) > 0 {
-			sources, err := h.svc.Sources(ctx, project)
+		if ref.Mode == "allowlist" && len(ref.Sources) > 0 {
+			sources, err := svc.ListConnectorSources(ctx, uid, ref.ConnectorID)
 			if err != nil {
-				c.JSON(400, gin.H{"error": "无法校验团队知识库来源"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": ref.ConnectorID + "：无法校验子知识库范围"})
 				return
 			}
-			allowed := map[string]bool{}
-			for _, s := range sources {
-				allowed[s.ID] = s.Allowed
-			}
-			for _, id := range ref.Sources {
-				if !allowed[id] {
-					c.JSON(400, gin.H{"error": "知识库来源失效或未授权"})
-					return
+			if len(sources) > 0 {
+				allowed := map[string]bool{}
+				for _, s := range sources {
+					allowed[s.ID] = true
+				}
+				for _, id := range ref.Sources {
+					if !allowed[id] {
+						c.JSON(http.StatusBadRequest, gin.H{"error": "知识库来源失效或未授权：" + id})
+						return
+					}
 				}
 			}
 		}
 	}
-	c.Status(204)
+	c.Status(http.StatusNoContent)
 }

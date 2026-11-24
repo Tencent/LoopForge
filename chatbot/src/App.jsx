@@ -1372,7 +1372,7 @@ export default function App() {
                   />
                 </div>
               ) : null}
-              {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联知识库：会话回答时只读检索所选知识服务" aria-label="关联知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
+              {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联我的知识库：会话回答时只读检索所选个人知识库连接器" aria-label="关联我的知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
               {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
               <Participants session={chat.session} users={chat.users} />
             </>
@@ -1945,7 +1945,7 @@ export default function App() {
                     />
                   </div>
                   {showEnvironmentPicker && chat.projectId ? <ChevronRightSmall /> : null}
-                  {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联知识库：会话回答时只读检索所选知识服务" aria-label="关联知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
+                  {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联我的知识库：会话回答时只读检索所选个人知识库连接器" aria-label="关联我的知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
               {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
                 </div>
                 ) : null}

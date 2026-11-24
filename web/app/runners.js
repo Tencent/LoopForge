@@ -1,4 +1,32 @@
-function openRunModal(workflowId){const select=$('#runWorkflowChoice'),workflows=runnableWorkflowOptions();select.innerHTML=workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===workflowId?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可运行 SOP</option>';$('#confirmRun').disabled=!workflows.length;$('#runModal').classList.add('open');setTimeout(()=>$('#runInput').focus(),0)}
+function syncRunModalKnowledgeSummary(){
+  const summary=$('#runKnowledgeRefsSummary'),reset=$('#runKnowledgeRefsResetBtn');
+  const override=state.runModalKnowledgeRefs;
+  if(summary){
+    if(override===null||override===undefined)summary.textContent='默认按节点或角色配置';
+    else if(override.length)summary.textContent=`本次覆盖：已选 ${override.length} 个连接器`;
+    else summary.textContent='本次覆盖：不挂载知识库';
+  }
+  if(reset)reset.hidden=override===null||override===undefined;
+}
+function openRunModal(workflowId){
+  const select=$('#runWorkflowChoice'),workflows=runnableWorkflowOptions();
+  select.innerHTML=workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===workflowId?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可运行 SOP</option>';
+  state.runModalKnowledgeRefs=null;
+  syncRunModalKnowledgeSummary();
+  const refBtn=$('#runKnowledgeRefsBtn');
+  if(refBtn)refBtn.onclick=()=>{
+    if(typeof window.editKnowledgeRefs!=='function')return toast('知识库选择器尚未加载');
+    window.editKnowledgeRefs(currentProject()?.id||state.projectFilter||'',state.runModalKnowledgeRefs||[],refs=>{
+      state.runModalKnowledgeRefs=refs;
+      syncRunModalKnowledgeSummary();
+    });
+  };
+  const resetBtn=$('#runKnowledgeRefsResetBtn');
+  if(resetBtn)resetBtn.onclick=()=>{state.runModalKnowledgeRefs=null;syncRunModalKnowledgeSummary()};
+  $('#confirmRun').disabled=!workflows.length;
+  $('#runModal').classList.add('open');
+  setTimeout(()=>$('#runInput').focus(),0);
+}
 
 // ---------- 执行机器（bind-cli，个人维度） ----------
 let runnerRefreshTimer=null;

@@ -1,25 +1,48 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 )
 
-// Sources is empty for all sources visible to the current principal.
+// KnowledgeRef binds one user-owned KnowledgeConnector and optional sub-source
+// allowlist to a Chat session or SOP agent node/run.
 type KnowledgeRef struct {
-	ServerID string   `json:"mcpServerId"`
-	Mode     string   `json:"mode"`
-	Sources  []string `json:"sources,omitempty"`
+	ConnectorID string   `json:"connectorId"`
+	Mode        string   `json:"mode"`
+	Sources     []string `json:"sources,omitempty"`
+}
+
+// UnmarshalJSON accepts both the new connectorId field and legacy mcpServerId
+// payloads so stored sessions and workflows decode seamlessly.
+func (r *KnowledgeRef) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ConnectorID string   `json:"connectorId"`
+		MCPServerID string   `json:"mcpServerId"`
+		Mode        string   `json:"mode"`
+		Sources     []string `json:"sources,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	r.ConnectorID = raw.ConnectorID
+	if strings.TrimSpace(r.ConnectorID) == "" {
+		r.ConnectorID = raw.MCPServerID
+	}
+	r.Mode = raw.Mode
+	r.Sources = raw.Sources
+	return nil
 }
 
 func ValidateKnowledgeRefs(refs []KnowledgeRef) error {
 	seen := map[string]bool{}
 	for _, ref := range refs {
-		if strings.TrimSpace(ref.ServerID) == "" || strings.TrimSpace(ref.ServerID) != ref.ServerID || seen[ref.ServerID] {
-			return fmt.Errorf("知识服务标识为空或重复")
+		if strings.TrimSpace(ref.ConnectorID) == "" || strings.TrimSpace(ref.ConnectorID) != ref.ConnectorID || seen[ref.ConnectorID] {
+			return fmt.Errorf("知识连接器标识为空或重复")
 		}
-		seen[ref.ServerID] = true
+		seen[ref.ConnectorID] = true
 		switch ref.Mode {
 		case "all":
 			if len(ref.Sources) > 0 {
@@ -31,9 +54,6 @@ func ValidateKnowledgeRefs(refs []KnowledgeRef) error {
 			}
 		default:
 			return fmt.Errorf("无效的知识库范围模式")
-		}
-		if ref.ServerID != KnowledgeMCPServerID && len(ref.Sources) > 0 {
-			return fmt.Errorf("服务 %s 尚未验证按库限制", ref.ServerID)
 		}
 		for _, source := range ref.Sources {
 			if strings.TrimSpace(source) == "" {

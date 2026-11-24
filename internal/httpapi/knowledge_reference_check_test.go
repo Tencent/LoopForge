@@ -15,8 +15,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// checkRefServer is a tiny MCP endpoint used to drive the two failure modes
-// of checkReferences independently.
 type checkRefServer struct {
 	mode string // "error", "no-readonly", "readonly"
 }
@@ -47,11 +45,10 @@ func (s checkRefServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func jsonDecode(r *http.Request, v any) error {
-	dec := json.NewDecoder(r.Body)
-	return dec.Decode(v)
+	return json.NewDecoder(r.Body).Decode(v)
 }
 
-func newCheckRefHandler(t *testing.T, mode string) (*knowledgeHandlers, *gin.Engine, domain.User) {
+func newCheckRefHandler(t *testing.T, mode string) (*knowledgeHandlers, *gin.Engine, domain.User, string) {
 	t.Helper()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -62,30 +59,29 @@ func newCheckRefHandler(t *testing.T, mode string) (*knowledgeHandlers, *gin.Eng
 	upstream := httptest.NewServer(checkRefServer{mode: mode})
 	t.Cleanup(upstream.Close)
 
-	const project = "p1"
-	const serverID = "ext-mcp"
-	if err := s.PutMCPServer(domain.MCPServerDefinition{
-		ID: serverID, Name: "External", ProjectID: project, Scope: "project",
-		Transport: "http", URL: upstream.URL,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutProject(domain.Project{ID: project, Name: "P1"}); err != nil {
-		t.Fatal(err)
-	}
 	user := domain.User{ID: 1, LoginName: "lab"}
 	if err := s.PutUser(user); err != nil {
 		t.Fatal(err)
 	}
+	svc := knowledge.NewService(s, func() string { return "ext" })
+	conn, err := svc.CreateConnector(context.Background(), user.ID, knowledge.ConnectorInput{
+		Name:     "External",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: upstream.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	h := &knowledgeHandlers{
-		deps: &deps{repo: s},
-		svc:  knowledge.NewService(s, func() string { return "id" }),
+		deps: &deps{repo: s, knowledgeSvc: svc, knowledgeExec: knowledge.NewExecutor(svc)},
+		svc:  svc,
+		exec: knowledge.NewExecutor(svc),
 	}
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.POST("/api/knowledge/reference-check", h.checkReferences)
-	return h, r, user
+	return h, r, user, conn.ID
 }
 
 func doCheckRef(t *testing.T, router *gin.Engine, user domain.User, body string) *httptest.ResponseRecorder {
@@ -98,41 +94,32 @@ func doCheckRef(t *testing.T, router *gin.Engine, user domain.User, body string)
 	return rec
 }
 
-const checkRefBody = `{"knowledgeRefs":[{"mcpServerId":"ext-mcp","mode":"all"}]}`
-
 func TestCheckReferenceErrorSurfacesUnderlyingMessage(t *testing.T) {
-	_, router, user := newCheckRefHandler(t, "error")
-	rec := doCheckRef(t, router, user, checkRefBody)
+	_, router, user, connID := newCheckRefHandler(t, "error")
+	rec := doCheckRef(t, router, user, `{"knowledgeRefs":[{"connectorId":"`+connID+`","mode":"all"}]}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, "当前身份无法发现可用只读工具") {
-		t.Fatalf("stale misleading message returned: %s", body)
-	}
-	if !strings.Contains(body, "知识服务不可用或调用失败") {
+	if !strings.Contains(body, "知识库 MCP 服务不可用或调用失败") {
 		t.Fatalf("underlying error not surfaced: %s", body)
 	}
 }
 
 func TestCheckReferenceNoReadOnlyToolsMessage(t *testing.T) {
-	_, router, user := newCheckRefHandler(t, "no-readonly")
-	rec := doCheckRef(t, router, user, checkRefBody)
+	_, router, user, connID := newCheckRefHandler(t, "no-readonly")
+	rec := doCheckRef(t, router, user, `{"knowledgeRefs":[{"connectorId":"`+connID+`","mode":"all"}]}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "未发现声明为只读的工具") {
-		t.Fatalf("expected no-readonly message, got: %s", body)
-	}
-	if strings.Contains(body, "当前身份无法发现可用只读工具") {
-		t.Fatalf("stale misleading message returned: %s", body)
+	if !strings.Contains(rec.Body.String(), "未发现声明为只读的工具") {
+		t.Fatalf("expected no-readonly message, got: %s", rec.Body.String())
 	}
 }
 
 func TestCheckReferenceReadOnlyToolSucceeds(t *testing.T) {
-	_, router, user := newCheckRefHandler(t, "readonly")
-	rec := doCheckRef(t, router, user, checkRefBody)
+	_, router, user, connID := newCheckRefHandler(t, "readonly")
+	rec := doCheckRef(t, router, user, `{"knowledgeRefs":[{"connectorId":"`+connID+`","mode":"all"}]}`)
 	if rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 204/200; body=%s", rec.Code, rec.Body.String())
 	}

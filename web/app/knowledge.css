@@ -8,7 +8,7 @@
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 
 #knowledgeView .kb-head-actions {
@@ -18,211 +18,200 @@
   flex-wrap: wrap;
 }
 
-#knowledgeView .kb-tabs {
+#knowledgeView .kb-notice {
   display: flex;
-  align-items: center;
-  gap: 20px;
-  border-bottom: 1px solid var(--hui-border, rgba(15, 23, 42, .08));
-  margin-bottom: 18px;
-}
-
-#knowledgeView .kb-tab {
-  position: relative;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  background: transparent;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--hui-border);
+  background: var(--hui-surface-subtle, rgba(15, 23, 42, .02));
+  font-size: 12.5px;
   color: var(--hui-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 9px 2px;
-  cursor: pointer;
-  transition: color .15s ease, border-color .15s ease;
 }
 
-#knowledgeView .kb-tab:hover {
-  color: var(--hui-ink);
+#knowledgeView .kb-notice strong {
+  color: var(--hui-text);
 }
 
-#knowledgeView .kb-tab.active {
-  color: var(--hui-ink);
-  font-weight: 600;
-  border-bottom-color: var(--hui-accent);
-}
-
-#knowledgeView .kb-metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-#knowledgeView .kb-metric {
-  padding: 14px 16px;
+#knowledgeView .kb-connector-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
 }
 
-#knowledgeView .kb-metric-label {
-  font-size: 12px;
-  color: var(--hui-secondary);
-}
-
-#knowledgeView .kb-metric-val {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--hui-ink);
-}
-
-#knowledgeView .kb-grid-2 {
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-@media (max-width: 960px) {
-  #knowledgeView .kb-grid-2 {
-    grid-template-columns: 1fr;
-  }
-}
-
-#knowledgeView .kb-panel {
+#knowledgeView .kb-panel,
+#knowledgeView .kb-card,
+#knowledgeView .kb-empty-panel {
   padding: 16px 18px;
-  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-#knowledgeView .kb-panel-head {
+#knowledgeView .kb-card-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
 }
 
-#knowledgeView .kb-panel-head h2,
-#knowledgeView .kb-panel-head h3 {
+#knowledgeView .kb-card-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+#knowledgeView .kb-card-title-group h3 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+  color: var(--hui-text);
 }
 
-#knowledgeView .kb-source-list {
+#knowledgeView .kb-card-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+#knowledgeView .kb-card-meta,
+#knowledgeView .kb-extra-row {
+  display: flex;
+  align-items: center;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--hui-secondary);
+}
+
+#knowledgeView .kb-endpoint-line code,
+#knowledgeView .kb-extra-item code,
+#knowledgeView .kb-chip {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--hui-border);
+  background: var(--hui-surface-subtle, rgba(15, 23, 42, .03));
+  color: var(--hui-text);
+}
+
+#knowledgeView .kb-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+#knowledgeView .kb-empty-head h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  color: var(--hui-text);
+}
+
+#knowledgeView .kb-empty-head p {
+  margin: 0;
+}
+
+#knowledgeView .kb-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 6px;
+}
+
+#knowledgeView .kb-type-card {
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--hui-surface);
 }
 
-#knowledgeView .kb-source-item {
+#knowledgeView .kb-type-card-top {
   width: 100%;
-  text-align: left;
-  padding: 11px 12px;
-  border: 0;
-  border-bottom: 1px solid var(--hui-border);
-  border-left: 3px solid transparent;
-  background: transparent;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  transition: background-color .15s ease, border-left-color .15s ease;
-}
-
-#knowledgeView .kb-source-item:last-child {
-  border-bottom: 0;
-}
-
-#knowledgeView .kb-source-item:hover {
-  background: color-mix(in srgb, var(--hui-ink) 3%, transparent);
-}
-
-#knowledgeView .kb-source-item:focus-visible {
-  outline: 2px solid var(--hui-accent);
-  outline-offset: -2px;
-}
-
-#knowledgeView .kb-source-item.active {
-  border-left-color: var(--hui-accent);
-  background: color-mix(in srgb, var(--hui-ink) 6%, transparent);
-}
-
-#knowledgeView .kb-source-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--hui-ink);
 }
 
-#knowledgeView .kb-source-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-#knowledgeView .kb-source-meta {
-  font-size: 12px;
+#knowledgeView .kb-type-card-top code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 11px;
   color: var(--hui-secondary);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
-#knowledgeView .kb-toolbar,
-#kbDrawer .kb-toolbar {
+#knowledgeView .kb-type-card p {
+  margin: 0;
+  flex: 1;
+}
+
+#knowledgeView .kb-sources-box {
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--hui-surface-subtle, rgba(15, 23, 42, .02));
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
-#knowledgeView .kb-toolbar .kb-input {
-  width: auto;
-  min-width: 200px;
-  height: 32px;
-  padding: 0 10px;
-}
-
-#knowledgeView .kb-toolbar .kb-btn {
-  height: 32px;
-  padding: 0 12px;
-  display: inline-flex;
+#knowledgeView .kb-sources-head {
+  display: flex;
   align-items: center;
-  justify-content: center;
-}
-
-#knowledgeView .kb-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-#knowledgeView .kb-table th,
-#knowledgeView .kb-table td {
-  text-align: left;
-  padding: 9px 10px;
-  border-bottom: 1px solid var(--hui-border);
-  vertical-align: middle;
-}
-
-#knowledgeView .kb-table th {
+  justify-content: space-between;
   font-size: 12px;
-  font-weight: 500;
   color: var(--hui-secondary);
 }
 
-#knowledgeView .kb-form-grid {
+#knowledgeView .kb-sources-head strong {
+  color: var(--hui-text);
+}
+
+#knowledgeView .kb-sources-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+#knowledgeView .kb-source-pill {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--hui-border);
+  background: var(--hui-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#knowledgeView .kb-source-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--hui-text);
+}
+
+#knowledgeView .kb-source-sub {
+  font-size: 11.5px;
+  color: var(--hui-secondary);
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-muted {
+  color: var(--hui-secondary);
+  font-size: 12.5px;
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-req {
+  color: var(--hui-error);
 }
 
 :is(#knowledgeView, #kbDrawer) .kb-field {
@@ -237,12 +226,11 @@
 :is(#knowledgeView, #kbDrawer) .kb-field > label {
   display: block;
   font-weight: 500;
-  color: var(--hui-ink);
+  color: var(--hui-text);
   text-align: left;
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-field small,
-:is(#knowledgeView, #kbDrawer) .kb-muted {
+:is(#knowledgeView, #kbDrawer) .kb-field small {
   color: var(--hui-secondary);
   font-size: 12px;
 }
@@ -255,59 +243,61 @@
   font-size: 13px;
 }
 
-#kbDrawer textarea.kb-input {
-  min-height: 260px;
+:is(#knowledgeView, #kbDrawer) .kb-kv-input {
+  min-height: 76px;
   resize: vertical;
-  line-height: 1.6;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-checks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+:is(#knowledgeView, #kbDrawer) .kb-check-banner {
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  border: 1px solid var(--hui-border);
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-check-chip {
+:is(#knowledgeView, #kbDrawer) .kb-check-banner.ok {
+  border-color: color-mix(in srgb, var(--hui-success) 35%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-success) 7%, var(--hui-surface));
+  color: var(--hui-text);
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-check-banner.err {
+  border-color: color-mix(in srgb, var(--hui-error) 35%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-error) 7%, var(--hui-surface));
+  color: var(--hui-error);
+}
+
+:is(#knowledgeView, #kbDrawer) :is(.kb-btn, .hui-badge) {
+  white-space: nowrap;
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-btn.xs {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-btn.danger-outline {
+  border-color: color-mix(in srgb, var(--hui-error) 35%, var(--hui-border));
+  background: var(--hui-surface);
+  color: var(--hui-error);
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-btn.danger-outline:hover:not(:disabled) {
+  border-color: var(--hui-error);
+  background: color-mix(in srgb, var(--hui-error) 6%, var(--hui-surface));
+  color: var(--hui-error);
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-row-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--hui-border);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-#knowledgeView .kb-hit-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-#knowledgeView .kb-hit {
-  padding: 12px 14px;
-  border: 1px solid var(--hui-border);
-  border-radius: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-#knowledgeView .kb-hit-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-#knowledgeView .kb-hit-snippet {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--hui-secondary);
-  white-space: pre-wrap;
+  flex-wrap: wrap;
 }
 
 #kbDrawer {
@@ -315,7 +305,7 @@
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(620px, 94vw);
+  width: min(560px, 94vw);
   background: var(--hui-surface, #fff);
   border-left: 1px solid var(--hui-border);
   box-shadow: -12px 0 36px rgba(15, 23, 42, .14);
@@ -371,7 +361,29 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  gap: 14px;
+}
+
+#kbDrawer .kb-dynamic-fields {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+}
+
+#kbDrawer .kb-drawer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 12px;
+  align-items: end;
+}
+
+#kbDrawer .kb-check-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--hui-text);
+  cursor: pointer;
 }
 
 #kbDrawer .kb-drawer-foot {
@@ -379,199 +391,17 @@
   border-top: 1px solid var(--hui-border);
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
 }
 
-/* 控制台登录凭据：标签 + 可复制的值 + 操作按钮 */
-#kbDrawer .kb-cred-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+#kbDrawer .kb-drawer-spacer {
+  flex: 1;
 }
 
-#kbDrawer .kb-cred-row > span:first-child {
-  min-width: 72px;
-  color: var(--hui-secondary);
-  font-size: 13px;
-}
-
-#kbDrawer .kb-cred-row code {
-  padding: 4px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--hui-border);
-  background: var(--hui-surface-subtle, rgba(15, 23, 42, .03));
-  font-family: var(--hui-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 13px;
-  word-break: break-all;
-}
-
-#kbDrawer .kb-cred-error {
-  color: var(--hui-error);
-}
-
-#kbDrawer .kb-doc-pre {
-  margin: 0;
-  padding: 12px;
-  border-radius: 8px;
-  border: 1px solid var(--hui-border);
-  background: var(--hui-surface-subtle, rgba(15, 23, 42, .03));
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* 行内操作、连接能力胶囊与删除描边按钮 */
-:is(#knowledgeView, #kbDrawer) :is(.kb-btn, .hui-badge) {
-  white-space: nowrap;
-}
-
-:is(#knowledgeView, #kbDrawer) .kb-btn.xs {
-  flex-shrink: 0;
-  height: 28px;
-  padding: 0 10px;
-  font-size: 12px;
-}
-
-:is(#knowledgeView, #kbDrawer) .kb-btn.danger-outline {
-  border-color: var(--hui-error);
-  background: transparent;
-  color: var(--hui-error);
-}
-
-:is(#knowledgeView, #kbDrawer) .kb-btn.danger-outline:hover:not(:disabled) {
-  border-color: var(--hui-error);
-  background: color-mix(in srgb, var(--hui-error) 6%, var(--hui-surface));
-  color: var(--hui-error);
-}
-
-:is(#knowledgeView, #kbDrawer) .kb-row-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-
-:is(#knowledgeView, #kbDrawer) .kb-cap-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-}
-
-/* 文档详情抽屉：分段视图 / 分块卡片 / 预览与分页 */
-:is(#knowledgeView, #kbDrawer) .kb-seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  align-self: flex-start;
-  padding: 3px;
-  border: 1px solid var(--hui-border);
-  border-radius: 10px;
-  background: var(--hui-surface-subtle, rgba(15, 23, 42, .03));
-}
-
-:is(#knowledgeView, #kbDrawer) .kb-seg button {
-  border: 0;
-  background: transparent;
-  color: var(--hui-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 6px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-:is(#knowledgeView, #kbDrawer) .kb-seg button:hover {
-  color: var(--hui-text);
-}
-
-:is(#knowledgeView, #kbDrawer) .kb-seg button.active {
-  background: var(--hui-surface);
-  color: var(--hui-text);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
-}
-
-#kbDrawer .kb-doc-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-#kbDrawer .kb-doc-meta {
+.modal-knowledge-row {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-#kbDrawer .kb-doc-pane {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-#kbDrawer .kb-chunk-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-#kbDrawer .kb-chunk-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--hui-border);
-  border-radius: 10px;
-}
-
-#kbDrawer .kb-chunk-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--hui-text);
-}
-
-#kbDrawer .kb-chunk-card .kb-doc-pre {
-  border: 0;
-  padding: 0;
-  background: transparent;
-}
-
-#kbDrawer .kb-preview-box {
-  border: 1px solid var(--hui-border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--hui-surface-subtle, rgba(15, 23, 42, .03));
-}
-
-#kbDrawer .kb-preview-img {
-  display: block;
-  max-width: 100%;
-  max-height: 60vh;
-  margin: 0 auto;
-}
-
-#kbDrawer .kb-preview-frame {
-  display: block;
-  width: 100%;
-  height: 60vh;
-  border: 0;
-  background: var(--hui-surface);
-}
-
-#kbDrawer .kb-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  margin-top: 8px;
 }

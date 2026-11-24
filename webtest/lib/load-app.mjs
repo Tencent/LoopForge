@@ -87,16 +87,38 @@ function defaultPayload(pathname, method) {
     businessDomains: [], projects: [], trend: [], deliveryTrend: [], grain: 'day',
     timeZone: 'UTC', generatedAt: '2026-10-21T10:00:00Z',
   };
-  if (pathname === '/api/knowledge/settings') return {
-    ready: true, url: 'https://knowledge.example/mcp', tokenConfigured: true,
-    defaultSources: ['handbook'], projectSources: {},
-  };
-  if (/^\/api\/knowledge\/(submissions|candidates|sources)$/.test(pathname)) return [];
-  // 连接能力探测的默认空安全响应：不声明任何能力，前端沿用「未知 → 乐观放行」的旧行为。
-  if (/^\/api\/knowledge\/connections\/[^/]+\/capabilities$/.test(pathname)) {
-    return { checkedAt: null, capabilities: null };
+  if (pathname === '/api/knowledge/connector-types') return [
+    {
+      type: 'weknora',
+      name: 'WeKnora 知识库',
+      description: '通过只读 REST API 接入个人或团队 WeKnora 实例（支持列子库、混合检索与分块原文读取）',
+      supportsSubSources: true,
+      defaultAuthType: 'api_key',
+      fields: [
+        { key: 'endpoint', label: 'WeKnora 服务地址', kind: 'url', required: true },
+        { key: 'token', label: 'API Key', kind: 'secret', required: true, secret: true },
+      ],
+    },
+    {
+      type: 'mcp',
+      name: '通用知识 MCP（Streamable HTTP）',
+      description: '接入遵循 Streamable HTTP MCP 协议的任意只读知识库服务（含 LightCloud 等），仅放行 readOnlyHint 工具',
+      supportsSubSources: true,
+      defaultAuthType: 'bearer',
+      fields: [
+        { key: 'endpoint', label: 'MCP 服务地址', kind: 'url', required: true },
+        { key: 'token', label: 'Bearer Token（可选）', kind: 'secret', required: false, secret: true },
+        { key: 'headers', label: '认证请求头（可选）', kind: 'kv', required: false, secret: true },
+      ],
+    },
+  ];
+  if (pathname === '/api/knowledge/connectors') return [];
+  if (/^\/api\/knowledge\/connectors\/[^/]+\/sources$/.test(pathname)) return [];
+  if (/^\/api\/knowledge\/connectors(?:\/[^/]+)?\/check$/.test(pathname)) {
+    return { ok: true, latencyMs: 8, sources: [], tools: ['kb_search'] };
   }
-  if (pathname === '/api/knowledge/usage') return { searches: 3, fetches: 2, agents: 1 };
+  if (pathname === '/api/knowledge/reference-options') return [];
+  if (pathname === '/api/knowledge/reference-check') return { ok: true };
   if (/^\/api\/(projects|issues|tasks|runs|flows|workflows|sops|agents|runners|assets|bots|rooms|users|notifications|revisions|approvals|business-domains|rules|skills|mcp|mcp-servers|executors|dockerfiles|environments|sandboxes|schedule-jobs)$/.test(pathname)) {
     const key = pathname.split('/').at(-1).replace('flows', 'workflows').replace('mcp-servers', 'mcpServers').replace('schedule-jobs', 'scheduleJobs');
     return sampleBootstrap()[key] || [];

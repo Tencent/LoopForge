@@ -717,11 +717,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
 			}
-			for _, ref := range effectiveNode.KnowledgeRefs {
-				id := ref.ServerID
-				if id != domain.KnowledgeMCPServerID {
-					id = domain.KnowledgeMCPServerID + "-" + id
-				}
+			effectiveRefs := effectiveNode.KnowledgeRefs
+			if current.ExecutionContext.KnowledgeRefs != nil {
+				effectiveRefs = *current.ExecutionContext.KnowledgeRefs
+			}
+			for _, ref := range effectiveRefs {
+				id := domain.KnowledgeMCPServerID + "-" + ref.ConnectorID
 				found := false
 				for _, server := range assets.MCPServers {
 					if server.ID == id {
@@ -730,11 +731,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					}
 				}
 				if !found {
-					warnMCPSkipped("知识服务未装配：" + ref.ServerID)
+					warnMCPSkipped("知识连接器未装配：" + ref.ConnectorID + "（不存在、已停用或不属于当前执行人）")
 				}
 			}
-			if warning := knowledgeSkippedWarning(agent, assets); warning != "" {
-				warnMCPSkipped(warning)
+			if current.ExecutionContext.KnowledgeRefs == nil && len(effectiveNode.KnowledgeRefs) == 0 {
+				if warning := knowledgeSkippedWarning(agent, assets); warning != "" {
+					warnMCPSkipped(warning)
+				}
 			}
 			options := runtime.InvocationOptions{RunID: runID, NodeID: node.ID, ResumeSessionID: resumeSessionID, Repositories: current.RepositoryContexts()}
 			if requiresSubmit {

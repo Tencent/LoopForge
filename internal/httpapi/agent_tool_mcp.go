@@ -13,6 +13,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/mcpserver"
 
 	"github.com/gin-gonic/gin"
@@ -288,11 +289,14 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		}
 	}
 	if tool.Kind == "knowledge" {
+		exec := h.deps.executor()
+		if exec == nil {
+			return nil, errAgentToolForbidden
+		}
 		for _, ref := range session.KnowledgeRefs {
-			if ref.ServerID == tool.ServerID {
-				res, err := callKnowledgeReferenceWithOrigin(ctx, h.deps, session.ProjectID, session.UserID, ref, tool.UpstreamName, args, domain.KnowledgeCallOriginModelTool)
-				read, text := knowledgeReadResultWithMeta(ref.ServerID, tool.UpstreamName, res.Text, res.Hits, res.Status, res.Warning, domain.KnowledgeCallOriginModelTool, err)
-				read.Query = knowledgeCallQuerySummary(args)
+			if ref.ConnectorID == tool.ServerID {
+				read, text, err := exec.ExecuteReferenceTool(ctx, session.UserID, ref, tool.UpstreamName, args, domain.KnowledgeCallOriginModelTool)
+				read.Query = knowledge.KnowledgeCallQuerySummary(args)
 				session.mu.Lock()
 				session.knowledgeReads = append(session.knowledgeReads, read)
 				session.mu.Unlock()

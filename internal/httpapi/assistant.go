@@ -322,7 +322,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			sess.SandboxProfileID = saved.SandboxProfileID
 			sess.KnowledgeRefs = saved.KnowledgeRefs
 			for _, ref := range saved.KnowledgeRefs {
-				sess.MCPServers = slices.DeleteFunc(sess.MCPServers, func(s domain.MCPServerDefinition) bool { return s.ID == ref.ServerID })
+				sess.MCPServers = slices.DeleteFunc(sess.MCPServers, func(s domain.MCPServerDefinition) bool {
+					return s.ID == ref.ConnectorID || s.ID == domain.KnowledgeMCPServerID+"-"+ref.ConnectorID
+				})
 			}
 		}
 		if req.RunID == "" {
@@ -504,7 +506,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
 				if len(toolSession.KnowledgeRefs) > 0 {
-					if kbCtx := knowledgeReferencePromptContext(ctx, h.deps, req.ProjectID, u.ID, toolSession.KnowledgeRefs); kbCtx != "" {
+					if kbCtx := knowledgeReferencePromptContext(ctx, h.deps, u.ID, toolSession.KnowledgeRefs); kbCtx != "" {
 						system += "\n" + kbCtx
 						if resume || req.workspaceMode {
 							prompt = kbCtx + "\n" + prompt

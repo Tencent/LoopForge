@@ -35,40 +35,45 @@ func (e *Engine) platformMCPServer() domain.MCPServerDefinition {
 	return def
 }
 
-// knowledgeMCPServer materializes the reserved read-only knowledge proxy with
-// a fresh project-scoped token. It degrades to a no-op while the knowledge
-// base is not connected, so turning the role toggle on never fails a run.
-func (e *Engine) knowledgeMCPServer(claims knowledge.ProxyClaims) (domain.MCPServerDefinition, bool) {
-	if e.repo == nil {
-		return domain.MCPServerDefinition{}, false
+// knowledgeConnectorMCP resolves one user-owned KnowledgeConnector ref into
+// a read-only proxied MCPServerDefinition with an afkb1. token. Returns false
+// when the connector does not exist under userID or is disabled.
+func (e *Engine) knowledgeConnectorMCP(claims knowledge.ProxyClaims) (domain.MCPServerDefinition, domain.KnowledgeConnector, bool) {
+	if e.repo == nil || claims.Ref == nil || strings.TrimSpace(claims.Ref.ConnectorID) == "" {
+		return domain.MCPServerDefinition{}, domain.KnowledgeConnector{}, false
+	}
+	exec := e.knowledgeExecutor()
+	if exec == nil || exec.Service() == nil {
+		return domain.MCPServerDefinition{}, domain.KnowledgeConnector{}, false
+	}
+	conn, ok := exec.Service().GetConnector(claims.UserID, claims.Ref.ConnectorID)
+	if !ok || !conn.Enabled {
+		return domain.MCPServerDefinition{}, domain.KnowledgeConnector{}, false
 	}
 	e.mu.Lock()
 	base := e.platformMCPBase
 	e.mu.Unlock()
-	settings := e.repo.KnowledgeSettings()
-	if !settings.Ready() && (claims.Ref == nil || claims.Ref.ServerID == domain.KnowledgeMCPServerID) {
-		return domain.MCPServerDefinition{}, false
-	}
-	token, err := knowledge.SignProxyToken(settings, claims, time.Now())
+	token, err := knowledge.SignProxyToken(claims, time.Now())
 	if err != nil {
-		return domain.MCPServerDefinition{}, false
+		return domain.MCPServerDefinition{}, domain.KnowledgeConnector{}, false
 	}
-	return knowledge.MCPServerDefinition(base, token), true
+	serverID := domain.KnowledgeMCPServerID + "-" + conn.ID
+	desc := fmt.Sprintf("个人只读知识库连接器（%s）：%s", conn.Type, conn.Name)
+	return knowledge.MCPServerDefinition(base, serverID, conn.Name, desc, token), conn, true
 }
 
-// knowledgeSkippedWarning explains a knowledge toggle that resolveAssets could
-// not honor, so the node log says why instead of the agent silently lacking
-// the tools.
+// knowledgeSkippedWarning explains a role knowledge toggle that could not
+// attach any user-owned connector, so the node log stays informative.
 func knowledgeSkippedWarning(agent domain.AgentDefinition, assets domain.AgentAssetBundle) string {
 	if !agent.KnowledgeBase {
 		return ""
 	}
 	for _, server := range assets.MCPServers {
-		if server.ID == domain.KnowledgeMCPServerID {
+		if server.ID == domain.KnowledgeMCPServerID || strings.HasPrefix(server.ID, domain.KnowledgeMCPServerID+"-") {
 			return ""
 		}
 	}
-	return "角色开启了团队知识库，但未注入 " + domain.KnowledgeMCPServerID + "：知识中心未启用或未配置知识库地址/Token"
+	return "角色开启了知识库，但当前执行人未配置已启用的个人知识库连接器（" + domain.KnowledgeMCPServerID + "）"
 }
 
 // RoleAssets resolves a role's assets outside any SOP run, for a chat
@@ -136,8 +141,21 @@ func (e *Engine) resolveAssets(agent domain.AgentDefinition, projectID, workflow
 		bundle.MCPServers = append(bundle.MCPServers, e.platformMCPServer())
 	}
 	if agent.KnowledgeBase {
-		if v, ok := e.knowledgeMCPServer(knowledge.ProxyClaims{ProjectID: projectID, UserID: userID, AgentID: agent.ID}); ok {
-			bundle.MCPServers = append(bundle.MCPServers, v)
+		exec := e.knowledgeExecutor()
+		var injected bool
+		if exec != nil && exec.Service() != nil {
+			for _, conn := range exec.Service().ListConnectors(userID) {
+				if !conn.Enabled {
+					continue
+				}
+				ref := domain.KnowledgeRef{ConnectorID: conn.ID, Mode: "all"}
+				if v, _, ok := e.knowledgeConnectorMCP(knowledge.ProxyClaims{ProjectID: projectID, UserID: userID, AgentID: agent.ID, Ref: &ref}); ok {
+					bundle.MCPServers = append(bundle.MCPServers, v)
+					injected = true
+				}
+			}
+		}
+		if injected {
 			bundle.Rules = append(bundle.Rules, knowledge.UsageRule())
 		}
 	}
@@ -148,58 +166,61 @@ func (e *Engine) resolveAssets(agent domain.AgentDefinition, projectID, workflow
 func (e *Engine) resolveNodeAssets(ctx context.Context, agent domain.AgentDefinition, run domain.Run, wfID string, node domain.WorkflowNode) domain.AgentAssetBundle {
 	project := run.ExecutionContext.ProjectID
 	uid := run.ExecutionContext.ResponsibleUserID
-	selected := map[string]bool{}
-	for _, ref := range node.KnowledgeRefs {
-		selected[ref.ServerID] = true
-	}
-	ids := make([]string, 0, len(agent.MCPServers))
-	for _, id := range agent.MCPServers {
-		if !selected[id] {
-			ids = append(ids, id)
+	exec := e.knowledgeExecutor()
+
+	// Priority:
+	// 1) Explicit run-level override (ExecutionContext.KnowledgeRefs != nil)
+	// 2) Node-level KnowledgeRefs (strictly filtered to connectors owned by uid)
+	// 3) Role-level KnowledgeBase toggle (all enabled connectors owned by uid)
+	var effectiveRefs []domain.KnowledgeRef
+	hasExplicitOverride := run.ExecutionContext.KnowledgeRefs != nil
+	switch {
+	case hasExplicitOverride:
+		effectiveRefs = append([]domain.KnowledgeRef(nil), (*run.ExecutionContext.KnowledgeRefs)...)
+	case len(node.KnowledgeRefs) > 0:
+		effectiveRefs = append([]domain.KnowledgeRef(nil), node.KnowledgeRefs...)
+	case agent.KnowledgeBase && exec != nil && exec.Service() != nil:
+		for _, conn := range exec.Service().ListConnectors(uid) {
+			if conn.Enabled {
+				effectiveRefs = append(effectiveRefs, domain.KnowledgeRef{ConnectorID: conn.ID, Mode: "all"})
+			}
 		}
 	}
-	agent.MCPServers = ids
-	if selected[domain.KnowledgeMCPServerID] {
-		agent.KnowledgeBase = false
-	}
+
+	// Suppress role-level generic tokens so we mint node/run/attempt-bound tokens below.
+	agent.KnowledgeBase = false
 	bundle := e.resolveAssets(agent, project, wfID, uid)
 	attempt := 0
 	if nr := run.Nodes[node.ID]; nr != nil {
 		attempt = nr.Attempt
 	}
-	if agent.KnowledgeBase && !selected[domain.KnowledgeMCPServerID] && run.ID != "" && node.ID != "" {
-		if s, ok := e.knowledgeMCPServer(knowledge.ProxyClaims{ProjectID: project, UserID: uid, AgentID: agent.ID, RunID: run.ID, NodeID: node.ID, Attempt: attempt}); ok {
-			for i, srv := range bundle.MCPServers {
-				if srv.ID == domain.KnowledgeMCPServerID {
-					bundle.MCPServers[i] = s
-					break
-				}
-			}
-		}
-	}
+
 	var attached []domain.MCPServerDefinition
-	for _, ref := range node.KnowledgeRefs {
-		s, ok := e.knowledgeMCPServer(knowledge.ProxyClaims{ProjectID: project, UserID: uid, AgentID: agent.ID, RunID: run.ID, NodeID: node.ID, Attempt: attempt, Ref: &ref})
+	var attachedRefs []domain.KnowledgeRef
+	for _, ref := range effectiveRefs {
+		r := ref
+		srv, _, ok := e.knowledgeConnectorMCP(knowledge.ProxyClaims{
+			ProjectID: project,
+			UserID:    uid,
+			AgentID:   agent.ID,
+			RunID:     run.ID,
+			NodeID:    node.ID,
+			Attempt:   attempt,
+			Ref:       &r,
+		})
 		if !ok {
 			continue
 		}
-		s.ID = ref.ServerID
-		if ref.ServerID != domain.KnowledgeMCPServerID {
-			v, ok := e.repo.MCPServer(ref.ServerID)
-			if !ok || !roleMCPServerVisible(v, project, uid) {
-				continue
-			}
-			s.ID = domain.KnowledgeMCPServerID + "-" + v.ID
-			s.Name = v.Name
-			s.Description = v.Description
-		}
-		bundle.MCPServers = append(bundle.MCPServers, s)
-		attached = append(attached, s)
+		bundle.MCPServers = append(bundle.MCPServers, srv)
+		attached = append(attached, srv)
+		attachedRefs = append(attachedRefs, r)
 	}
 	if len(attached) > 0 {
 		catalog := ""
-		if e.BuildKnowledgeCatalog != nil {
-			catalog = e.BuildKnowledgeCatalog(ctx, project, uid, node.KnowledgeRefs)
+		if exec != nil {
+			catalog = exec.BuildCatalogXML(ctx, uid, attachedRefs, "sop", func(conn domain.KnowledgeConnector, toolName string) string {
+				return "mcp__" + domain.KnowledgeMCPServerID + "-" + conn.ID + "__" + toolName
+			})
 		}
 		if catalog == "" {
 			catalog = fallbackSOPKnowledgeCatalog(attached)
@@ -207,7 +228,7 @@ func (e *Engine) resolveNodeAssets(ctx context.Context, agent domain.AgentDefini
 		bundle.Rules = append(bundle.Rules, domain.RuleDefinition{
 			ID:          domain.SOPKnowledgeUsageRuleID,
 			Name:        "节点知识库使用规范",
-			Description: "SOP 节点执行前先核对并检索已绑定知识库，引用附出处和标记",
+			Description: "SOP 节点执行前先核对并检索当前执行人绑定的个人知识库，引用附精准出处",
 			Content:     domain.SOPKnowledgeLookupInstruction + "\n" + catalog,
 			Priority:    60,
 		})

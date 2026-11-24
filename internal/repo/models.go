@@ -672,29 +672,22 @@ type spaceThreadRow struct {
 
 func (spaceThreadRow) TableName() string { return "space_threads" }
 
-// knowledgeSettingsRow keeps the upstream token in its own column so the JSON
-// payload can be logged or diffed without leaking the credential.
-type knowledgeSettingsRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Token   *string    `gorm:"column:token;type:text"`
-	Updated *time.Time `gorm:"column:updated_at"`
+// knowledgeConnectorRow stores one user-owned read-only knowledge connector.
+// Sealed upstream credentials stay in SecretEnc and never leak in API responses.
+type knowledgeConnectorRow struct {
+	ID          string     `gorm:"column:id;primaryKey;size:64"`
+	OwnerUserID int64      `gorm:"column:owner_user_id;index:idx_knowledge_connectors_owner;not null;default:0"`
+	Name        string     `gorm:"column:name;size:128;not null"`
+	Type        string     `gorm:"column:type;size:32;not null"`
+	Endpoint    string     `gorm:"column:endpoint;type:text;not null"`
+	ConfigJSON  []byte     `gorm:"column:config_json;type:json"`
+	SecretEnc   *string    `gorm:"column:secret_enc;type:text"`
+	Enabled     bool       `gorm:"column:enabled;not null"`
+	CreatedAt   *time.Time `gorm:"column:created_at"`
+	UpdatedAt   *time.Time `gorm:"column:updated_at"`
 }
 
-func (knowledgeSettingsRow) TableName() string { return "knowledge_settings" }
-
-type knowledgeSubmissionRow struct {
-	ID         string     `gorm:"column:id;primaryKey;size:64"`
-	ProjectID  string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64"`
-	RunID      string     `gorm:"column:run_id;index:idx_knowledge_submissions_run;size:64"`
-	ArtifactID string     `gorm:"column:artifact_id;index:idx_knowledge_submissions_artifact;size:64"`
-	Status     string     `gorm:"column:status;index:idx_knowledge_submissions_status;size:32"`
-	Payload    []byte     `gorm:"column:payload;type:json"`
-	Created    *time.Time `gorm:"column:created_at"`
-	Updated    *time.Time `gorm:"column:updated_at"`
-}
-
-func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions" }
+func (knowledgeConnectorRow) TableName() string { return "knowledge_connectors" }
 
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
@@ -714,7 +707,7 @@ func allModels() []any {
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
-		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
+		knowledgeConnectorRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}
 }

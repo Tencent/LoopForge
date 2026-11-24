@@ -90,9 +90,10 @@ func (h *runsHandlers) runs(c *gin.Context) {
 	}
 	if r.Method == http.MethodPost {
 		var req struct {
-			WorkflowID string `json:"workflowId"`
-			Input      string `json:"input"`
-			ProjectID  string `json:"projectId"`
+			WorkflowID    string                 `json:"workflowId"`
+			Input         string                 `json:"input"`
+			ProjectID     string                 `json:"projectId"`
+			KnowledgeRefs *[]domain.KnowledgeRef `json:"knowledgeRefs,omitempty"`
 		}
 		if !decode(c, &req) {
 			return
@@ -124,6 +125,15 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			c.JSON(http.StatusConflict, map[string]string{"error": "手动运行需要登录用户或已配置 Owner 的项目"})
 			return
 		}
+		var runKnowledgeRefs *[]domain.KnowledgeRef
+		if req.KnowledgeRefs != nil {
+			if err := h.validateUserKnowledgeRefs(responsibleUserID, *req.KnowledgeRefs); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			copied := append([]domain.KnowledgeRef(nil), (*req.KnowledgeRefs)...)
+			runKnowledgeRefs = &copied
+		}
 		var repositories []domain.RepositoryContext
 		if wf, ok := h.repo.Workflow(req.WorkflowID); ok && wf.Generic && strings.TrimSpace(project.DefaultRepositoryID) != "" {
 			repositoryID := strings.TrimSpace(project.DefaultRepositoryID)
@@ -134,7 +144,7 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			}
 			repositories = []domain.RepositoryContext{repositoryRunContext(repoDef)}
 		}
-		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: responsibleUserID})
+		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: responsibleUserID, KnowledgeRefs: runKnowledgeRefs})
 		if err != nil {
 			respond(c, err)
 			return

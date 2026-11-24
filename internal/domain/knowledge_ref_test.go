@@ -1,24 +1,26 @@
 package domain
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 )
 
 func TestWorkflowKnowledgeReferences(t *testing.T) {
-	team := KnowledgeRef{ServerID: KnowledgeMCPServerID, Mode: "allowlist", Sources: []string{"dns"}}
-	external := KnowledgeRef{ServerID: "handbook", Mode: "all"}
+	team := KnowledgeRef{ConnectorID: "wk-personal-1", Mode: "allowlist", Sources: []string{"dns"}}
+	external := KnowledgeRef{ConnectorID: "handbook", Mode: "all"}
 	for _, tc := range []struct {
 		name  string
 		kind  string
 		refs  []KnowledgeRef
 		valid bool
 	}{
-		{"legacy", "agent", nil, true}, {"two services", "agent", []KnowledgeRef{team, external}, true},
+		{"legacy", "agent", nil, true},
+		{"two connectors", "agent", []KnowledgeRef{team, external}, true},
+		{"any connector allowlist", "agent", []KnowledgeRef{{ConnectorID: "handbook", Mode: "allowlist", Sources: []string{"dns"}}}, true},
 		{"duplicate", "agent", []KnowledgeRef{team, team}, false},
-		{"unsupported scope", "agent", []KnowledgeRef{{ServerID: "handbook", Mode: "allowlist", Sources: []string{"dns"}}}, false},
-		{"empty allowlist", "agent", []KnowledgeRef{{ServerID: KnowledgeMCPServerID, Mode: "allowlist"}}, false},
+		{"empty allowlist", "agent", []KnowledgeRef{{ConnectorID: "wk-personal-1", Mode: "allowlist"}}, false},
 		{"script", "script", []KnowledgeRef{team}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -27,6 +29,23 @@ func TestWorkflowKnowledgeReferences(t *testing.T) {
 				t.Fatalf("validate: %v", err)
 			}
 		})
+	}
+}
+
+func TestKnowledgeRefUnmarshalLegacyMCPServerID(t *testing.T) {
+	var ref KnowledgeRef
+	if err := json.Unmarshal([]byte(`{"mcpServerId":"legacy-conn","mode":"allowlist","sources":["kb-1"]}`), &ref); err != nil {
+		t.Fatal(err)
+	}
+	if ref.ConnectorID != "legacy-conn" || ref.Mode != "allowlist" || !reflect.DeepEqual(ref.Sources, []string{"kb-1"}) {
+		t.Fatalf("unexpected decoded ref: %+v", ref)
+	}
+	var modern KnowledgeRef
+	if err := json.Unmarshal([]byte(`{"connectorId":"new-conn","mcpServerId":"ignored","mode":"all"}`), &modern); err != nil {
+		t.Fatal(err)
+	}
+	if modern.ConnectorID != "new-conn" {
+		t.Fatalf("expected connectorId to take precedence, got %+v", modern)
 	}
 }
 

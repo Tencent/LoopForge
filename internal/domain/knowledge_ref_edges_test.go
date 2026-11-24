@@ -5,7 +5,7 @@ import "testing"
 // TestValidateKnowledgeRefsEdges covers the direct validation rules that the
 // existing TestWorkflowKnowledgeReferences only reaches indirectly.
 func TestValidateKnowledgeRefsEdges(t *testing.T) {
-	const team = KnowledgeMCPServerID
+	const team = "conn-1"
 	cases := []struct {
 		name  string
 		refs  []KnowledgeRef
@@ -13,22 +13,22 @@ func TestValidateKnowledgeRefsEdges(t *testing.T) {
 	}{
 		{"nil refs", nil, true},
 		{"empty refs", []KnowledgeRef{}, true},
-		{"team all no sources", []KnowledgeRef{{ServerID: team, Mode: "all"}}, true},
-		{"external all no sources", []KnowledgeRef{{ServerID: "handbook", Mode: "all"}}, true},
-		{"team allowlist", []KnowledgeRef{{ServerID: team, Mode: "allowlist", Sources: []string{"dns"}}}, true},
-		{"empty server id", []KnowledgeRef{{ServerID: "", Mode: "all"}}, false},
-		{"whitespace server id", []KnowledgeRef{{ServerID: " ", Mode: "all"}}, false},
-		{"leading space in server id", []KnowledgeRef{{ServerID: " handbook", Mode: "all"}}, false},
-		{"trailing space in server id", []KnowledgeRef{{ServerID: "handbook ", Mode: "all"}}, false},
-		{"duplicate server id", []KnowledgeRef{{ServerID: team, Mode: "all"}, {ServerID: team, Mode: "all"}}, false},
-		{"invalid mode", []KnowledgeRef{{ServerID: team, Mode: "deny"}}, false},
-		{"empty mode", []KnowledgeRef{{ServerID: team}}, false},
-		{"all with sources", []KnowledgeRef{{ServerID: team, Mode: "all", Sources: []string{"dns"}}}, false},
-		{"allowlist without sources", []KnowledgeRef{{ServerID: team, Mode: "allowlist"}}, false},
-		{"external allowlist", []KnowledgeRef{{ServerID: "handbook", Mode: "allowlist", Sources: []string{"dns"}}}, false},
-		{"blank source", []KnowledgeRef{{ServerID: team, Mode: "allowlist", Sources: []string{" "}}}, false},
-		{"mixed blank source", []KnowledgeRef{{ServerID: team, Mode: "allowlist", Sources: []string{"dns", "  "}}}, false},
-		{"multiple team sources", []KnowledgeRef{{ServerID: team, Mode: "allowlist", Sources: []string{"dns", "api"}}}, true},
+		{"all no sources", []KnowledgeRef{{ConnectorID: team, Mode: "all"}}, true},
+		{"another all no sources", []KnowledgeRef{{ConnectorID: "handbook", Mode: "all"}}, true},
+		{"allowlist", []KnowledgeRef{{ConnectorID: team, Mode: "allowlist", Sources: []string{"dns"}}}, true},
+		{"empty connector id", []KnowledgeRef{{ConnectorID: "", Mode: "all"}}, false},
+		{"whitespace connector id", []KnowledgeRef{{ConnectorID: " ", Mode: "all"}}, false},
+		{"leading space in connector id", []KnowledgeRef{{ConnectorID: " handbook", Mode: "all"}}, false},
+		{"trailing space in connector id", []KnowledgeRef{{ConnectorID: "handbook ", Mode: "all"}}, false},
+		{"duplicate connector id", []KnowledgeRef{{ConnectorID: team, Mode: "all"}, {ConnectorID: team, Mode: "all"}}, false},
+		{"invalid mode", []KnowledgeRef{{ConnectorID: team, Mode: "deny"}}, false},
+		{"empty mode", []KnowledgeRef{{ConnectorID: team}}, false},
+		{"all with sources", []KnowledgeRef{{ConnectorID: team, Mode: "all", Sources: []string{"dns"}}}, false},
+		{"allowlist without sources", []KnowledgeRef{{ConnectorID: team, Mode: "allowlist"}}, false},
+		{"any connector allowlist", []KnowledgeRef{{ConnectorID: "handbook", Mode: "allowlist", Sources: []string{"dns"}}}, true},
+		{"blank source", []KnowledgeRef{{ConnectorID: team, Mode: "allowlist", Sources: []string{" "}}}, false},
+		{"mixed blank source", []KnowledgeRef{{ConnectorID: team, Mode: "allowlist", Sources: []string{"dns", "  "}}}, false},
+		{"multiple sources", []KnowledgeRef{{ConnectorID: team, Mode: "allowlist", Sources: []string{"dns", "api"}}}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestValidateKnowledgeRefsEdges(t *testing.T) {
 }
 
 func TestValidateWorkflowKnowledgeAgentOnly(t *testing.T) {
-	ref := KnowledgeRef{ServerID: KnowledgeMCPServerID, Mode: "all"}
+	ref := KnowledgeRef{ConnectorID: "conn-1", Mode: "all"}
 	cases := []struct {
 		name  string
 		node  WorkflowNode

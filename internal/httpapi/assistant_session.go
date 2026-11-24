@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -301,7 +302,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if existing.ID != "" {
 			conv.KnowledgeRefs = existing.KnowledgeRefs
 		}
-		if err := domain.ValidateKnowledgeRefs(conv.KnowledgeRefs); err != nil {
+		if err := h.validateUserKnowledgeRefs(current.ID, conv.KnowledgeRefs); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
@@ -644,7 +645,7 @@ func (h *assistantHandlers) sessionKnowledge(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "缺少知识库引用列表"})
 		return
 	}
-	if err := domain.ValidateKnowledgeRefs(*body.Refs); err != nil {
+	if err := h.validateUserKnowledgeRefs(user.ID, *body.Refs); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -654,4 +655,24 @@ func (h *assistantHandlers) sessionKnowledge(c *gin.Context) {
 	}
 	saved, _ := h.repo.AssistantSession(owner, id)
 	c.JSON(200, saved)
+}
+
+func (d *deps) validateUserKnowledgeRefs(uid int64, refs []domain.KnowledgeRef) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	if err := domain.ValidateKnowledgeRefs(refs); err != nil {
+		return err
+	}
+	svc := d.knowledgeService()
+	if svc == nil {
+		return nil
+	}
+	for _, ref := range refs {
+		conn, ok := svc.GetConnector(uid, ref.ConnectorID)
+		if !ok || !conn.Enabled {
+			return fmt.Errorf("所选知识库连接器 %s 不存在、已停用或不属于当前用户", ref.ConnectorID)
+		}
+	}
+	return nil
 }

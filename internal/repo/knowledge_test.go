@@ -6,90 +6,95 @@ import (
 	"agentflow/internal/domain"
 )
 
-func TestKnowledgeRepoLegacyTokenMigrationAndFreshInstallLock(t *testing.T) {
+func TestKnowledgeConnectorRepoOwnerIsolation(t *testing.T) {
 	s, err := OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(s.Close)
+	t.Cleanup(func() { s.Close() })
 
-	// 1. Fresh install: MutateKnowledgeSettingsIfFresh claims once and rejects subsequent calls.
-	claimed, err := s.MutateKnowledgeSettingsIfFresh(func(cur *domain.KnowledgeSettings) (bool, error) {
-		*cur = domain.KnowledgeSettings{
-			Provider: domain.KnowledgeProviderWeKnora,
-			Enabled:  true,
-			URL:      "http://legacy-weknora:8080",
-			Token:    "sk-legacy-secret",
-		}
-		return true, nil
-	})
-	if err != nil || !claimed {
-		t.Fatalf("expected first MutateKnowledgeSettingsIfFresh to claim, got claimed=%v err=%v", claimed, err)
+	u1 := domain.KnowledgeConnector{
+		ID:          "conn-u1",
+		OwnerUserID: 101,
+		Name:        "Alice WeKnora",
+		Type:        domain.ConnectorTypeWeKnora,
+		Endpoint:    "http://weknora-a:8080",
+		Config:      domain.KnowledgeConnectorConfig{TimeoutSec: 20},
+		SecretEnc:   "v1:sealed-alice",
+		Enabled:     true,
 	}
-
-	claimedAgain, err := s.MutateKnowledgeSettingsIfFresh(func(cur *domain.KnowledgeSettings) (bool, error) {
-		t.Fatal("callback must not run once knowledge_settings row exists")
-		return true, nil
-	})
-	if err != nil || claimedAgain {
-		t.Fatalf("expected second MutateKnowledgeSettingsIfFresh not to claim, got claimed=%v err=%v", claimedAgain, err)
+	u2 := domain.KnowledgeConnector{
+		ID:          "conn-u2",
+		OwnerUserID: 202,
+		Name:        "Bob MCP",
+		Type:        domain.ConnectorTypeMCP,
+		Endpoint:    "http://mcp-b:9090/mcp",
+		SecretEnc:   "v1:sealed-bob",
+		Enabled:     true,
 	}
 
-	// 2. Legacy single-connection -> multi-connection migration inside MutateKnowledgeSettings
-	// must see the real legacy Token on current.Token and persist it into kbconn:<id>.
-	if err := s.MutateKnowledgeSettings(func(cur *domain.KnowledgeSettings) bool {
-		if cur.Token != "sk-legacy-secret" {
-			t.Fatalf("expected legacy token to be available in MutateKnowledgeSettings callback, got %q", cur.Token)
-		}
-		cur.Connections = []domain.KnowledgeConnection{
-			{
-				ID:       "conn-legacy",
-				Name:     "默认连接",
-				Provider: domain.KnowledgeProviderWeKnora,
-				URL:      cur.URL,
-				Token:    cur.Token,
-				Enabled:  true,
-			},
-			{
-				ID:       "wk-managed",
-				Name:     "内置 WeKnora",
-				Provider: domain.KnowledgeProviderWeKnora,
-				URL:      "http://weknora-app:8080",
-				Token:    "sk-managed-secret",
-				Enabled:  true,
-			},
-		}
-		return true
-	}); err != nil {
-		t.Fatalf("MutateKnowledgeSettings(migrate legacy) error = %v", err)
+	if err := s.PutKnowledgeConnector(u1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutKnowledgeConnector(u2); err != nil {
+		t.Fatal(err)
 	}
 
-	got := s.KnowledgeSettings()
-	if len(got.Connections) != 2 {
-		t.Fatalf("expected 2 connections after migration, got %+v", got.Connections)
+	list1 := s.ListKnowledgeConnectors(101)
+	if len(list1) != 1 || list1[0].ID != "conn-u1" || !list1[0].SecretConfigured || list1[0].SecretEnc != "v1:sealed-alice" || list1[0].Config.TimeoutSec != 20 {
+		t.Fatalf("unexpected user 1 connectors: %+v", list1)
 	}
-	if got.Connections[0].ID != "conn-legacy" || got.Connections[0].Token != "sk-legacy-secret" || !got.Connections[0].TokenConfigured {
-		t.Fatalf("legacy connection token lost during migration: %+v", got.Connections[0])
-	}
-	if got.Connections[1].ID != "wk-managed" || got.Connections[1].Token != "sk-managed-secret" || !got.Connections[1].TokenConfigured {
-		t.Fatalf("managed connection token not persisted: %+v", got.Connections[1])
+	if got := s.ListKnowledgeConnectors(999); len(got) != 0 {
+		t.Fatalf("expected 0 connectors for unknown user, got %+v", got)
 	}
 
-	// 3. Even if an administrator clears all connections (with empty UpdatedBy in local mode),
-	// MutateKnowledgeSettingsIfFresh must still refuse to overwrite the existing row.
-	if err := s.PutKnowledgeSettings(domain.KnowledgeSettings{
-		Provider:    domain.KnowledgeProviderWeKnora,
+	if _, ok := s.GetKnowledgeConnector(101, "conn-u2"); ok {
+		t.Fatal("user 1 must not read user 2 connector")
+	}
+	if deleted, err := s.DeleteKnowledgeConnector(101, "conn-u2"); err != nil || deleted {
+		t.Fatalf("user 1 must not delete user 2 connector, got deleted=%v err=%v", deleted, err)
+	}
+
+	// Cross-user ID collision overwrite attempt must fail.
+	hijack := u1
+	hijack.OwnerUserID = 202
+	if err := s.PutKnowledgeConnector(hijack); err == nil {
+		t.Fatal("expected PutKnowledgeConnector to reject overwriting another user's connector ID")
+	}
+
+	// Same owner update preserves created_at and updates enabled/config/secret.
+	u1.Enabled = false
+	u1.SecretEnc = ""
+	if err := s.PutKnowledgeConnector(u1); err != nil {
+		t.Fatal(err)
+	}
+	updated, ok := s.GetKnowledgeConnector(101, "conn-u1")
+	if !ok || updated.Enabled || updated.SecretConfigured || updated.SecretEnc != "" {
+		t.Fatalf("expected updated connector to clear enabled and secret, got %+v %v", updated, ok)
+	}
+
+	disabledConn := domain.KnowledgeConnector{
+		ID:          "conn-u1-disabled",
+		OwnerUserID: 101,
+		Name:        "Disabled Initially",
+		Type:        domain.ConnectorTypeMCP,
+		Endpoint:    "http://disabled.local/mcp",
 		Enabled:     false,
-		Connections: []domain.KnowledgeConnection{},
-		UpdatedBy:   "",
-	}); err != nil {
-		t.Fatalf("PutKnowledgeSettings(clear) error = %v", err)
 	}
-	claimedAfterClear, err := s.MutateKnowledgeSettingsIfFresh(func(cur *domain.KnowledgeSettings) (bool, error) {
-		t.Fatal("callback must not run after admin cleared connections")
-		return true, nil
-	})
-	if err != nil || claimedAfterClear {
-		t.Fatalf("expected MutateKnowledgeSettingsIfFresh to refuse after admin clear, got claimed=%v err=%v", claimedAfterClear, err)
+	if err := s.PutKnowledgeConnector(disabledConn); err != nil {
+		t.Fatal(err)
+	}
+	gotDisabled, ok := s.GetKnowledgeConnector(101, "conn-u1-disabled")
+	if !ok || gotDisabled.Enabled {
+		t.Fatalf("expected initial Enabled=false persisted, got %+v %v", gotDisabled, ok)
+	}
+	_, _ = s.DeleteKnowledgeConnector(101, "conn-u1-disabled")
+
+	deleted, err := s.DeleteKnowledgeConnector(101, "conn-u1")
+	if err != nil || !deleted {
+		t.Fatalf("expected user 1 delete to succeed, got deleted=%v err=%v", deleted, err)
+	}
+	if _, ok := s.GetKnowledgeConnector(101, "conn-u1"); ok {
+		t.Fatal("expected deleted connector to disappear")
 	}
 }

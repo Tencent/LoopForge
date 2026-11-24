@@ -547,29 +547,32 @@ func (h *agentToolGateway) knowledgeReferenceCatalog(ctx context.Context, s *Age
 	if len(s.KnowledgeRefs) == 0 {
 		return out
 	}
+	exec := h.deps.executor()
+	if exec == nil {
+		return out
+	}
 	ctx, cancel := context.WithTimeout(ctx, knowledge.CallTimeout)
 	defer cancel()
 	for _, ref := range s.KnowledgeRefs {
 		if ctx.Err() != nil {
 			break
 		}
-		tools, _, err := referenceTools(ctx, h.deps, s.ProjectID, s.UserID, ref)
+		conn, tools, err := exec.ReferenceTools(ctx, s.UserID, ref)
 		if err != nil {
-			s.diagnostics().platform("knowledge.unavailable", ref.ServerID+"："+err.Error(), s.User)
+			s.diagnostics().platform("knowledge.unavailable", ref.ConnectorID+"："+err.Error(), s.User)
 			continue
 		}
-		ns := knowledgeToolNamespace(ref.ServerID)
-		serverName, serverDesc := knowledgeServerMeta(h.deps, ref.ServerID)
+		ns := knowledgeToolNamespace(ref.ConnectorID)
 		for _, tool := range tools {
 			out = append(out, agentToolDescriptor{
 				Name:         ns + "__" + tool.Name,
 				Kind:         "knowledge",
-				ServerID:     ref.ServerID,
+				ServerID:     ref.ConnectorID,
 				UpstreamName: tool.Name,
 				InputSchema:  defaultToolSchema(tool.InputSchema),
 				OutputSchema: tool.OutputSchema,
 				Annotations:  tool.Annotations,
-				Description:  knowledgeToolDescription(serverName, serverDesc, ref.ServerID, tool.Name, tool.Description),
+				Description:  knowledgeToolDescription(conn.Name, conn.Type, conn.ID, tool.Name, tool.Description),
 			})
 		}
 	}
