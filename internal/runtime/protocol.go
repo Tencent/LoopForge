@@ -271,6 +271,11 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 			a.emit(domain.TelemetryEvent{Category: "tool", Name: "tool.call", Phase: "finish", Level: map[bool]string{true: "error", false: "info"}[failed], Message: msg, SessionID: sessionID, ToolCallID: id, Tool: &domain.ToolObservation{Name: name, Operation: "tool.result", CallID: id, Success: &success}})
 		}
 	case "result":
+		// The root result already includes subagent consumption. A child's
+		// message-scoped result must not reset the session billing cursor.
+		if stringValue(raw["parent_tool_use_id"]) != "" {
+			return
+		}
 		result := stringValue(raw["result"])
 		failed, _ := raw["is_error"].(bool)
 		a.mu.Lock()
@@ -281,10 +286,10 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 		usage := tokenUsage(raw["usage"])
 		usage.CostUSD = float64Value(raw["total_cost_usd"])
 		// 适配器显式上报成本时标记 reported，用于区分"真实零成本"与"成本未识别"。
-		if _, ok := raw["total_cost_usd"]; ok {
+		if _, ok := raw["total_cost_usd"]; ok && (a.ex.Kind != "codebuddy" || usage.CostUSD != 0) {
 			usage.CostStatus = "reported"
 		}
-		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"]}})
+		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"], "usageReported": raw["usage"] != nil}})
 		a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.completed", Phase: "finish", Message: result, SessionID: sessionID})
 	default:
 		// File snapshots and provider-specific housekeeping events are intentionally hidden from the portable view.
@@ -297,6 +302,7 @@ func (a *protocolAdapter) handleAnthropicEvent(event map[string]any, sessionID, 
 	case "message_start":
 		message, _ := event["message"].(map[string]any)
 		a.emit(domain.TelemetryEvent{Category: "model", Name: "model.request", Phase: "start", Message: "model generation started", Model: stringValue(message["model"]), SessionID: sessionID, ParentID: parentID})
+		a.emitAnthropicUsage(message["usage"], sessionID, parentID)
 	case "content_block_start":
 		block, _ := event["content_block"].(map[string]any)
 		if stringValue(block["type"]) == "tool_use" {
@@ -329,9 +335,13 @@ func (a *protocolAdapter) handleAnthropicEvent(event map[string]any, sessionID, 
 		}
 		a.emit(domain.TelemetryEvent{Category: "model", Name: "model.request", Phase: "finish", Message: "model generation finished", SessionID: sessionID, ParentID: parentID})
 	case "message_delta":
-		if usage := tokenUsage(event["usage"]); usage.InputTokens+usage.OutputTokens+usage.CacheReadTokens+usage.CacheWriteTokens > 0 {
-			a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.update", Phase: "progress", SessionID: sessionID, ParentID: parentID, Usage: &usage})
-		}
+		a.emitAnthropicUsage(event["usage"], sessionID, parentID)
+	}
+}
+
+func (a *protocolAdapter) emitAnthropicUsage(value any, sessionID, parentID string) {
+	if usage := tokenUsage(value); usage.InputTokens+usage.OutputTokens+usage.CacheReadTokens+usage.CacheWriteTokens+usage.ReasoningTokens > 0 {
+		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.update", Phase: "progress", SessionID: sessionID, ParentID: parentID, Usage: &usage})
 	}
 }
 

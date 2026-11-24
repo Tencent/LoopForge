@@ -9,10 +9,10 @@ import (
 // mrMergeAnalytics uses the MR clock independently of the Run creation window.
 // The primary key (mr_project, mr_iid) counts each MR once, including multiple
 // repositories for one requirement. Baseline promotion MRs have no work issue.
-func (r *AnalyticsRepo) mrMergeAnalytics(filter domain.AnalyticsFilter, issues map[string]domain.Issue) ([]domain.AnalyticsMRMerge, int) {
+func (r *AnalyticsRepo) mrMergeAnalytics(filter domain.AnalyticsFilter, issues map[string]domain.Issue) ([]domain.AnalyticsMRMerge, int, error) {
 	items := []domain.AnalyticsMRMerge{}
 	if filter.ProjectIDs != nil && len(filter.ProjectIDs) == 0 {
-		return items, 0
+		return items, 0, nil
 	}
 	matchingRuns := map[string]bool{}
 	if filter.WorkflowID != "" || filter.UserID != "" {
@@ -20,7 +20,7 @@ func (r *AnalyticsRepo) mrMergeAnalytics(filter domain.AnalyticsFilter, issues m
 		runFilter.From, runFilter.To = time.Time{}, time.Time{}
 		runs, err := r.runs.RunSummariesFor(runFilter, "")
 		if err != nil {
-			return items, 0
+			return items, 0, err
 		}
 		for _, run := range runs {
 			issueID := run.ExecutionContext.IssueID
@@ -39,7 +39,7 @@ func (r *AnalyticsRepo) mrMergeAnalytics(filter domain.AnalyticsFilter, issues m
 	}
 	var rows []mrDeliveryStateRow
 	if err := q.Order("merged_at DESC, mr_project ASC, mr_iid ASC").Find(&rows).Error; err != nil {
-		return items, 0
+		return items, 0, err
 	}
 	missingTime := 0
 	for _, row := range rows {
@@ -68,5 +68,5 @@ func (r *AnalyticsRepo) mrMergeAnalytics(filter domain.AnalyticsFilter, issues m
 			MergedAt: row.MergedAt.UTC(),
 		})
 	}
-	return items, missingTime
+	return items, missingTime, nil
 }

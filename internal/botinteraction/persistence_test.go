@@ -18,7 +18,15 @@ func TestEmojiPersistenceFailureFinishesWithActionableReply(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			item := domain.BotInteraction{ID: "emoji-reply", BotID: "bot", Status: "running"}
+			bot := domain.NotificationBot{ID: "bot", BotID: "external", ProjectID: "p", OwnerID: 1, Enabled: true, InteractionEnabled: true}
+			if err := store.SaveNotificationBot(bot, "s"); err != nil {
+				t.Fatal(err)
+			}
+			lease, _, err := store.ClaimBotConnection(bot.LeaseKey(), "owner")
+			if err != nil {
+				t.Fatal(err)
+			}
+			item := domain.BotInteraction{ID: "emoji-reply", BotID: "bot", Status: "running", LeaseOwner: lease.Owner, LeaseEpoch: lease.Epoch}
 			if err := store.DB.Create(&item).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -36,7 +44,7 @@ func TestEmojiPersistenceFailureFinishesWithActionableReply(t *testing.T) {
 				t.Fatal(err)
 			}
 			service := New(store)
-			reply, detail, err := service.saveReply(item, "你好 👋", "")
+			reply, detail, err := service.saveReply(item, lease, "你好 👋", "")
 			if err != nil || failures != 1 || !strings.Contains(reply, "utf8mb4") || !strings.Contains(detail, fmt.Sprint(code)) {
 				t.Fatal(reply, detail, err, failures)
 			}

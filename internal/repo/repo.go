@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"agentflow/internal/credcrypt"
 	"agentflow/internal/domain"
 
 	"gorm.io/driver/mysql"
@@ -113,6 +114,9 @@ type TasksRepo struct {
 type UsersRepo struct {
 	*deps
 	gitHTTPHosts *GitHTTPHostTrustRepo
+	// keyring seals Bot credentials; installed by SetCredentialKeyring.
+	keyringMu sync.RWMutex
+	keyring   *credcrypt.Keyring
 }
 
 // TokensRepo owns API tokens.

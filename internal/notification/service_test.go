@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
@@ -325,5 +326,227 @@ func TestUnifiedSOPSetupFailureUsesStandardReminder(t *testing.T) {
 	items, _ := svc.Store.NotificationDeliveries(bot.ProjectID)
 	if len(items) != 1 || f.sent != 1 || !strings.Contains(f.content, "沙箱启动失败") || strings.Contains(f.content, "完成汇报专用") {
 		t.Fatalf("%+v %s", items, f.content)
+	}
+}
+
+// A run started from a WeCom chat reports back over the Bot's live
+// connection, without the wecom-cli session list: text events become a
+// queued chat message, and a Bot without chat cannot reach the
+// conversation.
+func TestWeComOriginDeliveryUsesTheLiveConnection(t *testing.T) {
+	svc, provider, bot, run := serviceFixture(t)
+	provider.err = context.Canceled // the CLI path must not be used
+	now := time.Now().UTC()
+	item := domain.NotificationDelivery{ID: "origin-done", ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "wr_group", TargetType: "group", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+	if err := svc.Store.CreateNotificationDelivery(item); err != nil {
+		t.Fatal(err)
+	}
+	drain := func() {
+		for i := 0; i < 10; i++ {
+			if processed, err := svc.ProcessOne(context.Background()); err != nil || !processed {
+				return
+			}
+		}
+	}
+	drain()
+	got, _ := svc.Store.NotificationDelivery(item.ID)
+	if got.Status != "target_unavailable" || !strings.Contains(got.LastError, "未开启对话") {
+		t.Fatalf("without chat = %+v", got)
+	}
+	bot.InteractionEnabled = true
+	if err := svc.Store.SaveNotificationBot(bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.RetryNotification("p", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	stop := sendChatPosts(t, svc, domain.BotReplied)
+	drain()
+	stop()
+	if got, _ = svc.Store.NotificationDelivery(item.ID); got.Status != "sent" || provider.sent != 0 {
+		t.Fatalf("with chat = %+v sent=%d", got, provider.sent)
+	}
+	rows, err := svc.Store.BotInteractionRecords(bot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var post domain.BotInteraction
+	for _, row := range rows {
+		if row.DeliveryID == item.ID && row.Action == botinteraction.ActionChatPost {
+			post = row
+			break
+		}
+	}
+	conv, _ := svc.Store.BotConversation(post.ConversationID)
+	if post.Action != botinteraction.ActionChatPost || post.DeliveryID != item.ID || post.SendRoute != repo.BotSendRoutePushChat || conv.ChatType != "group" || conv.ChatID != "wr_group" || !strings.Contains(post.Content, "SOP 已完成") {
+		t.Fatalf("queued = %+v in %+v", post, conv)
+	}
+}
+
+// settlePending takes the fixture's own notifications out of the queue.
+func settlePending(t *testing.T, svc *Service) {
+	t.Helper()
+	if err := svc.Store.DB.Model(&domain.NotificationDelivery{}).Where("status = ?", "pending").Update("status", "cancelled").Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sendChatPosts plays the live connection: queued chat posts end in status.
+func sendChatPosts(t *testing.T, svc *Service, status string) func() {
+	t.Helper()
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for {
+			svc.Store.DB.Model(&domain.BotInteraction{}).Where("action = ? AND status NOT IN ?", botinteraction.ActionChatPost, []string{domain.BotReplied, domain.BotReplyFailed, domain.BotReplyUnknown}).Update("status", status)
+			select {
+			case <-done:
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}()
+	return func() { close(done); <-stopped }
+}
+
+// A WeCom chat post is "sent" only once the live connection sent it: a
+// failure retries (re-sending the message), an unconfirmed send is kept for
+// checking.
+func TestWeComOriginDeliveryFollowsTheSendResult(t *testing.T) {
+	svc, _, bot, run := serviceFixture(t)
+	bot.InteractionEnabled = true
+	if err := svc.Store.SaveNotificationBot(bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	settlePending(t, svc)
+	now := time.Now().UTC()
+	item := domain.NotificationDelivery{ID: "origin-done", ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "wr_group", TargetType: "group", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+	if err := svc.Store.CreateNotificationDelivery(item); err != nil {
+		t.Fatal(err)
+	}
+	process := func(status string) domain.NotificationDelivery {
+		t.Helper()
+		stop := sendChatPosts(t, svc, status)
+		defer stop()
+		if ok, err := svc.ProcessOne(context.Background()); err != nil || !ok {
+			t.Fatalf("process %v %v", ok, err)
+		}
+		got, _ := svc.Store.NotificationDelivery(item.ID)
+		return got
+	}
+	if got := process(domain.BotReplyFailed); got.Status != "pending" || !strings.Contains(got.LastError, "发送失败") {
+		t.Fatalf("failed send = %+v", got)
+	}
+	if err := svc.Store.DB.Model(&domain.NotificationDelivery{}).Where("id = ?", item.ID).Update("next_attempt_at", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got := process(domain.BotReplyUnknown); got.Status != "send_unknown" {
+		t.Fatalf("unconfirmed send = %+v", got)
+	}
+	if err := svc.Store.RetryNotification(item.ProjectID, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := process(domain.BotReplied); got.Status != "sent" || got.DeliveryGeneration != 1 {
+		t.Fatalf("manual resend = %+v", got)
+	}
+	original, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "chat-post:"+item.ID))
+	if err != nil || original.Status != domain.BotReplyUnknown {
+		t.Fatalf("original interaction = %+v, %v", original, err)
+	}
+}
+
+// A run started from a private WeCom chat reports back there only while
+// the sender is still bound to an account with access to the project.
+func TestWeComPrivateOriginRechecksTheSender(t *testing.T) {
+	svc, _, bot, run := serviceFixture(t)
+	bot.InteractionEnabled = true
+	if err := svc.Store.SaveNotificationBot(bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	settlePending(t, svc)
+	svc.Store.PutUser(domain.User{ID: 1, LoginName: "owner"})
+	svc.Store.PutUser(domain.User{ID: 7, LoginName: "dev"})
+	svc.Store.PutProject(domain.Project{ID: "p", OwnerID: 1, Members: []domain.ProjectMember{{UserID: 7, Role: "member"}}})
+	now := time.Now().UTC()
+	token, err := svc.Store.NewBotBindingChallenge(bot, "zhangsan", now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := svc.Store.ClaimBotBindingChallenge(token, 7, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.Store.ConfirmBotUserBinding(bot, "zhangsan", code, now); err != nil {
+		t.Fatal(err)
+	}
+	deliver := func(id string) domain.NotificationDelivery {
+		t.Helper()
+		item := domain.NotificationDelivery{ID: id, ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "zhangsan", TargetType: "single", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+		if err := svc.Store.CreateNotificationDelivery(item); err != nil {
+			t.Fatal(err)
+		}
+		stop := sendChatPosts(t, svc, domain.BotReplied)
+		defer stop()
+		if ok, err := svc.ProcessOne(context.Background()); err != nil || !ok {
+			t.Fatalf("process %v %v", ok, err)
+		}
+		got, _ := svc.Store.NotificationDelivery(id)
+		return got
+	}
+	if got := deliver("member"); got.Status != "sent" {
+		t.Fatalf("member = %+v", got)
+	}
+	svc.Store.PutProject(domain.Project{ID: "p", OwnerID: 1, Members: []domain.ProjectMember{}})
+	got := deliver("removed")
+	if got.Status != "target_unavailable" || !strings.Contains(got.LastError, "没有该项目的权限") {
+		t.Fatalf("removed member = %+v", got)
+	}
+	if _, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "chat-post:removed")); err == nil {
+		t.Fatal("a message was queued for a member without access")
+	}
+}
+
+// WeCom template cards have no text input: a node question goes out as
+// text with the question and how to answer, on the SOP notification and on
+// the message back to the conversation the run came from.
+func TestWeComNodeQuestionIsSentAsText(t *testing.T) {
+	svc, provider, bot, run := serviceFixture(t)
+	bot.InteractionEnabled = true
+	if err := svc.Store.SaveNotificationBot(bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	run.Nodes["n"].Activity = "等待人工确认"
+	run.Nodes["n"].GateResult = &domain.GateResult{Decision: "human", Reason: "缺登录方式", ActionRequired: "登录要不要支持邮箱？"}
+	run.Events = nil
+	if err := svc.Store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := svc.ProcessOne(context.Background())
+	if err != nil || !ok || provider.sent != 1 || !strings.Contains(provider.content, "问题：登录要不要支持邮箱？") || !strings.Contains(provider.content, "回答方式：@我 发送「回答：你的答案」，或引用本条消息回复") {
+		t.Fatalf("binding %v %v sent=%d %q", ok, err, provider.sent, provider.content)
+	}
+	items, _ := svc.Store.NotificationDeliveries("p")
+	if !strings.HasPrefix(provider.content, botinteraction.WeComNodeQuestionRefPrefix+items[0].ID+"\n") {
+		t.Fatalf("binding question is missing its delivery reference: %q", provider.content)
+	}
+	if _, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "notification:"+items[0].ID)); err == nil {
+		t.Fatal("a card was queued for the question")
+	}
+
+	now := time.Now().UTC()
+	origin := domain.NotificationDelivery{ID: "origin-q", ProjectID: "p", BotID: bot.ID, RunID: run.ID, NodeID: "n", Attempt: 1, EventType: "waiting", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "wr_group", TargetType: "group", Content: "### 节点需要补充信息\n节点：开发", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+	if err := svc.Store.CreateNotificationDelivery(origin); err != nil {
+		t.Fatal(err)
+	}
+	defer sendChatPosts(t, svc, domain.BotReplied)()
+	if ok, err := svc.ProcessOne(context.Background()); err != nil || !ok {
+		t.Fatalf("origin %v %v", ok, err)
+	}
+	post, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "chat-post:"+origin.ID))
+	if err != nil || post.Action != botinteraction.ActionChatPost ||
+		!strings.HasPrefix(post.Content, botinteraction.WeComNodeQuestionRefPrefix+origin.ID+"\n") ||
+		!strings.Contains(post.Content, "问题：登录要不要支持邮箱？") {
+		t.Fatalf("origin post = %+v %v", post, err)
 	}
 }
