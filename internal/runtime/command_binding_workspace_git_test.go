@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -190,26 +191,50 @@ func TestWorkspaceGitScopesHTTPRedirectsToAuthorizedOrigin(t *testing.T) {
 	}))
 	t.Cleanup(gateway.Close)
 	workspace := t.TempDir()
-	run := func(remote string) (string, error) {
-		cmd := WithCommandEnvironment(CommandSpec{
-			Argv:               []string{"sh", "-c", `exec git ls-remote -- "$0"`, remote},
-			CredentialBindings: []CredentialBinding{BindGitWorkspace},
-		}, map[string]string{SessionGatewayEnv: gateway.URL, "NO_PROXY": "*", "no_proxy": "*", "GIT_CONFIG_GLOBAL": os.DevNull})
-		return ExecuteLocalCommand(t.Context(), workspace, cmd, RunCredentials{
-			GitHTTPHosts: map[string]string{scope: "other"},
-		}, nil)
+	for _, mode := range []string{"shell", "direct"} {
+		t.Run(mode, func(t *testing.T) {
+			run := func(remote string) (string, error) {
+				argv := []string{"git", "ls-remote", "--", remote}
+				if mode == "shell" {
+					argv = append([]string{"sh", "-c", `exec "$@"`, "sh"}, argv...)
+				}
+				cmd := WithCommandEnvironment(CommandSpec{
+					Argv:               argv,
+					CredentialBindings: []CredentialBinding{BindGitWorkspace},
+				}, map[string]string{SessionGatewayEnv: gateway.URL, "NO_PROXY": "*", "no_proxy": "*", "GIT_CONFIG_GLOBAL": os.DevNull})
+				return ExecuteLocalCommand(t.Context(), workspace, cmd, RunCredentials{
+					GitHTTPHosts: map[string]string{scope: "other"},
+				}, nil)
+			}
+			for _, remote := range []string{
+				raw + "/private.git",
+				scope + "/private.git",
+				"http://localhost:" + port + "/moved.git",
+			} {
+				if out, err := run(remote); err != nil || !strings.Contains(out, "refs/heads/main") {
+					t.Fatalf("ls-remote %s: %v (%s)", remote, err, out)
+				}
+			}
+			if out, err := run(raw + "/moved.git"); err == nil || !strings.Contains(out+" "+err.Error(), "301") {
+				t.Fatalf("authorized IPv6 redirect should fail: %v (%s)", err, out)
+			}
+		})
 	}
-	for _, remote := range []string{
-		raw + "/private.git",
-		scope + "/private.git",
-		"http://localhost:" + port + "/moved.git",
-	} {
-		if out, err := run(remote); err != nil || !strings.Contains(out, "refs/heads/main") {
-			t.Fatalf("ls-remote %s: %v (%s)", remote, err, out)
-		}
+}
+
+func TestWorkspaceGitPreservesSubmoduleScripts(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	workspace := t.TempDir()
+	if out, err := exec.CommandContext(t.Context(), "git", "init", "-q", workspace).CombinedOutput(); err != nil {
+		t.Fatalf("initialize repository: %v (%s)", err, out)
 	}
-	if out, err := run(raw + "/moved.git"); err == nil || !strings.Contains(out+" "+err.Error(), "301") {
-		t.Fatalf("authorized IPv6 redirect should fail: %v (%s)", err, out)
+	cmd := WithCommandEnvironment(CommandSpec{
+		Argv:               []string{"sh", "-c", "exec git submodule status"},
+		CredentialBindings: []CredentialBinding{BindGitWorkspace},
+	}, map[string]string{SessionGatewayEnv: "http://127.0.0.1:1"})
+	credentials := RunCredentials{GitHTTPHosts: map[string]string{"http://git.example.org": "other"}}
+	if out, err := ExecuteLocalCommand(t.Context(), workspace, cmd, credentials, nil); err != nil {
+		t.Fatalf("git submodule status: %v (%s)", err, out)
 	}
 }
 

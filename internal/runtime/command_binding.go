@@ -114,13 +114,19 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			}
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
 			bound.environment["CODEBUDDY_BASE_URL"] = strings.TrimSpace(credentials.CodeBuddy.BaseURL)
-		case BindGit:
+		case BindGit, BindGitWorkspace:
 			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err
 			}
-		case BindGitWorkspace:
-			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
-				return CommandSpec{}, err
+			// A direct native command can resolve its executable before the
+			// bound PATH takes effect. Launch the same Git shim as a shell would.
+			if len(bound.Argv) > 0 && bound.Argv[0] == "git" && sandboxDriver(sandbox) != "docker" &&
+				strings.Contains(","+bound.environment[GitHostsEnv], ",http://") {
+				git, err := filepath.Abs(filepath.Join(mcpCallHostDir(workspace), workspaceGitBin, "git"))
+				if err != nil {
+					return CommandSpec{}, err
+				}
+				bound.Argv = append([]string{git}, bound.Argv[1:]...)
 			}
 		case BindExtra:
 			// Missing credentials export as empty strings on purpose: a child
@@ -311,10 +317,14 @@ func privateHomePaths(sandbox Sandbox, workspace string, command CommandSpec) (h
 // It requests credentials through a live relay rather than writing tokens.
 func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
 	environment["GIT_TERMINAL_PROMPT"] = "0"
-	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
+	runtimeHost, err := EnsureControlDirectory(workspace, "runtime")
+	if err != nil {
 		return fmt.Errorf("create git runtime dir: %w", err)
 	}
-	runtimeHost := mcpCallHostDir(workspace)
+	runtimeHost, err = filepath.Abs(runtimeHost)
+	if err != nil {
+		return fmt.Errorf("resolve git runtime dir: %w", err)
+	}
 	runtimePath := func(rel string) string {
 		if sandboxDriver(sandbox) == "docker" {
 			return mcpCallGuestPath(rel)

@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"net/url"
 	"os"
@@ -21,7 +23,7 @@ const (
 )
 
 // Git invokes git-remote-http with the effective URL, after resolving remotes
-// and URL rewrites. Keep the system helpers on PATH and override only HTTP.
+// and URL rewrites. Preserve the installed helpers and override only HTTP.
 func workspaceGitMain(args []string) int {
 	self, err := os.Executable()
 	if err != nil {
@@ -43,11 +45,71 @@ func workspaceGitMain(args []string) int {
 		fmt.Fprintf(os.Stderr, "git: read the transport helper path: %v\n", err)
 		return 126
 	}
-	realExec := strings.TrimSpace(string(output))
+	realExec, err := filepath.Abs(strings.TrimSpace(string(output)))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "git: resolve the transport helper path: %v\n", err)
+		return 126
+	}
+	workspaceExec, err := workspaceGitExecPath(filepath.Join(base, workspaceGitExec), realExec)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "git: prepare workspace helpers: %v\n", err)
+		return 126
+	}
 	env := gitwork.WithEnvValue(os.Environ(), workspaceGitRealExecEnv, realExec)
-	env = gitwork.WithEnvValue(env, "GIT_EXEC_PATH", filepath.Join(base, workspaceGitExec))
+	env = gitwork.WithEnvValue(env, "GIT_EXEC_PATH", workspaceExec)
 	env = gitwork.WithEnvValue(env, "PATH", realExec+string(os.PathListSeparator)+path)
 	return execWorkspaceGit(git, args, env)
+}
+
+// Git scripts also load support files and directories from GIT_EXEC_PATH.
+// Publish a complete helper directory before another Git process can reuse it.
+func workspaceGitExecPath(shims, installed string) (string, error) {
+	installedInfo, err := os.Stat(installed)
+	if err != nil {
+		return "", err
+	}
+	key := sha256.Sum256([]byte(fmt.Sprintf("%s\n%d", installed, installedInfo.ModTime().UnixNano())))
+	name := fmt.Sprintf("helpers-%x", key[:8])
+	dir := filepath.Join(shims, name)
+	root, err := os.OpenRoot(shims)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	if info, err := root.Lstat(name); err == nil {
+		if !info.IsDir() {
+			return "", fmt.Errorf("Git helper path is not a directory: %s", dir)
+		}
+		return dir, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	entries, err := os.ReadDir(installed)
+	if err != nil {
+		return "", err
+	}
+	staging := "stage-" + rand.Text()
+	if err := root.Mkdir(staging, 0o700); err != nil {
+		return "", err
+	}
+	defer root.RemoveAll(staging)
+	for _, helper := range entries {
+		if helper.Name() == "git-remote-http" {
+			continue
+		}
+		if err := root.Symlink(filepath.Join(installed, helper.Name()), filepath.Join(staging, helper.Name())); err != nil {
+			return "", err
+		}
+	}
+	if err := root.Symlink("../git-remote-http", filepath.Join(staging, "git-remote-http")); err != nil {
+		return "", err
+	}
+	if err := root.Rename(staging, name); err != nil {
+		if info, statErr := root.Lstat(name); statErr != nil || !info.IsDir() {
+			return "", err
+		}
+	}
+	return dir, nil
 }
 
 func workspaceGitHTTPMain(args []string) int {
