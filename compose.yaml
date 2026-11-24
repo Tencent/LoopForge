@@ -19,6 +19,14 @@ services:
       retries: 60
   platform:
     profiles: [platform]
+    # Runs and conversation workspaces store the platform host that owns them
+    # (`runs.workspace_host`, taken from os.Hostname()). A container's default
+    # hostname is its container ID, so pin it: otherwise every recreation (an
+    # upgrade, `./start.sh pull`, an image or service change) makes earlier
+    # workspaces look owned by another execution host, and approval, terminal
+    # and Agent browser calls fail with a workspace-binding or control-channel
+    # error. Keep this value stable across upgrades and operator overrides.
+    hostname: loopforge-platform
     # Published release stack: never builds. Bump the pinned tag (here and in
     # AGENTFLOW_ISOLATED_IMAGE) with each release; source builds use compose.dev.yaml.
     image: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.4.2}
