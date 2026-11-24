@@ -198,12 +198,16 @@ func TestWorkspaceGitScopesHTTPRedirectsToAuthorizedOrigin(t *testing.T) {
 	if out, err := exec.CommandContext(t.Context(), "git", "-C", workspace, "config", "--local", key, "true").CombinedOutput(); err != nil {
 		t.Fatalf("set local redirect policy: %s: %v", out, err)
 	}
-	for _, mode := range []string{"shell", "direct"} {
+	for _, mode := range []string{"shell", "direct", "login shell"} {
 		t.Run(mode, func(t *testing.T) {
 			run := func(remote string) (string, error) {
 				argv := []string{"git", "ls-remote", "--", remote}
-				if mode == "shell" {
+				switch mode {
+				case "shell":
 					argv = append([]string{"sh", "-c", `exec "$@"`, "sh"}, argv...)
+				case "login shell":
+					// Reproduce login profiles that discard the Runner's PATH additions.
+					argv = append([]string{"sh", "-lc", `PATH="$1"; export PATH; shift; exec "$@"`, "sh", os.Getenv("PATH")}, argv...)
 				}
 				cmd := WithCommandEnvironment(CommandSpec{
 					Argv:               argv,

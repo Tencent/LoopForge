@@ -95,7 +95,7 @@ func VerifyGitPreparation(ctx context.Context, workspace string, repositories []
 		} else if _, err := gitwork.C(ctx, dir, "merge-base", "--is-ancestor", baseTip, "HEAD"); err != nil {
 			return fmt.Errorf("repository %s: HEAD does not contain the frozen remote base branch origin/%s: %w", r.Name, base, err)
 		}
-		if err := gitwork.RecordBaseline(dir, base); err != nil {
+		if err := gitwork.RecordBaselineContext(ctx, dir, base); err != nil {
 			return err
 		}
 	}

@@ -88,20 +88,20 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return runnerWorkspaceError(err)
 	}
-	cacheCtx := runtime.WithRepositoryCacheFor(ctx, runnerTaskSandboxDriver(task))
-	if err := checkoutInvocationRepositories(cacheCtx, root, request.PreparationInvocation, request.RefreshCleanRepositories); err != nil {
-		return runnerWorkspaceError(fmt.Errorf("prepare workspace repositories: %w", err))
-	}
 	sb, release, err := d.acquireTaskSandbox(ctx, task)
 	if err != nil {
 		return runnerWorkspaceError(err)
 	}
 	defer release()
+	checkoutCtx := taskRepositoryContext(ctx, task, sb, request.PreparationInvocation)
+	if err := checkoutInvocationRepositories(checkoutCtx, root, request.PreparationInvocation, request.RefreshCleanRepositories); err != nil {
+		return runnerWorkspaceError(fmt.Errorf("prepare workspace repositories: %w", err))
+	}
 	execution, err := d.workspaceExecutionSandbox(ctx, sb, request)
 	if err != nil {
 		return runnerWorkspaceError(err)
 	}
-	status, err := runtime.EnsureWorkspacePreparation(ctx, execution, *request.Workflow, request.Repositories, nil)
+	status, err := runtime.EnsureWorkspacePreparation(checkoutCtx, execution, *request.Workflow, request.Repositories, nil)
 	if err != nil {
 		return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
 	}
@@ -132,22 +132,23 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 	unlock := onceRelease(gate.Unlock)
 	d.workspacePreparing.Store(key, true)
 	defer d.workspacePreparing.Delete(key)
-	if err := checkoutInvocationRepositories(runtime.WithRepositoryCacheFor(ctx, runnerTaskSandboxDriver(task)), root, request.PreparationInvocation); err != nil {
-		unlock()
-		return runtime.TerminalResult{}, fmt.Errorf("prepare workspace repositories: %w", err)
-	}
 	sb, releaseSandbox, err := d.acquireTaskSandbox(ctx, task)
 	if err != nil {
 		unlock()
 		return runtime.TerminalResult{}, err
 	}
 	release := onceRelease(releaseSandbox, unlock)
+	checkoutCtx := taskRepositoryContext(ctx, task, sb, request.PreparationInvocation)
+	if err := checkoutInvocationRepositories(checkoutCtx, root, request.PreparationInvocation); err != nil {
+		release()
+		return runtime.TerminalResult{}, fmt.Errorf("prepare workspace repositories: %w", err)
+	}
 	execution, err := d.workspaceExecutionSandbox(ctx, sb, request)
 	if err != nil {
 		release()
 		return runtime.TerminalResult{}, err
 	}
-	if _, err = runtime.EnsureWorkspacePreparation(ctx, execution, *request.Workflow, request.Repositories, nil); err != nil {
+	if _, err = runtime.EnsureWorkspacePreparation(checkoutCtx, execution, *request.Workflow, request.Repositories, nil); err != nil {
 		release()
 		return runtime.TerminalResult{}, err
 	}

@@ -156,6 +156,9 @@ case "$git_exec" in "$1"/*) ;; *) exit 11 ;; esac
 if touch "$git_exec/workspace-write-probe" 2>/dev/null; then exit 12; fi
 if touch "${AGENTFLOW_WORKSPACE_GIT_BINS%%:*}/workspace-write-probe" 2>/dev/null; then exit 13; fi
 git submodule status
+if [ "$3" = docker ]; then
+  exec sh -lc 'PATH=/usr/bin:/bin; export PATH; exec git ls-remote -- "$1"' git-login "$2"
+fi
 exec git ls-remote -- "$2"`
 	for _, speaker := range []string{"alice", "bob", "viewer"} {
 		credentials := RunCredentials{}

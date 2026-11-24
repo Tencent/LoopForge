@@ -755,8 +755,14 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("workspace %s: %v", workspace, err)}
 	}
+	sandbox, release, err := d.acquireExecutionTaskSandbox(ctx, task)
+	if err != nil {
+		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("create runner sandbox: %v", err)}
+	}
+	defer release()
 	if task.Invocation != nil {
-		if err := checkoutInvocationRepositories(runtime.WithRepositoryCacheFor(ctx, runnerTaskSandboxDriver(task)), workspace, task.Invocation); err != nil {
+		checkoutCtx := taskRepositoryContext(ctx, task, sandbox, task.Invocation)
+		if err := checkoutInvocationRepositories(checkoutCtx, workspace, task.Invocation); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", err)}
 		}
 		if err := writeRunnerHumanContext(workspace, task.Invocation.HumanContext); err != nil {
@@ -767,16 +773,6 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		}
 	}
 	command := runtime.CommandSpec{Argv: []string{"sh", "-lc", task.Command}, Provider: "script"}
-	var sandbox runtime.Sandbox
-	if task.Sandbox != nil {
-		var release func()
-		var err error
-		sandbox, release, err = d.acquireTaskSandbox(ctx, task)
-		if err != nil {
-			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("create runner sandbox: %v", err)}
-		}
-		defer release()
-	}
 	if task.Invocation != nil {
 		servers := task.Invocation.MCPCallServers
 		if len(servers) == 0 {
@@ -837,7 +833,13 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("workspace %s: %v", workspace, err)}, nil
 	}
-	checkoutErr := checkoutInvocationRepositories(runtime.WithRepositoryCacheFor(ctx, runnerTaskSandboxDriver(task)), workspace, inv)
+	sandbox, release, err := d.acquireExecutionTaskSandbox(ctx, task)
+	if err != nil {
+		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("create runner sandbox: %v", err)}, nil
+	}
+	defer release()
+	checkoutCtx := taskRepositoryContext(ctx, task, sandbox, inv)
+	checkoutErr := checkoutInvocationRepositories(checkoutCtx, workspace, inv)
 	repositoryFallback := checkoutErr != nil && inv.RepositoryPreparationFallback && ctx.Err() == nil
 	if checkoutErr != nil {
 		if !repositoryFallback {
@@ -852,16 +854,8 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 	}
 	driver := "runner"
-	var sandbox runtime.Sandbox
-	var err error
 	if task.Sandbox != nil {
 		driver = task.Sandbox.Profile.Driver
-		var release func()
-		sandbox, release, err = d.acquireTaskSandbox(ctx, task)
-		if err != nil {
-			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("create runner sandbox: %v", err)}, nil
-		}
-		defer release()
 	}
 	target := d.mcpTarget(true, inv.GitHTTPCredentials)
 	sshRepoCount := len(inv.GitSSHRemotes())
@@ -1012,7 +1006,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		return result, nil
 	}
 	if repositoryFallback {
-		if err := runtime.VerifyGitPreparation(invocationGitHTTPContext(ctx, inv), workspace, invocationRepositoryContexts(inv)); err != nil {
+		if err := runtime.VerifyGitPreparation(invocationGitHTTPContext(checkoutCtx, inv), workspace, invocationRepositoryContexts(inv)); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("Agent repository preparation failed validation: %v", err)}, nil
 		}
 	}
@@ -1197,7 +1191,7 @@ func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *
 		if err := checkoutRepositoryForPreparation(ctx, target, &repo, refresh); err != nil {
 			return err
 		}
-		if err := gitwork.RecordBaseline(target, repo.Ref); err != nil {
+		if err := gitwork.RecordBaselineContext(ctx, target, repo.Ref); err != nil {
 			return err
 		}
 		if err := configureRepositoryGitIdentity(ctx, target, inv.GitUserName, inv.GitUserEmail); err != nil {
@@ -1219,9 +1213,8 @@ func configureRepositoryGitIdentity(ctx context.Context, workspace, name, email 
 		{key: "user.name", value: name},
 		{key: "user.email", value: email},
 	} {
-		cmd := exec.CommandContext(ctx, "git", "-C", workspace, "config", "--local", item.key, item.value)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("configure git %s: %w (%s)", item.key, err, strings.TrimSpace(string(output)))
+		if _, err := gitwork.C(ctx, workspace, "config", "--local", item.key, item.value); err != nil {
+			return fmt.Errorf("configure git %s: %w", item.key, err)
 		}
 	}
 	return nil
@@ -1299,12 +1292,12 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	}
 	if workBranch := strings.TrimSpace(repo.WorkBranch); workBranch != "" && workBranch != strings.TrimSpace(repo.Ref) {
 		remoteRef := "refs/remotes/origin/" + workBranch
-		if err := exec.CommandContext(cloneCtx, "git", "-C", workspace, "show-ref", "--verify", "--quiet", remoteRef).Run(); err == nil {
-			if out, err := exec.CommandContext(cloneCtx, "git", "-C", workspace, "checkout", "--quiet", "-b", workBranch, "--track", "origin/"+workBranch).CombinedOutput(); err != nil {
-				return fmt.Errorf("git checkout work branch %s: %v (%s)", workBranch, err, cloneOutput(out, repo.GitToken))
+		if _, err := gitwork.C(cloneCtx, workspace, "show-ref", "--verify", "--quiet", remoteRef); err == nil {
+			if _, err := gitwork.C(cloneCtx, workspace, "checkout", "--quiet", "-b", workBranch, "--track", "origin/"+workBranch); err != nil {
+				return fmt.Errorf("git checkout work branch %s: %w", workBranch, err)
 			}
-		} else if out, err := exec.CommandContext(cloneCtx, "git", "-C", workspace, "checkout", "--quiet", "-b", workBranch).CombinedOutput(); err != nil {
-			return fmt.Errorf("git create work branch %s: %v (%s)", workBranch, err, cloneOutput(out, repo.GitToken))
+		} else if _, err := gitwork.C(cloneCtx, workspace, "checkout", "--quiet", "-b", workBranch); err != nil {
+			return fmt.Errorf("git create work branch %s: %w", workBranch, err)
 		}
 	}
 	return nil
@@ -1365,8 +1358,8 @@ func createNewRepositoryBranch(ctx context.Context, workspace string, repo *doma
 			return fmt.Errorf("远端已存在分支 %s，不能按新建分支处理；继续该分支请用 branchMode=continue", branch)
 		}
 	}
-	if out, err := exec.CommandContext(ctx, "git", "-C", workspace, "checkout", "--quiet", "-b", branch).CombinedOutput(); err != nil {
-		return fmt.Errorf("git create work branch %s: %v (%s)", branch, err, cloneOutput(out, repo.GitToken))
+	if _, err := gitwork.C(ctx, workspace, "checkout", "--quiet", "-b", branch); err != nil {
+		return fmt.Errorf("git create work branch %s: %w", branch, err)
 	}
 	return nil
 }
@@ -1394,8 +1387,8 @@ func checkoutCreatedRepositoryBranch(ctx context.Context, workspace string, repo
 	} else if _, ok := gitwork.RevParse(repoCtx, workspace, "refs/remotes/origin/"+base); ok {
 		base = "origin/" + base
 	}
-	if out, err := exec.CommandContext(ctx, "git", "-C", workspace, "checkout", "--quiet", "-b", branch, base).CombinedOutput(); err != nil {
-		return fmt.Errorf("git create work branch %s: %v (%s)", branch, err, cloneOutput(out, repo.GitToken))
+	if _, err := gitwork.C(ctx, workspace, "checkout", "--quiet", "-b", branch, base); err != nil {
+		return fmt.Errorf("git create work branch %s: %w", branch, err)
 	}
 	return nil
 }

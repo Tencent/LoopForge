@@ -155,7 +155,7 @@ func TestGitHTTPRepositoryRequiresCompatibleRunner(t *testing.T) {
 	}
 	t.Cleanup(st.Close)
 	for _, runner := range []domain.Runner{
-		{ID: "base", RunnerVersion: domain.RunnerVersionProjectCredentials},
+		{ID: "base", RunnerVersion: domain.RunnerVersionConversationSOPWorkspace},
 		{ID: "http", RunnerVersion: domain.RunnerVersionGitPlainHTTP},
 	} {
 		if err := st.PutRunner(runner); err != nil {

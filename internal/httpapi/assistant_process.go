@@ -26,16 +26,19 @@ import (
 
 type assistantHelperExecutionKey struct{}
 type assistantHelperExecution struct {
-	h      *assistantHandlers
-	owner  int64
-	target domain.AssistantExecutionTarget
+	h         *assistantHandlers
+	owner     int64
+	projectID string
+	target    domain.AssistantExecutionTarget
 }
 
-func (h *assistantHandlers) helperExecutionContext(ctx context.Context, owner int64, target *domain.AssistantExecutionTarget) context.Context {
+func (h *assistantHandlers) helperExecutionContext(ctx context.Context, owner int64, projectID string, target *domain.AssistantExecutionTarget) context.Context {
 	if target == nil || target.RunnerID == "" {
 		return ctx
 	}
-	return context.WithValue(ctx, assistantHelperExecutionKey{}, assistantHelperExecution{h: h, owner: owner, target: *target})
+	return context.WithValue(ctx, assistantHelperExecutionKey{}, assistantHelperExecution{
+		h: h, owner: owner, projectID: projectID, target: *target,
+	})
 }
 
 func helperCLIExecution(ctx context.Context, root string, actorID int64, engine string) (func(context.Context, string, runtime.CommandSpec, runtime.RunCredentials, runtime.EventSink) (string, error), bool) {
@@ -43,7 +46,11 @@ func helperCLIExecution(ctx context.Context, root string, actorID int64, engine 
 	if !ok {
 		return nil, false
 	}
-	s := &AgentToolSession{ChatOwnerID: bound.owner, ChatSessionID: "helper-" + newAssistantSessionID(), ExecutionRunnerID: bound.target.RunnerID, RuntimeMode: domain.AssistantModePlatform}
+	s := &AgentToolSession{
+		ChatOwnerID: bound.owner, ChatSessionID: "helper-" + newAssistantSessionID(),
+		UserID: actorID, ProjectID: bound.projectID, ExecutionRunnerID: bound.target.RunnerID,
+		RuntimeMode: domain.AssistantModePlatform,
+	}
 	s.runnerLogin = bound.h.assistantUsesRunnerLogin(actorID, &bound.target, engine)
 	return bound.h.conversationExecutor(s, root), s.runnerLogin
 }
@@ -169,34 +176,50 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			if h.runnerControls == nil {
 				return preDispatchError(errAssistantExecutionUnavailable)
 			}
-			runner, ok := h.repo.Runner(s.ExecutionRunnerID)
-			if !ok || runner.Status != domain.RunnerStatusOnline {
-				return preDispatchError(errAssistantExecutionUnavailable)
-			}
-			if !runner.SupportsConversationCLI() {
-				return preDispatchError(fmt.Errorf("执行机器需升级至 %s", domain.RunnerVersionConversationCLI))
-			}
-			if len(projectCredentialEnv) > 0 && !runner.SupportsProjectCredentials() {
-				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用项目凭据", domain.RunnerVersionProjectCredentials))
-			}
-			if (s.runnerLogin || s.transient) && !runner.SupportsCLISettings() {
-				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用对话本机登录和 CLI 测试", domain.RunnerVersionCLISettings))
-			}
-			if req.Command != nil && req.Command.Provider == assistantEngineCodeBuddy &&
-				req.Command.Credentials.CodeBuddy.BaseURL != "" && !runner.SupportsCodeBuddyBaseURL() {
-				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用 CodeBuddy Base URL", domain.RunnerVersionCodeBuddyBaseURL))
-			}
 			raw, err := json.Marshal(req)
 			if err != nil {
 				return preDispatchError(err)
 			}
 			envelope := request
 			envelope.Conversation = raw
-			response, err := h.runnerControls.requestWorkspace(callCtx, s.ExecutionRunnerID, envelope)
-			// A 429 means the runner's request slots were full and it rejected
-			// the request before handling it, so every operation (including a
-			// write) can be sent again. Back off instead of failing the turn.
-			for delay := 50 * time.Millisecond; err == nil && response.Status == http.StatusTooManyRequests && delay <= conversationProcessBusyMaxDelay; delay *= 2 {
+			// A revoked turn can finish and release its resources. Preparing a
+			// new turn, sending files and starting a process need a live grant.
+			checkAccess := false
+			switch req.Operation {
+			case "prepare", "resetAssets", "sync", "start":
+				checkAccess = true
+			}
+			var response domain.RunnerWorkspaceResponse
+			for delay := 50 * time.Millisecond; ; delay *= 2 {
+				runner, ok := h.repo.Runner(s.ExecutionRunnerID)
+				if !ok {
+					return preDispatchError(errAssistantExecutionUnavailable)
+				}
+				if checkAccess && !h.canUseBoundRunner(runner, s.ProjectID, s.UserID) {
+					return preDispatchError(errAssistantRunnerAccessRevoked)
+				}
+				if runner.Status != domain.RunnerStatusOnline {
+					return preDispatchError(errAssistantExecutionUnavailable)
+				}
+				if !runner.SupportsConversationCLI() {
+					return preDispatchError(fmt.Errorf("执行机器需升级至 %s", domain.RunnerVersionConversationCLI))
+				}
+				if len(projectCredentialEnv) > 0 && !runner.SupportsProjectCredentials() {
+					return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用项目凭据", domain.RunnerVersionProjectCredentials))
+				}
+				if (s.runnerLogin || s.transient) && !runner.SupportsCLISettings() {
+					return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用对话本机登录和 CLI 测试", domain.RunnerVersionCLISettings))
+				}
+				if req.Command != nil && req.Command.Provider == assistantEngineCodeBuddy &&
+					req.Command.Credentials.CodeBuddy.BaseURL != "" && !runner.SupportsCodeBuddyBaseURL() {
+					return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用 CodeBuddy Base URL", domain.RunnerVersionCodeBuddyBaseURL))
+				}
+				response, err = h.runnerControls.requestWorkspace(callCtx, s.ExecutionRunnerID, envelope)
+				// The runner returned 429 before handling the request. Retry
+				// with backoff and check the machine again before each send.
+				if err != nil || response.Status != http.StatusTooManyRequests || delay > conversationProcessBusyMaxDelay {
+					break
+				}
 				timer := time.NewTimer(delay)
 				select {
 				case <-timer.C:
@@ -204,7 +227,6 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 					timer.Stop()
 					return runtime.ConversationProcessResult{}, callCtx.Err()
 				}
-				response, err = h.runnerControls.requestWorkspace(callCtx, s.ExecutionRunnerID, envelope)
 			}
 			if err != nil {
 				return runtime.ConversationProcessResult{}, fmt.Errorf("%w: %w", errAssistantExecutionUnavailable, err)
@@ -610,7 +632,7 @@ func (h *assistantHandlers) testRunnerCLI(ctx context.Context, runnerID, provide
 		}
 	}
 	session := &AgentToolSession{
-		ChatOwnerID: user.ID, ChatSessionID: newAssistantSessionID(), ExecutionRunnerID: runnerID,
+		UserID: user.ID, ChatOwnerID: user.ID, ChatSessionID: newAssistantSessionID(), ExecutionRunnerID: runnerID,
 		RuntimeMode: domain.AssistantModePlatform, runnerLogin: runnerLogin, transient: true,
 	}
 	_, _, err = runAssistantCLI(ctx, assistantCLIRequest{

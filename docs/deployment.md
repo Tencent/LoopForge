@@ -65,7 +65,7 @@ Run it as the installation owner, including an ordinary Linux user. If that user
 
 `compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.2`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
-To upgrade, update the checkout first, apply any required upgrade migrations, then refresh the containers. For the sandbox catalog upgrade, follow [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets).
+To upgrade, update the checkout first, apply any manual migrations required by the release, then refresh the containers. The Compose upgrade applies sandbox migration 041 before starting the platform when needed. See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets).
 
 ```bash
 git fetch --tags && git checkout vX.Y.Z
@@ -148,7 +148,7 @@ In **Platform administration → Git Host Trust**, enter an HTTP instance addres
 
 Under **Personal settings → Git access tokens**, select the authorized HTTP instance and enter your token and the server's Git authentication username if required. Add the repository using its `http://` clone URL. For a host that also has a managed provider, paste the `git clone http://host/team/repo.git` command to explicitly choose HTTP. **Check repository access** runs `git ls-remote` against a repository at that exact endpoint. A successful check confirms read access. A push also requires a server that accepts pushes and credentials with write access.
 
-HTTP and HTTPS have separate authorizations and personal credentials. Git resolves hostnames using the execution environment. Platform-managed Git disables redirects for authorized HTTP credentials. HTTP repositories on an execution machine require Runner 0.12.2 or later. The Git transport supports generic repositories. PR and MR APIs depend on the hosting provider.
+HTTP and HTTPS have separate authorizations and personal credentials. Git resolves hostnames using the execution environment. Platform-managed Git disables redirects for authorized HTTP credentials. HTTP repositories on an execution machine require Runner 0.12.4 or later. The Git transport supports generic repositories. PR and MR APIs depend on the hosting provider.
 
 If a Docker image lacks Git, the SOP can install it and use the same host-scoped credential helper in that script. The installed Git uses its own HTTP redirect settings.
 
@@ -207,6 +207,8 @@ The upstream process roles remain `-role api`, `-role worker` and `-role all`. A
 
 Personal runners are connected from the execution-machine page with a short-lived binding code. The installer is served at `/runners/install.sh`. `AGENTFLOW_RUNNER_BINARY` can point to binaries with `{os}` and `{arch}` substitutions. Container images bundle Linux/macOS amd64/arm64 runner and gate binaries. Native source installations can build on demand with Go.
 
+The machine owner can use **Settings → Execution machines → Shared projects** to grant access to one or more projects where they are the owner or a member with write access. Members with write access can select a compatible shared machine for a new conversation. **Use in this project** sets a default for that user and project. Each new turn on a shared machine requires a current grant and project write access for both the machine owner and the sender. Removing a grant clears the saved project defaults that pointed to the machine.
+
 Docker workspaces on macOS use a Linux Runner executable for Git credentials and MCP calls. The installer chooses the architecture of the installed macOS Runner, including Intel binaries running under Rosetta. For a universal Runner on Apple Silicon it installs the arm64 helpers and adds the amd64 helpers when available. Foreground starts and the command printed by `--no-start` select the native arm64 slice, including from a Rosetta shell. On Intel Macs the installer installs the amd64 helpers. By default, it places the helpers next to the host binary. A Runner-side `AGENTFLOW_RUNNER_BINARY` template with `{os}` selects the installation and runtime path. To install both helpers, use `{arch}` and give each architecture a distinct destination. The installer saves the template for upgrades and includes it in launchd and in the startup command printed by `--no-start`. Helper paths must resolve to files separate from the macOS Runner.
 
 The installer checks the helper destinations against the staged macOS binary and installs the required Gate MCP helpers before replacing an installed Runner. When the existing Runner has a working Docker helper, an upgrade requires a compatible helper at the new Runner's configured path before replacing the binary and restarting the service. Relative templates in the installed launchd configuration use the job's working directory. The installer and updater validate the Linux executable's format, architecture, and load segments before replacing it. Custom installs keep a compatible existing helper. A Runner built from a local checkout can build its companion from that checkout. A download URL with an `{os}` placeholder can supply both binaries when used as the Runner's download source.
@@ -216,6 +218,10 @@ When platform updates are enabled, macOS runners synchronize the helper in the b
 A platform administrator can share one CodeBuddy API Key under **Platform administration → Shared CodeBuddy Key** (平台共享 CodeBuddy Key): pick the network environment that issued it and the models members may use (the first is the default). Members without a key of their own then chat and run SOPs on it, limited to those models; a role configured with another model runs on the default and the run says so. Members with their own key keep using it with any model. Clarification, reports, bots and run evaluation use the personal credentials of the relevant account. Scheduled prompts follow the selected CLI's credential and sponsorship settings. The key is stored in the database like personal keys and is never shown again after saving. `AGENTFLOW_ASSISTANT_SPONSOR_LOGIN`, which lent one account's key limited to `deepseek-v4.1-flash`, still applies while no shared key is configured.
 
 Configure provider credentials in the platform UI, not the host's global CLI configuration. Credentials are bound to the responsible actor by the upstream runtime. The home composer and SOP roles each choose a built-in CLI independently. Select the executor beside the home model selector; its API key (and optional Codex/Claude base URL) comes from your personal settings. Changing the executor preserves the draft; saved conversations record the executor used. Main Bot writes still pass through the platform tool gateway and its approval checks. A scheduled assistant task can select any supported CLI and runs as an ordinary chat turn; Codex and Claude Code still need that account's own credential. Live model tests are opt-in; set `AGENTFLOW_LIVE_TESTS=1` only for the acceptance suites that need to load local credentials.
+
+### Upgrading existing project conversations
+
+After upgrading, a project conversation already locked to a personal machine requires a project grant before its next message can run. The machine owner opens **Settings → Execution machines** (设置 → 执行机器), chooses **Shared projects** (共享项目) on the bound machine's card, selects the conversation's project and saves. Sending again then uses the original conversation on the same machine. The grant also lets other project members with write access run on that machine using their own credentials or an applicable platform credential.
 
 ## Observability schema
 
@@ -230,19 +236,24 @@ For an external MySQL deployment, review that migration and check column existen
 | Kind | Example | What an operator does |
 | --- | --- | --- |
 | Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
-| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql`, `041_native_sandbox_inline_assets.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
+| Applied before startup by `./start.sh pull` for an existing Compose database | `041_native_sandbox_inline_assets.sql` | See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets) |
+| Required manual upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
 
 ### Migrating existing sandboxes to inline assets
 
-Check out the upgraded release and stop the old platform and any other processes using the database. Back up the database while MySQL remains running. For Compose installations, apply the migration with these commands.
+For a published Compose release, check out the target release and run `./start.sh pull`. If other API or worker processes share the Compose database, stop them first. After pulling the images, the command checks that the target image supports inline Dockerfiles and that the database still has a legacy asset table. When both conditions hold, it stops the platform, saves a database dump in `.local/loopforge-before-041.*/loopforge.sql`, and runs 041 before starting the new platform. An empty database or one whose legacy tables are already gone skips 041.
+
+If the backup or migration fails, the platform stays stopped. Fix the error and rerun `./start.sh pull`. Keep the original backup if you plan to roll back to a release that uses the old sandbox format, and restore it before starting that release.
+
+For a Compose source upgrade, stop the old platform and any other processes using the database, and back up the database while MySQL remains running. Run these commands before starting the new platform with `./start.sh dev`.
 
 ```bash
 ./start.sh stop platform
 ./start.sh migrate-sandboxes
 ```
 
-Once the migration succeeds, start the upgraded platform with `./start.sh pull` for a published release or `./start.sh dev` for a source build. For external MySQL deployments, apply `migrations/041_native_sandbox_inline_assets.sql` directly before starting the upgraded platform.
+For external MySQL deployments, stop the platform processes, back up the database and apply `migrations/041_native_sandbox_inline_assets.sql` directly before starting the upgraded platform.
 
 The migration copies Dockerfiles into sandboxes, converts local sandboxes to native, drops the legacy Dockerfile and environment tables and includes the built-in Dockerfile fix from `031_generic_backend_openssh.sql`. Fresh installations seed the new sandbox format directly.
 

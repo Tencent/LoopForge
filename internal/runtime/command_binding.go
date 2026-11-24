@@ -383,6 +383,10 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 	}
 	environment[workspaceGitBinsEnv] = bins
 	if sandboxDriver(sandbox) != "docker" {
+		// Login shells can reset PATH before the agent calls Git.
+		if httpBin != "" {
+			environment["GIT_EXEC_PATH"] = filepath.Join(tools, workspaceGitDistribution, "exec")
+		}
 		base := environment["PATH"]
 		if base == "" {
 			base = sandboxBasePath(sandbox)

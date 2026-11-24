@@ -252,16 +252,20 @@ if [ -x /workspace/.agentflow/runtime/bin/agentflow-helper ]; then
   export PATH
 fi
 if [ -n "${` + workspaceGitBinsEnv + `:-}" ]; then
-  if [ -x "` + dockerGitToolsMount + "/" + workspaceGitDistribution + `/git" ]; then
-    PATH="$` + workspaceGitBinsEnv + `:$PATH"
-  else
-    # An image without Git can install it and use the host-scoped helper directly.
-    git_bins="${` + workspaceGitBinsEnv + `#` + dockerGitToolsMount + "/" + workspaceGitHTTPBin + `:}"
-    if [ "$git_bins" != "$` + workspaceGitBinsEnv + `" ]; then
-      export ` + workspaceGitHTTPSystemGitEnv + `=1
-    fi
-    PATH="$git_bins:$PATH"
-  fi
+  git_bins="$` + workspaceGitBinsEnv + `"
+  case "$git_bins" in
+    ` + dockerGitToolsMount + "/" + workspaceGitHTTPBin + `:*)
+      if [ -x "` + dockerGitToolsMount + "/" + workspaceGitDistribution + `/git" ]; then
+        # Git still uses the managed transport if a nested login shell resets PATH.
+        export GIT_EXEC_PATH="` + dockerGitToolsMount + "/" + workspaceGitDistribution + `/exec"
+      else
+        # An image without Git can install it and use the host-scoped helper directly.
+        git_bins="${git_bins#` + dockerGitToolsMount + "/" + workspaceGitHTTPBin + `:}"
+        export ` + workspaceGitHTTPSystemGitEnv + `=1
+      fi
+      ;;
+  esac
+  PATH="$git_bins:$PATH"
   export PATH
 fi
 if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH" ]; then
