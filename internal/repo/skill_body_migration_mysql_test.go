@@ -52,8 +52,8 @@ CREATE TABLE skill_files (
 INSERT INTO skills (id, payload) VALUES
   ('valid', JSON_OBJECT('content', '# Valid')),
   ('case-collision', JSON_OBJECT('content', '# Legacy')),
-  ('oversized', JSON_OBJECT('content', REPEAT('x', 1048577))),
-  ('uploaded', JSON_OBJECT('content', REPEAT('y', 1048577)));
+  ('oversized', JSON_OBJECT('content', REPEAT('x', 10485761))),
+  ('uploaded', JSON_OBJECT('content', REPEAT('y', 10485761)));
 INSERT INTO skill_files (skill_id, path, content, size, sha256, unix_mode) VALUES
   ('case-collision', 'Skill.MD', 'Keep this file', 14, SHA2('Keep this file', 256), 420),
   ('uploaded', 'SKILL.md', 'Keep the upload', 15, SHA2('Keep the upload', 256), 420);
@@ -74,7 +74,7 @@ INSERT INTO skill_files (skill_id, path, content, size, sha256, unix_mode) VALUE
 	if err := conn.QueryRowContext(ctx, "SELECT GROUP_CONCAT(CONCAT(skill_id, ':', reason) ORDER BY skill_id) FROM skill_body_migration_blockers").Scan(&reasons); err != nil {
 		t.Fatal(err)
 	}
-	if reasons != "case-collision:skill_md_path_collision,oversized:body_exceeds_1_mib" {
+	if reasons != "case-collision:skill_md_path_collision,oversized:body_exceeds_10_mib" {
 		t.Fatalf("unexpected blockers %q", reasons)
 	}
 
@@ -97,7 +97,7 @@ INSERT INTO skill_files (skill_id, path, content, size, sha256, unix_mode) VALUE
 
 	if _, err := conn.ExecContext(ctx, `
 UPDATE skill_files SET path = 'SKILL.md' WHERE skill_id = 'case-collision';
-UPDATE skills SET payload = JSON_SET(payload, '$.content', REPEAT('x', 1048576)) WHERE id = 'oversized';
+UPDATE skills SET payload = JSON_SET(payload, '$.content', REPEAT('x', 10485760)) WHERE id = 'oversized';
 `); err != nil {
 		t.Fatal(err)
 	}

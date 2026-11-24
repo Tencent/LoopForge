@@ -110,7 +110,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 
 ### `PUT /api/skills`
 
-`id`、`name`、`projectId` 必填。创建时兼容旧客户端提交 `content`，服务端将其保存为 `SKILL.md` 文件，单文件上限为 1 MiB。更新现有技能时只保存元数据。`files` 映射会被忽略，文件上传使用 `POST /api/skills/:id/files`。
+`id`、`name`、`projectId` 必填。创建时兼容旧客户端提交 `content`，服务端将其保存为 `SKILL.md` 文件，单文件上限为 10 MiB。更新现有技能时只保存元数据。`files` 映射会被忽略，文件上传使用 `POST /api/skills/:id/files`。
 
 `shared=true` 后其他项目可只读使用，仍被共享角色引用时不能取消共享。成功 `200 {"ok":true}`，失败 `400/404/409`。
 
