@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"github.com/gin-gonic/gin"
 )
 
@@ -131,5 +132,68 @@ func TestRenameAssistantSessionPermissionsAndValidation(t *testing.T) {
 				t.Fatalf("rename: %d %s, want %d", code, response, tc.code)
 			}
 		})
+	}
+}
+
+// A scheduled reply with a notification block is rewritten after the turn
+// ends; that write must keep a manual title longer than a prompt title.
+func TestScheduledNotificationReplyKeepsLongManualTitle(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	if err := s.PutUser(domain.User{LoginName: "rename-owner", CodeBuddyAPIKey: "test-ai-key"}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := s.UserByLoginName("rename-owner")
+	if err := s.PutProject(domain.Project{ID: "rename-project", Name: "项目", OwnerID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	task := assistantTask{ID: "rename-task", ProjectID: "rename-project", Name: "巡检", Prompt: "巡检服务", IntervalSec: 3600}
+	if err := s.PutAssistantTask(owner.ID, task); err != nil {
+		t.Fatal(err)
+	}
+	scheduledSession := func() domain.AssistantSession {
+		for _, item := range s.ListAssistantSessionsBySource(domain.AssistantSourceScheduled) {
+			if item.TaskID == task.ID {
+				stored, _ := s.AssistantSession(owner.ID, item.ID)
+				return stored
+			}
+		}
+		t.Fatal("scheduled conversation not found")
+		return domain.AssistantSession{}
+	}
+	const reply = "巡检完成\n```notification\n{\"title\":\"巡检\",\"summary\":\"一切正常\"}\n```"
+	h := &assistantHandlers{deps: &deps{repo: s}}
+
+	// Renamed while the scheduled turn is running.
+	duringRun := strings.Repeat("巡检", 25)
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		session := scheduledSession()
+		if err := s.SetAssistantSessionTitle(owner.ID, session.ID, session.ProjectID, duringRun); err != nil {
+			t.Error(err)
+		}
+		return reply, nil
+	}
+	h.runStoredAssistantTask(owner, task)
+	session := scheduledSession()
+	if session.Title != duringRun || !session.TitleEdited || strings.Contains(session.Messages[1].Content, "```notification") {
+		t.Errorf("rename during the run: title %q edited=%v reply %s", session.Title, session.TitleEdited, session.Messages[1].Content)
+	}
+
+	// Renamed before the next run continues the pinned conversation.
+	beforeRun := strings.Repeat("续接", 30)
+	if err := s.SetAssistantSessionTitle(owner.ID, session.ID, session.ProjectID, beforeRun); err != nil {
+		t.Fatal(err)
+	}
+	h.generate = func(context.Context, string, domain.User) (string, error) { return reply, nil }
+	ctx := withScheduledSessionPolicy(context.Background(), scheduledSessionPolicy{Continue: session.ID})
+	if err := h.executeAssistantTask(ctx, owner, &task); err != nil {
+		t.Fatal(err)
+	}
+	continued, _ := s.AssistantSession(owner.ID, session.ID)
+	if continued.Title != beforeRun || !continued.TitleEdited || len(continued.Messages) != 4 {
+		t.Fatalf("continued run: title %q edited=%v messages=%d", continued.Title, continued.TitleEdited, len(continued.Messages))
 	}
 }

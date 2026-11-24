@@ -204,3 +204,38 @@ func TestRenameAssistantSessionKeepsLegacyScheduledSource(t *testing.T) {
 		t.Fatalf("renaming changed the conversation's legacy origin: %+v", scheduled)
 	}
 }
+
+// A rename keeps updated_at, so a proposal write read before it still passes
+// the unchanged check; it must not put the earlier manual title back.
+func TestProposalWriteKeepsConcurrentRename(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	const owner = int64(94)
+	const id = "proposal-title-race"
+	if err := st.PutAssistantSession(owner, domain.AssistantSession{ID: id, Title: "问题", Messages: []domain.AssistantMessage{
+		{Role: "user", Content: "问题"}, {Role: "assistant", Content: `{"message":"建议","drafts":[]}`},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAssistantSessionTitle(owner, id, "", "第一个手动名称"); err != nil {
+		t.Fatal(err)
+	}
+	read, _ := st.AssistantSession(owner, id)
+	renamed := strings.Repeat("新名称", 20)
+	if err := st.SetAssistantSessionTitle(owner, id, "", renamed); err != nil {
+		t.Fatal(err)
+	}
+	next := read
+	next.Messages = append([]domain.AssistantMessage(nil), read.Messages...)
+	next.Messages[1].Content = `{"message":"建议","drafts":[{"decision":"accepted"}]}`
+	if err := st.PutAssistantSessionIfUnchanged(owner, next, read); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := st.AssistantSession(owner, id)
+	if stored.Title != renamed || !stored.TitleEdited || stored.Messages[1].Content != next.Messages[1].Content {
+		t.Fatalf("proposal write restored an earlier title: %q edited=%v", stored.Title, stored.TitleEdited)
+	}
+}
