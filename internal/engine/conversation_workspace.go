@@ -14,7 +14,24 @@ import (
 	"agentflow/internal/runtime"
 )
 
-const ConversationWorkspaceIdleTTL = time.Hour
+// ConversationWorkspaceIdleTTL bounds how long an idle conversation workspace
+// is retained before it is reclaimed. Override it with
+// AGENTFLOW_WORKSPACE_IDLE_TTL, a Go duration such as "6h"; invalid or
+// non-positive values keep the one hour default.
+var ConversationWorkspaceIdleTTL = idleTTLFromEnv()
+
+func idleTTLFromEnv() time.Duration {
+	const fallback = time.Hour
+	raw := strings.TrimSpace(os.Getenv("AGENTFLOW_WORKSPACE_IDLE_TTL"))
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
 
 type conversationWorkspaceTokenKey struct{}
 
