@@ -880,7 +880,8 @@ func (h *assistantHandlers) botClarifySave(ctx context.Context, bot domain.Notif
 	if start {
 		origin := domain.BotChatOrigin{ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: sess.ConversationID, ChatType: sess.ChatType, ChatID: sess.ChatID, SenderID: sess.StarterSender, UserID: sess.StarterUserID}
 		h.recordBotOrigin(origin, true, saved.ID)
-		runID, err := h.dispatchBotIssue(withBotChatActor(withBotStartOrigin(ctx, origin), bot.ChannelKind(), sess.StarterSender), user, bot.ProjectID, saved.ID)
+		chatCtx := withBotChatActor(withBotStartOrigin(ctx, origin), bot.ChannelKind(), sess.StarterSender, h.botSenderName(bot, sess.StarterSender, ""))
+		runID, err := h.dispatchBotIssue(chatCtx, user, bot.ProjectID, saved.ID)
 		if err != nil {
 			lines = append(lines, "SOP 没有启动："+truncateRunes(err.Error(), 200)+"。可以在平台手动启动。")
 		} else {

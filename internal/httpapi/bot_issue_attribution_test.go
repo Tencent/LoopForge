@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -74,6 +75,35 @@ func TestIssueOperationNamesWeComSenderOnAutoWrite(t *testing.T) {
 	}
 }
 
+// DingTalk reports the sender's name, so the audit entry names a person and
+// not only a staff ID.
+func TestIssueOperationNamesDingTalkSender(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "bot-attribution-dingtalk-secret")
+	s, h, bot := botFixture(t)
+	bot.ID, bot.BotID, bot.Channel, bot.TenantKey, bot.TenantState = "b-dingtalk", "app-dingtalk", domain.BotChannelDingTalk, "tenant", domain.BotTenantLocked
+	bot.WriteApproval = domain.BotWriteAuto
+	if err := s.SaveNotificationBot(bot, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	bot, _ = s.NotificationBot(bot.ID)
+	bindBotTestUser(t, s, bot, "staff-1", 43)
+	h.api = New(s, h.engine, tracker.NewService(), "", "")
+	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
+		session := botTestToolSession(t, user.ID)
+		body, _ := json.Marshal(map[string]any{"projectId": "p", "title": "钉钉发起的需求"})
+		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{Message: "已创建。", Drafts: []assistantDraft{{Tool: "issues_save", Body: body}}}})
+		return "", nil
+	}
+	item := domain.BotInteraction{ID: "turn-ding", SenderID: "staff-1", SenderName: "张三", Content: "帮我建个需求"}
+	if _, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "bot-session", ChatType: "single"}, nil, item); err != nil {
+		t.Fatal(err)
+	}
+	op := latestIssueOperation(t, s, "create")
+	if op.ActorChannel != domain.BotChannelDingTalk || op.ActorSender != "staff-1" || op.ActorSenderName != "张三" {
+		t.Fatalf("chat attribution = %q %q %q", op.ActorChannel, op.ActorSender, op.ActorSenderName)
+	}
+}
+
 // Operations taken on the platform itself carry no IM identity, so the
 // drawer keeps showing the account alone.
 func TestIssueOperationHasNoChatIdentityOnPlatformWrite(t *testing.T) {
@@ -102,18 +132,76 @@ func TestBotChatActorContext(t *testing.T) {
 	if _, ok := botChatActorFrom(context.Background()); ok {
 		t.Fatal("bare context reported a chat actor")
 	}
-	if _, ok := botChatActorFrom(withBotChatActor(context.Background(), domain.BotChannelWeCom, "  ")); ok {
+	if _, ok := botChatActorFrom(withBotChatActor(context.Background(), domain.BotChannelWeCom, "  ", "张三")); ok {
 		t.Fatal("empty sender reported a chat actor")
 	}
-	actor, ok := botChatActorFrom(withBotChatActor(context.Background(), "", "wangxx"))
+	actor, ok := botChatActorFrom(withBotChatActor(context.Background(), "", "wangxx", ""))
 	if !ok || actor.Channel != domain.BotChannelWeCom || actor.SenderID != "wangxx" {
 		t.Fatalf("actor = %+v ok=%t", actor, ok)
 	}
+	// WeCom reports no name: the raw userid stands in.
 	if actor.Label() != "企业微信 wangxx" {
 		t.Fatalf("label = %q", actor.Label())
 	}
-	feishu, _ := botChatActorFrom(withBotChatActor(context.Background(), domain.BotChannelFeishu, "ou_1"))
+	feishu, _ := botChatActorFrom(withBotChatActor(context.Background(), domain.BotChannelFeishu, "ou_1", ""))
 	if feishu.Label() != "飞书 ou_1" {
 		t.Fatalf("label = %q", feishu.Label())
+	}
+	named, _ := botChatActorFrom(withBotChatActor(context.Background(), domain.BotChannelDingTalk, "staff-1", "  张三  "))
+	if named.SenderName != "张三" || named.Label() != "钉钉 张三" {
+		t.Fatalf("named actor = %+v label=%q", named, named.Label())
+	}
+}
+
+// DingTalk is the only channel whose message carries the sender's name. It is
+// cached on the binding, so a later action of the same sender that carries no
+// name is still attributed to a person.
+func TestBotSenderNameIsCachedOnTheBinding(t *testing.T) {
+	s, h, bot := botFixture(t)
+	bot.ID, bot.BotID, bot.Channel, bot.TenantKey, bot.TenantState = "b-dingtalk", "app-dingtalk", domain.BotChannelDingTalk, "tenant", domain.BotTenantLocked
+	if err := s.SaveNotificationBot(bot, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	bot, _ = s.NotificationBot(bot.ID)
+	bindBotTestUser(t, s, bot, "staff-1", 43)
+	if name := h.botSenderName(bot, "staff-1", ""); name != "" {
+		t.Fatalf("unseen sender already named %q", name)
+	}
+	if name := h.botSenderName(bot, "staff-1", " 张三 "); name != "张三" {
+		t.Fatalf("reported name = %q", name)
+	}
+	// A later card click carries no name and must still resolve it.
+	if name := h.botSenderName(bot, "staff-1", ""); name != "张三" {
+		t.Fatalf("cached name = %q", name)
+	}
+	if binding, err := s.BotUserBinding(bot.IdentityScope(), "staff-1"); err != nil || binding.SenderName != "张三" {
+		t.Fatalf("binding = %+v err=%v", binding, err)
+	}
+	// An empty report never clears what is already known.
+	if err := s.NoteBotSenderName(bot.IdentityScope(), "staff-1", "  "); err != nil {
+		t.Fatal(err)
+	}
+	if binding, _ := s.BotUserBinding(bot.IdentityScope(), "staff-1"); binding.SenderName != "张三" {
+		t.Fatalf("name cleared by an empty report: %q", binding.SenderName)
+	}
+	// Unbinding drops the cached name with the rest of the identity.
+	binding, _ := s.BotUserBinding(bot.IdentityScope(), "staff-1")
+	if err := s.RevokeBotUserBinding(binding.ID, 43, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if name := h.botSenderName(bot, "staff-1", ""); name != "" {
+		t.Fatalf("name survived revocation: %q", name)
+	}
+}
+
+// WeCom carries no sender name, so nothing is cached and the audit entry
+// keeps naming the sender by userid alone.
+func TestWeComSenderHasNoReportedName(t *testing.T) {
+	s, h, bot := botFixture(t)
+	if name := h.botSenderName(bot, "new-wecom-user", ""); name != "" {
+		t.Fatalf("WeCom sender named %q", name)
+	}
+	if binding, err := s.BotUserBinding(bot.IdentityScope(), "new-wecom-user"); err != nil || binding.SenderName != "" {
+		t.Fatalf("binding = %+v err=%v", binding, err)
 	}
 }

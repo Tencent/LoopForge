@@ -20,6 +20,12 @@ type BotUserBinding struct {
 	GuideCount       int        `json:"-" gorm:"not null;default:0"`
 	LastLinkAt       *time.Time `json:"-"`
 	SenderID         string     `json:"senderId" gorm:"size:191"`
+	// SenderName is the display name the channel reported for SenderID, kept
+	// so audit trails and member pickers can show a person instead of an
+	// opaque ID. It is only set for channels whose events carry a name
+	// (DingTalk); WeCom and Feishu bot callbacks carry the ID alone, and
+	// those senders are named by the platform account they are bound to.
+	SenderName string `json:"senderName,omitempty" gorm:"size:191"`
 	// TargetVerifiedAt records a successful trial proactive send to this
 	// sender (Feishu/DingTalk notification target). Cleared on revocation.
 	TargetVerifiedAt *time.Time `json:"targetVerifiedAt,omitempty"`

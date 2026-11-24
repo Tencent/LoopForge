@@ -925,11 +925,13 @@ function issueOperationLabel(action){
   return {create:'创建需求',update:'编辑需求',close:'关闭需求',reopen:'重新打开',dispatch:'触发 SOP'}[action]||action||'操作';
 }
 // 聊天 Bot 发起的操作：actor 仍是执行所用的平台账号，这里补出是哪个 IM 用户发起的。
+// 渠道报了显示名就用名字，没报（企业微信、飞书只给 ID）就用 ID，后面的平台账号本身带真名。
 function issueOperationOrigin(op){
   const sender=(op?.actorSender||'').trim();
   if(!sender)return '';
   const channel={wecom:'企业微信',feishu:'飞书',dingtalk:'钉钉'}[op.actorChannel]||op.actorChannel||'聊天';
-  return `${channel} ${sender}`;
+  const named=(op.actorSenderName||'').trim();
+  return `${channel} ${named?`${named}（${sender}）`:sender}`;
 }
 function issueOperationEntries(issue){
   const stored=(issue?.operations||[]).map(op=>({

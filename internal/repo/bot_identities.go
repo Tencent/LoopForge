@@ -55,6 +55,19 @@ func (r *UsersRepo) BotUserBinding(bot, sender string) (domain.BotUserBinding, e
 	return out, err
 }
 
+// NoteBotSenderName caches the display name a channel reported for a bound
+// sender, so later actions of that sender can be shown with a person's name
+// even when the name is not repeated (card clicks, web confirmations).
+// Writing only on change keeps the common turn free of an extra write; an
+// empty name never clears a stored one.
+func (r *UsersRepo) NoteBotSenderName(bot, sender, name string) error {
+	name = strings.TrimSpace(name)
+	if bot == "" || sender == "" || name == "" || len(name) > 191 {
+		return nil
+	}
+	return r.DB.Model(&domain.BotUserBinding{}).Where("id = ? AND user_id > 0 AND sender_name <> ?", botIdentityID(bot, sender), name).Update("sender_name", name).Error
+}
+
 // Serialize all challenge creation/claim/confirmation/revocation on the same
 // stable binding row, including while the user has not yet completed binding.
 func (r *UsersRepo) botBindingRow(tx *gorm.DB, id string) (domain.BotUserBinding, error) {
@@ -230,7 +243,7 @@ func (r *UsersRepo) RevokeBotUserBinding(id string, userID int64, now time.Time)
 		if row.UserID != userID || userID <= 0 {
 			return gorm.ErrRecordNotFound
 		}
-		if err = tx.Model(&row).Updates(map[string]any{"user_id": 0, "target_verified_at": nil, "updated_at": now}).Error; err != nil {
+		if err = tx.Model(&row).Updates(map[string]any{"user_id": 0, "target_verified_at": nil, "sender_name": "", "updated_at": now}).Error; err != nil {
 			return err
 		}
 		if err = cancelBotDraftsWhere(tx, "账号绑定已解除", "identity_scope = ? AND sender_id = ?", row.BotID, row.SenderID); err != nil {

@@ -480,8 +480,11 @@ func dingtalkEvent(bot domain.NotificationBot, raw, frameID string, webhookAllow
 		EventID:   frameID,
 		MessageID: m.MsgId,
 		SenderID:  m.SenderStaffId,
-		ChatID:    m.ConversationId,
-		MsgType:   m.Msgtype,
+		// DingTalk is the only channel whose message carries the sender's
+		// name; it is kept so audit trails can show a person.
+		SenderName: truncate(strings.TrimSpace(m.SenderNick), 191),
+		ChatID:     m.ConversationId,
+		MsgType:    m.Msgtype,
 	}
 	switch m.ConversationType {
 	case "1":

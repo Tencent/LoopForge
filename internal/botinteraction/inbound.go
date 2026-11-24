@@ -44,6 +44,7 @@ func interactionFromEvent(bot domain.NotificationBot, ev InboundEvent) (domain.B
 		BotID:           bot.ID,
 		ProjectID:       bot.ProjectID,
 		SenderID:        ev.SenderID,
+		SenderName:      ev.SenderName,
 		RequestID:       ev.Route.RequestID,
 		Content:         ev.Text,
 		Quote:           ev.Quote,

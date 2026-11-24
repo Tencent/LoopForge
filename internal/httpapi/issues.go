@@ -528,7 +528,7 @@ func (h issuesHandlers) recordIssueOperation(c *gin.Context, issue *domain.Issue
 	actor, id := actorLabel(user)
 	op := domain.IssueOperation{Actor: actor, ActorUserID: id, Action: action, Detail: detail}
 	if chat, ok := botChatActorFrom(c.Request.Context()); ok {
-		op.ActorChannel, op.ActorSender = chat.Channel, chat.SenderID
+		op.ActorChannel, op.ActorSender, op.ActorSenderName = chat.Channel, chat.SenderID, chat.SenderName
 	}
 	issue.AppendOperation(op)
 }

@@ -715,7 +715,7 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 	// a dropped connection cannot interrupt the writes halfway.
 	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 	defer cancel()
-	execCtx = withBotChatActor(execCtx, bot.ChannelKind(), draft.SenderID)
+	execCtx = withBotChatActor(execCtx, bot.ChannelKind(), draft.SenderID, h.botSenderName(bot, draft.SenderID, ""))
 	origin, hasOrigin := h.botDraftOrigin(draft)
 	if hasOrigin {
 		execCtx = withBotStartOrigin(execCtx, origin)
