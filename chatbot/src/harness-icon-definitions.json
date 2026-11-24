@@ -383,6 +383,22 @@
     "strokeWidth": 1.7,
     "note": "锁身固定，锁梁轻压后复位"
   },
+  "sandbox-container": {
+    "body": "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M8 8v8m4-8v8m4-8v8\"/>",
+    "duration": 0,
+    "viewBox": "0 0 24 24",
+    "filled": false,
+    "strokeWidth": 1.7,
+    "note": "容器轮廓与三条竖筋，表示 Docker 沙箱"
+  },
+  "sandbox-shield": {
+    "body": "<path d=\"M12 3 4.5 6.5V12c0 4.3 3 7.2 7.5 9 4.5-1.8 7.5-4.7 7.5-9V6.5L12 3Z\"/>",
+    "duration": 0,
+    "viewBox": "0 0 24 24",
+    "filled": false,
+    "strokeWidth": 1.7,
+    "note": "盾牌轮廓，表示系统轻量隔离"
+  },
   "key": {
     "body": "<g><circle cx=\"8\" cy=\"15\" r=\"4\"/><path d=\"M11.5 12.5 21 3M16 8l3 3M18 5l3 3\"/></g>",
     "duration": 530,

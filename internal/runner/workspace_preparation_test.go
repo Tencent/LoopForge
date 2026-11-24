@@ -23,7 +23,7 @@ func runnerPreparationFixture(t *testing.T) (*Daemon, domain.RunnerWorkspaceRequ
 	return &Daemon{cfg: Config{DefaultWorkspaceRoot: base}}, domain.RunnerWorkspaceRequest{
 		RunID: "prepared", RunStatus: "waiting", WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
 		Operation: domain.RunnerWorkspaceOperationPrepare,
-		Sandbox:   &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: "local", Environment: map[string]string{"WORKSPACE_OVERLAY": "same-node-environment"}}, Requirements: &domain.RunnerSandboxRequirements{}},
+		Sandbox:   &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: "native", Environment: map[string]string{"WORKSPACE_OVERLAY": "same-node-environment"}}, Requirements: &domain.RunnerSandboxRequirements{}},
 		Workflow:  &domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "prepare", Name: "Prepare", Type: "script", RunOnWorkspaceRebuild: true, Script: "printf x >> preparation-count; printf '%s' \"$WORKSPACE_OVERLAY\" > prepared-environment"}}},
 	}, root
 }
@@ -149,7 +149,7 @@ func TestRunnerWorkspacePreparationFailsClosedAndFencesActiveTasks(t *testing.T)
 	if result = d.readRunnerWorkspace(context.Background(), req); result.Status == 200 {
 		t.Fatal("terminal silently opened host shell")
 	}
-	req.Sandbox = &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: "local"}}
+	req.Sandbox = &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: "native"}}
 	req.Operation = domain.RunnerWorkspaceOperationPrepare
 	gate := d.workspaceGate(req.RunID)
 	gate.RLock()
@@ -561,7 +561,7 @@ func TestConversationWorkspaceMaterializesOnConnectedRunner(t *testing.T) {
 	runnerID := s.Runners()[0].ID
 	run := domain.Run{
 		ID: "chat-materialize", Kind: domain.RunKindWorkspace, Status: "waiting", Nodes: map[string]*domain.NodeRun{},
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "local"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "test-native"},
 		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runnerID, RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared},
 		Repositories:     []domain.RepositoryContext{{RepositoryID: "web", Name: "web", CloneURL: remote, BaseBranch: "master", WorkBranch: "feature/chat", WorkspaceDir: "web"}},
 	}

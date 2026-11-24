@@ -107,8 +107,6 @@ curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" "$AGENTFLOW_URL/api/health"
 | `GET`, `PUT` | `/api/mcp-servers` |
 | `POST` | `/api/mcp-servers/import` |
 | `GET` | `/api/executors` |
-| `GET`, `PUT`, `DELETE` | `/api/dockerfiles` |
-| `GET`, `PUT`, `DELETE` | `/api/environments` |
 | `GET`, `PUT`, `DELETE` | `/api/sandboxes` |
 
 ### 编排、运行与观测

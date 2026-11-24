@@ -23,6 +23,7 @@ func (r *AssistantRepo) AssistantPreferences(userID int64) domain.AssistantPrefe
 	out.ProactiveRoles = row.ProactiveRoles
 	out.ProactiveSOPs = row.ProactiveSOPs
 	out.SteerOnSend = row.SteerOnSend
+	out.WorkspaceDriver = row.WorkspaceDriver
 	out.Instructions = row.Instructions
 	out.ApprovalReviewMode = strings.TrimSpace(row.ApprovalReviewMode)
 	out.ApprovalReviewModel = strings.TrimSpace(row.ApprovalReviewModel)
@@ -73,6 +74,7 @@ func (r *AssistantRepo) PutAssistantPreferences(userID int64, p domain.Assistant
 		ProactiveRoles:      p.ProactiveRoles,
 		ProactiveSOPs:       p.ProactiveSOPs,
 		SteerOnSend:         p.SteerOnSend,
+		WorkspaceDriver:     strings.TrimSpace(p.WorkspaceDriver),
 		Instructions:        strings.TrimSpace(p.Instructions),
 		ApprovalReviewMode:  p.EffectiveApprovalReviewMode(),
 		ApprovalReviewModel: strings.TrimSpace(p.ApprovalReviewModel),

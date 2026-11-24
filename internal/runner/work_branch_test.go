@@ -71,7 +71,7 @@ func TestRunnerModeNodeKeepsChangesLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{
-		ID: "runner-work-branch", Name: "Runner work branch", SandboxProfileID: "local",
+		ID: "runner-work-branch", Name: "Runner work branch", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "implement", Name: "实现", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf 'fixed\\n' > feature.txt && mkdir -p node_modules/x && printf 'dep\\n' > node_modules/x/index.js", MaxAttempts: 1},
 			{ID: "verify", Name: "验证", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "test \"$(cat feature.txt)\" = fixed && test -n \"$(git status --porcelain -- feature.txt)\" && echo uncommitted", MaxAttempts: 1},

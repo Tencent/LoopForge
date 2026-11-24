@@ -660,7 +660,7 @@ func (h *scheduleHandlers) ensureBaselineAlignWorkflow(_ domain.ScheduleJob) boo
 			return true
 		}
 	}
-	if _, ok := h.repo.Sandbox("local"); !ok {
+	if _, ok := h.repo.Sandbox(repo.DefaultSandboxProfileID); !ok {
 		return false
 	}
 	now := time.Now().UTC()
@@ -671,7 +671,7 @@ func (h *scheduleHandlers) ensureBaselineAlignWorkflow(_ domain.ScheduleJob) boo
 		Version:          baselineAlignWorkflowVersion,
 		Status:           "published",
 		Description:      "定时任务开工前把默认分支合入集成分支。全平台共用对齐角色实际执行 merge，平台校验后自动合入基线，无需人工确认。",
-		SandboxProfileID: "local",
+		SandboxProfileID: repo.DefaultSandboxProfileID,
 		Nodes: []domain.WorkflowNode{
 			{ID: "resolve", Name: "解决冲突", Type: "agent", AgentID: engine.BaselineAlignAgentID, MaxAttempts: 2, MaxReworks: 2, RejectTo: "resolve", Position: domain.Position{X: 80, Y: 80}},
 			{

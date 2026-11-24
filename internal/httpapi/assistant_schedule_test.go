@@ -82,7 +82,7 @@ func TestScheduledAssistantStopsAtDeadline(t *testing.T) {
 
 func TestScheduledAssistantRecoveredDraftDoesNotDispatchRun(t *testing.T) {
 	h, user := workbenchFixture(t)
-	wf := domain.WorkflowDefinition{ID: "wf", Name: "Scheduled approval", ProjectID: "workbench", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "review", Type: "approval"}}}
+	wf := domain.WorkflowDefinition{ID: "wf", Name: "Scheduled approval", ProjectID: "workbench", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "review", Type: "approval"}}}
 	if err := h.repo.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}

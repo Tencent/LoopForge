@@ -482,12 +482,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/skillhub/install", api.skillhub.install)
 	g.POST("/api/skillhub/update", api.skillhub.update)
 	g.GET("/api/executors", api.catalog.executors)
-	g.GET("/api/dockerfiles", api.catalog.dockerfiles)
-	g.PUT("/api/dockerfiles", api.catalog.dockerfiles)
-	g.DELETE("/api/dockerfiles", api.catalog.dockerfiles)
-	g.GET("/api/environments", api.catalog.environments)
-	g.PUT("/api/environments", api.catalog.environments)
-	g.DELETE("/api/environments", api.catalog.environments)
 	g.GET("/api/sandboxes", api.catalog.sandboxes)
 	g.PUT("/api/sandboxes", api.catalog.sandboxes)
 	g.DELETE("/api/sandboxes", api.catalog.sandboxes)
@@ -743,15 +737,13 @@ func (s *Server) bootstrap(c *gin.Context) {
 	var skills []domain.SkillDefinition
 	var mcpServers []domain.MCPServerDefinition
 	var executors []domain.ExecutorDefinition
-	var dockerfiles []domain.DockerfileDefinition
-	var environments []domain.EnvironmentDefinition
 	var sandboxes []domain.SandboxProfile
 	var workflows []domain.WorkflowDefinition
 	var syncConfig domain.SyncConfig
 	var scheduleJobs []domain.ScheduleJob
 	var users []domain.User
 	var load stdsync.WaitGroup
-	load.Add(14)
+	load.Add(12)
 	go func() { defer load.Done(); projects = s.repo.Projects() }()
 	go func() { defer load.Done(); repositories = s.repo.Repositories() }()
 	go func() { defer load.Done(); agents = s.repo.Agents() }()
@@ -759,8 +751,6 @@ func (s *Server) bootstrap(c *gin.Context) {
 	go func() { defer load.Done(); skills = s.repo.Skills() }()
 	go func() { defer load.Done(); mcpServers = s.repo.MCPServers() }()
 	go func() { defer load.Done(); executors = repo.BuiltInExecutors() }()
-	go func() { defer load.Done(); dockerfiles = s.repo.Dockerfiles() }()
-	go func() { defer load.Done(); environments = s.repo.Environments() }()
 	go func() { defer load.Done(); sandboxes = s.repo.Sandboxes() }()
 	go func() { defer load.Done(); workflows = s.repo.Workflows() }()
 	go func() { defer load.Done(); syncConfig = s.repo.SyncConfig() }()
@@ -795,7 +785,7 @@ func (s *Server) bootstrap(c *gin.Context) {
 	c.JSON(200, map[string]any{
 		"businessDomains": businessDomains, "projects": domain.PublicProjects(projects), "repositories": domain.PublicRepositories(repositories),
 		"agents": catalogAgents(agents), "rules": rules, "skills": skills, "mcpServers": mcpServers,
-		"executors": executors, "dockerfiles": dockerfiles, "environments": environments, "sandboxes": sandboxes,
+		"executors": executors, "sandboxes": sandboxes,
 		"workflows": workflows, "syncConfig": syncConfig, "scheduleJobs": scheduleJobs, "schedulerEnabled": schedulerEnabled(),
 		"users":        domain.PublicUsers(users),
 		"storage":      s.repo.StorageInfo(),

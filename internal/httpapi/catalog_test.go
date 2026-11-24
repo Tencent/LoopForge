@@ -107,22 +107,26 @@ func TestEnvironmentAssetsAreFilteredByProjectAndSharedScope(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, item := range []domain.DockerfileDefinition{
-		{ID: "alpha-dockerfile", Name: "Alpha", ProjectID: "alpha", Content: "FROM alpine"},
-		{ID: "beta-shared-dockerfile", Name: "Beta shared", ProjectID: "beta", Shared: true, Content: "FROM alpine"},
-		{ID: "beta-private-dockerfile", Name: "Beta private", ProjectID: "beta", Content: "FROM alpine"},
+	recipe := &domain.SandboxDockerfile{Content: "FROM alpine"}
+	for _, item := range []domain.SandboxProfile{
+		{ID: "alpha-box", Name: "Alpha", ProjectID: "alpha", Driver: "docker", Dockerfile: recipe},
+		{ID: "beta-shared-box", Name: "Beta shared", ProjectID: "beta", Shared: true, Driver: "docker", Dockerfile: recipe},
+		{ID: "beta-private-box", Name: "Beta private", ProjectID: "beta", Driver: "docker", Dockerfile: recipe},
 	} {
-		if err := s.PutDockerfile(item); err != nil {
+		if err := s.PutSandbox(item); err != nil {
 			t.Fatal(err)
 		}
 	}
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
-	items := requestEmptyJSON[[]domain.DockerfileDefinition](t, h, http.MethodGet, "/api/dockerfiles?projectId=alpha", http.StatusOK)
+	items := requestEmptyJSON[[]domain.SandboxProfile](t, h, http.MethodGet, "/api/sandboxes?projectId=alpha", http.StatusOK)
 	visible := map[string]bool{}
 	for _, item := range items {
 		visible[item.ID] = true
+		if item.ID == "beta-shared-box" && (item.Dockerfile == nil || item.Dockerfile.Content != "FROM alpine") {
+			t.Fatalf("a shared sandbox carries its Dockerfile: %+v", item)
+		}
 	}
-	if !visible["alpha-dockerfile"] || !visible["beta-shared-dockerfile"] || visible["beta-private-dockerfile"] {
+	if !visible["alpha-box"] || !visible["beta-shared-box"] || visible["beta-private-box"] {
 		t.Fatalf("unexpected project catalog visibility: %#v", visible)
 	}
 }
@@ -159,7 +163,7 @@ func TestWorkflowAgentsAreFilteredAndValidatedByProject(t *testing.T) {
 	}
 
 	invalid := domain.WorkflowDefinition{
-		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", SandboxProfileID: "local",
+		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "agent", AgentID: "beta-private-role"}},
 	}
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/workflows", invalid, http.StatusBadRequest)
@@ -169,7 +173,7 @@ func TestWorkflowAgentsAreFilteredAndValidatedByProject(t *testing.T) {
 		t.Fatalf("shared role was not saved: %+v", saved.Nodes)
 	}
 	legacyPayload := map[string]any{
-		"id": "legacy-node-gate", "name": "Legacy node gate", "projectId": "alpha", "sandboxProfileId": "local",
+		"id": "legacy-node-gate", "name": "Legacy node gate", "projectId": "alpha", "sandboxProfileId": "test-native",
 		"nodes": []any{map[string]any{
 			"id": "work", "name": "Work", "type": "agent", "agentId": "alpha-role",
 			"verification": []any{map[string]any{"id": "obsolete", "mode": "command", "commands": []string{"false"}}},
@@ -183,7 +187,7 @@ func TestWorkflowAgentsAreFilteredAndValidatedByProject(t *testing.T) {
 	}
 }
 
-func TestSharingSandboxCascadesDependenciesAndSharedWorkflowRequiresSharedSandbox(t *testing.T) {
+func TestSharedWorkflowRequiresSharedSandbox(t *testing.T) {
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -192,30 +196,15 @@ func TestSharingSandboxCascadesDependenciesAndSharedWorkflowRequiresSharedSandbo
 	if err := s.PutProject(domain.Project{ID: "alpha", Key: "ALPHA", Name: "Alpha"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutDockerfile(domain.DockerfileDefinition{ID: "alpha-dockerfile", Name: "Alpha image", ProjectID: "alpha", Content: "FROM alpine"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutEnvironment(domain.EnvironmentDefinition{ID: "alpha-tools", Name: "Alpha tools", ProjectID: "alpha", InstallScript: "true"}); err != nil {
-		t.Fatal(err)
-	}
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", domain.SandboxProfile{
-		ID: "alpha-container", Name: "Alpha container", ProjectID: "alpha", Shared: true, Driver: "docker", DockerfileID: "alpha-dockerfile",
-	}, http.StatusOK)
-	dockerfile, _ := s.Dockerfile("alpha-dockerfile")
-	if !dockerfile.Shared {
-		t.Fatal("sharing a sandbox did not share its Dockerfile")
-	}
-	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", domain.SandboxProfile{
-		ID: "alpha-process", Name: "Alpha process", ProjectID: "alpha", Driver: "bwrap", EnvironmentID: "alpha-tools",
+		ID: "alpha-process", Name: "Alpha process", ProjectID: "alpha", Driver: "bwrap",
 	}, http.StatusOK)
 	requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
 		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", Shared: true, SandboxProfileID: "alpha-process",
 	}, http.StatusBadRequest)
-	profile, _ := s.Sandbox("alpha-process")
-	environment, _ := s.Environment("alpha-tools")
-	if profile.Shared || environment.Shared {
-		t.Fatalf("rejected workflow unexpectedly shared its environment chain: sandbox=%+v environment=%+v", profile, environment)
+	if profile, _ := s.Sandbox("alpha-process"); profile.Shared {
+		t.Fatalf("rejected workflow unexpectedly shared its sandbox: %+v", profile)
 	}
 }
 
@@ -304,7 +293,7 @@ func TestAgentDeleteRequiresUnusedAndUnshared(t *testing.T) {
 	}
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	saved := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
-		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", SandboxProfileID: "local",
+		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "agent", AgentID: "referenced-role"}},
 	}, http.StatusOK)
 	if saved.Nodes[0].AgentID != "referenced-role" {
@@ -362,17 +351,9 @@ func TestCatalogAssetDeleteRequiresUnusedAndUnshared(t *testing.T) {
 	must(s.PutSkill(domain.SkillDefinition{ID: "used-skill", Name: "Used skill", ProjectID: "alpha"}))
 	must(s.PutSkill(domain.SkillDefinition{ID: "shared-skill", Name: "Shared skill", ProjectID: "alpha", Shared: true}))
 	must(s.PutSkillFiles("free-skill", []repo.SkillFileInput{{Path: "SKILL.md", Content: []byte("# free\n")}}))
-	must(s.PutDockerfile(domain.DockerfileDefinition{ID: "free-df", Name: "Free df", ProjectID: "alpha", Content: "FROM scratch"}))
-	must(s.PutDockerfile(domain.DockerfileDefinition{ID: "used-df", Name: "Used df", ProjectID: "alpha", Content: "FROM scratch"}))
-	must(s.PutDockerfile(domain.DockerfileDefinition{ID: "shared-df", Name: "Shared df", ProjectID: "alpha", Shared: true, Content: "FROM scratch"}))
-	must(s.PutEnvironment(domain.EnvironmentDefinition{ID: "free-env", Name: "Free env", ProjectID: "alpha"}))
-	must(s.PutEnvironment(domain.EnvironmentDefinition{ID: "used-env", Name: "Used env", ProjectID: "alpha"}))
-	must(s.PutEnvironment(domain.EnvironmentDefinition{ID: "shared-env", Name: "Shared env", ProjectID: "alpha", Shared: true}))
-	must(s.PutSandbox(domain.SandboxProfile{ID: "free-box", Name: "Free box", ProjectID: "alpha", Driver: "local"}))
-	must(s.PutSandbox(domain.SandboxProfile{ID: "used-box", Name: "Used box", ProjectID: "alpha", Driver: "local"}))
-	must(s.PutSandbox(domain.SandboxProfile{ID: "shared-box", Name: "Shared box", ProjectID: "alpha", Shared: true, Driver: "local"}))
-	must(s.PutSandbox(domain.SandboxProfile{ID: "df-box", Name: "DF box", ProjectID: "alpha", Driver: "docker", DockerfileID: "used-df"}))
-	must(s.PutSandbox(domain.SandboxProfile{ID: "env-box", Name: "Env box", ProjectID: "alpha", Driver: "seatbelt", EnvironmentID: "used-env"}))
+	must(s.PutSandbox(domain.SandboxProfile{ID: "free-box", Name: "Free box", ProjectID: "alpha", Driver: "docker", Dockerfile: &domain.SandboxDockerfile{Content: "FROM scratch"}}))
+	must(s.PutSandbox(domain.SandboxProfile{ID: "used-box", Name: "Used box", ProjectID: "alpha", Driver: "native"}))
+	must(s.PutSandbox(domain.SandboxProfile{ID: "shared-box", Name: "Shared box", ProjectID: "alpha", Shared: true, Driver: "native"}))
 	must(s.PutAgent(domain.AgentDefinition{
 		ID: "asset-user", Name: "Asset user", ProjectID: "alpha", Version: 1,
 		Rules: []string{"used-rule"}, Skills: []string{"used-skill"},
@@ -426,19 +407,9 @@ func TestCatalogAssetDeleteRequiresUnusedAndUnshared(t *testing.T) {
 		t.Fatal("skill_files rows were not cascaded")
 	}
 
-	assertConflict("/api/dockerfiles?id=used-df")
-	assertConflict("/api/dockerfiles?id=shared-df")
-	assertGone("/api/dockerfiles?id=free-df", func() bool { _, ok := s.Dockerfile("free-df"); return ok }, "free dockerfile")
-
-	assertConflict("/api/environments?id=used-env")
-	assertConflict("/api/environments?id=shared-env")
-	assertGone("/api/environments?id=free-env", func() bool { _, ok := s.Environment("free-env"); return ok }, "free environment")
-
 	assertConflict("/api/sandboxes?id=used-box")
 	assertConflict("/api/sandboxes?id=shared-box")
-	assertConflict("/api/sandboxes?id=local")
 	assertConflict("/api/sandboxes?id=" + repo.GenericDockerSandboxID)
-	assertConflict("/api/dockerfiles?id=" + repo.GenericBackendDockerfileID)
 	assertGone("/api/sandboxes?id=free-box", func() bool { _, ok := s.Sandbox("free-box"); return ok }, "free sandbox")
 }
 
@@ -769,13 +740,13 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
-		ID: "alpha-sop", Name: "Alpha SOP", ProjectID: "alpha", SandboxProfileID: "local",
+		ID: "alpha-sop", Name: "Alpha SOP", ProjectID: "alpha", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "dev", Name: "实现", Type: "agent", AgentID: "developer"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
-		ID: "beta-private", Name: "Beta private", ProjectID: "beta", SandboxProfileID: "local",
+		ID: "beta-private", Name: "Beta private", ProjectID: "beta", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "dev", Name: "实现", Type: "agent", AgentID: "developer"}},
 	}); err != nil {
 		t.Fatal(err)
