@@ -71,6 +71,12 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		cancel()
 		nodesWG.Wait()
 	}
+	var prepareWorkspace func() error
+	if borrowsConversationWorkspace(r) {
+		prepareWorkspace = sync.OnceValue(func() error {
+			return e.prepareBorrowedConversationWorkspace(ctx, r)
+		})
+	}
 	defer func() {
 		cancel()
 		nodesWG.Wait()
@@ -181,7 +187,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 					default:
 					}
 				}()
-				e.executeNode(ctx, runID, wf, node)
+				e.executeNode(ctx, runID, wf, node, prepareWorkspace)
 			}()
 		}
 	}
@@ -294,6 +300,11 @@ func (e *Engine) bindDockerWorkspace(ctx context.Context, runID, nodeID string, 
 		e.flushAllObservations()
 	}
 	started := time.Now()
+	if sb.activeExecutions.Load() == 0 {
+		if err := runtime.RefreshWorkspaceGitTools(ctx, sb); err != nil {
+			return err
+		}
+	}
 	if err := sb.BindWorkspace(ctx); err != nil {
 		return err
 	}
@@ -317,7 +328,7 @@ func dockerfileID(snap *domain.RunnerSandboxSpec) string {
 	return snap.Dockerfile.ID
 }
 
-func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode) {
+func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, prepareWorkspace ...func() error) {
 	currentLease, ok := e.repo.RunProgress(runID)
 	if !ok || !e.ownsRun(currentLease) {
 		return
@@ -376,6 +387,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		if err != nil {
 			failNode(err, false)
+			return
+		}
+	}
+	if len(prepareWorkspace) > 0 && prepareWorkspace[0] != nil && node.Type != "approval" {
+		if err := prepareWorkspace[0](); err != nil {
+			failNode(fmt.Errorf("准备对话工作区：%w", err), false)
 			return
 		}
 	}
@@ -537,15 +554,19 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	// A runner that integrates on its own checkout needs nothing from a
 	// control-plane clone, so none is made.
 	stagingCheckout := true
-	if runnerFound && runner.SupportsIntegrate() {
-		stagingCheckout = false
+	if runnerID != "" {
+		stagingCheckout = !current.UsesConversationWorkspace() && !runner.SupportsIntegrate()
+	}
+	checkoutCtx := runtime.WithRepositoryCacheIn(ctx, sb.Unwrap())
+	if current.UsesConversationWorkspace() {
+		checkoutCtx = runtime.WithSandboxGit(ctx, sb.Unwrap(), gitCredentials)
 	}
 	repositoryFallback := ""
 	if err := sb.prepareRepositoriesOnce(func() error {
 		if !stagingCheckout {
 			return nil
 		}
-		if err := prepareRepositories(runtime.WithRepositoryCacheIn(ctx, sb.Unwrap()), sb.Workspace(), current.RepositoryContexts()); err != nil {
+		if err := prepareRepositories(checkoutCtx, sb.Workspace(), current.RepositoryContexts(), current.UsesConversationWorkspace()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "" || len(gitCredentials.GitHTTPCredentials) > 0)
 		}
 		for _, rc := range current.RepositoryContexts() {
@@ -652,6 +673,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	}
 	// The environment is ready and this node's inputs are in place; parallel
 	// branches execute from here on without holding the environment lock.
+	sb.activeExecutions.Add(1)
+	defer sb.activeExecutions.Add(-1)
 	if repositoryFallback == "" {
 		preparing = false
 		sb.nodeMu.Unlock()
@@ -663,7 +686,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return nil
 		}
 		if e.defaultExecutionRunner(current) == "" {
-			if err := runtime.VerifyGitPreparation(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
+			if err := runtime.VerifyGitPreparation(checkoutCtx, sb.Workspace(), current.RepositoryContexts()); err != nil {
 				return fmt.Errorf("Agent 仓库准备兜底校验失败: %w", err)
 			}
 		}
@@ -677,8 +700,6 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.preparation.recovered", Phase: "finish", Message: "Agent 已完成仓库准备，冻结仓库和工作分支校验通过"})
 		return nil
 	}
-	sb.activeExecutions.Add(1)
-	defer sb.activeExecutions.Add(-1)
 	var output string
 	defaultFailure := "fail"
 	if nodeRejects(node) {

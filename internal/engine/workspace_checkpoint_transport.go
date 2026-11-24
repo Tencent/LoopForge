@@ -153,7 +153,8 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	transfer := domain.IsWorkspaceCheckpointTransferOperation(request.Operation)
-	probe := request.Operation == domain.RunnerWorkspaceOperationCheckpointStatus
+	probe := request.Operation == domain.RunnerWorkspaceOperationCheckpointStatus ||
+		request.Operation == domain.RunnerWorkspaceOperationCheckouts && e.defaultExecutionRunner(run) != ""
 	if !probe && !transfer && request.Operation != domain.RunnerWorkspaceOperationPreparationRecord && request.Operation != domain.RunnerWorkspaceOperationPrepare && request.Operation != domain.RunnerWorkspaceOperationPreparationStatus && request.Operation != domain.RunnerWorkspaceOperationTerminal && request.Operation != domain.RunnerWorkspaceOperationCheckpoint && request.Operation != domain.RunnerWorkspaceOperationRestore && request.Operation != domain.RunnerWorkspaceOperationReclaim && request.Operation != domain.RunnerWorkspaceOperationArtifacts {
 		http.Error(w, "unsupported operation", 400)
 		return
@@ -173,7 +174,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	request.RunStatus = run.Status
 	request.RunKind = run.Kind
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
-	if interactive {
+	if interactive || request.Operation == domain.RunnerWorkspaceOperationCheckouts && run.UsesConversationWorkspace() {
 		var err error
 		request, err = e.preparedWorkspaceRequest(run, request)
 		if err != nil {

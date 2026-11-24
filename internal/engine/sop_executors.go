@@ -22,6 +22,7 @@ type sopExecutorAccess struct {
 	user            domain.User
 	runner          domain.Runner
 	usesRunner      bool
+	execution       domain.TelemetryContext
 	sharedCodeBuddy bool
 }
 
@@ -29,13 +30,22 @@ func (e *Engine) sopExecutorAccess(ec domain.TelemetryContext) sopExecutorAccess
 	user, _ := e.repo.User(ec.ResponsibleUserID)
 	runner, _ := e.repo.Runner(ec.ExecutionRunnerID)
 	return sopExecutorAccess{
-		user: user, runner: runner, usesRunner: ec.ExecutionRunnerID != "",
+		user: user, runner: runner, usesRunner: ec.ExecutionRunnerID != "", execution: ec,
 		sharedCodeBuddy: resolveCodeBuddyCredential(e.repo, user.ID).Sponsored,
 	}
 }
 
+func sopRunnerAuthMode(ec domain.TelemetryContext, runner domain.Runner, provider string) string {
+	// A conversation allocated to a platform runner keeps using the
+	// responsible user's credentials when it hands off to an SOP.
+	if ec.ExecutionPinned && ec.WorkspaceRunID != "" && runner.OwnerUserID == 0 && ec.ResponsibleUserID > 0 {
+		return domain.RuntimeAuthPersonal
+	}
+	return runner.RuntimeAuthModeForUser(provider, ec.ResponsibleUserID)
+}
+
 func (a sopExecutorAccess) runnerLogin(kind string) bool {
-	return a.usesRunner && domain.SupportsRunnerLogin(kind) && a.runner.RuntimeAuthModeForUser(kind, a.user.ID) == domain.RuntimeAuthLocal
+	return a.usesRunner && domain.SupportsRunnerLogin(kind) && sopRunnerAuthMode(a.execution, a.runner, kind) == domain.RuntimeAuthLocal
 }
 
 func (a sopExecutorAccess) configured(kind string) bool {

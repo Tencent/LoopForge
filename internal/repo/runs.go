@@ -1018,8 +1018,13 @@ func (r *RunsRepo) writeRun(run domain.Run, expectedRevision ...int) error {
 }
 
 func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision ...int) error {
+	workspaceAdmission := run.UsesConversationWorkspace() && run.ExecutionContext.ParentRunID == "" &&
+		(run.Status == "running" || run.Status == "queued")
 	var opts []*sql.TxOptions
-	if lockKey != "" {
+	// Under MySQL REPEATABLE READ, a missing run ID takes a gap lock.
+	// A dispatch waiting on the workspace owner could then block the holder's
+	// insert. READ COMMITTED lets the owner row serialize these dispatches.
+	if lockKey != "" || workspaceAdmission {
 		opts = r.admissionTxOptions()
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
@@ -1051,6 +1056,11 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 			}
 		} else if err != gorm.ErrRecordNotFound {
 			return err
+		}
+		if workspaceAdmission && current.Status != "running" && current.Status != "queued" {
+			if err := r.checkConversationWorkspaceForSOP(tx, run, current.ID == ""); err != nil {
+				return err
+			}
 		}
 		if len(expectedRevision) > 0 {
 			if err != nil {
@@ -1202,6 +1212,15 @@ func (r *RunsRepo) DeleteRun(id string) error {
 		}
 		if row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
 			return fmt.Errorf("run %s is %s: cancel it before deleting", id, row.Status)
+		}
+		if row.Kind == domain.RunKindWorkspace {
+			inUse, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, id, nil))
+			if err != nil {
+				return err
+			}
+			if inUse {
+				return fmt.Errorf("工作区仍有关联的 SOP 运行：%w", ErrWorkspaceInUse)
+			}
 		}
 		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_artifact_blob_chunks", "run_artifact_blobs", "run_evals", "run_workspace_checkpoint_chunks", "run_workspace_checkpoints"} {
 			if err := tx.Table(table).Where("run_id = ?", id).Delete(nil).Error; err != nil {

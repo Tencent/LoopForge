@@ -112,14 +112,14 @@ func TestContinueExistingBranchRequiresCompatibleRunner(t *testing.T) {
 	}
 	e := &Engine{repo: st}
 	repositories := []domain.RepositoryContext{{RepositoryID: "repo", WorkBranch: "feature/continue", RequireExistingWorkBranch: true}}
-	if err := e.requireWorkBranchCapabilities("old", repositories); err == nil {
+	if err := e.requireRunnerRepositoryCapabilities("old", repositories); err == nil {
 		t.Fatal("an older runner must not silently ignore the existing-branch requirement")
 	}
-	if err := e.requireWorkBranchCapabilities("new", repositories); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities("new", repositories); err != nil {
 		t.Fatal(err)
 	}
 	repositories[0].RequireExistingWorkBranch = false
-	if err := e.requireWorkBranchCapabilities("old", repositories); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities("old", repositories); err != nil {
 		t.Fatalf("creating a new branch must stay compatible with older runners: %v", err)
 	}
 }
@@ -139,10 +139,39 @@ func TestCreateWorkBranchRequiresCompatibleRunner(t *testing.T) {
 	}
 	e := &Engine{repo: st}
 	repositories := []domain.RepositoryContext{{RepositoryID: "repo", WorkBranch: "feature/caller", CreateNewWorkBranch: true}}
-	if err := e.requireWorkBranchCapabilities("old", repositories); err == nil {
+	if err := e.requireRunnerRepositoryCapabilities("old", repositories); err == nil {
 		t.Fatal("an older runner must not silently ignore the create-branch requirement")
 	}
-	if err := e.requireWorkBranchCapabilities("new", repositories); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities("new", repositories); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGitHTTPRepositoryRequiresCompatibleRunner(t *testing.T) {
+	t.Parallel()
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	for _, runner := range []domain.Runner{
+		{ID: "base", RunnerVersion: domain.RunnerVersionConversationSOPWorkspace},
+		{ID: "http", RunnerVersion: domain.RunnerVersionGitPlainHTTP},
+	} {
+		if err := st.PutRunner(runner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := &Engine{repo: st}
+	repositories := []domain.RepositoryContext{{Provider: domain.RepositoryProviderHTTP}}
+	if err := e.requireRunnerRepositoryCapabilities("base", repositories); err == nil || err.Error() != domain.RunnerGitPlainHTTPUpgradeMessage {
+		t.Fatalf("expected a plaintext support upgrade error, got %v", err)
+	}
+	if err := e.requireRunnerRepositoryCapabilities("http", repositories); err != nil {
+		t.Fatal(err)
+	}
+	repositories[0].Provider = domain.RepositoryProviderHTTPS
+	if err := e.requireRunnerRepositoryCapabilities("base", repositories); err != nil {
+		t.Fatalf("the base runner should still support HTTPS: %v", err)
 	}
 }
