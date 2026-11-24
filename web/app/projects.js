@@ -540,20 +540,24 @@ function invalidateProjectJoinMembers(projectId){
   projectJoinMemberRefreshes.delete(projectId);
   projectCacheRevisions.set(projectId,(projectCacheRevisions.get(projectId)||0)+1);
 }
+// Resolves to false only when the read itself failed, so callers that depend on
+// the refreshed project can tell a stale page from a settled one.
 async function refreshProjectJoinMembers(projectId){
   invalidateProjectJoinMembers(projectId);
   const refresh={};projectJoinMemberRefreshes.set(projectId,refresh);
-  const fresh=await api('/api/projects/'+encodeURIComponent(projectId)).catch(()=>null);
+  let fresh=null,failed=false;
+  try{fresh=await api('/api/projects/'+encodeURIComponent(projectId))}catch{failed=true}
   // A later refresh supersedes this snapshot, even if its response arrived first.
-  if(projectJoinMemberRefreshes.get(projectId)!==refresh)return;
+  if(projectJoinMemberRefreshes.get(projectId)!==refresh)return true;
   projectJoinMemberRefreshes.delete(projectId);
-  if(!fresh?.id||fresh.archivedAt||!(state.data.projects||[]).some(p=>p.id===projectId))return;
+  if(failed)return false;
+  if(!fresh?.id||fresh.archivedAt||!(state.data.projects||[]).some(p=>p.id===projectId))return true;
   storeSavedProject(fresh);
-  if(state.projectDraftFor!==fresh.id)return;
+  if(state.projectDraftFor!==fresh.id)return true;
   captureProjectAdminForm();
   // Adopt the entire roster and token together. Local member edits keep their
   // old token so the server can reject a conflicting replacement.
-  if(projectMembershipSignature(state.projectDraft)!==projectMembershipSignature(state.projectDraftBase))return;
+  if(projectMembershipSignature(state.projectDraft)!==projectMembershipSignature(state.projectDraftBase))return true;
   const members=projectDraftFrom(fresh).members;
   for(const d of [state.projectDraft,state.projectDraftBase])if(d){
     d.members=clone(members);d.ownerId=fresh.ownerId;d.membersVersion=fresh.membersVersion;
@@ -566,6 +570,7 @@ async function refreshProjectJoinMembers(projectId){
     bindUserSearches(panel);
     renderProjectAdminHead();syncProjectAdminTabs();syncProjectAdminSaveBar();
   }
+  return true;
 }
 // Approval refreshes the roster without discarding unsaved project settings.
 async function reviewProjectJoin(id,approve,role){
@@ -652,10 +657,13 @@ function applyProjectDefaultSOP(project,workflowId){
   }
 }
 // Shared by the edit page and the new-project wizard. Fields left undefined fall back to base.
+// members and membersVersion describe one roster snapshot: a caller that brings its own roster
+// must bring the token it read with it, so the server can reject a replacement built on an
+// outdated list instead of silently dropping members approved meanwhile.
 function buildProjectPayload(base,fields={}){
   base=base||{};
   const ownerId=Number(fields.ownerId??base.ownerId)||0,id=String(fields.id??base.id??'').trim(),rawDefault=String(fields.defaultRepositoryId??base.defaultRepositoryId??'');
-  const value={...base,id,key:String(fields.key??base.key??'').trim().toUpperCase(),name:String(fields.name??base.name??'').trim(),description:fields.description??base.description??'',color:fields.color||base.color||PROJECT_SWATCHES[0],ownerId,workflowId:fields.workflowId??base.workflowId??'',defaultRepositoryId:rawDefault&&(state.data.repositories||[]).some(r=>r.id===rawDefault&&r.projectId===id)?rawDefault:'',members:(fields.members??base.members??[]).map(m=>({userId:Number(m.userId)||0,role:projectMemberRole(m.role)})).filter(m=>m.userId!==ownerId),runEval:base.runEval,tapdWorkspaceId:String(fields.tapdWorkspaceId??base.tapdWorkspaceId??'').trim(),tapdIterationId:String(fields.tapdIterationId??base.tapdIterationId??'').trim()};
+  const value={...base,id,key:String(fields.key??base.key??'').trim().toUpperCase(),name:String(fields.name??base.name??'').trim(),description:fields.description??base.description??'',color:fields.color||base.color||PROJECT_SWATCHES[0],ownerId,workflowId:fields.workflowId??base.workflowId??'',defaultRepositoryId:rawDefault&&(state.data.repositories||[]).some(r=>r.id===rawDefault&&r.projectId===id)?rawDefault:'',members:(fields.members??base.members??[]).map(m=>({userId:Number(m.userId)||0,role:projectMemberRole(m.role)})).filter(m=>m.userId!==ownerId),membersVersion:fields.members===undefined?base.membersVersion:fields.membersVersion,runEval:base.runEval,tapdWorkspaceId:String(fields.tapdWorkspaceId??base.tapdWorkspaceId??'').trim(),tapdIterationId:String(fields.tapdIterationId??base.tapdIterationId??'').trim()};
   applyProjectDefaultSOP(value,value.workflowId);
   for(const k of ['businessDomainId','tapdClear','repoRows','repoDrafts','gitToken','codeBuddyApiKey','codeBuddyInternetEnvironment'])delete value[k];
   if(fields.tapdClear)value.tapdClear=true;
@@ -688,7 +696,9 @@ async function persistProject(value,method='PUT'){
   // A save response describes the write's snapshot. A roster refresh or
   // another write may already have installed a newer project while it waited.
   if(current!==before||JSON.stringify(current)!==snapshot||(projectCacheRevisions.get(value.id)||0)!==revision){
-    if(current)await refreshProjectJoinMembers(value.id);
+    // Without the authoritative re-read the page keeps pre-save content while
+    // the server already holds the new one; say so instead of reporting success.
+    if(current&&!await refreshProjectJoinMembers(value.id))throw new Error('保存已提交，但页面没能同步到最新内容，请刷新页面后确认。');
     return (state.data.projects||[]).find(p=>p.id===value.id)||null;
   }
   return storeSavedProject(result,value);

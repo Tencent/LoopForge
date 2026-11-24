@@ -140,6 +140,52 @@ for (const mode of ['settings', 'default repository', 'wizard']) {
   });
 }
 
+test('the wizard members step replaces the roster it loaded, not a newer one', async t => {
+  const app = await projectApp(t);
+  app.evaluate("openProjectWizard();projectWizard.projectId='project-1';projectWizardEnter('members')");
+  const roster = app.evaluate('clone(state.data.projects[0])');
+  const approved = { ...roster, members: [...roster.members, { userId: 3, role: 'member' }], membersVersion: 'after-approval' };
+  // Another session approves a join request and a project list refresh installs the new roster,
+  // while the wizard step still shows the members it loaded.
+  app.evaluate(`storeSavedProject(${JSON.stringify(approved)})`);
+  app.router.get('/api/projects/project-1', approved);
+  let written = null;
+  app.router.put('/api/projects', call => {
+    written = call.body;
+    return call.body.membersVersion === approved.membersVersion
+      ? { ...call.body, membersVersion: 'replaced' }
+      : { status: 409, body: { error: '项目成员已变化，请刷新项目后重试' } };
+  });
+  app.evaluate('projectWizard.draft.members=[]');
+  await app.evaluate('projectWizardSaveProject()');
+  assert.equal(written.membersVersion, roster.membersVersion, 'the step submits the token of the roster it edited');
+  assert.equal(app.evaluate('state.data.projects[0].members.some(m=>Number(m.userId)===3)'), true, 'the approved member survives');
+  assert.equal(app.evaluate('projectWizard.draft.membersVersion'), approved.membersVersion, 'the step reloads the current roster');
+  assert.equal(app.evaluate('projectWizard.draft.members.some(m=>Number(m.userId)===3)'), true);
+  assert.match(app.document.querySelector('#projectWizard [role="alert"]').textContent, /项目成员已经变化/);
+});
+
+test('a failed read after a late save reports the page is out of sync', async t => {
+  const app = await projectApp(t);
+  const write = deferred(), roster = app.evaluate('clone(state.data.projects[0])');
+  let written, reads = 0;
+  app.router.put('/api/projects', call => { written = { ...call.body, membersVersion: 'saved' }; return write.promise; });
+  app.router.get('/api/projects/project-1', () => ++reads === 1
+    ? { ...roster, members: [...roster.members, { userId: 3, role: 'member' }], membersVersion: 'approved' }
+    : { status: 503, body: { error: '读取项目失败' } });
+  app.router.post('/api/project-join-requests/71/approve', { id: 71, projectId: 'project-1', userId: 3, role: 'member', status: 'approved' });
+  const saving = startProjectSave(app, 'settings');
+  await settle();
+  await app.evaluate("reviewProjectJoin(71,true,'member')");
+  write.resolve(written);
+  await saving;
+  assert.equal(reads, 2, 'the save response is reconciled through an authoritative read');
+  assert.notEqual(app.evaluate('state.data.projects[0].description'), 'saved description', 'the cache never adopted the save snapshot');
+  assert.match(app.document.querySelector('#toastContainer').textContent, /没能同步到最新内容/);
+  assert.equal(app.evaluate('state.projectDraft.description'), 'saved description', 'the edit is kept for a retry');
+  assert.equal(app.evaluate('projectAdminDirty()'), true);
+});
+
 test('out-of-order settings saves retain the latest server snapshot', async t => {
   const app = await projectApp(t);
   const first = deferred();
