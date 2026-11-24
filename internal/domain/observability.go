@@ -47,9 +47,13 @@ type TelemetryContext struct {
 	ScheduleJobID         string `json:"scheduleJobId,omitempty"`
 	SharedScheduleID      string `json:"sharedScheduleId,omitempty"`
 	SharedScheduleVersion int    `json:"sharedScheduleVersion,omitempty"`
-	RunID                 string `json:"runId"`
-	ParentRunID           string `json:"parentRunId,omitempty"`
-	ParentNodeID          string `json:"parentNodeId,omitempty"`
+	// BotOriginID is the chat origin (bot_chat_origins) a top-level run was
+	// started from, stored with the run so that its first events already
+	// go back to that chat.
+	BotOriginID  string `json:"botOriginId,omitempty"`
+	RunID        string `json:"runId"`
+	ParentRunID  string `json:"parentRunId,omitempty"`
+	ParentNodeID string `json:"parentNodeId,omitempty"`
 	// WorkspaceRunID names the run that owns the workspace a child LOOP works
 	// in: the top-level run of its LOOP chain. Empty means the run owns its
 	// own workspace.

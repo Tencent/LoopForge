@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func TestBotBindingHTTPRequiresBrowserLoginOriginAndOriginalSender(t *testing.T)
 	router.POST("/api/bot-bindings/status", h.binding)
 	router.GET("/api/bot-bindings", h.list)
 	router.DELETE("/api/bot-bindings/:id", h.remove)
-	token, err := s.NewBotBindingChallenge(bot.BotID, "original", time.Now().UTC())
+	token, err := s.NewBotBindingChallenge(bot, "original", time.Now().UTC(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +72,7 @@ func TestBotBindingHTTPRequiresBrowserLoginOriginAndOriginalSender(t *testing.T)
 	if _, err = s.BotUserBinding(bot.BotID, "original"); err == nil {
 		t.Fatal("browser claim activated binding")
 	}
-	if _, err = s.ConfirmBotUserBinding(bot.BotID, "group-attacker", strings.TrimPrefix(data.Command, "/bind "), time.Now().UTC()); err == nil {
+	if _, err = s.ConfirmBotUserBinding(bot, "group-attacker", strings.TrimPrefix(data.Command, "/bind "), time.Now().UTC()); err == nil {
 		t.Fatal("wrong group sender confirmed")
 	}
 	handled, reply, err := h.message(bot, domain.BotInteraction{SenderID: "original", Content: data.Command})
@@ -108,11 +109,37 @@ func TestBotBindingLinkSurvivesNotificationRedaction(t *testing.T) {
 	}
 }
 
+// Feishu and DingTalk send plain text: the link must be a bare URL on its
+// own line, or auto-linking keeps the Markdown ")" and the token breaks.
+func TestBotBindingLinkIsBareURLOnPlainTextChannels(t *testing.T) {
+	for _, channel := range []string{domain.BotChannelFeishu, domain.BotChannelDingTalk} {
+		_, assistant, bot := botFixture(t)
+		bot.Channel = channel
+		h := &botIdentityHandlers{deps: assistant.deps, publicURL: "https://platform.example/"}
+		handled, reply, err := h.message(bot, domain.BotInteraction{SenderID: "plain-" + channel, Content: "绑定账号"})
+		if err != nil || !handled {
+			t.Fatal(channel, err)
+		}
+		if strings.ContainsAny(reply, "[]()") {
+			t.Fatal(channel, "markdown link syntax in plain-text reply", reply)
+		}
+		var line string
+		for _, l := range strings.Split(reply, "\n") {
+			if strings.HasPrefix(l, "https://") {
+				line = l
+			}
+		}
+		if !regexp.MustCompile(`^https://platform\.example/bot-bind\.html#request=[a-f0-9]{64}$`).MatchString(line) {
+			t.Fatal(channel, "binding URL is not alone on its line", reply)
+		}
+	}
+}
+
 func TestBotUnbindOnlyRevokesCurrentSender(t *testing.T) {
 	s, assistant, bot := botFixture(t)
 	h := &botIdentityHandlers{deps: assistant.deps}
 	now := time.Now().UTC()
-	token, err := s.NewBotBindingChallenge(bot.BotID, "unbind-test", now)
+	token, err := s.NewBotBindingChallenge(bot, "unbind-test", now, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +147,7 @@ func TestBotUnbindOnlyRevokesCurrentSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ConfirmBotUserBinding(bot.BotID, "unbind-test", code, now); err != nil {
+	if _, err = s.ConfirmBotUserBinding(bot, "unbind-test", code, now); err != nil {
 		t.Fatal(err)
 	}
 	handled, reply, err := h.message(bot, domain.BotInteraction{SenderID: "unbound-other", Content: "/unbind"})
@@ -137,7 +164,7 @@ func TestBotUnbindOnlyRevokesCurrentSender(t *testing.T) {
 	if _, err = s.BotUserBinding(bot.BotID, "unbind-test"); err == nil {
 		t.Fatal("binding survived")
 	}
-	if _, err = s.ConfirmBotUserBinding(bot.BotID, "unbind-test", code, now); err == nil {
+	if _, err = s.ConfirmBotUserBinding(bot, "unbind-test", code, now); err == nil {
 		t.Fatal("old code rebound")
 	}
 }

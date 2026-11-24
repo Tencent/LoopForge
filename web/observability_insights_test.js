@@ -1,6 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 const ctx = {
   lfT: zh => zh,
@@ -9,8 +10,8 @@ const ctx = {
   projectQuery:()=>'?projectId=p',currentProject:()=>({id:'p',ownerId:7,members:[{userId:8,role:'maintainer'}]}),
 };
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync('app/obs-charts.js','utf8'),ctx);
-vm.runInContext(fs.readFileSync('app/observability.js','utf8'),ctx);
+vm.runInContext(fs.readFileSync('app/obs-charts.js','utf8'),ctx,{filename:path.resolve('app/obs-charts.js')});
+vm.runInContext(fs.readFileSync('app/observability.js','utf8'),ctx,{filename:path.resolve('app/observability.js')});
 assert.match(ctx.analyticsQuery({overview:true}),/origin=external/);
 assert.match(ctx.analyticsQuery({overview:true}),/projectId=p/);
 assert.doesNotMatch(ctx.analyticsQuery({crossProject:true}),/projectId=/);
@@ -95,3 +96,14 @@ ctx.lfT = zh => zh;
 assert.equal(ctx.obsPeriodRange('2026-10').label,'2026年10月');
 assert.match(ctx.obsActivityKpis(),/输入 0 \/ 输出 0/);
 assert.match(ctx.obsUsageKpis({period:true}),/10月运行/);
+
+// Unknown conversation costs must remain partial in totals and period views.
+ctx.state.obsTrendGrain='all';
+ctx.state.analytics={summary:{costUnknownRuns:0,conversationWorkspaces:1,conversationCostUnknownWorkspaces:1,totalCostCny:0}};
+assert.equal(ctx.obsScopedView().costKnown,false);
+assert.equal(ctx.obsScopedView().conversationCostKnown,false);
+assert.match(ctx.costLabel(0,ctx.obsScopedView().costKnown),/未识别/);
+ctx.state.obsTrendGrain='day';ctx.state.obsPeriodKey='2026-10-08';
+ctx.state.analytics={runTraces:[],trend:[{date:'2026-10-08',costUnknownRuns:0,conversationWorkspaces:1,conversationCostUnknownWorkspaces:1}]};
+assert.equal(ctx.obsScopedView().costKnown,false);
+assert.equal(ctx.obsScopedView().conversationCostKnown,false);

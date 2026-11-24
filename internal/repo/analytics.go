@@ -53,6 +53,7 @@ type analyticsRunSignals struct {
 	toolSucceeded int
 	toolFailed    int
 	interventions int
+	byNode        map[string]domain.AnalyticsHumanCounts
 }
 
 // Analytics returns a read-only, vendor-neutral operational view across runs.
@@ -65,12 +66,15 @@ func (r *AnalyticsRepo) Analytics(filter domain.AnalyticsFilter) domain.Analytic
 // still applied in Go by the same predicates, so every aggregate is identical to
 // the self-fetching path. Nil keeps the original behavior.
 func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetched []domain.Run) (out domain.AnalyticsSnapshot) {
-	overview := filter.Scope == "overview"
+	overview := filter.Scope == "overview" || filter.Scope == "dashboard"
 	now := time.Now().UTC()
 	out = domain.AnalyticsSnapshot{
 		Filter:   filter,
 		Summary:  domain.AnalyticsSummary{GeneratedAt: now},
 		Coverage: domain.AnalyticsCoverage{AdapterEvents: map[string]int{}, LogLevels: map[string]int{}},
+	}
+	if filter.Scope == "dashboard" || filter.IncludeDashboard {
+		out.Dashboard = &domain.AnalyticsDashboard{}
 	}
 	defer applyAnalyticsCNY(&out)
 	trends := map[string]*domain.AnalyticsTrendPoint{}
@@ -80,6 +84,10 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	workflows, agents, executors, models, nodes, categories, sources := map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}
 	versions := map[string]*analyticsVersionAccumulator{}
 	users := map[string]*analyticsUserAccumulator{}
+	var tokenUsage map[analyticsTokenUsageKey]int64
+	if filter.IncludeDashboard && filter.Scope != "dashboard" {
+		tokenUsage = map[analyticsTokenUsageKey]int64{}
+	}
 	projects := map[string]*analyticsProjectAccumulator{}
 	failures := map[string]*domain.AnalyticsFailure{}
 	var terminalDurations, terminalExecDurations []int64
@@ -212,6 +220,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		}
 		if !isExternal && run.IsWorkspace() {
 			accumulateConversationRun(&out.Summary, conversationIssues, trends, conversationTrendIssues, users, projects, sources, run, issuesByID[issueID], filter.Grain)
+			accumulateAnalyticsTokenUsage(tokenUsage, run, analyticsRunUserID(run, issuesByID[issueID]), run.CreatedAt.UTC().Format("2006-01-02"), nil)
 			continue
 		}
 		if !isExternal {
@@ -422,6 +431,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		cell.CostUSD += run.Usage.CostUSD
 		addAnalyticsTrendIssue(trendIssues, bucket, issueID)
 		accumulateUserUsage(users, analyticsRunUserID(run, issuesByID[issueID]), day, run, duration, complete, execDuration)
+		accumulateAnalyticsTokenUsage(tokenUsage, run, analyticsRunUserID(run, issuesByID[issueID]), day, external.execution.Usage)
 		accumulateProjectUsage(projects, domain.RunProjectID(run, issuesByID[issueID].ProjectID), issueID, run)
 		if isExternal {
 			accumulateInsightModels(models, external.execution)
@@ -475,7 +485,22 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	// Tool outcome and human-decision facts live in append-only event tables,
 	// not in Run summary columns. Load only matching tool-finish telemetry and
 	// compact control events, then join them back to each auditable Run row.
-	signals := r.analyticsRunSignals(includedRunIDs)
+	signalRunIDs := includedRunIDs
+	dashboardRuns := platformRuns
+	if out.Dashboard != nil {
+		var err error
+		dashboardRuns, err = r.analyticsDashboardSignalRuns(platformRuns, filter, issuesByID)
+		if err != nil {
+			out.DataErrors = append(out.DataErrors, "子流程统计读取失败")
+			return out
+		}
+		signalRunIDs = analyticsDashboardSignalIDs(dashboardRuns, filter, issuesByID, signalRunIDs)
+	}
+	signals, signalErr := r.analyticsRunSignals(signalRunIDs)
+	if signalErr != nil {
+		out.DataErrors = append(out.DataErrors, "人工介入统计读取失败")
+		return out
+	}
 	for runID, signal := range signals {
 		index, ok := runTraceIndex[runID]
 		if !ok {
@@ -555,8 +580,9 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	if cacheDenominator > 0 {
 		out.Summary.CacheHitRate = float64(cacheReadTotal) * 100 / float64(cacheDenominator)
 	}
-	if out.Summary.TotalRuns > 0 {
-		out.Summary.CostCoveragePct = float64(costKnownRuns) * 100 / float64(out.Summary.TotalRuns)
+	if units := out.Summary.TotalRuns + out.Summary.ConversationWorkspaces; units > 0 {
+		known := costKnownRuns + out.Summary.ConversationWorkspaces - out.Summary.ConversationCostUnknownWorkspaces
+		out.Summary.CostCoveragePct = float64(known) * 100 / float64(units)
 	}
 	if qualityTerminal > 0 {
 		out.Summary.WaitAverageDurationMs = terminalWaitDuration / int64(qualityTerminal)
@@ -583,6 +609,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	out.WorkflowVersions = finalizeWorkflowVersions(versions)
 	out.IssueSources = finalizeBreakdowns(sources)
 	out.UserUsage = finalizeUserUsage(users)
+	out.TokenUsage = finalizeAnalyticsTokenUsage(tokenUsage)
 	out.ProjectUsage = finalizeProjectUsage(projects)
 	out.Models = finalizeBreakdowns(models)
 	out.Nodes = finalizeBreakdowns(nodes)
@@ -595,8 +622,19 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		out.Failures = append(out.Failures, *failure)
 	}
 	sort.Slice(out.Failures, func(i, j int) bool { return out.Failures[i].Count > out.Failures[j].Count })
-	out.MRMerges, out.Summary.MergedMRsMissingTime = r.mrMergeAnalytics(filter, issuesByID)
+	merged, missingMergeTime, mergeErr := r.mrMergeAnalytics(filter, issuesByID)
+	if mergeErr != nil {
+		out.DataErrors = append(out.DataErrors, "交付统计读取失败")
+		return out
+	}
+	out.MRMerges, out.Summary.MergedMRsMissingTime = merged, missingMergeTime
 	out.Summary.MergedMRs = len(out.MRMerges)
+	if out.Dashboard != nil {
+		if err := r.analyticsDashboard(filter, dashboardRuns, issuesByID, workflowDefs, signals, &out); err != nil {
+			out.DataErrors = append(out.DataErrors, "统计趋势读取失败")
+			return out
+		}
+	}
 	for _, mr := range out.MRMerges {
 		analyticsTrendEntry(trends, analyticsTrendBucket(mr.MergedAt, filter.Grain)).MergedMRs++
 	}
@@ -623,6 +661,14 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 			out.Delivery.Issues = countDeliveryGroups(filter, platformRuns, issuesByID)
 		}
 		out.Summary.InProgressIssues = countInProgressIssues(issueList, filter)
+		if filter.Scope == "dashboard" {
+			// The compact page consumes aggregates, not trace IDs, MR links or
+			// per-person / per-model detail. Keep legacy overview unchanged.
+			out.RunTraces, out.MRMerges, out.Trend, out.WeekHour = nil, nil, nil, nil
+			out.UserUsage, out.ProjectUsage = nil, nil
+			out.Workflows, out.Models, out.Nodes, out.Failures = nil, nil, nil, nil
+			out.Categories, out.WorkflowVersions, out.IssueSources = nil, nil, nil
+		}
 		return out
 	}
 	out.Agents = finalizeBreakdowns(agents)
@@ -652,22 +698,36 @@ var analyticsHumanEventTypes = []string{
 // analyticsRunSignals reads only the append-only facts needed by the Loop
 // demo. It deliberately avoids hydrating logs, output, artifacts, and ordinary
 // progress telemetry into the analytics request.
-func (r *AnalyticsRepo) analyticsRunSignals(runIDs []string) map[string]analyticsRunSignals {
+func (r *AnalyticsRepo) analyticsRunSignals(runIDs []string) (map[string]analyticsRunSignals, error) {
 	out := map[string]analyticsRunSignals{}
 	for start := 0; start < len(runIDs); start += 500 {
 		batch := runIDs[start:min(start+500, len(runIDs))]
 		r.accumulateToolSignals(out, batch)
 
 		var eventRows []runEventRow
-		if err := r.DB.Select("run_id", "type").Where("run_id IN ? AND type IN ?", batch, analyticsHumanEventTypes).Find(&eventRows).Error; err == nil {
-			for _, row := range eventRows {
-				signal := out[row.RunID]
-				signal.interventions++
-				out[row.RunID] = signal
+		if err := r.DB.Select("run_id", "node_id", "type").Where("run_id IN ? AND type IN ?", batch, analyticsHumanEventTypes).Find(&eventRows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range eventRows {
+			signal := out[row.RunID]
+			signal.interventions++
+			if signal.byNode == nil {
+				signal.byNode = map[string]domain.AnalyticsHumanCounts{}
 			}
+			counts := signal.byNode[row.NodeID]
+			switch row.Type {
+			case "gate.approved", "node.passed":
+				counts.Approvals++
+			case "gate.rejected":
+				counts.Rejections++
+			default:
+				counts.Retries++
+			}
+			signal.byNode[row.NodeID] = counts
+			out[row.RunID] = signal
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (r *AnalyticsRepo) accumulateToolSignals(out map[string]analyticsRunSignals, batch []string) {
@@ -1421,10 +1481,14 @@ func executorName(values map[string]domain.ExecutorDefinition, id string) string
 // trendIssues.
 func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[string]struct{}, trends map[string]*domain.AnalyticsTrendPoint, trendIssues map[string]map[string]struct{}, users map[string]*analyticsUserAccumulator, projects map[string]*analyticsProjectAccumulator, sources map[string]*analyticsAccumulator, run domain.Run, issue domain.Issue, grain string) {
 	usage := run.Usage
+	known := conversationUsageCostKnown(usage)
 	issueID := strings.TrimSpace(run.ExecutionContext.IssueID)
 	summary.ConversationWorkspaces++
 	summary.ConversationTokens += usage.TotalTokens
 	summary.ConversationCostUSD += usage.CostUSD
+	if !known {
+		summary.ConversationCostUnknownWorkspaces++
+	}
 	summary.TotalTokens += usage.TotalTokens
 	summary.TotalCostUSD += usage.CostUSD
 	summary.CostReportedUSD += usage.CostUSD
@@ -1446,12 +1510,15 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	point.ConversationWorkspaces++
 	point.ConversationTokens += usage.TotalTokens
 	point.ConversationCostUSD += usage.CostUSD
+	if !known {
+		point.ConversationCostUnknownWorkspaces++
+	}
 	point.InputTokens += usage.InputTokens
 	point.OutputTokens += usage.OutputTokens
 	point.CacheReadTokens += usage.CacheReadTokens
 	point.CacheWriteTokens += usage.CacheWriteTokens
 	addAnalyticsTrendIssue(trendIssues, bucket, issueID)
-	if usage.TotalTokens == 0 && usage.CostUSD == 0 && issueID == "" {
+	if known && usage.TotalTokens == 0 && usage.CostUSD == 0 && issueID == "" {
 		return
 	}
 	user := analyticsUserEntry(users, analyticsRunUserID(run, issue), at.Format("2006-01-02"))
@@ -1461,9 +1528,11 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	user.item.CacheReadTokens += usage.CacheReadTokens
 	user.item.CacheWriteTokens += usage.CacheWriteTokens
 	user.item.CostUSD += usage.CostUSD
+	user.item.CostKnown = user.item.CostKnown && known
 	project := analyticsProjectEntry(projects, domain.RunProjectID(run, issue.ProjectID))
 	project.item.Tokens += usage.TotalTokens
 	project.item.CostUSD += usage.CostUSD
+	project.item.CostKnown = project.item.CostKnown && known
 	if issueID == "" {
 		return
 	}
@@ -1471,8 +1540,20 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	value := analyticsSourceEntry(sources, analyticsIssueSource(issue))
 	value.item.Tokens += usage.TotalTokens
 	value.item.CostUSD += usage.CostUSD
+	if !known {
+		value.item.CostUnknownRuns++
+	}
 	value.inputTokens += usage.InputTokens
 	value.outputTokens += usage.OutputTokens
 	value.cacheReadTokens += usage.CacheReadTokens
 	value.cacheWriteTokens += usage.CacheWriteTokens
+}
+
+func conversationUsageCostKnown(u domain.TokenUsage) bool {
+	if usageCostKnown(u) {
+		return true
+	}
+	// An idle workspace has no billable invocation. A populated unknown
+	// usage record must still remain unknown in every aggregate.
+	return u.CostStatus == "" && u.InputTokens == 0 && u.OutputTokens == 0 && u.TotalTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 && u.ReasoningTokens == 0 && u.CostUSD == 0
 }

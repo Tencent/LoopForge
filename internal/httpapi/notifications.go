@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"agentflow/internal/notification"
 	"agentflow/internal/repo"
 	"errors"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"net/http"
@@ -107,21 +109,40 @@ func (h *notificationHandlers) bot(c *gin.Context) {
 		if !ok {
 			return
 		}
+		if !notification.BotWorkersEnabled() {
+			c.JSON(503, gin.H{"error": "机器人配置维护中，请稍后再试", "code": "bot_maintenance"})
+			return
+		}
 		respond(c, h.repo.DeleteNotificationBot(bot.ID))
 	default:
 		c.JSON(405, gin.H{"error": "method not allowed"})
 	}
 }
 func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot) {
+	if !notification.BotWorkersEnabled() {
+		c.JSON(503, gin.H{"error": "机器人配置维护中，请稍后再试", "code": "bot_maintenance"})
+		return
+	}
 	var req struct {
 		ProjectID          string  `json:"projectId"`
 		Name               string  `json:"name"`
+		Channel            string  `json:"channel"`
 		BotID              string  `json:"botId"`
 		Secret             string  `json:"secret"`
 		Enabled            bool    `json:"enabled"`
 		Model              *string `json:"model"`
 		InteractionEnabled *bool   `json:"interactionEnabled"`
 		TargetID           *string `json:"targetId"`
+		WriteApproval      *string `json:"writeApproval"`
+		ConfigVersion      *int64  `json:"configVersion"`
+		// TenantKey is the DingTalk CorpId entered by the administrator.
+		TenantKey *string `json:"tenantKey"`
+		// CardTemplateID is the DingTalk interactive card template for
+		// action cards; empty sends plain-text notifications.
+		CardTemplateID *string `json:"cardTemplateId"`
+		// PendingTargetAction decides what happens to queued Feishu/DingTalk
+		// notifications of the previous target: "cancel" or "migrate".
+		PendingTargetAction string `json:"pendingTargetAction"`
 	}
 	if !decode(c, &req) {
 		return
@@ -130,15 +151,30 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 	req.BotID = strings.TrimSpace(req.BotID)
 	req.Secret = strings.TrimSpace(req.Secret)
 	if req.Name == "" || len([]rune(req.Name)) > 80 || req.BotID == "" || len(req.BotID) > 191 || len(req.Secret) > 512 {
-		c.JSON(400, gin.H{"error": "请填写有效的名称、Bot ID 和 Secret"})
+		c.JSON(400, gin.H{"error": "请填写有效的名称、应用标识和 Secret"})
 		return
 	}
-	bot := domain.NotificationBot{ID: "bot-" + randomID(), ProjectID: strings.TrimSpace(req.ProjectID), Name: req.Name, BotID: req.BotID, Enabled: req.Enabled, Health: "unchecked"}
+	// Clients without a channel field only ever managed WeCom Bots.
+	channel := domain.NotificationBot{Channel: strings.TrimSpace(req.Channel)}.ChannelKind()
+	if req.Channel != "" && req.Channel != channel {
+		c.JSON(400, gin.H{"error": "不支持的渠道"})
+		return
+	}
+	bot := domain.NotificationBot{ID: "bot-" + randomID(), ProjectID: strings.TrimSpace(req.ProjectID), Name: req.Name, Channel: channel, BotID: req.BotID, Enabled: req.Enabled, Health: "unchecked", WriteApproval: domain.BotWriteReadOnly}
 	if old != nil {
 		bot = *old
 		bot.Name = req.Name
 		bot.Enabled = req.Enabled
+		if req.Channel != "" && channel != old.ChannelKind() {
+			c.JSON(400, gin.H{"error": repo.ErrBotImmutableField.Error(), "code": "immutable_field"})
+			return
+		}
+		channel = old.ChannelKind()
 		if old.BotID != req.BotID {
+			if channel != domain.BotChannelWeCom {
+				c.JSON(400, gin.H{"error": repo.ErrBotImmutableField.Error(), "code": "immutable_field"})
+				return
+			}
 			if req.Secret == "" {
 				c.JSON(400, gin.H{"error": "修改 Bot ID 时必须同时填写新 Secret"})
 				return
@@ -149,8 +185,55 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			bot.LastCheckedAt = nil
 		}
 	}
+	if !botChannelOpen(channel) {
+		c.JSON(409, gin.H{"error": "该渠道尚未开放", "code": "channel_not_ready"})
+		return
+	}
+	if req.WriteApproval != nil {
+		switch mode := strings.TrimSpace(*req.WriteApproval); {
+		case mode == domain.BotWriteReadOnly, mode == domain.BotWriteConfirm:
+			// Web confirmation works on every channel: drafts run only
+			// after the bound user confirms them on the platform page.
+			bot.WriteApproval = mode
+		case mode == domain.BotWriteAuto && channel == domain.BotChannelWeCom:
+			bot.WriteApproval = mode
+		default:
+			c.JSON(400, gin.H{"error": "该渠道只支持只读查询或网页确认"})
+			return
+		}
+	}
 	if req.InteractionEnabled != nil {
 		bot.InteractionEnabled = *req.InteractionEnabled
+	}
+	if channel == domain.BotChannelDingTalk {
+		corp := ""
+		if req.TenantKey != nil {
+			corp = strings.TrimSpace(*req.TenantKey)
+		}
+		switch {
+		case corp == "" && old == nil:
+			c.JSON(400, gin.H{"error": "请填写钉钉企业 CorpId", "code": "tenant_required"})
+			return
+		case len(corp) > 191 || strings.ContainsAny(corp, " \t\r\n"):
+			c.JSON(400, gin.H{"error": "钉钉企业 CorpId 格式无效"})
+			return
+		case corp != "" && old != nil && old.TenantState == domain.BotTenantLocked && corp != old.TenantKey:
+			c.JSON(400, gin.H{"error": "企业已确认，更换企业请新建配置", "code": "immutable_field"})
+			return
+		case corp != "":
+			bot.TenantExpected = corp
+			if user, ok := h.requestUser(c.Request, true); ok && user != nil {
+				bot.TenantExpectedBy = user.ID
+			}
+		}
+		if req.CardTemplateID != nil {
+			tpl := strings.TrimSpace(*req.CardTemplateID)
+			if len(tpl) > 128 || strings.ContainsAny(tpl, " \t\r\n/?#") {
+				c.JSON(400, gin.H{"error": "钉钉互动卡片模板 ID 格式无效"})
+				return
+			}
+			bot.CardTemplateID = tpl
+		}
 	}
 	if req.Model != nil {
 		model, err := normalizeFeatureModel(*req.Model)
@@ -186,6 +269,26 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 		bot.SecretConfigured = true
 		bot.Health = "unchecked"
 		bot.LastCheckedAt = nil
+		// New channels verify the credential before anything is stored, outside
+		// the database transaction; a failure keeps the previous configuration.
+		if channel != domain.BotChannelWeCom {
+			adapter, err := h.service.Interactions.Channel(bot)
+			if err != nil {
+				c.JSON(409, gin.H{"error": "该渠道尚未开放", "code": "channel_not_ready"})
+				return
+			}
+			verified, err := adapter.Verify(c.Request.Context(), bot, botinteraction.Credential{Secret: req.Secret})
+			if err != nil {
+				c.JSON(400, gin.H{"error": "凭据校验失败：" + err.Error(), "code": "credential_invalid"})
+				return
+			}
+			bot.Health = "ready"
+			now := time.Now().UTC()
+			bot.LastCheckedAt = &now
+			if verified.TenantName != "" {
+				bot.TenantName = verified.TenantName
+			}
+		}
 	}
 	// A target is accepted only after refreshing the real provider list. Never trust a posted name/type.
 	if bot.InteractionEnabled {
@@ -193,21 +296,47 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			c.JSON(400, gin.H{"error": "请登录后创建支持对话的 Bot，平台需要记录创建者的执行身份"})
 			return
 		}
-		bots, err := h.repo.InteractiveNotificationBots()
-		if err != nil {
-			respond(c, err)
-			return
-		}
-		for _, existing := range bots {
-			if existing.BotID == bot.BotID && existing.ID != bot.ID && bot.Enabled {
-				c.JSON(409, gin.H{"error": "这只企业微信 Bot 已在另一个配置中启用对话，请复用原配置"})
-				return
-			}
-		}
 	}
+	var switchedTarget *domain.BotChat
 	if req.TargetID != nil {
 		if *req.TargetID == "" {
 			bot.Target = nil
+		} else if channel != domain.BotChannelWeCom {
+			// Feishu/DingTalk: a bound private-chat sender of this
+			// configuration, accepted only after a trial send succeeded.
+			if old == nil || req.Secret != "" {
+				c.JSON(400, gin.H{"error": "请先保存凭据，再选择通知接收人"})
+				return
+			}
+			unchanged := old.Target != nil && old.Target.ID == *req.TargetID && old.Target.VerifiedAt != nil
+			if !unchanged {
+				if !bot.Enabled {
+					c.JSON(409, gin.H{"error": "请先启用此 Bot，再试发并选择通知接收人"})
+					return
+				}
+				if pending, err := h.repo.PendingNotificationsForOtherTargets(bot.ID, *req.TargetID); err != nil {
+					respond(c, err)
+					return
+				} else if pending > 0 && req.PendingTargetAction != "cancel" && req.PendingTargetAction != "migrate" {
+					c.JSON(409, gin.H{"error": fmt.Sprintf("原接收人还有 %d 条待发通知，请选择取消或改发到新接收人", pending), "code": "pending_deliveries", "pending": pending})
+					return
+				}
+				target, err := h.service.VerifyPushTarget(c.Request.Context(), bot, *req.TargetID)
+				if err != nil {
+					var failed *notification.PushTargetError
+					switch {
+					case errors.As(err, &failed):
+						c.JSON(502, gin.H{"error": "试发未成功，接收人未保存：" + failed.Error(), "code": "push_trial_failed", "outcome": failed.Result.Outcome})
+					case errors.Is(err, notification.ErrPushTargetUnverified):
+						c.JSON(409, gin.H{"error": "只能选择已在本 Bot 单聊中绑定平台账号的成员", "code": "push_target_unverified"})
+					default:
+						c.JSON(409, gin.H{"error": err.Error(), "code": "push_target_unavailable"})
+					}
+					return
+				}
+				bot.Target = &target
+				switchedTarget = &target
+			}
 		} else {
 			if old == nil || req.Secret != "" || old.BotID != req.BotID {
 				c.JSON(400, gin.H{"error": "请先保存凭据，再刷新并选择接收会话"})
@@ -236,27 +365,129 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			bot.LastCheckedAt = &now
 		}
 	}
-	if err := h.repo.SaveNotificationBot(bot, req.Secret); err != nil {
-		if errors.Is(err, repo.ErrInteractiveBotAlreadyExists) {
-			c.JSON(409, gin.H{"error": err.Error()})
-			return
-		}
-		respond(c, err)
+	saved, err := h.repo.SaveNotificationBotChecked(bot, req.Secret, req.ConfigVersion)
+	if err != nil {
+		botSaveError(c, err)
 		return
 	}
-	stored, err := h.repo.NotificationBot(bot.ID)
+	if switchedTarget != nil && (req.PendingTargetAction == "cancel" || req.PendingTargetAction == "migrate") {
+		if _, err := h.repo.SwitchNotificationTarget(saved.ID, *switchedTarget, req.PendingTargetAction); err != nil {
+			respond(c, err)
+			return
+		}
+	}
+	stored, err := h.repo.NotificationBot(saved.ID)
 	if err != nil {
 		respond(c, err)
 		return
 	}
 	c.JSON(200, stored)
 }
+
+// botChannelOpen reports the channels configurable in this release.
+func botChannelOpen(channel string) bool {
+	return channel == domain.BotChannelWeCom || channel == domain.BotChannelFeishu || channel == domain.BotChannelDingTalk
+}
+
+func botSaveError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, repo.ErrInteractiveBotAlreadyExists):
+		c.JSON(409, gin.H{"error": "这个应用已在另一个配置中启用对话，请复用原配置", "code": "receive_slot_taken"})
+	case errors.Is(err, repo.ErrBotConfigChanged):
+		c.JSON(409, gin.H{"error": "配置已被其他人修改，请刷新后重试", "code": "config_changed"})
+	case errors.Is(err, repo.ErrBotImmutableField):
+		c.JSON(400, gin.H{"error": err.Error(), "code": "immutable_field"})
+	case errors.Is(err, repo.ErrCredentialKeyMissing):
+		c.JSON(503, gin.H{"error": "平台未配置凭据加密密钥，暂时无法保存 Secret，请联系管理员", "code": "credential_key_missing"})
+	default:
+		respond(c, err)
+	}
+}
+
+// tenant reads the enterprise information the channel reports for the
+// stored credential, shown next to the candidate on the confirmation page.
+func (h *notificationHandlers) tenant(c *gin.Context) {
+	bot, ok := h.find(c, true)
+	if !ok {
+		return
+	}
+	adapter, err := h.service.Interactions.Channel(bot)
+	if err != nil || bot.ChannelKind() == domain.BotChannelWeCom {
+		c.JSON(409, gin.H{"error": "该渠道没有企业确认", "code": "channel_not_ready"})
+		return
+	}
+	secret, err := h.repo.BotCredential(bot.ID)
+	if err != nil {
+		c.JSON(409, gin.H{"error": "机器人凭据不可用"})
+		return
+	}
+	info := gin.H{"tenantState": bot.TenantState, "candidate": bot.TenantCandidate, "tenantKey": bot.TenantKey, "configVersion": bot.ConfigVersion}
+	if verified, err := adapter.Verify(c.Request.Context(), bot, botinteraction.Credential{Secret: secret}); err == nil {
+		info["queried"] = gin.H{"tenantKey": verified.TenantKey, "tenantName": verified.TenantName}
+		if verified.TenantName != "" && verified.TenantName != bot.TenantName {
+			_ = h.repo.SetBotTenantName(bot.ID, verified.TenantName)
+		}
+	} else {
+		info["queryError"] = err.Error()
+	}
+	c.JSON(200, info)
+}
+
+// tenantConfirm locks the candidate enterprise scope (Bot managers only).
+func (h *notificationHandlers) tenantConfirm(c *gin.Context) {
+	bot, ok := h.find(c, true)
+	if !ok {
+		return
+	}
+	if !botBindingSameOrigin(c) {
+		c.JSON(403, gin.H{"error": "请从平台页面操作"})
+		return
+	}
+	var req struct {
+		TenantKey     string `json:"tenantKey"`
+		ConfigVersion int64  `json:"configVersion"`
+		Rediscover    bool   `json:"rediscover"`
+	}
+	if !decode(c, &req) {
+		return
+	}
+	var saved domain.NotificationBot
+	var err error
+	if req.Rediscover {
+		saved, err = h.repo.RediscoverBotTenant(bot.ID, req.ConfigVersion)
+	} else {
+		actor := int64(0)
+		if user, ok := h.requestUser(c.Request, true); ok && user != nil {
+			actor = user.ID
+		}
+		saved, err = h.repo.ConfirmBotTenant(bot.ID, strings.TrimSpace(req.TenantKey), req.ConfigVersion, actor)
+	}
+	switch {
+	case errors.Is(err, repo.ErrBotTenantCandidate):
+		c.JSON(409, gin.H{"error": "企业候选已变化或与当前凭据不一致，请刷新后重新确认", "code": "tenant_candidate_mismatch"})
+		return
+	case err != nil:
+		botSaveError(c, err)
+		return
+	}
+	stored, err := h.repo.NotificationBot(saved.ID)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(200, stored)
+}
+
 func (h *notificationHandlers) sessions(c *gin.Context) {
 	bot, ok := h.find(c, true)
 	if !ok {
 		return
 	}
 	chats, err := h.service.Sessions(c.Request.Context(), bot)
+	if err != nil && bot.ChannelKind() != domain.BotChannelWeCom {
+		c.JSON(409, gin.H{"error": err.Error(), "code": "push_target_unavailable"})
+		return
+	}
 	if err != nil {
 		h.providerError(c, err)
 		return
@@ -277,6 +508,20 @@ func (h *notificationHandlers) test(c *gin.Context) {
 	}
 	if bot.Target == nil {
 		c.JSON(400, gin.H{"error": "请先选择并保存接收会话"})
+		return
+	}
+	if bot.ChannelKind() != domain.BotChannelWeCom {
+		// The test re-runs the trial send and refreshes the verification.
+		target, err := h.service.VerifyPushTarget(c.Request.Context(), bot, bot.Target.ID)
+		var failed *notification.PushTargetError
+		switch {
+		case errors.As(err, &failed):
+			c.JSON(502, gin.H{"error": failed.Error(), "code": "push_trial_failed", "outcome": failed.Result.Outcome})
+		case err != nil:
+			c.JSON(409, gin.H{"error": err.Error(), "code": "push_target_unavailable"})
+		default:
+			c.JSON(200, gin.H{"success": true, "targetName": target.Name})
+		}
 		return
 	}
 	content := "### 平台通知测试\n机器人：" + bot.Name + "\n这是一条测试通知，不代表实际任务状态。"
@@ -309,6 +554,43 @@ func (h *notificationHandlers) test(c *gin.Context) {
 	}
 	c.JSON(200, gin.H{"success": true, "targetName": bot.Target.Name})
 }
+
+// verifyTarget sends a trial proactive message to a bound member without
+// changing the notification target, so the member becomes a verified push
+// target (for example before switching an expired DingTalk reply).
+func (h *notificationHandlers) verifyTarget(c *gin.Context) {
+	bot, ok := h.find(c, true)
+	if !ok {
+		return
+	}
+	if bot.ChannelKind() == domain.BotChannelWeCom {
+		c.JSON(409, gin.H{"error": "企业微信不需要试发验证", "code": "state_conflict"})
+		return
+	}
+	if !botBindingSameOrigin(c) {
+		c.JSON(403, gin.H{"error": "请从平台页面操作"})
+		return
+	}
+	var req struct {
+		TargetID string `json:"targetId"`
+	}
+	if !decode(c, &req) {
+		return
+	}
+	target, err := h.service.VerifyPushTarget(c.Request.Context(), bot, strings.TrimSpace(req.TargetID))
+	var failed *notification.PushTargetError
+	switch {
+	case errors.As(err, &failed):
+		c.JSON(502, gin.H{"error": "试发未成功：" + failed.Error(), "code": "push_trial_failed", "outcome": failed.Result.Outcome})
+	case errors.Is(err, notification.ErrPushTargetUnverified):
+		c.JSON(409, gin.H{"error": "只能试发给已在本 Bot 单聊中绑定平台账号的成员", "code": "push_target_unverified"})
+	case err != nil:
+		c.JSON(409, gin.H{"error": err.Error(), "code": "push_target_unavailable"})
+	default:
+		c.JSON(200, target)
+	}
+}
+
 func (h *notificationHandlers) providerError(c *gin.Context, err error) {
 	code := 0
 	var pe *notification.ProviderError
@@ -348,6 +630,19 @@ func (h *notificationHandlers) retry(c *gin.Context) {
 				return
 			}
 			if !h.managed(c, bot) {
+				return
+			}
+			if c.Request.URL.Path == "/api/notification-deliveries/"+item.ID+"/confirm" {
+				actor := int64(0)
+				if user, ok := h.requestUser(c.Request, true); ok && user != nil {
+					actor = user.ID
+				}
+				err = h.repo.ConfirmNotificationReceived(projectID, item.ID, actor)
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					c.JSON(409, gin.H{"error": "只有送达结果未知的记录可以确认收到"})
+					return
+				}
+				respond(c, err)
 				return
 			}
 			err = h.repo.RetryNotification(projectID, item.ID)
