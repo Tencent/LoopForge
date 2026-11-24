@@ -1,7 +1,7 @@
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {get,put,post,del,track,cleanup,ensureProject,waitRun,tokenOwner} from '../lib/api.mjs';
+import {get,put,post,del,track,cleanup,ensureProject,waitRun,tokenOwner,withProjectMember} from '../lib/api.mjs';
 import {cfg,uid} from '../lib/env.mjs';
 import {createWorkflow,script,approval,startRun} from '../lib/fixtures.mjs';
 
@@ -20,13 +20,9 @@ test('separate account cannot access private conversations, edit workspaces or i
   };
   const owner=await tokenOwner();
   assert.notEqual(owner.id,identity.id,'test needs two distinct accounts');
-  const initial=await get(`/api/projects/${cfg.projectId}`);
-  const restore={...initial,members:initial.members||[]};
-  track('restore original project membership',()=>put('/api/projects',restore));
   // A prior interrupted run may have left this account as a viewer. Restore
-  // the exact original membership afterwards, including an explicit [] (an
-  // omitted members field intentionally means 'keep existing' in the API).
-  await put('/api/projects',{...initial,members:(initial.members||[]).filter(m=>m.userId!==identity.id)});
+  // the exact original roster on cleanup using the current membership token.
+  await withProjectMember(identity.id,null);
   const id=uid('private-conversation');
   await put(`/api/assistant/sessions/${id}`,{title:'E2E private',messages:[{role:'user',content:'Private acceptance fixture'}]});
   track('private session',()=>del(`/api/assistant/sessions/${id}`));
@@ -41,14 +37,11 @@ test('separate account cannot access private conversations, edit workspaces or i
   await second('PUT',`/api/runs/${run.id}/workspace/file`,{path:'note.txt',content:'wrong actor'},403);
   await second('GET',`/api/runs/${run.id}/conversation`,undefined,403);
   assert.equal((await get(`/api/runs/${run.id}/workspace/file?path=note.txt`)).content,'isolated\n');
-  const snapshot=await get(`/api/projects/${cfg.projectId}`);
-  const original={...snapshot,members:snapshot.members||[]};
-  track('restore project membership',()=>put('/api/projects',original));
-  await put('/api/projects',{...original,members:[...(original.members||[]),{userId:identity.id,role:'viewer'}]});
+  const restoreViewer=await withProjectMember(identity.id,'viewer');
   try {
     // Read-only membership must not become agent execution permission.
     await second('GET',`/api/runs/${run.id}/conversation`,undefined,200);
     await second('PUT',`/api/runs/${run.id}/workspace/file`,{path:'note.txt',content:'viewer write'},403);
     assert.equal((await get(`/api/runs/${run.id}/workspace/file?path=note.txt`)).content,'isolated\n');
-  } finally {await put('/api/projects',original)}
+  } finally {await restoreViewer()}
 });

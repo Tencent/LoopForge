@@ -124,7 +124,7 @@ html[data-theme="dark"] {
 
 /* 设置区：页头与内容外层容器居中、最大 1200px；页面内部布局不变。
  * product-v4.css 用 !important 清掉了这些元素的 max-width / margin，这里同样需要 !important。 */
-:is(#settingsView, #botsView, #assistantView, #aiSchedulesView, #projectsView, #runnersView, #agentsView, #mcpView, #assetsView, #knowledgeView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView).page-view.active > :not(.agent-row-menu) {
+:is(#settingsView, #botsView, #assistantView, #aiSchedulesView, #projectsView, #projectCredentialsView, #runnersView, #agentsView, #mcpView, #assetsView, #knowledgeView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView).page-view.active > :not(.agent-row-menu) {
   box-sizing: border-box;
   width: 100%;
   max-width: 1200px !important;
@@ -133,12 +133,12 @@ html[data-theme="dark"] {
 }
 
 /* 设置区页头：H1 22px/600，说明 13px 次级色 */
-:is(#settingsView, #botsView, #assistantView, #aiSchedulesView, #projectsView, #runnersView, #agentsView, #mcpView, #assetsView, #knowledgeView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView) :is(.page-heading, .pa-ph, .kb-head) h1 {
+:is(#settingsView, #botsView, #assistantView, #aiSchedulesView, #projectsView, #projectCredentialsView, #runnersView, #agentsView, #mcpView, #assetsView, #knowledgeView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView) :is(.page-heading, .pa-ph, .kb-head) h1 {
   color: var(--hui-text);
   font: 600 22px/1.25 var(--hui-sans);
   letter-spacing: -.02em;
 }
-:is(#settingsView, #botsView, #assistantView, #aiSchedulesView, #projectsView, #runnersView, #agentsView, #mcpView, #assetsView, #knowledgeView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView) :is(.page-heading, .pa-ph) h1 + p,
+:is(#settingsView, #botsView, #assistantView, #aiSchedulesView, #projectsView, #projectCredentialsView, #runnersView, #agentsView, #mcpView, #assetsView, #knowledgeView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView) :is(.page-heading, .pa-ph) h1 + p,
 :is(#settingsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView) .page-heading > div > p:last-child,
 #knowledgeView .kb-head-desc {
   color: var(--hui-secondary);

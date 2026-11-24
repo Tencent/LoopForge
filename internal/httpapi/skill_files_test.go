@@ -259,6 +259,28 @@ func TestSkillFileUploadConflictsAndMissingSkill(t *testing.T) {
 	}
 }
 
+func TestSkillCreateStoresBodyAsSkillFile(t *testing.T) {
+	s := newSkillFileServer(t)
+	h := skillFileHandler(t, s)
+	body := "---\nname: file-backed\n---\n\n# 技能正文\n"
+	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/skills", domain.SkillDefinition{
+		ID: "file-backed", Name: "File backed", ProjectID: "platform", Content: body,
+	}, http.StatusOK)
+
+	stored, found := s.Skill("file-backed")
+	if !found || stored.Content != "" || len(stored.FileRefs) != 1 {
+		t.Fatalf("expected file-backed skill, got %+v", stored)
+	}
+	if ref := stored.FileRefs[0]; ref.Path != "SKILL.md" || ref.Size != int64(len(body)) {
+		t.Fatalf("invalid SKILL.md manifest entry: %+v", ref)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/skills/file-backed/files/SKILL.md", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != body {
+		t.Fatalf("SKILL.md download = %d %q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSkillPutPreservesServerFileManifest(t *testing.T) {
 	s := newSkillFileServer(t)
 	if err := s.PutSkill(domain.SkillDefinition{ID: "keep-skill", Name: "Keep", ProjectID: "platform", Content: "# keep"}); err != nil {
