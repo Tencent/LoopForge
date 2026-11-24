@@ -95,11 +95,14 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
               ? "暂无在线机器"
               : "平台自动分配",
         },
-        ...(chat.machines || []).map((row) => ({
+        ...(chat.availableMachines || []).map((row) => ({
           id: row.id,
           label: row.name || row.id,
           icon: "monitor",
-          description: row.status === "online" ? "在线" : "离线，执行前需启动",
+          description: [
+            row.ownerUserId && row.ownerUserId !== chat.user?.id ? "项目共享" : "",
+            row.status === "online" ? "在线" : "离线，执行前需启动",
+          ].filter(Boolean).join(" · "),
         })),
       ]
     : [];

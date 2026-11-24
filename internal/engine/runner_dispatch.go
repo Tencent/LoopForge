@@ -198,6 +198,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	}
 	runner, _ := e.repo.Runner(runnerID)
 	authMode := sopRunnerAuthMode(run.ExecutionContext, runner, ex.Kind)
+	projectShare := runner.OwnerUserID > 0 && runner.OwnerUserID != run.ExecutionContext.ResponsibleUserID
 	resumeSessionID := resolveRunnerResumeSessionID(run, node.ID, options)
 	invocation := &domain.RunnerInvocation{
 		ArchivedFiles:                 e.legacyArchivedWorkspaceFiles(run, node.ID),
@@ -221,12 +222,18 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		switch ex.Kind {
 		case "codex":
 			if strings.TrimSpace(sb.credentialSnapshot().Codex.APIKey) == "" {
+				if projectShare {
+					return "", errors.New("项目共享执行机器需要当前责任人的 Codex API Key，请在个人配置中填写")
+				}
 				return "", errors.New("当前责任人未配置 Codex API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
 			invocation.CodexAPIKey = sb.credentialSnapshot().Codex.APIKey
 			invocation.CodexBaseURL = sb.credentialSnapshot().Codex.BaseURL
 		case "claude-code":
 			if strings.TrimSpace(sb.credentialSnapshot().ClaudeCode.APIKey) == "" {
+				if projectShare {
+					return "", errors.New("项目共享执行机器需要当前责任人的 Claude Code API Key，请在个人配置中填写")
+				}
 				return "", errors.New("当前责任人未配置 Claude Code API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
 			invocation.ClaudeCodeAPIKey = sb.credentialSnapshot().ClaudeCode.APIKey

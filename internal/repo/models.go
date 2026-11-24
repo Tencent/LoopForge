@@ -545,6 +545,8 @@ type runnerRow struct {
 	MaxConcurrency         int        `gorm:"column:max_concurrency"`
 	RunLimit               *int       `gorm:"column:run_limit"`
 	OwnerUserID            *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
+	SharedProjectIDs       []byte     `gorm:"column:shared_project_ids;type:json"`
+	LoginModels            []byte     `gorm:"column:login_model_catalogs;type:json"`
 	SessionTokenHash       string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
 	SessionExpiresAt       *time.Time `gorm:"column:session_expires_at"`
 	Runtimes               []byte     `gorm:"column:runtimes;type:json"`
@@ -589,6 +591,14 @@ type userRunnerPrefRow struct {
 }
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
+
+type userProjectRunnerPrefRow struct {
+	UserID          int64  `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	ProjectID       string `gorm:"column:project_id;primaryKey;size:64"`
+	DefaultRunnerID string `gorm:"column:default_runner_id;not null;size:64;index:idx_user_project_runner_prefs_runner"`
+}
+
+func (userProjectRunnerPrefRow) TableName() string { return "user_project_runner_prefs" }
 
 // assistantPreferenceRow: a missing row means switches are off, messages queue
 // and the agent picks conversation workspace sandboxes itself.
@@ -772,7 +782,7 @@ func allModels() []any {
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
 		mrDeliveryStateRow{}, definitionRevisionRow{},
-		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{},
+		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{}, userProjectRunnerPrefRow{},
 		assistantSessionRow{}, assistantTaskRow{}, assistantGenerationRow{}, assistantSessionReadRow{}, assistantPreferenceRow{}, assistantDiagnosticsRow{},
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},

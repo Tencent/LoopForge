@@ -1,11 +1,14 @@
 package engine
 
 import (
-	"agentflow/internal/domain"
 	"context"
 	"fmt"
 	"strings"
 	"time"
+
+	"agentflow/internal/apperr"
+	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 // assignWorkBranches gives every repository without a branch the first
@@ -159,6 +162,9 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 			if !ok || !runner.SupportsWorkspaceOwnerPreparation() || owner.ExecutionContext.RunnerWorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
 				return domain.Run{}, fmt.Errorf("原执行机器或工作区不支持共享检出目录，请更新执行机器并重新打开工作区")
 			}
+			if runner.OwnerUserID > 0 && !e.repo.CanUseRunner(runner, executionContext.ProjectID, executionContext.ResponsibleUserID) {
+				return domain.Run{}, apperr.New(apperr.Forbidden, repo.ErrRunnerProjectDenied.Error())
+			}
 			if len(repositories) > 0 && !runner.SupportsConversationSOPWorkspace() {
 				return domain.Run{}, fmt.Errorf("复用对话中的仓库检出需要执行机器升级至 %s", domain.RunnerVersionConversationSOPWorkspace)
 			}
@@ -268,7 +274,8 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 
 func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryContext) {
 	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
-		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
+		defaults := e.repo.ResolveRunnerDefaults(executionContext.ResponsibleUserID, executionContext.ProjectID)
+		executionContext.ExecutionRunnerID = defaults.Runner.ID
 		executionContext.WorkspaceRunID = ""
 	}
 	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {

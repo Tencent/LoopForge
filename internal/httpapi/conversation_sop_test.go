@@ -16,11 +16,14 @@ func TestConversationSOPDispatchUsesBoundWorkspace(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, body string
 		native, share    bool
+		revokeGrant      bool
 	}{
-		{"confirmed issue dispatch", "/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"issues_dispatch","arguments":{"path":{"id":"handoff-issue"}}}}`, false, true},
-		{"automatic issue dispatch", "/api/issues/handoff-issue/dispatch", `{}`, true, true},
-		{"direct SOP start", "/api/runs", `{"projectId":"workbench","workflowId":"handoff-sop"}`, false, true},
-		{"ordinary issue dispatch", "/api/issues/handoff-issue/dispatch", `{}`, false, false},
+		{"confirmed issue dispatch", "/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"issues_dispatch","arguments":{"path":{"id":"handoff-issue"}}}}`, false, true, false},
+		{"automatic issue dispatch", "/api/issues/handoff-issue/dispatch", `{}`, true, true, false},
+		{"direct SOP start", "/api/runs", `{"projectId":"workbench","workflowId":"handoff-sop"}`, false, true, false},
+		{"ordinary issue dispatch", "/api/issues/handoff-issue/dispatch", `{}`, false, false, false},
+		{"revoked SOP start", "/api/runs", `{"projectId":"workbench","workflowId":"handoff-sop"}`, false, true, true},
+		{"revoked issue dispatch", "/api/issues/handoff-issue/dispatch", `{}`, false, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, user, _ := chatSandboxFixture(t)
@@ -40,6 +43,9 @@ func TestConversationSOPDispatchUsesBoundWorkspace(t *testing.T) {
 			if err := h.repo.PutRunner(runner); err != nil {
 				t.Fatal(err)
 			}
+			if err := h.repo.SetRunnerSharedProjects(runner.ID, user.ID, []string{wf.ProjectID}); err != nil {
+				t.Fatal(err)
+			}
 			owner, err := h.engine.StartConversationWorkspace("Conversation", domain.TelemetryContext{
 				ProjectID: wf.ProjectID, ResponsibleUserID: user.ID, ExecutionPinned: true, ExecutionRunnerID: runner.ID,
 			}, "business")
@@ -51,6 +57,11 @@ func TestConversationSOPDispatchUsesBoundWorkspace(t *testing.T) {
 				ID: sessionID, ProjectID: wf.ProjectID, WorkspaceRunID: owner.ID, OwnWorkspaceRunIDs: []string{owner.ID},
 			}); err != nil {
 				t.Fatal(err)
+			}
+			if tc.revokeGrant {
+				if err := h.repo.SetRunnerSharedProjects(runner.ID, user.ID, nil); err != nil {
+					t.Fatal(err)
+				}
 			}
 			api := New(h.repo, h.engine, tracker.NewService(), "", "")
 			c, rec := workbenchContext(user, http.MethodPost, tc.path, bytes.NewBufferString(tc.body))
@@ -67,7 +78,11 @@ func TestConversationSOPDispatchUsesBoundWorkspace(t *testing.T) {
 					c.Request.Header.Set(chatSessionHeader, sessionID)
 				}
 				api.ServeHTTP(rec, c.Request)
-				if rec.Code < 200 || rec.Code >= 300 || bytes.Contains(rec.Body.Bytes(), []byte(`"isError":true`)) {
+				if tc.revokeGrant {
+					if rec.Code != http.StatusForbidden || !bytes.Contains(rec.Body.Bytes(), []byte(repo.ErrRunnerProjectDenied.Error())) {
+						t.Fatalf("dispatch with revoked runner access returned %d: %s", rec.Code, rec.Body)
+					}
+				} else if rec.Code < 200 || rec.Code >= 300 || bytes.Contains(rec.Body.Bytes(), []byte(`"isError":true`)) {
 					t.Fatalf("dispatch returned %d: %s", rec.Code, rec.Body.String())
 				}
 			}
@@ -76,6 +91,12 @@ func TestConversationSOPDispatchUsesBoundWorkspace(t *testing.T) {
 				if run.WorkflowID == wf.ID {
 					sop = run
 				}
+			}
+			if tc.revokeGrant {
+				if sop.ID != "" || h.repo.IssueHasTaskForWorkflow(issue.ID, wf.ID) {
+					t.Fatal("dispatch with revoked runner access left a run or task")
+				}
+				return
 			}
 			if sop.ID == "" {
 				t.Fatal("SOP was not started")
