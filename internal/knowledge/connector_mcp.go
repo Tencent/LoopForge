@@ -74,7 +74,15 @@ func (mcpFactory) Meta() domain.ConnectorTypeMeta {
 				Placeholder: "X-API-Key: your-key",
 				Required:    false,
 				Secret:      true,
-				Help:        "每行填写一个 Header: Value（例如 X-API-Key: xxx），保存后加密存储",
+				Help:        "每行填写一个 Header: Value（例如 Authorization: <TOKEN> 或 X-Lark-MCP-TAT: xxx），保存后加密存储",
+			},
+			{
+				Key:         "allowedTools",
+				Label:       "允许工具白名单（可选）",
+				Kind:        "text",
+				Placeholder: "例如：fetch-doc, search-doc 或 manage.search_file, get_content",
+				Required:    false,
+				Help:        "逗号或换行分隔；留空按默认只读策略放行，配置后仅放行列表内的工具（推荐用于飞书远程端点与腾讯文档）",
 			},
 			{
 				Key:      "oauth",
@@ -109,6 +117,7 @@ func (mcpFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConn
 	}
 	cfg.Headers = normalizeHeaderMap(cfg.Headers)
 	cfg.DefaultSources = CleanList(cfg.DefaultSources)
+	cfg.AllowedTools = CleanList(cfg.AllowedTools)
 
 	secret.Token = stripBearer(secret.Token)
 	secret.Headers = normalizeHeaderMap(secret.Headers)
@@ -268,8 +277,9 @@ func (c *mcpConnector) Tools(ctx context.Context) ([]mcpclient.Tool, error) {
 	}
 	out := make([]mcpclient.Tool, 0, len(all))
 	var blocked []string
+	allowSet := buildAllowedToolSet(c.spec.Config.AllowedTools)
 	for _, t := range all {
-		allowed, reason := describeReadOnlyMCPTool(t)
+		allowed, reason := describeReadOnlyMCPTool(t, allowSet)
 		if allowed {
 			out = append(out, t)
 		} else {
@@ -280,14 +290,38 @@ func (c *mcpConnector) Tools(ctx context.Context) ([]mcpclient.Tool, error) {
 	return out, nil
 }
 
+func buildAllowedToolSet(allowed []string) map[string]struct{} {
+	if len(allowed) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(allowed))
+	for _, name := range allowed {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			set[name] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
+}
+
 func isAllowedReadOnlyMCPTool(t mcpclient.Tool) bool {
-	allowed, _ := describeReadOnlyMCPTool(t)
+	allowed, _ := describeReadOnlyMCPTool(t, nil)
 	return allowed
 }
 
-func describeReadOnlyMCPTool(t mcpclient.Tool) (bool, string) {
-	if strings.TrimSpace(t.Name) == "" {
+func describeReadOnlyMCPTool(t mcpclient.Tool, allowSet map[string]struct{}) (bool, string) {
+	name := strings.TrimSpace(t.Name)
+	if name == "" {
 		return false, "empty_name"
+	}
+	if len(allowSet) > 0 {
+		if _, ok := allowSet[name]; ok {
+			return true, "allowed_by_allowlist"
+		}
+		return false, "not_in_allowlist"
 	}
 	var hints struct {
 		ReadOnly    *bool `json:"readOnlyHint"`
@@ -307,13 +341,22 @@ func describeReadOnlyMCPTool(t mcpclient.Tool) (bool, string) {
 	return true, "unannotated_allowed"
 }
 
+func isMCPSourceListTool(name string) bool {
+	switch strings.TrimSpace(name) {
+	case WeKnoraToolListKnowledgeBases, ToolListSources, "ragflow_list_datasets", "query_space_list":
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *mcpConnector) ListSources(ctx context.Context) ([]Source, error) {
 	tools, err := c.Tools(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var sourceTool string
-	for _, candidate := range []string{WeKnoraToolListKnowledgeBases, ToolListSources} {
+	for _, candidate := range []string{WeKnoraToolListKnowledgeBases, ToolListSources, "ragflow_list_datasets", "query_space_list"} {
 		for _, t := range tools {
 			if t.Name == candidate {
 				sourceTool = candidate
@@ -350,15 +393,28 @@ func parseSourcesFromMCPText(raw string) []Source {
 				if !ok {
 					continue
 				}
-				id := strings.TrimSpace(argString(m["id"]))
+				id := firstNonEmpty(
+					strings.TrimSpace(argString(m["id"])),
+					strings.TrimSpace(argString(m["dataset_id"])),
+					strings.TrimSpace(argString(m["space_id"])),
+				)
 				if id == "" || seen[id] {
 					continue
 				}
 				seen[id] = true
-				name := firstNonEmpty(argString(m["name"]), argString(m["title"]), id)
+				name := firstNonEmpty(
+					argString(m["name"]),
+					argString(m["title"]),
+					argString(m["dataset_name"]),
+					argString(m["space_name"]),
+					id,
+				)
 				docCount := argInt(m["doc_count"], 0)
 				if docCount == 0 {
 					docCount = argInt(m["knowledge_count"], 0)
+				}
+				if docCount == 0 {
+					docCount = argInt(m["document_count"], 0)
 				}
 				out = append(out, Source{
 					ID:          id,
@@ -369,7 +425,7 @@ func parseSourcesFromMCPText(raw string) []Source {
 				})
 			}
 		case map[string]any:
-			for _, key := range []string{"knowledge_bases", "sources", "items", "data"} {
+			for _, key := range []string{"knowledge_bases", "sources", "datasets", "spaces", "space_list", "items", "data"} {
 				if sub, ok := x[key]; ok {
 					walk(sub)
 				}
@@ -416,7 +472,7 @@ func (c *mcpConnector) CallTool(ctx context.Context, toolName string, args map[s
 	}
 
 	trimmed := strings.TrimSpace(text)
-	if len(scope.Allowlist()) > 0 && (toolName == WeKnoraToolListKnowledgeBases || toolName == ToolListSources) {
+	if len(scope.Allowlist()) > 0 && isMCPSourceListTool(toolName) {
 		trimmed = filterMCPSourcesJSON(trimmed, scope)
 	}
 	trimmed = truncateRunes(trimmed, 32000)
@@ -473,13 +529,13 @@ func applyScopeToMCPArgs(tool mcpclient.Tool, args map[string]any, scope SourceS
 		}
 		return cloned, nil
 	}
-	for _, singleKey := range []string{"source", "knowledge_base_id", "kb_id"} {
+	for _, singleKey := range []string{"source", "knowledge_base_id", "kb_id", "dataset_id", "space_id"} {
 		if val := strings.TrimSpace(argString(cloned[singleKey])); val != "" && !scope.Allows(val) {
 			return nil, fmt.Errorf("知识库来源 %q 不在当前授权范围内", val)
 		}
 	}
 	hasArrayArg := false
-	for _, listKey := range []string{"knowledge_base_ids", "sources"} {
+	for _, listKey := range []string{"knowledge_base_ids", "sources", "dataset_ids", "space_ids"} {
 		if _, exists := cloned[listKey]; exists {
 			req := argStringList(cloned[listKey])
 			filtered, err := scope.FilterIDs(req)
@@ -494,6 +550,10 @@ func applyScopeToMCPArgs(tool mcpclient.Tool, args map[string]any, scope SourceS
 		props := toolSchemaProperties(tool.InputSchema)
 		if _, ok := props["knowledge_base_ids"]; ok {
 			cloned["knowledge_base_ids"] = allowed
+		} else if _, ok := props["dataset_ids"]; ok {
+			cloned["dataset_ids"] = allowed
+		} else if _, ok := props["space_ids"]; ok {
+			cloned["space_ids"] = allowed
 		} else if _, ok := props["sources"]; ok || tool.Name == ToolSearch {
 			cloned["sources"] = allowed
 		}
@@ -520,7 +580,7 @@ func filterMCPSourcesJSON(raw string, scope SourceScope) string {
 		return raw
 	}
 	changed := false
-	for _, key := range []string{"knowledge_bases", "sources"} {
+	for _, key := range []string{"knowledge_bases", "sources", "datasets", "spaces", "space_list"} {
 		arr, ok := root[key].([]any)
 		if !ok {
 			continue
@@ -528,7 +588,12 @@ func filterMCPSourcesJSON(raw string, scope SourceScope) string {
 		kept := make([]any, 0, len(arr))
 		for _, item := range arr {
 			if m, isMap := item.(map[string]any); isMap {
-				if id := strings.TrimSpace(argString(m["id"])); id != "" && !scope.Allows(id) {
+				id := firstNonEmpty(
+					strings.TrimSpace(argString(m["id"])),
+					strings.TrimSpace(argString(m["dataset_id"])),
+					strings.TrimSpace(argString(m["space_id"])),
+				)
+				if id != "" && !scope.Allows(id) {
 					continue
 				}
 			}

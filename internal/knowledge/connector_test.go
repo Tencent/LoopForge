@@ -386,3 +386,131 @@ func TestProxyTokenSignVerify(t *testing.T) {
 		t.Fatal("expected missing ref rejection")
 	}
 }
+
+func TestMCPConnectorAllowedToolsAndVendorAdapters(t *testing.T) {
+	var lastRetrievalArgs map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     any            `json:"id"`
+			Method string         `json:"method"`
+			Params map[string]any `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "initialize":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"protocolVersion": "2024-11-05"}})
+		case "tools/list":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      req.ID,
+				"result": map[string]any{
+					"tools": []map[string]any{
+						// Feishu remote returns readOnlyHint=false for fetch-doc/search-doc.
+						{"name": "fetch-doc", "description": "Fetch Feishu doc", "annotations": map[string]any{"readOnlyHint": false}},
+						{"name": "search-doc", "description": "Search Feishu doc", "annotations": map[string]any{"readOnlyHint": false}},
+						{"name": "create-doc", "description": "Create doc", "annotations": map[string]any{"readOnlyHint": false}},
+						// Tencent Docs unannotated tools (mix of read + write).
+						{"name": "manage.search_file", "description": "Search Tencent Docs"},
+						{"name": "doc.delete_file", "description": "Delete Tencent Docs"},
+						// RAGFlow tools with dataset_ids schema.
+						{"name": "ragflow_list_datasets", "description": "List RAGFlow datasets"},
+						{
+							"name":        "ragflow_retrieval",
+							"description": "Retrieve chunks",
+							"inputSchema": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"question":    map[string]any{"type": "string"},
+									"dataset_ids": map[string]any{"type": "array"},
+								},
+							},
+						},
+					},
+				},
+			})
+		case "tools/call":
+			name, _ := req.Params["name"].(string)
+			args, _ := req.Params["arguments"].(map[string]any)
+			var payload string
+			switch name {
+			case "ragflow_list_datasets":
+				payload = `{"datasets":[{"id":"ds-1","name":"星云网关","document_count":3},{"id":"ds-2","name":"私有库","document_count":1}]}`
+			case "ragflow_retrieval":
+				lastRetrievalArgs = args
+				payload = `{"chunks":[{"dataset_id":"ds-1","document_id":"doc-9","document_keyword":"01_星云网关_架构与规格.md","content":"管理端口为 18443"}]}`
+			default:
+				payload = `{"ok":true}`
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      req.ID,
+				"result":  map[string]any{"content": []map[string]any{{"type": "text", "text": payload}}},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	idSeq := 0
+	ids := []string{"v1", "v2", "v3"}
+	svc := NewService(newMemoryConnectorStore(), func() string {
+		id := ids[idSeq]
+		idSeq++
+		return id
+	})
+	exec := NewExecutor(svc)
+	ctx := context.Background()
+
+	// 1. Explicit allowlist overrides Feishu readOnlyHint=false and blocks unannotated write tools (doc.delete_file).
+	feishuConn, err := svc.CreateConnector(ctx, 9, ConnectorInput{
+		Name:     "飞书远程",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: srv.URL,
+		Config: &domain.KnowledgeConnectorConfig{
+			AllowedTools: []string{"fetch-doc", "search-doc", "manage.search_file"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, tools, err := exec.ReferenceTools(ctx, 9, domain.KnowledgeRef{ConnectorID: feishuConn.ID, Mode: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 3 {
+		t.Fatalf("expected exactly 3 allowlisted tools, got %+v", tools)
+	}
+	if _, _, err := exec.ExecuteReferenceTool(ctx, 9, domain.KnowledgeRef{ConnectorID: feishuConn.ID, Mode: "all"}, "doc.delete_file", nil, ""); err == nil {
+		t.Fatal("unlisted tool doc.delete_file must be blocked by allowlist")
+	}
+	if _, _, err := exec.ExecuteReferenceTool(ctx, 9, domain.KnowledgeRef{ConnectorID: feishuConn.ID, Mode: "all"}, "create-doc", nil, ""); err == nil {
+		t.Fatal("unlisted tool create-doc must be blocked by allowlist")
+	}
+
+	// 2. RAGFlow dataset listing, dataset_ids scope injection, and evidence extraction.
+	ragflowConn, err := svc.CreateConnector(ctx, 9, ConnectorInput{
+		Name:     "RAGFlow",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: srv.URL,
+		Secret:   domain.KnowledgeConnectorSecret{Token: "ragflow-key"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources, err := svc.ListConnectorSources(ctx, 9, ragflowConn.ID)
+	if err != nil || len(sources) != 2 || sources[0].ID != "ds-1" || sources[0].DocCount != 3 {
+		t.Fatalf("expected ragflow_list_datasets to populate sources, got sources=%+v err=%v", sources, err)
+	}
+	ref := domain.KnowledgeRef{ConnectorID: ragflowConn.ID, Mode: "allowlist", Sources: []string{"ds-1"}}
+	read, _, err := exec.ExecuteReferenceTool(ctx, 9, ref, "ragflow_retrieval", map[string]any{"question": "管理端口"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dsIDs, ok := lastRetrievalArgs["dataset_ids"].([]any)
+	if !ok || len(dsIDs) != 1 || dsIDs[0] != "ds-1" {
+		t.Fatalf("expected dataset_ids=[ds-1] injected by scope, got %+v", lastRetrievalArgs)
+	}
+	if len(read.Evidences) != 1 || read.Evidences[0].SourceID != "ds-1" || read.Evidences[0].FileName != "01_星云网关_架构与规格.md" {
+		t.Fatalf("unexpected RAGFlow evidence: %+v", read.Evidences)
+	}
+}

@@ -88,7 +88,7 @@ func BuiltinOAuthPresets() []OAuthProviderPreset {
 			Scopes:       []string{"all"},
 			AuthMethod:   OAuthAuthMethodPost,
 			TokenHeader:  "Authorization",
-			TokenPrefix:  "Bearer ",
+			TokenPrefix:  "",
 			SupportsDCR:  false,
 			ScopesEnv:    "LOOPFORGE_OAUTH_TENCENT_DOCS_SCOPES",
 		},

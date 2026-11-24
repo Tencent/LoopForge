@@ -331,8 +331,7 @@ test('手动发起 SOP 运行弹窗支持覆盖个人知识库并在重开后重
   assert.equal(document.querySelector('#runKnowledgeRefsResetBtn').hidden, true);
 });
 
-test('knowledge OAuth 授权前端：预设厂商卡片未授权灰阶/授权后彩色、三分段抽屉、草稿自动保存与 BroadcastChannel 闭环', async t => {
-  let authorizedState = false;
+test('前端隐藏 OAuth 入口，常用知识库模板预填免授权/静态 Token/工具白名单并正常保存', async t => {
   let createdConn = null;
   let lastSavedPayload = null;
 
@@ -340,15 +339,16 @@ test('knowledge OAuth 授权前端：预设厂商卡片未授权灰阶/授权后
     ...DEFAULT_TYPES.filter(item => item.type !== 'mcp'),
     {
       type: 'mcp',
-      name: '通用知识 MCP',
+      name: '通用知识 MCP（Streamable HTTP）',
       description: '对接任意实现 search/fetch 工具的远端 MCP 服务',
       supportsSubSources: true,
       defaultAuthType: 'bearer',
       fields: [
         { key: 'endpoint', label: 'MCP 服务地址', kind: 'url', required: true },
+        { key: 'token', label: 'Bearer Token（可选）', kind: 'secret', required: false, secret: true },
+        { key: 'headers', label: '认证请求头（可选）', kind: 'kv', required: false, secret: true },
+        { key: 'allowedTools', label: '允许工具白名单（可选）', kind: 'text', required: false },
         { key: 'oauth', label: 'OAuth 2.0 授权', kind: 'oauth', required: false },
-        { key: 'token', label: 'Bearer Token', kind: 'secret', required: false, secret: true },
-        { key: 'headers', label: '认证请求头', kind: 'kv', required: false, secret: true },
       ],
     },
   ];
@@ -358,29 +358,8 @@ test('knowledge OAuth 授权前端：预设厂商卡片未授权灰阶/授权后
       { method: 'GET', path: '/api/knowledge/connector-types', body: mcpTypes },
       {
         method: 'GET',
-        path: '/api/knowledge/oauth/presets',
-        body: {
-          redirectUri: 'http://localhost:8080/api/knowledge/oauth/callback',
-          presets: [
-            { key: 'feishu', name: '飞书 / Lark', configured: true, scopes: ['wiki:wiki:readonly'] },
-            { key: 'tencent_docs', name: '腾讯文档', configured: false, scopes: ['all'] },
-            { key: 'lexiang', name: '乐享知识库', configured: true, scopes: ['knowledge:read'] },
-            { key: 'notion', name: 'Notion', configured: false, scopes: [] },
-          ],
-        },
-      },
-      {
-        method: 'GET',
         path: '/api/knowledge/connectors',
-        body: () => {
-          if (!createdConn) return [];
-          return [
-            Object.assign({}, createdConn, {
-              oauthStatus: authorizedState ? 'authorized' : 'unauthorized',
-              oauthExpiresAt: authorizedState ? '2026-11-25T03:12:00Z' : '',
-            }),
-          ];
-        },
+        body: () => (createdConn ? [createdConn] : []),
       },
       {
         method: 'POST',
@@ -390,51 +369,25 @@ test('knowledge OAuth 授权前端：预设厂商卡片未授权灰阶/授权后
           const body = call.body;
           lastSavedPayload = body;
           createdConn = {
-            id: 'conn-oauth-1',
+            id: 'conn-tdocs-1',
             name: body.name,
             type: body.type,
             endpoint: body.endpoint,
             enabled: body.enabled !== false,
-            secretConfigured: false,
-            oauthMode: body.config?.extra?.oauthMode || 'auto',
-            oauthStatus: 'unauthorized',
-            config: body.config || { extra: {} },
+            secretConfigured: Boolean(body.secret),
+            config: body.config || {},
           };
           return createdConn;
         },
       },
       {
-        method: 'PUT',
-        path: '/api/knowledge/connectors/conn-oauth-1',
-        body: call => {
-          const body = call.body;
-          lastSavedPayload = body;
-          createdConn = Object.assign({}, createdConn, {
-            name: body.name,
-            endpoint: body.endpoint,
-            oauthMode: body.config?.extra?.oauthMode || 'auto',
-            config: body.config || { extra: {} },
-            secretConfigured: body.clearSecret ? false : createdConn.secretConfigured,
-          });
-          return createdConn;
-        },
-      },
-      {
         method: 'POST',
-        path: '/api/knowledge/oauth/mcp/authorize',
-        body: {
-          authorizeUrl: 'https://auth.example.com/oauth/authorize?state=test-state',
-          redirectUri: 'http://localhost:8080/api/knowledge/oauth/callback',
-        },
-      },
-      {
-        method: 'POST',
-        path: '/api/knowledge/connectors/conn-oauth-1/check',
+        path: '/api/knowledge/connectors/conn-tdocs-1/check',
         body: {
           ok: true,
           latencyMs: 18,
-          tools: ['search_knowledge', 'read_document'],
-          sources: [{ id: 'space-lexiang', name: '乐问研发知识库' }],
+          tools: ['manage.search_file', 'get_content'],
+          sources: [{ id: 'space-1', name: '云栖居家庭装修项目' }],
         },
       },
     ],
@@ -444,111 +397,61 @@ test('knowledge OAuth 授权前端：预设厂商卡片未授权灰阶/授权后
   const { window } = app;
   const { document } = window;
 
-  let openedPopupUrl = '';
-  let popupClosed = false;
-  window.open = url => {
-    openedPopupUrl = url;
-    popupClosed = false;
-    const win = {
-      closed: false,
-      focus() {},
-      close() {
-        this.closed = true;
-        popupClosed = true;
-      },
-      location: {
-        _href: url,
-        get href() {
-          return this._href;
-        },
-        set href(next) {
-          this._href = next;
-          openedPopupUrl = next;
-        },
-        origin: window.location.origin,
-        search: '',
-      },
-    };
-    return win;
-  };
-
-  const bcListeners = [];
-  window.BroadcastChannel = class FakeBroadcastChannel {
-    constructor(name) {
-      this.name = name;
-    }
-    addEventListener(type, fn) {
-      if (type === 'message') bcListeners.push(fn);
-    }
-    close() {}
-  };
-
   app.evaluate('window.__kbToasts = []; toast = (m, k) => window.__kbToasts.push({ m, k });');
   app.evaluate("switchView('knowledge')");
   await settle(10);
 
-  // 1. 预设厂商卡片矩阵：未授权时全部处于灰阶 is-unauthorized 状态
-  const lexiangCard = document.querySelector('.kb-vendor-card[data-vendor-key="lexiang"]');
-  assert.ok(lexiangCard, '应渲染腾讯乐问预设卡片');
-  assert.equal(lexiangCard.getAttribute('data-oauth-state'), 'unauthorized');
-  assert.equal(lexiangCard.classList.contains('is-unauthorized'), true);
+  // 1. 不请求 /api/knowledge/oauth/presets，且页面不出现 OAuth 一键授权按钮
+  assert.equal(callsTo(app, 'GET', '/api/knowledge/oauth/presets').length, 0);
+  assert.equal(document.querySelector('[data-kb-vendor-auth]'), null);
 
-  // 2. 打开抽屉并切换到通用知识 MCP，检查 OAuth 三分段（免授权 | 自动发现 | 预注册）
-  document.querySelector('#kbAddConnectorBtn').click();
+  // 2. 展示已验证的 4 个常用知识库模板卡片
+  for (const key of ['ragflow', 'lexiang', 'tencent_docs', 'feishu']) {
+    const card = document.querySelector(`.kb-vendor-card[data-vendor-key="${key}"]`);
+    assert.ok(card, `应渲染 ${key} 模板卡片`);
+    assert.equal(card.getAttribute('data-vendor-state'), 'unconfigured');
+  }
+
+  // 3. 点击腾讯文档「快速配置」，验证端点、认证请求头模板、6 个只读工具白名单预填，且隐藏 OAuth 字段
+  document.querySelector('[data-kb-vendor-setup="tencent_docs"]').click();
   await settle(6);
 
   const drawer = document.querySelector('#kbDrawer');
-  const typeSel = drawer.querySelector('#kbConnType');
-  typeSel.value = 'mcp';
-  typeSel.dispatchEvent(new window.Event('change', { bubbles: true }));
-  await settle(4);
+  assert.equal(drawer.querySelector('#kbOAuthCard'), null, '前端应完全隐藏 OAuth 授权卡片');
+  assert.equal(drawer.querySelector('#kbField-endpoint').value, 'https://docs.qq.com/openapi/mcp');
+  assert.equal(drawer.querySelector('#kbField-token').value, '');
+  assert.match(drawer.querySelector('#kbField-headers').value, /Authorization:/);
+  assert.match(drawer.querySelector('#kbField-allowedTools').value, /manage\.search_file/);
+  assert.match(drawer.querySelector('#kbField-allowedTools').value, /sheet\.get_cell_data/);
 
-  const oauthCard = drawer.querySelector('#kbOAuthCard');
-  assert.ok(oauthCard, 'MCP 类型应渲染 OAuth 授权卡片');
+  // 填入真实静态 Token 并保存
+  drawer.querySelector('#kbField-headers').value = 'Authorization: td-static-token-123';
+  drawer.querySelector('#kbDrawerSaveBtn').click();
+  await settle(12);
 
-  // 切换到预注册 OAuth 2.0，验证只读回调地址、预设下拉与 configured=true 公共应用提示
-  const presetSegBtn = oauthCard.querySelector('[data-oauth-seg="preset"]');
-  presetSegBtn.click();
-  await settle(4);
-  assert.equal(drawer.querySelector('#kbOAuthPresetPane').hidden, false);
-  assert.equal(drawer.querySelector('#kbOAuthRedirectUri').value, 'http://localhost:8080/api/knowledge/oauth/callback');
-  assert.equal(drawer.querySelector('#kbOAuthPublicNotice').hidden, false);
-  // 静态 token 字段在 OAuth 激活时应自动隐藏
-  assert.equal(drawer.querySelector('[data-kb-field-wrap="token"]').hidden, true);
+  assert.ok(lastSavedPayload);
+  assert.equal(lastSavedPayload.endpoint, 'https://docs.qq.com/openapi/mcp');
+  assert.equal(lastSavedPayload.secret.headers.Authorization, 'td-static-token-123');
+  assert.equal(lastSavedPayload.secret.token, undefined);
+  assert.equal(lastSavedPayload.config.extra.oauthMode, undefined);
+  assert.deepEqual(normalizeRealm(lastSavedPayload.config.allowedTools), [
+    'manage.search_file',
+    'get_content',
+    'smartcanvas.read',
+    'query_space_list',
+    'query_space_node',
+    'sheet.get_cell_data',
+  ]);
 
-  // 切换到自动发现态，填写 Endpoint 并点击「一键前往第三方授权」（未保存草稿自动先 POST 保存再 POST authorize）
-  const autoSegBtn = oauthCard.querySelector('[data-oauth-seg="auto"]');
-  autoSegBtn.click();
-  await settle(4);
+  // 4. 保存后腾讯文档模板卡片变为已接入状态，连接器卡片展示工具白名单且无 OAuth 按钮
+  const updatedCard = document.querySelector('.kb-vendor-card[data-vendor-key="tencent_docs"]');
+  assert.equal(updatedCard.getAttribute('data-vendor-state'), 'configured');
+  assert.equal(updatedCard.classList.contains('is-authorized'), true);
+  assert.equal(document.querySelector('[data-kb-authorize]'), null);
 
-  drawer.querySelector('#kbField-endpoint').value = 'https://mcp.lexiangla.com/mcp';
-  drawer.querySelector('#kbOAuthAuthorizeBtn').click();
-  await settle(15);
-
-  assert.ok(lastSavedPayload, '点击一键授权应先静默保存连接器草稿');
-  assert.equal(lastSavedPayload.config.extra.oauthMode, 'auto');
-  assert.equal(Boolean(lastSavedPayload.secret?.token), false, '严禁将 OAuth 配置写入 secret.token');
-  assert.equal(openedPopupUrl, 'https://auth.example.com/oauth/authorize?state=test-state');
-  assert.equal(popupClosed, false);
-
-  // 3. 模拟关闭抽屉后 BroadcastChannel 收到完成页消息，验证持久订阅仍会重拉连接器、卡片由灰变彩并自动触发 check
-  drawer.querySelector('#kbDrawerCloseBtn').click();
-  await settle(4);
-
-  authorizedState = true;
-  for (const fn of bcListeners) {
-    await fn({ data: { type: 'knowledge-oauth-completed' } });
-  }
-  await settle(15);
-
-  const updatedLexiangCard = document.querySelector('.kb-vendor-card[data-vendor-key="lexiang"]');
-  assert.equal(updatedLexiangCard.getAttribute('data-oauth-state'), 'authorized');
-  assert.equal(updatedLexiangCard.classList.contains('is-authorized'), true);
-  assert.match(updatedLexiangCard.textContent, /OAuth 已授权/);
-
-  const connCard = document.querySelector('[data-kb-card="conn-oauth-1"]');
+  const connCard = document.querySelector('[data-kb-card="conn-tdocs-1"]');
   assert.ok(connCard);
-  assert.match(connCard.textContent, /OAuth 已授权/);
-  assert.match(connCard.textContent, /探测通过/);
+  assert.match(connCard.textContent, /工具白名单/);
+  assert.match(connCard.textContent, /manage\.search_file/);
 });
 

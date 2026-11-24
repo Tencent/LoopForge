@@ -495,6 +495,11 @@
   border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
 }
 
+#knowledgeView .kb-vendor-icon[data-brand="ragflow"] {
+  background: color-mix(in srgb, var(--hui-warn, #d97706) 14%, var(--hui-surface));
+  color: var(--hui-warn, #d97706);
+}
+
 #knowledgeView .kb-vendor-icon[data-brand="lexiang"] {
   background: color-mix(in srgb, var(--hui-info) 14%, var(--hui-surface));
   color: var(--hui-info);
@@ -510,9 +515,19 @@
   color: var(--hui-accent);
 }
 
-#knowledgeView .kb-vendor-icon[data-brand="notion"] {
-  background: color-mix(in srgb, var(--hui-text) 10%, var(--hui-surface));
+#kbDrawer .kb-vendor-guide {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--hui-info, var(--hui-accent)) 28%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-info, var(--hui-accent)) 6%, var(--hui-surface));
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--hui-text);
+}
+
+#kbDrawer .kb-vendor-guide strong {
+  display: block;
+  margin-bottom: 4px;
 }
 
 #knowledgeView .kb-vendor-info {

@@ -69,8 +69,8 @@ func extractKnowledgeMetaFromMap(m map[string]any) knowledgeParentMeta {
 		}
 		return ""
 	}
-	sourceID := strVal("source", "source_id", "knowledge_base_id", "kb_id")
-	docID := strVal("document_id", "doc_id", "knowledge_id", "path", "uri", "id")
+	sourceID := strVal("source", "source_id", "knowledge_base_id", "kb_id", "dataset_id", "space_id")
+	docID := strVal("document_id", "doc_id", "file_id", "knowledge_id", "path", "uri", "id")
 	connID := strVal("connection_id", "connectionId", "connector_id", "connectorId")
 	if connID == "" && strings.Contains(sourceID, "::") {
 		connID, _, _ = strings.Cut(sourceID, "::")
@@ -81,10 +81,10 @@ func extractKnowledgeMetaFromMap(m map[string]any) knowledgeParentMeta {
 	return knowledgeParentMeta{
 		connID:     connID,
 		sourceID:   sourceID,
-		sourceName: strVal("source_name", "knowledge_base_name", "kb_name"),
+		sourceName: strVal("source_name", "knowledge_base_name", "kb_name", "dataset_name", "space_name"),
 		docID:      docID,
-		title:      strVal("title", "knowledge_title", "document_title", "doc_title", "name"),
-		fileName:   strVal("file_name", "filename", "doc_name"),
+		title:      strVal("title", "knowledge_title", "document_title", "doc_title", "document_keyword", "name"),
+		fileName:   strVal("file_name", "filename", "doc_name", "document_name", "document_keyword"),
 	}
 }
 
@@ -149,8 +149,8 @@ func summarizeChunksLocator(chunks []any) string {
 
 func hasExplicitDocParentMeta(m map[string]any) bool {
 	for _, k := range []string{
-		"document_id", "doc_id", "knowledge_id", "path", "uri",
-		"title", "knowledge_title", "document_title", "doc_title", "file_name", "filename", "doc_name",
+		"document_id", "doc_id", "file_id", "knowledge_id", "path", "uri",
+		"title", "knowledge_title", "document_title", "doc_title", "file_name", "filename", "doc_name", "document_name", "document_keyword",
 	} {
 		if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
 			return true

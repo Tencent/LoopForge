@@ -36,6 +36,7 @@ type KnowledgeConnectorConfig struct {
 	TimeoutSec     int               `json:"timeoutSec,omitempty"`
 	Headers        map[string]string `json:"headers,omitempty"`
 	DefaultSources []string          `json:"defaultSources,omitempty"`
+	AllowedTools   []string          `json:"allowedTools,omitempty"`
 	Extra          map[string]string `json:"extra,omitempty"`
 }
 
