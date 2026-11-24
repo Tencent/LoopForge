@@ -2506,7 +2506,12 @@ paths:
     get:
       tags: [Assets]
       operationId: listExecutorModels
-      description: Returns, per built-in CLI, the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs.
+      description: Returns, per built-in CLI, the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs. `configured` reports whether a SOP run can use the CLI for the caller, and `personal` whether the caller saved their own key for it.
+      parameters:
+        - name: projectId
+          in: query
+          schema: {type: string}
+          description: Resolve `configured` against the execution machine a SOP in this project uses, which is the caller's project default before the personal default. Omit it for personal SOPs.
       responses:
         "200":
           description: Model catalog keyed by CLI id

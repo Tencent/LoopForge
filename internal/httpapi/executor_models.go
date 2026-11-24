@@ -234,7 +234,9 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 		catalog.Models = []executorModelInfo{}
 		catalogs[runtime.AgentCLIAntigravity] = catalog
 	}
-	hasCredential := engine.ExecutorCredentials(h.repo, user.ID)
+	// A project SOP runs on the caller's project default machine, so the
+	// picker resolves credentials against the same machine.
+	hasCredential := engine.ExecutorCredentials(h.repo, user.ID, strings.TrimSpace(c.Query("projectId")))
 	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
 		id := engine
 		if engine == assistantEngineClaude {

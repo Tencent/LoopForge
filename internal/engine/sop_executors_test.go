@@ -388,14 +388,14 @@ func TestExecutorCredentialsUseTheDefaultRunnerLogin(t *testing.T) {
 	if err := st.PutRunner(machine); err != nil {
 		t.Fatal(err)
 	}
-	hasCredential := ExecutorCredentials(st, user.ID)
+	hasCredential := ExecutorCredentials(st, user.ID, "")
 	if hasCredential("codex") {
 		t.Fatal("machine login counted without a default machine")
 	}
 	if err := st.SetDefaultRunner(user.ID, machine.ID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	hasCredential = ExecutorCredentials(st, user.ID)
+	hasCredential = ExecutorCredentials(st, user.ID, "")
 	for kind, want := range map[string]bool{"codex": true, "kimi": true, "claude-code": false, "codebuddy": false} {
 		if got := hasCredential(kind); got != want {
 			t.Errorf("%s credential = %t, want %t", kind, got, want)
@@ -404,4 +404,63 @@ func TestExecutorCredentialsUseTheDefaultRunnerLogin(t *testing.T) {
 	if newSOPExecutorAccess(st, domain.TelemetryContext{ResponsibleUserID: user.ID, ExecutionRunnerID: machine.ID}).configured("kimi") {
 		t.Fatal("a run must still require the machine to provide the CLI")
 	}
+}
+
+// A project SOP runs on the user's project default machine, so the picker
+// must resolve the same machine instead of only the personal default.
+func TestExecutorCredentialsFollowTheProjectDefaultRunner(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.PutUser(domain.User{ID: 42, LoginName: "project-picker"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range []domain.Project{
+		{ID: "picker-shared", Name: "Picker shared", OwnerID: 42},
+		{ID: "picker-other", Name: "Picker other", OwnerID: 42},
+	} {
+		if err := st.PutProject(project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projectMachine := domain.Runner{ID: "picker-project-machine", OwnerUserID: 42, Status: domain.RunnerStatusOnline,
+		Runtimes: []domain.RunnerRuntime{{Provider: "codex", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline}}}
+	personalMachine := domain.Runner{ID: "picker-personal-machine", OwnerUserID: 42, Status: domain.RunnerStatusOnline,
+		Runtimes: []domain.RunnerRuntime{{Provider: "claude-code", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline}}}
+	for _, machine := range []domain.Runner{projectMachine, personalMachine} {
+		if err := st.PutRunner(machine); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SetRunnerSharedProjects(projectMachine.ID, 42, []string{"picker-shared"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProjectDefaultRunner(42, "picker-shared", projectMachine.ID); err != nil {
+		t.Fatal(err)
+	}
+	check := func(projectID string, want map[string]bool) {
+		t.Helper()
+		execution := domain.TelemetryContext{ProjectID: projectID, ResponsibleUserID: 42}
+		(&Engine{repo: st}).selectSOPExecutionTarget(&execution)
+		hasCredential := ExecutorCredentials(st, 42, projectID)
+		for kind, expected := range want {
+			if got := hasCredential(kind); got != expected {
+				t.Errorf("project %q %s credential = %t, want %t (run machine %q)", projectID, kind, got, expected, execution.ExecutionRunnerID)
+			}
+		}
+	}
+	// Only the project default is set: a run in the project uses its login.
+	check("picker-shared", map[string]bool{"codex": true, "claude-code": false})
+	check("", map[string]bool{"codex": false, "claude-code": false})
+
+	// The personal default is not shared with either project, so a project run
+	// does not use it, while a personal SOP does.
+	if err := st.SetDefaultRunner(42, personalMachine.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	check("picker-shared", map[string]bool{"codex": true, "claude-code": false})
+	check("picker-other", map[string]bool{"codex": false, "claude-code": false})
+	check("", map[string]bool{"codex": false, "claude-code": true})
 }

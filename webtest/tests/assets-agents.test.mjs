@@ -312,3 +312,25 @@ test('a personal catalog does not rewrite an existing role effort during a name 
   assert.equal(saved.name, 'Renamed');
   assert.equal(saved.effort, 'xhigh');
 });
+
+test('role editor checks executors against the current project default machine', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', (call) => ({
+    codebuddy: { configured: false, models: [] },
+    codex: { configured: call.search === '?projectId=project-1', models: [{ id: 'gpt-project' }], efforts: [] },
+    claude: { configured: false, models: [] },
+  }));
+  app.evaluate(`state.data.executors=[{id:'codebuddy',name:'CodeBuddy'},{id:'codex',name:'Codex'}]`);
+  app.evaluate(`state.projectFilter='project-1';switchView('agents');renderAgents();openAgentWizard()`);
+  await settle(3);
+  const requests = () => app.router.calls.filter((c) => c.path === '/api/executor-models').map((c) => c.search);
+  assert.deepEqual(requests(), ['?projectId=project-1']);
+  const options = () => [...app.document.querySelector('#agentForm').elements.executorId.options].map((o) => o.value);
+  assert.ok(options().includes('codex'), `project options: ${options()}`);
+
+  app.evaluate(`closeAgentWizard();state.projectFilter='';openAgentWizard()`);
+  await settle(3);
+  assert.deepEqual(requests(), ['?projectId=project-1', '']);
+  assert.equal(options().includes('codex'), false, 'the personal scope must not reuse the project catalog');
+});

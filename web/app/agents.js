@@ -145,20 +145,26 @@ function storedAgentExecutorId(agent){
 }
 const AGENT_CUSTOM_MODEL='__custom__';
 let executorModelCatalogUser, executorModelCatalogRequest, agentModelRevision=0;
+// A project SOP runs on the user's project default machine, so the catalog is
+// scoped to the signed-in user and the current project.
+function executorModelCatalogKey(){
+  const user=state.currentUser?.id;
+  return user==null?user:`${user}\n${state.projectFilter||''}`;
+}
 function executorModelCatalogs(){
-  return executorModelCatalogUser===state.currentUser?.id?(window.AgentFlowExecutorModels||{}):{};
+  return executorModelCatalogUser===executorModelCatalogKey()?(window.AgentFlowExecutorModels||{}):{};
 }
 function executorConfigured(id){
   return !executorModelCatalogRequest&&executorModelCatalogs()[id]?.configured===true;
 }
 function loadExecutorModelCatalogs(){
-  const user=state.currentUser?.id;
+  const user=executorModelCatalogKey(),project=state.projectFilter||'';
   if(executorModelCatalogRequest&&executorModelCatalogRequest.user===user)return executorModelCatalogRequest.pending;
   if(executorModelCatalogUser!==user)window.AgentFlowExecutorModels=null;
   executorModelCatalogUser=user;
   const request={user};
-  request.pending=api('/api/executor-models',{silent:true}).catch(()=>null).then(data=>{
-    if(executorModelCatalogRequest===request&&state.currentUser?.id===user){
+  request.pending=api(`/api/executor-models${project?`?projectId=${encodeURIComponent(project)}`:''}`,{silent:true}).catch(()=>null).then(data=>{
+    if(executorModelCatalogRequest===request&&executorModelCatalogKey()===user){
       window.AgentFlowExecutorModels=data;
     }
   }).finally(()=>{

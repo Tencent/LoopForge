@@ -920,4 +920,36 @@ func TestExecutorModelsConfiguredMatchesRunTimeCredentials(t *testing.T) {
 		t.Fatalf("assistant models disagree for runner login: %+v", engines)
 	}
 	check("personal key with a shared key", personal, map[string]availability{"codebuddy": {true, false}, "codex": {true, true}})
+
+	// A project SOP runs on the user's project default machine, even when the
+	// user has no personal default.
+	if err := st.PutUser(domain.User{LoginName: "picker-project"}); err != nil {
+		t.Fatal(err)
+	}
+	member, _ := st.UserByLoginName("picker-project")
+	if err := st.PutProject(domain.Project{ID: "picker-project", Name: "Picker project", OwnerID: member.ID}); err != nil {
+		t.Fatal(err)
+	}
+	projectMachine := machine
+	projectMachine.ID, projectMachine.OwnerUserID = "picker-project-machine", member.ID
+	if err := st.PutRunner(projectMachine); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRunnerSharedProjects(projectMachine.ID, member.ID, []string{"picker-project"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProjectDefaultRunner(member.ID, "picker-project", projectMachine.ID); err != nil {
+		t.Fatal(err)
+	}
+	for query, want := range map[string]bool{"": false, "?projectId=picker-project": true, "?projectId=other-project": false} {
+		c, rec := workbenchContext(member, http.MethodGet, "/api/executor-models"+query, &bytes.Buffer{})
+		handler.executorModels(c)
+		var catalogs map[string]map[string]any
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalogs) != nil {
+			t.Fatalf("executor models%s: %d %s", query, rec.Code, rec.Body)
+		}
+		if catalogs["codex"]["configured"] != want || catalogs["claude"]["configured"] != false {
+			t.Errorf("project default%s: codex=%v claude=%v, want codex=%t", query, catalogs["codex"]["configured"], catalogs["claude"]["configured"], want)
+		}
+	}
 }

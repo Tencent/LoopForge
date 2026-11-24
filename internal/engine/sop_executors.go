@@ -39,11 +39,15 @@ func newSOPExecutorAccess(s *repo.Store, ec domain.TelemetryContext) sopExecutor
 	}
 }
 
-// ExecutorCredentials reports which CLIs have a credential for a SOP run on
-// the user's default machine. Pickers use it before the run's machine is
-// known, so the run-time check still verifies that the machine provides the CLI.
-func ExecutorCredentials(s *repo.Store, userID int64) func(kind string) bool {
-	return newSOPExecutorAccess(s, domain.TelemetryContext{ResponsibleUserID: userID, ExecutionRunnerID: s.DefaultRunner(userID)}).hasCredential
+// ExecutorCredentials reports which CLIs have a credential for a SOP run that
+// userID starts in projectID (empty for a personal SOP). It resolves the
+// machine the same way a new SOP run does: the user's project default first,
+// then the personal default when the project may use it. Pickers use it before
+// the run's machine is known, so the run-time check still verifies that the
+// machine provides the CLI.
+func ExecutorCredentials(s *repo.Store, userID int64, projectID string) func(kind string) bool {
+	runnerID := s.ResolveRunnerDefaults(userID, projectID).Runner.ID
+	return newSOPExecutorAccess(s, domain.TelemetryContext{ResponsibleUserID: userID, ProjectID: projectID, ExecutionRunnerID: runnerID}).hasCredential
 }
 
 func sopRunnerAuthMode(ec domain.TelemetryContext, runner domain.Runner, provider string) string {
