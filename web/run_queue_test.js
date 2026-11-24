@@ -107,18 +107,18 @@ async function main() {
   assert.equal(limitUI.runnerRunLimitHTML({id:'cloud',ownerUserId:0}),'','platform machines have no per-machine limit');
   const unlimited=limitUI.runnerRunLimitHTML({id:'m',name:'mac',ownerUserId:9});
   assert.match(unlimited,/placeholder="不限" value=""/);
-  assert.match(unlimited,/class="runner-tip" tabindex="0"[^>]*data-tip="[^"]*不受项目 10 条限额/,'run limit rules stay in a focusable tip');
-  assert.match(limitUI.runnerRunLimitHTML({id:'m',ownerUserId:9,runLimit:5}),/value="5"/);
+  assert.match(unlimited,/class="runner-tip" tabindex="0"[^>]*data-tip="[^"]*默认 10 条[^"]*共享项目共用机器名额/,'run limit rules stay in a focusable tip');
+  assert.match(limitUI.runnerRunLimitHTML({id:'m',ownerUserId:9,runLimit:10}),/value="10"/);
   assert.doesNotMatch(limitUI.runnerRunLimitHTML({id:'"><img src=x onerror=alert(1)>',ownerUserId:9}),/<img/,'runner id is escaped');
 
   const saves=[],notes=[];let refreshed=0,rendered=0;
   const saver={state:{runners:[{id:'m',ownerUserId:9}]},api:async(path,opts)=>{saves.push([path,opts.method,JSON.parse(opts.body)]);return{id:'m',ownerUserId:9,runLimit:JSON.parse(opts.body).runLimit}},toast:m=>notes.push(m),refreshRunners:()=>refreshed++,renderRunnersView:()=>rendered++};
   load(saver,['saveRunnerRunLimit']);
-  await saver.saveRunnerRunLimit('m','3');
+  await saver.saveRunnerRunLimit('m','250');
   await saver.saveRunnerRunLimit('m','  ');
-  assert.deepEqual(saves,[['/api/runners/m/run-limit','PUT',{runLimit:3}],['/api/runners/m/run-limit','PUT',{runLimit:0}]]);
-  assert.equal(saver.state.runners[0].runLimit,0);assert.match(notes[0],/3 条/);assert.match(notes[1],/不限/);
-  for (const bad of ['0.5','-2','101','abc']) await saver.saveRunnerRunLimit('m',bad);
+  assert.deepEqual(saves,[['/api/runners/m/run-limit','PUT',{runLimit:250}],['/api/runners/m/run-limit','PUT',{runLimit:0}]]);
+  assert.equal(saver.state.runners[0].runLimit,0);assert.match(notes[0],/250 条/);assert.match(notes[1],/不限/);
+  for (const bad of ['0.5','-2',String(Number.MAX_SAFE_INTEGER+1),'abc']) await saver.saveRunnerRunLimit('m',bad);
   assert.equal(saves.length,2,'invalid values are not sent');assert.equal(refreshed,4);
 
   const nodes=load({issueExecution:()=>({run:{status:'queued',nodes:{old:{status:'failed'}}}})},['currentRunNode']);
