@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -132,10 +133,42 @@ func botDeliveryQuestion(content string) string {
 	return strings.TrimSpace(question)
 }
 
+// botQuotedRun restores the stored URL marker in a rendered quote and
+// returns the run named by the generated details link.
+func botQuotedRun(quote string) (runID, storedQuote string) {
+	const details = "\n查看详情："
+	message := "\n" + quote
+	offset := strings.LastIndex(message, details)
+	question := strings.Index(message, "\n问题：")
+	hint := strings.LastIndex(message, "\n回答方式：")
+	// A details line between the question and hint belongs to the question.
+	if question >= 0 && question < offset && offset < hint {
+		offset = strings.LastIndex(message[:question], details)
+	}
+	if offset < 0 {
+		return "", quote
+	}
+	start := offset + len(details)
+	line, _, _ := strings.Cut(message[start:], "\n")
+	link, err := url.Parse(strings.TrimSpace(line))
+	if err != nil || (link.Scheme != "http" && link.Scheme != "https") || link.Hostname() == "" {
+		return "", quote
+	}
+	id, ok := strings.CutPrefix(link.EscapedFragment(), "/runs/")
+	if !ok || id == "" || strings.ContainsAny(id, "/?#") {
+		return "", quote
+	}
+	runID, err = url.PathUnescape(id)
+	if err != nil {
+		return "", quote
+	}
+	return runID, message[1:start] + domain.NotificationURLMarker + message[start+len(line):]
+}
+
 // botQuotedNodeQuestion locates a quoted delivery by platform message ID or
 // by the complete message or question text. Exact text matches include
-// answered questions so they can be refused as stale. Prefix matches always
-// require a numbered selection because the original may be outside the window.
+// answered questions so they can be refused as stale. A details link limits
+// matches to its run. A missing match there or a prefix match needs a number.
 func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction) (d domain.NotificationDelivery, quoted, needsPick bool) {
 	if item.ReplyTo != "" {
 		d, ok := h.repo.NotificationDeliveryByPlatformMessage(bot.ID, item.ReplyTo)
@@ -156,8 +189,11 @@ func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, co
 		return d, false, false
 	}
 	question := botDeliveryQuestion(quote)
+	var runID string
 	if question == "" {
 		question = quote
+	} else {
+		runID, quote = botQuotedRun(quote)
 	}
 	sent := h.botChatNodeQuestions(bot, conv, item.SenderID)
 	for _, quotes := range []func(botNodeQuestion) bool{
@@ -170,7 +206,7 @@ func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, co
 	} {
 		var hits []botNodeQuestion
 		for _, q := range sent {
-			if quotes(q) {
+			if (runID == "" || q.delivery.RunID == runID) && quotes(q) {
 				hits = append(hits, q)
 			}
 		}
@@ -180,6 +216,9 @@ func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, co
 		case 1:
 			return hits[0].delivery, true, false
 		}
+		return d, false, true
+	}
+	if runID != "" {
 		return d, false, true
 	}
 	for _, q := range sent {

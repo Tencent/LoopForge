@@ -296,7 +296,9 @@ func TestFeishuCardAnswerReachesTheNode(t *testing.T) {
 // question can still be identified even when it spans several lines.
 func TestWeComQuoteAnswersNodeQuestion(t *testing.T) {
 	f := newNodeQuestionFixture(t, domain.BotChannelWeCom)
-	f.ask("run-q", nodeQuestionText+"\n邮箱需要验证吗？")
+	question := nodeQuestionText + "\n邮箱需要验证吗？"
+	f.ask("run-other", question)
+	f.ask("run-q", question)
 	sent := f.question("run-q")
 	quote := strings.ReplaceAll(sent.Content, domain.NotificationURLMarker, "https://platform.example/#/runs/run-q")
 	item := domain.BotInteraction{ID: "msg-wecom-quote", BotID: f.bot.ID, ConversationID: f.conv.ID, SenderID: "ou-member", Content: "@Bot 都要", Quote: quote}
@@ -306,6 +308,13 @@ func TestWeComQuoteAnswersNodeQuestion(t *testing.T) {
 	}
 	if node := f.node("run-q"); !strings.Contains(node.Feedback, "都要") {
 		t.Fatalf("node = %+v", node)
+	}
+	item.Content = "@Bot 补充已回答的问题"
+	if reply, handled := f.h.botNodeAnswer(context.Background(), f.bot, f.conv, item); !handled || !strings.Contains(reply, "答案未提交") {
+		t.Fatalf("stale linked question = %q, handled = %v", reply, handled)
+	}
+	if node := f.node("run-other"); node.Status != "waiting_approval" || node.Feedback != "" {
+		t.Fatalf("another run changed: %+v", node)
 	}
 }
 
@@ -355,13 +364,15 @@ func TestWeComQuoteAnswersTheQuotedOfSimilarQuestions(t *testing.T) {
 }
 
 func TestWeComQuoteOfAnOldQuestionRequiresANumber(t *testing.T) {
+	const oldQuestion = nodeQuestionText + "\n第三方登录要不要？"
 	for name, current := range map[string]string{
-		"common prefix":         nodeQuestionText + "邮箱需要验证吗？",
-		"whole question prefix": nodeQuestionText,
+		"common prefix":          nodeQuestionText + "邮箱需要验证吗？",
+		"whole question prefix":  nodeQuestionText,
+		"same complete question": oldQuestion,
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newNodeQuestionFixture(t, domain.BotChannelWeCom)
-			f.ask("old", nodeQuestionText+"\n第三方登录要不要？")
+			f.ask("old", oldQuestion)
 			old := f.question("old")
 			if reply := f.say("ou-member", "回答：暂时不用"); !strings.Contains(reply, "已把答案提交") {
 				t.Fatalf("answer old question = %q", reply)
@@ -373,10 +384,11 @@ func TestWeComQuoteOfAnOldQuestionRequiresANumber(t *testing.T) {
 			f.ask("current", current)
 			f.question("current")
 
-			item := domain.BotInteraction{
-				BotID: f.bot.ID, ConversationID: f.conv.ID, SenderID: "ou-member",
-				Quote: strings.ReplaceAll(old.Content, domain.NotificationURLMarker, "https://platform.example/#/runs/old"),
+			quote := old.Content
+			if current == oldQuestion {
+				quote = strings.ReplaceAll(quote, domain.NotificationURLMarker, "https://platform.example/#/runs/old")
 			}
+			item := domain.BotInteraction{BotID: f.bot.ID, ConversationID: f.conv.ID, SenderID: "ou-member", Quote: quote}
 			for _, text := range []string{"@Bot 补充旧问题", "@Bot 回答：补充旧问题"} {
 				item.Content = text
 				reply, handled := f.h.botNodeAnswer(context.Background(), f.bot, f.conv, item)
