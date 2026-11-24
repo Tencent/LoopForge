@@ -86,9 +86,11 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 	}
 }
 
+var errNodeArtifactCommit = errors.New("保存节点终态和产物失败")
+
 func shouldRetryFailedAttempt(node domain.WorkflowNode, attempt int, err error) bool {
-	// A failed artifact write must not repeat a child that already succeeded.
-	if errors.Is(err, ErrWorkspaceControlConfiguration) || errors.Is(err, errSOPArtifactWrite) {
+	// A failed artifact write follows a completed execution, which may have side effects.
+	if errors.Is(err, ErrWorkspaceControlConfiguration) || errors.Is(err, errSOPArtifactWrite) || errors.Is(err, errNodeArtifactCommit) {
 		return false
 	}
 	if err != nil && (isMaxTurnsErr(err) || strings.Contains(err.Error(), "verification ") || runtime.IsCwdMountFailure(err)) {

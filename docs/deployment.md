@@ -217,6 +217,11 @@ For an external MySQL deployment, review that migration and check column existen
 | Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql`, `041_native_sandbox_inline_assets.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
 
+For an existing database with `run_artifacts.content` defined as `TEXT`, apply
+`migrations/042_run_artifacts_content_mediumtext.sql` before starting the upgraded
+platform. It widens the column for the 1 MiB artifact contract and preserves
+existing data, character set, collation and nullability. The script is safe to rerun.
+
 ### Migrating existing sandboxes to inline assets
 
 Check out the upgraded release and stop the old platform and any other processes using the database. Back up the database while MySQL remains running. For Compose installations, apply the migration with these commands.

@@ -1115,11 +1115,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	if !shouldCommitNodeOutcome(current, current.Nodes[node.ID], executionGeneration, executionAttempt, true) {
 		return
 	}
-	e.updateRun(runID, func(r *domain.Run) {
+	var outcomeNode *domain.NodeRun
+	commitErr := e.updateRunErr(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true) {
 			return
 		}
+		outcomeNode = nr
 		r.Artifacts = append(r.Artifacts, artifacts...)
 		nr.Output = output
 		nr.Error = ""
@@ -1133,6 +1135,19 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			e.event(r, node.ID, "node.succeeded", node.Name+" 已完成")
 		}
 	})
+	if outcomeNode == nil {
+		return
+	}
+	if commitErr != nil {
+		if ctx.Err() == nil && !errors.Is(commitErr, repo.ErrRunLeaseLost) {
+			failure := fmt.Errorf("%w：%w", errNodeArtifactCommit, commitErr)
+			e.observe(runID, node.ID, domain.TelemetryEvent{
+				Category: "orchestration", Name: "node.commit.failed", Phase: "finish", Level: "error", Message: failure.Error(),
+			})
+			e.nodeFailedAt(runID, node, outcomeNode.Attempt, executionGeneration, failure, false)
+		}
+		return
+	}
 	for _, artifact := range artifacts {
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "mediaType": artifact.MediaType, "size": artifact.Size, "sha256": artifact.SHA256}})
 	}
