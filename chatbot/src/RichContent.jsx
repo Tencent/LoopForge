@@ -23,6 +23,7 @@ import {
 } from "./agent-browser-links.js";
 import {
   buildKnowledgeSummary,
+  collapseAdjacentDuplicateCitations,
   extractCitedIdsInOrder,
   filterKnowledgeReadsForAttempt,
   formatTextForCopy,
@@ -453,6 +454,13 @@ export function RichContent({
       live: streaming,
     });
   }, [hasReads, precomputedSummary, knowledgeReads, text, streaming]);
+  const displayText = useMemo(
+    () =>
+      hasReads && knowledgeSummary
+        ? collapseAdjacentDuplicateCitations(text, knowledgeSummary)
+        : text,
+    [hasReads, knowledgeSummary, text],
+  );
   const streamingCiteOrder = useMemo(() => {
     if (!enableCites || hasReads) return null;
     const ids = extractCitedIdsInOrder([text]);
@@ -495,7 +503,7 @@ export function RichContent({
           components={markdownComponents}
           urlTransform={markdownURL}
         >
-          {text}
+          {displayText}
         </Markdown>
       </div>
     </MarkdownAssets.Provider>

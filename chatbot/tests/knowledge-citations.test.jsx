@@ -348,6 +348,37 @@ describe("knowledge citations & two-layer summary", () => {
     ], ["见 [[knowledge:ev_fn_1]]"]);
     expect(fileNameSummary.usedDocs[0].label).toBe("我是谁.md");
     expect(fileNameSummary.referencedDocs[1].label).toBe("部署规范 (deploy.pdf)");
+
+    // Adjacent markers for the same document collapse to one [1], while distinct docs keep [1][2].
+    const dedupReads = [
+      {
+        id: "r_s",
+        serverId: "agentflow-knowledge",
+        tool: "search_knowledge",
+        status: "hit",
+        evidences: [
+          { id: "ev_s1", sourceId: "kb1", sourceName: "库一", documentId: "doc1", title: "我是谁", fileName: "我是谁.md", cited: true },
+          { id: "ev_s2", sourceId: "kb2", sourceName: "库二", documentId: "doc2", title: "我是谁", fileName: "我是谁.md", cited: true },
+        ],
+      },
+      {
+        id: "r_r",
+        serverId: "agentflow-knowledge",
+        tool: "read_document",
+        status: "hit",
+        evidences: [
+          { id: "ev_r1", sourceId: "kb1", sourceName: "库一", documentId: "doc1", title: "我是谁", fileName: "我是谁.md", cited: true },
+        ],
+      },
+    ];
+    const multiText = "同文档重复 [[knowledge:ev_s1]][[knowledge:ev_r1]]，多文档综合 [[knowledge:ev_s1]][[knowledge:ev_s2]]。";
+    const { container: dedupContainer } = render(
+      <RichContent message={multiText} knowledgeReads={dedupReads} />,
+    );
+    const supButtons = [...dedupContainer.querySelectorAll("button.knowledge-cite-sup")].map((b) => b.textContent);
+    expect(supButtons).toEqual(["1", "1", "2"]);
+    const copiedMulti = formatTextForCopy(multiText, dedupReads, [multiText]);
+    expect(copiedMulti).toContain("同文档重复 [1]，多文档综合 [1][2]。");
   });
 
   test("ignores markers inside code blocks/inline code and formats clean copy text & streaming mask", () => {

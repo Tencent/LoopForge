@@ -121,13 +121,13 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 	}
 	switch request.Method {
 	case "initialize":
-		instructions := "团队知识库（只读）。先 kb_search 检索，再用 kb_fetch 读原文；采用结论时请在引用处紧跟输出工具返回中的 [[knowledge:<id>]] 标记（勿放入反引号）。"
+		instructions := "团队知识库（只读）。先 kb_search 检索，再用 kb_fetch 读原文；采用结论时在引用处紧跟输出直接支撑该句事实的 [[knowledge:<id>]] 标记（勿放入反引号，不漏标不多标）。"
 		if knowledge.HasWeKnoraConnection(settings) {
-			instructions = "团队知识库（WeKnora，只读）。先 list_knowledge_bases 或 search_knowledge 检索，再用 read_document 读原文；采用结论时请在引用处紧跟输出工具返回中的 [[knowledge:<id>]] 标记（勿放入反引号）。"
+			instructions = "团队知识库（WeKnora，只读）。先 list_knowledge_bases 或 search_knowledge 检索，再用 read_document 读原文；采用结论时在引用处紧跟输出直接支撑该句事实的 [[knowledge:<id>]] 标记（勿放入反引号，不漏标不多标）。"
 		}
 		if claims.Ref != nil && claims.Ref.ServerID != domain.KnowledgeMCPServerID {
 			serverName, _ := knowledgeServerMeta(h.deps, claims.Ref.ServerID)
-			instructions = "用户为当前 SOP 节点绑定的只读知识服务（" + serverName + "）。请优先使用本服务的检索与文档读取工具核实团队规范、架构、接口与排障资料，采用结论时请在引用处紧跟输出工具返回中的 [[knowledge:<id>]] 标记（勿放入反引号）。"
+			instructions = "用户为当前 SOP 节点绑定的只读知识服务（" + serverName + "）。请优先使用本服务的检索与文档读取工具核实团队规范、架构、接口与排障资料，采用结论时在引用处紧跟输出直接支撑该句事实的 [[knowledge:<id>]] 标记（勿放入反引号，不漏标不多标）。"
 		}
 		return reply(map[string]any{
 			"protocolVersion": agentToolProtocolVersion(request.Params),

@@ -686,6 +686,28 @@ function replaceCiteMarkersOutsideCode(raw, replacer) {
   return out.join("\n");
 }
 
+export function collapseAdjacentDuplicateCitations(text = "", summary = null) {
+  const raw = String(text || "");
+  if (!raw.includes("[[knowledge:") || !summary?.byCiteId?.size) return raw;
+  const runPattern =
+    /\[\[knowledge:[A-Za-z0-9_.-]+\]\](?:[ \t]*\[\[knowledge:[A-Za-z0-9_.-]+\]\])+/g;
+  return replaceCiteMarkersOutsideCode(raw, (segment) =>
+    segment.replace(runPattern, (run) => {
+      const seenIndices = new Set();
+      const kept = [];
+      for (const m of run.matchAll(/\[\[knowledge:([A-Za-z0-9_.-]+)\]\]/g)) {
+        const entry = summary.byCiteId.get(m[1]);
+        if (entry) {
+          if (seenIndices.has(entry.citeIndex)) continue;
+          seenIndices.add(entry.citeIndex);
+        }
+        kept.push(m[0]);
+      }
+      return kept.join("");
+    }),
+  );
+}
+
 export function formatTextForCopy(
   text,
   knowledgeReads = [],
@@ -710,8 +732,9 @@ export function formatTextForCopy(
           Array.isArray(textsOrSummary) ? textsOrSummary : [raw],
         );
 
+  const deduped = collapseAdjacentDuplicateCitations(raw, summary);
   const referencedIndices = new Set();
-  const formatted = replaceCiteMarkersOutsideCode(raw, (segment) =>
+  const formatted = replaceCiteMarkersOutsideCode(deduped, (segment) =>
     segment.replace(
       /([ \t]*)\[\[knowledge:([A-Za-z0-9_.-]+)\]\]/g,
       (_, leadingSpace, id) => {

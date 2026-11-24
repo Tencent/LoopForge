@@ -725,7 +725,7 @@ func TestKnowledgeReadResultUniqueEvidenceIDsAndMetadata(t *testing.T) {
 	if ev2.ID == read1.Evidences[0].ID {
 		t.Fatalf("evidence IDs collided across calls: %q", ev2.ID)
 	}
-	if !strings.Contains(text2, "运维手册库 / 部署手册.md (#chunk-2..#chunk-4)") {
+	if !strings.Contains(text2, "知识库「运维手册库」 / 部署手册.md (#chunk-2..#chunk-4)") {
 		t.Fatalf("expected readable source + title + chunk range in tool text:\n%s", text2)
 	}
 

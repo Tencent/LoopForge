@@ -636,8 +636,22 @@ function runKBCiteButtonHTML(citeId,summary,hasReads){
   const tip=[entry.doc.sourceName||entry.doc.sourceId,entry.doc.label,entry.locator].filter(Boolean).join(' · ');
   return `<button type="button" class="run-kb-cite" data-kb-cite="${entry.citeIndex}" title="${escapeHTML(tip||entry.doc.label)}" aria-label="${escapeHTML(tr(`引用 [${entry.citeIndex}] ${entry.doc.label}`,`Citation [${entry.citeIndex}] ${entry.doc.label}`))}">${entry.citeIndex}</button>`;
 }
-function formatPlainTextWithKnowledgeCitations(text,summary,hasReads){
+function collapseRunAdjacentDuplicateCitations(text,summary){
   const raw=String(text||'');
+  if(!raw.includes('[[knowledge:')||!summary?.byCiteId?.size)return raw;
+  const runRe=/\[\[knowledge:[A-Za-z0-9_.-]+\]\](?:[ \t]*\[\[knowledge:[A-Za-z0-9_.-]+\]\])+/g;
+  return replaceRunCiteMarkersOutsideCode(raw,seg=>seg.replace(runRe,run=>{
+    const seen=new Set(),kept=[];
+    for(const m of run.matchAll(/\[\[knowledge:([A-Za-z0-9_.-]+)\]\]/g)){
+      const entry=summary.byCiteId.get(m[1]);
+      if(entry){if(seen.has(entry.citeIndex))continue;seen.add(entry.citeIndex)}
+      kept.push(m[0]);
+    }
+    return kept.join('');
+  }));
+}
+function formatPlainTextWithKnowledgeCitations(text,summary,hasReads){
+  const raw=hasReads?collapseRunAdjacentDuplicateCitations(text,summary):String(text||'');
   if(!hasReads||!raw.includes('[[knowledge:'))return escapeHTML(raw);
   const re=/\[\[knowledge:([A-Za-z0-9_.-]+)\]\]/g;
   let out='',last=0,m;
@@ -695,7 +709,7 @@ function replaceRunCiteMarkersOutsideCode(raw,replacer){
   return out.join('\n');
 }
 function formatRunTextForCopy(text,summary,hasReads){
-  const raw=String(text||'');
+  const raw=hasReads?collapseRunAdjacentDuplicateCitations(text,summary):String(text||'');
   if(!hasReads||!raw.includes('[[knowledge:'))return raw;
   const refsSeen=new Set();
   const formatted=replaceRunCiteMarkersOutsideCode(raw,seg=>seg.replace(/([ \t]*)\[\[knowledge:([A-Za-z0-9_.-]+)\]\]/g,(_,lead,id)=>{
@@ -714,7 +728,7 @@ function formatRunTextForCopy(text,summary,hasReads){
   return `${formatted}\n\n${tr('参考来源','References')}:\n${lines.join('\n')}`;
 }
 function renderMarkdownWithKnowledgeCitations(content,summary,hasReads){
-  const raw=String(content||'');
+  const raw=hasReads?collapseRunAdjacentDuplicateCitations(content,summary):String(content||'');
   if(!hasReads||!raw.includes('[[knowledge:'))return renderMarkdown(raw);
   let prefix='LFKBCITETOKEN';
   while(raw.includes(prefix))prefix+='X';
