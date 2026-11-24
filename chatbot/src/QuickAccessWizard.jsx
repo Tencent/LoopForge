@@ -562,15 +562,20 @@ function parseGitHubRepo(raw) {
   };
 }
 
-// Explicit SSH and HTTP keep their transport. Managed HTTPS uses the configured host.
+// An ordinary managed link keeps its provider identity. Clone commands can
+// explicitly choose plaintext transport.
 export function parseGongfengRepo(raw, host = "") {
-  if (/^(?:git clone\s+)?http:\/\//i.test(String(raw || "").trim())) {
+  if (globalThis.LoopForgeExplicitHTTPClone(raw)) {
     return globalThis.LoopForgeGitHTTPRepository(raw);
   }
   return globalThis.LoopForgeGitSSH(raw) ||
     globalThis.LoopForgeGongfengRepository(raw, host) ||
-    globalThis.LoopForgeGitHTTPRepository(raw) ||
-    parseGitHubRepo(raw);
+    parseGitHubRepo(raw) ||
+    globalThis.LoopForgeGitHTTPRepository(raw);
+}
+
+function parseSavedRepo(repo, host) {
+  return parseGongfengRepo(repo?.provider === "http" ? globalThis.LoopForgeGitRepositoryReference(repo) : repo?.cloneUrl, host);
 }
 
 function slugifyProjectId(value) {
@@ -954,7 +959,14 @@ export default function QuickAccessWizard({
           const http = fresh.gitHttpCredentialsConfigured
             ? await api(`/api/users/${encodeURIComponent(userId)}/git-http-credentials`).catch(() => [])
             : [];
-          if (current()) setGitHttpHosts(http.map(item => item.host));
+          const savedHosts = Array.isArray(http) ? http.map(item => item.host) : [];
+          const authorized = savedHosts.some(host => host.startsWith("http://"))
+            ? await api("/api/git-http-hosts").catch(() => [])
+            : [];
+          if (current()) {
+            const authorizedHosts = new Set(Array.isArray(authorized) ? authorized.map(item => item.host) : []);
+            setGitHttpHosts(savedHosts.filter(host => !host.startsWith("http://") || authorizedHosts.has(host)));
+          }
         })
         .catch(() => {})
         .finally(() => { if (current()) setCredentialsPending(false); });
@@ -1076,7 +1088,7 @@ export default function QuickAccessWizard({
   const wizardStepCount = STEPS.length - 1;
   const gitHubReady = Boolean(storedUser?.gitHubCredentialConfigured);
   const gongfengReady = Boolean(storedUser?.gitTokenOAuth);
-  const hasGit = gitHubReady || gongfengReady || Boolean(storedUser?.gitSshKeyConfigured || storedUser?.gitHttpCredentialsConfigured);
+  const hasGit = gitHubReady || gongfengReady || Boolean(storedUser?.gitSshKeyConfigured) || gitHttpHosts.length > 0;
   const sshKeysLoaded = sshCredentials.userId === user?.id && sshCredentials.keys !== null;
   const hasSSHKey = (remote) => sshKeysLoaded && !sshCredentials.error && sshCredentials.keys.some(
     (key) => globalThis.LoopForgeGitSSHHost(key.host) === remote?.host,
@@ -1088,7 +1100,7 @@ export default function QuickAccessWizard({
     if (repo?.provider === "gongfeng") return { label: "工蜂", ready: gongfengReady };
     return { label: "Git", ready: hasGit };
   };
-  const selectedRepo = (bindRepoNow && parsedRepo) || parseGongfengRepo(defaultRepo?.cloneUrl, gongfengHost);
+  const selectedRepo = (bindRepoNow && parsedRepo) || parseSavedRepo(defaultRepo, gongfengHost);
   const repoAccess = gitAccess(selectedRepo);
   const readyCLIs = EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id));
   const cliReady = readyCLIs.length > 0 || Boolean(sponsoredModel);
@@ -1369,7 +1381,7 @@ export default function QuickAccessWizard({
         repository: boundRepo,
         workflow: provisionedWorkflow || activeWorkflow,
         roles: roles.map(({ id, name }) => ({ id, name })),
-        gitAccess: gitAccess(parseGongfengRepo(boundRepo?.cloneUrl, gongfengHost)),
+        gitAccess: gitAccess(parseSavedRepo(boundRepo, gongfengHost)),
         cliNames: EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id)).map(cli => cli.label),
       });
       setPhase("success");

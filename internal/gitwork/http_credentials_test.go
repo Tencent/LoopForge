@@ -2,9 +2,32 @@ package gitwork
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 )
+
+func TestPlainHTTPRedirectConfigMatchesIPv6Spellings(t *testing.T) {
+	for _, tc := range []struct {
+		scope, url string
+		want       bool
+	}{
+		{"http://[fd00::2]", "http://[FD00:0::0002]/team/app.git", true},
+		{"http://[fd00::2]:8443", "http://[FD00:0:0:0:0:0:0:2]:8443/team/app.git", true},
+		{"http://[fd00::2]:8443", "http://[fd00::2]:8444/team/app.git", false},
+		{"http://[fd00::2]:8443", "https://[fd00::2]:8443/team/app.git", false},
+		{"http://git.example.org:8443", "http://git.example.org:8443/team/app.git", true},
+	} {
+		out, err := exec.CommandContext(t.Context(), "git", "-c", PlainHTTPRedirectConfig(tc.scope)+"=false",
+			"config", "--get-urlmatch", "http.followRedirects", tc.url).Output()
+		if tc.want && (err != nil || strings.TrimSpace(string(out)) != "false") {
+			t.Errorf("redirect setting for %s from %s = %q, %v", tc.url, tc.scope, out, err)
+		}
+		if !tc.want && err == nil {
+			t.Errorf("unexpected redirect setting for %s from %s: %q", tc.url, tc.scope, out)
+		}
+	}
+}
 
 func TestHTTPSCredentialMatchesOnlyItsHostAndProtocol(t *testing.T) {
 	ctx := WithHTTPRemote(WithHTTPCredentials(WithToken(context.Background(), "legacy-must-not-answer"), map[string]HTTPCredential{

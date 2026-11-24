@@ -35,7 +35,7 @@ func (e *Engine) alignBaseline(repository domain.RepositoryContext, userID int64
 		}
 		return alignIntegrateBaseline(ctx, repository, e.repo)
 	}
-	if err := e.requireWorkBranchCapabilities(runner.ID, []domain.RepositoryContext{repository}); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities(runner.ID, []domain.RepositoryContext{repository}); err != nil {
 		return err
 	}
 	unlock, err := lockIntegration(e.repo, repository.RepositoryID)

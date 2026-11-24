@@ -59,6 +59,19 @@ globalThis.LoopForgeGitHTTPSHost = function normalizeHTTPSHost(raw) {
   }
 };
 
+// A pasted clone command explicitly selects plaintext transport.
+globalThis.LoopForgeExplicitHTTPClone = function isHTTPCloneCommand(raw) {
+  const input = String(raw || '').trim();
+  return input.startsWith('git clone ') && /^http:\/\//i.test(input.slice('git clone '.length).trimStart());
+};
+
+// Keep the stored transport when displaying a repository in an editable field.
+globalThis.LoopForgeGitRepositoryReference = function gitRepositoryReference(repository) {
+  if (repository?.provider === 'http' && repository.cloneUrl) return `git clone ${repository.cloneUrl}`;
+  if (repository?.provider === 'ssh') return repository.cloneUrl || '';
+  return repository?.webUrl || repository?.cloneUrl || repository?.gongfengProjectId || '';
+};
+
 // Generic HTTP(S) hosts use Git transport without a hosting API.
 globalThis.LoopForgeGitHTTPRepository = function parseHTTPRepository(raw) {
   const address=String(raw||'').trim().replace(/^git clone\s+/i,'');

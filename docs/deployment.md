@@ -138,9 +138,9 @@ When migrating a host from deployment CIDRs, include every IP the platform shoul
 
 In **Platform administration → Git Host Trust**, enter an HTTP instance address and select **Authorize**. This accepts hostnames and literal IP addresses, such as `http://git.example.org:8080`, `http://10.0.0.5:8080` or `http://[fd00::2]:8080`. HTTP sends credentials in cleartext.
 
-Under **Personal settings → Git access tokens**, select the authorized HTTP instance and enter your token and the server's Git authentication username if required. Add the repository using its `http://` clone URL. **Check repository access** runs `git ls-remote` against a repository at that exact endpoint. A successful check confirms read access. A push also requires a server that accepts pushes and credentials with write access.
+Under **Personal settings → Git access tokens**, select the authorized HTTP instance and enter your token and the server's Git authentication username if required. Add the repository using its `http://` clone URL. For a host that also has a managed provider, paste the `git clone http://host/team/repo.git` command to explicitly choose HTTP. **Check repository access** runs `git ls-remote` against a repository at that exact endpoint. A successful check confirms read access. A push also requires a server that accepts pushes and credentials with write access.
 
-HTTP and HTTPS have separate authorizations and personal credentials. Git resolves hostnames using the execution environment and disables redirects for authorized HTTP credentials. Use a Runner that includes HTTP token support. The Git transport supports generic repositories. PR and MR APIs depend on the hosting provider.
+HTTP and HTTPS have separate authorizations and personal credentials. Git resolves hostnames using the execution environment and disables redirects for authorized HTTP credentials. HTTP repositories on an execution machine require Runner 0.11.3 or later. The Git transport supports generic repositories. PR and MR APIs depend on the hosting provider.
 
 ### Git repositories over SSH
 

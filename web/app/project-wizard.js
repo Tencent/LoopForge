@@ -3,7 +3,7 @@
 // and can be skipped. Progress lives only in memory.
 const PROJECT_WIZARD_STEPS=[
   {id:'basic',title:'基本信息',desc:'名称与默认 SOP'},
-  {id:'repos',title:'代码仓库',desc:'绑定 GitHub 仓库'},
+  {id:'repos',title:'代码仓库',desc:'绑定 Git 仓库'},
   {id:'members',title:'项目成员',desc:'Owner 与协作成员'},
   {id:'tapd',title:'TAPD 集成',desc:'可选，导入 TAPD 需求'},
   {id:'done',title:'完成',desc:'开始使用新项目'},
@@ -245,13 +245,13 @@ function projectWizardBasicHTML(w){
 }
 function projectWizardRepoHint(url){
   const raw=String(url||'').trim(),info=raw?parseGongfengRepoURL(raw):null;
-  if(!raw)return '例如 https://github.com/owner/repo 或 git@gitlab.com:group/repo.git';
+  if(!raw)return '例如 https://github.com/owner/repo 或 git clone http://git.example.org/team/repo.git';
   if(info?.provider==='ssh')return `识别为 Git SSH · <b>${escapeHTML(info.name)}</b>。请平台管理员在「平台管理 → Git 主机信任」登记主机公钥，并在个人配置中添加 Git SSH 密钥。`;
   return info?`识别为 <b>${escapeHTML(info.name)}</b> · ${escapeHTML(repoDisplayPath(info,info.project))}`:'请输入 Git HTTP(S) 链接或 Git SSH 地址';
 }
 function projectWizardReposHTML(w){
   const project=projectWizardProject()||{},repos=projectWizardRepos();
-  const list=repos.map(r=>{const path=r.cloneUrl||r.gongfengProjectId||'',name=r.name||path||r.id,shown=repoDisplayPath(parseGongfengRepoURL(r.provider==='ssh'?r.cloneUrl:r.webUrl||path),path);return `<div class="pw-repo" data-pw-repo="${escapeHTML(r.id)}"><span class="pw-repo-ic">${pwIcon('repo',14,1.9)}</span><b title="${escapeHTML(name)}">${escapeHTML(name)}</b><code title="${escapeHTML(shown)}">${escapeHTML(shown)}</code><small>${escapeHTML(r.defaultBranch||'main')}</small>${r.integrateBranch?`<small title="集成分支">${escapeHTML(r.integrateBranch)}</small>`:''}${r.id===project.defaultRepositoryId?'<small class="is-def">默认</small>':''}<button type="button" class="pw-repo-rm" data-pw-repo-remove="${escapeHTML(r.id)}" title="移除" aria-label="移除仓库 ${escapeHTML(name)}">${pwIcon('x',14)}</button></div>`}).join('');
+  const list=repos.map(r=>{const path=r.cloneUrl||r.gongfengProjectId||'',name=r.name||path||r.id,shown=repoDisplayPath(parseGongfengRepoURL(globalThis.LoopForgeGitRepositoryReference(r)),path);return `<div class="pw-repo" data-pw-repo="${escapeHTML(r.id)}"><span class="pw-repo-ic">${pwIcon('repo',14,1.9)}</span><b title="${escapeHTML(name)}">${escapeHTML(name)}</b><code title="${escapeHTML(shown)}">${escapeHTML(shown)}</code><small>${escapeHTML(r.defaultBranch||'main')}</small>${r.integrateBranch?`<small title="集成分支">${escapeHTML(r.integrateBranch)}</small>`:''}${r.id===project.defaultRepositoryId?'<small class="is-def">默认</small>':''}<button type="button" class="pw-repo-rm" data-pw-repo-remove="${escapeHTML(r.id)}" title="移除" aria-label="移除仓库 ${escapeHTML(name)}">${pwIcon('x',14)}</button></div>`}).join('');
   const body=(list?`<div class="pw-repo-list">${list}</div>`:'')
     +'<div data-github-repositories></div>'
     +pwField('Git 仓库地址',`<input class="pw-input pw-mono" id="pwRepoUrl" name="repoUrl" value="${escapeHTML(w.repo.url)}" placeholder="https://github.com/owner/repo" spellcheck="false" autocomplete="off">`,{for:'pwRepoUrl',hint:projectWizardRepoHint(w.repo.url),hintAttrs:' data-pw-repo-hint'})

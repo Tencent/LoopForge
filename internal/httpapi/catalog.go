@@ -148,10 +148,12 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	}
 	// One pasted repository reference (web / SSH / clone / git clone)
 	// A generic web Git URL uses Git transport without a hosting adapter.
-	reference := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(sshReference, "git clone ")))
+	reference, cloneCommand := strings.CutPrefix(sshReference, "git clone ")
+	reference = strings.ToLower(strings.TrimSpace(reference))
+	plainHTTP := strings.HasPrefix(reference, "http://")
 	_, knownHost := domain.ParseRepositoryURL(sshReference)
 	if v.Provider == domain.RepositoryProviderHTTPS || v.Provider == domain.RepositoryProviderHTTP ||
-		strings.HasPrefix(reference, "http://") || !knownHost && strings.HasPrefix(reference, "https://") {
+		plainHTTP && cloneCommand || !knownHost && (plainHTTP || strings.HasPrefix(reference, "https://")) {
 		remote, name, err := gitwork.GitHTTPRepositoryURL(sshReference)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

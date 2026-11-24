@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -535,13 +536,24 @@ func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSe
 		return command, credentials
 	}
 	credentials.GitSSHHostKeys = h.repo.GitSSHKeysByHost(s.User.ID)
-	if hosts := h.repo.GitHTTPWorkspaceHosts(s.User.ID); len(hosts) > 0 {
-		if runner, ok := h.repo.Runner(s.ExecutionRunnerID); s.ExecutionRunnerID != "" && (!ok || !runner.SupportsGitHTTP()) {
-			assistantDiagnosticsFrom(ctx).platform("git.http_unavailable", fmt.Sprintf("执行机器需升级至 %s 才能在工作区使用 Git 访问令牌", domain.RunnerVersionGitHTTP), s.User)
-		} else {
-			credentials.GitHTTPHosts = hosts
-			command = runtime.WithCommandEnvironment(command, map[string]string{runtime.SessionGatewayEnv: agentToolMCPURL(s.Token)})
+	hosts := h.repo.GitHTTPWorkspaceHosts(s.User.ID)
+	if len(hosts) > 0 && s.ExecutionRunnerID != "" {
+		runner, _ := h.repo.Runner(s.ExecutionRunnerID)
+		if !runner.SupportsGitPlainHTTP() {
+			before := len(hosts)
+			maps.DeleteFunc(hosts, func(host, _ string) bool { return strings.HasPrefix(host, "http://") })
+			if len(hosts) < before {
+				assistantDiagnosticsFrom(ctx).platform("git.plain_http_unavailable", domain.RunnerGitPlainHTTPUpgradeMessage, s.User)
+			}
 		}
+		if len(hosts) > 0 && !runner.SupportsGitHTTP() {
+			assistantDiagnosticsFrom(ctx).platform("git.http_unavailable", fmt.Sprintf("执行机器需升级至 %s 才能在工作区使用 Git 访问令牌", domain.RunnerVersionGitHTTP), s.User)
+			hosts = nil
+		}
+	}
+	if len(hosts) > 0 {
+		credentials.GitHTTPHosts = hosts
+		command = runtime.WithCommandEnvironment(command, map[string]string{runtime.SessionGatewayEnv: agentToolMCPURL(s.Token)})
 	}
 	if user, ok := h.repo.User(s.User.ID); ok {
 		if login := strings.TrimSpace(user.LoginName); login != "" {

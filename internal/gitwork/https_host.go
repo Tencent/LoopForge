@@ -45,7 +45,11 @@ func GitCredentialScope(protocol, host string) (string, bool) {
 	return "", false
 }
 
-// PlainHTTPRedirectConfig is the Git config key for one canonical HTTP scope.
+// PlainHTTPRedirectConfig applies only to plaintext Git URLs. Git's URL
+// matching compares IPv6 spellings as strings, so match the port for literals.
 func PlainHTTPRedirectConfig(scope string) string {
+	if endpoint, err := domain.ParseGitHTTPEndpoint(scope); err == nil && strings.HasPrefix(endpoint.Authority, "[") {
+		scope = "http://*:" + endpoint.Port()
+	}
 	return "http." + scope + "/.followRedirects"
 }

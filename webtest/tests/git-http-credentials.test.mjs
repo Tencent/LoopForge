@@ -131,7 +131,8 @@ test('generic HTTP credentials select the authorized endpoint and check a reposi
   const instance = {host:'http://192.0.2.13:8080', platform:'other'};
   const remote = instance.host + '/team/app.git';
   assert.equal(app.evaluate(`LoopForgeGitHTTPRepository(${JSON.stringify(remote)}).host`), instance.host);
-  assert.equal(app.evaluate("parseGongfengRepoURL('http://github.com/team/app.git').provider"), 'http');
+  assert.equal(app.evaluate("parseGongfengRepoURL('http://github.com/team/app.git').provider"), 'github');
+  assert.equal(app.evaluate("parseGongfengRepoURL('git clone http://github.com/team/app.git').provider"), 'http');
   assert.equal(app.evaluate("LoopForgeGitHTTPRepository('http://0x7f000001/team/app.git')"), null);
   app.router.get('/api/git-http-hosts', [instance]);
   app.router.get(endpoint, []);

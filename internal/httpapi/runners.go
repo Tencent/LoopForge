@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"slices"
@@ -864,7 +865,13 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			c.Header("Cache-Control", "no-store")
 		}
 		if task.Invocation != nil && task.Invocation.GitHTTPUserID > 0 && runner.SupportsGitHTTP() {
-			task.Invocation.GitHTTPCredentials = h.repo.GitHTTPCredentialSecrets(c.Request.Context(), task.Invocation.GitHTTPUserID)
+			credentials := h.repo.GitHTTPCredentialSecrets(c.Request.Context(), task.Invocation.GitHTTPUserID)
+			if !runner.SupportsGitPlainHTTP() {
+				maps.DeleteFunc(credentials, func(host string, _ domain.GitHTTPExecutionCredential) bool {
+					return strings.HasPrefix(host, "http://")
+				})
+			}
+			task.Invocation.GitHTTPCredentials = credentials
 			task.Invocation.GitHTTPUserID = 0
 			c.Header("Cache-Control", "no-store")
 		}

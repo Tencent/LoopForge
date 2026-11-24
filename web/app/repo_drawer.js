@@ -28,7 +28,7 @@ function openRepoDrawer(repoId=''){
   if(repoId&&!repo)return toast('仓库不存在或已被删除','err');
   const f=$('#repoDrawerForm');if(!f)return;
   const hasDefault=!projectNeedsDefaultRepository(project);
-  const repoAddress=repo?.provider==='ssh'?repo.cloneUrl:repo?.webUrl||repo?.cloneUrl||repo?.gongfengProjectId||'';
+  const repoAddress=globalThis.LoopForgeGitRepositoryReference(repo);
   const parsedName=parseGongfengRepoURL(repoAddress)?.name||'';
   Object.assign(repoDrawerState,{projectId,repoId:repo?.id||'',nameTouched:!!repo&&!!repo.name&&repo.name!==parsedName,saving:false,returnFocus:document.activeElement});
   f.elements.id.value=repo?.id||'';
