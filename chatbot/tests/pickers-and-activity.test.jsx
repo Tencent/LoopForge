@@ -81,6 +81,54 @@ describe("pickers and activity", () => {
     expect(selectPermission).toHaveBeenCalledWith("auto");
   });
 
+  test("allows manual model ID input when allowCustomModel is enabled", async () => {
+    const user = userEvent.setup();
+    const selectModel = vi.fn();
+    const onOpenChange = vi.fn();
+    const view = render(
+      <ModelPicker
+        models={[]}
+        value=""
+        label="输入模型 ID"
+        allowCustomModel
+        customEngine="pi"
+        open={false}
+        onOpenChange={onOpenChange}
+        onSelect={selectModel}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "选择模型" });
+    expect(trigger).toBeEnabled();
+    expect(trigger).toHaveTextContent("输入模型 ID");
+
+    view.rerender(
+      <ModelPicker
+        models={[]}
+        value=""
+        label="输入模型 ID"
+        allowCustomModel
+        customEngine="pi"
+        open
+        onOpenChange={onOpenChange}
+        onSelect={selectModel}
+      />,
+    );
+    expect(screen.getByRole("menuitem", { name: /手动输入模型 ID/ })).toBeInTheDocument();
+
+    const search = screen.getByLabelText("搜索模型");
+    await user.type(search, "bad model");
+    expect(screen.getByRole("status")).toHaveTextContent("模型 ID 不能包含空格");
+
+    await user.clear(search);
+    await user.type(search, "default");
+    expect(screen.getByRole("status")).toHaveTextContent("请填写具体的模型 ID");
+
+    await user.clear(search);
+    await user.type(search, "anthropic/claude-sonnet-4-5{Enter}");
+    expect(selectModel).toHaveBeenCalledWith("pi:anthropic/claude-sonnet-4-5");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   test("uses request approval for an unknown mode", () => {
     expect(normalizeApprovalMode("auto")).toBe("auto");
     expect(normalizeApprovalMode("bogus")).toBe("confirm");

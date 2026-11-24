@@ -517,7 +517,8 @@ export default function App() {
     !hasComposerExecutor && !composerLoading && (chat.machinesReady || chat.machineError);
   const selectedModel = chat.models.find((m) => m.id === chat.model) || (!chat.local ? chat.modelDetails : null);
   const modelLabel =
-    (hasComposerExecutor && (selectedModel?.name || chat.model)?.replace(/^Claude-/, "").replace(/^GPT-/, "")) || "模型";
+    (hasComposerExecutor && (selectedModel?.name || chat.model)?.replace(/^Claude-/, "").replace(/^GPT-/, "")) ||
+    (hasComposerExecutor && !chat.local && chat.allowCustomModel && !chat.models.length ? "输入模型 ID" : "模型");
   // The CLI switch is only for a conversation that has not started. A reply
   // in flight, or one already saved, keeps that CLI; another CLI needs a new chat.
   const lockedExecutorId = chat.session
@@ -2157,6 +2158,8 @@ export default function App() {
                     <ModelPicker
                       models={hasComposerExecutor ? chat.models : []}
                       disabled={composerLoading || !hasComposerExecutor}
+                      allowCustomModel={hasComposerExecutor && !chat.local && !!chat.allowCustomModel}
+                      customEngine={chat.executor}
                       value={chat.model}
                       label={modelLabel}
                       open={menu?.type === "model"}

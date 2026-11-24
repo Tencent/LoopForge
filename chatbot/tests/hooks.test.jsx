@@ -531,6 +531,75 @@ describe("conversation hooks", () => {
     }
   });
 
+  test("accepts and remembers a manually entered model ID on Pi and Codex", async () => {
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/models") {
+        return {
+          ...(await original(path, options)),
+          engines: [
+            { id: "pi", configured: true, customModel: true },
+            { id: "codex", configured: true, customModel: true },
+          ],
+        };
+      }
+      if (path === "/api/assistant/models?executor=pi") {
+        return { default: "", customModel: true, models: [] };
+      }
+      if (path === "/api/assistant/models?executor=codex") {
+        return {
+          default: "gpt-5",
+          customModel: true,
+          models: [{ id: "gpt-5", name: "GPT-5", family: "gpt" }],
+        };
+      }
+      return original(path, options);
+    });
+    const view = renderHook(() => useChat());
+    try {
+      await waitFor(() => expect(view.result.current.ready).toBe(true));
+      act(() => view.result.current.setExecutor("pi"));
+      await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/assistant/models?executor=pi"));
+      expect(view.result.current.allowCustomModel).toBe(true);
+      expect(view.result.current.models).toEqual([]);
+
+      let accepted = false;
+      act(() => { accepted = view.result.current.setModel("default"); });
+      expect(accepted).toBe(false);
+      act(() => { accepted = view.result.current.setModel("bad model"); });
+      expect(accepted).toBe(false);
+      act(() => { accepted = view.result.current.setModel("openrouter/claude-3.7"); });
+      expect(accepted).toBe(true);
+      expect(view.result.current.model).toBe("pi:openrouter/claude-3.7");
+      expect(view.result.current.modelDetails?.name).toBe("openrouter/claude-3.7");
+
+      await act(async () => expect(await view.result.current.send({ text: "用自定义 Pi 模型" })).toBe(true));
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/assistant/generations",
+        expect.objectContaining({
+          executor: "pi",
+          model: "pi:openrouter/claude-3.7",
+          requireExactModel: true,
+        }),
+      );
+
+      // An executor with a preset list still accepts a manually entered model ID.
+      act(() => view.result.current.newChat());
+      act(() => view.result.current.setExecutor("codex"));
+      await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/assistant/models?executor=codex"));
+      expect(view.result.current.allowCustomModel).toBe(true);
+      act(() => { accepted = view.result.current.setModel("gpt-custom-preview"); });
+      expect(accepted).toBe(true);
+      expect(view.result.current.model).toBe("codex:gpt-custom-preview");
+    } finally {
+      view.unmount();
+      apiMock.mockImplementation(original);
+      localStorage.removeItem("loopforge.assistant.executor");
+      localStorage.removeItem("loopforge.assistant.model.pi");
+      localStorage.removeItem("loopforge.assistant.model.codex");
+    }
+  });
+
   test("reads Antigravity model families and restores a previous variant as an effort", async () => {
     const originalAPI = apiMock.getMockImplementation();
     const originalWrite = writeMock.getMockImplementation();

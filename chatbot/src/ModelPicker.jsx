@@ -2,13 +2,29 @@ import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef,
 import { createPortal } from "react-dom";
 import HarnessIcon from "./HarnessIcon";
 import ModelProviderIcon from "./ModelProviderIcon";
+import { concreteModel, normalizeCustomModelId, validCustomModelId } from "./engines.js";
 import { usePanelPresence } from "./usePanelPresence";
 import "./model-picker.css";
 
 const unavailable = (model) => !!(model.disabled || model.unavailable);
 const menuWidth = 240;
 
-export default function ModelPicker({ models, value, label, open: requestedOpen, disabled = false, onOpenChange, onSelect }) {
+function displayModelId(id, engine) {
+  const prefix = engine ? `${engine}:` : "";
+  return prefix && id?.startsWith(prefix) ? id.slice(prefix.length) : id;
+}
+
+export default function ModelPicker({
+  models,
+  value,
+  label,
+  open: requestedOpen,
+  disabled = false,
+  allowCustomModel = false,
+  customEngine = "",
+  onOpenChange,
+  onSelect,
+}) {
   const open = requestedOpen && !disabled;
   const trigger = useRef(null);
   const panel = useRef(null);
@@ -20,10 +36,24 @@ export default function ModelPicker({ models, value, label, open: requestedOpen,
   const [query, setQuery] = useState("");
   const [position, setPosition] = useState({ top: 0, left: 0, width: menuWidth, maxHeight: 420, placement: "top" });
   const current = models.find((model) => model.id === value);
+  const trimmed = query.trim();
+  const customNormalized = useMemo(() => {
+    if (!allowCustomModel || !trimmed) return "";
+    if (customEngine) return normalizeCustomModelId(customEngine, trimmed);
+    return validCustomModelId(trimmed) && concreteModel({ id: trimmed }, "") ? trimmed : "";
+  }, [allowCustomModel, customEngine, trimmed]);
+  const exactMatch = useMemo(() => {
+    if (!trimmed) return undefined;
+    return models.find((model) =>
+      model.id === trimmed ||
+      (customNormalized && model.id === customNormalized) ||
+      (customEngine && model.id === `${customEngine}:${trimmed}`));
+  }, [models, trimmed, customNormalized, customEngine]);
+  const showCustomOption = Boolean(allowCustomModel && customNormalized && !exactMatch);
   const filtered = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
+    const needle = trimmed.toLocaleLowerCase();
     return models.filter((model) => [model.name, model.id, model.family].filter(Boolean).join(" ").toLocaleLowerCase().includes(needle));
-  }, [models, query]);
+  }, [models, trimmed]);
 
   const place = useCallback(() => {
     if (!trigger.current || !panel.current) return;
@@ -56,7 +86,7 @@ export default function ModelPicker({ models, value, label, open: requestedOpen,
 
   useLayoutEffect(() => {
     if (presence.mounted) place();
-  }, [presence.mounted, filtered.length, place]);
+  }, [presence.mounted, filtered.length, showCustomOption, place]);
 
   useEffect(() => {
     if (!open) return;
@@ -118,6 +148,11 @@ export default function ModelPicker({ models, value, label, open: requestedOpen,
     callbacks.current.onSelect(model.id);
     callbacks.current.onOpenChange(false);
   }
+  function chooseCustom(id) {
+    if (!id) return;
+    callbacks.current.onSelect(id);
+    callbacks.current.onOpenChange(false);
+  }
   function keyDown(event) {
     if (event.isComposing || event.nativeEvent?.isComposing) return;
     if (event.key === "Escape") {
@@ -136,12 +171,14 @@ export default function ModelPicker({ models, value, label, open: requestedOpen,
     const inSearch = event.target === search.current;
     if (inSearch && event.key === "Enter") {
       event.preventDefault();
-      choose(filtered.find((model) => !unavailable(model)));
+      const firstAvailable = filtered.find((model) => !unavailable(model));
+      if (firstAvailable) choose(firstAvailable);
+      else if (showCustomOption) chooseCustom(customNormalized);
       return;
     }
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) ||
         (inSearch && ["Home", "End"].includes(event.key))) return;
-    const items = [...(panel.current?.querySelectorAll('[role="menuitemradio"]:not(:disabled)') || [])];
+    const items = [...(panel.current?.querySelectorAll('[role^="menuitem"]:not(:disabled)') || [])];
     if (!items.length) return;
     event.preventDefault();
     const index = items.indexOf(document.activeElement);
@@ -151,6 +188,14 @@ export default function ModelPicker({ models, value, label, open: requestedOpen,
     items[next].focus({ preventScroll: true });
     items[next].scrollIntoView({ block: "nearest" });
   }
+
+  const customDisplay = customNormalized ? displayModelId(customNormalized, customEngine) : "";
+  const activeCustomName = allowCustomModel && value && !current ? displayModelId(value, customEngine) : "";
+  const invalidCustomHint = allowCustomModel && trimmed && !customNormalized
+    ? (concreteModel({ id: displayModelId(trimmed, customEngine) }, customEngine || "codebuddy")
+      ? "模型 ID 不能包含空格、引号或以 - 开头"
+      : "请填写具体的模型 ID")
+    : "没有匹配的模型";
 
   return (
     <div className="menu-anchor model-picker-anchor">
@@ -162,7 +207,7 @@ export default function ModelPicker({ models, value, label, open: requestedOpen,
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={presence.mounted ? identity : undefined}
-        disabled={disabled || !models.length}
+        disabled={disabled || (!models.length && !allowCustomModel)}
         onClick={() => onOpenChange(!open)}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -191,11 +236,28 @@ export default function ModelPicker({ models, value, label, open: requestedOpen,
         >
           <label className="grasp-model-search" data-icon-motion-host="">
             <HarnessIcon name="search" size={16} />
-            <input ref={search} type="text" aria-label="搜索模型" placeholder="搜索模型" value={query} onChange={(event) => setQuery(event.target.value)} />
+            <input ref={search} type="text" aria-label="搜索模型" placeholder={allowCustomModel ? "搜索或输入模型 ID" : "搜索模型"} value={query} onChange={(event) => setQuery(event.target.value)} />
             {query ? <button type="button" className="model-search-clear" aria-label="清空搜索" onClick={() => { setQuery(""); search.current?.focus(); }}><HarnessIcon name="close" size={13} /></button> : null}
           </label>
           <div className="grasp-model-options">
-            {filtered.length ? filtered.map((model) => (
+            {activeCustomName && !trimmed ? (
+              <button
+                type="button"
+                className="grasp-model-option"
+                role="menuitemradio"
+                aria-checked={true}
+                title={activeCustomName}
+                onClick={() => chooseCustom(value)}
+              >
+                <ModelProviderIcon model={value} size={18} />
+                <span className="model-option-copy">
+                  <strong>{activeCustomName}</strong>
+                  <small>自定义模型</small>
+                </span>
+                <span className="model-option-check"><HarnessIcon name="check" size={14} motion="once" /></span>
+              </button>
+            ) : null}
+            {filtered.map((model) => (
               <button
                 type="button"
                 key={model.id}
@@ -213,7 +275,41 @@ export default function ModelPicker({ models, value, label, open: requestedOpen,
                 </span>
                 <span className="model-option-check">{model.id === value ? <HarnessIcon name="check" size={14} motion="once" /> : null}</span>
               </button>
-            )) : <p className="model-picker-empty" role="status">没有匹配的模型</p>}
+            ))}
+            {showCustomOption ? (
+              <button
+                type="button"
+                className="grasp-model-option grasp-model-option-custom"
+                role="menuitemradio"
+                aria-checked={customNormalized === value}
+                title={customDisplay}
+                onClick={() => chooseCustom(customNormalized)}
+              >
+                <ModelProviderIcon model={customNormalized} size={18} />
+                <span className="model-option-copy">
+                  <strong>使用「{customDisplay}」</strong>
+                  <small>手动输入模型 ID</small>
+                </span>
+                <span className="model-option-check">{customNormalized === value ? <HarnessIcon name="check" size={14} motion="once" /> : null}</span>
+              </button>
+            ) : null}
+            {allowCustomModel && !trimmed ? (
+              <button
+                type="button"
+                className="grasp-model-option grasp-model-option-manual"
+                role="menuitem"
+                onClick={() => search.current?.focus({ preventScroll: true })}
+              >
+                <HarnessIcon name="terminal" size={16} />
+                <span className="model-option-copy">
+                  <strong>手动输入模型 ID…</strong>
+                  <small>{models.length ? "输入自定义模型 ID" : "在上方输入模型 ID 后按回车确认"}</small>
+                </span>
+              </button>
+            ) : null}
+            {!filtered.length && !showCustomOption && !(allowCustomModel && !trimmed) ? (
+              <p className="model-picker-empty" role="status">{invalidCustomHint}</p>
+            ) : null}
           </div>
         </div>, document.body,
       ) : null}

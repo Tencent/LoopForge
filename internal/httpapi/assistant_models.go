@@ -39,6 +39,7 @@ type assistantModel struct {
 type assistantModelCatalog struct {
 	Default        string           `json:"default"`
 	DefaultEfforts []string         `json:"defaultEfforts,omitempty"`
+	CustomModel    bool             `json:"customModel,omitempty"`
 	Models         []assistantModel `json:"models"`
 	// SponsoredModels is set when users without their own CodeBuddy API Key
 	// may still chat on the platform's shared key, limited to these models;
@@ -198,7 +199,10 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
 			return
 		}
-		result := assistantModelCatalog{Models: make([]assistantModel, 0, len(catalog.Models))}
+		result := assistantModelCatalog{
+			CustomModel: catalog.CustomModel,
+			Models:      make([]assistantModel, 0, len(catalog.Models)),
+		}
 		if engine == runtime.AgentCLIAntigravity && antigravityUsesCustomEndpoint(user) {
 			c.Header("Cache-Control", "private, no-store")
 			c.JSON(200, result)

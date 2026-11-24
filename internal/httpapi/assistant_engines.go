@@ -53,11 +53,12 @@ func assistantModelEngine(id string) (engine, model string) {
 // assistantEngineOption is one entry of the chat composer's CLI switch.
 // Credential names the 个人配置 field that enables it.
 type assistantEngineOption struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Configured bool   `json:"configured"`
-	Personal   bool   `json:"personal"`
-	Credential string `json:"credential"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Configured  bool   `json:"configured"`
+	Personal    bool   `json:"personal"`
+	Credential  string `json:"credential"`
+	CustomModel bool   `json:"customModel,omitempty"`
 	// Missing and installable are reported only for a cloud chat hosted by this platform.
 	ServerMissing     bool `json:"serverMissing,omitempty"`
 	ServerInstallable bool `json:"serverInstallable,omitempty"`
@@ -85,11 +86,12 @@ func assistantEngineOptions(user domain.User, sponsored bool) []assistantEngineO
 	for _, engine := range engines {
 		key, _ := assistantEngineCredential(user, engine)
 		out = append(out, assistantEngineOption{
-			ID:         engine,
-			Name:       assistantEngineLabel(engine),
-			Configured: key != "" || (engine == assistantEngineCodeBuddy && sponsored),
-			Personal:   key != "",
-			Credential: assistantEngineCredentialField(engine),
+			ID:          engine,
+			Name:        assistantEngineLabel(engine),
+			Configured:  key != "" || (engine == assistantEngineCodeBuddy && sponsored),
+			Personal:    key != "",
+			Credential:  assistantEngineCredentialField(engine),
+			CustomModel: executorSupportsCustomModel(engine),
 		})
 	}
 	return out

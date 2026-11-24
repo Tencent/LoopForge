@@ -1333,4 +1333,32 @@ describe("sidebar reply status", () => {
       Object.assign(chat, previous);
     }
   });
+
+  test("enables the model picker with manual input when Pi has no preset models", async () => {
+    const previous = { ...chat };
+    const user = userEvent.setup();
+    const setModel = vi.fn();
+    Object.assign(chat, {
+      executor: "pi",
+      executors: [{ id: "pi", label: "Pi", icon: "terminal" }],
+      models: [],
+      model: "",
+      modelDetails: undefined,
+      allowCustomModel: true,
+      setModel,
+    });
+    const view = render(<App />);
+    try {
+      const trigger = screen.getByRole("button", { name: "选择模型" });
+      expect(trigger).toBeEnabled();
+      expect(trigger).toHaveTextContent("输入模型 ID");
+      await user.click(trigger);
+      expect(screen.getByRole("menuitem", { name: /手动输入模型 ID/ })).toBeInTheDocument();
+      await user.type(screen.getByLabelText("搜索模型"), "pi-custom-1{Enter}");
+      expect(setModel).toHaveBeenCalledWith("pi:pi-custom-1");
+    } finally {
+      view.unmount();
+      Object.assign(chat, previous);
+    }
+  });
 });
