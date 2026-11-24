@@ -136,6 +136,8 @@ type CommandSpec struct {
 	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string
+	// observeOutput receives raw bytes before process telemetry splits lines.
+	observeOutput func(stream string, data []byte)
 	// privateBinds are host directories bwrap binds into this one process
 	// only (for example a terminal's own SSH agent).
 	privateBinds []string

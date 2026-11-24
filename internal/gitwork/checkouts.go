@@ -150,6 +150,10 @@ func ContinueSOPCheckout(ctx context.Context, dir, branch string) error {
 // hooks, pager, editor, askpass, credential helpers); config reads skip
 // includes. Checkout uses the same restrictions and never forces a switch.
 func checkoutGit(ctx context.Context, dir string, args ...string) (string, error) {
+	if run := workspaceExecutor(ctx); run != nil {
+		out, err := run(ctx, dir, WorkspaceCommand{Args: append([]string{"--git-dir=.git", "--work-tree=."}, args...), StdoutOnly: true})
+		return strings.TrimSpace(out), err
+	}
 	base := []string{
 		"--git-dir=" + filepath.Join(dir, ".git"), "--work-tree=" + dir,
 		"-c", "safe.directory=*",

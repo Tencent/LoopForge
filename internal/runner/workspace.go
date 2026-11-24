@@ -305,6 +305,22 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		}
 		return runnerWorkspacePayload(payload)
 	case domain.RunnerWorkspaceOperationCheckouts:
+		if request.Sandbox != nil {
+			task, err := d.workspaceSandboxTask(root, request)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			sandbox, release, err := d.acquireTaskSandbox(ctx, task)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			defer release()
+			checkouts, err := runtime.SandboxCheckouts(ctx, sandbox)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			return runnerWorkspacePayload(map[string]any{"checkouts": checkouts})
+		}
 		return runnerWorkspacePayload(map[string]any{"checkouts": gitwork.Checkouts(ctx, root)})
 	case domain.RunnerWorkspaceOperationTree:
 		entries, truncated, readErr := runnerReadWorkspaceTree(root, request.Path)

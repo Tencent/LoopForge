@@ -14,6 +14,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 func borrowsConversationWorkspace(run domain.Run) bool {
@@ -98,10 +99,12 @@ func (e *Engine) openBorrowedConversationWorkspace(ctx context.Context, run doma
 func (e *Engine) bindConversationCheckouts(ctx context.Context, run, owner domain.Run) error {
 	var checkouts []gitwork.Checkout
 	if e.defaultExecutionRunner(owner) != "" {
-		response, err := e.requestWorkspaceCheckpoint(ctx, owner, domain.RunnerWorkspaceRequest{
-			RunID: owner.ID, WorkspaceLayout: owner.ExecutionContext.RunnerWorkspaceLayout,
-			Operation: domain.RunnerWorkspaceOperationCheckouts,
-		})
+		request, err := e.preparedWorkspaceRequest(run, domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationCheckouts})
+		if err != nil {
+			return err
+		}
+		request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
+		response, err := e.requestWorkspaceCheckpoint(ctx, run, request)
 		if err != nil {
 			return err
 		}
@@ -116,7 +119,22 @@ func (e *Engine) bindConversationCheckouts(ctx context.Context, run, owner domai
 		}
 		checkouts = inventory.Checkouts
 	} else {
-		checkouts = gitwork.Checkouts(ctx, e.sandboxes.RunWorkspace(owner.ID))
+		profile, _, err := e.workspaceSandboxProfile(run)
+		if err != nil {
+			return err
+		}
+		requirements, err := workflowSandboxRequirements(e.repo, run.WorkflowSnapshot)
+		if err != nil {
+			return err
+		}
+		env, _, err := e.acquireRunEnvironment(ctx, run, profile, requirements)
+		if err != nil {
+			return err
+		}
+		checkouts, err = runtime.SandboxCheckouts(e.withPreparationProgress(ctx, run.ID), env.sandbox)
+		if err != nil {
+			return err
+		}
 	}
 	current := run.RepositoryContexts()
 	repositories := slices.Clone(current)

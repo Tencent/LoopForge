@@ -156,7 +156,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	request.RunStatus = run.Status
 	request.RunKind = run.Kind
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
-	if interactive {
+	if interactive || request.Operation == domain.RunnerWorkspaceOperationCheckouts && run.UsesConversationWorkspace() {
 		var err error
 		request, err = e.preparedWorkspaceRequest(run, request)
 		if err != nil {

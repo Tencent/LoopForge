@@ -149,6 +149,12 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
 	runnerID := e.defaultExecutionRunner(run)
+	if runnerID != "" && run.UsesConversationWorkspace() && len(run.RepositoryContexts()) > 0 {
+		runner, ok := e.repo.Runner(runnerID)
+		if !ok || !runner.SupportsConversationSOPWorkspace() {
+			return nil, fmt.Errorf("复用对话中的仓库检出需要执行机器升级至 %s", domain.RunnerVersionConversationSOPWorkspace)
+		}
+	}
 	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return nil, err
 	}

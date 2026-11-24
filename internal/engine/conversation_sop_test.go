@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,33 @@ import (
 
 func TestSOPReusesConversationCheckoutAfterTurn(t *testing.T) {
 	t.Parallel()
+	testSOPReusesConversationCheckout(t, false)
+}
+
+func TestSOPReusesConversationCheckoutInDocker(t *testing.T) {
+	if os.Getenv("AGENTFLOW_TEST_DOCKER") != "1" {
+		t.Skip("set AGENTFLOW_TEST_DOCKER=1 for local Docker sandbox tests")
+	}
+	dockerRoot := os.Getenv("AGENTFLOW_DOCKER_TEST_ROOT")
+	if dockerRoot == "" {
+		dockerRoot = "."
+	}
+	dockerRoot, err := filepath.Abs(dockerRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp, err := os.MkdirTemp(dockerRoot, ".sop-checkout-docker-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(temp) })
+	t.Setenv("TMPDIR", temp)
+	t.Setenv("AGENTFLOW_DOCKER_NETWORK", "none")
+	testSOPReusesConversationCheckout(t, true)
+}
+
+func testSOPReusesConversationCheckout(t *testing.T, docker bool) {
+	t.Helper()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +52,32 @@ func TestSOPReusesConversationCheckoutAfterTurn(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: projectID, Name: "Test"}); err != nil {
 		t.Fatal(err)
 	}
-	en := New(st, runtime.NewManager(t.TempDir()))
+	sopSandbox := repo.TestNativeSandboxID
+	if docker {
+		sopSandbox = "conversation-sop-docker"
+		if err := st.PutSandbox(domain.SandboxProfile{ID: sopSandbox, Name: "SOP Docker", ProjectID: projectID,
+			Driver: domain.SandboxDriverDocker, Dockerfile: &domain.SandboxDockerfile{
+				Content: "FROM golang:1.26.11-bookworm\nCOPY --chmod=0755 git /usr/local/bin/git\n",
+				Files: map[string]string{"git": `#!/bin/sh
+mkdir -p /workspace/.agentflow
+printf '%s\t%s\n' "$PWD" "$*" >> /workspace/.agentflow/sop-git.log
+exec /usr/bin/git "$@"
+`},
+			}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager := runtime.NewManager(t.TempDir())
+	en := New(st, manager)
+	if docker {
+		defer func() {
+			for _, run := range st.Runs() {
+				if run.ExecutionContext.ProjectID == projectID && !run.IsWorkspace() {
+					manager.DiscardRunContainer(context.Background(), run.ID)
+				}
+			}
+		}()
+	}
 	owner, err := en.StartConversationWorkspace("Prepare a fix", domain.TelemetryContext{
 		ProjectID: projectID, ExecutionPinned: true,
 	}, repo.TestNativeSandboxID)
@@ -56,17 +109,22 @@ func TestSOPReusesConversationCheckoutAfterTurn(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("unstaged"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("staged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(dir, "add", "staged.txt")
 	if err := os.WriteFile(filepath.Join(root, "handoff.txt"), []byte("conversation"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	child := domain.WorkflowDefinition{ID: "child-sop", Name: "Child SOP", SandboxProfileID: repo.TestNativeSandboxID,
+	child := domain.WorkflowDefinition{ID: "child-sop", Name: "Child SOP", SandboxProfileID: sopSandbox,
 		Nodes: []domain.WorkflowNode{{ID: "verify", Name: "Verify", Type: "script", ScriptLanguage: "shell", Script: `
 test "$(cat handoff.txt)" = conversation &&
 test "$(cat code/checkout/local-commit.txt)" = unpushed &&
 test "$(cat code/checkout/tracked.txt)" = unstaged &&
+test "$(git -C code/checkout diff --cached --name-only)" = staged.txt &&
 printf sop > result.txt`, MaxAttempts: 1}},
 	}
-	wf := domain.WorkflowDefinition{ID: "workspace-sop", Name: "SOP", SandboxProfileID: repo.TestNativeSandboxID,
+	wf := domain.WorkflowDefinition{ID: "workspace-sop", Name: "SOP", SandboxProfileID: sopSandbox,
 		Nodes: []domain.WorkflowNode{{ID: "child", Name: "Child SOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1}},
 	}
 	for _, workflow := range []domain.WorkflowDefinition{child, wf} {
@@ -96,13 +154,20 @@ printf sop > result.txt`, MaxAttempts: 1}},
 	if err := st.FinishWorkspaceUse(owner.ID, token, time.Now().UTC(), nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	done := waitRun(t, st, started.ID, 10*time.Second, func(run domain.Run) bool {
+	timeout := 10 * time.Second
+	if docker {
+		timeout = time.Minute
+	}
+	done := waitRun(t, st, started.ID, timeout, func(run domain.Run) bool {
 		return domain.TerminalRunStatus(run.Status)
 	})
-	if done.Status != "succeeded" {
-		t.Fatalf("SOP %s: %+v", done.Status, done.Nodes["child"])
-	}
 	childRun, _ := st.RunState(done.Nodes["child"].ChildRunID)
+	if done.Status != "succeeded" {
+		log, _ := os.ReadFile(filepath.Join(root, ".agentflow", "sop-git.log"))
+		t.Fatalf("SOP %s in %q, child in %q: %s, verification: %+v\nsandbox Git:\n%s",
+			done.Status, done.Repository.WorkspaceDir, childRun.Repository.WorkspaceDir,
+			done.Nodes["child"].Error, childRun.Nodes["verify"], log)
+	}
 	if en.RunWorkspace(done.ID) != root || en.RunWorkspace(childRun.ID) != root ||
 		done.Repository.WorkspaceDir != checkout || childRun.Repository.WorkspaceDir != checkout {
 		t.Fatalf("SOP and child must use %s and %s, got %+v and %+v", root, checkout, done.Repository, childRun.Repository)
@@ -116,6 +181,13 @@ printf sop > result.txt`, MaxAttempts: 1}},
 	if data, err := os.ReadFile(filepath.Join(root, "result.txt")); err != nil || string(data) != "sop" {
 		t.Fatalf("SOP output in original workspace = %q, %v", data, err)
 	}
+	if docker {
+		log, err := os.ReadFile(filepath.Join(root, ".agentflow", "sop-git.log"))
+		if err != nil || !strings.Contains(string(log), "config --local --no-includes --get-regexp") ||
+			!strings.Contains(string(log), "checkout --quiet -b "+done.Repository.WorkBranch) {
+			t.Fatalf("SOP sandbox did not discover and switch the shared checkout: %s (%v)", log, err)
+		}
+	}
 	if err := en.ReleaseConversationWorkspace(owner.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -127,10 +199,11 @@ printf sop > result.txt`, MaxAttempts: 1}},
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored := waitRun(t, st, next.ID, 10*time.Second, func(run domain.Run) bool {
+	restored := waitRun(t, st, next.ID, timeout, func(run domain.Run) bool {
 		return domain.TerminalRunStatus(run.Status)
 	})
 	if restored.Status != "succeeded" || en.RunWorkspace(restored.ID) != root {
-		t.Fatalf("SOP did not continue from the restored checkout: %+v", restored.Nodes["child"])
+		childRun, _ := st.RunState(restored.Nodes["child"].ChildRunID)
+		t.Fatalf("SOP did not continue from the restored checkout: %s, verification: %+v", restored.Nodes["child"].Error, childRun.Nodes["verify"])
 	}
 }

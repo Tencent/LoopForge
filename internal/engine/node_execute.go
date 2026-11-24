@@ -513,15 +513,20 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	// A runner that integrates on its own checkout needs nothing from a
 	// control-plane clone, so none is made.
 	stagingCheckout := true
-	if runner, ok := e.repo.Runner(e.defaultExecutionRunner(current)); ok && runner.SupportsIntegrate() {
-		stagingCheckout = false
+	if runnerID := e.defaultExecutionRunner(current); runnerID != "" {
+		runner, _ := e.repo.Runner(runnerID)
+		stagingCheckout = !current.UsesConversationWorkspace() && !runner.SupportsIntegrate()
+	}
+	checkoutCtx := runtime.WithRepositoryCacheIn(ctx, sb.Unwrap())
+	if current.UsesConversationWorkspace() {
+		checkoutCtx = runtime.WithSandboxGit(ctx, sb.Unwrap(), gitCredentials)
 	}
 	repositoryFallback := ""
 	if err := sb.prepareRepositoriesOnce(func() error {
 		if !stagingCheckout {
 			return nil
 		}
-		if err := prepareRepositories(runtime.WithRepositoryCacheIn(ctx, sb.Unwrap()), sb.Workspace(), current.RepositoryContexts(), current.UsesConversationWorkspace()); err != nil {
+		if err := prepareRepositories(checkoutCtx, sb.Workspace(), current.RepositoryContexts(), current.UsesConversationWorkspace()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "" || len(gitCredentials.GitHTTPCredentials) > 0)
 		}
 		for _, rc := range current.RepositoryContexts() {
@@ -626,7 +631,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return nil
 		}
 		if e.defaultExecutionRunner(current) == "" {
-			if err := runtime.VerifyGitPreparation(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
+			if err := runtime.VerifyGitPreparation(checkoutCtx, sb.Workspace(), current.RepositoryContexts()); err != nil {
 				return fmt.Errorf("Agent 仓库准备兜底校验失败: %w", err)
 			}
 		}

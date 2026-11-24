@@ -205,6 +205,20 @@ func TestDeleteFailedRunCleansRunnerWorkspace(t *testing.T) {
 }
 
 func TestSOPReusesRunnerConversationCheckout(t *testing.T) {
+	testSOPReusesRunnerConversationCheckout(t, false)
+}
+
+func TestSOPReusesRunnerConversationCheckoutInDocker(t *testing.T) {
+	if os.Getenv("AGENTFLOW_TEST_DOCKER") != "1" {
+		t.Skip("set AGENTFLOW_TEST_DOCKER=1 for local Docker sandbox tests")
+	}
+	useTempDirOutsideTmp(t, os.Getenv("AGENTFLOW_DOCKER_TEST_ROOT"))
+	t.Setenv("AGENTFLOW_DOCKER_NETWORK", "none")
+	testSOPReusesRunnerConversationCheckout(t, true)
+}
+
+func testSOPReusesRunnerConversationCheckout(t *testing.T, docker bool) {
+	t.Helper()
 	server, st, en := newDaemonTestServer(t)
 	machineRoot := t.TempDir()
 	daemon, err := New(Config{
@@ -216,13 +230,39 @@ func TestSOPReusesRunnerConversationCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go func() { _ = daemon.Run(ctx) }()
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Error("test runner did not stop")
+		}
+	})
+	go func() {
+		defer close(done)
+		_ = daemon.Run(ctx)
+	}()
 	waitFor(t, 10*time.Second, "runner workspace control", daemon.wsOnline.Load)
 	runner := st.Runners()[0]
 	const projectID = "runner-handoff"
 	if err := st.PutProject(domain.Project{ID: projectID, Name: "Runner Handoff"}); err != nil {
 		t.Fatal(err)
+	}
+	sopSandbox := repo.TestNativeSandboxID
+	if docker {
+		sopSandbox = "runner-conversation-sop-docker"
+		if err := st.PutSandbox(domain.SandboxProfile{ID: sopSandbox, Name: "SOP Docker", ProjectID: projectID,
+			Driver: domain.SandboxDriverDocker, Dockerfile: &domain.SandboxDockerfile{
+				Content: "FROM golang:1.26.11-bookworm\nCOPY --chmod=0755 git /usr/local/bin/git\n",
+				Files: map[string]string{"git": `#!/bin/sh
+mkdir -p /workspace/.agentflow
+printf '%s\t%s\n' "$PWD" "$*" >> /workspace/.agentflow/sop-git.log
+exec /usr/bin/git "$@"
+`},
+			}}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	owner, err := en.StartConversationWorkspace("Conversation", domain.TelemetryContext{
 		ProjectID: projectID, ExecutionPinned: true, ExecutionRunnerID: runner.ID,
@@ -236,18 +276,28 @@ func TestSOPReusesRunnerConversationCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	runGitT(t, dir, "clone", "-q", remote, ".")
-	runGitT(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-qm", "local commit")
+	localFile := filepath.Join(dir, "local-commit.txt")
+	if err := os.WriteFile(localFile, []byte("local commit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, dir, "add", "local-commit.txt")
+	runGitT(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "local commit")
 	head := runGitT(t, dir, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("staged edit\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runGitT(t, dir, "add", "README.md")
+	if err := os.WriteFile(localFile, []byte("unstaged edit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	wf := domain.WorkflowDefinition{
-		ID: "edit-runner-workspace", Name: "Continue on the runner", SandboxProfileID: repo.TestNativeSandboxID,
+		ID: "edit-runner-workspace", Name: "Continue on the runner", SandboxProfileID: sopSandbox,
 		Nodes: []domain.WorkflowNode{{
 			ID: "verify", Name: "Verify", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, MaxAttempts: 1,
 			Script: `test "$(git branch --show-current)" = "$AGENTFLOW_WORK_BRANCH" &&
 test "$(git diff --cached --name-only)" = README.md &&
+test "$(git diff --name-only)" = local-commit.txt &&
+test "$(cat local-commit.txt)" = 'unstaged edit' &&
 printf done > sop-result.txt`,
 		}},
 	}
@@ -261,7 +311,11 @@ printf done > sop-result.txt`,
 		t.Fatal(err)
 	}
 	var finished domain.Run
-	waitFor(t, 15*time.Second, "SOP in the conversation checkout", func() bool {
+	timeout := 15 * time.Second
+	if docker {
+		timeout = time.Minute
+	}
+	waitFor(t, timeout, "SOP in the conversation checkout", func() bool {
 		finished, _ = st.RunState(run.ID)
 		return domain.TerminalRunStatus(finished.Status)
 	})
@@ -273,6 +327,13 @@ printf done > sop-result.txt`,
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, "sop-result.txt")); err != nil || string(data) != "done" {
 		t.Fatalf("output in the conversation checkout = %q, %v", data, err)
+	}
+	if docker {
+		log, err := os.ReadFile(filepath.Join(filepath.Dir(dir), ".agentflow", "sop-git.log"))
+		if err != nil || !strings.Contains(string(log), "config --local --no-includes --get-regexp") ||
+			!strings.Contains(string(log), "checkout --quiet -b "+finished.Repository.WorkBranch) {
+			t.Fatalf("SOP sandbox did not discover and switch the shared checkout: %s (%v)", log, err)
+		}
 	}
 }
 

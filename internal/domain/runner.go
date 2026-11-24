@@ -153,9 +153,9 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 // when checking out repositories for a native workspace. Older runners clone fully.
 const RunnerVersionRepositoryCache = "0.12.0"
 
-// RunnerVersionConversationSOPWorkspace preserves the working tree and starts
-// the new SOP branch at the local HEAD of an existing conversation checkout.
-const RunnerVersionConversationSOPWorkspace = "0.12.1"
+// RunnerVersionConversationSOPWorkspace prepares an existing conversation
+// checkout in the SOP sandbox while preserving local work.
+const RunnerVersionConversationSOPWorkspace = "0.12.2"
 
 func (r Runner) SupportsConversationSOPWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationSOPWorkspace)

@@ -21,11 +21,17 @@ func checkoutRepositoryForPreparation(ctx context.Context, workspace string, rep
 		return fmt.Errorf("工作分支不能既继续已有分支又新建")
 	}
 	if repository.PreserveCheckout {
+		if !gitwork.HasWorkspaceExecutor(ctx) {
+			return fmt.Errorf("shared checkout preparation requires the SOP sandbox")
+		}
 		existing, err := gitwork.ExistingSOPCheckout(ctx, workspace, repository.CloneURL)
 		if err != nil {
 			return err
 		}
 		if existing && !repository.RequireExistingWorkBranch && !repository.CreateNewWorkBranch {
+			if err := runtime.RestoreLegacyProjectAgentConfig(ctx, workspace); err != nil {
+				return err
+			}
 			return gitwork.ContinueSOPCheckout(ctx, workspace, repository.WorkBranch)
 		}
 	}
