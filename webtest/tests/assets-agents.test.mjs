@@ -145,12 +145,16 @@ test('role editor refreshes configured CLIs and preserves an unavailable saved e
   `);
   const f = app.document.querySelector('#agentForm');
   const executor = f.elements.executorId;
+  const status = app.document.querySelector('#agentExecutorStatus');
   const options = () => [...executor.options].map(option => [option.value, option.disabled]);
   assert.equal(executor.disabled, true);
   assert.deepEqual(options(), [['', false]]);
+  assert.equal(executor.selectedOptions[0].text, '检查配置中…');
+  assert.equal(status.hidden, true);
   complete(catalog([{ id: 'private/second', name: 'Second' }, { id: 'private/first', name: 'First' }]));
   await settle();
   assert.deepEqual(options(), [['', false], ['codex', false]]);
+  assert.equal(status.hidden, true);
   f.elements.executorId.value = 'codex';
   f.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   const menu = () => [...app.document.querySelectorAll('#agentModelPicker [role=option]')];
@@ -177,6 +181,8 @@ test('role editor refreshes configured CLIs and preserves an unavailable saved e
   await settle();
   assert.deepEqual(options(), [['', false], ['codex', true]]);
   assert.match(executor.selectedOptions[0].text, /未配置/);
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '无可用执行器');
   assert.equal(app.document.querySelector('#agentModelPicker [data-model-toggle]').disabled, true);
   assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'private/second');
   app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
@@ -192,7 +198,13 @@ test('role editor refreshes configured CLIs and preserves an unavailable saved e
   await settle();
   assert.deepEqual(options(), [['', false]]);
   assert.equal(executor.value, '');
+  assert.equal(executor.disabled, true);
+  assert.equal(executor.selectedOptions[0].text, '无可用执行器');
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '运行时跟随责任人默认执行器');
   assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), '');
+  app.evaluate(`applyAgentPreset('developer');setAgentCreateStep(3)`);
+  assert.match(app.document.querySelector('#agentCreateReview').textContent, /跟随责任人默认执行器/);
 });
 
 test('a new role saves the first model from the refreshed catalog', async (t) => {

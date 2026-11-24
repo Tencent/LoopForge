@@ -81,6 +81,7 @@ test('flow preview properties persist the CLI, model and SPA fallback', async (t
   await app.evaluate('loadExecutorModelCatalogs()');
   const executor = app.document.querySelector('#previewNodeExecutor');
   assert.deepEqual([...executor.options].map(option => option.value), ['', 'codex']);
+  assert.equal(app.document.querySelector('#previewNodeExecutorStatus').hidden, true);
   assert.equal(executor.value, '');
   assert.equal(app.evaluate('state.workflow.preview.executorId'), '');
   assert.equal(app.document.querySelector('#previewNodeModel').disabled, true);
@@ -109,6 +110,18 @@ test('flow preview properties persist the CLI, model and SPA fallback', async (t
   assert.equal(savedExecutor.value, 'codex');
   assert.equal(savedModel.value, 'preview-other');
   assert.equal(savedModel.disabled, true);
+  const status = app.document.querySelector('#previewNodeExecutorStatus');
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '无可用执行器');
+
+  savedExecutor.value = '';
+  savedExecutor.dispatchEvent(new app.window.Event('change'));
+  app.evaluate('renderProperties()');
+  await app.evaluate('loadExecutorModelCatalogs()');
+  const inherited = app.document.querySelector('#previewNodeExecutor');
+  assert.equal(inherited.disabled, true);
+  assert.equal(inherited.selectedOptions[0].text, '无可用执行器');
+  assert.equal(app.evaluate('state.workflow.preview.executorId'), '');
 });
 
 test('SOP wizard creates a workflow and publish/delete actions send expected requests', async (t) => {

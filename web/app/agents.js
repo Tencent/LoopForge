@@ -120,12 +120,25 @@ function bindPickerFilters(root){(root||document).querySelectorAll('[data-picker
 function executorOptions(selected){
   const executors=state.data.executors||[];
   const items=executors.filter(executor=>executorConfigured(executor.id));
-  const inherited=`<option value="" ${selected?'':'selected'}>跟随责任人默认执行器</option>`;
+  const inheritedLabel=selected||items.length?'跟随责任人默认执行器':
+    executorModelCatalogRequest?'检查配置中…':'无可用执行器';
+  const inherited=`<option value="" ${selected?'':'selected'}>${inheritedLabel}</option>`;
   const saved=executors.find(executor=>executor.id===selected);
   const savedName=saved?saved.name||selected:`历史执行器 ${selected}`;
   const unavailable=selected&&!items.some(executor=>executor.id===selected)
     ?`<option value="${escapeHTML(selected)}" selected disabled>${escapeHTML(savedName)}（${executorModelCatalogRequest?'检查配置中':'未配置'}）</option>`:'';
   return inherited+unavailable+items.map(executor=>`<option value="${escapeHTML(executor.id)}" ${executor.id===selected?'selected':''}>${escapeHTML(executor.name||executor.id)}</option>`).join('');
+}
+function paintExecutorSelect(select,selected,readOnly=false){
+  select.innerHTML=executorOptions(selected);
+  const loading=!!executorModelCatalogRequest;
+  const hasConfigured=[...select.options].some(option=>option.value&&!option.disabled);
+  select.disabled=loading||readOnly||(!selected&&!hasConfigured);
+  const status=document.getElementById(select.getAttribute('aria-describedby'));
+  if(status){
+    status.hidden=loading||hasConfigured;
+    status.textContent=selected?'无可用执行器':'运行时跟随责任人默认执行器';
+  }
 }
 function storedAgentExecutorId(agent){
   return agent?.executorId||(agent?.model||agent?.effort?'codebuddy':'');
@@ -273,10 +286,7 @@ function selectAgent(a,rerender=true){
   const modelRevision=++agentModelRevision;
   const modelUser=state.currentUser?.id;
   const refreshModels=loadExecutorModelCatalogs();
-  if(executor){
-    executor.disabled=true;
-    executor.innerHTML=executorOptions(selectedId);
-  }
+  if(executor)paintExecutorSelect(executor,selectedId);
   const personalModel=!a.id&&preferredId===selectedId&&!a.model?prefs?.model:'';
   const model=a.model||personalModel||'';
   const effort=a.effort||(personalModel?prefs.effort:'');
@@ -284,10 +294,7 @@ function selectAgent(a,rerender=true){
   refreshModels.then(()=>{
     if(modelRevision!==agentModelRevision||modelUser!==state.currentUser?.id)return;
     const id=a.id||executorConfigured(selectedId)?selectedId:'';
-    if(executor){
-      executor.innerHTML=executorOptions(id);
-      executor.disabled=false;
-    }
+    if(executor)paintExecutorSelect(executor,id);
     applyAgentModelUI(id,model,effort,!a.id);
     if(state.agentModalMode==='create'&&state.agentCreateStep===3)renderAgentCreateReview();
   });
@@ -425,7 +432,8 @@ function setAgentWizardStep(step){
 function renderAgentCreateReview(){
   const host=$('#agentCreateReview'),f=$('#agentForm');if(!host||!f)return;
   const preset=agentPresets.find(x=>x.id===state.agentCreatePreset);
-  const cli=f.elements.executorId?.selectedOptions?.[0]?.textContent||f.elements.executorId?.value||'';
+  const executor=f.elements.executorId;
+  const cli=executor?.value?(executor.selectedOptions[0]?.textContent||executor.value):'跟随责任人默认执行器';
   const effort=(f.elements.effort?.value||'').trim();
   const rows=[['名称',f.elements.name.value.trim()],['标识',f.elements.id.value.trim()],['起点',preset?.name||'空白'],['CLI · 模型',`${cli} · ${agentEffectiveModel(f)||'未选模型'}${effort?` · ${effort}`:''}`],['职责',f.elements.description.value.trim()||'未填写职责']];
   host.innerHTML=rows.map(([k,v])=>`<div><dt>${k}</dt><dd>${escapeHTML(v)}</dd></div>`).join('');

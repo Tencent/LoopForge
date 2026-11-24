@@ -1013,13 +1013,18 @@ function renderPreviewBuildProperties(host,n){
     <div class="fd-db">
       <section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">
         <p class="prop-hint">运行到该节点时用所选模型构建静态站点，不必再手写脚本节点；Run 成功后平台归档预览。它只有成功出口。</p>
-        <div class="fd-field"><label for="previewNodeExecutor">执行器</label><select class="select" id="previewNodeExecutor" disabled>${executorOptions(workflowPreviewExecutor(state.workflow))}</select></div>
+        <div class="fd-field">
+          <label for="previewNodeExecutor">执行器</label>
+          <select class="select" id="previewNodeExecutor" aria-describedby="previewNodeExecutorStatus"></select>
+          <p class="prop-hint" id="previewNodeExecutorStatus" hidden></p>
+        </div>
         <div class="fd-field"><label for="previewNodeModel">模型</label><select class="select" id="previewNodeModel"></select></div>
         <label class="fd-check"><input type="checkbox" id="previewNodeSpa" ${spa?'checked':''}><span>单页应用回退（找不到路径时返回入口 HTML）</span></label>
       </div></section>
     </div>
     <div class="fd-df"><span class="fd-df-hint">从左侧「成功」出口连到下一步；预览节点没有失败出口</span></div>`;
   const executor=$('#previewNodeExecutor'),sel=$('#previewNodeModel');
+  paintExecutorSelect(executor,workflowPreviewExecutor(state.workflow),flowReadOnly());
   const fill=()=>{
     const model=fillPreviewModelSelect(sel,workflowPreviewModel(state.workflow),executor.value);
     if(!sel.disabled&&model&&state.workflow.preview?.model===''){
@@ -1030,8 +1035,7 @@ function renderPreviewBuildProperties(host,n){
   fill();
   refreshModels.then(()=>{
     if(!executor.isConnected||modelUser!==state.currentUser?.id)return;
-    executor.innerHTML=executorOptions(workflowPreviewExecutor(state.workflow));
-    executor.disabled=flowReadOnly();
+    paintExecutorSelect(executor,workflowPreviewExecutor(state.workflow),flowReadOnly());
     fill();
   });
   executor.onchange=()=>{
