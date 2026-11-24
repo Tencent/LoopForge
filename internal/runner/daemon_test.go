@@ -837,7 +837,7 @@ func TestWorkflowConditionalScriptRoutesOnRunner(t *testing.T) {
 	if err := s.SetDefaultRunner(42, runner.ID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "runner-route", Name: "route", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "runner-route", Name: "route", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{
 		{ID: "route", Type: "script", Script: `printf '{"route":"small"}' > "$LOOPFORGE_ROUTE_FILE"`, MaxAttempts: 1},
 		{ID: "small", Type: "script", Script: "echo small", MaxAttempts: 1},
 		{ID: "large", Type: "script", Script: "echo large", MaxAttempts: 1},

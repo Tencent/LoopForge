@@ -13,7 +13,7 @@ import (
 )
 
 func routingWorkflow(route string) domain.WorkflowDefinition {
-	return domain.WorkflowDefinition{ID: "routing-" + route, Name: "routing", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	return domain.WorkflowDefinition{ID: "routing-" + route, Name: "routing", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{
 		{ID: "classify", Type: "script", Script: `printf '{"route":"` + route + `"}' > "$LOOPFORGE_ROUTE_FILE"`, MaxAttempts: 1},
 		{ID: "small", Type: "script", Script: "echo small", MaxAttempts: 1},
 		{ID: "large", Type: "script", Script: "echo large", MaxAttempts: 1},
@@ -490,7 +490,7 @@ func TestConditionalRoutingRefreshRejectsNewConditionsOnCompletedNode(t *testing
 		t.Fatal(err)
 	}
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "refresh-routing", Name: "refresh", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "refresh-routing", Name: "refresh", Version: 1, SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{
 		{ID: "classify", Type: "script", Script: "echo initial", MaxAttempts: 1},
 		{ID: "approval", Type: "approval", MaxAttempts: 1},
 		{ID: "small", Type: "script", Script: "echo small", MaxAttempts: 1},
