@@ -704,7 +704,7 @@ function workspaceIsAvailable(run,ws){
     !ws.loading&&!ws.restoring&&!ws.error&&!ws.restoreError&&ws.info?.available);
 }
 function workspaceCanRestore(run,ws){
-  return !!(ws?.runId===run.id&&ws.cleaned&&runWorkspaceWasCleaned(run)&&ws.info?.restorable&&!ws.info.available);
+  return !!(ws?.runId===run.id&&ws.cleaned===runWorkspaceWasCleaned(run)&&ws.info?.available===false&&ws.info.restorable);
 }
 function workspaceRestoreButtonHTML(){
   const hint=lfT(
@@ -1031,8 +1031,17 @@ async function restoreRunWorkspace(runId,inProgress=false){
   renderWorkspacePane(state.activeRun);
   try{
     if(!inProgress){
-      const result=await api(`/api/runs/${encodeURIComponent(runId)}/workspace/restore`,{method:'POST',headers:{'Prefer':'respond-async'}});
-      inProgress=result.workspaceRestore?.status==='restoring';
+      const path='/api/runs/'+encodeURIComponent(runId)+'/workspace/restore';
+      for(let retries=0;isCurrent();retries++){
+        try{
+          const result=await api(path,{method:'POST',headers:{'Prefer':'respond-async'}});
+          inProgress=result.workspaceRestore?.status==='restoring';
+          break;
+        }catch(err){
+          if(err.code!=='workspace_busy'||retries>=4)throw err;
+          await new Promise(resolve=>setTimeout(resolve,1000));
+        }
+      }
     }
     if(inProgress)await waitForRunWorkspaceRestore(runId,isCurrent);
     if(isCurrent())await syncRunControlState(runId);

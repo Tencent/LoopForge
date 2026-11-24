@@ -180,7 +180,14 @@ func TestWorkspaceRestoreEligibilityUsesWorkspaceEditAccess(t *testing.T) {
 	}
 	run.Status = "succeeded"
 	run.WorkspaceCleanedAt = now
+	run.Nodes = map[string]*domain.NodeRun{"sub": {NodeID: "sub", Status: "succeeded", ChildRunID: "shared-child"}}
 	if err = h.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	child := domain.Run{ID: "shared-child", Status: "succeeded", ExecutionContext: run.ExecutionContext}
+	child.ExecutionContext.ParentRunID = run.ID
+	child.ExecutionContext.WorkspaceRunID = run.ID
+	if err = h.repo.PutRun(child); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,20 +206,22 @@ func TestWorkspaceRestoreEligibilityUsesWorkspaceEditAccess(t *testing.T) {
 		{"owner", owner, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			request, response := workbenchContext(tc.user, http.MethodGet, workspace, bytes.NewBuffer(nil))
-			router.ServeHTTP(response, request.Request)
-			var result struct {
-				Available         bool       `json:"available"`
-				Restorable        *bool      `json:"restorable"`
-				CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
-			}
-			err := json.Unmarshal(response.Body.Bytes(), &result)
-			if response.Code != http.StatusOK || err != nil || result.Available || result.CheckpointSavedAt == nil || result.Restorable == nil || *result.Restorable != tc.restorable {
-				t.Fatalf("restorable should be %v for %s: %d %s", tc.restorable, tc.name, response.Code, response.Body)
+			for _, path := range []string{workspace, "/api/runs/shared-child/workspace"} {
+				request, response := workbenchContext(tc.user, http.MethodGet, path, bytes.NewBuffer(nil))
+				router.ServeHTTP(response, request.Request)
+				var result struct {
+					Available         bool       `json:"available"`
+					Restorable        *bool      `json:"restorable"`
+					CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
+				}
+				err := json.Unmarshal(response.Body.Bytes(), &result)
+				if response.Code != http.StatusOK || err != nil || result.Available || result.CheckpointSavedAt == nil || result.Restorable == nil || *result.Restorable != tc.restorable {
+					t.Fatalf("restorable should be %v for %s at %s: %d %s", tc.restorable, tc.name, path, response.Code, response.Body)
+				}
 			}
 		})
 	}
-	request, response := workbenchContext(viewer, http.MethodPost, workspace+"/restore", bytes.NewBuffer(nil))
+	request, response := workbenchContext(viewer, http.MethodPost, "/api/runs/shared-child/workspace/restore", bytes.NewBuffer(nil))
 	request.Request.Header.Set("Prefer", "respond-async")
 	router.ServeHTTP(response, request.Request)
 	if response.Code != http.StatusForbidden {
