@@ -249,6 +249,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/auth/gongfeng", api.auth.gongfengOAuthStatus)
 	g.GET("/api/auth/gongfeng/start", api.auth.gongfengOAuthStart)
 	g.GET("/api/auth/gongfeng/callback", api.auth.gongfengOAuthCallback)
+	g.GET("/api/auth/github/login/start", api.auth.githubLoginStart)
+	g.GET("/api/auth/github/login/callback", api.auth.githubLoginCallback)
 	g.GET("/api/auth/github", api.github.status)
 	g.PUT("/api/auth/github/config", api.github.configure)
 	g.POST("/api/auth/github/device", api.github.start)

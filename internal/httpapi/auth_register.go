@@ -33,7 +33,7 @@ func signupEnabled() bool {
 
 func (h *authHandlers) authSetup(c *gin.Context) {
 	needsSetup := h.repo != nil && h.repo.LocalAccountCount() == 0
-	c.JSON(http.StatusOK, gin.H{"needsSetup": needsSetup, "signupEnabled": needsSetup || signupEnabled()})
+	c.JSON(http.StatusOK, gin.H{"needsSetup": needsSetup, "signupEnabled": needsSetup || signupEnabled(), "githubLogin": githubLoginEnabled()})
 }
 
 const welcomeProjectID = "welcome"
