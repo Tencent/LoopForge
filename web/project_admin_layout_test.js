@@ -36,6 +36,30 @@ function el(props = {}) {
     setAttribute(){},removeAttribute(){},focus(){},querySelector:()=>null,querySelectorAll:()=>[],
   }, props);
 }
+// Model the membership controls read by captureProjectAdminForm. Replacing the
+// members panel must replace these controls too, as it does in the browser.
+function membershipForm(project) {
+  const elements=Object.fromEntries(Object.entries(project).map(([name,value])=>[name,el({value})]));
+  let rows=[],html="";
+  const panel=el();
+  Object.defineProperty(panel,"innerHTML",{
+    get:()=>html,
+    set(value){
+      html=value;
+      elements.ownerId.value=/name="ownerId" value="(\d*)"/.exec(html)?.[1]||"";
+      rows=[...html.matchAll(/data-member-row="\d+"([^]*?)data-remove-member=/g)].map(([,row])=>{
+        const user=el({value:/name="member-\d+" value="(\d*)"/.exec(row)?.[1]||""});
+        const role=el({value:/<option value="([^"]+)" selected>/.exec(row)?.[1]||"member"});
+        return el({querySelector:sel=>sel==='input[type="hidden"]'?user:sel==='[data-m="role"]'?role:null});
+      });
+    },
+  });
+  panel.innerHTML=ctx.projectAdminFormHTML(project,{creating:false,custom:false,repos:[],saved:project});
+  const form=el({dataset:{projectFor:project.id,mode:"edit"},elements,
+    querySelector:sel=>sel==='[data-pa-panel="members"]'?panel:null,
+    querySelectorAll:sel=>sel==='[data-member-row]'?rows:[]});
+  return {form,panel};
+}
 const dom = {};
 const ctx = {
   URL,
@@ -372,6 +396,81 @@ assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
     assert.equal(ctx.state.projectDraft.members[0].role,"viewer");
     assert.equal(ctx.state.projectDraft.membersVersion,"before-approval","never pair a partial old roster with a new token");
     ctx.api=api;
+  }
+
+  // An owner's historical approval can refresh the roster while the hidden
+  // members panel still contains an older snapshot. A settings-only save must
+  // send the refreshed controls and token together.
+  {
+    const api=ctx.api;
+    const base={...projects[0],members:[{userId:2,role:"member"}],membersVersion:"old-controls"};
+    const fresh={...base,members:[...base.members,{userId:5,role:"viewer"}],membersVersion:"current-controls"};
+    ctx.storeSavedProject(base);
+    ctx.state.authRequired=true;ctx.state.currentUser={id:1};ctx.state.projectAdminDetailId=base.id;ctx.state.projectAdminTab="basic";
+    ctx.state.projectDraft=ctx.projectDraftFrom(base);ctx.state.projectDraftBase=ctx.projectDraftFrom(base);ctx.state.projectDraftFor=base.id;
+    ctx.state.projectJoinRequests=[];
+    const {form,panel}=membershipForm(base);dom["#projectAdminForm"]=form;
+    form.elements.description.value="settings typed during refresh";
+    ctx.document.activeElement=form.elements.description;
+    let saved;
+    ctx.api=async(url,init)=>{
+      if(url==="/api/project-join-requests")return [{id:83,projectId:base.id,userId:1,status:"approved"}];
+      if(url==="/api/projects/"+base.id)return fresh;
+      if(url==="/api/projects"){saved=JSON.parse(init.body);return saved}
+      throw new Error("unexpected API call: "+url);
+    };
+    await ctx.loadProjectJoinRequests(true);
+    assert.match(panel.innerHTML,/name="member-1" value="5"/,"refresh updates the hidden membership controls");
+    assert.equal(ctx.document.activeElement,form.elements.description,"other settings retain focus");
+    assert.equal(form.elements.description.value,"settings typed during refresh");
+    ctx.captureProjectAdminForm();
+    same(ctx.state.projectDraft.members,fresh.members,"later input cannot restore the old roster");
+    assert.equal(ctx.state.projectDraft.membersVersion,fresh.membersVersion);
+    assert.equal(ctx.state.projectDraft.description,"settings typed during refresh");
+    assert.equal(ctx.state.projectDraftBase.description,base.description,"unsaved settings retain their baseline");
+    assert.equal(ctx.projectAdminDirty(),true);
+    await ctx.saveProjectAdmin({preventDefault(){},currentTarget:form});
+    same(saved.members,fresh.members,"settings-only save preserves the newly approved member");
+    assert.equal(saved.membersVersion,fresh.membersVersion);
+    assert.equal(saved.description,"settings typed during refresh");
+    delete dom["#projectAdminForm"];ctx.document.activeElement=null;
+    ctx.api=api;ctx.state.authRequired=false;
+  }
+
+  // Concurrent approvals can return project snapshots out of order. Only the
+  // newest refresh for each project may update its cache, draft and controls.
+  {
+    const api=ctx.api,reads=[];
+    const base={...projects[0],members:[{userId:2,role:"member"}],membersVersion:"before-both"};
+    const earlier={...base,members:[...base.members,{userId:4,role:"member"}],membersVersion:"after-first"};
+    const latest={...earlier,members:[...earlier.members,{userId:5,role:"viewer"}],membersVersion:"after-both"};
+    const other={...projects[1],membersVersion:"independent-project"};
+    ctx.storeSavedProject(base);
+    ctx.state.projectAdminDetailId=base.id;ctx.state.projectDraftFor=base.id;
+    ctx.state.projectDraft=ctx.projectDraftFrom(base);ctx.state.projectDraftBase=ctx.projectDraftFrom(base);
+    const {form,panel}=membershipForm(base);dom["#projectAdminForm"]=form;
+    ctx.api=url=>new Promise(resolve=>reads.push({url,resolve}));
+    const first=ctx.refreshProjectJoinMembers(base.id),second=ctx.refreshProjectJoinMembers(base.id),independent=ctx.refreshProjectJoinMembers(other.id);
+    assert.equal(reads.length,3);
+    reads[1].resolve(latest);await second;
+    reads[2].resolve(other);await independent;
+    reads[0].resolve(earlier);await first;
+    same(ctx.state.data.projects.find(p=>p.id===base.id),latest,"late earlier response cannot roll back the project cache");
+    assert.equal(ctx.state.data.projects.find(p=>p.id===other.id).membersVersion,other.membersVersion,"different projects refresh independently");
+    ctx.captureProjectAdminForm();
+    same(ctx.state.projectDraft.members,latest.members);
+    same(ctx.state.projectDraftBase.members,latest.members);
+    assert.equal(ctx.state.projectDraft.membersVersion,latest.membersVersion);
+    assert.equal(ctx.state.projectDraftBase.membersVersion,latest.membersVersion);
+    assert.match(panel.innerHTML,/name="member-2" value="5"/);
+    assert.equal(ctx.projectAdminDirty(),false,"refreshing the roster does not create unsaved changes");
+    // Subsequent refreshes still protect genuine local membership edits.
+    form.querySelectorAll('[data-member-row]')[0].querySelector('[data-m="role"]').value="viewer";
+    const conflict=ctx.refreshProjectJoinMembers(base.id);
+    reads[3].resolve({...latest,membersVersion:"after-local-edit"});await conflict;
+    assert.equal(ctx.state.projectDraft.members[0].role,"viewer");
+    assert.equal(ctx.state.projectDraft.membersVersion,latest.membersVersion,"local member changes retain their original token");
+    delete dom["#projectAdminForm"];ctx.api=api;
   }
 
   // A refresh that finishes after a role selection, and reviewing a different

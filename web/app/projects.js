@@ -177,6 +177,13 @@ function projectRepoListHTML(repos,defaultId){
   if(!repos.length)return projectAdminEmptyHTML('repo','还没有绑定代码仓库','绑定后，Agent 执行 SOP 时会自动克隆仓库并在工作分支上提交。第一个仓库会自动设为默认。',`<ol class="pa-steps"><li><span>1</span>粘贴 Git HTTPS 链接或 Git SSH 地址</li><li><span>2</span>确认分支</li><li><span>3</span>保存即生效</li></ol><button type="button" class="button primary" data-repo-add>＋ 添加第一个仓库</button>`);
   return `<div class="pa-rgrid">${repos.map(r=>repoCardHTML(r,r.id===defaultId)).join('')}<button type="button" class="pa-rc-add" data-repo-add><i>${paIcon('plus',14)}</i><b>添加仓库</b></button></div>`;
 }
+function projectMembersPanelHTML(d,saved){
+  const owner=userById(d.ownerId);
+  const members=(d.members||[]).map((m,i)=>{const u=userById(m.userId);return `<div class="member-row pa-member-row" data-member-row="${i}"><span class="member-avatar">${userAvatarHTML(u,48)}</span><select class="select member-role" data-m="role" aria-label="成员角色">${PROJECT_MEMBER_ROLES.map(r=>`<option value="${r.id}"${projectMemberRole(m.role)===r.id?' selected':''}>${r.label}</option>`).join('')}</select>${userCombobox(`member-${i}`,m.userId,'请选择项目成员','data-m="userId"')}<button type="button" data-remove-member="${i}" title="移除成员" aria-label="移除成员">×</button></div>`}).join('');
+  return paSection('负责人','Owner 是项目的默认责任人，接收需要介入的通知。',`<div class="pa-rows"><div class="member-row owner-row pa-member-row"><span class="member-avatar owner">${userAvatarHTML(owner,48)}</span><span class="member-kind owner">Owner</span>${userCombobox('ownerId',d.ownerId,'请选择项目 Owner')}<span></span></div></div>`)
+    +paSection('成员','维护者和成员可推进需求、修改项目内角色与 SOP；维护者还能管理通知机器人和上报数据源；只读成员只能查看。',`<div class="pa-rows" id="memberRows">${members||'<div class="pa-rows-empty">还没有其他成员</div>'}</div>`,'<button id="addMember" type="button" class="button ghost small">＋ 添加成员</button>')
+    +(saved&&canReviewProjectJoin(saved)?paSection('加入申请','通过后申请人立即成为项目成员；通过前可调整授予的角色。',`<div class="pa-rows" data-pa-join-box>${projectJoinRowsHTML(saved)}</div>`):'');
+}
 function projectAdminFormHTML(d,ctx){
   const {creating,custom,repos,saved}=ctx;
   const defaultRepo=repos.some(r=>r.id===d.defaultRepositoryId)?d.defaultRepositoryId:'';
@@ -192,17 +199,12 @@ function projectAdminFormHTML(d,ctx){
       ${paRow('默认 SOP','用于新需求的默认流程；已关联 SOP 的需求保留原绑定。',projectDefaultSOPField(d),{required:true})}
       ${paRow('默认代码仓库',repoDesc,`<select name="defaultRepositoryId" class="select" ${repos.length?'':'disabled'}><option value="">暂未绑定</option>${repoOptions}</select>`)}
     </div>`);
-  const owner=userById(d.ownerId);
-  const members=(d.members||[]).map((m,i)=>{const u=userById(m.userId);return `<div class="member-row pa-member-row" data-member-row="${i}"><span class="member-avatar">${userAvatarHTML(u,48)}</span><select class="select member-role" data-m="role" aria-label="成员角色">${PROJECT_MEMBER_ROLES.map(r=>`<option value="${r.id}"${projectMemberRole(m.role)===r.id?' selected':''}>${r.label}</option>`).join('')}</select>${userCombobox(`member-${i}`,m.userId,'请选择项目成员','data-m="userId"')}<button type="button" data-remove-member="${i}" title="移除成员" aria-label="移除成员">×</button></div>`}).join('');
-  const memberPanel=paSection('负责人','Owner 是项目的默认责任人，接收需要介入的通知。',`<div class="pa-rows"><div class="member-row owner-row pa-member-row"><span class="member-avatar owner">${userAvatarHTML(owner,48)}</span><span class="member-kind owner">Owner</span>${userCombobox('ownerId',d.ownerId,'请选择项目 Owner')}<span></span></div></div>`)
-    +paSection('成员','维护者和成员可推进需求、修改项目内角色与 SOP；维护者还能管理通知机器人和上报数据源；只读成员只能查看。',`<div class="pa-rows" id="memberRows">${members||'<div class="pa-rows-empty">还没有其他成员</div>'}</div>`,'<button id="addMember" type="button" class="button ghost small">＋ 添加成员</button>')
-    +(saved&&canReviewProjectJoin(saved)?paSection('加入申请','通过后申请人立即成为项目成员；通过前可调整授予的角色。',`<div class="pa-rows" data-pa-join-box>${projectJoinRowsHTML(saved)}</div>`):'');
   const configured=!!(saved?.tapdWorkspaceId||saved?.tapdIterationId);
   const tapdPanel=(tapdIntegrationAvailable(saved)?paSection('TAPD 需求池','配置后可在需求页从 TAPD 导入需求，澄清结论会回写到 TAPD 单。',`<div class="pa-rows">
       ${paRow('Workspace ID','TAPD 项目 URL 中 /tapd_fe/ 后的数字。',`<input class="pa-input mono" name="tapdWorkspaceId" value="${escapeHTML(d.tapdWorkspaceId||'')}" placeholder="例如 20375341" spellcheck="false">`)}
       ${paRow('Iteration ID','可选，只导入该迭代内的需求。',`<input class="pa-input mono" name="tapdIterationId" value="${escapeHTML(d.tapdIterationId||'')}" placeholder="留空导入全部" spellcheck="false">`)}
     </div>`):'')+paSection('危险操作','',`<div class="pa-rows">${projectDeleteRow(saved)}${configured?paRow(`清除已保存的 TAPD 配置${configured?' <span class="pa-chip">当前已配置</span>':''}`,'保存项目设置时同时清空 Workspace 与 Iteration，已导入的需求不受影响。',`<label class="pa-switch-wrap"><input type="checkbox" name="tapdClear" role="switch" ${d.tapdClear?'checked':''} aria-label="清除已保存的 TAPD 配置"><span class="pa-switch danger"></span></label>`,{attrs:' data-pa-row-inline'}):''}</div>`);
-  const panels={basic,repos:paSection('代码仓库','Agent 执行 SOP 时会克隆这些仓库。仓库保存后立即生效，无需点「保存项目设置」。',`<div data-pa-repo-box>${projectRepoListHTML(repos,saved?.defaultRepositoryId||'')}</div>`,repos.length?'<button type="button" class="button ghost small" data-repo-add>＋ 添加仓库</button>':''),members:memberPanel,tapd:tapdPanel};
+  const panels={basic,repos:paSection('代码仓库','Agent 执行 SOP 时会克隆这些仓库。仓库保存后立即生效，无需点「保存项目设置」。',`<div data-pa-repo-box>${projectRepoListHTML(repos,saved?.defaultRepositoryId||'')}</div>`,repos.length?'<button type="button" class="button ghost small" data-repo-add>＋ 添加仓库</button>':''),members:projectMembersPanelHTML(d,saved),tapd:tapdPanel};
   const tab=state.projectAdminTab||'basic';
   return PROJECT_ADMIN_TABS.map(t=>`<section class="pa-panel" data-pa-panel="${t.id}" id="paPanel-${t.id}" role="tabpanel" aria-labelledby="paTab-${t.id}"${t.id===tab?'':' hidden'}>${creating&&t.id!=='basic'?'':panels[t.id]}</section>`).join('')
     +`<div class="pa-savebar-dock"><div class="pa-savebar" data-pa-savebar inert><span class="pa-savebar-tx"><i></i><span data-pa-savebar-text>有未保存的修改</span></span><button type="button" class="button ghost" data-pa-discard>放弃修改</button><button type="submit" class="button primary" data-pa-submit>保存项目设置</button></div></div>`;
@@ -520,8 +522,13 @@ async function withdrawProjectJoin(id){
 function projectMembershipSignature(p){
   return JSON.stringify([Number(p?.ownerId)||0,(p?.members||[]).map(m=>[Number(m.userId),projectMemberRole(m.role)]).sort((a,b)=>a[0]-b[0])]);
 }
+const projectJoinMemberRefreshes=new Map();
 async function refreshProjectJoinMembers(projectId){
+  const refresh={};projectJoinMemberRefreshes.set(projectId,refresh);
   const fresh=await api('/api/projects/'+encodeURIComponent(projectId)).catch(()=>null);
+  // A later refresh supersedes this snapshot, even if its response arrived first.
+  if(projectJoinMemberRefreshes.get(projectId)!==refresh)return;
+  projectJoinMemberRefreshes.delete(projectId);
   if(!fresh?.id)return;
   storeSavedProject(fresh);
   if(state.projectDraftFor!==fresh.id)return;
@@ -533,6 +540,14 @@ async function refreshProjectJoinMembers(projectId){
   for(const d of [state.projectDraft,state.projectDraftBase])if(d){
     d.members=clone(members);d.ownerId=fresh.ownerId;d.membersVersion=fresh.membersVersion;
   }
+  // The hidden members panel is read on every settings input. Replace its
+  // controls together with the token, while leaving other settings in place.
+  const form=$('#projectAdminForm'),panel=form?.querySelector('[data-pa-panel="members"]');
+  if(form?.dataset.projectFor===fresh.id&&panel){
+    panel.innerHTML=projectMembersPanelHTML(state.projectDraft,fresh);
+    bindUserSearches(panel);
+    renderProjectAdminHead();syncProjectAdminTabs();syncProjectAdminSaveBar();
+  }
 }
 // Approval refreshes the roster without discarding unsaved project settings.
 async function reviewProjectJoin(id,approve,role){
@@ -540,10 +555,7 @@ async function reviewProjectJoin(id,approve,role){
     const updated=await api(`/api/project-join-requests/${id}/${approve?'approve':'reject'}`,{method:'POST',body:JSON.stringify(approve?{role:projectMemberRole(role)}:{})});
     state.projectJoinRequests=(state.projectJoinRequests||[]).map(r=>r.id===id?updated:r);
     delete state.projectJoinRoles?.[id];
-    if(approve){
-      await refreshProjectJoinMembers(updated.projectId);
-      renderProjectDetail({force:true});
-    }
+    if(approve)await refreshProjectJoinMembers(updated.projectId);
     syncProjectJoinBox();
     const u=userById(updated.userId);
     toast(approve?`已通过，${u?userDisplay(u):'申请人'}已加入项目`:'已拒绝该申请','ok');
