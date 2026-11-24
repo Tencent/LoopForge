@@ -50,6 +50,42 @@ func TestSteerRejectsSecondRequestForSameGeneration(t *testing.T) {
 	}
 }
 
+func TestSteerKeepsRunningTurnWhenRunnerShareIsRevoked(t *testing.T) {
+	h, user := workbenchFixture(t)
+	runner := domain.Runner{ID: "steer-shared-runner", OwnerUserID: user.ID}
+	if err := h.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	const projectID, sessionID = "workbench", "steer-shared"
+	if err := h.repo.SetRunnerSharedProjects(runner.ID, user.ID, []string{projectID}); err != nil {
+		t.Fatal(err)
+	}
+	g := domain.AssistantGeneration{
+		ID: "original-turn", SessionID: sessionID, ProjectID: projectID, UserID: user.ID, ActorID: user.ID, Status: "running",
+	}
+	if err := h.repo.BeginAssistantGeneration(g, domain.AssistantSession{
+		ID: sessionID, ProjectID: projectID,
+		ExecutionTarget: &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID},
+		Messages:        []assistantMessage{{Role: "user", Content: "original"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.SetRunnerSharedProjects(runner.ID, user.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/assistant/sessions/" + sessionID + "/generation/steer"
+	c, rec := workbenchContext(user, "POST", path, bytes.NewBufferString(`{"content":"another turn"}`))
+	c.Params = gin.Params{{Key: "id", Value: sessionID}}
+	h.steerGeneration(c)
+	if rec.Code != 403 || !strings.Contains(rec.Body.String(), "会话绑定的执行机器") {
+		t.Fatalf("revoked runner accepted a steer: %d %s", rec.Code, rec.Body)
+	}
+	current, ok := h.repo.PeekAssistantGeneration(user.ID, sessionID)
+	if !ok || current.CancelRequested || current.Steer != nil || current.Status != "running" {
+		t.Fatalf("denied steer changed the prior generation: %+v", current)
+	}
+}
+
 func TestSteerDuringTurnFinalization(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

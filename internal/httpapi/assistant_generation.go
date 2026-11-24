@@ -533,6 +533,11 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "会话不存在"})
 		return
 	}
+	target := session.Execution()
+	if !h.canUseBoundExecutionTarget(target, session.ProjectID, stored.ID) {
+		c.JSON(403, gin.H{"error": errAssistantRunnerAccessRevoked.Error()})
+		return
+	}
 	// The saved conversation selects the CLI for steering. Bare model IDs
 	// use that CLI, and an explicit CLI prefix must match it.
 	executor := h.forkExecutor(c, session, stored.ID)
@@ -552,7 +557,6 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}
-	target := session.Execution()
 	loginRunner := h.assistantLoginRunner(stored.ID, &target, cliEngine)
 	runnerLogin := loginRunner.ID != ""
 	user, model, refusal := h.assistantTurnUser(stored, model, runnerLogin)

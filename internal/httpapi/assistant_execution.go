@@ -59,12 +59,9 @@ func (h *assistantHandlers) bindTurnExecutionTarget(c *gin.Context, req *assista
 			c.JSON(409, gin.H{"error": repo.ErrAssistantExecutionLocked.Error()})
 			return false
 		}
-		if target.Pool == domain.ExecutionModeRunner {
-			runner, ok := h.repo.Runner(target.RunnerID)
-			if !ok || !h.canUseBoundRunner(runner, saved.ProjectID, userID) {
-				c.JSON(403, gin.H{"error": errAssistantRunnerAccessRevoked.Error()})
-				return false
-			}
+		if !h.canUseBoundExecutionTarget(target, saved.ProjectID, userID) {
+			c.JSON(403, gin.H{"error": errAssistantRunnerAccessRevoked.Error()})
+			return false
 		}
 		req.ExecutionTarget = &target
 		return true
@@ -76,6 +73,14 @@ func (h *assistantHandlers) bindTurnExecutionTarget(c *gin.Context, req *assista
 	}
 	req.ExecutionTarget = target
 	return true
+}
+
+func (h *assistantHandlers) canUseBoundExecutionTarget(target domain.AssistantExecutionTarget, projectID string, userID int64) bool {
+	if target.Pool != domain.ExecutionModeRunner {
+		return true
+	}
+	runner, ok := h.repo.Runner(target.RunnerID)
+	return ok && h.canUseBoundRunner(runner, projectID, userID)
 }
 
 // Ownerless runners can only reach this check after a server allocation.
