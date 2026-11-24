@@ -34,7 +34,7 @@ func botFixture(t *testing.T) (*repo.Store, *assistantHandlers, domain.Notificat
 	d := &deps{repo: s, engine: e}
 	h := &assistantHandlers{deps: d, notifications: &notificationHandlers{deps: d, service: notification.New(s)}}
 	h.notifications.service.PublicURL = "http://platform.example"
-	h.identities = &botIdentityHandlers{deps: d, publicURL: h.notifications.service.PublicURL}
+	h.identities = &botIdentityHandlers{deps: d, publicURL: h.notifications.service.PublicAddress}
 	bindBotTestUser(t, s, bot, "new-wecom-user", 43)
 	bindBotTestUser(t, s, bot, "bound-member", 42)
 	return s, h, bot
