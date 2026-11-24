@@ -77,12 +77,21 @@ func TestOnlyPlatformAdminsMayWriteDefaultSandbox(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("project owner could modify the platform default: %d %s", rec.Code, rec.Body.String())
 	}
+	if err := f.s.DB.Exec("DELETE FROM projects WHERE id = ?", "platform").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.DB.Exec("DELETE FROM sandboxes WHERE id = ?", repo.DefaultSandboxProfileID).Error; err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.s.GrantPlatformAdmin(f.user.LoginName); err != nil {
 		t.Fatal(err)
 	}
-	rec = cvBRequest(t, f, http.MethodPut, "/api/sandboxes", body, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("platform admin could not configure the default: %d %s", rec.Code, rec.Body.String())
+	for _, projectID := range []string{"platform", ""} {
+		body["projectId"] = projectID
+		rec = cvBRequest(t, f, http.MethodPut, "/api/sandboxes", body, true)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("platform admin could not configure the default with projectId %q: %d %s", projectID, rec.Code, rec.Body.String())
+		}
 	}
 	if profile, ok := f.s.Sandbox(repo.DefaultSandboxProfileID); !ok || profile.Driver != domain.SandboxDriverNative {
 		t.Fatalf("platform override was not saved under the canonical ID: %+v", profile)

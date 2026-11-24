@@ -16,7 +16,7 @@ export AGENTFLOW_E2E_BASE=http://127.0.0.1:8090
 
 ### 用当前代码跑
 
-要验证本地还没合并的改动，用 `local.sh`：它用当前检出的代码编译并起一个临时平台，自带 MySQL 容器、测试用户和 Token、`generic-docker` 沙箱（`e2e-native` 由用例自动创建），以及一个本机裸仓库（给需要代码仓库的用例用），跑完全部清理。
+要验证本地还没合并的改动，用 `local.sh`。它用当前检出的代码编译并启动临时平台，准备 MySQL 容器、测试用户和 Token，以及一个本机裸仓库，跑完全部清理。平台提供内置的 `generic-docker`，用例按需创建 `e2e-native`。
 
 ```bash
 ./local.sh                                         # 全部 API 用例

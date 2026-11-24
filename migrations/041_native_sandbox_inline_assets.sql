@@ -10,7 +10,7 @@
 -- 1. Each docker sandbox copies the Dockerfile it referenced.
 -- 2. A Dockerfile no docker sandbox used becomes a docker sandbox, keeping its
 --    name, project and sharing. It keeps the Dockerfile ID when available, then
---    tries a "-docker" suffix and finally a derived ID if the suffix is taken.
+--    tries a "-docker" suffix and finally an unused numbered ID.
 --    Built-in sandbox IDs are reserved even without a catalog row.
 -- 3. Each local sandbox becomes a native sandbox: its execution machine,
 --    checkout directory and repository paths are dropped, and it keeps its
@@ -117,16 +117,8 @@ WHERE JSON_UNQUOTE(JSON_EXTRACT(s.payload, '$.driver')) = 'docker'
 
 -- 2. Wrap unused Dockerfiles as sandboxes of their own.
 INSERT INTO sandboxes (`id`, `name`, `payload`)
-SELECT w.sid, d.name, JSON_MERGE_PATCH(
-  JSON_OBJECT('id', w.sid, 'name', d.name, 'driver', 'docker', 'readOnlyRootFS', false,
-    'dockerfile', JSON_MERGE_PATCH(
-      JSON_OBJECT('content', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(d.payload, '$.content')), '')),
-      JSON_OBJECT('files', JSON_EXTRACT(d.payload, '$.files')))),
-  JSON_OBJECT('projectId', JSON_EXTRACT(d.payload, '$.projectId')),
-  JSON_OBJECT('shared', IF(JSON_EXTRACT(d.payload, '$.shared') = true, CAST('true' AS JSON), NULL)))
-FROM dockerfiles d
-JOIN (
-  SELECT legacy.id AS did,
+WITH unused_dockerfiles AS (
+  SELECT legacy.id, legacy.name, legacy.payload,
     CASE
       WHEN legacy.id COLLATE utf8mb4_unicode_ci NOT IN ('generic-docker', 'local')
         AND NOT EXISTS (SELECT 1 FROM sandboxes s WHERE s.id = legacy.id COLLATE utf8mb4_unicode_ci)
@@ -136,15 +128,45 @@ JOIN (
         AND NOT EXISTS (SELECT 1 FROM sandboxes s WHERE s.id = CONCAT(legacy.id, '-docker') COLLATE utf8mb4_unicode_ci)
         AND NOT EXISTS (SELECT 1 FROM dockerfiles d WHERE d.id = CONCAT(legacy.id, '-docker') COLLATE utf8mb4_unicode_ci)
         THEN CONCAT(legacy.id, '-docker')
-      ELSE CONCAT('dockerfile-', LEFT(SHA2(legacy.id, 256), 53))
-    END AS sid
+    END AS preferred_id
   FROM dockerfiles legacy
-) w ON w.did = d.id
-WHERE NOT EXISTS (
-  SELECT 1 FROM sandboxes s
-  WHERE JSON_UNQUOTE(JSON_EXTRACT(s.payload, '$.driver')) = 'docker'
-    AND JSON_UNQUOTE(JSON_EXTRACT(s.payload, '$.dockerfileId')) COLLATE utf8mb4_unicode_ci = d.id
-);
+  WHERE NOT EXISTS (
+    SELECT 1 FROM sandboxes s
+    WHERE JSON_UNQUOTE(JSON_EXTRACT(s.payload, '$.driver')) = 'docker'
+      AND JSON_UNQUOTE(JSON_EXTRACT(s.payload, '$.dockerfileId')) COLLATE utf8mb4_unicode_ci = legacy.id)
+), pending_ids AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS slot
+  FROM unused_dockerfiles
+  WHERE preferred_id IS NULL
+), numbered_ids AS (
+  -- Each existing row can occupy at most one candidate. Include one more
+  -- candidate per pending Dockerfile so every pending row gets a free ID.
+  SELECT CONCAT('dockerfile-', ROW_NUMBER() OVER ()) COLLATE utf8mb4_unicode_ci AS sid
+  FROM (
+    SELECT 1 FROM sandboxes
+    UNION ALL SELECT 1 FROM dockerfiles
+    UNION ALL SELECT 1 FROM pending_ids
+  ) occupied_and_pending
+  WHERE EXISTS (SELECT 1 FROM pending_ids)
+), available_ids AS (
+  SELECT sid, ROW_NUMBER() OVER (ORDER BY CHAR_LENGTH(sid), sid) AS slot
+  FROM numbered_ids n
+  WHERE NOT EXISTS (SELECT 1 FROM sandboxes s WHERE s.id = n.sid)
+    AND NOT EXISTS (SELECT 1 FROM dockerfiles d WHERE d.id = n.sid)
+)
+SELECT w.sid, w.name, JSON_MERGE_PATCH(
+  JSON_OBJECT('id', w.sid, 'name', w.name, 'driver', 'docker', 'readOnlyRootFS', false,
+    'dockerfile', JSON_MERGE_PATCH(
+      JSON_OBJECT('content', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(w.payload, '$.content')), '')),
+      JSON_OBJECT('files', JSON_EXTRACT(w.payload, '$.files')))),
+  JSON_OBJECT('projectId', JSON_EXTRACT(w.payload, '$.projectId')),
+  JSON_OBJECT('shared', IF(JSON_EXTRACT(w.payload, '$.shared') = true, CAST('true' AS JSON), NULL)))
+FROM (
+  SELECT COALESCE(d.preferred_id, a.sid) AS sid, d.name, d.payload
+  FROM unused_dockerfiles d
+  LEFT JOIN pending_ids p ON p.id = d.id
+  LEFT JOIN available_ids a ON a.slot = p.slot
+) w;
 
 -- 3. Local sandboxes become native sandboxes.
 UPDATE sandboxes

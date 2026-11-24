@@ -252,8 +252,8 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return false
 		}
-		if reserved && !d.requirePlatformAdmin(c) {
-			return false
+		if reserved {
+			return d.requirePlatformAdmin(c)
 		}
 	}
 	if !d.allowStoredAsset(c, kind, id) {

@@ -824,18 +824,26 @@ func (h *catalogHandlers) sandboxes(c *gin.Context) {
 		var v domain.SandboxProfile
 		if decode(c, &v) {
 			v.ID, v.ProjectID = strings.TrimSpace(v.ID), strings.TrimSpace(v.ProjectID)
-			existing, exists := h.repo.Sandbox(v.ID)
-			if exists && existing.ID == repo.DefaultSandboxProfileID {
-				v.ID = repo.DefaultSandboxProfileID
+			reserved, err := h.repo.IsReservedSandboxID(v.ID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
 			}
-			if err := h.validateEnvironmentAsset(v.ID, v.Name, v.ProjectID, "沙箱"); err != nil {
+			existing, exists := h.repo.Sandbox(v.ID)
+			if reserved {
+				// The built-in profile exposes a synthetic platform owner.
+				if v.ProjectID == "" {
+					v.ProjectID = existing.ProjectID
+				}
+			} else if err := h.validateEnvironmentAsset(v.ID, v.Name, v.ProjectID, "沙箱"); err != nil {
 				respond(c, err)
 				return
 			}
 			if exists && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
 				c.JSON(http.StatusConflict, map[string]string{"error": "沙箱标识已被其他项目使用"})
 				return
-			} else if exists && existing.Shared && !v.Shared && (v.ID == repo.GenericDockerSandboxID || h.sharedWorkflowUsesSandbox(v.ID)) {
+			}
+			if !v.Shared && (reserved || exists && existing.Shared && h.sharedWorkflowUsesSandbox(v.ID)) {
 				c.JSON(http.StatusConflict, map[string]string{"error": "该沙箱仍被共享 SOP 引用，不能取消共享"})
 				return
 			}

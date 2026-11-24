@@ -7,8 +7,8 @@
 #   ./local.sh all                 API, then UI
 #
 # It starts its own MySQL container and platform process, seeds a user with an
-# API token, the sandboxes the suite expects and a local bare Git repository
-# for the repository-bound scenarios, and removes all of it afterwards.
+# API token and a local bare Git repository for the repository-bound
+# scenarios, and removes all of it afterwards.
 #
 # Optional environment:
 #   AGENTFLOW_E2E_EXECUTOR           CLI executor ID (default codebuddy)
@@ -23,8 +23,7 @@
 #                                    agentflow-e2e-local-mysql); set it when
 #                                    several checkouts run the suite at once
 #   AGENTFLOW_E2E_MODEL_SANDBOX      sandbox for model scenarios (default
-#                                    e2e-native, which uses the host's CLIs:
-#                                    the seeded Docker image has no model CLI)
+#                                    e2e-native, which uses the host's CLIs)
 #   AGENTFLOW_E2E_KEEP=1             keep the platform, database and files; the
 #                                    exports needed to rerun single files against
 #                                    it are written to $WORK/env (mode 600)
@@ -153,7 +152,6 @@ api() {
   case "$code" in 2??) ;; *) echo "seed $1 $2 failed ($code): $(cat "$WORK/seed.out" 2>/dev/null)"; exit 1 ;; esac
 }
 api POST /api/projects '{"id":"e2e-auto","key":"E2E","name":"E2E 自动化测试（勿用）","color":"#8b5cf6","ownerId":900001}'
-api PUT /api/sandboxes '{"id":"generic-docker","name":"Generic Docker","projectId":"e2e-auto","driver":"docker","dockerfile":{"content":"FROM python:3.12-slim\nRUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*\n"},"readOnlyRootFS":false}'
 
 REPO="$WORK/repo"
 mkdir -p "$REPO/src" && git -C "$REPO/src" init -q -b main &&
