@@ -115,6 +115,31 @@ describe("personal execution machine selection", () => {
     await waitFor(() => expect(result.current.defaultRunnerId).toBe(""));
   });
 
+  test("replaces the scoped draft selection when switching projects", async () => {
+    const shared = { id: "shared", name: "Shared machine", ownerUserId: 2 };
+    const afterSwitch = pending();
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/runners?projectId=one") return [...machines, shared];
+      if (path === "/api/runners?projectId=two") return afterSwitch.promise;
+      return { runnerId: "mac" };
+    });
+    const { result, rerender } = renderHook(({ projectId }) =>
+      useExecutionMachines(1, false, false, vi.fn(), bindMock, null, projectId),
+      { initialProps: { projectId: "one" } },
+    );
+    await waitFor(() => expect(result.current.machinesReady).toBe(true));
+    await act(() => result.current.selectMachine(shared.id));
+    expect(result.current.defaultRunnerId).toBe(shared.id);
+
+    rerender({ projectId: "two" });
+    expect(result.current.machinesReady).toBe(false);
+    await act(async () => afterSwitch.resolve(machines));
+    expect(result.current.machinesReady).toBe(true);
+    expect(result.current.machines).toEqual(machines);
+    expect(result.current.defaultRunnerId).toBe("mac");
+    expect(apiMock).toHaveBeenCalledWith("/api/runners/default?projectId=two");
+  });
+
   test("keeps an explicit cloud choice through refresh, and resets only for a new draft", async () => {
     const { result } = renderHook(() => useExecutionMachines(1, false, false, vi.fn(), bindMock));
     await waitFor(() => expect(result.current.machinesReady).toBe(true));

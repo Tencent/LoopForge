@@ -1,20 +1,29 @@
 function openRunModal(workflowId){const select=$('#runWorkflowChoice'),workflows=runnableWorkflowOptions();select.innerHTML=workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===workflowId?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可运行 SOP</option>';$('#confirmRun').disabled=!workflows.length;$('#runModal').classList.add('open');setTimeout(()=>$('#runInput').focus(),0)}
 
-// ---------- 执行机器（bind-cli，个人维度） ----------
+// ---------- 执行机器 ----------
 let runnerRefreshTimer=null;
+let runnerRefreshRequest=0;
 const runnerRuntimeTests=new Set();
 const runnerAuthChanges=new Map();
 const runnerMaintenancePending=new Set();
 let runnerRuntimeMenu=null,runnerRuntimeTrigger=null;
 async function refreshRunners(silent){
+  const request=++runnerRefreshRequest;
+  const projectId=currentProject()?.id||'';
+  const query=projectId?`?projectId=${encodeURIComponent(projectId)}`:'';
+  if(state.runnerProjectId!==projectId)renderRunnersView();
+  void ensureRunnerBindCode(silent);
   try{
-    await ensureRunnerBindCode(silent);
     const [runners,def]=await Promise.all([
-      api('/api/runners?mine=1',{silent:true}).catch(()=>[]),
-      api('/api/runners/default',{silent:true}).catch(()=>({runnerId:''}))
+      api('/api/runners'+(query||'?mine=1'),{silent:true}),
+      api('/api/runners/default'+query,{silent:true})
     ]);
+    if(request!==runnerRefreshRequest||projectId!==(currentProject()?.id||''))return;
     state.runners=runners||[];
+    state.runnerProjectId=projectId;
     state.defaultRunnerId=def?.runnerId||'';
+    state.personalDefaultRunnerId=def?.personalRunnerId??state.defaultRunnerId;
+    state.projectDefaultRunnerId=def?.projectRunnerId||'';
     state.cloudPool=def?.cloudPool||null;
     state.minRunnerVersion=def?.minRunnerVersion||'';
     renderRunnersView();
@@ -79,7 +88,7 @@ function runnerRuntimeAuthMode(runtime){
 }
 function runnerAuthHTML(runtime,key,busy,shared){
   const supportsLogin=runnerRuntimeSupportsLogin(runtime);
-  const mode=runnerAuthChanges.get(key)||runnerRuntimeAuthMode(runtime);
+  const mode=shared?'personal':runnerAuthChanges.get(key)||runnerRuntimeAuthMode(runtime);
   const missing=mode==='personal'&&!runnerPersonalCredentialConfigured(runtime.provider);
   const title=missing?' title="请在个人配置中填写 API Key"':'';
   if(!shared&&supportsLogin)return `<select class="runner-auth-select${mode==='personal'?' is-personal':''}" data-runner-auth="${escapeHTML(key)}" aria-label="${runnerCLILabels[runtime.provider]} 认证方式"${title} ${busy?'disabled':''}>
@@ -144,8 +153,13 @@ function renderRunnersView(){
     const text=e.currentTarget.parentElement?.querySelector('pre')?.innerText||'';
     runnerCopyCommand(copyUnBtn,text,'已复制卸载命令');
   };
-  const runners=state.runners||[];
-  const defaultId=state.defaultRunnerId||'';
+  const projectId=currentProject()?.id||'';
+  const projectLoaded=state.runnerProjectId===projectId;
+  const own=r=>r.ownerUserId===state.currentUser?.id;
+  const runners=(state.runners||[]).filter(r=>own(r)||projectLoaded);
+  const personalDefaultId=state.personalDefaultRunnerId??state.defaultRunnerId??'';
+  const projectDefaultId=projectLoaded?state.projectDefaultRunnerId||'':'';
+  const defaultId=projectDefaultId||personalDefaultId;
   $('#runnerCount').textContent=String(runners.length);
   const poolStatus=$('#runnerPoolStatus');
   if(poolStatus){
@@ -153,7 +167,8 @@ function renderRunnersView(){
     let text='',warn=false;
     if(def){
       warn=def.status!=='online';
-      text=warn?'默认机器已离线，新任务会失败。请启动它或切回云端':`在 ${def.name||def.id} 上执行`;
+      const label=projectDefaultId?'此项目默认':'个人默认';
+      text=warn?`${label}执行机器已离线，请启动机器或更改默认`:`${label} · ${def.name||def.id}`;
     }else if(pool?.configured){
       warn=!pool.online;
       text=pool.online?`云端执行 · ${pool.online} 台在线`:'云端暂无在线机器，新任务最多等待 10 分钟';
@@ -164,11 +179,14 @@ function renderRunnersView(){
   }
   const focusedMenu=document.activeElement?.dataset.runnerRuntimeMenu;
   const focusedUpdate=document.activeElement?.dataset.runnerCheckUpdate;
+  const focusedShare=document.activeElement?.dataset.runnerShare;
   closeRunnerRuntimeMenu();
   list.innerHTML=runners.map(r=>{
     const isDefault=r.id===defaultId;
     const discoveredCLIs=(r.runtimes||[]).filter(rt=>runnerCLILabels[rt.provider]);
-    const shared=!(Number(r.ownerUserId)>0);
+    const shared=!own(r);
+    const isPersonalDefault=r.id===personalDefaultId;
+    const isProjectDefault=r.id===projectDefaultId;
     const cliRows=discoveredCLIs.map(rt=>runnerRuntimeHTML(r,rt,shared)).join('');
     const cliSection=cliRows||'<div class="runner-runtime-empty">未发现支持的 Agent CLI</div>';
     const osLabel=runnerOSLabels[r.os]||r.os||'?';
@@ -178,7 +196,7 @@ function renderRunnersView(){
       <div class="runner-card-head">
         <span class="runner-machine-icon" aria-hidden="true">${huiIcon('monitor')}</span>
         <div class="runner-card-title">
-          <div class="runner-card-name"><b title="${escapeHTML(r.name||r.id)}">${escapeHTML(r.name||r.id)}</b>${isDefault?'<span class="runner-tag default">默认</span>':''}${shared?'<span class="runner-tag">共享</span>':''}</div>
+          <div class="runner-card-name"><b title="${escapeHTML(r.name||r.id)}">${escapeHTML(r.name||r.id)}</b>${isProjectDefault?'<span class="runner-tag default">此项目默认</span>':isPersonalDefault?'<span class="runner-tag default">个人默认</span>':''}${shared?'<span class="runner-tag">项目共享</span>':''}</div>
           <small>${escapeHTML(osLabel)} · ${escapeHTML(r.arch||'?')} · Runner ${escapeHTML(r.runnerVersion||'未知')}</small>
         </div>
         <div class="runner-head-actions">${runnerStatusLabel(r.status,r.lastSeenAt)}${shared?'':`<button class="button ghost runner-check-update" type="button" data-runner-check-update="${escapeHTML(r.id)}" ${r.status!=='online'?'disabled':checking?'aria-disabled="true"':''}>${huiIcon(checking?'arc-spinner':'refresh')}${checking?'处理中…':'检查更新'}</button>`}</div>
@@ -188,17 +206,27 @@ function renderRunnersView(){
         ${cliSection}
       </div>
       <div class="runner-card-action">
-        ${runnerRunLimitHTML(r)}
+        ${shared?'':runnerRunLimitHTML(r)}
         <span class="runner-card-spacer"></span>
-        ${isDefault?'<button class="button ghost small runner-text-button" type="button" data-set-default="">切回云端</button>':''}
-        ${r.status==='online'?'':`<button class="button ghost small runner-text-button" type="button" data-remove-runner="${escapeHTML(r.id)}" title="机器已不再使用时移除绑定">移除</button>`}
-        ${isDefault?'':`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-default="${escapeHTML(r.id)}">设为默认</button>`}
+        ${shared?'':`<button class="button ghost small runner-text-button" type="button" data-runner-share="${escapeHTML(r.id)}" aria-haspopup="dialog">共享项目${r.sharedProjectIds?.length?`（${r.sharedProjectIds.length}）`:''}</button>`}
+        ${isPersonalDefault?`<button class="button ghost small runner-text-button" type="button" data-set-default="">${projectDefaultId?'清除个人默认':'切回云端'}</button>`:''}
+        ${shared||r.status==='online'?'':`<button class="button ghost small runner-text-button" type="button" data-remove-runner="${escapeHTML(r.id)}" title="机器已不再使用时移除绑定">移除</button>`}
+        ${!shared&&!isPersonalDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-default="${escapeHTML(r.id)}">设为个人默认</button>`:''}
+        ${isProjectDefault?'<button class="button ghost small runner-text-button" type="button" data-set-project-default="">恢复个人默认</button>':''}
+        ${shared&&projectId&&!isProjectDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-project-default="${escapeHTML(r.id)}">在此项目使用</button>`:''}
       </div>
     </article>`;
   }).join('')||'<div class="runner-empty"><b>还没有机器</b><span>执行上方命令后自动出现</span></div>';
   // Bind click handlers via JS (CSP blocks inline onclick attributes).
   list.querySelectorAll('[data-set-default]').forEach(btn=>btn.onclick=()=>{
     setDefaultRunner(btn.dataset.setDefault||'');
+  });
+  list.querySelectorAll('[data-set-project-default]').forEach(btn=>{
+    btn.onclick=()=>setDefaultRunner(btn.dataset.setProjectDefault,projectId);
+  });
+  list.querySelectorAll('[data-runner-share]').forEach(btn=>{
+    btn.onclick=()=>editRunnerSharing(runners.find(r=>r.id===btn.dataset.runnerShare));
+    if(btn.dataset.runnerShare===focusedShare)btn.focus({preventScroll:true});
   });
   list.querySelectorAll('[data-remove-runner]').forEach(btn=>btn.onclick=()=>removeRunner(btn.dataset.removeRunner));
   list.querySelectorAll('[data-runner-cli]').forEach(cb=>cb.onchange=()=>{
@@ -236,8 +264,40 @@ function renderRunnersView(){
   });
   window.AgentFlowHarnessIcons?.hydrate?.(list);
   if(!runnerRefreshTimer)runnerRefreshTimer=setInterval(()=>{
-    if(!document.hidden&&activeViewName()==='runners'&&!runnerRuntimeTrigger&&!document.activeElement?.matches?.('[data-runner-run-limit],[data-runner-auth],[data-runner-key-help]'))refreshRunners(true);
+    if(!document.hidden&&activeViewName()==='runners'&&!runnerRuntimeTrigger&&!$('#confirmModal.open')&&!document.activeElement?.matches?.('[data-runner-run-limit],[data-runner-auth],[data-runner-key-help]'))refreshRunners(true);
   },15000);
+}
+async function editRunnerSharing(runner){
+  const userId=state.currentUser?.id;
+  const projects=(state.data.projects||[]).filter(p=>p.ownerId===userId||
+    p.members?.some(m=>m.userId===userId&&String(m.role||'').trim().toLowerCase()!=='viewer'));
+  const shared=new Set(runner.sharedProjectIds||[]);
+  const projectIds=await afOpenDialog(modal=>{
+    $('#confirmTitle').textContent=`共享 ${runner.name||runner.id}`;
+    $('#confirmMessage').textContent=projects.length
+      ?'所选项目的可写成员可以在这台机器上运行代码，执行时使用各自的凭据。'
+      :'加入项目并获得写权限后，即可共享这台机器。';
+    const ok=$('#confirmOkBtn');
+    ok.textContent='保存';
+    ok.className='button primary';
+    $('#confirmCancelBtn').textContent='取消';
+    setConfirmIcon('info','monitor');
+    const fields=document.createElement('fieldset');
+    fields.className='runner-share-projects';
+    fields.setAttribute('aria-label','共享项目');
+    fields.innerHTML=projects.map(p=>`<label><input type="checkbox" value="${escapeHTML(p.id)}" ${shared.has(p.id)?'checked':''}> <span>${escapeHTML(p.name||p.id)}</span></label>`).join('');
+    if(projects.length)modal.querySelector('.confirm-modal-footer').before(fields);
+    return {focus:fields.querySelector('input')||ok,value:accepted=>{
+      fields.remove();
+      return accepted?[...fields.querySelectorAll('input:checked')].map(input=>input.value):null;
+    }};
+  });
+  if(!projectIds)return;
+  try{
+    await api(`/api/runners/${encodeURIComponent(runner.id)}/shared-projects`,{method:'PUT',body:JSON.stringify({projectIds})});
+    toast('已更新共享项目','ok');
+    await refreshRunners(true);
+  }catch(err){toast(err.message,'err')}
 }
 async function removeRunner(runnerId){
   const runner=(state.runners||[]).find(r=>r.id===runnerId);
@@ -263,9 +323,10 @@ function runnerDefaultBlocker(r){
   if(min&&!runnerVersionAtLeast(r.runnerVersion,min))return `执行机器版本 ${r.runnerVersion||'未知'} 过低，需升级至 ${min} 及以上`;
   return '';
 }
-async function setDefaultRunner(runnerId){
+async function setDefaultRunner(runnerId,projectId=''){
   try{
-    const out=await api('/api/runners/default',{method:'PUT',body:JSON.stringify({runnerId})});
+    const query=projectId?`?projectId=${encodeURIComponent(projectId)}`:'';
+    const out=await api('/api/runners/default'+query,{method:'PUT',body:JSON.stringify({runnerId})});
     toast(out?.message||'已更新','ok');refreshRunners(true);
   }catch(err){toast(err.message)}
 }

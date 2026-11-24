@@ -39,7 +39,7 @@ func (h *assistantHandlers) newExecutionTarget(userID int64, projectID string, r
 		}
 	case domain.ExecutionModeRunner:
 		runner, ok := h.repo.Runner(target.RunnerID)
-		if !ok || runner.OwnerUserID != userID {
+		if !ok || !h.repo.CanUseRunner(runner, projectID, userID) {
 			return nil, fmt.Errorf("无权使用此执行机器")
 		}
 		if !runner.SupportsConversationCLI() {

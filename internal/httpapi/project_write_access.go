@@ -57,15 +57,7 @@ func (d deps) speakerProjectWriter(projectID string, user domain.User, userID in
 
 func (d deps) projectMemberWrites(projectID string, userID int64) bool {
 	p, found := d.repo.Project(projectID)
-	if !found || p.OwnerID == 0 || p.OwnerID == userID {
-		return true
-	}
-	for _, member := range p.Members {
-		if member.UserID == userID && !strings.EqualFold(strings.TrimSpace(member.Role), "viewer") {
-			return true
-		}
-	}
-	return false
+	return !found || p.OwnerID == 0 || p.HasWritableMember(userID)
 }
 
 var guardedRunWrites = map[string]bool{

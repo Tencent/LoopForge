@@ -133,3 +133,39 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   await app.evaluate(`window.__removeRunner`);
   assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/runners/runner-local'));
 });
+
+test('runner sharing saves multiple projects and makes other owners’ machines selectable only in project scope', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const mine = {id: 'mine', name: 'Laptop', ownerUserId: 1, status: 'online'};
+  const shared = {id: 'team', name: 'Team host', ownerUserId: 2, status: 'online'};
+  app.router.get('/api/runners?projectId=one', [mine, shared]);
+  app.router.get('/api/runners?projectId=two', [mine]);
+  app.router.get('/api/runners/default', { runnerId: '' });
+  app.evaluate(`
+    state.currentUser={id:1};
+    state.projectFilter='one';
+    state.runnerBindCode={code:'fixture',expiresAt:'2099-01-01T00:00:00Z'};
+    state.data.projects=[
+      {id:'one',name:'One',ownerId:1},
+      {id:'two',name:'Two',ownerId:2,members:[{userId:1,role:'member'}]},
+      {id:'viewer',name:'Viewer',ownerId:2,members:[{userId:1,role:'viewer'}]},
+    ];
+  `);
+  await app.evaluate('refreshRunners()');
+  app.document.querySelector('[data-runner-share="mine"]').click();
+  const projects = [...app.document.querySelectorAll('.runner-share-projects input')];
+  assert.deepEqual(projects.map(box => box.value), ['one', 'two']);
+  projects.forEach(box => box.click());
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle();
+  assert.deepEqual(app.router.calls.find(c => c.path === '/api/runners/mine/shared-projects').body, {projectIds: ['one', 'two']});
+  assert.equal(app.document.querySelector('[data-runner-share="team"]'), null);
+  app.document.querySelector('[data-set-project-default="team"]').click();
+  await settle();
+  assert.ok(app.router.calls.some(c => c.method === 'PUT' && c.path === '/api/runners/default' &&
+    c.search === '?projectId=one' && c.body.runnerId === 'team'));
+
+  await app.evaluate("state.projectFilter='two';refreshRunners()");
+  assert.equal(app.document.querySelector('[data-set-project-default="team"]'), null);
+});

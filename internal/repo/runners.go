@@ -180,13 +180,25 @@ func (r *RunnersRepo) PutRunner(v domain.Runner) error {
 	if v.MaxConcurrency < 1 {
 		v.MaxConcurrency = 1
 	}
-	return upsert(r.DB, "runners", map[string]any{
+	values := map[string]any{
 		"id": v.ID, "name": v.Name, "status": v.Status, "os": v.OS, "arch": v.Arch,
 		"runner_version": v.RunnerVersion, "labels": jsonBytes(v.Labels), "max_concurrency": v.MaxConcurrency,
 		"native_sandbox_available": v.NativeSandboxAvailable,
 		"owner_user_id":            nullableInt64(v.OwnerUserID), "session_token_hash": v.SessionTokenHash,
 		"session_expires_at": v.SessionExpiresAt, "runtimes": jsonBytes(v.Runtimes),
 		"last_seen_at": v.LastSeenAt, "created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
+	}
+	if v.OwnerUserID > 0 {
+		return upsert(r.DB, "runners", values)
+	}
+	// A platform bootstrap can adopt a formerly user-bound machine. Clear
+	// its grant list and project preferences together with the owner change.
+	values["shared_project_ids"] = nil
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := upsert(tx, "runners", values); err != nil {
+			return err
+		}
+		return tx.Where("default_runner_id = ?", v.ID).Delete(&userProjectRunnerPrefRow{}).Error
 	})
 }
 
@@ -241,6 +253,9 @@ func runnerFromRow(row runnerRow) domain.Runner {
 	}
 	if row.OwnerUserID != nil {
 		v.OwnerUserID = *row.OwnerUserID
+	}
+	if len(row.SharedProjectIDs) > 0 {
+		_ = json.Unmarshal(row.SharedProjectIDs, &v.SharedProjectIDs)
 	}
 	if row.RunLimit != nil && *row.RunLimit > 0 {
 		v.RunLimit = *row.RunLimit
@@ -823,6 +838,9 @@ func (r *RunnersRepo) DeregisterRunner(id string, now time.Time) error {
 		return fmt.Errorf("runner id is required")
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := r.lockRunner(tx, id); err != nil {
+			return err
+		}
 		var rows []runnerTaskRow
 		if err := tx.Where("runner_id = ? AND status = ?", id, domain.RunnerTaskQueued).Find(&rows).Error; err != nil {
 			return err
@@ -841,6 +859,9 @@ func (r *RunnersRepo) DeregisterRunner(id string, now time.Time) error {
 			}
 		}
 		if err := tx.Where("default_runner_id = ?", id).Delete(&userRunnerPrefRow{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("default_runner_id = ?", id).Delete(&userProjectRunnerPrefRow{}).Error; err != nil {
 			return err
 		}
 		res := tx.Where("id = ?", id).Delete(&runnerRow{})
@@ -864,7 +885,10 @@ func (r *RunnersRepo) DefaultRunner(userID int64) string {
 		return ""
 	}
 	var row userRunnerPrefRow
-	if err := r.DB.Where("user_id = ?", userID).Take(&row).Error; err != nil {
+	// A former binding can leave a stale preference after older daemons
+	// re-register under another owner. Preserve legacy ownerless pool choices.
+	machines := r.DB.Model(&runnerRow{}).Select("id").Where("owner_user_id IS NULL OR owner_user_id IN ?", []int64{0, userID})
+	if err := r.DB.Where("user_id = ? AND default_runner_id IN (?)", userID, machines).Take(&row).Error; err != nil {
 		return ""
 	}
 	return strings.TrimSpace(row.DefaultRunnerID)

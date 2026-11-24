@@ -709,7 +709,7 @@ describe("conversation hooks", () => {
       ? new Promise((resolve) => { completeMachines = () => resolve(runners); })
       : Promise.resolve(runners);
     apiMock.mockImplementation((path, options) => {
-      if (path === "/api/runners?mine=1") return machines;
+      if (path === "/api/runners?mine=1" || path === "/api/runners?projectId=p1") return machines;
       if (path === "/api/assistant/sessions/agy-session") return Promise.resolve(stored);
       return originalAPI(path, options);
     });
@@ -1122,19 +1122,27 @@ describe("conversation hooks", () => {
   });
 
   test("keeps machine choices local and binds the final choice on the first send", async () => {
-    const { result } = renderHook(() => useChat());
-    await waitFor(() => expect(result.current.machinesReady).toBe(true));
-    await act(() => result.current.selectMachine(""));
-    await act(() => result.current.selectMachine("mac"));
-    await act(() => result.current.refreshMachines());
-    expect(result.current.defaultRunnerId).toBe("mac");
-    expect(result.current.session).toBeNull();
-    expect(result.current.activeId).toBeNull();
-    expect(location.search).not.toContain("session=");
-    expect(writeMock).not.toHaveBeenCalled();
-    await act(() => result.current.send({text:"开始"}));
-    expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations",expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"}}));
-    await act(async () => expect(await result.current.selectMachine("")).toBe(false));
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation((path, options) => path === "/api/runners?mine=1"
+      ? Promise.resolve([{ id: "mac", ownerUserId: 1, status: "online" }])
+      : original(path, options));
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.machinesReady).toBe(true));
+      await act(() => result.current.selectMachine(""));
+      await act(() => result.current.selectMachine("mac"));
+      await act(() => result.current.refreshMachines());
+      expect(result.current.defaultRunnerId).toBe("mac");
+      expect(result.current.session).toBeNull();
+      expect(result.current.activeId).toBeNull();
+      expect(location.search).not.toContain("session=");
+      expect(writeMock).not.toHaveBeenCalled();
+      await act(() => result.current.send({text:"开始"}));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations",expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"}}));
+      await act(async () => expect(await result.current.selectMachine("")).toBe(false));
+    } finally {
+      apiMock.mockImplementation(original);
+    }
   });
 
   test("waits for the personal machine default before allowing the first send", async () => {

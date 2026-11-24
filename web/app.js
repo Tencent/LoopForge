@@ -1382,6 +1382,7 @@ function bind(){
     closeScheduleJobModal();
     state.projectFilter=e.target.value;state.selectedIssue=null;
     if(state.currentView==='aiSchedules')refreshAISchedules();
+    if(state.currentView==='runners')refreshRunners(true);
     localStorage.setItem('agentflow.activeProject',state.projectFilter);
     if($('#botsView')?.classList.contains('active'))loadBots();
     resetListPages();

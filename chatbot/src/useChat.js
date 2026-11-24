@@ -156,6 +156,7 @@ export function useChat() {
     setError,
     bindExecutionMachine,
     session?.executionTarget,
+    projectId,
   );
   const currentId = useRef(activeId),
     sessionRef = useRef(session),

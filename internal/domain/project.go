@@ -65,6 +65,22 @@ type ProjectMember struct {
 	Role   string `json:"role"` // maintainer, member, viewer
 }
 
+// HasWritableMember checks explicit project membership, including the owner.
+func (p Project) HasWritableMember(userID int64) bool {
+	if userID <= 0 {
+		return false
+	}
+	if p.OwnerID == userID {
+		return true
+	}
+	for _, member := range p.Members {
+		if member.UserID == userID && !strings.EqualFold(strings.TrimSpace(member.Role), "viewer") {
+			return true
+		}
+	}
+	return false
+}
+
 // RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.
 const RepositoryProviderSSH = "ssh"
 

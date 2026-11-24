@@ -233,7 +233,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 
 func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryContext) {
 	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
-		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
+		executionContext.ExecutionRunnerID = e.repo.DefaultRunnerForProject(executionContext.ResponsibleUserID, executionContext.ProjectID)
 		executionContext.WorkspaceRunID = ""
 	}
 	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {

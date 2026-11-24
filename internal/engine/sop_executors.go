@@ -38,7 +38,7 @@ func (a sopExecutorAccess) configured(kind string) bool {
 		if !a.runner.SupportsProvider(kind) {
 			return false
 		}
-		if domain.SupportsRunnerLogin(kind) && a.runner.RuntimeAuthMode(kind) == domain.RuntimeAuthLocal {
+		if domain.SupportsRunnerLogin(kind) && a.runner.RuntimeAuthModeForUser(kind, a.user.ID) == domain.RuntimeAuthLocal {
 			return true
 		}
 		if kind == "codebuddy" && strings.TrimSpace(a.user.CodeBuddyBaseURL) != "" && !a.runner.SupportsCodeBuddyBaseURL() {
@@ -64,7 +64,7 @@ func (a sopExecutorAccess) defaults() domain.AssistantDefaults {
 		}
 	}
 	for _, ex := range executors {
-		if a.usesRunner && domain.SupportsRunnerLogin(ex.Kind) && a.runner.RuntimeAuthMode(ex.Kind) == domain.RuntimeAuthLocal && a.configured(ex.Kind) {
+		if a.usesRunner && domain.SupportsRunnerLogin(ex.Kind) && a.runner.RuntimeAuthModeForUser(ex.Kind, a.user.ID) == domain.RuntimeAuthLocal && a.configured(ex.Kind) {
 			return domain.AssistantDefaults{Executor: ex.ID}
 		}
 	}

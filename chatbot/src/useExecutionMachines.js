@@ -2,60 +2,67 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
 // Machine selection belongs to the local draft until its first turn starts.
-export function useExecutionMachines(userId, busy, readOnly, onError, bindMachine, draftTarget) {
+export function useExecutionMachines(userId, busy, readOnly, onError, bindMachine, draftTarget, projectId = "") {
   const [machines, setMachines] = useState([]);
   const [defaultRunnerId, setDefaultRunnerId] = useState("");
   const [cloudPool, setCloudPool] = useState(null);
-  const [machinesReady, setMachinesReady] = useState(false);
+  const [loadedScope, setLoadedScope] = useState(null);
+  const scope = `${userId ?? ""}/${projectId}`;
+  const machinesReady = loadedScope === scope;
   const [machineError, setMachineError] = useState("");
   const [machineSaving, setMachineSaving] = useState(false);
   const machineSavingRef = useRef(false);
   const revision = useRef(0);
-  const chosen = useRef(false);
+  const chosen = useRef(null);
   const suggestedRunner = useRef("");
   const targetRef = useRef(draftTarget);
   targetRef.current = draftTarget;
   const resetMachine = useCallback(() => {
-    chosen.current = false;
+    chosen.current = null;
     setDefaultRunnerId(suggestedRunner.current);
   }, []);
   useEffect(() => {
-    if (draftTarget && !chosen.current)
+    if (draftTarget && chosen.current === null)
       setDefaultRunnerId(draftTarget.pool === "runner" ? draftTarget.runnerId || "" : "");
   }, [draftTarget]);
 
-  const refreshMachines = useCallback(async () => {
-    if (!userId || machineSavingRef.current) return;
+  const refreshMachines = useCallback(async (force) => {
+    if (!userId || (machineSavingRef.current && force !== true)) return;
     const request = ++revision.current;
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
     try {
       const [rows, selected] = await Promise.all([
-        api("/api/runners?mine=1"),
-        api("/api/runners/default"),
+        api(`/api/runners${query || "?mine=1"}`),
+        api(`/api/runners/default${query}`),
       ]);
       if (request !== revision.current) return;
-      setMachines(Array.isArray(rows) ? rows : []);
+      const available = Array.isArray(rows) ? rows : [];
+      const hasMachine = (id) => available.some((row) => row.id === id);
+      setMachines(available);
       suggestedRunner.current = selected.runnerId || "";
-      if (!chosen.current) {
+      if (chosen.current && !hasMachine(chosen.current)) chosen.current = null;
+      if (chosen.current === null) {
         const target = targetRef.current;
-        setDefaultRunnerId(target ? target.pool === "runner" ? target.runnerId || "" : "" : suggestedRunner.current);
+        const draftRunner = target?.pool === "runner" ? target.runnerId : "";
+        setDefaultRunnerId(target?.pool === "cloud" ? "" : hasMachine(draftRunner) ? draftRunner : suggestedRunner.current);
       }
       setCloudPool(selected.cloudPool || null);
-      setMachinesReady(true);
+      setLoadedScope(scope);
       setMachineError("");
     } catch (e) {
       if (request === revision.current) setMachineError(e.message);
     }
-  }, [userId]);
+  }, [projectId, scope, userId]);
 
   useEffect(() => {
-    setMachinesReady(false);
+    setLoadedScope(null);
     setMachines([]);
     setDefaultRunnerId("");
-    chosen.current = false;
+    chosen.current = null;
     suggestedRunner.current = "";
     setCloudPool(null);
     setMachineError("");
-    void refreshMachines();
+    void refreshMachines(true);
     window.addEventListener("focus", refreshMachines);
     const returnedToChat = (event) => {
       if (
@@ -89,7 +96,7 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
     try {
       const selected = await bindMachine(runnerId);
       if (request !== revision.current) return false;
-      chosen.current = true;
+      chosen.current = selected.runnerId || "";
       setDefaultRunnerId(selected.runnerId || "");
       setMachineError("");
       return true;

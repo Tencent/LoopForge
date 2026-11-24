@@ -101,6 +101,55 @@ func TestGenericSOPExecutorPrefersRunnerLoginOverSharedKey(t *testing.T) {
 	}
 }
 
+func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.PutProject(domain.Project{ID: "shared-compute", Name: "Shared compute", OwnerID: 1,
+		Members: []domain.ProjectMember{{UserID: 42, Role: "member"}}}); err != nil {
+		t.Fatal(err)
+	}
+	runner := domain.Runner{ID: "shared", OwnerUserID: 42, Status: domain.RunnerStatusOnline,
+		Runtimes: []domain.RunnerRuntime{{Provider: "codex", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline}}}
+	if err := st.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRunnerSharedProjects(runner.ID, 42, []string{"shared-compute"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProjectDefaultRunner(1, "shared-compute", runner.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	e := &Engine{repo: st}
+	execution := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: 1}
+	e.selectSOPExecutionTarget(&execution)
+	if execution.ExecutionRunnerID != runner.ID || execution.ExecutionMode != domain.ExecutionModeRunner {
+		t.Fatalf("project target = %+v", execution)
+	}
+	if e.sopExecutorAccess(execution).configured("codex") {
+		t.Fatal("a project member inherited the machine owner's local login")
+	}
+	if _, err := st.UpdateUserCredentials(1, repo.UserCredentialUpdate{CodexAPIKey: "member-key"}); err != nil {
+		t.Fatal(err)
+	}
+	if !e.sopExecutorAccess(execution).configured("codex") {
+		t.Fatal("the responsible user's personal key is unavailable on the shared machine")
+	}
+	if err := st.SetRunnerSharedProjects(runner.ID, 42, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.defaultExecutionRunner(domain.Run{ExecutionContext: execution}); got != runner.ID {
+		t.Fatalf("existing run lost its frozen machine: %q", got)
+	}
+	e.selectSOPExecutionTarget(&execution)
+	if execution.ExecutionRunnerID != "" || execution.ExecutionMode != domain.ExecutionModeCloud {
+		t.Fatalf("new run used revoked machine: %+v", execution)
+	}
+}
+
 func TestSOPExecutorDefaultForBaselinePreviewAndProjectRole(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
