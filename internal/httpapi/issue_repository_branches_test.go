@@ -192,7 +192,7 @@ func TestDispatchRepositoryBranches(t *testing.T) {
 	}
 	t.Cleanup(st.Close)
 	ids := putIssueBranchRepositories(t, st)
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "multi-branch-flow", Name: "Approval", SandboxProfileID: "local",
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "multi-branch-flow", Name: "Approval", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}

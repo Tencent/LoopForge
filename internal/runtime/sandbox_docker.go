@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -982,7 +981,9 @@ func isolatedRuntimeImage(dockerfile domain.DockerfileDefinition) string {
 const isolatedDockerfileBase = "FROM node:22-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 ripgrep ca-certificates curl && rm -rf /var/lib/apt/lists/*\n"
 const legacyIsolatedDockerfile = isolatedDockerfileBase + "RUN npm install -g @openai/codex @anthropic-ai/claude-code @tencent-ai/codebuddy-code\nWORKDIR /workspace\n"
 
-// IsolatedDockerfile is the fallback for profiles without a custom image.
+// IsolatedDockerfile is the platform image recipe. Sandboxes whose Dockerfile
+// is this or the seeded generic-docker one (legacyIsolatedDockerfile) run on
+// AGENTFLOW_ISOLATED_IMAGE instead of building their own image.
 const IsolatedDockerfile = isolatedDockerfileBase + "RUN npm install -g @openai/codex @anthropic-ai/claude-code\nARG CODEBUDDY_PACKAGE=@tencent-ai/codebuddy-code\nRUN if [ -n \"$CODEBUDDY_PACKAGE\" ]; then npm install -g \"$CODEBUDDY_PACKAGE\"; fi\nWORKDIR /workspace\n"
 
 func isBuiltInIsolatedDockerfile(dockerfile domain.DockerfileDefinition) bool {
@@ -994,39 +995,4 @@ func effectiveIsolatedDockerfile(dockerfile domain.DockerfileDefinition) domain.
 		dockerfile.Content = strings.Replace(IsolatedDockerfile, "ARG CODEBUDDY_PACKAGE=@tencent-ai/codebuddy-code", "ARG CODEBUDDY_PACKAGE=", 1)
 	}
 	return dockerfile
-}
-
-// PrebuildIsolatedImage warms the shared sandbox image in the background so
-// the first SOP on a fresh container install does not wait for the build.
-func PrebuildIsolatedImage() {
-	if strings.TrimSpace(os.Getenv("AGENTFLOW_LOCAL_SANDBOX")) != "docker" || !DockerReady() {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-		dir, err := os.MkdirTemp("", "agentflow-prebuild-")
-		if err != nil {
-			return
-		}
-		defer os.RemoveAll(dir)
-		if _, err := ensureDockerImage(ctx, dir, domain.DockerfileDefinition{ID: "isolated", Content: IsolatedDockerfile}); err != nil {
-			log.Printf("prebuild sandbox image: %v", err)
-		}
-	}()
-}
-
-// isolateLocalDriver runs "local" profiles in Docker when
-// AGENTFLOW_LOCAL_SANDBOX=docker, so no SOP command executes inside a platform
-// container that can reach the host Docker daemon.
-func isolateLocalDriver(profile domain.SandboxProfile, dockerfile domain.DockerfileDefinition) (domain.SandboxProfile, domain.DockerfileDefinition) {
-	driver := strings.TrimSpace(profile.Driver)
-	if (driver != "" && driver != "local") || strings.TrimSpace(os.Getenv("AGENTFLOW_LOCAL_SANDBOX")) != "docker" {
-		return profile, dockerfile
-	}
-	profile.Driver = "docker"
-	if strings.TrimSpace(dockerfile.Content) == "" {
-		dockerfile = domain.DockerfileDefinition{ID: "generic-backend", Name: "Isolated local sandbox", Content: IsolatedDockerfile}
-	}
-	return profile, dockerfile
 }

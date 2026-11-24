@@ -31,6 +31,98 @@ test('schedule helpers and job list describe timing, status, blockers, and proje
   assert.match(app.evaluate(`alignConflictPanelHTML(state.data.runs[0])`), /resolved package\.json|让 Agent 重新对齐/);
 });
 
+test('AI jobs with the same name fold into a collapsed group that keeps its expanded state', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.projectFilter='project-1';
+    state.data.schedulerEnabled=true;
+    state.data.scheduleJobs=[
+      {id:'a1',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',enabled:true,intervalSec:3600,lastStatus:'running',lastRunAt:'2026-11-20T08:00:00Z'},
+      {id:'solo',projectId:'project-1',name:'日报',skipDispatch:true,assistantPrompt:'y',enabled:true,cron:'0 9 * * *'},
+      {id:'a2',projectId:'project-1',name:' 巡检 ',skipDispatch:true,assistantPrompt:'x',enabled:false,cron:'0 8 * * *',lastStatus:'failed',lastRunAt:'2026-11-21T08:00:00Z'},
+      {id:'a3',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',enabled:true,intervalSec:3600}
+    ];
+    renderScheduleJobs();
+  `);
+  const list = app.document.querySelector('#aiScheduleJobList');
+  const groups = list.querySelectorAll('.schedule-job-group');
+  assert.equal(groups.length, 1);
+  assert.equal(list.children[0], groups[0]);
+  assert.ok(list.children[1].querySelector('[data-edit-schedule="solo"]'));
+  let head = groups[0].querySelector('[data-schedule-group]');
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.match(head.textContent, /巡检.*3 个/s);
+  assert.match(head.textContent, /每小时、0 8 \* \* \* · 已启用 2\/3 · 1 个运行中 · 1 个失败/);
+  assert.ok(groups[0].classList.contains('is-running'));
+  assert.equal(groups[0].querySelector('.schedule-job-group-body').hidden, true);
+
+  head.focus();
+  head.click();
+  head = list.querySelector('[data-schedule-group]');
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  assert.equal(app.document.activeElement, head);
+  assert.deepEqual([...list.querySelectorAll('.schedule-job-group-body .schedule-job-main')].map(b => b.dataset.editSchedule), ['a1', 'a2', 'a3']);
+
+  app.evaluate('renderScheduleJobs()');
+  assert.equal(list.querySelector('[data-schedule-group]').getAttribute('aria-expanded'), 'true');
+  list.querySelector('[data-schedule-group]').click();
+  assert.equal(list.querySelector('.schedule-job-group-body').hidden, true);
+});
+
+test('collapsed AI groups show only subscriptions with an available newer version', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const jobs = [1, 2, 3, 4].map(version => ({
+    id: `subscription-${version}`, projectId: 'project-1', name: '巡检', skipDispatch: true,
+    sharedTaskId: 'shared-check', sharedTaskVersion: version, enabled: true, intervalSec: 3600,
+  }));
+  jobs.push({ ...jobs[0], id: 'unavailable', sharedTaskId: 'missing' });
+  jobs.push({ ...jobs[0], id: 'standalone', sharedTaskId: '' });
+  app.evaluate(`state.data.scheduleJobs=${JSON.stringify(jobs)};renderScheduleJobs()`);
+  const list = app.document.querySelector('#aiScheduleJobList');
+  assert.doesNotMatch(list.querySelector('[data-schedule-group]').textContent, /待升级/);
+
+  app.evaluate(`sharedScheduleCatalog=[{id:'shared-check',version:3}];renderScheduleJobs()`);
+  let head = list.querySelector('[data-schedule-group]');
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.match(head.textContent, /2 个待升级/);
+  head.click();
+  assert.deepEqual([...list.querySelectorAll('.schedule-job-row > [data-shared-versions]')].map(b => b.dataset.sharedVersions), ['subscription-1', 'subscription-2']);
+
+  app.evaluate(`state.data.scheduleJobs.forEach(j=>{if(j.sharedTaskId==='shared-check'&&j.sharedTaskVersion<3)j.sharedTaskVersion=3});renderScheduleJobs()`);
+  head = list.querySelector('[data-schedule-group]');
+  assert.doesNotMatch(head.textContent, /待升级/);
+  assert.equal(list.querySelector('.schedule-job-row > [data-shared-versions]'), null);
+});
+
+test('AI groups with line breaks and HTML characters can expand and retain focus across renders', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const names = ['Ops\rDaily', 'Ops\nDaily', 'Ops/"<Daily>'];
+  const jobs = names.flatMap((name, group) => [0, 1].map(index => ({
+    id: `group-${group}-${index}`, projectId: 'project-1', name, skipDispatch: true,
+    assistantPrompt: 'check', enabled: true, intervalSec: 3600,
+  })));
+  app.evaluate(`state.data.scheduleJobs=${JSON.stringify(jobs)};renderScheduleJobs()`);
+  const list = app.document.querySelector('#aiScheduleJobList');
+  assert.equal(list.querySelectorAll('.schedule-job-group').length, names.length);
+  for (let group = 0; group < names.length; group++) {
+    let head = list.querySelectorAll('[data-schedule-group]')[group];
+    head.focus();
+    head.click();
+    app.evaluate('renderScheduleJobs()');
+    head = list.querySelectorAll('[data-schedule-group]')[group];
+    assert.equal(head.getAttribute('aria-expanded'), 'true');
+    assert.equal(app.document.activeElement, head);
+    const body = app.document.getElementById(head.getAttribute('aria-controls'));
+    assert.equal(body.hidden, false);
+    assert.deepEqual([...body.querySelectorAll('[data-run-schedule]')].map(b => b.dataset.runSchedule), [`group-${group}-0`, `group-${group}-1`]);
+    head.click();
+    assert.equal(list.querySelectorAll('[data-schedule-group]')[group].getAttribute('aria-expanded'), 'false');
+  }
+});
+
 test('schedule form switches job kind and timing and sends validated assistant and dispatch payloads', async (t) => {
   const app = await loadApp();
   t.after(app.close);

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
 )
@@ -151,15 +152,12 @@ func (d deps) assetOwner(kind, id string) (project string, global bool, found bo
 	case "skills":
 		v, ok := d.repo.Skill(id)
 		return v.ProjectID, v.ProjectID == "", ok
-	case "dockerfiles":
-		v, ok := d.repo.Dockerfile(id)
-		return v.ProjectID, v.ProjectID == "", ok
-	case "environments":
-		v, ok := d.repo.Environment(id)
-		return v.ProjectID, v.ProjectID == "", ok
 	case "sandboxes":
+		if strings.EqualFold(id, repo.DefaultSandboxProfileID) {
+			return "", true, true
+		}
 		v, ok := d.repo.Sandbox(id)
-		return v.ProjectID, v.ProjectID == "", ok
+		return v.ProjectID, v.ProjectID == "" || v.ID == repo.DefaultSandboxProfileID, ok
 	case "mcp-servers":
 		v, ok := d.repo.MCPServer(id)
 		return v.ProjectID, v.ProjectID == "" && v.Scope != "personal", ok
@@ -234,7 +232,7 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 	}
 	kind := strings.TrimPrefix(path, "/api/")
 	switch kind {
-	case "rules", "skills", "dockerfiles", "environments", "sandboxes", "mcp-servers", "schedule-jobs":
+	case "rules", "skills", "sandboxes", "mcp-servers", "schedule-jobs":
 	default:
 		return true
 	}
@@ -248,6 +246,16 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 	}
 	peekJSON(c, &body)
 	id, project := strings.TrimSpace(body.ID), strings.TrimSpace(body.ProjectID)
+	if kind == "sandboxes" {
+		reserved, err := d.repo.IsReservedSandboxID(id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return false
+		}
+		if reserved {
+			return d.requirePlatformAdmin(c)
+		}
+	}
 	if !d.allowStoredAsset(c, kind, id) {
 		return false
 	}

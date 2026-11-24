@@ -251,7 +251,7 @@ func TestWorkflowScriptsShareRunnerRunWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{
-		ID: "runner-shared-scripts", Name: "Runner shared scripts", SandboxProfileID: "local",
+		ID: "runner-shared-scripts", Name: "Runner shared scripts", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "prepare", Name: "Prepare", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "test \"$(git branch --show-current)\" = fix/shared-runner-workspace && mkdir -p .git/info vendor/new && printf '/vendor/\\n' >> .git/info/exclude && git ls-files -z -- vendor/ | git update-index --skip-worktree -z --stdin && printf 'changed\\n' > vendor/tracked/dependency.php && printf 'new\\n' > vendor/new/dependency.php && printf 'shared-ready\\n' > workspace-marker", MaxAttempts: 1},
 			{ID: "consume", Name: "Consume", Type: "script", ScriptLanguage: "python", ExecutionScope: domain.ExecutionScopeRepositories, Script: "from pathlib import Path\nimport subprocess\nassert subprocess.check_output(['git', 'status', '--short', '--', 'vendor']).decode() == ''\nprint(Path(\"workspace-marker\").read_text().strip() + \" it's visible\")", MaxAttempts: 1},
@@ -765,7 +765,7 @@ func TestWorkflowAgentNodeDispatchesToRunner(t *testing.T) {
 	}
 	putMockDeveloperPlaybook(t, s)
 	wf := domain.WorkflowDefinition{
-		ID: "runner-e2e", Name: "Runner e2e", SandboxProfileID: "local",
+		ID: "runner-e2e", Name: "Runner e2e", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "agent", AgentID: "developer", ExecutorID: "mock", MaxAttempts: 1}},
 	}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -852,7 +852,7 @@ func TestRunnerPauseWaitsForRemoteStopAndRestartsScriptInSameWorkspace(t *testin
 	if err := s.SetDefaultRunner(42, runner.ID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "runner-pause", Name: "Runner pause", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "runner-pause", Name: "Runner pause", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "work", Name: "Work", Type: "command", Command: "if test -f .script-started; then printf restarted; else touch .script-started; sleep 30; fi", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -940,7 +940,7 @@ func TestRunnerBoundRoleRunsGatesOnRunnerMachine(t *testing.T) {
 	}
 	putMockDeveloperPlaybook(t, s)
 	wf := domain.WorkflowDefinition{
-		ID: "runner-gate-e2e", Name: "Runner gate e2e", SandboxProfileID: "local",
+		ID: "runner-gate-e2e", Name: "Runner gate e2e", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{
 			ID: "work", Name: "Work", Type: "agent", AgentID: "developer", ExecutorID: "mock",
 			MaxAttempts: 1,

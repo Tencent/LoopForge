@@ -759,10 +759,6 @@ func (h *catalogHandlers) deleteCatalogAsset(c *gin.Context, kind, notFound stri
 		c.JSON(http.StatusConflict, map[string]string{"error": fmt.Sprintf("内置沙箱 %s 不能删除", id)})
 		return
 	}
-	if kind == "Dockerfile" && id == repo.GenericBackendDockerfileID {
-		c.JSON(http.StatusConflict, map[string]string{"error": "内置 Dockerfile generic-backend 不能删除"})
-		return
-	}
 	if shared {
 		c.JSON(http.StatusConflict, map[string]string{"error": fmt.Sprintf("共享状态的%s不能删除，请先取消共享", kind)})
 		return
@@ -795,16 +791,6 @@ func (h *catalogHandlers) agentNamesReferencing(kind, id string) []string {
 	return names
 }
 
-func (h *catalogHandlers) sandboxNamesReferencing(kind, id string) []string {
-	var names []string
-	for _, sandbox := range h.repo.Sandboxes() {
-		if (kind == "dockerfile" && sandbox.DockerfileID == id) || (kind == "environment" && sandbox.EnvironmentID == id) {
-			names = append(names, sandbox.Name)
-		}
-	}
-	return names
-}
-
 func (h *catalogHandlers) workflowNamesReferencingSandbox(id string) []string {
 	var names []string
 	for _, workflow := range h.repo.Workflows() {
@@ -817,76 +803,6 @@ func (h *catalogHandlers) workflowNamesReferencingSandbox(id string) []string {
 
 func (h *catalogHandlers) executors(c *gin.Context) {
 	c.JSON(200, repo.BuiltInExecutors())
-}
-func (h *catalogHandlers) dockerfiles(c *gin.Context) {
-	if c.Request.Method == http.MethodGet {
-		items := h.repo.Dockerfiles()
-		if projectID := strings.TrimSpace(c.Query("projectId")); projectID != "" {
-			items = filterEnvironmentAssets(items, projectID, func(item domain.DockerfileDefinition) (string, bool) { return item.ProjectID, item.Shared })
-		}
-		c.JSON(200, items)
-		return
-	}
-	if c.Request.Method == http.MethodDelete {
-		h.deleteCatalogAsset(c, "Dockerfile", "dockerfile not found", func(id string) (bool, bool) {
-			item, ok := h.repo.Dockerfile(id)
-			return item.Shared, ok
-		}, func(id string) []string { return h.sandboxNamesReferencing("dockerfile", id) }, "沙箱", h.repo.DeleteDockerfile)
-		return
-	}
-	if c.Request.Method == http.MethodPut {
-		var v domain.DockerfileDefinition
-		if decode(c, &v) {
-			v.ID, v.ProjectID = strings.TrimSpace(v.ID), strings.TrimSpace(v.ProjectID)
-			if err := h.validateEnvironmentAsset(v.ID, v.Name, v.ProjectID, "Dockerfile"); err != nil {
-				respond(c, err)
-				return
-			}
-			if existing, ok := h.repo.Dockerfile(v.ID); ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
-				c.JSON(http.StatusConflict, map[string]string{"error": "Dockerfile 标识已被其他项目使用"})
-				return
-			} else if ok && existing.Shared && !v.Shared && h.sharedEnvironmentReference("dockerfile", v.ID) {
-				c.JSON(http.StatusConflict, map[string]string{"error": "该 Dockerfile 仍被共享沙箱引用，不能取消共享"})
-				return
-			}
-			respond(c, h.repo.PutDockerfile(v))
-		}
-	}
-}
-func (h *catalogHandlers) environments(c *gin.Context) {
-	if c.Request.Method == http.MethodGet {
-		items := h.repo.Environments()
-		if projectID := strings.TrimSpace(c.Query("projectId")); projectID != "" {
-			items = filterEnvironmentAssets(items, projectID, func(item domain.EnvironmentDefinition) (string, bool) { return item.ProjectID, item.Shared })
-		}
-		c.JSON(200, items)
-		return
-	}
-	if c.Request.Method == http.MethodDelete {
-		h.deleteCatalogAsset(c, "环境安装脚本", "environment not found", func(id string) (bool, bool) {
-			item, ok := h.repo.Environment(id)
-			return item.Shared, ok
-		}, func(id string) []string { return h.sandboxNamesReferencing("environment", id) }, "沙箱", h.repo.DeleteEnvironment)
-		return
-	}
-	if c.Request.Method == http.MethodPut {
-		var v domain.EnvironmentDefinition
-		if decode(c, &v) {
-			v.ID, v.ProjectID = strings.TrimSpace(v.ID), strings.TrimSpace(v.ProjectID)
-			if err := h.validateEnvironmentAsset(v.ID, v.Name, v.ProjectID, "环境安装脚本"); err != nil {
-				respond(c, err)
-				return
-			}
-			if existing, ok := h.repo.Environment(v.ID); ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
-				c.JSON(http.StatusConflict, map[string]string{"error": "环境安装脚本标识已被其他项目使用"})
-				return
-			} else if ok && existing.Shared && !v.Shared && h.sharedEnvironmentReference("environment", v.ID) {
-				c.JSON(http.StatusConflict, map[string]string{"error": "该环境安装脚本仍被共享沙箱引用，不能取消共享"})
-				return
-			}
-			respond(c, h.repo.PutEnvironment(v))
-		}
-	}
 }
 func (h *catalogHandlers) sandboxes(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
@@ -908,19 +824,27 @@ func (h *catalogHandlers) sandboxes(c *gin.Context) {
 		var v domain.SandboxProfile
 		if decode(c, &v) {
 			v.ID, v.ProjectID = strings.TrimSpace(v.ID), strings.TrimSpace(v.ProjectID)
-			if err := h.validateEnvironmentAsset(v.ID, v.Name, v.ProjectID, "沙箱"); err != nil {
+			reserved, err := h.repo.IsReservedSandboxID(v.ID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			existing, exists := h.repo.Sandbox(v.ID)
+			if reserved {
+				// The built-in profile exposes a synthetic platform owner.
+				if v.ProjectID == "" {
+					v.ProjectID = existing.ProjectID
+				}
+			} else if err := h.validateEnvironmentAsset(v.ID, v.Name, v.ProjectID, "沙箱"); err != nil {
 				respond(c, err)
 				return
 			}
-			if existing, ok := h.repo.Sandbox(v.ID); ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
+			if exists && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
 				c.JSON(http.StatusConflict, map[string]string{"error": "沙箱标识已被其他项目使用"})
 				return
-			} else if ok && existing.Shared && !v.Shared && (v.ID == repo.GenericDockerSandboxID || h.sharedEnvironmentReference("sandbox", v.ID)) {
-				c.JSON(http.StatusConflict, map[string]string{"error": "该沙箱仍被共享 SOP 引用，不能取消共享"})
-				return
 			}
-			if err := h.shareSandboxDependencies(v); err != nil {
-				respond(c, err)
+			if !v.Shared && (reserved || exists && existing.Shared && h.sharedWorkflowUsesSandbox(v.ID)) {
+				c.JSON(http.StatusConflict, map[string]string{"error": "该沙箱仍被共享 SOP 引用，不能取消共享"})
 				return
 			}
 			respond(c, h.repo.PutSandbox(v))
@@ -962,58 +886,13 @@ func (h *catalogHandlers) validateEnvironmentAsset(id, name, projectID, kind str
 	return nil
 }
 
-func (h *catalogHandlers) sharedEnvironmentReference(kind, id string) bool {
-	if kind == "sandbox" {
-		for _, workflow := range h.repo.Workflows() {
-			if workflow.Shared && workflow.SandboxProfileID == id {
-				return true
-			}
-		}
-		return false
-	}
-	for _, sandbox := range h.repo.Sandboxes() {
-		if !sandbox.Shared {
-			continue
-		}
-		if (kind == "dockerfile" && sandbox.DockerfileID == id) || (kind == "environment" && sandbox.EnvironmentID == id) {
+func (h *catalogHandlers) sharedWorkflowUsesSandbox(id string) bool {
+	for _, workflow := range h.repo.Workflows() {
+		if workflow.Shared && workflow.SandboxProfileID == id {
 			return true
 		}
 	}
 	return false
-}
-
-func (h *catalogHandlers) shareSandboxDependencies(sandbox domain.SandboxProfile) error {
-	if sandbox.DockerfileID != "" {
-		item, ok := h.repo.Dockerfile(sandbox.DockerfileID)
-		if !ok {
-			return fmt.Errorf("dockerfile %q not found", sandbox.DockerfileID)
-		}
-		if item.ProjectID != sandbox.ProjectID && !item.Shared {
-			return fmt.Errorf("Dockerfile %q 不属于当前项目且尚未共享", item.Name)
-		}
-		if sandbox.Shared && item.ProjectID == sandbox.ProjectID && !item.Shared {
-			item.Shared = true
-			if err := h.repo.PutDockerfile(item); err != nil {
-				return err
-			}
-		}
-	}
-	if sandbox.EnvironmentID != "" {
-		item, ok := h.repo.Environment(sandbox.EnvironmentID)
-		if !ok {
-			return fmt.Errorf("environment %q not found", sandbox.EnvironmentID)
-		}
-		if item.ProjectID != sandbox.ProjectID && !item.Shared {
-			return fmt.Errorf("环境安装脚本 %q 不属于当前项目且尚未共享", item.Name)
-		}
-		if sandbox.Shared && item.ProjectID == sandbox.ProjectID && !item.Shared {
-			item.Shared = true
-			if err := h.repo.PutEnvironment(item); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 func (h *catalogHandlers) workflows(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {

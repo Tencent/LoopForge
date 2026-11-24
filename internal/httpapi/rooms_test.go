@@ -23,7 +23,7 @@ func TestRoomDispatchesGenericTemplate(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 	if err := s.PutGenericTemplate(repo.GenericTemplate{Workflow: domain.WorkflowDefinition{
 		ID: "room-generic", Name: "通用确认", Version: 1, Status: "published", Generic: true,
-		SandboxProfileID: "local",
+		SandboxProfileID: "test-native",
 		Nodes:            []domain.WorkflowNode{{ID: "approval", Name: "人工确认", Type: "approval", MaxAttempts: 1}},
 	}}); err != nil {
 		t.Fatal(err)
@@ -57,14 +57,14 @@ func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
 		ID: "room-sop", Name: "群聊交付", Version: 1, ProjectID: "platform", Status: "published",
-		SandboxProfileID: "local",
+		SandboxProfileID: "test-native",
 		Nodes:            []domain.WorkflowNode{{ID: "approval", Name: "人工确认", Type: "approval", MaxAttempts: 1}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
 		ID: "room-sop-2", Name: "群聊评审", Version: 1, ProjectID: "platform", Status: "published",
-		SandboxProfileID: "local",
+		SandboxProfileID: "test-native",
 		Nodes:            []domain.WorkflowNode{{ID: "review", Name: "人工评审", Type: "approval", MaxAttempts: 1}},
 	}); err != nil {
 		t.Fatal(err)

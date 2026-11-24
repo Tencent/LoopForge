@@ -57,7 +57,7 @@ func TestRunnerRegistryValidationRuntimeAndPreferences(t *testing.T) {
 	if err := s.SetRunnerRunLimit(runner.ID, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RunnerHeartbeat("missing", nil, "", now, expires); !errors.Is(err, ErrRunnerNotFound) {
+	if err := s.RunnerHeartbeat("missing", nil, "", false, now, expires); !errors.Is(err, ErrRunnerNotFound) {
 		t.Fatalf("missing heartbeat err=%v", err)
 	}
 	if err := s.SetRunnerRuntimeAuthMode(runner.ID, "codex", "bad", now); err == nil {
@@ -81,7 +81,7 @@ func TestRunnerRegistryValidationRuntimeAndPreferences(t *testing.T) {
 	if err := s.SetRunnerRuntimeStatus(runner.ID, "codex", domain.RuntimeStatusDisabled, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RunnerHeartbeat(runner.ID, []domain.RunnerRuntime{{Provider: "codex"}, {Provider: "claude-code"}, {Provider: "codebuddy"}}, " 1.2.3 ", now.Add(time.Minute), expires); err != nil {
+	if err := s.RunnerHeartbeat(runner.ID, []domain.RunnerRuntime{{Provider: "codex"}, {Provider: "claude-code"}, {Provider: "codebuddy"}}, " 1.2.3 ", false, now.Add(time.Minute), expires); err != nil {
 		t.Fatal(err)
 	}
 	heartbeat, _ := s.Runner(runner.ID)
