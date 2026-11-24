@@ -517,13 +517,25 @@ func (r *RunnersRepo) RunnerTaskControl(id string) (domain.RunnerTask, bool) {
 }
 
 func (r *RunnersRepo) RunnerTasks() []domain.RunnerTask {
-	var rows []runnerTaskRow
-	if err := r.DB.Order("created_at DESC").Limit(200).Find(&rows).Error; err != nil {
+	// Sort only the narrow columns. A payload can carry legacy inline files of
+	// up to 1 MiB, and MySQL rejects a sort whose row exceeds sort_buffer_size.
+	var ids []string
+	if err := r.DB.Model(&runnerTaskRow{}).Order("created_at DESC").Limit(200).Pluck("id", &ids).Error; err != nil || len(ids) == 0 {
 		return []domain.RunnerTask{}
 	}
-	out := make([]domain.RunnerTask, 0, len(rows))
+	var rows []runnerTaskRow
+	if err := r.DB.Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return []domain.RunnerTask{}
+	}
+	byID := make(map[string]runnerTaskRow, len(rows))
 	for _, row := range rows {
-		out = append(out, runnerTaskFromRow(row))
+		byID[row.ID] = row
+	}
+	out := make([]domain.RunnerTask, 0, len(rows))
+	for _, id := range ids {
+		if row, ok := byID[id]; ok {
+			out = append(out, runnerTaskFromRow(row))
+		}
 	}
 	return out
 }
@@ -571,7 +583,10 @@ func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now t
 	var found bool
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var rows []runnerTaskRow
-		if err := r.locking(tx).
+		// Select only what the claim needs: sorting rows that include the
+		// payload (legacy inline input files) can exceed MySQL's sort buffer
+		// and would block every claim for these providers.
+		if err := r.locking(tx).Select("id", "attempt").
 			Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed).
 			Order("created_at").Limit(1).
 			Find(&rows).Error; err != nil {
