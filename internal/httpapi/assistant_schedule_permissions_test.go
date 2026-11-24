@@ -23,7 +23,7 @@ import (
 func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
 	h, user := workbenchFixture(t)
 	st := h.repo
-	wf := domain.WorkflowDefinition{ID: "scheduled-approval", ProjectID: "workbench", Name: "Scheduled approval", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "scheduled-approval", ProjectID: "workbench", Name: "Scheduled approval", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}

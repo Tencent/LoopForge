@@ -15,6 +15,7 @@ require (
 	golang.org/x/sys v0.49.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.31.2
+	mvdan.cc/sh/v3 v3.14.1
 )
 
 require (

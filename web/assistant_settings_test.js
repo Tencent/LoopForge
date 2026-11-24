@@ -65,6 +65,9 @@ assert.match(html, /id="assistantPrefsSave" disabled/);
 assert.match(html, /<option value="queue" selected>排队<\/option>/, 'queue remains the default');
 assert.match(mb.assistantPrefsFormHTML({ steerOnSend: true }), /<option value="steer" selected>立即发送<\/option>/);
 
+assert.match(html, /<option value="" selected>由 Agent 选择<\/option>/, 'the agent picks the sandbox by default');
+assert.match(mb.assistantPrefsFormHTML({ workspaceDriver: 'native' }), /<option value="native" selected>系统轻量隔离<\/option>/);
+
 // 2. Follow mode hides both sub-panels.
 const followHtml = mb.assistantPrefsFormHTML({ approvalReviewMode: 'follow', instructions: '' });
 assert.match(followHtml, /<option value="follow" selected>跟随当前对话 CLI 和模型<\/option>/);
@@ -104,6 +107,7 @@ const form = {
   proactiveRoles: { checked: true },
   proactiveSops: { checked: false },
   messageDuringGeneration: { value: 'queue' },
+  workspaceDriver: { value: '' },
   approvalReviewMode: { value: 'cli' },
   approvalReviewModel: { value: '  claude-code:claude-haiku-4-5  ' },
   approvalReviewApiProtocol: { value: 'chat' },
@@ -124,6 +128,10 @@ assert.equal(mb.assistantPrefsDirty(form), false, 'surrounding whitespace is not
 form.messageDuringGeneration.value = 'steer';
 assert.equal(mb.assistantPrefsDirty(form), true, 'send behavior changes must be saved');
 form.messageDuringGeneration.value = 'queue';
+form.workspaceDriver.value = 'native';
+assert.equal(mb.assistantPrefsDirty(form), true, 'a sandbox preference change must be saved');
+assert.equal(ctx.captureAssistantPrefsRenderModel(form).workspaceDriver, 'native', 'refreshing the CLI list preserves the sandbox draft');
+form.workspaceDriver.value = '';
 form.proactiveSops.checked = true;
 assert.equal(mb.assistantPrefsDirty(form), true);
 form.proactiveSops.checked = false;

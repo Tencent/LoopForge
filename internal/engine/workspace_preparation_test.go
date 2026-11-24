@@ -15,7 +15,7 @@ import (
 )
 
 func preparationWorkflow() domain.WorkflowDefinition {
-	return domain.WorkflowDefinition{ID: "workspace-preparation", Name: "Workspace preparation", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	return domain.WorkflowDefinition{ID: "workspace-preparation", Name: "Workspace preparation", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "env", Name: "准备环境", Type: "script", ScriptLanguage: "shell", Script: "mkdir -p .agentflow; echo run >> .agentflow/env-count; printf environment-ready", RunOnWorkspaceRebuild: true, MaxAttempts: 1},
 		{ID: "index", Name: "建立索引", Type: "script", ScriptLanguage: "shell", Script: "echo run >> .agentflow/index-count; printf index-ready", RunOnWorkspaceRebuild: true, MaxAttempts: 1},
 		{ID: "work", Name: "正常业务", Type: "script", ScriptLanguage: "shell", Script: "printf business-ok", MaxAttempts: 1},
@@ -30,6 +30,18 @@ func completedPreparationRun(t *testing.T, e *Engine, id string) domain.Run {
 		t.Fatal(err)
 	}
 	return run
+}
+
+func TestWorkspacePreparationRejectsFrozenLocalSandbox(t *testing.T) {
+	e, _ := cvEEngine(t)
+	run := domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{
+		SandboxSnapshot: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{
+			ID: "previous-sandbox", Driver: domain.SandboxDriverLocal,
+		}},
+	}}
+	if _, _, err := e.workspaceSandboxProfile(run); err == nil || !strings.Contains(err.Error(), "重新发起") {
+		t.Fatalf("frozen local sandbox accepted for workspace operations: %v", err)
+	}
 }
 
 func TestPreparedWorkspaceRequestScopesTerminalGitCredentials(t *testing.T) {
@@ -281,7 +293,7 @@ func TestWorkspacePreparationRecordFailureDoesNotRetrySuccessfulBusinessScript(t
 		t.Fatal(err)
 	}
 	defer st.Close()
-	wf := domain.WorkflowDefinition{ID: "record-warning", Name: "Record warning", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "script", Name: "成功脚本", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, MaxAttempts: 3, Script: "printf 'run\\n' >> count.txt; mv .agentflow/workspace-preparation .agentflow/saved-preparation; ln -s saved-preparation .agentflow/workspace-preparation; printf actually-succeeded"}, {ID: "pause", Type: "approval", MaxAttempts: 1}}, Edges: []domain.WorkflowEdge{{Source: "script", Target: "pause", When: "success"}}}
+	wf := domain.WorkflowDefinition{ID: "record-warning", Name: "Record warning", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "script", Name: "成功脚本", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, MaxAttempts: 3, Script: "printf 'run\\n' >> count.txt; mv .agentflow/workspace-preparation .agentflow/saved-preparation; ln -s saved-preparation .agentflow/workspace-preparation; printf actually-succeeded"}, {ID: "pause", Type: "approval", MaxAttempts: 1}}, Edges: []domain.WorkflowEdge{{Source: "script", Target: "pause", When: "success"}}}
 	if err = st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}

@@ -183,7 +183,8 @@ func (r *RunnersRepo) PutRunner(v domain.Runner) error {
 	return upsert(r.DB, "runners", map[string]any{
 		"id": v.ID, "name": v.Name, "status": v.Status, "os": v.OS, "arch": v.Arch,
 		"runner_version": v.RunnerVersion, "labels": jsonBytes(v.Labels), "max_concurrency": v.MaxConcurrency,
-		"owner_user_id": nullableInt64(v.OwnerUserID), "session_token_hash": v.SessionTokenHash,
+		"native_sandbox_available": v.NativeSandboxAvailable,
+		"owner_user_id":            nullableInt64(v.OwnerUserID), "session_token_hash": v.SessionTokenHash,
 		"session_expires_at": v.SessionExpiresAt, "runtimes": jsonBytes(v.Runtimes),
 		"last_seen_at": v.LastSeenAt, "created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
 	})
@@ -235,7 +236,8 @@ func runnerFromRow(row runnerRow) domain.Runner {
 	v := domain.Runner{
 		ID: row.ID, Name: row.Name, Status: row.Status, OS: row.OS, Arch: row.Arch,
 		RunnerVersion: row.RunnerVersion, MaxConcurrency: row.MaxConcurrency,
-		SessionTokenHash: row.SessionTokenHash,
+		NativeSandboxAvailable: row.NativeSandboxAvailable,
+		SessionTokenHash:       row.SessionTokenHash,
 	}
 	if row.OwnerUserID != nil {
 		v.OwnerUserID = *row.OwnerUserID
@@ -298,7 +300,7 @@ func (r *RunnersRepo) RunnerSessionByHash(hash string) (domain.Runner, bool) {
 // RunnerHeartbeat records liveness and the latest runtime inventory. The
 // server-side disabled flag survives: a CLI disabled from the 执行器 page
 // stays disabled even though the daemon keeps reporting it online.
-func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime, version string, now, sessionExpiresAt time.Time) error {
+func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime, version string, nativeSandboxAvailable bool, now, sessionExpiresAt time.Time) error {
 	current, ok := r.runnerRow(id)
 	disabled := map[string]bool{}
 	authModes := map[string]string{}
@@ -331,7 +333,8 @@ func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime
 		return err
 	}
 	updates := map[string]any{
-		"status": domain.RunnerStatusOnline, "last_seen_at": now, "runtimes": string(raw),
+		"native_sandbox_available": nativeSandboxAvailable,
+		"status":                   domain.RunnerStatusOnline, "last_seen_at": now, "runtimes": string(raw),
 		"session_expires_at": sessionExpiresAt, "updated_at": now,
 	}
 	if version = strings.TrimSpace(version); version != "" {

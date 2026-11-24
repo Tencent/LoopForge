@@ -168,6 +168,23 @@
 #aiSchedulesView .schedule-enabled { display:inline-flex;align-items:center;gap:6px;flex:none;margin-right:4px;color:var(--hui-secondary);font-size:12px;white-space:nowrap;cursor:pointer; }
 #aiSchedulesView .schedule-enabled span { min-width:3em; }
 #aiSchedulesView .schedule-job-item.is-paused .schedule-job-main b { color:var(--hui-secondary); }
+/* 同名 AI 任务折叠为一组：组头沿用任务行的排版，展开后子行缩进 */
+#aiSchedulesView .schedule-job-group { border-top:1px solid var(--hui-border-soft); }
+#aiSchedulesView .schedule-job-group-head { display:flex;align-items:center;gap:10px;width:100%;padding:14px 16px;border:0;background:transparent;color:var(--hui-text);text-align:left;cursor:pointer;transition:background .18s var(--hui-ease-flow); }
+#aiSchedulesView .schedule-job-group-head:is(:hover, :focus-visible) { background:var(--hui-canvas); }
+#aiSchedulesView .schedule-job-group-head:focus-visible { outline:2px solid var(--hui-focus-ring);outline-offset:-3px; }
+#aiSchedulesView .schedule-job-group-chevron { flex:none;color:var(--hui-muted);transition:transform .18s var(--hui-ease-flow); }
+#aiSchedulesView .schedule-job-group.is-open .schedule-job-group-chevron { transform:rotate(90deg); }
+#aiSchedulesView .schedule-job-group-text { min-width:0;flex:1;display:flex;flex-direction:column;gap:5px; }
+#aiSchedulesView .schedule-job-group-text b { display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:500; }
+#aiSchedulesView .schedule-job-group-name { min-width:0;overflow-wrap:anywhere; }
+#aiSchedulesView .schedule-job-group-text .schedule-kind-tag { flex:none; }
+#aiSchedulesView .schedule-job-group-text > span, #aiSchedulesView .schedule-job-group-text small { color:var(--hui-secondary);font-size:12px;overflow-wrap:anywhere; }
+#aiSchedulesView .schedule-job-group-text > span.schedule-run-live { color:var(--hui-info); }
+#aiSchedulesView .schedule-job-group.is-paused .schedule-job-group-text b { color:var(--hui-secondary); }
+#aiSchedulesView .schedule-job-group-body[hidden] { display:none; }
+#aiSchedulesView .schedule-job-group-body .schedule-job-row { padding-left:42px; }
+@media (prefers-reduced-motion: reduce) { #aiSchedulesView .schedule-job-group-chevron, #aiSchedulesView .schedule-job-group-head { transition:none; } }
 /* AI 任务行的 ⋯ 菜单：面板与选项沿用 .hui-menu 的尺寸与阴影 */
 #aiSchedulesView .schedule-row-more { position:relative;display:inline-flex;flex:none; }
 #aiSchedulesView .schedule-row-more-btn { width:28px;padding:0;justify-content:center;color:var(--hui-muted); }

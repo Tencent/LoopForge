@@ -217,12 +217,9 @@ func TestRunnerSOPCLIAuthentication(t *testing.T) {
 			}}); err != nil {
 				t.Fatal(err)
 			}
-			if err := st.PutDockerfile(image); err != nil {
-				t.Fatal(err)
-			}
 			profile := domain.SandboxProfile{ID: "runner-cli-auth-sandbox", Name: "CLI auth sandbox", Driver: driver}
 			if driver == domain.SandboxDriverDocker {
-				profile.DockerfileID = image.ID
+				profile.Dockerfile = &domain.SandboxDockerfile{Content: image.Content, Files: image.Files}
 			}
 			if err := st.PutSandbox(profile); err != nil {
 				t.Fatal(err)

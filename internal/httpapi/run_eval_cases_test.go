@@ -34,7 +34,7 @@ func TestRunEvalCloneAndApplyBranches(t *testing.T) {
 	if _, err := h.ensureProjectAgent(run, "cvb-eval-p", "missing"); err == nil {
 		t.Fatal("missing agent accepted")
 	}
-	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "cvb-shared-wf", Name: "Shared", ProjectID: "elsewhere", Shared: true, SandboxProfileID: "local", Nodes: run.WorkflowSnapshot.Nodes}); err != nil {
+	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "cvb-shared-wf", Name: "Shared", ProjectID: "elsewhere", Shared: true, SandboxProfileID: "test-native", Nodes: run.WorkflowSnapshot.Nodes}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.PutAgent(domain.AgentDefinition{ID: "cvb-eval-agent", Name: "Shared agent", ProjectID: "elsewhere", Shared: true, Version: 2}); err != nil {
@@ -215,7 +215,7 @@ func TestRunEvalLocalEntityReuseBranches(t *testing.T) {
 	if err := f.s.PutProject(domain.Project{ID: projectID, Key: "EVL", Name: "Eval local", OwnerID: f.user.ID}); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "cvb-eval-local-wf", Name: "Local workflow", ProjectID: projectID, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", AgentID: "cvb-eval-local-agent"}}}
+	wf := domain.WorkflowDefinition{ID: "cvb-eval-local-wf", Name: "Local workflow", ProjectID: projectID, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "n", AgentID: "cvb-eval-local-agent"}}}
 	agent := domain.AgentDefinition{ID: "cvb-eval-local-agent", Name: "Local", ProjectID: projectID}
 	if err := f.s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)

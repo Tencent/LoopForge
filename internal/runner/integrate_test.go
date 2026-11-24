@@ -36,7 +36,7 @@ func TestRunnerModeScheduledRunIntegratesOnRunner(t *testing.T) {
 		t.Fatalf("runner version %q does not integrate", runner.RunnerVersion)
 	}
 	wf := domain.WorkflowDefinition{
-		ID: "runner-integrate", Name: "Runner integrate", SandboxProfileID: "local",
+		ID: "runner-integrate", Name: "Runner integrate", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "implement", Name: "实现", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf 'fixed\\n' > feature.txt && printf 'report\\n' > fix-report.md", MaxAttempts: 1},
 		},

@@ -56,8 +56,7 @@ test('orchestration parsing and merge helpers preserve a valid workflow', async 
 test('asset editors render the selected asset of every asset type', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  for (const [type, name] of [['rules', 'Code style'], ['skills', 'Testing'], ['dockerfiles', 'Node image'],
-    ['environments', 'Node setup'], ['sandboxes', 'Restricted']]) {
+  for (const [type, name] of [['rules', 'Code style'], ['skills', 'Testing'], ['sandboxes', 'Restricted']]) {
     app.evaluate(`switchView(${JSON.stringify(type)});state.assetType=${JSON.stringify(type)};
       state.selectedAsset=state.data[${JSON.stringify(type)}][0].id;renderAssets();renderAssetDetail({force:true})`);
     await settle(2);

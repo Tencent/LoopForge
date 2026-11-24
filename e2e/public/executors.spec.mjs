@@ -127,7 +127,7 @@ test('SOP readiness checks each role executor rather than always requiring CodeB
     for(const executor of ['codebuddy','codex','claude']){
       const id=`e2e-provider-${executor}-${suffix}`;ids.push(id);
       expect((await page.request.put('/api/agents',{data:{id,projectId,name:id,executorId:executor,prompt:'Only perform an explicitly assigned task.'}})).ok()).toBe(true);
-      expect((await page.request.put('/api/workflows',{data:{id,projectId,name:id,status:'draft',sandboxProfileId:'local',nodes:[{id:'work',name:'Work',type:'agent',agentId:id,executorId:'codebuddy',position:{x:100,y:100}}],edges:[]}})).ok()).toBe(true);
+      expect((await page.request.put('/api/workflows',{data:{id,projectId,name:id,status:'draft',sandboxProfileId:'generic-docker',nodes:[{id:'work',name:'Work',type:'agent',agentId:id,executorId:'codebuddy',position:{x:100,y:100}}],edges:[]}})).ok()).toBe(true);
     }
     await page.reload();await switchProject(page,projectId);
     await openSettingsPage(page,'sops');

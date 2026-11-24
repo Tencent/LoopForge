@@ -197,24 +197,6 @@ type executorRow struct {
 
 func (executorRow) TableName() string { return "executors" }
 
-type dockerfileRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Name    string     `gorm:"column:name;size:255"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (dockerfileRow) TableName() string { return "dockerfiles" }
-
-type environmentRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Name    string     `gorm:"column:name;size:255"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (environmentRow) TableName() string { return "environments" }
-
 type sandboxRow struct {
 	ID      string `gorm:"column:id;primaryKey;size:64"`
 	Name    string `gorm:"column:name;size:255"`
@@ -537,22 +519,23 @@ type definitionRevisionRow struct {
 func (definitionRevisionRow) TableName() string { return "definition_revisions" }
 
 type runnerRow struct {
-	ID               string     `gorm:"column:id;primaryKey;size:64"`
-	Name             string     `gorm:"column:name;size:255"`
-	Status           string     `gorm:"column:status;index:idx_runners_status;size:32"`
-	OS               string     `gorm:"column:os;size:32"`
-	Arch             string     `gorm:"column:arch;size:32"`
-	RunnerVersion    string     `gorm:"column:runner_version;size:64"`
-	Labels           []byte     `gorm:"column:labels;type:json"`
-	MaxConcurrency   int        `gorm:"column:max_concurrency"`
-	RunLimit         *int       `gorm:"column:run_limit"`
-	OwnerUserID      *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
-	SessionTokenHash string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
-	SessionExpiresAt *time.Time `gorm:"column:session_expires_at"`
-	Runtimes         []byte     `gorm:"column:runtimes;type:json"`
-	LastSeenAt       *time.Time `gorm:"column:last_seen_at"`
-	Created          *time.Time `gorm:"column:created_at"`
-	Updated          *time.Time `gorm:"column:updated_at"`
+	ID                     string     `gorm:"column:id;primaryKey;size:64"`
+	Name                   string     `gorm:"column:name;size:255"`
+	Status                 string     `gorm:"column:status;index:idx_runners_status;size:32"`
+	OS                     string     `gorm:"column:os;size:32"`
+	Arch                   string     `gorm:"column:arch;size:32"`
+	RunnerVersion          string     `gorm:"column:runner_version;size:64"`
+	NativeSandboxAvailable bool       `gorm:"column:native_sandbox_available"`
+	Labels                 []byte     `gorm:"column:labels;type:json"`
+	MaxConcurrency         int        `gorm:"column:max_concurrency"`
+	RunLimit               *int       `gorm:"column:run_limit"`
+	OwnerUserID            *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
+	SessionTokenHash       string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
+	SessionExpiresAt       *time.Time `gorm:"column:session_expires_at"`
+	Runtimes               []byte     `gorm:"column:runtimes;type:json"`
+	LastSeenAt             *time.Time `gorm:"column:last_seen_at"`
+	Created                *time.Time `gorm:"column:created_at"`
+	Updated                *time.Time `gorm:"column:updated_at"`
 }
 
 func (runnerRow) TableName() string { return "runners" }
@@ -592,12 +575,14 @@ type userRunnerPrefRow struct {
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
 
-// assistantPreferenceRow: a missing row means switches are off and messages queue.
+// assistantPreferenceRow: a missing row means switches are off, messages queue
+// and the agent picks conversation workspace sandboxes itself.
 type assistantPreferenceRow struct {
 	UserID              int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
 	ProactiveRoles      bool       `gorm:"column:proactive_roles;not null;default:false"`
 	ProactiveSOPs       bool       `gorm:"column:proactive_sops;not null;default:false"`
 	SteerOnSend         bool       `gorm:"column:steer_on_send;not null;default:false"`
+	WorkspaceDriver     string     `gorm:"column:workspace_driver;type:varchar(16);not null;default:''"`
 	Instructions        string     `gorm:"column:instructions;type:text"`
 	ApprovalReviewMode  string     `gorm:"column:approval_review_mode;size:32;not null;default:''"`
 	ApprovalReviewModel string     `gorm:"column:approval_review_model;size:160;not null;default:''"`
@@ -766,7 +751,7 @@ func allModels() []any {
 		insightSourceRow{}, insightExecutionRow{},
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
-		dockerfileRow{}, environmentRow{}, sandboxRow{},
+		sandboxRow{},
 		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
 		issueRow{}, issueCommentRow{}, taskRow{},
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},

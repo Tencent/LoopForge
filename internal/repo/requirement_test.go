@@ -246,7 +246,7 @@ func TestRequirementSnapshotHTTPStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "generic-frontend-delivery", Name: "前端交付", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "shape", Name: "造型"}}}
+	wf := domain.WorkflowDefinition{ID: "generic-frontend-delivery", Name: "前端交付", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "shape", Name: "造型"}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
