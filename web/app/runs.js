@@ -170,7 +170,7 @@ async function refreshRuns(background=false,runsView=false){
   })();
   return refreshRunsPending;
 }
-function runProgress(r){const nodes=Object.values(r.nodes||{}).filter(Boolean),done=nodes.filter(n=>['succeeded','failed','cancelled'].includes(n.status)).length,total=Math.max(nodes.length,done);return {done:Math.min(done,total),total,pct:total?Math.round(Math.min(done,total)*100/total):0}}
+function runProgress(r){const nodes=Object.values(r.nodes||{}).filter(Boolean),done=nodes.filter(n=>['succeeded','skipped','failed','cancelled'].includes(n.status)).length,total=Math.max(nodes.length,done);return {done:Math.min(done,total),total,pct:total?Math.round(Math.min(done,total)*100/total):0}}
 function workflowStages(workflow){const nodes=workflow?.nodes||[],edges=workflow?.edges||[],byId=new Map(nodes.map(n=>[n.id,n])),indegree=new Map(nodes.map(n=>[n.id,0]));for(const edge of edges)if(indegree.has(edge.target)&&byId.has(edge.source))indegree.set(edge.target,indegree.get(edge.target)+1);let ready=nodes.filter(n=>indegree.get(n.id)===0).map(n=>n.id),seen=new Set(),stages=[];while(ready.length){const ids=ready,stage=ids.map(id=>byId.get(id)).filter(Boolean);stages.push(stage);ready=[];for(const id of ids){seen.add(id);for(const edge of edges.filter(e=>e.source===id)){if(!indegree.has(edge.target))continue;indegree.set(edge.target,indegree.get(edge.target)-1);if(indegree.get(edge.target)===0)ready.push(edge.target)}}}const remaining=nodes.filter(n=>!seen.has(n.id));if(remaining.length)stages.push(remaining);return stages}
 function runFinishedAt(r){
   let end=0;
@@ -497,6 +497,7 @@ function liveUsageHTML(r){
   return `<span>资源消耗</span><b>${formatTokens(usage.totalTokens)} tokens · ${r.toolCalls||0} tools</b><small>${formatTokens(usage.inputTokens)} 输入 / ${formatTokens(usage.outputTokens)} 输出 · cache ${formatTokens(usage.cacheReadTokens)} 命中 / ${formatTokens(usage.cacheWriteTokens)} 写入 · $${Number(usage.costUsd||0).toFixed(4)}</small><small class="usage-source">实时 stream-json · Hook / OTEL 只进轨迹</small>`;
 }
 function gateResultCardHTML(nr){
+  if(nr?.status==='skipped')return `<div class="node-skip-reason"><b>已跳过</b><p>${escapeHTML(nr.skipReason||'上游分支未被选中')}</p></div>`;
   const gate=nr?.gateResult;
   if(gate&&nr.status==='waiting_approval'){
     const findings=(gate.findings||[]).map(f=>`<li><b>${escapeHTML(f.title||'待确认项')}</b>${f.evidence?`<p>${escapeHTML(f.evidence)}</p>`:''}</li>`).join('');
@@ -584,6 +585,7 @@ function displayNodeOutput(raw){
 }
 function inspectorNeedsRefresh(host,r){
   const selected=state.selectedRunNode,nr=r.nodes?.[selected]||{};
+  if((nr.status==='skipped')!==Boolean(host.querySelector('.node-skip-reason')))return true;
   if(Boolean(r.pauseRequested)!==Boolean(host.querySelector('.paused-run-callout')))return true;
   if(r.pauseRequested){
     const hasContextField=Boolean(host.querySelector('.paused-run-callout [data-human-context]'));

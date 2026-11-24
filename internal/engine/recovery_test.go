@@ -238,7 +238,7 @@ func TestFinishAtKeepsRewoundRunAlive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.finishAt(run.ID, owned.Generation, "failed", pipelineFailedMessage)
+	e.finishAtReason(run.ID, owned.Generation, "failed", pipelineFailedMessage, finishFailedNode)
 	got, _ := s.Run(run.ID)
 	if got.Status != "running" {
 		t.Fatalf("status = %q, want running after the failure was rewound", got.Status)
@@ -280,7 +280,7 @@ func TestFinishAtFailsWhenANodeIsStillFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.finishAt(run.ID, owned.Generation, "failed", pipelineFailedMessage)
+	e.finishAtReason(run.ID, owned.Generation, "failed", pipelineFailedMessage, finishFailedNode)
 	got, _ := s.Run(run.ID)
 	if got.Status != "failed" {
 		t.Fatalf("status = %q, want failed", got.Status)
@@ -393,5 +393,50 @@ func TestResumeInterruptedRunsTakesExpiredLeaseAndBumpsGeneration(t *testing.T) 
 	}
 	if got.Nodes["running"].ResumeSessionID != "sess-running" {
 		t.Fatalf("resume session=%q", got.Nodes["running"].ResumeSessionID)
+	}
+}
+
+func TestAllSinksSkippedFinishUsesReasonAndRechecksGraph(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		sinkStatus string
+		wantStatus string
+	}{
+		{"still skipped", "skipped", "failed"},
+		{"restarted", "pending", "running"},
+		{"now succeeded", "succeeded", "running"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, s := newRecoveryEngine(t)
+			e.ConfigureExecution("worker", "host", time.Minute, true)
+			wf := domain.WorkflowDefinition{ID: "wf", Nodes: []domain.WorkflowNode{{ID: "source"}, {ID: "sink"}}, Edges: []domain.WorkflowEdge{{Source: "source", Target: "sink"}}}
+			now := time.Now().UTC()
+			run := domain.Run{ID: "sink-" + tc.sinkStatus, WorkflowSnapshot: wf, Status: "running", Nodes: map[string]*domain.NodeRun{
+				"source": {Status: "succeeded"}, "sink": {Status: tc.sinkStatus},
+			}, CreatedAt: now, UpdatedAt: now}
+			if err := s.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			owned, err := e.acquireLease(run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
+			defer cancelScheduler()
+			e.mu.Lock()
+			e.running[run.ID] = cancelScheduler
+			e.mu.Unlock()
+			e.finishAtReason(run.ID, owned.Generation, "failed", "alternate display text", finishAllSinksSkipped)
+			if tc.wantStatus == "running" && schedulerCtx.Err() != nil {
+				t.Fatal("stale finish stopped the scheduler")
+			}
+			e.mu.Lock()
+			delete(e.running, run.ID)
+			e.mu.Unlock()
+			got, _ := s.RunState(run.ID)
+			if got.Status != tc.wantStatus {
+				t.Fatalf("status = %q, want %q", got.Status, tc.wantStatus)
+			}
+		})
 	}
 }

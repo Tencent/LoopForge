@@ -71,6 +71,26 @@ func TestArchivedReplayDoesNotResurrectCurrentOrDownstreamOutputs(t *testing.T) 
 		}
 	}
 }
+
+func TestConditionalArchivedFilesExcludeStaleBranchesAndAttempts(t *testing.T) {
+	now := time.Now()
+	r := domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{Edges: []domain.WorkflowEdge{{Condition: &domain.WorkflowCondition{Type: "route"}}}}, Nodes: map[string]*domain.NodeRun{
+		"active": {Status: "succeeded", Attempt: 2}, "skipped": {Status: "skipped", Attempt: 1},
+	}}
+	old := archivedTestFile("active", "old.txt", "old", now)
+	old.Attempt = 1
+	current := archivedTestFile("active", "current.txt", "current", now)
+	current.Attempt = 2
+	skipped := archivedTestFile("skipped", "skipped.txt", "skipped", now)
+	skipped.Attempt = 1
+	r.Artifacts = []domain.Artifact{old, current, skipped}
+	for _, executing := range []string{"", "other"} {
+		files := archivedWorkspaceFiles(r, executing)
+		if len(files) != 1 || files[0].Path != "current.txt" {
+			t.Fatalf("executing %q: %+v", executing, files)
+		}
+	}
+}
 func TestRealSnapshotKeepsIntentionalArtifactDeletion(t *testing.T) {
 	t.Parallel()
 	e, id := checkpointFixture(t)

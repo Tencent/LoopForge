@@ -167,11 +167,11 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 			if !ok || fresh.Status != "running" {
 				continue
 			}
-			status, msg, done := settleStatusForCompletedGraph(workflowForRun(e.repo, fresh), fresh)
+			status, msg, reason, done := settleStatusForCompletedGraph(workflowForRun(e.repo, fresh), fresh)
 			// A scheduled run still has to push into the integration branch after
 			// the last node succeeds. Settling here deletes that checkout mid-push.
 			if done && !(status == "succeeded" && scheduledIntegratePending(fresh)) {
-				e.finishAt(fresh.ID, fresh.Generation, status, msg)
+				e.finishAtReason(fresh.ID, fresh.Generation, status, msg, reason)
 				continue
 			}
 		}

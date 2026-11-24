@@ -27,6 +27,9 @@ func TestAttachPreviewBuildUsesSelectedExecutor(t *testing.T) {
 	if last.ID != PreviewBuildNodeID || last.AgentID != PreviewBuildAgentID || last.ExecutorID != "codex" {
 		t.Fatalf("injected node = %+v", last)
 	}
+	if last.JoinRule != "none_failed_min_one_success" {
+		t.Fatalf("preview join rule = %q", last.JoinRule)
+	}
 	prompt := PreviewBuildPrompt(got.Preview)
 	if !strings.Contains(prompt, "base: './'") || !strings.Contains(prompt, "./assets/") || !strings.Contains(prompt, "拦截 fetch/XHR") {
 		t.Fatalf("preview build prompt must force a relative asset base and gateway-intercepted backend: %s", prompt)
@@ -49,6 +52,26 @@ func TestAttachPreviewBuildUsesSelectedExecutor(t *testing.T) {
 	agent := PreviewBuildAgent(got.Preview)
 	if agent.Model != "test-model" || agent.ExecutorID != "codex" {
 		t.Fatalf("synthetic agent = %+v", agent)
+	}
+}
+
+func TestAttachPreviewBuildPreservesExistingNodeAndDefaultsJoin(t *testing.T) {
+	for _, rule := range []string{"", "all_success", "none_failed_min_one_success"} {
+		wf := WorkflowDefinition{Preview: &PreviewContract{Enabled: true}, Nodes: []WorkflowNode{{ID: PreviewBuildNodeID, JoinRule: rule}}}
+		got, err := AttachPreviewBuild(wf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := rule
+		if want == "" {
+			want = "none_failed_min_one_success"
+		}
+		if got.Nodes[0].JoinRule != want {
+			t.Fatalf("rule %q: got %q, want %q", rule, got.Nodes[0].JoinRule, want)
+		}
+		if wf.Nodes[0].JoinRule != rule {
+			t.Fatalf("attach mutated input join rule %q", wf.Nodes[0].JoinRule)
+		}
 	}
 }
 

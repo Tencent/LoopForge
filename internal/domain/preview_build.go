@@ -44,12 +44,16 @@ func AttachPreviewBuild(wf WorkflowDefinition) (WorkflowDefinition, error) {
 	}
 	for i, node := range wf.Nodes {
 		if IsPreviewBuildNode(node.ID) {
-			// Older canvases persisted the original synthetic executor on
-			// the node. The preview contract owns this choice.
-			if node.ExecutorID != wf.Preview.SelectedExecutorID() {
-				wf.Nodes = append([]WorkflowNode(nil), wf.Nodes...)
+			// Older catalog definitions may already contain the preview node.
+			// Preserve branch-aware joins and refresh the executor owned by the preview contract.
+			wf.Nodes = append([]WorkflowNode(nil), wf.Nodes...)
+			if wf.Nodes[i].JoinRule == "" {
+				wf.Nodes[i].JoinRule = "none_failed_min_one_success"
+			}
+			if wf.Nodes[i].ExecutorID != wf.Preview.SelectedExecutorID() {
 				wf.Nodes[i].ExecutorID = wf.Preview.SelectedExecutorID()
 			}
+
 			return wf, nil
 		}
 	}
@@ -77,6 +81,7 @@ func PreviewBuildNode(wf WorkflowDefinition) WorkflowNode {
 		AgentID:         PreviewBuildAgentID,
 		ExecutorID:      contract.SelectedExecutorID(),
 		ExecutionScope:  ExecutionScopeRun,
+		JoinRule:        "none_failed_min_one_success",
 		ArtifactOutputs: []ArtifactContract{PreviewBuildArtifact(contract)},
 		OnFailure:       "fail",
 		RetryStrategy:   "targeted_fix",

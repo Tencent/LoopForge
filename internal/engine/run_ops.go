@@ -164,7 +164,27 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	if n == nil || n.Status != "waiting_approval" {
 		return fmt.Errorf("node is not waiting for approval")
 	}
+	wf := workflowForRun(e.repo, r)
+	var definition *domain.WorkflowNode
+	for i := range wf.Nodes {
+		if wf.Nodes[i].ID == nodeID {
+			definition = &wf.Nodes[i]
+			break
+		}
+	}
+	if definition == nil {
+		return fmt.Errorf("approval node definition not found")
+	}
+	var routeDecision *domain.RouteDecision
+	if n.GateResult != nil {
+		var err error
+		routeDecision, err = decideRoute(wf, *definition, n.GateResult.Route, routingArtifactsForNode(r, nodeID))
+		if err != nil {
+			return err
+		}
+	}
 	n.Status = "succeeded"
+	n.RouteDecision = routeDecision
 	n.FinishedAt = time.Now().UTC()
 	note := recordHumanContext(&r, nodeID, "人工批准继续", humanContext)
 	decision := "# Approval\n\nApproved by a human gate.\n"
@@ -174,6 +194,9 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	appendArtifact(&r, nodeID, n.Attempt, "decision", "decision.md", "text/markdown", []byte(decision))
 	e.event(&r, nodeID, "gate.approved", "人工门禁已通过")
 	appendControlTelemetry(&r, nodeID, "gate.approved", "人工门禁已通过")
+	if routeDecision != nil {
+		e.event(&r, nodeID, "route.decided", fmt.Sprintf("人工批准路由：%v", routeDecision.Values))
+	}
 	r.Status = "running"
 	return e.persistControlDecision(runID, r, expected...)
 }
@@ -245,6 +268,11 @@ func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpect
 	}
 	if !found || !isScriptNode(def) {
 		return fmt.Errorf("only a failed script node can be passed")
+	}
+	for _, edge := range wf.Edges {
+		if edge.Source == nodeID && edge.Condition != nil && n.RouteDecision == nil {
+			return fmt.Errorf("节点 %s 尚无有效路由决策，请重试节点而不是手动通过", nodeID)
+		}
 	}
 	n.Status = "succeeded"
 	n.FinishedAt = time.Now().UTC()
@@ -327,6 +355,7 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 				nr.Activity = ""
 			}
 			nr.Status = "pending"
+			nr.RouteDecision, nr.SkipReason = nil, ""
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""
@@ -585,6 +614,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 				stale = append(stale, nr.ChildRunID)
 			}
 			nr.Status = "pending"
+			nr.RouteDecision, nr.SkipReason = nil, ""
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""
@@ -840,6 +870,13 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	if previousVersion == latest.Version && previousRevision == latest.Revision {
 		return nil
 	}
+	// A route decision refers to edges in the frozen snapshot. Replacing that
+	// graph while preserving completed nodes could activate the wrong branch.
+	for _, nr := range r.Nodes {
+		if nr != nil && nr.RouteDecision != nil {
+			return fmt.Errorf("cannot refresh SOP after a routing decision; start a new run")
+		}
+	}
 	// A graph/role update must not silently replace the environment underneath
 	// an existing workspace. A new Run will pick up the latest sandbox asset.
 	latest.SandboxProfileID = r.WorkflowSnapshot.SandboxProfileID
@@ -851,6 +888,9 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	latest, err = domain.AttachPreviewBuild(latest)
 	if err != nil {
 		return err
+	}
+	if nodeID := missingRouteDecision(latest, r); nodeID != "" {
+		return fmt.Errorf("无法刷新 SOP：已完成的节点「%s」在新版 SOP 中需要路由决策，请创建新 Run 或调整 SOP", nodeID)
 	}
 	for _, node := range latest.Nodes {
 		if r.Nodes[node.ID] == nil {
