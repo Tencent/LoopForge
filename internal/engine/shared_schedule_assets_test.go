@@ -69,7 +69,7 @@ func TestSharedScheduleNestedSOPUsesImmediateParentBinding(t *testing.T) {
 	check(st.PutScheduleJob(job))
 	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Nested", Prompt: "start"}, 0)
 	check(err)
-	e := New(st, runtime.NewManager(t.TempDir()))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	// The control-plane start path persists real snapshots without launching
 	// background executions, so each admission can be checked independently.
 	e.ConfigureExecution("test", "test", time.Second, false)
@@ -137,7 +137,7 @@ func TestSharedScheduleRejectsPrivateNestedSOPSandboxResources(t *testing.T) {
 	check(st.PutScheduleJob(job))
 	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Private nested", Prompt: "start"}, 0)
 	check(err)
-	e := New(st, runtime.NewManager(t.TempDir()))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	e.ConfigureExecution("test", "test", time.Second, false)
 	exec := domain.TelemetryContext{ProjectID: "target", ResponsibleUserID: 42, SharedScheduleID: v.ID, SharedScheduleVersion: v.Version}
 	parent, err := e.StartWithRepositoriesContext("shared-parent", "inspect", nil, exec)
@@ -180,7 +180,7 @@ func TestSharedScheduleRejectsPrivateNestedSOP(t *testing.T) {
 	check(st.PutScheduleJob(job))
 	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Private child", Prompt: "start"}, 0)
 	check(err)
-	e := New(st, runtime.NewManager(t.TempDir()))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	e.ConfigureExecution("test", "test", time.Second, false)
 	exec := domain.TelemetryContext{ProjectID: "target", ResponsibleUserID: 42, SharedScheduleID: v.ID, SharedScheduleVersion: v.Version}
 	parent, err := e.StartWithRepositoriesContext("shared-parent-for-private-child", "inspect", nil, exec)
@@ -252,7 +252,7 @@ func TestSharedScheduleRejectsPrivateNestedDependencies(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			e := New(st, runtime.NewManager(t.TempDir()))
+			e := New(st, runtime.NewManager(sandboxRoot(t)))
 			e.ConfigureExecution("test", "test", time.Second, false)
 			exec := domain.TelemetryContext{ProjectID: "target", ResponsibleUserID: 42, SharedScheduleID: version.ID, SharedScheduleVersion: version.Version}
 			parentRun, err := e.StartWithRepositoriesContext(parent.ID, "inspect", nil, exec)

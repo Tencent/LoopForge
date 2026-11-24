@@ -46,7 +46,7 @@ func TestSOPScriptUsesProjectCredentials(t *testing.T) {
 	if err := st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	eng := New(st, runtime.NewManagerWithLimit(t.TempDir(), 1))
+	eng := New(st, runtime.NewManagerWithLimit(sandboxRoot(t), 1))
 	scope := domain.TelemetryContext{ProjectID: project.ID, ResponsibleUserID: user.ID}
 	run, err := eng.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{}, scope)
 	if err != nil {

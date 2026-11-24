@@ -19,7 +19,7 @@ func TestSharedWorkspacePreparationConversationUsesOwnerDirectoryAndSeparateRece
 		t.Fatal(err)
 	}
 	defer store.Close()
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	e := New(store, runtime.NewManagerWithLimit(root, 2))
 	makeRun := func(id, label, owner string) domain.Run {
 		return domain.Run{ID: id, WorkflowID: id, Status: "succeeded", ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeCloud, WorkspaceRunID: owner}, WorkflowSnapshot: domain.WorkflowDefinition{ID: id, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "prepare", Name: "Prepare " + label, Type: "script", RunOnWorkspaceRebuild: true, Script: "mkdir -p .agentflow; printf '" + label + "\\n' >> .agentflow/shared-preparation-count"}}}, Nodes: map[string]*domain.NodeRun{"prepare": {NodeID: "prepare", Status: "succeeded", Attempt: 1}}}
@@ -84,7 +84,7 @@ func TestSharedWorkspaceFlaggedChildDoesNotRepeatParentScript(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	e := New(store, runtime.NewManagerWithLimit(root, 2))
 	run, err := e.Start(parent.ID, "")
 	if err != nil {
@@ -116,7 +116,7 @@ func TestSharedWorkspacePreparationRequestCarriesOwnerWithoutChangingChildIdenti
 		t.Fatal(err)
 	}
 	defer store.Close()
-	e := New(store, runtime.NewManager(t.TempDir()))
+	e := New(store, runtime.NewManager(sandboxRoot(t)))
 	runner := domain.Runner{ID: "shared-runner", RunnerVersion: domain.RunnerVersionWorkspaceOwnerPreparation, Status: domain.RunnerStatusOnline}
 	if err = store.PutRunner(runner); err != nil {
 		t.Fatal(err)

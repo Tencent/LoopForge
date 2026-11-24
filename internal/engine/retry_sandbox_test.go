@@ -50,7 +50,7 @@ func retryEngine(t *testing.T) (*Engine, *repo.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	return New(store, runtime.NewManager(t.TempDir())), store
+	return New(store, runtime.NewManager(sandboxRoot(t))), store
 }
 
 // 从入口节点重跑等于整条 SOP 重来，旧容器的可写层里全是上一次的残留，

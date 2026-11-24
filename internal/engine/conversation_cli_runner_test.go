@@ -17,7 +17,7 @@ func TestConversationCloudRunnerRequiresConversationCLISupport(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	e := New(s, runtime.NewManager(t.TempDir()))
+	e := New(s, runtime.NewManager(sandboxRoot(t)))
 	if id, err := e.ConversationCloudRunner("e2e"); err != nil || id != "" {
 		t.Fatalf("unconfigured pool = %q, %v; want the built-in host", id, err)
 	}
@@ -52,7 +52,7 @@ func TestAcquireConversationCLIRejectsMissingWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	e := New(s, runtime.NewManager(t.TempDir()))
+	e := New(s, runtime.NewManager(sandboxRoot(t)))
 	sandbox, release, err := e.AcquireConversationCLI(context.Background(), "missing", t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "工作区不存在") || sandbox != nil || release != nil {
 		t.Fatalf("missing workspace = %v, %v, %v", sandbox, release != nil, err)

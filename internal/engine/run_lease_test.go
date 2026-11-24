@@ -16,7 +16,7 @@ import (
 
 func leaseEngine(t *testing.T, s *repo.Store, id string) *Engine {
 	t.Helper()
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 1))
 	e.ConfigureExecution(id, id+"-host", 100*time.Millisecond, true)
 	return e
 }
@@ -808,7 +808,7 @@ func TestDrainParksRunningRunForResume(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	a := New(s, runtime.NewManagerWithLimit(root, 1))
 	a.ConfigureExecution("worker-a", "shared-host", 2*time.Second, true)
 	run, err := a.Start(wf.ID, "")

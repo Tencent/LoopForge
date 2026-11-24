@@ -213,7 +213,7 @@ func TestConversationWorkspaceSplitWorkerSavesReclaimsAndRestoresOnOwner(t *test
 	if err := worker.repo.HeartbeatEngineInstance(repo.EngineInstance{InstanceID: "checkpoint-worker", Role: "worker", WorkspaceHost: worker.workspaceHost, ControlURL: server.URL}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	controller := New(worker.repo, runtime.NewManager(t.TempDir()))
+	controller := New(worker.repo, runtime.NewManager(sandboxRoot(t)))
 	controller.workspaceHost = "checkpoint-controller"
 	controller.controlToken = worker.controlToken
 	controller.reconcileTerminalWorkspaceCleanup()

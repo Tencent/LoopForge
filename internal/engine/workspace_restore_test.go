@@ -69,7 +69,7 @@ func TestBackgroundWorkspaceRestoreSharesLeaseAcrossAPIInstances(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("restore RPC did not start")
 			}
-			other := New(worker.repo, runtime.NewManager(t.TempDir()))
+			other := New(worker.repo, runtime.NewManager(sandboxRoot(t)))
 			for i := 0; i < 3; i++ {
 				state, err = other.StartWorkspaceRestore(id)
 				if err != nil || state.Status != "restoring" || state.StartedAt == nil {

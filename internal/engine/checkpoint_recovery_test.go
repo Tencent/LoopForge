@@ -225,7 +225,7 @@ func TestStaleWorkspaceSweepCannotReplaceCheckpointAfterRebind(t *testing.T) {
 	t.Parallel()
 	oldOwner, id := checkpointFixture(t)
 	stale, _ := oldOwner.repo.RunState(id)
-	newOwner := New(oldOwner.repo, runtime.NewManager(t.TempDir()))
+	newOwner := New(oldOwner.repo, runtime.NewManager(sandboxRoot(t)))
 	newOwner.workspaceHost = "new-checkpoint-owner"
 	newRoot := newOwner.RunWorkspace(id)
 	if err := os.MkdirAll(newRoot, 0700); err != nil {
@@ -284,7 +284,7 @@ func remoteWorkspaceReclaimFixture(t *testing.T, handle func(http.ResponseWriter
 		handle(w, r, req.Operation, worker.HandleWorkspaceCheckpoint)
 	}))
 	return worker, id, func() *Engine {
-		e := New(worker.repo, runtime.NewManager(t.TempDir()))
+		e := New(worker.repo, runtime.NewManager(sandboxRoot(t)))
 		e.workspaceHost, e.controlToken = "checkpoint-retry-controller", worker.controlToken
 		return e
 	}

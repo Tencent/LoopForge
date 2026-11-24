@@ -159,7 +159,7 @@ func TestIntegrationConflictRequeuesRepairNodeAndDescendants(t *testing.T) {
 	if err := st.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, runtime.NewManager(t.TempDir()))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	if err := e.requeueIntegrationConflict(run.ID, "release/2026", []string{"app.go"}); err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +450,7 @@ func TestIntegrateScheduledRunDoesNotTouchDefaultBranch(t *testing.T) {
 	if err := st.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, runtime.NewManager(t.TempDir()))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	var targets []string
 	e.MergeIntoBranch = func(projectID, sourceBranch, targetBranch, title, description string) (string, error) {
 		targets = append(targets, targetBranch)
@@ -607,7 +607,7 @@ func TestIntegrateScheduledRunUsesMRAndKeepsIntegrateUntouched(t *testing.T) {
 	if err := st.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, runtime.NewManager(t.TempDir()))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	var gotProject, gotSrc, gotTgt, gotTitle string
 	e.MergeIntoBranch = func(projectID, sourceBranch, targetBranch, title, description string) (string, error) {
 		gotProject, gotSrc, gotTgt, gotTitle = projectID, sourceBranch, targetBranch, title
@@ -787,7 +787,7 @@ func TestIntegrateScheduledRunMultiRepository(t *testing.T) {
 	if err := st.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, runtime.NewManager(t.TempDir()))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	remotes := map[string]string{"team/frontend": remoteA, "team/backend": remoteB}
 	type mergeCall struct{ project, source, target string }
 	var calls []mergeCall

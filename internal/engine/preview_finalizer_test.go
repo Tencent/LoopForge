@@ -36,7 +36,7 @@ func TestPendingPreviewHoldsWorkspaceCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	engine := New(store, runtime.NewManager(t.TempDir()))
+	engine := New(store, runtime.NewManager(sandboxRoot(t)))
 	enablePreview(t, engine, store)
 	run := domain.Run{
 		ID: "preview-hold", Status: "succeeded",
@@ -65,7 +65,7 @@ func TestPendingPreviewHoldsWorkspaceCleanup(t *testing.T) {
 
 func TestReadyPreviewReleasesWorkspaceCleanup(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +123,7 @@ func TestReadyPreviewReleasesWorkspaceCleanup(t *testing.T) {
 
 func TestBeginFinalizationSkipsNonFrontendWorkspace(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +187,7 @@ func TestStartInjectsPreviewBuildNode(t *testing.T) {
 	if err := store.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	engine := New(store, runtime.NewManager(t.TempDir()))
+	engine := New(store, runtime.NewManager(sandboxRoot(t)))
 	engine.ConfigureExecution("test-instance", "localhost", time.Minute, false)
 	run, err := engine.Start(wf.ID, "")
 	if err != nil {
@@ -220,7 +220,7 @@ func TestCancelledRunDoesNotCreatePreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	engine := New(store, runtime.NewManager(t.TempDir()))
+	engine := New(store, runtime.NewManager(sandboxRoot(t)))
 	enablePreview(t, engine, store)
 	run := domain.Run{
 		ID: "preview-cancel", Status: "cancelled",
@@ -242,7 +242,7 @@ func TestCancelledRunDoesNotCreatePreview(t *testing.T) {
 
 func TestRecoverMissingPreviewFinalizerHoldsWorkspace(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -297,7 +297,7 @@ func TestRecoverMissingPreviewFinalizerHoldsWorkspace(t *testing.T) {
 
 func TestSucceededPreviewWithoutRecordLosesWorkspaceWithoutRecover(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -333,7 +333,7 @@ func TestSucceededPreviewWithoutRecordLosesWorkspaceWithoutRecover(t *testing.T)
 
 func TestDeleteRunRevokesPreviewSession(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -400,7 +400,7 @@ func TestDeleteRunRevokesPreviewSession(t *testing.T) {
 
 func TestWaitingRunArchivesPreviewAfterBuild(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -457,7 +457,7 @@ func TestWaitingRunArchivesPreviewAfterBuild(t *testing.T) {
 
 func TestWaitingRunnerPreviewDoesNotSkipEmptyControlPlane(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -509,7 +509,7 @@ func TestSkippedPreviewIsNotRevivedWhileWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	engine := New(store, runtime.NewManager(t.TempDir()))
+	engine := New(store, runtime.NewManager(sandboxRoot(t)))
 	enablePreview(t, engine, store)
 	run := domain.Run{
 		ID: "preview-waiting-skip", Status: "waiting",

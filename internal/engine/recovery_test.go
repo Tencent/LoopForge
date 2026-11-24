@@ -18,7 +18,7 @@ func newRecoveryEngine(t *testing.T) (*Engine, *repo.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 1))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

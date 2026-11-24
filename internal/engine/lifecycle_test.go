@@ -325,7 +325,7 @@ func TestPassRejectsPausedAgentNode(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(t.TempDir()))
+	e := New(s, runtime.NewManager(sandboxRoot(t)))
 	if err := e.Pass(run.ID, "agent", ""); err == nil || !strings.Contains(err.Error(), "script") {
 		t.Fatalf("Pass error = %v, want script-only", err)
 	}

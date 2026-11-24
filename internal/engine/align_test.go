@@ -24,7 +24,7 @@ func TestBaselineAlignRunKeepsConfiguredCLI(t *testing.T) {
 	if err := store.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	eng := New(store, runtime.NewManager(t.TempDir()))
+	eng := New(store, runtime.NewManager(sandboxRoot(t)))
 	eng.ConfigureExecution("", "", 0, false)
 	for _, choice := range []struct{ setting, want string }{
 		{"", "codebuddy"},

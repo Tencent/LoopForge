@@ -102,7 +102,7 @@ func startSOPArtifactHandoff(t *testing.T, s *repo.Store) domain.Run {
 	if err := s.PutWorkflow(parent); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 2))
 	run, err := e.Start(parent.ID, "做徽章")
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestSOPChildSuccessDoesNotDeliverParentIssue(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 2))
 	run, err := e.StartWithRepositoriesContext(parent.ID, "x", nil, domain.TelemetryContext{IssueID: issue.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestSOPNodeReattachesChildAfterDrain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	a := New(s, runtime.NewManagerWithLimit(root, 2))
 	a.ConfigureExecution("worker-a", "shared-host", 2*time.Second, true)
 	run, err := a.Start(parent.ID, "")
@@ -269,7 +269,7 @@ func TestSOPNodePauseCascadesAndReusesFinishedChild(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 2))
 	run, err := e.Start(parent.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -335,7 +335,7 @@ func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 2))
 	run, err := e.Start(parent.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -416,7 +416,7 @@ func pauseParentThen(t *testing.T, cancelInstead bool) {
 			t.Fatal(err)
 		}
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 2))
 	run, err := e.Start(parent.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -481,7 +481,7 @@ func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 2))
 	run, err := e.Start(parent.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -556,7 +556,7 @@ func TestSOPNodeFollowsCancelledChildOnResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 2))
 	parentID, childID, _ := startPausedParentWithChild(t, s, e, "cancelled", false)
 	if err := e.Cancel(childID); err != nil {
 		t.Fatal(err)
@@ -579,7 +579,7 @@ func TestSOPRetryEarlierNodeCancelsLiveChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 2))
 	parentID, oldChild, marker := startPausedParentWithChild(t, s, e, "orphan", true)
 	if err := e.Retry(parentID, "first", "", ""); err != nil {
 		t.Fatal(err)
@@ -619,7 +619,7 @@ func TestSOPChildPassResumesFailedParent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 2))
 	run, err := e.Start(parent.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -650,7 +650,7 @@ func TestSOPNodeRejectsSelfReference(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 1))
 	if _, err := e.Start(wf.ID, ""); err == nil || !strings.Contains(err.Error(), "own workflow") {
 		t.Fatalf("want self-reference error, got %v", err)
 	}

@@ -20,7 +20,7 @@ func TestSucceededRunnerWorkspaceQueuesImmediateDurableCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	engine := New(store, runtime.NewManager(t.TempDir()))
+	engine := New(store, runtime.NewManager(sandboxRoot(t)))
 	runner := domain.Runner{ID: "runner-cleanup", Name: "cleanup runner", Status: domain.RunnerStatusOffline}
 	if err := store.PutRunner(runner); err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestRetryCancelsQueuedRunnerCleanupAndAllowsLaterCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	e := New(store, runtime.NewManager(t.TempDir()))
+	e := New(store, runtime.NewManager(sandboxRoot(t)))
 	e.executeRuns = false
 	runner := domain.Runner{ID: "runner-replay", Name: "replay runner", Status: domain.RunnerStatusOnline, Runtimes: []domain.RunnerRuntime{{Provider: "terminal", Status: domain.RuntimeStatusOnline}}}
 	if err := store.PutRunner(runner); err != nil {
@@ -160,7 +160,7 @@ func TestFailedWorkspaceIsNeverCleanedAutomatically(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	engine := New(store, runtime.NewManager(t.TempDir()))
+	engine := New(store, runtime.NewManager(sandboxRoot(t)))
 	run := domain.Run{ID: "failed-cleanup", Status: "failed", Nodes: map[string]*domain.NodeRun{}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
@@ -213,7 +213,7 @@ func TestCommittedCleanupClaimReclaimsCheckoutAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	root := t.TempDir()
+	root := sandboxRoot(t)
 	run := domain.Run{ID: "crash-window-run", Status: "succeeded", Nodes: map[string]*domain.NodeRun{}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
@@ -356,7 +356,7 @@ func TestCleanedWorkspaceLeftoverKeepsCheckpointLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(store.Close)
-			e := New(store, runtime.NewManager(t.TempDir()))
+			e := New(store, runtime.NewManager(sandboxRoot(t)))
 			run := domain.Run{ID: "leftover-run", Status: scenario.status, Nodes: map[string]*domain.NodeRun{}}
 			if scenario.cleaned {
 				run.WorkspaceCleanedAt = past

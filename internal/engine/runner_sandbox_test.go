@@ -63,7 +63,7 @@ func TestRunnerSandboxSpecRequestsRelayForDockerCodexAccountLogin(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer s.Close()
-	e := New(s, runtime.NewManager(t.TempDir()))
+	e := New(s, runtime.NewManager(sandboxRoot(t)))
 	for _, tc := range []struct {
 		name, driver, provider, authMode string
 		wantRelay                        bool

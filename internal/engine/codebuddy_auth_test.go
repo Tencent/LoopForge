@@ -121,7 +121,7 @@ func TestSponsoredExecutorKeepsAllowedRoleModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	e := New(st, runtime.NewManager(t.TempDir()))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	var observed []domain.TelemetryEvent
 	sink := func(event domain.TelemetryEvent) { observed = append(observed, event) }
 	got := e.sponsoredExecutor("missing-run", domain.ExecutorDefinition{Kind: "codebuddy", Model: "kimi-k2.6"}, []string{"glm-5.1", "kimi-k2.6"}, sink)
@@ -146,7 +146,7 @@ func TestSponsoredExecutorPinsModelAndExplains(t *testing.T) {
 	if err = st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, runtime.NewManager(t.TempDir()))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)

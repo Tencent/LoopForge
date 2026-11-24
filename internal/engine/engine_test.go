@@ -487,7 +487,7 @@ func TestShellAndPythonScriptNodesExecuteInOrder(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 1))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -536,7 +536,7 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 1))
 	run, err := e.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{}, domain.TelemetryContext{ProjectID: "dns", ResponsibleUserID: 9})
 	if err != nil {
 		t.Fatal(err)
@@ -594,7 +594,7 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
+	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 1))
 	run, err := e.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{}, domain.TelemetryContext{ProjectID: "dns", ResponsibleUserID: 9})
 	if err != nil {
 		t.Fatal(err)
@@ -1082,7 +1082,7 @@ func TestStartUsesFreshWorkBranchPerSOP(t *testing.T) {
 	if err := s.PutRun(domain.Run{ID: "old", Status: "failed", ExecutionContext: domain.TelemetryContext{IssueID: "gf-5", IssueNumber: 5}, Repository: domain.RepositoryContext{RepositoryID: "skillhub", WorkBranch: "feature/old-sop-branch"}, Nodes: map[string]*domain.NodeRun{}, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(t.TempDir()))
+	e := New(s, runtime.NewManager(sandboxRoot(t)))
 	wf := domain.WorkflowDefinition{ID: "branch-test", Name: "Branch test", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
@@ -2288,7 +2288,7 @@ func TestPassRejectsAgentNode(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(t.TempDir()))
+	e := New(s, runtime.NewManager(sandboxRoot(t)))
 	if err := e.Pass(run.ID, "agent", "补充信息"); err == nil || !strings.Contains(err.Error(), "script") {
 		t.Fatalf("Pass error = %v, want script-only", err)
 	}
@@ -2307,7 +2307,7 @@ func TestPassRejectsActiveRun(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(t.TempDir()))
+	e := New(s, runtime.NewManager(sandboxRoot(t)))
 	if err := e.Pass(run.ID, "gate", ""); err == nil || !strings.Contains(err.Error(), "still active") {
 		t.Fatalf("Pass error = %v, want still active", err)
 	}
