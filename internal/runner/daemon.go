@@ -1459,7 +1459,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionProjectCredentials
+var runnerVersion = domain.RunnerVersionGitPlainHTTP
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

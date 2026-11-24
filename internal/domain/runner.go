@@ -156,7 +156,7 @@ const RunnerVersionRepositoryCache = "0.12.0"
 
 // RunnerVersionGitPlainHTTP is the first runner that can supply credentials
 // for an authorized plaintext Git instance.
-const RunnerVersionGitPlainHTTP = "0.12.1"
+const RunnerVersionGitPlainHTTP = "0.12.2"
 
 func (r Runner) SupportsGitPlainHTTP() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionGitPlainHTTP)

@@ -15,7 +15,7 @@ func TestSOPGitCredentialsAreHydratedOnlyOnAuthenticatedRunnerClaim(t *testing.T
 	f := cvBNewHTTPFixture(t)
 	runnerID, session := registerTestRunner(t, f.h)
 	runner, _ := f.s.Runner(runnerID)
-	runner.RunnerVersion = domain.RunnerVersionGitHTTP
+	runner.RunnerVersion = domain.RunnerVersionProjectCredentials
 	if err := f.s.PutRunner(runner); err != nil {
 		t.Fatal(err)
 	}

@@ -148,7 +148,7 @@ In **Platform administration → Git Host Trust**, enter an HTTP instance addres
 
 Under **Personal settings → Git access tokens**, select the authorized HTTP instance and enter your token and the server's Git authentication username if required. Add the repository using its `http://` clone URL. For a host that also has a managed provider, paste the `git clone http://host/team/repo.git` command to explicitly choose HTTP. **Check repository access** runs `git ls-remote` against a repository at that exact endpoint. A successful check confirms read access. A push also requires a server that accepts pushes and credentials with write access.
 
-HTTP and HTTPS have separate authorizations and personal credentials. Git resolves hostnames using the execution environment. Platform-managed Git disables redirects for authorized HTTP credentials. HTTP repositories on an execution machine require Runner 0.12.1 or later. The Git transport supports generic repositories. PR and MR APIs depend on the hosting provider.
+HTTP and HTTPS have separate authorizations and personal credentials. Git resolves hostnames using the execution environment. Platform-managed Git disables redirects for authorized HTTP credentials. HTTP repositories on an execution machine require Runner 0.12.2 or later. The Git transport supports generic repositories. PR and MR APIs depend on the hosting provider.
 
 If a Docker image lacks Git, the SOP can install it and use the same host-scoped credential helper in that script. The installed Git uses its own HTTP redirect settings.
 
