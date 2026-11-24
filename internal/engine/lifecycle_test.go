@@ -171,7 +171,7 @@ func TestFinishStopsScheduler(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "finish-stop", Name: "finish stop", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "finish-stop", Name: "finish stop", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "wait", Name: "wait", Type: "command", Command: "sleep 30", MaxAttempts: 1},
 	}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -262,7 +262,7 @@ func TestPassPausedScriptContinuesDownstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "pass-paused-script", Name: "pass paused script", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "pass-paused-script", Name: "pass paused script", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "hard", Name: "hard", Type: "script", ScriptLanguage: "shell", Script: "exit 1", MaxAttempts: 1},
 		{ID: "next", Name: "next", Type: "script", ScriptLanguage: "shell", Script: "printf 'ok\\n'", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "hard", Target: "next", When: "success"}}}
@@ -336,7 +336,7 @@ func TestRefreshRunSOPPreservesCompletedNodesAndAddsLatestNodes(t *testing.T) {
 	e, s := newRecoveryEngine(t)
 	old := domain.WorkflowDefinition{ID: "refresh-paused", Name: "old", Version: 1, Revision: 2, SandboxProfileID: "frozen", Nodes: []domain.WorkflowNode{{ID: "done", Name: "done"}, {ID: "work", Name: "work"}}}
 	latest := domain.WorkflowDefinition{ID: old.ID, Name: "latest", Version: 2, Revision: 1, SandboxProfileID: "new-environment", Nodes: []domain.WorkflowNode{{ID: "done", Name: "done latest"}, {ID: "work", Name: "work latest"}, {ID: "verify", Name: "verify"}}, Edges: []domain.WorkflowEdge{{ID: "e", Source: "work", Target: "verify", When: "success"}}}
-	for _, sandbox := range []domain.SandboxProfile{{ID: "frozen", Name: "frozen", Driver: "local"}, {ID: "new-environment", Name: "new", Driver: "local"}} {
+	for _, sandbox := range []domain.SandboxProfile{{ID: "frozen", Name: "frozen", Driver: "native"}, {ID: "new-environment", Name: "new", Driver: "native"}} {
 		if err := s.PutSandbox(sandbox); err != nil {
 			t.Fatal(err)
 		}

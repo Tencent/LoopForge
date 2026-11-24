@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"agentflow/internal/gitwork"
 )
 
 // A conversation workspace CLI does its own git: Git's credential helper and
@@ -120,6 +123,93 @@ func TestBindGitWorkspaceFetchesTokenPerHost(t *testing.T) {
 		if strings.Contains(out, "password=") || !strings.Contains(out, "hosts=\n") || !strings.Contains(out, "enterprise= host=ghe.example.org args=api user") {
 			t.Fatalf("unbound output:\n%s", out)
 		}
+	}
+}
+
+func TestWorkspaceGitScopesHTTPRedirectsToAuthorizedOrigin(t *testing.T) {
+	listener, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		listener.Close()
+		t.Fatal(err)
+	}
+	scope := "http://[::1]:" + port
+	raw := "http://[0:0:0:0:0:0:0:1]:" + port
+	const secret = "fixture-workspace-git-token"
+	git := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ipv6 := strings.HasPrefix(r.Host, "[")
+		switch r.URL.Path {
+		case "/moved.git/info/refs":
+			target := "/public.git/info/refs"
+			if ipv6 {
+				target = "/private.git/info/refs"
+			}
+			http.Redirect(w, r, target+"?"+r.URL.RawQuery, http.StatusMovedPermanently)
+			return
+		case "/private.git/info/refs":
+			username, password, ok := r.BasicAuth()
+			if !ipv6 || !ok || username != "git" || password != secret {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Git"`)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+		case "/public.git/info/refs":
+			if _, _, ok := r.BasicAuth(); ok {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("0123456789012345678901234567890123456789\trefs/heads/main\n"))
+	}))
+	git.Listener.Close()
+	git.Listener = listener
+	git.Start()
+	t.Cleanup(git.Close)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var rpc struct {
+			Method string            `json:"method"`
+			Params map[string]string `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil || rpc.Method != gitCredentialMethod {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		result := gitCredentialReply{}
+		host, valid := gitwork.GitCredentialScope(rpc.Params["protocol"], rpc.Params["host"])
+		if valid && host == scope {
+			result = gitCredentialReply{Username: "git", Password: secret}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": result})
+	}))
+	t.Cleanup(gateway.Close)
+	workspace := t.TempDir()
+	run := func(remote string) (string, error) {
+		cmd := WithCommandEnvironment(CommandSpec{
+			Argv:               []string{"sh", "-c", `exec git ls-remote -- "$0"`, remote},
+			CredentialBindings: []CredentialBinding{BindGitWorkspace},
+		}, map[string]string{SessionGatewayEnv: gateway.URL, "NO_PROXY": "*", "no_proxy": "*", "GIT_CONFIG_GLOBAL": os.DevNull})
+		return ExecuteLocalCommand(t.Context(), workspace, cmd, RunCredentials{
+			GitHTTPHosts: map[string]string{scope: "other"},
+		}, nil)
+	}
+	for _, remote := range []string{
+		raw + "/private.git",
+		scope + "/private.git",
+		"http://localhost:" + port + "/moved.git",
+	} {
+		if out, err := run(remote); err != nil || !strings.Contains(out, "refs/heads/main") {
+			t.Fatalf("ls-remote %s: %v (%s)", remote, err, out)
+		}
+	}
+	if out, err := run(raw + "/moved.git"); err == nil || !strings.Contains(out+" "+err.Error(), "301") {
+		t.Fatalf("authorized IPv6 redirect should fail: %v (%s)", err, out)
 	}
 }
 

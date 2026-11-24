@@ -66,3 +66,21 @@ func TestRunnerCloneKeepsItsTotalLimitConfigurable(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestRunnerRepositoryCacheDoesNotRetryAStoppedTransfer(t *testing.T) {
+	t.Setenv(gitwork.CloneTimeoutEnv, "500ms")
+	calls := filepath.Join(t.TempDir(), "clone-calls")
+	t.Setenv("LOOPFORGE_TEST_CLONE_CALLS", calls)
+	installFakeRunnerClone(t, `    echo clone >>"$LOOPFORGE_TEST_CLONE_CALLS"
+    exec sleep 60`)
+	ctx := gitwork.WithRepositoryCache(context.Background(), t.TempDir())
+	repo := &domain.RunnerRepository{RepositoryID: "web", Ref: "main", CloneURL: "https://git.example.invalid/team/web.git"}
+	err := cloneRepository(ctx, t.TempDir(), repo)
+	if !procwatch.Stopped(err) {
+		t.Fatalf("want stopped clone, got %v", err)
+	}
+	got, err := os.ReadFile(calls)
+	if err != nil || string(got) != "clone\n" {
+		t.Fatalf("clone calls = %q, err = %v", got, err)
+	}
+}

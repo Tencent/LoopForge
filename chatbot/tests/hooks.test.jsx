@@ -1419,6 +1419,14 @@ describe("conversation hooks", () => {
       if (path === "/api/users")
         return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }];
       if (path === "/api/assistant/sessions") return [];
+      if (path === "/api/runs/active-workspace") {
+        return {
+          workflowSnapshot: {
+            sandboxProfileId: "mac-tools",
+            sandboxSnapshot: { profile: { id: "mac-tools", driver: "native" } },
+          },
+        };
+      }
       if (path.includes("/generation"))
         return {
           id: "g-stream",
@@ -1436,6 +1444,19 @@ describe("conversation hooks", () => {
     await waitFor(() => expect(result.current.ready).toBe(true));
     act(() => result.current.open("s1"));
     await waitFor(() => expect(sources).toHaveLength(1));
+    expect(result.current.workspaceSandbox).toBeNull();
+    await act(async () => {
+      sources[0].generation({
+        data: JSON.stringify({
+          id: "g-stream",
+          status: "running",
+          runtimeMode: "workspace",
+          workspaceRunId: "active-workspace",
+          events: [],
+        }),
+      });
+    });
+    await waitFor(() => expect(result.current.workspaceSandbox).toEqual({ id: "mac-tools", driver: "native" }));
     await act(async () => {
       sources[0].generation({
         data: JSON.stringify({

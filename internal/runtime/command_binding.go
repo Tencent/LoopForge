@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"agentflow/internal/domain"
-	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
 	"context"
 	"fmt"
@@ -370,25 +369,41 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 	environment["GIT_CONFIG_VALUE_0"] = ""
 	environment["GIT_CONFIG_KEY_1"] = "credential.helper"
 	environment["GIT_CONFIG_VALUE_1"] = "!" + shellSingleQuote(helper) + " git-credential"
-	count := 2
-	for _, pair := range strings.Split(hosts, ",") {
-		host, _, _ := strings.Cut(pair, "=")
-		if !strings.HasPrefix(host, "http://") {
-			continue
+	environment["GIT_CONFIG_COUNT"] = "2"
+	hasPlainHTTP := strings.Contains(","+hosts, ",http://")
+	if hasPlainHTTP {
+		environment[workspaceGitRealExecEnv] = ""
+		environment[workspaceGitHTTPOriginEnv] = ""
+		if err := installWorkspaceGitHTTP(workspace, helper); err != nil {
+			return err
 		}
-		index := strconv.Itoa(count)
-		environment["GIT_CONFIG_KEY_"+index] = gitwork.PlainHTTPRedirectConfig(host)
-		environment["GIT_CONFIG_VALUE_"+index] = "false"
-		count++
 	}
-	environment["GIT_CONFIG_COUNT"] = strconv.Itoa(count)
-	environment[GitHostsEnv] = hosts
 	if sandboxDriver(sandbox) != "docker" {
 		base := environment["PATH"]
 		if base == "" {
 			base = sandboxBasePath(sandbox)
 		}
 		environment["PATH"] = hostBin + string(os.PathListSeparator) + base
+		if hasPlainHTTP {
+			environment["PATH"] = filepath.Join(runtimeHost, workspaceGitBin) + string(os.PathListSeparator) + environment["PATH"]
+		}
+	}
+	return nil
+}
+
+func installWorkspaceGitHTTP(workspace, helper string) error {
+	for _, shim := range []struct{ dir, name, command string }{
+		{workspaceGitBin, "git", "git-workspace"},
+		{workspaceGitExec, "git-remote-http", "git-remote-http"},
+	} {
+		dir, err := EnsureControlDirectory(workspace, "runtime", shim.dir)
+		if err != nil {
+			return fmt.Errorf("create Git transport wrapper directory: %w", err)
+		}
+		script := "#!/bin/sh\nexec " + shellSingleQuote(helper) + " " + shim.command + " \"$@\"\n"
+		if err := writeManagedFile(workspace, filepath.Join(dir, shim.name), []byte(script), 0o700); err != nil {
+			return fmt.Errorf("write %s wrapper: %w", shim.name, err)
+		}
 	}
 	return nil
 }

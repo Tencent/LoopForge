@@ -405,3 +405,15 @@ func TestConversationImageInputChunkPreservesRemotePathAndUTF8(t *testing.T) {
 		})
 	}
 }
+
+func TestConversationInputChunkPreservesEncodedWorkspacePath(t *testing.T) {
+	root := `/session "quote"\path`
+	encodedRoot := runtime.ConversationStdinPath(root, "codex")
+	encodedWorkspace := runtime.ConversationStdinPath(filepath.Join(root, "ws"), "codex")
+	// The chunk boundary falls in the /ws suffix, after the root itself.
+	start := maxConversationInputChunk - len(encodedRoot) - 1
+	input := strings.Repeat("x", start) + encodedWorkspace + "tail"
+	if got := conversationInputChunkLen(input, encodedWorkspace, encodedRoot); got != start {
+		t.Fatalf("first write would split the encoded workspace path: %d", got)
+	}
+}

@@ -44,6 +44,8 @@ type gitCredentialReply struct {
 //
 //	git-credential <get|store|erase>   Git credential helper protocol
 //	cli-shim <gh|glab> [args...]       run gh/glab with the host's token
+//	git-workspace [args...]            run Git with a scoped HTTP transport
+//	git-remote-http [remote] [url]     run the workspace HTTP transport
 func RunGitHelperCLI(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -53,6 +55,10 @@ func RunGitHelperCLI(args []string) bool {
 		os.Exit(gitCredentialMain(args[1:], os.Stdin, os.Stdout, os.Stderr))
 	case "cli-shim":
 		os.Exit(cliShimMain(args[1:]))
+	case "git-workspace":
+		os.Exit(workspaceGitMain(args[1:]))
+	case "git-remote-http":
+		os.Exit(workspaceGitHTTPMain(args[1:]))
 	default:
 		return false
 	}
@@ -73,8 +79,8 @@ func gitCredentialMain(args []string, in io.Reader, out, errOut io.Writer) int {
 		return 0
 	}
 	if protocol == "http" {
-		scope, ok := gitwork.GitCredentialScope(protocol, attrs["host"])
-		if !ok || !strings.Contains(","+os.Getenv(GitHostsEnv)+",", ","+scope+"=other,") {
+		scope := workspacePlainHTTPHost(attrs["host"])
+		if scope == "" || scope != os.Getenv(workspaceGitHTTPOriginEnv) {
 			return 0
 		}
 	}

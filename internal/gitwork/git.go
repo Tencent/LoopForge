@@ -81,7 +81,7 @@ func command(ctx context.Context, workspace string, sshEnv map[string]string, ar
 	credential, endpoint, urlHost := httpCredentialForCommand(ctx, args)
 	authArgs := scopedHTTPAuthArgs(credential)
 	if endpoint.Scheme == "http" && credential.Token != "" {
-		authArgs = append(authArgs, "-c", PlainHTTPRedirectConfig(endpoint.Scope())+"=false")
+		authArgs = append(authArgs, "-c", PlainHTTPRedirectConfig("http://"+urlHost)+"=false")
 	}
 	cmd := exec.CommandContext(ctx, "git", append(authArgs, args...)...)
 	cmd.Dir = dir

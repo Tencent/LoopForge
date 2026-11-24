@@ -2,34 +2,33 @@ package gitwork
 
 import (
 	"context"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 )
 
 func TestPlainHTTPRedirectConfigMatchesIPv6Spellings(t *testing.T) {
 	dir := t.TempDir()
+	ctx := WithHTTPCredentials(t.Context(), map[string]HTTPCredential{
+		"http://[fd00::2]":      {Token: "fixture-http-token"},
+		"http://[fd00::2]:8443": {Token: "fixture-http-token"},
+	})
 	for _, tc := range []struct {
-		scope, url string
-		want       bool
+		url  string
+		want bool
 	}{
-		{"http://[fd00::2]", "http://[FD00:0::0002]/team/app.git", true},
-		{"http://[fd00::2]:8443", "http://[FD00:0:0:0:0:0:0:2]:8443/team/app.git", true},
-		{"http://[fd00::2]:8443", "http://[fd00::2]:8444/team/app.git", false},
-		{"http://[fd00::2]:8443", "https://[fd00::2]:8443/team/app.git", false},
-		{"http://git.example.org:8443", "http://git.example.org:8443/team/app.git", true},
+		{"http://[FD00:0::0002]/team/app.git", true},
+		{"http://[FD00:0:0:0:0:0:0:2]:8443/team/app.git", true},
+		{"http://[fd00::2]:8444/team/app.git", false},
+		{"https://[fd00::2]:8443/team/app.git", false},
+		{"http://localhost:8443/team/app.git", false},
 	} {
-		cmd := exec.CommandContext(t.Context(), "git", "-c", PlainHTTPRedirectConfig(tc.scope)+"=false",
-			"config", "--get-urlmatch", "http.followRedirects", tc.url)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+		cmd := command(ctx, dir, nil, []string{"config", "--get-urlmatch", "http.followRedirects", tc.url})
 		out, err := cmd.CombinedOutput()
 		if tc.want && (err != nil || strings.TrimSpace(string(out)) != "false") {
-			t.Errorf("redirect setting for %s from %s = %q, %v", tc.url, tc.scope, out, err)
+			t.Errorf("redirect setting for %s = %q, %v", tc.url, out, err)
 		}
 		if !tc.want && (err == nil || len(out) != 0) {
-			t.Errorf("unexpected redirect lookup result for %s from %s: %q, %v", tc.url, tc.scope, out, err)
+			t.Errorf("unexpected redirect lookup result for %s: %q, %v", tc.url, out, err)
 		}
 	}
 }

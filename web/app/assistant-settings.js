@@ -1,5 +1,6 @@
-// AI 助手设置：生成中消息的发送方式、主动派发、帮我批准审查模型（跟随当前对话 / 自定义 CLI / 自定义 API），以及每轮自定义规则。只对当前用户生效。
+// AI 助手设置：生成中消息的发送方式、主动派发、对话工作区倾向、帮我批准审查模型（跟随当前对话 / 自定义 CLI / 自定义 API），以及每轮自定义规则。只对当前用户生效。
 const ASSISTANT_RULES_MAX=4000;
+const ASSISTANT_WORKSPACE_DRIVERS=[['','由 Agent 选择'],['docker','Docker'],['native','系统轻量隔离']];
 const ASSISTANT_REVIEW_MODEL_MAX=160;
 const ASSISTANT_REVIEW_CUSTOM='__custom__';
 const ASSISTANT_REVIEW_MODES=[
@@ -153,6 +154,7 @@ function assistantPrefsDraft(form){
   proactiveRoles:form.proactiveRoles.checked,
   proactiveSops:form.proactiveSops.checked,
   steerOnSend:form.messageDuringGeneration?.value==='steer',
+  workspaceDriver:form.workspaceDriver.value,
   approvalReviewMode:mode,
   approvalReviewModel:String(form.approvalReviewModel?.value||'').trim(),
   instructions:form.instructions.value.trim(),
@@ -171,6 +173,7 @@ function assistantPrefsDirty(form){
  if(draft.proactiveRoles!==!!saved.proactiveRoles||
     draft.proactiveSops!==!!saved.proactiveSops||
     draft.steerOnSend!==!!saved.steerOnSend||
+    draft.workspaceDriver!==(saved.workspaceDriver||'')||
     draft.instructions!==(saved.instructions||'')||
     draft.approvalReviewMode!==savedMode)return true;
  if(draft.approvalReviewMode==='cli'){
@@ -338,6 +341,10 @@ function assistantPrefsFormHTML(p){
     ${assistantPrefsSwitchRow('proactiveRoles','主动派角色','整件事是某个角色的本职（如独立评审、整套测试），或改了高风险代码需要复核时，直接交给这个角色。',p.proactiveRoles)}
     ${assistantPrefsSwitchRow('proactiveSops','主动走 SOP','遇到要落到仓库的新需求时，先交给项目里用途对得上的 SOP，而不是自己直接改代码。',p.proactiveSops)}
    </div></section>
+  <section class="asst-panel"><header class="asst-panel-head"><h2>对话工作区</h2><p>会话里没有固定运行环境时，AI 助手自己选择在哪类沙箱里打开工作区。</p></header>
+   <div class="asst-rows"><label class="asst-switch-row" for="assistantPrefsWorkspaceDriver"><span><b>倾向的沙箱</b><small>没有特殊要求时优先用这一类；任务需要的语言或工具链只有其他环境具备时仍会换。</small></span>
+    <select id="assistantPrefsWorkspaceDriver" class="input" name="workspaceDriver">${ASSISTANT_WORKSPACE_DRIVERS.map(([value,label])=>`<option value="${value}" ${(p.workspaceDriver||'')===value?'selected':''}>${label}</option>`).join('')}</select>
+   </label></div></section>
   <section class="asst-panel"><header class="asst-panel-head"><h2>帮我批准审查模型</h2><p>「帮我批准」模式由 AI 独立审查平台及外部操作并直接放行或拒绝，无需人工审批。默认沿用当前对话的 CLI 与模型（最低思考强度）；也可指定已配置的 CLI 模型或独立轻量 API 节省 Token。</p></header>
    <div class="asst-review-block">
     <label class="asst-field"><span>快捷选择</span><select id="assistantPrefsReviewMode" class="input asst-select" name="approvalReviewMode" aria-label="帮我批准审查方式">${modeOptions}</select></label>
@@ -409,6 +416,7 @@ function captureAssistantPrefsRenderModel(form){
   proactiveRoles:form.proactiveRoles.checked,
   proactiveSops:form.proactiveSops.checked,
   steerOnSend:form.messageDuringGeneration?.value==='steer',
+  workspaceDriver:form.workspaceDriver.value,
   approvalReviewMode:assistantReviewModeOf({approvalReviewMode:form.approvalReviewMode?.value}),
   approvalReviewModel:String(form.approvalReviewModel?.value||'').trim(),
   approvalReviewApi:{

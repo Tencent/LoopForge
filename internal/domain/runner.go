@@ -1,7 +1,9 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
 	"path"
 	"strconv"
 	"strings"
@@ -148,15 +150,32 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionCodeBuddyBaseURL)
 }
 
+// RunnerVersionRepositoryCache is the first runner that reuses a host cache
+// when checking out repositories for a native workspace. Older runners clone fully.
+const RunnerVersionRepositoryCache = "0.12.0"
+
 // RunnerVersionGitPlainHTTP is the first runner that can supply credentials
 // for an authorized plaintext Git instance.
-const RunnerVersionGitPlainHTTP = "0.11.3"
+const RunnerVersionGitPlainHTTP = "0.12.1"
 
 func (r Runner) SupportsGitPlainHTTP() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionGitPlainHTTP)
 }
 
 const RunnerGitPlainHTTPUpgradeMessage = "Git HTTP 仓库需要 Runner " + RunnerVersionGitPlainHTTP + " 或更新版本，请先升级执行机器"
+
+// FilterGitHTTPCredentials limits a credential snapshot to the transports the
+// runner supports. The caller's map may also be used by local execution.
+func (r Runner) FilterGitHTTPCredentials(credentials map[string]GitHTTPExecutionCredential) map[string]GitHTTPExecutionCredential {
+	if r.SupportsGitPlainHTTP() {
+		return credentials
+	}
+	filtered := maps.Clone(credentials)
+	maps.DeleteFunc(filtered, func(scope string, _ GitHTTPExecutionCredential) bool {
+		return strings.HasPrefix(scope, "http://")
+	})
+	return filtered
+}
 
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
@@ -180,6 +199,9 @@ type Runner struct {
 	RunnerVersion  string   `json:"runnerVersion"`
 	Labels         []string `json:"labels,omitempty"`
 	MaxConcurrency int      `json:"maxConcurrency"`
+	// NativeSandboxAvailable is reported by the daemon. Older Runners leave it
+	// false so the platform does not choose native automatically for them.
+	NativeSandboxAvailable bool `json:"nativeSandboxAvailable"`
 	// RunLimit caps concurrently admitted top-level SOP runs on a personal
 	// machine, counted like the project limit. 0 means unlimited.
 	RunLimit   int             `json:"runLimit"`
@@ -451,7 +473,42 @@ type RunnerSandboxSpec struct {
 	Requirements *RunnerSandboxRequirements `json:"requirements,omitempty"`
 	Profile      SandboxProfile             `json:"profile"`
 	Dockerfile   *DockerfileDefinition      `json:"dockerfile,omitempty"`
-	Environment  *EnvironmentDefinition     `json:"environment,omitempty"`
+}
+
+// UnmarshalJSON carries ordinary variables forward from frozen environment
+// assets on historical runs and queued tasks. Asset installation paths no
+// longer exist, and inline values retain their precedence.
+func (s *RunnerSandboxSpec) UnmarshalJSON(raw []byte) error {
+	type frozenSpec RunnerSandboxSpec
+	var payload struct {
+		frozenSpec
+		Environment struct {
+			ID        string            `json:"id"`
+			Variables map[string]string `json:"variables"`
+		} `json:"environment"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return err
+	}
+	*s = RunnerSandboxSpec(payload.frozenSpec)
+	driver := strings.TrimSpace(s.Profile.Driver)
+	if !ConversationSandboxDriver(driver) || driver == SandboxDriverDocker || strings.TrimSpace(payload.Environment.ID) == "" {
+		return nil
+	}
+	for key, value := range payload.Environment.Variables {
+		if key == "PATH" || strings.Contains(value, "$PREFIX") || strings.Contains(value, "${PREFIX}") ||
+			strings.Contains(value, "$AGENTFLOW_ENVIRONMENT_ROOT") || strings.Contains(value, "${AGENTFLOW_ENVIRONMENT_ROOT}") {
+			continue
+		}
+		if _, exists := s.Profile.Environment[key]; exists {
+			continue
+		}
+		if s.Profile.Environment == nil {
+			s.Profile.Environment = make(map[string]string)
+		}
+		s.Profile.Environment[key] = value
+	}
+	return nil
 }
 
 // PublicRunnerTask strips task-scoped credentials from management responses.

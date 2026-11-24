@@ -174,14 +174,11 @@ func containerSafe(v string) string {
 }
 
 // taskSandboxSpec is the sandbox a task asks for: the provider's CLI needs
-// plus the Dockerfile and environment it carries.
+// plus the Dockerfile it carries.
 func taskSandboxSpec(task domain.RunnerTask) (runtime.SandboxRequirements, runtime.SandboxResources) {
 	resources := runtime.SandboxResources{}
 	if task.Sandbox.Dockerfile != nil {
 		resources.Dockerfile = *task.Sandbox.Dockerfile
-	}
-	if task.Sandbox.Environment != nil {
-		resources.Environment = *task.Sandbox.Environment
 	}
 	// Tasks queued before RunnerLoginRelay was added still carry their auth mode.
 	codexLoginRelay := task.Invocation != nil && task.Invocation.CredentialSource == domain.RuntimeAuthLocal &&

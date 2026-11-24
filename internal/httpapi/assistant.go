@@ -698,7 +698,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				toolFiles = next
 				defer next.Cleanup()
 				if streaming {
-					emit("runtime_mode", map[string]string{"mode": mode})
+					emit("runtime_mode", map[string]string{"mode": mode, "workspaceRunId": toolSession.conversationWorkspace()})
 				}
 				prompt = "内部控制信息，不向用户解释或复述：运行环境已切换为「" + mode + "」，当前原生会话及之前的工具结果全部保留。直接使用当前工具继续完成本轮用户请求，先核对已执行操作，避免重复执行。面向用户只说明任务进展和结果，不提交接、进程重启、工具注入或运行模式。"
 				// Each phase may start over once: a journal that a new
@@ -1167,10 +1167,10 @@ const assistantNativeSystemPrompt = `你是 LoopForge 的统一协作助手。�
 const assistantWorkflowDocumentPrompt = `修改已有 SOP 时先用 workflows_get 或 workflows_revision_get 读取完整定义再改。workflows_save 按 id 整图覆盖 nodes 和 edges，未提交的节点会被删除。`
 
 const assistantDraftProtocolPrompt = `写入先形成草稿：不要直接调用平台写入工具。提交草稿前通过 workbench_tool_schema 读取目标工具的准确输入 schema，按 body/path/query 包装参数，不得猜字段或把它们放到错误层级。用户明确要求构建或修改时，先用只读工具读到现有定义，再在结束时调用 mcp__agentflow_session__submit_assistant_reply 提交待确认草稿。用户在界面确认后才会保存。不要用本地 Bash/Write/Edit 操作控制平面目录；代码任务先打开工作区，明确开始交接后结束当前阶段，平台续接到工作区后使用 CLI 原生文件和命令工具操作，不得声称已经保存、发布或运行。
-普通问答、解释和只读查询直接用自然语言回复，不调用 mcp__agentflow_session__submit_assistant_reply。需要待确认写入时必须通过 mcp__agentflow_session__submit_assistant_reply 提交草稿，每轮只提交 1 个草稿（即下一步要执行的一个操作）：先在 message 中给出完整计划与依赖检查结论，再提交第一个草稿，用户确认保存后下一轮继续下一个草稿。构建 SOP（workflows_save）时，每个 agent 类型节点必须绑定当前项目已存在的角色 id（agentId）并填写 prompt，禁止提交未绑定角色的 agent 节点；所需角色还不存在时必须先提交创建角色的草稿，角色确认后再提交 SOP 草稿。提交删除类草稿（角色、规则、技能、沙箱、Dockerfile、环境、SOP 等）前，必须先用只读工具检查引用关系（例如删除角色前检查 workflows 节点是否引用该角色，删除沙箱前检查 SOP 是否绑定该沙箱），存在依赖时不要提交删除草稿，改为在 message 中说明并给出解除引用的方案；删除类草稿必须携带目标资源 id（path.id、query.id 或 body.id 均可），否则无法执行。
+普通问答、解释和只读查询直接用自然语言回复，不调用 mcp__agentflow_session__submit_assistant_reply。需要待确认写入时必须通过 mcp__agentflow_session__submit_assistant_reply 提交草稿，每轮只提交 1 个草稿（即下一步要执行的一个操作）：先在 message 中给出完整计划与依赖检查结论，再提交第一个草稿，用户确认保存后下一轮继续下一个草稿。构建 SOP（workflows_save）时，每个 agent 类型节点必须绑定当前项目已存在的角色 id（agentId）并填写 prompt，禁止提交未绑定角色的 agent 节点；所需角色还不存在时必须先提交创建角色的草稿，角色确认后再提交 SOP 草稿。提交删除类草稿（角色、规则、技能、沙箱、SOP 等）前，必须先用只读工具检查引用关系（例如删除角色前检查 workflows 节点是否引用该角色，删除沙箱前检查 SOP 是否绑定该沙箱），存在依赖时不要提交删除草稿，改为在 message 中说明并给出解除引用的方案；删除类草稿必须携带目标资源 id（path.id、query.id 或 body.id 均可），否则无法执行。
 ` + assistantWorkflowDocumentPrompt
 
-const assistantAutoWriteProtocolPrompt = `当前审批模式为「完全权限」：用户已授权平台写入工具调用即生效。直接按依赖顺序调用平台读写工具完成任务的全部步骤（环境/Dockerfile → 沙箱 → Rules/Skills/MCP → 角色 → SOP → 定时任务），不要把写入放进 drafts，不要请求用户确认，也不要让用户说"继续"：一次性完成全部步骤后，在 message 中按步骤汇总实际执行结果。构建 SOP 时每个 agent 类型节点必须绑定已存在的角色 id 并填写 prompt；所需角色不存在时先创建角色再保存 SOP。删除类操作前必须先用只读工具检查引用关系；平台返回冲突（如仍被引用）时如实说明并调整方案。不要用本地 Bash/Write/Edit 操作控制平面目录；代码任务先打开工作区，明确开始交接后结束当前阶段，平台续接到 Docker 内后使用 CLI 原生文件和命令工具操作。
+const assistantAutoWriteProtocolPrompt = `当前审批模式为「完全权限」：用户已授权平台写入工具调用即生效。直接按依赖顺序调用平台读写工具完成任务的全部步骤（沙箱 → Rules/Skills/MCP → 角色 → SOP → 定时任务），不要把写入放进 drafts，不要请求用户确认，也不要让用户说"继续"：一次性完成全部步骤后，在 message 中按步骤汇总实际执行结果。构建 SOP 时每个 agent 类型节点必须绑定已存在的角色 id 并填写 prompt；所需角色不存在时先创建角色再保存 SOP。删除类操作前必须先用只读工具检查引用关系；平台返回冲突（如仍被引用）时如实说明并调整方案。不要用本地 Bash/Write/Edit 操作控制平面目录；代码任务先打开工作区，明确开始交接后结束当前阶段，平台续接到 Docker 内后使用 CLI 原生文件和命令工具操作。
 ` + assistantWorkflowDocumentPrompt
 
 const assistantAssistedProtocolPrompt = `当前审批模式为「帮我批准」：直接调用平台写入工具，不要把写入放进 drafts，无需人工审批卡片。编程任务先打开工作区，明确开始交接后结束当前阶段，平台续接到工作区后使用 CLI 原生工具。工作区沙箱内的原生文件、补丁和命令直接执行。平台写入，以及 git push、gh pr create、gh api 或 curl 写请求、发布软件包等写入外部系统的命令执行前，平台会经规则快路径或独立审查模型根据本次操作、关键参数和当前用户的对话授权直接给出最终裁决（放行或拒绝），不按工具名一概放行。收到拒绝或审批不可用的提示后，不要绕过审查、不要提交 drafts、不要换工具实现同一副作用或反复重试；请调整方案或在自然语言回复中向用户说明未执行的原因。删除类操作前先用只读工具检查引用关系并携带目标 id。不要用本地 Bash/Write/Edit 操作控制平面目录。` + "\n" + assistantWorkflowDocumentPrompt

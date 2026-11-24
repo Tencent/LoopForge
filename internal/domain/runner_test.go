@@ -1,6 +1,35 @@
 package domain
 
-import "testing"
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+)
+
+func TestFrozenNativeSandboxCarriesLegacyEnvironmentVariables(t *testing.T) {
+	for _, driver := range []string{"native", "seatbelt", "bwrap", "docker", "local"} {
+		t.Run(driver, func(t *testing.T) {
+			raw := `{
+				"profile":{"driver":"` + driver + `","environment":{"HTTPS_PROXY":"inline"}},
+				"environment":{"id":"tools","variables":{
+					"JAVA_HOME":"/opt/java","HTTPS_PROXY":"legacy","PATH":"old-path",
+					"BIN":"${PREFIX}/bin","LIB":"$AGENTFLOW_ENVIRONMENT_ROOT/lib"
+				},"installScript":"old script"}
+			}`
+			var spec RunnerSandboxSpec
+			if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{"HTTPS_PROXY": "inline"}
+			if driver == "native" || driver == "seatbelt" || driver == "bwrap" {
+				want["JAVA_HOME"] = "/opt/java"
+			}
+			if !reflect.DeepEqual(spec.Profile.Environment, want) {
+				t.Fatalf("environment = %v, want %v", spec.Profile.Environment, want)
+			}
+		})
+	}
+}
 
 // TestPublicRunnerTaskScrubsMultiRepositoryTokens verifies that management
 // responses strip GitToken from every repository entry (legacy single field

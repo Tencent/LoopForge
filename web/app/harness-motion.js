@@ -1150,7 +1150,7 @@
     sops: "workflow", runs: "runs", management: "dashboard", runners: "server",
     settings: "settings", bots: "robot", assistant: "sparkles", projects: "users", flow: "workflow",
     agents: "user", mcp: "connector", rules: "doc", skills: "skills",
-    dockerfiles: "layers", environments: "terminal", sandboxes: "server",
+    sandboxes: "layers",
     observability: "token", guide: "key", platform: "gate",
   };
   const controls = {

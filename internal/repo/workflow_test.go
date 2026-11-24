@@ -31,7 +31,7 @@ func TestWorkflowOptimisticRevisionPreventsLostUpdate(t *testing.T) {
 	}
 }
 
-func TestLegacyWorkflowReadsDefaultEmptySandboxProfileToLocal(t *testing.T) {
+func TestLegacyWorkflowReadsDefaultEmptySandboxProfileToGenericDocker(t *testing.T) {
 	s, err := OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -53,16 +53,16 @@ func TestLegacyWorkflowReadsDefaultEmptySandboxProfileToLocal(t *testing.T) {
 	if !ok {
 		t.Fatal("legacy workflow not found")
 	}
-	if workflow.SandboxProfileID != "local" {
-		t.Fatalf("sandboxProfileId = %q, want local", workflow.SandboxProfileID)
+	if workflow.SandboxProfileID != GenericDockerSandboxID {
+		t.Fatalf("sandboxProfileId = %q, want generic-docker", workflow.SandboxProfileID)
 	}
 	workflows := s.Workflows()
 	found := false
 	for _, candidate := range workflows {
 		if candidate.ID == legacy.ID {
 			found = true
-			if candidate.SandboxProfileID != "local" {
-				t.Fatalf("list sandboxProfileId = %q, want local", candidate.SandboxProfileID)
+			if candidate.SandboxProfileID != GenericDockerSandboxID {
+				t.Fatalf("list sandboxProfileId = %q, want generic-docker", candidate.SandboxProfileID)
 			}
 		}
 	}
@@ -74,7 +74,7 @@ func TestLegacyWorkflowReadsDefaultEmptySandboxProfileToLocal(t *testing.T) {
 // The legacy per-node sandbox field is migrated while decoding a stored
 // workflow payload, which is now always a MySQL row.
 func TestDecodingRejectsConflictingLegacyNodeSandboxProfiles(t *testing.T) {
-	raw := []byte(`{"id":"bad","name":"Bad","nodes":[{"id":"a","sandboxProfileId":"local"},{"id":"b","sandboxProfileId":"container"}]}`)
+	raw := []byte(`{"id":"bad","name":"Bad","nodes":[{"id":"a","sandboxProfileId":"test-native"},{"id":"b","sandboxProfileId":"container"}]}`)
 	var wf domain.WorkflowDefinition
 	err := json.Unmarshal(raw, &wf)
 	if err == nil || !strings.Contains(err.Error(), "conflicting legacy node sandbox profiles") {
@@ -106,12 +106,9 @@ func TestFirstIssueInProjectStartsAtOne(t *testing.T) {
 
 func TestNormalizeSandboxProfileKeepsOnlyDriverRelevantFields(t *testing.T) {
 	base := domain.SandboxProfile{ReadOnlyRootFS: true, Environment: map[string]string{"TOOL_MODE": "test"}}
-	local := normalizeSandboxProfile(func() domain.SandboxProfile { p := base; p.Driver = "local"; return p }())
-	if local.ReadOnlyRootFS {
-		t.Fatalf("local retained irrelevant sandbox fields: %+v", local)
-	}
-	if local.Environment["TOOL_MODE"] != "test" {
-		t.Fatalf("local lost sandbox environment: %+v", local)
+	legacy := normalizeSandboxProfile(func() domain.SandboxProfile { p := base; p.Driver = "local"; return p }())
+	if legacy.Driver != domain.SandboxDriverNative || legacy.ReadOnlyRootFS || legacy.Environment["TOOL_MODE"] != "test" {
+		t.Fatalf("a legacy local sandbox becomes native with its environment: %+v", legacy)
 	}
 	light := normalizeSandboxProfile(func() domain.SandboxProfile { p := base; p.Driver = "seatbelt"; return p }())
 	if light.ReadOnlyRootFS || light.Driver != domain.SandboxDriverNative {
@@ -122,53 +119,45 @@ func TestNormalizeSandboxProfileKeepsOnlyDriverRelevantFields(t *testing.T) {
 			t.Fatalf("%q stored as %q, want native", driver, got)
 		}
 	}
-	docker := normalizeSandboxProfile(func() domain.SandboxProfile { p := base; p.Driver = "docker"; p.DockerfileID = "runtime"; return p }())
-	if docker.DockerfileID != "runtime" || !docker.ReadOnlyRootFS || docker.EnvironmentID != "" {
-		t.Fatalf("docker lost relevant sandbox fields: %+v", docker)
+	recipe := &domain.SandboxDockerfile{Content: "FROM debian"}
+	docker := normalizeSandboxProfile(func() domain.SandboxProfile {
+		p := base
+		p.Driver = "docker"
+		p.Dockerfile = recipe
+		return p
+	}())
+	if docker.Dockerfile != recipe || !docker.ReadOnlyRootFS {
+		t.Fatalf("docker keeps its Dockerfile: %+v", docker)
 	}
-	fromFile := normalizeSandboxProfile(domain.SandboxProfile{Driver: "docker", DockerfileID: "runtime", EnvironmentID: "php8", ReadOnlyRootFS: true})
-	if fromFile.DockerfileID != "runtime" || fromFile.EnvironmentID != "" || !fromFile.ReadOnlyRootFS {
-		t.Fatalf("docker dockerfile profile mismatch: %+v", fromFile)
-	}
-	lightEnv := normalizeSandboxProfile(domain.SandboxProfile{Driver: "seatbelt", DockerfileID: "runtime", EnvironmentID: "php8"})
-	if lightEnv.DockerfileID != "" || lightEnv.EnvironmentID != "php8" {
-		t.Fatalf("seatbelt environment profile mismatch: %+v", lightEnv)
+	if native := normalizeSandboxProfile(domain.SandboxProfile{Driver: "seatbelt", Dockerfile: recipe, DockerfileID: "runtime"}); native.Dockerfile != nil || native.DockerfileID != "" {
+		t.Fatalf("native drops a Dockerfile: %+v", native)
 	}
 	if light.Environment["TOOL_MODE"] != "test" || docker.Environment["TOOL_MODE"] != "test" {
 		t.Fatalf("managed sandbox lost environment: light=%+v docker=%+v", light, docker)
 	}
 }
 
-func TestPutDockerfileAndEnvironmentAndDockerSandbox(t *testing.T) {
+func TestPutSandboxStoresItsDockerfile(t *testing.T) {
 	s, err := OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.PutDockerfile(domain.DockerfileDefinition{ID: "slim", Name: "Slim"}); err == nil {
-		t.Fatal("empty dockerfile content should be rejected")
-	}
-	if err := s.PutDockerfile(domain.DockerfileDefinition{ID: "slim", Name: "Slim", Content: "FROM debian:bookworm-slim"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutEnvironment(domain.EnvironmentDefinition{ID: "php8-custom", Name: "PHP 8 custom", Variables: map[string]string{"PHP_VERSION": "8.4.0"}, PathEntries: []string{"bin"}}); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.PutSandbox(domain.SandboxProfile{ID: "docker-missing", Name: "Missing", Driver: "docker"}); err == nil {
 		t.Fatal("docker sandbox without dockerfile should be rejected")
 	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "docker-unknown", Name: "Unknown", Driver: "docker", DockerfileID: "missing"}); err == nil {
-		t.Fatal("unknown dockerfile should be rejected")
-	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "docker-ok", Name: "OK", Driver: "docker", DockerfileID: "slim"}); err != nil {
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "docker-ok", Name: "OK", Driver: "docker", Dockerfile: &domain.SandboxDockerfile{Content: "FROM debian:bookworm-slim", Files: map[string]string{"etc/a": "x"}}}); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := s.Sandbox("docker-ok")
-	if !ok || got.DockerfileID != "slim" {
-		t.Fatalf("docker sandbox not stored as dockerfile reference: %+v", got)
+	if !ok || got.Dockerfile == nil || got.Dockerfile.Content != "FROM debian:bookworm-slim" || got.Dockerfile.Files["etc/a"] != "x" {
+		t.Fatalf("docker sandbox lost its Dockerfile: %+v", got)
 	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "seatbelt-php", Name: "Seatbelt PHP", Driver: "seatbelt", EnvironmentID: "php8-custom"}); err != nil {
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "seatbelt-php", Name: "Seatbelt PHP", Driver: "seatbelt", Environment: map[string]string{"PHP_VERSION": "8.4.0"}}); err != nil {
 		t.Fatal(err)
+	}
+	if got, ok := s.Sandbox("seatbelt-php"); !ok || got.Driver != domain.SandboxDriverNative || got.Environment["PHP_VERSION"] != "8.4.0" {
+		t.Fatalf("native sandbox lost its environment: %+v", got)
 	}
 }
 

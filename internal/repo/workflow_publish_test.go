@@ -21,7 +21,7 @@ func TestMySQLConcurrentWorkflowPublish(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	prefix := "publish-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	if err := s.PutSandbox(domain.SandboxProfile{ID: prefix, Name: "Local test", Driver: "local"}); err != nil {
+	if err := s.PutSandbox(domain.SandboxProfile{ID: prefix, Name: "Native test", Driver: "native"}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.DB.Table("sandboxes").Where("id = ?", prefix).Delete(nil) })

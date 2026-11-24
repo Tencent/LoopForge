@@ -38,11 +38,14 @@ type ApprovalReviewAPIConfig struct {
 // hands work to roles and SOPs more readily (off by default), extra rules
 // added to every turn, and optional "帮我批准" review model settings.
 // SteerOnSend interrupts a running reply when sending a message; the default
-// queues it until the reply finishes.
+// queues it until the reply finishes. WorkspaceDriver is the sandbox driver
+// Main Bot prefers for conversation workspaces it opens. An empty value leaves
+// the choice to the agent.
 type AssistantPreferences struct {
 	ProactiveRoles      bool                     `json:"proactiveRoles"`
 	ProactiveSOPs       bool                     `json:"proactiveSops"`
 	SteerOnSend         bool                     `json:"steerOnSend"`
+	WorkspaceDriver     string                   `json:"workspaceDriver"`
 	Instructions        string                   `json:"instructions"`
 	ApprovalReviewMode  string                   `json:"approvalReviewMode,omitempty"`
 	ApprovalReviewModel string                   `json:"approvalReviewModel,omitempty"`
@@ -76,4 +79,14 @@ func (p AssistantPreferences) Sanitized() AssistantPreferences {
 		out.ApprovalReviewAPI = &cp
 	}
 	return out
+}
+
+// ValidAssistantWorkspaceDriver accepts the drivers a conversation workspace
+// can prefer, and empty for no preference.
+func ValidAssistantWorkspaceDriver(driver string) bool {
+	switch driver {
+	case "", SandboxDriverDocker, SandboxDriverNative:
+		return true
+	}
+	return false
 }
