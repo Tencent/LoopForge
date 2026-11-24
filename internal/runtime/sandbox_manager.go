@@ -323,6 +323,15 @@ type managedSandbox struct {
 	credentialsMu sync.RWMutex
 }
 
+// Unwrap returns the underlying driver sandbox so wrappers remain transparent
+// to runtime helpers such as browser provisioning and conversation CLI setup.
+func (s *managedSandbox) Unwrap() Sandbox {
+	if s == nil {
+		return nil
+	}
+	return s.Sandbox
+}
+
 func (s *managedSandbox) Driver() string {
 	if value, ok := s.Sandbox.(interface{ Driver() string }); ok {
 		return value.Driver()
@@ -397,6 +406,18 @@ func (s *managedSandbox) SetCredentials(credentials RunCredentials) {
 	s.credentials = credentials
 }
 
+// CredentialSnapshot returns the current credential snapshot. Read-only use:
+// preparation code validating a node's declared credentials up front.
+func (s *managedSandbox) CredentialSnapshot() RunCredentials {
+	s.credentialsMu.RLock()
+	defer s.credentialsMu.RUnlock()
+	return s.credentials
+}
+
+// sandboxCredentialSnapshot lets runtime preparation code read a sandbox's
+// credentials without widening the public Sandbox interface.
+type sandboxCredentialSnapshot interface{ CredentialSnapshot() RunCredentials }
+
 func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
 	select {
 	case s.slots <- struct{}{}:
@@ -407,20 +428,30 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	s.credentialsMu.RLock()
 	credentials := s.credentials
 	s.credentialsMu.RUnlock()
+	command, closeGit, err := prepareRunGitBinding(ctx, s.Sandbox, command, credentials)
+	if err != nil {
+		return "", err
+	}
+	defer closeGit()
+	if credentials.GitHTTPCredentials != nil {
+		credentials.GitHTTPHosts = runGitHosts(credentials)
+	}
 	// Binding writes the credential helpers into the workspace; parallel
 	// branches then run their commands concurrently.
 	s.execMu.Lock()
-	bound, err := bindCommand(s.Sandbox, s.workspace, command, credentials)
+	bound, err := bindCommand(ctx, s.Sandbox, s.workspace, command, credentials)
 	s.execMu.Unlock()
 	if err != nil {
 		return "", err
 	}
-	cleanup, err := bindCommandGitSSH(s.Sandbox, s.workspace, bound, credentials)
+	cleanup, err := bindCommandGitSSH(ctx, s.Sandbox, s.workspace, bound, credentials)
 	if err != nil {
 		return "", err
 	}
 	defer cleanup()
-	return s.Sandbox.Exec(ctx, bound, sink)
+	defer scrubRunGitCredentials(ctx, s.Sandbox, s.workspace, bound, credentials)
+	out, err := s.Sandbox.Exec(ctx, bound, runGitEventSink(sink, credentials))
+	return redactRunGitSecrets(out, credentials), err
 }
 
 // overlayEnvironment layers an activated environment's overlay under env,

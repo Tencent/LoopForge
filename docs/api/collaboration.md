@@ -6,7 +6,7 @@
 
 ### `GET /api/projects`
 
-返回 `Project[]`，`200`。项目含 `id`、`key`、`name`、`description`、`color`、`workflowId`、`defaultRepositoryId`、`members`、`clarification`、TAPD 配置及时间戳。响应永不返回 `gitToken`、`codeBuddyApiKey` 明文，只以 `gitTokenConfigured`、`codeBuddyApiKeyConfigured` 表示是否已配置。
+返回 `Project[]`，`200`。项目含 `id`、`key`、`name`、`description`、`color`、`workflowId`、`defaultRepositoryId`、`members`、`clarification`、TAPD 配置及时间戳。Git 凭据按用户和主机保存在个人配置中，不属于项目。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" "$AGENTFLOW_URL/api/projects"
@@ -27,8 +27,6 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" "$AGENTFLOW_URL/api/projects"
   "key":"PLATFORM",
   "defaultRepositoryId":"repo-platform",
   "workflowId":"wf-dev",
-  "gitToken":"new-token",
-  "gitTokenClear":false,
   "codeBuddyApiKey":"",
   "codeBuddyApiKeyClear":false,
   "codeBuddyInternetEnvironmentClear":false,
@@ -51,7 +49,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 
 ### `GET /api/repositories`
 
-返回脱敏的 `Repository[]`，`200`；`gitToken` 被清空，以 `gitTokenConfigured` 表示状态。
+返回 `Repository[]`，`200`。仓库不保存 Git 凭据。
 
 ### `GET /api/repositories/{id}`
 
@@ -59,7 +57,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 
 ### `POST|PUT /api/repositories`
 
-新建或按 `id` 更新。`projectId`、`name`、`gongfengProjectId` 必填；`provider` 默认且只能是 `gongfeng`；`defaultBranch` 默认 `main`；`id` 为空时服务生成。更新时空 token 保留旧值，`gitTokenClear=true` 清除。成功 `200` 返回脱敏后的仓库；校验失败 `400`。
+新建或按 `id` 更新。`projectId` 必填，可用 `repoUrl` 粘贴仓库地址。平台识别 GitHub 和部署适配器；其他 HTTPS 地址使用 `https`，显式 SSH 地址使用 `ssh`，不转换传输协议。`name` 可从地址推断，`defaultBranch` 默认 `main`，`id` 为空时服务生成。凭据通过 `/api/users/{id}/git-http-credentials` 或 `/api/users/{id}/git-ssh-keys` 管理。HTTPS 使用标准 Git credential helper；SSH 密钥可克隆和推送，创建 PR/MR 仍需要托管平台的访问令牌，由 Agent 节点完成。成功 `200` 返回仓库；校验失败 `400`。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \

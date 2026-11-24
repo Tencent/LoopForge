@@ -41,7 +41,12 @@ const fs = require('node:fs');
 const cases = JSON.parse(fs.readFileSync('testdata/routing_replay_cases.json', 'utf8'));
 const code = fs.readFileSync('../../web/app/issues.js', 'utf8');
 const state = {data:{workflows:[]}};
-eval(code.slice(code.indexOf('function runNodeChoices('), code.indexOf('function runNodeAllowsContext(')));
+const start = code.indexOf('function runNodeChoices(');
+const end = code.indexOf('function runNodeAllowsContext(');
+if (start < 0 || end < 0 || end <= start) {
+  throw new Error('issues.js no longer contains the expected runNodeChoices/runNodeAllowsContext range');
+}
+eval(code.slice(start, end));
 for (const c of cases) {
   const actual = runNodeChoices({workflowSnapshot:c.workflow,nodes:c.nodes}).some(n=>n.id===c.target);
   if (actual !== c.expected) throw new Error(c.name+': frontend eligibility='+actual+', expected='+c.expected);

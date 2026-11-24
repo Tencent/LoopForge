@@ -17,6 +17,12 @@ export function mergeActivity(previous = [], events = []) {
         host = { id: event.parent, kind: "tool", tool: "Agent", detail: "", text: "", startedAt: at };
         steps.push(host);
       }
+      // The model the subagent reports it runs on, whatever the dispatch
+      // asked for (an alias such as "lite", or nothing).
+      if (event.kind === "agentModel") {
+        if (event.model) host.ranModel = event.model;
+        continue;
+      }
       const child = { ...event, parent: undefined };
       if (child.kind === "agentText") child.kind = "text";
       host.children = mergeActivity(host.children || [], [{ data: child, sequence }]);
@@ -104,6 +110,7 @@ export function mergeActivity(previous = [], events = []) {
         if (event.subagent) existing.subagent = event.subagent;
         if (event.role) existing.role = event.role;
         if (event.input) existing.input = event.input;
+        if (event.model) existing.model = event.model;
         // A resumed dispatch names its agent before it finishes. Keep the
         // target apart: the CLI may still finish it under a new agent.
         if (event.agentId) existing.agentId = existing.resumed = event.agentId;
@@ -118,6 +125,7 @@ export function mergeActivity(previous = [], events = []) {
           ...(event.subagent ? { subagent: event.subagent } : {}),
           ...(event.role ? { role: event.role } : {}),
           ...(event.input ? { input: event.input } : {}),
+          ...(event.model ? { model: event.model } : {}),
           ...(event.agentId ? { agentId: event.agentId, resumed: event.agentId } : {}),
         });
     }
@@ -177,14 +185,19 @@ export function hasTextSegments(steps = []) {
 function replyFold(text) {
   return String(text || "").replace(/\s+/g, "");
 }
+function trimReplyText(text) {
+  // Leading spaces on a nonblank line can start an indented code block.
+  return text.replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd();
+}
+function replyParagraphs(text) {
+  return text.split(/\n{2,}/).filter((part) => part.trim());
+}
 // A finished reply sometimes stores the last paragraph twice: once from the
 // stream and again from the CLI result. Distinct paragraphs stay.
 function dropRepeatedReply(text) {
-  let parts = String(text || "")
-    .trim()
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const original = trimReplyText(String(text || ""));
+  let parts = replyParagraphs(original);
+  const originalCount = parts.length;
   while (parts.length >= 2 && replyFold(parts.at(-1)) === replyFold(parts.at(-2))) {
     parts.pop();
   }
@@ -194,19 +207,11 @@ function dropRepeatedReply(text) {
     const right = replyFold(parts.slice(mid).join("\n\n"));
     if (left && left === right) parts = parts.slice(0, mid);
   }
-  return parts.join("\n\n");
+  return parts.length === originalCount ? original : parts.join("\n\n");
 }
 function replyTail(text, head) {
   if (!text || !head || !text.startsWith(head)) return "";
-  return text.slice(head.length).trim();
-}
-function lastParagraph(text) {
-  const parts = String(text || "")
-    .trim()
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  return parts.at(-1) || "";
+  return trimReplyText(text.slice(head.length));
 }
 // Same letters with different spaces: keep the copy Markdown can still parse.
 function richerFold(primary, alternate) {
@@ -219,9 +224,9 @@ export function finalReply(full, steps = []) {
   const parts = steps.filter((step) => step.kind === "text" && step.text?.trim());
   const text = dropRepeatedReply(full || "");
   if (!parts.length) return text;
-  const last = parts.at(-1).text.trim();
+  const last = trimReplyText(parts.at(-1).text);
   if (!text) return last;
-  const covered = parts.map((step) => step.text.trim()).join("\n\n");
+  const covered = parts.map((step) => trimReplyText(step.text)).join("\n\n");
   const same =
     replyFold(text) === replyFold(covered) || replyFold(text) === replyFold(last);
   if (text === covered || text.startsWith(`${covered}\n`) || same) {
@@ -232,7 +237,7 @@ export function finalReply(full, steps = []) {
       replyFold(suffix) === replyFold(covered)
     ) {
       if (replyFold(text) === replyFold(last)) return richerFold(last, text);
-      const tail = lastParagraph(text);
+      const tail = replyParagraphs(text).at(-1) || "";
       if (replyFold(tail) === replyFold(last)) return richerFold(last, tail);
       return last;
     }
@@ -276,20 +281,29 @@ export const resumeMissed = (step) =>
 // collectSubagents lists every subagent of a conversation, newest last. A
 // dispatch that resumed an earlier agent joins it, so one entry holds every
 // task that agent was given.
-export function collectSubagents(messages = [], liveSteps = []) {
+// A subagent shows the model it reported running on (step.ranModel). Before
+// it reports, and for replies saved before that was recorded, it falls back
+// to the model its dispatch named, else the model of the reply that
+// dispatched it; a live dispatch has no saved reply yet and uses liveModel,
+// the model the running reply was sent with. agent.model is the latest
+// dispatch's, agent.models[step.id] each dispatch's.
+export function collectSubagents(messages = [], liveSteps = [], liveModel = "") {
   const agents = [];
   // messageIndex is the saved reply that holds the dispatch; a live one has
   // none yet, and its collected files are not attachments until it is saved.
-  const add = (step, messageIndex = null) => {
+  const add = (step, messageIndex = null, replyModel = "") => {
     const key = step.agentId || step.id;
     let agent = agents.find((item) => item.key === key || (step.agentId && item.agentId === step.agentId));
     if (!agent) {
-      agent = { key, agentId: step.agentId || "", role: "", subagent: "", dispatches: [], published: [] };
+      agent = { key, agentId: step.agentId || "", role: "", subagent: "", model: "", models: {}, dispatches: [], published: [] };
       agents.push(agent);
     }
     if (step.agentId) agent.agentId = step.agentId;
     agent.role = step.role || agent.role;
     agent.subagent = step.subagent || agent.subagent;
+    const model = String(step.ranModel || step.model || replyModel || "").trim();
+    if (model) agent.models[step.id] = model;
+    agent.model = model || agent.model;
     agent.dispatches.push(step);
     // What it published, and the role deliverables the platform collected
     // when it finished (a required one it did not write is marked missing).
@@ -309,9 +323,9 @@ export function collectSubagents(messages = [], liveSteps = []) {
     if (message.role !== "assistant") return;
     savedActivity(message)
       .filter(isDispatch)
-      .forEach((step) => add(step, index));
+      .forEach((step) => add(step, index, message.model));
   });
-  liveSteps.filter(isDispatch).forEach((step) => add(step));
+  liveSteps.filter(isDispatch).forEach((step) => add(step, null, liveModel));
   return agents;
 }
 // While streaming, the latest paragraph is the answer only once nothing has
@@ -453,8 +467,12 @@ export function activityFace(step) {
     return { kind: "verify", busy: "正在提交节点结果", done: "已提交节点结果" };
   if (/workbench_workspace_open/.test(name))
     return { kind: "workflow", busy: "正在打开工作区", done: "已打开工作区" };
-  if (/workbench_workspace_submit_mr/.test(name))
-    return { kind: "workflow", busy: "正在提交 MR", done: "已提交 MR" };
+  if (name === "workspace_docker_build")
+    return { kind: "workflow", busy: "正在构建 Docker 镜像", done: "已构建 Docker 镜像" };
+  if (/workbench_delivery_register/.test(name))
+    return { kind: "workflow", busy: "正在登记交付", done: "已登记交付" };
+  if (/workbench_publish_artifact/.test(name))
+    return { kind: "tool", busy: "正在发布产物", done: "已发布产物" };
   if (/todo/.test(name))
     return { kind: "plan", busy: "正在更新计划", done: "已更新计划" };
   if (/^(task|agent)$/.test(name)) {
@@ -553,7 +571,8 @@ export function activityTarget(step) {
         (typeof args.path === "string" ? args.path : "") ||
         args.body?.name ||
         args.body?.title ||
-        args.goal ||
+        args.title ||
+        args.sandboxProfileId ||
         "";
     } catch {
       if (activityFace(step).kind !== "command") return "";
@@ -561,7 +580,9 @@ export function activityTarget(step) {
   }
   if (typeof detail !== "string") return "";
   detail = detail.split("\n")[0].trim();
-  if (/mcp__|agentflow__/.test(detail)) return "";
+  // Docker build progress already carries a display label from the runtime.
+  if (step.tool !== "workspace_docker_build" && /mcp__|agentflow__/.test(detail))
+    return "";
   const kind = activityFace(step).kind;
   if (["read", "edit"].includes(kind) && !/\s/.test(detail))
     return detail.split(/[\\/]/).filter(Boolean).at(-1) || detail;

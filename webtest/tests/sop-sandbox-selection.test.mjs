@@ -17,16 +17,17 @@ function openBlank(app, sandboxes) {
   return form;
 }
 
-test('blank SOP uses an existing project sandbox when local is absent and respects the selected environment', async t=>{
+test('blank SOP prefers project isolation over local and shared profiles and saves the selected environment', async t=>{
   const app=await loadApp();t.after(app.close);
   openBlank(app,[
-    {id:'foreign-private',name:'Other project',projectId:'other',driver:'local'},
-    {id:'project-docker',name:'Project Docker',projectId:'project-1',driver:'docker'},
+    {id:'local',name:'Local',driver:'local'},
+    {id:'foreign-private',name:'Other project',projectId:'other',driver:'docker'},
     {id:'shared-docker',name:'Shared Docker',projectId:'other',shared:true,driver:'docker'},
+    {id:'project-docker',name:'Project Docker',projectId:'project-1',driver:'docker'},
   ]);
   const select=app.document.querySelector('#sopCreateSandbox');
   assert.equal(select.value,'project-docker');
-  assert.deepEqual([...select.options].filter(o=>o.value).map(o=>o.value),['project-docker','shared-docker']);
+  assert.deepEqual([...select.options].filter(o=>o.value).map(o=>o.value),['local','shared-docker','project-docker']);
   select.value='shared-docker';select.dispatchEvent(new app.window.Event('change',{bubbles:true}));
   app.evaluate('setSOPWizardStep(3)');
   assert.match(app.document.querySelector('#sopCreateSummary').textContent,/Shared Docker/);
@@ -60,10 +61,11 @@ test('missing sandboxes block submission and refresh keeps the entered SOP field
 test('template sandbox is preserved and a missing template sandbox requires an explicit replacement', async t=>{
   const app=await loadApp();t.after(app.close);
   app.evaluate(`state.data.workflows=[{id:'template',name:'Template',status:'published',sandboxProfileId:'template-box',nodes:[],edges:[]}];
-    state.data.sandboxes=[{id:'local',name:'Local'},{id:'template-box',name:'Template Box'}];openSOPWizard()`);
+    state.data.sandboxes=[{id:'local',name:'Local',driver:'local'},{id:'template-box',name:'Template Box',driver:'native'}];openSOPWizard()`);
   const form=app.document.querySelector('#sopCreateForm');form.elements.name.value='Copied SOP';
   assert.equal(app.document.querySelector('#sopCreateSandbox').value,'template-box');
-  app.evaluate(`state.data.sandboxes=state.data.sandboxes.filter(s=>s.id!=='template-box');setSOPWizardStep(2)`);
+  app.evaluate(`state.data.sandboxes=[{id:'local',name:'Local',driver:'local'},{id:'another-box',name:'Another Box',driver:'docker'}];setSOPWizardStep(2)`);
+  assert.match(app.document.querySelector('#sopSandboxHint').textContent,/模板原有沙箱不可用/);
   assert.equal(app.document.querySelector('#sopCreateSandbox').value,'');
   assert.equal(app.document.querySelector('#sopFinish').disabled,true);
   await submit(app);
@@ -85,29 +87,52 @@ test('generic templates keep their sandbox and continue through the clone endpoi
   assert.equal(app.document.querySelector('#sopFinish').disabled,true);
   app.router.get('/api/sandboxes',[{id:'generic-docker',name:'Docker',driver:'docker'}]);
   await app.evaluate('refreshSOPSandboxes()');
-  assert.equal(app.document.querySelector('#sopCreateSandbox').disabled,true);
+  assert.equal(app.document.querySelector('#sopCreateSandbox').value,'generic-docker');
   app.router.post('/api/workflows/generic-template/clone',call=>({status:200,body:{...call.body,id:'generic-copy',sandboxProfileId:'generic-docker',nodes:[],edges:[]}}));
   await submit(app);
-  assert.equal(app.router.calls.some(c=>c.path==='/api/workflows/generic-template/clone'&&c.method==='POST'),true);
+  assert.equal(app.router.calls.find(c=>c.path==='/api/workflows/generic-template/clone'&&c.method==='POST').body.sandboxProfileId,'generic-docker');
   assert.equal(app.evaluate('state.workflow.sandboxProfileId'),'generic-docker');
 });
 
-test('generic adoption retains its existing server fallback when the original sandbox is absent', async t=>{
+test('generic adoption sends the isolated replacement when its original sandbox is absent', async t=>{
   const app=await loadApp();t.after(app.close);
   app.evaluate(`state.data.workflows=[{id:'generic-template',name:'Generic',generic:true,sandboxProfileId:'missing-box',nodes:[],edges:[]}];
-    state.data.sandboxes=[{id:'project-box',name:'Project Sandbox',projectId:'project-1'}];openSOPWizard()`);
+    state.data.sandboxes=[{id:'local',name:'Local',driver:'local'},{id:'project-box',name:'Project Sandbox',projectId:'project-1',driver:'bwrap'}];openSOPWizard()`);
   app.document.querySelector('#sopCreateForm').elements.name.value='Fallback copy';
   assert.equal(app.document.querySelector('#sopFinish').disabled,false);
   assert.equal(app.document.querySelector('#sopCreateSandbox').value,'project-box');
   app.router.post('/api/workflows/generic-template/clone',call=>({status:201,body:{...call.body,id:'fallback-copy',sandboxProfileId:'project-box',nodes:[],edges:[]}}));
   await submit(app);
   assert.equal(app.evaluate('state.workflow.sandboxProfileId'),'project-box');
-  assert.equal(app.router.calls.some(c=>c.path==='/api/workflows/generic-template/clone'&&c.method==='POST'),true);
+  assert.equal(app.router.calls.find(c=>c.path==='/api/workflows/generic-template/clone'&&c.method==='POST').body.sandboxProfileId,'project-box');
+});
+
+test('local templates use shared isolation by default and local-only installs require an explicit choice',async t=>{
+  const app=await loadApp();t.after(app.close);
+  app.evaluate(`state.data.workflows=[{id:'template',name:'Template',status:'published',sandboxProfileId:'host',nodes:[],edges:[]}];
+    state.data.sandboxes=[{id:'host',name:'Host',projectId:'project-1',driver:'local'},{id:'shared-native',name:'Shared native',shared:true,driver:'seatbelt'}];openSOPWizard()`);
+  const form=app.document.querySelector('#sopCreateForm'),select=form.elements.sandboxProfileId;
+  assert.equal(select.value,'shared-native');
+  app.evaluate('state.data.sandboxes=state.data.sandboxes.slice(0,1);openSOPWizard()');
+  form.elements.name.value='Trusted copy';
+  app.evaluate('setSOPWizardStep(2)');
+  assert.equal(select.value,'');
+  assert.equal(app.document.querySelector('#sopFinish').disabled,true);
+  await submit(app);
+  assert.equal(app.router.calls.some(c=>c.path==='/api/workflows'&&c.method==='PUT'),false);
+  select.value='host';select.dispatchEvent(new app.window.Event('change',{bubbles:true}));
+  app.router.get('/api/sandboxes',[{id:'host',name:'Host',driver:'local'},{id:'docker',name:'Docker',driver:'docker'}]);
+  await app.evaluate('refreshSOPSandboxes()');
+  app.evaluate('setSOPWizardStep(3)');
+  assert.match(app.document.querySelector('#sopCreateSummary').textContent,/Host/);
+  app.router.put('/api/workflows',call=>({status:200,body:{...call.body,revision:1}}));
+  await submit(app);
+  assert.equal(app.evaluate('state.workflow.sandboxProfileId'),'host');
 });
 
 test('direct blank drafts choose an existing sandbox and stay unchanged when none is available', async t=>{
   const app=await loadApp();t.after(app.close);
-  app.evaluate(`state.data.sandboxes=[{id:'project-native',name:'Native',projectId:'project-1',driver:'native'}];newWorkflow()`);
+  app.evaluate(`state.data.sandboxes=[{id:'local',name:'Local',driver:'local'},{id:'project-native',name:'Native',projectId:'project-1',driver:'native'}];newWorkflow()`);
   assert.equal(app.evaluate('state.workflow.sandboxProfileId'),'project-native');
   const id=app.evaluate('state.workflow.id');
   app.evaluate('state.data.sandboxes=[];newWorkflow()');

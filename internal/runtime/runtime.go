@@ -25,10 +25,22 @@ const (
 	// BindAgentCLI injects the responsible user's key for the command's agent
 	// CLI and writes that CLI's model configuration into its private HOME.
 	BindAgentCLI CredentialBinding = "agent-cli"
+	// BindGitWorkspace gives a conversation workspace CLI the requester's Git
+	// credentials for any repository it clones itself: Git's credential helper
+	// and the gh/glab wrappers fetch the token of the exact HTTPS host from the
+	// session gateway while the turn runs, and SSH uses the requester's keys
+	// per configured host without exposing them.
+	BindGitWorkspace CredentialBinding = "git-workspace"
+	// BindExtra exports credentials from RunCredentials.Extra into the
+	// environment names listed in CommandSpec.ExtraCredentialEnv. Empty values
+	// are exported as empty strings so a child never inherits the host
+	// process's own variables.
+	BindExtra CredentialBinding = "extra"
 )
 
 type CodeBuddyCredential struct {
 	APIKey              string
+	BaseURL             string `json:",omitempty"`
 	InternetEnvironment string
 	// Sponsored is set when the responsible user has no key of their own and
 	// the platform's shared key is used; such runs are limited to
@@ -37,18 +49,39 @@ type CodeBuddyCredential struct {
 	SponsoredModels []string
 }
 
+func CodeBuddyUserCredential(user domain.User) CodeBuddyCredential {
+	return CodeBuddyCredential{
+		APIKey: user.CodeBuddyAPIKey, BaseURL: user.CodeBuddyBaseURL,
+		InternetEnvironment: user.CodeBuddyInternetEnvironment,
+	}
+}
+
 // RunCredentials lives only on the in-memory run sandbox handle. It is never
 // serialized into domain objects, run-context.json, or workspace files.
 type RunCredentials struct {
-	CodeBuddy    CodeBuddyCredential
-	Codex        ProviderCredential
-	ClaudeCode   ProviderCredential
-	AgentCLI     map[string]ProviderCredential
-	GitToken     string
-	GitSSHKeys   map[string]string `json:"-"`
-	GitUserName  string
-	GitUserEmail string
-	MCPServers   []domain.MCPServerDefinition
+	CodeBuddy  CodeBuddyCredential
+	Codex      ProviderCredential
+	ClaudeCode ProviderCredential
+	AgentCLI   map[string]ProviderCredential
+	GitSSHKeys map[string]string `json:"-"`
+	// GitSSHHostKeys maps "host:port" to the requester's private key for a
+	// conversation workspace. It travels to the execution machine on the
+	// authenticated control connection only, in the start request of the CLI.
+	GitSSHHostKeys map[string]string `json:",omitempty"`
+	// GitHTTPHosts maps each HTTPS host the requester exposes to a workspace
+	// to its platform. It holds no tokens; the helper asks for them per host.
+	GitHTTPHosts map[string]string `json:",omitempty"`
+	// GitHTTPCredentials travels only on authenticated execution dispatches.
+	// SOP commands fetch a matching, exposed credential from an ephemeral relay.
+	GitHTTPCredentials map[string]domain.GitHTTPExecutionCredential `json:",omitempty"`
+	GitUserName        string
+	GitUserEmail       string
+	MCPServers         []domain.MCPServerDefinition
+	// Extra carries deployment-registered credentials (see
+	// RegisterExtraCredentialSource). Like GitSSHKeys it lives only on the
+	// in-memory sandbox handle and is never serialized into domain objects,
+	// run-context.json, or workspace files.
+	Extra map[string]string `json:"-"`
 }
 
 type ProviderCredential struct {
@@ -66,6 +99,7 @@ type InvocationOptions struct {
 	ResumeSessionID string
 	GateResultPath  string
 	Repositories    []domain.RepositoryContext
+	RunnerLogin     bool
 	// BrowserMCP is resolved on the executing host, never sent to a runner.
 	BrowserMCP *domain.MCPServerDefinition `json:"-"`
 }
@@ -90,14 +124,29 @@ type CommandSpec struct {
 	AgentCLI   AgentCLIOptions
 	HookOutput string
 	Telemetry  *InvocationOptions
+	// ExtraCredentialEnv maps environment variable names to keys in
+	// RunCredentials.Extra and takes effect only together with the BindExtra
+	// credential binding. Empty or missing credentials export as empty
+	// strings, clearing any value inherited from the host process.
+	ExtraCredentialEnv map[string]string
+	// credentialEnvKeys records the environment variable names populated from
+	// Extra credentials (set by bindCommand) so process telemetry can redact
+	// them by origin instead of relying on naming conventions.
+	credentialEnvKeys []string
 	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string
 	// privateBinds are host directories bwrap binds into this one process
 	// only (for example a terminal's own SSH agent).
 	privateBinds []string
+	// Only the selected managed installation is exposed beneath bwrap's /tmp.
+	managedCLIInstall string
 	// Conversation preparation binds credentials before acknowledging start.
 	bindingsPrepared bool
+	// Runner-owned authentication state never enters serialized invocations.
+	runnerLogin           *runnerLoginLease
+	runnerLoginPrompt     string
+	runnerLoginInitialize bool
 }
 
 // WithPrivateHomeDir keeps CodeBuddy/Claude isolated from the operator HOME

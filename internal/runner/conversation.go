@@ -6,6 +6,7 @@ import (
 	"agentflow/internal/runtime"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,12 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 		return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid conversation process request"}
 	}
 	root := filepath.Join(d.cfg.DefaultWorkspaceRoot, ".conversations", req.SessionKey)
+	if req.Transient {
+		if request.RunID != "" {
+			return domain.RunnerWorkspaceResponse{Status: 400, Error: "transient processes cannot use a run workspace"}
+		}
+		root = filepath.Join(d.cfg.DefaultWorkspaceRoot, ".conversations", ".transient", req.SessionKey)
+	}
 	workspace := ""
 	if request.RunID != "" {
 		var err error
@@ -29,8 +36,8 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 		if err != nil {
 			return runnerWorkspaceError(err)
 		}
-		if request.Sandbox == nil || request.Sandbox.Profile.Driver != "docker" {
-			return domain.RunnerWorkspaceResponse{Status: 400, Error: "对话工作区仅支持 Docker"}
+		if request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
+			return domain.RunnerWorkspaceResponse{Status: 400, Error: "对话工作区只支持 Docker 或 native 沙箱"}
 		}
 	}
 	d.conversationMu.Lock()
@@ -112,7 +119,12 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 	}
 	result, err := d.conversationProcesses.Handle(ctx, root, workspace, request.Sandbox, req, forward, factory)
 	if err != nil {
-		return runnerWorkspaceError(err)
+		response := runnerWorkspaceError(err)
+		var stateErr *runtime.ConversationStateError
+		if errors.As(err, &stateErr) {
+			response.Code = domain.WorkspaceErrorConversationState
+		}
+		return response
 	}
 	return runnerWorkspacePayload(result)
 }

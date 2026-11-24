@@ -66,8 +66,9 @@ func (e *Engine) integrateScheduledRun(id string) (bool, error) {
 		return false, fmt.Errorf("run sandbox missing")
 	}
 	credentials := env.credentialSnapshot()
-	ctx := withGitIdentity(withGitToken(context.Background(), credentials.GitToken), credentials.GitUserName, credentials.GitUserEmail)
-	ctx = gitwork.WithSSHKeys(ctx, credentials.GitSSHKeys)
+	ctx := withGitIdentity(context.Background(), credentials.GitUserName, credentials.GitUserEmail)
+	ctx = withRunGitCredentials(ctx, credentials)
+	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), credentials.GitSSHKeys)
 	runner, onRunner, err := e.integrationRunner(r)
 	if err != nil {
 		return false, err

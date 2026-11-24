@@ -540,52 +540,28 @@ function issueFromForm(){
 }
 
 // ParseGongfengRepoURL 与后端 domain.ParseGongfengRepoURL 保持一致：把粘贴的
-// 工蜂链接（web / ssh / scp / 纯项目路径）解析成统一的仓库信息，让"粘一个链接"
-// 就能完成仓库配置。
+// 将完整的仓库链接和克隆地址解析成统一的仓库信息。
 // repoDisplayPath shows host/path for a parsed repository, e.g. github.com/owner/name.
 function repoDisplayPath(info,fallback=''){return info?.provider==='ssh'?(info.project||info.cloneUrl||fallback):info?.webUrl?String(info.webUrl).replace(/^https?:\/\//,''):String(fallback||'')}
-function repoProviderLabel(info){return info?.provider==='ssh'?'Git SSH':info?.provider==='github'?'GitHub':'工蜂'}
+function repoProviderLabel(info){
+  const labels={ssh:'Git SSH',https:'Git HTTPS',github:'GitHub',gongfeng:'工蜂'};
+  return labels[info?.provider]||'Git';
+}
 function parseGongfengRepoURL(raw){
   const sshInfo=globalThis.LoopForgeGitSSH?.(raw);if(sshInfo)return sshInfo;
+  const managed=globalThis.LoopForgeGongfengRepository?.(raw,state.data?.gongfengHost);if(managed)return managed;
+  const httpsInfo=globalThis.LoopForgeGitHTTPS?.(raw);if(httpsInfo)return httpsInfo;
   let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com(?::22)?\/)/,'https://github.com/');
   if(publicURL.startsWith('github.com/'))publicURL='https://'+publicURL;
   try{const u=new URL(publicURL);if(u.hostname==='github.com'&&!u.username&&!u.password&&['http:','https:'].includes(u.protocol)){const parts=u.pathname.split('/').filter(Boolean),owner=parts[0],name=(parts[1]||'').replace(/\.git$/,'');if(parts.length>=2&&/^[A-Za-z0-9_.-]+$/.test(owner)&&/^[A-Za-z0-9_.-]+$/.test(name)&&!['.','..'].includes(owner)&&!['.','..'].includes(name))return {project:'github:'+owner+'/'+name,name,webUrl:'https://github.com/'+owner+'/'+name,cloneUrl:'https://github.com/'+owner+'/'+name+'.git',provider:'github'}}}catch(_){}
 
-  let original=String(raw||'').trim().replace(/^['"]+|['"]+$/g,'');
-  if(!original)return null;
-  const strippedClone=/^git\s+clone\s+/i.test(original);
-  let s=original.replace(/^git\s+clone\s+/i,'').trim().replace(/^['"]+|['"]+$/g,'');
-  if(strippedClone&&/\s/.test(s))s=s.split(/\s+/)[0];
-  if(!s||/[\s"'<>()\\]/.test(s))return null;
-  const ssh=/^(git@|ssh:\/\/)/i.test(s);
-  s=s.replace(/\/+$/,'');
-  const hadScheme=s.includes('://'),hadAt=s.includes('@');
-  let rest=s;
-  if(hadScheme)rest=rest.slice(rest.indexOf('://')+3);
-  if(rest.includes('@'))rest=rest.slice(rest.lastIndexOf('@')+1);
-  let path='';
-  if(!hadScheme&&!hadAt&&!rest.includes(':')){
-    path=rest;
-  }else if(rest.includes('/')){
-    const cut=rest.search(/[:\/]/),host=rest.slice(0,cut);
-    if(host.toLowerCase()!=='git.example.com')return null;
-    path=rest.slice(cut+1);
-    if(rest[cut]===':'){const j=path.indexOf('/');if(j>=0&&/^\d+$/.test(path.slice(0,j)))path=path.slice(j+1)}
-  }else return null;
-  path=path.replace(/^git\.example\.com\//i,'').replace(/\.git$/i,'');
-  for(const marker of ['/-/','/tree/','/blob/','/commit/','/commits/','/merge_requests/','/issues/','/snippets/','/wikis/','/releases/','/tags/']){
-    const i=path.indexOf(marker);if(i>=0)path=path.slice(0,i);
-  }
-  path=path.replace(/^\/+|\/+$/g,'');
-  if(!path||path.includes('..')||path.split('/').some(seg=>!seg||/[\s\\?#]/.test(seg)))return null;
-  const name=path.slice(path.lastIndexOf('/')+1);
-  return {project:path,name,webUrl:`https://git.example.com/${path}`,cloneUrl:ssh?`git@git.example.com:${path}.git`:`https://git.example.com/${path}.git`};
+  return null;
 }
 // fillRepositoryFromLink 把解析结果填进空缺字段；显式填过的字段不覆盖。
 function fillRepositoryFromLink(url,fill){
   const info=parseGongfengRepoURL(url);
   if(!info)return false;
-  fill.gongfengProjectId=info.provider==='ssh'?'':info.project;
+  fill.gongfengProjectId=['ssh','https'].includes(info.provider)?'':info.project;
   if(!String(fill.name||'').trim())fill.name=info.name;
   fill.webUrl=info.provider==='ssh'&&fill.cloneUrl===info.cloneUrl?fill.webUrl:info.webUrl;
   fill.cloneUrl=info.cloneUrl;
@@ -600,20 +576,20 @@ function renderRepositoryCredentialHint(){
   host.sshHintVersion=(host.sshHintVersion||0)+1;
   host.hidden=false;
   host.removeAttribute('role');
-  const configured=!!user.gitTokenConfigured;
-  const title=configured?'已配置 GitHub Token':'仓库可以先保存，代码任务还需要 Token';
-  const message=configured?'请确认 Token 已获得目标仓库的访问和写入权限。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。':'使用仓库进行需求分析、访问私有代码或提交 PR 前，请先配置 GitHub Token。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。';
+  const configured=!!user.gitHttpCredentialsConfigured;
+  const title=configured?'已配置 Git 访问令牌':'仓库可以先保存，代码任务还需要 Token';
+  const message=configured?'请确认 Token 已获得目标仓库的访问和写入权限。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。':'使用仓库进行需求分析、访问私有代码或提交 PR 前，请先配置 Git 访问令牌。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。';
   host.dataset.configured=String(configured);
-  host.innerHTML=`<div><b>${escapeHTML(title)}</b><p>${escapeHTML(message)}</p></div><button type="button" class="button ghost small" data-repository-configure-token>${configured?'个人设置':'配置 GitHub Token'}</button>`;
+  host.innerHTML=`<div><b>${escapeHTML(title)}</b><p>${escapeHTML(message)}</p></div><button type="button" class="button ghost small" data-repository-configure-token>${configured?'个人设置':'配置 Git 访问令牌'}</button>`;
   host.querySelector('[data-repository-configure-token]').onclick=()=>{
-    $('#repositoryModal').classList.remove('open');gotoCredential('gitToken');
+    $('#repositoryModal').classList.remove('open');gotoCredential('gitHttpCredentials');
   };
 }
 function renderRepositoryList(){renderRepositoryCredentialHint();const project=(state.data.projects||[]).find(p=>p.id===state.projectFilter),repos=(state.data.repositories||[]).filter(r=>r.projectId===state.projectFilter);$('#repositoryProjectHint').textContent=`当前项目：${project?.name||'—'}。粘贴 GitHub 链接或 Git SSH 地址；集成分支用于检查多个 SOP 执行后是否存在合并冲突，可留空。`;$('#repositoryList').innerHTML=repos.map(r=>`<button type="button" data-edit-repo="${escapeHTML(r.id)}"><b>${escapeHTML(r.name)}</b><span>${escapeHTML(r.gongfengProjectId||r.cloneUrl)} · 主分支 ${escapeHTML(r.defaultBranch||'master')} · 集成分支 ${escapeHTML(r.integrateBranch||'未配置')}</span><em>${project?.defaultRepositoryId===r.id?'默认仓库':'编辑'}</em></button>`).join('')||'<p>当前项目还没有绑定代码仓库。</p>';$('#repositoryList').querySelectorAll('[data-edit-repo]').forEach(b=>b.onclick=()=>fillRepositoryForm((state.data.repositories||[]).find(r=>r.id===b.dataset.editRepo)))}
 function fillRepositoryForm(repo={}){const f=$('#repositoryForm');['id','name','gongfengProjectId','webUrl','cloneUrl','localPath'].forEach(k=>{if(f.elements[k])f.elements[k].value=repo[k]||''});if(f.elements.repoUrl)f.elements.repoUrl.value=repo.provider==='ssh'?repo.cloneUrl:repo.webUrl||repo.cloneUrl||repo.gongfengProjectId||'';
   const nameField=$('#repositoryNameField');if(nameField)nameField.hidden=!repo.id;f.elements.defaultBranch.value=repo.defaultBranch||'master';f.elements.integrateBranch.value=repo.integrateBranch||'';const project=(state.data.projects||[]).find(p=>p.id===state.projectFilter);f.elements.makeDefault.checked=!project?.defaultRepositoryId||project.defaultRepositoryId===repo.id;if(f.elements.repoUrl){f.elements.repoUrl.oninput=renderRepositoryCredentialHint;f.elements.repoUrl.onchange=()=>{renderRepositoryCredentialHint();const form=f.elements,fill={name:form.name.value,gongfengProjectId:form.gongfengProjectId.value,webUrl:form.webUrl.value,cloneUrl:form.cloneUrl.value};if(fillRepositoryFromLink(form.repoUrl.value,fill)){form.name.value=fill.name;form.gongfengProjectId.value=fill.gongfengProjectId;form.webUrl.value=fill.webUrl;form.cloneUrl.value=fill.cloneUrl}}};renderRepositoryCredentialHint()}
 function openRepositoryModal(){if(!state.projectFilter)return toast('请先选择项目');gitSSHKeyCache=null;fillRepositoryForm();renderRepositoryList();$('#repositoryModal').classList.add('open')}
-async function saveRepository(e){e.preventDefault();const f=e.currentTarget,project=(state.data.projects||[]).find(p=>p.id===state.projectFilter);if(f.elements.repoUrl){const fill={name:f.elements.name.value,gongfengProjectId:f.elements.gongfengProjectId.value,webUrl:f.elements.webUrl.value,cloneUrl:f.elements.cloneUrl.value};if(fillRepositoryFromLink(f.elements.repoUrl.value,fill)){f.elements.name.value=fill.name;f.elements.gongfengProjectId.value=fill.gongfengProjectId;f.elements.webUrl.value=fill.webUrl;f.elements.cloneUrl.value=fill.cloneUrl}}const payload={id:f.elements.id.value,projectId:state.projectFilter,provider:(parseGongfengRepoURL(f.elements.repoUrl?.value)?.provider||'gongfeng'),name:f.elements.name.value.trim(),gongfengProjectId:f.elements.gongfengProjectId.value.trim(),webUrl:f.elements.webUrl.value.trim(),cloneUrl:f.elements.cloneUrl.value.trim(),defaultBranch:f.elements.defaultBranch.value.trim(),integrateBranch:f.elements.integrateBranch.value.trim(),localPath:f.elements.localPath.value.trim(),repoUrl:f.elements.repoUrl?f.elements.repoUrl.value.trim():''};try{const repo=await api('/api/repositories',{method:payload.id?'PUT':'POST',body:JSON.stringify(payload)}),idx=(state.data.repositories||[]).findIndex(r=>r.id===repo.id);if(idx>=0)state.data.repositories[idx]=repo;else(state.data.repositories||(state.data.repositories=[])).push(repo);if(f.elements.makeDefault.checked&&project){const saved=await api('/api/projects',{method:'PUT',body:JSON.stringify({...project,defaultRepositoryId:repo.id})});if(saved&&saved.id){const pi=(state.data.projects||[]).findIndex(p=>p.id===saved.id);if(pi>=0)state.data.projects[pi]=saved;project.defaultRepositoryId=repo.id}else project.defaultRepositoryId=repo.id}fillRepositoryForm(repo);renderRepositoryList();renderIssues();toast(repo.provider==='ssh'?'仓库已保存；检出和推送使用 Git SSH 密钥。':(userById(state.currentUser?.id)||{}).gitTokenConfigured?'Git 仓库绑定已保存':'仓库已保存；配置 GitHub Token 后才能进行代码交付。')}catch(err){toast(err.message)}}
+async function saveRepository(e){e.preventDefault();const f=e.currentTarget,project=(state.data.projects||[]).find(p=>p.id===state.projectFilter);if(f.elements.repoUrl){const fill={name:f.elements.name.value,gongfengProjectId:f.elements.gongfengProjectId.value,webUrl:f.elements.webUrl.value,cloneUrl:f.elements.cloneUrl.value};if(fillRepositoryFromLink(f.elements.repoUrl.value,fill)){f.elements.name.value=fill.name;f.elements.gongfengProjectId.value=fill.gongfengProjectId;f.elements.webUrl.value=fill.webUrl;f.elements.cloneUrl.value=fill.cloneUrl}}const payload={id:f.elements.id.value,projectId:state.projectFilter,provider:(parseGongfengRepoURL(f.elements.repoUrl?.value)?.provider||'gongfeng'),name:f.elements.name.value.trim(),gongfengProjectId:f.elements.gongfengProjectId.value.trim(),webUrl:f.elements.webUrl.value.trim(),cloneUrl:f.elements.cloneUrl.value.trim(),defaultBranch:f.elements.defaultBranch.value.trim(),integrateBranch:f.elements.integrateBranch.value.trim(),localPath:f.elements.localPath.value.trim(),repoUrl:f.elements.repoUrl?f.elements.repoUrl.value.trim():''};try{const repo=await api('/api/repositories',{method:payload.id?'PUT':'POST',body:JSON.stringify(payload)}),idx=(state.data.repositories||[]).findIndex(r=>r.id===repo.id);if(idx>=0)state.data.repositories[idx]=repo;else(state.data.repositories||(state.data.repositories=[])).push(repo);if(f.elements.makeDefault.checked&&project){const saved=await api('/api/projects',{method:'PUT',body:JSON.stringify({...project,defaultRepositoryId:repo.id})});if(saved&&saved.id){const pi=(state.data.projects||[]).findIndex(p=>p.id===saved.id);if(pi>=0)state.data.projects[pi]=saved;project.defaultRepositoryId=repo.id}else project.defaultRepositoryId=repo.id}fillRepositoryForm(repo);renderRepositoryList();renderIssues();toast(repo.provider==='ssh'?'仓库已保存；检出和推送使用 Git SSH 密钥。':(userById(state.currentUser?.id)||{}).gitHubCredentialConfigured?'Git 仓库绑定已保存':'仓库已保存；配置 Git 访问令牌 后才能进行代码交付。')}catch(err){toast(err.message)}}
 function fillImportTAPDWorkflow(){
   const select=$('#importTAPDWorkflow');
   if(!select)return;
@@ -723,8 +699,9 @@ async function persistIssue(issue){
 async function saveIssue(e){e.preventDefault();const button=e.currentTarget.querySelector('button[type="submit"]');try{button.disabled=true;button.textContent='正在保存…';const saved=await persistIssue(issueFromForm());state.selectedIssue=saved.id;$('#issueModal').classList.remove('open');renderIssues();toast('需求已保存')}catch(err){toast(err.message)}finally{button.disabled=false;button.textContent='保存'}}
 async function dispatchIssue(){try{let issue=issueFromForm();const blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);const current=latestIssueTask(issue),rerun=!!current;if(current&&!await afConfirm({title:'重新运行确认',message:['queued','dispatched','running'].includes(current.status)?'该需求已有进行中的任务，确定额外发起一次重新运行吗？':'该需求已经处理过，确定整条 SOP 重新运行吗？',confirmText:'确认重新运行'}))return;const button=$('#dispatchIssue');button.disabled=true;button.textContent='正在调度…';issue=await persistIssue(issue);const task=await api(`/api/issues/${issue.id}/dispatch`,{method:'POST',body:JSON.stringify({rerun,workflowId:issue.workflowId||''})});issue.latestTaskId=task.id;issue.status='in_progress';const idx=state.data.issues.findIndex(i=>i.id===issue.id);if(idx>=0)state.data.issues[idx]=issue;if(!state.data.tasks)state.data.tasks=[];const existingTaskIdx=state.data.tasks.findIndex(t=>t.id===task.id);if(existingTaskIdx>=0)state.data.tasks[existingTaskIdx]=task;else state.data.tasks.unshift(task);if(task.runId){startLiveRun(task.runId);try{const run=await api(`/api/runs/${encodeURIComponent(task.runId)}`,{silent:true});if(run?.id){if(!state.data.runs)state.data.runs=[];const rIdx=state.data.runs.findIndex(r=>r.id===run.id);if(rIdx>=0)state.data.runs[rIdx]={...state.data.runs[rIdx],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}}catch(e){}}$('#issueModal').classList.remove('open');renderIssues();await openIssueDetail(issue.id,'sop');toast(rerun?'已创建重新运行':'已创建执行任务并启动工作流','ok');Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});}catch(err){toast(err.message)}finally{const button=$('#dispatchIssue');button.disabled=false;button.textContent='启动 SOP'}}
 async function dispatchIssueById(issueId,rerun=false,workflowId=''){try{const issue=(state.data.issues||[]).find(i=>i.id===issueId),blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);if(clarificationNeedsConfirm(issue)){openIssueDetail(issueId,'clarify');return toast('请先确认澄清结论后再触发 SOP')}
-const task=await api(`/api/issues/${issueId}/dispatch`,{method:'POST',body:JSON.stringify({rerun,workflowId})});if(issue){issue.latestTaskId=task.id;issue.status='in_progress'}if(!state.data.tasks)state.data.tasks=[];const existingTaskIdx=state.data.tasks.findIndex(t=>t.id===task.id);if(existingTaskIdx>=0)state.data.tasks[existingTaskIdx]=task;else state.data.tasks.unshift(task);if(task.runId){startLiveRun(task.runId);try{const run=await api(`/api/runs/${encodeURIComponent(task.runId)}`,{silent:true});if(run?.id){if(!state.data.runs)state.data.runs=[];const rIdx=state.data.runs.findIndex(r=>r.id===run.id);if(rIdx>=0)state.data.runs[rIdx]={...state.data.runs[rIdx],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}}catch(e){}}renderIssues();await openIssueDetail(issueId,'sop');toast(rerun?'已创建重新运行':'已启动 SOP','ok');Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});setTimeout(()=>refreshIssues(),2000);setTimeout(()=>refreshIssues(),10000);}catch(err){if(/澄清/.test(err.message||'')){state.issueDetailTab='clarify';openIssueDetail(issueId,'clarify')}toast(err.message,'err')}}
+const task=await api(`/api/issues/${issueId}/dispatch`,{method:'POST',body:JSON.stringify({rerun,workflowId})});if(issue){issue.latestTaskId=task.id;issue.status='in_progress';if(issueWithoutSOP(issue)&&workflowId){issue.sopMode='';issue.workflowId=workflowId}}if(!state.data.tasks)state.data.tasks=[];const existingTaskIdx=state.data.tasks.findIndex(t=>t.id===task.id);if(existingTaskIdx>=0)state.data.tasks[existingTaskIdx]=task;else state.data.tasks.unshift(task);if(task.runId){startLiveRun(task.runId);try{const run=await api(`/api/runs/${encodeURIComponent(task.runId)}`,{silent:true});if(run?.id){if(!state.data.runs)state.data.runs=[];const rIdx=state.data.runs.findIndex(r=>r.id===run.id);if(rIdx>=0)state.data.runs[rIdx]={...state.data.runs[rIdx],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}}catch(e){}}renderIssues();await openIssueDetail(issueId,'sop');toast(rerun?'已创建重新运行':'已启动 SOP','ok');Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});setTimeout(()=>refreshIssues(),2000);setTimeout(()=>refreshIssues(),10000);}catch(err){if(/澄清/.test(err.message||'')){state.issueDetailTab='clarify';openIssueDetail(issueId,'clarify')}toast(err.message,'err')}}
 function defaultSOPForIssue(issue){
+  if(issueWithoutSOP(issue))return '';
   const projectId=issue?.projectId||state.projectFilter;
   const project=(state.data.projects||[]).find(p=>p.id===projectId);
   const projectSOP=(project?.workflowId||'').trim();
@@ -774,6 +751,7 @@ async function triggerIssue(issueId,workflowId){
   const issue=(state.data.issues||[]).find(i=>i.id===issueId);
   if(!issue)return toast('未找到工作项');
   const blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);
+  if(issueWithoutSOP(issue)&&!String(workflowId||'').trim()){openIssueDetail(issueId,'sop');return toast('这条需求不使用 SOP，请先选择要运行的 SOP')}
   const targetWorkflow=String(workflowId||'').trim()||issue.workflowId||defaultSOPForIssue(issue);
   const laneTask=(state.data.tasks||[]).find(t=>t.issueId===issue.id&&t.workflowId===targetWorkflow);
   const latestRun=laneTask?latestIssueRun(issue,laneTask):null;

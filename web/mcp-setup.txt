@@ -1,6 +1,6 @@
 # LoopForge MCP — 安装 / 初始化 / 验证
 
-接入指南：<https://loopforge.example.com/#/guide>
+访问密钥位于当前 LoopForge 实例的「设置 → 访问密钥」。
 
 **适用范围**：Cursor、Claude Code、CodeBuddy、Codex。请根据当前运行的 Agent 自动选择对应配置，不要反问用户使用哪个客户端。
 
@@ -35,7 +35,6 @@
 {
   "mcpServers": {
     "agentflow": {
-      "type": "streamable-http",
       "url": "<ENDPOINT>",
       "headers": {
         "Authorization": "Bearer <API_TOKEN>"
@@ -65,7 +64,7 @@ claude mcp list
 
 ### CodeBuddy
 
-配置文件：`~/.codebuddy/mcp.json`
+在 CodeBuddy IDE 的 MCP 管理页打开用户配置。使用 CodeBuddy Code 时，按 `~/.codebuddy/.mcp.json`、`~/.codebuddy/mcp.json`、`~/.codebuddy.json` 的顺序更新第一个已有文件。首次配置使用 `~/.codebuddy/.mcp.json`。
 
 1. 文件存在时先创建带时间戳的备份。
 2. 保留原 JSON 中的全部字段，将下面的 `agentflow` 合并进 `mcpServers`：
@@ -74,7 +73,6 @@ claude mcp list
 {
   "mcpServers": {
     "agentflow": {
-      "type": "streamable-http",
       "url": "<ENDPOINT>",
       "headers": {
         "Authorization": "Bearer <API_TOKEN>"
@@ -124,7 +122,7 @@ curl -sS "$ENDPOINT" \
 
 ## 失败排查
 
-- **401 / token invalid**：确认 Authorization 格式为 `Bearer <API_TOKEN>`，Token 没有多余引号、空格或换行；仍失败则在接入指南的「我的 Token」撤销并重新生成。
+- **401 / token invalid**：确认 Authorization 格式为 `Bearer <API_TOKEN>`，密钥没有多余引号、空格或换行。仍然失败时，在「设置 → 访问密钥」撤销旧密钥并重新创建。
 - **404 / 无法连接**：确认 ENDPOINT 是完整 `/mcp` 地址，不要重复拼接 `/mcp`。
 - **客户端没有工具**：检查配置文件语法、配置作用域和服务名；重启客户端后重试。
 - **已有配置丢失**：立即从时间戳备份恢复，再重新执行“只合并 agentflow”步骤。

@@ -295,7 +295,10 @@ func workflowSandboxRequirements(st *repo.Store, wf domain.WorkflowDefinition) (
 		if !ok {
 			return runtime.SandboxRequirements{}, fmt.Errorf("agent %q not found", node.AgentID)
 		}
-		executor, err := resolveNodeExecutor(st, node, agent)
+		executor, err := workflowNodeExecutor(st, wf, node, agent)
+		if errors.Is(err, errSOPExecutorUnconfigured) {
+			continue
+		}
 		if err != nil {
 			return runtime.SandboxRequirements{}, err
 		}
@@ -429,6 +432,16 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		e.nodeFailedAt(runID, node, executionAttempt, executionGeneration, err, allowReject)
 	}
+	if currentLease.ExecutionContext.SharedScheduleID != "" {
+		version, err := e.repo.SharedScheduleVersion(currentLease.ExecutionContext.SharedScheduleID, currentLease.ExecutionContext.SharedScheduleVersion)
+		if err == nil {
+			err = e.repo.ValidateSharedScheduleAssets(version)
+		}
+		if err != nil {
+			failNode(err, false)
+			return
+		}
+	}
 	if node.Type == "sop" {
 		e.executeSOPNode(ctx, runID, wf, node, executionAttempt, executionGeneration)
 		return
@@ -466,6 +479,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(err, false)
 		return
 	}
+	current, err = e.resolveDeferredSOPExecutor(current, node)
+	if err != nil {
+		failNode(err, nodeRejects(node))
+		return
+	}
+	wf.ExecutorDefaults = current.WorkflowSnapshot.ExecutorDefaults
 	profile := domain.SandboxProfile{}
 	if current.WorkflowSnapshot.SandboxSnapshot != nil {
 		profile = current.WorkflowSnapshot.SandboxSnapshot.Profile
@@ -525,50 +544,45 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	// (执行器) it is dispatched to that machine so gates run next to the CLI
 	// output in the runner-side task workspace.
 	gateExec := func(command string, target executionTarget, gateSink runtime.EventSink) (string, error) {
-		return sb.Exec(ctx, runtime.CommandSpec{Argv: []string{"sh", "-lc", bindExecutionTarget(command, target)}, Provider: "verification", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, gateSink)
+		spec, err := runtime.CommandSpecWithCredentialEnv(runtime.CommandSpec{Argv: []string{"sh", "-lc", bindExecutionTarget(command, target)}, Provider: "verification", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, node.CredentialEnv, sb.credentialSnapshot())
+		if err != nil {
+			return "", err
+		}
+		return sb.Exec(ctx, spec, gateSink)
 	}
 	current, _ = e.repo.RunState(runID)
 	gitCredentials := sb.credentialSnapshot()
-	gitTok := gitCredentials.GitToken
-	ctx = withGitToken(ctx, gitTok)
-	ctx = gitwork.WithSSHKeys(ctx, gitCredentials.GitSSHKeys)
+	gitTok := gitCredentials.GitHTTPCredentials["github.com"].Token
+	ctx = withRunGitCredentials(ctx, sb.credentialSnapshot())
+	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), gitCredentials.GitSSHKeys)
 	ctx = withGitIdentity(ctx, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
-	// Repository checkout and Agent-configuration index isolation belong to the
-	// run environment, not to each node. The same checkout and .git/index are
-	// reused by all nodes, so repeatedly toggling skip-worktree only creates
-	// needless index.lock contention. A reconstructed runEnvironment (restart or
-	// lease takeover) starts unprepared and revalidates the persisted checkout.
+	// Share the checkout between nodes. A reconstructed run environment
+	// revalidates the persisted checkout after restart or lease takeover.
 	// A runner that integrates on its own checkout needs nothing from a
 	// control-plane clone, so none is made.
 	stagingCheckout := true
 	if runner, ok := e.repo.Runner(e.defaultExecutionRunner(current)); ok && runner.SupportsIntegrate() {
 		stagingCheckout = false
 	}
+	repositoryFallback := ""
 	if err := sb.prepareRepositoriesOnce(func() error {
 		if !stagingCheckout {
 			return nil
 		}
-		repoWorkspaces := repositoryWorkspaceDirs(sb.Workspace(), current.RepositoryContexts())
-		for _, dir := range repoWorkspaces {
-			if err := runtime.RestoreProjectAgentGitIndex(ctx, dir, sb.Driver()); err != nil {
-				return fmt.Errorf("restore repository Agent configuration index: %w", err)
-			}
-		}
 		if err := prepareRepositories(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
-			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "")
-		}
-		for _, dir := range repoWorkspaces {
-			if err := runtime.ProtectProjectAgentGitIndex(ctx, dir, sb.Driver()); err != nil {
-				return fmt.Errorf("protect repository Agent configuration index: %w", err)
-			}
+			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "" || len(gitCredentials.GitHTTPCredentials) > 0)
 		}
 		for _, rc := range current.RepositoryContexts() {
 			e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.checked_out", Phase: "finish", Message: rc.Name + " @ " + rc.WorkBranch, Attributes: map[string]any{"repositoryId": rc.RepositoryID, "repositoryDir": rc.WorkspaceDir, "baseBranch": rc.BaseBranch, "workBranch": rc.WorkBranch}})
 		}
 		return nil
 	}); err != nil {
-		failNode(err, nodeRejects(node))
-		return
+		if ctx.Err() != nil || !firstRepositoryAgent(wf, node) {
+			failNode(err, nodeRejects(node))
+			return
+		}
+		repositoryFallback = err.Error()
+		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.preparation.fallback", Phase: "progress", Level: "warn", Message: "平台仓库准备失败，交给首个 Agent 节点处理：" + repositoryFallback})
 	}
 	// An execution machine that reports its outputs receives the inputs and
 	// human context with each task and returns the files the engine needs;
@@ -635,15 +649,45 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return
 		}
 	}
-	_, preparationErr := e.PrepareNodeWorkspace(ctx, current, sb)
-	if preparationErr != nil {
-		failNode(preparationErr, nodeRejects(node))
-		return
+	if repositoryFallback == "" {
+		_, preparationErr := e.PrepareNodeWorkspace(ctx, current, sb)
+		if preparationErr != nil {
+			// A remote execution machine prepares its own checkout. Let its
+			// first Agent recover a checkout failure there as well.
+			if e.defaultExecutionRunner(current) == "" || !firstRepositoryAgent(wf, node) || !strings.Contains(preparationErr.Error(), "repositories") || ctx.Err() != nil {
+				failNode(preparationErr, nodeRejects(node))
+				return
+			}
+			repositoryFallback = preparationErr.Error()
+		}
 	}
 	// The environment is ready and this node's inputs are in place; parallel
 	// branches execute from here on without holding the environment lock.
-	preparing = false
-	sb.nodeMu.Unlock()
+	if repositoryFallback == "" {
+		preparing = false
+		sb.nodeMu.Unlock()
+	}
+	// A recovery Agent keeps the preparation lock until its checkout has been
+	// verified, so parallel nodes cannot use partially prepared repositories.
+	completeRepositoryFallback := func() error {
+		if repositoryFallback == "" {
+			return nil
+		}
+		if e.defaultExecutionRunner(current) == "" {
+			if err := runtime.VerifyGitPreparation(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
+				return fmt.Errorf("Agent 仓库准备兜底校验失败: %w", err)
+			}
+		}
+		if _, err := e.PrepareNodeWorkspace(ctx, current, sb); err != nil {
+			return err
+		}
+		sb.repositoriesPrepared = true
+		repositoryFallback = ""
+		preparing = false
+		sb.nodeMu.Unlock()
+		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.preparation.recovered", Phase: "finish", Message: "Agent 已完成仓库准备，冻结仓库和工作分支校验通过"})
+		return nil
+	}
 	sb.activeExecutions.Add(1)
 	defer sb.activeExecutions.Add(-1)
 	var output string
@@ -690,12 +734,16 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				scriptAssets := e.resolveScriptMCPAssets(current.ExecutionContext.ProjectID, current.ExecutionContext.ResponsibleUserID)
 				if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 					workspace := runnerWorkspaceRel(current, node.ID)
-					return e.dispatchRunnerScript(ctx, execMachine, current, node.ID, workspace, "shell", bound, target.directory(), outputContracts, sb, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail, scriptAssets, targetSink)
+					return e.dispatchRunnerScript(ctx, execMachine, current, node.ID, workspace, "shell", bound, target.directory(), outputContracts, sb, sb.credentialSnapshot().GitHTTPCredentials["github.com"].Token, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail, scriptAssets, targetSink)
 				}
 				if err := runtime.ProvisionMCPAssets(ctx, sb, sb.Workspace(), scriptAssets, targetSink); err != nil {
 					return "", err
 				}
-				return sb.Exec(ctx, runtime.CommandSpec{Argv: []string{"sh", "-lc", bound}, Provider: "script", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, targetSink)
+				scriptSpec, err := runtime.CommandSpecWithCredentialEnv(runtime.CommandSpec{Argv: []string{"sh", "-lc", bound}, Provider: "script", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, effectiveNode.CredentialEnv, sb.credentialSnapshot())
+				if err != nil {
+					return "", err
+				}
+				return sb.Exec(ctx, scriptSpec, targetSink)
 			})
 			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 				workspace := runnerWorkspaceRel(current, node.ID)
@@ -731,7 +779,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			err = fmt.Errorf("agent %q not found", node.AgentID)
 			break
 		}
-		ex, errResolve := resolveNodeExecutor(e.repo, node, agent)
+		ex, errResolve := workflowNodeExecutor(e.repo, wf, node, agent)
 		if errResolve != nil {
 			err = errResolve
 			break
@@ -801,6 +849,18 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					prompt += fmt.Sprintf("\n\n本节点负责选择下游分支。提交 pass 时，在 route 中提交一个或多个路由标签，可选值：%s。", strings.Join(labels, ", "))
 				}
 			}
+			if repositoryFallback != "" {
+				prompt = runtime.GitPreparationFallbackPrompt(current.RepositoryContexts(), repositoryFallback) + prompt
+			}
+			if current.ExecutionContext.SharedScheduleID != "" {
+				version, assetErr := e.repo.SharedScheduleVersion(current.ExecutionContext.SharedScheduleID, current.ExecutionContext.SharedScheduleVersion)
+				if assetErr != nil {
+					return "", assetErr
+				}
+				if assetErr = e.repo.ValidateSharedScheduleAssets(version); assetErr != nil {
+					return "", assetErr
+				}
+			}
 			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
@@ -834,7 +894,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 			repositories := current.RepositoryContexts()
 			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{
-				GitToken: gitTok, RequireCredentials: true,
+				GitHTTPCredentials:  gitCredentials.GitHTTPCredentials,
+				ExtraCredentials:    gitCredentials.Extra,
+				RequireCredentials:  true,
 				SSHRepositoriesOnly: len(repositories) > 0 && len(sshRepositoryURLs(repositories)) == len(repositories),
 			})
 			for _, warning := range skipped {
@@ -947,6 +1009,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 		}
 		if err == nil {
+			err = completeRepositoryFallback()
+		}
+		if err == nil {
 			live, _ := e.repo.RunState(runID)
 			var recovered []string
 			if reported != nil {
@@ -967,6 +1032,32 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			for _, candidate := range gates {
 				gate := candidate.gate
 				if strings.EqualFold(gate.Mode, "manual") || strings.EqualFold(gate.Mode, "submit") {
+					continue
+				}
+				if strings.EqualFold(gate.Mode, domain.VerificationModeMR) {
+					live, _ := e.repo.RunState(runID)
+					mrErr := e.verifyRunMRs(live, gitTok, func(rc domain.RepositoryContext) (pushedWork, error) {
+						target := executionTarget{Scope: domain.ExecutionScopeRepositories, Repository: &rc}
+						out, execErr := gateExec(mrPendingCommand, target, executionTargetSink(func(event domain.TelemetryEvent) {
+							event.Category = "verification"
+							sink(event)
+						}, target))
+						if execErr != nil {
+							return pushedWork{}, execErr
+						}
+						return parseMRPending(out)
+					})
+					if mrErr != nil {
+						e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.mr.failed", Phase: "finish", Level: "error", Message: "门禁未通过：" + gate.Name, Attributes: map[string]any{"gateId": gate.ID, "gateName": gate.Name, "iteration": iteration, "detail": mrErr.Error()}})
+						err = fmt.Errorf("verification %s: %w", gate.Name, mrErr)
+						failedAction = candidate.onFailure
+						if errors.Is(mrErr, errMRUnverifiable) {
+							failedAction = "human"
+						}
+						gateRejected = failedAction == "reject"
+						break
+					}
+					e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.mr.passed", Phase: "finish", Message: "门禁通过：" + gate.Name, Attributes: map[string]any{"gateId": gate.ID, "gateName": gate.Name, "iteration": iteration}})
 					continue
 				}
 				gateCmd := joinGateCommands(gate.Commands, effectiveNode.ArtifactOutputs)

@@ -30,7 +30,7 @@ func TestInvocationRepositoriesPrefersListAndFallsBackToLegacy(t *testing.T) {
 func TestCheckoutInvocationRepositoriesSkipsLegacyWithoutCloneURL(t *testing.T) {
 	workspace := t.TempDir()
 	inv := &domain.RunnerInvocation{Repository: &domain.RunnerRepository{RepositoryID: "legacy", CloneURL: "  "}}
-	if err := checkoutInvocationRepositories(context.Background(), workspace, inv, "local"); err != nil {
+	if err := checkoutInvocationRepositories(context.Background(), workspace, inv); err != nil {
 		t.Fatalf("legacy repository without clone URL should be skipped: %v", err)
 	}
 }

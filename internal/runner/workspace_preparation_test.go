@@ -28,9 +28,42 @@ func runnerPreparationFixture(t *testing.T) (*Daemon, domain.RunnerWorkspaceRequ
 	}, root
 }
 
+func TestRunnerWorkspacePreparationDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name, operation, runKind string
+		followsCaller            bool
+	}{
+		{"conversation", domain.RunnerWorkspaceOperationPrepare, domain.RunKindWorkspace, true},
+		{"SOP", domain.RunnerWorkspaceOperationPrepare, "", false},
+		{"terminal", domain.RunnerWorkspaceOperationTerminal, domain.RunKindWorkspace, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caller, stopCaller := context.WithTimeout(context.Background(), time.Hour)
+			defer stopCaller()
+			callerDeadline, _ := caller.Deadline()
+			ctx, done := runnerWorkspacePreparationContext(caller, domain.RunnerWorkspaceRequest{
+				Operation: tc.operation, RunKind: tc.runKind,
+			})
+			defer done()
+			deadline, ok := ctx.Deadline()
+			if !ok || deadline.Equal(callerDeadline) != tc.followsCaller {
+				t.Fatalf("preparation deadline = %v, caller deadline = %v, follows caller = %t", deadline, callerDeadline, tc.followsCaller)
+			}
+			stopCaller()
+			if ctx.Err() != context.Canceled {
+				t.Fatalf("preparation context error after caller cancellation: %v", ctx.Err())
+			}
+		})
+	}
+}
+
 func TestRunnerWorkspacePreparationAndTerminalShareFrozenEnvironment(t *testing.T) {
 	d, req, root := runnerPreparationFixture(t)
 	defer d.closeAllRunSandboxes(context.Background())
+	req.PreparationInvocation = &domain.RunnerInvocation{GitHTTPCredentials: map[string]domain.GitHTTPExecutionCredential{
+		"prepare.example.invalid": {Token: "prepare-fixture"},
+	}}
+	req.Workflow.Nodes[0].Script += `; printf '%s' "$AGENTFLOW_GIT_HOSTS" > prepared-git-hosts`
 	for i := 0; i < 2; i++ {
 		result := d.readRunnerWorkspace(context.Background(), req)
 		if result.Status != 200 {
@@ -47,8 +80,14 @@ func TestRunnerWorkspacePreparationAndTerminalShareFrozenEnvironment(t *testing.
 	if raw, err := os.ReadFile(filepath.Join(root, "prepared-environment")); err != nil || string(raw) != "same-node-environment" {
 		t.Fatalf("overlay: %q %v", raw, err)
 	}
+	if raw, err := os.ReadFile(filepath.Join(root, "prepared-git-hosts")); err != nil || string(raw) != "prepare.example.invalid=other" {
+		t.Fatalf("preparation Git hosts: %q %v", raw, err)
+	}
 	req.Operation = domain.RunnerWorkspaceOperationTerminal
 	req.TerminalOwner = 7
+	req.TerminalGitHTTPCredentials = map[string]domain.GitHTTPExecutionCredential{
+		"terminal.example.invalid": {Token: "terminal-fixture"},
+	}
 	req.Terminal = &domain.WorkspaceTerminalRequest{Operation: "open", ExpiresAt: time.Now().Add(time.Minute)}
 	opened := d.readRunnerWorkspace(context.Background(), req)
 	if opened.Status != 200 {
@@ -67,19 +106,23 @@ func TestRunnerWorkspacePreparationAndTerminalShareFrozenEnvironment(t *testing.
 			t.Fatalf("terminal sandbox reference: %d", entry.active)
 		}
 	}
-	req.Terminal = &domain.WorkspaceTerminalRequest{Operation: "input", ID: terminal.ID, Data: "printf '%s' \"$WORKSPACE_OVERLAY\" > terminal-environment\n"}
+	req.Terminal = &domain.WorkspaceTerminalRequest{
+		Operation: "input", ID: terminal.ID,
+		Data: `printf '%s|%s' "$WORKSPACE_OVERLAY" "$AGENTFLOW_GIT_HOSTS" > terminal-environment` + "\n",
+	}
 	if result := d.readRunnerWorkspace(context.Background(), req); result.Status != 200 {
 		t.Fatalf("input: %+v", result)
 	}
 	deadline := time.Now().Add(4 * time.Second)
+	const wantEnvironment = "same-node-environment|terminal.example.invalid=other"
 	for time.Now().Before(deadline) {
 		raw, err := os.ReadFile(filepath.Join(root, "terminal-environment"))
-		if err == nil && string(raw) == "same-node-environment" {
+		if err == nil && string(raw) == wantEnvironment {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if raw, err := os.ReadFile(filepath.Join(root, "terminal-environment")); err != nil || string(raw) != "same-node-environment" {
+	if raw, err := os.ReadFile(filepath.Join(root, "terminal-environment")); err != nil || string(raw) != wantEnvironment {
 		t.Fatalf("terminal overlay: %q %v", raw, err)
 	}
 	req.Terminal = &domain.WorkspaceTerminalRequest{Operation: "close", ID: terminal.ID}
@@ -647,4 +690,44 @@ func TestRunnerConcurrentEditSharesOnlyTheAgentFence(t *testing.T) {
 		t.Fatal("concurrent edit leaked its gate hold")
 	}
 	gate.Unlock()
+}
+
+func TestRunnerCheckpointStatusAndRestoreOverEmptyDirectory(t *testing.T) {
+	d, request, root := runnerPreparationFixture(t)
+	defer d.closeAllRunSandboxes(context.Background())
+
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "restored.txt"), []byte("from-checkpoint"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := runtime.CreateWorkspaceCheckpoint(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, ".agentflow", "hooks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	status := d.readRunnerWorkspace(context.Background(), domain.RunnerWorkspaceRequest{
+		RunID:           request.RunID,
+		WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		Operation:       domain.RunnerWorkspaceOperationCheckpointStatus,
+	})
+	if status.Status != 200 || !strings.Contains(string(status.Payload), `"empty":true`) {
+		t.Fatalf("status = %+v payload=%s", status, status.Payload)
+	}
+
+	restored := d.readRunnerWorkspace(context.Background(), domain.RunnerWorkspaceRequest{
+		RunID:           request.RunID,
+		WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		Operation:       domain.RunnerWorkspaceOperationRestore,
+		Checkpoint:      archive,
+	})
+	if restored.Status != 200 || restored.Error != "" {
+		t.Fatalf("restore = %+v", restored)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "restored.txt"))
+	if err != nil || string(got) != "from-checkpoint" {
+		t.Fatalf("restored.txt = %q (%v)", got, err)
+	}
 }

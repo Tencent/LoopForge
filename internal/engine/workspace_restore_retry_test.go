@@ -263,3 +263,70 @@ func TestConversationWorkspaceRunnerReusesSurvivingDirectory(t *testing.T) {
 		})
 	}
 }
+
+func TestConversationWorkspaceRemoteAndRunnerRestoreOverEmptyDirectory(t *testing.T) {
+	t.Parallel()
+	for _, target := range []string{"runner-empty", "runner-agentflow-only", "foreign-worker-empty", "foreign-worker-agentflow-only"} {
+		t.Run(target, func(t *testing.T) {
+			worker, controller, id := remoteWorkspaceRestoreFixture(t, "sqlite")
+			root := worker.RunWorkspace(id)
+			if err := os.MkdirAll(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasSuffix(target, "agentflow-only") {
+				if err := os.MkdirAll(filepath.Join(root, ".agentflow", "hooks"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			restores := 0
+			if strings.HasPrefix(target, "runner-") {
+				run, _ := worker.repo.RunState(id)
+				run.ExecutionContext.ExecutionMode = domain.ExecutionModeRunner
+				run.ExecutionContext.ExecutionRunnerID = "restore-runner"
+				if err := worker.repo.PutRun(run); err != nil {
+					t.Fatal(err)
+				}
+				controller.WorkspaceCheckpointTransport = func(_ context.Context, _ domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+					if request.Operation == domain.RunnerWorkspaceOperationCheckpointStatus {
+						return runtime.WorkspaceCheckpointStatus(root), nil
+					}
+					if request.Operation == domain.RunnerWorkspaceOperationRestore {
+						restores++
+						if err := runtime.RestoreWorkspaceCheckpoint(root, request.Checkpoint); err != nil {
+							return domain.RunnerWorkspaceResponse{Error: err.Error()}, nil
+						}
+						return domain.RunnerWorkspaceResponse{Payload: json.RawMessage(`{"restored":true}`)}, nil
+					}
+					return domain.RunnerWorkspaceResponse{Error: "unexpected operation " + request.Operation}, nil
+				}
+			} else {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodPost {
+						var body domain.RunnerWorkspaceRequest
+						raw, _ := io.ReadAll(r.Body)
+						_ = json.Unmarshal(raw, &body)
+						if body.Operation == domain.RunnerWorkspaceOperationRestore || body.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
+							restores++
+						}
+						r.Body = io.NopCloser(bytes.NewReader(raw))
+					}
+					worker.HandleWorkspaceCheckpoint(w, r)
+				}))
+				defer server.Close()
+				if err := worker.repo.HeartbeatEngineInstance(repo.EngineInstance{InstanceID: worker.workspaceHost, Role: "worker", WorkspaceHost: worker.workspaceHost, ControlURL: server.URL}, time.Minute); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := controller.RestoreConversationWorkspaceIfNeeded(context.Background(), id); err != nil {
+				t.Fatal(err)
+			}
+			if restores != 1 {
+				t.Fatalf("restores = %d, want 1", restores)
+			}
+			body, err := os.ReadFile(filepath.Join(root, "README.md"))
+			if err != nil || string(body) != "saved changes" {
+				t.Fatalf("remote restore lost files: %q (%v)", body, err)
+			}
+		})
+	}
+}

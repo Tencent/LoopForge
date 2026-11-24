@@ -14,6 +14,7 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
     status: 'backlog', repositoryIds: ['repo-1'], clarification: { status: 'ready' }
   });
   const result = structuredClone(await app.evaluate(`(async () => {
+    state.data.gongfengHost='git.review.test:8443';
     state.data.projects[0].key='ATL';
     state.data.issues=[
       {id:'a',projectId:'project-1',number:12,title:'【Bug】 Login: fails!',description:'Safari only',
@@ -32,13 +33,14 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
     const unassigned=filteredIssues().map(x=>x.id);
     const parsed=[
       parseGongfengRepoURL('git clone git@git.example.com:team/service.git'),
-      parseGongfengRepoURL('https://git.example.com/team/service/-/merge_requests/9'),
+      parseGongfengRepoURL('https://git.review.test:8443/team/service/-/merge_requests/9'),
       parseGongfengRepoURL('team/sub/repo'),
       parseGongfengRepoURL('https://evil.example/team/repo'),
       parseGongfengRepoURL('../secret'),
       parseGongfengRepoURL('git@github.com:octo/widgets.git'),
       parseGongfengRepoURL('ssh://git@github.com/octo/widgets.git')
     ];
+    const httpsCard=repoCardHTML({id:'external',provider:'https',webUrl:'https://gitlab.example.org/team/api'},false);
     const fill={name:''};const filled=fillRepositoryFromLink('ssh://git@gitlab.example.org:2222/team/api.git',fill);
     const title=issueTitleMarkup('[Bug] 【前端】 broken <button>');
     const keys=[issueKeyColumnWidth([{id:'x',projectId:'project-1',number:1}]),
@@ -49,7 +51,7 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
       source:'local',externalRef:{externalId:'T-9',externalUrl:'https://tapd.example/T-9'}});
     state.data.issues=[edited];
     await saveIssueSOPS('issue-1',[{workflowId:'flow-1',order:1}]);
-    return {queried,external,unassigned,parsed,fill,filled,title,keys,workBranch,
+    return {queried,external,unassigned,parsed,httpsCard,fill,filled,title,keys,workBranch,
       status:[issueStatusLabel('in_review'),issueStatusIcon('blocked'),issuePriorityLabel('urgent')],
       normalized:normalizeIssueTitleSearch(' Ｌｏｇｉｎ：Fails! '),edited,issues:state.data.issues};
   })()`));
@@ -58,14 +60,17 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
   assert.deepEqual(result.unassigned, ['b']);
   assert.equal(result.parsed[0].cloneUrl, 'git@git.example.com:team/service.git');
   assert.equal(result.parsed[1].project, 'team/service');
-  assert.equal(result.parsed[2].name, 'repo');
-  assert.equal(result.parsed[3], null);
+  assert.equal(result.parsed[1].webUrl, 'https://git.review.test:8443/team/service');
+  assert.equal(result.parsed[2], null);
+  assert.equal(result.parsed[3].provider, 'https');
+  assert.equal(result.parsed[3].cloneUrl, 'https://evil.example/team/repo');
+  assert.match(result.httpsCard, />Git HTTPS /);
   assert.equal(result.parsed[4], null);
-  // GitHub SSH-style addresses stay GitHub repositories, as on the server.
+  // Explicit SSH addresses keep their transport, including GitHub.
   for (const github of result.parsed.slice(5)) {
-    assert.equal(github.provider, 'github');
-    assert.equal(github.project, 'github:octo/widgets');
-    assert.equal(github.cloneUrl, 'https://github.com/octo/widgets.git');
+    assert.equal(github.provider, 'ssh');
+    assert.equal(github.project, 'github.com/octo/widgets.git');
+    assert.match(github.cloneUrl, /(?:git@github.com:|ssh:\/\/git@github.com(?::22)?\/)octo\/widgets\.git/);
   }
   assert.equal(result.filled, true);
   assert.deepEqual(result.fill, {

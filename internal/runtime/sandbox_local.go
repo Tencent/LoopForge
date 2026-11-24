@@ -32,7 +32,7 @@ func (s *localSandbox) Exec(ctx context.Context, command CommandSpec, sink Event
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
 	}
-	return runCommand(cmd, sink)
+	return runCommand(cmd, sink, command)
 }
 
 func (s *localSandbox) command(ctx context.Context, command CommandSpec, base []string) (*exec.Cmd, error) {
@@ -75,6 +75,14 @@ func (s *localSandbox) command(ctx context.Context, command CommandSpec, base []
 // or modifying the operator's CLI state or the inspected repository.
 func ExecuteLocalCommand(ctx context.Context, workspace string, command CommandSpec, credentials RunCredentials, sink EventSink) (string, error) {
 	sandbox := &localSandbox{id: "control-plane", workspace: workspace}
+	command, closeGit, err := prepareRunGitBinding(ctx, sandbox, command, credentials)
+	if err != nil {
+		return "", err
+	}
+	defer closeGit()
+	if credentials.GitHTTPCredentials != nil {
+		credentials.GitHTTPHosts = runGitHosts(credentials)
+	}
 	var cleanup func()
 	if command.PrivateHome {
 		root, err := os.MkdirTemp("", "agentflow-private-home-")
@@ -98,14 +106,16 @@ func ExecuteLocalCommand(ctx context.Context, workspace string, command CommandS
 	if cleanup != nil {
 		defer cleanup()
 	}
-	bound, err := bindCommand(sandbox, workspace, command, credentials)
+	bound, err := bindCommand(ctx, sandbox, workspace, command, credentials)
 	if err != nil {
 		return "", err
 	}
-	stopSSH, err := bindCommandGitSSH(sandbox, workspace, bound, credentials)
+	stopSSH, err := bindCommandGitSSH(ctx, sandbox, workspace, bound, credentials)
 	if err != nil {
 		return "", err
 	}
 	defer stopSSH()
-	return sandbox.Exec(ctx, bound, sink)
+	defer scrubRunGitCredentials(ctx, sandbox, workspace, bound, credentials)
+	out, err := sandbox.Exec(ctx, bound, runGitEventSink(sink, credentials))
+	return redactRunGitSecrets(out, credentials), err
 }

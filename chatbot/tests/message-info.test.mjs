@@ -54,6 +54,7 @@ test("legacy replies fall back to 「未上报」 without token details", () => 
   });
   assert.equal(row(info, "time").value, "2026-10-31 03:52");
   assert.equal(row(info, "agent").value, "前端顾问");
+  assert.equal(row(info, "tool").value, NOT_REPORTED);
   assert.equal(row(info, "model").value, NOT_REPORTED);
   assert.equal(row(info, "model").missing, true);
   assert.equal(row(info, "elapsed").value, NOT_REPORTED);
@@ -80,7 +81,31 @@ test("short replies and malformed values stay readable", () => {
     messageInfo()
       .rows.map((r) => r.value)
       .slice(1, 3),
-    ["主 Bot", "CodeBuddy"],
+    ["主 Bot", NOT_REPORTED],
+  );
+});
+
+test("coding tool follows each reply's CLI, with a session fallback for legacy replies", () => {
+  for (const [engine, expected] of [
+    ["codebuddy", "CodeBuddy"],
+    ["codex", "Codex"],
+    ["claude-code", "Claude Code"],
+    ["opencode", "OpenCode"],
+    ["cursor", "Cursor"],
+    ["agy", "Antigravity"],
+    ["kimi", "Kimi Code"],
+    ["pi", "Pi"],
+    ["dsh", "DeepSeek Harness"],
+    ["zcode", "ZCode"],
+  ]) {
+    assert.equal(row(messageInfo({ model: `${engine}:model` }, "codex"), "tool").value, expected);
+  }
+  for (const [executor, expected] of [["claude", "Claude Code"], [" CLAUDE ", "Claude Code"], ["Codex", "Codex"]]) {
+    assert.equal(row(messageInfo({ model: "legacy-model" }, executor), "tool").value, expected);
+  }
+  assert.equal(
+    row(messageInfo({ model: "claude-opus-4-5", speakerAgentId: "reviewer" }, "codex"), "tool").value,
+    NOT_REPORTED,
   );
 });
 

@@ -16,7 +16,7 @@ printf '%s\n' "$*" >> "$NPM_TEST_LOG"
 [ "$NPM_TEST_FAIL" = 1 ] && { echo 'npm ERR! registry unreachable'; exit 1; }
 prefix=$3
 mkdir -p "$prefix/node_modules/@anthropic-ai/claude-code/bin" "$prefix/node_modules/.bin"
-printf '#!/bin/sh\necho 2.1.300\n' > "$prefix/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+printf '#!/bin/sh\necho ` + ClaudeCodeVersion + `\n' > "$prefix/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
 chmod 755 "$prefix/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
 ln -s ../@anthropic-ai/claude-code/bin/claude.exe "$prefix/node_modules/.bin/claude"
 `
@@ -99,7 +99,7 @@ func TestDockerSandboxRunsOnDemandClaudeCodeFromMountedDirectory(t *testing.T) {
 printf '%s\n' "$*" >> "$DOCKER_TEST_LOG"
 case "$*" in
   "image inspect loopforge-platform:tested") exit 0 ;;
-  "inspect "*) exit 1 ;;
+  "inspect "*) echo 'Error: No such container' >&2; exit 1 ;;
   "exec "*) echo /workspace ;;
 esac
 `})

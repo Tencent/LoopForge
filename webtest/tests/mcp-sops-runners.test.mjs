@@ -47,9 +47,11 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
   app.router.post('/api/workflows/generic-delivery/clone', (call) => ({
     ...generic, ...call.body, generic: false, tags: ['generic-source:generic-delivery'],
   }));
-  app.evaluate(`
+  let executors = [{ kind: 'codex', name: 'Codex', configured: true }];
+  app.router.get('/api/workflows/generic-delivery/executor-requirements', () => executors);
+  await app.evaluate(`
     state.currentUser={id:1,loginName:'owner',isPlatformAdmin:false};
-    state.data.users=[{id:1,loginName:'owner',gitTokenConfigured:true}];
+    state.data.users=[{id:1,loginName:'owner',gitHttpCredentialsConfigured:true}];
     state.mcpMarket=[{id:'market-gf',name:'Gongfeng',aliases:['gongfeng'],url:'https://gongfeng'}];
     state.data.mcpServers=[{id:'gf',scope:'project',projectId:'project-1',marketId:'market-gf'}];
     state.data.workflows=[${JSON.stringify(generic)}];
@@ -57,7 +59,9 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
     openGenericTemplateModal('generic-delivery');
   `);
   const rows = app.document.querySelector('#genericTemplateRequirements').textContent;
-  assert.match(rows, /工蜂 Git Token.*已配置/s);
+  assert.match(rows, /执行器 · Codex.*已配置/s);
+  assert.doesNotMatch(rows, /CodeBuddy/);
+  assert.match(rows, /Git 访问令牌.*已配置/s);
   assert.match(rows, /TAPD MCP.*未配置/s);
   assert.match(rows, /工蜂 MCP.*已配置/s);
   const sopHTML = app.evaluate(`({
@@ -68,14 +72,17 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
     node:workflowNodeName(state.data.workflows[0],'mr')
   })`);
   assert.match(sopHTML.card, /平台维护/);
-  assert.match(sopHTML.chips, /sop-badge tone-success[^>]*>.*工蜂 Git Token/);
+  assert.doesNotMatch(sopHTML.card, /CodeBuddy/);
+  assert.match(sopHTML.chips, /sop-badge tone-success[^>]*>.*Git 访问令牌/);
   assert.match(sopHTML.chips, /sop-badge tone-warn[^>]*>.*TAPD MCP/);
   assert.equal(sopHTML.gongfeng, true);
   assert.equal(sopHTML.tapd, false);
   assert.equal(sopHTML.node, '发起 MR');
   app.evaluate(`openGenericRequirementTarget('gongfeng-mcp')`);
   assert.equal(app.evaluate(`state.mcpQuery`), 'gongfeng');
-  app.evaluate(`openGenericTemplateModal('generic-delivery')`);
+  executors = [{ name: '', configured: false }];
+  await app.evaluate(`openGenericTemplateModal('generic-delivery')`);
+  assert.match(app.document.querySelector('#genericTemplateRequirements .req-row').textContent, /执行器.*未配置.*配置执行器/s);
   await app.evaluate(`adoptGenericTemplate()`);
   await settle(8);
   const clone = app.router.calls.find(c => c.path === '/api/workflows/generic-delivery/clone');

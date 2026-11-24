@@ -72,6 +72,7 @@ func TestBuildFactsDetectsReworkAndToolStorm(t *testing.T) {
 
 func TestParseModelResultScoresByWeight(t *testing.T) {
 	raw := `{
+	  "score": 96.75,
 	  "summary": "返工过多，建议提高 maxAttempts 并收紧门禁。",
 	  "dimensions": {"control":40,"latency":80,"tools":50,"tokens":70,"recovery":30,"delivery":90},
 	  "findings":[{"severity":"error","dimension":"control","nodeId":"fix","message":"返工 2 次"}],

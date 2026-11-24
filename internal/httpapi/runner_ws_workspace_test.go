@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,10 +14,13 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 func quietRunnerHub() *runnerControlHub {
@@ -52,7 +56,7 @@ func answerOnce(t *testing.T, hub *runnerControlHub, conn *runnerControlConn, re
 		if message.Type != "workspace.request" || message.WorkspaceRequest == nil {
 			t.Fatalf("unexpected message %+v", message)
 		}
-		hub.resolveWorkspace(message.RequestID, response)
+		hub.resolveWorkspace(conn, message.RequestID, response)
 		return *message.WorkspaceRequest
 	case <-time.After(3 * time.Second):
 		t.Fatal("runner never received the request")
@@ -271,13 +275,181 @@ func TestRunnerWorkspaceRPCIsTransient(t *testing.T) {
 		t.Fatalf("unexpected workspace request: %+v", message)
 	}
 	payload := json.RawMessage(`{"entries":[],"truncated":false}`)
-	hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload, Status: 200})
+	hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload, Status: 200})
 	got := <-completed
 	if got.err != nil || string(got.response.Payload) != string(payload) {
 		t.Fatalf("unexpected response: %+v err=%v", got.response, got.err)
 	}
 	if len(hub.pending) != 0 {
 		t.Fatalf("completed transient requests retained in memory: %d", len(hub.pending))
+	}
+}
+
+func TestRunnerWorkspaceImageBuildUpdatesConversationWhilePreparing(t *testing.T) {
+	hub := quietRunnerHub()
+	conn := testRunnerConn("runner-a")
+	registerTestConn(hub, conn)
+	var activity assistantActivityLog
+	session := &AgentToolSession{Notify: func(kind string, value any) {
+		if kind == "thought" {
+			activity.add(value.(assistantStreamEvent))
+		}
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ctx = withAssistantDockerBuildProgress(ctx, session)
+	completed := make(chan error, 1)
+	go func() {
+		_, err := hub.requestWorkspace(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationPrepare})
+		completed <- err
+	}()
+	select {
+	case request := <-conn.send:
+		if request.Type != "workspace.request" || !request.ObserveImageBuild {
+			t.Fatalf("request = %+v", request)
+		}
+		hub.reportImageBuild(testRunnerConn("runner-b"), request.RequestID, domain.WorkspaceImageBuildProgress{ID: "foreign", Step: "unrelated"})
+		hub.reportImageBuild(conn, request.RequestID, domain.WorkspaceImageBuildProgress{ID: "a", Step: "启动构建"})
+		hub.reportImageBuild(conn, request.RequestID, domain.WorkspaceImageBuildProgress{ID: "a", Step: "导出镜像"})
+		events := activity.snapshot()
+		if len(events) != 1 || events[0].Tool != assistantDockerBuildTool || events[0].Detail != "导出镜像" {
+			t.Fatalf("live activity = %+v", events)
+		}
+		hub.reportImageBuild(conn, request.RequestID, domain.WorkspaceImageBuildProgress{ID: "a", Done: true})
+		hub.resolveWorkspace(conn, request.RequestID, domain.RunnerWorkspaceResponse{Status: 200})
+		if err := <-completed; err != nil {
+			t.Fatal(err)
+		}
+		events = activity.snapshot()
+		if len(events) != 2 || events[1].ID != events[0].ID || events[1].Kind != "toolDone" || events[1].Failed {
+			t.Fatalf("completed activity = %+v", events)
+		}
+	case <-ctx.Done():
+		t.Fatal("runner did not receive the workspace request")
+	}
+}
+
+func TestRunnerWorkspaceRelaysImageBuildProgressBeforeReturning(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	hub := quietRunnerHub()
+	conn := testRunnerConn("runner-a")
+	registerTestConn(hub, conn)
+	en := relayTestEngine(t)
+	en.ConfigureControl(engine.ControlConfig{Token: "service-secret"})
+	router := gin.New()
+	router.POST(runnerWorkspaceRelayPath, handleRunnerWorkspaceRelay(en, hub))
+	server := httptest.NewServer(router)
+	defer server.Close()
+	en.ConfigureControl(engine.ControlConfig{Token: "service-secret", APIURL: server.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	updates := make(chan domain.WorkspaceImageBuildProgress, 2)
+	ctx = runtime.WithDockerBuildProgress(ctx, func(update domain.WorkspaceImageBuildProgress) { updates <- update })
+	completed := make(chan workspaceResult, 1)
+	go func() {
+		response, err := relayRunnerWorkspaceToSuccessor(en)(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationPrepare})
+		completed <- workspaceResult{response, err}
+	}()
+	select {
+	case request := <-conn.send:
+		if !request.ObserveImageBuild {
+			t.Fatalf("relayed request did not subscribe: %+v", request)
+		}
+		want := domain.WorkspaceImageBuildProgress{ID: "relayed-build", Step: "读取 Dockerfile"}
+		hub.reportImageBuild(conn, request.RequestID, want)
+		select {
+		case got := <-updates:
+			if got != want {
+				t.Fatalf("relayed progress = %+v, want %+v", got, want)
+			}
+		case <-ctx.Done():
+			t.Fatal("relayed progress was not streamed during the request")
+		}
+		hub.resolveWorkspace(conn, request.RequestID, domain.RunnerWorkspaceResponse{Status: 200})
+		if got := <-completed; got.err != nil || got.response.Status != 200 {
+			t.Fatalf("relay completion = %+v", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("runner did not receive the relayed request")
+	}
+}
+
+func TestRunnerWorkspaceSendsScopedPlatformSSHKnownHosts(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	hub := quietRunnerHub()
+	hub.sshHostLookup = store.PlatformSSHKnownHosts
+	conn := testRunnerConn("runner-a")
+	registerTestConn(hub, conn)
+	_, hostKey := sshTestIdentity(t)
+	preparationPin := knownhosts.Line([]string{"gitlab.example.org:2222"}, hostKey) + "\n"
+	terminalPin := knownhosts.Line([]string{"terminal.example.org:22"}, hostKey) + "\n"
+	otherPin := knownhosts.Line([]string{"other.example.org:22"}, hostKey) + "\n"
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := store.CreatePlatformGitSSHHost(t.Context(), &repo.PlatformGitSSHHost{
+		Host: "gitlab.example.org:2222", PublicKeys: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostKey))),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(terminalPin+otherPin), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(gitwork.SSHKnownHostsEnv, path)
+	done := requestAsync(hub, conn.runnerID, domain.RunnerWorkspaceRequest{
+		RunID:     "run-a",
+		Operation: domain.RunnerWorkspaceOperationTerminal,
+		Terminal:  &domain.WorkspaceTerminalRequest{Operation: "open"},
+		PreparationInvocation: &domain.RunnerInvocation{
+			GitSSHKeys: map[string]string{"ssh://git@gitlab.example.org:2222/group/repo.git": "checkout-identity"},
+		},
+		TerminalGitSSHKeys: map[string]string{"git@terminal.example.org:group/repo.git": "terminal-identity"},
+	})
+	got := answerOnce(t, hub, conn, domain.RunnerWorkspaceResponse{Status: http.StatusOK})
+	if pins := got.GitSSHKnownHosts; pins == nil || pins.Entries != preparationPin+terminalPin || pins.ReadFailed {
+		t.Fatalf("workspace platform pins = %+v", pins)
+	}
+	if result := <-done; result.err != nil || result.response.Status != http.StatusOK {
+		t.Fatalf("workspace response = %+v", result)
+	}
+}
+
+func TestRunnerWorkspaceRelayHydratesConversationSSHKnownHosts(t *testing.T) {
+	predecessor, successor := quietRunnerHub(), quietRunnerHub()
+	predecessor.successor = successor.requestRelayed
+	predecessor.handOver()
+	conn := testRunnerConn("runner-a")
+	registerTestConn(successor, conn)
+
+	_, hostKey := sshTestIdentity(t)
+	pin := knownhosts.Line([]string{"gitlab.example.org:2222"}, hostKey) + "\n"
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte(pin), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(gitwork.SSHKnownHostsEnv, path)
+	conversation, err := json.Marshal(runtime.ConversationProcessRequest{
+		Operation: "start",
+		Command: &runtime.ConversationCommand{
+			Credentials: runtime.RunCredentials{GitSSHHostKeys: map[string]string{"gitlab.example.org:2222": "identity"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := requestAsync(predecessor, conn.runnerID, domain.RunnerWorkspaceRequest{
+		Operation:    domain.RunnerWorkspaceOperationConversationCLI,
+		Conversation: conversation,
+	})
+	got := answerOnce(t, successor, conn, domain.RunnerWorkspaceResponse{Status: http.StatusOK})
+	if pins := got.GitSSHKnownHosts; pins == nil || pins.Entries != pin || pins.ReadFailed {
+		t.Fatalf("relayed conversation pins = %+v", pins)
+	}
+	if result := <-done; result.err != nil || result.response.Status != http.StatusOK {
+		t.Fatalf("relayed conversation response = %+v", result)
 	}
 }
 
@@ -318,7 +490,7 @@ func TestRunnerWorkspaceHandoverDrainsInFlightRequests(t *testing.T) {
 		t.Fatalf("a request after the handover used the draining socket: %+v", message)
 	default:
 	}
-	predecessor.resolveWorkspace(delivered.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: json.RawMessage(`"step-4"`)})
+	predecessor.resolveWorkspace(old, delivered.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: json.RawMessage(`"step-4"`)})
 	if got := <-inFlight; got.err != nil || string(got.response.Payload) != `"step-4"` {
 		t.Fatalf("in-flight request across handover: %+v err=%v", got.response, got.err)
 	}
@@ -347,19 +519,28 @@ func TestRunnerWorkspaceHandoverDrainIsBounded(t *testing.T) {
 	}
 }
 
-func TestRunnerCheckpointCancellationReachesExecutorOnlyForOneShotRequests(t *testing.T) {
-	for _, operation := range []string{domain.RunnerWorkspaceOperationCheckpointExport, "conversation_process"} {
+func TestRunnerWorkspaceCancellationReachesExecutorOnlyForOneShotRequests(t *testing.T) {
+	for _, operation := range []string{domain.RunnerWorkspaceOperationCheckpointExport, domain.RunnerWorkspaceOperationPrepare, domain.RunnerWorkspaceOperationConversationCLI} {
 		t.Run(operation, func(t *testing.T) {
 			hub := quietRunnerHub()
 			conn := testRunnerConn("runner-cancel")
+			defer conn.close()
+			conn.send = make(chan runnerControlMessage, 1)
 			registerTestConn(hub, conn)
 			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			done := make(chan error, 1)
 			go func() {
 				_, err := hub.requestWorkspace(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{Operation: operation})
 				done <- err
 			}()
 			request := <-conn.send
+			wantCancel := operation != domain.RunnerWorkspaceOperationConversationCLI
+			if operation == domain.RunnerWorkspaceOperationPrepare {
+				// The API must release its waiter without losing the cancel
+				// message when the connection's write queue is full.
+				conn.send <- runnerControlMessage{Type: "busy"}
+			}
 			cancel()
 			select {
 			case err := <-done:
@@ -369,7 +550,10 @@ func TestRunnerCheckpointCancellationReachesExecutorOnlyForOneShotRequests(t *te
 			case <-time.After(time.Second):
 				t.Fatal("request cancellation blocked")
 			}
-			if operation == "conversation_process" {
+			if operation == domain.RunnerWorkspaceOperationPrepare {
+				<-conn.send
+			}
+			if !wantCancel {
 				select {
 				case unexpected := <-conn.send:
 					t.Fatalf("persistent CLI lifecycle cancelled by RPC: %+v", unexpected)
@@ -382,7 +566,7 @@ func TestRunnerCheckpointCancellationReachesExecutorOnlyForOneShotRequests(t *te
 						t.Fatalf("wrong cancellation: %+v", stop)
 					}
 				case <-time.After(time.Second):
-					t.Fatal("export cancellation not sent")
+					t.Fatal("workspace cancellation not sent")
 				}
 			}
 		})

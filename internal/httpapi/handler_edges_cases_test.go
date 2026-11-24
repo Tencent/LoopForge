@@ -125,34 +125,6 @@ func TestWorkbenchImagesDecksAttachments(t *testing.T) {
 		t.Fatal("nil conversation changed")
 	}
 
-	session := &AgentToolSession{
-		UserID: owner, ProjectID: "wb-p",
-		AttachmentIDs: map[string]bool{images[0].ID: true},
-	}
-	result, err := readWorkbenchAttachmentTool(session, json.RawMessage(`{"id":"`+images[0].ID+`"}`))
-	if err != nil || result["isError"] != false {
-		t.Fatalf("read image=%v %v", result, err)
-	}
-	text, err := saveWorkbenchImage(owner, "notes.txt", "text/plain", []byte("hello"), "wb-p")
-	if err != nil {
-		t.Fatal(err)
-	}
-	session.AttachmentIDs[text.ID] = true
-	result, err = readWorkbenchAttachmentTool(session, json.RawMessage(`{"id":"`+text.ID+`"}`))
-	if err != nil || !strings.Contains(string(cvAJSON(result)), "hello") {
-		t.Fatalf("read text=%v %v", result, err)
-	}
-	binary, _ := saveWorkbenchImage(owner, "blob.bin", "application/octet-stream", []byte{0, 1, 2}, "wb-p")
-	session.AttachmentIDs[binary.ID] = true
-	result, err = readWorkbenchAttachmentTool(session, json.RawMessage(`{"id":"`+binary.ID+`"}`))
-	if err != nil || !strings.Contains(string(cvAJSON(result)), "二进制") {
-		t.Fatalf("read binary=%v %v", result, err)
-	}
-	session.SetTerminalOnly()
-	if _, err := readWorkbenchAttachmentTool(session, json.RawMessage(`{"id":"`+images[0].ID+`"}`)); err == nil {
-		t.Fatal("terminal-only attachment read accepted")
-	}
-
 	copied, err := copyForkAttachment(owner, owner+1, images[0].ID, "wb-p")
 	if err != nil || copied.ID == images[0].ID {
 		t.Fatalf("copy=%+v %v", copied, err)
@@ -482,116 +454,6 @@ func TestMarketAndWorkspaceMRHelpers(t *testing.T) {
 	h.mcpMarketInstall(c)
 	if rec.Code != 404 {
 		t.Fatalf("missing market install=%d", rec.Code)
-	}
-
-	for _, tc := range []struct {
-		rc   domain.RepositoryContext
-		want string
-	}{
-		{domain.RepositoryContext{CloneURL: "git@git.example.com:group/repo.git"}, "group/repo"},
-		{domain.RepositoryContext{WebURL: "https://git.example.com/team/project/"}, "team/project"},
-		{domain.RepositoryContext{CloneURL: "https://github.com/a/b.git"}, ""},
-	} {
-		if got := gongfengProjectPath(tc.rc); got != tc.want {
-			t.Fatalf("project path=%q want=%q", got, tc.want)
-		}
-	}
-	for status, part := range map[int]string{401: "Token", 403: "权限", 404: "找不到", 500: "HTTP 500"} {
-		if got := gongfengMRError(status, []byte(`{"message":"detail"}`)).Error(); !strings.Contains(got, part) {
-			t.Fatalf("MR error %d=%q", status, got)
-		}
-	}
-	if firstNonNil(nil, "x", "y") != "x" || firstNonNil(nil) != nil {
-		t.Fatal("first nonnil")
-	}
-	desc := workspaceSubmitMRDescriptor()
-	if desc.Name != "workbench_workspace_submit_mr" {
-		t.Fatalf("descriptor=%+v", desc)
-	}
-
-	var auth []string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth = append(auth, r.Header.Get("Authorization")+"|"+r.Header.Get("PRIVATE-TOKEN"))
-		switch {
-		case strings.Contains(r.URL.Path, "merge_request/9"):
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(r.URL.Path, "merge_requests"):
-			_ = json.NewEncoder(w).Encode([]gongfengOpenMR{{ID: 9, IID: 3, SourceBranch: "work", TargetBranch: "main"}})
-		default:
-			w.WriteHeader(http.StatusUnauthorized)
-		}
-	}))
-	defer upstream.Close()
-	client := upstream.Client()
-	if open, ok := findOpenGongfengMR(context.Background(), client, "token", upstream.URL, "work", "main"); !ok || open.IID != 3 {
-		t.Fatalf("open MR=%+v %v", open, ok)
-	}
-	if err := updateGongfengMR(context.Background(), client, "token", upstream.URL, 9, "title", "body"); err != nil {
-		t.Fatal(err)
-	}
-	if err := updateGongfengMR(context.Background(), client, "token", upstream.URL, 0, "title", "body"); err == nil {
-		t.Fatal("zero MR id updated")
-	}
-	retry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("PRIVATE-TOKEN") != "" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		if r.Header.Get("Authorization") == "Bearer token" {
-			_, _ = w.Write([]byte(`{"ok":true}`))
-			return
-		}
-		w.WriteHeader(http.StatusForbidden)
-	}))
-	defer retry.Close()
-	resp, _, err := gongfengPostOrGet(context.Background(), retry.Client(), http.MethodGet, retry.URL, "token", nil)
-	if err != nil || resp.StatusCode != 200 {
-		t.Fatalf("auth retry=%v %v", resp, err)
-	}
-}
-
-func TestWorkspaceSubmitMRValidationBranches(t *testing.T) {
-	st := cvAStore(t)
-	_ = st.PutUser(domain.User{LoginName: "cva-mr-no-token"})
-	noToken, _ := st.UserByLoginName("cva-mr-no-token")
-	_ = st.PutUser(domain.User{LoginName: "cva-mr-token", GitToken: "test-token"})
-	withToken, _ := st.UserByLoginName("cva-mr-token")
-	runID := "cva-mr-run"
-	run := domain.Run{ID: runID, WorkflowSnapshot: domain.WorkflowDefinition{CollaborationMode: "sop"}}
-	_ = st.PutRun(run)
-	gateway := &agentToolGateway{deps: &deps{repo: st}}
-	session := &AgentToolSession{User: noToken, UserID: noToken.ID}
-	if _, err := gateway.workspaceSubmitMR(context.Background(), session, map[string]any{"title": "x"}); err == nil {
-		t.Fatal("submit without workspace accepted")
-	}
-	session.workspaceRunID = runID
-	if _, err := gateway.workspaceSubmitMR(context.Background(), session, map[string]any{"title": "x"}); err == nil || !strings.Contains(err.Error(), "对话工作区") {
-		t.Fatalf("SOP submit err=%v", err)
-	}
-	run.Kind = domain.RunKindWorkspace
-	run.WorkflowSnapshot.CollaborationMode = ""
-	_ = st.PutRun(run)
-	for _, args := range []map[string]any{
-		{},
-		{"title": strings.Repeat("x", 201)},
-		{"title": "x", "description": strings.Repeat("d", 20001)},
-		{"title": "x", "targetBranch": "../bad"},
-	} {
-		if _, err := gateway.workspaceSubmitMR(context.Background(), session, args); err == nil {
-			t.Fatalf("invalid args accepted: %v", args)
-		}
-	}
-	if _, err := gateway.workspaceSubmitMR(context.Background(), session, map[string]any{"title": "x"}); err == nil || !strings.Contains(err.Error(), "Git Token") {
-		t.Fatalf("missing token err=%v", err)
-	}
-	session.User, session.UserID = withToken, withToken.ID
-	if _, err := gateway.workspaceSubmitMR(context.Background(), session, map[string]any{"title": "x"}); err == nil || !strings.Contains(err.Error(), "执行引擎") {
-		t.Fatalf("missing engine err=%v", err)
-	}
-	session.User = domain.User{ID: 999999}
-	session.UserID = 999999
-	if _, err := gateway.workspaceSubmitMR(context.Background(), session, map[string]any{"title": "x"}); err == nil {
-		t.Fatal("missing requester accepted")
 	}
 }
 
@@ -1001,22 +863,22 @@ func TestRemoteWorkspaceEditing(t *testing.T) {
 		for message := range conn.send {
 			req := message.WorkspaceRequest
 			if req.Path == "remote-error.txt" {
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Error: "remote rejected"})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Error: "remote rejected"})
 				continue
 			}
 			if req.Path == "invalid-response.txt" {
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Payload: []byte(`{`)})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Payload: []byte(`{`)})
 				continue
 			}
 			if req.Terminal != nil && req.Terminal.Data == "fail" {
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Error: "terminal rejected"})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Error: "terminal rejected"})
 				continue
 			}
 			payload := []byte(`{"sha256":"remote-sha"}`)
 			if req.Operation == domain.RunnerWorkspaceOperationTerminal {
 				payload = []byte(`{"id":"terminal-one","ok":true}`)
 			}
-			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload})
+			hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload})
 		}
 	}()
 	t.Cleanup(func() {
@@ -1308,7 +1170,7 @@ func TestCloseRemoteWorkspaceResponseErrors(t *testing.T) {
 	h := &runsHandlers{deps: &deps{repo: f.s, engine: f.e}, runnerControls: hub}
 	go func() {
 		message := <-conn.send
-		hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Error: "cannot close"})
+		hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Error: "cannot close"})
 	}()
 	if err := h.closeWorkspaceTerminals(context.Background(), run, f.user.ID); err == nil {
 		t.Fatal("runner close response error accepted")

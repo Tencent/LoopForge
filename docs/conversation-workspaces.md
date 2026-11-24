@@ -1,14 +1,33 @@
 # 对话工作区与项目沙箱
 
-普通对话中的 Main Bot 保持本地对话进程，首次需要修改仓库或运行命令时才调用 `workbench_workspace_open` 创建 Docker 工作区。项目不再配置默认对话沙箱：工具描述列出本项目和共享的 Docker 沙箱及项目仓库，由 Main Bot 按要改的代码选择 `sandboxProfileId` 和 `repositories`。不选环境时使用平台 `generic-docker`，不选仓库时检出项目全部仓库（默认仓库在前）；任何情况下都不使用宿主机。所选环境不可用（被删除、非 Docker、跨项目私有）时返回可操作错误，由 Main Bot 改选，不会被静默替换。
+普通对话中的 Main Bot 保持本地对话进程，需要看代码、改代码、跑命令、构建或访问 GitHub 时才调用 `workbench_workspace_open` 进入工作区模式。工作区是一个**运行环境**，不是一次检出：`workbench_workspace_open` 接收可选的 `sandboxProfileId` 与 `workspaceRunId`（其他参数一律报错），工具描述列出本项目和共享的可用沙箱（Docker，或执行机器的 native 轻量沙箱）以及项目登记的仓库地址供 clone 参考。不选环境时沿用当前工作区，还没有工作区时用会话设置或平台 `generic-docker`；任何情况下都不使用无隔离的宿主机（`local`）。所选环境不可用（被删除、`local`、跨项目私有、Dockerfile 缺失）时返回可操作错误，由 Main Bot 改选，不会被静默替换。
 
-用户可在「高级设置 → 显示运行环境选择」中为会话指定环境。会话 `sandboxProfileId` 非空时，它优先于 Main Bot 的选择，工具描述也会告诉 Main Bot 不要再选。仓库不单独提供用户配置：Main Bot 按需求选择，拿不准时全部检出。
+传入 `workspaceRunId`（同项目的 SOP 运行 ID，或本对话之前开启过的可用工作区 ID；子 SOP 会自动定位到父工作区）时，要求目标工作区与当前对话在同一执行机器上（不在同一机器时如实报错并说明双方所在机器），直接将本对话绑定到该原工作区；已回收的快照会先原地恢复，且修改结果直接保留在原 SOP 工作区中，之后可直接在 SOP 上 `Retry` 重跑后续节点或 `runs_resume` 继续流程，删除普通对话也不会删除借用的 SOP 工作区。接入或进入 SOP 工作区与 SOP 自身的工作区编辑、终端、Retry、resume 一样需要项目写权限：本轮发言人是项目只读成员（viewer）时拒绝接入；共享对话已被其他成员绑定到 SOP 时，只读成员发言的那一轮以平台模式运行，不会继承该 SOP 工作区的写入能力。重新打开当前已绑定的工作区时若准备失败（租约被占用、执行机器暂时离线等），保留原绑定，稍后重试即可。执行机器比对使用运行实际所在的机器：没有冻结执行模式的旧运行按负责人默认执行机器计算。
 
-项目会话在入口统一校验项目访问权限。所有具备访问权限的成员（包括 viewer）都拥有同一会话的完整操作权限，可以继续讨论、编辑用户消息、停止任意成员发起的回复、选择运行环境、使用工作区和浏览器工具，以及归档或删除普通项目会话。内部不再按会话创建者、本轮发起人或项目编辑角色二次限制。会话的存储归属保持稳定，工作区绑定和历史对所有参与者一致；模型调用、Git 推送与 MR 仍使用当前操作人的个人凭据。
+工作区默认新开时是空目录，平台不预先检出任何仓库、不建分支。交接给 CLI 后，Agent 用自己的 git `clone`、`checkout`、建分支、`commit`、`push`，需要时 `merge`，并自己开 PR（`gh` 或 `curl` 调 API；镜像里没有 `gh` 时由 Agent 自行安装，或在沙箱配置里预装）。推送到主分支、强推、合并 PR 只在用户明确要求时做。
 
-一个对话同一时间只绑定一个工作区（会话 `workspaceRunId`），用哪个由 Main Bot 按用户当前实际要处理的需求决定，@ 只是线索。`workbench_workspace_open` 的 `issueId`、`workspaceRunId`、`new` 最多传一个：都不传继续用当前绑定的工作区，还没有就新开；`issueId` 切到该需求最近一次顶层 SOP 运行的工作区，不论它在执行、暂停、成功、失败还是取消，需求必须跑过 SOP；`workspaceRunId` 切回本对话之前开过的工作区（会话 `ownWorkspaceRunIds`）；`new` 新开一个对话工作区。没跑过 SOP 的新需求是否沿用当前工作区也由 Main Bot 判断：仓库和环境合适就沿用，不合适就新开。每轮上下文列出当前绑定的工作区、之前开过的工作区，以及本条消息 @ 的需求和关联主需求各自有没有跑过 SOP。
+个人对话可直接使用共享沙箱开启可写工作区。Agent 可以创建文件、运行命令、预览，并把产物附到回复供查看和下载。有 Git 任务时，Agent 仍使用本轮发言人的凭据自行操作仓库。个人工作区只向会话所有者开放，Agent 只能接入当前对话开启的工作区。从已有个人工作区的对话选项目时，会在项目中新建对话，原个人对话和文件可继续使用。
 
-工作区只由 Main Bot 打开或切换：角色子 Agent 的 agent 文件用 `disallowedTools` 禁掉 `workbench_workspace_open`，网关在本轮还有 Agent 派发在跑时也会拒绝它。子 Agent 与 Main Bot 共用同一个网关和同一个已绑定的工作区，直接在其中读写、跑命令；需要另一个工作区时在汇报里说明，由 Main Bot 在派发结束后处理。
+用户可在「高级设置 → 显示运行环境选择」中为会话指定环境。会话 `sandboxProfileId` 非空时，它优先于 Main Bot 的选择，工具描述也会告诉 Main Bot 不要再选。
+
+项目会话在入口统一校验项目访问权限。所有具备访问权限的成员（包括 viewer）都拥有同一会话的完整操作权限，可以继续讨论、编辑用户消息、停止任意成员发起的回复、选择运行环境、使用工作区和浏览器工具，以及归档或删除普通项目会话。内部不再按会话创建者、本轮发起人或项目编辑角色二次限制。会话的存储归属保持稳定，工作区绑定和历史对所有参与者一致；模型调用、Git 推送与 PR 仍使用**当前这一轮发言人**的个人凭据。
+
+## Git 凭据
+
+工作区模式下的 CLI 进程（`runtime.BindGitWorkspace`）在每轮启动时按本轮发言人注入：
+
+- HTTPS：个人配置的 Git Token。`GIT_ASKPASS` 指向工作区 `.agentflow/runtime/git-askpass-hosts`，脚本本身不含令牌，从提示里解析出 URL 主机，只在它恰好是 `https://github.com` 时以 `x-access-token` 应答；`github.com.example`、`github.com@example`、`http://` 等其他地址都拿不到凭据。带 `oauth2:`/`private:` 前缀的令牌不是 GitHub 令牌，不会注入。`GIT_TERMINAL_PROMPT=0`，不会卡在交互输入上。
+- `GH_TOKEN`：同一个令牌，供 `gh` 或 `curl` 调 GitHub API。平台进程自身的 `GH_TOKEN`/`GITHUB_TOKEN` 不会透传进沙箱。
+- SSH 克隆使用按 `host:port` 绑定的个人密钥。同一主机和端口的仓库共用该密钥。执行进程在内存中持有私钥，并通过临时 ssh-agent 签名。沙箱只接收 agent socket、公钥与 SSH 配置。平台内置 `github.com:22` 与 `ssh.github.com:443` 的主机公钥，其他主机由平台管理员在「平台管理 → Git SSH 主机信任」核验并登记。部署文件 `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` 的条目与页面记录合并生效。Runner 0.11.1 及以上会在启动工作区会话时收到匹配的条目。同一主机和端口优先使用平台下发的受信公钥。平台仅下发吊销记录或没有匹配条目时，Runner 使用本地配置的受信公钥。两处的 `@revoked` 条目都生效。
+- 提交身份：`GIT_CONFIG_SYSTEM` 设为发言人的登录名，邮箱 `<login>@users.noreply.loopforge.invalid`；Agent 可以用 `git config --global/--local` 覆盖。
+
+工具结果和回复都会对发言人的令牌（含去掉前缀后的裸令牌）做脱敏；提示词要求 Agent 不打印、不回显、不写入令牌。
+
+## 工作区的切换与生命周期
+
+一个对话同一时间只绑定一个工作区（会话 `workspaceRunId`）。工作区按运行环境区分：不传 `sandboxProfileId` 或传的与当前工作区相同时继续用当前工作区；传了别的环境就切换过去——本对话之前在那个环境开过、仍可用的工作区（会话 `ownWorkspaceRunIds`）直接接着用，文件和已克隆的仓库都在，没有就新开一个空工作区。每轮上下文列出当前绑定的工作区、之前在其他环境开过的工作区，以及本条消息 @ 的需求和关联主需求各自有没有跑过 SOP、SOP 的工作分支；要接着 SOP 的改动，Agent 进入工作区后自己 clone 并 checkout 那个分支。
+
+工作区只由 Main Bot 打开或切换：角色子 Agent 的 agent 文件用 `disallowedTools` 禁掉 `workbench_workspace_open`，网关在本轮还有 Agent 派发在跑时也会拒绝它。子 Agent 与 Main Bot 共用同一个已绑定的工作区；需要另一个环境时在汇报里说明，由 Main Bot 在派发结束后处理。
 
 普通对话按轮次持有工作区租约：首次使用时取得，此后整轮工具调用复用并持续续租，不再逐条命令、文件操作或浏览器操作保存完整快照。正常流程只在两个时点保存：本轮结束（包括失败、取消、超时和异常收尾），或切换工作区前。切换与轮次结束会等待正在使用该工作区的工具完成；重新打开同一个工作区不触发保存。切换前保存失败（例如工作区超过快照上限或保存超时）不阻止切换：旧工作区照常解绑，文件原样保留，空闲回收在回收前会再次保存，保存成功之前不会回收；`workbench_workspace_open` 的结果用 `previousCheckpointError` 说明原因。轮次收尾时仍未解决的保存错误通过生成状态的 `workspaceWarning` 返回。续租遇到存储错误时在租约有效期内重试，只有租约已被他人取得或临近过期才中止本轮生成。部署的在途任务等待包含收尾保存；强杀或崩溃仍依赖保留的工作目录和既有空闲回收机制补偿。
 
@@ -16,21 +35,19 @@
 
 会话尚未关联需求时，消息里 @ 的需求（优先取跑过 SOP 的）自动成为关联主需求；在对话里派发需求（模型调用 `issues_dispatch`、自动草稿，或用户确认草稿，后者由聊天页通过 `X-AgentFlow-Chat-Session` 请求头带上会话）也会把该需求关联到会话。之后不 @ 需求的消息也会把它列给 Main Bot。SOP 总是准备自己的工作区，不再借用对话工作区。
 
-使用 SOP 工作区时读写规则与任务工作区相同：执行中只读，暂停或结束后可写。Main Bot 通过 `workbench_workspace_sop` 直接控制这次 SOP，不经确认草稿（帮我批准模式仍经独立审查），请求按用户本人的权限走运行控制端点：`pause` 在当前节点停下供 Main Bot 改代码；`resume` 带着 Main Bot 的改动说明继续 SOP，由交付节点交付；`takeover` 取消执行中的 SOP，之后直接在它的工作区改。SOP 结束后（含成功交付），`workbench_workspace_submit_mr` 推送到它的工作分支并发起或更新 MR；暂停期间不能提交，以免与之后恢复的交付节点冲突。
 
-对话工作区创建时冻结完整沙箱、Dockerfile、环境定义和检出的仓库，之后不再改变环境或增加仓库；返回中的 `missingRepositories` 或环境不符的提示让 Main Bot 用 `new` 新开一个工作区。`repositories` 不填检出项目全部仓库；显式传空数组 `[]` 开一个不检出任何仓库的空工作区，只跑命令、起服务或开浏览器，项目没配仓库时也能用，它没有可提交的内容。每个仓库在各自目录下新建工作分支，`workbench_workspace_submit_mr` 只推送和发起相对基线分支有改动的仓库，没有任何改动时返回错误。
+已关联 SOP 的任务会话里，SOP 执行中工作区只读；Main Bot 用 `runs_pause` 或 `runs_cancel` 停下 SOP 后才进入工作区模式（`workbench_workspace_open` 返回 `handoff=false` 时会提示这一点）。SOP 的交付由它自己的交付节点完成。
 
-新开时每个仓库的分支由三件事决定：模式、分支名和起点。
+对话工作区创建时冻结完整沙箱、Dockerfile 和环境定义，之后不再改变环境；换环境就是切到另一个工作区。准备工作区失败时，本次新建的工作区会被取消并解绑，会话回到之前的工作区，不会卡在一个打不开的工作区上。
 
-- 模式 `branchMode`：`auto`（默认）由平台按需求编号或时间戳自动命名新分支；`continue` 继续指定的已有远端分支，以 `RequireExistingWorkBranch` 检出，不新建、不改名；`create` 按调用方给的名字新建分支，以 `CreateNewWorkBranch` 在检出时用 `ls-remote` 确认远端没有同名分支，已存在则报错并提示改用 `continue`，绝不静默继续（跑在 runner 上时要求 runner ≥ 0.9.1）；`readonly` 只读检出指定分支（可以是 preview、master 这类共享分支），仓库以 `ReadOnly` 记录、`BaseBranch` 即该分支、没有工作分支，能读、构建、跑测试、复现问题，`submit_mr` 不会提交它，工作区里全是只读仓库时提交直接报错。
-- 起点 `baseBranch`：工作分支从它拉出，它同时是 `submit_mr` 的默认 MR 目标和「有没有改动」的比较基线；不填用仓库配置的主分支。MR 的内容相对起点计算，所以 hotfix 打 release、堆叠 MR 打父分支时，开工作区就要把 `baseBranch` 设成目标分支；`submit_mr` 显式传的 `targetBranch` 与起点不同时照常发起，但结果带 `warning` 说明 MR 会混入两个分支之间的差异提交。工作分支不能等于起点、主分支、集成分支或 `master`/`main`。
-- 分支名：单仓库用 `branch`；多仓库用 `repositoryBranches`（按仓库名或 id）。值写字符串时使用顶层 `branchMode`/`baseBranch`；写对象 `{branch, branchMode, baseBranch}` 时该仓库用自己的模式和起点，所以一次调用就能「A 仓库 continue 别人的分支做评审、B 仓库 create 一个命名分支」。只给 `baseBranch` 不给 `branch` 的对象按 `auto` 从该起点新建；未列出的仓库按 `auto` 从顶层 `baseBranch`（或主分支）新建，不会沿用其他仓库显式 continue/create 的分支名。
+## Native 沙箱
 
-省略 `branchMode` 但传了分支时按 `continue` 处理，兼容老的调用方；`auto` 与分支名同时出现、`continue`/`create`/`readonly` 缺分支名、`readonly` 另给 `baseBranch`（包括顶层 `baseBranch` 没有任何非只读仓库用得上）、空工作区带分支参数，都会在参数校验阶段报错。起点或只读分支在远端不存在时，报错会点名是哪个仓库的哪个分支。`create` 的名字若是本对话之前开过、仍可切回的工作区用过的分支，直接拒绝并给出 `workspaceRunId`：那个工作区里可能有没推送的提交，重新从起点新建会静默丢掉它们。分支选择只在创建时生效，复用已有工作区时传入会被拒绝；`continue` 的分支不存在或不可读时按 runner 的既有规则直接报错。准备代码失败时，本次新建的工作区会被取消并解绑，会话回到之前的工作区，不会卡在一个打不开的工作区上。
+会话工作区可以使用 native 沙箱（Linux 上解析为 bwrap，macOS 上解析为 seatbelt）：
 
-工作分支以工作区记录的 `workBranch` 为准。`submit_mr` 推送前检查每个有改动的仓库确实检出在这个分支上、没有进行中的 merge/rebase/cherry-pick；在终端里手工 `git checkout` 到别的分支后提交会被拒绝并说明当前分支，而不是把记录的分支报告为已推送（本地执行与 runner ≥ 0.9.2 生效，更旧的 runner 仍按旧逻辑跳过）。要换分支就 `new` 新开工作区。
+- **Linux (`bwrap`)**：与 Docker 布局一致：CLI 的 HOME 是 `<会话根>/home`，cwd 是 `<会话根>/ws`（挂的是运行工作区），审批钩子文件只读挂载；宿主文件系统其余部分只读，网络与宿主的 Docker 守护进程保持可达（可以在工作区里构建镜像、启动容器）。CLI 使用执行机器自己安装的版本。bwrap 需要创建 user/pid 命名空间并挂载 `/proc`，平台运行在默认权限的容器里（Compose 部署）时做不到：平台镜像不带 bwrap，即使装上，不开特权容器也建不了命名空间。Compose 部署请用 Docker 沙箱；要用 Linux native 沙箱，在原生安装的平台或执行机器（Runner）上运行。
+- **macOS (`seatbelt`)**：macOS 没有每进程挂载命名空间，`seatbelt` 沙箱保留 HOME 为 `<会话根>/home`，工作区模式下 cwd 直接指向运行工作区目录（不重映射到 `<会话根>/ws`）。`seatbelt` 策略放开运行工作区、临时目录与 `<会话根>/home` 写入，并在最后追加审批钩子及其父目录的 `file-write*` 拒绝规则以防止篡改或改名替换；宿主其余路径保持只读，回环端口（工具中继、本机浏览器 CDP）与本机网络/Docker 保持可达；未显式设置 `DOCKER_HOST` / `DOCKER_CONFIG` 时自动解析宿主当前 Docker context 端点注入 `DOCKER_HOST`，以便在隔离 HOME 下使用 Colima、OrbStack 或 Docker Desktop 等守护进程。CLI 使用执行机器自己安装的版本。
 
-`workbench_workspace_submit_mr` 默认推送工作分支并发起或更新 MR；传 `mode=direct` 时不发 MR，而是把工作分支 `merge --no-ff` 进 `targetBranch` 后直推，用于 preview/test 这类共享分支的合并流程。直推要求目标分支已在远端存在、且不是可写仓库的基线分支（只读仓库不参与这项检查）；合并在临时 worktree 里完成，冲突时中止且不推送，运行的工作区始终留在自己的工作分支上；推送前用 merge-base 预检加 lease，别人先推过就拒绝覆盖。直推不产生 MR，登记的需求需要人工确认收尾。
+Docker 与 bwrap 下两种模式的 CLI 都在 `<会话根>/ws` 运行（工作区模式下这里挂的是运行工作区），按 cwd 存放原生会话的 CLI（如 Claude Code、CodeBuddy）进出工作区、换环境都能续接。seatbelt 下由于平台模式与工作区模式的 cwd 不同，或任一环境原生日志确实不可用时，平台在当前阶段用完整对话上下文新建原生会话继续（`cli.resume_fallback`），每个阶段最多一次，并告诉新会话当前所处的模式。
 
 `PUT /api/assistant/sessions/{id}/sandbox` 接受 `{ "sandboxProfileId": "id 或空字符串" }`，具备项目访问权限的会话参与者均可调用；生成期间和任务会话拒绝变更。已有工作区不受影响，新选择只用于之后新开的工作区。普通会话创建时也可以提交 `sandboxProfileId`，后续普通会话保存不能覆盖已保存的选择或伪造工作区绑定。
 
@@ -42,9 +59,11 @@
 
 ## 需求关联与统计
 
-对话里直接改代码也要落到需求上。Main Bot 识别出明确需求时，在 `workbench_workspace_open` 的 `requirement { title, description }` 中提交；`workbench_workspace_submit_mr` 提交 MR 时若工作区仍未关联需求，优先复用会话已关联的未完成需求，否则以 MR 标题和说明创建。新建需求为本地 `requirement`、`in_progress`、`automationState=ignored`（不会被自动派发 SOP），负责人为当前用户，记录来源会话、工作区仓库和创建操作，并同时关联工作区与会话。已关联需求的工作区不再改关联；SOP 运行的需求只在派发时确定。
+要交给用户的文件（HTML demo、报告、JSON/CSV 等文本文件）用 `workbench_publish_artifact { path }` 发布：附在本轮回复里，HTML 在产物栏可交互预览。空间会话里不带 `path` 时照旧把 `body`/`imageBase64`/`url` 发布到空间侧边栏。原来的 `workbench_workspace_attach` 已并入这个工具，只在角色交付物收集里作为内部调用保留。
 
-提交的 MR 写入该需求的交付 MR 并登记合入跟踪，需求转为 `in_review`；MR 合入默认分支后由 MR 轮询把需求标为完成。每轮对话的模型用量按回复模型定价累加到当前对话工作区。
+项目对话里直接改代码也要落到需求上。Agent 不需要调用登记工具：每轮回复保存前，平台列出工作区里两层目录内的 git 检出（远程执行机器上由 Runner 扫描，旧版 Runner 不支持时跳过），对其中指向 github.com 的远程仓库，用本轮发言人的 Git Token 查最近创建的 PR，满足以下全部条件的才登记：作者是该 Token 的用户、创建时间晚于工作区创建、头提交是工作区某个本地分支的当前提交、未关闭（或已合入），且还没有任何需求跟踪它。这样同一用户在别的会话或浏览器里开的 PR 不会被误登记；Agent 推送后又在本地追加了未推送的提交时，本轮不登记，下次推送后再登记。登记成功时回复末尾附一句登记结果。工作区仍未关联需求时，优先复用会话已关联的未完成需求，否则以第一个 PR 的标题和描述创建；借用已结束 SOP 工作区时登记到该 SOP 的需求。新建需求为本地 `requirement`、`in_progress`、`automationState=ignored`（不会被自动派发 SOP），负责人为当前用户，记录来源会话、工作区仓库和创建操作，并同时关联工作区与会话。已关联需求的工作区不再改关联；SOP 运行的需求只在派发时确定。
+
+登记的 PR（记为 `github:owner/repo`）写入该需求的交付 MR 并登记合入跟踪，链接能对上项目登记的仓库时同时记录仓库，需求转为 `in_review`；PR 合入默认分支后由轮询把需求标为完成。每轮对话的模型用量按回复模型定价累加到当前对话工作区。
 
 数据统计中，对话工作区不是 Run：不计入运行数、成功率、耗时和「平均 Token / Run」，但其 Token 与成本计入总量、趋势、成员、项目和来源，并在 `summary.conversation*` 与趋势点 `conversationTokens/conversationCost*` 中单列。只经对话改代码的需求（`directDelivery`）在交付明细中按 MR 状态显示「对话改代码中 / 对话 · MR 待合入 / 对话 · MR 已关闭」，MR 合入默认分支后算已交付并显示「对话直接交付」；同一需求有 SOP 运行时仍按 SOP 口径。对话工作区不出现在「运行记录」列表、运行概览和全局搜索中，也不计入 SOP 页「进行中 / 待审批」：它没有节点，且在回收前一直是 waiting，列出来只会变成看不懂的「已回收」记录。关联了需求的对话工作区仍在需求列表「关联 SOP」中显示为「对话工作区」。入口是对话本身（侧栏工作区）和关联需求；从对话直接打开 `#/runs/{id}` 仍可查看工作区详情。
 

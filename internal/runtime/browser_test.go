@@ -58,9 +58,23 @@ func TestBrowserWantedForExecutor(t *testing.T) {
 	}
 }
 
+type testSandboxWrapper struct {
+	Sandbox
+}
+
+func (w testSandboxWrapper) Unwrap() Sandbox { return w.Sandbox }
+
 func TestEnsureSandboxBrowserUnwrapsAndSkipsUnknownSandboxes(t *testing.T) {
 	if _, ok := unwrapSandbox(WithSandboxCredentials(&dockerSandbox{id: "x"}, RunCredentials{})).(*dockerSandbox); !ok {
 		t.Fatal("managed sandbox must unwrap to its docker sandbox")
+	}
+	nested := testSandboxWrapper{Sandbox: WithSandboxCredentials(&dockerSandbox{id: "nested"}, RunCredentials{})}
+	if _, ok := unwrapSandbox(nested).(*dockerSandbox); !ok {
+		t.Fatal("nested Unwrap wrapper must unwrap to its docker sandbox")
+	}
+	var typedNil *managedSandbox
+	if got := unwrapSandbox(typedNil); got != nil {
+		t.Fatalf("typed nil managedSandbox unwrapped to %T, want nil", got)
 	}
 	sb := &capturingSandbox{workspace: t.TempDir()}
 	var events []domain.TelemetryEvent
@@ -308,5 +322,70 @@ func TestBrowserViewCapturesLighterFramesWhileScrolling(t *testing.T) {
 	}
 	if got := starts(); len(got) != 3 || got[2]["quality"] != 60.0 {
 		t.Fatalf("drag frames: %v", got)
+	}
+}
+
+func TestBrowserViewCapturesASharpFrameWhenTheSettledScreencastSendsNone(t *testing.T) {
+	settle, wait := browserMotionSettle, browserSettledFrameWait
+	browserMotionSettle, browserSettledFrameWait = 30*time.Millisecond, 60*time.Millisecond
+	defer func() { browserMotionSettle, browserSettledFrameWait = settle, wait }()
+	wheel := []domain.BrowserInputEvent{{Type: "wheel", X: 0.5, Y: 0.5, DeltaY: 100}}
+	screenshots := func(transport *fakeCDPTransport) int {
+		transport.mu.Lock()
+		defer transport.mu.Unlock()
+		n := 0
+		for _, msg := range transport.sent {
+			if msg.Method == "Page.captureScreenshot" {
+				n++
+			}
+		}
+		return n
+	}
+	newView := func() (*browserView, *fakeCDPTransport) {
+		transport := newFakeCDPTransport()
+		transport.results = map[string]string{"Page.captureScreenshot": `{"data":"SHARP"}`}
+		view := &browserView{targets: map[string]*browserTarget{}, changed: make(chan struct{}), session: "page-1", active: "t1", width: 1000, height: 500, frameWidth: 1600, frame: "LIGHT", seq: 5}
+		view.client = newCDPClient(transport, view.onEvent)
+		return view, transport
+	}
+
+	// Chromium sends nothing after the restart: the view captures the page.
+	view, transport := newView()
+	defer view.client.close()
+	if err := view.input(context.Background(), wheel); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for view.state(5).Frame != "SHARP" {
+		if time.Now().After(deadline) {
+			t.Fatalf("no sharp frame after the scroll settled: %+v", view.state(0))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := screenshots(transport); n != 1 {
+		t.Fatalf("screenshots: %d", n)
+	}
+
+	// A frame that arrives in time is kept and no screenshot is taken.
+	view, transport = newView()
+	defer view.client.close()
+	// Deliver the frame during the settle wait, right after seq was sampled.
+	resent := make(chan struct{})
+	view.settledFrameSampled = func() {
+		frame, _ := json.Marshal(map[string]any{"data": "RESENT", "sessionId": 1, "metadata": map[string]any{"deviceWidth": 1000, "deviceHeight": 500}})
+		view.onEvent(cdpMessage{Method: "Page.screencastFrame", SessionID: "page-1", Params: frame})
+		close(resent)
+	}
+	if err := view.input(context.Background(), wheel); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-resent:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the screencast never returned to sharp frames")
+	}
+	time.Sleep(browserSettledFrameWait * 2)
+	if got := view.state(0).Frame; got != "RESENT" || screenshots(transport) != 0 {
+		t.Fatalf("frame %q, screenshots %d", got, screenshots(transport))
 	}
 }

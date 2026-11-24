@@ -35,6 +35,25 @@ test('legacy routes land on their replacements', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test('the latest deep link wins while the platform is loading', async ({ page }) => {
+  let release;
+  const bootstrap = new Promise(resolve => { release = resolve; });
+  await page.route('**/api/bootstrap', async route => {
+    await bootstrap;
+    await route.continue();
+  });
+  const loading = page.waitForRequest('**/api/bootstrap');
+  try {
+    await page.goto('/#/dashboard', { waitUntil: 'domcontentloaded' });
+    await loading;
+    await page.goto('/#/access');
+  } finally {
+    release();
+  }
+  await expect(page.locator('#pageTitle')).toHaveText(TITLES.guide);
+  await expect(page).toHaveURL(/#\/guide$/);
+});
+
 // SlidingTabs enhances each type-tab row and its rule forces display:flex, so
 // only a real browser shows whether the inactive group actually disappears.
 test('merged asset pages show only their own type tabs', async ({ page }) => {

@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 
 docker_access() {
+  # macOS /bin/bash 3.2 does not inherit an if/&& caller into a function.
+  # A failing command there aborts set -e before the caller can see the status.
+  # A subshell returns Docker's status instead, including to a cold install's
+  # image inspect and to the automatic mirror pull fallback.
   if [[ "${LOOPFORGE_DOCKER_USE_SUDO:-0}" == 1 ]]; then
     require_sudo
-    command sudo -n docker "$@"
+    ( command sudo -n docker "$@" )
   else
-    command docker "$@"
+    ( command docker "$@" )
   fi
 }
 

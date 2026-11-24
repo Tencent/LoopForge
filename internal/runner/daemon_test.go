@@ -21,6 +21,17 @@ import (
 )
 
 func TestBindInvocationCredentials(t *testing.T) {
+	t.Run("personal codebuddy overrides the runner endpoint", func(t *testing.T) {
+		inv := &domain.RunnerInvocation{CredentialSource: domain.RuntimeAuthPersonal, CodeBuddyAPIKey: "fixture-key", CodeBuddyBaseURL: "https://gateway.example/v1", CodeBuddyInternetEnvironment: "ioa"}
+		for _, baseURL := range []string{inv.CodeBuddyBaseURL, ""} {
+			inv.CodeBuddyBaseURL = baseURL
+			_, env, err := bindInvocationCredentials(inv, []runtime.CredentialBinding{runtime.BindCodeBuddy}, []string{"codebuddy", "-p", "prompt"})
+			boundURL, present := env["CODEBUDDY_BASE_URL"]
+			if err != nil || !present || boundURL != baseURL || env["CODEBUDDY_INTERNET_ENVIRONMENT"] != "ioa" {
+				t.Fatalf("unexpected CodeBuddy endpoint binding: %q, %v", boundURL, err)
+			}
+		}
+	})
 	t.Run("local login leaves codex invocation unchanged", func(t *testing.T) {
 		argv := []string{"codex", "exec", "prompt"}
 		gotArgv, env, err := bindInvocationCredentials(&domain.RunnerInvocation{CredentialSource: domain.RuntimeAuthLocal}, []runtime.CredentialBinding{runtime.BindCodex}, argv)
@@ -312,7 +323,7 @@ func TestConfigureRepositoryGitIdentityOverridesStaleLocalConfig(t *testing.T) {
 	}
 }
 
-func TestCheckoutInvocationRepositoriesProtectsEachSandboxedRepository(t *testing.T) {
+func TestCheckoutInvocationRepositoriesLeavesAgentConfigVisible(t *testing.T) {
 	root := t.TempDir()
 	invocation := &domain.RunnerInvocation{}
 	for _, name := range []string{"frontend", "backend"} {
@@ -344,7 +355,7 @@ func TestCheckoutInvocationRepositoriesProtectsEachSandboxedRepository(t *testin
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkoutInvocationRepositories(context.Background(), workspace, invocation, "docker"); err != nil {
+	if err := checkoutInvocationRepositories(context.Background(), workspace, invocation); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"frontend", "backend"} {
@@ -355,13 +366,13 @@ func TestCheckoutInvocationRepositoriesProtectsEachSandboxedRepository(t *testin
 			t.Fatalf("git ls-files %s: %v: %s", name, err, output)
 		}
 		for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-			if !strings.HasPrefix(line, "S ") {
-				t.Fatalf("%s repository path is not skip-worktree protected: %q", name, line)
+			if !strings.HasPrefix(line, "H ") {
+				t.Fatalf("%s repository instruction file was hidden from Git: %q", name, line)
 			}
 		}
 		exclude, err := os.ReadFile(filepath.Join(repository, ".git", "info", "exclude"))
-		if err != nil || !strings.Contains(string(exclude), ".agents/") {
-			t.Fatalf("%s repository excludes were not installed: %v %q", name, err, exclude)
+		if err != nil || strings.Contains(string(exclude), ".agents/") {
+			t.Fatalf("%s repository instruction excludes: %v %q", name, err, exclude)
 		}
 	}
 }

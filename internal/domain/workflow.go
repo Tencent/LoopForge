@@ -10,7 +10,7 @@ import (
 type VerificationGate struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
-	Mode      string   `json:"mode"`            // command, manual
+	Mode      string   `json:"mode"`            // command, manual, mr
 	Stage     string   `json:"stage,omitempty"` // after_execution, before_publish
 	Commands  []string `json:"commands,omitempty"`
 	Required  bool     `json:"required"`
@@ -59,6 +59,9 @@ type WorkflowNode struct {
 	RunOnWorkspaceRebuild bool               `json:"runOnWorkspaceRebuild,omitempty"`
 	ScriptLanguage        string             `json:"scriptLanguage,omitempty"` // shell, python
 	Script                string             `json:"script,omitempty"`
+	// CredentialEnv requests platform-managed credentials as environment
+	// variables for script and verification commands.
+	CredentialEnv         map[string]string  `json:"credentialEnv,omitempty"`
 	ExecutionScope        string             `json:"executionScope,omitempty"` // run, repositories; empty = run
 	Command               string             `json:"command,omitempty"`        // legacy command-node payload
 	ArtifactOutputs       []ArtifactContract `json:"artifactOutputs,omitempty"`
@@ -72,6 +75,7 @@ type WorkflowNode struct {
 	MaxReworks            int                `json:"maxReworks"`
 	Notifications         []NodeNotification `json:"notifications,omitempty"`
 	Position              Position           `json:"position"`
+
 }
 
 // ValidateWorkflowMetricStages prevents silently dropping a mistyped stage.
@@ -189,6 +193,10 @@ type WorkflowDefinition struct {
 	Edges     []WorkflowEdge   `json:"edges"`
 	CreatedAt time.Time        `json:"createdAt"`
 	UpdatedAt time.Time        `json:"updatedAt"`
+	// ExecutorDefaults is populated on a run snapshot for roles
+	// that inherit the responsible user's executor. An empty entry defers
+	// selection until the role starts on the bound machine.
+	ExecutorDefaults map[string]AssistantDefaults `json:"executorDefaults,omitempty"`
 }
 
 // UnmarshalJSON migrates the pre-workflow-sandbox shape while the legacy node

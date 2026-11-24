@@ -38,7 +38,7 @@ func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, 
 		if reason != "" {
 			return fmt.Errorf("%s", reason)
 		}
-		err = runtime.CreateWorkspaceCheckpointTo(root, workspaceCheckpointContextWriter{ctx, file})
+		err = runtime.CreateWorkspaceCheckpointToContext(ctx, root, workspaceCheckpointContextWriter{ctx, file})
 		if os.IsNotExist(err) && run.WorkspaceHost == "" {
 			if err = file.Truncate(0); err != nil {
 				return err
@@ -216,6 +216,14 @@ func (e *Engine) restoreOrReuseRemoteConversationCheckpoint(ctx context.Context,
 		}
 	} else {
 		err = workspaceCheckpointResponseError(probe)
+		if err == nil {
+			var status struct {
+				Empty bool `json:"empty"`
+			}
+			if len(probe.Payload) > 0 && json.Unmarshal(probe.Payload, &status) == nil && status.Empty {
+				err = os.ErrNotExist
+			}
+		}
 	}
 	if err == nil {
 		return e.verifyStoredCheckpoint(ctx, run.ID)
@@ -237,7 +245,7 @@ func (e *Engine) restoreConversationCheckpoint(ctx context.Context, run domain.R
 	}
 	defer source.Close()
 	sourceReader := workspaceCheckpointContextReader{ctx, source}
-	if e.defaultExecutionRunner(run) == "" && !e.foreignWorkspaceBind(run) {
+	if root != "" {
 		return runtime.RestoreWorkspaceCheckpointFrom(root, sourceReader)
 	}
 	meta, _ := e.repo.WorkspaceCheckpoint(run.ID)

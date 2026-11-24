@@ -56,8 +56,7 @@ func (r *runEnvironment) endReportedOutputs(nodeID string) {
 	delete(r.reported, nodeID)
 }
 
-// prepareRepositoriesOnce keeps repository checkout and Agent-configuration
-// index isolation at the run-environment lifecycle rather than the node
+// prepareRepositoriesOnce keeps repository checkout at the run-environment
 // lifecycle. nodeMu serializes callers, and a reconstructed environment starts
 // with repositoriesPrepared=false so process restarts and lease takeovers
 // still revalidate the persisted workspace once before executing a node.
@@ -74,6 +73,12 @@ func (r *runEnvironment) prepareRepositoriesOnce(prepare func() error) error {
 
 func (r *runEnvironment) ID() string        { return r.sandbox.ID() }
 func (r *runEnvironment) Workspace() string { return r.sandbox.Workspace() }
+func (r *runEnvironment) Unwrap() runtime.Sandbox {
+	if r == nil {
+		return nil
+	}
+	return r.sandbox
+}
 func (r *runEnvironment) Driver() string {
 	if value, ok := r.sandbox.(interface{ Driver() string }); ok {
 		return value.Driver()
@@ -221,9 +226,10 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	userID := run.ExecutionContext.ResponsibleUserID
 	credentials := runtime.RunCredentials{
-		CodeBuddy: resolveCodeBuddyCredential(e.repo, userID),
-		GitToken:  resolveGitToken(e.repo, userID),
+		CodeBuddy:          resolveCodeBuddyCredential(e.repo, userID),
+		GitHTTPCredentials: e.repo.GitHTTPCredentialSecrets(context.Background(), userID),
 	}
+	credentials.Extra = runtime.ExtraRunCredentials(userID)
 	credentials.GitSSHKeys = e.repo.GitSSHKeysForRemotes(userID, sshRepositoryURLs(run.RepositoryContexts()))
 	identity := resolveGitIdentity(e.repo, userID)
 	credentials.GitUserName = identity.name
@@ -233,7 +239,10 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 		credentials.ClaudeCode = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
 		credentials.AgentCLI = runtime.AgentCLIUserCredentials(user)
 	}
-	scriptAssets, _, _ := runtime.PrepareMCPServers(e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, userID), runtime.MCPTarget{GitToken: credentials.GitToken})
+	scriptAssets, _, _ := runtime.PrepareMCPServers(e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, userID), runtime.MCPTarget{
+		GitHTTPCredentials: credentials.GitHTTPCredentials,
+		ExtraCredentials:   credentials.Extra,
+	})
 	credentials.MCPServers = scriptAssets.MCPServers
 	return credentials
 }

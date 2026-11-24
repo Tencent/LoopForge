@@ -45,7 +45,7 @@ func OpenRemoteSandbox(ctx context.Context, id, workspace string, profile domain
 func WithCommandEnvironment(command CommandSpec, values map[string]string) CommandSpec {
 	bound := command
 	bound.environment = mergeEnvironmentMaps(command.environment, values)
-	return bound
+	return bindRunnerLoginLease(bound)
 }
 
 // CommandEnvironment returns a copy of the closed task-scoped environment for

@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {password as adminPassword, signInUnconfigured, appReady, switchProject, chat, openHome} from './helpers.mjs';
+import {password as adminPassword, signInUnconfigured, appReady, switchProject, chat, openHome, openExecutorSetup} from './helpers.mjs';
 
 // Credential UI must never enter a Playwright trace or screenshot artifact.
 test.use({trace:'off',screenshot:'off'});
@@ -12,39 +12,44 @@ test('a user without model credentials can draft, configure credentials and retu
   // This is an inert value for a UI state transition. No model request is sent.
   const marker='e2e-placeholder-credential-not-for-model-use';
   const draft='保留这份尚未发送的需求草稿';
+  let clearCredential;
   try {
     let input=await openHome(page);
     await input.fill(draft);
-    const notice=chat(page).locator('.credential-notice');
-    await expect(notice).toBeVisible();
-    await expect(notice).toContainText('CodeBuddy API Key');
-    await notice.getByRole('button',{name:'去配置'}).click();
-    await expect(page).toHaveURL(/#\/settings/);
+    const chooser=await openExecutorSetup(page);
+    if(chooser)await page.getByRole('listbox',{name:'新增执行器',exact:true}).getByRole('option',{name:'ZCode',exact:true}).click();
     const wizard=page.locator('#credentialWizard');
     const pane=wizard.locator('.credential-pane:not(.is-leaving)');
     const next=wizard.locator('[data-wizard-next]');
-    await expect(wizard.locator('[data-wizard-step]')).toHaveText('2 / 3');
+    if(!chooser)await expect(wizard.locator('[data-wizard-step]')).toHaveText('2 / 3');
     await expect(pane.locator('input[name="secret"]')).toBeFocused();
     await expect(next).toBeDisabled();
+    clearCredential=chooser?{agentCliCredentials:{zcode:{apiKeyClear:true}}}:{codeBuddyApiKeyClear:true};
     await pane.locator('input[name="secret"]').fill(marker);
     await expect(next).toBeEnabled();
     await next.click();
-    await expect(wizard.locator('[data-wizard-step]')).toHaveText('3 / 3');
-    await expect(pane).not.toContainText(marker);
-    await next.click();
-    await expect(wizard.locator('[data-wizard-done]')).toBeVisible({timeout:20_000});
+    if(chooser){
+      await expect(wizard).toBeHidden();
+    }else{
+      await expect(wizard.locator('[data-wizard-step]')).toHaveText('3 / 3');
+      await expect(pane).not.toContainText(marker);
+      await next.click();
+      await expect(wizard.locator('[data-wizard-done]')).toBeVisible({timeout:20_000});
+      await wizard.locator('[data-wizard-done]').click();
+    }
     const users=await page.request.get('/api/users').then(r=>r.json());
     const saved=users.find(u=>u.id===current.user.id);
-    expect(saved.codeBuddyApiKeyConfigured).toBe(true);
+    expect(chooser?saved.agentCliCredentials?.zcode?.apiKeyConfigured:saved.codeBuddyApiKeyConfigured).toBe(true);
     expect(JSON.stringify(saved)).not.toContain(marker);
-    await wizard.locator('[data-wizard-done]').click();
     input=await openHome(page);
     await expect(input).toHaveValue(draft);
     await expect(chat(page).locator('.credential-notice')).toHaveCount(0);
     expect(errors).toEqual([]);
   } finally {
-    const cleared=await page.request.put(path,{data:{codeBuddyApiKeyClear:true}});
-    expect(cleared.ok()).toBe(true);
+    if(clearCredential){
+      const cleared=await page.request.put(path,{data:clearCredential});
+      expect(cleared.ok()).toBe(true);
+    }
   }
 });
 

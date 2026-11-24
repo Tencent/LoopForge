@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
 	"github.com/gin-gonic/gin"
 )
@@ -50,6 +51,84 @@ func TestAssistantCLIReportsTerminalFailuresWithoutResult(t *testing.T) {
 	}
 }
 
+func TestAssistantClaudeRecoversReplyFromEmptySuccessfulResult(t *testing.T) {
+	const reply = "请在 Claude Code 中手动调用该技能。"
+	const answer = `{"type":"assistant","message":{"content":[{"type":"text","text":"` + reply + `"}]}}`
+	const skillCall = `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"skill-call","name":"Skill"}]}}`
+	const skillDenied = `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"skill-call","is_error":true,"content":"disable-model-invocation"}]}}`
+	const child = `{"type":"assistant","parent_tool_use_id":"agent-call","message":{"content":[{"type":"text","text":"child report"}]}}`
+	const later = `{"type":"assistant","message":{"content":[{"type":"text","text":"later message"}]}}`
+	const earlierMessage = `{"type":"assistant","message":{"id":"msg_earlier","content":[{"type":"text","text":"Earlier message."}]}}`
+	const firstParagraph = `{"type":"assistant","message":{"id":"msg_reply","content":[{"type":"text","text":"First complete paragraph."}]}}`
+	const secondParagraph = `{"type":"assistant","message":{"id":"msg_reply","content":[{"type":"text","text":"Second complete paragraph."}]}}`
+	const codeIntroduction = `{"type":"assistant","message":{"id":"msg_code","content":[{"type":"text","text":"Minimal example:\n\n"}]}}`
+	const codeIntroductionWithoutBreak = `{"type":"assistant","message":{"id":"msg_code","content":[{"type":"text","text":"Minimal example:"}]}}`
+	const codeAfterIntroduction = `{"type":"assistant","message":{"id":"msg_code","content":[{"type":"text","text":"    first()\n    second()"}]}}`
+	const codeWithLeadingBreak = `{"type":"assistant","message":{"id":"msg_code","content":[{"type":"text","text":"\n\n    first()\n    second()"}]}}`
+	const success = `{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","result":""}`
+	missingResult := errAssistantMissingResult.Error()
+	processErr := errors.New("exit status 1")
+	for _, tc := range []struct {
+		name       string
+		lines      []string
+		processErr error
+		want       string
+		wantErr    string
+	}{
+		{name: "keep main reply after rejected skill", lines: []string{answer, skillCall, skillDenied, child, success}, want: reply},
+		{
+			name:  "keep every complete paragraph of the latest main message",
+			lines: []string{earlierMessage, firstParagraph, child, secondParagraph, success},
+			want:  "First complete paragraph.\n\nSecond complete paragraph.",
+		},
+		{
+			name:  "preserve indentation after a paragraph break",
+			lines: []string{codeIntroduction, codeAfterIntroduction, success},
+			want:  "Minimal example:\n\n    first()\n    second()",
+		},
+		{
+			name:  "preserve the following block's paragraph break",
+			lines: []string{codeIntroductionWithoutBreak, codeWithLeadingBreak, success},
+			want:  "Minimal example:\n\n    first()\n    second()",
+		},
+		{name: "keep latest message without an ID", lines: []string{answer, later, success}, want: "later message"},
+		{name: "keep text from the completed turn", lines: []string{answer, success, later}, want: reply},
+		{name: "prefer explicit result", lines: []string{answer, `{"type":"result","subtype":"success","result":"final answer"}`}, want: "final answer"},
+		{name: "no result event", lines: []string{answer}, wantErr: missingResult},
+		{name: "failed result", lines: []string{answer, `{"type":"result","subtype":"success","is_error":true,"result":""}`}, wantErr: missingResult},
+		{name: "tool continuation", lines: []string{answer, `{"type":"result","subtype":"success","stop_reason":"tool_use","result":""}`}, wantErr: missingResult},
+		{name: "only child text", lines: []string{child, success}, wantErr: missingResult},
+		{name: "only partial text", lines: []string{`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}}}`, success}, wantErr: missingResult},
+		{name: "process failed", lines: []string{answer, success}, processErr: processErr, wantErr: processErr.Error()},
+		{name: "stream failed", lines: []string{answer, `{"type":"error","error":"upstream unavailable"}`, success}, wantErr: "upstream unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := assistantCLIRequest{
+				Executor:     "claude-code",
+				Model:        "claude-opus-4-8",
+				Prompt:       "test",
+				SessionRoot:  t.TempDir(),
+				Native:       true,
+				RemoteBinary: true,
+				Execute: func(_ context.Context, _ string, _ runtime.CommandSpec, _ runtime.RunCredentials, sink runtime.EventSink) (string, error) {
+					for _, line := range tc.lines {
+						sink(domain.TelemetryEvent{Name: "process.stdout", Message: line})
+					}
+					return "", tc.processErr
+				},
+			}
+			got, _, err := runAssistantCLI(context.Background(), req, domain.User{}, nil)
+			gotErr := ""
+			if err != nil {
+				gotErr = err.Error()
+			}
+			if got != tc.want || gotErr != tc.wantErr {
+				t.Fatalf("got reply=%q err=%q, want reply=%q err=%q", got, gotErr, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestAssistantGenerationFailurePreservesCancellationAndDeadline(t *testing.T) {
 	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
 		_, err := decodeAssistantCLIResult("", false, cause, []string{"process stopped"})
@@ -60,6 +139,27 @@ func TestAssistantGenerationFailurePreservesCancellationAndDeadline(t *testing.T
 		if status != http.StatusGatewayTimeout || !strings.Contains(message, "取消或超时") {
 			t.Fatalf("status=%d message=%q", status, message)
 		}
+	}
+}
+
+func TestAssistantWorkspaceBindFailuresStaySpecific(t *testing.T) {
+	for _, tc := range []struct {
+		name, code string
+		err        error
+	}{
+		{"live foreign bind", "WORKSPACE_BOUND_ELSEWHERE", fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, engine.ErrConversationWorkspaceBound)},
+		{"dead host without snapshot", "WORKSPACE_REBOUND", fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, engine.ErrConversationWorkspaceLost)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, message := assistantGenerationFailure(context.Background(), tc.err)
+			if status != http.StatusServiceUnavailable || !strings.Contains(message, "工作区") || strings.Contains(message, "诊断信息") {
+				t.Fatalf("status=%d message=%q", status, message)
+			}
+			failure := classifyAssistantFailure(context.Background(), tc.err)
+			if failure.Code != tc.code {
+				t.Fatalf("code=%s", failure.Code)
+			}
+		})
 	}
 }
 

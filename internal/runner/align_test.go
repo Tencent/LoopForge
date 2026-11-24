@@ -33,7 +33,7 @@ func TestAlignBaselineRunsOnPoolRunner(t *testing.T) {
 	commitOnBranch(t, remote, "master", "main.txt", "from default\n")
 	repository := domain.RepositoryContext{RepositoryID: "repo", Name: "svc", CloneURL: remote, DefaultBranch: "master", IntegrateBranch: "integration"}
 
-	if err := e.AlignBaseline(repository, ""); err != nil {
+	if err := e.AlignBaselineForUser(repository, 0); err != nil {
 		t.Fatal(err)
 	}
 	files := runGitT(t, remote, "ls-tree", "-r", "--name-only", "refs/heads/integration")
@@ -44,7 +44,7 @@ func TestAlignBaselineRunsOnPoolRunner(t *testing.T) {
 	commitOnBranch(t, remote, "master", "README.md", "default side\n")
 	commitOnBranch(t, remote, "integration", "README.md", "integration side\n")
 	before := runGitT(t, remote, "rev-parse", "refs/heads/integration")
-	err := e.AlignBaseline(repository, "")
+	err := e.AlignBaselineForUser(repository, 0)
 	var conflict *engine.AlignConflictError
 	if !errors.As(err, &conflict) || strings.Join(conflict.Files, ",") != "README.md" || len(conflict.Blocks) != 1 || !strings.Contains(conflict.Blocks[0].Theirs, "default side") {
 		t.Fatalf("align conflict = %v (%+v)", err, conflict)
