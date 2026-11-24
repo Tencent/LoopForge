@@ -75,6 +75,7 @@ function projectNeedsDefaultRepository(project){
 }
 async function saveProjectDefaultRepository(project,repoId){
   const saved=await api('/api/projects',{method:'PUT',body:JSON.stringify({...project,defaultRepositoryId:repoId})});
+  invalidateProjectJoinMembers(project.id);
   const projects=state.data.projects||[],pi=projects.findIndex(p=>p.id===project.id),next=saved&&saved.id?saved:{...project,defaultRepositoryId:repoId};
   if(pi>=0)projects[pi]=next;
   syncProjectDraftDefaultRepo(project.id,repoId);

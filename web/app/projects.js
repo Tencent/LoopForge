@@ -482,12 +482,22 @@ function syncProjectJoinBox(){
   if(!box||!p)return;
   box.innerHTML=projectJoinRowsHTML(p);
 }
+let projectJoinRequestsRefresh=null;
+function storeProjectJoinRequest(updated){
+  if(projectJoinRequestsRefresh)projectJoinRequestsRefresh.stale=true;
+  const requests=state.projectJoinRequests||[];
+  state.projectJoinRequests=requests.some(r=>r.id===updated.id)?requests.map(r=>r.id===updated.id?updated:r):[updated,...requests];
+  if(updated.status!=='pending')delete state.projectJoinRoles?.[updated.id];
+}
 async function loadProjectJoinRequests(force){
   if(!state.authRequired||!state.currentUser||state.currentUser.isGuest)return;
   if(!force&&state.projectJoinLoadedAt&&Date.now()-state.projectJoinLoadedAt<30000)return;
   state.projectJoinLoadedAt=Date.now();
+  const refresh={};projectJoinRequestsRefresh=refresh;
   try{
     const previous=state.projectJoinRequests||[],requests=await api('/api/project-join-requests')||[];
+    if(projectJoinRequestsRefresh!==refresh)return;
+    if(refresh.stale)return loadProjectJoinRequests(true);
     const uid=Number(state.currentUser.id),projects=new Map((state.data.projects||[]).map(p=>[p.id,p]));
     const previousApproved=new Set(previous.filter(r=>r.status==='approved').map(r=>r.id)),approved=new Set();
     for(const r of requests){
@@ -496,9 +506,11 @@ async function loadProjectJoinRequests(force){
     }
     // Fetch the authoritative roster: an old approval must not re-add a user who was later removed.
     await Promise.all([...approved].map(id=>refreshProjectJoinMembers(id)));
+    if(projectJoinRequestsRefresh!==refresh)return;
+    if(refresh.stale)return loadProjectJoinRequests(true);
     state.projectJoinRequests=requests;
     for(const id of Object.keys(state.projectJoinRoles||{}))if(!requests.some(r=>String(r.id)===id&&r.status==='pending'))delete state.projectJoinRoles[id];
-  }catch{return}
+  }catch{return}finally{if(projectJoinRequestsRefresh===refresh)projectJoinRequestsRefresh=null}
   if(activeViewName()!=='projects')return;
   if(state.projectAdminDetailId)syncProjectJoinBox();else renderProjectList();
 }
@@ -508,14 +520,14 @@ async function applyProjectJoin(projectId){
   if(reason==null)return;
   try{
     const created=await api('/api/projects/'+encodeURIComponent(p.id)+'/join-requests',{method:'POST',body:JSON.stringify({reason:String(reason).trim()})});
-    state.projectJoinRequests=[created,...(state.projectJoinRequests||[]).filter(r=>r.id!==created.id)];
+    storeProjectJoinRequest(created);
     renderProjectList();toast('已提交加入申请，等待项目 Owner 或维护者审批','ok');
   }catch(err){toast(err.message,'err');loadProjectJoinRequests(true)}
 }
 async function withdrawProjectJoin(id){
   try{
     const updated=await api(`/api/project-join-requests/${id}/withdraw`,{method:'POST'});
-    state.projectJoinRequests=(state.projectJoinRequests||[]).map(r=>r.id===id?updated:r);
+    storeProjectJoinRequest(updated);
     renderProjectList();toast('已撤回加入申请','ok');
   }catch(err){toast(err.message,'err');loadProjectJoinRequests(true)}
 }
@@ -523,13 +535,14 @@ function projectMembershipSignature(p){
   return JSON.stringify([Number(p?.ownerId)||0,(p?.members||[]).map(m=>[Number(m.userId),projectMemberRole(m.role)]).sort((a,b)=>a[0]-b[0])]);
 }
 const projectJoinMemberRefreshes=new Map();
+function invalidateProjectJoinMembers(projectId){projectJoinMemberRefreshes.delete(projectId)}
 async function refreshProjectJoinMembers(projectId){
   const refresh={};projectJoinMemberRefreshes.set(projectId,refresh);
   const fresh=await api('/api/projects/'+encodeURIComponent(projectId)).catch(()=>null);
   // A later refresh supersedes this snapshot, even if its response arrived first.
   if(projectJoinMemberRefreshes.get(projectId)!==refresh)return;
   projectJoinMemberRefreshes.delete(projectId);
-  if(!fresh?.id)return;
+  if(!fresh?.id||fresh.archivedAt||!(state.data.projects||[]).some(p=>p.id===projectId))return;
   storeSavedProject(fresh);
   if(state.projectDraftFor!==fresh.id)return;
   captureProjectAdminForm();
@@ -553,8 +566,7 @@ async function refreshProjectJoinMembers(projectId){
 async function reviewProjectJoin(id,approve,role){
   try{
     const updated=await api(`/api/project-join-requests/${id}/${approve?'approve':'reject'}`,{method:'POST',body:JSON.stringify(approve?{role:projectMemberRole(role)}:{})});
-    state.projectJoinRequests=(state.projectJoinRequests||[]).map(r=>r.id===id?updated:r);
-    delete state.projectJoinRoles?.[id];
+    storeProjectJoinRequest(updated);
     if(approve)await refreshProjectJoinMembers(updated.projectId);
     syncProjectJoinBox();
     const u=userById(updated.userId);
@@ -576,6 +588,7 @@ async function deleteProjectAdmin(projectId){
   if(!ok)return;
   try{
     await api('/api/projects/'+encodeURIComponent(project.id),{method:'DELETE'});
+    invalidateProjectJoinMembers(project.id);
     state.data.projects=(state.data.projects||[]).filter(p=>p.id!==project.id);
     if(state.projectFilter===project.id){
       state.projectFilter=defaultProjectId(state.data.projects,state.currentUser?.id)||'';state.selectedIssue=null;
@@ -658,6 +671,7 @@ function validateProjectPayload(value,{creating,projects=[],workflows=[],saved}=
 }
 function storeSavedProject(result,value){
   const projects=state.data.projects||(state.data.projects=[]),stored=result&&result.id?result:value;
+  invalidateProjectJoinMembers(stored.id);
   const i=projects.findIndex(p=>p.id===stored.id);if(i>=0)projects[i]=stored;else projects.push(stored);
   return stored;
 }
