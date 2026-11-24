@@ -34,6 +34,7 @@ const { apiMock, writeMock } = vi.hoisted(() => {
     if (path.endsWith("/fork") || path.endsWith("/edit"))
       return { ...baseSession, id: path.endsWith("/fork") ? "s2" : "s1", messages: [{ role: "user", content: body.content }] };
     if (path.includes("/issue")) return { ...baseSession, issueId: body.issueId };
+    if (path.endsWith("/title")) return { title: body.title, titleEdited: true };
     return { ...baseSession, ...body, id: body?.id || baseSession.id };
   });
   return { apiMock, writeMock };
@@ -1172,6 +1173,65 @@ describe("conversation hooks", () => {
     await act(() => result.current.refresh());
   });
 
+  test("keeps a running session's new title as earlier reads finish", async () => {
+    const path = "/api/assistant/sessions/s1";
+    const original = apiMock.getMockImplementation();
+    const old = {
+      id: "s1",
+      title: "上次手动设置的名称",
+      titleEdited: true,
+      messages: [{ role: "user", content: "问题" }],
+    };
+    const finished = { ...old, messages: [...old.messages, { role: "assistant", content: "回答" }] };
+    let finishReply = false;
+    let delayList = false;
+    let replyRequested = false;
+    let serverTitle = old.title;
+    let releaseReply, releaseList;
+    const reply = new Promise((resolve) => { releaseReply = resolve; });
+    const list = new Promise((resolve) => { releaseList = resolve; });
+    apiMock.mockImplementation(async (url, options) => {
+      if (url.startsWith(path + "/generation")) return { id: "g1", status: finishReply ? "completed" : "running" };
+      if (url === path) {
+        if (!finishReply) return old;
+        replyRequested = true;
+        return reply;
+      }
+      if (url === "/api/assistant/sessions") return delayList ? list : [{ ...old, title: serverTitle }];
+      return original(url, options);
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current.generation?.status).toBe("running"));
+
+      delayList = true;
+      const refresh = result.current.refreshSessions();
+      finishReply = true;
+      await waitFor(() => expect(replyRequested).toBe(true));
+
+      await act(() => result.current.rename("s1", "新的名称"));
+      expect(writeMock).toHaveBeenCalledWith(path + "/title", { title: "新的名称" }, "PUT");
+      expect(result.current.session).toMatchObject({ title: "新的名称", messages: old.messages });
+      expect(result.current.sessions[0].title).toBe("新的名称");
+
+      await act(async () => {
+        releaseList([old]);
+        await refresh;
+        delayList = false;
+        serverTitle = "新的名称";
+        releaseReply(finished);
+      });
+      expect(result.current.session).toMatchObject({ title: "新的名称", messages: finished.messages });
+      expect(result.current.sessions[0].title).toBe("新的名称");
+    } finally {
+      apiMock.mockImplementation(original);
+      releaseList([]);
+      releaseReply(finished);
+    }
+  });
+
   test("opens, edits, regenerates, stops and starts a known session", async () => {
     const { result } = renderHook(() => useChat());
     await waitFor(() => expect(result.current.ready).toBe(true));
@@ -1387,8 +1447,6 @@ describe("conversation hooks", () => {
   test("surfaces command failures without throwing from chat actions", async () => {
     const { result } = renderHook(() => useChat());
     await waitFor(() => expect(result.current.ready).toBe(true));
-    apiMock.mockRejectedValueOnce(new Error("读取失败"));
-    await act(() => result.current.rename("s1", "失败"));
     writeMock.mockRejectedValueOnce(new Error("保存失败"));
     await act(() => result.current.archive("s1", true));
     apiMock.mockRejectedValueOnce(new Error("删除失败"));

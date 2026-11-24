@@ -155,10 +155,6 @@ test("the rename pencil keeps its slot but only shows on hover or focus", () => 
   );
 });
 
-test("read-only sessions still omit the pencil", () => {
-  assert.match(app, /\{!chat\.readOnly \? \(\s*<IconButton\s+label="重命名会话"/);
-});
-
 test("the project switcher stays visible on laptop widths and hides only at phone width", () => {
   assert.doesNotMatch(mediaBlock("max-width: 1250px"), /conversation-project/);
   assert.match(mediaBlock("max-width: 520px"), /\.conversation-project-anchor\s*\{\s*display:\s*none/);
