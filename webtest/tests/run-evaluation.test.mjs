@@ -213,3 +213,16 @@ test('a rejected start follows the evaluation that is already running', async (t
   assert.equal(pane.querySelector('[aria-current="step"]').textContent.trim(), '等待执行');
   assert.ok(app.window.EventSource.instances.some(stream => stream.url.endsWith('/eval/stream') && stream.readyState !== 2));
 });
+
+test('the gate preview translates its yes and no values without a dictionary entry', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const preview = () => app.evaluate(`runEvalChange({
+    gate: { id: 'unit', name: '单元测试', mode: 'mr', required: false },
+  }, 'agent.upsert_gate')`);
+  const required = () => preview().fields.find(([label]) => label === '是否必需')[1];
+  assert.equal(required(), '否');
+  app.evaluate('window.lfT = (_zh, en) => en');
+  assert.equal(required(), 'No');
+  assert.equal(app.window.LF_I18N_EN['否'], undefined); // A typed 「否」 must not be rewritten.
+});

@@ -358,6 +358,8 @@ Object.assign(window.LF_I18N_EN, {
   "评测失败": "Evaluation failed",
   "评测未返回结果。": "The evaluation returned no result.",
   "评分维度": "Scoring dimensions",
+  "重试策略": "Retry strategy",
+  "合并请求": "Merge request",
   "评测结论": "Evaluation result",
   "维度得分": "Dimension scores",
   "准入线": "Passing score",

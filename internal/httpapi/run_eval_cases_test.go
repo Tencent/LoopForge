@@ -5,9 +5,11 @@ import (
 	"agentflow/internal/repo"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -548,4 +550,49 @@ func TestRunEvalApplyFallsBackWhenModelTargetIDIsUnknown(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "missing-agent") {
 		t.Fatalf("unknown agent without a node fallback: %v", err)
 	}
+}
+
+// Requests that arrive together must not each start a billed evaluation.
+func TestRunEvalConcurrentStartsRunOnce(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "run-eval-session-secret")
+	h, store, user := newRunEvalHarness(t)
+	release := make(chan struct{})
+	setRunEvalExecForTest(func(context.Context, domain.RunEvalRecord, domain.Run, domain.User, func(string, any)) (domain.RunEvalResult, error) {
+		<-release
+		return domain.RunEvalResult{}, errors.New("released")
+	})
+	t.Cleanup(func() { setRunEvalExecForTest(nil) })
+	for round := 0; round < 10; round++ {
+		id := fmt.Sprintf("run-race-%d", round)
+		if err := store.PutRun(domain.Run{ID: id, Status: "succeeded", Nodes: map[string]*domain.NodeRun{}}); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		codes := make([]int, 8)
+		start := make(chan struct{})
+		for i := range codes {
+			req := authedRequest(t, httptest.NewRequest(http.MethodPost, "/api/runs/"+id+"/eval", nil), user)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, req)
+				codes[i] = rec.Code
+			}()
+		}
+		close(start)
+		wg.Wait()
+		counts := map[int]int{}
+		for _, code := range codes {
+			counts[code]++
+		}
+		if counts[http.StatusAccepted] != 1 || counts[http.StatusConflict] != len(codes)-1 {
+			t.Fatalf("round %d: status counts = %v", round, counts)
+		}
+		if evals := store.ListRunEvals(id); len(evals) != 1 {
+			t.Fatalf("round %d: %d evaluations were stored", round, len(evals))
+		}
+	}
+	close(release)
 }

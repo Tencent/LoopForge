@@ -1554,7 +1554,7 @@ function runEvalChange(item,action){
       ['门禁类型',label({command:'命令',manual:'人工',mr:'合并请求'},gate?.mode||'command')],
       ['执行时机',label({after_execution:'节点执行后',before_publish:'发布前'},gate?.stage)],
       ['执行范围',label({run:'运行工作区',repositories:'代码仓库'},gate?.executionScope)],
-      ['是否必需',(gate?.required??!gate)?'是':'否'],
+      ['是否必需',(gate?.required??!gate)?lfT('是','Yes'):lfT('否','No')],
       ['失败处理',label(RUN_EVAL_FAILURE_LABELS,gate?.onFailure)]
     ];
     return {fields:fields.filter(([,value])=>value!=null&&value!==''),commands:gate?.commands?.join('\n')};
