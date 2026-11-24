@@ -7,7 +7,6 @@ import (
 	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // ---------- Project join requests ----------
@@ -111,9 +110,9 @@ func (r *ProjectsRepo) ProjectJoinRequests(projectIDs []string, userID int64, st
 }
 
 // ReviewProjectJoinRequest settles a pending request. Approval adds the
-// applicant with role in the same transaction; an applicant who became a
-// member meanwhile keeps the existing role.
-func (r *ProjectsRepo) ReviewProjectJoinRequest(id, reviewerID int64, approve bool, role string) (domain.ProjectJoinRequest, error) {
+// applicant with role in the same transaction. Membership and reviewer
+// permissions are checked again while the project is locked.
+func (r *ProjectsRepo) ReviewProjectJoinRequest(id, reviewerID int64, admin, approve bool, role string) (domain.ProjectJoinRequest, error) {
 	var out projectJoinRequestRow
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		if err := r.locking(tx).Where("id = ?", id).Take(&out).Error; err != nil {
@@ -125,14 +124,50 @@ func (r *ProjectsRepo) ReviewProjectJoinRequest(id, reviewerID int64, approve bo
 		if out.Status != domain.JoinRequestPending {
 			return apperr.New(apperr.Conflict, "申请已处理，请刷新后查看")
 		}
-		if err := r.lockProjectInTx(tx, out.ProjectID); err != nil {
+		var project projectRow
+		if err := r.locking(tx).Where("id = ?", out.ProjectID).Take(&project).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperr.New(apperr.NotFound, "项目不存在或已删除")
+			}
 			return err
+		}
+		var p domain.Project
+		if err := jsonUnmarshal(project.Payload, &p); err != nil {
+			return err
+		}
+		if p.ArchivedAt != nil {
+			return apperr.New(apperr.NotFound, "项目不存在或已删除")
+		}
+		p.OwnerID = 0
+		if project.OwnerUserID != nil {
+			p.OwnerID = *project.OwnerUserID
+		}
+		var err error
+		p.Members, err = r.projectMembersInTx(r.locking(tx), out.ProjectID)
+		if err != nil {
+			return err
+		}
+		if !admin && !domain.CanReviewProjectJoin(p, reviewerID) {
+			return apperr.New(apperr.Forbidden, "只有项目 Owner、维护者或平台管理员可以审批加入申请")
+		}
+		if approve {
+			var valid bool
+			role, valid = domain.NormalizeProjectMemberRole(role)
+			if !valid {
+				return apperr.New(apperr.Invalid, "角色只能是 maintainer、member 或 viewer")
+			}
+			if role == domain.ProjectRoleMaintainer && !admin && p.OwnerID != reviewerID {
+				return apperr.New(apperr.Forbidden, "只有项目 Owner 或平台管理员可以授予维护者角色")
+			}
+			if p.OwnerID == out.UserID || domain.ProjectMemberRole(p, out.UserID) != "" {
+				return apperr.New(apperr.Conflict, "申请人已是项目 Owner 或成员，请刷新后查看")
+			}
 		}
 		now := timePtr(time.Now().UTC())
 		out.Status, out.ReviewerID, out.Reviewed, out.Updated = domain.JoinRequestRejected, &reviewerID, now, now
 		if approve {
 			out.Status, out.Role = domain.JoinRequestApproved, role
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&projectMemberRow{
+			if err := tx.Create(&projectMemberRow{
 				ProjectID: out.ProjectID, UserID: out.UserID, Role: role, Created: now,
 			}).Error; err != nil {
 				return err

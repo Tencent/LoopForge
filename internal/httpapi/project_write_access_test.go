@@ -119,7 +119,8 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	}
 
 	members := fmt.Sprintf(`[{"userId":%d,"role":" Maintainer "},{"userId":%d}]`, memberUser.ID, viewerUser.ID)
-	if code := call(owner, "PUT", "/api/projects", `{"id":"p1","name":"P1","members":`+members+`}`); code != 200 {
+	before, _ := s.Project("p1")
+	if code := call(owner, "PUT", "/api/projects", `{"id":"p1","name":"P1","membersVersion":"`+before.MembersVersion+`","members":`+members+`}`); code != 200 {
 		t.Fatalf("owner saves member roles: %d", code)
 	}
 	saved, _ := s.Project("p1")
@@ -134,7 +135,7 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	if code := call(owner, "PUT", "/api/projects", bad); code != 400 {
 		t.Fatalf("unknown member role accepted: %d", code)
 	}
-	restore := fmt.Sprintf(`{"id":"p1","name":"P1","members":[{"userId":%d,"role":"member"},{"userId":%d,"role":"viewer"}]}`, memberUser.ID, viewerUser.ID)
+	restore := fmt.Sprintf(`{"id":"p1","name":"P1","membersVersion":%q,"members":[{"userId":%d,"role":"member"},{"userId":%d,"role":"viewer"}]}`, saved.MembersVersion, memberUser.ID, viewerUser.ID)
 	if code := call(owner, "PUT", "/api/projects", restore); code != 200 {
 		t.Fatalf("restore member roles: %d", code)
 	}

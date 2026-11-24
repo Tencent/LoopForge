@@ -25,7 +25,9 @@ type Project struct {
 	DefaultRepositoryID string            `json:"defaultRepositoryId,omitempty"`
 	OwnerID             int64             `json:"ownerId,omitempty"`
 	Members             []ProjectMember   `json:"members,omitempty"`
-	RunEval             RunEvalPolicy     `json:"runEval,omitempty"`
+	// MembersVersion is an opaque snapshot token for replacing the member list.
+	MembersVersion string        `json:"membersVersion,omitempty"`
+	RunEval        RunEvalPolicy `json:"runEval,omitempty"`
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`

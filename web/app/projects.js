@@ -302,6 +302,11 @@ function projectAdminFail(form,name,message){
 }
 function onProjectAdminInput(e){
   const t=e.target,form=$('#projectAdminForm');if(!form||!t?.name&&!t?.dataset)return;
+  if(t.matches?.('[data-join-role]')){
+    const id=t.closest('[data-join-row]')?.dataset.joinRow;
+    if(id)(state.projectJoinRoles||(state.projectJoinRoles={}))[id]=projectMemberRole(t.value);
+    return;
+  }
   if(t.matches?.('[data-pa-color-custom]')){setProjectAdminColor(t.value);return}
   t.classList?.remove('bad');t.closest?.('[data-user-combobox]')?.querySelector('[data-user-combobox-trigger]')?.classList.remove('bad');
   captureProjectAdminForm();
@@ -468,7 +473,7 @@ function projectJoinRowsHTML(p){
   const rows=projectJoinRequestsFor(p.id,'pending');
   if(!rows.length)return '<div class="pa-rows-empty">暂无待审批的申请</div>';
   const roles=PROJECT_MEMBER_ROLES.filter(r=>r.id!=='maintainer'||canGrantProjectMaintainer(p));
-  return rows.map(r=>{const u=userById(r.userId),role=projectMemberRole(r.role);return `<div class="pa-join-row" data-join-row="${r.id}"><span class="member-avatar">${userAvatarHTML(u||r.userId,48)}</span><select class="select member-role" data-join-role aria-label="授予角色">${roles.map(o=>`<option value="${o.id}"${o.id===role?' selected':''}>${o.label}</option>`).join('')}</select><div class="pa-join-m"><b>${escapeHTML(u?userDisplay(u):`用户 ${r.userId}`)}</b><small>${escapeHTML(r.reason||'未填写申请理由')} · ${escapeHTML(relativeTime(r.createdAt))}</small></div><span class="pa-join-acts"><button type="button" class="button primary small" data-join-approve="${r.id}">通过</button><button type="button" class="button ghost small" data-join-reject="${r.id}">拒绝</button></span></div>`}).join('');
+  return rows.map(r=>{const u=userById(r.userId),selected=projectMemberRole(state.projectJoinRoles?.[r.id]??r.role),role=roles.some(o=>o.id===selected)?selected:'member';return `<div class="pa-join-row" data-join-row="${r.id}"><span class="member-avatar">${userAvatarHTML(u||r.userId,48)}</span><select class="select member-role" data-join-role aria-label="授予角色">${roles.map(o=>`<option value="${o.id}"${o.id===role?' selected':''}>${o.label}</option>`).join('')}</select><div class="pa-join-m"><b>${escapeHTML(u?userDisplay(u):`用户 ${r.userId}`)}</b><small>${escapeHTML(r.reason||'未填写申请理由')} · ${escapeHTML(relativeTime(r.createdAt))}</small></div><span class="pa-join-acts"><button type="button" class="button primary small" data-join-approve="${r.id}">通过</button><button type="button" class="button ghost small" data-join-reject="${r.id}">拒绝</button></span></div>`}).join('');
 }
 function syncProjectJoinBox(){
   const box=$('#projectAdminForm [data-pa-join-box]'),p=(state.data.projects||[]).find(x=>x.id===state.projectAdminDetailId);
@@ -479,7 +484,19 @@ async function loadProjectJoinRequests(force){
   if(!state.authRequired||!state.currentUser||state.currentUser.isGuest)return;
   if(!force&&state.projectJoinLoadedAt&&Date.now()-state.projectJoinLoadedAt<30000)return;
   state.projectJoinLoadedAt=Date.now();
-  try{state.projectJoinRequests=await api('/api/project-join-requests')||[]}catch{return}
+  try{
+    const previous=state.projectJoinRequests||[],requests=await api('/api/project-join-requests')||[];
+    const uid=Number(state.currentUser.id),projects=new Map((state.data.projects||[]).map(p=>[p.id,p]));
+    const previousApproved=new Set(previous.filter(r=>r.status==='approved').map(r=>r.id)),approved=new Set();
+    for(const r of requests){
+      const p=projects.get(r.projectId);
+      if(p&&r.status==='approved'&&Number(r.userId)===uid&&(!previousApproved.has(r.id)||!projectHasUser(p,uid)))approved.add(r.projectId);
+    }
+    // Fetch the authoritative roster: an old approval must not re-add a user who was later removed.
+    await Promise.all([...approved].map(id=>refreshProjectJoinMembers(id)));
+    state.projectJoinRequests=requests;
+    for(const id of Object.keys(state.projectJoinRoles||{}))if(!requests.some(r=>String(r.id)===id&&r.status==='pending'))delete state.projectJoinRoles[id];
+  }catch{return}
   if(activeViewName()!=='projects')return;
   if(state.projectAdminDetailId)syncProjectJoinBox();else renderProjectList();
 }
@@ -500,18 +517,31 @@ async function withdrawProjectJoin(id){
     renderProjectList();toast('已撤回加入申请','ok');
   }catch(err){toast(err.message,'err');loadProjectJoinRequests(true)}
 }
-// Approval writes the member server-side; mirror it into the open draft so a later save does not drop the new member.
+function projectMembershipSignature(p){
+  return JSON.stringify([Number(p?.ownerId)||0,(p?.members||[]).map(m=>[Number(m.userId),projectMemberRole(m.role)]).sort((a,b)=>a[0]-b[0])]);
+}
+async function refreshProjectJoinMembers(projectId){
+  const fresh=await api('/api/projects/'+encodeURIComponent(projectId)).catch(()=>null);
+  if(!fresh?.id)return;
+  storeSavedProject(fresh);
+  if(state.projectDraftFor!==fresh.id)return;
+  captureProjectAdminForm();
+  // Adopt the entire roster and token together. Local member edits keep their
+  // old token so the server can reject a conflicting replacement.
+  if(projectMembershipSignature(state.projectDraft)!==projectMembershipSignature(state.projectDraftBase))return;
+  const members=projectDraftFrom(fresh).members;
+  for(const d of [state.projectDraft,state.projectDraftBase])if(d){
+    d.members=clone(members);d.ownerId=fresh.ownerId;d.membersVersion=fresh.membersVersion;
+  }
+}
+// Approval refreshes the roster without discarding unsaved project settings.
 async function reviewProjectJoin(id,approve,role){
   try{
     const updated=await api(`/api/project-join-requests/${id}/${approve?'approve':'reject'}`,{method:'POST',body:JSON.stringify(approve?{role:projectMemberRole(role)}:{})});
     state.projectJoinRequests=(state.projectJoinRequests||[]).map(r=>r.id===id?updated:r);
+    delete state.projectJoinRoles?.[id];
     if(approve){
-      const fresh=await api('/api/projects/'+encodeURIComponent(updated.projectId)).catch(()=>null);
-      if(fresh?.id)state.data.projects=(state.data.projects||[]).map(p=>p.id===fresh.id?fresh:p);
-      const member={userId:Number(updated.userId),role:projectMemberRole(updated.role)};
-      for(const d of [state.projectDraft,state.projectDraftBase]){
-        if(d&&state.projectDraftFor===updated.projectId&&Number(d.ownerId)!==member.userId&&!(d.members||[]).some(m=>Number(m.userId)===member.userId))(d.members||(d.members=[])).push({...member});
-      }
+      await refreshProjectJoinMembers(updated.projectId);
       renderProjectDetail({force:true});
     }
     syncProjectJoinBox();

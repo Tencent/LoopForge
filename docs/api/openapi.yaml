@@ -1304,6 +1304,7 @@ paths:
     put:
       tags: [Projects]
       operationId: upsertProject
+      description: When replacing members of an existing project, send membersVersion from the last project read. Omit members to preserve the current roster.
       requestBody:
         $ref: "#/components/requestBodies/Project"
       responses:
@@ -1313,6 +1314,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: The member list has changed or membersVersion is missing. Reload the project before retrying.
   /api/projects/{projectId}:
     parameters:
       - name: projectId
@@ -1422,7 +1425,7 @@ paths:
     post:
       tags: [Projects]
       operationId: approveProjectJoinRequest
-      description: Approve a pending request and add the applicant as a member; project owner, maintainer or platform admin.
+      description: Approve a pending request and add the applicant as a member; project owner, maintainer or platform admin. Archived projects cannot be reviewed.
       requestBody:
         required: false
         content:
@@ -1439,7 +1442,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409": {description: Request is no longer pending}
+        "409": {description: Request is no longer pending or the applicant is already a project owner or member}
   /api/project-join-requests/{requestId}/reject:
     parameters:
       - name: requestId
@@ -4549,6 +4552,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectMember"
+        membersVersion:
+          type: string
+          description: Opaque membership snapshot token. Required when replacing members of an existing project; stale tokens return 409.
         tapdWorkspaceId:
           type: string
         tapdIterationId:

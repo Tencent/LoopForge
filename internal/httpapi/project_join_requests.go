@@ -137,7 +137,7 @@ func (h *projectsHandlers) reviewJoinRequest(c *gin.Context, approve bool) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "只有项目 Owner 或平台管理员可以授予维护者角色"})
 		return
 	}
-	v, err := h.repo.ReviewProjectJoinRequest(id, uid, approve, role)
+	v, err := h.repo.ReviewProjectJoinRequest(id, uid, admin, approve, role)
 	if err != nil {
 		respond(c, err)
 		return

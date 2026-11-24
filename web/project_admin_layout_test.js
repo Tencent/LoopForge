@@ -345,16 +345,80 @@ assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
   // Approving mirrors the new member into the open draft so a later save keeps them.
   {
     const api=ctx.api,calls=[];
-    ctx.api=async(url,init)=>{calls.push({url,body:init&&init.body?JSON.parse(init.body):null});if(url.endsWith("/approve"))return {id:8,projectId:"agentflow",userId:5,role:"viewer",status:"approved"};if(url==="/api/projects/agentflow")return {...projects[0],members:[...projects[0].members]};return null};
-    const base={...projects[0],members:[{userId:2},{userId:3}]};
+    const base={...projects[0],members:[{userId:2},{userId:3}],membersVersion:"before-approval"};
+    const fresh={...base,members:[...base.members,{userId:5,role:"viewer"},{userId:4,role:"maintainer"}],membersVersion:"after-approval"};
+    ctx.api=async(url,init)=>{calls.push({url,body:init&&init.body?JSON.parse(init.body):null});if(url.endsWith("/approve"))return {id:8,projectId:"agentflow",userId:5,role:"viewer",status:"approved"};if(url==="/api/projects/agentflow")return fresh;return null};
     ctx.state.projectDraft=ctx.projectDraftFrom(base);ctx.state.projectDraftBase=ctx.projectDraftFrom(base);ctx.state.projectDraftFor="agentflow";
     ctx.state.projectJoinRequests=[{id:8,projectId:"agentflow",userId:5,role:"member",status:"pending"}];
     await ctx.reviewProjectJoin(8,true,"viewer");
     same(calls[0],{url:"/api/project-join-requests/8/approve",body:{role:"viewer"}});
-    same(ctx.state.projectDraft.members.map(m=>[m.userId,m.role]),[[2,"member"],[3,"member"],[5,"viewer"]]);
+    same(ctx.state.projectDraft.members.map(m=>[m.userId,m.role]),[[2,"member"],[3,"member"],[5,"viewer"],[4,"maintainer"]],"the whole current roster is adopted");
+    assert.equal(ctx.state.projectDraft.membersVersion,"after-approval");
+    assert.equal(ctx.buildProjectPayload(ctx.state.projectDraft).membersVersion,"after-approval","save sends the roster's token");
     assert.equal(ctx.projectDraftDirty(ctx.state.projectDraft,ctx.state.projectDraftBase),false,"approval does not mark the draft dirty");
     assert.equal(ctx.state.projectJoinRequests[0].status,"approved");
+
+    // Settings edits survive a roster refresh, while conflicting member edits
+    // retain the old token and must be resolved by a fresh server read.
+    ctx.state.projectDraft=ctx.projectDraftFrom(base);ctx.state.projectDraftBase=ctx.projectDraftFrom(base);
+    ctx.state.projectDraft.description="unsaved settings";
+    await ctx.refreshProjectJoinMembers("agentflow");
+    assert.equal(ctx.state.projectDraft.description,"unsaved settings");
+    assert.equal(ctx.state.projectDraft.membersVersion,"after-approval");
+    assert.equal(ctx.projectDraftDirty(ctx.state.projectDraft,ctx.state.projectDraftBase),true);
+    ctx.state.projectDraft=ctx.projectDraftFrom(base);ctx.state.projectDraftBase=ctx.projectDraftFrom(base);
+    ctx.state.projectDraft.members[0].role="viewer";
+    await ctx.refreshProjectJoinMembers("agentflow");
+    assert.equal(ctx.state.projectDraft.members[0].role,"viewer");
+    assert.equal(ctx.state.projectDraft.membersVersion,"before-approval","never pair a partial old roster with a new token");
     ctx.api=api;
+  }
+
+  // A refresh that finishes after a role selection, and reviewing a different
+  // request, both preserve the selection for the remaining pending row.
+  {
+    const api=ctx.api;
+    ctx.state.authRequired=true;ctx.state.currentUser={id:1};ctx.platformAdmin=true;
+    ctx.state.projectAdminDetailId="agentflow";ctx.state.projectJoinRoles={};
+    const pending=[{id:81,projectId:"agentflow",userId:5,role:"member",status:"pending"},{id:82,projectId:"agentflow",userId:4,role:"member",status:"pending"}];
+    const box=el();dom["#projectAdminForm [data-pa-join-box]"]=box;
+    dom["#projectAdminForm"]=el();
+    let finish;
+    ctx.api=async(url)=>url==="/api/project-join-requests"?new Promise(resolve=>{finish=resolve}):{...pending[1],status:"rejected"};
+    const loading=ctx.loadProjectJoinRequests(true);
+    ctx.onProjectAdminInput({target:el({value:"viewer",dataset:{joinRole:""},matches:s=>s==="[data-join-role]",closest:()=>({dataset:{joinRow:"81"}})})});
+    finish(pending);await loading;
+    assert.match(box.innerHTML,/data-join-row="81"[^]*?<option value="viewer" selected>/,"in-flight refresh preserves chosen viewer role");
+    await ctx.reviewProjectJoin(82,false);
+    assert.match(box.innerHTML,/data-join-row="81"[^]*?<option value="viewer" selected>/,"processing another row preserves chosen viewer role");
+    assert.doesNotMatch(box.innerHTML,/data-join-row="82"/);
+    delete dom["#projectAdminForm"];delete dom["#projectAdminForm [data-pa-join-box]"];
+    ctx.api=api;
+  }
+
+  // The applicant observes approval in another session without reloading all
+  // app data. Historical approvals cannot resurrect a subsequently removed member.
+  {
+    const api=ctx.api;
+    ctx.platformAdmin=false;ctx.state.projectAdminDetailId=null;
+    const team={id:"join-team",name:"Team",ownerId:2,members:[]};
+    ctx.state.data.projects.push(team);
+    const pending={id:91,projectId:team.id,userId:1,role:"member",status:"pending"};
+    ctx.state.projectJoinRequests=[pending];
+    let members=[{userId:1,role:"viewer"}];const calls=[];
+    ctx.api=async url=>{calls.push(url);return url==="/api/project-join-requests"?[{...pending,status:"approved",role:"viewer"}]:{...team,members,membersVersion:"fresh"}};
+    await ctx.loadProjectJoinRequests(true);
+    const approved=ctx.state.data.projects.find(p=>p.id===team.id);
+    assert.equal(ctx.projectHasUser(approved,1),true,"approval refreshes the applicant's member cache");
+    assert.doesNotMatch(ctx.projectCardHTML(approved,{}),/data-project-join="|申请中/);
+    assert.ok(calls.includes("/api/projects/join-team"));
+    members=[];ctx.storeSavedProject({...team,members:[]});
+    await ctx.loadProjectJoinRequests(true);
+    const removed=ctx.state.data.projects.find(p=>p.id===team.id);
+    assert.equal(ctx.projectHasUser(removed,1),false);
+    assert.match(ctx.projectCardHTML(removed,{}),/data-project-join="join-team"/,"removed users can apply again");
+    ctx.state.data.projects=ctx.state.data.projects.filter(p=>p.id!==team.id);
+    ctx.api=api;ctx.state.authRequired=false;ctx.platformAdmin=undefined;
   }
   console.log("project admin layout passed");
 })().catch(err=>{console.error(err);process.exitCode=1;});

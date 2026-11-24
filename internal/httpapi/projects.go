@@ -75,9 +75,6 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			if v.OwnerID == 0 {
 				v.OwnerID = existing.OwnerID
 			}
-			if v.Members == nil {
-				v.Members = existing.Members
-			}
 			if v.SOPBindings == nil {
 				v.SOPBindings = existing.SOPBindings
 			}
@@ -153,6 +150,10 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			v.RunEval = existing.RunEval
 		} else if !v.RunEval.IsZero() {
 			v.RunEval = domain.EffectiveRunEvalPolicy(v.RunEval)
+		}
+		if exists && v.Members != nil && v.MembersVersion == "" {
+			c.JSON(http.StatusConflict, gin.H{"error": "更新成员名单需要 membersVersion，请刷新项目后重试"})
+			return
 		}
 		if err := h.repo.PutProject(v); err != nil {
 			respond(c, err)

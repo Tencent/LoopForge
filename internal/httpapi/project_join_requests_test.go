@@ -106,6 +106,7 @@ func TestProjectJoinRequests(t *testing.T) {
 	}
 
 	approve := fmt.Sprintf("/api/project-join-requests/%d/approve", req.ID)
+	stale, _ := s.Project("p1")
 	expect(call(member, "POST", approve, ""), 403, "member approves")
 	expect(call(other, "POST", approve, ""), 403, "outsider approves")
 	expect(call(maint, "POST", approve, `{"role":"maintainer"}`), 403, "maintainer grants maintainer")
@@ -115,6 +116,17 @@ func TestProjectJoinRequests(t *testing.T) {
 	}
 	if p, _ := s.Project("p1"); domain.ProjectMemberRole(p, user("alice")) != domain.ProjectRoleViewer {
 		t.Fatalf("approved applicant not added as viewer: %+v", p.Members)
+	}
+	stale.Description = "Owner edited an old draft in another session"
+	body, err := json.Marshal(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(call(owner, "PUT", "/api/projects", string(body)), 409, "stale draft cannot remove approved member")
+	expect(call(owner, "PUT", "/api/projects", `{"id":"p1","name":"P1","members":[]}`), 409, "member replacement requires snapshot token")
+	expect(call(owner, "PUT", "/api/projects", `{"id":"p1","name":"P1","description":"settings only"}`), 200, "omitting members preserves live roster")
+	if p, _ := s.Project("p1"); domain.ProjectMemberRole(p, user("alice")) != domain.ProjectRoleViewer || p.Description != "settings only" {
+		t.Fatalf("settings save lost approved membership: %+v", p)
 	}
 	expect(call(owner, "POST", approve, ""), 409, "approve twice")
 
@@ -136,5 +148,32 @@ func TestProjectJoinRequests(t *testing.T) {
 	expect(call(owner, "POST", fmt.Sprintf("/api/project-join-requests/%d/approve", again.ID), `{"role":"maintainer"}`), 200, "owner grants maintainer")
 	if p, _ := s.Project("p1"); domain.ProjectMemberRole(p, user("carol")) != domain.ProjectRoleMaintainer {
 		t.Fatalf("owner-granted maintainer missing: %+v", p.Members)
+	}
+
+	// Another session may add a pending applicant directly before review.
+	bobReq = expect(call(bob, "POST", "/api/projects/p1/join-requests", `{}`), 200, "bob reapplies")
+	p, _ := s.Project("p1")
+	p.Members = append(p.Members, domain.ProjectMember{UserID: user("bob"), Role: "viewer"})
+	body, err = json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(call(owner, "PUT", "/api/projects", string(body)), 200, "current member token permits direct addition")
+	expect(call(owner, "POST", fmt.Sprintf("/api/project-join-requests/%d/approve", bobReq.ID), ""), 409, "already-member approval must not report a different role")
+	stored, _ := s.ProjectJoinRequest(bobReq.ID)
+	p, _ = s.Project("p1")
+	if stored.Status != domain.JoinRequestPending || domain.ProjectMemberRole(p, user("bob")) != "viewer" {
+		t.Fatalf("conflicting approval changed request or existing role: %+v %+v", stored, p.Members)
+	}
+
+	otherReq := expect(call(other, "POST", "/api/projects/p1/join-requests", `{}`), 200, "other applies before archive")
+	expect(call(owner, "DELETE", "/api/projects/p1", ""), 200, "owner archives project")
+	for _, action := range []string{"approve", "reject"} {
+		expect(call(owner, "POST", fmt.Sprintf("/api/project-join-requests/%d/%s", otherReq.ID, action), ""), 404, "archived project cannot be reviewed")
+	}
+	stored, _ = s.ProjectJoinRequest(otherReq.ID)
+	p, _ = s.Project("p1")
+	if stored.Status != domain.JoinRequestPending || domain.ProjectMemberRole(p, user("other")) != "" {
+		t.Fatal("archived review changed pending request or members")
 	}
 }
