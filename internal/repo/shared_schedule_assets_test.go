@@ -321,6 +321,81 @@ func TestSharedScheduleReusesExternalSharedAgentWithoutCascading(t *testing.T) {
 	}
 }
 
+func TestSharedScheduleOnlyOwnerCanRepairLegacySOPRoleSharing(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	check := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	role := domain.AgentDefinition{ID: "source-role", Name: "Role", ProjectID: "source"}
+	check(st.PutAgent(role))
+	wf := domain.WorkflowDefinition{ID: "legacy-sop", Name: "Legacy SOP", ProjectID: "source",
+		Nodes: []domain.WorkflowNode{{ID: "work", Type: "agent", AgentID: role.ID}},
+	}
+	check(st.PutWorkflow(wf))
+	wf, _ = st.Workflow(wf.ID)
+	// Older publications could leave a shared SOP pointing at a private role.
+	wf.Shared = true
+	check(st.DB.Table("workflows").Where("id = ?", wf.ID).Update("payload", mustJSON(wf)).Error)
+	for _, project := range []string{"subscriber", "source"} {
+		job := domain.ScheduleJob{ID: project + "-job", Name: "Job", ProjectID: project, SkipDispatch: true,
+			References: []domain.AssistantReference{{Type: "sop", ID: wf.ID}},
+		}
+		check(st.PutScheduleJob(job))
+		_, err := st.PublishSharedSchedule(job.ID, project, domain.SharedScheduleVersion{Name: "Shared", Prompt: "inspect"}, 0)
+		check(err)
+		saved, _ := st.Agent(role.ID)
+		if saved.Shared != (project == "source") {
+			t.Fatalf("publishing from %s left source role shared=%v", project, saved.Shared)
+		}
+	}
+	stored, _ := st.Workflow(wf.ID)
+	if stored.Revision != wf.Revision {
+		t.Fatal("repairing the role created a redundant SOP revision")
+	}
+}
+
+func TestSharedWorkflowRejectedSaveRollsBackRoleSharing(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	role := domain.AgentDefinition{ID: "rollback-reviewer", Name: "Reviewer", ProjectID: "source"}
+	if err := st.PutAgent(role); err != nil {
+		t.Fatal(err)
+	}
+	wf := domain.WorkflowDefinition{ID: "review", Name: "Review", ProjectID: "source", Shared: true,
+		Nodes:         []domain.WorkflowNode{{ID: "review", Type: "agent", AgentID: role.ID}},
+		Notifications: []domain.NotificationBinding{{BotID: "local-bot", Scope: "run", Events: []string{"succeeded"}}},
+	}
+	if err := st.PutWorkflow(wf); err == nil || !strings.Contains(err.Error(), "通知绑定") {
+		t.Fatalf("expected a project-only notification error, got %v", err)
+	}
+	savedRole, _ := st.Agent(role.ID)
+	if savedRole.Shared || len(st.Revisions("agent", role.ID)) != 0 {
+		t.Fatal("rejected SOP save changed the role or its revision history")
+	}
+	if _, exists := st.Workflow(wf.ID); exists {
+		t.Fatal("rejected SOP was stored")
+	}
+
+	wf.Notifications = nil
+	if err := st.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	savedRole, _ = st.Agent(role.ID)
+	if !savedRole.Shared {
+		t.Fatal("saving a shared SOP did not share its role")
+	}
+}
+
 func TestSharedSchedulePrivateSOPUsesExistingSharingChecks(t *testing.T) {
 	for _, tc := range []struct {
 		name, wantError string

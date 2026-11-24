@@ -62,7 +62,9 @@ func (r *CatalogRepo) shareScheduleReference(ref domain.AssistantReference, proj
 	if !found {
 		return fmt.Errorf("%w：%s/%s 不存在", ErrSharedScheduleReferences, ref.Type, ref.ID)
 	}
-	if shared {
+	// An owner republishing an older shared SOP may still need to share its
+	// direct roles. Reusing another project's SOP must not change its assets.
+	if shared && (ref.Type != "sop" || canonical.ProjectID != projectID) {
 		return nil
 	}
 	if canonical.ProjectID != projectID {

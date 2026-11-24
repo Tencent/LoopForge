@@ -73,10 +73,18 @@ func (r *CatalogRepo) ShareSkill(id string) error {
 
 // ValidateWorkflowAgentScopes is shared by SOP saves and sharing transitions.
 func (r *CatalogRepo) ValidateWorkflowAgentScopes(workflow domain.WorkflowDefinition) error {
+	_, err := r.privateWorkflowAgents(workflow)
+	return err
+}
+
+// privateWorkflowAgents validates direct role bindings and returns the roles
+// owned by the SOP project that still need to be shared.
+func (r *CatalogRepo) privateWorkflowAgents(workflow domain.WorkflowDefinition) ([]string, error) {
 	projectID := strings.TrimSpace(workflow.ProjectID)
 	if projectID == "" {
-		return nil
+		return nil, nil
 	}
+	var private []string
 	for _, node := range workflow.Nodes {
 		if node.Type != "agent" {
 			continue
@@ -87,14 +95,17 @@ func (r *CatalogRepo) ValidateWorkflowAgentScopes(workflow domain.WorkflowDefini
 		}
 		agent, ok := r.Agent(agentID)
 		if !ok {
-			return fmt.Errorf("角色 %q 不存在", agentID)
+			return nil, fmt.Errorf("角色 %q 不存在", agentID)
 		}
 		owner := strings.TrimSpace(agent.ProjectID)
 		if owner == "" || (owner != projectID && !agent.Shared) {
-			return fmt.Errorf("角色 %q 不属于当前项目且尚未共享", agent.Name)
+			return nil, fmt.Errorf("角色 %q 不属于当前项目且尚未共享", agent.Name)
+		}
+		if !agent.Shared {
+			private = append(private, agentID)
 		}
 	}
-	return nil
+	return private, nil
 }
 
 // ValidateWorkflowSharing preserves the SOP sandbox boundary. Sharing a SOP
@@ -116,22 +127,21 @@ func (r *CatalogRepo) ValidateWorkflowSharing(v domain.WorkflowDefinition) error
 	return nil
 }
 
-// ShareWorkflow applies SOP sharing checks before the ordinary save path,
-// including its existing notification and revision validation.
+// ShareWorkflow shares a stored SOP through the catalog save path. Repeating
+// the operation also shares any still-private direct roles from an older save.
 func (r *CatalogRepo) ShareWorkflow(id string) error {
 	v, ok := r.Workflow(id)
 	if !ok {
 		return fmt.Errorf("workflow %q not found", id)
 	}
-	if v.Shared || v.Generic {
+	if v.Generic {
 		return nil
 	}
-	v.Shared = true
-	if err := r.ValidateWorkflowAgentScopes(v); err != nil {
-		return err
-	}
-	if err := r.ValidateWorkflowSharing(v); err != nil {
-		return err
+	if !v.Shared {
+		v.Shared = true
+		if err := r.ValidateWorkflowSharing(v); err != nil {
+			return err
+		}
 	}
 	return r.PutWorkflow(v)
 }
