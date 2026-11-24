@@ -494,6 +494,9 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	if nodeID == "" {
 		nodeID = resumeNodeID(r)
 	}
+	if nodeID == "" {
+		return fmt.Errorf("没有可重试的节点：最后一步因条件汇合规则被跳过，请检查汇合规则，或从产生路由决策的节点重新运行")
+	}
 	if r.Nodes[nodeID] == nil {
 		return fmt.Errorf("retry node not found")
 	}
@@ -1064,10 +1067,11 @@ func resumeNodeID(r domain.Run) string {
 	if len(ready) > 0 {
 		return ready[0].ID
 	}
-	// 兜底：选第一个尚未成功的节点（例如取消/中断后仍停留在 running 的节点）。
-	// 这样即便历史遗留的 run 节点状态未收敛，也能定位到续跑目标，避免返回空。
+	// 兜底：选第一个尚未成功且不是 skipped 的节点（例如取消/中断后仍停留在
+	// running 的节点）。skipped 是条件路由或汇合规则的终态，重试它不会改变
+	// 上游路由决策，只会再次得到 skipped，因而不能作为重试起点。
 	for _, id := range order {
-		if nr := r.Nodes[id]; nr != nil && nr.Status != "succeeded" {
+		if nr := r.Nodes[id]; nr != nil && nr.Status != "succeeded" && nr.Status != "skipped" {
 			return id
 		}
 	}

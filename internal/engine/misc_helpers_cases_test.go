@@ -585,4 +585,10 @@ func TestPromptObservabilityAlignAndResumeRemainingBranches(t *testing.T) {
 	if got := resumeNodeID(domain.Run{WorkflowSnapshot: wf, Nodes: map[string]*domain.NodeRun{"a": {Status: "running"}, "b": {Status: "pending"}}}); got != "a" {
 		t.Fatalf("fallback resume=%q", got)
 	}
+	joinWf := domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "small"}, {ID: "large"}, {ID: "review", JoinRule: "all_success"}}, Edges: []domain.WorkflowEdge{{Source: "small", Target: "review"}, {Source: "large", Target: "review"}}}
+	if got := resumeNodeID(domain.Run{WorkflowSnapshot: joinWf, Nodes: map[string]*domain.NodeRun{
+		"small": {Status: "succeeded"}, "large": {Status: "skipped"}, "review": {Status: "skipped"},
+	}}); got != "" {
+		t.Fatalf("skipped route resume=%q, want no skipped retry target", got)
+	}
 }
