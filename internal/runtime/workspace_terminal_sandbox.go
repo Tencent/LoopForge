@@ -138,9 +138,6 @@ func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command C
 		if err := s.ensureStarted(ctx); err != nil {
 			return nil, err
 		}
-		if err := s.prepareCommandGitTools(ctx, command.environment); err != nil {
-			return nil, err
-		}
 		return s.terminalCommand(command), nil
 	default:
 		return nil, fmt.Errorf("工作区沙箱不支持交互终端；不能降级为宿主机终端")

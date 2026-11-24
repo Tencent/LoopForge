@@ -70,7 +70,7 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 		// child SOP in the shared checkout) holds the read fence. Its exact
 		// live environment already carries the stamp this recipe needs; reuse
 		// it instead of rerunning scripts under running members.
-		if !request.MigrateGitHelpers && gate.TryRLock() {
+		if gate.TryRLock() {
 			state := d.runnerWorkspacePreparationStatus(ctx, root, request)
 			gate.RUnlock()
 			if state.Status == "ready" {
@@ -97,11 +97,6 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 		return runnerWorkspaceError(err)
 	}
 	defer release()
-	if request.MigrateGitHelpers {
-		if err := runtime.MigrateWorkspaceGitHelpers(ctx, sb); err != nil {
-			return runnerWorkspaceError(err)
-		}
-	}
 	execution, err := d.workspaceExecutionSandbox(ctx, sb, request)
 	if err != nil {
 		return runnerWorkspaceError(err)
@@ -223,20 +218,13 @@ func (d *Daemon) runnerWorkspacePreparationStatus(ctx context.Context, root stri
 	}
 	defer release()
 	state = runtime.ReadWorkspacePreparationStatus(root, sb.ID())
-	migration, err := runtime.WorkspaceGitHelpersNeedMigration(ctx, sb)
-	if err != nil {
-		state.Status = "unprepared"
-		state.Error = err.Error()
-		return state
-	}
-	state.GitHelperMigrationRequired = migration
 	if _, active := d.workspacePreparing.Load(requestGateKey(request)); state.Status == "preparing" && !active {
 		state.Status = "unprepared"
 		state.Error = "上次工作区准备已中断，请重新准备"
 	}
 	if state.Status != "ready" {
 		if state.Status != "preparing" && request.Workflow != nil && runtime.WorkspacePreparationTrivial(*request.Workflow) {
-			return runtime.WorkspacePreparationStatus{Status: "ready", Steps: []runtime.WorkspacePreparationStep{}, GitHelperMigrationRequired: migration}
+			return runtime.WorkspacePreparationStatus{Status: "ready", Steps: []runtime.WorkspacePreparationStep{}}
 		}
 		return state
 	}

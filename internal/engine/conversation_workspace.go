@@ -176,9 +176,7 @@ var runnerMaterializeBusyWait = 30 * time.Second
 // never ran a command has no directory there yet. Refreshing is disabled: this
 // creates missing checkouts and never replaces one that may already be in use.
 func (e *Engine) materializeRunnerConversationWorkspace(ctx context.Context, run domain.Run) error {
-	request, err := e.preparedWorkspaceRequest(run, domain.RunnerWorkspaceRequest{
-		RunID: run.ID, Operation: domain.RunnerWorkspaceOperationPrepare, MigrateGitHelpers: workspaceGitHelperMigrationRequested(ctx),
-	})
+	request, err := e.preparedWorkspaceRequest(run, domain.RunnerWorkspaceRequest{RunID: run.ID, Operation: domain.RunnerWorkspaceOperationPrepare})
 	if err != nil {
 		return err
 	}

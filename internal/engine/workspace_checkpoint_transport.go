@@ -194,11 +194,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Status = 409
 			}
 		case domain.RunnerWorkspaceOperationPrepare:
-			ctx := r.Context()
-			if request.MigrateGitHelpers {
-				ctx = WithWorkspaceGitHelperMigration(ctx)
-			}
-			state, err := e.EnsureWorkspaceReady(ctx, run.ID)
+			state, err := e.EnsureWorkspaceReady(r.Context(), run.ID)
 			result.Payload, _ = json.Marshal(state)
 			if err != nil {
 				result.Error = err.Error()

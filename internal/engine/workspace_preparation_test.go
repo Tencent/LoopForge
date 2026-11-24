@@ -5,7 +5,6 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
-	"errors"
 
 	"maps"
 	"os"
@@ -371,9 +370,6 @@ func TestEnsureWorkspaceReadyWhileWorkspaceBusy(t *testing.T) {
 		state, err := e.EnsureWorkspaceReady(context.Background(), id)
 		if err != nil || state.Status != "ready" {
 			t.Fatalf("busy prepared workspace = %+v, %v", state, err)
-		}
-		if _, err := e.EnsureWorkspaceReady(WithWorkspaceGitHelperMigration(context.Background()), id); !errors.Is(err, repo.ErrWorkspaceInUse) {
-			t.Fatalf("explicit migration must wait for an existing terminal or agent: %v", err)
 		}
 		raw, _ := os.ReadFile(filepath.Join(e.RunWorkspace(id), ".agentflow", "env-count"))
 		if string(raw) != "run\n" {
