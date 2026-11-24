@@ -180,7 +180,7 @@ eval(fs.readFileSync('app/run-activation.js','utf8')+'\n'+fs.readFileSync('app/r
  assert.equal(workspaceTab.classList.active,true);
  assert.equal(overviewPane.hidden,true);
  assert.equal(pane.hidden,false);
- await Promise.resolve();
+ await new Promise(setImmediate);
  info={available:true};
  restoreStatus={status:'ready'};
  timers.shift()();
@@ -226,11 +226,11 @@ eval(fs.readFileSync('app/run-activation.js','utf8')+'\n'+fs.readFileSync('app/r
  cleanupBusy=true;
  const childRestore=restoreButton.onclick();
  await new Promise(setImmediate);
- assert.deepEqual(calls,[[restorePath,'POST']]);
+ assert.deepEqual(calls,[[workspacePath,'GET'],[restorePath,'POST']]);
  assert.match(pane.innerHTML,/正在恢复工作区/,'the cleanup lease should keep the restore pending');
  timers.shift()();
  await new Promise(setImmediate);
- assert.deepEqual(calls,[[restorePath,'POST'],[restorePath,'POST']]);
+ assert.deepEqual(calls,[[workspacePath,'GET'],[restorePath,'POST'],[restorePath,'POST']]);
  info={available:true,readOnly:true};
  timers.shift()();
  await childRestore;

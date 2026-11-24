@@ -28,6 +28,12 @@ func (h *runsHandlers) workspaceRestore(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	if runnerID := h.engine.RunExecutionRunner(owner); runnerID != "" {
+		if status, reason := h.probeRunnerWorkspace(c.Request.Context(), owner, runnerID); status != 0 {
+			c.JSON(status, gin.H{"error": reason})
+			return
+		}
+	}
 	if strings.Contains(c.GetHeader("Prefer"), "respond-async") && !owner.WorkspaceCleanedAt.IsZero() {
 		meta, _ := h.engine.ConversationWorkspaceStatus(owner.ID)
 		if meta.SavedAt == nil {
@@ -112,21 +118,23 @@ func (h *runsHandlers) workspaceRestoreStatus(c *gin.Context) {
 	c.JSON(200, state)
 }
 
-func (h *runsHandlers) workspaceLifecycleInfo(c *gin.Context, run domain.Run, payload map[string]any) {
+func (h *runsHandlers) workspaceLifecycleInfo(c *gin.Context, run domain.Run, payload map[string]any, allowRestore bool) {
 	payload["idleTimeoutSeconds"] = int(engine.ConversationWorkspaceIdleTTL.Seconds())
 	meta, ok := h.engine.ConversationWorkspaceStatus(run.ID)
 	if !ok {
 		return
 	}
 	restorable := false
-	if meta.SavedAt != nil && meta.SHA256 != "" {
+	if allowRestore && meta.SavedAt != nil && meta.SHA256 != "" {
 		_, status, _ := h.workspaceOwnerAccess(c.Request, run)
 		restorable = status == 0
 	}
 	payload["restorable"] = restorable
 	payload["checkpointSavedAt"] = meta.SavedAt
-	if state, err := h.engine.WorkspaceRestoreStatus(run.ID); err == nil && (state.Status == "restoring" || state.Status == "failed") {
-		payload["restore"] = state
+	if allowRestore {
+		if state, err := h.engine.WorkspaceRestoreStatus(run.ID); err == nil && (state.Status == "restoring" || state.Status == "failed") {
+			payload["restore"] = state
+		}
 	}
 	if meta.FollowUp {
 		payload["idleExpiresAt"] = meta.LastUsedAt.Add(engine.ConversationWorkspaceIdleTTL)

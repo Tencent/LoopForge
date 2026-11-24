@@ -155,18 +155,21 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 	}
 	owner, ok := h.workspaceOwner(run)
 	if !ok {
-		h.respondWorkspaceUnavailable(c, run, owner, http.StatusGone, "共享工作区所属运行已不可用")
+		h.respondWorkspaceUnavailable(c, run, owner, http.StatusGone, "共享工作区所属运行已不可用", false)
 		return
 	}
+	runnerID := h.engine.RunExecutionRunner(owner)
 	if !owner.WorkspaceCleanedAt.IsZero() {
-		h.respondWorkspaceUnavailable(c, run, owner, http.StatusGone, "工作区已回收；有保存的快照时可按需恢复，空闲 1 小时后再次回收")
+		if runnerID != "" && c.FullPath() == "/api/runs/:id/workspace" {
+			if status, reason := h.probeRunnerWorkspace(c.Request.Context(), owner, runnerID); status != 0 {
+				h.respondWorkspaceUnavailable(c, run, owner, status, reason, false)
+				return
+			}
+		}
+		h.respondWorkspaceUnavailable(c, run, owner, http.StatusGone, "工作区已回收；有保存的快照时可按需恢复，空闲 1 小时后再次回收", true)
 		return
 	}
-	if runnerID := h.engine.RunExecutionRunner(owner); runnerID != "" {
-		if _, exists := h.repo.Runner(runnerID); !exists {
-			h.respondWorkspaceUnavailable(c, run, owner, http.StatusGone, "执行机器 Daemon 已卸载，工作区已随之删除；重新连接执行机器也无法恢复此工作区")
-			return
-		}
+	if runnerID != "" {
 		h.proxyRunnerWorkspace(c, run, owner, runnerID)
 		return
 	}
@@ -183,7 +186,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		}
 	}
 	if reason != "" {
-		h.respondWorkspaceUnavailable(c, run, owner, http.StatusConflict, reason)
+		h.respondWorkspaceUnavailable(c, run, owner, http.StatusConflict, reason, true)
 		return
 	}
 
@@ -198,7 +201,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 			"changes": changes, "repositories": collectWorkspaceGitRepositories(root, run), "warning": warning,
 			"repositoryDetails": workspaceRepositoryDetails(run),
 		}
-		h.workspaceLifecycleInfo(c, owner, payload)
+		h.workspaceLifecycleInfo(c, owner, payload, true)
 		c.JSON(http.StatusOK, payload)
 	case "/api/runs/:id/workspace/tree":
 		entries, truncated, err := readWorkspaceTree(root, c.Query("path"))
@@ -281,23 +284,68 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 	}
 }
 
-func (h *runsHandlers) respondWorkspaceUnavailable(c *gin.Context, run, owner domain.Run, status int, reason string) {
+func (h *runsHandlers) respondWorkspaceUnavailable(c *gin.Context, run, owner domain.Run, status int, reason string, allowRestore bool) {
 	if c.FullPath() != "/api/runs/:id/workspace" {
 		c.JSON(status, gin.H{"error": reason})
 		return
 	}
 	payload := workspaceUnavailablePayload(run, reason)
 	if owner.ID != "" {
-		h.workspaceLifecycleInfo(c, owner, payload)
+		h.workspaceLifecycleInfo(c, owner, payload, allowRestore)
 	}
 	c.JSON(http.StatusOK, payload)
 }
 
-func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run, owner domain.Run, runnerID string) {
-	if h.runnerControls == nil {
-		c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "远程工作区通道未配置"})
-		return
+func (h *runsHandlers) requestRunnerWorkspace(ctx context.Context, runnerID string, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, int, string) {
+	if _, exists := h.repo.Runner(runnerID); !exists {
+		return domain.RunnerWorkspaceResponse{}, http.StatusGone, "执行机器 Daemon 已卸载，工作区已随之删除；重新连接执行机器也无法恢复此工作区"
 	}
+	if h.runnerControls == nil {
+		return domain.RunnerWorkspaceResponse{}, http.StatusServiceUnavailable, "远程工作区通道未配置"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	response, err := h.runnerControls.requestWorkspace(ctx, runnerID, request)
+	if err != nil {
+		reason := "远程执行机器当前离线或工作区通道不可用"
+		if errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errRunnerWorkspaceUnavailable) {
+			reason = "远程工作区读取超时"
+		}
+		return response, http.StatusConflict, reason
+	}
+	return response, 0, ""
+}
+
+func runnerWorkspaceErrorStatus(status int) int {
+	if status < 400 || status > 599 {
+		return http.StatusBadRequest
+	}
+	return status
+}
+
+func (h *runsHandlers) probeRunnerWorkspace(ctx context.Context, owner domain.Run, runnerID string) (int, string) {
+	response, status, reason := h.requestRunnerWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{
+		RunID: owner.ID, RunStatus: owner.Status, WorkspaceLayout: owner.ExecutionContext.RunnerWorkspaceLayout,
+		Operation: domain.RunnerWorkspaceOperationInfo,
+	})
+	if status != 0 {
+		return status, reason
+	}
+	// A missing checkout is expected after reclamation and confirms the Runner
+	// can receive a restore request.
+	if response.Status == http.StatusNotFound && !owner.WorkspaceCleanedAt.IsZero() {
+		return 0, ""
+	}
+	if response.Error != "" {
+		return runnerWorkspaceErrorStatus(response.Status), response.Error
+	}
+	if len(response.Payload) == 0 {
+		return http.StatusBadGateway, "远程执行机器返回了空响应"
+	}
+	return 0, ""
+}
+
+func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run, owner domain.Run, runnerID string) {
 	operation := ""
 	switch c.FullPath() {
 	case "/api/runs/:id/workspace":
@@ -330,22 +378,17 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run, owner domain.Ru
 		RunID: runnerWorkspaceRunID(run), RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: operation,
 		Path: path, Query: c.Query("q"), Ref: ref, Repositories: run.RepositoryContexts(),
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
-	defer cancel()
-	response, err := h.runnerControls.requestWorkspace(ctx, runnerID, request)
-	if err != nil {
-		reason := "远程执行机器当前离线或工作区通道不可用"
-		if errors.Is(err, context.DeadlineExceeded) {
-			reason = "远程工作区读取超时"
-		}
-		h.respondWorkspaceUnavailable(c, run, owner, http.StatusConflict, reason)
+	response, status, reason := h.requestRunnerWorkspace(c.Request.Context(), runnerID, request)
+	if status == http.StatusServiceUnavailable {
+		c.JSON(status, gin.H{"error": reason})
+		return
+	}
+	if status != 0 {
+		h.respondWorkspaceUnavailable(c, run, owner, status, reason, false)
 		return
 	}
 	if response.Error != "" {
-		status := response.Status
-		if status < 400 || status > 599 {
-			status = http.StatusBadRequest
-		}
+		status := runnerWorkspaceErrorStatus(response.Status)
 		if operation == domain.RunnerWorkspaceOperationInfo && status == http.StatusNotFound {
 			c.JSON(http.StatusOK, workspaceUnavailablePayload(run, response.Error))
 			return
@@ -366,7 +409,7 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run, owner domain.Ru
 			payload["readOnly"] = !h.workspaceWritable(c, run)
 			payload["pauseRequested"] = run.PauseRequested
 			payload["repositoryDetails"] = workspaceRepositoryDetails(run)
-			h.workspaceLifecycleInfo(c, owner, payload)
+			h.workspaceLifecycleInfo(c, owner, payload, true)
 			c.JSON(200, payload)
 			return
 		}
