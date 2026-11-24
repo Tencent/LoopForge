@@ -36,6 +36,9 @@ func TestMySQLRunnerSharingPreservesGrantsAndClearsRevokedDefaults(t *testing.T)
 	if err := store.PutRunner(runner); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SetDefaultRunner(1, runner.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.SetRunnerSharedProjects(runner.ID, 1, projects); err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +56,12 @@ func TestMySQLRunnerSharingPreservesGrantsAndClearsRevokedDefaults(t *testing.T)
 	}
 	if err := store.SetRunnerSharedProjects(runner.ID, 1, projects[1:]); err != nil {
 		t.Fatal(err)
+	}
+	if defaults := store.ResolveRunnerDefaults(1, projects[0]); defaults.Runner.ID != "" || defaults.PersonalRunnerID != runner.ID {
+		t.Fatalf("revoked project returned an invalid default: %+v", defaults)
+	}
+	if defaults := store.ResolveRunnerDefaults(1, projects[1]); defaults.Runner.ID != runner.ID {
+		t.Fatalf("eligible personal default was not selected: %+v", defaults)
 	}
 	if err := store.SetRunnerSharedProjects(runner.ID, 1, projects); err != nil {
 		t.Fatal(err)

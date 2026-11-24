@@ -142,7 +142,8 @@ test('runner sharing saves multiple projects and makes other owners’ machines 
   const shared = {id: 'team', name: 'Team host', ownerUserId: 2, status: 'online'};
   app.router.get('/api/runners?projectId=one', [mine, shared]);
   app.router.get('/api/runners?projectId=two', [mine]);
-  app.router.get('/api/runners/default', { runnerId: '' });
+  app.router.get('/api/runners/default?projectId=one', { runnerId: mine.id, personalRunnerId: mine.id, projectRunnerId: '' });
+  app.router.get('/api/runners/default?projectId=two', { runnerId: '', personalRunnerId: mine.id, projectRunnerId: '' });
   app.evaluate(`
     state.currentUser={id:1};
     state.projectFilter='one';
@@ -154,6 +155,7 @@ test('runner sharing saves multiple projects and makes other owners’ machines 
     ];
   `);
   await app.evaluate('refreshRunners()');
+  assert.match(app.document.querySelector('#runnerPoolStatus').textContent, /个人默认 · Laptop/);
   app.document.querySelector('[data-runner-share="mine"]').click();
   const projects = [...app.document.querySelectorAll('.runner-share-projects input')];
   assert.deepEqual(projects.map(box => box.value), ['one', 'two']);
@@ -169,4 +171,7 @@ test('runner sharing saves multiple projects and makes other owners’ machines 
 
   await app.evaluate("state.projectFilter='two';refreshRunners()");
   assert.equal(app.document.querySelector('[data-set-project-default="team"]'), null);
+  assert.equal(app.document.querySelector('#runnerPoolStatus').textContent, '在平台云端执行');
+  assert.equal(app.document.querySelector('.runner-card.is-default'), null);
+  assert.match(app.document.querySelector('.runner-card').textContent, /个人默认/);
 });

@@ -159,7 +159,7 @@ function renderRunnersView(){
   const runners=(state.runners||[]).filter(r=>own(r)||projectLoaded);
   const personalDefaultId=state.personalDefaultRunnerId??state.defaultRunnerId??'';
   const projectDefaultId=projectLoaded?state.projectDefaultRunnerId||'':'';
-  const defaultId=projectDefaultId||personalDefaultId;
+  const defaultId=projectLoaded?state.defaultRunnerId||'':'';
   $('#runnerCount').textContent=String(runners.length);
   const poolStatus=$('#runnerPoolStatus');
   if(poolStatus){
@@ -209,10 +209,10 @@ function renderRunnersView(){
         ${shared?'':runnerRunLimitHTML(r)}
         <span class="runner-card-spacer"></span>
         ${shared?'':`<button class="button ghost small runner-text-button" type="button" data-runner-share="${escapeHTML(r.id)}" aria-haspopup="dialog">共享项目${r.sharedProjectIds?.length?`（${r.sharedProjectIds.length}）`:''}</button>`}
-        ${isPersonalDefault?`<button class="button ghost small runner-text-button" type="button" data-set-default="">${projectDefaultId?'清除个人默认':'切回云端'}</button>`:''}
+        ${isPersonalDefault?'<button class="button ghost small runner-text-button" type="button" data-set-default="">清除个人默认</button>':''}
         ${shared||r.status==='online'?'':`<button class="button ghost small runner-text-button" type="button" data-remove-runner="${escapeHTML(r.id)}" title="机器已不再使用时移除绑定">移除</button>`}
         ${!shared&&!isPersonalDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-default="${escapeHTML(r.id)}">设为个人默认</button>`:''}
-        ${isProjectDefault?'<button class="button ghost small runner-text-button" type="button" data-set-project-default="">恢复个人默认</button>':''}
+        ${isProjectDefault?'<button class="button ghost small runner-text-button" type="button" data-set-project-default="">清除项目默认</button>':''}
         ${shared&&projectId&&!isProjectDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-project-default="${escapeHTML(r.id)}">在此项目使用</button>`:''}
       </div>
     </article>`;

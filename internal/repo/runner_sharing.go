@@ -110,11 +110,30 @@ func (r *RunnersRepo) ProjectDefaultRunner(userID int64, projectID string) domai
 	return runner
 }
 
-func (r *RunnersRepo) DefaultRunnerForProject(userID int64, projectID string) string {
+type RunnerDefaults struct {
+	Runner           domain.Runner
+	PersonalRunnerID string
+	ProjectRunnerID  string
+}
+
+// ResolveRunnerDefaults chooses the effective machine and returns the preference
+// IDs used by the machine settings, even when a project cannot use the personal default.
+func (r *RunnersRepo) ResolveRunnerDefaults(userID int64, projectID string) RunnerDefaults {
+	defaults := RunnerDefaults{PersonalRunnerID: r.DefaultRunner(userID)}
 	if runner := r.ProjectDefaultRunner(userID, projectID); runner.ID != "" {
-		return runner.ID
+		defaults.Runner, defaults.ProjectRunnerID = runner, runner.ID
+		return defaults
 	}
-	return r.DefaultRunner(userID)
+	if defaults.PersonalRunnerID == "" {
+		return defaults
+	}
+	if runner, ok := r.Runner(defaults.PersonalRunnerID); ok {
+		// A personal request can still use a legacy ownerless default.
+		if (projectID == "" && runner.OwnerUserID == 0) || r.CanUseRunner(runner, projectID, userID) {
+			defaults.Runner = runner
+		}
+	}
+	return defaults
 }
 
 func (r *RunnersRepo) SetProjectDefaultRunner(userID int64, projectID, runnerID string) error {

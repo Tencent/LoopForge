@@ -78,14 +78,41 @@ func TestRunnerProjectSharing(t *testing.T) {
 		}
 	}
 	selection := map[string]string{"runnerId": runner.ID}
+	check(owner, http.MethodPut, "/api/runners/default", selection, 200)
+	checkDefault := func(f cvBHTTPFixture, project, effective, personal, projectDefault string) {
+		t.Helper()
+		path := "/api/runners/default"
+		if project != "" {
+			path += "?projectId=" + project
+		}
+		var result struct {
+			RunnerID         string        `json:"runnerId"`
+			Runner           domain.Runner `json:"runner"`
+			PersonalRunnerID string        `json:"personalRunnerId"`
+			ProjectRunnerID  string        `json:"projectRunnerId"`
+			Online           bool          `json:"online"`
+		}
+		body := check(f, http.MethodGet, path, nil, 200)
+		if err := json.Unmarshal(body, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.RunnerID != effective || result.Runner.ID != effective || result.PersonalRunnerID != personal ||
+			result.ProjectRunnerID != projectDefault || result.Online != (effective != "") {
+			t.Fatalf("default for %q: %s, want effective=%q personal=%q project=%q", project, body, effective, personal, projectDefault)
+		}
+	}
+	checkDefault(owner, "", runner.ID, "", "")
+	checkDefault(owner, "one", runner.ID, runner.ID, "")
+	checkDefault(owner, "unassigned", "", runner.ID, "")
 	check(member, http.MethodPut, "/api/runners/default", selection, 403)
 	check(member, http.MethodPut, "/api/runners/default?projectId=other", selection, 403)
 	check(member, http.MethodPut, "/api/runners/default?projectId=read-only", selection, 403)
 	check(member, http.MethodPut, "/api/runners/default?projectId=one", selection, 200)
-	if got := owner.s.DefaultRunnerForProject(member.user.ID, "one"); got != runner.ID {
+	checkDefault(member, "one", runner.ID, "", runner.ID)
+	if got := owner.s.ResolveRunnerDefaults(member.user.ID, "one").Runner.ID; got != runner.ID {
 		t.Fatalf("selected project default = %q", got)
 	}
-	if got := owner.s.DefaultRunnerForProject(member.user.ID, "two"); got != "" {
+	if got := owner.s.ResolveRunnerDefaults(member.user.ID, "two").Runner.ID; got != "" {
 		t.Fatalf("default leaked to another project: %q", got)
 	}
 
@@ -103,6 +130,8 @@ func TestRunnerProjectSharing(t *testing.T) {
 	check(member, http.MethodPut, "/api/runners/"+runner.ID+"/run-limit", map[string]int{"runLimit": 2}, 403)
 
 	check(owner, http.MethodPut, sharing, grant("two"), 200)
+	checkDefault(owner, "one", "", runner.ID, "")
+	checkDefault(owner, "two", runner.ID, runner.ID, "")
 	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-one", draft(""), 400)
 	staleDraft := assistantRequest{
 		SessionID: "owner-runner-one", ProjectID: "one",
@@ -119,7 +148,7 @@ func TestRunnerProjectSharing(t *testing.T) {
 	}
 	check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-revoked", draft("one"), 400)
 	check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-two", draft("two"), 200)
-	if got := owner.s.DefaultRunnerForProject(member.user.ID, "one"); got != "" {
+	if got := owner.s.ResolveRunnerDefaults(member.user.ID, "one").Runner.ID; got != "" {
 		t.Fatalf("revoked project default = %q", got)
 	}
 

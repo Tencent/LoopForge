@@ -275,23 +275,16 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, map[string]string{"error": "请先登录后管理执行机器"})
 		return
 	}
-	personalID := h.repo.DefaultRunner(user.ID)
-	runnerID := personalID
 	projectID := strings.TrimSpace(c.Query("projectId"))
-	runner := h.repo.ProjectDefaultRunner(user.ID, projectID)
-	projectRunnerID := runner.ID
-	if projectRunnerID != "" {
-		runnerID = projectRunnerID
-	} else {
-		runner, _ = h.repo.Runner(runnerID)
-	}
+	defaults := h.repo.ResolveRunnerDefaults(user.ID, projectID)
+	runner := defaults.Runner
 	var poolConfigured bool
 	var poolOnline int
 	if h.engine != nil {
 		poolConfigured, poolOnline = h.engine.CloudPoolStatus()
 	}
 	result := map[string]any{
-		"runnerId":  runnerID,
+		"runnerId":  runner.ID,
 		"runner":    runnerViewForUser(runner, user.ID),
 		"online":    runner.Status == domain.RunnerStatusOnline,
 		"cloudPool": map[string]any{"configured": poolConfigured, "online": poolOnline},
@@ -300,8 +293,8 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 		"minRunnerVersion": domain.RunnerVersionDefaultSelection,
 	}
 	if projectID != "" {
-		result["personalRunnerId"] = personalID
-		result["projectRunnerId"] = projectRunnerID
+		result["personalRunnerId"] = defaults.PersonalRunnerID
+		result["projectRunnerId"] = defaults.ProjectRunnerID
 	}
 	c.JSON(http.StatusOK, result)
 }
@@ -457,9 +450,10 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 		}
 		message := "已设为你在此项目的默认执行机器"
 		if runnerID == "" {
-			message = "此项目已恢复个人默认执行机器"
+			message = "已清除此项目的默认执行机器"
 		}
-		c.JSON(http.StatusOK, gin.H{"runnerId": h.repo.DefaultRunnerForProject(user.ID, projectID), "message": message})
+		defaults := h.repo.ResolveRunnerDefaults(user.ID, projectID)
+		c.JSON(http.StatusOK, gin.H{"runnerId": defaults.Runner.ID, "message": message})
 		return
 	}
 	if err := h.repo.SetDefaultRunner(user.ID, runnerID, time.Now().UTC()); err != nil {

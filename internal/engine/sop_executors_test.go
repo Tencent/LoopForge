@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -111,6 +112,9 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 		Members: []domain.ProjectMember{{UserID: 42, Role: "member"}}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.PutProject(domain.Project{ID: "unshared-compute", Name: "Unshared compute", OwnerID: 42}); err != nil {
+		t.Fatal(err)
+	}
 	runner := domain.Runner{ID: "shared", OwnerUserID: 42, Status: domain.RunnerStatusOnline,
 		Runtimes: []domain.RunnerRuntime{{Provider: "codex", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline}}}
 	if err := st.PutRunner(runner); err != nil {
@@ -122,8 +126,24 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 	if err := st.SetProjectDefaultRunner(1, "shared-compute", runner.ID); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.SetDefaultRunner(42, runner.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 
 	e := &Engine{repo: st}
+	for _, tc := range []struct {
+		projectID, runnerID, mode string
+	}{
+		{"", runner.ID, domain.ExecutionModeRunner},
+		{"shared-compute", runner.ID, domain.ExecutionModeRunner},
+		{"unshared-compute", "", domain.ExecutionModeCloud},
+	} {
+		ownerExecution := domain.TelemetryContext{ProjectID: tc.projectID, ResponsibleUserID: 42}
+		e.selectSOPExecutionTarget(&ownerExecution)
+		if ownerExecution.ExecutionRunnerID != tc.runnerID || ownerExecution.ExecutionMode != tc.mode {
+			t.Fatalf("owner target for %q = %+v, want %s %q", tc.projectID, ownerExecution, tc.mode, tc.runnerID)
+		}
+	}
 	execution := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: 1}
 	e.selectSOPExecutionTarget(&execution)
 	if execution.ExecutionRunnerID != runner.ID || execution.ExecutionMode != domain.ExecutionModeRunner {
@@ -147,6 +167,11 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 	e.selectSOPExecutionTarget(&execution)
 	if execution.ExecutionRunnerID != "" || execution.ExecutionMode != domain.ExecutionModeCloud {
 		t.Fatalf("new run used revoked machine: %+v", execution)
+	}
+	ownerExecution := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: 42}
+	e.selectSOPExecutionTarget(&ownerExecution)
+	if ownerExecution.ExecutionRunnerID != "" || ownerExecution.ExecutionMode != domain.ExecutionModeCloud {
+		t.Fatalf("new owner run used revoked machine: %+v", ownerExecution)
 	}
 }
 
