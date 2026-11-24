@@ -154,6 +154,8 @@ test('generic HTTP credentials select the authorized endpoint and check a reposi
   await settle(6);
   assert.deepEqual(app.router.calls.find(call => call.method === 'PUT' && call.path === endpoint).body,
     {...instance, name:instance.host, username:'git-user', token:'fixture-token'});
+  const row = app.evaluate(`credentialGitRowsHTML([${JSON.stringify({...instance,id:'plain-token',name:'HTTP instance'})}], [], false)`);
+  assert.match(row, / · http:\/\/192\.0\.2\.13:8080/);
 
   const verify = dialog.querySelector('[data-http-cred-verify="plain-token"]');
   const repoCheck = dialog.querySelector('[data-http-repo-check]');

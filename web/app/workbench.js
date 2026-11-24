@@ -785,7 +785,7 @@ function credentialGitRowsHTML(http,ssh,showGitHub){
   return [...http.filter(item=>item.host!=='github.com'||!showGitHub).map(item=>({...item,kind:'http'})),...ssh.map(item=>({...item,kind:'ssh'}))].map(item=>{
     const isSSH=item.kind==='ssh';
     const platform=GIT_ADD_OPTIONS.find(type=>type.id===(isSSH?'gitSshKey':item.platform))||GIT_ADD_OPTIONS.find(type=>type.id==='other');
-    const endpoint=`${isSSH?'ssh':'https'}://${item.host}`;
+    const endpoint=item.host.startsWith('http://')?item.host:`${isSSH?'ssh':'https'}://${item.host}`;
     return `<div class="credential-row"><div class="credential-row-main">
       ${credentialLogo(platform)}<div class="credential-row-who"><b>${escapeHTML(item.name)}</b><small><span>${platform.name} · ${escapeHTML(endpoint)}</span></small></div>
       <div class="credential-row-end"><button type="button" class="credential-btn ghost credential-row-link" aria-haspopup="dialog" data-credential-git-kind="${item.kind}" data-credential-git-id="${escapeHTML(item.id)}">${item.managed?'查看':'编辑'}${credentialGlyph('chevron-right',14)}</button></div>

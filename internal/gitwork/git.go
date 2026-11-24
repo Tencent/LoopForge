@@ -78,11 +78,8 @@ func Watch(ctx context.Context, workspace string, opts procwatch.Options, args .
 
 func command(ctx context.Context, workspace string, sshEnv map[string]string, args []string) *exec.Cmd {
 	dir := CommandDir(workspace)
-	credential, endpoint, urlHost := httpCredentialForCommand(ctx, args)
+	credential, endpoint, remote := httpCredentialForCommand(ctx, args)
 	authArgs := scopedHTTPAuthArgs(credential)
-	if endpoint.Scheme == "http" && credential.Token != "" {
-		authArgs = append(authArgs, "-c", PlainHTTPRedirectConfig("http://"+urlHost)+"=false")
-	}
 	cmd := exec.CommandContext(ctx, "git", append(authArgs, args...)...)
 	cmd.Dir = dir
 	cmd.Env = WithEnvValue(Env(""), "PWD", dir)
@@ -90,6 +87,14 @@ func command(ctx context.Context, workspace string, sshEnv map[string]string, ar
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_GLOBAL", os.DevNull)
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_NOSYSTEM", "1")
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_PARAMETERS", "")
+		urlHost := ""
+		if remote != nil {
+			// The Git transport can send the original IPv6 authority to the helper.
+			urlHost = strings.ToLower(remote.Host)
+		}
+		if endpoint.Scheme == "http" && credential.Token != "" {
+			cmd.Env = WithPlainHTTPRedirectsDisabled(cmd.Env, remote)
+		}
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPHostEnv, endpoint.Authority)
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPURLHostEnv, urlHost)
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPSchemeEnv, endpoint.Scheme)

@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -51,11 +50,7 @@ func workspaceGitHTTPMain(args []string) int {
 		remote, err := url.Parse(args[len(args)-1])
 		if err == nil && remote.Scheme == "http" {
 			if scope := workspacePlainHTTPHost(remote.Host); scope != "" {
-				count, _ := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
-				index := strconv.Itoa(count)
-				env = gitwork.WithEnvValue(env, "GIT_CONFIG_COUNT", strconv.Itoa(count+1))
-				env = gitwork.WithEnvValue(env, "GIT_CONFIG_KEY_"+index, gitwork.PlainHTTPRedirectConfig("http://"+remote.Host))
-				env = gitwork.WithEnvValue(env, "GIT_CONFIG_VALUE_"+index, "false")
+				env = gitwork.WithPlainHTTPRedirectsDisabled(env, remote)
 				env = gitwork.WithEnvValue(env, workspaceGitHTTPOriginEnv, scope)
 			}
 		}

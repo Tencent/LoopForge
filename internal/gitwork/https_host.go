@@ -2,6 +2,7 @@ package gitwork
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -45,7 +46,21 @@ func GitCredentialScope(protocol, host string) (string, bool) {
 	return "", false
 }
 
-// PlainHTTPRedirectConfig takes the authority spelling used by Git.
-func PlainHTTPRedirectConfig(scope string) string {
-	return "http." + scope + "/.followRedirects"
+// WithPlainHTTPRedirectsDisabled applies the rule to the full remote URL.
+// Git prefers longer URL path matches even when the host rule is command scoped.
+func WithPlainHTTPRedirectsDisabled(env []string, remote *url.URL) []string {
+	urlMatch := *remote
+	if urlMatch.User != nil {
+		urlMatch.User = url.User(urlMatch.User.Username())
+	}
+	count := 0
+	for _, entry := range env {
+		if raw, ok := strings.CutPrefix(entry, "GIT_CONFIG_COUNT="); ok {
+			count, _ = strconv.Atoi(raw)
+		}
+	}
+	index := strconv.Itoa(count)
+	env = WithEnvValue(env, "GIT_CONFIG_COUNT", strconv.Itoa(count+1))
+	env = WithEnvValue(env, "GIT_CONFIG_KEY_"+index, "http."+urlMatch.String()+".followRedirects")
+	return WithEnvValue(env, "GIT_CONFIG_VALUE_"+index, "false")
 }

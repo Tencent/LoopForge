@@ -121,10 +121,11 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			}
 			// A direct native command can resolve its executable before the
 			// bound PATH takes effect. Launch the same Git shim as a shell would.
-			if len(bound.Argv) > 0 && bound.Argv[0] == "git" && sandboxDriver(sandbox) != "docker" &&
-				strings.Contains(","+bound.environment[GitHostsEnv], ",http://") {
+			if len(bound.Argv) > 0 && bound.Argv[0] == "git" && sandboxDriver(sandbox) != "docker" {
 				httpBin, _, _ := strings.Cut(bound.environment[workspaceGitBinsEnv], string(os.PathListSeparator))
-				bound.Argv = append([]string{filepath.Join(httpBin, "git")}, bound.Argv[1:]...)
+				if filepath.Base(httpBin) == workspaceGitHTTPBin {
+					bound.Argv = append([]string{filepath.Join(httpBin, "git")}, bound.Argv[1:]...)
+				}
 			}
 		case BindExtra:
 			// Missing credentials export as empty strings on purpose: a child
@@ -359,7 +360,7 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 		return nil
 	}
 	hasPlainHTTP := strings.Contains(","+hosts, ",http://")
-	tools, err := prepareWorkspaceGitTools(ctx, sandbox, workspace, hasPlainHTTP)
+	tools, httpBin, err := prepareWorkspaceGitTools(ctx, sandbox, workspace, hasPlainHTTP)
 	if err != nil {
 		return fmt.Errorf("prepare Runner Git helpers: %w", err)
 	}
@@ -375,7 +376,9 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 	bins := bin
 	if hasPlainHTTP {
 		environment[workspaceGitHTTPOriginEnv] = ""
-		bins = filepath.Join(tools, workspaceGitHTTPBin) + string(os.PathListSeparator) + bins
+	}
+	if httpBin != "" {
+		bins = httpBin + string(os.PathListSeparator) + bins
 	}
 	environment[workspaceGitBinsEnv] = bins
 	if sandboxDriver(sandbox) != "docker" {

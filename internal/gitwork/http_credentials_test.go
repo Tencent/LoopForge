@@ -2,12 +2,16 @@ package gitwork
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 )
 
 func TestPlainHTTPRedirectConfigMatchesIPv6Spellings(t *testing.T) {
 	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("initialize fixture repository: %s: %v", out, err)
+	}
 	ctx := WithHTTPCredentials(t.Context(), map[string]HTTPCredential{
 		"http://[fd00::2]":      {Token: "fixture-http-token"},
 		"http://[fd00::2]:8443": {Token: "fixture-http-token"},
@@ -17,11 +21,17 @@ func TestPlainHTTPRedirectConfigMatchesIPv6Spellings(t *testing.T) {
 		want bool
 	}{
 		{"http://[FD00:0::0002]/team/app.git", true},
-		{"http://[FD00:0:0:0:0:0:0:2]:8443/team/app.git", true},
+		{"http://[FD00:0:0:0:0:0:0:2]:8443/team/app=repo.git", true},
 		{"http://[fd00::2]:8444/team/app.git", false},
 		{"https://[fd00::2]:8443/team/app.git", false},
 		{"http://localhost:8443/team/app.git", false},
 	} {
+		if tc.want {
+			key := "http." + tc.url + ".followRedirects"
+			if out, err := exec.Command("git", "-C", dir, "config", "--local", key, "true").CombinedOutput(); err != nil {
+				t.Fatalf("set local redirect policy: %s: %v", out, err)
+			}
+		}
 		cmd := command(ctx, dir, nil, []string{"config", "--get-urlmatch", "http.followRedirects", tc.url})
 		out, err := cmd.CombinedOutput()
 		if tc.want && (err != nil || strings.TrimSpace(string(out)) != "false") {
@@ -60,8 +70,8 @@ func TestHTTPSCredentialMatchesOnlyItsHostAndProtocol(t *testing.T) {
 			t.Fatal("token was put in argv")
 		}
 	}
-	credential, endpoint, urlHost := httpCredentialForCommand(ctx, []string{"ls-remote", "https://git.example.org:8443/owner/other"})
-	if endpoint.Scope() != "git.example.org:8443" || urlHost != endpoint.Authority || credential.Token != "fake-other-token" {
+	credential, endpoint, remote := httpCredentialForCommand(ctx, []string{"ls-remote", "https://git.example.org:8443/owner/other"})
+	if endpoint.Scope() != "git.example.org:8443" || remote == nil || remote.Host != endpoint.Authority || credential.Token != "fake-other-token" {
 		t.Fatal("explicit URL borrowed the bound repository credential")
 	}
 

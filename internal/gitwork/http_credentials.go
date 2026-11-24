@@ -31,10 +31,10 @@ func WithHTTPRemote(ctx context.Context, remote string) context.Context {
 	return context.WithValue(ctx, httpRemoteKey{}, remote)
 }
 
-func httpCredentialForCommand(ctx context.Context, args []string) (credential HTTPCredential, endpoint domain.GitHTTPEndpoint, urlHost string) {
+func httpCredentialForCommand(ctx context.Context, args []string) (credential HTTPCredential, endpoint domain.GitHTTPEndpoint, remoteURL *url.URL) {
 	credentials, _ := ctx.Value(httpCredentialsKey{}).(map[string]HTTPCredential)
 	if len(credentials) == 0 {
-		return HTTPCredential{}, domain.GitHTTPEndpoint{}, ""
+		return HTTPCredential{}, domain.GitHTTPEndpoint{}, nil
 	}
 	remote, _ := ctx.Value(httpRemoteKey{}).(string)
 	for _, arg := range args {
@@ -56,19 +56,17 @@ func httpCredentialForCommand(ctx context.Context, args []string) (credential HT
 	}
 	u, err := url.Parse(remote)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
-		return HTTPCredential{}, domain.GitHTTPEndpoint{}, ""
+		return HTTPCredential{}, domain.GitHTTPEndpoint{}, nil
 	}
 	endpoint, err = domain.ParseGitHTTPEndpoint(u.Scheme + "://" + u.Host)
 	if err != nil {
-		return HTTPCredential{}, domain.GitHTTPEndpoint{}, ""
+		return HTTPCredential{}, domain.GitHTTPEndpoint{}, nil
 	}
 	credential = credentials[endpoint.Scope()]
 	if credential.Username == "" {
 		credential.Username = "x-access-token"
 	}
-	// Git can pass either the URL's original spelling or the normalized IPv6
-	// authority from its HTTP transport to the credential helper.
-	return credential, endpoint, strings.ToLower(u.Host)
+	return credential, endpoint, u
 }
 
 const (

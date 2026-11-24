@@ -144,6 +144,8 @@ Under **Personal settings → Git access tokens**, select the authorized HTTP in
 
 HTTP and HTTPS have separate authorizations and personal credentials. Git resolves hostnames using the execution environment and disables redirects for authorized HTTP credentials. HTTP repositories on an execution machine require Runner 0.12.1 or later. The Git transport supports generic repositories. PR and MR APIs depend on the hosting provider.
 
+Docker sandboxes use Git preinstalled in their configured image for HTTP token authentication.
+
 ### Git repositories over SSH
 
 Use Git SSH for GitLab.com, self-managed GitLab, Gitea, Gogs, GitHub, and other Git hosts that offer this transport. In **Project settings → Code repositories** or **Quick access**, enter the clone address, such as `git@gitlab.com:group/repo.git` or `ssh://git@git.example.org:2222/group/repo.git`, and select the existing default branch. GitHub HTTPS continues to use GitHub authorization or a PAT.

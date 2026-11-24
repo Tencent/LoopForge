@@ -70,74 +70,81 @@ func ensureDockerGitToolsDirectory(root string) error {
 	return ensureRunnerGitDir(root)
 }
 
-func prepareWorkspaceGitTools(ctx context.Context, sandbox Sandbox, workspace string, plainHTTP bool) (string, error) {
-	var host, guest string
+func prepareWorkspaceGitTools(ctx context.Context, sandbox Sandbox, workspace string, plainHTTP bool) (root, httpBin string, err error) {
+	var host string
 	docker, _ := unwrapSandbox(sandbox).(*dockerSandbox)
 	if docker != nil {
 		if docker.workspace != "" {
 			workspace = docker.workspace
 		}
-		var err error
 		host, err = dockerGitToolsDirectory(workspace, docker.name)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if err := ensureDockerGitToolsDirectory(host); err != nil {
-			return "", err
+			return "", "", err
 		}
-		guest = dockerGitToolsMount
+		root = dockerGitToolsMount
 	} else {
-		var err error
 		host, err = nativeGitToolsRoot()
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if err := os.MkdirAll(filepath.Dir(host), 0o700); err != nil {
-			return "", err
+			return "", "", err
 		}
 		if err := ensureRunnerGitDir(host); err != nil {
-			return "", err
+			return "", "", err
 		}
 		self, err := os.Executable()
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		info, err := os.Stat(self)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		key := sha256.Sum256([]byte(fmt.Sprintf("%s\n%d\n%d", self, info.Size(), info.ModTime().UnixNano())))
 		host = filepath.Join(host, fmt.Sprintf("runner-%x", key[:16]))
 		if err := ensureRunnerGitDir(host); err != nil {
-			return "", err
+			return "", "", err
 		}
-		host, err = prepareNativeGitDistribution(ctx, host, plainHTTP)
+		var git string
+		if plainHTTP {
+			git, err = exec.LookPath("git")
+			if err != nil && !errors.Is(err, exec.ErrNotFound) {
+				return "", "", err
+			}
+			plainHTTP = git != ""
+		}
+		host, err = prepareNativeGitDistribution(ctx, host, git)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		guest = host
+		root = host
 	}
 	if err := ensureRunnerGitDir(filepath.Join(host, "bin")); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := installMCPCallHelperForSandbox(ctx, sandbox, host, filepath.Join(host, "bin", "agentflow-helper")); err != nil {
-		return "", err
+		return "", "", err
 	}
-	helper := filepath.Join(guest, "bin", "agentflow-helper")
+	helper := filepath.Join(root, "bin", "agentflow-helper")
 	for _, name := range []string{"gh", "glab"} {
 		if err := writeWorkspaceGitShim(host, filepath.Join("bin", name), helper, "cli-shim "+name); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	if plainHTTP {
 		if err := ensureRunnerGitDir(filepath.Join(host, workspaceGitHTTPBin)); err != nil {
-			return "", err
+			return "", "", err
 		}
 		if err := writeWorkspaceGitShim(host, filepath.Join(workspaceGitHTTPBin, "git"), helper, "git-workspace"); err != nil {
-			return "", err
+			return "", "", err
 		}
+		httpBin = filepath.Join(root, workspaceGitHTTPBin)
 	}
-	return guest, nil
+	return root, httpBin, nil
 }
 
 func writeWorkspaceGitShim(root, rel, helper, command string) error {
@@ -145,14 +152,10 @@ func writeWorkspaceGitShim(root, rel, helper, command string) error {
 	return writeManagedFile(root, filepath.Join(root, rel), []byte(script), 0o755)
 }
 
-func prepareNativeGitDistribution(ctx context.Context, root string, plainHTTP bool) (string, error) {
-	if !plainHTTP {
+func prepareNativeGitDistribution(ctx context.Context, root, git string) (string, error) {
+	if git == "" {
 		dir := filepath.Join(root, "credential")
 		return dir, ensureRunnerGitDir(dir)
-	}
-	git, err := exec.LookPath("git")
-	if err != nil {
-		return "", err
 	}
 	output, err := exec.CommandContext(ctx, git, "--exec-path").Output()
 	if err != nil {

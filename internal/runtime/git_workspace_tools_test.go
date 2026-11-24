@@ -191,6 +191,29 @@ exec git ls-remote -- "$2"`
 	}
 }
 
+func TestNativeScriptWithGitCredentialOnHostWithoutGit(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.Symlink("/bin/sh", filepath.Join(bin, "sh")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", "")
+	workspace := t.TempDir()
+	const host = "http://git.example.invalid:8080"
+	credentials := RunCredentials{GitHTTPCredentials: map[string]domain.GitHTTPExecutionCredential{
+		host: {GitHTTPCredential: domain.GitHTTPCredential{Host: host, Platform: domain.GitPlatformOther}, Token: "fixture-token"},
+	}}
+	script := CommandSpec{Argv: []string{"sh", "-ec", "printf 'script ran'"}, CredentialBindings: []CredentialBinding{BindGit}}
+	if out, err := ExecuteLocalCommand(t.Context(), workspace, script, credentials, nil); err != nil || strings.TrimSpace(out) != "script ran" {
+		t.Fatalf("script with an HTTP Git token on a host without Git: %q, %v", out, err)
+	}
+	git := CommandSpec{Argv: []string{"git", "--version"}, CredentialBindings: []CredentialBinding{BindGit}}
+	if _, err := ExecuteLocalCommand(t.Context(), workspace, git, credentials, nil); !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("missing Git must fail only when invoked: %v", err)
+	}
+}
+
 func TestDockerScriptWithGitCredentialOnImageWithoutGit(t *testing.T) {
 	root := gitHelperDockerTestRoot(t)
 	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", "node:22-bookworm-slim")

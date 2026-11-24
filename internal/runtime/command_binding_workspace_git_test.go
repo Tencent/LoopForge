@@ -191,6 +191,13 @@ func TestWorkspaceGitScopesHTTPRedirectsToAuthorizedOrigin(t *testing.T) {
 	}))
 	t.Cleanup(gateway.Close)
 	workspace := t.TempDir()
+	if out, err := exec.CommandContext(t.Context(), "git", "init", "-q", workspace).CombinedOutput(); err != nil {
+		t.Fatalf("initialize fixture repository: %s: %v", out, err)
+	}
+	key := "http." + raw + "/moved.git.followRedirects"
+	if out, err := exec.CommandContext(t.Context(), "git", "-C", workspace, "config", "--local", key, "true").CombinedOutput(); err != nil {
+		t.Fatalf("set local redirect policy: %s: %v", out, err)
+	}
 	for _, mode := range []string{"shell", "direct"} {
 		t.Run(mode, func(t *testing.T) {
 			run := func(remote string) (string, error) {
