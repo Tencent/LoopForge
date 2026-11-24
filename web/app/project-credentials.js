@@ -40,7 +40,7 @@ async function loadProjectCredentialsPage() {
     host.innerHTML = credentials.map(item => `
       <div class="project-credential-item">
         <div>
-          <strong>${escapeHTML(item.name)}</strong>
+          <strong data-i18n-skip>${escapeHTML(item.name)}</strong>
           <span class="project-credential-kind">${escapeHTML(projectCredentialKinds[item.kind]?.label || item.kind)} · ${item.disabled ? '已停用' : '已设置'}</span>
           <div class="project-credential-variables">${item.variables.map(name => `<code>${escapeHTML(name)}</code>`).join('')}</div>
         </div>
@@ -130,7 +130,11 @@ function editProjectCredential(host, projectID, item, onClose) {
   };
   form.querySelector('[data-cancel-credential]').onclick = onClose;
   if (item) form.querySelector('[data-delete-credential]').onclick = async () => {
-    const confirmed = await afConfirm({title:'删除凭据？', message: '已绑定「' + item.name + '」的执行在重新选择凭据后才能启动。', danger:true, confirmText:'删除'});
+    const message = window.lfT(
+      `已绑定「${item.name}」的执行在重新选择凭据后才能启动。`,
+      `Runs that use “${item.name}” need a replacement credential before they can start.`,
+    );
+    const confirmed = await afConfirm({title:'删除凭据？', message, danger:true, confirmText:'删除'});
     if (!confirmed || !form.isConnected) return;
     try {
       await api(endpoint, {method:'DELETE', silent:true});
@@ -184,9 +188,9 @@ async function renderWorkflowProjectCredentials(workflow) {
     const selected = new Set(workflow.projectCredentialIds || []);
     const available = credentials.filter(item => !item.disabled || selected.has(item.id));
     const missing = [...selected].filter(id => !available.some(item => item.id === id));
-    list.innerHTML = [...available, ...missing.map(id => ({id, name:'凭据已不可用', disabled:true}))].map(item => `
+    list.innerHTML = [...available, ...missing.map(id => ({id, disabled:true}))].map(item => `
       <label class="project-credential-choice"><input type="checkbox" value="${escapeHTML(item.id)}" ${selected.has(item.id) ? 'checked' : ''} ${item.disabled && !selected.has(item.id) ? 'disabled' : ''}>
-        <span>${escapeHTML(item.name)}${item.disabled ? ' · 已停用或删除' : ''}</span>
+        <span>${item.name ? `<span data-i18n-skip>${escapeHTML(item.name)}</span>` : '凭据已不可用'}${item.disabled ? ' · 已停用或删除' : ''}</span>
       </label>`).join('') || '<p>当前项目没有可用的凭据。</p>';
     list.onchange = event => {
       const input = event.target;
