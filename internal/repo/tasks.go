@@ -23,6 +23,11 @@ func (r *TasksRepo) Task(id string) (domain.Task, bool) {
 	return payloadOne[domain.Task](r.DB, "tasks", id)
 }
 
+// ReleaseTaskReservation removes an unstarted dispatch so it can be retried.
+func (r *TasksRepo) ReleaseTaskReservation(id string) error {
+	return r.DB.Where("id = ? AND status = ? AND COALESCE(run_id, '') = ''", id, "queued").Delete(&taskRow{}).Error
+}
+
 func (r *TasksRepo) PutTask(v domain.Task) error {
 	now := time.Now().UTC()
 	if old, ok := r.Task(v.ID); ok {

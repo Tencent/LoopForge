@@ -147,10 +147,14 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		return
 	}
 	// One pasted repository reference (web / SSH / clone / git clone)
-	// An unknown HTTPS host is a Git transport, not an unknown hosting adapter.
+	// A generic web Git URL uses Git transport without a hosting adapter.
+	reference, cloneCommand := strings.CutPrefix(sshReference, "git clone ")
+	reference = strings.ToLower(strings.TrimSpace(reference))
+	plainHTTP := strings.HasPrefix(reference, "http://")
 	_, knownHost := domain.ParseRepositoryURL(sshReference)
-	if v.Provider == domain.RepositoryProviderHTTPS || !knownHost && strings.HasPrefix(strings.TrimPrefix(sshReference, "git clone "), "https://") {
-		remote, name, err := gitwork.HTTPSRepositoryURL(sshReference)
+	if v.Provider == domain.RepositoryProviderHTTPS || v.Provider == domain.RepositoryProviderHTTP ||
+		plainHTTP && cloneCommand || !knownHost && (plainHTTP || strings.HasPrefix(reference, "https://")) {
+		remote, name, err := gitwork.GitHTTPRepositoryURL(sshReference)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -159,7 +163,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			if candidate == "" {
 				continue
 			}
-			other, _, err := gitwork.HTTPSRepositoryURL(candidate)
+			other, _, err := gitwork.GitHTTPRepositoryURL(candidate)
 			if err != nil || other != remote {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "仓库地址与 cloneUrl 不一致"})
 				return
@@ -169,7 +173,12 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "仓库网页地址必须是不含凭据的 HTTP(S) 地址"})
 			return
 		}
-		v.Provider, v.CloneURL, v.GongfengProjectID = domain.RepositoryProviderHTTPS, remote, ""
+		endpoint, _ := gitwork.GitHTTPRemoteEndpoint(remote)
+		if (v.Provider == domain.RepositoryProviderHTTPS || v.Provider == domain.RepositoryProviderHTTP) && v.Provider != endpoint.Scheme {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "仓库地址与所选 HTTP(S) 协议不一致"})
+			return
+		}
+		v.Provider, v.CloneURL, v.GongfengProjectID = endpoint.Scheme, remote, ""
 		if v.WebURL == "" {
 			v.WebURL = strings.TrimSuffix(remote, ".git")
 		}
@@ -197,7 +206,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if primary != "" {
 		info, ok := domain.ParseRepositoryURL(primary)
 		if !ok {
-			c.JSON(400, gin.H{"error": "请填写完整的 GitHub、HTTPS 或 Git SSH 仓库地址"})
+			c.JSON(400, gin.H{"error": "请填写完整的 GitHub、HTTP(S) 或 Git SSH 仓库地址"})
 			return
 		}
 		if body.RepoURL != "" && body.URL != "" {

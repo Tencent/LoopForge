@@ -43,7 +43,7 @@ func TestGitHTTPCredentialsSettings(t *testing.T) {
 	}
 	githubID := creds[0].ID
 	put(map[string]any{"host": "github.com", "name": "Again", "token": "other"}, http.StatusConflict)
-	put(map[string]any{"host": "http://github.com", "name": "Plain", "token": "x"}, http.StatusBadRequest)
+	put(map[string]any{"host": "http://github.com", "name": "Plain", "token": "x"}, http.StatusForbidden)
 	put(map[string]any{"host": "10.0.0.1", "name": "IP", "token": "x"}, http.StatusBadRequest)
 	put(map[string]any{"host": "gitlab.example.org", "name": "No token"}, http.StatusBadRequest)
 	put(map[string]any{"host": "gitlab.example.org", "name": "Spaces", "token": "a b"}, http.StatusBadRequest)

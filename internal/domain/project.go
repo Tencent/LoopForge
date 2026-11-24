@@ -108,8 +108,11 @@ const RepositoryProviderSSH = "ssh"
 // RepositoryProviderHTTPS uses Git transport without a hosting API adapter.
 const RepositoryProviderHTTPS = "https"
 
+// RepositoryProviderHTTP uses plaintext Git transport without a hosting API adapter.
+const RepositoryProviderHTTP = "http"
+
 func GitOnlyRepositoryProvider(provider string) bool {
-	return provider == RepositoryProviderSSH || provider == RepositoryProviderHTTPS
+	return provider == RepositoryProviderSSH || provider == RepositoryProviderHTTPS || provider == RepositoryProviderHTTP
 }
 
 type Repository struct {
@@ -187,11 +190,9 @@ type RepositoryContext struct {
 	// be read, built and tested, but is never committed or pushed. It is the
 	// only way to sit on a shared branch such as preview.
 	ReadOnly bool `json:"readOnly,omitempty"`
-	// WorkspaceDir is the first-level sub-directory of the run workspace this
-	// repository is checked out into (slash-separated, relative). Empty is
-	// only kept for persisted legacy runs that already checked out at the
-	// workspace root; new runs always get a sub-directory so LOOP deliverables
-	// at the run root cannot pollute the git checkout.
+	// WorkspaceDir is the workspace-relative checkout path. New checkouts
+	// default to a first-level directory. An existing checkout can be at the
+	// workspace root (empty) or in a nested directory.
 	WorkspaceDir string `json:"workspaceDir,omitempty"`
 }
 

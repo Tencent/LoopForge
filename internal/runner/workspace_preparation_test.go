@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -133,6 +134,69 @@ func TestRunnerWorkspacePreparationAndTerminalShareFrozenEnvironment(t *testing.
 		if entry.active != 0 {
 			t.Fatalf("terminal leaked sandbox reference: %d", entry.active)
 		}
+	}
+}
+
+func TestRunnerWorkspacePreparationRefreshesLegacyDockerGitMount(t *testing.T) {
+	if os.Getenv("AGENTFLOW_TEST_GIT_HELPERS_DOCKER") != "1" {
+		t.Skip("enable the disposable Docker Git helper test explicitly")
+	}
+	const image = "golang:1.26.11-bookworm"
+	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", image)
+	base, err := os.MkdirTemp(os.Getenv("AGENTFLOW_TEST_GIT_HELPERS_ROOT"), "runner-legacy-git-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	d, req, _ := runnerPreparationFixture(t)
+	d.cfg.DefaultWorkspaceRoot = base
+	req.RunID = filepath.Base(base)
+	req.Sandbox.Profile.Driver = domain.SandboxDriverDocker
+	req.Sandbox.Dockerfile = &domain.DockerfileDefinition{Content: runtime.IsolatedDockerfile}
+	root := filepath.Join(base, "runs", req.RunID, "workspace")
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	t.Cleanup(func() {
+		d.workspaceTerminals.CloseScope(req.RunID + ":7")
+		d.closeAllRunSandboxes(context.Background())
+	})
+	task, err := d.workspaceSandboxTask(root, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, release, err := d.acquireTaskSandbox(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--name", "agentflow-"+sb.ID(),
+		"-v", root+":/workspace", "--entrypoint", "sh", image, "-c", "exec sleep infinity").CombinedOutput(); err != nil {
+		t.Fatalf("create legacy Docker container: %v (%s)", err, out)
+	}
+	legacy, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirty := filepath.Join(root, "uncommitted.txt")
+	if err := os.WriteFile(dirty, []byte("user edit"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prepared := d.readRunnerWorkspace(ctx, req)
+	var state runtime.WorkspacePreparationStatus
+	if err := json.Unmarshal(prepared.Payload, &state); prepared.Status != 200 || err != nil || state.Status != "ready" || state.Environment == legacy {
+		t.Fatalf("prepare legacy container: %+v %v", prepared, err)
+	}
+	req.Operation = domain.RunnerWorkspaceOperationTerminal
+	req.TerminalOwner = 7
+	req.Terminal = &domain.WorkspaceTerminalRequest{Operation: "open"}
+	req.TerminalGitHTTPCredentials = map[string]domain.GitHTTPExecutionCredential{
+		"terminal.example.invalid": {Token: "terminal-fixture"},
+	}
+	if opened := d.readRunnerWorkspace(ctx, req); opened.Status != 200 {
+		t.Fatalf("open terminal with Git credentials: %+v", opened)
+	}
+	if contents, err := os.ReadFile(dirty); err != nil || string(contents) != "user edit" {
+		t.Fatalf("workspace edit after refresh: %q, %v", contents, err)
 	}
 }
 

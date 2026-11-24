@@ -13,8 +13,8 @@ import (
 )
 
 // chatSessionHeader names the conversation a browser-confirmed tool call was
-// drafted in. It only links the dispatched issue to that conversation; access
-// is checked by the project operation that carries it.
+// drafted in. The project operation checks write access before resolving the
+// conversation and its current workspace.
 const chatSessionHeader = "X-AgentFlow-Chat-Session"
 
 type conversationSessionKey struct{}
@@ -41,6 +41,21 @@ func requestConversation(d *deps, r *http.Request, userID int64, projectID strin
 		return domain.AssistantSession{}, false
 	}
 	return session, true
+}
+
+func dispatchConversationWorkspace(d *deps, r *http.Request, userID int64, projectID string) string {
+	if projectID == "" {
+		return ""
+	}
+	session, ok := requestConversation(d, r, userID, projectID)
+	if !ok || session.WorkspaceRunID == "" || session.Archived {
+		return ""
+	}
+	run, ok := d.repo.RunState(session.WorkspaceRunID)
+	if !ok || !run.IsWorkspace() || !conversationMayBind(session, run, projectID) {
+		return ""
+	}
+	return run.ID
 }
 
 // linkDispatchingConversation links the conversation an issue was dispatched

@@ -120,7 +120,7 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 	if !ok {
 		return nil, fmt.Errorf("执行机器 %s 不存在", runnerID)
 	}
-	if err := e.requireWorkBranchCapabilities(runnerID, repositories); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities(runnerID, repositories); err != nil {
 		return nil, err
 	}
 	if sharedTarget != "" && !runner.SupportsSharedPush() {

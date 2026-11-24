@@ -93,7 +93,7 @@ const ctx = {
 ctx.document={activeElement:null,contains:()=>false};
 vm.createContext(ctx);
 const gitParsers = fs.readFileSync(require("node:path").join(__dirname, "app", "git-ssh.js"), "utf8");
-vm.runInContext(gitParsers.slice(gitParsers.indexOf("globalThis.LoopForgeGongfengRepository")), ctx);
+vm.runInContext(gitParsers, ctx);
 
 for (const name of ["parseGongfengRepoURL","repoDisplayPath","repoProviderLabel"]) vm.runInContext(extract(fs.readFileSync(issuesPath,"utf8"),name),ctx);
 vm.runInContext(fs.readFileSync(projectsPath,"utf8"),ctx);
@@ -177,7 +177,7 @@ assert.match(list,/pa-rc-add/);
 const empty=ctx.projectRepoListHTML([],"");
 assert.match(empty,/还没有绑定代码仓库/);
 assert.equal((empty.match(/<li>/g)||[]).length,3);
-assert.match(empty,/粘贴 Git HTTPS 链接或 Git SSH 地址[^]*确认分支[^]*保存即生效/);
+assert.match(empty,/粘贴 Git HTTP\(S\) 链接或 Git SSH 地址[^]*确认分支[^]*保存即生效/);
 assert.match(empty,/添加第一个仓库/);
 
 // Detail panels.
@@ -311,11 +311,12 @@ assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
   dom["#repoDrawer"]=el({classes:["open"]});
   dom["#repoDrawerScrim"]=el({classes:["open"]});
   dom["#repoDrawerUrlError"]=el();
-  const form={elements:{repoUrl:el({value:"git@git.example.com:group/new-repo.git"}),name:el({value:""}),defaultBranch:el({value:""}),integrateBranch:el({value:"agentflow/integration"}),localPath:el({value:""})}};
+  const form={elements:{repoUrl:el({value:"git@git.example.com:group/new-repo.git"}),webUrl:el(),name:el({value:""}),defaultBranch:el({value:""}),integrateBranch:el({value:"agentflow/integration"}),localPath:el({value:""})}};
   await ctx.saveRepoDrawer({preventDefault(){},currentTarget:form});
   assert.equal(requests[0].url,"/api/repositories");
   assert.equal(requests[0].method,"POST");
-  assert.equal(requests[0].body.gongfengProjectId,"group/new-repo");
+  assert.equal(requests[0].body.provider,"ssh");
+  assert.equal(requests[0].body.gongfengProjectId,"");
   assert.equal(requests[0].body.name,"new-repo");
   assert.equal(requests[0].body.defaultBranch,"main");
   assert.equal(requests[0].body.cloneUrl,"git@git.example.com:group/new-repo.git");
@@ -353,7 +354,7 @@ assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
 
   // Invalid URL keeps the drawer open and writes nothing.
   requests.length=0;dom["#repoDrawer"].classList.add("open");
-  form.elements.repoUrl.value="https://bitbucket.org/foo/bar";
+  form.elements.repoUrl.value="https://bitbucket.org";
   await ctx.saveRepoDrawer({preventDefault(){},currentTarget:form});
   assert.equal(requests.length,0);
   assert.equal(dom["#repoDrawerUrlError"].hidden,false);

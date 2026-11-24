@@ -316,7 +316,10 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 	if current, ok := h.requestUser(c.Request, true); ok && current != nil && current.ID > 0 {
 		triggerUserID = current.ID
 	}
-	req := dispatchRequest{IssueID: issue.ID, WorkflowID: request.WorkflowID, Rerun: request.Rerun, TriggerUserID: triggerUserID}
+	req := dispatchRequest{
+		IssueID: issue.ID, WorkflowID: request.WorkflowID, Rerun: request.Rerun, TriggerUserID: triggerUserID,
+		WorkspaceRunID: dispatchConversationWorkspace(h.deps, c.Request, triggerUserID, issue.ProjectID),
+	}
 	if origin, ok := botStartOriginFrom(c.Request.Context()); ok {
 		req.ChatOrigin = &origin
 	}
