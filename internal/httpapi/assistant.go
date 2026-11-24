@@ -30,15 +30,17 @@ type assistantConversation = domain.AssistantSession
 const assistantRequestBodyLimit = 32 << 20
 
 type assistantDraft struct {
-	Tool      string                   `json:"tool"`
-	Path      map[string]any           `json:"path,omitempty"`
-	Query     map[string]any           `json:"query,omitempty"`
-	Body      json.RawMessage          `json:"body,omitempty"`
-	Saved     bool                     `json:"saved,omitempty"`
-	Auto      bool                     `json:"auto,omitempty"`
-	Warnings  []string                 `json:"warnings,omitempty"`
-	SaveError string                   `json:"saveError,omitempty"`
-	Review    *assistantApprovalReview `json:"review,omitempty"`
+	Tool      string          `json:"tool"`
+	Path      map[string]any  `json:"path,omitempty"`
+	Query     map[string]any  `json:"query,omitempty"`
+	Body      json.RawMessage `json:"body,omitempty"`
+	Saved     bool            `json:"saved,omitempty"`
+	Auto      bool            `json:"auto,omitempty"`
+	Warnings  []string        `json:"warnings,omitempty"`
+	SaveError string          `json:"saveError,omitempty"`
+	// Result is the response body of an executed draft (not persisted).
+	Result string                   `json:"-"`
+	Review *assistantApprovalReview `json:"review,omitempty"`
 	// Proposal marks a draft the assistant offers on its own to hand work to a
 	// SOP; Decision is the server-recorded answer to it.
 	Proposal *assistantProposal `json:"proposal,omitempty"`
@@ -102,6 +104,11 @@ type assistantHandlers struct {
 	generate      func(context.Context, string, domain.User) (string, error)
 	review        func(context.Context, assistantApprovalInput, domain.User, string) (assistantApprovalReview, error)
 	titleSummary  func(context.Context, domain.User, string) (string, error)
+	// clarify runs chat clarification rounds on the platform's
+	// clarification jobs; clarifyClassify replaces the answer classifier
+	// in tests.
+	clarify         *streamHandlers
+	clarifyClassify func(context.Context, domain.User, string) (string, error)
 	// attachmentSweepWake nudges the background sweep after a deletion
 	// queues files; nil when no sweeper runs (tests sweep directly).
 	attachmentSweepWake chan struct{}
@@ -169,20 +176,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	old, exists := h.repo.AssistantSession(ownerID, req.SessionID)
-	if exists {
-		target := old.Execution()
-		if req.ExecutionTarget != nil && *req.ExecutionTarget != target {
-			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换；请新建对话"})
-			return
-		}
-		req.ExecutionTarget = &target
-	} else {
-		target, err := h.newExecutionTarget(stored.ID, req.ProjectID, req.ExecutionTarget)
-		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		req.ExecutionTarget = target
+	if !h.bindTurnExecutionTarget(c, &req, stored.ID, old) {
+		return
 	}
 	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
@@ -283,6 +278,18 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 	}
 	req.workspaceMode = savedConversation.Mode() == domain.AssistantModeWorkspace
+	var projectCredentialNote string
+	if len(savedConversation.ProjectCredentialIDs) > 0 && !req.sopDesigner() {
+		if savedConversation.ProjectID != req.ProjectID {
+			c.JSON(403, gin.H{"error": "会话项目与凭据项目不一致"})
+			return
+		}
+		names, ok := h.sessionProjectCredentialNames(c, savedConversation, user.ID)
+		if !ok {
+			return
+		}
+		projectCredentialNote = "\n项目凭据的环境变量为 " + strings.Join(names, "、") + "。需要时在项目工作区通过进程环境使用，避免输出值。\n"
+	}
 	if req.workspaceMode && req.RunID == "" && h.sopWorkspaceReadOnly(c, savedConversation, req.ProjectID, user.ID) {
 		// Another member left this shared conversation working in an SOP
 		// workspace; a read-only speaker continues in platform mode.
@@ -339,6 +346,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.ExecutionRunnerID = savedConversation.Execution().RunnerID
 		sess.runnerLogin = runnerLogin
 		sess.RuntimeMode = savedConversation.Mode()
+		if projectCredentialNote != "" {
+			sess.projectCredentialIDs = savedConversation.ProjectCredentialIDs
+		}
 		if sess.RuntimeMode == domain.AssistantModeWorkspace && !req.workspaceMode {
 			sess.RuntimeMode = domain.AssistantModePlatform
 		}
@@ -428,7 +438,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			emit = sink
 		}
 		forward := emit
-		var secretStream assistantSecretStream
+		secretStream := assistantSecretStream{projectSecrets: toolSession.projectSecrets}
 		publish := func(events []assistantStreamEvent) {
 			for _, event := range events {
 				activity.add(event)
@@ -584,11 +594,13 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 						// The journal's catalogue is uncertain until the phase completes.
 						workspaceRepositoryHash = ""
 					}
-					prompt = prefix + repositoryPrompt + prompt
+					prompt = prefix + repositoryPrompt + projectCredentialNote + prompt
 				} else if !req.sopDesigner() {
-					prompt = assistantPlatformExecutionReminder + "\n" + prompt
+					prompt = assistantPlatformExecutionReminder + "\n" + projectCredentialNote + prompt
 				}
-				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
+				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: func(usage domain.TokenUsage) {
+					turnUsage.add(domain.PriceScheduleExecutionUsage(replyModel, usage))
+				}, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
 				cliReq.ImageInput = conversationHasImageAttachments(req)
 				// Mode handoffs resume a journal which already has the user turn.
 				if switches == 0 || !resume {
@@ -810,6 +822,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			emit("flush", nil)
 		}
 		reply.Message = redactAssistantSecrets(reply.Message, user)
+		reply.Message = maskProjectSecrets(reply.Message, toolSession.projectSecrets())
 		// Join every streamed paragraph before slides and path cleanup, so a
 		// result that only repeats the last paragraph cannot replace them.
 		activityEvents := activity.forUser(user)
@@ -1523,8 +1536,7 @@ type assistantCLIRequest struct {
 	ReviewOnly                                     bool
 	Native                                         bool
 	MCPConfig, Settings                            string
-	// OnUsage receives the usage of this CLI invocation once its result event
-	// reports one; the result event covers only this process, not the session.
+	// OnUsage receives this invocation's usage once, excluding prior session turns.
 	OnUsage func(domain.TokenUsage)
 }
 
@@ -1640,6 +1652,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	var stderrTail []string
 	var missingSession, modelStarted, credentialRejected bool
 	var usageCollector assistantCLIUsage
+	if engine == assistantEngineCodeBuddy || engine == assistantEngineClaude {
+		usageCollector.session = newAssistantSessionUsage(root, sessionID, req.Resume, engine)
+	}
 	missingText := "No conversation found with session ID: " + inv.sessionRef
 	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
@@ -1833,14 +1848,25 @@ type assistantTurnUsage struct {
 func (t *assistantTurnUsage) add(u domain.TokenUsage) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	first := !assistantUsageReported(t.total)
+	if first {
+		t.total.CostPricingVersion = u.CostPricingVersion
+	} else if t.total.CostPricingVersion != u.CostPricingVersion {
+		t.total.CostPricingVersion = ""
+	}
 	t.total.InputTokens += u.InputTokens
 	t.total.OutputTokens += u.OutputTokens
 	t.total.CacheReadTokens += u.CacheReadTokens
 	t.total.CacheWriteTokens += u.CacheWriteTokens
 	t.total.ReasoningTokens += u.ReasoningTokens
 	t.total.CostUSD += u.CostUSD
-	if u.CostStatus != "" {
+	switch {
+	case first:
 		t.total.CostStatus = u.CostStatus
+	case t.total.CostStatus == "" || t.total.CostStatus == "unknown" || u.CostStatus == "" || u.CostStatus == "unknown":
+		t.total.CostStatus = "unknown"
+	case t.total.CostStatus == "estimated" || u.CostStatus == "estimated":
+		t.total.CostStatus = "estimated"
 	}
 	t.total.TotalTokens += u.TotalTokens
 }

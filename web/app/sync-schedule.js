@@ -254,14 +254,15 @@ function bindScheduleModelPicker(){
 async function loadScheduleModels(){
   const picker=scheduleModelAPI();
   if(!picker)return;
-  const version=scheduleModalVersion;
+  const version=scheduleModalVersion,projectId=state.projectFilter;
+  const projectQuery=projectId?`&projectId=${encodeURIComponent(projectId)}`:'';
   let catalog;
   try{
-    catalog=await api('/api/assistant/models?schedule=1',{silent:true});
+    catalog=await api('/api/assistant/models?schedule=1'+projectQuery,{silent:true});
   }catch{
     catalog={};
   }
-  if(version!==scheduleModalVersion)return;
+  if(version!==scheduleModalVersion||projectId!==state.projectFilter)return;
   scheduleCatalog=catalog;
   const form=$('#scheduleJobForm');
   const selected=form.elements.assistantModel.value;

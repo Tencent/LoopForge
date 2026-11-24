@@ -25,7 +25,9 @@ type Project struct {
 	DefaultRepositoryID string            `json:"defaultRepositoryId,omitempty"`
 	OwnerID             int64             `json:"ownerId,omitempty"`
 	Members             []ProjectMember   `json:"members,omitempty"`
-	RunEval             RunEvalPolicy     `json:"runEval,omitempty"`
+	// MembersVersion is an opaque snapshot token for replacing the member list.
+	MembersVersion string        `json:"membersVersion,omitempty"`
+	RunEval        RunEvalPolicy `json:"runEval,omitempty"`
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`
@@ -63,6 +65,41 @@ func PublicProjects(items []Project) []Project {
 type ProjectMember struct {
 	UserID int64  `json:"userId"`
 	Role   string `json:"role"` // maintainer, member, viewer
+}
+
+const (
+	ProjectRoleMaintainer = "maintainer"
+	ProjectRoleMember     = "member"
+	ProjectRoleViewer     = "viewer"
+)
+
+// NormalizeProjectMemberRole maps an empty role to member and reports whether
+// the role is one of maintainer, member or viewer.
+func NormalizeProjectMemberRole(role string) (string, bool) {
+	switch r := strings.ToLower(strings.TrimSpace(role)); r {
+	case "":
+		return ProjectRoleMember, true
+	case ProjectRoleMaintainer, ProjectRoleMember, ProjectRoleViewer:
+		return r, true
+	default:
+		return r, false
+	}
+}
+
+// HasWritableMember checks explicit project membership, including the owner.
+func (p Project) HasWritableMember(userID int64) bool {
+	if userID <= 0 {
+		return false
+	}
+	if p.OwnerID == userID {
+		return true
+	}
+	for _, member := range p.Members {
+		if member.UserID == userID && !strings.EqualFold(strings.TrimSpace(member.Role), ProjectRoleViewer) {
+			return true
+		}
+	}
+	return false
 }
 
 // RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.

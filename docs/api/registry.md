@@ -106,11 +106,13 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 
 ### `GET /api/skills`
 
-返回 `SkillDefinition[]`，字段为 `id`、`name`、`projectId`、`shared`、`description`、`content`、`files`、`updatedAt`，`200`。可用 `projectId` 查询参数只返回指定项目资产。
+返回 `SkillDefinition[]`，`200`。可用 `projectId` 查询参数只返回指定项目资产。文件清单由 `fileRefs` 提供，正文通过 `GET /api/skills/:id/files/SKILL.md` 下载。
 
 ### `PUT /api/skills`
 
-`id`、`name`、`projectId` 必填；`files` 是相对路径到文件内容的映射。`shared=true` 后其他项目可只读使用；仍被共享角色引用时不能取消共享。成功 `200 {"ok":true}`；失败 `400/404/409`。
+`id`、`name`、`projectId` 必填。创建时兼容旧客户端提交 `content`，服务端将其保存为 `SKILL.md` 文件，单文件上限为 1 MiB。更新现有技能时只保存元数据。`files` 映射会被忽略，文件上传使用 `POST /api/skills/:id/files`。
+
+`shared=true` 后其他项目可只读使用，仍被共享角色引用时不能取消共享。成功 `200 {"ok":true}`，失败 `400/404/409`。
 
 ### `DELETE /api/skills?id={id}`
 
@@ -175,7 +177,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 ## Sandbox Profile
 
-docker 沙箱的 Dockerfile 存在沙箱里，随沙箱一起共享，没有单独的 Dockerfile 资产。native 沙箱只有环境变量，使用实际执行它的机器（用户的执行机器、云端 Runner 或平台本机）上已安装的工具，仓库从那台机器的仓库缓存共享克隆。旧的 `/api/dockerfiles`、`/api/environments`、环境安装脚本和 `local` 类型已移除；现有部署升级时，在启动新版本前手动执行 `migrations/041_native_sandbox_inline_assets.sql`。
+docker 沙箱的 Dockerfile 存在沙箱里，随沙箱一起共享，没有单独的 Dockerfile 资产。native 沙箱只有环境变量，使用实际执行它的机器（用户的执行机器、云端 Runner 或平台本机）上已安装的工具，仓库从那台机器的仓库缓存共享克隆。旧的 `/api/dockerfiles`、`/api/environments`、环境安装脚本和 `local` 类型已移除；现有部署在启动新版前需要完成 [沙箱迁移 041](../deployment.md#migrating-existing-sandboxes-to-inline-assets)。
 
 ### `GET /api/sandboxes`
 

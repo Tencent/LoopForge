@@ -196,19 +196,24 @@ func TestRunEvalCRUDAndTrim(t *testing.T) {
 func TestBotConnectionConversationAndCardTransitions(t *testing.T) {
 	s := cvEStore(t)
 	now := time.Now().UTC()
-	if ok, err := s.ClaimBotConnection("cve-lease", "owner", now); err != nil || !ok {
+	if err := s.SaveNotificationBot(domain.NotificationBot{ID: "cve-bot", BotID: "cve-lease", ProjectID: "p", OwnerID: 1, Enabled: true, InteractionEnabled: true}, "s"); err != nil {
+		t.Fatal(err)
+	}
+	lease, ok, err := s.ClaimBotConnection("cve-lease", "owner")
+	if err != nil || !ok {
 		t.Fatalf("claim = %v %v", ok, err)
 	}
-	if ok, err := s.RenewBotConnection("cve-lease", "owner", "connected", "ok", now); err != nil || !ok {
+	if ok, err := s.RenewBotConnection(lease, "connected", "ok"); err != nil || !ok {
 		t.Fatalf("renew = %v %v", ok, err)
 	}
 	state, err := s.BotConnectionState("cve-lease")
 	if err != nil || state.State != "connected" {
 		t.Fatalf("state = %+v %v", state, err)
 	}
-	if err := s.ReleaseBotConnection("cve-lease", "owner"); err != nil {
+	if err := s.ReleaseBotConnection(lease); err != nil {
 		t.Fatal(err)
 	}
+	lease, _, _ = s.ClaimBotConnection("cve-lease", "owner")
 	state, _ = s.BotConnectionState("cve-lease")
 	if state.State != "offline" {
 		t.Fatalf("released state = %+v", state)
@@ -231,18 +236,22 @@ func TestBotConnectionConversationAndCardTransitions(t *testing.T) {
 	if err != nil || len(records) != 1 {
 		t.Fatalf("records = %d %v", len(records), err)
 	}
-	if err := s.NewBotConversation(records[0]); err != nil {
+	running, err := s.ClaimBotInteraction("cve-bot", lease, BotSendPolicy{})
+	if err != nil || running == nil {
+		t.Fatal(running, err)
+	}
+	if err := s.NewBotConversation(*running, lease); err != nil {
 		t.Fatal(err)
 	}
 
-	card := domain.BotInteraction{ID: "cve-card", BotID: "cve-bot", ConversationID: convID, Status: "ready", Action: "notification", CreatedAt: now, UpdatedAt: now}
+	card := domain.BotInteraction{ID: "cve-card", BotID: "cve-bot", ConversationID: convID, Status: "ready", Action: "notification", LeaseOwner: lease.Owner, LeaseEpoch: lease.Epoch, CreatedAt: now, UpdatedAt: now}
 	if err := s.DB.Create(&card).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetBotCardTaskID(card.ID, "opaque"); err != nil {
+	if err := s.SetBotCardTaskID(card.ID, lease, "opaque"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.FailBotReply(card.ID, "wire"); err != nil {
+	if err := s.FailBotReply(card.ID, lease, "wire"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RequeueBotCard(card.ID); err != nil {
@@ -255,7 +264,7 @@ func TestBotConnectionConversationAndCardTransitions(t *testing.T) {
 	if err != nil || card.Status != "replied" || card.CardTaskID != "opaque" {
 		t.Fatalf("card = %+v %v", card, err)
 	}
-	if err := s.SetBotCardTaskID("missing", "x"); err == nil {
+	if err := s.SetBotCardTaskID("missing", lease, "x"); err == nil {
 		t.Fatal("missing card task update succeeded")
 	}
 	history, err := s.BotHistory(conv.SessionID)

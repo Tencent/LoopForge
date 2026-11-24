@@ -13,6 +13,7 @@ func dockerConversationStopArgv(file string) []string {
 // and double-forked descendants without affecting other commands in the same
 // workspace container. It preserves stdin and waits for cleanup before exit.
 const dockerConversationProcessSupervisor = `import ctypes,json,os,signal,subprocess,sys,time
+` + dockerProcessStat + `
 path=sys.argv[1]
 stopped=path+'.stop'
 cancelled=False
@@ -21,13 +22,6 @@ def cancel(signum,frame):
     cancelled=True
 for sig in (signal.SIGTERM,signal.SIGINT,signal.SIGHUP):
     signal.signal(sig,cancel)
-def stat(pid):
-    try:
-        with open('/proc/'+str(pid)+'/stat') as f:
-            fields=f.read().rsplit(')',1)[1].split()
-        return int(fields[1]),fields[19]
-    except (OSError,ValueError,IndexError):
-        return None
 me=os.getpid()
 identity=stat(me)
 if identity is None or ctypes.CDLL(None,use_errno=True).prctl(36,1,0,0,0)!=0:
@@ -98,6 +92,17 @@ finally:
     code=cleanup(child)
     state('done')
 sys.exit(143 if cancelled or os.path.exists(stopped) else (code if code>=0 else 128-code))
+`
+
+// Linux start time identifies a process even after the kernel reuses its PID.
+const dockerProcessStat = `
+def stat(pid):
+    try:
+        with open('/proc/'+str(pid)+'/stat') as f:
+            fields=f.read().rsplit(')',1)[1].split()
+        return int(fields[1]),fields[19]
+    except (OSError,ValueError,IndexError):
+        return None
 `
 
 // A PID's Linux start time prevents a stale control file from signalling a

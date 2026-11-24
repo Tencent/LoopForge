@@ -236,10 +236,10 @@ function credentialCatalogDetailHTML(mode,kind,protocol){
   const copy=credentialCatalogCopy(mode,kind);
   return mode!=='remote'?escapeHTML(copy.detail):`目录为空时，AI 对话列出 Base URL 的 <code data-catalog-endpoint>${escapeHTML(credentialModelsEndpoint(kind,protocol))}</code> 返回的模型。`;
 }
-function credentialCatalogHTML(kind,user,{runnerLogin=false,label='模型目录'}={}){
+function credentialCatalogHTML(kind,user,{runnerLogin=false,label='模型目录',savedModels=credentialValue(user,kind.models.name)}={}){
   const baseUrl=credentialValue(user,kind.baseURL||(kind.extra?.url?kind.extra.name:'')),protocol=credentialProtocol(kind,user);
   const cursorAutomatic=kind.agentCli==='cursor'&&!user?.agentCliCredentials?.cursor?.modelsCustomized;
-  const models=credentialCatalogModels(cursorAutomatic?[]:credentialValue(user,kind.models.name)),empty=!models.length;
+  const models=credentialCatalogModels(cursorAutomatic?[]:savedModels),empty=!models.length;
   const mode=runnerLogin?'runner':!String(baseUrl||'').trim()?'official':'remote';
   const copy=credentialCatalogCopy(mode,kind);
   return `<section class="credential-catalog" data-credential-catalog data-catalog-engine="${escapeHTML(kind.models.engine)}" data-catalog-mode="${mode}" data-catalog-protocol="${escapeHTML(protocol)}" data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">

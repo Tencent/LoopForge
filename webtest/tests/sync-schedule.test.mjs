@@ -640,24 +640,26 @@ test('late save responses cannot close a newly opened editor',async t=>{
  assert.equal(form.querySelector('[type=submit]').disabled,false);
 });
 
-test('AI schedule model picker includes account login CLI models and keeps a saved CLI model', async (t) => {
+test('AI schedule model picker loads account login CLI models for its project and keeps a saved CLI model', async (t) => {
   const app = await loadApp();
   t.after(app.close);
+  const scheduleCatalogQuery = '?schedule=1&projectId=project-1';
   app.router.get('/api/assistant/models', call => ({
     default: 'default',
     models: [
       { id: 'glm-test', name: 'GLM Test', family: 'glm' },
       { id: 'claude-test', name: 'Claude Test', family: 'claude' },
       { id: 'claude-code:opus', name: 'Saved Opus', engine: 'claude-code' },
-      ...(call.search === '?schedule=1' ? [{ id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', family: 'gpt', engine: 'codex' }] : []),
+      ...(call.search === scheduleCatalogQuery ? [{ id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', family: 'gpt', engine: 'codex' }] : []),
     ],
     engines: [
       { id: 'codebuddy', name: 'CodeBuddy', configured: true },
-      { id: 'codex', name: 'Codex', configured: call.search === '?schedule=1' },
+      { id: 'codex', name: 'Codex', configured: call.search === scheduleCatalogQuery },
       { id: 'claude-code', name: 'Claude Code', configured: false },
     ],
   }));
   await app.evaluate(`(async () => {
+    state.projectFilter='project-1';
     fillScheduleJobForm({});
     const f=$('#scheduleJobForm');
     f.elements.jobKind.value='assistant';syncScheduleJobKind();

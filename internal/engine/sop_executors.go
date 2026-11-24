@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -44,6 +45,10 @@ func ExecutorCredentials(s *repo.Store, userID int64) func(kind string) bool {
 	return newSOPExecutorAccess(s, userID, s.DefaultRunner(userID)).hasCredential
 }
 
+func (a sopExecutorAccess) runnerLogin(kind string) bool {
+	return a.usesRunner && domain.SupportsRunnerLogin(kind) && a.runner.RuntimeAuthModeForUser(kind, a.user.ID) == domain.RuntimeAuthLocal
+}
+
 func (a sopExecutorAccess) configured(kind string) bool {
 	if a.usesRunner {
 		if !a.runner.SupportsProvider(kind) {
@@ -59,8 +64,7 @@ func (a sopExecutorAccess) configured(kind string) bool {
 // hasCredential accepts a personal key, the platform's shared CodeBuddy Key,
 // or account login on the run's machine.
 func (a sopExecutorAccess) hasCredential(kind string) bool {
-	if a.usesRunner && a.runner.SupportsProvider(kind) && domain.SupportsRunnerLogin(kind) &&
-		a.runner.RuntimeAuthMode(kind) == domain.RuntimeAuthLocal {
+	if a.runner.SupportsProvider(kind) && a.runnerLogin(kind) {
 		return true
 	}
 	return a.user.HasExecutorCredential(kind) || kind == "codebuddy" && a.sharedCodeBuddy
@@ -69,27 +73,58 @@ func (a sopExecutorAccess) hasCredential(kind string) bool {
 func (a sopExecutorAccess) defaults() domain.AssistantDefaults {
 	preferred := a.user.AssistantDefaults
 	if ex, ok := repo.BuiltInExecutorForKind(preferred.Executor); ok && a.user.HasExecutorCredential(ex.Kind) && a.configured(ex.Kind) {
-		model := strings.TrimSpace(preferred.Model)
-		if model == "" {
-			model = a.firstSavedModel(ex.Kind)
-		}
-		return domain.AssistantDefaults{Executor: ex.ID, Model: model, Effort: preferred.Effort}
+		return a.defaultsFor(ex, preferred.Model, preferred.Effort)
 	}
 	executors := repo.BuiltInExecutors()
 	for _, ex := range executors {
 		if a.user.HasExecutorCredential(ex.Kind) && a.configured(ex.Kind) {
-			return domain.AssistantDefaults{Executor: ex.ID, Model: a.firstSavedModel(ex.Kind)}
+			return a.defaultsFor(ex, "", "")
 		}
 	}
 	for _, ex := range executors {
-		if a.usesRunner && domain.SupportsRunnerLogin(ex.Kind) && a.runner.RuntimeAuthMode(ex.Kind) == domain.RuntimeAuthLocal && a.configured(ex.Kind) {
-			return domain.AssistantDefaults{Executor: ex.ID}
+		if a.runnerLogin(ex.Kind) && a.configured(ex.Kind) {
+			return a.defaultsFor(ex, "", "")
 		}
 	}
 	if a.configured("codebuddy") {
 		return domain.AssistantDefaults{Executor: "codebuddy"}
 	}
 	return domain.AssistantDefaults{}
+}
+
+func (a sopExecutorAccess) defaultsFor(ex domain.ExecutorDefinition, model, effort string) domain.AssistantDefaults {
+	if (ex.Kind == "codex" || ex.Kind == "claude-code") && a.runnerLogin(ex.Kind) {
+		return a.runnerLoginDefaults(ex)
+	}
+	model = strings.TrimSpace(model)
+	if model == "" && a.user.HasExecutorCredential(ex.Kind) {
+		model = a.firstSavedModel(ex.Kind)
+	}
+	return domain.AssistantDefaults{Executor: ex.ID, Model: model, Effort: effort}
+}
+
+func (a sopExecutorAccess) runnerLoginDefaults(ex domain.ExecutorDefinition) domain.AssistantDefaults {
+	defaults := domain.AssistantDefaults{Executor: ex.ID}
+	for _, model := range a.runner.LoginModels[ex.Kind] {
+		if model.ID == "" || model.ID == "default" || model.ID == ex.Kind+":default" || strings.HasPrefix(model.ID, "-") {
+			continue
+		}
+		defaults.Model = model.ID
+		levels := model.ReasoningEfforts
+		if levels == nil {
+			levels = model.DiscoveredReasoningEfforts
+		}
+		if levels != nil {
+			for _, level := range *levels {
+				if slices.Contains(domain.ExecutorEffortLevels[ex.Kind], level) {
+					defaults.Effort = level
+					break
+				}
+			}
+		}
+		break
+	}
+	return defaults
 }
 
 func (a sopExecutorAccess) firstSavedModel(kind string) string {

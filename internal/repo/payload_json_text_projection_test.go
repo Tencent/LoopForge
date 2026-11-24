@@ -19,6 +19,7 @@ func TestIssueAnalyticsViewsProjectsPayloadJSONColumns(t *testing.T) {
 	issue := domain.Issue{
 		ID: "iss-projection", ProjectID: "alpha", Title: "projection", Source: "tapd", Kind: "requirement",
 		TapdID: "1001", DeliveryState: "merged", DeliveryMRURL: "https://git.example.com/mr/7",
+		DeliveryMRState: "opened", DeliveryMRs: []domain.DeliveryMR{{URL: "https://github.com/example/frontend/pull/7", State: "merged"}, {URL: "https://github.com/example/backend/pull/8", State: "opened"}},
 		ExternalRef:   &domain.ExternalRef{ExternalID: "2002", ExternalURL: "https://tapd.example.com/story/2002"},
 		Clarification: domain.ClarificationAssessment{StartedAt: started},
 	}
@@ -38,6 +39,9 @@ func TestIssueAnalyticsViewsProjectsPayloadJSONColumns(t *testing.T) {
 	}
 	if !got.Clarification.StartedAt.Equal(started) {
 		t.Fatalf("clarification startedAt = %v, want %v", got.Clarification.StartedAt, started)
+	}
+	if got.DeliveryMRState != "opened" || len(got.DeliveryMRs) != 2 || got.DeliveryMRs[1].State != "opened" {
+		t.Fatalf("necessary MR projection lost pending delivery: %+v", got)
 	}
 }
 

@@ -14,8 +14,12 @@ type AnalyticsFilter struct {
 	WorkflowID string
 	From       time.Time
 	To         time.Time
-	// Scope "overview" skips delivery scans and detailed breakdowns for faster dashboards.
+	// Scope "overview" skips delivery scans and detailed breakdowns. "dashboard"
+	// also includes compact delivery and intervention cohorts without write paths.
 	Scope string
+	// IncludeDashboard adds compact panel aggregates and dated token attribution
+	// to overview/full responses, preserving their legacy time buckets and indexes.
+	IncludeDashboard bool
 	// UserID keeps runs whose responsible executor or linked issue assignee matches.
 	UserID string
 	// IssueSource keeps only runs/deliveries whose issue comes from a source: local, gongfeng, tapd.
@@ -65,11 +69,12 @@ type AnalyticsSummary struct {
 	ConversationIssues           int `json:"conversationIssues"`
 	// Of ConversationIssues, those with a submitted MR and those whose MR
 	// merged to the default branch. Unlike Delivery, also set in overview scope.
-	ConversationIssuesWithMR    int     `json:"conversationIssuesWithMr"`
-	ConversationIssuesDelivered int     `json:"conversationIssuesDelivered"`
-	ConversationTokens          int64   `json:"conversationTokens"`
-	ConversationCostUSD         float64 `json:"conversationCostUsd"`
-	ConversationCostCNY         float64 `json:"conversationCostCny"`
+	ConversationIssuesWithMR          int     `json:"conversationIssuesWithMr"`
+	ConversationIssuesDelivered       int     `json:"conversationIssuesDelivered"`
+	ConversationTokens                int64   `json:"conversationTokens"`
+	ConversationCostUSD               float64 `json:"conversationCostUsd"`
+	ConversationCostCNY               float64 `json:"conversationCostCny"`
+	ConversationCostUnknownWorkspaces int     `json:"conversationCostUnknownWorkspaces"`
 
 	CostCurrency       string  `json:"costCurrency"`
 	USDToCNY           float64 `json:"usdToCny"`
@@ -151,11 +156,12 @@ type AnalyticsTrendPoint struct {
 	// Conversation* is the share of Tokens/Cost* used by conversation
 	// workspaces in this bucket; they are not SOP runs, and their
 	// requirements are not part of Issues.
-	ConversationWorkspaces int     `json:"conversationWorkspaces,omitempty"`
-	ConversationIssues     int     `json:"conversationIssues,omitempty"`
-	ConversationTokens     int64   `json:"conversationTokens,omitempty"`
-	ConversationCostUSD    float64 `json:"conversationCostUsd,omitempty"`
-	ConversationCostCNY    float64 `json:"conversationCostCny,omitempty"`
+	ConversationWorkspaces            int     `json:"conversationWorkspaces,omitempty"`
+	ConversationIssues                int     `json:"conversationIssues,omitempty"`
+	ConversationTokens                int64   `json:"conversationTokens,omitempty"`
+	ConversationCostUSD               float64 `json:"conversationCostUsd,omitempty"`
+	ConversationCostCNY               float64 `json:"conversationCostCny,omitempty"`
+	ConversationCostUnknownWorkspaces int     `json:"conversationCostUnknownWorkspaces,omitempty"`
 }
 
 // AnalyticsWeekHourCell is one non-empty weekday × hour bucket in the requested time zone.
@@ -497,7 +503,17 @@ type AnalyticsActivityPoint struct {
 	AnalyticsActivity
 }
 
+// AnalyticsTokenUsagePoint reconciles execution tokens by UTC day, responsible
+// member and observed model. An empty model denotes tokens without attribution.
+type AnalyticsTokenUsagePoint struct {
+	Date   string `json:"date"`
+	UserID string `json:"userId"`
+	Model  string `json:"model"`
+	Tokens int64  `json:"tokens"`
+}
+
 type AnalyticsSnapshot struct {
+	Dashboard     *AnalyticsDashboard      `json:"dashboard,omitempty"`
 	Activity      AnalyticsActivity        `json:"activity"`
 	ActivityTrend []AnalyticsActivityPoint `json:"activityTrend"`
 	DataErrors    []string                 `json:"dataErrors,omitempty"`
@@ -514,6 +530,8 @@ type AnalyticsSnapshot struct {
 	Deliveries    []AnalyticsDelivery      `json:"deliveries,omitempty"`
 	Delivery      AnalyticsDeliverySummary `json:"delivery"`
 	MRMerges      []AnalyticsMRMerge       `json:"mrMerges"`
+
+	TokenUsage []AnalyticsTokenUsagePoint `json:"tokenUsage,omitempty"`
 
 	// IssueSources 为需求类型分布（local/gongfeng/tapd）。
 	IssueSources []AnalyticsBreakdown `json:"issueSources,omitempty"`

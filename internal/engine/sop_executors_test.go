@@ -102,40 +102,210 @@ func TestGenericSOPExecutorPrefersRunnerLoginOverSharedKey(t *testing.T) {
 	}
 }
 
-// Pickers accept the credentials a run on the default machine uses, but leave
-// the machine's CLI support to the run-time check.
-func TestExecutorCredentialsUseTheDefaultRunnerLogin(t *testing.T) {
+func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
-	if err := st.PutUser(domain.User{LoginName: "picker", AgentCLICredentials: map[string]domain.AgentCLICredential{"kimi": {APIKey: "fixture-key"}}}); err != nil {
+	t.Cleanup(st.Close)
+	if err := st.PutProject(domain.Project{ID: "shared-compute", Name: "Shared compute", OwnerID: 1,
+		Members: []domain.ProjectMember{{UserID: 42, Role: "member"}}}); err != nil {
 		t.Fatal(err)
 	}
-	user, _ := st.UserByLoginName("picker")
-	machine := domain.Runner{ID: "picker-machine", OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, Runtimes: []domain.RunnerRuntime{
-		{Provider: "codex", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline},
-		{Provider: "claude-code", AuthMode: domain.RuntimeAuthPersonal, Status: domain.RuntimeStatusOnline},
-	}}
-	if err := st.PutRunner(machine); err != nil {
+	if err := st.PutProject(domain.Project{ID: "unshared-compute", Name: "Unshared compute", OwnerID: 42}); err != nil {
 		t.Fatal(err)
 	}
-	hasCredential := ExecutorCredentials(st, user.ID)
-	if hasCredential("codex") {
-		t.Fatal("machine login counted without a default machine")
-	}
-	if err := st.SetDefaultRunner(user.ID, machine.ID, time.Now()); err != nil {
+	runner := domain.Runner{ID: "shared", OwnerUserID: 42, Status: domain.RunnerStatusOnline,
+		Runtimes: []domain.RunnerRuntime{{Provider: "codex", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline}}}
+	if err := st.PutRunner(runner); err != nil {
 		t.Fatal(err)
 	}
-	hasCredential = ExecutorCredentials(st, user.ID)
-	for kind, want := range map[string]bool{"codex": true, "kimi": true, "claude-code": false, "codebuddy": false} {
-		if got := hasCredential(kind); got != want {
-			t.Errorf("%s credential = %t, want %t", kind, got, want)
+	if err := st.SetRunnerSharedProjects(runner.ID, 42, []string{"shared-compute"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProjectDefaultRunner(1, "shared-compute", runner.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDefaultRunner(42, runner.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	e := &Engine{repo: st}
+	for _, tc := range []struct {
+		projectID, runnerID, mode string
+	}{
+		{"", runner.ID, domain.ExecutionModeRunner},
+		{"shared-compute", runner.ID, domain.ExecutionModeRunner},
+		{"unshared-compute", "", domain.ExecutionModeCloud},
+	} {
+		ownerExecution := domain.TelemetryContext{ProjectID: tc.projectID, ResponsibleUserID: 42}
+		e.selectSOPExecutionTarget(&ownerExecution)
+		if ownerExecution.ExecutionRunnerID != tc.runnerID || ownerExecution.ExecutionMode != tc.mode {
+			t.Fatalf("owner target for %q = %+v, want %s %q", tc.projectID, ownerExecution, tc.mode, tc.runnerID)
 		}
 	}
-	if newSOPExecutorAccess(st, user.ID, machine.ID).configured("kimi") {
-		t.Fatal("a run must still require the machine to provide the CLI")
+	execution := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: 1}
+	e.selectSOPExecutionTarget(&execution)
+	if execution.ExecutionRunnerID != runner.ID || execution.ExecutionMode != domain.ExecutionModeRunner {
+		t.Fatalf("project target = %+v", execution)
+	}
+	if e.sopExecutorAccess(execution).configured("codex") {
+		t.Fatal("a project member inherited the machine owner's local login")
+	}
+	if _, err := st.UpdateUserCredentials(1, repo.UserCredentialUpdate{CodexAPIKey: "member-key"}); err != nil {
+		t.Fatal(err)
+	}
+	if !e.sopExecutorAccess(execution).configured("codex") {
+		t.Fatal("the responsible user's personal key is unavailable on the shared machine")
+	}
+	setMembers := func(t *testing.T, members []domain.ProjectMember) {
+		t.Helper()
+		project, ok := st.Project("shared-compute")
+		if !ok {
+			t.Fatal("shared-compute project not found")
+		}
+		project.Members = members
+		if err := st.PutProject(project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkRevocation := func(t *testing.T) {
+		t.Helper()
+		if got := e.defaultExecutionRunner(domain.Run{ExecutionContext: execution}); got != runner.ID {
+			t.Fatalf("existing run lost its frozen machine: %q", got)
+		}
+		for _, userID := range []int64{1, 42} {
+			next := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: userID}
+			e.selectSOPExecutionTarget(&next)
+			if next.ExecutionRunnerID != "" || next.ExecutionMode != domain.ExecutionModeCloud {
+				t.Fatalf("new run used revoked machine: %+v", next)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		members []domain.ProjectMember
+	}{
+		{"owner becomes viewer", []domain.ProjectMember{{UserID: 42, Role: "viewer"}}},
+		{"owner removed", []domain.ProjectMember{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setMembers(t, tc.members)
+			checkRevocation(t)
+		})
+	}
+	t.Run("owner withdraws grant", func(t *testing.T) {
+		setMembers(t, []domain.ProjectMember{{UserID: 42, Role: "member"}})
+		if err := st.SetRunnerSharedProjects(runner.ID, 42, nil); err != nil {
+			t.Fatal(err)
+		}
+		checkRevocation(t)
+	})
+}
+
+func TestSOPDefaultSnapshotFollowsRunnerAuthMode(t *testing.T) {
+	for _, kind := range []string{"codex", "claude-code"} {
+		t.Run(kind, func(t *testing.T) {
+			st, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(st.Close)
+			if err := st.PutUser(domain.User{ID: 42, LoginName: "member"}); err != nil {
+				t.Fatal(err)
+			}
+			project := domain.Project{ID: "sop-auth", Name: "SOP auth", OwnerID: 1,
+				Members: []domain.ProjectMember{{UserID: 42, Role: "member"}}}
+			if err := st.PutProject(project); err != nil {
+				t.Fatal(err)
+			}
+			runner := domain.Runner{ID: "auth-runner", OwnerUserID: 1, Status: domain.RunnerStatusOnline,
+				Runtimes: []domain.RunnerRuntime{{Provider: kind, AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline}}}
+			if err := st.PutRunner(runner); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SetRunnerSharedProjects(runner.ID, 1, []string{project.ID}); err != nil {
+				t.Fatal(err)
+			}
+			ex, _ := repo.BuiltInExecutorForKind(kind)
+			personal := domain.AssistantDefaults{Executor: kind, Model: "owner-gateway", Effort: "high"}
+			member := domain.AssistantDefaults{Executor: kind, Model: "member-gateway", Effort: "high"}
+			for _, user := range []struct {
+				id       int64
+				defaults *domain.AssistantDefaults
+			}{{1, &personal}, {42, &member}} {
+				if err := st.SetProjectDefaultRunner(user.id, project.ID, runner.ID); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := st.UpdateUserCredentials(user.id, repo.UserCredentialUpdate{
+					CodexAPIKey: "codex-fixture-key", ClaudeCodeAPIKey: "claude-fixture-key", AssistantDefaults: user.defaults,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, role := range []domain.AgentDefinition{
+				{ID: "inherited", Name: "Inherited", ProjectID: project.ID},
+				{ID: "pinned", Name: "Pinned", ProjectID: project.ID, ExecutorID: ex.ID, Model: "workflow-model", Effort: "medium"},
+			} {
+				if err := st.PutAgent(role); err != nil {
+					t.Fatal(err)
+				}
+			}
+			workflow := domain.WorkflowDefinition{ID: "auth-workflow", Name: "Auth workflow", ProjectID: project.ID, SandboxProfileID: "test-native",
+				Nodes: []domain.WorkflowNode{
+					{ID: "inherited", Type: "agent", AgentID: "inherited"},
+					{ID: "pinned", Type: "agent", AgentID: "pinned"},
+				},
+			}
+			if err := st.PutWorkflow(workflow); err != nil {
+				t.Fatal(err)
+			}
+			e := &Engine{repo: st}
+			check := func(label string, userID int64, model, effort string) {
+				t.Helper()
+				run, err := e.StartWithExecutionContext(workflow.ID, "", domain.RepositoryContext{},
+					domain.TelemetryContext{ProjectID: project.ID, ResponsibleUserID: userID})
+				if err != nil {
+					t.Fatalf("%s: %v", label, err)
+				}
+				want := domain.AssistantDefaults{Executor: ex.ID, Model: model, Effort: effort}
+				defaults := run.WorkflowSnapshot.ExecutorDefaults
+				if run.ExecutionContext.ExecutionRunnerID != runner.ID || len(defaults) != 1 || defaults["inherited"] != want {
+					t.Errorf("%s: runner %q, defaults %+v, want runner %q and %+v", label, run.ExecutionContext.ExecutionRunnerID, defaults, runner.ID, want)
+				}
+				node := workflow.Nodes[1]
+				role, _ := workflowAgent(st, run.WorkflowSnapshot, node.AgentID)
+				pinned, err := workflowNodeExecutor(st, run.WorkflowSnapshot, node, role)
+				if err != nil || pinned.Model != "workflow-model" || pinned.Effort != "medium" {
+					t.Errorf("%s: pinned role executor %+v, %v", label, pinned, err)
+				}
+			}
+
+			saveAccountModel := func(model domain.CLIModel) {
+				t.Helper()
+				if err := st.SetRunnerLoginModels(runner.ID, 1, kind, []domain.CLIModel{{ID: "default"}, model, {ID: "second-account-model"}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			model := domain.CLIModel{ID: "machine-account", ReasoningEfforts: &[]string{"low"}, DiscoveredReasoningEfforts: &[]string{"medium"}}
+			saveAccountModel(model)
+			check("account login", 1, model.ID, "low")
+			check("shared machine uses member key", 42, member.Model, member.Effort)
+			model.ReasoningEfforts = &[]string{}
+			saveAccountModel(model)
+			check("model uses native effort", 1, model.ID, "")
+			model.ReasoningEfforts = nil
+			saveAccountModel(model)
+			check("discovered effort", 1, model.ID, "medium")
+			if err := st.SetRunnerLoginModels(runner.ID, 1, kind, nil); err != nil {
+				t.Fatal(err)
+			}
+			check("empty account catalog", 1, "", "")
+			if err := st.SetRunnerRuntimeAuthMode(runner.ID, kind, domain.RuntimeAuthPersonal, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			check("owner API key", 1, personal.Model, personal.Effort)
+		})
 	}
 }
 
@@ -192,5 +362,42 @@ func TestSOPExecutorDefaultForBaselinePreviewAndProjectRole(t *testing.T) {
 	if err != nil || len(defaults) != 2 ||
 		defaults["review"] != preference || defaults[domain.PreviewBuildNodeID] != preference {
 		t.Fatalf("project role and preview defaults = %+v, %v", defaults, err)
+	}
+}
+
+// Pickers accept the credentials a run on the default machine uses, but leave
+// the machine's CLI support to the run-time check.
+func TestExecutorCredentialsUseTheDefaultRunnerLogin(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.PutUser(domain.User{LoginName: "picker", AgentCLICredentials: map[string]domain.AgentCLICredential{"kimi": {APIKey: "fixture-key"}}}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := st.UserByLoginName("picker")
+	machine := domain.Runner{ID: "picker-machine", OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, Runtimes: []domain.RunnerRuntime{
+		{Provider: "codex", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline},
+		{Provider: "claude-code", AuthMode: domain.RuntimeAuthPersonal, Status: domain.RuntimeStatusOnline},
+	}}
+	if err := st.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+	hasCredential := ExecutorCredentials(st, user.ID)
+	if hasCredential("codex") {
+		t.Fatal("machine login counted without a default machine")
+	}
+	if err := st.SetDefaultRunner(user.ID, machine.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	hasCredential = ExecutorCredentials(st, user.ID)
+	for kind, want := range map[string]bool{"codex": true, "kimi": true, "claude-code": false, "codebuddy": false} {
+		if got := hasCredential(kind); got != want {
+			t.Errorf("%s credential = %t, want %t", kind, got, want)
+		}
+	}
+	if newSOPExecutorAccess(st, user.ID, machine.ID).configured("kimi") {
+		t.Fatal("a run must still require the machine to provide the CLI")
 	}
 }
