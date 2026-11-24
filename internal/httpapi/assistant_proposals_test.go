@@ -421,8 +421,8 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 	if code, _ := put(`{"approvalReviewMode":"api","approvalReviewApi":{"protocol":"chat","baseUrl":"ftp://bad.example","model":"hy4","apiKey":"sk-secret"}}`); code != 400 {
 		t.Fatalf("api mode with invalid baseUrl accepted: %d", code)
 	}
-	code, saved := put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"gemini","baseUrl":"https://generativelanguage.googleapis.com","model":"gemini-2.5-flash","apiKey":"sk-review-secret"},"instructions":"  回复先给结论  "}`)
-	if code != 200 || !saved.SteerOnSend || saved.ApprovalReviewMode != domain.ApprovalReviewModeAPI || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.APIKey != "" || saved.ApprovalReviewAPI.Model != "gemini-2.5-flash" {
+	code, saved := put(`{"proactiveRoles":true,"proactiveSops":false,"workspaceDriver":"native","steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"gemini","baseUrl":"https://generativelanguage.googleapis.com","model":"gemini-2.5-flash","apiKey":"sk-review-secret"},"instructions":"  回复先给结论  "}`)
+	if code != 200 || !saved.SteerOnSend || saved.WorkspaceDriver != domain.SandboxDriverNative || saved.ApprovalReviewMode != domain.ApprovalReviewModeAPI || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.APIKey != "" || saved.ApprovalReviewAPI.Model != "gemini-2.5-flash" {
 		t.Fatalf("saved api=%d %+v", code, saved)
 	}
 	// Cross-origin Base URL change without a new apiKey must be rejected and preserve original stored config.
@@ -440,10 +440,10 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
 		t.Fatalf("stored key lost on same-origin update: %+v", stored.ApprovalReviewAPI)
 	}
-	// Legacy PUT omitting approvalReview* fields must preserve saved API review settings and key.
+	// Legacy PUT must preserve the workspace choice and the configured review API.
 	code, saved = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"instructions":"回复先给结论"}`)
-	if code != 200 || saved.ApprovalReviewMode != domain.ApprovalReviewModeAPI || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.Model != "gemini-2.5-pro" {
-		t.Fatalf("legacy PUT should preserve saved API review settings: code=%d %+v", code, saved)
+	if code != 200 || saved.WorkspaceDriver != domain.SandboxDriverNative || saved.ApprovalReviewMode != domain.ApprovalReviewModeAPI || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.Model != "gemini-2.5-pro" {
+		t.Fatalf("legacy PUT should preserve workspace and API review settings: code=%d %+v", code, saved)
 	}
 	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
 		t.Fatalf("legacy PUT dropped stored api key: %+v", stored.ApprovalReviewAPI)

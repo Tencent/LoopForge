@@ -98,9 +98,7 @@ export function useChat() {
     [sandboxes, setSandboxes] = useState([]),
     [sandboxProfileId, setSandboxProfileId] = useState(""),
     [sandboxBusy, setSandboxBusy] = useState(false),
-    [workspaceSandbox, setWorkspaceSandbox] = useState(null),
-    [workspaceExecution, setWorkspaceExecution] = useState(null),
-    [workspaceExecutionError, setWorkspaceExecutionError] = useState(""),
+    [loadedWorkspace, setLoadedWorkspace] = useState(null),
     [users, setUsers] = useState([]),
     [draftIssueId, setDraftIssueId] = useState(
       new URLSearchParams(location.search).get("issueId") || "",
@@ -469,7 +467,12 @@ export function useChat() {
       setGenerationKnown(activeId);
       if (!running) setStopRequest((old) => old?.generationId === g.id ? null : old);
       if (running && ["platform", "workspace"].includes(g.runtimeMode)) {
-        setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
+        setSession((stored) => {
+          if (stored?.id !== activeId) return stored;
+          const workspaceRunId = g.workspaceRunId || stored.workspaceRunId;
+          if (stored.runtimeMode === g.runtimeMode && workspaceRunId === stored.workspaceRunId) return stored;
+          return { ...stored, runtimeMode: g.runtimeMode, workspaceRunId };
+        });
       }
       if (!running && needsTranscript) {
         await refreshSessions();
@@ -1549,22 +1552,30 @@ export function useChat() {
     } catch (e) { setError(e.message); return false; }
     finally { sandboxBusyRef.current = false; setSandboxBusy(false); }
   }
+  const workspaceRunId = session?.workspaceRunId || session?.runId;
   useEffect(() => {
+    if (!workspaceRunId) return;
     let current = true;
-    setWorkspaceSandbox(null);
-    setWorkspaceExecution(null);
-    setWorkspaceExecutionError("");
-    const id = session?.workspaceRunId || session?.runId;
-    if (id) void api(`/api/runs/${encodeURIComponent(id)}`).then((run) => {
-      if (current) {
-        setWorkspaceSandbox(run.workflowSnapshot?.sandboxSnapshot?.profile || { id: run.workflowSnapshot?.sandboxProfileId });
-        setWorkspaceExecution(run.executionContext || {});
-      }
+    void api(`/api/runs/${encodeURIComponent(workspaceRunId)}`).then((run) => {
+      if (!current) return;
+      setLoadedWorkspace({
+        id: workspaceRunId,
+        workflow: run.workflowSnapshot,
+        execution: run.executionContext || {},
+      });
     }).catch(() => {
-      if (current) setWorkspaceExecutionError("无法加载工作区执行机器");
+      if (current) setLoadedWorkspace({ id: workspaceRunId, error: "无法加载工作区执行机器" });
     });
     return () => { current = false; };
-  }, [session?.workspaceRunId, session?.runId]);
+  }, [workspaceRunId]);
+  const workspace = loadedWorkspace?.id === workspaceRunId ? loadedWorkspace : null;
+  const sandboxSnapshot = workspace?.workflow?.sandboxSnapshot?.profile;
+  const workspaceSandboxId = sandboxSnapshot?.id || workspace?.workflow?.sandboxProfileId;
+  const workspaceSandbox = workspaceSandboxId && (
+    sandboxSnapshot
+      ? { ...sandboxSnapshot, id: workspaceSandboxId }
+      : sandboxes.find((row) => row.id === workspaceSandboxId) || { id: workspaceSandboxId }
+  );
   async function refresh() {
     await executionMachines.refreshMachines();
     const sandboxRows = await api("/api/sandboxes").catch(() => null);
@@ -1617,9 +1628,9 @@ export function useChat() {
     sandboxProfileId: activeId ? session?.sandboxProfileId || "" : sandboxProfileId,
     sandboxLocked: !!session?.runId,
     sandboxBusy,
-    workspaceSandbox,
-    workspaceExecution,
-    workspaceExecutionError,
+    workspaceSandbox: workspaceSandbox || null,
+    workspaceExecution: workspace?.execution || null,
+    workspaceExecutionError: workspace?.error || "",
     ...executionMachines,
     selectSandbox,
     models: executorModels,

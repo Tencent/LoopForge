@@ -105,7 +105,7 @@ func TestGenericTemplateIsListedAndReadOnly(t *testing.T) {
 		t.Fatalf("generic template delete status = %d, want 409", code)
 	}
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
-		ID: repo.GenericBackendDeliveryWorkflowID, Name: "hijack", SandboxProfileID: "local",
+		ID: repo.GenericBackendDeliveryWorkflowID, Name: "hijack", SandboxProfileID: "test-native",
 	}, http.StatusConflict)
 	if workflowRowExists(t, s, repo.GenericBackendDeliveryWorkflowID) {
 		t.Fatal("generic template was written into the workflows table")
@@ -154,10 +154,10 @@ func TestGenericTemplateCloneUsesSelectedSandbox(t *testing.T) {
 		}
 	}
 	path := "/api/workflows/" + repo.GenericBackendDeliveryWorkflowID + "/clone"
-	for _, sandbox := range []string{"missing", "private-native", "project-native", "shared-native", "local"} {
+	for _, sandbox := range []string{"missing", "private-native", "local", "project-native", "shared-native"} {
 		id := "copy-" + sandbox
 		body := map[string]string{"id": id, "name": id, "projectId": "alpha", "sandboxProfileId": sandbox}
-		if sandbox == "missing" || sandbox == "private-native" {
+		if sandbox == "missing" || sandbox == "private-native" || sandbox == "local" {
 			requestJSON[map[string]string](t, h, http.MethodPost, path, body, http.StatusBadRequest)
 			if workflowRowExists(t, s, id) {
 				t.Fatalf("created a draft for unavailable sandbox %q", sandbox)
@@ -349,7 +349,7 @@ func TestGenericTemplateCloneCreatesProjectRolesAndRemapsNodes(t *testing.T) {
 func TestGenericTemplateIDCannotBeTakenByAnyClone(t *testing.T) {
 	h, s := newGenericTemplateServer(t)
 	requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
-		ID: "regular-sop", Name: "普通 SOP", SandboxProfileID: "local", ProjectID: "alpha", Nodes: []domain.WorkflowNode{}, Edges: []domain.WorkflowEdge{},
+		ID: "regular-sop", Name: "普通 SOP", SandboxProfileID: "test-native", ProjectID: "alpha", Nodes: []domain.WorkflowNode{}, Edges: []domain.WorkflowEdge{},
 	}, http.StatusOK)
 	requestJSON[map[string]string](t, h, http.MethodPost,
 		"/api/workflows/regular-sop/clone",
@@ -377,7 +377,7 @@ func TestGenericTemplateIDCannotBeTakenByAnyClone(t *testing.T) {
 func TestGenericTemplateSurvivesLegacyCollidingRow(t *testing.T) {
 	h, s := newGenericTemplateServer(t)
 	legacy := domain.WorkflowDefinition{
-		ID: repo.GenericBackendDeliveryWorkflowID, Name: "历史同 ID SOP", SandboxProfileID: "local",
+		ID: repo.GenericBackendDeliveryWorkflowID, Name: "历史同 ID SOP", SandboxProfileID: "test-native",
 		ProjectID: "alpha", Status: "draft", Version: 1, Nodes: []domain.WorkflowNode{}, Edges: []domain.WorkflowEdge{},
 	}
 	if err := s.PutWorkflow(legacy); err != nil {
@@ -451,11 +451,8 @@ func TestGenericTemplateRunsDirectlyByReference(t *testing.T) {
 	if err := s.PutRepository(domain.Repository{ID: "alpha-repo", ProjectID: "alpha", Name: "Repo", Provider: "gongfeng", CloneURL: "https://example.test/repo.git", DefaultBranch: "master"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "local", Name: "Local", Driver: "local"}); err != nil {
-		t.Fatal(err)
-	}
 	legacy := domain.WorkflowDefinition{
-		ID: repo.GenericBackendDeliveryWorkflowID, Name: "历史同 ID SOP", SandboxProfileID: "local",
+		ID: repo.GenericBackendDeliveryWorkflowID, Name: "历史同 ID SOP", SandboxProfileID: "test-native",
 		ProjectID: "alpha", Status: "draft", Version: 1, Nodes: []domain.WorkflowNode{}, Edges: []domain.WorkflowEdge{},
 	}
 	if err := s.PutWorkflow(legacy); err != nil {
@@ -535,7 +532,7 @@ func TestGenericTemplatesAndCopiesRunWithoutRepository(t *testing.T) {
 				template, _ := s.GenericTemplateByWorkflow(id)
 				// A real script verifies workspace execution and artifact delivery
 				// without a model key, Git credentials, or a Docker daemon.
-				template.Workflow.SandboxProfileID = "local"
+				template.Workflow.SandboxProfileID = "test-native"
 				template.Workflow.Nodes = []domain.WorkflowNode{{ID: "deliver", Type: "script", Name: "Deliver", ScriptLanguage: "shell", Script: "printf '# Delivered\\n' > delivery.md", MaxAttempts: 1, ArtifactOutputs: []domain.ArtifactContract{{Name: "delivery", Path: "delivery.md", Required: true}}}}
 				template.Workflow.Edges = nil
 				if err := s.PutGenericTemplate(template); err != nil {
@@ -604,7 +601,7 @@ func TestGenericTemplateAdoptFailureKeepsAssetsForRetry(t *testing.T) {
 	// A colliding row with a higher revision makes PutWorkflow fail with a
 	// revision conflict after the assets were already cloned.
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
-		ID: "conflicting-id", Name: "已有 SOP", SandboxProfileID: "local", ProjectID: "alpha", Revision: 5,
+		ID: "conflicting-id", Name: "已有 SOP", SandboxProfileID: "test-native", ProjectID: "alpha", Revision: 5,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -692,7 +689,7 @@ func TestPlatformAdminCanEditGenericTemplate(t *testing.T) {
 	}
 	alice, _ := s.UserByLoginName("alice")
 	requestJSONAuthed[map[string]string](t, h, alice, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
-		ID: repo.GenericBackendDeliveryWorkflowID, Name: "hijack", SandboxProfileID: "local",
+		ID: repo.GenericBackendDeliveryWorkflowID, Name: "hijack", SandboxProfileID: "test-native",
 	}, http.StatusConflict)
 	published := requestJSONAuthed[domain.WorkflowDefinition](t, h, admin, http.MethodPost,
 		"/api/workflows/"+repo.GenericBackendDeliveryWorkflowID+"/publish", map[string]any{}, http.StatusOK)
@@ -780,7 +777,7 @@ func TestPlatformAdminsAPIIsConfigurable(t *testing.T) {
 func TestPutDeletedWorkflowIsRejected(t *testing.T) {
 	h, s := newGenericTemplateServer(t)
 	created := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
-		ID: "deleted-sop", Name: "Issue修复·沙箱", ProjectID: "alpha", SandboxProfileID: "local",
+		ID: "deleted-sop", Name: "Issue修复·沙箱", ProjectID: "alpha", SandboxProfileID: "test-native",
 	}, http.StatusOK)
 	if err := s.DeleteWorkflow(created.ID); err != nil {
 		t.Fatal(err)
@@ -788,13 +785,13 @@ func TestPutDeletedWorkflowIsRejected(t *testing.T) {
 	// A stale editor tab resubmits the payload it loaded, which still carries a
 	// revision. That must not recreate the deleted row.
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
-		ID: created.ID, Name: created.Name, Status: "published", Version: 6, Revision: created.Revision, SandboxProfileID: "local",
+		ID: created.ID, Name: created.Name, Status: "published", Version: 6, Revision: created.Revision, SandboxProfileID: "test-native",
 	}, http.StatusConflict)
 	if workflowRowExists(t, s, created.ID) {
 		t.Fatal("deleted workflow was resurrected by a stale save")
 	}
 	recreated := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
-		ID: created.ID, Name: "Recreated", ProjectID: "alpha", SandboxProfileID: "local",
+		ID: created.ID, Name: "Recreated", ProjectID: "alpha", SandboxProfileID: "test-native",
 	}, http.StatusOK)
 	if recreated.Revision != 1 || recreated.ProjectID != "alpha" {
 		t.Fatalf("recreate = %+v", recreated)

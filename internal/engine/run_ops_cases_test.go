@@ -19,7 +19,7 @@ func TestRunOpsApproveRejectRetryDecline(t *testing.T) {
 	e, _ := cvEEngine(t)
 	e.executeRuns = false
 	wf := domain.WorkflowDefinition{
-		ID: "cve-ops-wf", SandboxProfileID: "local",
+		ID: "cve-ops-wf", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "fix", Type: "agent", AgentID: "developer"},
 			{ID: "gate", Type: "approval", RejectTo: "fix", MaxReworks: 2},
@@ -116,7 +116,7 @@ func TestRunOpsPassResumePausedRefreshAndHelpers(t *testing.T) {
 	e, st := cvEEngine(t)
 	e.executeRuns = false
 	wf := domain.WorkflowDefinition{
-		ID: "cve-pass-wf", Name: "v1", Version: 1, Revision: 1, SandboxProfileID: "local",
+		ID: "cve-pass-wf", Name: "v1", Version: 1, Revision: 1, SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "script", Type: "script", Script: "exit 1"}, {ID: "next", Type: "agent", AgentID: "developer"}},
 		Edges: []domain.WorkflowEdge{{Source: "script", Target: "next"}},
 	}

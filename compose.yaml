@@ -51,7 +51,6 @@ services:
       AGENTFLOW_PREVIEW_PUBLIC_URL: ${AGENTFLOW_PREVIEW_PUBLIC_URL:-}
       AGENTFLOW_PLATFORM_MCP_URL: ${AGENTFLOW_PLATFORM_MCP_URL:-http://platform:8080}
       AGENTFLOW_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-loopforge}_default
-      AGENTFLOW_LOCAL_SANDBOX: docker
       AGENTFLOW_ISOLATED_IMAGE: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.4.2}
       HOME: ${LOOPFORGE_DATA_DIR:?Run scripts/configure.sh first}/home
       AGENTFLOW_RUNNER_BINARY: /app/bin/agentflow-runner-{os}-{arch}

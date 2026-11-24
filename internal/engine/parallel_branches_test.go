@@ -49,7 +49,7 @@ func overlaps(a, b *domain.NodeRun) bool {
 // starts without waiting for its slow sibling (no wave barrier).
 func TestParallelBranchesExecuteConcurrently(t *testing.T) {
 	t.Parallel()
-	wf := domain.WorkflowDefinition{ID: "parallel-overlap", Name: "parallel overlap", SandboxProfileID: "local",
+	wf := domain.WorkflowDefinition{ID: "parallel-overlap", Name: "parallel overlap", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			scriptNode("start", "true"),
 			scriptNode("left", "sleep 1.5"),
@@ -87,7 +87,7 @@ func TestParallelBranchesExecuteConcurrently(t *testing.T) {
 // the sibling finishes and its successor still runs before the run fails.
 func TestSchedulerWaitsForRunningSiblingBeforeSettling(t *testing.T) {
 	t.Parallel()
-	wf := domain.WorkflowDefinition{ID: "parallel-fail-wait", Name: "parallel fail wait", SandboxProfileID: "local",
+	wf := domain.WorkflowDefinition{ID: "parallel-fail-wait", Name: "parallel fail wait", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			scriptNode("start", "true"),
 			scriptNode("broken", "exit 3"),
@@ -115,7 +115,7 @@ func TestSchedulerWaitsForRunningSiblingBeforeSettling(t *testing.T) {
 // works; the run only waits once nothing is in flight.
 func TestWaitingBranchDoesNotStopRunningSibling(t *testing.T) {
 	t.Parallel()
-	wf := domain.WorkflowDefinition{ID: "parallel-wait-sibling", Name: "parallel wait sibling", SandboxProfileID: "local",
+	wf := domain.WorkflowDefinition{ID: "parallel-wait-sibling", Name: "parallel wait sibling", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			scriptNode("start", "true"),
 			{ID: "gate", Name: "gate", Type: "approval"},
@@ -151,7 +151,7 @@ func TestWaitingBranchDoesNotStopRunningSibling(t *testing.T) {
 // more as a new attempt.
 func TestReworkResetsRunningSiblingWithoutDoubleCommit(t *testing.T) {
 	t.Parallel()
-	wf := domain.WorkflowDefinition{ID: "parallel-rework", Name: "parallel rework", SandboxProfileID: "local",
+	wf := domain.WorkflowDefinition{ID: "parallel-rework", Name: "parallel rework", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			scriptNode("start", "true"),
 			{ID: "gate", Name: "gate", Type: "approval", RejectTo: "start", MaxReworks: 3},
@@ -194,7 +194,7 @@ func TestReworkResetsRunningSiblingWithoutDoubleCommit(t *testing.T) {
 // committed twice and the run completes.
 func TestPauseThenImmediateResumeParallelBranches(t *testing.T) {
 	t.Parallel()
-	wf := domain.WorkflowDefinition{ID: "parallel-pause", Name: "parallel pause", SandboxProfileID: "local",
+	wf := domain.WorkflowDefinition{ID: "parallel-pause", Name: "parallel pause", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			scriptNode("start", "true"),
 			scriptNode("left", "sleep 1"),
@@ -287,7 +287,7 @@ func TestNodeControlKeyIsolatesChildSOP(t *testing.T) {
 // "running" with a cancelled branch nobody schedules.
 func TestRetryAfterCancelResumesCancelledParallelSibling(t *testing.T) {
 	t.Parallel()
-	wf := domain.WorkflowDefinition{ID: "parallel-cancel-retry", Name: "parallel cancel retry", SandboxProfileID: "local",
+	wf := domain.WorkflowDefinition{ID: "parallel-cancel-retry", Name: "parallel cancel retry", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			scriptNode("start", "true"),
 			scriptNode("left", "sleep 1"),
@@ -330,7 +330,7 @@ func TestRetryAfterCancelResumesCancelledParallelSibling(t *testing.T) {
 // revive fix, or by another path) settles instead of spinning forever.
 func TestSchedulerSettlesRunWithCancelledNode(t *testing.T) {
 	t.Parallel()
-	wf := domain.WorkflowDefinition{ID: "parallel-cancelled-settle", Name: "parallel cancelled settle", SandboxProfileID: "local",
+	wf := domain.WorkflowDefinition{ID: "parallel-cancelled-settle", Name: "parallel cancelled settle", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{scriptNode("left", "true"), scriptNode("right", "true")},
 	}
 	e, s := parallelTestEngine(t, wf)

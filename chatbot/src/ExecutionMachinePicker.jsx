@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
-import { SelectMenu } from "./ui";
+import { Dialog, SelectMenu } from "./ui";
 import { executionLocked } from "./execution-target";
+import { sandboxDriverPresentation } from "./SandboxPicker";
 import "./execution-machine-picker.css";
 
 export default function ExecutionMachinePicker({ chat, onManage }) {
   const trigger = useRef(null);
   const [open, setOpen] = useState(false);
+  const [sandboxDetails, setSandboxDetails] = useState(false);
   const locked = executionLocked(chat.session);
   const disabled = !!(
     chat.busy ||
@@ -46,14 +48,40 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
   const title = locked
     ? loadError || `当前会话执行机器：${label}。会话已绑定，后续运行始终使用此机器。`
     : chat.machineError || "选择执行机器，发送首条消息后固定";
+  const sandbox = chat.workspaceSandbox;
+  const sandboxType = sandboxDriverPresentation(sandbox?.driver);
+  const sandboxLabel = sandbox?.id ? `${sandboxType.label}-${sandbox.id}` : "";
+  useEffect(() => setSandboxDetails(false), [chat.session?.id, sandboxLabel]);
 
   if (locked)
     return (
-      <span className="machine-context machine-fixed" title={title}>
-        <HarnessIcon name="server" size={13} interactive={false} />
-        <span>{label}</span>
-        <HarnessIcon name="lock" size={11} interactive={false} />
-      </span>
+      <>
+        <span className={`machine-context machine-fixed${sandboxLabel ? " has-sandbox" : ""}`}>
+          <span className="machine-name" title={title}>
+            <HarnessIcon name="server" size={13} interactive={false} />
+            <span>{label}</span>
+            <HarnessIcon name="lock" size={11} interactive={false} />
+          </span>
+          {sandboxLabel ? (
+            <button
+              className="machine-sandbox"
+              type="button"
+              title={sandboxLabel}
+              aria-label={`工作区沙箱 ${sandboxLabel}`}
+              aria-haspopup="dialog"
+              onClick={() => setSandboxDetails(true)}
+            >
+              <HarnessIcon name={sandboxType.icon} size={13} interactive={false} />
+              <span>{sandbox.id}</span>
+            </button>
+          ) : null}
+        </span>
+        {sandboxDetails && sandboxLabel ? (
+          <Dialog title="工作区沙箱" onClose={() => setSandboxDetails(false)}>
+            <p className="machine-sandbox-detail">{sandboxLabel}</p>
+          </Dialog>
+        ) : null}
+      </>
     );
 
   const options = chat.machinesReady

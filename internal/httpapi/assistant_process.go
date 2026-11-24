@@ -302,10 +302,12 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				// Read complete frames, then split oversized writes for runners.
 				// The CLI receives the same byte stream, including newlines.
 				reader := bufio.NewReaderSize(command.Stdin, 64<<10)
+				rootPath := runtime.ConversationStdinPath(root, command.Provider)
+				workspacePath := runtime.ConversationStdinPath(filepath.Join(root, "ws"), command.Provider)
 				for {
 					data, readErr := reader.ReadString('\n')
 					for len(data) > 0 {
-						end := conversationInputChunkLen(data, root)
+						end := conversationInputChunkLen(data, workspacePath, rootPath)
 						if _, writeErr := call(ioCtx, runtime.ConversationProcessRequest{Operation: "write", ID: started.ID, Data: data[:end]}); writeErr != nil {
 							fail(fmt.Errorf("原生进程输入失败：%w", writeErr))
 							return
@@ -373,7 +375,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 
 const maxConversationInputChunk = 1 << 20
 
-func conversationInputChunkLen(data, root string) int {
+func conversationInputChunkLen(data string, paths ...string) int {
 	if len(data) <= maxConversationInputChunk {
 		return len(data)
 	}
@@ -382,11 +384,13 @@ func conversationInputChunkLen(data, root string) int {
 		end--
 	}
 	// The runner remaps paths separately in each write request.
-	if len(root) > 1 && len(root) < end {
-		start := end - len(root) + 1
-		windowEnd := min(len(data), end+len(root)-1)
-		if i := strings.Index(data[start:windowEnd], root); i >= 0 && start+i < end {
-			end = start + i
+	for _, path := range paths {
+		if len(path) > 1 && len(path) < end {
+			start := end - len(path) + 1
+			windowEnd := min(len(data), end+len(path)-1)
+			if i := strings.Index(data[start:windowEnd], path); i >= 0 && start+i < end {
+				end = start + i
+			}
 		}
 	}
 	return end

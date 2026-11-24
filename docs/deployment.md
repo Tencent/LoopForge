@@ -67,7 +67,7 @@ Run it as the installation owner, including an ordinary Linux user. If that user
 
 Both the bundled `mysql` and the `platform` service run with `restart: unless-stopped`, so after a Docker daemon or host restart the stack comes back by itself and the platform no longer loops on an unavailable database. Stop a service explicitly with `docker compose stop` when you want it to stay down.
 
-To upgrade, update the checkout first, then refresh the containers:
+To upgrade, update the checkout first, apply any required upgrade migrations, then refresh the containers. For the sandbox catalog upgrade, follow [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets).
 
 ```bash
 git fetch --tags && git checkout vX.Y.Z
@@ -101,7 +101,9 @@ Enterprise authentication gateways can sign users in by header with `AGENTFLOW_T
 
 ### Docker sandboxes
 
-The platform exposes a built-in default sandbox (`local`) even when the catalog SQL has not been installed. It is an in-memory fallback and does not insert database rows. An existing saved `local` profile takes priority, including its configured driver and environment. The default cannot be deleted; edit its configuration or create another profile to change how tasks run. The full installer still imports starter SOPs and the welcome project.
+The platform exposes a built-in default sandbox (`generic-docker`, built from its own Dockerfile) even when the catalog SQL has not been installed. It is an in-memory fallback and does not insert database rows. An existing saved `generic-docker` profile takes priority, including its configured driver and environment. The default cannot be deleted; edit its configuration or create another profile to change how tasks run. SOPs that do not choose a sandbox run in it. The full installer still imports starter SOPs and the welcome project; the seeded `generic-docker` Dockerfile matches the platform image, so Compose sandboxes reuse `AGENTFLOW_ISOLATED_IMAGE` instead of building. Without the catalog SQL, the first run builds the built-in Dockerfile once.
+
+`native` sandboxes use the execution machine's toolchains and the configured environment variables. For native SOP checkouts, the host refreshes a private per-repository cache using the checkout's Git credentials and copies objects into each working tree. Docker sandboxes clone directly from the remote. The Compose platform image has no bwrap, so run native work on Runners or a natively installed platform. See [conversation workspaces](conversation-workspaces.md#仓库缓存). Migration `041_native_sandbox_inline_assets.sql` converts local profiles to native, preserves ordinary environment variables, and moves SOPs relying on the old default to `generic-docker`.
 
 For native services running as an ordinary host user, default/root Docker images run with that service user's UID/GID so private workspaces remain accessible without relaxing their permissions or adding capabilities. Images that explicitly select a non-root user retain that identity; operators must arrange compatible bind-mount ownership for those images.
 
@@ -109,7 +111,7 @@ The Compose deployment mounts the host Docker socket into the platform container
 
 Docker SOP nodes using a standard CLI executor first look for the CLI on the sandbox user's PATH. When it is missing, LoopForge uses a shared installation for the platform image where available or runs the same installer as conversation workspaces in the container. The install uses the sandbox's configured proxy, and later nodes in that container reuse the CLI. In-container installation requires a writable filesystem and access to the official package source. Read-only sandboxes can use a CLI from the image or the mounted toolchain. ZCode uses the official executable supplied by the image.
 
-Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: the platform runs every task in a sandbox container, including SOPs configured for the `local` driver (`AGENTFLOW_LOCAL_SANDBOX=docker`), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. Agent CLIs also apply a bound repository's own configuration as their native rules define, including unattended SOP runs: `AGENTS.md`/`CLAUDE.md` instructions, `.codebuddy/`, `.claude/settings.json` (hooks and environment) and `.mcp.json` can start commands or MCP servers inside the sandbox. Bind only repositories whose contents you trust. To run without the socket, remove the `docker.sock` volume and the `AGENTFLOW_LOCAL_SANDBOX` setting from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for AI SOPs; the script-only welcome SOP then runs inside the platform container.
+Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: there is no unisolated sandbox type, so every task the platform runs itself is in a sandbox (the `AGENTFLOW_LOCAL_SANDBOX` setting is gone), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. Agent CLIs also apply a bound repository's own configuration as their native rules define, including unattended SOP runs: `AGENTS.md`/`CLAUDE.md` instructions, `.codebuddy/`, `.claude/settings.json` (hooks and environment) and `.mcp.json` can start commands or MCP servers inside the sandbox. Bind only repositories whose contents you trust. To run without the socket, remove the `docker.sock` volume from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for SOPs, including the welcome SOP, which now runs in `generic-docker`.
 
 ### Slow networks: clone and image build limits
 
@@ -189,7 +191,7 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 ## Observability schema
 
-After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog and the built-in catalog rewrites from `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql`, and `038_generic_sop_host_credentials.sql` in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in SOP graphs the new code ships. Application startup does not run data migrations.
+After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog, the built-in catalog rewrites from `033_generic_sop_mr_node.sql` and `038_generic_sop_host_credentials.sql`, in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in SOP graphs the new code ships. Application startup does not run data migrations.
 
 For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly.
 
@@ -199,9 +201,22 @@ For an external MySQL deployment, review that migration and check column existen
 
 | Kind | Example | What an operator does |
 | --- | --- | --- |
-| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
-| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
+| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
+| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql`, `041_native_sandbox_inline_assets.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
+
+### Migrating existing sandboxes to inline assets
+
+Check out the upgraded release and stop the old platform and any other processes using the database. Back up the database while MySQL remains running. For Compose installations, apply the migration with these commands.
+
+```bash
+./start.sh stop platform
+./start.sh migrate-sandboxes
+```
+
+Once the migration succeeds, start the upgraded platform with `./start.sh pull` for a published release or `./start.sh dev` for a source build. For external MySQL deployments, apply `migrations/041_native_sandbox_inline_assets.sql` directly before starting the upgraded platform.
+
+The migration copies Dockerfiles into sandboxes, converts local sandboxes to native, drops the legacy Dockerfile and environment tables and includes the built-in Dockerfile fix from `031_generic_backend_openssh.sql`. Fresh installations seed the new sandbox format directly.
 
 ## Updating existing public SOPs
 

@@ -57,7 +57,7 @@ func TestSharedScheduleDirectReferenceUnshareAndRestoreGuards(t *testing.T) {
 	check(f.s.PutAgent(agent))
 	agent.Shared = true
 	check(f.s.PutAgent(agent))
-	workflow := domain.WorkflowDefinition{ID: "direct-sop", Name: "SOP", ProjectID: "direct-refs", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
+	workflow := domain.WorkflowDefinition{ID: "direct-sop", Name: "SOP", ProjectID: "direct-refs", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
 	check(f.s.PutWorkflow(workflow))
 	workflow, _ = f.s.Workflow(workflow.ID)
 	workflow.Shared = true
@@ -74,7 +74,7 @@ func TestSharedScheduleDirectReferenceUnshareAndRestoreGuards(t *testing.T) {
 	}{
 		{"/api/agents", domain.AgentDefinition{ID: agent.ID, Name: agent.Name, ProjectID: agent.ProjectID}},
 		{"/api/skills", domain.SkillDefinition{ID: skill.ID, Name: skill.Name, ProjectID: skill.ProjectID}},
-		{"/api/workflows", domain.WorkflowDefinition{ID: workflow.ID, Name: workflow.Name, ProjectID: workflow.ProjectID, SandboxProfileID: "local"}},
+		{"/api/workflows", domain.WorkflowDefinition{ID: workflow.ID, Name: workflow.Name, ProjectID: workflow.ProjectID, SandboxProfileID: repo.TestNativeSandboxID}},
 	} {
 		if rec := cvBRequest(t, f, http.MethodPut, tc.path, tc.body, true); rec.Code != http.StatusConflict {
 			t.Fatalf("unshare %s = %d: %s", tc.path, rec.Code, rec.Body.String())

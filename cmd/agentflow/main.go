@@ -133,13 +133,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := runtime.SetRepositoryCacheRoot(root); err != nil {
+		log.Printf("repository cache disabled: %v", err)
+	}
 	s, err := repo.Open(strings.TrimSpace(*mysqlDSN))
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Printf("storage driver=%v database=%v role=%s", s.StorageInfo()["driver"], s.StorageInfo()["database"], role)
 	e := engine.New(s, runtime.NewManagerWithLimit(root, *workerConcurrency))
-	runtime.PrebuildIsolatedImage()
 	host, _ := os.Hostname()
 	instanceID := strings.TrimSpace(os.Getenv("AGENTFLOW_INSTANCE_ID"))
 	if instanceID == "" {

@@ -24,6 +24,9 @@ function flag(name, fallback) {
 
 const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(2, 14);
 
+// ensureProject provisions this native sandbox for SOP tests.
+export const defaultSandbox = 'e2e-native';
+
 export const cfg = {
   base: resolveBase(),
   token: (process.env.AGENTFLOW_E2E_TOKEN || (process.env.AGENTFLOW_E2E_TOKEN_FILE ? fs.readFileSync(process.env.AGENTFLOW_E2E_TOKEN_FILE,'utf8') : '')).trim(),
@@ -40,7 +43,7 @@ export const cfg = {
   model: flag('AGENTFLOW_E2E_MODEL', false),
   executor: process.env.AGENTFLOW_E2E_EXECUTOR || 'codebuddy',
   modelID: process.env.AGENTFLOW_E2E_MODEL_ID || '',
-  sandbox: process.env.AGENTFLOW_E2E_SANDBOX || 'local',
+  sandbox: process.env.AGENTFLOW_E2E_SANDBOX || defaultSandbox,
   keep: flag('AGENTFLOW_E2E_KEEP', false),
   // Repository-bound scenarios clone this repository read-only; they never
   // push. Unset skips them. A local path works when the deployment runs on
