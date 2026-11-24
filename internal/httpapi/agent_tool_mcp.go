@@ -170,9 +170,8 @@ func (h *agentToolGateway) toolList(ctx context.Context, session *AgentToolSessi
 			"description": tool.Description,
 			"inputSchema": json.RawMessage(defaultToolSchema(tool.InputSchema)),
 		}
-		if len(tool.OutputSchema) > 0 && string(tool.OutputSchema) != "null" {
-			item["outputSchema"] = json.RawMessage(tool.OutputSchema)
-		}
+		// Do not advertise outputSchema: callTool wraps tool results as plain text
+		// content without structuredContent, which would fail MCP client validation (-32600).
 		if len(tool.Annotations) > 0 && string(tool.Annotations) != "null" {
 			item["annotations"] = json.RawMessage(tool.Annotations)
 		}
