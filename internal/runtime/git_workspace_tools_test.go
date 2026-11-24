@@ -41,7 +41,7 @@ func TestSharedWorkspaceGitHelpersReadOnly(t *testing.T) {
 	for _, driver := range []string{domain.SandboxDriverNative, domain.SandboxDriverDocker} {
 		t.Run(driver, func(t *testing.T) {
 			host, listen := "127.0.0.1", "127.0.0.1:0"
-			toolsRoot := nativeGitToolsRoot()
+			var toolsRoot string
 			resources := SandboxResources{}
 			root := t.TempDir()
 			if driver == domain.SandboxDriverDocker {
@@ -52,8 +52,17 @@ func TestSharedWorkspaceGitHelpersReadOnly(t *testing.T) {
 				}
 				listen, toolsRoot = "0.0.0.0:0", dockerGitToolsMount
 				resources.Dockerfile = domain.DockerfileDefinition{Content: IsolatedDockerfile}
-			} else if !NativeSandboxAvailable(driver) {
-				t.Skip("native sandbox unavailable")
+			} else {
+				if !NativeSandboxAvailable(driver) {
+					t.Skip("native sandbox unavailable")
+				}
+				t.Setenv("HOME", filepath.Join(root, "home"))
+				t.Setenv("XDG_CACHE_HOME", "")
+				var err error
+				toolsRoot, err = os.UserCacheDir()
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			testSharedWorkspaceGitHelpers(t, driver, root, host, listen, toolsRoot, resources)
 		})

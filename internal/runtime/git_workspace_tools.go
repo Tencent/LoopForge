@@ -31,8 +31,12 @@ if [ -x "$execpath/git" ]; then git="$execpath/git"; fi
 cp -pL "$git" "$1/git"
 cp -pL "$execpath/git-remote-http" "$1/git-remote-http"`
 
-func nativeGitToolsRoot() string {
-	return fmt.Sprintf("/tmp/.loopforge-git-helpers-%d", os.Geteuid())
+func nativeGitToolsRoot() (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("locate native Git helper cache: %w", err)
+	}
+	return filepath.Join(cache, "LoopForge", "git-helpers"), nil
 }
 
 func ensureRunnerGitDir(dir string) error {
@@ -67,8 +71,7 @@ func ensureDockerGitToolsDirectory(root string) error {
 }
 
 func prepareWorkspaceGitTools(ctx context.Context, sandbox Sandbox, workspace string, plainHTTP bool) (string, error) {
-	host := nativeGitToolsRoot()
-	guest := host
+	var host, guest string
 	docker, _ := unwrapSandbox(sandbox).(*dockerSandbox)
 	if docker != nil {
 		if docker.workspace != "" {
@@ -84,6 +87,14 @@ func prepareWorkspaceGitTools(ctx context.Context, sandbox Sandbox, workspace st
 		}
 		guest = dockerGitToolsMount
 	} else {
+		var err error
+		host, err = nativeGitToolsRoot()
+		if err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(filepath.Dir(host), 0o700); err != nil {
+			return "", err
+		}
 		if err := ensureRunnerGitDir(host); err != nil {
 			return "", err
 		}
