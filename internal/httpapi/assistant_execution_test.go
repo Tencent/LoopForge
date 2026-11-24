@@ -95,6 +95,53 @@ func TestDraftCloudAllocationIsServerOwned(t *testing.T) {
 	}
 }
 
+func TestOwnerResumesLegacyProjectConversationAfterSharingRunner(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		return `{"message":"fixture reply","drafts":[]}`, nil
+	}
+	runner := domain.Runner{
+		ID: "owner-runner", OwnerUserID: owner.ID, Status: domain.RunnerStatusOnline,
+		RunnerVersion: domain.RunnerVersionConversationCLI,
+	}
+	if err := h.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	target := domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID}
+	saved := domain.AssistantSession{
+		ID: "legacy-conversation", ProjectID: "workbench", ExecutionTarget: &target,
+		Messages: []assistantMessage{{Role: "user", Content: "before upgrading"}, {Role: "assistant", Content: "earlier reply"}},
+	}
+	if err := h.repo.PutAssistantSession(owner.ID, saved); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(assistantRequest{
+		ProjectID: saved.ProjectID, SessionID: saved.ID,
+		Messages: append(saved.Messages, assistantMessage{Role: "user", Content: "after upgrading"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const path = "/api/assistant/chat"
+	c, rec := workbenchContext(owner, http.MethodPost, path, bytes.NewBuffer(body))
+	h.chat(c)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unshared machine: %d %s", rec.Code, rec.Body)
+	}
+	if err := h.repo.SetRunnerSharedProjects(runner.ID, owner.ID, []string{saved.ProjectID}); err != nil {
+		t.Fatal(err)
+	}
+	c, rec = workbenchContext(owner, http.MethodPost, path, bytes.NewBuffer(body))
+	h.chat(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resume after sharing: %d %s", rec.Code, rec.Body)
+	}
+	resumed, ok := h.repo.AssistantSession(owner.ID, saved.ID)
+	if !ok || resumed.Execution() != target || len(resumed.Messages) != 4 {
+		t.Fatalf("resumed conversation = %+v", resumed)
+	}
+}
+
 func TestLockedConversationRejectsTurnsAfterRunnerAccessChanges(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	member := domain.User{ID: owner.ID + 1, LoginName: "shared-conversation-member", CodeBuddyAPIKey: "test-only"}
