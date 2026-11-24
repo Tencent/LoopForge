@@ -56,7 +56,7 @@ async function saveRunnerRunLimit(runnerId,raw){
   try{
     const runner=await api(`/api/runners/${encodeURIComponent(runnerId)}/run-limit`,{method:'PUT',body:JSON.stringify({runLimit:value})});
     const i=(state.runners||[]).findIndex(r=>r.id===runnerId);
-    if(i>=0&&runner?.id)state.runners[i]=runner;
+    if(i>=0&&runner?.id)state.runners[i]={...runner,canUseInProject:state.runners[i].canUseInProject};
     toast(value>0?`已设置：最多同时运行 ${value} 条`:'已设为不限','ok');renderRunnersView();
   }catch(err){toast(err.message);refreshRunners(true)}
 }
@@ -187,10 +187,11 @@ function renderRunnersView(){
     const shared=!own(r);
     const isPersonalDefault=r.id===personalDefaultId;
     const isProjectDefault=r.id===projectDefaultId;
+    const canSetProjectDefault=projectLoaded&&projectId&&r.canUseInProject&&!isProjectDefault;
     const cliRows=discoveredCLIs.map(rt=>runnerRuntimeHTML(r,rt,shared)).join('');
     const cliSection=cliRows||'<div class="runner-runtime-empty">未发现支持的 Agent CLI</div>';
     const osLabel=runnerOSLabels[r.os]||r.os||'?';
-    const defaultBlocker=isDefault?'':runnerDefaultBlocker(r);
+    const defaultBlocker=runnerDefaultBlocker(r);
     const checking=runnerMaintenancePending.has(r.id);
     return `<article class="runner-card panel ${isDefault?'is-default':''}">
       <div class="runner-card-head">
@@ -213,7 +214,7 @@ function renderRunnersView(){
         ${shared||r.status==='online'?'':`<button class="button ghost small runner-text-button" type="button" data-remove-runner="${escapeHTML(r.id)}" title="机器已不再使用时移除绑定">移除</button>`}
         ${!shared&&!isPersonalDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-default="${escapeHTML(r.id)}">设为个人默认</button>`:''}
         ${isProjectDefault?'<button class="button ghost small runner-text-button" type="button" data-set-project-default="">清除项目默认</button>':''}
-        ${shared&&projectId&&!isProjectDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-project-default="${escapeHTML(r.id)}">在此项目使用</button>`:''}
+        ${canSetProjectDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-project-default="${escapeHTML(r.id)}">在此项目使用</button>`:''}
       </div>
     </article>`;
   }).join('')||'<div class="runner-empty"><b>还没有机器</b><span>执行上方命令后自动出现</span></div>';
@@ -496,7 +497,7 @@ function showRunnerModels(runner,runtime){
           const updated=await api(`/api/runners/${encodeURIComponent(runner.id)}/models`,{
             method:'PUT',body:JSON.stringify({provider,models})
           });
-          state.runners=(state.runners||[]).map(item=>item.id===runner.id?updated:item);
+          state.runners=(state.runners||[]).map(item=>item.id===runner.id?{...updated,canUseInProject:item.canUseInProject}:item);
           $('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
         }else{
           await saveCredential(kind.key,{models});

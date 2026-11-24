@@ -136,15 +136,17 @@ test('CLI model editor keeps machine account and personal API Key catalogs indep
   renderCodeBuddyRow(app, {
     codeBuddyApiKeyConfigured: true, codeBuddyModels: [model], codexApiKeyConfigured: true, codexModels: [model],
   });
+  app.evaluate('state.runners[0].canUseInProject=true');
   app.router.post('/api/runners/runner-cb/models/probe', {
     source:'runner', models:[{id:'codex/account-model',name:'Account model'}],
   });
   app.router.post('/api/users/1/cli-models/probe', {
     source:'official', models:[model,{id:'another-model',name:'Another model'}],
   });
-  app.router.put('/api/runners/runner-cb/models', ({body}) => ({
-    ...app.evaluate('state.runners[0]'), loginModels:{[body.provider]:body.models},
-  }));
+  app.router.put('/api/runners/runner-cb/models', ({body}) => {
+    const {canUseInProject, ...runner} = app.evaluate('state.runners[0]');
+    return {...runner, loginModels:{[body.provider]:body.models}};
+  });
   const show = provider => {
     app.document.querySelector(`[data-runner-runtime-menu="runner-cb|${provider}"]`).click();
     [...app.document.querySelectorAll('.runner-runtime-menu button')].find(b => b.textContent.trim()==='模型列表').click();
@@ -164,6 +166,7 @@ test('CLI model editor keeps machine account and personal API Key catalogs indep
   const saved = {id:'codex/account-model',name:'Account model'};
   assert.deepEqual(app.router.calls.find(c => c.method==='PUT'&&c.path.endsWith('/models')).body, {provider:'codex',models:[saved]});
   assert.equal(app.router.calls.some(c => c.method==='PUT'&&c.path.endsWith('/credentials')), false);
+  assert.equal(app.evaluate('state.runners[0].canUseInProject'), true);
   show('codex');
   assert.deepEqual(modelIDs(), [saved.id]);
   app.document.querySelector('#confirmCancelBtn').click();

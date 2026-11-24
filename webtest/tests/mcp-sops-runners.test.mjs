@@ -135,14 +135,23 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/runners/runner-local'));
 });
 
-test('runner sharing saves multiple projects and makes other owners’ machines selectable only in project scope', async (t) => {
+test('runner sharing saves multiple projects and offers project defaults for eligible machines', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  const mine = {id: 'mine', name: 'Laptop', ownerUserId: 1, status: 'online'};
-  const shared = {id: 'team', name: 'Team host', ownerUserId: 2, status: 'online'};
-  app.router.get('/api/runners?projectId=one', [mine, shared]);
-  app.router.get('/api/runners?projectId=two', [mine]);
-  app.router.get('/api/runners/default?projectId=one', { runnerId: mine.id, personalRunnerId: mine.id, projectRunnerId: '' });
+  const mine = {id: 'mine', name: 'Laptop', ownerUserId: 1, status: 'online', canUseInProject: true};
+  const desktop = {id: 'desktop', name: 'Desktop', ownerUserId: 1, status: 'online', canUseInProject: true};
+  const shared = {id: 'team', name: 'Team host', ownerUserId: 2, status: 'online', canUseInProject: true};
+  let projectRunnerId = '';
+  app.router.get('/api/runners?projectId=one', [mine, desktop, shared]);
+  app.router.get('/api/runners?projectId=two', [{...mine, canUseInProject: false}]);
+  app.router.get('/api/runners/default?projectId=one', () => ({
+    runnerId: projectRunnerId || mine.id, personalRunnerId: mine.id, projectRunnerId,
+  }));
+  app.router.put('/api/runners/default?projectId=one', ({body}) => {
+    projectRunnerId = body.runnerId;
+    return { runnerId: projectRunnerId || mine.id };
+  });
+  app.router.put('/api/runners/desktop/run-limit', {id: desktop.id, name: desktop.name, ownerUserId: 1, status: 'online', runLimit: 25});
   app.router.get('/api/runners/default?projectId=two', { runnerId: '', personalRunnerId: mine.id, projectRunnerId: '' });
   app.evaluate(`
     state.currentUser={id:1};
@@ -156,6 +165,9 @@ test('runner sharing saves multiple projects and makes other owners’ machines 
   `);
   await app.evaluate('refreshRunners()');
   assert.match(app.document.querySelector('#runnerPoolStatus').textContent, /个人默认 · Laptop/);
+  app.evaluate(`state.runners.find(r=>r.id==='mine').status='offline';renderRunnersView()`);
+  assert.equal(app.document.querySelector('[data-set-project-default="mine"]').disabled, true);
+  await app.evaluate('refreshRunners()');
   app.document.querySelector('[data-runner-share="mine"]').click();
   const projects = [...app.document.querySelectorAll('.runner-share-projects input')];
   assert.deepEqual(projects.map(box => box.value), ['one', 'two']);
@@ -164,6 +176,16 @@ test('runner sharing saves multiple projects and makes other owners’ machines 
   await settle();
   assert.deepEqual(app.router.calls.find(c => c.path === '/api/runners/mine/shared-projects').body, {projectIds: ['one', 'two']});
   assert.equal(app.document.querySelector('[data-runner-share="team"]'), null);
+  await app.evaluate(`saveRunnerRunLimit('desktop','25')`);
+  const ownerChoice = app.document.querySelector('[data-set-project-default="desktop"]');
+  assert.ok(ownerChoice, 'an eligible owned machine offers the project default action');
+  ownerChoice.click();
+  await settle();
+  assert.equal(projectRunnerId, desktop.id);
+  assert.equal(app.evaluate('state.personalDefaultRunnerId'), mine.id);
+  assert.match(app.document.querySelector('#runnerPoolStatus').textContent, /此项目默认 · Desktop/);
+  assert.equal(app.document.querySelector('[data-set-project-default="desktop"]'), null);
+
   app.document.querySelector('[data-set-project-default="team"]').click();
   await settle();
   assert.ok(app.router.calls.some(c => c.method === 'PUT' && c.path === '/api/runners/default' &&
@@ -171,6 +193,7 @@ test('runner sharing saves multiple projects and makes other owners’ machines 
 
   await app.evaluate("state.projectFilter='two';refreshRunners()");
   assert.equal(app.document.querySelector('[data-set-project-default="team"]'), null);
+  assert.equal(app.document.querySelector('[data-set-project-default="mine"]'), null);
   assert.equal(app.document.querySelector('#runnerPoolStatus').textContent, '在平台云端执行');
   assert.equal(app.document.querySelector('.runner-card.is-default'), null);
   assert.match(app.document.querySelector('.runner-card').textContent, /个人默认/);
