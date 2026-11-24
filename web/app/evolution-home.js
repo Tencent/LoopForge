@@ -51,8 +51,9 @@ function evoHomeRowHTML(row){
   const change=p?.review?.changes?.[0]?.title||(p?.title!==problem?p?.title:'')||'';
   const summary=[evoStoryBrief(change,64),evoHomeOutcome(p)].filter(Boolean).join(' · ');
   const glyph=r?.c?.kind==='user_feedback'?'user':'alert';
+  const selected=evo.modal?.openerKey===key;
   return `
-    <button type="button" class="evo-home-row" data-evo-asset-group="${escapeHTML(key)}" data-evo-key="${escapeHTML(key)}">
+    <button type="button" class="evo-home-row" data-evo-asset-group="${escapeHTML(key)}" data-evo-key="${escapeHTML(key)}" aria-controls="evoWorkspaceDetail" aria-pressed="${selected}">
       <span class="evo-home-mark">${evoReviewIcon(glyph)}</span>
       <span class="evo-home-problem">
         <b data-tooltip="${escapeHTML(problem)}">${escapeHTML(evoStoryBrief(problem,60))}</b>
@@ -65,21 +66,76 @@ function evoHomeRowHTML(row){
       </span>
     </button>`;
 }
-function evoHomeHTML(){
-  const all=evoUnifiedRows(),check=evoHomeCheck();
+function evoHomeStatusHTML(){
+  const check=evoHomeCheck();
   const checkNote=check?`<p class="evo-home-check-note" role="status">${evoReviewIcon('check')}上次检查 ${check.runs} 次运行 · ${check.findings} 个问题<span>${escapeHTML(relativeTime(check.at))}</span></p>`:'';
   const error=evo.checkError?`<div class="evo-home-check-error" role="alert">检查失败：${escapeHTML(evo.checkError)}${evoHomeButton('重试','data-evo-home-check')}</div>`:'';
-  if(!all.length)return `<div class="evo-home">${error}${checkNote}${evoHomeEmptyHTML()}</div>`;
-  if(!['active','all'].includes(evo.list.status))evo.list={status:'active',page:0};
-  const active=all.filter(r=>evoListCategory(r)!=='done'),list=evo.list.status==='all'?all:[...active];
+  const refreshError=evo.error?`<div class="evo-home-check-error" role="alert">读取失败：${escapeHTML(evo.error)}${evoHomeButton('重试','data-evo-reload')}</div>`:'';
+  return error+refreshError+checkNote;
+}
+function evoHomeBuckets(all){
+  return {
+    all,
+    active:all.filter(r=>evoListCategory(r)!=='done'),
+    doing:all.filter(r=>evoListCategory(r)==='doing'),
+    released:all.filter(r=>r.p?.status==='released'),
+    rolled_back:all.filter(r=>r.p?.status==='rolled_back')
+  };
+}
+function evoHomeSummaryHTML(){
+  const groups=evoHomeBuckets(evoUnifiedRows());
+  const stats=[
+    ['alert','待处理',groups.active.length-groups.doing.length,'warn'],
+    ['refresh','进行中',groups.doing.length,'accent'],
+    ['arrow-up','已发布',groups.released.length,'success']
+  ];
+  return `<div class="evo-workspace-metrics">${stats.map(([icon,label,value,tone])=>`
+    <section class="evo-workspace-stat" data-tone="${tone}">
+      <h2><span>${evoReviewIcon(icon)}</span>${label}</h2><b>${value}</b>
+    </section>`).join('')}</div>`;
+}
+function evoHomeTasksHTML(all){
+  if(!all.length)return evoHomeEmptyHTML();
+  const buckets=evoHomeBuckets(all);
+  const filters=[['active','待跟进'],['all','全部记录'],['doing','进行中'],['released','已发布'],['rolled_back','已回滚']];
+  if(!Object.hasOwn(buckets,evo.list.status))evo.list={status:'active',page:0};
   const priority=r=>r.p?.watch?.status==='degraded'||r.p?.summary?.regressed>0?0:evoListCategory(r)==='todo'?1:2;
-  list.sort((a,b)=>priority(a)-priority(b));
+  const list=[...buckets[evo.list.status]].sort((a,b)=>priority(a)-priority(b));
   const pages=Math.max(1,Math.ceil(list.length/10));evo.list.page=Math.max(0,Math.min(evo.list.page,pages-1));
   const rows=list.slice(evo.list.page*10,(evo.list.page+1)*10).map(evoHomeRowHTML).join('');
-  const toolbar=`<div class="evo-home-toolbar"><div class="evo-home-tabs" role="group" aria-label="改进记录筛选">${[['active','待跟进',active.length],['all','全部记录',all.length]].map(([key,label,n])=>`<button type="button" data-evo-list-status="${key}" data-evo-key="filter:${key}" aria-pressed="${evo.list.status===key}">${label}<span>${n}</span></button>`).join('')}</div><span class="evo-home-scope">当前载入 ${all.length} 项</span></div>`;
-  const empty=`<div class="evo-home-filter-empty">${evoReviewIcon('check')}当前没有待跟进的改进${evoHomeButton(`查看全部 ${all.length} 条`,'data-evo-list-status="all"')}</div>`;
-  const pager=pages>1?`<footer class="evo-list-footer"><span>当前载入 ${list.length} 项</span><nav aria-label="改进分页"><button type="button" data-evo-unified-page="${evo.list.page-1}"${evo.list.page?'':' disabled'}>上一页</button><span>${evo.list.page+1}/${pages}</span><button type="button" data-evo-unified-page="${evo.list.page+1}"${evo.list.page+1<pages?'':' disabled'}>下一页</button></nav></footer>`:'';
-  return `<div class="evo-home">${error}${checkNote}${toolbar}<section id="evoUnifiedList" class="evo-home-list" aria-label="问题、修改与验证">${rows||empty}</section>${pager}</div>`;
+  const toolbar=`<div class="evo-home-toolbar"><h2>改进任务 <span>${all.length}</span></h2><div class="evo-home-tabs" role="group" aria-label="改进任务筛选">${filters.map(([key,label])=>`<button type="button" data-evo-list-status="${key}" data-evo-key="filter:${key}" aria-pressed="${evo.list.status===key}">${label}<span>${buckets[key].length}</span></button>`).join('')}</div></div>`;
+  const empty=`<div class="evo-home-filter-empty">当前没有${escapeHTML(filters.find(([key])=>key===evo.list.status)?.[1]||'匹配的')}任务${evoHomeButton(`查看全部 ${all.length} 条`,'data-evo-list-status="all"')}</div>`;
+  const pager=pages>1?`<footer class="evo-list-footer"><nav aria-label="改进分页"><button type="button" data-evo-unified-page="${evo.list.page-1}"${evo.list.page?'':' disabled'}>上一页</button><span>${evo.list.page+1}/${pages}</span><button type="button" data-evo-unified-page="${evo.list.page+1}"${evo.list.page+1<pages?'':' disabled'}>下一页</button></nav></footer>`:'';
+  return `${toolbar}<section id="evoUnifiedList" class="evo-home-list" aria-label="改进任务">${rows||empty}</section>${pager}`;
+}
+function evoHomeHTML(){
+  const all=evoUnifiedRows();
+  return `<div class="evo-home">
+    <div id="evoWorkspaceStatus">${evoHomeStatusHTML()}</div>
+    <div id="evoWorkspace" class="evo-workspace${all.length?'':' is-empty'}">
+      <aside id="evoWorkspaceTasks" class="evo-workspace-tasks" aria-label="改进任务">${evoHomeTasksHTML(all)}</aside>
+      <div id="evoWorkspaceDetail" class="evo-workspace-detail">
+        <div class="evo-workspace-placeholder">${evoReviewIcon('workflow')}<p>选择一项改进任务</p></div>
+      </div>
+    </div>
+  </div>`;
+}
+function evoUpdateWorkspaceTasks(resetScroll=false){
+  const tasks=$('#evoWorkspaceTasks');
+  if(!tasks)return;
+  $('#evoWorkspaceStatus').innerHTML=evoHomeStatusHTML();
+  $('#evoWorkspace').classList.toggle('has-detail',!!evo.modal);
+  evoHomeSyncChecking();
+  if(!evo.overview)return;
+  const all=evoUnifiedRows(),list=tasks.querySelector('#evoUnifiedList'),scroll=list?.scrollTop||0;
+  const key=tasks.contains(document.activeElement)?document.activeElement.dataset.evoKey:'';
+  $('#evoWorkspace').classList.toggle('is-empty',!all.length);
+  tasks.innerHTML=evoHomeTasksHTML(all);
+  const nextList=tasks.querySelector('#evoUnifiedList');if(nextList&&!resetScroll)nextList.scrollTop=scroll;
+  window.AgentFlowHarnessIcons?.hydrate(tasks);
+  window.AgentFlowHarnessIcons?.hydrate($('#evoWorkspaceStatus'));
+  window.AgentFlowHarnessIcons?.hydrate($('.evo-workspace-placeholder'));
+  if(key)tasks.querySelector(`[data-evo-key="${CSS.escape(key)}"]`)?.focus({preventScroll:true});
 }
 document.addEventListener('click',event=>{
   const button=event.target.closest?.('[data-evo-home-check],[data-evo-home-runs]');

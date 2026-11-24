@@ -31,7 +31,7 @@ const {createDOM}=require('./hui_fake_dom');
   evo.overview={pending:[p],health:[]};
   html=api.evoHomeHTML();dom.html(html);
   assert.equal(dom.document.querySelector('img'),null,'model text must remain escaped');
-  assert.equal(dom.document.querySelectorAll('.evo-home-tabs button').length,2);
+  assert.equal(dom.document.querySelectorAll('.evo-home-tabs button').length,5);
   assert.equal(dom.document.querySelectorAll('.evo-home-row').length,1);
   assert.match(dom.document.querySelector('.evo-home-summary').textContent,/跳过摘要.*改善 1/,'the list summarizes the change and replay outcome');
   assert.equal(dom.document.querySelector('.evo-home-columns'),null,'the list starts with problems instead of table headers');

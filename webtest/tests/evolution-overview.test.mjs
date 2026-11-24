@@ -25,7 +25,7 @@ test('unified list paginates, preserves filter and page on return, and keeps dia
   const $ = s => app.document.querySelector(s);
   await open(app);
   assert.match($('[data-evo-asset-group="asset:agent:a"]').textContent, /1 条问题运行/);
-  assert.equal($('#evoMetrics').textContent, '');
+  assert.deepEqual([...app.document.querySelectorAll('.evo-workspace-stat h2')].map(el=>el.textContent), ['待处理','进行中','已发布']);
   assert.match($('[data-evo-list-status="all"]').textContent, /全部记录13/);
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 10);
   assert.equal($('#evolutionBody input'), null);
@@ -37,13 +37,14 @@ test('unified list paginates, preserves filter and page on return, and keeps dia
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 3);
   $('[data-evo-asset-group="asset:agent:a-11"]').click(); await settle(4);
   assert.match(app.window.location.hash, /findings\/f-11\/c-11/);
-  assert.ok($('#evoDetailPage'));
+  assert.ok($('#evoWorkspaceDetail #evoDetailPage'));
+  assert.equal($('#evoWorkspaceTasks [aria-pressed="true"][data-evo-asset-group]').dataset.evoAssetGroup, 'asset:agent:a-11');
+  assert.equal(app.document.querySelectorAll('.evo-home-row').length, 3);
   $('[data-evo-list-back]').click(); await settle(5);
   assert.equal(app.window.location.hash, '#/evolution');
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 3);
   assert.equal(app.document.activeElement.dataset.evoAssetGroup, 'asset:agent:a-11');
-  assert.equal(app.document.querySelectorAll('.evo-home-tabs button').length, 2);
-  assert.equal($('[data-evo-list-status="doing"]'), null);
+  assert.equal(app.document.querySelectorAll('.evo-home-tabs button').length, 5);
   $('[data-evo-list-status="all"]').click();
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 10);
 });
@@ -69,7 +70,7 @@ test('refresh does not diagnose and repeated diagnosis is guarded; legacy diagno
   resolve({ findings: [], runs: 3 }); await settle(5);
   assert.equal($('#evoDiagnose').disabled, false);
   $('[data-evo-asset-group="asset:agent:a"]').click(); await settle(3);
-  assert.match($('#evoFindingTitle').textContent, /Reviewer/);
+  assert.match($('#evoFindingTitle').textContent, /Old failure/);
   $('#evoSourceDetails').open = true;
   $('#evoDiagnosisDetails').open = true;
   assert.match($('#evoDiagnosisDetails').textContent, /旧版诊断/);
@@ -104,9 +105,16 @@ test('asset grouping deduplicates proposal appearances and merges findings witho
   assert.match($('[data-evo-asset-group="asset:rule:a"]').textContent, /同名规则.*1 条问题线索/);
   assert.equal(app.router.calls.some(c => c.path.startsWith('/api/runs/') || c.path === '/api/evolution/proposals/p-grouped'), false);
   $('[data-evo-asset-group="asset:agent:a"]').click(); await settle(5);
+  assert.match($('.evo-story-signal-section').textContent, /问题证据/);
+  $('[data-evo-open-sources]').click();
+  assert.equal($('#evoSourceDetails').open, true);
   assert.equal(app.document.querySelectorAll('#evoProblemRecords [data-evo-related-finding]').length, 12);
   assert.equal($('#evoProblemRecords [data-evo-related-finding="f-second"]'), null);
   assert.equal($('[data-evo-related-finding="f-rule"]'), null);
+  const detail = $('#evoDetailPage');
+  $('[data-evo-list-status="doing"]').click();
+  assert.equal($('#evoDetailPage'), detail);
+  assert.equal(app.document.querySelectorAll('.evo-home-row').length, 0);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 

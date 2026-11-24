@@ -108,6 +108,13 @@
 .evo-list-row .evo-story-list-effect .evo-good{color:var(--hui-success)}
 /* Keep the selected sample beside its history on wider workspaces. */
 .evo-story-evidence-grid {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.evo-story-signals{display:flex;gap:8px;flex-wrap:wrap;padding:11px 14px}
+.evo-story-signals>div{
+  display:flex;align-items:center;gap:7px;padding:6px 10px;border-radius:7px;
+  background:var(--hui-soft);color:var(--hui-secondary);font-size:12px;
+}
+.evo-story-signals>div b{color:var(--hui-text);font-variant-numeric:tabular-nums}
+.evo-story-signals>div .evo-review-icon{width:15px;height:15px;color:var(--hui-accent)}
 .evo-story-selected-sample {margin:12px 16px 0;font-size:13px;font-weight:500;overflow-wrap:anywhere}
 .evo-story-evidence-meta>span {min-width:0;overflow-wrap:anywhere}
 .evo-story-sample-input {margin:0 0 12px;font-size:12px;color:var(--hui-muted)}
@@ -125,7 +132,7 @@
 #evoDetailPage .evo-diff-numbered .evo-diff-heading {background:var(--hui-soft)}
 #evoDetailPage .evo-diff-numbered .evo-diff-heading-label {grid-column:3/-1;width:auto;padding-left:20px;color:var(--hui-muted);font:11px/1.85 var(--hui-sans)}
 #evoDetailPage .evo-diff-numbered .evo-diff-skip {padding-left:108px}
-@container(max-width:850px){
+@container(max-width:690px){
   .evo-story-evidence-grid{grid-template-columns:minmax(0,1fr)}
 }
 @container(max-width:500px){

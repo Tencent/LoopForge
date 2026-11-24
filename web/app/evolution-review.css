@@ -7,7 +7,7 @@
 .evo-review-identity > div { min-width:0; }
 .evo-review-glyph { display:grid; place-items:center; flex-shrink:0; width:40px; height:40px; border:1px solid var(--hui-border); border-radius:10px; background:var(--hui-soft); }
 .evo-review-glyph .evo-review-icon { width:22px; height:22px; }
-#evoDetailPage h1 { font-size:20px; line-height:1.4; }
+#evoFindingTitle { font-size:20px; line-height:1.4; }
 .evo-review-icon { width:16px; height:16px; flex-shrink:0; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
 #evoDetailObject { gap:7px; margin-top:5px; color:var(--hui-muted); font-size:12px; }
 #evoDetailObject .evo-review-icon { width:12px; height:12px; }
@@ -160,7 +160,7 @@
   #evoDetailPage .evo-review-identity > div { flex:1; }
   #evoReviewWorkbench .evo-detail-tabs { padding:0 12px; gap:18px; }
   #evoReviewWorkbench .evo-detail-tabs button { gap:5px; font-size:12px; }
-  #evoDetailPage h1 { font-size:18px; }
+  #evoFindingTitle { font-size:18px; }
   #evoDetailPage .evo-review-diff .evo-before-after { grid-template-columns:minmax(0,1fr); }
   #evoDetailPage .evo-review-diff .evo-before-after > section + section { border-left:0; border-top:1px solid var(--hui-border); }
   #evoDetailPanel-validation .evo-review-results th:not(:first-child) { width:50px; }

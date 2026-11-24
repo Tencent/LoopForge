@@ -53,13 +53,31 @@ function evoStoryValidationHTML(p){
   const counts=[['fixed','改善',s.fixed,'evo-good'],['unchanged','保持',s.unchanged,''],['regressed','退化',s.regressed,s.regressed?'evo-bad':'evo-muted'],['changed','结论变化',s.changed,'evo-review-warn'],['blocked','阻塞',s.blocked,'evo-review-warn']];
   return `<header class="evo-story-section-head"><h2>${evoReviewIcon('flask')}历史验证</h2><span class="evo-story-counts">${counts.filter(([k,,n])=>['fixed','unchanged','regressed'].includes(k)||n).map(([key,label,n,tone])=>`<button type="button" class="${tone}" data-evo-sample-filter="${key}" aria-pressed="${evo.modal?.compareFilter===key}">${label} ${n||0}</button>`).join('')}</span></header><div class="evo-story-validation-summary">${scored?`<span>原运行成功 <b>${rows.filter(r=>r.sourceScore>0).length}/${rows.length}</b></span>${evoReviewIcon('arrow-right')}<span>回放成功 <b>${complete.filter(r=>r.score>0).length}/${rows.length}</b></span>`:`<span>已完成 ${s.finished||0}/${s.total||rows.length}</span>`}${s.passed?kbBadge('验证通过','ok'):''}<span class="evo-story-summary-spacer"></span><button type="button" class="kb-btn quiet small" data-evo-sample-filter="all" aria-pressed="${(evo.modal?.compareFilter||'all')==='all'}">全部 ${rows.length}</button></div><div id="evoComparisonList"></div><footer class="evo-story-validation-foot"><details><summary>样例从哪来</summary><ul><li>诊断：从问题运行中选，供改进器参考。</li><li>留出：也来自问题运行，仅用于回放验证。</li><li>回归：从近期成功的运行中选。</li><li>钉选：在运行详情手动固定的成功运行。</li></ul></details><details><summary>判定口径</summary><p>比较创建验证时的运行评分：失败、返工后成功、一次成功。保持不表示产物相同；历史结果不代表线上效果。</p>${s.verdict?`<p>${escapeHTML(evoResultText(s.verdict))}</p>`:''}</details></footer>`;
 }
+function evoStoryProblemEvidenceHTML(m,p){
+  const issues=evoStoryCurrentIssues(m,p);
+  const kinds=m.row?.f.triage?.kinds||{};
+  const sources=[
+    ['node_failed','alert','失败运行'],['rework','refresh','返工运行'],
+    ['user_feedback','user','反馈运行'],['eval_low','chart','评测低分']
+  ].filter(([kind])=>kinds[kind]>0);
+  if(!issues.length&&!sources.length)return '';
+  return `<section class="evo-story-section evo-story-signal-section">
+    <header class="evo-story-section-head">
+      <h2>${evoReviewIcon('doc')}问题证据</h2>
+      <button type="button" class="kb-btn quiet small" data-evo-open-sources aria-controls="evoSourceDetails">查看记录 ${evoReviewIcon('arrow-right')}</button>
+    </header>
+    <div class="evo-story-signals">${sources.length?sources.map(([kind,icon,label])=>
+      `<div>${evoReviewIcon(icon)}<b>${kinds[kind]}</b><span>${label}</span></div>`
+    ).join(''):`<div>${evoReviewIcon('alert')}<b>${issues.length}</b><span>关联问题</span></div>`}</div>
+  </section>`;
+}
 function evoStoryDetailHTML(m,p){
   const asset=p||m.row?.f,group=evoGroupForAsset(asset);
-  const problems=!p?`
+  const problems=p?evoStoryProblemEvidenceHTML(m,p):`
     <section class="evo-story-section">
       <header class="evo-story-section-head"><h2>${evoReviewIcon('alert')}关联问题</h2></header>
       <div id="evoStoryProblems" class="evo-story-problems">${evoStoryProblemsHTML(m,p)}</div>
-    </section>`:'';
+    </section>`;
   return `
     <div id="evoReviewWorkbench" class="evo-review-workbench evo-story-workbench">
       <div id="evoProblemBox" class="evo-review-status" role="status">${p?.error?escapeHTML(p.error):''}</div>

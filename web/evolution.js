@@ -1,4 +1,4 @@
-// 改进与验证：具体报错列表与记录弹窗；提案、资产、样本沿用 kb-* 面板与抽屉。
+// RSI工作台：具体报错列表与记录弹窗；提案、资产、样本沿用 kb-* 面板与抽屉。
 // 依赖 app.js 与 knowledge.js 的公共状态、API 和组件。
 const evo={tab:'issues',projectId:null,overview:null,findings:null,samples:null,error:'',seq:0,poll:0,busy:new Set(),drawerProposal:null,stage:'',filter:{kind:'',q:'',status:'open',sort:'value',days:''},changes:{q:'',status:'all',page:0},list:{status:'active',page:0},groups:{},modal:null,page:0,selected:new Set(),diagnosing:false,lastCheck:null,checkError:''};
 
@@ -219,7 +219,11 @@ function evoChangeState(p){
   return {label:'状态待确认',tone:'',note:'打开详情查看处理记录'};
 }
 function evoChangeBadge(p){const s=evoChangeState(p);return kbBadge(s.label,s.tone)}
-function evoRenderMetrics(){const host=$('#evoMetrics');if(host)host.innerHTML=''}
+function evoRenderMetrics(){
+  const host=$('#evoMetrics');if(!host)return;
+  host.innerHTML=evo.overview&&!['assets','samples'].includes(evo.tab)?evoHomeSummaryHTML():'';
+  window.AgentFlowHarnessIcons?.hydrate(host);
+}
 function evoRecentChangeHTML(){
   const p=evoAllProposals().filter(p=>p.status==='released').sort((a,b)=>(Date.parse(b.decidedAt)||0)-(Date.parse(a.decidedAt)||0))[0];
   if(!p)return '';
@@ -232,7 +236,8 @@ function evoRender(){
   evoSchedulePoll();
   if(evo.modal){
     const m=evo.modal;
-    if(m.row)m.row=evoIssueRows().find(r=>evoIssueKey(r)===m.openerKey)||m.row;
+    evoUpdateWorkspaceTasks();
+    if(m.row)m.row=evoIssueRows().find(r=>evoIssueKey(r)===evoIssueKey(m.row))||m.row;
     if(!m.proposalId&&m.row)m.proposalId=m.row.f.proposalId||evoFindingProposal(m.row.f)?.id||'';
     if(m.proposalId)evoLoadDetailProposal(m);
     else if(m.row){evoDetailLayout(m);if(m.data)evoRenderFindingRuns()}
@@ -244,7 +249,7 @@ function evoRender(){
   const focused=document.activeElement?.closest?.('#evolutionBody')?document.activeElement.dataset.evoKey:'';
   if(['assets','samples'].includes(evo.tab)){
     const tabs=[['assets','角色与规则'],['samples','固定验证样本']];
-    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ 改进与验证</button><h2 class="evo-settings-title">进化设置</h2><div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
+    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ RSI工作台</button><h2 class="evo-settings-title">进化设置</h2><div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
   }else root.innerHTML=evoUnifiedListHTML();
   evoHomeSyncChecking();
   window.AgentFlowHarnessIcons?.hydrate(root);
@@ -505,7 +510,8 @@ function evoBack(){
   const key=evo.modal?.openerKey;
   evoCloseFinding(false);evo.tab='issues';
   if(history.state?.evolutionFrom==='#/evolution'){history.back()}else history.replaceState(null,'','#/evolution');
-  evoRender();$('#evolutionBody')?.querySelector(`[data-evo-key="${CSS.escape(key||'')}"]`)?.focus({preventScroll:true});
+  evoRender();
+  ($(`#evoWorkspaceTasks [data-evo-key="${CSS.escape(key||'')}"]`)||$('#evoWorkspaceTasks .evo-home-tabs [aria-pressed="true"]'))?.focus({preventScroll:true});
 }
 function evoApplyRoute(){
   if(!evoActive()||!evo.overview)return;
@@ -524,10 +530,14 @@ function evoFindingStats(r){
 }
 function evoMountDetail(title,openerKey,row=null){
   evoCloseFinding(false);if(evoDrawerOwned())evoDrawerClose();
-  const m={row,openerKey,routeKey:openerKey,projectId:evo.projectId,status:'',page:0,data:null,evidence:null,evidenceCache:new Map(),compareFilter:'all',viewOpen:[]};evo.modal=m;
-  $('#evoPageHead').hidden=true;$('#evoMetrics').hidden=true;
-  $('#evolutionBody').innerHTML=`<section id="evoDetailPage" aria-labelledby="evoFindingTitle"><button type="button" class="evo-back" data-evo-list-back>‹ 改进与验证</button><header class="evo-detail-head"><div class="evo-review-identity"><span id="evoDetailGlyph" class="evo-review-glyph"></span><div><h1 id="evoFindingTitle" tabindex="-1">${escapeHTML(title)}</h1><div id="evoDetailObject" class="evo-detail-object"></div></div></div><div id="evoDetailActions" class="evo-detail-actions"></div></header><div id="evoDetailBody" class="evo-detail-grid"><div class="kb-empty">正在读取…</div></div></section>`;
-  $('#evoFindingTitle').focus({preventScroll:true});
+  const asset=row?.f||evoAllProposals().find(p=>openerKey===`proposal:${p.id}`);
+  const m={row,openerKey:asset?`asset:${evoAssetKey(asset.assetKind,asset.assetId)}`:openerKey,routeKey:openerKey,projectId:evo.projectId,status:'',page:0,data:null,evidence:null,evidenceCache:new Map(),compareFilter:'all',viewOpen:[]};
+  evo.modal=m;evo.tab='issues';
+  if(!$('#evoWorkspaceDetail'))$('#evolutionBody').innerHTML=evoHomeHTML();
+  $('#evoWorkspaceDetail').insertAdjacentHTML('beforeend',`<section id="evoDetailPage" aria-labelledby="evoFindingTitle"><button type="button" class="evo-back" data-evo-list-back>‹ 改进任务</button><header class="evo-detail-head"><div class="evo-review-identity"><span id="evoDetailGlyph" class="evo-review-glyph"></span><div><h2 id="evoFindingTitle" tabindex="-1">${escapeHTML(title)}</h2><div id="evoDetailObject" class="evo-detail-object"></div></div></div><div id="evoDetailActions" class="evo-detail-actions"></div><button type="button" class="kb-btn quiet small evo-workspace-close" data-evo-list-back aria-label="关闭任务详情" data-tooltip="关闭任务详情">${evoReviewIcon('close')}</button></header><div id="evoDetailBody" class="evo-detail-grid"><div class="kb-empty">正在读取…</div></div></section>`);
+  if(!$('#evoMetrics')?.children.length)evoRenderMetrics();
+  evoUpdateWorkspaceTasks();
+  $('#evoFindingTitle').focus();
   return m;
 }
 function evoDetailTrackHTML(p,finding){
@@ -566,7 +576,7 @@ function evoDetailTrackHTML(p,finding){
 function evoDetailLayout(m,p=null){
   const r=m.row,asset=p||r?.f;
   m.viewOpen=[...document.querySelectorAll('#evoDetailPage details[open][id]')].map(d=>d.id);
-  const problem=p&&(p.review?.problem||r?.title||p.title);
+  const problem=p?.review?.problem||r?.title||p?.title;
   if(asset)$('#evoFindingTitle').textContent=evoStoryBrief(problem,72)||asset.assetName||asset.assetId;
   $('#evoDetailGlyph').innerHTML=evoReviewIcon(asset?.assetKind==='rule'?'doc':'robot');
   $('#evoDetailObject').innerHTML=evoReviewVersionHTML(asset,p);
@@ -726,7 +736,10 @@ async function evoLoadDetailProposal(m){
     for(const [key,data] of m.evidenceCache)if(data.replay){const current=(p.replays||[]).find(r=>r.id===data.replay.id);if(!current||!evoTime(current.finishedAt)||JSON.stringify(current)!==JSON.stringify(data.replay))m.evidenceCache.delete(key)}
     if(m.evidence?.type==='replay'&&!(p.replays||[]).some(r=>r.id===m.evidence.id)){m.evidence=null;m.evidenceRequest=null}
     m.proposal=p;
-    if(m.openerKey.startsWith('proposal:'))m.openerKey=`asset:${evoAssetKey(p.assetKind,p.assetId)}`;
+    if(m.openerKey.startsWith('proposal:')){
+      m.openerKey=`asset:${evoAssetKey(p.assetKind,p.assetId)}`;
+      evoUpdateWorkspaceTasks();
+    }
     if(!m.row)m.row=evoIssueRows().find(r=>r.f.id===p.findingId||r.f.proposalId===p.id)||null;
     evoDetailLayout(m,p);
     if(trafficState&&$('#evoTrafficPercent')&&trafficState.applied===p.canary?.percent){$('#evoTrafficPercent').value=trafficState.percent;if(trafficState.focus)$('#evoTrafficPercent').focus({preventScroll:true})}
@@ -1146,6 +1159,8 @@ async function evoAfterChange(openProposal='',context={pid:evo.projectId,detail:
   await evoRefresh();
   if(context.pid!==evoProjectId()||!evoActive())return;
   if(openProposal&&context.detail&&evo.modal===context.detail){
+    evoRenderMetrics();
+    evoUpdateWorkspaceTasks();
     if(context.detail.proposalId===openProposal)await evoLoadDetailProposal(context.detail);
     else evoOpenProposal(openProposal);
   }else evoRender();
@@ -1162,7 +1177,7 @@ async function evoDiagnose(btn){
     const fix=(res.findings||[]).filter(f=>f.triage?.verdict==='fix').length;
     toast(`诊断完成：${res.runs||0} 次运行，${(res.findings||[]).length} 个问题，其中 ${fix} 个值得修复${res.archived?`，自动归档 ${res.archived} 个`:''}`,'ok');
     if(pid===evoProjectId()){evo.lastCheck={projectId:pid,runs:res.runs||0,findings:(res.findings||[]).length,at:new Date().toISOString()};evo.selected.clear();await evoAfterChange()}
-  }catch(err){if(pid===evoProjectId()){evo.checkError=err.message;if(!evo.modal)evoRender()}toast(err.message,'err')}
+  }catch(err){if(pid===evoProjectId()){evo.checkError=err.message;if(evo.modal)evoUpdateWorkspaceTasks();else evoRender()}toast(err.message,'err')}
   finally{evo.diagnosing=false;evoHomeSyncChecking();if(btn?.isConnected)btn.disabled=false}
 }
 async function evoReload(btn){
@@ -1306,7 +1321,7 @@ function evoDecorateRunDetail(host,r){
   if((r.executionContext?.evolutionCanaryIds||[]).length)host.querySelector('.run-header-meta')?.insertAdjacentHTML('afterbegin','<span class="run-meta-chip evo-replay-chip" title="本次运行参与进化试用：受试资产使用修改稿正文，结果计入试用对比">进化试用</span>');
   if(!['succeeded','failed','cancelled'].includes(r.status)||!r.executionContext?.projectId)return;
   const actions=host.querySelector('.run-header-actions');if(!actions)return;
-  actions.insertAdjacentHTML('afterbegin',`<button class="button ghost small" data-evo-feedback="${escapeHTML(r.id)}" title="把问题反馈给改进与验证，参与角色与规则的诊断">反馈问题</button><button class="button ghost small" data-evo-pin="${escapeHTML(r.id)}" title="每次进化提案都会回放这次运行">钉为回归样本</button>`);
+  actions.insertAdjacentHTML('afterbegin',`<button class="button ghost small" data-evo-feedback="${escapeHTML(r.id)}" title="把问题反馈给RSI工作台，参与角色与规则的诊断">反馈问题</button><button class="button ghost small" data-evo-pin="${escapeHTML(r.id)}" title="每次进化提案都会回放这次运行">钉为回归样本</button>`);
   actions.querySelector('[data-evo-feedback]')?.addEventListener('click',async ev=>{
     const btn=ev.currentTarget,nodeId=state.selectedRunNode||'';
     const detail=await afPrompt({title:'反馈问题',message:'请写清预期结果、实际结果和需要改进的地方。提交后会整理为关联角色的问题。',defaultValue:'',multiline:true});
@@ -1318,10 +1333,10 @@ function evoDecorateRunDetail(host,r){
       if(btn.isConnected){
         host.querySelector('.evo-feedback-result')?.remove();
         const notice=document.createElement('div');notice.className='evo-feedback-result';notice.setAttribute('role','status');
-        notice.innerHTML=`<span>${escapeHTML(result.message||'反馈已保存，请在改进与验证检查最近运行后查看。')}</span>${result.findingId?'<button type="button">查看问题 ↗</button>':''}`;
+        notice.innerHTML=`<span>${escapeHTML(result.message||'反馈已保存，请在RSI工作台检查最近运行后查看。')}</span>${result.findingId?'<button type="button">查看问题 ↗</button>':''}`;
         notice.querySelector('button')?.addEventListener('click',()=>evoOpenFeedbackFinding(result));host.prepend(notice);
       }
-      toast(result.findingId?'反馈已加入改进与验证':'反馈已保存，详见提示','ok');
+      toast(result.findingId?'反馈已加入RSI工作台':'反馈已保存，详见提示','ok');
     }catch(err){toast(err.message,'err')}
     finally{btn.disabled=false}
   });
@@ -1340,7 +1355,7 @@ async function evoOpenFeedbackFinding(result){
   const pid=result.projectId;
   if(state.projectFilter!==pid){
     const picker=$('#projectSwitcher');
-    if(!picker?.onchange||![...picker.options].some(o=>o.value===pid))return toast('请先选择该运行所属项目，再打开改进与验证','warn');
+    if(!picker?.onchange||![...picker.options].some(o=>o.value===pid))return toast('请先选择该运行所属项目，再打开RSI工作台','warn');
     await picker.onchange({target:{value:pid}});
     if(state.projectFilter!==pid)return;
   }
@@ -1355,6 +1370,12 @@ document.addEventListener('click',e=>{
   const menu=e.target.closest('.evo-row-menu');
   document.querySelectorAll('.evo-row-menu[open]').forEach(m=>{if(m!==menu||!e.target.closest('summary'))m.open=false});
   const scope=e.target.closest('#evolutionView, #kbDrawer');if(!scope)return;
+  if(e.target.closest('[data-evo-open-sources]')){
+    const sources=$('#evoSourceDetails');
+    sources.open=true;
+    sources.querySelector('summary').focus();
+    return;
+  }
   const detailTab=e.target.closest('[data-evo-detail-tab]');if(detailTab)return evoSetDetailTab(detailTab.dataset.evoDetailTab);
   if(e.target.closest('[data-evo-list-back]'))return evoBack();
   if(e.target.closest('[data-evo-reload]'))return renderEvolutionView();
@@ -1364,9 +1385,9 @@ document.addEventListener('click',e=>{
   if(e.target.closest('[data-evo-evidence-retry]')&&evo.modal?.evidence){const m=evo.modal;m.evidenceCache.delete(`${m.evidence.type}:${m.evidence.id}`);return evoSelectEvidence(m.evidence)}
   const sampleFilter=e.target.closest('[data-evo-sample-filter]');if(sampleFilter&&evo.modal){evo.modal.compareFilter=sampleFilter.dataset.evoSampleFilter;evoRenderComparisonList(evo.modal);$(`[data-evo-sample-filter="${evo.modal.compareFilter}"]`)?.focus({preventScroll:true});return}
   const filter=e.target.closest('[data-evo-list-status]');
-  if(filter){evo.list={status:filter.dataset.evoListStatus,page:0};evoRender();$(`[data-evo-list-status="${evo.list.status}"]`)?.focus({preventScroll:true});return}
+  if(filter){evo.list={status:filter.dataset.evoListStatus,page:0};evoUpdateWorkspaceTasks(true);$(`[data-evo-list-status="${evo.list.status}"]`)?.focus({preventScroll:true});return}
   const unifiedPage=e.target.closest('[data-evo-unified-page]');
-  if(unifiedPage&&!unifiedPage.disabled){evo.list.page=Number(unifiedPage.dataset.evoUnifiedPage);evoRender();$('#evoUnifiedList button')?.focus({preventScroll:true});return}
+  if(unifiedPage&&!unifiedPage.disabled){evo.list.page=Number(unifiedPage.dataset.evoUnifiedPage);evoUpdateWorkspaceTasks(true);$('#evoUnifiedList button')?.focus({preventScroll:true});return}
   const rediagnose=e.target.closest('[data-evo-rediagnose]');if(rediagnose&&!rediagnose.disabled)return evoDiagnose(rediagnose);
   const open=e.target.closest('[data-evo-open]');if(open)return evoOpenFinding(open.dataset.evoOpen,open.dataset.cluster);
   if(e.target.closest('[data-evo-change-decisions]')){evo.tab='proposals';evo.changes={q:'',status:'decide',page:0};evoRender();$('#evoTab-proposals')?.focus({preventScroll:true});return}
