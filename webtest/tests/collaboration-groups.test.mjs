@@ -95,9 +95,9 @@ test('a group-mode run detail shows the existing collaboration copy', async (t) 
   const detail = app.document.querySelector('#runDetail').textContent;
   assert.match(detail, /协作模式/);
   assert.match(detail, /历史协作记录/);
-  assert.match(detail, /SOP 主干已冷冻/);
+  assert.match(detail, /LOOP 主干已冷冻/);
   assert.match(detail, /1 步可展开/);
   assert.match(detail, /群内任务 1 个/);
-  assert.match(detail, /冷冻 SOP v3/);
+  assert.match(detail, /冷冻 LOOP v3/);
   assert.doesNotMatch(app.evaluate(`document.querySelector('#runDetail .run-progress-cell span').textContent`), /执行进度/);
 });

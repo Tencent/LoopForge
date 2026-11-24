@@ -20,7 +20,7 @@ func (e *Engine) RunWorkspace(runID string) string {
 }
 
 // WorkspaceRunID returns the run whose workspace directory run works in; a
-// child SOP shares the checkout of the run that started its SOP chain.
+// child LOOP shares the checkout of the run that started its LOOP chain.
 func WorkspaceRunID(run domain.Run) string {
 	return workspaceRunID(run)
 }
@@ -285,7 +285,7 @@ func (e *Engine) SupersedeIssueRuns(issueID, keepRunID string) {
 		if !ok || e.foreignWorkspaceBind(run) {
 			continue
 		}
-		// Another SOP of the same issue does not replace this run; it may still be retried.
+		// Another LOOP of the same issue does not replace this run; it may still be retried.
 		if keptFound && run.WorkflowID != kept.WorkflowID {
 			continue
 		}

@@ -36,7 +36,7 @@ func TestRunQueueAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`<h1>运行记录<span class="info-tip" tabindex="0"`, "每个项目最多同时运行 10 条 SOP", "个人执行机器不受此限制"} {
+	for _, want := range []string{`<h1>运行记录<span class="info-tip" tabindex="0"`, "每个项目最多同时运行 10 条 LOOP", "个人执行机器不受此限制"} {
 		if !strings.Contains(string(page), want) {
 			t.Fatalf("run concurrency hint missing %q", want)
 		}

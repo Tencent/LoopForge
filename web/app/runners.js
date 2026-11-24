@@ -1,4 +1,4 @@
-function openRunModal(workflowId){const select=$('#runWorkflowChoice'),workflows=runnableWorkflowOptions();select.innerHTML=workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===workflowId?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可运行 SOP</option>';$('#confirmRun').disabled=!workflows.length;$('#runModal').classList.add('open');setTimeout(()=>$('#runInput').focus(),0)}
+function openRunModal(workflowId){const select=$('#runWorkflowChoice'),workflows=runnableWorkflowOptions();select.innerHTML=workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===workflowId?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可运行 LOOP</option>';$('#confirmRun').disabled=!workflows.length;$('#runModal').classList.add('open');setTimeout(()=>$('#runInput').focus(),0)}
 
 // ---------- 执行机器（bind-cli，个人维度） ----------
 let runnerRefreshTimer=null;
@@ -32,12 +32,12 @@ async function ensureRunnerBindCode(silent){
 function runnerConcurrencyLabel(runner){
   if(!(Number(runner?.ownerUserId)>0))return '项目共享执行机器';
   const limit=Number(runner?.runLimit)||0;
-  return limit>0?`个人机器 · 最多同时运行 ${limit} 条 SOP（不受项目 10 条限额）`:'个人机器 · 不限同时运行数（不受项目 10 条限额）';
+  return limit>0?`个人机器 · 最多同时运行 ${limit} 条 LOOP（不受项目 10 条限额）`:'个人机器 · 不限同时运行数（不受项目 10 条限额）';
 }
 function runnerRunLimitHTML(runner){
   if(!(Number(runner?.ownerUserId)>0))return '';
   const limit=Number(runner?.runLimit)||0;
-  const tip='按顶层 SOP 计数，超出排队；失败、暂停、待确认也占用名额。留空表示不限，不受项目 10 条限额约束。';
+  const tip='按顶层 LOOP 计数，超出排队；失败、暂停、待确认也占用名额。留空表示不限，不受项目 10 条限额约束。';
   return `<div class="runner-run-limit"><label for="runLimit-${escapeHTML(runner.id)}">最多同时运行<input id="runLimit-${escapeHTML(runner.id)}" type="number" inputmode="numeric" min="1" max="100" step="1" placeholder="不限" value="${limit>0?limit:''}" data-runner-run-limit="${escapeHTML(runner.id)}" aria-label="${escapeHTML(runner.name||runner.id)} 最多同时运行条数">条</label><span class="runner-tip" tabindex="0" role="note" aria-label="${tip}" data-tip="${tip}">?</span></div>`;
 }
 async function saveRunnerRunLimit(runnerId,raw){
@@ -58,7 +58,7 @@ function runnerStatusLabel(status,lastSeen){
 }
 const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
 const runnerAuthLabel={local:'账号登录',personal:'API Key'};
-const runnerAuthDescription={local:'Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 SOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。Antigravity 的 Gemini API Key 按 API 单独计费。'};
+const runnerAuthDescription={local:'Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 LOOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，LOOP 使用运行责任人的 Key。Antigravity 的 Gemini API Key 按 API 单独计费。'};
 const runnerOSLabels={darwin:'macOS',linux:'Linux',windows:'Windows'};
 function runnerKeyDescription(provider){
   if(provider==='zcode')return 'GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。';

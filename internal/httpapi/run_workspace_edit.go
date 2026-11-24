@@ -41,12 +41,12 @@ func (h *runsHandlers) workspaceEditAccess(r *http.Request, run domain.Run) (int
 		return 0, http.StatusForbidden, "无权编辑该任务工作区"
 	}
 	if engine.WorkspaceRunID(run) != run.ID {
-		return 0, http.StatusConflict, "子 SOP 共享父任务工作区，请从父任务操作"
+		return 0, http.StatusConflict, "子 LOOP 共享父任务工作区，请从父任务操作"
 	}
 	// Parent/child workspace ownership needs a separate coordinated lease.
 	for _, node := range run.Nodes {
 		if node != nil && node.ChildRunID != "" {
-			return 0, http.StatusConflict, "请进入子 SOP 运行后再编辑对应工作区"
+			return 0, http.StatusConflict, "请进入子 LOOP 运行后再编辑对应工作区"
 		}
 	}
 	return user.ID, 0, ""
@@ -327,7 +327,7 @@ func humanWorkspaceEdit(c *gin.Context, run domain.Run) bool {
 }
 
 // mainBotWorkspaceMode tells the runner to apply the live-workspace rule to
-// Main Bot (no SOP fence on its conversation workspace).
+// Main Bot (no LOOP fence on its conversation workspace).
 func mainBotWorkspaceMode(c *gin.Context, run domain.Run) string {
 	if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
 		return run.Kind

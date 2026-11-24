@@ -369,7 +369,7 @@ func (e *Engine) RetryContext(ctx context.Context, runID, nodeID, reason, humanC
 	return nil
 }
 
-// cancelLiveChildRuns stops child SOP runs whose parent node was reset and no
+// cancelLiveChildRuns stops child LOOP runs whose parent node was reset and no
 // longer references them, so they neither keep working nor hold a workspace.
 // Callers hold stateMu and Cancel settles through updateRun, which takes it
 // too, so the cancellation runs once the caller has released the lock.
@@ -393,8 +393,8 @@ func (e *Engine) cancelLiveChildRuns(ids []string) {
 }
 
 // resumeParentAfterChildRecovery lets a parent that failed because of this
-// child SOP run continue once the child is retried or passed: the parent
-// replays its SOP node and follows the recovered child instead of starting a
+// child LOOP run continue once the child is retried or passed: the parent
+// replays its LOOP node and follows the recovered child instead of starting a
 // new one.
 func (e *Engine) resumeParentAfterChildRecovery(childID string) {
 	e.resumeParentAfterChildRecoveryContext(context.Background(), childID)
@@ -427,7 +427,7 @@ func (e *Engine) resumeParentAfterChildRecoveryContext(ctx context.Context, chil
 	if !pointsAtChild {
 		return
 	}
-	if err := e.retryContext(ctx, parentID, nodeID, "子 SOP "+childID+" 已恢复，父流程重新接上", "", childID); err != nil {
+	if err := e.retryContext(ctx, parentID, nodeID, "子 LOOP "+childID+" 已恢复，父流程重新接上", "", childID); err != nil {
 		log.Printf("resume parent %s after child %s recovery: %v", parentID, childID, err)
 		return
 	}
@@ -473,7 +473,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 			}
 		}
 		if !found {
-			return fmt.Errorf("retry node is not in the current SOP")
+			return fmt.Errorf("retry node is not in the current LOOP")
 		}
 	}
 	nodeStatus := r.Nodes[nodeID].Status
@@ -543,7 +543,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	reset := descendants(r.WorkflowSnapshot, nodeID)
 	reset[nodeID] = true
 	if e.executes() && len(reset) >= len(r.WorkflowSnapshot.Nodes) {
-		// Replaying the whole SOP against the previous attempt's container
+		// Replaying the whole LOOP against the previous attempt's container
 		// inherits whatever that attempt broke or filled up, and the container
 		// would otherwise survive until the run finally succeeds. Dropping the
 		// handle first releases the workspace flock so the removal is safe;
@@ -556,7 +556,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	// Parallel branches stopped together with this one by a cancel are not
 	// failures of their own: resume them as well, or nothing would schedule
 	// them again and the run would never settle. This happens after the
-	// whole-SOP check above so reviving siblings never discards the checkout.
+	// whole-LOOP check above so reviving siblings never discards the checkout.
 	var revived []string
 	for _, node := range r.WorkflowSnapshot.Nodes {
 		if reset[node.ID] {
@@ -631,14 +631,14 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 
 // ResumePaused continues every node interrupted by an operator pause. It is a
 // separate operation from Retry so ordinary approval gates remain untouched.
-// Child SOP runs paused together with the parent are resumed with it.
+// Child LOOP runs paused together with the parent are resumed with it.
 // Children are resumed first so a resumed parent never waits on a child that
 // is still paused.
 func (e *Engine) ResumePaused(runID, humanContext string, expected ...NodeExpectation) error {
 	return e.ResumePausedContext(context.Background(), runID, humanContext, expected...)
 }
 
-// ResumePausedContext retains workspace ownership while restoring a paused SOP.
+// ResumePausedContext retains workspace ownership while restoring a paused LOOP.
 func (e *Engine) ResumePausedContext(ctx context.Context, runID, humanContext string, expected ...NodeExpectation) error {
 	if len(expected) > 0 {
 		r, ok := e.repo.RunState(runID)
@@ -660,10 +660,10 @@ func (e *Engine) ResumePausedContext(ctx context.Context, runID, humanContext st
 			}
 			switch child.Status {
 			case "running":
-				return fmt.Errorf("子 SOP %s 仍在停止当前任务，请稍后再继续", child.ID)
+				return fmt.Errorf("子 LOOP %s 仍在停止当前任务，请稍后再继续", child.ID)
 			case "waiting":
 				if err := e.ResumePausedContext(ctx, child.ID, humanContext); err != nil {
-					return fmt.Errorf("继续子 SOP %s：%w", child.ID, err)
+					return fmt.Errorf("继续子 LOOP %s：%w", child.ID, err)
 				}
 			}
 		}
@@ -674,7 +674,7 @@ func (e *Engine) ResumePausedContext(ctx context.Context, runID, humanContext st
 	return e.resumePaused(runID, humanContext, expected...)
 }
 
-// childRunIDs lists the child SOP runs referenced by the run's SOP nodes.
+// childRunIDs lists the child LOOP runs referenced by the run's LOOP nodes.
 func childRunIDs(r domain.Run) []string {
 	ids := make([]string, 0)
 	for _, nr := range r.Nodes {
@@ -715,7 +715,7 @@ func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpect
 			paused = append(paused, id)
 		}
 	}
-	// Returning from group mode deliberately leaves a pending SOP node, rather
+	// Returning from group mode deliberately leaves a pending LOOP node, rather
 	// than an interrupted worker. Recognize that explicit checkpoint, including
 	// records created before this fix, without approving ordinary human gates.
 	if len(paused) == 0 && !r.IsWorkspace() {
@@ -813,7 +813,7 @@ func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpect
 }
 
 // RefreshRunSOP replaces a stopped Run's frozen graph with the latest
-// published SOP. Completed nodes with the same ID keep their outcomes, new
+// published LOOP. Completed nodes with the same ID keep their outcomes, new
 // nodes start pending, and the already materialised sandbox stays frozen.
 func (e *Engine) RefreshRunSOP(runID string) error {
 	e.stateMu.Lock()
@@ -823,7 +823,7 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 		return fmt.Errorf("run not found")
 	}
 	if r.Status == "running" || r.HasActiveNode() || (r.Status != "waiting" && !domain.TerminalRunStatus(r.Status)) {
-		return fmt.Errorf("only a stopped run can update its SOP")
+		return fmt.Errorf("only a stopped run can update its LOOP")
 	}
 	if e.executes() {
 		var err error
@@ -858,7 +858,7 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 		}
 	}
 	r.WorkflowSnapshot = latest
-	message := fmt.Sprintf("已更新为最新 SOP：v%d #%d → v%d #%d（保留当前运行环境）", previousVersion, previousRevision, latest.Version, latest.Revision)
+	message := fmt.Sprintf("已更新为最新 LOOP：v%d #%d → v%d #%d（保留当前运行环境）", previousVersion, previousRevision, latest.Version, latest.Revision)
 	e.event(&r, "", "run.workflow_refreshed", message)
 	appendControlTelemetry(&r, "", "run.workflow_refreshed", message)
 	if err := e.repo.PutRun(r); err != nil {
@@ -874,7 +874,7 @@ func isUserPausedNode(nr *domain.NodeRun) bool {
 
 // resumeUnpausedGraph clears a pause that did not interrupt a node.
 // A human gate still blocks: resume must not approve it. Otherwise a finished
-// SOP goes back to the scheduler so it can settle, pending work continues,
+// LOOP goes back to the scheduler so it can settle, pending work continues,
 // and an idle group returns to waiting for the next task.
 func resumeUnpausedGraph(r *domain.Run) (bool, error) {
 	if r == nil {

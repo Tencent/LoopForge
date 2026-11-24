@@ -25,8 +25,8 @@ type Issue struct {
 	// Nil means inherit that playbook's steps. AssigneeUserID on the issue
 	// stays the overall owner / TAPD 跟进人.
 	SOPBindings []IssueSOPBinding `json:"sopBindings,omitempty"`
-	// SOPMode "none" delivers the requirement without an SOP (clarified and
-	// changed in conversations): no SOP is bound by default and scheduled SOPs
+	// SOPMode "none" delivers the requirement without a LOOP (clarified and
+	// changed in conversations): no LOOP is bound by default and scheduled LOOPs
 	// never claim it. Empty on writes keeps the stored mode; "sop" clears it.
 	SOPMode      string `json:"sopMode,omitempty"`
 	RepositoryID string `json:"repositoryId,omitempty"`
@@ -41,7 +41,7 @@ type Issue struct {
 	// provided, it replaces BaseBranch; an unlisted repository creates a new branch.
 	RepositoryBranches map[string]string `json:"repositoryBranches,omitempty"`
 	LatestTaskID       string            `json:"latestTaskId,omitempty"`
-	AutomationState    string            `json:"automationState,omitempty"` // ignored means scheduled SOPs must not claim it
+	AutomationState    string            `json:"automationState,omitempty"` // ignored means scheduled LOOPs must not claim it
 	DeliveryState      string            `json:"deliveryState,omitempty"`   // merged, reopened
 	DeliveryMRURL      string            `json:"deliveryMrUrl,omitempty"`
 	DeliveryMRState    string            `json:"deliveryMrState,omitempty"` // merged (default branch), integrated (baseline), opened, closed, reopened, unknown
@@ -57,7 +57,7 @@ type Issue struct {
 	TapdID      string       `json:"tapdId,omitempty"`
 	ExternalRef *ExternalRef `json:"externalRef,omitempty"`
 	// ConversationSessionID is the conversation that identified and created
-	// this requirement while changing code directly, without an SOP.
+	// this requirement while changing code directly, without a LOOP.
 	ConversationSessionID string    `json:"conversationSessionId,omitempty"`
 	CreatedAt             time.Time `json:"createdAt"`
 	UpdatedAt             time.Time `json:"updatedAt"`
@@ -261,7 +261,7 @@ func (i Issue) DeliveryLockedLabel() string {
 
 const issueIdentityMarker = "需求身份（平台权威，禁止忽略）"
 
-// IdentityBlock is the authoritative tracker identity injected into SOP input
+// IdentityBlock is the authoritative tracker identity injected into LOOP input
 // and the compiled task prompt. Agents must not guess a TAPD/Gongfeng ID from
 // branch names when this block is present.
 func (i Issue) IdentityBlock() string {
@@ -331,14 +331,14 @@ const (
 	IssueSOPUse  = "sop"
 )
 
-// WithoutSOP reports whether the requirement opted out of SOP delivery.
+// WithoutSOP reports whether the requirement opted out of LOOP delivery.
 func (i Issue) WithoutSOP() bool {
 	return strings.EqualFold(strings.TrimSpace(i.SOPMode), IssueSOPNone)
 }
 
 func (i Issue) ExecutionBlockedReason() string {
 	if i.ManuallyClosed() {
-		return "工作项已关闭，请先重新打开后再触发 SOP"
+		return "工作项已关闭，请先重新打开后再触发 LOOP"
 	}
 	if i.TrackerClosed() || (i.Status == "closed" && i.CloseSource == "external") {
 		return "外部工作项已关闭，请先在外部系统重新打开"
@@ -346,15 +346,15 @@ func (i Issue) ExecutionBlockedReason() string {
 	if i.DeliveryLocked() {
 		switch i.DeliveryLockedLabel() {
 		case "已关闭":
-			return "工作项已关闭，请先重新打开后再触发 SOP"
+			return "工作项已关闭，请先重新打开后再触发 LOOP"
 		case "MR 已合入":
-			return "关联 MR 已合入，请先重新打开工作项再触发 SOP"
+			return "关联 MR 已合入，请先重新打开工作项再触发 LOOP"
 		case "已合入基线":
-			return "已合入基线，请先重新打开工作项再触发 SOP"
+			return "已合入基线，请先重新打开工作项再触发 LOOP"
 		case "MR 已关闭":
-			return "关联 MR 已关闭，请先重新打开工作项再触发 SOP"
+			return "关联 MR 已关闭，请先重新打开工作项再触发 LOOP"
 		default:
-			return "工作项已交付闭环，请先重新打开后再触发 SOP"
+			return "工作项已交付闭环，请先重新打开后再触发 LOOP"
 		}
 	}
 	return ""

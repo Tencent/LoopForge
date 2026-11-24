@@ -365,7 +365,7 @@ func (r *IssuesRepo) ResponsibleUser(issue domain.Issue) (domain.User, error) {
 	return user, nil
 }
 
-// projectWorkflowID returns the project's configured default SOP.
+// projectWorkflowID returns the project's configured default LOOP.
 func (r *IssuesRepo) projectWorkflowID(projectID string) string {
 	if strings.TrimSpace(projectID) == "" {
 		return ""

@@ -241,7 +241,7 @@ func TestSOPCompletionSendsOnceAfterAllNodeEvents(t *testing.T) {
 	}
 	items, _ := svc.Store.NotificationDeliveries(bot.ProjectID)
 	if len(items) != 0 {
-		t.Fatal("node completion sent before SOP completion")
+		t.Fatal("node completion sent before LOOP completion")
 	}
 	run.Status = "succeeded"
 	run.Events = append(run.Events, domain.RunEvent{ID: "sop-done", Type: "run.succeeded", Timestamp: time.Now().UTC()})
@@ -302,7 +302,7 @@ func TestClearingUnifiedBotDisablesAllNotifications(t *testing.T) {
 	}
 	items, _ := svc.Store.NotificationDeliveries(bot.ProjectID)
 	if len(items) != 0 || f.sent != 0 {
-		t.Fatalf("disabled SOP sent %+v", items)
+		t.Fatalf("disabled LOOP sent %+v", items)
 	}
 }
 

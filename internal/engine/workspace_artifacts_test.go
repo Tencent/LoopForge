@@ -48,7 +48,7 @@ func TestLegacyConversationRefillsOnlyMissingLatestArtifacts(t *testing.T) {
 	}
 	got, _ := s.RunState(r.ID)
 	if got.Status != "waiting" || !got.PauseRequested {
-		t.Fatal("reconstruction changed SOP state")
+		t.Fatal("reconstruction changed LOOP state")
 	}
 	if _, err := e.PrepareConversationWorkspace(context.Background(), r.ID, token); err != nil {
 		t.Fatal(err)

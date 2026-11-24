@@ -162,7 +162,7 @@
   <header class="topbar">
     <button type="button" id="settingsSidebarExpand" class="settings-navigation-toggle settings-navigation-reopen" aria-label="展开设置导航" title="展开设置导航" aria-controls="settingsSidebar" aria-expanded="false" hidden><svg class="agent-icon harness-icon" data-icon="panel-left" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m13 9 3 3-3 3"/></svg></button>
     <div class="page-context"><b id="pageTitle">AI 工作台</b><span>／ Agent 原生研发协作平台</span></div>
-    <button id="commandPaletteTrigger" class="command-trigger" type="button"><span><svg class="agent-icon harness-icon" data-icon="search" data-icon-motion="idle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></span><b>搜索需求、运行、SOP 或 Agent</b><kbd>⌘K</kbd></button>
+    <button id="commandPaletteTrigger" class="command-trigger" type="button"><span><svg class="agent-icon harness-icon" data-icon="search" data-icon-motion="idle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></span><b>搜索需求、运行、LOOP 或 Agent</b><kbd>⌘K</kbd></button>
     <div class="topbar-spacer"></div>
     <div class="topbar-project">
       <label class="topbar-project-label">项目</label>
@@ -238,7 +238,7 @@
 
     <section id="aiSchedulesView" class="view page-view">
       <div class="page-heading">
-        <div><h1>定时任务</h1><p>按计划执行提示词，或自动派发 SOP，整理需求、巡检项目或汇总进展。</p></div>
+        <div><h1>定时任务</h1><p>按计划执行提示词，或自动派发 LOOP，整理需求、巡检项目或汇总进展。</p></div>
         <div class="heading-actions">
           <button id="refreshAISchedules" class="button ghost hui-icon-button" type="button" aria-label="刷新定时任务" title="刷新"><svg class="agent-icon harness-icon" data-icon="refresh" width="16" height="16" aria-hidden="true" focusable="false"></svg></button>
           <button id="newAISchedule" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>新建 AI 定时任务</button>
@@ -247,7 +247,7 @@
       <div class="mcp-toolbar ai-schedule-toolbar">
         <div class="mcp-view-tabs" role="tablist" aria-label="定时任务视图">
           <button id="aiScheduleProjectTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="aiScheduleProjectPanel" data-ai-schedule-tab="project">提示词任务<span id="aiScheduleProjectCount" class="mcp-tab-count">0</span></button>
-          <button id="aiScheduleTriggerTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleTriggerPanel" data-ai-schedule-tab="trigger">SOP 触发<span id="scheduleJobCount" class="schedule-job-count">未配置</span></button>
+          <button id="aiScheduleTriggerTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleTriggerPanel" data-ai-schedule-tab="trigger">LOOP 触发<span id="scheduleJobCount" class="schedule-job-count">未配置</span></button>
           <button id="aiScheduleMarketTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleMarketPanel" data-ai-schedule-tab="market">共享任务市场<span id="sharedScheduleMarketCount" class="mcp-tab-count">0</span></button>
           <button id="aiScheduleExecTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleExecPanel" data-ai-schedule-tab="executions">执行记录<span id="aiScheduleExecCount" class="mcp-tab-count" hidden></span></button>
         </div>
@@ -259,8 +259,8 @@
         <div id="aiScheduleJobList" class="schedule-job-list"></div>
       </div>
       <section id="aiScheduleTriggerPanel" class="ai-schedule-panel" role="tabpanel" aria-labelledby="aiScheduleTriggerTab" hidden>
-        <div class="ai-schedule-panel-head"><b>SOP 自动派发</b><button id="editScheduleTrigger" class="button ghost small" type="button"><svg class="agent-icon harness-icon" data-icon="edit" width="14" height="14" aria-hidden="true" focusable="false"></svg>编辑触发配置</button></div>
-        <p id="aiScheduleTriggerHint" class="schedule-field-hint" role="status">按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。</p>
+        <div class="ai-schedule-panel-head"><b>LOOP 自动派发</b><button id="editScheduleTrigger" class="button ghost small" type="button"><svg class="agent-icon harness-icon" data-icon="edit" width="14" height="14" aria-hidden="true" focusable="false"></svg>编辑触发配置</button></div>
+        <p id="aiScheduleTriggerHint" class="schedule-field-hint" role="status">按计划扫描本项目选定状态、尚未跑过 LOOP 的需求，通过基线门禁后派发 LOOP。每个项目使用一份触发配置。</p>
         <div id="aiScheduleTriggerList" class="schedule-job-list"></div>
       </section>
       <section id="aiScheduleMarketPanel" role="tabpanel" aria-labelledby="aiScheduleMarketTab" hidden>
@@ -333,21 +333,21 @@
 
     <section id="botsView" class="view page-view">
       <div class="page-heading bot-heading">
-        <div><h1>通道管理</h1><p>配置企业微信单聊或群聊通知通道，把任务进展发出去；在 SOP 设置或定时任务中选用这些通道。</p></div>
+        <div><h1>通道管理</h1><p>配置企业微信单聊或群聊通知通道，把任务进展发出去；在 LOOP 设置或定时任务中选用这些通道。</p></div>
         <div class="heading-actions"><button id="botNew" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>添加通道</button></div>
       </div>
       <div id="botsContent"></div>
     </section>
     <section id="assistantView" class="view page-view">
       <div class="page-heading">
-        <div><h1>AI 助手</h1><p>AI 工作台里和你对话、帮你动手的助手。设置消息发送方式、角色与 SOP 的主动派发，以及每次对话都要遵守的规则；只对你自己生效。</p></div>
+        <div><h1>AI 助手</h1><p>AI 工作台里和你对话、帮你动手的助手。设置消息发送方式、角色与 LOOP 的主动派发，以及每次对话都要遵守的规则；只对你自己生效。</p></div>
       </div>
       <div id="assistantContent"></div>
     </section>
     <!-- 运行记录 -->
     <section id="runsView" class="view page-view">
       <div class="page-heading runs-heading">
-        <h1>运行记录<span class="info-tip" tabindex="0" role="note" aria-label="并发规则：云端执行时，每个项目最多同时运行 10 条 SOP，超出的进入排队中。"><span class="run-hint-icon" data-run-icon="info" aria-hidden="true"><svg width="15" height="15"></svg></span><span class="info-tip-panel" role="tooltip"><b>并发规则</b><span>云端执行时，<strong>每个项目最多同时运行 10 条 SOP</strong>，超出的进入「排队中」，名额空出后按提交顺序自动开始。</span><span>失败、暂停、待确认、开始后被取消的运行仍占用名额；只有成功完成或排队时取消的不占用。</span><span>嵌套的子 SOP 不单独计数；未归属项目的运行共用一组 10 个名额。</span><span>个人执行机器不受此限制，可在「执行机器」页单独设置上限。</span></span></span></h1>
+        <h1>运行记录<span class="info-tip" tabindex="0" role="note" aria-label="并发规则：云端执行时，每个项目最多同时运行 10 条 LOOP，超出的进入排队中。"><span class="run-hint-icon" data-run-icon="info" aria-hidden="true"><svg width="15" height="15"></svg></span><span class="info-tip-panel" role="tooltip"><b>并发规则</b><span>云端执行时，<strong>每个项目最多同时运行 10 条 LOOP</strong>，超出的进入「排队中」，名额空出后按提交顺序自动开始。</span><span>失败、暂停、待确认、开始后被取消的运行仍占用名额；只有成功完成或排队时取消的不占用。</span><span>嵌套的子 LOOP 不单独计数；未归属项目的运行共用一组 10 个名额。</span><span>个人执行机器不受此限制，可在「执行机器」页单独设置上限。</span></span></span></h1>
         <span id="runsLiveState" class="run-live" role="status"><span class="run-lamp" aria-hidden="true"><i></i></span><span data-live-text>实时更新中</span></span>
         <div id="runOverview" class="run-kpis" aria-label="运行指标"></div>
         <button id="refreshRuns" class="run-icon-btn" type="button" aria-label="刷新" title="刷新"><span data-run-icon="refresh" aria-hidden="true"><svg width="15" height="15"></svg></span></button>
@@ -356,8 +356,8 @@
         <div class="run-panel-head">
           <div id="runFilters" class="run-filters" role="tablist" aria-label="按状态筛选"><button type="button" class="active" data-run-filter="all">全部<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="active">进行中<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="queued">排队中<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="paused">已暂停<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="waiting">待确认<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="succeeded">已完成<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="failed">失败<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="cancelled">已取消<span class="sliding-tab-count">0</span></button></div>
           <div class="run-tools">
-            <label class="run-search"><span data-run-icon="search" aria-hidden="true"><svg width="14" height="14"></svg></span><input id="runSearch" type="search" placeholder="搜索需求标题或 SOP" aria-label="搜索需求标题或 SOP"></label>
-            <span class="run-select"><select id="runWorkflowFilter" aria-label="按 SOP 筛选"><option value="">全部 SOP</option></select><span data-run-icon="chevron-down" aria-hidden="true"><svg width="14" height="14"></svg></span></span>
+            <label class="run-search"><span data-run-icon="search" aria-hidden="true"><svg width="14" height="14"></svg></span><input id="runSearch" type="search" placeholder="搜索需求标题或 LOOP" aria-label="搜索需求标题或 LOOP"></label>
+            <span class="run-select"><select id="runWorkflowFilter" aria-label="按 LOOP 筛选"><option value="">全部 LOOP</option></select><span data-run-icon="chevron-down" aria-hidden="true"><svg width="14" height="14"></svg></span></span>
           </div>
         </div>
         <div id="runsListSection" class="runs-layout">
@@ -373,7 +373,7 @@
     <!-- 待我处理 -->
     <section id="approvalsView" class="view page-view">
       <div class="page-heading approvals-heading">
-        <div><p class="eyebrow">需要拍板</p><h1>待我确认</h1><p>流程跑到人工确认节点时会停在这里。你批准后继续，退回则按 SOP 返工。</p></div>
+        <div><p class="eyebrow">需要拍板</p><h1>待我确认</h1><p>流程跑到人工确认节点时会停在这里。你批准后继续，退回则按 LOOP 返工。</p></div>
         <div class="heading-actions">
           <span class="live-state" id="approvalLiveState" title="列表不会自动刷新，点右侧按钮获取最新"><i></i> <span data-updated>未加载</span></span>
           <button id="refreshApprovals" class="button ghost" type="button"><svg class="agent-icon harness-icon" data-icon="refresh" width="14" height="14" aria-hidden="true" focusable="false"></svg>刷新</button>
@@ -384,18 +384,18 @@
       <div id="approvalList" class="approval-list"></div>
     </section>
 
-    <!-- SOP 流程库 -->
+    <!-- LOOP 流程库 -->
     <section id="sopsView" class="view page-view">
       <div class="page-heading">
         <div>
-          <div class="scope-switch" data-scope-for="sop" role="tablist" aria-label="SOP 范围">
+          <div class="scope-switch" data-scope-for="sop" role="tablist" aria-label="LOOP 范围">
             <button type="button" data-scope="project" class="on">本项目<span data-scope-count="sop-project">0</span></button>
             <button type="button" data-scope="shared">团队共享<span data-scope-count="sop-shared">0</span></button>
             <button type="button" data-scope="generic">内置<span data-scope-count="sop-generic">0</span></button>
           </div>
-          <p class="eyebrow">生产流程</p><h1>SOP 流程</h1><p class="sop-explainer"><b>SOP</b> 是可复用的 AI 协作流程，由 Agent、脚本和人工审批节点组成：输入一条需求，按步骤产出文档、代码或 PR。</p><p>「本项目」的 SOP 只在当前项目里用；共享后，其他项目可以在「团队共享」里选用；「内置」SOP 由平台提供，复制到本项目后即可运行和修改。</p>
+          <p class="eyebrow">生产流程</p><h1>LOOP 流程</h1><p class="sop-explainer"><b>LOOP</b> 是可复用的 AI 协作流程，由 Agent、脚本和人工审批节点组成：输入一条需求，按步骤产出文档、代码或 PR。</p><p>「本项目」的 LOOP 只在当前项目里用；共享后，其他项目可以在「团队共享」里选用；「内置」LOOP 由平台提供，复制到本项目后即可运行和修改。</p>
         </div>
-        <div class="heading-actions"><button id="refreshSOPs" class="button ghost" type="button">↻ 刷新</button><button id="newSOP" class="button primary" type="button">＋ 新建 SOP</button></div>
+        <div class="heading-actions"><button id="refreshSOPs" class="button ghost" type="button">↻ 刷新</button><button id="newSOP" class="button primary" type="button">＋ 新建 LOOP</button></div>
       </div>
       <div class="sop-page">
         <div id="sopOverview" class="sop-overview"></div>
@@ -416,8 +416,8 @@
           <span class="fd-ident-tile" data-fd-ic="workflow" data-s="16"></span>
           <div class="fd-ident-text">
             <div class="fd-name-row">
-              <button type="button" id="flowSwitch" class="fd-switch" aria-haspopup="listbox" aria-expanded="false"><span class="fd-switch-name" id="flowCommandTitle">选择或新建 SOP</span><span class="fd-chev" data-fd-ic="chev" data-s="14"></span></button>
-              <button type="button" id="copyWorkflowName" class="fd-copy-name" hidden aria-label="复制 SOP 名称" data-tip="复制 SOP 名称"><svg class="agent-icon harness-icon" data-icon="copy" data-icon-motion="idle" width="14" height="14" aria-hidden="true" focusable="false"></svg></button>
+              <button type="button" id="flowSwitch" class="fd-switch" aria-haspopup="listbox" aria-expanded="false"><span class="fd-switch-name" id="flowCommandTitle">选择或新建 LOOP</span><span class="fd-chev" data-fd-ic="chev" data-s="14"></span></button>
+              <button type="button" id="copyWorkflowName" class="fd-copy-name" hidden aria-label="复制 LOOP 名称" data-tip="复制 LOOP 名称"><svg class="agent-icon harness-icon" data-icon="copy" data-icon-motion="idle" width="14" height="14" aria-hidden="true" focusable="false"></svg></button>
             </div>
             <div class="fd-meta"><span id="workflowMeta" class="fd-meta-main"></span><button type="button" id="sandboxChip" class="fd-sbx" hidden data-tip="运行沙箱 · 点击修改"><span data-fd-ic="box" data-s="12"></span><span class="lbl" id="sandboxChipLabel">沙箱</span></button></div>
           </div>
@@ -432,9 +432,9 @@
         <button id="saveWorkflow" class="fd-btn save" type="button" disabled data-tip="所有修改已保存"><span class="ud"></span><span class="ok-ic" data-fd-ic="check" data-s="14"></span><span class="lbl" id="saveStateLabel">已保存</span><kbd>⌘S</kbd></button>
         <button id="publishWorkflow" class="fd-btn primary pub" type="button" data-tip="发布为新版本"><span data-fd-ic="upload" data-s="14"></span><span class="lbl">发布版本</span></button>
         <div class="fd-pop" id="flowSwitchPop" hidden>
-          <label class="fd-search"><span data-fd-ic="search" data-s="14"></span><input id="flowSwitchQ" type="search" placeholder="搜索 SOP" autocomplete="off"></label>
+          <label class="fd-search"><span data-fd-ic="search" data-s="14"></span><input id="flowSwitchQ" type="search" placeholder="搜索 LOOP" autocomplete="off"></label>
           <div class="fd-pop-list" id="flowSwitchList" role="listbox"></div>
-          <div class="fd-pop-foot"><button id="newSOPFromFlow" class="fd-btn" type="button"><span data-fd-ic="plus" data-s="14"></span><span class="lbl">新建 SOP</span></button><button id="flowFromTemplate" class="fd-btn" type="button"><span data-fd-ic="layers" data-s="14"></span><span class="lbl">从模板创建</span></button></div>
+          <div class="fd-pop-foot"><button id="newSOPFromFlow" class="fd-btn" type="button"><span data-fd-ic="plus" data-s="14"></span><span class="lbl">新建 LOOP</span></button><button id="flowFromTemplate" class="fd-btn" type="button"><span data-fd-ic="layers" data-s="14"></span><span class="lbl">从模板创建</span></button></div>
         </div>
       </div>
       <div id="flowSettingsPanel" class="flow-settings-panel" hidden>
@@ -448,7 +448,7 @@
                 <b>流程全局设置</b>
                 <span id="flowSettingsPill" class="flow-settings-pill">基础配置</span>
               </div>
-              <p class="flow-settings-subtitle">配置当前 SOP 的元数据、执行环境沙箱、前端预览归档及研发交付度量归类</p>
+              <p class="flow-settings-subtitle">配置当前 LOOP 的元数据、执行环境沙箱、前端预览归档及研发交付度量归类</p>
             </div>
           </div>
           <div class="flow-settings-head-actions">
@@ -478,7 +478,7 @@
             <div class="flow-field-wrap">
               <label for="workflowTags" class="flow-field-label">流程标签</label>
               <input id="workflowTags" class="input flow-input" placeholder="例如：issue, ts, gmr, production (逗号分隔)">
-              <div class="flow-field-hint">用逗号分隔标签，支持在 SOP 列表中快速检索</div>
+              <div class="flow-field-hint">用逗号分隔标签，支持在 LOOP 列表中快速检索</div>
             </div>
             <div class="flow-field-wrap">
               <label for="workflowDescription" class="flow-field-label">流程说明与适用范围</label>
@@ -496,7 +496,7 @@
             <div id="workflowSandboxField" class="flow-field-wrap">
               <label for="workflowSandbox" class="flow-field-label">运行沙箱环境</label>
               <select id="workflowSandbox" class="select flow-select"></select>
-              <div class="flow-field-hint">当前 SOP 节点执行 Shell/Python 及构建命令所绑定的隔离沙箱</div>
+              <div class="flow-field-hint">当前 LOOP 节点执行 Shell/Python 及构建命令所绑定的隔离沙箱</div>
             </div>
             <div class="flow-form-row two-col">
               <div class="flow-field-wrap">
@@ -518,8 +518,8 @@
                 </select>
               </div>
               <div class="flow-field-wrap">
-                <label for="workflowSOPLane" class="flow-field-label">SOP 泳道</label>
-                <select id="workflowSOPLane" class="select flow-select" title="一条需求上可并列产品 / 前端 / 后端 SOP">
+                <label for="workflowSOPLane" class="flow-field-label">LOOP 泳道</label>
+                <select id="workflowSOPLane" class="select flow-select" title="一条需求上可并列产品 / 前端 / 后端 LOOP">
                   <option value="">未设置（按名称推断）</option>
                   <option value="product">产品</option>
                   <option value="frontend">前端</option>
@@ -538,12 +538,12 @@
               </div>
             </div>
           </div>
-          <section class="flow-settings-section flow-settings-notifications"><div class="flow-settings-sec-head"><span class="sec-dot"></span><b>SOP 通知</b><small>选一个 Bot，自动接收提醒与完成汇报</small></div><div id="workflowNotificationEditor"></div></section>
+          <section class="flow-settings-section flow-settings-notifications"><div class="flow-settings-sec-head"><span class="sec-dot"></span><b>LOOP 通知</b><small>选一个 Bot，自动接收提醒与完成汇报</small></div><div id="workflowNotificationEditor"></div></section>
         </div>
 
         <div class="flow-settings-footer">
           <div class="flow-settings-footer-tips">
-            <span class="fd-live-dot"></span> 配置已实时关联当前编辑中的 SOP
+            <span class="fd-live-dot"></span> 配置已实时关联当前编辑中的 LOOP
           </div>
           <div class="flow-settings-footer-actions">
             <button type="button" id="flowSettingsCollapse" class="button ghost small">收起配置</button>
@@ -561,7 +561,7 @@
             <div class="fd-pal-group" data-pal-group="role"><div class="fd-pal-gh">角色<em id="flowPaletteRoleCount"></em></div><div id="flowPaletteRoles"></div></div>
             <div class="fd-pal-group" data-pal-group="control"><div class="fd-pal-gh">控制</div>
               <div class="fd-pal-item" role="button" tabindex="0" draggable="true" data-add="script" data-tip="脚本"><span class="fd-tile t-script" data-fd-ic="terminal"></span><div class="fd-pal-text"><b>脚本</b><small>Shell / Python 命令</small></div><span class="fd-grip" data-fd-ic="grip" data-s="14"></span></div>
-              <div class="fd-pal-item" role="button" tabindex="0" draggable="true" data-add="sop" data-tip="子 SOP"><span class="fd-tile t-sop" data-fd-ic="layers"></span><div class="fd-pal-text"><b>子 SOP</b><small>跑完另一条流程再继续</small></div><span class="fd-grip" data-fd-ic="grip" data-s="14"></span></div>
+              <div class="fd-pal-item" role="button" tabindex="0" draggable="true" data-add="sop" data-tip="子 LOOP"><span class="fd-tile t-sop" data-fd-ic="layers"></span><div class="fd-pal-text"><b>子 LOOP</b><small>跑完另一条流程再继续</small></div><span class="fd-grip" data-fd-ic="grip" data-s="14"></span></div>
               <div class="fd-pal-item" role="button" tabindex="0" draggable="true" data-add="preview" data-tip="预览构建"><span class="fd-tile t-preview" data-fd-ic="eye"></span><div class="fd-pal-text"><b>预览构建</b><small>构建静态站点并归档</small></div><span class="fd-grip" data-fd-ic="grip" data-s="14"></span></div>
             </div>
             <div class="fd-pal-group" data-pal-group="collab"><div class="fd-pal-gh">协作</div>
@@ -654,7 +654,7 @@
     <section id="projectsView" class="view page-view">
       <div id="projectListView" class="pa-level">
         <header class="pa-ph">
-          <div><h1>项目配置</h1><p>项目是需求、仓库、团队和默认 SOP 的统一边界。点击项目进入详情配置。</p></div>
+          <div><h1>项目配置</h1><p>项目是需求、仓库、团队和默认 LOOP 的统一边界。点击项目进入详情配置。</p></div>
           <div class="pa-ph-act">
             <label class="pa-search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="projectAdminSearch" type="search" placeholder="搜索项目名称、标识、Key 或仓库" autocomplete="off" aria-label="搜索项目"></label>
             <button id="newProject" class="button primary" type="button">＋ 新建项目</button>
@@ -886,7 +886,7 @@
     </form>
   </div>
 
-  <div id="sopCreateModal" class="modal"><form id="sopCreateForm" class="modal-card definition-wizard-card sop-wizard-card"><button type="button" class="modal-close sop-create-close">×</button><div class="wizard-head"><div><p class="eyebrow">新建 SOP</p><h2>创建 SOP 流程</h2><p>先确定用途和起点，再进入可视化流程设计器完善节点。</p></div><span class="pill">草稿</span></div><div class="wizard-steps" data-wizard-steps="sop"><button type="button" class="active" data-step-target="1"><i>1</i><span>流程信息</span></button><button type="button" data-step-target="2"><i>2</i><span>选择起点</span></button><button type="button" data-step-target="3"><i>3</i><span>确认创建</span></button></div><div class="wizard-body"><section class="wizard-pane active" data-step="1"><div class="wizard-intro"><b>这条 SOP 解决什么问题？</b><p>清晰的用途能帮助团队快速选择正确流程。</p></div><div class="wizard-grid"><label class="wide">流程名称<input name="name" required placeholder="例如：服务端需求交付流程"></label><label>负责人<input name="owner" placeholder="团队或姓名"></label><label>标签<input name="tags" placeholder="需求, 后端, 生产"></label><label class="wide">流程说明<textarea name="description" rows="4" placeholder="适用范围、入口条件和预期交付"></textarea></label></div></section><section class="wizard-pane" data-step="2"><div class="wizard-intro"><b>选择一个流程起点</b><p>复制模板会保留节点、门禁和返工策略，之后仍可自由编辑。</p></div><div id="sopTemplateChoices" class="template-choice-grid"></div><div class="wizard-grid sop-sandbox-settings"><label class="wide" for="sopCreateSandbox">运行沙箱<select class="select" id="sopCreateSandbox" name="sandboxProfileId" aria-describedby="sopSandboxHint"></select></label><p id="sopSandboxHint" class="wide" role="status"></p><div class="wide sop-sandbox-actions"><a class="button ghost small" href="/#/sandboxes" target="_blank" rel="noopener">配置沙箱</a><button id="sopRefreshSandboxes" type="button" class="button ghost small">刷新沙箱</button></div></div></section><section class="wizard-pane" data-step="3"><div class="wizard-intro"><b>准备创建</b><p>创建后将进入流程设计器：绑定角色、连线、配置打回。任务书和门禁在角色定义里改。</p></div><div id="sopCreateSummary" class="create-summary"></div></section></div><div class="wizard-actions"><button id="sopPrev" type="button" class="button ghost" disabled>上一步</button><span id="sopStepHint">第 1 步，共 3 步</span><button id="sopNext" type="button" class="button primary">下一步</button><button id="sopFinish" type="submit" class="button primary" hidden>创建并设计流程</button></div></form></div>
+  <div id="sopCreateModal" class="modal"><form id="sopCreateForm" class="modal-card definition-wizard-card sop-wizard-card"><button type="button" class="modal-close sop-create-close">×</button><div class="wizard-head"><div><p class="eyebrow">新建 LOOP</p><h2>创建 LOOP 流程</h2><p>先确定用途和起点，再进入可视化流程设计器完善节点。</p></div><span class="pill">草稿</span></div><div class="wizard-steps" data-wizard-steps="sop"><button type="button" class="active" data-step-target="1"><i>1</i><span>流程信息</span></button><button type="button" data-step-target="2"><i>2</i><span>选择起点</span></button><button type="button" data-step-target="3"><i>3</i><span>确认创建</span></button></div><div class="wizard-body"><section class="wizard-pane active" data-step="1"><div class="wizard-intro"><b>这条 LOOP 解决什么问题？</b><p>清晰的用途能帮助团队快速选择正确流程。</p></div><div class="wizard-grid"><label class="wide">流程名称<input name="name" required placeholder="例如：服务端需求交付流程"></label><label>负责人<input name="owner" placeholder="团队或姓名"></label><label>标签<input name="tags" placeholder="需求, 后端, 生产"></label><label class="wide">流程说明<textarea name="description" rows="4" placeholder="适用范围、入口条件和预期交付"></textarea></label></div></section><section class="wizard-pane" data-step="2"><div class="wizard-intro"><b>选择一个流程起点</b><p>复制模板会保留节点、门禁和返工策略，之后仍可自由编辑。</p></div><div id="sopTemplateChoices" class="template-choice-grid"></div><div class="wizard-grid sop-sandbox-settings"><label class="wide" for="sopCreateSandbox">运行沙箱<select class="select" id="sopCreateSandbox" name="sandboxProfileId" aria-describedby="sopSandboxHint"></select></label><p id="sopSandboxHint" class="wide" role="status"></p><div class="wide sop-sandbox-actions"><a class="button ghost small" href="/#/sandboxes" target="_blank" rel="noopener">配置沙箱</a><button id="sopRefreshSandboxes" type="button" class="button ghost small">刷新沙箱</button></div></div></section><section class="wizard-pane" data-step="3"><div class="wizard-intro"><b>准备创建</b><p>创建后将进入流程设计器：绑定角色、连线、配置打回。任务书和门禁在角色定义里改。</p></div><div id="sopCreateSummary" class="create-summary"></div></section></div><div class="wizard-actions"><button id="sopPrev" type="button" class="button ghost" disabled>上一步</button><span id="sopStepHint">第 1 步，共 3 步</span><button id="sopNext" type="button" class="button primary">下一步</button><button id="sopFinish" type="submit" class="button primary" hidden>创建并设计流程</button></div></form></div>
 
   <div id="requirementModal" class="modal">
     <div class="modal-card req-composer req-wizard" role="dialog" aria-modal="true" aria-labelledby="reqWizardTitle">
@@ -923,11 +923,11 @@
             <div class="req-field req-wide">
               <div class="req-f-label" id="reqDeliveryLabel">交付方式</div>
               <div id="reqDelivery" class="req-dest" role="radiogroup" aria-labelledby="reqDeliveryLabel">
-                <button type="button" class="req-choice" role="radio" aria-checked="true" data-req-delivery="sop"><span class="req-choice-ind" aria-hidden="true"></span><span class="req-choice-body"><b>按 SOP 交付</b><span id="reqDeliverySOPHint">按选定的 SOP 流程跑，可手动或定时触发</span></span></button>
-                <button type="button" class="req-choice" role="radio" aria-checked="false" data-req-delivery="none"><span class="req-choice-ind" aria-hidden="true"></span><span class="req-choice-body"><b>不使用 SOP</b><span>只建单，在对话里澄清、直接改代码</span></span></button>
+                <button type="button" class="req-choice" role="radio" aria-checked="true" data-req-delivery="sop"><span class="req-choice-ind" aria-hidden="true"></span><span class="req-choice-body"><b>按 LOOP 交付</b><span id="reqDeliverySOPHint">按选定的 LOOP 流程跑，可手动或定时触发</span></span></button>
+                <button type="button" class="req-choice" role="radio" aria-checked="false" data-req-delivery="none"><span class="req-choice-ind" aria-hidden="true"></span><span class="req-choice-body"><b>不使用 LOOP</b><span>只建单，在对话里澄清、直接改代码</span></span></button>
               </div>
             </div>
-            <div id="reqWorkflowField" class="req-field req-wide"><label class="req-f-label" for="reqWorkflow"><svg class="agent-icon harness-icon" data-icon="workflow" width="13" height="13" aria-hidden="true"></svg>SOP 流程</label><select id="reqWorkflow" class="select"></select></div>
+            <div id="reqWorkflowField" class="req-field req-wide"><label class="req-f-label" for="reqWorkflow"><svg class="agent-icon harness-icon" data-icon="workflow" width="13" height="13" aria-hidden="true"></svg>LOOP 流程</label><select id="reqWorkflow" class="select"></select></div>
             <div class="req-field req-wide">
               <div class="req-f-label" id="reqTargetLabel">建到哪里</div>
               <div id="reqTarget" class="req-dest" role="radiogroup" aria-labelledby="reqTargetLabel">
@@ -946,15 +946,15 @@
     </div>
   </div>
 
-  <div id="importTAPDModal" class="modal"><form id="importTAPDForm" class="modal-card"><button type="button" class="modal-close import-tapd-close">×</button><p class="eyebrow">外部需求</p><h2>导入 TAPD 工作项</h2><p class="modal-hint">支持 TAPD 需求、缺陷或任务链接，也可以粘贴「标题 + 链接」。导入时将读取 TAPD 最新标题和描述并写入当前项目。</p><label for="importTAPDURL">TAPD 链接或分享文本</label><textarea id="importTAPDURL" class="input" required rows="3" placeholder="【工作项标题】&#10;https://www.tapd.cn/tapd_fe/…/story/detail/…"></textarea><label>SOP 流程</label><select id="importTAPDWorkflow" class="select"></select><label>代码仓库（可多选）</label><div id="importTAPDRepository" class="repo-picker"></div><p class="modal-hint">从下拉框添加仓库，点击标签可移除。导入前必须至少选择一个仓库。</p><label for="importTAPDBaseBranch">继续开发分支（可选）</label><input id="importTAPDBaseBranch" class="input" placeholder="留空从配置主分支新建工作分支" aria-describedby="importTAPDBaseBranchHint" autocomplete="off"><div id="importTAPDRepositoryBranches" class="repository-branches" hidden></div><p id="importTAPDBaseBranchHint" class="modal-hint">留空从配置主分支新建工作分支；填写时直接继续该已有分支，不新建。</p><div class="modal-actions"><button type="button" class="button ghost import-tapd-close">取消</button><button id="confirmImportTAPD" type="submit" class="button primary">导入</button></div></form></div>
+  <div id="importTAPDModal" class="modal"><form id="importTAPDForm" class="modal-card"><button type="button" class="modal-close import-tapd-close">×</button><p class="eyebrow">外部需求</p><h2>导入 TAPD 工作项</h2><p class="modal-hint">支持 TAPD 需求、缺陷或任务链接，也可以粘贴「标题 + 链接」。导入时将读取 TAPD 最新标题和描述并写入当前项目。</p><label for="importTAPDURL">TAPD 链接或分享文本</label><textarea id="importTAPDURL" class="input" required rows="3" placeholder="【工作项标题】&#10;https://www.tapd.cn/tapd_fe/…/story/detail/…"></textarea><label>LOOP 流程</label><select id="importTAPDWorkflow" class="select"></select><label>代码仓库（可多选）</label><div id="importTAPDRepository" class="repo-picker"></div><p class="modal-hint">从下拉框添加仓库，点击标签可移除。导入前必须至少选择一个仓库。</p><label for="importTAPDBaseBranch">继续开发分支（可选）</label><input id="importTAPDBaseBranch" class="input" placeholder="留空从配置主分支新建工作分支" aria-describedby="importTAPDBaseBranchHint" autocomplete="off"><div id="importTAPDRepositoryBranches" class="repository-branches" hidden></div><p id="importTAPDBaseBranchHint" class="modal-hint">留空从配置主分支新建工作分支；填写时直接继续该已有分支，不新建。</p><div class="modal-actions"><button type="button" class="button ghost import-tapd-close">取消</button><button id="confirmImportTAPD" type="submit" class="button primary">导入</button></div></form></div>
 
-  <div id="runModal" class="modal"><div class="modal-card"><button class="modal-close">×</button><p class="eyebrow">手动运行</p><h2>发起流程运行</h2><p>选择 SOP 并提供任务输入，内容会注入使用 <code>{{input}}</code> 的 Agent 节点。</p><label class="modal-label" for="runWorkflowChoice">SOP 流程</label><select id="runWorkflowChoice" class="select"></select><label class="modal-label" for="runInput">任务输入</label><textarea id="runInput" placeholder="例如：实现用户登录接口，并补充单元测试"></textarea><div class="modal-actions"><button class="button ghost modal-close">取消</button><button id="confirmRun" class="button primary">开始运行</button></div></div></div>
+  <div id="runModal" class="modal"><div class="modal-card"><button class="modal-close">×</button><p class="eyebrow">手动运行</p><h2>发起流程运行</h2><p>选择 LOOP 并提供任务输入，内容会注入使用 <code>{{input}}</code> 的 Agent 节点。</p><label class="modal-label" for="runWorkflowChoice">LOOP 流程</label><select id="runWorkflowChoice" class="select"></select><label class="modal-label" for="runInput">任务输入</label><textarea id="runInput" placeholder="例如：实现用户登录接口，并补充单元测试"></textarea><div class="modal-actions"><button class="button ghost modal-close">取消</button><button id="confirmRun" class="button primary">开始运行</button></div></div></div>
 
-  <div id="genericTemplateModal" class="modal"><div class="modal-card generic-template-card"><button class="modal-close generic-template-close">×</button><p class="eyebrow">内置 SOP</p><h2 id="genericTemplateTitle">使用通用模板</h2><p id="genericTemplateIntro" class="modal-hint"></p><div id="genericTemplateStructure" class="generic-structure"></div><div class="generic-requirement-head"><b>运行依赖</b><span>复制不检查依赖；未配置时对应节点会在运行中降级或失败。凭证按任务责任人注入。</span></div><div id="genericTemplateRequirements" class="generic-requirements"></div><div class="modal-actions"><button type="button" class="button ghost generic-template-close">取消</button><button id="runGenericTemplateDirect" type="button" class="button ghost">直接运行</button><button id="confirmGenericTemplate" type="button" class="button primary">复制到本项目</button></div></div></div>
+  <div id="genericTemplateModal" class="modal"><div class="modal-card generic-template-card"><button class="modal-close generic-template-close">×</button><p class="eyebrow">内置 LOOP</p><h2 id="genericTemplateTitle">使用通用模板</h2><p id="genericTemplateIntro" class="modal-hint"></p><div id="genericTemplateStructure" class="generic-structure"></div><div class="generic-requirement-head"><b>运行依赖</b><span>复制不检查依赖；未配置时对应节点会在运行中降级或失败。凭证按任务责任人注入。</span></div><div id="genericTemplateRequirements" class="generic-requirements"></div><div class="modal-actions"><button type="button" class="button ghost generic-template-close">取消</button><button id="runGenericTemplateDirect" type="button" class="button ghost">直接运行</button><button id="confirmGenericTemplate" type="button" class="button primary">复制到本项目</button></div></div></div>
 
-  <div id="issueModal" class="modal"><form id="issueForm" class="modal-card issue-modal-card"><button type="button" class="modal-close issue-close">×</button><p class="eyebrow">需求</p><h2 id="issueModalTitle">新建 Issue</h2><input type="hidden" name="id"><div class="form-grid"><div><label>项目</label><select name="projectId" class="select"></select></div><div><label>优先级</label><select name="priority" class="select"><option value="urgent">Urgent</option><option value="high">High</option><option value="medium" selected>Medium</option><option value="low">Low</option></select></div><div><label>责任人</label><div id="issueAssigneePicker"></div></div></div><label>标题</label><input name="title" required><label>说明（Markdown）</label><textarea name="description" rows="7"></textarea><div id="issueSyncTargetBox" class="sync-target-box"><span>创建方式</span><label><input type="radio" name="syncTarget" value="local"> 平台需求</label><p>平台需求不需要同步外部系统，也可以进入效能统计。</p></div><div id="issueBoundNote" class="sync-target-box" hidden><span>外部单据</span><p id="issueBoundNoteText">保存只改本平台记录，不会回写外部系统。</p></div><div id="issueManualTapdBinding" hidden><label>关联 TAPD ID（可选，仅统计）</label><input name="tapdId" inputmode="numeric" pattern="[0-9]*" placeholder="不填写也会按平台需求统计"><small>不会自动同步或回写 TAPD；以后可以补填或清空。</small></div><div class="form-grid"><div><label>代码仓库（可多选）</label><div id="issueRepoChecks" class="repo-checks"></div><small>默认全选；可调整本次需求涉及的仓库。留空时各仓库从配置主分支新建工作分支。</small></div><div><label for="issueBaseBranch">继续开发分支（可选）</label><input id="issueBaseBranch" name="baseBranch" placeholder="留空从配置主分支新建工作分支" aria-describedby="issueBaseBranchHint" autocomplete="off"><div id="issueRepositoryBranches" class="repository-branches" hidden></div><small id="issueBaseBranchHint"></small></div></div><div class="form-grid"><div><label>状态</label><select name="status" class="select"><option value="backlog">待规划</option><option value="todo">待处理</option><option value="in_progress">进行中</option><option value="in_review">评审中</option><option value="done">已完成</option><option value="blocked">已阻塞</option><option value="cancelled">已取消</option></select></div><div><label>工作流</label><select name="workflowId" class="select"></select></div></div><label class="toggle-row"><input name="automationIgnored" type="checkbox"> 不参与定时 SOP（适合已经人工处理的单据）</label><div id="issueTaskState" class="issue-task-state"></div><div class="modal-actions"><button type="button" class="button ghost issue-close">取消</button><button id="reopenDeliveredIssue" type="button" class="button ghost" hidden>重新打开</button><button id="dispatchIssue" type="button" class="button ghost">启动 SOP</button><button type="submit" class="button primary">保存</button></div></form></div>
+  <div id="issueModal" class="modal"><form id="issueForm" class="modal-card issue-modal-card"><button type="button" class="modal-close issue-close">×</button><p class="eyebrow">需求</p><h2 id="issueModalTitle">新建 Issue</h2><input type="hidden" name="id"><div class="form-grid"><div><label>项目</label><select name="projectId" class="select"></select></div><div><label>优先级</label><select name="priority" class="select"><option value="urgent">Urgent</option><option value="high">High</option><option value="medium" selected>Medium</option><option value="low">Low</option></select></div><div><label>责任人</label><div id="issueAssigneePicker"></div></div></div><label>标题</label><input name="title" required><label>说明（Markdown）</label><textarea name="description" rows="7"></textarea><div id="issueSyncTargetBox" class="sync-target-box"><span>创建方式</span><label><input type="radio" name="syncTarget" value="local"> 平台需求</label><p>平台需求不需要同步外部系统，也可以进入效能统计。</p></div><div id="issueBoundNote" class="sync-target-box" hidden><span>外部单据</span><p id="issueBoundNoteText">保存只改本平台记录，不会回写外部系统。</p></div><div id="issueManualTapdBinding" hidden><label>关联 TAPD ID（可选，仅统计）</label><input name="tapdId" inputmode="numeric" pattern="[0-9]*" placeholder="不填写也会按平台需求统计"><small>不会自动同步或回写 TAPD；以后可以补填或清空。</small></div><div class="form-grid"><div><label>代码仓库（可多选）</label><div id="issueRepoChecks" class="repo-checks"></div><small>默认全选；可调整本次需求涉及的仓库。留空时各仓库从配置主分支新建工作分支。</small></div><div><label for="issueBaseBranch">继续开发分支（可选）</label><input id="issueBaseBranch" name="baseBranch" placeholder="留空从配置主分支新建工作分支" aria-describedby="issueBaseBranchHint" autocomplete="off"><div id="issueRepositoryBranches" class="repository-branches" hidden></div><small id="issueBaseBranchHint"></small></div></div><div class="form-grid"><div><label>状态</label><select name="status" class="select"><option value="backlog">待规划</option><option value="todo">待处理</option><option value="in_progress">进行中</option><option value="in_review">评审中</option><option value="done">已完成</option><option value="blocked">已阻塞</option><option value="cancelled">已取消</option></select></div><div><label>工作流</label><select name="workflowId" class="select"></select></div></div><label class="toggle-row"><input name="automationIgnored" type="checkbox"> 不参与定时 LOOP（适合已经人工处理的单据）</label><div id="issueTaskState" class="issue-task-state"></div><div class="modal-actions"><button type="button" class="button ghost issue-close">取消</button><button id="reopenDeliveredIssue" type="button" class="button ghost" hidden>重新打开</button><button id="dispatchIssue" type="button" class="button ghost">启动 LOOP</button><button type="submit" class="button primary">保存</button></div></form></div>
 
-  <div id="repositoryModal" class="modal"><form id="repositoryForm" class="modal-card issue-modal-card"><button type="button" class="modal-close repository-close">×</button><p class="eyebrow">代码仓库</p><h2>管理 Git 仓库</h2><p id="repositoryProjectHint" class="modal-hint"></p><input type="hidden" name="id"><input type="hidden" name="gongfengProjectId"><input type="hidden" name="webUrl"><input type="hidden" name="cloneUrl"><label>仓库地址</label><input name="repoUrl" placeholder="https://github.com/owner/repo 或 git@github.com:owner/repo.git" required><p class="modal-hint">粘贴 GitHub Web、SSH 或 clone URL 任一即可，会自动识别仓库路径并补全其余地址。</p><div id="repositoryNameField"><label>仓库名称</label><input name="name" placeholder="留空则自动取项目路径末段"></div><div class="form-grid"><div><label>主分支</label><input name="defaultBranch" value="main" required placeholder="main / master / release"></div><div><label>集成分支（可选）</label><input name="integrateBranch" placeholder="例如 agentflow/integration"></div></div><p class="modal-hint">集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突。不填则跳过冲突对齐；部分仓库不允许创建 agentflow/ 分支。</p><input type="hidden" name="localPath"><label class="toggle-row"><input id="repositoryMakeDefault" name="makeDefault" type="checkbox" checked><span>设为当前项目默认仓库</span></label><div id="repositoryCredentialHint" class="repository-credential-hint" role="status"></div><div id="repositoryList" class="repository-list"></div><div class="modal-actions"><button type="button" class="button ghost repository-close">取消</button><button type="submit" class="button primary">保存仓库</button></div></form></div>
+  <div id="repositoryModal" class="modal"><form id="repositoryForm" class="modal-card issue-modal-card"><button type="button" class="modal-close repository-close">×</button><p class="eyebrow">代码仓库</p><h2>管理 Git 仓库</h2><p id="repositoryProjectHint" class="modal-hint"></p><input type="hidden" name="id"><input type="hidden" name="gongfengProjectId"><input type="hidden" name="webUrl"><input type="hidden" name="cloneUrl"><label>仓库地址</label><input name="repoUrl" placeholder="https://github.com/owner/repo 或 git@github.com:owner/repo.git" required><p class="modal-hint">粘贴 GitHub Web、SSH 或 clone URL 任一即可，会自动识别仓库路径并补全其余地址。</p><div id="repositoryNameField"><label>仓库名称</label><input name="name" placeholder="留空则自动取项目路径末段"></div><div class="form-grid"><div><label>主分支</label><input name="defaultBranch" value="main" required placeholder="main / master / release"></div><div><label>集成分支（可选）</label><input name="integrateBranch" placeholder="例如 agentflow/integration"></div></div><p class="modal-hint">集成分支用于检查多个 LOOP 执行后工作分支之间是否存在合并冲突。不填则跳过冲突对齐；部分仓库不允许创建 agentflow/ 分支。</p><input type="hidden" name="localPath"><label class="toggle-row"><input id="repositoryMakeDefault" name="makeDefault" type="checkbox" checked><span>设为当前项目默认仓库</span></label><div id="repositoryCredentialHint" class="repository-credential-hint" role="status"></div><div id="repositoryList" class="repository-list"></div><div class="modal-actions"><button type="button" class="button ghost repository-close">取消</button><button type="submit" class="button primary">保存仓库</button></div></form></div>
   <div id="repoDrawerScrim" class="pa-scrim"></div>
   <aside id="repoDrawer" class="pa-drawer" role="dialog" aria-modal="true" aria-labelledby="repoDrawerTitle" aria-hidden="true" inert>
     <form id="repoDrawerForm" class="pa-drawer-form" novalidate autocomplete="off">
@@ -982,7 +982,7 @@
             <label class="pa-field"><span class="pa-field-l">主分支</span><input class="pa-input mono" name="defaultBranch" placeholder="main"></label>
             <label class="pa-field"><span class="pa-field-l">集成分支 <i>可选</i></span><input class="pa-input mono" name="integrateBranch" placeholder="agentflow/integration"></label>
           </div>
-          <p class="pa-fs-hint">集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突；留空则跳过（部分仓库不允许创建 agentflow/ 分支）。</p>
+          <p class="pa-fs-hint">集成分支用于检查多个 LOOP 执行后工作分支之间是否存在合并冲突；留空则跳过（部分仓库不允许创建 agentflow/ 分支）。</p>
         </div>
         <div class="pa-fs"><div class="pa-toggle-card"><div><b>设为项目默认仓库</b><span>新需求默认在此仓库上执行。</span></div><button type="button" class="pa-switch" id="repoDrawerDefault" role="switch" aria-checked="false" aria-label="设为项目默认仓库"></button></div></div>
         <details class="pa-fs pa-adv" id="repoDrawerAdvanced">
@@ -1044,7 +1044,7 @@
       <button type="button" class="modal-close schedule-close" aria-label="关闭">×</button>
       <p class="eyebrow">自动化</p>
       <h2 id="scheduleModalTitle">触发配置</h2>
-      <p id="scheduleModalHint" class="modal-hint">按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。</p>
+      <p id="scheduleModalHint" class="modal-hint">按计划扫描本项目选定状态、尚未跑过 LOOP 的需求，通过基线门禁后派发 LOOP。</p>
       <section class="schedule-section">
         <div class="schedule-head"><small id="scheduleRuntimeHint">每个项目使用一份触发配置，修改后保存即可生效。</small></div>
         <div id="scheduleJobList" class="schedule-job-list"></div>
@@ -1082,9 +1082,9 @@
               <p class="schedule-field-hint" data-schedule-hint>按所选间隔循环执行。</p>
             </div>
             <div data-schedule-kind="dispatch">
-              <label>默认 SOP</label>
+              <label>默认 LOOP</label>
               <select name="workflowId" class="select"></select>
-              <label class="schedule-check schedule-check-follow"><input name="useIssueWorkflow" type="checkbox" checked> 优先使用需求已绑定的 SOP（没有则用默认 SOP）</label>
+              <label class="schedule-check schedule-check-follow"><input name="useIssueWorkflow" type="checkbox" checked> 优先使用需求已绑定的 LOOP（没有则用默认 LOOP）</label>
             </div>
             <div data-schedule-kind="dispatch">
               <label>同步哪些来源</label>
@@ -1093,7 +1093,7 @@
                 <option value="gongfeng" data-legacy-tracker hidden disabled>只同步工蜂</option>
                 <option value="tapd" data-legacy-tracker hidden disabled>只同步 TAPD</option>
               </select>
-              <p class="schedule-field-hint">到点只启动所选来源、且还没跑过 SOP 的单。开启自动同步后，外部同步仍会按间隔把所有已配置来源拉进项目列表。</p>
+              <p class="schedule-field-hint">到点只启动所选来源、且还没跑过 LOOP 的单。开启自动同步后，外部同步仍会按间隔把所有已配置来源拉进项目列表。</p>
             </div>
             <div data-schedule-kind="dispatch">
               <label>触发哪些状态</label>
@@ -1104,7 +1104,7 @@
                 <label class="schedule-check"><input type="checkbox" name="issueStatus" value="in_review"> 评审中</label>
                 <label class="schedule-check"><input type="checkbox" name="issueStatus" value="blocked"> 已阻塞</label>
               </div>
-              <p class="schedule-field-hint">只扫描勾选状态、且还没有跑过 SOP 的需求。已完成和已取消不会被触发。</p>
+              <p class="schedule-field-hint">只扫描勾选状态、且还没有跑过 LOOP 的需求。已完成和已取消不会被触发。</p>
             </div>
             <div data-schedule-kind="dispatch">
               <label for="scheduleMaxDispatch">单次最多触发需求数</label>
@@ -1130,7 +1130,7 @@
             <div data-schedule-kind="assistant" hidden>
               <label for="scheduleTimeoutMinutes">执行超时（分钟）</label>
               <input id="scheduleTimeoutMinutes" class="input" name="timeoutMinutes" type="number" min="1" max="240" step="1" placeholder="30" aria-describedby="scheduleTimeoutHint">
-              <p class="schedule-field-hint" id="scheduleTimeoutHint">默认 30 分钟。达到时限会停止本次 AI 执行，已启动的 SOP 继续运行。</p>
+              <p class="schedule-field-hint" id="scheduleTimeoutHint">默认 30 分钟。达到时限会停止本次 AI 执行，已启动的 LOOP 继续运行。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
               <label for="scheduleSessionMode">会话</label>
@@ -1153,7 +1153,7 @@
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
               <label for="schedulePromptFallback">提示词</label>
               <textarea id="schedulePromptFallback" name="assistantPrompt" class="input" rows="4" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
-              <p class="schedule-field-hint">到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动 SOP、操作工作区及浏览器。</p>
+              <p class="schedule-field-hint">到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动 LOOP、操作工作区及浏览器。</p>
             </div>
             <div data-schedule-reference-editor hidden>
               <div id="schedulePromptEditor"></div>
@@ -1273,7 +1273,7 @@
   </div>
   <div id="commandPalette" class="command-palette" hidden>
     <div class="command-dialog">
-      <div class="command-search"><span>⌕</span><input id="commandSearch" autocomplete="off" placeholder="搜索需求、运行、SOP、Agent，或输入页面名称…"><kbd>ESC</kbd></div>
+      <div class="command-search"><span>⌕</span><input id="commandSearch" autocomplete="off" placeholder="搜索需求、运行、LOOP、Agent，或输入页面名称…"><kbd>ESC</kbd></div>
       <div id="commandResults" class="command-results"></div>
       <div class="command-footer"><span>↑↓ 浏览</span><span>Enter 打开</span><span>⌘K 快速唤起</span></div>
     </div>

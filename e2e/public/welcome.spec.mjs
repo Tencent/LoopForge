@@ -58,8 +58,8 @@ test('home starters prepare a question or open quick access without calling a mo
   await signInUnconfigured(page);
   const input=await openHome(page);
   const frame=chat(page);
-  await frame.locator('.home-starter').filter({hasText:'选用 SOP 与角色'}).click();
-  await expect(input).toHaveValue(/SOP/);
+  await frame.locator('.home-starter').filter({hasText:'选用 LOOP 与角色'}).click();
+  await expect(input).toHaveValue(/LOOP/);
   await expect(input).toBeFocused();
   await input.fill('');
   await frame.locator('.home-starter').filter({hasText:'快速接入'}).click();
@@ -110,10 +110,10 @@ test('the home composer asks a real model with one click',async({page})=>{
   const frame=chat(page);
   const sessionId=()=>new URL(page.frames().find(f=>f.url().includes('/chatbot/'))?.url()||'http://x/').searchParams.get('session')||'';
   try{
-    await frame.locator('.home-starter').filter({hasText:'选用 SOP 与角色'}).click();
+    await frame.locator('.home-starter').filter({hasText:'选用 LOOP 与角色'}).click();
     await input.press('End');await input.pressSequentially('只介绍，不要创建或修改任何数据。');
     await frame.locator('.send-button').click();
-    await expect(frame.locator('.message.user').last()).toContainText('SOP');
+    await expect(frame.locator('.message.user').last()).toContainText('LOOP');
     const reply=frame.locator('.message.assistant').last();
     await expect.poll(async()=>(await reply.innerText()).length,{timeout:240_000}).toBeGreaterThan(30);
     await expect.poll(sessionId).not.toBe('');

@@ -180,7 +180,7 @@ const (
 	WorkspaceErrorConversationState = "conversation_state"
 )
 
-// WorkspaceRestoreStatus describes restoration separately from SOP execution.
+// WorkspaceRestoreStatus describes restoration separately from LOOP execution.
 type WorkspaceRestoreStatus struct {
 	Status    string     `json:"status"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`

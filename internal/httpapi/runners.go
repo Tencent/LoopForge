@@ -294,7 +294,7 @@ func (h *runnersHandlers) runnerRemove(c *gin.Context) {
 	c.JSON(http.StatusOK, map[string]bool{"ok": true})
 }
 
-// runnerRunLimitSet sets how many top-level SOP runs one of the caller's own
+// runnerRunLimitSet sets how many top-level LOOP runs one of the caller's own
 // machines may hold at once. 0 clears the limit (unlimited, the default).
 // 路由: g.PUT("/api/runners/:id/run-limit", h.runnerRunLimitSet)
 func (h *runnersHandlers) runnerRunLimitSet(c *gin.Context) {

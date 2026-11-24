@@ -2,7 +2,7 @@
  * （MIT，见 harness-ui-LICENSE.txt）。Loaded after issues-list.css, whose
  * --hui-* token block (including the dark variant) also covers #sopsView.
  * Every rule stays inside #sopsView. Colour is reserved for the health dots,
- * failure counts and the single 新建 SOP primary button.
+ * failure counts and the single 新建 LOOP primary button.
  * Fonts are set with font-family/font-size/font-weight: an `inherit` inside the
  * `font` shorthand invalidates the whole declaration.
  */

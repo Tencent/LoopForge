@@ -150,7 +150,7 @@ func TestConversationLifecycle(t *testing.T) {
 		"workflowIds": []string{"space-fe"}, "inputs": []string{doc.ID},
 	}, http.StatusCreated)
 	if started.Task == nil || started.Task.RunID == "" || started.Issue.ID != linked.IssueID {
-		t.Fatalf("SOPs must run on the linked requirement: %+v", started)
+		t.Fatalf("LOOPs must run on the linked requirement: %+v", started)
 	}
 	if desc := started.Issue.Description; !strings.HasPrefix(desc, "兑换流程从 4 步缩到 2 步") || strings.Count(desc, "## 输入产物") != 1 || !strings.Contains(desc, "需求说明 v2") {
 		t.Fatalf("inputs should be appended to the requirement once: %q", desc)
@@ -185,13 +185,13 @@ func TestConversationLifecycle(t *testing.T) {
 			ID string `json:"id"`
 		} `json:"workflow"`
 	}](t, h, owner, http.MethodPost, base+"/flows", map[string]any{
-		"name": "联调 SOP", "sandboxProfileId": "test-native",
+		"name": "联调 LOOP", "sandboxProfileId": "test-native",
 		"nodes": []map[string]any{{"id": "dev", "name": "开发", "type": "agent", "agentId": "developer"}, {"id": "check", "name": "验收", "type": "approval"}},
 		"edges": []map[string]any{{"source": "dev", "target": "check"}, {"source": "check", "target": "dev", "when": "rework"}},
 	}, http.StatusOK)
 	wf, ok := s.Workflow(flow.Workflow.ID)
 	if !ok || wf.ProjectID != "platform" || len(wf.Nodes) != 2 || wf.Nodes[1].RejectTo != "dev" || len(wf.Edges) != 1 || flow.Artifact.WorkflowID != wf.ID {
-		t.Fatalf("flow should be saved as a real SOP: %+v %+v", wf, flow)
+		t.Fatalf("flow should be saved as a real LOOP: %+v %+v", wf, flow)
 	}
 	requestJSONAuthed[map[string]any](t, h, owner, http.MethodPost, base+"/flows", map[string]any{
 		"name": "缺角色", "nodes": []map[string]any{{"id": "x", "name": "开发", "type": "agent", "agentId": "nobody"}},
@@ -245,20 +245,20 @@ func TestConversationRequirementIsExplicit(t *testing.T) {
 		t.Fatalf("plain conversations open empty: %+v", msgs)
 	}
 
-	// Starting an SOP from a plain conversation creates the requirement the
-	// user confirmed in the dialog and links it, so later SOPs share it.
+	// Starting a LOOP from a plain conversation creates the requirement the
+	// user confirmed in the dialog and links it, so later LOOPs share it.
 	first := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, base+"/sops", map[string]any{
 		"title": "缓存击穿治理", "workflowIds": []string{"space-be"},
 	}, http.StatusCreated)
 	view := requestJSONAuthed[spaceView](t, h, owner, http.MethodGet, base, nil, http.StatusOK)
 	if view.Requirement == nil || view.Requirement.ID != first.Issue.ID || view.Requirement.Title != "缓存击穿治理" {
-		t.Fatalf("first SOP should link its requirement: %+v", view.Requirement)
+		t.Fatalf("first LOOP should link its requirement: %+v", view.Requirement)
 	}
 	second := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, base+"/sops", map[string]any{
 		"title": "ignored", "workflowIds": []string{"space-be"},
 	}, http.StatusCreated)
 	if second.Issue.ID != first.Issue.ID || len(s.Issues()) != issuesBefore+1 {
-		t.Fatalf("later SOPs must reuse the requirement: %s vs %s", second.Issue.ID, first.Issue.ID)
+		t.Fatalf("later LOOPs must reuse the requirement: %s vs %s", second.Issue.ID, first.Issue.ID)
 	}
 	if lanes := requestJSONAuthed[[]spaceLane](t, h, owner, http.MethodGet, base+"/lanes", nil, http.StatusOK); len(lanes) != 2 {
 		t.Fatalf("both lanes stay on the conversation: %+v", lanes)

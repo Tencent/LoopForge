@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// A lane is one SOP run dispatched from the space, projected for the
+// A lane is one LOOP run dispatched from the space, projected for the
 // workbench: its graph, live node state, inputs and workspace.
 
 type spaceLaneNode struct {
@@ -244,7 +244,7 @@ func (h *spacesHandlers) lane(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
-// startSOPs dispatches SOPs from the space. Inputs pin the artifact versions
+// startSOPs dispatches LOOPs from the space. Inputs pin the artifact versions
 // the lanes start from and are appended to the issue description so every
 // agent reads the same spec.
 func (h *spacesHandlers) startSOPs(c *gin.Context) {
@@ -345,7 +345,7 @@ func withInputs(description string, lines []string) string {
 	return strings.TrimSpace(out)
 }
 
-// catalog lists the SOPs, roles and sandboxes the space's project may use.
+// catalog lists the LOOPs, roles and sandboxes the space's project may use.
 func (h *spacesHandlers) catalog(c *gin.Context) {
 	room, _, ok := h.loadSpace(c, false)
 	if !ok {
@@ -416,7 +416,7 @@ type spaceFlowRequest struct {
 	Edges            []spaceLaneEdge `json:"edges"`
 }
 
-// saveFlow turns an orchestration drafted in the space into a real SOP via
+// saveFlow turns an orchestration drafted in the space into a real LOOP via
 // PUT /api/workflows, then keeps it as a versioned "sop" artifact.
 func (h *spacesHandlers) saveFlow(c *gin.Context) {
 	room, _, ok := h.loadSpace(c, true)
@@ -443,7 +443,7 @@ func (h *spacesHandlers) saveFlow(c *gin.Context) {
 	}
 	status, raw := h.internalCall(c, http.MethodPut, "/api/workflows", wf)
 	if status >= 400 {
-		c.JSON(status, gin.H{"error": apiError(raw, "保存 SOP 失败")})
+		c.JSON(status, gin.H{"error": apiError(raw, "保存 LOOP 失败")})
 		return
 	}
 	var stored domain.WorkflowDefinition
@@ -485,7 +485,7 @@ func (h *spacesHandlers) flowWorkflow(room domain.ChatRoom, req spaceFlowRequest
 	if wf.ID != "" {
 		old, ok := h.repo.Workflow(wf.ID)
 		if !ok || old.ProjectID != room.ProjectID {
-			return wf, "只能更新当前项目里由需求空间保存的 SOP"
+			return wf, "只能更新当前项目里由需求空间保存的 LOOP"
 		}
 		wf.Version, wf.Revision, wf.Status, wf.Tags, wf.Notifications = old.Version, old.Revision, old.Status, old.Tags, old.Notifications
 		if wf.SandboxProfileID == "" {

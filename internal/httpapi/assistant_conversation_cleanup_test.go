@@ -17,7 +17,7 @@ import (
 // it handed in (an MR, whatever its state, or a direct push) together with
 // their workspace records, which only end, and deletes the requirements it
 // created but never handed in. Requirements from elsewhere, or dispatched to an
-// SOP, are never deleted.
+// LOOP, are never deleted.
 func TestDeletingConversationSettlesItsRequirements(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	h.deps.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))

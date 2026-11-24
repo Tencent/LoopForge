@@ -178,7 +178,7 @@ func TestFitAssistantToolResultLeavesDefinitionsAndTextUnchanged(t *testing.T) {
 	// Indented JSON that fits once compacted keeps every item.
 	short := make([]map[string]any, 0, 20)
 	for i := 0; i < 20; i++ {
-		short = append(short, map[string]any{"id": fmt.Sprintf("wf%d", i), "name": "SOP", "status": "published"})
+		short = append(short, map[string]any{"id": fmt.Sprintf("wf%d", i), "name": "LOOP", "status": "published"})
 	}
 	indented, _ := json.MarshalIndent(map[string]any{"items": short}, strings.Repeat(" ", 600), "\t")
 	if len(indented) <= assistantToolResultBudget {

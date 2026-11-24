@@ -191,7 +191,7 @@ func integrateMRTitle(r domain.Run, rc domain.RepositoryContext, work, integrate
 		return fmt.Sprintf("LoopForge: 对齐 %s → %s", def, integrate)
 	}
 	label := integrationCommitLabel(r)
-	if label == "" || label == "scheduled SOP work" {
+	if label == "" || label == "scheduled LOOP work" {
 		return fmt.Sprintf("LoopForge: %s → %s", work, integrate)
 	}
 	return fmt.Sprintf("LoopForge: %s → %s", label, integrate)
@@ -202,14 +202,14 @@ func integrateMRDescription(r domain.Run, work, integrate string) string {
 		return fmt.Sprintf("Align the configured main branch into the shared integration baseline.\n\n- run: %s\n- source: `%s`\n- target: `%s`\n", r.ID, work, integrate)
 	}
 	var b strings.Builder
-	b.WriteString("Scheduled SOP merge of an issue work branch into the integration baseline.\n\n")
+	b.WriteString("Scheduled LOOP merge of an issue work branch into the integration baseline.\n\n")
 	if n := r.ExecutionContext.IssueNumber; n > 0 {
 		fmt.Fprintf(&b, "- issue: #%d\n", n)
 	}
 	fmt.Fprintf(&b, "- run: %s\n", r.ID)
 	fmt.Fprintf(&b, "- source: `%s`\n", work)
 	fmt.Fprintf(&b, "- target: `%s`\n", integrate)
-	b.WriteString("\nSOP report files are excluded from the baseline. The work branch is kept for history.\n")
+	b.WriteString("\nLOOP report files are excluded from the baseline. The work branch is kept for history.\n")
 	return b.String()
 }
 func integrationCommitLabel(r domain.Run) string {
@@ -227,7 +227,7 @@ func integrationCommitLabel(r domain.Run) string {
 	case work != "":
 		return work
 	default:
-		return "scheduled SOP work"
+		return "scheduled LOOP work"
 	}
 }
 
@@ -348,7 +348,7 @@ func patchNewFiles(diff string) []string {
 // only applies direct-predecessor patches and skips them on a workspace that
 // already has git work — safe on the instance owning the run workspace, but
 // a fresh clone elsewhere only contains committed work, so uncommitted
-// upstream files (e.g. an SOP e2e script) silently vanish from the pushed
+// upstream files (e.g. a LOOP e2e script) silently vanish from the pushed
 // MR. This check never mutates the workspace; it only surfaces the loss as
 // an explicit warning the operator can act on.
 func (e *Engine) verifyDeliveryCompleteness(r domain.Run, workspace string) []string {

@@ -196,7 +196,7 @@ func (r *NotificationsRepo) enqueueRunNotifications(tx *gorm.DB, run domain.Run,
 			if binding.Scope == "run" {
 				trigger = runTrigger
 				nodeID = ""
-				labelPrefix = "SOP"
+				labelPrefix = "LOOP"
 			} else if event.NodeID != node.ID {
 				continue
 			}
@@ -239,14 +239,14 @@ func (r *NotificationsRepo) enqueueRunNotifications(tx *gorm.DB, run domain.Run,
 }
 
 // runNotificationBindings selects the bindings evaluated for one node of a run.
-// Workflow nodes use the SOP reminder bindings; the synthetic SOP-level node
+// Workflow nodes use the LOOP reminder bindings; the synthetic LOOP-level node
 // (empty ID) uses its own bindings, falling back to run-scoped "failed"
 // reminders when the run failed without any node failure event.
 func runNotificationBindings(run domain.Run, node domain.WorkflowNode, runTrigger string) []domain.NotificationBinding {
 	if node.ID != "" {
 		return domain.NodeReminderBindings(domain.WorkflowNotifications(run.WorkflowSnapshot))
 	}
-	// Setup/runtime failures may end a SOP without a node failure event.
+	// Setup/runtime failures may end a LOOP without a node failure event.
 	if runTrigger != "failed" || runHasNodeFailureEvent(run.Events) {
 		return node.Notifications
 	}

@@ -27,7 +27,7 @@ describe("sop-designer helpers", () => {
     expect(isDesignerSurface("?projectId=p")).toBe(false);
   });
 
-  test("pick the newest conversation of the SOP", () => {
+  test("pick the newest conversation of the LOOP", () => {
     const rows = [
       { id: "old", projectId: "p1", workflowId: "w", updatedAt: "2026-11-01T00:00:00Z" },
       { id: "other-project", projectId: "p2", workflowId: "w", updatedAt: "2026-11-09T00:00:00Z" },

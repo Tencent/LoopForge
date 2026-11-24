@@ -139,7 +139,7 @@ func AssistantTitleFromMessages(messages []domain.AssistantMessage) string {
 
 // Project conversation replies once blanked their stored title, so the history
 // list showed "新对话". Name those rows after their first user message, once.
-// SOP run sessions are always titled by their workflow and are left alone.
+// LOOP run sessions are always titled by their workflow and are left alone.
 func (r *AssistantRepo) backfillAssistantTitles(rows []assistantSessionRow) {
 	index := map[string]int{}
 	var ids []string
@@ -383,7 +383,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		if old.Shared {
 			v.RunID = old.RunID
 			v.ProjectID = old.ProjectID
-			// The first generated title may replace a shared SOP label.
+			// The first generated title may replace a shared LOOP label.
 			// Every other write keeps the title already stored.
 			if !(v.TitleGenerated && !old.TitleGenerated && !old.TitleEdited) {
 				v.Title = old.Title

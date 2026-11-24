@@ -187,7 +187,7 @@ docker 沙箱的 Dockerfile 存在沙箱里，随沙箱一起共享，没有单�
 
 ### `DELETE /api/sandboxes?id={id}`
 
-删除沙箱配置。前置条件：不是内置 `generic-docker`、未共享、且未被任何 SOP 引用，否则 `409`；成功 `204`。
+删除沙箱配置。前置条件：不是内置 `generic-docker`、未共享、且未被任何 LOOP 引用，否则 `409`；成功 `204`。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
@@ -196,4 +196,4 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
   "$AGENTFLOW_URL/api/sandboxes"
 ```
 
-`/api/sandboxes` 仅管理供 SOP 引用的配置，不创建、查询或回收运行时沙箱；沙箱回收不是公共 API。
+`/api/sandboxes` 仅管理供 LOOP 引用的配置，不创建、查询或回收运行时沙箱；沙箱回收不是公共 API。

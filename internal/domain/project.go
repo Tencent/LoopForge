@@ -153,7 +153,7 @@ type RepositoryContext struct {
 	// WorkspaceDir is the first-level sub-directory of the run workspace this
 	// repository is checked out into (slash-separated, relative). Empty is
 	// only kept for persisted legacy runs that already checked out at the
-	// workspace root; new runs always get a sub-directory so SOP deliverables
+	// workspace root; new runs always get a sub-directory so LOOP deliverables
 	// at the run root cannot pollute the git checkout.
 	WorkspaceDir string `json:"workspaceDir,omitempty"`
 }
@@ -356,7 +356,7 @@ func NormalizeRepositoryDirName(rc RepositoryContext) string {
 
 // AssignRepositoryDirs fills WorkspaceDir so every bound repository is
 // checked out into a unique first-level sub-directory of the run workspace.
-// SOP deliverables such as fix-plan.md stay at the run root and never enter
+// LOOP deliverables such as fix-plan.md stay at the run root and never enter
 // a git checkout.
 func AssignRepositoryDirs(repositories []RepositoryContext) {
 	used := map[string]bool{}

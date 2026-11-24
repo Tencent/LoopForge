@@ -26,7 +26,7 @@ import (
 )
 
 // runnerWorkspaceRunID names the runner directory holding run's checkout: a
-// child SOP on the shared layout works in the checkout of its parent chain.
+// child LOOP on the shared layout works in the checkout of its parent chain.
 func runnerWorkspaceRunID(run domain.Run) string {
 	if run.ExecutionContext.RunnerWorkspaceLayout == domain.RunnerWorkspaceLayoutShared {
 		return engine.WorkspaceRunID(run)

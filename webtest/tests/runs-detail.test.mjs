@@ -154,14 +154,14 @@ test('run filtering, paging, status actions, and list/detail transitions remain 
   assert.match(app.document.querySelector('#runsView').textContent, /共 28 条|运行记录/);
 });
 
-test('conversation workspaces stay out of SOP run lists and counts but keep their requirement', async (t) => {
+test('conversation workspaces stay out of LOOP run lists and counts but keep their requirement', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const out = JSON.parse(app.evaluate(`
     const pid=state.projectFilter||state.data.projects[0].id;
     state.data.issues=[...(state.data.issues||[]),{id:'iss-conv',projectId:pid,number:42,title:'修复登录页文案',workflowId:state.data.workflows[0].id}];
     state.data.runs=[
-      {id:'sop-1',workflowId:'wf-a',status:'succeeded',input:'SOP run',createdAt:new Date(Date.now()-60000).toISOString(),executionContext:{projectId:pid},nodes:{a:{status:'succeeded'}},workflowSnapshot:{name:'SOP A'}},
+      {id:'sop-1',workflowId:'wf-a',status:'succeeded',input:'LOOP run',createdAt:new Date(Date.now()-60000).toISOString(),executionContext:{projectId:pid},nodes:{a:{status:'succeeded'}},workflowSnapshot:{name:'LOOP A'}},
       {id:'ws-linked',kind:'workspace',workflowId:'conversation-workspace',status:'waiting',input:'对话改代码：改登录文案',createdAt:new Date().toISOString(),executionContext:{projectId:pid,issueId:'iss-conv'},usage:{totalTokens:999},workflowSnapshot:{id:'conversation-workspace',name:'对话工作区'}},
       {id:'ws-review',kind:'workspace',workflowId:'conversation-workspace',status:'waiting',input:'对话改代码：只读评审 MR 546',createdAt:new Date().toISOString(),workspaceCleanedAt:new Date().toISOString(),executionContext:{projectId:pid},workflowSnapshot:{name:'对话工作区'}}
     ];
@@ -182,7 +182,7 @@ test('conversation workspaces stay out of SOP run lists and counts but keep thei
   assert.doesNotMatch(out.overview, /999/);
   assert.equal(out.searched, 0);
   assert.deepEqual(out.live, []);
-  // The requirement list is unchanged: the linked workspace still shows as its SOP.
+  // The requirement list is unchanged: the linked workspace still shows as its LOOP.
   assert.equal(out.latest, 'ws-linked');
   assert.equal(out.sop, '对话工作区');
   assert.ok(out.row.includes('对话工作区'), JSON.stringify(out.row));
@@ -317,7 +317,7 @@ test('terminal, human-waiting, paused and cancelling runs stop inspector motion'
   }
 });
 
-test('a parent node only animates while its child SOP is executing', async (t) => {
+test('a parent node only animates while its child LOOP is executing', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   renderActivityFixture(app);

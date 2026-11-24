@@ -1397,7 +1397,7 @@ export function useChat() {
         if (error.draftChanged && currentId.current === id) setSession(stored);
         throw error;
       }
-      // The session header lets a confirmed SOP continue in this
+      // The session header lets a confirmed LOOP continue in this
       // conversation's workspace.
       const result = await api("/mcp", {
         method: "POST",

@@ -336,10 +336,10 @@ function assistantPrefsFormHTML(p){
    <div class="asst-rows"><label class="asst-switch-row" for="assistantPrefsMessageDuringGeneration"><span><b>生成中发送消息</b><small>排队会等当前回复结束；立即发送会打断当前回复，保留已输出内容并继续处理新消息。</small></span>
     <select id="assistantPrefsMessageDuringGeneration" class="input" name="messageDuringGeneration"><option value="queue" ${p.steerOnSend?'':'selected'}>排队</option><option value="steer" ${p.steerOnSend?'selected':''}>立即发送</option></select>
    </label></div></section>
-  <section class="asst-panel"><header class="asst-panel-head"><h2>主动派发</h2><p>打开后 AI 助手会更主动地把事情交给角色或 SOP。派角色不需要确认；走 SOP 在「请求批准」下先征求同意，「帮我批准」下由 AI 审查直接裁决，「完全权限」下直接启动。</p></header>
+  <section class="asst-panel"><header class="asst-panel-head"><h2>主动派发</h2><p>打开后 AI 助手会更主动地把事情交给角色或 LOOP。派角色不需要确认；走 LOOP 在「请求批准」下先征求同意，「帮我批准」下由 AI 审查直接裁决，「完全权限」下直接启动。</p></header>
    <div class="asst-rows">
     ${assistantPrefsSwitchRow('proactiveRoles','主动派角色','整件事是某个角色的本职（如独立评审、整套测试），或改了高风险代码需要复核时，直接交给这个角色。',p.proactiveRoles)}
-    ${assistantPrefsSwitchRow('proactiveSops','主动走 SOP','遇到要落到仓库的新需求时，先交给项目里用途对得上的 SOP，而不是自己直接改代码。',p.proactiveSops)}
+    ${assistantPrefsSwitchRow('proactiveSops','主动走 LOOP','遇到要落到仓库的新需求时，先交给项目里用途对得上的 LOOP，而不是自己直接改代码。',p.proactiveSops)}
    </div></section>
   <section class="asst-panel"><header class="asst-panel-head"><h2>对话工作区</h2><p>会话里没有固定运行环境时，AI 助手自己选择在哪类沙箱里打开工作区。</p></header>
    <div class="asst-rows"><label class="asst-switch-row" for="assistantPrefsWorkspaceDriver"><span><b>倾向的沙箱</b><small>没有特殊要求时优先用这一类；任务需要的语言或工具链只有其他环境具备时仍会换。</small></span>

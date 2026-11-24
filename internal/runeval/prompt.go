@@ -11,7 +11,7 @@ import (
 func BuildPrompt(policy domain.RunEvalPolicy, facts domain.RunEvalFacts) (system, user string) {
 	policy = domain.EffectiveRunEvalPolicy(policy)
 	var b strings.Builder
-	b.WriteString("你是 AgentFlow 的 SOP Run 评测员。根据提供的结构化 facts 和压缩 trace digest，按平台规则给这次 run 打分，并给出可落地的改进建议。\n")
+	b.WriteString("你是 AgentFlow 的 LOOP Run 评测员。根据提供的结构化 facts 和压缩 trace digest，按平台规则给这次 run 打分，并给出可落地的改进建议。\n")
 	b.WriteString("只输出一个 JSON 对象，不要 Markdown。字段：\n")
 	b.WriteString(`{"dimensions":{`)
 	for i, dim := range policy.Dimensions {
@@ -28,13 +28,13 @@ func BuildPrompt(policy domain.RunEvalPolicy, facts domain.RunEvalFacts) (system
 	b.WriteString("- recommendations 可为空。可应用时 action 只能是：update_node、upsert_gate、remove_gate、append_task_prompt（追加到角色 prompt）。\n")
 	b.WriteString("- target 为 workflow 或 agent。改节点重试用 update_node + set.maxAttempts/maxReworks/onFailure/retryStrategy。\n")
 	b.WriteString("- 门禁只属于角色；改门禁用 target=agent + upsert_gate/remove_gate，并给 gate.id 和 targetId。\n")
-	b.WriteString("- 不要整份重写 SOP 或角色，不要改边或删节点。\n")
+	b.WriteString("- 不要整份重写 LOOP 或角色，不要改边或删节点。\n")
 	b.WriteString("评分维度：\n")
 	for _, dim := range policy.Dimensions {
 		b.WriteString(fmt.Sprintf("- %s（%s，权重 %d）：%s\n", dim.ID, dim.Name, dim.Weight, dim.Question))
 	}
 	raw, _ := json.Marshal(facts)
-	return b.String(), "评测这次 SOP run。facts=" + string(raw)
+	return b.String(), "评测这次 LOOP run。facts=" + string(raw)
 }
 
 func ParseModelResult(raw string, policy domain.RunEvalPolicy) (domain.RunEvalResult, error) {

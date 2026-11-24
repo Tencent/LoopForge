@@ -167,7 +167,7 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	// 与 master 的 runSummaryHeaderColumns 一致：列表携带控制位与
 	// human_context、多仓 repositories，且 input 在 SQL 层截断到 500 字符
 	//（master 用 LEFT(input, 500)，使 handler 的 clip 不再追加省略号）。
-	// List rows only need the frozen SOP identity and whether it is a free
+	// List rows only need the frozen LOOP identity and whether it is a free
 	// collaboration task (待我确认 and status badges depend on it). The graph,
 	// scripts, and commands stay in the snapshot column and are not transferred.
 	snapshotExpr := "json_object('id', json_extract(snapshot, '$.id'), 'name', json_extract(snapshot, '$.name'), 'collaborationMode', json_extract(snapshot, '$.collaborationMode')) AS snapshot"
@@ -347,7 +347,7 @@ func (r *RunsRepo) RunState(id string) (domain.Run, bool) {
 	}
 	// Engine decisions only need nodes, events and artifacts. Loading thousands
 	// of historical telemetry rows on every lease/heartbeat-adjacent state read
-	// made long SOP runs miss their 30s lease: finishAt then refused to persist
+	// made long LOOP runs miss their 30s lease: finishAt then refused to persist
 	// succeeded, and ResumeInterruptedRuns parked a completed graph forever.
 	// Live telemetry still lands through the observation queue (sequence comes
 	// from the header); the paginated API keeps the history.
@@ -1455,7 +1455,7 @@ func runDuration(run domain.Run, now time.Time) int64 {
 	return end.Sub(run.CreatedAt).Milliseconds()
 }
 
-// runExecutionDuration 统计 SOP 节点真实执行耗时之和：Σ(节点 FinishedAt − StartedAt)。
+// runExecutionDuration 统计 LOOP 节点真实执行耗时之和：Σ(节点 FinishedAt − StartedAt)。
 // 与 runDuration（Run 创建 → 最后结束的墙钟差）不同，它不含审批、排队、恢复等待，
 // 因此执行耗时 ≤ 端到端墙钟。起止时间缺失或倒挂的节点跳过。
 // 纯聚合层只读计算，不触碰执行链路；既有的 runDuration/runEndedAt 语义保持不变。

@@ -153,7 +153,7 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 	}
 	env.nodeMu.Lock()
 	defer env.nodeMu.Unlock()
-	// Same checkout as an SOP node: the responsible user's Git Token, the
+	// Same checkout as a LOOP node: the responsible user's Git Token, the
 	// frozen base branch, and a fresh work branch.
 	credentials := env.credentialSnapshot()
 	ctx = e.withPreparationProgress(ctx, run.ID)
@@ -229,7 +229,7 @@ func (e *Engine) prepareConversationWorkspace(ctx context.Context, id, token str
 
 func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token string) error {
 	if run, ok := e.repo.RunState(id); ok && sharesWorkspace(run) {
-		return fmt.Errorf("子 SOP 共享父任务工作区，请从父任务操作")
+		return fmt.Errorf("子 LOOP 共享父任务工作区，请从父任务操作")
 	}
 	meta, ok := e.repo.WorkspaceCheckpoint(id)
 	if !ok || meta.LeaseToken != token || meta.LeaseUntil == nil || meta.LeaseUntil.Before(time.Now()) {
@@ -457,7 +457,7 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	if meta.FollowUp && !released && now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
 		return true, false, nil, nil
 	}
-	// Revision and node checks serialize the deletion claim against SOP or group dispatch.
+	// Revision and node checks serialize the deletion claim against LOOP or group dispatch.
 	claimed, err = e.repo.ClaimCheckpointWorkspaceCleanup(run.ID, token, run.Revision, now)
 	if claimed {
 		release = finish

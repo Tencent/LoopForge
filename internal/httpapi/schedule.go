@@ -107,7 +107,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 				return
 			}
 			if job.WorkflowID == "" {
-				c.JSON(400, map[string]string{"error": "触发任务必须选择默认 SOP"})
+				c.JSON(400, map[string]string{"error": "触发任务必须选择默认 LOOP"})
 				return
 			}
 			job.AssistantPrompt = ""

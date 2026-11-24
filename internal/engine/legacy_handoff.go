@@ -1,6 +1,6 @@
 package engine
 
-// Read-only compatibility for SOPs that already archived a group handoff.
+// Read-only compatibility for LOOPs that already archived a group handoff.
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
@@ -45,7 +45,7 @@ func archivedSOPHandoffArtifacts(run domain.Run) ([]domain.Artifact, error) {
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("自由协作交接归档缺失或校验失败，不能启动 SOP")
+			return nil, fmt.Errorf("自由协作交接归档缺失或校验失败，不能启动 LOOP")
 		}
 	}
 	var manifest sopHandoffTranscriptManifest
@@ -181,7 +181,7 @@ func materializeSOPHandoffInputs(workspace string, run domain.Run) (string, erro
 	return manifest, nil
 }
 
-// Child SOPs have independent workspaces on master. Freeze the same handoff
+// Child LOOPs have independent workspaces on master. Freeze the same handoff
 // into the child before scheduling its first node, rather than assuming files
 // in the parent's directory are visible there.
 func inheritSOPHandoff(parent domain.Run, child *domain.Run) error {

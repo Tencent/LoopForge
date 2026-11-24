@@ -728,7 +728,7 @@ function genericMCPChecked(id,selected){
 }
 function assetVisible(item){return !item?.projectId||item.projectId===state.projectFilter}
 function catalogWorkflows(){return (state.data?.workflows||[]).filter(w=>!catalogGeneric(w)&&catalogVisible(w.projectId,w.shared))}
-// Runnable options = stored SOPs + platform generic templates (run by reference).
+// Runnable options = stored LOOPs + platform generic templates (run by reference).
 function runnableWorkflowOptions(){return catalogWorkflows().concat((state.data?.workflows||[]).filter(catalogGeneric).map(w=>({...w,name:`通用 · ${w.name}`})))}
 function scopedWorkflows(){
   const all=state.data?.workflows||[];
@@ -798,9 +798,9 @@ function runProjectId(r){
   return '';
 }
 function scopedRuns(runs){const pid=state.projectFilter,list=runs||[];return pid?list.filter(r=>runProjectId(r)===pid):list}
-// Conversation workspaces (Run.kind=workspace) are the chat's sandbox, not SOP
+// Conversation workspaces (Run.kind=workspace) are the chat's sandbox, not LOOP
 // runs: they have no nodes and stay "waiting" until reclaimed. They are reached
-// from the conversation and the requirement, never from SOP run lists or counts.
+// from the conversation and the requirement, never from LOOP run lists or counts.
 function isSOPRun(r){return r?.kind!=='workspace'}
 function sopRuns(runs){return (runs||[]).filter(isSOPRun)}
 function preferredWorkflow(){
@@ -1902,7 +1902,7 @@ async function applyAgentRoute(){
     openAgentWizard(agent,routePart(2)==='gov'?3:1,{loaded:true});
   }catch(error){if(agentRouteId()===id)toast(error.message,'err')}
 }
-// Only SOPs visible in the active project can be restored from the URL or localStorage.
+// Only LOOPs visible in the active project can be restored from the URL or localStorage.
 function openableWorkflow(id){return id?catalogWorkflows().find(w=>w.id===id)||null:null}
 function savedWorkflowId(){
   const id=state.workflow?.id||'';

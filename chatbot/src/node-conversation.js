@@ -98,7 +98,7 @@ export function nodeConversationItems(
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// Adapt one executor event to the chatbot's activity step so SOP nodes share
+// Adapt one executor event to the chatbot's activity step so LOOP nodes share
 // the Codex-style rows ("已运行 pwd", "已读取 SKILL.md", "已思考 …").
 export function nodeActivityStep(event) {
   const id = `event-${event.id || event.sequence}`;

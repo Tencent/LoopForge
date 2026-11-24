@@ -16,15 +16,15 @@ test("mentions replace only the active token and retain the surrounding user tex
   const text = "请参考@排版继续分析";
   const range = mentionAt(text, 6);
   assert.deepEqual(range, { start: 3, end: 6, query: "排版" });
-  assert.deepEqual(insertMention(text, range, { name: "排版 SOP" }), {
-    text: "请参考@排版 SOP 继续分析",
-    caret: 11,
+  assert.deepEqual(insertMention(text, range, { name: "排版 LOOP" }), {
+    text: "请参考@排版 LOOP 继续分析",
+    caret: 12,
   });
   assert.equal(mentionAt("mail@example.com", 16), null);
-  assert.equal(mentionAt("@排版 SOP 后续", 10, [{ name: "排版 SOP" }]), null);
+  assert.equal(mentionAt("@排版 LOOP 后续", 10, [{ name: "排版 LOOP" }]), null);
   assert.deepEqual(
-    mentionAt("@排版 SOP 后续 @角", 13, [{ name: "排版 SOP" }]),
-    { start: 11, end: 13, query: "角" },
+    mentionAt("@排版 LOOP 后续 @角", 14, [{ name: "排版 LOOP" }]),
+    { start: 12, end: 14, query: "角" },
   );
 });
 const draft = {
@@ -128,19 +128,19 @@ test("a new project drafted inside another project's chat is not shown as belong
     ).effect,
     /修改这个项目/,
   );
-  // A new project is bound to the generic backend SOP unless one is chosen;
+  // A new project is bound to the generic backend LOOP unless one is chosen;
   // the card says so, so the reply cannot claim "not bound".
   const sopOf = (body, references = []) =>
     operationSummary({ tool: "projects_save", body }, { projects, references, projectId: "skillhub" })
-      .fields.find(([label]) => label === "SOP")?.[1];
-  assert.equal(sopOf({ id: "okr", name: "OKR系统" }), "通用后端交付 SOP（默认）");
+      .fields.find(([label]) => label === "LOOP")?.[1];
+  assert.equal(sopOf({ id: "okr", name: "OKR系统" }), "通用后端交付 LOOP（默认）");
   assert.equal(
-    sopOf({ id: "okr", name: "OKR系统" }, [{ type: "sop", id: "generic-backend-delivery", name: "通用后端交付 SOP（LoopForge）" }]),
-    "通用后端交付 SOP（LoopForge）（默认）",
+    sopOf({ id: "okr", name: "OKR系统" }, [{ type: "sop", id: "generic-backend-delivery", name: "通用后端交付 LOOP（LoopForge）" }]),
+    "通用后端交付 LOOP（LoopForge）（默认）",
   );
   assert.equal(
-    sopOf({ id: "okr", name: "OKR系统", workflowId: "generic-frontend-delivery" }, [{ type: "sop", id: "generic-frontend-delivery", name: "通用前端交付 SOP" }]),
-    "通用前端交付 SOP",
+    sopOf({ id: "okr", name: "OKR系统", workflowId: "generic-frontend-delivery" }, [{ type: "sop", id: "generic-frontend-delivery", name: "通用前端交付 LOOP" }]),
+    "通用前端交付 LOOP",
   );
   assert.equal(sopOf({ id: "skillhub", name: "SkillHub" }), undefined);
   // Project-scoped resources still show the session project.

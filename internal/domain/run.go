@@ -58,7 +58,7 @@ type Run struct {
 const RunKindWorkspace = "workspace"
 const ConversationWorkspaceWorkflowID = "conversation-workspace"
 
-// IsWorkspace distinguishes an on-demand chat workspace from a scheduled SOP.
+// IsWorkspace distinguishes an on-demand chat workspace from a scheduled LOOP.
 func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
 
 // IsPersonalWorkspace identifies a workspace whose access is scoped to its owner.
@@ -66,7 +66,7 @@ func (r Run) IsPersonalWorkspace() bool {
 	return r.IsWorkspace() && r.ExecutionContext.ProjectID == ""
 }
 
-// LiveWorkspace reports a chat workspace that is open for edits. It has no SOP
+// LiveWorkspace reports a chat workspace that is open for edits. It has no LOOP
 // graph to pause, so Main Bot and people in the IDE edit it side by side and
 // rely on expectedSha256 to catch conflicting writes.
 func (r Run) LiveWorkspace() bool {
@@ -74,7 +74,7 @@ func (r Run) LiveWorkspace() bool {
 }
 
 // HumanEditable reports whether people may edit the workspace in the IDE. Like
-// an AI IDE they edit at any time, also while SOP agents run: nothing pauses,
+// an AI IDE they edit at any time, also while LOOP agents run: nothing pauses,
 // expectedSha256 catches conflicting writes and agents re-read what changed.
 func (r Run) HumanEditable() bool {
 	if !r.WorkspaceCleanedAt.IsZero() {
@@ -89,7 +89,7 @@ func (r Run) HumanEditable() bool {
 	return false
 }
 
-// HistoricalGroup is a record of the retired role groups. It has no SOP graph
+// HistoricalGroup is a record of the retired role groups. It has no LOOP graph
 // that could be resumed or retried.
 func (r Run) HistoricalGroup() bool {
 	return !r.IsWorkspace() && r.WorkflowSnapshot.CollaborationMode == "group"
@@ -247,7 +247,7 @@ type Artifact struct {
 	SHA256    string `json:"sha256"`
 	Content   string `json:"content"`
 	// RepositoryDir records which run repository workspace the artifact was
-	// collected from (empty = run workspace root, where SOP deliverables live).
+	// collected from (empty = run workspace root, where LOOP deliverables live).
 	RepositoryDir string    `json:"repositoryDir,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
 }

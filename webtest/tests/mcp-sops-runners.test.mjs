@@ -32,7 +32,7 @@ test('MCP import accepts common formats, validates bad input, and saves HTTP con
   assert.equal(call.body.projectId, 'project-1');
 });
 
-test('generic SOP requirements reflect credentials and installed MCPs, then clone through API', async (t) => {
+test('generic LOOP requirements reflect credentials and installed MCPs, then clone through API', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const generic = {
@@ -116,7 +116,7 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   assert.match(list.textContent, /Laptop/);
   const limit = list.querySelector('[data-runner-run-limit]');
   assert.equal(limit.value, '2');
-  assert.match(app.evaluate(`runnerConcurrencyLabel(state.runners[0])`), /最多同时运行 2 条 SOP/);
+  assert.match(app.evaluate(`runnerConcurrencyLabel(state.runners[0])`), /最多同时运行 2 条 LOOP/);
   limit.value = '5';
   limit.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   await settle(6);

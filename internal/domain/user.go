@@ -29,7 +29,7 @@ type User struct {
 	DeptID              int                           `json:"deptId"`
 	DeptName            string                        `json:"deptName"`
 	// PlatformRole is a platform-wide role, independent of project membership.
-	// "admin" may edit generic SOP templates; empty is a regular user.
+	// "admin" may edit generic LOOP templates; empty is a regular user.
 	PlatformRole                 string     `json:"platformRole,omitempty"`
 	GitToken                     string     `json:"gitToken,omitempty"`
 	GitHubCredentialConfigured   bool       `json:"gitHubCredentialConfigured,omitempty"`

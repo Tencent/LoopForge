@@ -160,10 +160,10 @@ const homeStarters = [
     icon: "sparkles",
     tone: "blue",
     title: "快速接入",
-    description: "提供最低限度的鉴权与仓库，用默认角色与 SOP 立即开始。",
-    steps: ["鉴权", "仓库", "默认 SOP"],
+    description: "提供最低限度的鉴权与仓库，用默认角色与 LOOP 立即开始。",
+    steps: ["鉴权", "仓库", "默认 LOOP"],
   },
-  // New users asked how to hook up a test environment and how roles and SOPs
+  // New users asked how to hook up a test environment and how roles and LOOPs
   // work; these two cards start a guided conversation instead of dropping them
   // on a settings page.
   {
@@ -180,11 +180,11 @@ const homeStarters = [
     id: "sop",
     icon: "workflow",
     tone: "green",
-    title: "选用 SOP 与角色",
-    description: "了解产品、前端、后端三套交付 SOP 和其中的角色，按需求推荐一套。",
+    title: "选用 LOOP 与角色",
+    description: "了解产品、前端、后端三套交付 LOOP 和其中的角色，按需求推荐一套。",
     steps: ["产品", "前端", "后端"],
     prompt:
-      "我准备写需求了。平台内置的产品、前端、后端交付 SOP 分别适合什么场景、好在哪里、里面有哪些角色？请结合当前项目推荐一套，并告诉我怎么绑定和派发第一条需求。我的需求是：",
+      "我准备写需求了。平台内置的产品、前端、后端交付 LOOP 分别适合什么场景、好在哪里、里面有哪些角色？请结合当前项目推荐一套，并告诉我怎么绑定和派发第一条需求。我的需求是：",
   },
 ];
 
@@ -1837,7 +1837,7 @@ export default function App() {
                     kind: "run",
                     id: run.id,
                     runId: run.id,
-                    name: run.workflowSnapshot?.name || "SOP 运行",
+                    name: run.workflowSnapshot?.name || "LOOP 运行",
                     nodeId,
                   })
                 }
@@ -1916,7 +1916,7 @@ export default function App() {
                     <button
                       ref={projectPicker}
                       className={`context-pill project-picker${chat.projectId ? "" : " is-unset"}`}
-                      title="对话所属的项目：需求、仓库、角色和 SOP 都按项目区分"
+                      title="对话所属的项目：需求、仓库、角色和 LOOP 都按项目区分"
                       aria-label="选择项目"
                       aria-haspopup="listbox"
                       aria-expanded={menu?.type === "project"}
@@ -2426,7 +2426,7 @@ export default function App() {
           ) : dialog.type === "delete" ? (
             <p>
               删除“{dialog.session.title}”的聊天记录？本对话里还没提交 MR
-              的需求单会一并删除，已提交 MR 的需求和已保存的 SOP 会保留。
+              的需求单会一并删除，已提交 MR 的需求和已保存的 LOOP 会保留。
             </p>
           ) : dialog.type === "edit" ? (
             <>

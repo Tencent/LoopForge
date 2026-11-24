@@ -15,7 +15,7 @@ func TestWorkflowOptimisticRevisionPreventsLostUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	original := domain.WorkflowDefinition{ID: "team-sop", Name: "Team SOP", Status: "draft"}
+	original := domain.WorkflowDefinition{ID: "team-sop", Name: "Team LOOP", Status: "draft"}
 	if err := s.PutWorkflow(original); err != nil {
 		t.Fatal(err)
 	}

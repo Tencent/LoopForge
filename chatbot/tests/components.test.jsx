@@ -359,10 +359,10 @@ describe("content and panels", () => {
     );
     expect(await screen.findByText("流程一")).toBeInTheDocument();
     await user.type(screen.getByPlaceholderText("新流程或这次要做的事"), "新任务");
-    await user.click(screen.getByText("派发 SOP"));
+    await user.click(screen.getByText("派发 LOOP"));
     await waitFor(() => expect(writeMock).toHaveBeenCalled());
     await user.type(screen.getByPlaceholderText("新流程或这次要做的事"), "复制流程");
-    await user.click(screen.getByText("创建 SOP"));
+    await user.click(screen.getByText("创建 LOOP"));
     const runRow = await screen.findByRole("button", { name: /交付流程/ });
     await user.click(runRow);
     expect(await screen.findByText("完成任务")).toBeInTheDocument();
@@ -404,10 +404,10 @@ describe("content and panels", () => {
         />
       </div>,
     );
-    expect(screen.getByLabelText("SOP 运行过程")).toBeInTheDocument();
+    expect(screen.getByLabelText("LOOP 运行过程")).toBeInTheDocument();
   });
 
-  test("renders file artifacts and validates SOP actions without a project", async () => {
+  test("renders file artifacts and validates LOOP actions without a project", async () => {
     const user = userEvent.setup();
     const select = vi.fn();
     const artifactChat = {
@@ -450,7 +450,7 @@ describe("content and panels", () => {
       />,
     );
     await user.type(screen.getByPlaceholderText("新流程或这次要做的事"), "任务");
-    await user.click(screen.getByText("派发 SOP"));
+    await user.click(screen.getByText("派发 LOOP"));
     expect(screen.getByRole("alert")).toHaveTextContent("请先点右上角的项目名称选择或绑定项目");
   });
 
@@ -572,7 +572,7 @@ describe("content and panels", () => {
     expect(screen.getByText("导入前请检查")).toBeInTheDocument();
   });
 
-  test("an SOP proposal is declined or muted from its card", async () => {
+  test("a LOOP proposal is declined or muted from its card", async () => {
     const user = userEvent.setup();
     const decide = vi.fn(async () => ({}));
     const artifact = (draft) => ({
@@ -584,7 +584,7 @@ describe("content and panels", () => {
       draft: {
         tool: "issues_save",
         body: { projectId: "p1", title: "积分排行榜", kind: "requirement", workflowId: "delivery" },
-        proposal: { reason: "后续可以走 SOP 完整交付", timing: "end" },
+        proposal: { reason: "后续可以走 LOOP 完整交付", timing: "end" },
         ...draft,
       },
     });
@@ -592,7 +592,7 @@ describe("content and panels", () => {
     const { rerender } = render(
       <DraftCard artifact={artifact({})} onApply={vi.fn()} onDecide={decide} onPreview={vi.fn()} context={context} />,
     );
-    expect(screen.getByText(/可选的后续工作：后续可以走 SOP/)).toBeInTheDocument();
+    expect(screen.getByText(/可选的后续工作：后续可以走 LOOP/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "不需要" }));
     expect(decide).toHaveBeenLastCalledWith(3, 0, "declined");
     await user.click(screen.getByRole("button", { name: "本会话不再建议" }));
@@ -600,7 +600,7 @@ describe("content and panels", () => {
 
     rerender(
       <DraftCard
-        artifact={artifact({ proposal: { reason: "整件需求走 SOP", timing: "start" } })}
+        artifact={artifact({ proposal: { reason: "整件需求走 LOOP", timing: "start" } })}
         onApply={vi.fn()}
         onDecide={decide}
         onPreview={vi.fn()}
@@ -613,7 +613,7 @@ describe("content and panels", () => {
     const expiresAt = new Date(Date.now() + 125_000).toISOString();
     rerender(
       <DraftCard
-        artifact={artifact({ proposal: { reason: "整件需求走 SOP", timing: "start", expiresAt } })}
+        artifact={artifact({ proposal: { reason: "整件需求走 LOOP", timing: "start", expiresAt } })}
         onApply={vi.fn()}
         onDecide={decide}
         onPreview={vi.fn()}
@@ -625,7 +625,7 @@ describe("content and panels", () => {
     rerender(
       <DraftCard
         artifact={artifact({
-          proposal: { reason: "整件需求走 SOP", timing: "start", expiresAt: new Date(Date.now() - 1000).toISOString() },
+          proposal: { reason: "整件需求走 LOOP", timing: "start", expiresAt: new Date(Date.now() - 1000).toISOString() },
         })}
         onApply={vi.fn()}
         onDecide={decide}
@@ -637,7 +637,7 @@ describe("content and panels", () => {
 
     rerender(
       <DraftCard
-        artifact={artifact({ proposal: { reason: "整件需求走 SOP", timing: "start", expiresAt }, decision: "expired" })}
+        artifact={artifact({ proposal: { reason: "整件需求走 LOOP", timing: "start", expiresAt }, decision: "expired" })}
         onApply={vi.fn()}
         onDecide={decide}
         onPreview={vi.fn()}
@@ -645,7 +645,7 @@ describe("content and panels", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "已超时，AI 助手直接执行" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "建需求并走 SOP" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "建需求并走 LOOP" })).not.toBeInTheDocument();
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "让 AI 助手自己做" })).not.toBeInTheDocument();
 
@@ -653,7 +653,7 @@ describe("content and panels", () => {
       <DraftCard artifact={artifact({ decision: "declined" })} onApply={vi.fn()} onDecide={decide} onPreview={vi.fn()} context={context} />,
     );
     expect(screen.getByText(/未采纳/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "建需求并走 SOP" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "建需求并走 LOOP" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "本会话不再建议" })).not.toBeInTheDocument();
 
     rerender(
@@ -667,10 +667,10 @@ describe("content and panels", () => {
     );
     expect(screen.getByText(/AI 已拒绝/)).toBeInTheDocument();
     expect(screen.getByText(/缺少发布授权/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "建需求并走 SOP" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "建需求并走 LOOP" })).not.toBeInTheDocument();
   });
 
-  test("an SOP proposal card names the SOP route", async () => {
+  test("a LOOP proposal card names the LOOP route", async () => {
     const user = userEvent.setup();
     const apply = vi.fn(async () => ({}));
     const decide = vi.fn(async () => ({}));
@@ -685,7 +685,7 @@ describe("content and panels", () => {
           draft: {
             tool: "issues_save",
             body: { projectId: "p1", title: "积分排行榜", kind: "requirement", workflowId: "delivery" },
-            proposal: { reason: "新功能，SOP 用途对得上", timing: "start" },
+            proposal: { reason: "新功能，LOOP 用途对得上", timing: "start" },
           },
         }}
         onApply={apply}
@@ -694,14 +694,14 @@ describe("content and panels", () => {
         context={{ projectId: "p1", projects: [{ id: "p1", name: "项目一" }], references: [] }}
       />,
     );
-    expect(screen.getByText(/建议整件事走 SOP：新功能/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "建需求并走 SOP" }));
+    expect(screen.getByText(/建议整件事走 LOOP：新功能/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "建需求并走 LOOP" }));
     expect(apply).toHaveBeenCalledWith(1, 0, expect.anything());
     await user.click(screen.getByRole("button", { name: "让 AI 助手自己做" }));
     expect(decide).toHaveBeenLastCalledWith(1, 0, "declined");
   });
 
-  test("opens SOP node conversation and its artifacts", async () => {
+  test("opens LOOP node conversation and its artifacts", async () => {
     const user = userEvent.setup();
     render(<SopRunPanel runs={[run]} onClose={vi.fn()} />);
     await user.click(screen.getByText("实现"));

@@ -26,18 +26,18 @@ func TestIssueDeliverySkipped(t *testing.T) {
 		want    bool
 	}{
 		{name: "manually closed blocks poll", issue: domain.Issue{Status: "closed"}, mrs: own, at: at, want: true},
-		{name: "manually closed blocks SOP", issue: domain.Issue{Status: "closed"}, mrs: own, at: at, fromSOP: true, want: true},
+		{name: "manually closed blocks LOOP", issue: domain.Issue{Status: "closed"}, mrs: own, at: at, fromSOP: true, want: true},
 		{name: "externally closed is not manual", issue: domain.Issue{Status: "closed", CloseSource: "external"}, mrs: own, at: at, want: false},
 		{name: "reopened blocks poll", issue: domain.Issue{DeliveryState: "Reopened"}, mrs: own, at: at, want: true},
-		{name: "reopened allows SOP", issue: domain.Issue{DeliveryState: "reopened"}, mrs: own, at: at, fromSOP: true, want: false},
+		{name: "reopened allows LOOP", issue: domain.Issue{DeliveryState: "reopened"}, mrs: own, at: at, fromSOP: true, want: false},
 		{name: "leftover MR blocks poll", issue: withOwn, mrs: other, at: at, want: true},
-		{name: "leftover MR allowed for SOP", issue: withOwn, mrs: other, at: at, fromSOP: true, want: false},
+		{name: "leftover MR allowed for LOOP", issue: withOwn, mrs: other, at: at, fromSOP: true, want: false},
 		{name: "own MR allows poll", issue: withOwn, mrs: own, at: at, want: false},
 		{name: "no recorded MRs allows poll", issue: domain.Issue{}, mrs: other, at: at, want: false},
 		{name: "merged with older signal", issue: domain.Issue{DeliveryState: "merged", DeliveryUpdatedAt: at}, mrs: nil, at: at.Add(-time.Minute), want: true},
 		{name: "merged with same time", issue: domain.Issue{DeliveryState: "merged", DeliveryUpdatedAt: at}, mrs: nil, at: at, want: true},
 		{name: "merged with newer signal", issue: domain.Issue{DeliveryState: "merged", DeliveryUpdatedAt: at}, mrs: nil, at: at.Add(time.Minute), want: false},
-		{name: "merged older blocks SOP too", issue: domain.Issue{DeliveryState: "merged", DeliveryUpdatedAt: at}, mrs: nil, at: at.Add(-time.Minute), fromSOP: true, want: true},
+		{name: "merged older blocks LOOP too", issue: domain.Issue{DeliveryState: "merged", DeliveryUpdatedAt: at}, mrs: nil, at: at.Add(-time.Minute), fromSOP: true, want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

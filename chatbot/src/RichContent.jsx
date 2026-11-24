@@ -369,7 +369,7 @@ export function RichContent({ message, assets = emptyAssets, projectId = "" }) {
   );
 }
 
-// Full-window viewer shared by chat images, artifact previews and SOP node
+// Full-window viewer shared by chat images, artifact previews and LOOP node
 // files. Double-click an image to open; Esc closes.
 export function ImageLightbox({ src, alt, onClose }) {
   useEffect(() => {

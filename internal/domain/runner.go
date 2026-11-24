@@ -178,7 +178,7 @@ type Runner struct {
 	// NativeSandboxAvailable is reported by the daemon. Older Runners leave it
 	// false so the platform does not choose native automatically for them.
 	NativeSandboxAvailable bool `json:"nativeSandboxAvailable"`
-	// RunLimit caps concurrently admitted top-level SOP runs on a personal
+	// RunLimit caps concurrently admitted top-level LOOP runs on a personal
 	// machine, counted like the project limit. 0 means unlimited.
 	RunLimit   int             `json:"runLimit"`
 	Status     string          `json:"status"`
@@ -605,7 +605,7 @@ type RunnerInvocation struct {
 	// authenticated claim/control dispatch and never persisted in the task.
 	GitHTTPUserID      int64                                 `json:"gitHttpUserId,omitempty"`
 	GitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"gitHttpCredentials,omitempty"`
-	// The first SOP Agent may recover a failed automatic checkout. The runner
+	// The first LOOP Agent may recover a failed automatic checkout. The runner
 	// validates the frozen repository and branch before reporting success.
 	RepositoryPreparationFallback bool `json:"repositoryPreparationFallback,omitempty"`
 	// Repositories lists every repository the run touches (multi-repository

@@ -34,7 +34,7 @@ func TestRunnerWorkspacePreparationDeadline(t *testing.T) {
 		followsCaller            bool
 	}{
 		{"conversation", domain.RunnerWorkspaceOperationPrepare, domain.RunKindWorkspace, true},
-		{"SOP", domain.RunnerWorkspaceOperationPrepare, "", false},
+		{"LOOP", domain.RunnerWorkspaceOperationPrepare, "", false},
 		{"terminal", domain.RunnerWorkspaceOperationTerminal, domain.RunKindWorkspace, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,10 +236,10 @@ func TestRunnerConversationWorkspaceWaveReusesReadinessWithoutPreparingDuringAct
 		t.Fatalf("active wave readiness: %s %v", result.Payload, err)
 	}
 	request.Operation = domain.RunnerWorkspaceOperationPrepare
-	// A parallel SOP branch starting next to a running sibling reuses the live
+	// A parallel LOOP branch starting next to a running sibling reuses the live
 	// stamp exactly like a group role; neither reruns preflight scripts.
 	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 200 {
-		t.Fatal("parallel SOP branch failed to reuse active wave", result)
+		t.Fatal("parallel LOOP branch failed to reuse active wave", result)
 	}
 	request.RunKind = domain.RunKindWorkspace
 	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 200 {
@@ -602,7 +602,7 @@ func TestConversationWorkspaceMaterializesOnConnectedRunner(t *testing.T) {
 	}
 }
 
-// A SOP without preparation steps never stamps readiness: its nodes skip
+// A LOOP without preparation steps never stamps readiness: its nodes skip
 // preparation. While a node runs, the IDE still joins that live environment.
 func TestRunnerIDEJoinsRunningSOPWithoutPreparationSteps(t *testing.T) {
 	d, request, root := runnerPreparationFixture(t)

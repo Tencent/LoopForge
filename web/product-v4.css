@@ -1764,7 +1764,7 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
   overflow-y:hidden !important;
   box-sizing:border-box !important;
 }
-/* Existing work-item clarification: optional, contextual, and separate from SOP execution. */
+/* Existing work-item clarification: optional, contextual, and separate from LOOP execution. */
 .clarify-overview{display:flex;align-items:center;gap:11px;margin-top:12px;padding:11px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2)}
 .clarify-overview>span{display:grid;place-items:center;flex:0 0 28px;height:28px;border-radius:9px;background:var(--blue-soft);color:var(--blue);font-weight:800}
 .clarify-overview>div{min-width:0;flex:1}.clarify-overview b,.clarify-overview small{display:block}.clarify-overview small{margin-top:2px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

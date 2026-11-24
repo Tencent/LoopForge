@@ -61,14 +61,14 @@ const CREDENTIAL_KINDS=[
     description:'用于克隆私有仓库、创建任务分支及推送交付产物。',
     guide:[['打开 GitHub「Settings → Developer settings → Personal access tokens」','https://github.com/settings/tokens','前往 GitHub 申请个人访问令牌'],['新建令牌，为目标仓库授予 <code>Contents</code> 和 <code>Pull requests</code> 的读写权限'],['复制令牌粘贴到下方，保存前会自动校验权限']],
     placeholder:'请输入个人访问令牌（PAT）',hint:'保存前会先校验令牌有效性与权限',
-    impact:'依赖私有仓库的 SOP 将无法克隆或推送仓库。'},
+    impact:'依赖私有仓库的 LOOP 将无法克隆或推送仓库。'},
   {key:'gitSshKey',group:'platform',name:'Git SSH',short:'Git SSH 密钥',icon:'key',
     use:'SSH 密钥用于克隆和推送；创建 PR/MR 需要访问令牌',dialog:()=>openGitSSHKeys(),action:'管理密钥'},
   {key:'gitHttpCredentials',group:'platform',name:'Git HTTPS',short:'Git 访问令牌',icon:'lock',
     use:'按主机管理 HTTPS 访问令牌，工作区的 git、gh、glab 自动认证',dialog:()=>openGitHTTPCredentials(),action:'管理令牌'},
   {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
-    use:'AI 对话与 SOP 的 CodeBuddy 执行器',
-    description:'AI 对话（含 Claude、GPT 等模型）和 SOP 的 CodeBuddy 执行器都使用它；网络环境按账号所在环境配置。',
+    use:'AI 对话与 LOOP 的 CodeBuddy 执行器',
+    description:'AI 对话（含 Claude、GPT 等模型）和 LOOP 的 CodeBuddy 执行器都使用它；网络环境按账号所在环境配置。',
     guide:[['使用官方地址时，选择 CodeBuddy 账号所在的网络环境'],['登录该站点的 API Key 页面，新建 API Key',codeBuddyKeyURL,codeBuddyKeyLinkLabel],['使用自定义网关时，填写网关提供的 Base URL 和 API Key']],
     placeholder:'请输入个人 ck_ key',
     extra:{name:'codeBuddyInternetEnvironment',label:'网络环境',options:CODEBUDDY_ENVIRONMENTS},
@@ -76,21 +76,21 @@ const CREDENTIAL_KINDS=[
     models:{name:'codeBuddyModels',engine:'codebuddy'},
     impact:'CodeBuddy 会使用可用的共享配置。其他 CLI 继续使用各自的凭据。'},
   {key:'codexApiKey',group:'model',name:'Codex',short:'Codex API Key',logo:'codex',monochrome:true,
-    use:'AI 对话选择 Codex 执行器，以及以 Codex 运行的 SOP 节点',
-    description:'AI 对话切换到 Codex 后可选用模型目录里的模型，SOP 在执行机器上以 Codex 运行的节点也使用它。目录为空时，未填 Base URL 使用 Codex 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
+    use:'AI 对话选择 Codex 执行器，以及以 Codex 运行的 LOOP 节点',
+    description:'AI 对话切换到 Codex 后可选用模型目录里的模型，LOOP 在执行机器上以 Codex 运行的节点也使用它。目录为空时，未填 Base URL 使用 Codex 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
     guide:[['在模型服务商控制台创建 API Key'],['如走代理或私有网关，记下服务地址'],['粘贴 Key，按需填写 Base URL；保存后可在模型目录里挑选 AI 对话的模型']],
     placeholder:'请输入 Codex API Key',
     extra:{name:'codexBaseUrl',label:'Base URL',placeholder:'https://api.openai.com/v1',url:true,clearWithKey:true},
     models:{name:'codexModels',engine:'codex',endpoint:'/models'},
-    impact:'以 Codex 运行的 SOP 节点将无法执行，Base URL 与模型目录一并清空。'},
+    impact:'以 Codex 运行的 LOOP 节点将无法执行，Base URL 与模型目录一并清空。'},
   {key:'claudeCodeApiKey',group:'model',name:'Claude Code',short:'Claude Code API Key',logo:'claude',monochrome:true,
-    use:'AI 对话选择 Claude 执行器，以及以 Claude Code 运行的 SOP 节点',
-    description:'AI 对话切换到 Claude Code 后可选用模型目录里的模型，SOP 在执行机器上以 Claude Code 运行的节点也使用它。目录为空时，未填 Base URL 使用 Claude Code 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
+    use:'AI 对话选择 Claude 执行器，以及以 Claude Code 运行的 LOOP 节点',
+    description:'AI 对话切换到 Claude Code 后可选用模型目录里的模型，LOOP 在执行机器上以 Claude Code 运行的节点也使用它。目录为空时，未填 Base URL 使用 Claude Code 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
     guide:[['在模型服务商控制台创建 API Key'],['如走代理或私有网关，记下服务地址'],['粘贴 Key，按需填写 Base URL；保存后可在模型目录里挑选 AI 对话的模型']],
     placeholder:'请输入 Claude Code API Key',
     extra:{name:'claudeCodeBaseUrl',label:'Base URL',placeholder:'https://api.anthropic.com',url:true,clearWithKey:true},
     models:{name:'claudeCodeModels',engine:'claude-code',endpoint:'/v1/models'},
-    impact:'以 Claude Code 运行的 SOP 节点将无法执行，Base URL 与模型目录一并清空。'},
+    impact:'以 Claude Code 运行的 LOOP 节点将无法执行，Base URL 与模型目录一并清空。'},
   agentCliCredentialKind('opencode',{name:'OpenCode',logo:'opencode',baseUrl:'https://api.example.com/v1',required:()=>true,
     note:'OpenCode 没有自己的模型服务，需要填写 Base URL。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
   agentCliCredentialKind('cursor',{name:'Cursor CLI',logo:'cursor',monochrome:true,
@@ -112,8 +112,8 @@ const CREDENTIAL_KINDS=[
 function agentCliCredentialKind(cli,o){
   const field=`agentCli.${cli}.`,configurable=!!o.protocols;
   return {key:`agentCli.${cli}`,agentCli:cli,group:'model',name:o.name,short:`${o.name} API Key`,logo:o.logo,monochrome:!!o.monochrome,
-    use:`AI 对话的 ${o.name} 模型与以 ${o.name} 运行的 SOP 节点`,
-    description:`AI 对话切换到 ${o.name} 后可选用它的模型，SOP 在执行机器上以 ${o.name} 运行的节点也使用它。${o.note||''}`,
+    use:`AI 对话的 ${o.name} 模型与以 ${o.name} 运行的 LOOP 节点`,
+    description:`AI 对话切换到 ${o.name} 后可选用它的模型，LOOP 在执行机器上以 ${o.name} 运行的节点也使用它。${o.note||''}`,
     guide:o.guide||[['在模型服务商控制台创建 API Key'],['记下服务地址和它提供的接口协议'],['粘贴 Key，按需填写 Base URL 并选择协议；保存后可在模型目录里挑选 AI 对话的模型']],
     placeholder:`请输入 ${o.name} API Key`,
     ...(configurable?{
@@ -121,7 +121,7 @@ function agentCliCredentialKind(cli,o){
       protocol:{name:field+'protocol',options:o.protocols},
     }:{}),
     models:{name:field+'models',engine:cli},
-    impact:`AI 对话将不能再切换到 ${o.name}，以 ${o.name} 运行的 SOP 节点将无法执行${configurable?'，Base URL、协议与模型目录一并清空':''}。`};
+    impact:`AI 对话将不能再切换到 ${o.name}，以 ${o.name} 运行的 LOOP 节点将无法执行${configurable?'，Base URL、协议与模型目录一并清空':''}。`};
 }
 function credentialValue(user,name){
   const [scope,cli,field]=String(name).split('.');
@@ -1766,7 +1766,7 @@ function renderPlatformAdminPanel(){
           </form>
           <div class="platform-add-hint">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-            <span>授权后用户将获得全平台通用 SOP 模板及公共角色的修改与发布权限，请谨慎授予。</span>
+            <span>授权后用户将获得全平台通用 LOOP 模板及公共角色的修改与发布权限，请谨慎授予。</span>
           </div>
         </div>
 
@@ -1795,7 +1795,7 @@ function renderPlatformAdminPanel(){
           </div>
           <ul class="platform-side-list">
             <li>
-              <b>通用 SOP 模板全局编辑</b>
+              <b>通用 LOOP 模板全局编辑</b>
               <p>通用模板面向全平台所有项目共享，由平台管理员统一定义并维护，修改后各项目下次运行即刻生效。</p>
             </li>
             <li>
@@ -1818,7 +1818,7 @@ function renderPlatformAdminPanel(){
           </div>
           <p class="platform-side-desc">平台管理员在流程设计或角色定义中维护通用模板后，所有关联项目将在下次运行自动应用最新版本。</p>
           <div class="platform-side-quick-links">
-            <button type="button" class="button ghost small platform-quick-link-btn" data-platform-nav="sops">查看 SOP 流程 ↗</button>
+            <button type="button" class="button ghost small platform-quick-link-btn" data-platform-nav="sops">查看 LOOP 流程 ↗</button>
             <button type="button" class="button ghost small platform-quick-link-btn" data-platform-nav="agents">查看角色定义 ↗</button>
           </div>
           <div class="platform-audit-note">
@@ -1888,7 +1888,7 @@ function platformSharedKeyHTML(){
       <div class="platform-admin-head">
         <div class="platform-admin-head-meta">
           <h2>给没配 Key 的成员用</h2>
-          <p>成员没配自己的 CodeBuddy API Key 时，对话和 SOP 会用这里的 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。</p>
+          <p>成员没配自己的 CodeBuddy API Key 时，对话和 LOOP 会用这里的 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。</p>
         </div>
         <span class="platform-admin-count-pill platform-status-pill" data-shared-key-badge>${lfT('加载中','Loading')}</span>
       </div>
@@ -1901,7 +1901,7 @@ function platformSharedKeyHTML(){
               <a class="platform-shared-key-link" data-shared-key-link target="_blank" rel="noopener noreferrer"></a>
             </div>
             <div class="platform-note is-warn" data-shared-key-warning hidden></div>
-            <label class="platform-field"><span>默认模型</span><select name="defaultModel"></select><small class="platform-field-hint">没指定模型时用它；SOP 角色的模型不在允许范围内时也改用它。</small></label>
+            <label class="platform-field"><span>默认模型</span><select name="defaultModel"></select><small class="platform-field-hint">没指定模型时用它；LOOP 角色的模型不在允许范围内时也改用它。</small></label>
           </div>
           <div class="platform-shared-key-col">
             <div class="platform-field">
@@ -2044,7 +2044,7 @@ async function loadPlatformSharedKey(host){
       const n=(status.models||[]).length,first=sharedModelLabel(status.models?.[0]),by=status.updatedBy||'';
       parts.push(lfT(`当前：${envInfo.label}，${n} 个模型，默认 ${first}${by?`，${by} 最后修改`:''}。`,`Current: ${envInfo.label}, ${n} model${n===1?'':'s'}, default ${first}${by?`, last changed by ${by}`:''}.`));
     }
-    else parts.push(lfT('还没有配置共享 Key，没配 Key 的成员需要先配自己的 Key 才能对话和跑 SOP。','No shared key yet; members without their own key must add one before chatting or running SOPs.'));
+    else parts.push(lfT('还没有配置共享 Key，没配 Key 的成员需要先配自己的 Key 才能对话和跑 LOOP。','No shared key yet; members without their own key must add one before chatting or running LOOPs.'));
     const sponsor=status?.legacySponsor;
     if(sponsor)parts.push(on
       ?lfT(`配置后不再使用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${sponsor} 的 Key。`,`The key of ${sponsor} (AGENTFLOW_ASSISTANT_SPONSOR_LOGIN) is no longer used.`)
@@ -2095,7 +2095,7 @@ async function loadPlatformSharedKey(host){
     finally{if(submit)submit.disabled=false}
   };
   clear.onclick=async()=>{
-    if(!await afConfirm({title:'停用共享 Key',message:'停用后，没配自己 Key 的成员将不能再用共享 Key 对话和跑 SOP。确定停用？',danger:true,confirmText:'停用'}))return;
+    if(!await afConfirm({title:'停用共享 Key',message:'停用后，没配自己 Key 的成员将不能再用共享 Key 对话和跑 LOOP。确定停用？',danger:true,confirmText:'停用'}))return;
     try{status=await api('/api/platform/codebuddy-key',{method:'DELETE'});renderStatus();syncBootstrap();toast('共享 Key 已停用','ok')}
     catch(err){toast(err.message,'err')}
   };

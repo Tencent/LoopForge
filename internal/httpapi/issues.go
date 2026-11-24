@@ -305,7 +305,7 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			return
 		}
 		// Clarification is optional: saving a ticket never scores it or starts
-		// a round. Binding SOP or repositories must not invent a status.
+		// a round. Binding LOOP or repositories must not invent a status.
 		if found {
 			keepExistingTrackerBinding(&v, existing)
 		} else {
@@ -580,7 +580,7 @@ func issueChangeDetail(before, after domain.Issue) string {
 		parts = append(parts, "责任人")
 	}
 	if before.WorkflowID != after.WorkflowID && after.WorkflowID != "" {
-		parts = append(parts, "关联 SOP")
+		parts = append(parts, "关联 LOOP")
 	}
 	if before.TapdID != after.TapdID {
 		if after.TapdID == "" {
@@ -802,7 +802,7 @@ func normalizeSOPBindings(store *repo.Store, projectID string, in []domain.Issue
 	bindings := domain.NormalizeSOPBindings(in)
 	for i, binding := range bindings {
 		if !knownWorkflow(store, binding.WorkflowID) {
-			return nil, fmt.Errorf("SOP %s 不存在", binding.WorkflowID)
+			return nil, fmt.Errorf("LOOP %s 不存在", binding.WorkflowID)
 		}
 		if binding.AssigneeUserID > 0 {
 			if _, ok := store.User(binding.AssigneeUserID); !ok {
@@ -810,7 +810,7 @@ func normalizeSOPBindings(store *repo.Store, projectID string, in []domain.Issue
 			}
 		}
 		if wf, ok := store.Workflow(binding.WorkflowID); ok && strings.TrimSpace(wf.ProjectID) != "" && wf.ProjectID != projectID && !wf.Shared && !wf.Generic {
-			return nil, fmt.Errorf("SOP %s 不属于当前项目", binding.WorkflowID)
+			return nil, fmt.Errorf("LOOP %s 不属于当前项目", binding.WorkflowID)
 		}
 		bindings[i] = binding
 	}

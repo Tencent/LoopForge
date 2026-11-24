@@ -99,7 +99,7 @@ func TestMainBotConversationWorkspaceWriterKeepsHashChecks(t *testing.T) {
 	gate.RLock()
 	defer gate.RUnlock()
 	if result := d.readRunnerWorkspace(context.Background(), req); result.Status != 409 {
-		t.Fatal("ordinary writer bypassed active SOP", result)
+		t.Fatal("ordinary writer bypassed active LOOP", result)
 	}
 	req.RunKind = domain.RunKindWorkspace
 	if result := d.readRunnerWorkspace(context.Background(), req); result.Status != 200 {

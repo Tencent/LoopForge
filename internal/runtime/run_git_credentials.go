@@ -14,7 +14,7 @@ import (
 	"agentflow/internal/gitwork"
 )
 
-// prepareRunGitBinding lends SOP commands an authenticated, command-lifetime
+// prepareRunGitBinding lends LOOP commands an authenticated, command-lifetime
 // credential relay. Tokens remain in memory, rather than environment variables
 // or the files that a workspace snapshot carries to the next node.
 func prepareRunGitBinding(ctx context.Context, sandbox Sandbox, command CommandSpec, credentials RunCredentials) (CommandSpec, func(), error) {
@@ -38,7 +38,7 @@ func prepareRunGitBinding(ctx context.Context, sandbox Sandbox, command CommandS
 			hosts[host], secrets[host] = credential.Platform, credential
 		}
 	}
-	// Keep BindGit distinct from conversation BindGitWorkspace: SOP SSH
+	// Keep BindGit distinct from conversation BindGitWorkspace: LOOP SSH
 	// credentials are keyed by the frozen remote, rather than by host.
 	// The host list is deliberately separate from the secret snapshot.
 	credentials.GitHTTPHosts = hosts

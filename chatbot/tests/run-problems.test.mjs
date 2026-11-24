@@ -7,7 +7,7 @@ const run = (status, nodes) => ({
   id: "run-1",
   status,
   workflowSnapshot: {
-    name: "通用后端交付 SOP",
+    name: "通用后端交付 LOOP",
     nodes: [
       { id: "design", name: "方案设计", type: "agent" },
       { id: "mr", name: "提交 MR", type: "agent" },
@@ -57,7 +57,7 @@ test("failed and waiting nodes surface with the reason in workflow order", () =>
   );
   assert.equal(
     problems[2].reason,
-    "SOP「通用后端交付 SOP」在这一步设置了人工门禁：「提交 MR」已完成，需要有权限的成员检查结果后确认，确认后运行结束。",
+    "LOOP「通用后端交付 LOOP」在这一步设置了人工门禁：「提交 MR」已完成，需要有权限的成员检查结果后确认，确认后运行结束。",
   );
   assert.deepEqual(problems[0].expected, {
     status: "failed",
@@ -106,7 +106,7 @@ test("approval reason names upstream, downstream, rework and instructions", asyn
   const { approvalWaitReason } = await import("../src/runs.js");
   const run = {
     workflowSnapshot: {
-      name: "通用后端交付 SOP",
+      name: "通用后端交付 LOOP",
       nodes: [
         { id: "impl", name: "代码实现" },
         { id: "test", name: "测试" },
@@ -129,6 +129,6 @@ test("approval reason names upstream, downstream, rework and instructions", asyn
   // Same expectation as TestApprovalWaitReason in internal/domain.
   assert.equal(
     approvalWaitReason(run, "gate"),
-    "SOP「通用后端交付 SOP」在这一步设置了人工门禁：「代码实现」、「测试」已完成，需要有权限的成员检查结果后确认，确认后继续「发布」；不通过可打回到「代码实现」重做。确认要求：检查测试报告和 MR 改动范围",
+    "LOOP「通用后端交付 LOOP」在这一步设置了人工门禁：「代码实现」、「测试」已完成，需要有权限的成员检查结果后确认，确认后继续「发布」；不通过可打回到「代码实现」重做。确认要求：检查测试报告和 MR 改动范围",
   );
 });

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp } from '../lib/load-app.mjs';
 
-// A requirement worked on only in a conversation workspace has no SOP nodes:
+// A requirement worked on only in a conversation workspace has no LOOP nodes:
 // its stage follows the MR it handed in, and 查看 opens the requirement
 // instead of the empty run page.
 test('conversation requirements follow their MR and open the requirement drawer', async (t) => {
@@ -63,7 +63,7 @@ test('conversation requirements follow their MR and open the requirement drawer'
   // A deleted conversation ends its workspace: that is not a failure.
   assert.equal(out.ended.stage, 'MR 待合入');
   assert.equal(out.ended.failed, false);
-  // Once dispatched to an SOP the requirement follows its SOP run.
+  // Once dispatched to a LOOP the requirement follows its LOOP run.
   assert.equal(out.withSOP, false);
   // The source conversation still marks it after the workspace record is gone.
   assert.equal(out.gone.stage, 'MR 待合入');
@@ -128,11 +128,11 @@ test('conversation requirement drawer shows MR, branches and the conversation', 
     'https://git.example.com/g/api/-/compare/main...feature/chat%202',
   ]);
   assert.match(out.push, /已直推 · 待验收/);
-  // The SOP-only tabs explain where a conversation requirement keeps that information.
-  assert.match(out.artifacts, /不产出 SOP 节点产物/);
+  // The LOOP-only tabs explain where a conversation requirement keeps that information.
+  assert.match(out.artifacts, /不产出 LOOP 节点产物/);
   assert.match(out.acceptance, /在 MR 里评审，合入默认分支后需求自动完成/);
   assert.doesNotMatch(out.acceptance, /尚未执行/);
-  assert.match(out.activity, /对话需求没有 SOP 任务/);
+  assert.match(out.activity, /对话需求没有 LOOP 任务/);
   const url = new URL(out.link);
   assert.equal(url.searchParams.get('chatSession'), 'chat-1');
   assert.equal(url.hash, '#/collaboration');
@@ -141,7 +141,7 @@ test('conversation requirement drawer shows MR, branches and the conversation', 
   assert.ok(out.overviewChat);
   assert.match(out.overview, /对话工作区/);
   assert.equal(out.deliveryRunLinks, 0);
-  assert.match(out.delivery, /没有 SOP 运行/);
+  assert.match(out.delivery, /没有 LOOP 运行/);
   assert.match(out.deleted, /对话已删除/);
   assert.equal(out.deletedLink, false);
   // Without the snapshot the branches come from the run list.

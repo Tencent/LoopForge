@@ -183,7 +183,7 @@ test("internal resume prompts render as acknowledgements only with a matching sa
     "",
   );
 });
-test("answered SOP proposals render as short acknowledgements", async () => {
+test("answered LOOP proposals render as short acknowledgements", async () => {
   const { confirmationCaption, isProposalTimeout } = await import("../src/api.js");
   const reply = (draft) => ({
     role: "assistant",
@@ -192,18 +192,18 @@ test("answered SOP proposals render as short acknowledgements", async () => {
   const dispatch = {
     tool: "issues_dispatch",
     path: { id: "i1" },
-    proposal: { reason: "整件需求走 SOP", timing: "start" },
+    proposal: { reason: "整件需求走 LOOP", timing: "start" },
   };
-  const declined = { role: "user", content: "不走 SOP，这件事由你直接完成。" };
+  const declined = { role: "user", content: "不走 LOOP，这件事由你直接完成。" };
   assert.equal(
     confirmationCaption(declined, reply({ ...dispatch, decision: "declined" })),
-    "不走 SOP，让 AI 助手自己做",
+    "不走 LOOP，让 AI 助手自己做",
   );
   assert.equal(confirmationCaption(declined, reply(dispatch)), "");
   const expired = {
     role: "user",
     trigger: "proposal_timeout",
-    content: "SOP 建议超时未确认，这件事由你直接完成。",
+    content: "LOOP 建议超时未确认，这件事由你直接完成。",
   };
   const timedOut = reply({ ...dispatch, decision: "expired" });
   assert.equal(confirmationCaption(expired, timedOut), "");

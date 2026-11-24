@@ -324,7 +324,7 @@ export default function ActivityTrace({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(Date.now);
-  // Fold the trace once its turn finishes (an SOP node keeps this instance).
+  // Fold the trace once its turn finishes (a LOOP node keeps this instance).
   useEffect(() => {
     if (!live) setExpanded(false);
   }, [live]);

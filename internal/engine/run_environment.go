@@ -15,7 +15,7 @@ import (
 )
 
 // runEnvironment owns the single sandbox/workspace assigned to a workflow run.
-// SOP nodes and group tasks hold nodeMu only while preparing the shared
+// LOOP nodes and group tasks hold nodeMu only while preparing the shared
 // environment (checkout, preparation scripts, inputs); parallel branches then
 // execute concurrently and are counted in activeExecutions.
 type runEnvironment struct {

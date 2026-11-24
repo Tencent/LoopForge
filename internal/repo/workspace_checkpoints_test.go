@@ -157,7 +157,7 @@ func TestWorkspaceCheckpointLeaseCASAndDurableIdleDeadline(t *testing.T) {
 	}
 	restored, _ := s.RunState(r.ID)
 	if restored.Status != "succeeded" || !restored.WorkspaceCleanedAt.IsZero() {
-		t.Fatal("restore altered SOP outcome")
+		t.Fatal("restore altered LOOP outcome")
 	}
 	if err = s.FinishWorkspaceUse(r.ID, token, now, nil, ""); err != nil {
 		t.Fatal(err)

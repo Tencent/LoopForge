@@ -13,7 +13,7 @@ func (e *Engine) updateRun(id string, mutate func(*domain.Run)) {
 }
 
 // updateRunErr is updateRun for callers that must react to a failed write,
-// such as a SOP node whose artifact handoff did not reach the store.
+// such as a LOOP node whose artifact handoff did not reach the store.
 func (e *Engine) updateRunErr(id string, mutate func(*domain.Run)) error {
 	_, err := e.updateRunAtErr(id, false, mutate)
 	return err

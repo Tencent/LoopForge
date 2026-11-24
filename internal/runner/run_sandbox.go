@@ -134,7 +134,7 @@ func (d *Daemon) closeSharedSandboxes(ctx context.Context, match func(*runSandbo
 }
 
 // runSandboxKey identifies the shared sandbox of a task that runs in a
-// shared checkout (runs/<run>/workspace). A child SOP works in its parent's
+// shared checkout (runs/<run>/workspace). A child LOOP works in its parent's
 // checkout but keeps a sandbox of its own. The id doubles as the container
 // name suffix, so it keeps the runner-owned "rt-" prefix that cleanup_run
 // enumerates.

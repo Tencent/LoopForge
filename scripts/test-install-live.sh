@@ -100,13 +100,13 @@ def wait_for(status):
         if current['status']==status:
             return current
         time.sleep(0.5)
-    raise AssertionError('welcome SOP did not reach '+status)
+    raise AssertionError('welcome LOOP did not reach '+status)
 waiting=wait_for('waiting')
 assert waiting['nodes']['prepare']['status']=='succeeded',waiting
 assert any(item['name']=='welcome' for item in waiting['artifacts']),waiting
 api('POST','/api/runs/'+run_id+'/approve',{'nodeId':'approve'})
 wait_for('succeeded')
-print('Verified access, administrator creation, seeded sandboxes/templates/executors, and a real no-key welcome SOP through approval and completion')
+print('Verified access, administrator creation, seeded sandboxes/templates/executors, and a real no-key welcome LOOP through approval and completion')
 PY
   printf '%s install + repeat: %ss (UID %s)\n' "$actor" "$((SECONDS-started))" "$("${prefix[@]}" id -u)"
 done

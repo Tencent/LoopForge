@@ -78,7 +78,7 @@ type AgentToolSession struct {
 	turnMessages     []assistantMessage
 	SandboxProfileID string
 	// workspaceRunID is the one workspace an ordinary conversation is bound
-	// to: one it opened itself, or the SOP run of an issue.
+	// to: one it opened itself, or the LOOP run of an issue.
 	workspaceRunID string
 	workspaceMu    sync.Mutex
 	workspaceTurn  *assistantWorkspaceTurn
@@ -556,7 +556,7 @@ func (s *AgentToolSession) diagnostics() *assistantDiagnosticsCollector {
 	return assistantDiagnosticsFrom(s.ctx)
 }
 
-// sopDesigner reports a SOP designer turn: read-only platform tools plus one
+// sopDesigner reports a LOOP designer turn: read-only platform tools plus one
 // workflows_save draft, no workspace, browser or external MCP.
 func (s *AgentToolSession) sopDesigner() bool {
 	return s != nil && s.Surface == assistantSurfaceSOPDesigner

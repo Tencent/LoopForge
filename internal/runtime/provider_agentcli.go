@@ -117,7 +117,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	effort := strings.TrimSpace(o.Effort)
 	resume := strings.TrimSpace(o.Resume)
 	prompt := o.Prompt
-	// A chat session keeps the prompt of its first turn; SOP invocations
+	// A chat session keeps the prompt of its first turn; LOOP invocations
 	// are independent processes that each receive it.
 	inline := !agentCLINativeSystemPrompt(kind) && !(o.Chat && kind == AgentCLIKimi)
 	if inline && !(o.Chat && resume != "") {

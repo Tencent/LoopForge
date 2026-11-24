@@ -49,7 +49,7 @@ func (e *Engine) StartWithExecutionContext(workflowID, input string, repository 
 // StartWithRepositoriesContext starts a run with one or more repositories.
 // All repositories are equals: each is checked out into a first-level
 // sub-directory, gets the same work branch and, on scheduled runs, its own
-// integration merge and MR. SOP deliverables stay at the run workspace root.
+// integration merge and MR. LOOP deliverables stay at the run workspace root.
 func (e *Engine) StartWithRepositoriesContext(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext) (domain.Run, error) {
 	return e.startWorkflow(workflowID, input, repositories, executionContext, false)
 }
@@ -80,7 +80,7 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 			}
 		}
 		if !allowed {
-			return domain.Run{}, fmt.Errorf("SOP 不在共享任务的引用范围内")
+			return domain.Run{}, fmt.Errorf("LOOP 不在共享任务的引用范围内")
 		}
 	}
 	return e.startWorkflowDefinition(wf, input, repositories, executionContext, workspace)
@@ -188,7 +188,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if executionContext.ParentRunID != "" {
 		parent, exists := e.repo.RunState(executionContext.ParentRunID)
 		if !exists {
-			return domain.Run{}, fmt.Errorf("父 SOP 运行不存在")
+			return domain.Run{}, fmt.Errorf("父 LOOP 运行不存在")
 		}
 		if err := inheritSOPHandoff(parent, &r); err != nil {
 			return domain.Run{}, err

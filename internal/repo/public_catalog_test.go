@@ -58,7 +58,7 @@ func TestPublicCatalogPassesRunInputToEveryRole(t *testing.T) {
 	}
 }
 
-// A code SOP must not succeed with its changes only in the reclaimed
+// A code LOOP must not succeed with its changes only in the reclaimed
 // workspace: the MR node runs after acceptance and before the summary, and
 // its command gate blocks while a checkout has unpushed work.
 func TestPublicCodeSOPsOpenMRBeforeDeliver(t *testing.T) {
@@ -113,7 +113,7 @@ func TestPublicCodeSOPsOpenMRBeforeDeliver(t *testing.T) {
 	}
 	for _, node := range templates[GenericProductDeliveryWorkflowID].Workflow.Nodes {
 		if node.ID == "mr" {
-			t.Errorf("product SOP delivers documents only and must not open an MR")
+			t.Errorf("product LOOP delivers documents only and must not open an MR")
 		}
 	}
 }

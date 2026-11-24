@@ -14,7 +14,7 @@ import (
 
 // TestRoomDispatchTargetReachesIssueAndCards pins the two callers of
 // roomDispatchTarget: the issue's create operation and every dispatch card must
-// carry the same multi-SOP target, keyed by the first SOP, and a single-SOP
+// carry the same multi-LOOP target, keyed by the first LOOP, and a single-LOOP
 // dispatch onto an existing issue must stay an "sop" target.
 func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "room-test-session-secret")
@@ -48,23 +48,23 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 		}
 	}
 
-	const multiName = "SOP「构建」、「评审」、「上线」"
+	const multiName = "LOOP「构建」、「评审」、「上线」"
 	multi := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
 		"title": "三条流程并行", "workflowIds": []string{"target-build", "target-review", "target-ship"},
 	}, http.StatusCreated)
 	cancelRuns(multi)
 	if multi.Issue.WorkflowID != "target-build" {
-		t.Fatalf("new issue should bind the first SOP: %q", multi.Issue.WorkflowID)
+		t.Fatalf("new issue should bind the first LOOP: %q", multi.Issue.WorkflowID)
 	}
 	stored, ok := s.Issue(multi.Issue.ID)
 	if !ok || len(stored.Operations) == 0 {
 		t.Fatalf("issue should be stored with operations: %+v %v", stored, ok)
 	}
 	if create := stored.Operations[0]; create.Action != "create" || create.Detail != "从协作群「派发目标群」建单，派给"+multiName {
-		t.Fatalf("create operation should name every SOP: %+v", create)
+		t.Fatalf("create operation should name every LOOP: %+v", create)
 	}
 	if len(multi.Messages) != 3 {
-		t.Fatalf("one dispatch card per SOP: %+v", multi.Messages)
+		t.Fatalf("one dispatch card per LOOP: %+v", multi.Messages)
 	}
 	for i, msg := range multi.Messages {
 		if msg.TargetType != "multi" || msg.TargetID != "target-build" || msg.TargetName != multiName {
@@ -79,10 +79,10 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 	}, http.StatusCreated)
 	cancelRuns(again)
 	if len(again.Messages) != 2 {
-		t.Fatalf("one card per SOP on the existing issue: %+v", again.Messages)
+		t.Fatalf("one card per LOOP on the existing issue: %+v", again.Messages)
 	}
 	for i, msg := range again.Messages {
-		if msg.TargetType != "multi" || msg.TargetID != "target-ship" || msg.TargetName != "SOP「上线」、「评审」" {
+		if msg.TargetType != "multi" || msg.TargetID != "target-ship" || msg.TargetName != "LOOP「上线」、「评审」" {
 			t.Fatalf("existing-issue card %d target = (%q, %q, %q)", i, msg.TargetType, msg.TargetID, msg.TargetName)
 		}
 	}
@@ -90,8 +90,8 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 		"issueId": multi.Issue.ID, "workflowId": "target-review",
 	}, http.StatusCreated)
 	cancelRuns(single)
-	if msg := single.Message; msg.TargetType != "sop" || msg.TargetID != "target-review" || msg.TargetName != "SOP「评审」" {
-		t.Fatalf("single-SOP card target = (%q, %q, %q)", msg.TargetType, msg.TargetID, msg.TargetName)
+	if msg := single.Message; msg.TargetType != "sop" || msg.TargetID != "target-review" || msg.TargetName != "LOOP「评审」" {
+		t.Fatalf("single-LOOP card target = (%q, %q, %q)", msg.TargetType, msg.TargetID, msg.TargetName)
 	}
 	latest, _ := s.Issue(multi.Issue.ID)
 	creates := 0

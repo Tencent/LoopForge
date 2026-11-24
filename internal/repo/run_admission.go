@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// ProjectRunLimit caps concurrently admitted top-level SOP runs per project on
+// ProjectRunLimit caps concurrently admitted top-level LOOP runs per project on
 // platform (cloud) execution. Personal machines are counted per machine
 // against their optional user-configured Runner.RunLimit instead.
 const ProjectRunLimit = 10
@@ -180,8 +180,8 @@ func (s *admissionScope) rowBucketKey(row runRow) (string, error) {
 // idx_runs_quota_bucket. Rows with a NULL bucket are legacy rows not yet
 // backfilled; they are resolved in Go so they still count.
 //
-// Conversation workspaces and retired template-free groups do not execute SOPs
-// and never reserve SOP capacity. Nested SOPs share their top-level SOP slot.
+// Conversation workspaces and retired template-free groups do not execute LOOPs
+// and never reserve LOOP capacity. Nested LOOPs share their top-level LOOP slot.
 func (s *admissionScope) occupied(key, exclude string) (int, error) {
 	var rows []runRow
 	q := s.tx.Select("id", "kind", "workflow_id", "status", "quota_bucket", "quota_project_id", "quota_parent_run_id", "quota_exempt", "admission_state", "execution_context").
@@ -346,7 +346,7 @@ func (r *RunsRepo) checkParentAdmission(tx *gorm.DB, run domain.Run) error {
 			return fmt.Errorf("parent run unavailable: %w", err)
 		}
 		if parent.Status == "succeeded" || parent.Status == "queued" || parent.AdmissionState == "unstarted" {
-			return fmt.Errorf("请从顶层 SOP 重新运行，父流程尚未获得运行名额")
+			return fmt.Errorf("请从顶层 LOOP 重新运行，父流程尚未获得运行名额")
 		}
 		parentID = strings.TrimSpace(runFromRow(parent).ExecutionContext.ParentRunID)
 	}

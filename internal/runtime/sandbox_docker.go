@@ -60,7 +60,7 @@ func (s *dockerSandbox) Close(ctx context.Context) error {
 
 // removeDockerSandbox drops a sandbox container. Per-run throwaway images
 // (agentflow-tmp-*) are removed with it; content-hashed cache images stay so
-// the next SOP with the same Dockerfile does not rebuild from node:22.
+// the next LOOP with the same Dockerfile does not rebuild from node:22.
 func removeDockerSandbox(ctx context.Context, container, image string) {
 	if !dockerAvailable() {
 		return

@@ -34,7 +34,7 @@ func (e *Engine) workspaceSandboxProfile(run domain.Run) (domain.SandboxProfile,
 	return spec.Profile, sandboxResourcesFromSnapshot(spec), nil
 }
 
-// acquireConversationEnvironment does not acquire or steal the SOP scheduler
+// acquireConversationEnvironment does not acquire or steal the LOOP scheduler
 // lease. The workspace-use lease fences cleanup; the sandbox's workspace flock
 // fences another process. An active local scheduler shares its existing handle.
 func (e *Engine) acquireConversationEnvironment(ctx context.Context, run domain.Run) (*runEnvironment, error) {
@@ -121,7 +121,7 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 			return request, fmt.Errorf("执行机器需升级至 %s 才能准备环境或打开沙箱终端", domain.RunnerVersionWorkspacePreparation)
 		}
 		if sharesWorkspace(run) && !runner.SupportsWorkspaceOwnerPreparation() {
-			return request, fmt.Errorf("执行机器需升级至 %s 才能操作共享父工作区中的子 SOP 环境", domain.RunnerVersionWorkspaceOwnerPreparation)
+			return request, fmt.Errorf("执行机器需升级至 %s 才能操作共享父工作区中的子 LOOP 环境", domain.RunnerVersionWorkspaceOwnerPreparation)
 		}
 	}
 	spec, err := e.runnerSandboxSpec(run)
@@ -348,7 +348,7 @@ func (e *Engine) PrepareNodeWorkspace(ctx context.Context, run domain.Run, env *
 }
 
 // HandleWorkspaceTerminal uses exactly the same environment and preparation
-// contract as SOP execution. The pool owns the PTY, the Engine owns the sandbox.
+// contract as LOOP execution. The pool owns the PTY, the Engine owns the sandbox.
 func (e *Engine) HandleWorkspaceTerminal(ctx context.Context, id string, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, actorID int64) (runtime.TerminalResult, error) {
 	if req.Operation == "open" {
 		if err := e.RestoreConversationWorkspaceIfNeeded(ctx, id); err != nil {
@@ -457,7 +457,7 @@ func (e *Engine) ForwardPreparedWorkspaceRequest(ctx context.Context, run domain
 	return e.requestWorkspaceCheckpoint(ctx, run, request)
 }
 
-// Only scripts that already succeeded in normal SOP execution can be replayed
+// Only scripts that already succeeded in normal LOOP execution can be replayed
 // to reconstruct its environment. Pending/failed/current/downstream nodes keep
 // their ordinary scheduling semantics and are never executed early.
 func workspacePreparationPlan(run domain.Run) domain.WorkflowDefinition {

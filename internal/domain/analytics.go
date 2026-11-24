@@ -56,8 +56,8 @@ type AnalyticsSummary struct {
 	GeneratedAt       time.Time `json:"generatedAt"`
 
 	// Conversation* cover conversations that changed code directly in a
-	// conversation workspace, without an SOP. Their tokens are part of
-	// TotalTokens/TotalCost*, but the workspaces are not SOP runs and stay out
+	// conversation workspace, without a LOOP. Their tokens are part of
+	// TotalTokens/TotalCost*, but the workspaces are not LOOP runs and stay out
 	// of TotalRuns and every run status or duration metric.
 	ConversationWorkspaces int `json:"conversationWorkspaces"`
 	// ConversationLinkedWorkspaces have a requirement linked.
@@ -89,7 +89,7 @@ type AnalyticsSummary struct {
 	// CancelRate = cancelled ÷ 全部终态执行 × 100。
 	CancelRate float64 `json:"cancelRate"`
 
-	// 执行耗时 = Σ(SOP 节点 FinishedAt−StartedAt)，不含审批/排队/恢复等待；
+	// 执行耗时 = Σ(LOOP 节点 FinishedAt−StartedAt)，不含审批/排队/恢复等待；
 	// AverageDurationMs 系列仍为端到端墙钟（Run 创建 → 最后结束），作为参考列保留。
 	ExecutionAverageDurationMs int64 `json:"executionAverageDurationMs"`
 	ExecutionP50DurationMs     int64 `json:"executionP50DurationMs"`
@@ -149,7 +149,7 @@ type AnalyticsTrendPoint struct {
 	MergedMRs int `json:"mergedMrs"`
 
 	// Conversation* is the share of Tokens/Cost* used by conversation
-	// workspaces in this bucket; they are not SOP runs, and their
+	// workspaces in this bucket; they are not LOOP runs, and their
 	// requirements are not part of Issues.
 	ConversationWorkspaces int     `json:"conversationWorkspaces,omitempty"`
 	ConversationIssues     int     `json:"conversationIssues,omitempty"`
@@ -263,7 +263,7 @@ type AnalyticsDelivery struct {
 	RunStatus    string `json:"runStatus"`
 	SOPSucceeded bool   `json:"sopSucceeded"`
 	// DirectDelivery marks a requirement delivered only from conversation
-	// workspaces, without an SOP run: it counts as delivered once its MR merges.
+	// workspaces, without a LOOP run: it counts as delivered once its MR merges.
 	DirectDelivery bool    `json:"directDelivery,omitempty"`
 	DurationMs     int64   `json:"durationMs"`
 	Tokens         int64   `json:"tokens"`
@@ -305,7 +305,7 @@ type AnalyticsDelivery struct {
 	LastRunAt  time.Time `json:"lastRunAt,omitempty"`
 	// UserID 为该需求的责任人（取最近一次执行的 ResponsibleUserID）。
 	UserID string `json:"userId,omitempty"`
-	// Category 来自 SOP 的受控统计标签 metricCategory。
+	// Category 来自 LOOP 的受控统计标签 metricCategory。
 	Category string `json:"category,omitempty"`
 	// CostKnown 为 false 表示成本未识别，前端展示"未识别"而非 ¥0。
 	CostKnown bool `json:"costKnown"`
@@ -333,7 +333,7 @@ type AnalyticsPhaseEvidence struct {
 type AnalyticsDeliverySummary struct {
 	Issues       int `json:"issues"`
 	SOPSucceeded int `json:"sopSucceeded"`
-	// DirectIssues were worked on only in conversations, without an SOP run;
+	// DirectIssues were worked on only in conversations, without a LOOP run;
 	// DirectWithMR of them have submitted an MR, DirectDelivered are delivered.
 	DirectIssues       int     `json:"directIssues"`
 	DirectWithMR       int     `json:"directWithMr"`
@@ -362,7 +362,7 @@ type AnalyticsDeliverySummary struct {
 	CostUnknownIssues int `json:"costUnknownIssues"`
 }
 
-// AnalyticsWorkflowVersion 对比同一 SOP 不同版本的执行效果。
+// AnalyticsWorkflowVersion 对比同一 LOOP 不同版本的执行效果。
 type AnalyticsWorkflowVersion struct {
 	CostUnknownRuns int    `json:"costUnknownRuns"`
 	WorkflowID      string `json:"workflowId"`
@@ -468,7 +468,7 @@ type AnalyticsRunTrace struct {
 }
 
 // AnalyticsActivity counts persisted conversations, created requirements and
-// top-level requirement SOP executions independently of token/run coverage.
+// top-level requirement LOOP executions independently of token/run coverage.
 type AnalyticsActivity struct {
 	Sessions              int `json:"sessions"`
 	CollaborativeSessions int `json:"collaborativeSessions"`
@@ -517,9 +517,9 @@ type AnalyticsSnapshot struct {
 
 	// IssueSources 为需求类型分布（local/gongfeng/tapd）。
 	IssueSources []AnalyticsBreakdown `json:"issueSources,omitempty"`
-	// Categories 按 SOP 受控标签 metricCategory 拆解。
+	// Categories 按 LOOP 受控标签 metricCategory 拆解。
 	Categories []AnalyticsBreakdown `json:"categories,omitempty"`
-	// WorkflowVersions 为 SOP 版本对比。
+	// WorkflowVersions 为 LOOP 版本对比。
 	WorkflowVersions []AnalyticsWorkflowVersion `json:"workflowVersions,omitempty"`
 	// UserUsage 为每用户每日 Token/成本/运行数。
 	UserUsage []AnalyticsUserUsage `json:"userUsage,omitempty"`
