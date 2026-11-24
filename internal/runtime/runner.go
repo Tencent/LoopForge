@@ -114,6 +114,7 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 		}
 	}()
 	raw, err := sb.Exec(execCtx, command, adapter.Handle)
+	err = withExecutorStderr(err)
 	output := strings.TrimSpace(adapter.VisibleOutput())
 	if adapter.Failed() {
 		if isMaxTurnsBudget(adapter.Result(), raw, err) {
@@ -157,6 +158,20 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 		return clipExecutorOutput(raw), err
 	}
 	return clipExecutorOutput(raw), err
+}
+
+// withExecutorStderr appends the CLI's last stderr lines to a failed process
+// error. The lines name the real cause (model quota, auth, missing binary);
+// without them the Agent node only reports "exit status 1".
+func withExecutorStderr(err error) error {
+	if err == nil {
+		return nil
+	}
+	stderr := ProcessFailureStderr(err)
+	if stderr == "" {
+		return err
+	}
+	return fmt.Errorf("%w\n--- 执行器 stderr ---\n%s", err, stderr)
 }
 
 // RemoteInvocation is the self-contained input a CLI Runner daemon needs to
