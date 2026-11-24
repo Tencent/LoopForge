@@ -224,14 +224,15 @@ func TestSkillFileUploadLimits(t *testing.T) {
 	content := bytes.Repeat([]byte("x"), maxFileBytes+1)
 	for _, kind := range []string{"file", "zip"} {
 		t.Run(kind, func(t *testing.T) {
+			fileName := kind + ".txt"
 			upload := func(content []byte) *httptest.ResponseRecorder {
 				return requestMultipart(t, h, http.MethodPost, filesPath, func(w *multipart.Writer) {
 					if kind == "zip" {
-						archive := zipBytes(t, map[string]string{"test.txt": string(content)}, nil)
+						archive := zipBytes(t, map[string]string{fileName: string(content)}, nil)
 						addFilePart(w, "files", "bundle.zip", archive)
 						return
 					}
-					addFilePartWithPath(w, "test.txt", content)
+					addFilePartWithPath(w, fileName, content)
 				})
 			}
 			rec := upload(content[:maxFileBytes])
@@ -242,7 +243,7 @@ func TestSkillFileUploadLimits(t *testing.T) {
 			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "10MB") {
 				t.Fatalf("per-file limit not enforced: %d %s", rec.Code, rec.Body.String())
 			}
-			req := httptest.NewRequest(http.MethodGet, filesPath+"/test.txt", nil)
+			req := httptest.NewRequest(http.MethodGet, filesPath+"/"+fileName, nil)
 			dl := httptest.NewRecorder()
 			h.ServeHTTP(dl, req)
 			if dl.Code != http.StatusOK || !bytes.Equal(dl.Body.Bytes(), content[:maxFileBytes]) {
