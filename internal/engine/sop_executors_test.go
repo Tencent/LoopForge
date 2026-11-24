@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -98,6 +99,43 @@ func TestGenericSOPExecutorPrefersRunnerLoginOverSharedKey(t *testing.T) {
 	}
 	if got := access.defaults().Executor; got != "codex" {
 		t.Fatalf("executor with configured machine login = %s, want codex", got)
+	}
+}
+
+// Pickers accept the credentials a run on the default machine uses, but leave
+// the machine's CLI support to the run-time check.
+func TestExecutorCredentialsUseTheDefaultRunnerLogin(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.PutUser(domain.User{LoginName: "picker", AgentCLICredentials: map[string]domain.AgentCLICredential{"kimi": {APIKey: "fixture-key"}}}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := st.UserByLoginName("picker")
+	machine := domain.Runner{ID: "picker-machine", OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, Runtimes: []domain.RunnerRuntime{
+		{Provider: "codex", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline},
+		{Provider: "claude-code", AuthMode: domain.RuntimeAuthPersonal, Status: domain.RuntimeStatusOnline},
+	}}
+	if err := st.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+	hasCredential := ExecutorCredentials(st, user.ID)
+	if hasCredential("codex") {
+		t.Fatal("machine login counted without a default machine")
+	}
+	if err := st.SetDefaultRunner(user.ID, machine.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	hasCredential = ExecutorCredentials(st, user.ID)
+	for kind, want := range map[string]bool{"codex": true, "kimi": true, "claude-code": false, "codebuddy": false} {
+		if got := hasCredential(kind); got != want {
+			t.Errorf("%s credential = %t, want %t", kind, got, want)
+		}
+	}
+	if newSOPExecutorAccess(st, user.ID, machine.ID).configured("kimi") {
+		t.Fatal("a run must still require the machine to provide the CLI")
 	}
 }
 

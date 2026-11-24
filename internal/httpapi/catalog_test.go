@@ -837,3 +837,87 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 		t.Fatal("other user received executor availability from the editor's account")
 	}
 }
+
+// Role and SOP pickers offer the executors a SOP run can use: a personal key,
+// the platform's shared CodeBuddy Key, or account login on the default runner.
+func TestExecutorModelsConfiguredMatchesRunTimeCredentials(t *testing.T) {
+	assistant, _ := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	st := assistant.repo
+	for _, user := range []domain.User{
+		{LoginName: "picker-personal", CodexAPIKey: "fixture-codex"},
+		{LoginName: "picker-shared"},
+		{LoginName: "picker-login"},
+	} {
+		if err := st.PutUser(user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	personal, _ := st.UserByLoginName("picker-personal")
+	shared, _ := st.UserByLoginName("picker-shared")
+	login, _ := st.UserByLoginName("picker-login")
+	machine := domain.Runner{ID: "picker-login-machine", OwnerUserID: login.ID, Status: domain.RunnerStatusOnline,
+		RunnerVersion: domain.RunnerVersionCLISettings, Runtimes: []domain.RunnerRuntime{
+			{Provider: assistantEngineCodex, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
+			{Provider: assistantEngineClaude, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthPersonal},
+		},
+	}
+	if err := st.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDefaultRunner(login.ID, machine.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	handler := &catalogHandlers{deps: assistant.deps}
+	executorModels := func(user domain.User) map[string]map[string]any {
+		t.Helper()
+		c, rec := workbenchContext(user, http.MethodGet, "/api/executor-models", &bytes.Buffer{})
+		handler.executorModels(c)
+		var catalogs map[string]map[string]any
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalogs) != nil {
+			t.Fatalf("executor models: %d %s", rec.Code, rec.Body)
+		}
+		return catalogs
+	}
+	assistantEngines := func(user domain.User, query string) map[string]assistantEngineOption {
+		t.Helper()
+		c, rec := workbenchContext(user, http.MethodGet, "/api/assistant/models"+query, &bytes.Buffer{})
+		assistant.models(c)
+		var catalog assistantModelCatalog
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalog) != nil {
+			t.Fatalf("assistant models: %d %s", rec.Code, rec.Body)
+		}
+		out := map[string]assistantEngineOption{}
+		for _, option := range catalog.Engines {
+			out[option.ID] = option
+		}
+		return out
+	}
+	type availability struct{ configured, personal bool }
+	check := func(name string, user domain.User, want map[string]availability) {
+		t.Helper()
+		catalogs := executorModels(user)
+		for id, entry := range catalogs {
+			expected := want[id]
+			if entry["configured"] != expected.configured || entry["personal"] != expected.personal {
+				t.Errorf("%s: %s configured=%v personal=%v, want %+v", name, id, entry["configured"], entry["personal"], expected)
+			}
+		}
+	}
+
+	check("no credentials", shared, nil)
+	check("personal key", personal, map[string]availability{"codex": {true, true}})
+	if err := st.SetPlatformCodeBuddyKey(repo.PlatformCodeBuddyKeyUpdate{APIKey: "shared-fixture", Models: []string{"glm-5.1"}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	check("shared CodeBuddy key", shared, map[string]availability{"codebuddy": {true, false}})
+	if engine := assistantEngines(shared, "")[assistantEngineCodeBuddy]; !engine.Configured || engine.Personal {
+		t.Fatalf("assistant models disagree for the shared key: %+v", engine)
+	}
+	check("runner login", login, map[string]availability{"codebuddy": {true, false}, "codex": {true, false}})
+	engines := assistantEngines(login, "?schedule=1")
+	if !engines[assistantEngineCodex].Configured || engines[assistantEngineClaude].Configured {
+		t.Fatalf("assistant models disagree for runner login: %+v", engines)
+	}
+	check("personal key with a shared key", personal, map[string]availability{"codebuddy": {true, false}, "codex": {true, true}})
+}

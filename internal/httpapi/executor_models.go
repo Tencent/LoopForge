@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -27,9 +28,11 @@ type executorEffortOption struct {
 
 // executorModelCatalog is the per-CLI model and effort catalog used by the
 // agent wizard. CustomModel marks CLIs that accept free-form model IDs
-// (custom base URLs). Configured indicates that the caller saved a personal key.
+// (custom base URLs). Configured means a SOP run can use the CLI for the
+// caller; Personal means the caller saved their own key for it.
 type executorModelCatalog struct {
 	Configured  bool                   `json:"configured"`
+	Personal    bool                   `json:"personal"`
 	Source      string                 `json:"source,omitempty"`
 	Default     string                 `json:"default,omitempty"`
 	CustomModel bool                   `json:"customModel,omitempty"`
@@ -231,6 +234,7 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 		catalog.Models = []executorModelInfo{}
 		catalogs[runtime.AgentCLIAntigravity] = catalog
 	}
+	hasCredential := engine.ExecutorCredentials(h.repo, user.ID)
 	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
 		id := engine
 		if engine == assistantEngineClaude {
@@ -238,7 +242,8 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 		}
 		catalog := catalogs[id]
 		key, _ := assistantEngineCredential(user, engine)
-		catalog.Configured = key != ""
+		catalog.Configured = hasCredential(engine)
+		catalog.Personal = key != ""
 		catalogs[id] = catalog
 		models, _ := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
 		if len(models) == 0 {

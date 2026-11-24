@@ -25,12 +25,23 @@ type sopExecutorAccess struct {
 }
 
 func (e *Engine) sopExecutorAccess(ec domain.TelemetryContext) sopExecutorAccess {
-	user, _ := e.repo.User(ec.ResponsibleUserID)
-	runner, _ := e.repo.Runner(ec.ExecutionRunnerID)
+	return newSOPExecutorAccess(e.repo, ec.ResponsibleUserID, ec.ExecutionRunnerID)
+}
+
+func newSOPExecutorAccess(s *repo.Store, userID int64, runnerID string) sopExecutorAccess {
+	user, _ := s.User(userID)
+	runner, _ := s.Runner(runnerID)
 	return sopExecutorAccess{
-		user: user, runner: runner, usesRunner: ec.ExecutionRunnerID != "",
-		sharedCodeBuddy: resolveCodeBuddyCredential(e.repo, user.ID).Sponsored,
+		user: user, runner: runner, usesRunner: runnerID != "",
+		sharedCodeBuddy: resolveCodeBuddyCredential(s, user.ID).Sponsored,
 	}
+}
+
+// ExecutorCredentials reports which CLIs have a credential for a SOP run on
+// the user's default machine. Pickers use it before the run's machine is
+// known, so the run-time check still verifies that the machine provides the CLI.
+func ExecutorCredentials(s *repo.Store, userID int64) func(kind string) bool {
+	return newSOPExecutorAccess(s, userID, s.DefaultRunner(userID)).hasCredential
 }
 
 func (a sopExecutorAccess) configured(kind string) bool {
@@ -38,12 +49,19 @@ func (a sopExecutorAccess) configured(kind string) bool {
 		if !a.runner.SupportsProvider(kind) {
 			return false
 		}
-		if domain.SupportsRunnerLogin(kind) && a.runner.RuntimeAuthMode(kind) == domain.RuntimeAuthLocal {
-			return true
-		}
 		if kind == "codebuddy" && strings.TrimSpace(a.user.CodeBuddyBaseURL) != "" && !a.runner.SupportsCodeBuddyBaseURL() {
 			return false
 		}
+	}
+	return a.hasCredential(kind)
+}
+
+// hasCredential accepts a personal key, the platform's shared CodeBuddy Key,
+// or account login on the run's machine.
+func (a sopExecutorAccess) hasCredential(kind string) bool {
+	if a.usesRunner && a.runner.SupportsProvider(kind) && domain.SupportsRunnerLogin(kind) &&
+		a.runner.RuntimeAuthMode(kind) == domain.RuntimeAuthLocal {
+		return true
 	}
 	return a.user.HasExecutorCredential(kind) || kind == "codebuddy" && a.sharedCodeBuddy
 }
