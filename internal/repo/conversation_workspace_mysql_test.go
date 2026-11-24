@@ -40,8 +40,11 @@ func TestMySQLConcurrentSOPsCannotClaimSameConversationWorkspace(t *testing.T) {
 			}
 			id, _ := where.Exprs[0].(clause.Expr)
 			if _, locked := tx.Statement.Clauses["FOR"]; locked && len(id.Vars) == 1 && id.Vars[0] == owner.ID {
-				entered <- struct{}{}
-				<-release
+				select {
+				case entered <- struct{}{}:
+					<-release
+				case <-release:
+				}
 			}
 		}); err != nil {
 			t.Fatal(err)
