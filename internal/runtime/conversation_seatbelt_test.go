@@ -191,6 +191,46 @@ echo '{"type":"result","result":"seatbelt-ok"}'
 	}
 }
 
+func TestConversationProcessSeatbeltMapsWsInStdinToRunWorkspace(t *testing.T) {
+	if goruntime.GOOS != "darwin" {
+		t.Skip("seatbelt execution test requires macOS")
+	}
+	if out, err := exec.Command("/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)", "/usr/bin/true").CombinedOutput(); err != nil {
+		t.Skipf("sandbox-exec unavailable in current environment: %v (%s)", err, string(out))
+	}
+	root, workspace := t.TempDir(), t.TempDir()
+	cli := filepath.Join(t.TempDir(), "fake-codebuddy")
+	if err := os.WriteFile(cli, []byte("#!/bin/sh\nread line\necho \"LINE=$line\"\necho '{\"type\":\"result\",\"result\":\"ok\"}'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", cli)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	factory := func(_ context.Context, nativeRoot string) (Sandbox, func(), error) {
+		sb := &processSandbox{id: "conv-seatbelt-ws", driver: domain.SandboxDriverSeatbelt, binary: "/usr/bin/sandbox-exec", workspace: workspace}
+		if err := ConfigureConversationSandbox(ctx, sb, nativeRoot); err != nil {
+			return nil, nil, err
+		}
+		return WithSandboxCredentials(sb, RunCredentials{}), func() {}, nil
+	}
+	pool := &ConversationProcessPool{}
+	spec := &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "native", Driver: domain.SandboxDriverNative}}
+	start, err := pool.Handle(ctx, root, workspace, spec, ConversationProcessRequest{
+		Operation: "start", SourceRoot: "/api-state",
+		Command: &ConversationCommand{Provider: "codebuddy", Argv: []string{"codebuddy"}, Interactive: true},
+	}, nil, factory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Handle(ctx, root, workspace, spec, ConversationProcessRequest{Operation: "write", ID: start.ID, SourceRoot: "/api-state", Data: `{"cwd":"/api-state/ws"}` + "\n"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := conversationPoll(t, pool, ctx, root, start.ID)
+	if want := `LINE={"cwd":"` + workspace + `"}`; !strings.Contains(got, want) {
+		t.Fatalf("stdin cwd not mapped onto the run workspace: want %s in:\n%s", want, got)
+	}
+}
+
 func TestConversationProcessSeatbeltDockerDaemon(t *testing.T) {
 	if goruntime.GOOS != "darwin" {
 		t.Skip("seatbelt execution test requires macOS")

@@ -2339,82 +2339,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OpenObject"
-  /api/dockerfiles:
-    get:
-      tags: [Assets]
-      operationId: listDockerfiles
-      responses:
-        "200":
-          $ref: "#/components/responses/AssetList"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    put:
-      tags: [Assets]
-      operationId: upsertDockerfile
-      requestBody:
-        $ref: "#/components/requestBodies/DockerfileAsset"
-      responses:
-        "200":
-          $ref: "#/components/responses/Ok"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    delete:
-      tags: [Assets]
-      operationId: deleteDockerfile
-      summary: Delete a Dockerfile that is not shared and not referenced by any sandbox
-      parameters:
-        - $ref: "#/components/parameters/AssetIdQuery"
-      responses:
-        "204":
-          description: Dockerfile deleted
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-  /api/environments:
-    get:
-      tags: [Assets]
-      operationId: listEnvironments
-      responses:
-        "200":
-          $ref: "#/components/responses/AssetList"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    put:
-      tags: [Assets]
-      operationId: upsertEnvironment
-      requestBody:
-        $ref: "#/components/requestBodies/EnvironmentAsset"
-      responses:
-        "200":
-          $ref: "#/components/responses/Ok"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    delete:
-      tags: [Assets]
-      operationId: deleteEnvironment
-      summary: Delete an environment install script that is not shared and not referenced by any sandbox
-      parameters:
-        - $ref: "#/components/parameters/AssetIdQuery"
-      responses:
-        "204":
-          description: Environment deleted
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
   /api/sandboxes:
     get:
       tags: [Assets]
@@ -3987,18 +3911,6 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/MCPServerAsset"
-    DockerfileAsset:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/DockerfileAsset"
-    EnvironmentAsset:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/EnvironmentAsset"
     SandboxProfile:
       required: true
       content:
@@ -4255,49 +4167,31 @@ components:
         pathEntries: {type: array, items: {type: string}}
         authType: {type: string, enum: ["", github-token]}
         timeoutSec: {type: integer}
-    DockerfileAsset:
-      type: object
-      required: [id, name, projectId, content]
-      additionalProperties: true
-      properties:
-        id: {type: string}
-        name: {type: string}
-        projectId: {type: string}
-        shared: {type: boolean}
-        description: {type: string}
-        content: {type: string, description: Dockerfile text}
-        files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
-    EnvironmentAsset:
-      type: object
-      required: [id, name, projectId]
-      additionalProperties: true
-      properties:
-        id: {type: string}
-        name: {type: string}
-        projectId: {type: string}
-        shared: {type: boolean}
-        description: {type: string}
-        variables: {type: object, additionalProperties: {type: string}}
-        pathEntries: {type: array, items: {type: string}}
-        installScript: {type: string, description: Runs once with PREFIX set to the isolated environment root}
     SandboxProfile:
       type: object
       required: [id, name, projectId, driver]
       additionalProperties: true
       description: >-
-        Execution environment for SOP runs and conversation workspaces. Conversation workspaces
-        need driver=docker with an existing dockerfileId; the built-in shared generic-docker
-        profile already satisfies this, so create a new profile only for a different toolchain.
+        Execution environment for SOP runs and conversation workspaces; the built-in shared
+        generic-docker profile is the default. driver=native runs on whichever execution machine,
+        cloud runner or platform host executes the work, with that machine's own toolchains; its
+        repositories are shared clones of that machine's repository cache. A stored local profile
+        reads as native.
       properties:
         id: {type: string}
         name: {type: string}
         projectId: {type: string, description: Owning project (required)}
         shared: {type: boolean, description: Visible to every project}
-        driver: {type: string, enum: [local, native, docker]}
-        dockerfileId: {type: string, description: Required for driver=docker; see dockerfiles_list}
-        environmentId: {type: string, description: Toolchain for native/local drivers; see environments_list}
-        readOnlyRootFS: {type: boolean}
-        environment: {type: object, additionalProperties: {type: string}}
+        driver: {type: string, enum: [native, docker]}
+        dockerfile:
+          type: object
+          description: "driver=docker (required): the image recipe, stored with the sandbox. Ignored for other drivers."
+          required: [content]
+          properties:
+            content: {type: string, description: Dockerfile text}
+            files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
+        readOnlyRootFS: {type: boolean, description: "driver=docker only"}
+        environment: {type: object, additionalProperties: {type: string}, description: Variables added to every command; a native sandbox keeps the execution machine's PATH unless this sets one}
     APIToken:
       type: object
       required: [id, userId, name, prefix, createdAt]
@@ -5801,8 +5695,6 @@ components:
         - skills
         - mcpServers
         - executors
-        - dockerfiles
-        - environments
         - sandboxes
         - workflows
         - syncConfig
@@ -5842,18 +5734,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OpenObject"
-        dockerfiles:
-          type: array
-          items:
-            $ref: "#/components/schemas/OpenObject"
-        environments:
-          type: array
-          items:
-            $ref: "#/components/schemas/OpenObject"
         sandboxes:
           type: array
           items:
-            $ref: "#/components/schemas/OpenObject"
+            $ref: "#/components/schemas/SandboxProfile"
         workflows:
           type: array
           items:

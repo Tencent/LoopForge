@@ -49,8 +49,8 @@ function reset(type, data) {
     assetType: type,
     selectedAsset: null,
     assetQuery: '',
-    ruleScope: 'project', skillScope: 'project', dockerfileScope: 'project', environmentScope: 'project', sandboxScope: 'project',
-    data: { projects: [{ id: 'p1', name: '本项目' }, { id: 'p2', name: '平台公共' }], agents: [], sandboxes: [], workflows: [], rules: [], skills: [], dockerfiles: [], environments: [], ...data },
+    ruleScope: 'project', skillScope: 'project', sandboxScope: 'project',
+    data: { projects: [{ id: 'p1', name: '本项目' }, { id: 'p2', name: '平台公共' }], agents: [], sandboxes: [], workflows: [], rules: [], skills: [], ...data },
   };
 }
 
@@ -80,7 +80,7 @@ for (const html of [own, shared, foreign]) {
   assert.ok(!/data-(share|delete)-asset/.test(html), 'share/delete moved off the card');
   assert.ok(!/class="[^"]*\bopen\b/.test(html), 'card classes must not collide with .open menu state');
 }
-for (const [type, icon] of [['rules', 'gate'], ['skills', 'skills'], ['dockerfiles', 'layers'], ['environments', 'terminal'], ['sandboxes', 'server']]) {
+for (const [type, icon] of [['rules', 'gate'], ['skills', 'skills'], ['sandboxes', 'server']]) {
   assert.strictEqual(ctx.assetIconName(type), icon);
 }
 
@@ -128,6 +128,10 @@ reset('sandboxes', { sandboxes: [{ id: 'generic-docker', name: '通用 Docker', 
 head = ctx.assetDetailHeadHTML(ctx.state.data.sandboxes[0], {});
 assert.ok(head.includes('内置沙箱 generic-docker 不能删除'), 'builtin reason');
 assert.ok(ctx.assetOverviewCardHTML(ctx.state.data.sandboxes[0]).includes('<dt>类型</dt><dd>内置</dd>'));
+assert.ok(ctx.assetCardHTML({ id: 'd', projectId: 'p1', driver: 'docker', dockerfile: { content: 'FROM x\nRUN y\n' } }).includes('Dockerfile 2 行'));
+assert.ok(ctx.assetCardHTML({ id: 'd', projectId: 'p1', driver: 'docker' }).includes('Docker'));
+assert.ok(ctx.assetCardHTML({ id: 'n', projectId: 'p1', driver: 'seatbelt' }).includes('系统轻量隔离'));
+assert.ok(ctx.assetCardHTML({ id: 'l', projectId: 'p1', driver: 'local' }).includes('系统轻量隔离'), 'an unmigrated local row reads as native');
 
 reset('skills', {});
 ctx.state.selectedAsset = '__new__';
@@ -158,7 +162,7 @@ function fakeForm(values) {
   return { elements, querySelectorAll: () => [], querySelector: () => null };
 }
 function renderedFieldNames(type, asset) {
-  const form = { innerHTML: '', elements: { driver: { value: asset.driver || 'local', form: null } }, querySelectorAll: () => [], querySelector: () => null };
+  const form = { innerHTML: '', elements: { driver: { value: asset.driver || 'docker', form: null } }, querySelectorAll: () => [], querySelector: () => null };
   const saved$ = ctx.$;
   ctx.$ = sel => (sel === '#assetForm' ? form : null);
   ctx.state.selectedAsset = asset.id;
@@ -188,18 +192,14 @@ async function save(type, existing, values) {
       { id: 's', ...base },
       { id: 's', name: 'N', description: 'D', projectId: 'p1', shared: false },
       ['description', 'id', 'name']],
-    ['dockerfiles', { id: 'd', projectId: 'p1' },
-      { id: 'd', ...base, content: 'FROM x', files: '{"a":"b"}' },
-      { id: 'd', name: 'N', description: 'D', projectId: 'p1', shared: false, content: 'FROM x', files: { a: 'b' } },
-      ['content', 'description', 'files', 'id', 'name']],
-    ['environments', { id: 'e', projectId: 'p1' },
-      { id: 'e', ...base, variables: '{"V":"1"}', pathEntries: 'bin\n sbin ', installScript: 'echo' },
-      { id: 'e', name: 'N', description: 'D', projectId: 'p1', shared: false, variables: { V: '1' }, pathEntries: ['bin', 'sbin'], installScript: 'echo' },
-      ['description', 'id', 'installScript', 'name', 'pathEntries', 'variables']],
-    ['sandboxes', { id: 'x', projectId: 'p1', driver: 'docker' },
-      { id: 'x', ...base, driver: 'docker', environment: '{}', dockerfileId: 'df', readOnlyRootFS: true, environmentId: 'env' },
-      { id: 'x', name: 'N', description: 'D', projectId: 'p1', shared: false, driver: 'docker', environment: {}, dockerfileId: 'df', readOnlyRootFS: true },
-      ['description', 'dockerfileId', 'driver', 'environment', 'environmentId', 'id', 'name', 'readOnlyRootFS']],
+    ['sandboxes', { id: 'x', projectId: 'p1', driver: 'docker', dockerfile: { content: 'FROM old' } },
+      { id: 'x', ...base, driver: 'docker', environment: '{}', dockerfileContent: 'FROM x', dockerfileFiles: '{"a":"b"}', readOnlyRootFS: true },
+      { id: 'x', name: 'N', description: 'D', projectId: 'p1', shared: false, driver: 'docker', environment: {}, dockerfile: { content: 'FROM x', files: { a: 'b' } }, readOnlyRootFS: true },
+      ['description', 'dockerfileContent', 'dockerfileFiles', 'driver', 'environment', 'id', 'name', 'readOnlyRootFS']],
+    ['sandboxes', { id: 'n', projectId: 'p1', driver: 'native' },
+      { id: 'n', ...base, driver: 'native', environment: '{"JAVA_HOME":"/opt/jdk"}', dockerfileContent: 'FROM x', dockerfileFiles: '{}', readOnlyRootFS: true },
+      { id: 'n', name: 'N', description: 'D', projectId: 'p1', shared: false, driver: 'native', environment: { JAVA_HOME: '/opt/jdk' } },
+      ['description', 'dockerfileContent', 'dockerfileFiles', 'driver', 'environment', 'id', 'name', 'readOnlyRootFS']],
   ];
   for (const [type, existing, values, body, fields] of cases) {
     assert.deepStrictEqual(await save(type, existing, values), body, `${type} save payload`);

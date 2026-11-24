@@ -71,7 +71,7 @@ func TestSSHRepositoryCheckoutAndDelivery(t *testing.T) {
 	rc := domain.RepositoryContext{RepositoryID: repository.ID, Name: repository.Name, Provider: repository.Provider, CloneURL: remote, WebURL: repository.WebURL, BaseBranch: "main", DefaultBranch: "main", WorkBranch: "feature/ssh-test", CreateNewWorkBranch: true, WorkspaceDir: "app"}
 	run := domain.Run{
 		ID: "run-git-ssh", Kind: domain.RunKindWorkspace, Status: "waiting",
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "local"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "test-native"},
 		ExecutionContext: domain.TelemetryContext{ProjectID: "platform", ResponsibleUserID: f.user.ID},
 		Repositories:     []domain.RepositoryContext{rc}, Nodes: map[string]*domain.NodeRun{},
 	}
@@ -311,7 +311,7 @@ func TestGitSSHRunnerClaimUsesTaskActorCredential(t *testing.T) {
 	runnerID, session := registerTestRunner(t, f.h)
 	registered, _ := f.s.Runner(runnerID)
 	now := time.Now().UTC()
-	if err := f.s.RunnerHeartbeat(runnerID, registered.Runtimes, domain.RunnerVersionGitSSHKnownHosts, now, now.Add(time.Hour)); err != nil {
+	if err := f.s.RunnerHeartbeat(runnerID, registered.Runtimes, domain.RunnerVersionGitSSHKnownHosts, false, now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	task := domain.RunnerTask{ID: "ssh-task", RunnerID: runnerID, Provider: "mock", Status: domain.RunnerTaskQueued, MaxAttempts: 1, Invocation: &domain.RunnerInvocation{

@@ -134,12 +134,12 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 			return domain.Run{}, err
 		}
 	}
-	resources, err := resolveSandboxResources(e.repo, profile)
+	sandbox, err := resolveSandbox(profile)
 	if err != nil {
 		return domain.Run{}, err
 	}
 	if executionContext.SharedScheduleID != "" {
-		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile, resources); err != nil {
+		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile); err != nil {
 			return domain.Run{}, err
 		}
 	}
@@ -173,7 +173,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err
 	}
-	wf.SandboxSnapshot = resolvedSandboxSnapshot(profile, resources)
+	wf.SandboxSnapshot = sandbox
 	r := domain.Run{
 		ID: id, WorkflowID: workflowID, WorkflowSnapshot: wf, Status: "running", Input: input,
 		Repository: firstRepository, ExecutionContext: executionContext, Nodes: map[string]*domain.NodeRun{},

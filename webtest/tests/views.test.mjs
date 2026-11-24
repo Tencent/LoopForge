@@ -10,7 +10,7 @@ test('boots with platform-shaped data and renders every routed view', async (t) 
 
   const views = [
     'collaboration', 'issues', 'runs', 'approvals', 'sops', 'flow', 'agents', 'mcp',
-    'rules', 'skills', 'dockerfiles', 'environments', 'sandboxes', 'observability',
+    'rules', 'skills', 'sandboxes', 'observability',
     'projects', 'platform', 'runners', 'settings', 'guide', 'bots', 'aiSchedules',
   ];
   for (const view of views) {

@@ -613,14 +613,15 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 		return
 	}
 	var input struct {
-		RunnerID       string                 `json:"runnerId"`
-		Name           string                 `json:"name"`
-		OS             string                 `json:"os"`
-		Arch           string                 `json:"arch"`
-		Version        string                 `json:"version"`
-		Labels         []string               `json:"labels"`
-		MaxConcurrency int                    `json:"maxConcurrency"`
-		Runtimes       []domain.RunnerRuntime `json:"runtimes"`
+		RunnerID               string                 `json:"runnerId"`
+		Name                   string                 `json:"name"`
+		OS                     string                 `json:"os"`
+		Arch                   string                 `json:"arch"`
+		Version                string                 `json:"version"`
+		Labels                 []string               `json:"labels"`
+		MaxConcurrency         int                    `json:"maxConcurrency"`
+		Runtimes               []domain.RunnerRuntime `json:"runtimes"`
+		NativeSandboxAvailable bool                   `json:"nativeSandboxAvailable"`
 	}
 	if !decode(c, &input) {
 		return
@@ -635,16 +636,17 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 	// re-binds ownership to the token used for this registration.
 	now := time.Now().UTC()
 	runner := domain.Runner{
-		Name:           strings.TrimSpace(input.Name),
-		OS:             strings.TrimSpace(input.OS),
-		Arch:           strings.TrimSpace(input.Arch),
-		RunnerVersion:  strings.TrimSpace(input.Version),
-		Labels:         input.Labels,
-		MaxConcurrency: input.MaxConcurrency,
-		Status:         domain.RunnerStatusOnline,
-		Runtimes:       normalizeRunnerRuntimes(input.Runtimes, nil),
-		OwnerUserID:    owner,
-		LastSeenAt:     &now,
+		Name:                   strings.TrimSpace(input.Name),
+		OS:                     strings.TrimSpace(input.OS),
+		Arch:                   strings.TrimSpace(input.Arch),
+		RunnerVersion:          strings.TrimSpace(input.Version),
+		Labels:                 input.Labels,
+		MaxConcurrency:         input.MaxConcurrency,
+		Status:                 domain.RunnerStatusOnline,
+		Runtimes:               normalizeRunnerRuntimes(input.Runtimes, nil),
+		NativeSandboxAvailable: input.NativeSandboxAvailable,
+		OwnerUserID:            owner,
+		LastSeenAt:             &now,
 	}
 	if existing, ok := h.repo.Runner(strings.TrimSpace(input.RunnerID)); ok {
 		runner.ID = existing.ID
@@ -709,17 +711,18 @@ func (h *runnersHandlers) runnerHeartbeat(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Status       string                 `json:"status"`
-		RunningTasks int                    `json:"runningTasks"`
-		Version      string                 `json:"version"`
-		Runtimes     []domain.RunnerRuntime `json:"runtimes"`
+		Status                 string                 `json:"status"`
+		RunningTasks           int                    `json:"runningTasks"`
+		Version                string                 `json:"version"`
+		Runtimes               []domain.RunnerRuntime `json:"runtimes"`
+		NativeSandboxAvailable bool                   `json:"nativeSandboxAvailable"`
 	}
 	if !decode(c, &input) {
 		return
 	}
 	now := time.Now().UTC()
 	expires := now.Add(runnerSessionTTL)
-	if err := h.repo.RunnerHeartbeat(runner.ID, input.Runtimes, strings.TrimSpace(input.Version), now, expires); err != nil {
+	if err := h.repo.RunnerHeartbeat(runner.ID, input.Runtimes, strings.TrimSpace(input.Version), input.NativeSandboxAvailable, now, expires); err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -847,7 +850,24 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			available, err := h.repo.RunnerTaskAvailable(runner.ID, input.AvailableRuntimes)
 			return domain.RunnerTask{}, available, err
 		}
-		return h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, time.Now().UTC(), runnerTaskLeaseTTL)
+		for {
+			task, claimed, err := h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, time.Now().UTC(), runnerTaskLeaseTTL)
+			if err != nil || !claimed || task.RunID == "" || task.Action != "" || task.Sandbox == nil {
+				return task, claimed, err
+			}
+			if err := domain.ValidateFrozenSandbox(task.Sandbox.Profile); err != nil {
+				// A task queued before the upgrade still carries its old
+				// profile. Finish it without sending it to an older runner.
+				if finishErr := h.repo.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskFailed, nil, "", err.Error(), nil, nil, time.Now().UTC()); finishErr != nil {
+					return domain.RunnerTask{}, false, finishErr
+				}
+				if ctxErr := c.Request.Context().Err(); ctxErr != nil {
+					return domain.RunnerTask{}, false, ctxErr
+				}
+				continue
+			}
+			return task, true, nil
+		}
 	}
 	respond := func(task domain.RunnerTask) {
 		if input.Preflight {

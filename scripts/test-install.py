@@ -35,7 +35,7 @@ class InstallerTests(unittest.TestCase):
         for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh', 'install-schema-extensions.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
-        for name in ('001_run_obs_generated_columns.sql', '031_generic_backend_openssh.sql', '033_generic_sop_mr_node.sql', '038_generic_sop_host_credentials.sql'):
+        for name in ('001_run_obs_generated_columns.sql', '033_generic_sop_mr_node.sql', '038_generic_sop_host_credentials.sql', '041_native_sandbox_inline_assets.sql'):
             (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
         (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
         (self.root / 'mock').mkdir()
@@ -49,6 +49,13 @@ if [[ "$1" == image && "$2" == inspect && "${MOCK_IMAGE_PRESENT:-0}" != 1 ]]; th
 if [[ "$1" == pull && "${MOCK_PULL_FAIL:-0}" == 1 ]]; then exit 42; fi
 if [[ "$1" == tag && "${MOCK_TAG_FAIL:-0}" == 1 ]]; then exit 1; fi
 if [[ "$*" == 'compose version' && "${MOCK_COMPOSE_MISSING:-0}" == 1 && ! -f "$MOCK_COMPOSE_INSTALLED" ]]; then exit 1; fi
+if [[ "$*" == *'ps --all --status running --status restarting --status paused --services platform' ]]; then
+  case "${MOCK_MIGRATION_PLATFORM:-stopped}" in
+    running) echo platform ;;
+    error) exit 1 ;;
+  esac
+  exit 0
+fi
 if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
 if [[ "$*" == *'exec -T mysql'* ]]; then
@@ -70,6 +77,7 @@ exec "$@"
         for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL', 'MOCK_MIRROR_GHCR', 'MOCK_MIRROR_NJU', 'MOCK_CURL_LOG'):
             self.environ.pop(name, None)
         self.environ.pop('MOCK_COLUMN_COUNT', None)
+        self.environ.pop('MOCK_MIGRATION_PLATFORM', None)
 
     def executable(self, name, contents):
         target = self.root / 'mock' / name
@@ -461,6 +469,7 @@ esac
         self.assertIn('ALTER TABLE run_telemetry', sql)
         self.assertIn('ALTER TABLE run_logs', sql)
         self.assertIn('INSERT IGNORE', sql)
+        self.assertNotIn('DROP TABLE IF EXISTS dockerfiles', sql)
         # The 「发起 MR」 node of the code delivery SOPs is replayed too, instead
         # of waiting for an operator to run migration 033 by hand.
         self.assertIn('JSON_ARRAY_APPEND', sql)
@@ -468,6 +477,31 @@ esac
         self.assertLess(sql.index('JSON_ARRAY_APPEND'), sql.index('SET @new_mr_auth'))
         # Recreated containers come first; the old volume then gets the columns.
         self.assertLess(log.index('up -d --no-build --wait'), log.index('exec -T mysql'))
+
+    def test_migrate_sandboxes_requires_a_stopped_platform(self):
+        (self.root / '.env').touch()
+        command = [self.shell(), 'start.sh', 'migrate-sandboxes']
+        for state in ('running', 'error'):
+            with self.subTest(platform=state):
+                result = subprocess.run(command, cwd=self.root,
+                    env=dict(self.environ, MOCK_MIGRATION_PLATFORM=state),
+                    text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+                self.assertNotEqual(result.returncode, 0)
+                if state == 'running':
+                    self.assertIn('stop platform', result.stderr)
+                self.assertFalse((self.root / 'mysql.log').exists())
+
+        result = subprocess.run([self.shell(), 'start.sh', 'stop', 'platform'],
+            cwd=self.root, env=self.environ, text=True, capture_output=True,
+            stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('compose --profile platform stop platform', (self.root / 'docker.log').read_text())
+
+        result = subprocess.run(command, cwd=self.root, env=self.environ,
+            text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        migration = self.root / 'migrations/041_native_sandbox_inline_assets.sql'
+        self.assertEqual((self.root / 'mysql.log').read_text(), migration.read_text())
 
     def test_start_pull_names_the_migration_when_columns_cannot_be_checked(self):
         self.assert_success(self.install())

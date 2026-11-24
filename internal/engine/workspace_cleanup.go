@@ -390,7 +390,13 @@ func (e *Engine) reclaimSandboxes() {
 	if idle := e.discardIdleRunContainers(context.Background(), time.Now().UTC()); idle > 0 {
 		log.Printf("discarded %d idle failed/waiting sandbox container(s)", idle)
 	}
-	images, err := e.sandboxes.ReclaimCachedDockerImages(context.Background(), append(e.repo.Dockerfiles(), e.repo.LiveSandboxDockerfiles()...))
+	keep := e.repo.LiveSandboxDockerfiles()
+	for _, profile := range e.repo.Sandboxes() {
+		if spec := domain.RunnerSandbox(profile); spec.Dockerfile != nil {
+			keep = append(keep, *spec.Dockerfile)
+		}
+	}
+	images, err := e.sandboxes.ReclaimCachedDockerImages(context.Background(), keep)
 	if err != nil {
 		log.Printf("reclaim cached docker images: %v", err)
 		return
