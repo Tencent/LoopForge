@@ -76,7 +76,10 @@ echo "== platform on $BASE"
 HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 # AGENTFLOW_LOCAL_LOGIN_USER enables the loopback-only acceptance login, so the
 # session-only endpoints (personal API tokens, logout) can be exercised.
+# Chat Bot secrets are sealed with AGENTFLOW_CREDENTIAL_KEYS; without a key
+# saving a Bot answers 503 credential_key_missing.
 AGENTFLOW_SESSION_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n') \
+AGENTFLOW_CREDENTIAL_KEYS="e2e:$(head -c 32 /dev/urandom | base64 | tr -d '\n')" \
 AGENTFLOW_AUTH_REQUIRED=true \
 AGENTFLOW_LOCAL_LOGIN_USER=e2e-local \
 AGENTFLOW_RUNNER_BINARY="$WORK/agentflow-runner" \

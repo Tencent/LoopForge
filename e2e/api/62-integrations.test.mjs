@@ -51,6 +51,9 @@ test('notification bots: create, update, secret stays write-only, delete', async
 
   const interactions = await get(`/api/notification-bots/${bot.id}/interactions`, { expect: [200] });
   assert.ok(interactions);
+  // Chat replies waiting for a manager's review: none without traffic.
+  assert.ok(Array.isArray(list(await get(`/api/bot-interactions/pending?projectId=${P}`))));
+  await api('GET', '/api/bot-interactions/pending?projectId=e2e-missing-project', undefined, { expect: [403, 404] });
 
   await del(`/api/notification-bots/${bot.id}`, { expect: [200, 204] });
   assert.ok(!list(await get(`/api/notification-bots?projectId=${P}`)).some(b => b.id === bot.id));

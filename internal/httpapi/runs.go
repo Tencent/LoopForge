@@ -32,6 +32,7 @@ func (h *runsHandlers) analytics(c *gin.Context) {
 		ProjectID:        c.Query("projectId"),
 		WorkflowID:       c.Query("workflowId"),
 		Scope:            strings.TrimSpace(c.Query("scope")),
+		IncludeDashboard: c.Query("dashboard") == "1",
 		UserID:           strings.TrimSpace(c.Query("userId")),
 		IssueSource:      strings.TrimSpace(c.Query("issueSource")),
 		RequirementsOnly: c.Query("requirementsOnly") == "1",
