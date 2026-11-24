@@ -5,12 +5,43 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
 )
+
+func TestProjectCredentialsReserveRuntimeSettings(t *testing.T) {
+	reserved := slices.Concat(workspaceGitSecretEnvironment, agentCLIHostEnv, []string{
+		"ANTHROPIC_BASE_URL", "CODEBUDDY_BASE_URL", "OPENAI_BASE_URL", "HTTPS_PROXY", "GIT_SSH_COMMAND", "PATH",
+	})
+	for _, name := range reserved {
+		for _, spelling := range []string{name, strings.ToLower(name)} {
+			if err := domain.ValidateProjectCredentialVariable(spelling); err == nil {
+				t.Errorf("platform setting %s can be saved as a project credential", spelling)
+			}
+		}
+	}
+	for _, name := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "SERVICE_API_KEY", "PROJECT_GITHUB_TOKEN"} {
+		if err := domain.ValidateProjectCredentialVariable(name); err != nil {
+			t.Errorf("project variable %s is rejected: %v", name, err)
+		}
+	}
+}
+
+func TestProjectCredentialEnvironmentRejectsOccupiedNames(t *testing.T) {
+	ctx := WithProjectCredentialEnv(t.Context(), map[string]string{"FIXTURE_SETTING": "fixture-value"})
+	command := CommandSpec{environment: map[string]string{"FIXTURE_SETTING": ""}}
+	if _, err := projectCommandEnvironment(ctx, command, nil); err == nil || !strings.Contains(err.Error(), "冲突") {
+		t.Fatalf("empty command binding did not reserve its name: %v", err)
+	}
+	profile := map[string]string{"fixture_setting": ""}
+	if _, err := projectCommandEnvironment(ctx, CommandSpec{}, profile); err == nil || !strings.Contains(err.Error(), "冲突") {
+		t.Fatalf("case variant of a sandbox setting did not reserve its name: %v", err)
+	}
+}
 
 func TestLocalProjectCredentialEnvironment(t *testing.T) {
 	t.Setenv("AGENTFLOW_PROJECT_CREDENTIAL_KEY", "platform-test-key")

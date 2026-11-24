@@ -12,6 +12,9 @@ import (
 )
 
 func TestSOPScriptUsesProjectCredentials(t *testing.T) {
+	if !runtime.NativeSandboxAvailable(domain.SandboxDriverNative) {
+		t.Skip("native sandbox unavailable")
+	}
 	t.Setenv("AGENTFLOW_PROJECT_CREDENTIAL_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	st, err := repo.OpenTest()
 	if err != nil {

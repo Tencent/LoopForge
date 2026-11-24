@@ -43,13 +43,33 @@ type ProjectCredentialVariableInput struct {
 
 var projectCredentialVariableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 
+var projectCredentialReservedNames = []string{
+	"HOME", "USERPROFILE", "PATH", "PWD", "OLDPWD", "SHELL", "TMPDIR", "TMP", "TEMP", "IFS", "ENV", "BASH_ENV", "ZDOTDIR",
+	"PYTHONPATH", "PYTHONHOME", "NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "JAVA_TOOL_OPTIONS",
+	"GITHUB_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN", "TEA_TOKEN", "CNB_TOKEN",
+	"GIT_ASKPASS", "GIT_EXEC_PATH", "GIT_PROXY_COMMAND", "SSH_ASKPASS", "SSH_AUTH_SOCK",
+	"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+	"GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GEMINI_BASE_URL",
+	"MOONSHOT_API_KEY", "DSH_HOME", "PI_CODING_AGENT_DIR",
+}
+
+var projectCredentialReservedPrefixes = []string{
+	"AGENTFLOW_", "LOOPFORGE_", "LD_", "DYLD_", "GIT_CONFIG", "GIT_SSH", "GH_", "OTEL_",
+	"AGY_", "ANTHROPIC_", "CLAUDE_", "CODEBUDDY_", "CODEX_", "CURSOR_", "DEEPSEEK_",
+	"GEMINI_", "KIMI_", "OPENAI_", "OPENCODE_", "ZCODE_",
+}
+
 func ValidateProjectCredentialVariable(name string) error {
-	reserved := []string{"HOME", "PATH", "PWD", "OLDPWD", "SHELL", "TMPDIR", "TMP", "TEMP", "IFS", "ENV", "BASH_ENV", "ZDOTDIR", "SSH_AUTH_SOCK", "PYTHONPATH", "PYTHONHOME", "NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "JAVA_TOOL_OPTIONS"}
-	if !projectCredentialVariableName.MatchString(name) || slices.Contains(reserved, name) {
-		return fmt.Errorf("环境变量名无效或由沙箱保留")
+	if !projectCredentialVariableName.MatchString(name) {
+		return fmt.Errorf("环境变量名无效")
 	}
-	for _, prefix := range []string{"AGENTFLOW_", "LOOPFORGE_", "LD_", "DYLD_", "GIT_CONFIG", "OTEL_"} {
-		if strings.HasPrefix(name, prefix) {
+	// Credential names must also be safe on case-insensitive execution hosts.
+	key := strings.ToUpper(name)
+	if slices.Contains(projectCredentialReservedNames, key) {
+		return fmt.Errorf("环境变量名 %s 由沙箱保留", name)
+	}
+	for _, prefix := range projectCredentialReservedPrefixes {
+		if strings.HasPrefix(key, prefix) {
 			return fmt.Errorf("环境变量名 %s 由沙箱保留", name)
 		}
 	}
@@ -87,10 +107,11 @@ func (v ProjectCredentialInput) Validate() error {
 		if err := ValidateProjectCredentialVariable(field.Name); err != nil {
 			return err
 		}
-		if names[field.Name] {
+		key := strings.ToUpper(field.Name)
+		if names[key] {
 			return fmt.Errorf("环境变量 %s 重复", field.Name)
 		}
-		names[field.Name] = true
+		names[key] = true
 	}
 	return nil
 }

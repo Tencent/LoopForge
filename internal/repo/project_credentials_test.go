@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -72,6 +73,9 @@ func TestProjectCredentialStorageAndRotation(t *testing.T) {
 			if _, err := st.ResolveProjectCredentialEnv(ctx, otherID, []string{id}); !errors.Is(err, ErrProjectCredentialUnavailable) {
 				t.Fatalf("cross-project resolution: %v", err)
 			}
+			if _, err := st.ProjectCredentialVariableNames(ctx, projectID, []string{id, id}); err == nil || !strings.Contains(err.Error(), "重复") {
+				t.Fatalf("duplicate credential binding: %v", err)
+			}
 			if err := st.DeleteProjectCredential(ctx, otherID, id); !errors.Is(err, ErrProjectCredentialUnavailable) {
 				t.Fatalf("cross-project deletion: %v", err)
 			}
@@ -94,6 +98,21 @@ func TestProjectCredentialStorageAndRotation(t *testing.T) {
 			}
 			if _, err := st.ResolveProjectCredentialEnv(ctx, projectID, []string{id}); !errors.Is(err, ErrProjectCredentialUnavailable) {
 				t.Fatalf("disabled credential resolved: %v", err)
+			}
+
+			t.Setenv("AGENTFLOW_PROJECT_CREDENTIAL_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)))
+			input.Disabled = false
+			if _, err := st.SaveProjectCredential(ctx, projectID, id, false, input); err == nil {
+				t.Fatal("an update with omitted values succeeded after the key changed")
+			}
+			input.Fields[0].Value, input.Fields[1].Value = &username, &replacement
+			restored, err := st.SaveProjectCredential(ctx, projectID, id, false, input)
+			if err != nil || restored.ID != id {
+				t.Fatalf("replace all values with the new key: %v", err)
+			}
+			env, err = st.ResolveProjectCredentialEnv(ctx, projectID, []string{id})
+			if err != nil || len(env) != 2 || env["REGISTRY_LOGIN"] != username || env["REGISTRY_PASSWORD"] != replacement {
+				t.Fatalf("the same binding did not resolve after replacement: %v", err)
 			}
 		})
 	}

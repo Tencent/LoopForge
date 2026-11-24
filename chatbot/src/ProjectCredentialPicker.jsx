@@ -32,7 +32,7 @@ export default function ProjectCredentialPicker({ chat }) {
     return () => { active = false; };
   }, [open, projectId]);
 
-  if (!projectId || chat.session?.runId || chat.session?.shared || chat.readOnly) return null;
+  if ((!projectId && !projectCredentialIds.length) || chat.session?.runId || chat.session?.shared || chat.readOnly) return null;
   const available = items.filter((item) => !item.disabled || selection.includes(item.id));
   const options = available.map((item) => ({
     id: item.id,
@@ -49,6 +49,10 @@ export default function ProjectCredentialPicker({ chat }) {
   }
   const changed = selection.length !== projectCredentialIds.length ||
     selection.some((id) => !projectCredentialIds.includes(id));
+  const actions = changed ? [{ id: "apply-credentials", label: "应用", onSelect: () => void chat.selectProjectCredentials(selection) }] : [];
+  if (projectCredentialIds.length) {
+    actions.push({ id: "clear-credentials", label: "清除绑定", onSelect: () => void chat.selectProjectCredentials([]) });
+  }
   const label = projectCredentialIds.length ? `项目凭据 · ${projectCredentialIds.length}` : "项目凭据";
   return (
     <span className="menu-anchor sandbox-context">
@@ -79,7 +83,7 @@ export default function ProjectCredentialPicker({ chat }) {
         onSelect={(id) => setSelection((current) => current.includes(id) ? current.filter((key) => key !== id) : [...current, id])}
         onClose={() => setOpen(false)}
         emptyText={status || "当前项目没有可用的凭据"}
-        actions={changed ? [{ id: "apply-credentials", label: "应用", onSelect: () => void chat.selectProjectCredentials(selection) }] : []}
+        actions={actions}
       />
     </span>
   );

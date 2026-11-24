@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -120,10 +121,13 @@ func (r *ProjectCredentialsRepo) SaveProjectCredential(ctx context.Context, proj
 			if row.ProjectID != projectID || row.ID != id {
 				return ErrProjectCredentialUnavailable
 			}
-			var err error
-			previous, err = row.open(box)
-			if err != nil {
-				return err
+			// Replacing every value also lets the owner recover after a key change.
+			if slices.ContainsFunc(input.Fields, func(field domain.ProjectCredentialVariableInput) bool { return field.Value == nil }) {
+				var err error
+				previous, err = row.open(box)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		values := make(map[string]string, len(input.Fields))
@@ -187,6 +191,13 @@ func (r *ProjectCredentialsRepo) selectedProjectCredentials(ctx context.Context,
 	if len(ids) > 16 {
 		return nil, fmt.Errorf("一次最多绑定 16 条项目凭据")
 	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			return nil, fmt.Errorf("绑定的项目凭据重复")
+		}
+		seen[id] = true
+	}
 	project, ok := r.projects.Project(projectID)
 	if !ok || project.ID != projectID || project.ArchivedAt != nil {
 		return nil, ErrProjectCredentialUnavailable
@@ -231,10 +242,14 @@ func (r *ProjectCredentialsRepo) ProjectCredentialVariableNames(ctx context.Cont
 			return nil, err
 		}
 		for _, name := range item.Variables {
-			if seen[name] {
+			if err := domain.ValidateProjectCredentialVariable(name); err != nil {
+				return nil, err
+			}
+			key := strings.ToUpper(name)
+			if seen[key] {
 				return nil, fmt.Errorf("所选凭据的环境变量 %s 冲突", name)
 			}
-			seen[name] = true
+			seen[key] = true
 			names = append(names, name)
 		}
 	}
@@ -254,6 +269,7 @@ func (r *ProjectCredentialsRepo) ResolveProjectCredentialEnv(ctx context.Context
 		return nil, err
 	}
 	env := make(map[string]string)
+	seen := make(map[string]bool)
 	size := 0
 	for _, row := range rows {
 		values, err := row.open(box)
@@ -264,9 +280,11 @@ func (r *ProjectCredentialsRepo) ResolveProjectCredentialEnv(ctx context.Context
 			if err := domain.ValidateProjectCredentialVariable(name); err != nil {
 				return nil, err
 			}
-			if _, exists := env[name]; exists {
+			key := strings.ToUpper(name)
+			if seen[key] {
 				return nil, fmt.Errorf("所选凭据的环境变量 %s 冲突", name)
 			}
+			seen[key] = true
 			env[name] = value
 			size += len(name) + len(value) + 2
 		}

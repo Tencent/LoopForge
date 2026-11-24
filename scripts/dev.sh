@@ -6,11 +6,6 @@ bash scripts/configure.sh
 set -a
 source .env
 set +a
-# Browser acceptance tests write credentials to a disposable CI database.
-if [[ ${CI:-} == true && -z ${AGENTFLOW_PROJECT_CREDENTIAL_KEY:-} ]]; then
-  AGENTFLOW_PROJECT_CREDENTIAL_KEY=$(openssl rand -base64 32)
-  export AGENTFLOW_PROJECT_CREDENTIAL_KEY
-fi
 mkdir -p .local/bin .local/workspaces
 docker compose up -d --wait mysql
 bash scripts/build-binaries.sh

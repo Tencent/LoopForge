@@ -11,7 +11,7 @@ import (
 
 func (h *assistantHandlers) sessionProjectCredentialNames(c *gin.Context, session domain.AssistantSession, userID int64) ([]string, bool) {
 	use, _ := h.projectCredentialAccess(c.Request, session.ProjectID, userID)
-	if !use || session.Shared || session.RunID != "" || session.Source == domain.AssistantSourceSOPDesigner {
+	if (len(session.ProjectCredentialIDs) > 0 && !use) || session.Shared || session.RunID != "" || session.Source == domain.AssistantSourceSOPDesigner {
 		c.JSON(http.StatusForbidden, gin.H{"error": "仅有权限的普通项目会话可以绑定项目凭据"})
 		return nil, false
 	}
@@ -25,7 +25,7 @@ func (h *assistantHandlers) sessionProjectCredentialNames(c *gin.Context, sessio
 
 func (h *assistantHandlers) sessionProjectCredentials(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
-	if !ok {
+	if !ok || user.ID <= 0 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
 		return
 	}

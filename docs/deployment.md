@@ -99,7 +99,9 @@ Enterprise authentication gateways can sign users in by header with `AGENTFLOW_T
 
 ### Project credentials
 
-To enable project credentials, set `AGENTFLOW_PROJECT_CREDENTIAL_KEY` in the platform environment (or Compose `.env`). Use a Base64-encoded 32-byte random key, which you can generate with `openssl rand -base64 32`. Keep the same key across platform instances and restarts so saved credentials remain readable. Runners receive only the variables selected for the current execution. Remote execution of these bindings requires Runner 0.12.1 or later.
+The installer configures `AGENTFLOW_PROJECT_CREDENTIAL_KEY` in `.env` when the setting is missing. For a custom deployment, set it in the platform environment to a Base64-encoded 32-byte random key, which you can generate with `openssl rand -base64 32`. Share the same key across instances and keep it with database backups. After replacing the key, enter every value again on each existing credential to keep its bindings. Leaving values blank requires the previous ciphertext to be readable with the configured key.
+
+Use a project-specific name for any credential that would otherwise share a variable name with a platform executor, Git authentication, or proxy setting. Runners receive only the variables selected for the current execution. Remote execution of these bindings requires Runner 0.12.1 or later.
 
 ### Docker sandboxes
 

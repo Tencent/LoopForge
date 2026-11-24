@@ -28,11 +28,19 @@ func projectCommandEnvironment(ctx context.Context, command CommandSpec, profile
 	if len(env) == 0 {
 		return command, nil
 	}
+	occupied := make(map[string]struct{}, len(profile)+len(command.environment))
+	for name := range profile {
+		occupied[strings.ToUpper(name)] = struct{}{}
+	}
+	// Command bindings include empty values to suppress inherited settings.
+	for name := range command.environment {
+		occupied[strings.ToUpper(name)] = struct{}{}
+	}
 	for name := range env {
 		if err := domain.ValidateProjectCredentialVariable(name); err != nil {
 			return CommandSpec{}, err
 		}
-		if _, exists := profile[name]; exists || command.environment[name] != "" {
+		if _, exists := occupied[strings.ToUpper(name)]; exists {
 			return CommandSpec{}, fmt.Errorf("项目凭据环境变量 %s 与沙箱配置或执行器冲突", name)
 		}
 	}

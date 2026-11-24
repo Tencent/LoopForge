@@ -92,6 +92,66 @@ func TestProjectCredentialsHTTPAndSessionBinding(t *testing.T) {
 	}
 }
 
+func TestSessionOwnerCanClearProjectCredentialsAfterLosingAccess(t *testing.T) {
+	t.Setenv("AGENTFLOW_PROJECT_CREDENTIAL_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	h, owner := workbenchFixture(t)
+	if err := h.repo.PutUser(domain.User{LoginName: "credential-session-member"}); err != nil {
+		t.Fatal(err)
+	}
+	member, _ := h.repo.UserByLoginName("credential-session-member")
+	project, _ := h.repo.Project("workbench")
+	const credentialID = "registry"
+	value := "fixture-token"
+	if _, err := h.repo.SaveProjectCredential(t.Context(), project.ID, credentialID, true, domain.ProjectCredentialInput{
+		Name: "Registry", Kind: domain.ProjectCredentialToken,
+		Fields: []domain.ProjectCredentialVariableInput{{Name: "SERVICE_TOKEN", Value: &value}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"viewer", "removed"} {
+		t.Run(role, func(t *testing.T) {
+			project.Members = []domain.ProjectMember{{UserID: member.ID, Role: "member"}}
+			if err := h.repo.PutProject(project); err != nil {
+				t.Fatal(err)
+			}
+			session := domain.AssistantSession{ID: "credential-chat-" + role, ProjectID: project.ID}
+			if err := h.repo.PutAssistantSession(member.ID, session); err != nil {
+				t.Fatal(err)
+			}
+			bind := func(user domain.User, ids []string) int {
+				data, _ := json.Marshal(map[string][]string{"projectCredentialIds": ids})
+				c, rec := workbenchContext(user, http.MethodPut, "/", bytes.NewBuffer(data))
+				c.Params = gin.Params{{Key: "id", Value: session.ID}}
+				h.sessionProjectCredentials(c)
+				return rec.Code
+			}
+			if code := bind(member, []string{credentialID}); code != http.StatusOK {
+				t.Fatalf("bind as member: %d", code)
+			}
+			project.Members = []domain.ProjectMember{}
+			if role == "viewer" {
+				project.Members = []domain.ProjectMember{{UserID: member.ID, Role: role}}
+			}
+			if err := h.repo.PutProject(project); err != nil {
+				t.Fatal(err)
+			}
+			if code := bind(member, []string{credentialID}); code != http.StatusForbidden {
+				t.Fatalf("binding without permission: %d", code)
+			}
+			if code := bind(owner, []string{}); code != http.StatusNotFound {
+				t.Fatalf("clear another user's session: %d", code)
+			}
+			if code := bind(member, []string{}); code != http.StatusOK {
+				t.Fatalf("clear own session without project credential access: %d", code)
+			}
+			stored, _ := h.repo.AssistantSession(member.ID, session.ID)
+			if len(stored.ProjectCredentialIDs) != 0 {
+				t.Fatal("credential binding was not cleared")
+			}
+		})
+	}
+}
+
 func TestProjectCredentialsRunnerClaimScope(t *testing.T) {
 	t.Setenv("AGENTFLOW_PROJECT_CREDENTIAL_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	h, user, session := chatSandboxFixture(t)
