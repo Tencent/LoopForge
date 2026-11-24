@@ -9,8 +9,10 @@ Each conditional edge uses one of these forms:
 
 - **Route label:** match one or more labels emitted by the source node. A label
   may occur on only one outgoing edge of a node. An Agent submits `route` as a
-  string or an array of strings in `submit_gate_result`; the available labels
-  are included in its prompt. A script writes a JSON object to the path in
+  string or an array of strings in `submit_gate_result` together with `pass` or
+  `human`; the available labels are included in its prompt. With `human`, the
+  route is held until approval, and a rejection discards it before re-running
+  the upstream node. A script writes a JSON object to the path in
   `LOOPFORGE_ROUTE_FILE`, for example:
 
   ```sh

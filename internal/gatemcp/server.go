@@ -118,7 +118,7 @@ func handleRequest(encoder *json.Encoder, req request, resultPath string) error 
 	case "tools/list":
 		return writeResponse(encoder, req.ID, map[string]any{"tools": []any{map[string]any{
 			"name":        "submit_gate_result",
-			"description": "Submit exactly one terminal node decision. reason explains why. human also requires actionRequired to state exactly what a person must confirm.",
+			"description": "Submit exactly one terminal node decision. reason explains why. route may accompany pass or human; with human it is held until approval. human also requires actionRequired to state exactly what a person must confirm.",
 			"inputSchema": inputSchema,
 		}}}, "")
 	case "tools/call":
@@ -216,6 +216,9 @@ func normalizeResult(result *gateResult) string {
 	case "pass", "rework", "fail", "human":
 	default:
 		return "decision must be pass, rework, fail, or human"
+	}
+	if len(result.Route) > 0 && result.Decision != "pass" && result.Decision != "human" {
+		return "route is only valid with pass or human decisions"
 	}
 	result.Reason = strings.TrimSpace(result.Reason)
 	if result.Reason == "" {

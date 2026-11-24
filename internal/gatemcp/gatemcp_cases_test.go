@@ -47,6 +47,8 @@ func TestDecodeGateResultValidation(t *testing.T) {
 		`{"decision":"bad","reason":"x"}`,
 		`{"decision":"pass","reason":""}`,
 		`{"decision":"human","reason":"x"}`,
+		`{"decision":"rework","reason":"x","route":"small"}`,
+		`{"decision":"fail","reason":"x","route":"small"}`,
 		`{"decision":"pass","reason":"x","findings":[{"bad":1}]}`,
 		`{"decision":"pass","reason":"x","findings":[{"title":""}]}`,
 		`{"decision":"pass","reason":"x","findings":[{"title":"x","severity":"` + strings.Repeat("x", 65) + `"}]}`,

@@ -164,7 +164,27 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	if n == nil || n.Status != "waiting_approval" {
 		return fmt.Errorf("node is not waiting for approval")
 	}
+	wf := workflowForRun(e.repo, r)
+	var definition *domain.WorkflowNode
+	for i := range wf.Nodes {
+		if wf.Nodes[i].ID == nodeID {
+			definition = &wf.Nodes[i]
+			break
+		}
+	}
+	if definition == nil {
+		return fmt.Errorf("approval node definition not found")
+	}
+	var routeDecision *domain.RouteDecision
+	if n.GateResult != nil {
+		var err error
+		routeDecision, err = decideRoute(wf, *definition, n.GateResult.Route, routingArtifactsForNode(r, nodeID))
+		if err != nil {
+			return err
+		}
+	}
 	n.Status = "succeeded"
+	n.RouteDecision = routeDecision
 	n.FinishedAt = time.Now().UTC()
 	note := recordHumanContext(&r, nodeID, "人工批准继续", humanContext)
 	decision := "# Approval\n\nApproved by a human gate.\n"
@@ -174,6 +194,9 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	appendArtifact(&r, nodeID, n.Attempt, "decision", "decision.md", "text/markdown", []byte(decision))
 	e.event(&r, nodeID, "gate.approved", "人工门禁已通过")
 	appendControlTelemetry(&r, nodeID, "gate.approved", "人工门禁已通过")
+	if routeDecision != nil {
+		e.event(&r, nodeID, "route.decided", fmt.Sprintf("人工批准路由：%v", routeDecision.Values))
+	}
 	r.Status = "running"
 	return e.persistControlDecision(runID, r, expected...)
 }

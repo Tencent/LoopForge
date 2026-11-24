@@ -602,3 +602,87 @@ func TestConditionalRoutingRejectChangesRoute(t *testing.T) {
 	}
 	waitFor(t, s, r.ID, "succeeded")
 }
+
+func TestConditionalRoutingHumanRouteAppliesOnlyAfterApproval(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.PutAgent(domain.AgentDefinition{ID: "human-router", Name: "human router", ExecutorID: "mock", Prompt: "[[mock:gate=human]][[mock:route=small]]"}); err != nil {
+		t.Fatal(err)
+	}
+	wf := routingWorkflow("human")
+	wf.Nodes[0] = domain.WorkflowNode{ID: "classify", Name: "classify", Type: "agent", AgentID: "human-router", ExecutorID: "mock", MaxAttempts: 1}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r, err := e.Start(wf.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "waiting")
+	waiting, _ := s.Run(r.ID)
+	if waiting.Nodes["classify"].Status != "waiting_approval" || waiting.Nodes["classify"].RouteDecision != nil {
+		t.Fatalf("human route must wait without committing a decision: %+v", waiting.Nodes["classify"])
+	}
+	if err := e.Approve(r.ID, "classify", "route confirmed"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "succeeded")
+	got, _ := s.Run(r.ID)
+	if got.Nodes["classify"].RouteDecision == nil || !got.Nodes["classify"].RouteDecision.SelectedEdges["id:small-edge"] {
+		t.Fatalf("approval did not commit saved route: %+v", got.Nodes["classify"].RouteDecision)
+	}
+	if got.Nodes["small"].Status != "succeeded" || got.Nodes["large"].Status != "skipped" {
+		t.Fatalf("approved route selected wrong branches: small=%+v large=%+v", got.Nodes["small"], got.Nodes["large"])
+	}
+}
+
+func TestConditionalRoutingHumanRouteIsClearedOnUpstreamReject(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.PutAgent(domain.AgentDefinition{ID: "human-reject-router", Name: "human reject router", ExecutorID: "mock", Prompt: "[[mock:gate=human]][[mock:route=small]]"}); err != nil {
+		t.Fatal(err)
+	}
+	wf := routingWorkflow("human-reject")
+	wf.Nodes = append([]domain.WorkflowNode{{ID: "prepare", Name: "prepare", Type: "script", Script: "echo prepare", MaxAttempts: 1}}, wf.Nodes...)
+	wf.Edges = append([]domain.WorkflowEdge{{ID: "prepare-classify", Source: "prepare", Target: "classify"}}, wf.Edges...)
+	wf.Nodes[1] = domain.WorkflowNode{ID: "classify", Name: "classify", Type: "agent", AgentID: "human-reject-router", ExecutorID: "mock", RejectTo: "prepare", MaxAttempts: 1, MaxReworks: 2}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r, err := e.Start(wf.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "waiting")
+	first, _ := s.Run(r.ID)
+	if first.Nodes["classify"].GateResult == nil || first.Nodes["classify"].GateResult.Route[0] != "small" {
+		t.Fatalf("human route was not saved: %+v", first.Nodes["classify"].GateResult)
+	}
+	if err := s.PutAgent(domain.AgentDefinition{ID: "human-reject-router", Name: "human reject router", ExecutorID: "mock", Prompt: "[[mock:gate=human]][[mock:route=large]]"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Reject(r.ID, domain.RejectRequest{NodeID: "classify", TargetID: "prepare", Reason: "route needs reconsideration"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "waiting")
+	second, _ := s.Run(r.ID)
+	if second.Nodes["classify"].RouteDecision != nil || second.Nodes["small"].Status != "pending" || second.Nodes["large"].Status != "pending" {
+		t.Fatalf("reject must clear old route before rerun: classify=%+v small=%+v large=%+v", second.Nodes["classify"], second.Nodes["small"], second.Nodes["large"])
+	}
+	if err := e.Approve(r.ID, "classify", "new route confirmed"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "succeeded")
+	got, _ := s.Run(r.ID)
+	if got.Nodes["small"].Status != "skipped" || got.Nodes["large"].Status != "succeeded" {
+		t.Fatalf("rerun did not recalculate route: small=%+v large=%+v", got.Nodes["small"], got.Nodes["large"])
+	}
+}

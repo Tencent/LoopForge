@@ -846,7 +846,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if requiresSubmit {
 				prompt = appendSubmitGateInstruction(prompt, node.RejectTo, feedback == gateMissingRetryMarker)
 				if labels := routeLabels(wf, node.ID); len(labels) > 0 {
-					prompt += fmt.Sprintf("\n\n本节点负责选择下游分支。提交 pass 时，在 route 中提交一个或多个路由标签，可选值：%s。", strings.Join(labels, ", "))
+					prompt += fmt.Sprintf("\n\n本节点负责选择下游分支。提交 pass 或 human 时，可在 route 中提交一个或多个路由标签，可选值：%s。human 的 route 会在人工批准后生效；如果打回上游则会丢弃并重新计算。", strings.Join(labels, ", "))
 				}
 			}
 			if repositoryFallback != "" {

@@ -79,4 +79,10 @@ func TestReadGateResultRequiresHumanAction(t *testing.T) {
 	if err != nil || result.ActionRequired == "" {
 		t.Fatalf("valid human result=%+v err=%v", result, err)
 	}
+	if err := os.WriteFile(target, []byte(`{"decision":"rework","reason":"send it back","route":"small"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readGateResult(workspace, path); err == nil || !strings.Contains(err.Error(), "route is only valid") {
+		t.Fatalf("rework route must fail validation: %v", err)
+	}
 }
