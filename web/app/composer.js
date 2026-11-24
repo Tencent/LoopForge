@@ -4,6 +4,36 @@ function reqIcon(name,size=13){
 function hydrateReqIcons(root){
   if(root)window.AgentFlowHarnessIcons?.hydrate?.(root);
 }
+function renderReqAttachments(){
+  const host=$('#reqAttachments');
+  if(!host)return;
+  const files=state.reqAttachments||[];
+  host.hidden=!files.length&&!state.reqUploading;
+  host.innerHTML=files.map(a=>`<div class="req-attachment"><span>${reqIcon('doc',14)}</span><span class="req-attachment-name">${escapeHTML(a.name)}</span><small>${fmtBytes(a.size)}</small><button type="button" class="hui-icon-btn" data-remove-req-attachment="${escapeHTML(a.id)}" aria-label="移除 ${escapeHTML(a.name)}"${state.reqUploading||state.reqCreating?' disabled':''}>${reqIcon('close',12)}</button></div>`).join('')+(state.reqUploading?'<small role="status">正在上传附件…</small>':'');
+  host.querySelectorAll('[data-remove-req-attachment]').forEach(b=>b.onclick=()=>{
+    state.reqAttachments=files.filter(a=>a.id!==b.dataset.removeReqAttachment);
+    renderReqAttachments();persistRequirementComposer();
+  });
+  const button=$('#reqAttach');if(button)button.disabled=!!state.reqUploading||!!state.reqCreating||files.length>=8;
+  hydrateReqIcons(host);
+}
+async function uploadReqAttachments(files){
+  if(!files.length||requirementComposerBusy())return;
+  if(!state.currentUser?.id)return toast('请先登录后上传附件','err');
+  if(files.some(f=>!f.size||f.size>10*1024*1024))return toast('附件不能为空，且每个不能超过 10 MB','err');
+  if((state.reqAttachments||[]).length+files.length>8)return toast('最多上传 8 个附件','err');
+  state.reqUploading=true;renderReqAttachments();renderReqFooter();
+  try{
+    for(const file of files){
+      const body=new FormData();body.append('file',file);body.append('projectId',currentProject()?.id||'');
+      const resp=await fetch('/api/assistant/attachments',{method:'POST',body});
+      const data=await resp.json();if(!resp.ok)throw new Error(data.error||'附件上传失败');
+      state.reqAttachments=[...(state.reqAttachments||[]),data];
+      renderReqAttachments();persistRequirementComposer();
+    }
+  }catch(err){toast(err.message,'err')}
+  finally{state.reqUploading=false;renderReqAttachments();renderReqFooter();persistRequirementComposer()}
+}
 function reqDescription(){
   return ($('#chatInput')?.value||'').trim();
 }
@@ -188,20 +218,21 @@ function reqFooterNote(){
 }
 function renderReqFooter(){
   const creating=!!state.reqCreating;
-  const reason=reqDescription()?'':'先写一句需求';
+  const reason=reqDescription()||state.reqAttachments?.length?'':'先写需求或上传附件';
   const create=$('#reqCreate'),chat=$('#reqCreateChat');
   if(create){
-    create.disabled=creating||!!reason;
+    create.disabled=creating||!!state.reqUploading||!!reason;
     create.title=reason;
     create.innerHTML=creating==='issue'?'<span class="req-spin" aria-hidden="true"></span>正在创建…':'创建需求';
   }
   if(chat){
-    chat.disabled=creating||!!reason;
+    chat.disabled=creating||!!state.reqUploading||!!reason;
     chat.title=reason||'建单后打开 AI 工作台，新对话里已 @ 这个需求';
     chat.innerHTML=creating==='chat'?'<span class="req-spin" aria-hidden="true"></span>正在创建…':`${reqIcon('chat')}创建并去对话澄清`;
   }
   const note=$('#reqComposerHint');
   if(note)note.textContent=reqFooterNote();
+  renderReqAttachments();
   hydrateReqIcons($('#reqFooter'));
 }
 function renderReqTarget(){
@@ -249,10 +280,10 @@ function requirementComposerOpen(){
   return !!$('#requirementModal')?.classList.contains('open');
 }
 function requirementComposerBusy(){
-  return !!state.reqCreating;
+  return !!state.reqCreating||!!state.reqUploading;
 }
 function requirementComposerDirty(){
-  return requirementComposerBusy()||!!reqDescription();
+  return requirementComposerBusy()||!!reqDescription()||!!state.reqAttachments?.length;
 }
 function persistRequirementComposer(){
   const modal=$('#requirementModal');
@@ -265,6 +296,8 @@ function persistRequirementComposer(){
     open:requirementComposerOpen(),
     projectId:currentProject()?.id||'',
     input:$('#chatInput')?.value||'',
+    attachments:state.reqAttachments||[],
+    attachmentUserId:state.currentUser?.id||0,
     target:state.reqTarget||'local',
     delivery:reqUsesSOP()?'sop':'none',
     repoIds:selectedReqRepositoryIds(),
@@ -278,7 +311,8 @@ function clearRequirementComposer(){
   try{sessionStorage.removeItem('agentflow.requirementComposer')}catch{}
 }
 function resetRequirementComposer(){
-  Object.assign(state,{reqCreating:'',reqTarget:'local',reqDelivery:'sop'});
+  Object.assign(state,{reqCreating:'',reqTarget:'local',reqDelivery:'sop',reqAttachments:[],reqUploading:false});
+  renderReqAttachments();
   ['#reqBaseBranch','#chatInput'].forEach(id=>{const el=$(id);if(el)el.value=''});
   renderReqContext();
   renderReqTarget();
@@ -292,6 +326,8 @@ function readRequirementComposerDraft(){
   }catch{return null}
 }
 function applyRequirementComposerDraft(raw){
+  state.reqAttachments=raw.projectId===currentProject()?.id&&Number(raw.attachmentUserId)===Number(state.currentUser?.id)?(raw.attachments||[]):[];
+  renderReqAttachments();
   state.reqTarget=raw.target==='tapd'?'tapd':'local';
   state.reqDelivery=raw.delivery==='none'?'none':'sop';
   renderReqContext();
@@ -354,7 +390,8 @@ function clarifyToolLabel(tool){
   return ({Read:'读取',Grep:'搜索',Glob:'查找',MCP:'MCP',submit_clarification:'提交结论',submit_assistant_reply:'提交回复'})[name]||name||'操作';
 }
 function collectRequirementDraft(){
-  const description=reqDescription();
+  const description=reqDescription()||(state.reqAttachments?.length?'本需求以附件正文为准。请先读取全部附件，明确需求范围、约束和验收标准；无法读取或有歧义时先澄清。':'');
+  if(!reqDescription()&&state.reqAttachments?.length)return {title:state.reqAttachments[0].name.slice(0,80),description};
   const first=(description.split('\n').map(l=>l.trim()).find(Boolean)||'');
   return {title:first.slice(0,80),description};
 }
@@ -395,6 +432,7 @@ async function createIssueFromChat(target,mode){
   const draft=collectRequirementDraft();
   if(!draft.description){$('#chatInput')?.focus();return toast('先写一句需求')}
   if(target==='tapd'&&!projectTAPDReady())return toast('当前项目未配置 TAPD');
+  if(state.reqUploading)return toast('请等待附件上传完成');
   if(state.reqCreating)return toast('正在建单，请勿重复点击');
   const useSOP=reqUsesSOP();
   const workflowId=selectedReqWorkflowId();
@@ -416,6 +454,7 @@ async function createIssueFromChat(target,mode){
       assigneeUserId:Number(state.currentUser?.id)||0,
       title:draft.title||'新工作项',
       description:draft.description,
+      attachments:state.reqAttachments||[],
       priority:'medium',
     })});
     rememberIssue(issue);

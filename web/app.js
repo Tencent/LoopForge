@@ -1257,6 +1257,8 @@ function bind(){
   bindScheduleExecutionUI();
   bindProjectAdmin();bindRepoDrawer();
   $$('.requirement-close').forEach(b=>b.onclick=()=>closeRequirementComposer());
+  $('#reqAttach').onclick=()=>$('#reqAttachmentInput').click();
+  $('#reqAttachmentInput').onchange=e=>{const files=[...(e.target.files||[])];e.target.value='';void uploadReqAttachments(files)};
   $('#reqCreate').onclick=()=>createIssueFromChat();
   $('#reqCreateChat').onclick=()=>createIssueFromChat(undefined,'chat');
   $('#reqRepoChipToggle').onclick=e=>{e.stopPropagation();toggleReqRepoPopover()};

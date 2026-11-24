@@ -21,19 +21,17 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/attachment"
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
 
-const workbenchAttachmentLimit = 10 << 20
+const workbenchAttachmentLimit = attachment.Limit
 const workbenchAttachmentCount = 8
 
-type workbenchAttachmentRecord struct {
-	domain.AssistantAttachment
-	ProjectID string `json:"projectId"`
-}
+type workbenchAttachmentRecord = attachment.Record
 
 // Open legacy projects retain the room membership policy. Private projects
 // require an explicit member or owner; a reference never grants access.
@@ -218,6 +216,7 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 			}
 		}
 	}
+	req.issueAttachments = nil
 	req.attachmentIDs = map[string]bool{}
 	req.attachmentOwners = map[string]int64{}
 	if len(req.Messages) > 200 {
@@ -346,6 +345,9 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 			req.attachmentIDs[a.ID] = true
 			req.attachmentOwners[a.ID] = attachmentOwner
 		}
+	}
+	if err := h.addIssueAttachments(req, user.ID); err != nil {
+		return err
 	}
 	prefs := h.repo.AssistantPreferences(user.ID)
 	if len(req.roles) > 0 {
@@ -525,7 +527,7 @@ func pageAssistantReferences(refs []domain.AssistantReference, offset, size int)
 }
 
 func workbenchAttachmentDir(userID int64) string {
-	return filepath.Join(assistantSessionRoot(userID), "attachments")
+	return attachment.OwnerDir(userID)
 }
 
 var localMediaPath = regexp.MustCompile(`(?:^|[\s` + "`" + `（(:：])(/[^\s` + "`" + `）)]+\.(?:png|jpe?g|gif|webp))`)
@@ -1169,6 +1171,14 @@ func (h *assistantHandlers) downloadAttachment(c *gin.Context) {
 		return
 	}
 	ownerID := u.ID
+	if issueID := c.Query("issueId"); issueID != "" {
+		var err error
+		ownerID, err = h.issueAttachmentOwner(c, issueID, c.Param("id"), u.ID)
+		if err != nil {
+			c.JSON(403, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	readOnly, sessionProject := false, ""
 	if sessionID := c.Query("sessionId"); sessionID != "" {
 		owner, shared, viewOnly, err := h.conversationReadScope(c, sessionID, u.ID)

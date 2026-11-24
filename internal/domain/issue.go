@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+type IssueAttachment struct {
+	AssistantAttachment
+	UploadedBy int64 `json:"uploadedBy"`
+}
+
 type Issue struct {
 	ID             string `json:"id"`
 	ProjectID      string `json:"projectId"`
@@ -66,6 +71,8 @@ type Issue struct {
 	CompletedAt time.Time `json:"completedAt,omitempty"`
 	// Operations is the requirement's own audit trail: create, edit, close, reopen, dispatch.
 	Operations []IssueOperation `json:"operations,omitempty"`
+	// Attachments are uploaded by the creator and retained with the requirement.
+	Attachments []IssueAttachment `json:"attachments,omitempty"`
 }
 
 func (i Issue) Completed() bool {

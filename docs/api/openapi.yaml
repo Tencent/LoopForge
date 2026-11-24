@@ -4839,8 +4839,29 @@ components:
           type: boolean
     Issue:
       type: object
-      required: [projectId, title]
+      required: [projectId]
+      anyOf:
+        - required: [title]
+          properties:
+            title: {type: string, minLength: 1}
+        - required: [attachments]
+          properties:
+            attachments: {type: array, minItems: 1}
       properties:
+        attachments:
+          type: array
+          maxItems: 8
+          description: Creation accepts IDs uploaded by the caller to the same project. Server fills canonical metadata and uploadedBy. Preserved on later edits.
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: {type: string}
+              name: {type: string, readOnly: true}
+              mimeType: {type: string, readOnly: true}
+              size: {type: integer, format: int64, readOnly: true}
+              uploadedBy: {type: integer, format: int64, readOnly: true}
+
         closureAllowed:
           type: boolean
           readOnly: true

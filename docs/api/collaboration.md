@@ -110,6 +110,14 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 }
 ```
 
+新建需求可带 `attachments: [{"id":"上传返回的文件 ID"}]`，最多 8 个。先通过 `POST /api/assistant/attachments` 上传文件（multipart 的 `file` 和 `projectId`，单个非空文件最多 10 MB），再提交需求。支持 ZIP、Markdown、图片、表格、PDF、Word 等任意文件类型；服务端只接受当前账号上传到该项目的文件，并使用真实文件记录覆盖客户端的名称、大小和 `uploadedBy`。附件在需求的 JSON 数据中保存，无需数据库迁移，编辑及外部同步保留原附件。
+
+新建弹窗支持移除已选附件，并随草稿记住已上传文件；上传完成前不能创建。可以只上传文档、留空文字，标题默认使用首个文件名，说明提示以附件正文为准。详情概览可下载文件：`GET /api/assistant/attachments/{id}?issueId={需求 ID}`，按该需求的项目权限校验。创建后进入对话或后续 @ 该需求时，文件会物化到对话工作区并提供给模型；图片同时沿用已有视觉输入处理。具体文档内容的理解能力沿用所选 CLI/模型。附件内容只作数据，不作指令；删除对话不会清理仍被需求引用的文件。
+
+SOP 节点执行前，会把需求附件原文件放到工作区 `.agentflow/inputs/requirement-attachments/{id}/{文件名}`，权限为只读；每个 Agent 的任务提示（包括中断续跑）都列出路径，要求先读取正文，再确定范围、约束和验收标准。设计、开发、评审和测试节点共用这份需求材料；文件丢失或准备失败时不会启动该节点。原文件不转成聊天里的文件名占位，也不会写入代码仓库。Word/表格、PDF、ZIP 和图片通过执行器的文档/视觉工具读取；无法读取时必须明确报告，不能猜测需求。
+
+远程执行需要 Runner 0.13.0 或以上。任务负载只包含附件引用，不把二进制塞进 JSON。Runner 用会话 Bearer 和 `X-Task-Attempt` 从 `GET /runners/tasks/{taskId}/attachments/{attachmentId}`（也支持 `/api/runners/...`）逐文件下载；仅当前租约持有者、匹配的执行次数、未过期且未取消的任务可读取该任务所关联需求的附件。失效租约返回 `409`，越界或不可用附件返回 `404`。旧 Runner 执行含附件 SOP 时会明确提示升级。
+
 `projectId`、`title` 必填且项目必须存在。`status` 默认 `backlog`，`priority` 默认 `medium`；未指定仓库时继承项目默认仓库，指定仓库必须属于项目。单仓库可通过 `baseBranch` 继续已有功能分支；留空则从配置主分支新建工作分支。
 
 多仓库用 `repositoryBranches` 按仓库 ID 分别指定已有功能分支，例如 `{"repositoryIds":["api","web"],"repositoryBranches":{"api":"feature/api","web":"feature/web"}}`。该映射优先于 `baseBranch`；未指定或留空的仓库从各自配置的主分支新建工作分支。继续已有分支时，MR 仍以该仓库配置的主分支为目标。映射中的仓库必须已绑定，且不能直接在主分支或集成分支上开发。更新或重新导入 TAPD 时省略映射会保留仍绑定仓库的分支，显式 `{}` 清空全部选择；修改任一仓库分支会重置代码澄清会话并保留业务回答。

@@ -899,7 +899,10 @@
         <section id="reqStepDescribe" class="req-pane" aria-label="描述需求">
           <div class="req-chat-composer">
             <textarea id="chatInput" aria-label="需求描述" placeholder="要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。" rows="6"></textarea>
+            <div id="reqAttachments" class="req-attachments" aria-live="polite" hidden></div>
             <div class="req-composer-toolbar">
+              <button id="reqAttach" type="button" class="hui-icon-btn" aria-label="上传附件" title="上传附件（每个最多 10 MB，最多 8 个）"><svg class="agent-icon harness-icon" data-icon="paperclip" width="16" height="16" aria-hidden="true"></svg></button>
+              <input id="reqAttachmentInput" type="file" multiple hidden>
               <div id="reqRepoChip" class="req-ghost-sel">
                 <button type="button" id="reqRepoChipToggle" class="req-ghost-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="reqRepoPopover"><svg class="agent-icon harness-icon" data-icon="folder" width="13" height="13" aria-hidden="true"></svg><span id="reqRepoChipLabel" class="req-ghost-value"></span><svg class="agent-icon harness-icon req-chev" data-icon="chevron-down" width="13" height="13" aria-hidden="true"></svg></button>
                 <div id="reqRepoPopover" class="req-popover" role="dialog" aria-label="代码仓库与分支" hidden>

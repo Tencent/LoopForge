@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/attachment"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 
@@ -465,14 +466,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 }
 
 func assistantSessionBase() string {
-	if override := strings.TrimSpace(os.Getenv("AGENTFLOW_ASSISTANT_SESSION_DIR")); override != "" {
-		return override
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		home = os.TempDir()
-	}
-	return filepath.Join(home, ".agentflow", "assistant")
+	return attachment.BaseDir()
 }
 
 func assistantSessionRoot(userID int64) string {

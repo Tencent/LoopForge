@@ -147,8 +147,8 @@ func TestAttachmentSweepBatchesDeletionsAndRetriesOnError(t *testing.T) {
 	if removed := h.sweepQueuedAttachments(); removed != len(ids) {
 		t.Fatalf("sweep removed %d of %d files", removed, len(ids))
 	}
-	if queries != 3 {
-		t.Errorf("sweep ran %d reference scans for 30 deletions, want 3 (one per table)", queries)
+	if queries != 4 {
+		t.Errorf("sweep ran %d reference scans for 30 deletions, want 4 (one per table)", queries)
 	}
 	if left, _ := os.ReadDir(attachmentSweepQueueDir()); len(left) != 0 {
 		t.Errorf("sweep left %d markers", len(left))

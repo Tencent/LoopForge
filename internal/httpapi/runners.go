@@ -1266,6 +1266,9 @@ func isRunnerAgentPath(path string) bool {
 	// user auth.
 	if after, ok := strings.CutPrefix(rest, "tasks/"); ok && after != "" {
 		parts := strings.Split(after, "/")
+		if len(parts) == 3 && parts[1] == "attachments" && parts[2] != "" {
+			return true
+		}
 		if len(parts) == 1 {
 			return true
 		}

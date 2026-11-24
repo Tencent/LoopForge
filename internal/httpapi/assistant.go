@@ -86,6 +86,7 @@ type assistantRequest struct {
 	// skills are skills mentioned in the conversation, written to the CLI
 	// home with the project's skills even when they are shared.
 	skills           []domain.SkillDefinition
+	issueAttachments []domain.AssistantAttachment
 	attachmentIDs    map[string]bool
 	attachmentOwners map[string]int64
 	workspaceMode    bool

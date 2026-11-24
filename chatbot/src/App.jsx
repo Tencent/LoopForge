@@ -684,6 +684,7 @@ export default function App() {
         const value = insertMention("", { start: 0, end: 0 }, ref);
         setText(value.text);
         setReferences([ref]);
+        setAttachments((current) => current.length ? current : (issue.attachments || []).filter((a) => Number(a.uploadedBy) === Number(chat.user.id)));
         setMention(null);
         const editor = input.current;
         requestAnimationFrame(() => {
