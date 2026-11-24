@@ -46,6 +46,8 @@ type runnerTaskPayload struct {
 	// workspace and reuse the existing verification/handoff pipeline.
 	Artifacts map[string]string         `json:"artifacts,omitempty"`
 	Outputs   *domain.RunnerTaskOutputs `json:"outputs,omitempty"`
+
+	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
 }
 
 // runnerTaskTime decodes timestamps written by both write paths: Go struct
@@ -118,6 +120,7 @@ func runnerTaskFromRow(row runnerTaskRow) domain.RunnerTask {
 		t.CompletedAt = p.CompletedAt.toTime()
 		t.RunID = p.RunID
 		t.NodeID = p.NodeID
+		t.ProjectCredentialIDs = p.ProjectCredentialIDs
 		t.Invocation = p.Invocation
 		t.Sandbox = p.Sandbox
 		t.Command = p.Command
@@ -145,6 +148,7 @@ func runnerTaskPayloadBytes(v domain.RunnerTask) []byte {
 		Invocation: v.Invocation, Sandbox: v.Sandbox, Command: v.Command, Action: v.Action,
 		PreviewArchive: v.PreviewArchive, WorkBranchMessage: v.WorkBranchMessage, Artifacts: v.Artifacts,
 		Outputs: v.Outputs, IntegrationLabel: v.IntegrationLabel,
+		ProjectCredentialIDs: v.ProjectCredentialIDs,
 	})
 }
 

@@ -309,11 +309,12 @@ func (r *RunsRepo) Run(id string) (domain.Run, bool) {
 	return run, true
 }
 
-// RunHeader reads identity and execution scope without loading the snapshot,
+// RunHeader reads identity, execution scope and workspace binding without loading the snapshot,
 // nodes, events or artifacts. A missing run is returned as an empty header.
 func (r *RunsRepo) RunHeader(id string) (domain.Run, error) {
 	var row runRow
-	err := r.DB.Select("id", "kind", "workflow_id", "execution_context").Where("id = ?", id).Take(&row).Error
+	err := r.DB.Select("id", "kind", "workflow_id", "execution_context", "workspace_host", "workspace_root", "workspace_cleaned_at").
+		Where("id = ?", id).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return domain.Run{}, nil
 	}

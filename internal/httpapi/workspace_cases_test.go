@@ -197,6 +197,10 @@ func TestWorkspaceMoreRemoteProxyMatrix(t *testing.T) {
 		for message := range conn.send {
 			request := message.WorkspaceRequest
 			switch request.Query {
+			case "shared-child":
+				if request.RunID != "shared-runner-owner" || request.WorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
+					t.Errorf("shared child request was not addressed to the owner: %+v", request)
+				}
 			case "error404":
 				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusNotFound, Error: "missing"})
 				continue
@@ -257,6 +261,31 @@ func TestWorkspaceMoreRemoteProxyMatrix(t *testing.T) {
 		}
 	}
 
+	owner := run
+	owner.ID = "shared-runner-owner"
+	owner.ExecutionContext.RunnerWorkspaceLayout = domain.RunnerWorkspaceLayoutShared
+	if err := f.s.PutRun(owner); err != nil {
+		t.Fatal(err)
+	}
+	child := owner
+	child.ID = "shared-runner-child"
+	child.Status = "succeeded"
+	child.WorkspaceCleanedAt = time.Now().UTC()
+	child.ExecutionContext.ParentRunID = owner.ID
+	child.ExecutionContext.WorkspaceRunID = owner.ID
+	child.ExecutionContext.ExecutionRunnerID = "old-runner"
+	if err := f.s.PutRun(child); err != nil {
+		t.Fatal(err)
+	}
+	sharedRouter := gin.New()
+	sharedRouter.GET(paths[0], h.runWorkspace)
+	childPath := "/api/runs/" + child.ID + "/workspace?q=shared-child"
+	sharedResponse := httptest.NewRecorder()
+	sharedRouter.ServeHTTP(sharedResponse, httptest.NewRequest(http.MethodGet, childPath, nil))
+	if sharedResponse.Code != http.StatusOK || !strings.Contains(sharedResponse.Body.String(), "\"available\":true") {
+		t.Fatalf("completed child should reach the owner's runner: %d %s", sharedResponse.Code, sharedResponse.Body)
+	}
+
 	unavailable := &runsHandlers{deps: h.deps, runnerControls: newRunnerControlHub()}
 	for _, fullPath := range []string{paths[0], paths[2]} {
 		rec := httptest.NewRecorder()
@@ -274,14 +303,14 @@ func TestWorkspaceMoreRemoteProxyMatrix(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	router := gin.New()
-	router.GET("/unexpected", func(c *gin.Context) { h.proxyRunnerWorkspace(c, run, "cvb-runner") })
+	router.GET("/unexpected", func(c *gin.Context) { h.proxyRunnerWorkspace(c, run, run, "cvb-runner") })
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/unexpected", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unexpected operation = %d", rec.Code)
 	}
 	rec = httptest.NewRecorder()
 	router = gin.New()
-	router.GET(paths[0], func(c *gin.Context) { (&runsHandlers{deps: h.deps}).proxyRunnerWorkspace(c, run, "cvb-runner") })
+	router.GET(paths[0], func(c *gin.Context) { (&runsHandlers{deps: h.deps}).proxyRunnerWorkspace(c, run, run, "cvb-runner") })
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, strings.Replace(paths[0], ":id", run.ID, 1), nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("nil remote channel = %d", rec.Code)

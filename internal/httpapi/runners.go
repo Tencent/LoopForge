@@ -950,7 +950,11 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			if err != nil || !claimed || task.RunID == "" || task.Action != "" || task.Sandbox == nil {
 				return task, claimed, err
 			}
-			if err := domain.ValidateFrozenSandbox(task.Sandbox.Profile); err != nil {
+			err = domain.ValidateFrozenSandbox(task.Sandbox.Profile)
+			if err == nil {
+				task.ProjectCredentialEnv, err = h.runnerTaskProjectCredentialEnv(c.Request.Context(), task, runner)
+			}
+			if err != nil {
 				// A task queued before the upgrade still carries its old
 				// profile. Finish it without sending it to an older runner.
 				if finishErr := h.repo.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskFailed, nil, "", err.Error(), nil, nil, time.Now().UTC()); finishErr != nil {
@@ -968,6 +972,9 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		if input.Preflight {
 			c.JSON(http.StatusOK, map[string]bool{"taskAvailable": true})
 			return
+		}
+		if len(task.ProjectCredentialEnv) > 0 {
+			c.Header("Cache-Control", "no-store")
 		}
 		if task.Invocation != nil && task.Invocation.GitSSHUserID > 0 && runner.SupportsGitSSH() && len(task.Invocation.GitSSHRemotes()) > 0 {
 			task.Invocation.GitSSHKeys = h.repo.GitSSHKeysForRemotes(task.Invocation.GitSSHUserID, task.Invocation.GitSSHRemotes())

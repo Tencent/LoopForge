@@ -285,6 +285,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	if err != nil {
 		return "", err
 	}
+	task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
 	task.Sandbox = sandboxSpec
 	if err := validateSOPHandoffRunnerPayload(run, task); err != nil {
 		return "", err
@@ -456,6 +457,7 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 	if err != nil {
 		return "", err
 	}
+	task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
 	if err := validateSOPHandoffRunnerPayload(run, task); err != nil {
 		return "", err
 	}
@@ -654,6 +656,7 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 			return "", err
 		}
 		task.Invocation = e.gateCommandInvocation(run, nodeID)
+		task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
 		return "", err

@@ -62,6 +62,7 @@ func controlledBaseEnvironment(base []string) []string {
 		"CLAUDE_CODE_USE_BEDROCK=", "CLAUDE_CODE_USE_VERTEX=", "CLAUDE_CODE_USE_FOUNDRY=",
 		"CODEBUDDY_INTERNET_ENVIRONMENT=",
 		"AGENTFLOW_GIT_TOKEN=",
+		"AGENTFLOW_PROJECT_CREDENTIAL_KEY=",
 		"GH_TOKEN=",
 		"GITHUB_TOKEN=",
 		"AGENTFLOW_MCP_CONFIG=",
@@ -188,6 +189,10 @@ func processSandboxBinary(driver, requiredOS, osName, binaryName string) (string
 }
 
 func (s *processSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+	command, err := projectCommandEnvironment(ctx, command, s.profile.Environment)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
 	cmd, err := s.command(ctx, command, controlledBaseEnvironment(os.Environ()))
 	if err != nil {
 		return "", err
@@ -245,7 +250,7 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 		return nil, fmt.Errorf("unsupported process sandbox %q", s.driver)
 	}
 	cmd.Dir = s.workspace
-	cmd.Env = appendEnvironment(base, s.profile.Environment, command.environment)
+	cmd.Env = appendEnvironment(base, s.profile.Environment, command.environment, command.projectCredentialEnv)
 	cmd.Stdin = command.Stdin
 	if command.WorkingDir != "" {
 		cmd.Env = upsertEnv(cmd.Env, "PWD", command.WorkingDir)
