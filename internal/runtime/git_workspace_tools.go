@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,8 @@ import (
 )
 
 const dockerGitToolsMount = "/run/loopforge-git"
+
+var errDockerGitToolsMountMissing = errors.New("此 Docker 容器缺少 Git 凭据只读挂载，请在容器正常重建后重试，或使用新工作区")
 
 // Take a private snapshot even when the installed distribution uses links.
 // Prefer the executable from libexec when available, including on macOS where
@@ -46,6 +49,22 @@ func ensureRunnerGitDir(dir string) error {
 	return nil
 }
 
+func dockerGitToolsDirectory(workspace, name string) (string, error) {
+	workspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", err
+	}
+	key := sha256.Sum256([]byte(workspace + "\n" + name))
+	return filepath.Join(filepath.Dir(workspace), ".loopforge-git-helpers", fmt.Sprintf("%x", key[:16])), nil
+}
+
+func ensureDockerGitToolsDirectory(root string) error {
+	if err := ensureRunnerGitDir(filepath.Dir(root)); err != nil {
+		return err
+	}
+	return ensureRunnerGitDir(root)
+}
+
 func prepareWorkspaceGitTools(ctx context.Context, sandbox Sandbox, workspace string, plainHTTP bool) (string, error) {
 	host := nativeGitToolsRoot()
 	guest := host
@@ -54,22 +73,19 @@ func prepareWorkspaceGitTools(ctx context.Context, sandbox Sandbox, workspace st
 		if docker.workspace != "" {
 			workspace = docker.workspace
 		}
-		workspace, err := filepath.Abs(workspace)
+		var err error
+		host, err = dockerGitToolsDirectory(workspace, docker.name)
 		if err != nil {
 			return "", err
 		}
-		host = filepath.Join(filepath.Dir(workspace), ".loopforge-git-helpers")
+		if err := ensureDockerGitToolsDirectory(host); err != nil {
+			return "", err
+		}
+		guest = dockerGitToolsMount
+	} else {
 		if err := ensureRunnerGitDir(host); err != nil {
 			return "", err
 		}
-		key := sha256.Sum256([]byte(workspace + "\n" + docker.name))
-		host = filepath.Join(host, fmt.Sprintf("%x", key[:16]))
-		guest = dockerGitToolsMount
-	}
-	if err := ensureRunnerGitDir(host); err != nil {
-		return "", err
-	}
-	if docker == nil {
 		self, err := os.Executable()
 		if err != nil {
 			return "", err
@@ -106,11 +122,6 @@ func prepareWorkspaceGitTools(ctx context.Context, sandbox Sandbox, workspace st
 			return "", err
 		}
 		if err := writeWorkspaceGitShim(host, filepath.Join(workspaceGitHTTPBin, "git"), helper, "git-workspace"); err != nil {
-			return "", err
-		}
-	}
-	if docker != nil {
-		if err := docker.requireGitTools(ctx, host, plainHTTP); err != nil {
 			return "", err
 		}
 	}
@@ -196,8 +207,8 @@ func publishGitDistribution(path string, install func(string) error) error {
 
 // Read the Git installation from the image with no workspace, credentials or
 // network attached. A live workspace container can have changed its own files.
-func prepareDockerGitTools(ctx context.Context, root string, inspectArgs ...string) error {
-	out, err := exec.CommandContext(ctx, "docker", inspectArgs...).Output()
+func prepareDockerGitTools(ctx context.Context, root, container string) error {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", "{{.Image}}", container).Output()
 	if err != nil {
 		return fmt.Errorf("inspect sandbox Git image: %w", err)
 	}
