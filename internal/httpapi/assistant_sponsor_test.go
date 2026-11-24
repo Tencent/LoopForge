@@ -55,7 +55,7 @@ func TestSharedCodeBuddyEffortsIgnoreAnOldPersonalOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scheduled, _, ok := scheduleCredentialUser(st, member, assistantEngineCodeBuddy); !ok || scheduled.CodeBuddyBaseURL != "" {
+	if scheduled, _, ok := scheduleCredentialUser(st, member, "", assistantEngineCodeBuddy); !ok || scheduled.CodeBuddyBaseURL != "" {
 		t.Fatal("a scheduled run on the shared key must not use the caller's personal endpoint")
 	}
 	c, rec := workbenchContext(afterClear, http.MethodGet, "/api/assistant/models", &bytes.Buffer{})

@@ -116,6 +116,9 @@ func TestProjectRunAdmissionPersonalRunnerChildAndEmptyProject(t *testing.T) {
 	if err := s.PutRunner(domain.Runner{ID: "personal", OwnerUserID: 7}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.SetRunnerRunLimit("personal", 0); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 12; i++ {
 		r := admissionRun(fmt.Sprintf("personal-%d", i), "")
 		r.ExecutionContext.ExecutionRunnerID = "personal"
@@ -219,10 +222,8 @@ func TestPersonalRunnerRunLimit(t *testing.T) {
 	if got, _ := s.Runner("laptop"); got.RunLimit != 2 {
 		t.Fatalf("run limit reset by PutRunner: %+v", got)
 	}
-	for _, err := range []error{s.SetRunnerRunLimit("laptop", -1), s.SetRunnerRunLimit("laptop", MaxRunnerRunLimit+1)} {
-		if err == nil {
-			t.Fatal("out-of-range run limit accepted")
-		}
+	if err := s.SetRunnerRunLimit("laptop", -1); err == nil {
+		t.Fatal("negative run limit accepted")
 	}
 	if err := s.SetRunnerRunLimit("missing", 3); err != ErrRunnerNotFound {
 		t.Fatalf("missing runner: %v", err)
@@ -246,12 +247,20 @@ func TestPersonalRunnerRunLimit(t *testing.T) {
 	if queuedMessage("runner:laptop") != "等待执行机器可用运行名额" || queuedMessage("project:p") != "等待项目可用运行名额" {
 		t.Fatal("queued event message does not name the limiting bucket")
 	}
-	// An unlimited personal machine is unaffected by the full project and the laptop queue.
-	if err := s.PutRun(personalRun("desk-1", "p", "desktop")); err != nil {
-		t.Fatal(err)
-	}
-	if status("desk-1") != "running" {
-		t.Fatal("unlimited personal machine queued")
+	// Both projects use the desktop's ten default slots, independently of cloud and laptop.
+	projects := []string{"p", "q"}
+	for i := 0; i < 11; i++ {
+		id := fmt.Sprintf("desk-%d", i)
+		if err := s.PutRun(personalRun(id, projects[i%len(projects)], "desktop")); err != nil {
+			t.Fatal(err)
+		}
+		want := "running"
+		if i == 10 {
+			want = "queued"
+		}
+		if got := status(id); got != want {
+			t.Fatalf("default machine limit: %s = %s, want %s", id, got, want)
+		}
 	}
 	// Personal runs never occupy the project bucket.
 	if err := s.PutRun(admissionRun("cloud-extra", "p")); err != nil {
@@ -295,6 +304,12 @@ func TestPersonalRunnerRunLimit(t *testing.T) {
 	if promoted, _ := s.PromoteQueuedRuns(); len(promoted) != 1 || promoted[0] != "lap-4" {
 		t.Fatalf("cleared limit did not release queue: %v", promoted)
 	}
+	if err := s.SetRunnerRunLimit("desktop", 250); err != nil {
+		t.Fatal(err)
+	}
+	if promoted, err := s.PromoteQueuedRuns(); err != nil || len(promoted) != 1 || promoted[0] != "desk-10" {
+		t.Fatalf("raising the machine limit did not release its queue: %v %v", promoted, err)
+	}
 }
 
 func TestAdmissionLocksOnlyWhenClaimingAndPersistsBucket(t *testing.T) {
@@ -310,7 +325,12 @@ func TestAdmissionLocksOnlyWhenClaimingAndPersistsBucket(t *testing.T) {
 		}
 		return ids
 	}
-	if err := s.PutRunner(domain.Runner{ID: "free", OwnerUserID: 7}); err != nil {
+	ownerID := int64(7)
+	if err := s.DB.Create(&runnerRow{ID: "free", OwnerUserID: &ownerID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// An existing unlimited machine has a NULL limit and keeps it on re-registration.
+	if err := s.PutRunner(domain.Runner{ID: "free", OwnerUserID: ownerID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutRun(admissionRun("p1", "alpha")); err != nil {

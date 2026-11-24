@@ -1,8 +1,8 @@
 // Runs script LOOPs on an execution machine the suite starts itself: the runner
-// binary served by the deployment registers with a bind code and is the token
-// owner's default machine for the duration of this file (the previous default
-// is restored afterwards). Upstream artifacts must reach downstream nodes on
-// the runner, and the control plane registers what the runner reports.
+// binary served by the deployment registers with a bind code, is shared with
+// the test project and becomes the token owner's default machine for this file.
+// The previous default is restored afterwards. Upstream artifacts must reach
+// downstream nodes on the runner, and the control plane registers what it reports.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -49,6 +49,7 @@ before(async () => {
   }, { timeoutMs: 60_000 }).catch(err => { throw new Error(`${err.message}\n${log.slice(-2000)}`); });
   runnerId = runner.id;
   assert.ok(versionAtLeast(runner.runnerVersion, '0.3.0'), `runner ${runner.runnerVersion} predates reported outputs`);
+  await put(`/api/runners/${runnerId}/shared-projects`, { projectIds: [cfg.projectId] });
   await put('/api/runners/default', { runnerId });
 });
 
