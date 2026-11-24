@@ -82,7 +82,7 @@ function evoReviewOutputHTML(node,error){
   if(error)return `<p class="evo-muted">记录不可用：${escapeHTML(error)}</p>`;
   if(!node)return '<p class="evo-muted">未跑到此节点或无记录</p>';
   const text=node.output||node.error||node.gateResult?.summary||node.feedback||'',long=text.length>400||text.split('\n').length>8;
-  return `${evoNodeSideHTML({status:node.status,rework:node.reworkCount,decision:node.gateResult?.decision})}${text?`<div class="evo-review-output"><pre class="evo-output-excerpt">${escapeHTML(text)}</pre>${long?'<button type="button" class="evo-review-expand" data-evo-output-expand aria-expanded="false">展开记录</button>':''}</div>`:'<p class="evo-muted">未记录输出</p>'}`;
+  return `${evoNodeSideHTML({status:node.status,rework:node.reworkCount,decision:node.gateResult?.decision})}${text?`<div class="evo-review-output"><pre class="evo-output-excerpt" tabindex="0">${escapeHTML(text)}</pre>${long?'<button type="button" class="evo-review-expand" data-evo-output-expand aria-expanded="false">展开记录</button>':''}</div>`:'<p class="evo-muted">未记录输出</p>'}`;
 }
 // 结构化产出只对比真实字段值；无法完整枚举时回退到原记录，不推断业务含义。
 function evoReviewJSONChanges(before,after){
@@ -107,14 +107,14 @@ function evoReviewEvidenceHTML(m,data){
   if(data.record){
     const {record,run}=data,nodes=run.nodes&&!Array.isArray(run.nodes)?run.nodes:{},ids=Object.keys(nodes);
     const chosen=ids.includes(m.evidenceNode)?m.evidenceNode:ids.includes(record.nodeId)?record.nodeId:ids.find(id=>nodes[id].status==='failed')||ids[0]||'';m.evidenceNode=chosen;
-    return `<div class="evo-review-evidence-meta">${evoEvidenceRunLink(record.runId,'完整运行 ↗')}</div><div class="evo-evidence-signal"><p>${escapeHTML(record.detail||'无信号摘要')}</p></div><h4>运行输入</h4><pre class="evo-output-excerpt">${escapeHTML(run.input||'未记录输入')}</pre>${evoStoryNodePickerHTML(ids,chosen,run)}<section>${evoReviewOutputHTML(nodes[chosen])}</section>`;
+    return `<div class="evo-review-evidence-meta">${evoEvidenceRunLink(record.runId,'完整运行 ↗')}</div><div class="evo-evidence-signal"><p>${escapeHTML(record.detail||'无信号摘要')}</p></div><h4>运行输入</h4><pre class="evo-output-excerpt" tabindex="0">${escapeHTML(run.input||'未记录输入')}</pre>${evoStoryNodePickerHTML(ids,chosen,run)}<section>${evoReviewOutputHTML(nodes[chosen])}</section>`;
   }
   const {replay,comparison,source,candidate}=data,chosen=evoStoryChosenNode(m,data);
   m.evidenceNode=chosen?.id||'';
   const ids=comparison.nodes.map(node=>node.id);
   const side=(title,data,id)=>`<section>
     <h4>${title} ${evoEvidenceRunLink(id,'完整运行 ↗')}</h4>
-    <h5>运行输入</h5><pre class="evo-output-excerpt">${escapeHTML(data.run?.input||'未记录输入')}</pre>
+    <h5>运行输入</h5><pre class="evo-output-excerpt" tabindex="0">${escapeHTML(data.run?.input||'未记录输入')}</pre>
     <h5>节点输出</h5>${evoReviewOutputHTML(data.run?.nodes?.[chosen?.id],data.error)}
   </section>`;
   return `${evoReplaySourceChanged(replay,source)?'<p class="evo-review-warn">原运行状态已变化。此处展示最新记录，历史评分仍按验证时记录。</p>':''}

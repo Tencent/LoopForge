@@ -47,6 +47,8 @@ test('task details have a separate page and returning preserves pagination, filt
   $('[data-evo-asset-group="asset:agent:a-11"]').click(); await settle(4);
   assert.match(app.window.location.hash, /findings\/f-11\/c-11/);
   assert.ok($('#evolutionBody > #evoDetailPage'));
+  assert.equal($('#evoValidationResults .evo-story-empty').textContent,'暂无');
+  assert.equal($('#evoValidationResults table'),null);
   assert.equal($('#evoWorkspaceTasks'), null);
   assert.equal($('#evoPageHead').hidden, true);
   assert.equal($('#evoMetrics').hidden, true);
@@ -236,7 +238,7 @@ test('clicking a history cell opens a short summary and restores focus when clos
   await settle(7);
   assert.equal(app.document.querySelectorAll('.evo-detail-track li').length, 6);
   assert.match($('.evo-detail-track [aria-current="step"]').textContent, /小范围试用[\s\S]+待确认试用/);
-  assert.match($('.evo-story-replay-pair').textContent,/原版 1\/2 成功\s+修改稿 2\/2 成功/);
+  assert.match($('.evo-story-validation-summary').textContent,/原运行成功 1\/2[\s\S]+回放成功 2\/2/);
   assert.doesNotMatch($('#evoValidationResults').textContent,/试用|流量/);
   assert.equal($('#evoRolloutDetails'),null);
   assert.doesNotMatch($('#evoDetailBody').textContent,/来源记录与诊断|试用、发布与观察/);
@@ -251,7 +253,13 @@ test('clicking a history cell opens a short summary and restores focus when clos
   assert.deepEqual(cells.map(el => el.textContent), ['3', '4']);
   assert.equal($('#evoEvidenceDialog').open,false);
   assert.equal(app.router.calls.some(call=>call.path.endsWith('/compare')),false);
-  $('#evoValidationDetails > summary').click();
+  assert.equal($('#evoValidationDetails'),null);
+  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length,2);
+  $('[data-evo-sample-filter="fixed"]').click();
+  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length,1);
+  assert.equal($('[data-evo-sample-filter="fixed"]').getAttribute('aria-pressed'),'true');
+  $('[data-evo-sample-filter="all"]').click();
+  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length,2);
   $('[data-evo-story-row="problem"] td:last-child').click();
   await settle(5);
   assert.equal($('#evoEvidenceDialog').open,true);
@@ -266,7 +274,6 @@ test('clicking a history cell opens a short summary and restores focus when clos
   assert.equal(app.document.activeElement.dataset.evoStoryReplay,'problem');
   $('[data-evo-story-replay="regression"]').click();
   await settle(5);
-  assert.equal($('#evoValidationDetails').open,true);
   assert.equal($('#evoEvidenceDetails').open,false);
   assert.match($('#evoStoryBehavior').textContent,/结构化输出保持一致/);
   assert.doesNotMatch($('#evoEvidenceBody').textContent,/Test0/);

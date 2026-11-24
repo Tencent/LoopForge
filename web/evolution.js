@@ -853,6 +853,7 @@ function evoRenderComparisonList(m){
     const focused=document.activeElement;
     const replay=host.contains(focused)?focused.dataset.evoStoryReplay:'';
     host.innerHTML=evoStoryReplayTable(m);evoStoryUpdateSelection(m);
+    $$('#evoValidationResults [data-evo-sample-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.evoSampleFilter===m.compareFilter)));
     window.AgentFlowHarnessIcons?.hydrate($('#evoReviewWorkbench'));
     if(replay)host.querySelector(`[data-evo-story-replay="${CSS.escape(replay)}"]`)?.focus({preventScroll:true});
     return;
@@ -874,7 +875,7 @@ async function evoSelectEvidence(selection,refresh=true,reveal=false){
   const replay=selection.type==='replay'?(m.proposal?.replays||[]).find(r=>r.id===selection.id):null;
   const record=selection.type==='run'?(m.data?.items||[]).find(r=>r.runId===selection.id&&!r.unavailable):null;
   if(!replay&&!record)return;
-  if(reveal){const details=$('#evoValidationDetails');if(details)details.open=true;m.evidenceTouched=true;if(!replay||m.detailTab!=='change'){m.detailTab=replay?'validation':'records';evoSetDetailTab(m.detailTab,false)}}
+  if(reveal){m.evidenceTouched=true;if(!replay||m.detailTab!=='change'){m.detailTab=replay?'validation':'records';evoSetDetailTab(m.detailTab,false)}}
   if(replay)m.lastReplay=selection.id;else m.lastRun=selection.id;
   $('#evoEvidenceCount').textContent=replay?(EVO_GROUPS[replay.group]?.[0]||'历史样例'):'问题运行';
   if(m.evidence?.type!==selection.type||m.evidence?.id!==selection.id){m.evidenceData=null;m.evidenceNode=''}
@@ -1448,7 +1449,7 @@ document.addEventListener('click',e=>{
   const detailTab=e.target.closest('[data-evo-detail-tab]');if(detailTab)return evoSetDetailTab(detailTab.dataset.evoDetailTab);
   if(e.target.closest('[data-evo-list-back]'))return evoBack();
   if(e.target.closest('[data-evo-reload]'))return renderEvolutionView();
-  if(e.target.closest('[data-evo-review-regressions]')&&evo.modal){const m=evo.modal,r=m.proposal?.replays?.find(r=>r.outcome==='regressed');if(r){m.compareFilter='regressed';evoRenderComparisonList(m);$('#evoValidationDetails').open=true;return evoOpenStoryEvidence({type:'replay',id:r.id},e.target.closest('[data-evo-review-regressions]'))}}
+  if(e.target.closest('[data-evo-review-regressions]')&&evo.modal){const m=evo.modal,r=m.proposal?.replays?.find(r=>r.outcome==='regressed');if(r){m.compareFilter='regressed';evoRenderComparisonList(m);return evoOpenStoryEvidence({type:'replay',id:r.id},e.target.closest('[data-evo-review-regressions]'))}}
   const evidenceRun=e.target.closest('[data-evo-evidence-run]');if(evidenceRun&&!evidenceRun.disabled)return evoOpenStoryEvidence({type:'run',id:evidenceRun.dataset.evoEvidenceRun},evidenceRun);
   const evidenceReplay=e.target.closest('[data-evo-evidence-replay]');if(evidenceReplay)return evoSelectEvidence({type:'replay',id:evidenceReplay.dataset.evoEvidenceReplay},true,true);
   if(e.target.closest('[data-evo-evidence-retry]')&&evo.modal?.evidence){const m=evo.modal;m.evidenceCache.delete(`${m.evidence.type}:${m.evidence.id}`);return evoSelectEvidence(m.evidence)}
