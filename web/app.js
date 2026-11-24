@@ -397,9 +397,11 @@ function highlightJSON(src){
   return html;
 }
 
-function renderMarkdown(md){
+function renderMarkdown(md, options={}){
   if(!md)return '';
   const text=String(md).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const inline=text=>parseInlineMarkdown(text,options.images);
+  const copyButton=options.copyCode===false?'':'<button type="button" class="md-code-copy">复制</button>';
   const lines=text.split('\n');
   const out=[];
   let inCode=false, codeLang='', codeLines=[];
@@ -418,10 +420,10 @@ function renderMarkdown(md){
     const parseRow=(r)=>r.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c=>c.trim());
     const headers=parseRow(tableRows[0]);
     const bodyRows=tableRows.slice(2);
-    const thead=`<thead><tr>${headers.map(h=>`<th>${parseInlineMarkdown(h)}</th>`).join('')}</tr></thead>`;
+    const thead=`<thead><tr>${headers.map(h=>`<th>${inline(h)}</th>`).join('')}</tr></thead>`;
     const tbody=`<tbody>${bodyRows.map(row=>{
       const cells=parseRow(row);
-      return `<tr>${headers.map((_,idx)=>`<td>${parseInlineMarkdown(cells[idx]||'')}</td>`).join('')}</tr>`;
+      return `<tr>${headers.map((_,idx)=>`<td>${inline(cells[idx]||'')}</td>`).join('')}</tr>`;
     }).join('')}</tbody>`;
     out.push(`<table>${thead}${tbody}</table>`);
     inTable=false;tableRows=[];
@@ -434,7 +436,7 @@ function renderMarkdown(md){
       if(inCode){
         const rawCode=codeLines.join('\n');
         const highlighted=highlightCode(rawCode, codeLang);
-        out.push(`<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${escapeHTML(codeLang||'TEXT')}</span><button type="button" class="md-code-copy">复制</button></div><pre><code>${highlighted}</code></pre></div>`);
+        out.push(`<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${escapeHTML(codeLang||'TEXT')}</span>${copyButton}</div><pre><code>${highlighted}</code></pre></div>`);
         inCode=false;codeLang='';codeLines=[];
       } else {
         flushList();
@@ -483,7 +485,7 @@ function renderMarkdown(md){
       }
       const titleIcons={note:'ℹ️ NOTE', tip:'💡 TIP', important:'🟣 IMPORTANT', warning:'⚠️ WARNING', caution:'🛑 CAUTION'};
       const titleText=titleIcons[kind]||kind.toUpperCase();
-      out.push(`<div class="md-alert md-alert-${kind}"><div class="md-alert-title">${titleText}</div><div class="md-alert-content">${renderMarkdown(alertLines.join('\n'))}</div></div>`);
+      out.push(`<div class="md-alert md-alert-${kind}"><div class="md-alert-title">${titleText}</div><div class="md-alert-content">${renderMarkdown(alertLines.join('\n'),options)}</div></div>`);
       continue;
     }
 
@@ -494,7 +496,7 @@ function renderMarkdown(md){
         i++;
         bqLines.push(lines[i].replace(/^>\s?/, ''));
       }
-      out.push(`<blockquote>${renderMarkdown(bqLines.join('\n'))}</blockquote>`);
+      out.push(`<blockquote>${renderMarkdown(bqLines.join('\n'),options)}</blockquote>`);
       continue;
     }
 
@@ -508,7 +510,7 @@ function renderMarkdown(md){
     if(hMatch){
       flushList();
       const level=hMatch[1].length;
-      out.push(`<h${level}>${parseInlineMarkdown(hMatch[2])}</h${level}>`);
+      out.push(`<h${level}>${inline(hMatch[2])}</h${level}>`);
       continue;
     }
 
@@ -519,7 +521,7 @@ function renderMarkdown(md){
         inList=true;listType='ul';
       }
       const checked=taskMatch[1].toLowerCase()==='x';
-      listItems.push(`<li class="task-list-item"><input type="checkbox" class="task-checkbox" disabled ${checked?'checked':''}><span>${parseInlineMarkdown(taskMatch[2])}</span></li>`);
+      listItems.push(`<li class="task-list-item"><input type="checkbox" class="task-checkbox" disabled ${checked?'checked':''}><span>${inline(taskMatch[2])}</span></li>`);
       continue;
     }
 
@@ -529,7 +531,7 @@ function renderMarkdown(md){
         flushList();
         inList=true;listType='ul';
       }
-      listItems.push(`<li>${parseInlineMarkdown(ulMatch[1])}</li>`);
+      listItems.push(`<li>${inline(ulMatch[1])}</li>`);
       continue;
     }
 
@@ -539,12 +541,12 @@ function renderMarkdown(md){
         flushList();
         inList=true;listType='ol';
       }
-      listItems.push(`<li>${parseInlineMarkdown(olMatch[1])}</li>`);
+      listItems.push(`<li>${inline(olMatch[1])}</li>`);
       continue;
     }
 
     flushList();
-    out.push(`<p>${parseInlineMarkdown(line)}</p>`);
+    out.push(`<p>${inline(line)}</p>`);
   }
 
   flushList();
@@ -556,7 +558,26 @@ function renderMarkdown(md){
   return out.join('');
 }
 
-function parseInlineMarkdown(text){
+function renderRequirementMarkdown(text){
+  return renderMarkdown(text,{images:true,copyCode:false});
+}
+
+function parseInlineMarkdown(text, allowImages=false){
+  if(allowImages){
+    const parts=[];
+    let offset=0;
+    for(const match of text.matchAll(/`[^`]+`|!\[([^\]]*)\]\(([^()\s]+)\)/g)){
+      const [,alt,src]=match;
+      if(!src)continue;
+      parts.push(parseInlineMarkdown(text.slice(offset,match.index)));
+      const url=safeURL(src);
+      if(url==='#')parts.push(escapeHTML(match[0]));
+      else if(new URL(url).origin===location.origin)parts.push(`<img src="${escapeHTML(url)}" alt="${escapeHTML(alt)}" loading="lazy">`);
+      else parts.push(`<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(alt||src)}</a>`);
+      offset=match.index+match[0].length;
+    }
+    if(parts.length)return parts.join('')+parseInlineMarkdown(text.slice(offset));
+  }
   let s=escapeHTML(text);
   s=s.replace(/`([^`]+)`/g, '<code>$1</code>');
   s=s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
@@ -1270,6 +1291,8 @@ function bind(){
   $('#reqWorkflow')&&($('#reqWorkflow').onchange=()=>{renderReqFooter();persistRequirementComposer()});
   $('#reqBaseBranch')?.addEventListener('input',onReqBaseBranchInput);
   $('#chatInput').addEventListener('input',onReqDescriptionInput);
+  $('#chatInput').addEventListener('paste',onReqDescriptionPaste);
+  $('#reqPreviewToggle').onclick=()=>setReqPreview($('#reqMarkdownPreview').hidden);
   window.addEventListener('beforeunload',()=>persistRequirementComposer());
   if($('#sopCreateForm')){$('#sopCreateForm').onsubmit=createSOPFromWizard;$('#sopPrev').onclick=()=>setSOPWizardStep(state.sopWizardStep-1);$('#sopNext').onclick=()=>setSOPWizardStep(state.sopWizardStep+1);$$('[data-wizard-steps="sop"] [data-step-target]').forEach(b=>b.onclick=()=>setSOPWizardStep(Number(b.dataset.stepTarget)));$$('.sop-create-close').forEach(b=>b.onclick=()=>$('#sopCreateModal').classList.remove('open'))}
   $('#newSOP')&&($('#newSOP').onclick=openSOPWizard);

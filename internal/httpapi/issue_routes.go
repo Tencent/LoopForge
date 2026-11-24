@@ -19,7 +19,12 @@ func (h issuesHandlers) issueDetail(c *gin.Context, issue domain.Issue) {
 		respond(c, err)
 		return
 	}
-	c.JSON(200, map[string]any{"issue": views[0], "comments": h.repo.Comments(issue.ID)})
+	images, err := h.repo.IssueImages(issue.ID)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(200, map[string]any{"issue": views[0], "comments": h.repo.Comments(issue.ID), "images": images})
 }
 
 func (h issuesHandlers) addIssueComment(c *gin.Context, issue domain.Issue) {
