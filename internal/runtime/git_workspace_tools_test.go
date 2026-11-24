@@ -216,15 +216,53 @@ func TestNativeScriptWithGitCredentialOnHostWithoutGit(t *testing.T) {
 
 func TestDockerScriptWithGitCredentialOnImageWithoutGit(t *testing.T) {
 	root := gitHelperDockerTestRoot(t)
-	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", "node:22-bookworm-slim")
-	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	host := os.Getenv("AGENTFLOW_TEST_GIT_HELPERS_HOST")
+	if host == "" {
+		t.Fatal("AGENTFLOW_TEST_GIT_HELPERS_HOST must reach this test process")
+	}
+	t.Setenv("AGENTFLOW_CONVERSATION_RELAY_HOST", host)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
+	// Stage the packaged Git outside PATH so the SOP can install it without
+	// network access. Leave its standard Git helpers and libraries in place.
+	dockerfile := domain.DockerfileDefinition{Content: "FROM " + gitHelperDockerTestImage + "\n" +
+		"RUN mkdir /opt/git-fixture && mv /usr/bin/git /opt/git-fixture/git\n"}
 	sandbox, err := OpenRemoteSandbox(ctx, "script-no-git-"+filepath.Base(root), filepath.Join(root, "workspace"),
-		domain.SandboxProfile{Driver: domain.SandboxDriverDocker}, SandboxRequirements{}, SandboxResources{Dockerfile: domain.DockerfileDefinition{Content: IsolatedDockerfile}})
+		domain.SandboxProfile{Driver: domain.SandboxDriverDocker}, SandboxRequirements{}, SandboxResources{Dockerfile: dockerfile})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sandbox.Close(context.Background()) })
+
+	tokens := map[string]string{"alice": "alice-fixture-value", "bob": "bob-fixture-value"}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, token, ok := r.BasicAuth()
+		if !ok || tokens[user] == "" || tokens[user] != token || r.URL.Path != "/"+user+".git/info/refs" {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Git fixture"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("0123456789012345678901234567890123456789\trefs/heads/main\n"))
+	}))
+	_ = server.Listener.Close()
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Listener = listener
+	server.Start()
+	t.Cleanup(server.Close)
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := "http://" + net.JoinHostPort(host, port)
+	credentialsFor := func(user, endpoint string) RunCredentials {
+		return RunCredentials{GitHTTPCredentials: map[string]domain.GitHTTPExecutionCredential{
+			endpoint: {GitHTTPCredential: domain.GitHTTPCredential{Host: endpoint, Platform: domain.GitPlatformOther, Username: user}, Token: tokens[user]},
+		}}
+	}
 
 	script := CommandSpec{Argv: []string{"sh", "-ec", "printf 'script ran'"}, CredentialBindings: []CredentialBinding{BindGit}}
 	if out, err := sandbox.Exec(ctx, script, nil); err != nil || !strings.Contains(out, "script ran") {
@@ -234,10 +272,7 @@ func TestDockerScriptWithGitCredentialOnImageWithoutGit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const host = "http://git.example.invalid:8080"
-	withToken := WithSandboxCredentials(sandbox, RunCredentials{GitHTTPCredentials: map[string]domain.GitHTTPExecutionCredential{
-		host: {GitHTTPCredential: domain.GitHTTPCredential{Host: host, Platform: domain.GitPlatformOther}, Token: "fixture-token"},
-	}})
+	withToken := WithSandboxCredentials(sandbox, credentialsFor("alice", origin))
 	if out, err := withToken.Exec(ctx, script, nil); err != nil || !strings.Contains(out, "script ran") {
 		t.Fatalf("script with an HTTP Git token on an image without Git: %q, %v", out, err)
 	}
@@ -247,14 +282,32 @@ func TestDockerScriptWithGitCredentialOnImageWithoutGit(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 127 || !strings.Contains(out, "git: not found") {
 		t.Fatalf("missing Git must fail only when invoked: %q, %v", out, err)
 	}
-	sb := sandbox.(*dockerSandbox)
-	if out, err := exec.CommandContext(ctx, "docker", "exec", "--user", "0", sb.name, "sh", "-ec",
-		`printf '%s\n' '#!/bin/sh' 'echo runtime Git' > /usr/local/bin/git
-chmod +x /usr/local/bin/git`).CombinedOutput(); err != nil {
-		t.Fatalf("install runtime Git fixture: %q, %v", out, err)
+	const installAndFetch = `
+export PATH="$HOME/bin:$PATH"
+if ! command -v git >/dev/null; then
+  mkdir -p "$HOME/bin"
+  install /opt/git-fixture/git "$HOME/bin/git"
+fi
+git --version
+exec git ls-remote -- "$1"
+`
+	fetch := func(user string) CommandSpec {
+		return WithCommandEnvironment(CommandSpec{
+			Argv:               []string{"sh", "-ec", installAndFetch, "git-fixture", origin + "/" + user + ".git"},
+			CredentialBindings: []CredentialBinding{BindGit},
+		}, map[string]string{"GIT_CONFIG_GLOBAL": os.DevNull, "NO_PROXY": "*", "no_proxy": "*"})
 	}
-	if out, err := withToken.Exec(ctx, git, nil); err != nil || strings.TrimSpace(out) != "runtime Git" {
-		t.Fatalf("normal PATH must find runtime-installed Git: %q, %v", out, err)
+	for _, user := range []string{"alice", "bob"} {
+		bound := WithSandboxCredentials(sandbox, credentialsFor(user, origin))
+		if out, err := bound.Exec(ctx, fetch(user), nil); err != nil || !strings.Contains(out, "refs/heads/main") {
+			t.Fatalf("%s could not install Git and authenticate in the same SOP: %q, %v", user, out, err)
+		}
+	}
+	for _, creds := range []RunCredentials{{}, credentialsFor("alice", "http://"+net.JoinHostPort(host, "1"))} {
+		bound := WithSandboxCredentials(sandbox, creds)
+		if out, err := bound.Exec(ctx, fetch("alice"), nil); err == nil || !strings.Contains(out, "terminal prompts disabled") {
+			t.Fatalf("Git authenticated without a matching credential: %q, %v", out, err)
+		}
 	}
 	if after, err := ReadSandboxEnvironmentIdentity(ctx, sandbox); err != nil || after != before {
 		t.Fatalf("the workspace container changed after using the token: %v", err)

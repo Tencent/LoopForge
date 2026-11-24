@@ -80,7 +80,7 @@ func gitCredentialMain(args []string, in io.Reader, out, errOut io.Writer) int {
 	}
 	if protocol == "http" {
 		scope := workspacePlainHTTPHost(attrs["host"])
-		if scope == "" || scope != os.Getenv(workspaceGitHTTPOriginEnv) {
+		if scope == "" || (scope != os.Getenv(workspaceGitHTTPOriginEnv) && os.Getenv(workspaceGitHTTPSystemGitEnv) != "1") {
 			return 0
 		}
 	}

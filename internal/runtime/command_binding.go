@@ -376,6 +376,7 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 	bins := bin
 	if hasPlainHTTP {
 		environment[workspaceGitHTTPOriginEnv] = ""
+		environment[workspaceGitHTTPSystemGitEnv] = ""
 	}
 	if httpBin != "" {
 		bins = httpBin + string(os.PathListSeparator) + bins

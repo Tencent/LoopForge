@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	workspaceGitHTTPBin       = "http-bin"
-	workspaceGitDistribution  = "distribution"
-	workspaceGitBinsEnv       = "AGENTFLOW_WORKSPACE_GIT_BINS"
-	workspaceGitHTTPOriginEnv = "AGENTFLOW_GIT_HTTP_ORIGIN"
+	workspaceGitHTTPBin          = "http-bin"
+	workspaceGitDistribution     = "distribution"
+	workspaceGitBinsEnv          = "AGENTFLOW_WORKSPACE_GIT_BINS"
+	workspaceGitHTTPOriginEnv    = "AGENTFLOW_GIT_HTTP_ORIGIN"
+	workspaceGitHTTPSystemGitEnv = "AGENTFLOW_GIT_HTTP_SYSTEM_GIT"
 )
 
 // Git invokes git-remote-http with the effective URL, after resolving remotes
