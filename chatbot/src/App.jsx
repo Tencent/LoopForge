@@ -2032,6 +2032,7 @@ export default function App() {
                     ref={referenceInput}
                     editorRef={input}
                     projectId={chat.projectId}
+                    runId={chat.session?.runId}
                     text={text}
                     references={references}
                     mention={mention}

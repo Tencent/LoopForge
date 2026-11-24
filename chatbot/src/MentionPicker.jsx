@@ -92,6 +92,7 @@ export { mentionAnchor };
 export default forwardRef(function MentionPicker(
   {
     projectId,
+    runId,
     trigger,
     onSelect,
     onClose,
@@ -139,6 +140,7 @@ export default forwardRef(function MentionPicker(
             // A project conversation only references its own project's
             // objects (plus shared ones); a personal one searches them all.
             ...(projectId ? {} : { scope: "all" }),
+            ...(runId ? { runId } : {}),
             type,
             q: query.trim(),
             offset: String(offset),
@@ -171,7 +173,7 @@ export default forwardRef(function MentionPicker(
       clearTimeout(timer);
       request.current++;
     };
-  }, [open, projectId, type, query, categories]);
+  }, [open, projectId, runId, type, query, categories]);
   useEffect(() => {
     if (!open) return;
     function outside(event) {

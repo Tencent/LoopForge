@@ -14,6 +14,7 @@ import { elementTitle } from "./element-context.js";
 export default forwardRef(function ReferenceInput(
   {
     projectId,
+    runId,
     text,
     references,
     mention,
@@ -98,6 +99,7 @@ export default forwardRef(function ReferenceInput(
         ref={picker}
         key={projectId}
         projectId={projectId}
+        runId={runId}
         trigger={mention}
         editor={editorRef}
         onSelect={choose}

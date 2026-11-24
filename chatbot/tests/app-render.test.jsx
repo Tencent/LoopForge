@@ -680,6 +680,46 @@ describe("App", () => {
     }
   });
 
+  test.each([
+    { name: "a task chat", binding: { runId: "run-1" }, expectedRunId: "run-1" },
+    { name: "a project chat borrowing an SOP workspace", binding: { workspaceRunId: "run-1" }, expectedRunId: null },
+  ])("searches the available references in $name", async ({ binding, expectedRunId }) => {
+    const previous = { activeId: chat.activeId, projectId: chat.projectId, session: chat.session };
+    const taskRole = { type: "agent", id: "task-role", name: "本次任务角色", projectId: "p1" };
+    const projectRole = { type: "agent", id: "project-role", name: "项目其他角色", projectId: "p1" };
+    const referenceQueries = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url) => {
+      const { pathname, searchParams } = new URL(url, location.origin);
+      const rows = [];
+      if (pathname === "/api/assistant/references") {
+        referenceQueries.push(searchParams);
+        rows.push(taskRole);
+        if (searchParams.get("runId") !== "run-1") rows.push(projectRole);
+      }
+      return { ok: true, status: 200, json: async () => rows };
+    });
+    Object.assign(chat, {
+      activeId: "reference-chat",
+      projectId: "p1",
+      session: { id: "reference-chat", projectId: "p1", messages: [], ...binding },
+    });
+    try {
+      render(<App />);
+      const value = "@角色";
+      fireEvent.change(screen.getByRole("textbox", { name: "消息" }), {
+        target: { value, selectionStart: value.length },
+      });
+      await screen.findByRole("option", { name: /本次任务角色/ });
+      expect(referenceQueries[0].get("projectId")).toBe("p1");
+      expect(referenceQueries[0].get("runId")).toBe(expectedRunId);
+      expect(Boolean(screen.queryByRole("option", { name: /项目其他角色/ }))).toBe(expectedRunId === null);
+    } finally {
+      globalThis.fetch = originalFetch;
+      Object.assign(chat, previous);
+    }
+  });
+
   test("renders the ready empty state and opens primary controls", async () => {
     const user = userEvent.setup();
     render(<App />);
