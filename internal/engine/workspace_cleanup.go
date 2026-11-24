@@ -2,9 +2,13 @@ package engine
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -162,7 +166,12 @@ func (e *Engine) cleanupRunWorkspace(runID string) {
 }
 
 func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
-	managed, checkpointClaimed, releaseCheckpoint, checkpointErr := e.claimIdleConversationWorkspace(run, now)
+	runnerID := e.defaultExecutionRunner(run)
+	if !run.WorkspaceCleanedAt.IsZero() {
+		e.reconcileClaimedWorkspaceCleanup(run, runnerID, now)
+		return
+	}
+	managed, checkpointLease, releaseCheckpoint, checkpointErr := e.claimIdleConversationWorkspace(run, now)
 	if releaseCheckpoint != nil {
 		defer releaseCheckpoint()
 	}
@@ -170,26 +179,8 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 		log.Printf("preserve workspace %s: %v", run.ID, checkpointErr)
 		return
 	}
+	checkpointClaimed := checkpointLease != ""
 	if managed && !checkpointClaimed {
-		return
-	}
-	runnerID := e.defaultExecutionRunner(run)
-	if !run.WorkspaceCleanedAt.IsZero() {
-		if runnerID == "" {
-			return
-		}
-		task, exists := e.repo.RunnerTask("rt-cleanup-" + safeRunnerPath(run.ID))
-		if !exists {
-			// A removed Runner has already cleaned its workspace as part of
-			// deregistration; otherwise allow the request to be queued again.
-			if _, runnerExists := e.repo.Runner(runnerID); runnerExists {
-				_ = e.repo.ResetRunWorkspaceCleanup(run.ID)
-			}
-			return
-		}
-		if task.Status == domain.RunnerTaskFailed || task.Status == domain.RunnerTaskCanceled {
-			_ = e.repo.ResetRunWorkspaceCleanup(run.ID)
-		}
 		return
 	}
 	claimed, err := checkpointClaimed, error(nil)
@@ -203,9 +194,20 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 	if !claimed {
 		return
 	}
+	confirmReclaimed := func() {
+		if err := e.repo.ConfirmCheckpointWorkspaceReclaimed(run.ID, checkpointLease, time.Now().UTC()); err != nil {
+			log.Printf("record reclaimed workspace %s: %v", run.ID, err)
+		}
+	}
 	reset := func(cleanupErr error) {
 		log.Printf("cleanup terminal workspace %s: %v", run.ID, cleanupErr)
-		if resetErr := e.repo.ResetRunWorkspaceCleanup(run.ID); resetErr != nil {
+		var resetErr error
+		if checkpointClaimed {
+			resetErr = e.repo.ResetCheckpointWorkspaceCleanup(run.ID, checkpointLease, time.Now().UTC())
+		} else {
+			resetErr = e.repo.ResetRunWorkspaceCleanup(run.ID)
+		}
+		if resetErr != nil {
 			log.Printf("reset terminal workspace cleanup %s: %v", run.ID, resetErr)
 		}
 	}
@@ -214,27 +216,41 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 			reset(fmt.Errorf("workspace belongs to %s:%s", run.WorkspaceHost, run.WorkspaceRoot))
 			return
 		}
-		meta, _ := e.repo.WorkspaceCheckpoint(run.ID)
 		ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stop()
-		response, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, Operation: domain.RunnerWorkspaceOperationReclaim, CheckpointLease: meta.LeaseToken})
-		if err == nil && response.Error != "" {
-			err = fmt.Errorf("%s", response.Error)
+		response, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, Operation: domain.RunnerWorkspaceOperationReclaim, CheckpointLease: checkpointLease})
+		if err == nil {
+			err = workspaceCheckpointResponseError(response)
 		}
-		if err != nil {
-			// The Worker can remove the directory before the reply is lost.
-			// Keep its saved checkpoint immediately available for restoration
-			// when an independent probe confirms that removal completed.
-			probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if !e.remoteCheckpointRootMissing(probeCtx, run) {
-				reset(err)
+		// A transport error can follow a successful deletion. A success reply
+		// can also come from a Worker that skipped a locked directory.
+		probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		probe, probeErr := e.probeRemoteCheckpointRoot(probeCtx, run)
+		switch {
+		case probeErr == nil && probe.Code == domain.WorkspaceErrorMissing:
+			confirmReclaimed()
+		case probeErr == nil && probe.Status == http.StatusOK && probe.Error == "":
+			if err == nil {
+				err = errors.New("workspace directory survived reclamation")
 			}
+			reset(err)
+		default:
+			log.Printf("cleanup outcome for terminal workspace %s is unknown: %v", run.ID, errors.Join(err, probeErr, workspaceCheckpointResponseError(probe)))
 		}
 		return
 	}
-	if err := e.releaseRunEnvironment(run.ID, true); err != nil {
-		reset(err)
+	if checkpointClaimed {
+		err = e.reclaimCheckpointWorkspace(run.ID, checkpointLease)
+	} else {
+		err = e.releaseRunEnvironment(run.ID, true)
+	}
+	if err != nil {
+		if checkpointClaimed {
+			log.Printf("cleanup outcome for terminal workspace %s is unknown: %v", run.ID, err)
+		} else {
+			reset(err)
+		}
 		return
 	}
 	if runnerID != "" {
@@ -242,36 +258,120 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 			reset(err)
 			return
 		}
+	} else if checkpointClaimed {
+		if root, reason := e.LocalRunWorkspace(run); reason == "" {
+			status := runtime.WorkspaceCheckpointStatus(root)
+			switch {
+			case status.Code == domain.WorkspaceErrorMissing:
+				confirmReclaimed()
+			case status.Status == http.StatusOK:
+				reset(errors.New("workspace directory survived reclamation"))
+				return
+			}
+		}
 	}
 	log.Printf("cleaned terminal workspace %s", run.ID)
 }
 
-func (e *Engine) liveSandboxRunIDs() []string {
-	ids := e.repo.LiveSandboxRunIDs()
-	seen := map[string]bool{}
-	for _, id := range ids {
-		seen[id] = true
-	}
-	// A not-yet-reclaimed managed workspace, including one with a failed save,
-	// stays protected from the lower-level orphan directory/container sweeps.
-	for _, session := range e.repo.ListSharedAssistantSessions() {
-		if seen[session.RunID] {
-			continue
-		}
-		if run, ok := e.repo.RunState(session.RunID); ok && run.WorkspaceCleanedAt.IsZero() {
-			ids = append(ids, run.ID)
-			seen[run.ID] = true
-		}
-	}
-	for _, id := range e.repo.CheckpointWorkspaceRunIDs() {
-		if !seen[id] {
-			if run, ok := e.repo.RunState(id); ok && run.WorkspaceCleanedAt.IsZero() {
-				ids = append(ids, id)
-				seen[id] = true
+func (e *Engine) reconcileClaimedWorkspaceCleanup(run domain.Run, runnerID string, now time.Time) {
+	if runnerID != "" {
+		task, exists := e.repo.RunnerTask("rt-cleanup-" + safeRunnerPath(run.ID))
+		if !exists {
+			// A removed Runner cleans its workspace as part of deregistration.
+			if _, runnerExists := e.repo.Runner(runnerID); runnerExists {
+				e.resetInterruptedRunnerCleanup(run, now)
+				return
 			}
+		} else if task.Status == domain.RunnerTaskFailed || task.Status == domain.RunnerTaskCanceled {
+			e.resetInterruptedRunnerCleanup(run, now)
+			return
+		} else if task.Status != domain.RunnerTaskSuccess {
+			return
 		}
 	}
-	return ids
+	checkpoint, ok := e.repo.WorkspaceCheckpoint(run.ID)
+	if !ok || checkpoint.CleanupRetryAt == nil || checkpoint.CleanupDeferred(now) ||
+		checkpoint.LeaseUntil != nil && !now.After(*checkpoint.LeaseUntil) {
+		return
+	}
+
+	observed := repo.WorkspaceCleanupAbsent
+	if runnerID == "" {
+		observed = repo.WorkspaceCleanupUnknown
+		var status domain.RunnerWorkspaceResponse
+		var err error
+		if e.foreignWorkspaceBind(run) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			status, err = e.probeRemoteCheckpointRoot(ctx, run)
+		} else if root, reason := e.LocalRunWorkspace(run); reason == "" {
+			status = e.workspaceCheckpointRootStatus(run, root)
+		}
+		switch {
+		case err == nil && status.Code == domain.WorkspaceErrorMissing:
+			observed = repo.WorkspaceCleanupAbsent
+		case err == nil && status.Status == http.StatusOK && status.Error == "":
+			observed = repo.WorkspaceCleanupPresent
+		}
+	}
+	if err := e.repo.ResolveCheckpointWorkspaceCleanup(run, *checkpoint.CleanupRetryAt, now, observed); err != nil {
+		log.Printf("recheck workspace cleanup %s: %v", run.ID, err)
+	}
+}
+
+func (e *Engine) resetInterruptedRunnerCleanup(run domain.Run, now time.Time) {
+	if err := e.repo.ResetInterruptedRunnerCleanup(run, now); err != nil {
+		log.Printf("reset runner workspace cleanup %s: %v", run.ID, err)
+	}
+}
+
+func (e *Engine) tryLockCheckpointWorkspace(runID string) (func(), error) {
+	release, err := e.sandboxes.TryLockWorkspaceCheckpoint(runID)
+	if err != nil {
+		return nil, err
+	}
+	if release == nil {
+		return nil, repo.ErrWorkspaceInUse
+	}
+	return release, nil
+}
+
+func (e *Engine) reclaimCheckpointWorkspace(runID, token string) error {
+	release, err := e.tryLockCheckpointWorkspace(runID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	// Validate the claim after taking the filesystem lock. A delayed RPC
+	// might arrive after another instance has restored or rebound this run.
+	run, exists := e.repo.RunState(runID)
+	meta, saved := e.repo.WorkspaceCheckpoint(runID)
+	if !exists || !saved || meta.SavedAt == nil || meta.Error != "" || run.WorkspaceCleanedAt.IsZero() ||
+		token == "" || meta.LeaseToken != token || meta.LeaseUntil == nil || !meta.LeaseUntil.After(time.Now()) ||
+		e.foreignWorkspaceBind(run) || !e.conversationWorkspaceIdle(run) {
+		return repo.ErrWorkspaceInUse
+	}
+	return e.releaseRunEnvironment(runID, true)
+}
+
+func (e *Engine) workspaceCheckpointRootStatus(run domain.Run, root string) domain.RunnerWorkspaceResponse {
+	if !e.conversationWorkspaceIdle(run) {
+		return checkpointWorkspaceLockError(repo.ErrWorkspaceInUse)
+	}
+	release, err := e.tryLockCheckpointWorkspace(run.ID)
+	if err != nil {
+		return checkpointWorkspaceLockError(err)
+	}
+	defer release()
+	return runtime.WorkspaceCheckpointStatus(root)
+}
+
+func checkpointWorkspaceLockError(err error) domain.RunnerWorkspaceResponse {
+	response := domain.RunnerWorkspaceResponse{Status: http.StatusConflict, Error: err.Error()}
+	if errors.Is(err, repo.ErrWorkspaceInUse) {
+		response.Code = domain.WorkspaceErrorBusy
+	}
+	return response
 }
 
 // SupersedeIssueRuns releases the sandbox containers of an issue's earlier
@@ -377,23 +477,22 @@ func (e *Engine) settleDeletedRunTasks(run domain.Run) error {
 }
 
 func (e *Engine) reclaimSandboxes() {
-	live := e.liveSandboxRunIDs()
-	n, err := e.sandboxes.ReclaimExcept(live)
+	n, err := e.sandboxes.ReclaimExcept(e.repo.SandboxSweepKeepRunIDs)
 	if err != nil {
 		log.Printf("reclaim sandboxes: %v", err)
 	} else if n > 0 {
-		log.Printf("reclaimed %d finished sandbox workspace(s)", n)
+		log.Printf("reclaimed %d orphaned sandbox workspace(s)", n)
 	}
-	// Containers outlive the directory sweep above: a run whose workspace was
-	// already reclaimed, or one deleted outright, still has a container holding
-	// gigabytes of writable layer that only an explicit docker rm can release.
-	containers, err := e.sandboxes.ReclaimDockerSandboxes(context.Background(), live)
+	// Containers can retain a writable layer after their workspace is gone.
+	containers, err := e.sandboxes.ReclaimDockerSandboxes(context.Background(), func() ([]string, error) {
+		return e.repo.DockerSandboxSweepKeepRunIDs(time.Now().UTC())
+	})
 	if err != nil {
 		log.Printf("reclaim docker sandboxes: %v", err)
 		return
 	}
 	if containers > 0 {
-		log.Printf("reclaimed %d finished sandbox container(s)", containers)
+		log.Printf("reclaimed %d orphaned sandbox container(s)", containers)
 	}
 	if idle := e.discardIdleRunContainers(context.Background(), time.Now().UTC()); idle > 0 {
 		log.Printf("discarded %d idle failed/waiting sandbox container(s)", idle)

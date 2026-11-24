@@ -2,11 +2,83 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestReclaimExceptKeepsPathsCreatedAfterDiscoveryAndFailsClosed(t *testing.T) {
+	m := NewManager(t.TempDir())
+	orphan := m.RunWorkspace("orphan")
+	if err := os.Mkdir(orphan, 0700); err != nil {
+		t.Fatal(err)
+	}
+	readErr := errors.New("ownership unavailable")
+	if removed, err := m.ReclaimExcept(func() ([]string, error) { return nil, readErr }); removed != 0 || !errors.Is(err, readErr) {
+		t.Fatalf("ownership error reclaimed %d paths: %v", removed, err)
+	}
+	if _, err := os.Stat(orphan); err != nil {
+		t.Fatal(err)
+	}
+	fresh := m.RunWorkspace("newly-created")
+	removed, err := m.ReclaimExcept(func() ([]string, error) { return nil, os.Mkdir(fresh, 0700) })
+	if removed != 1 || err != nil {
+		t.Fatalf("reclaimed %d paths: %v", removed, err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReclaimExceptClearsRetiredCheckoutAfterRestart(t *testing.T) {
+	root := t.TempDir()
+	manager := NewManager(root)
+	checkout := manager.RunWorkspace("run-known")
+	retired := filepath.Join(root, reclaimedSandboxPrefix+rand.Text())
+	for _, path := range []string{checkout, retired, filepath.Join(root, ".private")} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed, err := manager.ReclaimExcept(func() ([]string, error) { return []string{"run-known"}, nil })
+	if err != nil || removed != 1 {
+		t.Fatalf("cleared %d retired workspaces: %v", removed, err)
+	}
+	if _, err := os.Stat(retired); !os.IsNotExist(err) {
+		t.Fatalf("retired workspace still occupies disk: %v", err)
+	}
+	if _, err := os.Stat(checkout); err != nil {
+		t.Fatalf("registered workspace was affected: %v", err)
+	}
+}
+
+func TestDockerSandboxReclaimWaitsForChildExecutionLock(t *testing.T) {
+	ctx := t.Context()
+	manager := NewManager(t.TempDir())
+	workspace := manager.RunWorkspace("run-parent")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cvRInstallFakeDocker(t, workspace)
+	lock, err := manager.acquireLock(ctx, "cvr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := func() ([]string, error) { return nil, nil }
+	removed, sweepErr := manager.ReclaimDockerSandboxes(ctx, keep)
+	if err := unlockFile(lock); err != nil {
+		t.Fatal(err)
+	}
+	if sweepErr != nil || removed != 0 {
+		t.Fatalf("removed %d running child containers: %v", removed, sweepErr)
+	}
+	if removed, err := manager.ReclaimDockerSandboxes(ctx, keep); err != nil || removed != 1 {
+		t.Fatalf("removed %d idle child containers after the lock was released: %v", removed, err)
+	}
+}
 
 // 一台机器上可能同时有控制面的 agentflow-run-* 和执行机的 agentflow-rt-*，
 // 后者由 runner 自己按工作区清理。归属只能看 /workspace 绑定，不能看名字。

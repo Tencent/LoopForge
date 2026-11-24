@@ -459,9 +459,6 @@ func (r *RunsRepo) RunRevision(id string) (int, bool) {
 	return row.Revision, err == nil
 }
 
-// LiveSandboxRunIDs returns every run whose workspace has not been cleaned.
-// Failed and active runs remain live; successful and cancelled workspaces are
-// removed explicitly before being excluded here.
 // SupersededIssueRunIDs lists settled runs of an issue that a newer dispatch
 // has replaced. A failed run keeps its workspace and container only so it can
 // be retried; starting the issue over withdraws that reason, and nothing else
@@ -486,12 +483,24 @@ func (r *RunsRepo) SupersededIssueRunIDs(issueID, keepRunID string) []string {
 	return ids
 }
 
-func (r *RunsRepo) LiveSandboxRunIDs() []string {
+// SandboxSweepKeepRunIDs protects registered workspaces even after their
+// checkout was reclaimed. Restoring one does not change its sweep ownership.
+// Physical cleanup for a registered run belongs to the run's cleanup path.
+func (r *RunsRepo) SandboxSweepKeepRunIDs() ([]string, error) {
 	var ids []string
-	if err := r.DB.Model(&runRow{}).Select("id").Where("workspace_cleaned_at IS NULL").Pluck("id", &ids).Error; err != nil {
-		return nil
-	}
-	return ids
+	err := r.DB.Model(&runRow{}).Pluck("id", &ids).Error
+	return ids, err
+}
+
+// DockerSandboxSweepKeepRunIDs also allows removal of containers left behind
+// by completed cleanup. Pending cleanup and active restore still protect them.
+func (r *RunsRepo) DockerSandboxSweepKeepRunIDs(now time.Time) ([]string, error) {
+	var ids []string
+	err := r.DB.Model(&runRow{}).
+		Joins("LEFT JOIN run_workspace_checkpoints ON run_workspace_checkpoints.run_id = runs.id").
+		Where("runs.workspace_cleaned_at IS NULL OR run_workspace_checkpoints.cleanup_retry_at IS NOT NULL OR run_workspace_checkpoints.lease_until >= ?", now).
+		Pluck("runs.id", &ids).Error
+	return ids, err
 }
 
 // LiveSandboxDockerfiles returns the Dockerfiles frozen into runs that still

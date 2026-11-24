@@ -7,10 +7,7 @@ services:
       MYSQL_USER: loopforge
       MYSQL_PASSWORD: ${LOOPFORGE_DB_PASSWORD:?Run scripts/configure.sh first}
       MYSQL_ROOT_PASSWORD: ${LOOPFORGE_DB_ROOT_PASSWORD:?Run scripts/configure.sh first}
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --binlog-row-image=${LOOPFORGE_MYSQL_BINLOG_ROW_IMAGE:-NOBLOB}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
     ports:
       - "127.0.0.1:${LOOPFORGE_MYSQL_PORT:-33315}:3306"
     volumes:

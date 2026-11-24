@@ -81,7 +81,7 @@ func TestCheckpointExportFailsFastWhileTerminalIsOpen(t *testing.T) {
 	for name, response := range checkpointTerminalResponses {
 		t.Run(name, func(t *testing.T) {
 			e, run, calls := terminalRestoreFixture(t, response, domain.RunnerWorkspaceOperationCheckpointExport)
-			requireTerminalActive(t, e.saveConversationWorkspace(context.Background(), run, "", ""))
+			requireTerminalActive(t, e.saveConversationWorkspace(context.Background(), run, "", nil))
 			if calls.Load() != 1 {
 				t.Fatalf("export retried an open terminal %d times", calls.Load())
 			}

@@ -141,9 +141,9 @@ func TestInterruptedBackgroundSaveIsRetriedBeforeIdleCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	run, _ := e.repo.RunState(id)
-	managed, claimed, _, err := e.claimIdleConversationWorkspace(run, now.Add(time.Second))
-	if err != nil || !managed || claimed {
-		t.Fatal("pending save was not retried safely", managed, claimed, err)
+	managed, lease, _, err := e.claimIdleConversationWorkspace(run, now.Add(time.Second))
+	if err != nil || !managed || lease != "" {
+		t.Fatal("pending save was not retried safely", managed, lease != "", err)
 	}
 	meta, _ := e.repo.WorkspaceCheckpoint(id)
 	if meta.SavedAt == nil || meta.SaveRetryAt != nil || meta.LeaseToken != "" {

@@ -392,7 +392,7 @@ func TestManagerLocalLifecycleAndHelpers(t *testing.T) {
 	}
 	_ = os.MkdirAll(filepath.Join(root, "stale"), 0o700)
 	_ = os.MkdirAll(filepath.Join(root, "persist-live"), 0o700)
-	removed, err := m.ReclaimExcept([]string{"live"})
+	removed, err := m.ReclaimExcept(func() ([]string, error) { return []string{"live"}, nil })
 	if err != nil || removed != 2 {
 		t.Fatalf("removed=%d err=%v", removed, err)
 	}

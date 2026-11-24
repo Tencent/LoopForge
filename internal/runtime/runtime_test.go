@@ -1169,7 +1169,7 @@ func TestReclaimExceptKeepsLiveRunWorkspaces(t *testing.T) {
 	if err := dead.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	removed, err := m.ReclaimExcept([]string{"run-live"})
+	removed, err := m.ReclaimExcept(func() ([]string, error) { return []string{"run-live"}, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1197,7 +1197,7 @@ func TestReclaimExceptSkipsLockedWorkspace(t *testing.T) {
 	if err := os.MkdirAll(stale, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	removed, err := m.ReclaimExcept(nil)
+	removed, err := m.ReclaimExcept(func() ([]string, error) { return nil, nil })
 	if err != nil {
 		t.Fatal(err)
 	}

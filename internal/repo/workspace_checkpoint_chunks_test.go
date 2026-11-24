@@ -228,7 +228,7 @@ func TestWorkspaceCheckpointHeartbeatDuringCaptureDefersCleanup(t *testing.T) {
 	if err = s.TouchWorkspaceUse(run.ID, touched); err != nil {
 		t.Fatal(err)
 	}
-	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(run.ID, token, run.Revision, now.Add(2*time.Second)); err != nil || claimed {
+	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(run, token, now.Add(2*time.Second)); err != nil || claimed {
 		t.Fatal("active reader reclaimed during capture", claimed, err)
 	}
 	if err = s.FinishWorkspaceCheckpointSave(run.ID, token, idle, now.Add(2*time.Second), ""); err != nil {

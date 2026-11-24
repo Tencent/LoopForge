@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 	"time"
 
@@ -104,6 +105,53 @@ func TestRetryCancelsQueuedRunnerCleanupAndAllowsLaterCleanup(t *testing.T) {
 	}
 }
 
+func TestInterruptedRunnerCleanupPreservesNewerClaim(t *testing.T) {
+	t.Parallel()
+	e, store := newRecoveryEngine(t)
+	now := time.Now().UTC()
+	runner := domain.Runner{ID: "runner-interrupted-cleanup", Status: domain.RunnerStatusOffline}
+	if err := store.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{ID: "runner-cleanup-claim", Status: "succeeded", WorkspaceCleanedAt: now.Add(-time.Hour),
+		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutRunnerTask(domain.RunnerTask{ID: "rt-cleanup-" + run.ID, RunnerID: runner.ID, Provider: "terminal",
+		Action: domain.RunnerTaskActionCleanupRun, Status: domain.RunnerTaskFailed, RunID: run.ID}); err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := store.RunState(run.ID)
+	if err := store.DB.Table("runs").Where("id = ?", run.ID).Updates(map[string]any{
+		"revision": stale.Revision + 1, "workspace_cleaned_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	e.cleanupWorkspace(stale, now)
+	current, _ := store.RunState(run.ID)
+	if !current.WorkspaceCleanedAt.Equal(now) {
+		t.Fatalf("previous cleanup changed the current claim: %v", current.WorkspaceCleanedAt)
+	}
+	token, err := store.BeginWorkspaceUse(run.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.cleanupWorkspace(current, now)
+	current, _ = store.RunState(run.ID)
+	if !current.WorkspaceCleanedAt.Equal(now) {
+		t.Fatalf("cleanup changed the claim while workspace use was active: %v", current.WorkspaceCleanedAt)
+	}
+	if err := store.FinishWorkspaceUse(run.ID, token, now, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	e.cleanupWorkspace(current, now)
+	current, _ = store.RunState(run.ID)
+	if !current.WorkspaceCleanedAt.IsZero() {
+		t.Fatal("interrupted current cleanup was not reopened for retry")
+	}
+}
+
 func TestFailedWorkspaceIsNeverCleanedAutomatically(t *testing.T) {
 	t.Parallel()
 	store, err := repo.OpenTest()
@@ -141,14 +189,8 @@ func TestCompletedConversationSavesBeforeReclamationEvenWhenNotArchived(t *testi
 	if got.WorkspaceCleanedAt.IsZero() {
 		t.Fatal("completed SOP workspace was not reclaimed")
 	}
-	kept := false
-	for _, id := range e.liveSandboxRunIDs() {
-		if id == r.ID {
-			kept = true
-		}
-	}
-	if kept {
-		t.Fatal("reclaimed workspace was retained by background sweep")
+	if _, err := os.Stat(e.RunWorkspace(r.ID)); !os.IsNotExist(err) {
+		t.Fatalf("claimed checkout remained on disk: %v", err)
 	}
 	if _, err = s.WorkspaceCheckpointArchive(r.ID); err != nil {
 		t.Fatal("reclaimed without durable snapshot", err)

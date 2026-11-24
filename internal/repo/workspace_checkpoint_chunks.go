@@ -10,6 +10,8 @@ import (
 	"io"
 	"time"
 
+	"agentflow/internal/domain"
+
 	"gorm.io/gorm"
 )
 
@@ -32,14 +34,24 @@ func (workspaceCheckpointChunk) TableName() string { return "run_workspace_check
 // and publish the manifest by lease CAS. The reader still accepts inline
 // checkpoints from older releases.
 func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.Time, source io.Reader) error {
+	return r.saveWorkspaceCheckpointStream(runID, token, now, source, nil)
+}
+
+// SaveBoundWorkspaceCheckpointStream publishes bytes from the captured
+// checkout only while its workspace binding is still current.
+func (r *RunsRepo) SaveBoundWorkspaceCheckpointStream(run domain.Run, token string, now time.Time, source io.Reader) error {
+	return r.saveWorkspaceCheckpointStream(run.ID, token, now, source, &run)
+}
+
+func (r *RunsRepo) saveWorkspaceCheckpointStream(runID, token string, now time.Time, source io.Reader, bound *domain.Run) error {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return err
 	}
 	id := hex.EncodeToString(raw)
-	published := false
+	commitMayHavePublished := false
 	defer func() {
-		if !published {
+		if !commitMayHavePublished {
 			r.DB.Where("run_id = ? AND archive_id = ?", runID, id).Delete(&workspaceCheckpointChunk{})
 		}
 	}()
@@ -83,9 +95,13 @@ func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.T
 	if size == 0 {
 		return fmt.Errorf("empty workspace checkpoint")
 	}
-	err := r.DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		current, err := r.takeRunForUpdate(tx, runID)
+		if err != nil {
 			return err
+		}
+		if bound != nil && (current.WorkspaceHost != bound.WorkspaceHost || current.WorkspaceRoot != bound.WorkspaceRoot) {
+			return ErrWorkspaceCheckpointStale
 		}
 		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, time.Now().UTC()).Updates(map[string]any{
 			"archive": nil, "archive_id": id, "archive_bytes": size, "archive_chunks": count,
@@ -97,10 +113,14 @@ func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.T
 		if result.RowsAffected != 1 {
 			return ErrWorkspaceInUse
 		}
-		return tx.Where("run_id = ? AND archive_id <> ?", runID, id).Delete(&workspaceCheckpointChunk{}).Error
+		if err := tx.Where("run_id = ? AND archive_id <> ?", runID, id).Delete(&workspaceCheckpointChunk{}).Error; err != nil {
+			return err
+		}
+		// The database can commit even if its reply is lost. Leave these
+		// chunks for the next save to remove if they are no longer referenced.
+		commitMayHavePublished = true
+		return nil
 	})
-	published = err == nil
-	return err
 }
 
 func (r *RunsRepo) OpenWorkspaceCheckpointArchive(runID string) (io.ReadCloser, error) {

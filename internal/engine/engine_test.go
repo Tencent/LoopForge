@@ -1485,12 +1485,7 @@ func TestSubmitReworkWithoutRejectToDegradesToFail(t *testing.T) {
 
 func TestSubmitReworkRejectsUpstreamInsteadOfRetrying(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(s.Close)
+	e, s := newRecoveryEngine(t)
 	// Attempt 1 submits rework; if the node (wrongly) retries locally, attempt
 	// 2 would pass and the upstream node would never be reworked.
 	if err := s.PutAgent(domain.AgentDefinition{ID: "rework-upstream-agent", Name: "rework-upstream-agent", ExecutorID: "mock", Prompt: "[[mock:gate=rework,pass]]"}); err != nil {
@@ -1503,7 +1498,6 @@ func TestSubmitReworkRejectsUpstreamInsteadOfRetrying(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)

@@ -33,9 +33,11 @@ Stop the foreground service with Ctrl-C. Start it again with the same command. M
 
 Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Apply existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
 
-New workspace checkpoints keep archive data in separate chunks. For existing inline checkpoints, the bundled MySQL service defaults to `binlog_row_image=NOBLOB` so a lease renewal omits the unchanged archive bytes from the binary log. Apply the updated Compose file and recreate the MySQL service with `docker compose up -d mysql` to use the new setting with the existing volume.
+New workspace checkpoints store archive data separately from lease metadata. Lease renewals produce smaller binary log entries even with MySQL's default `FULL` row image. Existing inline archives remain readable and move to chunks the next time LoopForge saves the workspace. Binary logs already on disk follow the database's retention settings.
 
-Use matching source and replica table definitions with `NOBLOB`. Set `LOOPFORGE_MYSQL_BINLOG_ROW_IMAGE=FULL` if your replication or change-data-capture consumer requires complete row images. For external MySQL, review the same setting with your database administrator. [MySQL binary log row images](https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html#sysvar_binlog_row_image)
+When upgrading instances that share a workspace directory, stop all instances using that directory before starting the updated version. Their workspace maintenance uses the version running on each instance.
+
+If you choose `NOBLOB` on your MySQL server to reduce writes for existing inline archives, verify that your change-data-capture consumers support it and that source and replica table definitions match. [MySQL binary log row images](https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html#sysvar_binlog_row_image)
 
 ## Choosing an executor
 

@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
 
@@ -236,12 +236,17 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 			http.Error(w, reason, 409)
 			return
 		}
-		if probe {
-			if !e.conversationWorkspaceIdle(run) {
-				result = domain.RunnerWorkspaceResponse{Status: 409, Code: domain.WorkspaceErrorBusy, Error: "workspace is still in use"}
-			} else {
-				result = runtime.WorkspaceCheckpointStatus(root)
+		if request.Operation == domain.RunnerWorkspaceOperationRestore || request.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
+			release, err := e.tryLockCheckpointWorkspace(run.ID)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(checkpointWorkspaceLockError(err))
+				return
 			}
+			defer release()
+		}
+		if probe {
+			result = e.workspaceCheckpointRootStatus(run, root)
 		} else if transfer {
 			if request.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
 				if err := e.discardEmptyWorkspaceContainer(r.Context(), run.ID, root); err != nil {
@@ -252,12 +257,12 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result = e.checkpointTransfers.Handle(r.Context(), root, request)
 			}
 		} else if request.Operation == domain.RunnerWorkspaceOperationReclaim {
-			meta, saved := e.repo.WorkspaceCheckpoint(run.ID)
-			if !saved || meta.SavedAt == nil || meta.Error != "" || run.WorkspaceCleanedAt.IsZero() || request.CheckpointLease == "" || meta.LeaseToken != request.CheckpointLease || meta.LeaseUntil == nil || !meta.LeaseUntil.After(time.Now()) {
+			err := e.reclaimCheckpointWorkspace(run.ID, request.CheckpointLease)
+			if errors.Is(err, repo.ErrWorkspaceInUse) {
 				http.Error(w, "workspace cleanup not reserved", 409)
 				return
 			}
-			if err := e.releaseRunEnvironment(run.ID, true); err != nil {
+			if err != nil {
 				result.Error = err.Error()
 			} else {
 				result.Payload = json.RawMessage(`{"reclaimed":true}`)
