@@ -247,6 +247,86 @@ func TestCommittedCleanupClaimReclaimsCheckoutAfterRestart(t *testing.T) {
 	}
 }
 
+// A run that moved to another host or root leaves its old checkout behind on
+// the former host. Once the run is cleaned, that copy must be reclaimed there
+// too, while the usual lifecycle checks still keep it when it may be in use.
+func TestReboundRunReclaimsStaleCheckoutOnFormerHost(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	future, past := now.Add(time.Hour), now.Add(-time.Hour)
+	for _, scenario := range []struct {
+		name       string
+		status     string
+		cleaned    bool
+		host       string
+		sameRoot   bool
+		checkpoint *repo.WorkspaceCheckpoint
+		removed    bool
+	}{
+		{name: "other host and root", status: "succeeded", cleaned: true, host: "host-b", removed: true},
+		{name: "other host same root", status: "succeeded", cleaned: true, host: "host-b", sameRoot: true, removed: true},
+		{name: "same host other root", status: "cancelled", cleaned: true, host: "host-a", removed: true},
+		{name: "not cleaned yet", status: "succeeded", host: "host-b"},
+		{name: "rebound run running again", status: "running", cleaned: true, host: "host-b"},
+		{name: "restore lease on bound host", status: "succeeded", cleaned: true, host: "host-b",
+			checkpoint: &repo.WorkspaceCheckpoint{SavedAt: &past, SHA256: "saved", LeaseToken: "restore", LeaseUntil: &future, RestoreStatus: "restoring"}},
+		{name: "pending cleanup retry", status: "succeeded", cleaned: true, host: "host-b",
+			checkpoint: &repo.WorkspaceCheckpoint{SavedAt: &past, SHA256: "saved", CleanupRetryAt: &future}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(store.Close)
+			rootA := t.TempDir()
+			e := New(store, runtime.NewManager(rootA))
+			e.ConfigureExecution("inst-a", "host-a", time.Minute, false)
+			boundRoot := t.TempDir()
+			if scenario.sameRoot {
+				boundRoot = rootA
+			}
+			run := domain.Run{ID: "rebound-run", Status: scenario.status, WorkspaceHost: scenario.host, WorkspaceRoot: boundRoot, Nodes: map[string]*domain.NodeRun{}}
+			if scenario.cleaned {
+				run.WorkspaceCleanedAt = past
+			}
+			if err := store.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			if !e.foreignWorkspaceBind(run) {
+				t.Fatal("test run is not bound elsewhere")
+			}
+			if scenario.checkpoint != nil {
+				row := *scenario.checkpoint
+				row.RunID, row.LastUsedAt = run.ID, past
+				if err := store.DB.Create(&row).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			stale := e.RunWorkspace(run.ID)
+			if err := os.MkdirAll(stale, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(stale, "big.bin"), make([]byte, 1<<20), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				e.reconcileTerminalWorkspaceCleanup()
+				e.reclaimSandboxes()
+			}
+			_, err = os.Stat(stale)
+			if removed := os.IsNotExist(err); removed != scenario.removed {
+				t.Fatalf("stale checkout removed=%v, want %v (%v)", removed, scenario.removed, err)
+			}
+			got, _ := store.RunState(run.ID)
+			if got.WorkspaceHost != scenario.host || got.WorkspaceRoot != boundRoot {
+				t.Fatalf("binding changed to %s:%s", got.WorkspaceHost, got.WorkspaceRoot)
+			}
+		})
+	}
+}
+
 func TestCleanedWorkspaceLeftoverKeepsCheckpointLifecycle(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()

@@ -326,9 +326,13 @@ func (e *Engine) reconcileClaimedWorkspaceCleanup(run domain.Run, runnerID strin
 // reclaimCleanedWorkspaceLeftover removes a checkout that survived a committed
 // cleanup claim, e.g. when the process stopped before DestroyRun. The orphan
 // sweep keeps registered runs, so this is the only path that frees it.
+//
+// A run that was rebound to another host or root also leaves its old checkout
+// here. Sandbox roots are host-local (rebindWorkspaceHere discards the same
+// kind of leftover), so that copy is reclaimed under the same checks.
 func (e *Engine) reclaimCleanedWorkspaceLeftover(expected domain.Run) {
 	root := e.sandboxes.RunWorkspace(expected.ID)
-	if root == "" || e.foreignWorkspaceBind(expected) {
+	if root == "" {
 		return
 	}
 	if _, err := os.Lstat(root); err != nil {
