@@ -59,9 +59,9 @@ func TestSharedScheduleNestedSOPUsesImmediateParentBinding(t *testing.T) {
 		}
 	}
 	for _, wf := range []domain.WorkflowDefinition{
-		{ID: "root", Name: "Root", ProjectID: "source", Shared: true, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "child-node", Name: "Child", Type: "sop", SOPWorkflowID: "child"}}},
-		{ID: "child", Name: "Child", ProjectID: "source", Shared: true, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "leaf-node", Name: "Leaf", Type: "sop", SOPWorkflowID: "leaf"}}},
-		{ID: "leaf", Name: "Leaf", ProjectID: "source", Shared: true, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approve", Name: "Approve", Type: "approval"}}},
+		{ID: "root", Name: "Root", ProjectID: "source", Shared: true, SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "child-node", Name: "Child", Type: "sop", SOPWorkflowID: "child"}}},
+		{ID: "child", Name: "Child", ProjectID: "source", Shared: true, SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "leaf-node", Name: "Leaf", Type: "sop", SOPWorkflowID: "leaf"}}},
+		{ID: "leaf", Name: "Leaf", ProjectID: "source", Shared: true, SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "approve", Name: "Approve", Type: "approval"}}},
 	} {
 		check(st.PutWorkflow(wf))
 	}
@@ -116,13 +116,9 @@ func TestSharedScheduleRejectsPrivateNestedSOPSandboxResources(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	check(st.PutEnvironment(domain.EnvironmentDefinition{
-		ID: "private-child-env", Name: "Private child environment", ProjectID: "source",
-		Variables: map[string]string{"PRIVATE_TOKEN": "do-not-leak"}, InstallScript: "echo private-install",
-	}))
 	check(st.PutSandbox(domain.SandboxProfile{
-		ID: "private-child-sandbox", Name: "Private child sandbox", ProjectID: "source",
-		Driver: domain.SandboxDriverNative, EnvironmentID: "private-child-env",
+		ID: "private-child-sandbox", Name: "Private child sandbox", ProjectID: "source", Driver: domain.SandboxDriverNative,
+		Environment: map[string]string{"PRIVATE_MODE": "child"},
 	}))
 	check(st.PutWorkflow(domain.WorkflowDefinition{
 		ID: "shared-child", Name: "Shared child", ProjectID: "source", Shared: true,
@@ -204,51 +200,6 @@ func TestSharedScheduleRejectsPrivateNestedDependencies(t *testing.T) {
 		expected   string
 		setupChild func(*repo.Store) (domain.WorkflowDefinition, error)
 	}{
-		{
-			name:     "environment behind shared sandbox",
-			expected: "环境",
-			setupChild: func(st *repo.Store) (domain.WorkflowDefinition, error) {
-				if err := st.PutEnvironment(domain.EnvironmentDefinition{
-					ID: "private-environment", Name: "Private environment", ProjectID: "source",
-					Variables: map[string]string{"PRIVATE_TOKEN": "do-not-leak"}, InstallScript: "echo private-install",
-				}); err != nil {
-					return domain.WorkflowDefinition{}, err
-				}
-				if err := st.PutSandbox(domain.SandboxProfile{
-					ID: "shared-sandbox-with-private-environment", Name: "Shared sandbox", ProjectID: "source",
-					Shared: true, Driver: domain.SandboxDriverNative, EnvironmentID: "private-environment",
-				}); err != nil {
-					return domain.WorkflowDefinition{}, err
-				}
-				return domain.WorkflowDefinition{
-					ID: "child-with-private-environment", Name: "Child with private environment", ProjectID: "source", Shared: true,
-					SandboxProfileID: "shared-sandbox-with-private-environment",
-					Nodes:            []domain.WorkflowNode{{ID: "approve", Name: "Approve", Type: "approval"}},
-				}, nil
-			},
-		},
-		{
-			name:     "docker sandbox with private dockerfile",
-			expected: "Dockerfile",
-			setupChild: func(st *repo.Store) (domain.WorkflowDefinition, error) {
-				if err := st.PutDockerfile(domain.DockerfileDefinition{
-					ID: "private-dockerfile", Name: "Private Dockerfile", ProjectID: "source", Content: "FROM scratch\n",
-				}); err != nil {
-					return domain.WorkflowDefinition{}, err
-				}
-				if err := st.PutSandbox(domain.SandboxProfile{
-					ID: "shared-docker-sandbox", Name: "Shared Docker sandbox", ProjectID: "source",
-					Shared: true, Driver: domain.SandboxDriverDocker, DockerfileID: "private-dockerfile",
-				}); err != nil {
-					return domain.WorkflowDefinition{}, err
-				}
-				return domain.WorkflowDefinition{
-					ID: "child-with-private-dockerfile", Name: "Child with private Dockerfile", ProjectID: "source", Shared: true,
-					SandboxProfileID: "shared-docker-sandbox",
-					Nodes:            []domain.WorkflowNode{{ID: "approve", Name: "Approve", Type: "approval"}},
-				}, nil
-			},
-		},
 		{
 			name:     "private role node",
 			expected: "角色",

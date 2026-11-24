@@ -12,6 +12,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
 
@@ -86,7 +87,7 @@ func TestWaitRunUsesFrozenWorkflowProjectWhenStartOmitsProject(t *testing.T) {
 
 	wf := domain.WorkflowDefinition{
 		ID: "wait-manual-start", Name: "Wait for manual SOP", ProjectID: "workbench",
-		SandboxProfileID: "local",
+		SandboxProfileID: repo.TestNativeSandboxID,
 		Nodes:            []domain.WorkflowNode{{ID: "review", Name: "Review", Type: "approval", MaxAttempts: 1}},
 	}
 	if err := h.repo.PutWorkflow(wf); err != nil {

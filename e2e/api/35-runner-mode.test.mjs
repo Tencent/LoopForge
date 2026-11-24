@@ -18,12 +18,10 @@ const dir = mkdtempSync(join(tmpdir(), 'e2e-runner-'));
 let proc;
 let runnerId = '';
 let previousDefault = '';
-let sandboxProfileId = cfg.sandbox;
+const sandboxProfileId = cfg.sandbox;
 
 before(async () => {
   await ensureProject();
-  const profiles = list(await get('/api/sandboxes'));
-  if (profiles.some(p => p.id === 'local')) sandboxProfileId = 'local';
   previousDefault = (await get('/api/runners/default')).runnerId || '';
 
   const binary = join(dir, 'agentflow-runner');

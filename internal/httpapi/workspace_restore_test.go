@@ -27,7 +27,7 @@ func TestRetryAsyncRestoreSurvivesDisconnectAndReusesBackgroundOperation(t *test
 	run, _ := a.repo.RunState("shared-run")
 	run.Status = "failed"
 	run.WorkflowSnapshot.Nodes = []domain.WorkflowNode{{ID: "work", Type: "script", Script: "true", MaxAttempts: 1}}
-	run.WorkflowSnapshot.SandboxProfileID = "local"
+	run.WorkflowSnapshot.SandboxProfileID = "test-native"
 	run.Nodes = map[string]*domain.NodeRun{"work": {NodeID: "work", Status: "failed", Attempt: 1}}
 	run.ExecutionContext.ExecutionMode, run.ExecutionContext.ExecutionRunnerID = domain.ExecutionModeRunner, "restore-runner"
 	if err := a.repo.PutRun(run); err != nil {

@@ -91,22 +91,11 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return fail(err)
 	}
-	activated, err := prepareSandboxEnvironment(workspace, profile, resources.Environment)
-	if err != nil {
-		return fail(err)
-	}
-	profile.Environment = overlayEnvironment(profile.Environment, activated.Overlay)
-	profile, resources.Dockerfile = isolateLocalDriver(profile, resources.Dockerfile)
 	sandbox, err := createDriverSandbox(ctx, "sandbox", id, workspace, profile, requirements, resources.Dockerfile)
 	if err != nil {
 		return fail(err)
 	}
-	managed := &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}
-	if err := runEnvironmentInstall(ctx, managed, activated); err != nil {
-		_ = managed.Close(ctx)
-		return nil, err
-	}
-	return managed, nil
+	return &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}, nil
 }
 
 // DestroyRun deletes the host workspace for a finished SOP run: the persistent
@@ -452,20 +441,6 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	defer scrubRunGitCredentials(ctx, s.Sandbox, s.workspace, bound, credentials)
 	out, err := s.Sandbox.Exec(ctx, bound, runGitEventSink(sink, credentials))
 	return redactRunGitSecrets(out, credentials), err
-}
-
-// overlayEnvironment layers an activated environment's overlay under env,
-// except PATH: the overlay's PATH wins so its tools stay first on the path.
-// An empty overlay returns env unchanged.
-func overlayEnvironment(env, overlay map[string]string) map[string]string {
-	if len(overlay) == 0 {
-		return env
-	}
-	merged := mergeEnvironmentMaps(overlay, env)
-	if path := overlay["PATH"]; path != "" {
-		merged["PATH"] = path
-	}
-	return merged
 }
 
 // createDriverSandbox builds the sandbox for profile.Driver. kind only names

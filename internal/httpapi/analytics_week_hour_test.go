@@ -64,4 +64,17 @@ func TestAnalyticsWeekHourHonorsTimeZoneParam(t *testing.T) {
 			t.Fatalf("existing analytics field %q missing from response", key)
 		}
 	}
+	embedded := fetch("&dashboard=1")
+	var dashboard domain.AnalyticsDashboard
+	if err := json.Unmarshal(embedded["dashboard"], &dashboard); err != nil || dashboard.SOPRuns != 1 {
+		t.Fatalf("dashboard=1 must preserve the grouped view and add scoped aggregates: %s / %v", embedded["dashboard"], err)
+	}
+	var traces []domain.AnalyticsRunTrace
+	if err := json.Unmarshal(embedded["runTraces"], &traces); err != nil || len(traces) != 1 {
+		t.Fatalf("embedded dashboard must keep detail indexes: %s / %v", embedded["runTraces"], err)
+	}
+	personal := fetch("&dashboard=1&userId=7")
+	if err := json.Unmarshal(personal["dashboard"], &dashboard); err != nil || dashboard.SOPRuns != 0 {
+		t.Fatalf("personal scope must not include another owner's SOP: %s / %v", personal["dashboard"], err)
+	}
 }

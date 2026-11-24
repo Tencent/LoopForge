@@ -400,7 +400,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 			schema, _ := json.Marshal(platformToolInputSchema(op))
 			writePolicy := "平台写入工具（已授权直接执行）："
 			if session.ExecMode.ReviewWrites {
-				writePolicy = "平台写入工具（执行前独立 AI 审查，未批准时交给用户确认）："
+				writePolicy = "平台写入工具（执行前由独立 AI 审查并直接决定放行或拒绝，无需人工确认）："
 			}
 			out = append(out, agentToolDescriptor{
 				Name:         ns,

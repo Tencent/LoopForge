@@ -33,7 +33,9 @@ func hostConversationWorkspace(t *testing.T) {
 func configureConversationSandbox(t *testing.T, h *assistantHandlers) {
 	t.Helper()
 	if os.Getenv("AGENTFLOW_TEST_DOCKER") == "1" {
-		err := h.repo.PutDockerfile(domain.DockerfileDefinition{ID: repo.GenericBackendDockerfileID, Name: "Isolated workspace test", ProjectID: "workbench", Shared: true, Content: "FROM alpine:3.20\nRUN apk add --no-cache bash git coreutils && adduser -D -u 1000 user_00\nWORKDIR /workspace\n"})
+		sandbox := repo.GenericDockerSandbox()
+		sandbox.Dockerfile = &domain.SandboxDockerfile{Content: "FROM alpine:3.20\nRUN apk add --no-cache bash git coreutils && adduser -D -u 1000 user_00\nWORKDIR /workspace\n"}
+		err := h.repo.PutSandbox(sandbox)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -368,7 +370,7 @@ func TestConversationWorkspaceFallsBackToGenericDocker(t *testing.T) {
 // can switch to a new workspace.
 func altConversationSandbox(t *testing.T, h *assistantHandlers) string {
 	t.Helper()
-	if err := h.repo.PutSandbox(domain.SandboxProfile{ID: "alt-docker", Name: "Alt", Shared: true, Driver: domain.SandboxDriverDocker, DockerfileID: repo.GenericBackendDockerfileID}); err != nil {
+	if err := h.repo.PutSandbox(domain.SandboxProfile{ID: "alt-docker", Name: "Alt", Shared: true, Driver: domain.SandboxDriverDocker, Dockerfile: repo.GenericDockerSandbox().Dockerfile}); err != nil {
 		t.Fatal(err)
 	}
 	return "alt-docker"

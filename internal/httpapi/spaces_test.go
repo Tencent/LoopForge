@@ -31,7 +31,7 @@ func TestConversationLifecycle(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
-		ID: "space-fe", Name: "前端研发", Version: 1, ProjectID: "platform", Status: "published", SandboxProfileID: "local",
+		ID: "space-fe", Name: "前端研发", Version: 1, ProjectID: "platform", Status: "published", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "review", Name: "方案评审", Type: "approval", MaxAttempts: 1}},
 	}); err != nil {
 		t.Fatal(err)
@@ -185,7 +185,7 @@ func TestConversationLifecycle(t *testing.T) {
 			ID string `json:"id"`
 		} `json:"workflow"`
 	}](t, h, owner, http.MethodPost, base+"/flows", map[string]any{
-		"name": "联调 SOP", "sandboxProfileId": "local",
+		"name": "联调 SOP", "sandboxProfileId": "test-native",
 		"nodes": []map[string]any{{"id": "dev", "name": "开发", "type": "agent", "agentId": "developer"}, {"id": "check", "name": "验收", "type": "approval"}},
 		"edges": []map[string]any{{"source": "dev", "target": "check"}, {"source": "check", "target": "dev", "when": "rework"}},
 	}, http.StatusOK)
@@ -227,7 +227,7 @@ func TestConversationRequirementIsExplicit(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
-		ID: "space-be", Name: "后端研发", Version: 1, ProjectID: "platform", Status: "published", SandboxProfileID: "local",
+		ID: "space-be", Name: "后端研发", Version: 1, ProjectID: "platform", Status: "published", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "review", Name: "方案评审", Type: "approval", MaxAttempts: 1}},
 	}); err != nil {
 		t.Fatal(err)

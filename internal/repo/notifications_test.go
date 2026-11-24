@@ -16,6 +16,11 @@ func notificationFixture(t *testing.T, s *Store, suffix string) (domain.Notifica
 	if err := s.PutProject(domain.Project{ID: bot.ProjectID, Name: "研发项目"}); err != nil {
 		t.Fatal(err)
 	}
+	// Stores opened with Open (MySQL tests) have no keyring until the
+	// process installs one; secrets are sealed, so tests install the test key.
+	if s.credentialKeyring() == nil {
+		s.SetCredentialKeyring(testCredentialKeyring)
+	}
 	if err := s.SaveNotificationBot(bot, "ciphertext-not-a-real-secret"); err != nil {
 		t.Fatal(err)
 	}

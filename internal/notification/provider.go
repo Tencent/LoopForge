@@ -194,9 +194,19 @@ func (p *CLIProvider) Sessions(ctx context.Context, botID, secret string) ([]dom
 	}
 	return chats, nil
 }
+
+var errNotificationContentLength = errors.New("通知正文必须为 1 至 20480 字节")
+
+// Verify checks a Bot ID and secret through the signed bootstrap API only.
+// It never opens a long connection, so a running receiver is not displaced.
+func (p *CLIProvider) Verify(ctx context.Context, botID, secret string) error {
+	_, err := p.token(ctx, botID, secret)
+	return err
+}
+
 func (p *CLIProvider) Send(ctx context.Context, botID, secret, target, content string) error {
 	if len([]byte(content)) == 0 || len([]byte(content)) > 20480 {
-		return errors.New("通知正文必须为 1 至 20480 字节")
+		return errNotificationContentLength
 	}
 	body, _ := json.Marshal(map[string]any{"chat_id": target, "msg_type": "markdown", "markdown": map[string]string{"content": content}})
 	raw, err := p.call(ctx, botID, secret, "message", "aibot", "send", "--json", string(body))

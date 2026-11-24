@@ -140,7 +140,11 @@ export function collectArtifacts(session) {
         draft,
         messageIndex,
         draftIndex: index,
-        source: draft.saved ? "已执行" : "待确认",
+        source: draft.saved
+          ? "已执行"
+          : draft.decision === "rejected"
+            ? "AI 已拒绝"
+            : "待确认",
       });
     }
     // PR/MR links the agent opened with its own git only appear in the reply

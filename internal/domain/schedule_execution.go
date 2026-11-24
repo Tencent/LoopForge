@@ -50,7 +50,7 @@ func (e *ScheduleJobExecution) RecordUsage(model string, usage *TokenUsage) {
 	}
 	priced := PriceScheduleExecutionUsage(model, *usage)
 	e.Model, e.Usage, e.CostCNY = strings.TrimSpace(model), &priced, nil
-	if priced.CostStatus == "estimated" {
+	if priced.CostStatus == "estimated" || priced.CostStatus == "reported" {
 		cny := priced.CostUSD * AnalyticsUSDToCNY
 		e.CostCNY = &cny
 	}

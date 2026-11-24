@@ -58,8 +58,7 @@ func TestAssistantDraftBoundary(t *testing.T) {
 		{"assistant task", `{"message":"草稿","drafts":[{"tool":"assistant_tasks_save","body":{"name":"每小时检查待办","prompt":"列出当前项目未完成事项","intervalSec":3600,"enabled":true,"projectId":"p"}}]}`, "p", true},
 		{"assistant task cron", `{"message":"草稿","drafts":[{"tool":"assistant_tasks_save","body":{"name":"工作日巡检","prompt":"列出当前项目未完成事项","cron":"0 9 * * 1-5","model":"default","enabled":true,"projectId":"p"}}]}`, "p", true},
 		{"schedule job", `{"message":"草稿","drafts":[{"tool":"schedule_jobs_save","body":{"id":"job-1","name":"TAPD 自动开发","projectId":"p","source":"tapd","workflowId":"wf","intervalSec":300,"tapdWorkspaceId":"ws","tapdIterationId":"it","enabled":true}}]}`, "p", true},
-		{"sandbox", `{"message":"草稿","drafts":[{"tool":"sandboxes_save","body":{"id":"p-box","name":"Docker 沙箱","projectId":"p","driver":"docker","dockerfileId":"p-df"}}]}`, "p", true},
-		{"dockerfile", `{"message":"草稿","drafts":[{"tool":"dockerfiles_save","body":{"id":"p-df","name":"构建镜像","projectId":"p","content":"FROM debian:12"}}]}`, "p", true},
+		{"sandbox", `{"message":"草稿","drafts":[{"tool":"sandboxes_save","body":{"id":"p-box","name":"Docker 沙箱","projectId":"p","driver":"docker","dockerfile":{"content":"FROM debian:12"}}}]}`, "p", true},
 		{"script node", `{"message":"草稿","drafts":[{"tool":"workflows_save","body":{"id":"a","name":"A","projectId":"p","status":"draft","sandboxProfileId":"s","edges":[],"nodes":[{"id":"script","name":"脚本","type":"script","scriptLanguage":"shell","script":"printf ok"}]}}]}`, "p", true},
 		{"hook allowed", `{"message":"草稿","drafts":[{"tool":"agents_save","body":{"id":"a","name":"A","projectId":"p","hooks":[{"id":"h1","name":"start","event":"SessionStart","language":"shell","script":"echo hi"}]}}]}`, "p", true},
 		{"publish", `{"message":"草稿","drafts":[{"tool":"workflows_publish","path":{"id":"a"}}]}`, "p", true},
@@ -272,7 +271,7 @@ func TestAssistantPromptDoesNotInjectProjectCatalog(t *testing.T) {
 		ID: "p-dev-review-test", Name: "开发-评审-测试流程", ProjectID: "p", Status: "draft", Revision: 1,
 		Nodes: []domain.WorkflowNode{{ID: "dev", Name: "开发实现", Type: "agent", Script: strings.Repeat("HUGE_SOP", 2000)}},
 	})
-	if err := st.PutDockerfile(domain.DockerfileDefinition{ID: "p-df", Name: "构建镜像", ProjectID: "p", Content: "FROM debian:12"}); err != nil {
+	if err := st.PutSandbox(domain.SandboxProfile{ID: "p-box", Name: "构建镜像", ProjectID: "p", Driver: "docker", Dockerfile: &domain.SandboxDockerfile{Content: "FROM debian:12"}}); err != nil {
 		t.Fatal(err)
 	}
 	h := &assistantHandlers{deps: &deps{repo: st}}

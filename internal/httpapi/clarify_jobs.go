@@ -130,6 +130,11 @@ func (h *streamHandlers) resumeClarifyIssue(issueID string) {
 	if issueID == "" || h == nil || h.repo == nil {
 		return
 	}
+	if h.repo.ActiveBotClarifyIssue(issueID) {
+		// A chat clarification reruns its own interrupted round, keeping
+		// the conclusion out of the requirement until it is saved.
+		return
+	}
 	issue, ok := h.repo.Issue(issueID)
 	if !ok || !domain.ShouldResumeClarification(issue) {
 		return
@@ -171,7 +176,23 @@ func historyToClarify(history []domain.ClarificationMessage) []struct {
 	return out
 }
 
+// clarifyJobOptions adapt a clarification job for chat clarification.
+type clarifyJobOptions struct {
+	// HoldReady keeps a ready conclusion out of the requirement: the
+	// analysis is recorded in the history and handed to OnDone, and the
+	// conclusion is saved later by an authorized member.
+	HoldReady bool
+	// OnDone receives the outcome of the round (err set when it failed).
+	OnDone func(model clarifyModelResult, err error)
+}
+
 func (h *streamHandlers) ensureClarifyJob(issue domain.Issue, request chatClarifyRequest) (*clarifyJob, error) {
+	return h.startClarifyJob(issue, request, clarifyJobOptions{})
+}
+
+// startClarifyJob is ensureClarifyJob with options. A round already running
+// for the issue is returned as is (its options stay those it started with).
+func (h *streamHandlers) startClarifyJob(issue domain.Issue, request chatClarifyRequest, opts clarifyJobOptions) (*clarifyJob, error) {
 	if strings.TrimSpace(issue.ID) == "" {
 		return nil, fmt.Errorf("issue id is required")
 	}
@@ -212,7 +233,7 @@ func (h *streamHandlers) ensureClarifyJob(issue domain.Issue, request chatClarif
 	untrack := inflightTasks.Add()
 	go func() {
 		defer untrack()
-		h.runClarifyJob(ctx, job, issue.ID, request)
+		h.runClarifyJob(ctx, job, issue.ID, request, opts)
 	}()
 	return job, nil
 }
@@ -404,7 +425,16 @@ func (h *streamHandlers) markIssueAnalyzing(issueID, message string, request cha
 	return err
 }
 
-func (h *streamHandlers) runClarifyJob(ctx context.Context, job *clarifyJob, issueID string, request chatClarifyRequest) {
+func (h *streamHandlers) runClarifyJob(ctx context.Context, job *clarifyJob, issueID string, request chatClarifyRequest, opts ...clarifyJobOptions) {
+	var opt clarifyJobOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	done := func(model clarifyModelResult, err error) {
+		if opt.OnDone != nil {
+			opt.OnDone(model, err)
+		}
+	}
 	defer func() {
 		job.cancel()
 		close(job.done)
@@ -422,11 +452,13 @@ func (h *streamHandlers) runClarifyJob(ctx context.Context, job *clarifyJob, iss
 	case <-ctx.Done():
 		job.fail("澄清已取消")
 		h.revertAnalyzing(issueID, ctx.Err())
+		done(clarifyModelResult{}, fmt.Errorf("澄清已取消"))
 		return
 	}
 	issue, ok := h.repo.Issue(issueID)
 	if !ok {
 		job.fail("issue not found")
+		done(clarifyModelResult{}, fmt.Errorf("需求不存在"))
 		return
 	}
 	emit := func(event string, payload any) {
@@ -445,14 +477,27 @@ func (h *streamHandlers) runClarifyJob(ctx context.Context, job *clarifyJob, iss
 		job.fail(msg)
 		h.revertAnalyzing(issueID, err)
 		job.publish("error", map[string]string{"error": msg})
+		done(clarifyModelResult{}, fmt.Errorf("%s", msg))
 		return
 	}
-	stored, persistErr := h.persistClarifyOutcome(issueID, parsed, raw)
+	model := parseClarifyModel(parsed, raw)
+	var stored domain.Issue
+	var persistErr error
+	if opt.HoldReady && model.Ready {
+		stored, persistErr = h.holdClarifyConclusion(issueID, model)
+	} else {
+		stored, persistErr = h.persistClarifyOutcome(issueID, parsed, raw)
+	}
 	if persistErr != nil {
+		if opt.HoldReady {
+			h.revertAnalyzing(issueID, nil)
+		}
 		job.fail(persistErr.Error())
 		job.publish("error", map[string]string{"error": persistErr.Error()})
+		done(clarifyModelResult{}, persistErr)
 		return
 	}
+	defer done(model, nil)
 	result := map[string]any{"result": raw, "parsed": clarificationAPIPayload(stored.Clarification), "repository": repoInfo, "issue": stored}
 	job.mu.Lock()
 	job.result = result
@@ -533,6 +578,22 @@ func (h *streamHandlers) revertAnalyzing(issueID string, cause error) {
 		if cause != nil && cause != context.Canceled && cause != context.DeadlineExceeded {
 			issue.Clarification.WriteBackError = cause.Error()
 		}
+		return nil
+	})
+}
+
+// holdClarifyConclusion records a ready analysis of a chat clarification
+// in the history without saving it into the requirement: the status goes
+// back to in progress until an authorized member saves the conclusion.
+func (h *streamHandlers) holdClarifyConclusion(issueID string, model clarifyModelResult) (domain.Issue, error) {
+	if err := model.userFacingOK(); err != nil {
+		return domain.Issue{}, fmt.Errorf("澄清结果无效，未保存原文: %w", err)
+	}
+	encoded, _ := json.Marshal(stripClarifyMCPCalls(model.raw))
+	return h.repo.PatchIssue(issueID, func(issue *domain.Issue) error {
+		issue.Clarification.History = append(append([]domain.ClarificationMessage(nil), issue.Clarification.History...), domain.ClarificationMessage{Role: "assistant", Content: string(encoded)})
+		issue.Clarification.Questions = nil
+		issue.Clarification.Status = domain.ClarificationInProgress
 		return nil
 	})
 }

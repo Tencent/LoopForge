@@ -32,9 +32,7 @@ const entities = {
   assistant_tasks: "助手定时任务",
   runs: "运行",
   issues: "需求",
-  environments: "环境",
   sandboxes: "沙箱",
-  dockerfiles: "Dockerfile",
   executors: "执行器",
 };
 const verbs = {
@@ -63,7 +61,10 @@ export const actionName = (tool) => {
 export const visibleSidebarArtifact = (a) =>
   !a.draft ||
   !!definitionTarget(a) ||
-  (!a.draft.saved && !a.draft.resolved && !a.draft.inherited);
+  (!a.draft.saved &&
+    !a.draft.resolved &&
+    !a.draft.inherited &&
+    a.draft.decision !== "rejected");
 
 export function definitionTarget(artifact, projectId = "") {
   if (!["sop", "role"].includes(artifact?.kind)) return null;

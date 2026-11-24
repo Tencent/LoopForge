@@ -70,14 +70,13 @@ func TestInsightIdempotencyAndAnalytics(t *testing.T) {
 	}
 	for _, scope := range []string{"overview", ""} {
 		got := s.Analytics(domain.AnalyticsFilter{ProjectID: "alpha", Scope: scope})
-		// Unknown models and missing native model/token attribution cannot be
-		// priced from public tariffs, even if an adapter reported zero.
-		if len(got.DataErrors) > 0 || got.Summary.TotalRuns != 2 || got.Summary.TotalTokens != 190 || got.Summary.ExternalRuns != 1 || got.Summary.CostUnknownRuns != 2 {
+		// Explicit zero reports are known even without model attribution;
+		// the unpriced external m2 usage still makes that execution partial.
+		if len(got.DataErrors) > 0 || got.Summary.TotalRuns != 2 || got.Summary.TotalTokens != 190 || got.Summary.ExternalRuns != 1 || got.Summary.CostUnknownRuns != 1 {
 			t.Fatalf("summary: %+v", got.Summary)
 		}
-		delta := got.Summary.TotalCostCNY - .00118 // inclusive input: 70*8 + 30*2 + 20*28 per million
-		if delta < -1e-12 || delta > 1e-12 {
-			t.Fatalf("external public CNY estimate: %+v", got.Summary)
+		if got.Summary.TotalCostCNY != 0 {
+			t.Fatalf("reported zero must not be replaced by a public estimate: %+v", got.Summary)
 		}
 		if got.Demo.AutomatedSucceededRuns != 0 || got.Demo.CoveredRuns != 1 || got.Summary.FirstPassRate != 0 || got.Summary.UniqueIssues != 0 {
 			t.Fatalf("invented quality/requirements: %+v %+v", got.Demo, got.Summary)

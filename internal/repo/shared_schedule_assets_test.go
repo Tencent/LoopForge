@@ -190,17 +190,15 @@ func TestSharedScheduleDoesNotPinSOPDependencies(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	check(st.PutDockerfile(domain.DockerfileDefinition{ID: "image", Name: "Image", ProjectID: "source", Content: "FROM scratch"}))
-	check(st.PutEnvironment(domain.EnvironmentDefinition{ID: "setup", Name: "Setup", ProjectID: "source"}))
-	check(st.PutSandbox(domain.SandboxProfile{ID: "sandbox", Name: "Sandbox", ProjectID: "source", Driver: "docker", DockerfileID: "image", EnvironmentID: "setup"}))
-	check(st.PutSandbox(domain.SandboxProfile{ID: "native", Name: "Native", ProjectID: "source", Driver: "native", EnvironmentID: "setup"}))
+	check(st.PutSandbox(domain.SandboxProfile{ID: "sandbox", Name: "Sandbox", ProjectID: "source", Driver: "docker", Dockerfile: &domain.SandboxDockerfile{Content: "FROM scratch"}}))
+	check(st.PutSandbox(domain.SandboxProfile{ID: "native", Name: "Native", ProjectID: "source", Driver: "native", Environment: map[string]string{"MODE": "test"}}))
 	check(st.PutWorkflow(domain.WorkflowDefinition{ID: "child", Name: "Child", ProjectID: "source", SandboxProfileID: "native", Nodes: []domain.WorkflowNode{{ID: "approve", Type: "approval", Name: "Approve"}}}))
 	check(st.PutWorkflow(domain.WorkflowDefinition{ID: "parent", Name: "Parent", ProjectID: "source", Shared: true, SandboxProfileID: "sandbox", Nodes: []domain.WorkflowNode{{ID: "child", Type: "sop", SOPWorkflowID: "child", Name: "Child"}}}))
 	job := domain.ScheduleJob{ID: "sop-task", Name: "SOP task", ProjectID: "source", SkipDispatch: true, AssistantPrompt: "start", References: []domain.AssistantReference{{Type: "sop", ID: "parent"}}}
 	check(st.PutScheduleJob(job))
 	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "SOP task", Prompt: "start"}, 0)
 	check(err)
-	if !v.HasAsset("sop", "parent") || v.HasAsset("sop", "child") || v.HasAsset("sandbox", "sandbox") || v.HasAsset("dockerfile", "image") || v.HasAsset("environment", "setup") {
+	if !v.HasAsset("sop", "parent") || v.HasAsset("sop", "child") || v.HasAsset("sandbox", "sandbox") || v.HasAsset("sandbox", "native") {
 		t.Fatalf("version contains nested SOP dependencies: %+v", v.Assets)
 	}
 	profile, _ := st.Sandbox("sandbox")
@@ -243,7 +241,7 @@ func TestSharedScheduleSOPPreservesTemplateFallbacksAndBuiltInPreview(t *testing
 		t.Fatalf("publication stored nested template dependencies: %+v", v.Assets)
 	}
 	// The preview builder is an engine-generated role, not a catalog asset.
-	wf := domain.WorkflowDefinition{ID: "preview-sop", Name: "Preview", ProjectID: "source", Shared: true, SandboxProfileID: "local", Preview: &domain.PreviewContract{Enabled: true}, Nodes: []domain.WorkflowNode{{ID: "approve", Type: "approval", Name: "Approve"}}}
+	wf := domain.WorkflowDefinition{ID: "preview-sop", Name: "Preview", ProjectID: "source", Shared: true, SandboxProfileID: TestNativeSandboxID, Preview: &domain.PreviewContract{Enabled: true}, Nodes: []domain.WorkflowNode{{ID: "approve", Type: "approval", Name: "Approve"}}}
 	wf, err = domain.AttachPreviewBuild(wf)
 	check(err)
 	check(st.PutWorkflow(wf))

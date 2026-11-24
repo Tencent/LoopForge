@@ -165,6 +165,22 @@ type NodeRun struct {
 	ChildRunID      string      `json:"childRunId,omitempty"`
 	StartedAt       time.Time   `json:"startedAt,omitzero"`
 	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
+
+	// Stream cursors are message-scoped; pending usage is already included in
+	// Usage until a session result replaces it with authoritative totals.
+	UsageStreamCursors map[string]TokenUsage `json:"usageStreamCursors,omitempty"`
+	UsagePending       map[string]TokenUsage `json:"usagePending,omitempty"`
+}
+
+// Question is what the node asks a human to supply: the actionRequired of
+// a "human" decision while the node waits for it. Empty otherwise, also
+// for a paused or turn-exhausted node that still carries an earlier
+// decision.
+func (n *NodeRun) Question() string {
+	if n == nil || n.Status != "waiting_approval" || n.Activity != "等待人工确认" || n.GateResult == nil || n.GateResult.Decision != "human" {
+		return ""
+	}
+	return strings.TrimSpace(n.GateResult.ActionRequired)
 }
 
 // GateResult is the structured terminal decision submitted by an Agent through
@@ -195,6 +211,9 @@ type TokenUsage struct {
 	// CostStatus 区分"成本为 0"与"成本未知"：reported（适配器上报）、estimated（按 token 估算）、
 	// unknown（未识别，展示为"未识别"而不是 ¥0）。空值视为 unknown，旧数据向后兼容。
 	CostStatus string `json:"costStatus,omitempty"`
+	// Marks a platform-priced total so a sum of reported and fallback-priced
+	// invocations is not repriced as though it came from one model call.
+	CostPricingVersion string `json:"costPricingVersion,omitempty"`
 }
 
 type TelemetryEvent struct {

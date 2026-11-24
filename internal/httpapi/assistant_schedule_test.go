@@ -82,7 +82,7 @@ func TestScheduledAssistantStopsAtDeadline(t *testing.T) {
 
 func TestScheduledAssistantRecoveredDraftDoesNotDispatchRun(t *testing.T) {
 	h, user := workbenchFixture(t)
-	wf := domain.WorkflowDefinition{ID: "wf", Name: "Scheduled approval", ProjectID: "workbench", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "review", Type: "approval"}}}
+	wf := domain.WorkflowDefinition{ID: "wf", Name: "Scheduled approval", ProjectID: "workbench", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "review", Type: "approval"}}}
 	if err := h.repo.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -177,6 +177,7 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 func TestScheduledUsageStaysPerExecution(t *testing.T) {
 	h, user := workbenchFixture(t)
 	bin := filepath.Join(t.TempDir(), "codebuddy")
+	counter := filepath.Join(t.TempDir(), "calls")
 	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
 	job := domain.ScheduleJob{ID: "usage-job", ProjectID: "workbench", OwnerUserID: user.ID, RunAsUserID: user.ID, Name: "巡检", SkipDispatch: true, AssistantPrompt: "检查文件", Enabled: true, SessionMode: domain.ScheduleSessionFixed}
 	if err := h.repo.PutScheduleJob(job); err != nil {
@@ -197,11 +198,19 @@ func TestScheduledUsageStaysPerExecution(t *testing.T) {
 		{name: "unreported", message: "检查结果正常，没有问题。", unreported: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			usage := `,"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":3}`
+			// Legacy CodeBuddy reports session totals, even when a new
+			// scheduled execution or protocol retry resumes that session.
+			script := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo 2.185.0; exit 0; fi
+n=0
+if [ -f '` + counter + `' ]; then read -r n < '` + counter + `'; fi
+n=$((n + 1))
+echo "$n" > '` + counter + `'
+printf '{"type":"result","result":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_read_input_tokens":%s,"cache_creation_input_tokens":%s}}\n' '` + tc.message + `' "$((n * 10))" "$((n * 5))" "$((n * 100))" "$((n * 3))"
+`
 			if tc.unreported {
-				usage = ""
+				script = "#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"" + tc.message + "\"}'\n"
 			}
-			script := "#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"" + tc.message + "\"" + usage + "}'\n"
 			if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 				t.Fatal(err)
 			}

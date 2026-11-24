@@ -215,13 +215,13 @@ func workspaceTurnFixture(t *testing.T) (*assistantHandlers, domain.User, *Agent
 	root := t.TempDir()
 	en := engine.New(st, runtime.NewManager(root))
 	h := &assistantHandlers{deps: &deps{repo: st, engine: en}}
-	profile := domain.SandboxProfile{ID: id + "-sandbox", ProjectID: id, Name: "Workspace turn test", Driver: "local"}
+	profile := domain.SandboxProfile{ID: id + "-sandbox", ProjectID: id, Name: "Workspace turn test", Driver: "native"}
 	if err := st.PutSandbox(profile); err != nil {
 		t.Fatal(err)
 	}
 	// Each workspace runs in its own environment: the conversation switches
 	// between them by environment.
-	if err := st.PutSandbox(domain.SandboxProfile{ID: id + "-second-sandbox", ProjectID: id, Name: "Workspace turn test 2", Driver: "local"}); err != nil {
+	if err := st.PutSandbox(domain.SandboxProfile{ID: id + "-second-sandbox", ProjectID: id, Name: "Workspace turn test 2", Driver: "native"}); err != nil {
 		t.Fatal(err)
 	}
 	ids := []string{id + "-first", id + "-second"}

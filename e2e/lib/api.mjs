@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cfg, requireToken } from './env.mjs';
+import { cfg, defaultSandbox, requireToken } from './env.mjs';
 
 export class HTTPError extends Error {
   constructor(method, path, status, body) {
@@ -121,7 +121,18 @@ export async function ensureProject() {
   if (project.ownerId !== ownerId) {
     project = await put('/api/projects', { ...project, ownerId });
   }
+  await ensureSandbox();
   return project;
+}
+
+// ensureSandbox provisions the default SOP sandbox in the e2e project: a
+// native sandbox, so scripts run on the deployment host without an image
+// build (bubblewrap on Linux, sandbox-exec on macOS). A sandbox chosen with
+// AGENTFLOW_E2E_SANDBOX must already exist.
+async function ensureSandbox() {
+  if (cfg.sandbox !== defaultSandbox) return;
+  if (list(await get('/api/sandboxes')).some(s => s.id === defaultSandbox)) return;
+  await put('/api/sandboxes', { id: defaultSandbox, name: 'E2E 轻量沙箱', projectId: cfg.projectId, driver: 'native' });
 }
 
 // tokenOwner resolves who the API token belongs to. There is no "whoami" for

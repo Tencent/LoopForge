@@ -13,7 +13,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 
 | 领域 Repo | 拥有 |
 |---|---|
-| `CatalogRepo` | agents/rules/skills/MCP servers/executors/dockerfiles/environments/sandboxes/workflows/repositories/sync config/schedule jobs/definition revisions/generic templates |
+| `CatalogRepo` | agents/rules/skills/MCP servers/executors/sandboxes（docker 内嵌 Dockerfile，native 只有环境变量）/workflows/repositories/sync config/schedule jobs/definition revisions/generic templates |
 | `ProjectsRepo` | projects、project members |
 | `IssuesRepo` | issues、issue comments |
 | `TasksRepo` | tasks（跨实例幂等记录） |

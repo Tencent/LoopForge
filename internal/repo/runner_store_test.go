@@ -68,7 +68,7 @@ func TestRunnerHeartbeatPreservesRuntimeAuthMode(t *testing.T) {
 	if err := s.SetRunnerRuntimeAuthMode("runner-auth", "codex", domain.RuntimeAuthPersonal, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RunnerHeartbeat("runner-auth", []domain.RunnerRuntime{{Provider: "codex", Status: domain.RuntimeStatusOnline}}, "", now.Add(time.Second), now.Add(30*24*time.Hour)); err != nil {
+	if err := s.RunnerHeartbeat("runner-auth", []domain.RunnerRuntime{{Provider: "codex", Status: domain.RuntimeStatusOnline}}, "", false, now.Add(time.Second), now.Add(30*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	runner, _ := s.Runner("runner-auth")
@@ -99,7 +99,7 @@ func TestAgentCLIHeartbeatForcesPersonalAuth(t *testing.T) {
 	if err := s.SetRunnerRuntimeAuthMode("runner-agy", "opencode", domain.RuntimeAuthLocal, now); err == nil {
 		t.Fatal("local auth accepted for opencode")
 	}
-	if err := s.RunnerHeartbeat("runner-agy", []domain.RunnerRuntime{{Provider: "opencode", Status: domain.RuntimeStatusOnline}}, "1", now, now.Add(time.Hour)); err != nil {
+	if err := s.RunnerHeartbeat("runner-agy", []domain.RunnerRuntime{{Provider: "opencode", Status: domain.RuntimeStatusOnline}}, "1", false, now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	runner, _ = s.Runner("runner-agy")
@@ -118,7 +118,7 @@ func TestAntigravityHeartbeatPreservesSelectedAuthentication(t *testing.T) {
 		if err := s.SetRunnerRuntimeAuthMode("agy-auth", "agy", mode, now); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.RunnerHeartbeat("agy-auth", []domain.RunnerRuntime{{Provider: "agy", Status: domain.RuntimeStatusOnline}}, "1", now, now.Add(time.Hour)); err != nil {
+		if err := s.RunnerHeartbeat("agy-auth", []domain.RunnerRuntime{{Provider: "agy", Status: domain.RuntimeStatusOnline}}, "1", false, now, now.Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 		runner, _ := s.Runner("agy-auth")
