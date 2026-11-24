@@ -551,6 +551,7 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	// locks, cloning repositories, creating sandboxes and collecting outputs too.
 	ctx, stopLease := d.keepTaskLease(ctx, task, leaseRenewInterval)
 	defer stopLease()
+	ctx = runtime.WithProjectCredentialEnv(ctx, task.ProjectCredentialEnv)
 	ctx = d.withDockerRunnerHelperWait(ctx)
 	ctx = gitwork.WithSSHKnownHosts(ctx, task.GitSSHKnownHosts)
 	// The read fence ends before the completion report: once the control plane
@@ -571,6 +572,8 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	var artifacts map[string]string
 	managed := d.managedTaskState(task.ID)
 	switch {
+	case len(task.ProjectCredentialIDs) > 0 && len(task.ProjectCredentialEnv) == 0:
+		result = execResult{status: domain.RunnerTaskFailed, errMsg: "未收到任务绑定的项目凭据"}
 	case managed != nil && managed.err != nil:
 		result = execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("pin managed CLI inventory: %v", managed.err)}
 	case task.Action == domain.RunnerTaskActionCleanupRun:
@@ -1456,7 +1459,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionRepositoryCache
+var runnerVersion = domain.RunnerVersionProjectCredentials
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

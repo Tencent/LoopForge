@@ -97,6 +97,7 @@ export function useChat() {
     [projects, setProjects] = useState([]),
     [sandboxes, setSandboxes] = useState([]),
     [sandboxProfileId, setSandboxProfileId] = useState(""),
+    [draftProjectCredentialIds, setDraftProjectCredentialIds] = useState([]),
     [sandboxBusy, setSandboxBusy] = useState(false),
     [loadedWorkspace, setLoadedWorkspace] = useState(null),
     [users, setUsers] = useState([]),
@@ -220,6 +221,7 @@ export function useChat() {
       draftExecutorPicked.current = false;
       setSelection((options) => ({ executor: id ? options.executor : accountDefaultsRef.current?.executor || storedExecutor(), model: null, effort: null }));
       setSandboxProfileId("");
+      setDraftProjectCredentialIds([]);
       currentId.current = id;
       setActiveId(id);
       if (id) setRevealId(id);
@@ -582,6 +584,7 @@ export function useChat() {
       if (strategy === "new") newChat();
       if (id !== projectRef.current) {
         setSandboxProfileId("");
+        setDraftProjectCredentialIds([]);
         setDraftIssueId("");
         const url = new URL(location.href);
         url.searchParams.delete("issueId");
@@ -1154,6 +1157,7 @@ export function useChat() {
             projectId: draft.projectId,
             issueId: draft.issueId,
             sandboxProfileId,
+            projectCredentialIds: draftProjectCredentialIds,
             executionTarget: {pool: executionMachines.defaultRunnerId ? "runner" : "cloud", runnerId: executionMachines.defaultRunnerId || ""},
             ...chosen,
             executor,
@@ -1552,6 +1556,36 @@ export function useChat() {
     } catch (e) { setError(e.message); return false; }
     finally { sandboxBusyRef.current = false; setSandboxBusy(false); }
   }
+  async function selectProjectCredentials(ids) {
+    const current = sessionRef.current;
+    if (submittingRef.current || sandboxBusyRef.current || generation?.status === "running") return false;
+    if (!currentId.current) {
+      setDraftProjectCredentialIds(ids);
+      return true;
+    }
+    if (!current || current.id !== currentId.current || current.shared || current.runId) return false;
+    sandboxBusyRef.current = true;
+    setSandboxBusy(true);
+    setError("");
+    try {
+      const saved = await write(
+        `${sessionPath(current.id)}/project-credentials`,
+        { projectCredentialIds: ids },
+        "PUT",
+      );
+      if (currentId.current === current.id) {
+        sessionRef.current = saved;
+        setSession(saved);
+      }
+      return true;
+    } catch (error) {
+      setError(error.message);
+      return false;
+    } finally {
+      sandboxBusyRef.current = false;
+      setSandboxBusy(false);
+    }
+  }
   const workspaceRunId = session?.workspaceRunId || session?.runId;
   useEffect(() => {
     if (!workspaceRunId) return;
@@ -1626,6 +1660,8 @@ export function useChat() {
     projects,
     sandboxes,
     sandboxProfileId: activeId ? session?.sandboxProfileId || "" : sandboxProfileId,
+    projectCredentialIds: activeId ? session?.projectCredentialIds || [] : draftProjectCredentialIds,
+    selectProjectCredentials,
     sandboxLocked: !!session?.runId,
     sandboxBusy,
     workspaceSandbox: workspaceSandbox || null,

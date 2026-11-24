@@ -126,7 +126,7 @@ async function openIDE({ status, readOnly = false, preparation }) {
 
   const viewer = await openIDE({ status: 'unprepared', readOnly: true });
   viewer.startWorkbench();
-  assert.deepEqual(viewer.preparationMethods, ['GET']);
+  assert.deepEqual(viewer.preparationMethods, [], 'read-only workspaces do not check or prepare a terminal environment');
   assert.equal(viewer.terminal.disabled, true);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 `

@@ -203,6 +203,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	if request.Operation == domain.RunnerWorkspaceOperationPreparationStatus {
 		return runnerWorkspacePayload(d.runnerWorkspacePreparationStatus(ctx, root, request))
 	}
+	if request.Operation == domain.RunnerWorkspaceOperationPreviewService {
+		return d.workspacePreviewService(ctx, root, request)
+	}
 
 	liveWorkspace := request.RunKind == domain.RunKindWorkspace && (request.RunStatus == "running" || request.RunStatus == "waiting")
 	// A person editing from the IDE only shares the workspace with running
