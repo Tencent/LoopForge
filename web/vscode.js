@@ -26,24 +26,41 @@
   const environment=document.createElement('section');environment.className='vscode-environment';environment.setAttribute('aria-live','polite');environment.hidden=true;toolbar.after(environment);
   let environmentState=null,preparingEnvironment=false,environmentPoll=0,environmentEpoch=0,environmentRetry=0;
   function paintEnvironment(info){
-    environmentState=info;environment.hidden=info.status!=='failed';environment.replaceChildren();
+    const migrate=info.gitHelperMigrationRequired===true;
+    environmentState=info;environment.hidden=info.status!=='failed'&&!migrate;environment.replaceChildren();
     paintToolbar();
     if(environment.hidden)return;
-    const copy=document.createElement('div'),heading=document.createElement('b'),detail=document.createElement('span');heading.textContent='工作区准备失败';detail.textContent=info.error||'请重试，现有文件仍可浏览';copy.append(heading,detail);environment.append(copy);
-    const retry=document.createElement('button');retry.type='button';retry.textContent='重试';retry.disabled=!editing||preparingEnvironment;retry.onclick=prepareEnvironment;environment.append(retry);
+    const copy=document.createElement('div'),heading=document.createElement('b'),detail=document.createElement('span');
+    heading.textContent=migrate?'升级 Git 凭据环境':'工作区准备失败';
+    const migrationDetails='升级会重建 Docker 容器并重新执行环境准备。容器内的临时文件和后台服务会被清除。';
+    detail.textContent=migrate?[info.error,migrationDetails].filter(Boolean).join(' '):info.error||'请重试，现有文件仍可浏览';
+    copy.append(heading,detail);environment.append(copy);
+    const retry=document.createElement('button');retry.type='button';retry.textContent=migrate?'升级并重新准备':'重试';
+    retry.disabled=!editing||preparingEnvironment;retry.onclick=()=>prepareEnvironment(migrate);environment.append(retry);
   }
   async function refreshEnvironment(){
     const epoch=environmentEpoch;
     const res=await fetch('/api/runs/'+encodeURIComponent(runId)+'/workspace/preparation',{credentials:'same-origin',headers:{Accept:'application/json'}});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'环境状态读取失败');if(epoch===environmentEpoch)paintEnvironment(data);return data;
   }
-  async function prepareEnvironment(){
+  async function prepareEnvironment(migrateGitHelpers=false){
     if(preparingEnvironment||!editing)return;
     clearTimeout(environmentRetry);environmentRetry=0;preparingEnvironment=true;environmentEpoch++;paintEnvironment({status:'preparing'});
     environmentPoll=setInterval(()=>refreshEnvironment().catch(()=>{}),1500);
-    try{const result=await action('preparation');environmentEpoch++;paintEnvironment(result)}catch(err){environmentEpoch++;if(err.code==='workspace_busy'){paintEnvironment({status:'busy'});environmentRetry=setTimeout(()=>prepareEnvironment(),Math.min(5000,Math.max(1000,Number(err.retryAfterMs)||2000)))}else{paintEnvironment({status:'failed',error:err.message})}}finally{preparingEnvironment=false;clearInterval(environmentPoll);if(environmentState)paintEnvironment(environmentState)}
+    try{
+      const result=await action('preparation',migrateGitHelpers?{migrateGitHelpers:true}:{});
+      environmentEpoch++;paintEnvironment(result);
+    }catch(err){
+      environmentEpoch++;
+      if(err.code==='workspace_busy'&&!migrateGitHelpers){
+        paintEnvironment({status:'busy'});
+        environmentRetry=setTimeout(()=>prepareEnvironment(),Math.min(5000,Math.max(1000,Number(err.retryAfterMs)||2000)));
+      }else{
+        paintEnvironment({status:'failed',error:err.message,gitHelperMigrationRequired:err.gitHelperMigrationRequired??migrateGitHelpers});
+      }
+    }finally{preparingEnvironment=false;clearInterval(environmentPoll);if(environmentState)paintEnvironment(environmentState)}
   }
   let currentInfo=null,editing=false;
-  async function action(name,body={}){const res=await fetch('/api/runs/'+encodeURIComponent(runId)+'/workspace/'+name,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json().catch(()=>({}));if(!res.ok){const err=new Error(data.error||'操作失败');err.code=data.code;err.retryAfterMs=data.retryAfterMs;throw err}return data}
+  async function action(name,body={}){const res=await fetch('/api/runs/'+encodeURIComponent(runId)+'/workspace/'+name,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json().catch(()=>({}));if(!res.ok){const err=new Error(data.error||'操作失败');err.code=data.code;err.retryAfterMs=data.retryAfterMs;if(name==='preparation'&&data.status==='failed')err.gitHelperMigrationRequired=Boolean(data.gitHelperMigrationRequired);throw err}return data}
   function paintToolbar() {
     const busy = environmentState?.status === 'busy';
     const preparing = preparingEnvironment || environmentState?.status === 'preparing';
@@ -154,7 +171,7 @@
       paintToolbar();
       // Opening a shell revalidates the environment on the server.
       refreshEnvironment().then(state => {
-        if (state.status !== 'ready') return prepareEnvironment();
+        if (state.status !== 'ready' && !state.gitHelperMigrationRequired) return prepareEnvironment();
       }).catch(err => paintEnvironment({ status: 'failed', error: err.message }));
       // No edit lease to renew; writable whenever the server says so.
       workspaceChanges = Array.isArray(info.changes) ? info.changes : [];

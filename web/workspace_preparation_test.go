@@ -53,7 +53,7 @@ func TestIDEStartupReusesPreparedEnvironment(t *testing.T) {
 const assert = require('node:assert/strict');
 const { createDOM } = require('./hui_fake_dom.js');
 
-async function openIDE({ status, readOnly = false, preparation }) {
+async function openIDE({ status, readOnly = false, preparation, gitHelperMigrationRequired = false }) {
   const dom = createDOM();
   const { document, window } = dom;
   const host = dom.html('<div id="workbench"></div>');
@@ -66,6 +66,7 @@ async function openIDE({ status, readOnly = false, preparation }) {
   };
 
   const preparationMethods = [];
+  const preparationBodies = [];
   const commands = [];
   let startWorkbench;
   window.URLSearchParams = URLSearchParams;
@@ -79,7 +80,7 @@ async function openIDE({ status, readOnly = false, preparation }) {
   window.require.config = () => {};
   window.setInterval = () => 1;
   window.clearInterval = () => {};
-  window.fetch = async (url, { method = 'GET' } = {}) => {
+  window.fetch = async (url, { method = 'GET', body } = {}) => {
     const response = body => ({ ok: true, json: async () => body });
     switch (url) {
       case '/api/runs/test/workspace':
@@ -88,7 +89,9 @@ async function openIDE({ status, readOnly = false, preparation }) {
         return response({});
       case '/api/runs/test/workspace/preparation':
         preparationMethods.push(method);
-        return response(method === 'GET' ? { status } : await preparation);
+        if (method === 'GET') return response({ status, gitHelperMigrationRequired });
+        preparationBodies.push(JSON.parse(body));
+        return response(await preparation);
       default:
         throw new Error('Unexpected request ' + method + ' ' + url);
     }
@@ -99,7 +102,8 @@ async function openIDE({ status, readOnly = false, preparation }) {
   return {
     terminal: document.querySelector('button[aria-label="新建终端"]'),
     status: document.querySelector('.vscode-toolbar-status'),
-    preparationMethods, commands, startWorkbench, settle: dom.settle
+    migrationButton: () => document.querySelector('.vscode-environment').querySelector('button'),
+    preparationMethods, preparationBodies, commands, startWorkbench, settle: dom.settle
   };
 }
 
@@ -123,6 +127,14 @@ async function openIDE({ status, readOnly = false, preparation }) {
   await cold.settle();
   assert.equal(cold.terminal.disabled, false);
   assert.doesNotMatch(cold.status.textContent, /正在准备终端环境/);
+  assert.deepEqual(cold.preparationBodies, [{}], 'ordinary preparation must not authorize migration');
+
+  const legacy = await openIDE({ status: 'unprepared', gitHelperMigrationRequired: true, preparation: { status: 'ready' } });
+  assert.deepEqual(legacy.preparationMethods, ['GET'], 'opening the IDE must not migrate a legacy container');
+  assert.equal(legacy.migrationButton().textContent, '升级并重新准备');
+  await legacy.migrationButton().onclick();
+  assert.deepEqual(legacy.preparationBodies, [{migrateGitHelpers: true}]);
+  assert.equal(legacy.migrationButton(), null);
 
   const viewer = await openIDE({ status: 'unprepared', readOnly: true });
   viewer.startWorkbench();

@@ -12,6 +12,19 @@ import (
 	"agentflow/internal/runtime"
 )
 
+type workspaceGitHelperMigrationKey struct{}
+
+// WithWorkspaceGitHelperMigration is reserved for an explicitly authorized
+// preparation request. Ordinary workspace opens and commands never set it.
+func WithWorkspaceGitHelperMigration(ctx context.Context) context.Context {
+	return context.WithValue(ctx, workspaceGitHelperMigrationKey{}, true)
+}
+
+func workspaceGitHelperMigrationRequested(ctx context.Context) bool {
+	requested, _ := ctx.Value(workspaceGitHelperMigrationKey{}).(bool)
+	return requested
+}
+
 func (e *Engine) workspaceSandboxProfile(run domain.Run) (domain.SandboxProfile, runtime.SandboxResources, error) {
 	spec := run.WorkflowSnapshot.SandboxSnapshot
 	if spec == nil {
@@ -96,6 +109,11 @@ func (e *Engine) prepareLocalEnvironment(ctx context.Context, run domain.Run, en
 	ctx = e.withPreparationProgress(ctx, run.ID)
 	env.preparing.Store(true)
 	defer env.preparing.Store(false)
+	if workspaceGitHelperMigrationRequested(ctx) {
+		if err := runtime.MigrateWorkspaceGitHelpers(ctx, env.sandbox); err != nil {
+			return runtime.WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []runtime.WorkspacePreparationStep{}}, err
+		}
+	}
 	// Caller owns env.nodeMu so reconstruction is serialized without turning
 	// environment preparation into business-node attempts.
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
@@ -133,7 +151,7 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	request.RunID = run.ID
 	request.RunKind = run.Kind
 	request.WorkspaceRunID = workspaceRunID(run)
-	request.RefreshCleanRepositories = request.Operation == domain.RunnerWorkspaceOperationPrepare && workspaceCanRefreshRepositories(run)
+	request.RefreshCleanRepositories = request.Operation == domain.RunnerWorkspaceOperationPrepare && !request.MigrateGitHelpers && workspaceCanRefreshRepositories(run)
 	request.Sandbox = spec
 	// Requests are constructed from the persisted frozen run, never client JSON.
 	wf := workspacePreparationPlan(run)
@@ -199,7 +217,10 @@ func workspaceCanRefreshRepositories(run domain.Run) bool {
 }
 
 func (e *Engine) remoteWorkspacePreparation(ctx context.Context, run domain.Run, operation string) (runtime.WorkspacePreparationStatus, error) {
-	request, err := e.preparedWorkspaceRequest(run, domain.RunnerWorkspaceRequest{RunID: run.ID, Operation: operation})
+	request, err := e.preparedWorkspaceRequest(run, domain.RunnerWorkspaceRequest{
+		RunID: run.ID, Operation: operation,
+		MigrateGitHelpers: operation == domain.RunnerWorkspaceOperationPrepare && workspaceGitHelperMigrationRequested(ctx),
+	})
 	if err != nil {
 		return runtime.WorkspacePreparationStatus{}, err
 	}
@@ -245,6 +266,11 @@ func (e *Engine) WorkspacePreparationStatus(ctx context.Context, id string) (run
 		return runtime.WorkspacePreparationStatus{Status: "unprepared", Error: "执行环境尚未检查；文件仍可浏览", Steps: []runtime.WorkspacePreparationStep{}}, nil
 	}
 	state := runtime.ReadWorkspacePreparationStatus(root, scopeEnv.ID())
+	migration, err := runtime.WorkspaceGitHelpersNeedMigration(ctx, scopeEnv.sandbox)
+	if err != nil {
+		return state, err
+	}
+	state.GitHelperMigrationRequired = migration
 	if state.Status == "preparing" {
 		e.runEnvMu.Lock()
 		env := e.runEnvs[id]
@@ -301,14 +327,22 @@ func (e *Engine) EnsureWorkspaceReady(ctx context.Context, id string) (runtime.W
 		run = current
 	}
 	if run.HasActiveNode() || env.activeExecutions.Load() > 0 || e.workspaceTerminals.HasRunScope(id) || e.WorkspaceActive != nil && e.WorkspaceActive(run) {
+		if workspaceGitHelperMigrationRequested(ctx) {
+			return runtime.WorkspacePreparationStatus{}, repo.ErrWorkspaceInUse
+		}
 		state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())
+		migration, err := runtime.WorkspaceGitHelpersNeedMigration(ctx, env.sandbox)
+		if err != nil {
+			return state, err
+		}
+		state.GitHelperMigrationRequired = migration
 		epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
 		// The environment agents already run in serves the IDE terminal too.
 		if err == nil && runtime.WorkspacePreparationReusable(state, workspacePreparationPlan(run), run.RepositoryContexts(), epoch) {
 			return state, nil
 		}
 		if state.Status != "preparing" && runtime.WorkspacePreparationTrivial(workspacePreparationPlan(run)) {
-			return runtime.WorkspacePreparationStatus{Status: "ready", Steps: []runtime.WorkspacePreparationStep{}}, nil
+			return runtime.WorkspacePreparationStatus{Status: "ready", Steps: []runtime.WorkspacePreparationStep{}, GitHelperMigrationRequired: migration}, nil
 		}
 		return runtime.WorkspacePreparationStatus{Status: "unprepared", Error: "成员或终端正在使用工作区，请结束当前操作后重新准备", Steps: []runtime.WorkspacePreparationStep{}}, fmt.Errorf("成员或终端正在使用工作区，请结束当前操作后重新准备")
 	}

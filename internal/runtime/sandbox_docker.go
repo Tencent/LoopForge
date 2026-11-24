@@ -20,18 +20,18 @@ import (
 )
 
 type dockerSandbox struct {
-	id, name, workspace string
-	profile             domain.SandboxProfile
-	requirements        SandboxRequirements
-	dockerfile          domain.DockerfileDefinition
-	builtImage          string
-	mu                  sync.Mutex
-	browserMu           sync.Mutex
-	started             bool
-	gitToolsRoot        string
-	gitPlainHTTP        bool
-	cliSetupOnce        sync.Once
-	cliSetupGate        chan struct{}
+	id, name, workspace  string
+	profile              domain.SandboxProfile
+	requirements         SandboxRequirements
+	dockerfile           domain.DockerfileDefinition
+	builtImage           string
+	mu                   sync.Mutex
+	browserMu            sync.Mutex
+	started              bool
+	gitToolsRoot         string
+	gitDistributionReady bool
+	cliSetupOnce         sync.Once
+	cliSetupGate         chan struct{}
 	// execGate lets parallel branches exec concurrently (read side) while a
 	// cwd-recovery Recreate (write side) waits for them instead of docker
 	// rm-ing the container under a sibling's running command.
@@ -172,6 +172,9 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 }
 
 func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
+	if err := s.prepareCommandGitTools(ctx, command.environment); err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
 	command, cliPath, err := s.prepareSOPCLI(ctx, command)
 	if err != nil {
 		return "", err
@@ -737,30 +740,22 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 	return s.start(ctx, false)
 }
 
-func (s *dockerSandbox) requireGitTools(ctx context.Context, root string, plainHTTP bool) error {
-	s.mu.Lock()
-	ready := s.gitToolsRoot == root && (!plainHTTP || s.gitPlainHTTP)
-	s.mu.Unlock()
-	if ready {
+func (s *dockerSandbox) prepareCommandGitTools(ctx context.Context, env map[string]string) error {
+	if env[workspaceGitBinsEnv] == "" {
 		return nil
 	}
-	// Mount changes can recreate a legacy container. Wait for active commands
-	// to finish before changing the mounts or the Git distribution they use.
-	s.execGate.Lock()
-	defer s.execGate.Unlock()
 	s.mu.Lock()
-	if s.gitToolsRoot == root && (!plainHTTP || s.gitPlainHTTP) {
-		s.mu.Unlock()
+	defer s.mu.Unlock()
+	if s.gitToolsRoot == "" {
+		return errDockerGitToolsMigration
+	}
+	if s.gitDistributionReady || !strings.Contains(","+env[GitHostsEnv], ",http://") {
 		return nil
 	}
-	started := s.started
-	s.started = false
-	s.gitToolsRoot = root
-	s.gitPlainHTTP = s.gitPlainHTTP || plainHTTP
-	s.mu.Unlock()
-	if started {
-		return s.ensureStarted(ctx)
+	if err := prepareDockerGitTools(ctx, s.gitToolsRoot, s.name); err != nil {
+		return err
 	}
+	s.gitDistributionReady = true
 	return nil
 }
 
@@ -771,7 +766,13 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		return nil
 	}
 	s.started = false
+	s.gitToolsRoot = ""
+	s.gitDistributionReady = false
 	name, workspace, p := s.name, s.workspace, s.profile
+	gitTools, err := dockerGitToolsDirectory(workspace, name)
+	if err != nil {
+		return err
+	}
 	mounts, err := inspectDockerWorkspaceMounts(ctx, name)
 	if err != nil {
 		return err
@@ -780,14 +781,12 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		if !dockerBindMatchesWorkspace(mounts.source, workspace) {
 			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, mounts.source, workspace)
 		}
-		if !recreate && !mounts.legacyMasks && (s.gitToolsRoot == "" || dockerBindMatchesWorkspace(mounts.gitTools, s.gitToolsRoot)) {
-			if s.gitPlainHTTP {
-				if err := prepareDockerGitTools(ctx, s.gitToolsRoot, "inspect", "--type", "container", "--format", "{{.Image}}", name); err != nil {
-					return err
-				}
-			}
+		if !recreate && !mounts.legacyMasks {
 			if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
 				if err := waitDockerWorkspaceReady(ctx, name); err == nil {
+					if dockerBindMatchesWorkspace(mounts.gitTools, gitTools) {
+						s.gitToolsRoot = gitTools
+					}
 					s.started = true
 					return nil
 				}
@@ -800,14 +799,11 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 	}
 	image := built
 	args := []string{"create", "--name", name, "--init", "--cap-drop=ALL", "--security-opt", "no-new-privileges", "-v", workspace + ":/workspace"}
-	if s.gitToolsRoot != "" {
-		if s.gitPlainHTTP {
-			if err := prepareDockerGitTools(ctx, s.gitToolsRoot, "image", "inspect", "--format", "{{.Id}}", image); err != nil {
-				return err
-			}
-		}
-		args = append(args, "--mount", "type=bind,src="+s.gitToolsRoot+",dst="+dockerGitToolsMount+",readonly")
+	if err := ensureDockerGitToolsDirectory(gitTools); err != nil {
+		dropEphemeralDockerImage(built)
+		return err
 	}
+	args = append(args, "--mount", "type=bind,src="+gitTools+",dst="+dockerGitToolsMount+",readonly")
 	// Native installs own private (0700) workspaces as the service user.
 	// A root image without DAC capabilities cannot access another UID's bind.
 	// Run default/root images as that user; retain explicit non-root image users.
@@ -887,6 +883,7 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		return err
 	}
 	s.started = true
+	s.gitToolsRoot = gitTools
 	return nil
 }
 

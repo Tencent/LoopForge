@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/repo"
 	"context"
 	"errors"
+	"io"
 	"time"
 
 	"agentflow/internal/engine"
@@ -63,7 +64,20 @@ func (h *runsHandlers) workspacePreparation(c *gin.Context) {
 	if _, _, ok := h.workspaceEditActor(c); !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
+	var options struct {
+		MigrateGitHelpers bool `json:"migrateGitHelpers"`
+	}
+	if c.Request.Body != nil {
+		if err := c.ShouldBindJSON(&options); err != nil && !errors.Is(err, io.EOF) {
+			c.JSON(400, gin.H{"error": "无效的工作区准备选项"})
+			return
+		}
+	}
+	ctx := c.Request.Context()
+	if options.MigrateGitHelpers {
+		ctx = engine.WithWorkspaceGitHelperMigration(ctx)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	c.Request = c.Request.WithContext(ctx)
 	var state runtime.WorkspacePreparationStatus

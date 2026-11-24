@@ -73,6 +73,9 @@ type RunnerWorkspaceRequest struct {
 	// Only the control plane may allow a clean checkout to be refreshed, before
 	// any non-preparation node has run. Later nodes keep their frozen baseline.
 	RefreshCleanRepositories bool `json:"refreshCleanRepositories,omitempty"`
+	// Only an explicit workspace preparation request may replace a legacy
+	// Docker container to add the read-only Git helper mount.
+	MigrateGitHelpers bool `json:"migrateGitHelpers,omitempty"`
 	// Sandbox and Workflow are resolved exclusively from the frozen run by the
 	// control plane. A terminal must never silently substitute a host shell.
 	PreparationNodeID     string                    `json:"preparationNodeId,omitempty"`

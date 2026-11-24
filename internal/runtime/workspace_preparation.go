@@ -30,13 +30,14 @@ type WorkspacePreparationStep struct {
 }
 
 type WorkspacePreparationStatus struct {
-	Status        string                     `json:"status"`
-	StepName      string                     `json:"stepName,omitempty"`
-	Error         string                     `json:"error,omitempty"`
-	Steps         []WorkspacePreparationStep `json:"steps"`
-	UpdatedAt     time.Time                  `json:"updatedAt,omitempty"`
-	Environment   string                     `json:"environment,omitempty"`
-	ReplayBlocked bool                       `json:"replayBlocked,omitempty"`
+	Status                     string                     `json:"status"`
+	StepName                   string                     `json:"stepName,omitempty"`
+	Error                      string                     `json:"error,omitempty"`
+	Steps                      []WorkspacePreparationStep `json:"steps"`
+	UpdatedAt                  time.Time                  `json:"updatedAt,omitempty"`
+	Environment                string                     `json:"environment,omitempty"`
+	ReplayBlocked              bool                       `json:"replayBlocked,omitempty"`
+	GitHelperMigrationRequired bool                       `json:"gitHelperMigrationRequired,omitempty"`
 }
 
 // ReadWorkspacePreparationStatus reads one sandbox's preparation receipt. Shared
@@ -297,6 +298,10 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	if err != nil {
 		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
 	}
+	gitHelperMigration, err := WorkspaceGitHelpersNeedMigration(ctx, sb)
+	if err != nil {
+		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
+	}
 	if err := RestoreLegacyWorkspaceAgentConfig(ctx, sb.Workspace(), repositories); err != nil {
 		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
 	}
@@ -307,7 +312,7 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 			prior[step.NodeID] = step
 		}
 	}
-	state = WorkspacePreparationStatus{Status: "preparing", Steps: []WorkspacePreparationStep{}, Environment: epoch, UpdatedAt: time.Now().UTC()}
+	state = WorkspacePreparationStatus{Status: "preparing", Steps: []WorkspacePreparationStep{}, Environment: epoch, UpdatedAt: time.Now().UTC(), GitHelperMigrationRequired: gitHelperMigration}
 	if old.Environment == epoch {
 		state.Steps = append([]WorkspacePreparationStep(nil), old.Steps...)
 	}
