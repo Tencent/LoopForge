@@ -77,6 +77,22 @@ const (
 	waitDelay     = 5 * time.Second
 )
 
+// WithinTimeout shares the configured command budget across its preparation
+// stages. An earlier caller deadline still takes precedence.
+func WithinTimeout(ctx context.Context, opts Options, work func(context.Context) error) error {
+	if opts.Timeout <= 0 {
+		return work(ctx)
+	}
+	started := time.Now()
+	ctx, cancel := context.WithTimeoutCause(ctx, opts.Timeout, errTimeout)
+	defer cancel()
+	err := work(ctx)
+	if err != nil && !Stopped(err) {
+		return stopError(context.Cause(ctx), opts, time.Since(started), err)
+	}
+	return err
+}
+
 // Run starts the command build returns and waits for it. build receives the
 // context to bind with exec.CommandContext; Run owns Stdout and Stderr.
 // The returned text is the redacted tail of the output; on failure the error

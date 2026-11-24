@@ -179,7 +179,7 @@ func TestLegacyArchivedFilesRefillOnOwningWorker(t *testing.T) {
 func TestLegacyNodeReplayCanReadOriginalReportPaths(t *testing.T) {
 	t.Parallel()
 	e, s := newRecoveryEngine(t)
-	wf := domain.WorkflowDefinition{ID: "legacy-original-paths", Name: "legacy original paths", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "legacy-original-paths", Name: "legacy original paths", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "design", Type: "command", Command: "printf archived-design > design.md", ArtifactOutputs: []domain.ArtifactContract{{Name: "design", Path: "design.md", Required: true}}, MaxAttempts: 1},
 		{ID: "implement", Type: "command", Command: "test \"$(cat design.md)\" = archived-design && test ! -e current.md && printf fresh > current.md", ArtifactOutputs: []domain.ArtifactContract{{Name: "current", Path: "current.md", Required: true}}, MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{Source: "design", Target: "implement", When: "success"}}}

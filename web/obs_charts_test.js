@@ -1,6 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 
 // ---------- 极简 DOM ----------
@@ -167,8 +168,8 @@ function makeContext({ echarts, reduced } = {}) {
   ctx.__frames = frames;
   ctx.__IO = IO;
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync('app/obs-charts.js', 'utf8'), ctx);
-  vm.runInContext(fs.readFileSync('app/observability.js', 'utf8'), ctx);
+  vm.runInContext(fs.readFileSync('app/obs-charts.js', 'utf8'), ctx, { filename: path.resolve('app/obs-charts.js') });
+  vm.runInContext(fs.readFileSync('app/observability.js', 'utf8'), ctx, { filename: path.resolve('app/observability.js') });
   return ctx;
 }
 const plain = v => JSON.parse(JSON.stringify(v));

@@ -22,7 +22,7 @@ func TestSharedWorkspacePreparationConversationUsesOwnerDirectoryAndSeparateRece
 	root := t.TempDir()
 	e := New(store, runtime.NewManagerWithLimit(root, 2))
 	makeRun := func(id, label, owner string) domain.Run {
-		return domain.Run{ID: id, WorkflowID: id, Status: "succeeded", ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeCloud, WorkspaceRunID: owner}, WorkflowSnapshot: domain.WorkflowDefinition{ID: id, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "prepare", Name: "Prepare " + label, Type: "script", RunOnWorkspaceRebuild: true, Script: "mkdir -p .agentflow; printf '" + label + "\\n' >> .agentflow/shared-preparation-count"}}}, Nodes: map[string]*domain.NodeRun{"prepare": {NodeID: "prepare", Status: "succeeded", Attempt: 1}}}
+		return domain.Run{ID: id, WorkflowID: id, Status: "succeeded", ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeCloud, WorkspaceRunID: owner}, WorkflowSnapshot: domain.WorkflowDefinition{ID: id, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "prepare", Name: "Prepare " + label, Type: "script", RunOnWorkspaceRebuild: true, Script: "mkdir -p .agentflow; printf '" + label + "\\n' >> .agentflow/shared-preparation-count"}}}, Nodes: map[string]*domain.NodeRun{"prepare": {NodeID: "prepare", Status: "succeeded", Attempt: 1}}}
 	}
 	parent := makeRun("shared-parent", "parent", "")
 	child := makeRun("shared-child", "child", parent.ID)
@@ -72,8 +72,8 @@ func TestSharedWorkspaceFlaggedChildDoesNotRepeatParentScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	child := domain.WorkflowDefinition{ID: "child-rebuild-script", Name: "Child", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "prepare", Name: "Child prepare", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, MaxAttempts: 1, Script: "test -f parent.txt && printf 'child\\n' >> .agentflow/shared-flow-order && printf child > child.txt"}}}
-	parent := domain.WorkflowDefinition{ID: "parent-rebuild-script", Name: "Parent", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	child := domain.WorkflowDefinition{ID: "child-rebuild-script", Name: "Child", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "prepare", Name: "Child prepare", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, MaxAttempts: 1, Script: "test -f parent.txt && printf 'child\\n' >> .agentflow/shared-flow-order && printf child > child.txt"}}}
+	parent := domain.WorkflowDefinition{ID: "parent-rebuild-script", Name: "Parent", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "prepare", Name: "Parent prepare", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, MaxAttempts: 1, Script: "mkdir -p .agentflow; printf 'parent\\n' >> .agentflow/shared-flow-order; printf parent > parent.txt"},
 		{ID: "sub", Name: "Child SOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 		{ID: "after", Name: "Parent resumes", Type: "script", ScriptLanguage: "shell", MaxAttempts: 1, Script: "test -f child.txt && test \"$(grep -c '^parent$' .agentflow/shared-flow-order)\" = 1 && test \"$(grep -c '^child$' .agentflow/shared-flow-order)\" = 1 && printf 'after\\n' >> .agentflow/shared-flow-order"},
@@ -121,7 +121,7 @@ func TestSharedWorkspacePreparationRequestCarriesOwnerWithoutChangingChildIdenti
 	if err = store.PutRunner(runner); err != nil {
 		t.Fatal(err)
 	}
-	child := domain.Run{ID: "child-run", ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID, RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared, WorkspaceRunID: "parent-run"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "child-flow", SandboxProfileID: "local"}, Nodes: map[string]*domain.NodeRun{}}
+	child := domain.Run{ID: "child-run", ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID, RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared, WorkspaceRunID: "parent-run"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "child-flow", SandboxProfileID: "test-native"}, Nodes: map[string]*domain.NodeRun{}}
 	request, err := e.preparedWorkspaceRequest(child, domain.RunnerWorkspaceRequest{RunID: child.ID, WorkspaceRunID: "untrusted-directory", Operation: domain.RunnerWorkspaceOperationPrepare})
 	if err != nil {
 		t.Fatal(err)

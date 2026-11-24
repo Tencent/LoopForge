@@ -192,7 +192,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	}
 	if !op.ReadOnly && mode.ReviewWrites {
 		// Review the final merged payload immediately before the real handler.
-		review := reviewAssistantAction(ctx, op.Name, op.Description, map[string]any{"path": input.Path, "query": input.Query, "body": input.Body})
+		review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceBuiltinPlatform), op.Name, op.Description, map[string]any{"path": input.Path, "query": input.Query, "body": input.Body})
 		if !review.allows() {
 			return "", assistantReviewRefusal(op.Name, review)
 		}

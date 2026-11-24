@@ -33,6 +33,8 @@ func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
 		DeliveryState          string    `gorm:"column:delivery_state"`
 		CreatedAt              time.Time `gorm:"column:created_at"`
 		DeliveryMRURL          string    `gorm:"column:delivery_mr_url"`
+		DeliveryMRState        string    `gorm:"column:delivery_mr_state"`
+		DeliveryMRs            string    `gorm:"column:delivery_mrs"`
 	}
 	var rows []liteRow
 	if err := r.DB.Table("issues").Select(
@@ -42,23 +44,29 @@ func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
 		r.sqlPayloadJSONText("clarification.startedAt")+" AS clarification_started_at",
 		r.sqlPayloadJSONText("deliveryState")+" AS delivery_state",
 		r.sqlPayloadJSONText("deliveryMrUrl")+" AS delivery_mr_url",
+		r.sqlPayloadJSONText("deliveryMrState")+" AS delivery_mr_state",
+		r.sqlPayloadJSONText("deliveryMrs")+" AS delivery_mrs",
 	).Find(&rows).Error; err != nil {
 		return []domain.Issue{}
 	}
 	out := make([]domain.Issue, 0, len(rows))
 	for _, row := range rows {
 		issue := domain.Issue{
-			ID:            row.ID,
-			ProjectID:     row.ProjectID,
-			Title:         row.Title,
-			Status:        row.Status,
-			Kind:          row.Kind,
-			Source:        row.Source,
-			TapdID:        strings.TrimSpace(row.TapdID),
-			WorkflowID:    row.WorkflowID,
-			DeliveryState: strings.TrimSpace(row.DeliveryState),
-			DeliveryMRURL: strings.TrimSpace(row.DeliveryMRURL),
-			CreatedAt:     row.CreatedAt,
+			ID:              row.ID,
+			ProjectID:       row.ProjectID,
+			Title:           row.Title,
+			Status:          row.Status,
+			Kind:            row.Kind,
+			Source:          row.Source,
+			TapdID:          strings.TrimSpace(row.TapdID),
+			WorkflowID:      row.WorkflowID,
+			DeliveryState:   strings.TrimSpace(row.DeliveryState),
+			DeliveryMRURL:   strings.TrimSpace(row.DeliveryMRURL),
+			DeliveryMRState: strings.TrimSpace(row.DeliveryMRState),
+			CreatedAt:       row.CreatedAt,
+		}
+		if row.DeliveryMRs != "" {
+			_ = jsonUnmarshal([]byte(row.DeliveryMRs), &issue.DeliveryMRs)
 		}
 		if started, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(row.ClarificationStartedAt)); err == nil {
 			issue.Clarification.StartedAt = started
@@ -366,6 +374,14 @@ func (r *IssuesRepo) ResponsibleUser(issue domain.Issue) (domain.User, error) {
 }
 
 // projectWorkflowID returns the project's configured default SOP.
+// DefaultIssueWorkflow returns the SOP a new issue of the project would be
+// bound to when it is saved without one (see bindDefaultWorkflow).
+func (r *IssuesRepo) DefaultIssueWorkflow(projectID, source, kind string) string {
+	v := domain.Issue{ProjectID: projectID, Source: source, Kind: kind}
+	bindDefaultWorkflow(&v, r.projectWorkflowID(projectID), r.projectIssueWorkflowID(projectID))
+	return v.WorkflowID
+}
+
 func (r *IssuesRepo) projectWorkflowID(projectID string) string {
 	if strings.TrimSpace(projectID) == "" {
 		return ""

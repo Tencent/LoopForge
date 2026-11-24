@@ -179,6 +179,7 @@ func streamPersistedAssistantGeneration(c *gin.Context, g domain.AssistantGenera
 	writeAssistantSSE(c, g)
 	id := g.ID
 	cancelRequested := g.CancelRequested
+	runtimeMode, workspaceRunID := g.RuntimeMode, g.WorkspaceRunID
 	poll := time.NewTicker(assistantPersistedPollInterval)
 	defer poll.Stop()
 	heartbeat := time.NewTicker(10 * time.Second)
@@ -211,11 +212,13 @@ func streamPersistedAssistantGeneration(c *gin.Context, g domain.AssistantGenera
 			events := assistantEventsAfter(g.Events, cursor)
 			cursor = latestAssistantEventSequence(events, cursor)
 			g.Events = events
-			if len(events) == 0 && g.Status == "running" && g.CancelRequested == cancelRequested {
+			if len(events) == 0 && g.Status == "running" && g.CancelRequested == cancelRequested &&
+				g.RuntimeMode == runtimeMode && g.WorkspaceRunID == workspaceRunID {
 				continue
 			}
 		}
 		cancelRequested = g.CancelRequested
+		runtimeMode, workspaceRunID = g.RuntimeMode, g.WorkspaceRunID
 		writeAssistantSSE(c, g)
 		if g.Status != "running" {
 			return

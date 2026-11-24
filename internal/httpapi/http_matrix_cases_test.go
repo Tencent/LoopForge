@@ -132,8 +132,6 @@ func TestCatalogIssueRunAndSpaceValidationHTTP(t *testing.T) {
 		{http.MethodDelete, "/api/rules?id=missing", nil, 404},
 		{http.MethodPut, "/api/skills", map[string]any{}, 400},
 		{http.MethodDelete, "/api/skills?id=missing", nil, 404},
-		{http.MethodPut, "/api/dockerfiles", map[string]any{}, 400},
-		{http.MethodPut, "/api/environments", map[string]any{}, 400},
 		{http.MethodPut, "/api/sandboxes", map[string]any{}, 400},
 		{http.MethodPut, "/api/workflows", map[string]any{}, 200},
 		{http.MethodGet, "/api/workflows/missing", nil, 404},

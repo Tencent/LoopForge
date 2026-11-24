@@ -46,6 +46,11 @@ test('approval gate: reject reworks upstream in the same workspace, approve comp
     await get(`/api/runs/${id}/workspace`);
   });
 
+  await test.test('run control lists the approval actions while waiting', async () => {
+    const control = await get(`/api/runs/${id}/control`);
+    assert.match(JSON.stringify(control), /runs_approve/);
+  });
+
   await test.test('wrong node cannot be approved', async () => {
     await api('POST', `/api/runs/${id}/approve`, { nodeId: 'prep' }, { expect: [400, 409, 500] });
   });

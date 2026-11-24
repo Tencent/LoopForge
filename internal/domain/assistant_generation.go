@@ -19,6 +19,7 @@ type AssistantGeneration struct {
 	ProjectID        string                     `json:"projectId"`
 	Status           string                     `json:"status"`
 	RuntimeMode      string                     `json:"runtimeMode,omitempty"`
+	WorkspaceRunID   string                     `json:"workspaceRunId,omitempty"`
 	WorkspaceWarning string                     `json:"workspaceWarning,omitempty"`
 	Error            string                     `json:"error,omitempty"`
 	Failure          *AssistantFailure          `json:"failure,omitempty"`

@@ -21,7 +21,7 @@ services:
     profiles: [platform]
     # Published release stack: never builds. Bump the pinned tag (here and in
     # AGENTFLOW_ISOLATED_IMAGE) with each release; source builds use compose.dev.yaml.
-    image: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.4.1}
+    image: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.4.2}
     ports:
       - "${LOOPFORGE_BIND:-0.0.0.0}:${AGENTFLOW_HTTP_PORT:-8090}:8080"
     environment:
@@ -36,6 +36,14 @@ services:
       AGENTFLOW_TAPD_HOST: ${AGENTFLOW_TAPD_HOST:-}
       AGENTFLOW_MCP_TOKEN: ${AGENTFLOW_MCP_TOKEN:-}
       AGENTFLOW_GIT_SSH_KNOWN_HOSTS: ${AGENTFLOW_GIT_SSH_KNOWN_HOSTS:-}
+      # Chat Bots: keys sealing Bot secrets (scripts/configure.sh adds one),
+      # the address users open from chat links, the maintenance switch and
+      # the retention of chat text and records in days (0 keeps forever).
+      AGENTFLOW_CREDENTIAL_KEYS: ${AGENTFLOW_CREDENTIAL_KEYS:-}
+      AGENTFLOW_PUBLIC_URL: ${AGENTFLOW_PUBLIC_URL:-${LOOPFORGE_PUBLIC_URL:-}}
+      AGENTFLOW_BOT_WORKERS_ENABLED: ${AGENTFLOW_BOT_WORKERS_ENABLED:-true}
+      AGENTFLOW_BOT_BODY_RETENTION_DAYS: ${AGENTFLOW_BOT_BODY_RETENTION_DAYS:-90}
+      AGENTFLOW_BOT_RECORD_RETENTION_DAYS: ${AGENTFLOW_BOT_RECORD_RETENTION_DAYS:-180}
       AGENTFLOW_ASSISTANT_SESSION_DIR: /data/assistant
       AGENTFLOW_CONVERSATION_DIR: ${LOOPFORGE_DATA_DIR}/conversations
       AGENTFLOW_CLARIFY_SESSION_DIR: /data/clarify
@@ -43,11 +51,11 @@ services:
       AGENTFLOW_SKIP_CODEBUDDY_INSTALL: ${AGENTFLOW_SKIP_CODEBUDDY_INSTALL:-}
       AGENTFLOW_ASSISTANT_MODEL: ${AGENTFLOW_ASSISTANT_MODEL:-}
       AGENTFLOW_ASSISTANT_MODELS: ${AGENTFLOW_ASSISTANT_MODELS:-}
+      AGENTFLOW_APPROVAL_EGRESS_ALLOW_CIDRS: ${AGENTFLOW_APPROVAL_EGRESS_ALLOW_CIDRS:-}
       AGENTFLOW_PREVIEW_PUBLIC_URL: ${AGENTFLOW_PREVIEW_PUBLIC_URL:-}
       AGENTFLOW_PLATFORM_MCP_URL: ${AGENTFLOW_PLATFORM_MCP_URL:-http://platform:8080}
       AGENTFLOW_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-loopforge}_default
-      AGENTFLOW_LOCAL_SANDBOX: docker
-      AGENTFLOW_ISOLATED_IMAGE: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.4.1}
+      AGENTFLOW_ISOLATED_IMAGE: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.4.2}
       HOME: ${LOOPFORGE_DATA_DIR:?Run scripts/configure.sh first}/home
       AGENTFLOW_RUNNER_BINARY: /app/bin/agentflow-runner-{os}-{arch}
       AGENTFLOW_GATE_MCP_BINARY: /app/bin/agentflow-gate-mcp-{os}-{arch}

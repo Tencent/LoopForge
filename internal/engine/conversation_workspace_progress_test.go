@@ -34,7 +34,7 @@ func putCloningWorkspace(t *testing.T) (*Engine, domain.Run) {
 	e, s := newRecoveryEngine(t)
 	run := domain.Run{
 		ID: "slow-clone-chat", Kind: domain.RunKindWorkspace, Status: "waiting", Nodes: map[string]*domain.NodeRun{},
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "local"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "test-native"},
 		ExecutionContext: domain.TelemetryContext{ProjectID: "platform"},
 		Repositories:     []domain.RepositoryContext{{RepositoryID: "web", Name: "web", CloneURL: "https://git.example.invalid/team/web.git", BaseBranch: "main", WorkBranch: "feature/chat", WorkspaceDir: "web"}},
 	}

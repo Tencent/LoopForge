@@ -74,27 +74,14 @@ WORKDIR /workspace
 CMD ["sh", "-lc", "trap : TERM INT; sleep infinity & wait"]
 `
 
-// GenericBackendDockerfile is the catalog row for the platform default image.
-func GenericBackendDockerfile() domain.DockerfileDefinition {
-	return domain.DockerfileDefinition{
-		ID:          GenericBackendDockerfileID,
-		Name:        "通用后端运行镜像",
-		ProjectID:   "platform",
-		Shared:      true,
-		Description: "通用后端交付 SOP 的默认镜像：git、Node agent CLI 与 Go 工具链。",
-		Content:     genericBackendDockerfileContent,
-		UpdatedAt:   genericDockerEpoch,
-	}
-}
-
 // GenericDockerSandbox is the shared docker profile bound by the generic SOP.
 func GenericDockerSandbox() domain.SandboxProfile {
 	return domain.SandboxProfile{
-		ID:           GenericDockerSandboxID,
-		Name:         "通用后端容器沙箱",
-		ProjectID:    "platform",
-		Shared:       true,
-		Driver:       "docker",
-		DockerfileID: GenericBackendDockerfileID,
+		ID:         GenericDockerSandboxID,
+		Name:       "通用后端容器沙箱",
+		ProjectID:  "platform",
+		Shared:     true,
+		Driver:     "docker",
+		Dockerfile: &domain.SandboxDockerfile{Content: genericBackendDockerfileContent},
 	}
 }
