@@ -117,26 +117,26 @@ func (h *assistantHandlers) botChatNodeQuestions(bot domain.NotificationBot, con
 	return all
 }
 
-// botDeliveryQuestion reads the "问题：" line of a node-question message.
+// botDeliveryQuestion extracts the complete question, including any line
+// breaks, before the generated answer hint or details link.
 func botDeliveryQuestion(content string) string {
-	_, rest, found := strings.Cut(content, "\n问题：")
+	_, question, found := strings.Cut("\n"+content, "\n问题：")
 	if !found {
 		return ""
 	}
-	line, _, _ := strings.Cut(rest, "\n")
-	return strings.TrimSpace(line)
+	if hint := strings.LastIndex(question, "\n回答方式："); hint >= 0 {
+		question = question[:hint]
+	} else {
+		question, _, _ = strings.Cut(question, "\n查看详情：")
+	}
+	return strings.TrimSpace(question)
 }
 
-// botQuotedNodeQuestion finds the waiting-node message a chat message
-// quotes: a Feishu reply names the message (a pushed delivery, or a WeCom
-// card); a WeCom quote only carries the text, matched against the
-// questions sent to the conversation, answered ones included, by the whole
-// message, then the whole question, then its beginning. A quote of an
-// answered question finds that question, so the answer is refused as stale
-// rather than given to another one. A quote matching several questions at
-// the same level is ambiguous: no delivery is returned and the sender picks
-// one by number.
-func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction) (d domain.NotificationDelivery, quoted, ambiguous bool) {
+// botQuotedNodeQuestion locates a quoted delivery by platform message ID or
+// by the complete message or question text. Exact text matches include
+// answered questions so they can be refused as stale. Prefix matches always
+// require a numbered selection because the original may be outside the window.
+func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction) (d domain.NotificationDelivery, quoted, needsPick bool) {
 	if item.ReplyTo != "" {
 		d, ok := h.repo.NotificationDeliveryByPlatformMessage(bot.ID, item.ReplyTo)
 		if !ok {
@@ -151,23 +151,21 @@ func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, co
 		}
 		return d, d.ProjectID == bot.ProjectID && botDeliveryInChat(d, conv, item.SenderID), false
 	}
-	quote := strings.TrimSpace(item.Quote)
+	quote := strings.TrimSpace(strings.ReplaceAll(item.Quote, "\r\n", "\n"))
 	if quote == "" {
 		return d, false, false
+	}
+	question := botDeliveryQuestion(quote)
+	if question == "" {
+		question = quote
 	}
 	sent := h.botChatNodeQuestions(bot, conv, item.SenderID)
 	for _, quotes := range []func(botNodeQuestion) bool{
 		func(q botNodeQuestion) bool {
-			content := strings.TrimSpace(q.delivery.Content)
-			return content != "" && strings.Contains(quote, content)
+			return quote == strings.TrimSpace(q.delivery.Content)
 		},
 		func(q botNodeQuestion) bool {
-			question := strings.TrimSpace(domain.NotificationText(q.question, 1200))
-			return question != "" && strings.Contains(quote, question)
-		},
-		func(q botNodeQuestion) bool {
-			prefix := []rune(strings.TrimSpace(q.question))
-			return len(prefix) > 0 && strings.Contains(quote, string(prefix[:min(len(prefix), 15)]))
+			return question == domain.NotificationText(q.question, 1200)
 		},
 	} {
 		var hits []botNodeQuestion
@@ -184,6 +182,12 @@ func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, co
 		}
 		return d, false, true
 	}
+	for _, q := range sent {
+		prefix := []rune(strings.TrimSpace(q.question))
+		if len(prefix) > 0 && strings.HasPrefix(question, string(prefix[:min(len(prefix), 15)])) {
+			return d, false, true
+		}
+	}
 	return d, false, false
 }
 
@@ -192,8 +196,8 @@ func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, co
 func (h *assistantHandlers) botNodeAnswer(ctx context.Context, bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction) (string, bool) {
 	text := botClarifyText(item.Content)
 	answer, pick, prefixed := botNodeAnswerText(text)
-	delivery, quoted, ambiguous := h.botQuotedNodeQuestion(bot, conv, item)
-	if !quoted && !prefixed && !ambiguous {
+	delivery, quoted, needsPick := h.botQuotedNodeQuestion(bot, conv, item)
+	if !quoted && !prefixed && !needsPick {
 		return "", false
 	}
 	if quoted && !prefixed {
@@ -204,11 +208,9 @@ func (h *assistantHandlers) botNodeAnswer(ctx context.Context, bot domain.Notifi
 		switch {
 		case len(open) == 0:
 			return "这个会话没有待回答的节点问题，答案未提交。问题可能已经回答、节点已结束或运行已取消，请在平台查看运行状态。", true
-		case !prefixed:
-			return h.botNodeQuestionList(open), true
 		case pick > 0 && pick <= len(open):
 			delivery = open[pick-1].delivery
-		case pick == 0 && len(open) == 1:
+		case prefixed && pick == 0 && strings.TrimSpace(item.Quote) == "" && len(open) == 1:
 			delivery = open[0].delivery
 		default:
 			return h.botNodeQuestionList(open), true

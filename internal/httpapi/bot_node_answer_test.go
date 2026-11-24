@@ -292,13 +292,14 @@ func TestFeishuCardAnswerReachesTheNode(t *testing.T) {
 	}
 }
 
-// A WeCom quote carries only the quoted text: a quote of the question
-// message (longer than the matched prefix) answers it.
+// A live WeCom quote contains the rendered details link. Its complete
+// question can still be identified even when it spans several lines.
 func TestWeComQuoteAnswersNodeQuestion(t *testing.T) {
 	f := newNodeQuestionFixture(t, domain.BotChannelWeCom)
-	f.ask("run-q", nodeQuestionText)
+	f.ask("run-q", nodeQuestionText+"\n邮箱需要验证吗？")
 	sent := f.question("run-q")
-	item := domain.BotInteraction{ID: "msg-wecom-quote", BotID: f.bot.ID, ConversationID: f.conv.ID, SenderID: "ou-member", Content: "@Bot 都要", Quote: sent.Content}
+	quote := strings.ReplaceAll(sent.Content, domain.NotificationURLMarker, "https://platform.example/#/runs/run-q")
+	item := domain.BotInteraction{ID: "msg-wecom-quote", BotID: f.bot.ID, ConversationID: f.conv.ID, SenderID: "ou-member", Content: "@Bot 都要", Quote: quote}
 	reply, err := f.h.generateBotReply(context.Background(), f.bot, f.conv, nil, item)
 	if err != nil || !strings.Contains(reply, "已把答案提交") {
 		t.Fatalf("reply = %q %v", reply, err)
@@ -350,6 +351,50 @@ func TestWeComQuoteAnswersTheQuotedOfSimilarQuestions(t *testing.T) {
 	}
 	if f.node("run-q1").Feedback != "" {
 		t.Fatalf("first node got another question's answer: %+v", f.node("run-q1"))
+	}
+}
+
+func TestWeComQuoteOfAnOldQuestionRequiresANumber(t *testing.T) {
+	for name, current := range map[string]string{
+		"common prefix":         nodeQuestionText + "邮箱需要验证吗？",
+		"whole question prefix": nodeQuestionText,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newNodeQuestionFixture(t, domain.BotChannelWeCom)
+			f.ask("old", nodeQuestionText+"\n第三方登录要不要？")
+			old := f.question("old")
+			if reply := f.say("ou-member", "回答：暂时不用"); !strings.Contains(reply, "已把答案提交") {
+				t.Fatalf("answer old question = %q", reply)
+			}
+			olderThanWindow := time.Now().UTC().Add(-botNodeQuestionWindow - time.Hour)
+			if err := f.s.DB.Model(&domain.NotificationDelivery{}).Where("id = ?", old.ID).Update("created_at", olderThanWindow).Error; err != nil {
+				t.Fatal(err)
+			}
+			f.ask("current", current)
+			f.question("current")
+
+			item := domain.BotInteraction{
+				BotID: f.bot.ID, ConversationID: f.conv.ID, SenderID: "ou-member",
+				Quote: strings.ReplaceAll(old.Content, domain.NotificationURLMarker, "https://platform.example/#/runs/old"),
+			}
+			for _, text := range []string{"@Bot 补充旧问题", "@Bot 回答：补充旧问题"} {
+				item.Content = text
+				reply, handled := f.h.botNodeAnswer(context.Background(), f.bot, f.conv, item)
+				if !handled || !strings.Contains(reply, "回答 序号：你的答案") {
+					t.Fatalf("old question reply = %q, handled = %v", reply, handled)
+				}
+				if node := f.node("current"); node.Status != "waiting_approval" || node.Feedback != "" {
+					t.Fatalf("current question changed: %+v", node)
+				}
+			}
+			item.Content = "@Bot 回答 1：确认回答当前问题"
+			if reply, handled := f.h.botNodeAnswer(context.Background(), f.bot, f.conv, item); !handled || !strings.Contains(reply, "已把答案提交") {
+				t.Fatalf("numbered answer = %q, handled = %v", reply, handled)
+			}
+			if node := f.node("current"); !strings.Contains(node.Feedback, "确认回答当前问题") {
+				t.Fatalf("current question did not receive the numbered answer: %+v", node)
+			}
+		})
 	}
 }
 
