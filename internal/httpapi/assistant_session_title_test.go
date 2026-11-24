@@ -197,3 +197,30 @@ func TestScheduledNotificationReplyKeepsLongManualTitle(t *testing.T) {
 		t.Fatalf("continued run: title %q edited=%v messages=%d", continued.Title, continued.TitleEdited, len(continued.Messages))
 	}
 }
+
+// The project picker binds with a session that another device may have renamed
+// since this one read it, so it sends no title fields.
+func TestProjectBindingKeepsTitleRenamedElsewhere(t *testing.T) {
+	h, owner, _, _, _ := sharedWorkbenchFixture(t)
+	const id = "bind-title"
+	if err := h.repo.PutAssistantSession(owner.ID, domain.AssistantSession{
+		ID: id, Title: "旧名字", TitleGenerated: true, Messages: []domain.AssistantMessage{{Role: "user", Content: "问题"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, response := callRenameSession(h, owner, id, "另一台设备的新名字"); code != 200 {
+		t.Fatalf("rename: %d %s", code, response)
+	}
+	c, rec := workbenchContext(owner, "PUT", "/api/assistant/sessions/"+id, bytes.NewBufferString(
+		`{"id":"bind-title","projectId":"workbench","messages":[{"role":"user","content":"问题"}]}`,
+	))
+	c.Params = gin.Params{{Key: "id", Value: id}}
+	h.session(c)
+	if rec.Code != 200 {
+		t.Fatalf("bind: %d %s", rec.Code, rec.Body.String())
+	}
+	saved, _ := h.repo.AssistantSession(owner.ID, id)
+	if saved.ProjectID != "workbench" || saved.Title != "另一台设备的新名字" || !saved.TitleEdited || saved.TitleGenerated {
+		t.Fatalf("bound session = %+v", saved)
+	}
+}

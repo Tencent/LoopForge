@@ -586,7 +586,11 @@ export function useChat() {
         try {
           const saved = await write(
             sessionPath(current.id),
-            { ...current, projectId: id },
+            // Another device may have renamed the session since this one read it.
+            {
+              ...current, projectId: id,
+              title: undefined, titleEdited: undefined, titleGenerated: undefined,
+            },
             "PUT",
           );
           setSession(saved);

@@ -1173,6 +1173,35 @@ describe("conversation hooks", () => {
     await act(() => result.current.refresh());
   });
 
+  test("binding a project leaves a title renamed on another device alone", async () => {
+    const path = "/api/assistant/sessions/s1";
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    const stale = { id: "s1", title: "旧名字", titleGenerated: true, projectId: "", messages: [{ role: "user", content: "问题" }] };
+    apiMock.mockImplementation(async (url, options) => url === path ? structuredClone(stale)
+      : url === "/api/assistant/sessions" ? [stale] : originalAPI(url, options));
+    let bound;
+    writeMock.mockImplementation(async (url, body, method) => {
+      if (url !== path || method !== "PUT") return originalWrite(url, body, method);
+      // What the request carries over the wire.
+      bound = JSON.parse(JSON.stringify(body));
+      return { ...stale, ...bound, title: "另一台设备的新名字", titleEdited: true, titleGenerated: false };
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+      await act(() => result.current.selectProject("p1"));
+      expect(bound).toMatchObject({ id: "s1", projectId: "p1", messages: stale.messages });
+      for (const field of ["title", "titleEdited", "titleGenerated"]) expect(bound).not.toHaveProperty(field);
+      expect(result.current.session).toMatchObject({ title: "另一台设备的新名字", projectId: "p1" });
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
   test("keeps a running session's new title as earlier reads finish", async () => {
     const path = "/api/assistant/sessions/s1";
     const original = apiMock.getMockImplementation();
