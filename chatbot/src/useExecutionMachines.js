@@ -26,15 +26,18 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
   const refreshMachines = useCallback(async (force) => {
     if (!userId || (machineSavingRef.current && force !== true)) return;
     const request = ++revision.current;
-    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    const projectQuery = projectId ? `projectId=${encodeURIComponent(projectId)}` : "";
+    const defaultQuery = projectQuery ? `${projectQuery}&conversation=1` : "conversation=1";
     try {
       const [rows, selected] = await Promise.all([
-        api(`/api/runners${query || "?mine=1"}`),
-        api(`/api/runners/default${query}`),
+        api(`/api/runners?${projectQuery || "mine=1"}`),
+        api(`/api/runners/default?${defaultQuery}`),
       ]);
       if (request !== revision.current) return;
       const machines = Array.isArray(rows) ? rows : [];
-      const availableMachines = projectId ? machines.filter((row) => row.canUseInProject) : machines;
+      const availableMachines = machines.filter((row) =>
+        row.supportsConversation !== false && (!projectId || row.canUseInProject),
+      );
       const hasMachine = (id) => availableMachines.some((row) => row.id === id);
       setChosen((current) => current && !hasMachine(current) ? null : current);
       setLoaded({

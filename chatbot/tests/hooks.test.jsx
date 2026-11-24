@@ -599,7 +599,7 @@ describe("conversation hooks", () => {
         { id: "mac", name: "Mac", status: "online", ownerUserId: 1,
           runtimes: [{ provider: "agy", authMode: "local" }] },
       ]);
-      if (path === "/api/runners/default") return Promise.resolve({ runnerId: "mac" });
+      if (path === "/api/runners/default?conversation=1") return Promise.resolve({ runnerId: "mac" });
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body) => path === "/api/runners/mac/models/probe"
@@ -699,7 +699,7 @@ describe("conversation hooks", () => {
     let completeProbe;
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/runners?mine=1") return runners;
-      if (path === "/api/runners/default") return { runnerId: "runner-a" };
+      if (path === "/api/runners/default?conversation=1") return { runnerId: "runner-a" };
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body, method) => {
@@ -1210,7 +1210,7 @@ describe("conversation hooks", () => {
     let release;
     const delayed=new Promise(resolve=>{release=resolve;});
     apiMock.mockImplementation((path, opts) => {
-      if (path === "/api/runners/default") return delayed;
+      if (path === "/api/runners/default?conversation=1") return delayed;
       if (path === "/api/runners?mine=1") return Promise.resolve([{ id: "mac", ownerUserId: 1 }]);
       return original(path, opts);
     });

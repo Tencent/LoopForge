@@ -276,7 +276,12 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 		return
 	}
 	projectID := strings.TrimSpace(c.Query("projectId"))
-	defaults := h.repo.ResolveRunnerDefaults(user.ID, projectID)
+	var defaults repo.RunnerDefaults
+	if c.Query("conversation") == "1" {
+		defaults = h.repo.ResolveConversationRunnerDefaults(user.ID, projectID)
+	} else {
+		defaults = h.repo.ResolveRunnerDefaults(user.ID, projectID)
+	}
 	runner := defaults.Runner
 	var poolConfigured bool
 	var poolOnline int

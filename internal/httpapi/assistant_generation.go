@@ -77,20 +77,8 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		return
 	}
 	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
-	if old.ID != "" && old.ExecutionLocked() {
-		if req.ExecutionTarget != nil && *req.ExecutionTarget != old.Execution() {
-			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换"})
-			return
-		}
-		target := old.Execution()
-		req.ExecutionTarget = &target
-	} else {
-		var targetErr error
-		req.ExecutionTarget, targetErr = h.newExecutionTarget(stored.ID, req.ProjectID, draftExecutionTarget(old, req.ExecutionTarget))
-		if targetErr != nil {
-			c.JSON(400, gin.H{"error": targetErr.Error()})
-			return
-		}
+	if !h.bindTurnExecutionTarget(c, &req, stored.ID, old) {
+		return
 	}
 	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
@@ -236,7 +224,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		})
 	}
 	_, sharedModels, _ := h.assistantChatUser(stored)
-	h.scheduleAssistantTitle(h.helperExecutionContext(parent, ownerID, req.ExecutionTarget), ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
+	h.scheduleAssistantTitle(h.helperExecutionContext(parent, ownerID, req.ProjectID, req.ExecutionTarget), ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
 	done := inflightTasks.Add()
 	go func() {
 		defer done()

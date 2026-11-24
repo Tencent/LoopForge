@@ -142,7 +142,7 @@ describe("personal execution machine selection", () => {
     expect(result.current.machines).toEqual(machines);
     expect(result.current.availableMachines).toEqual([]);
     expect(result.current.defaultRunnerId).toBe("");
-    expect(apiMock).toHaveBeenCalledWith("/api/runners/default?projectId=two");
+    expect(apiMock).toHaveBeenCalledWith("/api/runners/default?projectId=two&conversation=1");
   });
 
   test("uses an eligible project default when a saved draft loses its grant", async () => {
@@ -167,6 +167,23 @@ describe("personal execution machine selection", () => {
     expect(result.current.defaultRunnerId).toBe("shared");
     rerender({ target: { pool: "runner", runnerId: "mac" } });
     expect(result.current.defaultRunnerId).toBe("shared");
+  });
+
+  test("hides SOP-only machines and uses the chat default for an incompatible draft", async () => {
+    const oldRunner = { id: "old", canUseInProject: true, supportsConversation: false };
+    const chatRunner = { id: "chat", canUseInProject: true, supportsConversation: true };
+    apiMock.mockImplementation(async (path) =>
+      path === "/api/runners?projectId=one" ? [oldRunner, chatRunner] : { runnerId: "chat" },
+    );
+    const target = { pool: "runner", runnerId: oldRunner.id };
+    const { result } = renderHook(() =>
+      useExecutionMachines(1, false, false, vi.fn(), bindMock, target, "one"),
+    );
+    await waitFor(() => expect(result.current.defaultRunnerId).toBe("chat"));
+    expect(result.current.availableMachines).toEqual([chatRunner]);
+    expect(apiMock).toHaveBeenCalledWith("/api/runners/default?projectId=one&conversation=1");
+    await act(async () => expect(await result.current.selectMachine(oldRunner.id)).toBe(false));
+    expect(bindMock).not.toHaveBeenCalled();
   });
 
   test("keeps an explicit cloud choice through refresh, and resets only for a new draft", async () => {

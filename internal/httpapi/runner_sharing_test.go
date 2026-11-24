@@ -9,6 +9,65 @@ import (
 	"agentflow/internal/repo"
 )
 
+func TestConversationRunnerDefaultSkipsMachinesThatOnlySupportSOPs(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	project := "runner-compatibility"
+	if err := f.s.PutProject(domain.Project{ID: project, Name: "Runner compatibility", OwnerID: f.user.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, runner := range []domain.Runner{
+		{ID: "sop-only", OwnerUserID: f.user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: "0.9.2"},
+		{ID: "chat-ready", OwnerUserID: f.user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionConversationCLI},
+	} {
+		if err := f.s.PutRunner(runner); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.s.SetRunnerSharedProjects(runner.ID, f.user.ID, []string{project}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	putDefault := func(path, id string) {
+		t.Helper()
+		rec := cvBRequest(t, f, http.MethodPut, path, map[string]string{"runnerId": id}, true)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("set %s: %d %s", id, rec.Code, rec.Body.String())
+		}
+	}
+	path := "/api/runners/default?projectId=" + project
+	check := func(path, expected string) {
+		t.Helper()
+		var row struct{ RunnerID string }
+		rec := cvBRequest(t, f, http.MethodGet, path, nil, true)
+		if err := json.Unmarshal(rec.Body.Bytes(), &row); err != nil || rec.Code != http.StatusOK || row.RunnerID != expected {
+			t.Errorf("%s: got %d %s, want runner %q", path, rec.Code, rec.Body.String(), expected)
+		}
+	}
+	putDefault(path, "sop-only")
+	putDefault("/api/runners/default", "chat-ready")
+	check(path, "sop-only")
+	check(path+"&conversation=1", "chat-ready")
+	rec := cvBRequest(t, f, http.MethodGet, "/api/runners?projectId="+project, nil, true)
+	var rows []struct {
+		ID                   string
+		SupportsConversation *bool
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil || rec.Code != http.StatusOK || len(rows) != 2 {
+		t.Fatalf("runner list: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, row := range rows {
+		if row.SupportsConversation == nil || *row.SupportsConversation != (row.ID == "chat-ready") {
+			t.Errorf("wrong chat capability in runner list: %s", rec.Body.String())
+		}
+	}
+	if err := f.s.SetRunnerSharedProjects("chat-ready", f.user.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	check(path, "sop-only")
+	check(path+"&conversation=1", "")
+	putDefault("/api/runners/default", "sop-only")
+	check("/api/runners/default?conversation=1", "")
+}
+
 func TestRunnerProjectSharing(t *testing.T) {
 	owner := cvBNewHTTPFixture(t)
 	member := owner

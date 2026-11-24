@@ -46,7 +46,8 @@ func (r *RunnersRepo) CanUseRunner(runner domain.Runner, projectID string, userI
 
 type RunnerProjectView struct {
 	domain.Runner
-	CanUseInProject bool `json:"canUseInProject,omitempty"`
+	CanUseInProject      bool `json:"canUseInProject,omitempty"`
+	SupportsConversation bool `json:"supportsConversation"`
 }
 
 func (r *RunnersRepo) RunnersForUser(userID int64, projectID string) []RunnerProjectView {
@@ -56,7 +57,9 @@ func (r *RunnersRepo) RunnersForUser(userID int64, projectID string) []RunnerPro
 	for _, runner := range items {
 		canUse := writable && runnerSharedByWritableOwner(runner, project)
 		if runner.OwnerUserID == userID || canUse {
-			out = append(out, RunnerProjectView{Runner: runner, CanUseInProject: canUse})
+			out = append(out, RunnerProjectView{
+				Runner: runner, CanUseInProject: canUse, SupportsConversation: runner.SupportsConversationCLI(),
+			})
 		}
 	}
 	return out
@@ -124,17 +127,33 @@ type RunnerDefaults struct {
 // ResolveRunnerDefaults chooses the effective machine and returns the preference
 // IDs used by the machine settings, even when a project cannot use the personal default.
 func (r *RunnersRepo) ResolveRunnerDefaults(userID int64, projectID string) RunnerDefaults {
+	return r.resolveRunnerDefaults(userID, projectID, false)
+}
+
+// ResolveConversationRunnerDefaults applies the conversation runtime requirement
+// while preserving the saved preference IDs used by the machine settings.
+func (r *RunnersRepo) ResolveConversationRunnerDefaults(userID int64, projectID string) RunnerDefaults {
+	return r.resolveRunnerDefaults(userID, projectID, true)
+}
+
+func (r *RunnersRepo) resolveRunnerDefaults(userID int64, projectID string, conversation bool) RunnerDefaults {
 	defaults := RunnerDefaults{PersonalRunnerID: r.DefaultRunner(userID)}
 	if runner := r.ProjectDefaultRunner(userID, projectID); runner.ID != "" {
-		defaults.Runner, defaults.ProjectRunnerID = runner, runner.ID
-		return defaults
+		defaults.ProjectRunnerID = runner.ID
+		if !conversation || runner.SupportsConversationCLI() {
+			defaults.Runner = runner
+			return defaults
+		}
 	}
 	if defaults.PersonalRunnerID == "" {
 		return defaults
 	}
 	if runner, ok := r.Runner(defaults.PersonalRunnerID); ok {
-		// A personal request can still use a legacy ownerless default.
-		if (projectID == "" && runner.OwnerUserID == 0) || r.CanUseRunner(runner, projectID, userID) {
+		if conversation && !runner.SupportsConversationCLI() {
+			return defaults
+		}
+		// A personal SOP can still use a legacy ownerless default.
+		if (!conversation && projectID == "" && runner.OwnerUserID == 0) || r.CanUseRunner(runner, projectID, userID) {
 			defaults.Runner = runner
 		}
 	}
