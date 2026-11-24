@@ -1,5 +1,6 @@
 -- Widen legacy artifact storage to accommodate the 1 MiB artifact contract.
--- Apply to the existing LoopForge database before upgrading. Safe to repeat.
+-- The Compose startup runs this automatically. Run before starting the new
+-- platform in other deployment pipelines. Safe to repeat.
 SET @loopforge_artifact_ddl = (
   SELECT CONCAT(
     'ALTER TABLE `run_artifacts` MODIFY COLUMN `content` MEDIUMTEXT',

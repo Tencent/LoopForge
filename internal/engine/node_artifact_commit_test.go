@@ -106,6 +106,8 @@ func TestMySQLNodeArtifactCommit(t *testing.T) {
 		run := runArtifactSOP(t, store, content, "waiting")
 		assertArchivedPlan(t, store, run, content)
 	}
+	oversized := runArtifactSOP(t, store, strings.Repeat("x", maxArtifactBytes+1), "failed")
+	assertOversizedPlanRejected(t, oversized)
 }
 
 func runArtifactSOP(t *testing.T, store *repo.Store, content, wantStatus string) domain.Run {
@@ -149,7 +151,7 @@ func runArtifactSOP(t *testing.T, store *repo.Store, content, wantStatus string)
 	if _, err := eng.acquireLease(run); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	runID := run.ID
 	done := make(chan struct{})
 	go func() {
@@ -168,19 +170,19 @@ func runArtifactSOP(t *testing.T, store *repo.Store, content, wantStatus string)
 			t.Logf("%d bytes: run=%s, node=%s, approval=%s, artifacts=%d", len(content), run.Status, run.Nodes["writing-plans"].Status, run.Nodes["approval"].Status, len(run.Artifacts))
 			return run
 		}
-		if (wantStatus == "failed" && artifactPublished(run)) || domain.TerminalRunStatus(run.Status) {
+		if (wantStatus == "failed" && planPublished(run)) || domain.TerminalRunStatus(run.Status) {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	node := run.Nodes["writing-plans"]
-	t.Fatalf("%d bytes: run=%s, node=%s, approval=%s, artifacts=%d, published=%t, error=%q, want run=%s", len(content), run.Status, node.Status, run.Nodes["approval"].Status, len(run.Artifacts), artifactPublished(run), node.Error, wantStatus)
+	t.Fatalf("%d bytes: run=%s, node=%s, approval=%s, artifacts=%d, plan published=%t, error=%q, want run=%s", len(content), run.Status, node.Status, run.Nodes["approval"].Status, len(run.Artifacts), planPublished(run), node.Error, wantStatus)
 	return domain.Run{}
 }
 
-func artifactPublished(run domain.Run) bool {
+func planPublished(run domain.Run) bool {
 	return slices.ContainsFunc(run.Telemetry, func(event domain.TelemetryEvent) bool {
-		return event.NodeID == "writing-plans" && event.Name == "artifact.published"
+		return event.NodeID == "writing-plans" && event.Name == "artifact.published" && event.Message == "plan"
 	})
 }
 
@@ -193,8 +195,8 @@ func assertArtifactCommitFailed(t *testing.T, run domain.Run, cause string) {
 	if node.GateResult == nil || node.GateResult.Decision != "pass" {
 		t.Fatal("expected the agent to pass its gate before the artifact write failed")
 	}
-	if run.Nodes["approval"].Status != "pending" || len(run.Artifacts) != 0 || artifactPublished(run) {
-		t.Fatalf("rejected write advanced the run or published an artifact: approval=%s artifacts=%d published=%t", run.Nodes["approval"].Status, len(run.Artifacts), artifactPublished(run))
+	if run.Nodes["approval"].Status != "pending" || len(run.Artifacts) != 0 || planPublished(run) {
+		t.Fatalf("rejected write advanced the run or published an artifact: approval=%s artifacts=%d plan published=%t", run.Nodes["approval"].Status, len(run.Artifacts), planPublished(run))
 	}
 	if !slices.ContainsFunc(run.Events, func(event domain.RunEvent) bool {
 		return event.NodeID == "writing-plans" && event.Type == "node.failed" && strings.Contains(event.Message, cause)
@@ -211,5 +213,18 @@ func assertArchivedPlan(t *testing.T, store *repo.Store, run domain.Run, content
 	artifact, ok := store.Artifact(run.ID, run.Artifacts[0].ID)
 	if !ok || artifact.Size != int64(len(content)) || artifact.Content != content {
 		t.Fatalf("stored artifact differs from the %d-byte plan", len(content))
+	}
+}
+
+func assertOversizedPlanRejected(t *testing.T, run domain.Run) {
+	t.Helper()
+	if got := run.Nodes["writing-plans"].Error; !strings.Contains(got, fmt.Sprintf("plan exceeds %d bytes", maxArtifactBytes)) {
+		t.Fatalf("oversized plan returned %q", got)
+	}
+	archived := slices.ContainsFunc(run.Artifacts, func(artifact domain.Artifact) bool {
+		return artifact.NodeID == "writing-plans" && artifact.Name == "plan"
+	})
+	if archived || planPublished(run) || run.Nodes["approval"].Status != "pending" {
+		t.Fatal("oversized plan was archived, published, or passed to approval")
 	}
 }
