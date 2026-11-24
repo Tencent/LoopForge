@@ -27,6 +27,8 @@ func SandboxCheckouts(ctx context.Context, sandbox Sandbox) ([]gitwork.Checkout,
 // sandbox. Resolve guest paths relative to the checkout owner's workspace.
 func WithSandboxGit(ctx context.Context, sandbox Sandbox, credentials RunCredentials) context.Context {
 	return gitwork.WithWorkspaceExecutor(ctx, func(ctx context.Context, dir string, git gitwork.WorkspaceCommand) (string, error) {
+		// Automated checkout uses Git authentication scoped to the remote.
+		ctx = context.WithValue(ctx, projectCredentialEnvKey{}, nil)
 		if sandbox == nil {
 			return "", fmt.Errorf("shared checkout preparation requires the SOP sandbox")
 		}

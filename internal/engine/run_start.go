@@ -167,6 +167,14 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		executionContext.ExecutionPool = ""
 	}
 	e.selectSOPExecutionTarget(&executionContext)
+	if len(wf.ProjectCredentialIDs) > 0 {
+		if _, err := e.ResolveRunProjectCredentialEnv(context.Background(), domain.Run{WorkflowSnapshot: wf, ExecutionContext: executionContext}); err != nil {
+			return domain.Run{}, err
+		}
+		if err := e.requireProjectCredentialRunner(wf, executionContext.ExecutionRunnerID); err != nil {
+			return domain.Run{}, err
+		}
+	}
 	wf.ExecutorDefaults = nil
 	if executionContext.ResponsibleUserID > 0 {
 		wf.ExecutorDefaults, _, err = e.planSOPExecutors(wf, executionContext, false)

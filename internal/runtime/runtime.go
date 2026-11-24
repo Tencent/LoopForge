@@ -133,6 +133,8 @@ type CommandSpec struct {
 	// Extra credentials (set by bindCommand) so process telemetry can redact
 	// them by origin instead of relying on naming conventions.
 	credentialEnvKeys []string
+	// Project values are set just before launching a sandbox command.
+	projectCredentialEnv map[string]string
 	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string

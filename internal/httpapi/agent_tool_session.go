@@ -72,6 +72,10 @@ type AgentToolSession struct {
 	// belongs to, so Main Bot can open and bind a temporary workspace there.
 	ChatSessionID string
 	ChatOwnerID   int64
+
+	projectCredentialIDs    []string
+	projectCredentialValues []string // protected by mu
+
 	// turnMessages is the transcript this chat request is sending. A new
 	// personal session is stored only after the reply, so proposal checks
 	// read the request before the saved session.
