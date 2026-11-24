@@ -22,49 +22,21 @@ source scripts/ghcr-mirror.sh
 compose() {
   [[ -f .env ]] || docker_access_fail 'Not installed yet. Run ./start.sh first.'
   select_docker_access || docker_access_fail 'Docker is not running, or this user cannot access it.'
-  local profiles=(--profile platform)
-  if grep -q '^LOOPFORGE_WITH_WEKNORA=1' .env 2>/dev/null; then
-    profiles+=(--profile weknora)
-  fi
-  docker_access compose "${profiles[@]}" "$@"
+  docker_access compose --profile platform "$@"
 }
-
-with_weknora="${LOOPFORGE_WITH_WEKNORA:-}"
-if [[ -z "$with_weknora" ]]; then
-  if grep -q '^LOOPFORGE_WITH_WEKNORA=0' .env 2>/dev/null; then
-    with_weknora=0
-  else
-    with_weknora=1
-  fi
-fi
-args=()
-for arg in "$@"; do
-  case "$arg" in
-    --with-weknora)
-      with_weknora=1
-      ;;
-    --without-weknora|--no-weknora)
-      with_weknora=0
-      ;;
-    *)
-      args+=("$arg")
-      ;;
-  esac
-done
-set -- "${args[@]}"
 
 cmd="${1:--d}"
 shift || true
 case "$cmd" in
-  up|-d|detach) LOOPFORGE_WITH_WEKNORA="$with_weknora" bash scripts/install.sh ;;
-  dev) LOOPFORGE_WITH_WEKNORA="$with_weknora" LOOPFORGE_BUILD_FROM_SOURCE=1 bash scripts/install.sh ;;
+  up|-d|detach) bash scripts/install.sh ;;
+  dev) LOOPFORGE_BUILD_FROM_SOURCE=1 bash scripts/install.sh ;;
   release)
     [[ -f .env ]] && python3 - <<'PY'
 import pathlib,re
 p=pathlib.Path('.env')
 p.write_text(re.sub(r'(?m)^COMPOSE_FILE=.*\n?','',p.read_text()))
 PY
-    LOOPFORGE_WITH_WEKNORA="$with_weknora" COMPOSE_FILE=compose.yaml bash scripts/install.sh
+    COMPOSE_FILE=compose.yaml bash scripts/install.sh
     ;;
   pull)
     # An empty MIRROR keeps the original refresh. A registry host pulls the pinned

@@ -19,27 +19,4 @@ else:
  fd=os.open(str(p),os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
  with os.fdopen(fd,'w') as f: f.write(''.join(f'{k}={shlex.quote(v)}\n' for k,v in data.items()))
  print('Created .env with unique local secrets')
-cur_text=p.read_text() if p.exists() else ''
-with_wk=os.environ.get('LOOPFORGE_WITH_WEKNORA','').strip()
-if not with_wk:
- with_wk='0' if 'LOOPFORGE_WITH_WEKNORA=0' in cur_text else '1'
-if with_wk=='1':
- cur=p.read_text()
- if 'LOOPFORGE_WITH_WEKNORA=0' in cur:
-  cur=cur.replace('LOOPFORGE_WITH_WEKNORA=0','LOOPFORGE_WITH_WEKNORA=1')
-  p.write_text(cur)
- wk={'LOOPFORGE_WITH_WEKNORA':'1','WEKNORA_DB_USER':'weknora','WEKNORA_DB_NAME':'weknora','WEKNORA_DB_PASSWORD':secrets.token_hex(24),'WEKNORA_REDIS_PASSWORD':secrets.token_hex(24),'WEKNORA_SYSTEM_AES_KEY':secrets.token_hex(16),'WEKNORA_JWT_SECRET':secrets.token_hex(32),'LOOPFORGE_WEKNORA_ADMIN_PASSWORD':'Lf!'+secrets.token_hex(12)}
- added=[]
- for k,v in wk.items():
-  if f'{k}=' not in cur:
-   added.append(f'{k}={shlex.quote(v)}\n')
- if added:
-  with p.open('a') as f: f.write('\n'+''.join(added))
-  print('Added WeKnora secrets to .env')
-else:
- cur=p.read_text()
- if 'LOOPFORGE_WITH_WEKNORA=1' in cur:
-  p.write_text(cur.replace('LOOPFORGE_WITH_WEKNORA=1','LOOPFORGE_WITH_WEKNORA=0'))
- elif 'LOOPFORGE_WITH_WEKNORA=' not in cur:
-  with p.open('a') as f: f.write('\nLOOPFORGE_WITH_WEKNORA=0\n')
 PY

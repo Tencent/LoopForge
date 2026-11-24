@@ -149,98 +149,34 @@ if ! docker_access compose ps --status running --services 2>/dev/null | grep -qx
   fi
 fi
 
-compose_files=(compose.yaml)
-if [[ "${LOOPFORGE_BUILD_FROM_SOURCE:-0}" == 1 ]]; then
-  compose_files+=(compose.dev.yaml)
-fi
-if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 ]]; then
-  compose_files+=(compose.weknora.yaml)
-fi
-target_compose=$(IFS=:; echo "${compose_files[*]}")
-if [[ "${COMPOSE_FILE:-compose.yaml}" != "$target_compose" ]]; then
-  # Persisted because sudo-run Compose only reads .env; later plain compose commands keep the stack.
-  python3 - "$target_compose" <<'PY'
+dev_compose=compose.yaml:compose.dev.yaml
+if [[ "${LOOPFORGE_BUILD_FROM_SOURCE:-0}" == 1 && "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
+  # Persisted because sudo-run Compose only reads .env; later plain compose commands keep the source stack.
+  python3 - "$dev_compose" <<'PY'
 import pathlib,re,sys
 p=pathlib.Path('.env')
 text=re.sub(r'(?m)^COMPOSE_FILE=.*\n?','',p.read_text())
 p.write_text(text.rstrip('\n')+'\nCOMPOSE_FILE='+sys.argv[1]+'\n')
 PY
-  export COMPOSE_FILE="$target_compose"
+  export COMPOSE_FILE="$dev_compose"
 fi
 
-compose_profiles=(--profile platform)
-reuse_existing_weknora=0
-reconcile_existing_weknora() {
-  [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 ]] || return 0
-  local project_name="${COMPOSE_PROJECT_NAME:-loopforge}"
-  local net_name="${project_name}_default"
-  local existing_app=""
-  while IFS='|' read -r cname cimage cproject cports; do
-    [[ -z "$cname" ]] && continue
-    [[ "$cproject" == "$project_name" ]] && continue
-    if [[ "$cname" == *weknora-app* || "$cimage" == *weknora-app* || "$cports" == *":${WEKNORA_APP_PORT:-18080}->8080/tcp"* ]]; then
-      existing_app="$cname"
-      break
-    fi
-  done < <(docker_access ps --format '{{.Names}}|{{.Image}}|{{.Label "com.docker.compose.project"}}|{{.Ports}}' 2>/dev/null || true)
-
-  [[ -n "$existing_app" ]] || return 0
-  reuse_existing_weknora=1
-  step "Detected existing WeKnora instance ($existing_app); reusing it and skipping duplicate WeKnora containers"
-
-  # Remove any duplicate WeKnora containers belonging to this compose project so
-  # they cannot hijack weknora-postgres / weknora-redis DNS aliases on the shared network.
-  local dup
-  for dup in $(docker_access ps -a --filter "label=com.docker.compose.project=${project_name}" --format '{{.Names}}' 2>/dev/null | grep -E 'weknora-(postgres|redis|docreader|app|frontend)' || true); do
-    docker_access rm -f "$dup" >/dev/null 2>&1 || true
-  done
-}
-
-bridge_existing_weknora_network() {
-  [[ "$reuse_existing_weknora" == 1 ]] || return 0
-  local project_name="${COMPOSE_PROJECT_NAME:-loopforge}"
-  local net_name="${project_name}_default"
-  docker_access network inspect "$net_name" >/dev/null 2>&1 || return 0
-  local cname role alias_name
-  while IFS= read -r cname; do
-    [[ -z "$cname" ]] && continue
-    alias_name=""
-    for role in weknora-postgres weknora-redis weknora-docreader weknora-app weknora-frontend; do
-      if [[ "$cname" == *"$role"* ]]; then
-        alias_name="$role"
-        break
-      fi
-    done
-    [[ -n "$alias_name" ]] || continue
-    docker_access network connect --alias "$alias_name" "$net_name" "$cname" >/dev/null 2>&1 || true
-  done < <(docker_access ps --format '{{.Names}}' 2>/dev/null || true)
-}
-
-reconcile_existing_weknora
-if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 && "$reuse_existing_weknora" != 1 ]]; then
-  compose_profiles+=(--profile weknora)
-fi
-
-if [[ "${LOOPFORGE_BUILD_FROM_SOURCE:-0}" != 1 ]]; then
+if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
   pull_policy="${LOOPFORGE_PULL_POLICY:-missing}"
   if mirror_published_ghcr "$pull_policy"; then
     # The platform name is already local. Pull it with missing so Compose does
     # not contact ghcr.io; MySQL keeps the requested policy.
     if [[ "$pull_policy" == always ]]; then
-      docker_access compose "${compose_profiles[@]}" pull --policy missing platform
-      docker_access compose "${compose_profiles[@]}" pull --policy always mysql
+      docker_access compose --profile platform pull --policy missing platform
+      docker_access compose --profile platform pull --policy always mysql
     else
-      docker_access compose "${compose_profiles[@]}" pull --policy "$pull_policy" platform mysql
+      docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
     fi
   else
     step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
-    docker_access compose "${compose_profiles[@]}" pull --policy "$pull_policy" platform mysql
+    docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
   fi
-  if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 && "$reuse_existing_weknora" != 1 ]]; then
-    step 'Pulling WeKnora knowledge base images'
-    docker_access compose "${compose_profiles[@]}" pull --policy "$pull_policy" weknora-postgres weknora-redis weknora-docreader weknora-app weknora-frontend
-  fi
-  docker_access compose "${compose_profiles[@]}" up -d --no-build --wait --wait-timeout 180
+  docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 else
   step 'Building LoopForge from source (first install takes several minutes; frontend, Go and runtime stages build in parallel)'
   if [[ -z "${LOOPFORGE_COMMIT:-}" ]]; then
@@ -250,16 +186,11 @@ else
   # Download MySQL while the platform image builds instead of afterwards.
   docker_access compose pull --quiet --policy missing mysql >/dev/null 2>&1 &
   mysql_pull=$!
-  docker_access compose "${compose_profiles[@]}" build platform
+  docker_access compose --profile platform build platform
   wait "$mysql_pull" || true
-  if [[ "${LOOPFORGE_WITH_WEKNORA:-1}" == 1 && "$reuse_existing_weknora" != 1 ]]; then
-    step 'Pulling WeKnora knowledge base images'
-    docker_access compose "${compose_profiles[@]}" pull --policy missing weknora-postgres weknora-redis weknora-docreader weknora-app weknora-frontend
-  fi
   step 'Starting LoopForge'
-  docker_access compose "${compose_profiles[@]}" up -d --no-build --wait --wait-timeout 180
+  docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 fi
-bridge_existing_weknora_network
 step 'Installing the schema extensions and the starter catalog'
 bash scripts/install-schema-extensions.sh
 
