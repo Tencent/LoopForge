@@ -90,13 +90,17 @@ var errNodeArtifactCommit = errors.New("保存节点终态和产物失败")
 
 func shouldRetryFailedAttempt(node domain.WorkflowNode, attempt int, err error) bool {
 	// A failed artifact write follows a completed execution, which may have side effects.
-	if errors.Is(err, ErrWorkspaceControlConfiguration) || errors.Is(err, errSOPArtifactWrite) || errors.Is(err, errNodeArtifactCommit) {
+	if errors.Is(err, ErrWorkspaceControlConfiguration) || errors.Is(err, errSOPArtifactWrite) || errors.Is(err, errNodeArtifactCommit) || isArtifactHandoffFailure(err) {
 		return false
 	}
 	if err != nil && (isMaxTurnsErr(err) || strings.Contains(err.Error(), "verification ") || runtime.IsCwdMountFailure(err)) {
 		return false
 	}
 	return attempt < max(1, node.MaxAttempts)
+}
+
+func isArtifactHandoffFailure(err error) bool {
+	return errors.Is(err, errArtifactTransfer) || errors.Is(err, errOutputTooLarge) || errors.Is(err, errLegacyOutputTooLarge)
 }
 
 // gateReworkReject reports whether this failure is the node's explicit

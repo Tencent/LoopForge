@@ -32,6 +32,20 @@ func TestNodeArtifactCommitFailure(t *testing.T) {
 	assertArtifactCommitFailed(t, run, "artifact write rejected")
 }
 
+func TestOptionalArtifactCommitFailureAllowsApproval(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	if err := store.DB.Exec(`CREATE TRIGGER reject_optional BEFORE INSERT ON run_artifacts
+		WHEN NEW.name = 'optional' BEGIN SELECT RAISE(ABORT, 'optional storage unavailable'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	run := runArtifactSOP(t, store, "# Plan\n", "waiting", "optional diagnostics")
+	assertArchivedPlan(t, store, run, "# Plan\n")
+}
+
 func TestMySQLNodeArtifactCommit(t *testing.T) {
 	dsn := os.Getenv("AGENTFLOW_RUN_ARTIFACT_TEST_DSN")
 	if dsn == "" {
@@ -102,15 +116,15 @@ func TestMySQLNodeArtifactCommit(t *testing.T) {
 		}
 	}
 	assertArchivedPlan(t, store, legacy, boundary)
-	for _, content := range []string{boundary + "x", strings.Repeat("x", maxArtifactBytes)} {
+	for _, content := range []string{boundary + "x", strings.Repeat("x", domain.MaxSOPArtifactBytes), strings.Repeat("\xff\x00", 1024)} {
 		run := runArtifactSOP(t, store, content, "waiting")
 		assertArchivedPlan(t, store, run, content)
 	}
-	oversized := runArtifactSOP(t, store, strings.Repeat("x", maxArtifactBytes+1), "failed")
+	oversized := runArtifactSOP(t, store, strings.Repeat("x", domain.MaxSOPArtifactBytes+1), "failed")
 	assertOversizedPlanRejected(t, oversized)
 }
 
-func runArtifactSOP(t *testing.T, store *repo.Store, content, wantStatus string) domain.Run {
+func runArtifactSOP(t *testing.T, store *repo.Store, content, wantStatus string, optional ...string) domain.Run {
 	t.Helper()
 	const sandboxID = "artifact-sandbox"
 	if err := store.PutSandbox(domain.SandboxProfile{ID: sandboxID, Name: "Artifact sandbox", Driver: domain.SandboxDriverNative}); err != nil {
@@ -129,6 +143,9 @@ func runArtifactSOP(t *testing.T, store *repo.Store, content, wantStatus string)
 		},
 		Edges: []domain.WorkflowEdge{{ID: "plan-approval", Source: "writing-plans", Target: "approval", When: "success"}},
 	}
+	if len(optional) != 0 {
+		workflow.Nodes[0].ArtifactOutputs = append(workflow.Nodes[0].ArtifactOutputs, domain.ArtifactContract{Name: "optional", Path: "optional.md"})
+	}
 	if err := store.PutWorkflow(workflow); err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +163,11 @@ func runArtifactSOP(t *testing.T, store *repo.Store, content, wantStatus string)
 	}
 	if err := os.WriteFile(filepath.Join(workspace, "plan.md"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
+	}
+	if len(optional) != 0 {
+		if err := os.WriteFile(filepath.Join(workspace, "optional.md"), []byte(optional[0]), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	eng.ConfigureExecution("artifact-worker", "", 30*time.Second, true)
 	if _, err := eng.acquireLease(run); err != nil {
@@ -218,13 +240,13 @@ func assertArchivedPlan(t *testing.T, store *repo.Store, run domain.Run, content
 
 func assertOversizedPlanRejected(t *testing.T, run domain.Run) {
 	t.Helper()
-	if got := run.Nodes["writing-plans"].Error; !strings.Contains(got, fmt.Sprintf("plan exceeds %d bytes", maxArtifactBytes)) {
+	if got := run.Nodes["writing-plans"].Error; !strings.Contains(got, "plan (plan.md): "+errOutputTooLarge.Error()) {
 		t.Fatalf("oversized plan returned %q", got)
 	}
 	archived := slices.ContainsFunc(run.Artifacts, func(artifact domain.Artifact) bool {
 		return artifact.NodeID == "writing-plans" && artifact.Name == "plan"
 	})
-	if archived || planPublished(run) || run.Nodes["approval"].Status != "pending" {
-		t.Fatal("oversized plan was archived, published, or passed to approval")
+	if archived || planPublished(run) || run.Nodes["approval"].Status != "pending" || run.Nodes["writing-plans"].Attempt != 1 {
+		t.Fatal("oversized plan was archived, published, retried, or passed to approval")
 	}
 }

@@ -1150,7 +1150,8 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 		Artifacts map[string]string         `json:"artifacts"`
 		Outputs   *domain.RunnerTaskOutputs `json:"outputs"`
 	}
-	if !decode(c, &input) {
+	// Legacy runners still post several inline files in one completion.
+	if !decodeLimit(c, &input, 16<<20) {
 		return
 	}
 	if input.Status == "" {
@@ -1168,6 +1169,9 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 	}
 	if message := validateRunnerTaskOutputs(input.Outputs); message != "" {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": message})
+		return
+	}
+	if input.Outputs != nil && (len(input.Outputs.FileBlobs) != 0 || len(input.Outputs.FileErrors) != 0) && !h.validateRunnerOutputTransfer(c, runner.ID, input.Outputs) {
 		return
 	}
 	if err := h.repo.CompleteRunnerTask(c.Param("id"), runner.ID, input.Status, input.ExitCode, input.Result, input.Error, input.Artifacts, input.Outputs, time.Now().UTC()); err != nil {
@@ -1231,8 +1235,18 @@ func validateRunnerTaskOutputs(outputs *domain.RunnerTaskOutputs) string {
 		if !domain.SafeWorkspaceRelPath(path) {
 			return fmt.Sprintf("产物路径 %q 不合法", path)
 		}
-		if len(content) > 1<<20 {
-			return fmt.Sprintf("产物 %s 超过 1MB 上传限制", path)
+		if len(content) > domain.MaxInlineRunnerArtifactBytes {
+			return fmt.Sprintf("旧版行内产物 %s 超过 1 MiB 上传限制", path)
+		}
+	}
+	for path, message := range outputs.FileErrors {
+		if !domain.SafeWorkspaceRelPath(path) || len(message) > 2048 {
+			return "无效的产物错误报告"
+		}
+	}
+	for _, path := range outputs.TooLarge {
+		if !domain.SafeWorkspaceRelPath(path) {
+			return fmt.Sprintf("产物路径 %q 不合法", path)
 		}
 	}
 	for dir, patch := range outputs.Patches {
@@ -1270,7 +1284,7 @@ func isRunnerAgentPath(path string) bool {
 			return true
 		}
 		switch strings.Join(parts[1:], "/") {
-		case "start", "lease/renew", "events", "complete", "control":
+		case "start", "lease/renew", "events", "complete", "control", "input-file", "output-file":
 			return true
 		}
 	}

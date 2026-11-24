@@ -34,7 +34,7 @@ func (e *Engine) updateRunAt(id string, allowExpiredLease bool, mutate func(*dom
 func (e *Engine) updateRunAtErr(id string, allowExpiredLease bool, mutate func(*domain.Run)) (bool, error) {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
-	r, ok := e.repo.RunState(id)
+	r, ok := e.repo.RunProgress(id)
 	if !ok {
 		_ = e.takePendingObservations(id)
 		return false, nil

@@ -176,7 +176,7 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 	// others re-read the run and follow it.
 	release := e.lockPoolBinding(run.ID)
 	defer release()
-	if fresh, ok := e.repo.RunState(run.ID); ok {
+	if fresh, ok := e.repo.RunProgress(run.ID); ok {
 		run = fresh
 	}
 	ec := run.ExecutionContext
@@ -247,7 +247,7 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 		}
 		e.event(c, nodeID, "execution.bound", msg)
 	})
-	bound, ok := e.repo.RunState(run.ID)
+	bound, ok := e.repo.RunProgress(run.ID)
 	if !ok {
 		return run, errors.New("run not found")
 	}
@@ -280,7 +280,7 @@ func (e *Engine) waitForBoundPoolRunner(ctx context.Context, run domain.Run, nod
 			e.updateRun(run.ID, func(c *domain.Run) {
 				e.event(c, nodeID, "execution.resumed", fmt.Sprintf("执行机器 %s 已恢复在线，继续使用原工作区", name))
 			})
-			current, ok := e.repo.RunState(run.ID)
+			current, ok := e.repo.RunProgress(run.ID)
 			if !ok {
 				return run, errors.New("run not found")
 			}

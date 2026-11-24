@@ -191,6 +191,12 @@ The upstream process roles remain `-role api`, `-role worker` and `-role all`. A
 
 Personal runners are connected from the execution-machine page with a short-lived binding code. The installer is served at `/runners/install.sh`. `AGENTFLOW_RUNNER_BINARY` can point to binaries with `{os}` and `{arch}` substitutions. Container images bundle Linux/macOS amd64/arm64 runner and gate binaries. Native source installations can build on demand with Go.
 
+SOP deliverables support up to 20 MiB per file. Runner 0.13.0 and later transfer
+declared files separately from the task completion report, so several files
+can be handed off together. Installations with automatic Runner updates
+enabled receive the bundled version after the platform release. Older Runners
+keep their 1 MiB inline upload limit until they update.
+
 Docker workspaces on macOS use a Linux Runner executable for Git credentials and MCP calls. The installer chooses the architecture of the installed macOS Runner, including Intel binaries running under Rosetta. For a universal Runner on Apple Silicon it installs the arm64 helpers and adds the amd64 helpers when available. Foreground starts and the command printed by `--no-start` select the native arm64 slice, including from a Rosetta shell. On Intel Macs the installer installs the amd64 helpers. By default, it places the helpers next to the host binary. A Runner-side `AGENTFLOW_RUNNER_BINARY` template with `{os}` selects the installation and runtime path. To install both helpers, use `{arch}` and give each architecture a distinct destination. The installer saves the template for upgrades and includes it in launchd and in the startup command printed by `--no-start`. Helper paths must resolve to files separate from the macOS Runner.
 
 The installer checks the helper destinations against the staged macOS binary and installs the required Gate MCP helpers before replacing an installed Runner. When the existing Runner has a working Docker helper, an upgrade requires a compatible helper at the new Runner's configured path before replacing the binary and restarting the service. Relative templates in the installed launchd configuration use the job's working directory. The installer and updater validate the Linux executable's format, architecture, and load segments before replacing it. Custom installs keep a compatible existing helper. A Runner built from a local checkout can build its companion from that checkout. A download URL with an `{os}` placeholder can supply both binaries when used as the Runner's download source.
@@ -220,8 +226,9 @@ For an external MySQL deployment, review that migration and check column existen
 Compose runs `migrations/042_run_artifacts_content_mediumtext.sql` before the
 platform starts, including during `./start.sh pull`. The native development
 script runs the same migration against its Compose database. It widens an existing
-`run_artifacts.content` column from `TEXT` to `MEDIUMTEXT` for the 1 MiB artifact
-contract and preserves existing data, character set, collation and nullability.
+`run_artifacts.content` column from `TEXT` to `MEDIUMTEXT` for inline artifacts
+and preserves existing data, character set, collation and nullability. Larger
+files use separate chunk tables added at platform startup.
 For a deployment using an external MySQL server and no Compose startup, run this
 SQL file in the deployment's database upgrade step before starting the new binary.
 If the Compose migration fails, review `docker compose --profile platform logs

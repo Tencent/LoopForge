@@ -151,6 +151,10 @@ func existingMRBlurb(st *repo.Store, run domain.Run) string {
 }
 
 func hostedMRBlurb(st *repo.Store, run domain.Run) string {
+	art, hasMR := latestNamedArtifact(run, "mr", "mr-body")
+	if hasMR && art.Content == "" && st != nil {
+		art, hasMR = st.Artifact(run.ID, art.ID)
+	}
 	var continued []string
 	for _, repository := range run.RepositoryContexts() {
 		if !domain.GitOnlyRepositoryProvider(repository.Provider) && repository.RequireExistingWorkBranch {
@@ -159,7 +163,7 @@ func hostedMRBlurb(st *repo.Store, run domain.Run) string {
 	}
 	if len(continued) > 0 {
 		hint := "用户要求直接在指定的已有分支上继续处理，不新建或改名工作分支。先查找来源分支和目标主分支均匹配的已有 MR 并更新；没有匹配 MR 时才创建。\n" + strings.Join(continued, "\n")
-		if art, ok := latestNamedArtifact(run, "mr", "mr-body"); ok && strings.Contains(art.Content, "merge_requests") {
+		if hasMR && strings.Contains(art.Content, "merge_requests") {
 			hint += "\n已有 MR 信息（核对来源与目标分支后使用）：\n" + art.Content
 		}
 		return hint
@@ -172,10 +176,9 @@ func hostedMRBlurb(st *repo.Store, run domain.Run) string {
 		}
 		return content
 	}
-	if art, ok := latestNamedArtifact(run, "mr", "mr-body"); ok && strings.Contains(art.Content, "merge_requests") {
+	if hasMR && strings.Contains(art.Content, "merge_requests") {
 		return "已有本轮 MR，在本轮工作分支上更新，禁止另开分支：\n" + clip(art.Content) + "\n" + searchHint
 	}
-	_ = st
 	return "本轮还没有 MR。对当前工作分支 git push 后创建新 MR。"
 }
 

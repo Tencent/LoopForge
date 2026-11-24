@@ -265,6 +265,7 @@ type Artifact struct {
 	Size      int64  `json:"size"`
 	SHA256    string `json:"sha256"`
 	Content   string `json:"content"`
+	BlobID    string `json:"-"`
 	// RepositoryDir records which run repository workspace the artifact was
 	// collected from (empty = run workspace root, where SOP deliverables live).
 	RepositoryDir string    `json:"repositoryDir,omitempty"`

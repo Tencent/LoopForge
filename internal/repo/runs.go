@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/observability"
@@ -337,6 +339,16 @@ func (r *RunsRepo) RunWorkflowProjectID(id string) (string, error) {
 // loading the entire log history on every state transition only makes long
 // runs progressively slower.
 func (r *RunsRepo) RunState(id string) (domain.Run, bool) {
+	return r.runState(id, true)
+}
+
+// RunProgress is the execution state without artifact bodies. Polling and
+// observation writes use it, while consumers of files can still load them.
+func (r *RunsRepo) RunProgress(id string) (domain.Run, bool) {
+	return r.runState(id, false)
+}
+
+func (r *RunsRepo) runState(id string, withArtifactContents bool) (domain.Run, bool) {
 	row, ok := takeRun(r.DB, id)
 	if !ok {
 		return domain.Run{}, false
@@ -361,13 +373,14 @@ func (r *RunsRepo) RunState(id string) (domain.Run, bool) {
 			run.Events = append(run.Events, ev)
 		}
 	}
-	var artifactRows []runArtifactRow
-	if err := r.DB.Where("run_id = ?", run.ID).Find(&artifactRows).Error; err != nil {
-		return domain.Run{}, false
+	var err error
+	if withArtifactContents {
+		err = r.loadArtifactContents(&run)
+	} else {
+		err = r.loadArtifactMeta(&run)
 	}
-	for _, row := range artifactRows {
-		art := artifactFromRow(row, true)
-		run.Artifacts = append(run.Artifacts, art)
+	if err != nil {
+		return domain.Run{}, false
 	}
 	return run, true
 }
@@ -712,19 +725,12 @@ func (r *RunsRepo) loadRunHeavy(run *domain.Run) error {
 			run.Logs = append(run.Logs, rec)
 		}
 	}
-	var artifactRows []runArtifactRow
-	if err := r.DB.Where("run_id = ?", run.ID).Find(&artifactRows).Error; err != nil {
-		return err
-	}
-	for _, row := range artifactRows {
-		run.Artifacts = append(run.Artifacts, artifactFromRow(row, true))
-	}
-	return nil
+	return r.loadArtifactContents(run)
 }
 
 func (r *RunsRepo) loadArtifactMeta(run *domain.Run) error {
 	var rows []runArtifactRow
-	if err := r.DB.Select("id", "run_id", "node_id", "attempt", "name", "path", "media_type", "size_bytes", "sha256", "created_at").
+	if err := r.DB.Select("id", "run_id", "node_id", "attempt", "name", "path", "media_type", "size_bytes", "sha256", "repository_dir", "blob_id", "created_at").
 		Where("run_id = ?", run.ID).Find(&rows).Error; err != nil {
 		return err
 	}
@@ -732,6 +738,21 @@ func (r *RunsRepo) loadArtifactMeta(run *domain.Run) error {
 		run.Artifacts = append(run.Artifacts, artifactFromRow(row, false))
 	}
 	run.ArtifactCount = len(run.Artifacts)
+	return nil
+}
+
+func (r *RunsRepo) loadArtifactContents(run *domain.Run) error {
+	var rows []runArtifactRow
+	if err := r.DB.Where("run_id = ?", run.ID).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		art := artifactFromRow(row, true)
+		if err := r.hydrateArtifact(&art); err != nil {
+			return fmt.Errorf("read artifact %s: %w", art.ID, err)
+		}
+		run.Artifacts = append(run.Artifacts, art)
+	}
 	return nil
 }
 
@@ -822,7 +843,7 @@ func artifactFromRow(row runArtifactRow, withContent bool) domain.Artifact {
 	art := domain.Artifact{
 		ID: row.ID, RunID: row.RunID, NodeID: row.NodeID, Attempt: row.Attempt,
 		Name: row.Name, Path: row.Path, MediaType: row.MediaType, Size: row.SizeBytes,
-		SHA256: row.SHA256, RepositoryDir: row.RepositoryDir,
+		SHA256: row.SHA256, RepositoryDir: row.RepositoryDir, BlobID: row.BlobID,
 	}
 	if withContent {
 		art.Content = row.Content
@@ -838,7 +859,44 @@ func (r *RunsRepo) Artifact(runID, artifactID string) (domain.Artifact, bool) {
 	if err := r.DB.Where("run_id = ? AND id = ?", runID, artifactID).Take(&row).Error; err != nil {
 		return domain.Artifact{}, false
 	}
-	return artifactFromRow(row, true), true
+	art := artifactFromRow(row, true)
+	if err := r.hydrateArtifact(&art); err != nil {
+		return domain.Artifact{}, false
+	}
+	return art, true
+}
+
+func (r *RunsRepo) hydrateArtifact(art *domain.Artifact) error {
+	if art.BlobID == "" {
+		return nil
+	}
+	_, body, err := r.OpenArtifactBlob(context.Background(), art.RunID, art.BlobID)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	// A hydrated snapshot can be copied into another run and archived there.
+	art.Content, art.BlobID = string(data), ""
+	return nil
+}
+
+func (r *RunsRepo) OpenArtifactContent(ctx context.Context, runID, artifactID string) (domain.Artifact, io.ReadCloser, error) {
+	var row runArtifactRow
+	if err := r.DB.WithContext(ctx).Where("run_id = ? AND id = ?", runID, artifactID).Take(&row).Error; err != nil {
+		return domain.Artifact{}, nil, err
+	}
+	art := artifactFromRow(row, false)
+	if art.BlobID != "" {
+		blob, body, err := r.OpenArtifactBlob(ctx, runID, art.BlobID)
+		art.Size = blob.Size
+		return art, body, err
+	}
+	art.Size = int64(len(row.Content))
+	return art, io.NopCloser(strings.NewReader(row.Content)), nil
 }
 
 // FilterRunsByProject keeps runs stamped with projectID, or legacy runs whose
@@ -1083,22 +1141,51 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 				return err
 			}
 		}
-		for _, art := range run.Artifacts {
-			id := art.ID
-			if id == "" {
-				id = fmt.Sprintf("%s-%s-%d-%s", run.ID, art.NodeID, art.Attempt, art.Name)
-			}
-			if err := upsert(tx, "run_artifacts", map[string]any{
-				"id": id, "run_id": run.ID, "node_id": art.NodeID, "attempt": art.Attempt,
-				"name": art.Name, "path": art.Path, "media_type": art.MediaType,
-				"size_bytes": art.Size, "sha256": art.SHA256, "repository_dir": art.RepositoryDir,
-				"content": art.Content, "created_at": timePtr(art.CreatedAt),
-			}); err != nil {
-				return err
-			}
-		}
-		return nil
+		return writeRunArtifacts(tx, run)
 	}, opts...)
+}
+
+func writeRunArtifacts(tx *gorm.DB, run domain.Run) error {
+	if len(run.Artifacts) == 0 {
+		return nil
+	}
+	var ids []string
+	if err := tx.Table("run_artifacts").Where("run_id = ?", run.ID).Pluck("id", &ids).Error; err != nil {
+		return err
+	}
+	stored := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		stored[id] = true
+	}
+	for _, art := range run.Artifacts {
+		id := art.ID
+		if id == "" {
+			id = fmt.Sprintf("%s-%s-%d-%s", run.ID, art.NodeID, art.Attempt, art.Name)
+		}
+		if stored[id] {
+			continue
+		}
+		if art.BlobID == "" && (len(art.Content) > domain.MaxInlineRunnerArtifactBytes || !utf8.ValidString(art.Content)) {
+			blob, err := saveArtifactBlob(tx, run.ID, id, strings.NewReader(art.Content))
+			if err != nil {
+				return fmt.Errorf("save artifact %s: %w", art.Name, err)
+			}
+			art.BlobID, art.Size, art.SHA256 = blob.ID, blob.Size, blob.SHA256
+		}
+		if art.BlobID != "" {
+			art.Content = ""
+		}
+		if err := upsert(tx, "run_artifacts", map[string]any{
+			"id": id, "run_id": run.ID, "node_id": art.NodeID, "attempt": art.Attempt,
+			"name": art.Name, "path": art.Path, "media_type": art.MediaType,
+			"size_bytes": art.Size, "sha256": art.SHA256, "repository_dir": art.RepositoryDir,
+			"content": art.Content, "blob_id": art.BlobID, "created_at": timePtr(art.CreatedAt),
+		}); err != nil {
+			return err
+		}
+		stored[id] = true
+	}
+	return nil
 }
 
 // DeleteRun removes a settled run together with all of its children (nodes,
@@ -1115,7 +1202,7 @@ func (r *RunsRepo) DeleteRun(id string) error {
 		if row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
 			return fmt.Errorf("run %s is %s: cancel it before deleting", id, row.Status)
 		}
-		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_evals", "run_workspace_checkpoint_chunks", "run_workspace_checkpoints"} {
+		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_artifact_blob_chunks", "run_artifact_blobs", "run_evals", "run_workspace_checkpoint_chunks", "run_workspace_checkpoints"} {
 			if err := tx.Table(table).Where("run_id = ?", id).Delete(nil).Error; err != nil {
 				return fmt.Errorf("runs delete %s: %w", id, err)
 			}
