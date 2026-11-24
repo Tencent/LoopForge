@@ -1,7 +1,7 @@
 function loadBotModels(){return window.AgentFlowAssistantModels?.load?.()||Promise.resolve()}
 function botModelPickerHTML(){return `<div class="feature-model-picker" id="botModelPicker">${globalThis.AgentFlowAssistantModels?.featurePickerHTML('model')||''}</div>`}
 // Project-scoped enterprise chat notifications.
-const botUI={projectId:'',items:[],deliveries:[],selected:null,sessions:[],query:'',loading:false,error:'',busy:false,busyAction:'',revision:0,tab:'list',step:1,recordsTab:'deliveries',interactionBotId:'',interaction:null,interactionLoading:false,interactionError:'',testResult:'',flashId:'',motion:null,animations:[],shownCount:null,shownError:'',watchTimer:0,watchCount:0,deletingId:''};
+const botUI={projectId:'',items:[],deliveries:[],selected:null,sessions:[],query:'',loading:false,error:'',busy:false,busyAction:'',revision:0,tab:'list',step:1,recordsTab:'deliveries',interactionBotId:'',interactionRevision:0,interaction:null,interactionLoading:false,interactionError:'',testResult:'',flashId:'',motion:null,animations:[],shownCount:null,shownError:'',watchTimer:0,watchCount:0,deletingId:''};
 const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选择接收会话'],[3,'发送测试']];
 // In-progress states breathe; terminal states stay still.
 const BOT_LIVE_STATES=['pending','sending','connecting','reconnecting','queued','running','ready'];
@@ -431,10 +431,12 @@ function botWatchDeliveries(){
  },2500);
 }
 async function loadBotInteractions(){
+ // Revisiting the same bot can leave two in-flight requests with the same bot ID.
+ const request=++botUI.interactionRevision;
  const bots=botInteractionBots(),bot=bots.find(b=>b.id===botUI.interactionBotId)||bots[0];
- if(!bot){botUI.interaction=null;return}
+ if(!bot){botUI.interaction=null;botUI.interactionLoading=false;return}
  const revision=botUI.revision;botUI.interactionBotId=bot.id;botUI.interactionLoading=true;botUI.interactionError='';
- const current=()=>revision===botUI.revision&&botUI.interactionBotId===bot.id;
+ const current=()=>request===botUI.interactionRevision&&revision===botUI.revision&&botUI.interactionBotId===bot.id;
  try{const result=await api(`/api/notification-bots/${encodeURIComponent(bot.id)}/interactions`,{silent:true});if(!current())return;if(!botUI.interaction)botMotion('entries');botUI.interaction=result}
  catch(e){if(current())botUI.interactionError=e.message}
  finally{if(current()){botUI.interactionLoading=false;renderBots()}}
