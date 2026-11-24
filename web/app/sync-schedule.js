@@ -593,8 +593,8 @@ const scheduleGroupExpanded=new Set();
 function scheduleJobGroups(jobs){
   const groups=new Map();
   for(const j of jobs){
-    const key=`${j.projectId||''}/${String(j.name||'').trim()}`;
-    if(!groups.has(key))groups.set(key,{key,name:String(j.name||'').trim(),jobs:[]});
+    const name=String(j.name||'').trim(),key=JSON.stringify([j.projectId||'',name]);
+    if(!groups.has(key))groups.set(key,{key,name,jobs:[]});
     groups.get(key).jobs.push(j);
   }
   return [...groups.values()];
@@ -602,11 +602,12 @@ function scheduleJobGroups(jobs){
 function scheduleJobGroupHTML(g,rowHTML){
   const open=scheduleGroupExpanded.has(g.key);
   const running=g.jobs.filter(scheduleJobRunning).length,failed=g.jobs.filter(j=>j.lastStatus==='failed').length,enabled=g.jobs.filter(j=>j.enabled).length;
+  const updates=g.jobs.filter(sharedScheduleAvailableUpdate).length;
   const timings=[...new Set(g.jobs.map(scheduleJobTimingLabel))];
   const last=g.jobs.map(j=>knownTime(j.lastRunAt)).filter(Boolean).sort((a,b)=>b-a)[0];
-  const summary=[timings.slice(0,3).join('、')+(timings.length>3?` 等 ${timings.length} 种`:''),`已启用 ${enabled}/${g.jobs.length}`,running?`${running} 个运行中`:'',failed?`${failed} 个失败`:''].filter(Boolean).join(' · ');
+  const summary=[timings.slice(0,3).join('、')+(timings.length>3?` 等 ${timings.length} 种`:''),`已启用 ${enabled}/${g.jobs.length}`,running?`${running} 个运行中`:'',failed?`${failed} 个失败`:'',updates?`${updates} 个待升级`:''].filter(Boolean).join(' · ');
   const key=escapeHTML(g.key),id=`schedule-group-${g.jobs[0].id}`;
-  return `<div class="schedule-job-group${open?' is-open':''}${running?' is-running':''}${enabled?'':' is-paused'}" data-group-for="${key}"><button type="button" class="schedule-job-group-head" data-schedule-group="${key}" aria-expanded="${open}" aria-controls="${escapeHTML(id)}"><svg class="agent-icon harness-icon schedule-job-group-chevron" data-icon="chevron-right" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="schedule-job-group-text"><b><span class="schedule-kind-tag is-assistant">AI</span>${escapeHTML(g.name)}<span class="hui-badge" data-tone="neutral" data-size="sm">${g.jobs.length} 个</span></b><span class="${running?'schedule-run-live':''}">${escapeHTML(summary)}</span><small>${last?`最近：${last.toLocaleString()}`:'尚未运行'}</small></span></button><div class="schedule-job-group-body" id="${escapeHTML(id)}" ${open?'':'hidden'}>${g.jobs.map(rowHTML).join('')}</div></div>`;
+  return `<div class="schedule-job-group${open?' is-open':''}${running?' is-running':''}${enabled?'':' is-paused'}" data-group-for="${key}"><button type="button" class="schedule-job-group-head" data-schedule-group="${key}" aria-expanded="${open}" aria-controls="${escapeHTML(id)}"><svg class="agent-icon harness-icon schedule-job-group-chevron" data-icon="chevron-right" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="schedule-job-group-text"><b><span class="schedule-kind-tag is-assistant">AI</span><span class="schedule-job-group-name">${escapeHTML(g.name)}</span><span class="hui-badge" data-tone="neutral" data-size="sm">${g.jobs.length} 个</span></b><span class="${running?'schedule-run-live':''}">${escapeHTML(summary)}</span><small>${last?`最近：${last.toLocaleString()}`:'尚未运行'}</small></span></button><div class="schedule-job-group-body" id="${escapeHTML(id)}" ${open?'':'hidden'}>${g.jobs.map(rowHTML).join('')}</div></div>`;
 }
 function renderScheduleJobList(list,jobs,kind,canRun){
   if(!list)return;
