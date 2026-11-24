@@ -189,11 +189,13 @@ type Runner struct {
 	// personal 执行器 page lists machines by owner.
 	OwnerUserID int64 `json:"ownerUserId,omitempty"`
 	// SharedProjectIDs holds the projects granted use of this machine by its owner.
-	SharedProjectIDs []string   `json:"sharedProjectIds,omitempty"`
-	SessionTokenHash string     `json:"-"`
-	SessionExpiresAt *time.Time `json:"-"`
-	CreatedAt        time.Time  `json:"createdAt"`
-	UpdatedAt        time.Time  `json:"updatedAt"`
+	SharedProjectIDs []string `json:"sharedProjectIds,omitempty"`
+	// LoginModels contains the machine owner's saved account-login catalogs by CLI.
+	LoginModels      map[string][]CLIModel `json:"loginModels,omitempty"`
+	SessionTokenHash string                `json:"-"`
+	SessionExpiresAt *time.Time            `json:"-"`
+	CreatedAt        time.Time             `json:"createdAt"`
+	UpdatedAt        time.Time             `json:"updatedAt"`
 }
 
 // PublicRunner strips credential material before returning runner data to

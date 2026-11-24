@@ -300,6 +300,66 @@ describe("conversation hooks", () => {
     }
   });
 
+  test.each([
+    ["codex", "gpt-5.5", false],
+    ["claude-code", "claude-sonnet-4-6", true],
+  ])("uses the selected runner authentication to choose %s models", async (executor, accountID, saved) => {
+    const original = apiMock.getMockImplementation();
+    const gatewayModel = { id: `${executor}:gateway/model`, engine: executor, efforts: ["low"] };
+    const accountModel = { id: accountID, discoveredReasoningEfforts: ["high"] };
+    const localRunner = {
+      id: "login-machine",
+      ownerUserId: 1,
+      runtimes: [{ provider: executor, authMode: "local" }],
+      loginModels: saved ? { [executor]: [accountModel] } : {},
+    };
+    const keyRunner = {
+      id: "key-machine",
+      ownerUserId: 1,
+      runtimes: [{ provider: executor, authMode: "personal" }],
+      loginModels: { [executor]: [accountModel] },
+    };
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/runners?mine=1") return [localRunner, keyRunner];
+      if (path === "/api/assistant/models") {
+        const catalog = await original(path, options);
+        return { ...catalog, engines: [{ id: executor, configured: true }], models: [gatewayModel] };
+      }
+      if (path === `/api/assistant/models?executor=${executor}`)
+        return { models: [{ id: accountID, efforts: ["high"] }] };
+      return original(path, options);
+    });
+    const view = renderHook(useChat);
+    try {
+      const { result } = view;
+      await waitFor(() => expect(result.current).toMatchObject({ ready: true, machinesReady: true }));
+      act(() => result.current.setExecutor(executor));
+      await waitFor(() => expect(result.current.model).toBe(gatewayModel.id));
+      await act(() => result.current.selectMachine(localRunner.id));
+      const accountModelID = saved ? `${executor}:${accountID}` : accountID;
+      await waitFor(() => expect(result.current.models.map(model => model.id)).toEqual([accountModelID]));
+      expect(result.current.modelDetails.efforts).toEqual(["high"]);
+
+      await act(() => result.current.selectMachine(keyRunner.id));
+      expect(result.current.models).toEqual([gatewayModel]);
+      expect(result.current.modelDetails.efforts).toEqual(["low"]);
+      act(() => result.current.setEffort("low"));
+      await act(() => result.current.selectMachine(localRunner.id));
+      act(() => result.current.setEffort("high"));
+      await act(async () => expect(await result.current.send({ text: "使用账号登录" })).toBe(true));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        executor, model: accountModelID, effort: "high",
+        executionTarget: { pool: "runner", runnerId: localRunner.id },
+      }));
+    } finally {
+      view.unmount();
+      apiMock.mockImplementation(original);
+      localStorage.removeItem("loopforge.assistant.executor");
+      localStorage.removeItem(`loopforge.assistant.effort.${executor}.${accountID}`);
+      localStorage.removeItem(`loopforge.assistant.effort.${executor}.gateway/model`);
+    }
+  });
+
   test("restores the conversation's unsent choices even after choosing a stronger model elsewhere", async () => {
     const original = apiMock.getMockImplementation();
     apiMock.mockImplementation(async (path, options) => {

@@ -192,8 +192,9 @@ func (r *RunnersRepo) PutRunner(v domain.Runner) error {
 		return upsert(r.DB, "runners", values)
 	}
 	// A platform bootstrap can adopt a formerly user-bound machine. Clear
-	// its grant list and project preferences together with the owner change.
+	// its sharing and account settings together with the owner change.
 	values["shared_project_ids"] = nil
+	values["login_model_catalogs"] = nil
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		if err := upsert(tx, "runners", values); err != nil {
 			return err
@@ -256,6 +257,9 @@ func runnerFromRow(row runnerRow) domain.Runner {
 	}
 	if len(row.SharedProjectIDs) > 0 {
 		_ = json.Unmarshal(row.SharedProjectIDs, &v.SharedProjectIDs)
+	}
+	if len(row.LoginModels) > 0 {
+		_ = json.Unmarshal(row.LoginModels, &v.LoginModels)
 	}
 	if row.RunLimit != nil && *row.RunLimit > 0 {
 		v.RunLimit = *row.RunLimit

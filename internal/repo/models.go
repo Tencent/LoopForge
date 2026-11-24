@@ -531,6 +531,7 @@ type runnerRow struct {
 	RunLimit               *int       `gorm:"column:run_limit"`
 	OwnerUserID            *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
 	SharedProjectIDs       []byte     `gorm:"column:shared_project_ids;type:json"`
+	LoginModels            []byte     `gorm:"column:login_model_catalogs;type:json"`
 	SessionTokenHash       string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
 	SessionExpiresAt       *time.Time `gorm:"column:session_expires_at"`
 	Runtimes               []byte     `gorm:"column:runtimes;type:json"`

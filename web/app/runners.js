@@ -427,19 +427,23 @@ function showRunnerRuntimeMenu(trigger,last=false){
 }
 function showRunnerModels(runner,runtime){
   const provider=runtime.provider,local=runnerRuntimeAuthMode(runtime)==='local';
+  const separateCatalog=local&&(provider==='codex'||provider==='claude-code');
   const kind=CREDENTIAL_KINDS.find(item=>item.models?.engine===provider);
   if(!kind)return;
   return afOpenDialog(modal=>{
     $('#confirmTitle').textContent=`${runnerCLILabels[provider]} 模型列表`;
     const keySource=kind.extra?.url?'API Key 和服务地址':kind.extra?'API Key 和网络环境':'API Key';
-    $('#confirmMessage').textContent=local
+    $('#confirmMessage').textContent=separateCatalog
+      ?'用于这台机器的账号登录。清空目录后使用 CLI 自带的模型。'
+      :local
       ?'与个人配置共用模型目录。获取时使用这台机器的账号登录。'
       :`与个人配置共用模型目录。获取时使用个人配置里的 ${keySource}。`;
     const ok=$('#confirmOkBtn'),cancel=$('#confirmCancelBtn'),card=modal.querySelector('.confirm-modal-card');
     const panel=document.createElement('div');
     panel.className='credential-panel runner-model-editor';
     panel.dataset.credentialRow=kind.key;
-    panel.innerHTML=credentialCatalogHTML(kind,credentialUser(),{runnerLogin:local,label:local?'账号登录':'API Key'});
+    const savedModels=separateCatalog?runner.loginModels?.[provider]||[]:undefined;
+    panel.innerHTML=credentialCatalogHTML(kind,credentialUser(),{runnerLogin:local,label:local?'账号登录':'API Key',savedModels});
     modal.querySelector('.confirm-modal-footer').before(panel);
     card.classList.add('runner-model-card');
     const catalog=panel.querySelector('[data-credential-catalog]');
@@ -488,7 +492,15 @@ function showRunnerModels(runner,runtime){
       ok.textContent='保存中…';
       catalog.inert=true;
       try{
-        await saveCredential(kind.key,{models});
+        if(separateCatalog){
+          const updated=await api(`/api/runners/${encodeURIComponent(runner.id)}/models`,{
+            method:'PUT',body:JSON.stringify({provider,models})
+          });
+          state.runners=(state.runners||[]).map(item=>item.id===runner.id?updated:item);
+          $('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
+        }else{
+          await saveCredential(kind.key,{models});
+        }
         toast('模型列表已保存','ok');
         if(panel.isConnected)confirmPromiseResolve?.(true);
       }catch(err){

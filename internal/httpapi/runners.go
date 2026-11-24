@@ -229,6 +229,7 @@ func (h *runnersHandlers) runners(c *gin.Context) {
 		if !signedIn {
 			for i := range list {
 				list[i].SharedProjectIDs = nil
+				list[i].LoginModels = nil
 			}
 		}
 		c.JSON(http.StatusOK, list)
@@ -250,10 +251,14 @@ func (h *runnersHandlers) runners(c *gin.Context) {
 
 func runnerViewForUser(runner domain.Runner, userID int64) domain.Runner {
 	runner = domain.PublicRunner(runner)
-	if runner.OwnerUserID == userID {
+	if userID > 0 && runner.OwnerUserID == userID {
+		for provider, models := range runner.LoginModels {
+			runner.LoginModels[provider] = runnerLoginModelsWithEfforts(provider, models)
+		}
 		return runner
 	}
 	runner.SharedProjectIDs = nil
+	runner.LoginModels = nil
 	runner.Labels = nil
 	for i := range runner.Runtimes {
 		runner.Runtimes[i].BinaryPath = ""
