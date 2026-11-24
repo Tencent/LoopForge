@@ -164,8 +164,8 @@ test('runner management: register, heartbeat, runtime status, run limit, unknown
   assert.equal(beat.ok, true);
   await status('POST', '/api/runners/runtimes', {}, [400]);
   await status('PUT', '/api/runners/runtimes', { runnerId, provider: 'codebuddy' }, [400]);
-  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: 500 }, [400]);
-  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: 2 }, [200, 403]);
+  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: -1 }, [400]);
+  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: 500 }, [200, 403]);
   assert.ok(Array.isArray(await get('/api/runners/tasks')));
   await status('POST', '/api/runners/tasks', {}, [400]);
   await status('POST', `/api/runners/tasks/${MISSING}/cancel`, {}, [200, 404]);

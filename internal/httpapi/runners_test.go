@@ -952,6 +952,11 @@ func TestRunnerRunLimitOnlyOwnerCanSet(t *testing.T) {
 	}
 	poolRunnerID, _ := registerTestRunner(t, h)
 	path := "/api/runners/" + registered.RunnerID + "/run-limit"
+	rec = requestWithHeaders(t, h, http.MethodGet, "/api/runners?mine=1", nil, userAuth)
+	var mine []domain.Runner
+	if err := json.Unmarshal(rec.Body.Bytes(), &mine); rec.Code != http.StatusOK || err != nil || len(mine) != 1 || mine[0].RunLimit != 10 {
+		t.Fatalf("new machine default: %d %s", rec.Code, rec.Body.String())
+	}
 
 	if rec = requestWithHeaders(t, h, http.MethodPut, path, map[string]any{"runLimit": 3}, nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous set status = %d, want 401", rec.Code)
@@ -959,21 +964,20 @@ func TestRunnerRunLimitOnlyOwnerCanSet(t *testing.T) {
 	if rec = requestWithHeaders(t, h, http.MethodPut, "/api/runners/"+poolRunnerID+"/run-limit", map[string]any{"runLimit": 3}, userAuth); rec.Code != http.StatusForbidden {
 		t.Fatalf("set someone else's machine status = %d, want 403", rec.Code)
 	}
-	for _, body := range []map[string]any{{}, {"runLimit": -1}, {"runLimit": 101}} {
+	for _, body := range []map[string]any{{}, {"runLimit": -1}, {"runLimit": 1.5}} {
 		if rec = requestWithHeaders(t, h, http.MethodPut, path, body, userAuth); rec.Code != http.StatusBadRequest {
 			t.Fatalf("invalid %v status = %d, want 400", body, rec.Code)
 		}
 	}
-	rec = requestWithHeaders(t, h, http.MethodPut, path, map[string]any{"runLimit": 3}, userAuth)
+	rec = requestWithHeaders(t, h, http.MethodPut, path, map[string]any{"runLimit": 250}, userAuth)
 	var updated domain.Runner
-	if err := json.Unmarshal(rec.Body.Bytes(), &updated); rec.Code != http.StatusOK || err != nil || updated.RunLimit != 3 || updated.SessionTokenHash != "" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); rec.Code != http.StatusOK || err != nil || updated.RunLimit != 250 || updated.SessionTokenHash != "" {
 		t.Fatalf("set own machine: %d %s", rec.Code, rec.Body.String())
 	}
 	// A heartbeat from the machine must not reset the owner's limit.
 	requestWithHeaders(t, h, http.MethodPost, "/api/runners/heartbeat", map[string]any{}, map[string]string{"Authorization": "Bearer " + registered.SessionToken})
 	rec = requestWithHeaders(t, h, http.MethodGet, "/api/runners?mine=1", nil, userAuth)
-	var mine []domain.Runner
-	if err := json.Unmarshal(rec.Body.Bytes(), &mine); err != nil || len(mine) != 1 || mine[0].RunLimit != 3 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &mine); err != nil || len(mine) != 1 || mine[0].RunLimit != 250 {
 		t.Fatalf("limit after heartbeat: %s", rec.Body.String())
 	}
 	rec = requestWithHeaders(t, h, http.MethodPut, path, map[string]any{"runLimit": 0}, userAuth)

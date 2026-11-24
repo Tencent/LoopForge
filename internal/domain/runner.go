@@ -24,6 +24,9 @@ const (
 	RunnerStatusOffline = "offline"
 )
 
+// DefaultRunnerRunLimit is the initial SOP run limit for a newly bound machine.
+const DefaultRunnerRunLimit = 10
+
 // RunnerTask states. LEASED sits between QUEUED and RUNNING so a claim that
 // never starts is still recoverable through lease expiry.
 const (

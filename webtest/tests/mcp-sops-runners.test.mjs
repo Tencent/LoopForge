@@ -96,10 +96,10 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   t.after(app.close);
   const runner = {
     id: 'runner-local', name: 'Laptop', ownerUserId: 1, status: 'online', os: 'darwin', arch: 'arm64',
-    runLimit: 2, lastSeenAt: new Date().toISOString(),
+    runLimit: 10, lastSeenAt: new Date().toISOString(),
     runtimes: [{ provider: 'codex', status: 'online', authMode: 'local', version: '1.0' }],
   };
-  app.router.put('/api/runners/runner-local/run-limit', { ...runner, runLimit: 5 });
+  app.router.put('/api/runners/runner-local/run-limit', { ...runner, runLimit: 250 });
   app.router.put('/api/runners/default', { message: 'default updated' });
   app.router.put('/api/runners/runtimes', { ok: true });
   app.router.delete('/api/runners/runner-local', { ok: true });
@@ -115,12 +115,13 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   const list = app.document.querySelector('#runnersList');
   assert.match(list.textContent, /Laptop/);
   const limit = list.querySelector('[data-runner-run-limit]');
-  assert.equal(limit.value, '2');
-  assert.match(app.evaluate(`runnerConcurrencyLabel(state.runners[0])`), /最多同时运行 2 条 SOP/);
-  limit.value = '5';
+  assert.equal(limit.value, '10');
+  assert.equal(limit.hasAttribute('max'), false);
+  assert.match(app.evaluate(`runnerConcurrencyLabel(state.runners[0])`), /最多同时运行 10 条 SOP/);
+  limit.value = '250';
   limit.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   await settle(6);
-  assert.deepEqual(app.router.calls.find(c => c.path.endsWith('/run-limit')).body, { runLimit: 5 });
+  assert.deepEqual(app.router.calls.find(c => c.path.endsWith('/run-limit')).body, { runLimit: 250 });
   await app.evaluate(`setDefaultRunner('runner-local');setRunnerRuntimeAuth('runner-local','codex','personal')`);
   await settle(6);
   assert.ok(app.router.calls.some(c => c.path === '/api/runners/default' && c.body.runnerId === 'runner-local'));

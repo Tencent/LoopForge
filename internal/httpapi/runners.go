@@ -376,7 +376,7 @@ func (h *runnersHandlers) runnerRemove(c *gin.Context) {
 }
 
 // runnerRunLimitSet sets how many top-level SOP runs one of the caller's own
-// machines may hold at once. 0 clears the limit (unlimited, the default).
+// machines may hold at once. 0 sets unlimited mode.
 // 路由: g.PUT("/api/runners/:id/run-limit", h.runnerRunLimitSet)
 func (h *runnersHandlers) runnerRunLimitSet(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
@@ -390,8 +390,8 @@ func (h *runnersHandlers) runnerRunLimitSet(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	if input.RunLimit == nil || *input.RunLimit < 0 || *input.RunLimit > repo.MaxRunnerRunLimit {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("runLimit 需为 0-%d 的整数，0 表示不限制", repo.MaxRunnerRunLimit)})
+	if input.RunLimit == nil || *input.RunLimit < 0 {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "runLimit 需为非负整数，0 表示不限制"})
 		return
 	}
 	runner, found := h.repo.Runner(strings.TrimSpace(c.Param("id")))

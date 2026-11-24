@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -189,7 +191,9 @@ func (r *RunnersRepo) PutRunner(v domain.Runner) error {
 		"last_seen_at": v.LastSeenAt, "created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
 	}
 	if v.OwnerUserID > 0 {
-		return upsert(r.DB, "runners", values)
+		updateCols := slices.Sorted(maps.Keys(values))
+		values["run_limit"] = domain.DefaultRunnerRunLimit
+		return upsertColumns(r.DB, "runners", values, updateCols)
 	}
 	// A platform bootstrap can adopt a formerly user-bound machine. Clear
 	// its sharing and account settings together with the owner change.
@@ -203,16 +207,13 @@ func (r *RunnersRepo) PutRunner(v domain.Runner) error {
 	})
 }
 
-// MaxRunnerRunLimit bounds the user-configurable per-machine run limit.
-const MaxRunnerRunLimit = 100
-
-// SetRunnerRunLimit is the only writer of run_limit; PutRunner (register and
-// heartbeat) deliberately omits the column so a reconnect never resets it.
+// SetRunnerRunLimit updates the owner-configured limit. PutRunner sets the
+// initial limit on insert, and re-registration preserves the stored value.
 // It takes only this machine's admission bucket so a limit change cannot
 // interleave with an admission decision on the same machine.
 func (r *RunnersRepo) SetRunnerRunLimit(id string, limit int) error {
-	if limit < 0 || limit > MaxRunnerRunLimit {
-		return fmt.Errorf("最多同时运行条数需在 0-%d 之间（0 表示不限制）", MaxRunnerRunLimit)
+	if limit < 0 {
+		return fmt.Errorf("最多同时运行条数需为非负整数（0 表示不限制）")
 	}
 	var value any
 	if limit > 0 {
