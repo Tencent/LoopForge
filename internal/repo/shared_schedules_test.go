@@ -126,3 +126,21 @@ func TestSharedScheduleImmutableVersions(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedScheduleAssetReferencesRejectsMalformedSubscription(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.DB.Create(&scheduleJobRow{
+		ID:      "broken-schedule-subscription",
+		Name:    "Broken subscription",
+		Payload: []byte("{"),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SharedScheduleAssetReferences("skill", "missing"); err == nil {
+		t.Fatal("malformed subscription was silently ignored")
+	}
+}

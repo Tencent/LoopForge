@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"agentflow/internal/domain"
@@ -13,6 +15,14 @@ import (
 )
 
 var ErrSharedScheduleVersionConflict = errors.New("共享任务已有新版本，请刷新后再发布")
+
+// SharedScheduleAssetReference identifies a published version that still
+// protects one of its direct assets from being unpublished or deleted.
+type SharedScheduleAssetReference struct {
+	SharedTaskID string `json:"sharedTaskId"`
+	Name         string `json:"name"`
+	Version      int    `json:"version"`
+}
 
 func (r *CatalogRepo) SharedScheduleVersions(id string) ([]domain.SharedScheduleVersion, error) {
 	var rows []sharedScheduleVersionRow
@@ -53,6 +63,72 @@ func (r *CatalogRepo) SharedScheduleTasks() ([]domain.SharedScheduleVersion, err
 	}
 	return out, nil
 }
+
+// SharedScheduleAssetReferences returns the effective direct references for
+// an asset. Every shared task's latest version is effective, as is each older
+// version still pinned by a subscription job. Nested dependencies remain
+// governed by the referenced asset's own sharing and resolution logic.
+func (r *CatalogRepo) SharedScheduleAssetReferences(kind, id string) ([]SharedScheduleAssetReference, error) {
+	latest, err := r.SharedScheduleTasks()
+	if err != nil {
+		return nil, fmt.Errorf("读取共享任务最新版本失败: %w", err)
+	}
+
+	versions := make(map[string]domain.SharedScheduleVersion, len(latest))
+	versionKey := func(taskID string, version int) string {
+		return taskID + "\x00" + fmt.Sprintf("%d", version)
+	}
+	for _, item := range latest {
+		versions[versionKey(item.ID, item.Version)] = item
+	}
+
+	var rows []scheduleJobRow
+	if err := r.DB.Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("读取共享任务订阅失败: %w", err)
+	}
+	for _, row := range rows {
+		var job domain.ScheduleJob
+		if err := json.Unmarshal(row.Payload, &job); err != nil {
+			return nil, fmt.Errorf("解析定时任务 %q 失败: %w", row.ID, err)
+		}
+		taskID := strings.TrimSpace(job.SharedTaskID)
+		if taskID == "" || job.SharedTaskVersion < 1 {
+			continue
+		}
+		key := versionKey(taskID, job.SharedTaskVersion)
+		if _, ok := versions[key]; ok {
+			continue
+		}
+		item, err := r.SharedScheduleVersion(taskID, job.SharedTaskVersion)
+		if err != nil {
+			return nil, fmt.Errorf("读取订阅任务 %q 绑定的共享版本 %s v%d 失败: %w", row.Name, taskID, job.SharedTaskVersion, err)
+		}
+		versions[key] = item
+	}
+
+	out := make([]SharedScheduleAssetReference, 0)
+	for _, item := range versions {
+		if !item.HasAsset(kind, id) {
+			continue
+		}
+		out = append(out, SharedScheduleAssetReference{
+			SharedTaskID: item.ID,
+			Name:         item.Name,
+			Version:      item.Version,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		if out[i].SharedTaskID != out[j].SharedTaskID {
+			return out[i].SharedTaskID < out[j].SharedTaskID
+		}
+		return out[i].Version < out[j].Version
+	})
+	return out, nil
+}
+
 func (r *CatalogRepo) PublishSharedSchedule(jobID, projectID string, v domain.SharedScheduleVersion, baseVersion int) (domain.SharedScheduleVersion, error) {
 	if err := v.Validate(); err != nil {
 		return v, err
