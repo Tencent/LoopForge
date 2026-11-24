@@ -37,7 +37,7 @@ test('Git HTTPS credentials are managed per host with write-only tokens and veri
   const dialog = app.document.querySelector('#gitHTTPCredentialDialog');
   const form = dialog.querySelector('form');
   assert.equal(form.elements.exposeToWorkspace, undefined, 'workspace credentials are always available');
-  assert.match(dialog.textContent, /无法从 Token 推导/);
+  assert.match(dialog.textContent, /Git 认证用户名（选填）/);
   assert.equal(dialog.querySelectorAll('.git-ssh-key-row').length, 2);
   assert.equal(dialog.querySelector('[data-http-cred-edit="managed-internal"]'), null, 'the managed credential is read-only');
   assert.equal(dialog.querySelector('[data-http-cred-delete="managed-internal"]'), null);

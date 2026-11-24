@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"net/netip"
 	"strings"
 	"time"
 )
@@ -144,8 +143,7 @@ func (c GitHTTPCredentialSecret) APIAuthHeader() (string, string) {
 // only and never serializes the token.
 type GitHTTPCredentialSecret struct {
 	GitHTTPCredential
-	Token             string       `json:"-"`
-	ApprovedAddresses []netip.Addr `json:"-"`
+	Token string `json:"-"`
 	// ExpiresAt is set for managed OAuth tokens; zero means no known expiry.
 	ExpiresAt time.Time `json:"-"`
 }
@@ -155,9 +153,8 @@ type GitHTTPCredentialSecret struct {
 // Queued tasks and public management responses always remove these values.
 type GitHTTPExecutionCredential struct {
 	GitHTTPCredential
-	Token             string       `json:"token"`
-	ExpiresAt         time.Time    `json:"expiresAt,omitempty"`
-	ApprovedAddresses []netip.Addr `json:"approvedAddresses,omitempty"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
 }
 
 // NormalizeGitPlatform reports ok=false for a platform outside the three kinds.

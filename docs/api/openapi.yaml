@@ -1079,7 +1079,7 @@ paths:
       summary: List plaintext Git host authorizations
       responses:
         "200":
-          description: Host authorizations and approved addresses
+          description: Authorized hosts and ports
           content:
             application/json:
               schema: {type: array, items: {$ref: "#/components/schemas/PlatformGitHTTPHost"}}
@@ -1087,7 +1087,7 @@ paths:
     post:
       tags: [Repositories]
       operationId: createPlatformGitHTTPHost
-      summary: Authorize a plaintext Git host and its confirmed addresses
+      summary: Authorize a plaintext Git host and port
       requestBody:
         required: true
         content:
@@ -1099,33 +1099,9 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/PlatformGitHTTPHost"}
-        "400": {description: Invalid host or addresses}
+        "400": {description: Invalid HTTP host}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409": {description: The HTTP host and port are already authorized}
-  /api/platform/git-http-hosts/preview:
-    post:
-      tags: [Repositories]
-      operationId: previewPlatformGitHTTPHost
-      summary: Review assigned or resolved IP addresses for a plaintext Git host
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [host]
-              properties:
-                host: {type: string, example: "http://git.example.org:8080"}
-                addresses: {type: array, minItems: 1, items: {type: string}}
-      responses:
-        "200":
-          description: Normalized host and IP addresses
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/PlatformGitHTTPHost"}
-        "400": {description: Invalid host or supplied addresses}
-        "403": {$ref: "#/components/responses/Forbidden"}
-        "502": {description: No valid addresses could be resolved}
   /api/platform/git-http-hosts/{host}:
     parameters:
       - {name: host, in: path, required: true, schema: {type: string}, example: "git.example.org:8080"}
@@ -1134,29 +1110,6 @@ paths:
         required: true
         schema: {type: string}
         description: Quote the revision returned when the authorization was read or saved.
-    put:
-      tags: [Repositories]
-      operationId: updatePlatformGitHTTPHost
-      summary: Update the approved addresses of a plaintext Git host
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [addresses]
-              properties:
-                addresses: {type: array, minItems: 1, items: {type: string}}
-      responses:
-        "200":
-          description: Updated authorization
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/PlatformGitHTTPHost"}
-        "400": {description: Invalid host, addresses, or revision}
-        "403": {$ref: "#/components/responses/Forbidden"}
-        "412": {description: The registration has changed or been removed}
-        "428": {description: The current registration revision is required}
     delete:
       tags: [Repositories]
       operationId: deletePlatformGitHTTPHost
@@ -4608,15 +4561,13 @@ components:
         platform: {type: string, enum: [github, gitlab, other]}
     PlatformGitHTTPHost:
       type: object
-      required: [host, addresses]
+      required: [host]
       properties:
         host:
           type: string
           example: "10.0.0.5:8080"
           description: Plaintext Git hostname or IP address. The default port is 80.
-        addresses: {type: array, minItems: 1, items: {type: string}}
-        platform: {type: string, enum: [other], readOnly: true}
-        revision: {type: string, readOnly: true}
+        revision: {type: string, readOnly: true, description: Opaque revision for conditional removal.}
     PlatformGitHTTPSHost:
       allOf:
         - $ref: "#/components/schemas/GitHTTPSHostChoice"

@@ -116,11 +116,11 @@ func (r *UsersRepo) SaveGitHTTPCredential(userID int64, existingID string, input
 	host, httpHost := endpoint.Scope(), ""
 	id := gitHTTPCredentialID(host)
 	if endpoint.Scheme == "http" {
-		approved, err := r.gitHTTPHosts.PlatformGitHTTPAddresses(context.Background(), host)
+		authorized, err := r.gitHTTPHosts.PlatformGitHTTPHostAuthorized(context.Background(), endpoint.Authority)
 		if err != nil {
 			return err
 		}
-		if len(approved) == 0 {
+		if !authorized {
 			return ErrGitHTTPHostUnauthorized
 		}
 		httpHost, host = host, ""
@@ -189,11 +189,10 @@ func (r *UsersRepo) GitHTTPCredentialForHost(ctx context.Context, userID int64, 
 	secret := row.secret()
 	if row.ID != "" && secret.Host == host && secret.Token != "" {
 		if endpoint.Scheme == "http" {
-			approved, err := r.gitHTTPHosts.PlatformGitHTTPAddresses(ctx, host)
-			if err != nil || len(approved) == 0 {
+			authorized, err := r.gitHTTPHosts.PlatformGitHTTPHostAuthorized(ctx, endpoint.Authority)
+			if err != nil || !authorized {
 				return domain.GitHTTPCredentialSecret{}, false
 			}
-			secret.ApprovedAddresses = approved
 		}
 		return secret, true
 	}
@@ -214,7 +213,7 @@ func (r *UsersRepo) GitHTTPCredentialSecrets(ctx context.Context, userID int64) 
 	for _, credential := range credentials {
 		if secret, ok := r.GitHTTPCredentialForHost(ctx, userID, credential.Host); ok {
 			out[credential.Host] = domain.GitHTTPExecutionCredential{
-				GitHTTPCredential: secret.GitHTTPCredential, Token: secret.Token, ExpiresAt: secret.ExpiresAt, ApprovedAddresses: secret.ApprovedAddresses,
+				GitHTTPCredential: secret.GitHTTPCredential, Token: secret.Token, ExpiresAt: secret.ExpiresAt,
 			}
 		}
 	}
@@ -257,6 +256,12 @@ func (r *UsersRepo) GitHTTPWorkspaceHosts(userID int64) map[string]string {
 	}
 	hosts := make(map[string]string, len(creds))
 	for _, cred := range creds {
+		if authority, plain := strings.CutPrefix(cred.Host, "http://"); plain {
+			authorized, err := r.gitHTTPHosts.PlatformGitHTTPHostAuthorized(context.Background(), authority)
+			if err != nil || !authorized {
+				continue
+			}
+		}
 		hosts[cred.Host] = cred.Platform
 	}
 	return hosts

@@ -50,8 +50,8 @@ function openGitHTTPCredentials(options = {}) {
         <small id="gitHTTPCredentialPlatformHint">GitHub 和 GitLab 支持 gh / glab 认证和 PR/MR 合并状态同步。其他平台也可由 Agent 创建 PR/MR，合并状态请到托管平台查看。</small>
       </label>
       ${credentialFieldHTML({label:'名称', name:'name', type:'text', placeholder:'例如 公司 GitLab', hint:null})}
-      ${credentialFieldHTML({label:'Git 认证用户名', name:'username', type:'text', placeholder:'x-access-token', hint:'按 Git 服务器要求填写认证账号，通常无法从 Token 推导。'})}
       ${credentialFieldHTML({label:'个人访问令牌', name:'token', placeholder:'粘贴个人访问令牌', hint:'保存后不再显示；编辑时留空保留现有令牌。'})}
+      ${credentialFieldHTML({label:'Git 认证用户名（选填）', name:'username', type:'text', placeholder:'x-access-token', hint:'Git 服务器要求指定用户名时填写。'})}
       <footer class="git-ssh-form-actions">
         <button type="button" class="credential-btn secondary" data-http-cred-cancel>取消</button>
         <button type="submit" class="credential-btn primary">保存令牌</button>

@@ -135,9 +135,8 @@ func (h *usersHandlers) gitHTTPCredentialFromInput(ctx context.Context, userID i
 	}, nil
 }
 
-// verifyGitHTTPCredential checks a saved credential against its platform's
-// "current user" endpoint. It always answers 200 with a structured result
-// once the credential exists.
+// verifyGitHTTPCredential checks the provider account or read access to a
+// plaintext Git repository.
 func (h *usersHandlers) verifyGitHTTPCredential(c *gin.Context) {
 	id, ok := h.gitHTTPCredentialOwner(c)
 	if !ok {
@@ -172,15 +171,12 @@ func (h *usersHandlers) verifyPlainGitRepository(ctx context.Context, cred domai
 	if !ok || endpoint.Scope() != cred.Host || endpoint.Scheme != "http" {
 		return gitTokenVerifyResult{Error: "仓库地址必须与此令牌的 HTTP 主机和端口一致"}
 	}
-	approved, err := h.repo.PlatformGitHTTPAddresses(ctx, cred.Host)
+	authorized, err := h.repo.PlatformGitHTTPHostAuthorized(ctx, endpoint.Authority)
 	if err != nil {
 		return gitTokenVerifyResult{Error: "暂时无法读取 Git 主机授权，请稍后重试"}
 	}
-	if len(approved) == 0 {
+	if !authorized {
 		return gitTokenVerifyResult{Error: repo.ErrGitHTTPHostUnauthorized.Error()}
-	}
-	if !gitwork.SupportsHTTPAddressPinning() {
-		return gitTokenVerifyResult{Error: "平台上的 Git 需要支持 http.curloptResolve"}
 	}
 	workspace, err := os.MkdirTemp("", "loopforge-git-access-")
 	if err != nil {
@@ -188,7 +184,7 @@ func (h *usersHandlers) verifyPlainGitRepository(ctx context.Context, cred domai
 	}
 	defer os.RemoveAll(workspace)
 	ctx = gitwork.WithHTTPCredentials(ctx, map[string]gitwork.HTTPCredential{
-		cred.Host: {Username: cred.GitUsername(), Token: cred.Token, ApprovedAddresses: approved},
+		cred.Host: {Username: cred.GitUsername(), Token: cred.Token},
 	})
 	if _, err := gitwork.Run(ctx, workspace, "ls-remote", "--", remote); err != nil {
 		return gitTokenVerifyResult{Error: "无法读取仓库，请检查仓库地址、HTTP 主机授权与令牌的读取权限"}

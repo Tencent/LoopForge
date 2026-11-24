@@ -2,7 +2,6 @@ package gitwork
 
 import (
 	"context"
-	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -13,9 +12,8 @@ import (
 // HTTPCredential authenticates exactly one HTTP(S) endpoint. The map containing it
 // belongs to a live execution; it is never written to a checkout or git config.
 type HTTPCredential struct {
-	Username          string
-	Token             string
-	ApprovedAddresses []netip.Addr
+	Username string
+	Token    string
 }
 
 type httpCredentialsKey struct{}

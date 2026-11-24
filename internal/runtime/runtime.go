@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"io"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -72,9 +71,6 @@ type RunCredentials struct {
 	// GitHTTPHosts maps each HTTP(S) endpoint the requester exposes to a workspace
 	// to its platform. It holds no tokens; the helper asks for them per host.
 	GitHTTPHosts map[string]string `json:",omitempty"`
-	// GitHTTPApprovedAddresses pins plaintext endpoints in conversation Git.
-	// This contains only addresses and travels with the live turn.
-	GitHTTPApprovedAddresses map[string][]netip.Addr `json:",omitempty"`
 	// GitHTTPCredentials travels only on authenticated execution dispatches.
 	// SOP commands fetch a matching, exposed credential from an ephemeral relay.
 	GitHTTPCredentials map[string]domain.GitHTTPExecutionCredential `json:",omitempty"`

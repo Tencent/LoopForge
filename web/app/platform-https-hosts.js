@@ -1,30 +1,25 @@
-function platformHTTPHostTrustHTML(protocol) {
-  const scheme = protocol.toUpperCase();
-  const plain = protocol === 'http';
+const platformHTTPSHostsEndpoint = '/api/platform/git-https-hosts';
+
+function platformHTTPSHostTrustHTML() {
   return `
-    <section class="platform-admin-main-card" id="platform${scheme}HostTrustCard">
+    <section class="platform-admin-main-card" id="platformHTTPSHostTrustCard">
       <div class="platform-admin-head">
         <div class="platform-admin-head-meta">
-          <h2>${lfT(`Git ${scheme} 主机授权`, `Git ${scheme} host authorization`)}</h2>
-          <p>${plain
-            ? lfT('HTTP 会明文传输 Git 令牌。请仅授权可信网络中的仓库主机。', 'HTTP sends Git tokens in cleartext. Authorize hosts on trusted networks only.')
-            : lfT('授权平台访问自建 Git 实例，用于校验令牌和跟踪合并请求。', 'Authorize access to self-hosted Git instances for token verification and merge request tracking.')}</p>
+          <h2>${lfT('Git HTTPS 主机授权', 'Git HTTPS host authorization')}</h2>
+          <p>${lfT('授权平台访问自建 Git 实例，用于校验令牌和跟踪合并请求。', 'Authorize access to self-hosted Git instances for token verification and merge request tracking.')}</p>
         </div>
-        <button type="button" class="button primary" data-https-host-add>${lfT(`添加 ${scheme} 主机`, `Add ${scheme} host`)}</button>
+        <button type="button" class="button primary" data-https-host-add>${lfT('添加 HTTPS 主机', 'Add HTTPS host')}</button>
       </div>
       <form class="platform-shared-key-form platform-https-host-form" autocomplete="off" hidden>
         <label class="platform-field">
-          <span>${lfT(`${scheme} 主机`, `${scheme} host`)}</span>
-          <input name="host" placeholder="${plain ? 'http://git.example.org:8080' : 'gitlab.example.org:8443'}" maxlength="${plain ? 267 : 260}" required spellcheck="false">
-          <small class="platform-field-hint">${plain ? lfT(
-            '填写域名、IPv4 或 IPv6，默认端口为 80。IPv6 带端口用 [fd00::2]:8080。',
-            'Enter a hostname, IPv4 or IPv6 address. Port 80 is the default. Use [fd00::2]:8080 for IPv6 with a port.',
-          ) : lfT(
+          <span>${lfT('HTTPS 主机', 'HTTPS host')}</span>
+          <input name="host" placeholder="gitlab.example.org:8443" maxlength="260" required spellcheck="false">
+          <small class="platform-field-hint">${lfT(
             '填写域名或 IPv6。默认端口为 443，IPv6 带端口用 [fd00::2]:8443。IPv4 服务器请填域名，在「手动编辑地址」里填 IPv4。',
             'Enter a hostname or IPv6 address. Port 443 is the default. Use [fd00::2]:8443 for IPv6 with a port. For an IPv4 server, enter its hostname and put the IP under Edit addresses manually.',
           )}</small>
         </label>
-        <label class="platform-field"${plain ? ' hidden' : ''}>
+        <label class="platform-field">
           <span>${lfT('托管平台', 'Git provider')}</span>
           <select name="platform">
             ${GIT_HTTP_PLATFORMS.map(([value, label]) => `<option value="${value}">${escapeHTML(label)}</option>`).join('')}
@@ -48,11 +43,8 @@ function platformHTTPHostTrustHTML(protocol) {
     </section>`;
 }
 
-async function loadPlatformHTTPHosts(host, protocol) {
-  const scheme = protocol.toUpperCase();
-  const plain = protocol === 'http';
-  const endpoint = `/api/platform/git-${protocol}-hosts`;
-  const card = host.querySelector(`#platform${scheme}HostTrustCard`);
+async function loadPlatformHTTPSHosts(host) {
+  const card = host.querySelector('#platformHTTPSHostTrustCard');
   if (!card) return;
   const form = card.querySelector('form');
   const add = card.querySelector('[data-https-host-add]');
@@ -65,13 +57,12 @@ async function loadPlatformHTTPHosts(host, protocol) {
   let entries = [];
   let editing = null;
   let busy = false;
-  const displayHost = authority => plain ? `http://${authority}` : authority;
 
   function showForm(entry) {
     editing = entry;
     hostField.value = entry?.host || '';
     hostField.readOnly = !!entry;
-    platformField.value = entry?.platform || (plain ? 'other' : 'gitlab');
+    platformField.value = entry?.platform || 'gitlab';
     addressesField.value = entry?.addresses.join('\n') || '';
     manualDetails.open = !!entry;
     form.hidden = false;
@@ -90,19 +81,19 @@ async function loadPlatformHTTPHosts(host, protocol) {
     list.innerHTML = entries.length ? entries.map((entry, index) => `
       <div class="platform-admin-row" data-git-host-entry>
         <div class="platform-admin-info platform-ssh-host-info" data-i18n-skip>
-          <strong>${escapeHTML(displayHost(entry.host))}</strong>
+          <strong>${escapeHTML(entry.host)}</strong>
           ${entry.addresses.map(address => `<code>${escapeHTML(address)}</code>`).join('')}
         </div>
         <div class="platform-admin-actions">
           <button type="button" class="button ghost small" data-https-host-edit="${index}">${lfT('更新授权', 'Update authorization')}</button>
           <button type="button" class="button ghost small danger" data-https-host-remove="${index}">${lfT('撤销授权', 'Revoke')}</button>
         </div>
-      </div>`).join('') : `<p class="prop-hint">${lfT(`尚未授权 Git ${scheme} 主机。`, `No Git ${scheme} hosts are authorized.`)}</p>`;
+      </div>`).join('') : `<p class="prop-hint">${lfT('尚未授权 Git HTTPS 主机。', 'No Git HTTPS hosts are authorized.')}</p>`;
     setPlatformTabCount(host, 'gitHostTrust', host.querySelectorAll('[data-git-host-entry]').length);
   }
 
   async function refresh() {
-    const items = await api(endpoint, {silent:true});
+    const items = await api(platformHTTPSHostsEndpoint, {silent:true});
     entries = Array.isArray(items) ? items : [];
     render();
   }
@@ -114,7 +105,7 @@ async function loadPlatformHTTPHosts(host, protocol) {
       await action();
     } catch (error) {
       toast(error.message, 'err');
-      if (error.code === `${protocol}_host_trust_changed`) {
+      if (error.code === 'https_host_trust_changed') {
         hideForm();
         try {
           await refresh();
@@ -139,9 +130,9 @@ async function loadPlatformHTTPHosts(host, protocol) {
       input.addresses = addressesField.value.split(/\s+/).filter(Boolean);
     }
     return change(async () => {
-      const preview = await api(`${endpoint}/preview`, {method:'POST', body:JSON.stringify(input)});
+      const preview = await api(`${platformHTTPSHostsEndpoint}/preview`, {method:'POST', body:JSON.stringify(input)});
       if (!card.isConnected) return;
-      const review = [displayHost(preview.host), preview.addresses.join('\n')];
+      const review = [preview.host, preview.addresses.join('\n')];
       if (previous) {
         const added = preview.addresses.filter(address => !previous.addresses.includes(address));
         const removed = previous.addresses.filter(address => !preview.addresses.includes(address));
@@ -150,21 +141,21 @@ async function loadPlatformHTTPHosts(host, protocol) {
       }
       review.push(lfT('核对以上地址属于该 Git 实例。平台仅连接已确认的地址。', 'Verify that these addresses belong to the Git instance. The platform will connect only to approved addresses.'));
       const confirmed = await afConfirm({
-        title:lfT(`确认 Git ${scheme} 主机授权`, `Confirm Git ${scheme} host authorization`),
+        title:lfT('确认 Git HTTPS 主机授权', 'Confirm Git HTTPS host authorization'),
         message:review.join('\n\n'),
         confirmText:lfT('确认授权', 'Authorize host'),
       });
       if (!confirmed || !card.isConnected) return;
-      const target = previous ? `${endpoint}/${encodeURIComponent(previous.host)}` : endpoint;
+      const endpoint = previous ? `${platformHTTPSHostsEndpoint}/${encodeURIComponent(previous.host)}` : platformHTTPSHostsEndpoint;
       const headers = previous ? {'Content-Type':'application/json', 'If-Match':JSON.stringify(previous.revision)} : undefined;
-      const entry = await api(target, {
+      const entry = await api(endpoint, {
         method:previous ? 'PUT' : 'POST', headers,
         body:JSON.stringify({host:preview.host, platform:preview.platform, addresses:preview.addresses}),
       });
       entries = [...entries.filter(item => item.host !== entry.host), entry].sort((a, b) => a.host.localeCompare(b.host));
       hideForm();
       render();
-      toast(lfT(`已保存 ${scheme} 主机授权`, `${scheme} host authorization saved`), 'ok');
+      toast(lfT('已保存 HTTPS 主机授权', 'HTTPS host authorization saved'), 'ok');
     });
   };
   list.onclick = event => {
@@ -176,8 +167,127 @@ async function loadPlatformHTTPHosts(host, protocol) {
     const entry = entries[Number(httpsHostRemove)];
     return change(async () => {
       if (!await afConfirm({
-        title:lfT(`撤销 ${scheme} 主机授权`, `Revoke ${scheme} host authorization`),
-        message:displayHost(entry.host),
+        title:lfT('撤销 HTTPS 主机授权', 'Revoke HTTPS host authorization'),
+        message:entry.host,
+        confirmText:lfT('撤销授权', 'Revoke'),
+      }) || !card.isConnected) return;
+      await api(`${platformHTTPSHostsEndpoint}/${encodeURIComponent(entry.host)}`, {
+        method:'DELETE',
+        headers:{'If-Match':JSON.stringify(entry.revision)},
+      });
+      entries = entries.filter(item => item.host !== entry.host);
+      render();
+      toast(lfT('已撤销 HTTPS 主机授权', 'HTTPS host authorization revoked'), 'ok');
+    });
+  };
+  try {
+    await refresh();
+  } catch (error) {
+    toast(error.message, 'err');
+  }
+}
+
+function platformHTTPHostTrustHTML() {
+  return `
+    <section class="platform-admin-main-card" id="platformHTTPHostTrustCard">
+      <div class="platform-admin-head">
+        <div class="platform-admin-head-meta">
+          <h2>${lfT('Git HTTP 主机授权', 'Git HTTP host authorization')}</h2>
+          <p>${lfT('HTTP 会明文传输 Git 令牌。', 'HTTP sends Git tokens in cleartext.')}</p>
+        </div>
+        <button type="button" class="button primary" data-http-host-add>${lfT('添加 HTTP 主机', 'Add HTTP host')}</button>
+      </div>
+      <form class="platform-shared-key-form" autocomplete="off" hidden>
+        <label class="platform-field">
+          <span>${lfT('HTTP 实例地址', 'HTTP instance address')}</span>
+          <input name="host" placeholder="http://git.example.org:8080" maxlength="267" required spellcheck="false">
+          <small class="platform-field-hint">${lfT('填写域名或 IP，可附带端口。IPv6 带端口时用 [fd00::2]:8080。', 'Enter a hostname or IP with an optional port. Use [fd00::2]:8080 for IPv6 with a port.')}</small>
+        </label>
+        <div class="platform-shared-key-actions">
+          <button type="button" class="button ghost" data-http-host-cancel>${lfT('取消', 'Cancel')}</button>
+          <button type="submit" class="button primary">${lfT('授权', 'Authorize')}</button>
+        </div>
+      </form>
+      <div class="platform-admin-list" data-http-host-list aria-live="polite"></div>
+    </section>`;
+}
+
+async function loadPlatformHTTPHosts(host) {
+  const card = host.querySelector('#platformHTTPHostTrustCard');
+  if (!card) return;
+  const endpoint = '/api/platform/git-http-hosts';
+  const form = card.querySelector('form');
+  const hostField = form.elements.namedItem('host');
+  const submit = form.querySelector('button[type="submit"]');
+  const add = card.querySelector('[data-http-host-add]');
+  const list = card.querySelector('[data-http-host-list]');
+  add.disabled = true;
+  let entries = [];
+  let busy = false;
+
+  function setFormOpen(open) {
+    form.hidden = !open;
+    add.hidden = open;
+    if (!open) form.reset();
+    (open ? hostField : add).focus();
+  }
+
+  function render() {
+    list.innerHTML = entries.length ? entries.map((entry, index) => `
+      <div class="platform-admin-row" data-git-host-entry>
+        <div class="platform-admin-info" data-i18n-skip><strong>http://${escapeHTML(entry.host)}</strong></div>
+        <div class="platform-admin-actions">
+          <button type="button" class="button ghost small danger" data-http-host-revoke="${index}">${lfT('撤销授权', 'Revoke')}</button>
+        </div>
+      </div>`).join('') : `<p class="prop-hint">${lfT('尚未授权 Git HTTP 主机。', 'No Git HTTP hosts are authorized.')}</p>`;
+    setPlatformTabCount(host, 'gitHostTrust', host.querySelectorAll('[data-git-host-entry]').length);
+  }
+
+  async function refresh() {
+    const items = await api(endpoint, {silent:true});
+    entries = Array.isArray(items) ? items : [];
+    render();
+  }
+
+  async function change(action) {
+    if (busy) return;
+    busy = submit.disabled = true;
+    try {
+      await action();
+    } catch (error) {
+      toast(error.message, 'err');
+      if (error.code === 'http_host_trust_changed') {
+        try {
+          await refresh();
+        } catch (refreshError) {
+          toast(refreshError.message, 'err');
+        }
+      }
+    } finally {
+      busy = submit.disabled = false;
+    }
+  }
+
+  add.onclick = () => { if (!busy) setFormOpen(true); };
+  form.querySelector('[data-http-host-cancel]').onclick = () => { if (!busy) setFormOpen(false); };
+  form.onsubmit = event => {
+    event.preventDefault();
+    return change(async () => {
+      const entry = await api(endpoint, {method:'POST', body:JSON.stringify({host:hostField.value.trim()})});
+      entries = [...entries.filter(item => item.host !== entry.host), entry].sort((a, b) => a.host.localeCompare(b.host));
+      setFormOpen(false);
+      render();
+      toast(lfT('已授权 HTTP 主机', 'HTTP host authorized'), 'ok');
+    });
+  };
+  list.onclick = event => {
+    const button = event.target.closest('[data-http-host-revoke]');
+    if (!button) return;
+    const entry = entries[Number(button.dataset.httpHostRevoke)];
+    return change(async () => {
+      if (!await afConfirm({
+        title:lfT('撤销 HTTP 主机授权', 'Revoke HTTP host authorization'),
+        message:`http://${entry.host}`,
         confirmText:lfT('撤销授权', 'Revoke'),
       }) || !card.isConnected) return;
       await api(`${endpoint}/${encodeURIComponent(entry.host)}`, {
@@ -186,12 +296,14 @@ async function loadPlatformHTTPHosts(host, protocol) {
       });
       entries = entries.filter(item => item.host !== entry.host);
       render();
-      toast(lfT(`已撤销 ${scheme} 主机授权`, `${scheme} host authorization revoked`), 'ok');
+      toast(lfT('已撤销 HTTP 主机授权', 'HTTP host authorization revoked'), 'ok');
     });
   };
   try {
     await refresh();
   } catch (error) {
     toast(error.message, 'err');
+  } finally {
+    add.disabled = false;
   }
 }

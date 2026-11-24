@@ -20,7 +20,7 @@ func invocationGitHTTPContext(ctx context.Context, inv *domain.RunnerInvocation)
 	}
 	hosts := map[string]gitwork.HTTPCredential{}
 	for host, credential := range inv.GitHTTPCredentials {
-		hosts[host] = gitwork.HTTPCredential{Username: credential.GitUsername(), Token: credential.Token, ApprovedAddresses: credential.ApprovedAddresses}
+		hosts[host] = gitwork.HTTPCredential{Username: credential.GitUsername(), Token: credential.Token}
 	}
 	return gitwork.WithHTTPCredentials(ctx, hosts)
 }

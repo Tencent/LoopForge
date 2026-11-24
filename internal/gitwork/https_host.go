@@ -44,3 +44,8 @@ func GitCredentialScope(protocol, host string) (string, bool) {
 	}
 	return "", false
 }
+
+// PlainHTTPRedirectConfig is the Git config key for one canonical HTTP scope.
+func PlainHTTPRedirectConfig(scope string) string {
+	return "http." + scope + "/.followRedirects"
+}

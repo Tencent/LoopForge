@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -122,15 +121,14 @@ type AgentToolSession struct {
 	// gitHosts maps each endpoint a Git token was handed out for this turn
 	// onto its platform, for the end-of-turn PR scan. gitScrubbed names the
 	// credentials the agent wrote by hand that were removed after its CLI.
-	gitHosts                 map[string]string
-	gitHTTPApprovedAddresses map[string][]netip.Addr
-	gitScrubbed              []string
-	nativePhaseClosed        atomic.Bool
-	closed                   atomic.Bool
-	committed                atomic.Bool
-	ctx                      context.Context
-	stopContext              func() bool // protected by mu
-	CancelModel              context.CancelFunc
+	gitHosts          map[string]string
+	gitScrubbed       []string
+	nativePhaseClosed atomic.Bool
+	closed            atomic.Bool
+	committed         atomic.Bool
+	ctx               context.Context
+	stopContext       func() bool // protected by mu
+	CancelModel       context.CancelFunc
 }
 
 type agentReplyFile struct {

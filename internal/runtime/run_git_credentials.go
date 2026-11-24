@@ -111,7 +111,7 @@ func scrubRunGitCredentials(ctx context.Context, sandbox Sandbox, workspace stri
 func runGitHosts(credentials RunCredentials) map[string]string {
 	hosts := map[string]string{}
 	for host, credential := range credentials.GitHTTPCredentials {
-		if credential.Token != "" && (!strings.HasPrefix(host, "http://") || len(credential.ApprovedAddresses) != 0) {
+		if credential.Token != "" {
 			hosts[host] = credential.Platform
 		}
 	}

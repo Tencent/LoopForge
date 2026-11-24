@@ -79,16 +79,9 @@ func Watch(ctx context.Context, workspace string, opts procwatch.Options, args .
 func command(ctx context.Context, workspace string, sshEnv map[string]string, args []string) *exec.Cmd {
 	dir := CommandDir(workspace)
 	credential, endpoint, urlHost := httpCredentialForCommand(ctx, args)
-	var pinned []HTTPConfigEntry
-	if endpoint.Scheme == "http" && credential.Token != "" {
-		pinned = PlainHTTPConfig(endpoint, credential.ApprovedAddresses)
-		if len(pinned) == 0 || !SupportsHTTPAddressPinning() {
-			credential = HTTPCredential{}
-		}
-	}
 	authArgs := scopedHTTPAuthArgs(credential)
-	for _, entry := range pinned {
-		authArgs = append(authArgs, "-c", entry.Key+"="+entry.Value)
+	if endpoint.Scheme == "http" && credential.Token != "" {
+		authArgs = append(authArgs, "-c", PlainHTTPRedirectConfig(endpoint.Scope())+"=false")
 	}
 	cmd := exec.CommandContext(ctx, "git", append(authArgs, args...)...)
 	cmd.Dir = dir

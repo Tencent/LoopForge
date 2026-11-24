@@ -313,10 +313,11 @@ test('platform admins authorize HTTPS and HTTP separately in the Git host trust 
   app.router.put(path, { ...updated, revision: 'second' });
   app.router.delete(path, null, 204);
   const plainEndpoint = '/api/platform/git-http-hosts';
-  const plain = { host: '192.0.2.13:8080', platform: 'other', addresses: ['192.0.2.13'] };
+  const plain = { host: 'git.internal.example:8080', revision: 'plain' };
   app.router.get(plainEndpoint, []);
-  app.router.post(`${plainEndpoint}/preview`, plain);
-  app.router.post(plainEndpoint, { ...plain, revision: 'plain' }, 201);
+  app.router.post(plainEndpoint, plain, 201);
+  const plainPath = `${plainEndpoint}/${encodeURIComponent(plain.host)}`;
+  app.router.delete(plainPath, null, 204);
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}; renderPlatformAdminPanel()`);
   const trustTab = app.document.querySelector('[data-platform-tab="gitHostTrust"]');
   trustTab.click();
@@ -374,16 +375,20 @@ test('platform admins authorize HTTPS and HTTP separately in the Git host trust 
   assert.equal(card.querySelector('[data-https-host-remove]'), null);
 
   const plainCard = panel.querySelector('#platformHTTPHostTrustCard');
-  plainCard.querySelector('[data-https-host-add]').click();
+  plainCard.querySelector('[data-http-host-add]').click();
   const plainForm = plainCard.querySelector('form');
-  assert.equal(plainForm.elements.platform.closest('label').hidden, true);
+  assert.deepEqual([...plainForm.querySelectorAll('[name]')].map(field => field.name), ['host']);
   plainForm.elements.host.value = `http://${plain.host}`;
   plainForm.querySelector('button[type="submit"]').click();
   await settle();
-  assert.match(app.document.querySelector('#confirmMessage').textContent, /http:\/\/192\.0\.2\.13:8080/);
+  assert.deepEqual(app.router.calls.find(call => call.method === 'POST' && call.path === plainEndpoint).body, {host:`http://${plain.host}`});
+  assert.match(plainCard.querySelector('[data-http-host-list]').textContent, /http:\/\/git\.internal\.example:8080/);
+  assert.equal(card.querySelector('[data-https-host-remove]'), null);
+
+  plainCard.querySelector('[data-http-host-revoke]').click();
   app.document.querySelector('#confirmOkBtn').click();
   await settle();
-  assert.deepEqual(app.router.calls.find(call => call.method === 'POST' && call.path === plainEndpoint).body, plain);
-  assert.match(plainCard.querySelector('[data-https-host-list]').textContent, /http:\/\/192\.0\.2\.13:8080/);
-  assert.equal(card.querySelector('[data-https-host-remove]'), null);
+  const plainRevoke = app.router.calls.find(call => call.method === 'DELETE' && call.path === plainPath);
+  assert.equal(new Headers(plainRevoke.options.headers).get('If-Match'), '"plain"');
+  assert.equal(plainCard.querySelector('[data-http-host-revoke]'), null);
 });

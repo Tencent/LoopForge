@@ -77,10 +77,6 @@ func gitCredentialMain(args []string, in io.Reader, out, errOut io.Writer) int {
 		if !ok || !strings.Contains(","+os.Getenv(GitHostsEnv)+",", ","+scope+"=other,") {
 			return 0
 		}
-		if !gitwork.SupportsHTTPAddressPinning() {
-			fmt.Fprintln(errOut, "agentflow: plaintext Git requires http.curloptResolve")
-			return 0
-		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

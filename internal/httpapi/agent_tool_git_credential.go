@@ -64,20 +64,14 @@ func (h *agentToolGateway) gitCredential(ctx context.Context, s *AgentToolSessio
 	case !valid:
 		outcome = "refused (not an HTTP(S) endpoint)"
 		return gitCredentialResult{}
+	case strings.HasPrefix(host, "http://") && caller != "git":
+		outcome = "refused (HTTP credentials are for Git)"
+		return gitCredentialResult{}
 	}
 	cred, ok := h.repo.GitHTTPCredentialForHost(ctx, s.UserID, host)
 	if !ok || cred.Token == "" {
 		outcome = "not configured"
 		return gitCredentialResult{}
-	}
-	if strings.HasPrefix(host, "http://") {
-		s.mu.Lock()
-		pinned := s.gitHTTPApprovedAddresses[host]
-		s.mu.Unlock()
-		if caller != "git" || len(pinned) == 0 || !slices.Equal(pinned, cred.ApprovedAddresses) {
-			outcome = "refused (HTTP authorization differs from the turn's approved addresses)"
-			return gitCredentialResult{}
-		}
 	}
 	result := gitCredentialResult{Username: cred.GitUsername(), Password: cred.Token, Platform: cred.Platform}
 	s.rememberGitCredential(host, cred.Platform, result.Username, cred.Token)

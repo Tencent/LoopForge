@@ -37,7 +37,7 @@ func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext)
 func withRunGitCredentials(ctx context.Context, credentials runtime.RunCredentials) context.Context {
 	hosts := map[string]gitwork.HTTPCredential{}
 	for host, credential := range credentials.GitHTTPCredentials {
-		hosts[host] = gitwork.HTTPCredential{Username: credential.GitUsername(), Token: credential.Token, ApprovedAddresses: credential.ApprovedAddresses}
+		hosts[host] = gitwork.HTTPCredential{Username: credential.GitUsername(), Token: credential.Token}
 	}
 	return gitwork.WithHTTPCredentials(ctx, hosts)
 }

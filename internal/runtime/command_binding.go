@@ -376,20 +376,10 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 		if !strings.HasPrefix(host, "http://") {
 			continue
 		}
-		endpoint, err := domain.ParseGitHTTPEndpoint(host)
-		if err != nil {
-			continue
-		}
-		approved := credentials.GitHTTPApprovedAddresses[host]
-		if len(approved) == 0 {
-			approved = credentials.GitHTTPCredentials[host].ApprovedAddresses
-		}
-		for _, entry := range gitwork.PlainHTTPConfig(endpoint, approved) {
-			index := strconv.Itoa(count)
-			environment["GIT_CONFIG_KEY_"+index] = entry.Key
-			environment["GIT_CONFIG_VALUE_"+index] = entry.Value
-			count++
-		}
+		index := strconv.Itoa(count)
+		environment["GIT_CONFIG_KEY_"+index] = gitwork.PlainHTTPRedirectConfig(host)
+		environment["GIT_CONFIG_VALUE_"+index] = "false"
+		count++
 	}
 	environment["GIT_CONFIG_COUNT"] = strconv.Itoa(count)
 	environment[GitHostsEnv] = hosts

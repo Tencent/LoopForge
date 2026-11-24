@@ -2,7 +2,6 @@ package gitwork
 
 import (
 	"context"
-	"net/netip"
 	"strings"
 	"testing"
 )
@@ -81,33 +80,31 @@ func TestGitHTTPRepositoryURLDoesNotNeedAPlatform(t *testing.T) {
 	}
 }
 
-func TestPlainHTTPCredentialNeedsApprovalAndMatchesSchemeAndPort(t *testing.T) {
-	if !SupportsHTTPAddressPinning() {
-		t.Skip("Git with http.curloptResolve required")
-	}
+func TestPlainHTTPCredentialMatchesOnlyItsEndpoint(t *testing.T) {
 	const authority = "git.example.org:443"
 	const repoURL = "http://" + authority + "/team/code.git"
 	for _, tc := range []struct {
 		name, protocol, host string
-		approved             bool
+		configured           bool
 		want                 bool
 	}{
 		{"configured", "http", authority, true, true},
 		{"other scheme", "https", authority, true, false},
 		{"other port", "http", "git.example.org", true, false},
 		{"other host", "http", "elsewhere.example.org:443", true, false},
-		{"absent approval", "http", authority, false, false},
+		{"absent credential", "http", authority, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			plain := HTTPCredential{Username: "git", Token: "fake-plaintext-token"}
-			if tc.approved {
-				plain.ApprovedAddresses = []netip.Addr{netip.MustParseAddr("192.0.2.13")}
+			credentials := map[string]HTTPCredential{
+				"git.example.org": {Username: "git", Token: "fake-secure-token"},
 			}
-			ctx := WithHTTPRemote(WithHTTPCredentials(t.Context(), map[string]HTTPCredential{
-				"http://" + authority: plain,
-				"git.example.org":     {Username: "git", Token: "fake-secure-token"},
-			}), repoURL)
-			if selected, endpoint, _ := httpCredentialForCommand(ctx, []string{"push", "origin", "HEAD:refs/heads/verification"}); endpoint.URL()+"/team/code.git" != repoURL || selected.Token != plain.Token {
+			token := ""
+			if tc.configured {
+				token = "fake-plaintext-token"
+				credentials["http://"+authority] = HTTPCredential{Username: "git", Token: token}
+			}
+			ctx := WithHTTPRemote(WithHTTPCredentials(t.Context(), credentials), repoURL)
+			if selected, endpoint, _ := httpCredentialForCommand(ctx, []string{"push", "origin", "HEAD:refs/heads/verification"}); endpoint.URL()+"/team/code.git" != repoURL || selected.Token != token {
 				t.Fatal("the push refspec replaced the repository endpoint")
 			}
 			cmd := command(ctx, t.TempDir(), nil, []string{"credential", "fill"})
