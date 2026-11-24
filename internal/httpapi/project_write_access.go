@@ -15,8 +15,8 @@ import (
 
 // requireProjectWriter limits changes to a project's requirements, roles and
 // SOPs to platform administrators, the project owner and non-viewer members.
-// Projects without an owner or members are shared. Requests that passed authentication
-// without a user identity (service tokens) are allowed.
+// Projects with neither an owner nor members are shared. Authenticated
+// requests without a user identity (service tokens) are allowed.
 func (d deps) requireProjectWriter(c *gin.Context, projectIDs ...string) bool {
 	if !authRequired() {
 		return true
@@ -57,15 +57,7 @@ func (d deps) speakerProjectWriter(projectID string, user domain.User, userID in
 
 func (d deps) projectMemberWrites(projectID string, userID int64) bool {
 	p, found := d.repo.Project(projectID)
-	if !found || p.OwnerID == userID || p.OwnerID == 0 && len(p.Members) == 0 {
-		return true
-	}
-	for _, member := range p.Members {
-		if member.UserID == userID && !strings.EqualFold(strings.TrimSpace(member.Role), domain.ProjectRoleViewer) {
-			return true
-		}
-	}
-	return false
+	return !found || (p.OwnerID == 0 && len(p.Members) == 0) || p.HasWritableMember(userID)
 }
 
 var guardedRunWrites = map[string]bool{
