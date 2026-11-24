@@ -263,20 +263,31 @@ func (c *mcpConnector) Tools(ctx context.Context) ([]mcpclient.Tool, error) {
 		all, err = c.client.ListToolsContext(ctx)
 	}
 	if err != nil {
+		logKnowledgeMCPTools(c.spec, 0, 0, nil, err)
 		return nil, c.safeError(err)
 	}
 	out := make([]mcpclient.Tool, 0, len(all))
+	var blocked []string
 	for _, t := range all {
-		if isAllowedReadOnlyMCPTool(t) {
+		allowed, reason := describeReadOnlyMCPTool(t)
+		if allowed {
 			out = append(out, t)
+		} else {
+			blocked = append(blocked, strings.TrimSpace(t.Name)+"("+reason+")")
 		}
 	}
+	logKnowledgeMCPTools(c.spec, len(all), len(out), blocked, nil)
 	return out, nil
 }
 
 func isAllowedReadOnlyMCPTool(t mcpclient.Tool) bool {
+	allowed, _ := describeReadOnlyMCPTool(t)
+	return allowed
+}
+
+func describeReadOnlyMCPTool(t mcpclient.Tool) (bool, string) {
 	if strings.TrimSpace(t.Name) == "" {
-		return false
+		return false, "empty_name"
 	}
 	var hints struct {
 		ReadOnly    *bool `json:"readOnlyHint"`
@@ -284,13 +295,16 @@ func isAllowedReadOnlyMCPTool(t mcpclient.Tool) bool {
 	}
 	if len(t.Annotations) > 0 && json.Unmarshal(t.Annotations, &hints) == nil {
 		if hints.Destructive != nil && *hints.Destructive {
-			return false
+			return false, "destructiveHint"
 		}
 		if hints.ReadOnly != nil {
-			return *hints.ReadOnly
+			if *hints.ReadOnly {
+				return true, "readOnlyHint"
+			}
+			return false, "readOnlyHint=false"
 		}
 	}
-	return true
+	return true, "unannotated_allowed"
 }
 
 func (c *mcpConnector) ListSources(ctx context.Context) ([]Source, error) {
@@ -395,7 +409,10 @@ func (c *mcpConnector) CallTool(ctx context.Context, toolName string, args map[s
 	text, callErr := c.callTool(ctx, toolName, callArgs)
 	latency := time.Since(started).Milliseconds()
 	if callErr != nil {
-		return CallResult{Status: domain.KnowledgeStatusUnavailable, LatencyMs: latency}, c.authError(callErr)
+		authErr := c.authError(callErr)
+		res := CallResult{Status: domain.KnowledgeStatusUnavailable, LatencyMs: latency}
+		logKnowledgeDebugCall(c.spec, "upstream_mcp", toolName, scope, callArgs, res, authErr)
+		return res, authErr
 	}
 
 	trimmed := strings.TrimSpace(text)
@@ -431,7 +448,7 @@ func (c *mcpConnector) CallTool(ctx context.Context, toolName string, args map[s
 	if domain.IsKnowledgeCatalogTool(toolName) {
 		evidences = nil
 	}
-	return CallResult{
+	res := CallResult{
 		Status:    status,
 		Text:      trimmed,
 		Hits:      hits,
@@ -439,7 +456,9 @@ func (c *mcpConnector) CallTool(ctx context.Context, toolName string, args map[s
 		Evidences: evidences,
 		Citeable:  !domain.IsKnowledgeCatalogTool(toolName),
 		LatencyMs: latency,
-	}, nil
+	}
+	logKnowledgeDebugCall(c.spec, "upstream_mcp", toolName, scope, callArgs, res, nil)
+	return res, nil
 }
 
 func applyScopeToMCPArgs(tool mcpclient.Tool, args map[string]any, scope SourceScope) (map[string]any, error) {

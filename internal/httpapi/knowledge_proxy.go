@@ -126,7 +126,13 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 		}
 		conn, tools, err := exec.ReferenceTools(ctx, claims.UserID, *claims.Ref)
 		if err != nil {
+			log.Printf("knowledge-proxy-tools connector=%s user=%d run=%s node=%s ok=false err=%q",
+				claims.Ref.ConnectorID, claims.UserID, claims.RunID, claims.NodeID, err.Error())
 			return fail(-32603, err.Error())
+		}
+		if len(tools) == 0 || knowledge.DebugEnabled() {
+			log.Printf("knowledge-proxy-tools connector=%s type=%s user=%d run=%s node=%s ok=true tools=%d",
+				conn.ID, conn.Type, claims.UserID, claims.RunID, claims.NodeID, len(tools))
 		}
 		out := make([]map[string]any, 0, len(tools))
 		for _, tool := range tools {

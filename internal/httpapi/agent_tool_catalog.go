@@ -559,7 +559,13 @@ func (h *agentToolGateway) knowledgeReferenceCatalog(ctx context.Context, s *Age
 		}
 		conn, tools, err := exec.ReferenceTools(ctx, s.UserID, ref)
 		if err != nil {
+			logAgentToolEvent("knowledge-catalog-err", "mode="+string(s.Mode), "connector="+ref.ConnectorID, "err="+truncateRunes(err.Error(), 160))
 			s.diagnostics().platform("knowledge.unavailable", ref.ConnectorID+"："+err.Error(), s.User)
+			continue
+		}
+		if len(tools) == 0 {
+			logAgentToolEvent("knowledge-catalog-empty", "mode="+string(s.Mode), "connector="+ref.ConnectorID, "type="+conn.Type)
+			s.diagnostics().platform("knowledge.empty_tools", ref.ConnectorID+"：未发现声明为只读（readOnlyHint）的工具", s.User)
 			continue
 		}
 		ns := knowledgeToolNamespace(ref.ConnectorID)

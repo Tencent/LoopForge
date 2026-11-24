@@ -285,6 +285,16 @@ func (c *weknoraConnector) CallTool(ctx context.Context, tool string, args map[s
 	if args == nil {
 		args = map[string]any{}
 	}
+	started := time.Now()
+	res, err := c.callToolInner(ctx, tool, args, scope)
+	if res.LatencyMs == 0 {
+		res.LatencyMs = time.Since(started).Milliseconds()
+	}
+	logKnowledgeDebugCall(c.spec, "upstream_weknora", strings.TrimSpace(tool), scope, args, res, err)
+	return res, err
+}
+
+func (c *weknoraConnector) callToolInner(ctx context.Context, tool string, args map[string]any, scope SourceScope) (CallResult, error) {
 	switch strings.TrimSpace(tool) {
 	case WeKnoraToolListKnowledgeBases:
 		return c.execListKBs(ctx, scope)
