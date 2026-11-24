@@ -80,6 +80,7 @@ HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 # saving a Bot answers 503 credential_key_missing.
 AGENTFLOW_SESSION_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n') \
 AGENTFLOW_CREDENTIAL_KEYS="e2e:$(head -c 32 /dev/urandom | base64 | tr -d '\n')" \
+AGENTFLOW_PROJECT_CREDENTIAL_KEY="$(head -c 32 /dev/urandom | base64 | tr -d '\n')" \
 AGENTFLOW_AUTH_REQUIRED=true \
 AGENTFLOW_LOCAL_LOGIN_USER=e2e-local \
 AGENTFLOW_RUNNER_BINARY="$WORK/agentflow-runner" \

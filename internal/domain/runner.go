@@ -153,6 +153,14 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 // when checking out repositories for a native workspace. Older runners clone fully.
 const RunnerVersionRepositoryCache = "0.12.0"
 
+// RunnerVersionProjectCredentials adds in-memory project environment values
+// to authenticated SOP task claims and conversation process starts.
+const RunnerVersionProjectCredentials = "0.12.1"
+
+func (r Runner) SupportsProjectCredentials() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionProjectCredentials)
+}
+
 // RunnerVersionArtifactTransfer introduced task-scoped streaming for SOP files.
 const RunnerVersionArtifactTransfer = "0.13.0"
 
@@ -404,7 +412,11 @@ type RunnerTask struct {
 	NodeID     string            `json:"nodeId,omitempty"`
 	Invocation *RunnerInvocation `json:"invocation,omitempty"`
 	// GitSSHKnownHosts is attached on authenticated claim and is never queued.
-	GitSSHKnownHosts *GitSSHKnownHosts `json:"gitSshKnownHosts,omitempty"`
+	GitSSHKnownHosts     *GitSSHKnownHosts `json:"gitSshKnownHosts,omitempty"`
+	ProjectCredentialIDs []string          `json:"projectCredentialIds,omitempty"`
+	// ProjectCredentialEnv is filled after an authenticated claim. It is not
+	// part of the persisted runner task payload.
+	ProjectCredentialEnv map[string]string `json:"projectCredentialEnv,omitempty"`
 	// Sandbox is the workflow sandbox definition resolved by the control
 	// plane. The runner creates it locally so Docker/seatbelt/bwrap isolation
 	// lives on the same machine that executes the Agent CLI.
