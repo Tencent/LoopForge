@@ -186,6 +186,34 @@ test('a failed read after a late save reports the page is out of sync', async t 
   assert.equal(app.evaluate('projectAdminDirty()'), true);
 });
 
+test('a save waits for the refresh that superseded its own read', async t => {
+  const app = await projectApp(t);
+  const write = deferred(), read = deferred(), roster = app.evaluate('clone(state.data.projects[0])');
+  const unavailable = { status: 503, body: { error: '读取项目失败' } };
+  let written, reads = 0;
+  app.router.put('/api/projects', call => { written = { ...call.body, membersVersion: 'saved' }; return write.promise; });
+  app.router.get('/api/projects/project-1', () => ++reads === 1 ? read.promise : unavailable);
+  app.router.post('/api/project-join-requests/71/approve', { id: 71, projectId: 'project-1', userId: 3, role: 'member', status: 'approved' });
+  const saving = startProjectSave(app, 'settings');
+  await settle();
+  // A project list refresh installs a newer snapshot, so the save has to reconcile through a read.
+  app.evaluate(`storeSavedProject(${JSON.stringify({ ...roster, membersVersion: 'refreshed' })})`);
+  write.resolve(written);
+  await settle();
+  assert.equal(reads, 1, 'the save reconciles through its own read');
+  // An approval replaces that read before it returns, and neither read succeeds.
+  const approving = app.evaluate("reviewProjectJoin(71,true,'member')");
+  await settle();
+  assert.equal(reads, 2);
+  read.resolve(unavailable);
+  await approving;
+  await saving;
+  assert.notEqual(app.evaluate('state.data.projects[0].description'), 'saved description', 'no read installed the save snapshot');
+  assert.match(app.document.querySelector('#toastContainer').textContent, /没能同步到最新内容/);
+  assert.equal(app.evaluate('state.projectDraft.description'), 'saved description', 'the edit is kept for a retry');
+  assert.equal(app.evaluate('projectAdminDirty()'), true);
+});
+
 test('out-of-order settings saves retain the latest server snapshot', async t => {
   const app = await projectApp(t);
   const first = deferred();

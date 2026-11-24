@@ -540,24 +540,35 @@ function invalidateProjectJoinMembers(projectId){
   projectJoinMemberRefreshes.delete(projectId);
   projectCacheRevisions.set(projectId,(projectCacheRevisions.get(projectId)||0)+1);
 }
-// Resolves to false only when the read itself failed, so callers that depend on
-// the refreshed project can tell a stale page from a settled one.
+// Resolves to false while no refreshed project has reached the page, so callers
+// that depend on it can tell a stale page from a settled one. A refresh that was
+// superseded reports the outcome of the request that replaced it instead of its
+// own: only that one can still install a current snapshot.
 async function refreshProjectJoinMembers(projectId){
   invalidateProjectJoinMembers(projectId);
-  const refresh={};projectJoinMemberRefreshes.set(projectId,refresh);
+  const refresh={};refresh.done=new Promise(settle=>{refresh.settle=settle});
+  projectJoinMemberRefreshes.set(projectId,refresh);
   let fresh=null,failed=false;
   try{fresh=await api('/api/projects/'+encodeURIComponent(projectId))}catch{failed=true}
   // A later refresh supersedes this snapshot, even if its response arrived first.
-  if(projectJoinMemberRefreshes.get(projectId)!==refresh)return true;
-  projectJoinMemberRefreshes.delete(projectId);
-  if(failed)return false;
-  if(!fresh?.id||fresh.archivedAt||!(state.data.projects||[]).some(p=>p.id===projectId))return true;
+  // A missing entry means a project write or delete already settled the page.
+  const latest=projectJoinMemberRefreshes.get(projectId);
+  if(latest!==refresh){const ok=latest?await latest.done:true;refresh.settle(ok);return ok}
+  // Keep this refresh in the map once it is done: a slower predecessor still has
+  // to learn whether the page ended up current.
+  if(!failed&&fresh?.id&&!fresh.archivedAt&&(state.data.projects||[]).some(p=>p.id===projectId))adoptProjectRoster(fresh);
+  refresh.settle(!failed);
+  return !failed;
+}
+// Installs a freshly read project and, when its settings page is open, the roster
+// that goes with it.
+function adoptProjectRoster(fresh){
   storeSavedProject(fresh);
-  if(state.projectDraftFor!==fresh.id)return true;
+  if(state.projectDraftFor!==fresh.id)return;
   captureProjectAdminForm();
   // Adopt the entire roster and token together. Local member edits keep their
   // old token so the server can reject a conflicting replacement.
-  if(projectMembershipSignature(state.projectDraft)!==projectMembershipSignature(state.projectDraftBase))return true;
+  if(projectMembershipSignature(state.projectDraft)!==projectMembershipSignature(state.projectDraftBase))return;
   const members=projectDraftFrom(fresh).members;
   for(const d of [state.projectDraft,state.projectDraftBase])if(d){
     d.members=clone(members);d.ownerId=fresh.ownerId;d.membersVersion=fresh.membersVersion;
@@ -570,7 +581,6 @@ async function refreshProjectJoinMembers(projectId){
     bindUserSearches(panel);
     renderProjectAdminHead();syncProjectAdminTabs();syncProjectAdminSaveBar();
   }
-  return true;
 }
 // Approval refreshes the roster without discarding unsaved project settings.
 async function reviewProjectJoin(id,approve,role){
