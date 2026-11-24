@@ -699,17 +699,12 @@ function runWorkspaceWasCleaned(run){
   if(!Number.isFinite(ts))return false;
   return new Date(ts).getUTCFullYear()>=1971;
 }
-function runBorrowsWorkspace(run){
-  const ctx=run?.executionContext;
-  return !!(ctx?.executionPinned&&ctx.workspaceRunId&&ctx.workspaceRunId!==run.id);
-}
 function workspaceIsAvailable(run,ws){
   return !!(ws&&ws.runId===run?.id&&ws.cleaned===runWorkspaceWasCleaned(run)&&
-    !ws.loading&&!ws.restoring&&!ws.error&&!ws.restoreError&&ws.info?.available);
+    !ws.restoring&&!ws.error&&!ws.restoreError&&ws.info?.available);
 }
 function workspaceCanRestore(run,ws){
-  return !!(ws?.runId===run.id&&ws.cleaned===runWorkspaceWasCleaned(run)&&
-    (ws.cleaned||runBorrowsWorkspace(run))&&ws.info?.restorable&&!ws.info.available);
+  return !!(ws?.runId===run.id&&ws.cleaned===runWorkspaceWasCleaned(run)&&ws.info?.available===false&&ws.info.restorable);
 }
 function workspaceRestoreButtonHTML(){
   const hint=lfT(
@@ -728,7 +723,7 @@ function syncRunWorkspaceRestoreButton(run,host){
 function workspacePaneHTML(run){
   const ws=state.runWorkspace?.runId===run.id?state.runWorkspace:null;
   if(ws?.restoring)return `<div class="workspace-loading" role="status"><span class="workspace-spinner" aria-hidden="true"></span><b>${lfT('正在恢复工作区…','Restoring workspace…')}</b></div>`;
-  if(!ws||ws.loading||ws.cleaned!==runWorkspaceWasCleaned(run))return '<div class="workspace-loading"><span class="workspace-spinner"></span><b>正在读取工作区</b><p>确认工作区是否仍可浏览…</p></div>';
+  if(!ws||(ws.loading&&!ws.info)||ws.cleaned!==runWorkspaceWasCleaned(run))return '<div class="workspace-loading"><span class="workspace-spinner"></span><b>正在读取工作区</b><p>确认工作区是否仍可浏览…</p></div>';
   if(ws.error)return `<div class="workspace-unavailable"><span>!</span><b>工作区加载失败</b><p>${escapeHTML(ws.error)}</p><button class="button ghost small" data-workspace-refresh>重试</button></div>`;
   if(!ws.info?.available||ws.restoreError)return workspaceUnavailableHTML(ws.info?.reason,ws.restoreError||ws.info?.restore?.error,workspaceCanRestore(run,ws));
   const maximized=!!ws.maximized;
@@ -1008,11 +1003,10 @@ async function loadRunWorkspace(runId,{refresh=false,restore=false}={}){
     cached.restoreRequested ||= restore;
     return;
   }
-  if(!refresh&&cached?.cleaned===cleaned){
-    if(restore&&workspaceCanRestore(run,cached))return restoreRunWorkspace(runId);
-    return;
-  }
-  const ws={runId,cleaned,restoreRequested:restore,loading:true,error:'',info:null,maximized:!!cached?.maximized};
+  if(!refresh&&cached?.cleaned===cleaned)return;
+  // Keep the IDE connected while rechecking a previously available checkout.
+  const info=workspaceIsAvailable(run,cached)?cached.info:null;
+  const ws={runId,cleaned,restoreRequested:restore,loading:true,error:'',info,maximized:!!cached?.maximized};
   state.runWorkspace=ws;
   renderWorkspacePane(run);
   try{
@@ -1036,8 +1030,17 @@ async function restoreRunWorkspace(runId,inProgress=false){
   renderWorkspacePane(state.activeRun);
   try{
     if(!inProgress){
-      const result=await api(`/api/runs/${encodeURIComponent(runId)}/workspace/restore`,{method:'POST',headers:{'Prefer':'respond-async'}});
-      inProgress=result.workspaceRestore?.status==='restoring';
+      const path='/api/runs/'+encodeURIComponent(runId)+'/workspace/restore';
+      for(let retries=0;isCurrent();retries++){
+        try{
+          const result=await api(path,{method:'POST',headers:{'Prefer':'respond-async'}});
+          inProgress=result.workspaceRestore?.status==='restoring';
+          break;
+        }catch(err){
+          if(err.code!=='workspace_busy'||retries>=4)throw err;
+          await new Promise(resolve=>setTimeout(resolve,1000));
+        }
+      }
     }
     if(inProgress)await waitForRunWorkspaceRestore(runId,isCurrent);
     if(isCurrent())await syncRunControlState(runId);
@@ -1213,15 +1216,14 @@ function runModeChipHTML(r,wf){if(r?.kind==='workspace')return '<span class="run
 function bindRunDetailTabs(run,host){
   function selectTab(tab){
     if(state.selectedRun!==run.id)return;
-    const previousTab=state.runDetailTab||'overview';
-    if(previousTab===tab&&tab!=='workspace')return;
+    if((state.runDetailTab||'overview')===tab&&tab!=='workspace')return;
     state.runDetailTab=tab;
     host.querySelectorAll('[data-run-tab]').forEach(button=>button.classList.toggle('active',button.dataset.runTab===tab));
     host.querySelectorAll('[data-run-pane]').forEach(pane=>pane.hidden=pane.dataset.runPane!==tab);
     paintRunActivationProgress(run.id);
     if(tab==='preview')return loadRunPreview(run.id);
     stopPreviewPoll();
-    if(tab==='workspace')return loadRunWorkspace(run.id,{restore:true,refresh:previousTab!==tab&&runBorrowsWorkspace(run)});
+    if(tab==='workspace')return loadRunWorkspace(run.id,{refresh:true,restore:true});
     if(tab==='eval')return loadRunEval(run.id);
   }
   host.querySelectorAll('[data-run-tab]').forEach(button=>button.onclick=()=>selectTab(button.dataset.runTab));

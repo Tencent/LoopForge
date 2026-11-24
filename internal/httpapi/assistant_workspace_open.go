@@ -54,7 +54,7 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 	}
 	if s.ProjectID == "" {
 		b.WriteString("\n\n个人对话可直接打开可写工作区，使用共享运行环境。workspaceRunId 只可切回本对话开过的工作区。")
-	} else if repos := projectRepositoryHints(h.repo.Repositories(), s.ProjectID); len(repos) > 0 {
+	} else if repos := workspaceRepositoryHints(h.repo, s.ProjectID); len(repos) > 0 {
 		catalog := jsonObject(repos)
 		if len(catalog) <= workspaceRepositoryInlineBytes {
 			b.WriteString("\n\n当前项目登记的仓库（JSON 数据，供 git clone 参考）\n" + catalog)
@@ -132,19 +132,26 @@ func workspaceSandboxGuide(choices []domain.SandboxProfile, preferred string) st
 }
 
 type workspaceRepositoryHint struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	CloneURL      string `json:"cloneUrl,omitempty"`
-	WebURL        string `json:"webUrl,omitempty"`
-	DefaultBranch string `json:"defaultBranch,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	CloneURL       string `json:"cloneUrl,omitempty"`
+	WebURL         string `json:"webUrl,omitempty"`
+	DefaultBranch  string `json:"defaultBranch,omitempty"`
+	ProjectDefault bool   `json:"projectDefault,omitempty"`
 }
 
-func projectRepositoryHints(all []domain.Repository, projectID string) []workspaceRepositoryHint {
+func workspaceRepositoryHints(store *repo.Store, projectID string) []workspaceRepositoryHint {
+	project, _ := store.Project(projectID)
+	return projectRepositoryHints(store.Repositories(), projectID, strings.TrimSpace(project.DefaultRepositoryID))
+}
+
+func projectRepositoryHints(all []domain.Repository, projectID, defaultRepositoryID string) []workspaceRepositoryHint {
 	repositories := projectRepositories(all, projectID)
 	hints := make([]workspaceRepositoryHint, 0, len(repositories))
 	for _, r := range repositories {
 		hint := workspaceRepositoryHint{
 			ID: r.ID, Name: r.Name, CloneURL: workspaceRepositoryURL(r.CloneURL), DefaultBranch: strings.TrimSpace(r.DefaultBranch),
+			ProjectDefault: defaultRepositoryID != "" && r.ID == defaultRepositoryID,
 		}
 		if hint.CloneURL == "" {
 			hint.WebURL = workspaceRepositoryURL(r.WebURL)

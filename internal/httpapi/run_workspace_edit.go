@@ -30,7 +30,10 @@ func (h *runsHandlers) workspaceEditActor(c *gin.Context) (domain.Run, int64, bo
 	return run, userID, true
 }
 
-func (h *runsHandlers) workspaceEditAccess(r *http.Request, run domain.Run) (int64, int, string) {
+// workspaceOwnerAccess is the permission to operate on the owning run's
+// workspace, including restoring its snapshot. Editing also needs the
+// coordination checks in workspaceEditAccess.
+func (h *runsHandlers) workspaceOwnerAccess(r *http.Request, run domain.Run) (int64, int, string) {
 	user, ok := h.requestUser(r, true)
 	if !ok {
 		return 0, http.StatusUnauthorized, "请先登录"
@@ -41,15 +44,23 @@ func (h *runsHandlers) workspaceEditAccess(r *http.Request, run domain.Run) (int
 		return 0, http.StatusForbidden, "无权编辑该任务工作区"
 	}
 	if engine.WorkspaceRunID(run) != run.ID {
-		return 0, http.StatusConflict, "子 SOP 共享父任务工作区，请从父任务操作"
-	}
-	// Parent/child workspace ownership needs a separate coordinated lease.
-	for _, node := range run.Nodes {
-		if node != nil && node.ChildRunID != "" {
-			return 0, http.StatusConflict, "请进入子 SOP 运行后再编辑对应工作区"
-		}
+		return 0, http.StatusConflict, "子 SOP 的共享工作区仅支持浏览"
 	}
 	return user.ID, 0, ""
+}
+
+func (h *runsHandlers) workspaceEditAccess(r *http.Request, run domain.Run) (int64, int, string) {
+	userID, status, message := h.workspaceOwnerAccess(r, run)
+	if status != 0 {
+		return userID, status, message
+	}
+	// Parent/child workspace writes need a coordinated lease.
+	for _, node := range run.Nodes {
+		if node != nil && node.ChildRunID != "" {
+			return 0, http.StatusConflict, "父子 SOP 的共享工作区仅支持浏览"
+		}
+	}
+	return userID, 0, ""
 }
 func (h *runsHandlers) workspaceTakeover(c *gin.Context) {
 	run, user, ok := h.workspaceEditActor(c)
@@ -158,17 +169,13 @@ func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, use
 
 func (h *runsHandlers) workspaceWritable(c *gin.Context, run domain.Run) bool {
 	// Read-only probe: never write HTTP errors here (browse handlers still return the payload).
-	if run.ID == "" || engine.WorkspaceRunID(run) != run.ID {
-		return false
-	}
-	user, ok := h.requestUser(c.Request, true)
-	if !ok {
+	if _, status, _ := h.workspaceEditAccess(c.Request, run); status != 0 {
 		return false
 	}
 	if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
 		return run.LiveWorkspace() || (run.Status == "waiting" && run.PauseRequested && !run.CancelRequested) || domain.TerminalRunStatus(run.Status)
 	}
-	return run.HumanEditable() && h.workspaceEditAllowed(c.Request, run, user.ID)
+	return run.HumanEditable()
 }
 
 func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
