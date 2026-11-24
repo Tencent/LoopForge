@@ -113,6 +113,7 @@ type TasksRepo struct {
 // UsersRepo owns users and their saved credentials.
 type UsersRepo struct {
 	*deps
+	gitHTTPHosts *GitHTTPHostTrustRepo
 	// keyring seals Bot credentials; installed by SetCredentialKeyring.
 	keyringMu sync.RWMutex
 	keyring   *credcrypt.Keyring
@@ -194,6 +195,7 @@ type Store struct {
 	*KnowledgeRepo
 	*SSHHostTrustRepo
 	*HTTPSHostTrustRepo
+	*GitHTTPHostTrustRepo
 	*NotificationsRepo
 	*BotInteractionsRepo
 }
@@ -206,7 +208,8 @@ func newStore(db *gorm.DB) *Store {
 	s.ProjectsRepo = &ProjectsRepo{deps: d}
 	s.ProjectCredentialsRepo = &ProjectCredentialsRepo{deps: d, projects: s.ProjectsRepo}
 	s.BusinessDomainsRepo = &BusinessDomainsRepo{deps: d}
-	s.UsersRepo = &UsersRepo{deps: d}
+	s.GitHTTPHostTrustRepo = &GitHTTPHostTrustRepo{deps: d}
+	s.UsersRepo = &UsersRepo{deps: d, gitHTTPHosts: s.GitHTTPHostTrustRepo}
 	s.BotInteractionsRepo = &BotInteractionsRepo{deps: d}
 	s.TokensRepo = &TokensRepo{deps: d}
 	s.AssistantRepo = &AssistantRepo{deps: d, users: s.UsersRepo}

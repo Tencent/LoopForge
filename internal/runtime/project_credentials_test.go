@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 func TestProjectCredentialsReserveRuntimeSettings(t *testing.T) {
@@ -47,6 +48,25 @@ func TestLocalProjectCredentialEnvironment(t *testing.T) {
 	t.Setenv("AGENTFLOW_PROJECT_CREDENTIAL_KEY", "platform-test-key")
 	sandbox := &localSandbox{id: "project-credentials", workspace: t.TempDir()}
 	assertProjectCredentialProcess(t, t.Context(), sandbox)
+}
+
+func TestSandboxGitPreparationExcludesProjectCredentialEnvironment(t *testing.T) {
+	workspace := t.TempDir()
+	git := []byte("#!/bin/sh\n" + `test -z "${PROJECT_TEST_TOKEN+x}" && test "$GIT_TERMINAL_PROMPT" = 0 || exit 1
+printf git-probe
+printf diagnostic >&2
+`)
+	if err := os.WriteFile(filepath.Join(workspace, "git"), git, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", workspace+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sandbox := &localSandbox{id: "project-credentials", workspace: workspace}
+	ctx := WithProjectCredentialEnv(t.Context(), map[string]string{"PROJECT_TEST_TOKEN": "fixture-value"})
+	ctx = WithSandboxGit(ctx, sandbox, RunCredentials{})
+	out, err := gitwork.RunWorkspaceCommand(ctx, workspace, gitwork.WorkspaceCommand{Args: []string{"--version"}, StdoutOnly: true})
+	if err != nil || out != "git-probe" {
+		t.Fatalf("Git preparation = %q, %v", out, err)
+	}
 }
 
 func TestDockerProjectCredentialEnvironment(t *testing.T) {

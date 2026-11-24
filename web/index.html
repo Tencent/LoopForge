@@ -983,10 +983,10 @@
         <div class="pa-fs">
           <h5>仓库地址</h5>
           <div data-github-repositories></div>
-          <label class="pa-field"><span class="pa-field-l">Git HTTPS 链接或 Git SSH 地址</span>
+          <label class="pa-field"><span class="pa-field-l">Git 仓库地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
-            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code></span>
-            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。</span>
+            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code><code>git clone http://git.example.org/team/repo.git</code></span>
+            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 Git HTTP(S) 地址或 Git SSH 克隆地址。</span>
           </label>
           <div class="pa-detect" id="repoDrawerDetect" hidden><span class="pa-detect-ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span><div class="pa-detect-m"><b id="repoDrawerDetectName"></b><code id="repoDrawerDetectPath"></code></div><button type="button" class="button ghost small" id="repoDrawerRename">改名</button></div>
           <label class="pa-field" id="repoDrawerNameField" hidden><span class="pa-field-l">仓库名称</span><input class="pa-input mono" name="name" placeholder="留空则自动取项目路径末段"></label>

@@ -22,18 +22,19 @@ type sopExecutorAccess struct {
 	user            domain.User
 	runner          domain.Runner
 	usesRunner      bool
+	execution       domain.TelemetryContext
 	sharedCodeBuddy bool
 }
 
 func (e *Engine) sopExecutorAccess(ec domain.TelemetryContext) sopExecutorAccess {
-	return newSOPExecutorAccess(e.repo, ec.ResponsibleUserID, ec.ExecutionRunnerID)
+	return newSOPExecutorAccess(e.repo, ec)
 }
 
-func newSOPExecutorAccess(s *repo.Store, userID int64, runnerID string) sopExecutorAccess {
-	user, _ := s.User(userID)
-	runner, _ := s.Runner(runnerID)
+func newSOPExecutorAccess(s *repo.Store, ec domain.TelemetryContext) sopExecutorAccess {
+	user, _ := s.User(ec.ResponsibleUserID)
+	runner, _ := s.Runner(ec.ExecutionRunnerID)
 	return sopExecutorAccess{
-		user: user, runner: runner, usesRunner: runnerID != "",
+		user: user, runner: runner, usesRunner: ec.ExecutionRunnerID != "", execution: ec,
 		sharedCodeBuddy: resolveCodeBuddyCredential(s, user.ID).Sponsored,
 	}
 }
@@ -42,11 +43,20 @@ func newSOPExecutorAccess(s *repo.Store, userID int64, runnerID string) sopExecu
 // the user's default machine. Pickers use it before the run's machine is
 // known, so the run-time check still verifies that the machine provides the CLI.
 func ExecutorCredentials(s *repo.Store, userID int64) func(kind string) bool {
-	return newSOPExecutorAccess(s, userID, s.DefaultRunner(userID)).hasCredential
+	return newSOPExecutorAccess(s, domain.TelemetryContext{ResponsibleUserID: userID, ExecutionRunnerID: s.DefaultRunner(userID)}).hasCredential
+}
+
+func sopRunnerAuthMode(ec domain.TelemetryContext, runner domain.Runner, provider string) string {
+	// A conversation allocated to a platform runner keeps using the
+	// responsible user's credentials when it hands off to an SOP.
+	if ec.ExecutionPinned && ec.WorkspaceRunID != "" && runner.OwnerUserID == 0 && ec.ResponsibleUserID > 0 {
+		return domain.RuntimeAuthPersonal
+	}
+	return runner.RuntimeAuthModeForUser(provider, ec.ResponsibleUserID)
 }
 
 func (a sopExecutorAccess) runnerLogin(kind string) bool {
-	return a.usesRunner && domain.SupportsRunnerLogin(kind) && a.runner.RuntimeAuthModeForUser(kind, a.user.ID) == domain.RuntimeAuthLocal
+	return a.usesRunner && domain.SupportsRunnerLogin(kind) && sopRunnerAuthMode(a.execution, a.runner, kind) == domain.RuntimeAuthLocal
 }
 
 func (a sopExecutorAccess) configured(kind string) bool {

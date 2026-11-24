@@ -100,6 +100,10 @@ func TestGenericSOPExecutorPrefersRunnerLoginOverSharedKey(t *testing.T) {
 	if got := access.defaults().Executor; got != "codex" {
 		t.Fatalf("executor with configured machine login = %s, want codex", got)
 	}
+	access.execution = domain.TelemetryContext{ResponsibleUserID: 1, ExecutionPinned: true, WorkspaceRunID: "conversation"}
+	if got := access.defaults().Executor; got != "codebuddy" {
+		t.Fatalf("executor for a borrowed platform workspace = %s, want codebuddy", got)
+	}
 }
 
 func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testing.T) {
@@ -397,7 +401,7 @@ func TestExecutorCredentialsUseTheDefaultRunnerLogin(t *testing.T) {
 			t.Errorf("%s credential = %t, want %t", kind, got, want)
 		}
 	}
-	if newSOPExecutorAccess(st, user.ID, machine.ID).configured("kimi") {
+	if newSOPExecutorAccess(st, domain.TelemetryContext{ResponsibleUserID: user.ID, ExecutionRunnerID: machine.ID}).configured("kimi") {
 		t.Fatal("a run must still require the machine to provide the CLI")
 	}
 }

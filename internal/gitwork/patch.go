@@ -2,6 +2,7 @@ package gitwork
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,6 +28,10 @@ func BaselinePath(workspace string) string {
 // against this frozen checkout rather than the moving HEAD. An existing
 // record is kept.
 func RecordBaseline(workspace, baseBranch string) error {
+	return RecordBaselineContext(context.Background(), workspace, baseBranch)
+}
+
+func RecordBaselineContext(ctx context.Context, workspace, baseBranch string) error {
 	root, err := os.OpenRoot(workspace)
 	if err != nil {
 		return err
@@ -46,7 +51,7 @@ func RecordBaseline(workspace, baseBranch string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	sha, err := resolveBaselineSHA(workspace, baseBranch)
+	sha, err := resolveBaselineSHA(ctx, workspace, baseBranch)
 	if err != nil {
 		return fmt.Errorf("resolve repository baseline: %w", err)
 	}
@@ -73,7 +78,7 @@ func RecordBaseline(workspace, baseBranch string) error {
 // resolveBaselineSHA picks the first resolvable baseline candidate:
 // origin/<baseBranch> (when set), origin/master, origin/main, then HEAD.
 // When none resolves, the error of the last candidate is returned.
-func resolveBaselineSHA(workspace, baseBranch string) (string, error) {
+func resolveBaselineSHA(ctx context.Context, workspace, baseBranch string) (string, error) {
 	var refs []string
 	if ref := strings.TrimSpace(baseBranch); ref != "" {
 		refs = append(refs, "origin/"+ref)
@@ -82,7 +87,7 @@ func resolveBaselineSHA(workspace, baseBranch string) (string, error) {
 	var err error
 	for _, ref := range refs {
 		var sha string
-		if sha, err = resolveCommitSHA(workspace, ref); err == nil {
+		if sha, err = resolveCommitSHA(ctx, workspace, ref); err == nil {
 			return sha, nil
 		}
 	}
@@ -91,18 +96,17 @@ func resolveBaselineSHA(workspace, baseBranch string) (string, error) {
 
 // resolveCommitSHA resolves ref to a commit object ID. The ref travels on
 // stdin so a branch name never reaches git's argument list.
-func resolveCommitSHA(workspace, ref string) (string, error) {
+func resolveCommitSHA(ctx context.Context, workspace, ref string) (string, error) {
 	if strings.ContainsAny(ref, "\r\n") {
 		return "", fmt.Errorf("invalid ref %q", ref)
 	}
-	cmd := exec.Command("git", "cat-file", "--batch-check=%(objectname)")
-	cmd.Dir = workspace
-	cmd.Stdin = strings.NewReader(ref + "^{commit}\n")
-	out, err := cmd.CombinedOutput()
+	out, err := RunWorkspaceCommand(ctx, workspace, WorkspaceCommand{
+		Args: []string{"cat-file", "--batch-check=%(objectname)"}, Stdin: strings.NewReader(ref + "^{commit}\n"),
+	})
 	if err != nil {
-		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
 	}
-	sha := strings.TrimSpace(string(out))
+	sha := strings.TrimSpace(out)
 	if !isObjectID(sha) {
 		return "", fmt.Errorf("resolve %s: %s", ref, sha)
 	}

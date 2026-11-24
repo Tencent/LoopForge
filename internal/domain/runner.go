@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strconv"
@@ -157,12 +158,43 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 // when checking out repositories for a native workspace. Older runners clone fully.
 const RunnerVersionRepositoryCache = "0.12.0"
 
+// RunnerVersionGitPlainHTTP is the first runner that can supply credentials
+// for an authorized plaintext Git instance.
+const RunnerVersionGitPlainHTTP = "0.12.4"
+
+func (r Runner) SupportsGitPlainHTTP() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitPlainHTTP)
+}
+
+const RunnerGitPlainHTTPUpgradeMessage = "Git HTTP 仓库需要 Runner " + RunnerVersionGitPlainHTTP + " 或更新版本，请先升级执行机器"
+
+// FilterGitHTTPCredentials limits a credential snapshot to the transports the
+// runner supports. The caller's map may also be used by local execution.
+func (r Runner) FilterGitHTTPCredentials(credentials map[string]GitHTTPExecutionCredential) map[string]GitHTTPExecutionCredential {
+	if r.SupportsGitPlainHTTP() {
+		return credentials
+	}
+	filtered := maps.Clone(credentials)
+	maps.DeleteFunc(filtered, func(scope string, _ GitHTTPExecutionCredential) bool {
+		return strings.HasPrefix(scope, "http://")
+	})
+	return filtered
+}
+
 // RunnerVersionProjectCredentials adds in-memory project environment values
 // to authenticated SOP task claims and conversation process starts.
 const RunnerVersionProjectCredentials = "0.12.1"
 
 func (r Runner) SupportsProjectCredentials() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionProjectCredentials)
+}
+
+// RunnerVersionConversationSOPWorkspace discovers nested conversation checkouts
+// and prepares them inside the SOP sandbox while preserving local work.
+const RunnerVersionConversationSOPWorkspace = "0.12.3"
+
+func (r Runner) SupportsConversationSOPWorkspace() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationSOPWorkspace)
 }
 
 func (r Runner) SupportsSharedPush() bool {
@@ -662,8 +694,11 @@ type RunnerRepository struct {
 	// CreateNewWorkBranch creates WorkBranch from the base ref and fails when a
 	// same-named remote head already exists.
 	CreateNewWorkBranch bool `json:"createNewWorkBranch,omitempty"`
-	// Dir is the workspace-relative checkout directory (empty is only kept
-	// for persisted legacy runs that already checked out at the workspace root).
+	// PreserveCheckout starts a generated SOP branch at the existing local
+	// HEAD when the checkout was supplied by a conversation.
+	PreserveCheckout bool `json:"preserveCheckout,omitempty"`
+	// Dir is the workspace-relative checkout directory. Empty selects the
+	// workspace root for an existing checkout.
 	Dir string `json:"dir,omitempty"`
 	// SyncWorkBranch is the control plane's decision that WorkBranch may
 	// receive intermediate node commits (it is not a shared base/integration
