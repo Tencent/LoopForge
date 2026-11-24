@@ -91,7 +91,9 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
-	domain.AssignRepositoryDirs(repositories)
+	if executionContext.ParentRunID == "" || !executionContext.ExecutionPinned || executionContext.WorkspaceRunID == "" {
+		domain.AssignRepositoryDirs(repositories)
+	}
 	e.mu.Lock()
 	draining, executeRuns := e.draining, e.executeRuns
 	instanceID, ttl := e.instanceID, e.leaseTTL
@@ -142,6 +144,27 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile); err != nil {
 			return domain.Run{}, err
 		}
+	}
+	if !workspace && executionContext.ParentRunID == "" && executionContext.WorkspaceRunID != "" {
+		owner, err := e.sopConversationWorkspace(executionContext)
+		if err != nil {
+			return domain.Run{}, err
+		}
+		if domain.TerminalRunStatus(owner.Status) || owner.CancelRequested {
+			return domain.Run{}, fmt.Errorf("对话工作区已结束")
+		}
+		executionContext.ExecutionRunnerID = e.defaultExecutionRunner(owner)
+		if executionContext.ExecutionRunnerID != "" {
+			runner, ok := e.repo.Runner(executionContext.ExecutionRunnerID)
+			if !ok || !runner.SupportsWorkspaceOwnerPreparation() || owner.ExecutionContext.RunnerWorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
+				return domain.Run{}, fmt.Errorf("原执行机器或工作区不支持共享检出目录，请更新执行机器并重新打开工作区")
+			}
+			if len(repositories) > 0 && !runner.SupportsConversationSOPWorkspace() {
+				return domain.Run{}, fmt.Errorf("复用对话中的仓库检出需要执行机器升级至 %s", domain.RunnerVersionConversationSOPWorkspace)
+			}
+		}
+		executionContext.ExecutionPinned = true
+		executionContext.ExecutionPool = ""
 	}
 	e.selectSOPExecutionTarget(&executionContext)
 	wf.ExecutorDefaults = nil
@@ -202,8 +225,12 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		e.event(&r, "", "workspace.created", "对话工作区已创建")
 	} else {
 		e.event(&r, "", "run.started", "流水线开始执行")
+		if borrowsConversationWorkspace(r) {
+			e.event(&r, "", "workspace.shared", "复用对话工作区 "+workspaceRunID(r))
+		}
 	}
-	if executeRuns && !workspace {
+	executeHere := executeRuns && !workspace && (!borrowsConversationWorkspace(r) || !e.workspaceBlocked(r))
+	if executeHere {
 		if strings.TrimSpace(instanceID) == "" || ttl <= 0 {
 			return domain.Run{}, ErrExecutionDisabled
 		}
@@ -219,7 +246,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		r = current
 	}
 	e.publish(r.ID)
-	if !executeRuns || r.Status == "queued" || workspace {
+	if !executeHere || r.Status == "queued" {
 		return r, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())

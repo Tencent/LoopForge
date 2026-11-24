@@ -327,6 +327,9 @@ func (h *agentToolGateway) resolveWorkspaceRunTarget(conv domain.AssistantSessio
 	if !run.IsWorkspace() {
 		if canonicalID := engine.WorkspaceRunID(run); canonicalID != "" && canonicalID != run.ID {
 			parent, found := h.repo.RunState(canonicalID)
+			if found && parent.IsWorkspace() && conversationMayBind(conv, parent, projectID) {
+				return parent, nil
+			}
 			if !found || !borrowableSOPRun(parent, projectID) {
 				return domain.Run{}, fmt.Errorf("子 SOP %s 所属父工作区 %s 不属于当前项目或不可接入", run.ID, canonicalID)
 			}

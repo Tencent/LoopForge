@@ -14,6 +14,7 @@ import (
 
 type dispatchRequest struct {
 	IssueID, WorkflowID, ScheduleJobID, TriggerOrigin string
+	WorkspaceRunID                                    string
 	Rerun                                             bool
 	TriggerUserID                                     int64
 }
@@ -148,7 +149,7 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	if summary := strings.TrimSpace(issue.Clarification.Summary); summary != "" {
 		input += "\n\nClarification summary:\n" + summary
 	}
-	if len(repositories) > 0 {
+	if len(repositories) > 0 && req.WorkspaceRunID == "" {
 		if len(repositories) == 1 {
 			input += "\n\nRepository context (frozen): the repository is checked out in a first-level subdirectory; SOP deliverables stay at the workspace root"
 		} else {
@@ -204,14 +205,28 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	issue.LatestTaskID = stored.ID
 	issue.Status = "in_progress"
-	if err := d.repo.PutIssue(issue); err != nil {
-		task.Status = "failed"
-		_ = d.repo.PutTask(task)
-		return domain.Task{}, err
+	if req.WorkspaceRunID == "" {
+		if err := d.repo.PutIssue(issue); err != nil {
+			task.Status = "failed"
+			_ = d.repo.PutTask(task)
+			return domain.Task{}, err
+		}
 	}
 	tapdID := issue.RequirementTAPDID()
-	run, err := d.engine.StartWithRepositoriesContext(workflowID, input, repositories, domain.TelemetryContext{ProjectID: issue.ProjectID, IssueID: issue.ID, TAPDID: tapdID, ResponsibleUserID: runUserID, IssueNumber: issue.Number, TaskID: taskID, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID)})
+	run, err := d.engine.StartWithRepositoriesContext(workflowID, input, repositories, domain.TelemetryContext{
+		ProjectID: issue.ProjectID, IssueID: issue.ID, TAPDID: tapdID, ResponsibleUserID: runUserID, IssueNumber: issue.Number,
+		TaskID: taskID, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID), WorkspaceRunID: req.WorkspaceRunID,
+	})
 	if err != nil {
+		if req.WorkspaceRunID != "" {
+			if releaseErr := d.repo.ReleaseTaskReservation(task.ID); releaseErr != nil {
+				return domain.Task{}, errors.Join(err, releaseErr)
+			}
+			if errors.Is(err, repo.ErrWorkspaceInUse) {
+				return domain.Task{}, HTTPError{http.StatusConflict, err.Error()}
+			}
+			return domain.Task{}, err
+		}
 		task.Status = "failed"
 		_ = d.repo.PutTask(task)
 		issue.Status = "blocked"

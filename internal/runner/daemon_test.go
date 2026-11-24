@@ -204,6 +204,78 @@ func TestDeleteFailedRunCleansRunnerWorkspace(t *testing.T) {
 	})
 }
 
+func TestSOPReusesRunnerConversationCheckout(t *testing.T) {
+	server, st, en := newDaemonTestServer(t)
+	machineRoot := t.TempDir()
+	daemon, err := New(Config{
+		ServerURL: server.URL, BootstrapToken: "boot-secret", StatePath: filepath.Join(t.TempDir(), "state.json"),
+		Name: "conversation-workspace-runner", MaxConcurrency: 1, HeartbeatInterval: time.Second,
+		LongPollTimeout: 2 * time.Second, DefaultWorkspaceRoot: machineRoot, DisableAutoUpdate: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = daemon.Run(ctx) }()
+	waitFor(t, 10*time.Second, "runner workspace control", daemon.wsOnline.Load)
+	runner := st.Runners()[0]
+	const projectID = "runner-handoff"
+	if err := st.PutProject(domain.Project{ID: projectID, Name: "Runner Handoff"}); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := en.StartConversationWorkspace("Conversation", domain.TelemetryContext{
+		ProjectID: projectID, ExecutionPinned: true, ExecutionRunnerID: runner.ID,
+	}, repo.TestNativeSandboxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := bareRemoteWithBaseline(t)
+	dir := filepath.Join(machineRoot, "runs", owner.ID, "workspace", "code-custom")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, dir, "clone", "-q", remote, ".")
+	runGitT(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-qm", "local commit")
+	head := runGitT(t, dir, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("staged edit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, dir, "add", "README.md")
+	wf := domain.WorkflowDefinition{
+		ID: "edit-runner-workspace", Name: "Continue on the runner", SandboxProfileID: repo.TestNativeSandboxID,
+		Nodes: []domain.WorkflowNode{{
+			ID: "verify", Name: "Verify", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, MaxAttempts: 1,
+			Script: `test "$(git branch --show-current)" = "$AGENTFLOW_WORK_BRANCH" &&
+test "$(git diff --cached --name-only)" = README.md &&
+printf done > sop-result.txt`,
+		}},
+	}
+	if err := st.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	run, err := en.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{
+		RepositoryID: "repo", Name: "Different catalog name", CloneURL: remote, BaseBranch: "master",
+	}, domain.TelemetryContext{ProjectID: projectID, WorkspaceRunID: owner.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var finished domain.Run
+	waitFor(t, 15*time.Second, "SOP in the conversation checkout", func() bool {
+		finished, _ = st.RunState(run.ID)
+		return domain.TerminalRunStatus(finished.Status)
+	})
+	if finished.Status != "succeeded" || finished.Repository.WorkspaceDir != "code-custom" {
+		t.Fatalf("SOP %s in %q: %+v", finished.Status, finished.Repository.WorkspaceDir, finished.Nodes["verify"])
+	}
+	if got := runGitT(t, dir, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("SOP did not start at the conversation HEAD: %s, want %s", got, head)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "sop-result.txt")); err != nil || string(data) != "done" {
+		t.Fatalf("output in the conversation checkout = %q, %v", data, err)
+	}
+}
+
 func TestWorkflowScriptsShareRunnerRunWorkspace(t *testing.T) {
 	server, s, e := newDaemonTestServer(t)
 	repository := t.TempDir()

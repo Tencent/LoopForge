@@ -2,12 +2,50 @@ package repo
 
 import (
 	"agentflow/internal/domain"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestMySQLConcurrentSOPsCannotClaimSameConversationWorkspace(t *testing.T) {
+	stores, prefix := admissionMySQLStores(t)
+	owner := admissionMySQLRun(prefix+"-ws", prefix)
+	owner.Kind, owner.Status = domain.RunKindWorkspace, "waiting"
+	if err := stores[0].PutRun(owner); err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{prefix + "-first", prefix + "-second"}
+	admissionMySQLCleanup(t, stores[0], append([]string{owner.ID}, ids...))
+	start := make(chan struct{})
+	results := make(chan error, len(stores))
+	for i, store := range stores {
+		run := admissionMySQLRun(ids[i], prefix)
+		run.ExecutionContext.ExecutionPinned, run.ExecutionContext.WorkspaceRunID = true, owner.ID
+		go func() {
+			<-start
+			results <- store.PutRun(run)
+		}()
+	}
+	close(start)
+	admitted := 0
+	for range stores {
+		err := <-results
+		if err == nil {
+			admitted++
+		} else if !errors.Is(err, ErrWorkspaceInUse) {
+			t.Fatalf("dispatch returned %v", err)
+		}
+	}
+	if admitted != 1 {
+		t.Fatalf("admitted %d runs into one conversation workspace", admitted)
+	}
+	if _, err := stores[0].BeginWorkspaceUse(owner.ID, time.Now()); !errors.Is(err, ErrWorkspaceInUse) {
+		t.Fatalf("conversation obtained a lease during SOP execution: %v", err)
+	}
+}
 
 func TestMySQLConversationSandboxSelectionSerializesWithGeneration(t *testing.T) {
 	stores, prefix := admissionMySQLStores(t)

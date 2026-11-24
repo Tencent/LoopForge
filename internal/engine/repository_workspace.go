@@ -57,16 +57,49 @@ func repositoryWorkspaceDirs(workspace string, repositories []domain.RepositoryC
 
 // prepareRepositories checks out every run repository into its WorkspaceDir
 // (a first-level sub-directory of the run workspace).
-func prepareRepositories(ctx context.Context, workspace string, repositories []domain.RepositoryContext) error {
+func prepareRepositories(ctx context.Context, workspace string, repositories []domain.RepositoryContext, preserveCheckout ...bool) error {
 	if err := runtime.RestoreLegacyWorkspaceAgentConfig(ctx, workspace, repositories); err != nil {
 		return err
 	}
+	prepare := prepareRepository
+	if len(preserveCheckout) > 0 && preserveCheckout[0] {
+		prepare = prepareSharedRepository
+	}
 	for _, rc := range repositories {
-		if err := prepareRepository(ctx, repositoryWorkspacePath(workspace, rc), rc); err != nil {
+		dir := repositoryWorkspacePath(workspace, rc)
+		if err := prepare(ctx, dir, rc); err != nil {
 			return fmt.Errorf("repository %s: %w", rc.Name, err)
 		}
 	}
 	return nil
+}
+
+func repositoryCheckoutRemote(repository domain.RepositoryContext) string {
+	if remote := strings.TrimSpace(repository.CloneURL); remote != "" {
+		return remote
+	}
+	return strings.TrimSpace(repository.LocalPath)
+}
+
+func prepareSharedRepository(ctx context.Context, dir string, repository domain.RepositoryContext) error {
+	existing, err := gitwork.ExistingSOPCheckout(ctx, dir, repositoryCheckoutRemote(repository))
+	if err != nil {
+		return err
+	}
+	if !existing || repository.RequireExistingWorkBranch || repository.CreateNewWorkBranch {
+		return prepareRepository(ctx, dir, repository)
+	}
+	ctx = withRepositoryGit(ctx, repository)
+	if err := applyWorkspaceGitAuth(ctx, dir); err != nil {
+		return err
+	}
+	if err := applyWorkspaceGitIdentity(ctx, dir); err != nil {
+		return err
+	}
+	if err := gitwork.ContinueSOPCheckout(ctx, dir, repository.WorkBranch); err != nil {
+		return err
+	}
+	return recordRepositoryBaseline(dir, repositoryBaseBranch(repository))
 }
 
 func repositoryBaseBranch(repository domain.RepositoryContext) string {

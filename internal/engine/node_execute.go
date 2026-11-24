@@ -70,6 +70,12 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		cancel()
 		nodesWG.Wait()
 	}
+	var prepareWorkspace func() error
+	if borrowsConversationWorkspace(r) {
+		prepareWorkspace = sync.OnceValue(func() error {
+			return e.prepareBorrowedConversationWorkspace(ctx, r)
+		})
+	}
 	defer func() {
 		cancel()
 		nodesWG.Wait()
@@ -180,7 +186,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 					default:
 					}
 				}()
-				e.executeNode(ctx, runID, wf, node)
+				e.executeNode(ctx, runID, wf, node, prepareWorkspace)
 			}()
 		}
 	}
@@ -316,7 +322,7 @@ func dockerfileID(snap *domain.RunnerSandboxSpec) string {
 	return snap.Dockerfile.ID
 }
 
-func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode) {
+func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, prepareWorkspace ...func() error) {
 	currentLease, ok := e.repo.RunState(runID)
 	if !ok || !e.ownsRun(currentLease) {
 		return
@@ -375,6 +381,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		if err != nil {
 			failNode(err, false)
+			return
+		}
+	}
+	if len(prepareWorkspace) > 0 && prepareWorkspace[0] != nil && node.Type != "approval" {
+		if err := prepareWorkspace[0](); err != nil {
+			failNode(fmt.Errorf("准备对话工作区：%w", err), false)
 			return
 		}
 	}
@@ -509,7 +521,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if !stagingCheckout {
 			return nil
 		}
-		if err := prepareRepositories(runtime.WithRepositoryCacheIn(ctx, sb.Unwrap()), sb.Workspace(), current.RepositoryContexts()); err != nil {
+		if err := prepareRepositories(runtime.WithRepositoryCacheIn(ctx, sb.Unwrap()), sb.Workspace(), current.RepositoryContexts(), current.UsesConversationWorkspace()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "" || len(gitCredentials.GitHTTPCredentials) > 0)
 		}
 		for _, rc := range current.RepositoryContexts() {

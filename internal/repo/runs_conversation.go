@@ -2,6 +2,8 @@ package repo
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -10,6 +12,58 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// HasWorkspaceSOPRuns reports whether another run relies on this workspace.
+// Status filters let callers distinguish executing runs from saved history.
+func (r *RunsRepo) HasWorkspaceSOPRuns(runID string, statuses ...string) (bool, error) {
+	return workspaceSOPRunExists(r.workspaceSOPRuns(r.DB, runID, statuses))
+}
+
+func (r *RunsRepo) workspaceSOPRuns(tx *gorm.DB, runID string, statuses []string) *gorm.DB {
+	query := tx.Model(&runRow{}).Where(r.sqlExecutionContextJSONText("workspaceRunId")+" = ?", runID)
+	if len(statuses) > 0 {
+		query = query.Where("status IN ?", statuses)
+	}
+	return query
+}
+
+func workspaceSOPRunExists(query *gorm.DB) (bool, error) {
+	var run runRow
+	err := query.Select("id").Take(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// Lock the checkout owner while admitting a top-level SOP. This serializes
+// dispatch and retry with other SOPs, foreground leases and workspace cleanup.
+func (r *RunsRepo) checkConversationWorkspaceForSOP(tx *gorm.DB, run domain.Run, newRun bool) error {
+	id := run.ExecutionContext.WorkspaceRunID
+	row, err := r.takeRunForUpdate(tx, id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("对话工作区已删除")
+	}
+	if err != nil {
+		return err
+	}
+	owner := runFromRow(row)
+	if !owner.IsWorkspace() || owner.ExecutionContext.ProjectID == "" || owner.ExecutionContext.ProjectID != run.ExecutionContext.ProjectID {
+		return fmt.Errorf("工作区不属于当前项目的对话")
+	}
+	if newRun && (domain.TerminalRunStatus(owner.Status) || owner.CancelRequested) {
+		return fmt.Errorf("对话工作区已结束")
+	}
+	busy, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, id, []string{"running", "queued", "waiting"}).
+		Where("id <> ? AND COALESCE(quota_parent_run_id, '') = ''", run.ID))
+	if err != nil {
+		return err
+	}
+	if busy {
+		return fmt.Errorf("对话工作区已有未结束的 SOP：%w", ErrWorkspaceInUse)
+	}
+	return nil
+}
 
 // updateConversationWorkspaceRun rewrites only the named JSON columns of a
 // conversation workspace run under its row lock, so a concurrent conversation

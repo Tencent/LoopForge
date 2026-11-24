@@ -98,7 +98,7 @@ func (h *runsHandlers) workspaceRestoreStatus(c *gin.Context) {
 
 func (h *runsHandlers) workspaceLifecycleInfo(c *gin.Context, run domain.Run, payload map[string]any) {
 	payload["idleTimeoutSeconds"] = int(engine.ConversationWorkspaceIdleTTL.Seconds())
-	meta, ok := h.engine.ConversationWorkspaceStatus(run.ID)
+	meta, ok := h.engine.ConversationWorkspaceStatus(engine.WorkspaceRunID(run))
 	if !ok {
 		return
 	}
@@ -128,7 +128,7 @@ func (h *runsHandlers) touchWorkspaceBrowse(c *gin.Context, run domain.Run) {
 	}
 	access := assistantHandlers{deps: h.deps}
 	if access.workbenchProjectAllowed(c, run.ExecutionContext.ProjectID, user.ID) {
-		_ = h.repo.TouchWorkspaceUse(run.ID, time.Now().UTC())
+		_ = h.repo.TouchWorkspaceUse(engine.WorkspaceRunID(run), time.Now().UTC())
 	}
 }
 func (h *runsHandlers) workspaceActivity(c *gin.Context) {

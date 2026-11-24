@@ -316,7 +316,10 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 	if current, ok := h.requestUser(c.Request, true); ok && current != nil && current.ID > 0 {
 		triggerUserID = current.ID
 	}
-	task, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: request.WorkflowID, Rerun: request.Rerun, TriggerUserID: triggerUserID})
+	task, err := dispatchIssue(h.deps, dispatchRequest{
+		IssueID: issue.ID, WorkflowID: request.WorkflowID, Rerun: request.Rerun, TriggerUserID: triggerUserID,
+		WorkspaceRunID: dispatchConversationWorkspace(h.deps, c.Request, triggerUserID, issue.ProjectID),
+	})
 	if err != nil {
 		respond(c, err)
 		return

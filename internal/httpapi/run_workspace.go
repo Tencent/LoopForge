@@ -138,6 +138,13 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "run not found"})
 		return
 	}
+	if run.UsesConversationWorkspace() {
+		// The SOP can release its own sandbox while the conversation still
+		// owns the checkout. Its files follow the checkout's lifecycle.
+		if owner, found := h.repo.RunState(engine.WorkspaceRunID(run)); found {
+			run.WorkspaceCleanedAt = owner.WorkspaceCleanedAt
+		}
+	}
 	if !run.WorkspaceCleanedAt.IsZero() {
 		reason := "工作区已回收；有保存的快照时可按需恢复，空闲 1 小时后再次回收"
 		if c.FullPath() == "/api/runs/:id/workspace" {

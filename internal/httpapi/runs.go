@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"agentflow/internal/engine"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -131,13 +133,12 @@ func (h *runsHandlers) runs(c *gin.Context) {
 		if !h.requireProjectWriter(c, req.ProjectID, workflowProject) {
 			return
 		}
-		var responsibleUserID int64
+		executionContext := domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: project.OwnerID}
 		if current, ok := h.requestUser(r, true); ok {
-			responsibleUserID = current.ID
-		} else if project.OwnerID > 0 {
-			responsibleUserID = project.OwnerID
+			executionContext.ResponsibleUserID = current.ID
+			executionContext.WorkspaceRunID = dispatchConversationWorkspace(h.deps, r, current.ID, req.ProjectID)
 		}
-		if responsibleUserID == 0 {
+		if executionContext.ResponsibleUserID == 0 {
 			c.JSON(http.StatusConflict, map[string]string{"error": "手动运行需要登录用户或已配置 Owner 的项目"})
 			return
 		}
@@ -151,12 +152,15 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			}
 			repositories = []domain.RepositoryContext{repositoryRunContext(repoDef)}
 		}
-		executionContext := domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: responsibleUserID}
 		if scopedWorkflow {
 			executionContext.SharedScheduleID, executionContext.SharedScheduleVersion = scope.Version.ID, scope.Version.Version
 		}
 		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, executionContext)
 		if err != nil {
+			if errors.Is(err, repo.ErrWorkspaceInUse) {
+				respond(c, HTTPError{http.StatusConflict, err.Error()})
+				return
+			}
 			respond(c, err)
 			return
 		}

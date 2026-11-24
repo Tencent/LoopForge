@@ -20,6 +20,15 @@ func checkoutRepositoryForPreparation(ctx context.Context, workspace string, rep
 	if repository.CreateNewWorkBranch && repository.RequireExistingWorkBranch {
 		return fmt.Errorf("工作分支不能既继续已有分支又新建")
 	}
+	if repository.PreserveCheckout {
+		existing, err := gitwork.ExistingSOPCheckout(ctx, workspace, repository.CloneURL)
+		if err != nil {
+			return err
+		}
+		if existing && !repository.RequireExistingWorkBranch && !repository.CreateNewWorkBranch {
+			return gitwork.ContinueSOPCheckout(ctx, workspace, repository.WorkBranch)
+		}
+	}
 	info, err := os.Lstat(filepath.Join(workspace, ".git"))
 	if os.IsNotExist(err) {
 		return cloneRepository(ctx, workspace, repository)

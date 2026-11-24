@@ -288,6 +288,13 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		// workspace; a read-only speaker continues in platform mode.
 		req.workspaceMode = false
 	}
+	if req.workspaceMode && req.RunID == "" && savedConversation.WorkspaceRunID != "" {
+		// A dispatched SOP can be working in this checkout while the chat
+		// discusses its progress. Keep the conversation in platform mode then.
+		if running, err := h.repo.HasWorkspaceSOPRuns(savedConversation.WorkspaceRunID, "running"); err == nil && running {
+			req.workspaceMode = false
+		}
+	}
 	sourceRoot := h.resolvedSourceRoot()
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
