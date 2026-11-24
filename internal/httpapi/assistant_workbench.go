@@ -1285,6 +1285,8 @@ func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user dom
 		fmt.Fprintf(&b, "本对话当前绑定的工作区：%s。", describeConversationWorkspace(current))
 		if !current.IsWorkspace() {
 			b.WriteString(borrowedSOPNotice(current))
+		} else if req.ProjectID != "" {
+			b.WriteString("从这里派发 SOP 会复用该工作区。如果本轮仍在使用它，派发后先结束回复，SOP 会在工作区释放后开始。")
 		}
 		b.WriteString("\n")
 	}
