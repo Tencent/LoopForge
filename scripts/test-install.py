@@ -1,3 +1,4 @@
+import fcntl
 import importlib.util
 import hashlib
 import io
@@ -45,6 +46,15 @@ if [[ "$1" == info ]]; then
   [[ "${MOCK_USER:-0}" == 0 || "${MOCK_PRIVILEGED:-0}" == 1 || "${MOCK_DIRECT:-0}" == 1 ]]
   exit
 fi
+if [[ "$*" == 'compose --profile platform config --format json platform' ]]; then
+  printf '%s\\n' '{"services":{"mysql":{"image":"mysql:8.4"},"platform":{"image":"ghcr.io/example/target:next"}}}'
+  exit 0
+fi
+if [[ "$1" == image && "$2" == inspect && "$3" == --format ]]; then
+  [[ "$5" == ghcr.io/example/target:next ]] || exit 1
+  printf '%s\\n' "${MOCK_SANDBOX_CATALOG:-}"
+  exit 0
+fi
 if [[ "$1" == image && "$2" == inspect && "${MOCK_IMAGE_PRESENT:-0}" != 1 ]]; then exit 1; fi
 if [[ "$1" == pull && "${MOCK_PULL_FAIL:-0}" == 1 ]]; then exit 42; fi
 if [[ "$1" == tag && "${MOCK_TAG_FAIL:-0}" == 1 ]]; then exit 1; fi
@@ -60,9 +70,20 @@ if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
 if [[ "$*" == *'exec -T mysql'* ]]; then
   if [[ "$*" == *'count(*) from users'* ]]; then echo 0; exit 0; fi
+  if [[ "$*" == *mysqldump* ]]; then
+    printf 'database backup\\n'
+    [[ "${MOCK_BACKUP_FAILURE:-0}" != 1 ]]
+    exit
+  fi
   query=$(cat)
   printf '%s\n' "$query" >> "$MOCK_SQL_LOG"
   if [[ "$query" == *'information_schema.columns'* ]]; then printf '%s\n' "${MOCK_COLUMN_COUNT:-1}"; fi
+  if [[ "$query" == 'SELECT COUNT(*) FROM information_schema.tables'* ]]; then
+    printf '%s\\n' "${MOCK_LEGACY_SANDBOX_TABLES:-0}"
+  fi
+  if [[ "$query" == *'DROP TABLE IF EXISTS dockerfiles, environments;'* && "${MOCK_SANDBOX_MIGRATION_FAILURE:-0}" == 1 ]]; then
+    exit 1
+  fi
 fi
 ''')
         self.executable('id', '#!/usr/bin/env bash\nif [[ "$1" == -u ]]; then echo "${MOCK_USER:-0}"; else /usr/bin/id "$@"; fi\n')
@@ -78,6 +99,8 @@ exec "$@"
             self.environ.pop(name, None)
         self.environ.pop('MOCK_COLUMN_COUNT', None)
         self.environ.pop('MOCK_MIGRATION_PLATFORM', None)
+        for name in ('MOCK_SANDBOX_CATALOG', 'MOCK_LEGACY_SANDBOX_TABLES', 'MOCK_BACKUP_FAILURE', 'MOCK_SANDBOX_MIGRATION_FAILURE'):
+            self.environ.pop(name, None)
 
     def executable(self, name, contents):
         target = self.root / 'mock' / name
@@ -108,13 +131,21 @@ exec "$@"
     def install(self, shell=None, **values):
         return subprocess.run([shell or self.shell(), 'scripts/install.sh'], cwd=self.root, env=dict(self.environ, **values), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
 
+    def pull(self, **values):
+        (self.root / '.env').touch()
+        return subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root,
+            env=dict(self.environ, **values), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('https://team.example.test', result.stdout)
         self.assertNotIn('running at http://127.0.0.1', result.stdout)
 
     def test_root_install_and_repeat_preserve_secrets(self):
-        self.assert_success(self.install())
+        self.assert_success(self.install(MOCK_SANDBOX_CATALOG='inline'))
+        sql = (self.root / 'mysql.log').read_text()
+        self.assertIn('INSERT IGNORE', sql)
+        self.assertNotIn('DROP TABLE IF EXISTS dockerfiles', sql)
         secrets = (self.root / '.env').read_text()
         self.assert_success(self.install())
         self.assertEqual((self.root / '.env').read_text(), secrets)
@@ -495,6 +526,78 @@ esac
         self.assertLess(sql.index('JSON_ARRAY_APPEND'), sql.index('SET @new_mr_auth'))
         # Recreated containers come first; the old volume then gets the columns.
         self.assertLess(log.index('up -d --no-build --wait'), log.index('exec -T mysql'))
+
+    def test_start_pull_migrates_legacy_sandboxes_before_startup(self):
+        result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='2')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        steps = (
+            'pull --ignore-buildable',
+            'image inspect --format',
+            'up -d --no-build --no-recreate --wait --wait-timeout 180 --pull never mysql',
+            'stop platform',
+            'mysqldump',
+            'ps --all --status running',
+            'up -d --no-build --wait --wait-timeout 180 --pull never',
+        )
+        offsets = [log.index(step) for step in steps]
+        self.assertEqual(offsets, sorted(offsets))
+        migration_start = log.index('exec -T mysql', offsets[-2])
+        self.assertLess(migration_start, offsets[-1])
+        sql = (self.root / 'mysql.log').read_text()
+        self.assertLess(sql.index('FROM information_schema.tables'), sql.index('DROP TABLE IF EXISTS dockerfiles'))
+        self.assertLess(sql.index('DROP TABLE IF EXISTS dockerfiles'), sql.index('INSERT IGNORE'))
+        backup, = (self.root / '.local').glob('loopforge-before-041.*/loopforge.sql')
+        self.assertEqual(backup.read_text(), 'database backup\n')
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+
+    def test_start_pull_skips_migration_for_legacy_images_and_current_schemas(self):
+        for target, legacy_tables in (('', '2'), ('inline', '0')):
+            with self.subTest(target=target, legacy_tables=legacy_tables):
+                (self.root / 'docker.log').unlink(missing_ok=True)
+                (self.root / 'mysql.log').unlink(missing_ok=True)
+                result = self.pull(MOCK_SANDBOX_CATALOG=target, MOCK_LEGACY_SANDBOX_TABLES=legacy_tables)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                log = (self.root / 'docker.log').read_text()
+                self.assertNotIn('stop platform', log)
+                self.assertNotIn('mysqldump', log)
+                sql = (self.root / 'mysql.log').read_text()
+                self.assertEqual('FROM information_schema.tables' in sql, target == 'inline')
+                self.assertNotIn('DROP TABLE IF EXISTS dockerfiles', sql)
+                self.assertIn('INSERT IGNORE', sql)
+
+    def test_start_pull_keeps_platform_stopped_on_backup_or_migration_failure(self):
+        for failure, message in (('MOCK_BACKUP_FAILURE', 'Database backup failed'), ('MOCK_SANDBOX_MIGRATION_FAILURE', 'Sandbox migration 041 failed')):
+            with self.subTest(failure=failure):
+                (self.root / 'docker.log').unlink(missing_ok=True)
+                (self.root / 'mysql.log').unlink(missing_ok=True)
+                result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='1', **{failure: '1'})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                log = (self.root / 'docker.log').read_text()
+                self.assertIn('stop platform', log)
+                self.assertNotIn('up -d --no-build --wait', log)
+                sql = (self.root / 'mysql.log').read_text()
+                self.assertNotIn('INSERT IGNORE', sql)
+                has_backup = any((self.root / '.local').glob('loopforge-before-041.*'))
+                self.assertEqual(has_backup, failure == 'MOCK_SANDBOX_MIGRATION_FAILURE')
+
+        result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='1')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Applied sandbox migration 041', result.stdout)
+        self.assertEqual(len(list((self.root / '.local').glob('loopforge-before-041.*/loopforge.sql'))), 2)
+
+    def test_start_pull_and_manual_sandbox_migration_share_an_upgrade_lock(self):
+        (self.root / '.local').mkdir()
+        with (self.root / '.local/compose-upgrade.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            pull = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='2')
+            migrate = subprocess.run([self.shell(), 'start.sh', 'migrate-sandboxes'], cwd=self.root,
+                env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        for result in (pull, migrate):
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Could not lock the installation', result.stderr)
+        self.assertFalse((self.root / 'mysql.log').exists())
 
     def test_migrate_sandboxes_requires_a_stopped_platform(self):
         (self.root / '.env').touch()

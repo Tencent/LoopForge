@@ -65,7 +65,7 @@ Run it as the installation owner, including an ordinary Linux user. If that user
 
 `compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.2`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
-To upgrade, update the checkout first, apply any required upgrade migrations, then refresh the containers. For the sandbox catalog upgrade, follow [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets).
+To upgrade, update the checkout first, apply any manual migrations required by the release, then refresh the containers. The Compose upgrade applies sandbox migration 041 before starting the platform when needed. See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets).
 
 ```bash
 git fetch --tags && git checkout vX.Y.Z
@@ -214,19 +214,24 @@ For an external MySQL deployment, review that migration and check column existen
 | Kind | Example | What an operator does |
 | --- | --- | --- |
 | Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
-| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql`, `041_native_sandbox_inline_assets.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
+| Applied before startup by `./start.sh pull` for an existing Compose database | `041_native_sandbox_inline_assets.sql` | See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets) |
+| Required manual upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
 
 ### Migrating existing sandboxes to inline assets
 
-Check out the upgraded release and stop the old platform and any other processes using the database. Back up the database while MySQL remains running. For Compose installations, apply the migration with these commands.
+For a published Compose release, check out the target release and run `./start.sh pull`. If other API or worker processes share the Compose database, stop them first. After pulling the images, the command checks that the target image supports inline Dockerfiles and that the database still has a legacy asset table. When both conditions hold, it stops the platform, saves a database dump in `.local/loopforge-before-041.*/loopforge.sql`, and runs 041 before starting the new platform. An empty database or one whose legacy tables are already gone skips 041.
+
+If the backup or migration fails, the platform stays stopped. Fix the error and rerun `./start.sh pull`. Keep the original backup if you plan to roll back to a release that uses the old sandbox format, and restore it before starting that release.
+
+For a Compose source upgrade, stop the old platform and any other processes using the database, and back up the database while MySQL remains running. Run these commands before starting the new platform with `./start.sh dev`.
 
 ```bash
 ./start.sh stop platform
 ./start.sh migrate-sandboxes
 ```
 
-Once the migration succeeds, start the upgraded platform with `./start.sh pull` for a published release or `./start.sh dev` for a source build. For external MySQL deployments, apply `migrations/041_native_sandbox_inline_assets.sql` directly before starting the upgraded platform.
+For external MySQL deployments, stop the platform processes, back up the database and apply `migrations/041_native_sandbox_inline_assets.sql` directly before starting the upgraded platform.
 
 The migration copies Dockerfiles into sandboxes, converts local sandboxes to native, drops the legacy Dockerfile and environment tables and includes the built-in Dockerfile fix from `031_generic_backend_openssh.sql`. Fresh installations seed the new sandbox format directly.
 
