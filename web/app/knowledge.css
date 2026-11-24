@@ -398,6 +398,321 @@
   flex: 1;
 }
 
+#knowledgeView .kb-vendor-section {
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#knowledgeView .kb-vendor-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+#knowledgeView .kb-vendor-section-head h2 {
+  margin: 0 0 4px;
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--hui-text);
+}
+
+#knowledgeView .kb-vendor-section-head p {
+  margin: 0;
+}
+
+#knowledgeView .kb-vendor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 760px) {
+  #knowledgeView .kb-vendor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+#knowledgeView .kb-vendor-card {
+  border: 1px solid var(--hui-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--hui-surface);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  transition: border-color .18s var(--hui-ease-out), background-color .18s var(--hui-ease-out), filter .18s var(--hui-ease-out), opacity .18s var(--hui-ease-out);
+}
+
+#knowledgeView .kb-vendor-card.is-unauthorized {
+  background: var(--hui-surface-subtle, rgba(15, 23, 42, .02));
+  border-color: var(--hui-border);
+}
+
+#knowledgeView .kb-vendor-card.is-unauthorized .kb-vendor-icon {
+  filter: grayscale(1);
+  opacity: .56;
+  background: color-mix(in srgb, var(--hui-secondary) 14%, var(--hui-surface));
+  color: var(--hui-secondary);
+}
+
+#knowledgeView .kb-vendor-card.is-unauthorized .kb-vendor-name {
+  color: var(--hui-secondary);
+}
+
+#knowledgeView .kb-vendor-card.is-authorized {
+  border-color: color-mix(in srgb, var(--hui-success) 38%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-success) 4%, var(--hui-surface));
+}
+
+#knowledgeView .kb-vendor-card.is-expired {
+  border-color: color-mix(in srgb, var(--hui-error) 38%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-error) 4%, var(--hui-surface));
+}
+
+#knowledgeView .kb-vendor-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+#knowledgeView .kb-vendor-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hui-accent-soft);
+  color: var(--hui-accent);
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+}
+
+#knowledgeView .kb-vendor-icon[data-brand="lexiang"] {
+  background: color-mix(in srgb, var(--hui-info) 14%, var(--hui-surface));
+  color: var(--hui-info);
+}
+
+#knowledgeView .kb-vendor-icon[data-brand="feishu"] {
+  background: color-mix(in srgb, var(--hui-success) 15%, var(--hui-surface));
+  color: var(--hui-success);
+}
+
+#knowledgeView .kb-vendor-icon[data-brand="tencent_docs"] {
+  background: var(--hui-accent-soft);
+  color: var(--hui-accent);
+}
+
+#knowledgeView .kb-vendor-icon[data-brand="notion"] {
+  background: color-mix(in srgb, var(--hui-text) 10%, var(--hui-surface));
+  color: var(--hui-text);
+}
+
+#knowledgeView .kb-vendor-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+#knowledgeView .kb-vendor-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+#knowledgeView .kb-vendor-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--hui-text);
+}
+
+#knowledgeView .kb-vendor-desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--hui-secondary);
+  line-height: 1.45;
+}
+
+#knowledgeView .kb-vendor-meta {
+  font-size: 11.5px;
+  color: var(--hui-success);
+}
+
+#knowledgeView .kb-vendor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+#kbDrawer .kb-oauth-card {
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--hui-surface-subtle, rgba(15, 23, 42, .02));
+  gap: 10px;
+}
+
+#kbDrawer .kb-oauth-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+#kbDrawer .kb-oauth-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#kbDrawer .kb-oauth-card-title > label {
+  font-weight: 600;
+  color: var(--hui-text);
+}
+
+#kbDrawer .kb-oauth-status-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+#kbDrawer .kb-oauth-exp {
+  font-size: 11.5px;
+  color: var(--hui-secondary);
+}
+
+#kbDrawer .kb-oauth-segments {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border-radius: 9px;
+  border: 1px solid var(--hui-border);
+  background: var(--hui-surface);
+}
+
+#kbDrawer .kb-oauth-seg {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 7px 8px;
+  background: transparent;
+  color: var(--hui-secondary);
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: background-color .15s var(--hui-ease-out), border-color .15s var(--hui-ease-out), color .15s var(--hui-ease-out);
+}
+
+#kbDrawer .kb-oauth-seg:hover {
+  background: var(--hui-surface-subtle, rgba(15, 23, 42, .03));
+  color: var(--hui-text);
+}
+
+#kbDrawer .kb-oauth-seg.active {
+  background: var(--hui-accent-soft);
+  border-color: color-mix(in srgb, var(--hui-accent) 32%, var(--hui-border));
+  color: var(--hui-text);
+}
+
+#kbDrawer .kb-oauth-seg-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+}
+
+#kbDrawer .kb-oauth-seg-sub {
+  font-size: 11px;
+  color: var(--hui-secondary);
+}
+
+#kbDrawer .kb-oauth-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#kbDrawer .kb-oauth-pane[hidden],
+#kbDrawer .kb-oauth-actions[hidden],
+#kbDrawer .kb-field[hidden],
+#kbDrawer .kb-check-banner[hidden] {
+  display: none;
+}
+
+#kbDrawer .kb-oauth-hint-box {
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--hui-border);
+  background: var(--hui-surface);
+  font-size: 12px;
+  color: var(--hui-text);
+}
+
+#kbDrawer .kb-oauth-hint-box p {
+  margin: 4px 0 0;
+}
+
+#kbDrawer .kb-oauth-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#kbDrawer .kb-mono-input {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+}
+
+#kbDrawer .kb-oauth-advanced {
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--hui-surface);
+}
+
+#kbDrawer .kb-oauth-advanced > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--hui-secondary);
+  user-select: none;
+}
+
+#kbDrawer .kb-oauth-advanced[open] > summary {
+  margin-bottom: 10px;
+  color: var(--hui-text);
+}
+
+#kbDrawer .kb-oauth-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+#kbDrawer .kb-oauth-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
 .modal-knowledge-row {
   display: flex;
   align-items: center;
