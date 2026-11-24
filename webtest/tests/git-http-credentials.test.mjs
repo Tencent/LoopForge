@@ -155,10 +155,23 @@ test('generic HTTP credentials select the authorized endpoint and check a reposi
   assert.deepEqual(app.router.calls.find(call => call.method === 'PUT' && call.path === endpoint).body,
     {...instance, name:instance.host, username:'git-user', token:'fixture-token'});
 
-  dialog.querySelector('[data-http-cred-verify="plain-token"]').click();
-  app.document.querySelector('#confirmPromptInput').value = remote;
-  app.document.querySelector('#confirmOkBtn').click();
+  const verify = dialog.querySelector('[data-http-cred-verify="plain-token"]');
+  const repoCheck = dialog.querySelector('[data-http-repo-check]');
+  const repoUrl = repoCheck.elements.repoUrl;
+  verify.click();
+  assert.equal(repoCheck.hidden, false);
+  assert.equal(app.document.activeElement, repoUrl, 'the native credential dialog owns the focused URL field');
+  repoCheck.querySelector('[data-http-repo-check-cancel]').click();
+  assert.equal(repoCheck.hidden, true);
+  assert.equal(app.document.activeElement, verify);
+  assert.equal(app.router.calls.some(call => call.path === `${endpoint}/plain-token/verify`), false);
+
+  verify.click();
+  repoUrl.value = remote;
+  repoCheck.querySelector('button[type="submit"]').click();
   await settle(6);
+  assert.equal(dialog.open, true);
+  assert.equal(repoCheck.hidden, true);
   assert.deepEqual(app.router.calls.find(call => call.path === `${endpoint}/plain-token/verify`).body, {repoUrl:remote});
   assert.match(dialog.querySelector('.git-ssh-status').textContent, /仓库可读/);
 });

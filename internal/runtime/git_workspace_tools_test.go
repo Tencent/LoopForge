@@ -182,6 +182,44 @@ exec git ls-remote -- "$2"`
 	}
 }
 
+func TestDockerScriptWithGitCredentialOnImageWithoutGit(t *testing.T) {
+	root := gitHelperDockerTestRoot(t)
+	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", "node:22-bookworm-slim")
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	sandbox, err := OpenRemoteSandbox(ctx, "script-no-git-"+filepath.Base(root), filepath.Join(root, "workspace"),
+		domain.SandboxProfile{Driver: domain.SandboxDriverDocker}, SandboxRequirements{}, SandboxResources{Dockerfile: domain.DockerfileDefinition{Content: IsolatedDockerfile}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sandbox.Close(context.Background()) })
+
+	script := CommandSpec{Argv: []string{"sh", "-ec", "printf 'script ran'"}, CredentialBindings: []CredentialBinding{BindGit}}
+	if out, err := sandbox.Exec(ctx, script, nil); err != nil || !strings.Contains(out, "script ran") {
+		t.Fatalf("script before configuring a Git token: %q, %v", out, err)
+	}
+	before, err := ReadSandboxEnvironmentIdentity(ctx, sandbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const host = "http://git.example.invalid:8080"
+	withToken := WithSandboxCredentials(sandbox, RunCredentials{GitHTTPCredentials: map[string]domain.GitHTTPExecutionCredential{
+		host: {GitHTTPCredential: domain.GitHTTPCredential{Host: host, Platform: domain.GitPlatformOther}, Token: "fixture-token"},
+	}})
+	if out, err := withToken.Exec(ctx, script, nil); err != nil || !strings.Contains(out, "script ran") {
+		t.Fatalf("script with an HTTP Git token on an image without Git: %q, %v", out, err)
+	}
+	git := CommandSpec{Argv: []string{"git", "--version"}, CredentialBindings: []CredentialBinding{BindGit}}
+	out, err := withToken.Exec(ctx, git, nil)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 127 || !strings.Contains(out, "git: executable not found") {
+		t.Fatalf("missing Git must fail only when invoked: %q, %v", out, err)
+	}
+	if after, err := ReadSandboxEnvironmentIdentity(ctx, sandbox); err != nil || after != before {
+		t.Fatalf("the workspace container changed after using the token: %v", err)
+	}
+}
+
 func TestDockerGitToolsRefreshAfterLegacyContainerBecomesIdle(t *testing.T) {
 	root := gitHelperDockerTestRoot(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)

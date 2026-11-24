@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -72,6 +73,10 @@ func workspacePlainHTTPHost(authority string) string {
 
 func execWorkspaceGit(path string, args, env []string) int {
 	if err := syscall.Exec(path, append([]string{path}, args...), env); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "git: executable not found: %s\n", path)
+			return 127
+		}
 		fmt.Fprintf(os.Stderr, "git: execute %s: %v\n", path, err)
 		return 126
 	}

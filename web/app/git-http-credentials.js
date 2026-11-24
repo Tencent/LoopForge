@@ -17,6 +17,7 @@ function openGitHTTPCredentials(options = {}) {
   let editing = null;
   let deleting = '';
   let busy = false;
+  let repoCheckOpener = null;
 
   const dialog = document.createElement('dialog');
   dialog.id = 'gitHTTPCredentialDialog';
@@ -56,12 +57,23 @@ function openGitHTTPCredentials(options = {}) {
         <button type="button" class="credential-btn secondary" data-http-cred-cancel>取消</button>
         <button type="submit" class="credential-btn primary">保存令牌</button>
       </footer>
+    </form>
+    <form class="git-ssh-key-form" data-http-repo-check hidden>
+      <h3>${lfT('检查仓库访问', 'Check repository access')}</h3>
+      ${credentialFieldHTML({label:lfT('HTTP 仓库克隆地址', 'HTTP clone URL'), name:'repoUrl', type:'url'})}
+      <footer class="git-ssh-form-actions">
+        <button type="button" class="credential-btn secondary" data-http-repo-check-cancel>${lfT('取消', 'Cancel')}</button>
+        <button type="submit" class="credential-btn primary">${lfT('检查', 'Check')}</button>
+      </footer>
     </form>`;
 
   const list = dialog.querySelector('.git-ssh-key-list');
   const status = dialog.querySelector('.git-ssh-status');
   const add = dialog.querySelector('[data-http-cred-add]');
   const form = dialog.querySelector('form');
+  const repoCheck = dialog.querySelector('[data-http-repo-check]');
+  const repoURL = repoCheck.elements.repoUrl;
+  repoURL.required = true;
   const field = key => form.elements.namedItem(key);
   const [instance, host, platform, name, username, token] = ['instance', 'host', 'platform', 'name', 'username', 'token'].map(field);
   const instanceField = instance.closest('.credential-field');
@@ -101,6 +113,7 @@ function openGitHTTPCredentials(options = {}) {
   }
 
   function openForm(cred) {
+    closeRepoCheck(false);
     editing = cred;
     deleting = '';
     renderList();
@@ -153,6 +166,7 @@ function openGitHTTPCredentials(options = {}) {
 
   async function request(method, body, id) {
     if (busy) return;
+    closeRepoCheck(false);
     setBusy(true);
     setStatus(method === 'PUT' ? '正在保存…' : '正在删除…');
     try {
@@ -173,19 +187,32 @@ function openGitHTTPCredentials(options = {}) {
     }
   }
 
-  async function verify(cred) {
+  function closeRepoCheck(restoreFocus = true) {
+    repoCheck.hidden = true;
+    repoCheck.reset();
+    repoCheck.onsubmit = null;
+    if (restoreFocus) repoCheckOpener?.focus({preventScroll:true});
+    repoCheckOpener = null;
+  }
+
+  function openRepoCheck(cred, button) {
+    repoCheckOpener = button;
+    repoCheck.reset();
+    repoURL.placeholder = `${cred.host}/team/repo.git`;
+    repoCheck.hidden = false;
+    repoURL.focus();
+    repoCheck.onsubmit = event => {
+      event.preventDefault();
+      const repoUrl = repoURL.value.trim();
+      if (busy || !repoUrl) return;
+      closeRepoCheck();
+      return verify(cred, repoUrl);
+    };
+  }
+
+  async function verify(cred, repoUrl) {
     if (busy) return;
-    let body;
-    if (cred.host.startsWith('http://')) {
-      const repoUrl = await afPrompt({
-        title:lfT('检查仓库访问', 'Check repository access'),
-        label:lfT('HTTP 仓库克隆地址', 'HTTP clone URL'),
-        placeholder:`${cred.host}/team/repo.git`,
-        confirmText:lfT('检查', 'Check'),
-      });
-      if (!repoUrl?.trim()) return;
-      body = JSON.stringify({repoUrl:repoUrl.trim()});
-    }
+    const body = repoUrl ? JSON.stringify({repoUrl}) : undefined;
     setBusy(true);
     setStatus('正在校验…');
     try {
@@ -206,11 +233,18 @@ function openGitHTTPCredentials(options = {}) {
     const action = button.dataset;
     if ('httpCredClose' in action) return dialog.close();
     if ('httpCredCancel' in action) return closeForm();
+    if ('httpRepoCheckCancel' in action) return closeRepoCheck();
     if ('httpCredAdd' in action) return openForm(null);
-    if (action.httpCredVerify) return verify(creds.find(cred => cred.id === action.httpCredVerify));
+    if (action.httpCredVerify) {
+      const cred = creds.find(item => item.id === action.httpCredVerify);
+      if (cred?.host.startsWith('http://')) return openRepoCheck(cred, button);
+      closeRepoCheck(false);
+      if (cred) return verify(cred);
+    }
     if (action.httpCredEdit) return openForm(creds.find(cred => cred.id === action.httpCredEdit));
     if (action.httpCredRemove) return request('DELETE', null, action.httpCredRemove);
     if (action.httpCredDelete || 'httpCredKeep' in action) {
+      closeRepoCheck(false);
       deleting = action.httpCredDelete || '';
       renderList();
       (list.querySelector('[data-http-cred-remove]') || add).focus();
@@ -244,7 +278,10 @@ function openGitHTTPCredentials(options = {}) {
   dialog.addEventListener('keydown', event => {
     if (event.key === 'Escape' || event.metaKey || event.ctrlKey) event.stopPropagation();
   });
-  dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
+  dialog.addEventListener('cancel', event => {
+    if (busy || !repoCheck.hidden) event.preventDefault();
+    if (!busy && !repoCheck.hidden) closeRepoCheck();
+  });
   dialog.addEventListener('close', () => {
     form.reset();
     dialog.remove();

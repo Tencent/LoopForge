@@ -19,9 +19,10 @@ var errDockerGitToolsMountMissing = errors.New("此 Docker 容器缺少 Git 凭�
 
 // Take a private snapshot even when the installed distribution uses links.
 // Prefer the executable from libexec when available, including on macOS where
-// the command on PATH may be the developer tools launcher.
+// the command on PATH may be the developer tools launcher. Docker images
+// without Git publish an empty distribution.
 const copyGitDistribution = `git="${2:-}"
-if [ -z "$git" ]; then git=$(command -v git); fi
+if [ -z "$git" ]; then git=$(command -v git) || exit 0; fi
 execpath="${3:-}"
 if [ -z "$execpath" ]; then execpath=$("$git" --exec-path); fi
 mkdir "$1/exec"
@@ -228,6 +229,12 @@ func prepareDockerGitDistribution(ctx context.Context, root, imageID string) err
 			"--entrypoint", "sh", imageID, "-ec", copyGitDistribution, "loopforge-git-install", "/git-install"}
 		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 			return fmt.Errorf("copy Git helpers from sandbox image: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		if _, err := os.Stat(filepath.Join(stage, "git")); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
 		}
 		return writeWorkspaceGitShim(stage, "exec/git-remote-http", dockerGitToolsMount+"/bin/agentflow-helper", "git-remote-http")
 	}); err != nil {
