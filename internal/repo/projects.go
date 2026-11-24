@@ -1,16 +1,31 @@
 package repo
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 // ---------- Projects ----------
+
+func projectMembersVersion(ownerID int64, members []domain.ProjectMember) string {
+	ordered := append([]domain.ProjectMember(nil), members...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].UserID < ordered[j].UserID })
+	h := sha256.New()
+	fmt.Fprintf(h, "owner:%d\n", ownerID)
+	for _, member := range ordered {
+		role, _ := domain.NormalizeProjectMemberRole(member.Role)
+		fmt.Fprintf(h, "%d:%s\n", member.UserID, role)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
 
 func (r *ProjectsRepo) lockProjectInTx(tx *gorm.DB, id string) error {
 	var row projectRow
@@ -51,6 +66,7 @@ func (r *ProjectsRepo) Projects() []domain.Project {
 		if project.Members == nil {
 			project.Members = []domain.ProjectMember{}
 		}
+		project.MembersVersion = projectMembersVersion(project.OwnerID, project.Members)
 		out = append(out, project)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -76,6 +92,7 @@ func (r *ProjectsRepo) Project(id string) (domain.Project, bool) {
 		project.UpdatedAt = *row.Updated
 	}
 	project.Members = r.projectMembers(project.ID)
+	project.MembersVersion = projectMembersVersion(project.OwnerID, project.Members)
 	return project, true
 }
 
@@ -111,15 +128,20 @@ func (r *ProjectsRepo) ProjectMemberships(ids []string) (map[string]domain.Proje
 }
 
 func (r *ProjectsRepo) projectMembers(projectID string) []domain.ProjectMember {
+	members, _ := r.projectMembersInTx(r.DB, projectID)
+	return members
+}
+
+func (r *ProjectsRepo) projectMembersInTx(tx *gorm.DB, projectID string) ([]domain.ProjectMember, error) {
 	var rows []projectMemberRow
-	if err := r.DB.Where("project_id = ?", projectID).Order("user_id").Find(&rows).Error; err != nil {
-		return nil
+	if err := tx.Where("project_id = ?", projectID).Order("user_id").Find(&rows).Error; err != nil {
+		return nil, err
 	}
 	members := make([]domain.ProjectMember, 0, len(rows))
 	for _, row := range rows {
 		members = append(members, domain.ProjectMember{UserID: row.UserID, Role: row.Role})
 	}
-	return members
+	return members, nil
 }
 
 // SetProjectArchived deletes (at != nil) or restores (at == nil) a project
@@ -147,36 +169,49 @@ func (r *ProjectsRepo) SetProjectArchived(id string, at *time.Time, by int64) er
 	})
 }
 
+// PutProject preserves members when omitted. Replacing an existing roster
+// requires the MembersVersion returned by Project or Projects.
 func (r *ProjectsRepo) PutProject(v domain.Project) error {
-	now := time.Now().UTC()
-	if old, ok := r.Project(v.ID); ok {
-		if v.OwnerID == 0 {
-			v.OwnerID = old.OwnerID
-		}
-		if v.Members == nil {
-			v.Members = old.Members
-		}
-		v.CreatedAt = old.CreatedAt
-	} else {
-		v.CreatedAt = now
-	}
-	v.UpdatedAt = now
 	return r.writeProject(v)
 }
 
 func (r *ProjectsRepo) writeProject(v domain.Project) error {
-	payload := v
-	payload.Members = nil
-	payload.GitToken, payload.CodeBuddyAPIKey = "", ""
-	var owner any
-	if v.OwnerID > 0 {
-		owner = v.OwnerID
-	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		var current projectRow
 		err := r.locking(tx).Where("id = ?", v.ID).Take(&current).Error
 		if err != nil && err != gorm.ErrRecordNotFound {
 			return err
+		}
+		now := time.Now().UTC()
+		v.CreatedAt, v.UpdatedAt = now, now
+		if err == nil {
+			members, err := r.projectMembersInTx(r.locking(tx), v.ID)
+			if err != nil {
+				return err
+			}
+			var ownerID int64
+			if current.OwnerUserID != nil {
+				ownerID = *current.OwnerUserID
+			}
+			if v.Members != nil && v.MembersVersion != projectMembersVersion(ownerID, members) {
+				return apperr.New(apperr.Conflict, "项目成员已变化，请刷新项目后重试")
+			}
+			if v.OwnerID == 0 {
+				v.OwnerID = ownerID
+			}
+			if v.Members == nil {
+				v.Members = members
+			}
+			if current.Created != nil {
+				v.CreatedAt = *current.Created
+			}
+		}
+		payload := v
+		payload.Members, payload.MembersVersion = nil, ""
+		payload.GitToken, payload.CodeBuddyAPIKey = "", ""
+		var owner any
+		if v.OwnerID > 0 {
+			owner = v.OwnerID
 		}
 		// Only SetProjectBusinessDomain owns the assignment, even for stale project payloads.
 		v.BusinessDomainID = current.BusinessDomainID

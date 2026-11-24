@@ -99,10 +99,10 @@ func TestSessionOwnerCanClearProjectCredentialsAfterLosingAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	member, _ := h.repo.UserByLoginName("credential-session-member")
-	project, _ := h.repo.Project("workbench")
+	const projectID = "workbench"
 	const credentialID = "registry"
 	value := "fixture-token"
-	if _, err := h.repo.SaveProjectCredential(t.Context(), project.ID, credentialID, true, domain.ProjectCredentialInput{
+	if _, err := h.repo.SaveProjectCredential(t.Context(), projectID, credentialID, true, domain.ProjectCredentialInput{
 		Name: "Registry", Kind: domain.ProjectCredentialToken,
 		Fields: []domain.ProjectCredentialVariableInput{{Name: "SERVICE_TOKEN", Value: &value}},
 	}); err != nil {
@@ -110,6 +110,7 @@ func TestSessionOwnerCanClearProjectCredentialsAfterLosingAccess(t *testing.T) {
 	}
 	for _, role := range []string{"viewer", "removed"} {
 		t.Run(role, func(t *testing.T) {
+			project, _ := h.repo.Project(projectID)
 			project.Members = []domain.ProjectMember{{UserID: member.ID, Role: "member"}}
 			if err := h.repo.PutProject(project); err != nil {
 				t.Fatal(err)
@@ -128,6 +129,7 @@ func TestSessionOwnerCanClearProjectCredentialsAfterLosingAccess(t *testing.T) {
 			if code := bind(member, []string{credentialID}); code != http.StatusOK {
 				t.Fatalf("bind as member: %d", code)
 			}
+			project, _ = h.repo.Project(projectID)
 			project.Members = []domain.ProjectMember{}
 			if role == "viewer" {
 				project.Members = []domain.ProjectMember{{UserID: member.ID, Role: role}}
