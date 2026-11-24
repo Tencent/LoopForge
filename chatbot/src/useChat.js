@@ -672,7 +672,8 @@ export function useChat() {
   const runnerId = composerRunnerId(session);
   const runner = executionMachines.machines.find(machine => machine.id === runnerId && machine.ownerUserId === user?.id);
   const checkServerCLI = executionMachines.machinesReady && !runnerId &&
-    !session?.executionTarget?.runnerId && !session?.runId && session?.runtimeMode !== "workspace";
+    !(session?.executionTarget?.pool === "cloud" && session.executionTarget.runnerId) &&
+    !session?.runId && session?.runtimeMode !== "workspace";
   const availableExecutors = EXECUTORS.flatMap(item => {
     if (usesRunnerLogin(runner, item.id)) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
     const option = catalogEngines.find(engine => engine.id === item.id);
@@ -720,7 +721,10 @@ export function useChat() {
     const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
     const listedModel = findExecutorModel(executorModels, executor, model);
     const concrete = concreteModel({ id: model }, executor);
-    const keepConversationModel = conversation && (!runnerCatalog || executionLocked(conversation));
+    const changedDraftRunner = conversation?.executionTarget?.pool === "runner" &&
+      conversation.executionTarget.runnerId !== personalMachineId;
+    const keepConversationModel = conversation &&
+      (executionLocked(conversation) || (!runnerCatalog && !changedDraftRunner));
     const hasSelectedModel = concrete && !listedModel?.disabled && !listedModel?.unavailable &&
       (keepConversationModel || !executorModels.length || listedModel);
     const inheritsDefault = !!conversation && !concrete;

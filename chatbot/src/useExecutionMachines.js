@@ -3,28 +3,25 @@ import { api } from "./api";
 
 // Machine selection belongs to the local draft until its first turn starts.
 export function useExecutionMachines(userId, busy, readOnly, onError, bindMachine, draftTarget, projectId = "") {
-  const [machines, setMachines] = useState([]);
-  const [defaultRunnerId, setDefaultRunnerId] = useState("");
-  const [cloudPool, setCloudPool] = useState(null);
-  const [loadedScope, setLoadedScope] = useState(null);
+  const [loaded, setLoaded] = useState(null);
+  const [chosen, setChosen] = useState(null);
   const scope = `${userId ?? ""}/${projectId}`;
-  const machinesReady = loadedScope === scope;
+  const machinesReady = loaded?.scope === scope;
+  const machines = machinesReady ? loaded.machines : [];
+  const availableMachines = machinesReady ? loaded.availableMachines : [];
+  const cloudPool = machinesReady ? loaded.cloudPool : null;
+  let defaultRunnerId = "";
+  if (machinesReady) {
+    if (chosen !== null) defaultRunnerId = chosen;
+    else if (draftTarget?.pool === "runner" && availableMachines.some((row) => row.id === draftTarget.runnerId))
+      defaultRunnerId = draftTarget.runnerId;
+    else if (draftTarget?.pool !== "cloud") defaultRunnerId = loaded.suggestedRunner;
+  }
   const [machineError, setMachineError] = useState("");
   const [machineSaving, setMachineSaving] = useState(false);
   const machineSavingRef = useRef(false);
   const revision = useRef(0);
-  const chosen = useRef(null);
-  const suggestedRunner = useRef("");
-  const targetRef = useRef(draftTarget);
-  targetRef.current = draftTarget;
-  const resetMachine = useCallback(() => {
-    chosen.current = null;
-    setDefaultRunnerId(suggestedRunner.current);
-  }, []);
-  useEffect(() => {
-    if (draftTarget && chosen.current === null)
-      setDefaultRunnerId(draftTarget.pool === "runner" ? draftTarget.runnerId || "" : "");
-  }, [draftTarget]);
+  const resetMachine = useCallback(() => setChosen(null), []);
 
   const refreshMachines = useCallback(async (force) => {
     if (!userId || (machineSavingRef.current && force !== true)) return;
@@ -36,18 +33,17 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
         api(`/api/runners/default${query}`),
       ]);
       if (request !== revision.current) return;
-      const available = Array.isArray(rows) ? rows : [];
-      const hasMachine = (id) => available.some((row) => row.id === id);
-      setMachines(available);
-      suggestedRunner.current = selected.runnerId || "";
-      if (chosen.current && !hasMachine(chosen.current)) chosen.current = null;
-      if (chosen.current === null) {
-        const target = targetRef.current;
-        const draftRunner = target?.pool === "runner" ? target.runnerId : "";
-        setDefaultRunnerId(target?.pool === "cloud" ? "" : hasMachine(draftRunner) ? draftRunner : suggestedRunner.current);
-      }
-      setCloudPool(selected.cloudPool || null);
-      setLoadedScope(scope);
+      const machines = Array.isArray(rows) ? rows : [];
+      const availableMachines = projectId ? machines.filter((row) => row.canUseInProject) : machines;
+      const hasMachine = (id) => availableMachines.some((row) => row.id === id);
+      setChosen((current) => current && !hasMachine(current) ? null : current);
+      setLoaded({
+        scope,
+        machines,
+        availableMachines,
+        suggestedRunner: hasMachine(selected.runnerId) ? selected.runnerId : "",
+        cloudPool: selected.cloudPool || null,
+      });
       setMachineError("");
     } catch (e) {
       if (request === revision.current) setMachineError(e.message);
@@ -55,12 +51,8 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
   }, [projectId, scope, userId]);
 
   useEffect(() => {
-    setLoadedScope(null);
-    setMachines([]);
-    setDefaultRunnerId("");
-    chosen.current = null;
-    suggestedRunner.current = "";
-    setCloudPool(null);
+    setLoaded(null);
+    resetMachine();
     setMachineError("");
     void refreshMachines(true);
     window.addEventListener("focus", refreshMachines);
@@ -78,7 +70,7 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
       window.removeEventListener("focus", refreshMachines);
       window.removeEventListener("message", returnedToChat);
     };
-  }, [refreshMachines]);
+  }, [refreshMachines, resetMachine]);
 
   async function selectMachine(runnerId) {
     if (
@@ -86,7 +78,8 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
       busy ||
       readOnly ||
       !machinesReady ||
-      machineSavingRef.current
+      machineSavingRef.current ||
+      (runnerId && !availableMachines.some((row) => row.id === runnerId))
     )
       return false;
     machineSavingRef.current = true;
@@ -96,8 +89,7 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
     try {
       const selected = await bindMachine(runnerId);
       if (request !== revision.current) return false;
-      chosen.current = selected.runnerId || "";
-      setDefaultRunnerId(selected.runnerId || "");
+      setChosen(selected.runnerId || "");
       setMachineError("");
       return true;
     } catch (e) {
@@ -111,6 +103,7 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
 
   return {
     machines,
+    availableMachines,
     defaultRunnerId,
     cloudPool,
     machinesReady,

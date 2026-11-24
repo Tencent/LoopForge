@@ -243,8 +243,8 @@ func (h *runnersHandlers) runners(c *gin.Context) {
 		projectID = ""
 	}
 	list := h.repo.RunnersForUser(user.ID, projectID)
-	for i, runner := range list {
-		list[i] = runnerViewForUser(runner, user.ID)
+	for i := range list {
+		list[i].Runner = runnerViewForUser(list[i].Runner, user.ID)
 	}
 	c.JSON(http.StatusOK, list)
 }
@@ -441,7 +441,7 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 			c.JSON(http.StatusForbidden, map[string]string{"error": "只能选择自己绑定的执行机器"})
 			return
 		}
-		if projectID != "" && (!runner.SharedWithProject(projectID) || !h.repo.CanUseRunner(runner, projectID, user.ID)) {
+		if projectID != "" && !h.repo.CanUseRunner(runner, projectID, user.ID) {
 			runnerPreferenceError(c, repo.ErrRunnerProjectDenied)
 			return
 		}

@@ -169,7 +169,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	old, exists := h.repo.AssistantSession(ownerID, req.SessionID)
-	if exists {
+	if exists && old.ExecutionLocked() {
 		target := old.Execution()
 		if req.ExecutionTarget != nil && *req.ExecutionTarget != target {
 			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换；请新建对话"})
@@ -177,7 +177,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 		req.ExecutionTarget = &target
 	} else {
-		target, err := h.newExecutionTarget(stored.ID, req.ProjectID, req.ExecutionTarget)
+		target, err := h.newExecutionTarget(stored.ID, req.ProjectID, draftExecutionTarget(old, req.ExecutionTarget))
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return

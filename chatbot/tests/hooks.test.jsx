@@ -1209,7 +1209,11 @@ describe("conversation hooks", () => {
     const original=apiMock.getMockImplementation();
     let release;
     const delayed=new Promise(resolve=>{release=resolve;});
-    apiMock.mockImplementation((path,opts)=>path==="/api/runners/default"?delayed:original(path,opts));
+    apiMock.mockImplementation((path, opts) => {
+      if (path === "/api/runners/default") return delayed;
+      if (path === "/api/runners?mine=1") return Promise.resolve([{ id: "mac", ownerUserId: 1 }]);
+      return original(path, opts);
+    });
     try {
       const {result}=renderHook(()=>useChat());
       await waitFor(()=>expect(result.current.ready).toBe(true));

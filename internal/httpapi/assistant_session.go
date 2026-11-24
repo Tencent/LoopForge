@@ -301,6 +301,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		conv := body.assistantConversation
+		if conv.ProjectID == "" {
+			conv.ProjectID = existing.ProjectID
+		}
 		conv.RuntimeMode = existing.Mode()
 		conv.ExecutionTargetLocked = existing.ExecutionLocked()
 		if existing.ID != "" && existing.ExecutionLocked() {
@@ -376,9 +379,6 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		conv.UpdatedAt = time.Time{}
 		if conv.Title == "" {
 			conv.Title = existing.Title
-		}
-		if conv.ProjectID == "" {
-			conv.ProjectID = existing.ProjectID
 		}
 		if conv.RunID == "" {
 			conv.RunID = existing.RunID

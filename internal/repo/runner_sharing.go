@@ -33,17 +33,25 @@ func (r *RunnersRepo) projectRunnerAccess(projectID string, userID int64) bool {
 }
 
 func (r *RunnersRepo) CanUseRunner(runner domain.Runner, projectID string, userID int64) bool {
-	return userID > 0 && (runner.OwnerUserID == userID ||
-		runner.SharedWithProject(projectID) && r.projectRunnerAccess(projectID, userID))
+	if projectID == "" {
+		return userID > 0 && runner.OwnerUserID == userID
+	}
+	return runner.SharedWithProject(projectID) && r.projectRunnerAccess(projectID, userID)
 }
 
-func (r *RunnersRepo) RunnersForUser(userID int64, projectID string) []domain.Runner {
-	shared := r.projectRunnerAccess(projectID, userID)
+type RunnerProjectView struct {
+	domain.Runner
+	CanUseInProject bool `json:"canUseInProject,omitempty"`
+}
+
+func (r *RunnersRepo) RunnersForUser(userID int64, projectID string) []RunnerProjectView {
+	writable := r.projectRunnerAccess(projectID, userID)
 	items := r.Runners()
-	out := make([]domain.Runner, 0, len(items))
+	out := make([]RunnerProjectView, 0, len(items))
 	for _, runner := range items {
-		if runner.OwnerUserID == userID || shared && runner.SharedWithProject(projectID) {
-			out = append(out, runner)
+		canUse := writable && runner.SharedWithProject(projectID)
+		if runner.OwnerUserID == userID || canUse {
+			out = append(out, RunnerProjectView{Runner: runner, CanUseInProject: canUse})
 		}
 	}
 	return out
@@ -96,7 +104,7 @@ func (r *RunnersRepo) ProjectDefaultRunner(userID int64, projectID string) domai
 		return domain.Runner{}
 	}
 	runner, ok := r.Runner(pref.DefaultRunnerID)
-	if !ok || !runner.SharedWithProject(projectID) || !r.projectRunnerAccess(projectID, userID) {
+	if !ok || !r.CanUseRunner(runner, projectID, userID) {
 		return domain.Runner{}
 	}
 	return runner

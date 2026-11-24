@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 func TestRunnerProjectSharing(t *testing.T) {
@@ -20,6 +21,7 @@ func TestRunnerProjectSharing(t *testing.T) {
 		{ID: "two", Name: "Two", OwnerID: member.user.ID, Members: []domain.ProjectMember{{UserID: owner.user.ID, Role: "maintainer"}}},
 		{ID: "other", Name: "Other", OwnerID: member.user.ID},
 		{ID: "read-only", Name: "Read only", OwnerID: owner.user.ID, Members: []domain.ProjectMember{{UserID: member.user.ID, Role: "viewer"}}},
+		{ID: "unassigned", Name: "Unassigned", OwnerID: owner.user.ID},
 	} {
 		if err := owner.s.PutProject(project); err != nil {
 			t.Fatal(err)
@@ -54,16 +56,25 @@ func TestRunnerProjectSharing(t *testing.T) {
 		{"?projectId=one", true}, {"?projectId=two", true}, {"?projectId=other", false},
 		{"?projectId=read-only", false}, {"?mine=1&projectId=one", false}, {"", false},
 	} {
-		var rows []domain.Runner
+		var rows []repo.RunnerProjectView
 		if err := json.Unmarshal(check(member, http.MethodGet, "/api/runners"+tc.query, nil, 200), &rows); err != nil {
 			t.Fatal(err)
 		}
 		if !tc.visible && len(rows) != 0 {
 			t.Fatalf("%s exposed %+v", tc.query, rows)
 		}
-		if tc.visible && (len(rows) != 1 || rows[0].ID != runner.ID || len(rows[0].SharedProjectIDs) != 0 ||
+		if tc.visible && (len(rows) != 1 || rows[0].ID != runner.ID || !rows[0].CanUseInProject || len(rows[0].SharedProjectIDs) != 0 ||
 			len(rows[0].Runtimes) != 1 || rows[0].Runtimes[0].BinaryPath != "" || rows[0].Runtimes[0].AuthMode != "personal") {
 			t.Fatalf("%s returned an invalid shared machine view: %+v", tc.query, rows)
+		}
+	}
+	for _, project := range []string{"one", "other", "unassigned"} {
+		var rows []repo.RunnerProjectView
+		if err := json.Unmarshal(check(owner, http.MethodGet, "/api/runners?projectId="+project, nil, 200), &rows); err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].ID != runner.ID || rows[0].CanUseInProject != (project == "one") {
+			t.Fatalf("owner's management view for %s: %+v", project, rows)
 		}
 	}
 	selection := map[string]string{"runnerId": runner.ID}
@@ -83,12 +94,29 @@ func TestRunnerProjectSharing(t *testing.T) {
 			Pool: domain.ExecutionModeRunner, RunnerID: runner.ID,
 		}}
 	}
+	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-unassigned", draft("unassigned"), 400)
+	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-personal", draft(""), 200)
+	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-one", draft("one"), 200)
 	check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-one", draft("one"), 200)
 	check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-other", draft("other"), 400)
 	check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-personal", draft(""), 400)
 	check(member, http.MethodPut, "/api/runners/"+runner.ID+"/run-limit", map[string]int{"runLimit": 2}, 403)
 
 	check(owner, http.MethodPut, sharing, grant("two"), 200)
+	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-one", draft(""), 400)
+	staleDraft := assistantRequest{
+		SessionID: "owner-runner-one", ProjectID: "one",
+		Messages: []assistantMessage{{Role: "user", Content: "hello"}},
+	}
+	for _, path := range []string{"/api/assistant/chat", "/api/assistant/generations"} {
+		var outcome struct{ Error string }
+		if err := json.Unmarshal(check(owner, http.MethodPost, path, staleDraft, 400), &outcome); err != nil {
+			t.Fatal(err)
+		}
+		if outcome.Error != "无权使用此执行机器" {
+			t.Fatalf("%s returned %q for a revoked draft machine", path, outcome.Error)
+		}
+	}
 	check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-revoked", draft("one"), 400)
 	check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-two", draft("two"), 200)
 	if got := owner.s.DefaultRunnerForProject(member.user.ID, "one"); got != "" {

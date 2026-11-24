@@ -95,7 +95,7 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
               ? "暂无在线机器"
               : "平台自动分配",
         },
-        ...(chat.machines || []).map((row) => ({
+        ...(chat.availableMachines || []).map((row) => ({
           id: row.id,
           label: row.name || row.id,
           icon: "monitor",

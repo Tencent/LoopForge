@@ -21,6 +21,9 @@ func TestConversationDraftMachineSelectionAndFirstTurnBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := h.repo.SetRunnerSharedProjects("mine", user.ID, []string{"workbench"}); err != nil {
+		t.Fatal(err)
+	}
 	put := func(target *domain.AssistantExecutionTarget, want int) {
 		draft, ok := h.repo.AssistantSession(user.ID, "machine-draft")
 		if !ok {
