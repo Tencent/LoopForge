@@ -91,6 +91,16 @@ func TestRunnerWorkspaceOfflineRunnerFailsFast(t *testing.T) {
 	}
 }
 
+func TestRunnerWorkspaceDeadlineWhileWaitingForConnectionReportsUnavailable(t *testing.T) {
+	hub := newRunnerControlHub()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := hub.requestWorkspace(ctx, "runner-a", domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationInfo})
+	if !errors.Is(err, errRunnerWorkspaceUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waiting for a runner connection returned %v", err)
+	}
+}
+
 // A socket that just dropped (deploy, network blip) is expected back within
 // seconds; the request waits for it instead of failing the tool call.
 func TestRunnerWorkspaceWaitsForReconnect(t *testing.T) {

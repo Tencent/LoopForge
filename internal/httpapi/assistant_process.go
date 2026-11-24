@@ -72,6 +72,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		key := hex.EncodeToString(sum[:])
 		request := domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationConversationCLI}
 		workspace := ""
+		var projectCredentialEnv map[string]string
 		if s.RuntimeMode == domain.AssistantModeWorkspace {
 			runID := s.workspaceRun()
 			run, ok := h.repo.RunState(runID)
@@ -103,6 +104,18 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			if request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
 				return "", fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
+			}
+			if len(s.projectCredentialIDs) > 0 {
+				project, ok := h.repo.Project(s.ProjectID)
+				use, _ := domain.ProjectCredentialAccess(project, s.UserID, h.repo.IsPlatformAdmin(s.User.LoginName))
+				if !ok || !use || project.ID != s.ProjectID || run.ExecutionContext.ProjectID != s.ProjectID {
+					return "", fmt.Errorf("无权在该工作区使用项目凭据")
+				}
+				projectCredentialEnv, err = h.repo.ResolveProjectCredentialEnv(ctx, project.ID, s.projectCredentialIDs)
+				if err != nil {
+					return "", err
+				}
+				s.recordProjectCredentialValues(projectCredentialEnv)
 			}
 			if s.ExecutionRunnerID == "" {
 				var reason string
@@ -160,6 +173,9 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			if !runner.SupportsConversationCLI() {
 				return preDispatchError(fmt.Errorf("执行机器需升级至 %s", domain.RunnerVersionConversationCLI))
+			}
+			if len(projectCredentialEnv) > 0 && !runner.SupportsProjectCredentials() {
+				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用项目凭据", domain.RunnerVersionProjectCredentials))
 			}
 			if (s.runnerLogin || s.transient) && !runner.SupportsCLISettings() {
 				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用对话本机登录和 CLI 测试", domain.RunnerVersionCLISettings))
@@ -255,6 +271,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			command, credentials = h.bindWorkspaceGit(ctx, s, command, credentials)
 		}
 		wire := runtime.ConversationCommandFor(command, credentials)
+		wire.ProjectCredentialEnv = projectCredentialEnv
 		wire.RunnerLogin = s.runnerLogin
 		if s.ExecutionRunnerID != "" {
 			wire.Argv[0] = assistantEngineBinary(command.Provider)
