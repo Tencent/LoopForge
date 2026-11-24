@@ -178,7 +178,7 @@ func TestStartInjectsPreviewBuildNode(t *testing.T) {
 	}
 	t.Cleanup(store.Close)
 	wf := domain.WorkflowDefinition{
-		ID: "preview-auto-build", Name: "preview", SandboxProfileID: "local",
+		ID: "preview-auto-build", Name: "preview", SandboxProfileID: "test-native",
 		Preview: &domain.PreviewContract{Enabled: true, Model: "gpt-5.6-terra"},
 		Nodes: []domain.WorkflowNode{
 			{ID: "impl", Name: "实现", Type: "script", ScriptLanguage: "shell", Script: "printf ok\n", MaxAttempts: 1},

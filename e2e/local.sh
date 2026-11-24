@@ -7,8 +7,8 @@
 #   ./local.sh all                 API, then UI
 #
 # It starts its own MySQL container and platform process, seeds a user with an
-# API token, the sandboxes the suite expects and a local bare Git repository
-# for the repository-bound scenarios, and removes all of it afterwards.
+# API token and a local bare Git repository for the repository-bound
+# scenarios, and removes all of it afterwards.
 #
 # Optional environment:
 #   AGENTFLOW_E2E_EXECUTOR           CLI executor ID (default codebuddy)
@@ -22,8 +22,8 @@
 #   AGENTFLOW_E2E_LOCAL_MYSQL_CONTAINER MySQL container name (default
 #                                    agentflow-e2e-local-mysql); set it when
 #                                    several checkouts run the suite at once
-#   AGENTFLOW_E2E_MODEL_SANDBOX      sandbox for model scenarios (default local:
-#                                    the seeded Docker image has no model CLI)
+#   AGENTFLOW_E2E_MODEL_SANDBOX      sandbox for model scenarios (default
+#                                    e2e-native, which uses the host's CLIs)
 #   AGENTFLOW_E2E_KEEP=1             keep the platform, database and files; the
 #                                    exports needed to rerun single files against
 #                                    it are written to $WORK/env (mode 600)
@@ -76,7 +76,10 @@ echo "== platform on $BASE"
 HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 # AGENTFLOW_LOCAL_LOGIN_USER enables the loopback-only acceptance login, so the
 # session-only endpoints (personal API tokens, logout) can be exercised.
+# Chat Bot secrets are sealed with AGENTFLOW_CREDENTIAL_KEYS; without a key
+# saving a Bot answers 503 credential_key_missing.
 AGENTFLOW_SESSION_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n') \
+AGENTFLOW_CREDENTIAL_KEYS="e2e:$(head -c 32 /dev/urandom | base64 | tr -d '\n')" \
 AGENTFLOW_AUTH_REQUIRED=true \
 AGENTFLOW_LOCAL_LOGIN_USER=e2e-local \
 AGENTFLOW_RUNNER_BINARY="$WORK/agentflow-runner" \
@@ -152,9 +155,6 @@ api() {
   case "$code" in 2??) ;; *) echo "seed $1 $2 failed ($code): $(cat "$WORK/seed.out" 2>/dev/null)"; exit 1 ;; esac
 }
 api POST /api/projects '{"id":"e2e-auto","key":"E2E","name":"E2E 自动化测试（勿用）","color":"#8b5cf6","ownerId":900001}'
-api PUT /api/dockerfiles '{"id":"generic-backend","name":"generic backend","projectId":"e2e-auto","content":"FROM python:3.12-slim\nRUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*\n"}'
-api PUT /api/sandboxes '{"id":"generic-docker","name":"Generic Docker","projectId":"e2e-auto","driver":"docker","dockerfileId":"generic-backend","readOnlyRootFS":false}'
-api PUT /api/sandboxes '{"id":"local","name":"Local","projectId":"e2e-auto","driver":"local"}'
 
 REPO="$WORK/repo"
 mkdir -p "$REPO/src" && git -C "$REPO/src" init -q -b main &&
@@ -165,7 +165,7 @@ mkdir -p "$REPO/src" && git -C "$REPO/src" init -q -b main &&
 
 export AGENTFLOW_E2E_BASE=$BASE AGENTFLOW_E2E_TOKEN=$TOKEN AGENTFLOW_E2E_TOKEN_B=$TOKEN_B
 export AGENTFLOW_E2E_REPO_CLONE_URL="$REPO/remote.git" AGENTFLOW_E2E_REPO_BRANCH=main
-export AGENTFLOW_E2E_MODEL_SANDBOX=${AGENTFLOW_E2E_MODEL_SANDBOX:-local}
+export AGENTFLOW_E2E_MODEL_SANDBOX=${AGENTFLOW_E2E_MODEL_SANDBOX:-e2e-native}
 # A fresh database has no data-rich project to tour; tour the e2e project.
 export AGENTFLOW_E2E_VIEW_PROJECT=${AGENTFLOW_E2E_VIEW_PROJECT:-e2e-auto}
 if [ "${AGENTFLOW_E2E_KEEP:-0}" = 1 ]; then

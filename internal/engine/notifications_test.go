@@ -24,7 +24,7 @@ func TestAgentNotificationsFollowRealGateAndApprovalEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	putGateTestAgent(t, s, "notify-agent", []domain.VerificationGate{{ID: "manual", Name: "人工确认", Mode: "manual", Stage: "after_execution", Required: true}})
-	wf := domain.WorkflowDefinition{ID: "notify-flow", Name: "通知流程", ProjectID: "notify-p", SandboxProfileID: "local", Notifications: []domain.NotificationBinding{{BotID: bot.ID, Scope: "run", Events: []string{"succeeded"}, ContentMode: "ai"}}, Nodes: []domain.WorkflowNode{{ID: "agent", Name: "实现", Type: "agent", AgentID: "notify-agent", ExecutorID: "mock", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "notify-flow", Name: "通知流程", ProjectID: "notify-p", SandboxProfileID: "test-native", Notifications: []domain.NotificationBinding{{BotID: bot.ID, Scope: "run", Events: []string{"succeeded"}, ContentMode: "ai"}}, Nodes: []domain.WorkflowNode{{ID: "agent", Name: "实现", Type: "agent", AgentID: "notify-agent", ExecutorID: "mock", MaxAttempts: 1}}}
 	if err = s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}

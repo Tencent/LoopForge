@@ -9,7 +9,6 @@ const sandboxes = [
   { id: "business", name: "PHP 业务环境", projectId: "p", driver: "docker" },
   { id: "shared", name: "共享环境", shared: true, driver: "docker" },
   { id: "private", name: "其他业务私有环境", projectId: "other", driver: "docker" },
-  { id: "local", name: "宿主机", shared: true, driver: "local" },
 ];
 
 describe("conversation environment selection", () => {
@@ -28,12 +27,19 @@ describe("conversation environment selection", () => {
     expect(select).not.toHaveBeenCalled();
   });
 
-  test("defaults to the agent's choice and lists only accessible containers", () => {
+  test("defaults to the agent's choice and lists only accessible sandboxes", () => {
     const options = conversationSandboxOptions(sandboxes, project);
     expect(options.map((o) => o.value)).toEqual(["", "business", "shared"]);
     expect(options[0].label).toBe("由 Agent 选择");
     const missing = conversationSandboxOptions(sandboxes, project, "deleted").at(-1);
     expect(missing).toMatchObject({ value: "deleted", disabled: true });
+  });
+
+  test("lists native sandboxes after the Docker ones", () => {
+    const rows = [{ id: "light", name: "轻量沙箱", projectId: "p", driver: "native" }, ...sandboxes];
+    const options = conversationSandboxOptions(rows, project, "");
+    expect(options.map((o) => o.value)).toEqual(["", "business", "shared", "light"]);
+    expect(options.find((o) => o.value === "light")).toMatchObject({ kind: "native" });
   });
 
   test("a task conversation shows the task environment", () => {
@@ -62,7 +68,7 @@ describe("conversation environment selection", () => {
     trigger.getBoundingClientRect = () => ({top:500,bottom:528,left:200,right:450,width:250,height:28});
     const user = userEvent.setup();
     await user.click(trigger);
-    await user.click(screen.getByRole("option", { name: "PHP 业务环境" }));
+    await user.click(screen.getByRole("option", { name: /^PHP 业务环境/ }));
     expect(select).toHaveBeenCalledWith("business");
   });
 });

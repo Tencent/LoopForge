@@ -1041,6 +1041,117 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "412": {description: The registration has changed or been removed}
         "428": {description: The current registration revision is required}
+  /api/git-https-hosts:
+    get:
+      tags: [Repositories]
+      operationId: listGitHTTPSHostChoices
+      summary: List authorized HTTPS Git instances for the signed-in user
+      responses:
+        "200":
+          description: Host and provider options for personal access tokens
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/GitHTTPSHostChoice"}}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/platform/git-https-hosts:
+    get:
+      tags: [Repositories]
+      operationId: listPlatformGitHTTPSHosts
+      summary: List Git HTTPS host authorizations
+      responses:
+        "200":
+          description: Host authorizations and approved addresses
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      tags: [Repositories]
+      operationId: createPlatformGitHTTPSHost
+      summary: Authorize a Git HTTPS host and its confirmed addresses
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}
+      responses:
+        "201":
+          description: Saved authorization
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}
+        "400": {description: Invalid host or addresses}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {description: The host and port are already authorized}
+  /api/platform/git-https-hosts/preview:
+    post:
+      tags: [Repositories]
+      operationId: previewPlatformGitHTTPSHost
+      summary: Review assigned or resolved IP addresses for a Git HTTPS host
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/GitHTTPSHostChoice"
+                - type: object
+                  properties:
+                    addresses:
+                      type: array
+                      minItems: 1
+                      items: {type: string}
+                      description: IP addresses to validate for review. Omit to resolve the hostname with DNS.
+      responses:
+        "200":
+          description: Normalized host, provider, and IP addresses
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}
+        "400": {description: Invalid host, provider, or supplied addresses}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "502": {description: No valid addresses could be resolved}
+  /api/platform/git-https-hosts/{host}:
+    parameters:
+      - {name: host, in: path, required: true, schema: {type: string}, example: "gitlab.example.org:8443"}
+      - name: If-Match
+        in: header
+        required: true
+        schema: {type: string}
+        description: Quote the revision returned when the authorization was read or saved.
+    put:
+      tags: [Repositories]
+      operationId: updatePlatformGitHTTPSHost
+      summary: Update the provider and approved addresses of a Git HTTPS host
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [platform, addresses]
+              properties:
+                platform: {type: string, enum: [github, gitlab, other]}
+                addresses: {type: array, minItems: 1, items: {type: string}}
+      responses:
+        "200":
+          description: Updated authorization
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}
+        "400": {description: Invalid addresses or revision}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412": {description: The authorization has changed or been removed}
+        "428": {description: The current authorization revision is required}
+    delete:
+      tags: [Repositories]
+      operationId: deletePlatformGitHTTPSHost
+      summary: Revoke a platform Git HTTPS host authorization
+      responses:
+        "204": {description: Authorization removed}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412": {description: The authorization has changed or been removed}
+        "428": {description: The current authorization revision is required}
   /api/business-domains:
     get:
       tags: [BusinessDomains]
@@ -2228,82 +2339,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OpenObject"
-  /api/dockerfiles:
-    get:
-      tags: [Assets]
-      operationId: listDockerfiles
-      responses:
-        "200":
-          $ref: "#/components/responses/AssetList"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    put:
-      tags: [Assets]
-      operationId: upsertDockerfile
-      requestBody:
-        $ref: "#/components/requestBodies/DockerfileAsset"
-      responses:
-        "200":
-          $ref: "#/components/responses/Ok"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    delete:
-      tags: [Assets]
-      operationId: deleteDockerfile
-      summary: Delete a Dockerfile that is not shared and not referenced by any sandbox
-      parameters:
-        - $ref: "#/components/parameters/AssetIdQuery"
-      responses:
-        "204":
-          description: Dockerfile deleted
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-  /api/environments:
-    get:
-      tags: [Assets]
-      operationId: listEnvironments
-      responses:
-        "200":
-          $ref: "#/components/responses/AssetList"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    put:
-      tags: [Assets]
-      operationId: upsertEnvironment
-      requestBody:
-        $ref: "#/components/requestBodies/EnvironmentAsset"
-      responses:
-        "200":
-          $ref: "#/components/responses/Ok"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    delete:
-      tags: [Assets]
-      operationId: deleteEnvironment
-      summary: Delete an environment install script that is not shared and not referenced by any sandbox
-      parameters:
-        - $ref: "#/components/parameters/AssetIdQuery"
-      responses:
-        "204":
-          description: Environment deleted
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
   /api/sandboxes:
     get:
       tags: [Assets]
@@ -3368,6 +3403,69 @@ paths:
               schema: {type: array, items: {type: object}}
         "403":
           description: Project membership required
+    post:
+      summary: Create a notification Bot (WeCom, Feishu or DingTalk)
+      description: |
+        `channel` is `wecom` (default for clients that omit it), `feishu` or
+        `dingtalk`. New Bots default to `writeApproval=readonly`; Feishu and
+        DingTalk accept only `readonly`. Feishu and DingTalk credentials are
+        verified before anything is stored. DingTalk requires `tenantKey`
+        (the enterprise CorpId): the first private message from that
+        enterprise locks it, another enterprise moves the Bot to
+        `tenantState=conflict`. Secrets are sealed with
+        AGENTFLOW_CREDENTIAL_KEYS.
+      operationId: createNotificationBot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationBotInput"}
+      responses:
+        "200":
+          description: Stored Bot, without credentials
+        "400":
+          description: Invalid input, `credential_invalid`, `tenant_required` or `immutable_field`
+        "409":
+          description: "`receive_slot_taken` (application already receives in another configuration) or `channel_not_ready`"
+        "503":
+          description: "`credential_key_missing` or `bot_maintenance`"
+  /api/notification-bots/{id}:
+    put:
+      summary: Update a notification Bot
+      description: |
+        Channel, project and (for Feishu) the App ID are immutable. Send the
+        `configVersion` read from the Bot; a concurrent change returns
+        `409 config_changed`.
+      operationId: updateNotificationBot
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationBotInput"}
+      responses:
+        "200":
+          description: Stored Bot
+        "400":
+          description: Invalid input or `immutable_field`
+        "409":
+          description: "`config_changed`, `receive_slot_taken` or `channel_not_ready`"
+        "503":
+          description: "`credential_key_missing` or `bot_maintenance`"
+    delete:
+      summary: Delete a notification Bot
+      description: |
+        Cancels unsent work, moves in-flight sends to `reply_unknown` /
+        `send_unknown`, and revokes the configuration's chat bindings.
+      operationId: deleteNotificationBot
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Deleted
+        "503":
+          description: "`bot_maintenance`"
   /api/notification-bots/{id}/interactions:
     get:
       summary: Inspect Bot connection and recent chat interactions
@@ -3379,12 +3477,247 @@ paths:
           schema: {type: string}
       responses:
         "200":
-          description: Connection status, recent conversations and messages; credentials excluded
+          description: Connection status, recent conversations and messages; credentials excluded. Messages whose text was removed by the retention cleanup carry `bodyPurgedAt` and empty `content`/`reply`; they cannot be sent again. DingTalk messages carry `pushResendAvailable`.
         "403":
           description: Bot management permission required
+  /api/notification-bots/{id}/tenant:
+    get:
+      summary: Read the enterprise confirmation state of a Feishu Bot
+      description: |
+        Returns `tenantState` (`awaiting_confirmation`, `locked`, `conflict`),
+        the candidate observed on the first trusted event, `configVersion`,
+        and the platform's enterprise query (`queried`) or `queryError`.
+      operationId: getNotificationBotTenant
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Confirmation state
+        "409":
+          description: "`channel_not_ready` (WeCom has no enterprise confirmation)"
+  /api/notification-bots/{id}/tenant/confirm:
+    post:
+      summary: Lock the candidate enterprise scope, or restart discovery
+      operationId: confirmNotificationBotTenant
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configVersion]
+              properties:
+                tenantKey: {type: string}
+                configVersion: {type: integer}
+                rediscover: {type: boolean}
+      responses:
+        "200":
+          description: Stored Bot with `tenantState=locked` (or `awaiting_confirmation` after rediscover)
+        "403":
+          description: Same-origin browser request and Bot management permission required
+        "409":
+          description: "`config_changed` or `tenant_candidate_mismatch`"
+  /api/bot-interactions/pending:
+    get:
+      summary: List a project's chat replies awaiting manual review
+      description: Includes records of deleted Bots for project managers.
+      operationId: listPendingBotInteractions
+      parameters:
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Interactions in `reply_unknown` or `reply_failed`
+        "403":
+          description: Bot creator or project maintainer required
+  /api/bot-interactions/{interactionId}/confirm:
+    post:
+      summary: Mark a reply_unknown reply as received
+      operationId: confirmBotInteraction
+      parameters:
+        - {name: interactionId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BotManualAction"}
+      responses:
+        "200":
+          description: Interaction now `replied` with `receiptSource=manual`; a repeated actionKey returns the same result
+        "409":
+          description: "`state_conflict`"
+  /api/bot-interactions/{interactionId}/resend:
+    post:
+      summary: Send a saved reply again as a new delivery generation
+      description: Accepts `reply_unknown` or `reply_failed`; the recipient may receive a duplicate.
+      operationId: resendBotInteraction
+      parameters:
+        - {name: interactionId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BotManualAction"}
+      responses:
+        "200":
+          description: Interaction back in `ready` with `deliveryGeneration` + 1; a repeated actionKey returns the same generation
+        "409":
+          description: "`bot_deleted`, `route_expired` or `state_conflict`"
+  /api/bot-interactions/{interactionId}/push-resend:
+    post:
+      summary: Send an expired DingTalk reply as a proactive private message
+      description: Accepts `reply_failed` with `terminalReason=route_expired` on a DingTalk Bot. The original sender must still be bound to the same platform user, keep project permission and have passed a trial proactive send. The saved reply is sent again as a new generation with a new key.
+      operationId: pushResendBotInteraction
+      parameters:
+        - {name: interactionId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BotManualAction"}
+      responses:
+        "200":
+          description: Interaction back in `ready` with `sendRoute=push` and `deliveryGeneration` + 1; a repeated actionKey returns the same result
+        "409":
+          description: "`push_target_unverified`, `bot_deleted` or `state_conflict`"
+  /api/notification-bots/{id}/targets/verify:
+    post:
+      summary: Send a trial proactive message to a bound member (Feishu, DingTalk)
+      description: Records `targetVerifiedAt` on the member's binding when the platform confirms delivery. Does not change the notification recipient.
+      operationId: verifyBotPushTarget
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetId]
+              properties:
+                targetId: {type: string, description: Sender ID of the bound member (Feishu open_id, DingTalk staffId)}
+      responses:
+        "200":
+          description: Verified target
+        "409":
+          description: "`push_target_unverified` or `push_target_unavailable`"
+        "502":
+          description: "`push_trial_failed`; `outcome` is `rejected`, `not_delivered` or `unknown`"
+  /api/notification-bots/{id}/sessions:
+    get:
+      summary: List selectable notification targets
+      description: WeCom lists chats from wecom-cli. Feishu and DingTalk list members bound in a private chat with this Bot (after the enterprise is confirmed); `verifiedAt` marks a successful trial send.
+      operationId: listNotificationBotSessions
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: "`{sessions, total}`"
+        "409":
+          description: "`push_target_unavailable` (enterprise not confirmed)"
+  /api/notification-bots/{id}/test:
+    post:
+      summary: Send a test notification to the saved target
+      description: For Feishu and DingTalk this repeats the trial send and refreshes the target verification.
+      operationId: testNotificationBot
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Test sent
+        "409":
+          description: "`push_target_unavailable`"
+        "502":
+          description: "`push_trial_failed`"
+  /api/notification-deliveries:
+    get:
+      summary: List notification deliveries of a project
+      description: Content is never returned. `contentSource=purged` marks deliveries whose rendered text was removed by the retention cleanup; they cannot be retried.
+      operationId: listNotificationDeliveries
+      parameters:
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Deliveries, newest first
+  /api/notification-deliveries/{deliveryId}/retry:
+    post:
+      summary: Send a failed, unauthorized, unavailable-target or send_unknown delivery again
+      description: Starts a new delivery generation with a new send key. Deliveries with invalid or purged content are refused.
+      operationId: retryNotificationDelivery
+      parameters:
+        - {name: deliveryId, in: path, required: true, schema: {type: string}}
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Delivery back in `pending`
+        "409":
+          description: The delivery cannot be retried
+  /api/notification-deliveries/{deliveryId}/confirm:
+    post:
+      summary: Mark a send_unknown notification as received
+      operationId: confirmNotificationDelivery
+      parameters:
+        - {name: deliveryId, in: path, required: true, schema: {type: string}}
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: "`{\"ok\": true}`; delivery now `sent` with `receiptSource=manual`"
+        "409":
+          description: Only `send_unknown` deliveries can be confirmed
+  /api/bot-drafts/{id}:
+    get:
+      summary: Read a Bot write draft awaiting confirmation
+      description: Only the platform user bound to the chat sender can read it; other users get 404. Status is `pending`, `executing`, `executed`, `failed`, `needs_review`, `expired` or `cancelled`. Pending drafts list `newIssues` (index, title, workflowId) and the selectable `workflows` of the project.
+      operationId: getBotDraft
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Draft summary, operations and results
+        "404":
+          description: Unknown draft or another user's draft
+  /api/bot-drafts/{id}/confirm:
+    post:
+      summary: Confirm and execute a Bot write draft
+      description: Re-checks the Bot (enabled, chat on, confirm mode), the sender binding, project permission, expiry and the frozen parameters, then moves the draft from `pending` to `executing` once. Any other state returns the current draft without executing. `choices` set the SOP of new requirements (only SOPs listed in the draft's `workflows`) and whether to start it after creation; results report `已启动` or `未启动`.
+      operationId: confirmBotDraft
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                choices:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      index: {type: integer, description: Position of the draft in the operation list}
+                      workflowId: {type: string}
+                      start: {type: boolean}
+      responses:
+        "200":
+          description: Draft after the confirmation (or its current state)
+        "403":
+          description: Cross-origin request
+        "409":
+          description: "`draft_invalidated`; the draft was cancelled and `draft` carries the reason"
+  /api/bot-drafts/{id}/cancel:
+    post:
+      summary: Cancel a pending WeCom Bot write draft
+      operationId: cancelBotDraft
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Draft in its current state
   /api/bot-bindings:
     get:
-      summary: List the logged-in user's WeCom identity bindings
+      summary: List the logged-in user's chat identity bindings (WeCom, Feishu)
       operationId: listBotUserBindings
       responses:
         "200":
@@ -3393,7 +3726,7 @@ paths:
           description: Interactive browser login required
   /api/bot-bindings/{id}:
     delete:
-      summary: Revoke the logged-in user's WeCom identity binding
+      summary: Revoke the logged-in user's chat identity binding
       operationId: revokeBotUserBinding
       parameters:
         - name: id
@@ -3411,7 +3744,7 @@ paths:
           description: Binding does not belong to the current user
   /api/bot-bindings/claim:
     post:
-      summary: Nominate the logged-in account; original WeCom sender must confirm
+      summary: Nominate the logged-in account; the original chat sender must confirm
       operationId: claimBotUserBinding
       requestBody:
         required: true
@@ -3424,7 +3757,7 @@ paths:
                 token: {type: string, minLength: 64, maxLength: 64}
       responses:
         "200":
-          description: Login name, status and browser-only confirmation command
+          description: Login name, status, browser-only confirmation command, and channel, Bot, project and masked sender of the link
         "400":
           description: Expired, invalid or already claimed challenge
         "401":
@@ -3876,18 +4209,6 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/MCPServerAsset"
-    DockerfileAsset:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/DockerfileAsset"
-    EnvironmentAsset:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/EnvironmentAsset"
     SandboxProfile:
       required: true
       content:
@@ -4087,6 +4408,28 @@ components:
             items:
               $ref: "#/components/schemas/ScheduleJob"
   schemas:
+    NotificationBotInput:
+      type: object
+      required: [name, botId]
+      properties:
+        projectId: {type: string}
+        name: {type: string, maxLength: 80}
+        channel: {type: string, enum: [wecom, feishu, dingtalk]}
+        botId: {type: string, description: "WeCom Bot ID, Feishu App ID or DingTalk Client ID", maxLength: 191}
+        secret: {type: string, description: "Empty keeps the stored secret", maxLength: 512}
+        enabled: {type: boolean}
+        interactionEnabled: {type: boolean}
+        model: {type: string}
+        writeApproval: {type: string, enum: [readonly, auto], description: "auto is WeCom only"}
+        targetId: {type: string, description: "WeCom notification target"}
+        configVersion: {type: integer, description: "Expected version for updates"}
+        tenantKey: {type: string, maxLength: 191, description: "DingTalk enterprise CorpId; required on create, changeable until the enterprise is locked"}
+    BotManualAction:
+      type: object
+      required: [actionKey]
+      properties:
+        actionKey: {type: string, maxLength: 64, description: "Client-generated key; a repeated key returns the same result"}
+        reason: {type: string, maxLength: 60}
     AssistantDefaults:
       type: object
       properties:
@@ -4144,49 +4487,31 @@ components:
         pathEntries: {type: array, items: {type: string}}
         authType: {type: string, enum: ["", github-token]}
         timeoutSec: {type: integer}
-    DockerfileAsset:
-      type: object
-      required: [id, name, projectId, content]
-      additionalProperties: true
-      properties:
-        id: {type: string}
-        name: {type: string}
-        projectId: {type: string}
-        shared: {type: boolean}
-        description: {type: string}
-        content: {type: string, description: Dockerfile text}
-        files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
-    EnvironmentAsset:
-      type: object
-      required: [id, name, projectId]
-      additionalProperties: true
-      properties:
-        id: {type: string}
-        name: {type: string}
-        projectId: {type: string}
-        shared: {type: boolean}
-        description: {type: string}
-        variables: {type: object, additionalProperties: {type: string}}
-        pathEntries: {type: array, items: {type: string}}
-        installScript: {type: string, description: Runs once with PREFIX set to the isolated environment root}
     SandboxProfile:
       type: object
       required: [id, name, projectId, driver]
       additionalProperties: true
       description: >-
-        Execution environment for SOP runs and conversation workspaces. Conversation workspaces
-        need driver=docker with an existing dockerfileId; the built-in shared generic-docker
-        profile already satisfies this, so create a new profile only for a different toolchain.
+        Execution environment for SOP runs and conversation workspaces; the built-in shared
+        generic-docker profile is the default. driver=native runs on whichever execution machine,
+        cloud runner or platform host executes the work, with that machine's own toolchains; its
+        repositories are shared clones of that machine's repository cache. A stored local profile
+        reads as native.
       properties:
         id: {type: string}
         name: {type: string}
         projectId: {type: string, description: Owning project (required)}
         shared: {type: boolean, description: Visible to every project}
-        driver: {type: string, enum: [local, native, docker]}
-        dockerfileId: {type: string, description: Required for driver=docker; see dockerfiles_list}
-        environmentId: {type: string, description: Toolchain for native/local drivers; see environments_list}
-        readOnlyRootFS: {type: boolean}
-        environment: {type: object, additionalProperties: {type: string}}
+        driver: {type: string, enum: [native, docker]}
+        dockerfile:
+          type: object
+          description: "driver=docker (required): the image recipe, stored with the sandbox. Ignored for other drivers."
+          required: [content]
+          properties:
+            content: {type: string, description: Dockerfile text}
+            files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
+        readOnlyRootFS: {type: boolean, description: "driver=docker only"}
+        environment: {type: object, additionalProperties: {type: string}, description: Variables added to every command; a native sandbox keeps the execution machine's PATH unless this sets one}
     APIToken:
       type: object
       required: [id, userId, name, prefix, createdAt]
@@ -4372,6 +4697,27 @@ components:
         invalid: {type: boolean, readOnly: true, description: Set on a stored record with an invalid hostname or public keys. The list omits its key contents.}
         invalidHost: {type: boolean, readOnly: true, description: The stored hostname does not identify a canonical SSH endpoint. Remove this record before registering the correct host.}
         revision: {type: string, readOnly: true, description: Opaque revision for conditional updates and removals.}
+    GitHTTPSHostChoice:
+      type: object
+      required: [host, platform]
+      properties:
+        host:
+          type: string
+          example: "[fd00::2]:8443"
+          description: Git hostname or IPv6 address. An IPv6 address with a port uses brackets.
+        platform: {type: string, enum: [github, gitlab, other]}
+    PlatformGitHTTPSHost:
+      allOf:
+        - $ref: "#/components/schemas/GitHTTPSHostChoice"
+        - type: object
+          required: [addresses]
+          properties:
+            addresses:
+              type: array
+              minItems: 1
+              items: {type: string}
+              description: Approved IPv4 or IPv6 addresses for the host.
+            revision: {type: string, readOnly: true, description: Opaque revision for conditional updates and removals.}
     PlatformCodeBuddyKey:
       type: object
       properties:
@@ -5669,8 +6015,6 @@ components:
         - skills
         - mcpServers
         - executors
-        - dockerfiles
-        - environments
         - sandboxes
         - workflows
         - syncConfig
@@ -5710,18 +6054,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OpenObject"
-        dockerfiles:
-          type: array
-          items:
-            $ref: "#/components/schemas/OpenObject"
-        environments:
-          type: array
-          items:
-            $ref: "#/components/schemas/OpenObject"
         sandboxes:
           type: array
           items:
-            $ref: "#/components/schemas/OpenObject"
+            $ref: "#/components/schemas/SandboxProfile"
         workflows:
           type: array
           items:

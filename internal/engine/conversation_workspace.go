@@ -159,6 +159,7 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 	ctx = e.withPreparationProgress(ctx, run.ID)
 	ctx = withRunGitCredentials(ctx, credentials)
 	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), credentials.GitSSHKeys)
+	ctx = runtime.WithRepositoryCacheIn(ctx, env.Unwrap())
 	return env.prepareRepositoriesOnce(func() error {
 		if err := prepareRepositories(ctx, env.Workspace(), run.RepositoryContexts()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), len(credentials.GitHTTPCredentials) > 0)

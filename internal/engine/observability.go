@@ -28,6 +28,77 @@ func clarifyProcessLog(event *domain.TelemetryEvent) {
 	}
 }
 
+func messageUsageKey(sessionID, parentID string) string { return sessionID + "\x00" + parentID }
+
+func applyMessageUsage(run *domain.Run, nr *domain.NodeRun, sessionID, parentID string, snap domain.TokenUsage) {
+	if sessionID == "" {
+		sessionID = nr.SessionID
+	}
+	if nr.UsageStreamCursors == nil {
+		nr.UsageStreamCursors = map[string]domain.TokenUsage{}
+	}
+	if nr.UsagePending == nil {
+		nr.UsagePending = map[string]domain.TokenUsage{}
+	}
+	key := messageUsageKey(sessionID, parentID)
+	cursor := nr.UsageStreamCursors[key]
+	delta := subUsage(snap, cursor)
+	// Later message deltas may omit input/cache fields from message_start.
+	// Retain each token counter's high-water mark until the next message.
+	addUsage(&cursor, delta)
+	nr.UsageStreamCursors[key] = cursor
+	pending := nr.UsagePending[sessionID]
+	addUsage(&pending, delta)
+	nr.UsagePending[sessionID] = pending
+	addUsage(&run.Usage, delta)
+	addUsage(&nr.Usage, delta)
+	run.Usage.TotalTokens, nr.Usage.TotalTokens = billedTokens(run.Usage), billedTokens(nr.Usage)
+}
+
+func applyFinalUsage(run *domain.Run, nr *domain.NodeRun, event domain.TelemetryEvent) {
+	sessionID := event.SessionID
+	if sessionID == "" {
+		sessionID = nr.SessionID
+	}
+	if reported, present := event.Attributes["usageReported"].(bool); present && !reported {
+		// A result without token usage is not an authoritative zero snapshot.
+		// Keep observed tokens and advance only an explicitly reported cost.
+		if event.Usage.CostStatus != "" {
+			snap := nr.UsageCursor
+			if sessionID != nr.UsageSessionID {
+				snap = domain.TokenUsage{}
+			}
+			snap.CostUSD, snap.CostStatus = event.Usage.CostUSD, event.Usage.CostStatus
+			applyUsage(run, nr, sessionID, snap)
+		}
+		return
+	}
+	// Some CLIs identify the session only in the terminal result.
+	if sessionID != "" {
+		settlePendingMessageUsage(run, nr, "")
+	}
+	settlePendingMessageUsage(run, nr, sessionID)
+	applyUsage(run, nr, sessionID, *event.Usage)
+}
+
+func settlePendingMessageUsage(run *domain.Run, nr *domain.NodeRun, sessionID string) {
+	pending, ok := nr.UsagePending[sessionID]
+	if !ok {
+		return
+	}
+	for _, usage := range []*domain.TokenUsage{&run.Usage, &nr.Usage} {
+		status := usage.CostStatus
+		*usage = subUsage(*usage, pending)
+		usage.CostStatus, usage.TotalTokens = status, billedTokens(*usage)
+	}
+	delete(nr.UsagePending, sessionID)
+	for key := range nr.UsageStreamCursors {
+		if strings.HasPrefix(key, messageUsageKey(sessionID, "")) {
+			delete(nr.UsageStreamCursors, key)
+		}
+	}
+}
+
 func applyUsage(run *domain.Run, nr *domain.NodeRun, sessionID string, snap domain.TokenUsage) {
 	if run == nil || nr == nil {
 		return

@@ -15,7 +15,7 @@ func HTTPSRepositoryURL(raw string) (remote, name string, err error) {
 	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(raw, "\\\t\r\n ") {
 		return "", "", fmt.Errorf("请提供不含凭据、查询参数或片段的 HTTPS Git 克隆地址")
 	}
-	host, err := HTTPSHostScope(u.Host)
+	host, err := HTTPSHostScope("https://" + u.Host)
 	if err != nil {
 		return "", "", err
 	}

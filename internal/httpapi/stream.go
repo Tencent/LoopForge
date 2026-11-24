@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -110,7 +111,11 @@ type chatClarifyRequest struct {
 	Model              string            `json:"model,omitempty"`
 	SessionID          string            `json:"sessionId,omitempty"`
 	JobID              string            `json:"jobId,omitempty"`
-	History            []struct {
+	// ActorUserID runs the analysis as this account (model, Git and MCP
+	// access) instead of the requirement's responsible person. Set only by
+	// the server, for chat clarification.
+	ActorUserID int64 `json:"-"`
+	History     []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"history"`
@@ -410,12 +415,24 @@ func clarifyAssistantRounds(history []struct {
 	return n
 }
 
+// clarifyUser is the account a clarification analysis runs as.
+func (h *streamHandlers) clarifyUser(issue domain.Issue, request chatClarifyRequest) (domain.User, error) {
+	if request.ActorUserID == 0 {
+		return h.repo.ResponsibleUser(issue)
+	}
+	user, ok := h.repo.User(request.ActorUserID)
+	if !ok || user.ID == 0 {
+		return domain.User{}, errors.New("发起澄清的平台账号不可用")
+	}
+	return user, nil
+}
+
 func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue, request chatClarifyRequest, emit func(event string, payload any)) (any, string, map[string]any, error) {
 	if emit == nil {
 		emit = func(string, any) {}
 	}
 	emit("thought", map[string]string{"kind": "status", "text": "正在准备分析…"})
-	responsible, responsibleErr := h.repo.ResponsibleUser(issue)
+	responsible, responsibleErr := h.clarifyUser(issue, request)
 	if responsibleErr != nil {
 		return nil, "", nil, responsibleErr
 	}

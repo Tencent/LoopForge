@@ -117,10 +117,11 @@ type AgentAssetBundle struct {
 	MCPFiles   map[string]map[string][]byte `json:"mcpFiles,omitempty"`
 }
 
-// DockerfileDefinition is a Studio-managed build recipe. Content and Files are
-// stored on the catalog row in MySQL, the same way EnvironmentDefinition stores
-// install.sh. Docker sandboxes select one of these; the runtime materializes a
-// temporary build context from the stored payload at sandbox initialization.
+// DockerfileDefinition is the build recipe a runner spec carries for a docker
+// sandbox, derived from the profile's Dockerfile (ID and Name are the
+// sandbox's). The runtime materializes a temporary build context from it at
+// sandbox initialization. Run snapshots frozen before the recipe moved into
+// the sandbox carry the former catalog fields.
 type DockerfileDefinition struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
@@ -132,37 +133,71 @@ type DockerfileDefinition struct {
 	UpdatedAt   time.Time         `json:"updatedAt"`
 }
 
-// EnvironmentDefinition is a named execution toolchain for process sandboxes.
-// InstallScript is stored on the environment asset and loaded from the catalog
-// at sandbox init; it runs once with PREFIX set to the isolated environment root.
-type EnvironmentDefinition struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	ProjectID     string            `json:"projectId,omitempty"`
-	Shared        bool              `json:"shared,omitempty"`
-	Description   string            `json:"description"`
-	Variables     map[string]string `json:"variables,omitempty"`
-	PathEntries   []string          `json:"pathEntries,omitempty"`
-	InstallScript string            `json:"installScript,omitempty"`
-	UpdatedAt     time.Time         `json:"updatedAt"`
-}
-
 type SandboxProfile struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
 	ProjectID      string            `json:"projectId,omitempty"`
 	Shared         bool              `json:"shared,omitempty"`
-	Driver         string            `json:"driver"` // local, native, docker (seatbelt / bwrap are resolved native values)
-	DockerfileID   string            `json:"dockerfileId,omitempty"`
-	EnvironmentID  string            `json:"environmentId,omitempty"`
+	Driver         string            `json:"driver"` // native, docker (seatbelt / bwrap are resolved native values)
 	ReadOnlyRootFS bool              `json:"readOnlyRootFS"`
 	Environment    map[string]string `json:"environment,omitempty"`
+	// Dockerfile is the image recipe of a docker sandbox.
+	Dockerfile *SandboxDockerfile `json:"dockerfile,omitempty"`
+	// DockerfileID names the recipe in runner specs (see RunnerSandbox);
+	// stored profiles leave it empty.
+	DockerfileID string `json:"dockerfileId,omitempty"`
 }
 
-// Sandbox drivers. Profiles store local, native or docker; native is the OS
+// SandboxDockerfile is a Dockerfile and the files of its build context.
+type SandboxDockerfile struct {
+	Content string            `json:"content"`
+	Files   map[string]string `json:"files,omitempty"`
+}
+
+// ValidateSandboxAssets checks the sandbox driver and the recipe it needs:
+// docker requires a Dockerfile, native carries only environment variables.
+func ValidateSandboxAssets(v SandboxProfile) error {
+	switch strings.TrimSpace(v.Driver) {
+	case SandboxDriverDocker, SandboxDriverNative, SandboxDriverSeatbelt, SandboxDriverBwrap:
+	case SandboxDriverLocal:
+		return fmt.Errorf("local 沙箱已移除，请改用 native 沙箱")
+	default:
+		return fmt.Errorf("不支持的沙箱类型 %q", v.Driver)
+	}
+	docker := strings.TrimSpace(v.Driver) == SandboxDriverDocker
+	switch {
+	case docker && (v.Dockerfile == nil || strings.TrimSpace(v.Dockerfile.Content) == ""):
+		return fmt.Errorf("Docker 沙箱需要 Dockerfile 内容")
+	case !docker && v.Dockerfile != nil:
+		return fmt.Errorf("只有 Docker 沙箱可以配置 Dockerfile")
+	}
+	if v.Dockerfile != nil {
+		if err := ValidateManagedFiles(v.Dockerfile.Files); err != nil {
+			return fmt.Errorf("构建上下文：%w", err)
+		}
+	}
+	return ValidateEnvironmentVariables(v.Environment)
+}
+
+// RunnerSandbox is the runner spec of a stored profile: its Dockerfile
+// becomes the recipe a runner builds, named after the sandbox. The spec's
+// profile drops the embedded copy.
+func RunnerSandbox(profile SandboxProfile) *RunnerSandboxSpec {
+	spec := &RunnerSandboxSpec{Profile: profile}
+	spec.Profile.Dockerfile = nil
+	if d := profile.Dockerfile; d != nil && strings.TrimSpace(d.Content) != "" {
+		spec.Profile.DockerfileID = profile.ID
+		spec.Dockerfile = &DockerfileDefinition{ID: profile.ID, Name: profile.Name, ProjectID: profile.ProjectID, Shared: profile.Shared, Content: d.Content, Files: d.Files}
+	}
+	return spec
+}
+
+// Sandbox drivers. Profiles store native or docker; native is the OS
 // lightweight process sandbox and resolves on the executing machine to
 // seatbelt (macOS) or bwrap (Linux). seatbelt / bwrap remain valid resolved
 // values (runner task payloads, rows written before the native option).
+// local is the runtime's unisolated driver for internal callers; no profile
+// may store it.
 const (
 	SandboxDriverLocal    = "local"
 	SandboxDriverNative   = "native"
@@ -183,6 +218,15 @@ func ConversationSandboxDriver(driver string) bool {
 	}
 }
 
+// ValidateFrozenSandbox rejects the removed local driver in a sandbox frozen
+// into a run before it was removed: the runtime would run it unisolated.
+func ValidateFrozenSandbox(profile SandboxProfile) error {
+	if strings.TrimSpace(profile.Driver) == SandboxDriverLocal {
+		return fmt.Errorf("沙箱 %s 使用已移除的 local 类型，请改用 native 沙箱后重新发起", profile.ID)
+	}
+	return nil
+}
+
 // ResolveSandboxDriver maps native onto the lightweight sandbox of goos and
 // returns every other driver unchanged. An empty goos (a runner that never
 // reported its OS) leaves native for that machine to resolve itself.
@@ -201,34 +245,6 @@ func ResolveSandboxDriver(driver, goos string) (string, error) {
 	default:
 		return "", fmt.Errorf("系统轻量隔离（native）仅支持 macOS 与 Linux，当前执行机器为 %s", goos)
 	}
-}
-
-func ValidateDockerfile(v DockerfileDefinition) error {
-	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
-		return fmt.Errorf("Dockerfile 需要 id 和 name")
-	}
-	if strings.TrimSpace(v.Content) == "" {
-		return fmt.Errorf("Dockerfile 内容不能为空")
-	}
-	return ValidateManagedFiles(v.Files)
-}
-
-func ValidateEnvironment(v EnvironmentDefinition) error {
-	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
-		return fmt.Errorf("环境需要 id 和 name")
-	}
-	if err := ValidateEnvironmentVariables(v.Variables); err != nil {
-		return err
-	}
-	for _, entry := range v.PathEntries {
-		if err := ValidateRelativeFilePath(entry); err != nil {
-			return fmt.Errorf("pathEntries: %w", err)
-		}
-	}
-	if strings.ContainsRune(v.InstallScript, '\x00') {
-		return fmt.Errorf("install.sh 不能包含 NUL")
-	}
-	return nil
 }
 
 func ValidateEnvironmentVariables(values map[string]string) error {

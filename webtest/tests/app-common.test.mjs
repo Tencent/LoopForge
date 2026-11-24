@@ -126,7 +126,14 @@ test('theme, settings sidebar, merged asset tabs, and route helpers persist UI s
   assert.equal(app.document.documentElement.dataset.theme, 'dark');
   assert.equal(app.document.querySelector('#configurationNav .nav[data-view="mcp"]')?.classList.contains('active'), true);
   assert.equal(app.document.querySelector('#assetsView [data-asset-type-tab="rules"]')?.getAttribute('aria-selected'), 'true');
-  assert.equal(app.document.querySelector('#assetsView [data-asset-type-group="environment"]')?.hidden, true);
+  assert.equal(app.document.querySelector('#assetsView [data-asset-type-group="capability"]')?.hidden, false);
+  for (const legacy of ['dockerfiles', 'environments']) {
+    app.evaluate(`switchView(${JSON.stringify(legacy)})`);
+    assert.equal(app.evaluate('activeViewName()'), 'sandboxes', `${legacy} opens 沙箱管理`);
+  }
+  assert.equal(app.document.querySelector('#assetsView [data-asset-type-group="capability"]')?.hidden, true, '沙箱管理 has no type tabs');
+  assert.equal(app.document.querySelector('#configurationNav .nav[data-view="sandboxes"]')?.classList.contains('active'), true);
+  assert.equal(app.document.querySelector('#assetPageTitle')?.textContent, '沙箱管理');
   assert.match(app.evaluate(`viewTitles().settings`), /个人配置/);
   assert.equal(app.evaluate(`viewTitles().bots`), '通道管理');
 });
