@@ -75,7 +75,7 @@ const analytics = {
   weekHour: [{ weekday: 1, hour: 10, runs: 2, tokens: 3200, costCny: .6 }],
 };
 
-test('observability renders rich usage, drills into details, filters, and expands cards', async (t) => {
+test('compact observability preserves scope filters and detailed report data', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`
@@ -89,18 +89,9 @@ test('observability renders rich usage, drills into details, filters, and expand
   assert.match(report, /¥1\.25/);
   assert.doesNotMatch(report, /\$1\.25/);
   const body = app.document.querySelector('#obsBody');
-  body.querySelector('[data-obs-metric="cost"]')?.click();
-  body.querySelector('[data-obs-bd-dim="model"]')?.click();
-  body.querySelector('[data-obs-bd-metric="cost"]')?.click();
-  body.querySelector('[data-obs-heat-metric="runs"]')?.click();
-  body.querySelector('[data-obs-jump="fails"]')?.click();
-  const search = body.querySelector('[data-obs-detail-search]');
-  if (search) {
-    search.value = 'credential';
-    search.dispatchEvent(new app.window.Event('input', { bubbles: true }));
-  }
-  const expand = body.querySelector('[data-obs-card="trend"] [data-obs-expand]');
-  expand?.click();
+  assert.equal(body.querySelectorAll('.obs-kpi').length,9);
+  assert.ok(body.querySelector('[data-obs-scope="project"]'));
+  body.querySelector('[data-obs-card="human"] [data-obs-expand]').click();
   app.document.querySelector('#obsExpand')?.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
   app.evaluate(`obsCollapse();setObsTrendGrain('month');setObsPeriod('2026-10');obsShiftPeriod(-1);obsShiftPeriod(1)`);
   await settle(5);
@@ -160,7 +151,7 @@ test('delivery observability renders funnel, owners, filters, and CSV data', asy
   assert.match(app.evaluate(`obsCsvContent(obsDeliveryTableDef(true).tables)`), /team\/backend !1/);
 });
 
-test('conversation code changes have their own group, close the Token ring, and flow through delivery', async (t) => {
+test('conversation workspaces and costs appear once in the compact overview and remain in delivery details', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const summary = { ...analytics.summary, totalTokens: 7400, totalCostCny: 1.55, conversationWorkspaces: 3, conversationLinkedWorkspaces: 2, conversationIssues: 1, conversationIssuesWithMr: 1, conversationIssuesDelivered: 1, conversationTokens: 1000, conversationCostCny: .3 };
@@ -183,17 +174,10 @@ test('conversation code changes have their own group, close the Token ring, and 
     state.obsTab='overview';state.obsScope='project';state.obsTrendGrain='all';
     renderObservability();
   `);
-  const groups = [...app.document.querySelectorAll('#obsBody .obs-kg')].map(g => ({ title: g.querySelector('h4 span').textContent, text: g.textContent }));
-  const titles = groups.map(g => g.title);
-  assert.deepEqual(titles.slice(0, 5), ['Vibe Coding 与协作', 'SOP 产出与质量', '投入 · SOP + 对话改代码', '对话改代码 · 不走 SOP', 'Loop 自动化']);
-  const groupText = title => groups.find(g => g.title === title).text;
-  const conv = groupText('对话改代码 · 不走 SOP');
-  assert.match(conv, /累计需求1其中 1 个已提 PR · 1 个已交付/);
-  assert.match(conv, /累计 Token1\.0k占全部 Token 14%/);
-  assert.match(conv, /累计工作区32 个已关联需求 · 1 个未关联/);
-  assert.doesNotMatch(groupText('投入 · SOP + 对话改代码'), /工作区/, 'the 投入 group keeps three cards');
-  assert.match(groupText('投入 · SOP + 对话改代码'), /其中对话改代码1\.0k/);
-  assert.match(groupText('Loop 自动化'), /SOP 6\.4k ÷ 4 次运行/);
+  const value = key => app.document.querySelector(`[data-obs-stat="${key}"] .num`).textContent;
+  assert.equal(value('workspaces'),'3');assert.equal(value('tokens'),'7.4k');assert.equal(value('cost'),'¥1.55');
+  assert.equal(app.document.querySelectorAll('[data-obs-stat="cost"]').length,1);
+  assert.doesNotMatch(app.document.querySelector('#obsBody').textContent,/不走 SOP|Loop 自动化|仅含已记录部分/);
   // The Token ring adds up to the Token card.
   const rows = JSON.parse(app.evaluate(`JSON.stringify(obsBreakdownRows('sop','tokens'))`));
   assert.equal(rows.reduce((n, r) => n + r.tokens, 0), 7400);
@@ -260,14 +244,13 @@ test('conversation activity cards show counts, collaboration share, periods with
     state.obsTab='overview';state.obsScope='project';state.obsTrendGrain='all';state.obsPeriodKey='';
     renderObservability();
   `);
-  const group = () => [...app.document.querySelectorAll('#obsBody .obs-kg')]
-    .find(g => g.querySelector('h4 span').textContent === 'Vibe Coding 与协作');
+  const group = () => app.document.querySelector('[data-obs-card="vibe"]');
+  const metric = key => group().querySelector(`[data-obs-stat="${key}"] .num`).textContent;
   assert.ok(group(), 'the activity group appears on the usage page');
   assert.deepEqual([...group().querySelectorAll('.obs-kpi-label')].map(el => el.textContent),
-    ['会话数', '创建需求', '需求 SOP', '多人协作会话', '会话 Token', '协作会话 Token']);
-  assert.match(group().textContent, /占会话 66\.7%/);
-  assert.match(group().textContent, /1 条回复未采集 · 仅含已记录部分/);
-  assert.match(group().textContent, /缺少时间，仅计入累计用量/);
+    ['会话数', '协作会话', '会话 Token', '编码工作区']);
+  assert.equal(metric('sessions'),'3');assert.equal(metric('collaborative'),'2');
+  assert.equal(group().querySelector('.obs-kpi-foot'),null);
   assert.match(app.evaluate('obsActivityUsageCard(state.analytics.activity,false).value'), /6\.0k/);
   assert.match(app.evaluate('obsActivityUsageCard(state.analytics.activity,true).value'), /4\.5k/);
   const report = app.evaluate('buildObsReportHTML()');
@@ -278,12 +261,12 @@ test('conversation activity cards show counts, collaboration share, periods with
   app.evaluate(`state.obsTrendGrain='month';state.obsPeriodKey='';renderObservability()`);
   assert.equal(app.evaluate('obsPeriodKey()'), '2026-10', 'activity-only periods can be selected without run data');
   assert.ok(app.evaluate(`obsPeriodChoices().includes('2026-10')`));
-  assert.match(group().textContent, /占会话 50\.0%/);
+  assert.equal(metric('sessions'),'2');assert.equal(metric('collaborative'),'1');
   assert.equal(app.evaluate('obsActivityView().sopRuns'), 0);
   assert.equal(app.evaluate('obsActivityView().sessionUsage.tokens'), 1000);
   assert.equal(app.evaluate('obsActivityView().collaborativeUsage.tokens'), 500);
   app.evaluate(`state.obsPeriodKey='2026-11';renderObservability()`);
-  assert.match(group().textContent, /暂无会话/);
+  assert.equal(metric('sessions'),'0');
   assert.equal(app.evaluate('obsActivityView().sessions'), 0);
   assert.equal(app.evaluate('obsActivityUsageCard(obsActivityView(),false).value'), '0');
   app.evaluate(`
@@ -291,17 +274,17 @@ test('conversation activity cards show counts, collaboration share, periods with
     state.analytics.activityTrend=[{date:'2026-W42',sessions:1,collaborativeSessions:1,requirements:2,sopRuns:3}];
     renderObservability();
   `);
-  assert.match(group().textContent, /占会话 100\.0%/);
+  assert.equal(metric('sessions'),'1');assert.equal(metric('collaborative'),'1');
   app.evaluate(`
     state.obsTrendGrain='day';state.obsPeriodKey='2026-10-08';
     state.analytics.activityTrend=[{date:'2026-10-08',sessions:1,collaborativeSessions:0,requirements:0,sopRuns:0}];
     renderObservability();
   `);
-  assert.match(group().textContent, /占会话 0\.0%/);
+  assert.equal(metric('collaborative'),'0');
   app.evaluate(`state.analytics.activityTrend[0].sessionUsage={missingReplies:2};renderObservability()`);
   assert.equal(app.evaluate('obsActivityUsageCard(obsActivityView(),false).value'), '未采集');
-  assert.match(group().textContent, /2 条回复未采集/);
+  assert.doesNotMatch(group().textContent, /2 条回复未采集/);
   app.evaluate(`delete state.analytics.activity;renderObservability()`);
-  assert.match(group().textContent, /暂无统计数据/);
+  assert.equal(metric('sessions'),'—');
   assert.doesNotMatch(group().textContent, /NaN|Infinity/);
 });

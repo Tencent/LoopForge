@@ -13,6 +13,7 @@ import (
 // fails without a result, and repeated start/delta/assistant frames do not add
 // the same message's tokens twice.
 type assistantCLIUsage struct {
+	session   *assistantSessionUsage
 	final     *domain.TokenUsage
 	messages  map[string]map[string]any
 	active    string
@@ -22,9 +23,13 @@ type assistantCLIUsage struct {
 
 func (c *assistantCLIUsage) consume(line string) {
 	var frame struct {
-		Type    string         `json:"type"`
-		Usage   map[string]any `json:"usage"`
-		Message struct {
+		Type            string                     `json:"type"`
+		Usage           map[string]any             `json:"usage"`
+		CostUSD         *float64                   `json:"total_cost_usd"`
+		SessionID       string                     `json:"session_id"`
+		ParentToolUseID string                     `json:"parent_tool_use_id"`
+		Meta            map[string]json.RawMessage `json:"_meta"`
+		Message         struct {
 			ID    string         `json:"id"`
 			Usage map[string]any `json:"usage"`
 		} `json:"message"`
@@ -40,9 +45,23 @@ func (c *assistantCLIUsage) consume(line string) {
 	if json.Unmarshal([]byte(line), &frame) != nil {
 		return
 	}
+	// Child results are already included in the root turn's final usage.
+	if frame.ParentToolUseID != "" {
+		return
+	}
 	switch frame.Type {
 	case "result", "error", "usage":
-		if u := runtime.ParseTokenUsage(frame.Usage); assistantUsageReported(u) {
+		if c.session != nil {
+			if frame.Type == "result" {
+				c.session.result(frame.SessionID, frame.Usage, frame.CostUSD, frame.Meta["codebuddy.ai/turnUsage"])
+			}
+			return
+		}
+		u := runtime.ParseTokenUsage(frame.Usage)
+		if frame.CostUSD != nil {
+			u.CostUSD, u.CostStatus = *frame.CostUSD, "reported"
+		}
+		if assistantUsageReported(u) {
 			c.final = &u
 		}
 	case "assistant":
@@ -101,8 +120,12 @@ func (c *assistantCLIUsage) snapshot() domain.TokenUsage {
 	for _, message := range c.messages {
 		total.add(runtime.ParseTokenUsage(message))
 	}
+	var usage domain.TokenUsage
 	if u := total.snapshot(); u != nil {
-		return *u
+		usage = *u
 	}
-	return domain.TokenUsage{}
+	if c.session != nil {
+		return c.session.finish(usage)
+	}
+	return usage
 }

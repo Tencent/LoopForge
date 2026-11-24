@@ -120,6 +120,24 @@ exec "$@"
         self.assertEqual((self.root / '.env').read_text(), secrets)
         self.assertEqual((self.root / '.env').stat().st_mode & 0o777, 0o600)
 
+    def test_credential_key_generated_once_and_added_to_existing_env(self):
+        import base64, re
+        self.assert_success(self.install())
+        env = self.root / '.env'
+        match = re.search(r"^AGENTFLOW_CREDENTIAL_KEYS=k\d{6}:(\S+)$", env.read_text(), re.M)
+        self.assertIsNotNone(match, env.read_text())
+        self.assertEqual(len(base64.b64decode(match.group(1))), 32)
+        # An installation from before chat Bots gains a key; an existing key is kept.
+        env.write_text(''.join(l + '\n' for l in env.read_text().splitlines() if not l.startswith('AGENTFLOW_CREDENTIAL_KEYS=')))
+        self.assert_success(self.install())
+        first = env.read_text()
+        self.assertEqual(first.count('AGENTFLOW_CREDENTIAL_KEYS='), 1)
+        self.assert_success(self.install())
+        self.assertEqual(env.read_text(), first)
+        compose = (ROOT / 'compose.yaml').read_text()
+        for name in ('AGENTFLOW_CREDENTIAL_KEYS', 'AGENTFLOW_PUBLIC_URL', 'AGENTFLOW_BOT_WORKERS_ENABLED', 'AGENTFLOW_BOT_BODY_RETENTION_DAYS', 'AGENTFLOW_BOT_RECORD_RETENTION_DAYS'):
+            self.assertIn(f'      {name}: ${{{name}:-', compose)
+
     def test_non_root_without_docker_group_uses_sudo_everywhere(self):
         self.assert_success(self.install(MOCK_USER='1000'))
         lines = (self.root / 'docker.log').read_text().splitlines()

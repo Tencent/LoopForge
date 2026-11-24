@@ -98,6 +98,9 @@ test('schedule job: a manual trigger dispatches todo requirements of the project
   const saved = await put('/api/schedule-jobs', { ...job, name: 'E2E 定时任务（改）' });
   assert.equal(saved.name, 'E2E 定时任务（改）');
   assert.ok(list(await get('/api/schedule-jobs')).some(j => j.id === id));
+  // The enable switch keeps the e2e job disabled.
+  assert.equal((await post(`/api/schedule-jobs/${id}/enabled`, { enabled: false })).enabled, false);
+  await api('POST', `/api/schedule-jobs/${id}/enabled`, {}, { expect: 400 });
 
   await post(`/api/schedule-jobs/${id}/run`, {});
   const runs = await waitFor('scheduled dispatch', async () => {
@@ -106,6 +109,7 @@ test('schedule job: a manual trigger dispatches todo requirements of the project
   }, { timeoutMs: 120_000 });
   trackRun(runs[0].id);
   await waitRun(runs[0].id, r => r.status === 'succeeded', { label: 'scheduled run succeeded' });
+  assert.ok(Array.isArray(list(await get(`/api/schedule-job-executions?projectId=${P}&jobId=${id}`))));
   const after = list(await get('/api/schedule-jobs')).find(j => j.id === id);
   assert.ok(['success', 'waiting', 'running'].includes(after.lastStatus), `job status ${after.lastStatus}: ${after.lastError || ''}`);
 });
