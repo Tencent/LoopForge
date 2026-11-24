@@ -101,3 +101,17 @@ test('a group-mode run detail shows the existing collaboration copy', async (t) 
   assert.match(detail, /冷冻 LOOP v3/);
   assert.doesNotMatch(app.evaluate(`document.querySelector('#runDetail .run-progress-cell span').textContent`), /执行进度/);
 });
+
+test('room messages from LOOPs, including ones saved as SOP, show the LOOP name', async (t) => {
+  const app = await loadApp();
+  t.after(() => {
+    app.evaluate('clearTimeout(roomsPollTimer)');
+    return app.close();
+  });
+  await loadRooms(app);
+  for (const [author, name] of [['LOOP「后端交付」', '后端交付'], ['SOP「后端交付」', '后端交付'], ['Alice', 'Alice']]) {
+    assert.equal(app.evaluate(`roomAuthorName(${JSON.stringify(author)})`), name, author);
+    assert.equal(app.evaluate(`roomIsSOPAuthor(${JSON.stringify(author)})`), author !== 'Alice', author);
+  }
+  assert.match(app.evaluate(`roomAvatar('SOP「后端交付」')`), /room-avatar sop/);
+});

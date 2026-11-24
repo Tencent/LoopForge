@@ -397,15 +397,22 @@ export function restoreStream(snapshot) {
 // model-resume instruction as something the user typed. Validate the preceding
 // saved receipt; ordinary user text must never be hidden by a prefix match.
 // Mirrors assistantProposalDeclinedText and assistantProposalExpiredText.
-const PROPOSAL_DECLINED = "不走 LOOP，这件事由你直接完成。";
-const PROPOSAL_EXPIRED = "LOOP 建议超时未确认，这件事由你直接完成。";
+// Conversations saved before the LOOP rename still hold the SOP wording.
+const PROPOSAL_DECLINED = [
+  "不走 LOOP，这件事由你直接完成。",
+  "不走 SOP，这件事由你直接完成。",
+];
+const PROPOSAL_EXPIRED = [
+  "LOOP 建议超时未确认，这件事由你直接完成。",
+  "SOP 建议超时未确认，这件事由你直接完成。",
+];
 // The card already says it timed out, so the turn that hands the work back
 // is not shown.
 export function isProposalTimeout(message, previous) {
   return (
     message?.role === "user" &&
     message.trigger === "proposal_timeout" &&
-    message.content === PROPOSAL_EXPIRED &&
+    PROPOSAL_EXPIRED.includes(message.content) &&
     previous?.role === "assistant" &&
     (parseReply(previous).drafts || []).some(
       (d) => d.proposal && d.decision === "expired",
@@ -415,7 +422,7 @@ export function isProposalTimeout(message, previous) {
 
 export function confirmationCaption(message, previous) {
   if (message?.role !== "user" || previous?.role !== "assistant") return "";
-  if (message.content === PROPOSAL_DECLINED)
+  if (PROPOSAL_DECLINED.includes(message.content))
     return (parseReply(previous).drafts || []).some(
       (d) => d.proposal && ["declined", "muted"].includes(d.decision),
     )

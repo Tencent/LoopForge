@@ -368,12 +368,16 @@ function roomRunStatusLabel(status) {
   return {running: '运行中', waiting: '等待处理', succeeded: '已完成', failed: '失败', cancelled: '已取消', queued: '排队中'}[status] || status || '排队中';
 }
 
+// Messages saved before the LOOP rename still carry SOP「…」 authors.
+const ROOM_LOOP_AUTHOR = /^(?:LOOP|SOP)「(.*)」$/;
+
 function roomIsSOPAuthor(name) {
-  return /^LOOP「.*」$/.test(String(name || ''));
+  return ROOM_LOOP_AUTHOR.test(String(name || ''));
 }
 
 function roomAuthorName(name) {
-  return roomIsSOPAuthor(name) ? String(name).slice(4, -1) : String(name || '');
+  const match = ROOM_LOOP_AUTHOR.exec(String(name || ''));
+  return match ? match[1] : String(name || '');
 }
 
 function roomAvatar(name) {
