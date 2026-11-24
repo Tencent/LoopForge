@@ -1,11 +1,10 @@
 /* 进化中心：同页审查问题、修改和证据；沿用 Harness UI（MIT）令牌。 */
 #evoDetailPage .evo-story-workbench{border:0;border-radius:0;overflow:visible;background:transparent}
 #evoDetailPage>.evo-detail-head {
-  display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px 12px;margin:0 0 12px;
+  display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:8px 12px;margin:0 0 12px;
 }
 #evoDetailProgress{grid-column:1/-1;min-width:0}
 #evoDetailProgress:empty{display:none}
-.evo-workspace-close{grid-column:2;grid-row:1}
 .evo-workspace-heading{min-width:0}
 #evoDetailPage .evo-workspace-heading #evoDetailActions{justify-content:flex-start;margin-top:8px}
 #evoDetailPage .evo-workspace-heading #evoDetailActions:empty{display:none}
@@ -21,13 +20,12 @@
 .evo-story-section-head{
   display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;font-size:12px;
 }
-.evo-story-section-head :is(h2,h3),.evo-story-overview h3{
+.evo-story-section-head :is(h2,h3),.evo-story-overview h2{
   display:flex;align-items:center;gap:7px;margin:0;font-size:14px;font-weight:600;
 }
 @container(min-width:670px){
-  #evoDetailPage>.evo-detail-head{grid-template-columns:minmax(0,1fr) minmax(295px,1.25fr) auto;align-items:start;gap:12px}
+  #evoDetailPage>.evo-detail-head{grid-template-columns:minmax(0,1fr) minmax(295px,1.25fr);align-items:start;gap:12px}
   #evoDetailProgress{grid-column:auto}
-  .evo-workspace-close{grid-column:3}
 }
 .evo-story-section-head .evo-review-icon{width:15px;height:15px}
 .evo-story-problems{padding:8px;min-width:0}
@@ -78,6 +76,7 @@
 .evo-story-evidence-details{border-top:1px solid var(--hui-border-soft);font-size:12px}
 .evo-story-evidence-details>summary{padding:10px 16px;color:var(--hui-muted);cursor:pointer}
 #evoReviewWorkbench .evo-story-evidence-details .evo-evidence-panel{border:0}
+#evoEvidenceTitle{margin:0;font-size:12px;font-weight:500}
 #evoReviewWorkbench .evo-story-evidence-details .evo-output-pair{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
 #evoReviewWorkbench .evo-story-evidence-details .evo-output-pair>section+section{border:0}
 .evo-story-results{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px}
@@ -135,12 +134,12 @@
 .evo-story-signal,.evo-story-validation-cards>article{
   min-width:0;padding:8px 10px;border:1px solid var(--hui-border-soft);border-radius:8px;background:var(--hui-canvas);
 }
-.evo-story-signal h4,.evo-story-validation-cards h4{
+.evo-story-signal h3,.evo-story-validation-cards h3{
   display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin:0;font-size:13px;font-weight:600;
 }
-.evo-story-signal h4>.evo-review-icon,.evo-story-validation-cards h4>.evo-review-icon{width:15px;height:15px;color:var(--hui-accent)}
+.evo-story-signal h3>.evo-review-icon,.evo-story-validation-cards h3>.evo-review-icon{width:15px;height:15px;color:var(--hui-accent)}
 .evo-story-signal[data-signal=node_failed] h4>.evo-review-icon{color:var(--hui-error)}
-.evo-story-signal h4 b{font-size:11px;font-weight:500;color:var(--hui-muted);font-variant-numeric:tabular-nums}
+.evo-story-signal h3 b{font-size:11px;font-weight:500;color:var(--hui-muted);font-variant-numeric:tabular-nums}
 .evo-story-signal p,.evo-story-validation-cards p{margin:4px 0 0;line-height:1.55;font-size:12px;overflow-wrap:anywhere}
 .evo-story-signal p{color:var(--hui-secondary)}
 #evolutionView #evoDetailPage .evo-story-signal .kb-btn.quiet{padding-inline:0;color:var(--hui-accent);background:none}
@@ -170,7 +169,7 @@
 .evo-story-sample-input {margin:0 0 12px;font-size:12px;color:var(--hui-muted)}
 .evo-story-sample-input>summary {cursor:pointer}
 .evo-story-validation-foot ul {padding-inline-start:16px;margin:8px 0 0;line-height:1.7}
-#evoDetailPage .evo-review-filebar h3 {display:flex;align-items:center;gap:7px;margin:0;font-size:14px;font-weight:600}
+#evoDetailPage .evo-review-filebar h2 {display:flex;align-items:center;gap:7px;margin:0;font-size:14px;font-weight:600}
 #evoFullChange .evo-review-filebar{padding:0 0 6px;border-bottom:0;background:none}
 #evoFullChange .evo-story-change-reason{padding:0;margin:0 0 8px;background:none;border:0}
 #evoDetailPage .evo-review-diff .evo-before-after{

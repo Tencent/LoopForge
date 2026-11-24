@@ -16,7 +16,7 @@ const routes = [
 ];
 async function open(app) { await app.evaluate(`state.projectFilter='project-1';switchView('evolution');renderEvolutionView()`); await settle(4); }
 
-test('unified list paginates, preserves filter and page on return, and keeps diagnostics out of the home page', async t => {
+test('task details have a separate page and returning preserves pagination, filters and sorting', async t => {
   const assets = [finding, ...Array.from({ length: 11 }, (_, i) => ({
     ...finding, id: `f-${i + 1}`, assetId: `a-${i + 1}`, clusters: [clusters[i + 1]],
     ...(i===10?{ updatedAt:now, triage:{...finding.triage,score:1} }:{}),
@@ -31,6 +31,7 @@ test('unified list paginates, preserves filter and page on return, and keeps dia
   assert.deepEqual([...app.document.querySelectorAll('.evo-workspace-stat h2')].map(el=>el.textContent), ['待处理问题','迭代中','已发布']);
   assert.match($('[data-evo-list-status="all"]').textContent, /全部记录13/);
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 10);
+  assert.equal($('#evoDetailPage'), null);
   assert.equal($('#evolutionBody input'), null);
   assert.equal($('#evolutionBody select').getAttribute('aria-label'), '改进任务排序');
   assert.equal($('#evolutionBody [role="tab"]'), null);
@@ -40,11 +41,14 @@ test('unified list paginates, preserves filter and page on return, and keeps dia
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 3);
   $('[data-evo-asset-group="asset:agent:a-11"]').click(); await settle(4);
   assert.match(app.window.location.hash, /findings\/f-11\/c-11/);
-  assert.ok($('#evoWorkspaceDetail #evoDetailPage'));
-  assert.equal($('#evoWorkspaceTasks [aria-pressed="true"][data-evo-asset-group]').dataset.evoAssetGroup, 'asset:agent:a-11');
-  assert.equal(app.document.querySelectorAll('.evo-home-row').length, 3);
+  assert.ok($('#evolutionBody > #evoDetailPage'));
+  assert.equal($('#evoWorkspaceTasks'), null);
+  assert.equal($('#evoPageHead').hidden, true);
+  assert.equal($('#evoMetrics').hidden, true);
   $('[data-evo-list-back]').click(); await settle(5);
   assert.equal(app.window.location.hash, '#/evolution');
+  assert.equal($('#evoDetailPage'), null);
+  assert.equal($('#evoPageHead').hidden, false);
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 3);
   assert.equal(app.document.activeElement.dataset.evoAssetGroup, 'asset:agent:a-11');
   assert.equal(app.document.querySelectorAll('.evo-home-tabs button').length, 5);
@@ -54,6 +58,11 @@ test('unified list paginates, preserves filter and page on return, and keeps dia
   sort.value='recent';
   sort.dispatchEvent(new app.window.Event('change',{bubbles:true}));
   assert.equal($('.evo-home-row').dataset.evoAssetGroup,'asset:agent:a-11');
+  $('[data-evo-list-status="active"]').click();
+  $('.evo-home-row').click(); await settle(4);
+  $('[data-evo-list-back]').click(); await settle(5);
+  assert.equal($('[data-evo-list-sort]').value, 'recent');
+  assert.equal($('[data-evo-list-status="active"]').getAttribute('aria-pressed'), 'true');
 });
 
 test('refresh does not diagnose and repeated diagnosis is guarded; legacy diagnosis is kept in details', async t => {
@@ -121,9 +130,10 @@ test('asset grouping deduplicates proposal appearances and merges findings witho
   assert.equal(app.document.querySelectorAll('#evoProblemRecords [data-evo-related-finding]').length, 12);
   assert.equal($('#evoProblemRecords [data-evo-related-finding="f-second"]'), null);
   assert.equal($('[data-evo-related-finding="f-rule"]'), null);
-  const detail = $('#evoDetailPage');
+  assert.equal($('#evoWorkspaceTasks'), null);
+  $('[data-evo-list-back]').click(); await settle(4);
   $('[data-evo-list-status="doing"]').click();
-  assert.equal($('#evoDetailPage'), detail);
+  assert.equal($('#evoDetailPage'), null);
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 0);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });

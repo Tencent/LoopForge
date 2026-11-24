@@ -151,8 +151,8 @@ async function renderEvolutionView(){
   if(!root)return;
   if(evo.projectId!==null&&evo.projectId!==evoProjectId()){evoDispose();evo.overview=null;evo.findings=null;evo.samples=null;evo.list={status:'all',page:0};evo.lastCheck=null;evo.checkError='';evo.tab='issues';if(evoActive())history.replaceState(null,'','#/evolution')}
   evo.projectId=evoProjectId();
-  if(!evo.projectId){evo.overview=null;evoRenderMetrics();root.innerHTML='<div class="kb-empty">请先在顶部选择项目</div>';return}
-  if(!evo.overview)root.innerHTML='<div class="kb-empty">正在读取进化概览…</div>';
+  if(!evo.projectId){evo.overview=null;evoRenderOverviewHeader();root.innerHTML='<div class="kb-empty">请先在顶部选择项目</div>';return}
+  if(!evo.overview&&!evo.modal)root.innerHTML='<div class="kb-empty">正在读取进化概览…</div>';
   await evoRefresh();
   if(evoActive()){evoRender();evoApplyRoute()}
 }
@@ -219,9 +219,12 @@ function evoChangeState(p){
   return {label:'状态待确认',tone:'',note:'打开详情查看处理记录'};
 }
 function evoChangeBadge(p){const s=evoChangeState(p);return kbBadge(s.label,s.tone)}
-function evoRenderMetrics(){
+function evoRenderOverviewHeader(){
+  const show=!evo.modal;
+  $('#evoPageHead').hidden=!show;
   const host=$('#evoMetrics');if(!host)return;
-  host.innerHTML=evo.overview&&!['assets','samples'].includes(evo.tab)?evoHomeSummaryHTML():'';
+  host.hidden=!show;
+  host.innerHTML=show&&evo.overview&&!['assets','samples'].includes(evo.tab)?evoHomeSummaryHTML():'';
   window.AgentFlowHarnessIcons?.hydrate(host);
 }
 function evoRecentChangeHTML(){
@@ -232,19 +235,18 @@ function evoRecentChangeHTML(){
 
 function evoRender(){
   const root=$('#evolutionBody');if(!root)return;
-  evoRenderMetrics();
+  evoRenderOverviewHeader();
   evoSchedulePoll();
   if(evo.modal){
     const m=evo.modal;
-    evoUpdateWorkspaceTasks();
+    $('#evoDetailStatus').innerHTML=evoReadErrorHTML();
     if(m.row)m.row=evoIssueRows().find(r=>evoIssueKey(r)===evoIssueKey(m.row))||m.row;
     if(!m.proposalId&&m.row)m.proposalId=m.row.f.proposalId||evoFindingProposal(m.row.f)?.id||'';
-    if(m.proposalId)evoLoadDetailProposal(m);
-    else if(m.row){evoDetailLayout(m);if(m.data)evoRenderFindingRuns()}
+    if(m.proposalId)return evoLoadDetailProposal(m);
+    if(m.row){evoDetailLayout(m);if(m.data)evoRenderFindingRuns()}
     return;
   }
-  $('#evoPageHead').hidden=false;$('#evoMetrics').hidden=false;
-  if(evo.error){root.innerHTML=`<div class="kb-empty">读取失败：${escapeHTML(evo.error)} <button type="button" class="kb-btn" data-evo-reload>重试</button></div>`;return}
+  if(evo.error){root.innerHTML=evoReadErrorHTML();return}
   if(!evo.overview)return;
   const focused=document.activeElement?.closest?.('#evolutionBody')?document.activeElement.dataset.evoKey:'';
   if(['assets','samples'].includes(evo.tab)){
@@ -483,7 +485,7 @@ function evoCloseFinding(restore=true){
   $('#evoDetailPage')?.remove();
   if(restore&&evoActive()){
     evo.tab='issues';history.replaceState(null,'','#/evolution');evoRender();
-    $('#evolutionBody')?.querySelector(`[data-evo-key="${CSS.escape(m?.openerKey||'')}"]`)?.focus({preventScroll:true});
+    evoFocusTask(m?.openerKey);
   }
 }
 function evoDispose(){clearTimeout(evo.poll);++evo.seq;evoCloseFinding(false);if(evoDrawerOwned())evoDrawerClose()}
@@ -506,16 +508,22 @@ function evoBack(){
   evoCloseFinding(false);evo.tab='issues';
   if(history.state?.evolutionFrom==='#/evolution'){history.back()}else history.replaceState(null,'','#/evolution');
   evoRender();
-  ($(`#evoWorkspaceTasks [data-evo-key="${CSS.escape(key||'')}"]`)||$('#evoWorkspaceTasks .evo-home-tabs [aria-pressed="true"]'))?.focus({preventScroll:true});
+  evoFocusTask(key);
+}
+function evoFocusTask(key){
+  const task=key&&$(`#evoWorkspaceTasks [data-evo-key="${CSS.escape(key)}"]`);
+  (task||$('#evoWorkspaceTasks .evo-home-tabs [aria-pressed="true"]')||$('#evoDiagnose'))?.focus();
 }
 function evoApplyRoute(){
-  if(!evoActive()||!evo.overview)return;
-  const r=evoRoute();if(!r)return;
+  if(!evoActive())return;
+  const r=evoRoute();if(!r||!evo.overview&&r.type!=='list')return;
   const identity=r.type==='finding'?`finding:${r.id}:${r.key}`:r.type==='proposal'?`proposal:${r.id}`:'';
   if(identity&&evo.modal?.routeKey===identity)return;
   if(r.type==='finding')return evoOpenFinding(r.id,r.key,true);
   if(r.type==='proposal')return evoOpenProposal(r.id,true);
+  const key=evo.modal?.openerKey;
   evoCloseFinding(false);if(evoDrawerOwned())evoDrawerClose();evo.tab=r.type==='settings'?r.tab:'issues';evoRender();
+  if(r.type==='list'&&key)evoFocusTask(key);
 }
 function evoFindingStats(r){
   const {f,c}=r,t=f.triage;
@@ -528,26 +536,25 @@ function evoMountDetail(title,openerKey,row=null){
   const asset=row?.f||evoAllProposals().find(p=>openerKey===`proposal:${p.id}`);
   const m={row,openerKey:asset?`asset:${evoAssetKey(asset.assetKind,asset.assetId)}`:openerKey,routeKey:openerKey,projectId:evo.projectId,status:'',page:0,data:null,evidence:null,evidenceCache:new Map(),compareFilter:'all',viewOpen:[],diffSplit:true};
   evo.modal=m;evo.tab='issues';
-  if(!$('#evoWorkspaceDetail'))$('#evolutionBody').innerHTML=evoHomeHTML();
-  $('#evoWorkspaceDetail').insertAdjacentHTML('beforeend',`
+  $('#evolutionBody').innerHTML=`
     <section id="evoDetailPage" aria-labelledby="evoFindingTitle">
-      <button type="button" class="evo-back" data-evo-list-back>‹ 改进任务</button>
+      <button type="button" class="evo-back" data-evo-list-back>‹ 返回改进任务</button>
+      <div id="evoDetailStatus">${evoReadErrorHTML()}</div>
       <header class="evo-detail-head">
         <div class="evo-workspace-heading">
           <div class="evo-review-identity"><span id="evoDetailGlyph" class="evo-review-glyph"></span><div>
-            <h2 id="evoFindingTitle" tabindex="-1">${escapeHTML(title)}</h2>
+            <h1 id="evoFindingTitle" tabindex="-1">${escapeHTML(title)}</h1>
             <div id="evoDetailObject" class="evo-detail-object"></div>
           </div></div>
           <div id="evoDetailActions" class="evo-detail-actions"></div>
         </div>
         <div id="evoDetailProgress"></div>
-        <button type="button" class="kb-btn quiet small evo-workspace-close" data-evo-list-back aria-label="关闭任务详情" data-tooltip="关闭任务详情">${evoReviewIcon('close')}</button>
       </header>
       <div id="evoDetailBody" class="evo-detail-grid"><div class="kb-empty">正在读取…</div></div>
-    </section>`);
-  if(!$('#evoMetrics')?.children.length)evoRenderMetrics();
-  evoUpdateWorkspaceTasks();
-  $('#evoFindingTitle').focus();
+    </section>`;
+  evoRenderOverviewHeader();
+  $('#evoFindingTitle').focus({preventScroll:true});
+  $('#evoDetailPage').scrollIntoView?.({block:'start'});
   return m;
 }
 function evoDetailTrackHTML(p,finding){
@@ -764,10 +771,7 @@ async function evoLoadDetailProposal(m){
     for(const [key,data] of m.evidenceCache)if(data.replay){const current=(p.replays||[]).find(r=>r.id===data.replay.id);if(!current||!evoTime(current.finishedAt)||JSON.stringify(current)!==JSON.stringify(data.replay))m.evidenceCache.delete(key)}
     if(m.evidence?.type==='replay'&&!(p.replays||[]).some(r=>r.id===m.evidence.id)){m.evidence=null;m.evidenceRequest=null}
     m.proposal=p;
-    if(m.openerKey.startsWith('proposal:')){
-      m.openerKey=`asset:${evoAssetKey(p.assetKind,p.assetId)}`;
-      evoUpdateWorkspaceTasks();
-    }
+    if(m.openerKey.startsWith('proposal:'))m.openerKey=`asset:${evoAssetKey(p.assetKind,p.assetId)}`;
     if(!m.row)m.row=evoIssueRows().find(r=>r.f.id===p.findingId||r.f.proposalId===p.id)||null;
     evoDetailLayout(m,p);
     if(trafficState&&$('#evoTrafficPercent')&&trafficState.applied===p.canary?.percent){$('#evoTrafficPercent').value=trafficState.percent;if(trafficState.focus)$('#evoTrafficPercent').focus({preventScroll:true})}
@@ -1186,12 +1190,10 @@ async function evoOpenAsset(kind,id,selected=0){
 async function evoAfterChange(openProposal='',context={pid:evo.projectId,detail:evo.modal}){
   await evoRefresh();
   if(context.pid!==evoProjectId()||!evoActive())return;
-  if(openProposal&&context.detail&&evo.modal===context.detail){
-    evoRenderMetrics();
-    evoUpdateWorkspaceTasks();
-    if(context.detail.proposalId===openProposal)await evoLoadDetailProposal(context.detail);
-    else evoOpenProposal(openProposal);
-  }else evoRender();
+  if(openProposal&&context.detail&&evo.modal===context.detail&&context.detail.proposalId!==openProposal){
+    evoSchedulePoll();
+    evoOpenProposal(openProposal);
+  }else await evoRender();
 }
 
 async function evoDiagnose(btn){
@@ -1205,7 +1207,7 @@ async function evoDiagnose(btn){
     const fix=(res.findings||[]).filter(f=>f.triage?.verdict==='fix').length;
     toast(`诊断完成：${res.runs||0} 次运行，${(res.findings||[]).length} 个问题，其中 ${fix} 个值得修复${res.archived?`，自动归档 ${res.archived} 个`:''}`,'ok');
     if(pid===evoProjectId()){evo.lastCheck={projectId:pid,runs:res.runs||0,findings:(res.findings||[]).length,at:new Date().toISOString()};evo.selected.clear();await evoAfterChange()}
-  }catch(err){if(pid===evoProjectId()){evo.checkError=err.message;if(evo.modal)evoUpdateWorkspaceTasks();else evoRender()}toast(err.message,'err')}
+  }catch(err){if(pid===evoProjectId()){evo.checkError=err.message;if(!evo.modal)evoRender()}toast(err.message,'err')}
   finally{evo.diagnosing=false;evoHomeSyncChecking();if(btn?.isConnected)btn.disabled=false}
 }
 async function evoReload(btn){
@@ -1429,9 +1431,9 @@ document.addEventListener('click',e=>{
   if(e.target.closest('[data-evo-evidence-retry]')&&evo.modal?.evidence){const m=evo.modal;m.evidenceCache.delete(`${m.evidence.type}:${m.evidence.id}`);return evoSelectEvidence(m.evidence)}
   const sampleFilter=e.target.closest('[data-evo-sample-filter]');if(sampleFilter&&evo.modal){evo.modal.compareFilter=sampleFilter.dataset.evoSampleFilter;evoRenderComparisonList(evo.modal);$(`[data-evo-sample-filter="${evo.modal.compareFilter}"]`)?.focus({preventScroll:true});return}
   const filter=e.target.closest('[data-evo-list-status]');
-  if(filter){evo.list.status=filter.dataset.evoListStatus;evo.list.page=0;evoUpdateWorkspaceTasks(true);$(`[data-evo-list-status="${evo.list.status}"]`)?.focus({preventScroll:true});return}
+  if(filter){evo.list.status=filter.dataset.evoListStatus;evo.list.page=0;evoUpdateWorkspaceTasks();$(`[data-evo-list-status="${evo.list.status}"]`)?.focus({preventScroll:true});return}
   const unifiedPage=e.target.closest('[data-evo-unified-page]');
-  if(unifiedPage&&!unifiedPage.disabled){evo.list.page=Number(unifiedPage.dataset.evoUnifiedPage);evoUpdateWorkspaceTasks(true);$('#evoUnifiedList button')?.focus({preventScroll:true});return}
+  if(unifiedPage&&!unifiedPage.disabled){evo.list.page=Number(unifiedPage.dataset.evoUnifiedPage);evoUpdateWorkspaceTasks();$('#evoUnifiedList button')?.focus();return}
   const rediagnose=e.target.closest('[data-evo-rediagnose]');if(rediagnose&&!rediagnose.disabled)return evoDiagnose(rediagnose);
   const open=e.target.closest('[data-evo-open]');if(open)return evoOpenFinding(open.dataset.evoOpen,open.dataset.cluster);
   if(e.target.closest('[data-evo-change-decisions]')){evo.tab='proposals';evo.changes={q:'',status:'decide',page:0};evoRender();$('#evoTab-proposals')?.focus({preventScroll:true});return}
@@ -1492,7 +1494,7 @@ document.addEventListener('input',e=>{
 });
 document.addEventListener('change',e=>{
   if(e.target.matches('#evoWorkspaceTasks [data-evo-list-sort]')){
-    evo.list.sort=e.target.value;evo.list.page=0;evoUpdateWorkspaceTasks(true);return;
+    evo.list.sort=e.target.value;evo.list.page=0;evoUpdateWorkspaceTasks();return;
   }
   if(e.target.matches('#evoDetailPage [data-evo-evidence-node]')&&evo.modal?.evidenceData){evo.modal.evidenceNode=e.target.value;evoRenderEvidence(evo.modal,evo.modal.evidenceData);$('[data-evo-evidence-node]')?.focus({preventScroll:true});return}
   if(e.target.matches('#evolutionView [data-evo-change-status]')){evo.changes.status=e.target.value;evoUpdateChanges(true);return}

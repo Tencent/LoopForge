@@ -20,7 +20,7 @@ function evoReviewChangeHTML(m,p){
   const body=!p?.candidateContent?`<div class="evo-review-empty">${p?.status==='drafting'?'正在生成修改…':'暂无正文修改'}</div>`:m.diffSplit?evoBeforeAfterHTML(p,!!m.diffContext,!m.diffContext,long&&!m.diffContext&&!m.diffExpanded):evoDiffHTML(p.baseContent||'',p.candidateContent,!!m.diffContext,long&&!m.diffExpanded,false,titles);
   const reason=p?.review?.reason||p?.review?.changes?.[0]?.reason||p?.rationale||'';
   const contextLabel=m.diffContext?'收起未修改内容':'显示未修改内容';
-  return `<header class="evo-review-filebar"><h3>${evoReviewIcon('edit')}AI 生成的指令修改</h3>${p?.candidateContent?`<div>
+  return `<header class="evo-review-filebar"><h2>${evoReviewIcon('edit')}AI 生成的指令修改</h2>${p?.candidateContent?`<div>
       <span class="evo-good">+${stats.add} 行新增</span><span class="evo-bad">−${stats.del} 行删除</span>
       <button type="button" class="kb-btn quiet small evo-review-icon-button" data-evo-diff-context aria-label="${contextLabel}" aria-pressed="${!!m.diffContext}" data-tooltip="${contextLabel}">${evoReviewIcon('eye')}</button>
       <button type="button" class="kb-btn quiet small evo-review-icon-button" data-evo-diff-split aria-label="${m.diffSplit?'合并对比':'并排对比'}" aria-pressed="${!!m.diffSplit}" data-tooltip="${m.diffSplit?'合并对比':'并排对比'}">${evoReviewIcon('panel-left')}</button>

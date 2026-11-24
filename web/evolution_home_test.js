@@ -34,7 +34,7 @@ const {createDOM}=require('./hui_fake_dom');
   assert.equal(dom.document.querySelectorAll('.evo-home-tabs button').length,5);
   assert.equal(dom.document.querySelectorAll('.evo-home-row').length,1);
   assert.match(dom.document.querySelector('.evo-home-summary').textContent,/跳过摘要.*改善 1/,'the list summarizes the change and replay outcome');
-  assert.equal(dom.document.querySelector('.evo-home-columns'),null,'the list starts with problems instead of table headers');
+  assert.equal(dom.document.querySelector('.evo-home-columns').textContent,'问题与对象修改与验证当前状态');
   assert.match(html,/阻塞 1/);assert.ok(!html.includes('成功 3/3'));
   evo.overview={recent:[{...p,status:'rejected'}]};
   evo.list={status:'active',page:0};html=api.evoHomeHTML();

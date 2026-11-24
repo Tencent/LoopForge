@@ -51,15 +51,14 @@ function evoHomeRowHTML(row){
   const change=p?.review?.changes?.[0]?.title||(p?.title!==problem?p?.title:'')||'';
   const summary=[evoStoryBrief(change,64),evoHomeOutcome(p)].filter(Boolean).join(' · ');
   const glyph=r?.c?.kind==='user_feedback'?'user':'alert';
-  const selected=evo.modal?.openerKey===key;
   return `
-    <button type="button" class="evo-home-row" data-evo-asset-group="${escapeHTML(key)}" data-evo-key="${escapeHTML(key)}" aria-controls="evoWorkspaceDetail" aria-pressed="${selected}">
+    <button type="button" class="evo-home-row" data-evo-asset-group="${escapeHTML(key)}" data-evo-key="${escapeHTML(key)}">
       <span class="evo-home-mark">${evoFindingPriorityHTML(r?.f)||evoReviewIcon(glyph)}</span>
       <span class="evo-home-problem">
         <b data-tooltip="${escapeHTML(problem)}">${escapeHTML(evoStoryBrief(problem,60))}</b>
         <span class="evo-home-asset">${escapeHTML(asset.assetName||asset.assetId||'未知对象')} · ${escapeHTML(evoGroupFacts(row))}</span>
-        ${summary?`<span class="evo-home-summary">${escapeHTML(summary)}</span>`:''}
       </span>
+      <span class="evo-home-summary">${escapeHTML(summary)}</span>
       <span class="evo-home-next">
         ${kbBadge(escapeHTML(row.conflict?'存在并行冲突':state.label),row.conflict?'err':state.tone)}
         <span>${escapeHTML(evoHomeNext(row))}${evoReviewIcon('arrow-right')}</span>
@@ -70,8 +69,10 @@ function evoHomeStatusHTML(){
   const check=evoHomeCheck();
   const checkNote=check?`<p class="evo-home-check-note" role="status">${evoReviewIcon('check')}上次检查 ${check.runs} 次运行 · ${check.findings} 个问题<span>${escapeHTML(relativeTime(check.at))}</span></p>`:'';
   const error=evo.checkError?`<div class="evo-home-check-error" role="alert">检查失败：${escapeHTML(evo.checkError)}${evoHomeButton('重试','data-evo-home-check')}</div>`:'';
-  const refreshError=evo.error?`<div class="evo-home-check-error" role="alert">读取失败：${escapeHTML(evo.error)}${evoHomeButton('重试','data-evo-reload')}</div>`:'';
-  return error+refreshError+checkNote;
+  return error+checkNote;
+}
+function evoReadErrorHTML(){
+  return evo.error?`<div class="evo-home-check-error" role="alert">读取失败：${escapeHTML(evo.error)}${evoHomeButton('重试','data-evo-reload')}</div>`:'';
 }
 function evoHomeBuckets(all){
   return {
@@ -118,35 +119,22 @@ function evoHomeTasksHTML(all){
   </div>`;
   const empty=`<div class="evo-home-filter-empty">当前没有${escapeHTML(filters.find(([key])=>key===evo.list.status)?.[1]||'匹配的')}任务${evoHomeButton(`查看全部 ${all.length} 条`,'data-evo-list-status="all"')}</div>`;
   const pager=pages>1?`<footer class="evo-list-footer"><nav aria-label="改进分页"><button type="button" data-evo-unified-page="${evo.list.page-1}"${evo.list.page?'':' disabled'}>上一页</button><span>${evo.list.page+1}/${pages}</span><button type="button" data-evo-unified-page="${evo.list.page+1}"${evo.list.page+1<pages?'':' disabled'}>下一页</button></nav></footer>`:'';
-  return `${toolbar}<section id="evoUnifiedList" class="evo-home-list" aria-label="改进任务">${rows||empty}</section>${pager}`;
+  const columns=rows?'<div class="evo-home-columns" aria-hidden="true"><span>问题与对象</span><span>修改与验证</span><span>当前状态</span></div>':'';
+  return `${toolbar}<section id="evoUnifiedList" class="evo-home-list" aria-label="改进任务">${columns}${rows||empty}</section>${pager}`;
 }
 function evoHomeHTML(){
   const all=evoUnifiedRows();
   return `<div class="evo-home">
-    <div id="evoWorkspaceStatus">${evoHomeStatusHTML()}</div>
-    <div id="evoWorkspace" class="evo-workspace${all.length?'':' is-empty'}">
-      <aside id="evoWorkspaceTasks" class="evo-workspace-tasks" aria-label="改进任务">${evoHomeTasksHTML(all)}</aside>
-      <div id="evoWorkspaceDetail" class="evo-workspace-detail">
-        <div class="evo-workspace-placeholder">${evoReviewIcon('workflow')}<p>选择一项改进任务</p></div>
-      </div>
-    </div>
+    ${evoHomeStatusHTML()}
+    <section id="evoWorkspaceTasks" class="evo-workspace-tasks" aria-label="改进任务">${evoHomeTasksHTML(all)}</section>
   </div>`;
 }
-function evoUpdateWorkspaceTasks(resetScroll=false){
+function evoUpdateWorkspaceTasks(){
   const tasks=$('#evoWorkspaceTasks');
   if(!tasks)return;
-  $('#evoWorkspaceStatus').innerHTML=evoHomeStatusHTML();
-  $('#evoWorkspace').classList.toggle('has-detail',!!evo.modal);
-  evoHomeSyncChecking();
-  if(!evo.overview)return;
-  const all=evoUnifiedRows(),list=tasks.querySelector('#evoUnifiedList'),scroll=list?.scrollTop||0;
   const key=tasks.contains(document.activeElement)?document.activeElement.dataset.evoKey:'';
-  $('#evoWorkspace').classList.toggle('is-empty',!all.length);
-  tasks.innerHTML=evoHomeTasksHTML(all);
-  const nextList=tasks.querySelector('#evoUnifiedList');if(nextList&&!resetScroll)nextList.scrollTop=scroll;
+  tasks.innerHTML=evoHomeTasksHTML(evoUnifiedRows());
   window.AgentFlowHarnessIcons?.hydrate(tasks);
-  window.AgentFlowHarnessIcons?.hydrate($('#evoWorkspaceStatus'));
-  window.AgentFlowHarnessIcons?.hydrate($('.evo-workspace-placeholder'));
   if(key)tasks.querySelector(`[data-evo-key="${CSS.escape(key)}"]`)?.focus({preventScroll:true});
 }
 document.addEventListener('click',event=>{
