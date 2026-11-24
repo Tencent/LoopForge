@@ -126,6 +126,13 @@ func (h *assistantHandlers) sweepQueuedAttachments() int {
 				}
 			}
 		}
+		if err == nil {
+			var issues map[string]bool
+			issues, err = h.repo.IssueAttachmentsInUse(ids)
+			for id := range issues {
+				inUse[id] = true
+			}
+		}
 		if err != nil {
 			log.Printf("attachment sweep: %v; %d files stay queued", err, len(queue)-start)
 			return removed

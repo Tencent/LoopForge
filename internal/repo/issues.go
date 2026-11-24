@@ -242,6 +242,9 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 			v.CloseSource = old.CloseSource
 			v.AutomationState = old.AutomationState
 		}
+		if v.Attachments == nil {
+			v.Attachments = old.Attachments
+		}
 		v.CreatedAt = old.CreatedAt
 		if v.Number == 0 {
 			v.Number = old.Number
@@ -445,4 +448,10 @@ func (r *IssuesRepo) PutComment(v domain.IssueComment) error {
 	return upsert(r.DB, "issue_comments", map[string]any{
 		"id": v.ID, "issue_id": v.IssueID, "payload": mustJSON(v), "created_at": timePtr(v.CreatedAt),
 	})
+}
+
+// IssueAttachmentsInUse protects files retained by requirements even when a
+// conversation that also referenced them is deleted.
+func (r *IssuesRepo) IssueAttachmentsInUse(ids []string) (map[string]bool, error) {
+	return payloadMentions(r.DB, "issues", ids)
 }

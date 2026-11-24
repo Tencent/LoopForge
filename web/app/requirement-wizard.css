@@ -370,3 +370,9 @@
 @media (prefers-reduced-motion: reduce) {
   #requirementModal * { animation: none !important; transition: none !important; }
 }
+
+#requirementModal .req-attachments { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 18px; }
+#requirementModal .req-attachments[hidden] { display: none; }
+#requirementModal .req-attachment { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding: 4px 6px; border: 1px solid var(--hui-border); border-radius: 8px; font-size: 12px; }
+#requirementModal .req-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+#requirementModal .req-attachment small { color: var(--hui-muted); white-space: nowrap; }

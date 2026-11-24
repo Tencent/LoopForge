@@ -71,7 +71,7 @@ load(ctx, [
   "updateIssueBaseBranchInput", "reqProjectRepositories", "selectedReqRepositoryIds", "selectedReqRepositoryId", "selectedReqBaseBranch",
   "renderReqRepositoryPicker", "syncReqBaseBranch", "setReqRepositoryIds",
   "reqRepoNames", "renderReqRepoChip", "reqDescription", "collectRequirementDraft",
-  "persistRequirementComposer", "applyRequirementComposerDraft", "pushExistingIssueToTAPD",
+  "renderReqAttachments", "persistRequirementComposer", "applyRequirementComposerDraft", "pushExistingIssueToTAPD",
   "createIssueFromChat", "rememberIssue", "clearRequirementComposer", "selectedImportTAPDRepositoryIds", "importTAPDStory",
   "selectedIssueRepositoryBranches", "renderIssueRepositoryBranchInputs", "renderImportTAPDRepositoryPicker", "setImportTAPDRepositoryIds",
 ]);
@@ -130,10 +130,12 @@ assert.equal(elements["#chatInput"].value, "继续开发已有分支");
   input.value = "feature/continue";
   elements["#chatInput"].value = "个人主页增加徽章\n兼容现有成就体系";
   ctx.state.reqTarget = "local";
+  ctx.state.reqAttachments=[{id:"uploaded-file",name:"requirements.zip",size:10}];
   await ctx.createIssueFromChat();
   const created = requests.at(-1);
   assert.equal(created.url, "/api/issues");
   assert.equal(created.body.title, "个人主页增加徽章", "the title comes from the first line of the description");
+  assert.equal(created.body.attachments[0].id,"uploaded-file","creation must retain uploaded attachments");
   assert.equal(created.body.description, "个人主页增加徽章\n兼容现有成就体系");
   assert.equal(created.body.baseBranch, "feature/continue");
   assert.equal(created.body.clarification, undefined, "creating no longer carries a clarification");

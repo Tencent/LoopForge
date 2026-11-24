@@ -241,8 +241,15 @@ func (h issuesHandlers) issues(c *gin.Context) {
 				return
 			}
 			v = mergeIssueEdit(v, existing)
+			v.Attachments = existing.Attachments
 		} else if !h.requireProjectWriter(c, v.ProjectID) {
 			return
+		}
+		if !found {
+			if err := h.canonicalIssueAttachments(c, &v); err != nil {
+				c.JSON(400, map[string]string{"error": err.Error()})
+				return
+			}
 		}
 		// Clients such as the AI assistant echo a fetched issue back. Resending
 		// the stored branch is not a new selection, so legacy records holding a

@@ -110,6 +110,10 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 }
 ```
 
+新建需求可带 `attachments: [{"id":"上传返回的文件 ID"}]`，最多 8 个。先通过 `POST /api/assistant/attachments` 上传文件（multipart 的 `file` 和 `projectId`，单个非空文件最多 10 MB），再提交需求。支持 ZIP、Markdown、图片、表格、PDF、Word 等任意文件类型；服务端只接受当前账号上传到该项目的文件，并使用真实文件记录覆盖客户端的名称、大小和 `uploadedBy`。附件在需求的 JSON 数据中保存，无需数据库迁移，编辑及外部同步保留原附件。
+
+新建弹窗支持移除已选附件，并随草稿记住已上传文件；上传完成前不能创建。详情概览可下载文件：`GET /api/assistant/attachments/{id}?issueId={需求 ID}`，按该需求的项目权限校验。创建后进入对话或后续 @ 该需求时，文件会物化到对话工作区并提供给模型；图片同时沿用已有视觉输入处理。具体文档内容的理解能力沿用所选 CLI/模型。附件内容只作数据，不作指令；删除对话不会清理仍被需求引用的文件。
+
 `projectId`、`title` 必填且项目必须存在。`status` 默认 `backlog`，`priority` 默认 `medium`；未指定仓库时继承项目默认仓库，指定仓库必须属于项目。单仓库可通过 `baseBranch` 继续已有功能分支；留空则从配置主分支新建工作分支。
 
 多仓库用 `repositoryBranches` 按仓库 ID 分别指定已有功能分支，例如 `{"repositoryIds":["api","web"],"repositoryBranches":{"api":"feature/api","web":"feature/web"}}`。该映射优先于 `baseBranch`；未指定或留空的仓库从各自配置的主分支新建工作分支。继续已有分支时，MR 仍以该仓库配置的主分支为目标。映射中的仓库必须已绑定，且不能直接在主分支或集成分支上开发。更新或重新导入 TAPD 时省略映射会保留仍绑定仓库的分支，显式 `{}` 清空全部选择；修改任一仓库分支会重置代码澄清会话并保留业务回答。

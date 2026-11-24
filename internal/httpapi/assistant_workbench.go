@@ -218,6 +218,7 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 			}
 		}
 	}
+	req.issueAttachments = nil
 	req.attachmentIDs = map[string]bool{}
 	req.attachmentOwners = map[string]int64{}
 	if len(req.Messages) > 200 {
@@ -346,6 +347,9 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 			req.attachmentIDs[a.ID] = true
 			req.attachmentOwners[a.ID] = attachmentOwner
 		}
+	}
+	if err := h.addIssueAttachments(req, user.ID); err != nil {
+		return err
 	}
 	prefs := h.repo.AssistantPreferences(user.ID)
 	if len(req.roles) > 0 {
@@ -1169,6 +1173,14 @@ func (h *assistantHandlers) downloadAttachment(c *gin.Context) {
 		return
 	}
 	ownerID := u.ID
+	if issueID := c.Query("issueId"); issueID != "" {
+		var err error
+		ownerID, err = h.issueAttachmentOwner(c, issueID, c.Param("id"), u.ID)
+		if err != nil {
+			c.JSON(403, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	readOnly, sessionProject := false, ""
 	if sessionID := c.Query("sessionId"); sessionID != "" {
 		owner, shared, viewOnly, err := h.conversationReadScope(c, sessionID, u.ID)
