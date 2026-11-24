@@ -793,6 +793,7 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 		ClaudeCodeModels: []domain.CLIModel{{ID: "custom-sonnet", Name: "Personal Sonnet"}},
 		AgentCLICredentials: map[string]domain.AgentCLICredential{
 			"opencode": {Models: []domain.CLIModel{{ID: "alibaba/qwen3.7-plus", Name: "Qwen3.7 Plus"}}},
+			"dsh":      {APIKey: "fixture-dsh-secret"},
 		},
 	}
 	if err := assistant.repo.PutUser(user); err != nil {
@@ -821,10 +822,18 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 	if !catalogs["codex"].CustomModel || len(catalogs["codex"].Efforts) == 0 {
 		t.Fatalf("built-in Codex options disappeared: %+v", catalogs["codex"])
 	}
+	for id, want := range map[string]bool{"codex": true, "dsh": true, "claude": false, "opencode": false, "codebuddy": false} {
+		if got := catalogs[id].Configured; got != want {
+			t.Errorf("%s configured = %t, want %t", id, got, want)
+		}
+	}
 	other, _ := assistant.repo.UserByLoginName("workbench-owner")
 	c, rec = workbenchContext(other, "GET", "/api/executor-models", bytes.NewBuffer(nil))
 	handler.executorModels(c)
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "gateway/second") || !strings.Contains(rec.Body.String(), "gpt-6.1-sol") {
 		t.Fatalf("other user did not receive built-in models: %d %s", rec.Code, rec.Body)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &catalogs); err != nil || catalogs["codex"].Configured || catalogs["dsh"].Configured {
+		t.Fatal("other user received executor availability from the editor's account")
 	}
 }

@@ -27,8 +27,9 @@ type executorEffortOption struct {
 
 // executorModelCatalog is the per-CLI model and effort catalog used by the
 // agent wizard. CustomModel marks CLIs that accept free-form model IDs
-// (custom base URLs); Credits is only surfaced for CodeBuddy.
+// (custom base URLs). Configured indicates that the caller saved a personal key.
 type executorModelCatalog struct {
+	Configured  bool                   `json:"configured"`
 	Source      string                 `json:"source,omitempty"`
 	Default     string                 `json:"default,omitempty"`
 	CustomModel bool                   `json:"customModel,omitempty"`
@@ -231,15 +232,18 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 		catalogs[runtime.AgentCLIAntigravity] = catalog
 	}
 	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
-		models, _ := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
-		if len(models) == 0 {
-			continue
-		}
 		id := engine
 		if engine == assistantEngineClaude {
 			id = "claude"
 		}
 		catalog := catalogs[id]
+		key, _ := assistantEngineCredential(user, engine)
+		catalog.Configured = key != ""
+		catalogs[id] = catalog
+		models, _ := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
+		if len(models) == 0 {
+			continue
+		}
 		catalog.Source = "personal"
 		catalog.Models = make([]executorModelInfo, 0, len(models))
 		personal := cliModelsOf(models)

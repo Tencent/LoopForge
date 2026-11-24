@@ -159,7 +159,7 @@ function bindClarifyModelPicker(host, issue){
 // modal's scroll area cannot clip it, and opens toward the side with room.
 let scheduleCatalog=null;
 function scheduleModelCatalog(){
-  return scheduleCatalog||scheduleModelAPI()?.catalog?.()||{};
+  return scheduleCatalog||{};
 }
 function scheduleEngineModels(engine){
   return (scheduleModelCatalog().models||[]).filter(m=>(m.engine||'codebuddy')===engine);
@@ -179,21 +179,20 @@ function paintScheduleEngines(selected){
   if(!select)return;
   const current=scheduleModelEngine(selected);
   const engines=scheduleModelCatalog().engines||[];
-  const list=engines.filter(engine=>engine.configured||scheduleEngineModels(engine.id).length);
-  if(!list.some(e=>e.id===current)&&(scheduleModelAPI()?.concreteModelId(selected)||$('#scheduleJobForm')?.elements.id.value)){
+  const list=engines.filter(engine=>engine.configured);
+  if(!list.some(e=>e.id===current)&&$('#scheduleJobForm')?.elements.id.value){
     list.push(engines.find(e=>e.id===current)||{id:current,name:current});
   }
-  // CodeBuddy can run on its native default with no concrete model in the
-  // list. A saved task keeps its CLI selectable during edits.
   select.replaceChildren(...list.map(e=>{
-    const usable=e.id===current||(e.id==='codebuddy'&&e.configured)||scheduleEngineModels(e.id).length>0;
-    const option=new Option(usable?e.name:`${e.name}（缺少凭据）`,e.id);
-    option.disabled=!usable;
+    const hasModel=e.id==='codebuddy'||scheduleEngineModels(e.id).length>0;
+    const label=!e.configured?`${e.name}（缺少凭据）`:hasModel?e.name:`${e.name}（暂无可选模型）`;
+    const option=new Option(label,e.id);
+    option.disabled=!e.configured||!hasModel;
     return option;
   }));
   if(!list.length)select.add(new Option('暂无可用执行器',''));
   select.value=list.some(item=>item.id===current)?current:list[0]?.id||'';
-  select.disabled=!list.length;
+  select.disabled=![...select.options].some(option=>option.value&&!option.disabled);
 }
 function closeScheduleModelMenu(){
   const host=$('#scheduleModelPicker');
@@ -260,7 +259,7 @@ async function loadScheduleModels(){
   try{
     catalog=await api('/api/assistant/models?schedule=1',{silent:true});
   }catch{
-    catalog=await picker.load();
+    catalog={};
   }
   if(version!==scheduleModalVersion)return;
   scheduleCatalog=catalog;
@@ -285,6 +284,9 @@ function paintScheduleModel(selected){
   const item=catalog.models?.find(model=>model.id===keep);
   if(item)api.paintItem(toggle,item);
   else api.paint(toggle,keep);
+  const engine=scheduleModelEngine(keep);
+  toggle.disabled=!catalog.engines?.some(item=>item.id===engine&&item.configured)||!scheduleEngineModels(engine).length;
+  if(toggle.disabled)closeScheduleModelMenu();
   paintScheduleEngines(keep);
 }
 function syncScheduleJobTiming(){
@@ -405,6 +407,7 @@ async function openScheduleJobModal(kind='dispatch',job){
   if(scheduleModalOpener?.closest('#issueHeadingMenu'))scheduleModalOpener=$('#issueHeadingMore');
   const f=$('#scheduleJobForm');
   f.modelPickerReady=null;
+  scheduleCatalog=null;
   f.inert=false;
   f.querySelector('[type="submit"]').disabled=false;
   if(scheduleEditorKind==='assistant')fillScheduleJobForm(job||{});

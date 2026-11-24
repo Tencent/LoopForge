@@ -118,12 +118,14 @@ if(typeof document!=='undefined'&&document.fonts?.ready)document.fonts.ready.the
 function pickerHTML(items,selected,prefix){return `<input class="input picker-filter" data-picker-filter="${prefix}" placeholder="筛选名称或说明…">${(items||[]).map(x=>`<label class="asset-check"><input type="checkbox" name="${prefix}" value="${x.id}" ${(selected||[]).includes(x.id)?'checked':''}><span>${escapeHTML(x.name)}<small>${escapeHTML(x.description||x.id)}</small></span></label>`).join('')||'<span class="type-label">暂无可用资产，请先到对应的资产管理页面添加</span>'}`}
 function bindPickerFilters(root){(root||document).querySelectorAll('[data-picker-filter]').forEach(input=>input.oninput=()=>{const q=input.value.trim().toLowerCase();input.parentElement.querySelectorAll('.asset-check').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q))})}
 function executorOptions(selected){
-  const allowed=new Set(['codebuddy','codex','claude','opencode','cursor','agy','kimi','pi','dsh','zcode']);
-  const items=(state.data.executors||[]).filter(executor=>allowed.has(executor.id));
+  const executors=state.data.executors||[];
+  const items=executors.filter(executor=>executorConfigured(executor.id));
   const inherited=`<option value="" ${selected?'':'selected'}>跟随责任人默认执行器</option>`;
-  const legacy=selected&&!allowed.has(selected)
-    ?`<option value="${escapeHTML(selected)}" selected disabled>历史执行器 ${escapeHTML(selected)}（请重新选择 CLI）</option>`:'';
-  return inherited+legacy+items.map(executor=>`<option value="${escapeHTML(executor.id)}" ${executor.id===selected?'selected':''}>${escapeHTML(executor.name||executor.id)}</option>`).join('');
+  const saved=executors.find(executor=>executor.id===selected);
+  const savedName=saved?saved.name||selected:`历史执行器 ${selected}`;
+  const unavailable=selected&&!items.some(executor=>executor.id===selected)
+    ?`<option value="${escapeHTML(selected)}" selected disabled>${escapeHTML(savedName)}（${executorModelCatalogRequest?'检查配置中':'未配置'}）</option>`:'';
+  return inherited+unavailable+items.map(executor=>`<option value="${escapeHTML(executor.id)}" ${executor.id===selected?'selected':''}>${escapeHTML(executor.name||executor.id)}</option>`).join('');
 }
 function storedAgentExecutorId(agent){
   return agent?.executorId||(agent?.model||agent?.effort?'codebuddy':'');
@@ -133,17 +135,20 @@ let executorModelCatalogUser, executorModelCatalogRequest, agentModelRevision=0;
 function executorModelCatalogs(){
   return executorModelCatalogUser===state.currentUser?.id?(window.AgentFlowExecutorModels||{}):{};
 }
+function executorConfigured(id){
+  return !executorModelCatalogRequest&&executorModelCatalogs()[id]?.configured===true;
+}
 function loadExecutorModelCatalogs(){
   const user=state.currentUser?.id;
   if(executorModelCatalogRequest&&executorModelCatalogRequest.user===user)return executorModelCatalogRequest.pending;
   if(executorModelCatalogUser!==user)window.AgentFlowExecutorModels=null;
   executorModelCatalogUser=user;
   const request={user};
-  request.pending=api('/api/executor-models',{silent:true}).then(data=>{
-    if(executorModelCatalogRequest===request&&state.currentUser?.id===user&&data?.codebuddy&&data.codex&&data.claude){
+  request.pending=api('/api/executor-models',{silent:true}).catch(()=>null).then(data=>{
+    if(executorModelCatalogRequest===request&&state.currentUser?.id===user){
       window.AgentFlowExecutorModels=data;
     }
-  }).catch(()=>{}).finally(()=>{
+  }).finally(()=>{
     if(executorModelCatalogRequest===request)executorModelCatalogRequest=null;
   });
   executorModelCatalogRequest=request;
@@ -208,19 +213,19 @@ function renderAgentEffortPicker(modelChanged=false){
 }
 function applyAgentModelUI(executorId,model,effort,pickFirst=false){
   const picker=$('#agentModelPicker'),effortPicker=$('#agentEffortPicker');if(!picker||!effortPicker)return;
+  const editable=executorConfigured(executorId);
   for(const control of [picker,effortPicker]){
     const toggle=control.querySelector('[data-model-toggle]');
     if(!toggle)continue;
-    toggle.disabled=!executorId;
-    if(!executorId){
+    toggle.disabled=!editable;
+    if(!editable){
       control.querySelector('.ai-model-menu').hidden=true;
       toggle.setAttribute('aria-expanded','false');
     }
   }
   const cat=executorModelCatalogs()[executorId]||{};
-  // Keep cached models available for manual picks while the catalog refreshes.
-  let choice=executorId?(model||(pickFirst&&!executorModelCatalogRequest?(cat.models||[]).find(item=>item.id!=='default')?.id:'')||''):'';
-  if(choice&&choice!=='default'&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
+  let choice=executorId?(model||(pickFirst&&editable?(cat.models||[]).find(item=>item.id!=='default')?.id:'')||''):'';
+  if(editable&&choice&&choice!=='default'&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
   picker.querySelector('[name="modelChoice"]').value=choice;
   const customInput=$('#agentModelCustomField')?.querySelector('input[name="model"]');
   if(customInput&&choice===AGENT_CUSTOM_MODEL)customInput.value=model||'';
@@ -264,21 +269,26 @@ function selectAgent(a,rerender=true){
   const prefs=state.data.assistantDefaults;
   const preferredId=prefs?.executor==='claude-code'?'claude':prefs?.executor;
   const selectedId=storedAgentExecutorId(a)||(!a.id?preferredId:'')||'';
-  if(f.elements.executorId)f.elements.executorId.innerHTML=executorOptions(selectedId);
+  const executor=f.elements.executorId;
   const modelRevision=++agentModelRevision;
   const modelUser=state.currentUser?.id;
   const refreshModels=loadExecutorModelCatalogs();
+  if(executor){
+    executor.disabled=true;
+    executor.innerHTML=executorOptions(selectedId);
+  }
   const personalModel=!a.id&&preferredId===selectedId&&!a.model?prefs?.model:'';
-  applyAgentModelUI(currentAgentExecutorId(),a.model||personalModel||'',a.effort||(personalModel?prefs.effort:''),!a.id);
+  const model=a.model||personalModel||'';
+  const effort=a.effort||(personalModel?prefs.effort:'');
+  applyAgentModelUI(selectedId,model,effort);
   refreshModels.then(()=>{
     if(modelRevision!==agentModelRevision||modelUser!==state.currentUser?.id)return;
-    const model=agentEffectiveModel(f);
-    if(!model&&f.elements.modelChoice?.value===AGENT_CUSTOM_MODEL){
-      renderAgentModelPicker();
-      renderAgentEffortPicker();
-    }else{
-      applyAgentModelUI(currentAgentExecutorId(),model,f.elements.effort?.value,!a.id||currentAgentExecutorId()!==storedAgentExecutorId(a));
+    const id=a.id||executorConfigured(selectedId)?selectedId:'';
+    if(executor){
+      executor.innerHTML=executorOptions(id);
+      executor.disabled=false;
     }
+    applyAgentModelUI(id,model,effort,!a.id);
     if(state.agentModalMode==='create'&&state.agentCreateStep===3)renderAgentCreateReview();
   });
   if(f.elements.id)f.elements.id.readOnly=!!a.id;
@@ -456,6 +466,12 @@ async function persistAgent(f){
   const creating=state.agentModalMode==='create';
   const executorId=currentAgentExecutorId();
   const changedExecutor=executorId!==storedAgentExecutorId(agentWizardSubject());
+  if(executorId&&(creating||changedExecutor)&&!executorConfigured(executorId)){
+    toast(executorModelCatalogRequest?'正在检查执行器配置，请稍后再试':'请选用已配置的执行器','err');
+    if(creating)setAgentCreateStep(2);
+    else setAgentTab('identity');
+    return null;
+  }
   const model=agentEffectiveModel(f);
   if(executorId&&(creating||changedExecutor||f.elements.modelChoice?.value===AGENT_CUSTOM_MODEL)&&(!model||model==='default')){
     toast('请选择模型或填写模型 ID','err');
