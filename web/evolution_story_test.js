@@ -9,26 +9,31 @@ const { createDOM } = require('./hui_fake_dom');
   w.escapeHTML=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   w.kbBadge=(text,tone)=>`<span class="badge ${tone}">${text}</span>`;
   for(const name of ['evolution.js','app/evolution-simple.js','app/evolution-review.js','app/evolution-story.js'])dom.load(path.join(__dirname,name));
-  const api=dom.run('({evo,evoStoryLogEvidence,evoStoryBehaviorHTML,evoStoryArtifactPairs,evoStoryReadArtifact,evoStoryLoadArtifacts,evoStoryProblemsHTML,evoStoryReplayTable,evoStoryValidationHTML,evoStoryNodePickerHTML,evoGroupFacts})');
+  const api=dom.run('({evo,evoStoryLogEvidence,evoStorySampleSummary,evoStoryRenderBehavior,evoStoryProblemText,evoStoryArtifactPairs,evoStoryReadArtifact,evoStoryLoadArtifacts,evoStoryProblemsHTML,evoStoryReplayTable,evoStoryValidationHTML,evoStoryNodePickerHTML,evoGroupFacts})');
   const lines=['ERROR exited 1','--- FAIL: TestOutput','<img src=x onerror=alert(1)>'];
   const input=JSON.stringify({caseId:'case',lines});
   const before=JSON.stringify({evidence:{line:1,text:lines[0]}}),after=JSON.stringify({evidence:{line:2,text:lines[1]}});
   assert.equal(api.evoStoryLogEvidence(input,before,after).after,2);
   assert.equal(api.evoStoryLogEvidence(input,before,JSON.stringify({evidence:{line:2,text:'different'}})),null,'a guessed line or altered quote must not become a log diagram');
   assert.equal(api.evoStoryLogEvidence(input,before,JSON.stringify({evidence:{line:0,text:lines[0]}})),null);
-  const data={replay:{id:'replay',sourceStatus:'failed',sourceScore:0},comparison:{nodes:[{id:'node',shaped:true,source:{status:'failed'},replay:{status:'succeeded'}}]},source:{run:{id:'source',input,status:'failed',nodes:{node:{output:before}}}},candidate:{run:{id:'candidate',input,status:'succeeded',nodes:{node:{output:after}}}}};
-  const html=api.evoStoryBehaviorHTML({evidenceNode:'node'},data);
-  dom.html(html);
-  assert.equal(dom.document.querySelector('img'),null,'input and artifact content must remain escaped text');
-  assert.match(html,/L1/);assert.match(html,/L2/);
-  const different={...data,candidate:{run:{...data.candidate.run,input:'different'}}};
-  assert.ok(!api.evoStoryBehaviorHTML({evidenceNode:'node'},different).includes('evo-story-log-line'));
-  assert.match(api.evoStoryBehaviorHTML({evidenceNode:'node'},different),/输入不同/);
-  const reused={...data,comparison:{nodes:[{...data.comparison.nodes[0],reused:true}]}};
-  assert.ok(!api.evoStoryBehaviorHTML({evidenceNode:'node'},reused).includes('evo-story-log-line'));
-  assert.match(api.evoStoryBehaviorHTML({evidenceNode:'node'},reused),/未重跑/);
-
   const finishedAt='2026-11-23T00:00:00Z';
+  const data={replay:{id:'replay',sourceStatus:'failed',sourceScore:0,score:2,outcome:'fixed',finishedAt},comparison:{nodes:[{id:'node',shaped:true,source:{status:'failed'},replay:{status:'succeeded'}}]},source:{run:{id:'source',input,status:'failed',nodes:{node:{output:before}}}},candidate:{run:{id:'candidate',input,status:'succeeded',nodes:{node:{output:after}}}}};
+  const modal={evidenceNode:'node'};api.evo.modal=modal;
+  dom.html('<div id="evoStoryBehavior"></div>');
+  api.evoStoryRenderBehavior(modal,data);
+  assert.match(w.$('#evoStoryBehavior').textContent,/日志定位从第 1 行移到第 2 行：--- FAIL: TestOutput/);
+  assert.doesNotMatch(w.$('#evoStoryBehavior').textContent,/ERROR exited/,'the summary must leave raw output in the disclosure');
+  const different={...data,candidate:{run:{...data.candidate.run,input:'different'}}};
+  assert.equal(api.evoStorySampleSummary(modal,different),'这条样例的运行结果改善。');
+  const reused={...data,comparison:{nodes:[{...data.comparison.nodes[0],reused:true}]}};
+  assert.equal(api.evoStorySampleSummary(modal,reused),'这条样例的运行结果改善。');
+  const withOutput=(original,updated)=>({...data,source:{run:{...data.source.run,nodes:{node:{output:JSON.stringify(original)}}}},candidate:{run:{...data.candidate.run,nodes:{node:{output:JSON.stringify(updated)}}}}});
+  api.evoStoryRenderBehavior(modal,withOutput({decision:'REJECT'},{decision:'REJECT',reason:lines[2]}));
+  assert.match(w.$('#evoStoryBehavior').textContent,/补充了判定理由/);
+  assert.equal(dom.document.querySelector('img'),null,'model-generated summary must remain escaped text');
+  assert.equal(api.evoStorySampleSummary(modal,{...data,replay:{...data.replay,outcome:'blocked'}}),'这条样例未能完成回放。');
+  assert.equal(api.evoStoryProblemText({row:{title:'agent submitted terminal failure: 选择日志中首条错误作为证据',c:{kind:'node_failed'}}},null),'节点失败');
+
   const proposal={id:'p',findingId:'current',assetKind:'agent',assetId:'role',summary:{total:3,finished:3,fixed:1,blocked:1,unchanged:1,passed:true},replays:[
     {id:'a',sourceRunId:'source-a',group:'diagnosis',sourceScore:0,score:2,outcome:'fixed',finishedAt},
     {id:'b',sourceRunId:'source-b',group:'holdout',sourceScore:0,score:0,outcome:'blocked',finishedAt},
@@ -73,5 +78,5 @@ const { createDOM } = require('./hui_fake_dom');
   w.$('#evoStoryBehavior').textContent='new selection';
   pending.forEach(resolve=>resolve(new Response(after)));await loading;
   assert.equal(w.$('#evoStoryBehavior').textContent,'new selection','late artifact reads must not replace another detail or project');
-  console.log('evolution story: grounded diagrams, input mismatch, reused nodes, sample scope, artifact identity and size limits passed');
+  console.log('evolution story: grounded summaries, input mismatch, reused nodes, sample scope, artifact identity and size limits passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

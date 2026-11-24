@@ -1,9 +1,16 @@
-// 问题 → 指令变化 → 同一输入的产物变化 → 整份修改的历史验证。
+// 任务说明、历史验证及逐条样例。
 // 图标与组件沿用 Harness UI（MIT），见 harness-ui-LICENSE.txt。
 function evoStoryBrief(value,limit=72){
   const text=String(value||'').trim().replace(/\s+/g,' ');
-  const sentence=text.match(/^.*?[。！？](?:\s|$)/)?.[0]?.trim()||text;
+  const sentence=text.match(/^.*?[。！？]/u)?.[0]?.trim()||text;
   return [...sentence].length>limit?[...sentence].slice(0,limit).join('')+'…':sentence;
+}
+function evoStoryProblemText(m,p){
+  const row=m.row;
+  const raw=[p?.review?.problem,row?.title,row?.f?.summary,p?.title].find(value=>value?.trim()&&!/^\s*[·•]/.test(value));
+  if(!/^agent submitted terminal failure:/i.test(raw?.trim()||''))return evoProblemText(raw);
+  const check=evoStoryCurrentIssues(m,p).find(issue=>/^verification\s+.+?\s+command(?:\s|$)/i.test(issue.c.label||''));
+  return check?.title||EVO_SIGNALS[row?.c?.kind]||'节点执行失败';
 }
 function evoStoryPoints(p){
   return (p?.review?.changes||[]).filter(x=>x&&x.before!==x.after&&
@@ -43,7 +50,7 @@ function evoStoryReplayTable(m){
     const ready=!!evoTime(r.finishedAt)&&!!r.outcome&&r.outcome!=='blocked',result=outcome[r.outcome]||['待判定','evo-muted'];
     const selected=m.evidence?.type==='replay'&&m.evidence.id===r.id;
     const score=(n,complete)=>`${evoReviewScoreHTML(n,complete)}<span>${complete?escapeHTML(evoHistoricalScore(n)):'未完成'}</span>`;
-    return `<tr data-evo-story-row="${escapeHTML(r.id)}" class="${selected?'is-selected':''}"><td><button type="button" aria-controls="evoStoryBehavior" data-evo-story-replay="${escapeHTML(r.id)}" aria-pressed="${selected}" data-tooltip="${escapeHTML(r.sourceRunId||'原运行不可用')}">${evoReviewIcon(r.group==='pinned'?'pin':'doc')}<span>${escapeHTML(evoStorySampleName(m,r,all.indexOf(r)))}<small>${escapeHTML(EVO_GROUPS[r.group]?.[0]||r.group||'历史样例')}</small></span></button></td><td><span class="evo-story-score">${score(r.sourceScore,Number.isInteger(r.sourceScore)&&r.sourceScore>=0&&r.sourceScore<=2)}</span></td><td><span class="evo-story-score">${score(r.score,ready)}</span></td><td><span class="${result[1]}">${result[0]}</span></td></tr>`;
+    return `<tr data-evo-story-row="${escapeHTML(r.id)}" class="${selected?'is-selected':''}"><td><button type="button" aria-haspopup="dialog" aria-controls="evoEvidenceDialog" data-evo-story-replay="${escapeHTML(r.id)}" aria-pressed="${selected}" data-tooltip="${escapeHTML(r.sourceRunId||'原运行不可用')}">${evoReviewIcon(r.group==='pinned'?'pin':'doc')}<span>${escapeHTML(evoStorySampleName(m,r,all.indexOf(r)))}<small>${escapeHTML(EVO_GROUPS[r.group]?.[0]||r.group||'历史样例')}</small></span></button></td><td><span class="evo-story-score">${score(r.sourceScore,Number.isInteger(r.sourceScore)&&r.sourceScore>=0&&r.sourceScore<=2)}</span></td><td><span class="evo-story-score">${score(r.score,ready)}</span></td><td><span class="${result[1]}">${result[0]}</span></td></tr>`;
   }).join('')||'<tr><td colspan="4">没有此类结果</td></tr>'}</tbody></table>`;
 }
 function evoStoryValidationHTML(p){
@@ -63,7 +70,7 @@ function evoFindingPriorityHTML(finding){
 }
 function evoStoryProblemOverviewHTML(m,p){
   const f=m.row?.f,t=f?.triage,issues=evoStoryCurrentIssues(m,p);
-  const summary=f?.summary&&!f.summary.startsWith('· ')?f.summary:p?.review?.problem||m.row?.title||f?.summary||p?.title;
+  const summary=evoStoryProblemText(m,p);
   const runs=new Set([...(f?.sampleRunIds||[]),...issues.flatMap(r=>(r.c.occurrences||[]).map(o=>o.runId))].filter(Boolean));
   const failed=t?.kinds?.node_failed??(t?.kinds?0:undefined);
   const rate=t?.runs>0&&Number.isFinite(failed)&&failed>=0&&failed<=t.runs?evoPct(failed/t.runs):'';
@@ -71,9 +78,10 @@ function evoStoryProblemOverviewHTML(m,p){
     runs.size?`<div><dt>问题运行</dt><dd>${runs.size} 次</dd></div>`:'',
     rate?`<div><dt title="本次诊断窗口内当前资产版本的失败运行占比">当前失败率</dt><dd>${rate}</dd></div>`:''
   ].join('');
-  if(!summary&&!facts)return '';
+  const short=evoStoryBrief(summary,34),detail=evoStoryBrief(summary,72);
+  if(detail===short&&!facts)return '';
   return `<section id="evoProblemOverview" class="evo-story-section evo-story-overview">
-    <div><h2>${evoReviewIcon('doc')}问题与影响</h2>${summary?`<p data-tooltip="${escapeHTML(summary)}">${escapeHTML(evoStoryBrief(evoProblemText(summary),88))}</p>`:''}</div>
+    <div><h2>${evoReviewIcon('doc')}问题与影响</h2>${detail!==short?`<p>${escapeHTML(detail)}</p>`:''}</div>
     ${facts?`<dl>${facts}</dl>`:''}
   </section>`;
 }
@@ -128,31 +136,6 @@ function evoStoryReplayResultHTML(p){
     </div>
   </div>`;
 }
-function evoStoryReleaseHTML(p){
-  const w=p?.watch,c=p?.canary,released=p?.releasedVersion>0||['released','rolled_back'].includes(p?.status);
-  const releasedAt=released&&(evoTime(w?.startedAt)||(p.status==='released'&&evoTime(p.decidedAt)));
-  const published=released?(p.releasedVersion?`v${p.releasedVersion} 已发布`:'已发布'):'发布';
-  const observed=w?.status==='watching'?'观察中':EVO_WATCH_STATUS[w?.status]?.[0]||'观察';
-  const observationDone=['healthy','ended'].includes(w?.status);
-  const rolledBack=p?.status==='rolled_back'||w?.status==='rolled_back';
-  const steps=[
-    [published,released?'done':'todo',releasedAt?new Date(releasedAt).toLocaleDateString():''],
-    [rolledBack?'已回滚':observed,rolledBack?'stop':observationDone?'done':w?.status==='watching'?'active':w?'stop':'todo',w?.minRuns?`${w.current?.runs||0}/${w.minRuns} 次`:''],
-    ['完成',observationDone?'done':'todo','']
-  ];
-  const status=rolledBack?kbBadge('已回滚','err'):w?evoStatusBadge(EVO_WATCH_STATUS,w.status):p?.status==='canary'&&c?
-    kbBadge(c.status==='passed'?'待确认发布':`试用中 ${c.percent}%`,'info'):released?kbBadge('已发布','ok'):kbBadge('尚未发布','');
-  return `<section id="evoReleasePanel" class="evo-story-section evo-story-release">
-    <header class="evo-story-section-head"><h2>${evoReviewIcon('history')}发布与观测</h2></header>
-    <div class="evo-story-release-content">
-      <ol class="evo-story-release-track" aria-label="发布与观察进展">${steps.map(([name,state,note])=>
-        `<li data-state="${state}"${state==='active'?' aria-current="step"':''}><i aria-hidden="true"></i><b>${escapeHTML(name)}</b>${note?`<small>${escapeHTML(note)}</small>`:''}</li>`
-      ).join('')}</ol>
-      <div class="evo-story-release-state"><span>当前状态</span>${status}</div>
-    </div>
-    ${w?evoReviewTrialHTML(p):''}
-  </section>`;
-}
 function evoStoryDetailHTML(m,p){
   const asset=p||m.row?.f,group=evoGroupForAsset(asset);
   const problems=evoStoryProblemEvidenceHTML(m,p)||(!p?`
@@ -164,43 +147,23 @@ function evoStoryDetailHTML(m,p){
     <div id="evoReviewWorkbench" class="evo-review-workbench evo-story-workbench">
       <div id="evoProblemBox" class="evo-review-status" role="status">${p?.error?escapeHTML(p.error):''}</div>
       ${evoStoryProblemOverviewHTML(m,p)}
-      ${problems?`<details id="evoProblemEvidenceDetails" class="evo-story-expand"><summary>查看问题证据</summary>${problems}</details>`:''}
+      ${problems||m.row?`<details id="evoProblemEvidenceDetails" class="evo-story-expand">
+        <summary>查看问题证据</summary>
+        ${problems}
+        ${m.row?`<details id="evoSourceDetails" class="evo-detail-more">
+          <summary>查看关联运行</summary>
+          <div id="evoProblemRecords">${evoReviewProblemsHTML(m,p)}</div>
+        </details>`:''}
+      </details>`:''}
       <section id="evoFullChange" class="evo-story-section"><div id="evoLinkedChange">${evoReviewChangeHTML(m,p)}</div></section>
       <section id="evoValidationResults" class="evo-story-section evo-story-validation">
         <header class="evo-story-section-head"><h2>${evoReviewIcon('flask')}回放结果</h2></header>
         ${evoStoryReplayResultHTML(p)}
-        <details id="evoValidationDetails" class="evo-story-expand"${p?.replays?.length||m.row?'':' hidden'}>
-          <summary>${p?.replays?.length?'查看回放样例':'查看运行证据'}</summary>
-          <div class="evo-story-evidence-grid">
-        <section class="evo-story-section evo-story-behavior">
-          <header class="evo-story-section-head">
-            <h3>${evoReviewIcon('workflow')}输出前后对比</h3>
-          </header>
-          <p id="evoStorySelectedSample" class="evo-story-selected-sample" hidden></p>
-          <div id="evoStoryBehavior" aria-live="polite">
-            <p class="evo-story-empty">${p?.replays?.length?'选择历史样例查看变化':'暂无对比记录'}</p>
-          </div>
-          <details id="evoEvidenceDetails" class="evo-story-evidence-details">
-            <summary>运行输入与原始记录</summary>
-            <section class="evo-evidence-panel">
-              <header><h4 id="evoEvidenceTitle">运行证据</h4><span id="evoEvidenceCount"></span></header>
-              <div id="evoEvidenceBody" aria-live="polite"></div>
-            </section>
-          </details>
-        </section>
-        <section id="evoDetailPanel-validation" class="evo-story-section">${evoStoryValidationHTML(p)}</section>
-          </div>
-        </details>
+        ${p?.replays?.length?`<details id="evoValidationDetails" class="evo-story-expand">
+          <summary>查看回放样例</summary>
+          <section id="evoDetailPanel-validation">${evoStoryValidationHTML(p)}</section>
+        </details>`:''}
       </section>
-      ${p?`<details id="evoRolloutDetails" class="evo-story-section evo-story-expand">
-        <summary>试用、发布与观察</summary>
-        ${evoStoryReleaseHTML(p)}
-        ${p.canary&&!p.watch?evoReviewTrialHTML(p):''}
-      </details>`:''}
-      <details id="evoSourceDetails" class="evo-story-section evo-story-sources">
-        <summary>来源记录与诊断</summary>
-        <div id="evoProblemRecords">${evoReviewProblemsHTML(m,p)}</div>
-      </details>
       <footer class="evo-review-footer">
         <span>${evoReviewIcon('history')}<span id="evoLiveVersion">${p?'正在核对线上版本':'尚无正文修改'}</span></span>
         <div>${asset?`
@@ -214,13 +177,44 @@ function evoStoryDetailHTML(m,p){
       <div id="evoTrialHost"></div>
     </div>`;
 }
+function evoStoryEvidenceDialogHTML(){
+  return `<dialog id="evoEvidenceDialog" aria-labelledby="evoEvidenceTitle">
+    <div class="evo-story-dialog-inner">
+      <header class="evo-story-dialog-head">
+        <div><span id="evoEvidenceCount"></span><h2 id="evoEvidenceTitle"></h2></div>
+        <button type="button" class="kb-btn quiet small" data-evo-evidence-close aria-label="关闭样例">${evoReviewIcon('close')}</button>
+      </header>
+      <div id="evoStoryBehavior" aria-live="polite"></div>
+      <details id="evoEvidenceDetails" class="evo-story-evidence-details">
+        <summary>运行输入与原始记录</summary>
+        <div id="evoEvidenceBody" class="evo-evidence-panel" aria-live="polite"></div>
+      </details>
+    </div>
+  </dialog>`;
+}
 function evoStoryUpdateSelection(m){
-  const host=$('#evoStorySelectedSample');
-  if(!host)return;
-  const replays=m.proposal?.replays||[];
-  const index=m.evidence?.type==='replay'?replays.findIndex(r=>r.id===m.evidence.id):-1;
-  host.hidden=index<0;
-  host.textContent=index<0?'':evoStorySampleName(m,replays[index],index);
+  const host=$('#evoEvidenceTitle');if(!host)return;
+  const selected=m.evidence,replays=m.proposal?.replays||[];
+  const index=selected?.type==='replay'?replays.findIndex(r=>r.id===selected.id):-1;
+  const record=selected?.type==='run'?m.data?.items?.find(r=>r.runId===selected.id):null;
+  host.textContent=index>=0?evoStorySampleName(m,replays[index],index):record?.issueTitle||'问题运行';
+}
+function evoOpenStoryEvidence(selection,button){
+  const m=evo.modal,dialog=$('#evoEvidenceDialog');if(!m||!dialog||dialog.open)return;
+  m.evidenceOpener=button||document.activeElement;
+  $('#evoEvidenceDetails').open=false;
+  m.evidenceNode='';
+  dialog.showModal();
+  $('[data-evo-evidence-close]')?.focus();
+  evoSelectEvidence(selection);
+}
+function evoCloseStoryEvidence(m){
+  if(evo.modal!==m||$('#evoEvidenceDialog')?.open)return;
+  const selected=m.evidence,opener=m.evidenceOpener;
+  m.evidence=null;m.evidenceRequest=null;m.evidenceData=null;m.evidenceOpener=null;
+  evoRenderComparisonList(m);
+  const row=selected?.type==='replay'&&$('#evoComparisonList')?.querySelector(`[data-evo-story-replay="${CSS.escape(selected.id)}"]`);
+  (opener?.isConnected?opener:row||$('#evoValidationDetails > summary')||$('#evoProblemEvidenceDetails > summary'))?.focus({preventScroll:true});
 }
 function evoStoryParseJSON(text){
   if(typeof text!=='string'||text.length>32768)return null;
@@ -243,31 +237,53 @@ function evoStoryOutputs(m,data){
   const artifact=data.artifactEvidence?.[id]?.pairs?.find(x=>x.before!==undefined&&x.after!==undefined);
   return {chosen,before:artifact?.before??data.source?.run?.nodes?.[id]?.output,after:artifact?.after??data.candidate?.run?.nodes?.[id]?.output,name:artifact?.name||'节点输出',artifact};
 }
-function evoStoryBehaviorHTML(m,data){
-  if(data.record)return `<div class="evo-story-behavior-copy"><h3>问题运行</h3><p>${escapeHTML(evoStoryBrief(data.record.detail||'暂无问题摘要',140))}</p>${evoEvidenceRunLink(data.record.runId,'打开完整运行 ↗')}</div>`;
-  const {chosen,before,after,name,artifact}=evoStoryOutputs(m,data),source=data.source||{},candidate=data.candidate||{};
-  const changed=source.run&&(data.replay.sourceStatus&&source.run.status!==data.replay.sourceStatus||data.replay.sourceScore===0&&source.run.status==='succeeded');
-  const sameInput=source.run&&candidate.run&&typeof source.run.input==='string'&&source.run.input===candidate.run.input;
-  const warning=(changed?'<p class="evo-story-record-warning">原运行已重试；下方是当前读取的记录，历史评分保持原判定。</p>':'')+(source.run&&candidate.run&&!sameInput?'<p class="evo-story-record-warning">两次运行的输入不同，请展开原始输入核对。</p>':'');
-  const log=sameInput&&!chosen?.reused&&!source.error&&!candidate.error?evoStoryLogEvidence(source.run.input,before,after):null;
-  const context=`<div class="evo-story-evidence-meta"><span>${escapeHTML(data.comparison.workflowName||'历史样例')}${chosen?.name&&chosen.name!==chosen.id?' · '+escapeHTML(chosen.name):''}</span><span>${artifact?'产物 · ':''}${escapeHTML(name)}</span></div>`;
-  const input=sameInput?`<details class="evo-story-sample-input"><summary>本次运行输入</summary><pre class="evo-output-excerpt">${escapeHTML(source.run.input.length>1200?source.run.input.slice(0,1200)+'…':source.run.input)}</pre></details>`:'';
-  if(log){
-    const keep=new Set();[log.before,log.after].forEach(n=>{for(let i=Math.max(1,n-1);i<=Math.min(log.lines.length,n+1);i++)keep.add(i)});
-    let previous=0;const rows=[...keep].sort((a,b)=>a-b).map(n=>{const gap=n>previous+1?`<div class="evo-story-log-gap">… ${n-previous-1} 行</div>`:'';previous=n;const old=n===log.before,next=n===log.after;return gap+`<div class="evo-story-log-line ${old&&next?'is-both':old?'is-before':next?'is-after':''}"><span>${n}</span><code>${escapeHTML(log.lines[n-1])}</code><small>${old&&next?'前后相同':old?'原版定位':next?'修改后定位':''}</small></div>`}).join('');
-    return `${context}${warning}<div class="evo-story-log-caption"><b>同一段输入日志</b><span><i class="evo-bad">L${log.before}</i>${log.before===log.after?'=':evoReviewIcon('arrow-right')}<i class="evo-good">L${log.after}</i></span></div><div class="evo-story-log">${rows}${previous<log.lines.length?`<div class="evo-story-log-gap">… ${log.lines.length-previous} 行</div>`:''}</div>`;
+function evoStorySampleSummary(m,data){
+  const {replay,record,source,candidate}=data;
+  if(record)return evoStoryBrief(evoProblemText(record.detail?.replace(/^agent submitted terminal failure:\s*/i,'')||record.issueTitle),80)||'暂无问题摘要';
+  if(replay.outcome==='blocked')return '这条样例未能完成回放。';
+  if(!evoTime(replay.finishedAt)||!replay.outcome)return '回放结果待判定。';
+  const {chosen,before,after}=evoStoryOutputs(m,data);
+  const input=source.run?.input;
+  const sameInput=typeof input==='string'&&input===candidate.run?.input;
+  const current=!evoReplaySourceChanged(replay,source);
+  if(chosen&&!chosen.reused&&sameInput&&current&&!source.error&&!candidate.error){
+    const log=evoStoryLogEvidence(input,before,after);
+    if(log&&log.before!==log.after)return `日志定位从第 ${log.before} 行移到第 ${log.after} 行：${evoStoryBrief(log.lines[log.after-1],52)}`;
+    const changes=evoReviewJSONChanges(before,after);
+    const field=changes?.find(change=>change.path==='reason'&&change.after)||changes?.find(change=>!change.path.startsWith('evidence.'));
+    if(field){
+      const label={reason:'判定理由',decision:'判定结论',category:'分类',queue:'分流队列'}[field.path]||`「${field.path}」`;
+      const brief=value=>evoStoryBrief(value,30);
+      if(field.before===undefined)return `补充了${label}：${brief(field.after)}`;
+      if(field.after===undefined)return `移除了${label}。`;
+      return `${label}从「${brief(field.before)}」改为「${brief(field.after)}」。`;
+    }
+    if(changes?.length===0)return '这条样例的结构化输出保持一致。';
   }
-  const delta=!source.error&&!candidate.error&&!chosen?.reused?evoReviewJSONChanges(before,after):null;
-  if(delta)return `${context}${warning}${input}<div class="evo-story-fields">${delta.slice(0,3).map(row=>`<section><h3>${escapeHTML(row.path)}</h3><div class="is-before"><small>原运行</small><code>${escapeHTML(evoStoryBrief(row.before===undefined?'未设置':row.before,160))}</code></div>${evoReviewIcon('arrow-right')}<div class="is-after"><small>修改稿回放</small><code>${escapeHTML(evoStoryBrief(row.after===undefined?'未设置':row.after,160))}</code></div></section>`).join('')||'<p class="evo-story-empty">当前结构化输出相同，历史判定见下方验证表。</p>'}</div>${delta.length>3?`<p class="evo-story-note">另有 ${delta.length-3} 个字段变化，展开运行证据查看。</p>`:''}`;
-  const output=(run,side)=>run?.nodes?.[chosen?.id]?evoReviewOutputHTML(run.nodes[chosen.id]):evoNodeSideHTML(side);
-  return `${context}${warning}${input}<div class="evo-story-node-pair"><section><h3>原运行 · 最新</h3>${source.error?`<span class="evo-muted">${escapeHTML(source.error)}</span>`:output(source.run,chosen?.source)}</section>${evoReviewIcon('arrow-right')}<section><h3>修改稿回放</h3>${candidate.error?`<span class="evo-muted">${escapeHTML(candidate.error)}</span>`:chosen?.reused?'<span class="evo-muted">沿用原结果 · 此节点未重跑</span>':output(candidate.run,chosen?.replay)}</section></div><p class="evo-story-note">${data.artifactEvidence?.[chosen?.id]?.loading?'正在读取结构化产物…':artifact?'产物未形成可展示的结构化差异。':'展开运行证据查看输入、输出与判定理由。'}</p>`;
+  const point=evoStoryPoints(m.proposal).find(change=>change.title&&change.sourceRunIds?.includes(replay.sourceRunId));
+  if(point&&replay.outcome==='fixed')return `修改要点：${evoStoryBrief(point.title,48)}`;
+  return {
+    fixed:'这条样例的运行结果改善。',
+    unchanged:'这条样例的运行结果保持一致。',
+    changed:'回放改变了判定结论。',
+    regressed:'这条样例的运行结果退化。'
+  }[replay.outcome]||'暂无可确认的修复摘要。';
+}
+function evoStorySampleResultHTML(replay){
+  if(!replay)return '';
+  const before=evoHistoricalScore(replay.sourceScore);
+  const after=replay?.outcome&&evoTime(replay.finishedAt)&&replay.outcome!=='blocked'?evoHistoricalScore(replay.score):'未完成';
+  return `<div class="evo-story-dialog-result">
+    <span>原运行 <b>${escapeHTML(before)}</b></span>${evoReviewIcon('arrow-right')}<span>回放 <b>${escapeHTML(after)}</b></span>
+  </div>`;
 }
 function evoStoryRenderBehavior(m,data){
   const host=$('#evoStoryBehavior');if(!host||evo.modal!==m)return;
-  host.innerHTML=evoStoryBehaviorHTML(m,data);evoStoryUpdateSelection(m);
+  host.innerHTML=`${evoStorySampleResultHTML(data.replay)}<h3>${data.replay?'变化摘要':'问题摘要'}</h3><p>${escapeHTML(evoStorySampleSummary(m,data))}</p>`;
+  evoStoryUpdateSelection(m);
   const artifacts=$('#evoStoryArtifactEvidence');
   if(artifacts)artifacts.innerHTML=evoStoryArtifactEvidenceHTML(m,data);
-  window.AgentFlowHarnessIcons?.hydrate($('#evoReviewWorkbench'));
+  window.AgentFlowHarnessIcons?.hydrate(host);
 }
 function evoStoryArtifactEvidenceHTML(m,data){
   const slot=data.artifactEvidence?.[evoStoryChosenNode(m,data)?.id];
@@ -305,7 +321,7 @@ async function evoStoryLoadArtifacts(m,data){
   data.artifactEvidence||={};if(data.artifactEvidence[chosen.id])return;
   const pairs=evoStoryArtifactPairs(data.source.run,data.candidate.run,chosen.id);if(!pairs.length)return;
   const slot=data.artifactEvidence[chosen.id]={loading:true,pairs:[]};
-  const current=()=>evo.modal===m&&m.projectId===evoProjectId()&&m.evidenceData===data&&m.evidenceNode===chosen.id&&evoActive();
+  const current=()=>evo.modal===m&&m.projectId===evoProjectId()&&m.evidenceData===data&&m.evidenceNode===chosen.id&&evoActive()&&$('#evoEvidenceDialog')?.open!==false;
   if(current())evoStoryRenderBehavior(m,data);
   slot.pairs=await Promise.all(pairs.map(async pair=>{
     const sides=await Promise.allSettled([evoStoryReadArtifact(data.source.run.id,pair.source),evoStoryReadArtifact(data.candidate.run.id,pair.candidate)]);
@@ -314,20 +330,13 @@ async function evoStoryLoadArtifacts(m,data){
   slot.loading=false;if(current())evoStoryRenderBehavior(m,data);
 }
 document.addEventListener('click',event=>{
+  const dialog=$('#evoEvidenceDialog');
+  if(dialog?.open&&(event.target===dialog||event.target.closest?.('[data-evo-evidence-close]'))){
+    dialog.close();return;
+  }
   const trigger=event.target.closest?.('[data-evo-story-replay],[data-evo-story-row]');
-  const m=evo.modal;
-  if(!trigger||!m)return;
+  if(!trigger||!evo.modal)return;
   const row=trigger.closest('[data-evo-story-row]');
   const button=row?.querySelector('[data-evo-story-replay]')||trigger;
-  const id=button.dataset.evoStoryReplay;
-  if(!id||button.disabled)return;
-  const evidence=$('#evoStoryBehavior')?.closest('.evo-story-behavior');
-  const history=row?.closest('#evoDetailPanel-validation');
-  const stacked=evidence&&history&&evidence.getBoundingClientRect().top+1<history.getBoundingClientRect().top;
-  button.focus({preventScroll:true});
-  m.evidenceTouched=true;
-  evoSelectEvidence({type:'replay',id},true);
-  if(stacked){
-    evidence.scrollIntoView?.({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
-  }
+  if(!button.disabled)evoOpenStoryEvidence({type:'replay',id:button.dataset.evoStoryReplay},button);
 });

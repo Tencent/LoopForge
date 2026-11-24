@@ -558,7 +558,9 @@ function evoMountDetail(title,openerKey,row=null){
       </header>
       <div id="evoDetailProgress"></div>
       <div id="evoDetailBody" class="evo-detail-grid"><div class="kb-empty">正在读取…</div></div>
+      ${evoStoryEvidenceDialogHTML()}
     </section>`;
+  $('#evoEvidenceDialog').addEventListener('close',()=>evoCloseStoryEvidence(m));
   evoRenderOverviewHeader();
   $('#evoFindingTitle').focus({preventScroll:true});
   $('#evoDetailPage').scrollIntoView?.({block:'start'});
@@ -586,12 +588,12 @@ function evoDetailTrackHTML(p,finding){
     watch.state='stop';watch.note='已回滚';
   }
   const current=steps.findIndex(step=>['active','wait','fail','stop'].includes(step.state));
-  const targets=['evoProblemOverview','evoFullChange','evoValidationResults','evoRolloutDetails','evoRolloutDetails','evoRolloutDetails'];
+  const targets=['evoProblemOverview','evoFullChange','evoValidationResults'];
   return `<ol class="evo-detail-track" aria-label="进化进度">${steps.map((step,i)=>{
     const active=i===current;
     const note=step.note||EVO_STEP_STATE[step.state];
     return `<li class="is-${step.state}"${active?' aria-current="step"':''}>
-      <button type="button" data-evo-progress-target="${targets[i]}">
+      <button type="button" ${targets[i]?`data-evo-progress-target="${targets[i]}"`:p?`data-evo-progress-stage="${step.k}"`: 'disabled'}>
         <span aria-hidden="true">${EVO_STEP_ICON[step.state]||i+1}</span>
         <b>${escapeHTML(step.t)}</b>
         ${active||step.state==='skip'?`<small>${escapeHTML(note)}</small>`:`<small class="evo-review-sr">${escapeHTML(EVO_STEP_STATE[step.state])}</small>`}
@@ -602,19 +604,18 @@ function evoDetailTrackHTML(p,finding){
 function evoDetailLayout(m,p=null){
   const r=m.row,asset=p||r?.f;
   m.viewOpen=[...document.querySelectorAll('#evoDetailPage details[open][id]')].map(d=>d.id);
-  const problem=p?.review?.problem||r?.title||p?.title;
-  if(asset)$('#evoFindingTitle').textContent=evoStoryBrief(problem,72)||asset.assetName||asset.assetId;
+  const problem=evoStoryProblemText(m,p);
+  if(asset)$('#evoFindingTitle').textContent=evoStoryBrief(problem,34)||asset.assetName||asset.assetId;
   $('#evoDetailGlyph').innerHTML=evoFindingPriorityHTML(r?.f)||evoReviewIcon(asset?.assetKind==='rule'?'doc':'robot');
   $('#evoDetailObject').innerHTML=evoReviewVersionHTML(asset,p,r?.f);
   $('#evoDetailProgress').innerHTML=p||!m.proposalId?evoDetailTrackHTML(p,r?.f):'';
   $('#evoDetailBody').innerHTML=evoReviewDetailHTML(m,p);
   if(!p)$('#evoProblemBox').textContent=m.proposalId?'正在读取修改…':'';
-  if(!r)$('#evoProblemRecords').insertAdjacentHTML('beforeend','<p class="evo-muted">关联问题未载入</p>');
   if(!p&&r)$('#evoDetailActions').innerHTML=evoFindingActions(r.f);
   m.viewOpen.forEach(id=>{const d=document.getElementById(id);if(d)d.open=true});
   evoSetDetailTab(m.detailTab||(p||m.proposalId?'change':'records'),false);
   if(p)evoRenderComparisonList(m);
-  if(m.evidence)evoSelectEvidence(m.evidence,false);
+  if($('#evoEvidenceDialog').open&&m.evidence)evoSelectEvidence(m.evidence,false);
   window.AgentFlowHarnessIcons?.hydrate($('#evoDetailPage'));
 }
 function evoSetDetailTab(key,remember=true){
@@ -645,11 +646,6 @@ function evoEmptyDetailEvidence(m,key){
   $('#evoEvidenceTitle').textContent=key==='records'?'原问题 · 运行证据':'验证证据 · 新旧对比';
   $('#evoEvidenceCount').textContent='';
   $('#evoEvidenceBody').innerHTML=key==='records'&&m.dataError?`<div class="evo-evidence-empty">读取问题样本失败：${escapeHTML(m.dataError)} <button type="button" class="kb-btn small" data-evo-record-retry>重试</button></div>`:`<div class="evo-evidence-empty">${key==='records'?(m.data?'暂无可访问的问题样本':'正在读取问题样本…'):'尚无验证样本'}</div>`;
-}
-function evoDefaultEvidence(m){
-  if(m.evidenceTouched)return;
-  const replays=m.proposal?.replays||[],first=replays.find(r=>r.outcome==='regressed')||replays.find(r=>r.outcome==='fixed')||replays.find(r=>r.outcome)||replays[0];
-  if(first&&m.evidence?.type!=='replay')evoSelectEvidence({type:'replay',id:first.id});
 }
 function evoFindingActions(f){
   const level=evoLevelOf(f.assetKind,f.assetId),blocked=level<2||evoIssueState(f)==='done'||evoSnoozed(f);
@@ -767,21 +763,20 @@ function evoOpenProposal(id,fromRoute=false){
 }
 async function evoLoadDetailProposal(m){
   if(evo.modal!==m)return;
-  const request={};m.proposalRequest=request;
+  const request={};m.proposalRequest=request;m.liveVersion=null;
   if(!m.proposal){$('#evoDetailActions').innerHTML='';}
   else $$('[data-evo-approve],[data-evo-canary],[data-evo-traffic-apply]').forEach(b=>b.disabled=true);
   try{
     const p=await api(`/api/evolution/proposals/${encodeURIComponent(m.proposalId)}`,{silent:true});
     if(evo.modal!==m||m.proposalRequest!==request||m.projectId!==evoProjectId())return;
     const currentForm=$('#evoDetailCanary'),formState=currentForm?.open?{percent:$('#evoCanaryPercent')?.value,min:$('#evoCanaryMinRuns')?.value,focus:currentForm.contains(document.activeElement)?document.activeElement.id:''}:null;
-    const traffic=$('#evoTrafficPercent'),trafficState=traffic?{percent:traffic.value,applied:m.proposal?.canary?.percent,focus:document.activeElement===traffic}:null;
     for(const [key,data] of m.evidenceCache)if(data.replay){const current=(p.replays||[]).find(r=>r.id===data.replay.id);if(!current||!evoTime(current.finishedAt)||JSON.stringify(current)!==JSON.stringify(data.replay))m.evidenceCache.delete(key)}
-    if(m.evidence?.type==='replay'&&!(p.replays||[]).some(r=>r.id===m.evidence.id)){m.evidence=null;m.evidenceRequest=null}
+    if(m.evidence?.type==='replay'&&!(p.replays||[]).some(r=>r.id===m.evidence.id))$('#evoEvidenceDialog').close();
     m.proposal=p;
+    evoRefreshProcessTrial(p);
     if(m.openerKey.startsWith('proposal:'))m.openerKey=`asset:${evoAssetKey(p.assetKind,p.assetId)}`;
     if(!m.row)m.row=evoIssueRows().find(r=>r.f.id===p.findingId||r.f.proposalId===p.id)||null;
     evoDetailLayout(m,p);
-    if(trafficState&&$('#evoTrafficPercent')&&trafficState.applied===p.canary?.percent){$('#evoTrafficPercent').value=trafficState.percent;if(trafficState.focus)$('#evoTrafficPercent').focus({preventScroll:true})}
     $('#evoTrialHost').innerHTML=p.status==='pending'&&p.summary?.passed&&p.candidateContent?`<dialog id="evoDetailCanary" class="evo-review-trial-dialog" aria-labelledby="evoTrialTitle"><header><h2 id="evoTrialTitle">${evoReviewIcon('flask')}试用</h2><button type="button" class="kb-btn quiet small" data-evo-trial-close aria-label="关闭试用设置">${evoReviewIcon('close')}</button></header>${evoCanaryFormHTML(p.id)}</dialog>`:'';
     if(formState&&$('#evoDetailCanary')){$('#evoCanaryPercent').value=formState.percent;$('#evoCanaryMinRuns').value=formState.min;$('#evoDetailCanary').showModal();if(formState.focus)document.getElementById(formState.focus)?.focus({preventScroll:true})}
     m.viewOpen.forEach(id=>{const d=document.getElementById(id);if(d)d.open=true});
@@ -789,11 +784,11 @@ async function evoLoadDetailProposal(m){
     $$('#evoDetailActions [data-evo-approve], #evoDetailActions [data-evo-canary], #evoDetailCanary [data-evo-canary]').forEach(b=>b.disabled=true);
     window.AgentFlowHarnessIcons?.hydrate($('#evoDetailPage'));
     if(m.row){if(m.data)evoRenderFindingRuns();else evoLoadFindingRuns(m)}
-    evoDefaultEvidence(m);
     evoLoadLiveVersion(m,p,request);
   }catch(err){
     if(evo.modal!==m||m.proposalRequest!==request||m.projectId!==evoProjectId())return;
     $('#evoDetailActions').innerHTML='';
+    evoSyncTraffic();
     $('#evoProblemBox').innerHTML='<strong>修改暂不可用</strong><span>读取失败，请重试。</span>';
     const host=$('#evoLinkedChange')||$('#evoDetailBody');
     host.innerHTML=`<div class="kb-empty">读取修改失败：${escapeHTML(err.message)} <button type="button" class="kb-btn" data-evo-detail-refresh>重试</button></div>`;
@@ -814,14 +809,14 @@ async function evoLoadLiveVersion(m,p,request){
     m.liveVersion=v;
     $('#evoLiveVersion').textContent=v.drifted?'正文存在版本外修改':draft&&changed?'正文已变化 · 需重新生成':v.currentVersion?`当前生效 v${v.currentVersion}`:'当前版本未登记';
     $('#evoLiveVersion').setAttribute('data-tooltip',note);
-    if(p.status==='released'&&$('#evoTrafficBlock'))$('#evoTrafficBlock').hidden=!(v.currentVersion===p.releasedVersion&&!v.drifted&&v.liveHash);
-    if($('#evoTrafficBlock')&&p.status==='canary')$('#evoTrafficBlock').hidden=changed||!v.liveHash||!p.baseHash;
-    $$('[data-evo-traffic-apply]').forEach(b=>b.disabled=p.canary?.status!=='running'||evoGroupForAsset(p)?.conflict||changed||!v.liveHash||!p.baseHash);
+    evoSyncTraffic();
+    if(document.activeElement===document.body&&m.trafficFocus?.isConnected&&!m.trafficFocus.closest('[hidden]'))m.trafficFocus.focus({preventScroll:true});
+    m.trafficFocus=null;
     $$('#evoDetailActions [data-evo-approve], #evoDetailActions [data-evo-canary], #evoDetailCanary [data-evo-canary]').forEach(b=>{
       const ready=(p.status==='canary'&&p.canary?.status==='passed')||(p.status==='pending'&&p.summary?.passed&&!!p.candidateContent)||(b.dataset.force==='1'&&!!p.candidateContent);
       b.disabled=!ready||evoGroupForAsset(p)?.conflict||(draft&&(changed||!v.liveHash||!p.baseHash));
     });
-  }catch(err){if(evo.modal===m&&m.proposalRequest===request){$('#evoLiveVersion').textContent='版本核对失败 · 请刷新';$('#evoLiveVersion').setAttribute('data-tooltip',err.message)}}
+  }catch(err){if(evo.modal===m&&m.proposalRequest===request){$('#evoLiveVersion').textContent='版本核对失败 · 请刷新';$('#evoLiveVersion').setAttribute('data-tooltip',err.message);evoSyncTraffic()}}
 }
 async function evoLoadFindingRuns(m){
   const host=$('#evoFindingRecords');if(!host||evo.modal!==m)return;
@@ -837,7 +832,6 @@ async function evoLoadFindingRuns(m){
     m.dataError=err.message;
     const error=`<div class="evo-evidence-empty">读取问题样本失败：${escapeHTML(err.message)} <button type="button" class="kb-btn small" data-evo-record-retry>重试</button></div>`;
     const current=$('#evoFindingRecords');if(current)current.innerHTML=error;
-    if(!m.evidence)$('#evoEvidenceBody').innerHTML=error;
   }
 }
 function evoRenderFindingRuns(){
@@ -847,13 +841,7 @@ function evoRenderFindingRuns(){
   const labels={failed:['失败','err'],succeeded:['成功','ok'],reworked:['返工后成功','warn'],cancelled:['已取消',''],unavailable:['记录不可用','']};
   const preview=$('#evoRunPreview');
   if(preview)preview.innerHTML=`<h3>问题样本</h3>${!m.data.complete?'<small class="evo-muted">仅保留部分样例</small>':''}${(m.data.items||[]).slice(0,3).map(r=>`<button type="button" data-evo-evidence-run="${escapeHTML(r.runId)}"${r.unavailable?' disabled':''} aria-pressed="${m.evidence?.type==='run'&&m.evidence.id===r.runId}"><span><b>${escapeHTML(r.issueTitle||r.runId)}</b><small>${escapeHTML(evoProblemText(r.detail||'无报错摘要'))}</small></span>${evoStatusBadge(labels,r.status)}</button>`).join('')||'<small class="evo-muted">暂无运行记录</small>'}`;
-  if(m.evidence?.type!=='replay')$('#evoEvidenceCount').textContent=`${m.data.complete?'':'样例 · '}${m.data.total||0} 次运行`;
   const select=$('[data-evo-record-status]');if(select)select.value=m.status;
-  if(!m.evidence){
-    const first=(m.data.items||[]).find(r=>!r.unavailable);
-    if(first)evoSelectEvidence({type:'run',id:first.runId});
-    else $('#evoEvidenceBody').innerHTML='<div class="evo-evidence-empty">暂无可访问的运行证据</div>';
-  }
   const rows=list.slice(m.page*size,(m.page+1)*size).map(r=>`<tr><td>${escapeHTML(evoIssueDate(r.createdAt))}</td><td>${r.unavailable?escapeHTML(r.runId):`<a href="#" class="evo-run-link" data-evo-record-run="${escapeHTML(r.runId)}">${escapeHTML(r.runId)}</a>`}${r.nodeId?`<small>节点 ${escapeHTML(r.nodeId)}</small>`:''}</td><td>${escapeHTML(r.issueTitle||'—')}<small>${escapeHTML(r.workflowName||'')}</small></td><td>${evoStatusBadge(labels,r.status)}</td><td>${escapeHTML(r.unavailable?'运行已删除或当前项目不可访问':r.detail||'无报错详情')}</td></tr>`).join('');
   host.innerHTML=`${m.data.complete?'':'<div class="evo-record-note">旧版诊断只保留了部分样例，请重新诊断以获得当前窗口完整记录。</div>'}<div class="evo-record-table"><table><caption class="evo-record-caption">本类报错涉及 ${m.data.total||0} 次运行，当前筛选 ${list.length} 条；点击运行 ID 查看详情。</caption><thead><tr><th>出现时间</th><th>运行 / 节点</th><th>需求 / 工作流</th><th>运行结果</th><th>报错摘要</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="kb-empty">没有符合条件的运行记录</td></tr>'}</tbody></table></div><div class="evo-record-pages"><button type="button" class="kb-btn" data-evo-record-page="-1"${m.page===0?' disabled':''}>上一页</button><span>${m.page+1} / ${pages}</span><button type="button" class="kb-btn" data-evo-record-page="1"${m.page+1===pages?' disabled':''}>下一页</button></div>`;
   if(m.proposal)evoRenderComparisonList(m);
@@ -880,7 +868,7 @@ function evoRenderComparisonList(m){
   const visible=records.filter(r=>m.compareFilter==='all'||r.outcome===m.compareFilter);
   host.innerHTML=`<div class="evo-sample-filters" role="group" aria-label="验证样本筛选">${tabs.filter(([k])=>k==='all'||records.some(r=>r.outcome===k)).map(([k,t])=>`<button type="button" data-evo-sample-filter="${k}" aria-pressed="${m.compareFilter===k}">${t}<span>${k==='all'?records.length:records.filter(r=>r.outcome===k).length}</span></button>`).join('')}</div><div class="evo-compare-columns" aria-hidden="true"><span>历史样本</span><span>验证时评分 → 回放</span><span>判定</span></div>${visible.map(r=>`<button type="button" class="evo-compare-row" data-evo-evidence-replay="${escapeHTML(r.id)}" aria-pressed="${m.evidence?.type==='replay'&&m.evidence.id===r.id}"><span><b>${escapeHTML(r.sourceRunId||'原运行不可用')}</b><small>${escapeHTML(EVO_GROUPS[r.group]?.[0]||r.group||'验证样本')}</small></span><span class="evo-result-pair">${escapeHTML(evoHistoricalScore(r.sourceScore))} <i>→</i> ${escapeHTML(r.finishedAt&&Number.isFinite(r.score)?evoScoreLabel(r.score):EVO_NODE_STATUS[r.status]?.[0]||r.status||'等待结果')}</span><span>${r.outcome?evoStatusBadge(EVO_OUTCOMES,r.outcome):'<span class="evo-muted">待判定</span>'}</span></button>`).join('')||'<p class="evo-muted">暂无此类结果</p>'}<p class="evo-compare-scope">同一运行输入重放；可能沿用上游产出，环境不保证完全一致。“已修复”仅指本样本的历史运行评分改善，不是语义质量评分，也不代表彻底解决或已发布。</p>`;
 }
-function evoEvidenceValid(m,request){return evo.modal===m&&m.evidenceRequest===request&&m.projectId===evoProjectId()&&evoActive()}
+function evoEvidenceValid(m,request){return evo.modal===m&&m.evidenceRequest===request&&m.projectId===evoProjectId()&&evoActive()&&$('#evoEvidenceDialog')?.open!==false}
 async function evoSelectEvidence(selection,refresh=true,reveal=false){
   const m=evo.modal,host=$('#evoEvidenceBody');if(!m||!host)return;
   const replay=selection.type==='replay'?(m.proposal?.replays||[]).find(r=>r.id===selection.id):null;
@@ -888,15 +876,15 @@ async function evoSelectEvidence(selection,refresh=true,reveal=false){
   if(!replay&&!record)return;
   if(reveal){const details=$('#evoValidationDetails');if(details)details.open=true;m.evidenceTouched=true;if(!replay||m.detailTab!=='change'){m.detailTab=replay?'validation':'records';evoSetDetailTab(m.detailTab,false)}}
   if(replay)m.lastReplay=selection.id;else m.lastRun=selection.id;
-  $('#evoEvidenceTitle').textContent=replay?'运行记录':'问题运行';
-  $('#evoEvidenceCount').textContent=replay?`${m.proposal.replays.length} 条验证样本`:`${m.data.total||0} 次运行`;
-  if(m.evidence?.type!==selection.type||m.evidence?.id!==selection.id)m.evidenceData=null;
+  $('#evoEvidenceCount').textContent=replay?(EVO_GROUPS[replay.group]?.[0]||'历史样例'):'问题运行';
+  if(m.evidence?.type!==selection.type||m.evidence?.id!==selection.id){m.evidenceData=null;m.evidenceNode=''}
   m.evidence={type:selection.type,id:selection.id};const key=`${selection.type}:${selection.id}`,request={};m.evidenceRequest=request;
-  if(reveal&&innerWidth<=850)host.closest('.evo-evidence-panel')?.scrollIntoView?.({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+  evoStoryUpdateSelection(m);
+  if(reveal&&!$('#evoEvidenceDialog')&&innerWidth<=850)host.closest('.evo-evidence-panel')?.scrollIntoView?.({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
   if(refresh){evoRenderComparisonList(m);$$('[data-evo-evidence-run]').forEach(b=>b.setAttribute('aria-pressed',selection.type==='run'&&b.dataset.evoEvidenceRun===selection.id));if(replay)$(`${m.detailTab==='validation'?'#evoValidationList':'#evoComparisonList'} [data-evo-evidence-replay="${CSS.escape(replay.id)}"]`)?.focus({preventScroll:true})}
   if(m.evidenceCache.has(key)){evoRenderEvidence(m,m.evidenceCache.get(key));return}
   host.innerHTML='<div class="evo-evidence-empty" role="status">正在读取运行证据…</div>';
-  if($('#evoStoryBehavior'))$('#evoStoryBehavior').innerHTML='<p class="evo-story-empty" role="status">正在读取样例…</p>';
+  if($('#evoStoryBehavior'))$('#evoStoryBehavior').innerHTML=`${evoStorySampleResultHTML(replay)}<p class="evo-story-empty" role="status">正在读取样例…</p>`;
   try{
     let data;
     if(record){
@@ -917,7 +905,7 @@ async function evoSelectEvidence(selection,refresh=true,reveal=false){
   }catch(err){
     if(evoEvidenceValid(m,request)){
       host.innerHTML=`<div class="evo-evidence-empty">读取证据失败：${escapeHTML(err.message)}<button type="button" class="kb-btn small" data-evo-evidence-retry>重试</button></div>`;
-      if($('#evoStoryBehavior'))$('#evoStoryBehavior').innerHTML=host.innerHTML;
+      if($('#evoStoryBehavior'))$('#evoStoryBehavior').innerHTML=`${evoStorySampleResultHTML(replay)}<p>读取样例失败 <button type="button" class="kb-btn small" data-evo-evidence-retry>重试</button></p>`;
     }
   }
 }
@@ -929,9 +917,12 @@ function evoNodeExcerpt(node){
   return `${evoNodeSideHTML({status:node.status,rework:node.reworkCount,decision:node.gateResult?.decision})}${text?`<pre class="evo-output-excerpt">${escapeHTML(text)}</pre><small class="evo-muted">API 返回的记录摘要，可能已截断</small>`:'<p class="evo-muted">未记录输出摘要</p>'}${error}`;
 }
 function evoHistoricalScore(score){return Number.isInteger(score)&&score>=0&&score<EVO_SCORES.length?EVO_SCORES[score]:'未记录'}
+function evoReplaySourceChanged(replay,source){
+  return !!(source.run&&(replay.sourceStatus&&source.run.status!==replay.sourceStatus||replay.sourceScore===0&&source.run.status==='succeeded'));
+}
 function evoReplayJudgmentHTML(replay,source){
   const before=evoHistoricalScore(replay.sourceScore),after=replay.outcome&&replay.outcome!=='blocked'?evoHistoricalScore(replay.score):'尚无有效结果';
-  const changed=source.run&&(replay.sourceStatus&&source.run.status!==replay.sourceStatus||replay.sourceScore===0&&source.run.status==='succeeded');
+  const changed=evoReplaySourceChanged(replay,source);
   const hint={fixed:'仅表示这条历史样本的运行评分改善，不代表业务问题已彻底解决，也不代表已发布。',regressed:'这条历史样本的运行评分下降，应先检查退化原因。',unchanged:'这条样本的运行评分未改变，不代表产出内容完全相同。',changed:'修改稿改变了节点结论，需要人工确认是否符合反馈；不等于已修复。',blocked:'未得到有效验证结果，不能认定已修复。'}[replay.outcome]||'历史验证尚未完成。';
   return `<div class="evo-replay-judgment"><strong>验证时整次运行：${escapeHTML(before)} → ${escapeHTML(after)}</strong><p>${escapeHTML(hint)}</p>${changed?'<p class="evo-bad">原运行当前状态已不同于验证时的基线，可能已重试；下方两边成功不改变历史判定。</p>':''}<details class="evo-detail-more"><summary>判定与下方记录有什么区别？</summary><p>判定使用创建验证时保存的整次运行评分：失败为 0，返工后成功为 1，无返工成功为 2；评分提高标为“已修复”。下方展示当前可读取的节点状态与输出，不是验证时的原节点快照，原运行或回放运行重试后可能变化。</p></details></div>`;
 }
@@ -1129,32 +1120,54 @@ function evoStagePanelHTML(p,k){
       return `<p class="evo-panel-lead">挑了 ${s.total||replays.length} 条历史运行，把「${escapeHTML(p.assetName||p.assetId)}」换成新正文后重跑，和原来的结果逐条对比。</p><div class="evo-count-row">${counts.map(([l,v,t])=>kbBadge(`${l} ${v}`,t)).join('')}<span>完成 ${s.finished||0}/${s.total||0}</span></div>${replays.map((r,i)=>evoReplayCard(r,i,p.id)).join('')}`;
     }
     case 'canary':
-      if(p.canary)return evoCanaryHTML(p.canary);
-      if(p.status==='pending'&&s.passed&&p.candidateContent)return evoCanaryFormHTML(p.id);
+      if(p.canary)return p.status==='canary'&&evo.modal?.proposalId===p.id?evoReviewTrialHTML(p):evoCanaryHTML(p.canary);
+      if(p.status==='pending'&&s.passed&&p.candidateContent)return evo.modal?.proposalId===p.id?'<p class="evo-panel-lead">回放已通过，可以开始小范围试用。</p>':evoCanaryFormHTML(p.id);
       if(p.status==='released'||p.status==='rolled_back')return '<div class="kb-line-note">这次没有试用，回放通过后直接发布了。</div>';
       return '<div class="kb-line-note">没有进行试用。</div>';
     case 'release':
       return `<p class="evo-panel-lead">${p.releasedVersion?`新正文已写入资产，记为不可变版本 <b class="mono">v${p.releasedVersion}</b>，之后的运行都会使用它。`:'还没有发布。'}</p>${p.decidedAt?`<p class="evo-panel-meta">${relativeTime(p.decidedAt)}${p.decidedBy?'由人工':'由系统'}处理</p>`:''}${p.decisionNote?`${kbCaption('处理备注')}<p class="evo-rationale">${escapeHTML(p.decisionNote)}</p>`:''}`;
     case 'watch':
-      return p.watch?evoWatchHTML(p.watch):'<div class="kb-line-note">没有发布后观察记录。</div>';
+      return p.watch?evoWatchHTML(p.watch)+(p.status==='released'&&evo.modal?.proposalId===p.id?evoReviewTrafficHTML(p):''):'<div class="kb-line-note">没有发布后观察记录。</div>';
   }
   return '';
+}
+function evoSyncTraffic(){
+  const m=evo.modal,p=m?.proposal,block=$('#evoStagePanel #evoTrafficBlock');
+  if(!block)return;
+  const v=m?.liveVersion,verified=!!v?.liveHash&&p?.id===evo.drawerProposal?.id;
+  const trial=verified&&p.status==='canary'&&p.baseHash===v.liveHash;
+  const release=verified&&p.status==='released'&&!!p.releasedVersion&&p.releasedVersion===v.currentVersion&&!v.drifted;
+  block.hidden=!(trial||release);
+  const button=block.querySelector('[data-evo-traffic-apply]');
+  if(button)button.disabled=!trial||p.canary?.status!=='running'||!!evoGroupForAsset(p)?.conflict;
+}
+function evoRefreshProcessTrial(p){
+  const prev=evo.drawerProposal,stage=evo.stage;
+  if(!kbDrawerIsOpen()||!$('#evoStagePanel')||prev?.id!==p.id)return;
+  evo.drawerProposal=p;
+  if(!['canary','watch'].includes(stage)||
+    (prev.status===p.status&&JSON.stringify(prev[stage])===JSON.stringify(p[stage])))return;
+  const select=$('#evoTrafficPercent'),value=select?.value,focused=document.activeElement===select;
+  evoSelectStage(stage);
+  const next=$('#evoTrafficPercent');
+  if(next&&value&&prev.canary?.percent===p.canary?.percent)next.value=value;
+  if(next&&focused)evo.modal.trafficFocus=next;
 }
 function evoSelectStage(k){
   const p=evo.drawerProposal;if(!p)return;
   evo.stage=k;
   $$('#kbDrawer .evo-steps [data-evo-stage]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.evoStage===k)));
   const host=$('#evoStagePanel');
-  if(host){host.innerHTML=evoStagePanelHTML(p,k);host.classList.remove('is-in');void host.offsetWidth;host.classList.add('is-in')}
+  if(host){host.innerHTML=evoStagePanelHTML(p,k);evoSyncTraffic();window.AgentFlowHarnessIcons?.hydrate(host);host.classList.remove('is-in');void host.offsetWidth;host.classList.add('is-in')}
 }
 
-async function evoOpenProposalProcess(id){
+async function evoOpenProposalProcess(id,stage){
   const seq=evoDrawerOpen('完整处理过程','',`<div class="kb-empty">正在读取提案…</div>`,'',{openerKey:`proposal:${id}`,wide:true});
   try{
     const p=await api(`/api/evolution/proposals/${encodeURIComponent(id)}`,{silent:true});
     if(!evoDrawerLive(seq))return;
     const s=p.summary||{};
-    const {steps,panel}=evoStages(p);
+    const {steps,panel:current}=evoStages(p),panel=stage||current;
     evo.drawerProposal=p;evo.stage=panel;
     const body=`${evoStepperHTML(steps,panel)}${evoNowHTML(p)}<section id="evoStagePanel" class="evo-stage-panel is-in" role="tabpanel">${evoStagePanelHTML(p,panel)}</section>`;
     const canCanary=p.status==='pending'&&s.passed&&!!p.candidateContent;
@@ -1168,6 +1181,7 @@ async function evoOpenProposalProcess(id){
     else if(p.status==='failed'&&p.candidateContent&&typeof isPlatformAdmin==='function'&&isPlatformAdmin())foot=`${asset}<button type="button" class="kb-btn" data-evo-approve="${pid}" data-force="1" title="仅平台管理员：跳过回放判定直接发布">强制发布</button>`;
     const sub=`${evoKindLabel(p.assetKind)} · ${escapeHTML(p.assetName||p.assetId)} · ${evoStatusBadge(EVO_PROPOSAL_STATUS,p.status)}${p.model?` · ${escapeHTML(p.model)}`:''}`;
     evoDrawerOpen(p.title||'改进提案',sub,body,foot,{wide:true});
+    evoSyncTraffic();
   }catch(err){if(evoDrawerLive(seq))$('#kbDrawerBody').innerHTML=`<div class="kb-empty">读取失败：${escapeHTML(err.message)}</div>`}
 }
 
@@ -1299,7 +1313,7 @@ async function evoApprove(id,force,btn,trial=''){
 async function evoStartCanary(id,btn){
   const context={pid:evo.projectId,detail:evo.modal};
   const form=$('#evoDetailCanary');
-  if(form&&!form.open){form.showModal();$('#evoCanaryPercent')?.focus();return}
+  if(form&&!form.open){if(!form.querySelector('[data-evo-canary]')?.disabled){form.showModal();$('#evoCanaryPercent')?.focus()}return}
   if(!$('#evoCanaryPercent')){evoSelectStage('canary');$('#evoCanaryPercent')?.focus();return}
   const percent=Number($('#evoCanaryPercent')?.value)||50,minRuns=Number($('#evoCanaryMinRuns')?.value)||5;
   form?.close();
@@ -1409,11 +1423,13 @@ document.addEventListener('click',e=>{
   const scope=e.target.closest('#evolutionView, #kbDrawer');if(!scope)return;
   const progress=e.target.closest('[data-evo-progress-target]');
   if(progress){
-    const target=document.getElementById(progress.dataset.evoProgressTarget)||$('#evoSourceDetails');
+    const target=document.getElementById(progress.dataset.evoProgressTarget)||$('#evoProblemEvidenceDetails');
     if(target?.tagName==='DETAILS')target.open=true;
     target?.scrollIntoView?.({block:'nearest'});
     return;
   }
+  const stage=e.target.closest('[data-evo-progress-stage]');
+  if(stage&&evo.modal?.proposalId)return evoOpenProposalProcess(evo.modal.proposalId,stage.dataset.evoProgressStage);
   const example=e.target.closest('[data-evo-source-example]');
   if(example&&evo.modal){
     const m=evo.modal,kind=example.dataset.evoSourceExample,host=$('#evoStorySourceExample');
@@ -1426,15 +1442,14 @@ document.addEventListener('click',e=>{
   const openSources=e.target.closest('[data-evo-open-sources]');
   if(openSources){
     const sources=$('#evoSourceDetails');
-    sources.open=true;
-    sources.querySelector('summary').focus();
+    if(sources){sources.open=true;sources.querySelector('summary').focus()}
     return;
   }
   const detailTab=e.target.closest('[data-evo-detail-tab]');if(detailTab)return evoSetDetailTab(detailTab.dataset.evoDetailTab);
   if(e.target.closest('[data-evo-list-back]'))return evoBack();
   if(e.target.closest('[data-evo-reload]'))return renderEvolutionView();
-  if(e.target.closest('[data-evo-review-regressions]')&&evo.modal){const m=evo.modal,r=m.proposal?.replays?.find(r=>r.outcome==='regressed');if(r){m.compareFilter='regressed';evoRenderComparisonList(m);return evoSelectEvidence({type:'replay',id:r.id},true,true)}}
-  const evidenceRun=e.target.closest('[data-evo-evidence-run]');if(evidenceRun&&!evidenceRun.disabled)return evoSelectEvidence({type:'run',id:evidenceRun.dataset.evoEvidenceRun},true,true);
+  if(e.target.closest('[data-evo-review-regressions]')&&evo.modal){const m=evo.modal,r=m.proposal?.replays?.find(r=>r.outcome==='regressed');if(r){m.compareFilter='regressed';evoRenderComparisonList(m);$('#evoValidationDetails').open=true;return evoOpenStoryEvidence({type:'replay',id:r.id},e.target.closest('[data-evo-review-regressions]'))}}
+  const evidenceRun=e.target.closest('[data-evo-evidence-run]');if(evidenceRun&&!evidenceRun.disabled)return evoOpenStoryEvidence({type:'run',id:evidenceRun.dataset.evoEvidenceRun},evidenceRun);
   const evidenceReplay=e.target.closest('[data-evo-evidence-replay]');if(evidenceReplay)return evoSelectEvidence({type:'replay',id:evidenceReplay.dataset.evoEvidenceReplay},true,true);
   if(e.target.closest('[data-evo-evidence-retry]')&&evo.modal?.evidence){const m=evo.modal;m.evidenceCache.delete(`${m.evidence.type}:${m.evidence.id}`);return evoSelectEvidence(m.evidence)}
   const sampleFilter=e.target.closest('[data-evo-sample-filter]');if(sampleFilter&&evo.modal){evo.modal.compareFilter=sampleFilter.dataset.evoSampleFilter;evoRenderComparisonList(evo.modal);$(`[data-evo-sample-filter="${evo.modal.compareFilter}"]`)?.focus({preventScroll:true});return}

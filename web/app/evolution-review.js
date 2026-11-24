@@ -55,11 +55,26 @@ function evoReviewValidationHTML(p){
   const counts=[['all','全部',records.length],['fixed','修复',s.fixed],['regressed','退化',s.regressed],['unchanged','保持',s.unchanged],['changed','结论改变',s.changed],['blocked','阻塞',s.blocked]].filter(([key,,n])=>key==='all'||n);
   return `<header class="evo-review-filebar"><span>${evoReviewIcon('flask')}历史验证</span><span class="${s.passed?'evo-good':'evo-muted'}">${s.passed?evoReviewIcon('check'):evoReviewIcon('clock')}${s.finished||0} / ${s.total||records.length}</span></header><div class="evo-sample-filters" role="group" aria-label="验证样本筛选">${counts.map(([key,label,n])=>`<button type="button" data-evo-sample-filter="${key}" aria-pressed="${(evo.modal?.compareFilter||'all')===key}">${label}<span>${n||0}</span></button>`).join('')}</div><div id="evoValidationList"></div><details class="evo-review-reason"><summary>验证口径</summary><p>评分为创建验证时的整次运行结果。评分改善表示本样本改善；“保持”不表示输出完全相同。</p><p>下方节点输出为当前可读取的记录，原运行重试后可能变化。</p>${s.verdict?`<p>${escapeHTML(evoResultText(s.verdict))}</p>`:''}${p?.error?`<p class="evo-bad">${escapeHTML(p.error)}</p>`:''}</details>`;
 }
+function evoReviewTrafficHTML(p){
+  const c=p.canary,activeTrial=p.status==='canary'&&!!c,percent=activeTrial?Number(c.percent)||0:100;
+  const options=EVO_CANARY_PERCENTS.map(value=>`<option value="${value}"${value===percent?' selected':''}>${value}%</option>`).join('');
+  const setting=activeTrial&&c.status==='running'?`<div class="evo-traffic-setting">
+    <select id="evoTrafficPercent" class="kb-input" aria-label="灰度流量">${options}</select>
+    <button type="button" class="kb-btn quiet small" data-evo-traffic-apply="${escapeHTML(p.id)}" disabled>调整比例</button>
+  </div>`:'';
+  return `<div id="evoTrafficBlock" hidden>
+    <div class="evo-traffic-track" role="img" aria-label="${percent}% 新运行使用${activeTrial?'修改稿':'新版本'}">
+      <span style="width:${Math.max(0,Math.min(100,percent))}%"></span>
+    </div>
+    <div class="evo-traffic-legend"><span>${activeTrial?'试用版':'新版'} ${percent}%</span><span>原版 ${100-percent}%</span></div>
+    ${setting}
+  </div>`;
+}
 function evoReviewTrialHTML(p){
-  const c=p?.canary,w=p?.watch,trial=!!c&&!w,activeTrial=p?.status==='canary'&&trial;
+  const c=p?.canary,w=p?.watch,trial=!!c&&!w;
   if(!trial&&!w)return '';
-  const percent=trial?Number(c.percent)||0:100,arms=trial?[[c.control,'原版'],[c.canary,'试用版']]:[[w.baseline,'发布前'],[w.current,'发布后']];
-  return `<section class="evo-review-trial"><header>${evoReviewIcon('flask')}<b>${trial?'试用':'发布后观察'}</b>${evoStatusBadge(trial?EVO_CANARY_STATUS:EVO_WATCH_STATUS,trial?c.status:w.status)}</header><div id="evoTrafficBlock"${activeTrial?'':' hidden'}><div class="evo-traffic-track" role="img" aria-label="${percent}% 新运行使用${trial?'修改稿':'新版本'}"><span style="width:${Math.max(0,Math.min(100,percent))}%"></span></div><div class="evo-traffic-legend"><span>${trial?'试用版':'新版'} ${percent}%</span><span>原版 ${100-percent}%</span></div>${activeTrial&&c.status==='running'?`<div class="evo-traffic-setting"><select id="evoTrafficPercent" class="kb-input" aria-label="灰度流量">${EVO_CANARY_PERCENTS.map(v=>`<option value="${v}"${v===percent?' selected':''}>${v}%</option>`).join('')}</select><button type="button" class="kb-btn quiet small" data-evo-traffic-apply="${escapeHTML(p.id)}" disabled>调整比例</button></div>`:''}</div><table><thead><tr><th></th><th>运行</th><th>一次成功</th></tr></thead><tbody>${arms.map(([a,label])=>`<tr><td>${label}</td><td>${a?.runs||0}${trial?` / ${c.minRuns}`:''}</td><td>${a?.runs>0&&Number.isFinite(a.clean)?`${a.clean}/${a.runs}`:'—'}</td></tr>`).join('')}</tbody></table>${!trial&&!w.baselineReady?'<small class="evo-muted">发布前基线未就绪</small>':''}${(trial?c.verdict:w.verdict)?`<details><summary>判定</summary><p>${escapeHTML(trial?c.verdict:w.verdict)}</p></details>`:''}</section>`;
+  const arms=trial?[[c.control,'原版'],[c.canary,'试用版']]:[[w.baseline,'发布前'],[w.current,'发布后']];
+  return `<section class="evo-review-trial"><header>${evoReviewIcon('flask')}<b>${trial?'试用':'发布后观察'}</b>${evoStatusBadge(trial?EVO_CANARY_STATUS:EVO_WATCH_STATUS,trial?c.status:w.status)}</header>${evoReviewTrafficHTML(p)}<table><thead><tr><th></th><th>运行</th><th>一次成功</th></tr></thead><tbody>${arms.map(([a,label])=>`<tr><td>${label}</td><td>${a?.runs||0}${trial?` / ${c.minRuns}`:''}</td><td>${a?.runs>0&&Number.isFinite(a.clean)?`${a.clean}/${a.runs}`:'—'}</td></tr>`).join('')}</tbody></table>${!trial&&!w.baselineReady?'<small class="evo-muted">发布前基线未就绪</small>':''}${(trial?c.verdict:w.verdict)?`<details><summary>判定</summary><p>${escapeHTML(trial?c.verdict:w.verdict)}</p></details>`:''}</section>`;
 }
 function evoReviewDetailHTML(m,p){return evoStoryDetailHTML(m,p)}
 
@@ -92,16 +107,23 @@ function evoReviewEvidenceHTML(m,data){
   if(data.record){
     const {record,run}=data,nodes=run.nodes&&!Array.isArray(run.nodes)?run.nodes:{},ids=Object.keys(nodes);
     const chosen=ids.includes(m.evidenceNode)?m.evidenceNode:ids.includes(record.nodeId)?record.nodeId:ids.find(id=>nodes[id].status==='failed')||ids[0]||'';m.evidenceNode=chosen;
-    return `<div class="evo-review-evidence-meta">${evoEvidenceRunLink(record.runId,'完整运行 ↗')}</div><div class="evo-evidence-signal"><p>${escapeHTML(evoProblemText(record.detail||'无信号摘要'))}</p></div>${run.input?`<details class="evo-review-input"><summary>输入</summary><pre class="evo-output-excerpt">${escapeHTML(run.input)}</pre></details>`:''}${evoStoryNodePickerHTML(ids,chosen,run)}<section>${evoReviewOutputHTML(nodes[chosen])}</section>`;
+    return `<div class="evo-review-evidence-meta">${evoEvidenceRunLink(record.runId,'完整运行 ↗')}</div><div class="evo-evidence-signal"><p>${escapeHTML(record.detail||'无信号摘要')}</p></div><h4>运行输入</h4><pre class="evo-output-excerpt">${escapeHTML(run.input||'未记录输入')}</pre>${evoStoryNodePickerHTML(ids,chosen,run)}<section>${evoReviewOutputHTML(nodes[chosen])}</section>`;
   }
-  const {replay,comparison,source,candidate}=data,nodes=comparison.nodes,chosen=nodes.find(n=>n.id===m.evidenceNode)||nodes.find(n=>n.shaped&&!n.reused)||nodes.find(n=>n.changed)||nodes[0];m.evidenceNode=chosen?.id||'';
-  const before=source.run?.nodes?.[chosen?.id],after=candidate.run?.nodes?.[chosen?.id],changed=source.run&&(replay.sourceStatus&&source.run.status!==replay.sourceStatus||replay.sourceScore===0&&source.run.status==='succeeded');
-  const raw=`<div class="evo-output-pair"><section><h4>原运行 · 最新${evoEvidenceRunLink(replay.sourceRunId,'↗')}</h4>${evoReviewOutputHTML(before,source.error)}</section><section><h4>回放${chosen?.reused?' · 沿用':''}${evoEvidenceRunLink(replay.runId,'↗')}</h4>${evoReviewOutputHTML(after,candidate.error)}</section></div>`;
-  const delta=!source.error&&!candidate.error?evoReviewJSONChanges(before?.output,after?.output):null;
-  const output=delta?`<div class="evo-review-json-diff"><div class="evo-review-delta-label">当前记录差异</div>${delta.map(row=>`<section class="${Math.max(row.before?.length||0,row.after?.length||0)>40?'is-wide':''}"><h4>${escapeHTML(row.path)}</h4><div class="del"><span>−</span><code>${escapeHTML(row.before===undefined?'未设置':row.before)}</code></div><div class="add"><span>+</span><code>${escapeHTML(row.after===undefined?'未设置':row.after)}</code></div></section>`).join('')||'<p class="evo-muted">当前输出相同</p>'}</div><details class="evo-review-input"><summary>原始记录</summary>${raw}</details>`:raw;
-  const picker=nodes.length>1?`<label class="evo-evidence-node-label">节点<select class="kb-input" data-evo-evidence-node>${nodes.map(n=>`<option value="${escapeHTML(n.id)}"${n.id===chosen?.id?' selected':''}>${escapeHTML(n.name||n.id)}${n.reused?' · 沿用':''}</option>`).join('')}</select></label>`:'';
-  const input=`<details class="evo-review-input"><summary>完整输入</summary><div class="evo-output-pair"><section><h4>原运行 · 最新</h4><pre class="evo-output-excerpt">${escapeHTML(source.run?.input||'未记录输入')}</pre></section><section><h4>回放</h4><pre class="evo-output-excerpt">${escapeHTML(candidate.run?.input||'未记录输入')}</pre></section></div></details>`;
-  return `<div class="evo-review-evidence-meta">${evoStatusBadge(EVO_OUTCOMES,replay.outcome)}<span>${escapeHTML(EVO_GROUPS[replay.group]?.[0]||'历史样本')}</span></div>${changed?'<p class="evo-review-warn">原运行已重试；下方为最新记录。</p>':''}${replay.error?`<p class="evo-bad">${escapeHTML(replay.error)}</p>`:''}${input}${picker}${output}<div id="evoStoryArtifactEvidence"></div><details class="evo-review-reason"><summary>判定依据</summary>${evoReplayJudgmentHTML(replay,source)}${chosen?.source?.reason?`<p>${escapeHTML(chosen.source.reason)}</p>`:''}${chosen?.replay?.reason?`<p>${escapeHTML(chosen.replay.reason)}</p>`:''}</details>`;
+  const {replay,comparison,source,candidate}=data,chosen=evoStoryChosenNode(m,data);
+  m.evidenceNode=chosen?.id||'';
+  const ids=comparison.nodes.map(node=>node.id);
+  const side=(title,data,id)=>`<section>
+    <h4>${title} ${evoEvidenceRunLink(id,'完整运行 ↗')}</h4>
+    <h5>运行输入</h5><pre class="evo-output-excerpt">${escapeHTML(data.run?.input||'未记录输入')}</pre>
+    <h5>节点输出</h5>${evoReviewOutputHTML(data.run?.nodes?.[chosen?.id],data.error)}
+  </section>`;
+  return `${evoReplaySourceChanged(replay,source)?'<p class="evo-review-warn">原运行状态已变化。此处展示最新记录，历史评分仍按验证时记录。</p>':''}
+    ${replay.error?`<p class="evo-bad">${escapeHTML(replay.error)}</p>`:''}
+    ${ids.length>1?evoStoryNodePickerHTML(ids,m.evidenceNode,{workflowSnapshot:{nodes:comparison.nodes}}):''}
+    ${chosen?.reused?'<p class="evo-muted">此节点沿用原结果，回放时未重跑。</p>':''}
+    <div class="evo-output-pair">${side('原运行',source,replay.sourceRunId)}${side('修改稿回放',candidate,replay.runId)}</div>
+    <div id="evoStoryArtifactEvidence"></div>
+    <details class="evo-review-reason"><summary>判定依据</summary>${evoReplayJudgmentHTML(replay,source)}${chosen?.source?.reason?`<p>${escapeHTML(chosen.source.reason)}</p>`:''}${chosen?.replay?.reason?`<p>${escapeHTML(chosen.replay.reason)}</p>`:''}</details>`;
 }
 document.addEventListener('click',event=>{
   const button=event.target.closest?.('[data-evo-diff-split],[data-evo-diff-context],[data-evo-diff-expand],[data-evo-output-expand],[data-evo-trial-close]');if(!button||button.disabled||!evo.modal)return;

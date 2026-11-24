@@ -54,7 +54,7 @@ async function evoAdjustTraffic(id,btn){
   if(!await afConfirm({title:'调整灰度流量',message:`将试用流量从 ${p.canary.percent}% 调整为 ${percent}%。已发生的运行和统计保留；只影响之后启动的新运行。`}))return;
   if(evo.modal!==context.detail||context.pid!==evoProjectId())return;
   btn.disabled=true;
-  try{await api(`/api/evolution/proposals/${encodeURIComponent(id)}/canary/traffic`,{method:'POST',body:JSON.stringify({percent})});toast('已调整灰度流量','ok');await evoAfterChange(id,context)}catch(err){toast(err.message,'err');if(btn.isConnected)btn.disabled=false}
+  try{await api(`/api/evolution/proposals/${encodeURIComponent(id)}/canary/traffic`,{method:'POST',body:JSON.stringify({percent})});toast('已调整灰度流量','ok');await evoAfterChange(id,context)}catch(err){toast(err.message,'err');if(btn.isConnected)evoSyncTraffic()}
 }
 document.addEventListener('click',event=>{
   const button=event.target.closest('[data-evo-queue],[data-evo-queue-start],[data-evo-queue-reject],[data-evo-related-finding],[data-evo-traffic-apply]');if(!button||button.disabled)return;

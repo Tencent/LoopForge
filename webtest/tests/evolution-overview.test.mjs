@@ -201,7 +201,7 @@ test('new unqueued feedback is counted as a follow-up without changing the curre
   assert.equal(app.router.calls.some(c=>c.method!=='GET'),false);
 });
 
-test('clicking any history cell compares that sample and preserves the selected button', async t => {
+test('clicking a history cell opens a short summary and restores focus when closed', async t => {
   const replays = [
     { id: 'problem', sourceRunId: 'original-a', runId: 'replay-a', group: 'diagnosis', sourceScore: 0, score: 2, outcome: 'fixed', finishedAt: now },
     { id: 'regression', sourceRunId: 'original-b', runId: 'replay-b', group: 'regression', sourceScore: 2, score: 2, outcome: 'unchanged', finishedAt: now },
@@ -238,25 +238,42 @@ test('clicking any history cell compares that sample and preserves the selected 
   assert.match($('.evo-detail-track [aria-current="step"]').textContent, /小范围试用[\s\S]+待确认试用/);
   assert.match($('.evo-story-replay-pair').textContent,/原版 1\/2 成功\s+修改稿 2\/2 成功/);
   assert.doesNotMatch($('#evoValidationResults').textContent,/试用|流量/);
-  assert.equal($('#evoRolloutDetails').open,false);
+  assert.equal($('#evoRolloutDetails'),null);
+  assert.doesNotMatch($('#evoDetailBody').textContent,/来源记录与诊断|试用、发布与观察/);
   $('.evo-detail-track [aria-current="step"] button').click();
-  assert.equal($('#evoRolloutDetails').open,true);
-  assert.match($('#evoReleasePanel').textContent,/尚未发布/);
+  await settle(5);
+  assert.equal($('#kbDrawer [data-evo-stage="canary"]').getAttribute('aria-selected'),'true');
+  assert.match($('#evoStagePanel').textContent,/可以开始小范围试用/);
+  app.evaluate('evoDrawerClose()');
   assert.equal($('#evoReviewDiff .evo-before-after section:first-child .evo-split-number').textContent,'2');
   $('[data-evo-diff-split]').click();
   const cells = [...$('#evoFullChange .evo-diff-numbered .ctx:last-child').querySelectorAll('.evo-diff-number')];
   assert.deepEqual(cells.map(el => el.textContent), ['3', '4']);
-  assert.match($('#evoStoryBehavior').textContent, /Test0/);
+  assert.equal($('#evoEvidenceDialog').open,false);
+  assert.equal(app.router.calls.some(call=>call.path.endsWith('/compare')),false);
   $('#evoValidationDetails > summary').click();
-  $('[data-evo-story-row="regression"] td:last-child').click();
+  $('[data-evo-story-row="problem"] td:last-child').click();
   await settle(5);
-  assert.equal($('#evoValidationDetails').open, true);
-  assert.match($('#evoStoryBehavior').textContent, /Test1/);
-  assert.doesNotMatch($('#evoStoryBehavior').textContent, /Test0/);
-  assert.match($('#evoStorySelectedSample').textContent, /回归样本/);
-  assert.match($('.evo-detail-track [aria-current="step"]').textContent, /待确认试用/);
-  assert.equal($('[data-evo-story-replay="regression"]').getAttribute('aria-pressed'), 'true');
-  assert.equal(app.document.activeElement.dataset.evoStoryReplay, 'regression');
-  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length, 2);
+  assert.equal($('#evoEvidenceDialog').open,true);
+  assert.equal($('#evoEvidenceDetails').open,false);
+  assert.match($('#evoStoryBehavior').textContent,/日志定位从第 1 行移到第 2 行：--- FAIL: Test0/);
+  assert.doesNotMatch($('#evoStoryBehavior').textContent,/ERROR summary/);
+  $('#evoEvidenceDetails > summary').click();
+  assert.equal($('#evoEvidenceDetails').open,true);
+  assert.match($('#evoEvidenceBody').textContent,/ERROR summary 0/);
+  $('[data-evo-evidence-close]').click();
+  assert.equal($('#evoEvidenceDialog').open,false);
+  assert.equal(app.document.activeElement.dataset.evoStoryReplay,'problem');
+  $('[data-evo-story-replay="regression"]').click();
+  await settle(5);
+  assert.equal($('#evoValidationDetails').open,true);
+  assert.equal($('#evoEvidenceDetails').open,false);
+  assert.match($('#evoStoryBehavior').textContent,/结构化输出保持一致/);
+  assert.doesNotMatch($('#evoEvidenceBody').textContent,/Test0/);
+  assert.match($('#evoEvidenceTitle').textContent,/回归样本/);
+  assert.match($('.evo-detail-track [aria-current="step"]').textContent,/待确认试用/);
+  assert.equal($('[data-evo-story-replay="regression"]').getAttribute('aria-pressed'),'true');
+  assert.equal(app.document.activeElement.dataset.evoEvidenceClose,'');
+  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length,2);
   assert.equal(app.router.calls.some(call => call.method !== 'GET'), false);
 });

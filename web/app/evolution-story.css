@@ -35,48 +35,36 @@
 .evo-story-problem small{display:block;margin-top:5px;font-size:11px;color:var(--hui-muted)}
 .evo-story-problem-scope{display:block;padding:10px 9px 5px;color:var(--hui-muted);font-size:11px}
 .evo-story-empty{padding:18px 16px;margin:0;font-size:12px;color:var(--hui-muted);overflow-wrap:anywhere}
-#evoStoryBehavior{padding:14px 16px;min-width:0}
-#evoStoryBehavior>.evo-story-empty{padding:8px 0}
-.evo-story-evidence-meta{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;font-size:11px;color:var(--hui-muted);overflow-wrap:anywhere}
-.evo-story-log-caption{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:9px;font-size:12px}
-.evo-story-log-caption b{font-weight:400}
-.evo-story-log-caption>span{display:flex;align-items:center;gap:8px;font-family:var(--hui-mono)}
-.evo-story-log-caption i{font-style:normal}
-.evo-story-log-caption .evo-review-icon{width:13px;height:13px;color:var(--hui-muted)}
-.evo-story-log{border-radius:8px;background:var(--hui-soft);overflow:hidden}
-.evo-story-log-line{display:grid;grid-template-columns:26px minmax(0,1fr) 80px;gap:9px;align-items:start;padding:8px 11px;min-width:0;font-size:12px;line-height:1.65}
-.evo-story-log-line>span{font:11px/1.8 var(--hui-mono);color:var(--hui-muted);text-align:right}
-.evo-story-log-line>code{padding:0;background:transparent;color:var(--hui-text);font:12px/1.65 var(--hui-mono);white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}
-.evo-story-log-line small{font-size:11px;text-align:right;white-space:nowrap}
-.evo-story-log-line.is-before{background:color-mix(in srgb,var(--hui-error) 9%,var(--hui-surface))}
-.evo-story-log-line:is(.is-after,.is-both){background:color-mix(in srgb,var(--hui-success) 9%,var(--hui-surface))}
-.evo-story-log-line.is-before small{color:var(--hui-error)}
-.evo-story-log-line:is(.is-after,.is-both) small{color:var(--hui-success)}
-.evo-story-log-gap{padding:5px 44px;color:var(--hui-muted);font-size:11px}
-.evo-story-fields>section{display:grid;grid-template-columns:minmax(0,1fr) 20px minmax(0,1fr);gap:10px;align-items:center;margin:0 0 12px}
-.evo-story-fields>section:last-child{margin-bottom:0}
-.evo-story-fields h3{grid-column:1/-1;font:11px var(--hui-mono);color:var(--hui-muted);margin:0;overflow-wrap:anywhere}
-.evo-story-fields section>div{padding:8px 10px;border-radius:6px;min-width:0}
-.evo-story-fields .is-before{background:color-mix(in srgb,var(--hui-error) 9%,var(--hui-surface))}
-.evo-story-fields .is-after{background:color-mix(in srgb,var(--hui-success) 9%,var(--hui-surface))}
-.evo-story-fields small{display:block;font-size:11px;color:var(--hui-muted);margin-bottom:4px}
-.evo-story-fields code{display:block;font:12px/1.7 var(--hui-mono);padding:0;background:none;color:var(--hui-text);white-space:pre-wrap;overflow-wrap:anywhere}
-.evo-story-fields section>.evo-review-icon{width:14px;height:14px;color:var(--hui-muted)}
-.evo-story-note,.evo-story-record-warning{font-size:12px;line-height:1.7;color:var(--hui-muted);margin:12px 0 0!important;overflow-wrap:anywhere}
-.evo-story-record-warning{color:var(--hui-warn);margin:0 0 12px!important}
-.evo-story-node-pair{display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr);gap:12px;align-items:center}
-.evo-story-node-pair section{padding:12px;border-radius:8px;background:var(--hui-soft);font-size:12px;min-width:0;overflow-wrap:anywhere}
-.evo-story-node-pair h3{font-size:11px;color:var(--hui-muted);font-weight:400;margin:0 0 8px}
-.evo-story-node-pair>.evo-review-icon{color:var(--hui-muted);width:15px}
-.evo-story-behavior-copy{font-size:12px;color:var(--hui-muted)}
-.evo-story-behavior-copy h3{font-size:13px;color:var(--hui-text);font-weight:500;margin:0 0 7px}
-.evo-story-behavior-copy p{line-height:1.7;overflow-wrap:anywhere;margin:0 0 9px}
+#evoEvidenceDialog {
+  box-sizing:border-box;width:min(680px,calc(100vw - 32px));max-height:calc(100dvh - 32px);
+  padding:0;border:1px solid var(--hui-border);border-radius:12px;
+  background:var(--hui-surface);color:var(--hui-text);box-shadow:var(--hui-popover-shadow);
+  overflow:auto;overscroll-behavior:contain;
+}
+#evoEvidenceDialog::backdrop{background:var(--hui-scrim)}
+.evo-story-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--hui-border-soft)}
+.evo-story-dialog-head>div{min-width:0}
+#evoEvidenceCount{display:block;margin-bottom:4px;color:var(--hui-muted);font-size:12px}
+#evoEvidenceTitle{margin:0;font-size:17px;font-weight:600;overflow-wrap:anywhere}
+#evolutionView #evoEvidenceDialog [data-evo-evidence-close]{flex:none;margin:0;color:var(--hui-muted)}
+#evoStoryBehavior{padding:14px 20px;min-width:0}
+#evoStoryBehavior>.evo-story-empty{padding:0}
+#evoStoryBehavior h3{margin:12px 0 4px;font-size:12px;font-weight:500;color:var(--hui-muted)}
+#evoStoryBehavior p{margin:0;font-size:14px;line-height:1.65;overflow-wrap:anywhere}
+.evo-story-dialog-result{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;font-size:12px;color:var(--hui-muted)}
+.evo-story-dialog-result b{color:var(--hui-text);font-weight:600}
 .evo-story-evidence-details{border-top:1px solid var(--hui-border-soft);font-size:12px}
-.evo-story-evidence-details>summary{padding:10px 16px;color:var(--hui-muted);cursor:pointer}
-#evoReviewWorkbench .evo-story-evidence-details .evo-evidence-panel{border:0}
-#evoEvidenceTitle{margin:0;font-size:12px;font-weight:500}
-#evoReviewWorkbench .evo-story-evidence-details .evo-output-pair{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
-#evoReviewWorkbench .evo-story-evidence-details .evo-output-pair>section+section{border:0}
+.evo-story-evidence-details>summary{padding:12px 20px;color:var(--hui-accent);cursor:pointer}
+#evoEvidenceBody.evo-evidence-panel{padding:0 20px 16px;border:0;margin:0}
+#evoEvidenceBody :is(h4,h5){margin:0 0 6px;font-size:12px;font-weight:600}
+#evoEvidenceBody h5{margin-top:10px;color:var(--hui-muted)}
+#evoEvidenceBody .evo-output-excerpt{max-height:220px}
+#evoEvidenceBody .evo-output-pair{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+#evoEvidenceBody .evo-output-pair>section+section{border:0}
+@media(max-width:560px){
+  #evoEvidenceBody .evo-output-pair{grid-template-columns:minmax(0,1fr)}
+  .evo-story-dialog-head,#evoStoryBehavior,.evo-story-evidence-details>summary,#evoEvidenceBody.evo-evidence-panel{padding-inline:14px}
+}
 .evo-story-results{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px}
 .evo-story-results th,.evo-story-results td{padding:11px 16px;border-bottom:1px solid var(--hui-border-soft);text-align:left;vertical-align:middle}
 .evo-story-results th{font-size:11px;color:var(--hui-muted);font-weight:400}
@@ -119,8 +107,6 @@
 .evo-story-live-note{color:var(--hui-muted);font-size:12px}
 .evo-list-row .evo-story-list-effect{display:flex;align-items:center;gap:9px;font-size:11px;margin-top:6px;color:var(--hui-muted);flex-wrap:wrap}
 .evo-list-row .evo-story-list-effect .evo-good{color:var(--hui-success)}
-/* Keep the selected sample beside its history on wider workspaces. */
-.evo-story-evidence-grid {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
 .evo-story-overview{display:flex;gap:10px 16px;align-items:center;flex-wrap:wrap}
 .evo-story-overview>div{flex:1 1 240px;min-width:0}
 .evo-story-overview p{margin:6px 0 0;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
@@ -151,27 +137,10 @@
 .evo-story-replay-pair b{font-size:17px;font-variant-numeric:tabular-nums}
 .evo-story-replay-pair>.evo-review-icon{width:15px;height:15px;color:var(--hui-muted)}
 .evo-story-replay-facts{font-size:12px}
-#evoProblemEvidenceDetails>.evo-story-section,#evoRolloutDetails>.evo-story-section{margin-top:0}
-.evo-story-expand>summary,.evo-story-sources>summary{width:fit-content;padding:8px 0;color:var(--hui-accent);font-size:12px;cursor:pointer}
-.evo-story-evidence-grid .evo-story-section{border:1px solid var(--hui-border);border-radius:9px;padding:0;margin:6px 0 0;overflow:clip}
-.evo-story-evidence-grid .evo-story-section-head{margin:0;padding:9px 12px;border-bottom:1px solid var(--hui-border-soft)}
-.evo-story-release-content{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.evo-story-release-track{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:1 1 200px;padding:0;margin:0;list-style:none}
-.evo-story-release-track li{display:flex;flex-direction:column;gap:4px;align-items:center;position:relative;min-width:0;text-align:center;color:var(--hui-muted)}
-.evo-story-release-track li:not(:last-child)::after{content:'';position:absolute;top:6px;left:calc(50% + 7px);right:calc(-50% + 7px);height:2px;background:var(--hui-border)}
-.evo-story-release-track li[data-state=done]::after{background:var(--hui-accent)}
-.evo-story-release-track li>i{width:14px;height:14px;border:2px solid var(--hui-border-strong);border-radius:50%;background:var(--hui-canvas)}
-.evo-story-release-track li[data-state=done]>i{border-color:var(--hui-success);background:var(--hui-success)}
-.evo-story-release-track li[data-state=active]>i{border-color:var(--hui-accent);background:var(--hui-accent-soft)}
-.evo-story-release-track li[data-state=stop]>i{border-color:var(--hui-error);background:var(--hui-soft)}
-.evo-story-release-track li>b{font-size:12px;font-weight:500;overflow-wrap:anywhere}
-.evo-story-release-track li>small{font-size:11px}
-.evo-story-release-state{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;border-radius:8px;background:var(--hui-soft);font-size:12px}
-.evo-story-release .evo-review-trial,.evo-story-expand .evo-review-trial{margin-top:8px}
-.evo-story-selected-sample {margin:12px 16px 0;font-size:13px;font-weight:500;overflow-wrap:anywhere}
-.evo-story-evidence-meta>span {min-width:0;overflow-wrap:anywhere}
-.evo-story-sample-input {margin:0 0 12px;font-size:12px;color:var(--hui-muted)}
-.evo-story-sample-input>summary {cursor:pointer}
+#evoProblemEvidenceDetails>.evo-story-section{margin-top:0}
+.evo-story-expand>summary{width:fit-content;padding:8px 0;color:var(--hui-accent);font-size:12px;cursor:pointer}
+#evoDetailPanel-validation{border:1px solid var(--hui-border);border-radius:9px;margin:6px 0 0;overflow:clip}
+#evoDetailPanel-validation .evo-story-section-head{margin:0;padding:9px 12px;border-bottom:1px solid var(--hui-border-soft)}
 .evo-story-validation-foot ul {padding-inline-start:16px;margin:8px 0 0;line-height:1.7}
 #evoDetailPage .evo-review-filebar h2 {display:flex;align-items:center;gap:7px;margin:0;font-size:14px;font-weight:600}
 #evoFullChange .evo-review-filebar{padding:0 0 6px;border-bottom:0;background:none}
@@ -201,9 +170,6 @@
 #evoDetailPage .evo-diff-numbered .evo-diff-heading {background:var(--hui-soft)}
 #evoDetailPage .evo-diff-numbered .evo-diff-heading-label {grid-column:3/-1;width:auto;padding-left:20px;color:var(--hui-muted);font:11px/1.85 var(--hui-sans)}
 #evoDetailPage .evo-diff-numbered .evo-diff-skip {padding-left:108px}
-@container(max-width:690px){
-  .evo-story-evidence-grid{grid-template-columns:minmax(0,1fr)}
-}
 @container(max-width:500px){
   #evoFullChange .evo-review-filebar{flex-wrap:wrap}
   #evoDetailPage .evo-review-diff .evo-before-after{grid-template-columns:minmax(0,1fr)}
@@ -215,17 +181,6 @@
   .evo-story-counts{gap:9px}
   .evo-story-counts button{font-size:11px}
   .evo-story-validation-foot{flex-wrap:wrap;padding:10px 12px}
-  .evo-story-fields>section{grid-template-columns:1fr;gap:7px}
-  .evo-story-fields section>.evo-review-icon{display:none}
-  .evo-story-log-line{grid-template-columns:18px minmax(0,1fr);padding:8px;gap:7px}
-  .evo-story-log-line small{grid-column:2;text-align:left}
-  .evo-story-log-line>code{font-size:11px}
-  .evo-story-log-gap{padding-inline:33px}
-  #evoStoryBehavior{padding:12px}
-  .evo-story-node-pair{gap:8px;grid-template-columns:minmax(0,1fr)}
-  .evo-story-node-pair>.evo-review-icon{display:none}
-  .evo-story-node-pair section{padding:9px}
-  #evoReviewWorkbench .evo-story-evidence-details .evo-output-pair{grid-template-columns:minmax(0,1fr)}
 }
 @media(pointer:coarse){#evoDetailPage .evo-story-workbench button{min-height:40px}}
 @media(prefers-reduced-motion:reduce){.evo-story-workbench *{scroll-behavior:auto}}

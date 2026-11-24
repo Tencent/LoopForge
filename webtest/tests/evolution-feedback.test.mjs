@@ -32,7 +32,7 @@ test('feedback keeps its selected node and links to its actual problem without a
   assert.match(host.querySelector('.evo-feedback-result').textContent,/已加入RSI工作台/);
   host.querySelector('.evo-feedback-result button').click();await settle(8);
   assert.equal(app.window.location.hash,'#/evolution/findings/feedback-finding/feedback-cluster');
-  assert.match(app.document.querySelector('#evoProblemOverview').textContent,/缺少 reason/);
+  assert.match(app.document.querySelector('#evoFindingTitle').textContent,/缺少 reason/);
   app.document.querySelector('[data-evo-source-example="user_feedback"]').click();
   assert.match(app.document.querySelector('#evoStorySourceExample').textContent,/缺少 reason/);
   assert.equal(app.router.calls.filter(c=>c.path==='/api/evolution/diagnose').length,0,'opening the saved feedback is a read-only action');

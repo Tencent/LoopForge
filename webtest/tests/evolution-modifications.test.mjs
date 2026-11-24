@@ -440,6 +440,7 @@ test('traffic adjustment requires confirmation, no-ops at the current percent an
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/change-1', body: trafficTrial }] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app); $('[data-evo-asset-group]').click(); await settle(5);
+  $('[data-evo-progress-stage="canary"]').click(); await settle(4);
   const apply = $('[data-evo-traffic-apply]');
   assert.equal(apply.disabled, false);
   assert.equal($('#evoTrafficPercent').value, '25');
@@ -461,14 +462,9 @@ test('traffic adjustment requires confirmation, no-ops at the current percent an
   assert.equal(writes[0].path, '/api/evolution/proposals/change-1/canary/traffic');
   assert.deepEqual(writes[0].body, { percent: 50 });
   assert.equal($('#evoTrafficPercent').value, '50');
-  assert.match($('.evo-traffic-legend').textContent, /试用版 · 50% 流量.*原版 · 50%/s);
-  const arms = [...app.document.querySelectorAll('.evo-gray-board .evo-sample-arm')];
-  assert.deepEqual(arms.map(arm => arm.querySelector('.evo-arm-rate b').textContent), ['60%', '50%']);
-  assert.equal(arms[0].querySelectorAll('.evo-sample-dot.clean').length, 3);
-  assert.equal(arms[0].querySelectorAll('.evo-sample-dot.rework').length, 1);
-  assert.equal(arms[0].querySelectorAll('.evo-sample-dot.failed').length, 1);
-  assert.equal(arms[1].querySelectorAll('.evo-sample-dot.clean').length, 2);
-  assert.equal(arms[1].querySelectorAll('.evo-sample-dot.waiting').length, 1);
+  assert.match($('.evo-traffic-legend').textContent, /试用版 50%.*原版 50%/s);
+  const arms = [...app.document.querySelectorAll('#evoStagePanel .evo-review-trial tbody tr')];
+  assert.deepEqual(arms.map(arm=>arm.cells[2].textContent),['2/4','3/5']);
   assert.equal($('#evoDetailActions [data-evo-approve]').disabled, true);
 });
 
@@ -480,6 +476,7 @@ test('traffic controls stay disabled until live-version verification succeeds an
   ] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app); $('[data-evo-asset-group]').click(); await settle(4);
+  $('[data-evo-progress-stage="canary"]').click(); await settle(4);
   assert.equal($('[data-evo-traffic-apply]').disabled, true);
   $('[data-evo-traffic-apply]').click(); await settle(2);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
@@ -490,13 +487,11 @@ test('traffic controls stay disabled until live-version verification succeeds an
   $('[data-evo-detail-refresh]').click(); await settle(5);
   assert.equal($('[data-evo-traffic-apply]').disabled, true);
   assert.equal($('#evoTrafficBlock').hidden, true);
-  assert.equal($('#evoLiveVersionMain').textContent, $('#evoLiveVersion').textContent);
-  assert.match($('#evoLiveVersionMain').textContent, /正文已变化.*不能直接发布/);
+  assert.match($('#evoLiveVersion').getAttribute('data-tooltip'), /正文已变化.*不能直接发布/);
   app.router.get('/api/evolution/assets/agent/developer/versions', { status: 503, body: { error: 'version unavailable' } });
   $('[data-evo-detail-refresh]').click(); await settle(5);
   assert.equal($('[data-evo-traffic-apply]').disabled, true);
-  assert.equal($('#evoLiveVersionMain').textContent, $('#evoLiveVersion').textContent);
-  assert.match($('#evoLiveVersionMain').textContent, /版本核对失败/);
+  assert.match($('#evoLiveVersion').textContent, /版本核对失败/);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
@@ -509,22 +504,21 @@ test('released traffic is hidden until the exact live release is verified and st
   ] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app); $('[data-evo-asset-group]').click(); await settle(4);
+  $('[data-evo-progress-stage="watch"]').click(); await settle(4);
   assert.equal($('#evoTrafficBlock').hidden, true, 'historical release must not imply current traffic while verification is pending');
   resolve({ ...live, currentVersion: 3, liveHash: 'published-hash' }); await settle(4);
   assert.equal($('#evoTrafficBlock').hidden, false);
-  assert.match($('#evoTrafficBlock').textContent, /新版 · 100% 流量/);
-  assert.match($('#evoLiveVersionMain').textContent, /当前仍生效/);
-  assert.equal($('#evoLiveVersionMain').textContent, $('#evoLiveVersion').textContent);
+  assert.match($('#evoTrafficBlock').textContent, /新版 100%/);
+  assert.match($('#evoLiveVersion').getAttribute('data-tooltip'), /当前仍生效/);
   for (const version of [{ ...live, currentVersion: 4 }, { ...live, currentVersion: 3, drifted: true }, { ...live, currentVersion: 3, liveHash: '' }, { ...live, currentVersion: 0 }]) {
     app.router.get('/api/evolution/assets/agent/developer/versions', version);
     $('[data-evo-detail-refresh]').click(); await settle(5);
     assert.equal($('#evoTrafficBlock').hidden, true, 'unmatched, drifted, or unknown release cannot claim 100% current traffic');
-    assert.equal($('#evoLiveVersionMain').textContent, $('#evoLiveVersion').textContent);
   }
   app.router.get('/api/evolution/assets/agent/developer/versions', { status: 503, body: { error: 'version unavailable' } });
   $('[data-evo-detail-refresh]').click(); await settle(5);
   assert.equal($('#evoTrafficBlock').hidden, true);
-  assert.match($('#evoLiveVersionMain').textContent, /版本核对失败/);
+  assert.match($('#evoLiveVersion').textContent, /版本核对失败/);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
@@ -532,6 +526,7 @@ test('traffic adjustment confirmation cannot mutate an asset after leaving its p
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/change-1', body: trafficTrial }] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app); $('[data-evo-asset-group]').click(); await settle(5);
+  $('[data-evo-progress-stage="canary"]').click(); await settle(4);
   $('#evoTrafficPercent').value = '50'; $('[data-evo-traffic-apply]').click(); await settle(2);
   app.router.get('/api/evolution/overview?projectId=project-2', { projectId: 'project-2', pending: [], recent: [], validating: [], trial: [], queue: [], health: [] });
   app.router.get('/api/evolution/findings?projectId=project-2', []);
@@ -561,21 +556,20 @@ test('polling preserves an unsubmitted traffic selection and focus only while th
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/change-1', body: trafficTrial }] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app); $('[data-evo-asset-group]').click(); await settle(5);
+  $('[data-evo-progress-stage="canary"]').click(); await settle(4);
   $('#evoTrafficPercent').value = '50'; $('#evoTrafficPercent').focus();
   const hash = app.window.location.hash;
   await app.evaluate('evoRefresh().then(() => evoRender())'); await settle(6);
   assert.equal($('#evoTrafficPercent').value, '50', 'an unchanged server allocation must not reset an unsubmitted selection');
   assert.equal(app.document.activeElement.id, 'evoTrafficPercent');
-  assert.match($('.evo-traffic-legend').textContent, /试用版 · 25% 流量.*原版 · 75%/s);
+  assert.match($('.evo-traffic-legend').textContent, /试用版 25%.*原版 75%/s);
   assert.equal(app.window.location.hash, hash);
   const updated = { ...trafficTrial, canary: { ...trafficTrial.canary, percent: 10 } };
   app.router.get('/api/evolution/proposals/change-1', updated);
   await app.evaluate('evoRefresh().then(() => evoRender())'); await settle(6);
   assert.equal($('#evoTrafficPercent').value, '10', 'server allocation changes must replace the stale unsubmitted selection');
-  assert.match($('.evo-traffic-legend').textContent, /试用版 · 10% 流量.*原版 · 90%/s);
-  const arms = [...app.document.querySelectorAll('.evo-gray-board .evo-sample-arm')];
-  assert.deepEqual(arms.map(arm => arm.querySelector('.evo-arm-rate b').textContent), ['60%', '50%']);
-  assert.equal(arms[0].querySelectorAll('.evo-sample-dot.clean').length, 3);
-  assert.equal(arms[1].querySelectorAll('.evo-sample-dot.clean').length, 2);
+  assert.match($('.evo-traffic-legend').textContent, /试用版 10%.*原版 90%/s);
+  const arms = [...app.document.querySelectorAll('#evoStagePanel .evo-review-trial tbody tr')];
+  assert.deepEqual(arms.map(arm=>arm.cells[2].textContent),['2/4','3/5']);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
