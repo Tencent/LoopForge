@@ -74,6 +74,7 @@ type Server struct {
 	users           *usersHandlers // users.go
 	sshHostTrust    *sshHostTrustHandlers
 	httpsHostTrust  *httpsHostTrustHandlers
+	platformSetting *platformSettingsHandlers
 	projects        *projectsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
@@ -159,6 +160,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		users:           &usersHandlers{deps: d},
 		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
 		httpsHostTrust:  &httpsHostTrustHandlers{deps: d, hosts: s.HTTPSHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP},
+		platformSetting: &platformSettingsHandlers{deps: d, envPublicURL: func() string { return notifications.PublicURL }},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
@@ -285,6 +287,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/platform/git-https-hosts/:host", api.httpsHostTrust.save)
 	g.DELETE("/api/platform/git-https-hosts/:host", api.httpsHostTrust.remove)
 	g.GET("/api/git-https-hosts", api.httpsHostTrust.choices)
+	g.GET("/api/platform/public-url", api.platformSetting.publicURL)
+	g.PUT("/api/platform/public-url", api.platformSetting.publicURL)
+	g.DELETE("/api/platform/public-url", api.platformSetting.publicURL)
 	// master(net/http) 的 /api/users/ 子树只接受 PUT /api/users/<id>/credentials
 	// 一种形态，其余任何方法/子路径都走 method(w) → 405 JSON。
 	g.Any("/api/users/:id/credentials", func(c *gin.Context) {
@@ -309,7 +314,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	})
 
-	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
+	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicAddress}
 	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1), clarify: stream}
 	api.runs.assistant = asst
 	api.runners.assistant = asst
