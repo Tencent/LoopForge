@@ -177,12 +177,17 @@ func TestWeComConfirmDraftsInvalidatedByRevocationAndModeChange(t *testing.T) {
 	id := ask()
 	project, _ := s.Project("p")
 	project.Members = []domain.ProjectMember{}
-	s.PutProject(project)
+	if err := s.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
 	if code, out := draftCall(t, h, member, "POST", "/api/bot-drafts/"+id+"/confirm", true); code != 409 || out["code"] != "draft_invalidated" {
 		t.Fatalf("after revoke = %d %v", code, out)
 	}
+	project, _ = s.Project(project.ID)
 	project.Members = []domain.ProjectMember{{UserID: 43, Role: "member"}}
-	s.PutProject(project)
+	if err := s.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
 	// Unbinding cancels pending drafts of that sender.
 	id = ask()
 	binding, err := s.BotUserBinding(bot.IdentityScope(), "new-wecom-user")

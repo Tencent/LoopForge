@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -180,7 +182,14 @@ func TestWorkspaceRestoreEligibilityUsesWorkspaceEditAccess(t *testing.T) {
 	}
 	run.Status = "succeeded"
 	run.WorkspaceCleanedAt = now
+	run.Nodes = map[string]*domain.NodeRun{"sub": {NodeID: "sub", Status: "succeeded", ChildRunID: "shared-child"}}
 	if err = h.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	child := domain.Run{ID: "shared-child", Status: "succeeded", ExecutionContext: run.ExecutionContext}
+	child.ExecutionContext.ParentRunID = run.ID
+	child.ExecutionContext.WorkspaceRunID = run.ID
+	if err = h.repo.PutRun(child); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,20 +208,22 @@ func TestWorkspaceRestoreEligibilityUsesWorkspaceEditAccess(t *testing.T) {
 		{"owner", owner, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			request, response := workbenchContext(tc.user, http.MethodGet, workspace, bytes.NewBuffer(nil))
-			router.ServeHTTP(response, request.Request)
-			var result struct {
-				Available         bool       `json:"available"`
-				Restorable        *bool      `json:"restorable"`
-				CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
-			}
-			err := json.Unmarshal(response.Body.Bytes(), &result)
-			if response.Code != http.StatusOK || err != nil || result.Available || result.CheckpointSavedAt == nil || result.Restorable == nil || *result.Restorable != tc.restorable {
-				t.Fatalf("restorable should be %v for %s: %d %s", tc.restorable, tc.name, response.Code, response.Body)
+			for _, path := range []string{workspace, "/api/runs/shared-child/workspace"} {
+				request, response := workbenchContext(tc.user, http.MethodGet, path, bytes.NewBuffer(nil))
+				router.ServeHTTP(response, request.Request)
+				var result struct {
+					Available         bool       `json:"available"`
+					Restorable        *bool      `json:"restorable"`
+					CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
+				}
+				err := json.Unmarshal(response.Body.Bytes(), &result)
+				if response.Code != http.StatusOK || err != nil || result.Available || result.CheckpointSavedAt == nil || result.Restorable == nil || *result.Restorable != tc.restorable {
+					t.Fatalf("restorable should be %v for %s at %s: %d %s", tc.restorable, tc.name, path, response.Code, response.Body)
+				}
 			}
 		})
 	}
-	request, response := workbenchContext(viewer, http.MethodPost, workspace+"/restore", bytes.NewBuffer(nil))
+	request, response := workbenchContext(viewer, http.MethodPost, "/api/runs/shared-child/workspace/restore", bytes.NewBuffer(nil))
 	request.Request.Header.Set("Prefer", "respond-async")
 	router.ServeHTTP(response, request.Request)
 	if response.Code != http.StatusForbidden {
@@ -222,5 +233,118 @@ func TestWorkspaceRestoreEligibilityUsesWorkspaceEditAccess(t *testing.T) {
 	router.ServeHTTP(response, request.Request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("owner restore: %d %s", response.Code, response.Body)
+	}
+}
+
+func TestSharedRunnerWorkspaceRestoreRequiresConnectedRunner(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	a, user := workbenchFixture(t)
+	en := engine.New(a.repo, runtime.NewManager(t.TempDir()))
+	a.deps.engine = en
+	runner := domain.Runner{ID: "shared-runner", Status: domain.RunnerStatusOnline}
+	if err := a.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	parent := domain.Run{
+		ID: "runner-parent", Status: "succeeded",
+		ExecutionContext: domain.TelemetryContext{
+			ProjectID: "workbench", ExecutionMode: domain.ExecutionModeRunner,
+			ExecutionRunnerID: runner.ID, RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		},
+		Nodes: map[string]*domain.NodeRun{"sub": {NodeID: "sub", Status: "succeeded", ChildRunID: "runner-child"}},
+	}
+	child := domain.Run{ID: "runner-child", Status: "succeeded", ExecutionContext: parent.ExecutionContext}
+	child.ExecutionContext.ParentRunID = parent.ID
+	child.ExecutionContext.WorkspaceRunID = parent.ID
+	for _, run := range []domain.Run{parent, child} {
+		if err := a.repo.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	token, err := en.BeginConversationWorkspaceUse(parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.repo.SaveWorkspaceCheckpoint(parent.ID, token, now, runtime.EmptyWorkspaceCheckpoint()); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.repo.FinishWorkspaceUse(parent.ID, token, now, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	hub := newRunnerControlHub()
+	hub.startupGrace, hub.reconnectWait = 0, 0
+	h := &runsHandlers{deps: a.deps, runnerControls: hub}
+	router := gin.New()
+	router.Use(h.runWriteGuard())
+	router.GET("/api/runs/:id/workspace", h.runWorkspace)
+	router.POST("/api/runs/:id/workspace/restore", h.workspaceRestore)
+	request := func(id, method, suffix string) *httptest.ResponseRecorder {
+		c, response := workbenchContext(user, method, "/api/runs/"+id+"/workspace"+suffix, bytes.NewBuffer(nil))
+		c.Request.Header.Set("Prefer", "respond-async")
+		router.ServeHTTP(response, c.Request)
+		return response
+	}
+	connect := func(result domain.RunnerWorkspaceResponse) *runnerControlConn {
+		conn := hub.register(runner, nil, false)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				select {
+				case message := <-conn.send:
+					if message.WorkspaceRequest.RunID != parent.ID || message.WorkspaceRequest.WorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
+						t.Errorf("workspace request did not reach the shared checkout: %+v", message.WorkspaceRequest)
+					}
+					hub.resolveWorkspace(conn, message.RequestID, result)
+				case <-conn.done:
+					return
+				}
+			}
+		}()
+		t.Cleanup(func() {
+			hub.unregister(conn)
+			<-done
+		})
+		return conn
+	}
+	checkInfo := func(id string, available, restorable bool, reason string) {
+		t.Helper()
+		response := request(id, http.MethodGet, "")
+		var info struct {
+			Available         bool       `json:"available"`
+			Restorable        *bool      `json:"restorable"`
+			CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
+			Reason            string     `json:"reason"`
+		}
+		err := json.Unmarshal(response.Body.Bytes(), &info)
+		if response.Code != http.StatusOK || err != nil || info.Available != available ||
+			info.Restorable == nil || *info.Restorable != restorable || info.CheckpointSavedAt == nil || !strings.Contains(info.Reason, reason) {
+			t.Errorf("%s workspace want available=%t restorable=%t reason=%q, got %d %s", id, available, restorable, reason, response.Code, response.Body)
+		}
+	}
+	conn := connect(domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: json.RawMessage(`{"available":true}`)})
+	for _, id := range []string{parent.ID, child.ID} {
+		checkInfo(id, true, true, "")
+	}
+	hub.unregister(conn)
+
+	checkOffline := func() {
+		for _, id := range []string{parent.ID, child.ID} {
+			checkInfo(id, false, false, "当前离线")
+			response := request(id, http.MethodPost, "/restore")
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "当前离线") {
+				t.Errorf("%s restore must report offline: %d %s", id, response.Code, response.Body)
+			}
+		}
+	}
+	checkOffline()
+	if err := a.repo.DB.Table("runs").Where("id = ?", parent.ID).Update("workspace_cleaned_at", now).Error; err != nil {
+		t.Fatal(err)
+	}
+	checkOffline()
+	connect(domain.RunnerWorkspaceResponse{Status: http.StatusNotFound, Error: "workspace directory missing"})
+	for _, id := range []string{parent.ID, child.ID} {
+		checkInfo(id, false, true, "工作区已回收")
 	}
 }

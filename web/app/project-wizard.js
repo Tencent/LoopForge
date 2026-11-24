@@ -88,10 +88,7 @@ async function projectWizardCreate(){
   const value=buildProjectPayload(clone(d),{id:ident.id,key:ident.key,defaultRepositoryId:''});
   const invalid=validateProjectPayload(value,{creating:true,projects,workflows:state.data.workflows||[]});
   if(invalid)return projectWizardFail(invalid.field==='id'||invalid.field==='key'?'无法根据名称生成可用的项目标识，请换个名称重试':invalid.message,['name','workflowId','ownerId'].includes(invalid.field)?invalid.field:'');
-  const stored=await projectWizardRequest(async()=>{
-    const result=await api('/api/projects',{method:'POST',body:JSON.stringify(value)});
-    return storeSavedProject(result,value);
-  },'创建失败，可修改项目名称后重试：');
+  const stored=await projectWizardRequest(()=>persistProject(value,'POST'),'创建失败，可修改项目名称后重试：');
   if(!stored||projectWizard!==w)return false;
   w.projectId=stored.id||value.id;
   if(!state.projectFilter){state.projectFilter=w.projectId;localStorage.setItem('agentflow.activeProject',w.projectId)}
@@ -147,16 +144,35 @@ async function projectWizardRemoveRepo(repoId){
   renderAll();toast(notice,tone);
   return true;
 }
+// The members step edits the roster it loaded, so it submits that roster's own token: the
+// server rejects the write when someone else changed members meanwhile, instead of letting
+// the step replace the list with one that predates an approved join request.
 async function projectWizardSaveProject(){
   const w=projectWizard,saved=projectWizardProject();
   if(!saved)return projectWizardFail('项目不存在或无权访问');
-  const d=w.draft,fields=w.step==='members'?{ownerId:d.ownerId,members:d.members}:{tapdWorkspaceId:d.tapdWorkspaceId,tapdIterationId:d.tapdIterationId};
+  const d=w.draft,fields=w.step==='members'?{ownerId:d.ownerId,members:d.members,membersVersion:d.membersVersion}:{tapdWorkspaceId:d.tapdWorkspaceId,tapdIterationId:d.tapdIterationId};
   const value=buildProjectPayload(clone(saved),fields);
   const invalid=validateProjectPayload(value,{creating:false,projects:state.data.projects||[],workflows:state.data.workflows||[],saved});
   if(invalid)return projectWizardFail(invalid.message);
-  const stored=await projectWizardRequest(async()=>storeSavedProject(await api('/api/projects',{method:'PUT',body:JSON.stringify(value)}),value));
+  const stored=await projectWizardRequest(async()=>{
+    const project=await persistProject(value);
+    if(project&&projectWizard===w){w.draft=projectDraftFrom(project);w.base=clone(w.draft)}
+    return project;
+  });
   if(stored)renderAll();
+  else if(w.step==='members')await reloadProjectWizardMembers(value.membersVersion);
   return !!stored;
+}
+// A rejected member save usually means the roster moved on; reload it so the step shows the
+// current members and the next save replaces that list rather than the outdated one.
+async function reloadProjectWizardMembers(token){
+  const w=projectWizard,id=w?.projectId;if(!id)return;
+  await refreshProjectJoinMembers(id);
+  const fresh=projectWizardProject();
+  if(projectWizard!==w||w.step!=='members'||w.saving||!fresh||fresh.membersVersion===token)return;
+  w.draft=projectDraftFrom(fresh);w.base=clone(w.draft);
+  w.error='项目成员已经变化，这里已载入最新名单，请确认后重新保存。';
+  renderProjectWizard();
 }
 async function projectWizardNext(){
   const w=projectWizard;if(!w||w.saving)return;

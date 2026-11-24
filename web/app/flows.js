@@ -142,6 +142,7 @@ function renderFlowHeader(){
 function renderWorkflowMeta(){
   const workflows=catalogWorkflows();
   const wf=state.workflow;
+  if(typeof renderWorkflowProjectCredentials==='function')renderWorkflowProjectCredentials(wf);
   // Generic templates and an unsaved AI draft are not in the project SOP list.
   // Keep the open workflow selected while it is being previewed.
   const options=wf&&!workflows.some(w=>w.id===wf.id)?[wf,...workflows]:workflows;

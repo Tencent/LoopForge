@@ -173,6 +173,10 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 }
 
 func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
+	command, err = projectCommandEnvironment(ctx, command, s.profile.Environment)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
 	if err := s.prepareCommandGitTools(ctx, command.environment); err != nil {
 		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
 	}
@@ -185,7 +189,16 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 		args = append(args, "-i")
 	}
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
+		name, _, _ := strings.Cut(environment, "=")
+		if _, secret := command.projectCredentialEnv[name]; secret {
+			continue
+		}
 		args = append(args, "-e", environment)
+	}
+	for name := range command.projectCredentialEnv {
+		// Docker CLI reads the value from its own environment. Its command
+		// line and the long-lived container config only see variable names.
+		args = append(args, "-e", name)
 	}
 	if cliPath != "" {
 		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
@@ -213,6 +226,9 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	}
 	args = append(args, argv...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
+	if len(command.projectCredentialEnv) > 0 {
+		cmd.Env = appendEnvironment(os.Environ(), command.projectCredentialEnv)
+	}
 	cmd.Stdin = command.Stdin
 	return runCommand(cmd, sink, command)
 }

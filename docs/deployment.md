@@ -97,6 +97,12 @@ Enterprise authentication gateways can sign users in by header with `AGENTFLOW_T
 - Set `AGENTFLOW_IDENTITY_HEADER_SECRET` to a random value, and have the gateway send it in `X-AgentFlow-Gateway-Secret`. The gateway must overwrite, never pass through, the client's `Staffname`, `Staffid`, `x-staff-name` and `X-AgentFlow-Gateway-Secret` headers.
 - Without a secret, any request carrying `X-Forwarded-For`, `Forwarded` or `X-Real-IP` is treated as a forwarded client, and its identity headers are ignored. This only protects proxies that add one of those headers: a same-host proxy that passes client headers through without adding them (for example nginx `proxy_pass` without `proxy_set_header X-Forwarded-For`), and any other process on the host, can still sign in as any user. Set the secret whenever header sign-in is on; the platform logs a warning at startup when it is missing.
 
+### Project credentials
+
+The installer configures `AGENTFLOW_PROJECT_CREDENTIAL_KEY` in `.env` when the setting is missing. For a custom deployment, set it in the platform environment to a Base64-encoded 32-byte random key, which you can generate with `openssl rand -base64 32`. Share the same key across instances and keep it with database backups. After replacing the key, enter every value again on each existing credential to keep its bindings. Leaving values blank requires the previous ciphertext to be readable with the configured key.
+
+Use a project-specific name for any credential that would otherwise share a variable name with a platform executor, Git authentication, or proxy setting. Runners receive only the variables selected for the current execution. Remote execution of these bindings requires Runner 0.12.1 or later.
+
 ### Docker sandboxes
 
 The platform exposes a built-in default sandbox (`generic-docker`, built from its own Dockerfile) even when the catalog SQL has not been installed. It is an in-memory fallback and does not insert database rows. An existing saved `generic-docker` profile takes priority, including its configured driver and environment. The default cannot be deleted; edit its configuration or create another profile to change how tasks run. SOPs that do not choose a sandbox run in it. The full installer still imports starter SOPs and the welcome project; the seeded `generic-docker` Dockerfile matches the platform image, so Compose sandboxes reuse `AGENTFLOW_ISOLATED_IMAGE` instead of building. Without the catalog SQL, the first run builds the built-in Dockerfile once.
