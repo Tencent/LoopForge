@@ -290,6 +290,18 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 	}
 	req.workspaceMode = savedConversation.Mode() == domain.AssistantModeWorkspace
+	var projectCredentialNote string
+	if len(savedConversation.ProjectCredentialIDs) > 0 && !req.sopDesigner() {
+		if savedConversation.ProjectID != req.ProjectID {
+			c.JSON(403, gin.H{"error": "会话项目与凭据项目不一致"})
+			return
+		}
+		names, ok := h.sessionProjectCredentialNames(c, savedConversation, user.ID)
+		if !ok {
+			return
+		}
+		projectCredentialNote = "\n项目凭据的环境变量为 " + strings.Join(names, "、") + "。需要时在项目工作区通过进程环境使用，避免输出值。\n"
+	}
 	if req.workspaceMode && req.RunID == "" && h.sopWorkspaceReadOnly(c, savedConversation, req.ProjectID, user.ID) {
 		// Another member left this shared conversation working in an SOP
 		// workspace; a read-only speaker continues in platform mode.
@@ -346,6 +358,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.ExecutionRunnerID = savedConversation.Execution().RunnerID
 		sess.runnerLogin = runnerLogin
 		sess.RuntimeMode = savedConversation.Mode()
+		if projectCredentialNote != "" {
+			sess.projectCredentialIDs = savedConversation.ProjectCredentialIDs
+		}
 		if sess.RuntimeMode == domain.AssistantModeWorkspace && !req.workspaceMode {
 			sess.RuntimeMode = domain.AssistantModePlatform
 		}
@@ -435,7 +450,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			emit = sink
 		}
 		forward := emit
-		var secretStream assistantSecretStream
+		secretStream := assistantSecretStream{projectSecrets: toolSession.projectSecrets}
 		publish := func(events []assistantStreamEvent) {
 			for _, event := range events {
 				activity.add(event)
@@ -591,9 +606,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 						// The journal's catalogue is uncertain until the phase completes.
 						workspaceRepositoryHash = ""
 					}
-					prompt = prefix + repositoryPrompt + prompt
+					prompt = prefix + repositoryPrompt + projectCredentialNote + prompt
 				} else if !req.sopDesigner() {
-					prompt = assistantPlatformExecutionReminder + "\n" + prompt
+					prompt = assistantPlatformExecutionReminder + "\n" + projectCredentialNote + prompt
 				}
 				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: func(usage domain.TokenUsage) {
 					turnUsage.add(domain.PriceScheduleExecutionUsage(replyModel, usage))
@@ -819,6 +834,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			emit("flush", nil)
 		}
 		reply.Message = redactAssistantSecrets(reply.Message, user)
+		reply.Message = maskProjectSecrets(reply.Message, toolSession.projectSecrets())
 		// Join every streamed paragraph before slides and path cleanup, so a
 		// result that only repeats the last paragraph cannot replace them.
 		activityEvents := activity.forUser(user)

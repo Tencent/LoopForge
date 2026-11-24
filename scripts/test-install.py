@@ -99,6 +99,7 @@ exec "$@"
             self.environ.pop(name, None)
         self.environ.pop('MOCK_COLUMN_COUNT', None)
         self.environ.pop('MOCK_MIGRATION_PLATFORM', None)
+        self.environ.pop('AGENTFLOW_PROJECT_CREDENTIAL_KEY', None)
         for name in ('MOCK_SANDBOX_CATALOG', 'MOCK_LEGACY_SANDBOX_TABLES', 'MOCK_BACKUP_FAILURE', 'MOCK_SANDBOX_MIGRATION_FAILURE'):
             self.environ.pop(name, None)
 
@@ -168,6 +169,27 @@ exec "$@"
         compose = (ROOT / 'compose.yaml').read_text()
         for name in ('AGENTFLOW_CREDENTIAL_KEYS', 'AGENTFLOW_PUBLIC_URL', 'AGENTFLOW_BOT_WORKERS_ENABLED', 'AGENTFLOW_BOT_BODY_RETENTION_DAYS', 'AGENTFLOW_BOT_RECORD_RETENTION_DAYS'):
             self.assertIn(f'      {name}: ${{{name}:-', compose)
+
+    def test_project_credential_key_is_generated_and_preserved(self):
+        import base64
+        result = self.install()
+        self.assert_success(result)
+        env = self.root / '.env'
+        prefix = 'AGENTFLOW_PROJECT_CREDENTIAL_KEY='
+        first = env.read_text()
+        key, = [line[len(prefix):] for line in first.splitlines() if line.startswith(prefix)]
+        self.assertEqual(len(base64.b64decode(key, validate=True)), 32)
+        self.assertNotIn(key, result.stdout + result.stderr)
+        self.assert_success(self.install())
+        self.assertEqual(env.read_text(), first)
+
+        old_env = '\n'.join(line for line in first.splitlines() if not line.startswith(prefix))
+        env.write_text(old_env + '\n# ' + prefix + 'example\n')
+        provided = base64.b64encode(bytes(32)).decode()
+        self.assert_success(self.install(AGENTFLOW_PROJECT_CREDENTIAL_KEY=provided))
+        self.assertIn(prefix + provided, env.read_text().splitlines())
+        self.assert_success(self.install())
+        self.assertIn(prefix + provided, env.read_text().splitlines())
 
     def test_non_root_without_docker_group_uses_sudo_everywhere(self):
         self.assert_success(self.install(MOCK_USER='1000'))

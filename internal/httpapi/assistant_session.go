@@ -383,6 +383,13 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.RunID == "" {
 			conv.RunID = existing.RunID
 		}
+		if existing.ID != "" {
+			conv.ProjectCredentialIDs = existing.ProjectCredentialIDs
+		} else if len(conv.ProjectCredentialIDs) > 0 {
+			if _, ok := h.sessionProjectCredentialNames(c, conv, current.ID); !ok {
+				return
+			}
+		}
 		oldExecutor := h.forkExecutor(c, existing, current.ID)
 		if conv.Executor == "" {
 			conv.Executor = oldExecutor
