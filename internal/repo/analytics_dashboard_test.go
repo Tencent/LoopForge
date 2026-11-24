@@ -89,7 +89,7 @@ func TestAnalyticsDashboardCohorts(t *testing.T) {
 	if d.SOPRuns != 2 || d.SucceededRuns != 1 || d.FailedRuns != 1 || d.HumanRuns != 1 || d.P95ExecutionDurationMs != 180000 {
 		t.Fatalf("SOP cohort: %+v", d)
 	}
-	if d.DeliveredIssues != 3 || d.SOPDeliveredIssues != 2 || d.VibeDeliveredIssues != 1 {
+	if d.DeliveredIssues != 4 || d.SOPDeliveredIssues != 3 || d.VibeDeliveredIssues != 1 {
 		t.Fatalf("merge deduplication / routes: %+v", d)
 	}
 	if d.ActiveMembers != 2 || got.Activity.Sessions != 1 || got.Activity.CollaborativeSessions != 1 {

@@ -176,7 +176,7 @@ function obsPerformanceOption(points,opts){
       const p=point.performance||{},ok=Number(p.toolCallsSucceeded||0),bad=Number(p.toolCallsFailed||0);
       return obsTooltipRows(point.date,[[lfT('平均执行耗时','Mean execution time'),p.measuredRuns?duration(p.averageExecutionDurationMs):'—'],['P95',p.measuredRuns?duration(p.p95ExecutionDurationMs):'—'],[lfT('有耗时记录的运行','Measured runs'),String(p.measuredRuns||0)],[lfT('工具成功率','Tool success rate'),ok+bad?(ok*100/(ok+bad)).toFixed(1)+'%':'—']]);
     }},
-    series:[['averageExecutionDurationMs',lfT('平均执行耗时','Mean execution time'),t.c1],['p95ExecutionDurationMs','P95',t.c2]].map(([key,name,color])=>({id:key,name,type:'line',data:points.map(p=>p.performance?.measuredRuns?Number(p.performance[key]||0):null),connectNulls:false,itemStyle:{color},lineStyle:{color,width:2,type:key==='p95ExecutionDurationMs'?'dashed':'solid'},symbol:'circle',symbolSize:4,animationDurationUpdate:o.reduced?0:350})),
+    series:[['averageExecutionDurationMs',lfT('平均执行耗时','Mean execution time'),t.c1],['p95ExecutionDurationMs','P95',t.c2]].map(([metric,name,color])=>({id:metric,name,type:'line',data:points.map(p=>p.performance?.measuredRuns?Number(p.performance[metric]||0):null),connectNulls:false,itemStyle:{color},lineStyle:{color,width:2,type:metric==='p95ExecutionDurationMs'?'dashed':'solid'},symbol:'circle',symbolSize:4,animationDurationUpdate:o.reduced?0:350})),
   });
 }
 function obsSOPSpec(){

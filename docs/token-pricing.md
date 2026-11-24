@@ -16,7 +16,7 @@
 
 CodeBuddy 的 `result.usage` 是原生会话的累计值，续聊和重试时不能把它当成本轮增量再次相加。助手对话优先使用 `result._meta["codebuddy.ai/turnUsage"].total.usage` 的本轮终态快照；`stage`、`delta`、`total`、终态快照和子代理结果不重复累加。旧版 CLI 没有本轮快照时，按原生会话保留累计游标、计算差额，缓存读写也分别做差。续接会话缺少可靠游标或游标重置时，只采集独立的消息用量，否则将该轮保留为未采集并建立后续基线。进程中断后若已按消息用量计入，则废弃旧游标，避免下一次累计结果再次包含这部分消耗。协议参见 [CodeBuddy 每轮用量说明](https://www.codebuddy.ai/docs/cli/stream-json-turn-usage)。
 
-CodeBuddy SOP 的消息级 `usage.update` 仅用于展示，不得推进会话累计计量游标。累计计量只使用根会话的 `usage.final`，子代理结果不单独累计；同一会话重试仍延续游标。
+CodeBuddy 和 Anthropic 协议的 SOP 消息级 `usage.update` 使用独立游标暂记到运行与节点，不推进会话累计游标。根会话上报最终 Token 快照时，用最终快照结算并扣除已暂记部分；子代理最终结果不再单独累计。同一会话重试延续累计游标，进程在最终结果前中断或结果未包含 Token 用量时，保留已经观测的流式用量，避免将其计为零。
 
 CLI 顶层的 `total_cost_usd` 是美元字段，助手对话也采集它；有效的会话累计美元上报做差后再计入，不能直接叠加。CodeBuddy 的兼容占位 0 按缺失处理；`turnUsage.total.credits` 是积分，不转换成美元或人民币。一次回复内的多次调用分别选择上报金额或公价回退，再累加；`usage.costPricingVersion` 标记平台已计价的合计，防止混合金额再次整体估算。兼容字段 `costReportedUsd` / `costReportedCny` 保留原 API 语义，仍为已识别部分的总金额，可能同时包含上报与估算。
 

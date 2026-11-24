@@ -190,8 +190,8 @@ func (r *AnalyticsRepo) analyticsDashboard(filter domain.AnalyticsFilter, runs [
 	return nil
 }
 
-// Delivery has its own clock. An old execution merged this week belongs to this
-// week's delivery, and later MRs for the same issue must not count it again.
+// Delivery has its own clock: a requirement is delivered when its last
+// necessary PR reaches the default branch, and is counted once per issue.
 // Only persisted MR and run headers are read; analytics never registers MRs.
 func (r *AnalyticsRepo) analyticsDashboardDeliveries(filter domain.AnalyticsFilter, issues map[string]domain.Issue, visit func(time.Time, bool)) error {
 	allTime := filter
@@ -204,19 +204,25 @@ func (r *AnalyticsRepo) analyticsDashboardDeliveries(filter domain.AnalyticsFilt
 	for _, repository := range r.catalog.Repositories() {
 		repositories[strings.ToLower(strings.TrimSpace(repository.GongfengProjectID))] = repository
 	}
-	firstMerge := map[string]time.Time{}
+	lastMerge := map[string]time.Time{}
+	candidates := map[string]bool{}
 	for _, mr := range mrs {
 		repository := repositories[strings.ToLower(strings.TrimSpace(mr.MRProject))]
 		if domain.ClassifyMRDeliveryState("merged", mr.TargetBranch, repository.DefaultBranch, repository.IntegrateBranch) != "merged" {
 			continue
 		}
-		if prior := firstMerge[mr.IssueID]; prior.IsZero() || mr.MergedAt.Before(prior) {
-			firstMerge[mr.IssueID] = mr.MergedAt
+		candidates[mr.IssueID] = true
+		if mr.MergedAt.After(lastMerge[mr.IssueID]) {
+			lastMerge[mr.IssueID] = mr.MergedAt
 		}
 	}
+	states, err := r.analyticsCodingStates(candidates, issues)
+	if err != nil {
+		return err
+	}
 	ids := []string{}
-	for id, at := range firstMerge {
-		if analyticsActivityInWindow(at, filter) {
+	for id, at := range lastMerge {
+		if state := states[id]; state.delivered && !state.missingMergeTime && analyticsActivityInWindow(at, filter) {
 			ids = append(ids, id)
 		}
 	}
@@ -245,7 +251,7 @@ func (r *AnalyticsRepo) analyticsDashboardDeliveries(filter domain.AnalyticsFilt
 			if !filter.MatchesProject(projectID) {
 				continue
 			}
-			if context.ParentRunID != "" || row.Created == nil || row.Created.IsZero() || row.Created.After(firstMerge[context.IssueID]) {
+			if context.ParentRunID != "" || row.Created == nil || row.Created.IsZero() || row.Created.After(lastMerge[context.IssueID]) {
 				continue
 			}
 			if row.Kind == domain.RunKindWorkspace {
@@ -264,7 +270,7 @@ func (r *AnalyticsRepo) analyticsDashboardDeliveries(filter domain.AnalyticsFilt
 		}
 		for _, id := range batch {
 			if sop[id] || workspace[id] {
-				visit(firstMerge[id], sop[id])
+				visit(lastMerge[id], sop[id])
 			}
 		}
 	}

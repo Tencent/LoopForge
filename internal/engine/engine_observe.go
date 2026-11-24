@@ -191,8 +191,19 @@ func (e *Engine) applyObservation(r *domain.Run, nodeID string, observation doma
 			// message, while result usage is cumulative across the session.
 			// Mixing their cursors rebills prior turns at the next result.
 			messageUsage := observation.Name == "usage.update" && (observation.Source.Adapter == "anthropic-stream-v1" || observation.Source.Adapter == "codebuddy-stream-json-v1")
-			if observation.Usage != nil && !messageUsage {
-				applyUsage(r, nr, observation.SessionID, *observation.Usage)
+			if observation.Name == "model.request" && observation.Phase == "start" {
+				delete(nr.UsageStreamCursors, messageUsageKey(nr.SessionID, observation.ParentID))
+			}
+			if observation.Usage != nil {
+				if messageUsage {
+					applyMessageUsage(r, nr, observation.SessionID, observation.ParentID, *observation.Usage)
+				} else {
+					if observation.Name == "usage.final" {
+						applyFinalUsage(r, nr, observation)
+					} else {
+						applyUsage(r, nr, observation.SessionID, *observation.Usage)
+					}
+				}
 			}
 		}
 	}

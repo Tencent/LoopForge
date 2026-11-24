@@ -289,7 +289,7 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 		if _, ok := raw["total_cost_usd"]; ok && (a.ex.Kind != "codebuddy" || usage.CostUSD != 0) {
 			usage.CostStatus = "reported"
 		}
-		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"]}})
+		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"], "usageReported": raw["usage"] != nil}})
 		a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.completed", Phase: "finish", Message: result, SessionID: sessionID})
 	default:
 		// File snapshots and provider-specific housekeeping events are intentionally hidden from the portable view.

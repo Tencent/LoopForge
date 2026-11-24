@@ -6,7 +6,10 @@ import (
 	"agentflow/internal/domain"
 )
 
-type analyticsCodingState struct{ withMR, delivered bool }
+type analyticsCodingState struct {
+	withMR, delivered bool
+	missingMergeTime  bool
+}
 
 func (r *AnalyticsRepo) analyticsCodingStates(ids map[string]bool, issues map[string]domain.Issue) (map[string]analyticsCodingState, error) {
 	out := map[string]analyticsCodingState{}
@@ -27,7 +30,7 @@ func (r *AnalyticsRepo) analyticsCodingStates(ids map[string]bool, issues map[st
 	}
 	for start := 0; start < len(keys); start += 500 {
 		var rows []mrDeliveryStateRow
-		if err := r.DB.Select("issue_id", "mr_project", "state", "target_branch").Where("issue_id IN ?", keys[start:min(start+500, len(keys))]).Find(&rows).Error; err != nil {
+		if err := r.DB.Select("issue_id", "mr_project", "mr_iid", "mr_url", "state", "target_branch", "merged_at").Where("issue_id IN ?", keys[start:min(start+500, len(keys))]).Find(&rows).Error; err != nil {
 			return nil, err
 		}
 		byIssue := map[string][]domain.DeliveryMR{}
@@ -36,17 +39,39 @@ func (r *AnalyticsRepo) analyticsCodingStates(ids map[string]bool, issues map[st
 			state.withMR = true
 			repository := repositories[strings.ToLower(strings.TrimSpace(row.MRProject))]
 			classified := domain.ClassifyMRDeliveryState(row.State, row.TargetBranch, repository.DefaultBranch, repository.IntegrateBranch)
-			byIssue[row.IssueID] = append(byIssue[row.IssueID], domain.DeliveryMR{State: classified})
+			if classified == "merged" && (row.MergedAt == nil || row.MergedAt.IsZero()) {
+				state.missingMergeTime = true
+			}
+			url := row.MRURL
+			if url == "" {
+				url = domain.GongfengMRURL(row.MRProject, row.MRIID)
+			}
+			byIssue[row.IssueID] = append(byIssue[row.IssueID], domain.DeliveryMR{Project: row.MRProject, IID: row.MRIID, URL: url, State: classified})
 			out[row.IssueID] = state
 		}
 		for id, mrs := range byIssue {
+			state := out[id]
+			// A required PR may already be attached to the issue before its
+			// first host refresh registers a delivery-state row.
+			for _, mr := range issues[id].DeliveryMRList() {
+				found := false
+				for _, recorded := range mrs {
+					if domain.SameGongfengMR(mr.URL, recorded.URL) || (mr.Project != "" && strings.EqualFold(mr.Project, recorded.Project) && mr.IID == recorded.IID) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					mrs = append(mrs, mr)
+					state.missingMergeTime = state.missingMergeTime || mr.State != "closed"
+				}
+			}
 			// A reopened issue stays reopened, and one merged PR cannot stand
 			// in for an incomplete multi-repository delivery.
-			if issues[id].DeliveryState == "" && domain.AggregateDeliveryMRState(mrs) == "merged" {
-				state := out[id]
-				state.delivered = true
-				out[id] = state
+			if issues[id].DeliveryState == "" {
+				state.delivered = domain.AggregateDeliveryMRState(mrs) == "merged"
 			}
+			out[id] = state
 		}
 	}
 	return out, nil

@@ -165,6 +165,11 @@ type NodeRun struct {
 	ChildRunID      string      `json:"childRunId,omitempty"`
 	StartedAt       time.Time   `json:"startedAt,omitzero"`
 	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
+
+	// Stream cursors are message-scoped; pending usage is already included in
+	// Usage until a session result replaces it with authoritative totals.
+	UsageStreamCursors map[string]TokenUsage `json:"usageStreamCursors,omitempty"`
+	UsagePending       map[string]TokenUsage `json:"usagePending,omitempty"`
 }
 
 // GateResult is the structured terminal decision submitted by an Agent through
