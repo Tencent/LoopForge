@@ -239,5 +239,5 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	jitter := make([]byte, 1)
 	_, _ = rand.Read(jitter)
 	delay += time.Duration(jitter[0]%10) * time.Second
-	return true, s.Store.FinishNotification(*item, status, detail, now.Add(delay))
+	return true, s.Store.FinishNotification(*item, status, detail, time.Now().UTC().Add(delay))
 }

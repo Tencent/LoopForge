@@ -6,6 +6,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -326,4 +327,24 @@ func TestUnifiedSOPSetupFailureUsesStandardReminder(t *testing.T) {
 	if len(items) != 1 || f.sent != 1 || !strings.Contains(f.content, "沙箱启动失败") || strings.Contains(f.content, "完成汇报专用") {
 		t.Fatalf("%+v %s", items, f.content)
 	}
+}
+
+func TestNotificationRetryBackoffStartsWhenAttemptFails(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		svc, provider, bot, _ := serviceFixture(t)
+		provider.err = failure(500)
+		provider.onSessions = func() { time.Sleep(35 * time.Second) }
+
+		if processed, err := svc.ProcessOne(context.Background()); err != nil || !processed {
+			t.Fatalf("process = %t, %v", processed, err)
+		}
+		items, err := svc.Store.NotificationDeliveries(bot.ProjectID)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("deliveries = %v, %v", items, err)
+		}
+		item := items[0]
+		if item.Status != "pending" || item.NextAttemptAt.Sub(time.Now()) < 20*time.Second {
+			t.Fatalf("status = %q, delay after failing = %s, want pending with at least 20s backoff", item.Status, item.NextAttemptAt.Sub(time.Now()))
+		}
+	})
 }
