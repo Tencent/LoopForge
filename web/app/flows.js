@@ -1044,6 +1044,9 @@ function flowHasConditionalAncestor(id,edges,seen=new Set()){
   if(seen.has(id))return false;seen.add(id);return edges.some(e=>e.target===id&&(e.condition||flowHasConditionalAncestor(e.source,edges,seen)));
 }
 function flowRoutingPane(n){
+  // Approval nodes only pause for a human decision. They cannot evaluate
+  // route/artifact conditions, so do not expose a routing editor for them.
+  if(n.type==='approval')return '';
   const outgoing=(state.workflow.edges||[]).filter(e=>e.source===n.id);
   const incoming=(state.workflow.edges||[]).filter(e=>e.target===n.id);
   const warning=incoming.length>1&&(!n.joinRule||n.joinRule==='all_success')&&flowHasConditionalAncestor(n.id,state.workflow.edges||[])?'<p class="prop-hint">此节点汇合条件分支；默认规则会在任一上游跳过时跳过本节点。</p>':'';
