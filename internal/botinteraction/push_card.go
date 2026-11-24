@@ -481,7 +481,7 @@ func draftCard(draft domain.BotPendingDraft, reply, publicURL string) *PushCard 
 	}
 	card.Required = fmt.Sprintf("%d 分钟内有效，只有发起人可以确认；每份操作只执行一次", int(repo.BotDraftTTL.Minutes()))
 	card.Actions = []PushCardAction{{Key: DraftActionConfirm, Text: "确认执行"}}
-	if strings.Contains(draft.Summary, "（LOOP：") || strings.Contains(draft.Summary, "（SOP：") {
+	if strings.Contains(draft.Summary, "（LOOP：") || strings.Contains(draft.Summary, "（LOOP：") {
 		card.Actions = append(card.Actions, PushCardAction{Key: DraftActionConfirmStart, Text: "确认并启动 LOOP"})
 	}
 	card.Actions = append(card.Actions, PushCardAction{Key: DraftActionCancel, Text: "取消", Danger: true})

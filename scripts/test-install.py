@@ -40,7 +40,7 @@ class InstallerTests(unittest.TestCase):
             '033_generic_sop_mr_node.sql',
             '038_generic_sop_host_credentials.sql',
             '041_native_sandbox_inline_assets.sql',
-            '042_loop_terminology.sql',
+            '043_loop_terminology.sql',
         ):
             (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
         (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')

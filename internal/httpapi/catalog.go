@@ -1296,7 +1296,7 @@ func (h *catalogHandlers) validateWorkflowProjectCredentials(c *gin.Context, wf 
 	user, ok := h.requestUser(c.Request, true)
 	use, _ := h.projectCredentialAccess(c.Request, wf.ProjectID, user.ID)
 	if !ok || !use {
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权在该 SOP 中绑定项目凭据"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权在该 LOOP 中绑定项目凭据"})
 		return false
 	}
 	if _, err := h.repo.ProjectCredentialVariableNames(c.Request.Context(), wf.ProjectID, wf.ProjectCredentialIDs); err != nil {

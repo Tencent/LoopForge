@@ -154,7 +154,7 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 const RunnerVersionRepositoryCache = "0.12.0"
 
 // RunnerVersionProjectCredentials adds in-memory project environment values
-// to authenticated SOP task claims and conversation process starts.
+// to authenticated LOOP task claims and conversation process starts.
 const RunnerVersionProjectCredentials = "0.12.1"
 
 func (r Runner) SupportsProjectCredentials() bool {

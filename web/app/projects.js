@@ -181,7 +181,7 @@ function projectMembersPanelHTML(d,saved){
   const owner=userById(d.ownerId);
   const members=(d.members||[]).map((m,i)=>{const u=userById(m.userId);return `<div class="member-row pa-member-row" data-member-row="${i}"><span class="member-avatar">${userAvatarHTML(u,48)}</span><select class="select member-role" data-m="role" aria-label="成员角色">${PROJECT_MEMBER_ROLES.map(r=>`<option value="${r.id}"${projectMemberRole(m.role)===r.id?' selected':''}>${r.label}</option>`).join('')}</select>${userCombobox(`member-${i}`,m.userId,'请选择项目成员','data-m="userId"')}<button type="button" data-remove-member="${i}" title="移除成员" aria-label="移除成员">×</button></div>`}).join('');
   return paSection('负责人','Owner 是项目的默认责任人，接收需要介入的通知。',`<div class="pa-rows"><div class="member-row owner-row pa-member-row"><span class="member-avatar owner">${userAvatarHTML(owner,48)}</span><span class="member-kind owner">Owner</span>${userCombobox('ownerId',d.ownerId,'请选择项目 Owner')}<span></span></div></div>`)
-    +paSection('成员','维护者和成员可推进需求、修改项目内角色与 SOP；维护者还能管理通知机器人和上报数据源；只读成员只能查看。',`<div class="pa-rows" id="memberRows">${members||'<div class="pa-rows-empty">还没有其他成员</div>'}</div>`,'<button id="addMember" type="button" class="button ghost small">＋ 添加成员</button>')
+    +paSection('成员','维护者和成员可推进需求、修改项目内角色与 LOOP；维护者还能管理通知机器人和上报数据源；只读成员只能查看。',`<div class="pa-rows" id="memberRows">${members||'<div class="pa-rows-empty">还没有其他成员</div>'}</div>`,'<button id="addMember" type="button" class="button ghost small">＋ 添加成员</button>')
     +(saved&&canReviewProjectJoin(saved)?paSection('加入申请','通过后申请人立即成为项目成员；通过前可调整授予的角色。',`<div class="pa-rows" data-pa-join-box>${projectJoinRowsHTML(saved)}</div>`):'');
 }
 function projectAdminFormHTML(d,ctx){

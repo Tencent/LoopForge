@@ -173,7 +173,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		h.proxyRunnerWorkspace(c, run, owner, runnerID)
 		return
 	}
-	// In a child-first SOP, the child may have bound the checkout before the
+	// In a child-first LOOP, the child may have bound the checkout before the
 	// owner has run a step of its own. Use that binding until the owner has one.
 	workspace := owner
 	if strings.TrimSpace(workspace.WorkspaceRoot) == "" {

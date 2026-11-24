@@ -209,7 +209,7 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 ## Observability schema
 
-After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog and the built-in catalog updates in `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` and `042_loop_terminology.sql`, in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in LOOP graphs the new code ships. Application startup does not run data migrations.
+After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog and the built-in catalog updates in `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` and `043_loop_terminology.sql`, in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in LOOP graphs the new code ships. Application startup does not run data migrations.
 
 For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly.
 
@@ -255,7 +255,7 @@ cat migrations/033_generic_sop_mr_node.sql migrations/038_generic_sop_host_crede
 
 Migration 033 checks that the node graph and 交付汇总 position still match the shipped template. It updates the 交付汇总 prompt only when it is unedited. Migration 038 replaces the original Git authentication instruction with guidance to use a hosting CLI, a configured MCP, or `git credential fill` for API access. Both migrations preserve project copies and can be repeated. The Git credentials of the run's responsible user need push access for the new step to complete.
 
-The installer and `./start.sh pull` apply `042_loop_terminology.sql` to update the four built-in template names, their default MR guidance and the stock demo project description. On an existing non-Compose deployment, apply that SQL file directly to the LoopForge database after the catalog updates above. It is repeatable and preserves custom template names, project copies and run history.
+The installer and `./start.sh pull` apply `043_loop_terminology.sql` to update the four built-in template names, their default MR guidance and the stock demo project description. On an existing non-Compose deployment, apply that SQL file directly to the LoopForge database after the catalog updates above. It is repeatable and preserves custom template names, project copies and run history.
 
 ## GitHub credentials
 
