@@ -207,7 +207,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		firstRepository = repositories[0]
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
-	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err
 	}
 	wf.SandboxSnapshot = sandbox

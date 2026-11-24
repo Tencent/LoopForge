@@ -68,7 +68,7 @@ type RunCredentials struct {
 	// conversation workspace. It travels to the execution machine on the
 	// authenticated control connection only, in the start request of the CLI.
 	GitSSHHostKeys map[string]string `json:",omitempty"`
-	// GitHTTPHosts maps each HTTPS host the requester exposes to a workspace
+	// GitHTTPHosts maps each HTTP(S) endpoint the requester exposes to a workspace
 	// to its platform. It holds no tokens; the helper asks for them per host.
 	GitHTTPHosts map[string]string `json:",omitempty"`
 	// GitHTTPCredentials travels only on authenticated execution dispatches.

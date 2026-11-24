@@ -12,7 +12,7 @@ func TestExplainGitAuthFailure(t *testing.T) {
 	if !errors.Is(missing, raw) || !strings.HasPrefix(missing.Error(), "运行责任人未配置 Git Token") {
 		t.Fatalf("missing token: %v", missing)
 	}
-	for _, want := range []string{"Git 访问令牌", "准确主机", "用户名", "could not read Username"} {
+	for _, want := range []string{"Git 访问令牌", "协议、主机和端口", "用户名", "could not read Username"} {
 		if !strings.Contains(missing.Error(), want) {
 			t.Fatalf("missing %q in %v", want, missing)
 		}

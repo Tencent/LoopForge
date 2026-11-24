@@ -473,6 +473,11 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements) 
 	// The cache is private to the host side even when a sandbox has access
 	// to the host's temporary directory.
 	b.WriteString(`(deny file-read* file-write* (regex #"^(/private)?/tmp/[.]loopforge-repository-cache-[0-9]+(/|$)"))` + "\n")
+	if gitTools, err := nativeGitToolsRoot(); err == nil {
+		for _, path := range seatbeltPathVariants(gitTools) {
+			fmt.Fprintf(&b, "(deny file-write* (subpath %s))\n", strconv.Quote(path))
+		}
+	}
 	return b.String(), nil
 }
 
@@ -611,8 +616,10 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]str
 			return nil, statErr
 		}
 	}
-	args = append(args, "--")
-	return args, nil
+	if gitTools, err := nativeGitToolsRoot(); err == nil {
+		args = append(args, "--ro-bind-try", gitTools, gitTools)
+	}
+	return append(args, "--"), nil
 }
 
 // dockerAgentStateMount exposes only the state directory belonging to the CLI

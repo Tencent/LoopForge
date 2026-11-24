@@ -28,11 +28,12 @@ var gongfengAPIBase string
 var requiredGitTokenScopes = []string{"read_repository", "write_repository"}
 
 type gitTokenVerifyResult struct {
-	Valid   bool     `json:"valid"`
-	Login   string   `json:"login,omitempty"`
-	Scopes  []string `json:"scopes,omitempty"`
-	Missing []string `json:"missing,omitempty"`
-	Error   string   `json:"error,omitempty"`
+	Valid              bool     `json:"valid"`
+	RepositoryReadable bool     `json:"repositoryReadable,omitempty"`
+	Login              string   `json:"login,omitempty"`
+	Scopes             []string `json:"scopes,omitempty"`
+	Missing            []string `json:"missing,omitempty"`
+	Error              string   `json:"error,omitempty"`
 }
 
 // verifyGitToken 校验当前登录用户的 GitHub Git Token 是否生效。

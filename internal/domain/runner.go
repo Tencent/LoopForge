@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strconv"
@@ -156,6 +157,29 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 // RunnerVersionRepositoryCache is the first runner that reuses a host cache
 // when checking out repositories for a native workspace. Older runners clone fully.
 const RunnerVersionRepositoryCache = "0.12.0"
+
+// RunnerVersionGitPlainHTTP is the first runner that can supply credentials
+// for an authorized plaintext Git instance.
+const RunnerVersionGitPlainHTTP = "0.12.4"
+
+func (r Runner) SupportsGitPlainHTTP() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitPlainHTTP)
+}
+
+const RunnerGitPlainHTTPUpgradeMessage = "Git HTTP 仓库需要 Runner " + RunnerVersionGitPlainHTTP + " 或更新版本，请先升级执行机器"
+
+// FilterGitHTTPCredentials limits a credential snapshot to the transports the
+// runner supports. The caller's map may also be used by local execution.
+func (r Runner) FilterGitHTTPCredentials(credentials map[string]GitHTTPExecutionCredential) map[string]GitHTTPExecutionCredential {
+	if r.SupportsGitPlainHTTP() {
+		return credentials
+	}
+	filtered := maps.Clone(credentials)
+	maps.DeleteFunc(filtered, func(scope string, _ GitHTTPExecutionCredential) bool {
+		return strings.HasPrefix(scope, "http://")
+	})
+	return filtered
+}
 
 // RunnerVersionProjectCredentials adds in-memory project environment values
 // to authenticated SOP task claims and conversation process starts.

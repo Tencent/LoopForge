@@ -122,7 +122,7 @@ type AgentToolSession struct {
 	// toolCalls cancels the tools/call requests still running, by JSON-RPC
 	// id, when the CLI sends notifications/cancelled for them.
 	toolCalls map[string]*agentToolCallCancel
-	// gitHosts maps each host an HTTPS Git token was handed out for this turn
+	// gitHosts maps each endpoint a Git token was handed out for this turn
 	// onto its platform, for the end-of-turn PR scan. gitScrubbed names the
 	// credentials the agent wrote by hand that were removed after its CLI.
 	gitHosts          map[string]string
