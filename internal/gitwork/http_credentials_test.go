@@ -2,12 +2,14 @@ package gitwork
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 )
 
 func TestPlainHTTPRedirectConfigMatchesIPv6Spellings(t *testing.T) {
+	dir := t.TempDir()
 	for _, tc := range []struct {
 		scope, url string
 		want       bool
@@ -18,13 +20,16 @@ func TestPlainHTTPRedirectConfigMatchesIPv6Spellings(t *testing.T) {
 		{"http://[fd00::2]:8443", "https://[fd00::2]:8443/team/app.git", false},
 		{"http://git.example.org:8443", "http://git.example.org:8443/team/app.git", true},
 	} {
-		out, err := exec.CommandContext(t.Context(), "git", "-c", PlainHTTPRedirectConfig(tc.scope)+"=false",
-			"config", "--get-urlmatch", "http.followRedirects", tc.url).Output()
+		cmd := exec.CommandContext(t.Context(), "git", "-c", PlainHTTPRedirectConfig(tc.scope)+"=false",
+			"config", "--get-urlmatch", "http.followRedirects", tc.url)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+		out, err := cmd.CombinedOutput()
 		if tc.want && (err != nil || strings.TrimSpace(string(out)) != "false") {
 			t.Errorf("redirect setting for %s from %s = %q, %v", tc.url, tc.scope, out, err)
 		}
-		if !tc.want && err == nil {
-			t.Errorf("unexpected redirect setting for %s from %s: %q", tc.url, tc.scope, out)
+		if !tc.want && (err == nil || len(out) != 0) {
+			t.Errorf("unexpected redirect lookup result for %s from %s: %q, %v", tc.url, tc.scope, out, err)
 		}
 	}
 }
