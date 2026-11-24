@@ -111,11 +111,19 @@ func submitAssistantReplySchema(exec assistantExecMode) map[string]any {
 	names := assistantWriteToolNameList()
 	toolSchema := map[string]any{"type": "string", "description": "必填：本草稿要执行的写入工具名称，如 issues_save、issues_dispatch；不要省略，不带 mcp__ 前缀"}
 	if len(names) > 0 {
+		// assistant_tasks_save is itself a writable public operation, so the
+		// unconditional append used to register it twice. Strict validators
+		// reject a duplicated enum value and drop the whole tool definition,
+		// which takes every confirm-mode draft submission with it.
+		seen := make(map[string]struct{}, len(names)+1)
 		enum := make([]any, 0, len(names)+1)
-		for _, name := range names {
+		for _, name := range append(names, "assistant_tasks_save") {
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
 			enum = append(enum, name)
 		}
-		enum = append(enum, "assistant_tasks_save")
 		toolSchema["enum"] = enum
 	}
 	draft := map[string]any{
