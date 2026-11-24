@@ -30,7 +30,7 @@ type SkillDefinition struct {
 	ProjectID   string            `json:"projectId,omitempty"`
 	Shared      bool              `json:"shared,omitempty"`
 	Description string            `json:"description"`
-	Content     string            `json:"content"`
+	Content     string            `json:"content,omitempty"` // Legacy catalog input and embedded template content.
 	Files       map[string]string `json:"files,omitempty"`
 	// FileRefs is the manifest of binary assets stored in the skill_files
 	// table (one row per file). Only metadata travels in the payload; the

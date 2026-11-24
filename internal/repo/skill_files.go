@@ -93,9 +93,29 @@ func (r *CatalogRepo) PutSkillFiles(skillID string, files []SkillFileInput) erro
 	})
 }
 
-// ErrSkillExists is returned by PutSkillSnapshot when create is requested
-// for an id that already has a skills row.
+// ErrSkillExists is returned when creating a skill with an existing ID.
 var ErrSkillExists = errors.New("skill id already exists")
+
+// CreateSkill stores an optional initial body as SKILL.md in the file table.
+func (r *CatalogRepo) CreateSkill(v domain.SkillDefinition) error {
+	v.FileRefs = nil
+	if v.Content == "" {
+		v.UpdatedAt = time.Now().UTC()
+		return insertSkill(r.DB, v)
+	}
+	body := []byte(v.Content)
+	v.Content = ""
+	return r.PutSkillSnapshot(v, []SkillFileInput{{Path: "SKILL.md", Content: body}}, true)
+}
+
+func insertSkill(tx *gorm.DB, v domain.SkillDefinition) error {
+	row := skillRow{ID: v.ID, Name: v.Name, Payload: mustJSON(v), Updated: timePtr(v.UpdatedAt)}
+	err := tx.Create(&row).Error
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return ErrSkillExists
+	}
+	return err
+}
 
 // PutSkillSnapshot writes the skill row and its complete file set in one
 // transaction, so a failed install or update leaves no partial skill and no
@@ -111,15 +131,10 @@ func (r *CatalogRepo) PutSkillSnapshot(v domain.SkillDefinition, files []SkillFi
 	v.UpdatedAt = now
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		if create {
-			var count int64
-			if err := tx.Table("skills").Where("id = ?", v.ID).Count(&count).Error; err != nil {
+			if err := insertSkill(tx, v); err != nil {
 				return err
 			}
-			if count > 0 {
-				return ErrSkillExists
-			}
-		}
-		if err := upsert(tx, "skills", map[string]any{
+		} else if err := upsert(tx, "skills", map[string]any{
 			"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(now),
 		}); err != nil {
 			return err
