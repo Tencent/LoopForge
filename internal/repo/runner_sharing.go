@@ -24,19 +24,24 @@ func (r *RunnersRepo) lockRunner(tx *gorm.DB, id string) (runnerRow, error) {
 	return row, err
 }
 
-func (r *RunnersRepo) projectRunnerAccess(projectID string, userID int64) bool {
+func (r *RunnersRepo) writableRunnerProject(projectID string, userID int64) (domain.Project, bool) {
 	if projectID == "" || userID <= 0 {
-		return false
+		return domain.Project{}, false
 	}
 	project, ok := r.projects.Project(projectID)
-	return ok && project.ID == projectID && project.ArchivedAt == nil && project.HasWritableMember(userID)
+	return project, ok && project.ID == projectID && project.ArchivedAt == nil && project.HasWritableMember(userID)
+}
+
+func runnerSharedByWritableOwner(runner domain.Runner, project domain.Project) bool {
+	return runner.SharedWithProject(project.ID) && project.HasWritableMember(runner.OwnerUserID)
 }
 
 func (r *RunnersRepo) CanUseRunner(runner domain.Runner, projectID string, userID int64) bool {
 	if projectID == "" {
 		return userID > 0 && runner.OwnerUserID == userID
 	}
-	return runner.SharedWithProject(projectID) && r.projectRunnerAccess(projectID, userID)
+	project, writable := r.writableRunnerProject(projectID, userID)
+	return writable && runnerSharedByWritableOwner(runner, project)
 }
 
 type RunnerProjectView struct {
@@ -45,11 +50,11 @@ type RunnerProjectView struct {
 }
 
 func (r *RunnersRepo) RunnersForUser(userID int64, projectID string) []RunnerProjectView {
-	writable := r.projectRunnerAccess(projectID, userID)
+	project, writable := r.writableRunnerProject(projectID, userID)
 	items := r.Runners()
 	out := make([]RunnerProjectView, 0, len(items))
 	for _, runner := range items {
-		canUse := writable && runner.SharedWithProject(projectID)
+		canUse := writable && runnerSharedByWritableOwner(runner, project)
 		if runner.OwnerUserID == userID || canUse {
 			out = append(out, RunnerProjectView{Runner: runner, CanUseInProject: canUse})
 		}
@@ -67,7 +72,7 @@ func (r *RunnersRepo) SetRunnerSharedProjects(id string, userID int64, projectID
 	slices.Sort(projectIDs)
 	projectIDs = slices.Compact(projectIDs)
 	for _, projectID := range projectIDs {
-		if !r.projectRunnerAccess(projectID, userID) {
+		if _, writable := r.writableRunnerProject(projectID, userID); !writable {
 			return ErrRunnerProjectDenied
 		}
 	}
@@ -93,7 +98,7 @@ func (r *RunnersRepo) SetRunnerSharedProjects(id string, userID int64, projectID
 	})
 }
 
-// ProjectDefaultRunner rechecks membership and the grant on each resolution
+// ProjectDefaultRunner rechecks both memberships and the grant on each resolution
 // so a stale preference cannot allocate a new run on a revoked machine.
 func (r *RunnersRepo) ProjectDefaultRunner(userID int64, projectID string) domain.Runner {
 	if projectID == "" || userID <= 0 {
@@ -143,7 +148,8 @@ func (r *RunnersRepo) SetProjectDefaultRunner(userID int64, projectID, runnerID 
 	if runnerID == "" {
 		return r.DB.Where("user_id = ? AND project_id = ?", userID, projectID).Delete(&userProjectRunnerPrefRow{}).Error
 	}
-	if !r.projectRunnerAccess(projectID, userID) {
+	project, writable := r.writableRunnerProject(projectID, userID)
+	if !writable {
 		return ErrRunnerProjectDenied
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
@@ -151,7 +157,7 @@ func (r *RunnersRepo) SetProjectDefaultRunner(userID int64, projectID, runnerID 
 		if err != nil {
 			return err
 		}
-		if !runnerFromRow(row).SharedWithProject(projectID) {
+		if !runnerSharedByWritableOwner(runnerFromRow(row), project) {
 			return ErrRunnerProjectDenied
 		}
 		return upsert(tx, "user_project_runner_prefs", map[string]any{

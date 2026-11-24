@@ -152,6 +152,28 @@ func TestRunnerProjectSharing(t *testing.T) {
 		t.Fatalf("revoked project default = %q", got)
 	}
 
+	check(member, http.MethodPut, "/api/runners/default?projectId=two", selection, 200)
+	checkDefault(member, "two", runner.ID, "", runner.ID)
+	for _, members := range [][]domain.ProjectMember{
+		{{UserID: owner.user.ID, Role: "viewer"}},
+		{},
+	} {
+		if err := owner.s.PutProject(domain.Project{ID: "two", Name: "Two", OwnerID: member.user.ID, Members: members}); err != nil {
+			t.Fatal(err)
+		}
+		var rows []repo.RunnerProjectView
+		if err := json.Unmarshal(check(member, http.MethodGet, "/api/runners?projectId=two", nil, 200), &rows); err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("project with machine owner membership %+v exposed %+v", members, rows)
+		}
+		checkDefault(member, "two", "", "", "")
+		check(member, http.MethodPut, "/api/runners/default?projectId=two", selection, 403)
+		check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-owner-revoked", draft("two"), 400)
+	}
+	checkDefault(owner, "", runner.ID, "", "")
+
 	register := func(f cvBHTTPFixture) string {
 		t.Helper()
 		var code struct{ Code string }
