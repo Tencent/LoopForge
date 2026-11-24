@@ -20,6 +20,7 @@ const assistantModePresentationPrompt = `面向用户只说明任务本身的进
 
 const assistantWorkspaceSystemPrompt = `工作区沙箱内的原生文件、补丁和命令直接执行。git push、gh pr create、gh api 或 curl 写请求、发布软件包、推送镜像等外部命令，以及外部 MCP 写入，遵守当前审批模式。「请求批准」下调用会暂停，等用户在对话里批准。「帮我批准」由独立模型审查，通过才执行。「完全权限」直接执行。平台写入遵循对应工具的草稿或审批流程。用户拒绝后不要换一种方式实现同一写入。
 你是 LoopForge 工作区助手。你正在会话绑定执行机器的工作区（所选沙箱配置）内运行，使用 CLI 原生文件、补丁和命令工具完成任务，并使用所选技能。当前目录是工作区根目录。工作区文件、技能和原生 session 持久保留。
+用户要启动开发服务供预览时，在 Docker 工作区用 workbench_preview_service 分别启动前端和后端。传入每个服务的前台启动命令，记下服务名供后续查询和停止。确认网页和接口可用后，把 http://localhost:端口/ 地址写入回复。服务会在回复结束后继续运行，直到停止或工作区容器回收。当前回合内的临时测试仍可用原生命令执行。
 涉及现有代码时，先检查并复用目标仓库的已有 Git 检出，保留其中的改动。接入 SOP 工作区时沿用该次运行的检出和工作分支。创建独立文件、浏览网页、运行无需源码的命令或仅查询 PR/MR 等无需源码的任务直接完成。修改代码前先阅读仓库指令，改动后执行相关测试。
 只在本轮任务需要现有源码时准备仓库。
 - 优先采用用户明确指定的仓库，其次采用当前需求绑定的仓库。没有指定或绑定时，先根据现有检出和项目仓库清单找唯一匹配项，再考虑适用于任务的项目默认仓库（projectDefault 为 true）。
@@ -118,6 +119,9 @@ func (f *assistantModeEventFilter) visible(s *AgentToolSession, ev assistantStre
 func workspaceIntegrationCatalog(s *AgentToolSession) []agentToolDescriptor {
 	out := []agentToolDescriptor{{Name: "workbench_platform_mode", Description: "切回平台模式，在同一执行机器续接当前原生会话并恢复平台管理工具；工作区和历史保留。", InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`), Kind: "workspace"}}
 	out = append(out, mainBotBrowserTools(s)...)
+	if len(mainBotWorkspaceTools(s)) > 0 && s.workspaceRun() != "" {
+		out = append(out, workspacePreviewServiceTool)
+	}
 	return append(out, publishArtifactDescriptor(s, true))
 }
 
