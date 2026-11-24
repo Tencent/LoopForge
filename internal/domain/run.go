@@ -165,6 +165,11 @@ type NodeRun struct {
 	ChildRunID      string      `json:"childRunId,omitempty"`
 	StartedAt       time.Time   `json:"startedAt,omitzero"`
 	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
+
+	// Stream cursors are message-scoped; pending usage is already included in
+	// Usage until a session result replaces it with authoritative totals.
+	UsageStreamCursors map[string]TokenUsage `json:"usageStreamCursors,omitempty"`
+	UsagePending       map[string]TokenUsage `json:"usagePending,omitempty"`
 }
 
 // GateResult is the structured terminal decision submitted by an Agent through
@@ -195,6 +200,9 @@ type TokenUsage struct {
 	// CostStatus 区分"成本为 0"与"成本未知"：reported（适配器上报）、estimated（按 token 估算）、
 	// unknown（未识别，展示为"未识别"而不是 ¥0）。空值视为 unknown，旧数据向后兼容。
 	CostStatus string `json:"costStatus,omitempty"`
+	// Marks a platform-priced total so a sum of reported and fallback-priced
+	// invocations is not repriced as though it came from one model call.
+	CostPricingVersion string `json:"costPricingVersion,omitempty"`
 }
 
 type TelemetryEvent struct {

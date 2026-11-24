@@ -36,6 +36,9 @@ JSON
 	if u.InputTokens != 4 || u.OutputTokens != 493 || u.CacheReadTokens != 253736 || u.CacheWriteTokens != 454 {
 		t.Fatalf("usage = %+v", u)
 	}
+	if u.CostUSD != .12 || u.CostStatus != "reported" {
+		t.Fatalf("top-level reported dollars were lost: %+v", u)
+	}
 }
 
 func TestAssistantCLISkipsUsageWithoutTokens(t *testing.T) {
@@ -100,7 +103,7 @@ exit 0
 fi
 if [ -f "` + counter + `" ]; then
 cat <<'JSON'
-{"type":"result","result":"检查结果正常，没有问题。","usage":{"input_tokens":20,"output_tokens":30,"cache_read_input_tokens":400,"cache_creation_input_tokens":5}}
+{"type":"result","result":"检查结果正常，没有问题。","usage":{"input_tokens":21,"output_tokens":32,"cache_read_input_tokens":500,"cache_creation_input_tokens":8}}
 JSON
 else
 touch "` + counter + `"

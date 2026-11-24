@@ -1,12 +1,13 @@
 package domain
 
 import (
+	"math"
 	"regexp"
 	"strings"
 )
 
 const AnalyticsUSDToCNY = 7.0
-const AnalyticsPricingVersion = "public-standard-2026-11-05"
+const AnalyticsPricingVersion = "reported-first-2026-11-22"
 
 // TokenPrice is the published standard short-context price per million tokens.
 // Currency identifies the native tariff; RMB rates are used directly rather
@@ -109,9 +110,23 @@ func IsHYModel(model string) bool {
 // Inclusive input (Codex/external API) includes caches; Anthropic input excludes them.
 func AnalyticsPricedUsage(model string, usage TokenUsage, inclusiveInput bool) TokenUsage {
 	out := usage
+	out.CostPricingVersion = AnalyticsPricingVersion
+	status := strings.ToLower(strings.TrimSpace(usage.CostStatus))
+	validCost := usage.CostUSD >= 0 && !math.IsNaN(usage.CostUSD) && !math.IsInf(usage.CostUSD, 0)
+	// An explicitly reported dollar amount, including zero, is authoritative.
+	// Model/token splits are needed only for the public-price fallback.
+	if status == "reported" && validCost {
+		out.CostStatus = "reported"
+		return out
+	}
+	if usage.CostPricingVersion == AnalyticsPricingVersion && validCost && (status == "estimated" || status == "unknown") {
+		// Conversation retries may combine actual reports with estimates or
+		// incomplete usage. Each invocation has already been priced once.
+		return out
+	}
 	out.CostUSD, out.CostStatus = 0, "unknown"
 	if IsHYModel(model) {
-		// Hy / Hunyuan models are free on the platform; adapter amounts are ignored.
+		// Without a reported bill, Hy / Hunyuan uses the platform's free tariff.
 		out.CostUSD, out.CostStatus = 0, "estimated"
 		return out
 	}
