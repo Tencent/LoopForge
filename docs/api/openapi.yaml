@@ -3680,7 +3680,7 @@ paths:
   /api/bot-drafts/{id}/confirm:
     post:
       summary: Confirm and execute a Bot write draft
-      description: Re-checks the Bot (enabled, chat on, confirm mode), the sender binding, project permission, expiry and the frozen parameters, then moves the draft from `pending` to `executing` once. Any other state returns the current draft without executing. `choices` set the SOP of new requirements (only SOPs listed in the draft's `workflows`) and whether to start it after creation; results report `已启动` or `未启动`.
+      description: Re-checks the Bot (enabled, chat on, confirm mode), the sender binding, project permission, expiry and the frozen parameters, then moves the draft from `pending` to `executing` once. Any other state returns the current draft without executing. `choices` set the LOOP of new requirements (only LOOPs listed in the draft's `workflows`) and whether to start it after creation; results report `已启动` or `未启动`.
       operationId: confirmBotDraft
       parameters:
         - {name: id, in: path, required: true, schema: {type: string}}

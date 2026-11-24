@@ -252,7 +252,7 @@ func cardReason(run domain.Run, item domain.NotificationDelivery, content string
 	if strings.TrimSpace(reason) == "" {
 		for _, line := range strings.Split(content, "\n") {
 			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "需求：") || strings.HasPrefix(line, "SOP：") || strings.HasPrefix(line, "节点：") || strings.HasPrefix(line, "查看详情：") {
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "需求：") || strings.HasPrefix(line, "LOOP：") || strings.HasPrefix(line, "SOP：") || strings.HasPrefix(line, "节点：") || strings.HasPrefix(line, "查看详情：") {
 				continue
 			}
 			reason = line

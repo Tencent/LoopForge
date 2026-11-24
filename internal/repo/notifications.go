@@ -582,19 +582,19 @@ func (r *NotificationsRepo) enqueueRunNotifications(tx *gorm.DB, run domain.Run,
 
 // Templates of the messages sent back to the chat a run was started from.
 var originTemplates = map[string]string{
-	"waiting":       "### 需要人工处理\n需求：{{issue.title}}\nSOP：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}",
-	"question":      "### 节点需要补充信息\n需求：{{issue.title}}\nSOP：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}",
-	"failed":        "### 节点失败\n需求：{{issue.title}}\nSOP：{{workflow}}\n节点：{{node}}\n原因：{{error}}\n查看详情：{{url}}",
-	"run.succeeded": "### SOP 已完成\n需求：{{issue.title}}\nSOP：{{workflow}}\n查看详情：{{url}}",
-	"run.failed":    "### SOP 失败\n需求：{{issue.title}}\nSOP：{{workflow}}\n原因：{{error}}\n查看详情：{{url}}",
+	"waiting":       "### 需要人工处理\n需求：{{issue.title}}\nLOOP：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}",
+	"question":      "### 节点需要补充信息\n需求：{{issue.title}}\nLOOP：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}",
+	"failed":        "### 节点失败\n需求：{{issue.title}}\nLOOP：{{workflow}}\n节点：{{node}}\n原因：{{error}}\n查看详情：{{url}}",
+	"run.succeeded": "### LOOP 已完成\n需求：{{issue.title}}\nLOOP：{{workflow}}\n查看详情：{{url}}",
+	"run.failed":    "### LOOP 失败\n需求：{{issue.title}}\nLOOP：{{workflow}}\n原因：{{error}}\n查看详情：{{url}}",
 }
 
 // enqueueOriginNotification sends the key events of a run started from a
 // chat (Feishu, DingTalk, WeCom) back to that conversation (group or private),
-// whatever the SOP's notification bindings are: a waiting or failed node
+// whatever the LOOP's notification bindings are: a waiting or failed node
 // (with an action card when the Bot receives messages) and the end of the
 // run. A run failure already explained by a node failure is not repeated.
-// When the SOP itself notifies the same person through the same Bot the
+// When the LOOP itself notifies the same person through the same Bot the
 // delivery key is shared, so only one message goes out.
 func (r *NotificationsRepo) enqueueOriginNotification(tx *gorm.DB, run domain.Run, event domain.RunEvent, seq int64, nodeTrigger, runTrigger string) error {
 	kind := ""
@@ -680,7 +680,7 @@ func (r *NotificationsRepo) enqueueOriginNotification(tx *gorm.DB, run domain.Ru
 	}
 	key := fmt.Sprintf("origin:%s:%d:%s", run.ID, seq, bot.ID)
 	if bot.Target != nil && bot.Target.ID == target && kind != "run.succeeded" && kind != "run.failed" {
-		// Same Bot and receiver as the SOP's node reminders: share the key.
+		// Same Bot and receiver as the LOOP's node reminders: share the key.
 		key = fmt.Sprintf("run:%s:%d:%s", run.ID, seq, bot.ID)
 	}
 	content, source, renderErr := domain.RenderNotification(domain.NotificationBinding{BotID: bot.ID, Events: []string{trigger}, Template: template}, domain.NotificationContext{Values: values, SourceType: "run"})

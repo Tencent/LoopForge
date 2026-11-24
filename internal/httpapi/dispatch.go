@@ -25,7 +25,7 @@ type dispatchRequest struct {
 
 type botStartOriginKey struct{}
 
-// withBotStartOrigin marks the SOP starts made with ctx as requested in an
+// withBotStartOrigin marks the LOOP starts made with ctx as requested in an
 // IM conversation.
 func withBotStartOrigin(ctx context.Context, origin domain.BotChatOrigin) context.Context {
 	return context.WithValue(ctx, botStartOriginKey{}, origin)

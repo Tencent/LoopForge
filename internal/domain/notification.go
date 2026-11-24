@@ -218,7 +218,7 @@ type NotificationDelivery struct {
 	ConfirmedAt        *time.Time `json:"confirmedAt,omitempty"`
 	ReceiptSource      string     `json:"receiptSource,omitempty" gorm:"size:16"`
 	// Origin is "chat" for deliveries sent back to the conversation a run
-	// was started from (no SOP binding needed); TargetType is then "group"
+	// was started from (no LOOP binding needed); TargetType is then "group"
 	// for a group chat.
 	Origin string `json:"origin,omitempty" gorm:"size:16"`
 	// OriginUserID is the account bound to the private chat when the run started.

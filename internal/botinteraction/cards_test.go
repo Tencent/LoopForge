@@ -24,6 +24,20 @@ func TestNotificationCardShowsStructuredReasonAndRequiredAction(t *testing.T) {
 		t.Fatal(card)
 	}
 }
+
+// Without a node reason the card falls back to the first content line that
+// is not a header field; the LOOP line, and the SOP line of messages queued
+// before the rename, are header fields.
+func TestNotificationCardReasonSkipsLOOPAndLegacySOPLines(t *testing.T) {
+	item := domain.NotificationDelivery{NodeID: "missing", EventType: "failed"}
+	for _, label := range []string{"LOOP", "SOP"} {
+		reason, _ := cardReason(domain.Run{}, item, "### 节点失败\n需求：登录优化\n"+label+"：交付\n节点：实现\n构建失败\n查看详情：https://p.example")
+		if reason != "构建失败" {
+			t.Fatalf("%s line: reason = %q", label, reason)
+		}
+	}
+}
+
 func TestNotificationCardFailureAndLengthLimits(t *testing.T) {
 	run := domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{Name: "模拟失败"}, Nodes: map[string]*domain.NodeRun{"fail": {Error: "Run: exit status 1"}}}
 	item := domain.NotificationDelivery{NodeID: "fail", EventType: "failed"}

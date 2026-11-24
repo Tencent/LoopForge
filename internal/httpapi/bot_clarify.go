@@ -36,7 +36,7 @@ import (
 //     (or the card button), or three minutes after the last answer;
 //   - a conclusion is not written into the requirement until the
 //     requirement's responsible person, the starter or a project maintainer
-//     saves it ("保存澄清结果" / "保存并启动 SOP"), at most once.
+//     saves it ("保存澄清结果" / "保存并启动 LOOP"), at most once.
 
 const (
 	botClarifyIdleRound   = 3 * time.Minute
@@ -64,7 +64,7 @@ func botClarifyControl(text string) string {
 		return "status"
 	case "保存澄清", "保存澄清结果", "保存结论", "保存澄清结论":
 		return "save"
-	case "保存并启动", "保存并启动SOP", "保存并启动sop":
+	case "保存并启动", "保存并启动LOOP", "保存并启动loop", "保存并启动SOP", "保存并启动sop":
 		return "save_start"
 	case "是", "是的", "对", "对的", "没错", "是这个":
 		return "yes"
@@ -388,9 +388,9 @@ func (h *assistantHandlers) botClarifyConclusionText(bot domain.NotificationBot,
 	b.WriteString(truncateRunes(sess.Summary, 3000))
 	b.WriteString("\n\n")
 	if botClarifyCards(bot) {
-		b.WriteString("需求负责人、发起澄清的人或项目维护者可以点卡片上的「保存澄清结果」写入需求（来自 TAPD、工蜂的需求同时写回原单），或点「保存并启动 SOP」。")
+		b.WriteString("需求负责人、发起澄清的人或项目维护者可以点卡片上的「保存澄清结果」写入需求（来自 TAPD、工蜂的需求同时写回原单），或点「保存并启动 LOOP」。")
 	} else {
-		b.WriteString("需求负责人、发起澄清的人或项目维护者可以发「保存澄清」写入需求（来自 TAPD、工蜂的需求同时写回原单），或发「保存并启动」同时启动 SOP。")
+		b.WriteString("需求负责人、发起澄清的人或项目维护者可以发「保存澄清」写入需求（来自 TAPD、工蜂的需求同时写回原单），或发「保存并启动」同时启动 LOOP。")
 	}
 	b.WriteString("\n还要补充，直接说补充内容再发「下一轮」；不保存就发「结束澄清」。")
 	return b.String()
@@ -817,7 +817,7 @@ func (h *assistantHandlers) endBotClarify(id, blocked string) bool {
 }
 
 // botClarifySave writes the conclusion into the requirement (and back to
-// its external tracker), at most once, and optionally starts its SOP. The
+// its external tracker), at most once, and optionally starts its LOOP. The
 // Bot's current configuration must still allow writes from chat.
 func (h *assistantHandlers) botClarifySave(ctx context.Context, bot domain.NotificationBot, sess domain.BotClarifySession, user domain.User, start bool) string {
 	current, err := h.repo.NotificationBot(bot.ID)
@@ -882,9 +882,9 @@ func (h *assistantHandlers) botClarifySave(ctx context.Context, bot domain.Notif
 		h.recordBotOrigin(origin, true, saved.ID)
 		runID, err := h.dispatchBotIssue(withBotStartOrigin(ctx, origin), user, bot.ProjectID, saved.ID)
 		if err != nil {
-			lines = append(lines, "SOP 没有启动："+truncateRunes(err.Error(), 200)+"。可以在平台手动启动。")
+			lines = append(lines, "LOOP 没有启动："+truncateRunes(err.Error(), 200)+"。可以在平台手动启动。")
 		} else {
-			lines = append(lines, "已启动 SOP"+botRunLabel(runID)+"，失败、等待处理和完成时会发在这里。")
+			lines = append(lines, "已启动 LOOP"+botRunLabel(runID)+"，失败、等待处理和完成时会发在这里。")
 		}
 	}
 	return strings.Join(lines, "\n")

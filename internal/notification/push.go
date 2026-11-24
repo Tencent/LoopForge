@@ -191,7 +191,7 @@ func (s *Service) processPush(ctx context.Context, item *domain.NotificationDeli
 }
 
 // checkDeliveryTarget checks the receiver of a delivery before each send.
-// SOP notifications go to the configured, trial-verified member. Messages
+// LOOP notifications go to the configured, trial-verified member. Messages
 // back to the chat a run was started from need no trial send: a private
 // origin must still be a bound sender with access to the project; a group
 // origin needs the confirmed enterprise.

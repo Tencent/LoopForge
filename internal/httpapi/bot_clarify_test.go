@@ -234,7 +234,7 @@ func TestChatClarificationInAGroup(t *testing.T) {
 		t.Fatalf("member save = %q", reply)
 	}
 	// Switched to read-only after the conclusion: neither the card nor the
-	// text command writes the requirement or starts the SOP.
+	// text command writes the requirement or starts the LOOP.
 	readOnly := f.bot
 	readOnly.WriteApproval = domain.BotWriteReadOnly
 	if err := f.s.SaveNotificationBot(readOnly, "secret"); err != nil {
@@ -424,7 +424,7 @@ func TestChatClarificationEdgePaths(t *testing.T) {
 	if text := botClarifyText("@_user_1 @机器人 澄清 LOOP-7"); text != "澄清 LOOP-7" {
 		t.Fatalf("mentions = %q", text)
 	}
-	if botClarifyText("@机器人") != "" || botClarifyControl("下一轮。") != "next" || botClarifyControl("保存并启动 SOP") != "save_start" {
+	if botClarifyText("@机器人") != "" || botClarifyControl("下一轮。") != "next" || botClarifyControl("保存并启动 LOOP") != "save_start" || botClarifyControl("保存并启动loop") != "save_start" || botClarifyControl("保存并启动 SOP") != "save_start" {
 		t.Fatal("command parsing")
 	}
 	if got := parseBotClarifyAnswers("前言\nQ1 甲\n第2题：乙\n3、丙", 2); len(got) != 3 || got[0].N != 0 || got[1].Text != "甲" || got[2].N != 2 || !strings.Contains(got[2].Text, "3、丙") {
@@ -508,7 +508,7 @@ func TestChatClarificationEdgePaths(t *testing.T) {
 	if reply, _ := f.say(t, "group", "oc_edge", "ou_owner", "继续澄清"); !strings.Contains(reply, "澄清结论重新发在下面") {
 		t.Fatalf("resume concluded = %q", reply)
 	}
-	// Save and start: written back fails without tracker sync, the SOP
+	// Save and start: written back fails without tracker sync, the LOOP
 	// starts as the clicker and the run's chat is recorded.
 	if err := f.s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
 		t.Fatal(err)
