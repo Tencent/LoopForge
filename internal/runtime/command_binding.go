@@ -49,6 +49,7 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
 	bound.environment["GH_TOKEN"] = ""
 	bound.environment["GITHUB_TOKEN"] = ""
+	bound.environment[workspaceGitBinsEnv] = ""
 	for _, key := range workspaceGitSecretEnvironment {
 		bound.environment[key] = ""
 	}
@@ -122,11 +123,8 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			// bound PATH takes effect. Launch the same Git shim as a shell would.
 			if len(bound.Argv) > 0 && bound.Argv[0] == "git" && sandboxDriver(sandbox) != "docker" &&
 				strings.Contains(","+bound.environment[GitHostsEnv], ",http://") {
-				git, err := filepath.Abs(filepath.Join(mcpCallHostDir(workspace), workspaceGitBin, "git"))
-				if err != nil {
-					return CommandSpec{}, err
-				}
-				bound.Argv = append([]string{git}, bound.Argv[1:]...)
+				httpBin, _, _ := strings.Cut(bound.environment[workspaceGitBinsEnv], string(os.PathListSeparator))
+				bound.Argv = append([]string{filepath.Join(httpBin, "git")}, bound.Argv[1:]...)
 			}
 		case BindExtra:
 			// Missing credentials export as empty strings on purpose: a child
@@ -354,25 +352,19 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 	environment["GIT_CONFIG_COUNT"] = "1"
 	environment["GIT_CONFIG_KEY_0"] = "credential.helper"
 	environment["GIT_CONFIG_VALUE_0"] = ""
+	environment[workspaceGitBinsEnv] = ""
 	if gateway == "" || hosts == "" {
 		delete(environment, SessionGatewayEnv)
 		environment[GitHostsEnv] = ""
 		return nil
 	}
-	hostBin := filepath.Join(runtimeHost, "bin")
-	if _, err := EnsureControlDirectory(workspace, "runtime", "bin"); err != nil {
-		return fmt.Errorf("create git helper dir: %w", err)
+	hasPlainHTTP := strings.Contains(","+hosts, ",http://")
+	tools, err := prepareWorkspaceGitTools(ctx, sandbox, workspace, hasPlainHTTP)
+	if err != nil {
+		return fmt.Errorf("prepare Runner Git helpers: %w", err)
 	}
-	if err := installMCPCallHelperForSandbox(ctx, sandbox, workspace, filepath.Join(hostBin, "agentflow-helper")); err != nil {
-		return fmt.Errorf("install git credential helper: %w", err)
-	}
-	helper := runtimePath("bin/agentflow-helper")
-	for _, name := range []string{"gh", "glab"} {
-		script := "#!/bin/sh\nexec " + shellSingleQuote(helper) + " cli-shim " + name + " \"$@\"\n"
-		if err := writeManagedFile(workspace, filepath.Join(hostBin, name), []byte(script), 0o700); err != nil {
-			return fmt.Errorf("write %s wrapper: %w", name, err)
-		}
-	}
+	bin := filepath.Join(tools, "bin")
+	helper := filepath.Join(bin, "agentflow-helper")
 	// The empty helper entry drops every helper configured before it (system,
 	// global, repository), so a stored credential never answers instead.
 	environment["GIT_CONFIG_KEY_0"] = "credential.helper"
@@ -380,40 +372,18 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 	environment["GIT_CONFIG_KEY_1"] = "credential.helper"
 	environment["GIT_CONFIG_VALUE_1"] = "!" + shellSingleQuote(helper) + " git-credential"
 	environment["GIT_CONFIG_COUNT"] = "2"
-	hasPlainHTTP := strings.Contains(","+hosts, ",http://")
+	bins := bin
 	if hasPlainHTTP {
-		environment[workspaceGitRealExecEnv] = ""
 		environment[workspaceGitHTTPOriginEnv] = ""
-		if err := installWorkspaceGitHTTP(workspace, helper); err != nil {
-			return err
-		}
+		bins = filepath.Join(tools, workspaceGitHTTPBin) + string(os.PathListSeparator) + bins
 	}
+	environment[workspaceGitBinsEnv] = bins
 	if sandboxDriver(sandbox) != "docker" {
 		base := environment["PATH"]
 		if base == "" {
 			base = sandboxBasePath(sandbox)
 		}
-		environment["PATH"] = hostBin + string(os.PathListSeparator) + base
-		if hasPlainHTTP {
-			environment["PATH"] = filepath.Join(runtimeHost, workspaceGitBin) + string(os.PathListSeparator) + environment["PATH"]
-		}
-	}
-	return nil
-}
-
-func installWorkspaceGitHTTP(workspace, helper string) error {
-	for _, shim := range []struct{ dir, name, command string }{
-		{workspaceGitBin, "git", "git-workspace"},
-		{workspaceGitExec, "git-remote-http", "git-remote-http"},
-	} {
-		dir, err := EnsureControlDirectory(workspace, "runtime", shim.dir)
-		if err != nil {
-			return fmt.Errorf("create Git transport wrapper directory: %w", err)
-		}
-		script := "#!/bin/sh\nexec " + shellSingleQuote(helper) + " " + shim.command + " \"$@\"\n"
-		if err := writeManagedFile(workspace, filepath.Join(dir, shim.name), []byte(script), 0o700); err != nil {
-			return fmt.Errorf("write %s wrapper: %w", shim.name, err)
-		}
+		environment["PATH"] = bins + string(os.PathListSeparator) + base
 	}
 	return nil
 }

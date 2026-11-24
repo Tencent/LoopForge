@@ -28,6 +28,8 @@ type dockerSandbox struct {
 	mu                  sync.Mutex
 	browserMu           sync.Mutex
 	started             bool
+	gitToolsRoot        string
+	gitPlainHTTP        bool
 	cliSetupOnce        sync.Once
 	cliSetupGate        chan struct{}
 	// execGate lets parallel branches exec concurrently (read side) while a
@@ -49,12 +51,16 @@ func (s *dockerSandbox) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.started = false
 	image := s.builtImage
+	gitTools := s.gitToolsRoot
 	s.builtImage = ""
 	s.mu.Unlock()
 	if image == "" {
 		image = tempDockerImageName(s.id)
 	}
 	removeDockerSandbox(ctx, s.name, image)
+	if gitTools != "" {
+		return os.RemoveAll(gitTools)
+	}
 	return nil
 }
 
@@ -225,9 +231,10 @@ if [ -x /workspace/.agentflow/runtime/bin/agentflow-helper ]; then
   PATH=/workspace/.agentflow/runtime/bin:$PATH
   export PATH
 fi
-case ",${AGENTFLOW_GIT_HOSTS:-}" in
-  *,http://*) PATH=/workspace/.agentflow/runtime/` + workspaceGitBin + `:$PATH; export PATH ;;
-esac
+if [ -n "${` + workspaceGitBinsEnv + `:-}" ]; then
+  PATH="$` + workspaceGitBinsEnv + `:$PATH"
+  export PATH
+fi
 if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH" ]; then
   PATH=$PATH:$AGENTFLOW_RUNTIME_CLI_PATH
   export PATH
@@ -434,6 +441,7 @@ func isDockerCwdUnsafe(out string, err error) bool {
 type dockerWorkspaceMounts struct {
 	source      string
 	legacyMasks bool
+	gitTools    string
 }
 
 func inspectDockerWorkspaceMounts(ctx context.Context, name string) (*dockerWorkspaceMounts, error) {
@@ -446,6 +454,7 @@ func inspectDockerWorkspaceMounts(ctx context.Context, name string) (*dockerWork
 	}
 	var mounts []struct {
 		Destination, Source string
+		RW                  bool
 	}
 	if err := json.Unmarshal(out, &mounts); err != nil {
 		return nil, fmt.Errorf("decode Docker mounts for %s: %w", name, err)
@@ -455,6 +464,10 @@ func inspectDockerWorkspaceMounts(ctx context.Context, name string) (*dockerWork
 		switch mount.Destination {
 		case "/workspace":
 			workspace.source = mount.Source
+		case dockerGitToolsMount:
+			if !mount.RW {
+				workspace.gitTools = mount.Source
+			}
 		case "/workspace/.agentflow/isolation/empty-dir", "/workspace/.agentflow/isolation/empty-file":
 			// Older containers keep these binds even when restarted.
 			workspace.legacyMasks = true
@@ -724,6 +737,33 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 	return s.start(ctx, false)
 }
 
+func (s *dockerSandbox) requireGitTools(ctx context.Context, root string, plainHTTP bool) error {
+	s.mu.Lock()
+	ready := s.gitToolsRoot == root && (!plainHTTP || s.gitPlainHTTP)
+	s.mu.Unlock()
+	if ready {
+		return nil
+	}
+	// Mount changes can recreate a legacy container. Wait for active commands
+	// to finish before changing the mounts or the Git distribution they use.
+	s.execGate.Lock()
+	defer s.execGate.Unlock()
+	s.mu.Lock()
+	if s.gitToolsRoot == root && (!plainHTTP || s.gitPlainHTTP) {
+		s.mu.Unlock()
+		return nil
+	}
+	started := s.started
+	s.started = false
+	s.gitToolsRoot = root
+	s.gitPlainHTTP = s.gitPlainHTTP || plainHTTP
+	s.mu.Unlock()
+	if started {
+		return s.ensureStarted(ctx)
+	}
+	return nil
+}
+
 func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -740,7 +780,12 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		if !dockerBindMatchesWorkspace(mounts.source, workspace) {
 			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, mounts.source, workspace)
 		}
-		if !recreate && !mounts.legacyMasks {
+		if !recreate && !mounts.legacyMasks && (s.gitToolsRoot == "" || dockerBindMatchesWorkspace(mounts.gitTools, s.gitToolsRoot)) {
+			if s.gitPlainHTTP {
+				if err := prepareDockerGitTools(ctx, s.gitToolsRoot, "inspect", "--type", "container", "--format", "{{.Image}}", name); err != nil {
+					return err
+				}
+			}
 			if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
 				if err := waitDockerWorkspaceReady(ctx, name); err == nil {
 					s.started = true
@@ -755,6 +800,14 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 	}
 	image := built
 	args := []string{"create", "--name", name, "--init", "--cap-drop=ALL", "--security-opt", "no-new-privileges", "-v", workspace + ":/workspace"}
+	if s.gitToolsRoot != "" {
+		if s.gitPlainHTTP {
+			if err := prepareDockerGitTools(ctx, s.gitToolsRoot, "image", "inspect", "--format", "{{.Id}}", image); err != nil {
+				return err
+			}
+		}
+		args = append(args, "--mount", "type=bind,src="+s.gitToolsRoot+",dst="+dockerGitToolsMount+",readonly")
+	}
 	// Native installs own private (0700) workspaces as the service user.
 	// A root image without DAC capabilities cannot access another UID's bind.
 	// Run default/root images as that user; retain explicit non-root image users.

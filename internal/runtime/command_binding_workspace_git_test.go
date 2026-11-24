@@ -241,8 +241,11 @@ func TestWorkspaceGitPreservesSubmoduleScripts(t *testing.T) {
 // gh and glab logins written in one turn are gone in the next.
 func TestBindGitWorkspaceResetsCLIConfig(t *testing.T) {
 	provideDockerHelperFixture(t)
-	workspace := t.TempDir()
-	sb := &localSandbox{workspace: workspace, driver: "docker"}
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sb := &dockerSandbox{workspace: workspace}
 	env := map[string]string{SessionGatewayEnv: "http://relay.invalid/mcp"}
 	if err := bindWorkspaceGitEnvironment(t.Context(), sb, workspace, env, RunCredentials{GitHTTPHosts: map[string]string{"github.com": "github"}}); err != nil {
 		t.Fatal(err)
@@ -261,7 +264,7 @@ func TestBindGitWorkspaceResetsCLIConfig(t *testing.T) {
 	if env["GH_CONFIG_DIR"] != "/workspace/.agentflow/runtime/gh-config" || env["GLAB_CONFIG_DIR"] != "/workspace/.agentflow/runtime/glab-config" {
 		t.Fatalf("config dirs = %q %q", env["GH_CONFIG_DIR"], env["GLAB_CONFIG_DIR"])
 	}
-	if env["GIT_CONFIG_VALUE_1"] != "!'/workspace/.agentflow/runtime/bin/agentflow-helper' git-credential" || env["PATH"] != "" {
+	if env["GIT_CONFIG_VALUE_1"] != "!'"+dockerGitToolsMount+"/bin/agentflow-helper' git-credential" || env["PATH"] != "" {
 		t.Fatalf("docker helper = %q, PATH = %q", env["GIT_CONFIG_VALUE_1"], env["PATH"])
 	}
 }

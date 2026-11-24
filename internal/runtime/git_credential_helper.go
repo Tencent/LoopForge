@@ -192,12 +192,13 @@ func cliShimMain(args []string) int {
 	return 0
 }
 
-// lookPathSkipping finds name on PATH, skipping skip (the wrapper's own bin
-// directory) so the shim never executes itself.
+// lookPathSkipping keeps the CLI shim from finding itself or a workspace's
+// mutable runtime bin, where older releases installed their shims.
 func lookPathSkipping(name, skip, path string) (string, error) {
 	skip = filepath.Clean(skip)
 	for _, dir := range filepath.SplitList(path) {
-		if dir == "" || filepath.Clean(dir) == skip {
+		clean := filepath.Clean(dir)
+		if dir == "" || clean == skip || strings.HasSuffix(filepath.ToSlash(clean), "/.agentflow/runtime/bin") {
 			continue
 		}
 		candidate := filepath.Join(dir, name)
