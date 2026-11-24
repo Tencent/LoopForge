@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { api, get, list } from '../lib/api.mjs';
-import { cfg } from '../lib/env.mjs';
+import { cfg, defaultSandbox } from '../lib/env.mjs';
 
 test('health and public runner endpoints answer without auth', async () => {
   const health = await get('/api/health', { auth: false });
@@ -53,9 +53,8 @@ const readOnly = [
   ['/api/skills', d => assert.ok(Array.isArray(list(d)))],
   ['/api/mcp-servers', d => assert.ok(Array.isArray(list(d)))],
   ['/api/mcp-market', d => assert.ok(d)],
-  ['/api/dockerfiles', d => assert.ok(Array.isArray(list(d)))],
-  ['/api/environments', d => assert.ok(Array.isArray(list(d)))],
-  ['/api/sandboxes', d => assert.ok(list(d).some(s => s.id === cfg.sandbox), `sandbox ${cfg.sandbox} missing`)],
+  // The default e2e sandbox is provisioned with the e2e project (ensureProject).
+  ['/api/sandboxes', d => assert.ok(cfg.sandbox === defaultSandbox || list(d).some(s => s.id === cfg.sandbox), `sandbox ${cfg.sandbox} missing`)],
   ['/api/repositories', d => assert.ok(Array.isArray(list(d)))],
   ['/api/issues', d => assert.ok(Array.isArray(list(d)))],
   ['/api/runs', d => assert.ok(Array.isArray(list(d)))],

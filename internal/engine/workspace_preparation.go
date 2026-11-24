@@ -13,19 +13,25 @@ import (
 )
 
 func (e *Engine) workspaceSandboxProfile(run domain.Run) (domain.SandboxProfile, runtime.SandboxResources, error) {
-	if spec := run.WorkflowSnapshot.SandboxSnapshot; spec != nil {
-		return spec.Profile, sandboxResourcesFromSnapshot(spec), nil
+	spec := run.WorkflowSnapshot.SandboxSnapshot
+	if spec == nil {
+		id := strings.TrimSpace(run.WorkflowSnapshot.SandboxProfileID)
+		if id == "" {
+			id = repo.DefaultSandboxProfileID
+		}
+		profile, ok := e.repo.Sandbox(id)
+		if !ok {
+			return profile, runtime.SandboxResources{}, fmt.Errorf("sandbox profile %q not found", id)
+		}
+		var err error
+		if spec, err = resolveSandbox(profile); err != nil {
+			return profile, runtime.SandboxResources{}, err
+		}
 	}
-	id := strings.TrimSpace(run.WorkflowSnapshot.SandboxProfileID)
-	if id == "" {
-		id = "local"
+	if err := domain.ValidateFrozenSandbox(spec.Profile); err != nil {
+		return domain.SandboxProfile{}, runtime.SandboxResources{}, err
 	}
-	profile, ok := e.repo.Sandbox(id)
-	if !ok {
-		return profile, runtime.SandboxResources{}, fmt.Errorf("sandbox profile %q not found", id)
-	}
-	resources, err := resolveSandboxResources(e.repo, profile)
-	return profile, resources, err
+	return spec.Profile, sandboxResourcesFromSnapshot(spec), nil
 }
 
 // acquireConversationEnvironment does not acquire or steal the SOP scheduler

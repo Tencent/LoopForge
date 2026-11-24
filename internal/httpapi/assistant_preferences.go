@@ -27,16 +27,28 @@ func (h *assistantHandlers) preferences(c *gin.Context) {
 		c.JSON(200, h.repo.AssistantPreferences(user.ID).Sanitized())
 		return
 	}
-	var body domain.AssistantPreferences
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var request struct {
+		domain.AssistantPreferences
+		WorkspaceDriver *string `json:"workspaceDriver"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(400, gin.H{"error": "设置格式不正确"})
 		return
 	}
+	body := request.AssistantPreferences
 	if utf8.RuneCountInString(body.Instructions) > domain.AssistantPreferencesInstructionsMax {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("自定义规则最多 %d 字", domain.AssistantPreferencesInstructionsMax)})
 		return
 	}
 	existing := h.repo.AssistantPreferences(user.ID)
+	body.WorkspaceDriver = existing.WorkspaceDriver
+	if request.WorkspaceDriver != nil {
+		body.WorkspaceDriver = strings.TrimSpace(*request.WorkspaceDriver)
+		if !domain.ValidAssistantWorkspaceDriver(body.WorkspaceDriver) {
+			c.JSON(400, gin.H{"error": "对话工作区倾向只能是 docker、native 或留空"})
+			return
+		}
+	}
 	normalized, err := normalizeAndValidateAssistantPreferences(body, existing)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})

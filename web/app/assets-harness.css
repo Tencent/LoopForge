@@ -1,4 +1,4 @@
-/* 资产管理页（规则 / 技能 / Dockerfile / 环境安装脚本 / 沙箱）· Harness UI 设计语言
+/* 资产管理页（规则 / 技能 / 沙箱）· Harness UI 设计语言
  * （MIT，见 harness-ui-LICENSE.txt）。令牌、按钮与 ⋯ 菜单来自 app/harness-ui.css，
  * 外层 1200px 居中容器由其设置区规则统一提供。Every rule stays inside #assetsView.
  */
@@ -338,6 +338,14 @@
 #assetsView .asset-field-label,
 #assetsView .asset-side-card .rule-global-sops > label { display: block; margin: 12px 0 6px; color: var(--hui-muted); font: 500 12px/1.4 var(--hui-sans); }
 #assetsView .asset-stage .asset-field-label { margin-top: 0; }
+/* Sandbox setup fills the main pane as one form column. */
+#assetsView .sandbox-setup { max-width: 680px; }
+#assetsView .sandbox-setup .asset-field-label { display: flex; align-items: center; gap: 6px; margin: 18px 0 6px; }
+#assetsView .sandbox-setup > .asset-field-label:first-child { margin-top: 0; }
+#assetsView .sandbox-setup .asset-field-label label { cursor: pointer; }
+#assetsView .sandbox-setup .asset-editor.is-env { min-height: 96px; }
+#assetsView .sandbox-setup .field-help { display: inline-grid; place-items: center; box-sizing: border-box; width: 15px; height: 15px; padding: 0; border: 1px solid var(--hui-border-strong); border-radius: 50%; background: transparent; color: var(--hui-tertiary); font: 600 10px/1 var(--hui-sans); cursor: help; transition: border-color .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow); }
+#assetsView .sandbox-setup .field-help:is(:hover, :focus-visible) { border-color: var(--hui-accent); color: var(--hui-accent); outline: 0; }
 #assetsView .asset-field-label small { margin-left: 4px; color: var(--hui-tertiary); font-weight: 400; }
 #assetsView .asset-input {
   box-sizing: border-box;
@@ -597,11 +605,11 @@
   #assetsView .skillhub-drawer.is-open { transition: none; }
 }
 
-/* 能力资产（MCP / 规则 / 技能）与环境资产（Dockerfile / 安装脚本 / 沙箱）的类型标签：
+/* 能力资产（MCP / 规则 / 技能）的类型标签：
  * 下划线分段，沿用 Bot 记录页的 SlidingTabs 指示层；mcpView 与 assetsView 共用。 */
 :is(#mcpView, #assetsView) .asset-type-tabs{display:flex;align-items:flex-end;gap:22px;margin:-6px 0 16px;border-bottom:1px solid var(--hui-border-soft,var(--hui-border))}
 /* SlidingTabs adds .sliding-tabs[data-sliding-tabs] and the enhanced rule below forces display:flex;
- * the hidden group must out-rank it, otherwise both 能力资产 and 环境资产 tab rows show at once. */
+ * the hidden group must out-rank it, otherwise the tab row also shows on pages outside its group. */
 :is(#mcpView, #assetsView) .asset-type-tabs[hidden],
 :is(#mcpView, #assetsView) .asset-type-tabs.sliding-tabs[data-sliding-tabs][hidden]{display:none!important}
 :is(#mcpView, #assetsView) .asset-type-tabs.sliding-tabs[data-sliding-tabs]:not([hidden]){--sliding-surface:transparent;--sliding-text:var(--hui-text);--sliding-muted:var(--hui-muted);display:flex!important;width:auto;height:40px!important;min-height:40px!important;padding:0!important;gap:22px!important;border-radius:0!important;background:transparent!important}

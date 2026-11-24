@@ -328,10 +328,12 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			conv.SandboxProfileID = existing.SandboxProfileID
 		}
 		if existing.ID == "" && conv.SandboxProfileID != "" {
-			if _, err := h.repo.ConversationSandbox(conv.ProjectID, conv.SandboxProfileID); err != nil {
+			profile, err := h.repo.ConversationSandbox(conv.ProjectID, conv.SandboxProfileID)
+			if err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
 			}
+			conv.SandboxProfileID = profile.ID
 		}
 		conv.Effort = existing.Effort
 		if body.Effort != nil {

@@ -158,7 +158,7 @@ func (i *AgentCLIConversationInput) stageText(prompt string, limit int) error {
 		return err
 	}
 	for len(prompt) > 0 {
-		end := ConversationTextChunkLen(prompt, i.root, limit)
+		end := ConversationTextChunkLen(prompt, limit, i.root)
 		path := filepath.Join(i.dir, "prompt-"+strconv.Itoa(len(i.paths)+1)+".md")
 		if err := os.WriteFile(path, []byte(prompt[:end]), 0o600); err != nil {
 			return err

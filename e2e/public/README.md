@@ -15,7 +15,7 @@ The suite signs in through the real password form, checks preferences and editor
 
 Set `LOOPFORGE_TEST_URL`, `LOOPFORGE_TEST_USER` and `LOOPFORGE_TEST_PASSWORD` (or the protected `LOOPFORGE_TEST_PASSWORD_FILE`) to test another explicit acceptance installation. The welcome project/catalog must be installed. Screenshots and traces are saved under `e2e/test-results/public/`.
 
-The broader upstream API/UI suites remain under `api/` and `ui/`. They use `AGENTFLOW_E2E_BASE` and `AGENTFLOW_E2E_TOKEN`. Their public defaults target localhost, local sandboxes, and disable paid model scenarios. Live knowledge/model/integration cases require operator configuration and report skips when unavailable.
+The broader upstream API/UI suites remain under `api/` and `ui/`. They use `AGENTFLOW_E2E_BASE` and `AGENTFLOW_E2E_TOKEN`. Their public defaults target localhost, run SOPs in a native sandbox the suite creates in its project, and disable paid model scenarios. Live knowledge/model/integration cases require operator configuration and report skips when unavailable.
 
 `00-first-run.spec.mjs` covers what a brand-new user sees and only runs with `LOOPFORGE_FRESH_INSTALL=1` against an installation that has no accounts yet (for example right after `bash scripts/install.sh`). It creates the administrator through the browser using `LOOPFORGE_TEST_USER`/`LOOPFORGE_TEST_PASSWORD`, checks the onboarding checklist and missing-key notice, and signs up `LOOPFORGE_UNCONFIGURED_USER` as a regular user, so the remaining specs can run immediately afterwards.
 

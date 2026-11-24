@@ -13,13 +13,6 @@ func TestAssetValidationBranches(t *testing.T) {
 		name string
 		err  error
 	}{
-		{"docker missing", ValidateDockerfile(DockerfileDefinition{})},
-		{"docker content", ValidateDockerfile(DockerfileDefinition{ID: "d", Name: "d"})},
-		{"docker path", ValidateDockerfile(DockerfileDefinition{ID: "d", Name: "d", Content: "FROM x", Files: map[string]string{"../x": "x"}})},
-		{"env missing", ValidateEnvironment(EnvironmentDefinition{})},
-		{"env variable", ValidateEnvironment(EnvironmentDefinition{ID: "e", Name: "e", Variables: map[string]string{"x=y": "z"}})},
-		{"env path", ValidateEnvironment(EnvironmentDefinition{ID: "e", Name: "e", PathEntries: []string{"../x"}})},
-		{"env nul", ValidateEnvironment(EnvironmentDefinition{ID: "e", Name: "e", InstallScript: "\x00"})},
 		{"skill size", ValidateSkillFileRefs([]SkillFileRef{{Path: "x", Size: SkillFileMaxBytes + 1}})},
 	} {
 		if tc.err == nil {

@@ -49,7 +49,7 @@ func (r *RunsRepo) updateConversationWorkspaceRun(runID string, mutate func(row 
 // requirement is never cleared.
 func keepConversationRunFields(run *domain.Run, current runRow) {
 	var stored domain.TokenUsage
-	if len(current.UsageJSON) > 0 && json.Unmarshal(current.UsageJSON, &stored) == nil && stored.TotalTokens > run.Usage.TotalTokens {
+	if len(current.UsageJSON) > 0 && json.Unmarshal(current.UsageJSON, &stored) == nil && (stored.TotalTokens > run.Usage.TotalTokens || stored.InputTokens > run.Usage.InputTokens || stored.OutputTokens > run.Usage.OutputTokens || stored.CacheReadTokens > run.Usage.CacheReadTokens || stored.CacheWriteTokens > run.Usage.CacheWriteTokens || stored.ReasoningTokens > run.Usage.ReasoningTokens || stored.CostUSD > run.Usage.CostUSD) {
 		run.Usage = stored
 	}
 	if strings.TrimSpace(run.ExecutionContext.IssueID) != "" {
@@ -66,17 +66,21 @@ func keepConversationRunFields(run *domain.Run, current runRow) {
 // so analytics attributes the conversation's tokens and cost to that
 // workspace's project, user and requirement.
 func (r *RunsRepo) AddConversationRunUsage(runID, model string, usage domain.TokenUsage) error {
-	if usage.TotalTokens == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.CostUSD == 0 {
+	if usage.TotalTokens == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 && usage.ReasoningTokens == 0 && usage.CostUSD == 0 {
 		return nil
 	}
-	lower := strings.ToLower(strings.TrimSpace(model))
-	usage = domain.AnalyticsPricedUsage(model, usage, strings.HasPrefix(lower, "gpt-"))
+	usage = domain.PriceScheduleExecutionUsage(model, usage)
 	_, err := r.updateConversationWorkspaceRun(runID, func(row *runRow) (map[string]any, bool) {
 		var total domain.TokenUsage
 		if len(row.UsageJSON) > 0 {
 			_ = json.Unmarshal(row.UsageJSON, &total)
 		}
-		first := total.TotalTokens == 0 && total.InputTokens == 0 && total.OutputTokens == 0 && total.CostUSD == 0
+		first := total.TotalTokens == 0 && total.InputTokens == 0 && total.OutputTokens == 0 && total.CacheReadTokens == 0 && total.CacheWriteTokens == 0 && total.ReasoningTokens == 0 && total.CostUSD == 0
+		if first {
+			total.CostPricingVersion = usage.CostPricingVersion
+		} else if total.CostPricingVersion != usage.CostPricingVersion {
+			total.CostPricingVersion = ""
+		}
 		total.InputTokens += usage.InputTokens
 		total.OutputTokens += usage.OutputTokens
 		total.CacheReadTokens += usage.CacheReadTokens

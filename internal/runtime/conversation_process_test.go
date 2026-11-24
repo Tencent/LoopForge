@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -10,6 +11,26 @@ import (
 	"testing"
 	"time"
 )
+
+func TestConversationStdinRemapsQuotedCodexWorkspace(t *testing.T) {
+	source, root := `/api/state "chat"`, `/runner/state "chat"\one`
+	workspace := `/runner/workspaces "project"\two`
+	payload, err := json.Marshal(map[string]any{
+		"method": "thread/start", "params": map[string]string{"cwd": filepath.Join(source, "ws")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := remapConversationStdin(string(payload)+"\n", source, root, workspace, "codex")
+	var request struct {
+		Params struct {
+			Cwd string `json:"cwd"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(got), &request); err != nil || request.Params.Cwd != workspace {
+		t.Fatalf("Codex frame has invalid cwd: %q, %v", got, err)
+	}
+}
 
 func conversationPoll(t *testing.T, p *ConversationProcessPool, ctx context.Context, root, id string) string {
 	t.Helper()

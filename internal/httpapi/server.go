@@ -234,9 +234,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.DELETE("/api/notification-bots/:id", api.notifications.bot)
 	g.GET("/api/notification-bots/:id/sessions", api.notifications.sessions)
 	g.POST("/api/notification-bots/:id/test", api.notifications.test)
+	g.POST("/api/notification-bots/:id/targets/verify", api.notifications.verifyTarget)
 	g.POST("/api/notification-preview", api.notifications.preview)
 	g.GET("/api/notification-deliveries", api.notifications.deliveries)
 	g.POST("/api/notification-deliveries/:deliveryId/retry", api.notifications.retry)
+	g.POST("/api/notification-deliveries/:deliveryId/confirm", api.notifications.retry)
 
 	// --- auth & users ---
 	g.GET("/api/health", api.health)
@@ -308,7 +310,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	})
 
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
-	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1)}
+	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1), clarify: stream}
 	api.runs.assistant = asst
 	api.runners.assistant = asst
 	api.schedule.assistant = asst
@@ -316,13 +318,27 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if api.notifications.service.Interactions != nil {
 		api.notifications.service.Interactions.Generate = asst.generateBotReply
 		api.notifications.service.Interactions.Action = asst.handleBotCardAction
+		api.notifications.service.Interactions.NativeLogs = cleanBotNativeLogs
+	}
+	if flag.Lookup("test.v") == nil && notification.BotWorkersEnabled() {
+		// Timers of chat clarifications (next round, pause, rerun).
+		runAfterGate(bg.gate(), asst.startBotClarifyLoop)
 	}
 	api.botInteractions = &botInteractionHandlers{deps: d, notifications: api.notifications}
 	g.GET("/api/notification-bots/:id/interactions", api.botInteractions.records)
+	g.GET("/api/notification-bots/:id/tenant", api.notifications.tenant)
+	g.POST("/api/notification-bots/:id/tenant/confirm", api.notifications.tenantConfirm)
+	g.GET("/api/bot-interactions/pending", api.botInteractions.pending)
+	g.POST("/api/bot-interactions/:interactionId/resend", api.botInteractions.act)
+	g.POST("/api/bot-interactions/:interactionId/confirm", api.botInteractions.act)
+	g.POST("/api/bot-interactions/:interactionId/push-resend", api.botInteractions.act)
 	g.POST("/api/bot-bindings/claim", api.botIdentities.binding)
 	g.POST("/api/bot-bindings/status", api.botIdentities.binding)
 	g.GET("/api/bot-bindings", api.botIdentities.list)
 	g.DELETE("/api/bot-bindings/:id", api.botIdentities.remove)
+	g.GET("/api/bot-drafts/:id", asst.botDraft)
+	g.POST("/api/bot-drafts/:id/confirm", asst.botDraft)
+	g.POST("/api/bot-drafts/:id/cancel", asst.botDraft)
 	g.POST("/api/assistant/chat", asst.chat)
 	g.POST("/api/assistant/generations", asst.startGeneration)
 	g.GET("/api/assistant/sessions/:id/generation", asst.generation)
@@ -482,12 +498,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/skillhub/install", api.skillhub.install)
 	g.POST("/api/skillhub/update", api.skillhub.update)
 	g.GET("/api/executors", api.catalog.executors)
-	g.GET("/api/dockerfiles", api.catalog.dockerfiles)
-	g.PUT("/api/dockerfiles", api.catalog.dockerfiles)
-	g.DELETE("/api/dockerfiles", api.catalog.dockerfiles)
-	g.GET("/api/environments", api.catalog.environments)
-	g.PUT("/api/environments", api.catalog.environments)
-	g.DELETE("/api/environments", api.catalog.environments)
 	g.GET("/api/sandboxes", api.catalog.sandboxes)
 	g.PUT("/api/sandboxes", api.catalog.sandboxes)
 	g.DELETE("/api/sandboxes", api.catalog.sandboxes)
@@ -743,15 +753,13 @@ func (s *Server) bootstrap(c *gin.Context) {
 	var skills []domain.SkillDefinition
 	var mcpServers []domain.MCPServerDefinition
 	var executors []domain.ExecutorDefinition
-	var dockerfiles []domain.DockerfileDefinition
-	var environments []domain.EnvironmentDefinition
 	var sandboxes []domain.SandboxProfile
 	var workflows []domain.WorkflowDefinition
 	var syncConfig domain.SyncConfig
 	var scheduleJobs []domain.ScheduleJob
 	var users []domain.User
 	var load stdsync.WaitGroup
-	load.Add(14)
+	load.Add(12)
 	go func() { defer load.Done(); projects = s.repo.Projects() }()
 	go func() { defer load.Done(); repositories = s.repo.Repositories() }()
 	go func() { defer load.Done(); agents = s.repo.Agents() }()
@@ -759,8 +767,6 @@ func (s *Server) bootstrap(c *gin.Context) {
 	go func() { defer load.Done(); skills = s.repo.Skills() }()
 	go func() { defer load.Done(); mcpServers = s.repo.MCPServers() }()
 	go func() { defer load.Done(); executors = repo.BuiltInExecutors() }()
-	go func() { defer load.Done(); dockerfiles = s.repo.Dockerfiles() }()
-	go func() { defer load.Done(); environments = s.repo.Environments() }()
 	go func() { defer load.Done(); sandboxes = s.repo.Sandboxes() }()
 	go func() { defer load.Done(); workflows = s.repo.Workflows() }()
 	go func() { defer load.Done(); syncConfig = s.repo.SyncConfig() }()
@@ -795,7 +801,7 @@ func (s *Server) bootstrap(c *gin.Context) {
 	c.JSON(200, map[string]any{
 		"businessDomains": businessDomains, "projects": domain.PublicProjects(projects), "repositories": domain.PublicRepositories(repositories),
 		"agents": catalogAgents(agents), "rules": rules, "skills": skills, "mcpServers": mcpServers,
-		"executors": executors, "dockerfiles": dockerfiles, "environments": environments, "sandboxes": sandboxes,
+		"executors": executors, "sandboxes": sandboxes,
 		"workflows": workflows, "syncConfig": syncConfig, "scheduleJobs": scheduleJobs, "schedulerEnabled": schedulerEnabled(),
 		"users":        domain.PublicUsers(users),
 		"storage":      s.repo.StorageInfo(),

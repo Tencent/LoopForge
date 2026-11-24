@@ -311,10 +311,12 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				// Read complete frames, then split oversized writes for runners.
 				// The CLI receives the same byte stream, including newlines.
 				reader := bufio.NewReaderSize(command.Stdin, 64<<10)
+				rootPath := runtime.ConversationStdinPath(root, command.Provider)
+				workspacePath := runtime.ConversationStdinPath(filepath.Join(root, "ws"), command.Provider)
 				for {
 					data, readErr := reader.ReadString('\n')
 					for len(data) > 0 {
-						end := conversationInputChunkLen(data, root)
+						end := conversationInputChunkLen(data, workspacePath, rootPath)
 						if _, writeErr := call(ioCtx, runtime.ConversationProcessRequest{Operation: "write", ID: started.ID, Data: data[:end]}); writeErr != nil {
 							fail(fmt.Errorf("原生进程输入失败：%w", writeErr))
 							return
@@ -382,8 +384,8 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 
 const maxConversationInputChunk = 1 << 20
 
-func conversationInputChunkLen(data, root string) int {
-	return runtime.ConversationTextChunkLen(data, root, maxConversationInputChunk)
+func conversationInputChunkLen(data string, paths ...string) int {
+	return runtime.ConversationTextChunkLen(data, maxConversationInputChunk, paths...)
 }
 
 func assistantEngineBinary(kind string) string {

@@ -62,6 +62,60 @@ test('run detail loads logs, telemetry, preview, workspace, evaluation, and chil
   assert.match(app.document.querySelector('#runsView').textContent, /Implemented|Strong result|Report|2400|2\.4k/i);
 });
 
+test('live run redraws keep the current IDE document until the workspace is recycled', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'),
+    status: 'running',
+    workflowSnapshot: app.evaluate('structuredClone(state.data.workflows[0])'),
+    nodes: {
+      'node-1': { status: 'succeeded', gateResult: { decision: 'pass' } },
+      'node-2': { status: 'running' },
+    },
+  };
+  const workspacePath = '/api/runs/run-1/workspace';
+  app.router.get('/api/runs/run-1', run);
+  app.router.get(workspacePath, { available: true, readOnly: false });
+  app.evaluate('state.data.runs=[' + JSON.stringify(run) + "];switchView('runs');showRunDetail('run-1')");
+  await settle(8);
+  const detail = app.document.querySelector('#runDetail');
+  detail.querySelector('[data-run-node="node-1"]').click();
+  detail.querySelector('[data-run-tab="workspace"]').click();
+  await settle(8);
+
+  const header = detail.querySelector('.run-detail-header');
+  const frame = detail.querySelector('[data-vscode-frame]');
+  const frameWindow = frame.contentWindow;
+  assert.ok(frameWindow);
+  const stream = app.evaluate('state.runStream');
+  stream.emit({ run: { ...run, revision: 2 } }, 'run');
+  assert.equal(detail.querySelector('.run-detail-header'), header, 'a passed gate needs no prompt');
+
+  const withOutput = {
+    ...run,
+    revision: 3,
+    nodes: {
+      ...run.nodes,
+      'node-1': { ...run.nodes['node-1'], output: 'New result' },
+    },
+  };
+  stream.emit({ run: withOutput }, 'run');
+  assert.notEqual(detail.querySelector('.run-detail-header'), header, 'new output redraws details');
+  assert.equal(detail.querySelector('.node-output pre').textContent, 'New result');
+  assert.equal(detail.querySelector('[data-vscode-frame]'), frame);
+  assert.ok(frame.contentWindow === frameWindow, 'detail redraw keeps the IDE browsing context');
+
+  app.evaluate('renderWorkspacePane(state.activeRun)');
+  assert.ok(frame.contentWindow === frameWindow, 'workspace render keeps the IDE browsing context');
+
+  app.router.get(workspacePath, { available: false, reason: '工作区已回收' });
+  stream.emit({ run: { ...withOutput, revision: 4, workspaceCleanedAt: '2026-11-23T08:00:00Z' } }, 'run');
+  await settle(8);
+  assert.equal(detail.querySelector('[data-vscode-frame]'), null);
+  assert.match(detail.querySelector('[data-run-pane="workspace"]').textContent, /工作区已回收/);
+});
+
 test('run detail node topology renders an icon glyph instead of undefined', async (t) => {
   const app = await loadApp();
   t.after(app.close);

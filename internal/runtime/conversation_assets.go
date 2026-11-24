@@ -227,7 +227,7 @@ func ConversationPromptInputAsset(rel string) bool {
 
 // ConversationTextChunkLen splits input without breaking a UTF-8 rune or a
 // conversation path the runner must be able to relocate in each chunk.
-func ConversationTextChunkLen(data, root string, limit int) int {
+func ConversationTextChunkLen(data string, limit int, paths ...string) int {
 	limit = max(1, limit)
 	if len(data) <= limit {
 		return len(data)
@@ -236,11 +236,13 @@ func ConversationTextChunkLen(data, root string, limit int) int {
 	for end > max(1, limit-utf8.UTFMax+1) && !utf8.RuneStart(data[end]) {
 		end--
 	}
-	if len(root) > 1 && len(root) < end {
-		start := end - len(root) + 1
-		windowEnd := min(len(data), end+len(root)-1)
-		if i := strings.Index(data[start:windowEnd], root); i >= 0 && start+i < end {
-			end = start + i
+	for _, path := range paths {
+		if len(path) > 1 && len(path) < end {
+			start := end - len(path) + 1
+			windowEnd := min(len(data), end+len(path)-1)
+			if i := strings.Index(data[start:windowEnd], path); i >= 0 && start+i < end {
+				end = start + i
+			}
 		}
 	}
 	return end
