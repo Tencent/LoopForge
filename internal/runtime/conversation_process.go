@@ -83,6 +83,8 @@ type ConversationProcessResult struct {
 	// GitScrubbed names the Git credentials the agent wrote by hand that were
 	// removed when a workspace CLI finished; it never holds their values.
 	GitScrubbed []string `json:"gitScrubbed,omitempty"`
+	// Only conversation-relative paths are sent back to the platform.
+	RemovedSkillLinks []string `json:"removedSkillLinks,omitempty"`
 }
 
 type ConversationSandboxFactory func(context.Context, string) (Sandbox, func(), error)
@@ -160,6 +162,10 @@ type conversationProcess struct {
 	notStarted    bool
 	cliVersion    string
 	versionSource string
+	// workspace replaces <root>/ws in stdin under seatbelt, which has no mount
+	// namespace to map that path onto the run workspace.
+	workspace     string
+	stdinProvider string
 	// gitScrubbed is set with done, under mu.
 	gitScrubbed []string
 }
@@ -174,6 +180,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	if req.Operation == "start" {
 		return p.start(ctx, root, workspace, sandbox, req, forward, factories...)
 	}
+	var removedSkillLinks []string
 	if req.Operation == "prepare" || req.Operation == "sync" || req.Operation == "resetAssets" || req.Operation == "discard" {
 		// Serialize asset writes with reservation of a new process. Checking
 		// roots and releasing the fence before a write allows start to race it.
@@ -188,7 +195,12 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		if active {
 			return ConversationProcessResult{}, fmt.Errorf("会话原生进程仍在运行，不能替换资产或启动新进程")
 		}
-		if err = ValidateConversationRoot(root); err != nil {
+		if req.Operation == "prepare" {
+			removedSkillLinks, err = RemoveConversationSkillLinks(root)
+		} else {
+			err = ValidateConversationRoot(root)
+		}
+		if err != nil {
 			return ConversationProcessResult{}, err
 		}
 		if req.Operation == "discard" {
@@ -197,15 +209,14 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 			}
 			return ConversationProcessResult{}, os.RemoveAll(root)
 		}
-		if err = os.MkdirAll(filepath.Join(root, "home", "tmp"), 0700); err != nil {
-			return ConversationProcessResult{}, err
-		}
-		if err = os.MkdirAll(filepath.Join(root, "ws"), 0700); err != nil {
-			return ConversationProcessResult{}, err
+		for _, dir := range []string{"home/tmp", "ws"} {
+			if err = os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
+				return ConversationProcessResult{}, NewConversationStateError("创建会话目录", dir, err)
+			}
 		}
 	}
 	if req.Operation == "prepare" {
-		return ConversationProcessResult{Root: root}, nil
+		return ConversationProcessResult{Root: root, RemovedSkillLinks: removedSkillLinks}, nil
 	}
 	if req.Operation == "resetAssets" {
 		for _, dir := range conversationAssetTrees {
@@ -274,7 +285,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	switch req.Operation {
 	case "write":
 		proc.mu.Lock()
-		input := proc.input
+		input, workspace := proc.input, proc.workspace
 		proc.mu.Unlock()
 		if input == nil {
 			return ConversationProcessResult{}, fmt.Errorf("process has no stdin")
@@ -291,7 +302,8 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 				err = nil
 			}
 		} else {
-			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
+			data := remapConversationStdin(req.Data, req.SourceRoot, root, workspace, proc.stdinProvider)
+			_, err = io.WriteString(input, data)
 		}
 		return ConversationProcessResult{}, err
 	case "stop":
@@ -441,7 +453,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		return ConversationProcessResult{}, err
 	}
 	procCtx, cancel := context.WithCancel(ctx)
-	proc := &conversationProcess{cancel: cancel, wake: make(chan struct{}, 1), finished: make(chan struct{}), root: root, lastPoll: time.Now()}
+	proc := &conversationProcess{cancel: cancel, wake: make(chan struct{}, 1), finished: make(chan struct{}), root: root, lastPoll: time.Now(), stdinProvider: req.Command.Provider}
 	p.mu.Lock()
 	// Expiry and reservation share the same lock as stop's expired-ID reply.
 	// A start paused across its deadline must not register after stop said Done.
@@ -544,7 +556,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	}
 	for _, dir := range []string{"home/tmp", "ws"} {
 		if err = os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
-			return ConversationProcessResult{}, err
+			return ConversationProcessResult{}, NewConversationStateError("创建会话目录", dir, err)
 		}
 	}
 	if spec != nil {
@@ -566,9 +578,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			resources := SandboxResources{}
 			if spec.Dockerfile != nil {
 				resources.Dockerfile = *spec.Dockerfile
-			}
-			if spec.Environment != nil {
-				resources.Environment = *spec.Environment
 			}
 			sb, err = OpenRemoteSandbox(procCtx, "conversation-"+id, workspace, spec.Profile, SandboxRequirements{ConversationRoot: root}, resources)
 			if sb != nil {
@@ -604,6 +613,11 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			command.WorkingDir = sb.Workspace()
 		case strings.TrimSpace(workspace) != "":
 			command.WorkingDir = workspace
+		}
+		if command.WorkingDir != filepath.Join(root, "ws") {
+			proc.mu.Lock()
+			proc.workspace = command.WorkingDir
+			proc.mu.Unlock()
 		}
 	}
 	command.OwnProcessGroup = true
@@ -961,4 +975,23 @@ func conversationRemap(value, source, target string) string {
 		return value
 	}
 	return strings.ReplaceAll(value, source, target)
+}
+
+// ConversationStdinPath returns the bytes a path occupies inside the CLI's
+// stdin stream. Codex app-server frames use JSON strings, so paths must be
+// remapped in their encoded form even when a frame spans multiple writes.
+func ConversationStdinPath(path, provider string) string {
+	if provider != "codex" {
+		return path
+	}
+	raw, _ := json.Marshal(path)
+	return string(raw[1 : len(raw)-1])
+}
+
+func remapConversationStdin(data, source, root, workspace, provider string) string {
+	data = conversationRemap(data, ConversationStdinPath(source, provider), ConversationStdinPath(root, provider))
+	if workspace != "" {
+		data = conversationRemap(data, ConversationStdinPath(filepath.Join(root, "ws"), provider), ConversationStdinPath(workspace, provider))
+	}
+	return data
 }

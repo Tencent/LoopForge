@@ -6,6 +6,7 @@ import (
 	"agentflow/internal/runtime"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -118,7 +119,12 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 	}
 	result, err := d.conversationProcesses.Handle(ctx, root, workspace, request.Sandbox, req, forward, factory)
 	if err != nil {
-		return runnerWorkspaceError(err)
+		response := runnerWorkspaceError(err)
+		var stateErr *runtime.ConversationStateError
+		if errors.As(err, &stateErr) {
+			response.Code = domain.WorkspaceErrorConversationState
+		}
+		return response
 	}
 	return runnerWorkspacePayload(result)
 }

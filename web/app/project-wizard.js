@@ -245,7 +245,7 @@ function projectWizardBasicHTML(w){
 function projectWizardRepoHint(url){
   const raw=String(url||'').trim(),info=raw?parseGongfengRepoURL(raw):null;
   if(!raw)return '例如 https://github.com/owner/repo、https://codeup.aliyun.com/组织ID/仓库.git 或 git@gitlab.com:group/repo.git';
-  if(info?.provider==='ssh')return `识别为 Git SSH · <b>${escapeHTML(info.name)}</b>。请平台管理员在「平台管理 → Git SSH 主机信任」登记主机公钥，并在个人配置中添加 Git SSH 密钥。`;
+  if(info?.provider==='ssh')return `识别为 Git SSH · <b>${escapeHTML(info.name)}</b>。请平台管理员在「平台管理 → Git 主机信任」登记主机公钥，并在个人配置中添加 Git SSH 密钥。`;
   if(info?.provider==='codeup')return `识别为云效 Codeup · <b>${escapeHTML(info.name)}</b>。克隆与推送使用个人配置中的云效仓库授权（PAT + HTTPS 克隆账号）。`;
   return info?`识别为 <b>${escapeHTML(info.name)}</b> · ${escapeHTML(repoDisplayPath(info,info.project))}`:'请输入 GitHub、云效 Codeup 链接或 Git SSH 地址';
 }

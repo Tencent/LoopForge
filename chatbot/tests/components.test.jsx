@@ -655,6 +655,19 @@ describe("content and panels", () => {
     expect(screen.getByText(/未采纳/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "建需求并走 SOP" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "本会话不再建议" })).not.toBeInTheDocument();
+
+    rerender(
+      <DraftCard
+        artifact={artifact({ decision: "rejected", review: { model: "claude-code:claude-haiku-4-5", rationale: "缺少发布授权" } })}
+        onApply={vi.fn()}
+        onDecide={decide}
+        onPreview={vi.fn()}
+        context={context}
+      />,
+    );
+    expect(screen.getByText(/AI 已拒绝/)).toBeInTheDocument();
+    expect(screen.getByText(/缺少发布授权/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "建需求并走 SOP" })).not.toBeInTheDocument();
   });
 
   test("an SOP proposal card names the SOP route", async () => {

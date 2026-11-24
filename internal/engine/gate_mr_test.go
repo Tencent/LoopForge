@@ -229,7 +229,7 @@ func TestMRGateRunsInTheNodeLoop(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	putGateTestAgent(t, s, "mr-gate-agent", []domain.VerificationGate{{ID: "mr-opened", Name: "MR 已创建", Mode: domain.VerificationModeMR, Required: true, OnFailure: "loop"}})
-	wf := domain.WorkflowDefinition{ID: "mr-gate-lab", Name: "mr gate lab", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "mr-gate-lab", Name: "mr gate lab", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "mr", Name: "mr", Type: "agent", AgentID: "mr-gate-agent", ExecutorID: "mock", MaxAttempts: 1},
 	}}
 	if err := s.PutWorkflow(wf); err != nil {

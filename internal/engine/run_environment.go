@@ -110,23 +110,13 @@ func (r *runEnvironment) Detach() error {
 	return nil
 }
 
-func resolveSandboxResources(st *repo.Store, profile domain.SandboxProfile) (runtime.SandboxResources, error) {
-	var resources runtime.SandboxResources
-	if strings.TrimSpace(profile.DockerfileID) != "" {
-		dockerfile, ok := st.Dockerfile(profile.DockerfileID)
-		if !ok {
-			return resources, fmt.Errorf("dockerfile %q not found", profile.DockerfileID)
-		}
-		resources.Dockerfile = dockerfile
-	} else if strings.EqualFold(strings.TrimSpace(profile.Driver), "docker") {
-		return resources, fmt.Errorf("docker sandbox %q requires a dockerfileId", profile.ID)
+// resolveSandbox is the runner spec a stored profile runs as. A docker
+// sandbox cannot run without its Dockerfile.
+func resolveSandbox(profile domain.SandboxProfile) (*domain.RunnerSandboxSpec, error) {
+	if strings.TrimSpace(profile.Driver) == domain.SandboxDriverDocker && (profile.Dockerfile == nil || strings.TrimSpace(profile.Dockerfile.Content) == "") {
+		return nil, fmt.Errorf("docker sandbox %q has no Dockerfile", profile.ID)
 	}
-	if strings.TrimSpace(profile.EnvironmentID) != "" {
-		if environment, ok := st.Environment(profile.EnvironmentID); ok {
-			resources.Environment = environment
-		}
-	}
-	return resources, nil
+	return domain.RunnerSandbox(profile), nil
 }
 
 func resolvedSandboxSnapshot(profile domain.SandboxProfile, resources runtime.SandboxResources) *domain.RunnerSandboxSpec {
@@ -134,10 +124,6 @@ func resolvedSandboxSnapshot(profile domain.SandboxProfile, resources runtime.Sa
 	if strings.TrimSpace(resources.Dockerfile.ID) != "" {
 		dockerfile := resources.Dockerfile
 		snapshot.Dockerfile = &dockerfile
-	}
-	if strings.TrimSpace(resources.Environment.ID) != "" {
-		environment := resources.Environment
-		snapshot.Environment = &environment
 	}
 	return snapshot
 }
@@ -149,9 +135,6 @@ func sandboxResourcesFromSnapshot(snapshot *domain.RunnerSandboxSpec) runtime.Sa
 	}
 	if snapshot.Dockerfile != nil {
 		resources.Dockerfile = *snapshot.Dockerfile
-	}
-	if snapshot.Environment != nil {
-		resources.Environment = *snapshot.Environment
 	}
 	return resources
 }
@@ -193,11 +176,11 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 	}
 	resources := sandboxResourcesFromSnapshot(run.WorkflowSnapshot.SandboxSnapshot)
 	if run.WorkflowSnapshot.SandboxSnapshot == nil {
-		var err error
-		resources, err = resolveSandboxResources(e.repo, profile)
+		spec, err := resolveSandbox(profile)
 		if err != nil {
 			return nil, false, err
 		}
+		profile, resources = spec.Profile, sandboxResourcesFromSnapshot(spec)
 	}
 	sandbox, err := e.sandboxes.AcquireRunIn(ctx, run.ID, workspaceRunID(current), profile, requirements, credentials, resources)
 	if err != nil {

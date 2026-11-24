@@ -8,18 +8,18 @@ import { test, expect, watchErrors } from './fixtures.mjs';
 const TITLES = {
   collaboration: 'AI 工作台', issues: '需求列表', aiSchedules: '定时任务', bots: '通道管理', assistant: 'AI 助手', runs: '运行记录',
   approvals: '待我确认', sops: '流程模板', flow: '流程设计', agents: '角色定义', mcp: '能力资产', rules: '能力资产', skills: '能力资产',
-  dockerfiles: '环境资产', environments: '环境资产', sandboxes: '环境资产', observability: '统计', projects: '项目配置',
+  sandboxes: '沙箱管理', observability: '统计', projects: '项目配置',
   platform: '平台管理', runners: '执行机器', settings: '个人配置', guide: '访问密钥',
 };
 // Only offered for some roles; the app redirects otherwise.
 const CONDITIONAL = ['platform'];
-const ASSET_VIEWS = ['rules', 'skills', 'dockerfiles', 'environments', 'sandboxes'];
+const ASSET_VIEWS = ['rules', 'skills', 'sandboxes'];
 const RETIRED = ['metrics', 'knowledge', 'businessDomains', 'businessDomainManagement'];
 const projects = [process.env.AGENTFLOW_E2E_VIEW_PROJECT || 'welcome', null];
 
 test('legacy routes land on their replacements', async ({ page }) => {
   const errors = watchErrors(page);
-  for (const [legacy, view] of [['dashboard', 'collaboration'], ['access', 'guide'], ['assets', 'dockerfiles'], ['management', 'settings'], ['playbooks', 'sops']]) {
+  for (const [legacy, view] of [['dashboard', 'collaboration'], ['access', 'guide'], ['assets', 'sandboxes'], ['dockerfiles', 'sandboxes'], ['environments', 'sandboxes'], ['management', 'settings'], ['playbooks', 'sops']]) {
     await page.goto(`/#/${legacy}`);
     await expect(page.locator('#pageTitle')).toHaveText(TITLES[view]);
   }
@@ -56,14 +56,13 @@ test('the latest deep link wins while the platform is loading', async ({ page })
 
 // SlidingTabs enhances each type-tab row and its rule forces display:flex, so
 // only a real browser shows whether the inactive group actually disappears.
-test('merged asset pages show only their own type tabs', async ({ page }) => {
+test('capability pages show their type tabs and 沙箱管理 shows none', async ({ page }) => {
   const errors = watchErrors(page);
   const visibleTabs = () => page.evaluate(() => [...document.querySelectorAll('[data-asset-type-tab]')]
     .filter(el => el.getClientRects().length).map(el => el.dataset.assetTypeTab));
   const cases = [
     ['mcp', ['mcp', 'rules', 'skills'], 'mcp'],
     ['rules', ['mcp', 'rules', 'skills'], 'rules'],
-    ['sandboxes', ['dockerfiles', 'environments', 'sandboxes'], 'sandboxes'],
     ['skills', ['mcp', 'rules', 'skills'], 'skills'],
   ];
   for (const [view, tabs, active] of cases) {
@@ -71,17 +70,12 @@ test('merged asset pages show only their own type tabs', async ({ page }) => {
     await expect(page.locator('#pageTitle')).toHaveText(TITLES[view]);
     await expect.poll(visibleTabs, { message: `${view} type tabs` }).toEqual(tabs);
     await expect(page.locator(`[data-asset-type-tab="${active}"]:visible`)).toHaveAttribute('aria-selected', 'true');
-    const nav = view === 'sandboxes' ? 'dockerfiles' : 'mcp';
-    await expect(page.locator(`.platform-sidebar .nav[data-view="${nav}"]`)).toHaveClass(/\bactive\b/);
+    await expect(page.locator('.platform-sidebar .nav[data-view="mcp"]')).toHaveClass(/\bactive\b/);
   }
-  // Clicking a tab switches the page and keeps the single sidebar entry selected.
   await page.goto('/#/sandboxes');
   await expect(page.locator('#pageTitle')).toHaveText(TITLES.sandboxes);
-  await page.locator('#assetsView [data-asset-type-tab="environments"]:visible').click();
-  await expect(page).toHaveURL(/#\/environments/);
-  await expect.poll(visibleTabs).toEqual(['dockerfiles', 'environments', 'sandboxes']);
-  await expect(page.locator('[data-asset-type-tab="environments"]:visible')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('.platform-sidebar .nav[data-view="dockerfiles"]')).toHaveClass(/\bactive\b/);
+  await expect.poll(visibleTabs, { message: 'sandboxes type tabs' }).toEqual([]);
+  await expect(page.locator('.platform-sidebar .nav[data-view="sandboxes"]')).toHaveClass(/\bactive\b/);
   expect(errors).toEqual([]);
 });
 

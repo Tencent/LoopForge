@@ -150,13 +150,13 @@ func (h *codeupHandlers) repositories(c *gin.Context) {
 // verifyCodeupToken checks a saved Codeup credential against the current-user
 // endpoint. It is the Codeup branch of verifyGitHTTPToken and always answers
 // with a structured result.
-func verifyCodeupToken(ctx context.Context, cred domain.GitHTTPCredentialSecret) gitTokenVerifyResult {
+func verifyCodeupToken(ctx context.Context, cred domain.GitHTTPCredentialSecret, client *http.Client) gitTokenVerifyResult {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cred.APIBase()+"/oapi/v1/platform/user", nil)
 	if err != nil {
 		return gitTokenVerifyResult{Error: "无效的校验请求"}
 	}
 	req.Header.Set(cred.APIAuthHeader())
-	res, err := gitHTTPVerifyClient().Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return gitTokenVerifyResult{Error: fmt.Sprintf("无法连接 %s：%v", cred.Host, err)}
 	}

@@ -17,8 +17,6 @@
   "skills":[],
   "mcpServers":[],
   "executors":[],
-  "dockerfiles":[],
-  "environments":[],
   "sandboxes":[],
   "workflows":[],
   "syncConfig":{},
@@ -175,48 +173,26 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 返回只读的内置 CLI 目录（CodeBuddy、Codex、Claude Code，以及 OpenCode、Cursor CLI、Antigravity、Kimi Code、Pi、DeepSeek Harness、ZCode）。CLI 不允许通过 API 新增或修改；模型在 Agent 中设置，API Key/Base URL 使用需求责任人（未指定时为项目 Owner）的个人配置。
 
-## Dockerfile、Environment 与 Sandbox Profile
+## Sandbox Profile
 
-### `GET /api/dockerfiles`
-
-返回 `DockerfileDefinition[]`，`200`。字段为 `id`、`name`、`description`、`content`、`files`、`updatedAt`。
-
-### `PUT /api/dockerfiles`
-
-`id`、`name`、`content` 必填；`files` 的 key 必须是安全的相对路径。成功 `200 {"ok":true}`；校验失败 `400`。
-
-### `DELETE /api/dockerfiles?id={id}`
-
-删除 Dockerfile。前置条件：未共享且未被任何沙箱引用，否则 `409`；成功 `204`。
-
-### `GET /api/environments`
-
-返回 `EnvironmentDefinition[]`，`200`。字段为 `id`、`name`、`description`、`variables`、`pathEntries`、`installScript`、`updatedAt`。
-
-### `PUT /api/environments`
-
-`id`、`name` 必填；变量名不得含 `=`/NUL，`pathEntries` 必须是安全相对路径。成功 `200 {"ok":true}`；校验失败 `400`。
-
-### `DELETE /api/environments?id={id}`
-
-删除环境安装脚本。前置条件：未共享且未被任何沙箱引用，否则 `409`；成功 `204`。
+docker 沙箱的 Dockerfile 存在沙箱里，随沙箱一起共享，没有单独的 Dockerfile 资产。native 沙箱只有环境变量，使用实际执行它的机器（用户的执行机器、云端 Runner 或平台本机）上已安装的工具，仓库从那台机器的仓库缓存共享克隆。旧的 `/api/dockerfiles`、`/api/environments`、环境安装脚本和 `local` 类型已移除；现有部署升级时，在启动新版本前手动执行 `migrations/041_native_sandbox_inline_assets.sql`。
 
 ### `GET /api/sandboxes`
 
-返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`local|native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap）、`dockerfileId`、`environmentId`、`readOnlyRootFS`、`environment`。
+返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap；尚未迁移的 `local` 行读出时也是 `native`）、`dockerfile`、`readOnlyRootFS`、`environment`。`dockerfile` 为 `{content, files}`，`files` 是构建上下文文件（相对路径 → 内容）。
 
 ### `PUT /api/sandboxes`
 
-`id` 必填，成功 `200 {"ok":true}`；校验/存储失败 `400`。
+`id` 必填，成功 `200 {"ok":true}`；校验/存储失败 `400`。`docker` 必须带非空的 `dockerfile.content`；`dockerfile` 和 `readOnlyRootFS` 只对 `docker` 生效，改成 `native` 后在保存时丢弃。`files` 的 key 必须是安全的相对路径，变量名不得含 `=`/NUL。`driver` 为 `local` 时返回 `400`。
 
 ### `DELETE /api/sandboxes?id={id}`
 
-删除沙箱配置。前置条件：不是内置 `local`、未共享、且未被任何 SOP 引用，否则 `409`；成功 `204`。
+删除沙箱配置。前置条件：不是内置 `generic-docker`、未共享、且未被任何 SOP 引用，否则 `409`；成功 `204`。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
   -H 'Content-Type: application/json' \
-  -d '{"id":"sandbox-go","name":"Go 隔离环境","driver":"docker","dockerfileId":"go-1.23","readOnlyRootFS":false}' \
+  -d '{"id":"sandbox-go","name":"Go 隔离环境","driver":"docker","dockerfile":{"content":"FROM golang:1.23\nWORKDIR /workspace\n"},"readOnlyRootFS":false}' \
   "$AGENTFLOW_URL/api/sandboxes"
 ```
 

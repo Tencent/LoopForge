@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitegress"
 )
 
 func TestGitHTTPCredentialsSettings(t *testing.T) {
@@ -130,7 +131,7 @@ func TestVerifyGitHTTPCredential(t *testing.T) {
 	}))
 	defer srv.Close()
 	previous := gitHTTPVerifyClient
-	gitHTTPVerifyClient = func() *http.Client {
+	gitHTTPVerifyClient = func(gitegress.HTTPSHostLookup) *http.Client {
 		transport := srv.Client().Transport.(*http.Transport).Clone()
 		transport.TLSClientConfig = &tls.Config{RootCAs: transport.TLSClientConfig.RootCAs, ServerName: "example.com"}
 		transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {

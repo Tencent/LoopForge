@@ -42,7 +42,7 @@ func TestRunEvalRequiresTerminalRunAndUserKey(t *testing.T) {
 func TestRunEvalScoresAndAppliesNodePatch(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "run-eval-session-secret")
 	h, store, user := newRunEvalHarness(t)
-	if err := store.PutWorkflow(domain.WorkflowDefinition{ID: "wf-eval", Name: "评测SOP", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "修复", Type: "agent", AgentID: "fixer", MaxAttempts: 1}}}); err != nil {
+	if err := store.PutWorkflow(domain.WorkflowDefinition{ID: "wf-eval", Name: "评测SOP", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "修复", Type: "agent", AgentID: "fixer", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.PutAgent(domain.AgentDefinition{ID: "fixer", Name: "修复者", ProjectID: "platform", Prompt: "修 bug"}); err != nil {

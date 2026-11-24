@@ -510,12 +510,12 @@ func TestNativeExternalWriteClassifier(t *testing.T) {
 func TestRuntimeModeHandoffPublishesToLiveGeneration(t *testing.T) {
 	recorder := newAssistantGenerationRecorder(domain.AssistantGeneration{ID: "mode-stream", Status: "running"})
 	defer recorder.close()
-	recorder.sink("runtime_mode", map[string]string{"mode": domain.AssistantModeWorkspace})
-	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace {
-		t.Fatal("handoff mode not published")
+	recorder.sink("runtime_mode", map[string]string{"mode": domain.AssistantModeWorkspace, "workspaceRunId": "workspace-2"})
+	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace || got.WorkspaceRunID != "workspace-2" {
+		t.Fatalf("handoff = %q in %q", got.RuntimeMode, got.WorkspaceRunID)
 	}
-	recorder.sink("runtime_mode", map[string]string{"mode": "invalid"})
-	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace {
+	recorder.sink("runtime_mode", map[string]string{"mode": "invalid", "workspaceRunId": "unbound"})
+	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace || got.WorkspaceRunID != "workspace-2" {
 		t.Fatal("invalid mode accepted")
 	}
 }
