@@ -60,13 +60,7 @@ func (e *ScheduleJobExecution) RecordUsage(model string, usage *TokenUsage) {
 // Codex input includes caches; Claude Code input excludes them, even when a
 // custom endpoint names an OpenAI model. Unprefixed GPT usage stays inclusive.
 func PriceScheduleExecutionUsage(model string, usage TokenUsage) TokenUsage {
-	model = strings.ToLower(strings.TrimSpace(model))
-	engine := ""
-	if prefix, rest, ok := strings.Cut(model, ":"); ok && (prefix == "codex" || prefix == "claude-code" || prefix == "codebuddy" || IsAgentCLIKind(prefix)) {
-		engine, model = prefix, strings.TrimSpace(rest)
-	}
-	inclusive := engine == "codex" || engine != "claude-code" && strings.HasPrefix(pricingModel(model), "gpt-")
-	return AnalyticsPricedUsage(model, usage, inclusive)
+	return PricedRecordedModelUsage(model, usage)
 }
 
 // usageTotalTokens is the billed total, falling back to input + output.

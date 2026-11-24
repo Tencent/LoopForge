@@ -69,8 +69,7 @@ func (r *RunsRepo) AddConversationRunUsage(runID, model string, usage domain.Tok
 	if usage.TotalTokens == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.CostUSD == 0 {
 		return nil
 	}
-	lower := strings.ToLower(strings.TrimSpace(model))
-	usage = domain.AnalyticsPricedUsage(model, usage, strings.HasPrefix(lower, "gpt-"))
+	usage = domain.PricedRecordedModelUsage(model, usage)
 	_, err := r.updateConversationWorkspaceRun(runID, func(row *runRow) (map[string]any, bool) {
 		var total domain.TokenUsage
 		if len(row.UsageJSON) > 0 {
