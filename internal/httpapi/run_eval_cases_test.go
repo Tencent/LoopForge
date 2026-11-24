@@ -443,8 +443,9 @@ func TestRunEvalRecoveryAndApplyConflicts(t *testing.T) {
 	if err := f.s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	active := domain.RunEvalRecord{ID: "cvb-r2-orphan-eval", RunID: run.ID, Status: domain.RunEvalRunning}
-	if err := f.s.PutRunEval(active); err != nil {
+	// A recent running row without a local job may belong to another API replica.
+	remote := domain.RunEvalRecord{ID: "cvb-r2-remote-eval", RunID: run.ID, Status: domain.RunEvalRunning, CreatedAt: time.Now().UTC().Add(-time.Minute)}
+	if err := f.s.PutRunEval(remote); err != nil {
 		t.Fatal(err)
 	}
 	setRunEvalExecForTest(func(context.Context, domain.RunEvalRecord, domain.Run, domain.User, func(string, any)) (domain.RunEvalResult, error) {
@@ -452,6 +453,17 @@ func TestRunEvalRecoveryAndApplyConflicts(t *testing.T) {
 	})
 	t.Cleanup(func() { setRunEvalExecForTest(nil) })
 	rec := cvBRequest(t, f, http.MethodPost, "/api/runs/"+run.ID+"/eval", nil, true)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("eval on another replica = %d: %s", rec.Code, rec.Body.String())
+	}
+	if stored, _ := f.s.RunEval(remote.ID); stored.Status != domain.RunEvalRunning {
+		t.Fatalf("another replica's eval was changed: %+v", stored)
+	}
+	remote.CreatedAt = time.Now().UTC().Add(-runEvalTimeout - time.Minute)
+	if err := f.s.PutRunEval(remote); err != nil {
+		t.Fatal(err)
+	}
+	rec = cvBRequest(t, f, http.MethodPost, "/api/runs/"+run.ID+"/eval", nil, true)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("orphan eval recovery = %d: %s", rec.Code, rec.Body.String())
 	}

@@ -114,12 +114,14 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 		hub.mu.Lock()
 		job := hub.jobs[id]
 		hub.mu.Unlock()
-		if job != nil {
+		// Without a local job, a recent row may belong to another API process,
+		// as in streamRunEval. Starting again there would run a second evaluation.
+		if job != nil || time.Since(rec.CreatedAt) < runEvalTimeout {
 			c.JSON(http.StatusConflict, map[string]string{"error": "这次运行已有评测在进行"})
 			return
 		}
-		// The row was saved as running, then startup failed before a job existed.
-		h.failRunEval(rec, "上次评测没有真正启动")
+		// The row outlived its timeout without finishing, so its process stopped.
+		h.failRunEval(rec, "评测已中断，请重新评测。")
 	}
 	project, _ := h.repo.Project(run.ExecutionContext.ProjectID)
 	rec := domain.RunEvalRecord{

@@ -193,3 +193,23 @@ test('recommendations whose targetId names a node show the SOP or role the serve
   await row('retry').querySelector('[data-apply-eval]').onclick();
   assert.match(app.window.lastEvalConfirmation.message, /SOP · 交付流程/);
 });
+
+test('a rejected start follows the evaluation that is already running', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/assistant/models', {
+    engines: [{ id: 'codex', name: 'Codex', personal: true }],
+    models: [{ id: 'codex:model-x', name: 'Model X', engine: 'codex' }],
+  });
+  app.router.get('/api/runs/run-eval/eval', { id: 'eval-old', runId: run.id, status: 'succeeded', score: 80, result: {} });
+  const pane = mount(app);
+  await app.evaluate(`loadRunEval('${run.id}')`);
+
+  // Another tab started an evaluation that this page has not seen yet.
+  app.router.post('/api/runs/run-eval/eval', { status: 409, body: { error: '这次运行已有评测在进行' } });
+  app.router.get('/api/runs/run-eval/eval', { id: 'eval-new', runId: run.id, status: 'running' });
+  await app.evaluate(`startRunEval(state.activeRun)`);
+  assert.equal(pane.querySelector('[data-start-run-eval]').disabled, true);
+  assert.equal(pane.querySelector('[aria-current="step"]').textContent.trim(), '等待执行');
+  assert.ok(app.window.EventSource.instances.some(stream => stream.url.endsWith('/eval/stream') && stream.readyState !== 2));
+});

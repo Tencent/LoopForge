@@ -1695,17 +1695,21 @@ async function startRunEval(run){
   runEvalModelChoice={runId:run.id,model};
   runEvalSubmitting.add(run.id);
   paintRunEvalPane(run.id);
+  let failed=false;
   try{
     const rec=await api(`/api/runs/${encodeURIComponent(run.id)}/eval`,{method:'POST',body:JSON.stringify({model})});
     if(!runEvalIsCurrent(run.id))return;
     state.runEval={...rec,runId:run.id};
     attachRunEvalStream(run.id,rec.id);
   }catch(e){
+    failed=true;
     if(runEvalIsCurrent(run.id))toast(e.message,'err');
   }finally{
     runEvalSubmitting.delete(run.id);
     paintRunEvalPane(run.id);
   }
+  // Another tab or API replica may already be evaluating this run.
+  if(failed)await loadRunEval(run.id);
 }
 
 function stopRunEvalStream(){
