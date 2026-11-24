@@ -306,7 +306,12 @@ func (h *runsHandlers) applyOneRecommendation(run domain.Run, projectID string, 
 	action := domain.NormalizeRunEvalAction(rec.Target, rec.Action)
 	switch {
 	case strings.HasPrefix(action, "workflow."):
-		wf, err := h.ensureProjectWorkflow(run, projectID, firstNonEmpty(rec.TargetID, run.WorkflowID))
+		// Model output can name a node instead of the SOP; use the run's SOP then.
+		workflowID := run.WorkflowID
+		if _, ok := h.repo.Workflow(strings.TrimSpace(rec.TargetID)); ok {
+			workflowID = strings.TrimSpace(rec.TargetID)
+		}
+		wf, err := h.ensureProjectWorkflow(run, projectID, workflowID)
 		if err != nil {
 			return rec, err
 		}
@@ -319,7 +324,11 @@ func (h *runsHandlers) applyOneRecommendation(run domain.Run, projectID string, 
 		rec.AppliedTargetID = wf.ID
 		return rec, nil
 	case strings.HasPrefix(action, "agent."):
-		agentID := firstNonEmpty(rec.TargetID, agentIDFromRun(run, rec.NodeID))
+		// Model output can name a node instead of the role; use the node's role then.
+		agentID := strings.TrimSpace(rec.TargetID)
+		if _, ok := h.repo.Agent(agentID); !ok {
+			agentID = firstNonEmpty(agentIDFromRun(run, rec.NodeID), agentID)
+		}
 		agent, err := h.ensureProjectAgent(run, projectID, agentID)
 		if err != nil {
 			return rec, err

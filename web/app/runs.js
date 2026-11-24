@@ -1560,7 +1560,11 @@ function runEvalRecommendation(run,rec,item){
   const catalog=rec.facts?.editableCatalog;
   const node=run.workflowSnapshot?.nodes?.find(node=>node.id===item.nodeId);
   const sourceId=type==='agent'?node?.agentId:type==='workflow'?run.workflowId||run.workflowSnapshot?.id:'';
-  const targetId=item.appliedTargetId||item.targetId?.trim()||sourceId||'';
+  // Match the server: a targetId that names no SOP or role falls back to the run's own.
+  const known=id=>type==='agent'?Boolean(state.data.agents?.some(agent=>agent.id===id)||catalog?.agents?.some(agent=>agent.id===id)):
+    Boolean(state.data.workflows?.some(workflow=>workflow.id===id)||run.workflowSnapshot?.id===id);
+  const requestedId=item.targetId?.trim()||'';
+  const targetId=item.appliedTargetId||(requestedId&&(known(requestedId)||!sourceId)?requestedId:sourceId)||'';
   const workflow=run.workflowSnapshot?.id===targetId?run.workflowSnapshot:null;
   const target=type==='agent'?state.data.agents?.find(agent=>agent.id===targetId)||catalog?.agents?.find(agent=>agent.id===targetId):
     state.data.workflows?.find(workflow=>workflow.id===targetId)||workflow;

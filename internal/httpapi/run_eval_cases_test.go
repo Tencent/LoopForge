@@ -496,3 +496,44 @@ func TestRunEvalRecoveryAndApplyConflicts(t *testing.T) {
 		t.Fatal("lazy eval hub missing")
 	}
 }
+
+func TestRunEvalApplyFallsBackWhenModelTargetIDIsUnknown(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	h := &runsHandlers{deps: &deps{repo: f.s}, evalJobs: newRunEvalHub()}
+	nodes := []domain.WorkflowNode{{ID: "dev", Name: "开发", AgentID: "cvb-target-agent"}}
+	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "cvb-target-wf", Name: "Live", SandboxProfileID: "test-native", Nodes: nodes}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := f.s.Workflow("cvb-target-wf")
+	live := snapshot
+	live.Description = "edited after the run"
+	if err := f.s.PutWorkflow(live); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.PutAgent(domain.AgentDefinition{ID: "cvb-target-agent", Name: "Dev", Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{ID: "cvb-target-run", WorkflowID: "cvb-target-wf", Status: "succeeded", WorkflowSnapshot: snapshot}
+
+	// Models sometimes put the node ID into targetId.
+	got, err := h.applyOneRecommendation(run, "", domain.RunEvalRecommendation{
+		Target: "workflow", Action: "update_node", NodeID: "dev", TargetID: "dev", Set: map[string]any{"maxAttempts": 3},
+	})
+	if err != nil || got.AppliedTargetID != "cvb-target-wf" {
+		t.Fatalf("workflow apply = %+v, %v", got, err)
+	}
+	if wf, _ := f.s.Workflow("cvb-target-wf"); wf.Nodes[0].MaxAttempts != 3 || wf.Description != live.Description {
+		t.Fatalf("live workflow was not updated: %+v", wf)
+	}
+	got, err = h.applyOneRecommendation(run, "", domain.RunEvalRecommendation{
+		Target: "agent", Action: "append_task_prompt", NodeID: "dev", TargetID: "dev", Text: "attach test evidence",
+	})
+	if err != nil || got.AppliedTargetID != "cvb-target-agent" {
+		t.Fatalf("agent apply = %+v, %v", got, err)
+	}
+	if _, err := h.applyOneRecommendation(run, "", domain.RunEvalRecommendation{
+		Target: "agent", Action: "append_task_prompt", TargetID: "missing-agent", Text: "x",
+	}); err == nil || !strings.Contains(err.Error(), "missing-agent") {
+		t.Fatalf("unknown agent without a node fallback: %v", err)
+	}
+}

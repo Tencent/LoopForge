@@ -167,3 +167,29 @@ test('recommendations preview the actual change and show the server writeback ou
   assert.equal(row('append').querySelector('[data-open-eval-target]').dataset.openEvalId, 'reviewer-project');
   assert.equal(row('append').querySelector('[data-apply-eval]'), null);
 });
+
+test('recommendations whose targetId names a node show the SOP or role the server writes', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const report = {
+    id: 'eval-node-target', runId: run.id, status: 'succeeded', score: 54, passed: false,
+    facts: { editableCatalog: { agents: [{ id: 'reviewer', name: '审查角色' }] } },
+    result: {
+      recommendations: [
+        { id: 'retry', target: 'workflow', action: 'update_node', nodeId: 'verify', targetId: 'verify', set: { maxAttempts: 3 } },
+        { id: 'prompt', target: 'agent', action: 'append_task_prompt', nodeId: 'verify', targetId: 'verify', text: '附上验证证据。' },
+      ],
+    },
+  };
+  app.router.get('/api/runs/run-eval/eval', report);
+  app.router.post('/api/runs/run-eval/eval/apply', report);
+  const pane = mount(app);
+  await app.evaluate(`loadRunEval('${run.id}')`);
+  const row = (id) => pane.querySelector(`[data-eval-recommendation="${id}"]`);
+  assert.match(row('retry').querySelector('.run-eval-target').textContent, /SOP\s*交付流程/);
+  assert.match(row('prompt').querySelector('.run-eval-target').textContent, /角色\s*审查角色/);
+
+  app.evaluate(`window.afConfirm = async (options) => { window.lastEvalConfirmation = options; return true; }`);
+  await row('retry').querySelector('[data-apply-eval]').onclick();
+  assert.match(app.window.lastEvalConfirmation.message, /SOP · 交付流程/);
+});
