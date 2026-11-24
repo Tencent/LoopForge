@@ -67,9 +67,10 @@ func TestConversationProcessPreparesNativeRootUnderWorkspaceRoot(t *testing.T) {
 	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: root}}
 	d.conversationForward = func(context.Context, string, json.RawMessage) (json.RawMessage, error) { return nil, nil }
 
-	got := d.conversationProcess(context.Background(), domain.RunnerWorkspaceRequest{
+	request := domain.RunnerWorkspaceRequest{
 		Conversation: conversationRequest(t, runtime.ConversationProcessRequest{Operation: "prepare", SessionKey: key}),
-	})
+	}
+	got := d.conversationProcess(t.Context(), request)
 	if got.Status != 200 {
 		t.Fatalf("prepare = %+v", got)
 	}
@@ -85,6 +86,27 @@ func TestConversationProcessPreparesNativeRootUnderWorkspaceRoot(t *testing.T) {
 		if info, err := os.Stat(filepath.Join(want, filepath.FromSlash(dir))); err != nil || !info.IsDir() {
 			t.Fatalf("%s not prepared: %v", dir, err)
 		}
+	}
+	const skillLink = "home/.agents/skills/alias"
+	link := filepath.Join(want, skillLink)
+	if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("sample-skill", link); err != nil {
+		t.Fatal(err)
+	}
+	got = d.conversationProcess(t.Context(), request)
+	result = runtime.ConversationProcessResult{}
+	if err := json.Unmarshal(got.Payload, &result); err != nil || got.Status != 200 || len(result.RemovedSkillLinks) != 1 || result.RemovedSkillLinks[0] != skillLink {
+		t.Fatalf("runner did not report the recovered skill link: %+v %v", got, err)
+	}
+
+	if err := os.Symlink(link, filepath.Join(want, "current-mcp.json")); err != nil {
+		t.Fatal(err)
+	}
+	got = d.conversationProcess(t.Context(), request)
+	if got.Code != domain.WorkspaceErrorConversationState || !strings.Contains(got.Error, "current-mcp.json") || !strings.Contains(got.Error, "不支持符号链接") || strings.Contains(got.Error, want) {
+		t.Fatalf("runner did not report the protected path: %+v", got)
 	}
 }
 

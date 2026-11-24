@@ -141,6 +141,7 @@ func (h *assistantHandlers) registerTurnDeliveries(ctx context.Context, s *Agent
 	if len(heads) == 0 || len(repos) == 0 {
 		return ""
 	}
+	client := gitHostClient(h.repo.PlatformGitHTTPSAddresses)
 	pulls := []workspacePull{}
 	for _, host := range sortedKeys(repos) {
 		cred, ok := h.repo.GitHTTPCredentialForHost(ctx, s.UserID, host)
@@ -149,9 +150,9 @@ func (h *assistantHandlers) registerTurnDeliveries(ctx context.Context, s *Agent
 		}
 		var found []workspacePull
 		if cred.Platform == domain.GitPlatformGitLab {
-			found, err = workspaceMergeRequests(ctx, cred, repos[host], heads, run.CreatedAt)
+			found, err = h.workspaceMergeRequests(ctx, client, cred, repos[host], heads, run.CreatedAt)
 		} else {
-			found, err = workspacePulls(ctx, cred, repos[host], heads, run.CreatedAt)
+			found, err = workspacePulls(ctx, client, cred, repos[host], heads, run.CreatedAt)
 		}
 		if err != nil {
 			log.Printf("find conversation workspace %s pull requests on %s: %v", run.ID, host, err)
@@ -266,11 +267,11 @@ func (h *assistantHandlers) workspaceCheckouts(ctx context.Context, run domain.R
 // workspacePulls returns the open or merged GitHub PRs in repos (owner/repo)
 // that the token's user created since the given time and whose head commit
 // is in heads.
-func workspacePulls(ctx context.Context, cred domain.GitHTTPCredentialSecret, repos []string, heads map[string]bool, since time.Time) ([]workspacePull, error) {
+func workspacePulls(ctx context.Context, client *http.Client, cred domain.GitHTTPCredentialSecret, repos []string, heads map[string]bool, since time.Time) ([]workspacePull, error) {
 	var user struct {
 		Login string `json:"login"`
 	}
-	if err := gitHostGet(ctx, cred, "/user", &user); err != nil {
+	if err := gitHostGet(ctx, client, cred, "/user", &user); err != nil {
 		return nil, err
 	}
 	if user.Login == "" {
@@ -280,7 +281,7 @@ func workspacePulls(ctx context.Context, cred domain.GitHTTPCredentialSecret, re
 	for _, repo := range repos {
 		var list []workspacePull
 		path := "/repos/" + repo + fmt.Sprintf("/pulls?state=all&sort=created&direction=desc&per_page=%d", turnDeliveryPullsMax)
-		if err := gitHostGet(ctx, cred, path, &list); err != nil {
+		if err := gitHostGet(ctx, client, cred, path, &list); err != nil {
 			log.Printf("list pull requests of %s/%s: %v", cred.Host, repo, err)
 			continue
 		}
@@ -299,16 +300,22 @@ func workspacePulls(ctx context.Context, cred domain.GitHTTPCredentialSecret, re
 
 // workspaceMergeRequests is workspacePulls for GitLab: MRs in repos
 // (group/…/repo) the token's user authored since the given time.
-func workspaceMergeRequests(ctx context.Context, cred domain.GitHTTPCredentialSecret, repos []string, heads map[string]bool, since time.Time) ([]workspacePull, error) {
+func (h *assistantHandlers) workspaceMergeRequests(ctx context.Context, client *http.Client, cred domain.GitHTTPCredentialSecret, repos []string, heads map[string]bool, since time.Time) ([]workspacePull, error) {
+	approvedAddresses, err := h.repo.PlatformGitHTTPSAddresses(ctx, cred.Host)
+	if err != nil {
+		return nil, fmt.Errorf("load Git HTTPS host authorization: %w", err)
+	}
+
 	var user struct {
 		ID int64 `json:"id"`
 	}
-	if err := gitHostGet(ctx, cred, "/user", &user); err != nil {
+	if err := gitHostGet(ctx, client, cred, "/user", &user); err != nil {
 		return nil, err
 	}
 	if user.ID <= 0 {
 		return nil, errors.New("GitLab did not return the token's user")
 	}
+	ipv6Host := strings.HasPrefix(cred.Host, "[")
 	out := []workspacePull{}
 	for _, repo := range repos {
 		var list []struct {
@@ -323,15 +330,27 @@ func workspaceMergeRequests(ctx context.Context, cred domain.GitHTTPCredentialSe
 			TargetBranch string     `json:"target_branch"`
 		}
 		q := url.Values{"author_id": {fmt.Sprint(user.ID)}, "created_after": {since.UTC().Format(time.RFC3339)}, "state": {"all"}, "order_by": {"created_at"}, "sort": {"desc"}, "per_page": {fmt.Sprint(turnDeliveryPullsMax)}}
-		if err := gitHostGet(ctx, cred, "/projects/"+url.PathEscape(repo)+"/merge_requests?"+q.Encode(), &list); err != nil {
+		if err := gitHostGet(ctx, client, cred, "/projects/"+url.PathEscape(repo)+"/merge_requests?"+q.Encode(), &list); err != nil {
 			log.Printf("list merge requests of %s/%s: %v", cred.Host, repo, err)
 			continue
 		}
 		for _, mr := range list {
-			if mr.CreatedAt.Before(since) || !heads[mr.SHA] || mr.State == "closed" || mr.State == "locked" || !sameDeliveryHost(mr.WebURL, cred.Host) {
+			if mr.CreatedAt.Before(since) || !heads[mr.SHA] || mr.State == "closed" || mr.State == "locked" {
 				continue
 			}
-			p := workspacePull{Number: mr.IID, URL: mr.WebURL, Title: mr.Title, Body: mr.Description, State: mr.State, MergedAt: mr.MergedAt, CreatedAt: mr.CreatedAt, mergeRequest: true}
+			link := mr.WebURL
+			matchesHost := sameDeliveryHost(link, cred.Host)
+			if ipv6Host || (len(approvedAddresses) != 0 && !matchesHost) {
+				// GitLab can advertise a different host or port in web_url.
+				// Keep tracking on the endpoint and project that were queried.
+				link = domain.GongfengMRURL(domain.MRProjectGitLab+cred.Host+"/"+repo, mr.IID)
+				matchesHost = sameDeliveryHost(link, cred.Host)
+			}
+			if !matchesHost {
+				log.Printf("skip merge request !%d from %s/%s: web link is invalid or uses a different endpoint", mr.IID, cred.Host, repo)
+				continue
+			}
+			p := workspacePull{Number: mr.IID, URL: link, Title: mr.Title, Body: mr.Description, State: mr.State, MergedAt: mr.MergedAt, CreatedAt: mr.CreatedAt, mergeRequest: true}
 			p.Head.SHA, p.Base.Ref = mr.SHA, mr.TargetBranch
 			out = append(out, p)
 		}
@@ -346,10 +365,14 @@ func sameDeliveryHost(link, host string) bool {
 		return false
 	}
 	u, err := url.Parse(link)
-	return err == nil && strings.EqualFold(strings.TrimSuffix(u.Host, ":443"), host)
+	if err != nil {
+		return false
+	}
+	scope, err := gitwork.HTTPSHostScope("https://" + u.Host)
+	return err == nil && scope == host
 }
 
-func gitHostGet(ctx context.Context, cred domain.GitHTTPCredentialSecret, path string, out any) error {
+func gitHostGet(ctx context.Context, client *http.Client, cred domain.GitHTTPCredentialSecret, path string, out any) error {
 	base := gitHostAPIBase(cred.GitHTTPCredential)
 	if base == "" {
 		return fmt.Errorf("%s has no API the platform can call", cred.Host)
@@ -363,9 +386,9 @@ func gitHostGet(ctx context.Context, cred domain.GitHTTPCredentialSecret, path s
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	}
-	res, err := gitHostClient().Do(req)
+	res, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s request failed", cred.Host)
+		return fmt.Errorf("%s request failed: %w", cred.Host, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {

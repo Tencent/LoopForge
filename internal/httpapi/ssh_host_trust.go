@@ -189,7 +189,7 @@ func platformSSHHostRevisionToken(revision string) string {
 	return platformSSHHostLegacyRevisionPrefix + base64.RawURLEncoding.EncodeToString([]byte(revision))
 }
 
-func readPlatformSSHHostRevision(c *gin.Context) (string, bool) {
+func readPlatformGitHostRevision(c *gin.Context) (string, bool) {
 	value := strings.TrimSpace(c.GetHeader("If-Match"))
 	if value == "" {
 		c.JSON(http.StatusPreconditionRequired, gin.H{"error": "请重新打开主机信任记录后再操作"})
@@ -254,7 +254,7 @@ func (h *sshHostTrustHandlers) save(c *gin.Context) {
 		c.JSON(http.StatusCreated, entry)
 		return
 	}
-	revision, ok := readPlatformSSHHostRevision(c)
+	revision, ok := readPlatformGitHostRevision(c)
 	if !ok {
 		return
 	}
@@ -287,7 +287,7 @@ func (h *sshHostTrustHandlers) remove(c *gin.Context) {
 		}
 		host = hosts[0]
 	}
-	revision, ok := readPlatformSSHHostRevision(c)
+	revision, ok := readPlatformGitHostRevision(c)
 	if !ok {
 		return
 	}

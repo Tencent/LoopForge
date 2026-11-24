@@ -167,10 +167,10 @@ func TestResolveAssistantDraftsByApprovalMode(t *testing.T) {
 	})
 	out := h.resolveAssistantDrafts(ctx, domain.User{}, "p", drafts, AssistantApprovalAssisted)
 	if len(out) != 2 {
-		t.Fatalf("assisted mode should keep both drafts: %#v", out)
+		t.Fatalf("assisted mode should resolve both drafts: %#v", out)
 	}
-	if out[0].Auto || !out[1].Auto {
-		t.Fatalf("assisted mode should auto-apply only low-risk drafts: %#v", out)
+	if !out[0].Auto || out[0].Saved || out[0].Decision != domain.AssistantDraftRejected || !out[1].Auto {
+		t.Fatalf("assisted mode must reject denied drafts without human approval and auto-apply approved ones: %#v", out)
 	}
 	out = h.resolveAssistantDrafts(context.Background(), domain.User{}, "p", drafts, AssistantApprovalAuto)
 	for _, draft := range out {
@@ -178,8 +178,8 @@ func TestResolveAssistantDraftsByApprovalMode(t *testing.T) {
 			t.Fatalf("auto mode should auto-apply all drafts: %#v", out)
 		}
 	}
-	if out := h.resolveAssistantDrafts(context.Background(), domain.User{}, "p", []assistantDraft{{Tool: "agents_delete", Path: map[string]any{"id": "ghost"}}}, AssistantApprovalAssisted); len(out) != 1 || out[0].Auto {
-		t.Fatalf("assisted mode must confirm drafts with dependency warnings: %#v", out)
+	if out := h.resolveAssistantDrafts(context.Background(), domain.User{}, "p", []assistantDraft{{Tool: "agents_delete", Path: map[string]any{"id": "ghost"}}}, AssistantApprovalAssisted); len(out) != 1 || !out[0].Auto || out[0].Saved || out[0].Decision != domain.AssistantDraftRejected {
+		t.Fatalf("assisted mode must reject drafts with dependency warnings without human approval: %#v", out)
 	}
 }
 
@@ -269,8 +269,8 @@ func TestAssistantSystemPromptForMode(t *testing.T) {
 		t.Fatal("confirm prompt must block direct write tools")
 	}
 	assisted := assistantSystemPromptForMode(AssistantApprovalAssisted)
-	if !strings.Contains(assisted, "独立审查模型") || !strings.Contains(assisted, "放入 drafts") {
-		t.Fatal("assisted prompt must review actions and keep denied writes for confirmation")
+	if !strings.Contains(assisted, "独立审查模型") || !strings.Contains(assisted, "无需人工审批卡片") || !strings.Contains(assisted, "不要把写入放进 drafts") {
+		t.Fatal("assisted prompt must make AI final decision without human drafts")
 	}
 	if strings.Contains(assisted, "不要直接调用平台写入工具") {
 		t.Fatal("assisted prompt must allow direct write calls for saves")

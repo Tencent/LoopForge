@@ -83,6 +83,8 @@ type ConversationProcessResult struct {
 	// GitScrubbed names the Git credentials the agent wrote by hand that were
 	// removed when a workspace CLI finished; it never holds their values.
 	GitScrubbed []string `json:"gitScrubbed,omitempty"`
+	// Only conversation-relative paths are sent back to the platform.
+	RemovedSkillLinks []string `json:"removedSkillLinks,omitempty"`
 }
 
 type ConversationSandboxFactory func(context.Context, string) (Sandbox, func(), error)
@@ -174,6 +176,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	if req.Operation == "start" {
 		return p.start(ctx, root, workspace, sandbox, req, forward, factories...)
 	}
+	var removedSkillLinks []string
 	if req.Operation == "prepare" || req.Operation == "sync" || req.Operation == "resetAssets" || req.Operation == "discard" {
 		// Serialize asset writes with reservation of a new process. Checking
 		// roots and releasing the fence before a write allows start to race it.
@@ -188,7 +191,12 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		if active {
 			return ConversationProcessResult{}, fmt.Errorf("会话原生进程仍在运行，不能替换资产或启动新进程")
 		}
-		if err = ValidateConversationRoot(root); err != nil {
+		if req.Operation == "prepare" {
+			removedSkillLinks, err = RemoveConversationSkillLinks(root)
+		} else {
+			err = ValidateConversationRoot(root)
+		}
+		if err != nil {
 			return ConversationProcessResult{}, err
 		}
 		if req.Operation == "discard" {
@@ -197,15 +205,14 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 			}
 			return ConversationProcessResult{}, os.RemoveAll(root)
 		}
-		if err = os.MkdirAll(filepath.Join(root, "home", "tmp"), 0700); err != nil {
-			return ConversationProcessResult{}, err
-		}
-		if err = os.MkdirAll(filepath.Join(root, "ws"), 0700); err != nil {
-			return ConversationProcessResult{}, err
+		for _, dir := range []string{"home/tmp", "ws"} {
+			if err = os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
+				return ConversationProcessResult{}, NewConversationStateError("创建会话目录", dir, err)
+			}
 		}
 	}
 	if req.Operation == "prepare" {
-		return ConversationProcessResult{Root: root}, nil
+		return ConversationProcessResult{Root: root, RemovedSkillLinks: removedSkillLinks}, nil
 	}
 	if req.Operation == "resetAssets" {
 		for _, dir := range conversationAssetTrees {
@@ -544,7 +551,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	}
 	for _, dir := range []string{"home/tmp", "ws"} {
 		if err = os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
-			return ConversationProcessResult{}, err
+			return ConversationProcessResult{}, NewConversationStateError("创建会话目录", dir, err)
 		}
 	}
 	if spec != nil {
