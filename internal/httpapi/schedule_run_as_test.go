@@ -130,6 +130,7 @@ func TestScheduleJobRunsWithTheSaversKey(t *testing.T) {
 	if err := st.PutUser(domain.User{LoginName: "runas-owner", CodeBuddyAPIKey: "owner-key"}); err != nil {
 		t.Fatal(err)
 	}
+	project, _ = st.Project(project.ID)
 	project.Members[0].Role = "viewer"
 	if err := st.PutProject(project); err != nil {
 		t.Fatal(err)
