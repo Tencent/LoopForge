@@ -1,6 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 const ctx = {
   lfT: zh => zh,
@@ -9,8 +10,8 @@ const ctx = {
   projectQuery:()=>'?projectId=p',currentProject:()=>({id:'p',ownerId:7,members:[{userId:8,role:'maintainer'}]}),
 };
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync('app/obs-charts.js','utf8'),ctx);
-vm.runInContext(fs.readFileSync('app/observability.js','utf8'),ctx);
+vm.runInContext(fs.readFileSync('app/obs-charts.js','utf8'),ctx,{filename:path.resolve('app/obs-charts.js')});
+vm.runInContext(fs.readFileSync('app/observability.js','utf8'),ctx,{filename:path.resolve('app/observability.js')});
 assert.match(ctx.analyticsQuery({overview:true}),/origin=external/);
 assert.match(ctx.analyticsQuery({overview:true}),/projectId=p/);
 assert.doesNotMatch(ctx.analyticsQuery({crossProject:true}),/projectId=/);

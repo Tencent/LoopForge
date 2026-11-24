@@ -234,3 +234,70 @@ test('opening delivery while a scope change loads requests the full data for the
   assert.equal(app.evaluate('state.analytics.delivery.issues'),3);
   assert.ok(app.document.querySelector('[data-obs-card="deliveries"]'),'delivery details render for the new project scope');
 });
+
+test('dashboard switches retain chart instances, update tooltips and replace click handlers with reduced motion', async t => {
+  const app=await loadApp();t.after(app.close);prepare(app);
+  const charts=new Map(),created=[];
+  app.window.IntersectionObserver=undefined;app.window.ResizeObserver=undefined;
+  app.window.matchMedia=query=>({matches:query.includes('prefers-reduced-motion')});
+  app.window.echarts={init(el){
+    const chart={handlers:new Map(),updates:0,disposed:false,
+      setOption(option){this.option=option;this.updates++},
+      on(event,handler){this.handlers.set(event,handler)},off(event){this.handlers.delete(event)},
+      resize(){},clear(){},dispose(){this.disposed=true}};
+    charts.set(el.dataset.obsChart,chart);created.push(chart);return chart;
+  }};
+  app.router.get(/^\/api\/analytics\?/,snapshot('7'));
+  await app.evaluate('refreshObs()');await settle(3);
+  assert.equal(created.length,4);
+  const cost=charts.get('dashboard-tokens'),vibe=charts.get('dashboard-vibe'),human=charts.get('dashboard-human');
+  app.document.querySelector('[data-obs-token-view="models"]').click();
+  assert.equal(charts.get('dashboard-tokens'),cost);
+  assert.equal(cost.option.series[0].id,'token-models');
+  assert.match(cost.option.tooltip.formatter({dataIndex:0}),/model-7|100\.0%/);
+  app.document.querySelector('[data-obs-token-view="members"]').click();
+  assert.equal(cost.option.series[0].id,'token-member-7');
+  assert.match(cost.option.tooltip.formatter([{dataIndex:0,value:1000,seriesName:'alice'},{dataIndex:0,value:0,seriesName:'bob'}]),/alice/);
+  assert.doesNotMatch(cost.option.tooltip.formatter([{dataIndex:0,value:1000,seriesName:'alice'},{dataIndex:0,value:0,seriesName:'bob'}]),/bob/);
+  app.document.querySelector('[data-obs-vibe-view="outcomes"]').click();
+  assert.equal(charts.get('dashboard-vibe'),vibe);
+  assert.equal(vibe.handlers.has('click'),false,'an outcome bar must not retain a date drill-down handler');
+  assert.match(vibe.option.tooltip.formatter({dataIndex:1}),/50\.0%/);
+  app.document.querySelector('[data-obs-vibe-view="activity"]').click();
+  assert.equal(vibe.handlers.has('click'),true);
+  assert.match(vibe.option.tooltip.formatter([{dataIndex:0}]),/2026-11/);
+  app.document.querySelector('[data-obs-sop-view="performance"]').click();
+  assert.equal(charts.get('dashboard-human'),human);
+  assert.equal(human.option.series[0].data[0],2000);
+  assert.match(human.option.tooltip.formatter([{dataIndex:0}]),/P95|75\.0%/);
+  app.document.querySelector('[data-obs-sop-view="human"]').click();
+  chooseOption(app.document.querySelector('#obsHumanNode'),'flow/review');
+  app.document.querySelector('[data-obs-human-metric="count"]').click();
+  assert.equal(human.option.series[0].data[0],1);
+  assert.match(human.option.tooltip.formatter([{dataIndex:0}]),/2026-11/);
+  assert.equal(created.length,4,'view and node switches update the four existing charts');
+  for(const chart of created){assert.equal(chart.option.animation,false);assert.equal(chart.disposed,false)}
+});
+
+test('dashboard fallback charts retain delivery, coding, timing and model data without rendering server labels as HTML', async t => {
+  const app=await loadApp();t.after(app.close);prepare(app);
+  app.window.IntersectionObserver=undefined;app.window.ResizeObserver=undefined;
+  app.evaluate('obsEnsureECharts=async()=>null');
+  const data=snapshot('7');data.tokenUsage[0].model='<img src=x onerror=alert(1)>';
+  app.router.get(/^\/api\/analytics\?/,data);
+  await app.evaluate('refreshObs()');await settle(3);
+  const chart=key=>app.document.querySelector(`[data-obs-chart="dashboard-${key}"]`);
+  assert.equal(app.document.querySelectorAll('.obs-chart.is-fallback').length,4);
+  assert.match(chart('delivery').querySelector('svg').getAttribute('aria-label'),/交付/);
+  assert.equal(chart('vibe').querySelectorAll('polyline').length,2);
+  assert.ok(chart('human').querySelector('rect'));
+  app.document.querySelector('[data-obs-vibe-view="outcomes"]').click();
+  app.document.querySelector('[data-obs-sop-view="performance"]').click();
+  app.document.querySelector('[data-obs-token-view="models"]').click();
+  await settle(3);
+  assert.deepEqual([...chart('vibe').querySelectorAll('tbody tr')].map(row=>row.lastElementChild.textContent),['2','1','0']);
+  assert.match(chart('human').textContent,/2026-11.*2\.0s.*8\.0s/);
+  assert.match(chart('tokens').textContent,/<img src=x onerror=alert\(1\)>/);
+  assert.equal(chart('tokens').querySelector('img'),null);
+  assert.doesNotMatch(app.document.querySelector('#obsBody').textContent,/NaN|Infinity/);
+});
