@@ -54,12 +54,20 @@ export default function KnowledgeSources({
   containerRef = null,
   title = "知识库来源",
   usedLabel = "实际用于回答",
+  defaultOpen = false,
 }) {
+  const [open, setOpen] = useState(defaultOpen);
   const [expandedRefs, setExpandedRefs] = useState(false);
   const summary = useMemo(
     () => precomputedSummary || buildKnowledgeSummary(knowledgeReads, [text]),
     [precomputedSummary, knowledgeReads, text],
   );
+
+  React.useEffect(() => {
+    if (highlightedIndex != null) {
+      setOpen(true);
+    }
+  }, [highlightedIndex]);
 
   if (!Array.isArray(knowledgeReads) || knowledgeReads.length === 0) {
     return null;
@@ -79,134 +87,163 @@ export default function KnowledgeSources({
 
   return (
     <section
-      className="knowledge-sources"
+      className={`knowledge-sources ${open ? "is-open" : "is-collapsed"}`}
       aria-label={title}
       ref={containerRef}
     >
-      <header className="knowledge-sources-head">
+      <button
+        type="button"
+        className="knowledge-sources-head knowledge-sources-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
         <span className="knowledge-sources-title">
+          <span
+            className={`knowledge-sources-chevron ${open ? "is-open" : ""}`}
+            aria-hidden="true"
+          >
+            ▸
+          </span>
           <HarnessIcon name="layers" size={13} interactive={false} />
           <span>{title}</span>
         </span>
         <span className="knowledge-sources-counts">
           实际使用 {usedDocs.length} 篇 · 检索读取 {referencedDocs.length} 篇
         </span>
-      </header>
+      </button>
 
-      <div className="knowledge-sources-group">
-        <div className="knowledge-sources-label">{usedLabel}</div>
-        {usedDocs.length > 0 ? (
-          <ol className="knowledge-doc-list">
-            {usedDocs.map((doc) => {
-              const meta = formatDocMeta(doc, true);
-              return (
-                <li
-                  key={doc.key}
-                  className={`knowledge-doc-row is-used-row ${
-                    highlightedIndex === doc.citeIndex ? "is-highlighted" : ""
-                  }`}
-                  data-cite-index={doc.citeIndex}
-                >
-                  <span className="knowledge-doc-index">[{doc.citeIndex}]</span>
-                  <span className="knowledge-doc-main">
-                    <span className="knowledge-doc-name" title={doc.label}>
-                      <HarnessIcon name="doc" size={12} interactive={false} />
-                      <span>{doc.label}</span>
-                    </span>
-                    {meta ? (
-                      <span className="knowledge-doc-meta" title={meta}>
-                        {meta}
+      {open ? (
+        <div className="knowledge-sources-drawer">
+          <div className="knowledge-sources-group">
+            <div className="knowledge-sources-label">{usedLabel}</div>
+            {usedDocs.length > 0 ? (
+              <ol className="knowledge-doc-list">
+                {usedDocs.map((doc) => {
+                  const meta = formatDocMeta(doc, true);
+                  return (
+                    <li
+                      key={doc.key}
+                      className={`knowledge-doc-row is-used-row ${
+                        highlightedIndex === doc.citeIndex
+                          ? "is-highlighted"
+                          : ""
+                      }`}
+                      data-cite-index={doc.citeIndex}
+                    >
+                      <span className="knowledge-doc-index">
+                        [{doc.citeIndex}]
                       </span>
-                    ) : null}
-                  </span>
-                  {doc.readFull ? (
-                    <span className="knowledge-doc-tag is-read">已读正文</span>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ol>
-        ) : (
-          <p className="knowledge-sources-empty">
-            {emptyUsedMessage({
-              allContentFailed,
-              hasUnstructuredOnly,
-              referencedCount: referencedDocs.length,
-              hasCatalogOnly,
-            })}
-          </p>
-        )}
-      </div>
-
-      {referencedDocs.length > 0 ? (
-        <div className="knowledge-sources-group">
-          <div className="knowledge-sources-label">
-            本轮检索/读取文档（{referencedDocs.length}）
+                      <span className="knowledge-doc-main">
+                        <span className="knowledge-doc-name" title={doc.label}>
+                          <HarnessIcon
+                            name="doc"
+                            size={12}
+                            interactive={false}
+                          />
+                          <span>{doc.label}</span>
+                        </span>
+                        {meta ? (
+                          <span className="knowledge-doc-meta" title={meta}>
+                            {meta}
+                          </span>
+                        ) : null}
+                      </span>
+                      {doc.readFull ? (
+                        <span className="knowledge-doc-tag is-read">
+                          已读正文
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <p className="knowledge-sources-empty">
+                {emptyUsedMessage({
+                  allContentFailed,
+                  hasUnstructuredOnly,
+                  referencedCount: referencedDocs.length,
+                  hasCatalogOnly,
+                })}
+              </p>
+            )}
           </div>
-          <ul className="knowledge-doc-list">
-            {visibleRefs.map((doc) => {
-              const meta = formatDocMeta(doc, false);
-              return (
-                <li key={doc.key} className="knowledge-doc-row">
-                  <span className="knowledge-doc-main">
-                    <span className="knowledge-doc-name" title={doc.label}>
-                      <HarnessIcon name="doc" size={12} interactive={false} />
-                      <span>{doc.label}</span>
-                    </span>
-                    {meta ? (
-                      <span className="knowledge-doc-meta" title={meta}>
-                        {meta}
+
+          {referencedDocs.length > 0 ? (
+            <div className="knowledge-sources-group">
+              <div className="knowledge-sources-label">
+                本轮检索/读取文档（{referencedDocs.length}）
+              </div>
+              <ul className="knowledge-doc-list">
+                {visibleRefs.map((doc) => {
+                  const meta = formatDocMeta(doc, false);
+                  return (
+                    <li key={doc.key} className="knowledge-doc-row">
+                      <span className="knowledge-doc-main">
+                        <span className="knowledge-doc-name" title={doc.label}>
+                          <HarnessIcon
+                            name="doc"
+                            size={12}
+                            interactive={false}
+                          />
+                          <span>{doc.label}</span>
+                        </span>
+                        {meta ? (
+                          <span className="knowledge-doc-meta" title={meta}>
+                            {meta}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </span>
-                  <span
-                    className={`knowledge-doc-tag ${docStatusClass(doc)}`}
-                  >
-                    {docStatusLabel(doc)}
-                  </span>
-                </li>
+                      <span
+                        className={`knowledge-doc-tag ${docStatusClass(doc)}`}
+                      >
+                        {docStatusLabel(doc)}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              {hiddenCount > 0 ? (
+                <button
+                  type="button"
+                  className="knowledge-sources-more"
+                  onClick={() => setExpandedRefs((v) => !v)}
+                >
+                  {expandedRefs ? "收起" : `展开其余 ${hiddenCount} 篇`}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          <details className="knowledge-reads knowledge-reads-trace">
+            <summary>检索调用明细 · {knowledgeReads.length}</summary>
+            {knowledgeReads.map((read) => {
+              const citedEvs = (read.evidences || []).filter((ev) => ev.cited);
+              const evText = citedEvs.length
+                ? `引用 ${citedEvs.length} 条`
+                : read.evidences?.length
+                  ? `命中 ${read.evidences.length} 条`
+                  : read.targets?.length
+                    ? `命中：${read.targets.join("、")}`
+                    : "";
+              return (
+                <p key={read.id}>
+                  {[
+                    read.serverId,
+                    read.query ? `${read.tool} ("${read.query}")` : read.tool,
+                    evText,
+                    read.status,
+                    read.cited ? "回答已引用" : "",
+                    read.warning,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
               );
             })}
-          </ul>
-          {hiddenCount > 0 ? (
-            <button
-              type="button"
-              className="knowledge-sources-more"
-              onClick={() => setExpandedRefs((v) => !v)}
-            >
-              {expandedRefs ? "收起" : `展开其余 ${hiddenCount} 篇`}
-            </button>
-          ) : null}
+          </details>
         </div>
       ) : null}
-
-      <details className="knowledge-reads knowledge-reads-trace">
-        <summary>检索调用明细 · {knowledgeReads.length}</summary>
-        {knowledgeReads.map((read) => {
-          const citedEvs = (read.evidences || []).filter((ev) => ev.cited);
-          const evText = citedEvs.length
-            ? `引用 ${citedEvs.length} 条`
-            : read.evidences?.length
-              ? `命中 ${read.evidences.length} 条`
-              : read.targets?.length
-                ? `命中：${read.targets.join("、")}`
-                : "";
-          return (
-            <p key={read.id}>
-              {[
-                read.serverId,
-                read.query ? `${read.tool} ("${read.query}")` : read.tool,
-                evText,
-                read.status,
-                read.cited ? "回答已引用" : "",
-                read.warning,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          );
-        })}
-      </details>
     </section>
   );
 }

@@ -146,6 +146,46 @@ describe("knowledge citations & two-layer summary", () => {
       "#chunk-1",
       "#chunk-0..#chunk-3",
     ]);
+
+    // If model emits both search and read IDs of the same document side-by-side,
+    // RichContent and formatTextForCopy collapse the duplicate [1][1] into a single [1],
+    // while keeping distinct documents [1][2] intact when multiple docs are cited.
+    const multiDocReads = [
+      ...reads,
+      {
+        id: "r3",
+        tool: "read_document",
+        status: "命中",
+        cited: true,
+        evidences: [
+          {
+            id: "ev_333_1",
+            sourceName: "网络库",
+            documentId: "doc-2",
+            title: "网络规范.md",
+            locator: "#chunk-0",
+            cited: true,
+          },
+        ],
+      },
+    ];
+    const multiText =
+      "同文档重复标记 [[knowledge:ev_111_1]][[knowledge:ev_222_1]]，多文档共同引用 [[knowledge:ev_111_1]][[knowledge:ev_333_1]]。";
+    const { container } = render(
+      <RichContent message={multiText} knowledgeReads={multiDocReads} />,
+    );
+    const buttons = container.querySelectorAll("button.knowledge-cite-sup");
+    expect(Array.from(buttons).map((b) => b.textContent)).toEqual([
+      "1",
+      "1",
+      "2",
+    ]);
+    const copiedMulti = formatTextForCopy(multiText, multiDocReads, [
+      multiText,
+    ]);
+    expect(copiedMulti).toContain(
+      "同文档重复标记 [1]，多文档共同引用 [1][2]。",
+    );
   });
 
   test("RichContent renders numbered superscripts and clicking highlights matching KnowledgeSources row", () => {
@@ -183,12 +223,26 @@ describe("knowledge citations & two-layer summary", () => {
     expect(container.querySelector(".knowledge-cite-sup.is-unresolved")).toHaveTextContent("?");
 
     expect(screen.getByText("实际使用 1 篇 · 检索读取 3 篇")).toBeInTheDocument();
+    // Default collapsed: details are hidden until toggled or a citation superscript is clicked.
+    expect(screen.queryByText("[1] 已用于回答")).not.toBeInTheDocument();
+
+    const headerToggle = screen.getByRole("button", { name: /知识库来源/ });
+    expect(headerToggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(headerToggle);
+    expect(headerToggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("[1] 已用于回答")).toBeInTheDocument();
     expect(screen.getByText("已读正文 · 未引用")).toBeInTheDocument();
     expect(screen.getByText("仅检索未采用")).toBeInTheDocument();
     expect(container.textContent).not.toContain("目录里的无关文档.md");
 
+    // Clicking header again hides the drawer.
+    fireEvent.click(headerToggle);
+    expect(headerToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("[1] 已用于回答")).not.toBeInTheDocument();
+
+    // Clicking an inline citation superscript automatically opens the drawer and highlights the row.
     fireEvent.click(citeBtn);
+    expect(headerToggle).toHaveAttribute("aria-expanded", "true");
     const usedRow = container.querySelector('.knowledge-doc-row[data-cite-index="1"]');
     expect(usedRow).toHaveClass("is-highlighted");
   });
@@ -230,10 +284,15 @@ describe("knowledge citations & two-layer summary", () => {
     const { rerender } = render(
       <KnowledgeSources knowledgeReads={manyReads} text="普通回答无标记" />,
     );
+    expect(screen.getByText("实际使用 0 篇 · 检索读取 8 篇")).toBeInTheDocument();
+    expect(
+      screen.queryByText("未显式标注具体引用文档（以下为本轮检索/读取的候选文档）"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /知识库来源/ }));
     expect(
       screen.getByText("未显式标注具体引用文档（以下为本轮检索/读取的候选文档）"),
     ).toBeInTheDocument();
-    expect(screen.getByText("实际使用 0 篇 · 检索读取 8 篇")).toBeInTheDocument();
 
     const expandBtn = screen.getByRole("button", { name: "展开其余 2 篇" });
     expect(screen.queryByText("候选文档-8.md")).not.toBeInTheDocument();
@@ -409,6 +468,7 @@ describe("knowledge citations & two-layer summary", () => {
         knowledgeReads={[{ id: "kr_err", serverId: "srv", tool: "search_knowledge", status: "unavailable" }]}
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: /知识库来源/ }));
     expect(screen.getByText("知识库检索调用失败，未能获取可用文档")).toBeInTheDocument();
 
     rerender(
@@ -446,10 +506,11 @@ describe("knowledge citations & two-layer summary", () => {
     );
     expect(screen.getByText("产物引用来源")).toBeInTheDocument();
     expect(screen.getByText("实际使用 1 篇 · 检索读取 2 篇")).toBeInTheDocument();
+    expect(container.querySelectorAll(".knowledge-doc-row.is-used-row")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "引用 [1] 部署规范.md" }));
     expect(container.querySelectorAll(".knowledge-doc-row.is-used-row")).toHaveLength(1);
     expect(container.querySelector(".knowledge-doc-row.is-used-row")).toHaveTextContent("部署规范.md");
     expect(screen.getByText("仅检索未采用")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "引用 [1] 部署规范.md" }));
     expect(container.querySelector('.knowledge-doc-row[data-cite-index="1"]')).toHaveClass("is-highlighted");
     const copyBtn = screen.getByRole("button", { name: "复制正文" });
     expect(copyBtn).toBeInTheDocument();

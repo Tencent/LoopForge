@@ -191,8 +191,15 @@ export function maskIncompleteStreamingCitation(text = "") {
 
 // remarkKnowledgeCitations turns [[knowledge:<id>]] markers in markdown text
 // into #knowledge-cite:<id> links so RichContent can render numbered superscript
-// citations instead of raw marker syntax.
-export function remarkKnowledgeCitations() {
+// citations instead of raw marker syntax. When resolveDocKey is provided,
+// adjacent markers that point to the exact same underlying document (for example,
+// a search evidence ID and a read_document evidence ID for the same doc) are
+// deduplicated in place while distinct documents remain intact.
+export function remarkKnowledgeCitations(options = {}) {
+  const resolveDocKey =
+    typeof options?.resolveDocKey === "function"
+      ? options.resolveDocKey
+      : null;
   const walk = (node) => {
     if (
       !Array.isArray(node.children) ||
@@ -213,20 +220,44 @@ export function remarkKnowledgeCitations() {
       }
       changed = true;
       let last = 0;
+      let activeGroupKeys = new Set();
       knowledgeCitePattern.lastIndex = 0;
       for (const match of child.value.matchAll(knowledgeCitePattern)) {
         const id = match[1];
-        if (match.index > last) {
+        const between = child.value.slice(last, match.index);
+        if (between.length > 0) {
+          if (between.trim().length > 0) {
+            activeGroupKeys = new Set();
+            children.push({
+              type: "text",
+              value: between,
+            });
+          } else if (activeGroupKeys.size === 0) {
+            children.push({
+              type: "text",
+              value: between,
+            });
+          }
+        }
+        const docKey = (resolveDocKey && resolveDocKey(id)) || `id:${id}`;
+        if (!activeGroupKeys.has(docKey)) {
+          if (
+            between.length > 0 &&
+            between.trim().length === 0 &&
+            activeGroupKeys.size > 0
+          ) {
+            children.push({
+              type: "text",
+              value: between,
+            });
+          }
+          activeGroupKeys.add(docKey);
           children.push({
-            type: "text",
-            value: child.value.slice(last, match.index),
+            type: "link",
+            url: `${knowledgeCitePrefix}${id}`,
+            children: [{ type: "text", value: id }],
           });
         }
-        children.push({
-          type: "link",
-          url: `${knowledgeCitePrefix}${id}`,
-          children: [{ type: "text", value: id }],
-        });
         last = match.index + match[0].length;
       }
       if (last < child.value.length) {
@@ -734,17 +765,27 @@ export function formatTextForCopy(
 
   const deduped = collapseAdjacentDuplicateCitations(raw, summary);
   const referencedIndices = new Set();
-  const formatted = replaceCiteMarkersOutsideCode(deduped, (segment) =>
-    segment.replace(
+  const formatted = replaceCiteMarkersOutsideCode(deduped, (segment) => {
+    let lastEnd = -1;
+    let activeIndices = new Set();
+    return segment.replace(
       /([ \t]*)\[\[knowledge:([A-Za-z0-9_.-]+)\]\]/g,
-      (_, leadingSpace, id) => {
+      (fullMatch, leadingSpace, id, offset) => {
+        if (offset !== lastEnd) {
+          activeIndices = new Set();
+        }
+        lastEnd = offset + fullMatch.length;
         const entry = summary.byCiteId?.get(id);
         if (!entry) return "";
         referencedIndices.add(entry.citeIndex);
+        if (activeIndices.has(entry.citeIndex)) {
+          return "";
+        }
+        activeIndices.add(entry.citeIndex);
         return `${leadingSpace}[${entry.citeIndex}]`;
       },
-    ),
-  );
+    );
+  });
 
   const usedDocs = (summary.usedDocs || []).filter((doc) =>
     referencedIndices.size > 0 ? referencedIndices.has(doc.citeIndex) : true,
