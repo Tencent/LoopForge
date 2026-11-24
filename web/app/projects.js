@@ -535,8 +535,13 @@ function projectMembershipSignature(p){
   return JSON.stringify([Number(p?.ownerId)||0,(p?.members||[]).map(m=>[Number(m.userId),projectMemberRole(m.role)]).sort((a,b)=>a[0]-b[0])]);
 }
 const projectJoinMemberRefreshes=new Map();
-function invalidateProjectJoinMembers(projectId){projectJoinMemberRefreshes.delete(projectId)}
+const projectCacheRevisions=new Map();
+function invalidateProjectJoinMembers(projectId){
+  projectJoinMemberRefreshes.delete(projectId);
+  projectCacheRevisions.set(projectId,(projectCacheRevisions.get(projectId)||0)+1);
+}
 async function refreshProjectJoinMembers(projectId){
+  invalidateProjectJoinMembers(projectId);
   const refresh={};projectJoinMemberRefreshes.set(projectId,refresh);
   const fresh=await api('/api/projects/'+encodeURIComponent(projectId)).catch(()=>null);
   // A later refresh supersedes this snapshot, even if its response arrived first.
@@ -675,6 +680,19 @@ function storeSavedProject(result,value){
   const i=projects.findIndex(p=>p.id===stored.id);if(i>=0)projects[i]=stored;else projects.push(stored);
   return stored;
 }
+async function persistProject(value,method='PUT'){
+  const before=(state.data.projects||[]).find(p=>p.id===value.id),snapshot=JSON.stringify(before);
+  const revision=projectCacheRevisions.get(value.id)||0;
+  const result=await api('/api/projects',{method,body:JSON.stringify(value)});
+  const current=(state.data.projects||[]).find(p=>p.id===value.id);
+  // A save response describes the write's snapshot. A roster refresh or
+  // another write may already have installed a newer project while it waited.
+  if(current!==before||JSON.stringify(current)!==snapshot||(projectCacheRevisions.get(value.id)||0)!==revision){
+    if(current)await refreshProjectJoinMembers(value.id);
+    return (state.data.projects||[]).find(p=>p.id===value.id)||null;
+  }
+  return storeSavedProject(result,value);
+}
 async function saveProjectAdmin(e){
   e.preventDefault();
   const f=e.currentTarget,el=f.elements,projects=state.data.projects||[],creating=state.projectAdminDetailId==='new';
@@ -685,8 +703,8 @@ async function saveProjectAdmin(e){
   if(invalid)return invalid.field?projectAdminFail(f,invalid.field,invalid.message):toast(invalid.message,'err');
   const submit=f.querySelector?.('[data-pa-submit]');if(submit)submit.disabled=true;
   try{
-    const result=await api('/api/projects',{method:creating?'POST':'PUT',body:JSON.stringify(value)});
-    const savedProjectId=storeSavedProject(result,value).id||value.id;
+    const stored=await persistProject(value,creating?'POST':'PUT');if(!stored)return;
+    const savedProjectId=stored.id||value.id;
     if(!state.projectFilter){state.projectFilter=savedProjectId;localStorage.setItem('agentflow.activeProject',savedProjectId)}
     projectAdminAfterSave(savedProjectId,creating);
     renderAll();

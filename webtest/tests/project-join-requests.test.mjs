@@ -75,6 +75,152 @@ test('a late member read cannot undo a saved default repository', async t => {
   assert.equal(app.evaluate('state.data.projects[0].defaultRepositoryId'), 'repo-new');
 });
 
+function startProjectSave(app, mode) {
+  if (mode === 'default repository') {
+    return app.evaluate("saveProjectDefaultRepository(state.data.projects[0],'repo-new')");
+  }
+  if (mode === 'wizard') {
+    app.evaluate("openProjectWizard();projectWizard.projectId='project-1';projectWizardEnter('members');projectWizard.draft.members[0].role='viewer'");
+    return app.evaluate('projectWizardSaveProject()');
+  }
+  const form = app.document.querySelector('#projectAdminForm');
+  form.elements.description.value = 'saved description';
+  form.elements.description.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  return app.evaluate("saveProjectAdmin({preventDefault(){},currentTarget:document.querySelector('#projectAdminForm')})");
+}
+
+for (const mode of ['settings', 'default repository', 'wizard']) {
+  test(`a late ${mode} response cannot undo an approved member refresh`, async t => {
+    const app = await projectApp(t);
+    const write = deferred();
+    let written, server, reads = 0;
+    app.router.put('/api/projects', call => {
+      written = { ...call.body, membersVersion: 'saved-before-approval' };
+      server = structuredClone(written);
+      return write.promise;
+    });
+    app.router.post('/api/project-join-requests/71/approve', () => {
+      server = { ...server, members: [...server.members, { userId: 3, role: 'viewer' }], membersVersion: 'approved' };
+      return { id: 71, projectId: 'project-1', userId: 3, role: 'viewer', status: 'approved' };
+    });
+    app.router.get('/api/projects/project-1', () => { reads++; return server; });
+    const saving = startProjectSave(app, mode);
+    await settle();
+    assert.ok(written, 'the project write committed before approval');
+    await app.evaluate("reviewProjectJoin(71,true,'viewer')");
+    assert.equal(app.evaluate('state.data.projects[0].membersVersion'), 'approved');
+    write.resolve(written);
+    await saving;
+    const current = app.evaluate('state.data.projects[0]');
+    assert.deepEqual(JSON.parse(JSON.stringify(current)), server);
+    assert.equal(reads, 2, 'conflicting save responses trigger an authoritative read');
+    assert.equal(current.members.find(m => m.userId === 3)?.role, 'viewer');
+    assert.equal(app.evaluate('state.projectJoinRequests[0].status'), 'approved');
+    if (mode === 'wizard') {
+      assert.equal(app.evaluate('projectWizard.draft.members.some(m=>m.userId===3)'), true);
+    } else {
+      app.evaluate('renderProjectDetail({force:true});captureProjectAdminForm()');
+      assert.equal(app.evaluate('buildProjectPayload(state.projectDraft).membersVersion'), 'approved');
+    }
+  });
+
+  test(`a late ${mode} response cannot restore an archived project`, async t => {
+    const app = await projectApp(t);
+    const write = deferred();
+    let written;
+    app.router.put('/api/projects', call => { written = call.body; return write.promise; });
+    app.router.delete('/api/projects/project-1', { ok: true });
+    const saving = startProjectSave(app, mode);
+    await settle();
+    assert.ok(written);
+    await app.evaluate("deleteProjectAdmin('project-1')");
+    write.resolve(written);
+    await saving;
+    assert.equal(app.evaluate("state.data.projects.some(p=>p.id==='project-1')"), false);
+  });
+}
+
+test('out-of-order settings saves retain the latest server snapshot', async t => {
+  const app = await projectApp(t);
+  const first = deferred();
+  let written, server, writes = 0;
+  app.router.put('/api/projects', call => {
+    server = { ...call.body, membersVersion: `save-${++writes}` };
+    if (writes === 1) { written = server; return first.promise; }
+    return server;
+  });
+  app.router.get('/api/projects/project-1', () => server);
+  const saving = startProjectSave(app, 'settings');
+  await settle();
+  await app.evaluate("saveProjectDefaultRepository(state.data.projects[0],'repo-new')");
+  first.resolve(written);
+  await saving;
+  const current = app.evaluate('state.data.projects[0]');
+  assert.equal(current.defaultRepositoryId, 'repo-new');
+  assert.equal(current.membersVersion, 'save-2');
+});
+
+for (const firstRead of ['delayed', 'failed']) {
+  test(`a late save reconciles an approval whose first member read is ${firstRead}`, async t => {
+    const app = await projectApp(t);
+    const write = deferred(), read = deferred();
+    let written, server, reads = 0;
+    app.router.put('/api/projects', call => {
+      written = { ...call.body, membersVersion: 'before-approval' };
+      server = structuredClone(written);
+      return write.promise;
+    });
+    app.router.post('/api/project-join-requests/71/approve', () => {
+      server = { ...server, members: [...server.members, { userId: 3, role: 'viewer' }], membersVersion: 'approved' };
+      return { id: 71, projectId: 'project-1', userId: 3, role: 'viewer', status: 'approved' };
+    });
+    app.router.get('/api/projects/project-1', () => {
+      if (++reads > 1) return server;
+      return firstRead === 'delayed' ? read.promise : { status: 500, body: { error: 'read failed' } };
+    });
+    const saving = startProjectSave(app, 'settings');
+    await settle();
+    const approving = app.evaluate("reviewProjectJoin(71,true,'viewer')");
+    await settle();
+    assert.equal(reads, 1);
+    write.resolve(written);
+    await saving;
+    read.resolve(server);
+    await approving;
+    assert.equal(reads, 2);
+    assert.equal(app.evaluate('state.data.projects[0].membersVersion'), 'approved');
+    assert.equal(app.evaluate('state.data.projects[0].members.some(m=>m.userId===3)'), true);
+  });
+}
+
+for (const archived of [false, true]) {
+  test(`a delayed create response respects a project ${archived ? 'archived' : 'refreshed'} before it returns`, async t => {
+    const app = await projectApp(t);
+    const write = deferred();
+    let written;
+    app.router.post('/api/projects', call => {
+      written = { ...call.body, membersVersion: 'created' };
+      return write.promise;
+    });
+    app.evaluate("state.data.workflows.push({id:'generic-backend-delivery',name:'Generic',generic:true});openProjectWizard();projectWizard.draft.name='Created Race'");
+    const creating = app.evaluate('projectWizardCreate()');
+    await settle();
+    assert.ok(written);
+    const fresh = { ...written, members: [{ userId: 3, role: 'viewer' }], membersVersion: 'approved' };
+    app.evaluate(`storeSavedProject(${JSON.stringify(fresh)})`);
+    app.router.get(`/api/projects/${written.id}`, fresh);
+    if (archived) {
+      app.router.delete(`/api/projects/${written.id}`, { ok: true });
+      await app.evaluate(`deleteProjectAdmin(${JSON.stringify(written.id)})`);
+    }
+    write.resolve(written);
+    await creating;
+    const current = app.evaluate(`state.data.projects.find(p=>p.id===${JSON.stringify(written.id)})`);
+    if (archived) assert.equal(current, undefined);
+    else assert.equal(current.membersVersion, 'approved');
+  });
+}
+
 for (const action of ['approve', 'reject', 'withdraw', 'apply']) {
   test(`a stale join list cannot undo a successful ${action}`, async t => {
     const app = await projectApp(t);

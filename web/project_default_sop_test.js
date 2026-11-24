@@ -7,6 +7,7 @@ const requests = [];
 const notices = [];
 const project = {id:"pay",key:"PAY",name:"Payments",workflowId:"deleted-sop",members:[],ownerId:1};
 const ctx = {
+  projectCacheRevisions:new Map(),
   state:{projectFilter:"pay",projectDraft:null,data:{projects:[project],repositories:[],workflows:[
     {id:"new-sop",name:"New SOP",projectId:"pay"},
     {id:"foreign",name:"Foreign",projectId:"other"},
@@ -18,7 +19,7 @@ const ctx = {
   api:async(url,init)=>{const body=JSON.parse(init.body);requests.push({url,body});return body;},
 };
 vm.createContext(ctx);
-for(const name of ["projectDefaultSOPField","applyProjectDefaultSOP","buildProjectPayload","validateProjectPayload","storeSavedProject","saveProjectAdmin"]){
+for(const name of ["projectDefaultSOPField","applyProjectDefaultSOP","buildProjectPayload","validateProjectPayload","storeSavedProject","persistProject","saveProjectAdmin"]){
   const start=source.search(new RegExp("^(?:async )?function "+name+"\\(","m"));
   assert.ok(start>=0,name);
   const rest=source.slice(start),next=/\n(?:async )?function \w+\(/.exec(rest);

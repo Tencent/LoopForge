@@ -74,11 +74,8 @@ function projectNeedsDefaultRepository(project){
   return !(state.data.repositories||[]).some(r=>r.projectId===project?.id&&r.id===project?.defaultRepositoryId);
 }
 async function saveProjectDefaultRepository(project,repoId){
-  const saved=await api('/api/projects',{method:'PUT',body:JSON.stringify({...project,defaultRepositoryId:repoId})});
-  invalidateProjectJoinMembers(project.id);
-  const projects=state.data.projects||[],pi=projects.findIndex(p=>p.id===project.id),next=saved&&saved.id?saved:{...project,defaultRepositoryId:repoId};
-  if(pi>=0)projects[pi]=next;
-  syncProjectDraftDefaultRepo(project.id,repoId);
+  const next=await persistProject({...project,defaultRepositoryId:repoId});
+  if(next)syncProjectDraftDefaultRepo(project.id,next.defaultRepositoryId||'');
   return next;
 }
 async function saveRepoDrawer(e){

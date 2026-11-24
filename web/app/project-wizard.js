@@ -88,10 +88,7 @@ async function projectWizardCreate(){
   const value=buildProjectPayload(clone(d),{id:ident.id,key:ident.key,defaultRepositoryId:''});
   const invalid=validateProjectPayload(value,{creating:true,projects,workflows:state.data.workflows||[]});
   if(invalid)return projectWizardFail(invalid.field==='id'||invalid.field==='key'?'无法根据名称生成可用的项目标识，请换个名称重试':invalid.message,['name','workflowId','ownerId'].includes(invalid.field)?invalid.field:'');
-  const stored=await projectWizardRequest(async()=>{
-    const result=await api('/api/projects',{method:'POST',body:JSON.stringify(value)});
-    return storeSavedProject(result,value);
-  },'创建失败，可修改项目名称后重试：');
+  const stored=await projectWizardRequest(()=>persistProject(value,'POST'),'创建失败，可修改项目名称后重试：');
   if(!stored||projectWizard!==w)return false;
   w.projectId=stored.id||value.id;
   if(!state.projectFilter){state.projectFilter=w.projectId;localStorage.setItem('agentflow.activeProject',w.projectId)}
@@ -153,7 +150,11 @@ async function projectWizardSaveProject(){
   const value=buildProjectPayload(clone(saved),fields);
   const invalid=validateProjectPayload(value,{creating:false,projects:state.data.projects||[],workflows:state.data.workflows||[],saved});
   if(invalid)return projectWizardFail(invalid.message);
-  const stored=await projectWizardRequest(async()=>storeSavedProject(await api('/api/projects',{method:'PUT',body:JSON.stringify(value)}),value));
+  const stored=await projectWizardRequest(async()=>{
+    const project=await persistProject(value);
+    if(project&&projectWizard===w){w.draft=projectDraftFrom(project);w.base=clone(w.draft)}
+    return project;
+  });
   if(stored)renderAll();
   return !!stored;
 }
