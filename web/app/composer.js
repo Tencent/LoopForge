@@ -451,7 +451,7 @@ async function createIssueFromChat(target,mode){
   const toChat=mode==='chat';
   if(target!=='local'&&target!=='tapd')return toast('请选择平台或 TAPD');
   const draft=collectRequirementDraft();
-  if(!draft.description&&!reqImages.length){setReqPreview(false);$('#chatInput')?.focus();return toast('先写一句需求')}
+  if(!draft.description&&!reqImages.length){$('#chatInput')?.focus();return toast('先写一句需求')}
   if(target==='tapd'&&!projectTAPDReady())return toast('当前项目未配置 TAPD');
   if(state.reqCreating)return toast('正在建单，请勿重复点击');
   const useSOP=reqUsesSOP();
