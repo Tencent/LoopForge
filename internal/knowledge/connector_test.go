@@ -331,8 +331,8 @@ func TestMCPConnectorReadOnlyFilterAndCustomRegistryExtension(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools) != 2 {
-		t.Fatalf("expected only 2 read-only tools exposed, got %+v", tools)
+	if len(tools) != 3 {
+		t.Fatalf("expected 3 non-explicitly-writable tools exposed, got %+v", tools)
 	}
 	if _, _, err := exec.ExecuteReferenceTool(ctx, 5, domain.KnowledgeRef{ConnectorID: mcpConn.ID, Mode: "all"}, "kb_write_document", nil, ""); err == nil {
 		t.Fatal("write tool must be blocked")

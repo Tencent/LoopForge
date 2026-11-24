@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -276,6 +275,9 @@ func (c *mcpConnector) Tools(ctx context.Context) ([]mcpclient.Tool, error) {
 }
 
 func isAllowedReadOnlyMCPTool(t mcpclient.Tool) bool {
+	if strings.TrimSpace(t.Name) == "" {
+		return false
+	}
 	var hints struct {
 		ReadOnly    *bool `json:"readOnlyHint"`
 		Destructive *bool `json:"destructiveHint"`
@@ -288,7 +290,7 @@ func isAllowedReadOnlyMCPTool(t mcpclient.Tool) bool {
 			return *hints.ReadOnly
 		}
 	}
-	return slices.Contains(knownReadOnlyMCPTools, strings.TrimSpace(t.Name))
+	return true
 }
 
 func (c *mcpConnector) ListSources(ctx context.Context) ([]Source, error) {

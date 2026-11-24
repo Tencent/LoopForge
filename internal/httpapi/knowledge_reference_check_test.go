@@ -109,11 +109,8 @@ func TestCheckReferenceErrorSurfacesUnderlyingMessage(t *testing.T) {
 func TestCheckReferenceNoReadOnlyToolsMessage(t *testing.T) {
 	_, router, user, connID := newCheckRefHandler(t, "no-readonly")
 	rec := doCheckRef(t, router, user, `{"knowledgeRefs":[{"connectorId":"`+connID+`","mode":"all"}]}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "未发现声明为只读的工具") {
-		t.Fatalf("expected no-readonly message, got: %s", rec.Body.String())
+	if rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 204/200; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

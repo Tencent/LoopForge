@@ -316,13 +316,9 @@ func (h *knowledgeHandlers) checkReferences(c *gin.Context) {
 			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "知识服务探测超时"})
 			return
 		}
-		_, tools, err := exec.ReferenceTools(ctx, uid, ref)
+		_, _, err := exec.ReferenceTools(ctx, uid, ref)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": ref.ConnectorID + "：" + err.Error()})
-			return
-		}
-		if len(tools) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": ref.ConnectorID + "：未发现声明为只读的工具，请检查端点的工具配置"})
 			return
 		}
 		if ref.Mode == "allowlist" && len(ref.Sources) > 0 {
