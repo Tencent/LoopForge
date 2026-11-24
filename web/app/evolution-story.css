@@ -1,13 +1,15 @@
 /* 进化中心：同页审查问题、修改和证据；沿用 Harness UI（MIT）令牌。 */
 #evoDetailPage .evo-story-workbench{border:0;border-radius:0;overflow:visible;background:transparent}
-#evoDetailPage>.evo-detail-head {
-  display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:8px 12px;margin:0 0 12px;
+#evoDetailPage>.evo-detail-head{
+  display:flex;align-items:center;justify-content:space-between;gap:8px 12px;margin:0 0 12px;flex-wrap:wrap;
 }
-#evoDetailProgress{grid-column:1/-1;min-width:0}
+#evoDetailProgress{
+  padding:10px 8px 8px;border:1px solid var(--hui-border);border-radius:10px;background:var(--hui-soft);
+}
 #evoDetailProgress:empty{display:none}
-.evo-workspace-heading{min-width:0}
-#evoDetailPage .evo-workspace-heading #evoDetailActions{justify-content:flex-start;margin-top:8px}
-#evoDetailPage .evo-workspace-heading #evoDetailActions:empty{display:none}
+.evo-workspace-heading{flex:1 1 300px;min-width:0}
+#evoDetailPage #evoDetailActions{margin:0 0 0 auto;justify-content:flex-end}
+#evoDetailPage #evoDetailActions:empty{display:none}
 .evo-review-glyph:has(.evo-priority),.evo-home-mark:has(.evo-priority){border:0;background:none}
 .evo-priority{
   --priority-tone:var(--hui-warn);display:grid;place-items:center;width:28px;height:28px;
@@ -22,10 +24,6 @@
 }
 .evo-story-section-head :is(h2,h3),.evo-story-overview h2{
   display:flex;align-items:center;gap:7px;margin:0;font-size:14px;font-weight:600;
-}
-@container(min-width:670px){
-  #evoDetailPage>.evo-detail-head{grid-template-columns:minmax(0,1fr) minmax(295px,1.25fr);align-items:start;gap:12px}
-  #evoDetailProgress{grid-column:auto}
 }
 .evo-story-section-head .evo-review-icon{width:15px;height:15px}
 .evo-story-problems{padding:8px;min-width:0}
@@ -111,6 +109,7 @@
 .evo-story-validation-foot summary{cursor:pointer}
 .evo-story-validation-foot p{margin:9px 0 0;line-height:1.7}
 .evo-story-workbench>.evo-review-footer{margin-top:14px;padding:8px 0;border:0}
+.evo-story-workbench>.evo-review-footer>div{min-width:0;max-width:100%;flex-wrap:wrap}
 .evo-story-workbench .evo-review-records{padding-bottom:12px}
 .evo-story-workbench .evo-review-problem{padding:12px 16px;font-size:12px}
 #evoDetailPage .evo-story-workbench>.evo-review-status{border:1px solid color-mix(in srgb,var(--hui-warn) 25%,var(--hui-border));border-radius:8px;background:color-mix(in srgb,var(--hui-warn) 6%,var(--hui-surface));margin-bottom:14px}
@@ -130,24 +129,29 @@
 .evo-story-overview dt{font-size:11px;color:var(--hui-muted)}
 .evo-story-overview dd{display:flex;gap:4px;flex-wrap:wrap;margin:3px 0 0;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
 .evo-story-signals{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:8px}
-.evo-story-validation-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.evo-story-signal,.evo-story-validation-cards>article{
+.evo-story-signal{
   min-width:0;padding:8px 10px;border:1px solid var(--hui-border-soft);border-radius:8px;background:var(--hui-canvas);
 }
-.evo-story-signal h3,.evo-story-validation-cards h3{
+.evo-story-signal h3{
   display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin:0;font-size:13px;font-weight:600;
 }
-.evo-story-signal h3>.evo-review-icon,.evo-story-validation-cards h3>.evo-review-icon{width:15px;height:15px;color:var(--hui-accent)}
-.evo-story-signal[data-signal=node_failed] h4>.evo-review-icon{color:var(--hui-error)}
+.evo-story-signal h3>.evo-review-icon{width:15px;height:15px;color:var(--hui-accent)}
+.evo-story-signal[data-signal=node_failed] h3>.evo-review-icon{color:var(--hui-error)}
 .evo-story-signal h3 b{font-size:11px;font-weight:500;color:var(--hui-muted);font-variant-numeric:tabular-nums}
-.evo-story-signal p,.evo-story-validation-cards p{margin:4px 0 0;line-height:1.55;font-size:12px;overflow-wrap:anywhere}
+.evo-story-signal p{margin:4px 0 0;line-height:1.55;font-size:12px;overflow-wrap:anywhere}
 .evo-story-signal p{color:var(--hui-secondary)}
 #evolutionView #evoDetailPage .evo-story-signal .kb-btn.quiet{padding-inline:0;color:var(--hui-accent);background:none}
 .evo-story-source-example{margin-top:7px;padding:8px 10px;background:var(--hui-soft);border-radius:8px;font-size:12px;overflow-wrap:anywhere}
 .evo-story-source-example p{margin:0 0 3px;white-space:pre-wrap}
-.evo-story-validation-cards p{display:flex;align-items:center;gap:5px;flex-wrap:wrap;color:var(--hui-muted)}
-.evo-story-validation-cards p>b{font-variant-numeric:tabular-nums}
-.evo-story-validation-cards p>.evo-review-icon{width:14px;height:14px}
+.evo-story-replay-result{
+  display:flex;align-items:center;justify-content:space-between;gap:10px 14px;flex-wrap:wrap;
+  padding:10px 12px;border:1px solid var(--hui-border-soft);border-radius:8px;background:var(--hui-canvas);
+}
+.evo-story-replay-pair,.evo-story-replay-facts{display:flex;align-items:center;gap:7px 10px;flex-wrap:wrap;font-size:13px}
+.evo-story-replay-pair b{font-size:17px;font-variant-numeric:tabular-nums}
+.evo-story-replay-pair>.evo-review-icon{width:15px;height:15px;color:var(--hui-muted)}
+.evo-story-replay-facts{font-size:12px}
+#evoProblemEvidenceDetails>.evo-story-section,#evoRolloutDetails>.evo-story-section{margin-top:0}
 .evo-story-expand>summary,.evo-story-sources>summary{width:fit-content;padding:8px 0;color:var(--hui-accent);font-size:12px;cursor:pointer}
 .evo-story-evidence-grid .evo-story-section{border:1px solid var(--hui-border);border-radius:9px;padding:0;margin:6px 0 0;overflow:clip}
 .evo-story-evidence-grid .evo-story-section-head{margin:0;padding:9px 12px;border-bottom:1px solid var(--hui-border-soft)}
@@ -201,6 +205,7 @@
   .evo-story-evidence-grid{grid-template-columns:minmax(0,1fr)}
 }
 @container(max-width:500px){
+  #evoFullChange .evo-review-filebar{flex-wrap:wrap}
   #evoDetailPage .evo-review-diff .evo-before-after{grid-template-columns:minmax(0,1fr)}
   .evo-split-direction{display:none}
   .evo-story-results th,.evo-story-results td{padding:10px 7px}

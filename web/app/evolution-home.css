@@ -31,28 +31,26 @@
 .evo-home-empty p{font-size:13px;line-height:1.7;color:var(--hui-muted);margin:0 auto;max-width:520px}
 .evo-home-empty-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:18px 0 0}
 .evo-home-empty-actions .kb-btn{display:inline-flex;align-items:center;gap:6px}
-.evo-home-toolbar{display:grid;gap:8px;padding:13px 13px 9px}
-.evo-home-toolbar-title{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
-.evo-home-toolbar h2{display:flex;align-items:center;gap:6px;font-size:16px;font-weight:600;margin:0}
-.evo-home-toolbar h2 span{font-size:12px;color:var(--hui-muted);font-variant-numeric:tabular-nums}
-#evolutionView .evo-home-toolbar select{width:auto;min-height:28px;padding:3px 6px;font-size:12px}
-.evo-home-tabs{display:flex;flex-wrap:wrap;gap:3px;align-items:center}
+.evo-home-tabs{display:flex;gap:16px;flex-wrap:wrap;padding:0 14px;border-bottom:1px solid var(--hui-border-soft)}
 .evo-home-tabs button{
-  padding:5px 6px;border:0;border-radius:6px;background:none;color:var(--hui-muted);
-  font:12px var(--hui-sans);cursor:pointer;
+  padding:11px 3px 9px;border:0;border-bottom:2px solid transparent;background:none;color:var(--hui-muted);
+  font:13px var(--hui-sans);cursor:pointer;
 }
-.evo-home-tabs button:hover{background:var(--hui-soft);color:var(--hui-text)}
-.evo-home-tabs button[aria-pressed=true]{color:var(--hui-accent);background:var(--hui-accent-soft);font-weight:600}
-.evo-home-tabs button>span{margin-left:3px;font-size:11px;font-variant-numeric:tabular-nums}
+.evo-home-tabs button:hover{color:var(--hui-text)}
+.evo-home-tabs button[aria-pressed=true]{border-bottom-color:var(--hui-accent);color:var(--hui-accent);font-weight:600}
+.evo-home-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 14px}
+#evolutionView .evo-home-toolbar select{width:auto;min-height:34px;max-width:min(100%,210px);padding:6px 8px;font-size:12px}
+.evo-home-search{position:relative;flex:1 1 180px;min-width:0}
+.evo-home-search .evo-review-icon{position:absolute;left:9px;top:10px;width:14px;height:14px;color:var(--hui-muted);pointer-events:none}
+#evolutionView .evo-home-search input{width:100%;min-height:34px;padding:6px 10px 6px 29px;font-size:12px}
 .evo-workspace-tasks .evo-list-footer{justify-content:flex-end;padding:10px 14px}
-.evo-home-list{--evo-task-columns:28px minmax(0,1.25fr) minmax(0,1fr) minmax(146px,.58fr)}
+.evo-home-list{--evo-task-columns:28px minmax(0,1.35fr) minmax(0,1fr) minmax(102px,.5fr) 78px 14px}
 .evo-home-columns,#evolutionView .evo-home-row{
   display:grid;grid-template-columns:var(--evo-task-columns);align-items:center;gap:8px 12px;
   width:100%;padding:12px 14px;border:0;border-top:1px solid var(--hui-border-soft);text-align:left;
 }
 .evo-home-columns{background:var(--hui-soft);color:var(--hui-muted);font-size:12px}
 .evo-home-columns>span:first-child{grid-column:2}
-.evo-home-columns>span:last-child{text-align:right}
 #evolutionView .evo-home-row{
   background:var(--hui-surface);color:var(--hui-text);font:13px/1.5 var(--hui-sans);cursor:pointer;
 }
@@ -60,12 +58,14 @@
 #evolutionView .evo-home-row:hover{background:var(--hui-canvas)}
 .evo-home-mark{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;color:var(--hui-muted);background:var(--hui-soft)}
 .evo-home-problem{display:grid;gap:4px;min-width:0;overflow-wrap:anywhere}
-.evo-home-problem>b{font-size:14px;font-weight:600}
-.evo-home-asset{color:var(--hui-muted);font-size:12px}
+.evo-home-problem>b{font-size:14px;font-weight:600;line-height:1.45}
+.evo-home-asset{color:var(--hui-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .evo-home-summary{min-width:0;color:var(--hui-secondary);font-size:12px;overflow-wrap:anywhere}
-.evo-home-next{display:flex;grid-column:4;align-items:flex-end;flex-direction:column;gap:5px}
-.evo-home-next>span:last-child{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--hui-accent)}
-.evo-home-next .evo-review-icon{width:12px;height:12px}
+.evo-home-next{display:flex;align-items:center}
+.evo-home-next .hui-badge[data-tone]{white-space:normal}
+.evo-home-updated{color:var(--hui-muted);font-size:12px;white-space:nowrap}
+.evo-home-chevron{display:grid;place-items:center;color:var(--hui-muted)}
+.evo-home-chevron svg{width:13px;height:13px}
 .evo-home-check-note{display:flex;align-items:center;gap:7px;margin:0 0 15px;font-size:12px;color:var(--hui-muted);flex-wrap:wrap}
 .evo-home-check-note>.evo-review-icon{color:var(--hui-success);width:14px;height:14px}
 .evo-home-check-note>span{margin-left:auto;font-size:11px}
@@ -75,10 +75,10 @@
 #evolutionView :is(.evo-home-row,.evo-home-tabs button):focus-visible{outline:2px solid var(--hui-accent);outline-offset:-2px;border-radius:5px}
 @container(max-width:700px){
   .evo-home-columns{display:none}
-  #evolutionView .evo-home-row{grid-template-columns:28px minmax(0,1fr);align-items:start}
+  #evolutionView .evo-home-row{grid-template-columns:28px minmax(0,1fr) 14px;align-items:start}
   .evo-home-summary,.evo-home-next{grid-column:2}
-  .evo-home-summary:empty{display:none}
-  .evo-home-next{flex-direction:row;justify-content:space-between;align-items:center;flex-wrap:wrap}
+  .evo-home-summary:empty,.evo-home-updated{display:none}
+  .evo-home-chevron{grid-column:3;grid-row:1;align-self:center}
   .evo-workspace-metrics{gap:8px}
 }
 @container(max-width:500px){

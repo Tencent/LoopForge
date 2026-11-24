@@ -15,11 +15,16 @@ const routes = [
   { method: 'GET', path: '/api/evolution/findings/f/runs?cluster=c-11', body: { complete: true, total: 0, items: [] } },
 ];
 async function open(app) { await app.evaluate(`state.projectFilter='project-1';switchView('evolution');renderEvolutionView()`); await settle(4); }
+function filterTasks(app,key,value) {
+  const filter=app.document.querySelector(`[data-evo-task-filter="${key}"]`);
+  filter.value=value;
+  filter.dispatchEvent(new app.window.Event('change',{bubbles:true}));
+}
 
 test('task details have a separate page and returning preserves pagination, filters and sorting', async t => {
   const assets = [finding, ...Array.from({ length: 11 }, (_, i) => ({
     ...finding, id: `f-${i + 1}`, assetId: `a-${i + 1}`, clusters: [clusters[i + 1]],
-    ...(i===10?{ updatedAt:now, triage:{...finding.triage,score:1} }:{}),
+    ...(i===10?{ updatedAt:now, workflowIds:['flow-1'], triage:{...finding.triage,score:1} }:{}),
   }))];
   const app = await loadApp({ routes: [...routes,
     { method: 'GET', path: '/api/evolution/findings?projectId=project-1', body: assets },
@@ -27,13 +32,13 @@ test('task details have a separate page and returning preserves pagination, filt
   ] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app);
-  assert.match($('[data-evo-asset-group="asset:agent:a"]').textContent, /1 条问题运行/);
+  assert.match($('[data-evo-asset-group="asset:agent:a"] .evo-home-problem').textContent, /Error 0.*Reviewer/s);
   assert.deepEqual([...app.document.querySelectorAll('.evo-workspace-stat h2')].map(el=>el.textContent), ['待处理问题','迭代中','已发布']);
-  assert.match($('[data-evo-list-status="all"]').textContent, /全部记录13/);
+  assert.equal($('[data-evo-list-section="tasks"]').getAttribute('aria-pressed'),'true');
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 10);
   assert.equal($('#evoDetailPage'), null);
-  assert.equal($('#evolutionBody input'), null);
-  assert.equal($('#evolutionBody select').getAttribute('aria-label'), '改进任务排序');
+  assert.ok($('[data-evo-task-search]'));
+  assert.equal($('[data-evo-task-filter="sort"]').getAttribute('aria-label'), '改进任务排序');
   assert.equal($('#evolutionBody [role="tab"]'), null);
   const trend = app.evaluate('evoOverviewTrend(evoIssueRows())');
   assert.equal(trend.points.reduce((sum, p) => sum + p.value, 0), 1);
@@ -51,18 +56,23 @@ test('task details have a separate page and returning preserves pagination, filt
   assert.equal($('#evoPageHead').hidden, false);
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 3);
   assert.equal(app.document.activeElement.dataset.evoAssetGroup, 'asset:agent:a-11');
-  assert.equal(app.document.querySelectorAll('.evo-home-tabs button').length, 5);
-  $('[data-evo-list-status="all"]').click();
-  assert.equal(app.document.querySelectorAll('.evo-home-row').length, 10);
-  const sort=$('[data-evo-list-sort]');
-  sort.value='recent';
-  sort.dispatchEvent(new app.window.Event('change',{bubbles:true}));
+  assert.equal(app.document.querySelectorAll('.evo-home-tabs button').length, 3);
+  filterTasks(app,'sort','recent');
   assert.equal($('.evo-home-row').dataset.evoAssetGroup,'asset:agent:a-11');
-  $('[data-evo-list-status="active"]').click();
+  filterTasks(app,'status','active');
+  filterTasks(app,'sop','flow-1');
+  const search=$('[data-evo-task-search]');
+  search.value='delivery flow';
+  search.dispatchEvent(new app.window.Event('input',{bubbles:true}));
+  assert.equal($('[data-evo-task-search]'),search);
+  assert.equal(app.document.querySelectorAll('.evo-home-row').length,1);
+  assert.match($('.evo-home-asset').textContent,/SOP · Delivery Flow/);
   $('.evo-home-row').click(); await settle(4);
   $('[data-evo-list-back]').click(); await settle(5);
-  assert.equal($('[data-evo-list-sort]').value, 'recent');
-  assert.equal($('[data-evo-list-status="active"]').getAttribute('aria-pressed'), 'true');
+  assert.equal($('[data-evo-task-filter="sort"]').value, 'recent');
+  assert.equal($('[data-evo-task-filter="status"]').value, 'active');
+  assert.equal($('[data-evo-task-filter="sop"]').value, 'flow-1');
+  assert.equal($('[data-evo-task-search]').value,'delivery flow');
 });
 
 test('refresh does not diagnose and repeated diagnosis is guarded; legacy diagnosis is kept in details', async t => {
@@ -105,22 +115,24 @@ test('asset grouping deduplicates proposal appearances and merges findings witho
   const p = { id: 'p-grouped', projectId: 'project-1', findingId: finding.id, assetKind: 'agent', assetId: 'a', assetName: 'Reviewer', title: '当前修改', status: 'pending', summary: { total: 1, finished: 1, fixed: 1, passed: true }, baseHash: 'base', baseContent: '原文', candidateContent: '原文\n新增要求', replays: [] };
   const second = { ...finding, id: 'f-second', clusters: [{ id: 'new-1', label: '新问题一', runs: 1 }, { id: 'new-2', label: '新问题二', runs: 1 }] };
   const rule = { ...finding, id: 'f-rule', assetKind: 'rule', assetName: '同名规则', clusters: [{ id: 'rule-error', label: '规则问题', runs: 1 }] };
-  const history = { ...p, id: 'p-history', status: 'rejected' };
+  const history = { ...p, id: 'p-history', status: 'released', releasedVersion: 2 };
+  const rollback = { ...history, id: 'p-rollback', status: 'rolled_back' };
   const q = { id: 'q-grouped', projectId: 'project-1', findingId: second.id, assetKind: 'agent', assetId: 'a', status: 'queued', title: '排队修改' };
   const app = await loadApp({ routes: [...routes,
-    { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { projectId: 'project-1', pending: [p], validating: [], trial: [p], recent: [p, history], queue: [q], health: [] } },
+    { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { projectId: 'project-1', pending: [p], validating: [], trial: [p], recent: [p, history, rollback], queue: [q], health: [] } },
     { method: 'GET', path: '/api/evolution/findings?projectId=project-1', body: [{ ...finding, proposalId: p.id }, second, rule] },
     { method: 'GET', path: '/api/evolution/proposals/p-grouped', body: p },
+    { method: 'GET', path: '/api/evolution/proposals/p-history', body: history },
     { method: 'GET', path: '/api/evolution/assets/agent/a/versions', body: { liveHash: 'base', currentVersion: 1 } },
   ] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app);
   assert.equal(app.document.querySelectorAll('[data-evo-asset-group]').length, 2);
-  assert.match($('[data-evo-list-status="all"]').textContent, /全部记录2/);
-  assert.match($('[data-evo-asset-group="asset:agent:a"]').textContent, /1 条问题运行.*后续建议 1.*历史尝试 1.*当前修改/s);
-  assert.match($('[data-evo-asset-group="asset:rule:a"]').textContent, /同名规则.*1 条问题线索/);
+  assert.match($('[data-evo-asset-group="asset:agent:a"] .evo-home-summary').textContent, /当前修改/);
+  assert.match($('[data-evo-asset-group="asset:rule:a"]').textContent, /规则问题.*同名规则/s);
   assert.equal(app.router.calls.some(c => c.path.startsWith('/api/runs/') || c.path === '/api/evolution/proposals/p-grouped'), false);
   $('[data-evo-asset-group="asset:agent:a"]').click(); await settle(5);
+  $('#evoProblemEvidenceDetails > summary').click();
   assert.match($('.evo-story-signal-section').textContent, /取证依据/);
   $('[data-evo-source-example="node_failed"]').click();
   assert.equal($('#evoStorySourceExample').hidden,false);
@@ -132,9 +144,16 @@ test('asset grouping deduplicates proposal appearances and merges findings witho
   assert.equal($('[data-evo-related-finding="f-rule"]'), null);
   assert.equal($('#evoWorkspaceTasks'), null);
   $('[data-evo-list-back]').click(); await settle(4);
-  $('[data-evo-list-status="doing"]').click();
+  filterTasks(app,'status','doing');
   assert.equal($('#evoDetailPage'), null);
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 0);
+  $('[data-evo-list-section="released"]').click();
+  $('[data-evo-proposal="p-history"]').click(); await settle(5);
+  assert.equal(app.window.location.hash,'#/evolution/proposals/p-history');
+  $('[data-evo-list-back]').click(); await settle(4);
+  assert.equal(app.document.activeElement.dataset.evoProposal,'p-history');
+  $('[data-evo-list-section="rolled_back"]').click();
+  assert.equal($('.evo-home-row').dataset.evoProposal,'p-rollback');
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
@@ -176,7 +195,7 @@ test('new unqueued feedback is counted as a follow-up without changing the curre
     {method:'GET',path:'/api/evolution/findings?projectId=project-1',body:[old,feedback]},
   ]});t.after(app.close);
   await open(app);
-  assert.match(app.document.querySelector('.evo-home-row').textContent,/后续建议 1/);
+  assert.equal(app.evaluate('evoFollowupCount(evoUnifiedRows()[0])'),1);
   app.evaluate(`evoOpenQueue('agent','a')`);await settle(2);
   assert.match(app.document.querySelector('#kbDrawerBody').textContent,/产物缺少 reason 字段/);
   assert.equal(app.router.calls.some(c=>c.method!=='GET'),false);
@@ -217,7 +236,11 @@ test('clicking any history cell compares that sample and preserves the selected 
   await settle(7);
   assert.equal(app.document.querySelectorAll('.evo-detail-track li').length, 6);
   assert.match($('.evo-detail-track [aria-current="step"]').textContent, /小范围试用[\s\S]+待确认试用/);
-  assert.match($('#evoValidationResults').textContent,/运行成功\s*1\/2\s*2\/2/);
+  assert.match($('.evo-story-replay-pair').textContent,/原版 1\/2 成功\s+修改稿 2\/2 成功/);
+  assert.doesNotMatch($('#evoValidationResults').textContent,/试用|流量/);
+  assert.equal($('#evoRolloutDetails').open,false);
+  $('.evo-detail-track [aria-current="step"] button').click();
+  assert.equal($('#evoRolloutDetails').open,true);
   assert.match($('#evoReleasePanel').textContent,/尚未发布/);
   assert.equal($('#evoReviewDiff .evo-before-after section:first-child .evo-split-number').textContent,'2');
   $('[data-evo-diff-split]').click();

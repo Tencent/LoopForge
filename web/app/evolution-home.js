@@ -15,54 +15,43 @@ function evoHomeEmptyHTML(){
   const action=check?.findings?evoHomeButton('刷新列表','data-evo-reload'):evoHomeButton(`${evoReviewIcon('play')}查看运行`,'data-evo-home-runs');
   return `<section class="evo-home-empty" aria-labelledby="evoHomeEmptyTitle"><div class="evo-home-empty-mark">${evoReviewIcon(check&&hasRuns?'check':'workflow')}</div><h2 id="evoHomeEmptyTitle">${title}</h2><p>${escapeHTML(note)}</p><div class="evo-home-empty-actions">${action}</div></section>`;
 }
-function evoHomeNext(row){
-  const p=row.p;
-  if(row.conflict)return '检查并行修改';
-  if(p?.summary?.regressed>0)return '查看退化样例';
-  if(p?.status==='pending')return p.summary?.passed?'查看指令差异':'查看验证结果';
-  if(p?.status==='canary')return p.canary?.status==='passed'?'查看并确认发布':'查看试用结果';
-  if(p?.status==='released')return p.watch?.status==='degraded'?'检查并回滚':'查看发布结果';
-  if(['drafting','validating'].includes(p?.status))return '查看进度';
-  if(row.queue?.length&&!evoOccupiesAsset(p))return '查看后续建议';
-  if(p)return ['failed','rejected','rolled_back'].includes(p.status)?'查看记录':'查看指令差异';
-  return evoIssueState(row.r?.f||{})==='done'?'查看记录':'查看问题';
+function evoHomeBrief(raw,limit=28){
+  const first=String(raw||'').trim().split(/[。！？\r\n]/u,1)[0].trim();
+  return evoStoryBrief(first,limit);
 }
-function evoHomeOutcome(p){
-  if(!p)return '';
-  const trial=p.status==='canary'?p.canary:null,watch=p.status==='released'?p.watch:null;
-  if(trial||watch){
-    const arms=trial?[[trial.control,'原版'],[trial.canary,'试用版']]:[[watch.baseline,'发布前'],[watch.current,'发布后']];
-    return [trial?'试用一次成功':'发布前后一次成功',...arms.map(([a,label])=>`${label} ${a?.runs>0&&Number.isFinite(a.clean)?a.clean+'/'+a.runs:'暂无结果'}`)].join(' · ');
-  }
-  const s=p.summary;
-  if(!s?.total)return '';
-  if((s.finished||0)<s.total)return `历史回放 ${s.finished||0}/${s.total} 已完成`;
-  const facts=[];
-  if(s.fixed)facts.push(`改善 ${s.fixed}`);
-  if(s.regressed)facts.push(`退化 ${s.regressed}`);
-  if(s.changed)facts.push(`结论变化 ${s.changed}`);
-  if(s.blocked)facts.push(`阻塞 ${s.blocked}`);
-  if(!facts.length&&s.unchanged)facts.push(`结果保持 ${s.unchanged}`);
-  return ['历史回放',...facts,s.passed&&!s.fixed?'待核对产物':''].filter(Boolean).join(' · ');
+function evoHomeProblem(row){
+  const {p,r}=row;
+  if(p?.review?.problem)return evoHomeBrief(p.review.problem);
+  const raw=r?.title||p?.title||row.title||'改进问题';
+  // Execution wrappers repeat internal instructions. The signal type is a clearer list title.
+  if(/^agent submitted terminal failure:/i.test(raw))return EVO_SIGNALS[r?.c?.kind]||'节点失败';
+  return evoHomeBrief(raw)||'改进问题';
+}
+function evoHomeUpdated(row){
+  return (row.history&&evoTime(row.p.decidedAt))||evoTime(row.p?.updatedAt)||
+    evoTime(row.r?.f.updatedAt)||evoTime(row.r?.f.lastSeenAt)||evoTime(row.queue?.[0]?.updatedAt);
 }
 function evoHomeRowHTML(row){
   const {p,r,asset,key}=row,state=evoListProgress(row);
-  const problem=p?.review?.problem||r?.title||p?.title||'改进问题';
-  const change=p?.review?.changes?.[0]?.title||(p?.title!==problem?p?.title:'')||'';
-  const summary=[evoStoryBrief(change,64),evoHomeOutcome(p)].filter(Boolean).join(' · ');
+  const problem=evoHomeProblem(row),rawProblem=p?.review?.problem||r?.title||p?.title||problem;
+  const change=p?.review?.changes?.[0]?.title||(p?.status!=='drafting'&&p?.title!==rawProblem?p?.title:'')||'';
+  const workflows=evoFindingWorkflows(r?.f);
+  const related=workflows.length===1?`SOP · ${workflows[0].name}`:workflows.length>1?`${workflows.length} 个 SOP`:asset.assetName||asset.assetId||'未知对象';
   const glyph=r?.c?.kind==='user_feedback'?'user':'alert';
+  const updated=evoHomeUpdated(row),date=updated?new Date(updated):null;
+  const time=date&&!Number.isNaN(+date)?`<time datetime="${escapeHTML(updated)}" data-tooltip="${escapeHTML(date.toLocaleString())}">${escapeHTML(evoIssueDate(updated))}</time>`:'—';
+  const destination=row.history?`data-evo-proposal="${escapeHTML(p.id)}"`:`data-evo-asset-group="${escapeHTML(key)}"`;
   return `
-    <button type="button" class="evo-home-row" data-evo-asset-group="${escapeHTML(key)}" data-evo-key="${escapeHTML(key)}">
+    <button type="button" class="evo-home-row" ${destination} data-evo-key="${escapeHTML(key)}">
       <span class="evo-home-mark">${evoFindingPriorityHTML(r?.f)||evoReviewIcon(glyph)}</span>
       <span class="evo-home-problem">
-        <b data-tooltip="${escapeHTML(problem)}">${escapeHTML(evoStoryBrief(problem,60))}</b>
-        <span class="evo-home-asset">${escapeHTML(asset.assetName||asset.assetId||'未知对象')} · ${escapeHTML(evoGroupFacts(row))}</span>
+        <b data-tooltip="${escapeHTML(rawProblem)}">${escapeHTML(problem)}</b>
+        <span class="evo-home-asset" data-tooltip="${escapeHTML(workflows.map(w=>w.name).join('、')||related)}">${escapeHTML(related)}</span>
       </span>
-      <span class="evo-home-summary">${escapeHTML(summary)}</span>
-      <span class="evo-home-next">
-        ${kbBadge(escapeHTML(row.conflict?'存在并行冲突':state.label),row.conflict?'err':state.tone)}
-        <span>${escapeHTML(evoHomeNext(row))}${evoReviewIcon('arrow-right')}</span>
-      </span>
+      <span class="evo-home-summary"${change?` data-tooltip="${escapeHTML(change)}"`:''}>${escapeHTML(evoHomeBrief(change,30))}</span>
+      <span class="evo-home-next">${kbBadge(escapeHTML(row.conflict?'存在并行冲突':state.label),row.conflict?'err':state.tone)}</span>
+      <span class="evo-home-updated">${time}</span>
+      <span class="evo-home-chevron">${evoIcon('chevron')}</span>
     </button>`;
 }
 function evoHomeStatusHTML(){
@@ -88,39 +77,62 @@ function evoHomeSummaryHTML(){
   const stats=[
     ['alert','待处理问题',groups.active.length,'warn'],
     ['refresh','迭代中',groups.doing.length,'accent'],
-    ['arrow-up','已发布',groups.released.length,'success']
+    ['arrow-up','已发布',evoAllProposals().filter(p=>p.status==='released').length,'success']
   ];
   return `<div class="evo-workspace-metrics">${stats.map(([icon,label,value,tone])=>`
     <section class="evo-workspace-stat" data-tone="${tone}">
       <h2><span>${evoReviewIcon(icon)}</span>${label}</h2><b>${value}</b>
     </section>`).join('')}</div>`;
 }
-function evoHomeTasksHTML(all){
-  if(!all.length)return evoHomeEmptyHTML();
-  const buckets=evoHomeBuckets(all);
-  const filters=[['all','全部记录'],['active','待处理'],['doing','迭代中'],['released','已发布'],['rolled_back','已回滚']];
-  if(!Object.hasOwn(buckets,evo.list.status))evo.list={status:'all',page:0};
+const EVO_TASK_SECTIONS=[['tasks','改进任务'],['released','近期发布'],['rolled_back','回滚记录']];
+const EVO_TASK_STATUSES=[['all','全部状态'],['active','待处理'],['doing','迭代中'],['released','已发布'],['rolled_back','已回滚']];
+function evoHomeSectionRows(all){
+  return evo.list.section==='released'||evo.list.section==='rolled_back'?all.flatMap(group=>group.proposals
+    .filter(p=>p.status===evo.list.section).map(p=>({
+      key:`proposal:${p.id}`,history:true,p,asset:p,
+      r:group.issues.find(r=>r.f.id===p.findingId||r.f.proposalId===p.id)
+    }))):evoHomeBuckets(all)[evo.list.status]||all;
+}
+function evoHomeListHTML(all){
+  const q=(evo.list.q||'').trim().toLocaleLowerCase();
+  const list=evoHomeSectionRows(all).filter(row=>{
+    const workflows=evoFindingWorkflows(row.r?.f);
+    return (!evo.list.sop||workflows.some(w=>w.id===evo.list.sop))&&
+      (!q||[evoHomeProblem(row),row.r?.title,row.asset.assetName,row.p?.title,row.p?.review?.changes?.[0]?.title,...workflows.map(w=>w.name)]
+        .some(v=>String(v||'').toLocaleLowerCase().includes(q)));
+  });
   const needsAttention=r=>r.p?.watch?.status==='degraded'||r.p?.summary?.regressed>0;
   const priority={todo:0,doing:1,done:2};
   const impact=r=>r.r?.f.triage?.score||0;
-  const updated=r=>Date.parse(r.p?.updatedAt||r.r?.f.updatedAt||r.r?.f.lastSeenAt||r.queue?.[0]?.updatedAt)||0;
-  const list=[...buckets[evo.list.status]].sort(evo.list.sort==='recent'?
-    (a,b)=>updated(b)-updated(a):(a,b)=>Number(needsAttention(b))-Number(needsAttention(a))||
-    impact(b)-impact(a)||priority[evoListCategory(a)]-priority[evoListCategory(b)]||updated(b)-updated(a));
+  const newest=(a,b)=>(Date.parse(evoHomeUpdated(b))||0)-(Date.parse(evoHomeUpdated(a))||0);
+  list.sort(evo.list.sort==='recent'||evo.list.section&&evo.list.section!=='tasks'?
+    newest:(a,b)=>Number(needsAttention(b))-Number(needsAttention(a))||
+    impact(b)-impact(a)||priority[evoListCategory(a)]-priority[evoListCategory(b)]||newest(a,b));
   const pages=Math.max(1,Math.ceil(list.length/10));evo.list.page=Math.max(0,Math.min(evo.list.page,pages-1));
   const rows=list.slice(evo.list.page*10,(evo.list.page+1)*10).map(evoHomeRowHTML).join('');
-  const toolbar=`<div class="evo-home-toolbar">
-    <div class="evo-home-toolbar-title"><h2>改进任务 <span>${all.length}</span></h2>
-      <select class="kb-input" data-evo-list-sort data-evo-key="task-sort" aria-label="改进任务排序">
-        <option value="impact">按影响度</option><option value="recent"${evo.list.sort==='recent'?' selected':''}>最近更新</option>
-      </select>
-    </div>
-    <div class="evo-home-tabs" role="group" aria-label="改进任务筛选">${filters.map(([key,label])=>`<button type="button" data-evo-list-status="${key}" data-evo-key="filter:${key}" aria-pressed="${evo.list.status===key}">${label}<span>${buckets[key].length}</span></button>`).join('')}</div>
-  </div>`;
-  const empty=`<div class="evo-home-filter-empty">当前没有${escapeHTML(filters.find(([key])=>key===evo.list.status)?.[1]||'匹配的')}任务${evoHomeButton(`查看全部 ${all.length} 条`,'data-evo-list-status="all"')}</div>`;
+  const filtered=q||evo.list.sop||(!evo.list.section||evo.list.section==='tasks')&&evo.list.status!=='all';
+  const empty=`<div class="evo-home-filter-empty">${filtered?'暂无匹配任务':evo.list.section==='released'?'暂无发布记录':evo.list.section==='rolled_back'?'暂无回滚记录':'暂无改进任务'}
+    ${filtered?evoHomeButton('清除筛选','data-evo-list-reset'):''}</div>`;
   const pager=pages>1?`<footer class="evo-list-footer"><nav aria-label="改进分页"><button type="button" data-evo-unified-page="${evo.list.page-1}"${evo.list.page?'':' disabled'}>上一页</button><span>${evo.list.page+1}/${pages}</span><button type="button" data-evo-unified-page="${evo.list.page+1}"${evo.list.page+1<pages?'':' disabled'}>下一页</button></nav></footer>`:'';
-  const columns=rows?'<div class="evo-home-columns" aria-hidden="true"><span>问题与对象</span><span>修改与验证</span><span>当前状态</span></div>':'';
-  return `${toolbar}<section id="evoUnifiedList" class="evo-home-list" aria-label="改进任务">${columns}${rows||empty}</section>${pager}`;
+  const columns=rows?'<div class="evo-home-columns" aria-hidden="true"><span>问题 / 关联 SOP</span><span>改动摘要</span><span>当前阶段</span><span>更新</span></div>':'';
+  return `<section id="evoUnifiedList" class="evo-home-list" aria-label="任务记录">${columns}${rows||empty}</section>${pager}`;
+}
+function evoHomeTasksHTML(all){
+  if(!all.length)return evoHomeEmptyHTML();
+  const section=evo.list.section||'tasks';
+  const workflows=[...new Map(all.flatMap(group=>group.issues.flatMap(r=>evoFindingWorkflows(r.f))).map(w=>[w.id,w])).values()];
+  return `<div class="evo-home-tabs" role="group" aria-label="改进记录">${EVO_TASK_SECTIONS.map(([key,label])=>
+      `<button type="button" data-evo-list-section="${key}" data-evo-key="section:${key}" aria-pressed="${section===key}">${label}</button>`).join('')}</div>
+    <div class="evo-home-toolbar">
+      ${section==='tasks'?`<select class="kb-input" data-evo-task-filter="status" data-evo-key="task-status" aria-label="任务状态">${EVO_TASK_STATUSES.map(([key,label])=>
+        `<option value="${key}"${evo.list.status===key?' selected':''}>${label}</option>`).join('')}</select>`:''}
+      ${workflows.length?`<select class="kb-input" data-evo-task-filter="sop" data-evo-key="task-sop" aria-label="关联 SOP"><option value="">全部 SOP</option>${workflows.map(w=>
+        `<option value="${escapeHTML(w.id)}"${evo.list.sop===w.id?' selected':''}>${escapeHTML(w.name)}</option>`).join('')}</select>`:''}
+      <label class="evo-home-search">${evoReviewIcon('search')}<input class="kb-input" type="search" data-evo-task-search data-evo-key="task-search" aria-label="搜索问题、SOP 或任务" placeholder="搜索问题、SOP 或任务" value="${escapeHTML(evo.list.q||'')}"></label>
+      ${section==='tasks'?`<select class="kb-input" data-evo-task-filter="sort" data-evo-key="task-sort" aria-label="改进任务排序">
+        <option value="impact">按影响度</option><option value="recent"${evo.list.sort==='recent'?' selected':''}>最近更新</option></select>`:''}
+    </div>
+    <div id="evoHomeResults">${evoHomeListHTML(all)}</div>`;
 }
 function evoHomeHTML(){
   const all=evoUnifiedRows();
@@ -128,6 +140,12 @@ function evoHomeHTML(){
     ${evoHomeStatusHTML()}
     <section id="evoWorkspaceTasks" class="evo-workspace-tasks" aria-label="改进任务">${evoHomeTasksHTML(all)}</section>
   </div>`;
+}
+function evoUpdateHomeResults(){
+  const results=$('#evoHomeResults');
+  if(!results)return;
+  results.innerHTML=evoHomeListHTML(evoUnifiedRows());
+  window.AgentFlowHarnessIcons?.hydrate(results);
 }
 function evoUpdateWorkspaceTasks(){
   const tasks=$('#evoWorkspaceTasks');

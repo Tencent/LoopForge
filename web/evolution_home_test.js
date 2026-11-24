@@ -31,14 +31,14 @@ const {createDOM}=require('./hui_fake_dom');
   evo.overview={pending:[p],health:[]};
   html=api.evoHomeHTML();dom.html(html);
   assert.equal(dom.document.querySelector('img'),null,'model text must remain escaped');
-  assert.equal(dom.document.querySelectorAll('.evo-home-tabs button').length,5);
+  assert.equal(dom.document.querySelectorAll('.evo-home-tabs button').length,3);
   assert.equal(dom.document.querySelectorAll('.evo-home-row').length,1);
-  assert.match(dom.document.querySelector('.evo-home-summary').textContent,/跳过摘要.*改善 1/,'the list summarizes the change and replay outcome');
-  assert.equal(dom.document.querySelector('.evo-home-columns').textContent,'问题与对象修改与验证当前状态');
-  assert.match(html,/阻塞 1/);assert.ok(!html.includes('成功 3/3'));
+  assert.equal(dom.document.querySelector('.evo-home-summary').textContent,'跳过摘要');
+  assert.equal(dom.document.querySelector('.evo-home-columns').textContent,'问题 / 关联 SOP改动摘要当前阶段更新');
+  assert.doesNotMatch(html,/阻塞 1|成功 3\/3/);
   evo.overview={recent:[{...p,status:'rejected'}]};
   evo.list={status:'active',page:0};html=api.evoHomeHTML();
-  assert.match(html,/查看全部 1 条/);
+  assert.match(html,/清除筛选/);
   evo.list.status='all';assert.match(api.evoHomeHTML(),/data-evo-asset-group/);
 
   // A check is an explicit write; refresh must not silently run it.
