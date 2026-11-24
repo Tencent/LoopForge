@@ -51,9 +51,15 @@ while not os.path.exists('finish-turn'):
 			t.Fatalf("%s %s = %+v, %v, want %s", operation, name, got, err, want)
 		}
 	}
+	serverCommand := func(port int) string {
+		return fmt.Sprintf(`test -z "$PREVIEW_TEST_TURN_SECRET" && exec python3 -c '
+import subprocess, sys
+command = [sys.executable, "-m", "http.server", sys.argv[1], "--bind", "127.0.0.1"]
+sys.exit(subprocess.call(command, start_new_session=True))
+' %d`, port)
+	}
 	for name, port := range map[string]int{"frontend": 5173, "backend": 8080} {
-		command := fmt.Sprintf(`test -z "$PREVIEW_TEST_TURN_SECRET" && exec python3 -m http.server %d --bind 127.0.0.1`, port)
-		control("start", name, command, "running")
+		control("start", name, serverCommand(port), "running")
 		checkDockerPreviewPort(t, ctx, sb, port, true)
 	}
 	control("start", "frontend", "touch duplicate-start", "running")
@@ -76,6 +82,28 @@ while not os.path.exists('finish-turn'):
 	checkDockerPreviewPort(t, ctx, sb, 5174, false)
 	checkDockerPreviewPort(t, ctx, sb, 5173, true)
 	checkDockerPreviewPort(t, ctx, sb, 8080, true)
+	control("status", "frontend", "", "running")
+
+	killSupervisor := func(record string) {
+		t.Helper()
+		out, err := sb.Exec(ctx, CommandSpec{Argv: []string{"python3", "-c", `
+import json, os, signal, sys
+with open("/dev/shm/loopforge-preview/" + sys.argv[1]) as file:
+    os.kill(json.load(file)["pid"], signal.SIGKILL)
+`, record}}, nil)
+		if err != nil {
+			t.Fatalf("kill preview supervisor %s: %v %s", record, err, out)
+		}
+	}
+	// The outer subreaper cleans up even the server in a separate session.
+	killSupervisor("frontend.json")
+	checkDockerPreviewPort(t, ctx, sb, 5173, false)
+	control("start", "frontend", serverCommand(5173), "running")
+	checkDockerPreviewPort(t, ctx, sb, 5173, true)
+	checkDockerPreviewPort(t, ctx, sb, 8080, true)
+
+	// If the outer process dies first, the inner supervisor still owns the tree.
+	killSupervisor("frontend.json.guard")
 	control("status", "frontend", "", "running")
 	control("stop", "frontend", "", "stopped")
 	control("stop", "frontend", "", "stopped")

@@ -40,16 +40,19 @@ func WorkspacePreviewService(ctx context.Context, sandbox Sandbox, req domain.Wo
 
 // The control files live in the container's tmpfs, outside the workspace
 // snapshot. File locking serializes retries and concurrent starts or stops.
+// An outer subreaper adopts and reaps the service tree if the inner
+// supervisor dies before it can clean up.
 const dockerWorkspacePreviewService = `import fcntl,json,os,subprocess,sys,time
 ` + dockerProcessStat + `
 operation,name,command,supervise,stop=sys.argv[1:]
 directory='/dev/shm/loopforge-preview'
 os.makedirs(directory,mode=0o700,exist_ok=True)
 path=os.path.join(directory,name+'.json')
+guardian=path+'.guard'
 
-def status():
+def supervisor_status(record_path):
     try:
-        with open(path) as f:
+        with open(record_path) as f:
             record=json.load(f)
     except FileNotFoundError:
         return 'stopped'
@@ -58,19 +61,36 @@ def status():
     identity=stat(record['pid'])
     return 'running' if identity is not None and identity[1]==record['start'] else 'stopped'
 
+def status():
+    current=supervisor_status(path)
+    if current=='stopped':
+        guard_status=supervisor_status(guardian)
+        if guard_status=='running':
+            return 'stopping'
+        if guard_status=='exited':
+            return 'exited'
+    return current
+
 def clear():
-    for file in (path,path+'.stop'):
+    for file in (path,path+'.stop',guardian,guardian+'.stop'):
         try:
             os.unlink(file)
         except FileNotFoundError:
             pass
 
 def stop_service():
-    subprocess.run([sys.executable,'-c',stop,path],check=True,timeout=9)
+    for record_path in (guardian,path):
+        if supervisor_status(record_path)=='running':
+            result=subprocess.run([sys.executable,'-c',stop,record_path],
+                capture_output=True,text=True,timeout=9)
+            if result.returncode!=0 and supervisor_status(record_path)=='running':
+                raise RuntimeError(result.stderr.strip() or '预览服务未停止')
 
 def start():
+    stop_service()
     clear()
-    process=subprocess.Popen([sys.executable,'-c',supervise,path,'sh','-c',command],
+    process=subprocess.Popen([sys.executable,'-c',supervise,guardian,
+        sys.executable,'-c',supervise,path,'sh','-c',command],
         stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
         start_new_session=True)
     deadline=time.monotonic()+5
@@ -78,7 +98,7 @@ def start():
         if process.poll() is not None:
             raise RuntimeError('预览服务进程未启动')
         if time.monotonic()>=deadline:
-            stop_service()
+            process.terminate()
             process.wait(timeout=7)
             clear()
             raise RuntimeError('预览服务启动超时')
@@ -86,12 +106,10 @@ def start():
 
 with open(os.path.join(directory,'lock'),'a') as lock:
     fcntl.flock(lock,fcntl.LOCK_EX)
-    current=status()
-    if operation=='start' and current!='running':
+    if operation=='start' and supervisor_status(path)!='running':
         start()
     elif operation=='stop':
-        if current=='running':
-            stop_service()
+        stop_service()
         clear()
     print(json.dumps({'name':name,'status':status()}))
 `
