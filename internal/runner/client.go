@@ -109,14 +109,15 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 // ---------- endpoints ----------
 
 type RegisterRequest struct {
-	RunnerID       string                 `json:"runnerId,omitempty"`
-	Name           string                 `json:"name"`
-	OS             string                 `json:"os"`
-	Arch           string                 `json:"arch"`
-	Version        string                 `json:"version"`
-	Labels         []string               `json:"labels,omitempty"`
-	MaxConcurrency int                    `json:"maxConcurrency"`
-	Runtimes       []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	RunnerID               string                 `json:"runnerId,omitempty"`
+	Name                   string                 `json:"name"`
+	OS                     string                 `json:"os"`
+	Arch                   string                 `json:"arch"`
+	Version                string                 `json:"version"`
+	Labels                 []string               `json:"labels,omitempty"`
+	MaxConcurrency         int                    `json:"maxConcurrency"`
+	Runtimes               []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	NativeSandboxAvailable bool                   `json:"nativeSandboxAvailable"`
 }
 
 type RegisterResponse struct {
@@ -157,10 +158,11 @@ func (c *Client) Register(ctx context.Context, bootstrapToken string, req Regist
 }
 
 type HeartbeatRequest struct {
-	Status       string                 `json:"status"`
-	RunningTasks int                    `json:"runningTasks"`
-	Version      string                 `json:"version,omitempty"`
-	Runtimes     []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	Status                 string                 `json:"status"`
+	RunningTasks           int                    `json:"runningTasks"`
+	Version                string                 `json:"version,omitempty"`
+	Runtimes               []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	NativeSandboxAvailable bool                   `json:"nativeSandboxAvailable"`
 }
 
 type HeartbeatResponse struct {

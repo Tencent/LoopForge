@@ -116,6 +116,30 @@ test('desktop settings navigation reopens on the current page', async ({ page })
   }
 });
 
+test('desktop settings returns keyboard focus after the reopened button becomes visible', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openView(page, 'settings');
+  const collapse = page.locator('#settingsSidebarToggle');
+  const expand = page.getByRole('button', { name: '展开设置导航', exact: true });
+  await expect(collapse).toBeVisible();
+  await collapse.press('Enter');
+  await expect(expand).toBeFocused();
+
+  const visibilityDelay = await page.addStyleTag({ content: '#settingsSidebarToggle { visibility: hidden !important; }' });
+  await expand.press('Enter');
+  await expect(page.locator('#settingsSidebar')).not.toHaveAttribute('aria-hidden', 'true');
+  await expect(collapse).toBeHidden();
+
+  // The sidebar can be expanded several frames before its button can take focus.
+  await page.evaluate(async () => {
+    for (let frame = 0; frame < 3; frame++) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+  });
+  await visibilityDelay.evaluate(style => style.remove());
+  await expect(collapse).toBeFocused();
+});
+
 test('personal credentials: the add wizard validates, saves write-only, and the row clears it', async ({ page, identity }) => {
   const me = identity.user;
   test.skip(!!(await userById(me.id))?.codexApiKeyConfigured, 'the token owner already has a Codex API Key; not overwriting a real credential');

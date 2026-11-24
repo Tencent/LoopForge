@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -264,60 +265,13 @@ func BuiltInExecutorForKind(kind string) (domain.ExecutorDefinition, bool) {
 	return domain.ExecutorDefinition{}, false
 }
 
-// ---------- Dockerfiles / Environments / Sandboxes ----------
-
-func (r *CatalogRepo) Dockerfiles() []domain.DockerfileDefinition {
-	return payloadList[domain.DockerfileDefinition](r.DB, "dockerfiles", "")
-}
-
-func (r *CatalogRepo) Dockerfile(id string) (domain.DockerfileDefinition, bool) {
-	return payloadOne[domain.DockerfileDefinition](r.DB, "dockerfiles", id)
-}
-
-func (r *CatalogRepo) PutDockerfile(v domain.DockerfileDefinition) error {
-	if err := domain.ValidateDockerfile(v); err != nil {
-		return err
-	}
-	v.UpdatedAt = time.Now().UTC()
-	return upsert(r.DB, "dockerfiles", map[string]any{
-		"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt),
-	})
-}
-
-func (r *CatalogRepo) DeleteDockerfile(id string) error {
-	if _, ok := r.Dockerfile(id); !ok {
-		return fmt.Errorf("dockerfile not found")
-	}
-	return r.DB.Table("dockerfiles").Where("id = ?", id).Delete(nil).Error
-}
-
-func (r *CatalogRepo) Environments() []domain.EnvironmentDefinition {
-	return payloadList[domain.EnvironmentDefinition](r.DB, "environments", "")
-}
-
-func (r *CatalogRepo) Environment(id string) (domain.EnvironmentDefinition, bool) {
-	return payloadOne[domain.EnvironmentDefinition](r.DB, "environments", id)
-}
-
-func (r *CatalogRepo) PutEnvironment(v domain.EnvironmentDefinition) error {
-	if err := domain.ValidateEnvironment(v); err != nil {
-		return err
-	}
-	v.UpdatedAt = time.Now().UTC()
-	return upsert(r.DB, "environments", map[string]any{
-		"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt),
-	})
-}
-
-func (r *CatalogRepo) DeleteEnvironment(id string) error {
-	if _, ok := r.Environment(id); !ok {
-		return fmt.Errorf("environment not found")
-	}
-	return r.DB.Table("environments").Where("id = ?", id).Delete(nil).Error
-}
+// ---------- Sandboxes ----------
 
 func (r *CatalogRepo) Sandboxes() []domain.SandboxProfile {
 	profiles := payloadList[domain.SandboxProfile](r.DB, "sandboxes", "")
+	profiles = slices.DeleteFunc(profiles, func(profile domain.SandboxProfile) bool {
+		return isDefaultSandboxID(profile.ID) && !platformSandboxOwner(profile.ProjectID)
+	})
 	for i := range profiles {
 		profiles[i] = platformSandboxProfile(profiles[i])
 	}
@@ -333,26 +287,74 @@ func (r *CatalogRepo) Sandboxes() []domain.SandboxProfile {
 }
 
 func (r *CatalogRepo) Sandbox(id string) (domain.SandboxProfile, bool) {
+	isDefault := isDefaultSandboxID(id)
+	if isDefault {
+		id = DefaultSandboxProfileID
+	}
 	var profile domain.SandboxProfile
-	var row payloadRow
-	err := r.DB.Table("sandboxes").Where("id = ?", id).Take(&row).Error
+	var row struct {
+		Payload         []byte
+		PlatformDefault bool
+	}
+	err := r.DB.Table("sandboxes").Select("payload, id = ? AS platform_default", DefaultSandboxProfileID).
+		Where("id = ?", id).Take(&row).Error
 	// A missing row may use the built-in default. Database failures or invalid
 	// stored configuration must not silently switch a run's execution policy.
-	if errors.Is(err, gorm.ErrRecordNotFound) && id == DefaultSandboxProfileID {
-		return DefaultSandboxProfile(), true
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if reserved, err := r.IsReservedSandboxID(id); err == nil && reserved {
+			return GenericDockerSandbox(), true
+		}
+		return domain.SandboxProfile{}, false
 	}
 	if err != nil || json.Unmarshal(row.Payload, &profile) != nil {
 		return domain.SandboxProfile{}, false
 	}
+	if isDefault || row.PlatformDefault {
+		if !platformSandboxOwner(profile.ProjectID) {
+			// A project profile on an installation awaiting migration cannot
+			// replace the platform-wide default.
+			return GenericDockerSandbox(), true
+		}
+		profile.ID = DefaultSandboxProfileID
+	}
 	return platformSandboxProfile(profile), true
+}
+
+func isDefaultSandboxID(id string) bool {
+	return strings.EqualFold(strings.TrimSpace(id), DefaultSandboxProfileID)
+}
+
+// IsReservedSandboxID recognizes the default ID and its MySQL equivalents.
+// The catalog uses utf8mb4_unicode_ci for its primary keys.
+func (r *CatalogRepo) IsReservedSandboxID(id string) (bool, error) {
+	if isDefaultSandboxID(id) {
+		return true, nil
+	}
+	if id == "" || !r.isMySQL() {
+		return false, nil
+	}
+	var reserved bool
+	err := r.DB.Raw("SELECT CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci = ?", id, DefaultSandboxProfileID).Scan(&reserved).Error
+	return reserved, err
+}
+
+// Stored platform defaults are projectless, including operator overrides.
+func platformSandboxOwner(projectID string) bool {
+	return projectID == ""
 }
 
 // platformSandboxProfile keeps the built-in generic Docker sandbox shared:
 // conversation workspaces fall back to it, and rows seeded before it carried
-// the shared flag would otherwise hide it from every project.
+// the shared flag would otherwise hide it from every project. A row still
+// marked local reads as native, never as the runtime's unisolated driver.
 func platformSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfile {
-	if profile.ID == GenericDockerSandboxID {
+	if isDefaultSandboxID(profile.ID) && platformSandboxOwner(profile.ProjectID) {
+		profile.ID = DefaultSandboxProfileID
+		profile.ProjectID = "platform"
 		profile.Shared = true
+	}
+	if strings.TrimSpace(profile.Driver) == domain.SandboxDriverLocal {
+		profile = normalizeSandboxProfile(profile)
 	}
 	return profile
 }
@@ -361,27 +363,25 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
 		return errors.New("sandbox id and name are required")
 	}
+	reserved, err := r.IsReservedSandboxID(v.ID)
+	if err != nil {
+		return err
+	}
+	if reserved {
+		if v.ProjectID != "" && v.ProjectID != "platform" {
+			return fmt.Errorf("沙箱标识 %s 保留给平台默认沙箱", DefaultSandboxProfileID)
+		}
+		v.ID, v.ProjectID = DefaultSandboxProfileID, ""
+	}
 	if err := domain.ValidateEnvironmentVariables(v.Environment); err != nil {
 		return fmt.Errorf("sandbox environment: %w", err)
 	}
-	switch strings.TrimSpace(v.Driver) {
-	case "local", "native", "seatbelt", "bwrap", "docker":
-	default:
-		return fmt.Errorf("unsupported sandbox driver %q", v.Driver)
+	if strings.TrimSpace(v.Driver) == domain.SandboxDriverLocal {
+		return errors.New("local 沙箱已移除，请改用 native 沙箱")
 	}
 	stored := normalizeSandboxProfile(v)
-	if stored.Driver == "docker" && stored.DockerfileID == "" {
-		return errors.New("docker sandbox requires a dockerfileId")
-	}
-	if stored.DockerfileID != "" {
-		if _, ok := r.Dockerfile(stored.DockerfileID); !ok {
-			return fmt.Errorf("dockerfile %q not found", stored.DockerfileID)
-		}
-	}
-	if stored.EnvironmentID != "" {
-		if _, ok := r.Environment(stored.EnvironmentID); !ok {
-			return fmt.Errorf("environment %q not found", stored.EnvironmentID)
-		}
+	if err := domain.ValidateSandboxAssets(stored); err != nil {
+		return err
 	}
 	return upsert(r.DB, "sandboxes", map[string]any{
 		"id": stored.ID, "name": stored.Name, "payload": mustJSON(stored),
@@ -389,7 +389,11 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 }
 
 func (r *CatalogRepo) DeleteSandbox(id string) error {
-	if id == DefaultSandboxProfileID {
+	reserved, err := r.IsReservedSandboxID(id)
+	if err != nil {
+		return err
+	}
+	if reserved {
 		return errors.New("默认运行沙箱不能删除；可编辑配置或新建其他沙箱")
 	}
 	if _, ok := r.Sandbox(id); !ok {
@@ -514,9 +518,6 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 		return err
 	}
 	v = normalizeWorkflowDefinition(v)
-	if strings.TrimSpace(v.SandboxProfileID) == "" {
-		v.SandboxProfileID = "local"
-	}
 	if _, ok := r.Sandbox(v.SandboxProfileID); !ok {
 		return fmt.Errorf("sandbox profile %q not found", v.SandboxProfileID)
 	}
@@ -926,27 +927,27 @@ func ProjectIssueWorkflowID(projectID string) string {
 	return projectID + "-issue-fix"
 }
 
+// normalizeSandboxProfile keeps only what a driver uses; the removed local
+// driver becomes native.
 func normalizeSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfile {
 	profile.Driver = strings.TrimSpace(profile.Driver)
-	profile.DockerfileID = strings.TrimSpace(profile.DockerfileID)
-	profile.EnvironmentID = strings.TrimSpace(profile.EnvironmentID)
+	profile.DockerfileID = ""
+	// Each driver keeps only its own recipe, so switching drivers drops the
+	// other one instead of failing the save.
+	if profile.Driver != domain.SandboxDriverDocker {
+		profile.Dockerfile = nil
+	}
 	switch profile.Driver {
-	case "local":
-		profile.DockerfileID = ""
-		profile.ReadOnlyRootFS = false
-	case "native", "seatbelt", "bwrap":
+	case domain.SandboxDriverLocal, domain.SandboxDriverNative, domain.SandboxDriverSeatbelt, domain.SandboxDriverBwrap:
 		profile.Driver = domain.SandboxDriverNative
-		profile.DockerfileID = ""
 		profile.ReadOnlyRootFS = false
-	case "docker":
-		profile.EnvironmentID = ""
 	}
 	return profile
 }
 
 func normalizeWorkflowDefinition(workflow domain.WorkflowDefinition) domain.WorkflowDefinition {
 	if strings.TrimSpace(workflow.SandboxProfileID) == "" {
-		workflow.SandboxProfileID = "local"
+		workflow.SandboxProfileID = DefaultSandboxProfileID
 	}
 	for index := range workflow.Nodes {
 		node := &workflow.Nodes[index]

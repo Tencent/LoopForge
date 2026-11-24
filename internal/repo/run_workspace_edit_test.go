@@ -103,3 +103,46 @@ func TestWorkspaceEditorTerminalRunsAndReleaseFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceEditorReleaseOnlyUpdatesRunForLegacyLease(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	const userID = 10
+	run := domain.Run{
+		ID:                 "editor-release",
+		Status:             "running",
+		WorkspaceEditorID:  userID,
+		WorkspaceEditUntil: time.Now().UTC().Add(time.Minute),
+	}
+	if err := st.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	before, ok := st.RunState(run.ID)
+	if !ok {
+		t.Fatal("missing run")
+	}
+	closed := 0
+	closeTerminals := func(domain.Run) error {
+		closed++
+		return nil
+	}
+	if err := st.ReleaseWorkspaceEditor(run.ID, userID, closeTerminals); err != nil {
+		t.Fatal(err)
+	}
+	released, ok := st.RunState(run.ID)
+	if !ok || released.WorkspaceEditorID != 0 || !released.WorkspaceEditUntil.IsZero() || released.Revision != before.Revision+1 {
+		t.Fatalf("release should clear the legacy lease and increment the revision: %+v", released)
+	}
+	if err := st.ReleaseWorkspaceEditor(run.ID, userID, closeTerminals); err != nil {
+		t.Fatal(err)
+	}
+	if revision, ok := st.RunRevision(run.ID); !ok || revision != released.Revision {
+		t.Fatalf("release without a legacy lease changed the revision to %d, want %d", revision, released.Revision)
+	}
+	if closed != 2 {
+		t.Fatalf("release invoked terminal cleanup %d times, want 2", closed)
+	}
+}

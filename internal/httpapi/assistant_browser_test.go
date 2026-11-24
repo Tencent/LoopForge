@@ -13,6 +13,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
 
@@ -99,6 +100,8 @@ func TestMainBotBrowserStartsAndDrivesRunBrowser(t *testing.T) {
 	h.api = New(a.repo, en, tracker.NewService(), "", "")
 	r, _ := a.repo.RunState("shared-run")
 	r.ID, r.Status, r.Nodes, r.WorkspaceCleanedAt = "browser-run-"+t.Name(), "succeeded", map[string]*domain.NodeRun{}, time.Time{}
+	// A host browser reaches the httptest page; a docker sidecar could not.
+	r.WorkflowSnapshot.SandboxProfileID = repo.TestNativeSandboxID
 	if err := a.repo.PutRun(r); err != nil {
 		t.Fatal(err)
 	}

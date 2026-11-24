@@ -45,7 +45,7 @@ func TestWorkflowGetReturnsFullDefinition(t *testing.T) {
 	user.CodeBuddyAPIKey = secret
 	script := strings.Repeat("env-prep phpstan\n", 800)
 	wf := domain.WorkflowDefinition{
-		ID: "wf-large", Name: "大 SOP", ProjectID: "platform", SandboxProfileID: "local",
+		ID: "wf-large", Name: "大 SOP", ProjectID: "platform", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "zg-index", Name: "索引", Type: "script", ScriptLanguage: "shell", Script: script},
 			{ID: "design", Name: "设计", Type: "script", ScriptLanguage: "shell", Script: script},

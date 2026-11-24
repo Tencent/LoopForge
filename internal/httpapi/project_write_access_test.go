@@ -164,11 +164,11 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	if code := call(other, "DELETE", "/api/rules?id=rule1", ""); code != 403 {
 		t.Fatalf("non-member delete rule: %d", code)
 	}
-	if err := s.PutDockerfile(domain.DockerfileDefinition{ID: "df-global", Name: "Base", Content: "FROM alpine"}); err != nil {
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "sb-global", Name: "Base", Driver: domain.SandboxDriverDocker, Dockerfile: &domain.SandboxDockerfile{Content: "FROM alpine"}}); err != nil {
 		t.Fatal(err)
 	}
-	if code := call(owner, "PUT", "/api/dockerfiles", `{"id":"df-global","name":"Base","content":"FROM evil"}`); code != 403 {
-		t.Fatalf("non-admin edit platform dockerfile: %d", code)
+	if code := call(owner, "PUT", "/api/sandboxes", `{"id":"sb-global","name":"Base","driver":"docker","dockerfile":{"content":"FROM evil"}}`); code != 403 {
+		t.Fatalf("non-admin edit platform sandbox: %d", code)
 	}
 	if code := call(other, "PUT", "/api/sync/config", `{}`); code != 403 {
 		t.Fatalf("non-admin sync config: %d", code)

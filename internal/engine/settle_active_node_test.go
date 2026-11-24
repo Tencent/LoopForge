@@ -9,7 +9,7 @@ import (
 // A failed branch must not settle the run while a sibling node is still
 // running or waiting for input.
 func TestSettleStatusForCompletedGraphWaitsForActiveNodes(t *testing.T) {
-	wf := domain.WorkflowDefinition{ID: "wf", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "left", Type: "script"}, {ID: "right", Type: "agent"}}}
+	wf := domain.WorkflowDefinition{ID: "wf", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "left", Type: "script"}, {ID: "right", Type: "agent"}}}
 	for _, active := range []string{"running", "pending_input"} {
 		run := domain.Run{ID: "settle-" + active, Status: "running", WorkflowSnapshot: wf, Nodes: map[string]*domain.NodeRun{
 			"left":  {NodeID: "left", Status: "failed"},

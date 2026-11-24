@@ -8,6 +8,7 @@ import (
 	goruntime "runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -136,5 +137,40 @@ func TestMaterializeGateMCPSelectsLinuxForDocker(t *testing.T) {
 	}
 	if string(raw) != "linux" {
 		t.Fatalf("docker gate helper = %q, want linux artifact", raw)
+	}
+}
+
+// Only Go sources outside dependency and hidden trees can make the cached gate
+// MCP binary stale.
+func TestGateMCPFreshnessIgnoresDependencyAndHiddenTrees(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(t.TempDir(), "gate-mcp")
+	old := time.Now().Add(-time.Hour)
+	write := func(rel string, at time.Time) {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", old)
+	write("cmd/agentflow-gate-mcp/main.go", old)
+	if err := os.WriteFile(cache, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	write("chatbot/node_modules/pkg/x.go", now.Add(time.Minute))
+	write(".local/scratch/x.go", now.Add(time.Minute))
+	if !buildArtifactFresh(cache, root) {
+		t.Fatal("dependency or hidden trees made the binary stale")
+	}
+	write("internal/x/x.go", now.Add(time.Minute))
+	if buildArtifactFresh(cache, root) {
+		t.Fatal("a newer Go source did not make the binary stale")
 	}
 }

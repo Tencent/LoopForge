@@ -13,6 +13,8 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 // A conversation workspace is an environment, not a checkout: Main Bot picks
@@ -20,7 +22,7 @@ import (
 // earlier workspace of this conversation on the same execution machine). Empty
 // workspaces start empty so the agent clones, branches, commits and pushes with
 // its own git using the requester's Git credentials.
-const workspaceOpenSchema = `{"type":"object","properties":{"sandboxProfileId":{"type":"string","maxLength":128,"description":"运行环境（沙箱配置）id；用于新开或切回本对话在该环境自己的工作区，不填沿用当前工作区的环境（没有工作区时用会话设置或 generic-docker）。传入 workspaceRunId 接入已有工作区/SOP 时沿用原运行冻结的沙箱环境，不要传不同的 sandboxProfileId"},"workspaceRunId":{"type":"string","maxLength":128,"description":"可选：要直接接入的同项目 SOP 运行 id（或本对话之前开过的工作区 id）。要求与当前对话在同一执行机器上：会直接绑定并操作该原工作区现场（包括未推送改动与中间产物，改完后也可回 SOP 从后续节点重跑或继续；已回收工作区会自动恢复快照；传子 SOP 时自动定位到父工作区）。日常继续当前工作区或只切换对话自身环境时不要传"}},"additionalProperties":false}`
+const workspaceOpenSchema = `{"type":"object","properties":{"sandboxProfileId":{"type":"string","maxLength":128,"description":"运行环境（沙箱配置）id；用于新开或切回本对话在该环境自己的工作区，不填沿用当前工作区的环境（没有工作区时用会话设置、AI 助手设置里倾向的环境或 generic-docker）。传入 workspaceRunId 接入已有工作区/SOP 时沿用原运行冻结的沙箱环境，不要传不同的 sandboxProfileId"},"workspaceRunId":{"type":"string","maxLength":128,"description":"可选：要直接接入的同项目 SOP 运行 id（或本对话之前开过的工作区 id）。要求与当前对话在同一执行机器上：会直接绑定并操作该原工作区现场（包括未推送改动与中间产物，改完后也可回 SOP 从后续节点重跑或继续；已回收工作区会自动恢复快照；传子 SOP 时自动定位到父工作区）。日常继续当前工作区或只切换对话自身环境时不要传"}},"additionalProperties":false}`
 
 func workspaceOpenDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
@@ -40,12 +42,10 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 	if fixed := strings.TrimSpace(s.SandboxProfileID); fixed != "" {
 		fmt.Fprintf(&b, "\n\n用户已在高级设置中指定运行环境 %s，不要填 sandboxProfileId。", fixed)
 	} else {
-		b.WriteString("\n\n可选运行环境（sandboxProfileId，按要做的事需要的语言、工具链选择，拿不准用 generic-docker）：")
-		for _, profile := range h.repo.ConversationSandboxes(s.ProjectID) {
+		choices, preferred := h.conversationSandboxChoices(s)
+		fmt.Fprintf(&b, "\n\n可选运行环境（sandboxProfileId，%s）：", workspaceSandboxGuide(choices, preferred))
+		for _, profile := range choices {
 			name := profile.Name
-			if df, ok := h.repo.Dockerfile(profile.DockerfileID); ok && df.Name != "" && df.Name != name {
-				name += "，镜像 " + df.Name
-			}
 			if profile.Driver != "" && profile.Driver != domain.SandboxDriverDocker {
 				name += "，" + profile.Driver + " 沙箱"
 			}
@@ -64,6 +64,71 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 	}
 	d.Description = b.String()
 	return d
+}
+
+// conversationSandboxKind folds a sandbox driver into the kinds a user can
+// prefer for conversation workspaces.
+func conversationSandboxKind(profile domain.SandboxProfile) string {
+	switch strings.TrimSpace(profile.Driver) {
+	case "", domain.SandboxDriverDocker:
+		return domain.SandboxDriverDocker
+	}
+	return domain.SandboxDriverNative
+}
+
+// conversationSandboxChoices lists the environments the agent may open for
+// this conversation, sandboxes of the speaker's preferred kind first, and the
+// one it should use by default: empty without a preference or a sandbox of
+// that kind.
+func (h *agentToolGateway) conversationSandboxChoices(s *AgentToolSession) ([]domain.SandboxProfile, string) {
+	choices := h.repo.ConversationSandboxes(s.ProjectID)
+	nativeAvailable := runtime.NativeSandboxAvailable
+	if s.ExecutionRunnerID != "" {
+		runner, _ := h.repo.Runner(s.ExecutionRunnerID)
+		targetOS := strings.ToLower(strings.TrimSpace(runner.OS))
+		nativeAvailable = func(driver string) bool {
+			if !runner.NativeSandboxAvailable {
+				return false
+			}
+			driver, err := domain.ResolveSandboxDriver(driver, targetOS)
+			return err == nil && (driver == domain.SandboxDriverSeatbelt && targetOS == "darwin" ||
+				driver == domain.SandboxDriverBwrap && targetOS == "linux")
+		}
+	}
+	choices = slices.DeleteFunc(choices, func(profile domain.SandboxProfile) bool {
+		return conversationSandboxKind(profile) == domain.SandboxDriverNative && !nativeAvailable(profile.Driver)
+	})
+	prefer := h.repo.AssistantPreferences(s.UserID).WorkspaceDriver
+	if prefer == "" {
+		return choices, ""
+	}
+	rank := func(profile domain.SandboxProfile) int {
+		switch {
+		case conversationSandboxKind(profile) != prefer:
+			return 2
+		case profile.ID == repo.DefaultSandboxProfileID:
+			return 0
+		}
+		return 1
+	}
+	slices.SortStableFunc(choices, func(a, b domain.SandboxProfile) int { return rank(a) - rank(b) })
+	if len(choices) == 0 || rank(choices[0]) == 2 {
+		return choices, ""
+	}
+	return choices, choices[0].ID
+}
+
+func workspaceSandboxGuide(choices []domain.SandboxProfile, preferred string) string {
+	for _, profile := range choices {
+		if profile.ID != preferred {
+			continue
+		}
+		if conversationSandboxKind(profile) == domain.SandboxDriverNative {
+			return fmt.Sprintf("用户在 AI 助手设置里倾向 native 沙箱（执行机器上的系统轻量隔离，使用执行机器已装的工具链）：新开工作区且没有特殊要求时用 %s，任务需要的语言或工具链只有其他环境具备时再换", preferred)
+		}
+		return fmt.Sprintf("用户在 AI 助手设置里倾向 Docker 沙箱：新开工作区且没有特殊要求时用 %s，任务需要的语言或工具链只有其他环境具备时再换", preferred)
+	}
+	return "按要做的事需要的语言、工具链选择，拿不准用 generic-docker"
 }
 
 type workspaceRepositoryHint struct {
@@ -187,7 +252,7 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 		fmt.Fprintf(&notice, "已在运行环境 %s 中为本对话新开工作区。", run.WorkflowSnapshot.SandboxProfileID)
 	case bound.Reused:
 		notice.WriteString("继续使用本对话当前的工作区。")
-		if choice.SandboxID != "" && choice.SandboxID != run.WorkflowSnapshot.SandboxProfileID {
+		if choice.SandboxID != "" && !h.workspaceSandboxIDsMatch(choice.SandboxID, run.WorkflowSnapshot.SandboxProfileID) {
 			notice.WriteString("本次选择的环境没有生效。")
 		}
 	default:
@@ -397,7 +462,7 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 		if err != nil {
 			return binding, err
 		}
-		if choice.SandboxID != "" && target.WorkflowSnapshot.SandboxProfileID != "" && choice.SandboxID != target.WorkflowSnapshot.SandboxProfileID {
+		if choice.SandboxID != "" && target.WorkflowSnapshot.SandboxProfileID != "" && !h.workspaceSandboxIDsMatch(choice.SandboxID, target.WorkflowSnapshot.SandboxProfileID) {
 			return binding, fmt.Errorf("接入已有工作区 %s 时沿用其原本冻结的沙箱环境 %s，不能同时切换到 %s", target.ID, target.WorkflowSnapshot.SandboxProfileID, choice.SandboxID)
 		}
 		binding.Run = target
@@ -409,9 +474,12 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 		reuse := false
 		if s.workspaceRunID != "" {
 			run, ok := h.repo.RunState(s.workspaceRunID)
-			if ok && conversationMayBind(conv, run, s.ProjectID) && (wanted == "" || wanted == run.WorkflowSnapshot.SandboxProfileID || !run.IsWorkspace() && choice.SandboxID == "") {
+			if ok && conversationMayBind(conv, run, s.ProjectID) && (wanted == "" || h.workspaceSandboxIDsMatch(wanted, run.WorkflowSnapshot.SandboxProfileID) || !run.IsWorkspace() && choice.SandboxID == "") {
 				binding.Run, reuse = run, true
 			}
+		}
+		if !reuse && wanted == "" {
+			_, wanted = h.conversationSandboxChoices(s)
 		}
 		if !reuse && wanted != "" {
 			// Coming back to an environment this conversation used before resumes
@@ -483,11 +551,25 @@ func (h *agentToolGateway) ownConversationWorkspace(conv domain.AssistantSession
 	own := ownWorkspaceRunIDs(conv)
 	for i := len(own) - 1; i >= 0; i-- {
 		run, ok := h.repo.RunState(own[i])
-		if ok && run.WorkflowSnapshot.SandboxProfileID == sandboxID && conversationMayBind(conv, run, projectID) {
+		if ok && conversationMayBind(conv, run, projectID) && h.workspaceSandboxIDsMatch(sandboxID, run.WorkflowSnapshot.SandboxProfileID) {
 			return run, true
 		}
 	}
 	return domain.Run{}, false
+}
+
+// Older conversations and frozen workspaces may still spell the platform
+// default with an equivalent ID. It identifies a single workspace sandbox.
+func (h *agentToolGateway) workspaceSandboxIDsMatch(a, b string) bool {
+	if a == b {
+		return true
+	}
+	for _, id := range []string{a, b} {
+		if reserved, err := h.repo.IsReservedSandboxID(id); err != nil || !reserved {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *agentToolGateway) startConversationWorkspace(s *AgentToolSession, conv domain.AssistantSession, sandboxID string) (domain.Run, error) {
