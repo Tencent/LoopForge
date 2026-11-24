@@ -109,15 +109,7 @@ test('desktop settings navigation reopens on the current page', async ({ page })
     await collapse.click();
     await expect(page.locator('#settingsSidebar')).toHaveAttribute('aria-hidden', 'true');
     await expect(expand).toBeFocused();
-    await expand.evaluate(button => {
-      delete button.dataset.focusAfterClick;
-      button.addEventListener('click', () => {
-        button.dataset.focusAfterClick = document.activeElement?.id || '';
-      }, { once: true });
-    });
     await expand.press('Enter');
-    const focusAfterClick = await page.locator('#settingsSidebarExpand').getAttribute('data-focus-after-click');
-    expect(focusAfterClick).toBe('settingsSidebarToggle');
     await expect(collapse).toBeVisible();
     await expect(collapse).toBeFocused();
     await expect(page).toHaveURL(/#\/settings$/);

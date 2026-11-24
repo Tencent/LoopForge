@@ -256,7 +256,10 @@ body.management-mode .platform-sidebar {
   width: var(--sidebar-w) !important;
   clip-path: inset(0 0 0 0 round 16px);
   opacity: 1;
-  transition: clip-path var(--settings-sidebar-duration) var(--settings-sidebar-ease);
+  visibility: visible;
+  transition:
+    clip-path var(--settings-sidebar-duration) var(--settings-sidebar-ease),
+    visibility 0s;
 }
 
 body.management-mode .shell-main {
@@ -270,7 +273,9 @@ body.management-mode .app-shell::before {
 
 body.management-mode:is(.settings-sidebar-hidden, .settings-sidebar-entering) .platform-sidebar {
   clip-path: inset(0 100% 0 0 round 16px);
+  visibility: hidden;
   pointer-events: none;
+  transition-delay: 0s, var(--settings-sidebar-duration);
 }
 
 @media (prefers-reduced-motion: reduce) {
