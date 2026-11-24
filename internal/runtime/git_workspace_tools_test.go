@@ -212,8 +212,17 @@ func TestDockerScriptWithGitCredentialOnImageWithoutGit(t *testing.T) {
 	git := CommandSpec{Argv: []string{"git", "--version"}, CredentialBindings: []CredentialBinding{BindGit}}
 	out, err := withToken.Exec(ctx, git, nil)
 	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() != 127 || !strings.Contains(out, "git: executable not found") {
+	if !errors.As(err, &exit) || exit.ExitCode() != 127 || !strings.Contains(out, "git: not found") {
 		t.Fatalf("missing Git must fail only when invoked: %q, %v", out, err)
+	}
+	sb := sandbox.(*dockerSandbox)
+	if out, err := exec.CommandContext(ctx, "docker", "exec", "--user", "0", sb.name, "sh", "-ec",
+		`printf '%s\n' '#!/bin/sh' 'echo runtime Git' > /usr/local/bin/git
+chmod +x /usr/local/bin/git`).CombinedOutput(); err != nil {
+		t.Fatalf("install runtime Git fixture: %q, %v", out, err)
+	}
+	if out, err := withToken.Exec(ctx, git, nil); err != nil || strings.TrimSpace(out) != "runtime Git" {
+		t.Fatalf("normal PATH must find runtime-installed Git: %q, %v", out, err)
 	}
 	if after, err := ReadSandboxEnvironmentIdentity(ctx, sandbox); err != nil || after != before {
 		t.Fatalf("the workspace container changed after using the token: %v", err)

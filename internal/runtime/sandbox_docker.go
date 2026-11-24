@@ -236,7 +236,13 @@ if [ -x /workspace/.agentflow/runtime/bin/agentflow-helper ]; then
   export PATH
 fi
 if [ -n "${` + workspaceGitBinsEnv + `:-}" ]; then
-  PATH="$` + workspaceGitBinsEnv + `:$PATH"
+  # Only shadow Git when the Runner has a trusted executable from the image.
+  # Keep the credential/CLI helpers available if Git is installed at runtime.
+  if [ -x "` + dockerGitToolsMount + "/" + workspaceGitDistribution + `/git" ]; then
+    PATH="$` + workspaceGitBinsEnv + `:$PATH"
+  else
+    PATH="${` + workspaceGitBinsEnv + `#` + dockerGitToolsMount + "/" + workspaceGitHTTPBin + `:}:$PATH"
+  fi
   export PATH
 fi
 if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH" ]; then
