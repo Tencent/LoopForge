@@ -69,6 +69,12 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 		t.Fatalf("a default runner owned by someone else enabled a keyless save: %d", code)
 	}
 	setDefault(machine.ID)
+	if code := scheduleAuthzStatus(t, server, saver, http.MethodPut, "/api/schedule-jobs", body); code != http.StatusBadRequest {
+		t.Fatalf("an unshared personal default enabled a keyless save: %d", code)
+	}
+	if err := st.SetRunnerSharedProjects(machine.ID, saver.ID, []string{body.ProjectID}); err != nil {
+		t.Fatal(err)
+	}
 	saved := requestJSONAuthed[domain.ScheduleJob](t, server, saver, http.MethodPut, "/api/schedule-jobs", body, http.StatusOK)
 	if saved.RunAsUserID != saver.ID || saved.AssistantModel != body.AssistantModel {
 		t.Fatalf("saved run-as identity = %d, model = %q", saved.RunAsUserID, saved.AssistantModel)
@@ -77,7 +83,7 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	for _, test := range []struct {
 		query string
 		want  bool
-	}{{"", false}, {"?schedule=1", true}} {
+	}{{"", false}, {"?schedule=1&projectId=workbench", true}, {"?schedule=1&projectId=platform", false}} {
 		c, rec := workbenchContext(saver, http.MethodGet, "/api/assistant/models"+test.query, &bytes.Buffer{})
 		h.models(c)
 		var catalog assistantModelCatalog
@@ -226,5 +232,21 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	keyError = nil
 	if message, err := h.prepareScheduleJob(saved); err != nil || message != "云端巡检完成" || keyAttempts != 3 {
 		t.Fatalf("fallback with a Runner from main = %q, %v, attempts = %d", message, err, keyAttempts)
+	}
+
+	machine.RunnerVersion = domain.RunnerVersionCLISettings
+	if err := st.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRunnerSharedProjects(machine.ID, saver.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	saved.SessionMode, saved.FixedSessionID = domain.ScheduleSessionFixed, runnerSession
+	message, fallbackID, err := h.runScheduleJobPrompt(saved)
+	if err != nil || message != "云端巡检完成" || keyAttempts != 4 || fallbackID == "" || fallbackID == runnerSession {
+		t.Fatalf("revoked fixed session fallback = %q, session %q, %v, attempts = %d", message, fallbackID, err, keyAttempts)
+	}
+	if fallback, ok := st.AssistantSession(saver.ID, fallbackID); !ok || fallback.Execution().Pool != domain.ExecutionModeCloud {
+		t.Fatalf("expected a new cloud session, got %+v", fallback.Execution())
 	}
 }

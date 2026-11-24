@@ -5,14 +5,16 @@ import userEvent from "@testing-library/user-event";
 import ExecutionMachinePicker from "../src/ExecutionMachinePicker";
 
 function fixture(overrides = {}) {
+  const machines = [
+    { id: "mac", name: "开发 Mac", status: "online" },
+    { id: "linux", name: "测试 Linux", status: "offline" },
+  ];
   return {
     user: { id: 1 },
     ready: true,
     machinesReady: true,
-    machines: [
-      { id: "mac", name: "开发 Mac", status: "online" },
-      { id: "linux", name: "测试 Linux", status: "offline" },
-    ],
+    machines,
+    availableMachines: machines,
     defaultRunnerId: "mac",
     selectMachine: vi.fn(),
     refreshMachines: vi.fn(),
@@ -76,6 +78,17 @@ describe("execution machine picker", () => {
     await openPicker();
     await user.click(screen.getByRole("option", { name: "管理执行机器" }));
     expect(manage).toHaveBeenCalledOnce();
+  });
+
+  test("offers only cloud and selectable project machines", async () => {
+    const shared = { id: "shared", name: "项目机器", status: "online", ownerUserId: 2 };
+    const chat = fixture({ defaultRunnerId: "", availableMachines: [shared] });
+    chat.machines = [...chat.machines, shared];
+    render(<ExecutionMachinePicker chat={chat} />);
+    await openPicker();
+    expect(screen.getByRole("option", { name: /LoopForge 云端/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /项目机器 项目共享/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /开发 Mac|测试 Linux/ })).not.toBeInTheDocument();
   });
 
   test("keeps a workspace on its actual machine after the personal default changes", () => {
