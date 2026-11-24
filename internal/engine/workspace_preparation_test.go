@@ -5,9 +5,11 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
+	"errors"
 
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -211,6 +213,84 @@ func TestWorkspacePreparationRebuildPreservesHistoryAndWarmEditsDoNotReplay(t *t
 	content, _ := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md"))
 	if string(content) != "uncommitted" {
 		t.Fatal("overwritten source")
+	}
+}
+
+func TestWorkspacePreparationRefreshesIdleLegacyDocker(t *testing.T) {
+	if os.Getenv("AGENTFLOW_TEST_GIT_HELPERS_DOCKER") != "1" {
+		t.Skip("enable the disposable Docker Git helper test explicitly")
+	}
+	const image = "golang:1.26.11-bookworm"
+	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", image)
+	root, err := os.MkdirTemp(os.Getenv("AGENTFLOW_TEST_GIT_HELPERS_ROOT"), "prepare-git-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	e, st := cvEEngine(t)
+	e.sandboxes = runtime.NewManager(root)
+	snapshot := &domain.RunnerSandboxSpec{
+		Profile:    domain.SandboxProfile{Driver: domain.SandboxDriverDocker},
+		Dockerfile: &domain.DockerfileDefinition{Content: runtime.IsolatedDockerfile},
+	}
+	for _, entry := range []string{"terminal", "task"} {
+		t.Run(entry, func(t *testing.T) {
+			ctx := t.Context()
+			run := domain.Run{ID: filepath.Base(root) + "-" + entry, Status: "succeeded"}
+			run.WorkflowSnapshot.SandboxSnapshot = snapshot
+			if err := st.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			env, err := e.acquireConversationEnvironment(ctx, run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = e.releaseRunEnvironment(run.ID, false) })
+			if out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--name", "agentflow-"+env.ID(),
+				"-v", env.Workspace()+":/workspace", "--entrypoint", "sh", image, "-c", "exec sleep infinity").CombinedOutput(); err != nil {
+				t.Fatalf("create legacy Docker container: %v (%s)", err, out)
+			}
+			dirty := filepath.Join(env.Workspace(), "uncommitted.txt")
+			if err := os.WriteFile(dirty, []byte("user edit"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			old, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bindForTask := func() error {
+				env.nodeMu.Lock()
+				defer env.nodeMu.Unlock()
+				return e.bindDockerWorkspace(ctx, run.ID, "work", snapshot, env)
+			}
+			env.activeExecutions.Add(1)
+			err = bindForTask()
+			env.activeExecutions.Add(-1)
+			if current, readErr := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox); err != nil || readErr != nil || current != old {
+				t.Fatalf("task preparation replaced a sandbox with an executing sibling: %v, %v", err, readErr)
+			}
+			if entry == "terminal" {
+				var terminals runtime.TerminalPool
+				scope := run.ID + ":1"
+				defer terminals.CloseScope(scope)
+				request := domain.WorkspaceTerminalRequest{Operation: "open"}
+				env.nodeMu.Lock()
+				_, busyErr := e.HandlePreparedWorkspaceTerminal(ctx, run, &terminals, scope, request, runtime.TerminalGitCredentials{})
+				env.nodeMu.Unlock()
+				if !errors.Is(busyErr, repo.ErrWorkspaceInUse) {
+					t.Fatalf("terminal launch raced with environment preparation: %v", busyErr)
+				}
+				_, err = e.HandleWorkspaceTerminal(ctx, run.ID, &terminals, scope, request, 0)
+			} else {
+				err = bindForTask()
+			}
+			if current, readErr := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox); err != nil || readErr != nil || current == old {
+				t.Fatalf("%s preparation did not replace the idle legacy container: %v, %v", entry, err, readErr)
+			}
+			if body, err := os.ReadFile(dirty); err != nil || string(body) != "user edit" {
+				t.Fatalf("replacement lost uncommitted changes: %q, %v", body, err)
+			}
+		})
 	}
 }
 func TestWorkspacePreparationPlanExcludesPendingCurrentAndUncheckedScripts(t *testing.T) {

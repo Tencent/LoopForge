@@ -15,7 +15,7 @@ import (
 
 const dockerGitToolsMount = "/run/loopforge-git"
 
-var errDockerGitToolsMountMissing = errors.New("此 Docker 容器缺少 Git 凭据只读挂载，请在容器正常重建后重试，或使用新工作区")
+var errDockerGitToolsMountMissing = errors.New("此 Docker 容器缺少 Git 凭据只读挂载，请在当前任务和终端结束后重新打开工作区")
 
 // Take a private snapshot even when the installed distribution uses links.
 // Prefer the executable from libexec when available, including on macOS where

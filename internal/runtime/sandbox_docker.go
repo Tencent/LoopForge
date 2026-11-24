@@ -30,6 +30,7 @@ type dockerSandbox struct {
 	started              bool
 	gitToolsRoot         string
 	gitDistributionReady bool
+	activeTerminals      int
 	cliSetupOnce         sync.Once
 	cliSetupGate         chan struct{}
 	// execGate lets parallel branches exec concurrently (read side) while a
@@ -339,7 +340,7 @@ func dropShellLoginFlag(argv []string) []string {
 }
 
 func (s *dockerSandbox) Recreate(ctx context.Context) error {
-	return s.start(ctx, true)
+	return s.start(ctx, dockerStartRecreate)
 }
 
 // invalidate drops the cached started flag without docker rm. The next
@@ -737,7 +738,29 @@ func staleCachedDockerImages(listed []string, keep, inUse map[string]struct{}) [
 }
 
 func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
-	return s.start(ctx, false)
+	return s.start(ctx, dockerStartReuse)
+}
+
+// RefreshWorkspaceGitTools replaces a legacy Docker container at a workspace
+// preparation boundary. Callers hold the workspace and exclude live tasks.
+func RefreshWorkspaceGitTools(ctx context.Context, sandbox Sandbox) error {
+	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
+	if !ok || !s.execGate.TryLock() {
+		return nil
+	}
+	defer s.execGate.Unlock()
+	return s.start(ctx, dockerStartRefreshGitTools)
+}
+
+func (s *dockerSandbox) reserveTerminal() func() {
+	s.mu.Lock()
+	s.activeTerminals++
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		s.activeTerminals--
+		s.mu.Unlock()
+	}
 }
 
 func (s *dockerSandbox) prepareCommandGitTools(ctx context.Context, env map[string]string) error {
@@ -759,15 +782,23 @@ func (s *dockerSandbox) prepareCommandGitTools(ctx context.Context, env map[stri
 	return nil
 }
 
-func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
+type dockerStartMode uint8
+
+const (
+	dockerStartReuse dockerStartMode = iota
+	dockerStartRecreate
+	dockerStartRefreshGitTools
+)
+
+func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.started && !recreate {
+	if mode == dockerStartRefreshGitTools && (s.activeTerminals > 0 || s.started && s.gitToolsRoot != "") {
 		return nil
 	}
-	s.started = false
-	s.gitToolsRoot = ""
-	s.gitDistributionReady = false
+	if mode == dockerStartReuse && s.started {
+		return nil
+	}
 	name, workspace, p := s.name, s.workspace, s.profile
 	gitTools, err := dockerGitToolsDirectory(workspace, name)
 	if err != nil {
@@ -777,19 +808,37 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 	if err != nil {
 		return err
 	}
+	recreate := mode == dockerStartRecreate
+	hasGitTools := false
 	if mounts != nil {
 		if !dockerBindMatchesWorkspace(mounts.source, workspace) {
 			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, mounts.source, workspace)
 		}
-		if !recreate && !mounts.legacyMasks {
-			if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
-				if err := waitDockerWorkspaceReady(ctx, name); err == nil {
-					if dockerBindMatchesWorkspace(mounts.gitTools, gitTools) {
-						s.gitToolsRoot = gitTools
-					}
-					s.started = true
-					return nil
+		hasGitTools = dockerBindMatchesWorkspace(mounts.gitTools, gitTools)
+		if mode == dockerStartRefreshGitTools && !hasGitTools {
+			// A previous Worker can detach its workspace before all Docker
+			// execs have exited. Its local activity counters are gone.
+			out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", "{{len .ExecIDs}}", name).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("inspect active Docker executions: %w: %s", err, out)
+			}
+			if strings.TrimSpace(string(out)) != "0" {
+				return nil
+			}
+			recreate = true
+		}
+	}
+	s.started = false
+	s.gitToolsRoot = ""
+	s.gitDistributionReady = false
+	if mounts != nil && !recreate && !mounts.legacyMasks {
+		if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
+			if err := waitDockerWorkspaceReady(ctx, name); err == nil {
+				if hasGitTools {
+					s.gitToolsRoot = gitTools
 				}
+				s.started = true
+				return nil
 			}
 		}
 	}
@@ -858,8 +907,8 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 	} else {
 		args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
 	}
-	// Resolve the replacement image and mounts before retiring a workspace with
-	// legacy masks. Its new container ID invalidates old preparation receipts.
+	// Resolve the replacement image and mounts before retiring the old
+	// container. Its new ID invalidates old preparation receipts.
 	if mounts != nil || recreate {
 		if err := removeDockerWorkspaceContainers(ctx, name); err != nil {
 			return err

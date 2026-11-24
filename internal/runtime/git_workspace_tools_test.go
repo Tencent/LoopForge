@@ -1,9 +1,11 @@
 package runtime
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -180,9 +182,10 @@ exec git ls-remote -- "$2"`
 	}
 }
 
-func TestDockerGitBindingPreservesLegacyContainer(t *testing.T) {
+func TestDockerGitToolsRefreshAfterLegacyContainerBecomesIdle(t *testing.T) {
 	root := gitHelperDockerTestRoot(t)
-	ctx := t.Context()
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
 	workspace := filepath.Join(root, "workspace")
 	sandbox, err := OpenRemoteSandbox(ctx, "shared-git-legacy-"+filepath.Base(root), workspace,
 		domain.SandboxProfile{Driver: domain.SandboxDriverDocker}, SandboxRequirements{}, SandboxResources{Dockerfile: domain.DockerfileDefinition{Content: IsolatedDockerfile}})
@@ -217,18 +220,82 @@ func TestDockerGitBindingPreservesLegacyContainer(t *testing.T) {
 		t.Fatalf("credential binding should report the missing mount: %v", err)
 	}
 	check(`test "$(cat /tmp/manual-state)" = live`)
-	if current, err := ReadSandboxEnvironmentIdentity(ctx, sb); err != nil || current != old.Environment {
-		t.Fatalf("ordinary Git binding replaced the legacy container: %v", err)
+	checkOldContainer := func() {
+		t.Helper()
+		if current, err := ReadSandboxEnvironmentIdentity(ctx, sb); err != nil || current != old.Environment {
+			t.Fatalf("replaced the legacy Docker container while it was still in use: %v", err)
+		}
 	}
-	if err := sb.Recreate(ctx); err != nil {
+	checkOldContainer()
+
+	var terminals TerminalPool
+	terminal, err := terminals.HandleSandbox(ctx, sb, "workspace:1", domain.WorkspaceTerminalRequest{Operation: "open"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer terminals.CloseScope("workspace:1")
+	pty := terminalPTYTest{t: t, pool: &terminals, scope: "workspace:1", id: terminal.ID}
+	pty.waitFor("/workspace")
+	if err := RefreshWorkspaceGitTools(ctx, sb); err != nil {
+		t.Fatal(err)
+	}
+	checkOldContainer()
+	if _, err := terminals.HandleSandbox(ctx, nil, "workspace:1", domain.WorkspaceTerminalRequest{Operation: "close", ID: terminal.ID}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// An exec initiated by the previous Worker has no active Go handle here.
+	inherited := exec.CommandContext(ctx, "docker", "exec", "-i", sb.name, "sh", "-ec", "echo ready; read -r finish; test \"$finish\" = done")
+	stdin, err := inherited.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	stdout, err := inherited.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inherited.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if inherited.ProcessState == nil {
+			_ = inherited.Process.Kill()
+			_ = inherited.Wait()
+		}
+	}()
+	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || strings.TrimSpace(line) != "ready" {
+		t.Fatalf("start inherited Docker execution: %q, %v", line, err)
+	}
+	if err := RefreshWorkspaceGitTools(ctx, sb); err != nil {
+		t.Fatal(err)
+	}
+	checkOldContainer()
+	check(`test "$(cat /tmp/manual-state)" = live`)
+	if _, err := io.WriteString(stdin, "done\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := inherited.Wait(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RefreshWorkspaceGitTools(ctx, sb); err != nil {
 		t.Fatal(err)
 	}
 	prepared, err := EnsureWorkspacePreparation(ctx, sb, workflow, nil, nil)
 	if err != nil || prepared.Status != "ready" || prepared.Environment == old.Environment {
-		t.Fatalf("normal preparation must initialize the replacement environment: %+v, %v", prepared, err)
+		execs, _ := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{json .ExecIDs}}", sb.name).Output()
+		processes, _ := exec.CommandContext(ctx, "docker", "top", sb.name).Output()
+		t.Fatalf("normal preparation must initialize the replacement environment: %+v, %v; execs=%s processes=%s", prepared, err, execs, processes)
 	}
 	check(`test "$(cat shared-project)" = keep; test "$(cat /tmp/loopforge-git-prepared)" = restored; test ! -e /tmp/manual-state`)
 	if out, err := WithSandboxCredentials(sb, credentials).Exec(ctx, command, nil); err != nil || !strings.Contains(out, "git version") {
 		t.Fatalf("Git cannot use the new container's mount: %v (%s)", err, out)
+	}
+	if err := RefreshWorkspaceGitTools(ctx, sb); err != nil {
+		t.Fatal(err)
+	}
+	if current, err := ReadSandboxEnvironmentIdentity(ctx, sb); err != nil || current != prepared.Environment {
+		t.Fatalf("preparation replaced a container that already had the read-only mount: %v", err)
 	}
 }

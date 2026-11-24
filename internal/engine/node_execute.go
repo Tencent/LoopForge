@@ -293,6 +293,11 @@ func (e *Engine) bindDockerWorkspace(ctx context.Context, runID, nodeID string, 
 		e.flushAllObservations()
 	}
 	started := time.Now()
+	if sb.activeExecutions.Load() == 0 {
+		if err := runtime.RefreshWorkspaceGitTools(ctx, sb); err != nil {
+			return err
+		}
+	}
 	if err := sb.BindWorkspace(ctx); err != nil {
 		return err
 	}
@@ -603,6 +608,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	}
 	// The environment is ready and this node's inputs are in place; parallel
 	// branches execute from here on without holding the environment lock.
+	sb.activeExecutions.Add(1)
+	defer sb.activeExecutions.Add(-1)
 	if repositoryFallback == "" {
 		preparing = false
 		sb.nodeMu.Unlock()
@@ -628,8 +635,6 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.preparation.recovered", Phase: "finish", Message: "Agent 已完成仓库准备，冻结仓库和工作分支校验通过"})
 		return nil
 	}
-	sb.activeExecutions.Add(1)
-	defer sb.activeExecutions.Add(-1)
 	var output string
 	defaultFailure := "fail"
 	if nodeRejects(node) {
