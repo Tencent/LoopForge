@@ -6,6 +6,7 @@ import (
 	"agentflow/internal/repo"
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -13,23 +14,39 @@ import (
 )
 
 func (h *runsHandlers) workspaceRestore(c *gin.Context) {
-	run, _, ok := h.workspaceEditActor(c)
-	if !ok {
+	run, err := h.repo.RunHeader(c.Param("id"))
+	if err != nil || run.ID == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "运行不存在"})
 		return
 	}
-	if strings.Contains(c.GetHeader("Prefer"), "respond-async") && !run.WorkspaceCleanedAt.IsZero() {
-		meta, _ := h.engine.ConversationWorkspaceStatus(run.ID)
+	owner, ok := h.workspaceOwner(run)
+	if !ok {
+		c.JSON(http.StatusGone, gin.H{"error": "共享工作区所属运行已不可用"})
+		return
+	}
+	if _, status, message := h.workspaceOwnerAccess(c.Request, owner); status != 0 {
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	if runnerID := h.engine.RunExecutionRunner(owner); runnerID != "" {
+		if status, reason := h.probeRunnerWorkspace(c.Request.Context(), owner, runnerID); status != 0 {
+			c.JSON(status, gin.H{"error": reason})
+			return
+		}
+	}
+	if strings.Contains(c.GetHeader("Prefer"), "respond-async") && !owner.WorkspaceCleanedAt.IsZero() {
+		meta, _ := h.engine.ConversationWorkspaceStatus(owner.ID)
 		if meta.SavedAt == nil {
 			c.JSON(409, gin.H{"error": "没有已保存的工作区快照，无法恢复"})
 			return
 		}
-		if h.prepareRunActivationWorkspace(c, run.ID) {
+		if h.prepareRunActivationWorkspace(c, owner.ID) {
 			return
 		}
 		c.JSON(200, gin.H{"restored": true, "idleTimeoutSeconds": 3600})
 		return
 	}
-	token, err := h.engine.BeginConversationWorkspaceUse(run.ID)
+	token, err := h.engine.BeginConversationWorkspaceUse(owner.ID)
 	if err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
@@ -37,9 +54,9 @@ func (h *runsHandlers) workspaceRestore(c *gin.Context) {
 	defer func() {
 		ctx, stop := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 30*time.Second)
 		defer stop()
-		_ = h.engine.EndConversationWorkspaceUse(ctx, run.ID, token)
+		_ = h.engine.EndConversationWorkspaceUse(ctx, owner.ID, token)
 	}()
-	if _, err = h.engine.PrepareConversationWorkspace(c.Request.Context(), run.ID, token); err != nil {
+	if _, err = h.engine.PrepareConversationWorkspace(c.Request.Context(), owner.ID, token); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
@@ -88,7 +105,12 @@ func (h *runsHandlers) workspaceRestoreStatus(c *gin.Context) {
 	if _, allowed := h.projectRunUser(c, run.ExecutionContext.ProjectID); !allowed {
 		return
 	}
-	state, err := h.engine.WorkspaceRestoreStatus(run.ID)
+	owner, ok := h.workspaceOwner(run)
+	if !ok {
+		c.JSON(http.StatusGone, gin.H{"error": "共享工作区所属运行已不可用"})
+		return
+	}
+	state, err := h.engine.WorkspaceRestoreStatus(owner.ID)
 	if err != nil {
 		respond(c, err)
 		return
@@ -96,21 +118,23 @@ func (h *runsHandlers) workspaceRestoreStatus(c *gin.Context) {
 	c.JSON(200, state)
 }
 
-func (h *runsHandlers) workspaceLifecycleInfo(c *gin.Context, run domain.Run, payload map[string]any) {
+func (h *runsHandlers) workspaceLifecycleInfo(c *gin.Context, run domain.Run, payload map[string]any, allowRestore bool) {
 	payload["idleTimeoutSeconds"] = int(engine.ConversationWorkspaceIdleTTL.Seconds())
 	meta, ok := h.engine.ConversationWorkspaceStatus(run.ID)
 	if !ok {
 		return
 	}
 	restorable := false
-	if meta.SavedAt != nil && meta.SHA256 != "" {
-		_, status, _ := h.workspaceEditAccess(c.Request, run)
+	if allowRestore && meta.SavedAt != nil && meta.SHA256 != "" {
+		_, status, _ := h.workspaceOwnerAccess(c.Request, run)
 		restorable = status == 0
 	}
 	payload["restorable"] = restorable
 	payload["checkpointSavedAt"] = meta.SavedAt
-	if state, err := h.engine.WorkspaceRestoreStatus(run.ID); err == nil && (state.Status == "restoring" || state.Status == "failed") {
-		payload["restore"] = state
+	if allowRestore {
+		if state, err := h.engine.WorkspaceRestoreStatus(run.ID); err == nil && (state.Status == "restoring" || state.Status == "failed") {
+			payload["restore"] = state
+		}
 	}
 	if meta.FollowUp {
 		payload["idleExpiresAt"] = meta.LastUsedAt.Add(engine.ConversationWorkspaceIdleTTL)
@@ -140,7 +164,12 @@ func (h *runsHandlers) workspaceActivity(c *gin.Context) {
 	if _, allowed := h.projectRunUser(c, run.ExecutionContext.ProjectID); !allowed {
 		return
 	}
-	if err := h.repo.TouchWorkspaceUse(run.ID, time.Now().UTC()); err != nil {
+	owner, ok := h.workspaceOwner(run)
+	if !ok {
+		c.JSON(http.StatusGone, gin.H{"error": "共享工作区所属运行已不可用"})
+		return
+	}
+	if err := h.repo.TouchWorkspaceUse(owner.ID, time.Now().UTC()); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}

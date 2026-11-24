@@ -436,6 +436,28 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(err, false)
 		return
 	}
+	executionRunner := e.defaultExecutionRunner(current)
+	if err := e.requireProjectCredentialRunner(current.WorkflowSnapshot, executionRunner); err != nil {
+		failNode(err, false)
+		return
+	}
+	var projectCredentialNote string
+	if len(current.WorkflowSnapshot.ProjectCredentialIDs) > 0 {
+		names, err := e.repo.ProjectCredentialVariableNames(ctx, current.ExecutionContext.ProjectID, current.WorkflowSnapshot.ProjectCredentialIDs)
+		if err != nil {
+			failNode(err, false)
+			return
+		}
+		projectCredentialNote = "\n\n项目凭据的环境变量为 " + strings.Join(names, "、") + "。访问对应服务时从进程环境读取，避免输出变量值。"
+	}
+	if executionRunner == "" {
+		env, err := e.ResolveRunProjectCredentialEnv(ctx, current)
+		if err != nil {
+			failNode(err, false)
+			return
+		}
+		ctx = runtime.WithProjectCredentialEnv(ctx, env)
+	}
 	requirements, err := workflowSandboxRequirements(e.repo, wf)
 	if err != nil {
 		failNode(err, nodeRejects(node))
@@ -446,7 +468,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	// plane keeps only a local staging workspace for prompt/materialization and
 	// artifact handoff; creating Docker here would put isolation on the wrong
 	// host and leave the runner CLI outside it.
-	if e.defaultExecutionRunner(current) != "" {
+	if executionRunner != "" {
 		acquireProfile = domain.SandboxProfile{ID: profile.ID + "-runner-staging", Name: profile.Name + " staging", Driver: "local"}
 	}
 	sb, created, err := e.acquireRunEnvironment(ctx, current, acquireProfile, requirements, func() {
@@ -782,6 +804,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if repositoryFallback != "" {
 				prompt = runtime.GitPreparationFallbackPrompt(current.RepositoryContexts(), repositoryFallback) + prompt
 			}
+			prompt += projectCredentialNote
 			if current.ExecutionContext.SharedScheduleID != "" {
 				version, assetErr := e.repo.SharedScheduleVersion(current.ExecutionContext.SharedScheduleID, current.ExecutionContext.SharedScheduleVersion)
 				if assetErr != nil {

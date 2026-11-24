@@ -174,6 +174,7 @@ type Store struct {
 	*deps
 	*CatalogRepo
 	*ProjectsRepo
+	*ProjectCredentialsRepo
 	*BusinessDomainsRepo
 	*IssuesRepo
 	*TasksRepo
@@ -202,6 +203,7 @@ func newStore(db *gorm.DB) *Store {
 	d := &deps{DB: db}
 	s := &Store{deps: d}
 	s.ProjectsRepo = &ProjectsRepo{deps: d}
+	s.ProjectCredentialsRepo = &ProjectCredentialsRepo{deps: d, projects: s.ProjectsRepo}
 	s.BusinessDomainsRepo = &BusinessDomainsRepo{deps: d}
 	s.UsersRepo = &UsersRepo{deps: d}
 	s.BotInteractionsRepo = &BotInteractionsRepo{deps: d}

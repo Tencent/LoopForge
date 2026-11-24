@@ -465,9 +465,15 @@ func TestWeComPrivateOriginRechecksTheSender(t *testing.T) {
 		t.Fatal(err)
 	}
 	settlePending(t, svc)
-	svc.Store.PutUser(domain.User{ID: 1, LoginName: "owner"})
-	svc.Store.PutUser(domain.User{ID: 7, LoginName: "dev"})
-	svc.Store.PutProject(domain.Project{ID: "p", OwnerID: 1, Members: []domain.ProjectMember{{UserID: 7, Role: "member"}}})
+	if err := svc.Store.PutUser(domain.User{ID: 1, LoginName: "owner"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.PutUser(domain.User{ID: 7, LoginName: "dev"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.PutProject(domain.Project{ID: "p", OwnerID: 1, Members: []domain.ProjectMember{{UserID: 7, Role: "member"}}}); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
 	token, err := svc.Store.NewBotBindingChallenge(bot, "zhangsan", now, true)
 	if err != nil {
@@ -497,7 +503,11 @@ func TestWeComPrivateOriginRechecksTheSender(t *testing.T) {
 	if got := deliver("member"); got.Status != "sent" {
 		t.Fatalf("member = %+v", got)
 	}
-	svc.Store.PutProject(domain.Project{ID: "p", OwnerID: 1, Members: []domain.ProjectMember{}})
+	project, _ := svc.Store.Project("p")
+	project.Members = []domain.ProjectMember{}
+	if err := svc.Store.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
 	got := deliver("removed")
 	if got.Status != "target_unavailable" || !strings.Contains(got.LastError, "没有该项目的权限") {
 		t.Fatalf("removed member = %+v", got)

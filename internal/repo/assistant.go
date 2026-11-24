@@ -364,6 +364,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		v.Shared = old.Shared
 		// Environment preferences are changed only by the dedicated, locked setter.
 		v.SandboxProfileID = old.SandboxProfileID
+		v.ProjectCredentialIDs = old.ProjectCredentialIDs
 		if v.WorkspaceRunID == "" {
 			v.WorkspaceRunID = old.WorkspaceRunID
 		}

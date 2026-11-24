@@ -682,29 +682,31 @@ func (h *catalogHandlers) skills(c *gin.Context) {
 				c.JSON(404, map[string]string{"error": "project not found"})
 				return
 			}
-			if existing, ok := h.repo.Skill(v.ID); ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
+			existing, ok := h.repo.Skill(v.ID)
+			if ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
 				c.JSON(409, map[string]string{"error": "skill id is already used by another project"})
 				return
 			} else if ok && existing.Shared && !v.Shared && (h.sharedAgentReferences("skill", v.ID) || h.sharedScheduleReferences("skill", v.ID)) {
 				c.JSON(409, map[string]string{"error": "该技能仍被共享角色或共享任务引用，不能取消共享"})
 				return
 			}
-			// The binary file manifest is owned by the skill_files table;
-			// the SKILL.md body and text Files are owned by uploaded files
-			// (or existing content if the client never sends them). Client
-			// payloads cannot add, remove or reorder any of these, nor
-			// forge or drop a market source record.
-			if existing, ok := h.repo.Skill(v.ID); ok {
+			// Metadata updates preserve stored files and their source.
+			if ok {
 				v.FileRefs = existing.FileRefs
 				v.Files = existing.Files
 				v.Content = existing.Content
 				v.Source = existing.Source
-			} else {
-				v.FileRefs = nil
-				v.Files = nil
-				v.Source = nil
+				respond(c, h.repo.PutSkill(v))
+				return
 			}
-			respond(c, h.repo.PutSkill(v))
+			v.Files = nil
+			v.Source = nil
+			err := h.repo.CreateSkill(v)
+			if errors.Is(err, repo.ErrSkillExists) {
+				c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+				return
+			}
+			respond(c, err)
 		}
 	}
 }
@@ -969,6 +971,9 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
+			if !h.validateWorkflowProjectCredentials(c, v) {
+				return
+			}
 			if _, generic := h.repo.GenericTemplateByWorkflow(v.ID); generic {
 				if !h.isPlatformAdmin(c.Request) {
 					c.JSON(http.StatusConflict, map[string]string{"error": "通用模板为只读，请先复制到本项目再修改"})
@@ -1123,6 +1128,9 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if workflowHasNotifications(restored) && !h.notifications.access(c, v.ProjectID, true) {
 			return
 		}
+		if !h.validateWorkflowProjectCredentials(c, restored) {
+			return
+		}
 		if v.Shared && !restored.Shared && h.sharedScheduleReferences("sop", id) {
 			c.JSON(http.StatusConflict, map[string]string{"error": "该 LOOP 仍被共享任务引用，不能取消共享"})
 			return
@@ -1189,6 +1197,9 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		}
 		c.JSON(200, saved)
 	case "/api/workflows/:id/publish":
+		if !h.validateWorkflowProjectCredentials(c, v) {
+			return
+		}
 		if v.Generic {
 			if !h.isPlatformAdmin(c.Request) {
 				c.JSON(http.StatusConflict, map[string]string{"error": "通用模板为只读，请先复制到本项目再修改"})
@@ -1260,6 +1271,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		v.ID, v.Name, v.Owner = req.ID, req.Name, req.Owner
 		v.ProjectID = req.ProjectID
 		v.Shared = false
+		v.ProjectCredentialIDs = nil
 		v.Status, v.Version, v.Revision = "draft", 1, 0
 		v.CreatedAt, v.UpdatedAt = time.Time{}, time.Time{}
 		if err := h.repo.PutWorkflow(v); err != nil {
@@ -1271,6 +1283,27 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 	default:
 		c.Status(http.StatusNotFound)
 	}
+}
+
+func (h *catalogHandlers) validateWorkflowProjectCredentials(c *gin.Context, wf domain.WorkflowDefinition) bool {
+	if len(wf.ProjectCredentialIDs) == 0 {
+		return true
+	}
+	if _, generic := h.repo.GenericTemplateByWorkflow(wf.ID); generic || wf.Generic {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请复制通用模板到当前项目后绑定项目凭据"})
+		return false
+	}
+	user, ok := h.requestUser(c.Request, true)
+	use, _ := h.projectCredentialAccess(c.Request, wf.ProjectID, user.ID)
+	if !ok || !use {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权在该 SOP 中绑定项目凭据"})
+		return false
+	}
+	if _, err := h.repo.ProjectCredentialVariableNames(c.Request.Context(), wf.ProjectID, wf.ProjectCredentialIDs); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return false
+	}
+	return true
 }
 
 func workflowHasNotifications(workflow domain.WorkflowDefinition) bool {

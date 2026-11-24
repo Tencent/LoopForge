@@ -152,10 +152,11 @@
       workspaceReadOnly = info.readOnly !== false;
       editing = !workspaceReadOnly;
       paintToolbar();
-      // Opening a shell revalidates the environment on the server.
-      refreshEnvironment().then(state => {
-        if (state.status !== 'ready') return prepareEnvironment();
-      }).catch(err => paintEnvironment({ status: 'failed', error: err.message }));
+      if (editing) {
+        refreshEnvironment().then(state => {
+          if (state.status !== 'ready') return prepareEnvironment();
+        }).catch(err => paintEnvironment({ status: 'failed', error: err.message }));
+      }
       // No edit lease to renew; writable whenever the server says so.
       workspaceChanges = Array.isArray(info.changes) ? info.changes : [];
       const names = new Set();

@@ -15,7 +15,7 @@ import (
 
 // requireProjectWriter limits changes to a project's requirements, roles and
 // LOOPs to platform administrators, the project owner and non-viewer members.
-// Projects without an owner are shared. Requests that passed authentication
+// Projects without an owner or members are shared. Requests that passed authentication
 // without a user identity (service tokens) are allowed.
 func (d deps) requireProjectWriter(c *gin.Context, projectIDs ...string) bool {
 	if !authRequired() {
@@ -57,11 +57,11 @@ func (d deps) speakerProjectWriter(projectID string, user domain.User, userID in
 
 func (d deps) projectMemberWrites(projectID string, userID int64) bool {
 	p, found := d.repo.Project(projectID)
-	if !found || p.OwnerID == 0 || p.OwnerID == userID {
+	if !found || p.OwnerID == userID || p.OwnerID == 0 && len(p.Members) == 0 {
 		return true
 	}
 	for _, member := range p.Members {
-		if member.UserID == userID && !strings.EqualFold(strings.TrimSpace(member.Role), "viewer") {
+		if member.UserID == userID && !strings.EqualFold(strings.TrimSpace(member.Role), domain.ProjectRoleViewer) {
 			return true
 		}
 	}

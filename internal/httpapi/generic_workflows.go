@@ -165,7 +165,7 @@ func (h *catalogHandlers) cloneGenericTemplateSkills(sources []domain.SkillDefin
 		skill.ProjectID = projectID
 		skill.Shared = false
 		skill.UpdatedAt = now
-		if err := h.repo.PutSkill(skill); err != nil {
+		if err := h.repo.CreateSkill(skill); err != nil {
 			return nil, err
 		}
 		remap[source.ID] = skill.ID

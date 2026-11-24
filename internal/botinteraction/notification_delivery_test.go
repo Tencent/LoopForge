@@ -80,6 +80,7 @@ func TestWeComQueuedPrivateNotificationRechecksAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	project, _ = store.Project(project.ID)
 	project.Members = []domain.ProjectMember{}
 	if err := store.PutProject(project); err != nil {
 		t.Fatal(err)

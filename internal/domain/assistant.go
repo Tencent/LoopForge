@@ -233,6 +233,8 @@ type AssistantSession struct {
 	Messages           []AssistantMessage `json:"messages,omitempty"`
 	CreatedAt          time.Time          `json:"createdAt,omitempty"`
 	UpdatedAt          time.Time          `json:"updatedAt"`
+
+	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
 }
 
 type AssistantTask struct {

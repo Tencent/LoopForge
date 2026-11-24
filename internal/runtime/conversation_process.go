@@ -64,6 +64,8 @@ type ConversationCommand struct {
 	AgentCLI           AgentCLIOptions
 	Credentials        RunCredentials
 	Interactive        bool
+
+	ProjectCredentialEnv map[string]string `json:"projectCredentialEnv,omitempty"`
 }
 
 func ConversationCommandFor(command CommandSpec, credentials RunCredentials) *ConversationCommand {
@@ -602,6 +604,12 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		env[key] = conversationRemap(value, req.SourceRoot, root)
 	}
 	command = WithCommandEnvironment(command, env)
+	if len(req.Command.ProjectCredentialEnv) > 0 {
+		if spec == nil {
+			return ConversationProcessResult{}, fmt.Errorf("项目凭据只能在项目工作区中使用")
+		}
+		procCtx = WithProjectCredentialEnv(procCtx, req.Command.ProjectCredentialEnv)
+	}
 	command = command.WithPrivateHomeDir(filepath.Join(root, "home"))
 	command.AgentCLI.SystemPromptFile = conversationRemap(command.AgentCLI.SystemPromptFile, req.SourceRoot, root)
 	command.WorkingDir = filepath.Join(root, "ws")

@@ -75,6 +75,7 @@ type Server struct {
 	sshHostTrust    *sshHostTrustHandlers
 	httpsHostTrust  *httpsHostTrustHandlers
 	projects        *projectsHandlers
+	credentials     *projectCredentialsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
 	catalog         *catalogHandlers  // catalog.go
@@ -163,6 +164,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
 		projects:        &projectsHandlers{deps: d},
+		credentials:     &projectCredentialsHandlers{deps: d},
 		mcp:             &mcpHandlers{deps: d},
 		market:          &marketHandlers{deps: d},
 		skillhub:        &skillhubHandlers{deps: d, client: newSkillhubClientFromEnv()},
@@ -366,6 +368,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
 	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
+	g.PUT("/api/assistant/sessions/:id/project-credentials", asst.sessionProjectCredentials)
 	g.PUT("/api/assistant/sessions/:id/mode", asst.sessionMode)
 	g.GET("/api/assistant/sessions/:id/native-approvals", asst.nativeApprovals)
 	g.POST("/api/assistant/sessions/:id/native-approvals/:approvalId", asst.nativeApprovals)
@@ -391,8 +394,17 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/projects", api.projects.projects)
 	g.POST("/api/projects", api.projects.projects)
 	g.GET("/api/projects/:id", api.projects.project)
+	g.GET("/api/projects/:id/credentials", api.credentials.list)
+	g.POST("/api/projects/:id/credentials", api.credentials.save)
+	g.PUT("/api/projects/:id/credentials/:credentialId", api.credentials.save)
+	g.DELETE("/api/projects/:id/credentials/:credentialId", api.credentials.delete)
 	g.DELETE("/api/projects/:id", api.projects.deleteProject)
 	g.POST("/api/projects/:id/restore", api.projects.restoreProject)
+	g.POST("/api/projects/:id/join-requests", api.projects.createJoinRequest)
+	g.GET("/api/project-join-requests", api.projects.joinRequests)
+	g.POST("/api/project-join-requests/:id/approve", api.projects.approveJoinRequest)
+	g.POST("/api/project-join-requests/:id/reject", api.projects.rejectJoinRequest)
+	g.POST("/api/project-join-requests/:id/withdraw", api.projects.withdrawJoinRequest)
 	g.GET("/api/repositories", api.catalog.repositories)
 	g.POST("/api/repositories", api.catalog.repositories)
 	g.PUT("/api/repositories", api.catalog.repositories)

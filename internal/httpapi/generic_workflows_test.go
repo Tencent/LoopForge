@@ -235,8 +235,11 @@ func TestGenericTemplateCloneCreatesProjectRolesAndRemapsNodes(t *testing.T) {
 		if !found {
 			t.Fatalf("template skill %q was not cloned into the project", id)
 		}
-		if skill.ProjectID != "alpha" || skill.Shared || skill.Content == "" {
+		if skill.ProjectID != "alpha" || skill.Shared || skill.Content != "" {
 			t.Fatalf("cloned skill %q = %+v", id, skill)
+		}
+		if body, found := s.SkillFileContent(id, "SKILL.md"); !found || len(body) == 0 {
+			t.Fatalf("cloned skill %q is missing its SKILL.md", id)
 		}
 	}
 	var coreBindings int
