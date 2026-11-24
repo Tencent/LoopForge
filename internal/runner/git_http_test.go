@@ -28,7 +28,7 @@ func TestRunnerGitHelperUsesInvocationHostCredentials(t *testing.T) {
 		"unfamiliar.example.org": {GitHTTPCredential: domain.GitHTTPCredential{Host: "unfamiliar.example.org", Username: "required-user"}, Token: "fake-runner-token"},
 	}, Repository: &domain.RunnerRepository{GitToken: "obsolete-token-must-not-answer"}}
 	workspace := t.TempDir()
-	env, closeRelay, err := runtime.RunGitEnvironment(context.Background(), nil, workspace, invocationGitCredentials(inv))
+	env, closeRelay, err := runtime.RunGitEnvironment(context.Background(), nil, workspace, invocationGitCredentials(inv), "")
 	if err != nil {
 		t.Fatal(err)
 	}

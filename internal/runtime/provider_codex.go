@@ -1,12 +1,18 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
 
 	"agentflow/internal/domain"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 type codexProvider struct{ baseProvider }
@@ -115,6 +121,9 @@ func codexIsolationEnvKey(key string) bool {
 		return false
 	}
 	upper := strings.ToUpper(key)
+	if upper == SessionGatewayEnv || upper == GitHostsEnv {
+		return false // supplied by the live Git binding, never by profile set.*
+	}
 	if upper == "GIT_CEILING_DIRECTORIES" {
 		return true // a non-secret workspace boundary, needed by tool shells
 	}
@@ -129,6 +138,85 @@ func codexIsolationEnvKey(key string) bool {
 	default:
 		return true
 	}
+}
+
+// CodexRunGitArgv lets a SOP tool shell inherit its live Git binding by name.
+// The per-command relay URL must stay out of argv and persisted Codex config.
+func CodexRunGitArgv(argv []string, gitEnv map[string]string, nativeWorkspace string) []string {
+	if len(argv) < 2 || gitEnv[SessionGatewayEnv] == "" || gitEnv[GitHostsEnv] == "" {
+		return argv
+	}
+
+	// Codex applies include_only after set. Keep its core environment and
+	// the explicit isolation overrides already prepared for this invocation.
+	allowed := strings.Fields("PATH SHELL TMPDIR TEMP TMP HOME LANG LC_ALL LC_CTYPE LOGNAME USER")
+	if goruntime.GOOS == "windows" {
+		allowed = append(allowed, strings.Fields("PATHEXT COMSPEC SYSTEMROOT WINDIR SYSTEMDRIVE USERNAME USERDOMAIN USERPROFILE HOMEDRIVE HOMEPATH PROGRAMFILES PROGRAMFILES(X86) PROGRAMW6432 PROGRAMDATA LOCALAPPDATA APPDATA POWERSHELL PWSH")...)
+	}
+	for i := 1; i < len(argv)-1; i++ {
+		if argv[i-1] == "-c" && strings.HasPrefix(argv[i], "shell_environment_policy.set.") {
+			key, _, ok := strings.Cut(strings.TrimPrefix(argv[i], "shell_environment_policy.set."), "=")
+			if ok && codexIsolationEnvKey(key) && !strings.ContainsAny(key, "*?[]") {
+				allowed = append(allowed, key)
+			}
+		}
+	}
+	if nativeWorkspace != "" && !hasArg(argv[:len(argv)-1], "--ignore-user-config") {
+		allowed = append(allowed, nativeCodexShellSetKeys(nativeWorkspace)...)
+	}
+	// SSH appends one URL rewrite per remote after the HTTPS helper entries.
+	count, _ := strconv.Atoi(gitEnv["GIT_CONFIG_COUNT"])
+	for i := range count {
+		suffix := strconv.Itoa(i)
+		allowed = append(allowed, "GIT_CONFIG_KEY_"+suffix, "GIT_CONFIG_VALUE_"+suffix)
+	}
+	for _, key := range []string{SessionGatewayEnv, GitHostsEnv, "GIT_TERMINAL_PROMPT",
+		"GIT_CONFIG_COUNT", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_ALLOW_PROTOCOL",
+		"GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GH_CONFIG_DIR", "GLAB_CONFIG_DIR"} {
+		if _, bound := gitEnv[key]; bound {
+			allowed = append(allowed, key)
+		}
+	}
+	names, _ := json.Marshal(allowed)
+	out := append([]string{}, argv[:len(argv)-1]...)
+	out = append(out, "-c", `shell_environment_policy.inherit="all"`,
+		"-c", "shell_environment_policy.ignore_default_excludes=true",
+		"-c", "shell_environment_policy.include_only="+string(names))
+	return append(out, argv[len(argv)-1])
+}
+
+// Native runner invocations use the user's Codex home. Codex applies
+// include_only after set, including overrides it loaded from config.toml.
+func nativeCodexShellSetKeys(workspace string) []string {
+	home := os.Getenv("CODEX_HOME")
+	if home == "" {
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			return nil
+		}
+		home = filepath.Join(userHome, ".codex")
+	}
+	if !filepath.IsAbs(home) {
+		home = filepath.Join(workspace, home)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		return nil
+	}
+	var config map[string]any
+	if toml.Unmarshal(data, &config) != nil {
+		return nil // Codex reports invalid configuration at startup.
+	}
+	policy, _ := config["shell_environment_policy"].(map[string]any)
+	set, _ := policy["set"].(map[string]any)
+	var names []string
+	for key, value := range set {
+		if _, ok := value.(string); ok && codexIsolationEnvKey(key) && !strings.ContainsAny(key, "*?[]") {
+			names = append(names, key)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (codexProvider) Protocol(ex domain.ExecutorDefinition, sink EventSink) *protocolAdapter {

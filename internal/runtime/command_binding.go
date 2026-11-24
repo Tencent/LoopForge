@@ -5,8 +5,10 @@ import (
 	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -116,11 +118,11 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
 			bound.environment["CODEBUDDY_BASE_URL"] = strings.TrimSpace(credentials.CodeBuddy.BaseURL)
 		case BindGit:
-			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
+			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials, command.Provider); err != nil {
 				return CommandSpec{}, err
 			}
 		case BindGitWorkspace:
-			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
+			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials, ""); err != nil {
 				return CommandSpec{}, err
 			}
 		case BindExtra:
@@ -310,7 +312,7 @@ func privateHomePaths(sandbox Sandbox, workspace string, command CommandSpec) (h
 
 // bindWorkspaceGitEnvironment installs the standard host-scoped helper.
 // It requests credentials through a live relay rather than writing tokens.
-func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
+func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials, sopProvider string) error {
 	environment["GIT_TERMINAL_PROMPT"] = "0"
 	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
 		return fmt.Errorf("create git runtime dir: %w", err)
@@ -322,9 +324,18 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 		}
 		return filepath.Join(runtimeHost, filepath.FromSlash(rel))
 	}
+	gateway := strings.TrimSpace(environment[SessionGatewayEnv])
+	hosts := workspaceGitHosts(credentials.GitHTTPHosts)
 	// The requester's identity is the lowest-precedence (system) default, so
 	// the agent can still set its own with git config --global or --local.
 	if identity := workspaceGitIdentity(credentials.GitUserName, credentials.GitUserEmail); identity != "" {
+		if sopProvider == "codex" && gateway != "" && hosts != "" {
+			include, err := gitSystemConfigInclude(ctx, sandbox, workspace, environment)
+			if err != nil {
+				return err
+			}
+			identity = include + identity
+		}
 		if err := writeManagedFile(workspace, filepath.Join(runtimeHost, "gitconfig-system"), []byte(identity), 0o600); err != nil {
 			return fmt.Errorf("write git identity: %w", err)
 		}
@@ -339,8 +350,6 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 		}
 		environment[key] = runtimePath(dir)
 	}
-	gateway := strings.TrimSpace(environment[SessionGatewayEnv])
-	hosts := workspaceGitHosts(credentials.GitHTTPHosts)
 	environment[GitHostsEnv] = hosts
 	environment["GIT_CONFIG_COUNT"] = "1"
 	environment["GIT_CONFIG_KEY_0"] = "credential.helper"
@@ -415,6 +424,49 @@ func sandboxBasePath(sandbox Sandbox) string {
 		}
 	}
 	return os.Getenv("PATH")
+}
+
+// Resolve the system file with Git inside the target (its installation prefix
+// may differ from the host). The probe reads names only and skips user and repo
+// config. Git returns no system entries when the file is missing or disabled.
+func gitSystemConfigInclude(ctx context.Context, sandbox Sandbox, workspace string, env map[string]string) (string, error) {
+	null := os.DevNull
+	if sandboxDriver(sandbox) == "docker" {
+		workspace, null = "/workspace", "/dev/null"
+	}
+	probe := CommandSpec{
+		Argv:        []string{"git", "--git-dir=" + null, "config", "--null", "--no-includes", "--show-scope", "--show-origin", "--name-only", "--list"},
+		environment: map[string]string{"GIT_CONFIG_GLOBAL": null, "GIT_CONFIG_COUNT": "0", "GIT_CONFIG_PARAMETERS": ""},
+	}
+	for _, key := range []string{"GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM"} {
+		if value, ok := env[key]; ok {
+			probe.environment[key] = value
+		}
+	}
+	target := unwrapSandbox(sandbox)
+	if target == nil {
+		target = &localSandbox{workspace: workspace}
+	}
+	out, err := target.Exec(ctx, probe, nil)
+	if errors.Is(err, exec.ErrNotFound) || isDockerCLIMissing(err) {
+		return "", nil // A Codex task can still run other tools without Git.
+	}
+	if err != nil {
+		return "", fmt.Errorf("read Git system config origin: %w", err)
+	}
+	// Apple Git can emit built-in entries before the system scope.
+	fields := strings.Split(out, "\x00")
+	for len(fields) >= 3 {
+		scope, origin := fields[0], fields[1]
+		fields = fields[3:]
+		if path, ok := strings.CutPrefix(origin, "file:"); scope == "system" && ok {
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(workspace, path)
+			}
+			return "[include]\n\tpath = " + strconv.Quote(filepath.ToSlash(path)) + "\n", nil
+		}
+	}
+	return "", nil
 }
 
 func workspaceGitIdentity(name, email string) string {

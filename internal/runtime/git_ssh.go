@@ -28,14 +28,18 @@ func BindGitSSH(ctx context.Context, sandbox Sandbox, workspace string, environm
 	return gitwork.StartSSH(ctx, environment, keys, root, clientRoot)
 }
 
-func bindCommandGitSSH(ctx context.Context, sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (func(), error) {
+func bindCommandGitTransport(ctx context.Context, sandbox Sandbox, workspace string, command *CommandSpec, credentials RunCredentials) (func(), error) {
 	if slices.Contains(command.CredentialBindings, BindGitWorkspace) {
 		return bindWorkspaceGitSSH(ctx, sandbox, filepath.Clean(workspace), command.environment, credentials.GitSSHHostKeys)
 	}
 	if !slices.Contains(command.CredentialBindings, BindGit) {
 		return func() {}, nil
 	}
-	return BindGitSSH(ctx, sandbox, filepath.Clean(workspace), command.environment, credentials.GitSSHKeys)
+	stop, err := BindGitSSH(ctx, sandbox, filepath.Clean(workspace), command.environment, credentials.GitSSHKeys)
+	if err == nil && command.Provider == "codex" {
+		command.Argv = CodexRunGitArgv(command.Argv, command.environment, "")
+	}
+	return stop, err
 }
 
 // bindWorkspaceGitSSH starts the requester's SSH agent for every configured
