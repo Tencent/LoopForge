@@ -165,6 +165,14 @@ func (r Runner) SupportsProjectCredentials() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionProjectCredentials)
 }
 
+// RunnerVersionConversationSOPWorkspace discovers nested conversation checkouts
+// and prepares them inside the SOP sandbox while preserving local work.
+const RunnerVersionConversationSOPWorkspace = "0.12.3"
+
+func (r Runner) SupportsConversationSOPWorkspace() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationSOPWorkspace)
+}
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
@@ -662,8 +670,11 @@ type RunnerRepository struct {
 	// CreateNewWorkBranch creates WorkBranch from the base ref and fails when a
 	// same-named remote head already exists.
 	CreateNewWorkBranch bool `json:"createNewWorkBranch,omitempty"`
-	// Dir is the workspace-relative checkout directory (empty is only kept
-	// for persisted legacy runs that already checked out at the workspace root).
+	// PreserveCheckout starts a generated SOP branch at the existing local
+	// HEAD when the checkout was supplied by a conversation.
+	PreserveCheckout bool `json:"preserveCheckout,omitempty"`
+	// Dir is the workspace-relative checkout directory. Empty selects the
+	// workspace root for an existing checkout.
 	Dir string `json:"dir,omitempty"`
 	// SyncWorkBranch is the control plane's decision that WorkBranch may
 	// receive intermediate node commits (it is not a shared base/integration

@@ -43,6 +43,10 @@ func ConversationWorkspaceToken(ctx context.Context, runID ...string) string {
 }
 func (e *Engine) BeginConversationWorkspaceUse(id string) (string, error) {
 	token, previous, err := e.repo.BeginWorkspaceUsePreemptingSave(id, time.Now().UTC())
+	return e.finishTakingWorkspaceLease(id, token, previous, err)
+}
+
+func (e *Engine) finishTakingWorkspaceLease(id, token, previous string, err error) (string, error) {
 	if err != nil || previous == "" {
 		return token, err
 	}
@@ -267,6 +271,9 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 			if !info.IsDir() {
 				return fmt.Errorf("工作区路径不是目录")
 			}
+			if run.IsWorkspace() && run.WorkspaceRoot == "" {
+				return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+			}
 			return nil
 		} else if !os.IsNotExist(err) {
 			return err
@@ -402,6 +409,12 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	}
 	if !run.WorkspaceCleanedAt.IsZero() {
 		return false, "", nil, nil
+	}
+	if run.IsWorkspace() {
+		busy, err := e.repo.HasWorkspaceSOPRuns(run.ID, "running", "queued", "waiting")
+		if err != nil || busy {
+			return true, "", nil, err
+		}
 	}
 	if !e.conversationWorkspaceIdle(run) || e.conversationGenerationRunning(run) {
 		return true, "", nil, nil

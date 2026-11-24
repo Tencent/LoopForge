@@ -351,6 +351,12 @@ func (e *Engine) reclaimCleanedWorkspaceLeftover(expected domain.Run) {
 		e.WorkspaceActive != nil && e.WorkspaceActive(run) || e.conversationGenerationRunning(run) {
 		return
 	}
+	// SOP runs dispatched from a conversation borrow its checkout.
+	if run.IsWorkspace() {
+		if busy, err := e.repo.HasWorkspaceSOPRuns(run.ID, "running", "queued", "waiting"); err != nil || busy {
+			return
+		}
+	}
 	if checkpoint, ok := e.repo.WorkspaceCheckpoint(run.ID); ok &&
 		(checkpoint.CleanupRetryAt != nil || checkpoint.LeaseUntil != nil && !checkpoint.LeaseUntil.Before(time.Now())) {
 		return
@@ -469,6 +475,15 @@ func (e *Engine) DeleteRun(runID string) error {
 	}
 	if run.HasActiveNode() {
 		return fmt.Errorf("运行 %s 仍有未结束的节点，请先停止后再删除", runID)
+	}
+	if run.IsWorkspace() {
+		inUse, err := e.repo.HasWorkspaceSOPRuns(run.ID)
+		if err != nil {
+			return err
+		}
+		if inUse {
+			return fmt.Errorf("工作区仍有关联的 SOP 运行：%w", repo.ErrWorkspaceInUse)
+		}
 	}
 	token, err := e.beginWorkspaceUseAfterCleanup(context.Background(), runID)
 	if err != nil {

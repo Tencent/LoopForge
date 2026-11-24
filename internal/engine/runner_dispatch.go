@@ -149,6 +149,12 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
 	runnerID := e.defaultExecutionRunner(run)
+	if runnerID != "" && run.UsesConversationWorkspace() && len(run.RepositoryContexts()) > 0 {
+		runner, ok := e.repo.Runner(runnerID)
+		if !ok || !runner.SupportsConversationSOPWorkspace() {
+			return nil, fmt.Errorf("复用对话中的仓库检出需要执行机器升级至 %s", domain.RunnerVersionConversationSOPWorkspace)
+		}
+	}
 	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return nil, err
 	}
@@ -160,7 +166,7 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 	var codexLoginRelay bool
 	if profile.Driver == domain.SandboxDriverDocker && runnerID != "" {
 		runner, ok := e.repo.Runner(runnerID)
-		codexLoginRelay = ok && runner.RuntimeAuthModeForUser("codex", run.ExecutionContext.ResponsibleUserID) == domain.RuntimeAuthLocal
+		codexLoginRelay = ok && sopRunnerAuthMode(run.ExecutionContext, runner, "codex") == domain.RuntimeAuthLocal
 	}
 	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot, codexLoginRelay)
 	if err != nil {
@@ -191,7 +197,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		return "", err
 	}
 	runner, _ := e.repo.Runner(runnerID)
-	authMode := runner.RuntimeAuthModeForUser(ex.Kind, run.ExecutionContext.ResponsibleUserID)
+	authMode := sopRunnerAuthMode(run.ExecutionContext, runner, ex.Kind)
 	projectShare := runner.OwnerUserID > 0 && runner.OwnerUserID != run.ExecutionContext.ResponsibleUserID
 	resumeSessionID := resolveRunnerResumeSessionID(run, node.ID, options)
 	invocation := &domain.RunnerInvocation{
@@ -372,6 +378,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			WorkBranch:                run.Repository.WorkBranch,
 			RequireExistingWorkBranch: run.Repository.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       run.Repository.CreateNewWorkBranch,
+			PreserveCheckout:          run.UsesConversationWorkspace(),
 			UseSSH:                    run.Repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(run.Repository.CloneURL),
 		}
 	}
@@ -387,6 +394,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			WorkBranch:                rc.WorkBranch,
 			RequireExistingWorkBranch: rc.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       rc.CreateNewWorkBranch,
+			PreserveCheckout:          run.UsesConversationWorkspace(),
 			UseSSH:                    rc.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(rc.CloneURL),
 			Dir:                       rc.WorkspaceDir,
 		})

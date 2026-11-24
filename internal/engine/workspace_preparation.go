@@ -94,6 +94,9 @@ func (e *Engine) withPreparationProgress(ctx context.Context, runID string) cont
 func (e *Engine) prepareLocalEnvironment(ctx context.Context, run domain.Run, env *runEnvironment) (runtime.WorkspacePreparationStatus, error) {
 	// The first sandbox call below builds the Docker image when it is missing.
 	ctx = e.withPreparationProgress(ctx, run.ID)
+	if run.UsesConversationWorkspace() {
+		ctx = runtime.WithSandboxGit(ctx, env.sandbox, env.credentialSnapshot())
+	}
 	env.preparing.Store(true)
 	defer env.preparing.Store(false)
 	// Caller owns env.nodeMu so reconstruction is serialized without turning

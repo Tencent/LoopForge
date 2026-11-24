@@ -94,7 +94,15 @@ func (r *RunsRepo) BeginWorkspaceUse(runID string, now time.Time) (string, error
 // publish and finish by token CAS, so it cannot affect the new use.
 func (r *RunsRepo) BeginWorkspaceUsePreemptingSave(runID string, now time.Time) (string, string, error) {
 	var previous string
-	token, err := r.beginWorkspaceLease(runID, now, true, false, &previous)
+	token, err := r.beginWorkspaceLease(runID, now, true, false, false, &previous)
+	return token, previous, err
+}
+
+// BeginSOPWorkspacePreparation leases a conversation checkout for the SOP
+// already admitted to execute there. Other foreground use waits for that SOP.
+func (r *RunsRepo) BeginSOPWorkspacePreparation(runID string, now time.Time) (string, string, error) {
+	var previous string
+	token, err := r.beginWorkspaceLease(runID, now, true, false, true, &previous)
 	return token, previous, err
 }
 
@@ -123,9 +131,9 @@ func (r *RunsRepo) HandoffWorkspaceUseToSave(runID, token string, now time.Time)
 	return saveToken, err
 }
 func (r *RunsRepo) BeginWorkspaceCheckpointSave(runID string, now time.Time) (string, error) {
-	return r.beginWorkspaceLease(runID, now, false, false)
+	return r.beginWorkspaceLease(runID, now, false, false, false)
 }
-func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, restoring bool, preempted ...*string) (string, error) {
+func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, restoring, sopPreparation bool, preempted ...*string) (string, error) {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -140,6 +148,15 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 		// It must not save from a checkout that another sweep already removed.
 		if !touch && !restoring && run.WorkspaceCleaned != nil {
 			return ErrWorkspaceInUse
+		}
+		if run.Kind == domain.RunKindWorkspace && !sopPreparation {
+			busy, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, runID, []string{"running"}))
+			if err != nil {
+				return err
+			}
+			if busy {
+				return ErrWorkspaceInUse
+			}
 		}
 		var checkpoint WorkspaceCheckpoint
 		if err := tx.Omit("archive").Where("run_id = ?", runID).Take(&checkpoint).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -296,6 +313,12 @@ func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(expected domain.Run, token st
 		if row.Revision != expected.Revision || row.WorkspaceHost != expected.WorkspaceHost || row.WorkspaceRoot != expected.WorkspaceRoot ||
 			row.Status == "running" || row.Status == "queued" || row.WorkspaceCleaned != nil || row.CleanupNotBefore != nil && now.Before(*row.CleanupNotBefore) {
 			return nil
+		}
+		if row.Kind == domain.RunKindWorkspace {
+			busy, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, runID, []string{"running", "queued", "waiting"}))
+			if err != nil || busy {
+				return err
+			}
 		}
 		var checkpoint WorkspaceCheckpoint
 		if err = tx.Omit("archive").Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, now).Take(&checkpoint).Error; err != nil {
@@ -594,6 +617,15 @@ func (r *RunsRepo) ClaimWorkspaceDeletion(runID, token string, revision int, now
 		}
 		if row.Revision != revision || row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
 			return ErrWorkspaceInUse
+		}
+		if row.Kind == domain.RunKindWorkspace {
+			inUse, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, runID, nil))
+			if err != nil {
+				return err
+			}
+			if inUse {
+				return fmt.Errorf("工作区仍有关联的 SOP 运行：%w", ErrWorkspaceInUse)
+			}
 		}
 		var count int64
 		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, now).Count(&count).Error; err != nil {
