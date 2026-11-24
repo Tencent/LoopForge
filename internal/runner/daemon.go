@@ -759,6 +759,9 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		if err := writeRunnerHumanContext(workspace, task.Invocation.HumanContext); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("write human context: %v", err)}
 		}
+		if err := d.prepareRequirementAttachments(ctx, task, workspace); err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
+		}
 		if err := prepareInvocationWorkspace(workspace, task.Invocation); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
 		}
@@ -844,6 +847,9 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	}
 	if err := writeRunnerHumanContext(workspace, inv.HumanContext); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("write human context: %v", err)}, nil
+	}
+	if err := d.prepareRequirementAttachments(ctx, task, workspace); err != nil {
+		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 	}
 	if err := prepareInvocationWorkspace(workspace, inv); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
@@ -1456,7 +1462,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionRepositoryCache
+var runnerVersion = domain.RunnerVersionRequirementAttachments
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

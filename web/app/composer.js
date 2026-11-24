@@ -218,7 +218,7 @@ function reqFooterNote(){
 }
 function renderReqFooter(){
   const creating=!!state.reqCreating;
-  const reason=reqDescription()?'':'先写一句需求';
+  const reason=reqDescription()||state.reqAttachments?.length?'':'先写需求或上传附件';
   const create=$('#reqCreate'),chat=$('#reqCreateChat');
   if(create){
     create.disabled=creating||!!state.reqUploading||!!reason;
@@ -390,7 +390,8 @@ function clarifyToolLabel(tool){
   return ({Read:'读取',Grep:'搜索',Glob:'查找',MCP:'MCP',submit_clarification:'提交结论',submit_assistant_reply:'提交回复'})[name]||name||'操作';
 }
 function collectRequirementDraft(){
-  const description=reqDescription();
+  const description=reqDescription()||(state.reqAttachments?.length?'本需求以附件正文为准。请先读取全部附件，明确需求范围、约束和验收标准；无法读取或有歧义时先澄清。':'');
+  if(!reqDescription()&&state.reqAttachments?.length)return {title:state.reqAttachments[0].name.slice(0,80),description};
   const first=(description.split('\n').map(l=>l.trim()).find(Boolean)||'');
   return {title:first.slice(0,80),description};
 }

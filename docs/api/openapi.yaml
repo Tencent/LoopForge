@@ -4839,7 +4839,14 @@ components:
           type: boolean
     Issue:
       type: object
-      required: [projectId, title]
+      required: [projectId]
+      anyOf:
+        - required: [title]
+          properties:
+            title: {type: string, minLength: 1}
+        - required: [attachments]
+          properties:
+            attachments: {type: array, minItems: 1}
       properties:
         attachments:
           type: array

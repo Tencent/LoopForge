@@ -149,6 +149,11 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
 	runnerID := e.defaultExecutionRunner(run)
+	if !run.IsWorkspace() && runnerID != "" {
+		if _, err := e.runnerRequirementAttachments(runnerID, run); err != nil {
+			return nil, err
+		}
+	}
 	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return nil, err
 	}
@@ -249,6 +254,11 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 			}
 		}
 	}
+	files, attachmentErr := e.runnerRequirementAttachments(runnerID, run)
+	if attachmentErr != nil {
+		return "", attachmentErr
+	}
+	invocation.RequirementAttachments = files
 	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	reported := sb.reportedOutputs(node.ID)
 	if reported != nil {
@@ -418,6 +428,11 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 	invocation := &domain.RunnerInvocation{
 		ArchivedFiles: e.legacyArchivedWorkspaceFiles(run, nodeID),
 		RunID:         run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
+	files, attachmentErr := e.runnerRequirementAttachments(runnerID, run)
+	if attachmentErr != nil {
+		return "", attachmentErr
+	}
+	invocation.RequirementAttachments = files
 	bindRunnerRepositories(invocation, run, gitUserName, gitUserEmail)
 	reported := sb.reportedOutputs(nodeID)
 	if reported != nil {
@@ -647,6 +662,11 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 			return "", err
 		}
 		task.Invocation = e.gateCommandInvocation(run, nodeID)
+		files, attachmentErr := e.runnerRequirementAttachments(runnerID, run)
+		if attachmentErr != nil {
+			return "", attachmentErr
+		}
+		task.Invocation.RequirementAttachments = files
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
 		return "", err

@@ -21,19 +21,17 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/attachment"
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
 
-const workbenchAttachmentLimit = 10 << 20
+const workbenchAttachmentLimit = attachment.Limit
 const workbenchAttachmentCount = 8
 
-type workbenchAttachmentRecord struct {
-	domain.AssistantAttachment
-	ProjectID string `json:"projectId"`
-}
+type workbenchAttachmentRecord = attachment.Record
 
 // Open legacy projects retain the room membership policy. Private projects
 // require an explicit member or owner; a reference never grants access.
@@ -529,7 +527,7 @@ func pageAssistantReferences(refs []domain.AssistantReference, offset, size int)
 }
 
 func workbenchAttachmentDir(userID int64) string {
-	return filepath.Join(assistantSessionRoot(userID), "attachments")
+	return attachment.OwnerDir(userID)
 }
 
 var localMediaPath = regexp.MustCompile(`(?:^|[\s` + "`" + `（(:：])(/[^\s` + "`" + `）)]+\.(?:png|jpe?g|gif|webp))`)

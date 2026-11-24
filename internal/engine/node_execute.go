@@ -531,6 +531,22 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(err, false)
 		return
 	}
+	requirementFiles, attachmentErr := e.requirementAttachments(current)
+	if attachmentErr != nil {
+		failNode(attachmentErr, false)
+		return
+	}
+	if len(requirementFiles) > 0 {
+		if runnerID := e.defaultExecutionRunner(current); runnerID != "" {
+			if _, err := e.runnerRequirementAttachments(runnerID, current); err != nil {
+				failNode(err, false)
+				return
+			}
+		} else if err := materializeRequirementAttachments(sb.Workspace(), requirementFiles, current.ExecutionContext.ProjectID); err != nil {
+			failNode(err, false)
+			return
+		}
+	}
 	var reported *reportedOutputs
 	artifactContext := ""
 	if runner, ok := e.repo.Runner(e.defaultExecutionRunner(current)); ok && runner.SupportsReportedOutputs() {
@@ -775,6 +791,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				if resumeFeedback != "" {
 					prompt += "\n\n操作员补充了以下信息，请结合它继续：\n\n" + resumeFeedback
 				}
+			}
+			if resumeSessionID != "" {
+				prompt += requirementAttachmentPrompt(e.repo, current)
 			}
 			if requiresSubmit {
 				prompt = appendSubmitGateInstruction(prompt, node.RejectTo, feedback == gateMissingRetryMarker)

@@ -151,12 +151,19 @@ assert.equal(elements["#chatInput"].value, "继续开发已有分支");
   assert.equal(opened.length, 1, "creating for the chat does not open the issue detail");
   assert.equal(ctx.state.reqCreating, "");
 
+  ctx.state.reqAttachments=[];
   elements["#chatInput"].value = "   ";
   const blank = requests.length;
   await ctx.createIssueFromChat(undefined, "chat");
   assert.equal(requests.length, blank, "a blank description creates nothing");
   assert.equal(notices.at(-1), "先写一句需求");
 
+  ctx.state.reqAttachments=[{id:"only-doc",name:"需求说明.pdf",size:30}];
+  await ctx.createIssueFromChat(undefined,"chat");
+  assert.equal(requests.at(-1).body.title,"需求说明.pdf");
+  assert.ok(requests.at(-1).body.description.includes("附件正文"));
+  assert.equal(requests.at(-1).body.attachments[0].id,"only-doc");
+  ctx.state.reqAttachments=[];
   input.value = "";
   elements["#chatInput"].value = "空分支";
   await ctx.createIssueFromChat("local");

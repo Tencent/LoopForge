@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"github.com/gin-gonic/gin"
@@ -133,5 +134,64 @@ func TestRequirementAttachmentsSharedConversationAndSync(t *testing.T) {
 	h.downloadAttachment(c)
 	if rec.Code != 403 {
 		t.Fatalf("nonmember download: %d", rec.Code)
+	}
+}
+
+func TestAttachmentOnlyRequirementDerivesTitleAndDescription(t *testing.T) {
+	h, user := workbenchFixture(t)
+	a, err := saveWorkbenchImage(user.ID, "需求说明.md", "text/markdown", []byte("# 需求\n实现文档中的功能"), "workbench")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := domain.Issue{ProjectID: "workbench", Attachments: []domain.IssueAttachment{{AssistantAttachment: a}}}
+	c, _ := workbenchContext(user, "POST", "/api/issues", bytes.NewBuffer(nil))
+	if err := (&issuesHandlers{deps: h.deps}).canonicalIssueAttachments(c, &issue); err != nil {
+		t.Fatal(err)
+	}
+	if issue.Title != "需求说明.md" || !strings.Contains(issue.Description, "附件正文") {
+		t.Fatalf("attachment-only requirement missing context: %+v", issue)
+	}
+}
+
+func TestRunnerRequirementDownloadRequiresCurrentTaskLease(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	t.Setenv("AGENTFLOW_ASSISTANT_SESSION_DIR", t.TempDir())
+	st, handler := clarifyTestServer(t)
+	a, err := saveWorkbenchImage(42, "requirements.pdf", "application/pdf", []byte{0, 255, 128, 10}, "platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.PutIssue(domain.Issue{ID: "download-issue", ProjectID: "platform", Attachments: []domain.IssueAttachment{{AssistantAttachment: a, UploadedBy: 42}}})
+	st.PutRun(domain.Run{ID: "download-run", ExecutionContext: domain.TelemetryContext{ProjectID: "platform", IssueID: "download-issue"}})
+	runnerID, session := registerTestRunner(t, handler)
+	_, otherSession := registerTestRunner(t, handler)
+	until := time.Now().Add(time.Minute)
+	task := domain.RunnerTask{ID: "download-task", Provider: "mock", RunnerID: runnerID, LeaseOwner: runnerID, LeaseUntil: &until, Attempt: 2, Status: domain.RunnerTaskRunning, RunID: "download-run", Invocation: &domain.RunnerInvocation{RequirementAttachments: []domain.IssueAttachment{{AssistantAttachment: a, UploadedBy: 42}}}}
+	if err := st.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	path := "/runners/tasks/" + task.ID + "/attachments/" + a.ID
+	for _, tc := range []struct {
+		token, attempt string
+		status         int
+	}{{session, "2", 200}, {otherSession, "2", 409}, {session, "1", 409}} {
+		rec := requestWithHeaders(t, handler, "GET", path, nil, map[string]string{"Authorization": "Bearer " + tc.token, "X-Task-Attempt": tc.attempt})
+		if rec.Code != tc.status {
+			t.Fatalf("status=%d want=%d %s", rec.Code, tc.status, rec.Body.String())
+		}
+		if rec.Code == 200 && !bytes.Equal(rec.Body.Bytes(), []byte{0, 255, 128, 10}) {
+			t.Fatal("download corrupted")
+		}
+	}
+	rec := requestWithHeaders(t, handler, "GET", path+"different", nil, map[string]string{"Authorization": "Bearer " + session, "X-Task-Attempt": "2"})
+	if rec.Code != 404 {
+		t.Fatalf("other attachment: %d", rec.Code)
+	}
+	until = time.Now().Add(-time.Minute)
+	task.LeaseUntil = &until
+	st.PutRunnerTask(task)
+	rec = requestWithHeaders(t, handler, "GET", path, nil, map[string]string{"Authorization": "Bearer " + session, "X-Task-Attempt": "2"})
+	if rec.Code != 409 {
+		t.Fatalf("expired lease: %d", rec.Code)
 	}
 }

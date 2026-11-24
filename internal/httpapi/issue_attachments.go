@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"fmt"
+	"strings"
 
 	"agentflow/internal/domain"
 	"github.com/gin-gonic/gin"
@@ -36,6 +37,12 @@ func (h issuesHandlers) canonicalIssueAttachments(c *gin.Context, issue *domain.
 			return fmt.Errorf("附件不属于当前项目或大小无效，请重新上传")
 		}
 		issue.Attachments[i] = domain.IssueAttachment{AssistantAttachment: record.AssistantAttachment, UploadedBy: user.ID}
+	}
+	if strings.TrimSpace(issue.Title) == "" {
+		issue.Title = issue.Attachments[0].Name
+	}
+	if strings.TrimSpace(issue.Description) == "" {
+		issue.Description = "本需求以附件正文为准。请先读取全部附件，明确需求范围、约束和验收标准；无法读取或有歧义时先澄清。"
 	}
 	return nil
 }

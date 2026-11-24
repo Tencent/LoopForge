@@ -153,6 +153,13 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 // when checking out repositories for a native workspace. Older runners clone fully.
 const RunnerVersionRepositoryCache = "0.12.0"
 
+// RunnerVersionRequirementAttachments supports authenticated binary requirement inputs.
+const RunnerVersionRequirementAttachments = "0.13.0"
+
+func (r Runner) SupportsRequirementAttachments() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionRequirementAttachments)
+}
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
@@ -560,6 +567,8 @@ type RunnerInvocation struct {
 	// Inputs are upstream artifacts the runner writes read-only into the
 	// task workspace before the invocation (paths under .agentflow/inputs).
 	Inputs []RunnerInputFile `json:"inputs,omitempty"`
+	// RequirementAttachments are downloaded under the task lease before execution.
+	RequirementAttachments []IssueAttachment `json:"requirementAttachments,omitempty"`
 	// ReportOutputs asks the runner to return RunnerTask.Outputs: the
 	// OutputFiles that exist, the repository-patch inventory of every
 	// checkout, and workspace facts. OutputFiles are workspace-relative
