@@ -73,7 +73,8 @@ type Server struct {
 	github          *githubHandlers
 	users           *usersHandlers // users.go
 	sshHostTrust    *sshHostTrustHandlers
-	httpsHostTrust  *httpsHostTrustHandlers
+	httpsHostTrust  *gitHTTPHostTrustHandlers
+	httpHostTrust   *gitHTTPHostTrustHandlers
 	projects        *projectsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
@@ -158,7 +159,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		github:          newGitHubHandlers(d),
 		users:           &usersHandlers{deps: d},
 		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
-		httpsHostTrust:  &httpsHostTrustHandlers{deps: d, hosts: s.HTTPSHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP},
+		httpsHostTrust:  &gitHTTPHostTrustHandlers{deps: d, hosts: s.GitHTTPHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP},
+		httpHostTrust:   &gitHTTPHostTrustHandlers{deps: d, hosts: s.GitHTTPHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP, plainHTTP: true},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
@@ -283,6 +285,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/platform/git-https-hosts/:host", api.httpsHostTrust.save)
 	g.DELETE("/api/platform/git-https-hosts/:host", api.httpsHostTrust.remove)
 	g.GET("/api/git-https-hosts", api.httpsHostTrust.choices)
+	g.GET("/api/platform/git-http-hosts", api.httpHostTrust.list)
+	g.POST("/api/platform/git-http-hosts/preview", api.httpHostTrust.preview)
+	g.POST("/api/platform/git-http-hosts", api.httpHostTrust.save)
+	g.PUT("/api/platform/git-http-hosts/:host", api.httpHostTrust.save)
+	g.DELETE("/api/platform/git-http-hosts/:host", api.httpHostTrust.remove)
+	g.GET("/api/git-http-hosts", api.httpHostTrust.choices)
 	// master(net/http) 的 /api/users/ 子树只接受 PUT /api/users/<id>/credentials
 	// 一种形态，其余任何方法/子路径都走 method(w) → 405 JSON。
 	g.Any("/api/users/:id/credentials", func(c *gin.Context) {

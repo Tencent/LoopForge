@@ -71,6 +71,7 @@ type gitHTTPCredentialRow struct {
 	Name     string     `gorm:"size:80;not null"`
 	Platform string     `gorm:"size:16;not null"`
 	Host     string     `gorm:"size:255;not null"`
+	HTTPHost string     `gorm:"size:267;not null;default:''"`
 	Username string     `gorm:"size:128;not null"`
 	Token    string     `gorm:"type:text;not null"`
 	Created  *time.Time `gorm:"column:created_at"`
@@ -778,6 +779,6 @@ func allModels() []any {
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
-		PlatformGitSSHHost{}, PlatformGitHTTPSHost{},
+		PlatformGitSSHHost{}, PlatformGitHTTPSHost{}, PlatformGitHTTPHost{},
 	}
 }

@@ -112,6 +112,7 @@ type TasksRepo struct {
 // UsersRepo owns users and their saved credentials.
 type UsersRepo struct {
 	*deps
+	gitHTTPHosts *GitHTTPHostTrustRepo
 }
 
 // TokensRepo owns API tokens.
@@ -187,7 +188,7 @@ type Store struct {
 	*SpacesRepo
 	*KnowledgeRepo
 	*SSHHostTrustRepo
-	*HTTPSHostTrustRepo
+	*GitHTTPHostTrustRepo
 	*NotificationsRepo
 	*BotInteractionsRepo
 }
@@ -199,7 +200,8 @@ func newStore(db *gorm.DB) *Store {
 	s := &Store{deps: d}
 	s.ProjectsRepo = &ProjectsRepo{deps: d}
 	s.BusinessDomainsRepo = &BusinessDomainsRepo{deps: d}
-	s.UsersRepo = &UsersRepo{deps: d}
+	s.GitHTTPHostTrustRepo = &GitHTTPHostTrustRepo{deps: d}
+	s.UsersRepo = &UsersRepo{deps: d, gitHTTPHosts: s.GitHTTPHostTrustRepo}
 	s.BotInteractionsRepo = &BotInteractionsRepo{deps: d}
 	s.TokensRepo = &TokensRepo{deps: d}
 	s.AssistantRepo = &AssistantRepo{deps: d, users: s.UsersRepo}
@@ -220,7 +222,6 @@ func newStore(db *gorm.DB) *Store {
 	s.SpacesRepo = &SpacesRepo{deps: d}
 	s.KnowledgeRepo = &KnowledgeRepo{deps: d}
 	s.SSHHostTrustRepo = &SSHHostTrustRepo{deps: d}
-	s.HTTPSHostTrustRepo = &HTTPSHostTrustRepo{deps: d}
 	return s
 }
 

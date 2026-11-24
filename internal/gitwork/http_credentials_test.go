@@ -2,6 +2,7 @@ package gitwork
 
 import (
 	"context"
+	"net/netip"
 	"strings"
 	"testing"
 )
@@ -33,8 +34,8 @@ func TestHTTPSCredentialMatchesOnlyItsHostAndProtocol(t *testing.T) {
 			t.Fatal("token was put in argv")
 		}
 	}
-	credential, host, urlHost := httpCredentialForCommand(ctx, []string{"ls-remote", "https://git.example.org:8443/owner/other"})
-	if host != "git.example.org:8443" || urlHost != host || credential.Token != "fake-other-token" {
+	credential, endpoint, urlHost := httpCredentialForCommand(ctx, []string{"ls-remote", "https://git.example.org:8443/owner/other"})
+	if endpoint.Scope() != "git.example.org:8443" || urlHost != endpoint.Authority || credential.Token != "fake-other-token" {
 		t.Fatal("explicit URL borrowed the bound repository credential")
 	}
 
@@ -61,14 +62,63 @@ func TestHTTPSCredentialMatchesOnlyItsHostAndProtocol(t *testing.T) {
 	}
 }
 
-func TestHTTPSRepositoryURLDoesNotNeedAPlatform(t *testing.T) {
-	remote, name, err := HTTPSRepositoryURL("https://Unfamiliar.example.org:443/team/code.git")
-	if err != nil || remote != "https://unfamiliar.example.org/team/code.git" || name != "code" {
-		t.Fatalf("%q %q %v", remote, name, err)
+func TestGitHTTPRepositoryURLDoesNotNeedAPlatform(t *testing.T) {
+	for input, want := range map[string]string{
+		"https://Unfamiliar.example.org:443/team/code.git": "https://unfamiliar.example.org/team/code.git",
+		"http://unfamiliar.example.org:80/team/code.git":   "http://unfamiliar.example.org/team/code.git",
+		"http://192.0.2.13:8080/team/code.git":             "http://192.0.2.13:8080/team/code.git",
+		"http://[FD00:0::2]/team/code.git":                 "http://[fd00::2]/team/code.git",
+	} {
+		remote, name, err := GitHTTPRepositoryURL(input)
+		if err != nil || remote != want || name != "code" {
+			t.Errorf("%q: got %q %q %v, want %q", input, remote, name, err, want)
+		}
 	}
-	for _, raw := range []string{"http://unfamiliar.example.org/team/code", "https://user:token@unfamiliar.example.org/team/code", "https://unfamiliar.example.org/", "https://unfamiliar.example.org/team/../code", "https://unfamiliar.example.org/team/code?token=x", "https://127.0.0.1/team/code"} {
-		if _, _, err := HTTPSRepositoryURL(raw); err == nil {
+	for _, raw := range []string{"http://user:token@unfamiliar.example.org/team/code", "https://unfamiliar.example.org/", "https://unfamiliar.example.org/team/../code", "https://unfamiliar.example.org/team/code?token=x", "https://127.0.0.1/team/code", "http://0x7f000001/team/code", "http://127.1/team/code"} {
+		if _, _, err := GitHTTPRepositoryURL(raw); err == nil {
 			t.Fatalf("unsafe URL accepted: %s", raw)
 		}
+	}
+}
+
+func TestPlainHTTPCredentialNeedsApprovalAndMatchesSchemeAndPort(t *testing.T) {
+	if !SupportsHTTPAddressPinning() {
+		t.Skip("Git with http.curloptResolve required")
+	}
+	const authority = "git.example.org:443"
+	const repoURL = "http://" + authority + "/team/code.git"
+	for _, tc := range []struct {
+		name, protocol, host string
+		approved             bool
+		want                 bool
+	}{
+		{"configured", "http", authority, true, true},
+		{"other scheme", "https", authority, true, false},
+		{"other port", "http", "git.example.org", true, false},
+		{"other host", "http", "elsewhere.example.org:443", true, false},
+		{"absent approval", "http", authority, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plain := HTTPCredential{Username: "git", Token: "fake-plaintext-token"}
+			if tc.approved {
+				plain.ApprovedAddresses = []netip.Addr{netip.MustParseAddr("192.0.2.13")}
+			}
+			ctx := WithHTTPRemote(WithHTTPCredentials(t.Context(), map[string]HTTPCredential{
+				"http://" + authority: plain,
+				"git.example.org":     {Username: "git", Token: "fake-secure-token"},
+			}), repoURL)
+			if selected, endpoint, _ := httpCredentialForCommand(ctx, []string{"push", "origin", "HEAD:refs/heads/verification"}); endpoint.URL()+"/team/code.git" != repoURL || selected.Token != plain.Token {
+				t.Fatal("the push refspec replaced the repository endpoint")
+			}
+			cmd := command(ctx, t.TempDir(), nil, []string{"credential", "fill"})
+			cmd.Stdin = strings.NewReader("protocol=" + tc.protocol + "\nhost=" + tc.host + "\n\n")
+			out, err := cmd.CombinedOutput()
+			if tc.want && (err != nil || !strings.Contains(string(out), "password=fake-plaintext-token")) {
+				t.Fatalf("expected the scoped HTTP credential, git reported %v", err)
+			}
+			if !tc.want && (err == nil || strings.Contains(string(out), "password=")) {
+				t.Fatal("credential escaped its approved endpoint")
+			}
+		})
 	}
 }

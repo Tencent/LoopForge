@@ -68,12 +68,23 @@ func gitCredentialMain(args []string, in io.Reader, out, errOut io.Writer) int {
 		return 2
 	}
 	attrs := readGitCredentialAttrs(in)
-	if args[0] != "get" || attrs["protocol"] != "https" || attrs["host"] == "" {
+	protocol := attrs["protocol"]
+	if args[0] != "get" || attrs["host"] == "" || (protocol != "https" && protocol != "http") {
 		return 0
+	}
+	if protocol == "http" {
+		scope, ok := gitwork.GitCredentialScope(protocol, attrs["host"])
+		if !ok || !strings.Contains(","+os.Getenv(GitHostsEnv)+",", ","+scope+"=other,") {
+			return 0
+		}
+		if !gitwork.SupportsHTTPAddressPinning() {
+			fmt.Fprintln(errOut, "agentflow: plaintext Git requires http.curloptResolve")
+			return 0
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	reply, err := requestGitCredential(ctx, attrs["protocol"], attrs["host"], "git")
+	reply, err := requestGitCredential(ctx, protocol, attrs["host"], "git")
 	if err != nil {
 		fmt.Fprintln(errOut, "agentflow: "+err.Error())
 		return 0

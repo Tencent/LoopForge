@@ -300,7 +300,7 @@ test('platform admins share a CodeBuddy key limited to the models they pick', as
   assert.equal(app.evaluate(`state.data.sponsoredModel`), 'deepseek-v4.1-flash');
 });
 
-test('platform admins authorize HTTPS addresses in the Git host trust tab', async (t) => {
+test('platform admins authorize HTTPS and HTTP separately in the Git host trust tab', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const endpoint = '/api/platform/git-https-hosts';
@@ -312,6 +312,11 @@ test('platform admins authorize HTTPS addresses in the Git host trust tab', asyn
   const path = `${endpoint}/${encodeURIComponent(proposed.host)}`;
   app.router.put(path, { ...updated, revision: 'second' });
   app.router.delete(path, null, 204);
+  const plainEndpoint = '/api/platform/git-http-hosts';
+  const plain = { host: '192.0.2.13:8080', platform: 'other', addresses: ['192.0.2.13'] };
+  app.router.get(plainEndpoint, []);
+  app.router.post(`${plainEndpoint}/preview`, plain);
+  app.router.post(plainEndpoint, { ...plain, revision: 'plain' }, 201);
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}; renderPlatformAdminPanel()`);
   const trustTab = app.document.querySelector('[data-platform-tab="gitHostTrust"]');
   trustTab.click();
@@ -366,5 +371,19 @@ test('platform admins authorize HTTPS addresses in the Git host trust tab', asyn
   await settle();
   const revoke = app.router.calls.find(call => call.method === 'DELETE' && call.path === path);
   assert.equal(new Headers(revoke.options.headers).get('If-Match'), '"second"');
+  assert.equal(card.querySelector('[data-https-host-remove]'), null);
+
+  const plainCard = panel.querySelector('#platformHTTPHostTrustCard');
+  plainCard.querySelector('[data-https-host-add]').click();
+  const plainForm = plainCard.querySelector('form');
+  assert.equal(plainForm.elements.platform.closest('label').hidden, true);
+  plainForm.elements.host.value = `http://${plain.host}`;
+  plainForm.querySelector('button[type="submit"]').click();
+  await settle();
+  assert.match(app.document.querySelector('#confirmMessage').textContent, /http:\/\/192\.0\.2\.13:8080/);
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle();
+  assert.deepEqual(app.router.calls.find(call => call.method === 'POST' && call.path === plainEndpoint).body, plain);
+  assert.match(plainCard.querySelector('[data-https-host-list]').textContent, /http:\/\/192\.0\.2\.13:8080/);
   assert.equal(card.querySelector('[data-https-host-remove]'), null);
 });

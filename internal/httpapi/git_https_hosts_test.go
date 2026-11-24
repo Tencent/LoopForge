@@ -53,7 +53,7 @@ func TestPlatformGitHTTPSHostAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Request = authedRequest(t, httptest.NewRequest(http.MethodPost, path+"/preview", bytes.NewReader(raw)), admin.user)
-	previewHandler := &httpsHostTrustHandlers{
+	previewHandler := &gitHTTPHostTrustHandlers{
 		deps: &deps{repo: admin.s},
 		lookupIP: func(_ context.Context, network, name string) ([]netip.Addr, error) {
 			if network != "ip" || name != "gitlab.example.org" {

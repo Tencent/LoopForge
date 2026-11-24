@@ -94,8 +94,8 @@ test('an authorized IPv6 HTTPS instance needs only a personal token', async (t) 
   const endpoint = '/api/users/1/git-http-credentials';
   const instance = { host: '[fd00::2]:8443', platform: 'gitlab' };
   assert.equal(app.evaluate("LoopForgeGitHTTPSHost('FD00::0443')"), '[fd00::443]');
-  assert.equal(app.evaluate("LoopForgeGitHTTPS('https://[FD00:0::2]:8443/team/app.git').host"), instance.host);
-  assert.equal(app.evaluate("LoopForgeGitHTTPS('https://[::ffff:10.0.0.1]/team/app.git')"), null);
+  assert.equal(app.evaluate("LoopForgeGitHTTPRepository('https://[FD00:0::2]:8443/team/app.git').host"), instance.host);
+  assert.equal(app.evaluate("LoopForgeGitHTTPRepository('https://[::ffff:10.0.0.1]/team/app.git')"), null);
   app.router.get('/api/git-https-hosts', [instance]);
   app.router.get(endpoint, []);
   app.router.put(endpoint, [{ ...instance, id: 'instance-token', name: instance.host }]);
@@ -122,4 +122,42 @@ test('an authorized IPv6 HTTPS instance needs only a personal token', async (t) 
   assert.deepEqual(save.body, { ...instance, name: instance.host, token: 'test-only-token' });
   assert.equal(form.hidden, true);
   assert.equal(form.elements.token.value, '');
+});
+
+test('generic HTTP credentials select the authorized endpoint and check a repository URL', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const endpoint = '/api/users/1/git-http-credentials';
+  const instance = {host:'http://192.0.2.13:8080', platform:'other'};
+  const remote = instance.host + '/team/app.git';
+  assert.equal(app.evaluate(`LoopForgeGitHTTPRepository(${JSON.stringify(remote)}).host`), instance.host);
+  assert.equal(app.evaluate("parseGongfengRepoURL('http://github.com/team/app.git').provider"), 'http');
+  assert.equal(app.evaluate("LoopForgeGitHTTPRepository('http://0x7f000001/team/app.git')"), null);
+  app.router.get('/api/git-http-hosts', [instance]);
+  app.router.get(endpoint, []);
+  app.router.put(endpoint, [{...instance, id:'plain-token', name:'HTTP instance', username:'git-user'}]);
+  app.router.post(`${endpoint}/plain-token/verify`, {valid:false, repositoryReadable:true});
+  app.evaluate(`
+    state.currentUser={...state.data.users[0],id:1,isGuest:false};
+    openGitHTTPCredentials({add:true});
+  `);
+  await settle(6);
+  const dialog = app.document.querySelector('#gitHTTPCredentialDialog');
+  const form = dialog.querySelector('form');
+  form.elements.instance.value = instance.host;
+  form.elements.instance.dispatchEvent(new app.window.Event('change', {bubbles:true}));
+  assert.equal(form.elements.username.closest('.credential-field').hidden, false);
+  form.elements.username.value = 'git-user';
+  form.elements.token.value = 'fixture-token';
+  form.dispatchEvent(new app.window.Event('submit', {bubbles:true, cancelable:true}));
+  await settle(6);
+  assert.deepEqual(app.router.calls.find(call => call.method === 'PUT' && call.path === endpoint).body,
+    {...instance, name:instance.host, username:'git-user', token:'fixture-token'});
+
+  dialog.querySelector('[data-http-cred-verify="plain-token"]').click();
+  app.document.querySelector('#confirmPromptInput').value = remote;
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle(6);
+  assert.deepEqual(app.router.calls.find(call => call.path === `${endpoint}/plain-token/verify`).body, {repoUrl:remote});
+  assert.match(dialog.querySelector('.git-ssh-status').textContent, /仓库可读/);
 });

@@ -75,6 +75,9 @@ describe("QuickAccessWizard", () => {
     expect(parseGongfengRepo("https://git.review.test:8443/acme/widgets", "git.review.test:8443")).toMatchObject({
       provider: "gongfeng", project: "acme/widgets", cloneUrl: "https://git.review.test:8443/acme/widgets.git",
     });
+    expect(parseGongfengRepo("http://git.review.test:8443/acme/widgets.git", "git.review.test:8443")).toMatchObject({
+      provider: "http", host: "http://git.review.test:8443", cloneUrl: "http://git.review.test:8443/acme/widgets.git",
+    });
     expect(parseGongfengRepo("https://github.com/acme/widgets")).toEqual({
       project: "github:acme/widgets",
       provider: "github",

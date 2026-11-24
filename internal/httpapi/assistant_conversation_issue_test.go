@@ -419,7 +419,7 @@ func TestTurnEndRegistersMergeRequestsOnOtherHosts(t *testing.T) {
 	}
 	gitHostClient = func(gitegress.HTTPSHostLookup) *http.Client { return srv.Client() }
 	t.Cleanup(func() { gitHostAPIBase, gitHostClient = base, client })
-	if err := st.CreatePlatformGitHTTPSHost(t.Context(), &repo.PlatformGitHTTPSHost{
+	if err := st.CreatePlatformGitHTTPHost(t.Context(), false, &repo.PlatformGitHTTPSHost{
 		Host: authorizedDNSHost, Platform: domain.GitPlatformGitLab, Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.10")},
 	}); err != nil {
 		t.Fatal(err)

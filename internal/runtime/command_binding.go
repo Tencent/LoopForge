@@ -366,11 +366,32 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 	}
 	// The empty helper entry drops every helper configured before it (system,
 	// global, repository), so a stored credential never answers instead.
-	environment["GIT_CONFIG_COUNT"] = "2"
 	environment["GIT_CONFIG_KEY_0"] = "credential.helper"
 	environment["GIT_CONFIG_VALUE_0"] = ""
 	environment["GIT_CONFIG_KEY_1"] = "credential.helper"
 	environment["GIT_CONFIG_VALUE_1"] = "!" + shellSingleQuote(helper) + " git-credential"
+	count := 2
+	for _, pair := range strings.Split(hosts, ",") {
+		host, _, _ := strings.Cut(pair, "=")
+		if !strings.HasPrefix(host, "http://") {
+			continue
+		}
+		endpoint, err := domain.ParseGitHTTPEndpoint(host)
+		if err != nil {
+			continue
+		}
+		approved := credentials.GitHTTPApprovedAddresses[host]
+		if len(approved) == 0 {
+			approved = credentials.GitHTTPCredentials[host].ApprovedAddresses
+		}
+		for _, entry := range gitwork.PlainHTTPConfig(endpoint, approved) {
+			index := strconv.Itoa(count)
+			environment["GIT_CONFIG_KEY_"+index] = entry.Key
+			environment["GIT_CONFIG_VALUE_"+index] = entry.Value
+			count++
+		}
+	}
+	environment["GIT_CONFIG_COUNT"] = strconv.Itoa(count)
 	environment[GitHostsEnv] = hosts
 	if sandboxDriver(sandbox) != "docker" {
 		base := environment["PATH"]
@@ -383,12 +404,12 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 }
 
 // workspaceGitHosts renders host→platform as the sorted "host=platform" list
-// of GitHostsEnv, skipping anything that is not a plain HTTPS host.
+// of GitHostsEnv, skipping anything that is not a canonical Git endpoint.
 func workspaceGitHosts(hosts map[string]string) string {
 	pairs := make([]string, 0, len(hosts))
 	for host, platform := range hosts {
-		scope, err := gitwork.HTTPSHostScope(host)
-		if err != nil || scope != host {
+		endpoint, err := domain.ParseGitHTTPEndpoint(host)
+		if err != nil || endpoint.Scope() != host {
 			continue
 		}
 		var ok bool

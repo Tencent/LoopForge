@@ -37,7 +37,7 @@ func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext)
 func withRunGitCredentials(ctx context.Context, credentials runtime.RunCredentials) context.Context {
 	hosts := map[string]gitwork.HTTPCredential{}
 	for host, credential := range credentials.GitHTTPCredentials {
-		hosts[host] = gitwork.HTTPCredential{Username: credential.GitUsername(), Token: credential.Token}
+		hosts[host] = gitwork.HTTPCredential{Username: credential.GitUsername(), Token: credential.Token, ApprovedAddresses: credential.ApprovedAddresses}
 	}
 	return gitwork.WithHTTPCredentials(ctx, hosts)
 }
@@ -53,7 +53,7 @@ func sshRepositoryURLs(repositories []domain.RepositoryContext) []string {
 }
 
 func cloneRemoteForGit(ctx context.Context, remote string) string {
-	// The command-scoped credential helper authenticates HTTPS. Keep tokens
+	// The command-scoped credential helper authenticates HTTP(S). Keep tokens
 	// out of clone arguments and the origin URL written by Git.
 	return remote
 }
@@ -124,7 +124,7 @@ var (
 	gitAuthFailure    = regexp.MustCompile(`(?i)could not read Username|Authentication failed|HTTP Basic: Access denied|requested URL returned error: 40[13]|Invalid username or password`)
 )
 
-const gitTokenFixHint = "请责任人到「个人配置 → Git 访问令牌」为仓库的准确主机配置 HTTPS 令牌，并填写该平台要求的用户名、确认仓库权限，然后重试本节点"
+const gitTokenFixHint = "请责任人到「个人配置 → Git 访问令牌」为仓库的协议、主机和端口配置令牌，并填写该平台要求的用户名、确认仓库权限，然后重试本节点"
 
 // explainGitAuthFailure says what to fix when git rejects the clone or push.
 // SOP runs use the responsible user's Git Token, which git's own

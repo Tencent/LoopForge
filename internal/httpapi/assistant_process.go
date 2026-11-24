@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -526,7 +527,7 @@ func waitConversationProcessStop(ctx context.Context, id string, call func(conte
 // bindWorkspaceGit gives the workspace CLI this turn's requester's Git
 // credentials, so the agent clones, pushes and calls the Git host itself.
 // Each turn starts its CLI again, so a shared conversation always runs with
-// the identity of whoever sent the current message. HTTPS tokens never travel
+// the identity of whoever sent the current message. Git tokens never travel
 // with the command: the helper fetches them from this turn's session, so a
 // removed token stops working at once.
 func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSession, command runtime.CommandSpec, credentials runtime.RunCredentials) (runtime.CommandSpec, runtime.RunCredentials) {
@@ -535,11 +536,27 @@ func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSe
 		return command, credentials
 	}
 	credentials.GitSSHHostKeys = h.repo.GitSSHKeysByHost(s.User.ID)
-	if hosts := h.repo.GitHTTPWorkspaceHosts(s.User.ID); len(hosts) > 0 {
+	hosts := h.repo.GitHTTPWorkspaceHosts(s.User.ID)
+	approved := map[string][]netip.Addr{}
+	for host := range hosts {
+		if strings.HasPrefix(host, "http://") {
+			addresses, err := h.repo.PlatformGitHTTPAddresses(ctx, host)
+			if err != nil || len(addresses) == 0 {
+				delete(hosts, host)
+			} else {
+				approved[host] = addresses
+			}
+		}
+	}
+	if len(hosts) > 0 {
 		if runner, ok := h.repo.Runner(s.ExecutionRunnerID); s.ExecutionRunnerID != "" && (!ok || !runner.SupportsGitHTTP()) {
-			assistantDiagnosticsFrom(ctx).platform("git.http_unavailable", fmt.Sprintf("执行机器需升级至 %s 才能在工作区使用 HTTPS Git 访问令牌", domain.RunnerVersionGitHTTP), s.User)
+			assistantDiagnosticsFrom(ctx).platform("git.http_unavailable", fmt.Sprintf("执行机器需升级至 %s 才能在工作区使用 Git 访问令牌", domain.RunnerVersionGitHTTP), s.User)
 		} else {
 			credentials.GitHTTPHosts = hosts
+			credentials.GitHTTPApprovedAddresses = approved
+			s.mu.Lock()
+			s.gitHTTPApprovedAddresses = approved
+			s.mu.Unlock()
 			command = runtime.WithCommandEnvironment(command, map[string]string{runtime.SessionGatewayEnv: agentToolMCPURL(s.Token)})
 		}
 	}

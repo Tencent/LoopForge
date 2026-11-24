@@ -1830,13 +1830,14 @@ function renderPlatformAdminPanel(){
     </div>
     `)}
     ${platformTabPanel('sharedKey',tab,platformSharedKeyHTML())}
-    ${platformTabPanel('gitHostTrust',tab,platformSSHHostTrustHTML()+platformHTTPSHostTrustHTML())}
+    ${platformTabPanel('gitHostTrust',tab,platformSSHHostTrustHTML()+platformHTTPHostTrustHTML('https')+platformHTTPHostTrustHTML('http'))}
   `;
   bindPlatformTabs(host);
   loadPlatformAccounts(host);
   loadPlatformSharedKey(host);
   loadPlatformSSHHosts(host);
-  loadPlatformHTTPSHosts(host);
+  loadPlatformHTTPHosts(host, 'https');
+  loadPlatformHTTPHosts(host, 'http');
   loadPlatformAdmins(host);
 }
 

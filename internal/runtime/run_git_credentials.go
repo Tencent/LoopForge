@@ -31,12 +31,10 @@ func prepareRunGitBinding(ctx context.Context, sandbox Sandbox, command CommandS
 	if !command.PrivateHome && command.environment["HOME"] == "" {
 		command.PrivateHome = true
 	}
-	hosts := map[string]string{}
+	hosts := runGitHosts(credentials)
 	secrets := map[string]domain.GitHTTPExecutionCredential{}
-	for host, credential := range credentials.GitHTTPCredentials {
-		if credential.Token != "" {
-			hosts[host], secrets[host] = credential.Platform, credential
-		}
+	for host := range hosts {
+		secrets[host] = credentials.GitHTTPCredentials[host]
 	}
 	// Keep BindGit distinct from conversation BindGitWorkspace: SOP SSH
 	// credentials are keyed by the frozen remote, rather than by host.
@@ -57,8 +55,8 @@ func prepareRunGitBinding(ctx context.Context, sandbox Sandbox, command CommandS
 			Params struct{ Protocol, Host string } `json:"params"`
 		}
 		result := gitCredentialReply{}
-		if len(raw) <= 4096 && json.Unmarshal(raw, &request) == nil && request.Method == gitCredentialMethod && request.Params.Protocol == "https" {
-			if host, err := gitwork.HTTPSHostScope(request.Params.Host); err == nil && ctx.Err() == nil {
+		if len(raw) <= 4096 && json.Unmarshal(raw, &request) == nil && request.Method == gitCredentialMethod {
+			if host, ok := gitwork.GitCredentialScope(request.Params.Protocol, request.Params.Host); ok && ctx.Err() == nil {
 				if credential, ok := secrets[host]; ok {
 					result = gitCredentialReply{Username: credential.GitUsername(), Password: credential.Token, Platform: credential.Platform}
 					if !credential.ExpiresAt.IsZero() {
@@ -96,7 +94,7 @@ func RunGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, c
 	return env, closeRelay, nil
 }
 
-var workspaceGitSecretEnvironment = []string{"AGENTFLOW_GIT_TOKEN", "AGENTFLOW_GIT_HTTP_USER", "AGENTFLOW_GIT_HTTP_PASSWORD", "AGENTFLOW_GIT_HTTP_HOST", "AGENTFLOW_GIT_HTTP_URL_HOST", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN", "TEA_TOKEN", "CNB_TOKEN", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_CONFIG_PARAMETERS"}
+var workspaceGitSecretEnvironment = []string{"AGENTFLOW_GIT_TOKEN", "AGENTFLOW_GIT_HTTP_USER", "AGENTFLOW_GIT_HTTP_PASSWORD", "AGENTFLOW_GIT_HTTP_HOST", "AGENTFLOW_GIT_HTTP_URL_HOST", "AGENTFLOW_GIT_HTTP_SCHEME", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN", "TEA_TOKEN", "CNB_TOKEN", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_CONFIG_PARAMETERS"}
 
 func scrubRunGitCredentials(ctx context.Context, sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) {
 	home := command.environment["HOME"]
@@ -113,7 +111,7 @@ func scrubRunGitCredentials(ctx context.Context, sandbox Sandbox, workspace stri
 func runGitHosts(credentials RunCredentials) map[string]string {
 	hosts := map[string]string{}
 	for host, credential := range credentials.GitHTTPCredentials {
-		if credential.Token != "" {
+		if credential.Token != "" && (!strings.HasPrefix(host, "http://") || len(credential.ApprovedAddresses) != 0) {
 			hosts[host] = credential.Platform
 		}
 	}

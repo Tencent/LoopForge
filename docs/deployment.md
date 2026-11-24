@@ -134,6 +134,14 @@ The platform checks the approved addresses before dialing for token verification
 
 When migrating a host from deployment CIDRs, include every IP the platform should be able to reach in the authorization. To rotate an address, edit the saved list and review the added and removed addresses before confirming.
 
+### Git repositories over HTTP
+
+In **Platform administration → Git Host Trust**, explicitly authorize the HTTP instance and its IP addresses. This accepts hostnames and literal IP addresses, such as `http://git.example.org:8080`, `http://10.0.0.5:8080` or `http://[fd00::2]:8080`. HTTP sends credentials in cleartext, so use it on a trusted network.
+
+Under **Personal settings → Git access tokens**, select the authorized HTTP instance and enter your token and the server's Git authentication username if required. Add the repository using its `http://` clone URL. **Check repository access** runs `git ls-remote` against a repository at that exact endpoint. A successful check confirms read access. A push also requires a server that accepts pushes and credentials with write access.
+
+HTTP and HTTPS have separate authorizations and personal credentials. When using a plaintext token, managed Git pins the approved addresses and disables redirects and proxies. Use an updated Runner and a Git installation that supports `http.curloptResolve` on each machine or sandbox that runs Git. The Git transport supports generic repositories. PR and MR APIs depend on the hosting provider.
+
 ### Git repositories over SSH
 
 Use Git SSH for GitLab.com, self-managed GitLab, Gitea, Gogs, GitHub, and other Git hosts that offer this transport. In **Project settings → Code repositories** or **Quick access**, enter the clone address, such as `git@gitlab.com:group/repo.git` or `ssh://git@git.example.org:2222/group/repo.git`, and select the existing default branch. GitHub HTTPS continues to use GitHub authorization or a PAT.

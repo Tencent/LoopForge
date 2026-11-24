@@ -78,8 +78,18 @@ func Watch(ctx context.Context, workspace string, opts procwatch.Options, args .
 
 func command(ctx context.Context, workspace string, sshEnv map[string]string, args []string) *exec.Cmd {
 	dir := CommandDir(workspace)
-	credential, host, urlHost := httpCredentialForCommand(ctx, args)
+	credential, endpoint, urlHost := httpCredentialForCommand(ctx, args)
+	var pinned []HTTPConfigEntry
+	if endpoint.Scheme == "http" && credential.Token != "" {
+		pinned = PlainHTTPConfig(endpoint, credential.ApprovedAddresses)
+		if len(pinned) == 0 || !SupportsHTTPAddressPinning() {
+			credential = HTTPCredential{}
+		}
+	}
 	authArgs := scopedHTTPAuthArgs(credential)
+	for _, entry := range pinned {
+		authArgs = append(authArgs, "-c", entry.Key+"="+entry.Value)
+	}
 	cmd := exec.CommandContext(ctx, "git", append(authArgs, args...)...)
 	cmd.Dir = dir
 	cmd.Env = WithEnvValue(Env(""), "PWD", dir)
@@ -87,8 +97,9 @@ func command(ctx context.Context, workspace string, sshEnv map[string]string, ar
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_GLOBAL", os.DevNull)
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_NOSYSTEM", "1")
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_PARAMETERS", "")
-		cmd.Env = WithEnvValue(cmd.Env, gitHTTPHostEnv, host)
+		cmd.Env = WithEnvValue(cmd.Env, gitHTTPHostEnv, endpoint.Authority)
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPURLHostEnv, urlHost)
+		cmd.Env = WithEnvValue(cmd.Env, gitHTTPSchemeEnv, endpoint.Scheme)
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPUserEnv, credential.Username)
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPPassEnv, credential.Token)
 	}

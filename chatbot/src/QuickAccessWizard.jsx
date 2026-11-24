@@ -562,11 +562,14 @@ function parseGitHubRepo(raw) {
   };
 }
 
-// Explicit SSH keeps its transport. Managed HTTPS links use the configured host.
+// Explicit SSH and HTTP keep their transport. Managed HTTPS uses the configured host.
 export function parseGongfengRepo(raw, host = "") {
+  if (/^(?:git clone\s+)?http:\/\//i.test(String(raw || "").trim())) {
+    return globalThis.LoopForgeGitHTTPRepository(raw);
+  }
   return globalThis.LoopForgeGitSSH(raw) ||
     globalThis.LoopForgeGongfengRepository(raw, host) ||
-    globalThis.LoopForgeGitHTTPS(raw) ||
+    globalThis.LoopForgeGitHTTPRepository(raw) ||
     parseGitHubRepo(raw);
 }
 
@@ -1080,7 +1083,7 @@ export default function QuickAccessWizard({
   );
   const gitAccess = (repo) => {
     if (repo?.provider === "ssh") return { label: "Git SSH", ready: hasSSHKey(repo) };
-    if (repo?.provider === "https") return { label: "Git HTTPS", ready: gitHttpHosts.includes(repo.host) };
+    if (["http", "https"].includes(repo?.provider)) return { label: `Git ${repo.provider.toUpperCase()}`, ready: gitHttpHosts.includes(repo.host) };
     if (repo?.provider === "github") return { label: "GitHub", ready: gitHubReady };
     if (repo?.provider === "gongfeng") return { label: "工蜂", ready: gongfengReady };
     return { label: "Git", ready: hasGit };
@@ -1178,7 +1181,7 @@ export default function QuickAccessWizard({
       }
       if (bindRepoNow && repoUrl.trim() && !parsedRepo) {
         setError(
-          "请输入 Git HTTPS 仓库链接或 Git SSH 克隆地址。",
+          "请输入 Git HTTP(S) 仓库链接或 Git SSH 克隆地址。",
         );
         return;
       }
@@ -1236,7 +1239,7 @@ export default function QuickAccessWizard({
         const existingRepo = (repositories || []).find(
           (repo) =>
             repo.projectId === targetProject.id &&
-            (["ssh", "https"].includes(parsedRepo.provider)
+            (["ssh", "http", "https"].includes(parsedRepo.provider)
               ? repo.cloneUrl === parsedRepo.cloneUrl
               : repo.gongfengProjectId === parsedRepo.project ||
                 repo.webUrl === parsedRepo.webUrl),
@@ -1868,7 +1871,7 @@ export default function QuickAccessWizard({
                                   ? "旧项目可直接追加新仓库，复用已有流程与角色；留空则沿用现有仓库"
                                   : "沿用项目现有仓库与流程"
                                 : bindRepoNow
-                                  ? "粘贴 Git HTTPS 链接或 Git SSH 地址，自动设为项目默认仓库"
+                                  ? "粘贴 Git HTTP(S) 链接或 Git SSH 地址，自动设为项目默认仓库"
                                   : "已跳过，可在派发需求或项目配置中再绑定"}
                             </span>
                           </div>
@@ -1925,7 +1928,7 @@ export default function QuickAccessWizard({
                                     {projectMode === "existing" &&
                                     projectRepos.length
                                       ? "新增仓库地址（可选）"
-                                      : "Git HTTPS 链接或 Git SSH 地址"}
+                                      : "Git HTTP(S) 链接或 Git SSH 地址"}
                                   </span>
                                   <input
                                     className="qa-input qa-mono"
@@ -1972,7 +1975,7 @@ export default function QuickAccessWizard({
                                 </p>
                               ) : (
                                 <p key="help" className="qa-hint">
-                                  支持 Git HTTPS 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>。
+                                  支持 Git HTTP(S) 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>。
                                 </p>
                               )}
                               {selectedRepo?.provider === "ssh" && sshKeysLoaded && !repoAccess.ready ? (

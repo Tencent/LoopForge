@@ -544,13 +544,14 @@ function issueFromForm(){
 // repoDisplayPath shows host/path for a parsed repository, e.g. github.com/owner/name.
 function repoDisplayPath(info,fallback=''){return info?.provider==='ssh'?(info.project||info.cloneUrl||fallback):info?.webUrl?String(info.webUrl).replace(/^https?:\/\//,''):String(fallback||'')}
 function repoProviderLabel(info){
-  const labels={ssh:'Git SSH',https:'Git HTTPS',github:'GitHub',gongfeng:'工蜂'};
+  const labels={ssh:'Git SSH',http:'Git HTTP',https:'Git HTTPS',github:'GitHub',gongfeng:'工蜂'};
   return labels[info?.provider]||'Git';
 }
 function parseGongfengRepoURL(raw){
   const sshInfo=globalThis.LoopForgeGitSSH?.(raw);if(sshInfo)return sshInfo;
+  if(/^(?:git clone\s+)?http:\/\//i.test(String(raw||'').trim()))return globalThis.LoopForgeGitHTTPRepository?.(raw)||null;
   const managed=globalThis.LoopForgeGongfengRepository?.(raw,state.data?.gongfengHost);if(managed)return managed;
-  const httpsInfo=globalThis.LoopForgeGitHTTPS?.(raw);if(httpsInfo)return httpsInfo;
+  const httpInfo=globalThis.LoopForgeGitHTTPRepository?.(raw);if(httpInfo)return httpInfo;
   let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com(?::22)?\/)/,'https://github.com/');
   if(publicURL.startsWith('github.com/'))publicURL='https://'+publicURL;
   try{const u=new URL(publicURL);if(u.hostname==='github.com'&&!u.username&&!u.password&&['http:','https:'].includes(u.protocol)){const parts=u.pathname.split('/').filter(Boolean),owner=parts[0],name=(parts[1]||'').replace(/\.git$/,'');if(parts.length>=2&&/^[A-Za-z0-9_.-]+$/.test(owner)&&/^[A-Za-z0-9_.-]+$/.test(name)&&!['.','..'].includes(owner)&&!['.','..'].includes(name))return {project:'github:'+owner+'/'+name,name,webUrl:'https://github.com/'+owner+'/'+name,cloneUrl:'https://github.com/'+owner+'/'+name+'.git',provider:'github'}}}catch(_){}
@@ -561,7 +562,7 @@ function parseGongfengRepoURL(raw){
 function fillRepositoryFromLink(url,fill){
   const info=parseGongfengRepoURL(url);
   if(!info)return false;
-  fill.gongfengProjectId=['ssh','https'].includes(info.provider)?'':info.project;
+  fill.gongfengProjectId=['ssh','http','https'].includes(info.provider)?'':info.project;
   if(!String(fill.name||'').trim())fill.name=info.name;
   fill.webUrl=info.provider==='ssh'&&fill.cloneUrl===info.cloneUrl?fill.webUrl:info.webUrl;
   fill.cloneUrl=info.cloneUrl;
