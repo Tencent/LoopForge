@@ -165,22 +165,26 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 		return fmt.Errorf("node is not waiting for approval")
 	}
 	wf := workflowForRun(e.repo, r)
-	var definition *domain.WorkflowNode
-	for i := range wf.Nodes {
-		if wf.Nodes[i].ID == nodeID {
-			definition = &wf.Nodes[i]
-			break
-		}
-	}
-	if definition == nil {
-		return fmt.Errorf("approval node definition not found")
-	}
 	var routeDecision *domain.RouteDecision
 	if n.GateResult != nil {
-		var err error
-		routeDecision, err = decideRoute(wf, *definition, n.GateResult.Route, routingArtifactsForNode(r, nodeID))
-		if err != nil {
-			return err
+		if n.RouteDecision != nil {
+			routeDecision = n.RouteDecision
+		} else {
+			var definition *domain.WorkflowNode
+			for i := range wf.Nodes {
+				if wf.Nodes[i].ID == nodeID {
+					definition = &wf.Nodes[i]
+					break
+				}
+			}
+			if definition == nil {
+				return fmt.Errorf("approval node definition not found")
+			}
+			var err error
+			routeDecision, err = decideRoute(wf, *definition, n.GateResult.Route, routingArtifactsForNode(r, nodeID))
+			if err != nil {
+				return err
+			}
 		}
 	}
 	n.Status = "succeeded"

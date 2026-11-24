@@ -74,7 +74,7 @@ test('flow node metadata, properties, artifact editors, menus, and edge deletion
   assert.match(app.document.querySelector('#properties').textContent, /Agent|角色|节点/);
 });
 
-test('approval nodes do not expose conditional routing configuration', async (t) => {
+test('approval nodes expose join rules without conditional edge configuration', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`
@@ -89,6 +89,7 @@ test('approval nodes do not expose conditional routing configuration', async (t)
       sandboxProfileId:state.data.sandboxes[0]?.id||'local'};
     state.selectedNode='gate';renderCanvas();renderProperties();
   `);
-  assert.equal(app.document.querySelector('#properties').textContent.includes('分支与汇合'), false);
+  assert.equal(app.document.querySelector('#properties').textContent.includes('分支与汇合'), true);
+  assert.ok(app.document.querySelector('#properties [data-p="joinRule"]'));
   assert.equal(app.document.querySelector('[data-route-edge]'), null);
 });

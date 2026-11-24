@@ -84,7 +84,7 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	for id, nodeRun := range run.Nodes {
 		prompt = strings.ReplaceAll(prompt, "{{node."+id+".output}}", nodeRun.Output)
 	}
-	for _, artifact := range run.Artifacts {
+	for _, artifact := range activeRoutingArtifacts(run) {
 		prompt = strings.ReplaceAll(prompt, "{{artifact."+artifact.NodeID+"."+artifact.Name+"}}", artifactPromptBody(artifact))
 	}
 	if handoff := run.WorkflowSnapshot.GroupSOPHandoff; handoff != nil && wf.CollaborationMode != "group" {

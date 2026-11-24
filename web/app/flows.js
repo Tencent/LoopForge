@@ -219,7 +219,10 @@ function removeNode(id){
   flowHistory.record();
   wf.nodes=wf.nodes.filter(x=>x.id!==id);
   wf.edges=wf.edges.filter(e=>e.source!==id&&e.target!==id);
-  wf.nodes.forEach(x=>{if(x.rejectTo===id){x.rejectTo='';x.onFailure='fail'}});
+  wf.nodes.forEach(x=>{
+    if(x.rejectTo===id){x.rejectTo='';x.onFailure='fail'}
+    if(x.defaultTarget===id)x.defaultTarget='';
+  });
   if(isPreviewBuildNode(id)&&wf.preview)delete wf.preview;
   if(state.selectedNode===id)state.selectedNode=null;
   if(state.renamingNode===id)state.renamingNode=null;
@@ -527,6 +530,8 @@ async function deleteEdgeById(id){
   if(flowReadOnly())return toast(flowReadOnlyReason());
   flowHistory.record();
   state.workflow.edges=state.workflow.edges.filter(x=>x.id!==id);
+  const source=state.workflow.nodes.find(n=>n.id===edge.source);
+  if(source?.defaultTarget===edge.target)source.defaultTarget='';
   dirty();renderCanvas();renderProperties();flowToast('已删除连线',{undo:true});
 }
 async function deleteRejectEdgeByNodeId(nodeId){
@@ -1044,10 +1049,8 @@ function flowHasConditionalAncestor(id,edges,seen=new Set()){
   if(seen.has(id))return false;seen.add(id);return edges.some(e=>e.target===id&&(e.condition||flowHasConditionalAncestor(e.source,edges,seen)));
 }
 function flowRoutingPane(n){
-  // Approval nodes only pause for a human decision. They cannot evaluate
-  // route/artifact conditions, so do not expose a routing editor for them.
-  if(n.type==='approval')return '';
-  const outgoing=(state.workflow.edges||[]).filter(e=>e.source===n.id);
+  const approval=n.type==='approval';
+  const outgoing=approval?[]:(state.workflow.edges||[]).filter(e=>e.source===n.id);
   const incoming=(state.workflow.edges||[]).filter(e=>e.target===n.id);
   const warning=incoming.length>1&&(!n.joinRule||n.joinRule==='all_success')&&flowHasConditionalAncestor(n.id,state.workflow.edges||[])?'<p class="prop-hint">此节点汇合条件分支；默认规则会在任一上游跳过时跳过本节点。</p>':'';
   const byId=new Map(state.workflow.nodes.map(x=>[x.id,x]));

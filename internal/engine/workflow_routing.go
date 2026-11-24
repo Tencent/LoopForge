@@ -61,21 +61,17 @@ func routeEdgeSelected(decision *domain.RouteDecision, edge domain.WorkflowEdge,
 	return decision.SelectedEdges[routeEdgeKey(edge, index)]
 }
 
-// routingArtifactsForNode includes the current node's artifacts while it is
-// waiting for human approval. They are intentionally excluded from the normal
-// active set until the approval commits the node outcome.
+// routingArtifactsForNode returns only artifacts produced by this node's
+// current attempt. Approval-time reconstruction must not inspect an upstream
+// artifact with the same name.
 func routingArtifactsForNode(run domain.Run, nodeID string) []domain.Artifact {
-	artifacts := activeRoutingArtifacts(run)
 	nr := run.Nodes[nodeID]
 	if nr == nil {
-		return artifacts
+		return nil
 	}
-	seen := make(map[string]bool, len(artifacts))
-	for _, artifact := range artifacts {
-		seen[artifact.ID] = true
-	}
+	artifacts := make([]domain.Artifact, 0)
 	for _, artifact := range run.Artifacts {
-		if artifact.NodeID == nodeID && artifact.Attempt == nr.Attempt && !seen[artifact.ID] {
+		if artifact.NodeID == nodeID && artifact.Attempt == nr.Attempt {
 			artifacts = append(artifacts, artifact)
 		}
 	}
