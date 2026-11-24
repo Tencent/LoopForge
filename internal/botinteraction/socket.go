@@ -16,6 +16,26 @@ import (
 
 type ReplyError struct{ Code int }
 
+// sendPhase records how far a request got, which decides whether delivery is
+// provably absent (before write) or unknown (written, receipt not observed).
+type sendPhase int
+
+const (
+	phaseBeforeWrite sendPhase = iota
+	phaseWrite
+	phaseAwaitAck
+)
+
+// sendError keeps the original user-facing message and unwraps to the cause,
+// so callers using errors.Is(err, context.Canceled) keep working.
+type sendError struct {
+	phase sendPhase
+	err   error
+}
+
+func (e *sendError) Error() string { return e.err.Error() }
+func (e *sendError) Unwrap() error { return e.err }
+
 func (e *ReplyError) Error() string {
 	return "企业微信拒绝了这次回复，请检查接收会话和 Bot 授权"
 }
@@ -53,8 +73,12 @@ type Incoming struct {
 		Key               string `json:"event_key"`
 		TaskID            string `json:"task_id"`
 		TemplateCardEvent struct {
-			Key    string `json:"event_key"`
-			TaskID string `json:"task_id"`
+			Key           string `json:"event_key"`
+			TaskID        string `json:"task_id"`
+			CardType      string `json:"card_type"`
+			SelectedItems struct {
+				SelectedItem []wecomSelectedItem `json:"selected_item"`
+			} `json:"selected_items"`
 		} `json:"template_card_event"`
 	} `json:"event"`
 }
@@ -149,7 +173,7 @@ func dial(ctx context.Context, url, botID, secret string, onFrame func(*socket, 
 func (s *socket) close() { s.cancel(); s.conn.Close() }
 func (s *socket) request(ctx context.Context, cmd, id string, body any) error {
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return &sendError{phase: phaseBeforeWrite, err: ctx.Err()}
 	}
 	if id == "" {
 		id = randomID()
@@ -158,7 +182,7 @@ func (s *socket) request(ctx context.Context, cmd, id string, body any) error {
 	s.mu.Lock()
 	if _, exists := s.pending[id]; exists {
 		s.mu.Unlock()
-		return errors.New("相同回复仍在等待回执")
+		return &sendError{phase: phaseBeforeWrite, err: errors.New("相同回复仍在等待回执")}
 	}
 	s.pending[id] = ack
 	s.mu.Unlock()
@@ -172,7 +196,8 @@ func (s *socket) request(ctx context.Context, cmd, id string, body any) error {
 	err := s.conn.WriteJSON(payload)
 	s.writeMu.Unlock()
 	if err != nil {
-		return errors.New("企业微信回复连接中断")
+		// A failed write may still have flushed part or all of the frame.
+		return &sendError{phase: phaseWrite, err: errors.New("企业微信回复连接中断")}
 	}
 	timer := time.NewTimer(10 * time.Second)
 	defer timer.Stop()
@@ -183,11 +208,11 @@ func (s *socket) request(ctx context.Context, cmd, id string, body any) error {
 		}
 		return nil
 	case <-timer.C:
-		return errors.New("企业微信回复回执超时")
+		return &sendError{phase: phaseAwaitAck, err: errors.New("企业微信回复回执超时")}
 	case <-ctx.Done():
-		return ctx.Err()
+		return &sendError{phase: phaseAwaitAck, err: ctx.Err()}
 	case <-s.done:
-		return errors.New("企业微信连接已关闭")
+		return &sendError{phase: phaseAwaitAck, err: errors.New("企业微信连接已关闭")}
 	}
 }
 func (s *socket) send(ctx context.Context, chatID, text string) error {

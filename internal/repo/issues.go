@@ -374,6 +374,14 @@ func (r *IssuesRepo) ResponsibleUser(issue domain.Issue) (domain.User, error) {
 }
 
 // projectWorkflowID returns the project's configured default SOP.
+// DefaultIssueWorkflow returns the SOP a new issue of the project would be
+// bound to when it is saved without one (see bindDefaultWorkflow).
+func (r *IssuesRepo) DefaultIssueWorkflow(projectID, source, kind string) string {
+	v := domain.Issue{ProjectID: projectID, Source: source, Kind: kind}
+	bindDefaultWorkflow(&v, r.projectWorkflowID(projectID), r.projectIssueWorkflowID(projectID))
+	return v.WorkflowID
+}
+
 func (r *IssuesRepo) projectWorkflowID(projectID string) string {
 	if strings.TrimSpace(projectID) == "" {
 		return ""
