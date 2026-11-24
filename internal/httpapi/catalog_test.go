@@ -953,3 +953,42 @@ func TestExecutorModelsConfiguredMatchesRunTimeCredentials(t *testing.T) {
 		}
 	}
 }
+
+// Without a default machine a project SOP runs on a cloud pool runner with
+// that runner's account login, so the picker offers those CLIs too.
+func TestExecutorModelsConfiguredFollowsTheCloudPool(t *testing.T) {
+	assistant, _ := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	st := assistant.repo
+	if err := st.PutUser(domain.User{LoginName: "picker-pool"}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := st.UserByLoginName("picker-pool")
+	for _, id := range []string{"pool-project", "plain-project"} {
+		if err := st.PutProject(domain.Project{ID: id, Name: id, OwnerID: user.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PutRunner(domain.Runner{ID: "pool-machine", Status: domain.RunnerStatusOnline, RunnerVersion: "99.0.0",
+		Labels: []string{"pool"}, Runtimes: []domain.RunnerRuntime{
+			{Provider: assistantEngineCodex, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	runs := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	runs.ConfigureCloudRunnerPool(engine.CloudRunnerPool{Label: "pool", Projects: []string{"pool-project"}})
+	assistant.deps.engine = runs
+	handler := &catalogHandlers{deps: assistant.deps}
+	for query, want := range map[string]bool{"": false, "?projectId=pool-project": true, "?projectId=plain-project": false} {
+		c, rec := workbenchContext(user, http.MethodGet, "/api/executor-models"+query, &bytes.Buffer{})
+		handler.executorModels(c)
+		var catalogs map[string]map[string]any
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalogs) != nil {
+			t.Fatalf("executor models%s: %d %s", query, rec.Code, rec.Body)
+		}
+		if catalogs["codex"]["configured"] != want || catalogs["codex"]["personal"] != false || catalogs["claude"]["configured"] != false {
+			t.Errorf("cloud pool%s: codex=%v/%v claude=%v, want codex configured=%t", query,
+				catalogs["codex"]["configured"], catalogs["codex"]["personal"], catalogs["claude"]["configured"], want)
+		}
+	}
+}

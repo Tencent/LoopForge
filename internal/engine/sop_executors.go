@@ -50,6 +50,41 @@ func ExecutorCredentials(s *repo.Store, userID int64, projectID string) func(kin
 	return newSOPExecutorAccess(s, domain.TelemetryContext{ResponsibleUserID: userID, ProjectID: projectID, ExecutionRunnerID: runnerID}).hasCredential
 }
 
+// ExecutorCredentials also follows the cloud runner pool: a user without a
+// default machine runs on a pool runner, like selectSOPExecutionTarget picks.
+// The pick is random, so a CLI counts when any online pool runner logs it in;
+// the run-time check still verifies the machine it lands on.
+func (e *Engine) ExecutorCredentials(userID int64, projectID string) func(kind string) bool {
+	ec := domain.TelemetryContext{ResponsibleUserID: userID, ProjectID: projectID}
+	ec.ExecutionRunnerID = e.repo.ResolveRunnerDefaults(userID, projectID).Runner.ID
+	access := newSOPExecutorAccess(e.repo, ec)
+	if ec.ExecutionRunnerID != "" {
+		return access.hasCredential
+	}
+	e.mu.Lock()
+	pool := e.cloudPool
+	e.mu.Unlock()
+	if !pool.serves(projectID) {
+		return access.hasCredential
+	}
+	candidates := []sopExecutorAccess{access}
+	for _, runner := range e.eligiblePoolRunners(pool.Label) {
+		onRunner := access
+		onRunner.runner, onRunner.usesRunner = runner, true
+		onRunner.execution.ExecutionRunnerID = runner.ID
+		onRunner.execution.ExecutionPool = domain.ExecutionModeCloud
+		candidates = append(candidates, onRunner)
+	}
+	return func(kind string) bool {
+		for _, candidate := range candidates {
+			if candidate.hasCredential(kind) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 func sopRunnerAuthMode(ec domain.TelemetryContext, runner domain.Runner, provider string) string {
 	// A conversation allocated to a platform runner keeps using the
 	// responsible user's credentials when it hands off to an SOP.

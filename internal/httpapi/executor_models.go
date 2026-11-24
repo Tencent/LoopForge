@@ -236,7 +236,12 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 	}
 	// A project SOP runs on the caller's project default machine, so the
 	// picker resolves credentials against the same machine.
-	hasCredential := engine.ExecutorCredentials(h.repo, user.ID, strings.TrimSpace(c.Query("projectId")))
+	// Without a default machine the run goes to the cloud pool, if any.
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	hasCredential := engine.ExecutorCredentials(h.repo, user.ID, projectID)
+	if h.engine != nil {
+		hasCredential = h.engine.ExecutorCredentials(user.ID, projectID)
+	}
 	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
 		id := engine
 		if engine == assistantEngineClaude {
