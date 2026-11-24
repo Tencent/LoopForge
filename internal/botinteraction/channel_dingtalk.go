@@ -473,6 +473,7 @@ func dingtalkEvent(bot domain.NotificationBot, raw, frameID string, webhookAllow
 	if m.RobotCode != "" {
 		appID = m.RobotCode
 	}
+	senderName := []rune(strings.TrimSpace(m.SenderNick))
 	ev := InboundEvent{
 		Channel:   ChannelDingTalk,
 		AppID:     appID,
@@ -482,7 +483,7 @@ func dingtalkEvent(bot domain.NotificationBot, raw, frameID string, webhookAllow
 		SenderID:  m.SenderStaffId,
 		// DingTalk is the only channel whose message carries the sender's
 		// name; it is kept so audit trails can show a person.
-		SenderName: truncate(strings.TrimSpace(m.SenderNick), 191),
+		SenderName: string(senderName[:min(len(senderName), domain.BotSenderNameMaxRunes)]),
 		ChatID:     m.ConversationId,
 		MsgType:    m.Msgtype,
 	}

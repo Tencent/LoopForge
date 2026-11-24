@@ -309,6 +309,8 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		if found {
 			keepExistingTrackerBinding(&v, existing)
 		} else {
+			// Only the server records audit entries for a newly created issue.
+			v.Operations = nil
 			keepExistingTrackerBinding(&v, domain.Issue{})
 		}
 		if !found && !repo.IssueBoundToTracker(v) {

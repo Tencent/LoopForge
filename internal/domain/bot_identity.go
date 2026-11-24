@@ -2,6 +2,9 @@ package domain
 
 import "time"
 
+// BotSenderNameMaxRunes matches the sender_name column on bindings and interactions.
+const BotSenderNameMaxRunes = 191
+
 // BotUserBinding is scoped to the external Bot ID; do not assume user IDs
 // obtained from different enterprises or Bot namespaces are interchangeable.
 type BotUserBinding struct {

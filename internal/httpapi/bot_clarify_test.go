@@ -11,6 +11,7 @@ import (
 	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"agentflow/internal/tracker"
 )
 
 // clarifyChatFixture: a Feishu or DingTalk Bot of project LOOP with the
@@ -271,6 +272,57 @@ func TestChatClarificationInAGroup(t *testing.T) {
 	}
 	if _, ok := f.s.ActiveBotClarifySession(conv); ok {
 		t.Fatal("session still active after saving")
+	}
+}
+
+func TestChatClarificationStartAttributesTheSavingMember(t *testing.T) {
+	for _, method := range []string{"text", "card"} {
+		t.Run(method, func(t *testing.T) {
+			f := newClarifyChatFixture(t, domain.BotChannelFeishu)
+			f.h.api = New(f.s, f.h.engine, tracker.NewService(), "", "")
+			f.rounds = []map[string]any{clarifyReadyRound}
+			if err := f.s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "开发", Type: "agent", AgentID: "dev-agent"}}}); err != nil {
+				t.Fatal(err)
+			}
+			issue, _ := f.s.Issue("iss-7")
+			issue.WorkflowID, issue.AssigneeUserID = "wf-dev", 42
+			if err := f.s.PutIssue(issue); err != nil {
+				t.Fatal(err)
+			}
+			_, ask := f.say(t, "group", "oc_group", "ou_member", "澄清 LOOP-7")
+			sess := f.waitStatus(t, ask.ConversationID, domain.BotClarifyConcluded)
+			var reply string
+			if method == "card" {
+				var err error
+				conv, _ := f.s.BotConversation(ask.ConversationID)
+				reply, err = f.h.handleBotCardAction(context.Background(), f.bot, domain.BotInteraction{SenderID: "ou_owner", Action: botinteraction.ClarifyActionSaveStart, DeliveryID: sess.ID}, conv)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				reply, _ = f.say(t, "group", "oc_group", "ou_owner", "保存并启动")
+			}
+			if !strings.Contains(reply, "已启动 SOP") {
+				t.Fatalf("save and start = %q", reply)
+			}
+			op := latestIssueOperation(t, f.s, "dispatch")
+			if op.ActorUserID != 42 || op.ActorChannel != domain.BotChannelFeishu || op.ActorSender != "ou_owner" {
+				t.Fatalf("dispatch attribution = %+v", op)
+			}
+			var origin domain.BotChatOrigin
+			for _, task := range f.s.Tasks() {
+				if task.IssueID == issue.ID {
+					origin, _ = f.s.BotRunOrigin(task.RunID)
+					break
+				}
+			}
+			if origin.ConversationID != sess.ConversationID || origin.SenderID != "ou_member" || origin.UserID != 43 {
+				t.Fatalf("run notification origin = %+v", origin)
+			}
+		})
 	}
 }
 

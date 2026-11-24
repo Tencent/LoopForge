@@ -77,7 +77,7 @@ func TestPublicURLRequiresPlatformAdmin(t *testing.T) {
 // A value saved on the page wins over the environment, and the response names
 // both so a shadowed deployment value is visible rather than confusing.
 func TestPublicURLPageSettingOverridesEnvironment(t *testing.T) {
-	s, h, admin, _ := publicURLFixture(t, "http://10.0.0.5:8090")
+	s, h, admin, member := publicURLFixture(t, "http://10.0.0.5:8090")
 	code, view, _ := publicURLCall(t, h, admin, http.MethodGet, "")
 	if code != http.StatusOK || view.Source != publicURLSourceEnv || view.Value != "http://10.0.0.5:8090" || view.Stored != "" {
 		t.Fatalf("initial view = %d %+v", code, view)
@@ -93,8 +93,11 @@ func TestPublicURLPageSettingOverridesEnvironment(t *testing.T) {
 		t.Fatalf("stored = %+v", stored)
 	}
 	// Clearing falls back to the environment instead of leaving none.
-	code, view, _ = publicURLCall(t, h, admin, http.MethodDelete, "")
-	if code != http.StatusOK || view.Source != publicURLSourceEnv || view.Value != "http://10.0.0.5:8090" || view.Stored != "" {
+	if _, err := s.GrantPlatformAdmin(member.LoginName); err != nil {
+		t.Fatal(err)
+	}
+	code, view, _ = publicURLCall(t, h, member, http.MethodDelete, "")
+	if code != http.StatusOK || view.Source != publicURLSourceEnv || view.Value != "http://10.0.0.5:8090" || view.Stored != "" || view.UpdatedBy != member.LoginName || view.UpdatedAt == "" {
 		t.Fatalf("cleared view = %d %+v", code, view)
 	}
 }
@@ -106,34 +109,37 @@ func TestPublicURLEmptyValueClears(t *testing.T) {
 		t.Fatalf("save = %d", code)
 	}
 	code, view, _ := publicURLCall(t, h, admin, http.MethodPut, `{"value":"   "}`)
-	if code != http.StatusOK || view.Stored != "" || view.Source != publicURLSourceNone {
+	if code != http.StatusOK || view.Stored != "" || view.Source != publicURLSourceNone || view.UpdatedBy != admin.LoginName {
 		t.Fatalf("blank save = %d %+v", code, view)
 	}
 }
 
-// Rejected shapes mirror scripts/install-address.py, so the installer and this
-// page accept exactly the same values.
 func TestPublicURLRejectsUnusableAddresses(t *testing.T) {
-	_, h, admin, _ := publicURLFixture(t, "")
+	s, h, admin, _ := publicURLFixture(t, "")
+	if err := s.PutPlatformSettings(domain.PlatformSettings{PublicURL: "https://loopforge.example.com", UpdatedBy: "previous-admin"}); err != nil {
+		t.Fatal(err)
+	}
+	previous := s.PlatformSettings()
 	for name, value := range map[string]string{
-		"no_scheme":   "loopforge.example.com",
-		"wrong_proto": "ftp://loopforge.example.com",
-		"credentials": "https://user:pass@loopforge.example.com",
-		"query":       "https://loopforge.example.com?a=1",
-		"fragment":    "https://loopforge.example.com#x",
-		"path":        "https://loopforge.example.com/platform",
-		"no_host":     "https://",
-		"listen_any":  "http://0.0.0.0:8090",
-		"link_local":  "http://169.254.1.2:8090",
-		"too_long":    "https://" + strings.Repeat("a", 520) + ".example.com",
+		"no_scheme":    "loopforge.example.com",
+		"wrong_proto":  "ftp://loopforge.example.com",
+		"credentials":  "https://user:pass@loopforge.example.com",
+		"query":        "https://loopforge.example.com?a=1",
+		"fragment":     "https://loopforge.example.com#x",
+		"path":         "https://loopforge.example.com/platform",
+		"no_host":      "https://",
+		"invalid_port": "https://loopforge.example.com:65536",
+		"listen_any":   "http://0.0.0.0:8090",
+		"link_local":   "http://169.254.1.2:8090",
+		"too_long":     "https://" + strings.Repeat("a", 520) + ".example.com",
 	} {
 		code, _, failure := publicURLCall(t, h, admin, http.MethodPut, `{"value":`+strconv.Quote(value)+`}`)
 		if code != http.StatusBadRequest || failure == "" {
 			t.Errorf("%s (%q) = %d %q", name, value, code, failure)
 		}
 	}
-	if stored := h.repo.PlatformSettings(); stored.PublicURL != "" {
-		t.Fatalf("a refused address was stored: %+v", stored)
+	if stored := s.PlatformSettings(); stored != previous {
+		t.Fatalf("invalid address changed stored settings: got %+v, want %+v", stored, previous)
 	}
 }
 

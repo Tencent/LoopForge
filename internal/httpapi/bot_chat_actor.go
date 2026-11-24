@@ -54,22 +54,6 @@ func botChatActorFrom(ctx context.Context) (botChatActor, bool) {
 	return actor, true
 }
 
-// botChannelKindName is the user-facing IM product name of a channel kind.
-func botChannelKindName(kind string) string {
-	return botChannelName(domain.NotificationBot{Channel: kind})
-}
-
-// Label is how the sender is shown in an audit trail: the reported name when
-// the channel gives one ("钉钉 张三"), otherwise the raw sender ID
-// ("企业微信 wangxx"), which the bound platform account names in turn.
-func (a botChatActor) Label() string {
-	who := strings.TrimSpace(a.SenderName)
-	if who == "" {
-		who = strings.TrimSpace(a.SenderID)
-	}
-	return botChannelKindName(a.Channel) + " " + who
-}
-
 // botSenderName is the best display name known for a sender of bot.
 //
 // reported is the name carried by the message being handled; DingTalk is the

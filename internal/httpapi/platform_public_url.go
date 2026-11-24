@@ -85,7 +85,7 @@ func (h *platformSettingsHandlers) publicURL(c *gin.Context) {
 		if !h.platformAdminWrite(c) {
 			return
 		}
-		h.storePublicURL(c, "", "")
+		h.storePublicURL(c, "")
 		return
 	}
 	if !h.isPlatformAdmin(c.Request) {
@@ -113,18 +113,16 @@ func (h *platformSettingsHandlers) savePublicURL(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	actor := ""
-	if normalized != "" {
-		if user, ok := h.requestUser(c.Request, true); ok && user != nil {
-			actor = strings.TrimSpace(user.LoginName)
-		}
-	}
-	h.storePublicURL(c, normalized, actor)
+	h.storePublicURL(c, normalized)
 }
 
-func (h *platformSettingsHandlers) storePublicURL(c *gin.Context, address, actor string) {
+func (h *platformSettingsHandlers) storePublicURL(c *gin.Context, address string) {
 	settings := h.repo.PlatformSettings()
-	settings.PublicURL, settings.UpdatedBy = address, actor
+	settings.PublicURL = address
+	settings.UpdatedBy = ""
+	if user, ok := h.requestUser(c.Request, true); ok {
+		settings.UpdatedBy = user.LoginName
+	}
 	if err := h.repo.PutPlatformSettings(settings); err != nil {
 		respond(c, err)
 		return

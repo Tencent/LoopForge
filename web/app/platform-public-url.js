@@ -24,7 +24,7 @@ function platformPublicURLHTML() {
       <form class="platform-shared-key-form" autocomplete="off">
         <label class="platform-field">
           <span>${lfT('访问地址', 'Public address')}</span>
-          <input name="value" type="url" placeholder="https://loopforge.example.com" maxlength="512" spellcheck="false" autocapitalize="off">
+          <input name="value" type="url" placeholder="https://loopforge.example.com" maxlength="512" spellcheck="false" autocapitalize="off" required>
           <small class="platform-field-hint">${lfT(
             '只填到主机和端口，例如 https://loopforge.example.com 或 http://203.0.113.10:8090。必须是用户手机上的 IM 能打开的地址。',
             'Host and port only, e.g. https://loopforge.example.com or http://203.0.113.10:8090. It must be reachable from the phone that opens the chat link.',
@@ -96,11 +96,24 @@ async function loadPlatformPublicURL(host) {
       return view;
     });
   };
-  clear.onclick = () => change(async () => {
-    const view = await api(platformPublicURLEndpoint, {method: 'DELETE'});
-    toast(lfT('已清除，改回使用环境变量', 'Cleared; the environment value applies again'), 'ok');
-    return view;
-  });
+  clear.onclick = async () => {
+    if (busy || !await afConfirm({
+      title: lfT('清除外部访问地址', 'Clear public address'),
+      message: lfT(
+        '清除后将使用部署环境变量中的地址。如果环境变量未配置，平台将无法生成 IM 绑定和确认链接。',
+        'Clearing the setting uses the deployment environment address. If it is unset, the platform cannot generate chat binding or confirmation links.',
+      ),
+      confirmText: lfT('清除', 'Clear'),
+      danger: true,
+    }) || !card.isConnected || clear.hidden) return;
+    return change(async () => {
+      const view = await api(platformPublicURLEndpoint, {method: 'DELETE'});
+      toast(view.source === 'env'
+        ? lfT('已清除，改回使用环境变量', 'Cleared. The environment address now applies')
+        : lfT('已清除，外部访问地址未配置', 'Cleared. No public address is configured'), 'ok');
+      return view;
+    });
+  };
 
   try {
     render(await api(platformPublicURLEndpoint, {silent: true}));

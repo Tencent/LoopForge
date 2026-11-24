@@ -880,8 +880,7 @@ func (h *assistantHandlers) botClarifySave(ctx context.Context, bot domain.Notif
 	if start {
 		origin := domain.BotChatOrigin{ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: sess.ConversationID, ChatType: sess.ChatType, ChatID: sess.ChatID, SenderID: sess.StarterSender, UserID: sess.StarterUserID}
 		h.recordBotOrigin(origin, true, saved.ID)
-		chatCtx := withBotChatActor(withBotStartOrigin(ctx, origin), bot.ChannelKind(), sess.StarterSender, h.botSenderName(bot, sess.StarterSender, ""))
-		runID, err := h.dispatchBotIssue(chatCtx, user, bot.ProjectID, saved.ID)
+		runID, err := h.dispatchBotIssue(withBotStartOrigin(ctx, origin), user, bot.ProjectID, saved.ID)
 		if err != nil {
 			lines = append(lines, "SOP 没有启动："+truncateRunes(err.Error(), 200)+"。可以在平台手动启动。")
 		} else {
@@ -941,6 +940,7 @@ func (h *assistantHandlers) botClarifyCardAction(ctx context.Context, bot domain
 	case botinteraction.ClarifyActionEnd:
 		return h.botClarifyEnd(bot, sess, user), nil
 	case botinteraction.ClarifyActionSave, botinteraction.ClarifyActionSaveStart:
+		ctx = withBotChatActor(ctx, bot.ChannelKind(), item.SenderID, h.botSenderName(bot, item.SenderID, item.SenderName))
 		return h.botClarifySave(ctx, bot, sess, user, item.Action == botinteraction.ClarifyActionSaveStart), nil
 	case botinteraction.ClarifyActionYes, botinteraction.ClarifyActionNo:
 		return h.botClarifyConfirm(bot, sess, item.SenderID, item.Quote, item.Action == botinteraction.ClarifyActionYes), nil

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,8 +33,7 @@ const PublicURLMaxLen = 512
 var ErrPublicURLLoopback = errors.New("回环地址只有本机能打开，发到 IM 里点不开，仅适合本机联调")
 
 // NormalizePublicURL validates an external platform address and returns it
-// without a trailing slash. The rules mirror scripts/install-address.py so the
-// installer and this page accept exactly the same values.
+// without a trailing slash.
 //
 // A loopback address returns the normalized value together with
 // ErrPublicURLLoopback; every other error returns an empty value.
@@ -64,8 +64,14 @@ func NormalizePublicURL(raw string) (string, error) {
 	if path := strings.TrimSuffix(parsed.Path, "/"); path != "" {
 		return "", errors.New("地址不能包含路径，只填到主机和端口")
 	}
-	if _, _, err := net.SplitHostPort(parsed.Host); err != nil && parsed.Port() != "" {
-		return "", errors.New("端口格式不正确")
+	if parsed.Port() != "" || strings.HasSuffix(parsed.Host, ":") {
+		_, port, err := net.SplitHostPort(parsed.Host)
+		if err != nil {
+			return "", errors.New("端口格式不正确")
+		}
+		if number, err := strconv.ParseUint(port, 10, 16); err != nil || number == 0 {
+			return "", errors.New("端口必须为 1 到 65535")
+		}
 	}
 	host := parsed.Hostname()
 	// Rebuild from the parsed parts rather than echoing the input: the value

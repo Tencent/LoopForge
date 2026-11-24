@@ -24,11 +24,9 @@ func TestWeComAuthorizationFailuresAreActionable(t *testing.T) {
 		if !err.awaitingAuthorization() {
 			t.Errorf("failure(%d) is not reported as awaiting authorization", code)
 		}
-	}
-	// 850002 must also say retrying is pointless, which is the mistake it
-	// invites.
-	if msg := failure(850002).Message; !strings.Contains(msg, "重试不会解决") {
-		t.Errorf("failure(850002) message = %q", msg)
+		if !strings.Contains(err.Message, "权限恢复后") || !strings.Contains(err.Message, "发送记录」点击「重试") {
+			t.Errorf("failure(%d) does not explain how to retry after authorization: %q", code, err.Message)
+		}
 	}
 	// 853006 is a tenant-level capability block: no authorization can fix it,
 	// so it must not be shown as waiting for one.

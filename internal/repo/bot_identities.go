@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var ErrBotBindingChallenge = errors.New("绑定请求已失效，请回到聊天中重新发送消息获取链接")
@@ -62,10 +63,12 @@ func (r *UsersRepo) BotUserBinding(bot, sender string) (domain.BotUserBinding, e
 // empty name never clears a stored one.
 func (r *UsersRepo) NoteBotSenderName(bot, sender, name string) error {
 	name = strings.TrimSpace(name)
-	if bot == "" || sender == "" || name == "" || len(name) > 191 {
+	if bot == "" || sender == "" || name == "" || utf8.RuneCountInString(name) > domain.BotSenderNameMaxRunes {
 		return nil
 	}
-	return r.DB.Model(&domain.BotUserBinding{}).Where("id = ? AND user_id > 0 AND sender_name <> ?", botIdentityID(bot, sender), name).Update("sender_name", name).Error
+	return r.DB.Model(&domain.BotUserBinding{}).
+		Where("id = ? AND user_id > 0 AND (sender_name IS NULL OR sender_name <> ?)", botIdentityID(bot, sender), name).
+		Update("sender_name", name).Error
 }
 
 // Serialize all challenge creation/claim/confirmation/revocation on the same

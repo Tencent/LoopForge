@@ -6,12 +6,11 @@ import (
 	"agentflow/internal/tracker"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/gin-gonic/gin"
 )
 
 // latestIssueOperation returns the newest operation of the only issue a
@@ -104,17 +103,26 @@ func TestIssueOperationNamesDingTalkSender(t *testing.T) {
 	}
 }
 
-// Operations taken on the platform itself carry no IM identity, so the
-// drawer keeps showing the account alone.
-func TestIssueOperationHasNoChatIdentityOnPlatformWrite(t *testing.T) {
-	s, _, _ := botFixture(t)
+// The issue audit trail is managed by the server, including on creation.
+func TestIssueAuditTrailIsServerOwnedOnPlatformCreate(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "platform-issue-audit-test-secret")
+	s, h, _ := botFixture(t)
 	member, _ := s.User(43)
-	h := issuesHandlers{deps: &deps{repo: s}}
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = authedRequest(t, httptest.NewRequest("PUT", "/api/issues", nil), member)
-	issue := domain.Issue{ID: "i-platform", ProjectID: "p", Title: "平台页面创建"}
-	h.recordIssueOperation(c, &issue, "create", "创建需求")
-	if len(issue.Operations) != 1 {
+	api := New(s, h.engine, tracker.NewService(), "", "")
+	draft := domain.Issue{ID: "i-platform", ProjectID: "p", Title: "平台页面创建", Operations: []domain.IssueOperation{{Action: "update"}}}
+	body, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := authedRequest(t, httptest.NewRequest(http.MethodPut, "/api/issues", strings.NewReader(string(body))), member)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	api.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
+	}
+	issue, _ := s.Issue(draft.ID)
+	if len(issue.Operations) != 1 || issue.Operations[0].Action != "create" {
 		t.Fatalf("operations = %+v", issue.Operations)
 	}
 	op := issue.Operations[0]
@@ -139,17 +147,9 @@ func TestBotChatActorContext(t *testing.T) {
 	if !ok || actor.Channel != domain.BotChannelWeCom || actor.SenderID != "wangxx" {
 		t.Fatalf("actor = %+v ok=%t", actor, ok)
 	}
-	// WeCom reports no name: the raw userid stands in.
-	if actor.Label() != "企业微信 wangxx" {
-		t.Fatalf("label = %q", actor.Label())
-	}
-	feishu, _ := botChatActorFrom(withBotChatActor(context.Background(), domain.BotChannelFeishu, "ou_1", ""))
-	if feishu.Label() != "飞书 ou_1" {
-		t.Fatalf("label = %q", feishu.Label())
-	}
-	named, _ := botChatActorFrom(withBotChatActor(context.Background(), domain.BotChannelDingTalk, "staff-1", "  张三  "))
-	if named.SenderName != "张三" || named.Label() != "钉钉 张三" {
-		t.Fatalf("named actor = %+v label=%q", named, named.Label())
+	named, ok := botChatActorFrom(withBotChatActor(context.Background(), domain.BotChannelDingTalk, "  staff-1  ", "  张三  "))
+	if !ok || named.Channel != domain.BotChannelDingTalk || named.SenderID != "staff-1" || named.SenderName != "张三" {
+		t.Fatalf("named actor = %+v ok=%t", named, ok)
 	}
 }
 

@@ -3,6 +3,7 @@ package botinteraction
 import (
 	"agentflow/internal/domain"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -23,6 +24,19 @@ func TestDingTalkEventCarriesSenderName(t *testing.T) {
 	bare, _ := dingtalkEvent(bot, dingtalkCallbackJSON("msg-n2", "1", "text", "x", nil), "frame-n2", officialDingTalkWebhook)
 	if bare.SenderName != "" {
 		t.Fatalf("sender name = %q", bare.SenderName)
+	}
+}
+
+func TestDingTalkEventTruncatesSenderNameByCharacter(t *testing.T) {
+	bot := domain.NotificationBot{ID: "cfg", Channel: domain.BotChannelDingTalk, BotID: "ding-app"}
+	for _, count := range []int{64, domain.BotSenderNameMaxRunes + 1} {
+		nick := strings.Repeat("张", count)
+		ev, reason := dingtalkEvent(bot, dingtalkCallbackJSON("msg-long-nick", "1", "text", "建个需求", map[string]any{"senderNick": nick}), "frame-long-nick", officialDingTalkWebhook)
+		item, drop := interactionFromEvent(bot, ev)
+		want := strings.Repeat("张", min(count, domain.BotSenderNameMaxRunes))
+		if reason != "" || drop != "" || item.SenderName != want {
+			t.Errorf("name of %d characters = %q, reason = %q, drop = %q", count, item.SenderName, reason, drop)
+		}
 	}
 }
 

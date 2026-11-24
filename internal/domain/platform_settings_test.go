@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-// The rules mirror scripts/install-address.py so the installer and the
-// platform management page accept exactly the same values.
 func TestNormalizePublicURL(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{
 		"plain":           {"https://loopforge.example.com", "https://loopforge.example.com"},
 		"trailing_slash":  {"https://loopforge.example.com/", "https://loopforge.example.com"},
 		"port":            {"http://203.0.113.10:8090", "http://203.0.113.10:8090"},
+		"port_min":        {"https://loopforge.example.com:1", "https://loopforge.example.com:1"},
+		"port_max":        {"https://loopforge.example.com:65535", "https://loopforge.example.com:65535"},
 		"padded":          {"  https://loopforge.example.com  ", "https://loopforge.example.com"},
 		"empty":           {"", ""},
 		"blank":           {"   ", ""},
@@ -34,6 +34,12 @@ func TestNormalizePublicURL(t *testing.T) {
 		"fragment":      "https://loopforge.example.com#x",
 		"path":          "https://loopforge.example.com/platform",
 		"no_host":       "https://",
+		"port_empty":    "https://loopforge.example.com:",
+		"port_zero":     "https://loopforge.example.com:0",
+		"port_too_high": "https://loopforge.example.com:65536",
+		"port_overflow": "https://loopforge.example.com:99999999999999999999",
+		"ipv6_empty":    "https://[fd00::2]:",
+		"ipv6_port":     "https://[fd00::2]:65536",
 		"listen_v4":     "http://0.0.0.0:8090",
 		"listen_v6":     "http://[::]:8090",
 		"link_local":    "http://169.254.1.2:8090",
