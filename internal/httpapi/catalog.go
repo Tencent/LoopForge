@@ -682,29 +682,31 @@ func (h *catalogHandlers) skills(c *gin.Context) {
 				c.JSON(404, map[string]string{"error": "project not found"})
 				return
 			}
-			if existing, ok := h.repo.Skill(v.ID); ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
+			existing, ok := h.repo.Skill(v.ID)
+			if ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
 				c.JSON(409, map[string]string{"error": "skill id is already used by another project"})
 				return
 			} else if ok && existing.Shared && !v.Shared && (h.sharedAgentReferences("skill", v.ID) || h.sharedScheduleReferences("skill", v.ID)) {
 				c.JSON(409, map[string]string{"error": "该技能仍被共享角色或共享任务引用，不能取消共享"})
 				return
 			}
-			// The binary file manifest is owned by the skill_files table;
-			// the SKILL.md body and text Files are owned by uploaded files
-			// (or existing content if the client never sends them). Client
-			// payloads cannot add, remove or reorder any of these, nor
-			// forge or drop a market source record.
-			if existing, ok := h.repo.Skill(v.ID); ok {
+			// Metadata updates preserve stored files and their source.
+			if ok {
 				v.FileRefs = existing.FileRefs
 				v.Files = existing.Files
 				v.Content = existing.Content
 				v.Source = existing.Source
-			} else {
-				v.FileRefs = nil
-				v.Files = nil
-				v.Source = nil
+				respond(c, h.repo.PutSkill(v))
+				return
 			}
-			respond(c, h.repo.PutSkill(v))
+			v.Files = nil
+			v.Source = nil
+			err := h.repo.CreateSkill(v)
+			if errors.Is(err, repo.ErrSkillExists) {
+				c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+				return
+			}
+			respond(c, err)
 		}
 	}
 }
