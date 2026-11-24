@@ -528,17 +528,32 @@ a.evo-pill:hover { border-color: var(--hui-accent); }
 .evo-secondary-actions > summary { display: flex; align-items: center; height: 34px; padding-inline: 10px; cursor: pointer; list-style: none; }
 .evo-secondary-actions > summary::after { content: '⌄'; margin-left: 6px; }
 .evo-secondary-actions > div { position: absolute; z-index: 5; top: 100%; right: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--hui-border); border-radius: 8px; box-shadow: var(--hui-panel-shadow); background: var(--hui-surface); min-width: 120px; }
-.evo-detail-track { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); list-style: none; margin: 0 0 18px; padding: 18px 10px; border: 1px solid var(--hui-border); border-radius: 14px; background: var(--hui-surface); }
-.evo-detail-track li { position: relative; display: flex; flex-direction: column; align-items: center; gap: 7px; color: var(--hui-muted); font-size: 12px; text-align: center; }
-.evo-detail-track li:not(:last-child)::after { content: ''; position: absolute; top: 13px; left: calc(50% + 19px); right: calc(-50% + 19px); height: 2px; background: var(--hui-border); }
-.evo-detail-track li.is-done:not(:last-child)::after { background: var(--hui-success); }
-.evo-detail-track li > span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--hui-soft); font-weight: 600; }
-.evo-detail-track li > b { font-weight: 500; }
-.evo-detail-track li > span > svg { width: 16px; height: 16px; }
-.evo-detail-track .is-done > span { background: var(--hui-success); color: var(--hui-on-accent); }
-.evo-detail-track :is(.is-active, .is-wait) > span { background: var(--hui-accent); color: var(--hui-on-accent); box-shadow: 0 0 0 4px var(--hui-accent-soft); }
-.evo-detail-track .is-fail > span { background: var(--hui-error); color: var(--hui-on-accent); }
-.evo-detail-track :is(.is-done, .is-active, .is-wait) > b { color: var(--hui-text); }
+.evo-detail-track { display:grid;grid-template-columns:repeat(6,minmax(0,1fr));list-style:none;margin:0;padding:0; }
+.evo-detail-track li { position:relative;min-width:0;text-align:center; }
+.evo-detail-track li:not(:last-child)::after {
+  content:'';position:absolute;top:14px;left:calc(50% + 13px);right:calc(-50% + 13px);
+  height:2px;background:var(--hui-border);pointer-events:none;
+}
+.evo-detail-track li:is(.is-done,.is-skip):not(:last-child)::after { background:var(--hui-accent); }
+.evo-detail-track button {
+  display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;min-height:46px;
+  padding:4px 2px;border:0;border-radius:6px;background:transparent;color:var(--hui-muted);
+  font:11px/1.4 var(--hui-sans);text-align:center;overflow-wrap:anywhere;cursor:pointer;
+}
+.evo-detail-track button:hover { background:var(--hui-soft); }
+.evo-detail-track button:focus-visible { outline:2px solid var(--hui-accent);outline-offset:-2px; }
+.evo-detail-track button>span {
+  display:grid;place-items:center;width:22px;height:22px;border:1px solid var(--hui-border);
+  border-radius:50%;background:var(--hui-soft);font-weight:600;
+}
+.evo-detail-track button>span svg { width:13px;height:13px; }
+.evo-detail-track button>b { font-weight:500; }
+.evo-detail-track button>small { font:inherit; }
+.evo-detail-track .is-done button>span { background:var(--hui-accent);color:var(--hui-on-accent);border-color:var(--hui-accent); }
+.evo-detail-track :is(.is-active,.is-wait) button>span { border:2px solid var(--hui-accent);color:var(--hui-accent);background:var(--hui-surface); }
+.evo-detail-track .is-fail button>span { color:var(--hui-error);background:var(--hui-soft);border-color:var(--hui-error); }
+.evo-detail-track li[aria-current=step] button { color:var(--hui-text); }
+.evo-detail-track li[aria-current=step] button>b { font-weight:600; }
 .evo-detail-grid { display: block; }
 .evo-detail-impact { border-left: 1px solid var(--hui-border); padding-left: 10px; }
 .evo-decision-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 24px; padding: 12px 0 16px; }

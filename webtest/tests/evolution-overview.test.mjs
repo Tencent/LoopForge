@@ -17,7 +17,10 @@ const routes = [
 async function open(app) { await app.evaluate(`state.projectFilter='project-1';switchView('evolution');renderEvolutionView()`); await settle(4); }
 
 test('unified list paginates, preserves filter and page on return, and keeps diagnostics out of the home page', async t => {
-  const assets = [finding, ...Array.from({ length: 11 }, (_, i) => ({ ...finding, id: `f-${i + 1}`, assetId: `a-${i + 1}`, clusters: [clusters[i + 1]] }))];
+  const assets = [finding, ...Array.from({ length: 11 }, (_, i) => ({
+    ...finding, id: `f-${i + 1}`, assetId: `a-${i + 1}`, clusters: [clusters[i + 1]],
+    ...(i===10?{ updatedAt:now, triage:{...finding.triage,score:1} }:{}),
+  }))];
   const app = await loadApp({ routes: [...routes,
     { method: 'GET', path: '/api/evolution/findings?projectId=project-1', body: assets },
     { method: 'GET', path: '/api/evolution/findings/f-11/runs?cluster=c-11', body: { complete: true, total: 0, items: [] } },
@@ -25,11 +28,11 @@ test('unified list paginates, preserves filter and page on return, and keeps dia
   const $ = s => app.document.querySelector(s);
   await open(app);
   assert.match($('[data-evo-asset-group="asset:agent:a"]').textContent, /1 条问题运行/);
-  assert.deepEqual([...app.document.querySelectorAll('.evo-workspace-stat h2')].map(el=>el.textContent), ['待处理','进行中','已发布']);
+  assert.deepEqual([...app.document.querySelectorAll('.evo-workspace-stat h2')].map(el=>el.textContent), ['待处理问题','迭代中','已发布']);
   assert.match($('[data-evo-list-status="all"]').textContent, /全部记录13/);
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 10);
   assert.equal($('#evolutionBody input'), null);
-  assert.equal($('#evolutionBody select'), null);
+  assert.equal($('#evolutionBody select').getAttribute('aria-label'), '改进任务排序');
   assert.equal($('#evolutionBody [role="tab"]'), null);
   const trend = app.evaluate('evoOverviewTrend(evoIssueRows())');
   assert.equal(trend.points.reduce((sum, p) => sum + p.value, 0), 1);
@@ -47,6 +50,10 @@ test('unified list paginates, preserves filter and page on return, and keeps dia
   assert.equal(app.document.querySelectorAll('.evo-home-tabs button').length, 5);
   $('[data-evo-list-status="all"]').click();
   assert.equal(app.document.querySelectorAll('.evo-home-row').length, 10);
+  const sort=$('[data-evo-list-sort]');
+  sort.value='recent';
+  sort.dispatchEvent(new app.window.Event('change',{bubbles:true}));
+  assert.equal($('.evo-home-row').dataset.evoAssetGroup,'asset:agent:a-11');
 });
 
 test('refresh does not diagnose and repeated diagnosis is guarded; legacy diagnosis is kept in details', async t => {
@@ -105,8 +112,11 @@ test('asset grouping deduplicates proposal appearances and merges findings witho
   assert.match($('[data-evo-asset-group="asset:rule:a"]').textContent, /同名规则.*1 条问题线索/);
   assert.equal(app.router.calls.some(c => c.path.startsWith('/api/runs/') || c.path === '/api/evolution/proposals/p-grouped'), false);
   $('[data-evo-asset-group="asset:agent:a"]').click(); await settle(5);
-  assert.match($('.evo-story-signal-section').textContent, /问题证据/);
-  $('[data-evo-open-sources]').click();
+  assert.match($('.evo-story-signal-section').textContent, /取证依据/);
+  $('[data-evo-source-example="node_failed"]').click();
+  assert.equal($('#evoStorySourceExample').hidden,false);
+  assert.match($('#evoStorySourceExample').textContent,/Error 0/);
+  $('#evoSourceDetails > summary').click();
   assert.equal($('#evoSourceDetails').open, true);
   assert.equal(app.document.querySelectorAll('#evoProblemRecords [data-evo-related-finding]').length, 12);
   assert.equal($('#evoProblemRecords [data-evo-related-finding="f-second"]'), null);
@@ -195,13 +205,19 @@ test('clicking any history cell compares that sample and preserves the selected 
   await open(app);
   $('[data-evo-asset-group="asset:agent:a"]').click();
   await settle(7);
-  assert.equal(app.document.querySelectorAll('.evo-detail-track li').length, 5);
+  assert.equal(app.document.querySelectorAll('.evo-detail-track li').length, 6);
   assert.match($('.evo-detail-track [aria-current="step"]').textContent, /小范围试用[\s\S]+待确认试用/);
+  assert.match($('#evoValidationResults').textContent,/运行成功\s*1\/2\s*2\/2/);
+  assert.match($('#evoReleasePanel').textContent,/尚未发布/);
+  assert.equal($('#evoReviewDiff .evo-before-after section:first-child .evo-split-number').textContent,'2');
+  $('[data-evo-diff-split]').click();
   const cells = [...$('#evoFullChange .evo-diff-numbered .ctx:last-child').querySelectorAll('.evo-diff-number')];
   assert.deepEqual(cells.map(el => el.textContent), ['3', '4']);
   assert.match($('#evoStoryBehavior').textContent, /Test0/);
+  $('#evoValidationDetails > summary').click();
   $('[data-evo-story-row="regression"] td:last-child').click();
   await settle(5);
+  assert.equal($('#evoValidationDetails').open, true);
   assert.match($('#evoStoryBehavior').textContent, /Test1/);
   assert.doesNotMatch($('#evoStoryBehavior').textContent, /Test0/);
   assert.match($('#evoStorySelectedSample').textContent, /回归样本/);

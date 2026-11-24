@@ -42,7 +42,6 @@
 #evoDetailPage .evo-review-diff .evo-before-after { border:0; border-radius:0; margin:0; gap:0; }
 #evoDetailPage .evo-review-diff .evo-before-after > section { padding:0; }
 #evoDetailPage .evo-review-diff .evo-before-after h4 { padding:10px 16px; margin:0; border-bottom:1px solid var(--hui-border-soft); font-size:11px; font-weight:400; }
-#evoDetailPage .evo-review-diff.is-split:not(.is-expanded) .evo-before-after > section > div { max-height:290px; overflow:hidden; }
 .evo-review-reason { margin:14px 16px; color:var(--hui-muted); font-size:12px; }
 .evo-review-reason summary { cursor:pointer; }
 .evo-review-reason p { margin:10px 0 0; overflow-wrap:anywhere; line-height:1.7; }

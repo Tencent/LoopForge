@@ -6,12 +6,12 @@ function evoHomeButton(label,attr,primary=false){
 }
 function evoHomeSyncChecking(){
   $$('#evoDiagnose,[data-evo-rediagnose],[data-evo-home-check]').forEach(b=>b.disabled=evo.diagnosing);
-  $$('#evoDiagnose [data-evo-check-label],[data-evo-home-check] [data-evo-check-label]').forEach(el=>el.textContent=evo.diagnosing?'检查中…':'检查最近运行');
+  $$('#evoDiagnose [data-evo-check-label],[data-evo-home-check] [data-evo-check-label]').forEach(el=>el.textContent=evo.diagnosing?'诊断中…':'发起诊断');
 }
 function evoHomeEmptyHTML(){
   const check=evoHomeCheck(),hasRuns=check?check.runs>0:!!evo.overview?.health?.some(h=>h.runs>0);
   const title=check?check.findings?'检查已完成':hasRuns?'暂无待处理问题':'当前项目没有可分析的运行':'暂无改进记录';
-  const note=check?check.findings?'刷新列表查看处理进度。':hasRuns?'产物不符合预期时，在运行详情反馈具体问题。':'先完成一条使用角色或规则的任务，再回来检查。':hasRuns?'点击右上角检查最近运行，或在运行详情反馈问题。':'先完成一条任务，再从运行结果开始改进。';
+  const note=check?check.findings?'刷新列表查看处理进度。':hasRuns?'产物不符合预期时，在运行详情反馈具体问题。':'先完成一条使用角色或规则的任务，再回来检查。':hasRuns?'点击右上角发起诊断，或在运行详情反馈问题。':'先完成一条任务，再从运行结果开始改进。';
   const action=check?.findings?evoHomeButton('刷新列表','data-evo-reload'):evoHomeButton(`${evoReviewIcon('play')}查看运行`,'data-evo-home-runs');
   return `<section class="evo-home-empty" aria-labelledby="evoHomeEmptyTitle"><div class="evo-home-empty-mark">${evoReviewIcon(check&&hasRuns?'check':'workflow')}</div><h2 id="evoHomeEmptyTitle">${title}</h2><p>${escapeHTML(note)}</p><div class="evo-home-empty-actions">${action}</div></section>`;
 }
@@ -54,7 +54,7 @@ function evoHomeRowHTML(row){
   const selected=evo.modal?.openerKey===key;
   return `
     <button type="button" class="evo-home-row" data-evo-asset-group="${escapeHTML(key)}" data-evo-key="${escapeHTML(key)}" aria-controls="evoWorkspaceDetail" aria-pressed="${selected}">
-      <span class="evo-home-mark">${evoReviewIcon(glyph)}</span>
+      <span class="evo-home-mark">${evoFindingPriorityHTML(r?.f)||evoReviewIcon(glyph)}</span>
       <span class="evo-home-problem">
         <b data-tooltip="${escapeHTML(problem)}">${escapeHTML(evoStoryBrief(problem,60))}</b>
         <span class="evo-home-asset">${escapeHTML(asset.assetName||asset.assetId||'未知对象')} · ${escapeHTML(evoGroupFacts(row))}</span>
@@ -76,7 +76,7 @@ function evoHomeStatusHTML(){
 function evoHomeBuckets(all){
   return {
     all,
-    active:all.filter(r=>evoListCategory(r)!=='done'),
+    active:all.filter(r=>evoListCategory(r)==='todo'),
     doing:all.filter(r=>evoListCategory(r)==='doing'),
     released:all.filter(r=>r.p?.status==='released'),
     rolled_back:all.filter(r=>r.p?.status==='rolled_back')
@@ -85,8 +85,8 @@ function evoHomeBuckets(all){
 function evoHomeSummaryHTML(){
   const groups=evoHomeBuckets(evoUnifiedRows());
   const stats=[
-    ['alert','待处理',groups.active.length-groups.doing.length,'warn'],
-    ['refresh','进行中',groups.doing.length,'accent'],
+    ['alert','待处理问题',groups.active.length,'warn'],
+    ['refresh','迭代中',groups.doing.length,'accent'],
     ['arrow-up','已发布',groups.released.length,'success']
   ];
   return `<div class="evo-workspace-metrics">${stats.map(([icon,label,value,tone])=>`
@@ -97,13 +97,25 @@ function evoHomeSummaryHTML(){
 function evoHomeTasksHTML(all){
   if(!all.length)return evoHomeEmptyHTML();
   const buckets=evoHomeBuckets(all);
-  const filters=[['active','待跟进'],['all','全部记录'],['doing','进行中'],['released','已发布'],['rolled_back','已回滚']];
-  if(!Object.hasOwn(buckets,evo.list.status))evo.list={status:'active',page:0};
-  const priority=r=>r.p?.watch?.status==='degraded'||r.p?.summary?.regressed>0?0:evoListCategory(r)==='todo'?1:2;
-  const list=[...buckets[evo.list.status]].sort((a,b)=>priority(a)-priority(b));
+  const filters=[['all','全部记录'],['active','待处理'],['doing','迭代中'],['released','已发布'],['rolled_back','已回滚']];
+  if(!Object.hasOwn(buckets,evo.list.status))evo.list={status:'all',page:0};
+  const needsAttention=r=>r.p?.watch?.status==='degraded'||r.p?.summary?.regressed>0;
+  const priority={todo:0,doing:1,done:2};
+  const impact=r=>r.r?.f.triage?.score||0;
+  const updated=r=>Date.parse(r.p?.updatedAt||r.r?.f.updatedAt||r.r?.f.lastSeenAt||r.queue?.[0]?.updatedAt)||0;
+  const list=[...buckets[evo.list.status]].sort(evo.list.sort==='recent'?
+    (a,b)=>updated(b)-updated(a):(a,b)=>Number(needsAttention(b))-Number(needsAttention(a))||
+    impact(b)-impact(a)||priority[evoListCategory(a)]-priority[evoListCategory(b)]||updated(b)-updated(a));
   const pages=Math.max(1,Math.ceil(list.length/10));evo.list.page=Math.max(0,Math.min(evo.list.page,pages-1));
   const rows=list.slice(evo.list.page*10,(evo.list.page+1)*10).map(evoHomeRowHTML).join('');
-  const toolbar=`<div class="evo-home-toolbar"><h2>改进任务 <span>${all.length}</span></h2><div class="evo-home-tabs" role="group" aria-label="改进任务筛选">${filters.map(([key,label])=>`<button type="button" data-evo-list-status="${key}" data-evo-key="filter:${key}" aria-pressed="${evo.list.status===key}">${label}<span>${buckets[key].length}</span></button>`).join('')}</div></div>`;
+  const toolbar=`<div class="evo-home-toolbar">
+    <div class="evo-home-toolbar-title"><h2>改进任务 <span>${all.length}</span></h2>
+      <select class="kb-input" data-evo-list-sort data-evo-key="task-sort" aria-label="改进任务排序">
+        <option value="impact">按影响度</option><option value="recent"${evo.list.sort==='recent'?' selected':''}>最近更新</option>
+      </select>
+    </div>
+    <div class="evo-home-tabs" role="group" aria-label="改进任务筛选">${filters.map(([key,label])=>`<button type="button" data-evo-list-status="${key}" data-evo-key="filter:${key}" aria-pressed="${evo.list.status===key}">${label}<span>${buckets[key].length}</span></button>`).join('')}</div>
+  </div>`;
   const empty=`<div class="evo-home-filter-empty">当前没有${escapeHTML(filters.find(([key])=>key===evo.list.status)?.[1]||'匹配的')}任务${evoHomeButton(`查看全部 ${all.length} 条`,'data-evo-list-status="all"')}</div>`;
   const pager=pages>1?`<footer class="evo-list-footer"><nav aria-label="改进分页"><button type="button" data-evo-unified-page="${evo.list.page-1}"${evo.list.page?'':' disabled'}>上一页</button><span>${evo.list.page+1}/${pages}</span><button type="button" data-evo-unified-page="${evo.list.page+1}"${evo.list.page+1<pages?'':' disabled'}>下一页</button></nav></footer>`:'';
   return `${toolbar}<section id="evoUnifiedList" class="evo-home-list" aria-label="改进任务">${rows||empty}</section>${pager}`;

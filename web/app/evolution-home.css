@@ -45,8 +45,10 @@
 .evo-home-empty-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:18px 0 0}
 .evo-home-empty-actions .kb-btn{display:inline-flex;align-items:center;gap:6px}
 .evo-home-toolbar{display:grid;gap:8px;padding:13px 13px 9px}
+.evo-home-toolbar-title{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .evo-home-toolbar h2{display:flex;align-items:center;gap:6px;font-size:16px;font-weight:600;margin:0}
 .evo-home-toolbar h2 span{font-size:12px;color:var(--hui-muted);font-variant-numeric:tabular-nums}
+#evolutionView .evo-home-toolbar select{width:auto;min-height:28px;padding:3px 6px;font-size:12px}
 .evo-home-tabs{display:flex;flex-wrap:wrap;gap:3px;align-items:center}
 .evo-home-tabs button{
   padding:5px 6px;border:0;border-radius:6px;background:none;color:var(--hui-muted);
