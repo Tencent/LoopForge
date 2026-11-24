@@ -63,6 +63,11 @@ func TestDockerSandboxReclaimWaitsForChildExecutionLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	cvRInstallFakeDocker(t, workspace)
+	// dockerAvailable is cached per process; an earlier test on a host without
+	// Docker would otherwise make this sweep skip the fake CLI.
+	previous := dockerAvailable
+	dockerAvailable = func() bool { return true }
+	t.Cleanup(func() { dockerAvailable = previous })
 	lock, err := manager.acquireLock(ctx, "cvr")
 	if err != nil {
 		t.Fatal(err)
