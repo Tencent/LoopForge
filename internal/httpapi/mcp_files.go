@@ -68,7 +68,7 @@ func (h *mcpHandlers) mcpFiles(c *gin.Context) {
 			name = logical[i]
 		}
 		if strings.EqualFold(path.Ext(name), ".zip") {
-			items, err := readSkillZip(header, seen)
+			items, err := readSkillZip(header, seen, domain.MCPFileMaxBytes)
 			if err != nil {
 				c.JSON(400, map[string]string{"error": err.Error()})
 				return
@@ -101,7 +101,7 @@ func (h *mcpHandlers) mcpFiles(c *gin.Context) {
 			return
 		}
 		seen[part.path] = true
-		content, err := readBoundedPart(part.header)
+		content, err := readBoundedPart(part.header, domain.MCPFileMaxBytes)
 		if err != nil {
 			c.JSON(400, map[string]string{"error": err.Error()})
 			return
