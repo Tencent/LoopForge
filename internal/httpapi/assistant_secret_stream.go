@@ -17,8 +17,24 @@ type assistantSecretFragment struct {
 // Redacting individual model deltas is insufficient: a token often spans
 // several deltas, which the browser and generation projection join again.
 type assistantSecretStream struct {
-	mu      sync.Mutex
-	pending map[string]assistantSecretFragment
+	mu             sync.Mutex
+	pending        map[string]assistantSecretFragment
+	projectSecrets func() []string
+}
+
+func (s *assistantSecretStream) scopedSecrets() []string {
+	if s.projectSecrets == nil {
+		return nil
+	}
+	return s.projectSecrets()
+}
+
+func maskProjectEvent(event assistantStreamEvent, secrets []string) assistantStreamEvent {
+	event.Text = maskProjectSecrets(event.Text, secrets)
+	event.Detail = maskProjectSecrets(event.Detail, secrets)
+	event.Input = maskProjectSecrets(event.Input, secrets)
+	event.Output = maskProjectSecrets(event.Output, secrets)
+	return event
 }
 
 func assistantSecretField(event *assistantStreamEvent) *string {
@@ -35,6 +51,7 @@ func assistantSecretField(event *assistantStreamEvent) *string {
 func (s *assistantSecretStream) push(event assistantStreamEvent, user domain.User) []assistantStreamEvent {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	projectSecrets := s.scopedSecrets()
 	if event.Kind == "answerReset" || event.Kind == "draftStart" {
 		for key := range s.pending {
 			if strings.HasPrefix(key, "draftDelta\x00") || (event.Kind == "answerReset" && strings.HasPrefix(key, "answer\x00")) {
@@ -44,7 +61,7 @@ func (s *assistantSecretStream) push(event assistantStreamEvent, user domain.Use
 	}
 	field := assistantSecretField(&event)
 	if field == nil {
-		return []assistantStreamEvent{publicAssistantEvent(event, user)}
+		return []assistantStreamEvent{publicAssistantEvent(maskProjectEvent(event, projectSecrets), user)}
 	}
 	if s.pending == nil {
 		s.pending = map[string]assistantSecretFragment{}
@@ -52,10 +69,11 @@ func (s *assistantSecretStream) push(event assistantStreamEvent, user domain.Use
 	key := event.Kind + "\x00" + event.Parent + "\x00" + event.ID
 	if event.Full {
 		delete(s.pending, key)
-		return []assistantStreamEvent{publicAssistantEvent(event, user)}
+		return []assistantStreamEvent{publicAssistantEvent(maskProjectEvent(event, projectSecrets), user)}
 	}
 	text := redactAssistantSecrets(s.pending[key].text+*field, user)
-	secrets := gitSecretRedactions.streamSecrets(user)
+	text = maskProjectSecrets(text, projectSecrets)
+	secrets := append(gitSecretRedactions.streamSecrets(user), projectSecrets...)
 	keep := 0
 	for _, secret := range secrets {
 		for n := min(len(secret)-1, len(text)); n > keep; n-- {
@@ -74,7 +92,7 @@ func (s *assistantSecretStream) push(event assistantStreamEvent, user domain.Use
 	if *field == "" {
 		return nil
 	}
-	return []assistantStreamEvent{publicAssistantEvent(event, user)}
+	return []assistantStreamEvent{publicAssistantEvent(maskProjectEvent(event, projectSecrets), user)}
 }
 
 func (s *assistantSecretStream) flush(user domain.User) []assistantStreamEvent {
@@ -85,12 +103,13 @@ func (s *assistantSecretStream) flush(user domain.User) []assistantStreamEvent {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	projectSecrets := s.scopedSecrets()
 	var events []assistantStreamEvent
 	for _, key := range keys {
 		fragment := s.pending[key]
 		if field := assistantSecretField(&fragment.event); field != nil {
 			*field = fragment.text
-			events = append(events, publicAssistantEvent(fragment.event, user))
+			events = append(events, publicAssistantEvent(maskProjectEvent(fragment.event, projectSecrets), user))
 		}
 	}
 	s.pending = nil
