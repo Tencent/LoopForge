@@ -187,7 +187,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			engine = assistantEngineClaude
 		}
 		var user domain.User
-		if h.repo != nil && (engine == runtime.AgentCLIKimi || engine == runtime.AgentCLIAntigravity) {
+		if h.repo != nil {
 			if current, signedIn := h.requestUser(c.Request, true); signedIn {
 				user, _ = h.repo.User(current.ID)
 			}
@@ -197,6 +197,28 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
 			return
+		}
+		// Keep the composer fallback catalog in sync with the executor catalog.
+		// Custom-model CLIs have no useful built-in list, so their saved
+		// personal models must be preferred when available.
+		personal, _ := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
+		if len(personal) > 0 {
+			catalog.Models = make([]executorModelInfo, 0, len(personal))
+			personalCatalog := cliModelsOf(personal)
+			for _, model := range personal {
+				modelID := model.ID
+				if engine != assistantEngineCodeBuddy {
+					modelID = engine + ":" + model.ID
+				}
+				name := strings.TrimSpace(model.Name)
+				if name == "" {
+					name = model.ID
+				}
+				catalog.Models = append(catalog.Models, executorModelInfo{
+					ID: model.ID, Name: name, Family: assistantModelFamily(model.ID, engine),
+					Efforts: effortOptions(assistantModelEffortsForBaseURL(modelID, personalCatalog, kimiBaseURL)),
+				})
+			}
 		}
 		result := assistantModelCatalog{Models: make([]assistantModel, 0, len(catalog.Models))}
 		if engine == runtime.AgentCLIAntigravity && antigravityUsesCustomEndpoint(user) {
@@ -213,6 +235,9 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		}
 		if len(result.Models) > 0 {
 			result.Default = result.Models[0].ID
+		}
+		if user.ID != 0 {
+			c.Header("Cache-Control", "private, no-store")
 		}
 		c.JSON(200, result)
 		return

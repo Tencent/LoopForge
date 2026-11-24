@@ -71,6 +71,22 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 	}
 }
 
+func TestAgentCLIDefaultSentinelIsNotSentToProvider(t *testing.T) {
+	for _, kind := range []string{AgentCLIPi, AgentCLIOpenCode} {
+		command := AgentCLICommand(kind, AgentCLICommandOptions{Model: "default", Prompt: "p"})
+		if slices.Contains(command.Argv, "default") || slices.Contains(command.Argv, "agentflow/default") {
+			t.Fatalf("%s received the default sentinel: %q", kind, command.Argv)
+		}
+	}
+	for _, kind := range []string{AgentCLIPi, AgentCLIOpenCode} {
+		home := t.TempDir()
+		_, _, err := ApplyAgentCLICredential(kind, ProviderCredential{APIKey: "k", BaseURL: "https://gateway.example/v1"}, AgentCLIOptions{Model: "default"}, HostAgentCLIHome(home), home, nil)
+		if err == nil || !strings.Contains(err.Error(), "需要指定模型") {
+			t.Fatalf("%s accepted the default sentinel for a custom endpoint: %v", kind, err)
+		}
+	}
+}
+
 func TestKimiThinkingConfiguration(t *testing.T) {
 	home := t.TempDir()
 	for _, tc := range []struct {
