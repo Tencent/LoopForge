@@ -158,6 +158,17 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 	if !e.sopExecutorAccess(execution).configured("codex") {
 		t.Fatal("the responsible user's personal key is unavailable on the shared machine")
 	}
+	setMembers := func(t *testing.T, members []domain.ProjectMember) {
+		t.Helper()
+		project, ok := st.Project("shared-compute")
+		if !ok {
+			t.Fatal("shared-compute project not found")
+		}
+		project.Members = members
+		if err := st.PutProject(project); err != nil {
+			t.Fatal(err)
+		}
+	}
 	checkRevocation := func(t *testing.T) {
 		t.Helper()
 		if got := e.defaultExecutionRunner(domain.Run{ExecutionContext: execution}); got != runner.ID {
@@ -179,17 +190,12 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 		{"owner removed", []domain.ProjectMember{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := st.PutProject(domain.Project{ID: "shared-compute", Name: "Shared compute", OwnerID: 1, Members: tc.members}); err != nil {
-				t.Fatal(err)
-			}
+			setMembers(t, tc.members)
 			checkRevocation(t)
 		})
 	}
 	t.Run("owner withdraws grant", func(t *testing.T) {
-		if err := st.PutProject(domain.Project{ID: "shared-compute", Name: "Shared compute", OwnerID: 1,
-			Members: []domain.ProjectMember{{UserID: 42, Role: "member"}}}); err != nil {
-			t.Fatal(err)
-		}
+		setMembers(t, []domain.ProjectMember{{UserID: 42, Role: "member"}})
 		if err := st.SetRunnerSharedProjects(runner.ID, 42, nil); err != nil {
 			t.Fatal(err)
 		}

@@ -217,7 +217,12 @@ func TestRunnerProjectSharing(t *testing.T) {
 		{{UserID: owner.user.ID, Role: "viewer"}},
 		{},
 	} {
-		if err := owner.s.PutProject(domain.Project{ID: "two", Name: "Two", OwnerID: member.user.ID, Members: members}); err != nil {
+		project, ok := owner.s.Project("two")
+		if !ok {
+			t.Fatal("project two not found")
+		}
+		project.Members = members
+		if err := owner.s.PutProject(project); err != nil {
 			t.Fatal(err)
 		}
 		var rows []repo.RunnerProjectView

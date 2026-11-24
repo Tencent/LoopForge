@@ -102,10 +102,17 @@ func TestLockedConversationRejectsTurnsAfterRunnerAccessChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.generate = func(context.Context, string, domain.User) (string, error) { return "fixture", nil }
-	project, _ := h.repo.Project("workbench")
-	project.Members = []domain.ProjectMember{{UserID: member.ID, Role: "member"}}
-	if err := h.repo.PutProject(project); err != nil {
-		t.Fatal(err)
+	const projectID = "workbench"
+	setRole := func(t *testing.T, role string) {
+		t.Helper()
+		project, ok := h.repo.Project(projectID)
+		if !ok {
+			t.Fatal("workbench project not found")
+		}
+		project.Members = []domain.ProjectMember{{UserID: member.ID, Role: role}}
+		if err := h.repo.PutProject(project); err != nil {
+			t.Fatal(err)
+		}
 	}
 	target := &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: "shared-locked"}
 	if err := h.repo.PutRunner(domain.Runner{ID: target.RunnerID, OwnerUserID: owner.ID,
@@ -114,17 +121,14 @@ func TestLockedConversationRejectsTurnsAfterRunnerAccessChanges(t *testing.T) {
 	}
 	for _, path := range []string{"/api/assistant/chat", "/api/assistant/generations"} {
 		t.Run(path, func(t *testing.T) {
-			project.Members[0].Role = "member"
-			if err := h.repo.PutProject(project); err != nil {
-				t.Fatal(err)
-			}
-			if err := h.repo.SetRunnerSharedProjects(target.RunnerID, owner.ID, []string{project.ID}); err != nil {
+			setRole(t, domain.ProjectRoleMember)
+			if err := h.repo.SetRunnerSharedProjects(target.RunnerID, owner.ID, []string{projectID}); err != nil {
 				t.Fatal(err)
 			}
 			for _, revoke := range []string{"share", "membership"} {
 				id := "locked-" + revoke + "-" + strings.TrimPrefix(path, "/api/assistant/")
 				if err := h.repo.PutAssistantSession(member.ID, domain.AssistantSession{
-					ID: id, ProjectID: project.ID, ExecutionTarget: target, ExecutionTargetLocked: true,
+					ID: id, ProjectID: projectID, ExecutionTarget: target, ExecutionTargetLocked: true,
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -133,15 +137,12 @@ func TestLockedConversationRejectsTurnsAfterRunnerAccessChanges(t *testing.T) {
 						t.Fatal(err)
 					}
 				} else {
-					if err := h.repo.SetRunnerSharedProjects(target.RunnerID, owner.ID, []string{project.ID}); err != nil {
+					if err := h.repo.SetRunnerSharedProjects(target.RunnerID, owner.ID, []string{projectID}); err != nil {
 						t.Fatal(err)
 					}
-					project.Members[0].Role = "viewer"
-					if err := h.repo.PutProject(project); err != nil {
-						t.Fatal(err)
-					}
+					setRole(t, domain.ProjectRoleViewer)
 				}
-				body, _ := json.Marshal(assistantRequest{SessionID: id, ProjectID: project.ID,
+				body, _ := json.Marshal(assistantRequest{SessionID: id, ProjectID: projectID,
 					Messages: []assistantMessage{{Role: "user", Content: "fixture"}}})
 				c, rec := workbenchContext(member, http.MethodPost, path, bytes.NewBuffer(body))
 				if strings.HasSuffix(path, "/chat") {

@@ -115,6 +115,21 @@ type projectMemberRow struct {
 
 func (projectMemberRow) TableName() string { return "project_members" }
 
+type projectJoinRequestRow struct {
+	ID         int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	ProjectID  string     `gorm:"column:project_id;size:64;not null;index:idx_project_join_requests_project"`
+	UserID     int64      `gorm:"column:user_id;not null;index:idx_project_join_requests_user"`
+	Role       string     `gorm:"column:role;size:32;not null"`
+	Reason     string     `gorm:"column:reason;type:text"`
+	Status     string     `gorm:"column:status;size:16;not null"`
+	ReviewerID *int64     `gorm:"column:reviewer_user_id"`
+	Created    *time.Time `gorm:"column:created_at"`
+	Updated    *time.Time `gorm:"column:updated_at"`
+	Reviewed   *time.Time `gorm:"column:reviewed_at"`
+}
+
+func (projectJoinRequestRow) TableName() string { return "project_join_requests" }
+
 type repositoryRow struct {
 	ID        string     `gorm:"column:id;primaryKey;size:64"`
 	ProjectID string     `gorm:"column:project_id;index:idx_repos_project;size:64"`
@@ -759,7 +774,7 @@ func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, botNativeSessionRow{}, botPendingDraftRow{}, botChatOriginRow{}, botClarifySessionRow{}, domain.NotificationDelivery{},
 		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
-		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
+		projectRow{}, projectMemberRow{}, projectJoinRequestRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
 		sandboxRow{},
 		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
