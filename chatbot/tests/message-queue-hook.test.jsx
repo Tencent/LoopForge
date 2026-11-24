@@ -198,7 +198,7 @@ describe("sending while a reply runs", () => {
       executionTarget: { pool: "runner", runnerId: "runner-a" },
     };
     let completeProbe;
-    apiMock.mockImplementation((path, options) => path === "/api/runners?mine=1"
+    apiMock.mockImplementation((path, options) => path === "/api/runners?projectId=p1"
       ? Promise.resolve([{ id: "runner-a", ownerUserId: 1, runtimes: [{ provider: "agy", authMode: "local" }] }])
       : originalAPI(path, options));
     writeMock.mockImplementation((path, body, method) => path === "/api/runners/runner-a/models/probe"

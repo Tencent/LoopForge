@@ -344,7 +344,7 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 		}
 		stateMu.Unlock()
 
-		ctx = h.helperExecutionContext(ctx, user.ID, req.ExecutionTarget)
+		ctx = h.helperExecutionContext(ctx, user.ID, req.ProjectID, req.ExecutionTarget)
 		action := input
 		action.Tool = tool
 		action.Description = description

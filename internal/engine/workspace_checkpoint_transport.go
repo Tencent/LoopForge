@@ -44,6 +44,8 @@ func workspaceOperationLabel(operation string) string {
 		return "恢复归档产物"
 	case domain.RunnerWorkspaceOperationBrowser:
 		return "连接 Agent 浏览器"
+	case domain.RunnerWorkspaceOperationPreviewService:
+		return "操作预览服务"
 	case domain.RunnerWorkspaceOperationTerminal:
 		return "访问工作区终端"
 	default:
@@ -132,6 +134,22 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	if request.Operation == domain.RunnerWorkspaceOperationBrowser {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(e.HandleBrowserRequest(r.Context(), run, request.Browser))
+		return
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationPreviewService {
+		if request.PreviewService == nil {
+			http.Error(w, "invalid preview service request", 400)
+			return
+		}
+		var result domain.RunnerWorkspaceResponse
+		state, err := e.localWorkspacePreviewService(r.Context(), run, *request.PreviewService)
+		if err != nil {
+			result.Status, result.Error = http.StatusConflict, err.Error()
+		} else {
+			result.Payload, _ = json.Marshal(state)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
 		return
 	}
 	transfer := domain.IsWorkspaceCheckpointTransferOperation(request.Operation)

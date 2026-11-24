@@ -42,6 +42,8 @@
 
 对话工作区创建时冻结完整沙箱（连同它的 Dockerfile 和环境变量），之后不再改变环境；换环境就是切到另一个工作区。准备工作区失败时，本次新建的工作区会被取消并解绑，会话回到之前的工作区，不会卡在一个打不开的工作区上。
 
+Docker 工作区中，Agent 用 `workbench_preview_service` 分别启动用于验收的前端和后端。每个服务使用独立名称和前台启动命令，从工作区根目录在同一个容器中运行。通过对话侧栏打开 `http://localhost:端口/` 后，回复结束仍可访问，直到用户要求停止或容器被回收。容器重建后需要重新启动服务。
+
 ## Native 沙箱
 
 会话工作区可以使用 native 沙箱（Linux 上解析为 bwrap，macOS 上解析为 seatbelt）。native 沙箱只有环境变量，没有安装脚本：命令使用执行机器上已安装的语言和工具，需要的设置（如 `JAVA_HOME`、代理）写进沙箱的环境变量。它不限定执行位置，用户的执行机器、云端 Runner 和平台本机都可以运行。
@@ -57,7 +59,7 @@ Docker 与 bwrap 下两种模式的 CLI 都在 `<会话根>/ws` 运行（工作�
 
 普通对话工作区从空目录开始，Agent 使用当前发言人的 Git 凭据克隆所需仓库。自动选择沙箱时会考虑执行机器的可用类型。平台和 Runner 0.12.0 通过实际启动短命令确认系统轻量隔离是否可用。会话明确指定的沙箱仍按指定配置打开。
 
-local 沙箱类型已移除。`migrations/041_native_sandbox_inline_assets.sql` 把现有 local 沙箱改成 native，移除运行机器、基础目录和仓库路径的绑定，并复制引用环境中的普通变量。迁移删除环境安装脚本和 native 沙箱变量的 `PATH`，将依赖旧默认沙箱的 SOP 改到 `generic-docker`。已有项目若使用了这个保留 ID，迁移会为该沙箱分配新 ID，同步更新显式选用它的 SOP、会话选项和对应的工作区快照。现有部署在启动新版本前手动执行此迁移。尚未迁移的 local 行读出时按 native 处理；冻结了 local 沙箱的旧运行会提示改用 native 后重新发起。
+local 沙箱类型已移除。`migrations/041_native_sandbox_inline_assets.sql` 把现有 local 沙箱改成 native，移除运行机器、基础目录和仓库路径的绑定，并复制引用环境中的普通变量。迁移删除环境安装脚本和 native 沙箱变量的 `PATH`，将依赖旧默认沙箱的 SOP 改到 `generic-docker`。已有项目若使用了这个保留 ID，迁移会为该沙箱分配新 ID，同步更新显式选用它的 SOP、会话选项和对应的工作区快照。现有部署在启动新版前需要完成此迁移，执行方式见 [部署与升级说明](deployment.md#migrating-existing-sandboxes-to-inline-assets)。尚未迁移的 local 行读出时按 native 处理；冻结了 local 沙箱的旧运行会提示改用 native 后重新发起。
 
 `PUT /api/assistant/sessions/{id}/sandbox` 接受 `{ "sandboxProfileId": "id 或空字符串" }`，具备项目访问权限的会话参与者均可调用；生成期间和任务会话拒绝变更。已有工作区不受影响，新选择只用于之后新开的工作区。普通会话创建时也可以提交 `sandboxProfileId`，后续普通会话保存不能覆盖已保存的选择或伪造工作区绑定。
 

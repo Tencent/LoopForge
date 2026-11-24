@@ -301,6 +301,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		conv := body.assistantConversation
+		if conv.ProjectID == "" {
+			conv.ProjectID = existing.ProjectID
+		}
 		conv.RuntimeMode = existing.Mode()
 		conv.ExecutionTargetLocked = existing.ExecutionLocked()
 		if existing.ID != "" && existing.ExecutionLocked() {
@@ -377,11 +380,15 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Title == "" {
 			conv.Title = existing.Title
 		}
-		if conv.ProjectID == "" {
-			conv.ProjectID = existing.ProjectID
-		}
 		if conv.RunID == "" {
 			conv.RunID = existing.RunID
+		}
+		if existing.ID != "" {
+			conv.ProjectCredentialIDs = existing.ProjectCredentialIDs
+		} else if len(conv.ProjectCredentialIDs) > 0 {
+			if _, ok := h.sessionProjectCredentialNames(c, conv, current.ID); !ok {
+				return
+			}
 		}
 		oldExecutor := h.forkExecutor(c, existing, current.ID)
 		if conv.Executor == "" {

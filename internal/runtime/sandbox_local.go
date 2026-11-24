@@ -28,6 +28,10 @@ func (s *localSandbox) Close(context.Context) error {
 	return nil
 }
 func (s *localSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+	command, err := projectCommandEnvironment(ctx, command, s.environment)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
 	cmd, err := s.command(ctx, command, controlledBaseEnvironment(os.Environ()))
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
@@ -49,7 +53,7 @@ func (s *localSandbox) command(ctx context.Context, command CommandSpec, base []
 	}
 	cmd := exec.CommandContext(ctx, command.Argv[0], command.Argv[1:]...)
 	cmd.Dir = workspace
-	cmd.Env = appendEnvironment(base, s.environment, command.environment)
+	cmd.Env = appendEnvironment(base, s.environment, command.environment, command.projectCredentialEnv)
 	cmd.Env = upsertEnv(cmd.Env, "PWD", workspace)
 	cmd.Env = upsertEnv(cmd.Env, "GIT_CEILING_DIRECTORIES", filepath.Dir(workspace))
 	cmd.Stdin = command.Stdin

@@ -68,5 +68,7 @@ ARG LOOPFORGE_RELEASE_VERSION=
 ENV LOOPFORGE_RELEASE_VERSION=${LOOPFORGE_RELEASE_VERSION}
 RUN --mount=type=bind,source=.,target=/ctx,ro \
     sh /ctx/scripts/image-commit.sh /ctx /app/loopforge-commit
+# The Compose upgrade checks the target image for support for migration 041.
+LABEL io.loopforge.sandbox-catalog="inline"
 EXPOSE 8080
 ENTRYPOINT ["/app/bin/agentflow"]

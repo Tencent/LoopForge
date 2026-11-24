@@ -34,11 +34,12 @@ func runCommand(cmd *exec.Cmd, sink EventSink, commands ...CommandSpec) (string,
 	}
 	var buf bytes.Buffer
 	var mu sync.Mutex
-	stdout := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stdout", level: "info"}
+	redact := projectCredentialRedactor(command.projectCredentialEnv)
+	stdout := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stdout", level: "info", redact: redact}
 	if bridge != nil {
 		stdout.filter = bridge.filter
 	}
-	stderr := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stderr", level: "error"}
+	stderr := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stderr", level: "error", redact: redact}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	// When hooks spawn detached children that inherit stdout/stderr, bound how
 	// long os/exec waits for those inherited descriptors after the direct child
@@ -106,6 +107,7 @@ func runCommand(cmd *exec.Cmd, sink EventSink, commands ...CommandSpec) (string,
 
 type processWriter struct {
 	filter  func(string) bool
+	redact  func(string) string
 	output  *bytes.Buffer
 	mu      *sync.Mutex
 	sink    EventSink
@@ -149,6 +151,9 @@ func (w *processWriter) emitLines(includePartial bool) {
 func (w *processWriter) emit(line string) {
 	if w.filter != nil && !w.filter(line) {
 		return
+	}
+	if w.redact != nil {
+		line = w.redact(line)
 	}
 	w.output.WriteString(line)
 	w.output.WriteByte('\n')

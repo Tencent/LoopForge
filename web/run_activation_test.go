@@ -117,7 +117,7 @@ const setTimeout=callback=>timers.push(callback);
 const patchCachedRun=(_,run)=>{state.activeRun=run};
 const paintRunControl=()=>{};
 let info={available:false,restorable:false,reason:'工作区已回收'};
-let restoreStatus={status:'failed',error:'Runner <离线>'};
+let restoreStatus={status:'failed',error:'Runner <离线>'},cleanupBusy=false;
 const api=async(path,options={})=>{
  calls.push([path,options.method||'GET']);
  if(path===runPath)return restored;
@@ -125,6 +125,10 @@ const api=async(path,options={})=>{
  assert.equal(path,restorePath);
  if(options.method==='POST'){
   assert.equal(options.headers.Prefer,'respond-async');
+  if(cleanupBusy){
+    cleanupBusy=false;
+    throw Object.assign(new Error('workspace cleanup in progress'),{code:'workspace_busy'});
+  }
   return {workspaceRestore:{status:'restoring'}};
  }
  return restoreStatus;
@@ -176,7 +180,7 @@ eval(fs.readFileSync('app/run-activation.js','utf8')+'\n'+fs.readFileSync('app/r
  assert.equal(workspaceTab.classList.active,true);
  assert.equal(overviewPane.hidden,true);
  assert.equal(pane.hidden,false);
- await Promise.resolve();
+ await new Promise(setImmediate);
  info={available:true};
  restoreStatus={status:'ready'};
  timers.shift()();
@@ -211,6 +215,27 @@ eval(fs.readFileSync('app/run-activation.js','utf8')+'\n'+fs.readFileSync('app/r
  assert.match(pane.innerHTML,/data-vscode-frame/);
  assert.equal(controlButton.disabled,false);
  assert.ok(calls.every(([,method])=>method==='GET'),'reopening must follow the existing restore without posting again');
+
+ overviewTab.onclick();
+ state.activeRun={...restored,executionContext:{workspaceRunId:'parent'}};
+ state.runWorkspace=null;
+ info={available:false,restorable:true,reason:'工作区已回收'};
+ await loadWorkspace('run');
+ assert.equal(restoreButton.hidden,false,'a child can restore the shared checkout without its own cleanup timestamp');
+ calls.length=0;
+ cleanupBusy=true;
+ const childRestore=restoreButton.onclick();
+ await new Promise(setImmediate);
+ assert.deepEqual(calls,[[workspacePath,'GET'],[restorePath,'POST']]);
+ assert.match(pane.innerHTML,/正在恢复工作区/,'the cleanup lease should keep the restore pending');
+ timers.shift()();
+ await new Promise(setImmediate);
+ assert.deepEqual(calls,[[workspacePath,'GET'],[restorePath,'POST'],[restorePath,'POST']]);
+ info={available:true,readOnly:true};
+ timers.shift()();
+ await childRestore;
+ assert.deepEqual(calls.slice(-3),[[restorePath,'GET'],[runPath,'GET'],[workspacePath,'GET']]);
+ assert.match(pane.innerHTML,/data-vscode-frame/);
 })().catch(err=>{console.error(err);process.exitCode=1});
 `
 	if output, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {

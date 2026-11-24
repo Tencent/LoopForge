@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,9 @@ const (
 	RunnerStatusOnline  = "online"
 	RunnerStatusOffline = "offline"
 )
+
+// DefaultRunnerRunLimit is the initial SOP run limit for a newly bound machine.
+const DefaultRunnerRunLimit = 10
 
 // RunnerTask states. LEASED sits between QUEUED and RUNNING so a claim that
 // never starts is still recoverable through lease expiry.
@@ -153,6 +157,14 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 // when checking out repositories for a native workspace. Older runners clone fully.
 const RunnerVersionRepositoryCache = "0.12.0"
 
+// RunnerVersionProjectCredentials adds in-memory project environment values
+// to authenticated SOP task claims and conversation process starts.
+const RunnerVersionProjectCredentials = "0.12.1"
+
+func (r Runner) SupportsProjectCredentials() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionProjectCredentials)
+}
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
@@ -186,11 +198,15 @@ type Runner struct {
 	LastSeenAt *time.Time      `json:"lastSeenAt,omitempty"`
 	// OwnerUserID is the user who bound this machine via bind-cli.sh; the
 	// personal 执行器 page lists machines by owner.
-	OwnerUserID      int64      `json:"ownerUserId,omitempty"`
-	SessionTokenHash string     `json:"-"`
-	SessionExpiresAt *time.Time `json:"-"`
-	CreatedAt        time.Time  `json:"createdAt"`
-	UpdatedAt        time.Time  `json:"updatedAt"`
+	OwnerUserID int64 `json:"ownerUserId,omitempty"`
+	// SharedProjectIDs holds the projects granted use of this machine by its owner.
+	SharedProjectIDs []string `json:"sharedProjectIds,omitempty"`
+	// LoginModels contains the machine owner's saved account-login catalogs by CLI.
+	LoginModels      map[string][]CLIModel `json:"loginModels,omitempty"`
+	SessionTokenHash string                `json:"-"`
+	SessionExpiresAt *time.Time            `json:"-"`
+	CreatedAt        time.Time             `json:"createdAt"`
+	UpdatedAt        time.Time             `json:"updatedAt"`
 }
 
 // PublicRunner strips credential material before returning runner data to
@@ -207,6 +223,10 @@ func PublicRunners(items []Runner) []Runner {
 		out[i] = PublicRunner(r)
 	}
 	return out
+}
+
+func (r Runner) SharedWithProject(projectID string) bool {
+	return r.OwnerUserID > 0 && projectID != "" && slices.Contains(r.SharedProjectIDs, projectID)
 }
 
 // SupportsExistingWorkBranch guards strict checkout and synchronization;
@@ -327,6 +347,14 @@ func (r Runner) RuntimeAuthMode(provider string) string {
 	return RuntimeAuthLocal
 }
 
+// RuntimeAuthModeForUser keeps a user-bound machine's account login with its owner.
+func (r Runner) RuntimeAuthModeForUser(provider string, userID int64) string {
+	if r.OwnerUserID > 0 && r.OwnerUserID != userID && SupportsRunnerLogin(provider) {
+		return RuntimeAuthPersonal
+	}
+	return r.RuntimeAuthMode(provider)
+}
+
 func SupportsRunnerLogin(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "codex", "claude-code", "agy":
@@ -395,7 +423,11 @@ type RunnerTask struct {
 	NodeID     string            `json:"nodeId,omitempty"`
 	Invocation *RunnerInvocation `json:"invocation,omitempty"`
 	// GitSSHKnownHosts is attached on authenticated claim and is never queued.
-	GitSSHKnownHosts *GitSSHKnownHosts `json:"gitSshKnownHosts,omitempty"`
+	GitSSHKnownHosts     *GitSSHKnownHosts `json:"gitSshKnownHosts,omitempty"`
+	ProjectCredentialIDs []string          `json:"projectCredentialIds,omitempty"`
+	// ProjectCredentialEnv is filled after an authenticated claim. It is not
+	// part of the persisted runner task payload.
+	ProjectCredentialEnv map[string]string `json:"projectCredentialEnv,omitempty"`
 	// Sandbox is the workflow sandbox definition resolved by the control
 	// plane. The runner creates it locally so Docker/seatbelt/bwrap isolation
 	// lives on the same machine that executes the Agent CLI.

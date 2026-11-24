@@ -106,6 +106,39 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	if code := call(other, "POST", "/api/issues", `{"projectId":"shared","title":"Shared idea"}`); code != 200 {
 		t.Fatalf("ownerless projects stay shared: %d", code)
 	}
+	if err := s.PutProject(domain.Project{ID: "ownerless-team", Name: "Ownerless team", Members: []domain.ProjectMember{
+		{UserID: memberUser.ID, Role: "member"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if code := call(other, "POST", "/api/issues", `{"projectId":"ownerless-team","title":"Outsider idea"}`); code != 403 {
+		t.Fatalf("ownerless projects with members are limited to members: %d", code)
+	}
+	if code := call(member, "POST", "/api/issues", `{"projectId":"ownerless-team","title":"Member idea"}`); code != 200 {
+		t.Fatalf("member writes to ownerless team project: %d", code)
+	}
+
+	members := fmt.Sprintf(`[{"userId":%d,"role":" Maintainer "},{"userId":%d}]`, memberUser.ID, viewerUser.ID)
+	before, _ := s.Project("p1")
+	if code := call(owner, "PUT", "/api/projects", `{"id":"p1","name":"P1","membersVersion":"`+before.MembersVersion+`","members":`+members+`}`); code != 200 {
+		t.Fatalf("owner saves member roles: %d", code)
+	}
+	saved, _ := s.Project("p1")
+	roles := map[int64]string{}
+	for _, m := range saved.Members {
+		roles[m.UserID] = m.Role
+	}
+	if roles[memberUser.ID] != "maintainer" || roles[viewerUser.ID] != "member" {
+		t.Fatalf("member roles not normalized: %+v", saved.Members)
+	}
+	bad := fmt.Sprintf(`{"id":"p1","name":"P1","members":[{"userId":%d,"role":"admin"}]}`, memberUser.ID)
+	if code := call(owner, "PUT", "/api/projects", bad); code != 400 {
+		t.Fatalf("unknown member role accepted: %d", code)
+	}
+	restore := fmt.Sprintf(`{"id":"p1","name":"P1","membersVersion":%q,"members":[{"userId":%d,"role":"member"},{"userId":%d,"role":"viewer"}]}`, saved.MembersVersion, memberUser.ID, viewerUser.ID)
+	if code := call(owner, "PUT", "/api/projects", restore); code != 200 {
+		t.Fatalf("restore member roles: %d", code)
+	}
 
 	submission := `{"projectId":"p1","title":"Runbook","content":"restart the worker"}`
 	if code := call(other, "POST", "/api/knowledge/submissions", submission); code != 403 {
