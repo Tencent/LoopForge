@@ -8,10 +8,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func TestMySQLConcurrentSOPsCannotClaimSameConversationWorkspace(t *testing.T) {
 	stores, prefix := admissionMySQLStores(t)
+	runner := domain.Runner{ID: prefix + "-runner", OwnerUserID: 1, Status: domain.RunnerStatusOnline}
+	if err := stores[0].PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stores[0].DB.Where("id = ?", runner.ID).Delete(&runnerRow{}) })
 	owner := admissionMySQLRun(prefix+"-ws", prefix)
 	owner.Kind, owner.Status = domain.RunKindWorkspace, "waiting"
 	if err := stores[0].PutRun(owner); err != nil {
@@ -19,24 +27,56 @@ func TestMySQLConcurrentSOPsCannotClaimSameConversationWorkspace(t *testing.T) {
 	}
 	ids := []string{prefix + "-first", prefix + "-second"}
 	admissionMySQLCleanup(t, stores[0], append([]string{owner.ID}, ids...))
-	start := make(chan struct{})
+	// Both new IDs are in the same index gap. With an unlimited Runner, no
+	// quota lock serializes the dispatches before they reach the owner lock.
+	entered, release := make(chan struct{}, len(stores)), make(chan struct{})
+	const callback = "test:sop_workspace_admission"
+	for _, store := range stores {
+		query := store.DB.Callback().Query()
+		if err := query.Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+			where, _ := tx.Statement.Clauses["WHERE"].Expression.(clause.Where)
+			if tx.Statement.Table != "runs" || len(where.Exprs) != 1 {
+				return
+			}
+			id, _ := where.Exprs[0].(clause.Expr)
+			if _, locked := tx.Statement.Clauses["FOR"]; locked && len(id.Vars) == 1 && id.Vars[0] == owner.ID {
+				entered <- struct{}{}
+				<-release
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		defer query.Remove(callback)
+	}
 	results := make(chan error, len(stores))
 	for i, store := range stores {
 		run := admissionMySQLRun(ids[i], prefix)
 		run.ExecutionContext.ExecutionPinned, run.ExecutionContext.WorkspaceRunID = true, owner.ID
-		go func() {
-			<-start
-			results <- store.PutRun(run)
-		}()
+		run.ExecutionContext.ExecutionRunnerID = runner.ID
+		go func() { results <- store.PutRun(run) }()
 	}
-	close(start)
+	timeout := time.After(5 * time.Second)
+waitForDispatches:
+	for range stores {
+		select {
+		case <-entered:
+		case <-timeout:
+			t.Error("both dispatches did not reach the workspace lock")
+			break waitForDispatches
+		}
+	}
+	close(release)
 	admitted := 0
 	for range stores {
-		err := <-results
-		if err == nil {
-			admitted++
-		} else if !errors.Is(err, ErrWorkspaceInUse) {
-			t.Fatalf("dispatch returned %v", err)
+		select {
+		case err := <-results:
+			if err == nil {
+				admitted++
+			} else if !errors.Is(err, ErrWorkspaceInUse) {
+				t.Errorf("dispatch returned %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("workspace admission did not finish")
 		}
 	}
 	if admitted != 1 {

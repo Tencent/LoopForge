@@ -959,8 +959,13 @@ func (r *RunsRepo) writeRun(run domain.Run, expectedRevision ...int) error {
 }
 
 func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision ...int) error {
+	workspaceAdmission := run.UsesConversationWorkspace() && run.ExecutionContext.ParentRunID == "" &&
+		(run.Status == "running" || run.Status == "queued")
 	var opts []*sql.TxOptions
-	if lockKey != "" {
+	// Under MySQL REPEATABLE READ, a missing run ID takes a gap lock.
+	// A dispatch waiting on the workspace owner could then block the holder's
+	// insert. READ COMMITTED lets the owner row serialize these dispatches.
+	if lockKey != "" || workspaceAdmission {
 		opts = r.admissionTxOptions()
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
@@ -993,8 +998,7 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 		} else if err != gorm.ErrRecordNotFound {
 			return err
 		}
-		if run.UsesConversationWorkspace() && run.ExecutionContext.ParentRunID == "" &&
-			(run.Status == "running" || run.Status == "queued") && (current.Status != "running" && current.Status != "queued") {
+		if workspaceAdmission && current.Status != "running" && current.Status != "queued" {
 			if err := r.checkConversationWorkspaceForSOP(tx, run, current.ID == ""); err != nil {
 				return err
 			}

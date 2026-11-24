@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -222,5 +225,143 @@ func TestWorkspaceRestoreEligibilityUsesWorkspaceEditAccess(t *testing.T) {
 	router.ServeHTTP(response, request.Request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("owner restore: %d %s", response.Code, response.Body)
+	}
+}
+
+func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
+	for _, mode := range []string{"sync", "async"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+			a, owner, _, viewer, _ := sharedWorkbenchFixture(t)
+			project, _ := a.repo.Project("workbench")
+			project.Members = append(project.Members, domain.ProjectMember{UserID: viewer.ID, Role: "viewer"})
+			if err := a.repo.PutProject(project); err != nil {
+				t.Fatal(err)
+			}
+			manager := runtime.NewManager(t.TempDir())
+			en := engine.New(a.repo, manager)
+			en.ConfigureExecution("restore-api", "restore-api", time.Minute, false)
+			a.engine = en
+			ctx := domain.TelemetryContext{ProjectID: project.ID, ResponsibleUserID: owner.ID, ExecutionPinned: true}
+			workspace, err := en.StartConversationWorkspace("Conversation", ctx, repo.TestNativeSandboxID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const name, content = "handoff.txt", "unsent changes from chat"
+			source := t.TempDir()
+			if err := os.WriteFile(filepath.Join(source, name), []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := runtime.CreateWorkspaceCheckpoint(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token, err := en.BeginConversationWorkspaceUse(workspace.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			if err := a.repo.SaveWorkspaceCheckpoint(workspace.ID, token, now, snapshot); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.repo.FinishWorkspaceUse(workspace.ID, token, now, nil, ""); err != nil {
+				t.Fatal(err)
+			}
+			workspace.WorkspaceCleanedAt = now
+			if err := a.repo.PutRun(workspace); err != nil {
+				t.Fatal(err)
+			}
+			ctx.WorkspaceRunID = workspace.ID
+			sop := domain.Run{ID: "borrowing-sop", Status: "succeeded", ExecutionContext: ctx}
+			if err := a.repo.PutRun(sop); err != nil {
+				t.Fatal(err)
+			}
+
+			h := &runsHandlers{deps: a.deps}
+			router := gin.New()
+			router.Use(h.runWriteGuard())
+			router.GET("/api/runs/:id/workspace", h.runWorkspace)
+			router.GET("/api/runs/:id/workspace/file", h.runWorkspace)
+			router.GET("/api/runs/:id/workspace/restore", h.workspaceRestoreStatus)
+			router.POST("/api/runs/:id/workspace/restore", h.workspaceRestore)
+			path := "/api/runs/" + sop.ID + "/workspace"
+			request := func(actor domain.User, method, suffix string) *httptest.ResponseRecorder {
+				c, rec := workbenchContext(actor, method, path+suffix, bytes.NewBuffer(nil))
+				if mode == "async" {
+					c.Request.Header.Set("Prefer", "respond-async")
+				}
+				router.ServeHTTP(rec, c.Request)
+				return rec
+			}
+			view := request(owner, http.MethodGet, "")
+			var info struct {
+				Available         bool       `json:"available"`
+				Restorable        bool       `json:"restorable"`
+				CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
+			}
+			if err := json.Unmarshal(view.Body.Bytes(), &info); err != nil || view.Code != 200 ||
+				info.Available || !info.Restorable || info.CheckpointSavedAt == nil {
+				t.Fatalf("borrowed workspace should be restorable: %d %s", view.Code, view.Body)
+			}
+			if rec := request(viewer, http.MethodGet, ""); rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"restorable":false`)) {
+				t.Fatalf("viewer workspace info = %d: %s", rec.Code, rec.Body)
+			}
+			if rec := request(viewer, http.MethodPost, "/restore"); rec.Code != http.StatusForbidden {
+				t.Fatalf("viewer restore = %d: %s", rec.Code, rec.Body)
+			}
+			foreign := sop
+			foreign.ID, foreign.ExecutionContext.ProjectID = "foreign-sop", "foreign-project"
+			if err := a.repo.PutProject(domain.Project{ID: foreign.ExecutionContext.ProjectID, Name: "Foreign", OwnerID: owner.ID}); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.repo.PutRun(foreign); err != nil {
+				t.Fatal(err)
+			}
+			c, forbidden := workbenchContext(owner, http.MethodPost, "/api/runs/"+foreign.ID+"/workspace/restore", bytes.NewBuffer(nil))
+			router.ServeHTTP(forbidden, c.Request)
+			if forbidden.Code != http.StatusConflict {
+				t.Fatalf("cross-project restore = %d: %s", forbidden.Code, forbidden.Body)
+			}
+			sop.Status = "running"
+			if err := a.repo.PutRun(sop); err != nil {
+				t.Fatal(err)
+			}
+			if rec := request(owner, http.MethodPost, "/restore"); rec.Code != http.StatusConflict || !bytes.Contains(rec.Body.Bytes(), []byte(repo.ErrWorkspaceInUse.Error())) {
+				t.Fatalf("running SOP restore = %d: %s", rec.Code, rec.Body)
+			}
+			sop.Status = "succeeded"
+			if err := a.repo.PutRun(sop); err != nil {
+				t.Fatal(err)
+			}
+			rec := request(owner, http.MethodPost, "/restore")
+			if rec.Code != http.StatusOK && (mode != "async" || rec.Code != http.StatusAccepted) {
+				t.Fatalf("SOP restore = %d: %s", rec.Code, rec.Body)
+			}
+			for deadline := time.Now().Add(5 * time.Second); ; {
+				status := request(owner, http.MethodGet, "/restore")
+				var state domain.WorkspaceRestoreStatus
+				if err := json.Unmarshal(status.Body.Bytes(), &state); err != nil || status.Code != http.StatusOK {
+					t.Fatalf("SOP restore status = %d: %s", status.Code, status.Body)
+				}
+				if state.Status == "ready" {
+					break
+				}
+				if state.Status != "restoring" || time.Now().After(deadline) {
+					t.Fatalf("SOP restore did not finish: %s", status.Body)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			file := request(owner, http.MethodGet, "/file?path="+name)
+			var result struct{ Content string }
+			if err := json.Unmarshal(file.Body.Bytes(), &result); err != nil || file.Code != http.StatusOK || result.Content != content {
+				t.Fatalf("restored file = %d: %s", file.Code, file.Body)
+			}
+			if restored, ok := a.repo.RunState(workspace.ID); !ok || !restored.WorkspaceCleanedAt.IsZero() {
+				t.Fatal("the owning workspace still has a cleanup mark")
+			}
+			if _, err := os.Stat(manager.RunWorkspace(sop.ID)); !os.IsNotExist(err) {
+				t.Fatalf("restore created a separate SOP workspace: %v", err)
+			}
+		})
 	}
 }

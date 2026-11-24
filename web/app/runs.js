@@ -699,12 +699,17 @@ function runWorkspaceWasCleaned(run){
   if(!Number.isFinite(ts))return false;
   return new Date(ts).getUTCFullYear()>=1971;
 }
+function runBorrowsWorkspace(run){
+  const ctx=run?.executionContext;
+  return !!(ctx?.executionPinned&&ctx.workspaceRunId&&ctx.workspaceRunId!==run.id);
+}
 function workspaceIsAvailable(run,ws){
   return !!(ws&&ws.runId===run?.id&&ws.cleaned===runWorkspaceWasCleaned(run)&&
     !ws.loading&&!ws.restoring&&!ws.error&&!ws.restoreError&&ws.info?.available);
 }
 function workspaceCanRestore(run,ws){
-  return !!(ws?.runId===run.id&&ws.cleaned&&runWorkspaceWasCleaned(run)&&ws.info?.restorable&&!ws.info.available);
+  return !!(ws?.runId===run.id&&ws.cleaned===runWorkspaceWasCleaned(run)&&
+    (ws.cleaned||runBorrowsWorkspace(run))&&ws.info?.restorable&&!ws.info.available);
 }
 function workspaceRestoreButtonHTML(){
   const hint=lfT(
@@ -1208,14 +1213,15 @@ function runModeChipHTML(r,wf){if(r?.kind==='workspace')return '<span class="run
 function bindRunDetailTabs(run,host){
   function selectTab(tab){
     if(state.selectedRun!==run.id)return;
-    if((state.runDetailTab||'overview')===tab&&tab!=='workspace')return;
+    const previousTab=state.runDetailTab||'overview';
+    if(previousTab===tab&&tab!=='workspace')return;
     state.runDetailTab=tab;
     host.querySelectorAll('[data-run-tab]').forEach(button=>button.classList.toggle('active',button.dataset.runTab===tab));
     host.querySelectorAll('[data-run-pane]').forEach(pane=>pane.hidden=pane.dataset.runPane!==tab);
     paintRunActivationProgress(run.id);
     if(tab==='preview')return loadRunPreview(run.id);
     stopPreviewPoll();
-    if(tab==='workspace')return loadRunWorkspace(run.id,{restore:true});
+    if(tab==='workspace')return loadRunWorkspace(run.id,{restore:true,refresh:previousTab!==tab&&runBorrowsWorkspace(run)});
     if(tab==='eval')return loadRunEval(run.id);
   }
   host.querySelectorAll('[data-run-tab]').forEach(button=>button.onclick=()=>selectTab(button.dataset.runTab));

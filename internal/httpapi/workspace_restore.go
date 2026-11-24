@@ -13,8 +13,14 @@ import (
 )
 
 func (h *runsHandlers) workspaceRestore(c *gin.Context) {
-	run, _, ok := h.workspaceEditActor(c)
+	run, ok := h.repo.RunState(c.Param("id"))
 	if !ok {
+		c.JSON(404, gin.H{"error": "运行不存在"})
+		return
+	}
+	run = h.workspaceRestoreTarget(run)
+	if _, status, message := h.workspaceEditAccess(c.Request, run); status != 0 {
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 	if strings.Contains(c.GetHeader("Prefer"), "respond-async") && !run.WorkspaceCleanedAt.IsZero() {
@@ -44,6 +50,18 @@ func (h *runsHandlers) workspaceRestore(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"restored": true, "idleTimeoutSeconds": 3600})
+}
+
+// workspaceRestoreTarget selects the same-project checkout that owns the
+// snapshot when a user restores it from a borrowing SOP's panel.
+func (h *runsHandlers) workspaceRestoreTarget(run domain.Run) domain.Run {
+	if run.UsesConversationWorkspace() {
+		if owner, ok := h.repo.RunState(engine.WorkspaceRunID(run)); ok && owner.IsWorkspace() &&
+			owner.ExecutionContext.ProjectID != "" && owner.ExecutionContext.ProjectID == run.ExecutionContext.ProjectID {
+			return owner
+		}
+	}
+	return run
 }
 
 // Async callers poll the durable restore separately, then repeat their control
@@ -104,7 +122,7 @@ func (h *runsHandlers) workspaceLifecycleInfo(c *gin.Context, run domain.Run, pa
 	}
 	restorable := false
 	if meta.SavedAt != nil && meta.SHA256 != "" {
-		_, status, _ := h.workspaceEditAccess(c.Request, run)
+		_, status, _ := h.workspaceEditAccess(c.Request, h.workspaceRestoreTarget(run))
 		restorable = status == 0
 	}
 	payload["restorable"] = restorable

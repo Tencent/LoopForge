@@ -118,9 +118,10 @@ const patchCachedRun=(_,run)=>{state.activeRun=run};
 const paintRunControl=()=>{};
 let info={available:false,restorable:false,reason:'工作区已回收'};
 let restoreStatus={status:'failed',error:'Runner <离线>'};
+let runDetail=restored;
 const api=async(path,options={})=>{
  calls.push([path,options.method||'GET']);
- if(path===runPath)return restored;
+ if(path===runPath)return runDetail;
  if(path===workspacePath)return info;
  assert.equal(path,restorePath);
  if(options.method==='POST'){
@@ -132,6 +133,7 @@ const api=async(path,options={})=>{
 eval(fs.readFileSync('app/run-activation.js','utf8')+'\n'+fs.readFileSync('app/runs.js','utf8')+
  '\nglobalThis.loadWorkspace=loadRunWorkspace;'+
  '\nglobalThis.restoreButtonHTML=workspaceRestoreButtonHTML;'+
+ '\nglobalThis.bindTabs=bindRunDetailTabs;'+
  '\nbindRunDetailTabs(reclaimed,host);');
 (async()=>{
  assert.match(restoreButtonHTML(),/title="工作区是本次运行存放代码和生成文件的目录。恢复会从保存的快照还原文件/);
@@ -211,6 +213,23 @@ eval(fs.readFileSync('app/run-activation.js','utf8')+'\n'+fs.readFileSync('app/r
  assert.match(pane.innerHTML,/data-vscode-frame/);
  assert.equal(controlButton.disabled,false);
  assert.ok(calls.every(([,method])=>method==='GET'),'reopening must follow the existing restore without posting again');
+
+ overviewTab.onclick();
+ runDetail={id:'run',status:'succeeded',executionContext:{executionPinned:true,workspaceRunId:'conversation-workspace'}};
+ state.activeRun=runDetail;
+ state.runWorkspace={runId:'run',cleaned:false,info:{available:true}};
+ bindTabs(runDetail,host);
+ calls.length=0;
+ info={available:false,restorable:true,reason:'工作区已回收'};
+ const borrowed=workspaceTab.onclick();
+ await new Promise(setImmediate);
+ assert.deepEqual(calls,[[workspacePath,'GET'],[restorePath,'POST']],
+   'opening the borrowed workspace must refresh its status and restore even when the SOP itself was not reclaimed');
+ info={available:true};
+ restoreStatus={status:'ready'};
+ timers.shift()();
+ await borrowed;
+ assert.match(pane.innerHTML,/data-vscode-frame/);
 })().catch(err=>{console.error(err);process.exitCode=1});
 `
 	if output, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
