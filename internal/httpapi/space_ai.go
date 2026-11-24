@@ -98,7 +98,7 @@ func (h *spacesHandlers) askAI(c *gin.Context, room domain.ChatRoom, space domai
 	}
 	content := h.aiPrompt(room, space, msg)
 	if len(prior) > 0 {
-		content = fmt.Sprintf("会话里又有人发言。%s：%s%s\n请接着这个会话回复。需要写入平台时按当前审批模式处理：先问我就提交草稿，帮我批准就直接保存低风险内容，完全访问就直接执行。%s", msg.Author, msg.Body, attachmentNote(msg.Attachments), spaceDeliverablePrompt)
+		content = fmt.Sprintf("会话里又有人发言。%s：%s%s\n请接着这个会话回复。需要写入平台时按当前审批模式处理：先问我就提交草稿，帮我批准就直接调用写入工具由 AI 独立终审，完全访问就直接执行。%s", msg.Author, msg.Body, attachmentNote(msg.Attachments), spaceDeliverablePrompt)
 	}
 	prior = append(prior, assistantMessage{Role: "user", Content: content, Attachments: msg.Attachments})
 	status, raw := h.internalCall(c, http.MethodPost, "/api/assistant/generations", gin.H{

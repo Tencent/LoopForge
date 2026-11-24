@@ -98,6 +98,9 @@ test('schedule job: a manual trigger dispatches todo requirements of the project
   const saved = await put('/api/schedule-jobs', { ...job, name: 'E2E 定时任务（改）' });
   assert.equal(saved.name, 'E2E 定时任务（改）');
   assert.ok(list(await get('/api/schedule-jobs')).some(j => j.id === id));
+  // The enable switch keeps the e2e job disabled.
+  assert.equal((await post(`/api/schedule-jobs/${id}/enabled`, { enabled: false })).enabled, false);
+  await api('POST', `/api/schedule-jobs/${id}/enabled`, {}, { expect: 400 });
 
   await post(`/api/schedule-jobs/${id}/run`, {});
   const runs = await waitFor('scheduled dispatch', async () => {
@@ -106,6 +109,7 @@ test('schedule job: a manual trigger dispatches todo requirements of the project
   }, { timeoutMs: 120_000 });
   trackRun(runs[0].id);
   await waitRun(runs[0].id, r => r.status === 'succeeded', { label: 'scheduled run succeeded' });
+  assert.ok(Array.isArray(list(await get(`/api/schedule-job-executions?projectId=${P}&jobId=${id}`))));
   const after = list(await get('/api/schedule-jobs')).find(j => j.id === id);
   assert.ok(['success', 'waiting', 'running'].includes(after.lastStatus), `job status ${after.lastStatus}: ${after.lastError || ''}`);
 });
@@ -262,4 +266,33 @@ test('chat clarify and sync endpoints are reachable read-only', async () => {
   assert.ok(await get('/api/chat-clarify', { expect: [200, 400] }));
   const status = await get('/api/sync/status');
   assert.ok(status);
+});
+
+test('platform: Git HTTPS host authorizations are scoped and personal choices omit addresses', async () => {
+  const base = '/api/platform/git-https-hosts';
+  const host = `${uid('git-https-host')}.example.org:8443`;
+  const path = `${base}/${encodeURIComponent(host)}`;
+  const choicePath = '/api/git-https-hosts';
+  const findHost = async () => (await get(base)).find(entry => entry.host === host);
+  const revisionHeader = revision => ({ 'If-Match': JSON.stringify(revision) });
+
+  await post(`${base}/preview`, { host: 'bad/path', platform: 'gitlab' }, { expect: 400 });
+  const input = { host, platform: 'gitlab', addresses: ['10.20.30.40'] };
+  const created = await post(base, input, { expect: 201, raw: true });
+  track(`Git HTTPS host ${host}`, async () => {
+    const entry = await findHost();
+    if (entry) await del(path, { expect: 204, headers: revisionHeader(entry.revision) });
+  });
+  assert.equal(created.headers.get('etag'), JSON.stringify(created.data.revision));
+  const choices = await get(choicePath, cfg.tokenB ? asB() : {});
+  assert.deepEqual(choices.find(choice => choice.host === host), { host, platform: 'gitlab' });
+  if (cfg.tokenB) await get(base, asB({ expect: 403 }));
+
+  const updated = await put(path, { platform: 'gitlab', addresses: ['10.20.30.41', 'fd00::2'] }, {
+    expect: 200, headers: revisionHeader(created.data.revision),
+  });
+  assert.deepEqual(await findHost(), updated);
+  assert.equal((await del(path, { expect: 412, headers: revisionHeader(created.data.revision) })).code, 'https_host_trust_changed');
+  await del(path, { expect: 204, headers: revisionHeader(updated.revision) });
+  assert.ok(!(await get(choicePath)).some(choice => choice.host === host));
 });

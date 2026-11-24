@@ -83,6 +83,12 @@ test('unknown bots, rooms and spaces answer 404', async () => {
   for (const sub of ['decisions', 'flows', 'sops']) await status('POST', `/api/spaces/${MISSING}/${sub}`, {}, [404]);
 });
 
+test('read-only status endpoints answer for a signed-in user', async () => {
+  const install = await get('/api/assistant/cli-install?engine=codex');
+  assert.ok(['installed', 'missing', 'installing', 'failed'].includes(install.status), install.status);
+  await status('GET', '/api/assistant/cli-install?engine=not-a-cli', undefined, [400]);
+});
+
 test('OTLP ingest accepts an empty export', async () => {
   await status('POST', '/api/otel/v1/traces', {}, [200, 202]);
 });

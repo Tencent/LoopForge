@@ -96,7 +96,7 @@ func RunGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, c
 	return env, closeRelay, nil
 }
 
-var workspaceGitSecretEnvironment = []string{"AGENTFLOW_GIT_TOKEN", "AGENTFLOW_GIT_HTTP_USER", "AGENTFLOW_GIT_HTTP_PASSWORD", "AGENTFLOW_GIT_HTTP_HOST", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN", "TEA_TOKEN", "CNB_TOKEN", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_CONFIG_PARAMETERS"}
+var workspaceGitSecretEnvironment = []string{"AGENTFLOW_GIT_TOKEN", "AGENTFLOW_GIT_HTTP_USER", "AGENTFLOW_GIT_HTTP_PASSWORD", "AGENTFLOW_GIT_HTTP_HOST", "AGENTFLOW_GIT_HTTP_URL_HOST", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN", "TEA_TOKEN", "CNB_TOKEN", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_CONFIG_PARAMETERS"}
 
 func scrubRunGitCredentials(ctx context.Context, sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) {
 	home := command.environment["HOME"]

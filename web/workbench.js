@@ -5,7 +5,7 @@
   const MODE_KEY = 'agentflow.assistantApprovalMode';
   const MODES = [
     { id: 'confirm', name: '先问我', desc: '执行前先让你确认' },
-    { id: 'assisted', name: '帮我批准', desc: '低风险的写入直接做，重要操作仍会问你' },
+    { id: 'assisted', name: '帮我批准', desc: 'AI 独立审查并直接放行或拒绝，无需人工确认' },
     { id: 'auto', name: '完全访问', desc: '在你的权限内直接执行' },
   ];
   const KIND = { doc: '文档', prototype: '页面', api: '接口', diff: '变更', report: '报告', ppt: '幻灯片', browser: '浏览器', file: '文件', sop: 'SOP' };

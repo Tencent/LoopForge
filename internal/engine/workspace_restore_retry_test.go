@@ -48,7 +48,7 @@ func remoteWorkspaceRestoreFixture(t *testing.T, backend string) (*Engine, *Engi
 	worker.ConfigureExecution("restore-worker-"+id, "restore-worker-"+id, time.Minute, false)
 	worker.controlToken = "restore-retry-control"
 	t.Cleanup(worker.checkpointTransfers.Close)
-	workflow := domain.WorkflowDefinition{ID: id, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	workflow := domain.WorkflowDefinition{ID: id, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "prepare", Type: "command"}, {ID: "close", Type: "agent", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{Source: "prepare", Target: "close", When: "success"}}}
 	run := domain.Run{ID: id, WorkflowID: id, WorkflowSnapshot: workflow, Status: "succeeded",

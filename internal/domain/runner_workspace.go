@@ -175,6 +175,9 @@ const (
 	// WorkspaceErrorTerminalActive: an exclusive human terminal holds the
 	// workspace; waiting does not help until the user closes it.
 	WorkspaceErrorTerminalActive = "workspace_terminal_active"
+	// WorkspaceErrorConversationState carries a safe, conversation-relative
+	// preparation error from the execution machine.
+	WorkspaceErrorConversationState = "conversation_state"
 )
 
 // WorkspaceRestoreStatus describes restoration separately from SOP execution.

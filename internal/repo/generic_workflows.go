@@ -6,14 +6,10 @@ import "agentflow/internal/domain"
 // backend delivery SOP stored in generic_templates.
 const GenericBackendDeliveryWorkflowID = "generic-backend-delivery"
 
-// Platform docker assets the generic backend SOP binds to. They are catalog
-// rows (not part of the template blob), seeded by
-// migrations/seed/111_generic_docker.sql so new projects run in a container
-// instead of the host-local driver.
-const (
-	GenericBackendDockerfileID = "generic-backend"
-	GenericDockerSandboxID     = "generic-docker"
-)
+// GenericDockerSandboxID is the platform docker sandbox the generic backend
+// SOP binds to. It is a catalog row (not part of the template blob), seeded
+// by migrations/seed/001_public_catalog.sql.
+const GenericDockerSandboxID = "generic-docker"
 
 // Role identifiers used by the stored LoopForge backend template. Cloning a
 // generic template copies these roles into the target project.

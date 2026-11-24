@@ -434,6 +434,20 @@ func assistantDiscoveryKey(protocol, apiKey, baseURL string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func invalidateAssistantEngineDiscoveryCache(user domain.User) {
+	for _, engine := range assistantCLIEngines() {
+		key, baseURL := assistantEngineCredential(user, engine)
+		if key == "" || baseURL == "" {
+			continue
+		}
+		protocol := assistantEngineProtocol(user, engine)
+		if assistantEngineAnthropicModels(engine, protocol) {
+			protocol = runtime.AgentCLIProtocolMessages
+		}
+		assistantDiscoveryCache.Delete(assistantDiscoveryKey(protocol, key, baseURL))
+	}
+}
+
 func cachedAssistantEngineDiscovery(ctx context.Context, protocol, apiKey, baseURL string) []assistantDiscoveredModel {
 	cacheKey := assistantDiscoveryKey(protocol, apiKey, baseURL)
 	now := time.Now()
@@ -544,9 +558,20 @@ func cursorCatalogEqual(a, b []domain.CLIModel) bool {
 // /v1) and {base}/v1/models for Anthropic ones. Gateways answer both with
 // {"data":[{"id":…,"display_name"|"name":…}]}.
 func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, baseURL string) ([]assistantDiscoveredModel, error) {
+	return discoverAssistantEngineModelsWithClient(ctx, http.DefaultClient, anthropic, apiKey, baseURL)
+}
+
+func discoverAssistantEngineModelsWithClient(ctx context.Context, client *http.Client, anthropic bool, apiKey, baseURL string) ([]assistantDiscoveredModel, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
 	endpoint := strings.TrimRight(baseURL, "/")
 	if anthropic {
-		endpoint += "/v1/models"
+		if strings.HasSuffix(endpoint, "/v1") {
+			endpoint += "/models"
+		} else {
+			endpoint += "/v1/models"
+		}
 	} else {
 		endpoint += "/models"
 	}
@@ -575,13 +600,17 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 		} else {
 			req.Header.Set("x-api-key", apiKey)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			var urlErr *url.Error
 			if errors.As(err, &urlErr) {
 				err = urlErr.Err
 			}
 			return nil, fmt.Errorf("无法连接 %s：%w", endpoint, err)
+		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			resp.Body.Close()
+			return nil, fmt.Errorf("%s 返回重定向 HTTP %d，已拒绝跟随跳转", endpoint, resp.StatusCode)
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
@@ -631,6 +660,30 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 		return out, nil
 	}
 	return nil, lastErr
+}
+
+func discoverApprovalReviewAPIModels(ctx context.Context, protocol, apiKey, baseURL string) ([]assistantDiscoveredModel, error) {
+	baseURL = strings.TrimSpace(baseURL)
+	client := approvalHTTPClientFactory(10 * time.Second)
+	switch protocol {
+	case runtime.AgentCLIProtocolMessages:
+		if baseURL == "" {
+			baseURL = assistantAnthropicAPIBase
+		}
+		return discoverAssistantEngineModelsWithClient(ctx, client, true, apiKey, baseURL)
+	case runtime.AgentCLIProtocolChat, runtime.AgentCLIProtocolResponses:
+		if baseURL == "" {
+			baseURL = "https://api.openai.com/v1"
+		}
+		return discoverAssistantEngineModelsWithClient(ctx, client, false, apiKey, baseURL)
+	case runtime.AgentCLIProtocolGemini:
+		if baseURL == "" {
+			baseURL = "https://generativelanguage.googleapis.com"
+		}
+		return discoverGeminiModelsWithClient(ctx, client, apiKey, baseURL)
+	default:
+		return nil, fmt.Errorf("不支持的接口协议：%s", protocol)
+	}
 }
 
 // assistantEngineState records which CLI holds a personal conversation's

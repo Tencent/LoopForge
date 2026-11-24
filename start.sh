@@ -6,10 +6,13 @@
 #   ./start.sh            install/start in the background (same as -d)
 #   ./start.sh -d         install/start in the background
 #   ./start.sh logs       follow platform logs
-#   ./start.sh stop       stop containers, keep them and their data
+#   ./start.sh stop [service]
+#                         stop containers and keep their data
 #   ./start.sh down       remove containers, keep data volumes
 #   ./start.sh restart    restart the platform container
 #   ./start.sh pull       refresh images and recreate changed containers
+#   ./start.sh migrate-sandboxes
+#                         apply migration 041 while the platform is stopped
 #   ./start.sh dev        build this checkout (compose.dev.yaml) and start it
 #   ./start.sh release    switch a source-built installation back to GHCR
 #   ./start.sh            time ghcr.io and ghcr.nju.edu.cn, then pull the faster one
@@ -55,8 +58,17 @@ PY
     # A newer image may read generated columns the old volume never got.
     bash scripts/install-schema-extensions.sh
     ;;
+  migrate-sandboxes)
+    active_platform="$(compose ps --all --status running --status restarting --status paused --services platform)"
+    if [[ -n "$active_platform" ]]; then
+      docker_access_fail 'Stop the platform with ./start.sh stop platform. Keep MySQL running.'
+    fi
+    compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql -u loopforge loopforge' \
+      < migrations/041_native_sandbox_inline_assets.sql
+    printf 'Applied sandbox migration 041.\n'
+    ;;
   logs) compose logs -f "${@:-platform}" ;;
-  stop) compose stop ;;
+  stop) compose stop "$@" ;;
   down) compose down --remove-orphans ;;
   restart) compose restart platform ;;
   build)
@@ -66,7 +78,7 @@ PY
     ;;
   *)
     echo "unknown: $cmd" >&2
-    echo 'usage: ./start.sh [-d|logs|stop|down|restart|pull|dev|release]' >&2
+    echo 'usage: ./start.sh [-d|logs|stop|down|restart|pull|migrate-sandboxes|dev|release]' >&2
     exit 1
     ;;
 esac

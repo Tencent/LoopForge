@@ -18,7 +18,7 @@ func TestRequirementWithoutSOP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "sop-mode-flow", Name: "SOP mode", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "sop-mode-flow", Name: "SOP mode", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.PutProject(domain.Project{ID: "sop-mode", Name: "SOP mode", OwnerID: 1, WorkflowID: "sop-mode-flow"}); err != nil {

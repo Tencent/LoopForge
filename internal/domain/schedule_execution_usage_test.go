@@ -47,3 +47,14 @@ func TestScheduleUsageKeepsCacheOnlyReports(t *testing.T) {
 		}
 	}
 }
+
+func TestScheduleUsagePrefersReportedAmount(t *testing.T) {
+	for _, amount := range []float64{0, .12} {
+		u := TokenUsage{InputTokens: 100000, OutputTokens: 10000, CostUSD: amount, CostStatus: "reported"}
+		e := ScheduleJobExecution{}
+		e.RecordUsage("unrecognized-model", &u)
+		if e.CostCNY == nil || math.Abs(*e.CostCNY-amount*AnalyticsUSDToCNY) > 1e-10 || e.Usage.CostStatus != "reported" {
+			t.Fatalf("explicit report must survive without a model tariff: %+v", e)
+		}
+	}
+}

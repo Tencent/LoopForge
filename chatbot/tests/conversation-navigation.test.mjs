@@ -68,6 +68,13 @@ test("only the matching approved node resolves a historical approval draft", () 
   ]);
   assert.equal(resolved.draft.resolved, true);
   assert.equal(visibleSidebarArtifact(resolved), false);
+  assert.equal(
+    visibleSidebarArtifact({
+      ...artifact,
+      draft: { ...artifact.draft, decision: "rejected" },
+    }),
+    false,
+  );
   assert.equal(artifact.draft.resolved, undefined);
   assert.equal(actionName("runs_approve"), "批准节点");
 });

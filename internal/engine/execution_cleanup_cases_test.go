@@ -25,7 +25,7 @@ func TestDirectScriptNodeSuccessFailureAndResolution(t *testing.T) {
 		Script:          "mkdir -p out && printf ok > out/result.txt",
 		ArtifactOutputs: []domain.ArtifactContract{{Name: "result", Path: "out/result.txt", MediaType: "text/plain", Required: true}},
 	}
-	successWF := domain.WorkflowDefinition{ID: "wf-script", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{successNode}}
+	successWF := domain.WorkflowDefinition{ID: "wf-script", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{successNode}}
 	success := domain.Run{
 		ID: "cve-direct-script-success", Status: "running", WorkflowID: successWF.ID, WorkflowSnapshot: successWF,
 		Nodes: map[string]*domain.NodeRun{successNode.ID: {NodeID: successNode.ID, Status: "pending"}},
@@ -43,7 +43,7 @@ func TestDirectScriptNodeSuccessFailureAndResolution(t *testing.T) {
 	}
 
 	failedNode := domain.WorkflowNode{ID: "fail", Name: "Fail", Type: "script", ScriptLanguage: "shell", Script: "printf failure >&2; exit 7", MaxAttempts: 1}
-	failedWF := domain.WorkflowDefinition{ID: "wf-fail", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{failedNode}}
+	failedWF := domain.WorkflowDefinition{ID: "wf-fail", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{failedNode}}
 	failed := domain.Run{
 		ID: "cve-direct-script-failure", Status: "running", WorkflowID: failedWF.ID, WorkflowSnapshot: failedWF,
 		Nodes: map[string]*domain.NodeRun{failedNode.ID: {NodeID: failedNode.ID, Status: "pending"}},
@@ -61,7 +61,7 @@ func TestDirectScriptNodeSuccessFailureAndResolution(t *testing.T) {
 	}
 
 	agentNode := domain.WorkflowNode{ID: "agent", Name: "Agent", Type: "agent", AgentID: "missing-agent"}
-	agentWF := domain.WorkflowDefinition{ID: "wf-agent", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{agentNode}}
+	agentWF := domain.WorkflowDefinition{ID: "wf-agent", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{agentNode}}
 	agentRun := domain.Run{
 		ID: "cve-direct-agent-resolution", Status: "running", WorkflowID: agentWF.ID, WorkflowSnapshot: agentWF,
 		Nodes: map[string]*domain.NodeRun{agentNode.ID: {NodeID: agentNode.ID, Status: "pending"}},
@@ -217,7 +217,7 @@ func TestWorkspacePreparationDirectValidationAndRemoteStates(t *testing.T) {
 	if _, _, err := e.workspaceSandboxProfile(domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "missing"}}); err == nil {
 		t.Fatal("missing sandbox profile accepted")
 	}
-	snapshot := &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "snapshot", Name: "Snapshot", Driver: "local"}}
+	snapshot := &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "snapshot", Name: "Snapshot", Driver: domain.SandboxDriverNative}}
 	if profile, _, err := e.workspaceSandboxProfile(domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{SandboxSnapshot: snapshot}}); err != nil || profile.ID != "snapshot" {
 		t.Fatalf("snapshot profile=%+v err=%v", profile, err)
 	}

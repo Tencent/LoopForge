@@ -63,9 +63,9 @@ The installer checks Docker, Compose, Python 3 and curl. It offers to install mi
 
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
-`compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.0`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
+`compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.2`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
-To upgrade, update the checkout first, then refresh the containers:
+To upgrade, update the checkout first, apply any required upgrade migrations, then refresh the containers. For the sandbox catalog upgrade, follow [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets).
 
 ```bash
 git fetch --tags && git checkout vX.Y.Z
@@ -99,7 +99,9 @@ Enterprise authentication gateways can sign users in by header with `AGENTFLOW_T
 
 ### Docker sandboxes
 
-The platform exposes a built-in default sandbox (`local`) even when the catalog SQL has not been installed. It is an in-memory fallback and does not insert database rows. An existing saved `local` profile takes priority, including its configured driver and environment. The default cannot be deleted; edit its configuration or create another profile to change how tasks run. The full installer still imports starter SOPs and the welcome project.
+The platform exposes a built-in default sandbox (`generic-docker`, built from its own Dockerfile) even when the catalog SQL has not been installed. It is an in-memory fallback and does not insert database rows. An existing saved `generic-docker` profile takes priority, including its configured driver and environment. The default cannot be deleted; edit its configuration or create another profile to change how tasks run. SOPs that do not choose a sandbox run in it. The full installer still imports starter SOPs and the welcome project; the seeded `generic-docker` Dockerfile matches the platform image, so Compose sandboxes reuse `AGENTFLOW_ISOLATED_IMAGE` instead of building. Without the catalog SQL, the first run builds the built-in Dockerfile once.
+
+`native` sandboxes use the execution machine's toolchains and the configured environment variables. For native SOP checkouts, the host refreshes a private per-repository cache using the checkout's Git credentials and copies objects into each working tree. Docker sandboxes clone directly from the remote. The Compose platform image has no bwrap, so run native work on Runners or a natively installed platform. See [conversation workspaces](conversation-workspaces.md#仓库缓存). Migration `041_native_sandbox_inline_assets.sql` converts local profiles to native, preserves ordinary environment variables, and moves SOPs relying on the old default to `generic-docker`.
 
 For native services running as an ordinary host user, default/root Docker images run with that service user's UID/GID so private workspaces remain accessible without relaxing their permissions or adding capabilities. Images that explicitly select a non-root user retain that identity; operators must arrange compatible bind-mount ownership for those images.
 
@@ -107,7 +109,7 @@ The Compose deployment mounts the host Docker socket into the platform container
 
 Docker SOP nodes using a standard CLI executor first look for the CLI on the sandbox user's PATH. When it is missing, LoopForge uses a shared installation for the platform image where available or runs the same installer as conversation workspaces in the container. The install uses the sandbox's configured proxy, and later nodes in that container reuse the CLI. In-container installation requires a writable filesystem and access to the official package source. Read-only sandboxes can use a CLI from the image or the mounted toolchain. ZCode uses the official executable supplied by the image.
 
-Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: the platform runs every task in a sandbox container, including SOPs configured for the `local` driver (`AGENTFLOW_LOCAL_SANDBOX=docker`), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. Agent CLIs also apply a bound repository's own configuration as their native rules define, including unattended SOP runs: `AGENTS.md`/`CLAUDE.md` instructions, `.codebuddy/`, `.claude/settings.json` (hooks and environment) and `.mcp.json` can start commands or MCP servers inside the sandbox. Bind only repositories whose contents you trust. To run without the socket, remove the `docker.sock` volume and the `AGENTFLOW_LOCAL_SANDBOX` setting from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for AI SOPs; the script-only welcome SOP then runs inside the platform container.
+Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: there is no unisolated sandbox type, so every task the platform runs itself is in a sandbox (the `AGENTFLOW_LOCAL_SANDBOX` setting is gone), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. Agent CLIs also apply a bound repository's own configuration as their native rules define, including unattended SOP runs: `AGENTS.md`/`CLAUDE.md` instructions, `.codebuddy/`, `.claude/settings.json` (hooks and environment) and `.mcp.json` can start commands or MCP servers inside the sandbox. Bind only repositories whose contents you trust. To run without the socket, remove the `docker.sock` volume from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for SOPs, including the welcome SOP, which now runs in `generic-docker`.
 
 ### Slow networks: clone and image build limits
 
@@ -124,11 +126,21 @@ Runner conversation workspace preparation follows the conversation request's lif
 
 A clone that is stopped this way is not retried, since a retry would wait on the same network. When the execution host reaches GitHub or Debian mirrors slowly, point git at a proxy (`git config --global http.proxy`) and use a nearby package mirror in the Dockerfile rather than raising these limits.
 
+### Self-hosted Git repositories over HTTPS
+
+In **Platform administration → Git Host Trust**, add an HTTPS host, including its port if it differs from 443. Resolve the hostname or enter approved IP addresses manually, then review and confirm the list. For an IPv4 server, enter its hostname in the host field and include its IPv4 addresses in the authorization. For a direct IPv6 connection, enter `fd00::2` for port 443 or `[fd00::2]:8443` for a custom port. The authorization covers that IP, and the Git server's TLS certificate must include the IP in its subject alternative names. A clone URL uses the bracketed form, for example `https://[fd00::2]:8443/team/repo.git`.
+
+Signed-in users see the instance's hostname or IPv6 address and Git provider in **Personal settings → Git access tokens**. They can select the instance and enter their own token. The approved IP address lists appear in platform administration. When GitLab returns a merge request link with a different host or port, LoopForge tracks the MR using the authorized endpoint that it queried.
+
+The platform checks the approved addresses before dialing for token verification, pull or merge request discovery, and status synchronization. HTTPS connections use the platform's normal TLS trust chain. For each registered hostname and port, the platform dials only the addresses in that authorization. `AGENTFLOW_GIT_EGRESS_ALLOW_CIDRS` applies only to hosts without an HTTPS authorization.
+
+When migrating a host from deployment CIDRs, include every IP the platform should be able to reach in the authorization. To rotate an address, edit the saved list and review the added and removed addresses before confirming.
+
 ### Git repositories over SSH
 
 Use Git SSH for GitLab.com, self-managed GitLab, Gitea, Gogs, GitHub, and other Git hosts that offer this transport. In **Project settings → Code repositories** or **Quick access**, enter the clone address, such as `git@gitlab.com:group/repo.git` or `ssh://git@git.example.org:2222/group/repo.git`, and select the existing default branch. GitHub HTTPS continues to use GitHub authorization or a PAT.
 
-1. GitHub (`github.com:22` and `ssh.github.com:443`) uses built-in host keys. For another host, a platform administrator opens **Platform administration → Git SSH Host Trust**, enters the hostname and optional port, and selects **Read key and review fingerprint**. The platform reads the public key through an SSH handshake subject to `AGENTFLOW_GIT_EGRESS_ALLOW_CIDRS`. For a private host, select an online personal Runner with access to the server and support for host-key discovery. You can also enter OpenSSH public keys manually, including multiple keys for a host. Check the displayed SHA256 fingerprints against the Git provider or server administrator before confirming. The registration applies across the platform to that exact host and port. Edits and removals are picked up by the next platform-managed Git operation or newly started workspace CLI or terminal session.
+1. GitHub (`github.com:22` and `ssh.github.com:443`) uses built-in host keys. For another host, a platform administrator opens **Platform administration → Git Host Trust**, enters the hostname and optional port, and selects **Read key and review fingerprint**. The platform reads the public key through an SSH handshake subject to `AGENTFLOW_GIT_EGRESS_ALLOW_CIDRS`. For a private host, select an online personal Runner with access to the server and support for host-key discovery. You can also enter OpenSSH public keys manually, including multiple keys for a host. Check the displayed SHA256 fingerprints against the Git provider or server administrator before confirming. The registration applies across the platform to that exact host and port. Edits and removals are picked up by the next platform-managed Git operation or newly started workspace CLI or terminal session.
 2. Runner **0.11.1** and later receive the matching platform entries when a task or workspace request needs Git SSH. Deployments can also point `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` at a dedicated OpenSSH `known_hosts` file. For Compose, put the file under the `LOOPFORGE_DATA_DIR` bind mount and set its absolute path in `.env`. Entries in the platform file and administration page are combined. Use exact hostnames or IP addresses in the file, with `[host]:port` for a nondefault port. Platform-supplied trusted keys take precedence for the same host and port. Runner-local keys apply when the platform supplies only revocations or has no entries for that endpoint. Both sources apply explicit `@revoked` entries. The encoded entries have a 1 MiB allowance per dispatch. Runners **0.9.3** through **0.11.0** still need their own file and variable. A separate worker can read the registry from the shared database or use its own deployment file.
 
    If the database registry is unavailable, the platform logs the error and continues using the deployment file and built-in GitHub keys. Runner-local keys remain available under the same precedence rules. An unreadable configured `known_hosts` file still blocks Git SSH operations because it can carry revocations. The administration list marks invalid entries for removal, and an entry with a valid hostname can be repaired in place. Invalid entries contribute no trusted keys.
@@ -139,6 +151,20 @@ Use Git SSH for GitLab.com, self-managed GitLab, Gitea, Gogs, GitHub, and other 
 Repositories automatically use the current user's key for their SSH host and port; repositories on the same host and port share that key. The repository form only shows a red warning when that host has no personal key. This reminder does not block saving the repository or completing setup; credentials and host trust can be configured before the first Git operation. There is no repository-specific or default fallback key. Checkout and SOP execution use the responsible user's keys. Conversation submission and the workspace terminal use the requesting user's keys. The temporary signing agent closes when the command or terminal ends. A terminal's agent never lives in the shared workspace: with the `bwrap` driver it sits in a private directory bound only into that terminal, and with the `local` driver (no isolation) it stays outside the workspace in a 0700 directory. Docker and seatbelt workspaces share one filesystem view among all their processes, so their terminals get no personal SSH key; push from there with the platform's submit action. `git@github.com:` and `ssh://git@github.com/` addresses are saved as GitHub repositories (HTTPS + token, automatic pull requests) unless `provider` is explicitly `ssh`. To rotate a key, replace it in settings and revoke the old public key at the host.
 
 SSH handles clone, fetch and push. A conversation delivery returns the branch and commit SHA. You can optionally add a repository web URL to open the host and create a PR/MR manually. Issue import and PR/MR automation need a hosting API credential. To automate those actions, add a hosting-specific MCP in **Settings → Assets → MCP**, give it its own scoped token, and attach it to the relevant agent or workflow. [CNB does not support Git SSH](https://docs.cnb.cool/en/guide/git-access.html); it uses HTTPS with a CNB access token, which is outside this integration.
+
+## Chat Bots (WeCom, Feishu, DingTalk)
+
+Chat Bots are configured per project on the Bot page. The deployment provides:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AGENTFLOW_CREDENTIAL_KEYS` | generated by `scripts/configure.sh` | `kid:base64(32 bytes)[,…]`; the first key seals new Bot secrets. Every replica needs the same value. Back it up with the database: without it saved secrets cannot be decrypted. |
+| `AGENTFLOW_PUBLIC_URL` | `LOOPFORGE_PUBLIC_URL` | Address chat users open for account binding, run pages and WeCom write confirmation. Must be reachable from their browsers. |
+| `AGENTFLOW_BOT_WORKERS_ENABLED` | `true` | `false` during an upgrade window: no receiving connections, no notification delivery, Bot configuration writes return `503 bot_maintenance`. |
+| `AGENTFLOW_BOT_BODY_RETENTION_DAYS` | `90` | Days after a finished conversation turn, notification or write draft until its text and the native CLI log of the turn are removed. `0` keeps them. |
+| `AGENTFLOW_BOT_RECORD_RETENTION_DAYS` | `180` | Days until the finished records themselves are deleted. `0` keeps them; a value below the body retention is raised to it. |
+
+The retention cleanup runs hourly in each process that runs the Bot workers and never touches records still waiting for someone (in progress, ready to send or delivery unknown). Native CLI logs of Bot turns live in the CLI home under `AGENTFLOW_ASSISTANT_SESSION_DIR`; with several API replicas that directory must be shared, otherwise a replica that did not run a turn records its log as missing. Channel setup, upgrade and rollback steps are in the [enterprise IM manual](im-channels.md) (Chinese).
 
 ## Accounts
 
@@ -177,7 +203,7 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 ## Observability schema
 
-After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog and the built-in catalog rewrites from `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql`, and `038_generic_sop_host_credentials.sql` in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in SOP graphs the new code ships. Application startup does not run data migrations.
+After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog, the built-in catalog rewrites from `033_generic_sop_mr_node.sql` and `038_generic_sop_host_credentials.sql`, in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in SOP graphs the new code ships. Application startup does not run data migrations.
 
 For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly.
 
@@ -187,9 +213,22 @@ For an external MySQL deployment, review that migration and check column existen
 
 | Kind | Example | What an operator does |
 | --- | --- | --- |
-| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
-| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
+| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
+| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql`, `041_native_sandbox_inline_assets.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
+
+### Migrating existing sandboxes to inline assets
+
+Check out the upgraded release and stop the old platform and any other processes using the database. Back up the database while MySQL remains running. For Compose installations, apply the migration with these commands.
+
+```bash
+./start.sh stop platform
+./start.sh migrate-sandboxes
+```
+
+Once the migration succeeds, start the upgraded platform with `./start.sh pull` for a published release or `./start.sh dev` for a source build. For external MySQL deployments, apply `migrations/041_native_sandbox_inline_assets.sql` directly before starting the upgraded platform.
+
+The migration copies Dockerfiles into sandboxes, converts local sandboxes to native, drops the legacy Dockerfile and environment tables and includes the built-in Dockerfile fix from `031_generic_backend_openssh.sql`. Fresh installations seed the new sandbox format directly.
 
 ## Updating existing public SOPs
 

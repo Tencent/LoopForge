@@ -255,11 +255,11 @@ func cliFlagValue(args []string, long, short string) string {
 func cliRepoHost(repo string) string {
 	if strings.Contains(repo, "://") {
 		if u, err := url.Parse(repo); err == nil {
-			return cliHostScope(u.Host)
+			return cliHostScope("https://" + u.Host)
 		}
 		return ""
 	}
-	if parts := strings.Split(repo, "/"); len(parts) >= 3 && strings.Contains(parts[0], ".") {
+	if parts := strings.Split(repo, "/"); len(parts) >= 3 && (strings.Contains(parts[0], ".") || strings.HasPrefix(parts[0], "[")) {
 		return cliHostScope(parts[0])
 	}
 	return ""

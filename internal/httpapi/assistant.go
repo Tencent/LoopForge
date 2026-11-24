@@ -30,15 +30,17 @@ type assistantConversation = domain.AssistantSession
 const assistantRequestBodyLimit = 32 << 20
 
 type assistantDraft struct {
-	Tool      string                   `json:"tool"`
-	Path      map[string]any           `json:"path,omitempty"`
-	Query     map[string]any           `json:"query,omitempty"`
-	Body      json.RawMessage          `json:"body,omitempty"`
-	Saved     bool                     `json:"saved,omitempty"`
-	Auto      bool                     `json:"auto,omitempty"`
-	Warnings  []string                 `json:"warnings,omitempty"`
-	SaveError string                   `json:"saveError,omitempty"`
-	Review    *assistantApprovalReview `json:"review,omitempty"`
+	Tool      string          `json:"tool"`
+	Path      map[string]any  `json:"path,omitempty"`
+	Query     map[string]any  `json:"query,omitempty"`
+	Body      json.RawMessage `json:"body,omitempty"`
+	Saved     bool            `json:"saved,omitempty"`
+	Auto      bool            `json:"auto,omitempty"`
+	Warnings  []string        `json:"warnings,omitempty"`
+	SaveError string          `json:"saveError,omitempty"`
+	// Result is the response body of an executed draft (not persisted).
+	Result string                   `json:"-"`
+	Review *assistantApprovalReview `json:"review,omitempty"`
 	// Proposal marks a draft the assistant offers on its own to hand work to a
 	// SOP; Decision is the server-recorded answer to it.
 	Proposal *assistantProposal `json:"proposal,omitempty"`
@@ -101,8 +103,12 @@ type assistantHandlers struct {
 	api           http.Handler
 	generate      func(context.Context, string, domain.User) (string, error)
 	review        func(context.Context, assistantApprovalInput, domain.User, string) (assistantApprovalReview, error)
-	reviewCatalog func(string) assistantModelCatalog
 	titleSummary  func(context.Context, domain.User, string) (string, error)
+	// clarify runs chat clarification rounds on the platform's
+	// clarification jobs; clarifyClassify replaces the answer classifier
+	// in tests.
+	clarify         *streamHandlers
+	clarifyClassify func(context.Context, domain.User, string) (string, error)
 	// attachmentSweepWake nudges the background sweep after a deletion
 	// queues files; nil when no sweeper runs (tests sweep directly).
 	attachmentSweepWake chan struct{}
@@ -361,6 +367,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.Notify = func(kind string, value any) {
 			if emit != nil {
 				emit(kind, value)
+			} else if event, ok := value.(assistantStreamEvent); kind == "thought" && ok {
+				activity.add(publicAssistantEvent(event, user))
 			}
 		}
 		sess.mu.Lock()
@@ -464,13 +472,20 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 		c.JSON(status, payload)
 	}
+	failSetup := func(err error) {
+		status, _ := assistantGenerationFailure(modelCtx, err)
+		failure := assistantDiagnosticsFrom(modelCtx).fail(modelCtx, err, user)
+		fail(status, failure.Message)
+	}
 	var nativeSession *assistantNativeSession
 	// Every conversation runs in its own CLI root; shared ones switch to the
 	// native session root below. The root's home also carries the skills.
 	cliRoot := assistantConversationRoot(ownerID, req.SessionID)
-	if err := runtime.ValidateConversationRoot(cliRoot); err != nil {
-		fail(409, err.Error())
-		return
+	if !shared {
+		if _, err := runtime.ConversationSkillLinks(cliRoot); err != nil {
+			failSetup(err)
+			return
+		}
 	}
 	nativeContinuationReady := false
 	var turnUsage assistantTurnUsage
@@ -509,7 +524,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			var err error
 			nativeSession, err = openAssistantNativeSession(req, saved, user, sourceRoot)
 			if err != nil {
-				fail(409, "共享会话缓存不可用或正在使用，请稍后重试")
+				failSetup(err)
 				return
 			}
 			defer nativeSession.Close()
@@ -522,7 +537,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				turn = h.turnPrompt(req, sourceRoot, false)
 			}
 			if err = nativeSession.begin(); err != nil {
-				fail(500, "无法保存共享会话缓存")
+				failSetup(err)
 				return
 			}
 			cliRoot = nativeSession.root
@@ -546,12 +561,15 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			// drains output and lets each CLI commit tool results to its native
 			// journal before the next process is allowed to resume that journal.
 			restarted := false
+			reportSkillLinks := func(paths []string) {
+				reportRemovedConversationSkillLinks(ctx, u, paths, toolSession.Notify)
+			}
 			for switches := 0; switches < 8; switches++ {
 				if !resume {
 					workspaceRepositoryHash = ""
 				}
 				req.workspaceMode = toolSession.RuntimeMode == domain.AssistantModeWorkspace
-				if err := h.writeConversationAssets(cliRoot, req); err != nil {
+				if err := h.writeConversationAssets(cliRoot, req, reportSkillLinks); err != nil {
 					return "", err
 				}
 				mcp, settings, err := stageConversationToolFiles(cliRoot, toolFiles)
@@ -577,7 +595,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				} else if !req.sopDesigner() {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
-				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
+				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: func(usage domain.TokenUsage) {
+					turnUsage.add(domain.PriceScheduleExecutionUsage(replyModel, usage))
+				}, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
 				cliReq.ImageInput = conversationHasImageAttachments(req)
 				// Mode handoffs resume a journal which already has the user turn.
 				if switches == 0 || !resume {
@@ -687,7 +707,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				toolFiles = next
 				defer next.Cleanup()
 				if streaming {
-					emit("runtime_mode", map[string]string{"mode": mode})
+					emit("runtime_mode", map[string]string{"mode": mode, "workspaceRunId": toolSession.conversationWorkspace()})
 				}
 				prompt = "内部控制信息，不向用户解释或复述：运行环境已切换为「" + mode + "」，当前原生会话及之前的工具结果全部保留。直接使用当前工具继续完成本轮用户请求，先核对已执行操作，避免重复执行。面向用户只说明任务进展和结果，不提交接、进程重启、工具注入或运行模式。"
 				// Each phase may start over once: a journal that a new
@@ -909,7 +929,7 @@ func assistantModeTurnReminder(mode string) string {
 	case AssistantApprovalAuto:
 		return "当前审批模式为「完全权限」：平台写入工具直接调用即生效，工作区里 git push、gh pr create 等写入外部系统的命令也直接执行；不要提交 drafts，一次性完成全部步骤后汇总结果。"
 	case AssistantApprovalAssisted:
-		return "当前审批模式为「帮我批准」：工作区沙箱内的文件和命令直接执行；平台写入，以及 git push、gh pr create 等写入外部系统的命令，由独立 AI 审查对话授权，通过才执行；审查未通过的命令会等待用户在对话里批准，平台写入放入 drafts 供用户确认；被拒绝后说明原因，不要绕过审查或换一种方式实现同一写入。"
+		return "当前审批模式为「帮我批准」：工作区沙箱内的文件和命令直接执行；平台写入，以及 git push、gh pr create 等写入外部系统的命令，由独立 AI 审查对话授权并直接终审放行或拒绝，无需人工审批，不要提交 drafts；未通过审查时不要绕过或重复尝试，请调整方案或在回复中向用户说明原因。"
 	default:
 		return "当前审批模式为「请求批准」。平台写入通过 drafts（每轮 1 个）供用户确认。外部 MCP 写入直接调用对应工具，网关会等待本轮发言人批准后执行。工作区沙箱内的文件和命令直接执行。git push、gh pr create 等外部命令同样等待用户批准。被拒绝时不要换一种方式重试。"
 	}
@@ -1156,14 +1176,13 @@ const assistantNativeSystemPrompt = `你是 LoopForge 的统一协作助手。�
 const assistantWorkflowDocumentPrompt = `修改已有 SOP 时先用 workflows_get 或 workflows_revision_get 读取完整定义再改。workflows_save 按 id 整图覆盖 nodes 和 edges，未提交的节点会被删除。`
 
 const assistantDraftProtocolPrompt = `写入先形成草稿：不要直接调用平台写入工具。提交草稿前通过 workbench_tool_schema 读取目标工具的准确输入 schema，按 body/path/query 包装参数，不得猜字段或把它们放到错误层级。用户明确要求构建或修改时，先用只读工具读到现有定义，再在结束时调用 mcp__agentflow_session__submit_assistant_reply 提交待确认草稿。用户在界面确认后才会保存。不要用本地 Bash/Write/Edit 操作控制平面目录；代码任务先打开工作区，明确开始交接后结束当前阶段，平台续接到工作区后使用 CLI 原生文件和命令工具操作，不得声称已经保存、发布或运行。
-普通问答、解释和只读查询直接用自然语言回复，不调用 mcp__agentflow_session__submit_assistant_reply。需要待确认写入时必须通过 mcp__agentflow_session__submit_assistant_reply 提交草稿，每轮只提交 1 个草稿（即下一步要执行的一个操作）：先在 message 中给出完整计划与依赖检查结论，再提交第一个草稿，用户确认保存后下一轮继续下一个草稿。构建 SOP（workflows_save）时，每个 agent 类型节点必须绑定当前项目已存在的角色 id（agentId）并填写 prompt，禁止提交未绑定角色的 agent 节点；所需角色还不存在时必须先提交创建角色的草稿，角色确认后再提交 SOP 草稿。提交删除类草稿（角色、规则、技能、沙箱、Dockerfile、环境、SOP 等）前，必须先用只读工具检查引用关系（例如删除角色前检查 workflows 节点是否引用该角色，删除沙箱前检查 SOP 是否绑定该沙箱），存在依赖时不要提交删除草稿，改为在 message 中说明并给出解除引用的方案；删除类草稿必须携带目标资源 id（path.id、query.id 或 body.id 均可），否则无法执行。
+普通问答、解释和只读查询直接用自然语言回复，不调用 mcp__agentflow_session__submit_assistant_reply。需要待确认写入时必须通过 mcp__agentflow_session__submit_assistant_reply 提交草稿，每轮只提交 1 个草稿（即下一步要执行的一个操作）：先在 message 中给出完整计划与依赖检查结论，再提交第一个草稿，用户确认保存后下一轮继续下一个草稿。构建 SOP（workflows_save）时，每个 agent 类型节点必须绑定当前项目已存在的角色 id（agentId）并填写 prompt，禁止提交未绑定角色的 agent 节点；所需角色还不存在时必须先提交创建角色的草稿，角色确认后再提交 SOP 草稿。提交删除类草稿（角色、规则、技能、沙箱、SOP 等）前，必须先用只读工具检查引用关系（例如删除角色前检查 workflows 节点是否引用该角色，删除沙箱前检查 SOP 是否绑定该沙箱），存在依赖时不要提交删除草稿，改为在 message 中说明并给出解除引用的方案；删除类草稿必须携带目标资源 id（path.id、query.id 或 body.id 均可），否则无法执行。
 ` + assistantWorkflowDocumentPrompt
 
-const assistantAutoWriteProtocolPrompt = `当前审批模式为「完全权限」：用户已授权平台写入工具调用即生效。直接按依赖顺序调用平台读写工具完成任务的全部步骤（环境/Dockerfile → 沙箱 → Rules/Skills/MCP → 角色 → SOP → 定时任务），不要把写入放进 drafts，不要请求用户确认，也不要让用户说"继续"：一次性完成全部步骤后，在 message 中按步骤汇总实际执行结果。构建 SOP 时每个 agent 类型节点必须绑定已存在的角色 id 并填写 prompt；所需角色不存在时先创建角色再保存 SOP。删除类操作前必须先用只读工具检查引用关系；平台返回冲突（如仍被引用）时如实说明并调整方案。不要用本地 Bash/Write/Edit 操作控制平面目录；代码任务先打开工作区，明确开始交接后结束当前阶段，平台续接到 Docker 内后使用 CLI 原生文件和命令工具操作。
+const assistantAutoWriteProtocolPrompt = `当前审批模式为「完全权限」：用户已授权平台写入工具调用即生效。直接按依赖顺序调用平台读写工具完成任务的全部步骤（沙箱 → Rules/Skills/MCP → 角色 → SOP → 定时任务），不要把写入放进 drafts，不要请求用户确认，也不要让用户说"继续"：一次性完成全部步骤后，在 message 中按步骤汇总实际执行结果。构建 SOP 时每个 agent 类型节点必须绑定已存在的角色 id 并填写 prompt；所需角色不存在时先创建角色再保存 SOP。删除类操作前必须先用只读工具检查引用关系；平台返回冲突（如仍被引用）时如实说明并调整方案。不要用本地 Bash/Write/Edit 操作控制平面目录；代码任务先打开工作区，明确开始交接后结束当前阶段，平台续接到 Docker 内后使用 CLI 原生文件和命令工具操作。
 ` + assistantWorkflowDocumentPrompt
 
-const assistantAssistedProtocolPrompt = `当前审批模式为「帮我批准」：直接调用平台写入工具。编程任务先打开工作区，明确开始交接后结束当前阶段，平台续接到工作区后使用 CLI 原生工具。工作区沙箱内的原生文件、补丁和命令直接执行。平台写入，以及 git push、gh pr create、gh api 或 curl 写请求、发布软件包等写入外部系统的命令执行前，平台会让独立审查模型根据本次操作、完整参数和当前用户的对话授权判断是否批准；通过才执行，不按工具名一概放行。审查未通过的命令会等待用户在对话里批准；平台写入收到未批准或审批不可用的提示后，解释具体原因并放入 drafts（每轮 1 个，含完整参数）供用户确认；不要绕过审查、换工具实现同一副作用或反复尝试。提交删除类草稿前先检查引用关系并携带目标 id。不要用本地 Bash/Write/Edit 操作控制平面目录。
-` + assistantWorkflowDocumentPrompt
+const assistantAssistedProtocolPrompt = `当前审批模式为「帮我批准」：直接调用平台写入工具，不要把写入放进 drafts，无需人工审批卡片。编程任务先打开工作区，明确开始交接后结束当前阶段，平台续接到工作区后使用 CLI 原生工具。工作区沙箱内的原生文件、补丁和命令直接执行。平台写入，以及 git push、gh pr create、gh api 或 curl 写请求、发布软件包等写入外部系统的命令执行前，平台会经规则快路径或独立审查模型根据本次操作、关键参数和当前用户的对话授权直接给出最终裁决（放行或拒绝），不按工具名一概放行。收到拒绝或审批不可用的提示后，不要绕过审查、不要提交 drafts、不要换工具实现同一副作用或反复重试；请调整方案或在自然语言回复中向用户说明未执行的原因。删除类操作前先用只读工具检查引用关系并携带目标 id。不要用本地 Bash/Write/Edit 操作控制平面目录。` + "\n" + assistantWorkflowDocumentPrompt
 
 const assistantCommonTailPrompt = assistantModePresentationPrompt + "\n" + `普通问答和只读查询直接自然语言回复；只有提交待确认草稿时调用 mcp__agentflow_session__submit_assistant_reply。该工具成功后立即结束本轮，不能用来发送“稍等”“我先看看”等进度消息，不接受空 drafts。进度请用普通文本说明后继续调用工具：开始一组相关的工具调用或调整方向前，先用一两句中文告诉用户要查什么、刚发现了什么（例如“先查澄清面板的前端代码，确认模型选择器有没有被禁用。”），界面会把这些说明和随后折叠的工具步骤交替展示；不要每个工具调用前都写，不要复述命令本身或贴内部推理原文。用户要求执行时必须推进到实际执行结果、可确认的完整草稿或明确的阻塞原因，不能只承诺下一步就结束。模式切换工具明确开始交接后必须结束当前阶段，由平台自动续接并继续本轮任务。这是已直接提供的 MCP 终态工具，使用这个完整名称，不要把 submit_assistant_reply 裸名当成内置工具交给 DeferExecuteTool。若该工具不可用，不要反复搜索或尝试调用，不要声称草稿已提交。只使用当前项目；未选择项目时不要生成项目内资产。新建 ID 用项目 ID 前缀加语义英文短名。修改必须保留完整字段。不要把 shared 设为 true，不要填写 gitToken 等凭据。
 当前审批模式需要草稿的写操作不会作为可直接执行的 MCP 工具暴露，无需反复搜索写工具；直接用已提供的 mcp__agentflow_session__workbench_tool_schema 查询裸名称（如 issues_save、issues_dispatch、runs_start）的参数契约。drafts 每一项必须包含 tool 字段及对应参数。工具返回参数校验错误时修正字段重新提交，不要误判为工具不可用。
@@ -1513,8 +1532,7 @@ type assistantCLIRequest struct {
 	ReviewOnly                                     bool
 	Native                                         bool
 	MCPConfig, Settings                            string
-	// OnUsage receives the usage of this CLI invocation once its result event
-	// reports one; the result event covers only this process, not the session.
+	// OnUsage receives this invocation's usage once, excluding prior session turns.
 	OnUsage func(domain.TokenUsage)
 }
 
@@ -1630,6 +1648,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	var stderrTail []string
 	var missingSession, modelStarted, credentialRejected bool
 	var usageCollector assistantCLIUsage
+	if engine == assistantEngineCodeBuddy || engine == assistantEngineClaude {
+		usageCollector.session = newAssistantSessionUsage(root, sessionID, req.Resume, engine)
+	}
 	missingText := "No conversation found with session ID: " + inv.sessionRef
 	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
@@ -1823,14 +1844,25 @@ type assistantTurnUsage struct {
 func (t *assistantTurnUsage) add(u domain.TokenUsage) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	first := !assistantUsageReported(t.total)
+	if first {
+		t.total.CostPricingVersion = u.CostPricingVersion
+	} else if t.total.CostPricingVersion != u.CostPricingVersion {
+		t.total.CostPricingVersion = ""
+	}
 	t.total.InputTokens += u.InputTokens
 	t.total.OutputTokens += u.OutputTokens
 	t.total.CacheReadTokens += u.CacheReadTokens
 	t.total.CacheWriteTokens += u.CacheWriteTokens
 	t.total.ReasoningTokens += u.ReasoningTokens
 	t.total.CostUSD += u.CostUSD
-	if u.CostStatus != "" {
+	switch {
+	case first:
 		t.total.CostStatus = u.CostStatus
+	case t.total.CostStatus == "" || t.total.CostStatus == "unknown" || u.CostStatus == "" || u.CostStatus == "unknown":
+		t.total.CostStatus = "unknown"
+	case t.total.CostStatus == "estimated" || u.CostStatus == "estimated":
+		t.total.CostStatus = "estimated"
 	}
 	t.total.TotalTokens += u.TotalTokens
 }

@@ -170,7 +170,7 @@
 .bot-step-fold{position:relative}
 .bot-fields{display:grid;grid-template-columns:1fr 1fr;gap:16px 18px;max-width:820px}
 .bot-fields :is(label,.bot-model-field){display:flex;flex-direction:column;gap:6px;min-width:0;color:var(--hui-secondary);font-size:12px;font-weight:500}
-.bot-fields label small{color:var(--hui-tertiary);font-weight:400;line-height:1.6}
+.bot-fields :is(label,.bot-model-field) small{color:var(--hui-tertiary);font-weight:400;line-height:1.6}
 .bot-fields .bot-check{flex-direction:row;align-items:center;gap:10px;color:var(--hui-text);font-size:13px;font-weight:400;cursor:pointer}
 #botsContent fieldset{border:0;padding:0;margin:0;min-width:0}
 #botsContent .input{box-sizing:border-box;height:36px;min-height:36px;padding:0 11px;font:400 13px var(--hui-sans)}
@@ -238,3 +238,5 @@
  #botsContent *,#botsContent *::before,#botsContent *::after,#botsView .bot-heading *{animation:none!important;transition:none!important}
  #botsContent .bot-spin svg{animation:none!important}
 }
+.bot-channel-fixed{display:flex;align-items:center;gap:8px;min-height:32px}
+.bot-entry-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}

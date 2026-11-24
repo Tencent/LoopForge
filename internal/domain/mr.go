@@ -34,6 +34,14 @@ var (
 	externalPathPart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 )
 
+func externalMRHostScope(host string) (string, bool) {
+	if strings.HasPrefix(host, "[") {
+		normalized, err := HTTPSHostScope("https://" + host)
+		return normalized, err == nil
+	}
+	return host, host != "github.com" && externalMRHost.MatchString(host)
+}
+
 // ExternalMRProject splits a ghe: or gitlab: MR project key into its
 // platform, host and repository path.
 func ExternalMRProject(project string) (platform, host, path string, ok bool) {
@@ -47,7 +55,8 @@ func ExternalMRProject(project string) (platform, host, path string, ok bool) {
 		return "", "", "", false
 	}
 	host, path, found := strings.Cut(rest, "/")
-	if !found || !externalMRHost.MatchString(host) || host == "github.com" {
+	host, validHost := externalMRHostScope(host)
+	if !found || !validHost {
 		return "", "", "", false
 	}
 	parts := strings.Split(path, "/")
@@ -76,7 +85,10 @@ func ParseDeliveryMRURL(text string) (project string, iid int, url string, ok bo
 	if err != nil || u.Scheme != "https" || u.User != nil || u.RawPath != "" {
 		return "", 0, "", false
 	}
-	host := strings.TrimSuffix(strings.ToLower(u.Host), ":443")
+	host, validHost := externalMRHostScope(strings.TrimSuffix(strings.ToLower(u.Host), ":443"))
+	if !validHost {
+		return "", 0, "", false
+	}
 	if match := externalPRPath.FindStringSubmatch(u.Path); match != nil {
 		project = MRProjectGHE + host + "/" + match[1]
 		iid, _ = strconv.Atoi(match[2])

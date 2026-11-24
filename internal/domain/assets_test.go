@@ -2,30 +2,41 @@ package domain
 
 import "testing"
 
-func TestValidateDockerfile(t *testing.T) {
-	if err := ValidateDockerfile(DockerfileDefinition{ID: "runtime", Name: "Runtime"}); err == nil {
-		t.Fatal("empty dockerfile content should be rejected")
+func TestValidateSandboxAssets(t *testing.T) {
+	docker := func(d *SandboxDockerfile) SandboxProfile {
+		return SandboxProfile{ID: "box", Driver: SandboxDriverDocker, Dockerfile: d}
 	}
-	if err := ValidateDockerfile(DockerfileDefinition{ID: "runtime", Name: "Runtime", Content: "FROM debian", Files: map[string]string{"../escape": "x"}}); err == nil {
-		t.Fatal("path traversal in dockerfile files should be rejected")
-	}
-	if err := ValidateDockerfile(DockerfileDefinition{ID: "runtime", Name: "Runtime", Content: "FROM debian"}); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name    string
+		profile SandboxProfile
+		valid   bool
+	}{
+		{"docker", docker(&SandboxDockerfile{Content: "FROM debian", Files: map[string]string{"etc/a.conf": "x"}}), true},
+		{"docker without dockerfile", docker(nil), false},
+		{"docker blank dockerfile", docker(&SandboxDockerfile{Content: " "}), false},
+		{"docker context escape", docker(&SandboxDockerfile{Content: "FROM debian", Files: map[string]string{"../escape": "x"}}), false},
+		{"native", SandboxProfile{Driver: SandboxDriverNative, Environment: map[string]string{"PHP_VERSION": "8.3.0"}}, true},
+		{"native with dockerfile", SandboxProfile{Driver: SandboxDriverNative, Dockerfile: &SandboxDockerfile{Content: "FROM x"}}, false},
+		{"native bad variable", SandboxProfile{Driver: SandboxDriverNative, Environment: map[string]string{"BAD=NAME": "1"}}, false},
+		{"local", SandboxProfile{Driver: SandboxDriverLocal}, false},
+		{"unknown driver", SandboxProfile{Driver: "vm"}, false},
+	} {
+		if err := ValidateSandboxAssets(tc.profile); (err == nil) != tc.valid {
+			t.Errorf("%s: err = %v, want valid %v", tc.name, err, tc.valid)
+		}
 	}
 }
 
-func TestValidateEnvironment(t *testing.T) {
-	if err := ValidateEnvironment(EnvironmentDefinition{ID: "php8", Name: "PHP 8", Variables: map[string]string{"BAD=NAME": "1"}}); err == nil {
-		t.Fatal("invalid environment variable name should be rejected")
+func TestRunnerSandboxNamesTheRecipeAfterTheSandbox(t *testing.T) {
+	spec := RunnerSandbox(SandboxProfile{ID: "go", Name: "Go", ProjectID: "p", Driver: SandboxDriverDocker, Dockerfile: &SandboxDockerfile{Content: "FROM golang", Files: map[string]string{"a": "b"}}})
+	if spec.Dockerfile == nil || spec.Dockerfile.ID != "go" || spec.Dockerfile.Name != "Go" || spec.Dockerfile.Content != "FROM golang" || spec.Dockerfile.Files["a"] != "b" || spec.Profile.DockerfileID != "go" {
+		t.Fatalf("docker spec = %+v", spec)
 	}
-	if err := ValidateEnvironment(EnvironmentDefinition{ID: "php8", Name: "PHP 8", PathEntries: []string{"../bin"}}); err == nil {
-		t.Fatal("path traversal in pathEntries should be rejected")
+	if spec.Profile.Dockerfile != nil {
+		t.Fatalf("the spec profile must not carry the embedded recipe: %+v", spec.Profile)
 	}
-	if err := ValidateEnvironment(EnvironmentDefinition{ID: "php8", Name: "PHP 8", Variables: map[string]string{"PHP_VERSION": "8.3.0"}, PathEntries: []string{"bin"}, InstallScript: "mkdir -p \"$PREFIX/bin\""}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateEnvironment(EnvironmentDefinition{ID: "php8", Name: "PHP 8", InstallScript: "bad\x00script"}); err == nil {
-		t.Fatal("NUL in install.sh should be rejected")
+	if spec := RunnerSandbox(SandboxProfile{ID: "bare", Driver: SandboxDriverNative, Environment: map[string]string{"A": "1"}}); spec.Dockerfile != nil || spec.Profile.Environment["A"] != "1" {
+		t.Fatalf("a native sandbox = %+v", spec)
 	}
 }
 
