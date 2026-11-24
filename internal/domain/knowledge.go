@@ -47,11 +47,18 @@ type KnowledgeConnectorSecret struct {
 	Headers      map[string]string `json:"headers,omitempty"`
 	RefreshToken string            `json:"refreshToken,omitempty"`
 	ExpiresAt    string            `json:"expiresAt,omitempty"`
+	// OAuth 2.0 grant metadata. Everything here is sealed with the rest of the
+	// secret: the client secret and refresh token must never reach a client.
+	OAuthClientID        string `json:"oauthClientId,omitempty"`
+	OAuthClientSecret    string `json:"oauthClientSecret,omitempty"`
+	OAuthTokenURL        string `json:"oauthTokenUrl,omitempty"`
+	OAuthTokenAuthMethod string `json:"oauthTokenAuthMethod,omitempty"` // client_secret_post|client_secret_basic|none|json_body
+	OAuthResource        string `json:"oauthResource,omitempty"`
 }
 
 // HasCredential reports whether any upstream credential material is present.
 func (s KnowledgeConnectorSecret) HasCredential() bool {
-	if strings.TrimSpace(s.Token) != "" || strings.TrimSpace(s.RefreshToken) != "" {
+	if strings.TrimSpace(s.Token) != "" || strings.TrimSpace(s.RefreshToken) != "" || strings.TrimSpace(s.OAuthClientSecret) != "" {
 		return true
 	}
 	for _, v := range s.Headers {
@@ -72,9 +79,15 @@ type KnowledgeConnector struct {
 	Config           KnowledgeConnectorConfig `json:"config,omitempty"`
 	SecretEnc        string                   `json:"-"`
 	SecretConfigured bool                     `json:"secretConfigured"`
-	Enabled          bool                     `json:"enabled"`
-	CreatedAt        time.Time                `json:"createdAt,omitempty"`
-	UpdatedAt        time.Time                `json:"updatedAt,omitempty"`
+	// OAuth fields are derived read-only projections of the sealed secret and
+	// non-secret config; they never carry tokens or client secrets.
+	OAuthMode                   string     `json:"oauthMode,omitempty"`
+	OAuthStatus                 string     `json:"oauthStatus,omitempty"`
+	OAuthExpiresAt              *time.Time `json:"oauthExpiresAt,omitempty"`
+	OAuthClientSecretConfigured bool       `json:"oauthClientSecretConfigured,omitempty"`
+	Enabled                     bool       `json:"enabled"`
+	CreatedAt                   time.Time  `json:"createdAt,omitempty"`
+	UpdatedAt                   time.Time  `json:"updatedAt,omitempty"`
 }
 
 // Public returns a client-safe copy with sealed credentials stripped and

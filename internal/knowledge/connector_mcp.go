@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"slices"
 	"sort"
@@ -76,6 +77,13 @@ func (mcpFactory) Meta() domain.ConnectorTypeMeta {
 				Secret:      true,
 				Help:        "每行填写一个 Header: Value（例如 X-API-Key: xxx），保存后加密存储",
 			},
+			{
+				Key:      "oauth",
+				Label:    "OAuth 2.0 授权",
+				Kind:     "oauth",
+				Required: false,
+				Help:     "开启后按 OAuth 2.0 / MCP OAuth 2.1 完成授权，访问令牌到期自动刷新",
+			},
 		},
 	}
 }
@@ -105,6 +113,30 @@ func (mcpFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConn
 
 	secret.Token = stripBearer(secret.Token)
 	secret.Headers = normalizeHeaderMap(secret.Headers)
+
+	mode := oauthMode(cfg)
+	switch mode {
+	case OAuthModeNone, OAuthModeAuto, OAuthModePreset, OAuthModeCustom:
+	default:
+		return "", cfg, secret, apperr.New(apperr.Invalid, "oauthMode 取值无效")
+	}
+	if mode != OAuthModeNone {
+		for _, raw := range []string{
+			firstNonEmpty(secret.OAuthTokenURL, cfg.Extra["oauthTokenUrl"]),
+			cfg.Extra["oauthAuthorizeUrl"],
+		} {
+			if strings.TrimSpace(raw) == "" {
+				continue
+			}
+			if err := validateAuthURL(raw); err != nil {
+				return "", cfg, secret, apperr.New(apperr.Invalid, err.Error())
+			}
+		}
+		secret.AuthType = domain.ConnectorAuthOAuth
+	} else if secret.AuthType == domain.ConnectorAuthOAuth {
+		secret.AuthType = ""
+	}
+
 	if strings.TrimSpace(secret.AuthType) == "" {
 		if len(secret.Headers) > 0 && secret.Token == "" {
 			secret.AuthType = domain.ConnectorAuthHeaders
@@ -116,25 +148,38 @@ func (mcpFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConn
 }
 
 func (mcpFactory) New(spec ConnectorSpec) (Connector, error) {
-	headers := map[string]string{}
-	for k, v := range spec.Config.Headers {
-		headers[k] = v
-	}
-	for k, v := range spec.Secret.Headers {
-		headers[k] = v
-	}
-	if tok := strings.TrimSpace(spec.Secret.Token); tok != "" {
-		headers["Authorization"] = "Bearer " + tok
-	}
+	headers := mcpConnectorHeaders(spec.Config, spec.Secret)
 	timeout := CallTimeout
 	if spec.Config.TimeoutSec > 0 {
 		timeout = time.Duration(spec.Config.TimeoutSec) * time.Second
 	}
 	client := getOrCreateMCPClient(strings.TrimSpace(spec.Endpoint), headers, timeout)
 	return &mcpConnector{
-		spec:   spec,
-		client: client,
+		spec:    spec,
+		client:  client,
+		secret:  spec.Secret,
+		resolve: spec.ResolveSecret,
 	}, nil
+}
+
+// mcpConnectorHeaders merges configured headers with the current access token.
+// OAuth connectors may pick a custom header (e.g. Feishu's X-Lark-MCP-UAT).
+func mcpConnectorHeaders(cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret) map[string]string {
+	headers := map[string]string{}
+	for k, v := range cfg.Headers {
+		headers[k] = v
+	}
+	for k, v := range secret.Headers {
+		headers[k] = v
+	}
+	if token := strings.TrimSpace(secret.Token); token != "" {
+		header, prefix := "Authorization", "Bearer "
+		if oauthModeActive(cfg) {
+			header, prefix = oauthTokenHeader(cfg)
+		}
+		headers[header] = prefix + token
+	}
+	return headers
 }
 
 var (
@@ -168,8 +213,12 @@ func getOrCreateMCPClient(endpoint string, headers map[string]string, timeout ti
 }
 
 type mcpConnector struct {
-	spec   ConnectorSpec
-	client *mcpclient.Client
+	spec    ConnectorSpec
+	client  *mcpclient.Client
+	resolve func(ctx context.Context, forceRefresh bool, failedToken string) (domain.KnowledgeConnectorSecret, error)
+
+	mu     sync.Mutex
+	secret domain.KnowledgeConnectorSecret
 }
 
 func (c *mcpConnector) Type() string { return domain.ConnectorTypeMCP }
@@ -184,7 +233,7 @@ func (c *mcpConnector) Check(ctx context.Context) CheckResult {
 		return CheckResult{
 			ConnectorID: c.spec.ID,
 			OK:          false,
-			Error:       c.safeError(err).Error(),
+			Error:       c.authError(err).Error(),
 			LatencyMs:   latency,
 		}
 	}
@@ -203,7 +252,17 @@ func (c *mcpConnector) Check(ctx context.Context) CheckResult {
 }
 
 func (c *mcpConnector) Tools(ctx context.Context) ([]mcpclient.Tool, error) {
+	used, err := c.syncSecret(ctx, false, "")
+	if err != nil {
+		return nil, c.authError(err)
+	}
 	all, err := c.client.ListToolsContext(ctx)
+	if err != nil && c.canRefresh() && isUnauthorized(err) {
+		if _, refreshErr := c.syncSecret(ctx, true, used.Token); refreshErr != nil {
+			return nil, c.authError(refreshErr)
+		}
+		all, err = c.client.ListToolsContext(ctx)
+	}
 	if err != nil {
 		return nil, c.safeError(err)
 	}
@@ -252,7 +311,7 @@ func (c *mcpConnector) ListSources(ctx context.Context) ([]Source, error) {
 	if sourceTool == "" {
 		return []Source{}, nil
 	}
-	text, err := c.client.CallToolContext(ctx, sourceTool, map[string]any{})
+	text, err := c.callTool(ctx, sourceTool, map[string]any{})
 	if err != nil {
 		return nil, c.safeError(err)
 	}
@@ -331,10 +390,10 @@ func (c *mcpConnector) CallTool(ctx context.Context, toolName string, args map[s
 	}
 
 	started := time.Now()
-	text, callErr := c.client.CallToolContext(ctx, toolName, callArgs)
+	text, callErr := c.callTool(ctx, toolName, callArgs)
 	latency := time.Since(started).Milliseconds()
 	if callErr != nil {
-		return CallResult{Status: domain.KnowledgeStatusUnavailable, LatencyMs: latency}, c.safeError(callErr)
+		return CallResult{Status: domain.KnowledgeStatusUnavailable, LatencyMs: latency}, c.authError(callErr)
 	}
 
 	trimmed := strings.TrimSpace(text)
@@ -467,12 +526,74 @@ func filterMCPSourcesJSON(raw string, scope SourceScope) string {
 	return string(b)
 }
 
+// syncSecret refreshes the live credential and pushes the resulting auth
+// header onto the shared HTTP client.
+func (c *mcpConnector) syncSecret(ctx context.Context, force bool, failedToken string) (domain.KnowledgeConnectorSecret, error) {
+	if c.resolve == nil {
+		return c.currentSecret(), nil
+	}
+	secret, err := c.resolve(ctx, force, failedToken)
+	if err != nil {
+		return c.currentSecret(), err
+	}
+	c.mu.Lock()
+	c.secret = secret
+	c.mu.Unlock()
+	c.client.SetHeaders(mcpConnectorHeaders(c.spec.Config, secret))
+	return secret, nil
+}
+
+func (c *mcpConnector) currentSecret() domain.KnowledgeConnectorSecret {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.secret
+}
+
+func (c *mcpConnector) canRefresh() bool {
+	return c.resolve != nil && strings.TrimSpace(c.currentSecret().RefreshToken) != ""
+}
+
+// callTool performs one tool call, retrying once after a forced refresh when
+// the gateway answers 401.
+func (c *mcpConnector) callTool(ctx context.Context, name string, args map[string]any) (string, error) {
+	used, err := c.syncSecret(ctx, false, "")
+	if err != nil {
+		return "", c.authError(err)
+	}
+	text, err := c.client.CallToolContext(ctx, name, args)
+	if err != nil && c.canRefresh() && isUnauthorized(err) {
+		if _, refreshErr := c.syncSecret(ctx, true, used.Token); refreshErr != nil {
+			return "", c.authError(refreshErr)
+		}
+		text, err = c.client.CallToolContext(ctx, name, args)
+	}
+	return text, err
+}
+
+func isUnauthorized(err error) bool {
+	var httpErr *mcpclient.HTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized
+}
+
+// authError returns domain errors untouched (they already carry safe wording)
+// and funnels everything else through safeError.
+func (c *mcpConnector) authError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := apperr.As(err); ok {
+		return err
+	}
+	return c.safeError(err)
+}
+
 func (c *mcpConnector) safeError(err error) error {
 	if err == nil {
 		return nil
 	}
 	var timed net.Error
 	msg := RedactSecrets(err.Error(), c.spec.Secret)
+	msg = RedactSecrets(msg, c.currentSecret())
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &timed) && timed.Timeout()):
 		return apperr.New(apperr.Upstream, "知识库 MCP 服务超时")

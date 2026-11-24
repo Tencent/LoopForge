@@ -62,9 +62,29 @@ func (h *tokenHandlers) userAccessAuth() gin.HandlerFunc {
 	}
 }
 
+func isKnowledgeOAuthCallbackPath(path string) bool {
+	if path == "/api/knowledge/oauth/callback" {
+		return true
+	}
+	rest, ok := strings.CutPrefix(path, "/api/knowledge/oauth/")
+	if !ok {
+		return false
+	}
+	typ, ok := strings.CutSuffix(rest, "/callback")
+	if !ok || typ == "" {
+		return false
+	}
+	return !strings.Contains(typ, "/")
+}
+
 func protectedAccessPath(path string) bool {
 	// Ingestion always checks its own project-scoped credential.
 	if path == insightIngestPath {
+		return false
+	}
+	// OAuth callbacks arrive in a fresh tab without a platform session; the
+	// signed state parameter is the credential.
+	if isKnowledgeOAuthCallbackPath(path) {
 		return false
 	}
 	if path == "/mcp" {

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,15 @@ type Service struct {
 
 	mu        sync.Mutex
 	instances map[string]cachedConnectorEntry
+
+	// OAuth state (service_oauth.go): in-flight authorizations, per-connector
+	// refresh mutexes, discovery cache and the platform's public base URL.
+	oauthMu       sync.Mutex
+	oauthLocksMu  sync.Mutex
+	oauthPending  map[string]pendingOAuth
+	oauthLocks    sync.Map
+	oauthCache    map[string]discoveredOAuth
+	publicBaseURL string
 }
 
 // NewService constructs a Service backed by Store and DefaultRegistry().
@@ -62,11 +72,14 @@ func NewServiceWithRegistry(store Store, registry *Registry, newID func() string
 		registry = DefaultRegistry()
 	}
 	return &Service{
-		store:     store,
-		registry:  registry,
-		now:       time.Now,
-		newID:     newID,
-		instances: map[string]cachedConnectorEntry{},
+		store:         store,
+		registry:      registry,
+		now:           time.Now,
+		newID:         newID,
+		instances:     map[string]cachedConnectorEntry{},
+		oauthPending:  map[string]pendingOAuth{},
+		oauthCache:    map[string]discoveredOAuth{},
+		publicBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("LOOPFORGE_PUBLIC_BASE_URL")), "/"),
 	}
 }
 
@@ -86,7 +99,7 @@ func (s *Service) ListConnectors(ownerUserID int64) []domain.KnowledgeConnector 
 	rows := s.store.ListKnowledgeConnectors(ownerUserID)
 	out := make([]domain.KnowledgeConnector, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, r.Public())
+		out = append(out, s.decorateOAuth(r).Public())
 	}
 	return out
 }
@@ -97,7 +110,7 @@ func (s *Service) GetConnector(ownerUserID int64, id string) (domain.KnowledgeCo
 	if !ok {
 		return domain.KnowledgeConnector{}, false
 	}
-	return c.Public(), true
+	return s.decorateOAuth(c).Public(), true
 }
 
 // CreateConnector validates, seals credentials, and saves a new connector
@@ -169,6 +182,16 @@ func (s *Service) UpdateConnector(_ context.Context, ownerUserID int64, id strin
 	if !ok {
 		return domain.KnowledgeConnector{}, apperr.New(apperr.NotFound, ErrConnectorNotFound.Error())
 	}
+	// Edits share the connector lock with OAuth start/refresh/callback so a
+	// concurrent authorization cannot persist results onto a changed connector.
+	lockKey := instanceKey(ownerUserID, existing.ID)
+	lockEntry := s.acquireOAuthLock(lockKey)
+	defer s.releaseOAuthLock(lockKey, lockEntry)
+	if latest, found := s.store.GetKnowledgeConnector(ownerUserID, existing.ID); found {
+		existing = latest
+	} else {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.NotFound, ErrConnectorNotFound.Error())
+	}
 	typ := strings.ToLower(strings.TrimSpace(firstNonEmpty(input.Type, existing.Type)))
 	factory, ok := s.registry.Factory(typ)
 	if !ok {
@@ -226,6 +249,7 @@ func (s *Service) UpdateConnector(_ context.Context, ownerUserID int64, id strin
 		return domain.KnowledgeConnector{}, err
 	}
 	s.evictInstance(ownerUserID, existing.ID)
+	s.clearOAuthDiscovery(ownerUserID, existing.ID)
 	saved, ok := s.store.GetKnowledgeConnector(ownerUserID, existing.ID)
 	if !ok {
 		return updated.Public(), nil
@@ -235,6 +259,10 @@ func (s *Service) UpdateConnector(_ context.Context, ownerUserID int64, id strin
 
 // DeleteConnector deletes a connector only if owned by ownerUserID.
 func (s *Service) DeleteConnector(ownerUserID int64, id string) error {
+	id = strings.TrimSpace(id)
+	lockKey := instanceKey(ownerUserID, id)
+	lockEntry := s.acquireOAuthLock(lockKey)
+	defer s.releaseOAuthLock(lockKey, lockEntry)
 	deleted, err := s.store.DeleteKnowledgeConnector(ownerUserID, id)
 	if err != nil {
 		return err
@@ -243,6 +271,7 @@ func (s *Service) DeleteConnector(ownerUserID int64, id string) error {
 		return apperr.New(apperr.NotFound, ErrConnectorNotFound.Error())
 	}
 	s.evictInstance(ownerUserID, id)
+	s.clearOAuthState(ownerUserID, id)
 	return nil
 }
 
@@ -310,6 +339,11 @@ func (s *Service) CheckConnector(ctx context.Context, ownerUserID int64, id stri
 			Config:      normCfg,
 			Secret:      normSecret,
 			UpdatedAt:   saved.UpdatedAt,
+		}
+		if useSavedSecret {
+			spec.ResolveSecret = func(ctx context.Context, forceRefresh bool, failedToken string) (domain.KnowledgeConnectorSecret, error) {
+				return s.EnsureValidSecret(ctx, ownerUserID, saved.ID, forceRefresh, failedToken)
+			}
 		}
 	} else {
 		if override == nil {
@@ -382,7 +416,7 @@ func (s *Service) resolveConnector(ownerUserID int64, id string, requireEnabled 
 	s.mu.Lock()
 	if entry, ok := s.instances[cacheKey]; ok && entry.stamp == stamp {
 		s.mu.Unlock()
-		return saved.Public(), entry.instance, nil
+		return s.decorateOAuth(saved).Public(), entry.instance, nil
 	}
 	s.mu.Unlock()
 
@@ -403,6 +437,9 @@ func (s *Service) resolveConnector(ownerUserID int64, id string, requireEnabled 
 		Config:      saved.Config,
 		Secret:      secret,
 		UpdatedAt:   saved.UpdatedAt,
+		ResolveSecret: func(ctx context.Context, forceRefresh bool, failedToken string) (domain.KnowledgeConnectorSecret, error) {
+			return s.EnsureValidSecret(ctx, ownerUserID, saved.ID, forceRefresh, failedToken)
+		},
 	}
 	instance, err := factory.New(spec)
 	if err != nil {
@@ -414,7 +451,7 @@ func (s *Service) resolveConnector(ownerUserID int64, id string, requireEnabled 
 	}
 	s.instances[cacheKey] = cachedConnectorEntry{stamp: stamp, instance: instance}
 	s.mu.Unlock()
-	return saved.Public(), instance, nil
+	return s.decorateOAuth(saved).Public(), instance, nil
 }
 
 func (s *Service) evictInstance(ownerUserID int64, id string) {

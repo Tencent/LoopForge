@@ -37,10 +37,10 @@ import (
 
 // deps 聚合所有领域 handler 共享的基础依赖与跨领域行为。
 type deps struct {
-	repo         *repo.Store
-	engine       *engine.Engine
-	sync         *tracker.Service
-	schedule     *schedule.Service
+	repo          *repo.Store
+	engine        *engine.Engine
+	sync          *tracker.Service
+	schedule      *schedule.Service
 	authClient    *auth.Client
 	knowledgeSvc  *knowledge.Service
 	knowledgeExec *knowledge.Executor
@@ -512,6 +512,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/knowledge/connectors/:id/sources", api.know.connectorSources)
 	g.POST("/api/knowledge/reference-check", api.know.checkReferences)
 	g.GET("/api/knowledge/reference-options", api.know.referenceOptions)
+	g.GET("/api/knowledge/oauth/presets", api.know.oauthPresets)
+	g.POST("/api/knowledge/oauth/:type/authorize", api.know.oauthAuthorize)
+	g.GET("/api/knowledge/oauth/:type/authorize", api.know.oauthAuthorize)
+	g.GET("/api/knowledge/oauth/callback", api.know.oauthCallback)
+	g.GET("/api/knowledge/oauth/:type/callback", api.know.oauthCallback)
 
 	// --- runs ---
 	g.GET("/api/runs", api.runs.runs)

@@ -126,6 +126,9 @@ func RedactSecrets(text string, secret domain.KnowledgeConnectorSecret) string {
 	if s := strings.TrimSpace(secret.RefreshToken); s != "" {
 		candidates = append(candidates, s)
 	}
+	if s := strings.TrimSpace(secret.OAuthClientSecret); s != "" {
+		candidates = append(candidates, s)
+	}
 	for _, v := range secret.Headers {
 		if s := strings.TrimSpace(v); s != "" {
 			candidates = append(candidates, s)

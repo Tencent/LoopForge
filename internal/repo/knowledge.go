@@ -1,14 +1,17 @@
 package repo
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"time"
 
 	"agentflow/internal/domain"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // KnowledgeRepo owns user-isolated knowledge connector configurations.
@@ -119,6 +122,101 @@ func (r *KnowledgeRepo) PutKnowledgeConnector(conn domain.KnowledgeConnector) er
 			return err
 		}
 	})
+}
+
+// UpdateKnowledgeConnectorSecret compare-and-swaps the sealed credential of one
+// connector. The caller passes the ciphertext it based its change on, so a
+// concurrent refresh/authorization is never silently overwritten, and only
+// secret_enc/updated_at are touched (name, endpoint, config stay untouched).
+func (r *KnowledgeRepo) UpdateKnowledgeConnectorSecret(ctx context.Context, ownerUserID int64, id, expectedSecretEnc, secretEnc string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, errors.New("knowledge connector id is required")
+	}
+	now := time.Now().UTC()
+	secret := strings.TrimSpace(secretEnc)
+	var secretPtr *string
+	if secret != "" {
+		secretPtr = &secret
+	}
+	res := r.DB.WithContext(ctx).
+		Model(&knowledgeConnectorRow{}).
+		Where("id = ? AND owner_user_id = ? AND COALESCE(secret_enc, '') = ?", id, ownerUserID, strings.TrimSpace(expectedSecretEnc)).
+		Updates(map[string]any{"secret_enc": secretPtr, "updated_at": &now})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// UpdateKnowledgeConnectorConfig compare-and-swaps only config_json. The
+// comparison is structural (decoded config), so JSON storage normalization does
+// not produce false mismatches; name/endpoint/secret are never written.
+func (r *KnowledgeRepo) UpdateKnowledgeConnectorConfig(ctx context.Context, ownerUserID int64, id, expectedConfigJSON, configJSON string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, errors.New("knowledge connector id is required")
+	}
+	var updated bool
+	err := r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.WithContext(ctx)
+		if query.Dialector.Name() != "sqlite" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var row knowledgeConnectorRow
+		err := query.Where("id = ? AND owner_user_id = ?", id, ownerUserID).Take(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !connectorConfigEqual(row.ConfigJSON, expectedConfigJSON) {
+			return nil
+		}
+		now := time.Now().UTC()
+		res := tx.Model(&knowledgeConnectorRow{}).
+			Where("id = ? AND owner_user_id = ?", id, ownerUserID).
+			Updates(map[string]any{"config_json": []byte(configJSON), "updated_at": &now})
+		if res.Error != nil {
+			return res.Error
+		}
+		updated = res.RowsAffected == 1
+		return nil
+	})
+	return updated, err
+}
+
+func connectorConfigEqual(stored []byte, expectedJSON string) bool {
+	var storedCfg, expectedCfg domain.KnowledgeConnectorConfig
+	if len(stored) > 0 && string(stored) != "null" {
+		if json.Unmarshal(stored, &storedCfg) != nil {
+			return false
+		}
+	}
+	if strings.TrimSpace(expectedJSON) == "" {
+		expectedJSON = "{}"
+	}
+	if json.Unmarshal([]byte(expectedJSON), &expectedCfg) != nil {
+		return false
+	}
+	normalizeConnectorConfig(&storedCfg)
+	normalizeConnectorConfig(&expectedCfg)
+	return reflect.DeepEqual(storedCfg, expectedCfg)
+}
+
+// normalizeConnectorConfig makes nil and empty collections compare equal; they
+// are the same configuration semantically and JSON round-trips differ.
+func normalizeConnectorConfig(cfg *domain.KnowledgeConnectorConfig) {
+	if len(cfg.Headers) == 0 {
+		cfg.Headers = nil
+	}
+	if len(cfg.DefaultSources) == 0 {
+		cfg.DefaultSources = nil
+	}
+	if len(cfg.Extra) == 0 {
+		cfg.Extra = nil
+	}
 }
 
 // DeleteKnowledgeConnector deletes id only when owned by ownerUserID.

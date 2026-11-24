@@ -114,6 +114,9 @@ type ConnectorSpec struct {
 	Config      domain.KnowledgeConnectorConfig
 	Secret      domain.KnowledgeConnectorSecret
 	UpdatedAt   time.Time
+	// ResolveSecret returns a live credential (refreshing OAuth tokens when
+	// needed). Nil means the connector uses the static Secret above.
+	ResolveSecret func(ctx context.Context, forceRefresh bool, failedToken string) (domain.KnowledgeConnectorSecret, error)
 }
 
 // Connector is a runtime handle to a user-configured read-only knowledge backend.
