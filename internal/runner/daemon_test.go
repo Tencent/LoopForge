@@ -271,10 +271,14 @@ exec /usr/bin/git "$@"
 		t.Fatal(err)
 	}
 	remote := bareRemoteWithBaseline(t)
-	dir := filepath.Join(machineRoot, "runs", owner.ID, "workspace", "code-custom")
+	root := filepath.Join(machineRoot, "runs", owner.ID, "workspace")
+	const checkout = "custom/checkout"
+	dir := filepath.Join(root, checkout)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	runGitT(t, root, "init", "-q", "-b", "outer")
+	runGitT(t, root, "remote", "add", "origin", "https://example.invalid/outer.git")
 	runGitT(t, dir, "clone", "-q", remote, ".")
 	localFile := filepath.Join(dir, "local-commit.txt")
 	if err := os.WriteFile(localFile, []byte("local commit\n"), 0o600); err != nil {
@@ -319,7 +323,7 @@ printf done > sop-result.txt`,
 		finished, _ = st.RunState(run.ID)
 		return domain.TerminalRunStatus(finished.Status)
 	})
-	if finished.Status != "succeeded" || finished.Repository.WorkspaceDir != "code-custom" {
+	if finished.Status != "succeeded" || finished.Repository.WorkspaceDir != checkout {
 		t.Fatalf("SOP %s in %q: %+v", finished.Status, finished.Repository.WorkspaceDir, finished.Nodes["verify"])
 	}
 	if got := runGitT(t, dir, "rev-parse", "HEAD"); got != head {
@@ -329,7 +333,7 @@ printf done > sop-result.txt`,
 		t.Fatalf("output in the conversation checkout = %q, %v", data, err)
 	}
 	if docker {
-		log, err := os.ReadFile(filepath.Join(filepath.Dir(dir), ".agentflow", "sop-git.log"))
+		log, err := os.ReadFile(filepath.Join(root, ".agentflow", "sop-git.log"))
 		if err != nil || !strings.Contains(string(log), "config --local --no-includes --get-regexp") ||
 			!strings.Contains(string(log), "checkout --quiet -b "+finished.Repository.WorkBranch) {
 			t.Fatalf("SOP sandbox did not discover and switch the shared checkout: %s (%v)", log, err)

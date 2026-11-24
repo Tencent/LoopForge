@@ -18,7 +18,7 @@ func (h *runsHandlers) workspaceRestore(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "运行不存在"})
 		return
 	}
-	run = h.workspaceRestoreTarget(run)
+	run = h.workspaceLifecycleTarget(run)
 	if _, status, message := h.workspaceEditAccess(c.Request, run); status != 0 {
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -52,9 +52,9 @@ func (h *runsHandlers) workspaceRestore(c *gin.Context) {
 	c.JSON(200, gin.H{"restored": true, "idleTimeoutSeconds": 3600})
 }
 
-// workspaceRestoreTarget selects the same-project checkout that owns the
-// snapshot when a user restores it from a borrowing SOP's panel.
-func (h *runsHandlers) workspaceRestoreTarget(run domain.Run) domain.Run {
+// workspaceLifecycleTarget selects the owning conversation run for lifecycle
+// operations on a workspace borrowed by a same-project SOP.
+func (h *runsHandlers) workspaceLifecycleTarget(run domain.Run) domain.Run {
 	if run.UsesConversationWorkspace() {
 		if owner, ok := h.repo.RunState(engine.WorkspaceRunID(run)); ok && owner.IsWorkspace() &&
 			owner.ExecutionContext.ProjectID != "" && owner.ExecutionContext.ProjectID == run.ExecutionContext.ProjectID {
@@ -122,7 +122,7 @@ func (h *runsHandlers) workspaceLifecycleInfo(c *gin.Context, run domain.Run, pa
 	}
 	restorable := false
 	if meta.SavedAt != nil && meta.SHA256 != "" {
-		_, status, _ := h.workspaceEditAccess(c.Request, h.workspaceRestoreTarget(run))
+		_, status, _ := h.workspaceEditAccess(c.Request, h.workspaceLifecycleTarget(run))
 		restorable = status == 0
 	}
 	payload["restorable"] = restorable
@@ -158,7 +158,12 @@ func (h *runsHandlers) workspaceActivity(c *gin.Context) {
 	if _, allowed := h.projectRunUser(c, run.ExecutionContext.ProjectID); !allowed {
 		return
 	}
-	if err := h.repo.TouchWorkspaceUse(run.ID, time.Now().UTC()); err != nil {
+	target := h.workspaceLifecycleTarget(run)
+	if run.UsesConversationWorkspace() && target.ID == run.ID {
+		c.JSON(409, gin.H{"error": "当前项目的对话工作区不可用"})
+		return
+	}
+	if err := h.repo.TouchWorkspaceUse(target.ID, time.Now().UTC()); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}

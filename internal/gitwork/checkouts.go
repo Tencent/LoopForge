@@ -30,6 +30,16 @@ const (
 // user, hence safe.directory; see checkoutGit for why that stays safe on the
 // host that scans them.
 func Checkouts(ctx context.Context, root string) []Checkout {
+	return checkouts(ctx, root, false)
+}
+
+// CheckoutsIncludingNested also scans below each checkout. A conversation can
+// clone an independent repository inside an existing checkout for an SOP.
+func CheckoutsIncludingNested(ctx context.Context, root string) []Checkout {
+	return checkouts(ctx, root, true)
+}
+
+func checkouts(ctx context.Context, root string, includeNested bool) []Checkout {
 	dirs := []string{}
 	var walk func(dir string, depth int)
 	walk = func(dir string, depth int) {
@@ -40,7 +50,9 @@ func Checkouts(ctx context.Context, root string) []Checkout {
 		// the scan at a repository outside the workspace.
 		if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil && info.IsDir() {
 			dirs = append(dirs, dir)
-			return
+			if !includeNested {
+				return
+			}
 		}
 		if depth == checkoutScanDepth {
 			return

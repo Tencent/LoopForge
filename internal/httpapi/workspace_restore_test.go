@@ -284,6 +284,7 @@ func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
 			router.GET("/api/runs/:id/workspace/file", h.runWorkspace)
 			router.GET("/api/runs/:id/workspace/restore", h.workspaceRestoreStatus)
 			router.POST("/api/runs/:id/workspace/restore", h.workspaceRestore)
+			router.POST("/api/runs/:id/workspace/use", h.workspaceActivity)
 			path := "/api/runs/" + sop.ID + "/workspace"
 			request := func(actor domain.User, method, suffix string) *httptest.ResponseRecorder {
 				c, rec := workbenchContext(actor, method, path+suffix, bytes.NewBuffer(nil))
@@ -317,10 +318,12 @@ func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
 			if err := a.repo.PutRun(foreign); err != nil {
 				t.Fatal(err)
 			}
-			c, forbidden := workbenchContext(owner, http.MethodPost, "/api/runs/"+foreign.ID+"/workspace/restore", bytes.NewBuffer(nil))
-			router.ServeHTTP(forbidden, c.Request)
-			if forbidden.Code != http.StatusConflict {
-				t.Fatalf("cross-project restore = %d: %s", forbidden.Code, forbidden.Body)
+			for _, action := range []string{"restore", "use"} {
+				c, response := workbenchContext(owner, http.MethodPost, "/api/runs/"+foreign.ID+"/workspace/"+action, bytes.NewBuffer(nil))
+				router.ServeHTTP(response, c.Request)
+				if response.Code != http.StatusConflict {
+					t.Fatalf("cross-project workspace %s = %d: %s", action, response.Code, response.Body)
+				}
 			}
 			sop.Status = "running"
 			if err := a.repo.PutRun(sop); err != nil {
@@ -363,5 +366,63 @@ func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
 				t.Fatalf("restore created a separate SOP workspace: %v", err)
 			}
 		})
+	}
+}
+
+func TestSOPWorkspaceActivityTouchesConversationOwner(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	a, owner, member, outsider, _ := sharedWorkbenchFixture(t)
+	en := engine.New(a.repo, runtime.NewManager(t.TempDir()))
+	en.ConfigureExecution("activity-api", "activity-api", time.Minute, false)
+	a.engine = en
+	ctx := domain.TelemetryContext{ProjectID: "workbench", ResponsibleUserID: owner.ID, ExecutionPinned: true}
+	workspace, err := en.StartConversationWorkspace("Conversation", ctx, repo.TestNativeSandboxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(en.RunWorkspace(workspace.ID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	previous := time.Now().UTC().Add(-30 * time.Minute)
+	if err := a.repo.TouchWorkspaceUse(workspace.ID, previous); err != nil {
+		t.Fatal(err)
+	}
+	ctx.WorkspaceRunID = workspace.ID
+	sop := domain.Run{ID: "settled-sop", Status: "succeeded", WorkspaceCleanedAt: time.Now().UTC(), ExecutionContext: ctx}
+	if err := a.repo.PutRun(sop); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &runsHandlers{deps: a.deps}
+	router := gin.New()
+	router.Use(h.runWriteGuard())
+	router.GET("/api/runs/:id/workspace", h.runWorkspace)
+	router.POST("/api/runs/:id/workspace/use", h.workspaceActivity)
+	request := func(actor domain.User, method, suffix string) *httptest.ResponseRecorder {
+		c, response := workbenchContext(actor, method, "/api/runs/"+sop.ID+"/workspace"+suffix, bytes.NewBuffer(nil))
+		router.ServeHTTP(response, c.Request)
+		return response
+	}
+	if rec := request(member, http.MethodGet, ""); rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"available":true`)) {
+		t.Fatalf("shared workspace should be available: %d %s", rec.Code, rec.Body)
+	}
+	if rec := request(outsider, http.MethodPost, "/use"); rec.Code != http.StatusForbidden {
+		t.Fatalf("outsider workspace activity = %d: %s", rec.Code, rec.Body)
+	}
+	if rec := request(member, http.MethodPost, "/use"); rec.Code != http.StatusOK {
+		t.Fatalf("shared workspace activity = %d: %s", rec.Code, rec.Body)
+	}
+	if checkpoint, ok := a.repo.WorkspaceCheckpoint(workspace.ID); !ok || !checkpoint.LastUsedAt.After(previous) {
+		t.Fatal("activity did not update the conversation workspace")
+	}
+	if _, ok := a.repo.WorkspaceCheckpoint(sop.ID); ok {
+		t.Fatal("activity created a checkpoint for the borrowing SOP")
+	}
+	workspace.WorkspaceCleanedAt = time.Now().UTC()
+	if err := a.repo.PutRun(workspace); err != nil {
+		t.Fatal(err)
+	}
+	if rec := request(member, http.MethodPost, "/use"); rec.Code != http.StatusConflict {
+		t.Fatalf("reclaimed workspace activity = %d: %s", rec.Code, rec.Body)
 	}
 }

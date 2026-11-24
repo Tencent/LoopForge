@@ -20,7 +20,7 @@ func SandboxCheckouts(ctx context.Context, sandbox Sandbox) ([]gitwork.Checkout,
 	if _, err := gitwork.Run(ctx, sandbox.Workspace(), "--version"); err != nil {
 		return nil, fmt.Errorf("check Git in the SOP sandbox: %w", err)
 	}
-	return gitwork.Checkouts(ctx, sandbox.Workspace()), ctx.Err()
+	return gitwork.CheckoutsIncludingNested(ctx, sandbox.Workspace()), ctx.Err()
 }
 
 // WithSandboxGit routes Git workspace preparation through the selected SOP

@@ -101,6 +101,8 @@ exec /usr/bin/git "$@"
 		}
 		return out
 	}
+	gitInit(t, root)
+	git(root, "remote", "add", "origin", "https://example.invalid/outer.git")
 	git(root, "clone", remote, dir)
 	git(dir, "config", "user.email", "test@example.com")
 	git(dir, "config", "user.name", "Test")
