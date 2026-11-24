@@ -70,6 +70,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		cancel()
 		nodesWG.Wait()
 	}
+	checkChildRecovery := false
 	defer func() {
 		cancel()
 		nodesWG.Wait()
@@ -78,6 +79,13 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		e.mu.Lock()
 		delete(e.running, runID)
 		e.mu.Unlock()
+		if checkChildRecovery {
+			// A retry can arrive while the last scheduler is still holding
+			// the parent's lease, even after it persists failed or waiting.
+			if current, ok := e.repo.RunState(runID); ok {
+				e.recoverRetriedSOPNodes(context.Background(), current)
+			}
+		}
 	}()
 	for {
 		select {
@@ -103,6 +111,9 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		if r.Generation != generation || !e.ownsRun(r) {
 			return
+		}
+		if e.recoverRetriedSOPNodes(ctx, r) {
+			continue
 		}
 		wf := workflowForRun(e.repo, r)
 		e.reconcileNodeExecutions(runID)
@@ -147,10 +158,26 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 					})
 					continue
 				}
-				e.updateRun(runID, func(current *domain.Run) { current.Status = "waiting" })
+				parked := false
+				e.updateRun(runID, func(current *domain.Run) {
+					if current.Status == "waiting" {
+						parked = true
+						return
+					}
+					if current.Status != "running" || len(readyNodes(workflowForRun(e.repo, *current), *current)) > 0 {
+						return
+					}
+					current.Status = "waiting"
+					parked = true
+				})
+				if !parked {
+					continue
+				}
+				checkChildRecovery = true
 				return
 			}
 			if hasFailed(wf, r) {
+				checkChildRecovery = true
 				e.finishAt(runID, generation, "failed", pipelineFailedMessage)
 				return
 			}

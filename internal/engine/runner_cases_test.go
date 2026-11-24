@@ -112,13 +112,25 @@ func TestRunnerCallbacksPathsBindingsAndReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	reconnect := cvERunnerRun("reconnect", "missing")
-	reconnect.WorkflowSnapshot.Nodes = []domain.WorkflowNode{{ID: "script", Type: "script"}, {ID: "agent", Type: "agent", AgentID: "missing"}}
+	reconnect.WorkflowSnapshot.Nodes = []domain.WorkflowNode{
+		{ID: "script", Type: "script"},
+		{ID: "agent", Type: "agent", AgentID: "missing"},
+		{ID: "child", Type: "sop", SOPWorkflowID: "child-sop"},
+	}
 	if err := e.validateExecutionReconnect(reconnect, "script"); err == nil {
 		t.Fatal("missing reconnect runner accepted")
 	}
 	reconnect.ExecutionContext.ExecutionRunnerID = "offline"
 	if err := e.validateExecutionReconnect(reconnect, "script"); err == nil {
 		t.Fatal("offline reconnect accepted")
+	}
+	if err := e.validateExecutionReconnect(reconnect, "child"); err == nil || !strings.Contains(err.Error(), "当前离线") {
+		t.Fatalf("offline SOP reconnect error = %v", err)
+	}
+	cvERunner(t, e, "online-sop", domain.RunnerStatusOnline, "codex")
+	reconnect.ExecutionContext.ExecutionRunnerID = "online-sop"
+	if err := e.validateExecutionReconnect(reconnect, "child"); err != nil {
+		t.Fatalf("SOP reconnect requires only an online runner: %v", err)
 	}
 	reconnect.ExecutionContext.ExecutionRunnerID = "online"
 	if err := e.validateExecutionReconnect(reconnect, "unknown"); err == nil {

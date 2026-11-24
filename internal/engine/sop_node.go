@@ -108,13 +108,22 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 			Attributes: map[string]any{"childRunId": child.ID, "sopWorkflowId": childID},
 		})
 	}
-	finished, err := e.waitChildRun(ctx, runID, child.ID)
-	if err != nil {
-		fail(err)
-		return
-	}
-	if finished.Status != "succeeded" {
-		fail(fmt.Errorf("子 SOP %s %s", childID, finished.Status))
+	var finished domain.Run
+	for {
+		var err error
+		finished, err = e.waitChildRun(ctx, runID, child.ID)
+		if err != nil {
+			fail(err)
+			return
+		}
+		if finished.Status == "succeeded" {
+			break
+		}
+		current, err := e.repo.RunHeader(child.ID)
+		if err == nil && childSOPIsRecovering(current) {
+			continue
+		}
+		fail(errors.New(childSOPFailure(childID, finished.Status)))
 		return
 	}
 	imported, err := importChildArtifacts(parent.ID, node, attempt, finished)
@@ -152,6 +161,34 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 			Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "childRunId": finished.ID},
 		})
 	}
+}
+
+func childSOPFailure(workflowID, status string) string {
+	return "子 SOP " + workflowID + " " + status
+}
+
+func childSOPIsRecovering(child domain.Run) bool {
+	return child.Status == "queued" || child.Status == "succeeded" || isLiveStatus(child.Status)
+}
+
+// Recover a child that was retried while this scheduler still owned the
+// parent (including while it was settling the old failure).
+func (e *Engine) recoverRetriedSOPNodes(ctx context.Context, run domain.Run) bool {
+	recovered := false
+	for _, node := range run.WorkflowSnapshot.Nodes {
+		nr := run.Nodes[node.ID]
+		if node.Type != "sop" || nr == nil || nr.Status != "failed" || nr.ChildRunID == "" {
+			continue
+		}
+		id := strings.TrimSpace(node.SOPWorkflowID)
+		if nr.Error != childSOPFailure(id, "failed") && nr.Error != childSOPFailure(id, "cancelled") {
+			continue
+		}
+		if e.resumeParentAfterChildRecoveryContext(ctx, nr.ChildRunID) {
+			recovered = true
+		}
+	}
+	return recovered
 }
 
 func (e *Engine) guardSOPCycle(parent domain.Run, childWorkflowID string) error {

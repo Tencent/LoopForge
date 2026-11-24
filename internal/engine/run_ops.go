@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -392,51 +393,128 @@ func (e *Engine) cancelLiveChildRuns(ids []string) {
 	}()
 }
 
-// resumeParentAfterChildRecovery lets a parent that failed because of this
-// child SOP run continue once the child is retried or passed: the parent
-// replays its SOP node and follows the recovered child instead of starting a
-// new one.
+// resumeParentAfterChildRecovery reconnects a failed SOP node to the same
+// child after the child is retried or passed.
 func (e *Engine) resumeParentAfterChildRecovery(childID string) {
 	e.resumeParentAfterChildRecoveryContext(context.Background(), childID)
 }
 
-func (e *Engine) resumeParentAfterChildRecoveryContext(ctx context.Context, childID string) {
-	child, ok := e.repo.RunState(childID)
-	if !ok {
-		return
+func (e *Engine) resumeParentAfterChildRecoveryContext(ctx context.Context, childID string) bool {
+	child, err := e.repo.RunHeader(childID)
+	if err != nil || !childSOPIsRecovering(child) {
+		return false
 	}
 	parentID := strings.TrimSpace(child.ExecutionContext.ParentRunID)
 	nodeID := strings.TrimSpace(child.ExecutionContext.ParentNodeID)
 	if parentID == "" || nodeID == "" {
-		return
+		return false
 	}
-	parent, ok := e.repo.RunState(parentID)
-	if !ok || parent.Status != "failed" {
-		return
+	for attempt := 0; attempt < 3; attempt++ {
+		recovered, err := e.resumeParentSOPNode(ctx, parentID, nodeID, child)
+		if errors.Is(err, repo.ErrRunDecisionStale) {
+			continue
+		}
+		if err != nil {
+			log.Printf("resume parent %s after child %s recovery: %v", parentID, childID, err)
+		}
+		if recovered {
+			e.resumeParentAfterChildRecoveryContext(ctx, parentID)
+		}
+		return recovered
 	}
+	return false
+}
+
+func recoverableParentSOPNode(parent, child domain.Run, nodeID string) int {
 	nr := parent.Nodes[nodeID]
-	if nr == nil || nr.ChildRunID != childID || nr.Status != "failed" {
-		return
+	if parent.CancelRequested || parent.PauseRequested || nr == nil || nr.ChildRunID != child.ID || nr.Status != "failed" {
+		return -1
 	}
-	pointsAtChild := false
-	for _, node := range parent.WorkflowSnapshot.Nodes {
+	for i, node := range parent.WorkflowSnapshot.Nodes {
 		if node.ID == nodeID {
-			pointsAtChild = strings.TrimSpace(node.SOPWorkflowID) == child.WorkflowID
+			if node.Type == "sop" && strings.TrimSpace(node.SOPWorkflowID) == child.WorkflowID {
+				return i
+			}
+			break
 		}
 	}
-	if !pointsAtChild {
-		return
+	return -1
+}
+
+func (e *Engine) resumeParentSOPNode(ctx context.Context, parentID, nodeID string, child domain.Run) (bool, error) {
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	parent, ok := e.repo.RunState(parentID)
+	if !ok || (parent.Status != "failed" && !isLiveStatus(parent.Status)) {
+		return false, nil
 	}
-	if err := e.retryContext(ctx, parentID, nodeID, "子 SOP "+childID+" 已恢复，父流程重新接上", "", childID); err != nil {
-		log.Printf("resume parent %s after child %s recovery: %v", parentID, childID, err)
-		return
+	index := recoverableParentSOPNode(parent, child, nodeID)
+	if index < 0 {
+		return false, nil
 	}
-	e.resumeParentAfterChildRecoveryContext(ctx, parentID)
+	reason := "子 SOP " + child.ID + " 已恢复，父流程重新接上"
+	if parent.Status == "failed" {
+		nr := parent.Nodes[nodeID]
+		expected := NodeExpectation{NodeID: nodeID, Status: nr.Status, Attempt: nr.Attempt, ReworkCount: nr.ReworkCount}
+		err := e.retryLocked(ctx, parentID, nodeID, reason, "", child.ID, expected)
+		return err == nil, err
+	}
+	foreignLease := parent.OwnerInstanceID != "" && parent.LeaseUntil.After(time.Now().UTC()) && !e.ownsRun(parent)
+	if foreignLease && (parent.Status == "running" || parent.HasActiveNode()) {
+		// The owning scheduler reconciles the child without overwriting a
+		// concurrent result from another in-flight branch.
+		return false, nil
+	}
+	if e.executes() && !foreignLease && !e.ownsRun(parent) {
+		if e.workspaceBlocked(parent) {
+			return false, nil
+		}
+		var err error
+		parent, err = e.acquireLease(parent)
+		if err != nil {
+			return false, err
+		}
+		index = recoverableParentSOPNode(parent, child, nodeID)
+		if index < 0 || !isLiveStatus(parent.Status) {
+			return false, repo.ErrRunDecisionStale
+		}
+	}
+	if err := forbidClosedGongfengIssue(e.repo, parent); err != nil {
+		return false, err
+	}
+	child, err := e.repo.RunHeader(child.ID)
+	if err != nil || !childSOPIsRecovering(child) {
+		return false, err
+	}
+	nr := parent.Nodes[nodeID]
+	if node := &parent.WorkflowSnapshot.Nodes[index]; node.MaxAttempts <= nr.Attempt {
+		node.MaxAttempts = nr.Attempt + 1
+	}
+	nr.Status = "pending"
+	nr.Error = ""
+	nr.Output = ""
+	nr.FinishedAt = time.Time{}
+	nr.Activity = "子 SOP 已恢复，等待重新接上"
+	parent.Status = "running"
+	e.event(&parent, nodeID, "node.retry_requested", reason)
+	appendControlTelemetry(&parent, nodeID, "node.retry_requested", reason)
+	if err := e.repo.PutRunAtRevision(parent, parent.Revision); err != nil {
+		return false, err
+	}
+	e.publish(parentID)
+	if e.ownsRun(parent) {
+		e.resume(parentID)
+	}
+	return true, nil
 }
 
 func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanContext, keepChildRunID string, expected ...NodeExpectation) error {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
+	return e.retryLocked(ctx, runID, nodeID, reason, humanContext, keepChildRunID, expected...)
+}
+
+func (e *Engine) retryLocked(ctx context.Context, runID, nodeID, reason, humanContext, keepChildRunID string, expected ...NodeExpectation) error {
 	r, ok := e.repo.RunState(runID)
 	if !ok {
 		return fmt.Errorf("run not found")
@@ -453,6 +531,12 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	}
 	if err := checkNodeExpectation(r, expected); err != nil {
 		return err
+	}
+	if keepChildRunID != "" {
+		child, err := e.repo.RunHeader(keepChildRunID)
+		if err != nil || !childSOPIsRecovering(child) || r.Status != "failed" || recoverableParentSOPNode(r, child, nodeID) < 0 {
+			return repo.ErrRunDecisionStale
+		}
 	}
 	if err := forbidClosedGongfengIssue(e.repo, r); err != nil {
 		return err

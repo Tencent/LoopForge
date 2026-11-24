@@ -458,6 +458,16 @@ func pauseParentThen(t *testing.T, cancelInstead bool) {
 // 子 SOP 失败导致父流程失败；在子 SOP 上重跑后，父流程要接上这次重跑继续，而不是停在失败或另起一个子 SOP。
 func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 	t.Parallel()
+	testSOPChildRetryResumesParent(t, false)
+}
+
+func TestSOPChildRetryResumesParentWaitingOnSiblingApproval(t *testing.T) {
+	t.Parallel()
+	testSOPChildRetryResumesParent(t, true)
+}
+
+func testSOPChildRetryResumesParent(t *testing.T, siblingApproval bool) {
+	t.Helper()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -476,6 +486,11 @@ func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 		},
 		Edges: []domain.WorkflowEdge{{ID: "e1", Source: "sub", Target: "after", When: "success"}},
 	}
+	beforeRetry, afterRetry := "failed", "succeeded"
+	if siblingApproval {
+		parent.Nodes = append(parent.Nodes, domain.WorkflowNode{ID: "approval", Name: "Approval", Type: "approval"})
+		beforeRetry, afterRetry = "waiting", "waiting"
+	}
 	for _, wf := range []domain.WorkflowDefinition{child, parent} {
 		if err := s.PutWorkflow(wf); err != nil {
 			t.Fatal(err)
@@ -486,7 +501,10 @@ func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool { return got.Status == "failed" })
+	failed := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool {
+		return got.Status == beforeRetry && got.Nodes["sub"].Status == "failed" &&
+			(!siblingApproval || got.Nodes["approval"].Status == "waiting_approval")
+	})
 	childID := failed.Nodes["sub"].ChildRunID
 	if c, _ := s.RunState(childID); c.Status != "failed" {
 		t.Fatalf("child status = %s", c.Status)
@@ -497,12 +515,163 @@ func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 	if err := e.Retry(childID, "check", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	got := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool { return got.Status == "succeeded" })
+	got := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool {
+		return got.Status == afterRetry && got.Nodes["sub"].Status == "succeeded" && got.Nodes["after"].Status == "succeeded"
+	})
 	if got.Nodes["sub"].ChildRunID != childID || childRunsOf(s, run.ID) != 1 {
 		t.Fatalf("child=%s runs=%d", got.Nodes["sub"].ChildRunID, childRunsOf(s, run.ID))
 	}
-	if got.Nodes["after"].Status != "succeeded" {
-		t.Fatalf("downstream = %+v", got.Nodes["after"])
+	if siblingApproval {
+		if approval := got.Nodes["approval"]; approval.Status != "waiting_approval" || approval.Attempt != 1 {
+			t.Fatalf("independent approval changed during child retry: %+v", approval)
+		}
+		if err := e.Approve(run.ID, "approval", ""); err != nil {
+			t.Fatal(err)
+		}
+		waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool { return got.Status == "succeeded" })
+	}
+}
+
+func TestSOPChildRetryRecoversRunnerPinnedParent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name            string
+		parentStatus    string
+		siblingStatus   string
+		pause           bool
+		cancel          bool
+		childReplaced   bool
+		artifactFailure bool
+		wantRecovery    bool
+	}{
+		{name: "failed parent", parentStatus: "failed", siblingStatus: "succeeded", wantRecovery: true},
+		{name: "waiting for another approval", parentStatus: "waiting", siblingStatus: "waiting_approval", wantRecovery: true},
+		{name: "running another branch", parentStatus: "running", siblingStatus: "running", wantRecovery: true},
+		{name: "paused parent", parentStatus: "waiting", siblingStatus: "waiting_approval", pause: true},
+		{name: "cancelling parent", parentStatus: "running", siblingStatus: "running", cancel: true},
+		{name: "cancelled parent", parentStatus: "cancelled", siblingStatus: "cancelled"},
+		{name: "replaced child", parentStatus: "waiting", siblingStatus: "waiting_approval", childReplaced: true},
+		{name: "artifact failure", parentStatus: "running", siblingStatus: "running", artifactFailure: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, s := cvEEngine(t)
+			e.ConfigureExecution("control", "control", time.Minute, false)
+			machine := cvERunner(t, e, "runner", domain.RunnerStatusOnline, "terminal")
+			parent := cvERunnerRun("parent", machine.ID)
+			parent.Status = tc.parentStatus
+			parent.WorkflowID = "parent-sop"
+			child := cvERunnerRun("child", machine.ID)
+			child.WorkflowID = "child-sop"
+			child.ExecutionContext.ParentRunID = parent.ID
+			child.ExecutionContext.ParentNodeID = "sub"
+			child.ExecutionContext.WorkspaceRunID = parent.ID
+			child.WorkflowSnapshot = domain.WorkflowDefinition{
+				ID:    child.WorkflowID,
+				Nodes: []domain.WorkflowNode{{ID: "check", Type: "command", MaxAttempts: 1}},
+			}
+			child.Nodes["check"] = &domain.NodeRun{NodeID: "check", Status: "failed", Attempt: 1}
+			childID := child.ID
+			if tc.childReplaced {
+				childID = "new-child"
+			}
+			failure := childSOPFailure(child.WorkflowID, "failed")
+			if tc.artifactFailure {
+				child.Status = "succeeded"
+				child.Nodes["check"].Status = "succeeded"
+				failure = "required child artifact missing"
+			}
+			siblingType := "command"
+			if tc.siblingStatus == "waiting_approval" {
+				siblingType = "approval"
+			}
+			parent.WorkflowSnapshot = domain.WorkflowDefinition{
+				ID: parent.WorkflowID,
+				Nodes: []domain.WorkflowNode{
+					{ID: "sub", Type: "sop", SOPWorkflowID: child.WorkflowID, MaxAttempts: 1},
+					{ID: "after", Type: "command", MaxAttempts: 1},
+					{ID: "sibling", Type: siblingType, MaxAttempts: 2},
+				},
+				Edges: []domain.WorkflowEdge{{Source: "sub", Target: "after", When: "success"}},
+			}
+			finishedAt := time.Now().UTC()
+			parent.Nodes["sub"] = &domain.NodeRun{
+				NodeID: "sub", Status: "failed", ChildRunID: childID,
+				Attempt: 1, Error: failure, FinishedAt: finishedAt,
+			}
+			parent.Nodes["after"] = &domain.NodeRun{NodeID: "after", Status: "pending"}
+			parent.Nodes["sibling"] = &domain.NodeRun{
+				NodeID: "sibling", Status: tc.siblingStatus, Attempt: 2,
+				Activity: "independent activity", Output: "independent output",
+			}
+			for _, run := range []domain.Run{parent, child} {
+				if err := s.PutRun(run); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.parentStatus == "running" {
+				if err := s.TryAcquireRunLease(parent.ID, "parent-worker", parent.Generation, time.Minute); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.pause {
+				if _, err := s.RequestRunPause(parent.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.cancel {
+				if _, err := s.RequestRunCancel(parent.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if !tc.artifactFailure {
+				if err := e.Retry(child.ID, "check", "", ""); err != nil {
+					t.Fatal(err)
+				}
+				retried, _ := s.RunState(child.ID)
+				if retried.Status != "running" || retried.Nodes["check"].Status != "pending" {
+					t.Fatalf("child retry did not persist: status=%s node=%+v", retried.Status, retried.Nodes["check"])
+				}
+			}
+			current, _ := s.RunState(parent.ID)
+			if tc.parentStatus == "running" && (tc.wantRecovery || tc.artifactFailure) {
+				if current.OwnerInstanceID != "parent-worker" || current.Nodes["sub"].Status != "failed" {
+					t.Fatalf("control plane changed an owned parent: owner=%q node=%+v", current.OwnerInstanceID, current.Nodes["sub"])
+				}
+				owner := New(s, nil)
+				owner.ConfigureExecution("parent-worker", "parent-worker", time.Millisecond, true)
+				// Simulate the active scheduler without dispatching a runner task.
+				owner.claimRunning(parent.ID, func() {})
+				if recovered := owner.recoverRetriedSOPNodes(context.Background(), current); recovered != tc.wantRecovery {
+					t.Fatalf("owner recovery=%t, want %t", recovered, tc.wantRecovery)
+				}
+				current, _ = s.RunState(parent.ID)
+			}
+			sub := current.Nodes["sub"]
+			if tc.wantRecovery {
+				if current.Status != "running" || sub.Status != "pending" || sub.Error != "" || !sub.FinishedAt.IsZero() {
+					t.Fatalf("parent did not reconnect on retry: status=%s node=%+v", current.Status, sub)
+				}
+			} else if current.Status != tc.parentStatus || sub.Status != "failed" || sub.Error != failure {
+				t.Fatalf("unrelated parent state changed: status=%s node=%+v", current.Status, sub)
+			}
+			if current.PauseRequested != tc.pause || current.CancelRequested != tc.cancel {
+				t.Fatalf("parent control flags changed: pause=%t cancel=%t", current.PauseRequested, current.CancelRequested)
+			}
+			if tc.parentStatus == "running" && current.OwnerInstanceID != "parent-worker" {
+				t.Fatalf("independent running branch lost its owner: %q", current.OwnerInstanceID)
+			}
+			if sub.ChildRunID != childID || sub.Attempt != 1 || childRunsOf(s, parent.ID) != 1 {
+				t.Fatalf("parent lost its original child or attempt: %+v", sub)
+			}
+			if got := current.Nodes["sibling"]; got.Status != tc.siblingStatus || got.Attempt != 2 ||
+				got.Activity != "independent activity" || got.Output != "independent output" {
+				t.Fatalf("independent branch changed: %+v", got)
+			}
+			if got := current.Nodes["after"]; got.Status != "pending" || got.Attempt != 0 {
+				t.Fatalf("downstream started before the child completed: %+v", got)
+			}
+		})
 	}
 }
 

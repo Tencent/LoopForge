@@ -342,7 +342,7 @@ func (e *Engine) resumeAfterSchedulerRelease(runID string) {
 			}
 			current, ok := e.repo.RunState(runID)
 			if ok && current.Status == "running" {
-				if current.IsWorkspace() && !e.ownsRun(current) {
+				if !e.ownsRun(current) && (current.IsWorkspace() || (current.OwnerInstanceID == "" && !e.workspaceBlocked(current))) {
 					if _, err := e.acquireLease(current); err != nil {
 						return
 					}
