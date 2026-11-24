@@ -234,9 +234,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.DELETE("/api/notification-bots/:id", api.notifications.bot)
 	g.GET("/api/notification-bots/:id/sessions", api.notifications.sessions)
 	g.POST("/api/notification-bots/:id/test", api.notifications.test)
+	g.POST("/api/notification-bots/:id/targets/verify", api.notifications.verifyTarget)
 	g.POST("/api/notification-preview", api.notifications.preview)
 	g.GET("/api/notification-deliveries", api.notifications.deliveries)
 	g.POST("/api/notification-deliveries/:deliveryId/retry", api.notifications.retry)
+	g.POST("/api/notification-deliveries/:deliveryId/confirm", api.notifications.retry)
 
 	// --- auth & users ---
 	g.GET("/api/health", api.health)
@@ -308,7 +310,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	})
 
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
-	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1)}
+	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1), clarify: stream}
 	api.runs.assistant = asst
 	api.runners.assistant = asst
 	api.schedule.assistant = asst
@@ -316,13 +318,27 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if api.notifications.service.Interactions != nil {
 		api.notifications.service.Interactions.Generate = asst.generateBotReply
 		api.notifications.service.Interactions.Action = asst.handleBotCardAction
+		api.notifications.service.Interactions.NativeLogs = cleanBotNativeLogs
+	}
+	if flag.Lookup("test.v") == nil && notification.BotWorkersEnabled() {
+		// Timers of chat clarifications (next round, pause, rerun).
+		runAfterGate(bg.gate(), asst.startBotClarifyLoop)
 	}
 	api.botInteractions = &botInteractionHandlers{deps: d, notifications: api.notifications}
 	g.GET("/api/notification-bots/:id/interactions", api.botInteractions.records)
+	g.GET("/api/notification-bots/:id/tenant", api.notifications.tenant)
+	g.POST("/api/notification-bots/:id/tenant/confirm", api.notifications.tenantConfirm)
+	g.GET("/api/bot-interactions/pending", api.botInteractions.pending)
+	g.POST("/api/bot-interactions/:interactionId/resend", api.botInteractions.act)
+	g.POST("/api/bot-interactions/:interactionId/confirm", api.botInteractions.act)
+	g.POST("/api/bot-interactions/:interactionId/push-resend", api.botInteractions.act)
 	g.POST("/api/bot-bindings/claim", api.botIdentities.binding)
 	g.POST("/api/bot-bindings/status", api.botIdentities.binding)
 	g.GET("/api/bot-bindings", api.botIdentities.list)
 	g.DELETE("/api/bot-bindings/:id", api.botIdentities.remove)
+	g.GET("/api/bot-drafts/:id", asst.botDraft)
+	g.POST("/api/bot-drafts/:id/confirm", asst.botDraft)
+	g.POST("/api/bot-drafts/:id/cancel", asst.botDraft)
 	g.POST("/api/assistant/chat", asst.chat)
 	g.POST("/api/assistant/generations", asst.startGeneration)
 	g.GET("/api/assistant/sessions/:id/generation", asst.generation)
