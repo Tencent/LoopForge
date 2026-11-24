@@ -402,6 +402,7 @@ type spaceFlowNode struct {
 	ID              string                    `json:"id"`
 	Name            string                    `json:"name"`
 	Type            string                    `json:"type"` // agent, script, approval
+	NodePrompt      string                    `json:"nodePrompt,omitempty"`
 	AgentID         string                    `json:"agentId"`
 	Script          string                    `json:"script"`
 	MetricStage     string                    `json:"metricStage"`
@@ -530,7 +531,7 @@ func (h *spacesHandlers) flowWorkflow(room domain.ChatRoom, req spaceFlowRequest
 			return wf, "步骤 ID 不能为空或重复"
 		}
 		ids[id] = true
-		node := domain.WorkflowNode{ID: id, Name: fallbackName(strings.TrimSpace(n.Name), id), Type: n.Type, MaxAttempts: 1, MaxReworks: 2, JoinRule: n.JoinRule, DefaultTarget: n.DefaultTarget, ArtifactOutputs: n.ArtifactOutputs}
+		node := domain.WorkflowNode{ID: id, Name: fallbackName(strings.TrimSpace(n.Name), id), Type: n.Type, NodePrompt: strings.TrimSpace(n.NodePrompt), MaxAttempts: 1, MaxReworks: 2, JoinRule: n.JoinRule, DefaultTarget: n.DefaultTarget, ArtifactOutputs: n.ArtifactOutputs}
 		node.Position.X, node.Position.Y = n.X, n.Y
 		switch n.Type {
 		case "agent":

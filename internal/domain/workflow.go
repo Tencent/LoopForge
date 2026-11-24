@@ -40,7 +40,10 @@ type WorkflowNode struct {
 	// TaskPrompt is what an approval node asks its approver to check
 	// (「需要确认什么」). Role nodes take their whole brief from the role's
 	// prompt; the field is not read for them.
-	TaskPrompt   string   `json:"taskPrompt,omitempty"`
+	TaskPrompt string `json:"taskPrompt,omitempty"`
+	// NodePrompt adds execution-specific instructions after the bound role
+	// prompt. Approval nodes keep using TaskPrompt for their human question.
+	NodePrompt   string   `json:"nodePrompt,omitempty"`
 	RequestedBy  string   `json:"requestedBy,omitempty"`
 	RequestID    string   `json:"requestId,omitempty"`
 	ClaimedFiles []string `json:"claimedFiles,omitempty"`
@@ -56,26 +59,25 @@ type WorkflowNode struct {
 	// SOPWorkflowID is the referenced workflow when Type is "sop".
 	SOPWorkflowID string `json:"sopWorkflowId,omitempty"`
 	// RunOnWorkspaceRebuild replays this script when restoring an already-used environment.
-	RunOnWorkspaceRebuild bool               `json:"runOnWorkspaceRebuild,omitempty"`
-	ScriptLanguage        string             `json:"scriptLanguage,omitempty"` // shell, python
-	Script                string             `json:"script,omitempty"`
+	RunOnWorkspaceRebuild bool   `json:"runOnWorkspaceRebuild,omitempty"`
+	ScriptLanguage        string `json:"scriptLanguage,omitempty"` // shell, python
+	Script                string `json:"script,omitempty"`
 	// CredentialEnv requests platform-managed credentials as environment
 	// variables for script and verification commands.
-	CredentialEnv         map[string]string  `json:"credentialEnv,omitempty"`
-	ExecutionScope        string             `json:"executionScope,omitempty"` // run, repositories; empty = run
-	Command               string             `json:"command,omitempty"`        // legacy command-node payload
-	ArtifactOutputs       []ArtifactContract `json:"artifactOutputs,omitempty"`
-	JoinRule              string             `json:"joinRule,omitempty"`
-	DefaultTarget         string             `json:"defaultTarget,omitempty"`
-	RejectTo              string             `json:"rejectTo,omitempty"`
-	OnFailure             string             `json:"onFailure,omitempty"`     // fail, reject
-	RetryStrategy         string             `json:"retryStrategy,omitempty"` // targeted_fix, full_redo
-	CarryOver             []string           `json:"carryOver,omitempty"`
-	MaxAttempts           int                `json:"maxAttempts"`
-	MaxReworks            int                `json:"maxReworks"`
-	Notifications         []NodeNotification `json:"notifications,omitempty"`
-	Position              Position           `json:"position"`
-
+	CredentialEnv   map[string]string  `json:"credentialEnv,omitempty"`
+	ExecutionScope  string             `json:"executionScope,omitempty"` // run, repositories; empty = run
+	Command         string             `json:"command,omitempty"`        // legacy command-node payload
+	ArtifactOutputs []ArtifactContract `json:"artifactOutputs,omitempty"`
+	JoinRule        string             `json:"joinRule,omitempty"`
+	DefaultTarget   string             `json:"defaultTarget,omitempty"`
+	RejectTo        string             `json:"rejectTo,omitempty"`
+	OnFailure       string             `json:"onFailure,omitempty"`     // fail, reject
+	RetryStrategy   string             `json:"retryStrategy,omitempty"` // targeted_fix, full_redo
+	CarryOver       []string           `json:"carryOver,omitempty"`
+	MaxAttempts     int                `json:"maxAttempts"`
+	MaxReworks      int                `json:"maxReworks"`
+	Notifications   []NodeNotification `json:"notifications,omitempty"`
+	Position        Position           `json:"position"`
 }
 
 // ValidateWorkflowMetricStages prevents silently dropping a mistyped stage.

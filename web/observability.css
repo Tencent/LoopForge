@@ -121,6 +121,9 @@
   .node-inspector-title .node-activity-inline.is-running b{animation:none;background:none;color:var(--hui-text)}
 }
 .node-error,.node-output{margin-top:10px;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.node-skip-reason{margin-top:10px;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:rgba(148,163,184,.08)}
+.node-skip-reason strong{display:block;padding:8px 10px;background:rgba(148,163,184,.12);color:var(--muted-2);font-size:10px}
+.node-skip-reason p{margin:0;padding:10px;color:var(--muted);font-size:10px;line-height:1.55}
 .node-output>div{height:35px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border-bottom:1px solid var(--line);background:var(--bg-soft)}
 .node-output b{font-size:10px}
 .node-output button{border:0;background:transparent;color:var(--blue);cursor:pointer;font-size:9px}

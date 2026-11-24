@@ -495,7 +495,10 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 		nodeID = resumeNodeID(r)
 	}
 	if nodeID == "" {
-		return fmt.Errorf("没有可重试的节点：最后一步因条件汇合规则被跳过，请检查汇合规则，或从产生路由决策的节点重新运行")
+		if allSinksSkippedJoin(r) {
+			return fmt.Errorf("没有可重试的节点：最后一步因条件汇合规则被跳过，请检查汇合规则，或从产生路由决策的节点重新运行")
+		}
+		return fmt.Errorf("没有可重试的节点，请查看运行失败原因，或指定节点重跑")
 	}
 	if r.Nodes[nodeID] == nil {
 		return fmt.Errorf("retry node not found")
@@ -664,6 +667,14 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	}
 	e.cancelLiveChildRuns(stale)
 	return e.persistControlDecision(runID, r, expected...)
+}
+
+func allSinksSkippedJoin(r domain.Run) bool {
+	if r.Status != "failed" || len(r.WorkflowSnapshot.Nodes) == 0 {
+		return false
+	}
+	wf := workflowForRun(nil, r)
+	return allRoutingFinished(wf, r) && !allSucceeded(wf, r)
 }
 
 // ResumePaused continues every node interrupted by an operator pause. It is a
@@ -1032,6 +1043,7 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 			delete(r.WorkflowSnapshot.ExecutorDefaults, n.ID)
 		}
 		n.AgentID, n.ExecutorID = src.AgentID, src.ExecutorID
+		n.NodePrompt = src.NodePrompt
 		n.ArtifactOutputs = src.ArtifactOutputs
 		n.OnFailure, n.RejectTo = src.OnFailure, src.RejectTo
 		n.RetryStrategy, n.CarryOver = src.RetryStrategy, src.CarryOver

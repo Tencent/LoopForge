@@ -531,7 +531,11 @@ async function deleteEdgeById(id){
   flowHistory.record();
   state.workflow.edges=state.workflow.edges.filter(x=>x.id!==id);
   const source=state.workflow.nodes.find(n=>n.id===edge.source);
-  if(source?.defaultTarget===edge.target)source.defaultTarget='';
+  if(source?.defaultTarget){
+    const outgoing=state.workflow.edges.filter(x=>x.source===source.id);
+    const fallback=outgoing.find(x=>x.target===source.defaultTarget);
+    if(!fallback||fallback.condition||!outgoing.some(x=>x.condition))source.defaultTarget='';
+  }
   dirty();renderCanvas();renderProperties();flowToast('已删除连线',{undo:true});
 }
 async function deleteRejectEdgeByNodeId(nodeId){
@@ -1079,8 +1083,9 @@ function renderProperties(){
     const scriptPreview=scriptLines?`<div class="script-snippet-preview" id="previewScriptNodeEditor" title="点击在代码编辑器中修改"><code>${escapeHTML(n.script.slice(0, 120))}${n.script.length>120?'…':''}</code></div>`:'';
     const scriptPane=n.type==='script'?`<div class="fd-row2"><div class="fd-field"><label>脚本语言</label><select class="select" data-p="scriptLanguage"><option value="shell" ${n.scriptLanguage!=='python'?'selected':''}>Shell</option><option value="python" ${n.scriptLanguage==='python'?'selected':''}>Python</option></select></div><div class="fd-field"><label>执行范围</label><select class="select" data-p="executionScope"><option value="run" ${n.executionScope!=='repositories'?'selected':''}>Run 工作区</option><option value="repositories" ${n.executionScope==='repositories'?'selected':''}>每个代码仓库</option></select></div></div><div class="fd-field"><label>脚本内容</label><button type="button" class="script-editor-launch-btn btn-open-code-editor" id="openScriptNodeEditor"><span>${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span><span class="script-btn-badge">${scriptCountText}</span></button>${scriptPreview}<p class="prop-hint">逐仓库执行时会自动进入每个仓库根目录，无需手写 cd。</p></div>`:'';
     const approvalPane=n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div>`:'';
+    const nodePromptPane=n.type==='agent'?`<div class="fd-field"><label>本节点补充提示词（可选）</label><textarea class="input" rows="4" data-p="nodePrompt" placeholder="例如：只检查登录限流相关代码，并补充边界测试">${escapeHTML(n.nodePrompt||'')}</textarea><p class="prop-hint">执行时会追加到角色 Prompt 后面；同一个角色可以在不同节点使用不同要求。</p></div>`:'';
     const ownArtifacts=(n.type==='agent'||n.type==='script')?`<div class="fd-field"><label>本节点产物契约</label><div id="artifactContractRows">${artifactRowsHTML(n)}</div><button type="button" class="fd-btn ghost sm" id="addSOPHandoff">${flowPalette.icon('plus',13)}<span>增加产物</span></button></div>`:'';
-    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n):''}${sopSelect}${scriptPane}${approvalPane}${ownArtifacts}</div></section>`;
+    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n):''}${sopSelect}${scriptPane}${approvalPane}${nodePromptPane}${ownArtifacts}</div></section>`;
     const gates=n.type==='agent'?flowFold('gates','校验顺序',`${effectiveNodeArtifacts(n,workflowAgent(n.agentId)).length} 产物 · ${roleGates(workflowAgent(n.agentId)).length} 门禁`,nodeGatePane(n),false):'';
     const wantReject=state.flowWantReject??(n.onFailure==='reject');
     const targets=state.workflow.nodes.filter(x=>x.id!==n.id).map(x=>`<option value="${escapeHTML(x.id)}" ${x.id===n.rejectTo?'selected':''}>${escapeHTML(x.name)}</option>`).join('');
