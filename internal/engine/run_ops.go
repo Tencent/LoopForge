@@ -165,7 +165,11 @@ func nodeApproverAllowed(snapshot domain.WorkflowDefinition, nodeID string, acto
 				return nil
 			}
 		}
-		return fmt.Errorf("节点「%s」已指定审批人，当前账号不在审批人名单中", nodeDisplayName(node))
+		role := "审批人"
+		if node.Type != "approval" {
+			role = "操作人"
+		}
+		return fmt.Errorf("节点「%s」已指定%s，当前账号不在%s名单中", nodeDisplayName(node), role, role)
 	}
 	return nil
 }

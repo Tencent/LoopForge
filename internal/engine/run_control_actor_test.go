@@ -249,10 +249,10 @@ func failedScriptFixture(t *testing.T, operators []int64) (*repo.Store, *Engine,
 func TestPinnedOperatorsBlockOutsiderPassAndRetry(t *testing.T) {
 	s, e, runID := failedScriptFixture(t, []int64{7})
 	outsider := domain.Actor{ID: 8, Name: "outsider"}
-	if err := e.Pass(outsider, runID, "job", ""); err == nil || !strings.Contains(err.Error(), "审批人") {
+	if err := e.Pass(outsider, runID, "job", ""); err == nil || !strings.Contains(err.Error(), "操作人") {
 		t.Fatalf("outsider pass should be refused, got %v", err)
 	}
-	if err := e.Retry(outsider, runID, "job", "rework", ""); err == nil || !strings.Contains(err.Error(), "审批人") {
+	if err := e.Retry(outsider, runID, "job", "rework", ""); err == nil || !strings.Contains(err.Error(), "操作人") {
 		t.Fatalf("outsider retry should be refused, got %v", err)
 	}
 	if n, _ := s.Run(runID); n.Nodes["job"].Status != "failed" {
