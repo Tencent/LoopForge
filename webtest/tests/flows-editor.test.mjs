@@ -30,7 +30,7 @@ test('designer configures routing conditions and join behavior', async (t) => {
   assert.equal(app.document.querySelector('[data-route-edge="small-edge"] [data-route-field="equals"]').value,'null');
 });
 
-test('agent drawer keeps failure controls before branch configuration', async (t) => {
+test('linear agent drawer hides branch configuration', async (t) => {
   const app = await loadApp(); t.after(app.close);
   app.evaluate(`switchView('flow');state.workflow={id:'drawer',projectId:'project-1',name:'Drawer',nodes:[
     {id:'agent',name:'Agent',type:'agent',agentId:'agent-1',position:{x:20,y:30}},
@@ -39,8 +39,9 @@ test('agent drawer keeps failure controls before branch configuration', async (t
   const body=app.document.querySelector('#properties .fd-db');
   const failure=body.querySelector('[data-fail="reject"]');
   const routing=body.querySelector('[data-route-edge="edge"]');
-  assert.ok(failure && routing);
-  assert.ok(failure.compareDocumentPosition(routing) & app.window.Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.ok(failure);
+  assert.equal(routing, null);
+  assert.equal(body.textContent.includes('分支与汇合'), false);
 });
 
 test('flow editor manages preview contracts, nodes, connections, diagnostics, and properties', async (t) => {

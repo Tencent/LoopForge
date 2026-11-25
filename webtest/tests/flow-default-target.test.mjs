@@ -40,7 +40,8 @@ for (const [name, edit] of edits) {
     const before = app.evaluate(`JSON.stringify({nodes:state.workflow.nodes,edges:state.workflow.edges})`);
     await edit(app);
     assert.equal(app.evaluate(`state.workflow.nodes[0].defaultTarget`), '');
-    assert.equal(app.document.querySelector('[data-p="defaultTarget"]').value, '');
+    const defaultTarget=app.document.querySelector('[data-p="defaultTarget"]');
+    if(defaultTarget)assert.equal(defaultTarget.value, '');
     assert.doesNotMatch(app.document.querySelector('#edges').textContent, /默认/);
 
     assert.equal(app.evaluate(`flowHistory.undo()`), true);

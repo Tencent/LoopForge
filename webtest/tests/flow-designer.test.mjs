@@ -74,7 +74,7 @@ test('flow node metadata, properties, artifact editors, menus, and edge deletion
   assert.match(app.document.querySelector('#properties').textContent, /Agent|角色|节点/);
 });
 
-test('approval nodes expose join rules without conditional edge configuration', async (t) => {
+test('approval nodes expose join rules for a real merge without conditional edge configuration', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`
@@ -85,7 +85,7 @@ test('approval nodes expose join rules without conditional edge configuration', 
         {id:'a',name:'分支 A',type:'script',position:{x:420,y:40}},
         {id:'b',name:'分支 B',type:'script',position:{x:420,y:160}}
       ],
-      edges:[{id:'gate-a',source:'gate',target:'a'},{id:'gate-b',source:'gate',target:'b'}],
+      edges:[{id:'a-gate',source:'a',target:'gate'},{id:'b-gate',source:'b',target:'gate'}],
       sandboxProfileId:state.data.sandboxes[0]?.id||'local'};
     state.selectedNode='gate';renderCanvas();renderProperties();
   `);
