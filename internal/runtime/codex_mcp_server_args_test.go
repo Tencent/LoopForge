@@ -12,6 +12,7 @@ func TestCodexMCPServerArgsHTTP(t *testing.T) {
 	want := []string{
 		"-c", `mcp_servers.docs.url="https://mcp.example/x"`,
 		"-c", "mcp_servers.docs.tool_timeout_sec=30.0",
+		"-c", `mcp_servers.docs.default_tools_approval_mode="approve"`,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %q\nwant %q", got, want)
@@ -32,6 +33,7 @@ func TestCodexMCPServerArgsStdio(t *testing.T) {
 		"-c", `mcp_servers.fs.cwd="tools/fs"`,
 		"-c", `mcp_servers.fs.args=["server.js","--root","a b"]`,
 		"-c", `mcp_servers.fs.env={ ALPHA = "say \"hi\"", ZED = "1" }`,
+		"-c", `mcp_servers.fs.default_tools_approval_mode="approve"`,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %q\nwant %q", got, want)
@@ -40,7 +42,10 @@ func TestCodexMCPServerArgsStdio(t *testing.T) {
 
 func TestCodexMCPServerArgsMinimalStdio(t *testing.T) {
 	got := codexMCPServerArgs(domain.MCPServerDefinition{ID: "bare", Command: "bin"})
-	want := []string{"-c", `mcp_servers.bare.command="bin"`}
+	want := []string{
+		"-c", `mcp_servers.bare.command="bin"`,
+		"-c", `mcp_servers.bare.default_tools_approval_mode="approve"`,
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %q\nwant %q", got, want)
 	}

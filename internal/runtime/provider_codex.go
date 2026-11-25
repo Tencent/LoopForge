@@ -32,9 +32,11 @@ func (codexProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	}
 	// A private CODEX_HOME keeps the host login and config out of the run.
 	// Current Codex rejects --ignore-user-config and --ignore-rules.
-	if in.Driver == "docker" || in.Driver == "bwrap" {
-		// Docker and bwrap are the isolation boundary. Codex's own bubblewrap
-		// sandbox cannot create another user namespace inside them.
+	if in.Driver == "docker" || in.Driver == "bwrap" || in.Driver == "seatbelt" {
+		// Docker, bwrap and seatbelt are the isolation boundary. Codex's own
+		// sandbox cannot nest inside them: bubblewrap cannot create another user
+		// namespace, and macOS rejects a second seatbelt profile with
+		// "sandbox_apply: Operation not permitted".
 		argv = withCodexSandboxMode(argv, "danger-full-access")
 	}
 	if sessionID := strings.TrimSpace(in.Options.ResumeSessionID); sessionID != "" {
@@ -160,7 +162,10 @@ func codexConfigArgs(instructions string, skillPaths []string, servers []domain.
 }
 
 // codexMCPServerArgs renders one MCP server as Codex `-c mcp_servers.<id>.*`
-// overrides; env keys are sorted so the argv is deterministic.
+// overrides; env keys are sorted so the argv is deterministic. Workflow nodes
+// run unattended under approval_policy=never, where Codex refuses every MCP
+// call that needs approval, including the gate's submit_gate_result. The
+// tools come from the Agent's own assets, so they are approved up front.
 func codexMCPServerArgs(m domain.MCPServerDefinition) []string {
 	var args []string
 	prefix := "mcp_servers." + safeID(m.ID) + "."
@@ -195,5 +200,6 @@ func codexMCPServerArgs(m domain.MCPServerDefinition) []string {
 	if m.TimeoutSec > 0 {
 		args = append(args, "-c", fmt.Sprintf("%stool_timeout_sec=%d.0", prefix, m.TimeoutSec))
 	}
+	args = append(args, "-c", prefix+`default_tools_approval_mode="approve"`)
 	return args
 }
