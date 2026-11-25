@@ -5184,6 +5184,11 @@ components:
           format: int64
         workflowId:
           type: string
+          description: SOP to deliver the requirement with; empty binds the project default SOP. To deliver without any SOP, set sopMode to none instead.
+        sopMode:
+          type: string
+          enum: ["", none, sop]
+          description: none delivers the requirement without an SOP (clarified and changed in conversations; scheduled SOPs never claim it) and clears workflowId. sop removes that opt-out, so workflowId or the project default applies again. Empty or omitted keeps the stored mode on edits.
         repositoryId:
           type: string
         baseBranch:
