@@ -191,7 +191,10 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 		// A checkpoint claim marks the workspace before its files are removed.
 		// Only its lease holder may release the slot while cleanup is in flight.
 		// A claim reset above leaves the row uncleaned, so release is a no-op.
-		if meta, ok := e.repo.WorkspaceCheckpoint(run.ID); ok && meta.LeaseUntil != nil && meta.LeaseUntil.After(now) {
+		if meta, ok := e.repo.WorkspaceCheckpoint(run.ID); ok && (meta.LeaseUntil != nil && meta.LeaseUntil.After(now) ||
+			// A local deletion with an unknown outcome may still leave the
+			// checkout on disk. Keep the slot until the recheck confirms it.
+			runnerID == "" && meta.CleanupRetryAt != nil) {
 			return
 		}
 		e.releaseCleanedRunAdmission(run, "")

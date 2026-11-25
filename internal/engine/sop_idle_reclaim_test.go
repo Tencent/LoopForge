@@ -717,3 +717,60 @@ func TestSOPIdleReclaimRestoresOnAReplacementCloudWorker(t *testing.T) {
 		t.Fatalf("restored workspace binding = %s:%s", got.WorkspaceHost, got.WorkspaceRoot)
 	}
 }
+
+// A local deletion whose outcome is unknown keeps the checkout on disk until
+// the recheck. The run must keep its slot and must not re-export the checkout.
+func TestSOPIdleReclaimKeepsSlotWhileDeletionUnconfirmed(t *testing.T) {
+	t.Parallel()
+	e, s := newRecoveryEngine(t)
+	run := stoppedSOPForReclaim(t, s, domain.TelemetryContext{ProjectID: "idle"}, "failed", false)
+	root := e.RunWorkspace(run.ID)
+	writeSOPIdleFile(t, root)
+	run = setSOPIdleTime(t, s, run, time.Now().UTC().Add(-2*ConversationWorkspaceIdleTTL))
+	parent := filepath.Dir(root)
+	if err := os.MkdirAll(filepath.Join(parent, ".locks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+	now := time.Now().UTC()
+	e.cleanupWorkspace(run, now)
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.RunState(run.ID)
+	meta, _ := s.WorkspaceCheckpoint(run.ID)
+	if got.WorkspaceCleanedAt.IsZero() || meta.CleanupRetryAt == nil || meta.SavedAt == nil {
+		t.Fatalf("failed deletion was not left pending: cleaned=%v retry=%v saved=%v", got.WorkspaceCleanedAt, meta.CleanupRetryAt, meta.SavedAt)
+	}
+	if _, err := os.Stat(filepath.Join(root, "kept.txt")); err != nil {
+		t.Fatalf("checkout should survive a denied deletion: %v", err)
+	}
+	savedAt := *meta.SavedAt
+	for _, at := range []time.Time{now.Add(20 * time.Second), now.Add(5 * time.Minute)} {
+		current, _ := s.RunState(run.ID)
+		e.cleanupWorkspace(current, at)
+		current, _ = s.RunState(run.ID)
+		meta, _ = s.WorkspaceCheckpoint(run.ID)
+		if current.AdmissionState == "released" {
+			t.Fatalf("slot released while the checkout may still exist (at %v)", at.Sub(now))
+		}
+		if !meta.SavedAt.Equal(savedAt) {
+			t.Fatalf("checkpoint re-exported during cleanup backoff: %v -> %v", savedAt, meta.SavedAt)
+		}
+	}
+	// After the backoff the recheck finds the surviving checkout, reopens the
+	// claim, and the next pass reclaims it and releases the slot.
+	later := now.Add(11 * time.Minute)
+	for range 3 {
+		current, _ := s.RunState(run.ID)
+		e.cleanupWorkspace(current, later)
+		later = later.Add(11 * time.Minute)
+	}
+	assertSOPReclaimed(t, s, run.ID)
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("checkout survived final reclaim: %v", err)
+	}
+}
