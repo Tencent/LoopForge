@@ -69,6 +69,17 @@ func assistantResumeRecoverable(ctx context.Context, err error) bool {
 	return failure.Code == "MISSING_RESULT" || failure.Code == "CLI_EXIT_NONZERO"
 }
 
+const assistantWorkspaceFallbackStatus = "工作区启动失败，已回到平台模式，继续本轮对话。"
+
+const assistantWorkspaceFallbackPrompt = "工作区启动失败。本轮请用平台工具继续处理用户请求，如实说明仍需工作区的步骤。后续轮次有需要时可重新打开工作区。"
+
+// Only retry in platform mode when the workspace CLI is known not to have
+// run. A transport error can leave an active CLI on the execution machine.
+func assistantWorkspaceStartupFailed(ctx context.Context, err error) bool {
+	return ctx.Err() == nil && errors.Is(err, runtime.ErrConversationNotStarted) &&
+		!errors.Is(err, errAssistantExecutionUnavailable) && !errors.Is(err, errAssistantRunnerAccessRevoked)
+}
+
 // assistantHandoffOutlivesPhaseError reports whether a phase error should be
 // ignored because a mode handoff already succeeded in that phase. The old CLI
 // may end without type=result once it has nothing left to do; failing the

@@ -128,3 +128,25 @@ func TestPhaseProgressIgnoresStatusOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceFallbackRequiresConfirmedStartFailure(t *testing.T) {
+	ctx := context.Background()
+	timeout := fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, context.DeadlineExceeded)
+	if !assistantWorkspaceStartupFailed(ctx, timeout) {
+		t.Fatal("a CLI setup deadline must allow recovery while the turn is live")
+	}
+	for _, err := range []error{
+		context.DeadlineExceeded,
+		fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, errAssistantExecutionUnavailable),
+		fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, errAssistantRunnerAccessRevoked),
+	} {
+		if assistantWorkspaceStartupFailed(ctx, err) {
+			t.Fatalf("attempted fallback for %v", err)
+		}
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if assistantWorkspaceStartupFailed(canceled, timeout) {
+		t.Fatal("a stopped turn must not launch a platform CLI")
+	}
+}
