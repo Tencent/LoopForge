@@ -136,10 +136,12 @@ type DockerfileDefinition struct {
 type SandboxProfile struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
+	Toolchain      string            `json:"toolchain,omitempty"`
 	ProjectID      string            `json:"projectId,omitempty"`
 	Shared         bool              `json:"shared,omitempty"`
 	Driver         string            `json:"driver"` // native, docker (seatbelt / bwrap are resolved native values)
 	ReadOnlyRootFS bool              `json:"readOnlyRootFS"`
+	Privileged     bool              `json:"privileged,omitempty"`
 	Environment    map[string]string `json:"environment,omitempty"`
 	// Dockerfile is the image recipe of a docker sandbox.
 	Dockerfile *SandboxDockerfile `json:"dockerfile,omitempty"`

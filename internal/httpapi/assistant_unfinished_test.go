@@ -13,9 +13,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func waitGeneration(t *testing.T, h *assistantHandlers, userID int64, sessionID string, done func(domain.AssistantGeneration) bool) domain.AssistantGeneration {
+func waitGeneration(t *testing.T, h *assistantHandlers, userID int64, sessionID string, done func(domain.AssistantGeneration) bool, timeout ...time.Duration) domain.AssistantGeneration {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	wait := 5 * time.Second
+	if len(timeout) > 0 {
+		wait = timeout[0]
+	}
+	deadline := time.Now().Add(wait)
 	for {
 		g, _ := h.repo.AssistantGeneration(userID, sessionID)
 		if done(g) {

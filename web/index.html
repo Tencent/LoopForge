@@ -350,7 +350,7 @@
     <!-- 运行记录 -->
     <section id="runsView" class="view page-view">
       <div class="page-heading runs-heading">
-        <h1>运行记录<span class="info-tip" tabindex="0" role="note" aria-label="并发规则：云端执行时，每个项目最多同时运行 10 条 SOP，超出的进入排队中。"><span class="run-hint-icon" data-run-icon="info" aria-hidden="true"><svg width="15" height="15"></svg></span><span class="info-tip-panel" role="tooltip"><b>并发规则</b><span>云端执行时，<strong>每个项目最多同时运行 10 条 SOP</strong>，超出的进入「排队中」，名额空出后按提交顺序自动开始。</span><span>失败、暂停、待确认、开始后被取消的运行仍占用名额；只有成功完成或排队时取消的不占用。</span><span>嵌套的子 SOP 不单独计数；未归属项目的运行共用一组 10 个名额。</span><span>个人执行机器不受此限制，可在「执行机器」页单独设置上限。</span></span></span></h1>
+        <h1>运行记录<span class="info-tip" tabindex="0" role="note" aria-label="并发规则：云端执行时，每个项目最多同时运行 10 条 SOP，超出的进入排队中。"><span class="run-hint-icon" data-run-icon="info" aria-hidden="true"><svg width="15" height="15"></svg></span><span class="info-tip-panel" role="tooltip"><b>并发规则</b><span>云端执行时，<strong>每个项目最多同时运行 10 条 SOP</strong>，超出的进入「排队中」，名额空出后按提交顺序自动开始。</span><span>失败、暂停、待确认的 SOP 空闲 1 小时后自动归档工作区并释放名额，继续或重试时自动恢复。已开始的 SOP 取消后，工作区清理完成即释放名额。</span><span>嵌套的子 SOP 不单独计数；未归属项目的运行共用一组 10 个名额。</span><span>个人执行机器不受此限制，可在「执行机器」页单独设置上限。</span></span></span></h1>
         <span id="runsLiveState" class="run-live" role="status"><span class="run-lamp" aria-hidden="true"><i></i></span><span data-live-text>实时更新中</span></span>
         <div id="runOverview" class="run-kpis" aria-label="运行指标"></div>
         <button id="refreshRuns" class="run-icon-btn" type="button" aria-label="刷新" title="刷新"><span data-run-icon="refresh" aria-hidden="true"><svg width="15" height="15"></svg></span></button>
@@ -499,7 +499,7 @@
             <div id="workflowSandboxField" class="flow-field-wrap">
               <label for="workflowSandbox" class="flow-field-label">运行沙箱环境</label>
               <select id="workflowSandbox" class="select flow-select"></select>
-              <div class="flow-field-hint">当前 SOP 节点执行 Shell/Python 及构建命令所绑定的隔离沙箱</div>
+              <div class="flow-field-hint">本次运行的所有节点共用所选沙箱。选「由 Agent 选择」后，每次运行按项目和任务决定。</div>
             </div>
             <div id="workflowProjectCredentials" class="flow-field-wrap" hidden>
               <div class="flow-field-label">项目凭据</div>
@@ -1333,6 +1333,7 @@
   <script src="/app/run-activation.js"></script>
   <script src="/app/platform-ssh-hosts.js"></script>
   <script src="/app/platform-https-hosts.js"></script>
+  <script src="/app/platform-public-url.js"></script>
   <script src="/app/workbench.js?v=20261121settingsrows"></script>
   <script src="/app/git-ssh-keys.js?v=20261121settings"></script>
   <script src="/app/git-http-credentials.js?v=20261121settings"></script>

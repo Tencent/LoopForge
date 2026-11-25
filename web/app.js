@@ -115,8 +115,9 @@ function toast(message, type='info', duration=2600){
     legacy.textContent=message;
     legacy.className=`toast show toast-${kind}`;
     clearTimeout(toastTimer);
-    toastTimer=setTimeout(()=>legacy.classList.remove('show'), 2200);
-    return;
+    const hide=()=>{if(legacy.textContent===message)legacy.classList.remove('show')};
+    if(duration>0)toastTimer=setTimeout(hide,2200);
+    return hide;
   }
   if(!container)return;
   const kind=['ok','err','warn','info'].includes(type)?type:'info';
@@ -134,14 +135,18 @@ function toast(message, type='info', duration=2600){
   window.AgentFlowHarnessIcons?.hydrate?.(item);
   let timer=null;
   const remove=()=>{
+    clearTimeout(timer);
     if(item.classList.contains('leaving'))return;
     item.classList.add('leaving');
     setTimeout(()=>{try{item.remove()}catch{}}, 200);
   };
-  timer=setTimeout(remove, duration);
-  item.onmouseenter=()=>clearTimeout(timer);
-  item.onmouseleave=()=>{timer=setTimeout(remove, 1400)};
+  if(duration>0){
+    timer=setTimeout(remove,duration);
+    item.onmouseenter=()=>clearTimeout(timer);
+    item.onmouseleave=()=>{timer=setTimeout(remove,1400)};
+  }
   item.querySelector('.toast-item-close').onclick=remove;
+  return remove;
 }
 
 // Platform dialogs (#confirmModal) replace window.confirm/prompt/alert. Calls
@@ -1041,7 +1046,7 @@ function bind(){
   $('#workflowSelect').onchange=e=>switchFlowWorkflow(e.target.value);
   $('#workflowName').oninput=e=>{if(!state.workflow)return;state.workflow.name=e.target.value;dirty()};
   $('#workflowOwner').oninput=e=>{if(!state.workflow)return;state.workflow.owner=e.target.value;dirty()};
-  $('#workflowSandbox').onchange=e=>{if(!state.workflow)return;state.workflow.sandboxProfileId=e.target.value;dirty()};
+  $('#workflowSandbox').onchange=e=>{if(!state.workflow)return;setSOPSandboxChoice(state.workflow,e.target.value);dirty()};
   $('#workflowStatus').onchange=e=>{if(!state.workflow)return;state.workflow.status=e.target.value;dirty()};
   $('#workflowTags').oninput=e=>{if(!state.workflow)return;state.workflow.tags=e.target.value.split(',').map(x=>x.trim()).filter(Boolean);dirty()};
   $('#workflowMetricCategory').onchange=e=>{if(!state.workflow)return;state.workflow.metricCategory=e.target.value;dirty()};

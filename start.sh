@@ -115,6 +115,9 @@ PY
     [[ -f .env ]] || docker_access_fail 'Not installed yet. Run ./start.sh first.'
     select_docker_access || docker_access_fail 'Docker is not running, or this user cannot access it.'
     lock_compose_upgrade
+    bash scripts/configure.sh --project-credential-key
+    # An exported empty value would override the configured key in Compose.
+    [[ -n "${AGENTFLOW_PROJECT_CREDENTIAL_KEY:-}" ]] || unset AGENTFLOW_PROJECT_CREDENTIAL_KEY
     if mirror_published_ghcr always; then
       compose pull --policy always mysql
     else

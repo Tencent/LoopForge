@@ -192,9 +192,9 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 	}
 	e.runEnvs[run.ID] = env
 	first, err := e.repo.BindRunWorkspace(run.ID, e.instanceID, run.Generation, e.workspaceHost, e.sandboxes.Root())
-	if errors.Is(err, repo.ErrRunWorkspaceBound) && current.UsesConversationWorkspace() {
-		// The conversation's checkpoint may have moved its checkout to this
-		// worker. The SOP follows that binding after its startup preflight.
+	if errors.Is(err, repo.ErrRunWorkspaceBound) && sharesWorkspace(current) {
+		// The owner may have restored its checkout on this worker. A child
+		// or borrowed SOP follows the binding checked during startup.
 		err = e.repo.RebindRunWorkspace(run.ID, e.instanceID, run.Generation, e.workspaceHost, e.sandboxes.Root())
 	}
 	if err == nil && !current.WorkspaceCleanedAt.IsZero() {

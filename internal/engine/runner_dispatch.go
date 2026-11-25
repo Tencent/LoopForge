@@ -122,6 +122,10 @@ func (e *Engine) requireRunnerRepositoryCapabilities(runnerID string, repositori
 		return nil
 	}
 	runner, _ := e.repo.Runner(runnerID)
+	return runnerRepositoryCapabilityError(runner, repositories)
+}
+
+func runnerRepositoryCapabilityError(runner domain.Runner, repositories []domain.RepositoryContext) error {
 	for _, repository := range repositories {
 		if repository.Provider == domain.RepositoryProviderSSH && !runner.SupportsGitSSH() {
 			return fmt.Errorf("Git SSH 仓库需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionGitSSH)
@@ -145,6 +149,14 @@ func (e *Engine) requireRunnerRepositoryCapabilities(runnerID string, repositori
 	return nil
 }
 
+func (e *Engine) requireRunnerSandboxVersion(runnerID string, profile domain.SandboxProfile) error {
+	if runnerID == "" || !profile.Privileged {
+		return nil
+	}
+	runner, _ := e.repo.Runner(runnerID)
+	return runner.ValidateSandboxVersion(profile)
+}
+
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
 	runnerID := e.defaultExecutionRunner(run)
 	if runnerID != "" && run.UsesConversationWorkspace() && len(run.RepositoryContexts()) > 0 {
@@ -158,6 +170,9 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 	}
 	profile, resources, err := e.workspaceSandboxProfile(run)
 	if err != nil {
+		return nil, err
+	}
+	if err := e.requireRunnerSandboxVersion(runnerID, profile); err != nil {
 		return nil, err
 	}
 	spec := resolvedSandboxSnapshot(profile, resources)

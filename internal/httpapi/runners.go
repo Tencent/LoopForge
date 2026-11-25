@@ -952,6 +952,9 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			}
 			err = domain.ValidateFrozenSandbox(task.Sandbox.Profile)
 			if err == nil {
+				err = runner.ValidateSandboxVersion(task.Sandbox.Profile)
+			}
+			if err == nil {
 				task.ProjectCredentialEnv, err = h.runnerTaskProjectCredentialEnv(c.Request.Context(), task, runner)
 			}
 			if err != nil {

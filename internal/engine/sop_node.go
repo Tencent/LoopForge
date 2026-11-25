@@ -43,6 +43,14 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		fail(fmt.Errorf("SOP 流程 %q 不存在", childID))
 		return
 	}
+	// An SOP node does not acquire a sandbox itself. Restore the checkout
+	// before its child can start in it.
+	if !parent.WorkspaceCleanedAt.IsZero() {
+		if err := e.restoreCheckpointForExecution(ctx, parent, nil); err != nil {
+			fail(err)
+			return
+		}
+	}
 	var child domain.Run
 	if nr := parent.Nodes[node.ID]; nr != nil && nr.ChildRunID != "" {
 		// A deploy, pause or lease takeover interrupted the parent while its
@@ -78,7 +86,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		exec.WorkspaceRunID = workspaceRunID(parent)
 		exec.RunID = ""
 		exec.TraceID = parent.ExecutionContext.TraceID
-		started, err := e.StartWithRepositoriesContext(childID, childInput, parent.RepositoryContexts(), exec)
+		started, err := e.StartWithRepositories(ctx, childID, childInput, parent.RepositoryContexts(), exec)
 		if err != nil {
 			fail(fmt.Errorf("启动子 SOP：%w", err))
 			return
@@ -97,6 +105,12 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 			Attributes: map[string]any{"childRunId": child.ID, "sopWorkflowId": childID},
 		})
 	} else {
+		if nr := parent.Nodes[node.ID]; nr != nil && nr.Activity == resumePausedChildActivity && child.Status == "waiting" && child.PauseRequested {
+			if err := e.ResumePausedContext(ctx, child.ID, nr.Feedback); err != nil {
+				fail(fmt.Errorf("继续子 SOP %s：%w", child.ID, err))
+				return
+			}
+		}
 		e.updateRun(runID, func(r *domain.Run) {
 			if nr := r.Nodes[node.ID]; nr != nil {
 				nr.Activity = "正在执行子 SOP " + childID

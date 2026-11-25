@@ -13,23 +13,30 @@ import (
 // execution machine's native lightweight sandbox.
 func (r *CatalogRepo) ConversationSandbox(projectID, id string) (domain.SandboxProfile, error) {
 	id = strings.TrimSpace(id)
-	profile, ok := r.Sandbox(id)
-	if !ok || !(profile.Shared || projectID != "" && profile.ProjectID == projectID) {
+	profile, _ := r.Sandbox(id)
+	if err := validateConversationSandbox(projectID, profile); err != nil {
+		return domain.SandboxProfile{}, err
+	}
+	return profile, nil
+}
+
+func validateConversationSandbox(projectID string, profile domain.SandboxProfile) error {
+	if profile.ID == "" || !(profile.Shared || projectID != "" && profile.ProjectID == projectID) {
 		if projectID == "" {
-			return domain.SandboxProfile{}, fmt.Errorf("请选择共享的沙箱配置")
+			return fmt.Errorf("请选择共享的沙箱配置")
 		}
-		return domain.SandboxProfile{}, fmt.Errorf("请选择本项目或共享的沙箱配置")
+		return fmt.Errorf("请选择本项目或共享的沙箱配置")
 	}
 	switch profile.Driver {
 	case domain.SandboxDriverDocker:
 		if profile.Dockerfile == nil || strings.TrimSpace(profile.Dockerfile.Content) == "" {
-			return domain.SandboxProfile{}, fmt.Errorf("Docker 沙箱 %s 没有 Dockerfile，请联系项目 Owner 更新沙箱配置", profile.ID)
+			return fmt.Errorf("Docker 沙箱 %s 没有 Dockerfile，请联系项目 Owner 更新沙箱配置", profile.ID)
 		}
 	case domain.SandboxDriverNative, domain.SandboxDriverSeatbelt, domain.SandboxDriverBwrap:
 	default:
-		return domain.SandboxProfile{}, fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
+		return fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
 	}
-	return profile, nil
+	return nil
 }
 
 // ResolveConversationSandbox validates the chosen sandbox, or the platform
@@ -48,7 +55,7 @@ func (r *CatalogRepo) ResolveConversationSandbox(projectID, chosen string) (doma
 func (r *CatalogRepo) ConversationSandboxes(projectID string) []domain.SandboxProfile {
 	out := []domain.SandboxProfile{}
 	for _, profile := range r.Sandboxes() {
-		if _, err := r.ConversationSandbox(projectID, profile.ID); err == nil {
+		if validateConversationSandbox(projectID, profile) == nil {
 			out = append(out, profile)
 		}
 	}
