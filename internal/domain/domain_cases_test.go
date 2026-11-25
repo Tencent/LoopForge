@@ -146,8 +146,9 @@ func TestRunEvalRunnerAndSpaceBranches(t *testing.T) {
 		{Target: "workflow", Action: "update_node", NodeID: "n"},
 		{Target: "agent", Action: "upsert_gate", TargetID: "a"},
 		{Target: "agent", Action: "remove_gate", TargetID: "a"},
-		{Target: "agent", Action: "append_instructions", TargetID: "a"},
-		{Target: "agent", Action: "append_task_prompt", TargetID: "a"},
+		{Target: "agent", Action: "append_instructions", TargetID: "a", Text: "x"},
+		{Target: "agent", Action: "append_task_prompt", TargetID: "a", Set: map[string]any{"instructionsDelta": "x"}},
+		{Target: "agent", Action: "append_task_prompt", NodeID: "n", Set: map[string]any{"text": "x"}},
 	}
 	for _, rec := range recs {
 		if !rec.Applyable() {
@@ -156,6 +157,18 @@ func TestRunEvalRunnerAndSpaceBranches(t *testing.T) {
 		rec.Status = RunEvalRecApplied
 		if rec.Applyable() {
 			t.Fatal("applied recommendation remained applyable")
+		}
+	}
+	for _, rec := range []RunEvalRecommendation{
+		{Target: "agent", Action: "append_task_prompt", TargetID: "a"},
+		{Target: "agent", Action: "append_task_prompt", TargetID: "a", Text: "   \t\n  "},
+		{Target: "agent", Action: "append_task_prompt", TargetID: "a", Set: map[string]any{"text": "  "}},
+		{Target: "agent", Action: "append_task_prompt", TargetID: "a", Set: map[string]any{"instructionsDelta": "\n"}},
+		{Target: "agent", Action: "append_instructions", TargetID: "a"},
+		{Target: "agent", Action: "append_task_prompt", Text: "missing target"},
+	} {
+		if rec.Applyable() {
+			t.Fatalf("incomplete append recommendation should not be applyable: %#v", rec)
 		}
 	}
 	if NormalizeRunEvalAction("", "") != "" || NormalizeRunEvalAction("", "x.y") != "x.y" || NormalizeRunEvalAction("Agent", "UP") != "agent.up" {

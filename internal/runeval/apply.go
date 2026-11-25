@@ -37,18 +37,7 @@ func ApplyRecommendation(rec domain.RunEvalRecommendation, workflow *domain.Work
 }
 
 func recommendationText(rec domain.RunEvalRecommendation) string {
-	if text := strings.TrimSpace(rec.Text); text != "" {
-		return text
-	}
-	if rec.Set == nil {
-		return ""
-	}
-	for _, key := range []string{"text", "instructionsDelta"} {
-		if value, ok := stringFrom(rec.Set, key); ok {
-			return value
-		}
-	}
-	return ""
+	return rec.AppendText()
 }
 
 func appendAgentText(dst *string, rec domain.RunEvalRecommendation) error {

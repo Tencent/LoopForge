@@ -267,7 +267,7 @@ func (h *runsHandlers) applyRunEval(c *gin.Context) {
 			continue
 		}
 		if !item.Applyable() {
-			rec.Result.Recommendations[i].ApplyError = "这条建议只能查看，不能一键应用"
+			rec.Result.Recommendations[i].ApplyError = unapplyableReason(item)
 			changed = true
 			continue
 		}
@@ -291,6 +291,19 @@ func (h *runsHandlers) applyRunEval(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, rec)
+}
+
+func unapplyableReason(rec domain.RunEvalRecommendation) string {
+	switch domain.NormalizeRunEvalAction(rec.Target, rec.Action) {
+	case "agent.append_instructions", "agent.append_task_prompt":
+		if rec.AppendText() == "" {
+			return "缺少可追加的任务书文本，无法一键应用"
+		}
+		if strings.TrimSpace(rec.TargetID) == "" && strings.TrimSpace(rec.NodeID) == "" {
+			return "缺少目标角色，无法一键应用"
+		}
+	}
+	return "这条建议只能查看，不能一键应用"
 }
 
 func (h *runsHandlers) applyOneRecommendation(run domain.Run, projectID string, rec domain.RunEvalRecommendation) (domain.RunEvalRecommendation, error) {
