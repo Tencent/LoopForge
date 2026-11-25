@@ -49,6 +49,11 @@ type eventBatcher struct {
 // process events back to the control plane.
 func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTask, sandbox flowruntime.Sandbox, command flowruntime.CommandSpec) execResult {
 	batcher := newEventBatcher(task, d.client)
+	command, closeInput, err := batcher.observer.OpenSOPInput(command)
+	if err != nil {
+		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
+	}
+	defer closeInput()
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("start: %v", err)}
 	}
@@ -269,7 +274,16 @@ type execResult struct {
 // requested through the lease renewal response. extraEnv injects
 // task-scoped credentials (e.g. CODEBUDDY_API_KEY for CodeBuddy tasks).
 func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, argv []string, extraEnv ...map[string]string) execResult {
+	return d.executeHostCommand(ctx, task, flowruntime.CommandSpec{Argv: argv}, extraEnv...)
+}
+
+func (d *Daemon) executeHostCommand(ctx context.Context, task domain.RunnerTask, command flowruntime.CommandSpec, extraEnv ...map[string]string) execResult {
 	batcher := newEventBatcher(task, d.client)
+	command, closeInput, err := batcher.observer.OpenSOPInput(command)
+	if err != nil {
+		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
+	}
+	defer closeInput()
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
 		if err == ErrUnauthorized {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: "runner session rejected"}
@@ -282,8 +296,10 @@ func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, arg
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("workspace %s: %v", dir, err)}
 	}
 
+	argv := command.Argv
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = dir
+	cmd.Stdin = command.Stdin
 	// Agent CLI credentials live in the user environment on this machine;
 	// the platform additionally injects task-scoped credentials (currently
 	// the CodeBuddy API key, which cannot come from a local CLI login).

@@ -69,7 +69,7 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 			return "", err
 		}
 	}
-	command, err := provider.Prepare(providerInvocation{Executor: ex, Compiled: compiled, Prompt: prompt, PromptFile: promptRel, Driver: driver, Options: options})
+	command, err := provider.Prepare(providerInvocation{Executor: ex, Compiled: compiled, Prompt: prompt, PromptFile: promptRel, Driver: driver, Options: options, SOP: true})
 	if err != nil {
 		return "", err
 	}
@@ -92,6 +92,11 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 	}
 	command = WithCommandEnvironment(command, hookExecutionEnvironment(options.Repositories))
 	adapter := provider.Protocol(ex, sink)
+	command, closeInput, err := adapter.openSOPInput(command)
+	if err != nil {
+		return "", err
+	}
+	defer closeInput()
 	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stopObservation := provider.StartObservation(execCtx, compiled, sink)
@@ -217,7 +222,7 @@ func (r *ExecutorRunner) PrepareRemote(workspace string, inv RemoteInvocation) (
 			return nil, err
 		}
 	}
-	command, err := provider.Prepare(providerInvocation{Executor: inv.Executor, Compiled: compiled, Prompt: inv.Prompt, PromptFile: promptRel, Driver: driver, Options: inv.Options})
+	command, err := provider.Prepare(providerInvocation{Executor: inv.Executor, Compiled: compiled, Prompt: inv.Prompt, PromptFile: promptRel, Driver: driver, Options: inv.Options, SOP: true})
 	if err != nil {
 		return nil, err
 	}

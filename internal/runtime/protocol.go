@@ -26,20 +26,21 @@ const (
 )
 
 type protocolAdapter struct {
-	ex            domain.ExecutorDefinition
-	sink          EventSink
-	parser        protocolParser
-	adapterID     string
-	mu            sync.Mutex
-	result        string
-	lastOutput    string
-	failed        bool
-	reasoningBuf  strings.Builder
-	done          chan struct{}
-	once          sync.Once
-	tools         map[string]*toolUseBuf
-	currentToolID string
-	translate     func(string) []string
+	ex              domain.ExecutorDefinition
+	sink            EventSink
+	parser          protocolParser
+	adapterID       string
+	mu              sync.Mutex
+	result          string
+	lastOutput      string
+	failed          bool
+	reasoningBuf    strings.Builder
+	done            chan struct{}
+	once            sync.Once
+	tools           map[string]*toolUseBuf
+	currentToolID   string
+	translate       func(string) []string
+	codeBuddyStream *codeBuddySOPStream
 }
 
 // ProtocolObserver normalizes process output from a remotely executed Agent
@@ -94,7 +95,12 @@ func makeProtocolAdapter(ex domain.ExecutorDefinition, sink EventSink, parser pr
 	return &protocolAdapter{ex: ex, sink: sink, parser: parser, adapterID: adapterID, done: make(chan struct{})}
 }
 
-func (a *protocolAdapter) Completed() <-chan struct{} { return a.done }
+func (a *protocolAdapter) Completed() <-chan struct{} {
+	if a.codeBuddyStream != nil {
+		return a.codeBuddyStream.drained
+	}
+	return a.done
+}
 
 func (a *protocolAdapter) Finished() bool {
 	select {
@@ -232,6 +238,7 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 	switch typ {
 	case "system":
 		if stringValue(raw["subtype"]) != "init" {
+			a.handleCodeBuddyBackground(raw, sessionID)
 			return
 		}
 		a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.initialized", Phase: "start", Message: "agent session initialized", Model: stringValue(raw["model"]), SessionID: sessionID, Attributes: map[string]any{"permissionMode": raw["permissionMode"]}})
@@ -291,6 +298,13 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 		}
 		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"], "usageReported": raw["usage"] != nil}})
 		a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.completed", Phase: "finish", Message: result, SessionID: sessionID})
+		if stream := a.codeBuddyStream; stream != nil {
+			stream.parentDone = true
+			if failed {
+				clear(stream.active)
+			}
+			stream.finishIfReady()
+		}
 	default:
 		// File snapshots and provider-specific housekeeping events are intentionally hidden from the portable view.
 	}

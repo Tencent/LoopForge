@@ -115,6 +115,12 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 		return compiled, err
 	}
 	lines := append([]string{"# " + a.Name, "", "## Rules"}, ruleLines...)
+	if ex.Kind == "codebuddy" {
+		lines = append(lines, "", "## Background Agent results",
+			"CodeBuddy can run an Agent in the background while you do independent work.",
+			"If the Agent call assigns a team, ask the member to send its result to the leader and wait for the matching inbox message when you need it. TaskOutput on a teammate can report status without the result.",
+			"For a non-team task, use TaskOutput with block=true when you need its result. Collect results required by this step before submitting the gate decision.")
+	}
 	selectedSkills := make([]selectedSkill, 0, len(assets.Skills))
 	for _, skill := range assets.Skills {
 		item, err := compileSelectedSkill(agentRel, skill, assets.SkillFiles[skill.ID])
