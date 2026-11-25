@@ -2,12 +2,140 @@ package repo
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
 )
+
+func TestReleasedOutcomesFreeSlotsAndRejoinTheQueue(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	const project = "reclaimed"
+	for _, status := range []string{"failed", "waiting", "cancelled"} {
+		run := admissionRun(status, project)
+		if err := s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+		run, _ = s.RunState(run.ID)
+		run.Status, run.WorkspaceCleanedAt = status, time.Now().UTC()
+		if err := s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+		if released, err := s.ReleaseCleanedRunAdmission(run.ID, ""); err != nil || !released {
+			t.Fatalf("release %s: %v, %v", status, released, err)
+		}
+	}
+	if occupied, err := newAdmissionScope(s.DB).occupied("project:"+project, ""); err != nil || occupied != 0 {
+		t.Fatalf("released outcomes occupy %d slots, err=%v", occupied, err)
+	}
+	for i := range ProjectRunLimit {
+		if err := s.PutRun(admissionRun(fmt.Sprintf("holder-%d", i), project)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := admissionRun("first", project)
+	if err := s.PutRun(first); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"failed", "waiting", "cancelled"} {
+		run, _ := s.RunState(id)
+		if queued, err := s.RunWouldQueueOnAdmission(run); !queued || err != nil {
+			t.Fatalf("readmission preflight for %s: queued=%v, %v", id, queued, err)
+		}
+		run.Status = "running"
+		run.Events = append(run.Events, domain.RunEvent{Type: "control.decision"})
+		if err := s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := s.RunState(id)
+		if got.Status != "queued" || got.AdmissionState != "queued" || got.QueueEnteredAt.IsZero() || got.WorkspaceCleanedAt.IsZero() {
+			t.Fatalf("readmission for %s: status=%s, admission=%s, queued=%v, cleaned=%v", id, got.Status, got.AdmissionState, got.QueueEnteredAt, got.WorkspaceCleanedAt)
+		}
+		if len(got.Events) != 2 || got.Events[0].Type != "control.decision" || got.Events[1].Type != "run.queued" || got.Events[1].Message != queuedMessage("project:"+project) {
+			t.Fatalf("run %s events = %+v", id, got.Events)
+		}
+	}
+	holder, _ := s.RunState("holder-0")
+	holder.Status = "succeeded"
+	if err := s.PutRun(holder); err != nil {
+		t.Fatal(err)
+	}
+	if queued, err := s.RunWouldQueueOnAdmission(holder); !queued || err != nil {
+		t.Fatalf("preflight would overtake waiters: queued=%v, %v", queued, err)
+	}
+	if promoted, err := s.PromoteQueuedRuns(); err != nil || len(promoted) != 1 || promoted[0] != first.ID {
+		t.Fatalf("promotion lost FIFO order: %v, %v", promoted, err)
+	}
+}
+
+func TestReleaseCleanedRunAdmissionGuardsAndIdempotency(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, tc := range []struct {
+		id, status, admission string
+		cleaned, wantRelease  bool
+	}{
+		{"running", "running", "held", true, false},
+		{"queued", "queued", "queued", true, false},
+		{"uncleaned", "waiting", "held", false, false},
+		{"unstarted", "cancelled", "unstarted", true, false},
+		{"already-released", "waiting", "released", false, false},
+		{"cleaned", "waiting", "held", true, true},
+		{"legacy", "cancelled", "", true, true},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			row := runRow{ID: tc.id, Status: tc.status, AdmissionState: tc.admission, Revision: 7, Updated: &now}
+			if tc.cleaned {
+				row.WorkspaceCleaned = &now
+			}
+			if err := s.DB.Create(&row).Error; err != nil {
+				t.Fatal(err)
+			}
+			if tc.id == "legacy" {
+				if err := s.DB.Model(&row).Update("admission_state", nil).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			released, err := s.ReleaseCleanedRunAdmission(row.ID, "reclaimed")
+			if err != nil || released != tc.wantRelease {
+				t.Fatalf("released=%v, %v, want %v", released, err, tc.wantRelease)
+			}
+			if released, err := s.ReleaseCleanedRunAdmission(row.ID, "duplicate"); err != nil || released {
+				t.Fatalf("second release=%v, %v", released, err)
+			}
+			run, _ := s.RunState(row.ID)
+			if !run.UpdatedAt.Equal(now) || run.Status != tc.status {
+				t.Fatalf("release changed status or idle timestamp: %s, %v", run.Status, run.UpdatedAt)
+			}
+			if tc.wantRelease {
+				if run.AdmissionState != "released" || run.Revision != 8 || len(run.Events) != 1 || run.Events[0].Type != "workspace.reclaimed" || run.Events[0].Message != "reclaimed" {
+					t.Fatalf("release snapshot: admission=%s, revision=%d, events=%+v", run.AdmissionState, run.Revision, run.Events)
+				}
+			} else if run.AdmissionState != tc.admission || run.Revision != 7 || len(run.Events) != 0 {
+				t.Fatalf("guarded run changed: admission=%s, revision=%d, events=%+v", run.AdmissionState, run.Revision, run.Events)
+			}
+		})
+	}
+	child := admissionRun("child-of-released", "project")
+	child.ExecutionContext.ParentRunID = "already-released"
+	if err := s.PutRun(child); err == nil || !strings.Contains(err.Error(), "父流程尚未获得运行名额") {
+		t.Fatalf("child admission under released parent: %v", err)
+	}
+	var gates int64
+	if err := s.DB.Model(&runAdmissionLockRow{}).Count(&gates).Error; err != nil || gates != 0 {
+		t.Fatalf("release or child admission took a bucket lock: %d, %v", gates, err)
+	}
+}
 
 func admissionRun(id, project string) domain.Run {
 	return domain.Run{ID: id, Status: "running", CreatedAt: time.Now().UTC(), ExecutionContext: domain.TelemetryContext{ProjectID: project}, Nodes: map[string]*domain.NodeRun{}}
@@ -116,6 +244,9 @@ func TestProjectRunAdmissionPersonalRunnerChildAndEmptyProject(t *testing.T) {
 	if err := s.PutRunner(domain.Runner{ID: "personal", OwnerUserID: 7}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.SetRunnerRunLimit("personal", 0); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 12; i++ {
 		r := admissionRun(fmt.Sprintf("personal-%d", i), "")
 		r.ExecutionContext.ExecutionRunnerID = "personal"
@@ -219,10 +350,8 @@ func TestPersonalRunnerRunLimit(t *testing.T) {
 	if got, _ := s.Runner("laptop"); got.RunLimit != 2 {
 		t.Fatalf("run limit reset by PutRunner: %+v", got)
 	}
-	for _, err := range []error{s.SetRunnerRunLimit("laptop", -1), s.SetRunnerRunLimit("laptop", MaxRunnerRunLimit+1)} {
-		if err == nil {
-			t.Fatal("out-of-range run limit accepted")
-		}
+	if err := s.SetRunnerRunLimit("laptop", -1); err == nil {
+		t.Fatal("negative run limit accepted")
 	}
 	if err := s.SetRunnerRunLimit("missing", 3); err != ErrRunnerNotFound {
 		t.Fatalf("missing runner: %v", err)
@@ -246,12 +375,20 @@ func TestPersonalRunnerRunLimit(t *testing.T) {
 	if queuedMessage("runner:laptop") != "等待执行机器可用运行名额" || queuedMessage("project:p") != "等待项目可用运行名额" {
 		t.Fatal("queued event message does not name the limiting bucket")
 	}
-	// An unlimited personal machine is unaffected by the full project and the laptop queue.
-	if err := s.PutRun(personalRun("desk-1", "p", "desktop")); err != nil {
-		t.Fatal(err)
-	}
-	if status("desk-1") != "running" {
-		t.Fatal("unlimited personal machine queued")
+	// Both projects use the desktop's ten default slots, independently of cloud and laptop.
+	projects := []string{"p", "q"}
+	for i := 0; i < 11; i++ {
+		id := fmt.Sprintf("desk-%d", i)
+		if err := s.PutRun(personalRun(id, projects[i%len(projects)], "desktop")); err != nil {
+			t.Fatal(err)
+		}
+		want := "running"
+		if i == 10 {
+			want = "queued"
+		}
+		if got := status(id); got != want {
+			t.Fatalf("default machine limit: %s = %s, want %s", id, got, want)
+		}
 	}
 	// Personal runs never occupy the project bucket.
 	if err := s.PutRun(admissionRun("cloud-extra", "p")); err != nil {
@@ -295,6 +432,12 @@ func TestPersonalRunnerRunLimit(t *testing.T) {
 	if promoted, _ := s.PromoteQueuedRuns(); len(promoted) != 1 || promoted[0] != "lap-4" {
 		t.Fatalf("cleared limit did not release queue: %v", promoted)
 	}
+	if err := s.SetRunnerRunLimit("desktop", 250); err != nil {
+		t.Fatal(err)
+	}
+	if promoted, err := s.PromoteQueuedRuns(); err != nil || len(promoted) != 1 || promoted[0] != "desk-10" {
+		t.Fatalf("raising the machine limit did not release its queue: %v %v", promoted, err)
+	}
 }
 
 func TestAdmissionLocksOnlyWhenClaimingAndPersistsBucket(t *testing.T) {
@@ -310,7 +453,12 @@ func TestAdmissionLocksOnlyWhenClaimingAndPersistsBucket(t *testing.T) {
 		}
 		return ids
 	}
-	if err := s.PutRunner(domain.Runner{ID: "free", OwnerUserID: 7}); err != nil {
+	ownerID := int64(7)
+	if err := s.DB.Create(&runnerRow{ID: "free", OwnerUserID: &ownerID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// An existing unlimited machine has a NULL limit and keeps it on re-registration.
+	if err := s.PutRunner(domain.Runner{ID: "free", OwnerUserID: ownerID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutRun(admissionRun("p1", "alpha")); err != nil {

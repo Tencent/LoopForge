@@ -140,12 +140,16 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	}
 	ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(user))
 	input := assistantToolInput(call)
-	if scope := scheduledAssetsFrom(ctx); scope.Version.ID != "" && op.Name == "runs_start" {
+	if op.Name == "runs_start" && projectID != "" {
 		if body, ok := input.Body.(map[string]any); ok {
-			if id, _ := body["projectId"].(string); id != "" && id != projectID {
+			id, _ := body["projectId"].(string)
+			id = strings.TrimSpace(id)
+			if id != "" && id != projectID && scheduledAssetsFrom(ctx).Version.ID != "" {
 				return "", fmt.Errorf("只能在当前项目启动 SOP")
 			}
-			body["projectId"] = projectID
+			if id == "" {
+				body["projectId"] = projectID
+			}
 		}
 	}
 	if op.Name == "runs_control_get" {

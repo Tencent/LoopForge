@@ -74,7 +74,7 @@ func TestIssuesListStylesheetLoadsLast(t *testing.T) {
 	links := regexp.MustCompile(`<link rel="stylesheet" href="([^"?]+)`).FindAllStringSubmatch(string(html), -1)
 	// Page stylesheets that build on the shared --hui-* tokens, and the
 	// .topbar-scoped sheet, may follow it.
-	pageSheets := map[string]bool{"/app/assets-harness.css": true, "/app/sops-harness.css": true, "/app/sop-catalog.css": true, "/app/approvals-harness.css": true, "/app/observability-harness.css": true, "/app/topbar-harness.css": true, "/app/business-harness.css": true, "/app/requirement-wizard.css": true}
+	pageSheets := map[string]bool{"/app/assets-harness.css": true, "/app/sops-harness.css": true, "/app/sop-catalog.css": true, "/app/approvals-harness.css": true, "/app/observability-harness.css": true, "/app/observability-dashboard.css": true, "/app/topbar-harness.css": true, "/app/business-harness.css": true, "/app/requirement-wizard.css": true}
 	for len(links) > 0 && pageSheets[links[len(links)-1][1]] {
 		links = links[:len(links)-1]
 	}

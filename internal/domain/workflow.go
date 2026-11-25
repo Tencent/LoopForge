@@ -165,6 +165,10 @@ type WorkflowDefinition struct {
 	Tags              []string              `json:"tags,omitempty"`
 	Description       string                `json:"description"`
 	SandboxProfileID  string                `json:"sandboxProfileId"`
+	// AutoSelectSandbox resolves a sandbox for each new run in its target project.
+	AutoSelectSandbox bool `json:"autoSelectSandbox,omitempty"`
+
+	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
 	// MetricCategory 是受控的统计标签（需求开发/Bug 修复/…），用于交付指标归类。
 	// Run 创建时随 WorkflowSnapshot 冻结，历史执行不受后续编辑影响。
 	MetricCategory string `json:"metricCategory,omitempty"`

@@ -300,14 +300,25 @@ function bindRuleGlobalPicker(a){const host=$('#ruleSOPPicker');if(!host)return;
 // Rows saved as local before it was removed read as native.
 function sandboxDriverOption(driver){return ['seatbelt','bwrap','native','local'].includes(driver)?'native':'docker'}
 function sandboxDriverLabel(driver){return sandboxDriverOption(driver)==='native'?'系统轻量隔离':'Docker'}
-function syncSandboxDriverFields(select){const driver=select?.value||'docker';select?.form?.querySelectorAll('[data-sandbox-drivers]').forEach(el=>{el.hidden=!el.dataset.sandboxDrivers.split(' ').includes(driver)})}
+function syncSandboxDriverFields(select){
+  const driver=select?.value||'docker';
+  select?.form?.querySelectorAll('[data-sandbox-drivers]').forEach(fields=>{
+    fields.hidden=!fields.dataset.sandboxDrivers.split(' ').includes(driver);
+    fields.querySelectorAll('input,textarea').forEach(input=>{input.disabled=fields.hidden||select.disabled});
+  });
+}
 function resolveAssetSaveIdentity(items,selectedID,requestedID){if(selectedID!=='__new__'){const existing=(items||[]).find(item=>item.id===selectedID);return existing?{id:existing.id,existing,created:false}:{error:'选中的资产已不存在，请刷新后重试'}}if((items||[]).some(item=>item.id===requestedID))return {error:'该标识已存在，请换一个标识，或回到列表打开已有资产修改'};return {id:requestedID,existing:null,created:true}}
 function assetPaneTabs(type=state.assetType){return ({rules:[['edit','编辑'],['preview','预览']],skills:[['files','文件']],sandboxes:[['setup','配置']]})[type]||[['edit','编辑']]}
 function assetPaneHint(type=state.assetType){return ({rules:'支持 Markdown',skills:'每次上传都会完整替换现有文件',sandboxes:'隔离方式决定沙箱在哪里、怎样执行'})[type]||''}
 function assetFieldLabel(text,help,forId=''){return `<div class="asset-field-label">${forId?`<label for="${forId}">${escapeHTML(text)}</label>`:`<span>${escapeHTML(text)}</span>`}${help?`<button type="button" class="field-help" aria-label="${escapeHTML(text)}说明" title="${escapeHTML(help)}">?</button>`:''}</div>`}
-function sandboxSetupHTML(a){const driver=sandboxDriverOption(a.driver);return `<div class="sandbox-setup">
+function sandboxSetupHTML(a){
+  const driver=sandboxDriverOption(a.driver);
+  const privilegeHelp=lfT('执行机器须允许特权沙箱。容器内进程可访问宿主机设备，并可能控制执行机器。','The execution machine must allow privileged sandboxes. Processes in the container can access host devices and may take control of the machine.');
+  return `<div class="sandbox-setup">
   ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
   <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>
+  ${assetFieldLabel('工具链说明','Agent 自动选择沙箱时参考这些工具和版本。','assetSandboxToolchain')}
+  <input id="assetSandboxToolchain" name="toolchain" class="asset-input" maxlength="500" value="${escapeHTML(a.toolchain||'')}" placeholder="例如 Python 3.12、uv、PostgreSQL 客户端">
   <div data-sandbox-drivers="docker">
     ${assetFieldLabel('Dockerfile','保存在这个沙箱里。沙箱初始化时用它 docker build 出镜像；内容相同的沙箱共用同一个镜像。不要指向仓库目录或现成镜像名。','assetDockerfile')}
     <textarea id="assetDockerfile" name="dockerfileContent" class="asset-editor" rows="14" spellcheck="false" placeholder="FROM node:22-bookworm-slim">${escapeHTML(a.dockerfile?.content||'')}</textarea>
@@ -320,6 +331,27 @@ function sandboxSetupHTML(a){const driver=sandboxDriverOption(a.driver);return `
         <input id="assetReadOnlyRootFS" name="readOnlyRootFS" type="checkbox" class="asset-switch" role="switch" ${a.readOnlyRootFS?'checked':''}>
       </span>
     </div>
+    <details class="sandbox-advanced">
+      <summary>${lfT('高级设置','Advanced settings')}</summary>
+      <div class="sandbox-resource-fields">
+        <div>
+          <label for="assetSandboxCPU" class="asset-field-label">CPU 上限（核）</label>
+          <input id="assetSandboxCPU" name="cpuCores" class="asset-input" type="number" inputmode="decimal" min="0.01" max="9223372036.854" step="0.001" aria-describedby="assetSandboxResourceHint" value="${a.cpuMillicores?a.cpuMillicores/1000:''}">
+        </div>
+        <div>
+          <label for="assetSandboxMemory" class="asset-field-label">内存上限（MiB）</label>
+          <input id="assetSandboxMemory" name="memoryMiB" class="asset-input" type="number" inputmode="numeric" min="6" max="8796093022207" step="1" aria-describedby="assetSandboxResourceHint" value="${escapeHTML(a.memoryMiB||'')}">
+        </div>
+      </div>
+      <div id="assetSandboxResourceHint" class="asset-field-hint">留空使用执行机器配置。两处都配置上限时，较低值生效。</div>
+      <div class="asset-switch-row">
+        <label for="assetPrivileged"><b>${lfT('特权模式','Privileged mode')}</b></label>
+        <span class="asset-switch-controls">
+          <button type="button" class="field-help" aria-label="${lfT('特权模式说明','About privileged mode')}" title="${escapeHTML(privilegeHelp)}">?</button>
+          <input id="assetPrivileged" name="privileged" type="checkbox" class="asset-switch" role="switch" ${a.privileged?'checked':''}>
+        </span>
+      </div>
+    </details>
   </div>
   <div data-sandbox-drivers="native">
     <div class="asset-field-hint">系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。</div>
@@ -381,6 +413,8 @@ function renderAssetForm(a){
   if(state.assetType==='sandboxes'){
     f.elements.driver.onchange=()=>syncSandboxDriverFields(f.elements.driver);
     syncSandboxDriverFields(f.elements.driver);
+    const advanced=f.querySelector('.sandbox-advanced');
+    advanced?.addEventListener('invalid',()=>{advanced.open=true},true);
     f.querySelectorAll('.field-help').forEach(button=>button.addEventListener('click',event=>window.HuiTooltip?.show(event.currentTarget)));
   }
   f.querySelectorAll('select.asset-select').forEach(sel=>window.enhanceSelect?.(sel));
@@ -705,7 +739,18 @@ async function openSkillFilePreview(skill, path, opener){
 async function saveAsset(e){e.preventDefault();const f=e.currentTarget,items=state.data[state.assetType]||[],projectScoped=isProjectSharedAsset(state.assetType),identity=resolveAssetSaveIdentity(items,state.selectedAsset,f.elements.id.value.trim());if(identity.error)return toast(identity.error);const existing=identity.existing;if(existing&&projectScoped&&catalogForeign(existing.projectId))return toast('共享资产只读');let value={id:identity.id,name:f.elements.name.value.trim(),description:f.elements.description.value,projectId:existing?(existing.projectId||''):(state.projectFilter||''),shared:projectScoped&&!!existing?.shared};if(!value.id||!value.name)return toast('标识和名称不能为空');try{
   if(state.assetType==='rules'){const global=!!f.elements.global?.checked;Object.assign(value,{priority:Number(f.elements.priority.value),content:f.elements.content.value,global,workflowIds:global?selectedRuleWorkflowIds():[]})}
   if(state.assetType==='skills'){/* 文件经独立上传接口承载；此处只提交元数据。服务端会强制保留 Content/Files/FileRefs。 */}
-  if(state.assetType==='sandboxes'){const driver=f.elements.driver.value,sandbox={driver,environment:JSON.parse(f.elements.environment.value||'{}')};if(driver==='docker')Object.assign(sandbox,{dockerfile:{content:f.elements.dockerfileContent.value,files:JSON.parse(f.elements.dockerfileFiles.value||'{}')},readOnlyRootFS:f.elements.readOnlyRootFS.checked});Object.assign(value,sandbox)}
+  if(state.assetType==='sandboxes'){
+    const driver=f.elements.driver.value;
+    const sandbox={driver,toolchain:f.elements.toolchain.value.trim(),environment:JSON.parse(f.elements.environment.value||'{}')};
+    if(driver==='docker'){
+      sandbox.dockerfile={content:f.elements.dockerfileContent.value,files:JSON.parse(f.elements.dockerfileFiles.value||'{}')};
+      sandbox.readOnlyRootFS=f.elements.readOnlyRootFS.checked;
+      sandbox.privileged=f.elements.privileged.checked;
+      if(f.elements.cpuCores.value)sandbox.cpuMillicores=Math.round(Number(f.elements.cpuCores.value)*1000);
+      if(f.elements.memoryMiB.value)sandbox.memoryMiB=Number(f.elements.memoryMiB.value);
+    }
+    Object.assign(value,sandbox);
+  }
   const endpoints={rules:'rules',skills:'skills',sandboxes:'sandboxes'};await api(`/api/${endpoints[state.assetType]}`,{method:'PUT',body:JSON.stringify(value)});const i=items.findIndex(x=>x.id===value.id);if(state.assetType==='skills'&&existing)value={...existing,...value,fileRefs:existing.fileRefs||[],content:existing.content||'',files:existing.files||{}};if(i>=0)items[i]=value;else items.push(value);state.selectedAsset=value.id;state.assetDirty=false;
   if(identity.created){history.replaceState(history.state,'',assetViewHash(state.assetType,value.id));state.assetDetailKey='';renderAssets()}
   else{renderAssetDetailHead(value);refreshAssetAside(value)}

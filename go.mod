@@ -10,6 +10,8 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4
 	github.com/klauspost/compress v1.20.3
+	github.com/larksuite/oapi-sdk-go/v3 v3.13.0
+	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
@@ -34,6 +36,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect

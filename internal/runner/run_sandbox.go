@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,31 @@ type runSandbox struct {
 	sandbox  runtime.Sandbox
 	active   int
 	lastUsed time.Time
+}
+
+func preparesBorrowedCheckout(inv *domain.RunnerInvocation) bool {
+	return slices.ContainsFunc(invocationRepositories(inv), func(repo domain.RunnerRepository) bool {
+		return repo.PreserveCheckout
+	})
+}
+
+func (d *Daemon) acquireExecutionTaskSandbox(ctx context.Context, task domain.RunnerTask) (runtime.Sandbox, func(), error) {
+	if task.Sandbox != nil {
+		return d.acquireTaskSandbox(ctx, task)
+	}
+	if preparesBorrowedCheckout(task.Invocation) {
+		return nil, nil, fmt.Errorf("shared checkout preparation requires the frozen SOP sandbox")
+	}
+	return nil, func() {}, nil
+}
+
+func taskRepositoryContext(ctx context.Context, task domain.RunnerTask, sandbox runtime.Sandbox, inv *domain.RunnerInvocation) context.Context {
+	if preparesBorrowedCheckout(inv) {
+		credentials := invocationGitCredentials(inv)
+		credentials.GitSSHKeys = inv.GitSSHKeys
+		return runtime.WithSandboxGit(ctx, sandbox, credentials)
+	}
+	return runtime.WithRepositoryCacheFor(ctx, runnerTaskSandboxDriver(task))
 }
 
 // acquireTaskSandbox returns the sandbox a task executes in and the function

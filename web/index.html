@@ -21,6 +21,7 @@
   <link rel="stylesheet" href="/product-v3.css?v=20261030runs1">
   <link rel="stylesheet" href="/product-v4.css?v=20261031req2">
   <link rel="stylesheet" href="/app/harness-ui.css?v=20261031req1">
+  <link rel="stylesheet" href="/app/project-credentials.css">
   <link rel="stylesheet" href="/assistant-models.css">
   <link rel="stylesheet" href="/bots.css">
   <link rel="stylesheet" href="/app/frame.css">
@@ -40,6 +41,7 @@
   <link rel="stylesheet" href="/app/sops-harness.css">
   <link rel="stylesheet" href="/app/sop-catalog.css">
   <link rel="stylesheet" href="/app/observability-harness.css?v=20261030obs1">
+  <link rel="stylesheet" href="/app/observability-dashboard.css">
   <link rel="stylesheet" href="/app/topbar-harness.css?v=20261030tb1">
   <link rel="stylesheet" href="/app/approvals-harness.css?v=20261030ap1">
   <style>
@@ -138,6 +140,7 @@
       <p>项目</p>
       <button class="nav" data-view="projects"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="users" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><g class="team-front"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1"/></g><g class="team-back"><path d="M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5v1"/></g></svg></span><span class="nav-label">项目配置</span></button>
       <button class="nav" data-view="bots" aria-label="通道管理" title="通道管理"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="robot" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="8" width="16" height="11" rx="2"/><path class="antenna" d="M12 3v5"/><path class="eyes" d="M8 13h.01M16 13h.01"/><path class="mouth" d="M9 17h6"/></svg></span><span class="nav-label">通道管理</span></button>
+      <button class="nav" data-view="projectCredentials"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="key" data-icon-motion="idle" width="15" height="15" aria-hidden="true"></svg></span><span class="nav-label">凭据管理</span></button>
       <p>流程与任务</p>
       <button class="nav" data-view="sops" data-nav-match="flow"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="workflow" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="node-a" cx="6" cy="6" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-b" cx="6" cy="18" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-c" cx="18" cy="12" r="2.2" fill="currentColor" fill-opacity="0"/><path pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55"/><path class="signal" pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55" opacity="0" stroke-width="2.5"/></svg></span><span class="nav-label">流程模板</span></button>
       <button class="nav" data-view="runs"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="runs" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path class="motion-target" d="M10 9l5 3-5 3z"/></svg></span><span class="nav-label">运行记录</span></button>
@@ -333,7 +336,7 @@
 
     <section id="botsView" class="view page-view">
       <div class="page-heading bot-heading">
-        <div><h1>通道管理</h1><p>配置企业微信单聊或群聊通知通道，把任务进展发出去；在 SOP 设置或定时任务中选用这些通道。</p></div>
+        <div><h1>通道管理</h1><p>配置企业微信、飞书、钉钉机器人通道：在聊天中查询项目，并把任务进展发出去；在 SOP 设置或定时任务中选用这些通道。点“添加通道”后在“渠道”中选择。</p></div>
         <div class="heading-actions"><button id="botNew" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>添加通道</button></div>
       </div>
       <div id="botsContent"></div>
@@ -347,7 +350,7 @@
     <!-- 运行记录 -->
     <section id="runsView" class="view page-view">
       <div class="page-heading runs-heading">
-        <h1>运行记录<span class="info-tip" tabindex="0" role="note" aria-label="并发规则：云端执行时，每个项目最多同时运行 10 条 SOP，超出的进入排队中。"><span class="run-hint-icon" data-run-icon="info" aria-hidden="true"><svg width="15" height="15"></svg></span><span class="info-tip-panel" role="tooltip"><b>并发规则</b><span>云端执行时，<strong>每个项目最多同时运行 10 条 SOP</strong>，超出的进入「排队中」，名额空出后按提交顺序自动开始。</span><span>失败、暂停、待确认、开始后被取消的运行仍占用名额；只有成功完成或排队时取消的不占用。</span><span>嵌套的子 SOP 不单独计数；未归属项目的运行共用一组 10 个名额。</span><span>个人执行机器不受此限制，可在「执行机器」页单独设置上限。</span></span></span></h1>
+        <h1>运行记录<span class="info-tip" tabindex="0" role="note" aria-label="并发规则：云端执行时，每个项目最多同时运行 10 条 SOP，超出的进入排队中。"><span class="run-hint-icon" data-run-icon="info" aria-hidden="true"><svg width="15" height="15"></svg></span><span class="info-tip-panel" role="tooltip"><b>并发规则</b><span>云端执行时，<strong>每个项目最多同时运行 10 条 SOP</strong>，超出的进入「排队中」，名额空出后按提交顺序自动开始。</span><span>失败、暂停、待确认的 SOP 空闲 1 小时后自动归档工作区并释放名额，继续或重试时自动恢复。已开始的 SOP 取消后，工作区清理完成即释放名额。</span><span>嵌套的子 SOP 不单独计数；未归属项目的运行共用一组 10 个名额。</span><span>个人执行机器不受此限制，可在「执行机器」页单独设置上限。</span></span></span></h1>
         <span id="runsLiveState" class="run-live" role="status"><span class="run-lamp" aria-hidden="true"><i></i></span><span data-live-text>实时更新中</span></span>
         <div id="runOverview" class="run-kpis" aria-label="运行指标"></div>
         <button id="refreshRuns" class="run-icon-btn" type="button" aria-label="刷新" title="刷新"><span data-run-icon="refresh" aria-hidden="true"><svg width="15" height="15"></svg></span></button>
@@ -496,7 +499,12 @@
             <div id="workflowSandboxField" class="flow-field-wrap">
               <label for="workflowSandbox" class="flow-field-label">运行沙箱环境</label>
               <select id="workflowSandbox" class="select flow-select"></select>
-              <div class="flow-field-hint">当前 SOP 节点执行 Shell/Python 及构建命令所绑定的隔离沙箱</div>
+              <div class="flow-field-hint">本次运行的所有节点共用所选沙箱。选「由 Agent 选择」后，每次运行按项目和任务决定。</div>
+            </div>
+            <div id="workflowProjectCredentials" class="flow-field-wrap" hidden>
+              <div class="flow-field-label">项目凭据</div>
+              <div class="project-credential-choices" data-workflow-credential-list role="group" aria-label="项目凭据"></div>
+              <div class="flow-field-hint">选中的凭据会作为环境变量注入本 SOP 的沙箱进程。</div>
             </div>
             <div class="flow-form-row two-col">
               <div class="flow-field-wrap">
@@ -534,7 +542,7 @@
               <div class="callout-icon"><span data-fd-ic="info" data-s="16"></span></div>
               <div class="callout-text">
                 <b>沙箱与凭证提示</b>
-                <p>沙箱提供统一基础工具与依赖库；执行时凭证按任务责任人个人令牌注入。</p>
+                <p>沙箱提供运行工具与依赖。模型和 Git 根据任务责任人的执行凭据认证。</p>
               </div>
             </div>
           </div>
@@ -637,7 +645,7 @@
       <div class="page-heading obs-heading">
         <div class="obs-title-row"><h1>统计</h1>
           <div class="obs-tabs" id="obsTabs" role="tablist" aria-label="统计分类">
-            <button class="obs-tab active" role="tab" data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量</button>
+            <button class="obs-tab active" role="tab" data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>总览</button>
             <button class="obs-tab" role="tab" data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付<i id="obsDeliveryCount" hidden></i></button>
           </div>
         </div>
@@ -669,6 +677,14 @@
         <div class="pa-tabs-wrap"><div class="pa-tabs" role="tablist" id="projectAdminTabs" aria-label="项目配置分区"></div></div>
         <form id="projectAdminForm" class="pa-body" autocomplete="off"></form>
       </div>
+    </section>
+
+    <section id="projectCredentialsView" class="view page-view">
+      <header class="page-heading">
+        <div><h1>凭据管理</h1><p id="projectCredentialsProject" data-i18n-skip></p></div>
+        <button id="newProjectCredential" type="button" class="button primary" hidden>新增凭据</button>
+      </header>
+      <div id="projectCredentialsContent" class="project-credential-panel" aria-live="polite"></div>
     </section>
 
     <!-- 能力资产 · MCP -->
@@ -728,10 +744,10 @@
       </div>
     </section>
 
-    <!-- 执行机器：本机 / CVM 执行环境（个人） -->
+    <!-- 执行机器：本机 / CVM 执行环境 -->
     <section id="runnersView" class="view page-view">
       <div class="page-heading">
-        <div><h1>执行机器</h1><p>用自己的电脑或 CVM 跑任务，未设默认时在云端执行。</p></div>
+        <div><h1>执行机器</h1><p>连接电脑或 CVM，可将机器共享给多个项目。</p></div>
         <div class="heading-actions"><button id="refreshRunners" class="button ghost" type="button">刷新</button></div>
       </div>
 
@@ -758,7 +774,7 @@
         </div>
       </div>
 
-      <div class="runner-list-heading"><h2>我的机器</h2><span class="runner-count" id="runnerCount">0</span><p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p></div>
+      <div class="runner-list-heading"><h2>可用机器</h2><span class="runner-count" id="runnerCount">0</span><p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p></div>
       <div id="runnersList" class="runner-grid"></div>
     </section>
 
@@ -964,10 +980,10 @@
         <div class="pa-fs">
           <h5>仓库地址</h5>
           <div data-github-repositories></div>
-          <label class="pa-field"><span class="pa-field-l">Git HTTPS 链接或 Git SSH 地址</span>
+          <label class="pa-field"><span class="pa-field-l">Git 仓库地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
-            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code></span>
-            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。</span>
+            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code><code>git clone http://git.example.org/team/repo.git</code></span>
+            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 Git HTTP(S) 地址或 Git SSH 克隆地址。</span>
           </label>
           <div class="pa-detect" id="repoDrawerDetect" hidden><span class="pa-detect-ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span><div class="pa-detect-m"><b id="repoDrawerDetectName"></b><code id="repoDrawerDetectPath"></code></div><button type="button" class="button ghost small" id="repoDrawerRename">改名</button></div>
           <label class="pa-field" id="repoDrawerNameField" hidden><span class="pa-field-l">仓库名称</span><input class="pa-input mono" name="name" placeholder="留空则自动取项目路径末段"></label>
@@ -1286,6 +1302,7 @@
   <script src="/app/sops.js"></script>
   <script src="/app/issue-model.js"></script>
   <script src="/app/projects.js"></script>
+  <script src="/app/project-credentials.js"></script>
   <script src="/app/github-connect.js"></script>
   <script src="/app/project-wizard.js"></script>
   <script src="/app/repo_drawer.js"></script>
@@ -1316,12 +1333,14 @@
   <script src="/app/run-activation.js"></script>
   <script src="/app/platform-ssh-hosts.js"></script>
   <script src="/app/platform-https-hosts.js"></script>
+  <script src="/app/platform-public-url.js"></script>
   <script src="/app/workbench.js?v=20261121settingsrows"></script>
   <script src="/app/git-ssh-keys.js?v=20261121settings"></script>
   <script src="/app/git-http-credentials.js?v=20261121settings"></script>
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>
+  <script src="/app/observability-dashboard.js"></script>
   <script src="/app/issue-drawer.js"></script>
   <script src="/app/revisions.js"></script>
   <script src="/app/harness-motion.js"></script>

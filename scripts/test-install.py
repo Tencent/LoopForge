@@ -1,3 +1,4 @@
+import fcntl
 import importlib.util
 import hashlib
 import io
@@ -45,6 +46,15 @@ if [[ "$1" == info ]]; then
   [[ "${MOCK_USER:-0}" == 0 || "${MOCK_PRIVILEGED:-0}" == 1 || "${MOCK_DIRECT:-0}" == 1 ]]
   exit
 fi
+if [[ "$*" == 'compose --profile platform config --format json platform' ]]; then
+  printf '%s\\n' '{"services":{"mysql":{"image":"mysql:8.4"},"platform":{"image":"ghcr.io/example/target:next"}}}'
+  exit 0
+fi
+if [[ "$1" == image && "$2" == inspect && "$3" == --format ]]; then
+  [[ "$5" == ghcr.io/example/target:next ]] || exit 1
+  printf '%s\\n' "${MOCK_SANDBOX_CATALOG:-}"
+  exit 0
+fi
 if [[ "$1" == image && "$2" == inspect && "${MOCK_IMAGE_PRESENT:-0}" != 1 ]]; then exit 1; fi
 if [[ "$1" == pull && "${MOCK_PULL_FAIL:-0}" == 1 ]]; then exit 42; fi
 if [[ "$1" == tag && "${MOCK_TAG_FAIL:-0}" == 1 ]]; then exit 1; fi
@@ -60,9 +70,20 @@ if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
 if [[ "$*" == *'exec -T mysql'* ]]; then
   if [[ "$*" == *'count(*) from users'* ]]; then echo 0; exit 0; fi
+  if [[ "$*" == *mysqldump* ]]; then
+    printf 'database backup\\n'
+    [[ "${MOCK_BACKUP_FAILURE:-0}" != 1 ]]
+    exit
+  fi
   query=$(cat)
   printf '%s\n' "$query" >> "$MOCK_SQL_LOG"
   if [[ "$query" == *'information_schema.columns'* ]]; then printf '%s\n' "${MOCK_COLUMN_COUNT:-1}"; fi
+  if [[ "$query" == 'SELECT COUNT(*) FROM information_schema.tables'* ]]; then
+    printf '%s\\n' "${MOCK_LEGACY_SANDBOX_TABLES:-0}"
+  fi
+  if [[ "$query" == *'DROP TABLE IF EXISTS dockerfiles, environments;'* && "${MOCK_SANDBOX_MIGRATION_FAILURE:-0}" == 1 ]]; then
+    exit 1
+  fi
 fi
 ''')
         self.executable('id', '#!/usr/bin/env bash\nif [[ "$1" == -u ]]; then echo "${MOCK_USER:-0}"; else /usr/bin/id "$@"; fi\n')
@@ -78,6 +99,9 @@ exec "$@"
             self.environ.pop(name, None)
         self.environ.pop('MOCK_COLUMN_COUNT', None)
         self.environ.pop('MOCK_MIGRATION_PLATFORM', None)
+        self.environ.pop('AGENTFLOW_PROJECT_CREDENTIAL_KEY', None)
+        for name in ('MOCK_SANDBOX_CATALOG', 'MOCK_LEGACY_SANDBOX_TABLES', 'MOCK_BACKUP_FAILURE', 'MOCK_SANDBOX_MIGRATION_FAILURE'):
+            self.environ.pop(name, None)
 
     def executable(self, name, contents):
         target = self.root / 'mock' / name
@@ -108,17 +132,64 @@ exec "$@"
     def install(self, shell=None, **values):
         return subprocess.run([shell or self.shell(), 'scripts/install.sh'], cwd=self.root, env=dict(self.environ, **values), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
 
+    def pull(self, **values):
+        (self.root / '.env').touch()
+        return subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root,
+            env=dict(self.environ, **values), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('https://team.example.test', result.stdout)
         self.assertNotIn('running at http://127.0.0.1', result.stdout)
 
     def test_root_install_and_repeat_preserve_secrets(self):
-        self.assert_success(self.install())
+        self.assert_success(self.install(MOCK_SANDBOX_CATALOG='inline'))
+        sql = (self.root / 'mysql.log').read_text()
+        self.assertIn('INSERT IGNORE', sql)
+        self.assertNotIn('DROP TABLE IF EXISTS dockerfiles', sql)
         secrets = (self.root / '.env').read_text()
         self.assert_success(self.install())
         self.assertEqual((self.root / '.env').read_text(), secrets)
         self.assertEqual((self.root / '.env').stat().st_mode & 0o777, 0o600)
+
+    def test_credential_key_generated_once_and_added_to_existing_env(self):
+        import base64, re
+        self.assert_success(self.install())
+        env = self.root / '.env'
+        match = re.search(r"^AGENTFLOW_CREDENTIAL_KEYS=k\d{6}:(\S+)$", env.read_text(), re.M)
+        self.assertIsNotNone(match, env.read_text())
+        self.assertEqual(len(base64.b64decode(match.group(1))), 32)
+        # An installation from before chat Bots gains a key; an existing key is kept.
+        env.write_text(''.join(l + '\n' for l in env.read_text().splitlines() if not l.startswith('AGENTFLOW_CREDENTIAL_KEYS=')))
+        self.assert_success(self.install())
+        first = env.read_text()
+        self.assertEqual(first.count('AGENTFLOW_CREDENTIAL_KEYS='), 1)
+        self.assert_success(self.install())
+        self.assertEqual(env.read_text(), first)
+        compose = (ROOT / 'compose.yaml').read_text()
+        for name in ('AGENTFLOW_CREDENTIAL_KEYS', 'AGENTFLOW_PUBLIC_URL', 'AGENTFLOW_BOT_WORKERS_ENABLED', 'AGENTFLOW_BOT_BODY_RETENTION_DAYS', 'AGENTFLOW_BOT_RECORD_RETENTION_DAYS'):
+            self.assertIn(f'      {name}: ${{{name}:-', compose)
+
+    def test_project_credential_key_is_generated_and_preserved(self):
+        import base64
+        result = self.install()
+        self.assert_success(result)
+        env = self.root / '.env'
+        prefix = 'AGENTFLOW_PROJECT_CREDENTIAL_KEY='
+        first = env.read_text()
+        key, = [line[len(prefix):] for line in first.splitlines() if line.startswith(prefix)]
+        self.assertEqual(len(base64.b64decode(key, validate=True)), 32)
+        self.assertNotIn(key, result.stdout + result.stderr)
+        self.assert_success(self.install())
+        self.assertEqual(env.read_text(), first)
+
+        old_env = '\n'.join(line for line in first.splitlines() if not line.startswith(prefix))
+        env.write_text(old_env + '\n# ' + prefix + 'example\n')
+        provided = base64.b64encode(bytes(32)).decode()
+        self.assert_success(self.install(AGENTFLOW_PROJECT_CREDENTIAL_KEY=provided))
+        self.assertIn(prefix + provided, env.read_text().splitlines())
+        self.assert_success(self.install())
+        self.assertIn(prefix + provided, env.read_text().splitlines())
 
     def test_non_root_without_docker_group_uses_sudo_everywhere(self):
         self.assert_success(self.install(MOCK_USER='1000'))
@@ -457,6 +528,42 @@ esac
         self.assertIn('pull --ignore-buildable --policy always', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
 
+    def test_start_pull_configures_project_credential_key_once(self):
+        import base64
+
+        env = self.root / '.env'
+        key_name = 'AGENTFLOW_PROJECT_CREDENTIAL_KEY'
+        legacy = "COMPOSE_PROJECT_NAME=existing\nAGENTFLOW_SESSION_SECRET=existing-session\n"
+        provided = base64.b64encode(bytes(32)).decode()
+        scenarios = (
+            ('missing', '', '', None),
+            ('empty', f'{key_name}=\n', '', None),
+            ('quoted empty', f'{key_name}="" # project key\n', '', None),
+            ('provided', '', provided, provided),
+            ('configured', f'{key_name}={provided}\n', '', provided),
+        )
+        for name, setting, override, expected in scenarios:
+            with self.subTest(name=name):
+                env.write_text(legacy + setting)
+                env.chmod(0o600)
+                result = self.pull(MIRROR='ghcr.io', AGENTFLOW_PROJECT_CREDENTIAL_KEY=override)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                configured = env.read_text()
+                self.assertTrue(configured.startswith(legacy))
+                entries = [line for line in configured.splitlines() if line.startswith(key_name + '=')]
+                self.assertEqual(len(entries), 1)
+                key = shlex.split(entries[0], comments=True)[0].split('=', 1)[1]
+                self.assertEqual(len(base64.b64decode(key, validate=True)), 32)
+                if expected is not None:
+                    self.assertEqual(key, expected)
+                self.assertNotIn(key, result.stdout + result.stderr)
+                self.assertNotIn('LOOPFORGE_DATA_DIR=', configured)
+                self.assertNotIn('AGENTFLOW_CREDENTIAL_KEYS=', configured)
+                self.assertEqual(env.stat().st_mode & 0o777, 0o600)
+                result = self.pull(MIRROR='ghcr.io')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(env.read_text(), configured)
+
     def test_start_pull_reapplies_schema_extensions_after_containers_are_up(self):
         self.assert_success(self.install())
         (self.root / 'docker.log').unlink()
@@ -477,6 +584,78 @@ esac
         self.assertLess(sql.index('JSON_ARRAY_APPEND'), sql.index('SET @new_mr_auth'))
         # Recreated containers come first; the old volume then gets the columns.
         self.assertLess(log.index('up -d --no-build --wait'), log.index('exec -T mysql'))
+
+    def test_start_pull_migrates_legacy_sandboxes_before_startup(self):
+        result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='2')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        steps = (
+            'pull --ignore-buildable',
+            'image inspect --format',
+            'up -d --no-build --no-recreate --wait --wait-timeout 180 --pull never mysql',
+            'stop platform',
+            'mysqldump',
+            'ps --all --status running',
+            'up -d --no-build --wait --wait-timeout 180 --pull never',
+        )
+        offsets = [log.index(step) for step in steps]
+        self.assertEqual(offsets, sorted(offsets))
+        migration_start = log.index('exec -T mysql', offsets[-2])
+        self.assertLess(migration_start, offsets[-1])
+        sql = (self.root / 'mysql.log').read_text()
+        self.assertLess(sql.index('FROM information_schema.tables'), sql.index('DROP TABLE IF EXISTS dockerfiles'))
+        self.assertLess(sql.index('DROP TABLE IF EXISTS dockerfiles'), sql.index('INSERT IGNORE'))
+        backup, = (self.root / '.local').glob('loopforge-before-041.*/loopforge.sql')
+        self.assertEqual(backup.read_text(), 'database backup\n')
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+
+    def test_start_pull_skips_migration_for_legacy_images_and_current_schemas(self):
+        for target, legacy_tables in (('', '2'), ('inline', '0')):
+            with self.subTest(target=target, legacy_tables=legacy_tables):
+                (self.root / 'docker.log').unlink(missing_ok=True)
+                (self.root / 'mysql.log').unlink(missing_ok=True)
+                result = self.pull(MOCK_SANDBOX_CATALOG=target, MOCK_LEGACY_SANDBOX_TABLES=legacy_tables)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                log = (self.root / 'docker.log').read_text()
+                self.assertNotIn('stop platform', log)
+                self.assertNotIn('mysqldump', log)
+                sql = (self.root / 'mysql.log').read_text()
+                self.assertEqual('FROM information_schema.tables' in sql, target == 'inline')
+                self.assertNotIn('DROP TABLE IF EXISTS dockerfiles', sql)
+                self.assertIn('INSERT IGNORE', sql)
+
+    def test_start_pull_keeps_platform_stopped_on_backup_or_migration_failure(self):
+        for failure, message in (('MOCK_BACKUP_FAILURE', 'Database backup failed'), ('MOCK_SANDBOX_MIGRATION_FAILURE', 'Sandbox migration 041 failed')):
+            with self.subTest(failure=failure):
+                (self.root / 'docker.log').unlink(missing_ok=True)
+                (self.root / 'mysql.log').unlink(missing_ok=True)
+                result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='1', **{failure: '1'})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                log = (self.root / 'docker.log').read_text()
+                self.assertIn('stop platform', log)
+                self.assertNotIn('up -d --no-build --wait', log)
+                sql = (self.root / 'mysql.log').read_text()
+                self.assertNotIn('INSERT IGNORE', sql)
+                has_backup = any((self.root / '.local').glob('loopforge-before-041.*'))
+                self.assertEqual(has_backup, failure == 'MOCK_SANDBOX_MIGRATION_FAILURE')
+
+        result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='1')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Applied sandbox migration 041', result.stdout)
+        self.assertEqual(len(list((self.root / '.local').glob('loopforge-before-041.*/loopforge.sql'))), 2)
+
+    def test_start_pull_and_manual_sandbox_migration_share_an_upgrade_lock(self):
+        (self.root / '.local').mkdir()
+        with (self.root / '.local/compose-upgrade.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            pull = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='2')
+            migrate = subprocess.run([self.shell(), 'start.sh', 'migrate-sandboxes'], cwd=self.root,
+                env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        for result in (pull, migrate):
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Could not lock the installation', result.stderr)
+        self.assertFalse((self.root / 'mysql.log').exists())
 
     def test_migrate_sandboxes_requires_a_stopped_platform(self):
         (self.root / '.env').touch()

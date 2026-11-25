@@ -118,13 +118,19 @@ const patchCachedRun=(_,run)=>{state.activeRun=run};
 const paintRunControl=()=>{};
 let info={available:false,restorable:false,reason:'工作区已回收'};
 let restoreStatus={status:'failed',error:'Runner <离线>'};
+let runDetail=restored;
+let cleanupBusy=false;
 const api=async(path,options={})=>{
  calls.push([path,options.method||'GET']);
- if(path===runPath)return restored;
+ if(path===runPath)return runDetail;
  if(path===workspacePath)return info;
  assert.equal(path,restorePath);
  if(options.method==='POST'){
   assert.equal(options.headers.Prefer,'respond-async');
+  if(cleanupBusy){
+    cleanupBusy=false;
+    throw Object.assign(new Error('workspace cleanup in progress'),{code:'workspace_busy'});
+  }
   return {workspaceRestore:{status:'restoring'}};
  }
  return restoreStatus;
@@ -132,6 +138,7 @@ const api=async(path,options={})=>{
 eval(fs.readFileSync('app/run-activation.js','utf8')+'\n'+fs.readFileSync('app/runs.js','utf8')+
  '\nglobalThis.loadWorkspace=loadRunWorkspace;'+
  '\nglobalThis.restoreButtonHTML=workspaceRestoreButtonHTML;'+
+ '\nglobalThis.bindTabs=bindRunDetailTabs;'+
  '\nbindRunDetailTabs(reclaimed,host);');
 (async()=>{
  assert.match(restoreButtonHTML(),/title="工作区是本次运行存放代码和生成文件的目录。恢复会从保存的快照还原文件/);
@@ -176,7 +183,7 @@ eval(fs.readFileSync('app/run-activation.js','utf8')+'\n'+fs.readFileSync('app/r
  assert.equal(workspaceTab.classList.active,true);
  assert.equal(overviewPane.hidden,true);
  assert.equal(pane.hidden,false);
- await Promise.resolve();
+ await new Promise(setImmediate);
  info={available:true};
  restoreStatus={status:'ready'};
  timers.shift()();
@@ -211,6 +218,45 @@ eval(fs.readFileSync('app/run-activation.js','utf8')+'\n'+fs.readFileSync('app/r
  assert.match(pane.innerHTML,/data-vscode-frame/);
  assert.equal(controlButton.disabled,false);
  assert.ok(calls.every(([,method])=>method==='GET'),'reopening must follow the existing restore without posting again');
+
+ overviewTab.onclick();
+ runDetail={id:'run',status:'succeeded',executionContext:{executionPinned:true,workspaceRunId:'conversation-workspace'}};
+ state.activeRun=runDetail;
+ state.runWorkspace={runId:'run',cleaned:false,info:{available:true}};
+ bindTabs(runDetail,host);
+ calls.length=0;
+ info={available:false,restorable:true,reason:'工作区已回收'};
+ const borrowed=workspaceTab.onclick();
+ await new Promise(setImmediate);
+ assert.deepEqual(calls,[[workspacePath,'GET'],[restorePath,'POST']],
+   'opening the borrowed workspace must refresh its status and restore even when the SOP itself was not reclaimed');
+ info={available:true};
+ restoreStatus={status:'ready'};
+ timers.shift()();
+ await borrowed;
+ assert.match(pane.innerHTML,/data-vscode-frame/);
+
+ overviewTab.onclick();
+ runDetail={...restored,executionContext:{workspaceRunId:'parent'}};
+ state.activeRun=runDetail;
+ state.runWorkspace=null;
+ info={available:false,restorable:true,reason:'工作区已回收'};
+ await loadWorkspace('run');
+ assert.equal(restoreButton.hidden,false,'a child can restore the shared checkout without its own cleanup timestamp');
+ calls.length=0;
+ cleanupBusy=true;
+ const childRestore=restoreButton.onclick();
+ await new Promise(setImmediate);
+ assert.deepEqual(calls,[[workspacePath,'GET'],[restorePath,'POST']]);
+ assert.match(pane.innerHTML,/正在恢复工作区/,'the cleanup lease should keep the restore pending');
+ timers.shift()();
+ await new Promise(setImmediate);
+ assert.deepEqual(calls,[[workspacePath,'GET'],[restorePath,'POST'],[restorePath,'POST']]);
+ info={available:true,readOnly:true};
+ timers.shift()();
+ await childRestore;
+ assert.deepEqual(calls.slice(-3),[[restorePath,'GET'],[runPath,'GET'],[workspacePath,'GET']]);
+ assert.match(pane.innerHTML,/data-vscode-frame/);
 })().catch(err=>{console.error(err);process.exitCode=1});
 `
 	if output, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {

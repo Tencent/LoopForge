@@ -275,10 +275,11 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		}
 		var runnerLogin map[string]bool
 		if c.Query("schedule") == "1" {
+			projectID := strings.TrimSpace(c.Query("projectId"))
 			runnerLogin = make(map[string]bool)
 			for i := range catalog.Engines {
 				engine := catalog.Engines[i].ID
-				if scheduleLoginRunner(h.repo, user.ID, engine).ID != "" {
+				if scheduleLoginRunner(h.repo, user.ID, projectID, engine).ID != "" {
 					runnerLogin[engine] = true
 					catalog.Engines[i].Configured = true
 				}

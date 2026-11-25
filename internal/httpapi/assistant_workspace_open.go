@@ -49,12 +49,15 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 			if profile.Driver != "" && profile.Driver != domain.SandboxDriverDocker {
 				name += "，" + profile.Driver + " 沙箱"
 			}
+			if toolchain := strings.TrimSpace(profile.Toolchain); toolchain != "" {
+				name += " · " + toolchain
+			}
 			fmt.Fprintf(&b, "\n- %s：%s", profile.ID, truncateRunes(name, 80))
 		}
 	}
 	if s.ProjectID == "" {
 		b.WriteString("\n\n个人对话可直接打开可写工作区，使用共享运行环境。workspaceRunId 只可切回本对话开过的工作区。")
-	} else if repos := projectRepositoryHints(h.repo.Repositories(), s.ProjectID); len(repos) > 0 {
+	} else if repos := workspaceRepositoryHints(h.repo, s.ProjectID); len(repos) > 0 {
 		catalog := jsonObject(repos)
 		if len(catalog) <= workspaceRepositoryInlineBytes {
 			b.WriteString("\n\n当前项目登记的仓库（JSON 数据，供 git clone 参考）\n" + catalog)
@@ -85,15 +88,7 @@ func (h *agentToolGateway) conversationSandboxChoices(s *AgentToolSession) ([]do
 	nativeAvailable := runtime.NativeSandboxAvailable
 	if s.ExecutionRunnerID != "" {
 		runner, _ := h.repo.Runner(s.ExecutionRunnerID)
-		targetOS := strings.ToLower(strings.TrimSpace(runner.OS))
-		nativeAvailable = func(driver string) bool {
-			if !runner.NativeSandboxAvailable {
-				return false
-			}
-			driver, err := domain.ResolveSandboxDriver(driver, targetOS)
-			return err == nil && (driver == domain.SandboxDriverSeatbelt && targetOS == "darwin" ||
-				driver == domain.SandboxDriverBwrap && targetOS == "linux")
-		}
+		nativeAvailable = runner.SupportsNativeSandbox
 	}
 	choices = slices.DeleteFunc(choices, func(profile domain.SandboxProfile) bool {
 		return conversationSandboxKind(profile) == domain.SandboxDriverNative && !nativeAvailable(profile.Driver)
@@ -132,19 +127,26 @@ func workspaceSandboxGuide(choices []domain.SandboxProfile, preferred string) st
 }
 
 type workspaceRepositoryHint struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	CloneURL      string `json:"cloneUrl,omitempty"`
-	WebURL        string `json:"webUrl,omitempty"`
-	DefaultBranch string `json:"defaultBranch,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	CloneURL       string `json:"cloneUrl,omitempty"`
+	WebURL         string `json:"webUrl,omitempty"`
+	DefaultBranch  string `json:"defaultBranch,omitempty"`
+	ProjectDefault bool   `json:"projectDefault,omitempty"`
 }
 
-func projectRepositoryHints(all []domain.Repository, projectID string) []workspaceRepositoryHint {
+func workspaceRepositoryHints(store *repo.Store, projectID string) []workspaceRepositoryHint {
+	project, _ := store.Project(projectID)
+	return projectRepositoryHints(store.Repositories(), projectID, strings.TrimSpace(project.DefaultRepositoryID))
+}
+
+func projectRepositoryHints(all []domain.Repository, projectID, defaultRepositoryID string) []workspaceRepositoryHint {
 	repositories := projectRepositories(all, projectID)
 	hints := make([]workspaceRepositoryHint, 0, len(repositories))
 	for _, r := range repositories {
 		hint := workspaceRepositoryHint{
 			ID: r.ID, Name: r.Name, CloneURL: workspaceRepositoryURL(r.CloneURL), DefaultBranch: strings.TrimSpace(r.DefaultBranch),
+			ProjectDefault: defaultRepositoryID != "" && r.ID == defaultRepositoryID,
 		}
 		if hint.CloneURL == "" {
 			hint.WebURL = workspaceRepositoryURL(r.WebURL)
@@ -219,6 +221,9 @@ func parseWorkspaceOpenChoice(args map[string]any) (workspaceOpenChoice, error) 
 // and hands the CLI over to it. A task conversation enters its task's
 // workspace once the SOP has stopped.
 func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *AgentToolSession, args map[string]any) (string, error) {
+	if s.workspaceStartFailed.Load() {
+		return "", errors.New(assistantWorkspaceFallbackPrompt)
+	}
 	choice, err := parseWorkspaceOpenChoice(args)
 	if err != nil {
 		return "", err
@@ -327,6 +332,9 @@ func (h *agentToolGateway) resolveWorkspaceRunTarget(conv domain.AssistantSessio
 	if !run.IsWorkspace() {
 		if canonicalID := engine.WorkspaceRunID(run); canonicalID != "" && canonicalID != run.ID {
 			parent, found := h.repo.RunState(canonicalID)
+			if found && parent.IsWorkspace() && conversationMayBind(conv, parent, projectID) {
+				return parent, nil
+			}
 			if !found || !borrowableSOPRun(parent, projectID) {
 				return domain.Run{}, fmt.Errorf("子 SOP %s 所属父工作区 %s 不属于当前项目或不可接入", run.ID, canonicalID)
 			}

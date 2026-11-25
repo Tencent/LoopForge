@@ -91,8 +91,8 @@ const GitTokenHTTPUser = "x-access-token"
 // adapter keeps (and refreshes) in user_configs.
 const ManagedGitHTTPCredentialID = "managed-internal"
 
-// GitHTTPCredential is the public description of a personal HTTPS Git
-// credential bound to one host[:port]. It never carries the token.
+// GitHTTPCredential is the public description of a personal Git credential.
+// Host is a legacy HTTPS authority or an explicit HTTP endpoint.
 type GitHTTPCredential struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -113,6 +113,9 @@ func (c GitHTTPCredential) GitUsername() string {
 // APIBase is the REST API root the control plane uses for the credential's
 // host, or "" for platforms it does not call.
 func (c GitHTTPCredential) APIBase() string {
+	if strings.HasPrefix(c.Host, "http://") {
+		return ""
+	}
 	switch c.Platform {
 	case GitPlatformGitHub:
 		if c.Host == "github.com" {

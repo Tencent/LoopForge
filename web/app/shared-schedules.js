@@ -78,17 +78,20 @@ function sharedScheduleRowInfo(job){
 }
 // Only a pending update stays on the row; publishing and browsing versions
 // live in the row's ⋯ menu (sharedScheduleRowMenuItem).
-function sharedScheduleRowAction(job){
-  if(!job.skipDispatch||!job.sharedTaskId)return '';
+function sharedScheduleAvailableUpdate(job){
+  if(!job.skipDispatch||!job.sharedTaskId)return null;
   const latest=sharedScheduleCatalog.find(v=>v.id===job.sharedTaskId);
-  if(!(latest?.version>job.sharedTaskVersion))return '';
+  return latest?.version>job.sharedTaskVersion?latest:null;
+}
+function sharedScheduleRowAction(job){
+  const latest=sharedScheduleAvailableUpdate(job);
+  if(!latest)return '';
   return `<button type="button" class="button hui-btn-soft small" data-shared-versions="${escapeHTML(job.id)}">有新版 v${latest.version}</button>`;
 }
 function sharedScheduleRowMenuItem(job,item){
   if(!job.skipDispatch)return '';
   if(!job.sharedTaskId)return item('data-publish-schedule','发布共享','layers');
-  const latest=sharedScheduleCatalog.find(v=>v.id===job.sharedTaskId);
-  return latest?.version>job.sharedTaskVersion?'':item('data-shared-versions','查看版本','layers');
+  return sharedScheduleAvailableUpdate(job)?'':item('data-shared-versions','查看版本','layers');
 }
 function bindSharedScheduleRowActions(host){
   host.querySelectorAll('[data-publish-schedule]').forEach(b=>b.onclick=()=>openSharedSchedulePublish(b.dataset.publishSchedule));

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -36,7 +38,7 @@ var checkpointRestoreExcludedNames = []string{".agentflow"}
 
 // checkpointExcludedNames are skipped when capturing unless preserved as
 // Git-tracked repository files (except checkpointRestoreExcludedNames).
-var checkpointExcludedNames = append(slices.Clone(checkpointRestoreExcludedNames), "node_modules", ".cache", "__pycache__", ".zvec-grep")
+var checkpointExcludedNames = append(slices.Clone(checkpointRestoreExcludedNames), "node_modules", ".cache", "__pycache__", ".zvec-grep", ".next")
 
 // WorkspaceDirHasContent reports whether root already holds user or repository
 // files on disk. An empty directory or one containing only the platform's
@@ -130,12 +132,15 @@ func CreateWorkspaceCheckpointToContext(ctx context.Context, root string, destin
 	var expanded int64
 	entries := 0
 	tracker := &checkpointGitTracker{ctx: ctx, root: root, base: base}
-	err = fs.WalkDir(base.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
+	err = fs.WalkDir(base.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) (err error) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
+		}
+		if walkErr != nil {
+			if path != "." && errors.Is(walkErr, fs.ErrNotExist) {
+				return nil
+			}
+			return walkErr
 		}
 		if path == "." {
 			return nil
@@ -148,17 +153,51 @@ func CreateWorkspaceCheckpointToContext(ctx context.Context, root string, destin
 				return nil
 			}
 		}
+		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var file *os.File
+		if info.Mode().IsRegular() {
+			if filepath.Base(path) == ".git" {
+				return fmt.Errorf("external Git worktree metadata cannot be checkpointed: %s", path)
+			}
+			// Open before committing a tar header. A watcher can unlink the
+			// path between enumeration and copy; an open file remains readable.
+			file, err = base.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if closeErr := file.Close(); err == nil {
+					err = closeErr
+				}
+			}()
+			opened, err := file.Stat()
+			if err != nil {
+				return err
+			}
+			if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+				return fmt.Errorf("workspace file changed while opening checkpoint entry: %s", path)
+			}
+			info = opened
+		}
+		header, err := checkpointEntryHeader(base, path, info)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
 		entries++
 		if entries > 100000 {
 			return fmt.Errorf("workspace checkpoint exceeds file count limit")
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		header, err := checkpointEntryHeader(base, path, info)
-		if err != nil {
-			return err
 		}
 		expanded += header.Size
 		if expanded > workspaceCheckpointExpandedMax {
@@ -167,11 +206,9 @@ func CreateWorkspaceCheckpointToContext(ctx context.Context, root string, destin
 		if err = writer.WriteHeader(header); err != nil {
 			return err
 		}
-		if filepath.Base(path) == ".git" && info.Mode().IsRegular() {
-			return fmt.Errorf("external Git worktree metadata cannot be checkpointed: %s", path)
-		}
-		if info.Mode().IsRegular() {
-			return copyCheckpointFile(base, writer, path, header.Size)
+		if file != nil {
+			_, err = io.CopyN(writer, file, header.Size)
+			return err
 		}
 		return nil
 	})
@@ -217,21 +254,6 @@ func checkpointEntryHeader(base *os.Root, path string, info fs.FileInfo) (*tar.H
 	header.Uname = ""
 	header.Gname = ""
 	return header, nil
-}
-
-// copyCheckpointFile streams size bytes of the regular file at path into
-// writer, reporting a copy failure before a close failure.
-func copyCheckpointFile(base *os.Root, writer io.Writer, path string, size int64) error {
-	file, err := base.Open(path)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.CopyN(writer, file, size)
-	closeErr := file.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	return closeErr
 }
 
 type checkpointGitIndex struct {

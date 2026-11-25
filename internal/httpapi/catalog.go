@@ -147,10 +147,14 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		return
 	}
 	// One pasted repository reference (web / SSH / clone / git clone)
-	// An unknown HTTPS host is a Git transport, not an unknown hosting adapter.
+	// A generic web Git URL uses Git transport without a hosting adapter.
+	reference, cloneCommand := strings.CutPrefix(sshReference, "git clone ")
+	reference = strings.ToLower(strings.TrimSpace(reference))
+	plainHTTP := strings.HasPrefix(reference, "http://")
 	_, knownHost := domain.ParseRepositoryURL(sshReference)
-	if v.Provider == domain.RepositoryProviderHTTPS || !knownHost && strings.HasPrefix(strings.TrimPrefix(sshReference, "git clone "), "https://") {
-		remote, name, err := gitwork.HTTPSRepositoryURL(sshReference)
+	if v.Provider == domain.RepositoryProviderHTTPS || v.Provider == domain.RepositoryProviderHTTP ||
+		plainHTTP && cloneCommand || !knownHost && (plainHTTP || strings.HasPrefix(reference, "https://")) {
+		remote, name, err := gitwork.GitHTTPRepositoryURL(sshReference)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -159,7 +163,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			if candidate == "" {
 				continue
 			}
-			other, _, err := gitwork.HTTPSRepositoryURL(candidate)
+			other, _, err := gitwork.GitHTTPRepositoryURL(candidate)
 			if err != nil || other != remote {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "仓库地址与 cloneUrl 不一致"})
 				return
@@ -169,7 +173,12 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "仓库网页地址必须是不含凭据的 HTTP(S) 地址"})
 			return
 		}
-		v.Provider, v.CloneURL, v.GongfengProjectID = domain.RepositoryProviderHTTPS, remote, ""
+		endpoint, _ := gitwork.GitHTTPRemoteEndpoint(remote)
+		if (v.Provider == domain.RepositoryProviderHTTPS || v.Provider == domain.RepositoryProviderHTTP) && v.Provider != endpoint.Scheme {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "仓库地址与所选 HTTP(S) 协议不一致"})
+			return
+		}
+		v.Provider, v.CloneURL, v.GongfengProjectID = endpoint.Scheme, remote, ""
 		if v.WebURL == "" {
 			v.WebURL = strings.TrimSuffix(remote, ".git")
 		}
@@ -197,7 +206,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if primary != "" {
 		info, ok := domain.ParseRepositoryURL(primary)
 		if !ok {
-			c.JSON(400, gin.H{"error": "请填写完整的 GitHub、HTTPS 或 Git SSH 仓库地址"})
+			c.JSON(400, gin.H{"error": "请填写完整的 GitHub、HTTP(S) 或 Git SSH 仓库地址"})
 			return
 		}
 		if body.RepoURL != "" && body.URL != "" {
@@ -682,29 +691,31 @@ func (h *catalogHandlers) skills(c *gin.Context) {
 				c.JSON(404, map[string]string{"error": "project not found"})
 				return
 			}
-			if existing, ok := h.repo.Skill(v.ID); ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
+			existing, ok := h.repo.Skill(v.ID)
+			if ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
 				c.JSON(409, map[string]string{"error": "skill id is already used by another project"})
 				return
 			} else if ok && existing.Shared && !v.Shared && (h.sharedAgentReferences("skill", v.ID) || h.sharedScheduleReferences("skill", v.ID)) {
 				c.JSON(409, map[string]string{"error": "该技能仍被共享角色或共享任务引用，不能取消共享"})
 				return
 			}
-			// The binary file manifest is owned by the skill_files table;
-			// the SKILL.md body and text Files are owned by uploaded files
-			// (or existing content if the client never sends them). Client
-			// payloads cannot add, remove or reorder any of these, nor
-			// forge or drop a market source record.
-			if existing, ok := h.repo.Skill(v.ID); ok {
+			// Metadata updates preserve stored files and their source.
+			if ok {
 				v.FileRefs = existing.FileRefs
 				v.Files = existing.Files
 				v.Content = existing.Content
 				v.Source = existing.Source
-			} else {
-				v.FileRefs = nil
-				v.Files = nil
-				v.Source = nil
+				respond(c, h.repo.PutSkill(v))
+				return
 			}
-			respond(c, h.repo.PutSkill(v))
+			v.Files = nil
+			v.Source = nil
+			err := h.repo.CreateSkill(v)
+			if errors.Is(err, repo.ErrSkillExists) {
+				c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+				return
+			}
+			respond(c, err)
 		}
 	}
 }
@@ -969,6 +980,9 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
+			if !h.validateWorkflowProjectCredentials(c, v) {
+				return
+			}
 			if _, generic := h.repo.GenericTemplateByWorkflow(v.ID); generic {
 				if !h.isPlatformAdmin(c.Request) {
 					c.JSON(http.StatusConflict, map[string]string{"error": "通用模板为只读，请先复制到本项目再修改"})
@@ -1028,9 +1042,12 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 	}
 }
 
-// requireWorkflowSandbox 校验 SOP 载荷指定的沙箱档案：标识必填且必须存在。
+// requireWorkflowSandbox 校验固定沙箱：标识必填且档案必须存在。
 // 校验失败时已写好 400 响应，调用方直接返回即可。
 func (h *catalogHandlers) requireWorkflowSandbox(c *gin.Context, wf domain.WorkflowDefinition) (domain.SandboxProfile, bool) {
+	if wf.AutoSelectSandbox {
+		return domain.SandboxProfile{}, true
+	}
 	if strings.TrimSpace(wf.SandboxProfileID) == "" {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "workflow sandboxProfileId is required"})
 		return domain.SandboxProfile{}, false
@@ -1123,6 +1140,9 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if workflowHasNotifications(restored) && !h.notifications.access(c, v.ProjectID, true) {
 			return
 		}
+		if !h.validateWorkflowProjectCredentials(c, restored) {
+			return
+		}
 		if v.Shared && !restored.Shared && h.sharedScheduleReferences("sop", id) {
 			c.JSON(http.StatusConflict, map[string]string{"error": "该 SOP 仍被共享任务引用，不能取消共享"})
 			return
@@ -1189,6 +1209,9 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		}
 		c.JSON(200, saved)
 	case "/api/workflows/:id/publish":
+		if !h.validateWorkflowProjectCredentials(c, v) {
+			return
+		}
 		if v.Generic {
 			if !h.isPlatformAdmin(c.Request) {
 				c.JSON(http.StatusConflict, map[string]string{"error": "通用模板为只读，请先复制到本项目再修改"})
@@ -1210,11 +1233,12 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		c.JSON(200, stored)
 	case "/api/workflows/:id/clone":
 		var req struct {
-			ID               string `json:"id"`
-			Name             string `json:"name"`
-			Owner            string `json:"owner"`
-			ProjectID        string `json:"projectId"`
-			SandboxProfileID string `json:"sandboxProfileId"`
+			ID                string `json:"id"`
+			Name              string `json:"name"`
+			Owner             string `json:"owner"`
+			ProjectID         string `json:"projectId"`
+			SandboxProfileID  string `json:"sandboxProfileId"`
+			AutoSelectSandbox bool   `json:"autoSelectSandbox"`
 		}
 		if !decode(c, &req) {
 			return
@@ -1238,14 +1262,16 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if !h.requireProjectWriter(c, req.ProjectID, taken.ProjectID) {
 			return
 		}
-		if req.SandboxProfileID != "" {
+		if req.AutoSelectSandbox {
+			v.AutoSelectSandbox, v.SandboxProfileID = true, ""
+		} else if req.SandboxProfileID != "" {
 			profile, ok := h.repo.Sandbox(req.SandboxProfileID)
 			if !ok || !domain.CatalogVisible(profile.ProjectID, profile.Shared, req.ProjectID) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": "所选运行沙箱已不可用，请刷新后重新选择。"})
 				return
 			}
-			v.SandboxProfileID = profile.ID
-		} else if v.Generic {
+			v.AutoSelectSandbox, v.SandboxProfileID = false, profile.ID
+		} else if v.Generic && !v.AutoSelectSandbox {
 			v.SandboxProfileID = h.genericTemplateSandbox(v.SandboxProfileID, req.ProjectID)
 		}
 		if v.Generic {
@@ -1260,6 +1286,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		v.ID, v.Name, v.Owner = req.ID, req.Name, req.Owner
 		v.ProjectID = req.ProjectID
 		v.Shared = false
+		v.ProjectCredentialIDs = nil
 		v.Status, v.Version, v.Revision = "draft", 1, 0
 		v.CreatedAt, v.UpdatedAt = time.Time{}, time.Time{}
 		if err := h.repo.PutWorkflow(v); err != nil {
@@ -1271,6 +1298,27 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 	default:
 		c.Status(http.StatusNotFound)
 	}
+}
+
+func (h *catalogHandlers) validateWorkflowProjectCredentials(c *gin.Context, wf domain.WorkflowDefinition) bool {
+	if len(wf.ProjectCredentialIDs) == 0 {
+		return true
+	}
+	if _, generic := h.repo.GenericTemplateByWorkflow(wf.ID); generic || wf.Generic {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请复制通用模板到当前项目后绑定项目凭据"})
+		return false
+	}
+	user, ok := h.requestUser(c.Request, true)
+	use, _ := h.projectCredentialAccess(c.Request, wf.ProjectID, user.ID)
+	if !ok || !use {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权在该 SOP 中绑定项目凭据"})
+		return false
+	}
+	if _, err := h.repo.ProjectCredentialVariableNames(c.Request.Context(), wf.ProjectID, wf.ProjectCredentialIDs); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return false
+	}
+	return true
 }
 
 func workflowHasNotifications(workflow domain.WorkflowDefinition) bool {

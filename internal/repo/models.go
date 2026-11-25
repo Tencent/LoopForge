@@ -71,6 +71,7 @@ type gitHTTPCredentialRow struct {
 	Name     string     `gorm:"size:80;not null"`
 	Platform string     `gorm:"size:16;not null"`
 	Host     string     `gorm:"size:255;not null"`
+	HTTPHost string     `gorm:"size:267;not null;default:''"`
 	Username string     `gorm:"size:128;not null"`
 	Token    string     `gorm:"type:text;not null"`
 	Created  *time.Time `gorm:"column:created_at"`
@@ -114,6 +115,21 @@ type projectMemberRow struct {
 }
 
 func (projectMemberRow) TableName() string { return "project_members" }
+
+type projectJoinRequestRow struct {
+	ID         int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	ProjectID  string     `gorm:"column:project_id;size:64;not null;index:idx_project_join_requests_project"`
+	UserID     int64      `gorm:"column:user_id;not null;index:idx_project_join_requests_user"`
+	Role       string     `gorm:"column:role;size:32;not null"`
+	Reason     string     `gorm:"column:reason;type:text"`
+	Status     string     `gorm:"column:status;size:16;not null"`
+	ReviewerID *int64     `gorm:"column:reviewer_user_id"`
+	Created    *time.Time `gorm:"column:created_at"`
+	Updated    *time.Time `gorm:"column:updated_at"`
+	Reviewed   *time.Time `gorm:"column:reviewed_at"`
+}
+
+func (projectJoinRequestRow) TableName() string { return "project_join_requests" }
 
 type repositoryRow struct {
 	ID        string     `gorm:"column:id;primaryKey;size:64"`
@@ -530,6 +546,8 @@ type runnerRow struct {
 	MaxConcurrency         int        `gorm:"column:max_concurrency"`
 	RunLimit               *int       `gorm:"column:run_limit"`
 	OwnerUserID            *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
+	SharedProjectIDs       []byte     `gorm:"column:shared_project_ids;type:json"`
+	LoginModels            []byte     `gorm:"column:login_model_catalogs;type:json"`
 	SessionTokenHash       string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
 	SessionExpiresAt       *time.Time `gorm:"column:session_expires_at"`
 	Runtimes               []byte     `gorm:"column:runtimes;type:json"`
@@ -574,6 +592,14 @@ type userRunnerPrefRow struct {
 }
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
+
+type userProjectRunnerPrefRow struct {
+	UserID          int64  `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	ProjectID       string `gorm:"column:project_id;primaryKey;size:64"`
+	DefaultRunnerID string `gorm:"column:default_runner_id;not null;size:64;index:idx_user_project_runner_prefs_runner"`
+}
+
+func (userProjectRunnerPrefRow) TableName() string { return "user_project_runner_prefs" }
 
 // assistantPreferenceRow: a missing row means switches are off, messages queue
 // and the agent picks conversation workspace sandboxes itself.
@@ -731,6 +757,16 @@ type knowledgeSettingsRow struct {
 
 func (knowledgeSettingsRow) TableName() string { return "knowledge_settings" }
 
+// platformSettingsRow is the single row of platform-wide settings a platform
+// administrator maintains on the management page (see domain.PlatformSettings).
+type platformSettingsRow struct {
+	ID      string     `gorm:"column:id;primaryKey;size:64"`
+	Payload []byte     `gorm:"column:payload;type:json"`
+	Updated *time.Time `gorm:"column:updated_at"`
+}
+
+func (platformSettingsRow) TableName() string { return "platform_settings" }
+
 type knowledgeSubmissionRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
 	ProjectID  string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64"`
@@ -746,10 +782,10 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
-	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
+	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, botNativeSessionRow{}, botPendingDraftRow{}, botChatOriginRow{}, botClarifySessionRow{}, domain.NotificationDelivery{},
 		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
-		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
+		projectRow{}, projectMemberRow{}, projectJoinRequestRow{}, projectCredentialRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
 		sandboxRow{},
 		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
@@ -757,12 +793,13 @@ func allModels() []any {
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
 		mrDeliveryStateRow{}, definitionRevisionRow{},
-		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{},
+		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{}, userProjectRunnerPrefRow{},
 		assistantSessionRow{}, assistantTaskRow{}, assistantGenerationRow{}, assistantSessionReadRow{}, assistantPreferenceRow{}, assistantDiagnosticsRow{},
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
-		PlatformGitSSHHost{}, PlatformGitHTTPSHost{},
+		platformSettingsRow{},
+		PlatformGitSSHHost{}, PlatformGitHTTPSHost{}, PlatformGitHTTPHost{},
 	}
 }

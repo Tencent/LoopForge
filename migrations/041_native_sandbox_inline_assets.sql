@@ -1,4 +1,4 @@
--- Manual, idempotent MySQL migration: sandboxes carry their own Dockerfile,
+-- Idempotent MySQL migration: sandboxes carry their own Dockerfile,
 -- native replaces local, and environment install scripts are gone.
 --
 -- A docker sandbox now stores payload.dockerfile {content, files}; a native
@@ -25,8 +25,10 @@
 --
 -- Missing legacy tables are treated as empty so the migration can be repeated.
 -- Docker images are keyed by the Dockerfile content and are reused.
--- Apply manually to existing databases before starting the upgraded platform.
--- For Compose, use ./start.sh migrate-sandboxes with the old platform stopped.
+-- Apply to existing databases before starting the upgraded platform.
+-- ./start.sh pull applies it when the target image and Compose database need it.
+-- For a manual Compose upgrade, use ./start.sh migrate-sandboxes with the old
+-- platform stopped and the database backed up.
 
 SET NAMES utf8mb4;
 

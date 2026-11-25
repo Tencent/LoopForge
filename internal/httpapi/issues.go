@@ -309,6 +309,8 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		if found {
 			keepExistingTrackerBinding(&v, existing)
 		} else {
+			// Only the server records audit entries for a newly created issue.
+			v.Operations = nil
 			keepExistingTrackerBinding(&v, domain.Issue{})
 		}
 		if !found && !repo.IssueBoundToTracker(v) {
@@ -517,13 +519,20 @@ func actorLabel(user *auth.User) (string, int64) {
 	}
 }
 
+// recordIssueOperation appends one audit entry. Actor is always the platform
+// account whose permissions were used; a call made for a chat turn also
+// records the IM sender that asked for it (see botChatActor).
 func (h issuesHandlers) recordIssueOperation(c *gin.Context, issue *domain.Issue, action, detail string) {
 	if issue == nil {
 		return
 	}
 	user, _ := h.requestUser(c.Request, true)
 	actor, id := actorLabel(user)
-	issue.AppendOperation(domain.IssueOperation{Actor: actor, ActorUserID: id, Action: action, Detail: detail})
+	op := domain.IssueOperation{Actor: actor, ActorUserID: id, Action: action, Detail: detail}
+	if chat, ok := botChatActorFrom(c.Request.Context()); ok {
+		op.ActorChannel, op.ActorSender, op.ActorSenderName = chat.Channel, chat.SenderID, chat.SenderName
+	}
+	issue.AppendOperation(op)
 }
 
 func (h issuesHandlers) appendStoredOperation(c *gin.Context, issueID, action, detail string) (domain.Issue, error) {

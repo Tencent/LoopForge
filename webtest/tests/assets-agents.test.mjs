@@ -36,28 +36,54 @@ test('asset catalog filters, opens, marks dirty, shares, saves, and deletes asse
   assert.equal(app.evaluate(`state.data.rules.some(x=>x.id==='rule-1')`), false);
 });
 
-test('sandbox form saves its own Dockerfile, or only environment variables for native', async (t) => {
+test('sandbox form saves Docker limits and privilege and clears them when omitted or disabled', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.router.put(/^\/api\/sandboxes$/, (call) => ({ status: 200, body: call.body }));
-  app.evaluate(`state.assetType='sandboxes';state.selectedAsset='__new__';renderAssets()`);
+  app.evaluate(`
+    state.authRequired=true;
+    state.currentUser={...state.currentUser,isGuest:false,isPlatformAdmin:false};
+    state.assetType='sandboxes';
+    state.selectedAsset='__new__';
+    renderAssets();
+  `);
   let form = app.document.querySelector('#assetForm');
   const readOnlyHelp = form.querySelector('.field-help[aria-label="容器根文件系统只读说明"]');
   const dockerFields = form.elements.readOnlyRootFS.closest('[data-sandbox-drivers="docker"]');
   const nativeFields = form.querySelector('[data-sandbox-drivers="native"]');
+  let advanced = dockerFields.querySelector('details.sandbox-advanced');
   assert.deepEqual([...form.elements.driver.options].map((o) => [o.value, o.textContent]), [['docker', 'Docker'], ['native', '系统轻量隔离']]);
   assert.equal(dockerFields.hidden, false, 'a new sandbox starts as docker');
   assert.equal(nativeFields.hidden, true);
+  assert.equal(advanced.open, false);
+  assert.equal(advanced.querySelector('summary').textContent.trim(), '高级设置');
+  for (const name of ['cpuCores', 'memoryMiB', 'privileged']) {
+    assert.equal(form.elements[name].closest('details'), advanced);
+  }
+  assert.equal(form.elements.cpuCores.value, '');
+  assert.equal(form.elements.memoryMiB.value, '');
   chooseOption(form.elements.driver, 'native');
   assert.deepEqual([dockerFields.hidden, nativeFields.hidden], [true, false]);
+  assert.equal(form.elements.cpuCores.disabled, true);
+  assert.equal(form.elements.memoryMiB.disabled, true);
+  assert.equal(form.elements.privileged.disabled, true);
   assert.match(nativeFields.textContent, /系统轻量隔离直接使用执行机器上已安装的语言和工具/);
   assert.equal(form.elements.installScript, undefined);
   chooseOption(form.elements.driver, 'docker');
   assert.deepEqual([dockerFields.hidden, nativeFields.hidden], [false, true]);
+  assert.equal(form.elements.cpuCores.disabled, false);
+  assert.equal(form.elements.memoryMiB.disabled, false);
   readOnlyHelp.click();
   const tooltip = app.document.querySelector('#huiTooltip:not([hidden])');
   assert.match(tooltip?.textContent ?? '', /缺少的 CLI 无法在容器内自动安装；工作区 \/workspace 仍可写/);
   assert.equal(form.elements.readOnlyRootFS.checked, false);
+  advanced.querySelector('summary').click();
+  assert.equal(advanced.open, true);
+  assert.equal(form.elements.privileged.checked, false);
+  assert.equal(form.elements.privileged.disabled, false);
+  assert.equal(form.elements.privileged.closest('[data-sandbox-drivers]'), dockerFields);
+  form.querySelector('.field-help[aria-label="特权模式说明"]').click();
+  assert.match(app.document.querySelector('#huiTooltip:not([hidden])')?.textContent ?? '', /可能控制执行机器/);
   assert.equal(app.router.calls.some((c) => c.path === '/api/sandboxes' && c.method === 'PUT'), false);
 
   form.elements.id.value = 'sandbox-new';
@@ -65,7 +91,10 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   form.elements.environment.value = '{"CI":"1"}';
   form.elements.dockerfileContent.value = 'FROM node:22\nCOPY packages.txt /tmp/\n';
   form.elements.dockerfileFiles.value = '{"packages.txt":"git"}';
+  form.elements.cpuCores.value = '1.25';
+  form.elements.memoryMiB.value = '1536';
   form.elements.readOnlyRootFS.checked = true;
+  form.elements.privileged.checked = true;
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(2);
   const sandbox = app.router.calls.find((c) => c.path === '/api/sandboxes' && c.method === 'PUT').body;
@@ -73,10 +102,49 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   assert.deepEqual(sandbox.dockerfile, { content: 'FROM node:22\nCOPY packages.txt /tmp/\n', files: { 'packages.txt': 'git' } });
   assert.equal(sandbox.install, undefined);
   assert.equal(sandbox.readOnlyRootFS, true);
+  assert.equal(sandbox.privileged, true);
+  assert.equal(sandbox.cpuMillicores, 1250);
+  assert.equal(sandbox.memoryMiB, 1536);
   assert.deepEqual(sandbox.environment, { CI: '1' });
+
+  app.evaluate(`state.assetDetailKey='';renderAssets()`);
+  form = app.document.querySelector('#assetForm');
+  advanced = form.querySelector('details.sandbox-advanced');
+  assert.equal(advanced.open, false);
+  assert.equal(form.elements.privileged.checked, true);
+  assert.equal(form.elements.privileged.disabled, false);
+  assert.equal(form.elements.cpuCores.value, '1.25');
+  assert.equal(form.elements.memoryMiB.value, '1536');
+  form.elements.name.value = 'Docker sandbox renamed';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(2);
+  const renamed = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').at(-1).body;
+  assert.equal(renamed.name, 'Docker sandbox renamed');
+  assert.equal(renamed.privileged, true);
+  assert.equal(renamed.cpuMillicores, 1250);
+  assert.equal(renamed.memoryMiB, 1536);
+
+  form.elements.cpuCores.value = '0.001';
+  const writesBeforeInvalid = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').length;
+  form.requestSubmit();
+  assert.equal(advanced.open, true, 'validation opens the section containing the invalid input');
+  assert.equal(app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').length, writesBeforeInvalid);
+
+  form.elements.privileged.checked = false;
+  form.elements.cpuCores.value = '';
+  form.elements.memoryMiB.value = '';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(2);
+  const cleared = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').at(-1).body;
+  assert.equal(cleared.privileged, false);
+  assert.equal(cleared.cpuMillicores, undefined);
+  assert.equal(cleared.memoryMiB, undefined);
 
   app.evaluate(`state.selectedAsset='__new__';state.assetDetailKey='';renderAssets()`);
   form = app.document.querySelector('#assetForm');
+  form.elements.cpuCores.value = '0.001';
+  form.elements.memoryMiB.value = '128';
+  form.elements.privileged.checked = true;
   chooseOption(form.elements.driver, 'native');
   assert.equal(form.querySelector('[data-sandbox-drivers="native"]').hidden, false);
   form.elements.id.value = 'native-new';
@@ -89,6 +157,19 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   assert.deepEqual(native.environment, { JAVA_HOME: '/opt/jdk' });
   assert.equal(native.install, undefined);
   assert.equal(native.dockerfile, undefined);
+  assert.equal(native.cpuMillicores, undefined);
+  assert.equal(native.memoryMiB, undefined);
+  assert.equal(native.privileged, undefined);
+
+  app.evaluate(`
+    state.data.sandboxes.push({id:'shared-docker',name:'Shared Docker',projectId:'other-project',shared:true,driver:'docker',privileged:true});
+    state.selectedAsset='shared-docker';
+    renderAssets();
+  `);
+  form = app.document.querySelector('#assetForm');
+  assert.equal(form.elements.privileged.checked, true);
+  assert.equal(form.elements.privileged.disabled, true);
+  assert.equal(form.querySelector('button[type="submit"]'), null);
 });
 
 test('agent catalog search, presets, validation, persistence, clone, and delete update state', async (t) => {

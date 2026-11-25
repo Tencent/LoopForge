@@ -14,22 +14,27 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 type dockerSandbox struct {
-	id, name, workspace string
-	profile             domain.SandboxProfile
-	requirements        SandboxRequirements
-	dockerfile          domain.DockerfileDefinition
-	builtImage          string
-	mu                  sync.Mutex
-	browserMu           sync.Mutex
-	started             bool
-	cliSetupOnce        sync.Once
-	cliSetupGate        chan struct{}
+	id, name, workspace  string
+	profile              domain.SandboxProfile
+	requirements         SandboxRequirements
+	dockerfile           domain.DockerfileDefinition
+	limits               dockerSandboxLimits
+	builtImage           string
+	mu                   sync.Mutex
+	browserMu            sync.Mutex
+	started              bool
+	gitToolsRoot         string
+	gitDistributionReady bool
+	activeTerminals      int
+	cliSetupOnce         sync.Once
+	cliSetupGate         chan struct{}
 	// execGate lets parallel branches exec concurrently (read side) while a
 	// cwd-recovery Recreate (write side) waits for them instead of docker
 	// rm-ing the container under a sibling's running command.
@@ -49,12 +54,16 @@ func (s *dockerSandbox) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.started = false
 	image := s.builtImage
+	gitTools := s.gitToolsRoot
 	s.builtImage = ""
 	s.mu.Unlock()
 	if image == "" {
 		image = tempDockerImageName(s.id)
 	}
 	removeDockerSandbox(ctx, s.name, image)
+	if gitTools != "" {
+		return os.RemoveAll(gitTools)
+	}
 	return nil
 }
 
@@ -134,7 +143,7 @@ func DockerReady() bool {
 
 func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
 	if err := s.ensureStarted(ctx); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, &ConversationWorkspaceSetupError{Cause: err})
 	}
 	s.execGate.RLock()
 	out, err := s.execOnce(ctx, command, sink)
@@ -166,6 +175,13 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 }
 
 func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
+	command, err = projectCommandEnvironment(ctx, command, s.profile.Environment)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
+	if err := s.prepareCommandGitTools(ctx, command.environment); err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
 	command, cliPath, err := s.prepareSOPCLI(ctx, command)
 	if err != nil {
 		return "", err
@@ -175,7 +191,16 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 		args = append(args, "-i")
 	}
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
+		name, _, _ := strings.Cut(environment, "=")
+		if _, secret := command.projectCredentialEnv[name]; secret {
+			continue
+		}
 		args = append(args, "-e", environment)
+	}
+	for name := range command.projectCredentialEnv {
+		// Docker CLI reads the value from its own environment. Its command
+		// line and the long-lived container config only see variable names.
+		args = append(args, "-e", name)
 	}
 	if cliPath != "" {
 		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
@@ -203,6 +228,9 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	}
 	args = append(args, argv...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
+	if len(command.projectCredentialEnv) > 0 {
+		cmd.Env = appendEnvironment(os.Environ(), command.projectCredentialEnv)
+	}
 	cmd.Stdin = command.Stdin
 	return runCommand(cmd, sink, command)
 }
@@ -223,6 +251,23 @@ func dockerWorkspaceExecArgv(argv []string) []string {
 const dockerMCPCallLaunch = `cd /workspace || exit
 if [ -x /workspace/.agentflow/runtime/bin/agentflow-helper ]; then
   PATH=/workspace/.agentflow/runtime/bin:$PATH
+  export PATH
+fi
+if [ -n "${` + workspaceGitBinsEnv + `:-}" ]; then
+  git_bins="$` + workspaceGitBinsEnv + `"
+  case "$git_bins" in
+    ` + dockerGitToolsMount + "/" + workspaceGitHTTPBin + `:*)
+      if [ -x "` + dockerGitToolsMount + "/" + workspaceGitDistribution + `/git" ]; then
+        # Git still uses the managed transport if a nested login shell resets PATH.
+        export GIT_EXEC_PATH="` + dockerGitToolsMount + "/" + workspaceGitDistribution + `/exec"
+      else
+        # An image without Git can install it and use the host-scoped helper directly.
+        git_bins="${git_bins#` + dockerGitToolsMount + "/" + workspaceGitHTTPBin + `:}"
+        export ` + workspaceGitHTTPSystemGitEnv + `=1
+      fi
+      ;;
+  esac
+  PATH="$git_bins:$PATH"
   export PATH
 fi
 if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH" ]; then
@@ -326,7 +371,7 @@ func dropShellLoginFlag(argv []string) []string {
 }
 
 func (s *dockerSandbox) Recreate(ctx context.Context) error {
-	return s.start(ctx, true)
+	return s.start(ctx, dockerStartRecreate)
 }
 
 // invalidate drops the cached started flag without docker rm. The next
@@ -425,33 +470,51 @@ func isDockerCwdUnsafe(out string, err error) bool {
 		return false
 	}
 	msg := strings.ToLower(out + "\n" + err.Error())
-	return strings.Contains(msg, "outside of container mount") || strings.Contains(msg, "container breakout") || strings.Contains(msg, "oci runtime exec failed") || strings.Contains(msg, "exit status 126")
+	// PID exhaustion can also produce "OCI runtime exec failed". Recreating
+	// in that case would kill other commands and reset the sandbox's budget.
+	return strings.Contains(msg, "outside of container mount") || strings.Contains(msg, "container breakout") ||
+		strings.Contains(msg, "exit status 126") && !strings.Contains(msg, "oci runtime exec failed")
 }
 
-type dockerWorkspaceMounts struct {
+type dockerWorkspaceInspection struct {
 	source      string
 	legacyMasks bool
+	gitTools    string
+	privileged  bool
+	limitsLabel string
+	limits      dockerHostLimits
 }
 
-func inspectDockerWorkspaceMounts(ctx context.Context, name string) (*dockerWorkspaceMounts, error) {
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", `{{json .Mounts}}`, name).CombinedOutput()
+func inspectDockerWorkspace(ctx context.Context, name string) (*dockerWorkspaceInspection, error) {
+	const format = `{"mounts":{{json .Mounts}},"privileged":{{.HostConfig.Privileged}},"limitsLabel":{{json (index .Config.Labels "` + dockerSandboxLimitsLabel + `")}},"limits":{"NanoCpus":{{.HostConfig.NanoCpus}},"Memory":{{.HostConfig.Memory}},"PidsLimit":{{json .HostConfig.PidsLimit}}}}`
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", format, name).CombinedOutput()
 	if dockerObjectGone(string(out), err) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("docker inspect mounts: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("docker inspect workspace: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	var mounts []struct {
-		Destination, Source string
+	var config struct {
+		Mounts []struct {
+			Destination, Source string
+			RW                  bool
+		}
+		Privileged  bool
+		LimitsLabel string
+		Limits      dockerHostLimits
 	}
-	if err := json.Unmarshal(out, &mounts); err != nil {
-		return nil, fmt.Errorf("decode Docker mounts for %s: %w", name, err)
+	if err := json.Unmarshal(out, &config); err != nil {
+		return nil, fmt.Errorf("decode Docker workspace for %s: %w", name, err)
 	}
-	workspace := &dockerWorkspaceMounts{}
-	for _, mount := range mounts {
+	workspace := &dockerWorkspaceInspection{privileged: config.Privileged, limitsLabel: config.LimitsLabel, limits: config.Limits}
+	for _, mount := range config.Mounts {
 		switch mount.Destination {
 		case "/workspace":
 			workspace.source = mount.Source
+		case dockerGitToolsMount:
+			if !mount.RW {
+				workspace.gitTools = mount.Source
+			}
 		case "/workspace/.agentflow/isolation/empty-dir", "/workspace/.agentflow/isolation/empty-file":
 			// Older containers keep these binds even when restarted.
 			workspace.legacyMasks = true
@@ -557,15 +620,29 @@ func parseDockerSandboxMounts(out, absRoot string) map[string]string {
 	return found
 }
 
+const privilegedDockerSandboxEnv = "AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX"
+
 func createDocker(ctx context.Context, id, workspace string, p domain.SandboxProfile, requirements SandboxRequirements, dockerfile domain.DockerfileDefinition) (Sandbox, error) {
 	if strings.TrimSpace(dockerfile.Content) == "" {
 		return nil, fmt.Errorf("docker sandbox requires a dockerfile")
+	}
+	if p.Privileged {
+		// Only the process on the Docker host can authorize privileged
+		// execution. The profile's environment is for in-sandbox commands.
+		allowed, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv(privilegedDockerSandboxEnv)))
+		if !allowed {
+			return nil, fmt.Errorf("当前执行机器未允许特权 Docker 沙箱，请联系机器管理员设置 %s=true", privilegedDockerSandboxEnv)
+		}
+	}
+	limits, err := readDockerSandboxLimits(p)
+	if err != nil {
+		return nil, err
 	}
 	// Delay docker create until the first Exec so the bind-mount is taken
 	// after prepareRepository has cloned into this directory. Creating the
 	// container first, then letting git replace the workspace inode, is the
 	// runc 126 "cwd outside mount namespace" failure.
-	return &dockerSandbox{id: id, name: dockerContainerName(id), workspace: workspace, profile: p, requirements: requirements, dockerfile: dockerfile}, nil
+	return &dockerSandbox{id: id, name: dockerContainerName(id), workspace: workspace, profile: p, requirements: requirements, dockerfile: dockerfile, limits: limits}, nil
 }
 
 const dockerSandboxPrefix = "agentflow-"
@@ -718,31 +795,108 @@ func staleCachedDockerImages(listed []string, keep, inUse map[string]struct{}) [
 }
 
 func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
-	return s.start(ctx, false)
+	return s.start(ctx, dockerStartReuse)
 }
 
-func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.started && !recreate {
+// RefreshWorkspaceGitTools replaces a legacy Docker container at a workspace
+// preparation boundary. Callers hold the workspace and exclude live tasks.
+func RefreshWorkspaceGitTools(ctx context.Context, sandbox Sandbox) error {
+	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
+	if !ok || !s.execGate.TryLock() {
 		return nil
 	}
-	s.started = false
+	defer s.execGate.Unlock()
+	return s.start(ctx, dockerStartRefreshGitTools)
+}
+
+func (s *dockerSandbox) reserveTerminal() func() {
+	s.mu.Lock()
+	s.activeTerminals++
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		s.activeTerminals--
+		s.mu.Unlock()
+	}
+}
+
+func (s *dockerSandbox) prepareCommandGitTools(ctx context.Context, env map[string]string) error {
+	if env[workspaceGitBinsEnv] == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gitToolsRoot == "" {
+		return errDockerGitToolsMountMissing
+	}
+	if s.gitDistributionReady || !strings.Contains(","+env[GitHostsEnv], ",http://") {
+		return nil
+	}
+	if err := prepareDockerGitTools(ctx, s.gitToolsRoot, s.name); err != nil {
+		return err
+	}
+	s.gitDistributionReady = true
+	return nil
+}
+
+type dockerStartMode uint8
+
+const (
+	dockerStartReuse dockerStartMode = iota
+	dockerStartRecreate
+	dockerStartRefreshGitTools
+)
+
+func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if mode == dockerStartRefreshGitTools && (s.activeTerminals > 0 || s.started && s.gitToolsRoot != "") {
+		return nil
+	}
+	if mode == dockerStartReuse && s.started {
+		return nil
+	}
 	name, workspace, p := s.name, s.workspace, s.profile
-	mounts, err := inspectDockerWorkspaceMounts(ctx, name)
+	gitTools, err := dockerGitToolsDirectory(workspace, name)
 	if err != nil {
 		return err
 	}
-	if mounts != nil {
-		if !dockerBindMatchesWorkspace(mounts.source, workspace) {
-			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, mounts.source, workspace)
+	container, err := inspectDockerWorkspace(ctx, name)
+	if err != nil {
+		return err
+	}
+	recreate := mode == dockerStartRecreate
+	hasGitTools := false
+	if container != nil {
+		if !dockerBindMatchesWorkspace(container.source, workspace) {
+			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, container.source, workspace)
 		}
-		if !recreate && !mounts.legacyMasks {
-			if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
-				if err := waitDockerWorkspaceReady(ctx, name); err == nil {
-					s.started = true
-					return nil
+		recreate = recreate || container.privileged != p.Privileged || !s.limits.matches(container)
+		hasGitTools = dockerBindMatchesWorkspace(container.gitTools, gitTools)
+		if mode == dockerStartRefreshGitTools && !hasGitTools {
+			// A previous Worker can detach its workspace before all Docker
+			// execs have exited. Its local activity counters are gone.
+			out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", "{{len .ExecIDs}}", name).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("inspect active Docker executions: %w: %s", err, out)
+			}
+			if strings.TrimSpace(string(out)) != "0" {
+				return nil
+			}
+			recreate = true
+		}
+	}
+	s.started = false
+	s.gitToolsRoot = ""
+	s.gitDistributionReady = false
+	if container != nil && !recreate && !container.legacyMasks {
+		if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
+			if err := waitDockerWorkspaceReady(ctx, name); err == nil {
+				if hasGitTools {
+					s.gitToolsRoot = gitTools
 				}
+				s.started = true
+				return nil
 			}
 		}
 	}
@@ -751,10 +905,23 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		return err
 	}
 	image := built
-	args := []string{"create", "--name", name, "--init", "--cap-drop=ALL", "--security-opt", "no-new-privileges", "-v", workspace + ":/workspace"}
+	args := []string{"create", "--name", name, "--init"}
+	if p.Privileged {
+		args = append(args, "--privileged")
+	} else {
+		args = append(args, "--cap-drop=ALL", "--security-opt", "no-new-privileges")
+	}
+	args = append(args, "-v", workspace+":/workspace")
+	args = append(args, s.limits.createArgs()...)
+	if err := ensureDockerGitToolsDirectory(gitTools); err != nil {
+		dropEphemeralDockerImage(built)
+		return err
+	}
+	args = append(args, "--mount", "type=bind,src="+gitTools+",dst="+dockerGitToolsMount+",readonly")
 	// Native installs own private (0700) workspaces as the service user.
-	// A root image without DAC capabilities cannot access another UID's bind.
-	// Run default/root images as that user; retain explicit non-root image users.
+	// Run default/root images as that user so both modes can use the same
+	// workspace and leave files the service can clean up. Keep explicit
+	// non-root image users.
 	if os.Geteuid() != 0 {
 		configured, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Config.User}}", image).CombinedOutput()
 		if err != nil {
@@ -806,9 +973,9 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 	} else {
 		args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
 	}
-	// Resolve the replacement image and mounts before retiring a workspace with
-	// legacy masks. Its new container ID invalidates old preparation receipts.
-	if mounts != nil || recreate {
+	// Resolve the replacement image and mounts before retiring the old
+	// container. Its new ID invalidates old preparation receipts.
+	if container != nil || recreate {
 		if err := removeDockerWorkspaceContainers(ctx, name); err != nil {
 			return err
 		}
@@ -818,6 +985,20 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		dropEphemeralDockerImage(s.builtImage)
 		s.builtImage = ""
 		return fmt.Errorf("docker create: %w: %s", err, out)
+	}
+	if s.limits != (dockerSandboxLimits{}) {
+		created, err := inspectDockerWorkspace(ctx, name)
+		if err == nil && !s.limits.matches(created) {
+			err = fmt.Errorf("Docker daemon did not apply the configured sandbox resource limits")
+		}
+		if err != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerTeardownTimeout)
+			cleanupErr := removeDockerContainer(cleanupCtx, name)
+			cancel()
+			dropEphemeralDockerImage(s.builtImage)
+			s.builtImage = ""
+			return errors.Join(err, cleanupErr)
+		}
 	}
 	if out, err := exec.CommandContext(ctx, "docker", "start", name).CombinedOutput(); err != nil {
 		_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
@@ -831,6 +1012,7 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		return err
 	}
 	s.started = true
+	s.gitToolsRoot = gitTools
 	return nil
 }
 

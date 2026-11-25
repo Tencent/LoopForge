@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/domain"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -81,7 +83,15 @@ func (r *RunsRepo) BeginWorkspaceUse(runID string, now time.Time) (string, error
 // publish and finish by token CAS, so it cannot affect the new use.
 func (r *RunsRepo) BeginWorkspaceUsePreemptingSave(runID string, now time.Time) (string, string, error) {
 	var previous string
-	token, err := r.beginWorkspaceLease(runID, now, true, false, &previous)
+	token, err := r.beginWorkspaceLease(runID, now, true, false, false, &previous)
+	return token, previous, err
+}
+
+// BeginSOPWorkspacePreparation leases a conversation checkout for the SOP
+// already admitted to execute there. Other foreground use waits for that SOP.
+func (r *RunsRepo) BeginSOPWorkspacePreparation(runID string, now time.Time) (string, string, error) {
+	var previous string
+	token, err := r.beginWorkspaceLease(runID, now, true, false, true, &previous)
 	return token, previous, err
 }
 
@@ -110,9 +120,9 @@ func (r *RunsRepo) HandoffWorkspaceUseToSave(runID, token string, now time.Time)
 	return saveToken, err
 }
 func (r *RunsRepo) BeginWorkspaceCheckpointSave(runID string, now time.Time) (string, error) {
-	return r.beginWorkspaceLease(runID, now, false, false)
+	return r.beginWorkspaceLease(runID, now, false, false, false)
 }
-func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, restoring bool, preempted ...*string) (string, error) {
+func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, restoring, sopPreparation bool, preempted ...*string) (string, error) {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -122,6 +132,15 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 		run, err := r.takeRunForUpdate(tx, runID)
 		if err != nil {
 			return err
+		}
+		if run.Kind == domain.RunKindWorkspace && !sopPreparation {
+			busy, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, runID, []string{"running"}))
+			if err != nil {
+				return err
+			}
+			if busy {
+				return ErrWorkspaceInUse
+			}
 		}
 		var checkpoint WorkspaceCheckpoint
 		if err := tx.Omit("archive").Where("run_id = ?", runID).Take(&checkpoint).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -260,6 +279,12 @@ func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(runID, token string, revision
 		if row.Revision != revision || row.Status == "running" || row.Status == "queued" || row.WorkspaceCleaned != nil || row.CleanupNotBefore != nil && now.Before(*row.CleanupNotBefore) {
 			return nil
 		}
+		if row.Kind == domain.RunKindWorkspace {
+			busy, err := workspaceSOPRunExists(r.workspaceSOPRunsHoldingCheckout(r.workspaceSOPRuns(tx, runID, []string{"running", "queued", "waiting"})))
+			if err != nil || busy {
+				return err
+			}
+		}
 		var checkpoint WorkspaceCheckpoint
 		if err = tx.Omit("archive").Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, now).Take(&checkpoint).Error; err != nil {
 			return err
@@ -267,22 +292,74 @@ func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(runID, token string, revision
 		if checkpoint.SavedAt == nil || checkpoint.SHA256 == "" || checkpoint.Error != "" {
 			return fmt.Errorf("工作区未成功保存，暂缓回收")
 		}
-		if checkpoint.FollowUp && !checkpoint.Released() && now.Before(checkpoint.LastUsedAt.Add(time.Hour)) {
-			return nil
-		}
-		var count int64
-		if err = tx.Model(&runNodeRow{}).Where("run_id = ? AND status = ?", runID, "running").Count(&count).Error; err != nil {
-			return err
-		}
-		if count != 0 {
-			return nil
+		if row.Kind != domain.RunKindWorkspace && (row.Status == "failed" || row.Status == "waiting") {
+			run := runFromRow(row)
+			if !isTopLevelSOP(run) || (run.ExecutionContext.WorkspaceRunID != "" && run.ExecutionContext.WorkspaceRunID != run.ID) || !sopWorkspaceIdleAt(run, checkpoint, now) {
+				return nil
+			}
+			active, err := r.hasActiveSOPTree(tx, run)
+			if err != nil || active {
+				return err
+			}
+		} else {
+			if checkpoint.FollowUp && !checkpoint.Released() && now.Before(checkpoint.LastUsedAt.Add(time.Hour)) {
+				return nil
+			}
+			var count int64
+			if err = tx.Model(&runNodeRow{}).Where("run_id = ? AND status IN ?", runID, []string{"running", "pending_input"}).Count(&count).Error; err != nil || count != 0 {
+				return err
+			}
 		}
 		result := tx.Model(&runRow{}).Where("id = ? AND revision = ?", runID, revision).Updates(map[string]any{"workspace_cleaned_at": now, "sandbox_id": ""})
 		claimed = result.RowsAffected == 1
 		return result.Error
-	})
+	}, r.admissionTxOptions()...)
 	return claimed, err
 }
+
+func sopWorkspaceIdleAt(run domain.Run, checkpoint WorkspaceCheckpoint, now time.Time) bool {
+	idleSince := run.UpdatedAt
+	if checkpoint.LastUsedAt.After(idleSince) {
+		idleSince = checkpoint.LastUsedAt
+	}
+	return !idleSince.IsZero() && !now.Before(idleSince.Add(time.Hour))
+}
+
+// Recheck the node tree under the top-level row lock. Child activation takes
+// the same lock before it can commit a running status.
+func (r *RunsRepo) hasActiveSOPTree(tx *gorm.DB, root domain.Run) (bool, error) {
+	pending := []domain.Run{root}
+	seen := map[string]bool{root.ID: true}
+	for len(pending) > 0 {
+		run := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if err := r.loadRunNodesFrom(tx, &run); err != nil {
+			return false, err
+		}
+		if run.Status == "running" || run.Status == "queued" || run.HasActiveNode() {
+			return true, nil
+		}
+		for _, node := range run.Nodes {
+			if node == nil || node.ChildRunID == "" || seen[node.ChildRunID] {
+				continue
+			}
+			seen[node.ChildRunID] = true
+			var row runRow
+			err := tx.Select("id", "status").Where("id = ?", node.ChildRunID).Take(&row).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			pending = append(pending, domain.Run{ID: row.ID, Status: row.Status})
+		}
+	}
+	return false, nil
+}
+
+// RestoreCheckpointWorkspaceBinding publishes a restored checkout and its
+// binding. A Runner workspace may drop a stale control-plane staging bind.
 func (r *RunsRepo) RestoreCheckpointWorkspaceBinding(runID, token, host, root string, now time.Time) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
@@ -302,12 +379,9 @@ func (r *RunsRepo) RestoreCheckpointWorkspaceBinding(runID, token, host, root st
 			Updates(map[string]any{"restore_status": "ready", "restore_error": ""}).Error; err != nil {
 			return err
 		}
-		values := map[string]any{"workspace_cleaned_at": nil, "revision": gorm.Expr("revision + 1")}
-		if host != "" {
-			values["workspace_host"] = host
-			values["workspace_root"] = root
-		}
-		return tx.Model(&runRow{}).Where("id = ?", runID).Updates(values).Error
+		return tx.Model(&runRow{}).Where("id = ?", runID).Updates(map[string]any{
+			"workspace_cleaned_at": nil, "revision": gorm.Expr("revision + 1"), "workspace_host": host, "workspace_root": root,
+		}).Error
 	})
 }
 func (r *RunsRepo) CheckpointWorkspaceRunIDs() []string {
@@ -455,6 +529,15 @@ func (r *RunsRepo) ClaimWorkspaceDeletion(runID, token string, revision int, now
 		}
 		if row.Revision != revision || row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
 			return ErrWorkspaceInUse
+		}
+		if row.Kind == domain.RunKindWorkspace {
+			inUse, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, runID, nil))
+			if err != nil {
+				return err
+			}
+			if inUse {
+				return fmt.Errorf("工作区仍有关联的 SOP 运行：%w", ErrWorkspaceInUse)
+			}
 		}
 		var count int64
 		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, now).Count(&count).Error; err != nil {

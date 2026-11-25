@@ -16,17 +16,24 @@ func TestBotConnectionLeaseAndInterruptedTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	now := time.Now().UTC()
-	if ok, err := store.ClaimBotConnection("external", "owner-a", now); err != nil || !ok {
+	bot := domain.NotificationBot{ID: "b", BotID: "external", ProjectID: "p", OwnerID: 1, Enabled: true, InteractionEnabled: true}
+	if err := store.SaveNotificationBot(bot, "s"); err != nil {
+		t.Fatal(err)
+	}
+	clock := pinDBClock(t, 1_000_000_000_000)
+	a, ok, err := store.ClaimBotConnection("external", "owner-a")
+	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}
-	if ok, _ := store.ClaimBotConnection("external", "owner-b", now); ok {
+	if _, ok, _ := store.ClaimBotConnection("external", "owner-b"); ok {
 		t.Fatal("two connections claimed")
 	}
-	if ok, _ := store.ClaimBotConnection("external", "owner-b", now.Add(time.Minute)); !ok {
-		t.Fatal("expired lease unavailable")
+	clock(BotConnectionLeaseUS + 1)
+	b, ok, _ := store.ClaimBotConnection("external", "owner-b")
+	if !ok || b.Epoch != a.Epoch+1 {
+		t.Fatalf("expired lease unavailable or epoch kept: %+v %+v", a, b)
 	}
-	if ok, _ := store.RenewBotConnection("external", "owner-a", "connected", "", now.Add(time.Minute)); ok {
+	if ok, _ := store.RenewBotConnection(a, "connected", ""); ok {
 		t.Fatal("stale owner renewed lease")
 	}
 	item := domain.BotInteraction{ID: BotMessageID("b", "m1"), BotID: "b", SenderID: "u", Content: "重试"}
@@ -36,19 +43,28 @@ func TestBotConnectionLeaseAndInterruptedTurn(t *testing.T) {
 	if ok, _ := store.EnqueueBotInteraction(item, "group", "g"); ok {
 		t.Fatal("duplicate event")
 	}
-	claimed, err := store.ClaimBotInteraction("b", "external", "owner-b")
-	if err != nil || claimed == nil {
+	if _, err := store.ClaimBotInteraction("b", a, BotSendPolicy{}); err != ErrBotLeaseLost {
+		t.Fatalf("old owner claimed work: %v", err)
+	}
+	claimed, err := store.ClaimBotInteraction("b", b, BotSendPolicy{})
+	if err != nil || claimed == nil || claimed.Status != "running" || claimed.LeaseEpoch != b.Epoch {
+		t.Fatal(claimed, err)
+	}
+	// owner-b stops renewing; owner-c takes over and recovers the turn.
+	clock(BotConnectionLeaseUS + 1)
+	c, ok, _ := store.ClaimBotConnection("external", "owner-c")
+	if !ok {
+		t.Fatal("takeover failed")
+	}
+	if err = store.RecoverBotInteractions("b", c, BotSendPolicy{}); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.RecoverBotInteractions("b"); err != nil {
-		t.Fatal(err)
-	}
-	recovered, _ := store.ClaimBotInteraction("b", "external", "owner-b")
+	recovered, _ := store.ClaimBotInteraction("b", c, BotSendPolicy{})
 	if recovered == nil || recovered.Status != "ready" || recovered.Reply == "" {
 		t.Fatal("interrupted turn was replayed")
 	}
-	if err = store.SaveBotReply(*claimed, "late reply", ""); err != nil {
-		t.Fatal(err)
+	if err = store.SaveBotReply(*claimed, b, "late reply", ""); err != ErrBotLeaseLost {
+		t.Fatalf("stale owner saved: %v", err)
 	}
 	row, _ := store.BotInteraction(item.ID)
 	if row.Reply == "late reply" {
@@ -83,6 +99,9 @@ func TestBotCardDecisionCannotOverwriteConcurrentRunWrite(t *testing.T) {
 func TestBotInteractionMySQLLeaseCompetition(t *testing.T) {
 	dsn := os.Getenv("AGENTFLOW_BOT_TEST_MYSQL_DSN")
 	if dsn == "" {
+		dsn = os.Getenv("AGENTFLOW_TEST_MYSQL_DSN")
+	}
+	if dsn == "" {
 		t.Skip("local Docker MySQL not configured")
 	}
 	store, err := Open(dsn)
@@ -98,7 +117,7 @@ func TestBotInteractionMySQLLeaseCompetition(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			ok, err := store.ClaimBotConnection(id, fmt.Sprintf("owner-%d", i), time.Now().UTC())
+			_, ok, err := store.ClaimBotConnection(id, fmt.Sprintf("owner-%d", i))
 			if err != nil {
 				t.Error(err)
 			}
