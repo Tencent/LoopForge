@@ -566,7 +566,7 @@ func TestSharedRunnerWorkspaceRestoreRequiresConnectedRunner(t *testing.T) {
 		return response
 	}
 	connect := func(result domain.RunnerWorkspaceResponse) *runnerControlConn {
-		conn := hub.register(runner, nil, false)
+		conn := hub.register(runner, nil, false, false)
 		done := make(chan struct{})
 		go func() {
 			defer close(done)

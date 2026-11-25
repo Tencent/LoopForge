@@ -184,6 +184,10 @@ async function save(type, existing, values) {
 
 (async () => {
   const base = { name: 'N', description: 'D' };
+  const sandboxFields = [
+    'cpuCores', 'description', 'dockerfileContent', 'dockerfileFiles', 'driver',
+    'environment', 'id', 'memoryMiB', 'name', 'privileged', 'readOnlyRootFS', 'toolchain',
+  ];
   const cases = [
     ['rules', { id: 'r', projectId: 'p1', shared: true, priority: 100, content: 'x' },
       { id: 'r', ...base, priority: '120', content: '# hi', global: false },
@@ -194,13 +198,25 @@ async function save(type, existing, values) {
       { id: 's', name: 'N', description: 'D', projectId: 'p1', shared: false },
       ['description', 'id', 'name']],
     ['sandboxes', { id: 'x', projectId: 'p1', driver: 'docker', dockerfile: { content: 'FROM old' } },
-      { id: 'x', ...base, driver: 'docker', toolchain: ' Python 3.12 ', environment: '{}', dockerfileContent: 'FROM x', dockerfileFiles: '{"a":"b"}', readOnlyRootFS: true, privileged: true },
-      { id: 'x', name: 'N', description: 'D', projectId: 'p1', shared: false, driver: 'docker', toolchain: 'Python 3.12', environment: {}, dockerfile: { content: 'FROM x', files: { a: 'b' } }, readOnlyRootFS: true, privileged: true },
-      ['description', 'dockerfileContent', 'dockerfileFiles', 'driver', 'environment', 'id', 'name', 'privileged', 'readOnlyRootFS', 'toolchain']],
+      {
+        id: 'x', ...base, driver: 'docker', toolchain: ' Python 3.12 ', environment: '{}',
+        dockerfileContent: 'FROM x', dockerfileFiles: '{"a":"b"}', readOnlyRootFS: true,
+        privileged: true, cpuCores: '1.25', memoryMiB: '1536',
+      },
+      {
+        id: 'x', ...base, projectId: 'p1', shared: false, driver: 'docker', toolchain: 'Python 3.12',
+        environment: {}, dockerfile: { content: 'FROM x', files: { a: 'b' } }, readOnlyRootFS: true,
+        privileged: true, cpuMillicores: 1250, memoryMiB: 1536,
+      },
+      sandboxFields],
     ['sandboxes', { id: 'n', projectId: 'p1', driver: 'native', toolchain: 'JDK 21' },
-      { id: 'n', ...base, driver: 'native', toolchain: '', environment: '{"JAVA_HOME":"/opt/jdk"}', dockerfileContent: 'FROM x', dockerfileFiles: '{}', readOnlyRootFS: true, privileged: true },
+      {
+        id: 'n', ...base, driver: 'native', toolchain: '', environment: '{"JAVA_HOME":"/opt/jdk"}',
+        dockerfileContent: 'FROM x', dockerfileFiles: '{}', readOnlyRootFS: true,
+        privileged: true, cpuCores: '1.25', memoryMiB: '1536',
+      },
       { id: 'n', name: 'N', description: 'D', projectId: 'p1', shared: false, driver: 'native', toolchain: '', environment: { JAVA_HOME: '/opt/jdk' } },
-      ['description', 'dockerfileContent', 'dockerfileFiles', 'driver', 'environment', 'id', 'name', 'privileged', 'readOnlyRootFS', 'toolchain']],
+      sandboxFields],
   ];
   for (const [type, existing, values, body, fields] of cases) {
     assert.deepStrictEqual(await save(type, existing, values), body, `${type} save payload`);

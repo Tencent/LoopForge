@@ -119,9 +119,36 @@ Access to the Docker socket is equivalent to root on the host. Two safeguards fo
 
 ### Privileged Docker sandboxes
 
-Sandbox editors can request privileged mode for an individual Docker profile. The executing worker or Runner rejects that request unless its own process environment sets `AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX=true`. For Compose, set the variable in `.env` and recreate the platform container. For a native worker or a connected Runner, set it in the foreground command environment or service configuration and restart the process.
+Sandbox editors can request privileged mode for an individual Docker profile under **Advanced settings**. The executing worker or Runner rejects that request unless its own process environment sets `AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX=true`. For Compose, set the variable in `.env` and recreate the platform container. For a native worker or a connected Runner, set it in the foreground command environment or service configuration and restart the process.
 
 Enable this setting only on Docker hosts where the operator trusts every user who can run work there. Privileged containers can access host devices and may gain control of the Docker host. Connected machines need Runner `0.12.5` or later. Automatic LOOP sandbox selection considers ordinary sandboxes, and a privileged profile can be selected explicitly. A non-root execution service continues to map default-root images to its UID and GID to keep workspace files accessible.
+
+### Docker sandbox resource limits
+
+Set CPU and memory limits under **Advanced settings** in a Docker sandbox's
+configuration. Each new run or conversation workspace records those settings in
+its sandbox snapshot. To use profile limits on a remote execution machine,
+upgrade it to Runner 0.12.6 or later.
+
+Set machine-wide caps in the environment of each platform process or Runner
+that starts Docker sandboxes. With the published Compose stack, set these
+variables in `.env`. Restart the process to apply environment changes. Each
+sandbox uses the lower configured value for a resource. An empty value or
+`0` omits that setting. When both settings are omitted, Docker uses the
+daemon's default.
+
+| Setting | Limit |
+|---|---|
+| `AGENTFLOW_DOCKER_SANDBOX_CPU_MILLICORES` | CPU bandwidth. `1000` is one CPU. The minimum enabled value is `10`. |
+| `AGENTFLOW_DOCKER_SANDBOX_MEMORY_MIB` | Memory in MiB. The minimum enabled value is `6`. Swap follows the Docker daemon's policy. |
+| `AGENTFLOW_DOCKER_SANDBOX_PIDS` | Total tasks, including threads. |
+
+Docker applies the budget to the whole workspace container, including terminal
+sessions and later `docker exec` commands. When a container's effective limits change,
+LoopForge replaces the container the next time it opens the sandbox. The bind
+mounted checkout survives. The daemon must support the requested controllers.
+
+Image builds and browser sidecars run separately from the workspace container.
 
 ### Slow networks: clone and image build limits
 
