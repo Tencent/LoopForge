@@ -86,9 +86,13 @@ func (h *evolutionHandlers) putSOPPolicy(c *gin.Context) {
 		if model != "" {
 			if current, loggedIn := h.requestUser(c.Request, true); loggedIn {
 				if user, ok := h.repo.User(current.ID); ok {
-					catalog := assistantModelsForRequest(c.Request.Context(), user, model)
-					if resolved := assistantAllowedModel(model, catalog); resolved != "" {
+					if resolved, err := resolveFeatureModel(user, model); err == nil && resolved != "" {
 						model = resolved
+					} else {
+						catalog := assistantModelsForRequest(c.Request.Context(), user, model)
+						if allowed := assistantAllowedModel(model, catalog); allowed != "" {
+							model = allowed
+						}
 					}
 				}
 			}

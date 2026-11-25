@@ -26,7 +26,7 @@ const evoSOPState = {
   filter: 'all',
   q: '',
   mode: 'sop', // 'sop' | 'assets'
-  view: null,  // { workflowId, tab, scope, metric, fileIndex, detail, loading, error, expandedGray, seq }
+  view: null,  // { workflowId, tab, scope, metric, fileIndex, diffMode, detail, loading, error, expandedGray, seq }
   prefTarget: null,
   busyIds: new Set(),
 };
@@ -93,22 +93,6 @@ function evoSOPIsEnabledView() {
   return Array.isArray(evo.overview?.sops) && evoSOPState.mode !== 'assets';
 }
 
-function evoSOPModelOptionsHTML(selected) {
-  const list = window.AgentFlowAssistantModels?.list?.() || window.AgentFlowAssistantModels?.models?.() || [];
-  const value = String(selected || '').trim();
-  const seen = new Set();
-  const opts = [`<option value=""${value ? '' : ' selected'}>跟随项目检测模型</option>`];
-  for (const m of list) {
-    const id = typeof m === 'string' ? m : m?.id;
-    const name = typeof m === 'string' ? m : (m?.name || m?.id);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    opts.push(`<option value="${escapeHTML(id)}"${id === value ? ' selected' : ''}>${escapeHTML(name)}</option>`);
-  }
-  if (value && !seen.has(value)) opts.push(`<option value="${escapeHTML(value)}" selected>${escapeHTML(value)}</option>`);
-  return opts.join('');
-}
-
 // ---------- 首页（SOP 维度） ----------
 
 function evoSOPHomeHTML() {
@@ -119,7 +103,6 @@ function evoSOPHomeHTML() {
     optimize: sops.filter(s => s.stage === 'optimize').length,
     gray: sops.filter(s => s.stage === 'gray').length,
   };
-  const det = evo.overview?.sopDetection || {};
 
   const filters = [
     ['all', '全部', counts.all],
@@ -130,17 +113,6 @@ function evoSOPHomeHTML() {
 
   return `<div class="evo-sop-home">
     ${evoHomeStatusHTML()}
-    <section class="evo-sop-detect-bar" aria-label="SOP 运行分析配置">
-      <div class="evo-sop-detect-info">
-        ${kbBadge(det.enabled ? 'SOP 自动检测已开启' : 'SOP 自动检测未开启', det.enabled ? 'ok' : '')}
-        <span class="evo-sop-detect-rules">每次运行后检查：重复步骤 · 工具反复使用 · 工具调用失败</span>
-      </div>
-      <div class="evo-sop-detect-right">
-        ${det.model ? `<span class="evo-sop-model-note">检测模型：<b>${escapeHTML(det.model)}</b></span>` : ''}
-        <button type="button" class="kb-btn quiet small" data-evo-tab="assets">检测与模型设置</button>
-      </div>
-    </section>
-
     <section class="evo-sop-panel" aria-label="SOP 进化列表">
       <div class="evo-sop-toolbar">
         <div class="evo-sop-filters" role="group" aria-label="按 SOP 状态筛选">
@@ -206,7 +178,7 @@ function evoSOPRowHTML(s) {
       <span class="evo-sop-row-note">${escapeHTML(s.lastRunNote || '暂无运行记录')}</span>
     </button>
     <div class="evo-sop-row-pref">
-      <button type="button" class="evo-sop-pref-trigger" data-evo-sop-pref-open="${escapeHTML(s.workflowId)}" title="点击调整优化偏好与汇总周期"${busy}>
+      <button type="button" class="evo-sop-pref-trigger" data-evo-sop-pref-open="${escapeHTML(s.workflowId)}" title="点击调整优化偏好、汇总周期与分析模型"${busy}>
         <span class="evo-sop-pref-pills">${escapeHTML(evoSOPPrefsText(s.preferences))}</span>
         <small>每 ${Number(s.batchSize) || 10} 次</small>
       </button>
@@ -228,17 +200,19 @@ function evoSOPUpdateList() {
   window.AgentFlowHarnessIcons?.hydrate(host);
 }
 
-// ---------- 偏好 & 批次周期设置弹窗 ----------
+// ---------- 偏好、周期与专属模型设置弹窗 ----------
 
 function evoSOPPrefDialogHTML() {
   return `<dialog id="evoSopPrefDialog" class="evo-sop-dialog" aria-labelledby="evoSopPrefTitle">
     <form method="dialog" id="evoSopPrefForm" class="evo-sop-dialog-card">
       <header class="evo-sop-dialog-head">
-        <div>
+        <div class="evo-sop-dialog-title-wrap">
           <h2 id="evoSopPrefTitle">进化偏好与周期</h2>
-          <p id="evoSopPrefSub">选择优先优化的方向（支持多选）及每轮汇总的运行次数。</p>
+          <p id="evoSopPrefSub">选择优先优化的方向（支持多选）、汇总周期与专属分析模型。</p>
         </div>
-        <button type="button" class="kb-btn quiet small" data-evo-sop-pref-close aria-label="关闭">${evoReviewIcon('close')}</button>
+        <button type="button" class="evo-sop-dialog-close" data-evo-sop-pref-close aria-label="关闭弹窗">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
       </header>
       <div class="evo-sop-pref-list" id="evoSopPrefOptions"></div>
       <div class="evo-sop-batch-editor">
@@ -250,8 +224,15 @@ function evoSOPPrefDialogHTML() {
         </div>
       </div>
       <div class="evo-sop-batch-editor">
-        <label for="evoSopModelSelect">专属分析模型（可选）</label>
-        <select id="evoSopModelSelect" class="kb-input"></select>
+        <div class="evo-sop-model-head">
+          <label>分析与优化模型</label>
+          <div class="evo-sop-seg" role="group" aria-label="模型选择方式">
+            <button type="button" data-evo-sop-model-mode="default" aria-pressed="true">跟随默认</button>
+            <button type="button" data-evo-sop-model-mode="custom" aria-pressed="false">单独指定</button>
+          </div>
+        </div>
+        <p class="evo-sop-model-hint" id="evoSopModelDefaultHint">使用项目/个人默认模型进行分析与优化。</p>
+        <div id="evoSopModelPickerHost" class="evo-sop-model-picker" hidden></div>
       </div>
       <footer class="evo-sop-dialog-foot">
         <button type="button" class="kb-btn quiet" data-evo-sop-pref-close>取消</button>
@@ -261,16 +242,48 @@ function evoSOPPrefDialogHTML() {
   </dialog>`;
 }
 
+function evoSOPSyncPrefModelUI(mode, savedModel = '') {
+  const custom = mode === 'custom';
+  if (evoSOPState.prefTarget) evoSOPState.prefTarget.modelMode = custom ? 'custom' : 'default';
+  $$('[data-evo-sop-model-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.evoSopModelMode === (custom ? 'custom' : 'default'))));
+  const hint = $('#evoSopModelDefaultHint');
+  const host = $('#evoSopModelPickerHost');
+  if (hint) hint.hidden = custom;
+  if (!host) return;
+  host.hidden = !custom;
+  if (!custom) return;
+
+  if (!host.dataset.bound) {
+    host.dataset.bound = '1';
+    if (window.AgentFlowAssistantModels?.featurePickerHTML && window.AgentFlowAssistantModels?.bindFeaturePicker) {
+      host.innerHTML = window.AgentFlowAssistantModels.featurePickerHTML('sopModel');
+      host.modelPickerReady = null;
+      window.AgentFlowAssistantModels.bindFeaturePicker(host, {
+        model: savedModel || '',
+        keepSaved: true,
+        onChange: id => {
+          if (evoSOPState.prefTarget) evoSOPState.prefTarget.model = id || '';
+        },
+      });
+    } else {
+      host.innerHTML = `<input type="text" class="kb-input" data-feature-model name="sopModel" placeholder="输入模型 ID，如 claude-sonnet-4" value="${escapeHTML(savedModel || '')}">`;
+    }
+  }
+}
+
 function evoSOPOpenPrefDialog(workflowId) {
   const s = evoSOPFindSummary(workflowId);
   const dlg = $('#evoSopPrefDialog');
   if (!s || !dlg) return;
+  const projectModel = evo.overview?.sopDetection?.model || '';
+  const hasCustomModel = !!s.model && s.model !== projectModel;
   evoSOPState.prefTarget = {
     workflowId: s.workflowId,
     enabled: !!s.enabled,
     preferences: [...(s.preferences?.length ? s.preferences : ['tokens'])],
     batchSize: Number(s.batchSize) || 10,
-    model: s.model || '',
+    model: hasCustomModel ? s.model : '',
+    modelMode: hasCustomModel ? 'custom' : 'default',
   };
   $('#evoSopPrefTitle').textContent = `${s.workflowName || s.workflowId} · 优化偏好`;
   const opts = $('#evoSopPrefOptions');
@@ -284,7 +297,11 @@ function evoSOPOpenPrefDialog(workflowId) {
   const presets = $('#evoSopBatchPresets');
   presets.innerHTML = EVO_SOP_BATCH_PRESETS.map(n => `<button type="button" class="evo-sop-preset-btn" data-evo-sop-preset="${n}" aria-pressed="${evoSOPState.prefTarget.batchSize === n}">每 ${n} 次</button>`).join('');
   $('#evoSopBatchCustom').value = String(evoSOPState.prefTarget.batchSize);
-  $('#evoSopModelSelect').innerHTML = evoSOPModelOptionsHTML(evoSOPState.prefTarget.model);
+  const host = $('#evoSopModelPickerHost');
+  if (host) { delete host.dataset.bound; host.modelPickerReady = null; host.innerHTML = ''; }
+  const hint = $('#evoSopModelDefaultHint');
+  if (hint) hint.textContent = projectModel ? `跟随默认模型（当前：${projectModel}）。` : '跟随项目/个人默认模型进行分析与优化。';
+  evoSOPSyncPrefModelUI(evoSOPState.prefTarget.modelMode, evoSOPState.prefTarget.model);
   if (typeof dlg.showModal === 'function') dlg.showModal();
   else dlg.setAttribute('open', '');
 }
@@ -371,6 +388,7 @@ function evoOpenSOP(workflowId, tab = 'trend', scope = 'versions', fromRoute = f
     scope: scope === 'gray' ? 'gray' : (prev?.scope || 'versions'),
     metric: prev?.metric || 'score',
     fileIndex: prev?.fileIndex || 0,
+    diffMode: prev?.diffMode || 'split',
     expandedGray: prev?.expandedGray || null,
     detail: prev?.detail || null,
     loading: true,
@@ -426,7 +444,6 @@ function evoSOPDetailHTML(view) {
   }
 
   const busy = evoSOPState.busyIds.has(d.workflowId) ? ' disabled' : '';
-  const batchPresets = [...new Set([...EVO_SOP_BATCH_PRESETS, Number(d.batchSize) || 10])].sort((a, b) => a - b);
   const active = d.activeProposal;
   const versions = d.versions || [];
   const curPoint = versions.find(v => v.current) || versions[versions.length - 1];
@@ -434,12 +451,14 @@ function evoSOPDetailHTML(view) {
   const curM = (curPoint?.metrics?.runs > 0 ? curPoint.metrics : d.latestMetrics) || {};
   const prevM = prevPoint && prevPoint !== curPoint ? prevPoint.metrics : null;
 
-  const headActions = [];
+  const headActions = [
+    `<button type="button" class="kb-btn quiet small" data-evo-sop-pref-open="${escapeHTML(d.workflowId)}"${busy}>偏好与模型</button>`,
+  ];
   if (d.stage === 'monitor' && d.enabled) {
-    headActions.push(`<button type="button" class="kb-btn" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${busy}>立即发起优化</button>`);
+    headActions.push(`<button type="button" class="kb-btn small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${busy}>立即发起优化</button>`);
   }
   if (active?.id) {
-    headActions.push(`<button type="button" class="kb-btn quiet" data-evo-proposal="${escapeHTML(active.id)}">查看完整提案</button>`);
+    headActions.push(`<button type="button" class="kb-btn quiet small" data-evo-proposal="${escapeHTML(active.id)}">查看完整提案</button>`);
   }
 
   return `<section id="evoSopDetailPage" class="evo-sop-detail" aria-labelledby="evoSopDetailTitle">
@@ -455,25 +474,6 @@ function evoSOPDetailHTML(view) {
       </div>
       <div class="evo-sop-detail-actions">${headActions.join('')}</div>
     </header>
-
-    <div class="evo-sop-config-bar" aria-label="SOP 进化策略">
-      <button type="button" class="evo-sop-pref-trigger" data-evo-sop-pref-open="${escapeHTML(d.workflowId)}"${busy}>
-        <small>优化偏好</small>
-        <span class="evo-sop-pref-pills">${escapeHTML(evoSOPPrefsText(d.preferences))}</span>
-      </button>
-      <label class="evo-sop-inline-field">
-        <span>汇总周期</span>
-        <select class="kb-input" data-evo-sop-batch="${escapeHTML(d.workflowId)}" aria-label="每轮汇总运行次数"${busy}>
-          ${batchPresets.map(n => `<option value="${n}"${n === (Number(d.batchSize) || 10) ? ' selected' : ''}>每 ${n} 次</option>`).join('')}
-        </select>
-      </label>
-      ${d.stage === 'monitor' ? `<span class="evo-sop-round-note">本轮已收集 ${d.pendingRuns || 0}/${Number(d.batchSize) || 10} 次</span>` : ''}
-      <span class="evo-sop-model-note">分析模型：<b>${escapeHTML(d.model || '跟随项目默认')}</b></span>
-      <label class="evo-sop-switch-label">
-        <span>自动进化</span>
-        <input type="checkbox" role="switch" class="hui-switch" data-evo-sop-toggle="${escapeHTML(d.workflowId)}" aria-label="自动进化开关"${d.enabled ? ' checked' : ''}${busy}>
-      </label>
-    </div>
 
     ${evoSOPCalloutHTML(d)}
     ${evoSOPMetricsGridHTML(curM, prevM)}
@@ -841,7 +841,68 @@ function evoSOPDrawTrendChart(view) {
   }
 }
 
-// ---------- Tab 2: 本次修改与问题 ----------
+// ---------- Tab 2: 本次修改与问题（默认左右对比 Diff） ----------
+
+function evoSOPBuildSplitRows(lines) {
+  const rows = [];
+  let oldNo = 0;
+  let newNo = 0;
+  let i = 0;
+  while (i < lines.length) {
+    const [kind, text] = lines[i];
+    if (kind === 'ctx') {
+      oldNo++;
+      newNo++;
+      rows.push({
+        left: { kind: 'ctx', no: oldNo, text },
+        right: { kind: 'ctx', no: newNo, text },
+      });
+      i++;
+      continue;
+    }
+    const dels = [];
+    const adds = [];
+    while (i < lines.length && lines[i][0] === 'del') {
+      oldNo++;
+      dels.push({ kind: 'del', no: oldNo, text: lines[i][1] });
+      i++;
+    }
+    while (i < lines.length && lines[i][0] === 'add') {
+      newNo++;
+      adds.push({ kind: 'add', no: newNo, text: lines[i][1] });
+      i++;
+    }
+    const count = Math.max(dels.length, adds.length);
+    for (let k = 0; k < count; k++) {
+      rows.push({
+        left: dels[k] || { kind: 'empty', no: '', text: '' },
+        right: adds[k] || { kind: 'empty', no: '', text: '' },
+      });
+    }
+  }
+  return rows;
+}
+
+function evoSOPSplitDiffHTML(lines) {
+  const rows = evoSOPBuildSplitRows(lines || []);
+  const cell = (c, side) => {
+    const sign = c.kind === 'del' ? '−' : c.kind === 'add' ? '+' : ' ';
+    return `<div class="evo-sop-split-cell is-${c.kind} is-${side}"><span class="evo-sop-split-no">${c.no}</span><span class="evo-sop-split-sign" aria-hidden="true">${sign}</span><code>${escapeHTML(c.text || ' ')}</code></div>`;
+  };
+  return `<div class="evo-sop-split-diff" role="group" aria-label="左右对比差异">
+    <div class="evo-sop-split-head"><span>修改前（原版）</span><span>修改后（候选版）</span></div>
+    <div class="evo-sop-split-body">${rows.map(r => `<div class="evo-sop-split-row">${cell(r.left, 'left')}${cell(r.right, 'right')}</div>`).join('')}</div>
+  </div>`;
+}
+
+function evoSOPInlineDiffHTML(lines) {
+  return `<div class="evo-diff evo-sop-compact-diff" role="group" aria-label="文件改动差异">
+    ${(lines || []).map(([kind, line]) => {
+      const sign = kind === 'add' ? '+' : kind === 'del' ? '−' : ' ';
+      return `<div class="evo-diff-line ${escapeHTML(kind)}"><span class="evo-diff-sign" aria-hidden="true">${sign}</span><code>${escapeHTML(line || ' ')}</code></div>`;
+    }).join('')}
+  </div>`;
+}
 
 function evoSOPChangeTabHTML(view, d) {
   const bm = d.batchMetrics || d.latestMetrics || {};
@@ -849,6 +910,7 @@ function evoSOPChangeTabHTML(view, d) {
   const files = d.changeFiles || [];
   const activeFile = files[view.fileIndex] || files[0] || null;
   const prop = d.activeProposal || d.lastProposal;
+  const diffMode = view.diffMode === 'inline' ? 'inline' : 'split';
 
   const batchStrip = `<section class="evo-sop-batch-summary" aria-label="本批统计证据">
     <div><small>本批样本</small><b>${bm.runs || 0} 次</b></div>
@@ -875,16 +937,19 @@ function evoSOPChangeTabHTML(view, d) {
 
   const diffHTML = activeFile
     ? `<div class="evo-sop-file-bar" role="tablist" aria-label="修改的文件">
-        ${files.map((f, idx) => `<button type="button" role="tab" class="evo-sop-file-tab" data-evo-sop-file="${idx}" aria-selected="${idx === (view.fileIndex || 0)}"><span class="mono">${escapeHTML(f.path)}</span>${f.assetName ? `<small>${escapeHTML(f.assetName)}</small>` : ''}</button>`).join('')}
-        ${prop?.id ? `<button type="button" class="kb-btn quiet small evo-sop-open-proposal" data-evo-proposal="${escapeHTML(prop.id)}">查看完整提案 ↗</button>` : ''}
+        <div class="evo-sop-file-tabs">
+          ${files.map((f, idx) => `<button type="button" role="tab" class="evo-sop-file-tab" data-evo-sop-file="${idx}" aria-selected="${idx === (view.fileIndex || 0)}"><span class="mono">${escapeHTML(f.path)}</span>${f.assetName ? `<small>${escapeHTML(f.assetName)}</small>` : ''}</button>`).join('')}
+        </div>
+        <div class="evo-sop-file-actions">
+          <div class="evo-sop-seg" role="group" aria-label="差异展示方式">
+            <button type="button" data-evo-sop-diff-mode="split" aria-pressed="${diffMode === 'split'}">左右对比</button>
+            <button type="button" data-evo-sop-diff-mode="inline" aria-pressed="${diffMode === 'inline'}">行内视图</button>
+          </div>
+          ${prop?.id ? `<button type="button" class="kb-btn quiet small" data-evo-proposal="${escapeHTML(prop.id)}">查看完整提案 ↗</button>` : ''}
+        </div>
       </div>
-      <div class="evo-diff evo-sop-compact-diff" role="group" aria-label="文件改动差异">
-        ${(activeFile.lines || []).map(([kind, line]) => {
-          const sign = kind === 'add' ? '+' : kind === 'del' ? '−' : ' ';
-          return `<div class="evo-diff-line ${escapeHTML(kind)}"><span class="evo-diff-sign" aria-hidden="true">${sign}</span><code>${escapeHTML(line || ' ')}</code></div>`;
-        }).join('')}
-      </div>`
-    : `<div class="evo-sop-empty-card">本轮尚未生成修改文件；当运行达到 ${Number(d.batchSize) || 10} 次或点击「立即发起优化」后，这里会展示具体改动的文件与精简 Diff。</div>`;
+      ${diffMode === 'split' ? evoSOPSplitDiffHTML(activeFile.lines) : evoSOPInlineDiffHTML(activeFile.lines)}`
+    : `<div class="evo-sop-empty-card">本轮尚未生成修改文件；当运行达到 ${Number(d.batchSize) || 10} 次或点击「立即发起优化」后，这里会展示具体改动的文件与左右对比 Diff。</div>`;
 
   return `<div class="evo-sop-change-wrap">
     ${batchStrip}
@@ -1024,6 +1089,11 @@ document.addEventListener('click', e => {
     if (dlg) { if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open'); }
     return;
   }
+  const modelModeBtn = e.target.closest('[data-evo-sop-model-mode]');
+  if (modelModeBtn) {
+    evoSOPSyncPrefModelUI(modelModeBtn.dataset.evoSopModelMode, evoSOPState.prefTarget?.model || '');
+    return;
+  }
   const presetBtn = e.target.closest('[data-evo-sop-preset]');
   if (presetBtn) {
     const val = Number(presetBtn.dataset.evoSopPreset) || 10;
@@ -1066,6 +1136,12 @@ document.addEventListener('click', e => {
   const fileBtn = e.target.closest('[data-evo-sop-file]');
   if (fileBtn && evoSOPState.view) {
     evoSOPState.view.fileIndex = Number(fileBtn.dataset.evoSopFile) || 0;
+    evoSOPRenderDetail();
+    return;
+  }
+  const diffModeBtn = e.target.closest('[data-evo-sop-diff-mode]');
+  if (diffModeBtn && evoSOPState.view) {
+    evoSOPState.view.diffMode = diffModeBtn.dataset.evoSopDiffMode === 'inline' ? 'inline' : 'split';
     evoSOPRenderDetail();
     return;
   }
@@ -1116,11 +1192,6 @@ document.addEventListener('change', e => {
     evoSOPSavePolicy(e.target.dataset.evoSopToggle, { enabled: !!e.target.checked }, e.target);
     return;
   }
-  if (e.target.matches('[data-evo-sop-batch]')) {
-    const n = Math.max(1, Math.min(100, Number(e.target.value) || 10));
-    evoSOPSavePolicy(e.target.dataset.evoSopBatch, { batchSize: n }, e.target);
-    return;
-  }
   if (e.target.matches('#evoSopPrefOptions input[type="checkbox"]')) {
     e.target.closest('.evo-sop-pref-option')?.classList.toggle('is-checked', !!e.target.checked);
   }
@@ -1137,7 +1208,10 @@ document.addEventListener('submit', async e => {
     return;
   }
   const batchSize = Math.max(1, Math.min(100, Math.round(Number($('#evoSopBatchCustom')?.value) || 10)));
-  const model = $('#evoSopModelSelect')?.value || '';
+  let model = '';
+  if (target.modelMode === 'custom') {
+    model = String($('#evoSopModelPickerHost [data-feature-model]')?.value || target.model || '').trim();
+  }
   const saveBtn = $('#evoSopPrefSave');
   const saved = await evoSOPSavePolicy(target.workflowId, { preferences: prefs, batchSize, model }, saveBtn);
   if (saved) {

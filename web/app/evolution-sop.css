@@ -10,36 +10,15 @@
   margin-bottom: 10px;
 }
 
-.evo-sop-detect-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  padding: 10px 14px;
-  border: 1px solid var(--hui-border);
-  border-radius: 12px;
-  background: var(--hui-surface);
+/* 覆盖 knowledge.css 对 .kb-btn.quiet 的红色和自动右边距，保持工作台次要按钮中性克制 */
+#evolutionView :is(.evo-sop-home, .evo-sop-detail, .evo-sop-dialog) .kb-btn.quiet {
+  margin-right: 0;
+  color: var(--hui-secondary);
 }
 
-.evo-sop-detect-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.evo-sop-detect-rules {
-  font-size: 12px;
-  color: var(--hui-muted);
-}
-
-.evo-sop-detect-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-left: auto;
+#evolutionView :is(.evo-sop-home, .evo-sop-detail, .evo-sop-dialog) .kb-btn.quiet:hover:not(:disabled) {
+  background: var(--hui-soft);
+  color: var(--hui-text);
 }
 
 .evo-sop-panel {
@@ -322,59 +301,6 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.evo-sop-config-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  padding: 10px 14px;
-  border: 1px solid var(--hui-border);
-  border-radius: 12px;
-  background: var(--hui-surface);
-  font-size: 12px;
-}
-
-.evo-sop-inline-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--hui-muted);
-}
-
-#evolutionView .evo-sop-inline-field select {
-  width: auto;
-  min-height: 30px;
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-.evo-sop-round-note {
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--hui-soft);
-  color: var(--hui-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-.evo-sop-model-note {
-  font-size: 12px;
-  color: var(--hui-muted);
-}
-
-.evo-sop-model-note b {
-  color: var(--hui-text);
-  font-weight: 500;
-}
-
-.evo-sop-switch-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  font-weight: 500;
-  cursor: pointer;
 }
 
 .evo-sop-callout {
@@ -773,11 +699,28 @@
 .evo-sop-file-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px 12px;
   flex-wrap: wrap;
   padding: 8px 12px;
   border-bottom: 1px solid var(--hui-border-soft);
   background: var(--hui-soft);
+}
+
+.evo-sop-file-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.evo-sop-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .evo-sop-file-tab {
@@ -804,8 +747,95 @@
   color: var(--hui-muted);
 }
 
-.evo-sop-open-proposal {
-  margin-left: auto;
+/* 左右对比 Diff */
+.evo-sop-split-diff {
+  display: grid;
+  font: 12px/1.6 var(--hui-mono);
+}
+
+.evo-sop-split-head {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid var(--hui-border-soft);
+  background: var(--hui-canvas);
+  color: var(--hui-muted);
+  font: 500 11px/1.4 var(--hui-sans);
+}
+
+.evo-sop-split-head span {
+  padding: 7px 12px;
+}
+
+.evo-sop-split-head span:first-child {
+  border-right: 1px solid var(--hui-border-soft);
+}
+
+.evo-sop-split-body {
+  max-height: 400px;
+  overflow: auto;
+}
+
+.evo-sop-split-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid color-mix(in srgb, var(--hui-border-soft) 60%, transparent);
+}
+
+.evo-sop-split-row:last-child {
+  border-bottom: 0;
+}
+
+.evo-sop-split-cell {
+  display: grid;
+  grid-template-columns: 32px 16px minmax(0, 1fr);
+  align-items: baseline;
+  min-width: 0;
+  padding: 2px 10px 2px 6px;
+}
+
+.evo-sop-split-cell.is-left {
+  border-right: 1px solid var(--hui-border-soft);
+}
+
+.evo-sop-split-cell code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  color: var(--hui-text);
+}
+
+.evo-sop-split-no {
+  text-align: right;
+  padding-right: 6px;
+  color: var(--hui-tertiary);
+  user-select: none;
+  font-size: 11px;
+}
+
+.evo-sop-split-sign {
+  text-align: center;
+  user-select: none;
+  font-weight: 600;
+}
+
+.evo-sop-split-cell.is-del {
+  background: color-mix(in srgb, var(--hui-error) 10%, var(--hui-surface));
+}
+
+.evo-sop-split-cell.is-del .evo-sop-split-sign {
+  color: var(--hui-error);
+}
+
+.evo-sop-split-cell.is-add {
+  background: color-mix(in srgb, var(--hui-success) 10%, var(--hui-surface));
+}
+
+.evo-sop-split-cell.is-add .evo-sop-split-sign {
+  color: var(--hui-success);
+}
+
+.evo-sop-split-cell.is-empty {
+  background: var(--hui-canvas);
 }
 
 .evo-sop-compact-diff {
@@ -825,7 +855,7 @@
   text-align: center;
 }
 
-/* ---------- 偏好与周期弹窗 ---------- */
+/* ---------- 偏好、周期与模型弹窗 ---------- */
 
 .evo-sop-dialog {
   padding: 0;
@@ -834,7 +864,7 @@
   background: var(--hui-surface);
   color: var(--hui-text);
   box-shadow: var(--hui-popover-shadow);
-  width: min(480px, calc(100vw - 32px));
+  width: min(500px, calc(100vw - 32px));
 }
 
 .evo-sop-dialog::backdrop {
@@ -844,7 +874,7 @@
 .evo-sop-dialog-card {
   display: grid;
   gap: 14px;
-  padding: 18px;
+  padding: 18px 20px;
 }
 
 .evo-sop-dialog-head {
@@ -854,16 +884,48 @@
   gap: 12px;
 }
 
+.evo-sop-dialog-title-wrap {
+  min-width: 0;
+  flex: 1;
+}
+
 .evo-sop-dialog-head h2 {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+  line-height: 1.35;
 }
 
 .evo-sop-dialog-head p {
   margin: 4px 0 0;
   font-size: 12px;
   color: var(--hui-muted);
+}
+
+.evo-sop-dialog-close {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin: -4px -6px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hui-muted);
+  cursor: pointer;
+  transition: background-color .14s ease, color .14s ease;
+}
+
+.evo-sop-dialog-close:hover {
+  background: var(--hui-soft);
+  color: var(--hui-text);
+}
+
+.evo-sop-dialog-close:focus-visible {
+  outline: 2px solid var(--hui-focus-ring);
+  outline-offset: 1px;
 }
 
 .evo-sop-pref-list {
@@ -905,12 +967,45 @@
 
 .evo-sop-batch-editor {
   display: grid;
-  gap: 7px;
+  gap: 8px;
   font-size: 12px;
 }
 
-.evo-sop-batch-editor > label {
+.evo-sop-batch-editor > label,
+.evo-sop-model-head > label {
   font-weight: 600;
+}
+
+.evo-sop-model-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-model-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-model-picker {
+  display: grid;
+  grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
+  gap: 8px;
+}
+
+.evo-sop-model-picker[hidden] {
+  display: none;
+}
+
+.evo-sop-model-picker select,
+.evo-sop-model-picker input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  font-size: 12px;
 }
 
 .evo-sop-batch-presets {
@@ -951,7 +1046,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding-top: 6px;
+  padding-top: 8px;
   border-top: 1px solid var(--hui-border-soft);
 }
 
@@ -970,5 +1065,17 @@
   .evo-sop-row-pref,
   .evo-sop-row-metrics {
     grid-column: 1 / -1;
+  }
+  .evo-sop-split-head {
+    display: none;
+  }
+  .evo-sop-split-row {
+    grid-template-columns: 1fr;
+  }
+  .evo-sop-split-cell.is-left {
+    border-right: 0;
+  }
+  .evo-sop-split-cell.is-empty {
+    display: none;
   }
 }

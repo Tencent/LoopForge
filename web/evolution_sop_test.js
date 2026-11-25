@@ -19,6 +19,12 @@ const { createDOM } = require('./hui_fake_dom');
   w.history = { state: null, pushState() {}, replaceState() {}, back() {} };
   w.location = { hash: '#/evolution' };
 
+  let boundModel = null;
+  w.AgentFlowAssistantModels = {
+    featurePickerHTML: name => `<select data-feature-executor></select><select data-feature-model name="${name || ''}"><option value="claude-code:sonnet-4" selected>Sonnet 4</option></select>`,
+    bindFeaturePicker: (host, opts) => { boundModel = opts; return Promise.resolve(); },
+  };
+
   for (const file of [
     'evolution.js',
     'app/evolution-simple.js',
@@ -30,7 +36,7 @@ const { createDOM } = require('./hui_fake_dom');
     dom.load(path.join(__dirname, file));
   }
 
-  const api = dom.run('({evo, evoSOPState, evoHomeHTML, evoSOPDetailHTML, evoOpenSOP, evoSOPSavePolicy, evoSOPStartGray, evoSOPPublishGray})');
+  const api = dom.run('({evo, evoSOPState, evoHomeHTML, evoSOPDetailHTML, evoSOPOpenPrefDialog, evoSOPSyncPrefModelUI, evoSOPSavePolicy})');
   const { evo } = api;
   evo.projectId = 'p';
   evo.overview = {
@@ -45,7 +51,7 @@ const { createDOM } = require('./hui_fake_dom');
         enabled: true,
         preferences: ['tokens', 'tools'],
         batchSize: 10,
-        model: 'claude-sonnet-4',
+        model: 'codex:gpt-5',
         stage: 'gray',
         pendingRuns: 4,
         lastRunNote: '最近 1 次 · 一次成功，未发现异常',
@@ -80,10 +86,10 @@ const { createDOM } = require('./hui_fake_dom');
     ],
   };
 
-  // 1. Home view renders SOP table with 3 clean stages and NO round-progress column.
+  // 1. Home view has NO top auto-detection bar and NO round-progress column.
   const homeHTML = api.evoHomeHTML();
   assert.match(homeHTML, /evo-sop-home/);
-  assert.match(homeHTML, /SOP 自动检测已开启/);
+  assert.doesNotMatch(homeHTML, /evo-sop-detect-bar/, 'home must not show redundant auto-detection banner');
   assert.match(homeHTML, /Bug 自动修复/);
   assert.match(homeHTML, /需求研发交付/);
   assert.match(homeHTML, /省 Token · 省工具/);
@@ -92,8 +98,9 @@ const { createDOM } = require('./hui_fake_dom');
   assert.match(homeHTML, /优化中/);
   assert.match(homeHTML, /灰度中/);
   assert.doesNotMatch(homeHTML, /本轮进度/, 'home table must not show current round progress column');
+  assert.match(homeHTML, /evo-sop-dialog-close/, 'preference dialog uses dedicated neutral close icon button');
 
-  // 2. Detail view renders 5 core metrics with source notes, lifecycle callout, version & gray tabs, and diff tab.
+  // 2. Detail view has NO config bar, renders 5 core metrics, lifecycle callout, version & gray tabs, and side-by-side split diff.
   const detailPayload = {
     ...evo.overview.sops[0],
     versions: [
@@ -124,7 +131,8 @@ const { createDOM } = require('./hui_fake_dom');
     changeFiles: [{ path: 'roles/coder.md', assetName: '开发工程师', lines: [['ctx', '步骤 1'], ['del', '全局 grep'], ['add', '优先查索引']] }],
   };
 
-  const trendHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'versions', metric: 'score', fileIndex: 0, detail: detailPayload });
+  const trendHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'versions', metric: 'score', fileIndex: 0, diffMode: 'split', detail: detailPayload });
+  assert.doesNotMatch(trendHTML, /evo-sop-config-bar/, 'detail view must not show redundant config bar');
   assert.match(trendHTML, /v3 生效中/);
   assert.match(trendHTML, /SOP 评分/);
   assert.match(trendHTML, /平均 Token/);
@@ -133,46 +141,43 @@ const { createDOM } = require('./hui_fake_dom');
   assert.match(trendHTML, /一次成功率/);
   assert.match(trendHTML, /近 10 次运行评测均分/);
   assert.match(trendHTML, /发布 v4/);
-  assert.match(trendHTML, /历史正式版本/);
-  assert.match(trendHTML, /近几次灰度数据/);
 
   const grayHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'gray', metric: 'score', fileIndex: 0, expandedGray: 'evp-gray', detail: detailPayload });
   assert.match(grayHTML, /v3 → v4/);
   assert.match(grayHTML, /run-gray-1/);
   assert.match(grayHTML, /候选版/);
 
-  const changeHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'change', scope: 'versions', metric: 'score', fileIndex: 0, detail: detailPayload });
+  const changeHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'change', scope: 'versions', metric: 'score', fileIndex: 0, diffMode: 'split', detail: detailPayload });
   assert.match(changeHTML, /工具反复调用 grep/);
   assert.match(changeHTML, /roles\/coder\.md/);
+  assert.match(changeHTML, /evo-sop-split-diff/, 'change tab defaults to side-by-side split diff');
+  assert.match(changeHTML, /修改前（原版）/);
+  assert.match(changeHTML, /修改后（候选版）/);
+  assert.match(changeHTML, /全局 grep/);
   assert.match(changeHTML, /优先查索引/);
 
-  // 3. Optimize stage prompts whether to start grayscale.
-  const optDetail = {
-    ...evo.overview.sops[1],
-    versions: [],
-    grayRounds: [],
-    activeProposal: { id: 'evp-opt', status: 'pending', title: '优化提示词', candidateContent: 'new', summary: { passed: true, fixed: 2, total: 3 } },
-  };
-  const optHTML = api.evoSOPDetailHTML({ workflowId: 'wf-feat', tab: 'trend', scope: 'versions', metric: 'score', fileIndex: 0, detail: optDetail });
-  assert.match(optHTML, /优化完成，是否开始灰度/);
-  assert.match(optHTML, /data-evo-sop-start-gray="evp-opt"/);
+  // 3. Preference dialog binds real AgentFlowAssistantModels feature picker for standalone model selection.
+  dom.html(`<section id="evolutionView" class="active"><div id="evoPageHead"></div><div id="evoMetrics"></div><div id="evolutionBody">${homeHTML}</div></section>`);
+  api.evoSOPOpenPrefDialog('wf-bug');
+  assert.equal(boundModel?.model, 'codex:gpt-5', 'custom model must initialize feature picker');
+  assert.equal(w.$('#evoSopModelPickerHost').hidden, false);
 
-  // 4. Policy save hits PUT /api/evolution/sops/:workflowId/policy with preferences & batchSize.
+  // 4. Policy save hits PUT /api/evolution/sops/:workflowId/policy with preferences, batchSize, and standalone model.
   const calls = [];
   w.api = async (url, options = {}) => {
     calls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
-    if (url.includes('/policy')) return { workflowId: 'wf-bug', projectId: 'p', enabled: false, preferences: ['tokens', 'duration'], batchSize: 20, model: '' };
+    if (url.includes('/policy')) return { workflowId: 'wf-bug', projectId: 'p', enabled: false, preferences: ['tokens', 'duration'], batchSize: 20, model: 'claude-code:sonnet-4' };
     return detailPayload;
   };
-  dom.html('<section id="evolutionView" class="active"><div id="evoPageHead"></div><div id="evoMetrics"></div><div id="evolutionBody"></div></section>');
-  const saved = await api.evoSOPSavePolicy('wf-bug', { enabled: false, preferences: ['tokens', 'duration'], batchSize: 20 });
+  const saved = await api.evoSOPSavePolicy('wf-bug', { enabled: false, preferences: ['tokens', 'duration'], batchSize: 20, model: 'claude-code:sonnet-4' });
   assert.equal(saved.batchSize, 20);
+  assert.equal(saved.model, 'claude-code:sonnet-4');
   assert.equal(calls[0].method, 'PUT');
   assert.match(calls[0].url, /\/api\/evolution\/sops\/wf-bug\/policy$/);
   assert.deepEqual(calls[0].body.preferences, ['tokens', 'duration']);
-  assert.equal(calls[0].body.batchSize, 20);
+  assert.equal(calls[0].body.model, 'claude-code:sonnet-4');
 
-  console.log('evolution sop: SOP-centric home, detail metrics, version/gray trends, diff tab, and policy save passed');
+  console.log('evolution sop: clean home/detail, fixed switch scope, side-by-side diff, close icon, and standalone model picker passed');
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;

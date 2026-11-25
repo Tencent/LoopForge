@@ -90,7 +90,7 @@
 #evolutionView .evo-issue > b, .evo-change-row > div > b { display: block; color: var(--hui-text); font-size: 13px; line-height: 1.7; font-weight: 600; overflow-wrap: anywhere; }
 #evolutionView .evo-issue.v-fix .evo-issue-desc > span:first-child { color: var(--hui-error); }
 #evolutionView :is(.evo-issue, .evo-status-tabs button, .evo-row-primary, .evo-row-menu summary, .evo-list-footer button):focus-visible { outline: 2px solid var(--hui-accent); outline-offset: 2px; }
-#evolutionView input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var(--hui-accent); cursor: pointer; }
+#evolutionView input[type="checkbox"]:not([role="switch"], .hui-switch) { width: 15px; height: 15px; margin: 0; accent-color: var(--hui-accent); cursor: pointer; }
 .evo-issue-desc { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; margin-top: 7px; color: var(--hui-muted); font-size: 11px; overflow-wrap: anywhere; }
 .evo-object, .evo-change-copy, .evo-change-row > div { min-width: 0; overflow-wrap: anywhere; }
 .evo-object-name { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; }
