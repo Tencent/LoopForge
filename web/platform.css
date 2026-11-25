@@ -2073,6 +2073,8 @@ html[data-theme="dark"] .edge-delete-btn:hover path{stroke:#ffffff !important}
 .issue-modal-card label.toggle-row{display:flex;align-items:center;gap:7px}
 .issue-modal-card .toggle-row input[type="checkbox"]{width:auto;flex:0 0 auto;margin:0;padding:0}
 .issue-modal-card textarea{resize:vertical}
+/* 长表单滚动时，取消/启动 SOP/保存始终固定在弹窗底部可见 */
+.issue-modal-card>.modal-actions{position:sticky;bottom:calc(-1 * var(--sp-6));z-index:4;margin:var(--sp-4) calc(-1 * var(--sp-6)) calc(-1 * var(--sp-6));padding:12px var(--sp-6) var(--sp-6);background:var(--v3-surface,var(--panel));border-top:1px solid var(--line-strong)}
 
 /* ================= 响应式 ================= */
 @media (max-width:1100px){
