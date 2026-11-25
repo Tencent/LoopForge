@@ -120,7 +120,7 @@ test('repository drawer detects Git SSH URLs and persists a default repository',
   assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/repositories'));
 });
 
-test('repository drawer saves the AI CLI, model and instructions or an explicit empty prefix', async (t) => {
+test('repository drawer saves AI and prefix naming settings', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.router.put('/api/repositories', (call) => call.body);
@@ -174,6 +174,10 @@ test('repository drawer saves the AI CLI, model and instructions or an explicit 
   fields.workBranchNamingMode.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   assert.equal(form.querySelector('[data-work-branch-prefix]').hidden, false);
   assert.equal(form.querySelector('[data-work-branch-prompt]').hidden, true);
+  assert.deepEqual(Array.from(fields.workBranchPrefix.options, option => [option.value, option.text]), [
+    ['feature/', 'feature/'], ['custom', '自定义'], ['', '无前缀'],
+  ]);
+  assert.equal(fields.workBranchPrefix.value, 'feature/');
   fields.workBranchPrefix.value = '';
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(8);
@@ -182,6 +186,19 @@ test('repository drawer saves the AI CLI, model and instructions or an explicit 
   app.evaluate(`openRepoDrawer('branch-repo')`);
   assert.equal(fields.workBranchNamingMode.value, 'prefix');
   assert.equal(fields.workBranchPrefix.value, '');
+
+  for (const prefix of ['feat/', 'fix/', 'bugfix/']) {
+    app.evaluate(`
+      state.data.repositories[0].workBranchNaming={mode:'prefix',prefix:${JSON.stringify(prefix)}};
+      openRepoDrawer('branch-repo');
+    `);
+    assert.equal(fields.workBranchPrefix.value, 'custom');
+    assert.equal(fields.workBranchCustomPrefix.value, prefix);
+    assert.equal(form.querySelector('[data-work-branch-custom-prefix]').hidden, false);
+  }
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(8);
+  assert.deepEqual(updates().at(-1).body.workBranchNaming, { mode: 'prefix', prefix: 'bugfix/' });
 });
 
 test('project owner deletes a project from its danger zone and the list moves on', async (t) => {
