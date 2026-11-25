@@ -4,7 +4,6 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -216,6 +215,7 @@ func TestCatalogDirectSharingAndCloneHelpers(t *testing.T) {
 		{ID: "cvb-project-market", Name: "Market source", Command: "true", Scope: "project", ProjectID: "cvb-direct-a", MarketID: "market-x"},
 		{ID: "cvb-project-installed", Name: "Installed", Command: "true", Scope: "project", ProjectID: "cvb-direct-b", MarketID: "market-x"},
 		{ID: "cvb-project-copy", Name: "Copy", Command: "true", Scope: "project", ProjectID: "cvb-direct-a"},
+		{ID: "cvb-project-private", Name: "Private project", Command: "true", Scope: "project", ProjectID: "private-project"},
 		{ID: "cvb-personal-own", Name: "Own", Command: "true", Scope: "personal", OwnerUserID: f.user.ID},
 		{ID: "cvb-personal-other", Name: "Other", Command: "true", Scope: "personal", OwnerUserID: f.user.ID + 100},
 	}
@@ -224,28 +224,24 @@ func TestCatalogDirectSharingAndCloneHelpers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := h.cloneAgentMCPServers([]string{"cvb-personal-other"}, "cvb-direct-b", 0); !errors.Is(err, errPersonalMCPCloneRequiresLogin) {
-		t.Fatalf("personal clone without login error = %v", err)
-	}
+	allowed := func(projectID string) bool { return projectID == "cvb-direct-a" }
 	got, err := h.cloneAgentMCPServers([]string{
 		"missing", "cvb-empty", "cvb-project-same", "cvb-project-market",
-		"cvb-project-copy", "cvb-personal-own", "cvb-personal-other",
-	}, "cvb-direct-b", f.user.ID)
+		"cvb-project-copy", "cvb-personal-own", "cvb-personal-other", "cvb-project-private",
+	}, "cvb-direct-b", f.user.ID, allowed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 5 {
+	if len(got) != 4 {
 		t.Fatalf("cloned MCP ids = %#v", got)
 	}
 	if got[0] != "cvb-project-same" || got[1] != "cvb-project-installed" || got[3] != "cvb-personal-own" {
 		t.Fatalf("unexpected reused MCP ids: %#v", got)
 	}
-	for _, id := range []string{got[2], got[4]} {
-		if _, ok := f.s.MCPServer(id); !ok {
-			t.Fatalf("cloned MCP %q was not stored", id)
-		}
+	if _, ok := f.s.MCPServer(got[2]); !ok {
+		t.Fatalf("cloned MCP %q was not stored", got[2])
 	}
-	again, err := h.cloneAgentMCPServers([]string{"cvb-project-copy"}, "cvb-direct-b", f.user.ID)
+	again, err := h.cloneAgentMCPServers([]string{"cvb-project-copy"}, "cvb-direct-b", f.user.ID, allowed)
 	if err != nil || len(again) != 1 || again[0] != got[2] {
 		t.Fatalf("idempotent clone = %#v, %v", again, err)
 	}
