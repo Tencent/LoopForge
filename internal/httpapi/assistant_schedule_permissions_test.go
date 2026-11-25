@@ -45,6 +45,7 @@ func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
 	if !scheduled.Scheduled || home.Scheduled {
 		t.Fatal("only the scheduled session must be marked unattended")
 	}
+	h.deps.kb = knowledge.NewService(h.repo, randomID, staticKnowledgeUpstream{})
 	gateway := &agentToolGateway{deps: h.deps}
 	names := func(s *AgentToolSession) []string {
 		var out []string
@@ -77,9 +78,14 @@ func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
 			t.Errorf("homepage session is missing knowledge tool %s", name)
 		}
 	}
-	for _, name := range []string{"agentflow__issues_dispatch", "agentflow__runs_start", "agentflow__runs_retry", "agentflow__workflows_publish", "agentflow__schedule_jobs_save", "agentflow__schedule_jobs_delete", "workbench_workspace_open", "workbench_workspace_command", "workbench_workspace_submit_mr", "workbench_browser_navigate", "workbench_browser_screenshot"} {
+	for _, name := range []string{"agentflow__issues_dispatch", "agentflow__runs_start", "agentflow__runs_retry", "agentflow__workflows_publish", "agentflow__schedule_jobs_save", "agentflow__schedule_jobs_delete", "workbench_workspace_open", "workbench_browser_navigate", "workbench_browser_screenshot"} {
 		if !slices.Contains(got, name) {
 			t.Errorf("full-access scheduled session is missing %s", name)
+		}
+	}
+	for _, name := range []string{"workbench_workspace_command", "workbench_workspace_submit_mr"} {
+		if slices.Contains(got, name) || slices.Contains(want, name) {
+			t.Errorf("platform session exposes %s before workspace handoff", name)
 		}
 	}
 

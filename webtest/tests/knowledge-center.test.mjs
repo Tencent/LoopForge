@@ -258,3 +258,98 @@ test('knowledge engine settings switch between builtin and LightCloud views', as
   assert.ok(body.querySelector('[data-kb-tab="docs"]'));
   assert.match(body.textContent, /公开样例/);
 });
+
+test('LightCloud read-only tools and manual review use the selected project and source', async (t) => {
+  const pending = { id: 'sample-review', title: 'Review this note', source: 'alpha', path: 'docs/review.md', content: 'Reviewed synthetic body.', status: 'pending' };
+  let item;
+  const app = await loadApp({ routes: [
+    { method: 'GET', path: '/api/knowledge/settings', body: { provider: 'lightcloud', ready: true, canManage: true, writeEnabled: true } },
+    { method: 'GET', path: '/api/knowledge/sources?projectId=project-1', body: [{ id: 'alpha', name: 'External docs', allowed: true }] },
+    { method: 'GET', path: '/api/knowledge/usage?projectId=project-1', body: usage },
+    { method: 'GET', path: '/api/knowledge/submissions?projectId=project-1', body: () => item ? [item] : [] },
+    { method: 'GET', path: '/api/knowledge/candidates?projectId=project-1', body: () => item ? [] : [{ artifact: { id: 'note-1', runId: 'run-1', path: 'knowledge.md' } }] },
+    { method: 'POST', path: '/api/knowledge/submissions', body: () => item = { ...pending } },
+    { method: 'GET', path: '/api/knowledge/submissions/sample-review', body: () => item },
+    { method: 'PUT', path: '/api/knowledge/submissions/sample-review', body: (call) => item = { ...item, ...call.body } },
+    { method: 'POST', path: '/api/knowledge/submissions/sample-review/publish', body: () => item = { ...item, status: 'published', commit: 'external-revision' } },
+  ] });
+  t.after(app.close);
+  await settle(3);
+  await app.evaluate('renderKnowledgeView()');
+  app.evaluate('afConfirm=async()=>true');
+  const doc = app.document;
+  doc.querySelector('[data-kb-tab="usage"]').click();
+  assert.doesNotMatch(doc.querySelector('#kbTabBody').textContent, /自动入审核/);
+  doc.querySelector('[data-kb-inject]').click();
+  const tools = doc.querySelector('#kbDrawerBody').textContent;
+  for (const allowed of ['kb_search', 'kb_fetch', 'kb_list_sources', 'kb_get_source']) assert.match(tools, new RegExp(allowed));
+  assert.doesNotMatch(tools, /kb_grep|kb_report_issue|自动加入审核/);
+  doc.querySelector('#kbDrawerClose').click();
+
+  doc.querySelector('[data-kb-tab="distill"]').click();
+  assert.equal(doc.querySelector('[data-kb-status="retracted"]'), null);
+  doc.querySelector('[data-kb-cand="note-1"]').click();
+  doc.querySelector('#kbQueueBtn').click();
+  await settle(8);
+  const queued = app.router.calls.find((call) => call.method === 'POST' && call.path === '/api/knowledge/submissions');
+  assert.deepEqual(queued.body, { runId: 'run-1', artifactId: 'note-1' });
+  const form = doc.querySelector('#kbEditorForm');
+  assert.equal(form.elements.source.value, 'alpha');
+  assert.equal(form.elements.content.value, pending.content);
+  assert.equal(doc.querySelector('.kb-gates'), null);
+  form.elements.reviewNote.value = 'Looks ready.';
+  doc.querySelector('[data-kb-act="publish"]').click();
+  await settle(8);
+  const updated = app.router.calls.find((call) => call.method === 'PUT' && call.path === '/api/knowledge/submissions/sample-review');
+  assert.equal(updated.body.reviewNote, 'Looks ready.');
+  assert.ok(app.router.calls.some((call) => call.method === 'POST' && call.path.endsWith('/sample-review/publish')));
+  doc.querySelector('[data-kb-status="published"]').click();
+  doc.querySelector('[data-kb-sub="sample-review"]').click();
+  await settle(8);
+  assert.match(doc.querySelector('#kbDrawerFoot').textContent, /已写回/);
+  assert.equal(doc.querySelector('[data-kb-act="retract"]'), null);
+});
+
+test('builtin governance refreshes results and opens the pending review for a document', async (t) => {
+  const project = 'project-1';
+  const source = hostedSource.id;
+  const gap = { query: 'unknown term', count: 2 };
+  const issue = { type: 'dead_link', sourceId: source, path: 'guides/new.md', title: 'Broken cross-reference', summary: 'missing target', line: 8 };
+  const submission = { id: 'fix-link', title: 'Fix the reference', source, path: 'guides/new.md', content: 'Updated draft', status: 'pending', sedimentSignals: ['run_succeeded'], gateChecks: [{ name: '证据', detail: '存在运行产物', ok: true }] };
+  let gaps = [gap], pending = [];
+  const app = await loadApp({ routes: [
+    { method: 'GET', path: '/api/knowledge/settings', body: { provider: 'builtin', ready: true, canManage: true } },
+    { method: 'GET', path: '/api/knowledge/bases?projectId=project-1', body: overview },
+    { method: 'GET', path: '/api/knowledge/usage?projectId=project-1', body: usage },
+    { method: 'GET', path: '/api/knowledge/submissions?projectId=project-1', body: () => pending },
+    { method: 'GET', path: '/api/knowledge/candidates?projectId=project-1', body: [] },
+    { method: 'GET', path: '/api/knowledge/governance?projectId=project-1', body: () => ({
+      counts: { dead_link: 1, total: 1 }, issues: [issue], gaps, gapsTotal: gaps.length,
+      citedDocuments: [{ title: 'Referenced file', path: issue.path, layer: 'project', count: 2 }], uncitedDocuments: [{ title: 'Unread file' }],
+      feedback: [{ kind: 'issue', title: 'Agent report', surface: 'agent', note: 'Bad link' }],
+    }) },
+    { method: 'POST', path: '/api/knowledge/governance/scan', body: {} },
+    { method: 'POST', path: '/api/knowledge/governance/gaps', body: () => { gaps = []; return {}; } },
+    { method: 'POST', path: '/api/knowledge/governance/dispose', body: () => { pending = [submission]; return submission; } },
+    { method: 'GET', path: '/api/knowledge/submissions/fix-link', body: submission },
+  ] });
+  t.after(app.close);
+  await settle(3);
+  await app.evaluate('renderKnowledgeView()');
+  const doc = app.document;
+  doc.querySelector('[data-kb-tab="governance"]').click();
+  const body = doc.querySelector('#kbTabBody');
+  for (const text of ['Broken cross-reference', 'Agent report', 'Referenced file', 'Unread file', gap.query]) assert.ok(body.textContent.includes(text));
+  doc.querySelector('#kbGovScan').click();
+  await settle(6);
+  doc.querySelector('[data-kb-gap="resolved"]').click();
+  await settle(6);
+  assert.doesNotMatch(doc.querySelector('#kbTabBody').textContent, /unknown term/);
+  doc.querySelector('[data-kb-gov-action="update"]').click();
+  await settle(8);
+  const disposition = app.router.calls.find((call) => call.path === '/api/knowledge/governance/dispose');
+  assert.deepEqual(disposition.body, { projectId: project, source, path: issue.path, action: 'update' });
+  assert.equal(doc.querySelector('#kbDrawerTitle').textContent, submission.title);
+  assert.match(doc.querySelector('#kbDrawerBody .kb-gates').textContent, /存在运行产物/);
+  assert.equal(doc.querySelector('#kbEditorForm [name=content]').value, submission.content);
+});

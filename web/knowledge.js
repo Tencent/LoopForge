@@ -720,7 +720,7 @@ function kbRenderUsage(body){
       return kbRow(kbText(escapeHTML(r.name||r.id),escapeHTML(desc)),kbSwitch(r.on,r.name||r.id,{disabled:busy,attrs:`data-kb-agent="${escapeHTML(r.id)}"${busy?' aria-busy="true"':''}`}),{icon:'robot'});
     }).join(''):'<div class="kb-line-note">当前项目还没有可开启的角色</div>'}
     ${kbRow(kbText('运行时注入的工具与规则'),kbValue(`${kbTools().length} 个只读工具`),{go:true,icon:'settings',attrs:'data-kb-key="inject" data-kb-inject'})}`;
-  body.innerHTML=kbPanel(kbPanelTitle('角色','开启后可只读检索；运行产出的 knowledge.md 在闭环后自动入审核队列'),list,{label:'角色'});
+  body.innerHTML=kbPanel(kbPanelTitle('角色',kbExternal()?'开启后可只读检索项目授权的 LightCloud 来源。':'开启后可只读检索；运行产出的 knowledge.md 在闭环后自动入审核队列'),list,{label:'角色'});
   window.AgentFlowHarnessIcons?.hydrate(body);
   body.querySelectorAll('[data-kb-agent]').forEach(sw=>sw.onclick=()=>kbToggleAgent(sw.dataset.kbAgent,sw.getAttribute('aria-checked')!=='true',sw));
   body.querySelector('[data-kb-inject]').onclick=kbOpenInject;
@@ -749,6 +749,10 @@ async function kbToggleAgent(id,on,sw){
 }
 
 function kbOpenInject(){
+  const external=kbExternal();
+  const guidance=external
+    ?'角色开启开关后，运行时注入四个只读工具及「知识库使用规范」。平台签发限定项目的代理令牌，人工审核并写回沉淀内容。'
+    :'角色开启开关后，运行时注入五个只读工具、文档问题标记和「知识库使用规范」。闭环产出的 knowledge.md 自动入审核队列，审核通过或门禁全过后由平台写回。';
   const body=`
     ${kbCaption('MCP')}
     ${kbRow(kbText('项目知识库','<span class="mono">agentflow-knowledge</span> · 经平台代理只读访问，限定本项目授权来源'))}
@@ -756,8 +760,8 @@ function kbOpenInject(){
     ${kbTools().map(([n,d])=>kbRow(kbText(`<span class="mono">${n}</span>`,escapeHTML(d)))).join('')}
     ${kbRow(kbText('<span class="mono kb-off">kb_write_document</span>','不对 Agent 开放，写入由审核人员处理'))}
     ${kbCaption('说明')}
-    <div class="kb-cap">角色开启知识库开关后，运行时注入这 6 个知识库工具（5 个只读检索 + 1 个标记问题）与「知识库使用规范」；节点启动时平台签发限定本项目的令牌。Agent 对正文仍完全只读，标记问题只记录反馈、不改正文；运行到达闭环后，平台把该角色产出的 knowledge.md 自动加入审核队列，审核通过或门禁全过后才写回。</div>`;
-  kbDrawerOpen('运行时注入的工具与规则','Agent 只读正文；标记问题只记录反馈',body);
+    <div class="kb-cap">${guidance}</div>`;
+  kbDrawerOpen('运行时注入的工具与规则',external?'Agent 只读':'Agent 只读正文，标记问题记录到治理',body);
 }
 
 // ---------- 沉淀配置 ----------
