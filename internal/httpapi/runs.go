@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -274,7 +275,7 @@ func (h *runsHandlers) run(c *gin.Context) {
 		if strings.HasPrefix(mediaType, "text/") {
 			mediaType += "; charset=utf-8"
 		}
-		c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", artifact.Name+artifactExtension(artifact.MediaType)))
+		c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", artifactFileName(artifact)))
 		c.Header("ETag", `"`+artifact.SHA256+`"`)
 		c.DataFromReader(http.StatusOK, artifact.Size, mediaType, body, nil)
 	case "/api/runs/:id/approve":
@@ -339,6 +340,15 @@ func (h *runsHandlers) run(c *gin.Context) {
 	default:
 		c.Status(http.StatusNotFound)
 	}
+}
+
+// artifactFileName names a downloaded deliverable after the file it came from,
+// so a binary artifact keeps its extension instead of becoming a .txt file.
+func artifactFileName(artifact domain.Artifact) string {
+	if base := path.Base(artifact.Path); path.Ext(base) != "" && base != "." && base != "/" {
+		return base
+	}
+	return artifact.Name + artifactExtension(artifact.MediaType)
 }
 
 func artifactExtension(mediaType string) string {
