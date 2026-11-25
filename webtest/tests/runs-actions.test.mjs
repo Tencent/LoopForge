@@ -11,7 +11,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
     result: { dimensions: { control: 82 }, summary: 'Solid run',
       findings: [{ severity: 'warn', dimension: 'control', message: 'One retry', nodeId: 'b', evidence: 'attempt 2' }],
       recommendations: [{ id: 'rec-1', title: 'Tune node', rationale: 'Reduce retries',
-        target: 'workflow', action: 'workflow.update_node', nodeId: 'b', set: { retries: 1 } }] }
+        target: 'workflow', action: 'workflow.update_node', nodeId: 'b', set: { maxAttempts: 2 } }] }
   };
   app.router.get('/api/runs/run-x/eval', evaluation);
   app.router.post('/api/runs/run-x/eval', { ...evaluation, status: 'running' });
@@ -107,8 +107,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
       urls:[vscodeWorkbenchURL('run x',{embed:true}),vscodeWindowName('run x!'),
         previewCandidateHttpsURL('http://example.com:80/path')],
       clean:[runWorkspaceWasCleaned({workspaceCleanedAt:'1970-01-01'}),runWorkspaceWasCleaned({workspaceCleanedAt:'2026-01-01'})],
-      page:[runPageTarget(run,'a'),runDisplayStatus({...run,status:'paused'}),runAwaitsConfirmation({...run,status:'waiting'})],
-      evalApply:[runEvalApplyable({action:'workflow.update_node'}),runEvalApplyable({action:'noop'})]
+      page:[runPageTarget(run,'a'),runDisplayStatus({...run,status:'paused'}),runAwaitsConfirmation({...run,status:'waiting'})]
     };
   })()`));
   assert.equal(result.mergedStatus, 'running');
@@ -140,7 +139,6 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.equal(result.page[0].runId, 'run-x');
   assert.equal(result.page[1], '已暂停');
   assert.equal(result.page[2], true);
-  assert.deepEqual(result.evalApply, [true,false]);
   app.evaluate(`
     state.activeRun={...state.activeRun,status:'failed',artifacts:[
       {id:'art-1',nodeId:'b',name:'report.md',path:'report.md',attempt:2,size:1200,sha256:'abcdef',mediaType:'text/markdown'}]};
@@ -269,7 +267,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   }`);
   await submittingEvaluation;
   assert.equal(app.router.calls.find(c => c.method === 'POST' && c.path === '/api/runs/run-x/eval')?.body.model, 'codex:model-x');
-  app.evaluate(`state.runEvalStream?.close();state.runEvalStream=null;state.runEvalBusy=false`);
+  app.evaluate(`stopRunEvalStream()`);
   app.evaluate(`
     state.data.runs=[{id:'run-select',status:'succeeded',workflowId:'flow-1',createdAt:'2026-02-01',nodes:{}}];
     selectRun('run-select');

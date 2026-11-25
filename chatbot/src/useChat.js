@@ -105,6 +105,13 @@ const initialProject =
 
 class ComposerModelError extends Error {}
 
+function withSessionTitle(session, source) {
+  const { title, displayTitle, titleEdited, titleGenerated } = source;
+  if (session.title === title && session.displayTitle === displayTitle &&
+      session.titleEdited === titleEdited && session.titleGenerated === titleGenerated) return session;
+  return { ...session, title, displayTitle, titleEdited, titleGenerated };
+}
+
 export function useChat(embedded = null) {
   const scoped = !!embedded;
   const stopRequestRef = useRef(null);
@@ -192,20 +199,32 @@ export function useChat(embedded = null) {
   currentId.current = activeId;
   sessionRef.current = session;
   projectRef.current = projectId;
+  const renamedTitles = useRef(new Map());
+  const mergeRenamedTitle = useCallback((stored, titlesAtRequest) => {
+    const renamed = renamedTitles.current.get(stored?.id);
+    return renamed && renamed !== titlesAtRequest.get(stored.id)
+      ? withSessionTitle(stored, renamed)
+      : stored;
+  }, []);
+  const readSession = useCallback(async (id) => {
+    const titlesAtRequest = renamedTitles.current;
+    return mergeRenamedTitle(await api(sessionPath(id)), titlesAtRequest);
+  }, [mergeRenamedTitle]);
   const refreshSessions = useCallback(async () => {
     if (scoped) return;
-    const rows = await api("/api/assistant/sessions");
-    setSessions(rows || []);
-    const current = sessionRef.current;
-    const row = (rows || []).find((item) => item.id === current?.id);
-    if (row?.title && current && !current.titleEdited && row.title !== current.title) {
+    const titlesAtRequest = renamedTitles.current;
+    const rows = (await api("/api/assistant/sessions") || [])
+      .map((row) => mergeRenamedTitle(row, titlesAtRequest));
+    setSessions(rows);
+    const row = rows.find((item) => item.id === currentId.current);
+    if (row?.title) {
       setSession((prev) =>
-        prev && prev.id === row.id && !prev.titleEdited
-          ? { ...prev, title: row.title, titleGenerated: !!row.titleGenerated }
+        prev?.id === row.id && (!prev.titleEdited || row.titleEdited)
+          ? withSessionTitle(prev, row)
           : prev,
       );
     }
-  }, [scoped]);
+  }, [mergeRenamedTitle, scoped]);
   const changeURL = useCallback((id) => {
     if (scoped) return;
     const url = new URL(location.href);
@@ -370,7 +389,7 @@ export function useChat(embedded = null) {
       connectionError = "";
     async function load() {
       try {
-        const stored = await api(sessionPath(activeId));
+        const stored = await readSession(activeId);
         if (!current || currentId.current !== activeId || sessionRef.current?.id === activeId) return;
         receiveSession(stored);
         const recovered = connectionError;
@@ -388,7 +407,7 @@ export function useChat(embedded = null) {
       current = false;
       clearTimeout(timer);
     };
-  }, [activeId, ready, syncProject]);
+  }, [activeId, ready, readSession, syncProject]);
   useEffect(() => {
     if (!ready || scoped) return;
     const timer = setInterval(
@@ -404,18 +423,18 @@ export function useChat(embedded = null) {
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
-        const stored = await api(sessionPath(session.id));
+        const stored = await readSession(session.id);
         if (cancelled || currentId.current !== session.id || !stored?.title) return;
-        if (stored.title === sessionRef.current?.title && !stored.titleGenerated) return;
+        if (stored.title === sessionRef.current?.title && !stored.titleGenerated && !stored.titleEdited) return;
         setSession((prev) =>
           prev && prev.id === stored.id && !prev.titleEdited
-            ? { ...prev, title: stored.title, titleGenerated: !!stored.titleGenerated }
+            ? withSessionTitle(prev, stored)
             : prev,
         );
         setSessions((rows) =>
           (rows || []).map((item) =>
             item.id === stored.id
-              ? { ...item, title: stored.title, titleGenerated: !!stored.titleGenerated }
+              ? withSessionTitle(item, stored)
               : item,
           ),
         );
@@ -429,7 +448,7 @@ export function useChat(embedded = null) {
       clearInterval(timer);
       clearTimeout(stop);
     };
-  }, [ready, session?.id, session?.title, session?.titleEdited, session?.titleGenerated, titlePrompt]);
+  }, [readSession, ready, session?.id, session?.title, session?.titleEdited, session?.titleGenerated, titlePrompt]);
   useEffect(() => {
     if (!ready || !activeId) return;
     let cancelled = false,
@@ -464,7 +483,7 @@ export function useChat(embedded = null) {
           source?.close();
           source = null;
         }
-        const stored = await api(sessionPath(activeId));
+        const stored = await readSession(activeId);
         if (!isCurrent(revision)) return;
         receiveSession(stored, running);
         if (!running) {
@@ -577,7 +596,7 @@ export function useChat(embedded = null) {
       clearTimeout(timer);
       source?.close();
     };
-  }, [activeId, ready, refreshSessions, setGenerationKnown]);
+  }, [activeId, readSession, ready, refreshSessions, setGenerationKnown]);
   const selectProject = useCallback(
     async (id, { external = false } = {}) => {
       const current = sessionRef.current;
@@ -591,7 +610,11 @@ export function useChat(embedded = null) {
         try {
           const saved = await write(
             sessionPath(current.id),
-            { ...current, projectId: id },
+            // Another device may have renamed the session since this one read it.
+            {
+              ...current, projectId: id,
+              title: undefined, titleEdited: undefined, titleGenerated: undefined,
+            },
             "PUT",
           );
           setSession(saved);
@@ -1262,7 +1285,7 @@ export function useChat(embedded = null) {
         // the transcript fails. The session keeps receipts for earlier turns.
         if (mayHaveReachedServer && g?.clientRequestId === clientRequestId) return true;
         try {
-          const stored = await api(sessionPath(s.id));
+          const stored = await readSession(s.id);
           receiveSession(stored, g?.status === "running");
           if (g?.status === "running" && currentId.current === s.id) setGenerationKnown(s.id);
           if (mayHaveReachedServer && stored?.recentClientRequestIds?.includes(clientRequestId)) return true;
@@ -1297,16 +1320,12 @@ export function useChat(embedded = null) {
     }
   }
   async function rename(id, title) {
-    try {
-      const stored = await api(sessionPath(id));
-      const saved = await write(sessionPath(id), { ...stored, title }, "PUT");
-      if (id === currentId.current) setSession(saved);
-      await refreshSessions();
-      return true;
-    } catch (e) {
-      setError(e.message);
-      return false;
-    }
+    const saved = await write(`${sessionPath(id)}/title`, { title }, "PUT");
+    // Requests started before this rename can still return an older title.
+    renamedTitles.current = new Map(renamedTitles.current).set(id, saved);
+    setSession((current) => current?.id === id ? withSessionTitle(current, saved) : current);
+    setSessions((rows) => rows.map((row) => row.id === id ? withSessionTitle(row, saved) : row));
+    return true;
   }
   async function archive(id, archived) {
     try {
@@ -1388,7 +1407,7 @@ export function useChat(embedded = null) {
     applyingRef.current.add(key);
     let executed = false;
     try {
-      let stored = await api(sessionPath(id));
+      let stored = await readSession(id);
       let reply = JSON.parse(stored.messages[messageIndex].content);
       let draft = reply.drafts[draftIndex];
       if (draft.saved || draft.inherited || draft.decision === "rejected") return null;
@@ -1406,7 +1425,7 @@ export function useChat(embedded = null) {
             })
           ).session;
         } catch (error) {
-          void api(sessionPath(id))
+          void readSession(id)
             .then((latest) => currentId.current === id && setSession(latest))
             .catch(() => {});
           throw error;
@@ -1467,7 +1486,9 @@ export function useChat(embedded = null) {
           );
       }
       stored.messages[messageIndex].content = JSON.stringify(reply);
-      const saved = await write(sessionPath(id), stored, "PUT");
+      const saved = await write(sessionPath(id), {
+        ...stored, title: undefined, titleEdited: undefined, titleGenerated: undefined,
+      }, "PUT");
       if (currentId.current === id) {
         setSession(saved);
         // Confirmation resumes the original goal, while subsequent writes still
@@ -1640,7 +1661,7 @@ export function useChat(embedded = null) {
     const projectRows = await api("/api/projects").catch(() => null);
     if (Array.isArray(projectRows)) setProjects(projectRows);
     if (activeId) {
-      const stored = await api(sessionPath(activeId));
+      const stored = await readSession(activeId);
       if (currentId.current === activeId) setSession(stored);
     }
     await refreshSessions();

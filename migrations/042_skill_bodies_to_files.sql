@@ -7,7 +7,7 @@ DROP TEMPORARY TABLE IF EXISTS skill_body_migration_blockers;
 CREATE TEMPORARY TABLE skill_body_migration_blockers AS
 SELECT
   legacy.id AS skill_id,
-  CASE WHEN existing.skill_id IS NULL THEN 'body_exceeds_1_mib'
+  CASE WHEN existing.skill_id IS NULL THEN 'body_exceeds_10_mib'
        ELSE 'skill_md_path_collision' END AS reason,
   legacy.body_bytes,
   existing.path AS existing_path
@@ -20,7 +20,7 @@ LEFT JOIN skill_files AS existing
   ON existing.skill_id = legacy.id AND existing.path = 'SKILL.md'
 WHERE legacy.body_bytes > 0
   AND ((existing.skill_id IS NOT NULL AND CAST(existing.path AS BINARY) <> 'SKILL.md')
-       OR (existing.skill_id IS NULL AND legacy.body_bytes > 1048576));
+       OR (existing.skill_id IS NULL AND legacy.body_bytes > 10485760));
 
 SELECT skill_id, reason, body_bytes, existing_path
 FROM skill_body_migration_blockers
@@ -47,7 +47,7 @@ FROM (
   FROM skills
   WHERE JSON_TYPE(JSON_EXTRACT(payload, '$.content')) = 'STRING'
 ) AS legacy
-WHERE OCTET_LENGTH(body) BETWEEN 1 AND 1048576
+WHERE OCTET_LENGTH(body) BETWEEN 1 AND 10485760
   AND EXISTS (SELECT 1 FROM skill_body_migration_guard)
 ON DUPLICATE KEY UPDATE skill_id = skill_files.skill_id;
 

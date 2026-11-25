@@ -19,6 +19,8 @@ import (
 )
 
 var ErrAssistantPersonalWorkspaceProject = errors.New("此会话已有个人工作区，请在项目中新建对话")
+var ErrAssistantSessionNotFound = errors.New("会话不存在")
+var ErrAssistantSessionTitleLocked = errors.New("共享流程运行会话不能重命名")
 
 func assistantRecordID(id string) string {
 	id = filepath.Base(strings.TrimSpace(id))
@@ -295,6 +297,45 @@ func (r *AssistantRepo) SetAssistantSessionGeneratedTitle(userID int64, id, titl
 		base.DB = tx
 		scoped.deps = &base
 		return scoped.putAssistantSession(userID, item)
+	})
+}
+
+// SetAssistantSessionTitle shares the session lock with generation writes.
+// updated_at still tracks the transcript.
+func (r *AssistantRepo) SetAssistantSessionTitle(userID int64, id, projectID, title string) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row assistantSessionRow
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select(assistantSessionMetadataColumns).
+			Where("id = ? AND user_id = ?", assistantRecordID(id), userID).Take(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrAssistantSessionNotFound
+		}
+		if err != nil {
+			return err
+		}
+		session := decodeAssistantSession(row)
+		if session.Shared {
+			return ErrAssistantSessionTitleLocked
+		}
+		if session.ProjectID != projectID {
+			return ErrAssistantSessionProjectChanged
+		}
+		edited := "CAST('true' AS JSON)"
+		if tx.Dialector.Name() == "sqlite" {
+			edited = "json('true')"
+		}
+		payload := "JSON_SET(JSON_REMOVE(payload, '$.titleGenerated'), '$.title', ?, '$.titleEdited', " + edited + ")"
+		updates := map[string]any{
+			"title":   title,
+			"payload": gorm.Expr(payload, title),
+		}
+		// Legacy scheduled conversations identify their source by the old title.
+		if session.Source == "" {
+			source := inferredAssistantSessionSource(session)
+			updates["source"] = source
+			updates["payload"] = gorm.Expr("JSON_SET("+payload+", '$.source', ?)", title, source)
+		}
+		return tx.Model(&row).UpdateColumns(updates).Error
 	})
 }
 

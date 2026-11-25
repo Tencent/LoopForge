@@ -86,7 +86,7 @@ MIRROR=ghcr.nju.edu.cn ./start.sh pull
 
 Pushing a `vX.Y.Z` tag on `main` runs the `release` workflow once the `platform` workflow has passed on that commit. The tagged `compose.yaml` must already pin `loopforge:X.Y.Z`. It publishes `ghcr.io/<owner>/loopforge` as `X.Y.Z`, `X.Y`, `latest` and `sha-<commit>`, smoke-tests the pushed digest with `./start.sh`, and creates the GitHub Release. Forks publish under their own owner; set the GHCR package visibility/access for your team before distributing the image. Images are pulled only when missing by default; use an immutable tag/digest, or set `LOOPFORGE_PULL_POLICY=always` when updating a mutable tag. Existing `.env` values take precedence; change the saved image or URL there when updating an installation. Compose waits for the API's health check with a bounded timeout before installing schema extensions and seeds.
 
-Open the platform and create the first account in the browser; it receives platform administration. Until that account exists the login page only offers this setup step.
+On a password-only installation, open the platform and create the first account in the browser. If no administrator is configured, the login page offers this setup step and grants the account platform administration.
 
 During initial setup, restrict the cloud security group or firewall to the operator's IP. Do not expose the first-account setup page to arbitrary Internet clients before the administrator account has been created.
 
@@ -96,6 +96,8 @@ Enterprise authentication gateways can sign users in by header with `AGENTFLOW_T
 
 - Set `AGENTFLOW_IDENTITY_HEADER_SECRET` to a random value, and have the gateway send it in `X-AgentFlow-Gateway-Secret`. The gateway must overwrite, never pass through, the client's `Staffname`, `Staffid`, `x-staff-name` and `X-AgentFlow-Gateway-Secret` headers.
 - Without a secret, any request carrying `X-Forwarded-For`, `Forwarded` or `X-Real-IP` is treated as a forwarded client, and its identity headers are ignored. This only protects proxies that add one of those headers: a same-host proxy that passes client headers through without adding them (for example nginx `proxy_pass` without `proxy_set_header X-Forwarded-For`), and any other process on the host, can still sign in as any user. Set the secret whenever header sign-in is on; the platform logs a warning at startup when it is missing.
+
+Browser self-registration is available on password-only installations. SSO counts as configured only when both `AGENTFLOW_SSO_APP_TOKEN` and `AGENTFLOW_SSO_LOGIN_URL` are set. For gateway or SSO sign-in, provision administrators by setting `AGENTFLOW_PLATFORM_ADMINS` to their authenticated login names or by using the operator account command below. On a password installation that sets `AGENTFLOW_PLATFORM_ADMINS`, the browser offers no first-account setup and the listed login names cannot self-register; create those accounts with the operator account command.
 
 ### Project credentials
 
@@ -116,6 +118,39 @@ The Compose deployment mounts the host Docker socket into the platform container
 Docker SOP nodes using a standard CLI executor first look for the CLI on the sandbox user's PATH. When it is missing, LoopForge uses a shared installation for the platform image where available or runs the same installer as conversation workspaces in the container. The install uses the sandbox's configured proxy, and later nodes in that container reuse the CLI. In-container installation requires a writable filesystem and access to the official package source. Read-only sandboxes can use a CLI from the image or the mounted toolchain. ZCode uses the official executable supplied by the image.
 
 Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: there is no unisolated sandbox type, so every task the platform runs itself is in a sandbox (the `AGENTFLOW_LOCAL_SANDBOX` setting is gone), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. Agent CLIs also apply a bound repository's own configuration as their native rules define, including unattended SOP runs: `AGENTS.md`/`CLAUDE.md` instructions, `.codebuddy/`, `.claude/settings.json` (hooks and environment) and `.mcp.json` can start commands or MCP servers inside the sandbox. Bind only repositories whose contents you trust. To run without the socket, remove the `docker.sock` volume from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for SOPs, including the welcome SOP, which now runs in `generic-docker`.
+
+### Privileged Docker sandboxes
+
+Sandbox editors can request privileged mode for an individual Docker profile under **Advanced settings**. The executing worker or Runner rejects that request unless its own process environment sets `AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX=true`. For Compose, set the variable in `.env` and recreate the platform container. For a native worker or a connected Runner, set it in the foreground command environment or service configuration and restart the process.
+
+Enable this setting only on Docker hosts where the operator trusts every user who can run work there. Privileged containers can access host devices and may gain control of the Docker host. Connected machines need Runner `0.12.5` or later. Automatic SOP sandbox selection considers ordinary sandboxes, and a privileged profile can be selected explicitly. A non-root execution service continues to map default-root images to its UID and GID to keep workspace files accessible.
+
+### Docker sandbox resource limits
+
+Set CPU and memory limits under **Advanced settings** in a Docker sandbox's
+configuration. Each new run or conversation workspace records those settings in
+its sandbox snapshot. To use profile limits on a remote execution machine,
+upgrade it to Runner 0.12.6 or later.
+
+Set machine-wide caps in the environment of each platform process or Runner
+that starts Docker sandboxes. With the published Compose stack, set these
+variables in `.env`. Restart the process to apply environment changes. Each
+sandbox uses the lower configured value for a resource. An empty value or
+`0` omits that setting. When both settings are omitted, Docker uses the
+daemon's default.
+
+| Setting | Limit |
+|---|---|
+| `AGENTFLOW_DOCKER_SANDBOX_CPU_MILLICORES` | CPU bandwidth. `1000` is one CPU. The minimum enabled value is `10`. |
+| `AGENTFLOW_DOCKER_SANDBOX_MEMORY_MIB` | Memory in MiB. The minimum enabled value is `6`. Swap follows the Docker daemon's policy. |
+| `AGENTFLOW_DOCKER_SANDBOX_PIDS` | Total tasks, including threads. |
+
+Docker applies the budget to the whole workspace container, including terminal
+sessions and later `docker exec` commands. When a container's effective limits change,
+LoopForge replaces the container the next time it opens the sandbox. The bind
+mounted checkout survives. The daemon must support the requested controllers.
+
+Image builds and browser sidecars run separately from the workspace container.
 
 ### Slow networks: clone and image build limits
 
@@ -184,7 +219,7 @@ The retention cleanup runs hourly in each process that runs the Bot workers and 
 
 ## Accounts
 
-The first account created in the browser becomes the platform administrator. After that, anyone who can reach the login page may sign up as a regular user while `AGENTFLOW_ALLOW_SIGNUP` is `true` (the default). Registered users can create requirements and run SOPs on your workers, so set `AGENTFLOW_ALLOW_SIGNUP=false` for any installation reachable from untrusted networks and create accounts explicitly instead.
+On a password-only installation, the first browser account becomes the platform administrator when there is no existing password account or configured administrator. Regular users can sign up while `AGENTFLOW_ALLOW_SIGNUP` is `true` (the default). Registered users can create requirements and run SOPs on your workers, so set `AGENTFLOW_ALLOW_SIGNUP=false` for any installation reachable from untrusted networks and provision accounts explicitly.
 
 Platform administrators create accounts under **Platform administration → Member accounts** (平台管理 → 成员账号): enter a login name and an initial password, optionally grant administration, and hand the password to the teammate. The same page lists every account and resets the password of a password account; accounts that sign in through GitHub or a gateway cannot be given a password there. New accounts join the welcome project, like self sign-ups.
 

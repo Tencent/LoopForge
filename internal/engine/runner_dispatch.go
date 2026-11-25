@@ -149,6 +149,17 @@ func runnerRepositoryCapabilityError(runner domain.Runner, repositories []domain
 	return nil
 }
 
+func (e *Engine) requireRunnerSandboxVersion(runnerID string, profile domain.SandboxProfile) error {
+	if runnerID == "" || !profile.Privileged && !profile.HasResourceLimits() {
+		return nil
+	}
+	runner, _ := e.repo.Runner(runnerID)
+	if profile.HasResourceLimits() && !runner.SupportsDockerSandboxLimits() {
+		return errors.New(domain.RunnerDockerSandboxLimitsUpgradeMessage)
+	}
+	return runner.ValidatePrivilegedSandboxVersion(profile)
+}
+
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
 	runnerID := e.defaultExecutionRunner(run)
 	if runnerID != "" && run.UsesConversationWorkspace() && len(run.RepositoryContexts()) > 0 {
@@ -162,6 +173,9 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 	}
 	profile, resources, err := e.workspaceSandboxProfile(run)
 	if err != nil {
+		return nil, err
+	}
+	if err := e.requireRunnerSandboxVersion(runnerID, profile); err != nil {
 		return nil, err
 	}
 	spec := resolvedSandboxSnapshot(profile, resources)
@@ -521,6 +535,9 @@ func (e *Engine) defaultExecutionRunner(run domain.Run) string {
 	case domain.ExecutionModeRunner:
 		return strings.TrimSpace(run.ExecutionContext.ExecutionRunnerID)
 	}
+	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		return ""
+	}
 	// Legacy runs predate target snapshots; retain their historical behavior.
 	return e.repo.DefaultRunner(run.ExecutionContext.ResponsibleUserID)
 }
@@ -533,6 +550,11 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 	if runnerID == "" || isPoolRun(run) {
 		// A pool run is rebound to another pool runner when its node starts.
 		return nil
+	}
+	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		if err := e.validateAutoAssignBinding(run); err != nil {
+			return err
+		}
 	}
 	runner, ok := e.repo.Runner(runnerID)
 	if !ok {

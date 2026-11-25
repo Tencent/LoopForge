@@ -1021,17 +1021,23 @@ func TestRunnerAdditionalSuccessAndDecodePaths(t *testing.T) {
 	if rec := cvBRequest(t, f, http.MethodGet, "/api/runners?mine=1", nil, true); rec.Code != http.StatusOK {
 		t.Fatalf("mine = %d: %s", rec.Code, rec.Body.String())
 	}
+	bind := cvBRequest(t, f, http.MethodPost, "/api/runners/bind-codes", nil, true)
+	var issued struct{ Code string }
+	if bind.Code != http.StatusOK || json.Unmarshal(bind.Body.Bytes(), &issued) != nil || issued.Code == "" {
+		t.Fatalf("issue bind code: %d %s", bind.Code, bind.Body.String())
+	}
 	reregister := requestWithHeaders(t, f.h, http.MethodPost, "/runners/register", map[string]any{
 		"runnerId": runnerID, "name": "updated", "maxConcurrency": 0,
 		"runtimes": []domain.RunnerRuntime{{Provider: "codebuddy", Status: domain.RuntimeStatusOnline}},
-	}, map[string]string{"X-Bootstrap-Token": "boot-secret"})
+	}, map[string]string{"X-Bootstrap-Token": issued.Code})
 	if reregister.Code != http.StatusOK {
 		t.Fatalf("reregister = %d: %s", reregister.Code, reregister.Body.String())
 	}
 	var rotated struct {
+		RunnerID     string `json:"runnerId"`
 		SessionToken string `json:"sessionToken"`
 	}
-	if json.Unmarshal(reregister.Body.Bytes(), &rotated) != nil || rotated.SessionToken == "" {
+	if json.Unmarshal(reregister.Body.Bytes(), &rotated) != nil || rotated.RunnerID != runnerID || rotated.SessionToken == "" || rotated.SessionToken == session {
 		t.Fatalf("rotated session: %s", reregister.Body.String())
 	}
 	auth = map[string]string{"Authorization": "Bearer " + rotated.SessionToken}

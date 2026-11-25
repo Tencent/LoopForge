@@ -74,13 +74,18 @@ func (r *ProjectsRepo) Projects() []domain.Project {
 }
 
 func (r *ProjectsRepo) Project(id string) (domain.Project, bool) {
+	project, err := r.projectWithMembersInTx(r.DB, id)
+	return project, err == nil
+}
+
+func (r *ProjectsRepo) projectWithMembersInTx(tx *gorm.DB, id string) (domain.Project, error) {
 	var row projectRow
-	if err := r.DB.Where("id = ?", id).Take(&row).Error; err != nil {
-		return domain.Project{}, false
+	if err := tx.Where("id = ?", id).Take(&row).Error; err != nil {
+		return domain.Project{}, err
 	}
 	var project domain.Project
-	if jsonUnmarshal(row.Payload, &project) != nil {
-		return domain.Project{}, false
+	if err := jsonUnmarshal(row.Payload, &project); err != nil {
+		return domain.Project{}, err
 	}
 	if row.OwnerUserID != nil {
 		project.OwnerID = *row.OwnerUserID
@@ -91,9 +96,13 @@ func (r *ProjectsRepo) Project(id string) (domain.Project, bool) {
 	if row.Updated != nil {
 		project.UpdatedAt = *row.Updated
 	}
-	project.Members = r.projectMembers(project.ID)
+	members, err := r.projectMembersInTx(tx, project.ID)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	project.Members = members
 	project.MembersVersion = projectMembersVersion(project.OwnerID, project.Members)
-	return project, true
+	return project, nil
 }
 
 // ProjectMemberships returns only project identity, ownership and membership
@@ -125,11 +134,6 @@ func (r *ProjectsRepo) ProjectMemberships(ids []string) (map[string]domain.Proje
 		}
 	}
 	return out, nil
-}
-
-func (r *ProjectsRepo) projectMembers(projectID string) []domain.ProjectMember {
-	members, _ := r.projectMembersInTx(r.DB, projectID)
-	return members
 }
 
 func (r *ProjectsRepo) projectMembersInTx(tx *gorm.DB, projectID string) ([]domain.ProjectMember, error) {

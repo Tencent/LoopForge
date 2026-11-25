@@ -486,6 +486,39 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/assistant/sessions/{id}/title:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    put:
+      tags: [Assistant]
+      operationId: renameAssistantSession
+      summary: Rename a conversation, including during generation
+      description: Available to the owner of a private conversation and authorized members of a project conversation. Shared flow-run conversations keep their assigned titles.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: {type: string, minLength: 1, maxLength: 128, description: Leading and trailing whitespace is trimmed}
+      responses:
+        "200":
+          description: Saved title
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [title, titleEdited]
+                properties:
+                  title: {type: string}
+                  titleEdited: {type: boolean, enum: [true]}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: The conversation's project binding changed}
   /api/assistant/sessions/{id}/sandbox:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
@@ -2570,7 +2603,12 @@ paths:
     get:
       tags: [Assets]
       operationId: listExecutorModels
-      description: Returns, per built-in CLI, the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs.
+      description: Returns, per built-in CLI, the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs. `configured` reports whether a SOP run can use the CLI for the caller, and `personal` whether the caller saved their own key for it.
+      parameters:
+        - name: projectId
+          in: query
+          schema: {type: string}
+          description: Resolve `configured` against the execution machine a SOP in this project uses, which is the caller's project default before the personal default. Omit it for personal SOPs.
       responses:
         "200":
           description: Model catalog keyed by CLI id
@@ -2599,6 +2637,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [Assets]
       operationId: deleteSandbox
@@ -4763,6 +4803,9 @@ components:
             content: {type: string, description: Dockerfile text}
             files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
         readOnlyRootFS: {type: boolean, description: "driver=docker only"}
+        privileged: {type: boolean, default: false, description: "Docker only. Requests privileged workspace containers on an execution host that allows them."}
+        cpuMillicores: {type: integer, format: int64, minimum: 0, maximum: 9223372036854, description: "Docker CPU limit in millicores. 1000 is one CPU, 0 or omitted inherits machine settings, and the minimum configured limit is 10."}
+        memoryMiB: {type: integer, format: int64, minimum: 0, maximum: 8796093022207, description: "Docker memory limit in MiB. 0 or omitted inherits machine settings, and the minimum configured limit is 6."}
         environment: {type: object, additionalProperties: {type: string}, description: Variables added to every command; a native sandbox keeps the execution machine's PATH unless this sets one}
     APIToken:
       type: object

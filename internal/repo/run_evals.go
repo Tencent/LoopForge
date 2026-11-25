@@ -7,11 +7,47 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"gorm.io/gorm"
 )
 
 const maxRunEvalsPerRun = 10
 
 func (r *RunsRepo) PutRunEval(v domain.RunEvalRecord) error {
+	return r.putRunEval(r.DB, v)
+}
+
+// StartRunEval stores v unless the run already has a running evaluation that
+// live accepts. Locking the run row makes the check and the insert one step
+// across API replicas. A running row that is no longer live is failed with the
+// interrupted message. It reports whether v was stored.
+func (r *RunsRepo) StartRunEval(v domain.RunEvalRecord, live func(domain.RunEvalRecord) bool, interrupted string) (bool, error) {
+	started := false
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		started = false
+		if _, err := r.takeRunForUpdate(tx, v.RunID); err != nil {
+			return err
+		}
+		if active, busy := activeRunEval(tx, v.RunID); busy {
+			if live(active) {
+				return nil
+			}
+			active.Status = domain.RunEvalFailed
+			active.Error = interrupted
+			active.FinishedAt = time.Now().UTC()
+			if err := r.putRunEval(tx, active); err != nil {
+				return err
+			}
+		}
+		if err := r.putRunEval(tx, v); err != nil {
+			return err
+		}
+		started = true
+		return nil
+	})
+	return started && err == nil, err
+}
+
+func (r *RunsRepo) putRunEval(db *gorm.DB, v domain.RunEvalRecord) error {
 	if v.ID == "" || v.RunID == "" {
 		return fmt.Errorf("run eval id and runId are required")
 	}
@@ -22,14 +58,14 @@ func (r *RunsRepo) PutRunEval(v domain.RunEvalRecord) error {
 	if err != nil {
 		return err
 	}
-	if err := upsert(r.DB, "run_evals", map[string]any{
+	if err := upsert(db, "run_evals", map[string]any{
 		"id": v.ID, "run_id": v.RunID, "status": v.Status, "score": v.Score, "passed": v.Passed,
 		"model": v.Model, "created_by": v.CreatedBy, "payload": payload,
 		"created_at": timePtr(v.CreatedAt), "finished_at": timePtr(v.FinishedAt),
 	}); err != nil {
 		return err
 	}
-	return r.trimRunEvals(v.RunID)
+	return r.trimRunEvals(db, v.RunID)
 }
 
 func (r *RunsRepo) RunEval(id string) (domain.RunEvalRecord, bool) {
@@ -63,24 +99,28 @@ func (r *RunsRepo) ListRunEvals(runID string) []domain.RunEvalRecord {
 }
 
 func (r *RunsRepo) ActiveRunEval(runID string) (domain.RunEvalRecord, bool) {
+	return activeRunEval(r.DB, runID)
+}
+
+func activeRunEval(db *gorm.DB, runID string) (domain.RunEvalRecord, bool) {
 	var row runEvalRow
-	if err := r.DB.Where("run_id = ? AND status = ?", runID, domain.RunEvalRunning).Order("created_at DESC").Limit(1).Take(&row).Error; err != nil {
+	if err := db.Where("run_id = ? AND status = ?", runID, domain.RunEvalRunning).Order("created_at DESC").Limit(1).Take(&row).Error; err != nil {
 		return domain.RunEvalRecord{}, false
 	}
 	return runEvalFromRow(row)
 }
 
-func (r *RunsRepo) trimRunEvals(runID string) error {
+func (r *RunsRepo) trimRunEvals(db *gorm.DB, runID string) error {
 	var ids []string
 	// MySQL rejects a bare OFFSET. Pair it with an explicit LIMIT, the same way
 	// definition revisions are trimmed.
 	var err error
 	if r.isMySQL() {
-		err = r.DB.Raw(
+		err = db.Raw(
 			"SELECT id FROM run_evals WHERE run_id = ? ORDER BY created_at DESC, id DESC LIMIT 18446744073709551615 OFFSET ?",
 			runID, maxRunEvalsPerRun).Scan(&ids).Error
 	} else {
-		err = r.DB.Model(&runEvalRow{}).Where("run_id = ?", runID).Order("created_at DESC, id DESC").Limit(math.MaxInt64).Offset(maxRunEvalsPerRun).Pluck("id", &ids).Error
+		err = db.Model(&runEvalRow{}).Where("run_id = ?", runID).Order("created_at DESC, id DESC").Limit(math.MaxInt64).Offset(maxRunEvalsPerRun).Pluck("id", &ids).Error
 	}
 	if err != nil {
 		return err
@@ -88,7 +128,7 @@ func (r *RunsRepo) trimRunEvals(runID string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return r.DB.Where("id IN ?", ids).Delete(&runEvalRow{}).Error
+	return db.Where("id IN ?", ids).Delete(&runEvalRow{}).Error
 }
 
 func runEvalFromRow(row runEvalRow) (domain.RunEvalRecord, bool) {

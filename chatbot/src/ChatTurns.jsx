@@ -129,6 +129,7 @@ export function LiveMessage({
   finished = false,
   local = false,
   readOnly = false,
+  approvals = [],
 }) {
   const steps = live.activity || [];
   const textual = hasTextSegments(steps);
@@ -153,6 +154,7 @@ export function LiveMessage({
           finishedAt={generation?.updatedAt}
           live={!finished}
           interrupted={finished}
+          approvals={approvals}
         />
       ) : (
         <div className="reply-heading">
@@ -162,6 +164,7 @@ export function LiveMessage({
             finishedAt={generation?.updatedAt}
             live={!finished}
             interrupted={finished}
+            approvals={approvals}
           />
         </div>
       )}

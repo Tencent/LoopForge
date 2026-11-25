@@ -23,10 +23,30 @@ import (
 const (
 	RunnerStatusOnline  = "online"
 	RunnerStatusOffline = "offline"
+
+	RunnerSelectionModeAuto     = "auto"
+	RunnerSelectionModePlatform = "platform"
+	PlatformRunnerName          = "平台执行机器（云端）"
 )
 
-// DefaultRunnerRunLimit is the initial SOP run limit for a newly bound machine.
+// DefaultRunnerRunLimit is the initial SOP run limit for each execution machine.
 const DefaultRunnerRunLimit = 10
+
+type RunnerLoad struct {
+	OccupiedRuns int `json:"occupiedRuns"`
+	RunningRuns  int `json:"runningRuns"`
+	QueuedRuns   int `json:"queuedRuns"`
+}
+
+type PlatformRunnerStatus struct {
+	Name            string      `json:"name"`
+	Status          string      `json:"status"`
+	RunLimit        int         `json:"runLimit"`
+	CanEditLimit    bool        `json:"canEditLimit"`
+	CloudPool       bool        `json:"cloudPool"`
+	CloudPoolOnline int         `json:"cloudPoolOnline"`
+	Load            *RunnerLoad `json:"load"`
+}
 
 // RunnerTask states. LEASED sits between QUEUED and RUNNING so a claim that
 // never starts is still recoverable through lease expiry.
@@ -179,6 +199,27 @@ func (r Runner) SupportsGitPlainHTTP() bool {
 }
 
 const RunnerGitPlainHTTPUpgradeMessage = "Git HTTP 仓库需要 Runner " + RunnerVersionGitPlainHTTP + " 或更新版本，请先升级执行机器"
+
+// RunnerVersionPrivilegedSandbox is the first runner that applies the Docker
+// privilege setting in a frozen sandbox profile.
+const RunnerVersionPrivilegedSandbox = "0.12.5"
+
+func (r Runner) ValidatePrivilegedSandboxVersion(profile SandboxProfile) error {
+	if profile.Privileged && !versionAtLeast(r.RunnerVersion, RunnerVersionPrivilegedSandbox) {
+		return fmt.Errorf("特权 Docker 沙箱需要 Runner %s 或更新版本，请先升级执行机器", RunnerVersionPrivilegedSandbox)
+	}
+	return nil
+}
+
+const RunnerVersionDockerSandboxLimits = "0.12.6"
+
+const RunnerDockerSandboxLimitsUpgradeMessage = "配置了 CPU 或内存上限的 Docker 沙箱需要 Runner " + RunnerVersionDockerSandboxLimits + " 或更新版本，请先升级执行机器"
+
+const RunnerDockerSandboxLimitsHeader = "X-AgentFlow-Docker-Sandbox-Limits"
+
+func (r Runner) SupportsDockerSandboxLimits() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionDockerSandboxLimits)
+}
 
 // FilterGitHTTPCredentials limits a credential snapshot to the transports the
 // runner supports. The caller's map may also be used by local execution.
