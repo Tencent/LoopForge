@@ -124,19 +124,38 @@ function humanGateSectionsHTML(nr,run,node){
   return sections.join('')+approvalArtifactLinksHTML(run,node);
 }
 // The server rejects write actions from readers; hide the controls so a
-// viewer does not have to click through a 403 to find out.
-function canDecideRun(run){
-  if(!state.authRequired)return true;
+// viewer does not have to click through a 403 to find out. Mirrors
+// runWriteGuard/projectMemberWrites: the run's project is its execution
+// context project, else its requirement's project; runs without a project,
+// projects this client cannot see, and projects with neither an owner nor
+// members are writable by any signed-in user.
+function runWriteProjectId(run){
+  const ctx=run?.executionContext||{};
+  const own=String(ctx.projectId||'').trim();
+  if(own)return own;
+  const issue=ctx.issueId?(state.data?.issues||[]).find(i=>i.id===ctx.issueId):null;
+  return String(issue?.projectId||'').trim();
+}
+function runDecisionBlock(run){
+  if(!state.authRequired)return '';
   const user=state.currentUser;
-  if(!user||user.isGuest)return false;
-  if(user.isPlatformAdmin)return true;
-  const projectId=run?.executionContext?.projectId||run?.projectId||'';
-  const project=(state.data.projects||[]).find(p=>p.id===projectId);
-  if(!project)return false;
+  if(!user)return '';
+  if(user.isGuest)return 'guest';
+  if(user.isPlatformAdmin)return '';
+  const projectId=runWriteProjectId(run);
+  if(!projectId)return '';
+  const project=(state.data?.projects||[]).find(p=>p.id===projectId);
+  if(!project||(!Number(project.ownerId)&&!(project.members||[]).length))return '';
   const uid=Number(user.id);
-  if(Number(project.ownerId)===uid)return true;
+  if(uid>0&&Number(project.ownerId)===uid)return '';
   const member=(project.members||[]).find(m=>Number(m.userId)===uid);
-  return !!member&&String(member.role||'').trim().toLowerCase()!=='viewer';
+  if(!member)return 'outsider';
+  return String(member.role||'').trim().toLowerCase()==='viewer'?'viewer':'';
+}
+function canDecideRun(run){return !runDecisionBlock(run)}
+function runReadOnlyHTML(run){
+  const text={guest:'登录后才能审批或取消这次运行。',outsider:'你不是该项目的成员，不能审批或取消这次运行。',viewer:'你是该项目的只读成员，不能审批或取消这次运行。'}[runDecisionBlock(run)]||'';
+  return `<div class="human-decision"><div class="human-gate-brief"><div class="callout-section"><strong class="callout-label">只读</strong><p class="callout-text">${text}</p></div></div></div>`;
 }
 // Waiting starts when the gate asked a human, not when the run started.
 function waitingSince(run,nodeId){
@@ -153,7 +172,7 @@ function waitingForText(run,nodeId){
 }
 function humanDecisionPanelHTML(runId,nodeId,nr,node,nodes,run=cachedRun(runId)){
   if(run?.status==='queued')return '';
-  if(!canDecideRun(run))return '<div class="human-decision"><div class="human-gate-brief"><div class="callout-section"><strong class="callout-label">只读</strong><p class="callout-text">你是该项目的只读成员，不能审批或取消这次运行。</p></div></div></div>';
+  if(!canDecideRun(run))return runReadOnlyHTML(run);
   const field=isScriptWorkflowNode(node)?'':humanContextFieldHTML();
   return `<div class="human-decision" data-human-context-root><div class="human-gate-brief">${humanGateSectionsHTML(nr,run,node)}</div>${field}<div class="ap-buttons">${waitingActionButtons(runId,nodeId,nr,node,nodes)}</div></div>`;
 }
