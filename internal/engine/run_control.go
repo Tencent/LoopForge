@@ -16,6 +16,7 @@ import (
 )
 
 const controlTokenHeader = "X-Agentflow-Control-Token"
+const queuedRunPromotionPath = "/internal/runs/promote"
 
 // ControlConfig is how an api/worker process advertises and authenticates
 // run-control interrupts.
@@ -86,9 +87,11 @@ func (e *Engine) notifyRunControl(runID string) {
 }
 
 func (e *Engine) runControlURLs(runID, fallback string) []string {
-	if r, ok := e.repo.RunState(runID); ok {
-		if u := e.repo.EngineInstanceControlURL(r.OwnerInstanceID); u != "" {
-			return []string{u}
+	if runID != "" {
+		if r, ok := e.repo.RunState(runID); ok {
+			if u := e.repo.EngineInstanceControlURL(r.OwnerInstanceID); u != "" {
+				return []string{u}
+			}
 		}
 	}
 	seen := map[string]struct{}{}
@@ -109,6 +112,51 @@ func (e *Engine) runControlURLs(runID, fallback string) []string {
 	}
 	add(fallback)
 	return urls
+}
+
+// PromoteQueuedRunsAsync wakes admission after a capacity change, including
+// when the API and worker run in separate processes.
+func (e *Engine) PromoteQueuedRunsAsync() {
+	if e.executes() {
+		e.wakeRunClaimLoop()
+		return
+	}
+	e.mu.Lock()
+	fallback, token, client := e.fallbackWorkerURL, e.controlToken, e.controlClient
+	e.mu.Unlock()
+	if token == "" || client == nil {
+		return
+	}
+	go func() {
+		for _, base := range e.runControlURLs("", fallback) {
+			req, err := http.NewRequest(http.MethodPost, base+queuedRunPromotionPath, nil)
+			if err != nil {
+				continue
+			}
+			req.Header.Set(controlTokenHeader, token)
+			resp, err := client.Do(req)
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusNoContent {
+					return
+				}
+			}
+		}
+		// The claim ticker also observes committed capacity changes.
+	}()
+}
+
+func (e *Engine) HandleQueuedRunPromotion(w http.ResponseWriter, r *http.Request) {
+	if !e.ServiceTokenOK(r.Header.Get(controlTokenHeader)) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !e.executes() {
+		http.Error(w, "execution disabled", http.StatusServiceUnavailable)
+		return
+	}
+	e.wakeRunClaimLoop()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // StartInstanceHeartbeat publishes this process's interrupt URL so the API can

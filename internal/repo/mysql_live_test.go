@@ -202,6 +202,50 @@ func TestMySQLRunnerTaskCompletionScrubsCredentials(t *testing.T) {
 	}
 }
 
+// MySQL filesorts whole rows, so ordering queued tasks by created_at failed
+// with "Out of sort memory" once a payload outgrew sort_buffer_size (256 KiB
+// by default), e.g. a task carrying an uploaded skill file.
+func TestMySQLRunnerTaskWithLargeSkillFileIsListedAndClaimed(t *testing.T) {
+	dsn := os.Getenv("AGENTFLOW_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("AGENTFLOW_TEST_MYSQL_DSN is not set")
+	}
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	suffix := time.Now().UTC().UnixNano()
+	taskID := fmt.Sprintf("large-skill-task-%d", suffix)
+	runnerID := fmt.Sprintf("large-skill-runner-%d", suffix)
+	defer func() { _ = s.DB.Exec(`DELETE FROM runner_tasks WHERE id=?`, taskID) }()
+	content := []byte(strings.Repeat("x", int(domain.SkillFileMaxBytes)))
+	task := domain.RunnerTask{
+		ID: taskID, RunnerID: runnerID, Provider: "codex", Status: domain.RunnerTaskQueued, MaxAttempts: 1,
+		Invocation: &domain.RunnerInvocation{Assets: domain.AgentAssetBundle{
+			SkillFiles: map[string]map[string][]byte{"big-skill": {"SKILL.md": content}},
+		}},
+	}
+	if err := s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	listed := false
+	for _, v := range s.RunnerTasks() {
+		listed = listed || v.ID == taskID
+	}
+	if !listed {
+		t.Fatal("task list dropped the large runner task")
+	}
+	claimed, ok, err := s.ClaimRunnerTask(runnerID, []string{"codex"}, time.Now().UTC(), time.Minute)
+	if err != nil || !ok || claimed.ID != taskID || claimed.Attempt != 1 {
+		t.Fatalf("claim: ok=%v id=%q attempt=%d err=%v", ok, claimed.ID, claimed.Attempt, err)
+	}
+	if claimed.Invocation == nil || string(claimed.Invocation.Assets.SkillFiles["big-skill"]["SKILL.md"]) != string(content) {
+		t.Fatal("claimed task lost its skill file")
+	}
+}
+
 func TestMySQLGitSSHCredentialLifecycle(t *testing.T) {
 	dsn := os.Getenv("AGENTFLOW_TEST_MYSQL_DSN")
 	if dsn == "" {

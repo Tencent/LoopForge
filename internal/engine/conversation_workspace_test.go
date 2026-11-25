@@ -32,6 +32,61 @@ func checkpointFixture(t *testing.T) (*Engine, string) {
 	}
 	return e, r.ID
 }
+
+func TestConversationWorkspaceReusesCheckpointDuringPreviewHold(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	if err := e.ReleaseConversationWorkspace(id); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := e.repo.SetRunWorkspaceCleanupHold(id, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	sweep := func(at time.Time) {
+		t.Helper()
+		run, ok := e.repo.RunState(id)
+		if !ok {
+			t.Fatal("run disappeared")
+		}
+		e.cleanupWorkspace(run, at)
+	}
+	sweep(now)
+	before, ok := e.repo.WorkspaceCheckpoint(id)
+	if !ok || before.SavedAt == nil || before.SHA256 == "" {
+		t.Fatalf("initial checkpoint wasn't saved: %+v", before)
+	}
+	for elapsed := 20 * time.Second; elapsed <= time.Minute; elapsed += 20 * time.Second {
+		sweep(now.Add(elapsed))
+	}
+	after, _ := e.repo.WorkspaceCheckpoint(id)
+	if after.SavedAt == nil || !before.SavedAt.Equal(*after.SavedAt) || before.SHA256 != after.SHA256 || before.ArchiveID != after.ArchiveID {
+		t.Fatalf("preview hold replaced the checkpoint: before %+v, after %+v", before, after)
+	}
+	file := filepath.Join(e.RunWorkspace(id), "README.md")
+	if err := os.WriteFile(file, []byte("last preview edit"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.repo.ClearRunWorkspaceCleanupHold(id); err != nil {
+		t.Fatal(err)
+	}
+	sweep(now.Add(time.Hour))
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("workspace not reclaimed after hold: %v", err)
+	}
+	token, err := e.BeginConversationWorkspaceUse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.EnsureConversationWorkspace(t.Context(), id, token); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(file)
+	if err != nil || string(got) != "last preview edit" {
+		t.Fatalf("latest edit was not restored: %q, %v", got, err)
+	}
+}
+
 func TestConversationWorkspaceReclaimsOriginalAndRestoresThenExpiresAfterOneHour(t *testing.T) {
 	t.Parallel()
 	e, id := checkpointFixture(t)

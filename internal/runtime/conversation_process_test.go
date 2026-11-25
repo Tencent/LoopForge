@@ -1,16 +1,67 @@
 package runtime
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"agentflow/internal/domain"
 )
+
+func TestConversationRelayKeepsPendingToolCallOpen(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	release := make(chan struct{})
+	const reply = `{"jsonrpc":"2.0","id":12,"result":{"ok":true}}`
+	forward := func(ctx context.Context, _ string, _ json.RawMessage) (json.RawMessage, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-release:
+			return json.RawMessage(reply), nil
+		}
+	}
+	url, stop, err := startConversationRelay(ctx, "test-token", forward, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+"/internal/agent-tools/test-token/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"pending-tool"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	transport := &http.Transport{ResponseHeaderTimeout: 3 * time.Second}
+	defer transport.CloseIdleConnections()
+	resp, err := (&http.Client{Transport: transport}).Do(req)
+	if err != nil {
+		t.Fatalf("relay headers must arrive before tool completion: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("expected SSE while the tool is pending, got %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	reader := bufio.NewReader(resp.Body)
+	line, err := reader.ReadString('\n')
+	if err != nil || line != ": awaiting tool result\n" {
+		t.Fatalf("initial heartbeat = %q, %v", line, err)
+	}
+	close(release)
+	body, err := io.ReadAll(reader)
+	if err != nil || string(body) != "\nevent: message\ndata: "+reply+"\n\n" {
+		t.Fatalf("tool response = %q, %v", body, err)
+	}
+}
 
 func TestConversationStdinRemapsQuotedCodexWorkspace(t *testing.T) {
 	source, root := `/api/state "chat"`, `/runner/state "chat"\one`
@@ -171,6 +222,92 @@ func TestConversationProcessStopsAfterTerminalResult(t *testing.T) {
 	}
 }
 
+func TestConversationCodeBuddyKeepsStdinOpenUntilBackgroundAgentFinishes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	script := `#!/bin/sh
+IFS= read -r prompt || exit 1
+printf '%s\n' '{"type":"system","subtype":"task_started","task_type":"Agent","task_id":"agent-1"}'
+printf '%s\n' '{"type":"result","result":"parent result"}'
+sleep 3
+IFS= read -r probe || exit 1
+printf 'stdin remained open: %s\n' "$probe"
+printf '%s\n' '{"type":"system","subtype":"task_notification","task_id":"agent-1","status":"completed","summary":"child receipt"}'
+if IFS= read -r extra; then exit 1; fi
+printf 'stdin closed after child receipt\n'
+`
+	pool, root, id := startTestCodeBuddyWorkspace(t, ctx, script)
+	for _, write := range []ConversationProcessRequest{
+		{Data: "{\"type\":\"user\"}\n"}, {EOF: true}, {Data: "probe\n"},
+	} {
+		write.Operation, write.ID = "write", id
+		if _, err := pool.Handle(ctx, root, "", nil, write, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := conversationPoll(t, pool, ctx, root, id)
+	for _, want := range []string{"parent result", "stdin remained open: probe", `"summary":"child receipt"`, "stdin closed after child receipt"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("missing %q in process output %q", want, output)
+		}
+	}
+}
+
+func TestConversationCodeBuddyClosesInputOnEarlyResumeError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	// Resume can fail before CodeBuddy reads even the first user frame.
+	script := `#!/bin/sh
+printf '%s\n' '{"type":"error","error":"No conversation found with session ID: missing"}'
+if IFS= read -r extra; then exit 1; fi
+printf 'stdin closed after resume error\n'
+`
+	pool, root, id := startTestCodeBuddyWorkspace(t, ctx, script)
+	output := conversationPoll(t, pool, ctx, root, id)
+	for _, req := range []ConversationProcessRequest{{Data: "{\"type\":\"user\"}\n"}, {EOF: true}} {
+		req.Operation, req.ID = "write", id
+		if _, err := pool.Handle(ctx, root, "", nil, req, nil); err != nil {
+			t.Fatalf("input relay masked the resume error: %v", err)
+		}
+	}
+	for _, want := range []string{"No conversation found with session ID: missing", "stdin closed after resume error"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("missing %q in process output %q", want, output)
+		}
+	}
+}
+
+func startTestCodeBuddyWorkspace(t *testing.T, ctx context.Context, script string) (*ConversationProcessPool, string, string) {
+	t.Helper()
+	root, workspace, install := t.TempDir(), t.TempDir(), t.TempDir()
+	binary := filepath.Join(install, "codebuddy")
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", binary)
+	// Exercise the workspace process path without relying on a host sandbox
+	// binary. The shim executes the test CLI after the seatbelt profile.
+	shim := filepath.Join(install, "seatbelt-shim")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nshift 2\nexec \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	profile := domain.SandboxProfile{Driver: domain.SandboxDriverSeatbelt}
+	sandbox := &domain.RunnerSandboxSpec{Profile: profile}
+	factory := func(context.Context, string) (Sandbox, func(), error) {
+		return &processSandbox{driver: profile.Driver, workspace: workspace, binary: shim}, nil, nil
+	}
+	pool := &ConversationProcessPool{}
+	start, err := pool.Handle(ctx, root, workspace, sandbox, ConversationProcessRequest{
+		Operation: "start",
+		Command: &ConversationCommand{Provider: "codebuddy", Interactive: true,
+			Argv: []string{binary, "-p", "--input-format", "stream-json", "--output-format", "stream-json"}},
+	}, nil, factory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pool, root, start.ID
+}
+
 func TestConversationProcessCompletesDuringSlowVersionProbe(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(t.TempDir(), "codebuddy")
@@ -293,11 +430,31 @@ func TestConversationAssetsResetChmodAndRejectSymlink(t *testing.T) {
 	if err := syncFile("attachments/a/source.pdf", binary, 0600); err != nil {
 		t.Fatal(err)
 	}
+	prepared, err := p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "prepare"}, nil)
+	if err != nil || !prepared.PromptInputFiles {
+		t.Fatalf("runner must advertise staged prompt inputs: %v", err)
+	}
+	sourceRoot := t.TempDir()
+	promptPath := filepath.Join(root, "prompt-input", "turn-1", "prompt-1.md")
+	if _, err := p.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "sync", SourceRoot: sourceRoot, Files: []ConversationFile{{
+			Path: "prompt-input/turn-1/prompt-1.md", Rewrite: true, Mode: 0600,
+			Data: []byte("Read " + filepath.Join(sourceRoot, "attachments", "source.txt")),
+		}},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(promptPath); err != nil || string(data) != "Read "+filepath.Join(root, "attachments", "source.txt") {
+		t.Fatalf("prompt input references were not relocated: %q, %v", data, err)
+	}
 	if _, err := p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "resetAssets"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, rel)); !os.IsNotExist(err) {
 		t.Fatal("removed skill retained")
+	}
+	if _, err := os.Stat(promptPath); !os.IsNotExist(err) {
+		t.Fatalf("staged prompt survived asset reset: %v", err)
 	}
 	if b, err := os.ReadFile(native); err != nil || string(b) != "native" {
 		t.Fatal("native transcript changed")

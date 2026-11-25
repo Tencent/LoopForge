@@ -68,6 +68,7 @@ function mergeLiveRun(id,incoming,payload){
 }
 function applyRunPayload(run,{list=true}={}){
   if(state.selectedRun&&run?.id!==state.selectedRun)return;
+  const previousRunner=state.activeRun?.executionContext?.executionRunnerId;
   state.activeRun=run;state.selectedRun=run.id;
   const i=(state.data.runs||[]).findIndex(x=>x.id===run.id);
   if(i>=0)state.data.runs[i]={...state.data.runs[i],...run,telemetry:undefined,logs:undefined};
@@ -77,6 +78,16 @@ function applyRunPayload(run,{list=true}={}){
   }
   if(list)renderRuns();
   if(shouldPatchRunLive(run))patchRunLive(run);else renderRunDetail(run);
+  const ec=run.executionContext;
+  if(ec?.executionPool==='project-auto'&&run.concurrencyExempt&&ec.executionRunnerId&&ec.executionRunnerId!==previousRunner&&
+     !state.runMachineMetadata?.runners.some(machine=>machine.id===ec.executionRunnerId)){
+    void loadRunMachineMetadata(run).then(()=>{
+      const current=state.activeRun;
+      if(current?.id!==run.id||current.executionContext?.executionRunnerId!==ec.executionRunnerId)return;
+      const chip=$('#runDetail [data-run-execution-chip]');
+      if(chip)chip.outerHTML=runExecutionChipHTML(current);
+    });
+  }
 }
 function startLiveRun(id){
   stopLiveRun();
@@ -327,7 +338,7 @@ function renderRuns(){
 function showRunDetail(id){
   if(!id)return;
   stopQueuedRunRefresh();
-  if(state.selectedRun!==id){stopLiveRun();stopPreviewPoll();state.runWorkspace=null}
+  if(state.selectedRun!==id){stopLiveRun();stopPreviewPoll();stopRunEvalStream();state.runWorkspace=null}
   state.selectedRun=id;
   syncRunHash(id);
   $('#runsView')?.classList.add('detail-open');
@@ -349,6 +360,7 @@ function showRunDetail(id){
   }).catch(e=>toast(e.message,'err'));
 }
 function showRunList(){
+  stopRunEvalStream();
   stopLiveRun();
   stopPreviewPoll();
   state.selectedRun=null;
@@ -361,7 +373,7 @@ function showRunList(){
 }
 function selectRun(id,keepPages=false){
   if(!id)return;
-  if(state.selectedRun!==id)stopPreviewPoll();
+  if(state.selectedRun!==id){stopPreviewPoll();stopRunEvalStream()}
   if(!keepPages&&state.selectedRun!==id){state.runLogs=null;state.runTelemetry=null;state.runWorkspace=null;state.selectedRunNode=null}
   state.selectedRun=id;
   const summary=(state.data.runs||[]).find(x=>x.id===id);
@@ -1325,7 +1337,10 @@ function renderRunDetail(r){
   const focusNr=focusNode?(r.nodes?.[focusNode.id]||{}):nr;
   if(r.status==='queued'){
     host.querySelector('[data-cancel-run]')?.replaceChildren(document.createTextNode('取消排队'));
-    host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend','<div class="approval-callout queued-run-callout"><b>排队中，获得运行名额后自动启动</b><p>子 SOP 共享父级名额。未获准入和成功运行不占名额。失败、暂停、待确认的 SOP 空闲 1 小时后释放名额。排队期间可以取消运行。</p></div>');
+    host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend',queuedRunCalloutHTML(r));
+  }else if(r.status==='failed'&&r.executionContext?.executionPool==='project-auto'&&!r.executionContext.executionMode){
+    const reason=(r.events||[]).findLast(event=>event.type==='run.failed')?.message;
+    if(reason)host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend',`<div class="approval-callout"><b>自动分配失败</b><p>${escapeHTML(reason)}</p></div>`);
   }else if(!nonSOP&&r.pauseRequested){
     const header=host.querySelector('.run-detail-header');header?.insertAdjacentHTML('afterend',pausedRunPanelHTML(r));
     host.querySelector('.node-inspector .approval-callout')?.remove();
@@ -1399,92 +1414,292 @@ async function downloadRunLogs(runId){
     toast('已导出全部 Worker 日志，可发给 AI 复盘');
   }catch(e){toast(e.message,'err')}
 }
-function defaultRunEval(){return{enabled:true,version:1,threshold:70,dimensions:[
-  {id:'control',name:'控制流健康',question:'节点是否多次循环、返工或打回？',weight:25},
-  {id:'latency',name:'耗时与等待',question:'单节点是否占了大部分执行时间？',weight:20},
-  {id:'tools',name:'工具浪费',question:'是否有同工具连续失败或空转调用？',weight:20},
-  {id:'tokens',name:'Token 效率',question:'Token 是否集中在单一节点？',weight:15},
-  {id:'recovery',name:'错误恢复',question:'相同错误是否反复出现？',weight:10},
-  {id:'delivery',name:'交付完整',question:'终态、产物和验证信号是否齐全？',weight:10}
-]}}
-function runEvalApplyable(rec){if(!rec||rec.status==='applied')return false;const action=((rec.target||'')+'.'+(rec.action||'')).replace(/^\./,'').toLowerCase();const full=rec.action&&rec.action.includes('.')?rec.action.toLowerCase():action;return ['workflow.update_node','agent.upsert_gate','agent.remove_gate','agent.append_instructions','agent.append_task_prompt'].includes(full)}
-function runEvalPaneHTML(run){
-  const rec=state.runEval?.runId===run.id?state.runEval:null,busy=!!state.runEvalBusy,thoughts=state.runEvalThoughts||[];
-  const dims=rec?.policy?.dimensions||defaultRunEval().dimensions;
-  const isTerminal=['succeeded','failed','cancelled'].includes(run.status);
-
-  const heroCard=`<div class="run-eval-hero">
-    <div class="run-eval-hero-info">
-      <div class="run-eval-badge"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 7.2L21.6 12l-7.2 2.4L12 21.6l-2.4-7.2L2.4 12l7.2-2.4L12 2z"/></svg> AI 智能评测与架构巡检</div>
-      <h2>SOP 执行效果与准入质量评估</h2>
-      <p>基于大模型深度审视全链路 Trace，交叉评估目标达成度、产物契约与门禁防线，自动生成可确认落地的规则补丁与 SOP 优化建议。</p>
-      <div class="run-eval-hero-meta">
-        <span><i class="dot"></i>标准评测规则集 v${rec?.policy?.version||1}</span>
-        <span><i class="dot"></i>基线准入分：${rec?.policy?.threshold||70} 分</span>
-        <span><i class="dot"></i>支持一键回写 SOP 补丁</span>
-      </div>
-    </div>
-    <div class="run-eval-hero-action-card">
-      <div class="eval-control-label">评测执行器与模型</div>
-      <div class="run-eval-toolbar-row">
-        <div class="feature-model-picker run-eval-picker" id="runEvalModelPicker">
-          ${window.AgentFlowAssistantModels?.featurePickerHTML()||''}
-        </div>
-        <button type="button" class="button primary run-eval-launch-btn" data-start-run-eval ${isTerminal?'':'disabled'}>
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 7.2L21.6 12l-7.2 2.4L12 21.6l-2.4-7.2L2.4 12l7.2-2.4L12 2z"/></svg>
-          <span>${rec?.status==='succeeded'?'重新评测':'启动智能评测'}</span>
-        </button>
-      </div>
-      <div class="eval-control-hint">消耗约 1.5k~3.5k Tokens · 耗时约 5~12 秒</div>
-    </div>
-  </div>`;
-
-  if(!isTerminal){
-    return `<section class="run-eval-section">${heroCard}<div class="run-eval-empty-card"><div class="empty-icon"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3>运行执行中，请等待结束后评测</h3><p>SOP 执行全部节点完成后，将汇聚完整的链路 Trace、Token 消耗分布与交付物契约，届时可在此一键启动质量与准入评测。</p></div></section>`;
-  }
-
-  if(busy||rec?.status==='running'){
-    return `<section class="run-eval-section">${heroCard}<div class="run-eval-evaluating-card"><div class="evaluating-pulse-head"><span class="evaluating-spinner"></span><div><h4>大模型全链路 Trace 深度评测中...</h4><p>正在分析节点流转拓扑、工具调用频次、异常返工日志与产物交付契约</p></div></div><div class="run-eval-thoughts">${thoughts.map(t=>`<div class="thought-item"><span class="thought-dot"></span><span>${escapeHTML(t)}</span></div>`).join('')||'<div class="thought-item"><span class="thought-dot"></span><span>正在整理执行链路 Trace 并组织评测 Prompt...</span></div>'}</div></div></section>`;
-  }
-
-  if(rec?.status==='failed'){
-    return `<section class="run-eval-section">${heroCard}<div class="run-eval-error-card"><div class="error-head"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><b>评测执行失败</b></div><pre>${escapeHTML(rec.error||'模型未返回结果')}</pre><p class="error-tip">请检查所选 CLI 的凭据、安装状态或网络后重新评测。</p></div></section>`;
-  }
-
-  if(!rec||!rec.status){
-    return `<section class="run-eval-section">${heroCard}<div class="run-eval-pre-dashboard"><div class="eval-pre-title-row"><div class="eval-pre-title"><span class="eval-pre-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg></span><div><h3>评测指标体系与准入标准</h3><p>系统将基于当前 SOP 规则策略自动对本次运行的以下 6 个核心维度进行打分与归因诊断：</p></div></div><div class="eval-policy-tag">基线通过线：<b>${rec?.policy?.threshold||70} 分</b></div></div><div class="run-eval-dim-grid">${dims.map(d=>`<div class="eval-dim-card"><div class="eval-dim-head"><span class="eval-dim-name">${escapeHTML(d.name)}</span><span class="eval-dim-weight">权重 ${d.weight}%</span></div><p class="eval-dim-q">${escapeHTML(d.question)}</p></div>`).join('')}</div><div class="eval-pre-footer-tip"><span class="tip-sparkle"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span><p>评测完成后，不仅将生成各维度量化得分和缺陷根因证据链，还将提供针对任务书（Prompt）、门禁（Gate）以及重试策略的<b>「一键合并优化建议」</b>，帮助持续沉淀企业级优质 SOP。</p></div></div></section>`;
-  }
-
-  const scores=rec.result?.dimensions||{};
-  const bars=dims.map(d=>{
-    const val=scores[d.id]??'—';
-    const num=typeof val==='number'?val:0;
-    const barClass=num>=80?'high':(num>=60?'med':'low');
-    return `<div class="clarify-bar"><span>${escapeHTML(d.name)}</span><i><b class="${barClass}" style="width:${Math.max(0,Math.min(100,num))}%"></b></i><em>${val}</em></div>`;
-  }).join('');
-  const findings=(rec.result?.findings||[]).map(f=>`<li class="finding-item ${escapeHTML(f.severity||'info')}"><div class="finding-head"><span class="finding-badge ${escapeHTML(f.severity||'info')}">${escapeHTML(f.severity==='error'?'严重缺陷':f.severity==='warn'?'改进建议':'信息备忘')}</span><b class="finding-dim">${escapeHTML(f.dimension||'')}</b></div><p class="finding-msg">${escapeHTML(f.message||'')}</p>${f.nodeId?`<small class="finding-evidence">节点：<b>${escapeHTML(f.nodeId)}</b>${f.evidence?' · 证据：'+escapeHTML(f.evidence):''}</small>`:''}</li>`).join('');
-  const recs=(rec.result?.recommendations||[]).map(item=>runEvalRecHTML(item)).join('')||'<div class="empty-inline"><p>本次评测未发现阻止落地的缺陷，无需额外规则补丁。</p></div>';
-
-  return `<section class="run-eval-section">${heroCard}<div class="run-eval-result-grid"><div class="run-eval-scorecard"><div class="eval-score-ring-wrap ${rec.passed?'good':(rec.score>=60?'fair':'weak')}"><div class="eval-score-num">${rec.score||0}</div><div class="eval-score-label">${rec.passed?'达标通过':'未达标'}</div></div><div class="eval-score-details"><div class="eval-score-meta"><span><b>模型：</b>${escapeHTML(rec.model||'—')}</span><span><b>准入基线：</b>${rec.policy?.threshold||70} 分</span><span><b>规则：</b>v${rec.policy?.version||1}</span></div><div class="eval-dims-bars">${bars}</div></div></div>${rec.result?.summary?`<div class="run-eval-summary-card"><div class="summary-head"><span class="summary-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/></svg></span><b>AI 架构师评估总述</b></div><p>${escapeHTML(rec.result.summary)}</p></div>`:''}</div>${findings?`<div class="run-eval-findings-box"><div class="findings-box-head"><h4>关键诊断发现 <span>(${(rec.result?.findings||[]).length})</span></h4></div><ul class="run-eval-findings">${findings}</ul></div>`:''}<div class="run-eval-recs-box"><div class="recs-head"><h4>可落地改进建议 <span>(${(rec.result?.recommendations||[]).length})</span></h4><p>点击「应用此修改」可直接将治理规则回写到 SOP 流程或角色定义中</p></div><div class="recs-list">${recs}</div></div></section>`;
+function defaultRunEval(){
+  return {version:1,threshold:70,dimensions:[
+    {id:'control',name:'控制流健康',question:'节点是否多次循环、返工或打回？',weight:25},
+    {id:'latency',name:'耗时与等待',question:'单节点是否占了大部分执行时间？',weight:20},
+    {id:'tools',name:'工具浪费',question:'是否有同工具连续失败或空转调用？',weight:20},
+    {id:'tokens',name:'Token 效率',question:'Token 是否集中在单一节点？',weight:15},
+    {id:'recovery',name:'错误恢复',question:'相同错误是否反复出现？',weight:10},
+    {id:'delivery',name:'交付完整',question:'终态、产物和验证信号是否齐全？',weight:10}
+  ]};
 }
-function runEvalRecHTML(item){
-  const applied=item.status==='applied',can=runEvalApplyable(item);
-  const patch=item.gate||item.set||(item.text?{text:item.text}:null);
-  return `<article class="run-eval-rec ${applied?'is-applied':''}"><div><b>${escapeHTML(item.title||item.action||'建议')}</b><p>${escapeHTML(item.rationale||'')}</p><small>${escapeHTML(item.target||'')} ${escapeHTML(item.action||'')} ${item.nodeId?('· '+escapeHTML(item.nodeId)):''}</small>${patch?`<details><summary>预览补丁</summary><pre>${escapeHTML(JSON.stringify(patch,null,2))}</pre></details>`:''}${item.applyError?`<small class="danger">${escapeHTML(item.applyError)}</small>`:''}</div>${applied?`<button type="button" class="button ghost small" data-open-eval-target="${escapeHTML(item.target||'')}" data-open-eval-id="${escapeHTML(item.appliedTargetId||item.targetId||'')}">打开</button>`:(can?`<button type="button" class="button primary small" data-apply-eval="${escapeHTML(item.id)}">应用此修改</button>`:'<small>仅建议</small>')}</article>`;
+
+const RUN_EVAL_STAGES=[
+  {id:'queued',label:'等待执行',description:'评测已提交，正在等待可用的执行名额。'},
+  {id:'collecting',label:'整理运行轨迹',description:'正在汇总本次运行的节点、工具调用和交付记录。'},
+  {id:'evaluating',label:'分析并评分',description:'正在检查流程、耗时、资源用量与交付质量。'},
+  {id:'validating',label:'校验并保存',description:'正在校验评分和建议，随后保存评测报告。'}
+];
+const RUN_EVAL_ACTION_LABELS={
+  'workflow.update_node':'调整节点策略',
+  'agent.upsert_gate':'新增或更新角色门禁',
+  'agent.remove_gate':'移除角色门禁',
+  'agent.append_instructions':'追加角色任务说明',
+  'agent.append_task_prompt':'追加角色任务说明'
+};
+const RUN_EVAL_FAILURE_LABELS={fail:'标记失败',reject:'驳回',loop:'返工重跑',human:'转人工确认'};
+const runEvalSubmitting=new Set();
+const runEvalApplying=new Map();
+let runEvalModelChoice;
+let runEvalStream;
+
+function runEvalAction(item){
+  const target=(item.target||'').trim().toLowerCase();
+  const action=(item.action||'').trim().toLowerCase();
+  return target&&action&&!action.includes('.')?target+'.'+action:action;
+}
+
+function runEvalBadge(tone,label,icon){
+  return `<span class="hui-badge" data-size="sm" data-tone="${tone}">${icon?runIconSlot(icon,12,'hui-badge-glyph'):''}<span class="hui-badge-label">${label}</span></span>`;
+}
+
+function runEvalModelLabel(model){
+  if(!model)return '';
+  const catalog=window.AgentFlowAssistantModels?.catalog();
+  const item=catalog?.models.find(item=>item.id===model||`${item.engine}:${item.id}`===model);
+  return item?.name||model;
+}
+
+function runEvalPaneHTML(run){
+  const rec=state.runEval?.runId===run.id?state.runEval:null;
+  const policy=rec?.policy||defaultRunEval();
+  const dims=policy.dimensions?.length?policy.dimensions:defaultRunEval().dimensions;
+  const terminal=['succeeded','failed','cancelled'].includes(run.status);
+  const submitting=runEvalSubmitting.has(run.id);
+  const running=submitting||rec?.status==='running';
+  const label=rec?.status==='succeeded'?'重新评测':rec?.status==='failed'?'重试评测':'启动智能评测';
+  const toolbar=`<header class="run-eval-toolbar">
+    <h3>SOP 运行评测</h3>
+    <div class="run-eval-controls">
+      ${running?'':`<div class="feature-model-picker run-eval-picker" id="runEvalModelPicker">${window.AgentFlowAssistantModels?.featurePickerHTML()||''}</div>`}
+      <button type="button" class="button primary" data-start-run-eval ${!terminal||running||runEvalApplying.has(run.id)?'disabled':''}>${running?'评测中…':label}</button>
+    </div>
+  </header>`;
+  let content;
+  if(!terminal){
+    content=`<div class="run-eval-panel run-eval-notice">${runIconSlot('clock',17)}<div><h4>运行结束后可评测</h4><p>评测会使用本次运行的完整轨迹和交付记录。</p></div></div>`;
+  }else if(running){
+    const model=submitting?runEvalModelChoice?.model:rec?.model;
+    const stream=runEvalStream?.runId===run.id?runEvalStream:null;
+    content=`<section class="run-eval-panel" aria-labelledby="runEvalProgressTitle">
+      <div class="run-eval-panel-head"><h4 id="runEvalProgressTitle">评测进度</h4>
+        ${model?`<span class="run-eval-meta"><span>评测模型</span> <b data-i18n-data>${escapeHTML(runEvalModelLabel(model))}</b></span>`:''}
+      </div>
+      <div data-run-eval-progress>${runEvalProgressHTML(stream,submitting)}</div>
+    </section>`;
+  }else if(rec?.status==='failed'){
+    content=`<section class="run-eval-panel run-eval-failed" role="alert">
+      <div class="run-eval-panel-head"><h4>${runIconSlot('alert',16)} 评测失败</h4></div>
+      <pre>${escapeHTML(rec.error||'评测未返回结果。')}</pre>
+    </section>`;
+  }else if(rec?.status==='succeeded'){
+    content=runEvalReportHTML(run,rec,dims);
+  }else{
+    content=`<section class="run-eval-panel">
+      <div class="run-eval-panel-head"><h4>评分维度</h4><span class="run-eval-meta"><span>准入线</span> <b>${escapeHTML(policy.threshold||70)}/100</b></span></div>
+      <ul class="run-eval-criteria">${dims.map(d=>`<li><div><b>${escapeHTML(d.name)}</b><span>${escapeHTML(d.weight)}%</span></div><p>${escapeHTML(d.question)}</p></li>`).join('')}</ul>
+    </section>`;
+  }
+  return `<section class="run-eval-section" data-eval-record="${escapeHTML(rec?.id||'')}">${toolbar}${content}</section>`;
+}
+
+function runEvalStepsHTML(current){
+  return RUN_EVAL_STAGES.map(({label},index)=>`<li class="${index<current?'is-complete':''}" ${index===current?'aria-current="step"':''}>
+    <span class="run-eval-step-mark" aria-hidden="true">${index<current?runIconSlot('check',12):''}</span>
+    <span>${label}</span>
+  </li>`).join('');
+}
+
+function runEvalProgressMessage(stream,submitting){
+  if(submitting)return '正在提交评测…';
+  if(stream?.source.readyState===2)return '评测连接已断开。';
+  if(stream?.reconnecting)return '正在重新连接评测…';
+  return RUN_EVAL_STAGES[stream?.stage||0].description;
+}
+
+function runEvalProgressHTML(stream,submitting){
+  return `<ol class="run-eval-steps">${runEvalStepsHTML(stream?.stage||0)}</ol>
+  <div class="run-eval-live"><p role="status">${runEvalProgressMessage(stream,submitting)}</p>
+    <button type="button" class="button ghost small" data-reconnect-run-eval ${stream?.source.readyState===2?'':'hidden'}>重新连接</button>
+  </div>`;
+}
+
+function runEvalReportHTML(run,rec,dims){
+  const result=rec.result||{};
+  const model=runEvalModelLabel(rec.model);
+  const elapsed=Date.parse(rec.finishedAt)-Date.parse(rec.createdAt);
+  const findings=[...(result.findings||[])];
+  const severityOrder={error:0,warn:1,info:2};
+  findings.sort((a,b)=>(severityOrder[a.severity]??2)-(severityOrder[b.severity]??2));
+  const recs=result.recommendations||[];
+  return `<div class="run-eval-report-grid">
+    <section class="run-eval-panel run-eval-verdict">
+      <div class="run-eval-panel-head"><h4>评测结论</h4>${rec.passed?runEvalBadge('success','已达标','check'):runEvalBadge('warn','未达标','alert')}</div>
+      <div class="run-eval-score">
+        <strong>${escapeHTML(rec.score??result.score??'—')}</strong><span>/ 100</span>
+        <span class="run-eval-score-threshold"><span>准入线</span> <b>${escapeHTML(rec.policy?.threshold||70)}</b></span>
+      </div>
+      ${result.summary?`<p class="run-eval-summary" data-i18n-skip>${escapeHTML(result.summary)}</p>`:''}
+      <div class="run-eval-report-meta">
+        ${model?`<span><span>评测模型</span> <b data-i18n-data>${escapeHTML(model)}</b></span>`:''}
+        ${elapsed>=0?`<span><span>评测耗时</span> <b>${escapeHTML(duration(elapsed))}</b></span>`:''}
+        <span><span>规则版本</span> <b>v${escapeHTML(rec.policy?.version||1)}</b></span>
+      </div>
+    </section>
+    <section class="run-eval-panel">
+      <div class="run-eval-panel-head"><h4>维度得分</h4></div>
+      <ul class="run-eval-scores">${dims.map(d=>{
+        const score=result.dimensions?.[d.id];
+        const width=Number.isFinite(score)?Math.max(0,Math.min(100,score)):0;
+        return `<li><span>${escapeHTML(d.name)}</span><span class="run-eval-bar" aria-hidden="true"><i style="width:${width}%"></i></span><b>${escapeHTML(score??'—')}</b></li>`;
+      }).join('')}</ul>
+    </section>
+  </div>
+  <section class="run-eval-panel run-eval-list-panel">
+    <header class="run-eval-panel-head"><h4>诊断发现 <span>${findings.length}</span></h4></header>
+    ${findings.length?`<ul class="run-eval-list">${findings.map((finding,index)=>runEvalFindingHTML(run,rec,dims,finding,index)).join('')}</ul>`:'<p class="run-eval-empty">本次评测没有记录诊断发现。</p>'}
+  </section>
+  <section class="run-eval-panel run-eval-list-panel">
+    <header class="run-eval-panel-head"><h4>改进建议 <span>${recs.length}</span></h4></header>
+    ${recs.length?`<ul class="run-eval-list">${recs.map((item,index)=>runEvalRecHTML(run,rec,item,index)).join('')}</ul>`:'<p class="run-eval-empty">本次评测没有提出改进建议。</p>'}
+  </section>`;
+}
+
+function runEvalNodeName(run,rec,nodeId){
+  return run.workflowSnapshot?.nodes?.find(node=>node.id===nodeId)?.name||
+    rec.facts?.nodes?.find(node=>node.nodeId===nodeId)?.name||nodeId;
+}
+
+function runEvalFindingHTML(run,rec,dims,finding,index){
+  const severity=finding.severity==='error'?runEvalBadge('error','严重问题'):
+    finding.severity==='warn'?runEvalBadge('warn','待改进'):runEvalBadge('neutral','观察项');
+  const dimension=dims.find(d=>d.id===finding.dimension)?.name||finding.dimension||'运行诊断';
+  const nodeName=runEvalNodeName(run,rec,finding.nodeId);
+  return `<li class="run-eval-row">
+    <div class="run-eval-row-head"><div><b>${escapeHTML(dimension)}</b>
+      ${nodeName?`<span class="run-eval-node" title="${escapeHTML(finding.nodeId)}" data-i18n-data>${escapeHTML(nodeName)}</span>`:''}
+    </div>${severity}</div>
+    <p data-i18n-skip>${escapeHTML(finding.message||'')}</p>
+    ${finding.evidence?`<details class="run-eval-disclosure" data-eval-detail="finding-${index}">
+      <summary>${runIconSlot('chevron-right',13)}<span>查看证据</span></summary>
+      <pre>${escapeHTML(finding.evidence)}</pre>
+    </details>`:''}
+  </li>`;
+}
+
+function runEvalChange(item,action){
+  const set=item.set||{};
+  const gate=item.gate;
+  const gateId=(gate?.id||'').trim()||(typeof set.gateId==='string'?set.gateId.trim():'');
+  if(action==='agent.append_task_prompt'||action==='agent.append_instructions'){
+    const text=[item.text,set.text,set.instructionsDelta].find(value=>typeof value==='string'&&value.trim());
+    return {text:text?.trim()};
+  }
+  const label=(options,value)=>Object.hasOwn(options,value)?options[value]:value;
+  let fields=[];
+  if(action==='workflow.update_node'){
+    fields=[
+      ['最大尝试次数',set.maxAttempts],['最大返工次数',set.maxReworks],
+      ['失败处理',label(RUN_EVAL_FAILURE_LABELS,set.onFailure)],
+      ['重试策略',label({targeted_fix:'定向修复',full_redo:'完整重跑'},set.retryStrategy)]
+    ];
+  }else if(action==='agent.remove_gate'&&gateId){
+    fields=[['门禁标识',gateId],['门禁名称',gate?.name]];
+  }else if(action==='agent.upsert_gate'&&gateId){
+    fields=[
+      ['门禁标识',gateId],['门禁名称',gate?.name],
+      ['门禁类型',label({command:'命令',manual:'人工',mr:'合并请求'},gate?.mode||'command')],
+      ['执行时机',label({after_execution:'节点执行后',before_publish:'发布前'},gate?.stage)],
+      ['执行范围',label({run:'运行工作区',repositories:'代码仓库'},gate?.executionScope)],
+      ['是否必需',(gate?.required??!gate)?lfT('是','Yes'):lfT('否','No')],
+      ['失败处理',label(RUN_EVAL_FAILURE_LABELS,gate?.onFailure)]
+    ];
+    return {fields:fields.filter(([,value])=>value!=null&&value!==''),commands:gate?.commands?.join('\n')};
+  }
+  return {fields:fields.filter(([,value])=>value!=null&&value!=='')};
+}
+
+function runEvalRecommendation(run,rec,item){
+  const action=runEvalAction(item);
+  const type=action.startsWith('agent.')?'agent':action.startsWith('workflow.')?'workflow':'';
+  const catalog=rec.facts?.editableCatalog;
+  const node=run.workflowSnapshot?.nodes?.find(node=>node.id===item.nodeId);
+  const sourceId=type==='agent'?node?.agentId:type==='workflow'?run.workflowId||run.workflowSnapshot?.id:'';
+  // Match the server: a targetId that names no SOP or role falls back to the run's own.
+  const known=id=>type==='agent'?Boolean(state.data.agents?.some(agent=>agent.id===id)||catalog?.agents?.some(agent=>agent.id===id)):
+    Boolean(state.data.workflows?.some(workflow=>workflow.id===id)||run.workflowSnapshot?.id===id);
+  const requestedId=item.targetId?.trim()||'';
+  const targetId=item.appliedTargetId||(requestedId&&(known(requestedId)||!sourceId)?requestedId:sourceId)||'';
+  const workflow=run.workflowSnapshot?.id===targetId?run.workflowSnapshot:null;
+  const target=type==='agent'?state.data.agents?.find(agent=>agent.id===targetId)||catalog?.agents?.find(agent=>agent.id===targetId):
+    state.data.workflows?.find(workflow=>workflow.id===targetId)||workflow;
+  const name=target?.name||(type==='workflow'&&rec.facts?.workflowId===targetId?rec.facts.workflowName:'')||targetId;
+  const scope=type==='agent'?'角色':'SOP';
+  const projectId=run.executionContext?.projectId||rec.facts?.projectId||'';
+  const usesCopy=Boolean((type==='agent'?target?.shared:target?.generic)||(target?.projectId&&target.projectId!==projectId));
+  const change=runEvalChange(item,action);
+  const hasChange=Boolean(change.text||change.fields?.length);
+  const applied=item.status==='applied';
+  const canApply=!applied&&Boolean(item.id&&targetId&&hasChange&&Object.hasOwn(RUN_EVAL_ACTION_LABELS,action)&&
+    (type!=='workflow'||item.nodeId?.trim()));
+  const title=item.title?.trim();
+  const actionLabel=Object.hasOwn(RUN_EVAL_ACTION_LABELS,action)?RUN_EVAL_ACTION_LABELS[action]:'优化建议';
+  const displayTitle=title&&![action,item.action?.trim().toLowerCase(),action.split('.').at(-1)].includes(title.toLowerCase())?title:actionLabel;
+  return {type,targetId,name,scope,usesCopy,change,hasChange,applied,canApply,title:displayTitle};
+}
+
+function runEvalRecHTML(run,rec,item,index){
+  const info=runEvalRecommendation(run,rec,item);
+  const applying=runEvalApplying.get(run.id);
+  const nodeName=runEvalNodeName(run,rec,item.nodeId);
+  const badge=info.applied?runEvalBadge('success','已回写','check'):
+    item.applyError?runEvalBadge('error','回写失败'):
+    info.canApply?runEvalBadge('accent','可回写'):runEvalBadge('neutral','仅供参考');
+  const {fields,text,commands}=info.change;
+  return `<li class="run-eval-row" data-eval-recommendation="${escapeHTML(item.id||'')}">
+    <div class="run-eval-row-head"><b data-i18n-data>${escapeHTML(info.title)}</b>${badge}</div>
+    ${info.name||nodeName?`<div class="run-eval-target">
+      ${info.type&&info.name?`<span>${info.scope}</span> <b data-i18n-data>${escapeHTML(info.name)}</b>`:''}
+      ${nodeName?`<span class="run-eval-node" title="${escapeHTML(item.nodeId)}" data-i18n-data>${escapeHTML(nodeName)}</span>`:''}
+    </div>`:''}
+    ${item.rationale?`<p data-i18n-skip>${escapeHTML(item.rationale)}</p>`:''}
+    ${item.applyError?`<p class="run-eval-apply-error" role="alert" data-i18n-data>${escapeHTML(item.applyError)}</p>`:''}
+    <div class="run-eval-row-actions">
+      ${info.hasChange?`<details class="run-eval-disclosure" data-eval-detail="recommendation-${index}">
+        <summary>${runIconSlot('chevron-right',13)}<span>${info.canApply?'查看并应用':'查看改动'}</span></summary>
+        <div class="run-eval-patch">
+          ${fields?.length?`<dl>${fields.map(([label,value])=>`<div><dt>${label}</dt><dd>${escapeHTML(value)}</dd></div>`).join('')}</dl>`:''}
+          ${text?`<pre>${escapeHTML(text)}</pre>`:''}
+          ${commands?`<div class="run-eval-patch-label">执行命令</div><pre>${escapeHTML(commands)}</pre>`:''}
+          ${info.canApply?`<div class="run-eval-patch-actions">
+            ${info.usesCopy?'<span>将写入当前项目的评测副本</span>':''}
+            <button type="button" class="button primary small" data-apply-eval="${escapeHTML(item.id)}" ${applying?'disabled':''}>${applying===item.id?'正在回写…':'应用建议'}</button>
+          </div>`:''}
+        </div>
+      </details>`:''}
+      ${info.applied&&info.type&&info.targetId?`<button type="button" class="button ghost small" data-open-eval-target="${info.type}" data-open-eval-id="${escapeHTML(info.targetId)}">${info.type==='agent'?'打开角色':'打开 SOP'}${runIconSlot('arrow-right',13)}</button>`:''}
+    </div>
+  </li>`;
 }
 function bindRunEvalPane(run,host){
-  bindRunEvalModelPicker(host.querySelector('#runEvalModelPicker'),run.id);
-  host.querySelectorAll('[data-run-eval]').forEach(b=>b.onclick=()=>{
+  const pane=host.querySelector('[data-run-pane="eval"]');
+  hydrateRunIcons(pane);
+  bindRunEvalModelPicker(pane?.querySelector('#runEvalModelPicker'),run.id);
+  host.querySelectorAll('[data-run-eval]').forEach(button=>button.onclick=()=>{
+    if(state.selectedRun!==run.id)return;
     state.runDetailTab='eval';
-    host.querySelectorAll('[data-run-tab]').forEach(x=>x.classList.toggle('active',x.dataset.runTab==='eval'));
-    host.querySelectorAll('[data-run-pane]').forEach(p=>p.hidden=p.dataset.runPane!=='eval');
+    host.querySelectorAll('[data-run-tab]').forEach(tab=>tab.classList.toggle('active',tab.dataset.runTab==='eval'));
+    host.querySelectorAll('[data-run-pane]').forEach(tabPane=>tabPane.hidden=tabPane.dataset.runPane!=='eval');
     startRunEval(run);
   });
-  host.querySelectorAll('[data-start-run-eval]').forEach(b=>b.onclick=()=>startRunEval(run));
-  host.querySelectorAll('[data-apply-eval]').forEach(b=>b.onclick=()=>applyRunEvalRec(run,b.dataset.applyEval));
-  host.querySelectorAll('[data-open-eval-target]').forEach(b=>b.onclick=()=>openRunEvalTarget(b.dataset.openEvalTarget,b.dataset.openEvalId));
+  pane?.querySelectorAll('[data-start-run-eval]').forEach(button=>button.onclick=()=>startRunEval(run));
+  pane?.querySelectorAll('[data-apply-eval]').forEach(button=>button.onclick=()=>applyRunEvalRec(run,button.dataset.applyEval));
+  pane?.querySelectorAll('[data-open-eval-target]').forEach(button=>button.onclick=()=>openRunEvalTarget(button.dataset.openEvalTarget,button.dataset.openEvalId));
+  const reconnect=pane?.querySelector('[data-reconnect-run-eval]');
+  if(reconnect)reconnect.onclick=()=>loadRunEval(run.id);
 }
-let runEvalModelChoice;
+
 function bindRunEvalModelPicker(host,runId){
   window.AgentFlowAssistantModels?.bindFeaturePicker(host,{
     model:runEvalModelChoice?.runId===runId?runEvalModelChoice.model:'',
@@ -1492,67 +1707,207 @@ function bindRunEvalModelPicker(host,runId){
     onChange:model=>{runEvalModelChoice={runId,model}}
   });
 }
-async function loadRunEval(runId,background){
+
+function runEvalIsCurrent(runId){
+  return state.selectedRun===runId&&state.activeRun?.id===runId;
+}
+
+function paintRunEvalPane(runId){
+  if(!runEvalIsCurrent(runId))return;
+  const host=$('#runDetail');
+  const pane=host?.querySelector('[data-run-pane="eval"]');
+  if(!pane)return;
+  const previous=pane.querySelector('[data-eval-record]');
+  const sameRecord=previous&&previous.dataset.evalRecord===state.runEval?.id;
+  const openDetails=new Set(sameRecord?[...previous.querySelectorAll('details[open]')].map(detail=>detail.dataset.evalDetail):[]);
+  const focusDetail=sameRecord&&pane.contains(document.activeElement)?document.activeElement.closest('[data-eval-detail]')?.dataset.evalDetail:null;
+  pane.innerHTML=runEvalPaneHTML(state.activeRun);
+  for(const detail of pane.querySelectorAll('[data-eval-detail]')){
+    if(openDetails.has(detail.dataset.evalDetail))detail.open=true;
+    if(detail.dataset.evalDetail===focusDetail)detail.querySelector('summary')?.focus({preventScroll:true});
+  }
+  bindRunEvalPane(state.activeRun,host);
+}
+
+async function loadRunEval(runId,background=false){
+  if(!runEvalIsCurrent(runId)||runEvalSubmitting.has(runId))return;
+  const previous=state.runEval;
   try{
     const rec=await api(`/api/runs/${encodeURIComponent(runId)}/eval`,{silent:true});
-    if((state.activeRun?.id||state.selectedRun)!==runId&&state.activeRun?.id!==runId)return;
+    if(!runEvalIsCurrent(runId)||runEvalSubmitting.has(runId)||
+      (state.runEval?.runId===runId&&state.runEval!==previous))return;
     state.runEval={...rec,runId};
-    if(rec?.status==='running'&&!state.runEvalStream)attachRunEvalStream(runId);
-    if(!background){
-      const host=$('#runDetail');
-      const pane=host?.querySelector('[data-run-pane="eval"]');
-      if(pane){pane.innerHTML=runEvalPaneHTML(state.activeRun||{id:runId,status:state.activeRun?.status});bindRunEvalPane(state.activeRun||{id:runId,status:state.activeRun?.status},host)}
-    }
-  }catch(e){if(!background)toast(e.message,'err')}
+    if(rec?.status==='running')attachRunEvalStream(runId,rec.id);
+    else if(runEvalStream?.runId===runId)stopRunEvalStream();
+    if(!background)paintRunEvalPane(runId);
+  }catch(e){
+    if(!background&&runEvalIsCurrent(runId))toast(e.message,'err');
+  }
 }
+
 async function startRunEval(run){
   if(!['succeeded','failed','cancelled'].includes(run.status))return toast('请等 SOP 跑完后再评测');
   let picker=$('#runEvalModelPicker');
   await picker?.modelPickerReady;
-  if(picker&&!picker.isConnected&&state.activeRun?.id===run.id){
+  if(picker&&!picker.isConnected&&runEvalIsCurrent(run.id)){
     // Loading the last evaluation can replace the picker while its catalog is loading.
     picker=$('#runEvalModelPicker');
     await picker?.modelPickerReady;
   }
-  if(!picker?.isConnected||state.runEvalBusy)return;
+  if(!picker?.isConnected||!runEvalIsCurrent(run.id)||runEvalSubmitting.has(run.id)||
+    runEvalApplying.has(run.id)||(state.runEval?.runId===run.id&&state.runEval.status==='running'))return;
   const model=picker.querySelector('[data-feature-model]')?.value;
   if(!model)return toast('暂无可选模型，请检查个人配置中的执行器');
-  state.runEvalBusy=true;state.runEvalThoughts=['正在提交评测…'];
-  const host=$('#runDetail'),pane=host?.querySelector('[data-run-pane="eval"]');
-  if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}
+  runEvalModelChoice={runId:run.id,model};
+  runEvalSubmitting.add(run.id);
+  paintRunEvalPane(run.id);
+  let failed=false;
   try{
     const rec=await api(`/api/runs/${encodeURIComponent(run.id)}/eval`,{method:'POST',body:JSON.stringify({model})});
+    if(!runEvalIsCurrent(run.id))return;
     state.runEval={...rec,runId:run.id};
-    attachRunEvalStream(run.id);
-  }catch(e){state.runEvalBusy=false;toast(e.message,'err');if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}}
+    attachRunEvalStream(run.id,rec.id);
+  }catch(e){
+    failed=true;
+    if(runEvalIsCurrent(run.id))toast(e.message,'err');
+  }finally{
+    runEvalSubmitting.delete(run.id);
+    paintRunEvalPane(run.id);
+  }
+  // Another tab or API replica may already be evaluating this run.
+  if(failed)await loadRunEval(run.id);
 }
-function attachRunEvalStream(runId){
-  if(state.runEvalStream){state.runEvalStream.close();state.runEvalStream=null}
-  const es=new EventSource(`/api/runs/${encodeURIComponent(runId)}/eval/stream`);
-  state.runEvalStream=es;
-  const onThought=ev=>{try{const p=JSON.parse(ev.data||'{}');if(p.text){state.runEvalThoughts=[...(state.runEvalThoughts||[]),p.text].slice(-12);const pane=$('#runDetail')?.querySelector('[data-run-pane="eval"] .run-eval-thoughts');if(pane)pane.innerHTML=state.runEvalThoughts.map(t=>`<p>${escapeHTML(t)}</p>`).join('')}}catch(e){}};
-  es.addEventListener('thought',onThought);
-  const finish=async()=>{es.close();if(state.runEvalStream===es)state.runEvalStream=null;state.runEvalBusy=false;await loadRunEval(runId)};
-  es.addEventListener('done',finish);
-  es.addEventListener('error',async ev=>{if(ev.data){try{const p=JSON.parse(ev.data);if(p.error)toast(p.error,'err')}catch(e){}}await finish()});
+
+function stopRunEvalStream(){
+  runEvalStream?.source.close();
+  runEvalStream=null;
 }
+
+function paintRunEvalProgress(stream){
+  if(!runEvalIsCurrent(stream.runId))return;
+  const progress=$('#runDetail')?.querySelector('[data-run-eval-progress]');
+  if(!progress)return;
+  progress.querySelector('.run-eval-steps').innerHTML=runEvalStepsHTML(stream.stage);
+  const status=progress.querySelector('[role="status"]');
+  const message=runEvalProgressMessage(stream,false);
+  if(status.textContent!==message)status.textContent=message;
+  progress.querySelector('[data-reconnect-run-eval]').hidden=stream.source.readyState!==2;
+  hydrateRunIcons(progress);
+}
+
+function attachRunEvalStream(runId,evalId){
+  if(runEvalStream?.runId===runId&&runEvalStream.evalId===evalId&&runEvalStream.source.readyState!==2)return;
+  stopRunEvalStream();
+  const source=new EventSource(`/api/runs/${encodeURIComponent(runId)}/eval/stream`);
+  const stream={runId,evalId,source,stage:0,reconnecting:false};
+  runEvalStream=stream;
+  const current=()=>runEvalStream===stream&&runEvalIsCurrent(runId)&&state.runEval?.id===evalId;
+  const finish=rec=>{
+    if(!current())return;
+    stopRunEvalStream();
+    state.runEval={...rec,runId};
+    paintRunEvalPane(runId);
+  };
+  source.addEventListener('thought',event=>{
+    if(!current())return;
+    let payload;
+    try{payload=JSON.parse(event.data)}catch{return}
+    const stage=RUN_EVAL_STAGES.findIndex(step=>step.id===payload?.stage);
+    if(stage<=stream.stage)return;
+    stream.stage=stage;
+    paintRunEvalProgress(stream);
+  });
+  source.addEventListener('open',()=>{
+    if(!current()||!stream.reconnecting)return;
+    stream.reconnecting=false;
+    paintRunEvalProgress(stream);
+  });
+  source.addEventListener('done',event=>{
+    if(!current())return;
+    let rec;
+    try{rec=JSON.parse(event.data)}catch{}
+    if(rec?.id!==evalId){
+      stopRunEvalStream();
+      loadRunEval(runId);
+      return;
+    }
+    if(rec.status==='running'){
+      // Another API instance can return the persisted record without owning
+      // the evaluation job. EventSource will reconnect for progress.
+      stream.reconnecting=true;
+      paintRunEvalProgress(stream);
+      return;
+    }
+    finish(rec);
+  });
+  source.addEventListener('error',event=>{
+    if(!current())return;
+    if(event.data){
+      let error;
+      try{error=JSON.parse(event.data)?.error}catch{}
+      finish({...state.runEval,status:'failed',error});
+      return;
+    }
+    stream.reconnecting=true;
+    paintRunEvalProgress(stream);
+  });
+}
+
 async function applyRunEvalRec(run,recId){
-  if(!await afConfirm({title:'应用评测建议',message:'确认把这条建议写进当前 SOP 或角色？不会改这次运行的历史快照。',confirmText:'确认应用'}))return;
+  const rec=state.runEval;
+  if(!runEvalIsCurrent(run.id)||rec?.runId!==run.id||rec.status!=='succeeded'||
+    runEvalApplying.has(run.id)||runEvalSubmitting.has(run.id))return;
+  const recommendation=rec.result?.recommendations?.find(item=>item.id===recId);
+  if(!recommendation)return;
+  const info=runEvalRecommendation(run,rec,recommendation);
+  if(!info.canApply)return;
+  runEvalApplying.set(run.id,recId);
+  let writing=false,applied=false;
   try{
-    const rec=await api(`/api/runs/${encodeURIComponent(run.id)}/eval/apply`,{method:'POST',body:JSON.stringify({evalId:state.runEval?.id,recommendationIds:[recId]})});
-    state.runEval={...rec,runId:run.id};
-    const [workflows,agents]=await Promise.all([api('/api/workflows',{silent:true}),api('/api/agents',{silent:true})]);
-    state.data.workflows=workflows;state.data.agents=agents;
-    toast('已写回当前定义','ok');
-    const host=$('#runDetail'),pane=host?.querySelector('[data-run-pane="eval"]');
-    if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}
-  }catch(e){toast(e.message,'err')}
+    const destination=`${info.scope} · ${info.name}`;
+    const copyNote=info.usesCopy?'\n将写入当前项目的评测副本':'';
+    if(!await afConfirm({title:'应用评测建议',message:`将建议写入以下目标？\n${destination}${copyNote}`,confirmText:'确认回写'}))return;
+    if(!runEvalIsCurrent(run.id)||state.runEval?.id!==rec.id)return;
+    writing=true;
+    paintRunEvalPane(run.id);
+    const updated=await api(`/api/runs/${encodeURIComponent(run.id)}/eval/apply`,{
+      method:'POST',body:JSON.stringify({evalId:rec.id,recommendationIds:[recId]})
+    });
+    if(runEvalIsCurrent(run.id)&&state.runEval?.id===rec.id)state.runEval={...updated,runId:run.id};
+    const outcome=updated.result?.recommendations?.find(item=>item.id===recId);
+    applied=outcome?.status==='applied';
+    if(applied)toast('建议已回写','ok');
+    else if(!outcome?.applyError)toast('回写未完成，请刷新评测结果后重试。','err');
+  }catch(e){
+    toast(e.message,'err');
+  }finally{
+    runEvalApplying.delete(run.id);
+    if(writing)paintRunEvalPane(run.id);
+  }
+  if(!applied)return;
+  const [workflows,agents]=await Promise.allSettled([api('/api/workflows',{silent:true}),api('/api/agents',{silent:true})]);
+  if(workflows.status==='fulfilled')state.data.workflows=workflows.value;
+  if(agents.status==='fulfilled')state.data.agents=agents.value;
+  paintRunEvalPane(run.id);
 }
+
 function openRunEvalTarget(target,id){
-  if(target==='agent'){state.selectedAgent=id;switchView('agents');const agent=(state.data.agents||[]).find(a=>a.id===id);if(agent&&typeof openAgentWizard==='function')openAgentWizard(agent);return}
-  const wf=(state.data.workflows||[]).find(w=>w.id===id);
-  if(wf){state.workflow=clone(wf);state.selectedNode=null;switchView('flow');renderAll()}
+  if(target==='agent'){
+    const agent=(state.data.agents||[]).find(agent=>agent.id===id);
+    if(!agent)return toast('暂时无法打开回写后的角色，请刷新后再试。','err');
+    state.selectedAgent=id;
+    switchView('agents');
+    if(typeof openAgentWizard==='function')openAgentWizard(agent);
+    return;
+  }
+  const workflow=(state.data.workflows||[]).find(workflow=>workflow.id===id);
+  if(!workflow)return toast('暂时无法打开回写后的 SOP，请刷新后再试。','err');
+  state.workflow=clone(workflow);
+  state.selectedNode=null;
+  switchView('flow');
+  renderAll();
 }
+
 let artifactPreviewRequest;
 function bindArtifactPreview(){
   const modal=$('#artifactModal');
@@ -1598,6 +1953,32 @@ function openArtifactPreview({title,icon,details,url,action,download=false,loadi
   }else modal.querySelector('.artifact-close').focus();
   return artifactPreviewRequest.signal;
 }
+/** 页面内预览会整份读入并渲染正文，超过 5 MiB 的产物只提供下载。 */
+const ARTIFACT_PREVIEW_MAX_BYTES=5*1024*1024;
+function artifactHasBinaryType(artifact){
+  const type=String(artifact?.mediaType||'').split(';')[0].trim().toLowerCase();
+  return (type.startsWith('image/')&&type!=='image/svg+xml')||type.startsWith('audio/')||type.startsWith('video/')||
+    ['application/octet-stream','application/pdf','application/zip','application/x-zip-compressed',
+      'application/gzip','application/x-gzip','application/x-tar','application/x-7z-compressed'].includes(type);
+}
+/** 未声明类型的产物会登记为 Markdown，因此按正文判断二进制：含 NUL，或开头有大量无法解码的字符。 */
+function artifactLooksBinary(content){
+  if(content.includes('\u0000'))return true;
+  const head=content.slice(0,65536);
+  return (head.match(/\uFFFD/g)||[]).length>head.length*0.1;
+}
+function artifactDownloadName(artifact){
+  return String(artifact?.path||'').split('/').pop()||artifact?.name||'artifact.txt';
+}
+/** 通过产物地址下载原始字节，二进制文件不会经过文本解码。 */
+function downloadArtifactFile(url,artifact){
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=artifactDownloadName(artifact);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 async function previewArtifact(run,artifactId,opener){
   const artifact=(run.artifacts||[]).find(a=>a.id===artifactId);
   if(!artifact)return;
@@ -1608,10 +1989,31 @@ async function previewArtifact(run,artifactId,opener){
     url,action:'在新窗口打开 ↗',loading:'正在加载交付物…',opener,
   });
   try{
+    const renderDownloadOnly=reason=>{
+      const sizeKB=Math.max(1,Math.ceil((artifact.size||0)/1024));
+      const size=sizeKB>=1024?`${(sizeKB/1024).toFixed(1)} MB`:`${sizeKB} KB`;
+      host.innerHTML=`
+        <div class="artifact-preview-toolbar">
+          <div class="artifact-toolbar-left">
+            <div class="artifact-evidence-badges">
+              <span>SHA-256: <code>${escapeHTML((artifact.sha256||'—').slice(0, 16))}…</code></span>
+              <span>${size}</span>
+            </div>
+          </div>
+          <div class="artifact-toolbar-right">
+            <button type="button" class="button ghost small" data-download-artifact>⬇ 下载文件</button>
+          </div>
+        </div>
+        <div class="empty-properties"><b>此文件不在页面内预览</b><p>${escapeHTML(reason)}</p></div>`;
+      host.querySelector('[data-download-artifact]').onclick=()=>downloadArtifactFile(url,artifact);
+    };
+    if((artifact.size||0)>ARTIFACT_PREVIEW_MAX_BYTES){renderDownloadOnly('文件超过 5 MiB，请下载后查看。');return}
+    if(artifactHasBinaryType(artifact)){renderDownloadOnly('此类型请下载后查看。');return}
     const res=await fetch(url,{signal});
     if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const content=await res.text();
     if(signal.aborted)return;
+    if(artifactLooksBinary(content)){renderDownloadOnly('无法按文本显示，请下载后查看。');return}
     const isMd=isMarkdownArtifact(artifact, content);
     $('#artifactPreviewHeading .artifact-preview-icon').textContent=isMd?'MD':'{}';
     let viewMode=isMd?'preview':'source';
@@ -1650,16 +2052,7 @@ async function previewArtifact(run,artifactId,opener){
       });
 
       host.querySelector('[data-copy-artifact]').onclick=()=>copyText(content, '产物内容已复制到剪贴板');
-
-      host.querySelector('[data-download-artifact]').onclick=()=>{
-        const blob=new Blob([content], {type: artifact.mediaType || 'text/plain'});
-        const url=URL.createObjectURL(blob);
-        const a=document.createElement('a');
-        a.href=url;
-        a.download=artifact.name || 'artifact.txt';
-        a.click();
-        URL.revokeObjectURL(url);
-      };
+      host.querySelector('[data-download-artifact]').onclick=()=>downloadArtifactFile(url,artifact);
 
       host.querySelectorAll('.md-code-copy').forEach(b=>{
         b.onclick=()=>{
@@ -1686,22 +2079,44 @@ async function runAction(id,action,body){
   }catch(e){toast(e.message)}
 }
 async function loadRunMachineMetadata(r){
-  if(r.executionContext?.executionMode!=='runner')return;
+  const ec=r.executionContext||{};
+  if(ec.executionMode!=='runner'&&ec.executionPool!=='project-auto')return;
   // Unlike refreshRunners, this read-only lookup does not create a binding code.
   try{
-    const runners=await api('/api/runners?mine=1',{silent:true});
-    if(state.selectedRun===r.id)state.runners=runners||[];
+    const query=ec.projectId?`projectId=${encodeURIComponent(ec.projectId)}`:'mine=1';
+    const runners=await api('/api/runners?'+query,{silent:true});
+    if(state.selectedRun===r.id)state.runMachineMetadata={runId:r.id,runners:runners||[]};
   }catch{} // Machine metadata must not prevent displaying the run.
 }
 function runExecutionChipHTML(r){
   const ec=r.executionContext||{};
-  if(ec.executionMode!=='runner')return '';
+  const auto=ec.executionPool==='project-auto';
+  if(ec.executionMode!=='runner'&&!auto)return '';
   const id=ec.executionRunnerId||'';
-  const mine=(state.runners||[]).find(m=>m.id===id);
-  const personal=r.concurrencyExempt===true||Number(mine?.ownerUserId)>0;
-  const machineLimit=Number(mine?.runLimit)||0;
-  const label=personal?`个人机器 ${mine?.name||id.slice(-8)} · 不受项目 10 条 SOP 限额${machineLimit>0?`，本机最多 ${machineLimit} 条`:''}`:ec.executionPool==='cloud'?(id?'云端执行池':'等待云端执行机器'):`执行机器 ${mine?.name||id.slice(-8)}`;
-  return `<span class="run-meta-chip" title="${escapeHTML(id||'尚未分配')}">${escapeHTML(label)}</span>`;
+  const metadata=state.runMachineMetadata;
+  const list=metadata&&metadata.runId===r.id?metadata.runners:state.runners||[];
+  const machine=list.find(m=>m.id===id);
+  const personal=r.concurrencyExempt===true||Number(machine?.ownerUserId)>0;
+  const machineName=machine?.name||id.slice(-8);
+  const machineLimit=Number(machine?.runLimit)||0;
+  let label,title=id||'尚未分配';
+  if(auto){
+    if(!ec.executionMode&&!id)label=r.status==='queued'?'自动分配 · 等待可用机器':'自动分配 · 尚未分配';
+    else if(personal&&id)label=`自动分配 · ${machineName}`;
+    else{label='自动分配 · 平台云端';title='平台执行机器（云端）'}
+  }else if(personal){
+    label=`执行机器 ${machineName}${machineLimit>0?` · 本机最多 ${machineLimit} 条`:''}`;
+  }else{
+    label=ec.executionPool==='cloud'?(id?'云端执行池':'等待云端执行机器'):`执行机器 ${machineName}`;
+  }
+  return `<span class="run-meta-chip" data-run-execution-chip title="${escapeHTML(title)}">${escapeHTML(label)}</span>`;
+}
+function queuedRunCalloutHTML(r){
+  const ec=r.executionContext||{};
+  let queue='平台所有项目共用名额，默认 10 条，平台管理员可调整。';
+  if(ec.executionPool==='project-auto'&&!ec.executionMode)queue='系统会选择兼容且有空余名额的执行机器。';
+  else if(r.concurrencyExempt)queue='此机器的所有共享项目共用本机名额。';
+  return `<div class="approval-callout queued-run-callout"><b>排队中，获得运行名额后自动启动</b><p>${queue}失败、暂停、待确认的 SOP 空闲 1 小时后归档并释放名额。排队期间可以取消运行。</p></div>`;
 }
 async function deleteRun(id){
   if(!id)return;

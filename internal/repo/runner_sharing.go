@@ -28,8 +28,41 @@ func (r *RunnersRepo) writableRunnerProject(projectID string, userID int64) (dom
 	if projectID == "" || userID <= 0 {
 		return domain.Project{}, false
 	}
-	project, ok := r.projects.Project(projectID)
-	return project, ok && project.ID == projectID && project.ArchivedAt == nil && project.HasWritableMember(userID)
+	project, err := r.projects.projectWithMembersInTx(r.DB, projectID)
+	return project, err == nil && writableRunnerProject(project, projectID, userID)
+}
+
+func writableRunnerProject(project domain.Project, projectID string, userID int64) bool {
+	return project.ID == projectID && project.ArchivedAt == nil && project.HasWritableMember(userID)
+}
+
+// canAssignProjectRun checks current membership and sharing on the admission
+// transaction's own connection. A nil runner represents the platform.
+func (r *RunnersRepo) canAssignProjectRun(tx *gorm.DB, ec domain.TelemetryContext, runner *domain.Runner) (bool, error) {
+	project, err := r.projects.projectWithMembersInTx(tx, ec.ProjectID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !writableRunnerProject(project, ec.ProjectID, ec.ResponsibleUserID) {
+		return false, nil
+	}
+	if runner != nil {
+		return runner.ID == ec.ExecutionRunnerID && runnerSharedByWritableOwner(*runner, project), nil
+	}
+	if ec.ExecutionRunnerID == "" {
+		return true, nil
+	}
+	// A pool-backed platform assignment must still point to an online,
+	// platform-owned machine when the slot is granted.
+	var row runnerRow
+	err = tx.Select("owner_user_id", "status").Where("id = ?", ec.ExecutionRunnerID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return (row.OwnerUserID == nil || *row.OwnerUserID == 0) && row.Status == domain.RunnerStatusOnline, err
 }
 
 func runnerSharedByWritableOwner(runner domain.Runner, project domain.Project) bool {
@@ -46,8 +79,9 @@ func (r *RunnersRepo) CanUseRunner(runner domain.Runner, projectID string, userI
 
 type RunnerProjectView struct {
 	domain.Runner
-	CanUseInProject      bool `json:"canUseInProject,omitempty"`
-	SupportsConversation bool `json:"supportsConversation"`
+	CanUseInProject      bool               `json:"canUseInProject,omitempty"`
+	SupportsConversation bool               `json:"supportsConversation"`
+	Load                 *domain.RunnerLoad `json:"load,omitempty"`
 }
 
 func (r *RunnersRepo) RunnersForUser(userID int64, projectID string) []RunnerProjectView {
@@ -104,24 +138,35 @@ func (r *RunnersRepo) SetRunnerSharedProjects(id string, userID int64, projectID
 // ProjectDefaultRunner rechecks both memberships and the grant on each resolution
 // so a stale preference cannot allocate a new run on a revoked machine.
 func (r *RunnersRepo) ProjectDefaultRunner(userID int64, projectID string) domain.Runner {
-	if projectID == "" || userID <= 0 {
-		return domain.Runner{}
-	}
-	var pref userProjectRunnerPrefRow
-	if err := r.DB.Where("user_id = ? AND project_id = ?", userID, projectID).Take(&pref).Error; err != nil {
-		return domain.Runner{}
-	}
-	runner, ok := r.Runner(pref.DefaultRunnerID)
-	if !ok || !r.CanUseRunner(runner, projectID, userID) {
-		return domain.Runner{}
-	}
+	runner, _ := r.projectRunnerPreference(userID, projectID)
 	return runner
 }
 
+func (r *RunnersRepo) projectRunnerPreference(userID int64, projectID string) (domain.Runner, string) {
+	project, writable := r.writableRunnerProject(projectID, userID)
+	if !writable {
+		return domain.Runner{}, ""
+	}
+	var pref userProjectRunnerPrefRow
+	if err := r.DB.Where("user_id = ? AND project_id = ?", userID, projectID).Take(&pref).Error; err != nil {
+		return domain.Runner{}, ""
+	}
+	switch pref.SelectionMode {
+	case domain.RunnerSelectionModeAuto, domain.RunnerSelectionModePlatform:
+		return domain.Runner{}, pref.SelectionMode
+	}
+	runner, ok := r.Runner(pref.DefaultRunnerID)
+	if !ok || !runnerSharedByWritableOwner(runner, project) {
+		return domain.Runner{}, ""
+	}
+	return runner, ""
+}
+
 type RunnerDefaults struct {
-	Runner           domain.Runner
-	PersonalRunnerID string
-	ProjectRunnerID  string
+	Runner            domain.Runner
+	PersonalRunnerID  string
+	ProjectRunnerID   string
+	ProjectRunnerMode string
 }
 
 // ResolveRunnerDefaults chooses the effective machine and returns the preference
@@ -138,7 +183,14 @@ func (r *RunnersRepo) ResolveConversationRunnerDefaults(userID int64, projectID 
 
 func (r *RunnersRepo) resolveRunnerDefaults(userID int64, projectID string, conversation bool) RunnerDefaults {
 	defaults := RunnerDefaults{PersonalRunnerID: r.DefaultRunner(userID)}
-	if runner := r.ProjectDefaultRunner(userID, projectID); runner.ID != "" {
+	runner, mode := r.projectRunnerPreference(userID, projectID)
+	if mode != "" {
+		// Both modes suppress the personal fallback. Conversations use the
+		// platform even when SOPs in the same project are assigned automatically.
+		defaults.ProjectRunnerMode = mode
+		return defaults
+	}
+	if runner.ID != "" {
 		defaults.ProjectRunnerID = runner.ID
 		if !conversation || runner.SupportsConversationCLI() {
 			defaults.Runner = runner
@@ -161,15 +213,28 @@ func (r *RunnersRepo) resolveRunnerDefaults(userID int64, projectID string, conv
 }
 
 func (r *RunnersRepo) SetProjectDefaultRunner(userID int64, projectID, runnerID string) error {
+	return r.SetProjectRunnerPreference(userID, projectID, runnerID, "")
+}
+
+func (r *RunnersRepo) SetProjectRunnerPreference(userID int64, projectID, runnerID, mode string) error {
 	if userID <= 0 || projectID == "" {
 		return ErrRunnerProjectDenied
 	}
-	if runnerID == "" {
+	if mode == "" && runnerID == "" {
 		return r.DB.Where("user_id = ? AND project_id = ?", userID, projectID).Delete(&userProjectRunnerPrefRow{}).Error
 	}
 	project, writable := r.writableRunnerProject(projectID, userID)
 	if !writable {
 		return ErrRunnerProjectDenied
+	}
+	values := map[string]any{
+		"user_id": userID, "project_id": projectID, "default_runner_id": runnerID, "selection_mode": mode,
+	}
+	if mode != "" {
+		if runnerID != "" || (mode != domain.RunnerSelectionModeAuto && mode != domain.RunnerSelectionModePlatform) {
+			return errors.New("无效的项目执行模式")
+		}
+		return upsert(r.DB, "user_project_runner_prefs", values)
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		row, err := r.lockRunner(tx, runnerID)
@@ -179,8 +244,6 @@ func (r *RunnersRepo) SetProjectDefaultRunner(userID int64, projectID, runnerID 
 		if !runnerSharedByWritableOwner(runnerFromRow(row), project) {
 			return ErrRunnerProjectDenied
 		}
-		return upsert(tx, "user_project_runner_prefs", map[string]any{
-			"user_id": userID, "project_id": projectID, "default_runner_id": runnerID,
-		})
+		return upsert(tx, "user_project_runner_prefs", values)
 	})
 }

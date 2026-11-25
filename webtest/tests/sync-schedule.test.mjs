@@ -649,6 +649,7 @@ test('AI schedule model picker loads account login CLI models for its project an
     models: [
       { id: 'glm-test', name: 'GLM Test', family: 'glm' },
       { id: 'claude-test', name: 'Claude Test', family: 'claude' },
+      { id: 'claude-code:opus', name: 'Saved Opus', engine: 'claude-code' },
       ...(call.search === scheduleCatalogQuery ? [{ id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', family: 'gpt', engine: 'codex' }] : []),
     ],
     engines: [
@@ -694,9 +695,10 @@ test('AI schedule model picker loads account login CLI models for its project an
   assert.equal(form.elements.assistantModel.value, 'glm-test');
 
   // A job saved on a CLI this editor has no key for stays on that CLI.
-  app.evaluate(`paintScheduleModel('claude-code:opus')`);
+  app.evaluate(`$('#scheduleJobForm').elements.id.value='saved-task';paintScheduleModel('claude-code:opus')`);
   assert.equal(engine.value, 'claude-code');
-  assert.equal(engine.selectedOptions[0].disabled, false);
+  assert.equal(engine.selectedOptions[0].disabled, true);
+  assert.equal(toggle.disabled, true);
   assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
 
   app.router.get('/api/assistant/models', {
