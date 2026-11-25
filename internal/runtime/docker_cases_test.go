@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +85,45 @@ func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxReplacesContainerWhenPrivilegeChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		privileged bool
+	}{
+		{name: "enable", privileged: true},
+		{name: "disable", privileged: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			cvRInstallFakeDocker(t, workspace)
+			argsFile := filepath.Join(t.TempDir(), "create-args")
+			t.Setenv("CVR_DOCKER_CREATE_ARGS", argsFile)
+			t.Setenv("CVR_DOCKER_EXISTING_PRIVILEGED", strconv.FormatBool(!tc.privileged))
+			sb := &dockerSandbox{
+				name:       "box",
+				workspace:  workspace,
+				profile:    domain.SandboxProfile{Driver: "docker", Privileged: tc.privileged, ReadOnlyRootFS: true},
+				dockerfile: domain.DockerfileDefinition{Content: "FROM scratch"},
+			}
+			if err := sb.BindWorkspace(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatalf("expected docker create when privilege changes: %v", err)
+			}
+			args := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if slices.Contains(args, "--privileged") != tc.privileged ||
+				slices.Contains(args, "--cap-drop=ALL") == tc.privileged ||
+				slices.Contains(args, "no-new-privileges") == tc.privileged ||
+				!slices.Contains(args, "--read-only") ||
+				(tc.privileged && slices.Contains(args, "--user")) {
+				t.Fatalf("unexpected docker create args: %q", args)
+			}
+		})
+	}
+}
+
 func TestDockerSandboxUsesRelayNetworkOnlyWhenRequested(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
@@ -142,7 +183,7 @@ func TestDockerDiscoveryImagesAndBuildHelpers(t *testing.T) {
 	workspace := t.TempDir()
 	cvRInstallFakeDocker(t, workspace)
 	ctx := context.Background()
-	info, err := inspectDockerWorkspaceMounts(ctx, "box")
+	info, err := inspectDockerWorkspace(ctx, "box")
 	if err != nil || info == nil || info.source != workspace || info.legacyMasks {
 		t.Fatalf("mounts=%+v err=%v", info, err)
 	}
@@ -300,9 +341,9 @@ case "$*" in
       exited) echo "false|id-$(cat "$state/generation")|start-$(cat "$state/starts")"; exit 0 ;;
     esac
     echo 'Error: No such object: box' >&2; exit 1 ;;
-  "inspect --type container --format {{json .Mounts}} box")
+  'inspect --type container --format {"mounts":{{json .Mounts}},"privileged":{{.HostConfig.Privileged}}} box')
     [ -n "$(status)" ] || { echo 'Error: No such container: box' >&2; exit 1; }
-    printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
+    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false}\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
   "start box") [ -n "$(status)" ] || exit 1; echo running > "$state/status"; count starts; exit 0 ;;
   "create --name box "*) echo exited > "$state/status"; count generation; exit 0 ;;
   "rm -f box") rm -f "$state/status"; exit 0 ;;
@@ -368,8 +409,8 @@ if [ "${1-}" = inspect ] && [ "${2-}" = -f ]; then
   exit 0
 fi
 case "$*" in
-  "inspect --type container --format {{json .Mounts}} box")
-    printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$workspace"; exit 0 ;;
+  'inspect --type container --format {"mounts":{{json .Mounts}},"privileged":{{.HostConfig.Privileged}}} box')
+    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":%s}\n' "$workspace" "${CVR_DOCKER_EXISTING_PRIVILEGED:-false}"; exit 0 ;;
   "inspect --type container "*) echo 'Error: No such container' >&2; exit 1 ;;
   "inspect --format {{.State.Running}}|{{.Id}}|{{.State.StartedAt}} "*) echo 'true|container-id|now'; exit 0 ;;
   "image inspect --format {{.Config.User}} "*) exit 0 ;;

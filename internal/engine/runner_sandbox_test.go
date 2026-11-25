@@ -19,7 +19,7 @@ func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
 	}
 	defer s.Close()
 	dockerfile := &domain.SandboxDockerfile{Content: "FROM alpine:3.20\n"}
-	profile := domain.SandboxProfile{ID: "runner-docker", Name: "Runner Docker", Driver: "docker", Dockerfile: dockerfile, Environment: map[string]string{"E2E": "1"}}
+	profile := domain.SandboxProfile{ID: "runner-docker", Name: "Runner Docker", Driver: "docker", Privileged: true, Dockerfile: dockerfile, Environment: map[string]string{"E2E": "1"}}
 	if err := s.PutSandbox(profile); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec == nil || spec.Profile.Driver != "docker" || spec.Profile.Environment["E2E"] != "1" || spec.Dockerfile == nil || spec.Dockerfile.Content != dockerfile.Content || spec.Dockerfile.ID != profile.ID || spec.Profile.DockerfileID != profile.ID || spec.Profile.Dockerfile != nil {
+	if spec == nil || spec.Profile.Driver != "docker" || !spec.Profile.Privileged || spec.Profile.Environment["E2E"] != "1" || spec.Dockerfile == nil || spec.Dockerfile.Content != dockerfile.Content || spec.Dockerfile.ID != profile.ID || spec.Profile.DockerfileID != profile.ID || spec.Profile.Dockerfile != nil {
 		t.Fatalf("runner sandbox spec = %+v", spec)
 	}
 }

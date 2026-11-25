@@ -936,6 +936,7 @@ func normalizeSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfil
 	// other one instead of failing the save.
 	if profile.Driver != domain.SandboxDriverDocker {
 		profile.Dockerfile = nil
+		profile.Privileged = false
 	}
 	switch profile.Driver {
 	case domain.SandboxDriverLocal, domain.SandboxDriverNative, domain.SandboxDriverSeatbelt, domain.SandboxDriverBwrap:

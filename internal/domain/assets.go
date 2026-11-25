@@ -140,6 +140,7 @@ type SandboxProfile struct {
 	Shared         bool              `json:"shared,omitempty"`
 	Driver         string            `json:"driver"` // native, docker (seatbelt / bwrap are resolved native values)
 	ReadOnlyRootFS bool              `json:"readOnlyRootFS"`
+	Privileged     bool              `json:"privileged,omitempty"`
 	Environment    map[string]string `json:"environment,omitempty"`
 	// Dockerfile is the image recipe of a docker sandbox.
 	Dockerfile *SandboxDockerfile `json:"dockerfile,omitempty"`
