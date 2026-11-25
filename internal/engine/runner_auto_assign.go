@@ -172,7 +172,7 @@ func (e *Engine) prepareAutoAssign(ctx context.Context, wf domain.WorkflowDefini
 		return false
 	})
 	if len(candidates) == 0 {
-		return nil, profile, "", fmt.Errorf("没有在线执行机器可运行此 SOP：%w", branchIncompatible)
+		return nil, profile, "", fmt.Errorf("没有在线执行机器可运行此 LOOP：%w", branchIncompatible)
 	}
 	var selection string
 	if wf.AutoSelectSandbox {

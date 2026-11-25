@@ -92,7 +92,7 @@ func (h *assistantHandlers) runSOPHelper(ctx context.Context, execution domain.T
 	return redactSOPHelperText(raw, user), nil
 }
 
-var errSOPHelperCredentials = errors.New("请配置 SOP 负责人的模型凭据或执行机器登录")
+var errSOPHelperCredentials = errors.New("请配置 LOOP 负责人的模型凭据或执行机器登录")
 
 func redactSOPHelperText(value string, user domain.User) string {
 	return redactSecretValues(redactAgentToolResult(value, user))

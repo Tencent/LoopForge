@@ -263,7 +263,7 @@ func (e *Engine) waitChildRun(ctx context.Context, parentID, childID string) (do
 			}
 			if domain.TerminalRunStatus(child.Status) {
 				if child, ok = e.repo.RunState(childID); !ok {
-					return domain.Run{}, fmt.Errorf("读取子 SOP %s 的产物失败", childID)
+					return domain.Run{}, fmt.Errorf("读取子 LOOP %s 的产物失败", childID)
 				}
 				return child, nil
 			}
