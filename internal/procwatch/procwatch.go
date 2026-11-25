@@ -74,6 +74,7 @@ type Options struct {
 
 const (
 	tailLines     = 20
+	maxLineBytes  = 64 << 10
 	progressEvery = 10 * time.Second
 	waitDelay     = 5 * time.Second
 )
@@ -274,6 +275,7 @@ type lineWriter struct {
 	redact   func(string) string
 	onLine   func(string, time.Time)
 	pending  bytes.Buffer
+	oversize bool
 	lines    []string
 	last     time.Time
 	lastEmit time.Time
@@ -289,14 +291,30 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 			w.endLine(now)
 			continue
 		}
+		if w.oversize {
+			continue
+		}
+		if w.pending.Len() == maxLineBytes {
+			w.oversize = true
+			w.pending.Reset()
+			continue
+		}
 		w.pending.WriteByte(b)
 	}
 	return len(p), nil
 }
 
 func (w *lineWriter) endLine(now time.Time) {
-	line := strings.TrimSpace(w.pending.String())
-	w.pending.Reset()
+	var line string
+	if w.oversize {
+		// Omit the entire oversized line. Truncating could split a credential
+		// before the redactor gets a chance to recognize it.
+		line = "[output line exceeded 64 KiB]"
+		w.oversize = false
+	} else {
+		line = strings.TrimSpace(w.pending.String())
+		w.pending.Reset()
+	}
 	if line == "" {
 		return
 	}
