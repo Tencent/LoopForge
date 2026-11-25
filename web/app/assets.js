@@ -311,6 +311,8 @@ function sandboxSetupHTML(a){
   return `<div class="sandbox-setup">
   ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
   <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>
+  ${assetFieldLabel('工具链说明','Agent 自动选择沙箱时参考这些工具和版本。','assetSandboxToolchain')}
+  <input id="assetSandboxToolchain" name="toolchain" class="asset-input" maxlength="500" value="${escapeHTML(a.toolchain||'')}" placeholder="例如 Python 3.12、uv、PostgreSQL 客户端">
   <div data-sandbox-drivers="docker">
     ${assetFieldLabel('Dockerfile','保存在这个沙箱里。沙箱初始化时用它 docker build 出镜像；内容相同的沙箱共用同一个镜像。不要指向仓库目录或现成镜像名。','assetDockerfile')}
     <textarea id="assetDockerfile" name="dockerfileContent" class="asset-editor" rows="14" spellcheck="false" placeholder="FROM node:22-bookworm-slim">${escapeHTML(a.dockerfile?.content||'')}</textarea>
@@ -717,7 +719,7 @@ async function saveAsset(e){e.preventDefault();const f=e.currentTarget,items=sta
   if(state.assetType==='skills'){/* 文件经独立上传接口承载；此处只提交元数据。服务端会强制保留 Content/Files/FileRefs。 */}
   if(state.assetType==='sandboxes'){
     const driver=f.elements.driver.value;
-    const sandbox={driver,environment:JSON.parse(f.elements.environment.value||'{}')};
+    const sandbox={driver,toolchain:f.elements.toolchain.value.trim(),environment:JSON.parse(f.elements.environment.value||'{}')};
     if(driver==='docker'){
       sandbox.dockerfile={content:f.elements.dockerfileContent.value,files:JSON.parse(f.elements.dockerfileFiles.value||'{}')};
       sandbox.readOnlyRootFS=f.elements.readOnlyRootFS.checked;

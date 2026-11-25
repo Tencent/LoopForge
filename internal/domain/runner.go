@@ -99,6 +99,18 @@ func (r Runner) SupportsConversationCLI() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
 }
 
+// SupportsNativeSandbox checks the isolation driver against the Runner's OS
+// and its reported ability to start a native sandbox.
+func (r Runner) SupportsNativeSandbox(driver string) bool {
+	if !r.NativeSandboxAvailable {
+		return false
+	}
+	os := strings.ToLower(strings.TrimSpace(r.OS))
+	resolved, err := ResolveSandboxDriver(driver, os)
+	return err == nil && (resolved == SandboxDriverSeatbelt && os == "darwin" ||
+		resolved == SandboxDriverBwrap && os == "linux")
+}
+
 func (r Runner) SupportsConversationWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
 }

@@ -248,6 +248,8 @@ type TelemetryEvent struct {
 	Error          *ErrorObservation `json:"error,omitempty"`
 }
 
+const RunEventSandboxSelected = "sandbox.selected"
+
 type RunEvent struct {
 	ID        string    `json:"id"`
 	RunID     string    `json:"runId"`

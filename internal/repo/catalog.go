@@ -518,8 +518,10 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 		return err
 	}
 	v = normalizeWorkflowDefinition(v)
-	if _, ok := r.Sandbox(v.SandboxProfileID); !ok {
-		return fmt.Errorf("sandbox profile %q not found", v.SandboxProfileID)
+	if !v.AutoSelectSandbox {
+		if _, ok := r.Sandbox(v.SandboxProfileID); !ok {
+			return fmt.Errorf("sandbox profile %q not found", v.SandboxProfileID)
+		}
 	}
 	now := time.Now().UTC()
 	old, ok := r.storedWorkflow(v.ID)
@@ -947,7 +949,9 @@ func normalizeSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfil
 }
 
 func normalizeWorkflowDefinition(workflow domain.WorkflowDefinition) domain.WorkflowDefinition {
-	if strings.TrimSpace(workflow.SandboxProfileID) == "" {
+	if workflow.AutoSelectSandbox {
+		workflow.SandboxProfileID = ""
+	} else if strings.TrimSpace(workflow.SandboxProfileID) == "" {
 		workflow.SandboxProfileID = DefaultSandboxProfileID
 	}
 	for index := range workflow.Nodes {
