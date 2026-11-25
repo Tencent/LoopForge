@@ -159,6 +159,21 @@ func (e *Engine) prepareAutoAssign(ctx context.Context, wf domain.WorkflowDefini
 		}
 		return nil, profile, "", fmt.Errorf("项目暂无可用的在线执行机器，请启动平台执行机器或共享一台在线机器")
 	}
+	if err := e.assignSOPWorkBranches(ctx, ec, repositories, input, time.Now().UTC(), candidates); err != nil {
+		return nil, profile, "", err
+	}
+	// Repository naming can add a strict branch creation requirement.
+	var branchIncompatible error
+	candidates = slices.DeleteFunc(candidates, func(candidate autoAssignCandidate) bool {
+		if err := autoAssignRunnerCapabilities(candidate.runner, wf, ec, repositories); err != nil {
+			branchIncompatible = err
+			return true
+		}
+		return false
+	})
+	if len(candidates) == 0 {
+		return nil, profile, "", fmt.Errorf("没有在线执行机器可运行此 SOP：%w", branchIncompatible)
+	}
 	var selection string
 	if wf.AutoSelectSandbox {
 		// Use any compatible backend with a usable selector credential. Its

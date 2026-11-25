@@ -561,7 +561,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		return nil
 	}); err != nil {
-		if ctx.Err() != nil || !firstRepositoryAgent(wf, node) {
+		if ctx.Err() != nil || errors.Is(err, gitwork.ErrWorkBranchExists) || !firstRepositoryAgent(wf, node) {
 			failNode(err, nodeRejects(node))
 			return
 		}

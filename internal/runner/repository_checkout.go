@@ -28,9 +28,17 @@ func checkoutRepositoryForPreparation(ctx context.Context, workspace string, rep
 		if err != nil {
 			return err
 		}
-		if existing && !repository.RequireExistingWorkBranch && !repository.CreateNewWorkBranch {
+		if existing && !repository.RequireExistingWorkBranch {
 			if err := runtime.RestoreLegacyProjectAgentConfig(ctx, workspace); err != nil {
 				return err
+			}
+			if repository.CreateNewWorkBranch {
+				repoCtx := repositoryGitContext(ctx, *repository)
+				if _, created := gitwork.RevParse(repoCtx, workspace, "refs/heads/"+repository.WorkBranch); !created {
+					if err := gitwork.RequireNewRemoteWorkBranch(repoCtx, workspace, repository.WorkBranch); err != nil {
+						return err
+					}
+				}
 			}
 			return gitwork.ContinueSOPCheckout(ctx, workspace, repository.WorkBranch)
 		}

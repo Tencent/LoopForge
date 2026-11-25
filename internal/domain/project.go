@@ -133,6 +133,8 @@ type Repository struct {
 	IntegrateBranch            string    `json:"integrateBranch,omitempty"`
 	CreatedAt                  time.Time `json:"createdAt"`
 	UpdatedAt                  time.Time `json:"updatedAt"`
+
+	WorkBranchNaming *WorkBranchNaming `json:"workBranchNaming,omitempty"`
 }
 
 // PublicRepository strips the git token for API responses. Clone/push still

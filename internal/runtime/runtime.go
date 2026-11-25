@@ -138,6 +138,9 @@ type CommandSpec struct {
 	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string
+	// codeBuddySOPInput is the first frame of a CodeBuddy SOP's stdin stream.
+	// The protocol observer opens and owns the pipe on the executing machine.
+	codeBuddySOPInput []byte
 	// observeOutput receives raw bytes before process telemetry splits lines.
 	observeOutput func(stream string, data []byte)
 	// privateBinds are host directories bwrap binds into this one process

@@ -93,11 +93,22 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	v.WebURL = strings.TrimSpace(v.WebURL)
 	v.CloneURL = strings.TrimSpace(v.CloneURL)
 	v.IntegrateBranch = domain.NormalizeIntegrateBranch(v.IntegrateBranch)
-	if existing, ok := h.repo.Repository(v.ID); ok && !h.canManageProjectRepositories(c, existing.ProjectID) {
+	existing, exists := h.repo.Repository(v.ID)
+	if exists && !h.canManageProjectRepositories(c, existing.ProjectID) {
 		return
 	}
 	if !h.canManageProjectRepositories(c, v.ProjectID) {
 		return
+	}
+	if v.WorkBranchNaming != nil {
+		naming, err := repo.NormalizeRepositoryWorkBranchNaming(*v.WorkBranchNaming)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v.WorkBranchNaming = &naming
+	} else if exists {
+		v.WorkBranchNaming = existing.WorkBranchNaming
 	}
 	// localPath copies a directory from the executing host into the task
 	// workspace, so only platform administrators may set it.

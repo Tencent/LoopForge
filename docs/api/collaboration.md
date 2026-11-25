@@ -66,6 +66,11 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
   "$AGENTFLOW_URL/api/repositories"
 ```
 
+可用 `workBranchNaming` 设置 SOP 自动新建工作分支的命名方式。更新时省略该字段会保留已保存的配置，新仓库缺省使用 `feature/`。
+
+- `{"mode":"prefix","prefix":"feat/"}` 为原有分支名主体加上指定前缀。`prefix` 留空时直接使用分支名主体。
+- `{"mode":"ai","executorId":"codebuddy","model":"hy4std","prompt":"用小写英文概括改动，带上需求编号"}` 使用指定的 CLI 和模型生成完整分支名。`executorId` 和 `model` 必填，`prompt` 可留空。调用使用 SOP 责任人的凭据或已授权执行机器的登录。平台能访问远端仓库时，会在遇到同名分支后按原命名要求重新生成。节点重试沿用已保存的分支名。
+
 ### `DELETE /api/repositories?id={id}`
 
 `id` 必填。成功删除仓库，并清除引用它的项目默认仓库设置，返回 `200 {"status":"deleted"}`；缺少 `id` 或存储错误为 `400`。

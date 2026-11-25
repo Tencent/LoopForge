@@ -319,6 +319,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicAddress}
 	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1), clarify: stream}
 	e.SelectSOPSandbox = asst.selectSOPSandbox
+	e.GenerateSOPWorkBranch = asst.generateSOPWorkBranch
 	if schedulerEnabled() {
 		d.schedule.StartAfter(bg.gate())
 		if bg != nil {
