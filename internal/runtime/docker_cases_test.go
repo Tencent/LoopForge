@@ -286,7 +286,7 @@ func TestDockerExecRecoversFromUnsafeCWD(t *testing.T) {
 workspace="${CVR_DOCKER_WORKSPACE}"
 marker="${CVR_DOCKER_MARKER}"
 if [ "${1-}" = inspect ]; then
-  printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$workspace"
+  printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false}\n' "$workspace"
   exit 0
 fi
 if [ "${1-}" = exec ]; then
