@@ -180,6 +180,7 @@ test('runner sharing saves multiple projects and offers project defaults for eli
   await app.evaluate(`saveRunnerRunLimit('desktop','25')`);
   const ownerChoice = app.document.querySelector('[data-set-project-default="desktop"]');
   assert.ok(ownerChoice, 'an eligible owned machine offers the project default action');
+  assert.equal(ownerChoice.textContent, '设为项目默认');
   ownerChoice.click();
   await settle();
   assert.equal(projectRunnerId, desktop.id);
@@ -272,13 +273,17 @@ test('platform runner card and auto assignment respect project and admin permiss
   await settle(8);
   assert.equal(toggle.getAttribute('aria-pressed'), 'false');
 
-  card().querySelector('[data-runner-platform-default]').click();
+  const platformDefaultBtn = () => card().querySelector('[data-runner-platform-default]');
+  assert.equal(platformDefaultBtn().textContent, '设为项目默认');
+  platformDefaultBtn().click();
   await settle(8);
   assert.match(card().textContent, /此项目默认/);
+  assert.equal(platformDefaultBtn().textContent, '清除项目默认');
   assert.equal(poolStatus.textContent, '此项目默认 · 平台执行机器（云端）');
-  card().querySelector('[data-runner-platform-default]').click();
+  platformDefaultBtn().click();
   await settle(8);
   assert.doesNotMatch(card().textContent, /此项目默认/);
+  assert.equal(platformDefaultBtn().textContent, '设为项目默认');
   const preferences = app.router.calls.filter(c => c.method === 'PUT' && c.path === '/api/runners/default');
   assert.deepEqual(preferences.map(c => c.body), [{ mode: 'auto' }, { mode: '', runnerId: '' }, { mode: 'platform' }, { mode: '', runnerId: '' }]);
   assert.ok(preferences.every(c => c.search === '?projectId=write'));

@@ -177,7 +177,7 @@ function platformRunnerCardHTML(runner,isDefault,canSetDefault){
       ${runnerStatusLabel(runner.status)}
       <span class="runner-platform-sep" aria-hidden="true"></span>
       ${limit}
-      ${canSetDefault?`<button type="button" class="button small ${isDefault?'ghost runner-text-button':'hui-btn-soft'}" data-runner-platform-default>${isDefault?'清除项目默认':'在此项目使用'}</button>`:''}
+      ${canSetDefault?`<button type="button" class="button small ${isDefault?'ghost runner-text-button':'hui-btn-soft'}" data-runner-platform-default>${isDefault?'清除项目默认':'设为项目默认'}</button>`:''}
     </div>
   </article>`;
 }
@@ -294,7 +294,7 @@ function renderRunnersView(){
         ${shared||r.status==='online'?'':`<button class="button ghost small runner-text-button" type="button" data-remove-runner="${escapeHTML(r.id)}" title="机器已不再使用时移除绑定">移除</button>`}
         ${!shared&&!isPersonalDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-default="${escapeHTML(r.id)}">设为个人默认</button>`:''}
         ${isProjectDefault?'<button class="button ghost small runner-text-button" type="button" data-set-project-default="">清除项目默认</button>':''}
-        ${canSetProjectDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-project-default="${escapeHTML(r.id)}">在此项目使用</button>`:''}
+        ${canSetProjectDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-project-default="${escapeHTML(r.id)}">设为项目默认</button>`:''}
       </div>
     </article>`;
   }).join('');
