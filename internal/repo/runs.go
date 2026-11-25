@@ -403,6 +403,21 @@ func (r *RunsRepo) RunView(id string) (domain.Run, bool) {
 				run.Events = append(run.Events, event)
 			}
 		}
+	} else if run.WorkflowSnapshot.AutoSelectSandbox {
+		// This event is written at admission and must remain visible even on
+		// runs with a long history.
+		var rows []runEventRow
+		if err := r.DB.Select("payload").
+			Where("run_id = ? AND type = ?", id, domain.RunEventSandboxSelected).
+			Order("seq").Limit(1).Find(&rows).Error; err != nil {
+			return domain.Run{}, false
+		}
+		if len(rows) > 0 {
+			var event domain.RunEvent
+			if json.Unmarshal(rows[0].Payload, &event) == nil {
+				run.Events = []domain.RunEvent{event}
+			}
+		}
 	}
 	return run, true
 }

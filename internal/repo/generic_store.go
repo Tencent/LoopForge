@@ -113,7 +113,9 @@ func (r *CatalogRepo) UpdateGenericWorkflow(workflow domain.WorkflowDefinition) 
 	if len(workflow.Requirements) == 0 {
 		workflow.Requirements = template.Workflow.Requirements
 	}
-	if strings.TrimSpace(workflow.SandboxProfileID) == "" {
+	if workflow.AutoSelectSandbox {
+		workflow.SandboxProfileID = ""
+	} else if strings.TrimSpace(workflow.SandboxProfileID) == "" {
 		workflow.SandboxProfileID = template.Workflow.SandboxProfileID
 	}
 	workflow.UpdatedAt = now

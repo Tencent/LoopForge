@@ -86,8 +86,11 @@ type AgentToolSession struct {
 	workspaceRunID string
 	workspaceMu    sync.Mutex
 	workspaceTurn  *assistantWorkspaceTurn
-	SpaceID        string
-	Surface        string // entry of the turn; see sopDesigner
+	// The rest of this turn stays in platform mode after a startup failure.
+	workspaceStartFailed atomic.Bool
+
+	SpaceID string
+	Surface string // entry of the turn; see sopDesigner
 	// DesignerCanvas is the canvas a designer turn edits; operations in its
 	// workflows_save draft are applied to it.
 	DesignerCanvas   json.RawMessage

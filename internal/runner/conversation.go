@@ -20,12 +20,12 @@ var conversationKeyPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
 	var req runtime.ConversationProcessRequest
 	if err := json.Unmarshal(request.Conversation, &req); err != nil || !conversationKeyPattern.MatchString(req.SessionKey) {
-		return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid conversation process request"}
+		return domain.RunnerWorkspaceResponse{Status: 400, Code: domain.WorkspaceErrorConversationProcess, Error: "invalid conversation process request"}
 	}
 	root := filepath.Join(d.cfg.DefaultWorkspaceRoot, ".conversations", req.SessionKey)
 	if req.Transient {
 		if request.RunID != "" {
-			return domain.RunnerWorkspaceResponse{Status: 400, Error: "transient processes cannot use a run workspace"}
+			return domain.RunnerWorkspaceResponse{Status: 400, Code: domain.WorkspaceErrorConversationProcess, Error: "transient processes cannot use a run workspace"}
 		}
 		root = filepath.Join(d.cfg.DefaultWorkspaceRoot, ".conversations", ".transient", req.SessionKey)
 	}
@@ -34,17 +34,19 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 		var err error
 		workspace, err = d.runnerWorkspaceRoot(request)
 		if err != nil {
-			return runnerWorkspaceError(err)
+			response := runnerWorkspaceError(err)
+			response.Code = domain.WorkspaceErrorConversationSetup
+			return response
 		}
 		if request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
-			return domain.RunnerWorkspaceResponse{Status: 400, Error: "对话工作区只支持 Docker 或 native 沙箱"}
+			return domain.RunnerWorkspaceResponse{Status: 400, Code: domain.WorkspaceErrorConversationSetup, Error: "对话工作区只支持 Docker 或 native 沙箱"}
 		}
 	}
 	d.conversationMu.Lock()
 	forward := d.conversationForward
 	d.conversationMu.Unlock()
 	if forward == nil {
-		return runnerWorkspaceError(fmt.Errorf("conversation control channel unavailable"))
+		return domain.RunnerWorkspaceResponse{Status: 400, Code: domain.WorkspaceErrorConversationProcess, Error: "conversation control channel unavailable"}
 	}
 	var factory runtime.ConversationSandboxFactory
 	if request.RunID == "" {
@@ -121,8 +123,14 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 	if err != nil {
 		response := runnerWorkspaceError(err)
 		var stateErr *runtime.ConversationStateError
-		if errors.As(err, &stateErr) {
+		var workspaceErr *runtime.ConversationWorkspaceSetupError
+		switch {
+		case errors.As(err, &stateErr):
 			response.Code = domain.WorkspaceErrorConversationState
+		case errors.As(err, &workspaceErr):
+			response.Code = domain.WorkspaceErrorConversationSetup
+		default:
+			response.Code = domain.WorkspaceErrorConversationProcess
 		}
 		return response
 	}

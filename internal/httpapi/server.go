@@ -199,12 +199,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	sched.SetRunDispatcher(api.schedule.dispatchScheduledRun)
 	// deps 由所有领域共享，schedule 服务就绪后回填一次即全局可见。
 	d.schedule = sched
-	if schedulerEnabled() {
-		d.schedule.StartAfter(bg.gate())
-		if bg != nil {
-			bg.scheduler = d.schedule
-		}
-	}
 	api.runners.startRunnerSweeper()
 	runAfterGate(bg.gate(), stream.recoverClarifyJobs)
 	g := gin.New()
@@ -319,6 +313,13 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
 	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1), clarify: stream}
+	e.SelectSOPSandbox = asst.selectSOPSandbox
+	if schedulerEnabled() {
+		d.schedule.StartAfter(bg.gate())
+		if bg != nil {
+			bg.scheduler = d.schedule
+		}
+	}
 	api.runs.assistant = asst
 	api.runners.assistant = asst
 	api.schedule.assistant = asst

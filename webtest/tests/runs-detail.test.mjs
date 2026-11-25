@@ -68,7 +68,10 @@ test('live run redraws keep the current IDE document until the workspace is recy
   const run = {
     ...app.evaluate('structuredClone(state.data.runs[0])'),
     status: 'running',
-    workflowSnapshot: app.evaluate('structuredClone(state.data.workflows[0])'),
+    workflowSnapshot: {
+      ...app.evaluate('structuredClone(state.data.workflows[0])'),
+      autoSelectSandbox: true, sandboxProfileId: 'project-toolchain',
+    },
     nodes: {
       'node-1': { status: 'succeeded', gateResult: { decision: 'pass' } },
       'node-2': { status: 'running' },
@@ -89,8 +92,12 @@ test('live run redraws keep the current IDE document until the workspace is recy
   const frameWindow = frame.contentWindow;
   assert.ok(frameWindow);
   const stream = app.evaluate('state.runStream');
-  stream.emit({ run: { ...run, revision: 2 } }, 'run');
+  const sandbox = header.querySelector('[data-run-sandbox]');
+  assert.equal(sandbox.title, 'project-toolchain');
+  const events = [{ type: 'sandbox.selected', message: 'Agent 选择沙箱 project-toolchain' }];
+  stream.emit({ run: { ...run, revision: 2, events } }, 'run');
   assert.equal(detail.querySelector('.run-detail-header'), header, 'a passed gate needs no prompt');
+  assert.equal(sandbox.title, events[0].message);
 
   const withOutput = {
     ...run,

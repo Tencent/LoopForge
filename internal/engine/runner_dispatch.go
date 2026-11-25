@@ -122,6 +122,10 @@ func (e *Engine) requireRunnerRepositoryCapabilities(runnerID string, repositori
 		return nil
 	}
 	runner, _ := e.repo.Runner(runnerID)
+	return runnerRepositoryCapabilityError(runner, repositories)
+}
+
+func runnerRepositoryCapabilityError(runner domain.Runner, repositories []domain.RepositoryContext) error {
 	for _, repository := range repositories {
 		if repository.Provider == domain.RepositoryProviderSSH && !runner.SupportsGitSSH() {
 			return fmt.Errorf("Git SSH 仓库需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionGitSSH)

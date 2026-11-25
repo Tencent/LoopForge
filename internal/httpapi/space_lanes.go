@@ -452,7 +452,7 @@ func (h *spacesHandlers) saveFlow(c *gin.Context) {
 		stored = wf
 	}
 	userID, author := h.rooms.roomActor(c)
-	body, _ := json.Marshal(gin.H{"nodes": req.Nodes, "edges": req.Edges, "sandboxProfileId": wf.SandboxProfileID})
+	body, _ := json.Marshal(gin.H{"nodes": req.Nodes, "edges": req.Edges, "sandboxProfileId": stored.SandboxProfileID, "autoSelectSandbox": stored.AutoSelectSandbox})
 	art := domain.SpaceArtifact{ID: req.ArtifactID, SpaceID: room.ID, Kind: "sop", Title: req.Name, Summary: roomTrim(req.Description, 300), Format: "json",
 		Body: string(body), WorkflowID: stored.ID, AuthorID: userID, AuthorName: author}
 	base := 0
@@ -489,7 +489,7 @@ func (h *spacesHandlers) flowWorkflow(room domain.ChatRoom, req spaceFlowRequest
 		}
 		wf.Version, wf.Revision, wf.Status, wf.Tags, wf.Notifications = old.Version, old.Revision, old.Status, old.Tags, old.Notifications
 		if wf.SandboxProfileID == "" {
-			wf.SandboxProfileID = old.SandboxProfileID
+			wf.SandboxProfileID, wf.AutoSelectSandbox = old.SandboxProfileID, old.AutoSelectSandbox
 		}
 		if wf.Version == 0 {
 			wf.Version = 1
@@ -497,24 +497,19 @@ func (h *spacesHandlers) flowWorkflow(room domain.ChatRoom, req spaceFlowRequest
 	} else {
 		wf.ID = newChatID("wf")
 	}
-	if wf.SandboxProfileID == "" {
+	if !wf.AutoSelectSandbox && wf.SandboxProfileID == "" {
 		for _, s := range h.repo.Sandboxes() {
 			if s.ProjectID == room.ProjectID {
 				wf.SandboxProfileID = s.ID
 				break
 			}
-		}
-	}
-	if wf.SandboxProfileID == "" {
-		for _, s := range h.repo.Sandboxes() {
-			if s.Shared {
+			if wf.SandboxProfileID == "" && s.Shared {
 				wf.SandboxProfileID = s.ID
-				break
 			}
 		}
-	}
-	if wf.SandboxProfileID == "" {
-		return wf, "项目还没有可用的沙箱，请先在「沙箱」里创建一个"
+		if wf.SandboxProfileID == "" {
+			return wf, "项目还没有可用的沙箱，请先在「沙箱」里创建一个"
+		}
 	}
 	ids := map[string]bool{}
 	for i, n := range req.Nodes {

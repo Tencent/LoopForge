@@ -156,7 +156,7 @@ func (h *runsHandlers) runs(c *gin.Context) {
 		if scopedWorkflow {
 			executionContext.SharedScheduleID, executionContext.SharedScheduleVersion = scope.Version.ID, scope.Version.Version
 		}
-		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, executionContext)
+		v, err := h.engine.StartWithRepositories(r.Context(), req.WorkflowID, req.Input, repositories, executionContext)
 		if err != nil {
 			if errors.Is(err, repo.ErrWorkspaceInUse) {
 				respond(c, HTTPError{http.StatusConflict, err.Error()})
@@ -415,13 +415,19 @@ func publicRun(run domain.Run, summary bool) domain.Run {
 	return run
 }
 
-// publicLiveRun is the SSE payload: keep finished-node output and artifact
-// metadata so the inspector can update without a full refetch, but still drop
-// log/telemetry bodies (those arrive as deltas).
+// publicLiveRun keeps finished-node output, artifact metadata and the sandbox
+// decision in SSE. Logs and telemetry arrive as deltas.
 func publicLiveRun(run domain.Run) domain.Run {
 	run = publicRun(run, false)
 	if run.WorkflowSnapshot.CollaborationMode != "group" {
+		events := run.Events
 		run.Events = nil
+		for _, event := range events {
+			if event.Type == domain.RunEventSandboxSelected {
+				run.Events = []domain.RunEvent{event}
+				break
+			}
+		}
 	}
 	run.Input = clipRunText(run.Input, 500)
 	return run

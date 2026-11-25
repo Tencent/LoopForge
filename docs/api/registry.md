@@ -181,7 +181,7 @@ docker 沙箱的 Dockerfile 存在沙箱里，随沙箱一起共享，没有单�
 
 ### `GET /api/sandboxes`
 
-返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap；尚未迁移的 `local` 行读出时也是 `native`）、`dockerfile`、`readOnlyRootFS`、`environment`。`dockerfile` 为 `{content, files}`，`files` 是构建上下文文件（相对路径 → 内容）。
+返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap；尚未迁移的 `local` 行读出时也是 `native`）、`dockerfile`、`readOnlyRootFS`、`environment` 和可选的 `toolchain`。`toolchain` 记录沙箱内的工具和版本，供 Agent 选择沙箱。`dockerfile` 为 `{content, files}`，`files` 是构建上下文文件（相对路径 → 内容）。
 
 ### `PUT /api/sandboxes`
 

@@ -97,9 +97,12 @@ func (r *CatalogRepo) ValidateWorkflowAgentScopes(workflow domain.WorkflowDefini
 	return nil
 }
 
-// ValidateWorkflowSharing preserves the LOOP sandbox boundary. Sharing a LOOP
-// requires an already-shared sandbox; it does not share the sandbox itself.
+// ValidateWorkflowSharing checks the sandbox bound to a fixed LOOP. Automatic
+// LOOPs resolve and validate a sandbox in the target project at run admission.
 func (r *CatalogRepo) ValidateWorkflowSharing(v domain.WorkflowDefinition) error {
+	if v.AutoSelectSandbox {
+		return nil
+	}
 	if strings.TrimSpace(v.SandboxProfileID) == "" {
 		return fmt.Errorf("workflow sandboxProfileId is required")
 	}

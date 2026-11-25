@@ -78,7 +78,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		exec.WorkspaceRunID = workspaceRunID(parent)
 		exec.RunID = ""
 		exec.TraceID = parent.ExecutionContext.TraceID
-		started, err := e.StartWithRepositoriesContext(childID, childInput, parent.RepositoryContexts(), exec)
+		started, err := e.StartWithRepositories(ctx, childID, childInput, parent.RepositoryContexts(), exec)
 		if err != nil {
 			fail(fmt.Errorf("启动子 LOOP：%w", err))
 			return
