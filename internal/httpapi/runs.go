@@ -415,17 +415,27 @@ func publicRun(run domain.Run, summary bool) domain.Run {
 	return run
 }
 
-// publicLiveRun keeps finished-node output, artifact metadata and the sandbox
-// decision in SSE. Logs and telemetry arrive as deltas.
+// publicLiveRun keeps finished-node output, artifact metadata and admission
+// decisions in SSE. Logs and telemetry arrive as deltas.
 func publicLiveRun(run domain.Run) domain.Run {
+	// A published snapshot can include the full event history. Read admission
+	// events from it before the detail view's history cap is applied.
+	events := run.Events
 	run = publicRun(run, false)
 	if run.WorkflowSnapshot.CollaborationMode != "group" {
-		events := run.Events
 		run.Events = nil
 		for _, event := range events {
 			if event.Type == domain.RunEventSandboxSelected {
 				run.Events = []domain.RunEvent{event}
 				break
+			}
+		}
+		if run.FailedBeforeAutoAssignment() {
+			for i := len(events) - 1; i >= 0; i-- {
+				if events[i].Type == domain.RunEventFailed {
+					run.Events = append(run.Events, events[i])
+					break
+				}
 			}
 		}
 	}

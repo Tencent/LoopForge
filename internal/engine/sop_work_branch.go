@@ -23,7 +23,7 @@ type SOPWorkBranchRequest struct {
 	Feedback    string                   `json:"feedback,omitempty"`
 }
 
-func (e *Engine) assignSOPWorkBranches(ctx context.Context, ec domain.TelemetryContext, repositories []domain.RepositoryContext, input string, now time.Time) error {
+func (e *Engine) assignSOPWorkBranches(ctx context.Context, ec domain.TelemetryContext, repositories []domain.RepositoryContext, input string, now time.Time, candidates []autoAssignCandidate) error {
 	issueID := strings.TrimSpace(ec.IssueID)
 	getIssue := sync.OnceValues(func() (domain.Issue, bool) {
 		if issueID == "" {
@@ -62,7 +62,8 @@ func (e *Engine) assignSOPWorkBranches(ctx context.Context, ec domain.TelemetryC
 				task = strings.Join([]string{issue.Title, issue.Description, issue.Clarification.Summary, issue.IdentityBlock()}, "\n\n")
 			}
 			branch, err = e.generateSOPWorkBranch(ctx, SOPWorkBranchRequest{
-				Execution: ec, Executor: domain.AssistantDefaults{Executor: executor.Kind, Model: naming.Model}, Repository: definition.Name,
+				Execution: e.sopWorkBranchExecution(ec, candidates, executor.Kind),
+				Executor:  domain.AssistantDefaults{Executor: executor.Kind, Model: naming.Model}, Repository: definition.Name,
 				Task: task, IssueNumber: ec.IssueNumber, Prompt: naming.Prompt,
 			}, validate)
 		} else {
@@ -76,6 +77,21 @@ func (e *Engine) assignSOPWorkBranches(ctx context.Context, ec domain.TelemetryC
 	}
 	assignWorkBranches(repositories, generateDefault)
 	return nil
+}
+
+func (e *Engine) sopWorkBranchExecution(ec domain.TelemetryContext, candidates []autoAssignCandidate, executor string) domain.TelemetryContext {
+	// A helper can use a compatible machine before the run reserves a slot.
+	for _, candidate := range candidates {
+		runner := candidate.runner
+		if !runner.SupportsConversationCLI() || !runner.SupportsCLISettings() {
+			continue
+		}
+		target := candidate.bind(ec)
+		if e.sopExecutorAccess(target).configured(executor) {
+			return target
+		}
+	}
+	return ec
 }
 
 func validateSOPWorkBranch(branch string, repository domain.RepositoryContext, definition domain.Repository) error {

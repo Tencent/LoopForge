@@ -36,6 +36,9 @@ func (e *Engine) sopExecutorAccess(ec domain.TelemetryContext) sopExecutorAccess
 }
 
 func sopRunnerAuthMode(ec domain.TelemetryContext, runner domain.Runner, provider string) string {
+	if ec.ExecutionPool == domain.ExecutionPoolProjectAuto && runner.OwnerUserID == 0 {
+		return domain.RuntimeAuthPersonal
+	}
 	// A conversation allocated to a platform runner keeps using the
 	// responsible user's credentials when it hands off to an SOP.
 	if ec.ExecutionPinned && ec.WorkspaceRunID != "" && runner.OwnerUserID == 0 && ec.ResponsibleUserID > 0 {
@@ -226,7 +229,31 @@ func (e *Engine) SOPExecutorRequirements(wf domain.WorkflowDefinition, userID in
 		return nil, err
 	}
 	ec := domain.TelemetryContext{ResponsibleUserID: userID, ProjectID: projectID}
-	e.selectSOPExecutionTarget(&ec)
+	if e.selectSOPExecutionTarget(&ec, true) {
+		var best []SOPExecutorRequirement
+		var fewestMissing int
+		for _, candidate := range e.autoAssignCandidates(ec, false) {
+			_, requirements, err := e.planSOPExecutors(wf, candidate.bind(ec), true)
+			if err != nil {
+				return nil, err
+			}
+			missing := 0
+			for _, req := range requirements {
+				if !req.Configured {
+					missing++
+				}
+			}
+			if missing == 0 {
+				return requirements, nil
+			}
+			if best == nil || missing < fewestMissing {
+				best, fewestMissing = requirements, missing
+			}
+		}
+		if best != nil {
+			return best, nil
+		}
+	}
 	_, requirements, err := e.planSOPExecutors(wf, ec, true)
 	return requirements, err
 }

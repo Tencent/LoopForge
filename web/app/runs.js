@@ -68,6 +68,7 @@ function mergeLiveRun(id,incoming,payload){
 }
 function applyRunPayload(run,{list=true}={}){
   if(state.selectedRun&&run?.id!==state.selectedRun)return;
+  const previousRunner=state.activeRun?.executionContext?.executionRunnerId;
   state.activeRun=run;state.selectedRun=run.id;
   const i=(state.data.runs||[]).findIndex(x=>x.id===run.id);
   if(i>=0)state.data.runs[i]={...state.data.runs[i],...run,telemetry:undefined,logs:undefined};
@@ -77,6 +78,16 @@ function applyRunPayload(run,{list=true}={}){
   }
   if(list)renderRuns();
   if(shouldPatchRunLive(run))patchRunLive(run);else renderRunDetail(run);
+  const ec=run.executionContext;
+  if(ec?.executionPool==='project-auto'&&run.concurrencyExempt&&ec.executionRunnerId&&ec.executionRunnerId!==previousRunner&&
+     !state.runMachineMetadata?.runners.some(machine=>machine.id===ec.executionRunnerId)){
+    void loadRunMachineMetadata(run).then(()=>{
+      const current=state.activeRun;
+      if(current?.id!==run.id||current.executionContext?.executionRunnerId!==ec.executionRunnerId)return;
+      const chip=$('#runDetail [data-run-execution-chip]');
+      if(chip)chip.outerHTML=runExecutionChipHTML(current);
+    });
+  }
 }
 function startLiveRun(id){
   stopLiveRun();
@@ -1325,7 +1336,10 @@ function renderRunDetail(r){
   const focusNr=focusNode?(r.nodes?.[focusNode.id]||{}):nr;
   if(r.status==='queued'){
     host.querySelector('[data-cancel-run]')?.replaceChildren(document.createTextNode('取消排队'));
-    host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend','<div class="approval-callout queued-run-callout"><b>排队中，获得运行名额后自动启动</b><p>子 SOP 共享父级名额。未获准入和成功运行不占名额。失败、暂停、待确认的 SOP 空闲 1 小时后释放名额。排队期间可以取消运行。</p></div>');
+    host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend',queuedRunCalloutHTML(r));
+  }else if(r.status==='failed'&&r.executionContext?.executionPool==='project-auto'&&!r.executionContext.executionMode){
+    const reason=(r.events||[]).findLast(event=>event.type==='run.failed')?.message;
+    if(reason)host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend',`<div class="approval-callout"><b>自动分配失败</b><p>${escapeHTML(reason)}</p></div>`);
   }else if(!nonSOP&&r.pauseRequested){
     const header=host.querySelector('.run-detail-header');header?.insertAdjacentHTML('afterend',pausedRunPanelHTML(r));
     host.querySelector('.node-inspector .approval-callout')?.remove();
@@ -1686,22 +1700,44 @@ async function runAction(id,action,body){
   }catch(e){toast(e.message)}
 }
 async function loadRunMachineMetadata(r){
-  if(r.executionContext?.executionMode!=='runner')return;
+  const ec=r.executionContext||{};
+  if(ec.executionMode!=='runner'&&ec.executionPool!=='project-auto')return;
   // Unlike refreshRunners, this read-only lookup does not create a binding code.
   try{
-    const runners=await api('/api/runners?mine=1',{silent:true});
-    if(state.selectedRun===r.id)state.runners=runners||[];
+    const query=ec.projectId?`projectId=${encodeURIComponent(ec.projectId)}`:'mine=1';
+    const runners=await api('/api/runners?'+query,{silent:true});
+    if(state.selectedRun===r.id)state.runMachineMetadata={runId:r.id,runners:runners||[]};
   }catch{} // Machine metadata must not prevent displaying the run.
 }
 function runExecutionChipHTML(r){
   const ec=r.executionContext||{};
-  if(ec.executionMode!=='runner')return '';
+  const auto=ec.executionPool==='project-auto';
+  if(ec.executionMode!=='runner'&&!auto)return '';
   const id=ec.executionRunnerId||'';
-  const mine=(state.runners||[]).find(m=>m.id===id);
-  const personal=r.concurrencyExempt===true||Number(mine?.ownerUserId)>0;
-  const machineLimit=Number(mine?.runLimit)||0;
-  const label=personal?`个人机器 ${mine?.name||id.slice(-8)} · 不受项目 10 条 SOP 限额${machineLimit>0?`，本机最多 ${machineLimit} 条`:''}`:ec.executionPool==='cloud'?(id?'云端执行池':'等待云端执行机器'):`执行机器 ${mine?.name||id.slice(-8)}`;
-  return `<span class="run-meta-chip" title="${escapeHTML(id||'尚未分配')}">${escapeHTML(label)}</span>`;
+  const metadata=state.runMachineMetadata;
+  const list=metadata&&metadata.runId===r.id?metadata.runners:state.runners||[];
+  const machine=list.find(m=>m.id===id);
+  const personal=r.concurrencyExempt===true||Number(machine?.ownerUserId)>0;
+  const machineName=machine?.name||id.slice(-8);
+  const machineLimit=Number(machine?.runLimit)||0;
+  let label,title=id||'尚未分配';
+  if(auto){
+    if(!ec.executionMode&&!id)label=r.status==='queued'?'自动分配 · 等待可用机器':'自动分配 · 尚未分配';
+    else if(personal&&id)label=`自动分配 · ${machineName}`;
+    else{label='自动分配 · 平台云端';title='平台执行机器（云端）'}
+  }else if(personal){
+    label=`执行机器 ${machineName}${machineLimit>0?` · 本机最多 ${machineLimit} 条`:''}`;
+  }else{
+    label=ec.executionPool==='cloud'?(id?'云端执行池':'等待云端执行机器'):`执行机器 ${machineName}`;
+  }
+  return `<span class="run-meta-chip" data-run-execution-chip title="${escapeHTML(title)}">${escapeHTML(label)}</span>`;
+}
+function queuedRunCalloutHTML(r){
+  const ec=r.executionContext||{};
+  let queue='平台所有项目共用名额，默认 10 条，平台管理员可调整。';
+  if(ec.executionPool==='project-auto'&&!ec.executionMode)queue='系统会选择兼容且有空余名额的执行机器。';
+  else if(r.concurrencyExempt)queue='此机器的所有共享项目共用本机名额。';
+  return `<div class="approval-callout queued-run-callout"><b>排队中，获得运行名额后自动启动</b><p>${queue}失败、暂停、待确认的 SOP 空闲 1 小时后归档并释放名额。排队期间可以取消运行。</p></div>`;
 }
 async function deleteRun(id){
   if(!id)return;
