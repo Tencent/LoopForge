@@ -135,8 +135,11 @@ function evoHomeTasksHTML(all){
     <div id="evoHomeResults">${evoHomeListHTML(all)}</div>`;
 }
 function evoHomeHTML(){
+  if(typeof evoSOPIsEnabledView==='function'&&evoSOPIsEnabledView())return evoSOPHomeHTML();
   const all=evoUnifiedRows();
+  const backToSOP=Array.isArray(evo.overview?.sops)?'<div class="evo-sop-mode-banner"><button type="button" class="kb-btn quiet small" data-evo-sop-mode="sop">‹ 返回 SOP 进化列表</button></div>':'';
   return `<div class="evo-home">
+    ${backToSOP}
     ${evoHomeStatusHTML()}
     <section id="evoWorkspaceTasks" class="evo-workspace-tasks" aria-label="改进任务">${evoHomeTasksHTML(all)}</section>
   </div>`;

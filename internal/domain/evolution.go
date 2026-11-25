@@ -497,6 +497,140 @@ type EvoSOPDetectionSetting struct {
 	Model   string `json:"model,omitempty"`
 }
 
+// SOP evolution stages shown on the SOP-centric RSI workbench.
+const (
+	EvoSOPStageMonitor  = "monitor"
+	EvoSOPStageOptimize = "optimize"
+	EvoSOPStageGray     = "gray"
+)
+
+// SOP optimization preference keys.
+const (
+	EvoPrefTokens   = "tokens"
+	EvoPrefTools    = "tools"
+	EvoPrefDuration = "duration"
+	EvoPrefClean    = "clean"
+)
+
+// EvoSOPPolicy configures per-SOP evolution switch, multi-select preferences,
+// and batch trigger size (default 10 runs, adjustable per SOP).
+type EvoSOPPolicy struct {
+	WorkflowID  string    `json:"workflowId"`
+	ProjectID   string    `json:"projectId"`
+	Enabled     bool      `json:"enabled"`
+	Preferences []string  `json:"preferences"`
+	BatchSize   int       `json:"batchSize"`
+	Model       string    `json:"model,omitempty"`
+	UpdatedBy   int64     `json:"updatedBy,omitempty"`
+	UpdatedAt   time.Time `json:"updatedAt,omitempty"`
+}
+
+func DefaultEvoSOPPolicy(projectID, workflowID string) EvoSOPPolicy {
+	return EvoSOPPolicy{
+		WorkflowID:  strings.TrimSpace(workflowID),
+		ProjectID:   strings.TrimSpace(projectID),
+		Enabled:     true,
+		Preferences: []string{EvoPrefTokens, EvoPrefTools},
+		BatchSize:   10,
+	}
+}
+
+// EvoSOPMetrics summarizes core execution metrics and computed SOP score.
+type EvoSOPMetrics struct {
+	Runs        int     `json:"runs"`
+	TotalTokens int64   `json:"totalTokens"`
+	AvgTokens   int64   `json:"avgTokens"`
+	TotalTools  int     `json:"totalTools"`
+	AvgTools    float64 `json:"avgTools"`
+	AvgDuration float64 `json:"avgDuration"` // seconds
+	CleanCount  int     `json:"cleanCount"`
+	CleanRate   float64 `json:"cleanRate"`
+	Score       *int    `json:"score,omitempty"`
+	ScoredRuns  int     `json:"scoredRuns"`
+	ScoreSource string  `json:"scoreSource,omitempty"` // "eval" | "heuristic"
+}
+
+// EvoSOPVersionPoint is one historical SOP version row for the trend chart/table.
+type EvoSOPVersionPoint struct {
+	Version string        `json:"version"`
+	Current bool          `json:"current,omitempty"`
+	Metrics EvoSOPMetrics `json:"metrics"`
+}
+
+// EvoSOPGrayRunEvent is one recent run inside a grayscale trial.
+type EvoSOPGrayRunEvent struct {
+	RunID    string  `json:"runId"`
+	Group    string  `json:"group"` // control | candidate
+	Tokens   int64   `json:"tokens"`
+	Tools    int     `json:"tools"`
+	Duration float64 `json:"duration"`
+	Clean    bool    `json:"clean"`
+	Score    *int    `json:"score,omitempty"`
+}
+
+// EvoSOPGrayRound summarizes one grayscale trial round (control vs candidate).
+type EvoSOPGrayRound struct {
+	ProposalID  string               `json:"proposalId"`
+	BaseVersion string               `json:"baseVersion"`
+	Target      string               `json:"target"`
+	Status      string               `json:"status"` // running, passed, failed, published
+	Published   bool                 `json:"published,omitempty"`
+	Percent     int                  `json:"percent,omitempty"`
+	MinRuns     int                  `json:"minRuns,omitempty"`
+	Control     EvoSOPMetrics        `json:"control"`
+	Candidate   EvoSOPMetrics        `json:"candidate"`
+	RecentRuns  []EvoSOPGrayRunEvent `json:"recentRuns,omitempty"`
+}
+
+// EvoSOPChangeFile is one modified asset/file diff shown in the "本次修改" tab.
+type EvoSOPChangeFile struct {
+	Path      string      `json:"path"`
+	AssetKind string      `json:"assetKind,omitempty"`
+	AssetID   string      `json:"assetId,omitempty"`
+	AssetName string      `json:"assetName,omitempty"`
+	Lines     [][2]string `json:"lines"` // [kind("ctx"|"del"|"add"), text]
+}
+
+// EvoSOPProblemItem describes one problem discovered in the batch for the SOP.
+type EvoSOPProblemItem struct {
+	Key    string `json:"key,omitempty"`
+	Title  string `json:"title"`
+	Detail string `json:"detail,omitempty"`
+	Fix    string `json:"fix,omitempty"`
+	Hits   int    `json:"hits"`
+	Runs   int    `json:"runs"`
+}
+
+// EvoSOPSummary is one row on the SOP-centric RSI home table.
+type EvoSOPSummary struct {
+	WorkflowID       string        `json:"workflowId"`
+	WorkflowName     string        `json:"workflowName"`
+	Description      string        `json:"description,omitempty"`
+	CurrentVersion   string        `json:"currentVersion"`
+	Enabled          bool          `json:"enabled"`
+	Preferences      []string      `json:"preferences"`
+	BatchSize        int           `json:"batchSize"`
+	Model            string        `json:"model,omitempty"`
+	Stage            string        `json:"stage"` // monitor | optimize | gray
+	PendingRuns      int           `json:"pendingRuns"`
+	LastRunNote      string        `json:"lastRunNote,omitempty"`
+	LatestMetrics    EvoSOPMetrics `json:"latestMetrics"`
+	ActiveProposalID string        `json:"activeProposalId,omitempty"`
+	OpenFindings     int           `json:"openFindings,omitempty"`
+}
+
+// EvoSOPDetail is the full SOP detail payload for #/evolution/sops/:workflowId.
+type EvoSOPDetail struct {
+	EvoSOPSummary
+	Versions       []EvoSOPVersionPoint `json:"versions"`
+	GrayRounds     []EvoSOPGrayRound    `json:"grayRounds"`
+	ActiveProposal *EvoProposal         `json:"activeProposal,omitempty"`
+	LastProposal   *EvoProposal         `json:"lastProposal,omitempty"`
+	BatchMetrics   *EvoSOPMetrics       `json:"batchMetrics,omitempty"`
+	Problems       []EvoSOPProblemItem  `json:"problems,omitempty"`
+	ChangeFiles    []EvoSOPChangeFile   `json:"changeFiles,omitempty"`
+}
+
 // EvoOverview is the 进化中心 dashboard payload.
 type EvoOverview struct {
 	SOPDetection EvoSOPDetectionSetting `json:"sopDetection"`
@@ -511,6 +645,7 @@ type EvoOverview struct {
 	Recent      []EvoProposal    `json:"recent"`
 	Health      []EvoAssetHealth `json:"health"`
 	Policies    []EvoPolicy      `json:"policies"`
+	SOPs        []EvoSOPSummary  `json:"sops,omitempty"`
 	WindowDays  int              `json:"windowDays"`
 	GeneratedAt time.Time        `json:"generatedAt"`
 	AutoEnabled bool             `json:"autoEnabled"`

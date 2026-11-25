@@ -53,6 +53,10 @@ func registerEvolutionRoutes(g *gin.Engine, h *evolutionHandlers) {
 	g.GET("/api/evolution/overview", h.overview)
 	g.POST("/api/evolution/diagnose", h.diagnose)
 	g.PUT("/api/evolution/sop-detection", h.putSOPDetection)
+	g.GET("/api/evolution/sops", h.listSOPs)
+	g.GET("/api/evolution/sops/:workflowId", h.sopDetail)
+	g.PUT("/api/evolution/sops/:workflowId/policy", h.putSOPPolicy)
+	g.POST("/api/evolution/sops/:workflowId/optimize", h.optimizeSOP)
 	g.GET("/api/evolution/findings", h.findings)
 	g.GET("/api/evolution/findings/:id/runs", h.findingRuns)
 	g.POST("/api/evolution/findings/:id/dismiss", h.dismissFinding)
@@ -209,6 +213,7 @@ func (h *evolutionHandlers) overview(c *gin.Context) {
 			}
 		}
 	}
+	out.SOPs = h.buildSOPSummaries(projectID, days)
 	c.JSON(http.StatusOK, out)
 }
 

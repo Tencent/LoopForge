@@ -223,11 +223,13 @@ function evoChangeState(p){
 }
 function evoChangeBadge(p){const s=evoChangeState(p);return kbBadge(s.label,s.tone)}
 function evoRenderOverviewHeader(){
-  const show=!evo.modal;
+  const inSopDetail=typeof evoSOPState!=='undefined'&&!!evoSOPState.view;
+  const show=!evo.modal&&!inSopDetail;
   $('#evoPageHead').hidden=!show;
   const host=$('#evoMetrics');if(!host)return;
-  host.hidden=!show;
-  host.innerHTML=show&&evo.overview&&!['assets','samples'].includes(evo.tab)?evoHomeSummaryHTML():'';
+  const sopHome=typeof evoSOPIsEnabledView==='function'&&evoSOPIsEnabledView();
+  host.hidden=!show||sopHome;
+  host.innerHTML=show&&!sopHome&&evo.overview&&!['assets','samples'].includes(evo.tab)?evoHomeSummaryHTML():'';
   window.AgentFlowHarnessIcons?.hydrate(host);
 }
 function evoRecentChangeHTML(){
@@ -240,6 +242,10 @@ function evoRender(){
   const root=$('#evolutionBody');if(!root)return;
   evoRenderOverviewHeader();
   evoSchedulePoll();
+  if(typeof evoSOPState!=='undefined'&&evoSOPState.view){
+    evoSOPRenderDetail();
+    return;
+  }
   if(evo.modal){
     const m=evo.modal;
     $('#evoDetailStatus').innerHTML=evoReadErrorHTML();
@@ -496,11 +502,12 @@ function evoCloseFinding(restore=true){
     evoFocusTask(m);
   }
 }
-function evoDispose(){clearTimeout(evo.poll);++evo.seq;evoCloseFinding(false);if(evoDrawerOwned())evoDrawerClose()}
+function evoDispose(){clearTimeout(evo.poll);++evo.seq;evoCloseFinding(false);if(typeof evoCloseSOP==='function')evoCloseSOP(false);if(evoDrawerOwned())evoDrawerClose()}
 function evoRoute(){
   try{
     const parts=location.hash.replace(/^#\/?/,'').split('/').map(decodeURIComponent);
     if(parts[0]!=='evolution')return null;
+    if(parts[1]==='sops'&&parts[2])return {type:'sop',id:parts[2],tab:parts[3]||'trend',scope:parts[4]||'versions'};
     if(parts[1]==='proposals'&&parts[2])return {type:'proposal',id:parts[2]};
     if(parts[1]==='findings'&&parts[2])return {type:'finding',id:parts[2],key:parts[3]||''};
     if(parts[1]==='settings')return {type:'settings',tab:parts[2]==='samples'?'samples':'assets'};
@@ -526,6 +533,11 @@ function evoFocusTask(opener){
 function evoApplyRoute(){
   if(!evoActive())return;
   const r=evoRoute();if(!r||!evo.overview&&r.type!=='list')return;
+  if(r.type==='sop'&&typeof evoOpenSOP==='function'){
+    if(evoSOPState.view?.workflowId===r.id&&evoSOPState.view?.tab===(r.tab==='change'?'change':'trend'))return;
+    return evoOpenSOP(r.id,r.tab,r.scope,true);
+  }
+  if(typeof evoCloseSOP==='function')evoCloseSOP(false);
   const identity=r.type==='finding'?`finding:${r.id}:${r.key}`:r.type==='proposal'?`proposal:${r.id}`:'';
   if(identity&&evo.modal?.routeKey===identity)return;
   if(r.type==='finding')return evoOpenFinding(r.id,r.key,true);

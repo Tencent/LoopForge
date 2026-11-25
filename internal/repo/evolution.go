@@ -1138,3 +1138,78 @@ func (r *EvolutionRepo) EvoSamples(projectID string) []domain.EvoSample {
 	}
 	return out
 }
+
+// ---------- per-SOP evolution policies ----------
+
+type evoSOPPolicyRow struct {
+	WorkflowID string     `gorm:"column:workflow_id;primaryKey;size:128"`
+	ProjectID  string     `gorm:"column:project_id;size:64;index:idx_evo_sop_policies_project"`
+	Payload    []byte     `gorm:"column:payload;type:json"`
+	Updated    *time.Time `gorm:"column:updated_at"`
+}
+
+func (evoSOPPolicyRow) TableName() string { return "evo_sop_policies" }
+
+func (r *EvolutionRepo) EvoSOPPolicy(projectID, workflowID string) domain.EvoSOPPolicy {
+	workflowID = strings.TrimSpace(workflowID)
+	def := domain.DefaultEvoSOPPolicy(projectID, workflowID)
+	if workflowID == "" {
+		return def
+	}
+	var row evoSOPPolicyRow
+	if r.DB.Where("workflow_id = ?", workflowID).Take(&row).Error != nil {
+		return def
+	}
+	var p domain.EvoSOPPolicy
+	if json.Unmarshal(row.Payload, &p) != nil {
+		return def
+	}
+	p.WorkflowID = workflowID
+	if p.ProjectID == "" {
+		p.ProjectID = strings.TrimSpace(projectID)
+	}
+	if p.BatchSize <= 0 {
+		p.BatchSize = 10
+	}
+	return p
+}
+
+func (r *EvolutionRepo) PutEvoSOPPolicy(p domain.EvoSOPPolicy) error {
+	p.WorkflowID = strings.TrimSpace(p.WorkflowID)
+	p.ProjectID = strings.TrimSpace(p.ProjectID)
+	if p.WorkflowID == "" || p.ProjectID == "" {
+		return errors.New("sop policy needs project id and workflow id")
+	}
+	if p.BatchSize <= 0 {
+		p.BatchSize = 10
+	}
+	if p.UpdatedAt.IsZero() {
+		p.UpdatedAt = time.Now().UTC()
+	}
+	return upsert(r.DB, "evo_sop_policies", map[string]any{
+		"workflow_id": p.WorkflowID,
+		"project_id":  p.ProjectID,
+		"payload":     mustJSON(p),
+		"updated_at":  timePtr(p.UpdatedAt),
+	})
+}
+
+func (r *EvolutionRepo) EvoSOPPolicies(projectID string) map[string]domain.EvoSOPPolicy {
+	var rows []evoSOPPolicyRow
+	out := map[string]domain.EvoSOPPolicy{}
+	if r.DB.Where("project_id = ?", strings.TrimSpace(projectID)).Find(&rows).Error != nil {
+		return out
+	}
+	for _, row := range rows {
+		var p domain.EvoSOPPolicy
+		if json.Unmarshal(row.Payload, &p) == nil {
+			p.WorkflowID = row.WorkflowID
+			p.ProjectID = row.ProjectID
+			if p.BatchSize <= 0 {
+				p.BatchSize = 10
+			}
+			out[row.WorkflowID] = p
+		}
+	}
+	return out
+}

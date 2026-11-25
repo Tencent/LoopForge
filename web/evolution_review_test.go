@@ -34,3 +34,13 @@ func TestEvolutionHomeInteraction(t *testing.T) {
 		t.Fatalf("evolution home interaction: %v\n%s", err, out)
 	}
 }
+
+func TestEvolutionSOPInteraction(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	if out, err := exec.Command(node, "evolution_sop_test.js").CombinedOutput(); err != nil {
+		t.Fatalf("evolution sop interaction: %v\n%s", err, out)
+	}
+}

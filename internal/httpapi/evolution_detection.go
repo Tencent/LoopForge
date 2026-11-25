@@ -134,6 +134,11 @@ func (h *evolutionHandlers) detectSOPRun(ctx context.Context, project repo.SOPDe
 		(run.Status != "succeeded" && run.Status != "failed") || h.runProject(run) != project.ID {
 		return nil
 	}
+	if strings.TrimSpace(run.WorkflowID) != "" {
+		if policy := h.repo.EvoSOPPolicy(project.ID, run.WorkflowID); !policy.Enabled {
+			return nil
+		}
+	}
 	cfg := project.Config
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	rec := domain.RunEvalRecord{
