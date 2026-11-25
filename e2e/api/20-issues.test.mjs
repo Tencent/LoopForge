@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { api, get, post, put, list, track, cleanup, ensureProject, waitFor, waitRun } from '../lib/api.mjs';
-import { cfg } from '../lib/env.mjs';
+import { cfg, requireToken } from '../lib/env.mjs';
 import { createWorkflow, script, approval, trackRun } from '../lib/fixtures.mjs';
 
 const P = cfg.projectId;
@@ -51,6 +51,33 @@ test('list supports project filter, search and pagination', async () => {
 });
 
 const detailOf = async id => get(`/api/issues/${id}`);
+
+test('requirement markdown and a pasted image are available after saving', async () => {
+  const description = '# Acceptance criteria\n\n- Keep existing orders';
+  const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9EwAAAAASUVORK5CYII=', 'base64');
+  const form = new FormData();
+  form.set('issue', JSON.stringify({ projectId: P, title: 'E2E requirement with image', description }));
+  form.append('images', new Blob([bytes], { type: 'image/png' }), 'acceptance.png');
+  const saved = await post('/api/issues', form);
+  removeLater(saved.id);
+
+  const path = `/api/issues/${saved.id}`;
+  const detail = await get(path);
+  assert.equal(detail.issue.description, description);
+  assert.equal(detail.images.length, 1);
+  const [image] = detail.images;
+  assert.equal(image.name, 'acceptance.png');
+  const stored = await fetch(`${cfg.base}${path}/images/${image.id}`, {
+    headers: { Authorization: `Bearer ${requireToken()}` },
+    signal: AbortSignal.timeout(30_000),
+  });
+  assert.equal(stored.status, 200);
+  assert.equal(stored.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await stored.arrayBuffer()), bytes);
+
+  const catalog = await get(`${path}/clarify-models`);
+  assert.ok(Array.isArray(catalog.engines) && catalog.engines.length > 0);
+});
 
 test('edit keeps identity and records an operation', async () => {
   const { issue: current } = await detailOf(issue.id);
