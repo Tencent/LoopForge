@@ -320,4 +320,35 @@ func TestKnowledgeProxyIsReadOnlyAndUserConnectorScoped(t *testing.T) {
 	if !wrongIsErr || !strings.Contains(wrongText, knowledge.ErrConnectorNotFound.Error()) {
 		t.Fatalf("cross-user proxy token should fail: isErr=%v text=%s", wrongIsErr, wrongText)
 	}
+
+	// Verify usage counters recorded the successful proxy call (and ignored the failed cross-user lookup).
+	dev42 := domain.User{ID: 42, LoginName: "dev42"}
+	_ = s.PutUser(dev42)
+	usageRec := doJSONAsUser(t, h, dev42, http.MethodGet, "/api/knowledge/usage", "")
+	if usageRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/knowledge/usage failed: %d %s", usageRec.Code, usageRec.Body.String())
+	}
+	var summary domain.KnowledgeUsageSummary
+	if err := json.Unmarshal(usageRec.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.TotalCalls != 1 || len(summary.Connectors) != 1 || summary.Connectors[0].ConnectorID != conn.ID || summary.Connectors[0].CallCount != 1 {
+		t.Fatalf("expected 1 recorded connector call, got %+v", summary)
+	}
+	if len(summary.Documents) != 1 || summary.Documents[0].DocumentID != "x.md" || summary.Documents[0].CallCount != 1 {
+		t.Fatalf("expected 1 recorded document call for x.md, got %+v", summary.Documents)
+	}
+
+	resetRec := doJSONAsUser(t, h, dev42, http.MethodDelete, "/api/knowledge/usage", "")
+	if resetRec.Code != http.StatusOK {
+		t.Fatalf("DELETE /api/knowledge/usage failed: %d %s", resetRec.Code, resetRec.Body.String())
+	}
+	afterResetRec := doJSONAsUser(t, h, dev42, http.MethodGet, "/api/knowledge/usage", "")
+	var afterSummary domain.KnowledgeUsageSummary
+	if err := json.Unmarshal(afterResetRec.Body.Bytes(), &afterSummary); err != nil {
+		t.Fatal(err)
+	}
+	if afterSummary.TotalCalls != 0 || len(afterSummary.Connectors) != 0 || len(afterSummary.Documents) != 0 {
+		t.Fatalf("expected empty usage after reset, got %+v", afterSummary)
+	}
 }

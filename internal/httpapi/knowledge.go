@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"agentflow/internal/apperr"
@@ -342,4 +343,34 @@ func (h *knowledgeHandlers) checkReferences(c *gin.Context) {
 		}
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// 路由: GET /api/knowledge/usage
+func (h *knowledgeHandlers) getUsage(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	connectorID := strings.TrimSpace(c.Query("connectorId"))
+	limit := 50
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	c.JSON(http.StatusOK, h.service().UsageSummary(uid, connectorID, limit))
+}
+
+// 路由: DELETE /api/knowledge/usage
+func (h *knowledgeHandlers) resetUsage(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	connectorID := strings.TrimSpace(c.Query("connectorId"))
+	if err := h.service().ResetUsage(uid, connectorID); err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

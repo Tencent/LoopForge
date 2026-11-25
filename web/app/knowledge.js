@@ -74,6 +74,7 @@
   const kbState = {
     connectorTypes: [],
     connectors: [],
+    usage: null,
     sourcesByConn: {},
     checksByConn: {},
     loading: false,
@@ -839,12 +840,20 @@
     return `<div class="kb-extra-row">${items.join('')}</div>`;
   }
 
+  function usageForConnector(connectorId) {
+    const list = kbState.usage?.connectors;
+    if (!Array.isArray(list)) return null;
+    return list.find(item => item.connectorId === connectorId) || null;
+  }
+
   function renderConnectorCardHTML(conn) {
     const meta = typeMetaFor(conn.type);
     const checkRes = kbState.checksByConn[conn.id];
     const sources = kbState.sourcesByConn[conn.id];
+    const usage = usageForConnector(conn.id);
     const supportsSources = !meta || meta.supportsSubSources !== false;
     const confirmingDelete = kbState.confirmDeleteId === conn.id;
+    const callCount = Number(usage?.callCount || 0);
 
     return `
       <article class="sh-card kb-card" data-kb-card="${kbEsc(conn.id)}" data-connector-id="${kbEsc(conn.id)}">
@@ -855,6 +864,7 @@
               <span class="hui-badge" data-size="sm" data-tone="neutral">${kbEsc(meta?.name || conn.type)}</span>
               <span class="hui-badge" data-size="sm" data-tone="${conn.enabled ? 'success' : 'neutral'}">${conn.enabled ? '已启用' : '已停用'}</span>
               ${renderConnectorAuthBadgeHTML(conn)}
+              ${kbState.usage ? `<span class="hui-badge" data-size="sm" data-tone="neutral" data-kb-conn-calls="${kbEsc(conn.id)}">调用 ${callCount} 次</span>` : ''}
             </div>
           </div>
           <div class="kb-row-actions">
@@ -958,6 +968,65 @@
     `;
   }
 
+  function renderUsageSummaryHTML() {
+    const usage = kbState.usage;
+    if (!usage) return '';
+    const totalCalls = Number(usage.totalCalls || 0);
+    const totalDocCalls = Number(usage.totalDocumentCalls || 0);
+    const docs = Array.isArray(usage.documents) ? usage.documents : [];
+    if (totalCalls === 0 && docs.length === 0) return '';
+
+    const docRowsHTML = docs.length
+      ? `
+        <div class="kb-usage-table-wrap">
+          <table class="kb-usage-table">
+            <thead>
+              <tr>
+                <th>文档</th>
+                <th>所属连接器</th>
+                <th>检索命中</th>
+                <th>正文读取</th>
+                <th>总调用</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${docs.map(doc => {
+                const docLabel = doc.title || doc.fileName || doc.documentId;
+                const subLabel = doc.sourceName || doc.sourceId || '';
+                const connLabel = doc.connectorName || doc.connectorId;
+                return `
+                  <tr data-kb-usage-doc="${kbEsc(doc.documentId)}">
+                    <td>
+                      <div class="kb-usage-doc-title">${kbEsc(docLabel)}</div>
+                      ${subLabel ? `<div class="kb-muted kb-usage-doc-sub">${kbEsc(subLabel)}</div>` : ''}
+                    </td>
+                    <td>${kbEsc(connLabel)}</td>
+                    <td>${Number(doc.searchHitCount || 0)}</td>
+                    <td>${Number(doc.readCount || 0)}</td>
+                    <td><strong>${Number(doc.callCount || 0)}</strong></td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `
+      : '<p class="kb-muted">暂无文档级调用记录。</p>';
+
+    return `
+      <section class="sh-card kb-usage-section" data-kb-usage-section aria-label="知识库与文档调用统计">
+        <div class="kb-usage-head">
+          <div>
+            <h2>知识库与文档调用统计</h2>
+            <p class="kb-muted">累计调用 ${totalCalls} 次 · 文档命中/读取 ${totalDocCalls} 次</p>
+          </div>
+          <button type="button" class="kb-btn xs" data-kb-reset-usage>清空统计</button>
+        </div>
+        ${docRowsHTML}
+      </section>
+    `;
+  }
+
   function renderKnowledgeView() {
     const root = document.getElementById('knowledgeRoot');
     if (!root) return;
@@ -975,9 +1044,9 @@
     } else if (kbState.error && !kbState.connectors.length) {
       body = `<div class="sh-card kb-panel"><div class="kb-check-banner err">${kbEsc(kbState.error)}</div></div>`;
     } else if (!kbState.connectors.length) {
-      body = renderVendorGalleryHTML() + renderEmptyStateHTML();
+      body = renderVendorGalleryHTML() + renderEmptyStateHTML() + renderUsageSummaryHTML();
     } else {
-      body = renderVendorGalleryHTML() + `<div class="kb-connector-list">${kbState.connectors.map(renderConnectorCardHTML).join('')}</div>`;
+      body = renderVendorGalleryHTML() + `<div class="kb-connector-list">${kbState.connectors.map(renderConnectorCardHTML).join('')}</div>` + renderUsageSummaryHTML();
     }
 
     root.innerHTML = notice + body;
@@ -1092,6 +1161,20 @@
         }
       });
     });
+    root.querySelectorAll('[data-kb-reset-usage]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await kbAPI('/api/knowledge/usage', { method: 'DELETE' });
+          kbState.usage = { totalCalls: 0, totalDocumentCalls: 0, connectors: [], documents: [] };
+          kbToast('调用统计已清空');
+          renderKnowledgeView();
+        } catch (err) {
+          kbToast(err.message, true);
+          btn.disabled = false;
+        }
+      });
+    });
   }
 
   function bindHeaderActions() {
@@ -1114,12 +1197,14 @@
     kbState.error = '';
     renderKnowledgeView();
     try {
-      const [types, connectors] = await Promise.all([
+      const [types, connectors, usage] = await Promise.all([
         kbAPI('/api/knowledge/connector-types').catch(() => defaultConnectorTypes()),
         kbAPI('/api/knowledge/connectors'),
+        kbAPI('/api/knowledge/usage').catch(() => null),
       ]);
       kbState.connectorTypes = Array.isArray(types) && types.length ? types : defaultConnectorTypes();
       kbState.connectors = Array.isArray(connectors) ? connectors : [];
+      kbState.usage = usage && typeof usage === 'object' ? usage : null;
     } catch (err) {
       kbState.error = err.message || '加载个人知识库连接器失败';
       kbToast(kbState.error, true);

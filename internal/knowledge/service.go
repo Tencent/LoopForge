@@ -44,6 +44,7 @@ type cachedConnectorEntry struct {
 type Service struct {
 	store    Store
 	registry *Registry
+	usage    *UsageCounter
 	now      func() time.Time
 	newID    func() string
 
@@ -71,9 +72,14 @@ func NewServiceWithRegistry(store Store, registry *Registry, newID func() string
 	if registry == nil {
 		registry = DefaultRegistry()
 	}
+	var usage *UsageCounter
+	if us, ok := store.(UsageStore); ok {
+		usage = NewUsageCounter(us)
+	}
 	return &Service{
 		store:         store,
 		registry:      registry,
+		usage:         usage,
 		now:           time.Now,
 		newID:         newID,
 		instances:     map[string]cachedConnectorEntry{},
@@ -81,6 +87,35 @@ func NewServiceWithRegistry(store Store, registry *Registry, newID func() string
 		oauthCache:    map[string]discoveredOAuth{},
 		publicBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("LOOPFORGE_PUBLIC_BASE_URL")), "/"),
 	}
+}
+
+// Usage returns the UsageCounter associated with this Service (may be nil if
+// the underlying Store does not implement UsageStore).
+func (s *Service) Usage() *UsageCounter {
+	if s == nil {
+		return nil
+	}
+	return s.usage
+}
+
+// UsageSummary returns aggregated connector and document invocation counts for
+// ownerUserID.
+func (s *Service) UsageSummary(ownerUserID int64, connectorID string, docLimit int) domain.KnowledgeUsageSummary {
+	if s == nil || s.usage == nil {
+		return domain.KnowledgeUsageSummary{
+			Connectors: []domain.KnowledgeConnectorUsage{},
+			Documents:  []domain.KnowledgeDocumentUsage{},
+		}
+	}
+	return s.usage.Summary(s.ListConnectors(ownerUserID), ownerUserID, connectorID, docLimit)
+}
+
+// ResetUsage clears recorded invocation counts for ownerUserID.
+func (s *Service) ResetUsage(ownerUserID int64, connectorID string) error {
+	if s == nil || s.usage == nil {
+		return nil
+	}
+	return s.usage.Reset(ownerUserID, connectorID)
 }
 
 // Registry returns the underlying ConnectorFactory registry.

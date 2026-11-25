@@ -689,6 +689,40 @@ type knowledgeConnectorRow struct {
 
 func (knowledgeConnectorRow) TableName() string { return "knowledge_connectors" }
 
+type knowledgeConnectorUsageRow struct {
+	OwnerUserID      int64      `gorm:"column:owner_user_id;primaryKey;not null;default:0"`
+	ConnectorID      string     `gorm:"column:connector_id;primaryKey;size:64"`
+	CallCount        int64      `gorm:"column:call_count;not null;default:0"`
+	SearchCount      int64      `gorm:"column:search_count;not null;default:0"`
+	ReadCount        int64      `gorm:"column:read_count;not null;default:0"`
+	DocumentHitCount int64      `gorm:"column:document_hit_count;not null;default:0"`
+	ErrorCount       int64      `gorm:"column:error_count;not null;default:0"`
+	LastCalledAt     *time.Time `gorm:"column:last_called_at"`
+	CreatedAt        *time.Time `gorm:"column:created_at"`
+	UpdatedAt        *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeConnectorUsageRow) TableName() string { return "knowledge_connector_usage_counts" }
+
+type knowledgeDocumentUsageRow struct {
+	OwnerUserID    int64      `gorm:"column:owner_user_id;primaryKey;not null;default:0"`
+	ConnectorID    string     `gorm:"column:connector_id;primaryKey;size:64"`
+	DocumentKey    string     `gorm:"column:document_key;primaryKey;size:255"`
+	SourceID       string     `gorm:"column:source_id;size:191;not null;default:''"`
+	SourceName     string     `gorm:"column:source_name;size:255;not null;default:''"`
+	DocumentID     string     `gorm:"column:document_id;size:512;not null;default:''"`
+	Title          string     `gorm:"column:title;size:255;not null;default:''"`
+	FileName       string     `gorm:"column:file_name;size:255;not null;default:''"`
+	CallCount      int64      `gorm:"column:call_count;index:idx_knowledge_doc_usage_owner_calls;not null;default:0"`
+	SearchHitCount int64      `gorm:"column:search_hit_count;not null;default:0"`
+	ReadCount      int64      `gorm:"column:read_count;not null;default:0"`
+	LastCalledAt   *time.Time `gorm:"column:last_called_at"`
+	CreatedAt      *time.Time `gorm:"column:created_at"`
+	UpdatedAt      *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeDocumentUsageRow) TableName() string { return "knowledge_document_usage_counts" }
+
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
@@ -708,6 +742,8 @@ func allModels() []any {
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeConnectorRow{},
+		knowledgeConnectorUsageRow{},
+		knowledgeDocumentUsageRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}
 }

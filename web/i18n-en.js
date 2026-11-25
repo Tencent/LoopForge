@@ -669,5 +669,13 @@ Object.assign(window.LF_I18N_EN, {
   "WeKnora 知识库": "WeKnora Knowledge Base",
   "原生 REST API": "Native REST API",
   "通过只读 REST API 接入个人或团队 WeKnora 实例，支持列子库、混合检索与分块原文读取": "Connect personal or team WeKnora instances via read-only REST API for knowledge base listing, hybrid search and chunk reading",
-  "登录 WeKnora 控制台在「设置 → API Key」生成只读或检索密钥，填写服务基础地址（例如 http://host:8080）与 API Key，使用 X-API-Key 请求头鉴权。": "Log in to the WeKnora console, generate a read-only or retrieval key under Settings -> API Key, and enter the base URL (e.g. http://host:8080) and API Key authenticated via X-API-Key."
+  "登录 WeKnora 控制台在「设置 → API Key」生成只读或检索密钥，填写服务基础地址（例如 http://host:8080）与 API Key，使用 X-API-Key 请求头鉴权。": "Log in to the WeKnora console, generate a read-only or retrieval key under Settings -> API Key, and enter the base URL (e.g. http://host:8080) and API Key authenticated via X-API-Key.",
+  "知识库与文档调用统计": "Knowledge & Document Usage",
+  "暂无文档级调用记录。": "No document-level invocation records yet.",
+  "清空统计": "Reset counts",
+  "调用统计已清空": "Usage counts reset",
+  "所属连接器": "Connector",
+  "检索命中": "Search hits",
+  "正文读取": "Document reads",
+  "总调用": "Total calls"
 });

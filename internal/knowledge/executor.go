@@ -167,6 +167,9 @@ func (e *Executor) ExecuteReferenceToolWithHistory(
 	if callErr != nil {
 		read.Status = domain.KnowledgeStatusUnavailable
 		read.Warning = clipCatalogText(firstNonEmpty(res.Warning, callErr.Error()), 200)
+		if usage := e.svc.Usage(); usage != nil {
+			_ = usage.RecordExecution(ctx, ownerUserID, read, callErr)
+		}
 		return read, "", callErr
 	}
 
@@ -184,6 +187,9 @@ func (e *Executor) ExecuteReferenceToolWithHistory(
 	}
 	if rule.Role == ToolRoleCatalog || domain.IsKnowledgeCatalogTool(read.Tool) || !res.Citeable {
 		read.Evidences = nil
+		if usage := e.svc.Usage(); usage != nil {
+			_ = usage.RecordExecution(ctx, ownerUserID, read, nil)
+		}
 		return read, text, nil
 	}
 
@@ -209,6 +215,9 @@ func (e *Executor) ExecuteReferenceToolWithHistory(
 
 	if domain.IsKnowledgeCitableStatus(read.Status) {
 		text = appendCitationSuffix(text, read, meta.Name)
+	}
+	if usage := e.svc.Usage(); usage != nil {
+		_ = usage.RecordExecution(ctx, ownerUserID, read, nil)
 	}
 	return read, text, nil
 }

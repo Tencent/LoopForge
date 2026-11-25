@@ -505,3 +505,54 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
   assert.equal(updatedWkCard.getAttribute('data-vendor-state'), 'configured');
 });
 
+test('knowledge center renders connector and document usage counts and supports reset', async (t) => {
+  const { document } = await openKnowledge(t, [
+    { method: 'GET', path: '/api/knowledge/connector-types', body: DEFAULT_TYPES },
+    {
+      method: 'GET',
+      path: '/api/knowledge/connectors',
+      body: [{
+        id: 'kb_1',
+        name: '研发文档库',
+        type: 'weknora',
+        endpoint: 'https://weknora.example.com',
+        enabled: true,
+        secretConfigured: true,
+      }],
+    },
+    {
+      method: 'GET',
+      path: '/api/knowledge/usage',
+      body: {
+        totalCalls: 5,
+        totalDocumentCalls: 3,
+        connectors: [{ connectorId: 'kb_1', connectorName: '研发文档库', callCount: 5 }],
+        documents: [{
+          connectorId: 'kb_1',
+          connectorName: '研发文档库',
+          sourceName: '后端规范',
+          documentId: 'doc-1',
+          title: 'Go 服务开发规范',
+          searchHitCount: 2,
+          readCount: 1,
+          callCount: 3,
+        }],
+      },
+    },
+    { method: 'DELETE', path: '/api/knowledge/usage', body: { ok: true } },
+  ]);
+
+  const badge = document.querySelector('[data-kb-conn-calls="kb_1"]');
+  assert.ok(badge, '应展示连接器调用次数徽标');
+  assert.match(badge.textContent, /调用 5 次/);
+
+  const usageSection = document.querySelector('[data-kb-usage-section]');
+  assert.ok(usageSection, '应展示知识库与文档调用统计区块');
+  assert.match(usageSection.textContent, /Go 服务开发规范/);
+  assert.match(usageSection.textContent, /累计调用 5 次/);
+
+  document.querySelector('[data-kb-reset-usage]').click();
+  await settle(8);
+  assert.equal(document.querySelector('[data-kb-usage-section]'), null);
+});
+
