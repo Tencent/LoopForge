@@ -353,12 +353,41 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 	}
 
 	if targetAsset.ID == "" {
-		// Pick the highest-cost private evolvable agent on this SOP.
+		// Pick the highest-impact private evolvable agent on this SOP following
+		// the user's P1 > P2 > ... preference priority order.
 		type cand struct {
-			asset  evoAsset
-			nodeID string
-			tokens int64
-			tools  int
+			asset      evoAsset
+			nodeID     string
+			tokens     int64
+			tools      int
+			durationMs int64
+			unclean    int
+		}
+		betterCand := func(a, b cand) bool {
+			for _, pref := range policy.Preferences {
+				switch pref {
+				case domain.EvoPrefTokens:
+					if a.tokens != b.tokens {
+						return a.tokens > b.tokens
+					}
+				case domain.EvoPrefTools:
+					if a.tools != b.tools {
+						return a.tools > b.tools
+					}
+				case domain.EvoPrefDuration:
+					if a.durationMs != b.durationMs {
+						return a.durationMs > b.durationMs
+					}
+				case domain.EvoPrefClean:
+					if a.unclean != b.unclean {
+						return a.unclean > b.unclean
+					}
+				}
+			}
+			if a.tokens != b.tokens {
+				return a.tokens > b.tokens
+			}
+			return a.tools > b.tools
 		}
 		var best *cand
 		for _, node := range wf.Nodes {
@@ -372,16 +401,22 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 			if h.repo.EvoLevel(asset.Kind, asset.ID) < domain.EvoLevelPropose {
 				continue
 			}
-			var tok int64
-			var tools int
+			cur := cand{asset: asset, nodeID: node.ID}
 			for _, r := range batchRuns {
 				if nr := r.Nodes[node.ID]; nr != nil {
-					tok += evolution.NodeTokens(*nr)
-					tools += nr.ToolCalls
+					cur.tokens += evolution.NodeTokens(*nr)
+					cur.tools += nr.ToolCalls
+					if !nr.StartedAt.IsZero() && !nr.FinishedAt.IsZero() && nr.FinishedAt.After(nr.StartedAt) {
+						cur.durationMs += nr.FinishedAt.Sub(nr.StartedAt).Milliseconds()
+					}
+					if nr.Status != "succeeded" || nr.ReworkCount > 0 || nr.Attempt > 1 {
+						cur.unclean += 1 + nr.ReworkCount + max(0, nr.Attempt-1)
+					}
 				}
 			}
-			if best == nil || tok > best.tokens || (tok == best.tokens && tools > best.tools) {
-				best = &cand{asset: asset, nodeID: node.ID, tokens: tok, tools: tools}
+			if best == nil || betterCand(cur, *best) {
+				copyCur := cur
+				best = &copyCur
 			}
 		}
 		if best != nil {
@@ -397,8 +432,8 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 		return domain.EvoProposal{}, nil, false, evoConflict("当前 SOP 暂无可自动优化的私有角色（共享/平台角色请先复制为项目私有角色）")
 	}
 
-	// Build or enrich finding with the user's selected SOP optimization preferences & batch runs
-	// so Token/Tools/Duration optimization works even when runs succeeded without hard errors.
+	// Build or enrich finding with the user's prioritized SOP optimization preferences & batch runs
+	// so Token/Tools/Duration/Clean optimization strictly follows P1 > P2 > ... order.
 	if targetFinding.ID == "" {
 		if len(batchRuns) == 0 {
 			return domain.EvoProposal{}, nil, false, evoConflict("当前 SOP 尚无已完成的业务运行样本，至少完成 1 次运行后再优化")
@@ -410,10 +445,11 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 		}
 		targetFinding = f
 	} else if len(batchRuns) > 0 {
-		prefText := strings.Join(evolution.SOPPreferenceLabels(policy.Preferences), "、")
-		prefNote := fmt.Sprintf("【SOP 优化偏好：%s】近 %d 次运行平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。",
-			prefText, batchMetrics.Runs, batchMetrics.AvgTokens, batchMetrics.AvgTools, batchMetrics.AvgDuration, batchMetrics.CleanRate*100)
-		if !strings.Contains(targetFinding.Summary, "SOP 优化偏好") {
+		priorityText := evolution.SOPPreferencePriorityText(policy.Preferences)
+		guidance := evolution.SOPPreferencePromptGuidance(policy.Preferences)
+		prefNote := fmt.Sprintf("【SOP 优化优先级：%s】近 %d 次运行平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。%s",
+			priorityText, batchMetrics.Runs, batchMetrics.AvgTokens, batchMetrics.AvgTools, batchMetrics.AvgDuration, batchMetrics.CleanRate*100, guidance)
+		if !strings.Contains(targetFinding.Summary, "SOP 优化优先级") && !strings.Contains(targetFinding.Summary, "SOP 优化偏好") {
 			if targetFinding.Summary != "" {
 				targetFinding.Summary = prefNote + "\n" + targetFinding.Summary
 			} else {

@@ -42,7 +42,7 @@ const { createDOM } = require('./hui_fake_dom');
     dom.load(path.join(__dirname, file));
   }
 
-  const api = dom.run('({evo, evoSOPState, evoHomeHTML, evoSOPDetailHTML, evoSOPOpenPrefDialog, evoSOPSyncPrefModelUI, evoSOPSavePolicy})');
+  const api = dom.run('({evo, evoSOPState, evoHomeHTML, evoSOPDetailHTML, evoSOPOpenPrefDialog, evoSOPPrefMove, evoSOPPrefToggle, evoSOPPrefApplyPreset, evoSOPSyncPrefModelUI, evoSOPSavePolicy})');
   const { evo } = api;
   evo.projectId = 'p';
   evo.overview = {
@@ -98,7 +98,7 @@ const { createDOM } = require('./hui_fake_dom');
   assert.doesNotMatch(homeHTML, /evo-sop-detect-bar/, 'home must not show redundant auto-detection banner');
   assert.match(homeHTML, /Bug 自动修复/);
   assert.match(homeHTML, /需求研发交付/);
-  assert.match(homeHTML, /省 Token · 省工具/);
+  assert.match(homeHTML, /省 Token › 省工具/);
   assert.match(homeHTML, /每 15 次/);
   assert.match(homeHTML, /监测中/);
   assert.match(homeHTML, /优化中/);
@@ -146,6 +146,7 @@ const { createDOM } = require('./hui_fake_dom');
   assert.match(trendHTML, /平均执行耗时/);
   assert.match(trendHTML, /一次成功率/);
   assert.match(trendHTML, /近 10 次运行评测均分/);
+  assert.match(trendHTML, /P1 主目标/, 'detail view must badge the P1 preference KPI card');
   assert.match(trendHTML, /发布 v4/);
 
   const grayHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'gray', metric: 'score', fileIndex: 0, expandedGray: 'evp-gray', detail: detailPayload });
@@ -191,11 +192,21 @@ const { createDOM } = require('./hui_fake_dom');
   assert.match(chatChangeHTML, /Chatbot 修复后的新指令/);
   assert.match(chatChangeHTML, /evo-sop-split-diff/);
 
-  // 3. Preference dialog binds real AgentFlowAssistantModels feature picker for standalone model selection.
+  // 3. Preference dialog renders P1/P2 priority badges, supports up/down reorder & presets, and binds real model picker.
   dom.html(`<section id="evolutionView" class="active"><div id="evoPageHead"></div><div id="evoMetrics"></div><div id="evolutionBody">${homeHTML}</div></section>`);
   api.evoSOPOpenPrefDialog('wf-bug');
   assert.equal(boundModel?.model, 'codex:gpt-5', 'custom model must initialize feature picker');
   assert.equal(w.$('#evoSopModelPickerHost').hidden, false);
+  assert.deepEqual([...api.evoSOPState.prefTarget.preferences], ['tokens', 'tools']);
+  assert.match(w.$('#evoSopPrefOptions').textContent, /P1 主目标/);
+  assert.equal(w.$('#evoSopPrefOptions [data-pref-key]').dataset.prefKey, 'tokens');
+  api.evoSOPPrefMove('tools', -1);
+  assert.deepEqual([...api.evoSOPState.prefTarget.preferences], ['tools', 'tokens'], 'moving tools up must promote it to P1');
+  assert.equal(w.$('#evoSopPrefOptions [data-pref-key]').dataset.prefKey, 'tools', 'reordered P1 option must render first');
+  api.evoSOPPrefToggle('duration', true);
+  assert.deepEqual([...api.evoSOPState.prefTarget.preferences], ['tools', 'tokens', 'duration'], 'checking new preference appends as P3');
+  api.evoSOPPrefApplyPreset('quality');
+  assert.deepEqual([...api.evoSOPState.prefTarget.preferences], ['clean', 'tokens'], 'preset must set ordered priority chain');
 
   // 4. Policy save hits PUT /api/evolution/sops/:workflowId/policy with preferences, batchSize, and standalone model.
   const calls = [];

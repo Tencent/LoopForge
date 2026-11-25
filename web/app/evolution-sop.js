@@ -8,6 +8,11 @@ const EVO_SOP_PREFS = [
   { key: 'clean', label: '提高一次成功率', short: '一次成功', desc: '降低失败与打回返工，提升一次通过率' },
 ];
 const EVO_SOP_PREF_MAP = Object.fromEntries(EVO_SOP_PREFS.map(p => [p.key, p]));
+const EVO_SOP_PREF_PRESETS = [
+  { id: 'cost', label: '省成本', prefs: ['tokens', 'tools'] },
+  { id: 'speed', label: '提速度', prefs: ['duration', 'tools'] },
+  { id: 'quality', label: '求稳定', prefs: ['clean', 'tokens'] },
+];
 const EVO_SOP_BATCH_PRESETS = [5, 10, 15, 20, 30];
 const EVO_SOP_STAGES = {
   monitor: ['监测中', ''],
@@ -79,9 +84,26 @@ function evoSOPDeltaHTML(cur, prev, higherBetter, formatFn) {
   return `<span class="evo-sop-delta ${improved ? 'good' : 'bad'}">${escapeHTML(text)}</span>`;
 }
 
+function evoSOPNormalizePrefs(prefs) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of (Array.isArray(prefs) ? prefs : [])) {
+    const k = String(raw || '').trim().toLowerCase();
+    if (!EVO_SOP_PREF_MAP[k] || seen.has(k)) continue;
+    seen.add(k);
+    out.push(k);
+  }
+  return out.length ? out : ['tokens'];
+}
+
 function evoSOPPrefsText(prefs) {
-  const list = (Array.isArray(prefs) && prefs.length ? prefs : ['tokens']).map(k => EVO_SOP_PREF_MAP[k]?.short || k);
-  return list.join(' · ');
+  const list = evoSOPNormalizePrefs(prefs).map(k => EVO_SOP_PREF_MAP[k]?.short || k);
+  if (list.length <= 2) return list.join(' › ');
+  return `${list[0]} › ${list[1]} +${list.length - 2}`;
+}
+
+function evoSOPPrefsTitle(prefs) {
+  return evoSOPNormalizePrefs(prefs).map((k, idx) => `P${idx + 1} ${EVO_SOP_PREF_MAP[k]?.label || k}`).join(' > ');
 }
 
 function evoSOPStageBadge(stage) {
@@ -178,7 +200,7 @@ function evoSOPRowHTML(s) {
       <span class="evo-sop-row-note">${escapeHTML(s.lastRunNote || '暂无运行记录')}</span>
     </button>
     <div class="evo-sop-row-pref">
-      <button type="button" class="evo-sop-pref-trigger" data-evo-sop-pref-open="${escapeHTML(s.workflowId)}" title="点击调整优化偏好、汇总周期与分析模型"${busy}>
+      <button type="button" class="evo-sop-pref-trigger" data-evo-sop-pref-open="${escapeHTML(s.workflowId)}" title="点击调整优化优先级、汇总周期与分析模型（当前：${escapeHTML(evoSOPPrefsTitle(s.preferences))}）"${busy}>
         <span class="evo-sop-pref-pills">${escapeHTML(evoSOPPrefsText(s.preferences))}</span>
         <small>每 ${Number(s.batchSize) || 10} 次</small>
       </button>
@@ -207,13 +229,17 @@ function evoSOPPrefDialogHTML() {
     <form method="dialog" id="evoSopPrefForm" class="evo-sop-dialog-card">
       <header class="evo-sop-dialog-head">
         <div class="evo-sop-dialog-title-wrap">
-          <h2 id="evoSopPrefTitle">进化偏好与周期</h2>
-          <p id="evoSopPrefSub">选择优先优化的方向（支持多选）、汇总周期与专属分析模型。</p>
+          <h2 id="evoSopPrefTitle">进化偏好与优先级</h2>
+          <p id="evoSopPrefSub">按优先级从高到低生效：冲突时优先保障 P1 主目标，支持拖拽或点 ↑↓ 调序。</p>
         </div>
         <button type="button" class="evo-sop-dialog-close" data-evo-sop-pref-close aria-label="关闭弹窗">
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
         </button>
       </header>
+      <div class="evo-sop-pref-presets-row">
+        <span class="evo-sop-pref-presets-label">快捷预设</span>
+        <div class="evo-sop-pref-presets" id="evoSopPrefPresets" role="group" aria-label="优化优先级预设"></div>
+      </div>
       <div class="evo-sop-pref-list" id="evoSopPrefOptions"></div>
       <div class="evo-sop-batch-editor">
         <label for="evoSopBatchCustom">每轮汇总运行次数</label>
@@ -240,6 +266,101 @@ function evoSOPPrefDialogHTML() {
       </footer>
     </form>
   </dialog>`;
+}
+
+function evoSOPPrefPresetMatches(presetPrefs, currentPrefs) {
+  if (!Array.isArray(currentPrefs) || presetPrefs.length !== currentPrefs.length) return false;
+  return presetPrefs.every((k, idx) => currentPrefs[idx] === k);
+}
+
+function evoSOPRenderPrefOptions() {
+  const target = evoSOPState.prefTarget;
+  const opts = $('#evoSopPrefOptions');
+  if (!target || !opts) return;
+  const selected = (target.preferences || []).filter(k => !!EVO_SOP_PREF_MAP[k]);
+  const selectedSet = new Set(selected);
+  const unselected = EVO_SOP_PREFS.filter(p => !selectedSet.has(p.key));
+
+  const presetsHost = $('#evoSopPrefPresets');
+  if (presetsHost) {
+    presetsHost.innerHTML = EVO_SOP_PREF_PRESETS.map(pr => {
+      const active = evoSOPPrefPresetMatches(pr.prefs, selected);
+      const chain = pr.prefs.map(k => EVO_SOP_PREF_MAP[k]?.short || k).join(' › ');
+      return `<button type="button" class="evo-sop-pref-preset" data-evo-sop-pref-preset="${pr.id}" aria-pressed="${active}" title="${escapeHTML(chain)}">${escapeHTML(pr.label)} <small>${escapeHTML(chain)}</small></button>`;
+    }).join('');
+  }
+
+  const selectedHTML = selected.length
+    ? selected.map((key, idx) => {
+        const p = EVO_SOP_PREF_MAP[key];
+        const isP1 = idx === 0;
+        return `<div class="evo-sop-pref-option is-checked${isP1 ? ' is-p1' : ''}" data-pref-key="${p.key}" draggable="true">
+          <span class="evo-sop-pref-grip" title="拖拽调整优先级" aria-hidden="true">⋮⋮</span>
+          <label class="evo-sop-pref-check">
+            <input type="checkbox" value="${p.key}" checked>
+            <span class="evo-sop-rank${isP1 ? ' is-p1' : ''}">${isP1 ? 'P1 主目标' : `P${idx + 1}`}</span>
+            <span class="evo-sop-pref-copy"><b>${escapeHTML(p.label)}</b><small>${escapeHTML(p.desc)}</small></span>
+          </label>
+          <span class="evo-sop-pref-order">
+            <button type="button" class="evo-sop-order-btn" data-evo-sop-pref-move="up" data-pref-key="${p.key}" title="上移优先级" aria-label="提高 ${escapeHTML(p.label)} 优先级"${idx === 0 ? ' disabled' : ''}>↑</button>
+            <button type="button" class="evo-sop-order-btn" data-evo-sop-pref-move="down" data-pref-key="${p.key}" title="下移优先级" aria-label="降低 ${escapeHTML(p.label)} 优先级"${idx === selected.length - 1 ? ' disabled' : ''}>↓</button>
+          </span>
+        </div>`;
+      }).join('')
+    : '<div class="evo-sop-pref-empty">请至少勾选一项作为 P1 主目标</div>';
+
+  const unselectedHTML = unselected.length
+    ? `<div class="evo-sop-pref-divider">未启用（勾选后追加为下一优先级）</div>${unselected.map(p => `<div class="evo-sop-pref-option is-unselected" data-pref-key="${p.key}">
+        <label class="evo-sop-pref-check">
+          <input type="checkbox" value="${p.key}">
+          <span class="evo-sop-pref-copy"><b>${escapeHTML(p.label)}</b><small>${escapeHTML(p.desc)}</small></span>
+        </label>
+      </div>`).join('')}`
+    : '';
+
+  opts.innerHTML = selectedHTML + unselectedHTML;
+}
+
+function evoSOPPrefToggle(key, checked) {
+  const target = evoSOPState.prefTarget;
+  if (!target || !EVO_SOP_PREF_MAP[key]) return;
+  const list = (target.preferences || []).filter(k => k !== key && !!EVO_SOP_PREF_MAP[k]);
+  if (checked) list.push(key);
+  target.preferences = list;
+  evoSOPRenderPrefOptions();
+}
+
+function evoSOPPrefMove(key, delta) {
+  const target = evoSOPState.prefTarget;
+  if (!target) return;
+  const list = [...(target.preferences || [])];
+  const idx = list.indexOf(key);
+  const next = idx + delta;
+  if (idx < 0 || next < 0 || next >= list.length) return;
+  [list[idx], list[next]] = [list[next], list[idx]];
+  target.preferences = list;
+  evoSOPRenderPrefOptions();
+}
+
+function evoSOPPrefReorder(fromKey, toKey) {
+  const target = evoSOPState.prefTarget;
+  if (!target || !fromKey || !toKey || fromKey === toKey) return;
+  const list = [...(target.preferences || [])];
+  const fromIdx = list.indexOf(fromKey);
+  const toIdx = list.indexOf(toKey);
+  if (fromIdx < 0 || toIdx < 0) return;
+  list.splice(fromIdx, 1);
+  list.splice(toIdx, 0, fromKey);
+  target.preferences = list;
+  evoSOPRenderPrefOptions();
+}
+
+function evoSOPPrefApplyPreset(presetId) {
+  const target = evoSOPState.prefTarget;
+  const preset = EVO_SOP_PREF_PRESETS.find(p => p.id === presetId);
+  if (!target || !preset) return;
+  target.preferences = [...preset.prefs];
+  evoSOPRenderPrefOptions();
 }
 
 function evoSOPSyncPrefModelUI(mode, savedModel = '') {
@@ -280,20 +401,13 @@ function evoSOPOpenPrefDialog(workflowId) {
   evoSOPState.prefTarget = {
     workflowId: s.workflowId,
     enabled: !!s.enabled,
-    preferences: [...(s.preferences?.length ? s.preferences : ['tokens'])],
+    preferences: evoSOPNormalizePrefs(s.preferences),
     batchSize: Number(s.batchSize) || 10,
     model: hasCustomModel ? s.model : '',
     modelMode: hasCustomModel ? 'custom' : 'default',
   };
-  $('#evoSopPrefTitle').textContent = `${s.workflowName || s.workflowId} · 优化偏好`;
-  const opts = $('#evoSopPrefOptions');
-  opts.innerHTML = EVO_SOP_PREFS.map(p => {
-    const checked = evoSOPState.prefTarget.preferences.includes(p.key);
-    return `<label class="evo-sop-pref-option${checked ? ' is-checked' : ''}">
-      <input type="checkbox" value="${p.key}"${checked ? ' checked' : ''}>
-      <span><b>${escapeHTML(p.label)}</b><small>${escapeHTML(p.desc)}</small></span>
-    </label>`;
-  }).join('');
+  $('#evoSopPrefTitle').textContent = `${s.workflowName || s.workflowId} · 优化优先级`;
+  evoSOPRenderPrefOptions();
   const presets = $('#evoSopBatchPresets');
   presets.innerHTML = EVO_SOP_BATCH_PRESETS.map(n => `<button type="button" class="evo-sop-preset-btn" data-evo-sop-preset="${n}" aria-pressed="${evoSOPState.prefTarget.batchSize === n}">每 ${n} 次</button>`).join('');
   $('#evoSopBatchCustom').value = String(evoSOPState.prefTarget.batchSize);
@@ -453,8 +567,10 @@ function evoSOPDetailHTML(view) {
   const curM = (curPoint?.metrics?.runs > 0 ? curPoint.metrics : d.latestMetrics) || {};
   const prevM = prevPoint && prevPoint !== curPoint ? prevPoint.metrics : null;
 
+  const normPrefs = evoSOPNormalizePrefs(d.preferences);
+  const primaryPref = normPrefs[0];
   const headActions = [
-    `<button type="button" class="kb-btn quiet small" data-evo-sop-pref-open="${escapeHTML(d.workflowId)}"${busy}>偏好与模型</button>`,
+    `<button type="button" class="kb-btn quiet small" data-evo-sop-pref-open="${escapeHTML(d.workflowId)}" title="${escapeHTML(evoSOPPrefsTitle(normPrefs))}"${busy}>偏好 · P1 ${escapeHTML(EVO_SOP_PREF_MAP[primaryPref]?.short || '省 Token')}</button>`,
   ];
   if (d.stage === 'monitor' && d.enabled) {
     headActions.push(`<button type="button" class="kb-btn small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${busy}>立即发起优化</button>`);
@@ -478,7 +594,7 @@ function evoSOPDetailHTML(view) {
     </header>
 
     ${evoSOPCalloutHTML(d)}
-    ${evoSOPMetricsGridHTML(curM, prevM)}
+    ${evoSOPMetricsGridHTML(curM, prevM, primaryPref)}
 
     <div class="evo-sop-tabs" role="tablist" aria-label="SOP 详情视图">
       <button type="button" role="tab" data-evo-sop-tab="trend" aria-selected="${view.tab === 'trend'}">历史版本趋势</button>
@@ -546,13 +662,14 @@ function evoSOPCalloutHTML(d) {
   return '';
 }
 
-function evoSOPMetricsGridHTML(cur, prev) {
+function evoSOPMetricsGridHTML(cur, prev, primaryPref = '') {
   const runs = cur.runs || 0;
   const scoreNote = runs > 0
     ? (cur.scoreSource === 'eval' ? `近 ${cur.scoredRuns || runs} 次运行评测均分` : `综合一次成功、返工与工具效率加权（0–100）`)
     : '完成至少 1 次运行后自动计算';
   const cards = [
     {
+      key: 'score',
       primary: true,
       label: 'SOP 评分',
       value: cur.score != null ? `${cur.score}` : '—',
@@ -561,12 +678,14 @@ function evoSOPMetricsGridHTML(cur, prev) {
       note: scoreNote,
     },
     {
+      key: 'tokens',
       label: '平均 Token',
       value: evoSOPFormatTokens(cur.avgTokens),
       delta: evoSOPDeltaHTML(evoSOPMetricValue(cur, 'tokens'), evoSOPMetricValue(prev, 'tokens'), false),
       note: runs > 0 ? `近 ${runs} 次总计 ${evoSOPFormatTokens(cur.totalTokens)} ÷ ${runs}` : '暂无 Token 记录',
     },
     {
+      key: 'tools',
       label: '平均工具调用',
       value: runs > 0 ? `${evoSOPNum(cur.avgTools, 1)}` : '—',
       unit: runs > 0 ? '次' : '',
@@ -574,24 +693,29 @@ function evoSOPMetricsGridHTML(cur, prev) {
       note: runs > 0 ? `近 ${runs} 次累计 ${cur.totalTools || 0} 次 ÷ ${runs}` : '暂无工具调用记录',
     },
     {
+      key: 'duration',
       label: '平均执行耗时',
       value: evoSOPFormatSec(cur.avgDuration),
       delta: evoSOPDeltaHTML(evoSOPMetricValue(cur, 'duration'), evoSOPMetricValue(prev, 'duration'), false),
       note: runs > 0 ? `近 ${runs} 次有效执行耗时均值` : '暂无耗时记录',
     },
     {
+      key: 'clean',
       label: '一次成功率',
       value: runs > 0 ? `${Math.round((cur.cleanRate || 0) * 100)}%` : '—',
       delta: evoSOPDeltaHTML(evoSOPMetricValue(cur, 'clean'), evoSOPMetricValue(prev, 'clean'), true, d => `${d > 0 ? '+' : ''}${Math.round(d * 100)}pp`),
       note: runs > 0 ? `无返工一次成功 ${cur.cleanCount || 0}/${runs} 次` : '暂无终态运行记录',
     },
   ];
-  return `<div class="evo-sop-kpi-grid" aria-label="核心指标">${cards.map(c => `
-    <article class="evo-sop-kpi${c.primary ? ' is-primary' : ''}">
-      <div class="evo-sop-kpi-top"><span>${c.label}</span>${c.delta || ''}</div>
+  return `<div class="evo-sop-kpi-grid" aria-label="核心指标">${cards.map(c => {
+    const isP1Target = !!primaryPref && c.key === primaryPref;
+    return `
+    <article class="evo-sop-kpi${c.primary ? ' is-primary' : ''}${isP1Target ? ' is-p1-target' : ''}">
+      <div class="evo-sop-kpi-top"><span class="evo-sop-kpi-label">${c.label}${isP1Target ? '<em class="evo-sop-kpi-p1">P1 主目标</em>' : ''}</span>${c.delta || ''}</div>
       <div class="evo-sop-kpi-val"><b>${escapeHTML(c.value)}</b>${c.unit ? `<small>${escapeHTML(c.unit)}</small>` : ''}</div>
       <p class="evo-sop-kpi-note">${escapeHTML(c.note)}</p>
-    </article>`).join('')}</div>`;
+    </article>`;
+  }).join('')}</div>`;
 }
 
 // ---------- Tab 1: 历史版本趋势 + 近几次灰度数据 ----------
@@ -953,12 +1077,16 @@ function evoSOPChangeTabHTML(view, d) {
     <div><small>一次成功率</small><b>${bm.runs > 0 ? `${Math.round((bm.cleanRate || 0) * 100)}%` : '—'}</b></div>
   </section>`;
 
+  const normPrefs = evoSOPNormalizePrefs(d.preferences);
   const problemHTML = problems.length
     ? `<div class="evo-sop-problem-list">${problems.map(item => {
         const pref = EVO_SOP_PREF_MAP[item.key];
+        const rankIdx = normPrefs.indexOf(item.key);
+        const badgeText = pref ? (rankIdx >= 0 ? `P${rankIdx + 1} · ${pref.short}` : pref.short) : '';
+        const badgeTone = rankIdx === 0 ? 'info' : '';
         return `<article class="evo-sop-problem-card">
           <div class="evo-sop-problem-head">
-            ${pref ? kbBadge(escapeHTML(pref.short), '') : ''}
+            ${badgeText ? kbBadge(escapeHTML(badgeText), badgeTone) : ''}
             <b>${escapeHTML(item.title)}</b>
             <span class="evo-sop-problem-hits">出现 ${item.hits || 1} 次${item.runs ? ` · ${item.runs} 次运行` : ''}</span>
           </div>
@@ -1132,6 +1260,16 @@ document.addEventListener('click', e => {
     if (dlg) { if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open'); }
     return;
   }
+  const prefPresetBtn = e.target.closest('[data-evo-sop-pref-preset]');
+  if (prefPresetBtn) {
+    evoSOPPrefApplyPreset(prefPresetBtn.dataset.evoSopPrefPreset);
+    return;
+  }
+  const prefMoveBtn = e.target.closest('[data-evo-sop-pref-move]');
+  if (prefMoveBtn) {
+    evoSOPPrefMove(prefMoveBtn.dataset.prefKey, prefMoveBtn.dataset.evoSopPrefMove === 'up' ? -1 : 1);
+    return;
+  }
   const modelModeBtn = e.target.closest('[data-evo-sop-model-mode]');
   if (modelModeBtn) {
     evoSOPSyncPrefModelUI(modelModeBtn.dataset.evoSopModelMode, evoSOPState.prefTarget?.model || '');
@@ -1242,8 +1380,47 @@ document.addEventListener('change', e => {
     return;
   }
   if (e.target.matches('#evoSopPrefOptions input[type="checkbox"]')) {
-    e.target.closest('.evo-sop-pref-option')?.classList.toggle('is-checked', !!e.target.checked);
+    evoSOPPrefToggle(e.target.value, !!e.target.checked);
   }
+});
+
+let evoSOPDragPrefKey = '';
+document.addEventListener('dragstart', e => {
+  const row = e.target.closest?.('#evoSopPrefOptions .evo-sop-pref-option[draggable="true"]');
+  if (!row) return;
+  evoSOPDragPrefKey = row.dataset.prefKey || '';
+  row.classList.add('is-dragging');
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', evoSOPDragPrefKey);
+  }
+});
+document.addEventListener('dragover', e => {
+  const row = e.target.closest?.('#evoSopPrefOptions .evo-sop-pref-option[draggable="true"]');
+  if (!row || !evoSOPDragPrefKey) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  $$('#evoSopPrefOptions .evo-sop-pref-option.is-drag-over').forEach(el => {
+    if (el !== row) el.classList.remove('is-drag-over');
+  });
+  if (row.dataset.prefKey !== evoSOPDragPrefKey) row.classList.add('is-drag-over');
+});
+document.addEventListener('dragleave', e => {
+  const row = e.target.closest?.('#evoSopPrefOptions .evo-sop-pref-option.is-drag-over');
+  if (row && !row.contains(e.relatedTarget)) row.classList.remove('is-drag-over');
+});
+document.addEventListener('drop', e => {
+  const row = e.target.closest?.('#evoSopPrefOptions .evo-sop-pref-option[draggable="true"]');
+  if (!row || !evoSOPDragPrefKey) return;
+  e.preventDefault();
+  const toKey = row.dataset.prefKey || '';
+  const fromKey = evoSOPDragPrefKey;
+  evoSOPDragPrefKey = '';
+  if (fromKey && toKey && fromKey !== toKey) evoSOPPrefReorder(fromKey, toKey);
+});
+document.addEventListener('dragend', () => {
+  evoSOPDragPrefKey = '';
+  $$('#evoSopPrefOptions .evo-sop-pref-option').forEach(el => el.classList.remove('is-dragging', 'is-drag-over'));
 });
 
 document.addEventListener('submit', async e => {
@@ -1251,9 +1428,9 @@ document.addEventListener('submit', async e => {
   e.preventDefault();
   const target = evoSOPState.prefTarget;
   if (!target) return;
-  const prefs = [...document.querySelectorAll('#evoSopPrefOptions input[type="checkbox"]:checked')].map(i => i.value);
+  const prefs = (target.preferences || []).filter(k => !!EVO_SOP_PREF_MAP[k]);
   if (!prefs.length) {
-    toast('请至少选择一项优化偏好', 'warn');
+    toast('请至少选择一项作为 P1 主目标', 'warn');
     return;
   }
   const batchSize = Math.max(1, Math.min(100, Math.round(Number($('#evoSopBatchCustom')?.value) || 10)));

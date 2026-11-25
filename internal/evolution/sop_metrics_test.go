@@ -1,6 +1,7 @@
 package evolution
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -112,5 +113,41 @@ func TestDetermineSOPStageAndChangeFiles(t *testing.T) {
 	}
 	if !hasDel || !hasAdd {
 		t.Fatalf("expected del/add lines in diff, got %+v", files[0].Lines)
+	}
+}
+
+func TestSOPPreferencePriorityGuidanceAndSampleRanking(t *testing.T) {
+	now := time.Now().UTC()
+	prefs := []string{domain.EvoPrefTools, domain.EvoPrefDuration, domain.EvoPrefTokens}
+	if got := SOPPreferencePriorityText(prefs); got != "P1 减少工具调用次数 > P2 缩短执行耗时 > P3 减少 Token 消耗" {
+		t.Fatalf("unexpected priority text: %q", got)
+	}
+	guidance := SOPPreferencePromptGuidance(prefs)
+	if !strings.Contains(guidance, "P1 减少工具调用次数") || !strings.Contains(guidance, "冲突") {
+		t.Fatalf("expected tiered conflict guidance, got: %q", guidance)
+	}
+
+	runs := []domain.Run{
+		{ID: "r-low-tools-high-tok", Status: "succeeded", CreatedAt: now, ToolCalls: 8, Usage: domain.TokenUsage{TotalTokens: 900000}, Timing: &domain.RunTiming{ExecutionMs: 90000}},
+		{ID: "r-tie-tools-fast", Status: "succeeded", CreatedAt: now, ToolCalls: 20, Usage: domain.TokenUsage{TotalTokens: 500000}, Timing: &domain.RunTiming{ExecutionMs: 30000}},
+		{ID: "r-tie-tools-slow", Status: "succeeded", CreatedAt: now, ToolCalls: 20, Usage: domain.TokenUsage{TotalTokens: 100000}, Timing: &domain.RunTiming{ExecutionMs: 120000}},
+	}
+	finding := BuildSOPPreferenceFinding(
+		"p1",
+		domain.WorkflowDefinition{ID: "wf-1", Name: "测试 SOP"},
+		domain.EvoAssetAgent, "a1", "角色 A", "n1",
+		domain.EvoSOPPolicy{Preferences: prefs},
+		runs,
+		SummarizeSOPRuns(runs, nil),
+	)
+	if len(finding.SampleRunIDs) != 3 {
+		t.Fatalf("expected 3 samples, got %+v", finding.SampleRunIDs)
+	}
+	// P1=tools puts both 20-tool runs ahead of 8-tool run; P2=duration puts slow ahead of fast.
+	if finding.SampleRunIDs[0] != "r-tie-tools-slow" || finding.SampleRunIDs[1] != "r-tie-tools-fast" || finding.SampleRunIDs[2] != "r-low-tools-high-tok" {
+		t.Fatalf("expected P1>P2 sample ordering, got %+v", finding.SampleRunIDs)
+	}
+	if !strings.Contains(finding.Title, "P1 减少工具调用次数 > P2 缩短执行耗时") {
+		t.Fatalf("expected priority chain in finding title, got %q", finding.Title)
 	}
 }

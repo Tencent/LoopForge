@@ -37,9 +37,83 @@ func SOPPreferenceLabels(prefs []string) []string {
 	return out
 }
 
-// BuildSOPPreferenceFinding constructs a concrete, preference-guided finding from
+// SOPPreferencePriorityText formats ordered preferences as "P1 ... > P2 ...".
+func SOPPreferencePriorityText(prefs []string) string {
+	labels := SOPPreferenceLabels(prefs)
+	parts := make([]string, 0, len(labels))
+	for i, l := range labels {
+		parts = append(parts, fmt.Sprintf("P%d %s", i+1, l))
+	}
+	return strings.Join(parts, " > ")
+}
+
+// SOPPreferencePromptGuidance builds tiered optimization and conflict-resolution
+// instructions so the improver strictly respects P1 > P2 > ... priority order.
+func SOPPreferencePromptGuidance(prefs []string) string {
+	labels := SOPPreferenceLabels(prefs)
+	if len(labels) == 0 {
+		return ""
+	}
+	if len(labels) == 1 {
+		return fmt.Sprintf("首要目标（P1）：%s。本轮改动必须重点围绕该维度给出实质、可验证的改进，同时不得破坏产物正确性与验收门禁。", labels[0])
+	}
+	chain := SOPPreferencePriorityText(prefs)
+	secondary := make([]string, 0, len(labels)-1)
+	for i := 1; i < len(labels); i++ {
+		secondary = append(secondary, fmt.Sprintf("P%d %s", i+1, labels[i]))
+	}
+	return fmt.Sprintf("优化优先级（冲突时严格按顺位保障）：%s。首要目标（P1 %s）必须优先获得实质性收益；次要目标（%s）仅在不损害更高优先级收益的前提下顺带优化；若目标存在权衡冲突，优先保障靠前顺位，且始终不得破坏产物正确性与验收门禁。",
+		chain, labels[0], strings.Join(secondary, "、"))
+}
+
+func compareRunsByPreference(a, b domain.Run, pref string) int {
+	switch pref {
+	case domain.EvoPrefTokens:
+		ta, tb := RunTokens(a), RunTokens(b)
+		if ta != tb {
+			if ta > tb {
+				return -1
+			}
+			return 1
+		}
+	case domain.EvoPrefTools:
+		ca, cb := RunToolCalls(a), RunToolCalls(b)
+		if ca != cb {
+			if ca > cb {
+				return -1
+			}
+			return 1
+		}
+	case domain.EvoPrefDuration:
+		da, db := RunDurationMs(a), RunDurationMs(b)
+		if da != db {
+			if da > db {
+				return -1
+			}
+			return 1
+		}
+	case domain.EvoPrefClean:
+		sa, sb := RunScore(a), RunScore(b)
+		if sa != sb {
+			if sa < sb {
+				return -1
+			}
+			return 1
+		}
+		ha, hb := ComputeRunHeuristicScore(a), ComputeRunHeuristicScore(b)
+		if ha != hb {
+			if ha < hb {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+// BuildSOPPreferenceFinding constructs a concrete, priority-guided finding from
 // a completed SOP batch so the improver can optimize Token/Tools/Duration/Clean rate
-// even when most runs succeeded without hard errors.
+// in strict P1 > P2 > ... priority order even when most runs succeeded without hard errors.
 func BuildSOPPreferenceFinding(
 	projectID string,
 	wf domain.WorkflowDefinition,
@@ -49,22 +123,14 @@ func BuildSOPPreferenceFinding(
 	metrics domain.EvoSOPMetrics,
 ) domain.EvoFinding {
 	prefs := NormalizeSOPPreferences(policy.Preferences)
-	prefText := strings.Join(SOPPreferenceLabels(prefs), "、")
+	priorityText := SOPPreferencePriorityText(prefs)
+	guidance := SOPPreferencePromptGuidance(prefs)
 	scored := append([]domain.Run(nil), batchRuns...)
 	sort.SliceStable(scored, func(i, j int) bool {
-		// Prioritize highest-cost or non-clean runs according to primary preference.
-		switch prefs[0] {
-		case domain.EvoPrefTools:
-			if RunToolCalls(scored[i]) != RunToolCalls(scored[j]) {
-				return RunToolCalls(scored[i]) > RunToolCalls(scored[j])
-			}
-		case domain.EvoPrefDuration:
-			if RunDurationMs(scored[i]) != RunDurationMs(scored[j]) {
-				return RunDurationMs(scored[i]) > RunDurationMs(scored[j])
-			}
-		case domain.EvoPrefClean:
-			if RunScore(scored[i]) != RunScore(scored[j]) {
-				return RunScore(scored[i]) < RunScore(scored[j])
+		// Sort by P1 -> P2 -> ... priority chain, falling back to token usage.
+		for _, pref := range prefs {
+			if cmp := compareRunsByPreference(scored[i], scored[j], pref); cmp != 0 {
+				return cmp < 0
 			}
 		}
 		return RunTokens(scored[i]) > RunTokens(scored[j])
@@ -77,8 +143,8 @@ func BuildSOPPreferenceFinding(
 			break
 		}
 		sampleIDs = append(sampleIDs, r.ID)
-		detail := fmt.Sprintf("偏好目标：%s。本运行消耗 %d Token、%d 次工具调用、耗时 %.1fs（状态 %s）。请在保证最终产物与验收标准完全一致的前提下，精简多余步骤、重复核对与冗余输出。",
-			prefText, RunTokens(r), RunToolCalls(r), float64(RunDurationMs(r))/1000.0, r.Status)
+		detail := fmt.Sprintf("优化优先级：%s。本运行消耗 %d Token、%d 次工具调用、耗时 %.1fs（状态 %s）。%s",
+			priorityText, RunTokens(r), RunToolCalls(r), float64(RunDurationMs(r))/1000.0, r.Status, guidance)
 		signals = append(signals, domain.EvoSignal{
 			ProjectID: projectID,
 			RunID:     r.ID,
@@ -88,15 +154,15 @@ func BuildSOPPreferenceFinding(
 			CreatedAt: r.CreatedAt,
 		})
 	}
-	summary := fmt.Sprintf("SOP「%s」近 %d 次运行统计：平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。请严格围绕用户优化偏好【%s】精简该角色/规则正文，去除重复检索、重复核对和冗余输出，同时不得破坏正确性与验收门禁。",
-		firstText(wf.Name, wf.ID), metrics.Runs, metrics.AvgTokens, metrics.AvgTools, metrics.AvgDuration, metrics.CleanRate*100, prefText)
+	summary := fmt.Sprintf("SOP「%s」近 %d 次运行统计：平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。%s",
+		firstText(wf.Name, wf.ID), metrics.Runs, metrics.AvgTokens, metrics.AvgTools, metrics.AvgDuration, metrics.CleanRate*100, guidance)
 	now := time.Now().UTC()
 	return domain.EvoFinding{
 		ProjectID:    projectID,
 		AssetKind:    assetKind,
 		AssetID:      assetID,
 		AssetName:    firstText(assetName, assetID),
-		Title:        fmt.Sprintf("按偏好优化（%s）", prefText),
+		Title:        fmt.Sprintf("按优先级优化（%s）", priorityText),
 		Summary:      summary,
 		Signals:      signals,
 		SampleRunIDs: sampleIDs,
@@ -652,10 +718,12 @@ func splitNonEmptyEnd(s string) []string {
 }
 
 // BuildSOPProblems converts SOP findings and run signals into user-facing problem items,
-// prioritized by the SOP's selected optimization preferences.
+// prioritized by the SOP's ordered optimization preferences (P1 > P2 > ...).
 func BuildSOPProblems(findings []domain.EvoFinding, signals []domain.EvoSignal, preferences []string, active *domain.EvoProposal) []domain.EvoSOPProblemItem {
+	normPrefs := NormalizeSOPPreferences(preferences)
+	primaryPref := normPrefs[0]
 	prefRank := map[string]int{}
-	for i, p := range NormalizeSOPPreferences(preferences) {
+	for i, p := range normPrefs {
 		prefRank[p] = i + 1
 	}
 
@@ -674,7 +742,7 @@ func BuildSOPProblems(findings []domain.EvoFinding, signals []domain.EvoSignal, 
 	byKey := map[string]*acc{}
 
 	addItem := func(kind, title, detail, runID string, hits, runs int) {
-		prefKey := sopSignalPrefKey(kind)
+		prefKey := sopSignalPrefKey(kind, primaryPref)
 		k := kind + "|" + title
 		a := byKey[k]
 		if a == nil {
@@ -749,8 +817,13 @@ func BuildSOPProblems(findings []domain.EvoFinding, signals []domain.EvoSignal, 
 	return items
 }
 
-func sopSignalPrefKey(kind string) string {
+func sopSignalPrefKey(kind, primaryPref string) string {
 	switch kind {
+	case SignalSOPPreference:
+		if primaryPref != "" {
+			return primaryPref
+		}
+		return domain.EvoPrefTokens
 	case SignalSOPDetection:
 		return domain.EvoPrefTools
 	case SignalNodeFailed, SignalRework, SignalEvalLow, SignalUserFeedback:

@@ -385,6 +385,29 @@
   color: var(--hui-muted);
 }
 
+.evo-sop-kpi-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.evo-sop-kpi-p1 {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--hui-accent-soft);
+  color: var(--hui-accent);
+  white-space: nowrap;
+}
+
+.evo-sop-kpi.is-p1-target {
+  border-color: color-mix(in srgb, var(--hui-accent) 32%, var(--hui-border));
+}
+
 .evo-sop-kpi-val {
   display: flex;
   align-items: baseline;
@@ -934,34 +957,159 @@
   outline-offset: 1px;
 }
 
+.evo-sop-pref-presets-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-pref-presets-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hui-muted);
+  white-space: nowrap;
+}
+
+.evo-sop-pref-presets {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-pref-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--hui-border);
+  border-radius: 999px;
+  background: var(--hui-canvas);
+  color: var(--hui-secondary);
+  font: 12px/1.3 var(--hui-sans);
+  cursor: pointer;
+  transition: border-color .14s ease, background-color .14s ease, color .14s ease;
+}
+
+.evo-sop-pref-preset small {
+  font-size: 11px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-pref-preset:hover {
+  border-color: var(--hui-accent);
+  color: var(--hui-text);
+}
+
+.evo-sop-pref-preset[aria-pressed="true"] {
+  border-color: var(--hui-accent);
+  background: var(--hui-accent-soft);
+  color: var(--hui-accent);
+  font-weight: 600;
+}
+
+.evo-sop-pref-preset[aria-pressed="true"] small {
+  color: var(--hui-accent);
+  opacity: .85;
+}
+
 .evo-sop-pref-list {
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 
 .evo-sop-pref-option {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
   border: 1px solid var(--hui-border);
   border-radius: 10px;
   background: var(--hui-canvas);
-  cursor: pointer;
+  transition: border-color .14s ease, background-color .14s ease, opacity .14s ease;
 }
 
 .evo-sop-pref-option.is-checked {
+  border-color: color-mix(in srgb, var(--hui-accent) 45%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-accent-soft) 55%, var(--hui-surface));
+}
+
+.evo-sop-pref-option.is-p1 {
   border-color: var(--hui-accent);
   background: var(--hui-accent-soft);
 }
 
-.evo-sop-pref-option input {
+.evo-sop-pref-option.is-dragging {
+  opacity: .45;
+}
+
+.evo-sop-pref-option.is-drag-over {
+  border-style: dashed;
+  border-color: var(--hui-accent);
+}
+
+.evo-sop-pref-grip {
+  flex: none;
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: -1px;
+  color: var(--hui-muted);
+  cursor: grab;
+  user-select: none;
+  padding: 2px 1px;
+}
+
+.evo-sop-pref-grip:active {
+  cursor: grabbing;
+}
+
+.evo-sop-pref-check {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.evo-sop-pref-check input {
   margin-top: 2px;
+  flex: none;
+}
+
+.evo-sop-rank {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hui-soft);
+  border: 1px solid var(--hui-border);
+  color: var(--hui-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.evo-sop-rank.is-p1 {
+  background: var(--hui-accent);
+  border-color: var(--hui-accent);
+  color: var(--hui-on-accent);
+}
+
+.evo-sop-pref-copy {
+  flex: 1;
+  min-width: 0;
 }
 
 .evo-sop-pref-option b {
   display: block;
   font-size: 13px;
+  line-height: 1.35;
 }
 
 .evo-sop-pref-option small {
@@ -969,6 +1117,54 @@
   font-size: 11px;
   color: var(--hui-muted);
   margin-top: 2px;
+}
+
+.evo-sop-pref-order {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.evo-sop-order-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--hui-border);
+  border-radius: 6px;
+  background: var(--hui-surface);
+  color: var(--hui-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.evo-sop-order-btn:hover:not(:disabled) {
+  border-color: var(--hui-accent);
+  color: var(--hui-accent);
+  background: var(--hui-surface);
+}
+
+.evo-sop-order-btn:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+.evo-sop-pref-divider {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-pref-empty {
+  padding: 10px 12px;
+  border: 1px dashed var(--hui-border-strong);
+  border-radius: 8px;
+  color: var(--hui-muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 .evo-sop-batch-editor {
