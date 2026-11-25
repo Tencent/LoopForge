@@ -517,5 +517,15 @@ Object.assign(window.LF_I18N_EN, {
   "请填写名称": "Enter a credential name",
   "请填写环境变量名": "Enter an environment variable name",
   "请输入有效的环境变量名（以字母或下划线开头，仅含字母、数字、下划线）": "Enter a valid variable name (start with a letter or underscore; letters, digits, and underscores only)",
-  "请填写凭据值": "Enter a secret value"
+  "请填写凭据值": "Enter a secret value",
+  "工作分支命名": "Work branch naming",
+  "按前缀生成": "Generate with prefix",
+  "AI 生成": "Generate with AI",
+  "分支前缀": "Branch prefix",
+  "无前缀": "No prefix",
+  "自定义前缀": "Custom prefix",
+  "命名要求": "Naming instructions",
+  "用小写英文概括改动，带上需求编号": "Summarize the change in lowercase English and include the issue number",
+  "AI 根据任务和命名要求生成完整的分支名。": "AI uses the task and naming instructions to generate the full branch name.",
+  "请输入自定义前缀，或选择无前缀": "Enter a custom prefix or choose No prefix",
 });
