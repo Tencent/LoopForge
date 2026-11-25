@@ -115,7 +115,7 @@ func (e *Engine) planAutoAssignCandidate(candidate *autoAssignCandidate, wf doma
 		}
 		for _, req := range requirements {
 			if !req.Configured {
-				return fmt.Errorf("请在个人配置中添加可用的执行器凭据（%s）", cmp.Or(req.Name, req.Kind, "SOP 默认执行器"))
+				return fmt.Errorf("请在个人配置中添加可用的执行器凭据（%s）", cmp.Or(req.Name, req.Kind, "LOOP 默认执行器"))
 			}
 		}
 		candidate.executorDefaults = defaults
@@ -188,7 +188,7 @@ func (e *Engine) prepareAutoAssign(ctx context.Context, wf domain.WorkflowDefini
 		platformAdded = platformAdded || !candidate.shared
 	}
 	if len(compatible) == 0 {
-		return nil, profile, "", fmt.Errorf("没有在线执行机器支持此 SOP 的沙箱 %s（%s），请启用兼容的沙箱或执行机器", profile.ID, profile.Driver)
+		return nil, profile, "", fmt.Errorf("没有在线执行机器支持此 LOOP 的沙箱 %s（%s），请启用兼容的沙箱或执行机器", profile.ID, profile.Driver)
 	}
 	return compatible, profile, selection, nil
 }
