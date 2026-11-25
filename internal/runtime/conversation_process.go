@@ -159,6 +159,7 @@ type conversationProcess struct {
 	mu            sync.Mutex
 	cancel        context.CancelFunc
 	input         *os.File
+	keepInputOpen bool
 	events        []domain.TelemetryEvent
 	base          int64
 	done          bool
@@ -297,7 +298,11 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	case "write":
 		proc.mu.Lock()
 		input, workspace := proc.input, proc.workspace
+		deferEOF := req.EOF && proc.keepInputOpen
 		proc.mu.Unlock()
+		if deferEOF {
+			return ConversationProcessResult{}, nil
+		}
 		if input == nil {
 			return ConversationProcessResult{}, fmt.Errorf("process has no stdin")
 		}
@@ -734,13 +739,22 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		command.Argv = conversationZCodeResumeArgv(root, nativeArgv, command.Argv)
 	}
 	command.bindingsPrepared = true
+	var background *codeBuddyBackgroundStream
 	if req.Command.Interactive {
 		input, writer, err := os.Pipe()
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}
+		// The API relays one user frame. CodeBuddy needs this pipe to stay
+		// open through asynchronous Agents even after that frame reaches EOF.
+		if spec != nil && command.Provider == "codebuddy" &&
+			valueAfter(nativeArgv, "--input-format") == "stream-json" &&
+			valueAfter(nativeArgv, "--output-format") == "stream-json" {
+			background = newCodeBuddyBackgroundStream(writer)
+		}
 		proc.mu.Lock()
 		proc.input = writer
+		proc.keepInputOpen = background != nil
 		proc.mu.Unlock()
 		stdin = input
 		command.Stdin = input
@@ -778,7 +792,11 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		// it has already emitted its terminal result. Same drain as
 		// ExecutorRunner: let the trailing output land, then stop the process
 		// so the turn can be marked finished and a queued follow-up can send.
+		// For CodeBuddy background work, drain only after tracked Agents finish.
 		terminalResult := make(chan struct{})
+		if background != nil {
+			terminalResult = background.drained
+		}
 		var terminalOnce sync.Once
 		go func() {
 			select {
@@ -809,8 +827,12 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				cancel()
 			}
 			proc.mu.Unlock()
-			if ev.Name == "process.stdout" && conversationStdoutTerminal(ev.Message) {
-				terminalOnce.Do(func() { close(terminalResult) })
+			if ev.Name == "process.stdout" {
+				if background != nil {
+					background.observeStdout(ev.Message)
+				} else if conversationStdoutTerminal(ev.Message) {
+					terminalOnce.Do(func() { close(terminalResult) })
+				}
 			}
 			select {
 			case proc.wake <- struct{}{}:

@@ -40,7 +40,7 @@ type protocolAdapter struct {
 	tools           map[string]*toolUseBuf
 	currentToolID   string
 	translate       func(string) []string
-	codeBuddyStream *codeBuddySOPStream
+	codeBuddyStream *codeBuddyBackgroundStream
 }
 
 // ProtocolObserver normalizes process output from a remotely executed Agent
@@ -238,7 +238,9 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 	switch typ {
 	case "system":
 		if stringValue(raw["subtype"]) != "init" {
-			a.handleCodeBuddyBackground(raw, sessionID)
+			if stream := a.codeBuddyStream; stream != nil {
+				stream.observeTask(raw, a.emit)
+			}
 			return
 		}
 		a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.initialized", Phase: "start", Message: "agent session initialized", Model: stringValue(raw["model"]), SessionID: sessionID, Attributes: map[string]any{"permissionMode": raw["permissionMode"]}})
@@ -299,11 +301,7 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"], "usageReported": raw["usage"] != nil}})
 		a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.completed", Phase: "finish", Message: result, SessionID: sessionID})
 		if stream := a.codeBuddyStream; stream != nil {
-			stream.parentDone = true
-			if failed {
-				clear(stream.active)
-			}
-			stream.finishIfReady()
+			stream.finishParent(failed)
 		}
 	default:
 		// File snapshots and provider-specific housekeeping events are intentionally hidden from the portable view.
