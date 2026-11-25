@@ -13,7 +13,18 @@ import (
 
 type botIdentityHandlers struct {
 	*deps
-	publicURL string
+	// publicURL resolves the platform's external address on each use, so an
+	// address a platform administrator saves on the management page applies to
+	// the next binding link without a restart.
+	publicURL func() string
+}
+
+// platformAddress is the resolved external address, empty when unset.
+func (h *botIdentityHandlers) platformAddress() string {
+	if h == nil || h.publicURL == nil {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(h.publicURL()), "/")
 }
 
 func (h *botIdentityHandlers) currentUser(c *gin.Context) (domain.User, bool) {
@@ -214,9 +225,9 @@ func (h *botIdentityHandlers) message(bot domain.NotificationBot, item domain.Bo
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return true, "", err
 	}
-	base, err := url.Parse(strings.TrimRight(h.publicURL, "/"))
-	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
-		return true, "请先关联平台账号；平台外部访问地址尚未配置，请联系管理员。", nil
+	address := h.platformAddress()
+	if !domain.UsablePublicURL(address) {
+		return true, "请先关联平台账号。平台还没有配置对外访问地址，生成不了绑定链接：请平台管理员在「平台管理 → 外部访问地址」里填写用户能打开的平台地址。", nil
 	}
 	token, err := h.repo.NewBotBindingChallenge(bot, item.SenderID, time.Now().UTC(), explicit)
 	switch {
@@ -227,7 +238,7 @@ func (h *botIdentityHandlers) message(bot domain.NotificationBot, item domain.Bo
 	case err != nil:
 		return true, "", err
 	}
-	link := strings.TrimRight(h.publicURL, "/") + "/bot-bind.html#request=" + url.QueryEscape(token)
+	link := address + "/bot-bind.html#request=" + url.QueryEscape(token)
 	if bot.ChannelKind() != domain.BotChannelWeCom {
 		// Feishu and DingTalk replies are plain text: Markdown link syntax
 		// is shown verbatim and auto-linking swallows the closing bracket,

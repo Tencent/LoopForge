@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -193,10 +192,10 @@ func botDraftSummaryText(d assistantDraft) string {
 func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.NotificationBot, user domain.User, item domain.BotInteraction, drafts []assistantDraft) string {
 	base := ""
 	if h.notifications != nil && h.notifications.service != nil {
-		base = strings.TrimRight(h.notifications.service.PublicURL, "/")
+		base = h.notifications.service.PublicAddress()
 	}
-	if u, err := url.Parse(base); base == "" || err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "\n\n这次需要修改平台数据，但平台外部访问地址尚未配置，无法生成确认链接，操作没有执行。请联系管理员，或到平台页面完成。"
+	if !domain.UsablePublicURL(base) {
+		return "\n\n这次需要修改平台数据，但平台还没有配置对外访问地址，生成不了确认链接，操作没有执行。请平台管理员在「平台管理 → 外部访问地址」里填写，或到平台页面完成这次操作。"
 	}
 	drafts = h.resolveAssistantDrafts(ctx, user, bot.ProjectID, drafts, AssistantApprovalConfirm)
 	raw, err := json.Marshal(drafts)
@@ -715,6 +714,7 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 	// a dropped connection cannot interrupt the writes halfway.
 	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 	defer cancel()
+	execCtx = withBotChatActor(execCtx, bot.ChannelKind(), draft.SenderID, h.botSenderName(bot, draft.SenderID, ""))
 	origin, hasOrigin := h.botDraftOrigin(draft)
 	if hasOrigin {
 		execCtx = withBotStartOrigin(execCtx, origin)

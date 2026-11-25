@@ -49,22 +49,26 @@ type BotConversation struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 type BotInteraction struct {
-	ID             string    `json:"id" gorm:"primaryKey;size:64"`
-	BotID          string    `json:"botId" gorm:"index:idx_bot_queue,priority:1;index:idx_bot_send_due,priority:1;size:191"`
-	ConversationID string    `json:"conversationId" gorm:"index;size:64"`
-	SessionID      string    `json:"sessionId" gorm:"index;size:64"`
-	SenderID       string    `json:"senderId" gorm:"size:191"`
-	RequestID      string    `json:"-" gorm:"size:191"`
-	Content        string    `json:"content" gorm:"type:text"`
-	Quote          string    `json:"quote,omitempty" gorm:"type:text"`
-	Action         string    `json:"action,omitempty" gorm:"size:32"`
-	CardTaskID     string    `json:"cardTaskId,omitempty" gorm:"size:128"`
-	DeliveryID     string    `json:"deliveryId,omitempty" gorm:"size:64"`
-	Status         string    `json:"status" gorm:"index:idx_bot_queue,priority:2;index:idx_bot_send_due,priority:2;size:32"`
-	Reply          string    `json:"reply,omitempty" gorm:"type:text"`
-	LastError      string    `json:"lastError,omitempty" gorm:"size:255"`
-	CreatedAt      time.Time `json:"createdAt" gorm:"index:idx_bot_queue,priority:3"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID             string `json:"id" gorm:"primaryKey;size:64"`
+	BotID          string `json:"botId" gorm:"index:idx_bot_queue,priority:1;index:idx_bot_send_due,priority:1;size:191"`
+	ConversationID string `json:"conversationId" gorm:"index;size:64"`
+	SessionID      string `json:"sessionId" gorm:"index;size:64"`
+	SenderID       string `json:"senderId" gorm:"size:191"`
+	// SenderName is the display name the channel reported with this message,
+	// when it carries one (DingTalk senderNick). Empty on channels whose
+	// events identify the sender by ID alone.
+	SenderName string    `json:"senderName,omitempty" gorm:"size:191"`
+	RequestID  string    `json:"-" gorm:"size:191"`
+	Content    string    `json:"content" gorm:"type:text"`
+	Quote      string    `json:"quote,omitempty" gorm:"type:text"`
+	Action     string    `json:"action,omitempty" gorm:"size:32"`
+	CardTaskID string    `json:"cardTaskId,omitempty" gorm:"size:128"`
+	DeliveryID string    `json:"deliveryId,omitempty" gorm:"size:64"`
+	Status     string    `json:"status" gorm:"index:idx_bot_queue,priority:2;index:idx_bot_send_due,priority:2;size:32"`
+	Reply      string    `json:"reply,omitempty" gorm:"type:text"`
+	LastError  string    `json:"lastError,omitempty" gorm:"size:255"`
+	CreatedAt  time.Time `json:"createdAt" gorm:"index:idx_bot_queue,priority:3"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 
 	// ProjectID snapshots the configuration's project for record access
 	// after the Bot is deleted.
