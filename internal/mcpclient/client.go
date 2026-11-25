@@ -16,12 +16,14 @@ import (
 // Client is a minimal Streamable HTTP MCP client that sends JSON-RPC 2.0
 // tool-call requests to an MCP gateway and parses the response.
 type Client struct {
-	url    string
-	hdrs   map[string]string
-	http   *http.Client
-	mu     sync.Mutex
-	nextID int64
-	init   bool
+	url             string
+	hdrs            map[string]string
+	http            *http.Client
+	mu              sync.Mutex
+	nextID          int64
+	init            bool
+	sessionID       string
+	protocolVersion string
 }
 
 func New(url string, headers map[string]string) *Client {
@@ -138,6 +140,7 @@ func (c *Client) CallToolContext(ctx context.Context, name string, args map[stri
 		httpReq.Header.Set(k, v)
 	}
 
+	c.setSessionHeaders(httpReq)
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
 		return "", fmt.Errorf("mcp request %s: %w", name, err)
@@ -235,6 +238,7 @@ func (c *Client) ListToolsContext(ctx context.Context) ([]Tool, error) {
 	for k, v := range c.hdrs {
 		httpReq.Header.Set(k, v)
 	}
+	c.setSessionHeaders(httpReq)
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("mcp tools/list: %w", err)
@@ -319,24 +323,31 @@ func (c *Client) ensureInit(ctx context.Context) error {
 		c.init = true
 		return nil
 	}
-	var rpcResp rpcResponse
-	if json.Unmarshal(raw, &rpcResp) == nil && rpcResp.Error != nil {
-		// Non-fatal: continue even if init fails.
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var rpcResp rpcResponse
+		if json.Unmarshal(raw, &rpcResp) == nil && rpcResp.Error == nil {
+			c.sessionID = resp.Header.Get("Mcp-Session-Id")
+			var initialized struct {
+				ProtocolVersion string `json:"protocolVersion"`
+			}
+			if json.Unmarshal(rpcResp.Result, &initialized) == nil {
+				c.protocolVersion = initialized.ProtocolVersion
+			}
+		}
 	}
 
 	c.nextID++
-	notifReq := rpcRequest{
-		JSONRPC: "2.0",
-		ID:      0,
-		Method:  "notifications/initialized",
-	}
-	notifBody, _ := json.Marshal(notifReq)
+	notifBody, _ := json.Marshal(map[string]string{
+		"jsonrpc": "2.0",
+		"method":  "notifications/initialized",
+	})
 	notifHTTP, _ := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewReader(notifBody))
 	notifHTTP.Header.Set("Content-Type", "application/json")
 	notifHTTP.Header.Set("Accept", "application/json, text/event-stream")
 	for k, v := range c.hdrs {
 		notifHTTP.Header.Set(k, v)
 	}
+	c.setSessionHeaders(notifHTTP)
 	notifResp, err := c.http.Do(notifHTTP)
 	if err == nil {
 		notifResp.Body.Close()
@@ -346,6 +357,15 @@ func (c *Client) ensureInit(ctx context.Context) error {
 	}
 	c.init = true
 	return nil
+}
+
+func (c *Client) setSessionHeaders(req *http.Request) {
+	if c.sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
+	if c.protocolVersion != "" {
+		req.Header.Set("MCP-Protocol-Version", c.protocolVersion)
+	}
 }
 
 func (c *Client) readResponse(resp *http.Response) ([]byte, error) {
