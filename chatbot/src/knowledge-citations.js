@@ -452,7 +452,7 @@ export function buildKnowledgeSummary(
     }
     hasContentCalls = true;
     contentReads.push(read);
-    const readFull = isKnowledgeReadTool(read.tool);
+    const readFull = Boolean(read.readFull) || isKnowledgeReadTool(read.tool);
     const callCited = isCallCited(read);
     const evidences = Array.isArray(read.evidences) ? read.evidences : [];
 

@@ -15,6 +15,12 @@ const maxKnowledgeReadTargets = 5
 // models can populate CallResult.Evidences directly; generic connectors (such as
 // MCPConnector) call ExtractEvidences.
 func ExtractEvidences(raw, defaultConnID string) ([]string, []domain.KnowledgeEvidence, bool, int) {
+	return ExtractEvidencesWithRule(raw, defaultConnID, nil)
+}
+
+// ExtractEvidencesWithRule parses structured document evidences and target titles
+// using optional provider/tool field mapping rules.
+func ExtractEvidencesWithRule(raw, defaultConnID string, rule *KnowledgeToolRule) ([]string, []domain.KnowledgeEvidence, bool, int) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil, false, -1
@@ -35,7 +41,7 @@ func ExtractEvidences(raw, defaultConnID string) ([]string, []domain.KnowledgeEv
 	var parsed any
 	if json.Unmarshal([]byte(raw), &parsed) == nil {
 		var evidences []domain.KnowledgeEvidence
-		listCount := collectKnowledgeEvidencesFromJSON(parsed, addTarget, &evidences, defaultConnID, knowledgeParentMeta{connID: defaultConnID})
+		listCount := collectKnowledgeEvidencesFromJSON(parsed, addTarget, &evidences, defaultConnID, knowledgeParentMeta{connID: defaultConnID}, rule)
 		return targets, evidences, true, listCount
 	}
 
@@ -60,7 +66,7 @@ type knowledgeParentMeta struct {
 	fileName   string
 }
 
-func extractKnowledgeMetaFromMap(m map[string]any) knowledgeParentMeta {
+func extractKnowledgeMetaFromMap(m map[string]any, rule *KnowledgeToolRule) knowledgeParentMeta {
 	strVal := func(keys ...string) string {
 		for _, k := range keys {
 			if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
@@ -69,8 +75,26 @@ func extractKnowledgeMetaFromMap(m map[string]any) knowledgeParentMeta {
 		}
 		return ""
 	}
-	sourceID := strVal("source", "source_id", "knowledge_base_id", "kb_id", "dataset_id", "space_id")
-	docID := strVal("document_id", "doc_id", "file_id", "knowledge_id", "path", "uri", "id")
+	sourceKeys := []string{"source", "source_id", "knowledge_base_id", "kb_id", "dataset_id", "space_id"}
+	docIDKeys := []string{"document_id", "doc_id", "file_id", "knowledge_id", "page_id", "path", "uri", "url", "id"}
+	titleKeys := []string{"title", "knowledge_title", "document_title", "doc_title", "document_keyword", "name"}
+	fileNameKeys := []string{"file_name", "filename", "doc_name", "document_name", "document_keyword"}
+	if rule != nil {
+		if len(rule.SourceIDKeys) > 0 {
+			sourceKeys = appendUniqueStrings(append([]string(nil), rule.SourceIDKeys...), sourceKeys...)
+		}
+		if len(rule.DocIDKeys) > 0 {
+			docIDKeys = appendUniqueStrings(append([]string(nil), rule.DocIDKeys...), docIDKeys...)
+		}
+		if len(rule.TitleKeys) > 0 {
+			titleKeys = appendUniqueStrings(append([]string(nil), rule.TitleKeys...), titleKeys...)
+		}
+		if len(rule.FileNameKeys) > 0 {
+			fileNameKeys = appendUniqueStrings(append([]string(nil), rule.FileNameKeys...), fileNameKeys...)
+		}
+	}
+	sourceID := strVal(sourceKeys...)
+	docID := strVal(docIDKeys...)
 	connID := strVal("connection_id", "connectionId", "connector_id", "connectorId")
 	if connID == "" && strings.Contains(sourceID, "::") {
 		connID, _, _ = strings.Cut(sourceID, "::")
@@ -83,8 +107,8 @@ func extractKnowledgeMetaFromMap(m map[string]any) knowledgeParentMeta {
 		sourceID:   sourceID,
 		sourceName: strVal("source_name", "knowledge_base_name", "kb_name", "dataset_name", "space_name"),
 		docID:      docID,
-		title:      strVal("title", "knowledge_title", "document_title", "doc_title", "document_keyword", "name"),
-		fileName:   strVal("file_name", "filename", "doc_name", "document_name", "document_keyword"),
+		title:      strVal(titleKeys...),
+		fileName:   strVal(fileNameKeys...),
 	}
 }
 
@@ -169,15 +193,15 @@ func chunksCarryDocIdentity(chunks []any) bool {
 	return false
 }
 
-func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences *[]domain.KnowledgeEvidence, defaultConnID string, parent knowledgeParentMeta) int {
+func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences *[]domain.KnowledgeEvidence, defaultConnID string, parent knowledgeParentMeta, rule *KnowledgeToolRule) int {
 	switch x := v.(type) {
 	case []any:
 		for _, item := range x {
-			collectKnowledgeEvidencesFromJSON(item, addTarget, evidences, defaultConnID, parent)
+			collectKnowledgeEvidencesFromJSON(item, addTarget, evidences, defaultConnID, parent, rule)
 		}
 		return len(x)
 	case map[string]any:
-		selfMeta := extractKnowledgeMetaFromMap(x)
+		selfMeta := extractKnowledgeMetaFromMap(x, rule)
 		mergedMeta := mergeKnowledgeMeta(parent, selfMeta)
 		if chunksRaw, hasChunks := x["chunks"]; hasChunks && hasExplicitDocParentMeta(x) {
 			if chunks, isArr := chunksRaw.([]any); isArr {
@@ -208,7 +232,10 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 			sourceID:   mergedMeta.sourceID,
 			sourceName: mergedMeta.sourceName,
 		}
-		containerKeys := []string{"results", "documents", "chunks", "items", "knowledge_bases", "sources", "pages", "hits"}
+		containerKeys := []string{"results", "documents", "chunks", "items", "knowledge_bases", "sources", "pages", "hits", "file_list", "files", "docs", "list", "records"}
+		if rule != nil && len(rule.ListKeys) > 0 {
+			containerKeys = appendUniqueStrings(append([]string(nil), rule.ListKeys...), containerKeys...)
+		}
 		listCount := -1
 		for _, key := range containerKeys {
 			if sub, ok := x[key]; ok {
@@ -217,7 +244,7 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 						listCount = len(arr)
 					}
 					for _, item := range arr {
-						collectKnowledgeEvidencesFromJSON(item, addTarget, evidences, defaultConnID, childParent)
+						collectKnowledgeEvidencesFromJSON(item, addTarget, evidences, defaultConnID, childParent, rule)
 					}
 				}
 			}
@@ -229,10 +256,10 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 					listCount = len(d)
 				}
 				for _, item := range d {
-					collectKnowledgeEvidencesFromJSON(item, addTarget, evidences, defaultConnID, childParent)
+					collectKnowledgeEvidencesFromJSON(item, addTarget, evidences, defaultConnID, childParent, rule)
 				}
 			case map[string]any:
-				subCount := collectKnowledgeEvidencesFromJSON(d, addTarget, evidences, defaultConnID, mergedMeta)
+				subCount := collectKnowledgeEvidencesFromJSON(d, addTarget, evidences, defaultConnID, mergedMeta, rule)
 				if listCount < 0 && subCount >= 0 {
 					listCount = subCount
 				}
@@ -241,7 +268,7 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 		if listCount >= 0 {
 			return listCount
 		}
-		ev, ok := buildKnowledgeEvidenceFromMap(x, defaultConnID, parent)
+		ev, ok := buildKnowledgeEvidenceFromMap(x, defaultConnID, parent, rule)
 		if ok {
 			*evidences = append(*evidences, ev)
 			if label := firstNonEmpty(ev.FileName, ev.Title, ev.DocumentID, ev.SourceID); label != "" {
@@ -253,8 +280,8 @@ func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences 
 	return -1
 }
 
-func buildKnowledgeEvidenceFromMap(m map[string]any, defaultConnID string, parent knowledgeParentMeta) (domain.KnowledgeEvidence, bool) {
-	meta := mergeKnowledgeMeta(parent, extractKnowledgeMetaFromMap(m))
+func buildKnowledgeEvidenceFromMap(m map[string]any, defaultConnID string, parent knowledgeParentMeta, rule *KnowledgeToolRule) (domain.KnowledgeEvidence, bool) {
+	meta := mergeKnowledgeMeta(parent, extractKnowledgeMetaFromMap(m, rule))
 	if meta.title == "" && meta.fileName == "" && meta.docID == "" && meta.sourceID == "" {
 		return domain.KnowledgeEvidence{}, false
 	}

@@ -294,7 +294,10 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		}
 		for _, ref := range session.KnowledgeRefs {
 			if ref.ConnectorID == tool.ServerID {
-				read, text, err := exec.ExecuteReferenceTool(ctx, session.UserID, ref, tool.UpstreamName, args, domain.KnowledgeCallOriginModelTool)
+				session.mu.Lock()
+				priorReads := append([]domain.KnowledgeRead(nil), session.knowledgeReads...)
+				session.mu.Unlock()
+				read, text, err := exec.ExecuteReferenceToolWithHistory(ctx, session.UserID, ref, tool.UpstreamName, args, domain.KnowledgeCallOriginModelTool, priorReads)
 				read.Query = knowledge.KnowledgeCallQuerySummary(args)
 				session.mu.Lock()
 				session.knowledgeReads = append(session.knowledgeReads, read)

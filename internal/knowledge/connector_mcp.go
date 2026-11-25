@@ -486,7 +486,8 @@ func (c *mcpConnector) CallTool(ctx context.Context, toolName string, args map[s
 		}, nil
 	}
 
-	targets, evidences, isJSON, jsonListCount := ExtractEvidences(trimmed, c.spec.ID)
+	rule := resolveKnowledgeToolRule(c.spec.Config.Extra, toolName)
+	targets, evidences, isJSON, jsonListCount := ExtractEvidencesWithRule(trimmed, c.spec.ID, &rule)
 	status := domain.KnowledgeStatusHit
 	hits := len(evidences)
 	if isJSON && jsonListCount >= 0 {

@@ -160,7 +160,11 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 		}
 		name := strings.TrimSpace(params.Name)
 		started := time.Now()
-		read, text, err := exec.ExecuteReferenceTool(ctx, claims.UserID, *claims.Ref, name, params.Arguments, domain.KnowledgeCallOriginModelTool)
+		var priorReads []domain.KnowledgeRead
+		if claims.RunID != "" && claims.NodeID != "" && h.engine != nil {
+			priorReads = h.engine.NodeKnowledgeReads(claims.RunID, claims.NodeID, claims.Attempt)
+		}
+		read, text, err := exec.ExecuteReferenceToolWithHistory(ctx, claims.UserID, *claims.Ref, name, params.Arguments, domain.KnowledgeCallOriginModelTool, priorReads)
 		read.Query = knowledge.KnowledgeCallQuerySummary(params.Arguments)
 		read.Attempt = claims.Attempt
 

@@ -582,4 +582,29 @@ describe("knowledge citations & two-layer summary", () => {
       globalThis.fetch = origFetch;
     }
   });
+
+  test("KnowledgeSources honors backend readFull flag for custom MCP read tools like get_content", () => {
+    const tencentReads = [
+      {
+        id: "kr_td_read",
+        serverId: "kb_53e7dad4dd0e",
+        tool: "get_content",
+        status: "命中",
+        readFull: true,
+        cited: true,
+        evidences: [
+          {
+            id: "ev_td_1",
+            documentId: "doc_td_123",
+            fileName: "研发发布流程规范.docx",
+            cited: true,
+          },
+        ],
+      },
+    ];
+    const summary = buildKnowledgeSummary(tencentReads, ["见 [[knowledge:ev_td_1]]"]);
+    expect(summary.usedDocs).toHaveLength(1);
+    expect(summary.usedDocs[0].label).toBe("研发发布流程规范.docx");
+    expect(summary.usedDocs[0].readFull).toBe(true);
+  });
 });

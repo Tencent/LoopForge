@@ -102,6 +102,20 @@ func (e *Executor) ExecuteReferenceTool(
 	args map[string]any,
 	origin string,
 ) (domain.KnowledgeRead, string, error) {
+	return e.ExecuteReferenceToolWithHistory(ctx, ownerUserID, ref, tool, args, origin, nil)
+}
+
+// ExecuteReferenceToolWithHistory behaves like ExecuteReferenceTool while also
+// correlating document metadata from prior reads in the same session or node.
+func (e *Executor) ExecuteReferenceToolWithHistory(
+	ctx context.Context,
+	ownerUserID int64,
+	ref domain.KnowledgeRef,
+	tool string,
+	args map[string]any,
+	origin string,
+	priorReads []domain.KnowledgeRead,
+) (domain.KnowledgeRead, string, error) {
 	if origin == "" {
 		origin = domain.KnowledgeCallOriginModelTool
 	}
@@ -126,6 +140,8 @@ func (e *Executor) ExecuteReferenceTool(
 		return read, "", err
 	}
 	read.ServerID = meta.ID
+	rule := resolveKnowledgeToolRule(meta.Config.Extra, read.Tool)
+	read.ReadFull = rule.Role == ToolRoleRead || domain.IsKnowledgeReadTool(read.Tool)
 
 	res, callErr := conn.CallTool(ctx, read.Tool, args, SourceScope{
 		Mode:    ref.Mode,
@@ -149,15 +165,20 @@ func (e *Executor) ExecuteReferenceTool(
 	if origin == domain.KnowledgeCallOriginCatalogProbe || meta.Type != domain.ConnectorTypeWeKnora {
 		text = truncateRunes(text, 32000)
 	}
-	if domain.IsKnowledgeCatalogTool(read.Tool) || !res.Citeable {
+	if rule.Role == ToolRoleCatalog || domain.IsKnowledgeCatalogTool(read.Tool) || !res.Citeable {
 		read.Evidences = nil
 		return read, text, nil
 	}
 
 	if len(res.Evidences) > 0 {
+		read.Evidences = append([]domain.KnowledgeEvidence(nil), res.Evidences...)
+	}
+	enrichReadEvidences(&read, text, args, rule, priorReads, meta.ID)
+
+	if len(read.Evidences) > 0 {
 		prefix := knowledgeEvidenceIDPrefix(read.ID)
-		evidences := make([]domain.KnowledgeEvidence, len(res.Evidences))
-		for i, ev := range res.Evidences {
+		evidences := make([]domain.KnowledgeEvidence, len(read.Evidences))
+		for i, ev := range read.Evidences {
 			if strings.TrimSpace(ev.ID) == "" {
 				ev.ID = fmt.Sprintf("%s_%d", prefix, i+1)
 			}
@@ -220,7 +241,7 @@ func KnowledgeCallQuerySummary(args map[string]any) string {
 	if len(args) == 0 {
 		return ""
 	}
-	for _, key := range []string{"query", "knowledge_id", "document_id", "path", "keyword"} {
+	for _, key := range []string{"query", "keyword", "knowledge_id", "document_id", "doc_id", "file_id", "page_id", "path", "url", "id"} {
 		v, ok := args[key]
 		if !ok || v == nil {
 			continue

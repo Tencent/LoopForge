@@ -145,7 +145,7 @@ func IsKnowledgeCatalogTool(tool string) bool {
 // IsKnowledgeReadTool reports whether tool reads document contents directly.
 func IsKnowledgeReadTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case "read_document", "kb_fetch":
+	case "read_document", "kb_fetch", "get_content", "fetch-doc", "fetch_doc", "get_document", "read_page":
 		return true
 	default:
 		return false
@@ -158,6 +158,7 @@ type KnowledgeRead struct {
 	ServerID  string              `json:"serverId"`
 	Tool      string              `json:"tool"`
 	Status    string              `json:"status"`
+	ReadFull  bool                `json:"readFull,omitempty"`
 	Warning   string              `json:"warning,omitempty"`
 	Attempt   int                 `json:"attempt,omitempty"`
 	Cited     bool                `json:"cited,omitempty"`
