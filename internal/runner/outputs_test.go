@@ -90,3 +90,25 @@ func TestCollectTaskOutputsReportsOnlyRegularFilesInsideWorkspace(t *testing.T) 
 		t.Fatal("outputs reported without ReportOutputs")
 	}
 }
+
+func TestCollectTaskOutputsDoesNotGuessBetweenMatchingNames(t *testing.T) {
+	workspace := t.TempDir()
+	for _, dir := range []string{"repo-a", "repo-b"} {
+		nested := filepath.Join(workspace, dir)
+		if err := os.Mkdir(nested, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(nested, "report.md"), []byte(dir), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := collectTaskOutputs(workspace, &domain.RunnerInvocation{
+		ReportOutputs: true, RecoverOutputs: true, OutputFiles: []string{"report.md"},
+	})
+	if len(got.Recovered) != 0 || len(got.Files) != 0 {
+		t.Fatalf("ambiguous report was uploaded: recovered=%v, files=%v", got.Recovered, got.Files)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "report.md")); !os.IsNotExist(err) {
+		t.Fatalf("ambiguous report was copied into the output path: %v", err)
+	}
+}

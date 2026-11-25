@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 )
 
 func TestArtifactMaterializationAndRecoveryBranches(t *testing.T) {
@@ -81,7 +82,7 @@ func TestArtifactMaterializationAndRecoveryBranches(t *testing.T) {
 	if got := recoverMisplacedArtifacts(recoveryWorkspace, "", recoveryNode); got != nil {
 		t.Fatalf("repository recovery=%v", got)
 	}
-	if findNamedFile("", "x", 2) != "" || findNamedFile(recoveryWorkspace, "", 2) != "" {
+	if runtime.FindUniqueOutputFile("", "x", 2) != "" || runtime.FindUniqueOutputFile(recoveryWorkspace, "", 2) != "" {
 		t.Fatal("empty file search")
 	}
 	removeUntrackedHostLeak("", filepath.Join(recoveryWorkspace, "out", "deliverable.md"))
@@ -155,4 +156,24 @@ func TestArtifactCollectionErrorsAndFreeze(t *testing.T) {
 		t.Fatalf("reported artifacts=%v", updated.Artifacts)
 	}
 	e.freezeAvailableArtifacts("missing-run", freezeNode, workspace, nil, "ignored")
+}
+
+func TestRecoverMisplacedArtifactsDoesNotGuessBetweenMatchingNames(t *testing.T) {
+	workspace := t.TempDir()
+	for _, dir := range []string{"docs", "generated"} {
+		nested := filepath.Join(workspace, dir)
+		if err := os.Mkdir(nested, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(nested, "report.md"), []byte(dir), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	node := domain.WorkflowNode{ArtifactOutputs: []domain.ArtifactContract{{Name: "deliverable", Path: "report.md", Required: true}}}
+	if got := recoverMisplacedArtifacts(workspace, "", node); len(got) != 0 {
+		t.Fatalf("ambiguous report recovered: %v", got)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "report.md")); !os.IsNotExist(err) {
+		t.Fatalf("ambiguous report was copied into the output path: %v", err)
+	}
 }

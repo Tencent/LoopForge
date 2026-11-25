@@ -126,9 +126,9 @@ func recoverMisplacedArtifacts(workspace, hostLocalPath string, node domain.Work
 			continue
 		}
 		base := filepath.Base(clean)
-		candidates := []string{findNamedFile(workspace, base, 4)}
+		candidates := []string{runtime.FindUniqueOutputFile(workspace, base, 4)}
 		if host := strings.TrimSpace(hostLocalPath); host != "" {
-			candidates = append(candidates, filepath.Join(host, clean), filepath.Join(host, base), findNamedFile(host, base, 2))
+			candidates = append(candidates, filepath.Join(host, clean), filepath.Join(host, base), runtime.FindUniqueOutputFile(host, base, 2))
 		}
 		for _, src := range candidates {
 			if src == "" || src == dest {
@@ -154,37 +154,6 @@ func recoverMisplacedArtifacts(workspace, hostLocalPath string, node domain.Work
 		}
 	}
 	return recovered
-}
-
-func findNamedFile(root, name string, maxDepth int) string {
-	if strings.TrimSpace(root) == "" || name == "" {
-		return ""
-	}
-	var found string
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || found != "" {
-			return err
-		}
-		if d.IsDir() {
-			base := d.Name()
-			if base == ".git" || base == "node_modules" || base == ".agentflow" {
-				if path != root {
-					return filepath.SkipDir
-				}
-			}
-			rel, relErr := filepath.Rel(root, path)
-			if relErr == nil && rel != "." && strings.Count(rel, string(os.PathSeparator))+1 >= maxDepth {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() == name {
-			found = path
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	return found
 }
 
 func removeUntrackedHostLeak(host, path string) {

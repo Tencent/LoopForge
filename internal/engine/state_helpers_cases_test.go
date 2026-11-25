@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 )
 
 func TestLifecycleResetSettleAndForceTerminate(t *testing.T) {
@@ -161,10 +162,10 @@ func TestArtifactFilesValidationCollectionAndRecovery(t *testing.T) {
 	if got := recoverMisplacedArtifacts(workspace, host, recoverNode); got != nil {
 		t.Fatalf("repository recovery = %v", got)
 	}
-	if findNamedFile("", "x", 2) != "" || findNamedFile(workspace, "", 2) != "" {
+	if runtime.FindUniqueOutputFile("", "x", 2) != "" || runtime.FindUniqueOutputFile(workspace, "", 2) != "" {
 		t.Fatal("empty find")
 	}
-	if got := findNamedFile(workspace, "report.md", 4); !strings.HasSuffix(got, "report.md") {
+	if got := runtime.FindUniqueOutputFile(workspace, "report.md", 4); !strings.HasSuffix(got, "report.md") {
 		t.Fatal(got)
 	}
 
