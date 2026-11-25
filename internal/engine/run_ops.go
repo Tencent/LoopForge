@@ -895,6 +895,28 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 			return fmt.Errorf("cannot refresh SOP after a routing decision; start a new run")
 		}
 	}
+	// An Agent can be waiting for a human gate after it has submitted a route
+	// value but before the decision is materialised. Treat that pending route
+	// exactly like a committed decision: refreshing the graph would otherwise
+	// let the old value select a different target in the new SOP. Other gate
+	// outcomes (for example a failed/rework attempt) do not carry a pending
+	// route and remain refreshable.
+	for _, node := range r.WorkflowSnapshot.Nodes {
+		nr := r.Nodes[node.ID]
+		if nr == nil || nr.Status != "waiting_approval" || nr.RouteDecision != nil || nr.GateResult == nil || nr.GateResult.Decision != "human" {
+			continue
+		}
+		conditional := false
+		for _, edge := range r.WorkflowSnapshot.Edges {
+			if edge.Source == node.ID && edge.Condition != nil {
+				conditional = true
+				break
+			}
+		}
+		if conditional {
+			return fmt.Errorf("节点 %s 存在待处理的路由决策，不能刷新 SOP；请先审批原 SOP 或重新开始运行", node.ID)
+		}
+	}
 	// A graph/role update must not silently replace the environment underneath
 	// an existing workspace. A new Run will pick up the latest sandbox asset.
 	latest.SandboxProfileID = r.WorkflowSnapshot.SandboxProfileID
@@ -1022,6 +1044,15 @@ func (e *Engine) DeclineRetry(runID, nodeID string, expected ...NodeExpectation)
 func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string]bool) {
 	if st == nil || r == nil || len(nodeIDs) == 0 {
 		return
+	}
+	// Retries of a conditional workflow must use one coherent frozen graph.
+	// Overlaying a newer node contract here can rename an artifact while the
+	// frozen edge still checks the old name, producing a silently wrong default
+	// branch. Non-routing workflows retain the historical role-binding refresh.
+	for _, edge := range r.WorkflowSnapshot.Edges {
+		if edge.Condition != nil {
+			return
+		}
 	}
 	latest, ok := latestWorkflowDefinition(st, r.WorkflowID)
 	if !ok {

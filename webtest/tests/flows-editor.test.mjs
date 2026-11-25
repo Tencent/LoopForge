@@ -44,6 +44,31 @@ test('linear agent drawer hides branch configuration', async (t) => {
   assert.equal(body.textContent.includes('分支与汇合'), false);
 });
 
+test('routing picker disables unsupported node kinds and scopes', async (t) => {
+  const app = await loadApp(); t.after(app.close);
+  app.evaluate(`switchView('flow');state.workflow={id:'route-guards',projectId:'project-1',name:'Guards',nodes:[
+    {id:'repo-script',name:'Repo script',type:'script',executionScope:'repositories',position:{x:20,y:30}},
+    {id:'nested',name:'Nested SOP',type:'sop',position:{x:300,y:30}},
+    {id:'next',name:'Next',type:'script',position:{x:600,y:30}},
+    {id:'other',name:'Other',type:'script',position:{x:600,y:160}}
+  ],edges:[{id:'repo-edge',source:'repo-script',target:'next',when:'success'},{id:'repo-other',source:'repo-script',target:'other',when:'success'},{id:'sop-edge',source:'nested',target:'next',when:'success'},{id:'sop-other',source:'nested',target:'other',when:'success'}]};
+    state.selectedNode='repo-script';renderProperties()`);
+  assert.equal(app.document.querySelector('[data-route-edge="repo-edge"] [data-route-field="type"] option[value="route"]').disabled,true);
+  app.evaluate(`state.selectedNode='nested';renderProperties()`);
+  assert.equal(app.document.querySelector('[data-route-edge="sop-edge"] [data-route-field="type"] option[value="route"]').disabled,true);
+});
+
+test('routing picker keeps backend-supported agent routes enabled', async (t) => {
+  const app = await loadApp(); t.after(app.close);
+  app.evaluate(`switchView('flow');state.workflow={id:'agent-route',projectId:'project-1',name:'Agent route',nodes:[
+    {id:'router',name:'Router',type:'agent',executionScope:'repositories',position:{x:20,y:30}},
+    {id:'next',name:'Next',type:'script',position:{x:300,y:30}},
+    {id:'other',name:'Other',type:'script',position:{x:300,y:160}}
+  ],edges:[{id:'next-edge',source:'router',target:'next',when:'success'},{id:'other-edge',source:'router',target:'other',when:'success'}]};
+    state.selectedNode='router';renderProperties()`);
+  assert.equal(app.document.querySelector('[data-route-edge="next-edge"] [data-route-field="type"] option[value="route"]').disabled,false);
+});
+
 test('flow editor manages preview contracts, nodes, connections, diagnostics, and properties', async (t) => {
   const app = await loadApp();
   t.after(app.close);

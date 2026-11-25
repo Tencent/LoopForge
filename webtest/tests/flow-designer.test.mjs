@@ -93,3 +93,16 @@ test('approval nodes expose join rules for a real merge without conditional edge
   assert.ok(app.document.querySelector('#properties [data-p="joinRule"]'));
   assert.equal(app.document.querySelector('[data-route-edge]'), null);
 });
+
+test('linear default branches are included in join warnings', async (t) => {
+  const app = await loadApp(); t.after(app.close);
+  app.evaluate(`switchView('flow');state.workflow={id:'default-join',projectId:'project-1',name:'Default join',nodes:[
+    {id:'route',name:'Route',type:'script',defaultTarget:'large',position:{x:20,y:30}},
+    {id:'small',name:'Small',type:'script',position:{x:300,y:30}},
+    {id:'large',name:'Large',type:'script',position:{x:300,y:160}},
+    {id:'archive',name:'Archive',type:'script',position:{x:600,y:160}},
+    {id:'delivery',name:'Delivery',type:'script',position:{x:900,y:90}}
+  ],edges:[{id:'small-edge',source:'route',target:'small',condition:{type:'route',values:['small']}},{id:'large-edge',source:'route',target:'large'},{id:'small-delivery',source:'small',target:'delivery'},{id:'large-archive',source:'large',target:'archive'},{id:'archive-delivery',source:'archive',target:'delivery'}]};
+    renderCanvas();renderProperties()`);
+  assert.equal(app.evaluate(`flowDiagnostics().some(x=>x.title==='Delivery'&&x.level==='warn')`),true);
+});

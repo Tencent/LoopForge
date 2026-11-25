@@ -1094,7 +1094,19 @@ function renderPreviewBuildProperties(host,n){
   if(spaBox)spaBox.onchange=()=>{flowHistory.record();updatePreviewContract({spaFallback:spaBox.checked});dirty();};
 }
 function flowHasConditionalAncestor(id,edges,seen=new Set()){
-  if(seen.has(id))return false;seen.add(id);return edges.some(e=>e.target===id&&(e.condition||flowHasConditionalAncestor(e.source,edges,seen)));
+  if(seen.has(id))return false;
+  seen.add(id);
+  const byId=new Map((state.workflow?.nodes||[]).map(n=>[n.id,n]));
+  return edges.some(e=>{
+    if(e.target!==id)return false;
+    const source=byId.get(e.source);
+    return !!e.condition||source?.defaultTarget===e.target||flowHasConditionalAncestor(e.source,edges,seen);
+  });
+}
+function flowRouteOptionAllowed(n,type){
+  if(type==='route')return n.type==='agent'||((n.type==='script'||n.type==='command')&&n.executionScope!=='repositories');
+  if(type==='artifact')return (n.type==='agent'||n.type==='script'||n.type==='command')&&n.executionScope!=='repositories';
+  return true;
 }
 function flowRoutingPane(n){
   const approval=n.type==='approval';
@@ -1108,7 +1120,8 @@ function flowRoutingPane(n){
   const options=outgoing.map(e=>`<option value="${escapeHTML(e.target)}" ${n.defaultTarget===e.target?'selected':''}>${escapeHTML(byId.get(e.target)?.name||e.target)}</option>`).join('');
   const rows=outgoing.map(e=>{
     const c=e.condition||{},isDefault=n.defaultTarget===e.target;
-    return `<div class="fd-field" data-route-edge="${escapeHTML(e.id)}"><label>→ ${escapeHTML(byId.get(e.target)?.name||e.target)}</label><select class="select" data-route-field="type" ${isDefault?'disabled':''}><option value="" ${!c.type?'selected':''}>无条件</option><option value="route" ${c.type==='route'?'selected':''}>路由标签</option><option value="artifact" ${c.type==='artifact'?'selected':''}>JSON 产物字段</option></select>${c.type==='route'?`<input class="input" data-route-field="values" value="${escapeHTML((c.values||[]).join(', '))}" placeholder="标签，多个用逗号分隔">`:''}${c.type==='artifact'?`<input class="input" data-route-field="artifact" value="${escapeHTML(c.artifact||'')}" placeholder="已声明的产物名称"><input class="input" data-route-field="pointer" value="${escapeHTML(c.pointer||'')}" placeholder="JSON Pointer，例如 /size"><input class="input" data-route-field="equals" value="${escapeHTML(JSON.stringify(c.equals===undefined?'':c.equals))}" placeholder='JSON 值，例如 "small"'>`:''}${isDefault?'<p class="prop-hint">所有条件均未命中时走此分支。</p>':''}</div>`;
+    const routeAllowed=flowRouteOptionAllowed(n,'route'),artifactAllowed=flowRouteOptionAllowed(n,'artifact');
+    return `<div class="fd-field" data-route-edge="${escapeHTML(e.id)}"><label>→ ${escapeHTML(byId.get(e.target)?.name||e.target)}</label><select class="select" data-route-field="type" ${isDefault?'disabled':''}><option value="" ${!c.type?'selected':''}>无条件</option><option value="route" ${c.type==='route'?'selected':''} ${routeAllowed?'':'disabled'}>路由标签${routeAllowed?'':'（仅支持 Run 级 Agent/脚本节点）'}</option><option value="artifact" ${c.type==='artifact'?'selected':''} ${artifactAllowed?'':'disabled'}>JSON 产物字段${artifactAllowed?'':'（仅支持 Run 级 Agent/脚本节点）'}</option></select>${c.type==='route'?`<input class="input" data-route-field="values" value="${escapeHTML((c.values||[]).join(', '))}" placeholder="标签，多个用逗号分隔">`:''}${c.type==='artifact'?`<input class="input" data-route-field="artifact" value="${escapeHTML(c.artifact||'')}" placeholder="已声明的产物名称"><input class="input" data-route-field="pointer" value="${escapeHTML(c.pointer||'')}" placeholder="JSON Pointer，例如 /size"><input class="input" data-route-field="equals" value="${escapeHTML(JSON.stringify(c.equals===undefined?'':c.equals))}" placeholder='JSON 值，例如 "small"'>`:''}${isDefault?'<p class="prop-hint">所有条件均未命中时走此分支。</p>':''}</div>`;
   }).join('');
   return `<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">分支与汇合</span></div><div class="fd-sec-b"><div class="fd-field"><label>汇合规则</label><select class="select" data-p="joinRule"><option value="" ${!n.joinRule||n.joinRule==='all_success'?'selected':''}>全部上游成功</option><option value="none_failed_min_one_success" ${n.joinRule==='none_failed_min_one_success'?'selected':''}>至少一个成功，允许其他分支跳过</option></select>${warning}</div>${rows}${outgoing.length?`<div class="fd-field"><label>默认分支</label><select class="select" data-p="defaultTarget"><option value="">不设置</option>${options}</select><p class="prop-hint">默认分支应选择无条件连线；没有命中且未设置默认分支时节点失败。</p></div>`:''}${n.type==='script'?'<p class="prop-hint">脚本通过环境变量 LOOPFORGE_ROUTE_FILE 指定的文件提交 JSON，例如 {"route":"small"}。</p>':''}</div></section>`;
 }
@@ -1167,7 +1180,11 @@ function bindNodeProperties(host,n){
     const edge=state.workflow.edges.find(e=>e.id===row.dataset.routeEdge);if(!edge)return;
     row.querySelectorAll('[data-route-field]').forEach(el=>el.onchange=()=>{
       const key=el.dataset.routeField;flowHistory.record();
-      if(key==='type'){edge.condition=el.value?{type:el.value,...(el.value==='route'?{values:[]}:{artifact:'',pointer:'',equals:''})}:undefined;clearInvalidDefaultTargets(state.workflow);renderProperties()}
+      if(key==='type'){
+        if(el.value==='route'&&!flowRouteOptionAllowed(n,'route')){toast('子 SOP 或仓库级脚本不能配置路由标签');renderProperties();return}
+        if(el.value==='artifact'&&!flowRouteOptionAllowed(n,'artifact')){toast('子 SOP 或仓库级脚本不能配置 JSON 产物选路');renderProperties();return}
+        edge.condition=el.value?{type:el.value,...(el.value==='route'?{values:[]}:{artifact:'',pointer:'',equals:''})}:undefined;clearInvalidDefaultTargets(state.workflow);renderProperties()
+      }
       else if(key==='values')edge.condition.values=el.value.split(',').map(x=>x.trim()).filter(Boolean);
       else if(key==='equals'){try{edge.condition.equals=JSON.parse(el.value)}catch{toast('比较值需要是有效 JSON，例如 "small"');return}}
       else edge.condition[key]=el.value;
@@ -1181,6 +1198,7 @@ function bindNodeProperties(host,n){
     if(key==='defaultTarget'&&n.defaultTarget){const edge=state.workflow.edges.find(e=>e.source===n.id&&e.target===n.defaultTarget);if(edge)delete edge.condition;clearInvalidDefaultTargets(state.workflow);renderProperties()}
     dirty();
     if(key==='agentId'){renderProperties();renderCanvas();return}
+    if(key==='executionScope'){renderProperties();renderCanvas();return}
     renderCanvas();
   });
   const sopSel=host.querySelector('[data-p="sopWorkflowId"]');

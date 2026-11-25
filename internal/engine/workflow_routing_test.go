@@ -421,6 +421,23 @@ func TestConditionalRoutingDefaultAndValidation(t *testing.T) {
 	}
 }
 
+func TestWorkflowRoutingWarningsIncludeDefaultBranch(t *testing.T) {
+	wf := routingWorkflow("small")
+	wf.Nodes[0].DefaultTarget = "large"
+	wf.Nodes[4].JoinRule = "all_success"
+	wf.Edges = append(wf.Edges, domain.WorkflowEdge{ID: "default-large", Source: "classify", Target: "large"})
+	warnings := WorkflowRoutingWarnings(wf)
+	found := false
+	for _, warning := range warnings {
+		if strings.Contains(warning, "delivery") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("default branch warning = %v", warnings)
+	}
+}
+
 func TestConditionalRoutingFailures(t *testing.T) {
 	for _, route := range []string{"invalid", ""} {
 		t.Run(route, func(t *testing.T) {
@@ -526,6 +543,42 @@ func TestConditionalRoutingRefreshRejectsNewConditionsOnCompletedNode(t *testing
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "succeeded")
+}
+
+func TestConditionalRoutingRefreshRejectsPendingHumanRoute(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wf := routingWorkflow("refresh-pending-human")
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r := domain.Run{ID: "refresh-pending-human-run", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "waiting", Nodes: map[string]*domain.NodeRun{}}
+	for _, node := range wf.Nodes {
+		r.Nodes[node.ID] = &domain.NodeRun{NodeID: node.ID, Status: "pending"}
+	}
+	r.Nodes["classify"] = &domain.NodeRun{
+		NodeID: "classify", Status: "waiting_approval", Activity: "等待人工确认",
+		GateResult: &domain.GateResult{Decision: "human", Route: domain.RouteValues{"small"}},
+	}
+	if err := s.PutRun(r); err != nil {
+		t.Fatal(err)
+	}
+	latest, ok := s.Workflow(wf.ID)
+	if !ok {
+		t.Fatal("workflow disappeared")
+	}
+	latest.Version++
+	latest.Nodes = append(latest.Nodes, domain.WorkflowNode{ID: "extra", Type: "script"})
+	if err := s.PutWorkflow(latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RefreshRunSOP(r.ID); err == nil || !strings.Contains(err.Error(), "classify") || !strings.Contains(err.Error(), "路由决策") {
+		t.Fatalf("expected pending route refresh error, got %v", err)
+	}
 }
 
 func TestConditionalRoutingMissingDecisionFailsInsteadOfHanging(t *testing.T) {

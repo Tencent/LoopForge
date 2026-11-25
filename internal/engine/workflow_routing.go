@@ -380,7 +380,8 @@ func WorkflowRoutingWarnings(wf domain.WorkflowDefinition) []string {
 		}
 	}
 	for _, edge := range wf.Edges {
-		if edge.Condition != nil {
+		source := nodesByID(wf)[edge.Source]
+		if edge.Condition != nil || (source.DefaultTarget != "" && source.DefaultTarget == edge.Target) {
 			walk(edge.Target)
 		}
 	}
@@ -391,6 +392,14 @@ func WorkflowRoutingWarnings(wf domain.WorkflowDefinition) []string {
 		}
 	}
 	return warnings
+}
+
+func nodesByID(wf domain.WorkflowDefinition) map[string]domain.WorkflowNode {
+	byID := make(map[string]domain.WorkflowNode, len(wf.Nodes))
+	for _, node := range wf.Nodes {
+		byID[node.ID] = node
+	}
+	return byID
 }
 
 // ValidateWorkflowRouting checks routing configuration at both save and run time.

@@ -2854,6 +2854,31 @@ func TestOverlayLatestNodeBindingsRefreshesArtifactContracts(t *testing.T) {
 	}
 }
 
+func TestOverlayLatestNodeBindingsKeepsConditionalSnapshotFrozen(t *testing.T) {
+	t.Parallel()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	current := domain.WorkflowDefinition{
+		ID: "conditional-overlay", Name: "Conditional overlay", SandboxProfileID: "test-native", Version: 2,
+		Nodes: []domain.WorkflowNode{{ID: "classify", Type: "script", ArtifactOutputs: []domain.ArtifactContract{{Name: "classification-v2", Path: "v2.json"}}}},
+	}
+	if err := s.PutWorkflow(current); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{WorkflowID: current.ID, WorkflowSnapshot: domain.WorkflowDefinition{
+		ID: current.ID, Version: 1,
+		Nodes: []domain.WorkflowNode{{ID: "classify", Type: "script", ArtifactOutputs: []domain.ArtifactContract{{Name: "classification", Path: "v1.json"}}}},
+		Edges: []domain.WorkflowEdge{{ID: "route", Source: "classify", Target: "small", Condition: &domain.WorkflowCondition{Type: "artifact", Artifact: "classification", Pointer: "/size", Equals: []byte(`"small"`)}}},
+	}}
+	overlayLatestNodeBindings(s, &run, map[string]bool{"classify": true})
+	if got := run.WorkflowSnapshot.Nodes[0].ArtifactOutputs[0].Name; got != "classification" {
+		t.Fatalf("conditional retry changed frozen artifact contract to %q", got)
+	}
+}
+
 func TestOverlayLatestNodeBindingsReadsGenericTemplate(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
