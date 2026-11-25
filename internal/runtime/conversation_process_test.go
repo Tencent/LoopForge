@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -10,6 +11,26 @@ import (
 	"testing"
 	"time"
 )
+
+func TestConversationStdinRemapsQuotedCodexWorkspace(t *testing.T) {
+	source, root := `/api/state "chat"`, `/runner/state "chat"\one`
+	workspace := `/runner/workspaces "project"\two`
+	payload, err := json.Marshal(map[string]any{
+		"method": "thread/start", "params": map[string]string{"cwd": filepath.Join(source, "ws")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := remapConversationStdin(string(payload)+"\n", source, root, workspace, "codex")
+	var request struct {
+		Params struct {
+			Cwd string `json:"cwd"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(got), &request); err != nil || request.Params.Cwd != workspace {
+		t.Fatalf("Codex frame has invalid cwd: %q, %v", got, err)
+	}
+}
 
 func conversationPoll(t *testing.T, p *ConversationProcessPool, ctx context.Context, root, id string) string {
 	t.Helper()
@@ -55,8 +76,126 @@ func TestConversationProcessBidirectionalAndRootFence(t *testing.T) {
 	if !strings.Contains(output, filepath.Join(root, "ws/a")) || !strings.Contains(output, "err") {
 		t.Fatalf("duplex output: %s", output)
 	}
+	if _, err = p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "write", ID: r.ID, EOF: true}, nil); err != nil {
+		t.Fatalf("stdin EOF after process completion: %v", err)
+	}
 	if _, err = p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "prepare"}, nil); err != nil {
 		t.Fatal("root released before completion:", err)
+	}
+}
+
+func TestConversationProcessEOFAfterExit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	pool := &ConversationProcessPool{}
+	start, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "start",
+		Command:   &ConversationCommand{Argv: []string{"sh", "-c", "echo done"}, Interactive: true},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output := conversationPoll(t, pool, ctx, root, start.ID); strings.TrimSpace(output) != "done" {
+		t.Fatalf("finished process output = %q", output)
+	}
+	if _, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "write", ID: start.ID, EOF: true,
+	}, nil); err != nil {
+		t.Fatalf("close stdin after process exit: %v", err)
+	}
+}
+
+func TestConversationCLIVersionPreservesOutputQuota(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	root, install := t.TempDir(), t.TempDir()
+	bin := filepath.Join(install, "codebuddy")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec awk 'BEGIN { for (i=0; i<32768; i++) print \"line\" }'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(install, "package.json"), []byte(`{"name":"@tencent-ai/codebuddy-code","version":"1.2.3"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pool := &ConversationProcessPool{}
+	start, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "start", ReportVersion: true, Command: &ConversationCommand{Provider: "codebuddy", Argv: []string{bin}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.mu.Lock()
+	finished := pool.entries[start.ID].finished
+	pool.mu.Unlock()
+	// Leave every line unacknowledged until the buffer has filled.
+	select {
+	case <-finished:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	var after int64
+	for {
+		result, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "poll", ID: start.ID, After: after}, nil)
+		if err != nil || result.Error != "" {
+			t.Fatalf("poll: %+v %v", result, err)
+		}
+		after = result.Sequence
+		if result.Done {
+			if after != 32768 || result.CLIVersion != "1.2.3" || result.VersionSource != "package_metadata" {
+				t.Fatalf("completion: lines=%d version=%q source=%q", after, result.CLIVersion, result.VersionSource)
+			}
+			return
+		}
+	}
+}
+
+func TestConversationProcessStopsAfterTerminalResult(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	pool := &ConversationProcessPool{}
+	script := `printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"done"}'; exec sleep 60`
+	start := time.Now()
+	started, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "start", Command: &ConversationCommand{Argv: []string{"sh", "-c", script}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := conversationPoll(t, pool, ctx, root, started.ID)
+	if !strings.Contains(output, `"result":"done"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if elapsed := time.Since(start); elapsed > 6*time.Second {
+		t.Fatalf("turn stayed running for %s after the terminal result", elapsed)
+	}
+}
+
+func TestConversationProcessCompletesDuringSlowVersionProbe(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(t.TempDir(), "codebuddy")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  touch "$0.version-started"
+  exec sleep 30
+fi
+until [ -e "$0.version-started" ]; do sleep 0.02; done
+printf 'actual result\n'
+`
+	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	pool := &ConversationProcessPool{}
+	start, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "start", ReportVersion: true, Command: &ConversationCommand{Provider: "codebuddy", Argv: []string{bin}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output := conversationPoll(t, pool, ctx, root, start.ID); output != "actual result" {
+		t.Fatalf("output = %q", output)
 	}
 }
 
@@ -154,11 +293,31 @@ func TestConversationAssetsResetChmodAndRejectSymlink(t *testing.T) {
 	if err := syncFile("attachments/a/source.pdf", binary, 0600); err != nil {
 		t.Fatal(err)
 	}
+	prepared, err := p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "prepare"}, nil)
+	if err != nil || !prepared.PromptInputFiles {
+		t.Fatalf("runner must advertise staged prompt inputs: %v", err)
+	}
+	sourceRoot := t.TempDir()
+	promptPath := filepath.Join(root, "prompt-input", "turn-1", "prompt-1.md")
+	if _, err := p.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "sync", SourceRoot: sourceRoot, Files: []ConversationFile{{
+			Path: "prompt-input/turn-1/prompt-1.md", Rewrite: true, Mode: 0600,
+			Data: []byte("Read " + filepath.Join(sourceRoot, "attachments", "source.txt")),
+		}},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(promptPath); err != nil || string(data) != "Read "+filepath.Join(root, "attachments", "source.txt") {
+		t.Fatalf("prompt input references were not relocated: %q, %v", data, err)
+	}
 	if _, err := p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "resetAssets"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, rel)); !os.IsNotExist(err) {
 		t.Fatal("removed skill retained")
+	}
+	if _, err := os.Stat(promptPath); !os.IsNotExist(err) {
+		t.Fatalf("staged prompt survived asset reset: %v", err)
 	}
 	if b, err := os.ReadFile(native); err != nil || string(b) != "native" {
 		t.Fatal("native transcript changed")

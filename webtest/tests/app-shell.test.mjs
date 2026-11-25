@@ -102,13 +102,18 @@ test('workbench interface updates session, project and requested views', async (
   await settle(3);
   assert.equal(app.evaluate(`state.currentView`), 'settings');
   assert.equal(platform.getSnapshot().view, 'settings');
-  for (const view of ['projects', 'sops', 'runs', 'agents', 'mcp', 'runners', 'dockerfiles']) {
+  for (const view of ['projects', 'sops', 'runs', 'agents', 'mcp', 'runners']) {
     platform.navigate(view);
     await settle(3);
     assert.equal(app.evaluate(`state.currentView`), view);
     assert.equal(app.document.querySelector('#chatRoot') !== null, true, `${view} must keep the chat mount available`);
     assert.equal(app.document.querySelector('#chatNextFrame'), null);
   }
+  // The old dockerfiles entry now lives in the assets view.
+  platform.navigate('dockerfiles');
+  await settle(3);
+  assert.equal(app.evaluate(`state.currentView`), 'sandboxes');
+  assert.equal(app.document.querySelector('#chatRoot') !== null, true);
   platform.navigate('runs', {runId: 'run-1'});
   await settle(3);
   assert.match(app.window.location.hash, /runs\/run-1/);
@@ -204,9 +209,12 @@ test('generic workflow hydration, project switching, flow routes, and shell keyb
   assert.equal(app.document.querySelector('#commandPalette').hidden, true);
 
   const modal = app.document.querySelector('#artifactModal');
-  modal.classList.add('open');
-  modal.dispatchEvent(new app.window.Event('pointerdown', { bubbles: true }));
-  assert.equal(modal.classList.contains('open'), false);
+  modal.getBoundingClientRect = () => ({ left: 100, top: 100, right: 500, bottom: 500 });
+  modal.showModal();
+  modal.dispatchEvent(new app.window.MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }));
+  assert.equal(modal.open, true);
+  modal.dispatchEvent(new app.window.MouseEvent('pointerdown', { bubbles: true, clientX: 50, clientY: 50 }));
+  assert.equal(modal.open, false);
 
   const resize = app.document.querySelector('.sidebar-resize');
   resize.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));

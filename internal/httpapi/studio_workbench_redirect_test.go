@@ -9,8 +9,10 @@ import (
 
 func TestOldWorkbenchEntryRedirectsButPreviewRemainsAccessible(t *testing.T) {
 	files := fstest.MapFS{
-		"native-chat/preview.html": {Data: []byte("preview")},
-		"index.html":               {Data: []byte("home")},
+		"native-chat/preview.html":  {Data: []byte("preview")},
+		"native-chat/index.html":    {Data: []byte("designer")},
+		"native-chat/assets/app.js": {Data: []byte("app")},
+		"index.html":                {Data: []byte("home")},
 	}
 	handler := studioFileServer(files)
 	response := httptest.NewRecorder()
@@ -22,5 +24,12 @@ func TestOldWorkbenchEntryRedirectsButPreviewRemainsAccessible(t *testing.T) {
 	handler.ServeHTTP(preview, httptest.NewRequest(http.MethodGet, "/chatbot/preview.html", nil))
 	if preview.Code != http.StatusOK || preview.Body.String() != "preview" {
 		t.Fatalf("preview changed: %d %q", preview.Code, preview.Body.String())
+	}
+	// The SOP orchestrator panel embeds the chatbot surface, so it must keep
+	// serving the chat app instead of redirecting the frame to the platform.
+	designer := httptest.NewRecorder()
+	handler.ServeHTTP(designer, httptest.NewRequest(http.MethodGet, "/chatbot/?surface=sop-designer&workflowId=sop-1", nil))
+	if designer.Code != http.StatusOK || designer.Body.String() != "designer" {
+		t.Fatalf("designer surface must stay accessible: %d %q", designer.Code, designer.Body.String())
 	}
 }

@@ -110,23 +110,13 @@ func (r *runEnvironment) Detach() error {
 	return nil
 }
 
-func resolveSandboxResources(st *repo.Store, profile domain.SandboxProfile) (runtime.SandboxResources, error) {
-	var resources runtime.SandboxResources
-	if strings.TrimSpace(profile.DockerfileID) != "" {
-		dockerfile, ok := st.Dockerfile(profile.DockerfileID)
-		if !ok {
-			return resources, fmt.Errorf("dockerfile %q not found", profile.DockerfileID)
-		}
-		resources.Dockerfile = dockerfile
-	} else if strings.EqualFold(strings.TrimSpace(profile.Driver), "docker") {
-		return resources, fmt.Errorf("docker sandbox %q requires a dockerfileId", profile.ID)
+// resolveSandbox is the runner spec a stored profile runs as. A docker
+// sandbox cannot run without its Dockerfile.
+func resolveSandbox(profile domain.SandboxProfile) (*domain.RunnerSandboxSpec, error) {
+	if strings.TrimSpace(profile.Driver) == domain.SandboxDriverDocker && (profile.Dockerfile == nil || strings.TrimSpace(profile.Dockerfile.Content) == "") {
+		return nil, fmt.Errorf("docker sandbox %q has no Dockerfile", profile.ID)
 	}
-	if strings.TrimSpace(profile.EnvironmentID) != "" {
-		if environment, ok := st.Environment(profile.EnvironmentID); ok {
-			resources.Environment = environment
-		}
-	}
-	return resources, nil
+	return domain.RunnerSandbox(profile), nil
 }
 
 func resolvedSandboxSnapshot(profile domain.SandboxProfile, resources runtime.SandboxResources) *domain.RunnerSandboxSpec {
@@ -134,10 +124,6 @@ func resolvedSandboxSnapshot(profile domain.SandboxProfile, resources runtime.Sa
 	if strings.TrimSpace(resources.Dockerfile.ID) != "" {
 		dockerfile := resources.Dockerfile
 		snapshot.Dockerfile = &dockerfile
-	}
-	if strings.TrimSpace(resources.Environment.ID) != "" {
-		environment := resources.Environment
-		snapshot.Environment = &environment
 	}
 	return snapshot
 }
@@ -149,9 +135,6 @@ func sandboxResourcesFromSnapshot(snapshot *domain.RunnerSandboxSpec) runtime.Sa
 	}
 	if snapshot.Dockerfile != nil {
 		resources.Dockerfile = *snapshot.Dockerfile
-	}
-	if snapshot.Environment != nil {
-		resources.Environment = *snapshot.Environment
 	}
 	return resources
 }
@@ -193,11 +176,11 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 	}
 	resources := sandboxResourcesFromSnapshot(run.WorkflowSnapshot.SandboxSnapshot)
 	if run.WorkflowSnapshot.SandboxSnapshot == nil {
-		var err error
-		resources, err = resolveSandboxResources(e.repo, profile)
+		spec, err := resolveSandbox(profile)
 		if err != nil {
 			return nil, false, err
 		}
+		profile, resources = spec.Profile, sandboxResourcesFromSnapshot(spec)
 	}
 	sandbox, err := e.sandboxes.AcquireRunIn(ctx, run.ID, workspaceRunID(current), profile, requirements, credentials, resources)
 	if err != nil {
@@ -209,6 +192,11 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 	}
 	e.runEnvs[run.ID] = env
 	first, err := e.repo.BindRunWorkspace(run.ID, e.instanceID, run.Generation, e.workspaceHost, e.sandboxes.Root())
+	if errors.Is(err, repo.ErrRunWorkspaceBound) && sharesWorkspace(current) {
+		// The owner may have restored its checkout on this worker. A child
+		// or borrowed SOP follows the binding checked during startup.
+		err = e.repo.RebindRunWorkspace(run.ID, e.instanceID, run.Generation, e.workspaceHost, e.sandboxes.Root())
+	}
 	if err == nil && !current.WorkspaceCleanedAt.IsZero() {
 		// Legacy runs without an archive are rebuilt by normal execution, not
 		// restored by the preflight. Once a real sandbox exists, clear the old
@@ -226,9 +214,10 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	userID := run.ExecutionContext.ResponsibleUserID
 	credentials := runtime.RunCredentials{
-		CodeBuddy: resolveCodeBuddyCredential(e.repo, userID),
-		GitToken:  resolveGitToken(e.repo, userID),
+		CodeBuddy:          resolveCodeBuddyCredential(e.repo, userID),
+		GitHTTPCredentials: e.repo.GitHTTPCredentialSecrets(context.Background(), userID),
 	}
+	credentials.Extra = runtime.ExtraRunCredentials(userID)
 	credentials.GitSSHKeys = e.repo.GitSSHKeysForRemotes(userID, sshRepositoryURLs(run.RepositoryContexts()))
 	identity := resolveGitIdentity(e.repo, userID)
 	credentials.GitUserName = identity.name
@@ -238,7 +227,10 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 		credentials.ClaudeCode = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
 		credentials.AgentCLI = runtime.AgentCLIUserCredentials(user)
 	}
-	scriptAssets, _, _ := runtime.PrepareMCPServers(e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, userID), runtime.MCPTarget{GitToken: credentials.GitToken})
+	scriptAssets, _, _ := runtime.PrepareMCPServers(e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, userID), runtime.MCPTarget{
+		GitHTTPCredentials: credentials.GitHTTPCredentials,
+		ExtraCredentials:   credentials.Extra,
+	})
 	credentials.MCPServers = scriptAssets.MCPServers
 	return credentials
 }

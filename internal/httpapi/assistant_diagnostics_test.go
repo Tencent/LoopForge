@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,6 +26,9 @@ echo '{"type":"error","error":{"message":"rate limit reached","code":"rate_limit
 exit 7
 `
 	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"@tencent-ai/codebuddy-code","version":"2.185.0"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
@@ -43,6 +47,9 @@ exit 7
 		t.Fatalf("wrong failure: %+v", report)
 	}
 	a := report.Attempts[0]
+	if a.CLIVersion != "2.185.0" || a.VersionSource != "package_metadata" {
+		t.Fatalf("lost local CLI version: %+v", a)
+	}
 	if a.ExitCode == nil || *a.ExitCode != 7 || a.FinishedAt == nil || a.Status != "failed" || len(a.Events) != 1 {
 		t.Fatalf("lost process outcome: %+v", a)
 	}
@@ -60,6 +67,61 @@ exit 7
 	d.begin("codebuddy", "second-model", true, user).stderr("new output")
 	if len(report.Attempts) != 1 || len(report.Attempts[0].Stderr) != 2 {
 		t.Fatal("snapshot changed after another attempt")
+	}
+}
+
+func TestAssistantDiagnosticsReceiveVersionFromConversationProcess(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "codebuddy")
+	script := "#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"completed\"}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"@tencent-ai/codebuddy-code","version":"2.185.0-beta.1+fixture"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	g := domain.AssistantGeneration{ID: "version-turn", Status: "running"}
+	d := newAssistantDiagnosticsCollector(g)
+	ctx := context.WithValue(context.Background(), assistantDiagnosticsKey{}, d)
+	root := t.TempDir()
+	h, user := workbenchFixture(t)
+	session := &AgentToolSession{ChatOwnerID: user.ID, ChatSessionID: "version-session", RuntimeMode: domain.AssistantModePlatform}
+	req := assistantCLIRequest{Prompt: "test", SessionRoot: root, Execute: h.conversationExecutor(session, root)}
+	if _, _, err := runAssistantCLI(ctx, req, user, nil); err != nil {
+		t.Fatal(err)
+	}
+	g.Status = "completed"
+	report := d.snapshot(g)
+	attempt := report.Attempts[0]
+	if attempt.CLIVersion != "2.185.0-beta.1+fixture" || attempt.VersionSource != "package_metadata" {
+		t.Fatalf("lost executor's CLI version: %+v", attempt)
+	}
+}
+
+func TestAssistantDiagnosticsReadZCodeVersionFromNativeStream(t *testing.T) {
+	data, err := os.ReadFile("../runtime/testdata/zcode-0.17.1-stream-sample.ndjson")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := domain.AssistantGeneration{ID: "zcode-version-turn", Status: "completed"}
+	d := newAssistantDiagnosticsCollector(g)
+	attempt := d.begin(runtime.AgentCLIZCode, "fixture-model", false, domain.User{})
+	attempt.recordCLIVersion("0.17.0", "version_probe")
+	for line := range strings.SplitSeq(string(data), "\n") {
+		attempt.protocol(line)
+	}
+	attempt.recordCLIVersion("0.17.2", "version_probe")
+	report := d.snapshot(g)
+	if got := report.Attempts[0]; got.CLIVersion != "0.17.1" || got.VersionSource != "native_protocol" {
+		t.Fatalf("lost native ZCode version: %+v", got)
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("requestHeaders")) || bytes.Contains(raw, []byte("x-zcode-app-version")) {
+		t.Fatalf("retained ZCode request headers: %s", raw)
 	}
 }
 

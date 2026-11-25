@@ -1,15 +1,21 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/gin-gonic/gin"
+	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
+
+	"agentflow/internal/domain"
+
+	"github.com/gin-gonic/gin"
 )
 
 func (h *assistantHandlers) nativeApprovals(c *gin.Context) {
@@ -26,6 +32,7 @@ func (h *assistantHandlers) nativeApprovals(c *gin.Context) {
 	if c.Request.Method == "GET" {
 		stored, _ := h.repo.User(user.ID)
 		items := h.repo.PendingNativeApprovals(owner, c.Param("id"))
+		items = slices.DeleteFunc(items, func(item domain.AssistantNativeApproval) bool { return item.ActorID != user.ID })
 		for i := range items {
 			items[i].Input = redactNativeApprovalInput(items[i].Input, stored)
 		}
@@ -61,31 +68,100 @@ func (h *assistantHandlers) nativeApprovals(c *gin.Context) {
 // redaction over the encoded JSON can cut an escape such as \" and leave the
 // card with invalid JSON, which renders as an empty response.
 func redactNativeApprovalInput(raw json.RawMessage, user domain.User) json.RawMessage {
+	out, _ := redactNativeApprovalInputFields(raw, user)
+	return out
+}
+
+// redactNativeApprovalInputFields also returns the fields hidden as a whole,
+// so the card can tell the approver what it does not show.
+func redactNativeApprovalInputFields(raw json.RawMessage, user domain.User) (json.RawMessage, []string) {
 	hidden := json.RawMessage(`"[redacted]"`)
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var value any
 	if decoder.Decode(&value) != nil {
-		return hidden
+		return hidden, nil
 	}
-	out, err := json.Marshal(redactJSONStrings(value, user))
+	var fields []string
+	out, err := json.Marshal(redactJSONStrings(value, user, "", &fields))
 	if err != nil {
-		return hidden
+		return hidden, nil
 	}
-	return out
+	slices.Sort(fields)
+	return out, fields
 }
 
-func redactJSONStrings(value any, user domain.User) any {
+// secretFieldSuffixes match a normalized key (lower case, without -, _, . and
+// spaces): apiToken, PRIVATE-TOKEN, x-api-key, client_secret, refresh_token...
+// Counters such as max_tokens or tokenCount stay visible.
+var secretFieldSuffixes = []string{"token", "secret", "password", "passwd", "passphrase", "apikey", "accesskey", "secretkey", "privatekey", "credential", "credentials", "authorization", "cookie", "sessionid"}
+
+func secretFieldName(key string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		switch r {
+		case '-', '_', '.', ' ':
+			return -1
+		}
+		return unicode.ToLower(r)
+	}, key)
+	if normalized == "" {
+		return false
+	}
+	for _, suffix := range secretFieldSuffixes {
+		if strings.HasSuffix(normalized, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// secretValuePatterns find credentials inside any string, whatever the key:
+// bearer tokens, GitHub/GitLab/Slack/OpenAI/AWS keys, JWTs and PEM keys.
+var secretValuePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}`),
+	regexp.MustCompile(`\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})`),
+	regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{16,}`),
+	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}`),
+	regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{20,}`),
+	regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`),
+	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`),
+	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)`),
+}
+
+func redactSecretValues(text string) string {
+	for _, pattern := range secretValuePatterns {
+		text = pattern.ReplaceAllString(text, "[redacted]")
+	}
+	return text
+}
+
+func redactJSONStrings(value any, user domain.User, path string, hidden *[]string) any {
 	switch v := value.(type) {
 	case string:
-		return redactAgentToolResult(v, user)
+		return redactSecretValues(redactAgentToolResult(v, user))
 	case []any:
 		for i := range v {
-			v[i] = redactJSONStrings(v[i], user)
+			v[i] = redactJSONStrings(v[i], user, fmt.Sprintf("%s[%d]", path, i), hidden)
 		}
 	case map[string]any:
 		for key := range v {
-			v[key] = redactJSONStrings(v[key], user)
+			field := key
+			if path != "" {
+				field = path + "." + key
+			}
+			switch child := v[key].(type) {
+			case map[string]any, []any:
+				// Containers such as headers or credentials may carry the
+				// payload itself: only their secret fields are hidden.
+				v[key] = redactJSONStrings(child, user, field, hidden)
+			default:
+				if secretFieldName(key) && child != nil && child != "" {
+					v[key] = "[redacted]"
+					*hidden = append(*hidden, field)
+				} else {
+					v[key] = redactJSONStrings(child, user, field, hidden)
+				}
+			}
 		}
 	}
 	return value
@@ -122,7 +198,7 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 		return nativeToolApprovalResult{Allow: true}
 	}
 	switch strings.ToLower(action.Name) {
-	case "skill", "read", "read_file", "readfile", "glob", "grep", "list", "ls", "list_directory", "list_resources", "view_image", "todowrite", "todo_read", "todoread":
+	case "skill", "read", "read_file", "readfile", "glob", "grep", "list", "ls", "list_directory", "list_resources", "view_image", "readmediafile", "todowrite", "todo_read", "todoread":
 		return nativeToolApprovalResult{Allow: true}
 	}
 	if s.RuntimeMode != domain.AssistantModeWorkspace {
@@ -177,7 +253,7 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 		}
 		review, done, ok := s.nativeReview(ctx, nativeReviewPoll, id, nativeApprovalPhase(string(action.Input)), func(reviewCtx context.Context) assistantApprovalReview {
 			args := map[string]any{"tool": action.Name, "input": action.Input, "runId": s.workspaceRun()}
-			return reviewAssistantAction(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
+			return reviewAssistantAction(withApprovalActionSource(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), approvalSourceNativeCommand), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
 		})
 		switch {
 		case !ok:
@@ -215,19 +291,23 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 // The reviewer's own texts for an unavailable review still mention a manual
 // confirmation used by platform drafts; native commands have none.
 func nativeReviewRefusal(review assistantApprovalReview) string {
+	reason := strings.TrimSpace(review.Rationale)
 	if review.Outcome != "allow" && review.Outcome != "deny" {
+		if reason != "" && !strings.Contains(reason, "手动确认") {
+			return "帮我批准：自动审查暂不可用（" + reason + "），已拒绝本次外部写入，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
+		}
 		return "帮我批准：自动审查暂不可用，已拒绝本次外部写入，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
 	}
-	reason := strings.TrimSpace(review.Rationale)
 	if reason == "" {
 		reason = "审查未通过"
 	}
 	return "帮我批准：审查拒绝了本次外部写入（" + reason + "），操作未执行；不要换一种方式重试，先告诉用户原因"
 }
 
-// nativeReviewBudget bounds one background review. The reviewer stops at 60
-// seconds itself; the margin only covers starting its CLI.
-const nativeReviewBudget = 90 * time.Second
+// nativeReviewBudget bounds one background review. The reviewer stops at 5
+// minutes itself; the extra margin covers CLI teardown and stays below the
+// hook's 570-second hard ceiling.
+const nativeReviewBudget = assistantApprovalMaxTimeout + 15*time.Second
 
 // nativeReviewPoll is how long one hook request waits for the verdict before
 // answering pending, below the hook's 20-second request timeout.
@@ -280,8 +360,12 @@ func (h *agentToolGateway) nativeGatewayTool(ctx context.Context, s *AgentToolSe
 	}
 }
 
+func (s *AgentToolSession) nativeToolPhaseActive(ctx context.Context) bool {
+	return ctx.Err() == nil && !s.nativePhaseClosed.Load() && !s.closed.Load() && !s.expired(time.Now()) && s.requestedMode() == ""
+}
+
 func (h *agentToolGateway) nativeToolTurnActive(ctx context.Context, s *AgentToolSession) bool {
-	if ctx.Err() != nil || s.nativePhaseClosed.Load() || s.closed.Load() || s.ctx != nil && s.ctx.Err() != nil || s.requestedMode() != "" {
+	if !s.nativeToolPhaseActive(ctx) {
 		return false
 	}
 	if s.ctx == nil {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 const legacyProjectAgentGitExcludeBlock = `# AgentFlow managed sandbox: repository Agent configuration
@@ -160,11 +161,15 @@ func clearLegacyProjectAgentGitIndex(ctx context.Context, workspace string) erro
 		input.WriteByte(0)
 	}
 	run := func() ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "git", "-C", workspace, "update-index", mode, "-z", "--stdin")
-		cmd.Stdin = bytes.NewReader(input.Bytes())
-		return cmd.CombinedOutput()
+		out, err := gitwork.RunWorkspaceCommand(ctx, workspace, gitwork.WorkspaceCommand{
+			Args: []string{"update-index", mode, "-z", "--stdin"}, Stdin: bytes.NewReader(input.Bytes()),
+		})
+		return []byte(out), err
 	}
 	output, err := run()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err == nil {
 		return nil
 	}
@@ -195,6 +200,9 @@ func clearLegacyProjectAgentGitIndex(ctx context.Context, workspace string) erro
 		}
 		inUse, confirmed, inspectErr = gitIndexLockInUse(ctx, lockPath)
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if inspectErr != nil || !confirmed {
 		return fmt.Errorf("git update-index %s: %w: %s (cannot safely inspect index lock: %v)", mode, err, strings.TrimSpace(string(output)), inspectErr)
 	}
@@ -224,12 +232,13 @@ func isGitIndexLockConflict(output []byte) bool {
 }
 
 func gitIndexLockPath(ctx context.Context, workspace string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", workspace, "rev-parse", "--git-path", "index.lock")
-	output, err := cmd.Output()
+	output, err := gitwork.RunWorkspaceCommand(ctx, workspace, gitwork.WorkspaceCommand{
+		Args: []string{"rev-parse", "--git-path", "index.lock"}, StdoutOnly: true,
+	})
 	if err != nil {
 		return "", err
 	}
-	path := strings.TrimSpace(string(output))
+	path := strings.TrimSpace(output)
 	if path == "" {
 		return "", fmt.Errorf("git returned an empty index lock path")
 	}
@@ -382,12 +391,13 @@ func procMayOwnFile(procDir string, uid uint32) bool {
 }
 
 func trackedSkippedProjectAgentConfigPaths(ctx context.Context, workspace string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", workspace, "ls-files", "-v", "-z")
-	output, err := cmd.Output()
+	output, err := gitwork.RunWorkspaceCommand(ctx, workspace, gitwork.WorkspaceCommand{
+		Args: []string{"ls-files", "-v", "-z"}, StdoutOnly: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list tracked project Agent configuration: %w", err)
 	}
-	entries := bytes.Split(output, []byte{0})
+	entries := strings.Split(output, "\x00")
 	paths := make([]string, 0)
 	for _, entry := range entries {
 		if len(entry) == 0 {
@@ -396,7 +406,7 @@ func trackedSkippedProjectAgentConfigPaths(ctx context.Context, workspace string
 		if len(entry) < 3 || entry[1] != ' ' {
 			continue
 		}
-		path := string(entry[2:])
+		path := entry[2:]
 		if (entry[0] == 'S' || entry[0] == 's') && isLegacyProjectAgentConfigPath(path) {
 			paths = append(paths, path)
 		}

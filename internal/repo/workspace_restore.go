@@ -16,7 +16,7 @@ const WorkspaceRestoreInterrupted = "工作区恢复已中断，请重新发起�
 // failed or was interrupted after binding it; that one is retried so its
 // outcome can become ready.
 func (r *RunsRepo) BeginWorkspaceRestore(runID string, now time.Time) (string, error) {
-	return r.beginWorkspaceLease(runID, now.UTC(), true, true)
+	return r.beginWorkspaceLease(runID, now.UTC(), true, true, false)
 }
 
 // FinishWorkspaceRestore releases only this restoration's lease. Restoring an

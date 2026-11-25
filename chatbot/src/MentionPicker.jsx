@@ -20,12 +20,82 @@ const icons = {
   run: "play",
   repository: "folder",
 };
+
+const mirroredProperties = [
+  "boxSizing",
+  "fontFamily",
+  "fontSize",
+  "fontStyle",
+  "fontWeight",
+  "letterSpacing",
+  "lineHeight",
+  "paddingBottom",
+  "paddingLeft",
+  "paddingRight",
+  "paddingTop",
+  "tabSize",
+  "textAlign",
+  "textIndent",
+  "textTransform",
+  "wordSpacing",
+  "wordBreak",
+  "overflowWrap",
+];
+
+function mentionAnchor(editor, caret) {
+  if (!editor) return null;
+  const editorRect = editor.getBoundingClientRect();
+  const style = getComputedStyle(editor);
+  const lineHeight =
+    parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2 || 20;
+  const mirror = document.createElement("div");
+  const marker = document.createElement("span");
+  for (const property of mirroredProperties)
+    mirror.style[property] = style[property];
+  mirror.style.visibility = "hidden";
+  mirror.style.pointerEvents = "none";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.position = "fixed";
+  mirror.style.left = `${editorRect.left}px`;
+  mirror.style.top = `${editorRect.top - editor.scrollTop}px`;
+  mirror.style.width = `${editor.clientWidth || editorRect.width}px`;
+  mirror.style.minHeight = "0";
+  mirror.style.height = "auto";
+  mirror.style.border = "0";
+  mirror.style.overflow = "visible";
+  marker.style.display = "inline-block";
+  marker.style.width = "1px";
+  marker.style.height = `${lineHeight}px`;
+  marker.textContent = "\u200b";
+  mirror.append(document.createTextNode(editor.value.slice(0, caret)), marker);
+  document.body.append(mirror);
+  const markerRect = marker.getBoundingClientRect();
+  mirror.remove();
+  const fallbackTop =
+    editorRect.top +
+    (parseFloat(style.paddingTop) || 0) +
+    (editor.value.slice(0, caret).match(/\n/g) || []).length * lineHeight -
+    editor.scrollTop;
+  const top = markerRect.height ? markerRect.top : fallbackTop;
+  const bottom = markerRect.height ? markerRect.bottom : top + lineHeight;
+  return {
+    top,
+    bottom,
+    left: editorRect.left,
+    right: editorRect.right || editorRect.left + editorRect.width,
+    width: editorRect.width || editor.clientWidth,
+  };
+}
+
+export { mentionAnchor };
+
 export default forwardRef(function MentionPicker(
   {
     projectId,
     trigger,
     onSelect,
     onClose,
+    onRestoreFocus,
     editor,
     issueId,
     onManageIssue,
@@ -75,9 +145,10 @@ export default forwardRef(function MentionPicker(
           }),
       );
       if (version !== request.current || !openRef.current) return;
-      setRows((old) =>
-        offset ? [...old, ...(data.items || data)] : data.items || data,
+      const items = (data.items || data).filter((item) =>
+        referenceTypes.some((reference) => reference.type === item.type),
       );
+      setRows((old) => offset ? [...old, ...items] : items);
       setNext(data.nextOffset || 0);
     } catch (e) {
       if (version === request.current && openRef.current) setError(e.message);
@@ -104,10 +175,8 @@ export default forwardRef(function MentionPicker(
   useEffect(() => {
     if (!open) return;
     function outside(event) {
-      if (
-        !root.current?.contains(event.target) &&
-        event.target !== editor.current
-      )
+      const target = event.composedPath?.()[0] || event.target;
+      if (!root.current?.contains(target) && target !== editor.current)
         onClose();
     }
     document.addEventListener("pointerdown", outside);
@@ -126,12 +195,13 @@ export default forwardRef(function MentionPicker(
   }
   function keyDown(event) {
     if (!open) return false;
-    if (event.nativeEvent?.isComposing) return false;
+    if (event.nativeEvent?.isComposing || event.isComposing || event.keyCode === 229) return false;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       onClose();
-      editor.current?.focus();
+      if (onRestoreFocus) onRestoreFocus();
+      else editor.current?.focus({ preventScroll: true });
       return true;
     }
     if (["ArrowDown", "ArrowUp"].includes(event.key)) {
@@ -167,32 +237,75 @@ export default forwardRef(function MentionPicker(
     const node = root.current;
     if (!open || !node) return undefined;
     const fit = () => {
-      const box = node.getBoundingClientRect();
-      let top = 12;
+      const container = node.parentElement;
+      const containerRect = container.getBoundingClientRect();
+      const editorRect = editor.current?.getBoundingClientRect();
+      const caret = trigger?.end ?? editor.current?.selectionStart ?? 0;
+      const measured = mentionAnchor(editor.current, caret);
+      const anchor = measured || containerRect;
+      const viewport = window.visualViewport;
+      let top = (viewport?.offsetTop || 0) + 8,
+        bottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight) - 8,
+        left = (viewport?.offsetLeft || 0) + 8,
+        right = (viewport?.offsetLeft || 0) + (viewport?.width || window.innerWidth) - 8;
       for (
         let parent = node.parentElement;
         parent;
-        parent = parent.parentElement
+        parent = parent.parentElement || parent.getRootNode()?.host
       ) {
         const style = getComputedStyle(parent);
         const clips = [style.overflowY, style.overflowX].some((value) =>
           ["auto", "scroll", "hidden", "clip"].includes(value),
         );
         if (!clips) continue;
-        top = Math.max(top, parent.getBoundingClientRect().top + 8);
+        const clip = parent.getBoundingClientRect();
+        top = Math.max(top, clip.top + 8);
+        bottom = Math.min(bottom, clip.bottom - 8);
+        left = Math.max(left, clip.left + 8);
+        right = Math.min(right, clip.right - 8);
       }
-      const room = box.bottom - top;
-      node.style.maxHeight = `${Math.min(440, Math.max(80, room))}px`;
+      const above = anchor.top - top - 8, below = bottom - anchor.bottom - 8;
+      // Keep the picker below the active line whenever it has enough room;
+      // only use the upper side when the lower side cannot show a useful list.
+      const minRoom = 160;
+      const up = below < minRoom && above > below;
+      let room = up ? above : below,
+        y = up ? anchor.top - 8 : anchor.bottom + 8;
+      // On short screens the picker overlays the editor rather than escaping
+      // its scroll container or shrinking the results to an unusable sliver.
+      if (room < minRoom) {
+        const useAbove = above > below;
+        room = Math.max(0, Math.max(above, below));
+        y = useAbove ? bottom : top;
+      }
+      if (room < minRoom) {
+        room = Math.max(0, bottom - top);
+        y = above > below ? bottom : top;
+      }
+      const origin = containerRect;
+      const width = editorRect?.width || containerRect.width;
+      node.style.top = up ? "auto" : `${y - origin.top}px`;
+      node.style.bottom = up ? `${origin.bottom - y}px` : "auto";
+      node.style.left = `${Math.max(left, Math.min(editorRect?.left ?? origin.left, right - width)) - origin.left}px`;
+      node.style.right = "auto";
+      node.style.width = `${Math.max(0, Math.min(width, right - left))}px`;
+      node.style.maxHeight = `${Math.max(0, Math.min(440, room))}px`;
+      node.dataset.placement = up ? "above" : "below";
     };
     fit();
     window.addEventListener("resize", fit);
-    const scroller = node.closest(".empty-conversation, .message-scroll");
-    scroller?.addEventListener("scroll", fit, { passive: true });
+    document.addEventListener("scroll", fit, true);
+    editor.current?.addEventListener("scroll", fit);
+    window.visualViewport?.addEventListener("resize", fit);
+    window.visualViewport?.addEventListener("scroll", fit);
     return () => {
       window.removeEventListener("resize", fit);
-      scroller?.removeEventListener("scroll", fit);
+      document.removeEventListener("scroll", fit, true);
+      editor.current?.removeEventListener("scroll", fit);
+      window.visualViewport?.removeEventListener("resize", fit);
+      window.visualViewport?.removeEventListener("scroll", fit);
     };
-  }, [open, presence.phase, options.length, categories]);
+  }, [open, presence.phase, options.length, categories, trigger?.end, query, editor]);
   if (!presence.mounted) return null;
   return (
     <div
@@ -206,16 +319,6 @@ export default forwardRef(function MentionPicker(
       onKeyDown={keyDown}
     >
       <header>
-        <button
-          type="button"
-          aria-label="返回所有引用类别"
-          onClick={() => {
-            setType("");
-            setQuery("");
-          }}
-        >
-          <HarnessIcon name="chevron-left" size={17} />
-        </button>
         <HarnessIcon name="search" size={16} />
         <input
           aria-label="搜索引用对象"
@@ -227,7 +330,7 @@ export default forwardRef(function MentionPicker(
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <button type="button" onClick={() => { onClose(); editor.current?.focus({ preventScroll: true }); }} className="mention-close">
+        <button type="button" onClick={() => { onClose(); if (onRestoreFocus) onRestoreFocus(); else editor.current?.focus({ preventScroll: true }); }} className="mention-close">
           关闭
         </button>
       </header>

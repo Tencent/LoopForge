@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribe } from "./platform-host.js";
+import { modelEffort } from "./effort.js";
 import { createLocalConversations } from "./local-conversation-fixtures.js";
 import { localId as newLocalId } from "./local-id.js";
 
@@ -121,6 +122,7 @@ export function useLocalConversations(real) {
   const rows = store.key === key ? store.sessions : [];
   const session = available ? rows.find((row) => row.id === localId) : null;
   const local = !!session;
+  const localModel = session?.model || real.model;
   const selected = () => availableRef.current && storeRef.current.sessions.find((row) => row.id === localIdRef.current);
   const setGeneration = (id, value) => {
     const next = { ...generationsRef.current, [id]: value };
@@ -186,7 +188,8 @@ export function useLocalConversations(real) {
       session,
       projectId: session.projectId || "",
       issueId: session.issueId || "",
-      model: session.model || real.model,
+      model: localModel,
+      effort: modelEffort(real.models?.find((item) => item.id === localModel), session.effort),
       generation: generations[session.id] || null,
       live: emptyLive,
       busy: generations[session.id]?.status === "running",
@@ -208,8 +211,15 @@ export function useLocalConversations(real) {
     },
     setModel(value) {
       const current = selected();
-      if (current) update(current.id, (row) => ({ ...row, model: value }));
-      else if (!isLocalConversation(localIdRef.current)) real.setModel(value);
+      if (current) {
+        const model = real.models?.find((item) => item.id === value);
+        update(current.id, (row) => ({ ...row, model: value, effort: modelEffort(model, row.effort) }));
+      } else if (!isLocalConversation(localIdRef.current)) real.setModel(value);
+    },
+    setEffort(value) {
+      const current = selected();
+      if (current) update(current.id, (row) => ({ ...row, effort: value }));
+      else if (!isLocalConversation(localIdRef.current)) real.setEffort(value);
     },
     setSession(value) {
       const current = selected();
@@ -268,8 +278,8 @@ export function useLocalConversations(real) {
       selectLocal(id);
       return forked;
     },
-    async regenerate(stored) {
-      if (!isLocalConversation(stored?.id)) return real.regenerate(stored);
+    async regenerate(stored, approvalMode) {
+      if (!isLocalConversation(stored?.id)) return real.regenerate(stored, approvalMode);
       selectLocal(stored.id);
       return complete(stored, [...stored.messages].reverse().find((message) => message.role === "user")?.content || stored.title);
     },

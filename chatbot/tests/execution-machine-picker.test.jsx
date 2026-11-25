@@ -5,14 +5,16 @@ import userEvent from "@testing-library/user-event";
 import ExecutionMachinePicker from "../src/ExecutionMachinePicker";
 
 function fixture(overrides = {}) {
+  const machines = [
+    { id: "mac", name: "开发 Mac", status: "online" },
+    { id: "linux", name: "测试 Linux", status: "offline" },
+  ];
   return {
     user: { id: 1 },
     ready: true,
     machinesReady: true,
-    machines: [
-      { id: "mac", name: "开发 Mac", status: "online" },
-      { id: "linux", name: "测试 Linux", status: "offline" },
-    ],
+    machines,
+    availableMachines: machines,
     defaultRunnerId: "mac",
     selectMachine: vi.fn(),
     refreshMachines: vi.fn(),
@@ -78,6 +80,17 @@ describe("execution machine picker", () => {
     expect(manage).toHaveBeenCalledOnce();
   });
 
+  test("offers only cloud and selectable project machines", async () => {
+    const shared = { id: "shared", name: "项目机器", status: "online", ownerUserId: 2 };
+    const chat = fixture({ defaultRunnerId: "", availableMachines: [shared] });
+    chat.machines = [...chat.machines, shared];
+    render(<ExecutionMachinePicker chat={chat} />);
+    await openPicker();
+    expect(screen.getByRole("option", { name: /LoopForge 云端/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /项目机器 项目共享/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /开发 Mac|测试 Linux/ })).not.toBeInTheDocument();
+  });
+
   test("keeps a workspace on its actual machine after the personal default changes", () => {
     render(
       <ExecutionMachinePicker
@@ -113,6 +126,34 @@ describe("execution machine picker", () => {
     );
     expect(screen.getByText("LoopForge 云端")).toBeInTheDocument();
     expect(screen.queryByText("开发 Mac")).not.toBeInTheDocument();
+  });
+
+  test("shows an SVG and ID for the actual sandbox and opens its full label", async () => {
+    const chat = fixture({
+      session: { workspaceRunId: "workspace-1", executionTarget: { pool: "cloud" } },
+      sandboxProfileId: "preferred",
+      workspaceSandbox: { id: "mac-tools", driver: "seatbelt" },
+    });
+    const { rerender } = render(<ExecutionMachinePicker chat={chat} />);
+    const native = screen.getByRole("button", { name: "工作区沙箱 系统轻量隔离-mac-tools" });
+    expect(native).toHaveTextContent("mac-tools");
+    expect(native.querySelector("svg")).toHaveAttribute("data-icon", "sandbox-shield");
+    expect(native).toHaveAttribute("title", "系统轻量隔离-mac-tools");
+    const user = userEvent.setup();
+    native.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("dialog", { name: "工作区沙箱" })).toHaveTextContent("系统轻量隔离-mac-tools");
+    await user.keyboard("{Escape}");
+    expect(native).toHaveFocus();
+
+    rerender(<ExecutionMachinePicker chat={{ ...chat, workspaceSandbox: { id: "generic-docker", driver: "docker" } }} />);
+    const docker = screen.getByRole("button", { name: "工作区沙箱 Docker-generic-docker" });
+    expect(docker).toHaveTextContent("generic-docker");
+    expect(docker.querySelector("svg")).toHaveAttribute("data-icon", "sandbox-container");
+    expect(screen.queryByRole("button", { name: /mac-tools|preferred/ })).not.toBeInTheDocument();
+
+    rerender(<ExecutionMachinePicker chat={{ ...chat, workspaceSandbox: null }} />);
+    expect(screen.queryByRole("button", { name: /工作区沙箱/ })).not.toBeInTheDocument();
   });
 
   test.each(["busy", "machineSaving", "readOnly", "local"])(

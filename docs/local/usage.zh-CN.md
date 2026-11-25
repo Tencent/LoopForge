@@ -2,36 +2,45 @@
 
 [English](usage.md) | 简体中文
 
-LoopForge Local 在已有的编程助手中运行本地开发工作流，无需启动平台。当前支持内置的 Classic 和 Portable 工作流；平台 SOP 导出和独立执行尚未实现。平台部署见[部署指南](../deployment.md)。
+> **旧版（Legacy）。** LoopForge Local 在编码 Agent 中独立运行内置的 Classic 和 Portable 工作流，无需启动 LoopForge 服务端。已有项目可以继续使用已发布的版本。
+
+## 通过 MCP 连接 LoopForge
+
+可以通过 CodeBuddy 访问运行中的 LoopForge 实例内的项目、SOP 和运行记录。需要自建实例时，参阅[部署指南](../deployment.md)。
+
+1. 登录 LoopForge，打开「接入方式」，创建个人访问密钥并选择 **CodeBuddy**，获取 MCP 接入指引。
+2. 在 CodeBuddy 中应用用户级配置，在 MCP 管理页确认 `agentflow` 已连接，再让 CodeBuddy 列出可访问的 LoopForge 项目以验证接入。
+
+连接端点和可用操作见 [MCP API 参考](../api/README.md#公共能力发现与-mcp)。
 
 ## 快速开始
 
-要求 Node.js 20+ 和 Python 3.8+。以下命令安装默认的 Classic Edition，不确定选哪一种时直接用这一版。
+需要 Node.js 20+ 和 Python 3.8+。把下文命令中的 `X.Y.Z` 替换成与你的 Agent 和 Edition 匹配的已发布版本。可用 `npm view loopforge-cli versions --json` 查看已发布版本。各版本支持的宿主以对应版本为准。
 
 | Agent | 安装 | 启动工作流 |
 | --- | --- | --- |
-| CodeBuddy | `npx -y loopforge-cli@latest install codebuddy` | `/start-devflow "<需求>"` |
-| Codex | `npx -y loopforge-cli@latest install codex` | `$devflow-codex "<需求>"` |
-| Cursor | `npx -y loopforge-cli@latest install cursor` | `/start-devflow "<需求>"` |
-| Claude Code | `npx -y loopforge-cli@latest install claude` | `/start-devflow "<需求>"` |
-| DeepSeek Harness | `npx -y loopforge-cli@latest skills install dsh` | `/devflow "<需求>"` |
-| Hermes Agent | `npx -y loopforge-cli@latest skills install hermes`，然后 `hermes skills trust .` | `/devflow "<需求>"` |
+| CodeBuddy | `npx -y loopforge-cli@X.Y.Z install codebuddy` | `/start-devflow "<需求>"` |
+| Codex | `npx -y loopforge-cli@X.Y.Z install codex` | `$devflow-codex "<需求>"` |
+| Cursor | `npx -y loopforge-cli@X.Y.Z install cursor` | `/start-devflow "<需求>"` |
+| Claude Code | `npx -y loopforge-cli@X.Y.Z install claude` | `/start-devflow "<需求>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | `/devflow "<需求>"` |
+| Hermes Agent | `npx -y loopforge-cli@X.Y.Z skills install hermes`，然后 `hermes skills trust .` | `/devflow "<需求>"` |
 
 以 Claude Code 为例：
 
 ```bash
-npx -y loopforge-cli@latest install claude
-npx -y loopforge-cli@latest status claude
+npx -y loopforge-cli@X.Y.Z install claude
+npx -y loopforge-cli@X.Y.Z status claude
 ```
 
 ```text
 /start-devflow "为订单列表增加状态筛选，并补充接口测试"
 ```
 
-任何宿主都可以用 `npx -y loopforge-cli@latest status <agent>` 检查安装状态。如果安装或运行遇到问题，执行环境诊断：
+任何宿主都可以用 `npx -y loopforge-cli@X.Y.Z status <agent>` 检查安装状态。如果安装或运行遇到问题，执行环境诊断：
 
 ```bash
-npx -y loopforge-cli@latest doctor
+npx -y loopforge-cli@X.Y.Z doctor
 ```
 
 Pi、DeepSeek Harness 和 Hermes Agent 通过 [Portable Edition](#portable-edition) 支持。DSH 还可以安装[可选插件](../../local/dsh-plugin/README.md)，提供任务控制、状态、产物和人工审批入口。Hermes 使用项目级 `.hermes/skills/` 和 `delegate_task`，不会修改 `~/.hermes/config.yaml`；需要独立命令时可安装[可选 Hermes 插件](../../local/hermes-plugin/README.md)，提供 `/loopforge status`、`/loopforge result` 和 `/loopforge approve`。
@@ -130,26 +139,28 @@ LoopForge 尤其适合这些任务：
 
 ## Portable Edition
 
-“快速开始”安装的 Classic Edition 适合大多数用户。如果只希望安装基于 Agent Skills 的可移植工作流，可以使用 Portable Edition。为避免同一个 Coding Agent 同时加载两套工作流，以及状态和产物相互冲突，LoopForge 在每个项目中只允许为同一 Coding Agent 启用一种 Edition。如需切换，可重新安装并添加 `--force`。
+使用基于 Agent Skills 的可移植工作流时，选择 Portable Edition。为避免同一个 Coding Agent 同时加载两套工作流，以及状态和产物相互冲突，LoopForge 在每个项目中只允许为同一 Coding Agent 启用一种 Edition。如需切换，可重新安装并添加 `--force`。
 
 | Agent | 安装 | 启动工作流 |
 | --- | --- | --- |
-| CodeBuddy | `npx -y loopforge-cli@latest skills install codebuddy` | `/devflow "<需求>"` |
-| Codex | `npx -y loopforge-cli@latest skills install codex` | `$devflow "<需求>"` |
-| Cursor | `npx -y loopforge-cli@latest skills install cursor` | `/devflow "<需求>"` |
-| Claude Code | `npx -y loopforge-cli@latest skills install claude` | `/devflow "<需求>"` |
-| Pi | `npx -y loopforge-cli@latest skills install pi`，然后 `pi install npm:pi-subagents` | `/skill:devflow "<需求>"` |
-| DeepSeek Harness | `npx -y loopforge-cli@latest skills install dsh` | `/devflow "<需求>"` |
-| Hermes Agent | `npx -y loopforge-cli@latest skills install hermes`，然后 `hermes skills trust .` | `/devflow "<需求>"`（可选插件：`/loopforge`） |
+| CodeBuddy | `npx -y loopforge-cli@X.Y.Z skills install codebuddy` | `/devflow "<需求>"` |
+| Codex | `npx -y loopforge-cli@X.Y.Z skills install codex` | `$devflow "<需求>"` |
+| Cursor | `npx -y loopforge-cli@X.Y.Z skills install cursor` | `/devflow "<需求>"` |
+| Claude Code | `npx -y loopforge-cli@X.Y.Z skills install claude` | `/devflow "<需求>"` |
+| Pi | `npx -y loopforge-cli@X.Y.Z skills install pi`，然后 `pi install npm:pi-subagents` | `/skill:devflow "<需求>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | `/devflow "<需求>"` |
+| Hermes Agent | `npx -y loopforge-cli@X.Y.Z skills install hermes`，然后 `hermes skills trust .` | `/devflow "<需求>"`（可选插件：`/loopforge`） |
 
 完整边界和目录说明见 [Classic / Portable 说明](editions.md)。
 
 ## 更新与卸载
 
-如果希望长期使用，可以全局安装 CLI：
+切换到平台 MCP 或卸载 Local 前，先备份项目中的 `artifacts/`、`.devflow/`，以及自定义 Skill 和 Agent 配置，留作本地运行记录。仍在进行的任务可以用原来的 Local 版本继续或恢复。
+
+管理已有的 Local 安装时，可以全局安装同一版本的 CLI。
 
 ```bash
-npm install --global loopforge-cli
+npm install --global loopforge-cli@X.Y.Z
 ```
 
 之后用上面的宿主名（`codebuddy`、`codex`、`cursor`、`claude`，Portable Edition 另有 `pi`、`dsh` 和 `hermes`）维护安装：
@@ -168,7 +179,7 @@ loopforge skills uninstall <agent>
 
 安装状态保存在 `.devflow/install-state.json`。检测到用户修改或文件冲突时，更新会停止而不是覆盖。只有在确认要替换冲突文件或切换 Edition 时才使用 `--force`，建议先运行 `loopforge plan` 检查变更。
 
-如果已经克隆本仓库，也可以在仓库根目录从当前源码安装：
+要从历史发布版本的源码安装，先检出对应的 tag，再在仓库根目录执行以下命令。
 
 ```bash
 pipx install ./local

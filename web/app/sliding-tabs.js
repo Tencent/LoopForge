@@ -41,6 +41,7 @@
     ['.collab-dock-tabs:not(.collab-overview-head)', '.active', ':scope > [role="tab"]'],
     ['.collab-browser-tabs', '.active', ':scope > [role="tab"]'],
     ['.upp-theme-seg', '.active'],
+    ['.lang-switch', '.active'],
     ['.req-steps', '[aria-selected="true"]'],
   ];
   const same = (a, b) => a && b && ['x', 'y', 'width', 'height', 'opacity'].every(key => a[key] === b[key]);

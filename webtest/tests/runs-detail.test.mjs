@@ -42,8 +42,8 @@ test('run detail loads logs, telemetry, preview, workspace, evaluation, and chil
     changes: [{ path: 'web/app.js', index: 'M', worktree: 'M' }],
   });
   app.router.get('/api/runs/run-1/eval', {
-    id: 'eval-1', status: 'completed', score: 88, summary: 'Strong result',
-    recommendations: [{ id: 'rec-1', title: 'Add regression test', type: 'workflow', applied: false }],
+    id: 'eval-1', status: 'succeeded', score: 88, passed: true,
+    result: { summary: 'Strong result', recommendations: [{ id: 'rec-1', title: 'Add regression test' }] },
   });
 
   app.evaluate(`state.data.runs=[${JSON.stringify(run)}];state.selectedRun='run-1';state.activeRun=state.data.runs[0]`);
@@ -60,6 +60,162 @@ test('run detail loads logs, telemetry, preview, workspace, evaluation, and chil
     await settle(2);
   }
   assert.match(app.document.querySelector('#runsView').textContent, /Implemented|Strong result|Report|2400|2\.4k/i);
+});
+
+for (const entry of ['showRunDetail', 'applyRunPayload']) {
+  test(`${entry} shows the failure reason for an unbound auto-assigned run`, async (t) => {
+    const app = await loadApp();
+    t.after(app.close);
+    const workflow = app.evaluate('structuredClone(state.data.workflows[0])');
+    const reason = '兼容的项目执行机器已离线超过 2 分钟，请启动执行机器后重试';
+    const run = {
+      id: 'run-1', workflowId: workflow.id, workflowSnapshot: workflow,
+      status: 'failed', admissionState: 'unstarted', revision: 2,
+      createdAt: '2026-11-25T10:00:00Z', queueEnteredAt: '2026-11-25T10:00:00Z', updatedAt: '2026-11-25T10:03:01Z',
+      // The API omits executionMode when the run is unbound.
+      executionContext: { projectId: workflow.projectId, executionPool: 'project-auto' },
+      nodes: Object.fromEntries(workflow.nodes.map(({ id }) => [id, { nodeId: id, status: 'pending', attempt: 0 }])),
+      events: [{ id: 'adm-2', runId: 'run-1', type: 'run.failed', message: reason, timestamp: '2026-11-25T10:03:01Z' }],
+    };
+    const live = entry === 'applyRunPayload';
+    const initial = live ? { ...run, status: 'queued', admissionState: 'queued', revision: 1, events: null } : run;
+    const summary = { ...initial, workflowSnapshot: { id: workflow.id, name: workflow.name, nodes: null }, events: null };
+    app.router.get('/api/runs/run-1', initial);
+    app.evaluate(`state.data.runs=[${JSON.stringify(summary)}];switchView('runs');showRunDetail('run-1')`);
+    await settle(8);
+
+    if (live) {
+      const stream = app.evaluate('state.runStream');
+      const update = { ...run, executionContext: { ...run.executionContext, executionMode: '' } };
+      stream.emit({ run: update, telemetryDelta: [], logDelta: [] }, 'run');
+    }
+    const callout = app.document.querySelector('#runDetail .run-detail-header + .approval-callout');
+    assert.equal(callout?.querySelector('b')?.textContent, '自动分配失败');
+    assert.equal(callout.querySelector('p').textContent, reason);
+    assert.equal(callout.closest('[hidden]'), null);
+  });
+}
+
+test('live run redraws keep the current IDE document until the workspace is recycled', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'),
+    status: 'running',
+    workflowSnapshot: {
+      ...app.evaluate('structuredClone(state.data.workflows[0])'),
+      autoSelectSandbox: true, sandboxProfileId: 'project-toolchain',
+    },
+    nodes: {
+      'node-1': { status: 'succeeded', gateResult: { decision: 'pass' } },
+      'node-2': { status: 'running' },
+    },
+  };
+  const workspacePath = '/api/runs/run-1/workspace';
+  app.router.get('/api/runs/run-1', run);
+  app.router.get(workspacePath, { available: true, readOnly: false });
+  app.evaluate('state.data.runs=[' + JSON.stringify(run) + "];switchView('runs');showRunDetail('run-1')");
+  await settle(8);
+  const detail = app.document.querySelector('#runDetail');
+  detail.querySelector('[data-run-node="node-1"]').click();
+  detail.querySelector('[data-run-tab="workspace"]').click();
+  await settle(8);
+
+  const header = detail.querySelector('.run-detail-header');
+  const frame = detail.querySelector('[data-vscode-frame]');
+  const frameWindow = frame.contentWindow;
+  assert.ok(frameWindow);
+  const stream = app.evaluate('state.runStream');
+  const sandbox = header.querySelector('[data-run-sandbox]');
+  assert.equal(sandbox.title, 'project-toolchain');
+  const events = [{ type: 'sandbox.selected', message: 'Agent 选择沙箱 project-toolchain' }];
+  stream.emit({ run: { ...run, revision: 2, events } }, 'run');
+  assert.equal(detail.querySelector('.run-detail-header'), header, 'a passed gate needs no prompt');
+  assert.equal(sandbox.title, events[0].message);
+
+  const withOutput = {
+    ...run,
+    revision: 3,
+    nodes: {
+      ...run.nodes,
+      'node-1': { ...run.nodes['node-1'], output: 'New result' },
+    },
+  };
+  stream.emit({ run: withOutput }, 'run');
+  assert.notEqual(detail.querySelector('.run-detail-header'), header, 'new output redraws details');
+  assert.equal(detail.querySelector('.node-output pre').textContent, 'New result');
+  assert.equal(detail.querySelector('[data-vscode-frame]'), frame);
+  assert.ok(frame.contentWindow === frameWindow, 'detail redraw keeps the IDE browsing context');
+
+  app.evaluate('renderWorkspacePane(state.activeRun)');
+  assert.ok(frame.contentWindow === frameWindow, 'workspace render keeps the IDE browsing context');
+
+  app.router.get(workspacePath, { available: false, reason: '工作区已回收' });
+  stream.emit({ run: { ...withOutput, revision: 4, workspaceCleanedAt: '2026-11-23T08:00:00Z' } }, 'run');
+  await settle(8);
+  assert.equal(detail.querySelector('[data-vscode-frame]'), null);
+  assert.match(detail.querySelector('[data-run-pane="workspace"]').textContent, /工作区已回收/);
+});
+
+test('reopening a completed child workspace checks the owner and keeps a healthy IDE', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'),
+    status: 'succeeded',
+    executionContext: { projectId: 'p-1', parentRunId: 'parent', workspaceRunId: 'parent' },
+  };
+  const workspacePath = '/api/runs/run-1/workspace';
+  const restorePath = workspacePath + '/restore';
+  const active = { available: true, readOnly: true };
+  let info = active;
+  app.router.get('/api/runs/run-1', run);
+  app.router.get(workspacePath, () => info);
+  app.evaluate('state.data.runs=[' + JSON.stringify(run) + "];switchView('runs');showRunDetail('run-1')");
+  await settle(8);
+  const detail = app.document.querySelector('#runDetail');
+  const overview = detail.querySelector('[data-run-tab="overview"]');
+  const workspace = detail.querySelector('[data-run-tab="workspace"]');
+  const frame = () => detail.querySelector('[data-vscode-frame]');
+  workspace.click();
+  await settle();
+  const initialFrame = frame();
+  assert.ok(initialFrame);
+  const initialWindow = initialFrame.contentWindow;
+
+  overview.click();
+  let finishRefresh;
+  info = new Promise((resolve) => { finishRefresh = resolve; });
+  workspace.click();
+  assert.equal(app.router.calls.filter((call) => call.path === workspacePath).length, 2);
+  assert.equal(frame().contentWindow, initialWindow);
+  finishRefresh(active);
+  await settle();
+  assert.equal(frame(), initialFrame);
+  assert.equal(frame().contentWindow, initialWindow);
+
+  overview.click();
+  info = { available: false, restorable: true, reason: '工作区已回收' };
+  let finishRestore;
+  app.router.post(restorePath, () => new Promise((resolve) => { finishRestore = resolve; }));
+  workspace.click();
+  await settle();
+  assert.equal(frame(), null);
+  assert.match(detail.querySelector('[data-run-pane="workspace"]').textContent, /正在恢复工作区/);
+  assert.equal(app.router.calls.filter((call) => call.path === restorePath).length, 1);
+  info = active;
+  finishRestore({ restored: true });
+  await settle(8);
+  assert.ok(frame());
+
+  overview.click();
+  info = { available: false, restorable: false, reason: '远程执行机器当前离线或工作区通道不可用' };
+  workspace.click();
+  await settle();
+  assert.equal(frame(), null);
+  assert.match(detail.querySelector('[data-run-pane="workspace"]').textContent, /远程执行机器当前离线/);
+  assert.equal(detail.querySelector('[data-workspace-restore]').hidden, true);
+  assert.equal(app.router.calls.filter((call) => call.path === restorePath).length, 1);
 });
 
 test('run detail node topology renders an icon glyph instead of undefined', async (t) => {

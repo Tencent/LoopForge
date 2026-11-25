@@ -153,7 +153,9 @@ func TestBrowserViewOperationsWithFakeCDP(t *testing.T) {
 	ctxDone, cancel := context.WithCancel(ctx)
 	cancel()
 	view.waitFrame(ctxDone, 99, 10)
+	view.mu.Lock()
 	view.session = ""
+	view.mu.Unlock()
 	if err := view.pageCall(ctx, "x", nil); err == nil {
 		t.Fatal("page call without session")
 	}

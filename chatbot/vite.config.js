@@ -6,7 +6,19 @@ export default defineConfig({
   base: "/chatbot/",
   plugins: [react()],
   css: { postcss: { plugins: [scopeChatCSS()] } },
-  build: { outDir: "../web/native-chat", emptyOutDir: true, rollupOptions: { output: { entryFileNames: "assets/workbench.js", assetFileNames: (asset) => asset.names?.some((name) => name.endsWith(".css")) ? "assets/workbench.css" : "assets/[name]-[hash][extname]" } } },
+  build: {
+    outDir: "../web/native-chat", emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: new URL("./index.html", import.meta.url).pathname,
+        "prompt-editor": new URL("./src/prompt-editor-entry.jsx", import.meta.url).pathname,
+      },
+      output: {
+        entryFileNames: (chunk) => chunk.name === "prompt-editor" ? "prompt-editor.js" : "assets/workbench.js",
+        assetFileNames: (asset) => asset.names?.some((name) => name.endsWith(".css")) ? "assets/workbench.css" : "assets/[name]-[hash][extname]",
+      },
+    },
+  },
   server: {
     port: 18769,
     proxy: {

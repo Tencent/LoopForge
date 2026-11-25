@@ -13,6 +13,8 @@ import (
 	"strings"
 )
 
+var studioReleaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
+
 var studioAssetRef = regexp.MustCompile(`((?:href|src)=")(/[^"]+\.(?:js|css))(\?v=[^"]*)?(")`)
 
 func stampStudioIndex(static fs.FS, raw []byte) []byte {
@@ -42,6 +44,10 @@ func stampStudioIndex(static fs.FS, raw []byte) []byte {
 	if domain != "" && strings.Contains(html, "</head>") {
 		tag := fmt.Sprintf(`<meta name="agentflow-app-domain" content="%s"></head>`, htmlpkg.EscapeString(domain))
 		html = strings.Replace(html, "</head>", tag, 1)
+	}
+	if version := strings.TrimSpace(os.Getenv("LOOPFORGE_RELEASE_VERSION")); studioReleaseVersion.MatchString(version) {
+		meta := fmt.Sprintf(`<meta name="loopforge-release-version" content="%s"></head>`, version)
+		html = strings.Replace(html, "</head>", meta, 1)
 	}
 	html = injectBuildCommit(html)
 	return []byte(html)
@@ -102,7 +108,9 @@ func studioFileServer(static fs.FS) http.Handler {
 	native, _ := fs.Sub(static, "native-chat")
 	nativeFiles := http.StripPrefix("/chatbot/", http.FileServer(http.FS(native)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/chatbot/" || r.URL.Path == "/chatbot/index.html" || r.URL.Path == "/chatbot" {
+		// Embedded surfaces (the SOP orchestrator panel) still render the
+		// standalone chat app; only the old workbench entry redirects.
+		if (r.URL.Path == "/chatbot/" || r.URL.Path == "/chatbot/index.html" || r.URL.Path == "/chatbot") && r.URL.Query().Get("surface") == "" {
 			query := r.URL.Query()
 			session := query.Get("session")
 			issue := query.Get("issueId")

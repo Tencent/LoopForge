@@ -863,22 +863,22 @@ func TestRemoteWorkspaceEditing(t *testing.T) {
 		for message := range conn.send {
 			req := message.WorkspaceRequest
 			if req.Path == "remote-error.txt" {
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Error: "remote rejected"})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Error: "remote rejected"})
 				continue
 			}
 			if req.Path == "invalid-response.txt" {
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Payload: []byte(`{`)})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Payload: []byte(`{`)})
 				continue
 			}
 			if req.Terminal != nil && req.Terminal.Data == "fail" {
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Error: "terminal rejected"})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Error: "terminal rejected"})
 				continue
 			}
 			payload := []byte(`{"sha256":"remote-sha"}`)
 			if req.Operation == domain.RunnerWorkspaceOperationTerminal {
 				payload = []byte(`{"id":"terminal-one","ok":true}`)
 			}
-			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload})
+			hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload})
 		}
 	}()
 	t.Cleanup(func() {
@@ -1021,17 +1021,23 @@ func TestRunnerAdditionalSuccessAndDecodePaths(t *testing.T) {
 	if rec := cvBRequest(t, f, http.MethodGet, "/api/runners?mine=1", nil, true); rec.Code != http.StatusOK {
 		t.Fatalf("mine = %d: %s", rec.Code, rec.Body.String())
 	}
+	bind := cvBRequest(t, f, http.MethodPost, "/api/runners/bind-codes", nil, true)
+	var issued struct{ Code string }
+	if bind.Code != http.StatusOK || json.Unmarshal(bind.Body.Bytes(), &issued) != nil || issued.Code == "" {
+		t.Fatalf("issue bind code: %d %s", bind.Code, bind.Body.String())
+	}
 	reregister := requestWithHeaders(t, f.h, http.MethodPost, "/runners/register", map[string]any{
 		"runnerId": runnerID, "name": "updated", "maxConcurrency": 0,
 		"runtimes": []domain.RunnerRuntime{{Provider: "codebuddy", Status: domain.RuntimeStatusOnline}},
-	}, map[string]string{"X-Bootstrap-Token": "boot-secret"})
+	}, map[string]string{"X-Bootstrap-Token": issued.Code})
 	if reregister.Code != http.StatusOK {
 		t.Fatalf("reregister = %d: %s", reregister.Code, reregister.Body.String())
 	}
 	var rotated struct {
+		RunnerID     string `json:"runnerId"`
 		SessionToken string `json:"sessionToken"`
 	}
-	if json.Unmarshal(reregister.Body.Bytes(), &rotated) != nil || rotated.SessionToken == "" {
+	if json.Unmarshal(reregister.Body.Bytes(), &rotated) != nil || rotated.RunnerID != runnerID || rotated.SessionToken == "" || rotated.SessionToken == session {
 		t.Fatalf("rotated session: %s", reregister.Body.String())
 	}
 	auth = map[string]string{"Authorization": "Bearer " + rotated.SessionToken}
@@ -1115,7 +1121,7 @@ func TestRunnerAdditionalSuccessAndDecodePaths(t *testing.T) {
 func TestCatalogWorkflowOperations(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	const sandboxID = "cvb-r2-ops-sandbox"
-	if err := f.s.PutSandbox(domain.SandboxProfile{ID: sandboxID, Name: "Ops sandbox", ProjectID: "platform", Driver: "local"}); err != nil {
+	if err := f.s.PutSandbox(domain.SandboxProfile{ID: sandboxID, Name: "Ops sandbox", ProjectID: "platform", Driver: "native"}); err != nil {
 		t.Fatal(err)
 	}
 	makeWorkflow := func(id string) domain.WorkflowDefinition {
@@ -1170,7 +1176,7 @@ func TestCloseRemoteWorkspaceResponseErrors(t *testing.T) {
 	h := &runsHandlers{deps: &deps{repo: f.s, engine: f.e}, runnerControls: hub}
 	go func() {
 		message := <-conn.send
-		hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Error: "cannot close"})
+		hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Error: "cannot close"})
 	}()
 	if err := h.closeWorkspaceTerminals(context.Background(), run, f.user.ID); err == nil {
 		t.Fatal("runner close response error accepted")

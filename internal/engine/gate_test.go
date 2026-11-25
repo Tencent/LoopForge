@@ -60,7 +60,7 @@ func TestGateExecutionScopeIsExplicit(t *testing.T) {
 		{ID: "git", Name: "git", Mode: "command", Required: true, ExecutionScope: domain.ExecutionScopeRepositories, Commands: []string{`git rev-parse --is-inside-work-tree`}},
 	})
 	wf := domain.WorkflowDefinition{
-		ID: "explicit-gate-scope", Name: "explicit gate scope", SandboxProfileID: "local",
+		ID: "explicit-gate-scope", Name: "explicit gate scope", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{
 				ID: "mark", Name: "Mark", Type: "script", ScriptLanguage: "shell",
@@ -127,7 +127,7 @@ func TestRunScopedGitGateDoesNotEnterCheckout(t *testing.T) {
 		Commands:       []string{`git rev-parse --is-inside-work-tree`},
 	}})
 	wf := domain.WorkflowDefinition{
-		ID: "run-git-gate", Name: "run git gate", SandboxProfileID: "local",
+		ID: "run-git-gate", Name: "run git gate", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "prepare", Name: "Prepare", Type: "script", ScriptLanguage: "shell", Script: "printf 'ok\\n' > note.md", MaxAttempts: 1},
 			{ID: "check", Name: "Check", Type: "agent", AgentID: "run-git-validator", ExecutorID: "mock", MaxAttempts: 1},

@@ -1,11 +1,12 @@
 // Runs without a personal execution machine: on deployments whose cloud
 // runner pool covers the e2e project they execute on the platform's builtin
 // runner, otherwise on the control-plane host. Either way the nodes of one
-// run share a sandbox, so state left outside the workspace by one node is
-// visible to the next.
+// run share a sandbox, so state one node leaves in it is visible to the next.
+// A native sandbox gives every command a private /tmp, so there the state is
+// left in the workspace; a container keeps it in its /tmp.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { get, cleanup, ensureProject, waitRun, nodeStatus } from '../lib/api.mjs';
+import { get, list, cleanup, ensureProject, waitRun, nodeStatus } from '../lib/api.mjs';
 import { cfg } from '../lib/env.mjs';
 import { createWorkflow, script, startRun } from '../lib/fixtures.mjs';
 
@@ -17,7 +18,8 @@ before(async () => {
 after(cleanup);
 
 test('cloud path: nodes of one run share the sandbox and the run succeeds', async () => {
-  const marker = `/tmp/af-e2e-${Date.now()}`;
+  const sandbox = list(await get('/api/sandboxes')).find(s => s.id === cfg.sandbox);
+  const marker = `${sandbox?.driver === 'native' ? '.' : '/tmp/'}af-e2e-${Date.now()}`;
   const wf = await createWorkflow('cloud-shared-sandbox', [
     script('first', `printf shared > ${marker} && printf 'first\\n' > first.md`, {
       artifactOutputs: [{ name: 'first', path: 'first.md', mediaType: 'text/markdown', required: true }],

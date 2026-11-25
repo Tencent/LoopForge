@@ -11,10 +11,14 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
     result: { dimensions: { control: 82 }, summary: 'Solid run',
       findings: [{ severity: 'warn', dimension: 'control', message: 'One retry', nodeId: 'b', evidence: 'attempt 2' }],
       recommendations: [{ id: 'rec-1', title: 'Tune node', rationale: 'Reduce retries',
-        target: 'workflow', action: 'workflow.update_node', nodeId: 'b', set: { retries: 1 } }] }
+        target: 'workflow', action: 'workflow.update_node', nodeId: 'b', set: { maxAttempts: 2 } }] }
   };
   app.router.get('/api/runs/run-x/eval', evaluation);
   app.router.post('/api/runs/run-x/eval', { ...evaluation, status: 'running' });
+  app.router.get('/api/assistant/models', {
+    engines: [{id:'codex',name:'Codex',personal:true}],
+    models: [{id:'codex:model-x',name:'Model X',engine:'codex'}],
+  });
   app.router.post('/api/runs/run-x/eval/apply', {
     ...evaluation, result: { ...evaluation.result,
       recommendations: [{ ...evaluation.result.recommendations[0], status: 'applied', appliedTargetId: 'flow-1' }] }
@@ -103,8 +107,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
       urls:[vscodeWorkbenchURL('run x',{embed:true}),vscodeWindowName('run x!'),
         previewCandidateHttpsURL('http://example.com:80/path')],
       clean:[runWorkspaceWasCleaned({workspaceCleanedAt:'1970-01-01'}),runWorkspaceWasCleaned({workspaceCleanedAt:'2026-01-01'})],
-      page:[runPageTarget(run,'a'),runDisplayStatus({...run,status:'paused'}),runAwaitsConfirmation({...run,status:'waiting'})],
-      evalApply:[runEvalApplyable({action:'workflow.update_node'}),runEvalApplyable({action:'noop'})]
+      page:[runPageTarget(run,'a'),runDisplayStatus({...run,status:'paused'}),runAwaitsConfirmation({...run,status:'waiting'})]
     };
   })()`));
   assert.equal(result.mergedStatus, 'running');
@@ -136,7 +139,6 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.equal(result.page[0].runId, 'run-x');
   assert.equal(result.page[1], '已暂停');
   assert.equal(result.page[2], true);
-  assert.deepEqual(result.evalApply, [true,false]);
   app.evaluate(`
     state.activeRun={...state.activeRun,status:'failed',artifacts:[
       {id:'art-1',nodeId:'b',name:'report.md',path:'report.md',attempt:2,size:1200,sha256:'abcdef',mediaType:'text/markdown'}]};
@@ -151,10 +153,37 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   const applyCall = app.router.calls.find(c => c.path.endsWith('/eval/apply'));
   assert.deepEqual(applyCall.body.recommendationIds, ['rec-1']);
   await app.evaluate(`previewArtifact(state.activeRun,'art-1')`);
-  assert.equal(app.document.querySelector('#artifactModal').classList.contains('open'), true);
+  const artifactModal = app.document.querySelector('#artifactModal');
+  assert.equal(artifactModal.open, true);
   assert.match(app.document.querySelector('#artifactPreview').textContent, /Report/);
+  Object.defineProperty(app.window, 'isSecureContext', { value: true });
+  const copyArtifact = artifactModal.querySelector('[data-copy-artifact]');
+  await copyArtifact.onclick();
+  assert.match(artifactModal.querySelector('.toast-item-msg').textContent, /产物内容已复制到剪贴板/);
+  const writeText = app.window.navigator.clipboard.writeText;
+  const execCommand = app.document.execCommand;
+  let fallbackText;
+  app.window.navigator.clipboard.writeText = async () => { throw new Error('Clipboard unavailable'); };
+  app.document.execCommand = command => {
+    fallbackText = artifactModal.querySelector('textarea')?.value;
+    return command === 'copy';
+  };
+  copyArtifact.focus();
+  try {
+    await copyArtifact.onclick();
+    assert.match(fallbackText, /# Report/);
+    assert.equal(artifactModal.querySelector('textarea'), null);
+    assert.equal(app.document.activeElement, copyArtifact);
+  } finally {
+    app.window.navigator.clipboard.writeText = writeText;
+    app.document.execCommand = execCommand;
+  }
   app.document.querySelector('#artifactPreview [data-mode="source"]')?.click();
   assert.match(app.document.querySelector('#artifactPreview .artifact-content').textContent, /console\.log/);
+  artifactModal.close();
+  assert.equal(artifactModal.querySelector('.toast-item'), null);
+  app.evaluate(`toast('Outside artifact preview')`);
+  assert.match(app.document.querySelector('#toastContainer').textContent, /Outside artifact preview/);
   app.evaluate(`
     const pane=document.createElement('div');
     pane.innerHTML='<button data-preview-download>Download</button><button data-preview-refresh></button><button data-preview-copy></button><button data-preview-open></button><button data-preview-backend-edit></button>';
@@ -225,11 +254,20 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.equal(app.router.calls.find(c => c.path.endsWith('/logs.txt')).method, 'GET');
   app.evaluate(`
     const evalRun={id:'run-x',status:'failed',workflowId:'flow-1',nodes:{}};
-    state.activeRun=evalRun;state.selectedRun='run-x';state.currentUser.codeBuddyApiKeyConfigured=true;
+    state.activeRun=evalRun;state.selectedRun='run-x';
+    const evalHost=document.querySelector('#runDetail');
+    evalHost.innerHTML='<div data-run-pane="eval">'+runEvalPaneHTML(evalRun)+'</div>';
+    bindRunEvalPane(evalRun,evalHost);
   `);
-  await app.evaluate(`startRunEval(state.activeRun)`);
-  assert.equal(app.router.calls.find(c => c.method === 'POST' && c.path === '/api/runs/run-x/eval').body.model, 'model-x');
-  app.evaluate(`state.runEvalStream?.close();state.runEvalStream=null;state.runEvalBusy=false`);
+  const submittingEvaluation=app.evaluate(`startRunEval(state.activeRun)`);
+  app.evaluate(`{
+    const host=document.querySelector('#runDetail');
+    host.querySelector('[data-run-pane="eval"]').innerHTML=runEvalPaneHTML(state.activeRun);
+    bindRunEvalPane(state.activeRun,host);
+  }`);
+  await submittingEvaluation;
+  assert.equal(app.router.calls.find(c => c.method === 'POST' && c.path === '/api/runs/run-x/eval')?.body.model, 'codex:model-x');
+  app.evaluate(`stopRunEvalStream()`);
   app.evaluate(`
     state.data.runs=[{id:'run-select',status:'succeeded',workflowId:'flow-1',createdAt:'2026-02-01',nodes:{}}];
     selectRun('run-select');

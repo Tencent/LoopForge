@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,7 +12,7 @@ import (
 
 // BindGitSSH keeps the SSH agent alive for exactly one command. Only the
 // public configuration and socket are visible in the sandbox's control dir.
-func BindGitSSH(sandbox Sandbox, workspace string, environment map[string]string, keys map[string]string) (func(), error) {
+func BindGitSSH(ctx context.Context, sandbox Sandbox, workspace string, environment map[string]string, keys map[string]string) (func(), error) {
 	if len(keys) == 0 {
 		return func() {}, nil
 	}
@@ -24,24 +25,24 @@ func BindGitSSH(sandbox Sandbox, workspace string, environment map[string]string
 		clientRoot = "/workspace/.agentflow/runtime"
 	}
 	environment["GIT_ALLOW_PROTOCOL"] = gitwork.AllowedProtocols
-	return gitwork.StartSSH(environment, keys, root, clientRoot)
+	return gitwork.StartSSH(ctx, environment, keys, root, clientRoot)
 }
 
-func bindCommandGitSSH(sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (func(), error) {
+func bindCommandGitSSH(ctx context.Context, sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (func(), error) {
 	if slices.Contains(command.CredentialBindings, BindGitWorkspace) {
-		return bindWorkspaceGitSSH(sandbox, filepath.Clean(workspace), command.environment, credentials.GitSSHHostKeys)
+		return bindWorkspaceGitSSH(ctx, sandbox, filepath.Clean(workspace), command.environment, credentials.GitSSHHostKeys)
 	}
 	if !slices.Contains(command.CredentialBindings, BindGit) {
 		return func() {}, nil
 	}
-	return BindGitSSH(sandbox, filepath.Clean(workspace), command.environment, credentials.GitSSHKeys)
+	return BindGitSSH(ctx, sandbox, filepath.Clean(workspace), command.environment, credentials.GitSSHKeys)
 }
 
 // bindWorkspaceGitSSH starts the requester's SSH agent for every configured
 // host for as long as the workspace CLI runs. A host the administrator has not
 // pinned in the known hosts file cannot be used; SSH then fails with that
 // reason while HTTPS with the Git Token keeps working.
-func bindWorkspaceGitSSH(sandbox Sandbox, workspace string, environment map[string]string, keys map[string]string) (func(), error) {
+func bindWorkspaceGitSSH(ctx context.Context, sandbox Sandbox, workspace string, environment map[string]string, keys map[string]string) (func(), error) {
 	if len(keys) == 0 {
 		return func() {}, nil
 	}
@@ -54,7 +55,7 @@ func bindWorkspaceGitSSH(sandbox Sandbox, workspace string, environment map[stri
 		clientRoot = "/workspace/.agentflow/runtime"
 	}
 	environment["GIT_ALLOW_PROTOCOL"] = gitwork.AllowedProtocols
-	stop, err := gitwork.StartSSHHosts(environment, keys, root, clientRoot)
+	stop, err := gitwork.StartSSHHosts(ctx, environment, keys, root, clientRoot)
 	if err != nil {
 		environment["GIT_SSH_VARIANT"] = "ssh"
 		environment["GIT_SSH_COMMAND"] = "sh -c 'echo " + shellSingleQuoted("个人 Git SSH 密钥不可用："+err.Error()+"；可改用 HTTPS 地址（使用个人 Git Token）") + " >&2; exit 1' --"
@@ -84,7 +85,7 @@ const terminalGitSSHUnavailable = `sh -c 'echo "当前工作区环境无法把�
 //   - docker, seatbelt and anything else share one filesystem view among all
 //     processes of the workspace, so the requester's key is not offered and
 //     SSH remotes fail with a hint to use the platform's submit/push.
-func BindTerminalGitSSH(sandbox Sandbox, command *CommandSpec, keys map[string]string) (func(), error) {
+func BindTerminalGitSSH(ctx context.Context, sandbox Sandbox, command *CommandSpec, keys map[string]string) (func(), error) {
 	if len(keys) == 0 {
 		return func() {}, nil
 	}
@@ -106,7 +107,7 @@ func BindTerminalGitSSH(sandbox Sandbox, command *CommandSpec, keys map[string]s
 		_ = os.RemoveAll(root)
 		return nil, err
 	}
-	stop, err := gitwork.StartSSH(command.environment, keys, root, "")
+	stop, err := gitwork.StartSSH(ctx, command.environment, keys, root, "")
 	if err != nil {
 		_ = os.RemoveAll(root)
 		return nil, err

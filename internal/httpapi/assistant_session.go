@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -77,6 +78,7 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 		}
 	}
 	out := visibleAssistantConversations(append(append(items, shared...), projectChats...), current.ID, sharedIDs, runProjects, allowedProjects)
+	out = assistantSessionsForSurface(out, strings.TrimSpace(c.Query("surface")), strings.TrimSpace(c.Query("workflowId")), strings.TrimSpace(c.Query("projectId")), current.ID)
 	ids := make([]string, 0, len(out))
 	for _, item := range out {
 		ids = append(ids, item.ID)
@@ -183,6 +185,54 @@ func (h *assistantHandlers) archiveSession(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true})
 }
 
+func (h *assistantHandlers) renameSession(c *gin.Context) {
+	current, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(401, gin.H{"error": "请先登录"})
+		return
+	}
+	session, found := h.repo.AssistantSessionMetadata(c.Param("id"))
+	if !found || (!session.Shared && !repo.ProjectSharedAssistantSession(session) && session.UserID != current.ID) {
+		c.JSON(404, gin.H{"error": repo.ErrAssistantSessionNotFound.Error()})
+		return
+	}
+	if !h.workbenchProjectAllowed(c, session.ProjectID, current.ID) {
+		c.JSON(403, gin.H{"error": "无权修改此会话"})
+		return
+	}
+	if session.Shared {
+		c.JSON(403, gin.H{"error": repo.ErrAssistantSessionTitleLocked.Error()})
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	if title == "" {
+		c.JSON(400, gin.H{"error": "请输入会话名称"})
+		return
+	}
+	if utf8.RuneCountInString(title) > 128 {
+		c.JSON(400, gin.H{"error": "会话名称最多 128 个字符"})
+		return
+	}
+	switch err := h.repo.SetAssistantSessionTitle(session.UserID, session.ID, session.ProjectID, title); {
+	case errors.Is(err, repo.ErrAssistantSessionNotFound):
+		c.JSON(404, gin.H{"error": err.Error()})
+	case errors.Is(err, repo.ErrAssistantSessionTitleLocked):
+		c.JSON(403, gin.H{"error": err.Error()})
+	case errors.Is(err, repo.ErrAssistantSessionProjectChanged):
+		c.JSON(409, gin.H{"error": err.Error()})
+	case err != nil:
+		c.JSON(500, gin.H{"error": "保存会话名称失败"})
+	default:
+		c.JSON(200, gin.H{"title": title, "titleEdited": true})
+	}
+}
+
 // markSessionRead records the reply the reader has seen in a conversation, so
 // the history list stops marking it unread on every device. An older reply
 // is ignored: only the latest one carries a mark.
@@ -262,21 +312,24 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "对话不存在"})
 			return
 		}
-		if readOnly {
-			project, _ := h.repo.Project(item.ProjectID)
-			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
-			return
-		}
 		if !item.Shared && !readOnly {
 			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
 				if materializeWorkspaceImages(ownerID, &item) {
-					if err := saveAssistantConversation(h.repo, ownerID, item); err == nil {
+					updated := item
+					updated.TitleEdited = false
+					if err := saveAssistantConversation(h.repo, ownerID, updated); err == nil {
 						if stored, err := loadAssistantConversation(h.repo, ownerID, id); err == nil {
 							item = stored
 						}
 					}
 				}
 			}
+		}
+		item.Executor = h.forkExecutor(c, item, current.ID)
+		if readOnly {
+			project, _ := h.repo.Project(item.ProjectID)
+			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
+			return
 		}
 		if shared {
 			if run, ok := h.repo.RunState(item.RunID); ok {
@@ -292,12 +345,16 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		existing, _ := loadAssistantConversation(h.repo, ownerID, id)
 		var body struct {
 			assistantConversation
-			Effort *string `json:"effort"`
+			Effort         *string `json:"effort"`
+			ApprovalUserID int64   `json:"approvalUserId"`
 		}
-		if !decodeLimit(c, &body, assistantRequestBodyLimit) {
+		if !decodeLimit(c, &body, assistantRequestBodyLimit) || !requireAssistantApprovalUser(c, current.ID, body.ApprovalUserID) {
 			return
 		}
 		conv := body.assistantConversation
+		if conv.ProjectID == "" {
+			conv.ProjectID = existing.ProjectID
+		}
 		conv.RuntimeMode = existing.Mode()
 		conv.ExecutionTargetLocked = existing.ExecutionLocked()
 		if existing.ID != "" && existing.ExecutionLocked() {
@@ -325,14 +382,19 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			conv.SandboxProfileID = existing.SandboxProfileID
 		}
 		if existing.ID == "" && conv.SandboxProfileID != "" {
-			if _, err := h.repo.ConversationSandbox(conv.ProjectID, conv.SandboxProfileID); err != nil {
+			profile, err := h.repo.ConversationSandbox(conv.ProjectID, conv.SandboxProfileID)
+			if err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
 			}
+			conv.SandboxProfileID = profile.ID
 		}
 		conv.Effort = existing.Effort
 		if body.Effort != nil {
 			conv.Effort = *body.Effort
+		}
+		if existing.ID != "" {
+			conv.TitleEdited = false
 		}
 		if existing.ID != "" && conv.Title != "" && conv.Title != existing.Title {
 			// A client that still has the first-prompt title must not undo the
@@ -372,14 +434,19 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Title == "" {
 			conv.Title = existing.Title
 		}
-		if conv.ProjectID == "" {
-			conv.ProjectID = existing.ProjectID
-		}
 		if conv.RunID == "" {
 			conv.RunID = existing.RunID
 		}
+		if existing.ID != "" {
+			conv.ProjectCredentialIDs = existing.ProjectCredentialIDs
+		} else if len(conv.ProjectCredentialIDs) > 0 {
+			if _, ok := h.sessionProjectCredentialNames(c, conv, current.ID); !ok {
+				return
+			}
+		}
+		oldExecutor := h.forkExecutor(c, existing, current.ID)
 		if conv.Executor == "" {
-			conv.Executor = existing.Executor
+			conv.Executor = oldExecutor
 		}
 		if existing.ID != "" {
 			conv.IssueID = existing.IssueID
@@ -401,10 +468,20 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Model == "" {
 			conv.Model = existing.Model
 		}
-		editor, _ := h.repo.User(current.ID)
-		if err := validateAssistantEffort(editor, conv.Model, conv.Effort); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
+		model := assistantRequestModel(conv.Executor, conv.Model)
+		engine, modelID := assistantModelEngine(model)
+		oldEngine, oldModelID := assistantModelEngine(assistantRequestModel(oldExecutor, existing.Model))
+		// Metadata edits can keep historical settings after the model catalog changes.
+		if engine != oldEngine || modelID != oldModelID || conv.Effort != existing.Effort {
+			editor, _ := h.repo.User(current.ID)
+			if engine == assistantEngineCodeBuddy {
+				editor, _, _ = h.assistantChatUser(editor)
+			}
+			loginRunner := h.assistantLoginRunner(current.ID, conv.ExecutionTarget, engine)
+			if _, err := h.resolveAssistantTurnModel(c.Request.Context(), editor, model, conv.Effort, loginRunner); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
 		}
 		var saveErr error
 		if shared {
@@ -413,7 +490,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			saveErr = saveAssistantConversation(h.repo, ownerID, conv)
 		}
 		if saveErr != nil {
-			if errors.Is(saveErr, repo.ErrAssistantExecutionLocked) {
+			if errors.Is(saveErr, repo.ErrAssistantExecutionLocked) || errors.Is(saveErr, repo.ErrAssistantPersonalWorkspaceProject) {
 				c.JSON(409, gin.H{"error": saveErr.Error()})
 				return
 			}

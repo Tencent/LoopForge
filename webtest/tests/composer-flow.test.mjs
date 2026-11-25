@@ -8,6 +8,68 @@ function describe(app, text) {
   input.dispatchEvent(new app.window.Event('input', { bubbles: true }));
 }
 
+test('new requirements preview Markdown and retain pasted images until saved', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const $ = (s) => app.document.querySelector(s);
+  const { Event, File, URL } = app.window;
+  const released = [];
+  URL.createObjectURL = (file) => `blob:${file.name}`;
+  URL.revokeObjectURL = (url) => released.push(url);
+  const paste = (files) => {
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', { value: { files, getData: () => '' } });
+    $('#chatInput').dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  $('#newIssue').click();
+  assert.equal(paste([]), false, 'ordinary Markdown paste uses native text input');
+  const markdown = '# Checkout\n\n- Add **receipt**\n\n![Draft](/some_image_v2.png)\n\n![Unsafe](javascript:example)\n\n<script>example</script>';
+  describe(app, markdown);
+  assert.equal(paste([
+    new File(['discard'], 'discard.png', { type: 'image/png' }),
+    new File(['screenshot'], 'checkout.png', { type: 'image/png' }),
+  ]), true);
+  assert.equal(app.document.querySelectorAll('#reqImages img').length, 2);
+  $('#reqImages button').click();
+  assert.deepEqual(released, ['blob:discard.png']);
+  $('#reqPreviewToggle').click();
+  assert.equal($('#chatInput').hidden, true);
+  assert.equal($('#reqMarkdownPreview h1').textContent, 'Checkout');
+  assert.equal($('#reqMarkdownPreview li strong').textContent, 'receipt');
+  assert.match($('#reqMarkdownPreview img').src, /\/some_image_v2\.png$/);
+  assert.equal(app.document.querySelectorAll('#reqMarkdownPreview img').length, 1);
+  assert.equal($('#reqMarkdownPreview script'), null);
+  assert.equal($('#reqImages img').alt, 'checkout.png');
+
+  app.router.post('/api/issues', { error: 'Try again' }, 503);
+  $('#reqCreate').click();
+  await settle(4);
+  assert.equal($('#reqImages img').alt, 'checkout.png');
+  assert.equal($('#chatInput').value, markdown);
+  assert.match($('#toastContainer').textContent, /Try again/);
+
+  app.router.post('/api/issues', (call) => {
+    assert.equal(call.options.headers, undefined, 'the browser supplies the multipart boundary');
+    const issue = JSON.parse(call.body.get('issue'));
+    assert.equal(issue.title, 'Checkout');
+    assert.equal(issue.description, markdown);
+    assert.deepEqual(call.body.getAll('images').map((file) => file.name), ['checkout.png']);
+    const saved = { ...issue, id: 'issue-with-images' };
+    app.router.get('/api/issues/issue-with-images', {
+      issue: saved, comments: [], images: [{ id: 'image-1', name: 'checkout.png' }],
+    });
+    return { status: 200, body: saved };
+  });
+  $('#reqCreate').click();
+  await settle(6);
+  assert.equal($('#requirementModal').classList.contains('open'), false);
+  assert.deepEqual(released, ['blob:discard.png', 'blob:checkout.png']);
+  assert.equal($('.issue-description h1').textContent, 'Checkout');
+  assert.equal($('.issue-description-images img').getAttribute('src'), '/api/issues/issue-with-images/images/image-1');
+});
+
 test('the composer gates on the description and creates an undispatched issue without clarifying', async (t) => {
   const app = await loadApp();
   t.after(app.close);

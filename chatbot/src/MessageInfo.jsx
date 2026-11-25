@@ -32,8 +32,8 @@ function placeCard(trigger, card) {
   card.dataset.placement = up ? "top" : "bottom";
 }
 
-function InfoCard({ id, message, cardRef, onPointerEnter, onPointerLeave }) {
-  const info = messageInfo(message);
+function InfoCard({ id, message, sessionExecutor, cardRef, onPointerEnter, onPointerLeave }) {
+  const info = messageInfo(message, sessionExecutor);
   return (
     <section
       ref={cardRef}
@@ -79,7 +79,7 @@ function InfoCard({ id, message, cardRef, onPointerEnter, onPointerLeave }) {
   );
 }
 
-export default function MessageInfo({ message }) {
+export default function MessageInfo({ message, sessionExecutor }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const trigger = useRef(null);
@@ -177,6 +177,7 @@ export default function MessageInfo({ message }) {
             <InfoCard
               id={id.current}
               message={message}
+              sessionExecutor={sessionExecutor}
               cardRef={card}
               onPointerEnter={cancelClose}
               onPointerLeave={leave}

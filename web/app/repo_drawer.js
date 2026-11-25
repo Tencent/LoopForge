@@ -28,7 +28,7 @@ function openRepoDrawer(repoId=''){
   if(repoId&&!repo)return toast('仓库不存在或已被删除','err');
   const f=$('#repoDrawerForm');if(!f)return;
   const hasDefault=!projectNeedsDefaultRepository(project);
-  const repoAddress=repo?.provider==='ssh'?repo.cloneUrl:repo?.webUrl||repo?.cloneUrl||repo?.gongfengProjectId||'';
+  const repoAddress=globalThis.LoopForgeGitRepositoryReference(repo);
   const parsedName=parseGongfengRepoURL(repoAddress)?.name||'';
   Object.assign(repoDrawerState,{projectId,repoId:repo?.id||'',nameTouched:!!repo&&!!repo.name&&repo.name!==parsedName,saving:false,returnFocus:document.activeElement});
   f.elements.id.value=repo?.id||'';
@@ -65,7 +65,7 @@ function closeRepoDrawer(opt){
 function repoDrawerPayload(f,info){
   const existing=(state.data.repositories||[]).find(r=>r.id===repoDrawerState.repoId)||{};
   const payload={...existing,id:existing.id||undefined,projectId:repoDrawerState.projectId,provider:info.provider||'gongfeng',name:f.elements.name.value.trim()||info.name,gongfengProjectId:info.project,webUrl:info.webUrl,cloneUrl:info.cloneUrl,defaultBranch:f.elements.defaultBranch.value.trim()||'main',integrateBranch:f.elements.integrateBranch.value.trim(),localPath:f.elements.localPath.value.trim(),repoUrl:f.elements.repoUrl.value.trim()};
-  if(info.provider==='ssh'){payload.gongfengProjectId='';payload.webUrl=f.elements.webUrl.value.trim()}
+  if(['ssh','http','https'].includes(info.provider)){payload.gongfengProjectId='';payload.webUrl=f.elements.webUrl.value.trim()}
   delete payload.gitToken;if(!payload.id)delete payload.id;
   return payload;
 }
@@ -74,10 +74,8 @@ function projectNeedsDefaultRepository(project){
   return !(state.data.repositories||[]).some(r=>r.projectId===project?.id&&r.id===project?.defaultRepositoryId);
 }
 async function saveProjectDefaultRepository(project,repoId){
-  const saved=await api('/api/projects',{method:'PUT',body:JSON.stringify({...project,defaultRepositoryId:repoId})});
-  const projects=state.data.projects||[],pi=projects.findIndex(p=>p.id===project.id),next=saved&&saved.id?saved:{...project,defaultRepositoryId:repoId};
-  if(pi>=0)projects[pi]=next;
-  syncProjectDraftDefaultRepo(project.id,repoId);
+  const next=await persistProject({...project,defaultRepositoryId:repoId});
+  if(next)syncProjectDraftDefaultRepo(project.id,next.defaultRepositoryId||'');
   return next;
 }
 async function saveRepoDrawer(e){

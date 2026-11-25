@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import SopDesigner from "./SopDesigner";
+import { isDesignerSurface } from "./sop-designer.js";
 import "./styles.css";
 import "./home.css";
 import "./navigation.css";
@@ -29,6 +31,8 @@ export class Boundary extends React.Component {
     );
   }
 }
+// The workbench mounts into the platform shell and waits for it to prepare the
+// shared application state. The SOP designer keeps its standalone surface.
 function MainApplication() {
   const [ready, setReady] = useState(false);
   useEffect(() => {
@@ -45,6 +49,10 @@ function MainApplication() {
   if (!ready) return null;
   return <Boundary><App /></Boundary>;
 }
-const root = document.getElementById("chatRoot");
+const root = document.getElementById("chatRoot") || document.getElementById("root");
 if (!root) throw new Error("LoopForge chat root is missing");
-createRoot(root).render(<MainApplication />);
+if (isDesignerSurface(location.search)) {
+  createRoot(root).render(<Boundary><SopDesigner /></Boundary>);
+} else {
+  createRoot(root).render(<MainApplication />);
+}

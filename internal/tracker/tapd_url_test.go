@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func TestTAPDConfiguredWebHost(t *testing.T) {
+	t.Setenv("AGENTFLOW_TAPD_HOST", "tapd.review.test:8443")
+	const detail = "tapd.review.test:8443/tapd_fe/10000000/story/detail/1010000000100001554"
+	ref, err := ParseTAPDStoryURL("测试工作项\n" + detail)
+	if err != nil || ref.WorkspaceID != "10000000" || ref.StoryID != "1010000000100001554" || ref.Kind != "story" {
+		t.Fatalf("managed work item = %+v, %v", ref, err)
+	}
+	if got := tapdWorkItemURL(ref.WorkspaceID, ref.Kind, ref.StoryID); got != "https://"+detail {
+		t.Fatalf("managed work item URL = %s", got)
+	}
+}
+
 func TestParseTAPDStoryURLPastedText(t *testing.T) {
 	const storyURL = "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001554"
 	want := TAPDStoryRef{WorkspaceID: "10000000", StoryID: "1010000000100001554", Kind: "story"}

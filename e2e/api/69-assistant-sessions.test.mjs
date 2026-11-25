@@ -109,6 +109,16 @@ test('archive flags the conversation and can be undone', async () => {
 test('generation endpoints answer for an idle conversation', async () => {
   await api('GET', `${S}/${session.id}/generation`, undefined, { expect: 404 });
   await api('POST', `${S}/${session.id}/generation/cancel`, {}, { expect: [404, 409] });
+  // No native CLI approvals are pending without a generation.
+  assert.deepEqual(list(await get(`${S}/${session.id}/native-approvals`)), []);
+});
+
+test('runtime mode: platform is accepted, workspace needs an open workspace, unknown is refused', async () => {
+  const saved = await put(`${S}/${session.id}/mode`, { mode: 'platform' });
+  assert.equal(saved.id, session.id);
+  await api('PUT', `${S}/${session.id}/mode`, { mode: 'workspace' }, { expect: [409] });
+  await api('PUT', `${S}/${session.id}/mode`, { mode: 'ludicrous' }, { expect: [409] });
+  session = await get(`${S}/${session.id}`);
 });
 
 test('project conversations: non-members read only, members share full access', { skip: tokenBSkip }, async () => {

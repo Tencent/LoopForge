@@ -3,6 +3,7 @@ package httpapi
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
@@ -29,7 +30,10 @@ func (h *runsHandlers) workspaceEditActor(c *gin.Context) (domain.Run, int64, bo
 	return run, userID, true
 }
 
-func (h *runsHandlers) workspaceEditAccess(r *http.Request, run domain.Run) (int64, int, string) {
+// workspaceOwnerAccess is the permission to operate on the owning run's
+// workspace, including restoring its snapshot. Editing also needs the
+// coordination checks in workspaceEditAccess.
+func (h *runsHandlers) workspaceOwnerAccess(r *http.Request, run domain.Run) (int64, int, string) {
 	user, ok := h.requestUser(r, true)
 	if !ok {
 		return 0, http.StatusUnauthorized, "请先登录"
@@ -40,15 +44,23 @@ func (h *runsHandlers) workspaceEditAccess(r *http.Request, run domain.Run) (int
 		return 0, http.StatusForbidden, "无权编辑该任务工作区"
 	}
 	if engine.WorkspaceRunID(run) != run.ID {
-		return 0, http.StatusConflict, "子 SOP 共享父任务工作区，请从父任务操作"
-	}
-	// Parent/child workspace ownership needs a separate coordinated lease.
-	for _, node := range run.Nodes {
-		if node != nil && node.ChildRunID != "" {
-			return 0, http.StatusConflict, "请进入子 SOP 运行后再编辑对应工作区"
-		}
+		return 0, http.StatusConflict, "子 SOP 的共享工作区仅支持浏览"
 	}
 	return user.ID, 0, ""
+}
+
+func (h *runsHandlers) workspaceEditAccess(r *http.Request, run domain.Run) (int64, int, string) {
+	userID, status, message := h.workspaceOwnerAccess(r, run)
+	if status != 0 {
+		return userID, status, message
+	}
+	// Parent/child workspace writes need a coordinated lease.
+	for _, node := range run.Nodes {
+		if node != nil && node.ChildRunID != "" {
+			return 0, http.StatusConflict, "父子 SOP 的共享工作区仅支持浏览"
+		}
+	}
+	return userID, 0, ""
 }
 func (h *runsHandlers) workspaceTakeover(c *gin.Context) {
 	run, user, ok := h.workspaceEditActor(c)
@@ -134,6 +146,9 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 // from the task panel: platform admins, the project owner, anyone on an
 // unowned project without members, and non-viewer project members.
 func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, userID int64) bool {
+	if run.IsPersonalWorkspace() {
+		return userID > 0 && userID == run.ExecutionContext.ResponsibleUserID
+	}
 	if h.isPlatformAdmin(r) {
 		return true
 	}
@@ -154,17 +169,13 @@ func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, use
 
 func (h *runsHandlers) workspaceWritable(c *gin.Context, run domain.Run) bool {
 	// Read-only probe: never write HTTP errors here (browse handlers still return the payload).
-	if run.ID == "" || engine.WorkspaceRunID(run) != run.ID {
-		return false
-	}
-	user, ok := h.requestUser(c.Request, true)
-	if !ok {
+	if _, status, _ := h.workspaceEditAccess(c.Request, run); status != 0 {
 		return false
 	}
 	if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
 		return run.LiveWorkspace() || (run.Status == "waiting" && run.PauseRequested && !run.CancelRequested) || domain.TerminalRunStatus(run.Status)
 	}
-	return run.HumanEditable() && h.workspaceEditAllowed(c.Request, run, user.ID)
+	return run.HumanEditable()
 }
 
 func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
@@ -190,6 +201,19 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 	}
 	var result any
 	launch := func() error {
+		ctx := c.Request.Context()
+		var credentials runtime.TerminalGitCredentials
+		if req.Operation == "open" {
+			if runnerID == "" && !remoteHost {
+				credentials = h.engine.WorkspaceTerminalGitCredentials(ctx, run, user)
+			}
+			var preparationKeys map[string]string
+			if trustedRequest.PreparationInvocation != nil {
+				preparationKeys = trustedRequest.PreparationInvocation.GitSSHKeys
+			}
+			ctx = gitwork.WithSSHKnownHostsLookup(ctx, h.repo.PlatformSSHKnownHosts)
+			ctx = gitwork.SnapshotSSHKnownHostsLookup(ctx, credentials.SSHKeys, trustedRequest.TerminalGitSSHKeys, preparationKeys)
+		}
 		return h.withWorkspaceWriter(c, run.ID, user, func(locked domain.Run) error {
 			req.ExpiresAt = locked.WorkspaceEditUntil
 			trustedRequest.RunID = runnerWorkspaceRunID(locked)
@@ -201,7 +225,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 				if h.runnerControls == nil {
 					return fmt.Errorf("执行端未连接")
 				}
-				ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
 
 				response, err := h.runnerControls.requestWorkspace(ctx, runnerID, trustedRequest)
@@ -230,7 +254,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 				result = json.RawMessage(response.Payload)
 				return nil
 			}
-			r, err := h.engine.HandlePreparedWorkspaceTerminal(c.Request.Context(), run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req, user)
+			r, err := h.engine.HandlePreparedWorkspaceTerminal(ctx, run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req, credentials)
 			result = r
 			return err
 		})
@@ -292,7 +316,7 @@ func (h *runsHandlers) withWorkspaceWriter(c *gin.Context, runID string, user in
 		}()
 	}
 	if h.engine != nil {
-		if err := h.engine.EnsureConversationWorkspace(ctx, runID, token); err != nil {
+		if _, err := h.engine.PrepareConversationWorkspace(ctx, runID, token); err != nil {
 			return err
 		}
 	}
