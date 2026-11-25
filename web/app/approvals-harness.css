@@ -254,3 +254,6 @@
 #approvalsView .ap-batch-tip { color: var(--hui-muted); font-size: 12px; }
 #approvalsView .ap-batch-actions { display: inline-flex; gap: 8px; margin-left: auto; }
 #approvalsView .ap-card.is-selected { border-color: color-mix(in srgb, var(--hui-accent) 45%, var(--hui-border)); background: var(--hui-accent-soft); }
+
+/* 节点指定了审批人时，非审批人看到的等待提示 */
+#approvalsView .ap-guard-note, .ap-guard-note { display: inline-flex; align-items: center; font-size: 12.5px; color: var(--hui-muted, #8a8f98); padding: 4px 2px; }

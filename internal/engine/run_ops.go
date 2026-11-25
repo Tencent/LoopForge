@@ -143,6 +143,40 @@ func (e *Engine) Pause(actor domain.Actor, runID string) error {
 	return nil
 }
 
+// nodeApproverAllowed enforces a workflow node's pinned approvers: only a
+// listed person (or a platform administrator) may decide that node. Nodes
+// without approvers keep the historical behavior — any caller may decide.
+// Enforcement applies to authenticated persons; system and automation actors
+// are not gated, so engine-internal recovery keeps working. The caller has
+// already resolved the run's frozen workflow snapshot.
+func nodeApproverAllowed(snapshot domain.WorkflowDefinition, nodeID string, actor domain.Actor) error {
+	if !actor.IsPerson() || actor.Admin {
+		return nil
+	}
+	for _, node := range snapshot.Nodes {
+		if node.ID != nodeID {
+			continue
+		}
+		if len(node.Approvers) == 0 {
+			return nil
+		}
+		for _, id := range node.Approvers {
+			if id == actor.ID {
+				return nil
+			}
+		}
+		return fmt.Errorf("节点「%s」已指定审批人，当前账号不在审批人名单中", nodeDisplayName(node))
+	}
+	return nil
+}
+
+func nodeDisplayName(node domain.WorkflowNode) string {
+	if name := strings.TrimSpace(node.Name); name != "" {
+		return name
+	}
+	return node.ID
+}
+
 func (e *Engine) Approve(actor domain.Actor, runID, nodeID, humanContext string, expected ...NodeExpectation) error {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
@@ -169,6 +203,9 @@ func (e *Engine) Approve(actor domain.Actor, runID, nodeID, humanContext string,
 	n := r.Nodes[nodeID]
 	if n == nil || n.Status != "waiting_approval" {
 		return fmt.Errorf("node is not waiting for approval")
+	}
+	if err := nodeApproverAllowed(r.WorkflowSnapshot, nodeID, actor); err != nil {
+		return err
 	}
 	n.Status = "succeeded"
 	n.FinishedAt = time.Now().UTC()
@@ -313,6 +350,9 @@ func (e *Engine) Reject(actor domain.Actor, runID string, req domain.RejectReque
 	}
 	if r.Nodes[target] == nil {
 		return fmt.Errorf("reject target not found")
+	}
+	if err := nodeApproverAllowed(wf, req.NodeID, actor); err != nil {
+		return err
 	}
 	for _, n := range wf.Nodes {
 		if n.ID == req.NodeID && n.MaxReworks > 0 && r.Nodes[target].ReworkCount >= n.MaxReworks {
@@ -474,6 +514,9 @@ func (e *Engine) retryContext(actor domain.Actor, ctx context.Context, runID, no
 	}
 	if r.Nodes[nodeID] == nil {
 		return fmt.Errorf("retry node not found")
+	}
+	if err := nodeApproverAllowed(r.WorkflowSnapshot, nodeID, actor); err != nil {
+		return err
 	}
 	if len(r.WorkflowSnapshot.Nodes) > 0 {
 		found := false
@@ -956,6 +999,9 @@ func (e *Engine) DeclineRetry(actor domain.Actor, runID, nodeID string, expected
 	n := r.Nodes[nodeID]
 	if n == nil || n.Status != "waiting_approval" {
 		return fmt.Errorf("node is not waiting for approval")
+	}
+	if err := nodeApproverAllowed(r.WorkflowSnapshot, nodeID, actor); err != nil {
+		return err
 	}
 	n.Status = "failed"
 	if strings.TrimSpace(n.Error) == "" {

@@ -53,6 +53,12 @@ type WorkflowNode struct {
 	MetricStage string `json:"metricStage,omitempty"` // clarification, development, testing, none
 	AgentID     string `json:"agentId,omitempty"`
 	ExecutorID  string `json:"executorId,omitempty"`
+	// Approvers pins a human gate to specific users. Only they (and platform
+	// administrators) may decide this node once it waits for approval; an
+	// empty list keeps the historical behavior where any project member can.
+	// Enforcement lives in the engine's control decisions, so every path (web,
+	// IM bots, rooms) obeys it.
+	Approvers []int64 `json:"approvers,omitempty"`
 	// SOPWorkflowID is the referenced workflow when Type is "sop".
 	SOPWorkflowID string `json:"sopWorkflowId,omitempty"`
 	// RunOnWorkspaceRebuild replays this script when restoring an already-used environment.

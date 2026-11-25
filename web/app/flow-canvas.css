@@ -425,3 +425,7 @@ html[data-theme="dark"] #flowView .fd-toast button{background:rgba(0,0,0,.06);co
 @media (prefers-reduced-motion:reduce){
   #flowView *,#flowView *::before,#flowView *::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
 }
+
+/* 审批人选择（确认节点属性面板） */
+#flowView .flow-approver-list{display:flex;flex-wrap:wrap;gap:6px 14px;max-height:150px;overflow:auto;padding:4px 0}
+#flowView .flow-approver-item{margin:0}

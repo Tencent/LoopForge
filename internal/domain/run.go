@@ -14,6 +14,9 @@ import (
 type Actor struct {
 	ID   int64  `json:"id,omitempty"`
 	Name string `json:"name,omitempty"`
+	// Admin marks a platform administrator, who may decide any node even
+	// when the workflow pins it to specific approvers.
+	Admin bool `json:"admin,omitempty"`
 }
 
 // Label renders the actor for audit text: a person by name, a named

@@ -1,6 +1,21 @@
 // ================= 待办验收 =================
 function waitingNodeId(run){return run.status==='queued'?undefined:Object.keys(run.nodes||{}).find(id=>run.nodes[id]?.status==='waiting_approval')}
 function turnsExhausted(nr){const t=`${nr?.error||''} ${nr?.activity||''}`;return /max turns|轮次用尽|是否重试/i.test(t)}
+// 节点配置了指定审批人时，只有名单内成员和平台管理员可以决策。这里只做
+// 界面提示与按钮隐藏；最终裁决在服务端（internal/engine/run_ops.go）。
+function waitingApprovalGuard(node){
+  const ids=(node?.approvers||[]).map(Number).filter(Boolean);
+  if(!ids.length)return {allowed:true,label:''};
+  const user=state.currentUser||{};
+  if(user.isPlatformAdmin)return {allowed:true,label:''};
+  if(!state.authRequired||user.isGuest)return {allowed:true,label:''};
+  if(ids.includes(Number(user.id)))return {allowed:true,label:''};
+  const names=ids.map(id=>{const u=userById(id);return u?.chineseName||u?.loginName||('#'+id)}).join('、');
+  return {allowed:false,label:window.lfT?lfT(`等待审批人（${names}）处理`,`Waiting for the approvers (${names})`):`等待审批人（${names}）处理`};
+}
+function waitingGuardNoticeHTML(guard){
+  return `<span class="ap-wait-owner ap-guard-note">${escapeHTML(guard.label)}</span>`;
+}
 function humanContextFieldHTML(){
   return `<label class="human-context-field"><span class="human-context-label">补充上下文（可选）</span><textarea data-human-context rows="3" placeholder="例如：报告里缺少性能数据，补充后再继续；或告诉 Agent 下一步要注意什么"></textarea></label>`;
 }
@@ -22,6 +37,8 @@ function reworkTarget(node,nodes){
 function queuedRunActionBlocked(runId){if(cachedRun(runId)?.status!=='queued')return false;toast('运行正在排队，请先取消排队','err');return true}
 function waitingActionButtons(runId,nodeId,nr,node,nodes){
   if(cachedRun(runId)?.status==='queued')return '';
+  const guard=waitingApprovalGuard(node);
+  if(!guard.allowed)return waitingGuardNoticeHTML(guard);
   if(turnsExhausted(nr))return `<button class="button primary small" data-retry-node="${escapeHTML(runId)}" data-node="${escapeHTML(nodeId)}">重试本节点</button><button class="button danger-outline small" data-decline-retry="${escapeHTML(runId)}" data-node="${escapeHTML(nodeId)}">不重试</button>`;
   const target=reworkTarget(node,nodes);
   const rework=target?`<button class="button ghost small" data-reject="${escapeHTML(runId)}" data-node="${escapeHTML(nodeId)}" data-target="${escapeHTML(target.id)}" data-target-name="${escapeHTML(target.name)}">${lfT('退回上游「'+escapeHTML(target.name)+'」并重跑后续','Send back to “'+escapeHTML(target.name)+'” and rerun downstream')}</button>`:'';
@@ -44,6 +61,8 @@ function approvalWaitReason(run,nodeId){
   text+=down.length?`，确认后继续${down.join('、')}`:'，确认后运行结束';
   if(node.rejectTo)text+=`；不通过可打回到${name(node.rejectTo)}重做`;
   text+='。';
+  const guard=waitingApprovalGuard(node);
+  if(!guard.allowed)text+=guard.label+'。';
   const instructions=String(node.taskPrompt||'').trim();
   if(instructions)text+=`确认要求：${instructions}`;
   return text;
@@ -279,12 +298,15 @@ function pausedRunPanelHTML(run){
 }
 function approvalCalloutHTML(node,nr,nodes,run){
   nodes=nodes||state.activeRun?.workflowSnapshot?.nodes||[];
+  const guard=waitingApprovalGuard(node);
   const field=isScriptWorkflowNode(node)?'':humanContextFieldHTML();
   const nodeTitle=escapeHTML(node?.name||node?.id||'当前节点');
   const gate=nr?.gateResult;
   const target=reworkTarget(node,nodes);
-  const rework=turnsExhausted(nr)?'':(target?`<button class="button ghost" data-reject="${node.id}" data-target="${escapeHTML(target.id)}" data-target-name="${escapeHTML(target.name)}">${lfT('退回上游「'+escapeHTML(target.name)+'」并重跑后续','Send back to “'+escapeHTML(target.name)+'” and rerun downstream')}</button>`:'');
-  const buttons=turnsExhausted(nr)
+  const rework=turnsExhausted(nr)||!guard.allowed?'':(target?`<button class="button ghost" data-reject="${node.id}" data-target="${escapeHTML(target.id)}" data-target-name="${escapeHTML(target.name)}">${lfT('退回上游「'+escapeHTML(target.name)+'」并重跑后续','Send back to “'+escapeHTML(target.name)+'” and rerun downstream')}</button>`:'');
+  const buttons=!guard.allowed
+    ? waitingGuardNoticeHTML(guard)
+    : turnsExhausted(nr)
     ? `<button class="button primary" data-retry-node="${node.id}">重试本节点</button><button class="button ghost" data-decline-retry="${node.id}">不重试</button>`
     : `<button class="button primary" data-approve="${node.id}">确认通过，继续下游</button><button class="button ghost" data-retry-node="${node.id}">补充信息，重跑当前节点</button>${rework}`;
   const title=turnsExhausted(nr)?'对话轮次已用尽':(gate?.decision==='human'?'等待人工确认':'需要人工判断');
@@ -417,7 +439,9 @@ function approvalNodeDef(r){
 function approvalSelectable(r){
   if(!r||r.status!=='waiting'||r.pauseRequested)return false;
   const nodeId=waitingNodeId(r),nr=r.nodes?.[nodeId];
-  return !!nodeId&&nr?.status==='waiting_approval'&&!turnsExhausted(nr);
+  if(!nodeId||nr?.status!=='waiting_approval'||turnsExhausted(nr))return false;
+  const node=(r.workflowSnapshot?.nodes||[]).find(n=>n.id===nodeId);
+  return waitingApprovalGuard(node).allowed;
 }
 function approvalSelectedRuns(items){
   const selection=approvalSelection();

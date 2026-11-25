@@ -1052,7 +1052,7 @@ function renderProperties(){
     const scriptCountText=scriptLines?`已编写 ${scriptLines} 行 (${n.scriptLanguage==='python'?'Python':'Shell'})`:'未配置 (点击编写)';
     const scriptPreview=scriptLines?`<div class="script-snippet-preview" id="previewScriptNodeEditor" title="点击在代码编辑器中修改"><code>${escapeHTML(n.script.slice(0, 120))}${n.script.length>120?'…':''}</code></div>`:'';
     const scriptPane=n.type==='script'?`<div class="fd-row2"><div class="fd-field"><label>脚本语言</label><select class="select" data-p="scriptLanguage"><option value="shell" ${n.scriptLanguage!=='python'?'selected':''}>Shell</option><option value="python" ${n.scriptLanguage==='python'?'selected':''}>Python</option></select></div><div class="fd-field"><label>执行范围</label><select class="select" data-p="executionScope"><option value="run" ${n.executionScope!=='repositories'?'selected':''}>Run 工作区</option><option value="repositories" ${n.executionScope==='repositories'?'selected':''}>每个代码仓库</option></select></div></div><div class="fd-field"><label>脚本内容</label><button type="button" class="script-editor-launch-btn btn-open-code-editor" id="openScriptNodeEditor"><span>${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span><span class="script-btn-badge">${scriptCountText}</span></button>${scriptPreview}<p class="prop-hint">逐仓库执行时会自动进入每个仓库根目录，无需手写 cd。</p></div>`:'';
-    const approvalPane=n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div>`:'';
+    const approvalPane=n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div><div class="fd-field"><label>审批人（可选）</label><div id="flowApproverRows" class="flow-approver-list prop-hint">正在加载成员…</div><p class="prop-hint">不指定时项目成员都可确认；指定后只有名单内成员和平台管理员能决策该节点。</p></div>`:'';
     const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n):''}${sopSelect}${scriptPane}${approvalPane}</div></section>`;
     const gates=n.type==='agent'?flowFold('gates','校验顺序',`${effectiveNodeArtifacts(n,workflowAgent(n.agentId)).length} 产物 · ${roleGates(workflowAgent(n.agentId)).length} 门禁`,nodeGatePane(n),false):'';
     const wantReject=state.flowWantReject??(n.onFailure==='reject');
@@ -1072,6 +1072,37 @@ function renderProperties(){
   const refocus=focusKey&&host.querySelector(`[data-p="${focusKey}"]`);
   if(refocus){refocus.focus({preventScroll:true});if(caret)try{refocus.setSelectionRange(caret[0],caret[1])}catch{}}
   setFlowDrawer(true,n.id);
+}
+// 审批人选择：加载平台成员列表，勾选结果以数字 ID 存进 node.approvers。
+let flowApproverUsers=null;
+function flowApproverUserChoices(){
+  if(state.data.users?.length)return Promise.resolve(state.data.users);
+  flowApproverUsers||(flowApproverUsers=api('/api/users',{silent:true}).then(list=>{if(Array.isArray(list)&&list.length)state.data.users=list;return list}).catch(()=>[]));
+  return flowApproverUsers;
+}
+function bindFlowApprovers(host,n){
+  const box=host.querySelector('#flowApproverRows');
+  if(!box)return;
+  const current=(n.approvers||[]).map(Number);
+  const render=(users)=>{
+    const ro=flowReadOnly();
+    if(!users.length){box.textContent='暂无可选成员（无成员数据）';box.classList.remove('prop-hint');return}
+    box.classList.remove('prop-hint');
+    box.innerHTML=users.map(u=>{
+      const id=Number(u.id),label=u.chineseName||u.loginName||('#'+u.id),checked=current.includes(id)?' checked':'',dis=ro?' disabled':'';
+      return `<label class="fd-check flow-approver-item"><input type="checkbox" data-approver="${id}"${checked}${dis}><span>${escapeHTML(label)}</span></label>`;
+    }).join('');
+    if(ro){box.querySelectorAll('input').forEach(el=>el.disabled=true);return}
+    box.querySelectorAll('[data-approver]').forEach(el=>el.onchange=()=>{
+      flowHistory.record();
+      const ids=[...box.querySelectorAll('[data-approver]:checked')].map(x=>Number(x.dataset.approver));
+      n.approvers=ids.length?ids:undefined;
+      dirty();
+    });
+  };
+  if(box.dataset.filled&&state.data.users?.length){render(state.data.users);return}
+  box.dataset.filled='1';
+  flowApproverUserChoices().then(render);
 }
 function bindNodeProperties(host,n){
   host.querySelectorAll('[data-p]').forEach(el=>el.oninput=()=>{
@@ -1097,6 +1128,7 @@ function bindNodeProperties(host,n){
   };
   host.querySelector('#addSOPHandoff')?.addEventListener('click',()=>{flowHistory.record();n.artifactOutputs=n.artifactOutputs||[];n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderProperties();dirty()});
   if(n.type==='sop')bindArtifactRows(host,n);
+  if(n.type==='approval')bindFlowApprovers(host,n);
   if(catalogGeneric(state.workflow)){
     const agent=workflowAgent(n.agentId);
     host.querySelector('#openBoundAgent')?.addEventListener('click',()=>openAgentWizard(agent));

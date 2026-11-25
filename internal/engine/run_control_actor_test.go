@@ -136,3 +136,77 @@ func TestRejectRecordsActors(t *testing.T) {
 		t.Fatalf("gate decision identity = %+v", n)
 	}
 }
+
+// pinnedApproverFixture parks one run at a gate whose workflow pins the node
+// to approver 7.
+func pinnedApproverFixture(t *testing.T) (*repo.Store, *Engine, string) {
+	t.Helper()
+	s, e, runID := controlActorFixture(t)
+	run, ok := s.RunState(runID)
+	if !ok {
+		t.Fatal("run gone")
+	}
+	run.WorkflowSnapshot.Nodes[0].Approvers = []int64{7}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	return s, e, runID
+}
+
+// TestPinnedApproversBlockOutsiders asserts an unlisted person cannot decide
+// a node pinned to other approvers, on every decision entry point.
+func TestPinnedApproversBlockOutsiders(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		action func(e *Engine) error
+	}{
+		{"approve", func(e *Engine) error {
+			return e.Approve(domain.Actor{ID: 8, Name: "outsider"}, "run-control-actor", "gate", "")
+		}},
+		{"decline", func(e *Engine) error {
+			return e.DeclineRetry(domain.Actor{ID: 8, Name: "outsider"}, "run-control-actor", "gate")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, e, runID := pinnedApproverFixture(t)
+			if err := tc.action(e); err == nil {
+				t.Fatal("outsider decision should be refused")
+			} else if !strings.Contains(err.Error(), "审批人") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			run, _ := s.Run(runID)
+			if n := run.Nodes["gate"]; n == nil || n.Status != "waiting_approval" {
+				t.Fatalf("refused decision must not mutate the node: %+v", n)
+			}
+		})
+	}
+}
+
+// TestPinnedApproversAllowListedAndAdmin asserts the listed user and a
+// platform administrator can still decide a pinned node, and that a pinned
+// gate without an identity bypass (system actor) is not blocked.
+func TestPinnedApproversAllowListedAndAdmin(t *testing.T) {
+	_, e, runID := pinnedApproverFixture(t)
+	if err := e.Approve(domain.Actor{ID: 7, Name: "zhang"}, runID, "gate", ""); err != nil {
+		t.Fatalf("listed approver: %v", err)
+	}
+
+	_, e2, run2 := pinnedApproverFixture(t)
+	if err := e2.Approve(domain.Actor{ID: 5, Name: "root", Admin: true}, run2, "gate", ""); err != nil {
+		t.Fatalf("platform admin: %v", err)
+	}
+
+	_, e3, run3 := pinnedApproverFixture(t)
+	if err := e3.Approve(domain.Actor{Name: "auto"}, run3, "gate", ""); err != nil {
+		t.Fatalf("automation actor should not be gated: %v", err)
+	}
+}
+
+// TestUnpinnedGatesStayOpenToEveryone keeps the historical behavior: nodes
+// without configured approvers accept decisions from any authenticated user.
+func TestUnpinnedGatesStayOpenToEveryone(t *testing.T) {
+	_, e, runID := controlActorFixture(t)
+	if err := e.Approve(domain.Actor{ID: 8, Name: "anyone"}, runID, "gate", ""); err != nil {
+		t.Fatalf("unpinned gate: %v", err)
+	}
+}
