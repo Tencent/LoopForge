@@ -109,8 +109,13 @@ test('archive flags the conversation and can be undone', async () => {
 test('generation endpoints answer for an idle conversation', async () => {
   await api('GET', `${S}/${session.id}/generation`, undefined, { expect: 404 });
   await api('POST', `${S}/${session.id}/generation/cancel`, {}, { expect: [404, 409] });
+  await api('POST', `${S}/${session.id}/generation/steer`, { content: '插话' }, { expect: 409 });
+  await api('GET', `${S}/${session.id}/generations/af-e2e-missing-gen/diagnostics`, undefined, { expect: 404 });
+  await api('POST', `${S}/${session.id}/read`, {}, { expect: 400 });
+  await api('POST', `${S}/${session.id}/read`, { generationId: 'af-e2e-missing-gen' }, { expect: 404 });
   // No native CLI approvals are pending without a generation.
   assert.deepEqual(list(await get(`${S}/${session.id}/native-approvals`)), []);
+  await api('POST', `${S}/${session.id}/native-approvals/af-e2e-missing-approval`, { decision: 'approve' }, { expect: 404 });
 });
 
 test('runtime mode: platform is accepted, workspace needs an open workspace, unknown is refused', async () => {

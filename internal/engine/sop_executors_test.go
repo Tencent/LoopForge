@@ -443,7 +443,7 @@ func TestExecutorCredentialsFollowTheProjectDefaultRunner(t *testing.T) {
 	check := func(projectID string, want map[string]bool) {
 		t.Helper()
 		execution := domain.TelemetryContext{ProjectID: projectID, ResponsibleUserID: 42}
-		(&Engine{repo: st}).selectSOPExecutionTarget(&execution)
+		(&Engine{repo: st}).selectSOPExecutionTarget(&execution, false)
 		hasCredential := ExecutorCredentials(st, 42, projectID)
 		for kind, expected := range want {
 			if got := hasCredential(kind); got != expected {
@@ -528,7 +528,7 @@ func TestExecutorCredentialsFollowTheCloudPool(t *testing.T) {
 	// Whatever pool runner a run picks, its login matches a CLI the picker offered.
 	for i := 0; i < 20; i++ {
 		execution := domain.TelemetryContext{ProjectID: "pool-served", ResponsibleUserID: 42}
-		e.selectSOPExecutionTarget(&execution)
+		e.selectSOPExecutionTarget(&execution, false)
 		if execution.ExecutionPool != domain.ExecutionModeCloud || execution.ExecutionRunnerID == "" {
 			t.Fatalf("run did not use the pool: %+v", execution)
 		}
@@ -553,7 +553,7 @@ func TestExecutorCredentialsFollowTheCloudPool(t *testing.T) {
 	e.ConfigureCloudRunnerPool(CloudRunnerPool{Label: "pool", Projects: []string{"*"}})
 	check("personal default", "", map[string]bool{"codex": false, "claude-code": true})
 	execution := domain.TelemetryContext{ResponsibleUserID: 42}
-	e.selectSOPExecutionTarget(&execution)
+	e.selectSOPExecutionTarget(&execution, false)
 	if execution.ExecutionRunnerID != own.ID {
 		t.Fatalf("personal SOP ran on %q, want the default machine", execution.ExecutionRunnerID)
 	}
