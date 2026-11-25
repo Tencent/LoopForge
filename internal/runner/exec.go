@@ -59,6 +59,7 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 	}
 	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	drainDeadline := batcher.observer.CodeBuddySOPDrainDeadline(execCtx)
 	type outcome struct {
 		output string
 		err    error
@@ -86,6 +87,7 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 	flushTicker := time.NewTicker(eventFlushInterval)
 	defer flushTicker.Stop()
 	canceled := false
+	stoppedAfterDrain := false
 	ctxDone := ctx.Done()
 	for {
 		select {
@@ -93,19 +95,24 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 			ctxDone = nil
 			canceled = true
 			cancel()
+		case <-drainDeadline:
+			drainDeadline = nil
+			stoppedAfterDrain = true
+			cancel()
 		case completed := <-done:
-			batcher.finalizeProtocol(completed.err == nil)
+			err := batcher.protocolProcessError(completed.err, stoppedAfterDrain)
+			batcher.finalizeProtocol(err == nil)
 			batcher.flush(context.Background())
 			result := execResult{result: batcher.taskResult(completed.output)}
-			if canceled {
+			if canceled || (stoppedAfterDrain && ctx.Err() != nil) {
 				result.status = domain.RunnerTaskCanceled
 				result.errMsg = "runner stopped"
 				return result
 			}
-			result.exitCode = exitCode(completed.err)
-			if completed.err != nil {
+			result.exitCode = exitCode(err)
+			if err != nil {
 				result.status = domain.RunnerTaskFailed
-				result.errMsg = completed.err.Error()
+				result.errMsg = err.Error()
 			} else {
 				result.status = domain.RunnerTaskSuccess
 			}
@@ -206,6 +213,13 @@ func (b *eventBatcher) finalizeProtocol(success bool) {
 	if b.observer != nil {
 		b.observer.Finalize(success)
 	}
+}
+
+func (b *eventBatcher) protocolProcessError(err error, stoppedAfterDrain bool) error {
+	if err == nil || stoppedAfterDrain {
+		return b.observer.CodeBuddySOPResultError()
+	}
+	return err
 }
 
 func (b *eventBatcher) flush(ctx context.Context) {
@@ -358,7 +372,11 @@ func (d *Daemon) executeHostCommand(ctx context.Context, task domain.RunnerTask,
 	flushTicker := time.NewTicker(eventFlushInterval)
 	defer flushTicker.Stop()
 
+	drainCtx, stopDrain := context.WithCancel(ctx)
+	defer stopDrain()
+	drainDeadline := batcher.observer.CodeBuddySOPDrainDeadline(drainCtx)
 	canceled := false
+	stoppedAfterDrain := false
 	ctxDone := ctx.Done()
 	for {
 		select {
@@ -368,8 +386,15 @@ func (d *Daemon) executeHostCommand(ctx context.Context, task domain.RunnerTask,
 				canceled = true
 				terminateProcessGroup(cmd, processDone)
 			}
+		case <-drainDeadline:
+			drainDeadline = nil
+			if !canceled {
+				stoppedAfterDrain = true
+				terminateProcessGroup(cmd, processDone)
+			}
 		case <-processDone:
-			err := processErr
+			err := batcher.protocolProcessError(processErr, stoppedAfterDrain)
+			canceled = canceled || (stoppedAfterDrain && ctx.Err() != nil)
 			if canceled {
 				err = nil
 			}

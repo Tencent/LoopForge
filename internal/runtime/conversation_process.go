@@ -156,24 +156,24 @@ func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (
 }
 
 type conversationProcess struct {
-	mu            sync.Mutex
-	cancel        context.CancelFunc
-	input         *os.File
-	keepInputOpen bool
-	events        []domain.TelemetryEvent
-	base          int64
-	done          bool
-	err           string
-	errorCode     string
-	wake          chan struct{}
-	lastPoll      time.Time
-	closeRelay    func()
-	finished      chan struct{}
-	root          string
-	bytes         int
-	notStarted    bool
-	cliVersion    string
-	versionSource string
+	mu              sync.Mutex
+	cancel          context.CancelFunc
+	input           *os.File
+	codeBuddyStream *codeBuddyBackgroundStream
+	events          []domain.TelemetryEvent
+	base            int64
+	done            bool
+	err             string
+	errorCode       string
+	wake            chan struct{}
+	lastPoll        time.Time
+	closeRelay      func()
+	finished        chan struct{}
+	root            string
+	bytes           int
+	notStarted      bool
+	cliVersion      string
+	versionSource   string
 	// workspace replaces <root>/ws in stdin under seatbelt, which has no mount
 	// namespace to map that path onto the run workspace.
 	workspace     string
@@ -298,9 +298,9 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	case "write":
 		proc.mu.Lock()
 		input, workspace := proc.input, proc.workspace
-		deferEOF := req.EOF && proc.keepInputOpen
+		background := proc.codeBuddyStream
 		proc.mu.Unlock()
-		if deferEOF {
+		if background != nil && (req.EOF || background.isDrained()) {
 			return ConversationProcessResult{}, nil
 		}
 		if input == nil {
@@ -320,6 +320,11 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		} else {
 			data := remapConversationStdin(req.Data, req.SourceRoot, root, workspace, proc.stdinProvider)
 			_, err = io.WriteString(input, data)
+			if err != nil && background != nil && background.isDrained() {
+				// A terminal error can race the first prompt write. The
+				// caller needs the buffered error frame to recover.
+				err = nil
+			}
 		}
 		return ConversationProcessResult{}, err
 	case "stop":
@@ -394,11 +399,6 @@ func conversationAssetPath(root, target string) error {
 	}
 	return nil
 }
-
-// conversationTerminalResultDrain is how long a CLI may linger after its
-// stream-json terminal result. ExecutorRunner uses the same window before it
-// stops hook processes that outlive the protocol result.
-const conversationTerminalResultDrain = 2500 * time.Millisecond
 
 // conversationStdoutTerminal reports a Claude-style stream-json result frame,
 // which Cursor, CodeBuddy and the other agent CLIs emit when the turn is over.
@@ -496,11 +496,17 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	var release func()
 	var stdin io.Closer
 	var cleanupLogin func() error
+	var background *codeBuddyBackgroundStream
 	// Set once a terminal result line has been followed by the drain window
 	// and this process is stopped so a lingering CLI cannot pin the turn.
 	var stopAfterTerminalResult atomic.Bool
 	finish := func(runErr error, notStarted bool) {
 		cancel()
+		var backgroundWarning domain.TelemetryEvent
+		if background != nil {
+			background.stop()
+			backgroundWarning = background.timeoutEvent()
+		}
 		// Cancellation can skip the shell EXIT trap. Clean ephemeral ZCode
 		// credentials before publishing completion or releasing this root.
 		credentialCleanupErr := cleanupConversationCredentialFiles(root, req.Command.Provider)
@@ -523,6 +529,10 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		proc.mu.Lock()
 		if proc.input != nil {
 			_ = proc.input.Close()
+		}
+		if backgroundWarning.Name != "" {
+			proc.events = append(proc.events, backgroundWarning)
+			proc.bytes += len(backgroundWarning.Message)
 		}
 		if credentialCleanupErr != nil {
 			proc.err = "清理 CLI 临时凭证失败"
@@ -739,7 +749,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		command.Argv = conversationZCodeResumeArgv(root, nativeArgv, command.Argv)
 	}
 	command.bindingsPrepared = true
-	var background *codeBuddyBackgroundStream
 	if req.Command.Interactive {
 		input, writer, err := os.Pipe()
 		if err != nil {
@@ -754,7 +763,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 		proc.mu.Lock()
 		proc.input = writer
-		proc.keepInputOpen = background != nil
+		proc.codeBuddyStream = background
 		proc.mu.Unlock()
 		stdin = input
 		command.Stdin = input
@@ -792,26 +801,16 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		// it has already emitted its terminal result. Same drain as
 		// ExecutorRunner: let the trailing output land, then stop the process
 		// so the turn can be marked finished and a queued follow-up can send.
-		// For CodeBuddy background work, drain only after tracked Agents finish.
+		// For CodeBuddy background work, wait for stdin to close before draining.
 		terminalResult := make(chan struct{})
 		if background != nil {
 			terminalResult = background.drained
 		}
 		var terminalOnce sync.Once
 		go func() {
-			select {
-			case <-terminalResult:
-				timer := time.NewTimer(conversationTerminalResultDrain)
-				defer timer.Stop()
-				select {
-				case <-timer.C:
-					stopAfterTerminalResult.Store(true)
-					cancel()
-				case <-watchDone:
-				case <-procCtx.Done():
-				}
-			case <-watchDone:
-			case <-procCtx.Done():
+			if waitForProcessTerminalDrain(procCtx, terminalResult, watchDone) {
+				stopAfterTerminalResult.Store(true)
+				cancel()
 			}
 		}()
 		sink := func(ev domain.TelemetryEvent) {

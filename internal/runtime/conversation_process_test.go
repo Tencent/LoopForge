@@ -176,8 +176,6 @@ func TestConversationProcessStopsAfterTerminalResult(t *testing.T) {
 func TestConversationCodeBuddyKeepsStdinOpenUntilBackgroundAgentFinishes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	root, workspace, install := t.TempDir(), t.TempDir(), t.TempDir()
-	binary := filepath.Join(install, "codebuddy")
 	script := `#!/bin/sh
 IFS= read -r prompt || exit 1
 printf '%s\n' '{"type":"system","subtype":"task_started","task_type":"Agent","task_id":"agent-1"}'
@@ -189,6 +187,51 @@ printf '%s\n' '{"type":"system","subtype":"task_notification","task_id":"agent-1
 if IFS= read -r extra; then exit 1; fi
 printf 'stdin closed after child receipt\n'
 `
+	pool, root, id := startTestCodeBuddyWorkspace(t, ctx, script)
+	for _, write := range []ConversationProcessRequest{
+		{Data: "{\"type\":\"user\"}\n"}, {EOF: true}, {Data: "probe\n"},
+	} {
+		write.Operation, write.ID = "write", id
+		if _, err := pool.Handle(ctx, root, "", nil, write, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := conversationPoll(t, pool, ctx, root, id)
+	for _, want := range []string{"parent result", "stdin remained open: probe", `"summary":"child receipt"`, "stdin closed after child receipt"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("missing %q in process output %q", want, output)
+		}
+	}
+}
+
+func TestConversationCodeBuddyClosesInputOnEarlyResumeError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	// Resume can fail before CodeBuddy reads even the first user frame.
+	script := `#!/bin/sh
+printf '%s\n' '{"type":"error","error":"No conversation found with session ID: missing"}'
+if IFS= read -r extra; then exit 1; fi
+printf 'stdin closed after resume error\n'
+`
+	pool, root, id := startTestCodeBuddyWorkspace(t, ctx, script)
+	output := conversationPoll(t, pool, ctx, root, id)
+	for _, req := range []ConversationProcessRequest{{Data: "{\"type\":\"user\"}\n"}, {EOF: true}} {
+		req.Operation, req.ID = "write", id
+		if _, err := pool.Handle(ctx, root, "", nil, req, nil); err != nil {
+			t.Fatalf("input relay masked the resume error: %v", err)
+		}
+	}
+	for _, want := range []string{"No conversation found with session ID: missing", "stdin closed after resume error"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("missing %q in process output %q", want, output)
+		}
+	}
+}
+
+func startTestCodeBuddyWorkspace(t *testing.T, ctx context.Context, script string) (*ConversationProcessPool, string, string) {
+	t.Helper()
+	root, workspace, install := t.TempDir(), t.TempDir(), t.TempDir()
+	binary := filepath.Join(install, "codebuddy")
 	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -213,20 +256,7 @@ printf 'stdin closed after child receipt\n'
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, write := range []ConversationProcessRequest{
-		{Data: "{\"type\":\"user\"}\n"}, {EOF: true}, {Data: "probe\n"},
-	} {
-		write.Operation, write.ID = "write", start.ID
-		if _, err := pool.Handle(ctx, root, workspace, sandbox, write, nil); err != nil {
-			t.Fatal(err)
-		}
-	}
-	output := conversationPoll(t, pool, ctx, root, start.ID)
-	for _, want := range []string{"parent result", "stdin remained open: probe", `"summary":"child receipt"`, "stdin closed after child receipt"} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("missing %q in process output %q", want, output)
-		}
-	}
+	return pool, root, start.ID
 }
 
 func TestConversationProcessCompletesDuringSlowVersionProbe(t *testing.T) {

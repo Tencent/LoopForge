@@ -1700,6 +1700,10 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	missingText := "No conversation found with session ID: " + inv.sessionRef
 	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
+		if event.Name == runtime.CodeBuddyBackgroundTimeoutEvent {
+			assistantDiagnosticsFrom(ctx).platform(event.Name, event.Message, user)
+			return
+		}
 		attempt.process(event)
 		if event.Name == "process.stderr" {
 			attempt.stderr(event.Message)

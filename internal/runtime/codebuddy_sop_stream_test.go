@@ -2,10 +2,13 @@ package runtime
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +69,7 @@ func TestCodeBuddySOPInputRemainsOpenForBackgroundAgents(t *testing.T) {
 	handle(`{"type":"system","subtype":"task_started","task_type":"Agent","task_id":"agent-2"}`)
 	handle(`{"type":"system","subtype":"task_started","task_type":"Bash","task_id":"bash-1"}`)
 	handle(`{"type":"result","parent_tool_use_id":"agent-call","result":"child output"}`)
+	handle(`{"type":"error","parent_tool_use_id":"agent-call","error":"child error"}`)
 	if observer.adapter.Finished() {
 		t.Fatal("a child result finished the parent")
 	}
@@ -82,5 +86,44 @@ func TestCodeBuddySOPInputRemainsOpenForBackgroundAgents(t *testing.T) {
 	}
 	if observer.VisibleOutput() != "parent output" || !slices.Equal(phases, []string{"start", "start", "finish", "finish"}) {
 		t.Fatalf("result %q, background event phases %v", observer.VisibleOutput(), phases)
+	}
+}
+
+func TestCodeBuddySOPFinishesWhenChildNeverReportsCompletion(t *testing.T) {
+	t.Setenv("AGENTFLOW_BROWSER", "off")
+	workspace := t.TempDir()
+	cli := filepath.Join(t.TempDir(), "codebuddy")
+	script := `#!/bin/sh
+IFS= read -r input || exit 1
+printf '%s\n' '{"type":"system","subtype":"task_started","task_type":"Agent","task_id":"agent-1"}'
+printf '%s\n' '{"type":"result","result":"","is_error":false}'
+if IFS= read -r extra; then exit 1; fi
+touch input-closed
+exec sleep 60
+`
+	if err := os.WriteFile(cli, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", cli)
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
+	defer cancel()
+	ex := domain.ExecutorDefinition{Kind: "codebuddy", Binary: cli, Protocol: "stream-json"}
+	var warning domain.TelemetryEvent
+	output, err := NewExecutorRunner().Run(ctx, &localSandbox{workspace: workspace}, "test", ex,
+		domain.AgentDefinition{ID: "test", Name: "Test"}, domain.AgentAssetBundle{}, "prompt", InvocationOptions{},
+		func(event domain.TelemetryEvent) {
+			if event.Name == CodeBuddyBackgroundTimeoutEvent {
+				warning = event
+			}
+		})
+	if err != nil || ctx.Err() != nil || !strings.Contains(output, `"type":"result"`) {
+		t.Fatalf("successful parent result should finish the SOP, output=%q err=%v context=%v", output, err, ctx.Err())
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "input-closed")); err != nil {
+		t.Fatalf("CLI never received EOF: %v", err)
+	}
+	taskIDs, _ := warning.Attributes["taskIds"].([]string)
+	if warning.Level != "warn" || !slices.Equal(taskIDs, []string{"agent-1"}) {
+		t.Fatalf("missing timeout warning for unreported child: %+v", warning)
 	}
 }
