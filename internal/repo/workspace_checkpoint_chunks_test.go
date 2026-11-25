@@ -218,8 +218,11 @@ func checkpointBackoffTest(t *testing.T, s *Store, other *RunsRepo) {
 		t.Fatal(err)
 	}
 	meta, _ = s.WorkspaceCheckpoint(run.ID)
-	if meta.Error != "" || meta.SaveRetryAt != nil || meta.SaveFailures != 0 || meta.ArchiveID != "" {
-		t.Fatal("successful save did not reset backoff")
+	if meta.Error != "" || meta.SaveRetryAt != nil || meta.SaveFailures != 0 {
+		t.Fatalf("successful save did not reset backoff: %+v", meta)
+	}
+	if recovered, err := s.WorkspaceCheckpointArchive(run.ID); err != nil || string(recovered) != "repaired" {
+		t.Fatalf("successful save did not retain the repaired archive: %q, %v", recovered, err)
 	}
 }
 func TestMySQLWorkspaceCheckpointSharedBackoff(t *testing.T) {
