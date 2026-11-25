@@ -44,7 +44,7 @@ func (e *Engine) workspaceBlocked(r domain.Run) bool {
 	if host == e.workspaceHost || e.repo.WorkspaceHostAlive(host) {
 		return true
 	}
-	return e.defaultExecutionRunner(r) != ""
+	return e.defaultExecutionRunner(r) != "" && (r.WorkspaceCleanedAt.IsZero() || !e.hasSavedWorkspaceCheckpoint(r.ID))
 }
 
 // workspaceLost reports a foreign bind to a host that is gone while the
@@ -52,7 +52,13 @@ func (e *Engine) workspaceBlocked(r domain.Run) bool {
 // those changes went with the host: continuing elsewhere would silently drop
 // them. Runs without a repository may still be taken over.
 func (e *Engine) workspaceLost(r domain.Run) bool {
-	return e.foreignWorkspaceBind(r) && !e.workspaceBlocked(r) && hasCodeWorkspace(r)
+	return e.foreignWorkspaceBind(r) && !e.workspaceBlocked(r) && hasCodeWorkspace(r) &&
+		(r.WorkspaceCleanedAt.IsZero() || !e.hasSavedWorkspaceCheckpoint(r.ID))
+}
+
+func (e *Engine) hasSavedWorkspaceCheckpoint(runID string) bool {
+	meta, ok := e.repo.WorkspaceCheckpoint(runID)
+	return ok && meta.SavedAt != nil && meta.Error == ""
 }
 
 func (e *Engine) workspaceLostMessage(r domain.Run) string {

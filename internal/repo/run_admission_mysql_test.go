@@ -215,12 +215,15 @@ func TestMySQLProjectRunAdmissionStartedOutcomesAndFIFO(t *testing.T) {
 		t.Fatalf("started failed/waiting/cancelled runs released slots: %v", promoted)
 	}
 	run := admissionMySQLState(t, stores[1], ids[0], "failed")
-	run.Status = "succeeded"
+	run.WorkspaceCleanedAt = time.Now().UTC()
 	if err := stores[1].PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	if run = admissionMySQLState(t, stores[0], run.ID, "succeeded"); run.AdmissionState != "released" {
-		t.Fatalf("successful run did not release its slot: %q", run.AdmissionState)
+	if released, err := stores[0].ReleaseCleanedRunAdmission(run.ID, "archived"); err != nil || !released {
+		t.Fatalf("release failed SOP after cleanup: %v, %v", released, err)
+	}
+	if run = admissionMySQLState(t, stores[1], run.ID, "failed"); run.AdmissionState != "released" || len(run.Events) != 1 || run.Events[0].Type != "workspace.reclaimed" {
+		t.Fatalf("cleaned run release was not visible across stores: admission=%s, events=%+v", run.AdmissionState, run.Events)
 	}
 	if err := stores[0].PutRun(admissionMySQLRun(newcomer, project)); err != nil {
 		t.Fatal(err)
@@ -241,6 +244,15 @@ func TestMySQLProjectRunAdmissionStartedOutcomesAndFIFO(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+	run = admissionMySQLState(t, stores[1], ids[0], "failed")
+	run.Status = "running"
+	if err := stores[1].PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	run = admissionMySQLState(t, stores[0], run.ID, "queued")
+	if run.AdmissionState != "queued" || len(run.Events) != 2 || run.Events[1].Type != "run.queued" {
+		t.Fatalf("readmission did not queue with an event: admission=%s, events=%+v", run.AdmissionState, run.Events)
 	}
 }
 
