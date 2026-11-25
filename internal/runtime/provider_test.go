@@ -55,6 +55,48 @@ func TestProvidersBuildFinalArgvWithoutDuplicateManagedFlags(t *testing.T) {
 	}
 }
 
+func TestCodexRunDisablesBuiltinWebSearch(t *testing.T) {
+	for _, test := range []struct {
+		name, driver, session string
+		args                  []string
+	}{
+		{name: "existing executor", driver: "local", args: []string{"exec", "--json"}},
+		{name: "cached search", driver: "docker", args: []string{"exec", "-c", `web_search="cached"`}},
+		{name: "live search", driver: "bwrap", args: []string{"exec", "-c", `web_search="live"`}},
+		{name: "resume", driver: "local", session: "session-123", args: []string{"exec", "resume", "stale"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command, err := providerForKind("codex").Prepare(providerInvocation{
+				Executor: domain.ExecutorDefinition{Kind: "codex", Binary: "codex", Args: test.args},
+				Compiled: compiledConfig{Args: codexConfigArgs("probe", nil, []domain.MCPServerDefinition{
+					{ID: "docs", Transport: "http", URL: "https://mcp.example/x"},
+				})},
+				Prompt:  "probe",
+				Driver:  test.driver,
+				Options: InvocationOptions{ResumeSessionID: test.session},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			webSearch := ""
+			for i, arg := range command.Argv {
+				if arg == "resume" {
+					break // Config overrides must precede this subcommand.
+				}
+				if arg == "-c" && i+1 < len(command.Argv) && strings.HasPrefix(command.Argv[i+1], "web_search=") {
+					webSearch = command.Argv[i+1]
+				}
+			}
+			if webSearch != `web_search="disabled"` {
+				t.Fatalf("effective web search config = %q in %v", webSearch, command.Argv)
+			}
+			if !hasContiguousArgs(command.Argv, []string{"-c", `mcp_servers.docs.url="https://mcp.example/x"`}) || command.Argv[len(command.Argv)-1] != "probe" {
+				t.Fatalf("MCP configuration or prompt was lost: %v", command.Argv)
+			}
+		})
+	}
+}
+
 func TestCodeBuddyPluginDirectoryCannotConsumePrompt(t *testing.T) {
 	command, err := providerForKind("codebuddy").Prepare(providerInvocation{
 		Executor: domain.ExecutorDefinition{Kind: "codebuddy", Binary: "codebuddy"},
