@@ -561,8 +561,8 @@ func workflowNeedsPublish(v domain.WorkflowDefinition) bool {
 }
 
 func nextWorkflowVersion(v domain.WorkflowDefinition) int {
-	// Newly saved drafts already carry version 1 for compatibility.
-	if v.Version < 1 || (v.Version == 1 && workflowPublishedRevision(v) == 0) {
+	// Older evaluation copies can carry the source version before their first publication.
+	if v.Version < 1 || workflowPublishedRevision(v) == 0 {
 		return 1
 	}
 	return v.Version + 1

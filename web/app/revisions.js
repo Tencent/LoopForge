@@ -21,9 +21,9 @@ async function openRevisionHistory(kind,id,name){
   state.revisionItems=items||[];
   $('#revisionList').innerHTML=items.length?items.map(r=>{
     const workflow=kind==='workflow'&&revisionPayload(r);
-    const initialDraft=workflow?.status&&!workflowVersionLabel(workflow);
-    const summary=initialDraft?r.name:r.summary||r.name;
-    const version=initialDraft?lfT('草稿','Draft'):`v${r.version}`;
+    const unpublished=(workflow?.status==='draft'||workflow?.status==='archived')&&!workflowVersionLabel(workflow);
+    const summary=unpublished?r.name:r.summary||r.name;
+    const version=unpublished?(workflow.status==='archived'?lfT('已归档','Archived'):lfT('草稿','Draft')):`v${r.version}`;
     return `<button type="button" class="revision-item" data-rev="${escapeHTML(r.id)}"><b>${escapeHTML(summary)}</b><small>${version}${r.revision?` · #${r.revision}`:''} · ${new Date(r.createdAt).toLocaleString()}</small></button>`;
   }).join(''):'<p class="prop-hint">还没有历史。保存一次修改后才会留下上一版。</p>';
   $('#revisionDiff').textContent='选择一个历史版本，查看和当前的差异。';

@@ -138,7 +138,7 @@ function sopBadge(label,tone,icon,title){
 }
 function sopHealthBadge(health){const {tone,icon}=sopHealthTone(health);return sopBadge(health?.label||'',tone,icon)}
 function workflowVersionLabel(w){
-  return w.publishedRevision||w.status==='published'||w.version>1 ? `v${w.version||1}` : '';
+  return w.publishedRevision||w.status==='published' ? `v${w.version||1}` : '';
 }
 function sopStatusBadge(w){
   if(catalogGeneric(w))return sopBadge('通用','accent','layers');

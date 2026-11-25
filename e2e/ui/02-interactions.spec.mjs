@@ -337,6 +337,26 @@ test('SOP designer: the agent drawer shows name, role and on-failure in the firs
   expect(errors).toEqual([]);
 });
 
+test('SOP designer: Auto layout stays clickable beside the step drawer', async ({ page }) => {
+  const wf = await createWorkflow('ui-arrange-drawer', [script('first', 'echo 1'), script('second', 'echo 2')]);
+  await page.setViewportSize({ width: 1060, height: 800 });
+  await page.goto(`/#/flow/${encodeURIComponent(wf)}`);
+  await page.locator('#nodes .flow-node[data-id="first"]').click();
+  await expect(page.locator('#properties')).toHaveClass(/\bopen\b/);
+  const arrange = page.locator('#canvasArrange');
+  const toolbar = page.locator('#canvasToolbar');
+  for (const width of [1060, 1080]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect.poll(() => toolbar.evaluate(el => {
+      const canvas = el.parentElement.getBoundingClientRect();
+      const drawer = document.getElementById('properties').getBoundingClientRect();
+      return Math.abs(drawer.right - canvas.right) < 1 && el.getBoundingClientRect().right <= drawer.left;
+    })).toBe(true);
+    await arrange.click();
+    await expect(page.locator('#flowToastMsg')).toContainText('已按依赖层级整理画布');
+  }
+});
+
 // The reply to "让 AI 分析" must stay between the question and the alert while
 // it streams and after it finishes; it used to stream below the alert and then
 // jump above it, which read as "no answer".

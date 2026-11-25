@@ -169,12 +169,15 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	// 与 master 的 runSummaryHeaderColumns 一致：列表携带控制位与
 	// human_context、多仓 repositories，且 input 在 SQL 层截断到 500 字符
 	//（master 用 LEFT(input, 500)，使 handler 的 clip 不再追加省略号）。
-	// List rows only need the frozen SOP identity and whether it is a free
-	// collaboration task (待我确认 and status badges depend on it). The graph,
-	// scripts, and commands stay in the snapshot column and are not transferred.
-	snapshotExpr := "json_object('id', json_extract(snapshot, '$.id'), 'name', json_extract(snapshot, '$.name'), 'collaborationMode', json_extract(snapshot, '$.collaborationMode')) AS snapshot"
+	// Keep the frozen identity, collaboration mode, and publication metadata
+	// used in analytics. The graph, scripts, and commands stay in the database.
+	snapshotExpr := `json_object('id', json_extract(snapshot, '$.id'), 'name', json_extract(snapshot, '$.name'),
+		'collaborationMode', json_extract(snapshot, '$.collaborationMode'), 'status', json_extract(snapshot, '$.status'),
+		'version', json_extract(snapshot, '$.version'), 'publishedRevision', json_extract(snapshot, '$.publishedRevision')) AS snapshot`
 	if r.isMySQL() {
-		snapshotExpr = "JSON_OBJECT('id', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.id')), 'name', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.name')), 'collaborationMode', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.collaborationMode'))) AS snapshot"
+		snapshotExpr = `JSON_OBJECT('id', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.id')), 'name', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.name')),
+			'collaborationMode', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.collaborationMode')), 'status', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.status')),
+			'version', JSON_EXTRACT(snapshot, '$.version'), 'publishedRevision', JSON_EXTRACT(snapshot, '$.publishedRevision')) AS snapshot`
 	}
 	if err := q.Select("id", "kind", "workflow_id", "status", "admission_state", "queue_entered_at", "quota_exempt", "cancel_requested", "pause_requested", "human_context", "revision", "SUBSTR(input, 1, 500) AS input", "repository", "repositories", snapshotExpr, "execution_context", "usage_json", "tool_calls", "telemetry_sequence", "log_sequence", "owner_instance_id", "lease_until", "execution_generation", "workspace_host", "workspace_root", "workspace_cleaned_at", "created_at", "updated_at").
 		Order("created_at DESC, id DESC").
