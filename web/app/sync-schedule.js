@@ -37,8 +37,9 @@ function renderSync(){
   $('#syncPanelSummary').innerHTML=`<span class="sync-stat"><b>${githubCount}</b>GitHub</span>${gfCount?`<span class="sync-stat"><b>${gfCount}</b>工蜂</span>`:''}${tapdCount?`<span class="sync-stat"><b>${tapdCount}</b>TAPD</span>`:''}<span class="sync-stat">最近：${lastSync}</span>${latestBySource.map(l=>`<span class="sync-stat ${l.status==='failed'?'danger':'success'}"><b>${l.status==='failed'?'!':'✓'}</b>${l.source==='github'?'GitHub':l.source==='gongfeng'?'工蜂':'TAPD'} ${l.status==='failed'?'异常':'正常'}</span>`).join('')}${diagText?`<span class="sync-stat danger sync-error-detail" title="${escapeHTML(diagText)}"><b>诊断</b>${escapeHTML(diagText)}</span>`:''}`;
   const project=currentProject();
   // POST /api/sync/now and PUT /api/sync/config are platform-wide (every
-  // project's repositories), so only platform admins may use them.
-  const canSync=isPlatformAdmin(),adminOnly=canSync?'':'只有平台管理员可以同步外部工作项或修改同步配置';
+  // project's repositories), so only platform admins may use them once login
+  // is required; without login the server lets everyone through.
+  const canSync=!state.authRequired||isPlatformAdmin(),adminOnly=canSync?'':'只有平台管理员可以同步外部工作项或修改同步配置';
   const githubButton=document.querySelector("#importGitHubIssues");if(githubButton){githubButton.disabled=!!syncing||!canSync;githubButton.title=adminOnly}
   for(const id of ['#syncAutoEnabledInline','#syncAutoEnabled','#syncInterval','#saveSyncConfig']){const el=$(id);if(el){el.disabled=!canSync;el.title=adminOnly}}
   const repos=(state.data.repositories||[]).filter(r=>r.projectId===state.projectFilter&&r.provider==='github');
