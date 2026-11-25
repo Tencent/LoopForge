@@ -2295,6 +2295,12 @@ export default function App() {
         </div>
         {!chat.activeId && !chat.readOnly ? (
           <section className="home-starters" aria-label="可以这样开始">
+            {!chat.projectId ? (
+              <p className="home-starter-scope-hint" role="note">
+                当前是个人对话，未绑定项目，无法检查项目的机器、SOP 和角色；
+                下面的引导问题需要先在输入框旁「选择项目」，也可以直接提通用问题。
+              </p>
+            ) : null}
             <div className="home-starter-grid">
               {homeStarters.map((starter, index) => (
                 <button

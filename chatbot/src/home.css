@@ -257,6 +257,12 @@
   max-width: 768px;
   margin: 33px auto 0;
 }
+.home-starter-scope-hint {
+  margin: 0 1px 12px;
+  color: var(--home-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .home-section-heading {
   display: flex;
   align-items: center;
