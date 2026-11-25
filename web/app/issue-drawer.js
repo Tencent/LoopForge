@@ -969,7 +969,7 @@ function operationsPane(issue){
 }
 function activityPane(issue,data){
   const comments=data.comments||[],task=data.task,run=data.run;
-  const commentHtml=comments.slice().reverse().map(c=>`<div class="comment-row"><div class="muted">${c.authorType==='agent'?'Agent':c.authorId||'成员'} · ${new Date(c.createdAt).toLocaleString()}</div><p>${escapeHTML(c.body)}</p></div>`).join('')||'<div class="detail-empty compact">暂无讨论</div>';
+  const commentHtml=comments.slice().reverse().map(c=>`<div class="comment-row"><div class="muted">${c.authorType==='agent'?'Agent':c.authorId||'成员'} · ${new Date(c.createdAt).toLocaleString()}</div><p>${escapeHTML(c.body)}</p></div>`).join('')||'<div class="detail-empty compact">暂无讨论。这里只展示该需求已有的评论，暂不能直接发表；需要沟通请到「会话」页签。</div>';
   const items=[];
   for(const item of [task,data.deletionTask].filter((t,i,all)=>t&&all.findIndex(x=>x?.id===t.id)===i)){
     items.push({t:new Date(item.createdAt).getTime(),type:'task.created',label:item.id===data.deletionTask?.id?'阻止删除的任务':'创建任务',detail:`${taskStatusLabel(item.status)} · ${item.id}${item.agentId?' · '+item.agentId:''}`});

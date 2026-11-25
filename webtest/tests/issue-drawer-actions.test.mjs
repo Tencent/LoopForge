@@ -43,6 +43,7 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
       operations:operationsPane({...issue,createdAt:'2026-01-01',operations:[
         {at:'2026-01-03',action:'update',actor:'Alice',detail:'changed title'}]}),
       activity:activityPane(issue,state.issueDetailData),
+      emptyActivity:activityPane(issue,{...state.issueDetailData,comments:[]}),
       artifacts:artifactsPane({run:{...state.issueDetailData.run,artifacts:[
         {id:'a1',nodeId:'n1',name:'Report',path:'report.md',attempt:2,size:2048,sha256:'abcdef123456'}]}}),
       delivery:deliveryPane(issue,state.issueDetailData),
@@ -65,6 +66,7 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
   assert.match(result.overview, /继续/);
   assert.match(result.operations, /编辑需求|changed title/);
   assert.match(result.activity, /Automated note/);
+  assert.match(result.emptyActivity, /暂无讨论.*会话/);
   assert.match(result.activity, /节点失败/);
   assert.match(result.artifacts, /Report/);
   assert.match(result.delivery, /feature\/chart/);
