@@ -329,6 +329,7 @@ async function evoSOPSavePolicy(workflowId, patch, control) {
       method: 'PUT',
       body: JSON.stringify(body),
     });
+    evoSOPState.busyIds.delete(workflowId);
     if (pid === evoProjectId()) {
       if (Array.isArray(evo.overview?.sops)) {
         const idx = evo.overview.sops.findIndex(x => x.workflowId === workflowId);
@@ -351,6 +352,7 @@ async function evoSOPSavePolicy(workflowId, patch, control) {
     toast('SOP 进化配置已更新', 'ok');
     return saved;
   } catch (err) {
+    evoSOPState.busyIds.delete(workflowId);
     toast(err.message, 'err');
     if (pid === evoProjectId()) {
       if (evoSOPState.view?.workflowId === workflowId) evoSOPRenderDetail();

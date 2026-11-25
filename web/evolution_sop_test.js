@@ -176,6 +176,8 @@ const { createDOM } = require('./hui_fake_dom');
   assert.match(calls[0].url, /\/api\/evolution\/sops\/wf-bug\/policy$/);
   assert.deepEqual(calls[0].body.preferences, ['tokens', 'duration']);
   assert.equal(calls[0].body.model, 'claude-code:sonnet-4');
+  assert.equal(w.$('[data-evo-sop-pref-open="wf-bug"]').disabled, false, 'preference button must re-enable after policy save');
+  assert.equal(w.$('[data-evo-sop-toggle="wf-bug"]').disabled, false, 'switch must re-enable after policy save');
 
   console.log('evolution sop: clean home/detail, fixed switch scope, side-by-side diff, close icon, and standalone model picker passed');
 })().catch(error => {
