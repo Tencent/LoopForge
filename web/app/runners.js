@@ -166,16 +166,17 @@ function platformRunnerCardHTML(runner,isDefault,canSetDefault){
   const name=escapeHTML(runner.name||'平台执行机器（云端）');
   const limit=runner.canEditLimit?runnerRunLimitHTML(runner,true):`<span class="runner-limit-label">${runnerConcurrencyLabel(runner)}</span>`;
   return `<article class="runner-card runner-platform-card panel ${isDefault?'is-default':''}">
-    <div class="runner-card-head">
-      <span class="runner-machine-icon" aria-hidden="true">${huiIcon('monitor')}</span>
+    <div class="runner-platform-main">
+      <span class="runner-machine-icon" aria-hidden="true">${huiIcon('server')}</span>
       <div class="runner-card-title">
         <div class="runner-card-name"><b title="${name}">${name}</b><span class="runner-tag">平台自带</span>${isDefault?'<span class="runner-tag default">此项目默认</span>':''}</div>
         ${runnerLoadHTML(runner)}
       </div>
-      <div class="runner-head-actions">${runnerStatusLabel(runner.status)}</div>
     </div>
-    <div class="runner-card-action">
-      ${limit}<span class="runner-card-spacer"></span>
+    <div class="runner-platform-controls">
+      ${runnerStatusLabel(runner.status)}
+      <span class="runner-platform-sep" aria-hidden="true"></span>
+      ${limit}
       ${canSetDefault?`<button type="button" class="button small ${isDefault?'ghost runner-text-button':'hui-btn-soft'}" data-runner-platform-default>${isDefault?'清除项目默认':'在此项目使用'}</button>`:''}
     </div>
   </article>`;
@@ -211,7 +212,7 @@ function renderRunnersView(){
   const personalDefaultId=state.personalDefaultRunnerId??state.defaultRunnerId??'';
   const projectDefaultId=projectLoaded?state.projectDefaultRunnerId||'':'';
   const defaultId=projectLoaded?state.defaultRunnerId||'':'';
-  $('#runnerCount').textContent=String(runners.length+(platform?1:0));
+  $('#runnerCount').textContent=String(runners.length);
   const autoAssign=$('#runnerAutoAssign');
   if(autoAssign){
     const active=projectMode==='auto';
@@ -253,6 +254,12 @@ function renderRunnersView(){
   const focusedShare=document.activeElement?.dataset.runnerShare;
   const focusedPlatform=document.activeElement?.hasAttribute('data-runner-platform-default');
   closeRunnerRuntimeMenu();
+  const platformSection=$('#platformRunnerSection');
+  const platformHost=$('#platformRunnerHost');
+  if(platformSection&&platformHost){
+    platformSection.hidden=!platform;
+    platformHost.innerHTML=platform?platformRunnerCardHTML(platform,projectMode==='platform',canSetMode):'';
+  }
   const runnerCards=runners.map(r=>{
     const isDefault=r.id===defaultId;
     const discoveredCLIs=(r.runtimes||[]).filter(rt=>runnerCLILabels[rt.provider]);
@@ -291,9 +298,8 @@ function renderRunnersView(){
       </div>
     </article>`;
   }).join('');
-  list.innerHTML=((platform?platformRunnerCardHTML(platform,projectMode==='platform',canSetMode):'')+runnerCards)||
-    '<div class="runner-empty"><b>还没有机器</b><span>执行上方命令后自动出现</span></div>';
-  const platformDefault=list.querySelector('[data-runner-platform-default]');
+  list.innerHTML=runnerCards||'<div class="runner-empty"><b>还没有机器</b><span>执行上方命令后自动出现</span></div>';
+  const platformDefault=platformHost?.querySelector('[data-runner-platform-default]');
   if(platformDefault){
     platformDefault.onclick=()=>setDefaultRunner('',projectId,projectMode==='platform'?'':'platform');
     if(focusedPlatform)platformDefault.focus({preventScroll:true});
@@ -315,10 +321,12 @@ function renderRunnersView(){
     const [runnerId,provider]=cb.dataset.runnerCli.split('|');
     toggleRunnerRuntime(runnerId,provider,cb.checked);
   });
-  list.querySelectorAll('[data-runner-run-limit],[data-platform-run-limit]').forEach(input=>{
-    input.onchange=()=>saveRunnerRunLimit(input.dataset.runnerRunLimit,input.value,input.hasAttribute('data-platform-run-limit'));
-    input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();input.blur()}};
-  });
+  for(const scope of [platformHost,list]){
+    scope?.querySelectorAll('[data-runner-run-limit],[data-platform-run-limit]').forEach(input=>{
+      input.onchange=()=>saveRunnerRunLimit(input.dataset.runnerRunLimit,input.value,input.hasAttribute('data-platform-run-limit'));
+      input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();input.blur()}};
+    });
+  }
   list.querySelectorAll('[data-runner-auth]').forEach(select=>select.onchange=()=>{
     const [runnerId,provider]=select.dataset.runnerAuth.split('|');
     setRunnerRuntimeAuth(runnerId,provider,select.value);
@@ -343,7 +351,7 @@ function renderRunnersView(){
     btn.onclick=()=>checkRunnerUpdate(btn.dataset.runnerCheckUpdate);
     if(!btn.disabled&&btn.dataset.runnerCheckUpdate===focusedUpdate)btn.focus({preventScroll:true});
   });
-  window.AgentFlowHarnessIcons?.hydrate?.(list);
+  [platformHost,list].forEach(el=>el&&window.AgentFlowHarnessIcons?.hydrate?.(el));
   if(!runnerRefreshTimer)runnerRefreshTimer=setInterval(()=>{
     if(!document.hidden&&activeViewName()==='runners'&&!runnerRuntimeTrigger&&!$('#confirmModal.open')&&!document.activeElement?.matches?.('[data-runner-run-limit],[data-platform-run-limit],[data-runner-auth],[data-runner-key-help]'))refreshRunners(true);
   },15000);
