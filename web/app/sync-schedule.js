@@ -36,7 +36,11 @@ function renderSync(){
   const diagText=diag.join('；');
   $('#syncPanelSummary').innerHTML=`<span class="sync-stat"><b>${githubCount}</b>GitHub</span>${gfCount?`<span class="sync-stat"><b>${gfCount}</b>工蜂</span>`:''}${tapdCount?`<span class="sync-stat"><b>${tapdCount}</b>TAPD</span>`:''}<span class="sync-stat">最近：${lastSync}</span>${latestBySource.map(l=>`<span class="sync-stat ${l.status==='failed'?'danger':'success'}"><b>${l.status==='failed'?'!':'✓'}</b>${l.source==='github'?'GitHub':l.source==='gongfeng'?'工蜂':'TAPD'} ${l.status==='failed'?'异常':'正常'}</span>`).join('')}${diagText?`<span class="sync-stat danger sync-error-detail" title="${escapeHTML(diagText)}"><b>诊断</b>${escapeHTML(diagText)}</span>`:''}`;
   const project=currentProject();
-  const githubButton=document.querySelector("#importGitHubIssues");if(githubButton)githubButton.disabled=!!syncing;
+  // POST /api/sync/now and PUT /api/sync/config are platform-wide (every
+  // project's repositories), so only platform admins may use them.
+  const canSync=isPlatformAdmin(),adminOnly=canSync?'':'只有平台管理员可以同步外部工作项或修改同步配置';
+  const githubButton=document.querySelector("#importGitHubIssues");if(githubButton){githubButton.disabled=!!syncing||!canSync;githubButton.title=adminOnly}
+  for(const id of ['#syncAutoEnabledInline','#syncAutoEnabled','#syncInterval','#saveSyncConfig']){const el=$(id);if(el){el.disabled=!canSync;el.title=adminOnly}}
   const repos=(state.data.repositories||[]).filter(r=>r.projectId===state.projectFilter&&r.provider==='github');
   const repoHost=$('#syncGongfengRepos');
   if(repoHost){
@@ -56,7 +60,8 @@ function renderSync(){
   $('#syncAutoEnabledInline').checked=cfg.autoSyncEnabled||false;
   const repoNameOf=id=>{const r=(state.data.repositories||[]).find(x=>x.id===id);return r?r.name:''};
   $('#syncPushIssue').innerHTML=projectIssues.filter(i=>!i.externalRef||i.source==='local').map(i=>{const rn=repoNameOf(i.repositoryId||(i.repositoryIds||[])[0]);return `<option value="${i.id}">${rn?escapeHTML(rn)+' · ':''}${escapeHTML((i.title||'').slice(0,40))}</option>`}).join('')||'<option value="">当前项目暂无可推送项</option>';
-  if(syncing){$('#syncNowBtn').textContent='⟳ 同步中…';$('#syncNowBtn').disabled=true}else{$('#syncNowBtn').textContent='⟳ 立即同步';$('#syncNowBtn').disabled=false}
+  if(syncing){$('#syncNowBtn').textContent='⟳ 同步中…';$('#syncNowBtn').disabled=true}else{$('#syncNowBtn').textContent='⟳ 立即同步';$('#syncNowBtn').disabled=!canSync}
+  $('#syncNowBtn').title=adminOnly;
   $('#syncLogList').innerHTML=scopedLogs.length?scopedLogs.slice(0,20).map(l=>`<div class="sync-log-item"><span class="sync-log-direction ${l.direction}">${l.direction==='pull'?'拉取':'推送'}</span><span class="sync-log-source">${l.source}</span><span class="sync-log-message">${escapeHTML(l.message||l.action)}</span><span class="sync-log-status ${l.status}">${l.status==='success'?'成功':'失败'}</span><span class="sync-log-time">${new Date(l.startedAt).toLocaleTimeString()}</span></div>`).join(''):'<div class="sync-empty">暂无同步记录</div>';
   renderScheduleJobs();
 }
