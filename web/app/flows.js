@@ -212,6 +212,15 @@ function addNode(type,opts={}){
   state.workflow.nodes.push(node);
   dirty();openNodeDrawer(node.id);
 }
+// A default branch needs both an unconditional target edge and a conditional sibling.
+function clearInvalidDefaultTargets(wf){
+  for(const node of wf.nodes){
+    if(!node.defaultTarget)continue;
+    const outgoing=wf.edges.filter(edge=>edge.source===node.id);
+    const fallback=outgoing.find(edge=>edge.target===node.defaultTarget);
+    if(!fallback||fallback.condition||!outgoing.some(edge=>edge.condition))node.defaultTarget='';
+  }
+}
 // Removes a node with its edges and any reject routes pointing at it.
 function removeNode(id){
   const wf=state.workflow,n=wf?.nodes.find(x=>x.id===id);
@@ -222,8 +231,8 @@ function removeNode(id){
   wf.edges=wf.edges.filter(e=>e.source!==id&&e.target!==id);
   wf.nodes.forEach(x=>{
     if(x.rejectTo===id){x.rejectTo='';x.onFailure='fail'}
-    if(x.defaultTarget===id)x.defaultTarget='';
   });
+  clearInvalidDefaultTargets(wf);
   if(isPreviewBuildNode(id)&&wf.preview)delete wf.preview;
   if(state.selectedNode===id)state.selectedNode=null;
   if(state.renamingNode===id)state.renamingNode=null;
@@ -531,12 +540,7 @@ async function deleteEdgeById(id){
   if(flowReadOnly())return toast(flowReadOnlyReason());
   flowHistory.record();
   state.workflow.edges=state.workflow.edges.filter(x=>x.id!==id);
-  const source=state.workflow.nodes.find(n=>n.id===edge.source);
-  if(source?.defaultTarget){
-    const outgoing=state.workflow.edges.filter(x=>x.source===source.id);
-    const fallback=outgoing.find(x=>x.target===source.defaultTarget);
-    if(!fallback||fallback.condition||!outgoing.some(x=>x.condition))source.defaultTarget='';
-  }
+  clearInvalidDefaultTargets(state.workflow);
   dirty();renderCanvas();renderProperties();flowToast('已删除连线',{undo:true});
 }
 async function deleteRejectEdgeByNodeId(nodeId){
@@ -1111,7 +1115,7 @@ function bindNodeProperties(host,n){
     const edge=state.workflow.edges.find(e=>e.id===row.dataset.routeEdge);if(!edge)return;
     row.querySelectorAll('[data-route-field]').forEach(el=>el.onchange=()=>{
       const key=el.dataset.routeField;flowHistory.record();
-      if(key==='type'){edge.condition=el.value?{type:el.value,...(el.value==='route'?{values:[]}:{artifact:'',pointer:'',equals:''})}:undefined;renderProperties()}
+      if(key==='type'){edge.condition=el.value?{type:el.value,...(el.value==='route'?{values:[]}:{artifact:'',pointer:'',equals:''})}:undefined;clearInvalidDefaultTargets(state.workflow);renderProperties()}
       else if(key==='values')edge.condition.values=el.value.split(',').map(x=>x.trim()).filter(Boolean);
       else if(key==='equals'){try{edge.condition.equals=JSON.parse(el.value)}catch{toast('比较值需要是有效 JSON，例如 "small"');return}}
       else edge.condition[key]=el.value;
@@ -1122,7 +1126,7 @@ function bindNodeProperties(host,n){
     const key=el.dataset.p;
     if(key!=='sopWorkflowId')flowHistory.record({merge:`p:${n.id}:${key}`});
     n[key]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
-    if(key==='defaultTarget'&&n.defaultTarget){const edge=state.workflow.edges.find(e=>e.source===n.id&&e.target===n.defaultTarget);if(edge)delete edge.condition;renderProperties()}
+    if(key==='defaultTarget'&&n.defaultTarget){const edge=state.workflow.edges.find(e=>e.source===n.id&&e.target===n.defaultTarget);if(edge)delete edge.condition;clearInvalidDefaultTargets(state.workflow);renderProperties()}
     dirty();
     if(key==='agentId'){renderProperties();renderCanvas();return}
     renderCanvas();
