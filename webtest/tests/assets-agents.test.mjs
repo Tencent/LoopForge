@@ -51,15 +51,22 @@ test('sandbox form saves Docker limits and privilege and clears them when omitte
   const readOnlyHelp = form.querySelector('.field-help[aria-label="容器根文件系统只读说明"]');
   const dockerFields = form.elements.readOnlyRootFS.closest('[data-sandbox-drivers="docker"]');
   const nativeFields = form.querySelector('[data-sandbox-drivers="native"]');
+  let advanced = dockerFields.querySelector('details.sandbox-advanced');
   assert.deepEqual([...form.elements.driver.options].map((o) => [o.value, o.textContent]), [['docker', 'Docker'], ['native', '系统轻量隔离']]);
   assert.equal(dockerFields.hidden, false, 'a new sandbox starts as docker');
   assert.equal(nativeFields.hidden, true);
+  assert.equal(advanced.open, false);
+  assert.equal(advanced.querySelector('summary').textContent.trim(), '高级设置');
+  for (const name of ['cpuCores', 'memoryMiB', 'privileged']) {
+    assert.equal(form.elements[name].closest('details'), advanced);
+  }
   assert.equal(form.elements.cpuCores.value, '');
   assert.equal(form.elements.memoryMiB.value, '');
   chooseOption(form.elements.driver, 'native');
   assert.deepEqual([dockerFields.hidden, nativeFields.hidden], [true, false]);
   assert.equal(form.elements.cpuCores.disabled, true);
   assert.equal(form.elements.memoryMiB.disabled, true);
+  assert.equal(form.elements.privileged.disabled, true);
   assert.match(nativeFields.textContent, /系统轻量隔离直接使用执行机器上已安装的语言和工具/);
   assert.equal(form.elements.installScript, undefined);
   chooseOption(form.elements.driver, 'docker');
@@ -70,6 +77,8 @@ test('sandbox form saves Docker limits and privilege and clears them when omitte
   const tooltip = app.document.querySelector('#huiTooltip:not([hidden])');
   assert.match(tooltip?.textContent ?? '', /缺少的 CLI 无法在容器内自动安装；工作区 \/workspace 仍可写/);
   assert.equal(form.elements.readOnlyRootFS.checked, false);
+  advanced.querySelector('summary').click();
+  assert.equal(advanced.open, true);
   assert.equal(form.elements.privileged.checked, false);
   assert.equal(form.elements.privileged.disabled, false);
   assert.equal(form.elements.privileged.closest('[data-sandbox-drivers]'), dockerFields);
@@ -100,10 +109,27 @@ test('sandbox form saves Docker limits and privilege and clears them when omitte
 
   app.evaluate(`state.assetDetailKey='';renderAssets()`);
   form = app.document.querySelector('#assetForm');
+  advanced = form.querySelector('details.sandbox-advanced');
+  assert.equal(advanced.open, false);
   assert.equal(form.elements.privileged.checked, true);
   assert.equal(form.elements.privileged.disabled, false);
   assert.equal(form.elements.cpuCores.value, '1.25');
   assert.equal(form.elements.memoryMiB.value, '1536');
+  form.elements.name.value = 'Docker sandbox renamed';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(2);
+  const renamed = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').at(-1).body;
+  assert.equal(renamed.name, 'Docker sandbox renamed');
+  assert.equal(renamed.privileged, true);
+  assert.equal(renamed.cpuMillicores, 1250);
+  assert.equal(renamed.memoryMiB, 1536);
+
+  form.elements.cpuCores.value = '0.001';
+  const writesBeforeInvalid = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').length;
+  form.requestSubmit();
+  assert.equal(advanced.open, true, 'validation opens the section containing the invalid input');
+  assert.equal(app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').length, writesBeforeInvalid);
+
   form.elements.privileged.checked = false;
   form.elements.cpuCores.value = '';
   form.elements.memoryMiB.value = '';
