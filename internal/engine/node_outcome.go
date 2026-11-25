@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 func (e *Engine) waitApproval(runID string, node domain.WorkflowNode, msg string) {
@@ -50,7 +52,7 @@ func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attem
 func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, generation int, err error, allowReject bool) {
 	shouldReject := false
 	configurationFailure := errors.Is(err, ErrWorkspaceControlConfiguration)
-	e.updateRun(runID, func(r *domain.Run) {
+	storeFailure := func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
 			return
@@ -80,7 +82,21 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 			e.event(r, node.ID, "node.failed", err.Error())
 		}
 		shouldReject = !configurationFailure && allowReject && nr.Status == "failed" && node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount < max(1, node.MaxReworks)
-	})
+	}
+	// MySQL rolls back a deadlock victim. Retry only that write, reloading
+	// the run so the lease, generation and attempt checks still apply.
+	for writeAttempt := 0; ; writeAttempt++ {
+		shouldReject = false
+		writeErr := e.updateRunErr(runID, storeFailure)
+		if writeErr == nil {
+			break
+		}
+		var sqlErr *mysql.MySQLError
+		if writeAttempt == 2 || !errors.As(writeErr, &sqlErr) || sqlErr.Number != 1213 {
+			return
+		}
+		time.Sleep(time.Duration(5<<writeAttempt) * time.Millisecond)
+	}
 	if shouldReject {
 		_ = e.Reject(runID, domain.RejectRequest{NodeID: node.ID, TargetID: node.RejectTo, Reason: "节点失败自动打回：" + err.Error()})
 	}

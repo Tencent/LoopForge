@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,9 +17,37 @@ import (
 	"agentflow/internal/runtime"
 
 	"github.com/go-sql-driver/mysql"
+	"gorm.io/gorm"
 )
 
 func TestNodeArtifactCommitFailure(t *testing.T) {
+	store := storeRejectingPlanArtifact(t)
+	run := runArtifactSOP(t, store, "# Plan\n", "failed")
+	assertArtifactCommitFailed(t, run, "artifact write rejected")
+}
+
+func TestNodeArtifactCommitFailureRetriesTerminalDeadlock(t *testing.T) {
+	store := storeRejectingPlanArtifact(t)
+	var deadlockInjected atomic.Bool
+	err := store.DB.Callback().Create().Before("gorm:create").Register("test:deadlock-failed-node", func(tx *gorm.DB) {
+		values, ok := tx.Statement.Dest.(map[string]any)
+		if tx.Statement.Table == "run_nodes" && ok && values["node_id"] == "writing-plans" &&
+			values["status"] == "failed" && !deadlockInjected.Swap(true) {
+			tx.AddError(&mysql.MySQLError{Number: 1213, Message: "deadlock writing failed node"})
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := runArtifactSOP(t, store, "# Plan\n", "failed")
+	if !deadlockInjected.Load() {
+		t.Fatal("failed-node write did not encounter the injected deadlock")
+	}
+	assertArtifactCommitFailed(t, run, "artifact write rejected")
+}
+
+func storeRejectingPlanArtifact(t *testing.T) *repo.Store {
+	t.Helper()
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -28,8 +57,7 @@ func TestNodeArtifactCommitFailure(t *testing.T) {
 		WHEN NEW.name = 'plan' BEGIN SELECT RAISE(ABORT, 'artifact write rejected'); END`).Error; err != nil {
 		t.Fatal(err)
 	}
-	run := runArtifactSOP(t, store, "# Plan\n", "failed")
-	assertArtifactCommitFailed(t, run, "artifact write rejected")
+	return store
 }
 
 func TestOptionalArtifactCommitFailureAllowsApproval(t *testing.T) {
