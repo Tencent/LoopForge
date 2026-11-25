@@ -82,6 +82,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	weekHourZone := analyticsWeekHourLocation(filter.TimeZone)
 	var weekHour [7][24]domain.AnalyticsWeekHourCell
 	workflows, agents, executors, models, nodes, categories, sources := map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}
+	scheduleJobs := map[string]*analyticsAccumulator{}
 	versions := map[string]*analyticsVersionAccumulator{}
 	users := map[string]*analyticsUserAccumulator{}
 	var tokenUsage map[analyticsTokenUsageKey]int64
@@ -325,6 +326,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		errorNodeID, errorMessage := analyticsRunError(run)
 		trace := domain.AnalyticsRunTrace{
 			ProjectID: projectID, IssueID: issueID, IssueSource: analyticsIssueSource(issue), WorkflowTaskID: run.ExecutionContext.TaskID,
+			ScheduleJobID: run.ExecutionContext.ScheduleJobID, ScheduleExecutionID: run.ExecutionContext.ScheduleExecutionID,
 			RunID: run.ID, TraceID: traceID, Status: run.Status, DurationMs: duration,
 			Tokens: run.Usage.TotalTokens, CostUSD: run.Usage.CostUSD, CostKnown: usageCostKnown(run.Usage),
 			ToolCalls: run.ToolCalls, ErrorNodeID: errorNodeID, ErrorMessage: errorMessage,
@@ -367,6 +369,9 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		}
 		category := analyticsWorkflowCategory(workflow, workflowDefs[run.WorkflowID])
 		accumulateBreakdown(workflows, run.WorkflowID, workflowName, run, reworks, duration, complete, execDuration)
+		if jobID := strings.TrimSpace(run.ExecutionContext.ScheduleJobID); jobID != "" {
+			accumulateBreakdown(scheduleJobs, jobID, jobID, run, reworks, duration, complete, execDuration)
+		}
 		if acc := workflows[run.WorkflowID]; acc != nil {
 			acc.item.Category = category
 			acc.nodeCount = len(workflow.Nodes)
@@ -605,6 +610,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	// Agent/CLI 与交付明细仍只在完整扫描时计算。
 	out.Workflows = finalizeBreakdowns(workflows)
 	out.Categories = finalizeBreakdowns(categories)
+	out.ScheduleJobs = finalizeBreakdowns(scheduleJobs)
 	out.WorkflowVersions = finalizeWorkflowVersions(versions)
 	out.IssueSources = finalizeBreakdowns(sources)
 	out.UserUsage = finalizeUserUsage(users)

@@ -448,16 +448,21 @@ type AnalyticsDemoSummary struct {
 // AnalyticsRunTrace is the compact TAPD -> workflow task -> Run -> trace row
 // used by the dashboard. Event details remain cursor-paged on the Run endpoint.
 type AnalyticsRunTrace struct {
-	ExecutionDurationMs *int64    `json:"executionDurationMs,omitempty"`
-	Origin              string    `json:"origin,omitempty"`
-	SourceID            string    `json:"sourceId,omitempty"`
-	WorkflowName        string    `json:"workflowName,omitempty"`
-	ProjectID           string    `json:"projectId,omitempty"`
-	IssueID             string    `json:"issueId,omitempty"`
-	IssueSource         string    `json:"issueSource,omitempty"`
-	ExternalID          string    `json:"externalId,omitempty"`
-	ExternalURL         string    `json:"externalUrl,omitempty"`
-	WorkflowTaskID      string    `json:"workflowTaskId,omitempty"`
+	ExecutionDurationMs *int64 `json:"executionDurationMs,omitempty"`
+	Origin              string `json:"origin,omitempty"`
+	SourceID            string `json:"sourceId,omitempty"`
+	WorkflowName        string `json:"workflowName,omitempty"`
+	ProjectID           string `json:"projectId,omitempty"`
+	IssueID             string `json:"issueId,omitempty"`
+	IssueSource         string `json:"issueSource,omitempty"`
+	ExternalID          string `json:"externalId,omitempty"`
+	ExternalURL         string `json:"externalUrl,omitempty"`
+	WorkflowTaskID      string `json:"workflowTaskId,omitempty"`
+	// ScheduleJobID / ScheduleExecutionID carry the server-assigned schedule
+	// attribution from the run context (see #1187). Empty for manual runs and
+	// legacy records; never inferred from a raw trace.
+	ScheduleJobID       string    `json:"scheduleJobId,omitempty"`
+	ScheduleExecutionID string    `json:"scheduleExecutionId,omitempty"`
 	RunID               string    `json:"runId"`
 	TraceID             string    `json:"traceId"`
 	Status              string    `json:"status"`
@@ -540,6 +545,10 @@ type AnalyticsSnapshot struct {
 	IssueSources []AnalyticsBreakdown `json:"issueSources,omitempty"`
 	// Categories 按 LOOP 受控标签 metricCategory 拆解。
 	Categories []AnalyticsBreakdown `json:"categories,omitempty"`
+	// ScheduleJobs breaks down scheduled runs by their schedule job. Runs with
+	// no scheduleJobId (manual/legacy) are excluded, so this slice never inflates
+	// the overall Summary/Trend totals.
+	ScheduleJobs []AnalyticsBreakdown `json:"scheduleJobs,omitempty"`
 	// WorkflowVersions 为 LOOP 版本对比。
 	WorkflowVersions []AnalyticsWorkflowVersion `json:"workflowVersions,omitempty"`
 	// UserUsage 为每用户每日 Token/成本/运行数。

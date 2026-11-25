@@ -6787,6 +6787,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OpenObject"
+          description: Each trace may carry read-only scheduleJobId/scheduleExecutionId from the persisted run context; empty for manual and legacy runs.
+        scheduleJobs:
+          type: array
+          readOnly: true
+          items:
+            $ref: "#/components/schemas/OpenObject"
+          description: Breakdown of scheduled runs by scheduleJobId. Runs without a scheduleJobId are excluded, so this breakdown never inflates the summary/trend totals. Share fields are left unset for this atomic subset.
     Bootstrap:
       type: object
       additionalProperties: true
