@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 )
@@ -22,23 +23,30 @@ func RemoveWorkspaceTree(path string) error {
 	return os.RemoveAll(path)
 }
 
-// makeDirectoriesOwnerWritable adds owner rwx to every real directory below
-// path. os.Root keeps a concurrently swapped symlink from reaching outside.
+// makeDirectoriesOwnerWritable adds owner rwx to path and every real
+// directory below it. All mode changes go through an os.Root opened on path,
+// so a concurrently swapped symlink cannot reach outside: below the root
+// os.Root refuses it, and for path itself the opened directory must be the
+// one Lstat saw (OpenRoot follows a symlink in the last element). A path
+// without owner read cannot be opened and is left to the caller's error.
 func makeDirectoriesOwnerWritable(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil || !info.IsDir() {
 		return err
-	}
-	if mode := info.Mode().Perm(); mode&0o700 != 0o700 {
-		if err := os.Chmod(path, mode|0o700); err != nil {
-			return err
-		}
 	}
 	root, err := os.OpenRoot(path)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
+	opened, err := root.Stat(".")
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(info, opened) {
+		return fmt.Errorf("%s was replaced while it was being removed", path)
+	}
+	// WalkDir visits "." first, so the root itself is made writable here too.
 	return fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// Best effort: the final RemoveAll reports anything left behind.
