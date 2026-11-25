@@ -130,6 +130,8 @@ test('failed script: manual pass skips it and continues downstream', async () =>
   await api('POST', `/api/runs/${id}/pass`, { nodeId: 'after' }, { expect: [400, 409, 500] });
   await post(`/api/runs/${id}/pass`, { nodeId: 'broken', context: 'e2e 人工通过' });
   const run = await waitRun(id, r => r.status === 'succeeded', { label: 'succeeded after pass' });
+  const completed = await get(`/api/runs/${id}/wait?timeoutSec=25`);
+  assert.deepEqual(completed, { runId: id, projectId: cfg.projectId, status: 'succeeded', terminal: true, timedOut: false });
   assert.equal(nodeOf(run, 'broken').attempt, 1, 'pass must not re-execute the node');
   assert.match(await logsText(id), /AFTER_PASS/);
 });
