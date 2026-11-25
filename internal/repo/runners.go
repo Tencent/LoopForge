@@ -611,9 +611,9 @@ func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now t
 // StartRunnerTask moves a leased task into running.
 func (r *RunnersRepo) StartRunnerTask(id, runnerID string, now time.Time) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID)
-		if !ok {
-			return ErrRunnerTaskLeaseLost
+		row, err := r.takeRunnerTaskForLease(tx, id, runnerID)
+		if err != nil {
+			return err
 		}
 		task := runnerTaskFromRow(row)
 		task.Status = domain.RunnerTaskRunning
@@ -629,14 +629,15 @@ func (r *RunnersRepo) StartRunnerTask(id, runnerID string, now time.Time) error 
 }
 
 // takeRunnerTaskForLease loads a task that must currently be leased by runnerID.
-func (r *RunnersRepo) takeRunnerTaskForLease(tx *gorm.DB, id, runnerID string) (runnerTaskRow, bool) {
+func (r *RunnersRepo) takeRunnerTaskForLease(tx *gorm.DB, id, runnerID string) (runnerTaskRow, error) {
 	var row runnerTaskRow
-	if err := r.locking(tx).
+	err := r.locking(tx).
 		Where("id = ? AND lease_owner = ? AND status IN ?", id, runnerID, []string{domain.RunnerTaskLeased, domain.RunnerTaskRunning}).
-		Take(&row).Error; err != nil {
-		return runnerTaskRow{}, false
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return runnerTaskRow{}, ErrRunnerTaskLeaseLost
 	}
-	return row, true
+	return row, err
 }
 
 // RenewRunnerTaskLease extends the lease and returns the desired state so a
@@ -644,9 +645,9 @@ func (r *RunnersRepo) takeRunnerTaskForLease(tx *gorm.DB, id, runnerID string) (
 func (r *RunnersRepo) RenewRunnerTaskLease(id, runnerID string, ttl time.Duration, now time.Time) (string, error) {
 	var desired string
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
-		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID)
-		if !ok {
-			return ErrRunnerTaskLeaseLost
+		row, err := r.takeRunnerTaskForLease(tx, id, runnerID)
+		if err != nil {
+			return err
 		}
 		if err := tx.Model(&runnerTaskRow{}).Where("id = ?", id).Updates(map[string]any{
 			"lease_until": now.Add(ttl), "updated_at": now,
@@ -667,9 +668,9 @@ func (r *RunnersRepo) CompleteRunnerTask(id, runnerID, status string, exitCode *
 		return fmt.Errorf("invalid final task status %q", status)
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID)
-		if !ok {
-			return ErrRunnerTaskLeaseLost
+		row, err := r.takeRunnerTaskForLease(tx, id, runnerID)
+		if err != nil {
+			return err
 		}
 		task := runnerTaskFromRow(row)
 		task.Status = status
