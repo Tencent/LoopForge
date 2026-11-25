@@ -305,7 +305,7 @@ func TestChatClarificationStartAttributesTheSavingMember(t *testing.T) {
 			} else {
 				reply, _ = f.say(t, "group", "oc_group", "ou_owner", "保存并启动")
 			}
-			if !strings.Contains(reply, "已启动 SOP") {
+			if !strings.Contains(reply, "已启动 LOOP") {
 				t.Fatalf("save and start = %q", reply)
 			}
 			op := latestIssueOperation(t, f.s, "dispatch")
