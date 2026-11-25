@@ -474,7 +474,7 @@ func TestCloneAgentMCPServersCopiesByTargetScope(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 	for _, server := range []domain.MCPServerDefinition{
 		{ID: "project-source", Name: "Project", Scope: "project", ProjectID: "source", Transport: "http", URL: "https://example.com/project"},
-		{ID: "personal-source", Name: "Personal", Scope: "personal", OwnerUserID: 9, Transport: "http", URL: "https://example.com/personal"},
+		{ID: "personal-source", Name: "Personal", Scope: "personal", OwnerUserID: 2, Transport: "http", URL: "https://example.com/personal"},
 	} {
 		if err := s.PutMCPServer(server); err != nil {
 			t.Fatal(err)
@@ -482,7 +482,9 @@ func TestCloneAgentMCPServersCopiesByTargetScope(t *testing.T) {
 	}
 	server := &Server{deps: &deps{repo: s}}
 	server.catalog = &catalogHandlers{deps: server.deps}
-	ids, err := server.catalog.cloneAgentMCPServers([]string{"project-source", "personal-source"}, "target", 2)
+	ids, err := server.catalog.cloneAgentMCPServers([]string{"project-source", "personal-source"}, "target", 2, func(projectID string) bool {
+		return projectID == "source"
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,8 +496,8 @@ func TestCloneAgentMCPServersCopiesByTargetScope(t *testing.T) {
 		t.Fatalf("project MCP copy = %+v", project)
 	}
 	personal, ok := s.MCPServer(ids[1])
-	if !ok || personal.Scope != "personal" || personal.OwnerUserID != 2 || personal.ProjectID != "" {
-		t.Fatalf("personal MCP copy = %+v", personal)
+	if !ok || personal.ID != "personal-source" || personal.Scope != "personal" || personal.OwnerUserID != 2 || personal.ProjectID != "" {
+		t.Fatalf("personal MCP reference = %+v", personal)
 	}
 }
 

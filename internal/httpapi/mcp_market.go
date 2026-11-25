@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -106,10 +107,16 @@ func installMarketMCP(st *repo.Store, marketID, projectID string) (domain.MCPSer
 		URL: item.URL, AuthType: item.AuthType, CredentialKind: item.CredentialKind, Scope: "project", ProjectID: projectID,
 		TimeoutSec: 60, UpdatedAt: time.Now().UTC(),
 	}
-	if err := st.PutMCPServer(server); err != nil {
+	saved, err := st.SaveMCPServers(repo.MCPServerChange{Definition: server})
+	if errors.Is(err, repo.ErrMCPServerChanged) {
+		if existing, ok := st.MCPServer(server.ID); ok && existing.Scope == "project" && existing.ProjectID == projectID && sameMarketItem(existing.MarketID, item.ID) {
+			return existing, false, nil
+		}
+	}
+	if err != nil {
 		return domain.MCPServerDefinition{}, false, err
 	}
-	return server, true, nil
+	return saved[0], true, nil
 }
 
 func ensureDefaultProjectMCPs(st *repo.Store, projectID string) error {
@@ -231,7 +238,7 @@ func (h *marketHandlers) mcpMarketInstall(c *gin.Context) {
 			c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
 		}
-		respond(c, err)
+		respondMCPWriteError(c, err)
 		return
 	}
 	if !created {
@@ -287,16 +294,17 @@ func (h *marketHandlers) mcpCustomInstall(c *gin.Context) {
 		return
 	}
 	server.ID = mcpInstallID("custom-"+baseID, server.Scope, ownerKey)
-	if _, exists := h.repo.MCPServer(server.ID); exists {
+	saved, err := h.repo.SaveMCPServers(repo.MCPServerChange{Definition: server})
+	if errors.Is(err, repo.ErrMCPServerChanged) {
 		c.JSON(http.StatusConflict, map[string]string{"error": "当前范围已经存在相同标识的自定义 MCP"})
 		return
 	}
-	if err := h.repo.PutMCPServer(server); err != nil {
-		respond(c, err)
+	if err != nil {
+		respondMCPWriteError(c, err)
 		return
 	}
 	h.configureSync(h.repo.SyncConfig())
-	c.JSON(http.StatusCreated, domain.PublicMCPServer(server))
+	c.JSON(http.StatusCreated, domain.PublicMCPServer(saved[0]))
 }
 
 func visibleMCPServersForUser(items []domain.MCPServerDefinition, userID int64) []domain.MCPServerDefinition {

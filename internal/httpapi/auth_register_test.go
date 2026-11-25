@@ -12,9 +12,34 @@ import (
 	"testing"
 )
 
+func TestLocalSignupOptionsForExternalIdentity(t *testing.T) {
+	for _, mode := range []struct {
+		name, environment string
+	}{
+		{name: "gateway", environment: "AGENTFLOW_TRUST_IDENTITY_HEADERS"},
+		{name: "SSO app", environment: "AGENTFLOW_SSO_APP_TOKEN"},
+		{name: "SSO login", environment: "AGENTFLOW_SSO_LOGIN_URL"},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Setenv(mode.environment, "true")
+			t.Setenv("AGENTFLOW_ALLOW_SIGNUP", "true")
+			h := &authHandlers{deps: &deps{}}
+			needsSetup, signup, err := h.localSignupOptions()
+			if err != nil || needsSetup || signup {
+				t.Fatalf("setup=%v signup=%v err=%v", needsSetup, signup, err)
+			}
+		})
+	}
+}
+
 func TestRegisterFirstAccountBecomesAdminAndSignupToggle(t *testing.T) {
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
 	t.Setenv("AGENTFLOW_SCHEDULER_ENABLED", "false")
+	t.Setenv("AGENTFLOW_TRUST_IDENTITY_HEADERS", "false")
+	t.Setenv("AGENTFLOW_SSO_APP_TOKEN", "")
+	t.Setenv("AGENTFLOW_SSO_LOGIN_URL", "")
+	t.Setenv("AGENTFLOW_PLATFORM_ADMINS", "")
+	t.Setenv("AGENTFLOW_ALLOW_SIGNUP", "true")
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
