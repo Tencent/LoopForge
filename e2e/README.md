@@ -16,7 +16,7 @@ export AGENTFLOW_E2E_BASE=http://127.0.0.1:8090
 
 ### 用当前代码跑
 
-要验证本地还没合并的改动，用 `local.sh`：它用当前检出的代码编译并起一个临时平台，自带 MySQL 容器、测试用户和 Token、`generic-docker`/`local` 沙箱，以及一个本机裸仓库（给需要代码仓库的用例用），跑完全部清理。
+要验证本地还没合并的改动，用 `local.sh`。它用当前检出的代码编译并启动临时平台，准备 MySQL 容器、测试用户和 Token，以及一个本机裸仓库，跑完全部清理。平台提供内置的 `generic-docker`，用例按需创建 `e2e-native`。
 
 ```bash
 ./local.sh                                         # 全部 API 用例
@@ -37,7 +37,7 @@ AGENTFLOW_E2E_CODEBUDDY_API_KEY=ck_... ./local.sh api/40-model.test.mjs   # 带�
 | `AGENTFLOW_E2E_CLI_KEY` | 本地实测时所选 CLI 的个人凭据 |
 | `AGENTFLOW_E2E_CLI_BASE_URL` | 本地实测可选的自定义模型网关 |
 | `AGENTFLOW_E2E_EXECUTOR` | 执行器，默认 `codebuddy` |
-| `AGENTFLOW_E2E_SANDBOX` | 沙箱，默认 `local`，仅对可信的验收任务使用 |
+| `AGENTFLOW_E2E_SANDBOX` | SOP 用的沙箱，默认 `e2e-native`：测试项目里自动创建的 native 沙箱，脚本在部署机上隔离执行（Linux 需要 bubblewrap） |
 | `AGENTFLOW_E2E_MODEL_SANDBOX` | 真实模型用例使用的沙箱，镜像里要有执行器 CLI；默认同 `AGENTFLOW_E2E_SANDBOX` |
 | `AGENTFLOW_E2E_REPO_CLONE_URL` | 带代码仓库的用例克隆这个仓库（只读，不推送）。不设置就跳过这些用例；`local.sh` 会自动设成本机裸仓库 |
 | `AGENTFLOW_E2E_REPO_BRANCH` | 上面仓库的基线分支，默认 `main` |

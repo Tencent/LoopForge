@@ -62,6 +62,11 @@ func TestWorkspaceRepositoryPromptRefreshesOnlyWhenNeeded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	project, _ := h.repo.Project("workbench")
+	project.DefaultRepositoryID = "old-repo"
+	if err := h.repo.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
 
 	session := &AgentToolSession{ProjectID: "workbench", workspaceRunID: "first-workspace"}
 	root := t.TempDir()
@@ -87,7 +92,7 @@ func TestWorkspaceRepositoryPromptRefreshesOnlyWhenNeeded(t *testing.T) {
 	}
 	prompt, firstHash := render(session, "")
 	got := repositories(prompt)
-	want := workspaceRepositoryHint{ID: "old-repo", Name: "Old repo", CloneURL: "https://git.example.com/team/old.git", DefaultBranch: "develop"}
+	want := workspaceRepositoryHint{ID: "old-repo", Name: "Old repo", CloneURL: "https://git.example.com/team/old.git", DefaultBranch: "develop", ProjectDefault: true}
 	if firstHash == "" || len(got) != 1 || got[0] != want {
 		t.Fatalf("unexpected project repository context: %+v", got)
 	}
@@ -105,12 +110,21 @@ func TestWorkspaceRepositoryPromptRefreshesOnlyWhenNeeded(t *testing.T) {
 	}
 	prompt, updatedHash := render(session, firstHash)
 	got = repositories(prompt)
-	if updatedHash == "" || updatedHash == firstHash || len(got) != 2 || got[0].ID != "new-repo" || got[1] != want {
+	if updatedHash == "" || updatedHash == firstHash || len(got) != 2 || got[0].ID != "new-repo" || got[0].ProjectDefault || got[1] != want {
 		t.Fatalf("did not send the full updated catalog: %+v", got)
 	}
+	project.DefaultRepositoryID = "new-repo"
+	if err := h.repo.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
+	prompt, defaultHash := render(session, updatedHash)
+	got = repositories(prompt)
+	if defaultHash == "" || defaultHash == updatedHash || len(got) != 2 || !got[0].ProjectDefault || got[1].ProjectDefault {
+		t.Fatalf("default repository change did not refresh the catalog: %+v", got)
+	}
 	session.workspaceRunID = "second-workspace"
-	prompt, switchedHash := render(session, updatedHash)
-	if switchedHash == "" || switchedHash == updatedHash || len(repositories(prompt)) != 2 {
+	prompt, switchedHash := render(session, defaultHash)
+	if switchedHash == "" || switchedHash == defaultHash || len(repositories(prompt)) != 2 {
 		t.Fatal("the new workspace did not receive its catalog")
 	}
 	for _, id := range []string{"old-repo", "new-repo"} {
@@ -132,7 +146,7 @@ func TestWorkspaceRepositoryHintsStripURLSecrets(t *testing.T) {
 		{ID: "ssh", Name: "A", ProjectID: "p", CloneURL: "ssh://git:fixture-password@git.example.test:2222/team/repo.git?signature=fixture#marker"},
 		{ID: "web", Name: "B", ProjectID: "p", WebURL: "https://fixture-user@git.example.test/team/repo%20name?signature=fixture#marker"},
 		{ID: "scp", Name: "C", ProjectID: "p", CloneURL: "git@git.example.test:team/repo.git"},
-	}, "p")
+	}, "p", "")
 	if len(hints) != 3 || hints[0].CloneURL != "ssh://git@git.example.test:2222/team/repo.git" ||
 		hints[1].WebURL != "https://git.example.test/team/repo%20name" ||
 		hints[2].CloneURL != "git@git.example.test:team/repo.git" {
@@ -149,7 +163,7 @@ func TestWorkspaceRepositoryHintsPreserveGitPaths(t *testing.T) {
 	} {
 		hints := projectRepositoryHints([]domain.Repository{
 			{ID: "billing", Name: "Billing", ProjectID: "p", CloneURL: path},
-		}, "p")
+		}, "p", "")
 		if len(hints) != 1 || hints[0].CloneURL != path {
 			t.Errorf("catalog changed Git path %q: %+v", path, hints)
 		}
@@ -168,7 +182,12 @@ func TestLargeWorkspaceRepositoryCatalogReachableOnResumeAndRebuild(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	if size := len(jsonObject(projectRepositoryHints(h.repo.Repositories(), "workbench"))); size < 128<<10 {
+	project, _ := h.repo.Project("workbench")
+	project.DefaultRepositoryID = "repo-0000"
+	if err := h.repo.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
+	if size := len(jsonObject(workspaceRepositoryHints(h.repo, "workbench"))); size < 128<<10 {
 		t.Fatalf("fixture is too small to exercise the Linux argument limit: %d", size)
 	}
 	root := t.TempDir()
@@ -197,6 +216,9 @@ func TestLargeWorkspaceRepositoryCatalogReachableOnResumeAndRebuild(t *testing.T
 			var hint workspaceRepositoryHint
 			if err := json.Unmarshal([]byte(line), &hint); err != nil || hint.CloneURL == "" {
 				t.Fatalf("invalid staged catalog entry: %v", err)
+			}
+			if hint.ProjectDefault != (hint.ID == project.DefaultRepositoryID) {
+				t.Fatalf("incorrect default repository marker for %s", hint.ID)
 			}
 		}
 		return prompt, next
@@ -510,12 +532,12 @@ func TestNativeExternalWriteClassifier(t *testing.T) {
 func TestRuntimeModeHandoffPublishesToLiveGeneration(t *testing.T) {
 	recorder := newAssistantGenerationRecorder(domain.AssistantGeneration{ID: "mode-stream", Status: "running"})
 	defer recorder.close()
-	recorder.sink("runtime_mode", map[string]string{"mode": domain.AssistantModeWorkspace})
-	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace {
-		t.Fatal("handoff mode not published")
+	recorder.sink("runtime_mode", map[string]string{"mode": domain.AssistantModeWorkspace, "workspaceRunId": "workspace-2"})
+	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace || got.WorkspaceRunID != "workspace-2" {
+		t.Fatalf("handoff = %q in %q", got.RuntimeMode, got.WorkspaceRunID)
 	}
-	recorder.sink("runtime_mode", map[string]string{"mode": "invalid"})
-	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace {
+	recorder.sink("runtime_mode", map[string]string{"mode": "invalid", "workspaceRunId": "unbound"})
+	if got := recorder.snapshot(); got.RuntimeMode != domain.AssistantModeWorkspace || got.WorkspaceRunID != "workspace-2" {
 		t.Fatal("invalid mode accepted")
 	}
 }

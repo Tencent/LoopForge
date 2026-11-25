@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -14,8 +16,25 @@ import (
 
 type dispatchRequest struct {
 	IssueID, WorkflowID, ScheduleJobID, TriggerOrigin string
+	WorkspaceRunID                                    string
 	Rerun                                             bool
 	TriggerUserID                                     int64
+	// ChatOrigin is the IM conversation the start was requested in; the
+	// run's progress goes back there.
+	ChatOrigin *domain.BotChatOrigin
+}
+
+type botStartOriginKey struct{}
+
+// withBotStartOrigin marks the SOP starts made with ctx as requested in an
+// IM conversation.
+func withBotStartOrigin(ctx context.Context, origin domain.BotChatOrigin) context.Context {
+	return context.WithValue(ctx, botStartOriginKey{}, origin)
+}
+
+func botStartOriginFrom(ctx context.Context) (domain.BotChatOrigin, bool) {
+	origin, ok := ctx.Value(botStartOriginKey{}).(domain.BotChatOrigin)
+	return origin, ok
 }
 
 func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
@@ -148,7 +167,7 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	if summary := strings.TrimSpace(issue.Clarification.Summary); summary != "" {
 		input += "\n\nClarification summary:\n" + summary
 	}
-	if len(repositories) > 0 {
+	if len(repositories) > 0 && req.WorkspaceRunID == "" {
 		if len(repositories) == 1 {
 			input += "\n\nRepository context (frozen): the repository is checked out in a first-level subdirectory; SOP deliverables stay at the workspace root"
 		} else {
@@ -204,19 +223,49 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	issue.LatestTaskID = stored.ID
 	issue.Status = "in_progress"
-	if err := d.repo.PutIssue(issue); err != nil {
-		task.Status = "failed"
-		_ = d.repo.PutTask(task)
-		return domain.Task{}, err
+	if req.WorkspaceRunID == "" {
+		if err := d.repo.PutIssue(issue); err != nil {
+			task.Status = "failed"
+			_ = d.repo.PutTask(task)
+			return domain.Task{}, err
+		}
 	}
 	tapdID := issue.RequirementTAPDID()
-	run, err := d.engine.StartWithRepositoriesContext(workflowID, input, repositories, domain.TelemetryContext{ProjectID: issue.ProjectID, IssueID: issue.ID, TAPDID: tapdID, ResponsibleUserID: runUserID, IssueNumber: issue.Number, TaskID: taskID, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID)})
+	exec := domain.TelemetryContext{
+		ProjectID: issue.ProjectID, IssueID: issue.ID, TAPDID: tapdID, ResponsibleUserID: runUserID, IssueNumber: issue.Number,
+		TaskID: taskID, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID), WorkspaceRunID: req.WorkspaceRunID,
+	}
+	origin := req.ChatOrigin
+	if origin != nil && origin.ProjectID == issue.ProjectID {
+		origin.IssueID, origin.RunID = issue.ID, ""
+		if err := d.repo.RecordBotChatOrigin(*origin); err != nil {
+			log.Printf("bot chat origin of issue %s not recorded: %v", issue.ID, err)
+		} else {
+			exec.BotOriginID = repo.BotIssueOriginID(origin.ConversationID, issue.ID)
+		}
+	}
+	run, err := d.engine.StartWithRepositoriesContext(workflowID, input, repositories, exec)
 	if err != nil {
+		if req.WorkspaceRunID != "" {
+			if releaseErr := d.repo.ReleaseTaskReservation(task.ID); releaseErr != nil {
+				return domain.Task{}, errors.Join(err, releaseErr)
+			}
+			if errors.Is(err, repo.ErrWorkspaceInUse) {
+				return domain.Task{}, HTTPError{http.StatusConflict, err.Error()}
+			}
+			return domain.Task{}, err
+		}
 		task.Status = "failed"
 		_ = d.repo.PutTask(task)
 		issue.Status = "blocked"
 		_ = d.repo.PutIssue(issue)
 		return domain.Task{}, err
+	}
+	if exec.BotOriginID != "" {
+		origin.RunID = run.ID
+		if err := d.repo.RecordBotChatOrigin(*origin); err != nil {
+			log.Printf("bot chat origin of run %s not recorded: %v", run.ID, err)
+		}
 	}
 	// Bind only after the run actually starts. A second lane keeps the SOP
 	// that already ran; a stored list of several SOPs is left unchanged.

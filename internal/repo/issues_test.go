@@ -111,7 +111,7 @@ func TestPutIssueUsesProjectDefaultRequirementWorkflow(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "gslb", Key: "GSLB", Name: "GSLB"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "gslb-issue-fix", Name: "GSLB Issue", SandboxProfileID: "local"}); err != nil {
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "gslb-issue-fix", Name: "GSLB Issue", SandboxProfileID: "test-native"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutIssue(domain.Issue{ID: "bug-gslb", ProjectID: "gslb", Source: "gongfeng", Title: "bug"}); err != nil {
@@ -165,7 +165,7 @@ func TestPutIssueBindsGenericProjectDefaultForAllIssues(t *testing.T) {
 		t.Fatalf("gongfeng issue should use generic project default, got %+v", bug)
 	}
 	// 项目专属缺陷 SOP 仍然优先于项目通用默认。
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "newproj-issue-fix", Name: "Newproj fix", SandboxProfileID: "local"}); err != nil {
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "newproj-issue-fix", Name: "Newproj fix", SandboxProfileID: "test-native"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutIssue(domain.Issue{ID: "bug-np-2", ProjectID: "newproj", Source: "gongfeng", Title: "bug 2"}); err != nil {

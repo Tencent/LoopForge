@@ -301,6 +301,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		conv := body.assistantConversation
+		if conv.ProjectID == "" {
+			conv.ProjectID = existing.ProjectID
+		}
 		conv.RuntimeMode = existing.Mode()
 		conv.ExecutionTargetLocked = existing.ExecutionLocked()
 		if existing.ID != "" && existing.ExecutionLocked() {
@@ -328,10 +331,12 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			conv.SandboxProfileID = existing.SandboxProfileID
 		}
 		if existing.ID == "" && conv.SandboxProfileID != "" {
-			if _, err := h.repo.ConversationSandbox(conv.ProjectID, conv.SandboxProfileID); err != nil {
+			profile, err := h.repo.ConversationSandbox(conv.ProjectID, conv.SandboxProfileID)
+			if err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
 			}
+			conv.SandboxProfileID = profile.ID
 		}
 		conv.Effort = existing.Effort
 		if body.Effort != nil {
@@ -375,11 +380,15 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Title == "" {
 			conv.Title = existing.Title
 		}
-		if conv.ProjectID == "" {
-			conv.ProjectID = existing.ProjectID
-		}
 		if conv.RunID == "" {
 			conv.RunID = existing.RunID
+		}
+		if existing.ID != "" {
+			conv.ProjectCredentialIDs = existing.ProjectCredentialIDs
+		} else if len(conv.ProjectCredentialIDs) > 0 {
+			if _, ok := h.sessionProjectCredentialNames(c, conv, current.ID); !ok {
+				return
+			}
 		}
 		oldExecutor := h.forkExecutor(c, existing, current.ID)
 		if conv.Executor == "" {

@@ -28,7 +28,7 @@ func cvEEngine(t *testing.T) (*Engine, *repo.Store) {
 
 func TestWorkflowGraphValidationAndTraversal(t *testing.T) {
 	valid := domain.WorkflowDefinition{
-		ID: "cve-wf", SandboxProfileID: "local",
+		ID: "cve-wf", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "a", Type: "agent"},
 			{ID: "b", Type: "script", ScriptLanguage: "python", Script: "print(1)", ArtifactOutputs: []domain.ArtifactContract{{Name: "report", Path: "out/report.md"}}},
@@ -72,29 +72,29 @@ func TestWorkflowGraphValidationAndTraversal(t *testing.T) {
 
 	cases := []domain.WorkflowDefinition{
 		{ID: "x", Nodes: valid.Nodes},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "", Type: "agent"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent"}, {ID: "a", Type: "agent"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "sop"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "sop", SOPWorkflowID: "x"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "script", ScriptLanguage: "ruby", Script: "x"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "script"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "bad"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", OnFailure: "bad"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", ExecutionScope: "bad"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", RetryStrategy: "bad"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", ArtifactOutputs: []domain.ArtifactContract{{Name: "", Path: "../bad"}}}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", ArtifactOutputs: []domain.ArtifactContract{{Name: "same", Path: "a"}, {Name: "same", Path: "b"}}}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", RejectTo: "missing"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", OnFailure: "reject"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent"}}, Edges: []domain.WorkflowEdge{{Source: "a", Target: "missing"}}},
-		{ID: "x", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent"}, {ID: "b", Type: "agent"}}, Edges: []domain.WorkflowEdge{{Source: "a", Target: "b"}, {Source: "b", Target: "a"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "", Type: "agent"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent"}, {ID: "a", Type: "agent"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "sop"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "sop", SOPWorkflowID: "x"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "script", ScriptLanguage: "ruby", Script: "x"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "script"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "bad"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", OnFailure: "bad"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", ExecutionScope: "bad"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", RetryStrategy: "bad"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", ArtifactOutputs: []domain.ArtifactContract{{Name: "", Path: "../bad"}}}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", ArtifactOutputs: []domain.ArtifactContract{{Name: "same", Path: "a"}, {Name: "same", Path: "b"}}}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", RejectTo: "missing"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent", OnFailure: "reject"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent"}}, Edges: []domain.WorkflowEdge{{Source: "a", Target: "missing"}}},
+		{ID: "x", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "a", Type: "agent"}, {ID: "b", Type: "agent"}}, Edges: []domain.WorkflowEdge{{Source: "a", Target: "b"}, {Source: "b", Target: "a"}}},
 	}
 	for i, wf := range cases {
 		if err := validate(wf); err == nil {
 			t.Fatalf("case %d accepted: %+v", i, wf)
 		}
 	}
-	command := domain.WorkflowDefinition{ID: "cmd", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "run", Type: "command", Command: "echo ok"}}}
+	command := domain.WorkflowDefinition{ID: "cmd", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "run", Type: "command", Command: "echo ok"}}}
 	if err := validate(command); err != nil {
 		t.Fatal(err)
 	}
@@ -361,21 +361,21 @@ func TestWorkspaceTransportAndBrowserRunnerPaths(t *testing.T) {
 }
 
 func TestSandboxSnapshotsPathsAndMisc(t *testing.T) {
-	e, st := cvEEngine(t)
+	e, _ := cvEEngine(t)
 	profile := domain.SandboxProfile{ID: "bad", Driver: "docker"}
-	if _, err := resolveSandboxResources(st, profile); err == nil {
+	if _, err := resolveSandbox(profile); err == nil {
 		t.Fatal("docker without file accepted")
 	}
-	profile.DockerfileID = "missing"
-	if _, err := resolveSandboxResources(st, profile); err == nil {
-		t.Fatal("missing dockerfile accepted")
+	profile.Dockerfile = &domain.SandboxDockerfile{Content: " "}
+	if _, err := resolveSandbox(profile); err == nil {
+		t.Fatal("blank dockerfile accepted")
 	}
 	profile = domain.SandboxProfile{ID: "local", Driver: "local"}
-	resources, err := resolveSandboxResources(st, profile)
+	spec, err := resolveSandbox(profile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := resolvedSandboxSnapshot(profile, resources)
+	snapshot := resolvedSandboxSnapshot(spec.Profile, sandboxResourcesFromSnapshot(spec))
 	if snapshot.Profile.ID != "local" {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
@@ -409,7 +409,7 @@ func TestSandboxSnapshotsPathsAndMisc(t *testing.T) {
 func TestObservationIngressWorkspaceStatusAndStateTransitions(t *testing.T) {
 	e, st := cvEEngine(t)
 	wf := domain.WorkflowDefinition{
-		ID: "cve-state-wf", SandboxProfileID: "local",
+		ID: "cve-state-wf", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "script", Name: "Script", Type: "script", Script: "echo ok"}, {ID: "gate", Name: "Gate", Type: "approval"}},
 		Edges: []domain.WorkflowEdge{{Source: "script", Target: "gate"}},
 	}

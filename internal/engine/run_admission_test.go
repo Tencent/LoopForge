@@ -18,7 +18,7 @@ func TestQueuedSOPDoesNotStartAndCancelDoesNotOccupy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "queue-command", Name: "Queue", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "work", Type: "command", Command: "true", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "queue-command", Name: "Queue", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "work", Type: "command", Command: "true", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestQueuedSOPAutomaticallyStartsAfterSuccess(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "queue-approval", Name: "Queue", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "queue-approval", Name: "Queue", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}

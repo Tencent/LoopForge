@@ -58,8 +58,6 @@ await sweepCollection('skill', '/api/skills', item => ours(item) && !item.shared
 // mcp-<n>-project-<p> are the platform defaults, re-provisioned for every project.
 await sweepCollection('mcp server', '/api/mcp-servers', item => ours(item) && !item.shared && !/^mcp-\d+-project-/.test(item.id));
 await sweepCollection('sandbox', '/api/sandboxes');
-await sweepCollection('environment', '/api/environments');
-await sweepCollection('dockerfile', '/api/dockerfiles');
 // Repositories are deleted by query (DELETE /api/repositories?id=…).
 await sweepCollection('repository', '/api/repositories', ours, item => `/api/repositories?id=${encodeURIComponent(item.id)}`);
 // Runner-mode scenarios bind throwaway machines; a killed daemon cannot

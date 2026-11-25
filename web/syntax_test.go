@@ -999,8 +999,14 @@ assert.equal(cloned.provider, 'ssh');
 assert.equal(cloned.cloneUrl, 'git@git.example.com:example/agent-flow.git');
 assert.equal(web.name, 'agent-flow');
 const http = parseGongfengRepoURL('http://git.example.com/example/agent-flow.git');
+assert.equal(http.provider, 'gongfeng');
 assert.equal(http.project, 'example/agent-flow');
+assert.equal(http.cloneUrl, 'https://git.example.com/example/agent-flow.git');
 assert.equal(http.name, 'agent-flow');
+const plain = parseGongfengRepoURL('git clone http://git.example.com/example/agent-flow.git');
+assert.equal(plain.provider, 'http');
+assert.equal(plain.cloneUrl, 'http://git.example.com/example/agent-flow.git');
+assert.equal(parseGongfengRepoURL(globalThis.LoopForgeGitRepositoryReference(plain)).provider, 'http');
 assert.equal(ssh.name, 'agent-flow');
 const html = require('node:fs').readFileSync('index.html', 'utf8');
 assert.ok(html.includes('集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突'));
@@ -1281,7 +1287,7 @@ func TestUsageAnalysisUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(html)
-	for _, want := range []string{`data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量`, `data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付`, `id="exportObsReport"`} {
+	for _, want := range []string{`data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>总览`, `data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付`, `id="exportObsReport"`} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("usage analysis UI missing %q", want)
 		}
@@ -1296,7 +1302,7 @@ func TestUsageAnalysisUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(js)
-	for _, want := range []string{"ensureObsUserFilter", "obsRunMatchesUser", "exportObsReport", "buildObsReportHTML", "userDisplay(user)", "assigneeUserId", "各模型用量", "每人每日用量", "成员汇总", "data-obs-scope", "setObsScope", "需求类型分布", "SOP 版本对比", "节点质量明细", "setObsTrendGrain", "obsTrendChart", "该责任人在各项目", "data-obs-grain", "grain=", "全部", "obsApiGrain", "obsRangeCaption", "obsPeriodPicker", "setObsPeriod", "obsScopedView", "data-obs-period", "不含暂停/恢复", "Loop 指标", "workflow_task_id", "averageTokensPerRun", "toolSuccessRate", "runTraces", "obs-traces", "isPreviewHost", "showDirectRunButton"} {
+	for _, want := range []string{"ensureObsUserFilter", "obsRunMatchesUser", "exportObsReport", "buildObsReportHTML", "userDisplay(user)", "assigneeUserId", "各模型用量", "每人每日用量", "成员汇总", "data-obs-scope", "setObsScope", "需求类型分布", "SOP 版本对比", "节点质量明细", "setObsTrendGrain", "obsTrendChart", "该责任人在各项目", "data-obs-grain", "grain=", "全部", "obsApiGrain", "obsRangeCaption", "obsPeriodPicker", "setObsPeriod", "obsScopedView", "data-obs-period", "不含暂停/恢复", "obsSummaryCard", "workflow_task_id", "averageTokensPerRun", "toolSuccessRate", "runTraces", "obs-traces", "isPreviewHost", "showDirectRunButton"} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("app.js is missing %q", want)
 		}

@@ -445,6 +445,18 @@ func TestConversationMCPFollowsApprovalModeOnly(t *testing.T) {
 	if out := call(assisted, "allow", write); len(called) != 1 {
 		t.Fatalf("assisted mode runs an allowed write: %v %s", called, out)
 	}
+	// IM Bot read-only mode: reads run, writes are refused at once instead of
+	// waiting for an approval nobody can give in the chat.
+	readOnly := assistantReadOnlyExecMode()
+	if out := call(readOnly, "allow", read); len(called) != 1 {
+		t.Fatalf("read-only mode must run reads: %v %s", called, out)
+	}
+	if out := call(readOnly, "allow", write); len(called) != 0 || !strings.Contains(out, "只读模式") {
+		t.Fatalf("read-only mode must refuse writes: %v %s", called, out)
+	}
+	if assistantPlatformToolAllowed(readOnly, "issues_save") || !assistantPlatformToolAllowed(readOnly, "issues_list") {
+		t.Fatal("read-only platform tool policy")
+	}
 	for name, want := range map[string]bool{"merge_merge_request": true, "comments_add": true, "get_branch_list": false, "user_todo_stories_get": false, "frobnicate": true} {
 		if got := mcpCallMayWrite("gongfeng", assistantMCPCall{Tool: name}); got != want {
 			t.Fatalf("mcpCallMayWrite(%s)=%v", name, got)

@@ -12,6 +12,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
 )
@@ -34,7 +35,7 @@ func TestSharedSchedulePinsDirectReferencesAndKeepsNestedBindingsScoped(t *testi
 	role := domain.AgentDefinition{ID: "source-role", Name: "Source role", ProjectID: "workbench", Shared: true, Prompt: "shared through task", Rules: []string{"source-rule"}, Skills: []string{"source-skill"}}
 	check(st.PutAgent(role))
 	check(st.PutAgent(domain.AgentDefinition{ID: "unrelated-role", Name: "Unrelated", ProjectID: "workbench"}))
-	wf := domain.WorkflowDefinition{ID: "source-sop", Name: "SOP", ProjectID: "workbench", Shared: true, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approve", Type: "approval", Name: "Approve"}}}
+	wf := domain.WorkflowDefinition{ID: "source-sop", Name: "SOP", ProjectID: "workbench", Shared: true, SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "approve", Type: "approval", Name: "Approve"}}}
 	check(st.PutWorkflow(wf))
 	job := domain.ScheduleJob{ID: "shared-source", Name: "Shared", ProjectID: "workbench", SkipDispatch: true, AssistantPrompt: "inspect", References: []domain.AssistantReference{{Type: "agent", ID: role.ID}, {Type: "sop", ID: wf.ID}}}
 	check(st.PutScheduleJob(job))

@@ -72,6 +72,10 @@ type AgentToolSession struct {
 	// belongs to, so Main Bot can open and bind a temporary workspace there.
 	ChatSessionID string
 	ChatOwnerID   int64
+
+	projectCredentialIDs    []string
+	projectCredentialValues []string // protected by mu
+
 	// turnMessages is the transcript this chat request is sending. A new
 	// personal session is stored only after the reply, so proposal checks
 	// read the request before the saved session.
@@ -118,7 +122,7 @@ type AgentToolSession struct {
 	// toolCalls cancels the tools/call requests still running, by JSON-RPC
 	// id, when the CLI sends notifications/cancelled for them.
 	toolCalls map[string]*agentToolCallCancel
-	// gitHosts maps each host an HTTPS Git token was handed out for this turn
+	// gitHosts maps each endpoint a Git token was handed out for this turn
 	// onto its platform, for the end-of-turn PR scan. gitScrubbed names the
 	// credentials the agent wrote by hand that were removed after its CLI.
 	gitHosts          map[string]string

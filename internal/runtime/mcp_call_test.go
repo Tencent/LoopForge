@@ -207,8 +207,11 @@ func TestDockerHelperBindingWaitsForTheRunnerArtifact(t *testing.T) {
 			root := t.TempDir()
 			t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(root, "runner-{os}-{arch}"))
 			helper := filepath.Join(root, "runner-linux-"+goruntime.GOARCH)
-			workspace := t.TempDir()
-			sb := &localSandbox{workspace: workspace, driver: "docker"}
+			workspace := filepath.Join(t.TempDir(), "workspace")
+			if err := os.Mkdir(workspace, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			sb := &dockerSandbox{workspace: workspace}
 			const payload = "#!/bin/sh\nexit 0\n"
 			ctx := WithDockerRunnerHelperWait(t.Context(), func(ctx context.Context, path string) error {
 				if path != helper {
@@ -217,17 +220,21 @@ func TestDockerHelperBindingWaitsForTheRunnerArtifact(t *testing.T) {
 				return os.WriteFile(path, []byte(payload), 0o755)
 			})
 			var err error
+			helperDir := mcpCallHostDir(workspace)
 			if use == "git" {
 				env := map[string]string{SessionGatewayEnv: "http://fixture.invalid"}
 				err = bindWorkspaceGitEnvironment(ctx, sb, workspace, env, RunCredentials{GitHTTPHosts: map[string]string{"git.fixture.invalid": "other"}})
+				if err == nil {
+					helperDir, err = dockerGitToolsDirectory(workspace, sb.name)
+				}
 			} else {
 				_, err = PrepareMCPCall(ctx, sb, workspace, nil)
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got, err := os.ReadFile(filepath.Join(mcpCallHostDir(workspace), "bin", "agentflow-helper")); err != nil || string(got) != payload {
-				t.Fatalf("workspace helper = %q, %v", got, err)
+			if got, err := os.ReadFile(filepath.Join(helperDir, "bin", "agentflow-helper")); err != nil || string(got) != payload {
+				t.Fatalf("installed helper = %q, %v", got, err)
 			}
 		})
 	}

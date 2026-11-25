@@ -255,14 +255,15 @@ function bindScheduleModelPicker(){
 async function loadScheduleModels(){
   const picker=scheduleModelAPI();
   if(!picker)return;
-  const version=scheduleModalVersion;
+  const version=scheduleModalVersion,projectId=state.projectFilter;
+  const projectQuery=projectId?`&projectId=${encodeURIComponent(projectId)}`:'';
   let catalog;
   try{
-    catalog=await api('/api/assistant/models?schedule=1',{silent:true});
+    catalog=await api('/api/assistant/models?schedule=1'+projectQuery,{silent:true});
   }catch{
     catalog=await picker.load();
   }
-  if(version!==scheduleModalVersion)return;
+  if(version!==scheduleModalVersion||projectId!==state.projectFilter)return;
   scheduleCatalog=catalog;
   const form=$('#scheduleJobForm');
   const selected=form.elements.assistantModel.value;
@@ -587,10 +588,32 @@ function bindScheduleRowMenus(list){
   document.addEventListener('scroll',e=>{if(!e.target.closest?.('.schedule-row-menu'))closeScheduleRowMenus()},true);
   window.addEventListener('resize',()=>closeScheduleRowMenus());
 }
+// AI jobs sharing a name fold into one collapsed group, placed where the first
+// of them sits; expanded groups stay open across poll re-renders.
+const scheduleGroupExpanded=new Set();
+function scheduleJobGroups(jobs){
+  const groups=new Map();
+  for(const j of jobs){
+    const name=String(j.name||'').trim(),key=JSON.stringify([j.projectId||'',name]);
+    if(!groups.has(key))groups.set(key,{key,name,jobs:[]});
+    groups.get(key).jobs.push(j);
+  }
+  return [...groups.values()];
+}
+function scheduleJobGroupHTML(g,rowHTML){
+  const open=scheduleGroupExpanded.has(g.key);
+  const running=g.jobs.filter(scheduleJobRunning).length,failed=g.jobs.filter(j=>j.lastStatus==='failed').length,enabled=g.jobs.filter(j=>j.enabled).length;
+  const updates=g.jobs.filter(sharedScheduleAvailableUpdate).length;
+  const timings=[...new Set(g.jobs.map(scheduleJobTimingLabel))];
+  const last=g.jobs.map(j=>knownTime(j.lastRunAt)).filter(Boolean).sort((a,b)=>b-a)[0];
+  const summary=[timings.slice(0,3).join('、')+(timings.length>3?` 等 ${timings.length} 种`:''),`已启用 ${enabled}/${g.jobs.length}`,running?`${running} 个运行中`:'',failed?`${failed} 个失败`:'',updates?`${updates} 个待升级`:''].filter(Boolean).join(' · ');
+  const key=escapeHTML(g.key),id=`schedule-group-${g.jobs[0].id}`;
+  return `<div class="schedule-job-group${open?' is-open':''}${running?' is-running':''}${enabled?'':' is-paused'}" data-group-for="${key}"><button type="button" class="schedule-job-group-head" data-schedule-group="${key}" aria-expanded="${open}" aria-controls="${escapeHTML(id)}"><svg class="agent-icon harness-icon schedule-job-group-chevron" data-icon="chevron-right" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="schedule-job-group-text"><b><span class="schedule-kind-tag is-assistant">AI</span><span class="schedule-job-group-name">${escapeHTML(g.name)}</span><span class="hui-badge" data-tone="neutral" data-size="sm">${g.jobs.length} 个</span></b><span class="${running?'schedule-run-live':''}">${escapeHTML(summary)}</span><small>${last?`最近：${last.toLocaleString()}`:'尚未运行'}</small></span></button><div class="schedule-job-group-body" id="${escapeHTML(id)}" ${open?'':'hidden'}>${g.jobs.map(rowHTML).join('')}</div></div>`;
+}
 function renderScheduleJobList(list,jobs,kind,canRun){
   if(!list)return;
   const focused=document.activeElement;
-  const focusAction=['editSchedule','runSchedule','deleteSchedule','scheduleMenu','toggleSchedule'].find(key=>focused?.dataset?.[key]);
+  const focusAction=['editSchedule','runSchedule','deleteSchedule','scheduleMenu','toggleSchedule','scheduleGroup'].find(key=>focused?.dataset?.[key]);
   const focusId=list.contains(focused)&&focusAction&&!focused.closest('.schedule-row-menu')?focused.dataset[focusAction]:null;
   // A poll re-render keeps an open ⋯ menu open (and focused) on its job.
   const openMenu=list.querySelector('.schedule-row-menu:not([hidden])');
@@ -598,7 +621,8 @@ function renderScheduleJobList(list,jobs,kind,canRun){
   if(kind==='dispatch'){
     const job=jobs[0];
     list.innerHTML=job?`<div class="schedule-config-runtime"><div><b>${job.enabled?'已启用':'未启用'} · ${escapeHTML(scheduleJobTimingLabel(job))}</b><span>${escapeHTML(scheduleSourceLabel(job))} · ${scheduleIssueStatusValues(job).map(issueStatusLabel).join('、')}</span><small>${knownTime(job.lastRunAt)?`最近：${knownTime(job.lastRunAt).toLocaleString()} · 候选 ${job.lastPulled||0}，启动 ${job.lastDispatched||0}`:'尚未运行'}${scheduleJobStatusText(job)?` · ${escapeHTML(scheduleJobStatusText(job))}`:''}</small></div>${scheduleJobTraceActionsHTML(job)}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(job.id)}" ${scheduleJobRunning(job)||!canRun?'disabled':''}>${scheduleJobRunning(job)?'运行中…':'立即运行'}</button></div>${scheduleBlockerHTML(job)}`:'';
-  }else list.innerHTML=jobs.map(j=>{
+  }else{
+  const rowHTML=j=>{
     const assistant=!!j.skipDispatch;
     const kind=assistant?'AI':'触发';
     const running=scheduleJobRunning(j);
@@ -609,7 +633,15 @@ function renderScheduleJobList(list,jobs,kind,canRun){
     const runTitle=running?'任务正在服务端运行，关闭页面不会中断':(canRun?'':'本实例未启用 scheduler');
     const session=assistant&&j.sessionMode==='fixed'?' · 同一会话':'';
     return `<div class="schedule-job-item${running?' is-running':''}${assistant&&!j.enabled?' is-paused':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))}${assistant?'':` · ${j.enabled?'已启用':'已停用'}`}${assistant?session:` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${assistant?scheduleEnabledSwitchHTML(j):''}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button>${scheduleRowMenuHTML(j)}</div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
-  }).join('')||'<div class="sync-empty">当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。</div>';
+  };
+  list.innerHTML=scheduleJobGroups(jobs).map(g=>g.jobs.length>1?scheduleJobGroupHTML(g,rowHTML):rowHTML(g.jobs[0])).join('')||'<div class="sync-empty">当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。</div>';
+  list.querySelectorAll('[data-schedule-group]').forEach(b=>b.onclick=()=>{
+    const key=b.dataset.scheduleGroup;
+    if(scheduleGroupExpanded.has(key))scheduleGroupExpanded.delete(key);else scheduleGroupExpanded.add(key);
+    renderScheduleJobs();
+  });
+  window.AgentFlowHarnessIcons?.hydrate(list);
+  }
   list.querySelectorAll('[data-edit-schedule]').forEach(b=>b.onclick=()=>{
     const job=(state.data.scheduleJobs||[]).find(j=>j.id===b.dataset.editSchedule);
     if(!job)return;
@@ -625,7 +657,7 @@ function renderScheduleJobList(list,jobs,kind,canRun){
   list.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
   bindScheduleRowMenus(list);
   if(reopenId){const trigger=[...list.querySelectorAll('[data-schedule-menu]')].find(b=>b.dataset.scheduleMenu===reopenId);if(trigger)openScheduleRowMenu(trigger,{focus:reopenFocus})}
-  if(focusId){const next=[...list.querySelectorAll('[data-edit-schedule],[data-run-schedule],[data-delete-schedule],[data-schedule-menu],[data-toggle-schedule]')].find(el=>el.dataset[focusAction]===focusId&&!el.closest('.schedule-row-menu'));next?.focus()}
+  if(focusId){const next=[...list.querySelectorAll('[data-edit-schedule],[data-run-schedule],[data-delete-schedule],[data-schedule-menu],[data-toggle-schedule],[data-schedule-group]')].find(el=>el.dataset[focusAction]===focusId&&!el.closest('.schedule-row-menu'));next?.focus()}
 
 }
 async function saveScheduleJob(e){

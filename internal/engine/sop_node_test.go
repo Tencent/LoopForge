@@ -75,7 +75,7 @@ func TestSOPNodeArtifactWriteFailureKeepsSuccessfulChild(t *testing.T) {
 func startSOPArtifactHandoff(t *testing.T, s *repo.Store) domain.Run {
 	t.Helper()
 	child := domain.WorkflowDefinition{
-		ID: "child-prd", Name: "Child PRD", SandboxProfileID: "local",
+		ID: "child-prd", Name: "Child PRD", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{
 			ID: "write", Name: "Write", Type: "script", ScriptLanguage: "shell",
 			Script: "printf '# PRD\\nready\\n' > prd.md", MaxAttempts: 1,
@@ -83,7 +83,7 @@ func startSOPArtifactHandoff(t *testing.T, s *repo.Store) domain.Run {
 		}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "req-flow", Name: "Requirement flow", SandboxProfileID: "local",
+		ID: "req-flow", Name: "Requirement flow", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{
 				ID: "prd-sop", Name: "产品 SOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 2,
@@ -123,11 +123,11 @@ func TestSOPChildSuccessDoesNotDeliverParentIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 	child := domain.WorkflowDefinition{
-		ID: "child-ok", Name: "Child", SandboxProfileID: "local",
+		ID: "child-ok", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "ok", Name: "OK", Type: "script", ScriptLanguage: "shell", Script: "true", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "parent-fails", Name: "Parent", SandboxProfileID: "local",
+		ID: "parent-fails", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 			{ID: "boom", Name: "Boom", Type: "script", ScriptLanguage: "shell", Script: "exit 1", MaxAttempts: 1},
@@ -166,11 +166,11 @@ func TestSOPNodeReattachesChildAfterDrain(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: "slow-child", Name: "Slow child", SandboxProfileID: "local",
+		ID: "slow-child", Name: "Slow child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 3}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "parent-drain", Name: "Parent", SandboxProfileID: "local",
+		ID: "parent-drain", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 3}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{child, parent} {
@@ -257,11 +257,11 @@ func TestSOPNodePauseCascadesAndReusesFinishedChild(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: "pause-child", Name: "Child", SandboxProfileID: "local",
+		ID: "pause-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "pause-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "pause-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{child, parent} {
@@ -319,15 +319,15 @@ func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	oldChild := domain.WorkflowDefinition{
-		ID: "old-child", Name: "Old", SandboxProfileID: "local",
+		ID: "old-child", Name: "Old", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	newChild := domain.WorkflowDefinition{
-		ID: "new-child", Name: "New", SandboxProfileID: "local",
+		ID: "new-child", Name: "New", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "ok", Name: "OK", Type: "command", Command: "true", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "repoint-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "repoint-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: oldChild.ID, MaxAttempts: 1}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{oldChild, newChild, parent} {
@@ -404,11 +404,11 @@ func pauseParentThen(t *testing.T, cancelInstead bool) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: "resume-child", Name: "Child", SandboxProfileID: "local",
+		ID: "resume-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "resume-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "resume-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{child, parent} {
@@ -465,11 +465,11 @@ func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "ok")
 	child := domain.WorkflowDefinition{
-		ID: "flaky-child", Name: "Child", SandboxProfileID: "local",
+		ID: "flaky-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "check", Name: "Check", Type: "command", Command: "test -e " + marker, MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "flaky-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "flaky-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 			{ID: "after", Name: "After", Type: "command", Command: "true", MaxAttempts: 1},
@@ -512,11 +512,11 @@ func startPausedParentWithChild(t *testing.T, s *repo.Store, e *Engine, prefix s
 	t.Helper()
 	marker = filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: prefix + "-child", Name: "Child", SandboxProfileID: "local",
+		ID: prefix + "-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: prefix + "-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: prefix + "-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1}},
 	}
 	if before {
@@ -603,11 +603,11 @@ func TestSOPChildPassResumesFailedParent(t *testing.T) {
 	}
 	defer s.Close()
 	child := domain.WorkflowDefinition{
-		ID: "pass-child", Name: "Child", SandboxProfileID: "local",
+		ID: "pass-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "check", Name: "Check", Type: "command", Command: "false", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "pass-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "pass-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 			{ID: "after", Name: "After", Type: "command", Command: "true", MaxAttempts: 1},
@@ -644,7 +644,7 @@ func TestSOPNodeRejectsSelfReference(t *testing.T) {
 	}
 	defer s.Close()
 	wf := domain.WorkflowDefinition{
-		ID: "loop", Name: "Loop", SandboxProfileID: "local",
+		ID: "loop", Name: "Loop", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "self", Name: "Self", Type: "sop", SOPWorkflowID: "loop", MaxAttempts: 1}},
 	}
 	if err := s.PutWorkflow(wf); err != nil {

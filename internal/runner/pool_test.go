@@ -66,7 +66,7 @@ func TestPoolRequiredRunWaitsForPoolRunner(t *testing.T) {
 	e.ConfigureCloudRunnerPool(engine.CloudRunnerPool{Label: "pool=cloud", Projects: []string{"*"}, Required: true})
 	remote := bareRemoteWithBaseline(t)
 	wf := domain.WorkflowDefinition{
-		ID: "pool-required", Name: "Pool required", SandboxProfileID: "local",
+		ID: "pool-required", Name: "Pool required", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "implement", Name: "实现", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf 'pool\\n' > feature.txt", MaxAttempts: 1},
 		},
@@ -112,7 +112,7 @@ func TestPoolRunResumesOnOriginalRunnerAfterRestart(t *testing.T) {
 	}
 	first, stopFirst := startPoolRunnerWithConfig(t, s, cfg)
 	wf := domain.WorkflowDefinition{
-		ID: "pool-takeover", Name: "Pool takeover", SandboxProfileID: "local",
+		ID: "pool-takeover", Name: "Pool takeover", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "implement", Name: "实现", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf 'from a\\n' > feature.txt", MaxAttempts: 1},
 			{ID: "gate", Name: "确认", Type: "approval", MaxAttempts: 1},

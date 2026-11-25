@@ -142,6 +142,12 @@ type assistantRunnerTurnModel struct {
 
 func (h *assistantHandlers) resolveAssistantTurnModel(ctx context.Context, user domain.User, model, effort string, runner domain.Runner) (string, error) {
 	engine, id := assistantModelEngine(model)
+	if runner.ID != "" && runnerHasSeparateLoginModels(engine) {
+		if effort == "" {
+			return model, nil
+		}
+		return model, validateAssistantModelEffort(model, effort, assistantModelEffortsIn(model, runner.LoginModels[engine]))
+	}
 	if runner.ID == "" || engine != runtime.AgentCLIAntigravity {
 		return model, validateAssistantEffort(ctx, user, model, effort)
 	}

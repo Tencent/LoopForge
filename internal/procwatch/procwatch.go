@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -77,11 +78,40 @@ const (
 	waitDelay     = 5 * time.Second
 )
 
+// WithinTimeout shares the configured command budget across its preparation
+// stages. An earlier caller deadline still takes precedence.
+func WithinTimeout(ctx context.Context, opts Options, work func(context.Context) error) error {
+	if opts.Timeout <= 0 {
+		return work(ctx)
+	}
+	started := time.Now()
+	ctx, cancel := context.WithTimeoutCause(ctx, opts.Timeout, errTimeout)
+	defer cancel()
+	err := work(ctx)
+	if err != nil && !Stopped(err) {
+		return stopError(context.Cause(ctx), opts, time.Since(started), err)
+	}
+	return err
+}
+
 // Run starts the command build returns and waits for it. build receives the
 // context to bind with exec.CommandContext; Run owns Stdout and Stderr.
 // The returned text is the redacted tail of the output; on failure the error
 // says why (exit, stall, timeout) and does not repeat that tail.
 func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Options) (string, error) {
+	return RunWithOutput(ctx, func(ctx context.Context, out io.Writer) error {
+		cmd := build(ctx)
+		killGroup(cmd)
+		cmd.Stdout, cmd.Stderr = out, out
+		// Git and Docker helpers can keep pipes open after cancellation.
+		cmd.WaitDelay = waitDelay
+		return cmd.Run()
+	}, opts)
+}
+
+// RunWithOutput watches a process launched by an execution environment that
+// streams output to a writer and observes cancellation on the supplied context.
+func RunWithOutput(ctx context.Context, run func(context.Context, io.Writer) error, opts Options) (string, error) {
 	observer := observerFrom(ctx)
 	emit := func(kind Kind, message string, elapsed time.Duration) {
 		if observer != nil {
@@ -107,19 +137,13 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 		out.lastEmit = now
 		emit(Progress, opts.Label+"："+line, now.Sub(started))
 	}
-	cmd := build(runCtx)
-	killGroup(cmd)
-	cmd.Stdout, cmd.Stderr = out, out
-	// git and docker leave helpers holding the pipes after a kill; do not
-	// wait on them forever.
-	cmd.WaitDelay = waitDelay
 	emit(Started, "正在"+opts.Label, 0)
 
 	done := make(chan struct{})
 	if opts.Stall > 0 {
 		go watchStall(runCtx, cancel, out, opts.Stall, done)
 	}
-	err := cmd.Run()
+	err := run(runCtx, out)
 	close(done)
 	out.flush()
 	elapsed := time.Since(started)

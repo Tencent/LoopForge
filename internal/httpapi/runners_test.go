@@ -299,9 +299,10 @@ func TestRunnerTaskEndToEnd(t *testing.T) {
 
 	// Heartbeat keeps the runner online.
 	rec := requestWithHeaders(t, h, http.MethodPost, "/api/runners/heartbeat", map[string]any{
-		"status":       "idle",
-		"runningTasks": 0,
-		"runtimes":     []domain.RunnerRuntime{{Provider: "mock", BinaryPath: "(builtin)", Status: "online"}},
+		"status":                 "idle",
+		"runningTasks":           0,
+		"nativeSandboxAvailable": true,
+		"runtimes":               []domain.RunnerRuntime{{Provider: "mock", BinaryPath: "(builtin)", Status: "online"}},
 	}, auth)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("heartbeat: %d %s", rec.Code, rec.Body.String())
@@ -309,7 +310,7 @@ func TestRunnerTaskEndToEnd(t *testing.T) {
 
 	// The runner appears in the management list without session material.
 	list := requestEmptyJSON[[]domain.Runner](t, h, http.MethodGet, "/api/runners", http.StatusOK)
-	if len(list) != 1 || list[0].ID != runnerID {
+	if len(list) != 1 || list[0].ID != runnerID || !list[0].NativeSandboxAvailable {
 		t.Fatalf("unexpected runner list: %+v", list)
 	}
 	if list[0].SessionTokenHash != "" || list[0].SessionExpiresAt != nil {
@@ -528,6 +529,38 @@ func TestRunnerSessionRequiredForTaskAPI(t *testing.T) {
 	}, map[string]string{"Authorization": "Bearer afp_not-a-runner"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("user-token claim status = %d, want 401", rec.Code)
+	}
+}
+
+func TestRunnerClaimRejectsQueuedFrozenLocalSandbox(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	h := New(st, engine.New(st, runtime.NewManager(t.TempDir())), tracker.NewService(), "", "")
+	runnerID, session := registerTestRunner(t, h)
+	for i, driver := range []string{domain.SandboxDriverLocal, domain.SandboxDriverNative} {
+		task := domain.RunnerTask{
+			ID: driver, RunID: "run-" + driver, RunnerID: runnerID, Provider: "mock", Command: "true",
+			Sandbox:   &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: driver, Driver: driver}},
+			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Second),
+		}
+		if err := st.PutRunnerTask(task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := requestWithHeaders(t, h, http.MethodPost, "/api/runners/tasks/claim", map[string]any{
+		"availableRuntimes": []string{"mock"}, "capacity": 1, "noWait": true,
+	}, map[string]string{"Authorization": "Bearer " + session})
+	var response struct {
+		Task domain.RunnerTask `json:"task"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &response) != nil || response.Task.ID != domain.SandboxDriverNative {
+		t.Fatalf("claim returned %d: %s", rec.Code, rec.Body.String())
+	}
+	if old, _ := st.RunnerTask(domain.SandboxDriverLocal); old.Status != domain.RunnerTaskFailed || !strings.Contains(old.Error, "已移除的 local") {
+		t.Fatalf("legacy task status = %q, error = %q", old.Status, old.Error)
 	}
 }
 
@@ -919,6 +952,11 @@ func TestRunnerRunLimitOnlyOwnerCanSet(t *testing.T) {
 	}
 	poolRunnerID, _ := registerTestRunner(t, h)
 	path := "/api/runners/" + registered.RunnerID + "/run-limit"
+	rec = requestWithHeaders(t, h, http.MethodGet, "/api/runners?mine=1", nil, userAuth)
+	var mine []domain.Runner
+	if err := json.Unmarshal(rec.Body.Bytes(), &mine); rec.Code != http.StatusOK || err != nil || len(mine) != 1 || mine[0].RunLimit != 10 {
+		t.Fatalf("new machine default: %d %s", rec.Code, rec.Body.String())
+	}
 
 	if rec = requestWithHeaders(t, h, http.MethodPut, path, map[string]any{"runLimit": 3}, nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous set status = %d, want 401", rec.Code)
@@ -926,21 +964,20 @@ func TestRunnerRunLimitOnlyOwnerCanSet(t *testing.T) {
 	if rec = requestWithHeaders(t, h, http.MethodPut, "/api/runners/"+poolRunnerID+"/run-limit", map[string]any{"runLimit": 3}, userAuth); rec.Code != http.StatusForbidden {
 		t.Fatalf("set someone else's machine status = %d, want 403", rec.Code)
 	}
-	for _, body := range []map[string]any{{}, {"runLimit": -1}, {"runLimit": 101}} {
+	for _, body := range []map[string]any{{}, {"runLimit": -1}, {"runLimit": 1.5}} {
 		if rec = requestWithHeaders(t, h, http.MethodPut, path, body, userAuth); rec.Code != http.StatusBadRequest {
 			t.Fatalf("invalid %v status = %d, want 400", body, rec.Code)
 		}
 	}
-	rec = requestWithHeaders(t, h, http.MethodPut, path, map[string]any{"runLimit": 3}, userAuth)
+	rec = requestWithHeaders(t, h, http.MethodPut, path, map[string]any{"runLimit": 250}, userAuth)
 	var updated domain.Runner
-	if err := json.Unmarshal(rec.Body.Bytes(), &updated); rec.Code != http.StatusOK || err != nil || updated.RunLimit != 3 || updated.SessionTokenHash != "" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); rec.Code != http.StatusOK || err != nil || updated.RunLimit != 250 || updated.SessionTokenHash != "" {
 		t.Fatalf("set own machine: %d %s", rec.Code, rec.Body.String())
 	}
 	// A heartbeat from the machine must not reset the owner's limit.
 	requestWithHeaders(t, h, http.MethodPost, "/api/runners/heartbeat", map[string]any{}, map[string]string{"Authorization": "Bearer " + registered.SessionToken})
 	rec = requestWithHeaders(t, h, http.MethodGet, "/api/runners?mine=1", nil, userAuth)
-	var mine []domain.Runner
-	if err := json.Unmarshal(rec.Body.Bytes(), &mine); err != nil || len(mine) != 1 || mine[0].RunLimit != 3 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &mine); err != nil || len(mine) != 1 || mine[0].RunLimit != 250 {
 		t.Fatalf("limit after heartbeat: %s", rec.Body.String())
 	}
 	rec = requestWithHeaders(t, h, http.MethodPut, path, map[string]any{"runLimit": 0}, userAuth)

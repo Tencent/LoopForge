@@ -180,17 +180,16 @@ func TestEnsureRunnerBrowserDisabled(t *testing.T) {
 
 func TestRunSandboxKeysAndRequirements(t *testing.T) {
 	dockerfile := domain.DockerfileDefinition{ID: "d", Content: "FROM scratch"}
-	environment := domain.EnvironmentDefinition{ID: "e"}
 	task := domain.RunnerTask{
 		ID: "task", RunID: "run/id", Provider: "codex", Workspace: "runs/run-id/workspace",
 		Sandbox: &domain.RunnerSandboxSpec{
-			Profile:    domain.SandboxProfile{Driver: "docker"},
-			Dockerfile: &dockerfile, Environment: &environment,
+			Profile:      domain.SandboxProfile{Driver: "docker"},
+			Dockerfile:   &dockerfile,
 			Requirements: &domain.RunnerSandboxRequirements{PrivateHome: true, BunFS: true, RunnerLoginRelay: true, CLIStates: []domain.RunnerCLIStateRequirement{{Directory: ".x", Files: []string{"a"}}}},
 		},
 	}
 	requirements, resources := taskSandboxSpec(task)
-	if !requirements.PrivateHome || !requirements.BunFS || !requirements.RunnerLoginRelay || len(requirements.CLIStates) != 1 || resources.Dockerfile.ID != "d" || resources.Environment.ID != "e" {
+	if !requirements.PrivateHome || !requirements.BunFS || !requirements.RunnerLoginRelay || len(requirements.CLIStates) != 1 || resources.Dockerfile.ID != "d" {
 		t.Fatalf("requirements=%+v resources=%+v", requirements, resources)
 	}
 	key, id, shared := runSandboxKey(task, requirements, resources)

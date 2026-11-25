@@ -83,6 +83,12 @@ test('unknown bots, rooms and spaces answer 404', async () => {
   for (const sub of ['decisions', 'flows', 'sops']) await status('POST', `/api/spaces/${MISSING}/${sub}`, {}, [404]);
 });
 
+test('read-only status endpoints answer for a signed-in user', async () => {
+  const install = await get('/api/assistant/cli-install?engine=codex');
+  assert.ok(['installed', 'missing', 'installing', 'failed'].includes(install.status), install.status);
+  await status('GET', '/api/assistant/cli-install?engine=not-a-cli', undefined, [400]);
+});
+
 test('OTLP ingest accepts an empty export', async () => {
   await status('POST', '/api/otel/v1/traces', {}, [200, 202]);
 });
@@ -164,8 +170,8 @@ test('runner management: register, heartbeat, runtime status, run limit, unknown
   assert.equal(beat.ok, true);
   await status('POST', '/api/runners/runtimes', {}, [400]);
   await status('PUT', '/api/runners/runtimes', { runnerId, provider: 'codebuddy' }, [400]);
-  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: 500 }, [400]);
-  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: 2 }, [200, 403]);
+  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: -1 }, [400]);
+  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: 500 }, [200, 403]);
   assert.ok(Array.isArray(await get('/api/runners/tasks')));
   await status('POST', '/api/runners/tasks', {}, [400]);
   await status('POST', `/api/runners/tasks/${MISSING}/cancel`, {}, [200, 404]);

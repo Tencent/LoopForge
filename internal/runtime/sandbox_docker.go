@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,16 +20,19 @@ import (
 )
 
 type dockerSandbox struct {
-	id, name, workspace string
-	profile             domain.SandboxProfile
-	requirements        SandboxRequirements
-	dockerfile          domain.DockerfileDefinition
-	builtImage          string
-	mu                  sync.Mutex
-	browserMu           sync.Mutex
-	started             bool
-	cliSetupOnce        sync.Once
-	cliSetupGate        chan struct{}
+	id, name, workspace  string
+	profile              domain.SandboxProfile
+	requirements         SandboxRequirements
+	dockerfile           domain.DockerfileDefinition
+	builtImage           string
+	mu                   sync.Mutex
+	browserMu            sync.Mutex
+	started              bool
+	gitToolsRoot         string
+	gitDistributionReady bool
+	activeTerminals      int
+	cliSetupOnce         sync.Once
+	cliSetupGate         chan struct{}
 	// execGate lets parallel branches exec concurrently (read side) while a
 	// cwd-recovery Recreate (write side) waits for them instead of docker
 	// rm-ing the container under a sibling's running command.
@@ -50,12 +52,16 @@ func (s *dockerSandbox) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.started = false
 	image := s.builtImage
+	gitTools := s.gitToolsRoot
 	s.builtImage = ""
 	s.mu.Unlock()
 	if image == "" {
 		image = tempDockerImageName(s.id)
 	}
 	removeDockerSandbox(ctx, s.name, image)
+	if gitTools != "" {
+		return os.RemoveAll(gitTools)
+	}
 	return nil
 }
 
@@ -167,6 +173,13 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 }
 
 func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
+	command, err = projectCommandEnvironment(ctx, command, s.profile.Environment)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
+	if err := s.prepareCommandGitTools(ctx, command.environment); err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
 	command, cliPath, err := s.prepareSOPCLI(ctx, command)
 	if err != nil {
 		return "", err
@@ -176,7 +189,16 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 		args = append(args, "-i")
 	}
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
+		name, _, _ := strings.Cut(environment, "=")
+		if _, secret := command.projectCredentialEnv[name]; secret {
+			continue
+		}
 		args = append(args, "-e", environment)
+	}
+	for name := range command.projectCredentialEnv {
+		// Docker CLI reads the value from its own environment. Its command
+		// line and the long-lived container config only see variable names.
+		args = append(args, "-e", name)
 	}
 	if cliPath != "" {
 		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
@@ -204,6 +226,9 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	}
 	args = append(args, argv...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
+	if len(command.projectCredentialEnv) > 0 {
+		cmd.Env = appendEnvironment(os.Environ(), command.projectCredentialEnv)
+	}
 	cmd.Stdin = command.Stdin
 	return runCommand(cmd, sink, command)
 }
@@ -224,6 +249,23 @@ func dockerWorkspaceExecArgv(argv []string) []string {
 const dockerMCPCallLaunch = `cd /workspace || exit
 if [ -x /workspace/.agentflow/runtime/bin/agentflow-helper ]; then
   PATH=/workspace/.agentflow/runtime/bin:$PATH
+  export PATH
+fi
+if [ -n "${` + workspaceGitBinsEnv + `:-}" ]; then
+  git_bins="$` + workspaceGitBinsEnv + `"
+  case "$git_bins" in
+    ` + dockerGitToolsMount + "/" + workspaceGitHTTPBin + `:*)
+      if [ -x "` + dockerGitToolsMount + "/" + workspaceGitDistribution + `/git" ]; then
+        # Git still uses the managed transport if a nested login shell resets PATH.
+        export GIT_EXEC_PATH="` + dockerGitToolsMount + "/" + workspaceGitDistribution + `/exec"
+      else
+        # An image without Git can install it and use the host-scoped helper directly.
+        git_bins="${git_bins#` + dockerGitToolsMount + "/" + workspaceGitHTTPBin + `:}"
+        export ` + workspaceGitHTTPSystemGitEnv + `=1
+      fi
+      ;;
+  esac
+  PATH="$git_bins:$PATH"
   export PATH
 fi
 if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH" ]; then
@@ -327,7 +369,7 @@ func dropShellLoginFlag(argv []string) []string {
 }
 
 func (s *dockerSandbox) Recreate(ctx context.Context) error {
-	return s.start(ctx, true)
+	return s.start(ctx, dockerStartRecreate)
 }
 
 // invalidate drops the cached started flag without docker rm. The next
@@ -432,6 +474,7 @@ func isDockerCwdUnsafe(out string, err error) bool {
 type dockerWorkspaceMounts struct {
 	source      string
 	legacyMasks bool
+	gitTools    string
 }
 
 func inspectDockerWorkspaceMounts(ctx context.Context, name string) (*dockerWorkspaceMounts, error) {
@@ -444,6 +487,7 @@ func inspectDockerWorkspaceMounts(ctx context.Context, name string) (*dockerWork
 	}
 	var mounts []struct {
 		Destination, Source string
+		RW                  bool
 	}
 	if err := json.Unmarshal(out, &mounts); err != nil {
 		return nil, fmt.Errorf("decode Docker mounts for %s: %w", name, err)
@@ -453,6 +497,10 @@ func inspectDockerWorkspaceMounts(ctx context.Context, name string) (*dockerWork
 		switch mount.Destination {
 		case "/workspace":
 			workspace.source = mount.Source
+		case dockerGitToolsMount:
+			if !mount.RW {
+				workspace.gitTools = mount.Source
+			}
 		case "/workspace/.agentflow/isolation/empty-dir", "/workspace/.agentflow/isolation/empty-file":
 			// Older containers keep these binds even when restarted.
 			workspace.legacyMasks = true
@@ -719,31 +767,107 @@ func staleCachedDockerImages(listed []string, keep, inUse map[string]struct{}) [
 }
 
 func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
-	return s.start(ctx, false)
+	return s.start(ctx, dockerStartReuse)
 }
 
-func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.started && !recreate {
+// RefreshWorkspaceGitTools replaces a legacy Docker container at a workspace
+// preparation boundary. Callers hold the workspace and exclude live tasks.
+func RefreshWorkspaceGitTools(ctx context.Context, sandbox Sandbox) error {
+	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
+	if !ok || !s.execGate.TryLock() {
 		return nil
 	}
-	s.started = false
+	defer s.execGate.Unlock()
+	return s.start(ctx, dockerStartRefreshGitTools)
+}
+
+func (s *dockerSandbox) reserveTerminal() func() {
+	s.mu.Lock()
+	s.activeTerminals++
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		s.activeTerminals--
+		s.mu.Unlock()
+	}
+}
+
+func (s *dockerSandbox) prepareCommandGitTools(ctx context.Context, env map[string]string) error {
+	if env[workspaceGitBinsEnv] == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gitToolsRoot == "" {
+		return errDockerGitToolsMountMissing
+	}
+	if s.gitDistributionReady || !strings.Contains(","+env[GitHostsEnv], ",http://") {
+		return nil
+	}
+	if err := prepareDockerGitTools(ctx, s.gitToolsRoot, s.name); err != nil {
+		return err
+	}
+	s.gitDistributionReady = true
+	return nil
+}
+
+type dockerStartMode uint8
+
+const (
+	dockerStartReuse dockerStartMode = iota
+	dockerStartRecreate
+	dockerStartRefreshGitTools
+)
+
+func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if mode == dockerStartRefreshGitTools && (s.activeTerminals > 0 || s.started && s.gitToolsRoot != "") {
+		return nil
+	}
+	if mode == dockerStartReuse && s.started {
+		return nil
+	}
 	name, workspace, p := s.name, s.workspace, s.profile
+	gitTools, err := dockerGitToolsDirectory(workspace, name)
+	if err != nil {
+		return err
+	}
 	mounts, err := inspectDockerWorkspaceMounts(ctx, name)
 	if err != nil {
 		return err
 	}
+	recreate := mode == dockerStartRecreate
+	hasGitTools := false
 	if mounts != nil {
 		if !dockerBindMatchesWorkspace(mounts.source, workspace) {
 			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, mounts.source, workspace)
 		}
-		if !recreate && !mounts.legacyMasks {
-			if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
-				if err := waitDockerWorkspaceReady(ctx, name); err == nil {
-					s.started = true
-					return nil
+		hasGitTools = dockerBindMatchesWorkspace(mounts.gitTools, gitTools)
+		if mode == dockerStartRefreshGitTools && !hasGitTools {
+			// A previous Worker can detach its workspace before all Docker
+			// execs have exited. Its local activity counters are gone.
+			out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", "{{len .ExecIDs}}", name).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("inspect active Docker executions: %w: %s", err, out)
+			}
+			if strings.TrimSpace(string(out)) != "0" {
+				return nil
+			}
+			recreate = true
+		}
+	}
+	s.started = false
+	s.gitToolsRoot = ""
+	s.gitDistributionReady = false
+	if mounts != nil && !recreate && !mounts.legacyMasks {
+		if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
+			if err := waitDockerWorkspaceReady(ctx, name); err == nil {
+				if hasGitTools {
+					s.gitToolsRoot = gitTools
 				}
+				s.started = true
+				return nil
 			}
 		}
 	}
@@ -753,6 +877,11 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 	}
 	image := built
 	args := []string{"create", "--name", name, "--init", "--cap-drop=ALL", "--security-opt", "no-new-privileges", "-v", workspace + ":/workspace"}
+	if err := ensureDockerGitToolsDirectory(gitTools); err != nil {
+		dropEphemeralDockerImage(built)
+		return err
+	}
+	args = append(args, "--mount", "type=bind,src="+gitTools+",dst="+dockerGitToolsMount+",readonly")
 	// Native installs own private (0700) workspaces as the service user.
 	// A root image without DAC capabilities cannot access another UID's bind.
 	// Run default/root images as that user; retain explicit non-root image users.
@@ -807,8 +936,8 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 	} else {
 		args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
 	}
-	// Resolve the replacement image and mounts before retiring a workspace with
-	// legacy masks. Its new container ID invalidates old preparation receipts.
+	// Resolve the replacement image and mounts before retiring the old
+	// container. Its new ID invalidates old preparation receipts.
 	if mounts != nil || recreate {
 		if err := removeDockerWorkspaceContainers(ctx, name); err != nil {
 			return err
@@ -832,6 +961,7 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		return err
 	}
 	s.started = true
+	s.gitToolsRoot = gitTools
 	return nil
 }
 
@@ -982,7 +1112,9 @@ func isolatedRuntimeImage(dockerfile domain.DockerfileDefinition) string {
 const isolatedDockerfileBase = "FROM node:22-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 ripgrep ca-certificates curl && rm -rf /var/lib/apt/lists/*\n"
 const legacyIsolatedDockerfile = isolatedDockerfileBase + "RUN npm install -g @openai/codex @anthropic-ai/claude-code @tencent-ai/codebuddy-code\nWORKDIR /workspace\n"
 
-// IsolatedDockerfile is the fallback for profiles without a custom image.
+// IsolatedDockerfile is the platform image recipe. Sandboxes whose Dockerfile
+// is this or the seeded generic-docker one (legacyIsolatedDockerfile) run on
+// AGENTFLOW_ISOLATED_IMAGE instead of building their own image.
 const IsolatedDockerfile = isolatedDockerfileBase + "RUN npm install -g @openai/codex @anthropic-ai/claude-code\nARG CODEBUDDY_PACKAGE=@tencent-ai/codebuddy-code\nRUN if [ -n \"$CODEBUDDY_PACKAGE\" ]; then npm install -g \"$CODEBUDDY_PACKAGE\"; fi\nWORKDIR /workspace\n"
 
 func isBuiltInIsolatedDockerfile(dockerfile domain.DockerfileDefinition) bool {
@@ -994,39 +1126,4 @@ func effectiveIsolatedDockerfile(dockerfile domain.DockerfileDefinition) domain.
 		dockerfile.Content = strings.Replace(IsolatedDockerfile, "ARG CODEBUDDY_PACKAGE=@tencent-ai/codebuddy-code", "ARG CODEBUDDY_PACKAGE=", 1)
 	}
 	return dockerfile
-}
-
-// PrebuildIsolatedImage warms the shared sandbox image in the background so
-// the first SOP on a fresh container install does not wait for the build.
-func PrebuildIsolatedImage() {
-	if strings.TrimSpace(os.Getenv("AGENTFLOW_LOCAL_SANDBOX")) != "docker" || !DockerReady() {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-		dir, err := os.MkdirTemp("", "agentflow-prebuild-")
-		if err != nil {
-			return
-		}
-		defer os.RemoveAll(dir)
-		if _, err := ensureDockerImage(ctx, dir, domain.DockerfileDefinition{ID: "isolated", Content: IsolatedDockerfile}); err != nil {
-			log.Printf("prebuild sandbox image: %v", err)
-		}
-	}()
-}
-
-// isolateLocalDriver runs "local" profiles in Docker when
-// AGENTFLOW_LOCAL_SANDBOX=docker, so no SOP command executes inside a platform
-// container that can reach the host Docker daemon.
-func isolateLocalDriver(profile domain.SandboxProfile, dockerfile domain.DockerfileDefinition) (domain.SandboxProfile, domain.DockerfileDefinition) {
-	driver := strings.TrimSpace(profile.Driver)
-	if (driver != "" && driver != "local") || strings.TrimSpace(os.Getenv("AGENTFLOW_LOCAL_SANDBOX")) != "docker" {
-		return profile, dockerfile
-	}
-	profile.Driver = "docker"
-	if strings.TrimSpace(dockerfile.Content) == "" {
-		dockerfile = domain.DockerfileDefinition{ID: "generic-backend", Name: "Isolated local sandbox", Content: IsolatedDockerfile}
-	}
-	return profile, dockerfile
 }
