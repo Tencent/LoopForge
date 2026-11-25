@@ -196,13 +196,10 @@ func (r *CatalogRepo) publishGenericWorkflow(id string) (domain.WorkflowDefiniti
 	if !workflowNeedsPublish(template.Workflow) {
 		return template.Workflow, nil
 	}
+	template.Workflow.Version = nextWorkflowVersion(template.Workflow)
 	template.Workflow.Status = "published"
-	template.Workflow.Version++
 	template.Workflow.Revision++
 	template.Workflow.PublishedRevision = template.Workflow.Revision
-	if template.Workflow.Version < 1 {
-		template.Workflow.Version = 1
-	}
 	template.Workflow.UpdatedAt = time.Now().UTC()
 	if err := r.putGenericTemplate(template); err != nil {
 		return domain.WorkflowDefinition{}, err

@@ -473,6 +473,14 @@ func workflowNeedsPublish(v domain.WorkflowDefinition) bool {
 	return v.Status != "published" || workflowPublishedRevision(v) != v.Revision
 }
 
+func nextWorkflowVersion(v domain.WorkflowDefinition) int {
+	// Newly saved drafts already carry version 1 for compatibility.
+	if v.Version < 1 || (v.Version == 1 && workflowPublishedRevision(v) == 0) {
+		return 1
+	}
+	return v.Version + 1
+}
+
 // PublishWorkflow is idempotent until the saved definition changes.
 func (r *CatalogRepo) PublishWorkflow(id string) (domain.WorkflowDefinition, error) {
 	var published domain.WorkflowDefinition
@@ -498,8 +506,8 @@ func (r *CatalogRepo) publishStoredWorkflow(id string) (domain.WorkflowDefinitio
 	if !workflowNeedsPublish(v) {
 		return v, nil
 	}
+	v.Version = nextWorkflowVersion(v)
 	v.Status = "published"
-	v.Version++
 	if err := r.putWorkflow(v, true); err != nil {
 		return domain.WorkflowDefinition{}, err
 	}

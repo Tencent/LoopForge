@@ -32,7 +32,7 @@
   <link rel="stylesheet" href="/app/harness-motion.css">
   <link rel="stylesheet" href="/app/sliding-tabs.css">
   <link rel="stylesheet" href="/app/mcp.css">
-  <link rel="stylesheet" href="/app/flow-canvas.css?v=20261109cli">
+  <link rel="stylesheet" href="/app/flow-canvas.css?v=20261125arrange">
   <link rel="stylesheet" href="/app/assistant-settings.css">
   <link rel="stylesheet" href="/preferences.css">
   <link rel="stylesheet" href="/app/issues-list.css">
@@ -599,7 +599,7 @@
             <button type="button" class="fd-zoomv" id="canvasZoomValue" aria-label="重置缩放" data-tip="重置为 100%">100%</button>
             <button type="button" class="fd-icon-btn" id="canvasZoomIn" aria-label="放大" data-tip="放大"><span data-fd-ic="plus"></span></button>
             <button type="button" class="fd-icon-btn" id="canvasFit" aria-label="适应视图" data-tip="适应视图"><span data-fd-ic="fit"></span></button>
-            <button type="button" class="fd-icon-btn" id="canvasArrange" aria-label="自动整理" data-tip="自动整理"><span data-fd-ic="layout"></span></button>
+            <button type="button" class="fd-btn ghost sm" id="canvasArrange" disabled><span data-fd-ic="layout"></span><span>自动整理</span></button>
             <button type="button" class="fd-icon-btn on" id="canvasMinimapToggle" aria-label="小地图" data-tip="小地图"><span data-fd-ic="map"></span></button>
             <span class="fd-sep fd-lg-sep"></span>
             <div class="fd-legend"><span><i></i>成功</span><span><i class="rj"></i>失败打回</span></div>
@@ -1299,7 +1299,7 @@
   <script src="/app/assistant-models.js"></script>
   <script src="/app/access.js"></script>
   <script src="/app/dashboards.js"></script>
-  <script src="/app/sops.js"></script>
+  <script src="/app/sops.js?v=20261125publish"></script>
   <script src="/app/issue-model.js"></script>
   <script src="/app/projects.js"></script>
   <script src="/app/project-credentials.js"></script>
@@ -1321,9 +1321,9 @@
   <script src="/app/bots.js"></script>
   <script src="/app/assistant-settings.js"></script>
   <script src="/app/flow-history.js?v=20261030fd2"></script>
-  <script src="/app/flow-viewport.js?v=20261030fd2"></script>
-  <script src="/app/flow-palette.js?v=20261030fd2"></script>
-  <script src="/app/flows.js?v=20261121roles"></script>
+  <script src="/app/flow-viewport.js?v=20261125arrange"></script>
+  <script src="/app/flow-palette.js?v=20261125publish"></script>
+  <script src="/app/flows.js?v=20261125publish"></script>
   <script src="/app/agents.js"></script>
   <script src="/app/mcp.js"></script>
   <script src="/app/assets.js"></script>
@@ -1341,7 +1341,7 @@
   <script src="/app/observability.js"></script>
   <script src="/app/observability-dashboard.js"></script>
   <script src="/app/issue-drawer.js"></script>
-  <script src="/app/revisions.js"></script>
+  <script src="/app/revisions.js?v=20261125publish"></script>
   <script src="/app/harness-motion.js"></script>
   <script src="/app/hover-ink.js"></script>
   <script src="/app/sidebar-mode-motion.js"></script>
