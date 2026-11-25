@@ -555,6 +555,43 @@ describe("App", () => {
     }
   });
 
+  test("create-and-clarify handoff pre-fills a clarify prompt and cleans mentionIntent", async () => {
+    const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    const issues = {
+      i1: { id: "i1", title: "导出 CSV", projectId: "p1" },
+      i2: { id: "i2", title: "筛选条件", projectId: "p1" },
+    };
+    globalThis.fetch = vi.fn(async (path) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ issue: issues[decodeURIComponent(String(path).split("/").pop())] }),
+    }));
+    Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
+    history.replaceState({}, "", "/?projectId=p1&mentionIssue=i1&mentionIntent=clarify");
+    let view;
+    try {
+      view = render(<App />);
+      const box = screen.getByRole("textbox");
+      await waitFor(() => expect(box.value).toBe("@导出 CSV 帮我澄清这个需求"));
+      expect(new URLSearchParams(location.search).has("mentionIssue")).toBe(false);
+      expect(new URLSearchParams(location.search).has("mentionIntent")).toBe(false);
+
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "agentflow-chat-mention-issue", issueId: "i2", projectId: "p1", intent: "clarify" },
+        origin: location.origin,
+        source: window.parent,
+      }));
+      await waitFor(() => expect(box.value).toBe("@筛选条件 帮我澄清这个需求"));
+    } finally {
+      view?.unmount();
+      globalThis.fetch = originalFetch;
+      Object.assign(chat, previous);
+      delete chat.startProjectDraft;
+      localStorage.clear();
+    }
+  });
+
   test("a requirement handoff keeps the project's unsent new-conversation draft", async () => {
     const previous = { ...chat };
     const originalFetch = globalThis.fetch;

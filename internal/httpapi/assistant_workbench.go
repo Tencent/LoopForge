@@ -70,8 +70,22 @@ func (h *assistantHandlers) workbenchReference(ref domain.AssistantReference, pr
 			break
 		}
 		ref.Name = v.Title
-		data = gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID,
+		issueData := gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID,
 			"repositoryId": v.RepositoryID, "repositoryIds": v.RepositoryIDs}
+		if branch := strings.TrimSpace(v.BaseBranch); branch != "" {
+			issueData["baseBranch"] = branch
+		}
+		if v.WithoutSOP() {
+			issueData["sopMode"] = domain.IssueSOPNone
+		} else {
+			if wfID := strings.TrimSpace(v.WorkflowID); wfID != "" {
+				issueData["workflowId"] = wfID
+			}
+			if bound := h.issueBoundSOPs(v); len(bound) > 0 {
+				issueData["boundSops"] = bound
+			}
+		}
+		data = issueData
 	case "sop":
 		v, ok := h.repo.Workflow(ref.ID)
 		if !ok || !(v.Generic && project != "" || allowed(v.ProjectID, v.Shared)) {
@@ -1269,35 +1283,75 @@ func runNodeAgentID(r domain.Run, id string) string {
 	return ""
 }
 
+func (h *assistantHandlers) issueBoundSOPs(issue domain.Issue) []gin.H {
+	if issue.WithoutSOP() {
+		return nil
+	}
+	bindings := issue.EffectiveSOPBindings()
+	if len(bindings) == 0 {
+		return nil
+	}
+	out := make([]gin.H, 0, len(bindings))
+	for _, b := range bindings {
+		item := gin.H{"workflowId": b.WorkflowID}
+		if wf, ok := h.repo.Workflow(b.WorkflowID); ok && strings.TrimSpace(wf.Name) != "" {
+			item["name"] = strings.TrimSpace(wf.Name)
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func (h *assistantHandlers) issueBoundSOPLabels(issue domain.Issue) []string {
+	if issue.WithoutSOP() {
+		return nil
+	}
+	bindings := issue.EffectiveSOPBindings()
+	if len(bindings) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(bindings))
+	for _, b := range bindings {
+		if wf, ok := h.repo.Workflow(b.WorkflowID); ok && strings.TrimSpace(wf.Name) != "" {
+			out = append(out, fmt.Sprintf("%s（%s）", strings.TrimSpace(wf.Name), b.WorkflowID))
+		} else {
+			out = append(out, b.WorkflowID)
+		}
+	}
+	return out
+}
+
 // workspaceTurnContext tells Main Bot which workspace the conversation is
 // bound to, which environments it used before, and what the requirements in
 // play already delivered, so it resumes the right work instead of following @
 // mentions mechanically.
 func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user domain.User) string {
 	session, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID)
-	if !ok || session.Shared || session.RunID != "" {
+	if ok && (session.Shared || session.RunID != "") {
 		return ""
 	}
 	var b strings.Builder
-	current, bound := h.repo.RunState(session.WorkspaceRunID)
-	bound = bound && conversationMayBind(session, current, req.ProjectID)
-	if bound {
-		fmt.Fprintf(&b, "本对话当前绑定的工作区：%s。", describeConversationWorkspace(current))
-		if !current.IsWorkspace() {
-			b.WriteString(borrowedSOPNotice(current))
-		} else if req.ProjectID != "" {
-			b.WriteString("从这里派发 SOP 会复用该工作区。如果本轮仍在使用它，派发后先结束回复，SOP 会在工作区释放后开始。")
+	if ok {
+		current, bound := h.repo.RunState(session.WorkspaceRunID)
+		bound = bound && conversationMayBind(session, current, req.ProjectID)
+		if bound {
+			fmt.Fprintf(&b, "本对话当前绑定的工作区：%s。", describeConversationWorkspace(current))
+			if !current.IsWorkspace() {
+				b.WriteString(borrowedSOPNotice(current))
+			} else if req.ProjectID != "" {
+				b.WriteString("从这里派发 SOP 会复用该工作区。如果本轮仍在使用它，派发后先结束回复，SOP 会在工作区释放后开始。")
+			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
-	}
-	others := []string{}
-	for _, id := range ownWorkspaceRunIDs(session) {
-		if run, ok := h.repo.RunState(id); ok && id != session.WorkspaceRunID && run.IsWorkspace() && conversationMayBind(session, run, req.ProjectID) {
-			others = append(others, "- "+describeConversationWorkspace(run))
+		others := []string{}
+		for _, id := range ownWorkspaceRunIDs(session) {
+			if run, ok := h.repo.RunState(id); ok && id != session.WorkspaceRunID && run.IsWorkspace() && conversationMayBind(session, run, req.ProjectID) {
+				others = append(others, "- "+describeConversationWorkspace(run))
+			}
 		}
-	}
-	if len(others) > 0 {
-		b.WriteString("本对话之前在其他运行环境开过的工作区（传它的 sandboxProfileId 或 workspaceRunId 切回，文件和已克隆的仓库都在）：\n" + strings.Join(others, "\n") + "\n")
+		if len(others) > 0 {
+			b.WriteString("本对话之前在其他运行环境开过的工作区（传它的 sandboxProfileId 或 workspaceRunId 切回，文件和已克隆的仓库都在）：\n" + strings.Join(others, "\n") + "\n")
+		}
 	}
 	issues := []string{}
 	for _, issue := range turnIssues(h.deps, req.ProjectID, session.IssueID, lastMessageReferences(req.Messages)) {
@@ -1310,10 +1364,16 @@ func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user dom
 		} else {
 			line += "：没跑过 SOP"
 		}
+		if issue.WithoutSOP() {
+			line += "；交付方式：不使用 SOP（在对话里澄清并直接改代码）"
+		} else if labels := h.issueBoundSOPLabels(issue); len(labels) > 0 {
+			line += "；已绑定 SOP：" + strings.Join(labels, " → ")
+		}
 		issues = append(issues, line)
 	}
 	if len(issues) > 0 {
 		b.WriteString("本条消息 @ 的需求和本会话关联的主需求：\n" + strings.Join(issues, "\n") + "\n")
+		b.WriteString("如果需求已绑定 SOP，说明用户已选定按该 SOP 交付，不要再反问用户「直接改代码还是走 SOP」或要求重新选择交付方式；用户只 @ 需求或要求澄清/分析需求时，直接结合需求描述（需要核对代码现状时可先打开工作区查看）指出模糊点、边界条件或验收标准来澄清，若需求已足够清晰则直接给出评估，并说明可先更新需求（issues_save）或准备就绪后按已绑定的 SOP 派发（issues_dispatch）。如果需求标记为不使用 SOP，默认围绕澄清和在对话工作区直接实现协作，不要主动建议改走 SOP。\n")
 	}
 	if b.Len() == 0 {
 		return ""

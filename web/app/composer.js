@@ -496,7 +496,7 @@ async function createIssueFromChat(target,mode){
     if(syncError)toast('已在平台建单，TAPD 同步失败：'+syncError,'err');
     else if(target==='tapd')toast(`已创建需求并同步 TAPD ${issue.externalRef?.externalId||''}`,'ok');
     else toast(toChat?'已创建需求，在对话里继续澄清':(useSOP?'已在平台创建需求，可在详情里触发 SOP':'已创建需求（不使用 SOP）'),'ok');
-    if(toChat)openIssueInChat(issue);
+    if(toChat)openIssueInChat(issue,{intent:'clarify'});
     else openIssueDetail(issue.id);
   }catch(err){toast(err.message,'err')}
   finally{state.reqCreating='';renderReqFooter()}
