@@ -183,9 +183,13 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   }
   app.document.querySelector('#artifactPreview [data-mode="source"]')?.click();
   assert.match(app.document.querySelector('#artifactPreview .artifact-content').textContent, /console\.log/);
+  const downloads = [];
+  const clickAnchor = app.window.HTMLAnchorElement.prototype.click;
+  app.window.HTMLAnchorElement.prototype.click = function () { downloads.push([this.getAttribute('href'), this.download]); };
   const download = artifactModal.querySelector('[data-download-artifact]');
-  assert.equal(download.getAttribute('href'), '/api/runs/run-x/artifacts/art-1');
-  assert.equal(download.getAttribute('download'), 'report.md');
+  assert.equal(download.tagName, 'BUTTON');
+  download.click();
+  assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-1', 'report.md']);
   artifactModal.close();
   assert.equal(artifactModal.querySelector('.toast-item'), null);
   const artifactCalls = () => app.router.calls.filter(c => c.path.includes('/artifacts/')).length;
@@ -194,9 +198,9 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.equal(artifactModal.open, true);
   assert.equal(artifactCalls(), callsBefore, 'a binary artifact is not read into the page');
   assert.match(app.document.querySelector('#artifactPreview').textContent, /不在页面内预览/);
-  const binaryDownload = artifactModal.querySelector('[data-download-artifact]');
-  assert.equal(binaryDownload.getAttribute('href'), '/api/runs/run-x/artifacts/art-bin');
-  assert.equal(binaryDownload.getAttribute('download'), 'model.bin');
+  artifactModal.querySelector('[data-download-artifact]').click();
+  assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-bin', 'model.bin']);
+  app.window.HTMLAnchorElement.prototype.click = clickAnchor;
   artifactModal.close();
   app.evaluate(`toast('Outside artifact preview')`);
   assert.match(app.document.querySelector('#toastContainer').textContent, /Outside artifact preview/);

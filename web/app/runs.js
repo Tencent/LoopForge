@@ -1608,6 +1608,15 @@ function artifactPreviewable(artifact){
 function artifactDownloadName(artifact){
   return String(artifact?.path||'').split('/').pop()||artifact?.name||'artifact.txt';
 }
+/** 通过产物地址下载原始字节，二进制文件不会经过文本解码。 */
+function downloadArtifactFile(url,artifact){
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=artifactDownloadName(artifact);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 async function previewArtifact(run,artifactId,opener){
   const artifact=(run.artifacts||[]).find(a=>a.id===artifactId);
   if(!artifact)return;
@@ -1630,10 +1639,11 @@ async function previewArtifact(run,artifactId,opener){
             </div>
           </div>
           <div class="artifact-toolbar-right">
-            <a class="button ghost small" data-download-artifact href="${escapeHTML(url)}" download="${escapeHTML(artifactDownloadName(artifact))}">⬇ 下载文件</a>
+            <button type="button" class="button ghost small" data-download-artifact>⬇ 下载文件</button>
           </div>
         </div>
         <div class="empty-properties"><b>此文件不在页面内预览</b><p>文件较大或为二进制内容，请下载后查看。</p></div>`;
+      host.querySelector('[data-download-artifact]').onclick=()=>downloadArtifactFile(url,artifact);
       return;
     }
     const res=await fetch(url,{signal});
@@ -1661,7 +1671,7 @@ async function previewArtifact(run,artifactId,opener){
           </div>
           <div class="artifact-toolbar-right">
             <button type="button" class="button ghost small" data-copy-artifact>📋 复制内容</button>
-            <a class="button ghost small" data-download-artifact href="${escapeHTML(url)}" download="${escapeHTML(artifactDownloadName(artifact))}">⬇ 下载文件</a>
+            <button type="button" class="button ghost small" data-download-artifact>⬇ 下载文件</button>
           </div>
         </div>
         <div class="artifact-body">
@@ -1678,6 +1688,7 @@ async function previewArtifact(run,artifactId,opener){
       });
 
       host.querySelector('[data-copy-artifact]').onclick=()=>copyText(content, '产物内容已复制到剪贴板');
+      host.querySelector('[data-download-artifact]').onclick=()=>downloadArtifactFile(url,artifact);
 
       host.querySelectorAll('.md-code-copy').forEach(b=>{
         b.onclick=()=>{
