@@ -6,7 +6,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { api, get, put, post, del, list, track, cleanup, ensureProject, tokenOwner, tokenBSkip, asB, withProjectMember } from '../lib/api.mjs';
-import { cfg } from '../lib/env.mjs';
+import { cfg, uid } from '../lib/env.mjs';
 
 const P = cfg.projectId;
 const S = '/api/assistant/sessions';
@@ -24,6 +24,24 @@ async function saveSession(id, body, opts) {
   track(`assistant session ${id}`, () => del(`${S}/${id}`, { expect: [200, 404] }));
   return saved;
 }
+
+test('selecting a conversation sandbox keeps the transcript and rejects an unknown reply', async () => {
+  const sandboxId = uid('session-sandbox');
+  await put('/api/sandboxes', { id: sandboxId, name: 'E2E conversation sandbox', projectId: P, driver: 'native' });
+  track(`sandbox ${sandboxId}`, () => del(`/api/sandboxes/${sandboxId}`));
+  const id = newId('sandbox');
+  const messages = [{ role: 'user', content: 'Keep this turn when selecting the runtime.' }];
+  await saveSession(id, { title: 'E2E runtime choice', projectId: P, messages });
+  const path = `${S}/${id}`;
+
+  const chosen = await put(`${path}/sandbox`, { sandboxProfileId: sandboxId });
+  assert.equal(chosen.sandboxProfileId, sandboxId);
+  assert.equal(chosen.messages[0].content, messages[0].content);
+  await post(`${path}/read`, { generationId: 'unrecorded-reply' }, { expect: 404 });
+  const restored = await put(`${path}/sandbox`, { sandboxProfileId: '' });
+  assert.ok(!restored.sandboxProfileId);
+  assert.equal(restored.messages[0].content, messages[0].content);
+});
 
 test('save a project conversation; user turns are stamped with the caller', async () => {
   const id = newId('main');
