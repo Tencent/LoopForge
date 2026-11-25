@@ -105,7 +105,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 			Attributes: map[string]any{"childRunId": child.ID, "sopWorkflowId": childID},
 		})
 	} else {
-		if nr := parent.Nodes[node.ID]; nr != nil && nr.Activity == resumePausedChildActivity && child.Status == "waiting" && child.PauseRequested {
+		if nr := parent.Nodes[node.ID]; nr != nil && isResumePausedChildActivity(nr.Activity) && child.Status == "waiting" && child.PauseRequested {
 			if err := e.ResumePausedContext(ctx, child.ID, nr.Feedback); err != nil {
 				fail(fmt.Errorf("继续子 LOOP %s：%w", child.ID, err))
 				return

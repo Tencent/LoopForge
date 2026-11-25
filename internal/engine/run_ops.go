@@ -679,6 +679,14 @@ func resumeChildrenAfterAdmission(run domain.Run) bool {
 
 const resumePausedChildActivity = "等待继续子 LOOP"
 
+// legacyResumePausedChildActivity is the same marker stored before the LOOP
+// rename. A parent paused on that build still resumes its child.
+const legacyResumePausedChildActivity = "等待继续子 SOP"
+
+func isResumePausedChildActivity(activity string) bool {
+	return activity == resumePausedChildActivity || activity == legacyResumePausedChildActivity
+}
+
 // childRunIDs lists the child LOOP runs referenced by the run's LOOP nodes.
 func childRunIDs(r domain.Run) []string {
 	ids := make([]string, 0)

@@ -702,3 +702,18 @@ func TestSOPIdleReclaimRestoresOnAReplacementCloudWorker(t *testing.T) {
 		t.Fatalf("restored workspace binding = %s:%s", got.WorkspaceHost, got.WorkspaceRoot)
 	}
 }
+
+// A parent paused before the LOOP rename stored the old marker. It must still
+// resume its child once admitted again.
+func TestResumePausedChildActivityAcceptsLegacyMarker(t *testing.T) {
+	for activity, want := range map[string]bool{
+		resumePausedChildActivity: true,
+		"等待继续子 SOP":               true,
+		"等待继续":                    false,
+		"":                        false,
+	} {
+		if got := isResumePausedChildActivity(activity); got != want {
+			t.Fatalf("isResumePausedChildActivity(%q) = %v, want %v", activity, got, want)
+		}
+	}
+}
