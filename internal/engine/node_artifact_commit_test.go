@@ -278,3 +278,67 @@ func assertOversizedPlanRejected(t *testing.T, run domain.Run) {
 		t.Fatal("oversized plan was archived, published, retried, or passed to approval")
 	}
 }
+
+// A failed terminal write that is not a deadlock must not strand the run: the
+// node's auto-reject still resets it with its upstream so the run finishes.
+func TestNodeFailureWriteErrorKeepsAutoReject(t *testing.T) {
+	for name, injected := range map[string]error{
+		"lock wait timeout": &mysql.MySQLError{Number: 1205, Message: "lock wait timeout writing failed node"},
+		"plain error":       fmt.Errorf("transient store failure"),
+		"deadlock budget":   &mysql.MySQLError{Number: 1213, Message: "deadlock writing failed node"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(s.Close)
+			var failures atomic.Int32
+			limit := int32(1)
+			if name == "deadlock budget" {
+				limit = 6 // every RetryDeadlock attempt is a deadlock victim
+			}
+			err = s.DB.Callback().Create().Before("gorm:create").Register("test:fail-review-node", func(tx *gorm.DB) {
+				values, ok := tx.Statement.Dest.(map[string]any)
+				if tx.Statement.Table == "run_nodes" && ok && values["node_id"] == "review" && values["status"] == "failed" {
+					if failures.Add(1) <= limit {
+						tx.AddError(injected)
+					}
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.PutAgent(domain.AgentDefinition{ID: "write-repair-agent", Name: "write-repair-agent", ExecutorID: "mock", Prompt: "repair"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.PutAgent(domain.AgentDefinition{ID: "write-review-agent", Name: "write-review-agent", ExecutorID: "mock", Prompt: "[[mock:gate=rework,pass]]"}); err != nil {
+				t.Fatal(err)
+			}
+			wf := domain.WorkflowDefinition{ID: "write-error-reject", Name: "write error reject", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
+				{ID: "repair", Name: "repair", Type: "agent", AgentID: "write-repair-agent", ExecutorID: "mock", MaxAttempts: 1},
+				{ID: "review", Name: "review", Type: "agent", AgentID: "write-review-agent", ExecutorID: "mock", MaxAttempts: 3, MaxReworks: 3, RejectTo: "repair"},
+			}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "repair", Target: "review", When: "success"}}}
+			if err := s.PutWorkflow(wf); err != nil {
+				t.Fatal(err)
+			}
+			e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+			run, err := e.Start(wf.ID, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, s, run.ID, "succeeded")
+			if failures.Load() < limit {
+				t.Fatalf("failed-node write hit %d injected errors, want %d", failures.Load(), limit)
+			}
+			current, _ := s.Run(run.ID)
+			if repair := current.Nodes["repair"]; repair.ReworkCount != 1 {
+				t.Fatalf("repair reworkCount = %d, want the auto-reject to rework it once", repair.ReworkCount)
+			}
+			if review := current.Nodes["review"]; review.Status != "succeeded" {
+				t.Fatalf("review status = %q, want succeeded after the rework", review.Status)
+			}
+		})
+	}
+}

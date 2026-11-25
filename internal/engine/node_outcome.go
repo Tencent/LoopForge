@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/go-sql-driver/mysql"
 )
 
 func (e *Engine) waitApproval(runID string, node domain.WorkflowNode, msg string) {
@@ -85,18 +83,17 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 	}
 	// MySQL rolls back a deadlock victim. Retry only that write, reloading
 	// the run so the lease, generation and attempt checks still apply.
-	for writeAttempt := 0; ; writeAttempt++ {
+	writeErr := repo.RetryDeadlock(func() error {
 		shouldReject = false
-		writeErr := e.updateRunErr(runID, storeFailure)
-		if writeErr == nil {
-			break
-		}
-		var sqlErr *mysql.MySQLError
-		if writeAttempt == 2 || !errors.As(writeErr, &sqlErr) || sqlErr.Number != 1213 {
-			return
-		}
-		time.Sleep(time.Duration(5<<writeAttempt) * time.Millisecond)
+		return e.updateRunErr(runID, storeFailure)
+	})
+	if errors.Is(writeErr, repo.ErrRunLeaseLost) || errors.Is(writeErr, repo.ErrRunLeaseHeld) {
+		// Another worker owns the run now; it decides what happens next.
+		return
 	}
+	// Any other write failure keeps the auto-reject: Reject reloads the run
+	// and resets this node with its upstream, so the run still moves on
+	// instead of leaving a running node that nobody executes.
 	if shouldReject {
 		_ = e.Reject(runID, domain.RejectRequest{NodeID: node.ID, TargetID: node.RejectTo, Reason: "节点失败自动打回：" + err.Error()})
 	}
