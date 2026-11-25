@@ -39,6 +39,60 @@ func TestAutomaticSOPSandboxRunsSelectedToolchain(t *testing.T) {
 	}
 }
 
+func TestAutomaticSOPSandboxUsesCompatibleCloudRunner(t *testing.T) {
+	e, store := retryEngine(t)
+	const label = "pool=sop"
+	e.ConfigureCloudRunnerPool(CloudRunnerPool{Label: label, Projects: []string{"platform"}, Required: true})
+	docker := domain.Runner{ID: "docker", OS: "linux", Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionGitSSH, Labels: []string{label}}
+	native := docker
+	native.ID, native.NativeSandboxAvailable = "native", true
+	old := native
+	old.ID, old.RunnerVersion = "old-native", domain.RunnerVersionIntegrate
+	for _, runner := range []domain.Runner{docker, native, old} {
+		if err := store.PutRunner(runner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wf := domain.WorkflowDefinition{ProjectID: "platform", AutoSelectSandbox: true}
+	repositories := []domain.RepositoryContext{{Provider: domain.RepositoryProviderSSH}}
+	for _, tc := range []struct {
+		name, initialRunner, wantSandbox, wantRunner string
+		pinned, nativeGoesOffline                    bool
+	}{
+		{name: "unbound", wantSandbox: repo.TestNativeSandboxID, wantRunner: native.ID},
+		{name: "assigned docker runner", initialRunner: docker.ID, wantSandbox: repo.TestNativeSandboxID, wantRunner: native.ID},
+		{name: "pinned", initialRunner: docker.ID, pinned: true, wantSandbox: repo.DefaultSandboxProfileID, wantRunner: docker.ID},
+		{name: "native runner disappears during selection", initialRunner: docker.ID, nativeGoesOffline: true, wantSandbox: repo.DefaultSandboxProfileID, wantRunner: docker.ID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ec := domain.TelemetryContext{ProjectID: "platform", ExecutionPool: domain.ExecutionModeCloud, ExecutionRunnerID: tc.initialRunner, ExecutionPinned: tc.pinned}
+			called := false
+			e.SelectSOPSandbox = func(_ context.Context, selection SOPSandboxSelection) string {
+				called = true
+				offersNative := slices.ContainsFunc(selection.Candidates, func(c SOPSandboxCandidate) bool { return c.ID == repo.TestNativeSandboxID })
+				if offersNative == tc.pinned {
+					t.Fatalf("unexpected candidates: %+v", selection.Candidates)
+				}
+				if tc.nativeGoesOffline {
+					offline := native
+					offline.Status = domain.RunnerStatusOffline
+					if err := store.PutRunner(offline); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return repo.TestNativeSandboxID
+			}
+			sandbox, _, err := e.selectSOPSandbox(context.Background(), wf, &ec, repositories, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (!tc.pinned && !called) || sandbox.ID != tc.wantSandbox || ec.ExecutionRunnerID != tc.wantRunner {
+				t.Fatalf("called selector=%v, sandbox=%q, runner=%q; want sandbox=%q, runner=%q", called, sandbox.ID, ec.ExecutionRunnerID, tc.wantSandbox, tc.wantRunner)
+			}
+		})
+	}
+}
+
 func TestAutomaticSOPSandboxFallbackAndFrozenRefresh(t *testing.T) {
 	e, store := retryEngine(t)
 	e.ConfigureExecution("api-only", "test", 30*time.Second, false)

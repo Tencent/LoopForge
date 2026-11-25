@@ -61,6 +61,39 @@ test('automatic sandbox selection saves and reopens in the SOP designer', async 
   assert.equal(app.evaluate('!!state.workflow.autoSelectSandbox'),false);
 });
 
+test('manual SOP start shows sandbox selection while admission is pending', async t=>{
+  const app=await loadApp();t.after(app.close);
+  app.evaluate(`state.data.workflows[0].autoSelectSandbox=true;openRunModal('flow-1')`);
+  const reply=Promise.withResolvers();
+  app.router.post('/api/runs',()=>reply.promise);
+  const button=app.document.querySelector('#confirmRun');
+  const pending=app.evaluate('startRun()');
+  assert.equal(button.disabled,true);
+  assert.equal(button.textContent,'正在选择沙箱…');
+  const repeated=app.evaluate('startRun()');
+  assert.equal(app.router.calls.filter(call=>call.method==='POST'&&call.path==='/api/runs').length,1);
+  reply.resolve({status:400,body:{error:'Run could not start'}});
+  await Promise.all([pending,repeated]);
+  assert.equal(button.disabled,false);
+  assert.equal(button.textContent,'开始运行');
+});
+
+test('issue dispatch shows sandbox selection until admission returns', async t=>{
+  const app=await loadApp();t.after(app.close);
+  app.evaluate(`state.data.workflows[0].autoSelectSandbox=true;state.data.issues[0].workflowId='flow-1'`);
+  const reply=Promise.withResolvers();
+  app.router.post('/api/issues/issue-1/dispatch',()=>reply.promise);
+  const pending=app.evaluate(`dispatchIssueById('issue-1')`);
+  const notice=[...app.document.querySelectorAll('#toastContainer .toast-item')]
+    .find(item=>item.querySelector('.toast-item-msg')?.textContent==='正在选择沙箱…');
+  assert.ok(notice);
+  assert.equal(notice.classList.contains('leaving'),false);
+  reply.resolve({status:400,body:{error:'Dispatch failed'}});
+  await pending;
+  assert.equal(notice.classList.contains('leaving'),true);
+  assert.match(app.document.querySelector('#toastContainer').textContent,/Dispatch failed/);
+});
+
 test('missing sandboxes block submission and refresh keeps the entered SOP fields', async t=>{
   const app=await loadApp();t.after(app.close);
   const form=openBlank(app,[{id:'foreign-private',projectId:'other',name:'Private',driver:'docker'}]);

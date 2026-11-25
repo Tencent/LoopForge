@@ -7,6 +7,10 @@ const PREVIEW_BUILD_AGENT_ID='af-preview-builder';
 const SOP_AUTO_SANDBOX=' ';
 function sopSandboxValue(wf){return wf?.autoSelectSandbox?SOP_AUTO_SANDBOX:wf?.sandboxProfileId||''}
 function sopAutoSandboxLabel(){return lfT('由 Agent 选择','Let Agent choose')}
+function sopSandboxPendingText(workflowID){
+  return (state.data?.workflows||[]).some(wf=>wf.id===workflowID&&wf.autoSelectSandbox)
+    ?lfT('正在选择沙箱…','Selecting sandbox…'):'';
+}
 function setSOPSandboxChoice(wf,value){
   wf.sandboxProfileId=value===SOP_AUTO_SANDBOX?'':value;
   if(value===SOP_AUTO_SANDBOX)wf.autoSelectSandbox=true;

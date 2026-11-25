@@ -81,11 +81,23 @@ printf '{"type":"result","result":"{\\"sandboxProfileId\\":\\"%s\\"}"}\n' "$id"
 				t.Fatal(err)
 			}
 			task := requestJSON[domain.Task](t, api, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", map[string]string{}, http.StatusCreated)
-			run = requestJSON[domain.Run](t, api, http.MethodGet, "/api/runs/"+task.RunID, nil, http.StatusOK)
+			run.ID = task.RunID
 		}
+		run = requestJSON[domain.Run](t, api, http.MethodGet, "/api/runs/"+run.ID, nil, http.StatusOK)
 		if run.WorkflowSnapshot.SandboxProfileID != want || run.WorkflowSnapshot.SandboxSnapshot == nil || run.WorkflowSnapshot.SandboxSnapshot.Dockerfile == nil ||
 			run.WorkflowSnapshot.SandboxSnapshot.Dockerfile.Content != "FROM "+project.image {
 			t.Fatalf("project %s selected %q, want %q", project.id, run.WorkflowSnapshot.SandboxProfileID, want)
+		}
+		if len(run.Events) != 1 || run.Events[0].Type != domain.RunEventSandboxSelected || run.Events[0].Message != "Agent 选择沙箱 "+want {
+			t.Fatalf("run detail events = %+v", run.Events)
+		}
+		stream, ok := store.RunStreamView(run.ID)
+		if !ok {
+			t.Fatal("run stream view missing")
+		}
+		events := publicLiveRun(stream).Events
+		if len(events) != 1 || events[0] != run.Events[0] {
+			t.Fatalf("run stream lost the sandbox selection: %+v", events)
 		}
 	}
 }

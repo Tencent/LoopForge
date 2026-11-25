@@ -38,12 +38,25 @@ type SOPSandboxCandidate struct {
 	Project   bool   `json:"projectSandbox,omitempty"`
 }
 
-func (e *Engine) selectSOPSandbox(ctx context.Context, wf domain.WorkflowDefinition, ec domain.TelemetryContext, repositories []domain.RepositoryContext, input, workspaceSandboxID string) (domain.SandboxProfile, string, error) {
+func (e *Engine) selectSOPSandbox(ctx context.Context, wf domain.WorkflowDefinition, ec *domain.TelemetryContext, repositories []domain.RepositoryContext, input, workspaceSandboxID string) (domain.SandboxProfile, string, error) {
 	choices := e.repo.ConversationSandboxes(ec.ProjectID)
 	runner, _ := e.repo.Runner(ec.ExecutionRunnerID)
 	nativeAvailable := runner.SupportsNativeSandbox
 	dockerAvailable := true
-	if ec.ExecutionRunnerID == "" && ec.ExecutionPool != domain.ExecutionModeCloud && e.executes() {
+	var poolLabel string
+	if ec.ExecutionPool == domain.ExecutionModeCloud && !ec.ExecutionPinned && ec.ParentRunID == "" {
+		poolLabel = e.cloudPoolLabel()
+	}
+	if poolLabel != "" {
+		// A new pool run can start on any compatible online machine.
+		// Existing workspaces are tied to their owning machine.
+		runners := e.eligiblePoolRunners(poolLabel)
+		nativeAvailable = func(driver string) bool {
+			return slices.ContainsFunc(runners, func(runner domain.Runner) bool {
+				return sopNativeRunnerSupports(runner, driver, wf, repositories)
+			})
+		}
+	} else if ec.ExecutionRunnerID == "" && ec.ExecutionPool != domain.ExecutionModeCloud && e.executes() {
 		nativeAvailable = runtime.NativeSandboxAvailable
 		dockerAvailable = runtime.DockerReady()
 	}
@@ -74,7 +87,7 @@ func (e *Engine) selectSOPSandbox(ctx context.Context, wf domain.WorkflowDefinit
 	})
 	var selected string
 	if len(choices) > 1 && e.SelectSOPSandbox != nil {
-		request := e.sopSandboxSelection(wf, ec, repositories, input, choices, workspaceSandboxID)
+		request := e.sopSandboxSelection(wf, *ec, repositories, input, choices, workspaceSandboxID)
 		selectionCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		selected = strings.TrimSpace(e.SelectSOPSandbox(selectionCtx, request))
 		cancel()
@@ -98,6 +111,21 @@ func (e *Engine) selectSOPSandbox(ctx context.Context, wf domain.WorkflowDefinit
 		if err != nil || !supported(profile) {
 			continue
 		}
+		if poolLabel != "" && profile.Driver != domain.SandboxDriverDocker {
+			// The set of online machines may have changed during the model
+			// call. Use the next candidate if the native choice lost its host.
+			compatible := func(runner domain.Runner) bool {
+				return sopNativeRunnerSupports(runner, profile.Driver, wf, repositories)
+			}
+			target, ok := e.repo.Runner(ec.ExecutionRunnerID)
+			if !ok || !poolRunnerEligible(target, poolLabel) || !compatible(target) {
+				target, ok = e.pickPoolRunner(poolLabel, compatible)
+				if !ok {
+					continue
+				}
+				ec.ExecutionRunnerID = target.ID
+			}
+		}
 		source := "自动选择使用默认沙箱"
 		switch {
 		case profile.ID == selected:
@@ -110,6 +138,12 @@ func (e *Engine) selectSOPSandbox(ctx context.Context, wf domain.WorkflowDefinit
 		return profile, source + " " + profile.ID, nil
 	}
 	return domain.SandboxProfile{}, "", fmt.Errorf("当前项目和执行机器没有可用的 SOP 沙箱")
+}
+
+func sopNativeRunnerSupports(runner domain.Runner, driver string, wf domain.WorkflowDefinition, repositories []domain.RepositoryContext) bool {
+	return runner.SupportsNativeSandbox(driver) &&
+		(len(wf.ProjectCredentialIDs) == 0 || runner.SupportsProjectCredentials()) &&
+		runnerRepositoryCapabilityError(runner, repositories) == nil
 }
 
 func (e *Engine) sopSandboxSelection(wf domain.WorkflowDefinition, ec domain.TelemetryContext, repositories []domain.RepositoryContext, input string, choices []domain.SandboxProfile, workspaceSandboxID string) SOPSandboxSelection {

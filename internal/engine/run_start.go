@@ -174,26 +174,10 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 		executionContext.ExecutionPool = ""
 	}
 	e.selectSOPExecutionTarget(&executionContext)
-	if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
-		return domain.Run{}, err
-	}
 	if len(wf.ProjectCredentialIDs) > 0 {
 		if _, err := e.ResolveRunProjectCredentialEnv(context.Background(), domain.Run{WorkflowSnapshot: wf, ExecutionContext: executionContext}); err != nil {
 			return domain.Run{}, err
 		}
-		if err := e.requireProjectCredentialRunner(wf, executionContext.ExecutionRunnerID); err != nil {
-			return domain.Run{}, err
-		}
-	}
-	wf.ExecutorDefaults = nil
-	if executionContext.ResponsibleUserID > 0 {
-		wf.ExecutorDefaults, _, err = e.planSOPExecutors(wf, executionContext, false)
-		if err != nil {
-			return domain.Run{}, err
-		}
-	}
-	if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
-		return domain.Run{}, err
 	}
 	var profile domain.SandboxProfile
 	var sandboxSelection string
@@ -201,7 +185,7 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	case workspace:
 		profile, err = e.repo.ConversationSandbox(executionContext.ProjectID, wf.SandboxProfileID)
 	case wf.AutoSelectSandbox:
-		profile, sandboxSelection, err = e.selectSOPSandbox(ctx, wf, executionContext, repositories, input, workspaceSandboxID)
+		profile, sandboxSelection, err = e.selectSOPSandbox(ctx, wf, &executionContext, repositories, input, workspaceSandboxID)
 	default:
 		var ok bool
 		if profile, ok = e.repo.Sandbox(wf.SandboxProfileID); !ok {
@@ -222,6 +206,22 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	}
 	if wf.AutoSelectSandbox {
 		wf.SandboxProfileID = profile.ID
+	}
+	if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
+		return domain.Run{}, err
+	}
+	if err := e.requireProjectCredentialRunner(wf, executionContext.ExecutionRunnerID); err != nil {
+		return domain.Run{}, err
+	}
+	wf.ExecutorDefaults = nil
+	if executionContext.ResponsibleUserID > 0 {
+		wf.ExecutorDefaults, _, err = e.planSOPExecutors(wf, executionContext, false)
+		if err != nil {
+			return domain.Run{}, err
+		}
+	}
+	if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
+		return domain.Run{}, err
 	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("run-%d", now.UnixNano())
@@ -269,7 +269,7 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	} else {
 		e.event(&r, "", "run.started", "流水线开始执行")
 		if sandboxSelection != "" {
-			e.event(&r, "", "sandbox.selected", sandboxSelection)
+			e.event(&r, "", domain.RunEventSandboxSelected, sandboxSelection)
 		}
 		if borrowsConversationWorkspace(r) {
 			e.event(&r, "", "workspace.shared", "复用对话工作区 "+workspaceRunID(r))

@@ -115,8 +115,9 @@ function toast(message, type='info', duration=2600){
     legacy.textContent=message;
     legacy.className=`toast show toast-${kind}`;
     clearTimeout(toastTimer);
-    toastTimer=setTimeout(()=>legacy.classList.remove('show'), 2200);
-    return;
+    const hide=()=>{if(legacy.textContent===message)legacy.classList.remove('show')};
+    if(duration>0)toastTimer=setTimeout(hide,2200);
+    return hide;
   }
   if(!container)return;
   const kind=['ok','err','warn','info'].includes(type)?type:'info';
@@ -134,14 +135,18 @@ function toast(message, type='info', duration=2600){
   window.AgentFlowHarnessIcons?.hydrate?.(item);
   let timer=null;
   const remove=()=>{
+    clearTimeout(timer);
     if(item.classList.contains('leaving'))return;
     item.classList.add('leaving');
     setTimeout(()=>{try{item.remove()}catch{}}, 200);
   };
-  timer=setTimeout(remove, duration);
-  item.onmouseenter=()=>clearTimeout(timer);
-  item.onmouseleave=()=>{timer=setTimeout(remove, 1400)};
+  if(duration>0){
+    timer=setTimeout(remove,duration);
+    item.onmouseenter=()=>clearTimeout(timer);
+    item.onmouseleave=()=>{timer=setTimeout(remove,1400)};
+  }
   item.querySelector('.toast-item-close').onclick=remove;
+  return remove;
 }
 
 // Platform dialogs (#confirmModal) replace window.confirm/prompt/alert. Calls
