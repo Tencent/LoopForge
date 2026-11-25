@@ -529,3 +529,8 @@ Object.assign(window.LF_I18N_EN, {
   "AI 根据任务和命名要求生成完整的分支名。": "AI uses the task and naming instructions to generate the full branch name.",
   "请输入自定义前缀，或选择无前缀": "Enter a custom prefix or choose No prefix",
 });
+Object.assign(window.LF_I18N_EN, {
+  "对话处理": "Handled in chat",
+  "在对话里澄清和改代码": "Clarify and change code in chat",
+  "这条需求不使用 SOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no SOP: clarify and change code in chat; scheduled jobs won't pick it up.",
+});
