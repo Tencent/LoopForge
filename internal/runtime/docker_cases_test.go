@@ -85,6 +85,28 @@ func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxPrivilegedRequiresExecutionHostOptIn(t *testing.T) {
+	t.Setenv(privilegedDockerSandboxEnv, "")
+	profile := domain.SandboxProfile{
+		Driver:      domain.SandboxDriverDocker,
+		Privileged:  true,
+		Environment: map[string]string{privilegedDockerSandboxEnv: "true"},
+	}
+	resources := SandboxResources{Dockerfile: domain.DockerfileDefinition{Content: "FROM scratch"}}
+	manager := NewManager(t.TempDir())
+	if _, err := manager.AcquireRun(t.Context(), "privileged", profile, SandboxRequirements{}, RunCredentials{}, resources); err == nil || !strings.Contains(err.Error(), privilegedDockerSandboxEnv) {
+		t.Fatalf("platform worker accepted privileged sandbox without host opt-in: %v", err)
+	}
+	workspace := t.TempDir()
+	if _, err := OpenRemoteSandbox(t.Context(), "privileged", workspace, profile, SandboxRequirements{}, resources); err == nil || !strings.Contains(err.Error(), privilegedDockerSandboxEnv) {
+		t.Fatalf("runner accepted privileged sandbox without host opt-in: %v", err)
+	}
+	t.Setenv(privilegedDockerSandboxEnv, "true")
+	if _, err := OpenRemoteSandbox(t.Context(), "privileged", workspace, profile, SandboxRequirements{}, resources); err != nil {
+		t.Fatalf("runner rejected host opt-in: %v", err)
+	}
+}
+
 func TestDockerSandboxReplacesContainerWhenPrivilegeChanges(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -116,9 +138,14 @@ func TestDockerSandboxReplacesContainerWhenPrivilegeChanges(t *testing.T) {
 			if slices.Contains(args, "--privileged") != tc.privileged ||
 				slices.Contains(args, "--cap-drop=ALL") == tc.privileged ||
 				slices.Contains(args, "no-new-privileges") == tc.privileged ||
-				!slices.Contains(args, "--read-only") ||
-				(tc.privileged && slices.Contains(args, "--user")) {
+				!slices.Contains(args, "--read-only") {
 				t.Fatalf("unexpected docker create args: %q", args)
+			}
+			if os.Geteuid() != 0 {
+				wantUser := strconv.Itoa(os.Geteuid()) + ":" + strconv.Itoa(os.Getegid())
+				if !strings.Contains(string(data), "\n--user\n"+wantUser+"\n") {
+					t.Fatalf("docker create must map the default image user to %s: %q", wantUser, args)
+				}
 			}
 		})
 	}

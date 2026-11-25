@@ -307,7 +307,7 @@ function assetPaneHint(type=state.assetType){return ({rules:'支持 Markdown',sk
 function assetFieldLabel(text,help,forId=''){return `<div class="asset-field-label">${forId?`<label for="${forId}">${escapeHTML(text)}</label>`:`<span>${escapeHTML(text)}</span>`}${help?`<button type="button" class="field-help" aria-label="${escapeHTML(text)}说明" title="${escapeHTML(help)}">?</button>`:''}</div>`}
 function sandboxSetupHTML(a){
   const driver=sandboxDriverOption(a.driver);
-  const privilegeHelp=lfT('开启后，容器内进程可访问宿主机设备，并可能控制执行机器。','Processes in a privileged container can access host devices and may take control of the execution machine.');
+  const privilegeHelp=lfT('执行机器须允许特权沙箱。容器内进程可访问宿主机设备，并可能控制执行机器。','The execution machine must allow privileged sandboxes. Processes in the container can access host devices and may take control of the machine.');
   return `<div class="sandbox-setup">
   ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
   <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>

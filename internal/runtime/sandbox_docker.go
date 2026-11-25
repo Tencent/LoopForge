@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -611,9 +612,19 @@ func parseDockerSandboxMounts(out, absRoot string) map[string]string {
 	return found
 }
 
+const privilegedDockerSandboxEnv = "AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX"
+
 func createDocker(ctx context.Context, id, workspace string, p domain.SandboxProfile, requirements SandboxRequirements, dockerfile domain.DockerfileDefinition) (Sandbox, error) {
 	if strings.TrimSpace(dockerfile.Content) == "" {
 		return nil, fmt.Errorf("docker sandbox requires a dockerfile")
+	}
+	if p.Privileged {
+		// Only the process on the Docker host can authorize privileged
+		// execution. The profile's environment is for in-sandbox commands.
+		allowed, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv(privilegedDockerSandboxEnv)))
+		if !allowed {
+			return nil, fmt.Errorf("当前执行机器未允许特权 Docker 沙箱，请联系机器管理员设置 %s=true", privilegedDockerSandboxEnv)
+		}
 	}
 	// Delay docker create until the first Exec so the bind-mount is taken
 	// after prepareRepository has cloned into this directory. Creating the
@@ -894,11 +905,11 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 		return err
 	}
 	args = append(args, "--mount", "type=bind,src="+gitTools+",dst="+dockerGitToolsMount+",readonly")
-	// Privileged sandboxes use the image's configured user. For the ordinary
-	// case, native installs own private (0700) workspaces as the service user.
-	// A root image without DAC capabilities cannot access another UID's bind.
-	// Run default/root images as that user; retain explicit non-root image users.
-	if !p.Privileged && os.Geteuid() != 0 {
+	// Native installs own private (0700) workspaces as the service user.
+	// Run default/root images as that user so both modes can use the same
+	// workspace and leave files the service can clean up. Keep explicit
+	// non-root image users.
+	if os.Geteuid() != 0 {
 		configured, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Config.User}}", image).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("inspect sandbox image user: %w: %s", err, strings.TrimSpace(string(configured)))

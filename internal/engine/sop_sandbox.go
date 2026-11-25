@@ -62,7 +62,7 @@ func (e *Engine) selectSOPSandbox(ctx context.Context, wf domain.WorkflowDefinit
 	}
 	supported := func(profile domain.SandboxProfile) bool {
 		if profile.Driver == domain.SandboxDriverDocker {
-			return dockerAvailable
+			return dockerAvailable && !profile.Privileged
 		}
 		return nativeAvailable(profile.Driver)
 	}
