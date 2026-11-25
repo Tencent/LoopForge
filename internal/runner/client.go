@@ -204,11 +204,12 @@ func (c *Client) Disconnect(ctx context.Context) error {
 }
 
 type ClaimRequest struct {
-	AvailableRuntimes        []string `json:"availableRuntimes"`
-	Capacity                 int      `json:"capacity"`
-	Preflight                bool     `json:"preflight,omitempty"`
-	NoWait                   bool     `json:"noWait,omitempty"`
-	SupportsGitSSHKnownHosts bool     `json:"supportsGitSshKnownHosts,omitempty"`
+	AvailableRuntimes           []string `json:"availableRuntimes"`
+	Capacity                    int      `json:"capacity"`
+	Preflight                   bool     `json:"preflight,omitempty"`
+	NoWait                      bool     `json:"noWait,omitempty"`
+	SupportsGitSSHKnownHosts    bool     `json:"supportsGitSshKnownHosts,omitempty"`
+	SupportsDockerSandboxLimits bool     `json:"supportsDockerSandboxLimits,omitempty"`
 }
 
 // WaitForTask long-polls without leasing work. Older servers ignore preflight
@@ -216,6 +217,7 @@ type ClaimRequest struct {
 func (c *Client) WaitForTask(ctx context.Context, req ClaimRequest) (bool, *domain.RunnerTask, error) {
 	req.Preflight = true
 	req.SupportsGitSSHKnownHosts = true
+	req.SupportsDockerSandboxLimits = true
 	var out struct {
 		TaskAvailable bool              `json:"taskAvailable"`
 		Task          domain.RunnerTask `json:"task"`
@@ -234,6 +236,7 @@ func (c *Client) WaitForTask(ctx context.Context, req ClaimRequest) (bool, *doma
 // context deadline must exceed the server long-poll timeout.
 func (c *Client) Claim(ctx context.Context, req ClaimRequest) (*domain.RunnerTask, bool, error) {
 	req.SupportsGitSSHKnownHosts = true
+	req.SupportsDockerSandboxLimits = true
 	var out struct {
 		Task domain.RunnerTask `json:"task"`
 	}
@@ -290,6 +293,7 @@ func (c *Client) OpenControl(ctx context.Context) (*websocket.Conn, error) {
 	u.Path = strings.TrimRight(u.Path, "/") + "/runners/connect"
 	header := http.Header{}
 	header.Set(domain.RunnerSSHHostKeyProbeHeader, "1")
+	header.Set(domain.RunnerDockerSandboxLimitsHeader, "1")
 	if session := c.sessionToken(); session != "" {
 		header.Set("Authorization", "Bearer "+session)
 	}
