@@ -148,6 +148,32 @@ test('desktop settings returns keyboard focus after the reopened button becomes 
   await expect(collapse).toBeFocused();
 });
 
+for (const width of [900, 480]) {
+  test(`settings navigation reopens and restores keyboard focus at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await openView(page, 'settings');
+
+    const sidebar = page.locator('#settingsSidebar');
+    const collapse = page.locator('#settingsSidebarToggle');
+    const expand = page.locator('#settingsSidebarExpand');
+    if (await sidebar.getAttribute('aria-hidden') === 'true') {
+      await expect(expand).toBeVisible();
+      await expand.press('Enter');
+    }
+
+    await collapse.press('Enter');
+    await expect(sidebar).toHaveAttribute('aria-hidden', 'true');
+    await expect(expand).toBeVisible();
+    await expect(expand).toBeFocused();
+
+    await expand.press('Space');
+    await expect(sidebar).not.toHaveAttribute('aria-hidden', 'true');
+    await expect(collapse).toBeFocused();
+    await expect(page).toHaveURL(/#\/settings$/);
+  });
+}
+
 test('personal credentials: the add wizard validates, saves write-only, and the row clears it', async ({ page, identity }) => {
   const me = identity.user;
   test.skip(!!(await userById(me.id))?.codexApiKeyConfigured, 'the token owner already has a Codex API Key; not overwriting a real credential');

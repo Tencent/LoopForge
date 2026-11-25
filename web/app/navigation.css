@@ -99,10 +99,8 @@ body.management-mode .platform-sidebar > .settings-navigation-header {
   display: none;
 }
 
-@media (max-width: 1000px) {
-  .settings-navigation-reopen {
-    display: none;
-  }
+.settings-navigation-reopen {
+  flex-shrink: 0;
 }
 
 .platform-sidebar nav {
