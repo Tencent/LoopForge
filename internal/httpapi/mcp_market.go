@@ -1,13 +1,17 @@
 package httpapi
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,9 +77,77 @@ func mcpInstallID(marketID, scope, owner string) string {
 	return id
 }
 
+// destinationMCPInstallID returns the install ID for a destination. Install
+// IDs are predictable, so another user may already hold one with a personal
+// MCP or an MCP in another project. The install then uses an alternate ID
+// instead of failing for every later caller in this destination. With a key
+// the alternates are a fixed sequence of keyed digests that other users cannot
+// predict. A row this destination already holds under any candidate wins over
+// a free one, so repeated installs and clones find the same row even after an
+// earlier candidate was squatted or freed. Without a key, or when every
+// candidate is taken elsewhere, the alternate is random.
+func destinationMCPInstallID(st *repo.Store, key []byte, base, scope, owner string) string {
+	id := mcpInstallID(base, scope, owner)
+	existing, found := st.MCPServer(id)
+	if found && mcpInDestination(existing, scope, owner) {
+		return id
+	}
+	candidates := []string{id}
+	if len(key) > 0 {
+		for i := range mcpInstallIDAlternates {
+			mac := hmac.New(sha256.New, key)
+			mac.Write([]byte("loopforge-mcp-install-id\x00" + id))
+			if i > 0 {
+				mac.Write([]byte("\x00" + strconv.Itoa(i)))
+			}
+			candidates = append(candidates, mcpInstallID(fmt.Sprintf("%s-%x", base, mac.Sum(nil)[:6]), scope, owner))
+		}
+	}
+	free := ""
+	if !found {
+		free = id
+	}
+	for _, candidate := range candidates[1:] {
+		existing, found := st.MCPServer(candidate)
+		if found && mcpInDestination(existing, scope, owner) {
+			return candidate
+		}
+		if !found && free == "" {
+			free = candidate
+		}
+	}
+	if free != "" {
+		return free
+	}
+	var suffix [6]byte
+	_, _ = rand.Read(suffix[:])
+	return mcpInstallID(fmt.Sprintf("%s-%x", base, suffix), scope, owner)
+}
+
+// mcpInstallIDAlternates bounds the keyed alternates tried before a random ID.
+const mcpInstallIDAlternates = 8
+
+// mcpInstallIDKey keys alternate install IDs with the deployment's session
+// secret.
+func (d deps) mcpInstallIDKey() []byte {
+	return []byte(d.getAuthClient().Config().SessionSecret)
+}
+
+func mcpInDestination(server domain.MCPServerDefinition, scope, owner string) bool {
+	switch scope {
+	case "project":
+		return server.Scope == "project" && server.ProjectID == owner
+	case "personal":
+		return server.Scope == "personal" && strconv.FormatInt(server.OwnerUserID, 10) == owner
+	}
+	return false
+}
+
 // defaultProjectMarketMCPAliases are installed on every project so new users
 // can create Gongfeng MRs and sync TAPD without opening the MCP market.
 var defaultProjectMarketMCPAliases = []string{}
+
+var errMCPMarketItemMissing = errors.New("MCP 市场条目不存在")
 
 // installMarketMCP adds one market catalog item to a project. If the
 // same catalog entry is already installed there, it returns the existing row
@@ -83,7 +155,7 @@ var defaultProjectMarketMCPAliases = []string{}
 func installMarketMCP(st *repo.Store, marketID, projectID string) (domain.MCPServerDefinition, bool, error) {
 	item, ok := marketItem(strings.TrimSpace(marketID))
 	if !ok {
-		return domain.MCPServerDefinition{}, false, fmt.Errorf("MCP 市场条目不存在")
+		return domain.MCPServerDefinition{}, false, errMCPMarketItemMissing
 	}
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
@@ -101,15 +173,21 @@ func installMarketMCP(st *repo.Store, marketID, projectID string) (domain.MCPSer
 		}
 	}
 	server := domain.MCPServerDefinition{
-		ID: mcpInstallID(item.ID, "project", projectID), MarketID: item.ID, Name: item.Name,
+		ID: destinationMCPInstallID(st, nil, item.ID, "project", projectID), MarketID: item.ID, Name: item.Name,
 		Description: item.Description, IconURL: item.IconURL, Transport: item.Transport,
 		URL: item.URL, AuthType: item.AuthType, CredentialKind: item.CredentialKind, Scope: "project", ProjectID: projectID,
 		TimeoutSec: 60, UpdatedAt: time.Now().UTC(),
 	}
-	if err := st.PutMCPServer(server); err != nil {
+	saved, err := st.SaveMCPServers(repo.MCPServerChange{Definition: server})
+	if errors.Is(err, repo.ErrMCPServerChanged) {
+		if existing, ok := st.MCPServer(server.ID); ok && existing.Scope == "project" && existing.ProjectID == projectID && sameMarketItem(existing.MarketID, item.ID) {
+			return existing, false, nil
+		}
+	}
+	if err != nil {
 		return domain.MCPServerDefinition{}, false, err
 	}
-	return server, true, nil
+	return saved[0], true, nil
 }
 
 func ensureDefaultProjectMCPs(st *repo.Store, projectID string) error {
@@ -231,7 +309,7 @@ func (h *marketHandlers) mcpMarketInstall(c *gin.Context) {
 			c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
 		}
-		respond(c, err)
+		respondMCPWriteError(c, err)
 		return
 	}
 	if !created {
@@ -286,17 +364,18 @@ func (h *marketHandlers) mcpCustomInstall(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "自定义 MCP 需要标识"})
 		return
 	}
-	server.ID = mcpInstallID("custom-"+baseID, server.Scope, ownerKey)
-	if _, exists := h.repo.MCPServer(server.ID); exists {
+	server.ID = destinationMCPInstallID(h.repo, h.mcpInstallIDKey(), "custom-"+baseID, server.Scope, ownerKey)
+	saved, err := h.repo.SaveMCPServers(repo.MCPServerChange{Definition: server})
+	if errors.Is(err, repo.ErrMCPServerChanged) {
 		c.JSON(http.StatusConflict, map[string]string{"error": "当前范围已经存在相同标识的自定义 MCP"})
 		return
 	}
-	if err := h.repo.PutMCPServer(server); err != nil {
-		respond(c, err)
+	if err != nil {
+		respondMCPWriteError(c, err)
 		return
 	}
 	h.configureSync(h.repo.SyncConfig())
-	c.JSON(http.StatusCreated, domain.PublicMCPServer(server))
+	c.JSON(http.StatusCreated, domain.PublicMCPServer(saved[0]))
 }
 
 func visibleMCPServersForUser(items []domain.MCPServerDefinition, userID int64) []domain.MCPServerDefinition {

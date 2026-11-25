@@ -551,6 +551,9 @@ func (e *Engine) defaultExecutionRunner(run domain.Run) string {
 	case domain.ExecutionModeRunner:
 		return strings.TrimSpace(run.ExecutionContext.ExecutionRunnerID)
 	}
+	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		return ""
+	}
 	// Legacy runs predate target snapshots; retain their historical behavior.
 	return e.repo.DefaultRunner(run.ExecutionContext.ResponsibleUserID)
 }
@@ -563,6 +566,11 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 	if runnerID == "" || isPoolRun(run) {
 		// A pool run is rebound to another pool runner when its node starts.
 		return nil
+	}
+	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		if err := e.validateAutoAssignBinding(run); err != nil {
+			return err
+		}
 	}
 	runner, ok := e.repo.Runner(runnerID)
 	if !ok {

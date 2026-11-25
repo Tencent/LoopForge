@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -27,8 +28,11 @@ type executorEffortOption struct {
 
 // executorModelCatalog is the per-CLI model and effort catalog used by the
 // agent wizard. CustomModel marks CLIs that accept free-form model IDs
-// (custom base URLs); Credits is only surfaced for CodeBuddy.
+// (custom base URLs). Configured means a SOP run can use the CLI for the
+// caller; Personal means the caller saved their own key for it.
 type executorModelCatalog struct {
+	Configured  bool                   `json:"configured"`
+	Personal    bool                   `json:"personal"`
 	Source      string                 `json:"source,omitempty"`
 	Default     string                 `json:"default,omitempty"`
 	CustomModel bool                   `json:"customModel,omitempty"`
@@ -230,16 +234,28 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 		catalog.Models = []executorModelInfo{}
 		catalogs[runtime.AgentCLIAntigravity] = catalog
 	}
+	// A project SOP runs on the caller's project default machine, so the
+	// picker resolves credentials against the same machine.
+	// Without a default machine the run goes to the cloud pool, if any.
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	hasCredential := engine.ExecutorCredentials(h.repo, user.ID, projectID)
+	if h.engine != nil {
+		hasCredential = h.engine.ExecutorCredentials(user.ID, projectID)
+	}
 	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
-		models, _ := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
-		if len(models) == 0 {
-			continue
-		}
 		id := engine
 		if engine == assistantEngineClaude {
 			id = "claude"
 		}
 		catalog := catalogs[id]
+		key, _ := assistantEngineCredential(user, engine)
+		catalog.Configured = hasCredential(engine)
+		catalog.Personal = key != ""
+		catalogs[id] = catalog
+		models, _ := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
+		if len(models) == 0 {
+			continue
+		}
 		catalog.Source = "personal"
 		catalog.Models = make([]executorModelInfo, 0, len(models))
 		personal := cliModelsOf(models)

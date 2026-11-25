@@ -50,6 +50,7 @@ func (e *Engine) updateRunAtErr(id string, allowExpiredLease bool, mutate func(*
 	for _, item := range pending {
 		e.applyObservation(&r, item.nodeID, item.event)
 	}
+	wasSucceeded := r.Status == "succeeded"
 	if mutate != nil {
 		mutate(&r)
 	}
@@ -59,6 +60,9 @@ func (e *Engine) updateRunAtErr(id string, allowExpiredLease bool, mutate func(*
 	}
 	if current, ok := e.repo.RunStreamView(id); ok {
 		e.publishRun(current)
+	}
+	if !wasSucceeded && r.Status == "succeeded" && r.ExecutionContext.ParentRunID == "" && !r.IsWorkspace() {
+		e.wakeRunClaimLoop()
 	}
 	return true, nil
 }
@@ -140,15 +144,23 @@ func (e *Engine) StartClaimLoop(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if !e.executes() {
-					return
-				}
-				if resumed := e.ResumeInterruptedRuns(); len(resumed) > 0 {
-					log.Printf("claimed %d run(s): %v", len(resumed), resumed)
-				}
+			case <-e.claimKick:
+			}
+			if !e.executes() {
+				return
+			}
+			if resumed := e.ResumeInterruptedRuns(); len(resumed) > 0 {
+				log.Printf("claimed %d run(s): %v", len(resumed), resumed)
 			}
 		}
 	}()
+}
+
+func (e *Engine) wakeRunClaimLoop() {
+	select {
+	case e.claimKick <- struct{}{}:
+	default:
+	}
 }
 
 func (e *Engine) publish(runID string) {

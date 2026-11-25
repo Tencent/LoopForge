@@ -426,23 +426,35 @@ func (r *RunsRepo) RunView(id string) (domain.Run, bool) {
 				run.Events = append(run.Events, event)
 			}
 		}
-	} else if run.WorkflowSnapshot.AutoSelectSandbox {
-		// This event is written at admission and must remain visible even on
-		// runs with a long history.
-		var rows []runEventRow
-		if err := r.DB.Select("payload").
-			Where("run_id = ? AND type = ?", id, domain.RunEventSandboxSelected).
-			Order("seq").Limit(1).Find(&rows).Error; err != nil {
-			return domain.Run{}, false
+	} else {
+		if run.WorkflowSnapshot.AutoSelectSandbox {
+			if err := r.loadRunViewEvent(&run, domain.RunEventSandboxSelected, "seq"); err != nil {
+				return domain.Run{}, false
+			}
 		}
-		if len(rows) > 0 {
-			var event domain.RunEvent
-			if json.Unmarshal(rows[0].Payload, &event) == nil {
-				run.Events = []domain.RunEvent{event}
+		if run.FailedBeforeAutoAssignment() {
+			if err := r.loadRunViewEvent(&run, domain.RunEventFailed, "seq DESC"); err != nil {
+				return domain.Run{}, false
 			}
 		}
 	}
 	return run, true
+}
+
+func (r *RunsRepo) loadRunViewEvent(run *domain.Run, kind, order string) error {
+	var row runEventRow
+	result := r.DB.Select("payload").Where("run_id = ? AND type = ?", run.ID, kind).
+		Order(order).Limit(1).Find(&row)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		var event domain.RunEvent
+		if json.Unmarshal(row.Payload, &event) == nil {
+			run.Events = append(run.Events, event)
+		}
+	}
+	return nil
 }
 
 // RunStreamView matches the SSE contract, which delivers only the latest 80
@@ -1146,85 +1158,97 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 				return err
 			}
 		}
-		var cur struct {
-			logs      int64
-			telemetry int64
-			events    int64
-		}
+		return r.persistRun(tx, run, current)
+	}, opts...)
+}
+
+func (r *RunsRepo) persistRun(tx *gorm.DB, run domain.Run, current runRow) error {
+	var cur struct {
+		logs      int64
+		telemetry int64
+		events    int64
+	}
+	if current.ID != "" {
 		if err := tx.Raw(`SELECT
-			COALESCE((SELECT MAX(seq) FROM run_logs WHERE run_id=?), 0) AS logs,
-			COALESCE((SELECT MAX(seq) FROM run_telemetry WHERE run_id=?), 0) AS telemetry,
-			COALESCE((SELECT MAX(seq) FROM run_events WHERE run_id=?), -1) + 1 AS events`,
+		COALESCE((SELECT MAX(seq) FROM run_logs WHERE run_id=?), 0) AS logs,
+		COALESCE((SELECT MAX(seq) FROM run_telemetry WHERE run_id=?), 0) AS telemetry,
+		COALESCE((SELECT MAX(seq) FROM run_events WHERE run_id=?), -1) + 1 AS events`,
 			run.ID, run.ID, run.ID).Scan(&cur).Error; err != nil {
 			return err
 		}
-		// On conflict only the run header is refreshed. Lease fields
-		// (owner_instance_id, lease_until, execution_generation) and workspace
-		// bindings are owned by the lease operations and must survive PutRun.
-		// The control flags (cancel_requested/pause_requested) are likewise
-		// excluded: they are written exclusively via RequestRunControl/
-		// ClearRunControl, so a worker PutRun can never clobber an API-side
-		// cancel/pause request (master's writeRun has the same omission).
-		if err := upsertColumns(tx, "runs", runRowValues(run), []string{
+	}
+	// On conflict only the run header is refreshed. Lease fields
+	// (owner_instance_id, lease_until, execution_generation) and workspace
+	// bindings are owned by the lease operations and must survive PutRun.
+	// The control flags (cancel_requested/pause_requested) are likewise
+	// excluded: they are written exclusively via RequestRunControl/
+	// ClearRunControl, so a worker PutRun can never clobber an API-side
+	// cancel/pause request (master's writeRun has the same omission).
+	var err error
+	if current.ID == "" {
+		err = tx.Table("runs").Create(runRowValues(run)).Error
+	} else {
+		err = upsertColumns(tx, "runs", runRowValues(run), []string{
 			"kind", "workflow_id", "status", "revision", "input", "human_context", "sandbox_id", "repository", "repositories", "snapshot",
 			"execution_context", "usage_json", "tool_calls", "telemetry_sequence",
 			"log_sequence", "workspace_cleaned_at", "updated_at", "admission_state", "queue_entered_at", "quota_project_id", "quota_parent_run_id", "quota_exempt", "quota_bucket",
+		})
+	}
+	if err != nil {
+		return fmt.Errorf("write run %s: %w", run.ID, err)
+	}
+	// Nodes: upsert every node of the run.
+	for id, node := range run.Nodes {
+		if node == nil {
+			continue
+		}
+		if err := upsert(tx, "run_nodes", map[string]any{
+			"run_id": run.ID, "node_id": id, "status": node.Status, "attempt": node.Attempt, "payload": mustJSON(node),
 		}); err != nil {
-			return fmt.Errorf("runs upsert %s: %w", run.ID, err)
+			return err
 		}
-		// Nodes: upsert every node of the run.
-		for id, node := range run.Nodes {
-			if node == nil {
-				continue
+	}
+	// Events: append-only by index.
+	if int64(len(run.Events)) > cur.events {
+		for i := cur.events; i < int64(len(run.Events)); i++ {
+			ev := run.Events[i]
+			if err := r.notifications.enqueueRunNotifications(tx, run, ev, i); err != nil {
+				return err
 			}
-			if err := upsert(tx, "run_nodes", map[string]any{
-				"run_id": run.ID, "node_id": id, "status": node.Status, "attempt": node.Attempt, "payload": mustJSON(node),
+			if err := upsert(tx, "run_events", map[string]any{
+				"run_id": run.ID, "seq": i, "event_id": ev.ID, "node_id": ev.NodeID,
+				"type": ev.Type, "message": ev.Message, "payload": mustJSON(ev), "ts": timePtr(ev.Timestamp),
 			}); err != nil {
 				return err
 			}
 		}
-		// Events: append-only by index.
-		if int64(len(run.Events)) > cur.events {
-			for i := cur.events; i < int64(len(run.Events)); i++ {
-				ev := run.Events[i]
-				if err := r.notifications.enqueueRunNotifications(tx, run, ev, i); err != nil {
-					return err
-				}
-				if err := upsert(tx, "run_events", map[string]any{
-					"run_id": run.ID, "seq": i, "event_id": ev.ID, "node_id": ev.NodeID,
-					"type": ev.Type, "message": ev.Message, "payload": mustJSON(ev), "ts": timePtr(ev.Timestamp),
-				}); err != nil {
-					return err
-				}
-			}
+	}
+	if current.ID != "" && current.Status != "queued" && run.Status == "queued" && run.AdmissionState == "queued" {
+		if err := appendAdmissionRunEvent(tx, run.ID, "run.queued", queuedMessage(runAdmissionBucketKey(run)), run.QueueEnteredAt); err != nil {
+			return err
 		}
-		if current.ID != "" && current.Status != "queued" && run.Status == "queued" && run.AdmissionState == "queued" {
-			if err := appendAdmissionRunEvent(tx, run.ID, "run.queued", queuedMessage(runAdmissionBucketKey(run)), run.QueueEnteredAt); err != nil {
-				return err
-			}
+	}
+	for _, ev := range run.Telemetry {
+		if ev.Sequence == 0 || ev.Sequence <= cur.telemetry {
+			continue
 		}
-		for _, ev := range run.Telemetry {
-			if ev.Sequence == 0 || ev.Sequence <= cur.telemetry {
-				continue
-			}
-			if err := upsert(tx, "run_telemetry", map[string]any{
-				"run_id": run.ID, "seq": ev.Sequence, "payload": mustJSON(ev),
-			}); err != nil {
-				return err
-			}
+		if err := upsert(tx, "run_telemetry", map[string]any{
+			"run_id": run.ID, "seq": ev.Sequence, "payload": mustJSON(ev),
+		}); err != nil {
+			return err
 		}
-		for _, rec := range run.Logs {
-			if rec.Sequence == 0 || rec.Sequence <= cur.logs {
-				continue
-			}
-			if err := upsert(tx, "run_logs", map[string]any{
-				"run_id": run.ID, "seq": rec.Sequence, "payload": mustJSON(rec),
-			}); err != nil {
-				return err
-			}
+	}
+	for _, rec := range run.Logs {
+		if rec.Sequence == 0 || rec.Sequence <= cur.logs {
+			continue
 		}
-		return writeRunArtifacts(tx, run)
-	}, opts...)
+		if err := upsert(tx, "run_logs", map[string]any{
+			"run_id": run.ID, "seq": rec.Sequence, "payload": mustJSON(rec),
+		}); err != nil {
+			return err
+		}
+	}
+	return writeRunArtifacts(tx, run)
 }
 
 func writeRunArtifacts(tx *gorm.DB, run domain.Run) error {

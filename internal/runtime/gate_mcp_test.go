@@ -77,6 +77,15 @@ func TestMaterializeInvocationInjectsGateMCP(t *testing.T) {
 			t.Fatalf("mcp config missing %q:\n%s", want, text)
 		}
 	}
+	var config struct {
+		MCPServers map[string]map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	if args, ok := config.MCPServers[gateMCPServerID]["args"]; ok {
+		t.Fatalf("gate MCP has no command-line arguments, got args %s", args)
+	}
 	if info, err := os.Stat(filepath.Join(workspace, ".agentflow", "config", "reviewer", "gate-mcp")); err != nil || info.Mode().Perm()&0o111 == 0 {
 		t.Fatal(err)
 	}

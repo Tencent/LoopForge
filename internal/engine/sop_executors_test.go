@@ -143,13 +143,13 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 		{"unshared-compute", "", domain.ExecutionModeCloud},
 	} {
 		ownerExecution := domain.TelemetryContext{ProjectID: tc.projectID, ResponsibleUserID: 42}
-		e.selectSOPExecutionTarget(&ownerExecution)
+		e.selectSOPExecutionTarget(&ownerExecution, false)
 		if ownerExecution.ExecutionRunnerID != tc.runnerID || ownerExecution.ExecutionMode != tc.mode {
 			t.Fatalf("owner target for %q = %+v, want %s %q", tc.projectID, ownerExecution, tc.mode, tc.runnerID)
 		}
 	}
 	execution := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: 1}
-	e.selectSOPExecutionTarget(&execution)
+	e.selectSOPExecutionTarget(&execution, false)
 	if execution.ExecutionRunnerID != runner.ID || execution.ExecutionMode != domain.ExecutionModeRunner {
 		t.Fatalf("project target = %+v", execution)
 	}
@@ -180,7 +180,7 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 		}
 		for _, userID := range []int64{1, 42} {
 			next := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: userID}
-			e.selectSOPExecutionTarget(&next)
+			e.selectSOPExecutionTarget(&next, false)
 			if next.ExecutionRunnerID != "" || next.ExecutionMode != domain.ExecutionModeCloud {
 				t.Fatalf("new run used revoked machine: %+v", next)
 			}
@@ -367,4 +367,209 @@ func TestSOPExecutorDefaultForBaselinePreviewAndProjectRole(t *testing.T) {
 		defaults["review"] != preference || defaults[domain.PreviewBuildNodeID] != preference {
 		t.Fatalf("project role and preview defaults = %+v, %v", defaults, err)
 	}
+}
+
+// Pickers accept the credentials a run on the default machine uses, but leave
+// the machine's CLI support to the run-time check.
+func TestExecutorCredentialsUseTheDefaultRunnerLogin(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.PutUser(domain.User{LoginName: "picker", AgentCLICredentials: map[string]domain.AgentCLICredential{"kimi": {APIKey: "fixture-key"}}}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := st.UserByLoginName("picker")
+	machine := domain.Runner{ID: "picker-machine", OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, Runtimes: []domain.RunnerRuntime{
+		{Provider: "codex", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline},
+		{Provider: "claude-code", AuthMode: domain.RuntimeAuthPersonal, Status: domain.RuntimeStatusOnline},
+	}}
+	if err := st.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+	hasCredential := ExecutorCredentials(st, user.ID, "")
+	if hasCredential("codex") {
+		t.Fatal("machine login counted without a default machine")
+	}
+	if err := st.SetDefaultRunner(user.ID, machine.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	hasCredential = ExecutorCredentials(st, user.ID, "")
+	for kind, want := range map[string]bool{"codex": true, "kimi": true, "claude-code": false, "codebuddy": false} {
+		if got := hasCredential(kind); got != want {
+			t.Errorf("%s credential = %t, want %t", kind, got, want)
+		}
+	}
+	if newSOPExecutorAccess(st, domain.TelemetryContext{ResponsibleUserID: user.ID, ExecutionRunnerID: machine.ID}).configured("kimi") {
+		t.Fatal("a run must still require the machine to provide the CLI")
+	}
+}
+
+// A project SOP runs on the user's project default machine, so the picker
+// must resolve the same machine instead of only the personal default.
+func TestExecutorCredentialsFollowTheProjectDefaultRunner(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.PutUser(domain.User{ID: 42, LoginName: "project-picker"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range []domain.Project{
+		{ID: "picker-shared", Name: "Picker shared", OwnerID: 42},
+		{ID: "picker-other", Name: "Picker other", OwnerID: 42},
+	} {
+		if err := st.PutProject(project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projectMachine := domain.Runner{ID: "picker-project-machine", OwnerUserID: 42, Status: domain.RunnerStatusOnline,
+		Runtimes: []domain.RunnerRuntime{{Provider: "codex", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline}}}
+	personalMachine := domain.Runner{ID: "picker-personal-machine", OwnerUserID: 42, Status: domain.RunnerStatusOnline,
+		Runtimes: []domain.RunnerRuntime{{Provider: "claude-code", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline}}}
+	for _, machine := range []domain.Runner{projectMachine, personalMachine} {
+		if err := st.PutRunner(machine); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SetRunnerSharedProjects(projectMachine.ID, 42, []string{"picker-shared"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProjectDefaultRunner(42, "picker-shared", projectMachine.ID); err != nil {
+		t.Fatal(err)
+	}
+	check := func(projectID string, want map[string]bool) {
+		t.Helper()
+		execution := domain.TelemetryContext{ProjectID: projectID, ResponsibleUserID: 42}
+		(&Engine{repo: st}).selectSOPExecutionTarget(&execution, true)
+		hasCredential := ExecutorCredentials(st, 42, projectID)
+		for kind, expected := range want {
+			if got := hasCredential(kind); got != expected {
+				t.Errorf("project %q %s credential = %t, want %t (run machine %q)", projectID, kind, got, expected, execution.ExecutionRunnerID)
+			}
+		}
+	}
+	// Only the project default is set: a run in the project uses its login.
+	check("picker-shared", map[string]bool{"codex": true, "claude-code": false})
+	check("", map[string]bool{"codex": false, "claude-code": false})
+
+	// The personal default is not shared with either project, so a project run
+	// does not use it, while a personal SOP does.
+	if err := st.SetDefaultRunner(42, personalMachine.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	check("picker-shared", map[string]bool{"codex": true, "claude-code": false})
+	check("picker-other", map[string]bool{"codex": false, "claude-code": false})
+	check("", map[string]bool{"codex": false, "claude-code": true})
+}
+
+// A user with no default machine runs a project SOP on a cloud pool runner,
+// using that runner's account login. The picker must reach the same answer,
+// and must not depend on which pool runner a random pick would choose.
+func TestExecutorCredentialsFollowTheCloudPool(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.PutUser(domain.User{ID: 42, LoginName: "pool-picker"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range []domain.Project{
+		{ID: "pool-served", Name: "Pool served", OwnerID: 42},
+		{ID: "pool-skipped", Name: "Pool skipped", OwnerID: 42},
+	} {
+		if err := st.PutProject(project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	login := func(provider string) domain.RunnerRuntime {
+		return domain.RunnerRuntime{Provider: provider, AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline}
+	}
+	// Pool runners must be new enough to run a SOP end to end.
+	const poolVersion = "99.0.0"
+	for _, machine := range []domain.Runner{
+		{ID: "pool-codex", Status: domain.RunnerStatusOnline, RunnerVersion: poolVersion, Labels: []string{"pool"},
+			Runtimes: []domain.RunnerRuntime{login("codex")}},
+		{ID: "pool-claude", Status: domain.RunnerStatusOnline, RunnerVersion: poolVersion, Labels: []string{"pool"},
+			Runtimes: []domain.RunnerRuntime{login("claude-code")}},
+		// Not eligible for pool work: offline, owned by a user, or unlabelled.
+		{ID: "pool-offline", Status: domain.RunnerStatusOffline, RunnerVersion: poolVersion, Labels: []string{"pool"},
+			Runtimes: []domain.RunnerRuntime{login("cursor")}},
+		{ID: "pool-owned", OwnerUserID: 7, Status: domain.RunnerStatusOnline, RunnerVersion: poolVersion, Labels: []string{"pool"},
+			Runtimes: []domain.RunnerRuntime{login("cursor")}},
+		{ID: "unlabelled", Status: domain.RunnerStatusOnline, RunnerVersion: poolVersion,
+			Runtimes: []domain.RunnerRuntime{login("cursor")}},
+	} {
+		if err := st.PutRunner(machine); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := &Engine{repo: st}
+	check := func(name, projectID string, want map[string]bool) {
+		t.Helper()
+		hasCredential := e.ExecutorCredentials(42, projectID)
+		for kind, expected := range want {
+			if got := hasCredential(kind); got != expected {
+				t.Errorf("%s: project %q %s credential = %t, want %t", name, projectID, kind, got, expected)
+			}
+		}
+	}
+	none := map[string]bool{"codex": false, "claude-code": false, "cursor": false}
+	check("pool off", "pool-served", none)
+
+	e.ConfigureCloudRunnerPool(CloudRunnerPool{Label: "pool", Projects: []string{"pool-served"}})
+	check("pool on", "pool-served", map[string]bool{"codex": true, "claude-code": true, "cursor": false})
+	check("project outside the pool", "pool-skipped", none)
+	check("personal SOP outside the pool", "", none)
+
+	// Whatever pool runner a run picks, its login matches a CLI the picker offered.
+	for i := 0; i < 20; i++ {
+		execution := domain.TelemetryContext{ProjectID: "pool-served", ResponsibleUserID: 42}
+		e.selectSOPExecutionTarget(&execution, true)
+		if execution.ExecutionPool != domain.ExecutionModeCloud || execution.ExecutionRunnerID == "" {
+			t.Fatalf("run did not use the pool: %+v", execution)
+		}
+		access := e.sopExecutorAccess(execution)
+		picker := e.ExecutorCredentials(42, "pool-served")
+		for _, kind := range []string{"codex", "claude-code"} {
+			if access.hasCredential(kind) && !picker(kind) {
+				t.Fatalf("run on %s can use %s but the picker hides it", execution.ExecutionRunnerID, kind)
+			}
+		}
+	}
+
+	// A default machine takes precedence over the pool, as it does at run time.
+	own := domain.Runner{ID: "own-machine", OwnerUserID: 42, Status: domain.RunnerStatusOnline,
+		Runtimes: []domain.RunnerRuntime{login("claude-code")}}
+	if err := st.PutRunner(own); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDefaultRunner(42, own.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	e.ConfigureCloudRunnerPool(CloudRunnerPool{Label: "pool", Projects: []string{"*"}})
+	check("personal default", "", map[string]bool{"codex": false, "claude-code": true})
+	execution := domain.TelemetryContext{ResponsibleUserID: 42}
+	e.selectSOPExecutionTarget(&execution, true)
+	if execution.ExecutionRunnerID != own.ID {
+		t.Fatalf("personal SOP ran on %q, want the default machine", execution.ExecutionRunnerID)
+	}
+
+	// Pool required with no online runner: the run waits for one, so only
+	// credentials that do not depend on a machine count.
+	if err := st.SetDefaultRunner(42, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"pool-codex", "pool-claude"} {
+		machine, _ := st.Runner(id)
+		machine.Status = domain.RunnerStatusOffline
+		if err := st.PutRunner(machine); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.ConfigureCloudRunnerPool(CloudRunnerPool{Label: "pool", Projects: []string{"*"}, Required: true})
+	check("pool empty", "pool-served", none)
 }

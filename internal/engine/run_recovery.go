@@ -120,13 +120,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 	var resumed []string
 	// Promotion is per bucket; a failing bucket still returns the others and
 	// must not stop interrupted-run recovery below.
-	promoted, err := e.repo.PromoteQueuedRuns()
-	if err != nil {
-		log.Printf("promote queued runs: %v", err)
-	}
-	for _, id := range promoted {
-		e.publish(id)
-	}
+	e.promoteQueuedRuns()
 	// This scan repeats every few seconds; artifact bodies are not needed here.
 	for _, listed := range e.repo.Runs() {
 		if listed.IsWorkspace() || listed.HistoricalGroup() {
