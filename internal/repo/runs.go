@@ -980,6 +980,10 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 			if len(expectedRevision) > 0 && current.Revision != expectedRevision[0] {
 				return ErrRunDecisionStale
 			}
+			// A separately persisted control action may have advanced the
+			// revision after the engine read its snapshot. Live readers use
+			// this revision to decide whether to fetch the updated run.
+			run.Revision = max(run.Revision, current.Revision+1)
 			if run.Generation != current.Generation {
 				return ErrRunLeaseLost
 			}
