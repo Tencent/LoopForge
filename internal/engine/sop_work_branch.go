@@ -2,12 +2,14 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 )
 
@@ -52,9 +54,6 @@ func (e *Engine) assignSOPWorkBranches(ctx context.Context, ec domain.TelemetryC
 			return fmt.Errorf("仓库 %q 的工作分支命名配置无效：%w", definition.Name, err)
 		}
 		branch := naming.Prefix + strings.TrimPrefix(generateDefault(), domain.DefaultWorkBranchPrefix)
-		validate := func(branch string) error {
-			return validateSOPWorkBranch(branch, *repository, definition)
-		}
 		if naming.Mode == domain.WorkBranchNamingAI {
 			executor, _ := repo.BuiltInExecutor(naming.ExecutorID)
 			task := input
@@ -65,9 +64,14 @@ func (e *Engine) assignSOPWorkBranches(ctx context.Context, ec domain.TelemetryC
 				Execution: e.sopWorkBranchExecution(ec, candidates, executor.Kind),
 				Executor:  domain.AssistantDefaults{Executor: executor.Kind, Model: naming.Model}, Repository: definition.Name,
 				Task: task, IssueNumber: ec.IssueNumber, Prompt: naming.Prompt,
-			}, validate)
+			}, func(ctx context.Context, branch string) error {
+				if err := validateSOPWorkBranch(branch, *repository, definition); err != nil {
+					return err
+				}
+				return e.checkSOPWorkBranchCollision(ctx, ec.ResponsibleUserID, *repository, branch)
+			})
 		} else {
-			err = validate(branch)
+			err = validateSOPWorkBranch(branch, *repository, definition)
 		}
 		if err != nil {
 			return fmt.Errorf("仓库 %q 的工作分支生成失败：%w", definition.Name, err)
@@ -76,6 +80,37 @@ func (e *Engine) assignSOPWorkBranches(ctx context.Context, ec domain.TelemetryC
 		repository.CreateNewWorkBranch = naming.Mode == domain.WorkBranchNamingAI || naming.Prefix != domain.DefaultWorkBranchPrefix
 	}
 	assignWorkBranches(repositories, generateDefault)
+	return nil
+}
+
+func (e *Engine) checkSOPWorkBranchCollision(ctx context.Context, userID int64, repository domain.RepositoryContext, branch string) error {
+	remote := repositoryCheckoutRemote(repository)
+	if remote == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ctx = withRepositoryGit(ctx, repository)
+	if gitwork.UsesSSH(ctx) {
+		ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), e.repo.GitSSHKeysForRemotes(userID, []string{remote}))
+	} else if endpoint, ok := gitwork.GitHTTPRemoteEndpoint(remote); ok {
+		if endpoint.Scheme == "http" {
+			if allowed, err := e.repo.PlatformGitHTTPHostAuthorized(ctx, endpoint.Authority); err != nil || !allowed {
+				return nil
+			}
+		}
+		if credential, ok := e.repo.GitHTTPCredentialForHost(ctx, userID, endpoint.Scope()); ok {
+			ctx = gitwork.WithHTTPCredentials(ctx, map[string]gitwork.HTTPCredential{
+				endpoint.Scope(): {Username: credential.GitUsername(), Token: credential.Token},
+			})
+		}
+	}
+	err := gitwork.RequireNewWorkBranchOnRemote(ctx, remote, branch)
+	if errors.Is(err, gitwork.ErrWorkBranchExists) {
+		return err
+	}
+	// A remote may only be reachable from the execution machine. Checkout
+	// still enforces new-branch semantics using that machine's connection.
 	return nil
 }
 
@@ -106,7 +141,7 @@ func validateSOPWorkBranch(branch string, repository domain.RepositoryContext, d
 	return nil
 }
 
-func (e *Engine) generateSOPWorkBranch(ctx context.Context, request SOPWorkBranchRequest, validate func(string) error) (string, error) {
+func (e *Engine) generateSOPWorkBranch(ctx context.Context, request SOPWorkBranchRequest, validate func(context.Context, string) error) (string, error) {
 	if e.GenerateSOPWorkBranch == nil {
 		return "", fmt.Errorf("AI 分支命名不可用，请检查 SOP 执行器")
 	}
@@ -122,7 +157,10 @@ func (e *Engine) generateSOPWorkBranch(ctx context.Context, request SOPWorkBranc
 			return "", err
 		}
 		branch = strings.TrimSpace(branch)
-		invalid = validate(branch)
+		invalid = validate(ctx, branch)
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		if invalid == nil {
 			return branch, nil
 		}

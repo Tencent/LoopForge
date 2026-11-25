@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"agentflow/internal/procwatch"
 )
 
 var ErrWorkBranchExists = errors.New("远端已存在分支")
@@ -16,11 +18,29 @@ var ErrWorkBranchExists = errors.New("远端已存在分支")
 // RequireNewRemoteWorkBranch prevents checkout from attaching a new run to
 // work already published under the requested name.
 func RequireNewRemoteWorkBranch(ctx context.Context, workspace, branch string) error {
-	ref := "refs/heads/" + branch
-	out, err := C(ctx, workspace, "ls-remote", "--heads", "origin", ref)
+	out, err := C(ctx, workspace, "ls-remote", "--heads", "origin", "refs/heads/"+branch)
+	return verifyNewRemoteWorkBranch(branch, out, err)
+}
+
+// RequireNewWorkBranchOnRemote checks an explicit remote without a checkout.
+func RequireNewWorkBranchOnRemote(ctx context.Context, remote, branch string) error {
+	if err := ValidateRemoteURL(remote, true); err != nil {
+		return err
+	}
+	workspace, err := os.MkdirTemp("", "loopforge-branch-check-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(workspace)
+	out, err := Watch(ctx, workspace, procwatch.Options{Label: "检查远端工作分支"}, "ls-remote", "--heads", "--", remote, "refs/heads/"+branch)
+	return verifyNewRemoteWorkBranch(branch, out, err)
+}
+
+func verifyNewRemoteWorkBranch(branch, out string, err error) error {
 	if err != nil {
 		return fmt.Errorf("无法确认远端分支 %s 是否存在：%w", branch, err)
 	}
+	ref := "refs/heads/" + branch
 	for _, line := range strings.Split(out, "\n") {
 		_, name, ok := strings.Cut(strings.TrimSpace(line), "\t")
 		if ok && name == ref {

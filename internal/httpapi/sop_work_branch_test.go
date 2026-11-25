@@ -44,7 +44,7 @@ done
 [ "${model:-}" = hy4std ] || exit 5
 if [ "$input" = -- ]; then input=$(cat); fi
 case "$input" in
-  *branch-model-fixture-key*|*github.com*|*continued-repo*) exit 2 ;;
+  *branch-model-fixture-key*|*github.com*|*localhost*|*continued-repo*) exit 2 ;;
   *ai-repo*'payment timeout'*'use the dev namespace'*) ;;
   *) exit 3 ;;
 esac
@@ -63,8 +63,12 @@ printf '{"type":"result","result":"{\\"branch\\":\\"%s\\"}"}\n' "$name"
 	api := New(store, e, nil, "", "")
 
 	save := func(id, method string, naming *domain.WorkBranchNaming, status int) domain.Repository {
+		cloneURL := "https://github.com/acme/" + id + ".git"
+		if id == "ai-repo" {
+			cloneURL = "https://localhost:1/acme/ai-repo.git"
+		}
 		return requestJSON[domain.Repository](t, api, method, "/api/repositories", domain.Repository{
-			ID: id, ProjectID: "platform", Name: id, CloneURL: "https://github.com/acme/" + id + ".git", DefaultBranch: "main",
+			ID: id, ProjectID: "platform", Name: id, CloneURL: cloneURL, DefaultBranch: "main",
 			WorkBranchNaming: naming,
 		}, status)
 	}
