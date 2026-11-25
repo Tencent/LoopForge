@@ -993,13 +993,13 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		argv = runtime.BindMCPCallArgv(sandbox, argv)
 	}
 	var result execResult
+	command := prepared.Command
+	command.Argv = argv
 	if sandbox != nil {
-		command := prepared.Command
-		command.Argv = argv
 		command = runtime.WithCommandEnvironment(command, commandEnv)
 		result = d.executeSandboxProcess(ctx, task, sandbox, command)
 	} else {
-		result = d.executeProcess(ctx, task, argv, commandEnv)
+		result = d.executeHostCommand(ctx, task, command, commandEnv)
 	}
 	result.outputs = collectTaskOutputs(workspace, inv)
 	if result.status != domain.RunnerTaskSuccess {
