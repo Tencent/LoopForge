@@ -3,12 +3,14 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -511,6 +513,82 @@ func TestCheckoutInvocationRepositoriesLeavesAgentConfigVisible(t *testing.T) {
 		if err != nil || strings.Contains(string(exclude), ".agents/") {
 			t.Fatalf("%s repository instruction excludes: %v %q", name, err, exclude)
 		}
+	}
+}
+
+func TestRegisterUntilReadyRetriesTransientFailure(t *testing.T) {
+	previous := registerRetryInterval
+	registerRetryInterval = 10 * time.Millisecond
+	defer func() { registerRetryInterval = previous }()
+
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			http.Error(w, "unreachable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(RegisterResponse{
+			RunnerID:     "runner-retry",
+			SessionToken: "session-retry",
+			ExpiresAt:    time.Now().Add(time.Hour),
+		})
+	}))
+	defer server.Close()
+
+	d, err := New(Config{
+		ServerURL:            server.URL,
+		BootstrapToken:       "boot-secret",
+		StatePath:            filepath.Join(t.TempDir(), "state.json"),
+		Name:                 "retry-test",
+		MaxConcurrency:       1,
+		HeartbeatInterval:    time.Second,
+		LongPollTimeout:      time.Second,
+		DefaultWorkspaceRoot: t.TempDir(),
+		DisableAutoUpdate:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.registerUntilReady(context.Background()); err != nil {
+		t.Fatalf("registerUntilReady: %v", err)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("register attempts = %d, want 2", got)
+	}
+	if session := d.clientSession(); session != "session-retry" {
+		t.Fatalf("session = %q, want session-retry", session)
+	}
+}
+
+func TestRegisterUntilReadyStopsOnContextCancel(t *testing.T) {
+	previous := registerRetryInterval
+	registerRetryInterval = 10 * time.Millisecond
+	defer func() { registerRetryInterval = previous }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "offline", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	d, err := New(Config{
+		ServerURL:            server.URL,
+		BootstrapToken:       "boot-secret",
+		StatePath:            filepath.Join(t.TempDir(), "state.json"),
+		Name:                 "retry-cancel",
+		MaxConcurrency:       1,
+		HeartbeatInterval:    time.Second,
+		LongPollTimeout:      time.Second,
+		DefaultWorkspaceRoot: t.TempDir(),
+		DisableAutoUpdate:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := d.registerUntilReady(ctx); err == nil {
+		t.Fatal("registerUntilReady returned nil after context cancel")
 	}
 }
 
