@@ -62,12 +62,20 @@ var (
 	discoverCLIModels = discoverCodeBuddyModels
 )
 
-const cliModelTTL = time.Hour
+const (
+	cliModelTTL = time.Hour
+	// cliModelRetryTTL bounds how long a failed discovery is remembered. The
+	// CLI may be installed a moment later, or the network may recover, and the
+	// pickers must not stay empty for a whole cliModelTTL.
+	cliModelRetryTTL = time.Minute
+)
 
 type cliModelEntry struct {
 	environment string
 	models      []string
-	at          time.Time
+	// expires is when the next read runs discovery again: cliModelTTL after a
+	// successful discovery, cliModelRetryTTL after a failed one.
+	expires time.Time
 }
 
 // cliModelCacheKey separates accounts within one environment: without a key
@@ -124,20 +132,36 @@ func parseCodeBuddyModels(help string) []string {
 }
 
 // refreshCLIModels runs discovery when the cached list is missing or stale.
+// A failed discovery keeps the last good list and is retried after
+// cliModelRetryTTL, so neither a CLI installed later nor a transient failure
+// hides the catalog for a full cliModelTTL.
 func refreshCLIModels(ctx context.Context, environment, apiKey string) {
 	environment = strings.TrimSpace(environment)
 	cacheKey := cliModelCacheKey(environment, apiKey)
 	cliModelMu.Lock()
 	entry, ok := cliModelCache[cacheKey]
 	cliModelMu.Unlock()
-	if ok && time.Since(entry.at) < cliModelTTL {
+	if ok && time.Now().Before(entry.expires) {
 		return
 	}
 	models := discoverCLIModels(ctx, environment, apiKey)
 	cliModelMu.Lock()
-	if models != nil || !ok {
-		cliModelCache[cacheKey] = cliModelEntry{environment: environment, models: models, at: time.Now()}
+	entry.environment = environment
+	if models != nil {
+		entry.models = models
+		entry.expires = time.Now().Add(cliModelTTL)
+	} else {
+		entry.expires = time.Now().Add(cliModelRetryTTL)
 	}
+	cliModelCache[cacheKey] = entry
+	cliModelMu.Unlock()
+}
+
+// forgetCLIModels drops every discovered CodeBuddy catalog so the next read
+// asks the CLI again, e.g. right after the CLI was installed on this server.
+func forgetCLIModels() {
+	cliModelMu.Lock()
+	clear(cliModelCache)
 	cliModelMu.Unlock()
 }
 
