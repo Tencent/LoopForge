@@ -303,7 +303,7 @@ func runnerArtifactInputs(wf domain.WorkflowDefinition, node domain.WorkflowNode
 			if !sources[artifact.NodeID] {
 				continue
 			}
-			manifest.WriteString("## " + artifact.NodeID + " / repository-patch (" + artifact.RepositoryDir + ")\n\nNo full diff is stored. The run workspace is the source of truth.\n\n" + repositoryPatchSummary(artifact) + "\n\n")
+			manifest.WriteString("## " + artifact.NodeID + " / repository-patch (" + artifact.RepositoryDir + ")\n\nNo full diff is stored here (the artifact is an inventory summary); the runner's checkout is the source of truth.\n\n" + repositoryPatchSummary(artifact) + "\n\n")
 			continue
 		}
 		rel := artifactInputRelPath(run, artifact)

@@ -47,7 +47,7 @@ func TestArtifactMaterializationAndRecoveryBranches(t *testing.T) {
 	patchRun := domain.Run{Artifacts: []domain.Artifact{{
 		NodeID: "source", Name: "repository-patch", MediaType: "text/plain", Content: "summary only", SHA256: "patch-sha",
 	}}}
-	if patchManifest, err := materializeInputs(t.TempDir(), wf, node, patchRun); err != nil || !strings.Contains(patchManifest, "No full diff is stored") {
+	if patchManifest, err := materializeInputs(t.TempDir(), wf, node, patchRun); err != nil || !strings.Contains(patchManifest, "inventory summary") {
 		t.Fatalf("patch manifest=%q err=%v", patchManifest, err)
 	}
 	gitWorkspace := t.TempDir()
@@ -55,7 +55,7 @@ func TestArtifactMaterializationAndRecoveryBranches(t *testing.T) {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	patchRun.Artifacts[0].Content = "diff --git a/new.txt b/new.txt\nnew file mode 100644\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+new\n"
-	if patchManifest, err := materializeInputs(gitWorkspace, wf, node, patchRun); err != nil || !strings.Contains(patchManifest, "Applied a legacy unified diff") {
+	if patchManifest, err := materializeInputs(gitWorkspace, wf, node, patchRun); err != nil || !strings.Contains(patchManifest, "Applied the stored unified diff") {
 		t.Fatalf("applied patch manifest=%q err=%v", patchManifest, err)
 	}
 	if data, err := os.ReadFile(filepath.Join(gitWorkspace, "new.txt")); err != nil || string(data) != "new\n" {
