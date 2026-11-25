@@ -180,22 +180,27 @@ func TestEnsureRunnerBrowserDisabled(t *testing.T) {
 
 func TestRunSandboxKeysAndRequirements(t *testing.T) {
 	dockerfile := domain.DockerfileDefinition{ID: "d", Content: "FROM scratch"}
-	environment := domain.EnvironmentDefinition{ID: "e"}
 	task := domain.RunnerTask{
 		ID: "task", RunID: "run/id", Provider: "codex", Workspace: "runs/run-id/workspace",
 		Sandbox: &domain.RunnerSandboxSpec{
-			Profile:    domain.SandboxProfile{Driver: "docker"},
-			Dockerfile: &dockerfile, Environment: &environment,
-			Requirements: &domain.RunnerSandboxRequirements{PrivateHome: true, BunFS: true, CLIStates: []domain.RunnerCLIStateRequirement{{Directory: ".x", Files: []string{"a"}}}},
+			Profile:      domain.SandboxProfile{Driver: "docker"},
+			Dockerfile:   &dockerfile,
+			Requirements: &domain.RunnerSandboxRequirements{PrivateHome: true, BunFS: true, RunnerLoginRelay: true, CLIStates: []domain.RunnerCLIStateRequirement{{Directory: ".x", Files: []string{"a"}}}},
 		},
 	}
 	requirements, resources := taskSandboxSpec(task)
-	if !requirements.PrivateHome || !requirements.BunFS || len(requirements.CLIStates) != 1 || resources.Dockerfile.ID != "d" || resources.Environment.ID != "e" {
+	if !requirements.PrivateHome || !requirements.BunFS || !requirements.RunnerLoginRelay || len(requirements.CLIStates) != 1 || resources.Dockerfile.ID != "d" {
 		t.Fatalf("requirements=%+v resources=%+v", requirements, resources)
 	}
 	key, id, shared := runSandboxKey(task, requirements, resources)
 	if !shared || key == "" || !strings.HasPrefix(id, "rt-run-run-id-") {
 		t.Fatalf("key=%q id=%q shared=%v", key, id, shared)
+	}
+	terminal := task
+	terminal.Provider = "terminal"
+	terminalRequirements, terminalResources := taskSandboxSpec(terminal)
+	if terminalKey, _, _ := runSandboxKey(terminal, terminalRequirements, terminalResources); terminalKey != key {
+		t.Fatal("terminal and Codex did not share the frozen relay network requirement")
 	}
 	task.Workspace = "other"
 	if _, _, shared := runSandboxKey(task, requirements, resources); shared {
@@ -209,6 +214,9 @@ func TestRunSandboxKeysAndRequirements(t *testing.T) {
 		req, _ := taskSandboxSpec(task)
 		if provider != "mock" && len(req.CLIStates) != 1 {
 			t.Fatalf("%s req=%+v", provider, req)
+		}
+		if req.RunnerLoginRelay != (provider == "codex") {
+			t.Fatalf("%s login relay=%v", provider, req.RunnerLoginRelay)
 		}
 	}
 	if !sharedRunWorkspace("runs/r/workspace") || sharedRunWorkspace("runs/../workspace") || containerSafe("a/b") != "a-b" {

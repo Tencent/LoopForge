@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -36,7 +38,11 @@ func (h *usersHandlers) user(c *gin.Context) {
 		return
 	}
 	var body repo.UserCredentialUpdate
-	if !decode(c, &body) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if raw := body.CodeBuddyInternetEnvironment; raw != nil {
@@ -47,7 +53,7 @@ func (h *usersHandlers) user(c *gin.Context) {
 		}
 		body.CodeBuddyInternetEnvironment = &environment
 	}
-	baseURLs := []*string{body.CodexBaseURL, body.ClaudeCodeBaseURL}
+	baseURLs := []*string{body.CodeBuddyBaseURL, body.CodexBaseURL, body.ClaudeCodeBaseURL}
 	for _, cred := range body.AgentCLICredentials {
 		baseURLs = append(baseURLs, cred.BaseURL)
 	}
@@ -57,8 +63,40 @@ func (h *usersHandlers) user(c *gin.Context) {
 			return
 		}
 	}
+	if defaults := body.AssistantDefaults; defaults != nil {
+		defaults.Executor = strings.TrimSpace(defaults.Executor)
+		defaults.Model = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(defaults.Model), defaults.Executor+":"))
+		defaults.Effort = strings.TrimSpace(defaults.Effort)
+		defaults.Approval = strings.TrimSpace(defaults.Approval)
+		if defaults.Model != "" && (!assistantValidEngineModel(defaults.Model) || defaults.Model == assistantDefaultModel ||
+			defaults.Executor == assistantEngineCodeBuddy && codeBuddyIsDefaultModel(defaults.Model)) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请选择具体的默认模型"})
+			return
+		}
+		if defaults.Effort != "" {
+			if defaults.Model == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请先选择默认模型"})
+				return
+			}
+			user, _ := h.repo.User(id)
+			if err := validateAssistantEffort(c.Request.Context(), user, defaults.Executor+":"+defaults.Model, defaults.Effort); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		switch defaults.Approval {
+		case "", AssistantApprovalConfirm, AssistantApprovalAssisted, AssistantApprovalAuto:
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请选择有效的操作确认方式"})
+			return
+		}
+	}
 	saved, err := h.repo.UpdateUserCredentials(id, body)
 	if err != nil {
+		if errors.Is(err, repo.ErrAssistantDefaultExecutorUnavailable) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		respond(c, err)
 		return
 	}

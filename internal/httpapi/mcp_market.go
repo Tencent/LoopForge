@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,8 +33,11 @@ type mcpMarketItem struct {
 	URL         string   `json:"url"`
 	Transport   string   `json:"transport"`
 	AuthType    string   `json:"authType"`
-	Official    bool     `json:"official"`
-	Aliases     []string `json:"aliases,omitempty"`
+	// CredentialKind names the credential bound as the Authorization Bearer
+	// header when AuthType is "credential" (see MCPServerDefinition).
+	CredentialKind string   `json:"credentialKind,omitempty"`
+	Official       bool     `json:"official"`
+	Aliases        []string `json:"aliases,omitempty"`
 }
 
 type mcpMarketCatalogFile struct {
@@ -99,7 +103,7 @@ func installMarketMCP(st *repo.Store, marketID, projectID string) (domain.MCPSer
 	server := domain.MCPServerDefinition{
 		ID: mcpInstallID(item.ID, "project", projectID), MarketID: item.ID, Name: item.Name,
 		Description: item.Description, IconURL: item.IconURL, Transport: item.Transport,
-		URL: item.URL, AuthType: item.AuthType, Scope: "project", ProjectID: projectID,
+		URL: item.URL, AuthType: item.AuthType, CredentialKind: item.CredentialKind, Scope: "project", ProjectID: projectID,
 		TimeoutSec: 60, UpdatedAt: time.Now().UTC(),
 	}
 	if err := st.PutMCPServer(server); err != nil {
@@ -135,13 +139,8 @@ func marketItem(id string) (mcpMarketItem, bool) {
 		return mcpMarketItem{}, false
 	}
 	for _, item := range mcpMarketItems {
-		if item.ID == id {
+		if item.ID == id || slices.Contains(item.Aliases, id) {
 			return item, true
-		}
-		for _, alias := range item.Aliases {
-			if alias == id {
-				return item, true
-			}
 		}
 	}
 	return mcpMarketItem{}, false

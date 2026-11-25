@@ -68,26 +68,58 @@ func (p *TerminalPool) Handle(root, scope string, req domain.WorkspaceTerminalRe
 // On a failed open release is NOT called; the caller still owns that cleanup.
 // Non-open operations do not need a sandbox and ignore release.
 func (p *TerminalPool) HandleSandbox(ctx context.Context, sandbox Sandbox, scope string, req domain.WorkspaceTerminalRequest, release func()) (TerminalResult, error) {
+	return p.HandleSandboxWithGit(ctx, sandbox, scope, req, release, TerminalGitCredentials{})
+}
+
+// TerminalGitCredentials contains only the credentials of the terminal's caller.
+type TerminalGitCredentials struct {
+	HTTPS   map[string]domain.GitHTTPExecutionCredential
+	SSHKeys map[string]string
+}
+
+// HandleSandboxWithGit binds the caller's Git credentials for the terminal's lifetime.
+func (p *TerminalPool) HandleSandboxWithGit(ctx context.Context, sandbox Sandbox, scope string, req domain.WorkspaceTerminalRequest, release func(), credentials TerminalGitCredentials) (TerminalResult, error) {
 	if req.Operation != "open" {
 		return p.handle(scope, req, nil, nil)
 	}
 	if _, err := terminalTTL(req); err != nil {
 		return TerminalResult{}, err
 	}
-	cmd, home, err := sandboxTerminalCommand(ctx, sandbox)
+	releaseTerminal := func() {}
+	if s, ok := unwrapSandbox(sandbox).(*dockerSandbox); ok {
+		releaseTerminal = s.reserveTerminal()
+	}
+	stopSSH := func() {}
+	var bind func(*CommandSpec) error
+	if len(credentials.SSHKeys) > 0 && sandbox != nil {
+		bind = func(command *CommandSpec) error {
+			stop, err := BindTerminalGitSSH(ctx, sandbox, command, credentials.SSHKeys)
+			if err == nil {
+				stopSSH = stop
+			}
+			return err
+		}
+	}
+	cmd, home, err := sandboxTerminalCommandWithBinding(ctx, sandbox, credentials.HTTPS, bind)
 	if err != nil {
+		stopSSH()
+		releaseTerminal()
 		return TerminalResult{}, err
 	}
 	ownedRelease := func() {
+		stopSSH()
 		sandboxTerminalCleanup(sandbox, home)
+		releaseTerminal()
 		if release != nil {
 			release()
 		}
 	}
 	result, err := p.handle(scope, req, ownedRelease, func() (*exec.Cmd, string, error) { return cmd, home, nil })
 	if err != nil {
+		stopSSH()
 		sandboxTerminalCleanup(sandbox, home)
 		_ = removeTerminalHome(home)
+		releaseTerminal()
 	}
 	return result, err
 }
@@ -260,6 +292,12 @@ func (p *TerminalPool) CloseScope(scope string) {
 			s.stop()
 		}
 	}
+}
+
+func (p *TerminalPool) Active() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.sessions) != 0
 }
 
 func (p *TerminalPool) HasScope(scope string) bool {

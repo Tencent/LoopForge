@@ -34,8 +34,8 @@ function processSteps(step) {
 }
 
 // SubagentSession shows one subagent like an SOP node: what Main Bot asked,
-// how it worked and what it reported, once per dispatch when it was resumed,
-// plus its collected deliverables and what it published.
+// the model it ran on, how it worked and what it reported, once per dispatch
+// when it was resumed, plus its collected deliverables and what it published.
 export function SubagentSession({ agent, live = false, artifacts = [], onOpenArtifact }) {
   const [tab, setTab] = useState("conversation");
   useEffect(() => setTab("conversation"), [agent.key]);
@@ -92,9 +92,14 @@ export function SubagentSession({ agent, live = false, artifacts = [], onOpenArt
                       className="node-message node-message-user"
                       aria-label="收到的任务"
                     >
-                      <span className="node-message-sender">Main Bot</span>
+                      <span className="node-message-sender">AI 助手</span>
                       <RichContent message={step.input || step.detail} />
                     </article>
+                  ) : null}
+                  {agent.models?.[step.id] ? (
+                    <p className="muted subagent-model" aria-label="运行模型">
+                      模型 · {agent.models[step.id]}
+                    </p>
                   ) : null}
                   {resumeMissed(step) ? (
                     <p className="muted subagent-resume-missed" role="note">

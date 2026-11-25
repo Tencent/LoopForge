@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -13,8 +16,25 @@ import (
 
 type dispatchRequest struct {
 	IssueID, WorkflowID, ScheduleJobID, TriggerOrigin string
+	WorkspaceRunID                                    string
 	Rerun                                             bool
 	TriggerUserID                                     int64
+	// ChatOrigin is the IM conversation the start was requested in; the
+	// run's progress goes back there.
+	ChatOrigin *domain.BotChatOrigin
+}
+
+type botStartOriginKey struct{}
+
+// withBotStartOrigin marks the SOP starts made with ctx as requested in an
+// IM conversation.
+func withBotStartOrigin(ctx context.Context, origin domain.BotChatOrigin) context.Context {
+	return context.WithValue(ctx, botStartOriginKey{}, origin)
+}
+
+func botStartOriginFrom(ctx context.Context) (domain.BotChatOrigin, bool) {
+	origin, ok := ctx.Value(botStartOriginKey{}).(domain.BotChatOrigin)
+	return origin, ok
 }
 
 func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
@@ -30,8 +50,16 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		return domain.Task{}, HTTPError{http.StatusConflict, err.Error()}
 	}
 	if issue.AssigneeUserID == 0 {
-		issue.AssigneeUserID = responsible.ID
-		if err := d.repo.PutIssue(issue); err != nil {
+		issue, err = d.repo.PatchIssue(issue.ID, func(current *domain.Issue) error {
+			if current.AssigneeUserID == 0 {
+				current.AssigneeUserID = responsible.ID
+			}
+			return nil
+		})
+		if err != nil {
+			if errors.Is(err, repo.ErrIssueNotFound) {
+				return domain.Task{}, HTTPError{http.StatusNotFound, err.Error()}
+			}
 			return domain.Task{}, err
 		}
 	}
@@ -42,6 +70,14 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		}
 	}
 	scheduled := strings.TrimSpace(req.ScheduleJobID) != ""
+	if issue.WithoutSOP() {
+		if scheduled {
+			return domain.Task{}, HTTPError{http.StatusConflict, "该需求不使用 SOP"}
+		}
+		if strings.TrimSpace(req.WorkflowID) == "" {
+			return domain.Task{}, HTTPError{http.StatusBadRequest, "该需求不使用 SOP，请先选择要运行的 SOP"}
+		}
+	}
 	project, _ := d.repo.Project(issue.ProjectID)
 	workflowID := strings.TrimSpace(req.WorkflowID)
 	if workflowID == "" {
@@ -107,7 +143,7 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	var repositories []domain.RepositoryContext
 	for _, repo := range boundRepositories {
-		rc := domain.RepositoryContext{RepositoryID: repo.ID, Provider: repo.Provider, Name: repo.Name, GongfengProjectID: repo.GongfengProjectID, WebURL: repo.WebURL, CloneURL: repo.CloneURL, BaseBranch: repo.DefaultBranch, LocalPath: repo.LocalPath, PipelineProjectID: repo.PipelineProjectID, PipelineDefID: repo.PipelineDefID, PipelineURLPattern: repo.PipelineURLPattern, DefaultBranch: repo.DefaultBranch}
+		rc := repositoryRunContext(repo)
 		if selectedWorkBranch := branchSelection.WorkBranchForRepository(repo.ID); selectedWorkBranch != "" {
 			rc.WorkBranch = selectedWorkBranch
 			rc.RequireExistingWorkBranch = true
@@ -131,14 +167,14 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	if summary := strings.TrimSpace(issue.Clarification.Summary); summary != "" {
 		input += "\n\nClarification summary:\n" + summary
 	}
-	if len(repositories) > 0 {
+	if len(repositories) > 0 && req.WorkspaceRunID == "" {
 		if len(repositories) == 1 {
 			input += "\n\nRepository context (frozen): the repository is checked out in a first-level subdirectory; SOP deliverables stay at the workspace root"
 		} else {
 			input += "\n\nRepository context (frozen, multi-repository): every repository below is checked out side by side; treat them as equals"
 		}
 		for _, rc := range repositories {
-			input += fmt.Sprintf("\n- repository: %s (%s)\n  - provider: %s\n  - base branch: %s\n  - clone URL: %s\n  - local directory: ./%s (code changes for this repository MUST be written inside this directory)", rc.Name, rc.GongfengProjectID, rc.Provider, rc.BaseBranch, rc.CloneURL, rc.WorkspaceDir)
+			input += fmt.Sprintf("\n- repository: %s (%s)\n  - provider: %s\n  - base branch: %s\n  - clone URL: %s\n  - local directory: ./%s (code changes for this repository MUST be written inside this directory)", rc.Name, rc.GongfengProjectID, rc.Provider, rc.BaseBranch, domain.StripURLCredentials(rc.CloneURL), rc.WorkspaceDir)
 			input += fmt.Sprintf("\n  - merge request target branch: %s", rc.BaseBranch)
 			if rc.RequireExistingWorkBranch {
 				input += fmt.Sprintf("\n  - existing work branch: %s (continue directly on this remote branch; do not create or rename a work branch; fail if the branch does not exist; create or update its MR targeting %s)", rc.WorkBranch, rc.BaseBranch)
@@ -172,8 +208,11 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		displayRepository = repositories[0]
 	}
 	task := domain.Task{ID: taskID, IssueID: issue.ID, AgentID: issue.AssigneeID, WorkflowID: workflowID, Status: "queued", Repository: displayRepository, DispatchMode: dispatchMode, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID), TriggerOrigin: triggerOrigin}
-	stored, created, err := d.repo.CreateTask(task)
+	stored, created, err := d.repo.ReserveIssueDispatch(task)
 	if err != nil {
+		if errors.Is(err, repo.ErrIssueNotFound) {
+			return domain.Task{}, HTTPError{http.StatusNotFound, err.Error()}
+		}
 		return domain.Task{}, err
 	}
 	if !created {
@@ -184,23 +223,56 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	issue.LatestTaskID = stored.ID
 	issue.Status = "in_progress"
-	if err := d.repo.PutIssue(issue); err != nil {
-		task.Status = "failed"
-		_ = d.repo.PutTask(task)
-		return domain.Task{}, err
+	if req.WorkspaceRunID == "" {
+		if err := d.repo.PutIssue(issue); err != nil {
+			task.Status = "failed"
+			_ = d.repo.PutTask(task)
+			return domain.Task{}, err
+		}
 	}
 	tapdID := issue.RequirementTAPDID()
-	run, err := d.engine.StartWithRepositoriesContext(workflowID, input, repositories, domain.TelemetryContext{ProjectID: issue.ProjectID, IssueID: issue.ID, TAPDID: tapdID, ResponsibleUserID: runUserID, IssueNumber: issue.Number, TaskID: taskID, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID)})
+	exec := domain.TelemetryContext{
+		ProjectID: issue.ProjectID, IssueID: issue.ID, TAPDID: tapdID, ResponsibleUserID: runUserID, IssueNumber: issue.Number,
+		TaskID: taskID, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID), WorkspaceRunID: req.WorkspaceRunID,
+	}
+	origin := req.ChatOrigin
+	if origin != nil && origin.ProjectID == issue.ProjectID {
+		origin.IssueID, origin.RunID = issue.ID, ""
+		if err := d.repo.RecordBotChatOrigin(*origin); err != nil {
+			log.Printf("bot chat origin of issue %s not recorded: %v", issue.ID, err)
+		} else {
+			exec.BotOriginID = repo.BotIssueOriginID(origin.ConversationID, issue.ID)
+		}
+	}
+	run, err := d.engine.StartWithRepositoriesContext(workflowID, input, repositories, exec)
 	if err != nil {
+		if req.WorkspaceRunID != "" {
+			if releaseErr := d.repo.ReleaseTaskReservation(task.ID); releaseErr != nil {
+				return domain.Task{}, errors.Join(err, releaseErr)
+			}
+			if errors.Is(err, repo.ErrWorkspaceInUse) {
+				return domain.Task{}, HTTPError{http.StatusConflict, err.Error()}
+			}
+			return domain.Task{}, err
+		}
 		task.Status = "failed"
 		_ = d.repo.PutTask(task)
 		issue.Status = "blocked"
 		_ = d.repo.PutIssue(issue)
 		return domain.Task{}, err
 	}
+	if exec.BotOriginID != "" {
+		origin.RunID = run.ID
+		if err := d.repo.RecordBotChatOrigin(*origin); err != nil {
+			log.Printf("bot chat origin of run %s not recorded: %v", run.ID, err)
+		}
+	}
 	// Bind only after the run actually starts. A second lane keeps the SOP
 	// that already ran; a stored list of several SOPs is left unchanged.
 	// A failed start returns above and does not reach this write.
+	if issue.WithoutSOP() {
+		issue.SOPMode, issue.AutomationState = domain.IssueSOPUse, "eligible"
+	}
 	alreadyStarted := strings.TrimSpace(issue.WorkflowID) != "" && issue.WorkflowID != workflowID && d.repo.IssueHasTaskForWorkflow(issue.ID, issue.WorkflowID)
 	if len(issue.SOPBindings) > 1 {
 		if strings.TrimSpace(issue.WorkflowID) == "" {

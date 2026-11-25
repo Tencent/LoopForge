@@ -21,9 +21,9 @@ actors=(root nonroot without-compose)
 for actor in "${actors[@]}"; do
   fixture="$task_dir/$actor"
   mkdir -p "$fixture/scripts" "$fixture/migrations/seed" "$fixture/user-home"
-  cp scripts/{install.sh,configure.sh,docker-access.sh,install-address.py,install-compose.py,install-observability-schema.sh,knowledge-schema.sh} "$fixture/scripts/"
-  cp migrations/001_run_obs_generated_columns.sql "$fixture/migrations/"
-  cp migrations/[0-9][0-9][0-9]_*.sql "$fixture/migrations/"
+  cp scripts/{install.sh,configure.sh,docker-access.sh,ghcr-mirror.sh,install-address.py,install-compose.py,install-observability-schema.sh,install-schema-extensions.sh,knowledge-schema.sh} "$fixture/scripts/"
+  cp migrations/001_run_obs_generated_columns.sql migrations/033_generic_sop_mr_node.sql migrations/038_generic_sop_host_credentials.sql "$fixture/migrations/"
+  cp migrations/002_knowledge_base.sql migrations/0{4[3-9],5[0-5]}_*.sql "$fixture/migrations/"
   cp migrations/seed/*.sql "$fixture/migrations/seed/"
   cp compose.yaml "$fixture/"
   read -r http_port mysql_port < <(python3 - <<'PY'

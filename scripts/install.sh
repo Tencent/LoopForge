@@ -10,6 +10,7 @@ cd "$(dirname "$0")/.."
 fail() { printf '\n✗ %s\n' "$1" >&2; exit 1; }
 step() { printf '\n▸ %s\n' "$1"; }
 source scripts/docker-access.sh
+source scripts/ghcr-mirror.sh
 
 confirm() {
   [[ "${LOOPFORGE_YES:-}" == 1 ]] && return 0
@@ -161,10 +162,26 @@ PY
 fi
 
 if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
-  step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
-  docker_access compose --profile platform pull --policy "${LOOPFORGE_PULL_POLICY:-missing}" platform mysql
+  pull_policy="${LOOPFORGE_PULL_POLICY:-missing}"
+  if mirror_published_ghcr "$pull_policy"; then
+    # The platform name is already local. Pull it with missing so Compose does
+    # not contact ghcr.io; MySQL keeps the requested policy.
+    if [[ "$pull_policy" == always ]]; then
+      docker_access compose --profile platform pull --policy missing platform
+      docker_access compose --profile platform pull --policy always mysql
+    else
+      docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+    fi
+  else
+    step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
+    docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+  fi
 else
   step 'Building LoopForge from source (first install takes several minutes; frontend, Go and runtime stages build in parallel)'
+  if [[ -z "${LOOPFORGE_COMMIT:-}" ]]; then
+    LOOPFORGE_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+    export LOOPFORGE_COMMIT
+  fi
   # Download MySQL while the platform image builds instead of afterwards.
   docker_access compose pull --quiet --policy missing mysql >/dev/null 2>&1 &
   mysql_pull=$!
@@ -172,7 +189,7 @@ else
   wait "$mysql_pull" || true
 fi
 # Stop an existing platform before applying schema/data migrations: the old
-# binary must not write a review body into the control payload between 038's
+# binary must not write a review body into the control payload between 053's
 # copy and strip. A fresh install has no platform container yet.
 docker_access compose --profile platform stop platform >/dev/null || true
 # Start only MySQL first. The platform starts after the knowledge schema and
@@ -190,8 +207,7 @@ bash scripts/knowledge-schema.sh check --compose
 step 'Starting LoopForge'
 docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 step 'Installing the schema extensions and the starter catalog'
-bash scripts/install-observability-schema.sh
-bash scripts/knowledge-schema.sh seed --compose
+bash scripts/install-schema-extensions.sh
 
 python3 scripts/install-address.py "$port"
 users=$(docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -N -u loopforge loopforge -e "select count(*) from users"' 2>/dev/null || echo 0)
@@ -200,6 +216,5 @@ if [[ "${users//[^0-9]/}" == 0 ]]; then
 else
   printf '  Open it in your browser and sign in.\n'
 fi
-printf '  Open “一键体验” on the home page to run a real SOP without an API key.\n'
 printf '  Default sandboxes reuse the installed runtime image; no second CLI image build is needed.\n'
 printf '  Stop: ./start.sh stop   ·   Logs: ./start.sh logs   ·   Update images: ./start.sh pull\n'

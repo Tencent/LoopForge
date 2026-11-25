@@ -135,7 +135,7 @@ func TestRunRecoveryAndSchedulerBookkeeping(t *testing.T) {
 		t.Fatalf("disabled recovery = %v", got)
 	}
 	e.executeRuns = true
-	wf := domain.WorkflowDefinition{ID: "recovery-wf", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "failed", Type: "agent"}}}
+	wf := domain.WorkflowDefinition{ID: "recovery-wf", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "failed", Type: "agent"}}}
 	run := domain.Run{ID: "recover-failed", Status: "running", WorkflowSnapshot: wf, Nodes: map[string]*domain.NodeRun{"failed": {NodeID: "failed", Status: "failed"}}}
 	if err := st.PutRun(run); err != nil {
 		t.Fatal(err)

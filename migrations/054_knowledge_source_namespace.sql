@@ -132,7 +132,8 @@ START TRANSACTION;
 -- Control plane. Payload stores the review source, including retracted items.
 UPDATE knowledge_submissions s JOIN knowledge_id_migration_039 m
  ON m.kind='source' AND BINARY m.old_id=BINARY JSON_UNQUOTE(JSON_EXTRACT(s.payload,'$.source'))
- SET s.payload=JSON_SET(s.payload,'$.source',m.new_id);
+ SET s.payload=JSON_SET(s.payload,'$.source',m.new_id)
+ WHERE COALESCE(JSON_UNQUOTE(JSON_EXTRACT(s.payload,'$.provider')), 'builtin')='builtin';
 UPDATE knowledge_sync_jobs s JOIN knowledge_id_migration_039 m ON m.kind='source' AND BINARY m.old_id=BINARY s.source_id SET s.source_id=m.new_id;
 UPDATE knowledge_writebacks s JOIN knowledge_id_migration_039 m ON m.kind='source' AND BINARY m.old_id=BINARY s.source_id SET s.source_id=m.new_id;
 UPDATE knowledge_tombstones s JOIN knowledge_id_migration_039 m ON m.kind='source' AND BINARY m.old_id=BINARY s.source_id SET s.source_id=m.new_id;

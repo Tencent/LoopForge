@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
+
+	"agentflow/internal/domain"
 )
 
 const (
@@ -73,7 +73,7 @@ func nonEmpty(value any) bool {
 // applyZCodeCredential gives ZCode the key as a personal provider file that
 // exists only until ZCode has read it: ZCode accepts a literal key and
 // nothing else, and the key must not stay on disk.
-func applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
+func applyZCodeCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model, effort string, argv []string) ([]string, map[string]string, error) {
 	// The private provider has no model of its own, so "CLI default" (sent as
 	// "default") must name a real one: BigModel's coding model on the default
 	// endpoint, while a custom endpoint has no model we could guess.
@@ -87,6 +87,32 @@ func applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model string, a
 	if baseURL == "" {
 		baseURL, apiType = zcodeDefaultBaseURL, "anthropic-messages"
 	}
+	modelRules := []any{}
+	if effort != "" {
+		if err := domain.ValidateAgentEffort(effort, AgentCLIZCode); err != nil {
+			return nil, nil, err
+		}
+		// A resumed session keeps its original selection. Override the
+		// model's per-call mapping so the current turn uses the chosen effort,
+		// and removing the rule restores that session's native default.
+		wire := map[string]any{}
+		switch apiType {
+		case "anthropic-messages":
+			wire["thinking"] = map[string]string{"type": "enabled"}
+			wire["output_config"] = map[string]string{"effort": effort}
+		case "openai-chat-completions":
+			wire["thinking"] = map[string]string{"type": "enabled"}
+			wire["reasoning_effort"] = effort
+			wire["reasoning"] = map[string]string{"effort": effort}
+		case "openai-responses":
+			wire["reasoning"] = map[string]string{"effort": effort}
+		}
+		mapping, _ := json.Marshal(wire)
+		modelRules = append(modelRules, map[string]any{
+			"providerId": "agentflow", "modelId": model,
+			"config": map[string]any{"optionSpecs": map[string]any{"reasoningLevel": map[string]string{"map": string(mapping)}}},
+		})
+	}
 	providerConfig, err := json.MarshalIndent(map[string]any{"schemaVersion": 1, "config": map[string]any{
 		"providerConfigRules": map[string]any{"providerRules": []any{map[string]any{"providerId": "agentflow", "config": map[string]any{
 			"group":            "standard-personal",
@@ -94,7 +120,7 @@ func applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model string, a
 			"api":              map[string]any{"type": apiType, "baseUrl": baseURL},
 			"personalModelIds": []string{model},
 		}}}},
-		"modelConfigRules":      map[string]any{"providerModelRules": []any{}, "manualProviderModelRules": []any{}},
+		"modelConfigRules":      map[string]any{"providerModelRules": modelRules, "manualProviderModelRules": []any{}},
 		"defaultModelSelection": map[string]any{"providerId": "agentflow", "modelId": model},
 	}}, "", "  ")
 	if err != nil {
@@ -118,9 +144,14 @@ func applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model string, a
 
 // addZCodeKeyCleanupHook merges a SessionStart hook into ZCode's config,
 // keeping whatever the MCP configuration put there.
-func addZCodeKeyCleanupHook(home string) error {
+func addZCodeKeyCleanupHook(home AgentCLIHome) error {
 	document := map[string]any{}
-	data, err := os.ReadFile(filepath.Join(home, filepath.FromSlash(zcodeConfigPath)))
+	root, err := openAgentCLIHome(home)
+	if err != nil {
+		return err
+	}
+	data, err := root.ReadFile(zcodeConfigPath)
+	root.Close()
 	if err == nil {
 		err = json.Unmarshal(data, &document)
 	}
@@ -138,6 +169,7 @@ func addZCodeKeyCleanupHook(home string) error {
 	sessionStart, _ := events["SessionStart"].([]any)
 	events["SessionStart"] = append(sessionStart, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": zcodeRemoveKeyFile}}})
 	hooks["events"] = events
+	hooks["enabled"] = true
 	document["hooks"] = hooks
 	data, err = json.MarshalIndent(document, "", "  ")
 	if err != nil {

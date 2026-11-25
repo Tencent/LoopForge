@@ -215,7 +215,7 @@ func TestFinishAtKeepsRewoundRunAlive(t *testing.T) {
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("worker", "host", time.Minute, true)
 	wf := domain.WorkflowDefinition{
-		ID: "wf-rework", SandboxProfileID: "local",
+		ID: "wf-rework", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "fix", Name: "fix"},
 			{ID: "verify", Name: "verify", OnFailure: "reject", RejectTo: "fix"},
@@ -255,7 +255,7 @@ func TestFinishAtFailsWhenANodeIsStillFailed(t *testing.T) {
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("worker", "host", time.Minute, true)
 	wf := domain.WorkflowDefinition{
-		ID: "wf-still-failed", SandboxProfileID: "local",
+		ID: "wf-still-failed", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "fix", Name: "fix"},
 			{ID: "verify", Name: "verify"},

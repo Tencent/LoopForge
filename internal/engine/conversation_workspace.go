@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 const ConversationWorkspaceIdleTTL = time.Hour
@@ -41,7 +42,24 @@ func ConversationWorkspaceToken(ctx context.Context, runID ...string) string {
 	return lease.token
 }
 func (e *Engine) BeginConversationWorkspaceUse(id string) (string, error) {
-	return e.repo.BeginWorkspaceUse(id, time.Now().UTC())
+	token, previous, err := e.repo.BeginWorkspaceUsePreemptingSave(id, time.Now().UTC())
+	return e.finishTakingWorkspaceLease(id, token, previous, err)
+}
+
+func (e *Engine) finishTakingWorkspaceLease(id, token, previous string, err error) (string, error) {
+	if err != nil || previous == "" {
+		return token, err
+	}
+	if value, ok := e.conversationSaves.Load(previous); ok {
+		value.(context.CancelFunc)()
+	}
+	// Another API instance may own the save. Its lease watcher cancels the
+	// export; wait only for the runner's read-only gate probe, never its archive.
+	if err = e.waitForBackgroundWorkspaceSave(id); err != nil {
+		_ = e.repo.FinishWorkspaceUse(id, token, time.Now().UTC(), nil, "")
+		return "", err
+	}
+	return token, nil
 }
 func (e *Engine) RenewConversationWorkspaceUse(id, token string) error {
 	return e.repo.RenewWorkspaceUse(id, token, time.Now().UTC())
@@ -62,7 +80,7 @@ func (e *Engine) conversationWorkspaceIdle(run domain.Run) bool {
 	if e.WorkspaceActive != nil && e.WorkspaceActive(run) {
 		return false
 	}
-	if run.Status == "running" || run.Status == "queued" || hasRunningNode(run) {
+	if run.Status == "running" || run.Status == "queued" || run.HasActiveNode() {
 		return false
 	}
 	if run.Status == "waiting" && !run.IsWorkspace() {
@@ -76,19 +94,12 @@ func (e *Engine) conversationGenerationRunning(run domain.Run) bool {
 	if !ok {
 		return false
 	}
-	job, ok := e.repo.AssistantGeneration(session.UserID, session.ID)
+	job, ok := e.repo.PeekAssistantGeneration(session.UserID, session.ID)
 	return ok && job.Status == "running"
 }
 func (e *Engine) EndConversationWorkspaceUse(ctx context.Context, id, token string) error {
 	now := time.Now().UTC()
-	run, ok := e.repo.RunState(id)
-	var err error
-	if ok && run.WorkspaceCleanedAt.IsZero() && e.conversationWorkspaceIdle(run) {
-		err = e.saveConversationWorkspace(ctx, run, token)
-		if os.IsNotExist(err) {
-			err = nil
-		} // a fresh task may not have materialized files yet
-	}
+	err := e.saveConversationWorkspaceAfterUse(ctx, id, token)
 	message := ""
 	if err != nil {
 		message = err.Error()
@@ -99,7 +110,7 @@ func (e *Engine) EndConversationWorkspaceUse(ctx context.Context, id, token stri
 	return err
 }
 func (e *Engine) EnsureConversationWorkspace(ctx context.Context, id, token string) error {
-	_, err := e.PrepareConversationWorkspace(ctx, id, token)
+	_, err := e.prepareConversationWorkspace(ctx, id, token, true)
 	return err
 }
 
@@ -148,11 +159,14 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 	defer env.nodeMu.Unlock()
 	// Same checkout as an SOP node: the responsible user's Git Token, the
 	// frozen base branch, and a fresh work branch.
-	gitToken := env.credentialSnapshot().GitToken
-	ctx = withGitToken(e.withPreparationProgress(ctx, run.ID), gitToken)
+	credentials := env.credentialSnapshot()
+	ctx = e.withPreparationProgress(ctx, run.ID)
+	ctx = withRunGitCredentials(ctx, credentials)
+	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), credentials.GitSSHKeys)
+	ctx = runtime.WithRepositoryCacheIn(ctx, env.Unwrap())
 	return env.prepareRepositoriesOnce(func() error {
 		if err := prepareRepositories(ctx, env.Workspace(), run.RepositoryContexts()); err != nil {
-			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitToken) != "")
+			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), len(credentials.GitHTTPCredentials) > 0)
 		}
 		return nil
 	})
@@ -181,7 +195,7 @@ func (e *Engine) materializeRunnerConversationWorkspace(ctx context.Context, run
 			return nil
 		}
 		if !runnerWorkspaceBusy(response) || time.Now().After(deadline) {
-			return explainGitAuthFailure(fmt.Errorf("%s", response.Error), strings.TrimSpace(e.resolveRunCredentials(run).GitToken) != "")
+			return explainGitAuthFailure(fmt.Errorf("%s", response.Error), len(e.resolveRunCredentials(run).GitHTTPCredentials) > 0)
 		}
 		select {
 		case <-ctx.Done():
@@ -194,7 +208,11 @@ func (e *Engine) materializeRunnerConversationWorkspace(ctx context.Context, run
 // PrepareConversationWorkspace also repairs a legacy checkout that predates
 // snapshots. A real snapshot stays authoritative, including intentional deletes.
 func (e *Engine) PrepareConversationWorkspace(ctx context.Context, id, token string) ([]string, error) {
-	if err := e.ensureConversationWorkspace(ctx, id, token); err != nil {
+	return e.prepareConversationWorkspace(ctx, id, token, false)
+}
+
+func (e *Engine) prepareConversationWorkspace(ctx context.Context, id, token string, requireLocal bool) ([]string, error) {
+	if err := e.ensureConversationWorkspace(ctx, id, token); err != nil && (requireLocal || !errors.Is(err, ErrConversationWorkspaceBound)) {
 		return nil, err
 	}
 	meta, _ := e.repo.WorkspaceCheckpoint(id)
@@ -207,7 +225,7 @@ func (e *Engine) PrepareConversationWorkspace(ctx context.Context, id, token str
 	}
 	// Readers stay available during execution; never inject prior outputs while
 	// a node is currently expected to generate its own fresh deliverables.
-	if hasRunningNode(run) || !run.IsWorkspace() && (run.Status == "running" || run.Status == "queued") {
+	if run.HasActiveNode() || !run.IsWorkspace() && (run.Status == "running" || run.Status == "queued") {
 		return nil, nil
 	}
 	return e.restoreArchivedWorkspaceFiles(ctx, run)
@@ -230,13 +248,19 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 	}
 	runner := e.defaultExecutionRunner(run)
 	if runner == "" && e.foreignWorkspaceBind(run) {
-		if run.WorkspaceCleanedAt.IsZero() {
-			return nil
+		if !run.WorkspaceCleanedAt.IsZero() {
+			if err := e.restoreOrReuseRemoteConversationCheckpoint(ctx, run); err != nil {
+				return err
+			}
+			return e.repo.RestoreCheckpointWorkspaceBinding(id, token, "", "", time.Now().UTC())
 		}
-		if err := e.restoreOrReuseRemoteConversationCheckpoint(ctx, run); err != nil {
-			return err
+		// An uncleaned checkout still belongs to a live instance. Returning
+		// success here used to let the chat start, then fail in
+		// LocalRunWorkspace with a generic generation error.
+		if e.workspaceBlocked(run) {
+			return ErrConversationWorkspaceBound
 		}
-		return e.repo.RestoreCheckpointWorkspaceBinding(id, token, "", "", time.Now().UTC())
+		return e.rebindOfflineConversationWorkspace(ctx, id, token, run)
 	}
 	if runner == "" && run.WorkspaceCleanedAt.IsZero() {
 		root, reason := e.LocalRunWorkspace(run)
@@ -246,6 +270,9 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 		if info, err := os.Lstat(root); err == nil {
 			if !info.IsDir() {
 				return fmt.Errorf("工作区路径不是目录")
+			}
+			if run.IsWorkspace() && run.WorkspaceRoot == "" {
+				return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
 			}
 			return nil
 		} else if !os.IsNotExist(err) {
@@ -276,15 +303,88 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 	}
 	root := e.sandboxes.RunWorkspace(id)
 	if info, statErr := os.Lstat(root); statErr == nil && info.IsDir() && !e.foreignWorkspaceBind(run) {
-		if err = e.verifyStoredCheckpoint(ctx, id); err != nil {
+		hasContent, contentErr := runtime.WorkspaceDirHasContent(root)
+		if contentErr != nil {
+			return contentErr
+		}
+		if hasContent {
+			if err = e.verifyStoredCheckpoint(ctx, id); err != nil {
+				return err
+			}
+			return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+		}
+		// An empty or .agentflow-only directory created before restoration
+		// holds no user files; tear down any container bound to its old inode
+		// so restoreConversationCheckpoint can atomically replace it and the
+		// next container bind sees the restored files.
+		if err = e.releaseRunEnvironment(id, false); err != nil {
 			return err
 		}
-		return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+		e.sandboxes.DiscardRunContainer(ctx, id)
 	}
 	if err = e.restoreConversationCheckpoint(ctx, run, root); err != nil {
 		return err
 	}
 	return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+}
+
+// ErrConversationWorkspaceBound means this process must not open a checkout
+// that a live instance still serves.
+var ErrConversationWorkspaceBound = errors.New("工作区绑定在其他 LoopForge 实例")
+
+// ErrConversationWorkspaceLost means the bound instance is gone and neither
+// the checkout nor a snapshot could be recovered. The workspace is already
+// bound to the current instance, so the next turn can start.
+var ErrConversationWorkspaceLost = errors.New("原工作区实例已下线，未保存的改动无法恢复。工作区已换到当前实例，请重试")
+
+// rebindOfflineConversationWorkspace moves a conversation workspace off an
+// instance that is no longer alive. A checkout still present under this
+// sandbox root is kept if it has user files. Publish the new binding only
+// after the recovered checkout is ready so a failed restore can be retried.
+func (e *Engine) rebindOfflineConversationWorkspace(ctx context.Context, id, token string, run domain.Run) error {
+	_, boundRoot := e.workspaceBind(run)
+	local := e.sandboxes.RunWorkspace(id)
+	sameRoot := boundRoot == e.sandboxes.Root()
+	hasCheckout := false
+	if sameRoot {
+		var err error
+		hasCheckout, err = runtime.WorkspaceDirHasContent(local)
+		if err != nil {
+			return err
+		}
+	}
+	message := "原工作区实例已下线，当前实例继续使用同一目录中的检出"
+	var lost error
+	if !hasCheckout {
+		if err := e.releaseRunEnvironment(id, !sameRoot); err != nil {
+			return err
+		}
+		e.sandboxes.DiscardRunContainer(ctx, id)
+		meta, _ := e.repo.WorkspaceCheckpoint(id)
+		if meta.SavedAt != nil && meta.SHA256 != "" {
+			if err := e.restoreConversationCheckpoint(ctx, run, local); err != nil {
+				return err
+			}
+			message = "原工作区实例已下线，已从最近一次快照恢复；快照之后的未提交改动已丢失"
+		} else {
+			if err := os.MkdirAll(local, 0o700); err != nil {
+				return err
+			}
+			lost = ErrConversationWorkspaceLost
+			message = lost.Error()
+		}
+	}
+	if err := e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC()); err != nil {
+		return err
+	}
+	e.noteConversationWorkspaceRebound(id, message)
+	return lost
+}
+
+func (e *Engine) noteConversationWorkspaceRebound(id, message string) {
+	e.updateRunSettling(id, func(r *domain.Run) {
+		e.event(r, "", "workspace.rebound", message)
+	})
 }
 
 // claimIdleConversationWorkspace returns managed=true even on save failure, so
@@ -301,6 +401,12 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	if !run.WorkspaceCleanedAt.IsZero() {
 		return false, false, nil, nil
 	}
+	if run.IsWorkspace() {
+		busy, err := e.repo.HasWorkspaceSOPRuns(run.ID, "running", "queued", "waiting")
+		if err != nil || busy {
+			return true, false, nil, err
+		}
+	}
 	if !e.conversationWorkspaceIdle(run) || e.conversationGenerationRunning(run) {
 		return true, false, nil, nil
 	}
@@ -311,7 +417,8 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 		idleSinceBeforeLease = run.UpdatedAt
 	}
 	released := exists && meta.Released()
-	if exists && meta.FollowUp && !released && now.Before(idleSinceBeforeLease.Add(ConversationWorkspaceIdleTTL)) {
+	retryDue := meta.SaveRetryAt != nil && !now.Before(*meta.SaveRetryAt)
+	if exists && meta.FollowUp && !retryDue && !released && now.Before(idleSinceBeforeLease.Add(ConversationWorkspaceIdleTTL)) {
 		return true, false, nil, nil
 	}
 	token, err := e.repo.BeginWorkspaceCheckpointSave(run.ID, now)
@@ -351,7 +458,7 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 			finish()
 		}
 	}()
-	if released || meta.SavedAt == nil || run.UpdatedAt.After(*meta.SavedAt) || meta.Error != "" || !now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
+	if retryDue || released || meta.SavedAt == nil || run.UpdatedAt.After(*meta.SavedAt) || meta.Error != "" || !now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		captureErr := e.saveConversationWorkspace(ctx, run, token)

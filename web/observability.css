@@ -31,7 +31,13 @@
 #runsView .run-status-wrap .button[data-resume-run]{min-height:0;height:22px;padding:0 12px;font-size:9.5px;border-radius:6px;background:var(--green) !important;background-image:none !important;border-color:transparent;color:#fff;box-shadow:none}
 #runsView .run-status-wrap .button[data-resume-run]:hover{background:color-mix(in srgb,var(--green) 86%,#000) !important;box-shadow:none;transform:none}
 .run-header-main h2{margin:0;font-size:18px}
-.run-header-main p{max-width:760px;margin:5px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px}
+.run-header-main>div:first-child{min-width:0}
+.run-header-copy{display:block;max-width:760px;margin:5px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);font-size:12px}
+.run-header-description summary{cursor:pointer;list-style:none}
+.run-header-description summary::-webkit-details-marker{display:none}
+.run-header-description:not([open]) .run-header-copy{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.run-description-more,.run-description-less{display:inline-block;margin-top:5px;color:var(--blue);font-size:12px}
+.run-header-description[open] .run-description-more,.run-header-description:not([open]) .run-description-less{display:none}
 .run-header-meta{display:flex;gap:15px;margin-top:12px;color:var(--muted-2);font-size:9.5px}
 .run-header-meta code{font-size:9.5px}
 .run-header-actions{position:static;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
@@ -99,8 +105,20 @@
 .node-inspector-title h3{flex:0 0 auto}
 .node-inspector-title .node-inspector-model{display:block;margin-top:0;color:var(--muted-2);font-size:11px}
 .node-inspector-title .node-activity-inline{display:inline-flex;align-items:baseline;gap:4px;margin-top:0;padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:var(--bg-soft);color:var(--muted-2);font-size:10px;white-space:nowrap;max-width:100%;overflow:hidden}
-.node-inspector-title .node-activity-inline b{font-weight:650;color:var(--text);overflow:hidden;text-overflow:ellipsis}
+.node-inspector-title .node-activity-inline b{min-width:0;font-weight:650;color:var(--hui-text);overflow:hidden;text-overflow:ellipsis}
 .node-inspector-title .node-activity-inline[hidden]{display:none}
+/* 运行状态转圈与活动文字高光共享真实执行状态，不影响历史日志。 */
+.node-inspector .node-inspector-status{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
+.node-inspector-status.is-running::before{content:"";width:12px;height:12px;box-sizing:border-box;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:node-status-spin .85s linear infinite}
+@keyframes node-status-spin{to{transform:rotate(360deg)}}
+@supports ((background-clip:text) or (-webkit-background-clip:text)){
+  .node-inspector-title .node-activity-inline.is-running b{color:transparent;background-image:linear-gradient(100deg,var(--hui-secondary) 40%,var(--hui-text) 50%,var(--hui-secondary) 60%);background-size:250% 100%;background-position:100% 0;background-clip:text;-webkit-background-clip:text;animation:node-activity-shimmer 2.4s ease-in-out infinite}
+}
+@keyframes node-activity-shimmer{from{background-position:100% 0}to{background-position:0 0}}
+@media (prefers-reduced-motion:reduce),(forced-colors:active){
+  .node-inspector-status.is-running::before{animation:none}
+  .node-inspector-title .node-activity-inline.is-running b{animation:none;background:none;color:var(--hui-text)}
+}
 .node-error,.node-output{margin-top:10px;border:1px solid var(--line);border-radius:9px;overflow:hidden}
 .node-output>div{height:35px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border-bottom:1px solid var(--line);background:var(--bg-soft)}
 .node-output b{font-size:10px}
@@ -140,9 +158,14 @@
 .node-artifact-list{display:grid;gap:8px}
 .node-artifact-card{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);cursor:pointer;transition:border-color .14s}
 .node-artifact-card:hover{border-color:var(--blue)}
-.node-artifact-card b{font-size:11px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.node-artifact-card span{font-size:9px;color:var(--muted-2)}
-.node-artifact-card code{font-size:8.5px;color:var(--muted-2)}
+.node-artifact-info{display:flex;flex:1;flex-direction:column;gap:3px;min-width:0;text-align:left}
+.node-artifact-info>b{font-size:11px;overflow-wrap:anywhere}
+.node-artifact-info>span,.node-artifact-info>small{font-size:10px;color:var(--muted-2);overflow-wrap:anywhere}
+.node-artifact-card>i{flex:none;white-space:nowrap}
+.approval-artifacts{display:flex;flex-wrap:wrap;gap:6px}
+.approval-artifacts>button{max-width:100%;min-width:0;text-align:left}
+.approval-artifacts>button>svg{flex:none}
+.approval-artifacts>button>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .artifact-file-icon{width:28px;height:28px;display:grid;place-items:center;border-radius:7px;background:var(--blue-soft);color:var(--blue);font-size:12px}
 .approval-callout{display:flex;flex-direction:column;flex-shrink:0;min-height:fit-content;overflow:visible;gap:12px;margin:14px 20px 0;padding:16px 20px;border:1px solid rgba(245,158,11,.45);border-radius:12px;background:rgba(251,191,36,.08);box-sizing:border-box}
 .approval-callout.failed{border-color:rgba(239,68,68,.45);background:rgba(239,68,68,.07)}

@@ -3,6 +3,7 @@ import React, {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -41,8 +42,6 @@ import "./artifact-preview.css";
 const Check = (props) => <HarnessIcon name="check" {...props} />;
 const Copy = (props) => <HarnessIcon name="copy" {...props} />;
 const Download = (props) => <HarnessIcon name="download" {...props} />;
-const Expand = (props) => <HarnessIcon name="preview-expand" {...props} />;
-const Image = (props) => <HarnessIcon name="image" {...props} />;
 const ImageOff = (props) => <HarnessIcon name="image-off" {...props} />;
 const Refresh = (props) => <HarnessIcon name="refresh" {...props} />;
 const Spinner = (props) => <HarnessIcon name="spinner" {...props} />;
@@ -389,30 +388,29 @@ const markdownComponents = {
     </div>
   ),
 };
-export function RichContent({ message, assets = [], projectId = "" }) {
+const emptyAssets = [];
+export function RichContent({ message, assets = emptyAssets, projectId = "" }) {
   const text = typeof message === "string" ? message : visibleText(message);
   const citationInfo = useCitationInfo(text);
+  const context = useMemo(() => ({ assets, projectId }), [assets, projectId]);
+  const markdown = useMemo(() => (
+    <Markdown
+      remarkPlugins={[remarkGfm, remarkWorkspaceLinks, [remarkKnowledgeCitations, { info: citationInfo }]]}
+      components={markdownComponents}
+      urlTransform={markdownURL}
+    >
+      {text}
+    </Markdown>
+  ), [text, citationInfo]);
   return (
-    <MarkdownAssets.Provider value={{ assets, projectId }}>
-      <div className="markdown">
-        <Markdown
-          remarkPlugins={[
-            remarkGfm,
-            remarkWorkspaceLinks,
-            [remarkKnowledgeCitations, { info: citationInfo }],
-          ]}
-          components={markdownComponents}
-          urlTransform={markdownURL}
-        >
-          {text}
-        </Markdown>
-      </div>
+    <MarkdownAssets.Provider value={context}>
+      <div className="markdown">{markdown}</div>
     </MarkdownAssets.Provider>
   );
 }
 
 // Full-window viewer shared by chat images, artifact previews and SOP node
-// files. Double-click an image (or its expand icon) to open; Esc closes.
+// files. Double-click an image to open; Esc closes.
 export function ImageLightbox({ src, alt, onClose }) {
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
@@ -502,15 +500,18 @@ export function Attachment({ attachment, sessionId, onOpen }) {
       <button
         type="button"
         className={image ? "message-image" : "attachment-chip"}
+        // The card shows no caption, so the hover title names the file.
         title={
           image
-            ? failed
-              ? "单击在产物栏打开"
-              : "单击在产物栏打开，双击查看大图"
+            ? `${attachment.name}\n${failed ? "单击在产物栏打开" : "单击查看大图"}`
             : undefined
         }
         onClick={(e) => {
           if (continuesRetry(e)) return;
+          if (image && !failed) {
+            setZoom(true);
+            return;
+          }
           onOpen({
             ...attachment,
             url,
@@ -518,13 +519,6 @@ export function Attachment({ attachment, sessionId, onOpen }) {
             source: "会话附件",
           });
         }}
-        onDoubleClick={
-          image && !failed
-            ? (e) => {
-                if (!continuesRetry(e)) setZoom(true);
-              }
-            : undefined
-        }
       >
         {image ? (
           <span
@@ -573,24 +567,6 @@ export function Attachment({ attachment, sessionId, onOpen }) {
             <span>{attachment.name}</span>
           </>
         )}
-        {image ? (
-          <span className="image-caption">
-            <Image size={14} />
-            <span className="image-caption-name">{attachment.name}</span>
-            <span
-              className="image-zoom"
-              aria-hidden="true"
-              data-disabled={failed || undefined}
-              onClick={(e) => {
-                if (failed) return;
-                e.stopPropagation();
-                setZoom(true);
-              }}
-            >
-              <Expand size={14} />
-            </span>
-          </span>
-        ) : null}
       </button>
       {zoom ? (
         <ImageLightbox

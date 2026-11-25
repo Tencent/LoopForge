@@ -61,10 +61,49 @@ const ConversationWorkspaceWorkflowID = "conversation-workspace"
 // IsWorkspace distinguishes an on-demand chat workspace from a scheduled SOP.
 func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
 
+// IsPersonalWorkspace identifies a workspace whose access is scoped to its owner.
+func (r Run) IsPersonalWorkspace() bool {
+	return r.IsWorkspace() && r.ExecutionContext.ProjectID == ""
+}
+
+// LiveWorkspace reports a chat workspace that is open for edits. It has no SOP
+// graph to pause, so Main Bot and people in the IDE edit it side by side and
+// rely on expectedSha256 to catch conflicting writes.
+func (r Run) LiveWorkspace() bool {
+	return r.IsWorkspace() && !r.CancelRequested && r.WorkspaceCleanedAt.IsZero() && (r.Status == "running" || r.Status == "waiting")
+}
+
+// HumanEditable reports whether people may edit the workspace in the IDE. Like
+// an AI IDE they edit at any time, also while SOP agents run: nothing pauses,
+// expectedSha256 catches conflicting writes and agents re-read what changed.
+func (r Run) HumanEditable() bool {
+	if !r.WorkspaceCleanedAt.IsZero() {
+		return false
+	}
+	switch r.Status {
+	case "succeeded", "failed", "cancelled":
+		return true
+	case "running", "waiting":
+		return !r.CancelRequested
+	}
+	return false
+}
+
 // HistoricalGroup is a record of the retired role groups. It has no SOP graph
 // that could be resumed or retried.
 func (r Run) HistoricalGroup() bool {
 	return !r.IsWorkspace() && r.WorkflowSnapshot.CollaborationMode == "group"
+}
+
+// HasActiveNode reports whether any node of the run is still executing: it is
+// running or paused for input that the agent asked for mid-step.
+func (r Run) HasActiveNode() bool {
+	for _, nr := range r.Nodes {
+		if nr != nil && (nr.Status == "running" || nr.Status == "pending_input") {
+			return true
+		}
+	}
+	return false
 }
 
 // RepositoryContexts returns the frozen repositories of this run. New runs
@@ -77,6 +116,11 @@ func (r Run) RepositoryContexts() []RepositoryContext {
 		return []RepositoryContext{r.Repository}
 	}
 	return nil
+}
+
+// UsesConversationWorkspace includes a dispatched SOP and its child runs.
+func (r Run) UsesConversationWorkspace() bool {
+	return r.ExecutionContext.ExecutionPinned && r.ExecutionContext.WorkspaceRunID != "" && !r.IsWorkspace()
 }
 
 // UnmarshalJSON lifts the shared sandbox instance from historical node runs.
@@ -126,6 +170,22 @@ type NodeRun struct {
 	ChildRunID      string      `json:"childRunId,omitempty"`
 	StartedAt       time.Time   `json:"startedAt,omitzero"`
 	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
+
+	// Stream cursors are message-scoped; pending usage is already included in
+	// Usage until a session result replaces it with authoritative totals.
+	UsageStreamCursors map[string]TokenUsage `json:"usageStreamCursors,omitempty"`
+	UsagePending       map[string]TokenUsage `json:"usagePending,omitempty"`
+}
+
+// Question is what the node asks a human to supply: the actionRequired of
+// a "human" decision while the node waits for it. Empty otherwise, also
+// for a paused or turn-exhausted node that still carries an earlier
+// decision.
+func (n *NodeRun) Question() string {
+	if n == nil || n.Status != "waiting_approval" || n.Activity != "等待人工确认" || n.GateResult == nil || n.GateResult.Decision != "human" {
+		return ""
+	}
+	return strings.TrimSpace(n.GateResult.ActionRequired)
 }
 
 // GateResult is the structured terminal decision submitted by an Agent through
@@ -156,6 +216,9 @@ type TokenUsage struct {
 	// CostStatus 区分"成本为 0"与"成本未知"：reported（适配器上报）、estimated（按 token 估算）、
 	// unknown（未识别，展示为"未识别"而不是 ¥0）。空值视为 unknown，旧数据向后兼容。
 	CostStatus string `json:"costStatus,omitempty"`
+	// Marks a platform-priced total so a sum of reported and fallback-priced
+	// invocations is not repriced as though it came from one model call.
+	CostPricingVersion string `json:"costPricingVersion,omitempty"`
 }
 
 type TelemetryEvent struct {
@@ -184,6 +247,8 @@ type TelemetryEvent struct {
 	ModelOperation *ModelObservation `json:"modelOperation,omitempty"`
 	Error          *ErrorObservation `json:"error,omitempty"`
 }
+
+const RunEventSandboxSelected = "sandbox.selected"
 
 type RunEvent struct {
 	ID        string    `json:"id"`

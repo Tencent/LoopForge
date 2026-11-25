@@ -44,10 +44,14 @@ func TestAssistantTaskValidationPersistenceAndDue(t *testing.T) {
 	if err != nil || got.ID == "" || got.LastStatus != "idle" || got.CreatedAt.IsZero() {
 		t.Fatalf("normalize new = %+v, %v", got, err)
 	}
+	longPrompt := strings.Repeat("p", 8000)
+	long, err := normalizeAssistantTask(assistantTask{Name: "n", Prompt: longPrompt, ProjectID: "p", IntervalSec: 60}, assistantTask{})
+	if err != nil || long.Prompt != longPrompt {
+		t.Fatalf("long prompt rejected: %+v %v", long, err)
+	}
 	for _, tc := range []assistantTask{
 		{Prompt: "p", ProjectID: "p", IntervalSec: 60},
 		{Name: strings.Repeat("名", 81), Prompt: "p", ProjectID: "p", IntervalSec: 60},
-		{Name: "n", Prompt: strings.Repeat("p", 4001), ProjectID: "p", IntervalSec: 60},
 		{Name: "n", Prompt: "p", ProjectID: "p", IntervalSec: 59},
 		{Name: "n", Prompt: "p", ProjectID: "p", IntervalSec: assistantTaskMaxInterval + 1},
 		{Name: "n", Prompt: "p", ProjectID: "p", Cron: "bad cron"},
@@ -172,18 +176,24 @@ func TestAssistantTaskHandlersAndExecution(t *testing.T) {
 	if task.LastStatus != "ok" || strings.Contains(task.LastMessage, "secret") || task.SessionID == "" {
 		t.Fatalf("executed task = %+v", task)
 	}
-	h.active.Store(user.ID, true)
+	h.active.Store(assistantTaskActiveKey(task.ID, user.ID), true)
 	if err := h.executeAssistantTask(context.Background(), user, &task); !errors.Is(err, errAssistantBusy) {
 		t.Fatalf("busy error = %v", err)
 	}
-	h.active.Delete(user.ID)
+	// Another task of the same owner is not blocked by this one.
+	other := assistantTask{ID: "job-other", Name: "other", ProjectID: task.ProjectID, Prompt: "other"}
+	h.generate = func(context.Context, string, domain.User) (string, error) { return "完成", nil }
+	if err := h.executeAssistantTask(context.Background(), user, &other); err != nil {
+		t.Fatalf("other task blocked by a running one: %v", err)
+	}
+	h.active.Delete(assistantTaskActiveKey(task.ID, user.ID))
 	h.generate = func(context.Context, string, domain.User) (string, error) { return "", errors.New("upstream") }
 	if err := h.executeAssistantTask(context.Background(), user, &task); err == nil || task.LastStatus != "error" {
 		t.Fatalf("generation failure = %v %+v", err, task)
 	}
 	noKey := user
 	noKey.CodeBuddyAPIKey = ""
-	if err := h.executeAssistantTask(context.Background(), noKey, &task); err == nil || !strings.Contains(task.LastError, "API Key") {
+	if err := h.executeAssistantTask(context.Background(), noKey, &task); err == nil || task.LastError != errFeatureCredentials.Error() {
 		t.Fatalf("missing key = %v %+v", err, task)
 	}
 }
@@ -214,7 +224,7 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 	seeded, err := SeedAssistantAcceptance(st, AssistantAcceptanceIdentity{
 		LoginName: "accept-user", CodeBuddyAPIKey: "cb", GitToken: "git",
 	})
-	if err != nil || seeded.ChineseName != "accept-user" || seeded.GitToken != "git" {
+	if err != nil || seeded.ChineseName != "accept-user" || !seeded.GitHubCredentialConfigured || seeded.GitToken != "" {
 		t.Fatalf("seeded = %+v, %v", seeded, err)
 	}
 	if _, ok := st.Project(assistantAcceptanceProjectID); !ok {
@@ -223,13 +233,11 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 
 	h := &assistantHandlers{deps: &deps{repo: st}}
 	for tool, wantPart := range map[string]string{
-		"agents_delete":       "不存在",
-		"rules_delete":        "不存在",
-		"skills_delete":       "不存在",
-		"dockerfiles_delete":  "不存在",
-		"environments_delete": "不存在",
-		"sandboxes_delete":    "不存在",
-		"workflows_delete":    "不存在",
+		"agents_delete":    "不存在",
+		"rules_delete":     "不存在",
+		"skills_delete":    "不存在",
+		"sandboxes_delete": "不存在",
+		"workflows_delete": "不存在",
 	} {
 		d := assistantDraft{Tool: tool, Body: json.RawMessage(`{"id":"missing"}`)}
 		warnings := h.assistantDraftWarnings(d)
@@ -251,13 +259,9 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 	_ = st.PutRule(domain.RuleDefinition{ID: "rule-ref", Name: "Rule", ProjectID: projectID})
 	_ = st.PutSkill(domain.SkillDefinition{ID: "skill-ref", Name: "Skill", ProjectID: projectID})
 	_ = st.PutAgent(domain.AgentDefinition{ID: "agent-ref", Name: "Agent Ref", ProjectID: projectID, Rules: []string{"rule-ref"}, Skills: []string{"skill-ref"}})
-	_ = st.PutDockerfile(domain.DockerfileDefinition{ID: "docker-ref", Name: "Docker", ProjectID: projectID})
-	_ = st.PutEnvironment(domain.EnvironmentDefinition{ID: "env-ref", Name: "Env", ProjectID: projectID})
-	_ = st.PutSandbox(domain.SandboxProfile{ID: "sandbox-ref", Name: "Sandbox Ref", ProjectID: projectID, DockerfileID: "docker-ref", EnvironmentID: "env-ref"})
+	_ = st.PutSandbox(domain.SandboxProfile{ID: "sandbox-ref", Name: "Sandbox Ref", ProjectID: projectID})
 	_ = st.PutWorkflow(domain.WorkflowDefinition{ID: "workflow-ref", Name: "Workflow Ref", ProjectID: projectID, SandboxProfileID: "sandbox-ref"})
 	_ = h.agentNamesReferencing("rule", "rule-ref")
 	_ = h.agentNamesReferencing("skill", "skill-ref")
-	_ = h.sandboxNamesReferencing("dockerfile", "docker-ref")
-	_ = h.sandboxNamesReferencing("environment", "env-ref")
 	_ = h.workflowNamesReferencingSandbox("sandbox-ref")
 }

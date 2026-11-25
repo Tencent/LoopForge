@@ -6,6 +6,7 @@ import {
   savedActivity,
   activityFace,
   activityForReply,
+  generationStored,
   activityTarget,
   thoughtLine,
   hasTextSegments,
@@ -68,14 +69,24 @@ test("activity summaries replace internal tool names with readable subjects whil
   const open = {
     kind: "tool",
     tool: "mcp__agentflow_session__workbench_workspace_open",
-    detail: '{"goal":"修复登录按钮文案"}',
+    detail: '{"sandboxProfileId":"generic-docker"}',
   };
   assert.equal(activityFace(open).done, "已打开工作区");
-  assert.equal(activityTarget(open), "修复登录按钮文案");
-  assert.equal(
-    activityFace({ kind: "tool", tool: "workbench_workspace_submit_mr" }).done,
-    "已提交 MR",
-  );
+  assert.equal(activityTarget(open), "generic-docker");
+  const delivery = {
+    kind: "tool",
+    tool: "workbench_delivery_register",
+    detail: '{"urls":["https://github.com/a/b/pull/1"],"title":"修复登录按钮文案"}',
+  };
+  assert.equal(activityFace(delivery).done, "已登记交付");
+  assert.equal(activityTarget(delivery), "修复登录按钮文案");
+  const publish = {
+    kind: "tool",
+    tool: "mcp__agentflow_session__workbench_publish_artifact",
+    detail: '{"path":"reports/demo.html"}',
+  };
+  assert.equal(activityFace(publish).done, "已发布产物");
+  assert.equal(activityTarget(publish), "reports/demo.html");
   const read = {
     kind: "tool",
     tool: "Read",
@@ -311,4 +322,18 @@ test("tool rounds fold into one summary and only the trailing round stays active
     activityGroupSummary(many),
     "已运行命令、读取文件、搜索代码等",
   );
+});
+
+test("quick retries with matching timestamps keep generation identities separate", () => {
+  const message = {
+    role: "assistant", generationId: "failed-turn",
+    startedAt: "2026-11-13T10:00:00Z", content: '{"message":"ok"}',
+  };
+  const generation = {
+    id: "retry-turn", status: "completed",
+    startedAt: message.startedAt, reply: { message: "ok" },
+  };
+  assert.equal(generationStored([message], generation), false);
+  assert.deepEqual(activityForReply(message, generation, [{ kind: "tool", id: "new-tool" }]), []);
+  assert.equal(generationStored([{ ...message, generationId: generation.id }], generation), true);
 });

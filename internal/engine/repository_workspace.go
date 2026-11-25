@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/procwatch"
+	"agentflow/internal/runtime"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -56,16 +57,57 @@ func repositoryWorkspaceDirs(workspace string, repositories []domain.RepositoryC
 
 // prepareRepositories checks out every run repository into its WorkspaceDir
 // (a first-level sub-directory of the run workspace).
-func prepareRepositories(ctx context.Context, workspace string, repositories []domain.RepositoryContext) error {
-	if len(repositories) == 0 {
-		return nil
+func prepareRepositories(ctx context.Context, workspace string, repositories []domain.RepositoryContext, preserveCheckout ...bool) error {
+	prepare := prepareRepository
+	if len(preserveCheckout) > 0 && preserveCheckout[0] {
+		if !gitwork.HasWorkspaceExecutor(ctx) {
+			return fmt.Errorf("shared checkout preparation requires the SOP sandbox")
+		}
+		prepare = prepareSharedRepository
+	}
+	if err := runtime.RestoreLegacyWorkspaceAgentConfig(ctx, workspace, repositories); err != nil {
+		return err
 	}
 	for _, rc := range repositories {
-		if err := prepareRepository(ctx, repositoryWorkspacePath(workspace, rc), rc); err != nil {
+		dir := repositoryWorkspacePath(workspace, rc)
+		if err := prepare(ctx, dir, rc); err != nil {
 			return fmt.Errorf("repository %s: %w", rc.Name, err)
 		}
 	}
 	return nil
+}
+
+func repositoryCheckoutRemote(repository domain.RepositoryContext) string {
+	if remote := strings.TrimSpace(repository.CloneURL); remote != "" {
+		return remote
+	}
+	return strings.TrimSpace(repository.LocalPath)
+}
+
+func prepareSharedRepository(ctx context.Context, dir string, repository domain.RepositoryContext) error {
+	existing, err := gitwork.ExistingSOPCheckout(ctx, dir, repositoryCheckoutRemote(repository))
+	if err != nil {
+		return err
+	}
+	if existing {
+		if err := runtime.RestoreLegacyProjectAgentConfig(ctx, dir); err != nil {
+			return err
+		}
+	}
+	if !existing || repository.RequireExistingWorkBranch || repository.CreateNewWorkBranch {
+		return prepareRepository(ctx, dir, repository)
+	}
+	ctx = withRepositoryGit(ctx, repository)
+	if err := applyWorkspaceGitAuth(ctx, dir); err != nil {
+		return err
+	}
+	if err := applyWorkspaceGitIdentity(ctx, dir); err != nil {
+		return err
+	}
+	if err := gitwork.ContinueSOPCheckout(ctx, dir, repository.WorkBranch); err != nil {
+		return err
+	}
+	return gitwork.RecordBaselineContext(ctx, dir, repositoryBaseBranch(repository))
 }
 
 func repositoryBaseBranch(repository domain.RepositoryContext) string {
@@ -95,6 +137,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	if repository.RepositoryID == "" {
 		return nil
 	}
+	ctx = withRepositoryGit(ctx, repository)
 	if repository.RequireExistingWorkBranch && !existingDevelopmentBranch(repository) {
 		return fmt.Errorf("continuing an existing branch requires a development branch distinct from the main and integration branches")
 	}
@@ -133,29 +176,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		}
 	}
 	if localIsDir && !localIsGit && cloneURL == "" {
-		if repository.RequireExistingWorkBranch {
-			return fmt.Errorf("cannot continue branch %q: local source is not a Git repository", repository.WorkBranch)
-		}
-		base := strings.TrimSpace(repository.BaseBranch)
-		defaultBranch := strings.TrimSpace(repository.DefaultBranch)
-		legacyDefault := defaultBranch == "" && (base == "master" || base == "main")
-		if base != "" && base != defaultBranch && !legacyDefault {
-			return fmt.Errorf("cannot check out base branch %q: local source is not a Git repository", base)
-		}
-		cmd := exec.CommandContext(ctx, "cp", "-a", filepath.Clean(localPath)+"/.", workspace)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("copy local source: %w: %s", err, strings.TrimSpace(string(output)))
-		}
-		for _, args := range [][]string{{"init", "-b", "agentflow-base"}, {"config", "user.email", "loopforge@local"}, {"config", "user.name", "LoopForge"}, {"add", "-A"}, {"commit", "-m", "LoopForge baseline", "--quiet"}} {
-			cmd = exec.CommandContext(ctx, "git", append([]string{"-C", workspace}, args...)...)
-			if output, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("snapshot local source: %w: %s", err, strings.TrimSpace(string(output)))
-			}
-		}
-		if err := applyWorkspaceGitIdentity(ctx, workspace); err != nil {
-			return err
-		}
-		return recordRepositoryBaseline(workspace, "")
+		return prepareLocalSnapshotRepository(ctx, workspace, localPath, repository)
 	}
 	remote := cloneURL
 	if remote == "" {
@@ -169,6 +190,11 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	}
 	baseBranch := repositoryBaseBranch(repository)
 	clone := func(branch string, useReference bool) error {
+		if useReference {
+			if cloned, err := cloneFromRepositoryCache(ctx, workspace, repository, branch); cloned || err != nil {
+				return err
+			}
+		}
 		// --progress: without a terminal git prints nothing until it finishes,
 		// which is what made a slow clone indistinguishable from a hung one.
 		args := []string{"clone", "--progress", "--no-hardlinks", "--single-branch", "--branch", branch}
@@ -181,7 +207,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		}
 		// Clone into the existing directory (`.`) so git cannot unlink and
 		// recreate `workspace`. That inode is the Docker bind-mount source.
-		args = append(args, "--", gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), ".")
+		args = append(args, "--", cloneRemoteForGit(ctx, remote), ".")
 		if _, err := gitwork.Watch(ctx, workspace, watch, args...); err != nil {
 			return fmt.Errorf("git clone: %w", err)
 		}
@@ -203,11 +229,17 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		if procwatch.Stopped(err) || ctx.Err() != nil {
 			return err
 		}
+		if gitwork.UsesSSH(ctx) && !localIsGit {
+			return err
+		}
 		if clearErr := reset(workspace); clearErr != nil {
 			return clearErr
 		}
 		if retryErr := clone(baseBranch, false); retryErr != nil {
-			if seeded, seedErr := seedEmptyRepository(ctx, workspace, gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), repository.DefaultBranch, baseBranch, reset); seeded {
+			if gitwork.UsesSSH(ctx) {
+				return retryErr // An SSH checkout never initializes a remote branch.
+			}
+			if seeded, seedErr := seedEmptyRepository(ctx, workspace, cloneRemoteForGit(ctx, remote), repository.DefaultBranch, baseBranch, reset); seeded {
 				if seedErr != nil {
 					return seedErr
 				}
@@ -273,7 +305,36 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 			return err
 		}
 	}
-	return recordRepositoryBaseline(workspace, baseBranch)
+	return gitwork.RecordBaselineContext(ctx, workspace, baseBranch)
+}
+
+// prepareLocalSnapshotRepository copies a non-Git local source directory into
+// workspace and commits it as a single baseline on agentflow-base. Such a
+// source has no branches, so continuing a work branch or checking out a custom
+// base branch is refused.
+func prepareLocalSnapshotRepository(ctx context.Context, workspace, localPath string, repository domain.RepositoryContext) error {
+	if repository.RequireExistingWorkBranch {
+		return fmt.Errorf("cannot continue branch %q: local source is not a Git repository", repository.WorkBranch)
+	}
+	base := strings.TrimSpace(repository.BaseBranch)
+	defaultBranch := strings.TrimSpace(repository.DefaultBranch)
+	legacyDefault := defaultBranch == "" && (base == "master" || base == "main")
+	if base != "" && base != defaultBranch && !legacyDefault {
+		return fmt.Errorf("cannot check out base branch %q: local source is not a Git repository", base)
+	}
+	cmd := exec.CommandContext(ctx, "cp", "-a", filepath.Clean(localPath)+"/.", workspace)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("copy local source: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	for _, args := range [][]string{{"init", "-b", "agentflow-base"}, {"config", "user.email", "loopforge@local"}, {"config", "user.name", "LoopForge"}, {"add", "-A"}, {"commit", "-m", "LoopForge baseline", "--quiet"}} {
+		if _, err := gitC(ctx, workspace, args...); err != nil {
+			return fmt.Errorf("snapshot local source: %w", err)
+		}
+	}
+	if err := applyWorkspaceGitIdentity(ctx, workspace); err != nil {
+		return err
+	}
+	return gitwork.RecordBaselineContext(ctx, workspace, "")
 }
 
 // seedEmptyRepository handles a freshly created Gongfeng repository with no
@@ -380,13 +441,15 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 		branch, _ := gitC(ctx, workspace, "branch", "--show-current")
 		if strings.TrimSpace(branch) == repository.WorkBranch {
 			if _, err := gitC(ctx, workspace, "rev-parse", "--verify", "MERGE_HEAD"); err == nil {
-				return recordRepositoryBaseline(workspace, baseBranch)
+				return gitwork.RecordBaselineContext(ctx, workspace, baseBranch)
 			}
 		}
 	}
 	if _, err := gitC(ctx, workspace, "remote", "get-url", "origin"); err == nil {
 		if _, err := gitC(ctx, workspace, "fetch", "--prune", "origin", baseBranch); err != nil {
-			_, _ = gitC(ctx, workspace, "fetch", "--prune", "origin")
+			if _, fallbackErr := gitC(ctx, workspace, "fetch", "--prune", "origin"); fallbackErr != nil && gitwork.UsesSSH(ctx) {
+				return fmt.Errorf("git fetch: %w", fallbackErr)
+			}
 		}
 		if repository.WorkBranch != "" {
 			if err := fetchRepositoryWorkBranch(ctx, workspace, repository); err != nil {
@@ -413,7 +476,7 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 			return err
 		}
 	}
-	return recordRepositoryBaseline(workspace, baseBranch)
+	return gitwork.RecordBaselineContext(ctx, workspace, baseBranch)
 }
 
 // A continued branch is user-selected work. Never apply the legacy namesake
@@ -612,7 +675,7 @@ func defaultWorkBranch(issueNumber int, issueID string, now time.Time) string {
 	if issueNumber > 0 {
 		branchOwner = fmt.Sprintf("fix-issue-%d", issueNumber)
 	} else if issueID != "" {
-		branchOwner = "fix-" + safeGitRefSegment(issueID)
+		branchOwner = "fix-" + domain.SafeGitRefSegment(issueID)
 	}
 	branch := "feature/" + branchOwner + "-" + now.In(time.Local).Format("20060102-1504")
 	if issueNumber <= 0 && issueID == "" {
@@ -630,27 +693,4 @@ func workBranchNonce() string {
 		return strconv.FormatInt(time.Now().UnixNano()%(1<<24), 36)
 	}
 	return hex.EncodeToString(b[:])
-}
-
-func safeGitRefSegment(value string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(value) {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
-			b.WriteRune(r)
-		} else if b.Len() > 0 {
-			b.WriteByte('-')
-		}
-		if b.Len() >= 64 {
-			break
-		}
-	}
-	result := strings.Trim(b.String(), "-.")
-	if result == "" {
-		return "run"
-	}
-	return result
-}
-
-func recordRepositoryBaseline(workspace, baseBranch string) error {
-	return gitwork.RecordBaseline(workspace, baseBranch)
 }

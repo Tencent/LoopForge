@@ -26,7 +26,7 @@ func autoMigrateIncremental(db *gorm.DB, models []any) error {
 	for _, model := range models {
 		if !m.HasTable(model) {
 			create := m
-			// Bot chat and page feedback may contain supplementary Unicode (emoji).
+			// Bot chat may contain supplementary Unicode (emoji).
 			// Do not inherit a legacy database utf8mb3 default for these tables.
 			if needsUTF8MB4Table(model) && db.Dialector.Name() == "mysql" {
 				create = db.Set("gorm:table_options", "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci").Migrator()
@@ -63,7 +63,7 @@ func autoMigrateIncremental(db *gorm.DB, models []any) error {
 
 func needsUTF8MB4Table(model any) bool {
 	switch model.(type) {
-	case domain.BotInteraction, pageFeedbackRow, pageFeedbackImageRow,
+	case domain.BotInteraction, botPendingDraftRow, botClarifySessionRow,
 		knowledgeBaseRow, knowledgeSourceRow, knowledgeBindingRow, knowledgeSyncJobRow, knowledgeActivityRow,
 		knowledgeWritebackRow, knowledgeTombstoneRow, knowledgeCitationRow,
 		knowledgeFeedbackRow, knowledgeGapRow, knowledgeGovernanceIssueRow, knowledgeGovernanceScanRow,

@@ -1,6 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 
 // ---------- 极简 DOM ----------
@@ -167,8 +168,8 @@ function makeContext({ echarts, reduced } = {}) {
   ctx.__frames = frames;
   ctx.__IO = IO;
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync('app/obs-charts.js', 'utf8'), ctx);
-  vm.runInContext(fs.readFileSync('app/observability.js', 'utf8'), ctx);
+  vm.runInContext(fs.readFileSync('app/obs-charts.js', 'utf8'), ctx, { filename: path.resolve('app/obs-charts.js') });
+  vm.runInContext(fs.readFileSync('app/observability.js', 'utf8'), ctx, { filename: path.resolve('app/observability.js') });
   return ctx;
 }
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -261,6 +262,8 @@ function fireVisible(ctx) {
   const funnel = ctx.obsFunnelStats(stages);
   assert.equal(funnel.worst, 2);
   assert.equal(Math.round(funnel.stages[1].conv), 80);
+  assert.equal(Math.round(funnel.stages[1].drop), 20);
+  assert.equal(ctx.obsFunnelStats([{ value: 1 }, { value: 0 }]).stages[1].drop, 100);
   assert.equal(funnel.stages[2].lost, 6);
   assert.equal(ctx.obsFunnelOption(stages, opts).series[0].data.length, 4);
 

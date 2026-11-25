@@ -193,7 +193,7 @@ func TestDispatchCustomBaseBranchSkipsScheduledIntegration(t *testing.T) {
 	if err := st.PutRepository(domain.Repository{ID: "dispatch-branch-repo", ProjectID: "platform", Name: "Repo", DefaultBranch: "master", IntegrateBranch: "agentflow/integration"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "branch-flow", Name: "Branch flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "branch-flow", Name: "Branch flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}
 	eng := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
@@ -278,7 +278,7 @@ func TestImportTAPDRejectsInvalidLinksBeforeMCP(t *testing.T) {
 	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	for _, tc := range []struct{ text, errorPart string }{
 		{"只有标题，没有链接", "无法识别"},
-		{"https://example.test/tapd_fe/10000000/story/detail/1010000000100001332", "tapd.example.com"},
+		{"https://example.test/tapd_fe/10000000/story/detail/1010000000100001332", "www.tapd.cn"},
 		{"【两个工作项】\nhttps://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001332\nhttps://tapd.example.com/tapd_fe/10000000/task/detail/1010000000100001443", "多个不同"},
 	} {
 		response := requestJSON[map[string]string](t, h, http.MethodPost, "/api/issues/import-tapd", map[string]any{
@@ -303,7 +303,7 @@ func TestDispatchEmptyBaseBranchUsesCurrentConfiguredMainBranch(t *testing.T) {
 	if err := st.PutRepository(repository); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "configured-main-flow", Name: "Main branch flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "configured-main-flow", Name: "Main branch flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}
 	eng := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
@@ -369,7 +369,7 @@ func TestDispatchLegacyDefaultBranchCreatesNewWorkBranchWithoutChangingRecord(t 
 	if err := st.PutRepository(repository); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "legacy-main-flow", Name: "Legacy main", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "legacy-main-flow", Name: "Legacy main", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}
 	issue := domain.Issue{ID: "legacy-main", ProjectID: "platform", Title: "历史主分支", Kind: "issue", RepositoryID: repository.ID, BaseBranch: repository.DefaultBranch, WorkflowID: "legacy-main-flow"}

@@ -23,6 +23,7 @@ import (
 // SedimentStore 是自动沉淀额外需要的控制面能力。*repo.Store 通过内嵌的
 // KnowledgeRepo 满足它；已有 Store 接口保持不动，后台循环与测试各取所需。
 type SedimentStore interface {
+	Run(string) (domain.Run, bool)
 	ManagedStore
 	Issue(id string) (domain.Issue, bool)
 	KnowledgeTombstone(projectID, fingerprint string) (domain.KnowledgeTombstone, bool)
@@ -96,6 +97,10 @@ func NewID() string {
 // 直接走已有写回路径。同一个产物只会入队一次。
 func (s *Service) SedimentOnce(ctx context.Context) (SedimentReport, error) {
 	var report SedimentReport
+	s = s.Snapshot()
+	if !s.Builtin() {
+		return report, nil
+	}
 	store, ok := s.store.(SedimentStore)
 	if !ok {
 		return report, apperr.New(apperr.Unavailable, "知识库沉淀存储不可用")
@@ -150,7 +155,7 @@ func (s *Service) StartSedimentLoop(ctx context.Context) {
 }
 
 func (s *Service) sedimentCandidate(ctx context.Context, store SedimentStore, candidate domain.KnowledgeCandidate) (bool, bool, error) {
-	run, ok := s.store.Run(candidate.Artifact.RunID)
+	run, ok := store.Run(candidate.Artifact.RunID)
 	if !ok {
 		return false, false, nil
 	}

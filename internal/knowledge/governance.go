@@ -496,6 +496,9 @@ func (s *Service) ScanGovernance(ctx context.Context, projectID string) (Governa
 
 // ScanAllGovernance 是后台循环使用的全量扫描；不改变任何面板范围语义。
 func (s *Service) ScanAllGovernance(ctx context.Context) error {
+	if !s.Builtin() {
+		return nil
+	}
 	if s == nil || s.store == nil {
 		return nil
 	}

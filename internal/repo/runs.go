@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -140,20 +141,14 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	}
 	q := r.DB
 	if filter.ProjectIDs != nil {
-		expr := "json_extract(execution_context, '$.projectId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("projectId")
 		q = q.Where(expr+" IN ? OR "+expr+" IS NULL OR "+expr+" = ''", filter.ProjectIDs)
 	}
 	if filter.WorkflowID != "" {
 		q = q.Where("workflow_id = ?", filter.WorkflowID)
 	}
 	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
-		expr := "json_extract(execution_context, '$.projectId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("projectId")
 		// Keep legacy rows with an empty project stamp; FilterRunsByProject
 		// still resolves those through the linked issue.
 		q = q.Where(expr+" = ? OR "+expr+" IS NULL OR "+expr+" = ''", projectID)
@@ -165,10 +160,7 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 		q = q.Where("created_at <= ? OR created_at IS NULL", filter.To)
 	}
 	if issueID != "" {
-		expr := "json_extract(execution_context, '$.issueId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("issueId")
 		q = q.Where(expr+" = ?", issueID)
 	}
 	var rows []runRow
@@ -276,6 +268,16 @@ func (r *RunsRepo) RunStatuses() map[string]string {
 	return out
 }
 
+// ReadRunStatus reads a single run without loading its graph or event history.
+func (r *RunsRepo) ReadRunStatus(ctx context.Context, id string) (status string, found bool, err error) {
+	var row runRow
+	err = r.DB.WithContext(ctx).Select("status").Where("id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", false, nil
+	}
+	return row.Status, err == nil, err
+}
+
 // RunsWithActiveNodes reports runs that still have running or pending_input nodes.
 // Used by task reconciliation without hydrating full run views.
 func (r *RunsRepo) RunsWithActiveNodes() map[string]bool {
@@ -305,6 +307,30 @@ func (r *RunsRepo) Run(id string) (domain.Run, bool) {
 		return domain.Run{}, false
 	}
 	return run, true
+}
+
+// RunHeader reads identity, execution scope and workspace binding without loading the snapshot,
+// nodes, events or artifacts. A missing run is returned as an empty header.
+func (r *RunsRepo) RunHeader(id string) (domain.Run, error) {
+	var row runRow
+	err := r.DB.Select("id", "kind", "workflow_id", "execution_context", "workspace_host", "workspace_root", "workspace_cleaned_at").
+		Where("id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.Run{}, nil
+	}
+	return runFromRow(row), err
+}
+
+// RunWorkflowProjectID reads the frozen project association without loading
+// the workflow graph or execution data.
+func (r *RunsRepo) RunWorkflowProjectID(id string) (string, error) {
+	project := "JSON_EXTRACT(snapshot, '$.projectId')"
+	if r.isMySQL() {
+		project = "JSON_UNQUOTE(" + project + ")"
+	}
+	var row struct{ ProjectID string }
+	err := r.DB.Table("runs").Select(project+" AS project_id").Where("id = ?", id).Scan(&row).Error
+	return strings.TrimSpace(row.ProjectID), err
 }
 
 // RunState returns the durable aggregate needed by the execution engine.
@@ -377,6 +403,21 @@ func (r *RunsRepo) RunView(id string) (domain.Run, bool) {
 				run.Events = append(run.Events, event)
 			}
 		}
+	} else if run.WorkflowSnapshot.AutoSelectSandbox {
+		// This event is written at admission and must remain visible even on
+		// runs with a long history.
+		var rows []runEventRow
+		if err := r.DB.Select("payload").
+			Where("run_id = ? AND type = ?", id, domain.RunEventSandboxSelected).
+			Order("seq").Limit(1).Find(&rows).Error; err != nil {
+			return domain.Run{}, false
+		}
+		if len(rows) > 0 {
+			var event domain.RunEvent
+			if json.Unmarshal(rows[0].Payload, &event) == nil {
+				run.Events = []domain.RunEvent{event}
+			}
+		}
 	}
 	return run, true
 }
@@ -446,10 +487,7 @@ func (r *RunsRepo) SupersededIssueRunIDs(issueID, keepRunID string) []string {
 	if issueID == "" {
 		return nil
 	}
-	expr := "json_extract(execution_context, '$.issueId')"
-	if r.isMySQL() {
-		expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-	}
+	expr := r.sqlExecutionContextJSONText("issueId")
 	var ids []string
 	q := r.DB.Model(&runRow{}).
 		Where(expr+" = ?", issueID).
@@ -756,10 +794,7 @@ func (r *RunsRepo) runTimingEvents(ids []string) (map[string][]domain.RunEvent, 
 // nodes, events or artifact content. Missing runs are absent from the map.
 func (r *RunsRepo) RunProjectIDs(ids []string) (map[string]string, error) {
 	out := make(map[string]string, len(ids))
-	project := "json_extract(execution_context, '$.projectId')"
-	if r.isMySQL() {
-		project = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-	}
+	project := r.sqlExecutionContextJSONText("projectId")
 	for start := 0; start < len(ids); start += 500 {
 		var rows []struct {
 			ID        string
@@ -940,8 +975,13 @@ func (r *RunsRepo) writeRun(run domain.Run, expectedRevision ...int) error {
 }
 
 func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision ...int) error {
+	workspaceAdmission := run.UsesConversationWorkspace() && run.ExecutionContext.ParentRunID == "" &&
+		(run.Status == "running" || run.Status == "queued")
 	var opts []*sql.TxOptions
-	if lockKey != "" {
+	// Under MySQL REPEATABLE READ, a missing run ID takes a gap lock.
+	// A dispatch waiting on the workspace owner could then block the holder's
+	// insert. READ COMMITTED lets the owner row serialize these dispatches.
+	if lockKey != "" || workspaceAdmission {
 		opts = r.admissionTxOptions()
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
@@ -973,6 +1013,11 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 			}
 		} else if err != gorm.ErrRecordNotFound {
 			return err
+		}
+		if workspaceAdmission && current.Status != "running" && current.Status != "queued" {
+			if err := r.checkConversationWorkspaceForSOP(tx, run, current.ID == ""); err != nil {
+				return err
+			}
 		}
 		if len(expectedRevision) > 0 {
 			if err != nil {
@@ -1095,6 +1140,15 @@ func (r *RunsRepo) DeleteRun(id string) error {
 		}
 		if row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
 			return fmt.Errorf("run %s is %s: cancel it before deleting", id, row.Status)
+		}
+		if row.Kind == domain.RunKindWorkspace {
+			inUse, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, id, nil))
+			if err != nil {
+				return err
+			}
+			if inUse {
+				return fmt.Errorf("工作区仍有关联的 SOP 运行：%w", ErrWorkspaceInUse)
+			}
 		}
 		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_evals", "run_workspace_checkpoint_chunks", "run_workspace_checkpoints"} {
 			if err := tx.Table(table).Where("run_id = ?", id).Delete(nil).Error; err != nil {
@@ -1296,39 +1350,7 @@ func (r *RunsRepo) WorkflowMetricsFor(projectID string) []domain.WorkflowMetrics
 			m.LastRunAt = &createdAt
 			m.LastRunStatus = run.Status
 		}
-		index := map[string]int{}
-		for i := range m.NodeMetrics {
-			index[m.NodeMetrics[i].NodeID] = i + 1
-		}
-		for nodeID, node := range run.Nodes {
-			pos := index[nodeID] - 1
-			if pos < 0 {
-				name := nodeID
-				for _, definition := range workflowDefs[run.WorkflowID].Nodes {
-					if definition.ID == nodeID {
-						name = definition.Name
-					}
-				}
-				m.NodeMetrics = append(m.NodeMetrics, domain.WorkflowNodeMetric{NodeID: nodeID, Name: name})
-				pos = len(m.NodeMetrics) - 1
-			}
-			nm := &m.NodeMetrics[pos]
-			if node.Attempt > 0 {
-				nm.Executions += node.Attempt
-			}
-			switch node.Status {
-			case "succeeded":
-				nm.Succeeded++
-			case "failed":
-				nm.Failed++
-			case "waiting_approval":
-				nm.Waiting++
-			}
-			nm.Reworks += node.ReworkCount
-			if !node.StartedAt.IsZero() && !node.FinishedAt.IsZero() {
-				nodeDurations[run.WorkflowID][nodeID] += node.FinishedAt.Sub(node.StartedAt).Milliseconds()
-			}
-		}
+		accumulateNodeMetrics(m, run, workflowDefs[run.WorkflowID], nodeDurations[run.WorkflowID])
 	}
 	out := make([]domain.WorkflowMetrics, 0, len(metrics))
 	for id, m := range metrics {
@@ -1366,6 +1388,45 @@ func (r *RunsRepo) WorkflowMetricsFor(projectID string) []domain.WorkflowMetrics
 		return left.After(right)
 	})
 	return out
+}
+
+// accumulateNodeMetrics folds one run's node results into m.NodeMetrics,
+// appending a metric (named from def, falling back to the node ID) for nodes
+// not seen before, and adds finished node durations to durations by node ID.
+func accumulateNodeMetrics(m *domain.WorkflowMetrics, run domain.Run, def domain.WorkflowDefinition, durations map[string]int64) {
+	index := map[string]int{}
+	for i := range m.NodeMetrics {
+		index[m.NodeMetrics[i].NodeID] = i + 1
+	}
+	for nodeID, node := range run.Nodes {
+		pos := index[nodeID] - 1
+		if pos < 0 {
+			name := nodeID
+			for _, definition := range def.Nodes {
+				if definition.ID == nodeID {
+					name = definition.Name
+				}
+			}
+			m.NodeMetrics = append(m.NodeMetrics, domain.WorkflowNodeMetric{NodeID: nodeID, Name: name})
+			pos = len(m.NodeMetrics) - 1
+		}
+		nm := &m.NodeMetrics[pos]
+		if node.Attempt > 0 {
+			nm.Executions += node.Attempt
+		}
+		switch node.Status {
+		case "succeeded":
+			nm.Succeeded++
+		case "failed":
+			nm.Failed++
+		case "waiting_approval":
+			nm.Waiting++
+		}
+		nm.Reworks += node.ReworkCount
+		if !node.StartedAt.IsZero() && !node.FinishedAt.IsZero() {
+			durations[nodeID] += node.FinishedAt.Sub(node.StartedAt).Milliseconds()
+		}
+	}
 }
 
 // parallel waits for a set of concurrent loads and returns the first error.
@@ -1676,9 +1737,9 @@ func adapterSQLFilter(adapter string) sqlFilter {
 	case "hooks":
 		return sqlFilter{clause: " AND adapter IN (?, ?)", args: []any{observability.AdapterHooks, observability.AdapterLegacyHooks}}
 	case "otel":
-		return sqlFilter{clause: " AND adapter=?", args: []any{observability.AdapterOTEL}}
+		return sqlFilter{clause: " AND adapter IN (?, ?)", args: []any{observability.AdapterOTEL, observability.AdapterLegacyOTEL}}
 	case "live":
-		return sqlFilter{clause: " AND adapter NOT IN (?, ?, ?)", args: []any{observability.AdapterHooks, observability.AdapterLegacyHooks, observability.AdapterOTEL}}
+		return sqlFilter{clause: " AND adapter NOT IN (?, ?, ?, ?)", args: []any{observability.AdapterHooks, observability.AdapterLegacyHooks, observability.AdapterOTEL, observability.AdapterLegacyOTEL}}
 	default:
 		return sqlFilter{clause: " AND adapter=?", args: []any{strings.TrimSpace(adapter)}}
 	}

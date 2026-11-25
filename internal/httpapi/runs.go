@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -9,7 +10,9 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -29,6 +32,7 @@ func (h *runsHandlers) analytics(c *gin.Context) {
 		ProjectID:        c.Query("projectId"),
 		WorkflowID:       c.Query("workflowId"),
 		Scope:            strings.TrimSpace(c.Query("scope")),
+		IncludeDashboard: c.Query("dashboard") == "1",
 		UserID:           strings.TrimSpace(c.Query("userId")),
 		IssueSource:      strings.TrimSpace(c.Query("issueSource")),
 		RequirementsOnly: c.Query("requirementsOnly") == "1",
@@ -84,7 +88,15 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			respond(c, err)
 			return
 		}
-		c.JSON(200, runSummaries(runs))
+		user, authenticated := h.requestUser(r, true)
+		visible := runs[:0]
+		for _, run := range runs {
+			if run.IsPersonalWorkspace() && (!authenticated || user.ID <= 0 || user.ID != run.ExecutionContext.ResponsibleUserID) {
+				continue
+			}
+			visible = append(visible, run)
+		}
+		c.JSON(200, runSummaries(visible))
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -110,16 +122,24 @@ func (h *runsHandlers) runs(c *gin.Context) {
 		if workflow, ok := h.repo.Workflow(strings.TrimSpace(req.WorkflowID)); ok && !workflow.Shared && !workflow.Generic {
 			workflowProject = workflow.ProjectID
 		}
+		scope := scheduledAssetsFrom(r.Context())
+		scopedWorkflow := scope.Version.ID != "" && scope.ProjectID == req.ProjectID && scope.Version.HasAsset("sop", strings.TrimSpace(req.WorkflowID))
+		if scopedWorkflow {
+			if err := h.repo.ValidateSharedScheduleAssets(scope.Version); err != nil {
+				respond(c, err)
+				return
+			}
+			workflowProject = ""
+		}
 		if !h.requireProjectWriter(c, req.ProjectID, workflowProject) {
 			return
 		}
-		var responsibleUserID int64
+		executionContext := domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: project.OwnerID}
 		if current, ok := h.requestUser(r, true); ok {
-			responsibleUserID = current.ID
-		} else if project.OwnerID > 0 {
-			responsibleUserID = project.OwnerID
+			executionContext.ResponsibleUserID = current.ID
+			executionContext.WorkspaceRunID = dispatchConversationWorkspace(h.deps, r, current.ID, req.ProjectID)
 		}
-		if responsibleUserID == 0 {
+		if executionContext.ResponsibleUserID == 0 {
 			c.JSON(http.StatusConflict, map[string]string{"error": "手动运行需要登录用户或已配置 Owner 的项目"})
 			return
 		}
@@ -131,19 +151,21 @@ func (h *runsHandlers) runs(c *gin.Context) {
 				c.JSON(http.StatusConflict, map[string]string{"error": "项目默认代码仓库无效，请重新绑定", "code": "repository_required"})
 				return
 			}
-			repositories = []domain.RepositoryContext{{
-				RepositoryID: repoDef.ID, Provider: repoDef.Provider, Name: repoDef.Name,
-				GongfengProjectID: repoDef.GongfengProjectID, WebURL: repoDef.WebURL, CloneURL: repoDef.CloneURL,
-				BaseBranch: repoDef.DefaultBranch, DefaultBranch: repoDef.DefaultBranch, LocalPath: repoDef.LocalPath,
-				PipelineProjectID: repoDef.PipelineProjectID, PipelineDefID: repoDef.PipelineDefID, PipelineURLPattern: repoDef.PipelineURLPattern,
-			}}
+			repositories = []domain.RepositoryContext{repositoryRunContext(repoDef)}
 		}
-		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: responsibleUserID})
+		if scopedWorkflow {
+			executionContext.SharedScheduleID, executionContext.SharedScheduleVersion = scope.Version.ID, scope.Version.Version
+		}
+		v, err := h.engine.StartWithRepositories(r.Context(), req.WorkflowID, req.Input, repositories, executionContext)
 		if err != nil {
+			if errors.Is(err, repo.ErrWorkspaceInUse) {
+				respond(c, HTTPError{http.StatusConflict, err.Error()})
+				return
+			}
 			respond(c, err)
 			return
 		}
-		c.JSON(201, v)
+		c.JSON(201, publicRun(v, false))
 		return
 	}
 }
@@ -347,6 +369,14 @@ func publicRun(run domain.Run, summary bool) domain.Run {
 	for i := range run.Artifacts {
 		run.Artifacts[i].Content = ""
 	}
+	// Runs keep the stored clone URL so a repository saved with credentials
+	// before they were rejected still clones; readers never see them.
+	run.Repository = domain.PublicRepositoryContext(run.Repository)
+	run.Repositories = append([]domain.RepositoryContext(nil), run.Repositories...)
+	for i := range run.Repositories {
+		run.Repositories[i] = domain.PublicRepositoryContext(run.Repositories[i])
+	}
+	run.Input = gitwork.Redact(run.Input)
 	newNodes := make(map[string]*domain.NodeRun, len(run.Nodes))
 	for k, n := range run.Nodes {
 		if n == nil {
@@ -385,13 +415,19 @@ func publicRun(run domain.Run, summary bool) domain.Run {
 	return run
 }
 
-// publicLiveRun is the SSE payload: keep finished-node output and artifact
-// metadata so the inspector can update without a full refetch, but still drop
-// log/telemetry bodies (those arrive as deltas).
+// publicLiveRun keeps finished-node output, artifact metadata and the sandbox
+// decision in SSE. Logs and telemetry arrive as deltas.
 func publicLiveRun(run domain.Run) domain.Run {
 	run = publicRun(run, false)
 	if run.WorkflowSnapshot.CollaborationMode != "group" {
+		events := run.Events
 		run.Events = nil
+		for _, event := range events {
+			if event.Type == domain.RunEventSandboxSelected {
+				run.Events = []domain.RunEvent{event}
+				break
+			}
+		}
 	}
 	run.Input = clipRunText(run.Input, 500)
 	return run

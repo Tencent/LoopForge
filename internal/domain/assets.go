@@ -30,7 +30,7 @@ type SkillDefinition struct {
 	ProjectID   string            `json:"projectId,omitempty"`
 	Shared      bool              `json:"shared,omitempty"`
 	Description string            `json:"description"`
-	Content     string            `json:"content"`
+	Content     string            `json:"content,omitempty"` // Legacy catalog input and embedded template content.
 	Files       map[string]string `json:"files,omitempty"`
 	// FileRefs is the manifest of binary assets stored in the skill_files
 	// table (one row per file). Only metadata travels in the payload; the
@@ -89,9 +89,13 @@ type MCPServerDefinition struct {
 	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	PathEntries      []string          `json:"pathEntries,omitempty"`
 	FileRefs         []MCPFileRef      `json:"fileRefs,omitempty"`
-	AuthType         string            `json:"authType,omitempty"` // empty, github-token
-	TimeoutSec       int               `json:"timeoutSec"`
-	UpdatedAt        time.Time         `json:"updatedAt"`
+	AuthType         string            `json:"authType,omitempty"` // empty, github-token, credential
+	// CredentialKind names the platform-managed credential (RunCredentials.Extra
+	// key) bound as the Authorization Bearer header when AuthType is
+	// "credential". The stored asset never holds the secret itself.
+	CredentialKind string    `json:"credentialKind,omitempty"`
+	TimeoutSec     int       `json:"timeoutSec"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type MCPFileRef struct {
@@ -113,10 +117,11 @@ type AgentAssetBundle struct {
 	MCPFiles   map[string]map[string][]byte `json:"mcpFiles,omitempty"`
 }
 
-// DockerfileDefinition is a Studio-managed build recipe. Content and Files are
-// stored on the catalog row in MySQL, the same way EnvironmentDefinition stores
-// install.sh. Docker sandboxes select one of these; the runtime materializes a
-// temporary build context from the stored payload at sandbox initialization.
+// DockerfileDefinition is the build recipe a runner spec carries for a docker
+// sandbox, derived from the profile's Dockerfile (ID and Name are the
+// sandbox's). The runtime materializes a temporary build context from it at
+// sandbox initialization. Run snapshots frozen before the recipe moved into
+// the sandbox carry the former catalog fields.
 type DockerfileDefinition struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
@@ -128,37 +133,72 @@ type DockerfileDefinition struct {
 	UpdatedAt   time.Time         `json:"updatedAt"`
 }
 
-// EnvironmentDefinition is a named execution toolchain for process sandboxes.
-// InstallScript is stored on the environment asset and loaded from the catalog
-// at sandbox init; it runs once with PREFIX set to the isolated environment root.
-type EnvironmentDefinition struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	ProjectID     string            `json:"projectId,omitempty"`
-	Shared        bool              `json:"shared,omitempty"`
-	Description   string            `json:"description"`
-	Variables     map[string]string `json:"variables,omitempty"`
-	PathEntries   []string          `json:"pathEntries,omitempty"`
-	InstallScript string            `json:"installScript,omitempty"`
-	UpdatedAt     time.Time         `json:"updatedAt"`
-}
-
 type SandboxProfile struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
+	Toolchain      string            `json:"toolchain,omitempty"`
 	ProjectID      string            `json:"projectId,omitempty"`
 	Shared         bool              `json:"shared,omitempty"`
-	Driver         string            `json:"driver"` // local, native, docker (seatbelt / bwrap are resolved native values)
-	DockerfileID   string            `json:"dockerfileId,omitempty"`
-	EnvironmentID  string            `json:"environmentId,omitempty"`
+	Driver         string            `json:"driver"` // native, docker (seatbelt / bwrap are resolved native values)
 	ReadOnlyRootFS bool              `json:"readOnlyRootFS"`
 	Environment    map[string]string `json:"environment,omitempty"`
+	// Dockerfile is the image recipe of a docker sandbox.
+	Dockerfile *SandboxDockerfile `json:"dockerfile,omitempty"`
+	// DockerfileID names the recipe in runner specs (see RunnerSandbox);
+	// stored profiles leave it empty.
+	DockerfileID string `json:"dockerfileId,omitempty"`
 }
 
-// Sandbox drivers. Profiles store local, native or docker; native is the OS
+// SandboxDockerfile is a Dockerfile and the files of its build context.
+type SandboxDockerfile struct {
+	Content string            `json:"content"`
+	Files   map[string]string `json:"files,omitempty"`
+}
+
+// ValidateSandboxAssets checks the sandbox driver and the recipe it needs:
+// docker requires a Dockerfile, native carries only environment variables.
+func ValidateSandboxAssets(v SandboxProfile) error {
+	switch strings.TrimSpace(v.Driver) {
+	case SandboxDriverDocker, SandboxDriverNative, SandboxDriverSeatbelt, SandboxDriverBwrap:
+	case SandboxDriverLocal:
+		return fmt.Errorf("local 沙箱已移除，请改用 native 沙箱")
+	default:
+		return fmt.Errorf("不支持的沙箱类型 %q", v.Driver)
+	}
+	docker := strings.TrimSpace(v.Driver) == SandboxDriverDocker
+	switch {
+	case docker && (v.Dockerfile == nil || strings.TrimSpace(v.Dockerfile.Content) == ""):
+		return fmt.Errorf("Docker 沙箱需要 Dockerfile 内容")
+	case !docker && v.Dockerfile != nil:
+		return fmt.Errorf("只有 Docker 沙箱可以配置 Dockerfile")
+	}
+	if v.Dockerfile != nil {
+		if err := ValidateManagedFiles(v.Dockerfile.Files); err != nil {
+			return fmt.Errorf("构建上下文：%w", err)
+		}
+	}
+	return ValidateEnvironmentVariables(v.Environment)
+}
+
+// RunnerSandbox is the runner spec of a stored profile: its Dockerfile
+// becomes the recipe a runner builds, named after the sandbox. The spec's
+// profile drops the embedded copy.
+func RunnerSandbox(profile SandboxProfile) *RunnerSandboxSpec {
+	spec := &RunnerSandboxSpec{Profile: profile}
+	spec.Profile.Dockerfile = nil
+	if d := profile.Dockerfile; d != nil && strings.TrimSpace(d.Content) != "" {
+		spec.Profile.DockerfileID = profile.ID
+		spec.Dockerfile = &DockerfileDefinition{ID: profile.ID, Name: profile.Name, ProjectID: profile.ProjectID, Shared: profile.Shared, Content: d.Content, Files: d.Files}
+	}
+	return spec
+}
+
+// Sandbox drivers. Profiles store native or docker; native is the OS
 // lightweight process sandbox and resolves on the executing machine to
 // seatbelt (macOS) or bwrap (Linux). seatbelt / bwrap remain valid resolved
 // values (runner task payloads, rows written before the native option).
+// local is the runtime's unisolated driver for internal callers; no profile
+// may store it.
 const (
 	SandboxDriverLocal    = "local"
 	SandboxDriverNative   = "native"
@@ -166,6 +206,27 @@ const (
 	SandboxDriverSeatbelt = "seatbelt"
 	SandboxDriverBwrap    = "bwrap"
 )
+
+// ConversationSandboxDriver reports whether a conversation workspace can run
+// in a sandbox of driver: Docker, or the native lightweight sandbox (stored as
+// native, or already resolved to seatbelt / bwrap).
+func ConversationSandboxDriver(driver string) bool {
+	switch strings.TrimSpace(driver) {
+	case SandboxDriverDocker, SandboxDriverNative, SandboxDriverSeatbelt, SandboxDriverBwrap:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidateFrozenSandbox rejects the removed local driver in a sandbox frozen
+// into a run before it was removed: the runtime would run it unisolated.
+func ValidateFrozenSandbox(profile SandboxProfile) error {
+	if strings.TrimSpace(profile.Driver) == SandboxDriverLocal {
+		return fmt.Errorf("沙箱 %s 使用已移除的 local 类型，请改用 native 沙箱后重新发起", profile.ID)
+	}
+	return nil
+}
 
 // ResolveSandboxDriver maps native onto the lightweight sandbox of goos and
 // returns every other driver unchanged. An empty goos (a runner that never
@@ -185,34 +246,6 @@ func ResolveSandboxDriver(driver, goos string) (string, error) {
 	default:
 		return "", fmt.Errorf("系统轻量隔离（native）仅支持 macOS 与 Linux，当前执行机器为 %s", goos)
 	}
-}
-
-func ValidateDockerfile(v DockerfileDefinition) error {
-	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
-		return fmt.Errorf("Dockerfile 需要 id 和 name")
-	}
-	if strings.TrimSpace(v.Content) == "" {
-		return fmt.Errorf("Dockerfile 内容不能为空")
-	}
-	return ValidateManagedFiles(v.Files)
-}
-
-func ValidateEnvironment(v EnvironmentDefinition) error {
-	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
-		return fmt.Errorf("环境需要 id 和 name")
-	}
-	if err := ValidateEnvironmentVariables(v.Variables); err != nil {
-		return err
-	}
-	for _, entry := range v.PathEntries {
-		if err := ValidateRelativeFilePath(entry); err != nil {
-			return fmt.Errorf("pathEntries: %w", err)
-		}
-	}
-	if strings.ContainsRune(v.InstallScript, '\x00') {
-		return fmt.Errorf("install.sh 不能包含 NUL")
-	}
-	return nil
 }
 
 func ValidateEnvironmentVariables(values map[string]string) error {
@@ -291,42 +324,66 @@ func ValidateMCPServer(v MCPServerDefinition) error {
 	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
 		return fmt.Errorf("MCP 需要 id 和 name")
 	}
+	if err := validateMCPTransport(v); err != nil {
+		return err
+	}
+	if v.TimeoutSec < 0 || v.TimeoutSec > 600 {
+		return fmt.Errorf("timeoutSec 需在 0–600 之间")
+	}
+	if err := validateMCPScope(v); err != nil {
+		return err
+	}
+	return validateMCPAuth(v)
+}
+
+// validateMCPTransport checks the launch settings required by v.Transport.
+func validateMCPTransport(v MCPServerDefinition) error {
 	switch strings.TrimSpace(v.Transport) {
 	case "http":
 		if !strings.HasPrefix(v.URL, "http://") && !strings.HasPrefix(v.URL, "https://") {
 			return fmt.Errorf("HTTP MCP 需要有效的 url")
 		}
+		return nil
 	case "stdio", "":
-		if strings.TrimSpace(v.Command) == "" {
-			return fmt.Errorf("stdio MCP 需要 command")
-		}
-		if strings.ContainsRune(v.InstallScript, '\x00') {
-			return fmt.Errorf("MCP 安装脚本不能包含 NUL")
-		}
-		if cwd := strings.TrimSpace(v.WorkingDirectory); cwd != "" {
-			if err := ValidateRelativeFilePath(cwd); err != nil {
-				return fmt.Errorf("workingDirectory: %w", err)
-			}
-		}
-		for _, entry := range v.PathEntries {
-			if err := ValidateRelativeFilePath(entry); err != nil {
-				return fmt.Errorf("pathEntries: %w", err)
-			}
-		}
-		for _, ref := range v.FileRefs {
-			if err := ValidateRelativeFilePath(ref.Path); err != nil {
-				return err
-			}
-			if ref.Size < 0 || ref.Size > MCPFileMaxBytes {
-				return fmt.Errorf("MCP file %s exceeds the 1MB limit", ref.Path)
-			}
-		}
+		return validateMCPStdio(v)
 	default:
 		return fmt.Errorf("transport 只能是 stdio 或 http")
 	}
-	if v.TimeoutSec < 0 || v.TimeoutSec > 600 {
-		return fmt.Errorf("timeoutSec 需在 0–600 之间")
+}
+
+// validateMCPStdio checks the command, install script and workspace-relative
+// paths of a stdio MCP server.
+func validateMCPStdio(v MCPServerDefinition) error {
+	if strings.TrimSpace(v.Command) == "" {
+		return fmt.Errorf("stdio MCP 需要 command")
 	}
+	if strings.ContainsRune(v.InstallScript, '\x00') {
+		return fmt.Errorf("MCP 安装脚本不能包含 NUL")
+	}
+	if cwd := strings.TrimSpace(v.WorkingDirectory); cwd != "" {
+		if err := ValidateRelativeFilePath(cwd); err != nil {
+			return fmt.Errorf("workingDirectory: %w", err)
+		}
+	}
+	for _, entry := range v.PathEntries {
+		if err := ValidateRelativeFilePath(entry); err != nil {
+			return fmt.Errorf("pathEntries: %w", err)
+		}
+	}
+	for _, ref := range v.FileRefs {
+		if err := ValidateRelativeFilePath(ref.Path); err != nil {
+			return err
+		}
+		if ref.Size < 0 || ref.Size > MCPFileMaxBytes {
+			return fmt.Errorf("MCP file %s exceeds the 1MB limit", ref.Path)
+		}
+	}
+	return nil
+}
+
+// validateMCPScope checks that project and personal servers carry exactly the
+// owner fields their scope allows.
+func validateMCPScope(v MCPServerDefinition) error {
 	switch strings.TrimSpace(v.Scope) {
 	case "":
 	case "project":
@@ -349,18 +406,39 @@ func ValidateMCPServer(v MCPServerDefinition) error {
 	default:
 		return fmt.Errorf("scope 只能为空、project 或 personal")
 	}
+	return nil
+}
+
+// validateMCPAuth checks v.AuthType and keeps token auth on HTTP
+// servers without a stored Authorization header.
+func validateMCPAuth(v MCPServerDefinition) error {
 	switch strings.TrimSpace(v.AuthType) {
-	case "", "github-token":
+	case "", "github-token", "credential":
 	default:
-		return fmt.Errorf("authType must be empty or github-token")
+		return fmt.Errorf("authType must be empty, github-token or credential")
 	}
 	if v.AuthType == "github-token" && strings.TrimSpace(v.Transport) != "http" {
 		return fmt.Errorf("GitHub 令牌认证仅支持 HTTP MCP")
+	}
+	if v.AuthType == "credential" {
+		if strings.TrimSpace(v.Transport) != "http" {
+			return fmt.Errorf("credential authentication requires an HTTP MCP")
+		}
+		if strings.TrimSpace(v.CredentialKind) == "" {
+			return fmt.Errorf("credential authentication requires credentialKind")
+		}
 	}
 	if v.AuthType == "github-token" {
 		for key := range v.Headers {
 			if strings.EqualFold(strings.TrimSpace(key), "authorization") {
 				return fmt.Errorf("GitHub 令牌认证不允许在资产 Headers 中保存 Authorization")
+			}
+		}
+	}
+	if v.AuthType == "credential" {
+		for key := range v.Headers {
+			if strings.EqualFold(strings.TrimSpace(key), "authorization") {
+				return fmt.Errorf("credential authentication must not store an Authorization header on the asset")
 			}
 		}
 	}

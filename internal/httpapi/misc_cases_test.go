@@ -43,9 +43,10 @@ func cvBMiscContext(method, path string) (*gin.Context, *httptest.ResponseRecord
 
 func TestMiscScheduleRemainingHelpersAndHTTP(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
+	cvBGiveCodeBuddyKey(t, &f)
 	if err := f.s.PutWorkflow(domain.WorkflowDefinition{
 		ID: "cvb-misc-wf", Name: "misc workflow", ProjectID: "platform",
-		Status: "published", Version: 1, SandboxProfileID: "local",
+		Status: "published", Version: 1, SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "approve", Name: "approve", Type: "approval", MaxAttempts: 1}},
 	}); err != nil {
 		t.Fatal(err)
@@ -60,11 +61,22 @@ func TestMiscScheduleRemainingHelpersAndHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	longPrompt := strings.Repeat("x", 8000)
+	longRec := cvBRequest(t, f, http.MethodPost, "/api/schedule-jobs", map[string]any{
+		"name": "long", "skipDispatch": true, "assistantPrompt": longPrompt,
+	}, true)
+	if longRec.Code != http.StatusOK {
+		t.Fatalf("long prompt = %d: %s", longRec.Code, longRec.Body.String())
+	}
+	var longJob domain.ScheduleJob
+	if err := json.Unmarshal(longRec.Body.Bytes(), &longJob); err != nil || longJob.AssistantPrompt != longPrompt {
+		t.Fatalf("long prompt not stored: %v %s", err, longRec.Body.String())
+	}
+
 	for i, tc := range []struct {
 		body any
 		want int
 	}{
-		{map[string]any{"name": "long", "skipDispatch": true, "assistantPrompt": strings.Repeat("x", 4001)}, http.StatusBadRequest},
 		{map[string]any{"id": "cvb-misc-job", "name": "job", "projectId": "cvb-misc-project", "workflowId": "cvb-misc-wf", "intervalSec": 1}, http.StatusOK},
 	} {
 		rec := cvBRequest(t, f, http.MethodPost, "/api/schedule-jobs", tc.body, true)
@@ -248,7 +260,7 @@ func TestMiscProjectPlaybooksPermissionsAndAssignments(t *testing.T) {
 	}
 	if err := f.s.PutWorkflow(domain.WorkflowDefinition{
 		ID: "cvb-playbook-wf", Name: "playbook", ProjectID: "platform",
-		Status: "published", Version: 1, SandboxProfileID: "local",
+		Status: "published", Version: 1, SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "approve", Name: "approve", Type: "approval", MaxAttempts: 1}},
 	}); err != nil {
 		t.Fatal(err)
@@ -396,7 +408,7 @@ func TestMiscRoomAuthorizationRosterAndSuccessHTTP(t *testing.T) {
 	}
 	if err := f.s.PutWorkflow(domain.WorkflowDefinition{
 		ID: "cvb-room-wf", Name: "room workflow", ProjectID: project.ID,
-		Status: "published", Version: 1, SandboxProfileID: "local",
+		Status: "published", Version: 1, SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "approve", Name: "approve", Type: "approval", MaxAttempts: 1}},
 	}); err != nil {
 		t.Fatal(err)

@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -298,13 +299,57 @@ type cursorStream struct {
 	segment  int
 	partial  strings.Builder
 	thinking strings.Builder
+	// hold is a timestamped assistant chunk identical to the text already
+	// streamed. cursor-agent also resends that whole buffer, with timestamp_ms,
+	// immediately before a tool call. The next event decides which it was.
+	hold   string
+	held   bool
+	routes cursorRouteFilter
 }
 
 func (c *cursorStream) flushText(s *ClaudeStream) []string {
-	text := c.partial.String()
-	c.partial.Reset()
-	c.segment++
+	text := stripCursorAutoRoute(c.partial.String())
+	c.resetPartial()
 	return s.Text(text)
+}
+
+func (c *cursorStream) resetPartial() {
+	c.partial.Reset()
+	c.routes = cursorRouteFilter{}
+	c.segment++
+}
+
+// releaseHold commits or drops the identical chunk saved by acceptPartial.
+// A tool call means it was the CLI resending the buffer, so it is dropped.
+func (c *cursorStream) releaseHold(discard bool) string {
+	if !c.held {
+		return ""
+	}
+	text := c.hold
+	c.hold = ""
+	c.held = false
+	if discard {
+		return ""
+	}
+	return c.appendPartial(text)
+}
+
+// acceptPartial returns the newly visible text. A chunk identical to the
+// buffer is held until the next event; every other chunk is an increment,
+// even when it happens to start with the buffered text.
+func (c *cursorStream) acceptPartial(text string) string {
+	accumulated := c.partial.String()
+	if accumulated != "" && text == accumulated {
+		c.hold = text
+		c.held = true
+		return ""
+	}
+	return c.appendPartial(text)
+}
+
+func (c *cursorStream) appendPartial(text string) string {
+	c.partial.WriteString(text)
+	return c.routes.feed(text)
 }
 
 func (c *cursorStream) flushThinking(s *ClaudeStream) []string {
@@ -347,6 +392,15 @@ func cursorToolCall(raw map[string]any) (name string, input any, result map[stri
 }
 
 func (c *cursorStream) translate(s *ClaudeStream, raw map[string]any) []string {
+	kind := stringValue(raw["type"])
+	var prelude []string
+	if text := c.releaseHold(kind == "tool_call"); text != "" {
+		prelude = s.Delta(fmt.Sprintf("text#%d", c.segment), "text", text)
+	}
+	return append(prelude, c.translateEvent(s, raw)...)
+}
+
+func (c *cursorStream) translateEvent(s *ClaudeStream, raw map[string]any) []string {
 	switch stringValue(raw["type"]) {
 	case "system":
 		if stringValue(raw["subtype"]) == "init" {
@@ -364,12 +418,13 @@ func (c *cursorStream) translate(s *ClaudeStream, raw map[string]any) []string {
 		text := contentText(message["content"])
 		out := c.flushThinking(s)
 		if _, partial := raw["timestamp_ms"]; partial {
-			c.partial.WriteString(text)
-			return append(out, s.Delta(fmt.Sprintf("text#%d", c.segment), "text", text)...)
+			if text = c.acceptPartial(text); text != "" {
+				return append(out, s.Delta(fmt.Sprintf("text#%d", c.segment), "text", text)...)
+			}
+			return out
 		}
-		c.partial.Reset()
-		c.segment++
-		return append(out, s.Text(text)...)
+		c.resetPartial()
+		return append(out, s.Text(stripCursorAutoRoute(text))...)
 	case "tool_call":
 		out := append(c.flushThinking(s), c.flushText(s)...)
 		id := stringValue(raw["call_id"])
@@ -398,13 +453,172 @@ func (c *cursorStream) translate(s *ClaudeStream, raw map[string]any) []string {
 		usage, _ := raw["usage"].(map[string]any)
 		s.SetUsage(int64Value(usage["inputTokens"]), int64Value(usage["outputTokens"]), int64Value(usage["cacheReadTokens"]), int64Value(usage["cacheWriteTokens"]), 0)
 		failed, _ := raw["is_error"].(bool)
-		text := stringValue(raw["result"])
+		text := stripCursorAutoRoute(stringValue(raw["result"]))
 		if failed && text == "" {
 			text = errorText(raw["error"])
 		}
 		return append(out, s.Result(text, failed)...)
 	}
 	return nil
+}
+
+const cursorAutoRoutePrefix = "Auto routed to "
+
+var (
+	// The notice ends the line: either the whole line, or glued on with ">"
+	// ("回复。> Auto routed to GPT-5.6 Luna"). The model is a few ASCII words
+	// with a version digit, so prose that mentions the phrase is kept.
+	cursorAutoRouteNoticeRe = regexp.MustCompile(`(?:^|[ \t]*>)[ \t]*Auto routed to ([A-Za-z][A-Za-z0-9.\-]*(?: [A-Za-z0-9][A-Za-z0-9.\-]*){0,4})[ \t]*$`)
+	cursorAutoRouteModelRe  = regexp.MustCompile(`^[A-Za-z0-9.\- ]{0,64}$`)
+)
+
+// cursorAutoRouteNotice returns the text before a routing notice that ends line.
+func cursorAutoRouteNotice(line string) (string, bool) {
+	m := cursorAutoRouteNoticeRe.FindStringSubmatchIndex(line)
+	if m == nil {
+		return "", false
+	}
+	model := line[m[2]:m[3]]
+	if !strings.ContainsAny(model, "0123456789") || strings.HasSuffix(model, ".") {
+		return "", false
+	}
+	return line[:m[0]], true
+}
+
+// cursorAutoRouteMayStart reports whether rest can still grow into a notice.
+// Once it cannot, appending more text never makes it one again.
+func cursorAutoRouteMayStart(rest string, afterMarker bool) bool {
+	rest = strings.TrimLeft(rest, " \t")
+	if len(rest) <= len(cursorAutoRoutePrefix) {
+		return strings.HasPrefix(cursorAutoRoutePrefix, rest) && (afterMarker || rest != "")
+	}
+	return strings.HasPrefix(rest, cursorAutoRoutePrefix) && cursorAutoRouteModelRe.MatchString(rest[len(cursorAutoRoutePrefix):])
+}
+
+// cursorRouteFilter drops Cursor Auto's routing notice from assistant text as
+// it streams. Only the first non-empty line after a notice is compared with
+// the line before it; a repeat there is the same progress sentence and is
+// dropped. Repeated lines elsewhere stay. Text that may still turn into a
+// notice or that repeat is held until the line settles, so every chunk only
+// costs work on the unfinished line.
+type cursorRouteFilter struct {
+	line    string   // unfinished line
+	shown   int      // bytes of line already emitted
+	open    bool     // line is started in the output
+	any     bool     // output has at least one line
+	last    string   // last non-empty output line, trimmed
+	anchor  string   // line before the latest notice
+	pending bool     // waiting for the first non-empty line after a notice
+	blanks  []string // blank lines held while pending
+}
+
+func (f *cursorRouteFilter) feed(text string) string {
+	var w strings.Builder
+	for {
+		i := strings.IndexByte(text, '\n')
+		if i < 0 {
+			break
+		}
+		f.line += text[:i]
+		text = text[i+1:]
+		f.endLine(&w)
+	}
+	f.line += text
+	if safe := f.safe(); safe > f.shown {
+		f.startLine(&w)
+		w.WriteString(f.line[f.shown:safe])
+		f.shown = safe
+		f.pending = false
+	}
+	return w.String()
+}
+
+func (f *cursorRouteFilter) finish() string {
+	var w strings.Builder
+	f.endLine(&w)
+	return w.String()
+}
+
+// safe is how much of the unfinished line can be shown now.
+func (f *cursorRouteFilter) safe() int {
+	line := f.line
+	if f.pending && !f.open {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || f.anchor != "" && strings.HasPrefix(f.anchor, trimmed) {
+			return 0
+		}
+	}
+	if !f.open && cursorAutoRouteMayStart(line, false) {
+		return 0
+	}
+	limit := len(strings.TrimRight(line, " \t"))
+	for i := f.shown; i < limit; i++ {
+		if line[i] == '>' && cursorAutoRouteMayStart(line[i+1:], true) {
+			return min(limit, len(strings.TrimRight(line[:i], " \t")))
+		}
+	}
+	return limit
+}
+
+func (f *cursorRouteFilter) startLine(w *strings.Builder) {
+	if f.open {
+		return
+	}
+	for _, blank := range f.blanks {
+		f.newline(w)
+		w.WriteString(blank)
+	}
+	f.blanks = nil
+	f.newline(w)
+	f.open = true
+}
+
+func (f *cursorRouteFilter) newline(w *strings.Builder) {
+	if f.any {
+		w.WriteByte('\n')
+	}
+	f.any = true
+}
+
+func (f *cursorRouteFilter) endLine(w *strings.Builder) {
+	line := f.line
+	defer func() { f.line, f.shown, f.open = "", 0, false }()
+	if before, ok := cursorAutoRouteNotice(line); ok {
+		if trimmed := strings.TrimSpace(before); trimmed != "" {
+			f.startLine(w)
+			w.WriteString(before[f.shown:])
+			f.last = trimmed
+		}
+		f.anchor, f.pending, f.blanks = f.last, true, nil
+		return
+	}
+	trimmed := strings.TrimSpace(line)
+	if f.pending && !f.open {
+		if trimmed == "" {
+			f.blanks = append(f.blanks, line)
+			return
+		}
+		f.pending = false
+		if f.anchor != "" && trimmed == f.anchor {
+			f.blanks = nil
+			return
+		}
+	}
+	f.pending = false
+	f.startLine(w)
+	w.WriteString(line[f.shown:])
+	if trimmed != "" {
+		f.last = trimmed
+	}
+}
+
+// stripCursorAutoRoute is cursorRouteFilter applied to a finished text.
+func stripCursorAutoRoute(text string) string {
+	if !strings.Contains(text, cursorAutoRoutePrefix) {
+		return text
+	}
+	var f cursorRouteFilter
+	return f.feed(text) + f.finish()
 }
 
 // antigravityStream: `agy -p --output-format stream-json`.
@@ -420,44 +634,7 @@ func (a *antigravityStream) translate(s *ClaudeStream, raw map[string]any) []str
 		return s.Init(stringValue(raw["conversation_id"]), stringValue(init["model"]))
 	case "step_update":
 		step, _ := raw["step_update"].(map[string]any)
-		index := int64Value(step["step_index"])
-		done := stringValue(step["state"]) == "DONE"
-		switch stringValue(step["step_type"]) {
-		case "agent_response":
-			delta := stringValue(step["text_delta"])
-			a.text.WriteString(delta)
-			out := s.Delta(fmt.Sprintf("text#%d", index), "text", delta)
-			if done {
-				if usage, ok := step["usage"].(map[string]any); ok {
-					s.AddUsage(int64Value(usage["input_tokens"]), int64Value(usage["output_tokens"]), int64Value(usage["cache_read_tokens"]), 0, int64Value(usage["thinking_tokens"]))
-				}
-				out = append(out, s.Text(a.text.String())...)
-				a.text.Reset()
-			}
-			return out
-		case "tool":
-			info, _ := step["tool_info"].(map[string]any)
-			id := fmt.Sprintf("%s#%d", stringValue(step["conversation_id"]), index)
-			name := stringValue(info["name"])
-			input := info["parameters"]
-			if params, ok := input.(map[string]any); ok && name == "call_mcp_tool" {
-				name, input = "mcp__"+stringValue(params["ServerName"])+"__"+stringValue(params["ToolName"]), params["Arguments"]
-			}
-			out := s.ToolUse(id, name, input)
-			if done {
-				failure := errorText(info["error"])
-				if failure != "" {
-					out = append(out, s.ToolResult(id, true, failure)...)
-				} else {
-					out = append(out, s.ToolResult(id, false, jsonText(info["output"]))...)
-				}
-			}
-			return out
-		case "error_message":
-			if text := errorText(step["error"]); text != "" {
-				a.failure = text
-			}
-		}
+		return a.translateStep(s, step)
 	case "result":
 		result, _ := raw["result"].(map[string]any)
 		failed := stringValue(result["status"]) != "SUCCESS"
@@ -476,6 +653,62 @@ func (a *antigravityStream) translate(s *ClaudeStream, raw map[string]any) []str
 		return s.Result(text, failed)
 	}
 	return nil
+}
+
+// translateStep dispatches one `step_update` payload by its step_type.
+// error_message steps only remember the failure for the final result.
+func (a *antigravityStream) translateStep(s *ClaudeStream, step map[string]any) []string {
+	index := int64Value(step["step_index"])
+	done := stringValue(step["state"]) == "DONE"
+	switch stringValue(step["step_type"]) {
+	case "agent_response":
+		return a.responseStep(s, step, index, done)
+	case "tool":
+		return antigravityToolStep(s, step, index, done)
+	case "error_message":
+		if text := errorText(step["error"]); text != "" {
+			a.failure = text
+		}
+	}
+	return nil
+}
+
+// responseStep streams the text delta and, once the step is DONE, records its
+// usage and emits the accumulated text as one block.
+func (a *antigravityStream) responseStep(s *ClaudeStream, step map[string]any, index int64, done bool) []string {
+	delta := stringValue(step["text_delta"])
+	a.text.WriteString(delta)
+	out := s.Delta(fmt.Sprintf("text#%d", index), "text", delta)
+	if done {
+		if usage, ok := step["usage"].(map[string]any); ok {
+			s.AddUsage(int64Value(usage["input_tokens"]), int64Value(usage["output_tokens"]), int64Value(usage["cache_read_tokens"]), 0, int64Value(usage["thinking_tokens"]))
+		}
+		out = append(out, s.Text(a.text.String())...)
+		a.text.Reset()
+	}
+	return out
+}
+
+// antigravityToolStep reports the tool call (unwrapping call_mcp_tool into the
+// mcp__<server>__<tool> name) and, once the step is DONE, its result.
+func antigravityToolStep(s *ClaudeStream, step map[string]any, index int64, done bool) []string {
+	info, _ := step["tool_info"].(map[string]any)
+	id := fmt.Sprintf("%s#%d", stringValue(step["conversation_id"]), index)
+	name := stringValue(info["name"])
+	input := info["parameters"]
+	if params, ok := input.(map[string]any); ok && name == "call_mcp_tool" {
+		name, input = "mcp__"+stringValue(params["ServerName"])+"__"+stringValue(params["ToolName"]), params["Arguments"]
+	}
+	out := s.ToolUse(id, name, input)
+	if done {
+		failure := errorText(info["error"])
+		if failure != "" {
+			out = append(out, s.ToolResult(id, true, failure)...)
+		} else {
+			out = append(out, s.ToolResult(id, false, jsonText(info["output"]))...)
+		}
+	}
+	return out
 }
 
 // kimiStream: `kimi -p --output-format stream-json` prints whole messages;
@@ -593,20 +826,33 @@ func (p *piStream) translate(s *ClaudeStream, raw map[string]any) []string {
 }
 
 // dshStream: `dsh --profile headless --json` run events.
-type dshStream struct{ failure string }
+// dshStream: `dsh --json` caps every event string at 8 KiB and flags the event
+// `truncated`; only the terminal `final` carries the whole answer. A truncated
+// text is held back so `final` can replace it instead of being appended to it.
+type dshStream struct{ failure, truncatedText string }
 
 func (d *dshStream) translate(s *ClaudeStream, raw map[string]any) []string {
-	switch stringValue(raw["type"]) {
+	kind := stringValue(raw["type"])
+	var out []string
+	if d.truncatedText != "" && (kind == "thinking" || kind == "text" || kind == "tool_call" || kind == "tool_result") {
+		out = s.Text(d.truncatedText)
+		d.truncatedText = ""
+	}
+	switch kind {
 	case "session":
-		return s.Init(stringValue(raw["sessionId"]), "")
+		return append(out, s.Init(stringValue(raw["sessionId"]), "")...)
 	case "thinking":
-		return s.Thinking(stringValue(raw["text"]))
+		return append(out, s.Thinking(stringValue(raw["text"]))...)
 	case "text":
-		return s.Text(stringValue(raw["text"]))
+		if raw["truncated"] == true {
+			d.truncatedText = stringValue(raw["text"])
+			return out
+		}
+		return append(out, s.Text(stringValue(raw["text"]))...)
 	case "tool_call":
-		return s.ToolUse(stringValue(raw["callId"]), stringValue(raw["tool"]), raw["input"])
+		return append(out, s.ToolUse(stringValue(raw["callId"]), stringValue(raw["tool"]), raw["input"])...)
 	case "tool_result":
-		return s.ToolResult(stringValue(raw["callId"]), stringValue(raw["status"]) != "completed", jsonText(raw["result"]))
+		return append(out, s.ToolResult(stringValue(raw["callId"]), stringValue(raw["status"]) != "completed", jsonText(raw["result"]))...)
 	case "status":
 		if stringValue(raw["phase"]) == "step_end" {
 			usage, _ := raw["usage"].(map[string]any)
@@ -621,12 +867,19 @@ func (d *dshStream) translate(s *ClaudeStream, raw map[string]any) []string {
 		reason, _ := raw["reason"].(map[string]any)
 		failed := stringValue(reason["kind"]) != "completed"
 		text := stringValue(raw["text"])
+		if held := d.truncatedText; held != "" {
+			d.truncatedText = ""
+			if strings.HasPrefix(text, held) {
+				held = text
+			}
+			out = append(out, s.Text(held)...)
+		}
 		if failed && text == "" {
 			if text = d.failure; text == "" {
 				text = "DeepSeek Harness 运行结束：" + stringValue(reason["kind"])
 			}
 		}
-		return s.Result(text, failed)
+		return append(out, s.Result(text, failed)...)
 	}
-	return nil
+	return out
 }

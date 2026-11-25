@@ -13,7 +13,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 
 | 领域 Repo | 拥有 |
 |---|---|
-| `CatalogRepo` | agents/rules/skills/MCP servers/executors/dockerfiles/environments/sandboxes/workflows/repositories/sync config/schedule jobs/definition revisions/generic templates |
+| `CatalogRepo` | agents/rules/skills/MCP servers/executors/sandboxes（docker 内嵌 Dockerfile，native 只有环境变量）/workflows/repositories/sync config/schedule jobs/definition revisions/generic templates |
 | `ProjectsRepo` | projects、project members |
 | `IssuesRepo` | issues、issue comments |
 | `TasksRepo` | tasks（跨实例幂等记录） |
@@ -26,7 +26,6 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 | `AnalyticsRepo` | 只读运营分析视图 |
 | `PreviewsRepo` | run previews |
 | `EngineInstancesRepo` | engine instances |
-| `FeedbackRepo` | page feedbacks、page feedback images（独立表，不关联项目/Issue） |
 | `KnowledgeRepo` | 知识库（含沉淀发布模式与敏感规则）、来源、项目绑定、同步任务、审核队列、检索调用记录、Git 写回记录（分支/合并请求）、撤回墓碑、反馈、知识缺口、健康检查结果。主库 |
 | `KnowledgeContentRepo` | 文档正文、托管修订、索引块、审核正文 staging。独立的 gorm 连接，由 `newStore` 注入，不写入 `deps`；默认与主库同一个连接池 |
 
@@ -57,7 +56,8 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
    AutoMigrate 的增量 DDL（补缺失的表/列/索引）。基线 schema、数据迁移
    （改数据、删行、删列）和 seed 数据一律写成 `migrations/` 下的 SQL
    脚本，由安装/升级脚本（如 `scripts/knowledge-schema.sh`）或运维按序
-   执行；**Go 进程启动不会自动跑**。
+   执行；**Go 进程启动不会自动跑**。迁移 041 仍由 `./start.sh pull` 按部署文档
+   检查目标镜像和旧资产表后执行。
 2. **上游已发布的迁移文件名与内容是发布契约，不得改名、改写或重排。**
    合并上游后，本分支自己的迁移从上游已发布的最大编号之后继续；上游可选的
    手工 DDL 保持原名原内容，安装脚本也不代跑。知识库 runner
@@ -78,7 +78,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
    `previewsHandlers`、`streamHandlers`、`runnersHandlers`、
    `scheduleHandlers`、`tokenHandlers`、`syncHandlers`、
    `assistantHandlers`、`mcpHandlers`、
-   `marketHandlers`、`feedbackHandlers`…），在 `server.go` 的 `Server` 中以指针装配。
+   `marketHandlers`…），在 `server.go` 的 `Server` 中以指针装配。
 2. **新领域必须新建自己的 handler struct**，不要把方法挂到现有领域 handler
    或 `Server` 上。
 3. 同一领域的多个文件允许（`run_eval.go`/`run_workspace.go` 属

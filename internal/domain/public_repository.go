@@ -17,8 +17,11 @@ func ParseRepositoryURL(raw string) (GongfengRepoInfo, bool) {
 	if strings.HasPrefix(s, "github:") {
 		s = "https://github.com/" + strings.TrimPrefix(s, "github:")
 	}
-	if strings.HasPrefix(s, "git@github.com:") {
-		s = "https://github.com/" + strings.TrimPrefix(s, "git@github.com:")
+	for _, prefix := range []string{"git@github.com:", "ssh://git@github.com/", "ssh://git@github.com:22/"} {
+		if strings.HasPrefix(s, prefix) {
+			s = "https://github.com/" + strings.TrimPrefix(s, prefix)
+			break
+		}
 	}
 	if strings.HasPrefix(s, "github.com/") {
 		s = "https://" + s
@@ -35,6 +38,12 @@ func ParseRepositoryURL(raw string) (GongfengRepoInfo, bool) {
 		}
 		base := "https://github.com/" + path
 		return GongfengRepoInfo{Project: "github:" + path, Name: strings.TrimSuffix(parts[1], ".git"), WebURL: base, CloneURL: base + ".git"}, true
+	}
+	if !strings.ContainsAny(s, ":@") {
+		host, _, _ := strings.Cut(s, "/")
+		if !IsGongfengHost(host) {
+			return GongfengRepoInfo{}, false
+		}
 	}
 	return ParseGongfengRepoURL(raw)
 }

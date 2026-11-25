@@ -14,7 +14,7 @@ import (
 func TestLifecycleResetSettleAndForceTerminate(t *testing.T) {
 	script := domain.WorkflowNode{ID: "script", Type: "script"}
 	agent := domain.WorkflowNode{ID: "agent", Type: "agent"}
-	wf := domain.WorkflowDefinition{ID: "wf", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{script, agent}}
+	wf := domain.WorkflowDefinition{ID: "wf", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{script, agent}}
 	run := domain.Run{ID: "life", Status: "running", WorkflowSnapshot: wf, Nodes: map[string]*domain.NodeRun{
 		"script": {NodeID: "script", Status: "running", Attempt: 2, SessionID: "script-session"},
 		"agent":  {NodeID: "agent", Status: "pending_input", Attempt: 1, SessionID: "agent-session"},
@@ -32,7 +32,7 @@ func TestLifecycleResetSettleAndForceTerminate(t *testing.T) {
 	}
 	resetNodeForResume(&run, nil, "x")
 	resetNodeForResume(&run, run.Nodes["done"], "x")
-	if !isTerminalRunStatus("cancelled") || isTerminalRunStatus("waiting") || hasRunningNode(run) {
+	if !domain.TerminalRunStatus("cancelled") || domain.TerminalRunStatus("waiting") || run.HasActiveNode() {
 		t.Fatal("status helpers")
 	}
 	run.Nodes["script"].Status, run.Nodes["agent"].Status = "succeeded", "succeeded"
@@ -333,8 +333,8 @@ func TestSafeGitRefAndNodeFormattingHelpers(t *testing.T) {
 		"..bad.lock":            "bad-lock",
 		"":                      "run",
 	} {
-		if got := safeGitRefSegment(in); got != want {
-			t.Fatalf("safeGitRefSegment(%q)=%q want %q", in, got, want)
+		if got := domain.SafeGitRefSegment(in); got != want {
+			t.Fatalf("domain.SafeGitRefSegment(%q)=%q want %q", in, got, want)
 		}
 	}
 	if dockerImageBuildLabel(nil) != "沙箱镜像" {

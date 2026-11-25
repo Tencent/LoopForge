@@ -1,6 +1,6 @@
 # 内置知识引擎：阶段一设计与最小切片
 
-状态：可派发的实现设计。本文只定阶段一里先做的最小切片，不写实现代码。
+状态：可派发的实现设计。本文记录阶段一内置引擎设计及双引擎集成。
 
 本文不记录仓库地址、内部基础设施或人员。移植源指只读的既有知识引擎，下文源文件都相对该引擎的 `platform/` 目录。实施任务单给出移植源根目录，不要把该路径写进代码、注释、测试或界面。
 
@@ -8,15 +8,15 @@
 
 这些约束已经确定，实现不得改口：
 
-- 知识库是平台进程内的能力，不保留独立知识服务，也不做跨服务的项目绑定。移植源里的 `internal/projectkb`、`internal/store/project_bindings.go`、`internal/api/project_bindings.go`，以及 `internal/index/project_sources.go`、`internal/knowledge/project_sources.go`、`internal/search/project_sources_test.go` 整段不移植。
-- 不保留外部知识库模式，没有过渡期。外部客户端和「地址加 Token」配置直接删除。已确认没有存量在用这种模式，不迁移旧连接数据。
+- 内置知识库是平台进程内的能力，使用平台项目绑定。移植源里的 `internal/projectkb`、`internal/store/project_bindings.go`、`internal/api/project_bindings.go`，以及 `internal/index/project_sources.go`、`internal/knowledge/project_sources.go`、`internal/search/project_sources_test.go` 整段不移植。
+- 平台管理员可在知识中心选择内置引擎或 LightCloud。升级时保留已有连接及来源授权，详见第 14 节。
 - 部署按多实例加负载均衡、共用一个 MySQL。服务路径（检索、读当前原文）只读 MySQL，任何一个实例都能做。Git 工作副本是同步缓存，只由持有租约的实例使用，丢了重新克隆。不引入共享文件系统、Elasticsearch 或 PostgreSQL。
 - 项目知识库默认由平台托管，事实源是 MySQL 加修订历史，建项目即可用。外部 Git 只是可选来源；对外部来源，MySQL 里是当前已索引版本的服务副本。
 - 表分两组，不建跨组外键。内容面可以通过单独的连接配置指向另一个 MySQL，默认与主库相同。
 - 范围只有 Markdown。附件不在本阶段。
 - 关键词检索先走 MySQL 全文索引（ngram）。内存倒排只作为对照和备选，不作为切片的默认检索。
 - 向量、Qdrant、embedding、`kb_grep`、引用记录持久化、自动沉淀、治理面板都不在最小切片。它们仍按原阶段划分，见第 6 节。
-- 现有知识中心的审核队列、项目授权、Agent 只读代理和角色开关保留。换掉的是 `Upstream` 后面的远程客户端。
+- 两个引擎共用知识中心的审核队列、项目授权、Agent 只读代理和角色开关，使用各自的 `Upstream` 实现。
 - 迁移只写 `migrations/` 下的 SQL，由安装步骤或运维手动执行。`repo.Open` 只做连接和补缺失表的增量 DDL，不在代码里做数据迁移或 seed。
 - 不在 `Store` 上新写领域方法。领域方法挂在领域 Repo 上，由 `newStore` 匿名嵌入后提升。
 
@@ -78,7 +78,7 @@
 
 词汇按深模块来用。内置引擎是一个模块：调用方只看到很小的接口，分块、同步、全文查询都在实现里面。
 
-**外部替换点**在已有的 `knowledge.Upstream`。生产环境只有一个适配器，就是内置引擎。再留一个远程客户端会变成第二种部署，与「不保留外部模式」冲突。这个替换点继续存在，是因为 `Service` 的测试要用假实现，不是因为还要换后端。
+**引擎接口**是已有的 `knowledge.Upstream`。生产环境按 `KnowledgeSettings.Provider` 选择内置引擎或 LightCloud MCP 客户端。这个接口也让 `Service` 的测试能用假实现，不是因为还要换后端。
 
 `Upstream` 仍然只有五个方法，签名不改：
 
@@ -92,7 +92,7 @@
 
 `kb_get_source` 不进 `Upstream`。它要的是来源状态加文档清单，由 `Service.SourceDetail` 直接读两个 Repo。代理不再把原始工具调用转发给 HTTP 客户端。
 
-`Service` 不再按设置拨号。进程启动时注入这一个 `Upstream`。现有 `svc.dial = ...` 的测试改为注入假 `Upstream`。`NewClient`、客户端缓存和 `internal/knowledge/client.go` 里的远程 MCP 调用删除。`SearchResult`、`Document`、`Source`、`WriteResult` 这些类型留在 `knowledge` 包，因为它们就是工具的 JSON 契约。
+`Service` 按设置选择引擎。进程启动时注入内置 `Upstream`，LightCloud 使用 `NewClient`。`SearchResult`、`Document`、`Source`、`WriteResult` 这些类型留在 `knowledge` 包，因为它们就是工具的 JSON 契约。
 
 **授权语义要改。** 现在 `ScopeSources` 把空的允许列表当成「不限制」。切片里空列表表示该项目没有绑定任何知识库，检索结果为空，读原文返回拒绝。允许列表来自「项目绑定的知识库下面的来源」，不再来自 `KnowledgeSettings.ProjectSources`。请求里点名了未绑定来源，仍然拒绝。SOP 代理和 Main Bot 走同一套收窄，不能各写一份。
 
@@ -107,7 +107,7 @@
 
 ### 3.1 代理令牌的密钥
 
-现在的密钥是用外部 Token 做 HMAC，再混入 `AGENTFLOW_SESSION_SECRET`（空则回退 `SESSION_SECRET`）。外部 Token 删除后，密钥只来自这个会话密钥：
+两个引擎的代理令牌都用平台会话密钥签发，先读 `AGENTFLOW_SESSION_SECRET`，空值时回退 `SESSION_SECRET`：
 
 - 用会话密钥对固定字符串 `agentflow-knowledge-proxy` 做 HMAC-SHA256，得到签名密钥。
 - 会话密钥为空则拒绝签发。不在进程内生成随机密钥，否则多实例和其他实例签发的令牌对不上。部署说明已经要求各实例共用同一个 `AGENTFLOW_SESSION_SECRET`。
@@ -160,7 +160,7 @@ internal/knowledge/engine/gitsync/  同步缓存
 | `knowledge_sync_jobs` | 自增主键；`source_id`；`kind`；`status`；起止 commit；变更与删除计数；日志；起止时间 |
 | `knowledge_writebacks` | `048`。`id` 主键；`submission_id` 唯一；`source_id`；`path`；`branch`；`commit`；`mr_url`；`mr_provider`；`mr_iid`；`mr_state`；`status`；中文提示与错误；`attempts`；`checked_at`；时间戳 |
 | `knowledge_submissions` | 已有表，切片不改列。发布到托管来源时走 `WriteDocument`；发布到 Git 来源走 `WriteGitDocument`，分支与合并请求另存 `knowledge_writebacks` |
-| `knowledge_settings` | 删除。`043` 对已有库 `DROP TABLE`。从 `allModels` 去掉 `knowledgeSettingsRow`，并整体删除 `domain.KnowledgeSettings`、`KnowledgeRepo` 的读写方法与平台级写回开关；审核发布只按项目绑定和来源范围授权。新装不再建这张表。`002_knowledge_base.sql` 保持原样 |
+| `knowledge_settings` | 沿用 002 表保存 `provider`、连接地址、开关和项目来源。Token 单列存放，接口只返回是否已配置。 |
 
 `knowledge_bases.project_id` 加普通索引。一个项目在切片里只有一个自动托管库：用唯一索引 `(project_id, layer)` 挡住并发创建。`project_id` 为空时不参与这个唯一约束（MySQL 里多个 NULL 可以并存），所以不要靠它约束以后的公共库。
 
@@ -210,7 +210,7 @@ ALTER TABLE knowledge_chunks
 - `Upstream` 五个方法的切片行为，以及代理令牌改用会话密钥。
 - SOP：角色打开知识库开关后，工具仍走 `/runners/knowledge/mcp`，后面是内置引擎。
 - Main Bot：目录里有这五个只读工具（另含只写反馈的 `kb_report_issue`），调用按当前项目收窄。
-- 删除地址、Token、默认来源、按项目来源和 `Ready()` 对它们的依赖。检查连接接口改为返回本机索引状态，不再请求外部 MCP。
+- 内置模式直接检查本机引擎。LightCloud 模式可由管理员测试已保存或待保存的连接。
 - 知识中心界面从「连接配置」改成「本项目的知识库、来源、新建文档、同步、试搜、读原文」。审核标签留着，不作为体验主路径。
 
 界面沿用 `design.md` 知识中心一节的面板、标签和抽屉。该节现在写的是外部地址、打开控制台和按项目勾选来源，与本设计冲突。实现时改 `design.md` 这一节，使页头说明、指标和「连接」标签描述跟托管库一致；不要保留「打开控制台」。未配置外部地址时隐藏按钮的规则删除。
@@ -267,7 +267,7 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 
 验收看行为，不看内部类型：
 
-1. `bash scripts/dev.sh` 或 `./start.sh dev` 之后，执行 `043`（脚本已代劳则不必再执行），浏览器能打开知识中心，页面上没有地址和 Token 输入框。
+1. `bash scripts/dev.sh` 或 `./start.sh dev` 之后，执行 `043`（脚本已代劳则不必再执行），浏览器能打开知识中心，内置模式显示托管界面，管理员可以在「引擎设置」里切到 LightCloud。
 2. 新建一个项目。知识中心显示一个空的项目知识库，来源种类是托管。再打开安装时已有的欢迎项目，也会看到它的托管库，且重复打开不会多出第二个。
 3. 在新建项目的托管库写一篇含独特词的 Markdown。试搜这个词，打开原文，行号和正文与刚写入的内容一致，出处里的版本是修订号而不是 Git commit。覆盖该文档后再读，修订号增加，检索仍只看到新正文。
 4. 把样例仓库按 5.4 的地址登记为 Git 来源并同步。成功后篇数大于 0。检索一个 `docs/` 里稳定存在的词（例如部署文档中的 `AGENTFLOW_MYSQL_DSN`），打开原文，与 GitHub 上 `main` 分支该文件的对应行一致。同步过程中停掉平台再启动，工作副本目录删掉后再次同步仍能检索，说明副本不是事实源。
@@ -287,7 +287,7 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 | S4 | Git 同步缓存 | 无 | 可与 S1–S3 并行 | 移植 `internal/gitsync/gitsync.go` 中的克隆、拉取、列举 Markdown、工作副本内读文件。不移植 `gitsync_auth_test.go` 对应的包装器参数 | 用临时本地 Git 仓库改写 `gitsync_test.go` 里与同步缓存有关的用例。断言路径逃逸失败。不访问网络，不出现内部主机名 |
 | S5 | 引擎实现托管库的五个 `Upstream` 方法 | S1、S2 | S2 完成后即可，不必等 S4 | 新 `internal/knowledge/engine/` 下的引擎与 MySQL 关键词适配器。`Service` 改为注入 `Upstream` 可以放在 S7，本项先把引擎自己测通 | 假适配器测试授权收窄和按行读取。MySQL 测试：写入一篇中文 Markdown，ngram 能命中连续二字，单字查询不报错但可以没有命中，覆盖后旧正文不再命中 |
 | S6 | Git 来源同步、租约和 worker 循环 | S1、S4、S5 | 与 S7、S8 的托管部分并行 | `internal/knowledge/engine` 的同步；`KnowledgeRepo` 的领取方法；`cmd/agentflow/main.go` 在 `executeRuns` 时启动 | 两个逻辑上的领取者只有一个能同步。同步结果只存在内容表。删除工作副本后仍能 `Fetch`。`api` 角色不启动循环 |
-| S7 | 删除外部客户端、接入配置和旧密钥 | S5 | 可与 S6 并行 | 删除 `internal/knowledge/client.go` 的远程调用。改 `token.go`、`service.go`、`rules.go`、`internal/httpapi/knowledge.go`、`knowledge_proxy.go`、`internal/engine/assets.go`、`internal/domain/knowledge.go`，以及这些包里断言地址和 Token 的测试 | 现有知识库测试改为：没有地址和 Token 也能检索；错误密钥拒绝代理；写工具不出现在 Agent 的工具列表；Git 来源的 `WriteDocument` 返回未实现且不创建提交 |
+| S7 | 配置共享代理及引擎选择 | S5 | 可与 S6 并行 | `token.go`、`settings.go`、`service.go`、`knowledge_proxy.go` | 保留项目来源授权与两种引擎的工具边界 |
 | S8 | 知识中心的管理接口和界面 | S5；同步按钮依赖 S6 | 托管文档部分可与 S6 并行 | `internal/httpapi/knowledge.go` 与新的 `knowledge_bases.go`。`web/knowledge.js`、`web/knowledge.css`。改 `design.md` 知识中心一节 | HTTP 测试覆盖创建文档、试搜、读原文、拒绝其他项目。浏览器侧至少断言页面不再提交 `url` / `token` |
 | S9 | 建项目与打开知识中心时幂等创建托管库 | S5 | 可与 S6–S8 并行 | `internal/httpapi/projects.go` 注入 `knowledge.Service`。知识中心读取接口调用同一个保证函数 | 并发创建同一个项目不会有两个托管库。欢迎项目在第一次打开知识中心后恰好有一个 |
 | S10 | Main Bot 工具与提示词 | S7 | 在 S7 之后 | `internal/httpapi/agent_tool_catalog.go`、`agent_tool_mcp.go`、`assistant.go` | 目录在助手模式包含五个只读工具（另含 `kb_report_issue`），澄清模式和定时任务不包含。调用使用会话项目。系统提示包含使用规范里的工具名，且没有写工具 |
@@ -492,3 +492,19 @@ SOP 代理和 Main Bot 继续使用令牌/会话里的项目，工具参数不�
 
 MR API 与 Git 共用公网地址校验；HTTP 连接直接拨已校验 IP，保留原始 TLS
 主机名，禁用代理和重定向。Git 缓存新目录及复用的来源目录为 0700。
+
+
+## 14. LightCloud 与内置引擎共存
+
+平台设置 `provider` 使用 `builtin` 或 `lightcloud`。字段缺省时，读取历史
+`knowledge_settings`，URL 和 Token 齐全选 LightCloud，否则选内置。LightCloud
+继续使用原有启用开关、默认来源、项目来源覆盖和审核后写回开关。切回内置时保存的
+连接配置仍可供下次切换使用。
+
+同一个 `/runners/knowledge/mcp` 在每次调用时选定引擎和项目范围。LightCloud
+向 Agent 开放 `kb_search`、`kb_fetch`、`kb_list_sources` 和 `kb_get_source`。
+提交审核时记录引擎，发布只写入原引擎。052 标记上游的已有审核记录，053 将其正文
+移入内容库。切换时暂停内置 Git 同步、向量维护、治理和自动沉淀，切回后继续。
+
+PR #1104 使用相同的 `KnowledgeSettings.Provider`、`lightcloud` 和
+`knowledge.Upstream`。未来可在该路由中增加 `weknora` 和其工具白名单。

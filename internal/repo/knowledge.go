@@ -27,6 +27,10 @@ type KnowledgeRepo struct {
 // KnowledgeSubmissions lists submissions newest first. Empty filters match
 // everything; content is omitted to keep list payloads small.
 func (r *KnowledgeRepo) KnowledgeSubmissions(projectID, status string, limit int) []domain.KnowledgeSubmission {
+	return r.KnowledgeSubmissionsForProvider(projectID, status, "", limit)
+}
+
+func (r *KnowledgeRepo) KnowledgeSubmissionsForProvider(projectID, status, provider string, limit int) []domain.KnowledgeSubmission {
 	out := make([]domain.KnowledgeSubmission, 0)
 	if limit <= 0 || limit > 500 {
 		limit = 200
@@ -37,6 +41,13 @@ func (r *KnowledgeRepo) KnowledgeSubmissions(projectID, status string, limit int
 	}
 	if status = strings.TrimSpace(status); status != "" {
 		q = q.Where("status = ?", status)
+	}
+	if provider != "" {
+		expr := "JSON_EXTRACT(payload, '$.provider')"
+		if r.isMySQL() {
+			expr = "JSON_UNQUOTE(" + expr + ")"
+		}
+		q = q.Where("COALESCE(NULLIF("+expr+", ''), ?) = ?", domain.KnowledgeProviderBuiltin, provider)
 	}
 	var rows []knowledgeSubmissionRow
 	if err := q.Order("updated_at DESC").Limit(limit).Find(&rows).Error; err != nil {

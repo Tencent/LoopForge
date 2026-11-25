@@ -52,7 +52,7 @@ test('run detail loads logs, telemetry, preview, workspace, evaluation, and chil
   await app.evaluate(`loadRunLogs('run-1','node-1')`);
   await app.evaluate(`loadRunTelemetry('run-1','node-1')`);
   await app.evaluate(`loadRunPreview('run-1',{})`);
-  await app.evaluate(`loadRunWorkspace('run-1',true)`);
+  await app.evaluate(`loadRunWorkspace('run-1',{refresh:true})`);
   await app.evaluate(`loadRunEval('run-1',false)`);
   app.evaluate(`renderRunDetail(state.activeRun);renderRunOverview();refreshChildRuns(state.activeRun)`);
   for (const tab of app.document.querySelectorAll('#runsView [role="tab"], #runsView .run-tab')) {
@@ -60,6 +60,128 @@ test('run detail loads logs, telemetry, preview, workspace, evaluation, and chil
     await settle(2);
   }
   assert.match(app.document.querySelector('#runsView').textContent, /Implemented|Strong result|Report|2400|2\.4k/i);
+});
+
+test('live run redraws keep the current IDE document until the workspace is recycled', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'),
+    status: 'running',
+    workflowSnapshot: {
+      ...app.evaluate('structuredClone(state.data.workflows[0])'),
+      autoSelectSandbox: true, sandboxProfileId: 'project-toolchain',
+    },
+    nodes: {
+      'node-1': { status: 'succeeded', gateResult: { decision: 'pass' } },
+      'node-2': { status: 'running' },
+    },
+  };
+  const workspacePath = '/api/runs/run-1/workspace';
+  app.router.get('/api/runs/run-1', run);
+  app.router.get(workspacePath, { available: true, readOnly: false });
+  app.evaluate('state.data.runs=[' + JSON.stringify(run) + "];switchView('runs');showRunDetail('run-1')");
+  await settle(8);
+  const detail = app.document.querySelector('#runDetail');
+  detail.querySelector('[data-run-node="node-1"]').click();
+  detail.querySelector('[data-run-tab="workspace"]').click();
+  await settle(8);
+
+  const header = detail.querySelector('.run-detail-header');
+  const frame = detail.querySelector('[data-vscode-frame]');
+  const frameWindow = frame.contentWindow;
+  assert.ok(frameWindow);
+  const stream = app.evaluate('state.runStream');
+  const sandbox = header.querySelector('[data-run-sandbox]');
+  assert.equal(sandbox.title, 'project-toolchain');
+  const events = [{ type: 'sandbox.selected', message: 'Agent 选择沙箱 project-toolchain' }];
+  stream.emit({ run: { ...run, revision: 2, events } }, 'run');
+  assert.equal(detail.querySelector('.run-detail-header'), header, 'a passed gate needs no prompt');
+  assert.equal(sandbox.title, events[0].message);
+
+  const withOutput = {
+    ...run,
+    revision: 3,
+    nodes: {
+      ...run.nodes,
+      'node-1': { ...run.nodes['node-1'], output: 'New result' },
+    },
+  };
+  stream.emit({ run: withOutput }, 'run');
+  assert.notEqual(detail.querySelector('.run-detail-header'), header, 'new output redraws details');
+  assert.equal(detail.querySelector('.node-output pre').textContent, 'New result');
+  assert.equal(detail.querySelector('[data-vscode-frame]'), frame);
+  assert.ok(frame.contentWindow === frameWindow, 'detail redraw keeps the IDE browsing context');
+
+  app.evaluate('renderWorkspacePane(state.activeRun)');
+  assert.ok(frame.contentWindow === frameWindow, 'workspace render keeps the IDE browsing context');
+
+  app.router.get(workspacePath, { available: false, reason: '工作区已回收' });
+  stream.emit({ run: { ...withOutput, revision: 4, workspaceCleanedAt: '2026-11-23T08:00:00Z' } }, 'run');
+  await settle(8);
+  assert.equal(detail.querySelector('[data-vscode-frame]'), null);
+  assert.match(detail.querySelector('[data-run-pane="workspace"]').textContent, /工作区已回收/);
+});
+
+test('reopening a completed child workspace checks the owner and keeps a healthy IDE', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'),
+    status: 'succeeded',
+    executionContext: { projectId: 'p-1', parentRunId: 'parent', workspaceRunId: 'parent' },
+  };
+  const workspacePath = '/api/runs/run-1/workspace';
+  const restorePath = workspacePath + '/restore';
+  const active = { available: true, readOnly: true };
+  let info = active;
+  app.router.get('/api/runs/run-1', run);
+  app.router.get(workspacePath, () => info);
+  app.evaluate('state.data.runs=[' + JSON.stringify(run) + "];switchView('runs');showRunDetail('run-1')");
+  await settle(8);
+  const detail = app.document.querySelector('#runDetail');
+  const overview = detail.querySelector('[data-run-tab="overview"]');
+  const workspace = detail.querySelector('[data-run-tab="workspace"]');
+  const frame = () => detail.querySelector('[data-vscode-frame]');
+  workspace.click();
+  await settle();
+  const initialFrame = frame();
+  assert.ok(initialFrame);
+  const initialWindow = initialFrame.contentWindow;
+
+  overview.click();
+  let finishRefresh;
+  info = new Promise((resolve) => { finishRefresh = resolve; });
+  workspace.click();
+  assert.equal(app.router.calls.filter((call) => call.path === workspacePath).length, 2);
+  assert.equal(frame().contentWindow, initialWindow);
+  finishRefresh(active);
+  await settle();
+  assert.equal(frame(), initialFrame);
+  assert.equal(frame().contentWindow, initialWindow);
+
+  overview.click();
+  info = { available: false, restorable: true, reason: '工作区已回收' };
+  let finishRestore;
+  app.router.post(restorePath, () => new Promise((resolve) => { finishRestore = resolve; }));
+  workspace.click();
+  await settle();
+  assert.equal(frame(), null);
+  assert.match(detail.querySelector('[data-run-pane="workspace"]').textContent, /正在恢复工作区/);
+  assert.equal(app.router.calls.filter((call) => call.path === restorePath).length, 1);
+  info = active;
+  finishRestore({ restored: true });
+  await settle(8);
+  assert.ok(frame());
+
+  overview.click();
+  info = { available: false, restorable: false, reason: '远程执行机器当前离线或工作区通道不可用' };
+  workspace.click();
+  await settle();
+  assert.equal(frame(), null);
+  assert.match(detail.querySelector('[data-run-pane="workspace"]').textContent, /远程执行机器当前离线/);
+  assert.equal(detail.querySelector('[data-workspace-restore]').hidden, true);
+  assert.equal(app.router.calls.filter((call) => call.path === restorePath).length, 1);
 });
 
 test('run detail node topology renders an icon glyph instead of undefined', async (t) => {
@@ -195,4 +317,108 @@ test('a stage that has not started or finished hides the zero default time', asy
   assert.ok(times.some((text) => text === ''), 'an unstarted stage has no duration');
   assert.ok(times.some((text) => text.includes('现在') && !text.includes('0001')), `an open stage shows now, not year 1: ${times.join(' | ')}`);
   assert.ok(times.every((text) => !text.includes('0001')), times.join(' | '));
+});
+
+/** 渲染正在执行的节点，保留真实详情页与实时更新入口。 */
+function renderActivityFixture(app) {
+  app.evaluate(`
+    state.activeRun={...state.data.runs[0],status:'running',pauseRequested:false,cancelRequested:false,
+      workflowSnapshot:structuredClone(state.data.workflows[0]),artifacts:[],
+      nodes:{'node-1':{status:'running',attempt:1,activity:'正在分析需求'},'node-2':{status:'pending'}}};
+    state.selectedRun=state.activeRun.id;state.selectedRunNode='node-1';
+    renderRunDetail(state.activeRun);
+  `);
+}
+
+/** 同时检查活动文字与节点状态的动态反馈。 */
+function assertInspectorMotion(app, active, message) {
+  for (const selector of ['.node-activity-inline', '.node-inspector-status']) {
+    const element = app.document.querySelector(`#runDetail ${selector}`);
+    assert.ok(element, selector);
+    assert.equal(element.classList.contains('is-running'), active, `${message}: ${selector}`);
+  }
+}
+
+test('running node activity keeps its DOM and motion across streamed text updates', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  renderActivityFixture(app);
+  assertInspectorMotion(app, true, 'initial running node');
+  const activity = app.document.querySelector('#runDetail .node-activity-inline');
+  const text = activity.querySelector('b');
+  const status = app.document.querySelector('#runDetail .node-inspector-status');
+  assert.equal(activity.hidden, false);
+  app.evaluate(`startLiveRun(state.activeRun.id)`);
+  const stream = app.evaluate('state.runStream');
+  const next = '正在读取 <component> & 接口规范';
+  stream.emit({ run: { id: 'run-1', status: 'running', nodes: { 'node-1': { activity: next } } } }, 'run');
+  assert.equal(app.document.querySelector('#runDetail .node-activity-inline'), activity);
+  assert.equal(activity.querySelector('b'), text, 'streamed text should not replace the animated element');
+  assert.equal(app.document.querySelector('#runDetail .node-inspector-status'), status);
+  assert.equal(text.textContent, next);
+  assert.equal(text.children.length, 0, 'activity stays escaped text');
+  assertInspectorMotion(app, true, 'streamed activity');
+  stream.emit({ run: { id: 'run-1', status: 'running', nodes: {
+    'node-1': { status: 'succeeded' }, 'node-2': { status: 'running' },
+  } } }, 'run');
+  assertInspectorMotion(app, false, 'selected completed node while another node runs');
+  assert.equal(activity.querySelector('b').textContent, next, 'completed activity remains readable');
+});
+
+test('terminal, human-waiting, paused and cancelling runs stop inspector motion', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  for (const [label, runPatch, nodeStatus] of [
+    ['completed', { status: 'succeeded' }, 'succeeded'],
+    ['failed', { status: 'failed' }, 'failed'],
+    ['cancelled', { status: 'cancelled' }, 'cancelled'],
+    ['human approval', { status: 'waiting' }, 'waiting_approval'],
+    ['paused', { status: 'paused' }, 'running'],
+    ['pause requested', { pauseRequested: true }, 'running'],
+    ['cancel requested', { cancelRequested: true }, 'running'],
+  ]) {
+    renderActivityFixture(app);
+    app.evaluate(`Object.assign(state.activeRun,${JSON.stringify(runPatch)});
+      state.activeRun.nodes['node-1'].status=${JSON.stringify(nodeStatus)};patchRunLive(state.activeRun)`);
+    assertInspectorMotion(app, false, label);
+    assert.equal(app.document.querySelector('#runDetail .node-activity-inline b').textContent, '正在分析需求', label);
+  }
+});
+
+test('a parent node only animates while its child SOP is executing', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  renderActivityFixture(app);
+  app.evaluate(`
+    state.activeRun.nodes['node-1'].childRunId='child-activity';
+    state.childRuns={'child-activity':{at:Date.now(),run:{id:'child-activity',status:'waiting',
+      workflowSnapshot:{nodes:[{id:'review',name:'Review'}]},nodes:{review:{status:'waiting_approval'}}}}};
+    renderRunDetail(state.activeRun);
+  `);
+  assertInspectorMotion(app, false, 'child waits for human approval on first render');
+  app.evaluate(`state.childRuns['child-activity'].run.status='running';
+    state.childRuns['child-activity'].run.nodes.review.status='running';patchRunLive(state.activeRun)`);
+  assertInspectorMotion(app, true, 'child resumes execution');
+  app.evaluate(`state.childRuns['child-activity'].run.nodes.review.status='waiting_approval';patchRunLive(state.activeRun)`);
+  assertInspectorMotion(app, false, 'child approval node overrides its stale running status');
+});
+
+test('child pause and cancellation polling refreshes motion without parent stream events', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  renderActivityFixture(app);
+  const child = { id: 'child-activity', status: 'running', pauseRequested: false, cancelRequested: false,
+    workflowSnapshot: { nodes: [{ id: 'work', name: 'Work' }] }, nodes: { work: { status: 'running' } } };
+  app.evaluate(`state.activeRun.nodes['node-1'].childRunId='child-activity';
+    state.childRuns={'child-activity':{at:Date.now(),run:${JSON.stringify(child)}}};renderRunDetail(state.activeRun)`);
+  assertInspectorMotion(app, true, 'initial child execution');
+  for (const flag of ['pauseRequested', 'cancelRequested']) {
+    for (const requested of [true, false]) {
+      app.router.get('/api/runs/child-activity', { ...child, [flag]: requested });
+      app.evaluate(`state.childRuns['child-activity'].at=0;refreshChildRuns(state.activeRun)`);
+      await settle(3);
+      assert.equal(app.evaluate(`state.childRuns['child-activity'].run.${flag}`), requested);
+      assertInspectorMotion(app, !requested, `${flag}=${requested} from child polling`);
+    }
+  }
 });

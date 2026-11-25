@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -43,6 +44,8 @@ func workspaceOperationLabel(operation string) string {
 		return "恢复归档产物"
 	case domain.RunnerWorkspaceOperationBrowser:
 		return "连接 Agent 浏览器"
+	case domain.RunnerWorkspaceOperationPreviewService:
+		return "操作预览服务"
 	case domain.RunnerWorkspaceOperationTerminal:
 		return "访问工作区终端"
 	default:
@@ -133,8 +136,25 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 		_ = json.NewEncoder(w).Encode(e.HandleBrowserRequest(r.Context(), run, request.Browser))
 		return
 	}
+	if request.Operation == domain.RunnerWorkspaceOperationPreviewService {
+		if request.PreviewService == nil {
+			http.Error(w, "invalid preview service request", 400)
+			return
+		}
+		var result domain.RunnerWorkspaceResponse
+		state, err := e.localWorkspacePreviewService(r.Context(), run, *request.PreviewService)
+		if err != nil {
+			result.Status, result.Error = http.StatusConflict, err.Error()
+		} else {
+			result.Payload, _ = json.Marshal(state)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
+		return
+	}
 	transfer := domain.IsWorkspaceCheckpointTransferOperation(request.Operation)
-	probe := request.Operation == domain.RunnerWorkspaceOperationCheckpointStatus
+	probe := request.Operation == domain.RunnerWorkspaceOperationCheckpointStatus ||
+		request.Operation == domain.RunnerWorkspaceOperationCheckouts && e.defaultExecutionRunner(run) != ""
 	if !probe && !transfer && request.Operation != domain.RunnerWorkspaceOperationPreparationRecord && request.Operation != domain.RunnerWorkspaceOperationPrepare && request.Operation != domain.RunnerWorkspaceOperationPreparationStatus && request.Operation != domain.RunnerWorkspaceOperationTerminal && request.Operation != domain.RunnerWorkspaceOperationCheckpoint && request.Operation != domain.RunnerWorkspaceOperationRestore && request.Operation != domain.RunnerWorkspaceOperationReclaim && request.Operation != domain.RunnerWorkspaceOperationArtifacts {
 		http.Error(w, "unsupported operation", 400)
 		return
@@ -143,7 +163,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "invalid terminal request", 400)
 		return
 	}
-	artifactsAllowed := request.Operation == domain.RunnerWorkspaceOperationArtifacts && (run.IsWorkspace() || run.Status != "running" && run.Status != "queued" && !hasRunningNode(run))
+	artifactsAllowed := request.Operation == domain.RunnerWorkspaceOperationArtifacts && (run.IsWorkspace() || run.Status != "running" && run.Status != "queued" && !run.HasActiveNode())
 	interactive := request.Operation == domain.RunnerWorkspaceOperationPreparationRecord || request.Operation == domain.RunnerWorkspaceOperationPrepare || request.Operation == domain.RunnerWorkspaceOperationPreparationStatus || request.Operation == domain.RunnerWorkspaceOperationTerminal
 	transferAux := transfer && request.Operation != domain.RunnerWorkspaceOperationCheckpointExport && request.Operation != domain.RunnerWorkspaceOperationCheckpointCommit
 	if !probe && !interactive && (sharesWorkspace(run) || !artifactsAllowed && !transferAux && !e.conversationWorkspaceIdle(run)) {
@@ -154,7 +174,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	request.RunStatus = run.Status
 	request.RunKind = run.Kind
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
-	if interactive {
+	if interactive || request.Operation == domain.RunnerWorkspaceOperationCheckouts && run.UsesConversationWorkspace() {
 		var err error
 		request, err = e.preparedWorkspaceRequest(run, request)
 		if err != nil {
@@ -218,7 +238,11 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload = json.RawMessage(`{"ok":true}`)
 				break
 			}
-			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run.ID, &e.workspaceTerminals, scope, *request.Terminal)
+			var credentials runtime.TerminalGitCredentials
+			if request.Terminal.Operation == "open" {
+				credentials = e.WorkspaceTerminalGitCredentials(r.Context(), run, request.TerminalOwner)
+			}
+			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run, &e.workspaceTerminals, scope, *request.Terminal, credentials)
 			result.Payload, _ = json.Marshal(value)
 			if err != nil {
 				result.Error = err.Error()
@@ -238,7 +262,14 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result = runtime.WorkspaceCheckpointStatus(root)
 			}
 		} else if transfer {
-			result = e.checkpointTransfers.Handle(r.Context(), root, request)
+			if request.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
+				if err := e.discardEmptyWorkspaceContainer(r.Context(), run.ID, root); err != nil {
+					result.Error = err.Error()
+				}
+			}
+			if result.Error == "" {
+				result = e.checkpointTransfers.Handle(r.Context(), root, request)
+			}
 		} else if request.Operation == domain.RunnerWorkspaceOperationReclaim {
 			meta, saved := e.repo.WorkspaceCheckpoint(run.ID)
 			if !saved || meta.SavedAt == nil || meta.Error != "" || run.WorkspaceCleanedAt.IsZero() || request.CheckpointLease == "" || meta.LeaseToken != request.CheckpointLease || meta.LeaseUntil == nil || !meta.LeaseUntil.After(time.Now()) {
@@ -258,12 +289,14 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload, _ = json.Marshal(map[string]any{"restoredArtifacts": restored})
 			}
 		} else if request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
-			archive, err := runtime.CreateWorkspaceCheckpoint(root)
+			archive, err := runtime.CreateWorkspaceCheckpointContext(r.Context(), root)
 			if err != nil {
 				result.Error = err.Error()
 			} else {
 				result.Payload, _ = json.Marshal(map[string]any{"checkpoint": archive})
 			}
+		} else if err := e.discardEmptyWorkspaceContainer(r.Context(), run.ID, root); err != nil {
+			result.Error = err.Error()
 		} else if err := runtime.RestoreWorkspaceCheckpoint(root, request.Checkpoint); err != nil {
 			result.Error = err.Error()
 		} else {
@@ -272,4 +305,20 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (e *Engine) discardEmptyWorkspaceContainer(ctx context.Context, runID, root string) error {
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	hasContent, err := runtime.WorkspaceDirHasContent(root)
+	if err != nil || hasContent {
+		return nil
+	}
+	if err := e.releaseRunEnvironment(runID, false); err != nil {
+		return err
+	}
+	e.sandboxes.DiscardRunContainer(ctx, runID)
+	return nil
 }

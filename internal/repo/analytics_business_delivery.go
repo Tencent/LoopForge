@@ -121,12 +121,6 @@ func (r *AnalyticsRepo) businessDeliveryIssues(projectIDs []string) ([]domain.Is
 	if len(projectIDs) == 0 {
 		return nil, nil
 	}
-	extract := func(path string) string {
-		if r.isMySQL() {
-			return "JSON_UNQUOTE(JSON_EXTRACT(payload, '$." + path + "'))"
-		}
-		return "json_extract(payload, '$." + path + "')"
-	}
 	type lifecycleRow struct {
 		ID                     string
 		ProjectID              string
@@ -139,9 +133,9 @@ func (r *AnalyticsRepo) businessDeliveryIssues(projectIDs []string) ([]domain.Is
 	}
 	var rows []lifecycleRow
 	err := r.DB.Table("issues").Select("id", "project_id", "status", "kind", "source",
-		extract("completedAt")+" AS completed_at",
-		extract("clarification.startedAt")+" AS clarification_started_at",
-		extract("operations")+" AS operations",
+		r.sqlPayloadJSONText("completedAt")+" AS completed_at",
+		r.sqlPayloadJSONText("clarification.startedAt")+" AS clarification_started_at",
+		r.sqlPayloadJSONText("operations")+" AS operations",
 	).Where("project_id IN ?", projectIDs).Find(&rows).Error
 	if err != nil {
 		return nil, err
@@ -238,6 +232,13 @@ func businessExecutionDuration(item businessIssueTiming, completedAt time.Time, 
 	if !observed {
 		return nil
 	}
+	value := unionDuration(intervals).Milliseconds()
+	return &value
+}
+
+// unionDuration returns the total length of the union of intervals: spans
+// that overlap or touch are counted once. intervals is sorted in place.
+func unionDuration(intervals []domain.RunExecutionInterval) time.Duration {
 	sort.Slice(intervals, func(i, j int) bool { return intervals[i].StartedAt.Before(intervals[j].StartedAt) })
 	var total time.Duration
 	for i := 0; i < len(intervals); {
@@ -251,8 +252,7 @@ func businessExecutionDuration(item businessIssueTiming, completedAt time.Time, 
 		}
 		total += span.FinishedAt.Sub(span.StartedAt)
 	}
-	value := total.Milliseconds()
-	return &value
+	return total
 }
 
 // populateBusinessDeliveryMetrics 计算业务域交付指标。prefetchedRuns/prefetchedEvents

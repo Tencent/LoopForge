@@ -106,7 +106,7 @@ func (e *Engine) takePendingObservations(runID string) []pendingObservation {
 }
 
 func (e *Engine) applyObservation(r *domain.Run, nodeID string, observation domain.TelemetryEvent) {
-	if isTerminalRunStatus(r.Status) && observation.Name != "sandbox.closed" {
+	if domain.TerminalRunStatus(r.Status) && observation.Name != "sandbox.closed" {
 		return
 	}
 	// Worker/OTLP retries must be idempotent. Preserve a producer supplied ID
@@ -180,44 +180,30 @@ func (e *Engine) applyObservation(r *domain.Run, nodeID string, observation doma
 		}
 		metricsSideChannel := observation.Source.Adapter == observability.AdapterHooks || observation.Source.Adapter == observability.AdapterOTEL
 		if !metricsSideChannel {
-			switch observation.Category {
-			case "reasoning":
-				nr.Activity = "模型正在推理"
-			case "output":
-				nr.Activity = "模型正在生成输出"
-			case "tool":
-				if observation.Name == "tool.call" && (observation.Phase != "finish" || observation.Level == "error") {
-					nr.Activity = "调用工具：" + observation.Message
-				}
-			case "sandbox":
-				if observation.Name != "sandbox.closed" {
-					nr.Activity = observation.Message
-				}
-			case "process":
-				if observation.Name == "process.started" {
-					label := observation.Provider
-					if label == "" {
-						label = "执行器"
-					}
-					if observation.Model != "" {
-						label += " · " + observation.Model
-					}
-					nr.Activity = label + " 已启动"
-				} else {
-					nr.Activity = observation.Message
-				}
-			default:
-				nr.Activity = observation.Message
-				if nr.Activity == "" {
-					nr.Activity = observation.Name
-				}
+			if activity, ok := observationActivity(observation); ok {
+				nr.Activity = activity
 			}
 			if observation.Category == "tool" && observation.Name == "tool.call" && observation.Phase == "finish" {
 				nr.ToolCalls++
 				r.ToolCalls++
 			}
+			// Anthropic-compatible message_delta usage belongs to one model
+			// message, while result usage is cumulative across the session.
+			// Mixing their cursors rebills prior turns at the next result.
+			messageUsage := observation.Name == "usage.update" && (observation.Source.Adapter == "anthropic-stream-v1" || observation.Source.Adapter == "codebuddy-stream-json-v1")
+			if observation.Name == "model.request" && observation.Phase == "start" {
+				delete(nr.UsageStreamCursors, messageUsageKey(nr.SessionID, observation.ParentID))
+			}
 			if observation.Usage != nil {
-				applyUsage(r, nr, observation.SessionID, *observation.Usage)
+				if messageUsage {
+					applyMessageUsage(r, nr, observation.SessionID, observation.ParentID, *observation.Usage)
+				} else {
+					if observation.Name == "usage.final" {
+						applyFinalUsage(r, nr, observation)
+					} else {
+						applyUsage(r, nr, observation.SessionID, *observation.Usage)
+					}
+				}
 			}
 		}
 	}
@@ -227,5 +213,44 @@ func (e *Engine) applyObservation(r *domain.Run, nodeID string, observation doma
 	}
 	if len(r.Telemetry) > 4000 {
 		r.Telemetry = append([]domain.TelemetryEvent(nil), r.Telemetry[len(r.Telemetry)-4000:]...)
+	}
+}
+
+// observationActivity derives the node activity text shown for an observation.
+// ok is false when the observation must leave the current activity unchanged:
+// a finished, successful tool call or a closed sandbox.
+func observationActivity(observation domain.TelemetryEvent) (activity string, ok bool) {
+	switch observation.Category {
+	case "reasoning":
+		return "模型正在推理", true
+	case "output":
+		return "模型正在生成输出", true
+	case "tool":
+		if observation.Name == "tool.call" && (observation.Phase != "finish" || observation.Level == "error") {
+			return "调用工具：" + observation.Message, true
+		}
+		return "", false
+	case "sandbox":
+		if observation.Name != "sandbox.closed" {
+			return observation.Message, true
+		}
+		return "", false
+	case "process":
+		if observation.Name != "process.started" {
+			return observation.Message, true
+		}
+		label := observation.Provider
+		if label == "" {
+			label = "执行器"
+		}
+		if observation.Model != "" {
+			label += " · " + observation.Model
+		}
+		return label + " 已启动", true
+	default:
+		if observation.Message != "" {
+			return observation.Message, true
+		}
+		return observation.Name, true
 	}
 }

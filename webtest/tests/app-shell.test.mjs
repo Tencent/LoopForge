@@ -180,9 +180,12 @@ test('generic workflow hydration, project switching, flow routes, and shell keyb
   assert.equal(app.document.querySelector('#commandPalette').hidden, true);
 
   const modal = app.document.querySelector('#artifactModal');
-  modal.classList.add('open');
-  modal.dispatchEvent(new app.window.Event('pointerdown', { bubbles: true }));
-  assert.equal(modal.classList.contains('open'), false);
+  modal.getBoundingClientRect = () => ({ left: 100, top: 100, right: 500, bottom: 500 });
+  modal.showModal();
+  modal.dispatchEvent(new app.window.MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }));
+  assert.equal(modal.open, true);
+  modal.dispatchEvent(new app.window.MouseEvent('pointerdown', { bubbles: true, clientX: 50, clientY: 50 }));
+  assert.equal(modal.open, false);
 
   const resize = app.document.querySelector('.sidebar-resize');
   resize.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
@@ -209,4 +212,19 @@ test('boot exchanges an authentication callback, cleans the URL, and loads the s
   assert.doesNotMatch(app.window.location.search, /code=/);
   assert.match(app.window.location.hash, /issues/);
   assert.equal(app.document.querySelector('#pageTitle').textContent, '需求列表');
+});
+
+test('boot selects a project the signed-in user belongs to before an unrelated first project', async (t) => {
+  const shell = sampleBootstrap();
+  shell.projects = [
+    { id: 'someone-else', name: 'Someone else', key: 'ELSE', ownerId: 1, members: [] },
+    { id: 'joined', name: 'Joined', key: 'JOIN', ownerId: 2, members: [{ userId: 7, role: 'member' }] },
+  ];
+  const app = await loadApp({ routes: [
+    { path: '/api/auth/current', body: { user: { id: 7, loginName: 'member', isGuest: false }, authRequired: false } },
+    { path: '/api/bootstrap', body: shell },
+  ] });
+  t.after(app.close);
+  await settle(6);
+  assert.equal(app.evaluate('state.projectFilter'), 'joined');
 });

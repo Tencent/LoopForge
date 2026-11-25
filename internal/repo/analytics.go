@@ -27,7 +27,6 @@ type analyticsAccumulator struct {
 	retriedNodes     int
 	reworkNodes      int
 	models           map[string]int
-	versions         map[string]int
 	nodeTypes        map[string]int
 	nodeCount        int
 	issueIDs         map[string]struct{}
@@ -54,6 +53,7 @@ type analyticsRunSignals struct {
 	toolSucceeded int
 	toolFailed    int
 	interventions int
+	byNode        map[string]domain.AnalyticsHumanCounts
 }
 
 // Analytics returns a read-only, vendor-neutral operational view across runs.
@@ -66,12 +66,15 @@ func (r *AnalyticsRepo) Analytics(filter domain.AnalyticsFilter) domain.Analytic
 // still applied in Go by the same predicates, so every aggregate is identical to
 // the self-fetching path. Nil keeps the original behavior.
 func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetched []domain.Run) (out domain.AnalyticsSnapshot) {
-	overview := filter.Scope == "overview"
+	overview := filter.Scope == "overview" || filter.Scope == "dashboard"
 	now := time.Now().UTC()
 	out = domain.AnalyticsSnapshot{
 		Filter:   filter,
 		Summary:  domain.AnalyticsSummary{GeneratedAt: now},
 		Coverage: domain.AnalyticsCoverage{AdapterEvents: map[string]int{}, LogLevels: map[string]int{}},
+	}
+	if filter.Scope == "dashboard" || filter.IncludeDashboard {
+		out.Dashboard = &domain.AnalyticsDashboard{}
 	}
 	defer applyAnalyticsCNY(&out)
 	trends := map[string]*domain.AnalyticsTrendPoint{}
@@ -81,6 +84,10 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	workflows, agents, executors, models, nodes, categories, sources := map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}
 	versions := map[string]*analyticsVersionAccumulator{}
 	users := map[string]*analyticsUserAccumulator{}
+	var tokenUsage map[analyticsTokenUsageKey]int64
+	if filter.IncludeDashboard && filter.Scope != "dashboard" {
+		tokenUsage = map[analyticsTokenUsageKey]int64{}
+	}
 	projects := map[string]*analyticsProjectAccumulator{}
 	failures := map[string]*domain.AnalyticsFailure{}
 	var terminalDurations, terminalExecDurations []int64
@@ -213,6 +220,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		}
 		if !isExternal && run.IsWorkspace() {
 			accumulateConversationRun(&out.Summary, conversationIssues, trends, conversationTrendIssues, users, projects, sources, run, issuesByID[issueID], filter.Grain)
+			accumulateAnalyticsTokenUsage(tokenUsage, run, analyticsRunUserID(run, issuesByID[issueID]), run.CreatedAt.UTC().Format("2006-01-02"), nil)
 			continue
 		}
 		if !isExternal {
@@ -394,11 +402,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		eventAt = eventAt.UTC()
 		day := eventAt.Format("2006-01-02")
 		bucket := analyticsTrendBucket(eventAt, filter.Grain)
-		point := trends[bucket]
-		if point == nil {
-			point = &domain.AnalyticsTrendPoint{Date: bucket}
-			trends[bucket] = point
-		}
+		point := analyticsTrendEntry(trends, bucket)
 		point.Runs++
 		if !usageCostKnown(run.Usage) {
 			point.CostUnknownRuns++
@@ -425,13 +429,9 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		cell.Runs++
 		cell.Tokens += run.Usage.TotalTokens
 		cell.CostUSD += run.Usage.CostUSD
-		if issueID != "" {
-			if trendIssues[bucket] == nil {
-				trendIssues[bucket] = map[string]struct{}{}
-			}
-			trendIssues[bucket][issueID] = struct{}{}
-		}
+		addAnalyticsTrendIssue(trendIssues, bucket, issueID)
 		accumulateUserUsage(users, analyticsRunUserID(run, issuesByID[issueID]), day, run, duration, complete, execDuration)
+		accumulateAnalyticsTokenUsage(tokenUsage, run, analyticsRunUserID(run, issuesByID[issueID]), day, external.execution.Usage)
 		accumulateProjectUsage(projects, domain.RunProjectID(run, issuesByID[issueID].ProjectID), issueID, run)
 		if isExternal {
 			accumulateInsightModels(models, external.execution)
@@ -485,7 +485,22 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	// Tool outcome and human-decision facts live in append-only event tables,
 	// not in Run summary columns. Load only matching tool-finish telemetry and
 	// compact control events, then join them back to each auditable Run row.
-	signals := r.analyticsRunSignals(includedRunIDs)
+	signalRunIDs := includedRunIDs
+	dashboardRuns := platformRuns
+	if out.Dashboard != nil {
+		var err error
+		dashboardRuns, err = r.analyticsDashboardSignalRuns(platformRuns, filter, issuesByID)
+		if err != nil {
+			out.DataErrors = append(out.DataErrors, "子流程统计读取失败")
+			return out
+		}
+		signalRunIDs = analyticsDashboardSignalIDs(dashboardRuns, filter, issuesByID, signalRunIDs)
+	}
+	signals, signalErr := r.analyticsRunSignals(signalRunIDs)
+	if signalErr != nil {
+		out.DataErrors = append(out.DataErrors, "人工介入统计读取失败")
+		return out
+	}
 	for runID, signal := range signals {
 		index, ok := runTraceIndex[runID]
 		if !ok {
@@ -565,8 +580,9 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	if cacheDenominator > 0 {
 		out.Summary.CacheHitRate = float64(cacheReadTotal) * 100 / float64(cacheDenominator)
 	}
-	if out.Summary.TotalRuns > 0 {
-		out.Summary.CostCoveragePct = float64(costKnownRuns) * 100 / float64(out.Summary.TotalRuns)
+	if units := out.Summary.TotalRuns + out.Summary.ConversationWorkspaces; units > 0 {
+		known := costKnownRuns + out.Summary.ConversationWorkspaces - out.Summary.ConversationCostUnknownWorkspaces
+		out.Summary.CostCoveragePct = float64(known) * 100 / float64(units)
 	}
 	if qualityTerminal > 0 {
 		out.Summary.WaitAverageDurationMs = terminalWaitDuration / int64(qualityTerminal)
@@ -593,6 +609,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	out.WorkflowVersions = finalizeWorkflowVersions(versions)
 	out.IssueSources = finalizeBreakdowns(sources)
 	out.UserUsage = finalizeUserUsage(users)
+	out.TokenUsage = finalizeAnalyticsTokenUsage(tokenUsage)
 	out.ProjectUsage = finalizeProjectUsage(projects)
 	out.Models = finalizeBreakdowns(models)
 	out.Nodes = finalizeBreakdowns(nodes)
@@ -605,14 +622,21 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		out.Failures = append(out.Failures, *failure)
 	}
 	sort.Slice(out.Failures, func(i, j int) bool { return out.Failures[i].Count > out.Failures[j].Count })
-	out.MRMerges, out.Summary.MergedMRsMissingTime = r.mrMergeAnalytics(filter, issuesByID)
+	merged, missingMergeTime, mergeErr := r.mrMergeAnalytics(filter, issuesByID)
+	if mergeErr != nil {
+		out.DataErrors = append(out.DataErrors, "交付统计读取失败")
+		return out
+	}
+	out.MRMerges, out.Summary.MergedMRsMissingTime = merged, missingMergeTime
 	out.Summary.MergedMRs = len(out.MRMerges)
-	for _, mr := range out.MRMerges {
-		bucket := analyticsTrendBucket(mr.MergedAt, filter.Grain)
-		if trends[bucket] == nil {
-			trends[bucket] = &domain.AnalyticsTrendPoint{Date: bucket}
+	if out.Dashboard != nil {
+		if err := r.analyticsDashboard(filter, dashboardRuns, issuesByID, workflowDefs, signals, &out); err != nil {
+			out.DataErrors = append(out.DataErrors, "统计趋势读取失败")
+			return out
 		}
-		trends[bucket].MergedMRs++
+	}
+	for _, mr := range out.MRMerges {
+		analyticsTrendEntry(trends, analyticsTrendBucket(mr.MergedAt, filter.Grain)).MergedMRs++
 	}
 	for _, point := range trends {
 		if ids := trendIssues[point.Date]; ids != nil {
@@ -637,6 +661,14 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 			out.Delivery.Issues = countDeliveryGroups(filter, platformRuns, issuesByID)
 		}
 		out.Summary.InProgressIssues = countInProgressIssues(issueList, filter)
+		if filter.Scope == "dashboard" {
+			// The compact page consumes aggregates, not trace IDs, MR links or
+			// per-person / per-model detail. Keep legacy overview unchanged.
+			out.RunTraces, out.MRMerges, out.Trend, out.WeekHour = nil, nil, nil, nil
+			out.UserUsage, out.ProjectUsage = nil, nil
+			out.Workflows, out.Models, out.Nodes, out.Failures = nil, nil, nil, nil
+			out.Categories, out.WorkflowVersions, out.IssueSources = nil, nil, nil
+		}
 		return out
 	}
 	out.Agents = finalizeBreakdowns(agents)
@@ -666,22 +698,36 @@ var analyticsHumanEventTypes = []string{
 // analyticsRunSignals reads only the append-only facts needed by the Loop
 // demo. It deliberately avoids hydrating logs, output, artifacts, and ordinary
 // progress telemetry into the analytics request.
-func (r *AnalyticsRepo) analyticsRunSignals(runIDs []string) map[string]analyticsRunSignals {
+func (r *AnalyticsRepo) analyticsRunSignals(runIDs []string) (map[string]analyticsRunSignals, error) {
 	out := map[string]analyticsRunSignals{}
 	for start := 0; start < len(runIDs); start += 500 {
 		batch := runIDs[start:min(start+500, len(runIDs))]
 		r.accumulateToolSignals(out, batch)
 
 		var eventRows []runEventRow
-		if err := r.DB.Select("run_id", "type").Where("run_id IN ? AND type IN ?", batch, analyticsHumanEventTypes).Find(&eventRows).Error; err == nil {
-			for _, row := range eventRows {
-				signal := out[row.RunID]
-				signal.interventions++
-				out[row.RunID] = signal
+		if err := r.DB.Select("run_id", "node_id", "type").Where("run_id IN ? AND type IN ?", batch, analyticsHumanEventTypes).Find(&eventRows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range eventRows {
+			signal := out[row.RunID]
+			signal.interventions++
+			if signal.byNode == nil {
+				signal.byNode = map[string]domain.AnalyticsHumanCounts{}
 			}
+			counts := signal.byNode[row.NodeID]
+			switch row.Type {
+			case "gate.approved", "node.passed":
+				counts.Approvals++
+			case "gate.rejected":
+				counts.Rejections++
+			default:
+				counts.Retries++
+			}
+			signal.byNode[row.NodeID] = counts
+			out[row.RunID] = signal
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (r *AnalyticsRepo) accumulateToolSignals(out map[string]analyticsRunSignals, batch []string) {
@@ -833,6 +879,27 @@ func analyticsTrendBucket(at time.Time, grain string) string {
 	default:
 		return at.Format("2006-01-02")
 	}
+}
+
+// analyticsTrendEntry 取用 bucket 对应的趋势点，缺失时新建并存回。
+func analyticsTrendEntry(trends map[string]*domain.AnalyticsTrendPoint, bucket string) *domain.AnalyticsTrendPoint {
+	point := trends[bucket]
+	if point == nil {
+		point = &domain.AnalyticsTrendPoint{Date: bucket}
+		trends[bucket] = point
+	}
+	return point
+}
+
+// addAnalyticsTrendIssue 把需求 ID 记入 bucket 的需求集合；issueID 为空时不登记。
+func addAnalyticsTrendIssue(trendIssues map[string]map[string]struct{}, bucket, issueID string) {
+	if issueID == "" {
+		return
+	}
+	if trendIssues[bucket] == nil {
+		trendIssues[bucket] = map[string]struct{}{}
+	}
+	trendIssues[bucket][issueID] = struct{}{}
 }
 
 // analyticsRunInWindow 保持与既有行为一致：按 Run 创建时间过滤。
@@ -1005,34 +1072,49 @@ func accumulateBreakdown(values map[string]*analyticsAccumulator, key, name stri
 	}
 	value.item.Runs++
 	value.item.Reworks += reworks
-	if !usageCostKnown(run.Usage) {
+	value.item.ToolCalls += run.ToolCalls
+	accumulateBreakdownUsage(value, run.Usage)
+	countBreakdownStatus(&value.item, run.Status, run.Status == "running" || run.Status == "waiting")
+	if complete {
+		accumulateBreakdownDuration(value, duration, execDuration)
+	}
+}
+
+// accumulateBreakdownUsage 把单次执行的用量累加到维度累加器：Token/成本总量、
+// 成本未识别计数与 Token 四分项。dimension 维度（SOP、节点、模型等）共用。
+func accumulateBreakdownUsage(value *analyticsAccumulator, usage domain.TokenUsage) {
+	if !usageCostKnown(usage) {
 		value.item.CostUnknownRuns++
 	}
-	value.item.Tokens += run.Usage.TotalTokens
-	value.item.CostUSD += run.Usage.CostUSD
-	value.item.ToolCalls += run.ToolCalls
-	value.inputTokens += run.Usage.InputTokens
-	value.outputTokens += run.Usage.OutputTokens
-	value.cacheReadTokens += run.Usage.CacheReadTokens
-	value.cacheWriteTokens += run.Usage.CacheWriteTokens
-	if run.Status == "succeeded" {
-		value.item.Succeeded++
+	value.item.Tokens += usage.TotalTokens
+	value.item.CostUSD += usage.CostUSD
+	value.inputTokens += usage.InputTokens
+	value.outputTokens += usage.OutputTokens
+	value.cacheReadTokens += usage.CacheReadTokens
+	value.cacheWriteTokens += usage.CacheWriteTokens
+}
+
+// countBreakdownStatus 按执行状态累加维度终态计数，active 由调用方按各自的状态词表判定。
+func countBreakdownStatus(item *domain.AnalyticsBreakdown, status string, active bool) {
+	switch status {
+	case "succeeded":
+		item.Succeeded++
+	case "failed":
+		item.Failed++
+	case "cancelled":
+		item.Cancelled++
 	}
-	if run.Status == "failed" {
-		value.item.Failed++
+	if active {
+		item.Active++
 	}
-	if run.Status == "cancelled" {
-		value.item.Cancelled++
-	}
-	if run.Status == "running" || run.Status == "waiting" {
-		value.item.Active++
-	}
-	if complete {
-		value.duration += duration
-		value.durations = append(value.durations, duration)
-		value.execDuration += execDuration
-		value.execDurations = append(value.execDurations, execDuration)
-	}
+}
+
+// accumulateBreakdownDuration 记录一次有效耗时样本，供均值与 P95 使用。
+func accumulateBreakdownDuration(value *analyticsAccumulator, duration, execDuration int64) {
+	value.duration += duration
+	value.durations = append(value.durations, duration)
+	value.execDuration += execDuration
+	value.execDurations = append(value.execDurations, execDuration)
 }
 
 func accumulateNode(values map[string]*analyticsAccumulator, key, name string, node *domain.NodeRun, duration int64, complete bool) {
@@ -1046,16 +1128,8 @@ func accumulateNode(values map[string]*analyticsAccumulator, key, name string, n
 	}
 	value.item.Runs++
 	value.item.Reworks += node.ReworkCount
-	if !usageCostKnown(node.Usage) {
-		value.item.CostUnknownRuns++
-	}
-	value.item.Tokens += node.Usage.TotalTokens
-	value.item.CostUSD += node.Usage.CostUSD
 	value.item.ToolCalls += node.ToolCalls
-	value.inputTokens += node.Usage.InputTokens
-	value.outputTokens += node.Usage.OutputTokens
-	value.cacheReadTokens += node.Usage.CacheReadTokens
-	value.cacheWriteTokens += node.Usage.CacheWriteTokens
+	accumulateBreakdownUsage(value, node.Usage)
 	value.nodeRuns++
 	if node.Attempt > 1 {
 		value.retriedNodes++
@@ -1069,22 +1143,13 @@ func accumulateNode(values map[string]*analyticsAccumulator, key, name string, n
 		}
 		value.models[node.Model]++
 	}
-	if node.Status == "succeeded" {
-		value.item.Succeeded++
-	}
+	countBreakdownStatus(&value.item, node.Status, node.Status == "running" || node.Status == "waiting_approval")
 	if node.Status == "failed" {
-		value.item.Failed++
 		value.item.FailedNodes++
 	}
-	if node.Status == "running" || node.Status == "waiting_approval" {
-		value.item.Active++
-	}
 	if complete {
-		value.duration += duration
-		value.durations = append(value.durations, duration)
 		// 节点耗时本身就是"执行耗时"，与双口径中的执行耗时同源。
-		value.execDuration += duration
-		value.execDurations = append(value.execDurations, duration)
+		accumulateBreakdownDuration(value, duration, duration)
 	}
 }
 
@@ -1128,8 +1193,8 @@ func accumulateVersion(values map[string]*analyticsVersionAccumulator, workflowI
 	}
 }
 
-// accumulateUserUsage 按"责任人 × 自然日"聚合用量。
-func accumulateUserUsage(values map[string]*analyticsUserAccumulator, userID, day string, run domain.Run, duration int64, complete bool, execDuration int64) {
+// analyticsUserEntry 返回"责任人 × 自然日"的累加器，不存在时新建；空责任人归为 unassigned。
+func analyticsUserEntry(values map[string]*analyticsUserAccumulator, userID, day string) *analyticsUserAccumulator {
 	if userID == "" {
 		userID = "unassigned"
 	}
@@ -1139,6 +1204,12 @@ func accumulateUserUsage(values map[string]*analyticsUserAccumulator, userID, da
 		value = &analyticsUserAccumulator{item: domain.AnalyticsUserUsage{UserID: userID, Date: day, CostKnown: true}}
 		values[key] = value
 	}
+	return value
+}
+
+// accumulateUserUsage 按"责任人 × 自然日"聚合用量。
+func accumulateUserUsage(values map[string]*analyticsUserAccumulator, userID, day string, run domain.Run, duration int64, complete bool, execDuration int64) {
+	value := analyticsUserEntry(values, userID, day)
 	value.item.Runs++
 	value.item.Tokens += run.Usage.TotalTokens
 	value.item.InputTokens += run.Usage.InputTokens
@@ -1252,7 +1323,8 @@ func finalizeUserUsage(values map[string]*analyticsUserAccumulator) []domain.Ana
 	return out
 }
 
-func accumulateProjectUsage(values map[string]*analyticsProjectAccumulator, projectID, issueID string, run domain.Run) {
+// analyticsProjectEntry 返回项目的累加器，不存在时新建；空项目归为 unassigned。
+func analyticsProjectEntry(values map[string]*analyticsProjectAccumulator, projectID string) *analyticsProjectAccumulator {
 	if projectID == "" {
 		projectID = "unassigned"
 	}
@@ -1261,6 +1333,11 @@ func accumulateProjectUsage(values map[string]*analyticsProjectAccumulator, proj
 		value = &analyticsProjectAccumulator{item: domain.AnalyticsProjectUsage{ProjectID: projectID, CostKnown: true}, issues: map[string]struct{}{}}
 		values[projectID] = value
 	}
+	return value
+}
+
+func accumulateProjectUsage(values map[string]*analyticsProjectAccumulator, projectID, issueID string, run domain.Run) {
+	value := analyticsProjectEntry(values, projectID)
 	value.item.Runs++
 	value.item.Tokens += run.Usage.TotalTokens
 	value.item.CostUSD += run.Usage.CostUSD
@@ -1314,8 +1391,8 @@ func analyticsIssueSource(issue domain.Issue) string {
 	return source
 }
 
-// accumulateIssueSource 按需求来源聚合执行量、Token、成本与执行耗时。
-func accumulateIssueSource(values map[string]*analyticsAccumulator, source string, run domain.Run, execDuration int64) {
+// analyticsSourceEntry 返回需求来源的累加器，不存在时新建；空来源归为 local。
+func analyticsSourceEntry(values map[string]*analyticsAccumulator, source string) *analyticsAccumulator {
 	if source == "" {
 		source = "local"
 	}
@@ -1324,6 +1401,12 @@ func accumulateIssueSource(values map[string]*analyticsAccumulator, source strin
 		value = &analyticsAccumulator{item: domain.AnalyticsBreakdown{Key: source, Name: source}}
 		values[source] = value
 	}
+	return value
+}
+
+// accumulateIssueSource 按需求来源聚合执行量、Token、成本与执行耗时。
+func accumulateIssueSource(values map[string]*analyticsAccumulator, source string, run domain.Run, execDuration int64) {
+	value := analyticsSourceEntry(values, source)
 	value.item.Runs++
 	value.item.Tokens += run.Usage.TotalTokens
 	value.item.CostUSD += run.Usage.CostUSD
@@ -1398,10 +1481,14 @@ func executorName(values map[string]domain.ExecutorDefinition, id string) string
 // trendIssues.
 func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[string]struct{}, trends map[string]*domain.AnalyticsTrendPoint, trendIssues map[string]map[string]struct{}, users map[string]*analyticsUserAccumulator, projects map[string]*analyticsProjectAccumulator, sources map[string]*analyticsAccumulator, run domain.Run, issue domain.Issue, grain string) {
 	usage := run.Usage
+	known := conversationUsageCostKnown(usage)
 	issueID := strings.TrimSpace(run.ExecutionContext.IssueID)
 	summary.ConversationWorkspaces++
 	summary.ConversationTokens += usage.TotalTokens
 	summary.ConversationCostUSD += usage.CostUSD
+	if !known {
+		summary.ConversationCostUnknownWorkspaces++
+	}
 	summary.TotalTokens += usage.TotalTokens
 	summary.TotalCostUSD += usage.CostUSD
 	summary.CostReportedUSD += usage.CostUSD
@@ -1417,70 +1504,56 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	// Same timestamp the analytics window filters on.
 	at := run.CreatedAt.UTC()
 	bucket := analyticsTrendBucket(at, grain)
-	point := trends[bucket]
-	if point == nil {
-		point = &domain.AnalyticsTrendPoint{Date: bucket}
-		trends[bucket] = point
-	}
+	point := analyticsTrendEntry(trends, bucket)
 	point.Tokens += usage.TotalTokens
 	point.CostUSD += usage.CostUSD
 	point.ConversationWorkspaces++
 	point.ConversationTokens += usage.TotalTokens
 	point.ConversationCostUSD += usage.CostUSD
+	if !known {
+		point.ConversationCostUnknownWorkspaces++
+	}
 	point.InputTokens += usage.InputTokens
 	point.OutputTokens += usage.OutputTokens
 	point.CacheReadTokens += usage.CacheReadTokens
 	point.CacheWriteTokens += usage.CacheWriteTokens
-	if issueID != "" {
-		if trendIssues[bucket] == nil {
-			trendIssues[bucket] = map[string]struct{}{}
-		}
-		trendIssues[bucket][issueID] = struct{}{}
-	}
-	if usage.TotalTokens == 0 && usage.CostUSD == 0 && issueID == "" {
+	addAnalyticsTrendIssue(trendIssues, bucket, issueID)
+	if known && usage.TotalTokens == 0 && usage.CostUSD == 0 && issueID == "" {
 		return
 	}
-	userID := analyticsRunUserID(run, issue)
-	if userID == "" {
-		userID = "unassigned"
-	}
-	key := userID + "\x00" + at.Format("2006-01-02")
-	user := users[key]
-	if user == nil {
-		user = &analyticsUserAccumulator{item: domain.AnalyticsUserUsage{UserID: userID, Date: at.Format("2006-01-02"), CostKnown: true}}
-		users[key] = user
-	}
+	user := analyticsUserEntry(users, analyticsRunUserID(run, issue), at.Format("2006-01-02"))
 	user.item.Tokens += usage.TotalTokens
 	user.item.InputTokens += usage.InputTokens
 	user.item.OutputTokens += usage.OutputTokens
 	user.item.CacheReadTokens += usage.CacheReadTokens
 	user.item.CacheWriteTokens += usage.CacheWriteTokens
 	user.item.CostUSD += usage.CostUSD
-	projectID := domain.RunProjectID(run, issue.ProjectID)
-	if projectID == "" {
-		projectID = "unassigned"
-	}
-	project := projects[projectID]
-	if project == nil {
-		project = &analyticsProjectAccumulator{item: domain.AnalyticsProjectUsage{ProjectID: projectID, CostKnown: true}, issues: map[string]struct{}{}}
-		projects[projectID] = project
-	}
+	user.item.CostKnown = user.item.CostKnown && known
+	project := analyticsProjectEntry(projects, domain.RunProjectID(run, issue.ProjectID))
 	project.item.Tokens += usage.TotalTokens
 	project.item.CostUSD += usage.CostUSD
+	project.item.CostKnown = project.item.CostKnown && known
 	if issueID == "" {
 		return
 	}
 	project.issues[issueID] = struct{}{}
-	source := analyticsIssueSource(issue)
-	value := sources[source]
-	if value == nil {
-		value = &analyticsAccumulator{item: domain.AnalyticsBreakdown{Key: source, Name: source}}
-		sources[source] = value
-	}
+	value := analyticsSourceEntry(sources, analyticsIssueSource(issue))
 	value.item.Tokens += usage.TotalTokens
 	value.item.CostUSD += usage.CostUSD
+	if !known {
+		value.item.CostUnknownRuns++
+	}
 	value.inputTokens += usage.InputTokens
 	value.outputTokens += usage.OutputTokens
 	value.cacheReadTokens += usage.CacheReadTokens
 	value.cacheWriteTokens += usage.CacheWriteTokens
+}
+
+func conversationUsageCostKnown(u domain.TokenUsage) bool {
+	if usageCostKnown(u) {
+		return true
+	}
+	// An idle workspace has no billable invocation. A populated unknown
+	// usage record must still remain unknown in every aggregate.
+	return u.CostStatus == "" && u.InputTokens == 0 && u.OutputTokens == 0 && u.TotalTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 && u.ReasoningTokens == 0 && u.CostUSD == 0
 }

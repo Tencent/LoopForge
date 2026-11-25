@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"agentflow/internal/config"
+	"agentflow/internal/credcrypt"
 	"agentflow/internal/engine"
 	"agentflow/internal/httpapi"
 	"agentflow/internal/knowledge"
@@ -80,6 +81,9 @@ func main() {
 	if runtime.RunMCPCallCLI(os.Args[1:]) {
 		return
 	}
+	if runtime.RunGitHelperCLI(os.Args[1:]) {
+		return
+	}
 	addr := flag.String("addr", "", "HTTP listen address; overrides AGENTFLOW_HTTP_PORT")
 	workspaces := flag.String("workspaces", "", "sandbox workspace root")
 	workerConcurrency := flag.Int("worker-concurrency", 8, "maximum concurrent node sandboxes for this worker")
@@ -91,9 +95,10 @@ func main() {
 	mysqlDSN := flag.String("mysql-dsn", "", "MySQL DSN; overrides AGENTFLOW_MYSQL_DSN. MySQL is the only data source.")
 	roleFlag := flag.String("role", "", "process role: api, worker, or all (default all)")
 	cliAction := flag.String("cli-action", "", "local managed CLI administration: status, update, or rollback; exits without starting services")
-	cliProvider := flag.String("cli-provider", "", "provider for CLI rollback: codex, codebuddy, or claude-code")
+	cliProvider := flag.String("cli-provider", "", "managed CLI provider to roll back")
 	cliTimeout := flag.Duration("cli-timeout", 80*time.Minute, "total managed CLI operation timeout")
 	browserImage := flag.Bool("browser-image", false, "build or pull the agent browser sidecar image, print its name and exit")
+	credentialAction := flag.String("credential-action", "", "Bot credential administration: status or reencrypt; exits without starting services")
 	flag.Parse()
 	loadDotEnv()
 	if *browserImage {
@@ -106,7 +111,7 @@ func main() {
 		fmt.Println(image)
 		return
 	}
-	if os.Getenv("AGENTFLOW_SESSION_SECRET") == "" && *cliAction == "" {
+	if os.Getenv("AGENTFLOW_SESSION_SECRET") == "" && *cliAction == "" && *credentialAction == "" {
 		log.Fatal("AGENTFLOW_SESSION_SECRET is required; generate with openssl rand -hex 32")
 	}
 	if os.Getenv("AGENTFLOW_AUTH_REQUIRED") == "" {
@@ -132,6 +137,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := runtime.SetRepositoryCacheRoot(root); err != nil {
+		log.Printf("repository cache disabled: %v", err)
+	}
 	knowledgeCacheRoot, err := resolveKnowledgeCacheRoot()
 	if err != nil {
 		log.Fatal(err)
@@ -140,8 +148,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	keyring, err := credcrypt.FromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	s.SetCredentialKeyring(keyring)
+	if *credentialAction != "" {
+		if err := runCredentialAction(s, *credentialAction, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if keyring == nil {
+		log.Printf("%s is not set: stored plaintext Bot secrets stay readable, saving a new secret returns credential_key_missing", credcrypt.EnvKeys)
+	} else {
+		log.Printf("bot credential keyring current_kid=%s", keyring.CurrentKID())
+	}
 	// Data migrations are explicit scripts. Refuse to serve on an older schema
-	// so a new binary cannot create a second hosted source before 039 ran.
+	// so a new binary cannot create a second hosted source before 054 ran.
 	if err := s.CheckKnowledgeSchema(); err != nil {
 		log.Fatal(err)
 	}
@@ -150,7 +174,6 @@ func main() {
 	// 关键词检索，只有 MySQL 也能用。必须在构造任何知识引擎之前调用。
 	knowledgeengine.ConfigureVectorFromEnv(s, s)
 	e := engine.New(s, runtime.NewManagerWithLimit(root, *workerConcurrency))
-	runtime.PrebuildIsolatedImage()
 	host, _ := os.Hostname()
 	instanceID := strings.TrimSpace(os.Getenv("AGENTFLOW_INSTANCE_ID"))
 	if instanceID == "" {
@@ -209,6 +232,7 @@ func main() {
 	readyStatus := "serving"
 	switch role {
 	case "worker":
+		httpapi.ConfigureWorkerSOPSandboxSelection(s, e)
 		e.ConfigureControl(engine.ControlConfig{Role: role, URL: endpoints.ControlURL, Token: endpoints.ControlToken, APIURL: endpoints.APIBase})
 		e.StartInstanceHeartbeat(claimCtx)
 		srv = &http.Server{Addr: endpoints.ListenAddr, Handler: workerHandler(e), ReadHeaderTimeout: 10 * time.Second}

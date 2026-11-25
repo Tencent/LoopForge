@@ -293,6 +293,9 @@ func (h issuesHandlers) issueSOPs(c *gin.Context, issue domain.Issue) {
 			issue.WorkflowID = bindings[0].WorkflowID
 		}
 	}
+	if issue.WithoutSOP() && strings.TrimSpace(issue.WorkflowID) != "" {
+		issue.SOPMode, issue.AutomationState = domain.IssueSOPUse, "eligible"
+	}
 	if err := h.repo.PutIssue(issue); err != nil {
 		respond(c, err)
 		return
@@ -313,7 +316,14 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 	if current, ok := h.requestUser(c.Request, true); ok && current != nil && current.ID > 0 {
 		triggerUserID = current.ID
 	}
-	task, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: request.WorkflowID, Rerun: request.Rerun, TriggerUserID: triggerUserID})
+	req := dispatchRequest{
+		IssueID: issue.ID, WorkflowID: request.WorkflowID, Rerun: request.Rerun, TriggerUserID: triggerUserID,
+		WorkspaceRunID: dispatchConversationWorkspace(h.deps, c.Request, triggerUserID, issue.ProjectID),
+	}
+	if origin, ok := botStartOriginFrom(c.Request.Context()); ok {
+		req.ChatOrigin = &origin
+	}
+	task, err := dispatchIssue(h.deps, req)
 	if err != nil {
 		respond(c, err)
 		return
@@ -324,17 +334,21 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 		detail = "重新运行 SOP"
 	}
 	_, _ = h.appendStoredOperation(c, issue.ID, "dispatch", detail)
-	c.JSON(201, task)
+	c.JSON(201, publicTask(task))
 }
 
-// deleteIssue checks the complete history before cleaning failed/cancelled runs.
+// deleteIssue checks all execution history before cleaning any settled run.
 func (h issuesHandlers) deleteIssue(c *gin.Context, issue domain.Issue) {
+	mode := repo.IssueDeleteNormal
+	if c.Query("force") == "true" {
+		mode = repo.IssueDeleteForce
+	}
 	// Same as close: Task status trails a just-cancelled Run until the next
 	// sync, which would answer 409 "正在执行 SOP" for a stopped requirement.
 	if h.tasks != nil {
 		h.tasks.settleIssueTasks(issue.ID)
 	}
-	ids, err := h.repo.IssueDeletionRuns(issue.ID)
+	ids, err := h.repo.IssueDeletionRuns(issue.ID, mode)
 	if err == nil {
 		for _, id := range ids {
 			if err = h.engine.DeleteRun(id); err != nil {
@@ -343,17 +357,21 @@ func (h issuesHandlers) deleteIssue(c *gin.Context, issue domain.Issue) {
 		}
 	}
 	if err == nil {
-		err = h.repo.DeleteIssue(issue.ID)
+		err = h.repo.DeleteIssueAfterRunCleanup(issue.ID, mode)
 	}
 	if err != nil {
 		switch {
-		case errors.Is(err, repo.ErrIssueBusy), errors.Is(err, repo.ErrIssueSucceeded):
+		case errors.Is(err, repo.ErrIssueForceRequired):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "deletionRequiresForce": true})
+		case errors.Is(err, repo.ErrIssueBusy):
 			// Report the same concrete reason shown by list/detail affordances,
 			// including when execution history changed after the menu was opened.
-			if blocks, checkErr := h.repo.IssueDeletionBlocks([]domain.Issue{issue}); checkErr == nil {
-				if block, ok := blocks[issue.ID]; ok {
-					c.JSON(http.StatusConflict, gin.H{"error": block.Reason, "deletionBlock": block})
-					return
+			if current, ok := h.repo.Issue(issue.ID); ok {
+				if states, checkErr := h.repo.IssueDeletionStates([]domain.Issue{current}); checkErr == nil {
+					if block := states[issue.ID].Block; block != nil {
+						c.JSON(http.StatusConflict, gin.H{"error": block.Reason, "deletionBlock": block})
+						return
+					}
 				}
 			}
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})

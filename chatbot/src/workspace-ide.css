@@ -1,0 +1,20 @@
+/* Workspace IDE in the conversation side panel ("IDE" tab). */
+.chat-shell .artifact-panel .workspace-ide-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.workspace-ide {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.workspace-ide-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--surface, #fff);
+}

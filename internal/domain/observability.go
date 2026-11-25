@@ -24,8 +24,9 @@ type TelemetrySource struct {
 
 // TelemetryContext correlates all three platform layers plus product context.
 type TelemetryContext struct {
-	ProjectID string `json:"projectId,omitempty"`
-	IssueID   string `json:"issueId,omitempty"`
+	ExecutionPinned bool   `json:"executionPinned,omitempty"`
+	ProjectID       string `json:"projectId,omitempty"`
+	IssueID         string `json:"issueId,omitempty"`
 	// TAPDID is the external requirement key; local IssueID may differ across imports.
 	TAPDID            string `json:"tapdId,omitempty"`
 	ResponsibleUserID int64  `json:"responsibleUserId,omitempty"`
@@ -44,12 +45,18 @@ type TelemetryContext struct {
 	IssueNumber           int    `json:"issueNumber,omitempty"`
 	TaskID                string `json:"taskId,omitempty"`
 	ScheduleJobID         string `json:"scheduleJobId,omitempty"`
-	RunID                 string `json:"runId"`
-	ParentRunID           string `json:"parentRunId,omitempty"`
-	ParentNodeID          string `json:"parentNodeId,omitempty"`
-	// WorkspaceRunID names the run that owns the workspace a child SOP works
-	// in: the top-level run of its SOP chain. Empty means the run owns its
-	// own workspace.
+	SharedScheduleID      string `json:"sharedScheduleId,omitempty"`
+	SharedScheduleVersion int    `json:"sharedScheduleVersion,omitempty"`
+	// BotOriginID is the chat origin (bot_chat_origins) a top-level run was
+	// started from, stored with the run so that its first events already
+	// go back to that chat.
+	BotOriginID  string `json:"botOriginId,omitempty"`
+	RunID        string `json:"runId"`
+	ParentRunID  string `json:"parentRunId,omitempty"`
+	ParentNodeID string `json:"parentNodeId,omitempty"`
+	// WorkspaceRunID names the run that owns the checkout, either a
+	// conversation workspace or the root SOP in a nested run. Empty means
+	// this run owns its workspace.
 	WorkspaceRunID  string `json:"workspaceRunId,omitempty"`
 	WorkflowID      string `json:"workflowId,omitempty"`
 	WorkflowVersion int    `json:"workflowVersion,omitempty"`

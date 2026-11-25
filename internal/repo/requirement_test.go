@@ -246,7 +246,7 @@ func TestRequirementSnapshotHTTPStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "generic-frontend-delivery", Name: "前端交付", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "shape", Name: "造型"}}}
+	wf := domain.WorkflowDefinition{ID: "generic-frontend-delivery", Name: "前端交付", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "shape", Name: "造型"}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -275,5 +275,13 @@ func TestRequirementSnapshotHTTPStore(t *testing.T) {
 	}
 	if !frontend.Started || frontend.Status != "succeeded" {
 		t.Fatalf("frontend lane=%#v", frontend)
+	}
+}
+
+func TestRequirementConversationBranchesDropURLCredentials(t *testing.T) {
+	run := domain.Run{Kind: domain.RunKindWorkspace, Repositories: []domain.RepositoryContext{{RepositoryID: "app", Name: "app", WebURL: "https://user:s3cret-token@github.com/acme/app", WorkBranch: "feature/x"}}}
+	conv := requirementConversation(domain.Issue{ID: "iss-1"}, []domain.Run{run})
+	if conv == nil || len(conv.Branches) != 1 || conv.Branches[0].WebURL != "https://github.com/acme/app" {
+		t.Fatalf("branches = %+v", conv)
 	}
 }

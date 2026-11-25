@@ -16,7 +16,7 @@ printf '%s\n' "$*" >> "$NPM_TEST_LOG"
 [ "$NPM_TEST_FAIL" = 1 ] && { echo 'npm ERR! registry unreachable'; exit 1; }
 prefix=$3
 mkdir -p "$prefix/node_modules/@anthropic-ai/claude-code/bin" "$prefix/node_modules/.bin"
-printf '#!/bin/sh\necho 2.1.300\n' > "$prefix/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+printf '#!/bin/sh\necho ` + ClaudeCodeVersion + `\n' > "$prefix/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
 chmod 755 "$prefix/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
 ln -s ../@anthropic-ai/claude-code/bin/claude.exe "$prefix/node_modules/.bin/claude"
 `
@@ -99,7 +99,7 @@ func TestDockerSandboxRunsOnDemandClaudeCodeFromMountedDirectory(t *testing.T) {
 printf '%s\n' "$*" >> "$DOCKER_TEST_LOG"
 case "$*" in
   "image inspect loopforge-platform:tested") exit 0 ;;
-  "inspect "*) exit 1 ;;
+  "inspect "*) echo 'Error: No such container' >&2; exit 1 ;;
   "exec "*) echo /workspace ;;
 esac
 `})
@@ -133,5 +133,45 @@ esac
 	}
 	if !strings.Contains(dockerMCPCallLaunch, "PATH=$PATH:$AGENTFLOW_RUNTIME_CLI_PATH") {
 		t.Fatal("on-demand CLIs must be appended after the image PATH")
+	}
+}
+
+func TestDockerSandboxInstallsNPMAgentCLIBeforeExec(t *testing.T) {
+	root := t.TempDir()
+	log := filepath.Join(t.TempDir(), "npm.log")
+	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", "loopforge-platform:tested")
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", root)
+	t.Setenv("NPM_TEST_LOG", log)
+	t.Setenv("NPM_TEST_BIN", "pi")
+	useFakeCommands(t, map[string]string{"npm": genericFakeNPM})
+	sandbox := &dockerSandbox{dockerfile: domain.DockerfileDefinition{Content: IsolatedDockerfile}}
+	got, err := sandbox.onDemandCLIPath(context.Background(), CommandSpec{Provider: "pi", Argv: []string{"pi", "-p"}})
+	if want := filepath.Join(root, "pi", "current", "node_modules", ".bin"); err != nil || got != want {
+		t.Fatalf("pi bin dir %q %v, want %q", got, err, want)
+	}
+	for _, command := range []CommandSpec{
+		{Provider: "codex", Argv: []string{"codex", "exec"}},
+		{Provider: "codebuddy", Argv: []string{"codebuddy", "-p"}},
+		{Provider: "dsh", Argv: []string{"dsh", "--profile", "headless"}},
+		{Provider: "cursor", Argv: []string{"cursor-agent", "-p"}},
+		{Provider: "pi", Argv: []string{"/custom/pi"}},
+	} {
+		if got, err := sandbox.onDemandCLIPath(context.Background(), command); err != nil || got != "" {
+			t.Fatalf("%v: %q %v", command.Argv, got, err)
+		}
+	}
+	calls, _ := os.ReadFile(log)
+	if strings.Count(string(calls), "\n") != 1 || !strings.Contains(string(calls), "@earendil-works/pi-coding-agent") {
+		t.Fatalf("npm calls: %s", calls)
+	}
+}
+
+func TestDockerfileBundlesTheOnDemandDeepSeekHarnessRelease(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "@deepseek-ai/dsh@"+DeepSeekHarnessVersion+" ") && !strings.Contains(string(raw), "@deepseek-ai/dsh@"+DeepSeekHarnessVersion+"\n") {
+		t.Fatalf("Dockerfile must install @deepseek-ai/dsh@%s", DeepSeekHarnessVersion)
 	}
 }

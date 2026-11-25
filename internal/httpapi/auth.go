@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log"
@@ -40,8 +41,24 @@ func trustGatewayIdentityHeaders() bool {
 	return err == nil && enabled
 }
 
+// gatewayIdentitySecretHeader carries AGENTFLOW_IDENTITY_HEADER_SECRET from
+// the authenticating gateway.
+const gatewayIdentitySecretHeader = "X-AgentFlow-Gateway-Secret"
+
+// gatewayLoginName trusts identity headers only from the authenticating
+// gateway. Loopback alone does not prove that: a reverse proxy on the same
+// host also connects from loopback and may pass client headers through. With
+// a configured secret the gateway must present it; without one, any forwarded
+// request is refused, as authLocal does.
 func gatewayLoginName(r *http.Request) string {
 	if !trustGatewayIdentityHeaders() || !isLoopbackAddr(r.RemoteAddr) {
+		return ""
+	}
+	if secret := strings.TrimSpace(os.Getenv("AGENTFLOW_IDENTITY_HEADER_SECRET")); secret != "" {
+		if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(r.Header.Get(gatewayIdentitySecretHeader))), []byte(secret)) != 1 {
+			return ""
+		}
+	} else if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("Forwarded") != "" || r.Header.Get("X-Real-IP") != "" {
 		return ""
 	}
 	login := strings.TrimSpace(getHeaderCaseInsensitive(r, "Staffname"))
@@ -160,6 +177,38 @@ func bareHostname(hostport string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.Trim(hostport, "[]"), "."))
 }
 
+// syncAuthUserRecord reconciles an authenticated user with the users table:
+// an existing row supplies ID and non-empty profile fields (StaffID only when
+// the caller has none); a missing row is persisted and its ID read back.
+// source ("gateway" / "cookie") only labels the persist-failure log line.
+func (h *authHandlers) syncAuthUserRecord(user *auth.User, source string) {
+	if h.repo == nil {
+		return
+	}
+	if existing, ok := h.repo.UserByLoginName(user.LoginName); ok {
+		user.ID = existing.ID
+		if existing.ChineseName != "" {
+			user.ChineseName = existing.ChineseName
+		}
+		if existing.DeptName != "" {
+			user.DeptName = existing.DeptName
+		}
+		if existing.DeptID > 0 {
+			user.DeptID = existing.DeptID
+		}
+		if existing.StaffID > 0 && user.StaffID == 0 {
+			user.StaffID = existing.StaffID
+		}
+		return
+	}
+	// 数据库未查到该用户，但请求已经合法登录，执行写表补齐
+	if putErr := h.repo.PutUser(user.ToDomain()); putErr != nil {
+		log.Printf("[auth] persist %s user %s failed: %v", source, user.LoginName, putErr)
+	} else if saved, ok := h.repo.UserByLoginName(user.LoginName); ok {
+		user.ID = saved.ID
+	}
+}
+
 func (h *authHandlers) authCurrent(c *gin.Context) {
 	r := c.Request
 
@@ -177,29 +226,7 @@ func (h *authHandlers) authCurrent(c *gin.Context) {
 			IsGuest:     false,
 			AuthTime:    time.Now().UTC(),
 		}
-		if h.repo != nil {
-			if existing, ok := h.repo.UserByLoginName(staffName); ok {
-				user.ID = existing.ID
-				if existing.ChineseName != "" {
-					user.ChineseName = existing.ChineseName
-				}
-				if existing.DeptName != "" {
-					user.DeptName = existing.DeptName
-				}
-				if existing.DeptID > 0 {
-					user.DeptID = existing.DeptID
-				}
-				if existing.StaffID > 0 && user.StaffID == 0 {
-					user.StaffID = existing.StaffID
-				}
-			} else {
-				if putErr := h.repo.PutUser(user.ToDomain()); putErr != nil {
-					log.Printf("[auth] persist gateway user %s failed: %v", staffName, putErr)
-				} else if saved, ok := h.repo.UserByLoginName(staffName); ok {
-					user.ID = saved.ID
-				}
-			}
-		}
+		h.syncAuthUserRecord(user, "gateway")
 		user.AvatarURL = auth.AvatarURL(user.LoginName, 100)
 		if token, signErr := h.getAuthClient().SignUser(user); signErr == nil && token != "" {
 			h.setAuthCookie(c.Writer, c.Request, token)
@@ -219,31 +246,8 @@ func (h *authHandlers) authCurrent(c *gin.Context) {
 			if authSessionExpired(user) {
 				h.clearAuthCookie(c.Writer, r)
 			} else {
-				if h.repo != nil && user.LoginName != "" {
-					if existing, ok := h.repo.UserByLoginName(user.LoginName); ok {
-						user.ID = existing.ID
-						if existing.ChineseName != "" {
-							user.ChineseName = existing.ChineseName
-						}
-						if existing.DeptName != "" {
-							user.DeptName = existing.DeptName
-						}
-						if existing.DeptID > 0 {
-							user.DeptID = existing.DeptID
-						}
-						if existing.StaffID > 0 && user.StaffID == 0 {
-							user.StaffID = existing.StaffID
-						}
-					} else {
-						// 数据库未查到该用户，但前端 Cookie 已经合法登录，执行写表补齐
-						if putErr := h.repo.PutUser(user.ToDomain()); putErr != nil {
-							log.Printf("[auth] persist cookie user %s failed: %v", user.LoginName, putErr)
-						} else if saved, ok := h.repo.UserByLoginName(user.LoginName); ok {
-							user.ID = saved.ID
-						}
-					}
-				}
 				if user.LoginName != "" {
+					h.syncAuthUserRecord(user, "cookie")
 					user.AvatarURL = auth.AvatarURL(user.LoginName, 100)
 				}
 				if token, signErr := h.getAuthClient().SignUser(user); signErr == nil && token != "" {

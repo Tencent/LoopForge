@@ -57,6 +57,10 @@ func nativeCLIRecorder(t *testing.T) (string, func() []nativeCLICall) {
 	bin, capture := filepath.Join(dir, "codebuddy"), filepath.Join(dir, "calls")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo 2.185.0
+  exit 0
+fi
 previous=''
 config=''
 sid=''
@@ -85,6 +89,28 @@ if [ -f %s ]; then
 fi
 printf '%%s\n' '{"type":"result","result":"原生回复"}'
 `, quote(capture), quote(capture), quote(filepath.Join(dir, "fail")), quote(filepath.Join(dir, "fail")), quote(filepath.Join(dir, "progress-missing")), quote(filepath.Join(dir, "progress-missing")), quote(filepath.Join(dir, "missing")), quote(filepath.Join(dir, "missing")))
+	// "rejected" makes every resume fail the way a provider rejects a
+	// poisoned journal; "rejected-after-tool" fails one resume after a tool
+	// call, so the phase has side effects and must not be restarted.
+	resumed := `resumed=''
+previous=''
+for arg in "$@"; do
+  if [ "$previous" = '--resume' ]; then resumed=1; fi
+  previous="$arg"
+done
+if [ -f ` + quote(filepath.Join(dir, "rejected-always")) + ` ] || { [ -n "$resumed" ] && [ -f ` + quote(filepath.Join(dir, "rejected")) + ` ]; }; then
+  printf 'API Error: 400 the request parameters were rejected by the model provider\n' >&2
+  exit 1
+fi
+if [ -n "$resumed" ] && [ -f ` + quote(filepath.Join(dir, "rejected-after-tool")) + ` ]; then
+  rm ` + quote(filepath.Join(dir, "rejected-after-tool")) + `
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"echo hi"}}]}}'
+  printf 'API Error: 400 the request parameters were rejected by the model provider\n' >&2
+  exit 1
+fi
+`
+	final := `printf '%s\n' '{"type":"result","result":"原生回复"}'`
+	script = strings.Replace(script, final, resumed+final, 1)
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -247,13 +273,14 @@ func TestSharedNativeBranchHasIndependentContinuableState(t *testing.T) {
 	}
 }
 
-func TestSharedNativeSessionRecoversMissingTranscriptButDoesNotReplayModelErrors(t *testing.T) {
-	for _, mode := range []string{"missing", "fail", "progress-missing"} {
+func TestSharedNativeSessionPreservesIdentityAfterInterruptedTurn(t *testing.T) {
+	for _, mode := range []string{"fail", "progress-missing", "rejected-after-tool"} {
 		t.Run(mode, func(t *testing.T) {
 			h, a, b, _, session := sharedWorkbenchFixture(t)
 			dir, calls := nativeCLIRecorder(t)
 			session = sendNativeTurn(t, h, a, session, "恢复时需要的历史")
-			if err := os.WriteFile(filepath.Join(dir, mode), nil, 0o600); err != nil {
+			id := calls()[0].flag("--session-id")
+			if err := os.WriteFile(filepath.Join(dir, mode), nil, 0600); err != nil {
 				t.Fatal(err)
 			}
 			messages := append(append([]assistantMessage(nil), session.Messages...), assistantMessage{Role: "user", Content: "本轮新问题"})
@@ -261,33 +288,74 @@ func TestSharedNativeSessionRecoversMissingTranscriptButDoesNotReplayModelErrors
 			c, w := workbenchContext(b, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
 			h.chat(c)
 			got := calls()
-			if mode == "missing" {
-				if w.Code != 200 || len(got) != 3 || got[2].flag("--session-id") == "" || got[2].flag("--session-id") == got[0].flag("--session-id") {
-					t.Fatalf("missing transcript recovery: status=%d calls=%d", w.Code, len(got))
-				}
-				if !strings.Contains(got[2].prompt(), "恢复时需要的历史") || !strings.Contains(got[2].prompt(), "本轮新问题") {
-					t.Fatal("recovery omitted authoritative chat history")
-				}
-				session, _ = h.repo.SharedAssistantSession(session.ID)
-				sendNativeTurn(t, h, a, session, "恢复后继续")
-				if calls()[3].flag("--resume") != got[2].flag("--session-id") {
-					t.Fatal("recovered session was not retained")
-				}
-			} else {
-				if w.Code != 502 || len(got) != 2 {
-					t.Fatalf("model error replayed: status=%d calls=%d", w.Code, len(got))
-				}
-				job, _ := h.repo.AssistantGeneration(session.UserID, session.ID)
-				if job.Status != "failed" {
-					t.Fatalf("model failure was classified as %s", job.Status)
-				}
-				session, _ = h.repo.SharedAssistantSession(session.ID)
-				sendNativeTurn(t, h, b, session, "")
-				if calls()[2].flag("--resume") != "" {
-					t.Fatal("failed native turn was treated as a committed checkpoint")
-				}
+			if w.Code != 502 || len(got) != 2 || got[1].flag("--resume") != id {
+				t.Fatalf("failure silently restarted native session: status=%d calls=%d", w.Code, len(got))
+			}
+			job, _ := h.repo.AssistantGeneration(session.UserID, session.ID)
+			if job.Status != "failed" {
+				t.Fatalf("model failure was classified as %s", job.Status)
+			}
+			session, _ = h.repo.SharedAssistantSession(session.ID)
+			sendNativeTurn(t, h, b, session, "")
+			if calls()[2].flag("--resume") != id || calls()[2].flag("--session-id") != "" {
+				t.Fatal("retry discarded the interrupted native checkpoint")
 			}
 		})
+	}
+}
+
+// A journal that is missing, or that the provider rejects before the phase
+// produced anything, must not make the conversation permanently unusable:
+// the turn restarts once in a fresh native session from the full transcript,
+// and later turns resume that new session.
+func TestSharedNativeSessionRestartsAfterRejectedResume(t *testing.T) {
+	for _, mode := range []string{"missing", "rejected"} {
+		t.Run(mode, func(t *testing.T) {
+			h, a, b, _, session := sharedWorkbenchFixture(t)
+			dir, calls := nativeCLIRecorder(t)
+			session = sendNativeTurn(t, h, a, session, "恢复时需要的历史")
+			id := calls()[0].flag("--session-id")
+			marker := filepath.Join(dir, mode)
+			if err := os.WriteFile(marker, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			session = sendNativeTurn(t, h, b, session, "本轮新问题")
+			got := calls()
+			if len(got) != 3 || got[1].flag("--resume") != id {
+				t.Fatalf("turn did not try the existing journal first: calls=%d", len(got))
+			}
+			fresh := got[2].flag("--session-id")
+			if fresh == "" || fresh == id || got[2].flag("--resume") != "" {
+				t.Fatalf("rejected resume did not restart in a new native session: %q", got[2].args)
+			}
+			if prompt := got[2].prompt(); !strings.Contains(prompt, "恢复时需要的历史") || !strings.Contains(prompt, "本轮新问题") {
+				t.Fatal("fresh native session did not receive the full transcript")
+			}
+			_ = os.Remove(marker)
+			sendNativeTurn(t, h, a, session, "下一轮")
+			if next := calls()[3]; next.flag("--resume") != fresh {
+				t.Fatalf("next turn did not resume the fresh session: %q", next.args)
+			}
+		})
+	}
+}
+
+// A fresh session that the provider also rejects is reported as a failure:
+// the turn restarts at most once and never loops.
+func TestSharedNativeSessionRestartsRejectedResumeOnlyOnce(t *testing.T) {
+	h, a, b, _, session := sharedWorkbenchFixture(t)
+	dir, calls := nativeCLIRecorder(t)
+	session = sendNativeTurn(t, h, a, session, "第一轮")
+	if err := os.WriteFile(filepath.Join(dir, "rejected-always"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	messages := append(append([]assistantMessage(nil), session.Messages...), assistantMessage{Role: "user", Content: "第二轮"})
+	body, _ := json.Marshal(assistantRequest{ProjectID: session.ProjectID, RunID: session.RunID, SessionID: session.ID, Messages: messages})
+	c, w := workbenchContext(b, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
+	h.chat(c)
+	got := calls()
+	if w.Code != 502 || len(got) != 3 || got[1].flag("--resume") == "" || got[2].flag("--session-id") == "" {
+		t.Fatalf("expected one rejected resume and one rejected fresh start: status=%d calls=%d", w.Code, len(got))
 	}
 }
 
@@ -301,12 +369,73 @@ func TestSharedNativeSessionFencesAStaleWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writer.Close()
+	link := filepath.Join(writer.root, "home", ".agents", "skills", "waiting")
+	if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("original", link); err != nil {
+		t.Fatal(err)
+	}
 	messages := append(append([]assistantMessage(nil), session.Messages...), assistantMessage{Role: "user", Content: "不能抢写"})
 	body, _ := json.Marshal(assistantRequest{ProjectID: session.ProjectID, RunID: session.RunID, SessionID: session.ID, Messages: messages})
 	c, w := workbenchContext(b, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
 	(&assistantHandlers{deps: h.deps}).chat(c)
-	if w.Code != 409 || len(calls()) != 1 {
-		t.Fatalf("stale writer was not fenced: %d", w.Code)
+	if w.Code != 409 || len(calls()) != 1 || !strings.Contains(w.Body.String(), "SHARED_SESSION_BUSY") || !strings.Contains(w.Body.String(), "另一进程中生成") {
+		t.Fatalf("stale writer was not fenced or reported accurately: %d %s", w.Code, w.Body.String())
+	}
+	if target, err := os.Readlink(link); err != nil || target != "original" {
+		t.Fatalf("losing turn modified the locked conversation: %q %v", target, err)
+	}
+}
+
+func TestSharedNativeSessionContinuesAfterSkillInstallSymlink(t *testing.T) {
+	h, a, b, _, session := sharedWorkbenchFixture(t)
+	_, calls := nativeCLIRecorder(t)
+	session = sendNativeTurn(t, h, a, session, "安装技能")
+	root := assistantSharedSessionRoot(session.ID)
+	const skillPath = "home/.agents/skills/@publisher/design/SKILL.md"
+	const linkPath = "home/.agents/skills/design"
+	skill := filepath.Join(root, skillPath)
+	if err := os.MkdirAll(filepath.Dir(skill), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skill, []byte("installed skill"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("@publisher/design", filepath.Join(root, linkPath)); err != nil {
+		t.Fatal(err)
+	}
+	session = sendNativeTurn(t, h, b, session, "继续上次的工作")
+	recorded := calls()
+	if len(recorded) != 2 || recorded[1].flag("--resume") != recorded[0].flag("--session-id") {
+		t.Fatalf("turn did not resume the original native session: %+v", recorded)
+	}
+	if data, err := os.ReadFile(skill); err != nil || string(data) != "installed skill" {
+		t.Fatalf("skill files changed: %q %v", data, err)
+	}
+	reply := session.Messages[len(session.Messages)-1]
+	for _, event := range reply.Activity {
+		if event.Kind == "status" && strings.Contains(event.Text, linkPath) && strings.Contains(event.Text, "符号链接") {
+			return
+		}
+	}
+	t.Fatalf("turn did not record which link was removed: %+v", reply.Activity)
+}
+
+func TestSharedNativeSessionReportsCacheReadFailure(t *testing.T) {
+	h, a, _, _, session := sharedWorkbenchFixture(t)
+	_, calls := nativeCLIRecorder(t)
+	root := assistantSharedSessionRoot(session.ID)
+	if err := os.MkdirAll(filepath.Join(root, "session.json"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	messages := append(session.Messages, assistantMessage{Role: "user", Content: "继续"})
+	body, _ := json.Marshal(assistantRequest{ProjectID: session.ProjectID, RunID: session.RunID, SessionID: session.ID, Messages: messages})
+	c, w := workbenchContext(a, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
+	h.chat(c)
+	got := w.Body.String()
+	if w.Code != 500 || len(calls()) > 0 || !strings.Contains(got, "CONVERSATION_STATE_ERROR") || !strings.Contains(got, "读取共享会话缓存") || !strings.Contains(got, "session.json") || !strings.Contains(got, "is a directory") || strings.Contains(got, root) {
+		t.Fatalf("cache read failure lost its specific cause: %d %s", w.Code, got)
 	}
 }
 

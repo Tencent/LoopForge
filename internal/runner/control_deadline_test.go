@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,8 +10,75 @@ import (
 	"testing"
 	"time"
 
+	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
+
 	"github.com/gorilla/websocket"
 )
+
+func TestReadControlsRefreshesWorkspaceWriteDeadlineAfterToolForward(t *testing.T) {
+	old := controlWriteTimeout
+	controlWriteTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { controlWriteTimeout = old })
+	serverResult := make(chan error, 1)
+	conn := controlTestServer(t, func(ws *websocket.Conn) {
+		var tool controlMessage
+		if err := ws.ReadJSON(&tool); err != nil {
+			serverResult <- err
+			return
+		}
+		if err := ws.WriteJSON(controlMessage{Type: "agent_tool.response", RequestID: tool.RequestID, ToolResponse: &domain.RunnerToolResponse{Body: []byte(`{"result":{}}`)}}); err != nil {
+			serverResult <- err
+			return
+		}
+		// A native CLI may spend longer than the previous write timeout in
+		// its model call before the next process poll returns to the server.
+		time.Sleep(2 * controlWriteTimeout)
+		if err := ws.WriteJSON(controlMessage{Type: "workspace.request", RequestID: "next-poll", WorkspaceRequest: &domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationBrowser}}); err != nil {
+			serverResult <- err
+			return
+		}
+		_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var response controlMessage
+		if err := ws.ReadJSON(&response); err != nil {
+			serverResult <- err
+			return
+		}
+		if response.RequestID != "next-poll" || response.WorkspaceResponse == nil || response.WorkspaceResponse.Status != 400 {
+			serverResult <- fmt.Errorf("unexpected workspace response: %+v", response)
+			return
+		}
+		serverResult <- nil
+	})
+	d := &Daemon{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { finished <- d.readControls(ctx, conn) }()
+	var forward runtime.ConversationToolForward
+	for forward == nil {
+		d.conversationMu.Lock()
+		forward = d.conversationForward
+		d.conversationMu.Unlock()
+		if ctx.Err() != nil {
+			t.Fatal("conversation forwarder did not become available")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := forward(ctx, "fixture-token", []byte(`{"method":"ping"}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-serverResult:
+		if err != nil {
+			t.Fatalf("workspace response failed after previous write deadline expired: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("workspace response never arrived")
+	}
+	cancel()
+	<-finished
+}
 
 func controlTestServer(t *testing.T, serve func(*websocket.Conn)) *websocket.Conn {
 	t.Helper()

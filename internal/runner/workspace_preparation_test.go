@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,14 +24,47 @@ func runnerPreparationFixture(t *testing.T) (*Daemon, domain.RunnerWorkspaceRequ
 	return &Daemon{cfg: Config{DefaultWorkspaceRoot: base}}, domain.RunnerWorkspaceRequest{
 		RunID: "prepared", RunStatus: "waiting", WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
 		Operation: domain.RunnerWorkspaceOperationPrepare,
-		Sandbox:   &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: "local", Environment: map[string]string{"WORKSPACE_OVERLAY": "same-node-environment"}}, Requirements: &domain.RunnerSandboxRequirements{}},
+		Sandbox:   &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: "native", Environment: map[string]string{"WORKSPACE_OVERLAY": "same-node-environment"}}, Requirements: &domain.RunnerSandboxRequirements{}},
 		Workflow:  &domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "prepare", Name: "Prepare", Type: "script", RunOnWorkspaceRebuild: true, Script: "printf x >> preparation-count; printf '%s' \"$WORKSPACE_OVERLAY\" > prepared-environment"}}},
 	}, root
+}
+
+func TestRunnerWorkspacePreparationDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name, operation, runKind string
+		followsCaller            bool
+	}{
+		{"conversation", domain.RunnerWorkspaceOperationPrepare, domain.RunKindWorkspace, true},
+		{"SOP", domain.RunnerWorkspaceOperationPrepare, "", false},
+		{"terminal", domain.RunnerWorkspaceOperationTerminal, domain.RunKindWorkspace, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caller, stopCaller := context.WithTimeout(context.Background(), time.Hour)
+			defer stopCaller()
+			callerDeadline, _ := caller.Deadline()
+			ctx, done := runnerWorkspacePreparationContext(caller, domain.RunnerWorkspaceRequest{
+				Operation: tc.operation, RunKind: tc.runKind,
+			})
+			defer done()
+			deadline, ok := ctx.Deadline()
+			if !ok || deadline.Equal(callerDeadline) != tc.followsCaller {
+				t.Fatalf("preparation deadline = %v, caller deadline = %v, follows caller = %t", deadline, callerDeadline, tc.followsCaller)
+			}
+			stopCaller()
+			if ctx.Err() != context.Canceled {
+				t.Fatalf("preparation context error after caller cancellation: %v", ctx.Err())
+			}
+		})
+	}
 }
 
 func TestRunnerWorkspacePreparationAndTerminalShareFrozenEnvironment(t *testing.T) {
 	d, req, root := runnerPreparationFixture(t)
 	defer d.closeAllRunSandboxes(context.Background())
+	req.PreparationInvocation = &domain.RunnerInvocation{GitHTTPCredentials: map[string]domain.GitHTTPExecutionCredential{
+		"prepare.example.invalid": {Token: "prepare-fixture"},
+	}}
+	req.Workflow.Nodes[0].Script += `; printf '%s' "$AGENTFLOW_GIT_HOSTS" > prepared-git-hosts`
 	for i := 0; i < 2; i++ {
 		result := d.readRunnerWorkspace(context.Background(), req)
 		if result.Status != 200 {
@@ -47,8 +81,14 @@ func TestRunnerWorkspacePreparationAndTerminalShareFrozenEnvironment(t *testing.
 	if raw, err := os.ReadFile(filepath.Join(root, "prepared-environment")); err != nil || string(raw) != "same-node-environment" {
 		t.Fatalf("overlay: %q %v", raw, err)
 	}
+	if raw, err := os.ReadFile(filepath.Join(root, "prepared-git-hosts")); err != nil || string(raw) != "prepare.example.invalid=other" {
+		t.Fatalf("preparation Git hosts: %q %v", raw, err)
+	}
 	req.Operation = domain.RunnerWorkspaceOperationTerminal
 	req.TerminalOwner = 7
+	req.TerminalGitHTTPCredentials = map[string]domain.GitHTTPExecutionCredential{
+		"terminal.example.invalid": {Token: "terminal-fixture"},
+	}
 	req.Terminal = &domain.WorkspaceTerminalRequest{Operation: "open", ExpiresAt: time.Now().Add(time.Minute)}
 	opened := d.readRunnerWorkspace(context.Background(), req)
 	if opened.Status != 200 {
@@ -67,19 +107,23 @@ func TestRunnerWorkspacePreparationAndTerminalShareFrozenEnvironment(t *testing.
 			t.Fatalf("terminal sandbox reference: %d", entry.active)
 		}
 	}
-	req.Terminal = &domain.WorkspaceTerminalRequest{Operation: "input", ID: terminal.ID, Data: "printf '%s' \"$WORKSPACE_OVERLAY\" > terminal-environment\n"}
+	req.Terminal = &domain.WorkspaceTerminalRequest{
+		Operation: "input", ID: terminal.ID,
+		Data: `printf '%s|%s' "$WORKSPACE_OVERLAY" "$AGENTFLOW_GIT_HOSTS" > terminal-environment` + "\n",
+	}
 	if result := d.readRunnerWorkspace(context.Background(), req); result.Status != 200 {
 		t.Fatalf("input: %+v", result)
 	}
 	deadline := time.Now().Add(4 * time.Second)
+	const wantEnvironment = "same-node-environment|terminal.example.invalid=other"
 	for time.Now().Before(deadline) {
 		raw, err := os.ReadFile(filepath.Join(root, "terminal-environment"))
-		if err == nil && string(raw) == "same-node-environment" {
+		if err == nil && string(raw) == wantEnvironment {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if raw, err := os.ReadFile(filepath.Join(root, "terminal-environment")); err != nil || string(raw) != "same-node-environment" {
+	if raw, err := os.ReadFile(filepath.Join(root, "terminal-environment")); err != nil || string(raw) != wantEnvironment {
 		t.Fatalf("terminal overlay: %q %v", raw, err)
 	}
 	req.Terminal = &domain.WorkspaceTerminalRequest{Operation: "close", ID: terminal.ID}
@@ -90,6 +134,69 @@ func TestRunnerWorkspacePreparationAndTerminalShareFrozenEnvironment(t *testing.
 		if entry.active != 0 {
 			t.Fatalf("terminal leaked sandbox reference: %d", entry.active)
 		}
+	}
+}
+
+func TestRunnerWorkspacePreparationRefreshesLegacyDockerGitMount(t *testing.T) {
+	if os.Getenv("AGENTFLOW_TEST_GIT_HELPERS_DOCKER") != "1" {
+		t.Skip("enable the disposable Docker Git helper test explicitly")
+	}
+	const image = "golang:1.26.11-bookworm"
+	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", image)
+	base, err := os.MkdirTemp(os.Getenv("AGENTFLOW_TEST_GIT_HELPERS_ROOT"), "runner-legacy-git-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	d, req, _ := runnerPreparationFixture(t)
+	d.cfg.DefaultWorkspaceRoot = base
+	req.RunID = filepath.Base(base)
+	req.Sandbox.Profile.Driver = domain.SandboxDriverDocker
+	req.Sandbox.Dockerfile = &domain.DockerfileDefinition{Content: runtime.IsolatedDockerfile}
+	root := filepath.Join(base, "runs", req.RunID, "workspace")
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	t.Cleanup(func() {
+		d.workspaceTerminals.CloseScope(req.RunID + ":7")
+		d.closeAllRunSandboxes(context.Background())
+	})
+	task, err := d.workspaceSandboxTask(root, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, release, err := d.acquireTaskSandbox(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--name", "agentflow-"+sb.ID(),
+		"-v", root+":/workspace", "--entrypoint", "sh", image, "-c", "exec sleep infinity").CombinedOutput(); err != nil {
+		t.Fatalf("create legacy Docker container: %v (%s)", err, out)
+	}
+	legacy, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirty := filepath.Join(root, "uncommitted.txt")
+	if err := os.WriteFile(dirty, []byte("user edit"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prepared := d.readRunnerWorkspace(ctx, req)
+	var state runtime.WorkspacePreparationStatus
+	if err := json.Unmarshal(prepared.Payload, &state); prepared.Status != 200 || err != nil || state.Status != "ready" || state.Environment == legacy {
+		t.Fatalf("prepare legacy container: %+v %v", prepared, err)
+	}
+	req.Operation = domain.RunnerWorkspaceOperationTerminal
+	req.TerminalOwner = 7
+	req.Terminal = &domain.WorkspaceTerminalRequest{Operation: "open"}
+	req.TerminalGitHTTPCredentials = map[string]domain.GitHTTPExecutionCredential{
+		"terminal.example.invalid": {Token: "terminal-fixture"},
+	}
+	if opened := d.readRunnerWorkspace(ctx, req); opened.Status != 200 {
+		t.Fatalf("open terminal with Git credentials: %+v", opened)
+	}
+	if contents, err := os.ReadFile(dirty); err != nil || string(contents) != "user edit" {
+		t.Fatalf("workspace edit after refresh: %q, %v", contents, err)
 	}
 }
 
@@ -106,7 +213,7 @@ func TestRunnerWorkspacePreparationFailsClosedAndFencesActiveTasks(t *testing.T)
 	if result = d.readRunnerWorkspace(context.Background(), req); result.Status == 200 {
 		t.Fatal("terminal silently opened host shell")
 	}
-	req.Sandbox = &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: "local"}}
+	req.Sandbox = &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: "native"}}
 	req.Operation = domain.RunnerWorkspaceOperationPrepare
 	gate := d.workspaceGate(req.RunID)
 	gate.RLock()
@@ -518,7 +625,7 @@ func TestConversationWorkspaceMaterializesOnConnectedRunner(t *testing.T) {
 	runnerID := s.Runners()[0].ID
 	run := domain.Run{
 		ID: "chat-materialize", Kind: domain.RunKindWorkspace, Status: "waiting", Nodes: map[string]*domain.NodeRun{},
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "local"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "test-native"},
 		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runnerID, RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared},
 		Repositories:     []domain.RepositoryContext{{RepositoryID: "web", Name: "web", CloneURL: remote, BaseBranch: "master", WorkBranch: "feature/chat", WorkspaceDir: "web"}},
 	}
@@ -556,5 +663,135 @@ func TestConversationWorkspaceMaterializesOnConnectedRunner(t *testing.T) {
 	}
 	if got := runGitT(t, checkout, "rev-parse", "HEAD"); got != head {
 		t.Fatal("second open moved the checkout")
+	}
+}
+
+// A SOP without preparation steps never stamps readiness: its nodes skip
+// preparation. While a node runs, the IDE still joins that live environment.
+func TestRunnerIDEJoinsRunningSOPWithoutPreparationSteps(t *testing.T) {
+	d, request, root := runnerPreparationFixture(t)
+	defer d.closeAllRunSandboxes(context.Background())
+	request.RunStatus = "running"
+	request.Workflow = &domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "agent", Type: "agent"}}}
+	task := domain.RunnerTask{ID: "running-node", RunID: request.RunID, Workspace: "runs/prepared/workspace", Provider: "codebuddy", Sandbox: request.Sandbox}
+	_, release, err := d.acquireTaskSandbox(context.Background(), task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	gate := d.workspaceGate(request.RunID)
+	gate.RLock()
+	defer gate.RUnlock()
+
+	request.Operation = domain.RunnerWorkspaceOperationPrepare
+	result := d.readRunnerWorkspace(context.Background(), request)
+	var state runtime.WorkspacePreparationStatus
+	if err := json.Unmarshal(result.Payload, &state); result.Status != 200 || err != nil || state.Status != "ready" {
+		t.Fatalf("prepare beside running node: %+v %v", result, err)
+	}
+	request.Operation = domain.RunnerWorkspaceOperationWrite
+	request.ConcurrentEdit = true
+	request.Path, request.Content, request.ExpectedSHA256 = "ide.txt", "edited while running\n", "missing"
+	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 200 {
+		t.Fatalf("write beside running node: %+v", result)
+	}
+	if raw, err := os.ReadFile(filepath.Join(root, "ide.txt")); err != nil || string(raw) != "edited while running\n" {
+		t.Fatalf("write landed: %q %v", raw, err)
+	}
+	request.Operation = domain.RunnerWorkspaceOperationTerminal
+	request.TerminalOwner = 7
+	request.Terminal = &domain.WorkspaceTerminalRequest{Operation: "open", ExpiresAt: time.Now().Add(time.Minute)}
+	opened := d.readRunnerWorkspace(context.Background(), request)
+	if opened.Status != 200 {
+		t.Fatalf("terminal beside running node: %+v", opened)
+	}
+	d.workspaceTerminals.CloseScope("prepared:7")
+}
+
+// IDE edits share the workspace with running agents (gate readers) but stay
+// excluded from preparation, restore and checkpoints (the exclusive holder).
+func TestRunnerConcurrentEditSharesOnlyTheAgentFence(t *testing.T) {
+	d, request, root := runnerPreparationFixture(t)
+	defer d.closeAllRunSandboxes(context.Background())
+	request.RunStatus = "running"
+	request.ConcurrentEdit = true
+	gate := d.workspaceGate(request.RunID)
+	write := func(content string) domain.RunnerWorkspaceResponse {
+		request.Operation = domain.RunnerWorkspaceOperationWrite
+		request.Path, request.Content, request.ExpectedSHA256 = "ide.txt", content, "missing"
+		return d.readRunnerWorkspace(context.Background(), request)
+	}
+	artifacts := func() domain.RunnerWorkspaceResponse {
+		request.Operation = domain.RunnerWorkspaceOperationArtifacts
+		return d.readRunnerWorkspace(context.Background(), request)
+	}
+
+	gate.Lock()
+	if result := write("during preparation\n"); result.Status != 409 || result.Code != domain.WorkspaceErrorBusy {
+		t.Fatalf("write during an exclusive hold: %+v", result)
+	}
+	if result := artifacts(); result.Status != 409 || result.Code != domain.WorkspaceErrorBusy {
+		t.Fatalf("artifacts during an exclusive hold: %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, "ide.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write landed during an exclusive hold: %v", err)
+	}
+	gate.Unlock()
+
+	gate.RLock()
+	if result := write("beside a running agent\n"); result.Status != 200 {
+		t.Fatalf("write beside a running agent: %+v", result)
+	}
+	if result := artifacts(); result.Status != 200 {
+		t.Fatalf("artifacts beside a running agent: %+v", result)
+	}
+	gate.RUnlock()
+	if raw, err := os.ReadFile(filepath.Join(root, "ide.txt")); err != nil || string(raw) != "beside a running agent\n" {
+		t.Fatalf("write landed: %q %v", raw, err)
+	}
+	// The edit released its read hold: an exclusive holder can take the gate.
+	if !gate.TryLock() {
+		t.Fatal("concurrent edit leaked its gate hold")
+	}
+	gate.Unlock()
+}
+
+func TestRunnerCheckpointStatusAndRestoreOverEmptyDirectory(t *testing.T) {
+	d, request, root := runnerPreparationFixture(t)
+	defer d.closeAllRunSandboxes(context.Background())
+
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "restored.txt"), []byte("from-checkpoint"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := runtime.CreateWorkspaceCheckpoint(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, ".agentflow", "hooks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	status := d.readRunnerWorkspace(context.Background(), domain.RunnerWorkspaceRequest{
+		RunID:           request.RunID,
+		WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		Operation:       domain.RunnerWorkspaceOperationCheckpointStatus,
+	})
+	if status.Status != 200 || !strings.Contains(string(status.Payload), `"empty":true`) {
+		t.Fatalf("status = %+v payload=%s", status, status.Payload)
+	}
+
+	restored := d.readRunnerWorkspace(context.Background(), domain.RunnerWorkspaceRequest{
+		RunID:           request.RunID,
+		WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		Operation:       domain.RunnerWorkspaceOperationRestore,
+		Checkpoint:      archive,
+	})
+	if restored.Status != 200 || restored.Error != "" {
+		t.Fatalf("restore = %+v", restored)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "restored.txt"))
+	if err != nil || string(got) != "from-checkpoint" {
+		t.Fatalf("restored.txt = %q (%v)", got, err)
 	}
 }

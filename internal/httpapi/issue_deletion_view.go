@@ -9,17 +9,14 @@ import (
 
 type issueDeletionView struct {
 	domain.Issue
-	DeletionAllowed bool                     `json:"deletionAllowed"`
-	DeletionBlock   *repo.IssueDeletionBlock `json:"deletionBlock,omitempty"`
-	ClosureAllowed  bool                     `json:"closureAllowed"`
+	DeletionAllowed       bool                     `json:"deletionAllowed"`
+	DeletionRequiresForce bool                     `json:"deletionRequiresForce,omitempty"`
+	DeletionBlock         *repo.IssueDeletionBlock `json:"deletionBlock,omitempty"`
+	ClosureAllowed        bool                     `json:"closureAllowed"`
 }
 
 func (h issuesHandlers) issueDeletionViews(issues []domain.Issue) ([]issueDeletionView, error) {
-	blocks, err := h.repo.IssueDeletionBlocks(issues)
-	if err != nil {
-		return nil, err
-	}
-	closed, err := h.repo.IssueClosureAllowed(issues)
+	states, err := h.repo.IssueDeletionStates(issues)
 	if err != nil {
 		return nil, err
 	}
@@ -28,12 +25,14 @@ func (h issuesHandlers) issueDeletionViews(issues []domain.Issue) ([]issueDeleti
 	}
 	out := make([]issueDeletionView, 0, len(issues))
 	for _, issue := range issues {
-		view := issueDeletionView{Issue: issue, DeletionAllowed: true, ClosureAllowed: closed[issue.ID]}
-		if block, ok := blocks[issue.ID]; ok {
-			view.DeletionAllowed = false
-			view.DeletionBlock = &block
-		}
-		out = append(out, view)
+		state := states[issue.ID]
+		out = append(out, issueDeletionView{
+			Issue:                 issue,
+			DeletionAllowed:       state.Block == nil,
+			DeletionRequiresForce: state.RequiresForce(),
+			DeletionBlock:         state.Block,
+			ClosureAllowed:        state.Block == nil,
+		})
 	}
 	return out, nil
 }

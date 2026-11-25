@@ -23,9 +23,40 @@ type assistantGenerationRow struct {
 	// the next turn starts. Rows that ended before the column existed keep
 	// NULL, which is how read tracking leaves older history unmarked.
 	FinishedAt *time.Time
+	// WorkspaceRunID and WorkspaceLease name the foreground workspace lease
+	// this turn holds. Only that exact token is released when the turn is
+	// reaped; a lease another turn took in the meantime never matches.
+	WorkspaceRunID string `gorm:"size:64"`
+	WorkspaceLease string `gorm:"size:64"`
+}
+
+// Keep private control state alongside the public generation snapshot.
+type assistantGenerationPayload struct {
+	domain.AssistantGeneration
+	NativeApprovals []assistantNativeApprovalState `json:"nativeApprovals,omitempty"`
+	SteeringClosed  bool                           `json:"steeringClosed,omitempty"`
+}
+
+// assistantHeartbeatTimeout is how long a running turn may go without a
+// durable heartbeat before a reader that does not own it declares it dead.
+const assistantHeartbeatTimeout = 45 * time.Second
+
+var errAssistantGenerationEnded = errors.New("生成已结束或不存在")
+
+// AssistantGenerationLease is the workspace lease a reaped turn held.
+type AssistantGenerationLease struct {
+	RunID string
+	Token string
 }
 
 func (assistantGenerationRow) TableName() string { return "assistant_generations" }
+
+func generationPayload(row assistantGenerationRow) assistantGenerationPayload {
+	var payload assistantGenerationPayload
+	_ = json.Unmarshal(row.Payload, &payload)
+	return payload
+}
+
 func decodeGeneration(row assistantGenerationRow) domain.AssistantGeneration {
 	var g domain.AssistantGeneration
 	_ = json.Unmarshal(row.Payload, &g)
@@ -35,88 +66,221 @@ func decodeGeneration(row assistantGenerationRow) domain.AssistantGeneration {
 	g.UpdatedAt = row.UpdatedAt
 	return g
 }
-func (r *AssistantRepo) AssistantGeneration(userID int64, sessionID string) (domain.AssistantGeneration, bool) {
-	var row assistantGenerationRow
-	if err := r.DB.Where("session_id = ? AND user_id = ?", sessionID, userID).Take(&row).Error; err != nil {
+
+// PeekAssistantGeneration reads the latest turn without declaring it dead.
+// The owner of a live turn must use this. AssistantGeneration also reaps a
+// turn whose heartbeat is older than 45 seconds, which is only safe once the
+// owning process is gone: a slow commit stores an old updated_at and the next
+// read would otherwise cancel a CLI that is still working.
+func (r *AssistantRepo) PeekAssistantGeneration(userID int64, sessionID string) (domain.AssistantGeneration, bool) {
+	row, ok := r.loadAssistantGeneration(userID, sessionID)
+	if !ok {
 		return domain.AssistantGeneration{}, false
-	}
-	// A server that died cannot leave a conversation stuck forever. Never replay
-	// a model turn automatically, because its tools may already have written.
-	if row.Status == "running" && time.Since(row.UpdatedAt) > 45*time.Second {
-		g := decodeGeneration(row)
-		g.Status = "interrupted"
-		g.Error = "服务端生成已中断，请检查已执行操作后重试"
-		_ = r.DB.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ? AND status = ? AND updated_at = ?", sessionID, row.GenerationID, "running", row.UpdatedAt).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g)}).Error
-		if err := r.DB.Where("session_id = ? AND user_id = ?", sessionID, userID).Take(&row).Error; err != nil {
-			return domain.AssistantGeneration{}, false
-		}
 	}
 	return decodeGeneration(row), true
 }
-func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, pending ...domain.AssistantSession) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		var session assistantSessionRow
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", g.SessionID).Take(&session).Error; err == nil && session.UserID != g.UserID {
-			return fmt.Errorf("无权访问会话")
-		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		if len(pending) > 0 {
-			next := pending[0]
-			old := decodeAssistantSession(session)
-			if next.IssueID != old.IssueID {
-				return fmt.Errorf("关联需求已更新，请重新发送")
+
+func (r *AssistantRepo) loadAssistantGeneration(userID int64, sessionID string) (assistantGenerationRow, bool) {
+	var row assistantGenerationRow
+	if err := r.DB.Where("session_id = ? AND user_id = ?", sessionID, userID).Take(&row).Error; err != nil {
+		return assistantGenerationRow{}, false
+	}
+	return row, true
+}
+
+func (r *AssistantRepo) AssistantGeneration(userID int64, sessionID string) (domain.AssistantGeneration, bool) {
+	g, _, ok := r.ReapAssistantGeneration(userID, sessionID)
+	return g, ok
+}
+
+// ReapAssistantGeneration reads a turn and, when its heartbeat is late,
+// records it as interrupted. The lease is returned only to the caller whose
+// update actually reaped the turn, so the lease is released at most once.
+func (r *AssistantRepo) ReapAssistantGeneration(userID int64, sessionID string) (domain.AssistantGeneration, AssistantGenerationLease, bool) {
+	row, ok := r.loadAssistantGeneration(userID, sessionID)
+	if !ok {
+		return domain.AssistantGeneration{}, AssistantGenerationLease{}, false
+	}
+	var lease AssistantGenerationLease
+	// A server that died cannot leave a conversation stuck forever. Never replay
+	// a model turn automatically, because its tools may already have written.
+	if row.Status == "running" && r.heartbeatLate(r.DB, row.UpdatedAt) {
+		g := decodeGeneration(row)
+		g.Status = "interrupted"
+		g.Error = "服务端生成已中断，请检查已执行操作后重试"
+		g.Failure = &domain.AssistantFailure{Code: "EXECUTION_INTERRUPTED", Phase: "server", Message: g.Error, Suggestion: "检查已执行操作后再重试；可下载诊断信息交给管理员排查。"}
+		_ = r.DB.Transaction(func(tx *gorm.DB) error {
+			res := r.lateHeartbeatOnly(tx.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ? AND status = ? AND updated_at = ?", sessionID, row.GenerationID, "running", row.UpdatedAt)).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": r.generationClock()})
+			if res.Error != nil || res.RowsAffected != 1 {
+				return res.Error
 			}
-			if len(next.Messages) < len(old.Messages) {
-				return fmt.Errorf("会话已更新，请重新打开后发送")
-			}
-			for i, m := range old.Messages {
-				a, _ := json.Marshal(m)
-				b, _ := json.Marshal(next.Messages[i])
-				if !bytes.Equal(a, b) {
-					return fmt.Errorf("会话已更新，请重新打开后发送")
-				}
-			}
-			scoped := *r
-			base := *r.deps
-			base.DB = tx
-			scoped.deps = &base
-			if err := scoped.putAssistantSession(g.UserID, next); err != nil {
+			if err := checkpointAssistantDiagnostics(tx, g, nil); err != nil {
 				return err
 			}
+			lease = AssistantGenerationLease{RunID: row.WorkspaceRunID, Token: row.WorkspaceLease}
+			return nil
+		})
+		reloaded, ok := r.loadAssistantGeneration(userID, sessionID)
+		if !ok {
+			return domain.AssistantGeneration{}, AssistantGenerationLease{}, false
 		}
+		row = reloaded
+	}
+	return decodeGeneration(row), lease, true
+}
 
-		var old assistantGenerationRow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ?", g.SessionID).Take(&old).Error
-		if err == nil {
-			if old.UserID != g.UserID {
+// RecordAssistantGenerationWorkspaceLease remembers the foreground workspace
+// lease a running turn took, so a reader that reaps the turn after its process
+// died can release exactly that lease. The heartbeat clock is not touched.
+func (r *AssistantRepo) RecordAssistantGenerationWorkspaceLease(userID int64, sessionID, generationID, runID, token string) error {
+	return r.DB.Model(&assistantGenerationRow{}).
+		Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", sessionID, userID, generationID, "running").
+		UpdateColumns(map[string]any{"workspace_run_id": runID, "workspace_lease": token}).Error
+}
+
+// heartbeatNow is the clock a heartbeat's age is measured on. MySQL stamps
+// heartbeats with its own UTC_TIMESTAMP(3) (see generationClock), so their age
+// is measured on that same clock: comparing them with this machine's time.Now()
+// would turn any skew between the API host and the database into turns reaped
+// while alive, or never reaped. ok is false when the clock cannot be read, and
+// callers then treat the heartbeat as fresh rather than reap on a guess.
+func (r *AssistantRepo) heartbeatNow(db *gorm.DB) (time.Time, bool) {
+	if !r.isMySQL() {
+		return time.Now().UTC(), true
+	}
+	var now time.Time
+	if err := db.Raw("SELECT UTC_TIMESTAMP(3)").Scan(&now).Error; err != nil || now.IsZero() {
+		return time.Time{}, false
+	}
+	return now, true
+}
+
+// heartbeatLate reports a heartbeat older than assistantHeartbeatTimeout on
+// the heartbeat clock.
+func (r *AssistantRepo) heartbeatLate(db *gorm.DB, updatedAt time.Time) bool {
+	now, ok := r.heartbeatNow(db)
+	return ok && now.Sub(updatedAt) > assistantHeartbeatTimeout
+}
+
+// lateHeartbeatOnly lets the database itself confirm, when the reap commits,
+// that the heartbeat is still late on its own clock.
+func (r *AssistantRepo) lateHeartbeatOnly(q *gorm.DB) *gorm.DB {
+	if !r.isMySQL() {
+		return q
+	}
+	return q.Where("updated_at < UTC_TIMESTAMP(3) - INTERVAL ? MICROSECOND", assistantHeartbeatTimeout.Microseconds())
+}
+
+// generationClock is the commit-time clock on MySQL. A Go timestamp captured
+// before a stalled commit is already older than the 45 second reap when it
+// becomes visible, so the next read interrupts a turn that just checked in.
+func (r *AssistantRepo) generationClock() any {
+	if r.isMySQL() {
+		return clause.Expr{SQL: "UTC_TIMESTAMP(3)"}
+	}
+	return time.Now().UTC()
+}
+
+// BeginAssistantGeneration may lock a session that does not exist yet; two
+// first messages to new sessions can deadlock on that gap and are retried.
+func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, pending ...domain.AssistantSession) error {
+	return r.retryAssistantDeadlock(func() error {
+		return r.DB.Transaction(func(tx *gorm.DB) error {
+			var session assistantSessionRow
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", g.SessionID).Take(&session).Error; err == nil && session.UserID != g.UserID {
 				return fmt.Errorf("无权访问会话")
+			} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
 			}
-			if old.Status == "running" {
-				return fmt.Errorf("此会话正在生成，请等待完成或停止")
+			if len(pending) > 0 {
+				next := pending[0]
+				next.ExecutionTargetLocked = true
+				old := decodeAssistantSession(session)
+				if next.IssueID != old.IssueID {
+					return fmt.Errorf("关联需求已更新，请重新发送")
+				}
+				if len(next.Messages) < len(old.Messages) {
+					return fmt.Errorf("会话已更新，请重新打开后发送")
+				}
+				for i, m := range old.Messages {
+					a, _ := json.Marshal(m)
+					b, _ := json.Marshal(next.Messages[i])
+					if !bytes.Equal(a, b) {
+						return fmt.Errorf("会话已更新，请重新打开后发送")
+					}
+				}
+				scoped := *r
+				base := *r.deps
+				base.DB = tx
+				scoped.deps = &base
+				if err := scoped.putAssistantSession(g.UserID, next, g.ClientRequestID); err != nil {
+					return err
+				}
+			} else if session.ID != "" {
+				item := decodeAssistantSession(session)
+				item.ExecutionTargetLocked = true
+				if err := tx.Model(&assistantSessionRow{}).Where("id = ?", session.ID).UpdateColumn("payload", mustJSON(item)).Error; err != nil {
+					return err
+				}
 			}
-			return tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC(), "finished_at": nil}).Error
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		return tx.Create(&assistantGenerationRow{SessionID: g.SessionID, UserID: g.UserID, GenerationID: g.ID, Status: "running", Payload: mustJSON(g), UpdatedAt: time.Now().UTC()}).Error
+
+			var old assistantGenerationRow
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ?", g.SessionID).Take(&old).Error
+			if err == nil {
+				if old.UserID != g.UserID {
+					return fmt.Errorf("无权访问会话")
+				}
+				if old.Status == "running" {
+					return fmt.Errorf("此会话正在生成，请等待完成或停止")
+				}
+				if err := tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": r.generationClock(), "finished_at": nil, "workspace_run_id": "", "workspace_lease": ""}).Error; err != nil {
+					return err
+				}
+				return checkpointAssistantDiagnostics(tx, g, nil)
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if err := tx.Create(&assistantGenerationRow{SessionID: g.SessionID, UserID: g.UserID, GenerationID: g.ID, Status: "running", Payload: mustJSON(g), UpdatedAt: time.Now().UTC()}).Error; err != nil {
+				return err
+			}
+			if r.isMySQL() {
+				// The first heartbeat is on the database clock like every later one.
+				if err := tx.Model(&assistantGenerationRow{}).Where("session_id = ?", g.SessionID).UpdateColumn("updated_at", r.generationClock()).Error; err != nil {
+					return err
+				}
+			}
+			return checkpointAssistantDiagnostics(tx, g, nil)
+		})
 	})
 }
-func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGeneration) error {
+func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGeneration, diagnostics ...domain.AssistantDiagnostics) error {
+	return r.checkpointAssistantGeneration(g, true, diagnostics)
+}
+
+// HeartbeatAssistantGeneration records a running checkpoint whose diagnostic
+// evidence has not changed since it was last stored, so the diagnostic payload
+// is not rewritten.
+func (r *AssistantRepo) HeartbeatAssistantGeneration(g domain.AssistantGeneration) error {
+	return r.checkpointAssistantGeneration(g, false, nil)
+}
+
+func (r *AssistantRepo) checkpointAssistantGeneration(g domain.AssistantGeneration, withDiagnostics bool, diagnostics []domain.AssistantDiagnostics) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		var row assistantGenerationRow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", g.SessionID, g.UserID, g.ID, "running").Take(&row).Error
+		row, err := lockRunningAssistantGeneration(tx, g.UserID, g.SessionID, g.ID)
 		if err != nil {
 			return fmt.Errorf("生成状态已变化")
 		}
-		var current domain.AssistantGeneration
-		_ = json.Unmarshal(row.Payload, &current)
+		current := generationPayload(row)
 		if g.Steer == nil && current.Steer != nil {
 			g.Steer = current.Steer
 		}
+		current.AssistantGeneration = g
+		if g.Status != "running" || row.CancelRequested {
+			current.NativeApprovals = nil
+		}
 		now := time.Now().UTC()
-		changes := map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": now}
+		changes := map[string]any{"status": g.Status, "payload": mustJSON(current), "updated_at": r.generationClock()}
 		if g.Status != "running" {
 			changes["finished_at"] = now
 		}
@@ -124,23 +288,68 @@ func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGenerati
 		if res.Error != nil {
 			return res.Error
 		}
+		// MySQL counts changed rows. A heartbeat whose payload and clock match
+		// the stored row reports 0 even though the turn is still running.
+		// Treating that as "the turn disappeared" cancels a live CLI.
 		if res.RowsAffected != 1 {
-			return fmt.Errorf("生成状态已变化")
+			if g.Status != "running" {
+				return fmt.Errorf("生成状态已变化")
+			}
+			var again assistantGenerationRow
+			if err := tx.Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", g.SessionID, g.UserID, g.ID, "running").Take(&again).Error; err != nil {
+				return fmt.Errorf("生成状态已变化")
+			}
 		}
-		return nil
+		if !withDiagnostics {
+			return nil
+		}
+		return checkpointAssistantDiagnostics(tx, g, diagnostics)
 	})
+}
+
+func lockRunningAssistantGeneration(tx *gorm.DB, userID int64, sessionID, id string) (assistantGenerationRow, error) {
+	var row assistantGenerationRow
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", sessionID, userID, id, "running").Take(&row).Error
+	return row, err
+}
+
+// CloseAssistantGenerationSteering hands the worker any accepted steer and
+// prevents new steers while the worker saves the transcript. The generation
+// stays running until that transcript is available to readers.
+func (r *AssistantRepo) CloseAssistantGenerationSteering(userID int64, sessionID, id string) (*domain.AssistantSteer, error) {
+	var steer *domain.AssistantSteer
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		row, err := lockRunningAssistantGeneration(tx, userID, sessionID, id)
+		if err != nil {
+			return err
+		}
+		payload := generationPayload(row)
+		steer = payload.Steer
+		if steer != nil || payload.SteeringClosed {
+			return nil
+		}
+		payload.SteeringClosed = true
+		return tx.Model(&row).Updates(map[string]any{"payload": mustJSON(payload), "updated_at": r.generationClock()}).Error
+	})
+	return steer, err
 }
 
 func (r *AssistantRepo) SteerAssistantGeneration(userID int64, sessionID, id string, steer domain.AssistantSteer) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		var row assistantGenerationRow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", sessionID, userID, id, "running").Take(&row).Error
+		row, err := lockRunningAssistantGeneration(tx, userID, sessionID, id)
 		if err != nil {
-			return fmt.Errorf("生成已结束或不存在")
+			return errAssistantGenerationEnded
 		}
-		g := decodeGeneration(row)
-		g.Steer = &steer
-		return tx.Model(&row).Updates(map[string]any{"cancel_requested": true, "payload": mustJSON(g), "updated_at": time.Now().UTC()}).Error
+		payload := generationPayload(row)
+		if payload.Steer != nil {
+			return errors.New("本轮已有待处理的引导，请稍后重试")
+		}
+		if payload.SteeringClosed {
+			return errAssistantGenerationEnded
+		}
+		payload.Steer = &steer
+		payload.NativeApprovals = nil
+		return tx.Model(&row).Updates(map[string]any{"cancel_requested": true, "payload": mustJSON(payload), "updated_at": r.generationClock()}).Error
 	})
 }
 func (r *AssistantRepo) CancelAssistantGeneration(userID int64, sessionID, id string) error {
@@ -149,7 +358,7 @@ func (r *AssistantRepo) CancelAssistantGeneration(userID int64, sessionID, id st
 		return res.Error
 	}
 	if res.RowsAffected != 1 {
-		return fmt.Errorf("生成已结束或不存在")
+		return errAssistantGenerationEnded
 	}
 	return nil
 }
@@ -165,6 +374,9 @@ type AssistantGenerationState struct {
 	// Seen reports that the reader has opened the conversation since this
 	// reply (see MarkAssistantSessionRead).
 	Seen bool
+	// Stale reports a turn still stored as running whose heartbeat is late.
+	// Status reads "interrupted" for it, but nothing has been written yet.
+	Stale bool
 }
 
 // AssistantGenerationStatuses reads the latest reply of each conversation
@@ -190,9 +402,11 @@ func (r *AssistantRepo) AssistantGenerationStatuses(readerID int64, ids []string
 	if err != nil {
 		return out
 	}
+	now, clockOK := r.heartbeatNow(r.DB)
 	for _, row := range rows {
 		status := row.Status
-		if status == "running" && time.Since(row.UpdatedAt) > 45*time.Second {
+		stale := status == "running" && clockOK && now.Sub(row.UpdatedAt) > assistantHeartbeatTimeout
+		if stale {
 			status = "interrupted"
 		}
 		out[row.SessionID] = AssistantGenerationState{
@@ -200,6 +414,7 @@ func (r *AssistantRepo) AssistantGenerationStatuses(readerID int64, ids []string
 			Status:     status,
 			FinishedAt: row.FinishedAt,
 			Seen:       row.ReadID != nil && *row.ReadID == row.GenerationID,
+			Stale:      stale,
 		}
 	}
 	return out

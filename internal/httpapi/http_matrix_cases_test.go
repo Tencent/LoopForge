@@ -39,6 +39,17 @@ func cvBNewHTTPFixture(t *testing.T) cvBHTTPFixture {
 	return cvBHTTPFixture{h: New(s, e, tracker.NewService(), "", ""), s: s, e: e, user: user}
 }
 
+// cvBGiveCodeBuddyKey lets the fixture user save AI scheduled tasks, which
+// run with the saver's key.
+func cvBGiveCodeBuddyKey(t *testing.T, f *cvBHTTPFixture) {
+	t.Helper()
+	user, err := f.s.UpdateUserCredentials(f.user.ID, repo.UserCredentialUpdate{CodeBuddyAPIKey: "cvb-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.user = user
+}
+
 func cvBRequest(t *testing.T, f cvBHTTPFixture, method, path string, body any, authed bool) *httptest.ResponseRecorder {
 	t.Helper()
 	var raw []byte
@@ -121,8 +132,6 @@ func TestCatalogIssueRunAndSpaceValidationHTTP(t *testing.T) {
 		{http.MethodDelete, "/api/rules?id=missing", nil, 404},
 		{http.MethodPut, "/api/skills", map[string]any{}, 400},
 		{http.MethodDelete, "/api/skills?id=missing", nil, 404},
-		{http.MethodPut, "/api/dockerfiles", map[string]any{}, 400},
-		{http.MethodPut, "/api/environments", map[string]any{}, 400},
 		{http.MethodPut, "/api/sandboxes", map[string]any{}, 400},
 		{http.MethodPut, "/api/workflows", map[string]any{}, 200},
 		{http.MethodGet, "/api/workflows/missing", nil, 404},

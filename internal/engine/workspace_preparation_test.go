@@ -5,15 +5,19 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
+	"errors"
 
+	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
 func preparationWorkflow() domain.WorkflowDefinition {
-	return domain.WorkflowDefinition{ID: "workspace-preparation", Name: "Workspace preparation", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	return domain.WorkflowDefinition{ID: "workspace-preparation", Name: "Workspace preparation", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "env", Name: "准备环境", Type: "script", ScriptLanguage: "shell", Script: "mkdir -p .agentflow; echo run >> .agentflow/env-count; printf environment-ready", RunOnWorkspaceRebuild: true, MaxAttempts: 1},
 		{ID: "index", Name: "建立索引", Type: "script", ScriptLanguage: "shell", Script: "echo run >> .agentflow/index-count; printf index-ready", RunOnWorkspaceRebuild: true, MaxAttempts: 1},
 		{ID: "work", Name: "正常业务", Type: "script", ScriptLanguage: "shell", Script: "printf business-ok", MaxAttempts: 1},
@@ -29,6 +33,86 @@ func completedPreparationRun(t *testing.T, e *Engine, id string) domain.Run {
 	}
 	return run
 }
+
+func TestWorkspacePreparationRejectsFrozenLocalSandbox(t *testing.T) {
+	e, _ := cvEEngine(t)
+	run := domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{
+		SandboxSnapshot: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{
+			ID: "previous-sandbox", Driver: domain.SandboxDriverLocal,
+		}},
+	}}
+	if _, _, err := e.workspaceSandboxProfile(run); err == nil || !strings.Contains(err.Error(), "重新发起") {
+		t.Fatalf("frozen local sandbox accepted for workspace operations: %v", err)
+	}
+}
+
+func TestPreparedWorkspaceRequestScopesTerminalGitCredentials(t *testing.T) {
+	e, st := cvEEngine(t)
+	runner := cvERunner(t, e, "terminal-git", domain.RunnerStatusOnline)
+	run := cvERunnerRun("terminal-git-run", runner.ID)
+	run.ExecutionContext.ResponsibleUserID = 101
+	const ownerID = 102
+	const preparationHost = "prepare.example.invalid"
+	const terminalHost = "terminal.example.invalid"
+	for userID, host := range map[int64]string{run.ExecutionContext.ResponsibleUserID: preparationHost, ownerID: terminalHost} {
+		if err := st.CreatePlatformGitHTTPHost(t.Context(), &repo.PlatformGitHTTPHost{Host: host}); err != nil {
+			t.Fatal(err)
+		}
+		for _, scope := range []string{host, "http://" + host} {
+			credential := domain.GitHTTPCredentialSecret{
+				GitHTTPCredential: domain.GitHTTPCredential{Host: scope, Name: scope, Platform: domain.GitPlatformOther},
+				Token:             "fixture-credential",
+			}
+			if err := st.SaveGitHTTPCredential(userID, "", credential); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	cases := []struct {
+		name, operation, terminalOperation string
+		ownerID                            int64
+		preparationHosts, terminalHosts    []string
+	}{
+		{name: "prepare", operation: domain.RunnerWorkspaceOperationPrepare, preparationHosts: []string{preparationHost}},
+		{name: "open", operation: domain.RunnerWorkspaceOperationTerminal, terminalOperation: "open", ownerID: ownerID, preparationHosts: []string{preparationHost}, terminalHosts: []string{terminalHost}},
+		{name: "open without credentials", operation: domain.RunnerWorkspaceOperationTerminal, terminalOperation: "open", ownerID: 103, preparationHosts: []string{preparationHost}},
+		{name: "input", operation: domain.RunnerWorkspaceOperationTerminal, terminalOperation: "input", ownerID: ownerID},
+		{name: "status", operation: domain.RunnerWorkspaceOperationPreparationStatus},
+	}
+	for _, version := range []string{domain.RunnerVersionRepositoryCache, domain.RunnerVersionGitPlainHTTP} {
+		runner.RunnerVersion = version
+		if err := st.PutRunner(runner); err != nil {
+			t.Fatal(err)
+		}
+		wantHosts := func(https []string) []string {
+			if len(https) == 0 || !runner.SupportsGitPlainHTTP() {
+				return https
+			}
+			return []string{"http://" + https[0], https[0]}
+		}
+		for _, tt := range cases {
+			t.Run(version+"/"+tt.name, func(t *testing.T) {
+				request := domain.RunnerWorkspaceRequest{Operation: tt.operation, TerminalOwner: tt.ownerID}
+				if tt.terminalOperation != "" {
+					request.Terminal = &domain.WorkspaceTerminalRequest{Operation: tt.terminalOperation}
+				}
+				request, err := e.preparedWorkspaceRequest(run, request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				preparation := slices.Sorted(maps.Keys(request.PreparationInvocation.GitHTTPCredentials))
+				terminal := slices.Sorted(maps.Keys(request.TerminalGitHTTPCredentials))
+				if !slices.Equal(preparation, wantHosts(tt.preparationHosts)) {
+					t.Fatalf("preparation hosts = %v, want %v", preparation, wantHosts(tt.preparationHosts))
+				}
+				if !slices.Equal(terminal, wantHosts(tt.terminalHosts)) {
+					t.Fatalf("terminal hosts = %v, want %v", terminal, wantHosts(tt.terminalHosts))
+				}
+			})
+		}
+	}
+}
+
 func TestWorkspacePreparationNormalOrderAndFlaggedRetryAlwaysExecutes(t *testing.T) {
 	t.Parallel()
 	st, err := repo.OpenTest()
@@ -131,6 +215,84 @@ func TestWorkspacePreparationRebuildPreservesHistoryAndWarmEditsDoNotReplay(t *t
 		t.Fatal("overwritten source")
 	}
 }
+
+func TestWorkspacePreparationRefreshesIdleLegacyDocker(t *testing.T) {
+	if os.Getenv("AGENTFLOW_TEST_GIT_HELPERS_DOCKER") != "1" {
+		t.Skip("enable the disposable Docker Git helper test explicitly")
+	}
+	const image = "golang:1.26.11-bookworm"
+	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", image)
+	root, err := os.MkdirTemp(os.Getenv("AGENTFLOW_TEST_GIT_HELPERS_ROOT"), "prepare-git-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	e, st := cvEEngine(t)
+	e.sandboxes = runtime.NewManager(root)
+	snapshot := &domain.RunnerSandboxSpec{
+		Profile:    domain.SandboxProfile{Driver: domain.SandboxDriverDocker},
+		Dockerfile: &domain.DockerfileDefinition{Content: runtime.IsolatedDockerfile},
+	}
+	for _, entry := range []string{"terminal", "task"} {
+		t.Run(entry, func(t *testing.T) {
+			ctx := t.Context()
+			run := domain.Run{ID: filepath.Base(root) + "-" + entry, Status: "succeeded"}
+			run.WorkflowSnapshot.SandboxSnapshot = snapshot
+			if err := st.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			env, err := e.acquireConversationEnvironment(ctx, run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = e.releaseRunEnvironment(run.ID, false) })
+			if out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--name", "agentflow-"+env.ID(),
+				"-v", env.Workspace()+":/workspace", "--entrypoint", "sh", image, "-c", "exec sleep infinity").CombinedOutput(); err != nil {
+				t.Fatalf("create legacy Docker container: %v (%s)", err, out)
+			}
+			dirty := filepath.Join(env.Workspace(), "uncommitted.txt")
+			if err := os.WriteFile(dirty, []byte("user edit"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			old, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bindForTask := func() error {
+				env.nodeMu.Lock()
+				defer env.nodeMu.Unlock()
+				return e.bindDockerWorkspace(ctx, run.ID, "work", snapshot, env)
+			}
+			env.activeExecutions.Add(1)
+			err = bindForTask()
+			env.activeExecutions.Add(-1)
+			if current, readErr := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox); err != nil || readErr != nil || current != old {
+				t.Fatalf("task preparation replaced a sandbox with an executing sibling: %v, %v", err, readErr)
+			}
+			if entry == "terminal" {
+				var terminals runtime.TerminalPool
+				scope := run.ID + ":1"
+				defer terminals.CloseScope(scope)
+				request := domain.WorkspaceTerminalRequest{Operation: "open"}
+				env.nodeMu.Lock()
+				_, busyErr := e.HandlePreparedWorkspaceTerminal(ctx, run, &terminals, scope, request, runtime.TerminalGitCredentials{})
+				env.nodeMu.Unlock()
+				if !errors.Is(busyErr, repo.ErrWorkspaceInUse) {
+					t.Fatalf("terminal launch raced with environment preparation: %v", busyErr)
+				}
+				_, err = e.HandleWorkspaceTerminal(ctx, run.ID, &terminals, scope, request, 0)
+			} else {
+				err = bindForTask()
+			}
+			if current, readErr := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox); err != nil || readErr != nil || current == old {
+				t.Fatalf("%s preparation did not replace the idle legacy container: %v, %v", entry, err, readErr)
+			}
+			if body, err := os.ReadFile(dirty); err != nil || string(body) != "user edit" {
+				t.Fatalf("replacement lost uncommitted changes: %q, %v", body, err)
+			}
+		})
+	}
+}
 func TestWorkspacePreparationPlanExcludesPendingCurrentAndUncheckedScripts(t *testing.T) {
 	t.Parallel()
 	e, id := checkpointFixture(t)
@@ -229,7 +391,7 @@ func TestWorkspacePreparationRecordFailureDoesNotRetrySuccessfulBusinessScript(t
 		t.Fatal(err)
 	}
 	defer st.Close()
-	wf := domain.WorkflowDefinition{ID: "record-warning", Name: "Record warning", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "script", Name: "成功脚本", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, MaxAttempts: 3, Script: "printf 'run\\n' >> count.txt; mv .agentflow/workspace-preparation .agentflow/saved-preparation; ln -s saved-preparation .agentflow/workspace-preparation; printf actually-succeeded"}, {ID: "pause", Type: "approval", MaxAttempts: 1}}, Edges: []domain.WorkflowEdge{{Source: "script", Target: "pause", When: "success"}}}
+	wf := domain.WorkflowDefinition{ID: "record-warning", Name: "Record warning", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "script", Name: "成功脚本", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, MaxAttempts: 3, Script: "printf 'run\\n' >> count.txt; mv .agentflow/workspace-preparation .agentflow/saved-preparation; ln -s saved-preparation .agentflow/workspace-preparation; printf actually-succeeded"}, {ID: "pause", Type: "approval", MaxAttempts: 1}}, Edges: []domain.WorkflowEdge{{Source: "script", Target: "pause", When: "success"}}}
 	if err = st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -270,5 +432,79 @@ func TestWorkspacePreparationTrustedRequestCarriesWorkspaceKind(t *testing.T) {
 	}
 	if request.RunKind != domain.RunKindWorkspace || request.Workflow == nil || request.Workflow.CollaborationMode != "" || request.Workflow.SOPCheckpoint != nil {
 		t.Fatal("group mode lost during filtered plan projection", request)
+	}
+}
+
+// While agents or a terminal hold the workspace, an IDE request reuses the
+// environment they already run in, reports a trivial plan as ready, and only
+// refuses when real preparation would have to run underneath them.
+func TestEnsureWorkspaceReadyWhileWorkspaceBusy(t *testing.T) {
+	t.Parallel()
+	t.Run("reuses prepared environment", func(t *testing.T) {
+		e, id := checkpointFixture(t)
+		completedPreparationRun(t, e, id)
+		if state, err := e.EnsureWorkspaceReady(context.Background(), id); err != nil || state.Status != "ready" {
+			t.Fatal(state, err)
+		}
+		e.WorkspaceActive = func(domain.Run) bool { return true }
+		state, err := e.EnsureWorkspaceReady(context.Background(), id)
+		if err != nil || state.Status != "ready" {
+			t.Fatalf("busy prepared workspace = %+v, %v", state, err)
+		}
+		raw, _ := os.ReadFile(filepath.Join(e.RunWorkspace(id), ".agentflow", "env-count"))
+		if string(raw) != "run\n" {
+			t.Fatalf("busy workspace replayed preparation: %q", raw)
+		}
+	})
+	t.Run("trivial plan is ready", func(t *testing.T) {
+		e, id := checkpointFixture(t)
+		run := completedPreparationRun(t, e, id)
+		for i := range run.WorkflowSnapshot.Nodes {
+			run.WorkflowSnapshot.Nodes[i].RunOnWorkspaceRebuild = false
+		}
+		if err := e.repo.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+		e.WorkspaceActive = func(domain.Run) bool { return true }
+		state, err := e.EnsureWorkspaceReady(context.Background(), id)
+		if err != nil || state.Status != "ready" || len(state.Steps) != 0 {
+			t.Fatalf("busy trivial workspace = %+v, %v", state, err)
+		}
+		if _, err := os.Stat(filepath.Join(e.RunWorkspace(id), ".agentflow", "env-count")); !os.IsNotExist(err) {
+			t.Fatal("trivial plan ran a script")
+		}
+	})
+	t.Run("unprepared plan is refused", func(t *testing.T) {
+		e, id := checkpointFixture(t)
+		completedPreparationRun(t, e, id)
+		e.WorkspaceActive = func(domain.Run) bool { return true }
+		state, err := e.EnsureWorkspaceReady(context.Background(), id)
+		if err == nil || state.Status != "unprepared" || !strings.Contains(err.Error(), "成员或终端正在使用工作区") {
+			t.Fatalf("busy unprepared workspace = %+v, %v", state, err)
+		}
+	})
+}
+
+// A run with nothing to replay never writes a ready preparation status; the
+// IDE terminal must still open in the environment agents are using.
+func TestWorkspaceTerminalOpensForTrivialPlanWhileBusy(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	run := completedPreparationRun(t, e, id)
+	for i := range run.WorkflowSnapshot.Nodes {
+		run.WorkflowSnapshot.Nodes[i].RunOnWorkspaceRebuild = false
+	}
+	if err := e.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	e.WorkspaceActive = func(domain.Run) bool { return true }
+	var pool runtime.TerminalPool
+	opened, err := e.HandleWorkspaceTerminal(context.Background(), id, &pool, "trivial:1", domain.WorkspaceTerminalRequest{Operation: "open"}, 0)
+	if err != nil || opened.ID == "" {
+		t.Fatalf("trivial busy terminal = %+v, %v", opened, err)
+	}
+	defer pool.CloseScope("trivial:1")
+	if state := runtime.ReadWorkspacePreparationStatus(e.RunWorkspace(id), ""); state.Status == "ready" {
+		t.Fatalf("precondition: trivial plan wrote a ready status %+v", state)
 	}
 }

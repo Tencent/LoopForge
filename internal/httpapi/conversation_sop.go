@@ -8,11 +8,13 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+
+	"github.com/gin-gonic/gin"
 )
 
 // chatSessionHeader names the conversation a browser-confirmed tool call was
-// drafted in. It only links the dispatched issue to that conversation; access
-// is checked by the project operation that carries it.
+// drafted in. The project operation checks write access before resolving the
+// conversation and its current workspace.
 const chatSessionHeader = "X-AgentFlow-Chat-Session"
 
 type conversationSessionKey struct{}
@@ -41,6 +43,21 @@ func requestConversation(d *deps, r *http.Request, userID int64, projectID strin
 	return session, true
 }
 
+func dispatchConversationWorkspace(d *deps, r *http.Request, userID int64, projectID string) string {
+	if projectID == "" {
+		return ""
+	}
+	session, ok := requestConversation(d, r, userID, projectID)
+	if !ok || session.WorkspaceRunID == "" || session.Archived {
+		return ""
+	}
+	run, ok := d.repo.RunState(session.WorkspaceRunID)
+	if !ok || !run.IsWorkspace() || !conversationMayBind(session, run, projectID) {
+		return ""
+	}
+	return run.ID
+}
+
 // linkDispatchingConversation links the conversation an issue was dispatched
 // from to that issue, so later turns offer Main Bot the issue's SOP workspace.
 func linkDispatchingConversation(d *deps, r *http.Request, userID int64, issue domain.Issue) {
@@ -56,7 +73,7 @@ func linkDispatchingConversation(d *deps, r *http.Request, userID int64, issue d
 // borrowableSOPRun reports whether a top-level SOP run of projectID can lend
 // its workspace to an ordinary conversation.
 func borrowableSOPRun(run domain.Run, projectID string) bool {
-	return run.ID != "" && !run.IsWorkspace() && !run.HistoricalGroup() && run.ExecutionContext.ParentRunID == "" && run.ExecutionContext.ProjectID == projectID
+	return projectID != "" && run.ID != "" && !run.IsWorkspace() && !run.HistoricalGroup() && run.ExecutionContext.ParentRunID == "" && run.ExecutionContext.ProjectID == projectID
 }
 
 // ownWorkspaceRunIDs lists the workspaces conv opened itself. A workspace run
@@ -72,10 +89,21 @@ func ownWorkspaceRunIDs(conv domain.AssistantSession) []string {
 // conversationMayBind reports whether conv may work in run: a workspace it
 // opened that is still usable, or a top-level SOP run of its project.
 func conversationMayBind(conv domain.AssistantSession, run domain.Run, projectID string) bool {
+	if run.IsPersonalWorkspace() && (conv.ProjectID != "" || conv.Shared || conv.RunID != "" || conv.UserID <= 0 || conv.UserID != run.ExecutionContext.ResponsibleUserID) {
+		return false
+	}
 	if run.IsWorkspace() {
-		return usableConversationWorkspace(run, projectID) && slices.Contains(ownWorkspaceRunIDs(conv), run.ID)
+		return run.ExecutionContext.ProjectID == projectID && !domain.TerminalRunStatus(run.Status) &&
+			slices.Contains(ownWorkspaceRunIDs(conv), run.ID)
 	}
 	return borrowableSOPRun(run, projectID)
+}
+
+// sopWorkspaceReadOnly reports whether conv is bound to an SOP run whose
+// workspace the speaker may not write: the turn then stays in platform mode.
+func (d deps) sopWorkspaceReadOnly(c *gin.Context, conv domain.AssistantSession, projectID string, userID int64) bool {
+	run, ok := d.repo.RunState(conv.WorkspaceRunID)
+	return ok && !run.IsWorkspace() && !d.projectWriterAllowed(c, projectID, userID)
 }
 
 // loadTurnWorkspace starts a conversation turn in the workspace the

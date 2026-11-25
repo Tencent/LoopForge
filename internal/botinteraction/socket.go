@@ -16,6 +16,26 @@ import (
 
 type ReplyError struct{ Code int }
 
+// sendPhase records how far a request got, which decides whether delivery is
+// provably absent (before write) or unknown (written, receipt not observed).
+type sendPhase int
+
+const (
+	phaseBeforeWrite sendPhase = iota
+	phaseWrite
+	phaseAwaitAck
+)
+
+// sendError keeps the original user-facing message and unwraps to the cause,
+// so callers using errors.Is(err, context.Canceled) keep working.
+type sendError struct {
+	phase sendPhase
+	err   error
+}
+
+func (e *sendError) Error() string { return e.err.Error() }
+func (e *sendError) Unwrap() error { return e.err }
+
 func (e *ReplyError) Error() string {
 	return "企业微信拒绝了这次回复，请检查接收会话和 Bot 授权"
 }
@@ -53,8 +73,12 @@ type Incoming struct {
 		Key               string `json:"event_key"`
 		TaskID            string `json:"task_id"`
 		TemplateCardEvent struct {
-			Key    string `json:"event_key"`
-			TaskID string `json:"task_id"`
+			Key           string `json:"event_key"`
+			TaskID        string `json:"task_id"`
+			CardType      string `json:"card_type"`
+			SelectedItems struct {
+				SelectedItem []wecomSelectedItem `json:"selected_item"`
+			} `json:"selected_items"`
 		} `json:"template_card_event"`
 	} `json:"event"`
 }
@@ -66,6 +90,29 @@ type socket struct {
 	pending map[string]chan int
 	done    chan struct{}
 	cancel  context.CancelFunc
+}
+
+// logFrameKeys logs the sorted JSON keys of a frame body, its event and its
+// template card event to help diagnose unexpected WeCom frames.
+func logFrameKeys(f Frame) {
+	keys, body := sortedJSONKeys(f.Body)
+	eventKeys, event := sortedJSONKeys(body["event"])
+	cardKeys, _ := sortedJSONKeys(event["template_card_event"])
+	log.Printf("wecom frame cmd=%s body_keys=%v event_keys=%v card_keys=%v", f.Cmd, keys, eventKeys, cardKeys)
+}
+
+// sortedJSONKeys decodes raw as a JSON object and returns its keys in sorted
+// order together with the decoded fields. Invalid or empty input yields an
+// empty (non-nil) key slice and a nil map.
+func sortedJSONKeys(raw json.RawMessage) ([]string, map[string]json.RawMessage) {
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	keys := []string{}
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys, fields
 }
 
 func dial(ctx context.Context, url, botID, secret string, onFrame func(*socket, Frame)) (*socket, error) {
@@ -89,28 +136,7 @@ func dial(ctx context.Context, url, botID, secret string, onFrame func(*socket, 
 			ack := s.pending[f.Headers.RequestID]
 			s.mu.Unlock()
 			if f.Cmd != "" && f.Cmd != "aibot_msg_callback" {
-				var body map[string]json.RawMessage
-				_ = json.Unmarshal(f.Body, &body)
-				keys := []string{}
-				for key := range body {
-					keys = append(keys, key)
-				}
-				sort.Strings(keys)
-				var event map[string]json.RawMessage
-				_ = json.Unmarshal(body["event"], &event)
-				eventKeys := []string{}
-				for key := range event {
-					eventKeys = append(eventKeys, key)
-				}
-				sort.Strings(eventKeys)
-				var cardEvent map[string]json.RawMessage
-				_ = json.Unmarshal(event["template_card_event"], &cardEvent)
-				cardKeys := []string{}
-				for key := range cardEvent {
-					cardKeys = append(cardKeys, key)
-				}
-				sort.Strings(cardKeys)
-				log.Printf("wecom frame cmd=%s body_keys=%v event_keys=%v card_keys=%v", f.Cmd, keys, eventKeys, cardKeys)
+				logFrameKeys(f)
 			}
 			if f.Cmd == "aibot_msg_callback" || f.Cmd == "aibot_event_callback" {
 				onFrame(s, f)
@@ -147,7 +173,7 @@ func dial(ctx context.Context, url, botID, secret string, onFrame func(*socket, 
 func (s *socket) close() { s.cancel(); s.conn.Close() }
 func (s *socket) request(ctx context.Context, cmd, id string, body any) error {
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return &sendError{phase: phaseBeforeWrite, err: ctx.Err()}
 	}
 	if id == "" {
 		id = randomID()
@@ -156,7 +182,7 @@ func (s *socket) request(ctx context.Context, cmd, id string, body any) error {
 	s.mu.Lock()
 	if _, exists := s.pending[id]; exists {
 		s.mu.Unlock()
-		return errors.New("相同回复仍在等待回执")
+		return &sendError{phase: phaseBeforeWrite, err: errors.New("相同回复仍在等待回执")}
 	}
 	s.pending[id] = ack
 	s.mu.Unlock()
@@ -170,7 +196,8 @@ func (s *socket) request(ctx context.Context, cmd, id string, body any) error {
 	err := s.conn.WriteJSON(payload)
 	s.writeMu.Unlock()
 	if err != nil {
-		return errors.New("企业微信回复连接中断")
+		// A failed write may still have flushed part or all of the frame.
+		return &sendError{phase: phaseWrite, err: errors.New("企业微信回复连接中断")}
 	}
 	timer := time.NewTimer(10 * time.Second)
 	defer timer.Stop()
@@ -181,11 +208,11 @@ func (s *socket) request(ctx context.Context, cmd, id string, body any) error {
 		}
 		return nil
 	case <-timer.C:
-		return errors.New("企业微信回复回执超时")
+		return &sendError{phase: phaseAwaitAck, err: errors.New("企业微信回复回执超时")}
 	case <-ctx.Done():
-		return ctx.Err()
+		return &sendError{phase: phaseAwaitAck, err: ctx.Err()}
 	case <-s.done:
-		return errors.New("企业微信连接已关闭")
+		return &sendError{phase: phaseAwaitAck, err: errors.New("企业微信连接已关闭")}
 	}
 }
 func (s *socket) send(ctx context.Context, chatID, text string) error {

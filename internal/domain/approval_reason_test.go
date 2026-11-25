@@ -31,3 +31,36 @@ func TestApprovalWaitReason(t *testing.T) {
 		t.Fatal("unknown node must yield empty reason")
 	}
 }
+
+func TestApprovalWaitReasonFallbacks(t *testing.T) {
+	run := Run{WorkflowSnapshot: WorkflowDefinition{
+		Nodes: []WorkflowNode{{ID: "gate", Type: "approval"}},
+	}}
+	want := "该 SOP在这一步设置了人工门禁，需要有权限的成员确认，确认后运行结束。"
+	if got := ApprovalWaitReason(run, "gate"); got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+
+	run.WorkflowSnapshot = WorkflowDefinition{
+		Name:  "  ",
+		Nodes: []WorkflowNode{{ID: "gate", RejectTo: "ghost"}, {ID: "next", Name: "  "}},
+	}
+	want = "该 SOP在这一步设置了人工门禁，需要有权限的成员确认，确认后继续「next」；不通过可打回到「ghost」重做。"
+	if got := ApprovalWaitReason(run, "gate"); got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestApprovalNeighborsIgnoresEmptyEdgeEnds(t *testing.T) {
+	wf := WorkflowDefinition{
+		Nodes: []WorkflowNode{{ID: "a", Name: "甲"}, {ID: "gate"}, {ID: "b", Name: "乙"}},
+		Edges: []WorkflowEdge{{Source: "", Target: "gate"}, {Source: "gate", Target: ""}, {Source: "a", Target: "gate"}},
+	}
+	up, down := approvalNeighbors(wf, 1)
+	if strings.Join(up, ",") != "「甲」" || len(down) != 0 {
+		t.Fatalf("up=%v down=%v", up, down)
+	}
+	if got := approvalSOPLabel(" 交付 "); got != "SOP「交付」" {
+		t.Fatalf("sop label: %s", got)
+	}
+}

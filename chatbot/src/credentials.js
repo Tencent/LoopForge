@@ -6,6 +6,8 @@ export const CREDENTIALS = {
   codexApiKey: "Codex API Key",
   claudeCodeApiKey: "Claude Code API Key",
   gitToken: "GitHub Git Token",
+  gitSshKey: "Git SSH 密钥",
+  gitHttpCredentials: "Git 访问令牌",
 };
 
 // A CodeBuddy key only works on the edition that issued it, and the CLI
@@ -85,6 +87,20 @@ export function codeBuddyKeyWarning(key) {
 // Where and how to get each credential. Keep in sync with
 // assistantCredentialRules in internal/httpapi/assistant_run_view.go.
 export const CREDENTIAL_GUIDES = {
+  gitSshKey: {
+    steps: [
+      "把专用公钥添加到代码托管账号，并按需授予仓库写权限",
+      "到「个人配置 → Git SSH 密钥」为该主机添加无口令私钥，同一主机的仓库自动共用；请平台管理员在「平台管理 → Git 主机信任」登记主机公钥",
+      "回到这里重试",
+    ],
+  },
+  gitHttpCredentials: {
+    steps: [
+      "在代码托管平台创建仓库级、最小权限的个人访问令牌",
+      "到「个人配置 → Git 访问令牌」为该 HTTPS 主机添加令牌，并开启「提供给工作区」",
+      "回到这里重试",
+    ],
+  },
   gitToken: {
     url: "/#/settings",
     link: "连接 GitHub",
@@ -137,6 +153,10 @@ const RULES = [
     /CodeBuddy[^。\n]{0,20}(API Key|Key|凭据)|拒绝了你的 API Key/i,
   ],
   [
+    "gitSshKey",
+    /Git SSH (?:密钥|私钥)/i,
+  ],
+  [
     "gitToken",
     /Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]/i,
   ],
@@ -158,12 +178,30 @@ export function credentialHint(text) {
   return null;
 }
 
-export function openCredentialSettings(field) {
-  const credential = CREDENTIALS[field] ? field : "";
-  if (window.parent !== window)
+export function openCredentialSettings(field, sshRemote, { returnToQuickAccess = false } = {}) {
+  const credential = field === "executors" || Object.hasOwn(CREDENTIALS, field) ? field : "";
+  const resume = credential === "executors" && returnToQuickAccess;
+  if (window.parent !== window) {
     window.parent.postMessage(
-      { type: "agentflow-chat-open-view", view: "settings", credential },
+      {
+        type: "agentflow-chat-open-view", view: "settings", credential,
+        ...(credential === "gitSshKey" && sshRemote ? { sshRemote } : {}),
+        ...(resume ? { returnToQuickAccess: true } : {}),
+      },
       location.origin,
     );
-  else location.href = "/#/settings";
+  } else if (resume) {
+    const current = new URL(location.href);
+    current.searchParams.set("quickAccess", "1");
+    history.replaceState(history.state, "", current);
+    const settings = new URL("/", location.origin);
+    for (const [key, source] of [["projectId", "projectId"], ["chatSession", "session"]]) {
+      const value = current.searchParams.get(source);
+      if (value) settings.searchParams.set(key, value);
+    }
+    settings.hash = "/settings/executors/quick-access";
+    location.assign(settings);
+  } else {
+    location.href = credential === "executors" ? "/#/settings/executors" : "/#/settings";
+  }
 }

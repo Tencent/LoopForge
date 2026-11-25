@@ -6,6 +6,7 @@ import { DraftCard } from "./SidePanel";
 import SopRunPanel, { runStatus } from "./SopRunPanel";
 import ChangesPanel from "./ChangesPanel";
 import AgentBrowser from "./AgentBrowser";
+import WorkspaceIDE from "./WorkspaceIDE";
 import { SubagentSession, subagentName, subagentStatus } from "./SubagentSession";
 import { collectSubagents, resumeMissed } from "./activity";
 import { IconButton } from "./ui";
@@ -192,17 +193,20 @@ export default function ArtifactPanel({
   workspaceRunId = "",
   browserRequest = null,
   onBrowserRequestHandled = () => {},
+  onAddElement = null,
 }) {
   const root = useRef(null);
   const searchInput = useRef(null);
   const [nodeId, setNodeId] = useState(selected?.nodeId || null);
   const [search, setSearch] = useState("");
   const browsing = view === "browser";
-  const listView = view !== "changes" && !browsing;
+  const coding = view === "ide";
+  const listView = view !== "changes" && !browsing && !coding;
   const live = !!chat?.busy;
   const subagents = collectSubagents(
     chat?.session?.messages || [],
     live ? chat?.live?.activity || [] : [],
+    chat?.model || "",
   );
   // A new subagent is keyed by its dispatch until its agent ID arrives, so
   // an opened one is found by either.
@@ -249,7 +253,8 @@ export default function ArtifactPanel({
     onClose,
     nodeId ||
       (selectedAgent ? `subagent-${selectedAgent.key}` : null) ||
-      (browsing && workspaceRunId ? "agent-browser" : null),
+      (browsing && workspaceRunId ? "agent-browser" : null) ||
+      (coding && workspaceRunId ? "workspace-ide" : null),
     open,
   );
   useEffect(
@@ -340,6 +345,9 @@ export default function ArtifactPanel({
       subagentName(agent),
       agent.subagent,
       agent.agentId,
+      // Every dispatch's model: a resumed agent may have run on several.
+      ...Object.values(agent.models || {}),
+      agent.model,
       subagentStatus(agent, live).label,
       ...agent.dispatches.map((step) => step.detail),
       "子 Agent",
@@ -424,7 +432,7 @@ export default function ArtifactPanel({
         id="conversation-artifacts"
         role={layout.compact ? "dialog" : "complementary"}
         aria-modal={layout.compact && open ? "true" : undefined}
-        aria-label={view === "changes" ? "会话改动" : browsing ? "Agent 浏览器" : "会话产物"}
+        aria-label={view === "changes" ? "会话改动" : browsing ? "Agent 浏览器" : coding ? "工作区 IDE" : "会话产物"}
         aria-hidden={!open || undefined}
         inert={!open}
         data-compact={layout.compact || undefined}
@@ -477,6 +485,22 @@ export default function ArtifactPanel({
               <HarnessIcon name="stage-browser" size={14} />
               <span>浏览器</span>
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={coding}
+              className={coding ? "is-active" : ""}
+              onClick={() => onViewChange("ide")}
+              disabled={!workspaceRunId}
+              title={
+                workspaceRunId
+                  ? "在 VS Code 里浏览、编辑本次会话的工作区"
+                  : "本次会话还没有工作区"
+              }
+            >
+              <HarnessIcon name="stage-ide" size={14} />
+              <span>IDE</span>
+            </button>
           </div>
           <div className="artifact-panel-actions">
             {layout.compact ? (
@@ -510,8 +534,8 @@ export default function ArtifactPanel({
             {selectedAgent ? (
               <>
                 <span className="artifact-node-title">{subagentName(selectedAgent)}</span>
-                <small className="node-header-meta" title={[selectedAgent.subagent, selectedAgent.agentId].filter(Boolean).join(" · ")}>
-                  {subagentStatus(selectedAgent, live).label}
+                <small className="node-header-meta" title={[selectedAgent.subagent, selectedAgent.agentId, selectedAgent.model].filter(Boolean).join(" · ")}>
+                  {[subagentStatus(selectedAgent, live).label, selectedAgent.model].filter(Boolean).join(" · ")}
                 </small>
               </>
             ) : null}
@@ -569,6 +593,22 @@ export default function ArtifactPanel({
             <ChangesPanel changes={workspaceChanges} />
           </div>
         ) : null}
+        {coding ? (
+          <div className="artifact-panel-content workspace-ide-content">
+            {workspaceRunId && open ? (
+              <WorkspaceIDE
+                key={workspaceRunId}
+                runId={workspaceRunId}
+                onMaximize={layout.compact ? undefined : layout.toggleCovered}
+              />
+            ) : (
+              <div className="agent-browser-empty" role="status">
+                <HarnessIcon name="stage-ide" size={28} />
+                <p>本次会话还没有工作区。让助手打开工作区后，可以在这里用 VS Code 浏览和编辑它的代码。</p>
+              </div>
+            )}
+          </div>
+        ) : null}
         {browsing ? (
           <div className="artifact-panel-content agent-browser-content">
             {workspaceRunId && open ? (
@@ -577,6 +617,15 @@ export default function ArtifactPanel({
                 runId={workspaceRunId}
                 request={browserRequest}
                 onRequestHandled={onBrowserRequestHandled}
+                onAddElement={
+                  onAddElement &&
+                  ((ref) => {
+                    onAddElement(ref);
+                    // A compact panel covers the composer: go back so the
+                    // new chip is in view.
+                    if (layout.compact) onClose();
+                  })
+                }
               />
             ) : (
               <div className="agent-browser-empty" role="status">
@@ -731,6 +780,7 @@ export default function ArtifactPanel({
                           <small>
                             <i className={`artifact-run-dot status-${{ done: "succeeded", running: "running", failed: "failed" }[status.tone] || "canceled"}`} />
                             {status.label}
+                            {agent.model ? ` · 模型 ${agent.model}` : ""}
                             {count > 1 ? ` · 派发 ${count} 次` : ""}
                             {agent.dispatches.at(-1)?.detail
                               ? ` · ${agent.dispatches.at(-1).detail}`

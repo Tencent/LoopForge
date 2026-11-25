@@ -30,15 +30,41 @@ type ProviderError struct {
 func (e *ProviderError) Error() string {
 	return fmt.Sprintf("企业微信错误 %d：%s", e.Code, e.Message)
 }
+
+// failure maps a WeCom error code to what the administrator has to do about
+// it. 850002 and 850003 are the same layer - the Bot's per-capability
+// authorization - in its two states: never granted, and expired. Retrying
+// neither of them helps, so the text says who has to grant what and where.
 func failure(code int) *ProviderError {
 	message := "请求失败，请检查机器人授权或稍后重试"
 	switch code {
+	case 850002:
+		message = "机器人还没有被授权「消息」使用权限。请机器人创建者在企业微信「工作台 → 智能机器人 → 对应机器人 → 授权管理」里授权，部分企业需要管理员审批"
 	case 850003:
 		message = "消息使用权限已过期，请机器人创建者重新授权"
+	case 851009:
+		message = "能力授权已提交，正在等待企业管理员审批"
 	case 853004:
 		message = "机器人凭据或访问令牌失效，请重新验证"
+	case 853006:
+		message = "当前企业主体未开通该能力，无法通过授权解决，请改用其他渠道或联系企业微信支持"
 	}
-	return &ProviderError{Code: code, Message: message}
+	err := &ProviderError{Code: code, Message: message}
+	if err.awaitingAuthorization() {
+		err.Message += "。权限恢复后，已有待授权通知请到「机器人 → 记录 → 发送记录」点击「重试」"
+	}
+	return err
+}
+
+// awaitingAuthorization reports whether a failure is the Bot's capability
+// authorization rather than a transient fault, so the configuration is shown
+// as waiting for an authorization instead of a generic error.
+func (e *ProviderError) awaitingAuthorization() bool {
+	switch e.Code {
+	case 850002, 850003, 851009, 853004:
+		return true
+	}
+	return false
 }
 
 // CLIProvider keeps service discovery and message encoding inside the official CLI.
@@ -103,12 +129,7 @@ func (p *CLIProvider) call(ctx context.Context, botID, secret string, args ...st
 			return nil, err
 		}
 		cmd := exec.CommandContext(ctx, p.Binary, args...)
-		for _, name := range []string{"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
-			if value, ok := os.LookupEnv(name); ok {
-				cmd.Env = append(cmd.Env, name+"="+value)
-			}
-		}
-		cmd.Env = append(cmd.Env, "WECOM_CLI_ACCESS_TOKEN="+token, "WECOM_CLI_CONFIG_DIR="+dir)
+		cmd.Env = wecomCLIEnv(token, dir)
 		var out boundedBuffer
 		cmd.Stdout = &out
 		cmd.Stderr = io.Discard
@@ -119,23 +140,15 @@ func (p *CLIProvider) call(ctx context.Context, botID, secret string, args ...st
 		if errors.Is(err, exec.ErrNotFound) {
 			return nil, errors.New("通知服务未安装 wecom-cli，请联系管理员")
 		}
-		var result struct {
-			Code  int `json:"errcode"`
-			Error *struct {
-				Code int `json:"code"`
-			} `json:"error"`
+		code, parseErr := wecomResultCode(out.Bytes())
+		if parseErr != nil {
+			return nil, parseErr
 		}
-		if json.Unmarshal(out.Bytes(), &result) != nil {
-			return nil, errors.New("企业微信 CLI 响应格式异常")
-		}
-		if result.Error != nil {
-			result.Code = result.Error.Code
-		}
-		if result.Code == 853004 && attempt == 0 {
+		if code == 853004 && attempt == 0 {
 			continue
 		}
-		if result.Code != 0 {
-			return nil, failure(result.Code)
+		if code != 0 {
+			return nil, failure(code)
 		}
 		if err != nil {
 			return nil, errors.New("企业微信 CLI 调用失败")
@@ -143,6 +156,36 @@ func (p *CLIProvider) call(ctx context.Context, botID, secret string, args ...st
 		return append(json.RawMessage(nil), out.Bytes()...), nil
 	}
 	return nil, failure(853004)
+}
+
+// wecomCLIEnv builds the isolated wecom-cli environment: only a whitelist of
+// host variables is inherited, plus the per-call access token and config dir.
+func wecomCLIEnv(token, dir string) []string {
+	var env []string
+	for _, name := range []string{"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if value, ok := os.LookupEnv(name); ok {
+			env = append(env, name+"="+value)
+		}
+	}
+	return append(env, "WECOM_CLI_ACCESS_TOKEN="+token, "WECOM_CLI_CONFIG_DIR="+dir)
+}
+
+// wecomResultCode extracts the WeCom error code from wecom-cli output; a
+// nested error.code takes precedence over the top-level errcode.
+func wecomResultCode(raw []byte) (int, error) {
+	var result struct {
+		Code  int `json:"errcode"`
+		Error *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &result) != nil {
+		return 0, errors.New("企业微信 CLI 响应格式异常")
+	}
+	if result.Error != nil {
+		return result.Error.Code, nil
+	}
+	return result.Code, nil
 }
 
 type boundedBuffer struct{ bytes.Buffer }
@@ -177,9 +220,19 @@ func (p *CLIProvider) Sessions(ctx context.Context, botID, secret string) ([]dom
 	}
 	return chats, nil
 }
+
+var errNotificationContentLength = errors.New("通知正文必须为 1 至 20480 字节")
+
+// Verify checks a Bot ID and secret through the signed bootstrap API only.
+// It never opens a long connection, so a running receiver is not displaced.
+func (p *CLIProvider) Verify(ctx context.Context, botID, secret string) error {
+	_, err := p.token(ctx, botID, secret)
+	return err
+}
+
 func (p *CLIProvider) Send(ctx context.Context, botID, secret, target, content string) error {
 	if len([]byte(content)) == 0 || len([]byte(content)) > 20480 {
-		return errors.New("通知正文必须为 1 至 20480 字节")
+		return errNotificationContentLength
 	}
 	body, _ := json.Marshal(map[string]any{"chat_id": target, "msg_type": "markdown", "markdown": map[string]string{"content": content}})
 	raw, err := p.call(ctx, botID, secret, "message", "aibot", "send", "--json", string(body))

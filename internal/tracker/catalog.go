@@ -17,7 +17,7 @@ type mcpBinding struct {
 	Source  string
 }
 
-func bindTrackerMCP(kind string, cfg domain.SyncConfig, servers []domain.MCPServerDefinition, envToken, codebuddyAuth string) mcpBinding {
+func bindTrackerMCP(kind string, cfg domain.SyncConfig, servers []domain.MCPServerDefinition, envToken string) mcpBinding {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	cfgURL := strings.TrimSpace(cfg.GongfengMCPURL)
 	exact := []string{"gongfeng-delivery", "gongfeng"}
@@ -59,12 +59,13 @@ func bindTrackerMCP(kind string, cfg domain.SyncConfig, servers []domain.MCPServ
 		return out
 	}
 	if !headerHas(out.Headers, "Authorization") {
-		out.Headers = applyAuthFallback(out.Headers, envToken, codebuddyAuth)
+		token := strings.TrimSpace(envToken)
+		if token != "" {
+			out.Headers["Authorization"] = bearerHeader(token)
+		}
 		if out.Source == "" {
-			if strings.TrimSpace(envToken) != "" {
+			if token != "" {
 				out.Source = "env:AGENTFLOW_MCP_TOKEN"
-			} else if strings.TrimSpace(codebuddyAuth) != "" {
-				out.Source = "codebuddy:mcp.json"
 			} else {
 				out.Source = "none"
 			}
@@ -97,11 +98,11 @@ func bindProjectUserTrackerMCP(kind string, cfg domain.SyncConfig, servers []dom
 			projectServers = append(projectServers, server)
 		}
 	}
-	binding := bindTrackerMCP(kind, cfg, projectServers, "", "")
+	binding := bindTrackerMCP(kind, cfg, projectServers, "")
 	if strings.TrimSpace(binding.URL) == "" {
 		return binding, fmt.Errorf("项目 %s 未配置 %s MCP 地址", projectID, trackerDisplayName(kind))
 	}
-	if !hasAuthorizationHeader(binding.Headers) {
+	if !headerHas(binding.Headers, "Authorization") {
 		return binding, fmt.Errorf("项目 %s 的 %s MCP 未配置认证：请在 MCP Headers 中提供 Authorization（%s %s）", projectID, trackerDisplayName(kind), role, strings.TrimSpace(user.LoginName))
 	}
 	binding.Headers = maps.Clone(binding.Headers)
@@ -168,26 +169,6 @@ func findCatalogHTTP(servers []domain.MCPServerDefinition, exactIDs, needles []s
 	return matches[0], true
 }
 
-func applyAuthFallback(hdrs map[string]string, envToken, codebuddyAuth string) map[string]string {
-	out := hdrs
-	if out == nil {
-		out = map[string]string{}
-	} else {
-		out = maps.Clone(out)
-	}
-	if headerHas(out, "Authorization") {
-		return out
-	}
-	if token := strings.TrimSpace(envToken); token != "" {
-		out["Authorization"] = bearerHeader(token)
-		return out
-	}
-	if auth := strings.TrimSpace(codebuddyAuth); auth != "" {
-		out["Authorization"] = bearerHeader(auth)
-	}
-	return out
-}
-
 func bearerHeader(value string) string {
 	value = strings.TrimSpace(value)
 	if strings.HasPrefix(strings.ToLower(value), "bearer ") {
@@ -196,9 +177,11 @@ func bearerHeader(value string) string {
 	return "Bearer " + value
 }
 
+// headerHas reports whether headers carries a non-blank value for name,
+// matching the key case-insensitively and ignoring surrounding whitespace.
 func headerHas(headers map[string]string, name string) bool {
 	for k, v := range headers {
-		if strings.EqualFold(k, name) && strings.TrimSpace(v) != "" {
+		if strings.EqualFold(strings.TrimSpace(k), name) && strings.TrimSpace(v) != "" {
 			return true
 		}
 	}
@@ -212,13 +195,4 @@ func sameMCPHost(a, b string) bool {
 		return false
 	}
 	return strings.EqualFold(ua.Host, ub.Host)
-}
-
-func hasAuthorizationHeader(headers map[string]string) bool {
-	for key, value := range headers {
-		if strings.EqualFold(strings.TrimSpace(key), "authorization") && strings.TrimSpace(value) != "" {
-			return true
-		}
-	}
-	return false
 }

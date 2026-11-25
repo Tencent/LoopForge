@@ -8,6 +8,15 @@ CREATE TABLE IF NOT EXISTS knowledge_operation_leases (
  lease_until DATETIME(6) NULL
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Existing upstream reviews belong to LightCloud. The version column already
+-- exists on built-in deployments, whose existing reviews keep their provider.
+UPDATE knowledge_submissions
+ SET payload=JSON_SET(COALESCE(payload, JSON_OBJECT()), '$.provider', 'lightcloud')
+ WHERE JSON_EXTRACT(payload, '$.provider') IS NULL
+ AND NOT EXISTS (
+  SELECT 1 FROM information_schema.columns WHERE table_schema=DATABASE()
+   AND table_name='knowledge_submissions' AND column_name='version');
+
 SET @ddl = IF(
  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE()
   AND table_name='knowledge_submissions' AND column_name='version')=0,

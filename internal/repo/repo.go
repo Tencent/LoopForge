@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"agentflow/internal/credcrypt"
 	"agentflow/internal/domain"
 
 	"gorm.io/driver/mysql"
@@ -47,6 +48,26 @@ func (d *deps) sqlJSONText(path string) string {
 	return "json_extract(payload, ?)"
 }
 
+// sqlPayloadJSONText is the literal-path variant of sqlJSONText for SELECT
+// projections that cannot bind the path as a parameter. path is the JSON path
+// below "$." and must be a code constant, never user input.
+func (d *deps) sqlPayloadJSONText(path string) string {
+	if d.isMySQL() {
+		return "JSON_UNQUOTE(JSON_EXTRACT(payload, '$." + path + "'))"
+	}
+	return "json_extract(payload, '$." + path + "')"
+}
+
+// sqlExecutionContextJSONText is the execution_context-column counterpart of
+// sqlPayloadJSONText. path is the JSON path below "$." and must be a code
+// constant, never user input.
+func (d *deps) sqlExecutionContextJSONText(path string) string {
+	if d.isMySQL() {
+		return "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$." + path + "'))"
+	}
+	return "json_extract(execution_context, '$." + path + "')"
+}
+
 // locking returns the query with a row-lock clause on MySQL. sqlite serializes
 // writers already (single connection in tests), so no clause is needed there.
 func (d *deps) locking(q *gorm.DB) *gorm.DB {
@@ -57,7 +78,7 @@ func (d *deps) locking(q *gorm.DB) *gorm.DB {
 }
 
 // CatalogRepo owns the reusable definitions: agents, rules, skills, MCP
-// servers, executors, dockerfiles, environments, sandboxes, workflows,
+// servers, executors, sandboxes (with their Dockerfile or install), workflows,
 // repositories, sync config, schedule jobs and definition revisions.
 type CatalogRepo struct {
 	*deps
@@ -92,6 +113,10 @@ type TasksRepo struct {
 // UsersRepo owns users and their saved credentials.
 type UsersRepo struct {
 	*deps
+	gitHTTPHosts *GitHTTPHostTrustRepo
+	// keyring seals Bot credentials; installed by SetCredentialKeyring.
+	keyringMu sync.RWMutex
+	keyring   *credcrypt.Keyring
 }
 
 // TokensRepo owns API tokens.
@@ -121,6 +146,7 @@ type RunsRepo struct {
 // RunnersRepo owns the CLI runner registry, runner tasks and runner events.
 type RunnersRepo struct {
 	*deps
+	projects *ProjectsRepo
 }
 
 // DeliveryRepo owns MR delivery state and the delivery locking that follows.
@@ -150,6 +176,7 @@ type Store struct {
 	*deps
 	*CatalogRepo
 	*ProjectsRepo
+	*ProjectCredentialsRepo
 	*BusinessDomainsRepo
 	*IssuesRepo
 	*TasksRepo
@@ -167,7 +194,10 @@ type Store struct {
 	*SpacesRepo
 	*KnowledgeRepo
 	*KnowledgeContentRepo
-	*FeedbackRepo
+	*PlatformSettingsRepo
+	*SSHHostTrustRepo
+	*HTTPSHostTrustRepo
+	*GitHTTPHostTrustRepo
 	*NotificationsRepo
 	*BotInteractionsRepo
 }
@@ -179,8 +209,10 @@ func newStore(db, contentDB *gorm.DB, contentSeparate bool) *Store {
 	d := &deps{DB: db}
 	s := &Store{deps: d}
 	s.ProjectsRepo = &ProjectsRepo{deps: d}
+	s.ProjectCredentialsRepo = &ProjectCredentialsRepo{deps: d, projects: s.ProjectsRepo}
 	s.BusinessDomainsRepo = &BusinessDomainsRepo{deps: d}
-	s.UsersRepo = &UsersRepo{deps: d}
+	s.GitHTTPHostTrustRepo = &GitHTTPHostTrustRepo{deps: d}
+	s.UsersRepo = &UsersRepo{deps: d, gitHTTPHosts: s.GitHTTPHostTrustRepo}
 	s.BotInteractionsRepo = &BotInteractionsRepo{deps: d}
 	s.TokensRepo = &TokensRepo{deps: d}
 	s.AssistantRepo = &AssistantRepo{deps: d, users: s.UsersRepo}
@@ -191,7 +223,7 @@ func newStore(db, contentDB *gorm.DB, contentSeparate bool) *Store {
 	s.IssuesRepo = &IssuesRepo{deps: d, projects: s.ProjectsRepo, users: s.UsersRepo, tasks: s.TasksRepo}
 	s.NotificationsRepo.issues = s.IssuesRepo
 	s.RunsRepo = &RunsRepo{deps: d, assistant: s.AssistantRepo, issues: s.IssuesRepo, catalog: s.CatalogRepo, notifications: s.NotificationsRepo}
-	s.RunnersRepo = &RunnersRepo{deps: d}
+	s.RunnersRepo = &RunnersRepo{deps: d, projects: s.ProjectsRepo}
 	s.DeliveryRepo = &DeliveryRepo{deps: d, issues: s.IssuesRepo, tasks: s.TasksRepo, catalog: s.CatalogRepo, runs: s.RunsRepo}
 	s.InsightsRepo = &InsightsRepo{deps: d}
 	s.AnalyticsRepo = &AnalyticsRepo{deps: d, runs: s.RunsRepo, catalog: s.CatalogRepo, delivery: s.DeliveryRepo, issues: s.IssuesRepo, tasks: s.TasksRepo, projects: s.ProjectsRepo, insights: s.InsightsRepo}
@@ -201,7 +233,10 @@ func newStore(db, contentDB *gorm.DB, contentSeparate bool) *Store {
 	s.SpacesRepo = &SpacesRepo{deps: d}
 	s.KnowledgeContentRepo = &KnowledgeContentRepo{db: contentDB, separate: contentSeparate}
 	s.KnowledgeRepo = &KnowledgeRepo{deps: d, content: s.KnowledgeContentRepo}
-	s.FeedbackRepo = &FeedbackRepo{deps: d}
+
+	s.PlatformSettingsRepo = &PlatformSettingsRepo{deps: d}
+	s.SSHHostTrustRepo = &SSHHostTrustRepo{deps: d}
+	s.HTTPSHostTrustRepo = &HTTPSHostTrustRepo{deps: d}
 	return s
 }
 

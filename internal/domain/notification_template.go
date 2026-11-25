@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -55,25 +56,37 @@ func ValidateNotificationBinding(binding NotificationBinding) error {
 	if len(binding.AIInstruction) > 4000 {
 		return fmt.Errorf("AI 通知编写要求不能超过 4000 字节")
 	}
-	names := map[string]bool{}
-	for _, name := range NotificationVariableNames {
-		names[name] = true
+	if err := validateNotificationTemplate(binding.Template); err != nil {
+		return err
 	}
-	for _, match := range notificationVariable.FindAllStringSubmatch(binding.Template, -1) {
-		if !names[match[1]] {
+	return validateNotificationEvents(binding.Events, binding.Scope)
+}
+
+// validateNotificationTemplate accepts only whitelisted {{variable}}
+// placeholders and rejects any stray "{{" or "}}" left after removing them.
+func validateNotificationTemplate(template string) error {
+	for _, match := range notificationVariable.FindAllStringSubmatch(template, -1) {
+		if !slices.Contains(NotificationVariableNames, match[1]) {
 			return fmt.Errorf("通知模板包含不支持的变量：%s", match[1])
 		}
 	}
-	rest := notificationVariable.ReplaceAllString(binding.Template, "")
+	rest := notificationVariable.ReplaceAllString(template, "")
 	if strings.Contains(rest, "{{") || strings.Contains(rest, "}}") {
 		return fmt.Errorf("通知模板的变量格式无效")
 	}
-	if len(binding.Events) == 0 || len(binding.Events) > 3 {
+	return nil
+}
+
+// validateNotificationEvents requires one to three distinct supported events;
+// run-scoped bindings cannot fire on waiting.
+func validateNotificationEvents(events []string, scope string) error {
+	if len(events) == 0 || len(events) > 3 {
 		return fmt.Errorf("请选择通知触发条件")
 	}
 	seen := map[string]bool{}
-	for _, event := range binding.Events {
-		if seen[event] || (event != "succeeded" && event != "failed" && event != "waiting") || (binding.Scope == "run" && event == "waiting") {
+	for _, event := range events {
+		supported := event == "succeeded" || event == "failed" || event == "waiting"
+		if seen[event] || !supported || (scope == "run" && event == "waiting") {
 			return fmt.Errorf("不支持的通知触发条件")
 		}
 		seen[event] = true
@@ -155,18 +168,7 @@ func RenderNotification(binding NotificationBinding, ctx NotificationContext) (s
 		values["ai.summary"] = NotificationText(ai.Summary, 2000)
 		values["ai.body"] = NotificationText(ai.Body, 8000)
 	}
-	template := binding.Template
-	if strings.TrimSpace(template) == "" {
-		if binding.ContentMode == "ai" {
-			template = "### {{ai.title}}\n\n{{ai.body}}\n\n触发时状态：{{status}}\n\n{{url}}"
-		} else if binding.Scope == "run" {
-			template = "### 需求「{{issue.title}}」的 SOP 已完成\n\n{{result}}\n\n{{url}}"
-		} else if ctx.SourceType == "schedule_job" || ctx.SourceType == "assistant_task" {
-			template = "### {{task.name}} · {{status}}\n\n{{url}}"
-		} else {
-			template = "### {{status}}\n项目：{{project}}\n流程：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}"
-		}
-	}
+	template := notificationTemplate(binding, ctx.SourceType)
 	// Expand once, so text inside AI/output values cannot inject further variables.
 	content := notificationVariable.ReplaceAllStringFunc(template, func(match string) string { return values[notificationVariable.FindStringSubmatch(match)[1]] })
 	if len(content) == 0 || len(content) > 19000 {
@@ -174,6 +176,25 @@ func RenderNotification(binding NotificationBinding, ctx NotificationContext) (s
 	}
 	return content, source, nil
 }
+
+// notificationTemplate returns the binding's own template, or the built-in
+// default for its content mode, scope and source type when it has none.
+func notificationTemplate(binding NotificationBinding, sourceType string) string {
+	if strings.TrimSpace(binding.Template) != "" {
+		return binding.Template
+	}
+	switch {
+	case binding.ContentMode == "ai":
+		return "### {{ai.title}}\n\n{{ai.body}}\n\n触发时状态：{{status}}\n\n{{url}}"
+	case binding.Scope == "run":
+		return "### 需求「{{issue.title}}」的 SOP 已完成\n\n{{result}}\n\n{{url}}"
+	case sourceType == "schedule_job" || sourceType == "assistant_task":
+		return "### {{task.name}} · {{status}}\n\n{{url}}"
+	default:
+		return "### {{status}}\n项目：{{project}}\n流程：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}"
+	}
+}
+
 func NotificationAIInstructions(bindings []NotificationBinding) string {
 	lines := []string{}
 	seen := map[string]bool{}

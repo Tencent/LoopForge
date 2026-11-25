@@ -2,6 +2,8 @@ package knowledge
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -26,7 +28,7 @@ type Store interface {
 	DeleteKnowledgeSubmission(id string) error
 	KnowledgeArtifacts(projectID string, limit int) []domain.KnowledgeCandidate
 	Artifact(runID, artifactID string) (domain.Artifact, bool)
-	Run(id string) (domain.Run, bool)
+	RunHeader(id string) (domain.Run, error)
 	Agents() []domain.AgentDefinition
 	Workflows() []domain.WorkflowDefinition
 }
@@ -44,6 +46,7 @@ type Upstream interface {
 type Service struct {
 	store    Store
 	upstream Upstream
+	settings *domain.KnowledgeSettings
 	now      func() time.Time
 	newID    func() string
 }
@@ -67,7 +70,12 @@ type CheckResult struct {
 
 // Check checks the injected engine.
 func (s *Service) Check(ctx context.Context) CheckResult {
+	s = s.Snapshot()
 	client, err := s.connect()
+	return s.checkUpstream(ctx, client, err)
+}
+
+func (s *Service) checkUpstream(ctx context.Context, client Upstream, err error) CheckResult {
 	if err != nil {
 		return CheckResult{Error: err.Error()}
 	}
@@ -98,6 +106,7 @@ type SourceView struct {
 
 // Sources lists upstream sources, marking which ones projectID may read.
 func (s *Service) Sources(ctx context.Context, projectID string) ([]SourceView, error) {
+	s = s.Snapshot()
 	client, err := s.connect()
 	if err != nil {
 		return nil, err
@@ -111,8 +120,10 @@ func (s *Service) Sources(ctx context.Context, projectID string) ([]SourceView, 
 	allowed := s.AllowedSources(projectID)
 	out := make([]SourceView, 0, len(list))
 	for _, src := range list {
-		if SourceAllowed(allowed, src.ID) {
-			src.BaseOrigin = s.sourceOrigin(src.ID)
+		if s.sourceAllowed(allowed, src.ID) {
+			if s.Builtin() {
+				src.BaseOrigin = s.sourceOrigin(src.ID)
+			}
 			out = append(out, SourceView{Source: src, Allowed: true})
 		}
 	}
@@ -127,15 +138,17 @@ type SearchOutput struct {
 
 // Search runs a trial search limited to the sources projectID may read.
 func (s *Service) Search(ctx context.Context, projectID, query string, sources []string) (SearchOutput, error) {
+	s = s.Snapshot()
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return SearchOutput{}, apperr.New(apperr.Invalid, "请输入要检索的问题或关键词")
 	}
-	scoped, err := ScopeSources(s.AllowedSources(projectID), sources)
+	allowed := s.AllowedSources(projectID)
+	scoped, err := s.scopeSources(allowed, sources)
 	if err != nil {
 		return SearchOutput{}, apperr.New(apperr.Invalid, err.Error())
 	}
-	if len(scoped) == 0 {
+	if s.Builtin() && len(scoped) == 0 {
 		return SearchOutput{Result: SearchResult{Query: query, Mode: "lexical", Results: []SearchHit{}}, Sources: []string{}}, nil
 	}
 	client, err := s.connect()
@@ -148,6 +161,12 @@ func (s *Service) Search(ctx context.Context, projectID, query string, sources [
 	result, err := client.Search(ctx, query, scoped)
 	if err != nil {
 		return SearchOutput{}, apperr.New(apperr.Upstream, "检索失败："+err.Error())
+	}
+	if !s.Builtin() {
+		result.Results = slices.DeleteFunc(result.Results, func(hit SearchHit) bool {
+			return !s.sourceAllowed(scoped, hit.Source)
+		})
+		return SearchOutput{Result: result, Sources: scoped, LatencyMs: s.now().Sub(started).Milliseconds()}, nil
 	}
 	rawHits := len(result.Results)
 	s.applyLifecycle(&result)
@@ -162,11 +181,12 @@ func (s *Service) Search(ctx context.Context, projectID, query string, sources [
 // Document fetches a source document (optionally a line range) if the
 // source is within projectID's scope.
 func (s *Service) Document(ctx context.Context, projectID, source, path string, start, end int) (Document, error) {
+	s = s.Snapshot()
 	source, path = strings.TrimSpace(source), strings.TrimSpace(path)
 	if source == "" || path == "" {
 		return Document{}, apperr.New(apperr.Invalid, "source 和 path 必填")
 	}
-	if !SourceAllowed(s.AllowedSources(projectID), source) {
+	if !s.sourceAllowed(s.AllowedSources(projectID), source) {
 		return Document{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
 	}
 	client, err := s.connect()
@@ -178,6 +198,9 @@ func (s *Service) Document(ctx context.Context, projectID, source, path string, 
 	doc, err := client.Fetch(ctx, source, path, start, end)
 	if err != nil {
 		return Document{}, apperr.New(apperr.Upstream, "读取原文失败："+err.Error())
+	}
+	if !s.Builtin() {
+		return doc, nil
 	}
 	doc.BaseOrigin = s.sourceOrigin(source)
 	if doc.URL == "" {
@@ -243,13 +266,22 @@ func (s *Service) Candidates(projectID string) []domain.KnowledgeCandidate {
 }
 
 func (s *Service) Submissions(projectID, status string) []domain.KnowledgeSubmission {
-	return s.store.KnowledgeSubmissions(projectID, status, 200)
+	provider := s.Settings().EffectiveProvider()
+	if store, ok := s.store.(interface {
+		KnowledgeSubmissionsForProvider(projectID, status, provider string, limit int) []domain.KnowledgeSubmission
+	}); ok {
+		return store.KnowledgeSubmissionsForProvider(projectID, status, provider, 200)
+	}
+	items := s.store.KnowledgeSubmissions(projectID, status, 200)
+	return slices.DeleteFunc(items, func(item domain.KnowledgeSubmission) bool {
+		return item.EffectiveProvider() != provider
+	})
 }
 
 func (s *Service) Submission(id string) (domain.KnowledgeSubmission, error) {
 	item, ok := s.store.KnowledgeSubmission(id)
-	if !ok {
-		return item, apperr.New(apperr.NotFound, "沉淀条目不存在")
+	if !ok || item.EffectiveProvider() != s.Settings().EffectiveProvider() {
+		return item, apperr.New(apperr.NotFound, "此知识引擎中没有该审核条目")
 	}
 	return item, nil
 }
@@ -288,9 +320,20 @@ func (s *Service) Submit(input SubmissionInput, actor string) (domain.KnowledgeS
 	item := domain.KnowledgeSubmission{
 		ID: "kbs-" + s.itemID(), ProjectID: strings.TrimSpace(input.ProjectID),
 		Status: domain.KnowledgeSubmissionPending, CreatedBy: actor,
+		Provider: s.Settings().EffectiveProvider(),
 	}
 	content := input.Content
 	if input.ArtifactID != "" {
+		run, err := s.store.RunHeader(input.RunID)
+		if err != nil {
+			return item, err
+		}
+		if run.IsPersonalWorkspace() {
+			return item, apperr.New(apperr.Forbidden, "个人工作区产物不能提交到共享知识库")
+		}
+		if run.ID == "" {
+			return item, apperr.New(apperr.NotFound, "运行产物不存在")
+		}
 		if existing := s.store.KnowledgeSubmissionIDsByArtifact([]string{input.ArtifactID})[input.ArtifactID]; existing != "" {
 			return item, apperr.New(apperr.Conflict, "该产物已加入沉淀队列").With("id", existing)
 		}
@@ -300,9 +343,7 @@ func (s *Service) Submit(input SubmissionInput, actor string) (domain.KnowledgeS
 		}
 		item.RunID, item.NodeID, item.ArtifactID = art.RunID, art.NodeID, art.ID
 		content = art.Content
-		if run, ok := s.store.Run(art.RunID); ok {
-			item.ProjectID, item.IssueID, item.WorkflowID = run.ExecutionContext.ProjectID, run.ExecutionContext.IssueID, run.WorkflowID
-		}
+		item.ProjectID, item.IssueID, item.WorkflowID = run.ExecutionContext.ProjectID, run.ExecutionContext.IssueID, run.WorkflowID
 	}
 	parsed := ParseDistilled(content)
 	item.Content = parsed.Body
@@ -398,6 +439,7 @@ func (s *Service) Reject(id, note, actor string) (domain.KnowledgeSubmission, er
 // Publish writes a reviewed item into the upstream KB. It requires a source
 // within the item's project scope; upstream failures are recorded on the item.
 func (s *Service) Publish(ctx context.Context, id, actor string) (domain.KnowledgeSubmission, error) {
+	s = s.Snapshot()
 	item, err := s.mutable(id, "该条目已写回知识库")
 	if err != nil {
 		return item, err
@@ -425,21 +467,22 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 			_ = s.store.PutKnowledgeSubmission(current)
 		}
 	}()
-	if strings.EqualFold(strings.TrimSpace(item.Action), domain.KnowledgeSubmissionActionRetract) {
-		return s.publishRetraction(ctx, item, actor)
-	}
-	item, err = s.checkPublishGates(item)
-	if err != nil {
-		return item, err
-	}
-	if s.upstream == nil {
-		return item, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
+	if s.Builtin() {
+		if strings.EqualFold(strings.TrimSpace(item.Action), domain.KnowledgeSubmissionActionRetract) {
+			return s.publishRetraction(ctx, item, actor)
+		}
+		item, err = s.checkPublishGates(item)
+		if err != nil {
+			return item, err
+		}
+	} else if !s.Settings().WriteEnabled {
+		return item, apperr.New(apperr.Forbidden, "LightCloud 写回已关闭，请管理员开启审核后写回")
 	}
 	source := strings.TrimSpace(item.Source)
 	if source == "" {
 		return item, apperr.New(apperr.Invalid, "请先选择写入的知识库来源")
 	}
-	if !s.projectWritableSource(item.ProjectID, source) {
+	if !s.writableSource(item.ProjectID, source) {
 		return item, apperr.New(apperr.Forbidden, "该知识库来源不在项目授权范围内")
 	}
 	path, ok := NormalizeDocPath(item.Path)
@@ -456,7 +499,7 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	}
 	item.Path = path
 	item.ReviewedBy = actor
-	if src, ok := s.sourceByID(source); ok && src.Kind == "git" {
+	if src, ok := s.builtinSourceByID(source); ok && src.Kind == "git" {
 		writer, ok := client.(GitWritebacker)
 		if !ok {
 			return item, apperr.New(apperr.Unavailable, "内置知识引擎不支持 Git 来源写回")
@@ -516,6 +559,13 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	return s.save(item)
 }
 
+func (s *Service) builtinSourceByID(id string) (domain.KnowledgeSource, bool) {
+	if !s.Builtin() {
+		return domain.KnowledgeSource{}, false
+	}
+	return s.sourceByID(id)
+}
+
 // sourceByID reads the control-plane source when the store supports it. Tests
 // with a narrow fake store fall back to the hosted write path.
 func (s *Service) sourceByID(id string) (domain.KnowledgeSource, bool) {
@@ -560,14 +610,45 @@ func (s *Service) save(item domain.KnowledgeSubmission) (domain.KnowledgeSubmiss
 	return saved, nil
 }
 
-// connect returns the injected engine.
+// connect selects the configured engine behind the common Upstream interface.
 func (s *Service) connect() (Upstream, error) {
-	if s.upstream == nil {
-		return nil, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
+	settings := s.Settings()
+	switch settings.EffectiveProvider() {
+	case domain.KnowledgeProviderLightCloud:
+		if !settings.ExternalReady() {
+			return nil, apperr.New(apperr.Unavailable, errLightCloudNotConfigured.Error())
+		}
+		return NewClient(settings)
+	case domain.KnowledgeProviderBuiltin:
+		if s.upstream != nil {
+			return s.upstream, nil
+		}
 	}
-	return s.upstream, nil
+	return nil, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
 }
+
+func (s *Service) scopeSources(allowed, requested []string) ([]string, error) {
+	if !s.Builtin() && len(allowed) == 0 {
+		return cleanList(requested), nil
+	}
+	return ScopeSources(allowed, requested)
+}
+
+func (s *Service) sourceAllowed(allowed []string, source string) bool {
+	return (!s.Builtin() && len(allowed) == 0) || SourceAllowed(allowed, source)
+}
+
+func (s *Service) writableSource(project, source string) bool {
+	if !s.Builtin() {
+		return strings.TrimSpace(project) != "" && s.sourceAllowed(s.AllowedSources(project), source)
+	}
+	return s.projectWritableSource(project, source)
+}
+
 func (s *Service) AllowedSources(project string) []string {
+	if !s.Builtin() {
+		return cleanList(s.Settings().SourcesForProject(project))
+	}
 	if strings.TrimSpace(project) == "" {
 		return []string{}
 	}
@@ -610,10 +691,8 @@ func cleanSources(in []string) []string {
 }
 
 func appendUnique(list []string, v string) []string {
-	for _, existing := range list {
-		if existing == v {
-			return list
-		}
+	if slices.Contains(list, v) {
+		return list
 	}
 	return append(list, v)
 }
@@ -629,8 +708,26 @@ func firstNonEmpty(values ...string) string {
 
 // SourceDetail returns only public source metadata and document summaries.
 func (s *Service) SourceDetail(ctx context.Context, project, source string) (any, error) {
-	if !SourceAllowed(s.AllowedSources(project), source) {
+	s = s.Snapshot()
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return nil, apperr.New(apperr.Invalid, "source 必填")
+	}
+	if !s.sourceAllowed(s.AllowedSources(project), source) {
 		return nil, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
+	}
+	if !s.Builtin() {
+		up, err := s.connect()
+		if err != nil {
+			return nil, err
+		}
+		if details, ok := up.(interface {
+			GetSource(context.Context, string) (json.RawMessage, error)
+		}); ok {
+			ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+			defer cancel()
+			return details.GetSource(ctx, source)
+		}
 	}
 	list, err := s.Sources(ctx, project)
 	if err != nil {

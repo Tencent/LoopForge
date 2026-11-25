@@ -18,11 +18,8 @@ func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	dockerfile := domain.DockerfileDefinition{ID: "runner-image", Name: "Runner image", Content: "FROM alpine:3.20\n"}
-	profile := domain.SandboxProfile{ID: "runner-docker", Name: "Runner Docker", Driver: "docker", DockerfileID: dockerfile.ID, Environment: map[string]string{"E2E": "1"}}
-	if err := s.PutDockerfile(dockerfile); err != nil {
-		t.Fatal(err)
-	}
+	dockerfile := &domain.SandboxDockerfile{Content: "FROM alpine:3.20\n"}
+	profile := domain.SandboxProfile{ID: "runner-docker", Name: "Runner Docker", Driver: "docker", Dockerfile: dockerfile, Environment: map[string]string{"E2E": "1"}}
 	if err := s.PutSandbox(profile); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +28,7 @@ func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec == nil || spec.Profile.Driver != "docker" || spec.Profile.Environment["E2E"] != "1" || spec.Dockerfile == nil || spec.Dockerfile.Content != dockerfile.Content {
+	if spec == nil || spec.Profile.Driver != "docker" || spec.Profile.Environment["E2E"] != "1" || spec.Dockerfile == nil || spec.Dockerfile.Content != dockerfile.Content || spec.Dockerfile.ID != profile.ID || spec.Profile.DockerfileID != profile.ID || spec.Profile.Dockerfile != nil {
 		t.Fatalf("runner sandbox spec = %+v", spec)
 	}
 }
@@ -43,10 +40,7 @@ func TestRunnerSandboxSpecUsesFrozenSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.PutDockerfile(domain.DockerfileDefinition{ID: "image", Name: "changed", Content: "FROM busybox\n"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "docker", Name: "changed", Driver: "local"}); err != nil {
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "docker", Name: "changed", Driver: "native"}); err != nil {
 		t.Fatal(err)
 	}
 	frozen := &domain.RunnerSandboxSpec{
@@ -60,6 +54,51 @@ func TestRunnerSandboxSpecUsesFrozenSnapshot(t *testing.T) {
 	}
 	if spec == nil || spec.Profile.Driver != "docker" || spec.Profile.Environment["SNAPSHOT"] != "yes" || spec.Dockerfile == nil || spec.Dockerfile.Content != "FROM alpine:3.20\n" {
 		t.Fatalf("runner sandbox did not use frozen snapshot: %+v", spec)
+	}
+}
+
+func TestRunnerSandboxSpecRequestsRelayForDockerCodexAccountLogin(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	e := New(s, runtime.NewManager(t.TempDir()))
+	for _, tc := range []struct {
+		name, driver, provider, authMode string
+		wantRelay                        bool
+	}{
+		{name: "Codex account login", driver: "docker", provider: "codex", authMode: domain.RuntimeAuthLocal, wantRelay: true},
+		{name: "Codex API key", driver: "docker", provider: "codex", authMode: domain.RuntimeAuthPersonal},
+		{name: "CodeBuddy API key", driver: "docker", provider: "codebuddy", authMode: domain.RuntimeAuthPersonal},
+		{name: "Claude login uses stdio", driver: "docker", provider: "claude-code", authMode: domain.RuntimeAuthLocal},
+		{name: "Antigravity refreshes inside its sandbox", driver: "docker", provider: "agy", authMode: domain.RuntimeAuthLocal},
+		{name: "native Codex uses loopback", driver: "native", provider: "codex", authMode: domain.RuntimeAuthLocal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := domain.Runner{ID: "runner", Runtimes: []domain.RunnerRuntime{{Provider: tc.provider, AuthMode: tc.authMode}}}
+			if err := s.PutRunner(runner); err != nil {
+				t.Fatal(err)
+			}
+			agent := domain.AgentDefinition{ID: "agent-" + tc.provider, Name: tc.provider, ExecutorID: tc.provider}
+			if err := s.PutAgent(agent); err != nil {
+				t.Fatal(err)
+			}
+			run := domain.Run{
+				ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID},
+				WorkflowSnapshot: domain.WorkflowDefinition{
+					SandboxSnapshot: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: tc.driver}},
+					Nodes:           []domain.WorkflowNode{{Type: "script"}, {Type: "agent", AgentID: agent.ID}},
+				},
+			}
+			spec, err := e.runnerSandboxSpec(run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if spec.Requirements.RunnerLoginRelay != tc.wantRelay {
+				t.Fatalf("Runner login relay = %v, want %v", spec.Requirements.RunnerLoginRelay, tc.wantRelay)
+			}
+		})
 	}
 }
 
@@ -149,7 +188,7 @@ func TestBindRunnerRepositoriesPreservesMultiRepositoryLayout(t *testing.T) {
 		},
 	}
 	invocation := &domain.RunnerInvocation{}
-	bindRunnerRepositories(invocation, run, "git-token", "example-admin", "example-admin@users.noreply.loopforge.invalid")
+	bindRunnerRepositories(invocation, run, "example-admin", "example-admin@users.noreply.loopforge.invalid")
 	if invocation.GitUserName != "example-admin" || invocation.GitUserEmail != "example-admin@users.noreply.loopforge.invalid" {
 		t.Fatalf("runner git identity = %q <%s>", invocation.GitUserName, invocation.GitUserEmail)
 	}
@@ -158,7 +197,7 @@ func TestBindRunnerRepositoriesPreservesMultiRepositoryLayout(t *testing.T) {
 	}
 	for i, wantDir := range []string{"frontend", "backend"} {
 		got := invocation.Repositories[i]
-		if got.Dir != wantDir || got.WorkBranch != "feature/issue-7" || got.GitToken != "git-token" {
+		if got.Dir != wantDir || got.WorkBranch != "feature/issue-7" || got.GitToken != "" {
 			t.Fatalf("runner repository %d = %+v", i, got)
 		}
 	}
@@ -180,7 +219,7 @@ func TestRetryFailsBeforeMutationWhenFrozenRunnerIsOffline(t *testing.T) {
 	}
 	run := domain.Run{
 		ID: "run-offline-retry", WorkflowID: "retry", Status: "failed",
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: "retry", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "work", Type: "command", Command: "true", MaxAttempts: 1}}},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: "retry", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "work", Type: "command", Command: "true", MaxAttempts: 1}}},
 		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID},
 		Nodes:            map[string]*domain.NodeRun{"work": {NodeID: "work", Status: "failed", Attempt: 1, Error: "lost connection"}},
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -51,28 +52,50 @@ type AgentTerminalResult struct {
 // The token is CSPRNG random and is never logged or returned to
 // the browser.
 type AgentToolSession struct {
-	Token     string
-	UserID    int64
-	ProjectID string
-	Mode      AgentToolMode
-	// Scheduled marks an unattended scheduled task. It reuses the assistant
-	// gateway, but interactive-only tools (the knowledge base tools)
-	// must stay out of its catalog.
+	toolsMu           sync.RWMutex
+	pendingMode       string
+	modeAction        func(context.Context) error
+	SelectedMCPIDs    map[string]bool
+	ExecutionRunnerID string
+	runnerLogin       bool
+	transient         bool
+	RuntimeMode       string
+	Notify            func(string, any)
+	Token             string
+	UserID            int64
+	ProjectID         string
+	Mode              AgentToolMode
+	// Scheduled tasks reuse the gateway without interactive knowledge tools.
 	Scheduled      bool
 	IssueID        string
 	WorkspaceToken string
 	RunID          string
 	// ChatSessionID/ChatOwnerID identify the ordinary conversation this turn
 	// belongs to, so Main Bot can open and bind a temporary workspace there.
-	ChatSessionID    string
-	ChatOwnerID      int64
+	ChatSessionID string
+	ChatOwnerID   int64
+
+	projectCredentialIDs    []string
+	projectCredentialValues []string // protected by mu
+
+	// turnMessages is the transcript this chat request is sending. A new
+	// personal session is stored only after the reply, so proposal checks
+	// read the request before the saved session.
+	turnMessages     []assistantMessage
 	SandboxProfileID string
 	// workspaceRunID is the one workspace an ordinary conversation is bound
 	// to: one it opened itself, or the SOP run of an issue.
-	workspaceRunID   string
-	workspaceMu      sync.Mutex
-	workspaceTurn    *assistantWorkspaceTurn
-	SpaceID          string
+	workspaceRunID string
+	workspaceMu    sync.Mutex
+	workspaceTurn  *assistantWorkspaceTurn
+	// The rest of this turn stays in platform mode after a startup failure.
+	workspaceStartFailed atomic.Bool
+
+	SpaceID string
+	Surface string // entry of the turn; see sopDesigner
+	// DesignerCanvas is the canvas a designer turn edits; operations in its
+	// workflows_save draft are applied to it.
+	DesignerCanvas   json.RawMessage
 	ControlScope     assistantControlScope
 	ExpiresAt        time.Time
 	MCPServers       []domain.MCPServerDefinition
@@ -84,6 +107,7 @@ type AgentToolSession struct {
 	Final            chan AgentTerminalResult
 
 	mu           sync.Mutex
+	clarifyRepos map[string]string // read-only analysis checkouts for this turn
 	catalog      []agentToolDescriptor
 	terminalOnly bool
 	runIDs       []string
@@ -96,12 +120,24 @@ type AgentToolSession struct {
 	// dispatches are the Agent calls still running this turn. A subagent
 	// works in the bound workspace, so it is not switched under it.
 	// The value is the subagent id once the stream reports it.
-	dispatches  map[string]string
-	closed      atomic.Bool
-	committed   atomic.Bool
-	ctx         context.Context
-	stopContext func() bool // protected by mu
-	CancelModel context.CancelFunc
+	dispatches map[string]string
+	// nativeReviews are the assisted-mode reviews of external writes this
+	// phase, by approval ID; hook polls read the verdict here.
+	nativeReviews map[string]*agentNativeReview
+	// toolCalls cancels the tools/call requests still running, by JSON-RPC
+	// id, when the CLI sends notifications/cancelled for them.
+	toolCalls map[string]*agentToolCallCancel
+	// gitHosts maps each endpoint a Git token was handed out for this turn
+	// onto its platform, for the end-of-turn PR scan. gitScrubbed names the
+	// credentials the agent wrote by hand that were removed after its CLI.
+	gitHosts          map[string]string
+	gitScrubbed       []string
+	nativePhaseClosed atomic.Bool
+	closed            atomic.Bool
+	committed         atomic.Bool
+	ctx               context.Context
+	stopContext       func() bool // protected by mu
+	CancelModel       context.CancelFunc
 }
 
 type agentReplyFile struct {
@@ -109,6 +145,53 @@ type agentReplyFile struct {
 	MimeType   string
 	Data       []byte
 	Screenshot bool
+}
+
+type agentNativeReview struct {
+	digest string
+	done   chan struct{}
+	result assistantApprovalReview
+}
+
+// nativeReview starts the review of one exact native invocation on the first
+// poll and waits up to wait for its verdict; done is false when the hook has
+// to poll again. ok is false when the approval ID is reused for different
+// input. The review follows the turn's context, so a stopped turn cancels it.
+func (s *AgentToolSession) nativeReview(ctx context.Context, wait time.Duration, id, digest string, review func(context.Context) assistantApprovalReview) (assistantApprovalReview, bool, bool) {
+	s.mu.Lock()
+	item, found := s.nativeReviews[id]
+	if !found {
+		if s.nativeReviews == nil {
+			s.nativeReviews = map[string]*agentNativeReview{}
+		}
+		item = &agentNativeReview{digest: digest, done: make(chan struct{})}
+		s.nativeReviews[id] = item
+	}
+	s.mu.Unlock()
+	if item.digest != digest {
+		return assistantApprovalReview{}, false, false
+	}
+	if !found {
+		parent := s.ctx
+		if parent == nil {
+			parent = context.Background()
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(parent, nativeReviewBudget)
+			defer cancel()
+			item.result = review(ctx)
+			close(item.done)
+		}()
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-item.done:
+		return item.result, true, true
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	return assistantApprovalReview{}, false, true
 }
 
 const (
@@ -473,4 +556,17 @@ func (s *AgentToolSession) dispatchRunning() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.dispatches) > 0
+}
+
+func (s *AgentToolSession) diagnostics() *assistantDiagnosticsCollector {
+	if s == nil || s.ctx == nil {
+		return nil
+	}
+	return assistantDiagnosticsFrom(s.ctx)
+}
+
+// sopDesigner reports a SOP designer turn: read-only platform tools plus one
+// workflows_save draft, no workspace, browser or external MCP.
+func (s *AgentToolSession) sopDesigner() bool {
+	return s != nil && s.Surface == assistantSurfaceSOPDesigner
 }

@@ -111,16 +111,13 @@ func (h *catalogHandlers) skillFiles(c *gin.Context) {
 	for i, part := range plain {
 		plainNames[i] = part.path
 	}
-	if _, nested := sharedTopDir(plainNames); nested {
-		for i := range plain {
-			stripped := strings.Join(strings.Split(plain[i].path, "/")[1:], "/")
-			clean, err := cleanUploadPath(stripped)
-			if err != nil {
-				reject(err)
-				return
-			}
-			plain[i].path = clean
-		}
+	plainNames, err := stripUploadTopDir(plainNames)
+	if err != nil {
+		reject(err)
+		return
+	}
+	for i := range plain {
+		plain[i].path = plainNames[i]
 	}
 
 	for _, part := range plain {
@@ -263,43 +260,9 @@ func readSkillZipBytes(raw []byte, label string, seen map[string]bool) ([]repo.S
 		return nil, fmt.Errorf("%s 不是有效的 zip 文件", label)
 	}
 
-	names := make([]string, 0, len(reader.File))
-	files := make(map[string]*zip.File)
-	for _, f := range reader.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		if !f.Mode().IsRegular() { // reject symlinks and other non-regular entries
-			return nil, fmt.Errorf("zip 内含非常规文件条目 %s", f.Name)
-		}
-		name := strings.ReplaceAll(f.Name, "\\", "/")
-		name = strings.TrimPrefix(path.Clean(name), "./")
-		if top(name) == "__MACOSX" || path.Base(name) == ".DS_Store" {
-			continue
-		}
-		if err := domain.ValidateRelativeFilePath(name); err != nil {
-			return nil, fmt.Errorf("zip 内含无效路径 %q", f.Name)
-		}
-		names = append(names, name)
-		files[name] = f
-	}
-	if len(names) == 0 {
-		return nil, fmt.Errorf("zip %s 中没有可用的文件", label)
-	}
-	// Strip a single shared top-level directory: zipping a folder produces
-	// "my-skill/..." for every entry.
-	if _, nested := sharedTopDir(names); nested {
-		stripped := make([]string, 0, len(names))
-		for _, name := range names {
-			short := strings.Join(strings.Split(name, "/")[1:], "/")
-			if err := domain.ValidateRelativeFilePath(short); err != nil {
-				return nil, fmt.Errorf("zip 内含无效路径 %q", name)
-			}
-			files[short] = files[name]
-			delete(files, name)
-			stripped = append(stripped, short)
-		}
-		names = stripped
+	names, files, err := skillZipEntries(reader, label)
+	if err != nil {
+		return nil, err
 	}
 
 	var out []repo.SkillFileInput
@@ -326,6 +289,70 @@ func readSkillZipBytes(raw []byte, label string, seen map[string]bool) ([]repo.S
 		}
 		seen[name] = true
 		out = append(out, repo.SkillFileInput{Path: name, Content: content, Mode: uint32(files[name].Mode().Perm())})
+	}
+	return out, nil
+}
+
+// skillZipEntries lists the regular files of a skill zip, normalizing their
+// paths, dropping macOS metadata, validating each path and stripping a single
+// shared top-level directory. It returns the ordered paths and the zip entry
+// for each path.
+func skillZipEntries(reader *zip.Reader, label string) ([]string, map[string]*zip.File, error) {
+	names := make([]string, 0, len(reader.File))
+	files := make(map[string]*zip.File)
+	for _, f := range reader.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		if !f.Mode().IsRegular() { // reject symlinks and other non-regular entries
+			return nil, nil, fmt.Errorf("zip 内含非常规文件条目 %s", f.Name)
+		}
+		name := strings.ReplaceAll(f.Name, "\\", "/")
+		name = strings.TrimPrefix(path.Clean(name), "./")
+		if top(name) == "__MACOSX" || path.Base(name) == ".DS_Store" {
+			continue
+		}
+		if err := domain.ValidateRelativeFilePath(name); err != nil {
+			return nil, nil, fmt.Errorf("zip 内含无效路径 %q", f.Name)
+		}
+		names = append(names, name)
+		files[name] = f
+	}
+	if len(names) == 0 {
+		return nil, nil, fmt.Errorf("zip %s 中没有可用的文件", label)
+	}
+	// Strip a single shared top-level directory: zipping a folder produces
+	// "my-skill/..." for every entry.
+	if _, nested := sharedTopDir(names); nested {
+		stripped := make([]string, 0, len(names))
+		for _, name := range names {
+			short := strings.Join(strings.Split(name, "/")[1:], "/")
+			if err := domain.ValidateRelativeFilePath(short); err != nil {
+				return nil, nil, fmt.Errorf("zip 内含无效路径 %q", name)
+			}
+			files[short] = files[name]
+			delete(files, name)
+			stripped = append(stripped, short)
+		}
+		names = stripped
+	}
+	return names, files, nil
+}
+
+// stripUploadTopDir removes the shared top-level directory from plain
+// (non-zip) upload paths, re-validating each shortened path. Paths without a
+// common top-level directory are returned unchanged.
+func stripUploadTopDir(paths []string) ([]string, error) {
+	if _, nested := sharedTopDir(paths); !nested {
+		return paths, nil
+	}
+	out := make([]string, len(paths))
+	for i, name := range paths {
+		clean, err := cleanUploadPath(strings.Join(strings.Split(name, "/")[1:], "/"))
+		if err != nil {
+			return nil, err
+		}
+		out[i] = clean
 	}
 	return out, nil
 }

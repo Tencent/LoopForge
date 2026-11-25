@@ -10,7 +10,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"agentflow/internal/config"
 )
 
 // TokenEnv is the host-level fallback token, only used for output redaction.
@@ -77,16 +80,13 @@ func TokenFrom(ctx context.Context) string {
 // gongfengInsteadOfPrefixes are rewritten to HTTPS + private:token. Same list
 // for command-line -c and GIT_CONFIG_COUNT so clone/fetch/push and an Agent
 // CLI's own git all see one rewrite.
-var gongfengInsteadOfPrefixes = []string{
-	"git@git.example.com:",
-	"ssh://git@git.example.com/",
-	"https://git.example.com/",
-	"http://git.example.com/",
+func gongfengInsteadOfPrefixes(host string) []string {
+	return []string{"git@" + host + ":", "ssh://git@" + host + "/", "https://" + host + "/", "http://" + host + "/"}
 }
 
-func authedBase(token string) string {
+func authedBase(token, host string) string {
 	user, secret := SplitToken(token)
-	return "https://" + user + ":" + secret + "@git.example.com/"
+	return (&url.URL{Scheme: "https", User: url.UserPassword(user, secret), Host: host, Path: "/"}).String()
 }
 
 // SandboxEnv is the git environment for a child process: no interactive
@@ -95,16 +95,18 @@ func authedBase(token string) string {
 func SandboxEnv(token string) map[string]string {
 	extra := map[string]string{"GIT_TERMINAL_PROMPT": "0", "GIT_ALLOW_PROTOCOL": AllowedProtocols}
 	user, secret := SplitToken(token)
-	if secret == "" {
+	host := config.GongfengHost()
+	if secret == "" || host == "" {
 		return extra
 	}
 	// The credential helper reads these. The token stays out of the helper
 	// text, which git runs through a shell.
 	extra[gitHTTPUserEnv] = user
 	extra[gitHTTPPassEnv] = secret
-	authed := authedBase(token)
-	extra["GIT_CONFIG_COUNT"] = fmt.Sprintf("%d", len(gongfengInsteadOfPrefixes))
-	for i, prefix := range gongfengInsteadOfPrefixes {
+	authed := authedBase(token, host)
+	prefixes := gongfengInsteadOfPrefixes(host)
+	extra["GIT_CONFIG_COUNT"] = fmt.Sprintf("%d", len(prefixes))
+	for i, prefix := range prefixes {
 		extra[fmt.Sprintf("GIT_CONFIG_KEY_%d", i)] = "url." + authed + ".insteadof"
 		extra[fmt.Sprintf("GIT_CONFIG_VALUE_%d", i)] = prefix
 	}
@@ -192,12 +194,14 @@ func credentialHelper() string {
 // token without writing it to any git config file.
 func AuthConfigArgs(token string) []string {
 	_, secret := SplitToken(token)
-	if secret == "" {
+	host := config.GongfengHost()
+	if secret == "" || host == "" {
 		return nil
 	}
-	args := []string{"-c", "credential.helper=", "-c", "credential.helper=" + credentialHelper()}
-	authed := authedBase(token)
-	for _, prefix := range gongfengInsteadOfPrefixes {
+	helperKey := "credential.https://" + host + ".helper="
+	args := []string{"-c", helperKey, "-c", helperKey + credentialHelper()}
+	authed := authedBase(token, host)
+	for _, prefix := range gongfengInsteadOfPrefixes(host) {
 		args = append(args, "-c", "url."+authed+".insteadof="+prefix)
 	}
 	return args
@@ -229,8 +233,30 @@ func RewriteRemoteForToken(remote, token string) string {
 	return u.String()
 }
 
-// Redact masks tokens (and the host-level EnvToken) in git output.
+// urlUserinfo matches the userinfo of a URL anywhere in free text.
+var urlUserinfo = regexp.MustCompile(`(?i)\b(https?|git|ssh|git\+ssh|ssh\+git)://([^\s/@]+)@`)
+
+// redactURLUserinfo masks credentials embedded in URLs, including ones that
+// were never passed in as tokens (for example pasted into a clone URL).
+// HTTP(S) and git:// userinfo is masked whole; an ssh user name is kept.
+func redactURLUserinfo(s string) string {
+	return urlUserinfo.ReplaceAllStringFunc(s, func(match string) string {
+		parts := urlUserinfo.FindStringSubmatch(match)
+		scheme, info := parts[1], parts[2]
+		if strings.HasPrefix(strings.ToLower(scheme), "ssh") || strings.HasSuffix(strings.ToLower(scheme), "+ssh") {
+			if user, _, hasPassword := strings.Cut(info, ":"); hasPassword {
+				return scheme + "://" + user + ":***@"
+			}
+			return match
+		}
+		return scheme + "://***@"
+	})
+}
+
+// Redact masks tokens (and the host-level EnvToken) in git output, plus any
+// credentials embedded in URLs.
 func Redact(s string, tokens ...string) string {
+	s = redactURLUserinfo(s)
 	seen := map[string]struct{}{}
 	for _, raw := range append(tokens, EnvToken()) {
 		for _, candidate := range []string{strings.TrimSpace(raw), func() string { _, sec := SplitToken(raw); return sec }()} {

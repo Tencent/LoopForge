@@ -3,7 +3,7 @@
 const flowViewport=(()=>{
   const MIN=.25,MAX=2,GRID=18,NODE_W=244,NODE_H=132,PAL_W=256,PAL_MINI=48,MINIMAP_KEY='agentflow.flowMinimap';
   const vp={x:40,y:40,zoom:1};
-  let fittedId=null,autoCollapsed=false,animTimer=0,bound=false,onBlankClick=null,minimapRaf=0;
+  let fittedId=null,autoCollapsed=false,animTimer=0,bound=false,onBlankClick=null,minimapRaf=0,drawerFitRaf=0;
   const byId=id=>document.getElementById(id);
   const canvas=()=>byId('canvas');
   const clamp=z=>Math.min(MAX,Math.max(MIN,z));
@@ -58,6 +58,19 @@ const flowViewport=(()=>{
     vp.x=(v.w-b.w*vp.zoom)/2-b.x*vp.zoom;
     vp.y=(v.h-b.h*vp.zoom)/2-b.y*vp.zoom;
     apply(smooth);
+  }
+  function fitAfterDrawerChange(){
+    cancelAnimationFrame(drawerFitRaf);
+    const palette=byId('flowPalette');
+    const update=()=>{
+      drawerFitRaf=0;
+      fit({smooth:false});
+      // The palette can change width when the drawer opens or closes.
+      if(palette?.getAnimations().some(a=>a.transitionProperty==='width'&&a.playState==='running')){
+        drawerFitRaf=requestAnimationFrame(update);
+      }
+    };
+    drawerFitRaf=requestAnimationFrame(update);
   }
   function centerOn(x,y,opts={}){
     const v=visible();if(!v.w)return;
@@ -162,7 +175,7 @@ const flowViewport=(()=>{
     if(body&&typeof ResizeObserver==='function')new ResizeObserver(()=>{layoutTight();renderMinimap()}).observe(body);
     apply();
   }
-  return {toWorld,zoomBy,setZoom,fit,centerOn,reveal,reset,apply,layoutTight,freeSpot,afterRender,bind,paletteToggled,renderMinimap,
+  return {toWorld,zoomBy,setZoom,fit,fitAfterDrawerChange,centerOn,reveal,reset,apply,layoutTight,freeSpot,afterRender,bind,paletteToggled,renderMinimap,
     get zoom(){return vp.zoom},get x(){return vp.x},get y(){return vp.y},
     _set(next){Object.assign(vp,next)}};
 })();

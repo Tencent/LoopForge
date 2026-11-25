@@ -19,28 +19,48 @@ type ScheduleParameter struct {
 
 // SharedScheduleVersion is an immutable, credential-free published definition.
 type SharedScheduleVersion struct {
-	ID                string              `json:"id"`
-	Version           int                 `json:"version"`
-	SourceProjectID   string              `json:"sourceProjectId"`
-	SourceProjectName string              `json:"sourceProjectName"`
-	SourceJobID       string              `json:"sourceJobId"`
-	Name              string              `json:"name"`
-	Description       string              `json:"description"`
-	Prompt            string              `json:"prompt"`
-	Model             string              `json:"model"`
-	Cron              string              `json:"cron"`
-	IntervalSec       int                 `json:"intervalSec"`
-	Parameters        []ScheduleParameter `json:"parameters"`
-	ChangeNote        string              `json:"changeNote"`
-	CreatedAt         time.Time           `json:"createdAt"`
+	ID                string                `json:"id"`
+	Version           int                   `json:"version"`
+	SourceProjectID   string                `json:"sourceProjectId"`
+	SourceProjectName string                `json:"sourceProjectName"`
+	SourceJobID       string                `json:"sourceJobId"`
+	Name              string                `json:"name"`
+	Description       string                `json:"description"`
+	Prompt            string                `json:"prompt"`
+	References        []AssistantReference  `json:"references,omitempty"`
+	Assets            []SharedScheduleAsset `json:"assets,omitempty"`
+	Model             string                `json:"model"`
+	Cron              string                `json:"cron"`
+	IntervalSec       int                   `json:"intervalSec"`
+	Parameters        []ScheduleParameter   `json:"parameters"`
+	ChangeNote        string                `json:"changeNote"`
+	CreatedAt         time.Time             `json:"createdAt"`
+}
+
+// SharedScheduleAsset pins the ownership of one direct schedule reference.
+// Nested dependencies remain governed by the referenced asset's own
+// permission and resolution logic.
+type SharedScheduleAsset struct {
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId,omitempty"`
+}
+
+func (v SharedScheduleVersion) HasAsset(typ, id string) bool {
+	for _, asset := range v.Assets {
+		if asset.Type == typ && asset.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 var scheduleParameterName = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,31}$`)
 var scheduleParameterToken = regexp.MustCompile(`\{\{\s*params\.([^{}]+?)\s*\}\}`)
 
 func (v SharedScheduleVersion) Validate() error {
-	if strings.TrimSpace(v.Name) == "" || len(v.Name) > 255 || strings.TrimSpace(v.Prompt) == "" || len(v.Prompt) > 4000 {
-		return fmt.Errorf("共享名称和提示词必填，名称最多 255 字节，提示词最多 4000 字节")
+	if strings.TrimSpace(v.Name) == "" || len(v.Name) > 255 || strings.TrimSpace(v.Prompt) == "" {
+		return fmt.Errorf("共享名称和提示词必填，名称最多 255 字节")
 	}
 	if len(v.Description) > 2000 || len(v.ChangeNote) > 1000 || len(v.Parameters) > 20 {
 		return fmt.Errorf("描述、版本说明或参数数量超出限制")
@@ -125,8 +145,5 @@ func (v SharedScheduleVersion) Render(input map[string]string) (string, map[stri
 	prompt := scheduleParameterToken.ReplaceAllStringFunc(v.Prompt, func(token string) string {
 		return values[strings.TrimSpace(scheduleParameterToken.FindStringSubmatch(token)[1])]
 	})
-	if len(prompt) > 4000 {
-		return "", nil, fmt.Errorf("参数替换后的提示词超过 4000 字节")
-	}
 	return prompt, values, nil
 }

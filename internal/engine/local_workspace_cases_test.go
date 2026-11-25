@@ -82,13 +82,13 @@ func TestRunEnvironmentMethodsOutputsAndResources(t *testing.T) {
 	if _, _, err := e.workspaceSandboxProfile(domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "missing"}}); err == nil {
 		t.Fatal("missing profile accepted")
 	}
-	profile, resources, err := e.workspaceSandboxProfile(domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "local"}})
-	if err != nil || profile.ID != "local" {
+	profile, resources, err := e.workspaceSandboxProfile(domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "test-native"}})
+	if err != nil || profile.ID != "test-native" {
 		t.Fatalf("profile = %+v %+v %v", profile, resources, err)
 	}
-	snapshot := &domain.RunnerSandboxSpec{Profile: profile, Dockerfile: &domain.DockerfileDefinition{ID: "d"}, Environment: &domain.EnvironmentDefinition{ID: "e"}}
+	snapshot := &domain.RunnerSandboxSpec{Profile: profile, Dockerfile: &domain.DockerfileDefinition{ID: "d"}}
 	_, resources, err = e.workspaceSandboxProfile(domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{SandboxSnapshot: snapshot}})
-	if err != nil || resources.Dockerfile.ID != "d" || resources.Environment.ID != "e" {
+	if err != nil || resources.Dockerfile.ID != "d" {
 		t.Fatalf("snapshot resources = %+v %v", resources, err)
 	}
 	if st == nil {
@@ -100,7 +100,7 @@ func TestLocalWorkspaceCheckpointHandlerOperations(t *testing.T) {
 	e, st := cvEEngine(t)
 	e.sandboxes = runtime.NewManager(t.TempDir())
 	e.controlToken = "secret"
-	run := domain.Run{ID: "local-control", Status: "failed", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "local"}, Nodes: map[string]*domain.NodeRun{}}
+	run := domain.Run{ID: "local-control", Status: "failed", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "test-native"}, Nodes: map[string]*domain.NodeRun{}}
 	if err := st.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestWorkspaceCleanupDeleteAndFacts(t *testing.T) {
 	}
 	e.recordWorkspaceFacts("facts", &domain.RunnerTaskOutputs{})
 
-	run := domain.Run{ID: "cleanup-local", Status: "succeeded", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "local"}, Nodes: map[string]*domain.NodeRun{}}
+	run := domain.Run{ID: "cleanup-local", Status: "succeeded", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "test-native"}, Nodes: map[string]*domain.NodeRun{}}
 	if err := st.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestWorkspaceCleanupDeleteAndFacts(t *testing.T) {
 	}
 	e.cleanupRunWorkspace(run.ID)
 
-	deleted := domain.Run{ID: "delete-local", Status: "failed", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "local"}, Nodes: map[string]*domain.NodeRun{}}
+	deleted := domain.Run{ID: "delete-local", Status: "failed", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "test-native"}, Nodes: map[string]*domain.NodeRun{}}
 	if err := st.PutRun(deleted); err != nil {
 		t.Fatal(err)
 	}

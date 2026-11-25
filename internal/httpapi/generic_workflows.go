@@ -21,14 +21,13 @@ func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinitio
 	if _, found := h.repo.Project(projectID); !found {
 		return domain.WorkflowDefinition{}, errors.New("目标项目不存在，请刷新后重新选择")
 	}
+	if !template.AutoSelectSandbox && template.SandboxProfileID == "" {
+		return domain.WorkflowDefinition{}, errors.New("当前项目没有可用沙箱，请先在「沙箱管理」创建或共享一个沙箱")
+	}
 	if err := ensureDefaultProjectMCPs(h.repo, projectID); err != nil {
 		return domain.WorkflowDefinition{}, fmt.Errorf("安装默认 MCP: %w", err)
 	}
 	h.configureSync(h.repo.SyncConfig())
-	sandboxID := h.genericTemplateSandbox(template.SandboxProfileID, projectID)
-	if sandboxID == "" {
-		return domain.WorkflowDefinition{}, errors.New("当前项目没有可用沙箱，请先在「沙箱管理」创建或共享一个沙箱")
-	}
 	agents, err := h.cloneGenericTemplateAgents(template.ID, projectID)
 	if err != nil {
 		return domain.WorkflowDefinition{}, err
@@ -51,7 +50,6 @@ func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinitio
 		adopted.SOPLane = domain.InferSOPLane(template)
 	}
 	adopted.CreatedAt, adopted.UpdatedAt = time.Time{}, time.Time{}
-	adopted.SandboxProfileID = sandboxID
 	for index := range adopted.Nodes {
 		if target, ok := agents[adopted.Nodes[index].AgentID]; ok {
 			adopted.Nodes[index].AgentID = target
@@ -92,15 +90,10 @@ func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID strin
 	}
 	remap := make(map[string]string, len(template.Agents))
 	for _, source := range template.Agents {
-		if existing, found := h.repo.Agent(source.ID); found && existing.ProjectID == projectID {
-			h.upgradeGenericTemplateAgent(&existing, source, projectID, now)
-			remap[source.ID] = existing.ID
-			continue
-		}
 		// Projects that did not get the plain template id (a sibling project
 		// owns it) hold a deterministic <id>-<project> clone instead; reuse it
 		// so re-adopting the template never duplicates the roles.
-		if existing, found := h.repo.Agent(source.ID + "-" + projectID); found && existing.ProjectID == projectID {
+		if existing, found := findGenericProjectClone(source.ID, projectID, h.repo.Agent, func(a domain.AgentDefinition) string { return a.ProjectID }); found {
 			h.upgradeGenericTemplateAgent(&existing, source, projectID, now)
 			remap[source.ID] = existing.ID
 			continue
@@ -143,11 +136,7 @@ func (h *catalogHandlers) upgradeGenericTemplateAgent(existing *domain.AgentDefi
 func (h *catalogHandlers) cloneGenericTemplateRules(sources []domain.RuleDefinition, projectID string, now time.Time) (map[string]string, error) {
 	remap := make(map[string]string, len(sources))
 	for _, source := range sources {
-		if existing, found := h.repo.Rule(source.ID); found && existing.ProjectID == projectID {
-			remap[source.ID] = existing.ID
-			continue
-		}
-		if existing, found := h.repo.Rule(source.ID + "-" + projectID); found && existing.ProjectID == projectID {
+		if existing, found := findGenericProjectClone(source.ID, projectID, h.repo.Rule, func(v domain.RuleDefinition) string { return v.ProjectID }); found {
 			remap[source.ID] = existing.ID
 			continue
 		}
@@ -167,11 +156,7 @@ func (h *catalogHandlers) cloneGenericTemplateRules(sources []domain.RuleDefinit
 func (h *catalogHandlers) cloneGenericTemplateSkills(sources []domain.SkillDefinition, projectID string, now time.Time) (map[string]string, error) {
 	remap := make(map[string]string, len(sources))
 	for _, source := range sources {
-		if existing, found := h.repo.Skill(source.ID); found && existing.ProjectID == projectID {
-			remap[source.ID] = existing.ID
-			continue
-		}
-		if existing, found := h.repo.Skill(source.ID + "-" + projectID); found && existing.ProjectID == projectID {
+		if existing, found := findGenericProjectClone(source.ID, projectID, h.repo.Skill, func(v domain.SkillDefinition) string { return v.ProjectID }); found {
 			remap[source.ID] = existing.ID
 			continue
 		}
@@ -180,7 +165,7 @@ func (h *catalogHandlers) cloneGenericTemplateSkills(sources []domain.SkillDefin
 		skill.ProjectID = projectID
 		skill.Shared = false
 		skill.UpdatedAt = now
-		if err := h.repo.PutSkill(skill); err != nil {
+		if err := h.repo.CreateSkill(skill); err != nil {
 			return nil, err
 		}
 		remap[source.ID] = skill.ID
@@ -211,6 +196,19 @@ func remapAssetIDs(ids []string, remap map[string]string) []string {
 // re-adopting the template in the same project never piles up duplicates.
 func genericAssetIDCandidates(sourceID, projectID string) []string {
 	return []string{sourceID, sourceID + "-" + projectID}
+}
+
+// findGenericProjectClone returns the first genericAssetIDCandidates entry that
+// already exists and belongs to projectID, so re-adopting a template reuses the
+// project's clone instead of creating a duplicate.
+func findGenericProjectClone[T any](sourceID, projectID string, lookup func(string) (T, bool), ownerOf func(T) string) (T, bool) {
+	for _, id := range genericAssetIDCandidates(sourceID, projectID) {
+		if existing, found := lookup(id); found && ownerOf(existing) == projectID {
+			return existing, true
+		}
+	}
+	var zero T
+	return zero, false
 }
 
 func (h *catalogHandlers) availableGenericRuleID(sourceID, projectID string) string {

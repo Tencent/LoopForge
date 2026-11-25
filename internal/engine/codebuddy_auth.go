@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"slices"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -24,7 +25,7 @@ func resolveCodeBuddyCredential(s *repo.Store, userID int64) runtime.CodeBuddyCr
 		return runtime.CodeBuddyCredential{}
 	}
 	if strings.TrimSpace(user.CodeBuddyAPIKey) != "" {
-		return runtime.CodeBuddyCredential{APIKey: user.CodeBuddyAPIKey, InternetEnvironment: user.CodeBuddyInternetEnvironment}
+		return runtime.CodeBuddyUserCredential(user)
 	}
 	shared, ok := s.SharedCodeBuddyKey()
 	if !ok || (shared.SponsorID != 0 && shared.SponsorID == user.ID) {
@@ -65,10 +66,5 @@ func (e *Engine) sponsoredExecutor(runID string, ex domain.ExecutorDefinition, m
 }
 
 func hasRunEvent(run domain.Run, typ string) bool {
-	for _, event := range run.Events {
-		if event.Type == typ {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(run.Events, func(event domain.RunEvent) bool { return event.Type == typ })
 }

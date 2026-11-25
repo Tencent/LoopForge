@@ -46,6 +46,11 @@ test('approval gate: reject reworks upstream in the same workspace, approve comp
     await get(`/api/runs/${id}/workspace`);
   });
 
+  await test.test('run control lists the approval actions while waiting', async () => {
+    const control = await get(`/api/runs/${id}/control`);
+    assert.match(JSON.stringify(control), /runs_approve/);
+  });
+
   await test.test('wrong node cannot be approved', async () => {
     await api('POST', `/api/runs/${id}/approve`, { nodeId: 'prep' }, { expect: [400, 409, 500] });
   });
@@ -258,9 +263,15 @@ test('starting a run validates its input', async () => {
   // A fresh database (local.sh) has no built-in templates to try this with.
   const template = await api('GET', '/api/workflows/generic-backend-delivery', undefined, { expect: [200, 404], raw: true });
   if (!project.defaultRepositoryId && template.status === 200 && template.data?.generic) {
+    const requirements = await get(`/api/workflows/generic-backend-delivery/executor-requirements?projectId=${encodeURIComponent(cfg.projectId)}`);
+    assert.ok(Array.isArray(requirements));
     const run = await startRun('generic-backend-delivery', 'Check repository-free admission');
     assert.deepEqual(run.repositories || [], []);
-    await post(`/api/runs/${run.id}/cancel`, {});
+    const cancel = await api('POST', `/api/runs/${run.id}/cancel`, {}, { expect: [200, 400], raw: true });
+    if (cancel.status === 400) {
+      assert.equal(cancel.data?.error, 'run is not active');
+      assert.match((await get(`/api/runs/${run.id}`)).status, /^(failed|succeeded|cancelled)$/);
+    }
   }
 });
 

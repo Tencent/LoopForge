@@ -19,20 +19,8 @@ var gateMCPBinaryMu sync.Mutex
 // submit terminal node decisions. It mirrors runner binary distribution so
 // installed execution machines need neither Go nor Python.
 func serveGateMCPBinary(c *gin.Context) {
-	targetOS := sanitizePlatformParam(c.Query("os"))
-	targetArch := sanitizePlatformParam(c.Query("arch"))
-	if targetOS == "" {
-		targetOS = "darwin"
-	}
-	if targetArch == "" {
-		targetArch = "amd64"
-	}
-	if targetOS != "darwin" && targetOS != "linux" {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported os %q (darwin, linux)", targetOS)})
-		return
-	}
-	if targetArch != "amd64" && targetArch != "arm64" {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported arch %q (amd64, arm64)", targetArch)})
+	targetOS, targetArch, ok := binaryDownloadPlatform(c)
+	if !ok {
 		return
 	}
 	if pattern := strings.TrimSpace(os.Getenv("AGENTFLOW_GATE_MCP_BINARY")); pattern != "" {

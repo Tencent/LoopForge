@@ -58,7 +58,7 @@ func (e *Engine) Cancel(runID string) error {
 		return fmt.Errorf("run not found")
 	}
 	if !isLiveStatus(r.Status) {
-		if isTerminalRunStatus(r.Status) && hasRunningNode(r) {
+		if domain.TerminalRunStatus(r.Status) && r.HasActiveNode() {
 			e.forceTerminate(runID, "cancelled", "流水线已取消")
 			return nil
 		}
@@ -479,7 +479,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	nodeStatus := r.Nodes[nodeID].Status
 	waitingRetry := r.Status == "waiting" && nodeStatus == "waiting_approval"
 	replaySucceeded := r.Status == "succeeded"
-	if r.Status == "running" || hasRunningNode(r) {
+	if r.Status == "running" || r.HasActiveNode() {
 		return fmt.Errorf("run is still active")
 	}
 	if r.Status != "waiting" && r.Status != "failed" && r.Status != "cancelled" && !replaySucceeded {
@@ -822,7 +822,7 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	if !ok {
 		return fmt.Errorf("run not found")
 	}
-	if r.Status == "running" || hasRunningNode(r) || (r.Status != "waiting" && !isTerminalRunStatus(r.Status)) {
+	if r.Status == "running" || r.HasActiveNode() || (r.Status != "waiting" && !domain.TerminalRunStatus(r.Status)) {
 		return fmt.Errorf("only a stopped run can update its SOP")
 	}
 	if e.executes() {
@@ -843,8 +843,12 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	// A graph/role update must not silently replace the environment underneath
 	// an existing workspace. A new Run will pick up the latest sandbox asset.
 	latest.SandboxProfileID = r.WorkflowSnapshot.SandboxProfileID
+	latest.AutoSelectSandbox = r.WorkflowSnapshot.AutoSelectSandbox
 	latest.SandboxSnapshot = r.WorkflowSnapshot.SandboxSnapshot
-	var err error
+	latest, err := configureBaselineAlignCLI(latest)
+	if err != nil {
+		return err
+	}
 	latest, err = domain.AttachPreviewBuild(latest)
 	if err != nil {
 		return err
@@ -977,6 +981,9 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 		src, ok := byID[n.ID]
 		if !ok {
 			continue
+		}
+		if n.AgentID != src.AgentID || n.ExecutorID != src.ExecutorID {
+			delete(r.WorkflowSnapshot.ExecutorDefaults, n.ID)
 		}
 		n.AgentID, n.ExecutorID = src.AgentID, src.ExecutorID
 		n.ArtifactOutputs = src.ArtifactOutputs

@@ -13,7 +13,7 @@ import (
 	"agentflow/internal/repo"
 )
 
-const testTAPDTaskURL = "https://tapd.example.com/tapd_fe/10000000/task/detail/1010000000100000444"
+const testTAPDTaskURL = "https://www.tapd.cn/tapd_fe/10000000/task/detail/1010000000100000444"
 
 func TestParseTAPDTaskURL(t *testing.T) {
 	want := TAPDStoryRef{WorkspaceID: "10000000", StoryID: "1010000000100000444", Kind: "task"}

@@ -26,6 +26,21 @@ test('password authentication loads the upstream workspace',async({page,request,
   await expect(page).toHaveURL(/login\.html$/);
 });
 
+for (const failure of ['server error', 'network error']) {
+  test(`login shows administrator contact when setup status is unavailable (${failure})`, async ({page}) => {
+    await page.route('**/api/auth/setup', route =>
+      failure === 'server error' ? route.fulfill({status: 500}) : route.abort()
+    );
+    await page.goto('/login.html#register');
+    const contact = page.locator('#loginContact');
+    await expect(contact).toBeVisible();
+    await expect(contact).toHaveText('请联系部署管理员创建账号。');
+    await expect(page.locator('#loginSwitch')).toBeHidden();
+    await expect(page.locator('#setupNotice')).toBeHidden();
+    await expect(page.locator('#loginSubmit')).toHaveText('登录');
+  });
+}
+
 test('Chinese/English and light/dark preferences persist across reloads',async({page},info)=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await signIn(page);
@@ -38,7 +53,11 @@ test('Chinese/English and light/dark preferences persist across reloads',async({
   await expect(page.locator('#userProfilePopover [data-theme-pref="dark"]')).toHaveAttribute('aria-checked','true');
   await page.keyboard.press('Escape');
   await page.mouse.move(800,500);
-  await page.locator('#langToggle').click();
+  // first-run installs the published image, which still has one toggle button.
+  // This checkout replaces it with a segmented 中 / EN control.
+  const english = page.locator('#langToggle [data-lang-value="en"]');
+  if (await english.count()) await english.click();
+  else await page.locator('#langToggle').click();
   await expect(page.locator('html')).toHaveAttribute('lang','en');
   await expect(page.locator('.nav[data-view="issues"]')).toHaveAttribute('aria-label','Requirements');
   await expect(page.locator('.nav[data-view="issues"]')).toHaveAttribute('data-tooltip','Requirements');
@@ -46,6 +65,10 @@ test('Chinese/English and light/dark preferences persist across reloads',async({
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
   await expect(page.locator('html')).toHaveAttribute('lang','en');
+  if (await english.count()) {
+    await expect(page.locator('#langToggle').getByRole('radio',{name:'EN'})).toBeChecked();
+    await expect(page.locator('#langToggle').getByRole('radio',{name:'中'})).not.toBeChecked();
+  }
   // Translation must leave source code, editable content and user-marked text intact.
   await page.evaluate(()=>{
     for(const tag of ['pre','textarea']){const el=document.createElement(tag);el.id='test-'+tag;el.textContent='需求列表';document.body.append(el)}
@@ -57,7 +80,7 @@ test('Chinese/English and light/dark preferences persist across reloads',async({
   expect(errors).toEqual([]);
 });
 
-test('real script artifacts survive a human approval and execution continues',async({page})=>{
+test('real script artifacts survive UI approval and execution continues',async({page})=>{
   await signIn(page);
   const response=await page.request.post('/api/runs',{data:{workflowId:'welcome-workflow',projectId:'welcome',input:'Browser acceptance: artifacts, approval and continuation'}});
   expect(response.ok()).toBe(true);
@@ -72,10 +95,15 @@ test('real script artifacts survive a human approval and execution continues',as
   const artifact=detail.artifacts.find(a=>a.name==='welcome');expect(artifact).toBeTruthy();
   const content=await page.request.get(`/api/runs/${run.id}/artifacts/${encodeURIComponent(artifact.id)}`);
   expect(await content.text()).toContain('LoopForge');
-  const approval=await page.request.post(`/api/runs/${run.id}/approve`,{data:{nodeId:'approve',context:'Verified the saved report'}});
-  expect(approval.ok()).toBe(true);
+  await page.goto(`/#/runs/${encodeURIComponent(run.id)}`);
+  await page.locator('[data-run-node="approve"]').click();
+  const decision=page.locator('#runDetail .approval-callout.human');
+  await expect(decision).toBeVisible();
+  await decision.locator('[data-human-context]').fill('Verified the saved report');
+  await decision.locator('[data-approve="approve"]').click();
   await expect.poll(async()=>(await read()).status,{timeout:30_000}).toBe('succeeded');
   detail=await read();expect(detail.nodes.finish.status).toBe('succeeded');
+  expect(detail.humanContext).toBe('Verified the saved report');
   expect(detail.artifacts.some(a=>a.name==='completed')).toBe(true);
   await openSettingsPage(page,'runs');
   await expect(page.locator('#runsView')).toBeVisible();

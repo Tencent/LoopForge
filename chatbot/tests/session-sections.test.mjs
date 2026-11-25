@@ -24,6 +24,14 @@ const split = (sessions, options = {}) =>
   splitSidebarSections(sessions, projects, options);
 
 describe("splitSidebarSections", () => {
+  test("hides persisted blank drafts without hiding started or task conversations", () => {
+    const {groups} = split([
+      session("blank",{executionTargetLocked:false}),
+      session("started",{executionTargetLocked:true}),
+      session("task",{executionTargetLocked:false,taskId:"scheduled"}),
+    ]);
+    expect(groups.flatMap(g=>g.sessions.map(s=>s.id))).toEqual(["started","task"]);
+  });
   test("a running reply stays in its own project group", () => {
     const running = session("run", {
       projectId: "dp",

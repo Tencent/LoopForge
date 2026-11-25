@@ -60,13 +60,25 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 	fail := func(code int, msg string) *agentToolRPCResponse {
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Error: &agentToolRPCError{Code: code, Message: msg}}
 	}
+	handler := *h
+	handler.svc = h.svc.Snapshot()
+	h = &handler
+	if !h.svc.Builtin() && strings.TrimSpace(claims.ProjectID) == "" {
+		return fail(-32602, "LightCloud 工具需要项目范围")
+	}
+	instructions := "本项目知识库：先 kb_search 检索，再用 kb_fetch 读原文并附 citation。"
+	markerTool := ""
+	if h.svc.Builtin() {
+		markerTool = "及文档问题标记"
+		instructions += " 错误码、接口名等逐字标识用 kb_grep。发现文档问题时用 kb_report_issue 记录。"
+	}
 	switch request.Method {
 	case "initialize":
 		return reply(map[string]any{
 			"protocolVersion": agentToolProtocolVersion(request.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]string{"name": domain.KnowledgeMCPServerID, "version": "1.0.0"},
-			"instructions":    "本项目知识库：先 kb_search 检索；错误码、接口名等逐字标识用 kb_grep；再用 kb_fetch 读原文并附 citation。发现文档问题时用 kb_report_issue 记录，不改正文。",
+			"instructions":    instructions,
 		})
 	case "ping":
 		return reply(map[string]any{})
@@ -88,8 +100,8 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 		if i := strings.LastIndex(name, "__"); i >= 0 {
 			name = name[i+2:]
 		}
-		if !knowledge.IsAgentTool(name) {
-			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索、读取原文和标记文档问题", params.Name))
+		if !h.svc.AgentToolAllowed(name) {
+			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能调用当前引擎授权的只读工具%s", params.Name, markerTool))
 		}
 		started := time.Now()
 		caller := knowledge.Caller{
@@ -113,7 +125,7 @@ func (h *knowledgeHandlers) proxyTools(ctx context.Context) ([]map[string]any, e
 	}
 	out := make([]map[string]any, 0, len(knowledge.AgentTools))
 	for _, tool := range upstream {
-		if !knowledge.IsAgentTool(tool.Name) {
+		if !h.svc.AgentToolAllowed(tool.Name) {
 			continue
 		}
 		item := map[string]any{"name": tool.Name, "description": tool.Description, "inputSchema": json.RawMessage(defaultToolSchema(tool.InputSchema))}
@@ -135,11 +147,15 @@ func (h *knowledgeHandlers) callScoped(ctx context.Context, caller knowledge.Cal
 // tool contract. The SOP proxy and Main Bot's in-process tools both call it,
 // so project narrowing, JSON shapes and activity records cannot drift apart.
 func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowledge.Caller, tool string, args map[string]any) (text string, hits int, err error) {
+	if svc == nil {
+		return "", 0, knowledge.ErrNotConfigured
+	}
+	svc = svc.Snapshot()
+	if !svc.AgentToolAllowed(tool) {
+		return "", 0, fmt.Errorf("当前知识引擎不支持工具 %s", tool)
+	}
 	started := time.Now()
 	defer func() {
-		if svc == nil {
-			return
-		}
 		activity := domain.KnowledgeActivity{
 			At: started.UTC(), Tool: tool, ProjectID: caller.ProjectID, AgentID: caller.AgentID,
 			UserID: caller.UserID, RunID: caller.RunID, SessionID: caller.SessionID,
@@ -151,9 +167,6 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowl
 		}
 		recordKnowledgeActivity(svc, activity)
 	}()
-	if svc == nil {
-		return "", 0, knowledge.ErrNotConfigured
-	}
 	if args == nil {
 		args = map[string]any{}
 	}
@@ -165,7 +178,7 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowl
 		var out knowledge.SearchOutput
 		out, err = svc.Search(knowledge.WithGapActor(ctx, knowledge.GapActor{UserID: caller.UserID, SessionID: caller.SessionID}), caller.ProjectID, str("query"), stringList(args["sources"]))
 		hits = len(out.Result.Results)
-		if err == nil {
+		if err == nil && svc.Builtin() {
 			recordKnowledgeCitations(svc, knowledge.CitationsForSearch(caller, started, out.Result))
 		}
 		if err == nil && hits == 0 {
@@ -182,14 +195,14 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowl
 		var doc knowledge.Document
 		doc, err = svc.DocumentVersion(ctx, caller.ProjectID, str("source"), str("path"), str("commit"), integer("start_line"), integer("end_line"))
 		value = doc
-		if err == nil {
+		if err == nil && svc.Builtin() {
 			recordKnowledgeCitations(svc, knowledge.CitationsForDocument(caller, started, doc))
 		}
 	case knowledge.ToolGrep:
 		var grepped knowledge.GrepResult
 		grepped, err = svc.Grep(ctx, caller.ProjectID, knowledge.GrepQuery{Pattern: str("pattern"), Regex: argBool(args["regex"]), Sources: stringList(args["sources"])})
 		hits = len(grepped.Hits)
-		if err == nil {
+		if err == nil && svc.Builtin() {
 			recordKnowledgeCitations(svc, knowledge.CitationsForGrep(caller, started, grepped))
 			if hits == 0 {
 				value = map[string]any{

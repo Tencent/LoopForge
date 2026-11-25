@@ -11,24 +11,26 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+
+	"agentflow/internal/config"
 )
 
 const (
-	defaultAuthorizeURL = "https://git.example.com/oauth/authorize"
-	defaultTokenURL     = "https://git.example.com/oauth/token"
-	defaultAPIBase      = "https://git.example.com/api/v3"
 	// Repository clone and push need both scopes. The application must allow them.
 	RepositoryScope = "read_repository write_repository"
 	defaultTTL      = 2 * time.Hour
+	// maxResponseBytes caps how much of any Gongfeng response body is read.
+	maxResponseBytes = 64 << 10
 )
 
 // httpClient bounds every call to the Gongfeng OAuth endpoints. A refresh runs
 // while the caller holds the user's refresh lock, so it must never hang.
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
-// Config is the OAuth application registered on git.example.com.
+// Config describes the OAuth application registered on the deployment's host.
 type Config struct {
 	ClientID     string
 	ClientSecret string
@@ -40,21 +42,40 @@ type Config struct {
 
 // Enabled reports whether the process has enough configuration to start a grant.
 func (c Config) Enabled() bool {
+	return c.RefreshEnabled() && c.AuthorizeURL != "" && c.APIBase != ""
+}
+
+func (c Config) RefreshEnabled() bool {
+	return c.clientConfigured() && c.TokenURL != ""
+}
+
+func (c Config) clientConfigured() bool {
 	return strings.TrimSpace(c.ClientID) != "" && strings.TrimSpace(c.ClientSecret) != "" && strings.TrimSpace(c.RedirectURI) != ""
 }
 
-// ConfigFromEnv reads the application credentials. Authorize, token and API
-// URLs fall back to git.example.com; the overrides exist so tests can point at a
-// local server.
+// ConfigFromEnv derives endpoints from the configured host. Explicit OAuth
+// endpoint overrides still take precedence.
 func ConfigFromEnv() Config {
+	host := config.GongfengHost()
+	endpoint := func(path string) string {
+		if host == "" {
+			return ""
+		}
+		return "https://" + host + path
+	}
 	return Config{
 		ClientID:     strings.TrimSpace(os.Getenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_ID")),
 		ClientSecret: strings.TrimSpace(os.Getenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_SECRET")),
 		RedirectURI:  strings.TrimSpace(os.Getenv("AGENTFLOW_GONGFENG_OAUTH_REDIRECT_URI")),
-		AuthorizeURL: envOr("AGENTFLOW_GONGFENG_OAUTH_AUTHORIZE_URL", defaultAuthorizeURL),
-		TokenURL:     envOr("AGENTFLOW_GONGFENG_OAUTH_TOKEN_URL", defaultTokenURL),
-		APIBase:      strings.TrimRight(envOr("AGENTFLOW_GONGFENG_OAUTH_API_BASE", defaultAPIBase), "/"),
+		AuthorizeURL: envOr("AGENTFLOW_GONGFENG_OAUTH_AUTHORIZE_URL", endpoint("/oauth/authorize")),
+		TokenURL:     envOr("AGENTFLOW_GONGFENG_OAUTH_TOKEN_URL", endpoint("/oauth/token")),
+		APIBase:      strings.TrimRight(envOr("AGENTFLOW_GONGFENG_OAUTH_API_BASE", endpoint("/api/v3")), "/"),
 	}
+}
+
+func envBool(key string) bool {
+	on, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
+	return on
 }
 
 func envOr(key, fallback string) string {
@@ -84,7 +105,7 @@ func (t Token) Expiry(now time.Time) time.Time {
 
 // AuthorizeURL is the browser location that asks the user to approve the app.
 func AuthorizeURL(cfg Config, state string) (string, error) {
-	if !cfg.Enabled() {
+	if !cfg.clientConfigured() || cfg.AuthorizeURL == "" {
 		return "", fmt.Errorf("工蜂 OAuth 未配置")
 	}
 	u, err := url.Parse(cfg.AuthorizeURL)
@@ -137,17 +158,12 @@ func Username(ctx context.Context, cfg Config, accessToken string) (string, erro
 		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("无法连接工蜂：%v", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	status, body, err := do(req)
 	if err != nil {
 		return "", err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("工蜂用户信息返回 HTTP %d", resp.StatusCode)
+	if status != http.StatusOK {
+		return "", fmt.Errorf("工蜂用户信息返回 HTTP %d", status)
 	}
 	var user struct {
 		Username string `json:"username"`
@@ -159,7 +175,7 @@ func Username(ctx context.Context, cfg Config, accessToken string) (string, erro
 }
 
 func requestToken(ctx context.Context, cfg Config, form url.Values) (Token, error) {
-	if !cfg.Enabled() {
+	if !cfg.RefreshEnabled() {
 		return Token{}, fmt.Errorf("工蜂 OAuth 未配置")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.TokenURL, strings.NewReader(form.Encode()))
@@ -168,17 +184,12 @@ func requestToken(ctx context.Context, cfg Config, form url.Values) (Token, erro
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return Token{}, fmt.Errorf("无法连接工蜂：%v", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	status, body, err := do(req)
 	if err != nil {
 		return Token{}, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return Token{}, fmt.Errorf("工蜂令牌接口返回 HTTP %d：%s", resp.StatusCode, redact(cfg, truncate(string(body), 180)))
+	if status != http.StatusOK {
+		return Token{}, fmt.Errorf("工蜂令牌接口返回 HTTP %d：%s", status, redact(cfg, truncate(string(body), 180)))
 	}
 	var raw struct {
 		AccessToken  string `json:"access_token"`
@@ -201,6 +212,22 @@ func requestToken(ctx context.Context, cfg Config, form url.Values) (Token, erro
 		return Token{}, fmt.Errorf("工蜂没有返回访问令牌：%s", redact(cfg, msg))
 	}
 	return Token{AccessToken: raw.AccessToken, RefreshToken: raw.RefreshToken, ExpiresIn: raw.ExpiresIn}, nil
+}
+
+// do sends req with the bounded client and returns the status code and at
+// most maxResponseBytes of the body. Transport failures are reported as a
+// connection error so callers only handle status and payload.
+func do(req *http.Request) (int, []byte, error) {
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("无法连接工蜂：%v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, body, nil
 }
 
 func redact(cfg Config, msg string) string {

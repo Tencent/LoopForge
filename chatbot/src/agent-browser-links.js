@@ -68,3 +68,49 @@ export function remarkWorkspaceLinks() {
   };
   return walk;
 }
+
+// devServerTarget returns the port and path of a plain-HTTP address on the
+// execution machine (a dev server), or null. Those pages are shown natively:
+// the platform proxies the port, so the user's own browser renders them.
+// Workspace files (file:///workspace/…) are served the same way; their
+// "port" is "file".
+export function devServerTarget(raw) {
+  let url;
+  try {
+    url = new URL(String(raw || "").trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol === "file:") {
+    if (url.host || !url.pathname || url.pathname === "/") return null;
+    return { port: devFile, path: `${url.pathname}${url.search}${url.hash}` };
+  }
+  if (url.protocol !== "http:" || !localHost.test(url.hostname)) return null;
+  const port = Number(url.port || 80);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+  return { port, path: `${url.pathname || "/"}${url.search}${url.hash}` };
+}
+
+const devFile = "file";
+
+// devServerOrigin is how the page's address starts on the execution machine.
+export const devServerOrigin = (port) => (port === devFile ? "file://" : `http://localhost:${port}`);
+
+// devServerLabel names the target in the panel.
+export const devServerLabel = (port) => (port === devFile ? "工作区文件" : `localhost:${port}`);
+
+export const devServerPrefix = (runId, port) =>
+  `/devpreview/${encodeURIComponent(runId)}/${port}`;
+
+// devServerURL is where the platform serves the dev server page.
+export const devServerURL = (runId, port, path = "/") =>
+  `${devServerPrefix(runId, port)}${path.startsWith("/") ? path : `/${path}`}`;
+
+// devServerAddress maps a proxied page location back to the address the
+// dev server has on the execution machine.
+export function devServerAddress(runId, port, location) {
+  const prefix = devServerPrefix(runId, port);
+  const path = location?.pathname || "/";
+  const rest = path === prefix ? "/" : path.startsWith(`${prefix}/`) ? path.slice(prefix.length) : path;
+  return `${devServerOrigin(port)}${rest}${location?.search || ""}${location?.hash || ""}`;
+}

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+
+	"gorm.io/gorm"
 )
 
 // ---------- Issues ----------
@@ -15,18 +17,6 @@ import (
 // IssueAnalyticsViews loads the columns analytics needs without hydrating the
 // full issue payload (clarification, comments, and delivery lock blobs).
 func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
-	urlExpr := "json_extract(payload, '$.externalRef.externalUrl')"
-	tapdIDExpr := "json_extract(payload, '$.tapdId')"
-	clarificationStartExpr := "json_extract(payload, '$.clarification.startedAt')"
-	deliveryExpr := "json_extract(payload, '$.deliveryState')"
-	deliveryMRExpr := "json_extract(payload, '$.deliveryMrUrl')"
-	if r.isMySQL() {
-		urlExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.externalRef.externalUrl'))"
-		tapdIDExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.tapdId'))"
-		clarificationStartExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.clarification.startedAt'))"
-		deliveryExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.deliveryState'))"
-		deliveryMRExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.deliveryMrUrl'))"
-	}
 	type liteRow struct {
 		ID                     string    `gorm:"column:id"`
 		ProjectID              string    `gorm:"column:project_id"`
@@ -43,32 +33,40 @@ func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
 		DeliveryState          string    `gorm:"column:delivery_state"`
 		CreatedAt              time.Time `gorm:"column:created_at"`
 		DeliveryMRURL          string    `gorm:"column:delivery_mr_url"`
+		DeliveryMRState        string    `gorm:"column:delivery_mr_state"`
+		DeliveryMRs            string    `gorm:"column:delivery_mrs"`
 	}
 	var rows []liteRow
 	if err := r.DB.Table("issues").Select(
 		"id", "project_id", "title", "status", "kind", "source", "workflow_id", "assignee_user_id", "external_id", "created_at",
-		urlExpr+" AS external_url",
-		tapdIDExpr+" AS tapd_id",
-		clarificationStartExpr+" AS clarification_started_at",
-		deliveryExpr+" AS delivery_state",
-		deliveryMRExpr+" AS delivery_mr_url",
+		r.sqlPayloadJSONText("externalRef.externalUrl")+" AS external_url",
+		r.sqlPayloadJSONText("tapdId")+" AS tapd_id",
+		r.sqlPayloadJSONText("clarification.startedAt")+" AS clarification_started_at",
+		r.sqlPayloadJSONText("deliveryState")+" AS delivery_state",
+		r.sqlPayloadJSONText("deliveryMrUrl")+" AS delivery_mr_url",
+		r.sqlPayloadJSONText("deliveryMrState")+" AS delivery_mr_state",
+		r.sqlPayloadJSONText("deliveryMrs")+" AS delivery_mrs",
 	).Find(&rows).Error; err != nil {
 		return []domain.Issue{}
 	}
 	out := make([]domain.Issue, 0, len(rows))
 	for _, row := range rows {
 		issue := domain.Issue{
-			ID:            row.ID,
-			ProjectID:     row.ProjectID,
-			Title:         row.Title,
-			Status:        row.Status,
-			Kind:          row.Kind,
-			Source:        row.Source,
-			TapdID:        strings.TrimSpace(row.TapdID),
-			WorkflowID:    row.WorkflowID,
-			DeliveryState: strings.TrimSpace(row.DeliveryState),
-			DeliveryMRURL: strings.TrimSpace(row.DeliveryMRURL),
-			CreatedAt:     row.CreatedAt,
+			ID:              row.ID,
+			ProjectID:       row.ProjectID,
+			Title:           row.Title,
+			Status:          row.Status,
+			Kind:            row.Kind,
+			Source:          row.Source,
+			TapdID:          strings.TrimSpace(row.TapdID),
+			WorkflowID:      row.WorkflowID,
+			DeliveryState:   strings.TrimSpace(row.DeliveryState),
+			DeliveryMRURL:   strings.TrimSpace(row.DeliveryMRURL),
+			DeliveryMRState: strings.TrimSpace(row.DeliveryMRState),
+			CreatedAt:       row.CreatedAt,
+		}
+		if row.DeliveryMRs != "" {
+			_ = jsonUnmarshal([]byte(row.DeliveryMRs), &issue.DeliveryMRs)
 		}
 		if started, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(row.ClarificationStartedAt)); err == nil {
 			issue.Clarification.StartedAt = started
@@ -166,13 +164,36 @@ func (r *IssuesRepo) PutIssue(v domain.Issue) error {
 	return r.putIssueLocked(v)
 }
 
+// ReserveIssueDispatch holds the issue row lock through task reservation so
+// dispatch and the final delete cannot both succeed.
+func (r *IssuesRepo) ReserveIssueDispatch(task domain.Task) (domain.Task, bool, error) {
+	var stored domain.Task
+	var created bool
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var issue issueRow
+		err := r.locking(tx).Select("id").Where("id = ?", task.IssueID).Take(&issue).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrIssueNotFound
+		}
+		if err != nil {
+			return err
+		}
+		stored, created, err = r.tasks.createTask(tx, task)
+		return err
+	})
+	if err != nil {
+		return domain.Task{}, false, err
+	}
+	return stored, created, nil
+}
+
 // PutSyncedIssue refreshes tracker data without changing an existing issue's
 // local lifecycle. Reload under the write lock so an edit made after the
 // tracker snapshot was read is preserved too.
 func (r *IssuesRepo) PutSyncedIssue(v domain.Issue) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.saveIssueLocked(v, true)
+	return r.saveIssueLocked(v, true, false)
 }
 
 // PatchIssue loads the current row, applies fn, and writes it back under the
@@ -189,12 +210,12 @@ func (r *IssuesRepo) PatchIssue(id string, fn func(*domain.Issue) error) (domain
 	defer r.mu.Unlock()
 	issue, ok := r.Issue(id)
 	if !ok {
-		return domain.Issue{}, errors.New("issue not found")
+		return domain.Issue{}, ErrIssueNotFound
 	}
 	if err := fn(&issue); err != nil {
 		return issue, err
 	}
-	if err := r.putIssueLocked(issue); err != nil {
+	if err := r.saveIssueLocked(issue, false, true); err != nil {
 		return issue, err
 	}
 	stored, ok := r.Issue(id)
@@ -205,12 +226,15 @@ func (r *IssuesRepo) PatchIssue(id string, fn func(*domain.Issue) error) (domain
 }
 
 func (r *IssuesRepo) putIssueLocked(v domain.Issue) error {
-	return r.saveIssueLocked(v, false)
+	return r.saveIssueLocked(v, false, false)
 }
 
-func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync bool) error {
+func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool) error {
 	now := time.Now().UTC()
 	old, ok := r.Issue(v.ID)
+	if existingOnly && !ok {
+		return ErrIssueNotFound
+	}
 	preserveStatus := fromSync && ok
 	if ok {
 		if preserveStatus {
@@ -230,6 +254,9 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync bool) error {
 		}
 		if strings.TrimSpace(v.ConversationSessionID) == "" {
 			v.ConversationSessionID = old.ConversationSessionID
+		}
+		if strings.TrimSpace(v.SOPMode) == "" {
+			v.SOPMode = old.SOPMode
 		}
 		if !old.Clarification.StartedAt.IsZero() && (v.Clarification.StartedAt.IsZero() || v.Clarification.StartedAt.After(old.Clarification.StartedAt)) {
 			v.Clarification.StartedAt = old.Clarification.StartedAt
@@ -288,12 +315,30 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync bool) error {
 			v.CompletedAt = now
 		}
 	}
-	bindDefaultWorkflow(&v, r.projectWorkflowID(v.ProjectID), r.projectIssueWorkflowID(v.ProjectID))
+	if v.WithoutSOP() {
+		v.SOPMode = domain.IssueSOPNone
+		v.WorkflowID, v.PlaybookID, v.SOPBindings = "", "", nil
+		v.AutomationState = "ignored"
+	} else {
+		v.SOPMode = ""
+		bindDefaultWorkflow(&v, r.projectWorkflowID(v.ProjectID), r.projectIssueWorkflowID(v.ProjectID))
+	}
 	v.UpdatedAt = now
+	if existingOnly {
+		result := r.DB.Model(&issueRow{}).Where("id = ?", v.ID).Updates(issueValues(v))
+		if result.Error == nil && result.RowsAffected == 0 {
+			return ErrIssueNotFound
+		}
+		return result.Error
+	}
 	return r.writeIssue(v)
 }
 
 func (r *IssuesRepo) writeIssue(v domain.Issue) error {
+	return upsert(r.DB, "issues", issueValues(v))
+}
+
+func issueValues(v domain.Issue) map[string]any {
 	ext := ""
 	if v.ExternalRef != nil {
 		ext = v.ExternalRef.ExternalID
@@ -302,12 +347,12 @@ func (r *IssuesRepo) writeIssue(v domain.Issue) error {
 	if v.AssigneeUserID > 0 {
 		assignee = v.AssigneeUserID
 	}
-	return upsert(r.DB, "issues", map[string]any{
+	return map[string]any{
 		"id": v.ID, "project_id": v.ProjectID, "number": v.Number, "title": v.Title,
 		"status": v.Status, "kind": v.Kind, "source": v.Source, "workflow_id": v.WorkflowID,
 		"assignee_user_id": assignee, "external_id": ext, "payload": mustJSON(v),
 		"created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
-	})
+	}
 }
 
 // ResponsibleUser resolves the explicit issue responsibility first and falls
@@ -329,6 +374,14 @@ func (r *IssuesRepo) ResponsibleUser(issue domain.Issue) (domain.User, error) {
 }
 
 // projectWorkflowID returns the project's configured default SOP.
+// DefaultIssueWorkflow returns the SOP a new issue of the project would be
+// bound to when it is saved without one (see bindDefaultWorkflow).
+func (r *IssuesRepo) DefaultIssueWorkflow(projectID, source, kind string) string {
+	v := domain.Issue{ProjectID: projectID, Source: source, Kind: kind}
+	bindDefaultWorkflow(&v, r.projectWorkflowID(projectID), r.projectIssueWorkflowID(projectID))
+	return v.WorkflowID
+}
+
 func (r *IssuesRepo) projectWorkflowID(projectID string) string {
 	if strings.TrimSpace(projectID) == "" {
 		return ""

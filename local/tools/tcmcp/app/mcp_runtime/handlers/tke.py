@@ -237,7 +237,7 @@ def handle_pool_detail(args, data, selection):
         pools = [p for p in (resp.NodePools or []) if p.NodePoolId == pool_id]
         if pools:
             return ok(_v2022_pool_row(pools[0]))
-    except Exception as cop_exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         return fail(f"读取节点池失败: {exc}", "确认 CAM 有 tke:DescribeNodePools")
 
     return fail(f"找不到节点池 {pool_id}")

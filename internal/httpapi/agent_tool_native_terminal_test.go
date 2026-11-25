@@ -35,7 +35,7 @@ func TestAssistantProgressSubmissionCannotEndToolExecution(t *testing.T) {
 		if _, err := gateway.callTool(context.Background(), session, json.RawMessage(`{"name":"workbench_tool_schema","arguments":{"name":"issues_dispatch"}}`)); err != nil {
 			t.Fatalf("cannot continue querying after rejected progress: %v", err)
 		}
-		result, err = gateway.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"已核对需求，确认后派发。","drafts":[{"tool":"issues_dispatch","path":{"id":"workbench-issue"}}]}`))
+		result, err = gateway.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"已核对需求，确认后派发。","drafts":[{"tool":"issues_dispatch","path":{"id":"workbench-issue"},"proposal":{"reason":"整件需求走 SOP","timing":"start"}}]}`))
 		if err != nil || result["isError"] == true || !session.finished() || !cancelled {
 			t.Fatalf("valid draft did not finish: result=%v err=%v", result, err)
 		}
@@ -143,7 +143,7 @@ func TestAssistantPromptsNameCallableMCPSubmissionTool(t *testing.T) {
 	}
 	h := &assistantHandlers{}
 	prompt := h.turnPrompt(assistantRequest{Messages: []assistantMessage{{Role: "user", Content: "save"}}}, t.TempDir(), true)
-	if !strings.Contains(prompt, "待确认写入仍须通过 "+name) {
+	if !strings.Contains(prompt, "待确认的平台写入仍须通过 "+name) {
 		t.Fatal("resumed turns must refresh the qualified submission name")
 	}
 }

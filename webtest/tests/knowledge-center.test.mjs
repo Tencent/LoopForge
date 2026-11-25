@@ -214,3 +214,46 @@ test('ordinary project members see loaded libraries without management controls'
   assert.ok(toggle.checked);
   assert.ok(toggle.disabled);
 });
+
+test('knowledge engine settings switch between builtin and LightCloud views', async (t) => {
+  const external = { provider: 'lightcloud', url: 'https://kb.example.test/mcp', tokenConfigured: true, enabled: true, writeEnabled: true, defaultSources: ['alpha'], projectSources: { 'project-1': ['alpha'] }, ready: true, canManage: true };
+  let settings = { ...external, provider: 'builtin' };
+  const app = await loadApp({ routes: [
+    { method: 'GET', path: '/api/knowledge/settings', body: () => settings },
+    { method: 'PUT', path: '/api/knowledge/settings', body: (call) => {
+      settings = { ...external, provider: call.body.provider };
+      return settings;
+    } },
+    { method: 'GET', path: '/api/knowledge/bases?projectId=project-1', body: overview },
+    { method: 'GET', path: '/api/knowledge/sources?projectId=project-1', body: [
+      { id: 'alpha', name: 'External docs', allowed: true, doc_count: 2 },
+      { id: 'beta', name: 'Hidden docs', allowed: false },
+    ] },
+    { method: 'GET', path: '/api/knowledge/usage?projectId=project-1', body: usage },
+  ] });
+  t.after(app.close);
+  await settle(3);
+  await app.evaluate('renderKnowledgeView()');
+  const doc = app.document;
+  doc.querySelector('#kbSettings').click();
+  assert.equal(doc.querySelector('#kbExternalConfig').hidden, true);
+  chooseOption(doc.querySelector('#kbProvider'), 'lightcloud');
+  assert.equal(doc.querySelector('#kbExternalConfig').hidden, false);
+  assert.equal(doc.querySelector('#kbToken').value, '');
+  doc.querySelector('#kbSaveSettings').click();
+  await settle(8);
+  const body = doc.querySelector('#knowledgeBody');
+  assert.match(body.textContent, /External docs/);
+  assert.doesNotMatch(body.textContent, /Hidden docs/);
+  for (const sel of ['[data-kb-tab="governance"]', '[data-kb-tab="docs"]', '#kbSharedManage']) {
+    assert.equal(body.querySelector(sel), null);
+  }
+  assert.ok(body.querySelector('[data-kb-tab="distill"]'));
+  doc.querySelector('#kbSettings').click();
+  chooseOption(doc.querySelector('#kbProvider'), 'builtin');
+  doc.querySelector('#kbSaveSettings').click();
+  await settle(8);
+  assert.ok(body.querySelector('[data-kb-tab="governance"]'));
+  assert.ok(body.querySelector('[data-kb-tab="docs"]'));
+  assert.match(body.textContent, /公开样例/);
+});

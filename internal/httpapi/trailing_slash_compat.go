@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -28,23 +29,7 @@ func masterTrailingSlashCompat(c *gin.Context, s *Server) bool {
 	if !strings.HasPrefix(p, "/api/") || !strings.HasSuffix(p, "/") {
 		return false
 	}
-	rest := strings.TrimPrefix(p, "/api/")
-	entity := rest
-	if i := strings.Index(rest, "/"); i >= 0 {
-		entity = rest[:i]
-	}
-	// "auth/tokens" 这类两段子树：兼容表以两段为 key（/api/auth/ 本身没有
-	// 子树注册，取首段会 miss）。
-	if i := strings.Index(rest, "/"); i >= 0 {
-		if second := rest[i+1:]; second != "" {
-			if tail := strings.Index(second, "/"); tail >= 0 {
-				second = second[:tail]
-			}
-			if _, ok := apiTrailingSlash405[entity+"/"+second]; ok {
-				entity = entity + "/" + second
-			}
-		}
-	}
+	entity := trailingSlashEntity(strings.TrimPrefix(p, "/api/"))
 	// master authToken handler：非 DELETE 一律 405；DELETE 通过方法检查后做
 	// 登录检查（未登录 401；登录后空 id 400 "Token ID 不能为空"）。
 	if entity == "auth/tokens" {
@@ -58,7 +43,7 @@ func masterTrailingSlashCompat(c *gin.Context, s *Server) bool {
 		return true
 	}
 	methods, ok := apiTrailingSlash405[entity]
-	if ok && containsMethod(methods, c.Request.Method) {
+	if ok && slices.Contains(methods, c.Request.Method) {
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return true
 	}
@@ -69,11 +54,17 @@ func masterTrailingSlashCompat(c *gin.Context, s *Server) bool {
 	return true
 }
 
-func containsMethod(methods []string, m string) bool {
-	for _, method := range methods {
-		if method == m {
-			return true
-		}
+// trailingSlashEntity 从 "/api/" 之后的路径解析兼容表 key：默认取首段；
+// "auth/tokens" 这类两段子树以两段为 key（/api/auth/ 本身没有子树注册，
+// 取首段会 miss），仅当两段 key 在 apiTrailingSlash405 中存在时才采用。
+func trailingSlashEntity(rest string) string {
+	entity, tail, found := strings.Cut(rest, "/")
+	if !found || tail == "" {
+		return entity
 	}
-	return false
+	second, _, _ := strings.Cut(tail, "/")
+	if _, ok := apiTrailingSlash405[entity+"/"+second]; ok {
+		return entity + "/" + second
+	}
+	return entity
 }

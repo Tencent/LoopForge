@@ -72,6 +72,10 @@ func (f *fakeStore) Run(id string) (domain.Run, bool) {
 	run, ok := f.runs[id]
 	return run, ok
 }
+
+func (f *fakeStore) RunHeader(id string) (domain.Run, error) {
+	return f.runs[id], nil
+}
 func (f *fakeStore) Agents() []domain.AgentDefinition       { return f.agents }
 func (f *fakeStore) Workflows() []domain.WorkflowDefinition { return f.workflows }
 
@@ -255,8 +259,7 @@ func TestEditResetsReviewState(t *testing.T) {
 }
 
 // Publishing is gated by the reviewed item's project scope, not by a
-// platform-wide write switch. The switch was part of the deleted external
-// client configuration and its table is dropped by 043.
+// platform-wide write switch, which applies only to LightCloud.
 func TestPublishGatesAndWrites(t *testing.T) {
 	store := newFakeStore()
 	up := &fakeUpstream{}

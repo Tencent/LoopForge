@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -315,40 +314,6 @@ func TestRegisterGitSourceAndTriggerSyncOnlySetPending(t *testing.T) {
 	})
 	if rec := doJSON(t, h, http.MethodPost, "/api/knowledge/bases/sources", string(otherBody), nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("其它项目的库应 403，实际 %d %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestKnowledgePageNoLongerSubmitsURLOrToken(t *testing.T) {
-	t.Helper()
-	var source string
-	found := false
-	for _, p := range []string{
-		filepath.Join("..", "..", "web", "knowledge.js"),
-		filepath.Join("web", "knowledge.js"),
-	} {
-		if b, err := os.ReadFile(p); err == nil {
-			source, found = string(b), true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("web/knowledge.js not found")
-	}
-	for _, marker := range []string{
-		"/api/knowledge/settings",
-		"name=\"url\"",
-		"name=\"token\"",
-		"clearToken",
-		"tokenConfigured",
-		"kbSettingsPayload",
-	} {
-		if strings.Contains(source, marker) {
-			t.Fatalf("页面仍包含连接配置痕迹 %q", marker)
-		}
-	}
-	// 新管理接口确实被界面引用。
-	if !strings.Contains(source, "/api/knowledge/bases") {
-		t.Fatal("页面未引用新的知识库管理接口")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -66,6 +67,9 @@ type Options struct {
 	TimeoutEnv string
 	// Redact scrubs secrets from every line before it is kept or reported.
 	Redact func(string) string
+	// OnLine receives each nonempty line after redaction, independently of
+	// the throttled progress events. The callback should return promptly.
+	OnLine func(string)
 }
 
 const (
@@ -74,11 +78,40 @@ const (
 	waitDelay     = 5 * time.Second
 )
 
+// WithinTimeout shares the configured command budget across its preparation
+// stages. An earlier caller deadline still takes precedence.
+func WithinTimeout(ctx context.Context, opts Options, work func(context.Context) error) error {
+	if opts.Timeout <= 0 {
+		return work(ctx)
+	}
+	started := time.Now()
+	ctx, cancel := context.WithTimeoutCause(ctx, opts.Timeout, errTimeout)
+	defer cancel()
+	err := work(ctx)
+	if err != nil && !Stopped(err) {
+		return stopError(context.Cause(ctx), opts, time.Since(started), err)
+	}
+	return err
+}
+
 // Run starts the command build returns and waits for it. build receives the
 // context to bind with exec.CommandContext; Run owns Stdout and Stderr.
 // The returned text is the redacted tail of the output; on failure the error
 // says why (exit, stall, timeout) and does not repeat that tail.
 func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Options) (string, error) {
+	return RunWithOutput(ctx, func(ctx context.Context, out io.Writer) error {
+		cmd := build(ctx)
+		killGroup(cmd)
+		cmd.Stdout, cmd.Stderr = out, out
+		// Git and Docker helpers can keep pipes open after cancellation.
+		cmd.WaitDelay = waitDelay
+		return cmd.Run()
+	}, opts)
+}
+
+// RunWithOutput watches a process launched by an execution environment that
+// streams output to a writer and observes cancellation on the supplied context.
+func RunWithOutput(ctx context.Context, run func(context.Context, io.Writer) error, opts Options) (string, error) {
 	observer := observerFrom(ctx)
 	emit := func(kind Kind, message string, elapsed time.Duration) {
 		if observer != nil {
@@ -95,25 +128,22 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 	started := time.Now()
 	out := &lineWriter{redact: opts.Redact, last: started}
 	out.onLine = func(line string, now time.Time) {
+		if opts.OnLine != nil {
+			opts.OnLine(line)
+		}
 		if now.Sub(out.lastEmit) < progressEvery {
 			return
 		}
 		out.lastEmit = now
 		emit(Progress, opts.Label+"："+line, now.Sub(started))
 	}
-	cmd := build(runCtx)
-	killGroup(cmd)
-	cmd.Stdout, cmd.Stderr = out, out
-	// git and docker leave helpers holding the pipes after a kill; do not
-	// wait on them forever.
-	cmd.WaitDelay = waitDelay
 	emit(Started, "正在"+opts.Label, 0)
 
 	done := make(chan struct{})
 	if opts.Stall > 0 {
 		go watchStall(runCtx, cancel, out, opts.Stall, done)
 	}
-	err := cmd.Run()
+	err := run(runCtx, out)
 	close(done)
 	out.flush()
 	elapsed := time.Since(started)
@@ -125,21 +155,35 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 		emit(Completed, fmt.Sprintf("%s 完成，耗时 %s", opts.Label, roundDuration(elapsed)), elapsed)
 		return tail, nil
 	}
-	switch cause := context.Cause(runCtx); {
+	err = stopError(context.Cause(runCtx), opts, elapsed, err)
+	emit(Failed, failureMessage(opts.Label, elapsed, err, tail), elapsed)
+	return tail, err
+}
+
+// stopError wraps err in a StoppedError when cause shows Run's watchdog, its
+// own timeout or the caller's deadline stopped the command; any other failure
+// is returned unchanged.
+func stopError(cause error, opts Options, elapsed time.Duration, err error) error {
+	switch {
 	case errors.Is(cause, errStalled):
-		err = &StoppedError{fmt.Sprintf("%s 已 %s 没有任何输出，判定卡住并停止%s", opts.Label, roundDuration(opts.Stall), settingHint(opts.StallEnv)), err}
+		return &StoppedError{fmt.Sprintf("%s 已 %s 没有任何输出，判定卡住并停止%s", opts.Label, roundDuration(opts.Stall), settingHint(opts.StallEnv)), err}
 	case errors.Is(cause, errTimeout):
-		err = &StoppedError{fmt.Sprintf("%s 超过 %s 仍未完成，已停止%s", opts.Label, roundDuration(opts.Timeout), settingHint(opts.TimeoutEnv)), err}
+		return &StoppedError{fmt.Sprintf("%s 超过 %s 仍未完成，已停止%s", opts.Label, roundDuration(opts.Timeout), settingHint(opts.TimeoutEnv)), err}
 	case errors.Is(cause, context.DeadlineExceeded):
 		// The caller's own limit (an assistant turn, a preparation request).
-		err = &StoppedError{fmt.Sprintf("%s 在调用方时限内没有完成（已运行 %s），已停止", opts.Label, roundDuration(elapsed)), err}
+		return &StoppedError{fmt.Sprintf("%s 在调用方时限内没有完成（已运行 %s），已停止", opts.Label, roundDuration(elapsed)), err}
 	}
-	message := fmt.Sprintf("%s 失败（耗时 %s）：%v", opts.Label, roundDuration(elapsed), err)
+	return err
+}
+
+// failureMessage is the Failed event text: the error plus the last few lines
+// of output.
+func failureMessage(label string, elapsed time.Duration, err error, tail string) string {
+	message := fmt.Sprintf("%s 失败（耗时 %s）：%v", label, roundDuration(elapsed), err)
 	if last := lastLines(tail, 3); last != "" {
 		message += "\n" + last
 	}
-	emit(Failed, message, elapsed)
-	return tail, err
+	return message
 }
 
 var (

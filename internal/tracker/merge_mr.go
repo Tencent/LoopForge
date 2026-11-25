@@ -131,6 +131,7 @@ type gongfengListedMR struct {
 	ResolvedAt   string `json:"resolved_at"`
 	UpdatedAt    string `json:"updated_at"`
 	WebURL       string `json:"web_url"`
+	SHA          string `json:"sha"`
 }
 
 // FindBranchMR returns the delivery MR whose source is sourceBranch: the
@@ -176,6 +177,88 @@ func (s *Service) FindBranchMR(project, sourceBranch string) (domain.DeliveryMR,
 	}, true, nil
 }
 
+// FindBranchMRsInto lists every MR from the query's source branch into its
+// target branch with the head commit the host reports. Unlike FindBranchMR it
+// never answers with an MR into another branch, and it keeps all of them so a
+// caller can tell an earlier merged MR from one that carries the current tip.
+// It reads with the run's credentials: GitHub uses the token the run pushed
+// with, else the Owner of the run's project; Gongfeng uses the MCP binding of
+// the run's project.
+func (s *Service) FindBranchMRsInto(q domain.BranchMRQuery) ([]domain.DeliveryMR, error) {
+	project := strings.TrimSpace(q.RemoteProject)
+	src, target := strings.TrimSpace(q.SourceBranch), strings.TrimSpace(q.TargetBranch)
+	if project == "" || src == "" || target == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(project, "github:") {
+		g, identity, err := s.githubClientForRun(project, q.ProjectID, q.GitToken)
+		if err != nil {
+			return nil, err
+		}
+		pulls, err := g.listPulls(src, target)
+		if err != nil {
+			return nil, fmt.Errorf("以%s查询 GitHub 失败：%w", identity, err)
+		}
+		return githubPullsInto(pulls, project, src, target), nil
+	}
+	client, source, err := s.gongfengClientForRun(project, q)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := client.Clone(15*time.Second).CallTool("search_merge_request", map[string]any{
+		"project_id":    project,
+		"source_branch": src,
+		"target_branch": target,
+		"per_page":      20,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("以 %s 查询工蜂 MR %s 失败：%w", source, src, err)
+	}
+	return gongfengMRsInto(parseGongfengMRRecords(raw), project, src, target), nil
+}
+
+// gongfengClientForRun queries through the run project's Gongfeng MCP as the
+// run's responsible user; without a run project it falls back to the first
+// project that binds the repository.
+func (s *Service) gongfengClientForRun(project string, q domain.BranchMRQuery) (*MCPClient, string, error) {
+	local := strings.TrimSpace(q.ProjectID)
+	if local == "" || s.projectAuth == nil {
+		return s.gongfengClientForRemoteProject(project)
+	}
+	if q.ResponsibleUserID <= 0 {
+		return s.trackerClientForProject("gongfeng", local)
+	}
+	user, ok := s.projectAuth.User(q.ResponsibleUserID)
+	if !ok {
+		return nil, "none", fmt.Errorf("本轮责任人 %d 不存在", q.ResponsibleUserID)
+	}
+	binding, err := bindProjectUserTrackerMCP("gongfeng", s.cfg.Get(), s.projectAuth.MCPServers(), local, user, "责任人")
+	if err != nil {
+		return nil, binding.Source, err
+	}
+	return NewMCPClient(binding.URL, binding.Headers), binding.Source, nil
+}
+
+func gongfengMRsInto(items []gongfengListedMR, project, sourceBranch, targetBranch string) []domain.DeliveryMR {
+	var out []domain.DeliveryMR
+	for _, item := range items {
+		if s := strings.TrimSpace(item.SourceBranch); s != "" && !domain.SameGitBranch(s, sourceBranch) {
+			continue
+		}
+		if !domain.SameGitBranch(item.TargetBranch, targetBranch) {
+			continue
+		}
+		url := strings.TrimSpace(item.WebURL)
+		if _, _, parsed, ok := domain.ParseGongfengMR(url); ok {
+			url = parsed
+		} else {
+			url = domain.GongfengMRURL(project, item.IID)
+		}
+		out = append(out, domain.DeliveryMR{Project: project, IID: item.IID, URL: url, TargetBranch: item.TargetBranch, GongfengState: normalizeMRState(item.State), HeadSHA: strings.TrimSpace(item.SHA)})
+	}
+	return out
+}
+
 func pickBranchMR(items []gongfengListedMR, sourceBranch string) (gongfengListedMR, bool) {
 	var best gongfengListedMR
 	found, bestClosed := false, false
@@ -211,29 +294,10 @@ func parseGongfengMRRecords(raw string) []gongfengListedMR {
 			out = append(out, item)
 		}
 	}
-	var wrapped struct {
-		Data  json.RawMessage    `json:"data"`
-		Items []gongfengListedMR `json:"items"`
-	}
-	if json.Unmarshal([]byte(raw), &wrapped) == nil {
-		var list []gongfengListedMR
-		if json.Unmarshal(wrapped.Data, &list) == nil {
-			add(list)
-		}
-		var one gongfengListedMR
-		if json.Unmarshal(wrapped.Data, &one) == nil {
-			add([]gongfengListedMR{one})
-		}
-		add(wrapped.Items)
-	}
-	var list []gongfengListedMR
-	if json.Unmarshal([]byte(raw), &list) == nil {
-		add(list)
-	}
-	var one gongfengListedMR
-	if json.Unmarshal([]byte(raw), &one) == nil {
-		add([]gongfengListedMR{one})
-	}
+	visitGongfengMRPayload(raw, func(items []gongfengListedMR) bool {
+		add(items)
+		return false
+	})
 	return out
 }
 
@@ -283,42 +347,40 @@ func parseGongfengOpenMR(raw, wantTarget string) (globalID, iid int, ok bool) {
 		}
 		return 0, 0, false
 	}
-	return decodeGongfengMRList(raw, first)
+	visitGongfengMRPayload(raw, func(items []gongfengListedMR) bool {
+		globalID, iid, ok = first(items)
+		return ok
+	})
+	return globalID, iid, ok
 }
 
-func decodeGongfengMRList(raw string, first func([]gongfengListedMR) (int, int, bool)) (globalID, iid int, ok bool) {
+// visitGongfengMRPayload hands each candidate MR list of a search_merge_request
+// payload to visit, in order: {"data":[...]}, {"data":{...}}, {"items":[...]},
+// a bare array, then a bare object. It stops as soon as visit returns true.
+func visitGongfengMRPayload(raw string, visit func([]gongfengListedMR) bool) {
 	var wrapped struct {
 		Data  json.RawMessage    `json:"data"`
 		Items []gongfengListedMR `json:"items"`
 	}
 	if json.Unmarshal([]byte(raw), &wrapped) == nil {
 		var list []gongfengListedMR
-		if json.Unmarshal(wrapped.Data, &list) == nil {
-			if id, miid, found := first(list); found {
-				return id, miid, true
-			}
+		if json.Unmarshal(wrapped.Data, &list) == nil && visit(list) {
+			return
 		}
 		var one gongfengListedMR
-		if json.Unmarshal(wrapped.Data, &one) == nil {
-			if id, miid, found := first([]gongfengListedMR{one}); found {
-				return id, miid, true
-			}
+		if json.Unmarshal(wrapped.Data, &one) == nil && visit([]gongfengListedMR{one}) {
+			return
 		}
-		if id, miid, found := first(wrapped.Items); found {
-			return id, miid, true
+		if visit(wrapped.Items) {
+			return
 		}
 	}
 	var list []gongfengListedMR
-	if json.Unmarshal([]byte(raw), &list) == nil {
-		if id, miid, found := first(list); found {
-			return id, miid, true
-		}
+	if json.Unmarshal([]byte(raw), &list) == nil && visit(list) {
+		return
 	}
 	var one gongfengListedMR
 	if json.Unmarshal([]byte(raw), &one) == nil {
-		if id, miid, found := first([]gongfengListedMR{one}); found {
-			return id, miid, true
-		}
+		visit([]gongfengListedMR{one})
 	}
-	return 0, 0, false
 }

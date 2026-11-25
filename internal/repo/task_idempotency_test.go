@@ -14,12 +14,15 @@ func TestCreateTaskUsesTaskIDAsAtomicIdempotencyKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
+	if err := st.PutIssue(domain.Issue{ID: "issue-1", ProjectID: "platform", Title: "dispatch target"}); err != nil {
+		t.Fatal(err)
+	}
 	first := domain.Task{ID: "task-primary-fixed", IssueID: "issue-1", Status: "queued", DispatchMode: "scheduled", ScheduleJobID: "job-1"}
-	stored, created, err := st.CreateTask(first)
+	stored, created, err := st.ReserveIssueDispatch(first)
 	if err != nil || !created || stored.ID != first.ID {
 		t.Fatalf("first reservation: created=%t task=%+v err=%v", created, stored, err)
 	}
-	duplicate, created, err := st.CreateTask(domain.Task{ID: first.ID, IssueID: "issue-1", Status: "queued"})
+	duplicate, created, err := st.ReserveIssueDispatch(domain.Task{ID: first.ID, IssueID: "issue-1", Status: "queued"})
 	if err != nil || created || duplicate.ScheduleJobID != "job-1" {
 		t.Fatalf("duplicate reservation: created=%t task=%+v err=%v", created, duplicate, err)
 	}
@@ -31,15 +34,18 @@ func TestCreateTaskConcurrentPrimaryReservationHasOneWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
+	if err := st.PutIssue(domain.Issue{ID: "issue-1", ProjectID: "platform", Title: "dispatch target"}); err != nil {
+		t.Fatal(err)
+	}
 	var winners atomic.Int32
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, created, err := st.CreateTask(domain.Task{ID: "task-primary-concurrent", IssueID: "issue-1", Status: "queued"})
+			_, created, err := st.ReserveIssueDispatch(domain.Task{ID: "task-primary-concurrent", IssueID: "issue-1", Status: "queued"})
 			if err != nil {
-				t.Errorf("CreateTask: %v", err)
+				t.Errorf("ReserveIssueDispatch: %v", err)
 				return
 			}
 			if created {

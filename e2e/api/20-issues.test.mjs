@@ -1,6 +1,6 @@
 // Requirement lifecycle: create, list/filter/paginate, edit, comment,
 // clarification, SOP binding, dispatch into a real run, close and reopen, and
-// deleting a local requirement (refused while its run waits, history kept).
+// deleting a local requirement and its settled execution history.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { api, get, post, put, list, track, cleanup, ensureProject, waitFor, waitRun } from '../lib/api.mjs';
@@ -17,11 +17,10 @@ before(async () => {
 });
 after(cleanup);
 
-// Local requirements are deleted afterwards; a delivered, busy or half-deleted
-// one is closed so its SOP binding is released before the workflow is deleted.
+// Clean up the test's own requirements, including their execution history.
 function removeLater(id) {
   track(`issue ${id}`, async () => {
-    const res = await api('DELETE', `/api/issues/${id}`, undefined, { expect: [204, 400, 404, 409], raw: true });
+    const res = await api('DELETE', `/api/issues/${id}?force=true`, undefined, { expect: [204, 400, 404, 409], raw: true });
     if (res.status === 400 || res.status === 409) await post(`/api/issues/${id}/close`, {}, { expect: [200, 400, 404, 409] });
   });
 }
@@ -155,24 +154,20 @@ async function waitingIssue(label) {
   return { id: created.id, runId };
 }
 
-test('delete: refused once a run succeeded or while one waits; a cancelled attempt goes with the requirement', {
+test('delete: execution history requires force; a waiting run blocks deletion', {
   todo: 'POST /api/runs/:id/cancel tears the sandbox down inside the request (docker rm -f of the agentflow-run-*-scripts sidecar, up to dockerTeardownTimeout=60s); under nested Docker that rm hangs, so the call outlives the 60s client timeout',
 }, async () => {
-  // A requirement that delivered (its dispatched run succeeded) is history.
-  // Listing settles task status before the detail reason is shown.
+  // Listing settles task status before the detail affordance is shown.
   await get(`/api/issues?projectId=${P}`);
   const deliveredDetail = await detailOf(issue.id);
-  assert.equal(deliveredDetail.issue.deletionAllowed, false);
-  assert.equal(deliveredDetail.issue.deletionBlock?.code, 'succeeded');
-  assert.ok(deliveredDetail.issue.deletionBlock?.runId, `succeeded history has no run: ${JSON.stringify(deliveredDetail.issue.deletionBlock)}`);
-  assert.match(deliveredDetail.issue.deletionBlock.reason, /已有成功执行记录/);
+  assert.equal(deliveredDetail.issue.deletionAllowed, true);
+  assert.equal(deliveredDetail.issue.deletionRequiresForce, true);
+  assert.equal(deliveredDetail.issue.deletionBlock ?? null, null);
   const listed = list(await get(`/api/issues?projectId=${P}`)).find(i => i.id === issue.id);
-  assert.equal(listed?.deletionBlock?.reason, deliveredDetail.issue.deletionBlock.reason);
-  assert.equal(listed?.deletionBlock?.runId, deliveredDetail.issue.deletionBlock.runId);
+  assert.equal(listed?.deletionRequiresForce, true);
+  assert.equal(listed?.deletionAllowed, true);
   const delivered = await api('DELETE', `/api/issues/${issue.id}`, undefined, { expect: 409 });
-  assert.equal(delivered.error, deliveredDetail.issue.deletionBlock.reason);
-  assert.equal(delivered.deletionBlock?.code, 'succeeded');
-  assert.equal(delivered.deletionBlock?.runId, deliveredDetail.issue.deletionBlock.runId);
+  assert.equal(delivered.deletionRequiresForce, true);
 
   const doomed = await waitingIssue('issue-delete');
   await post(`/api/issues/${doomed.id}/comments`, { body: 'e2e 删除前的评论' });
@@ -181,9 +176,10 @@ test('delete: refused once a run succeeded or while one waits; a cancelled attem
   assert.equal(waiting.issue.deletionBlock?.code, 'active');
   assert.equal(waiting.issue.deletionBlock?.runId, doomed.runId);
   assert.match(waiting.issue.deletionBlock.reason, /未结束的运行/);
-  const busy = await api('DELETE', `/api/issues/${doomed.id}`, undefined, { expect: 409 });
+  const busy = await api('DELETE', `/api/issues/${doomed.id}?force=true`, undefined, { expect: 409 });
   assert.equal(busy.error, waiting.issue.deletionBlock.reason);
   assert.equal(busy.deletionBlock?.runId, doomed.runId);
+  assert.notEqual(busy.deletionRequiresForce, true);
   assert.equal((await get(`/api/issues/${doomed.id}`)).issue.id, doomed.id);
 
   await post(`/api/runs/${doomed.runId}/cancel`, {});
@@ -192,7 +188,7 @@ test('delete: refused once a run succeeded or while one waits; a cancelled attem
   // always lists before offering 删除 (see the todo below for the bare API).
   await waitFor('requirement deletable', async () => {
     await get(`/api/issues?projectId=${P}`);
-    return (await api('DELETE', `/api/issues/${doomed.id}`, undefined, { expect: [204, 409], raw: true })).status === 204 || null;
+    return (await api('DELETE', `/api/issues/${doomed.id}?force=true`, undefined, { expect: [204, 409], raw: true })).status === 204 || null;
   }, { timeoutMs: 30_000 });
   await api('GET', `/api/issues/${doomed.id}`, undefined, { expect: 404 });
   await api('DELETE', `/api/issues/${doomed.id}`, undefined, { expect: 404 });
@@ -206,5 +202,5 @@ test('delete right after the run is cancelled, without listing issues first', as
   const doomed = await waitingIssue('issue-delete-now');
   await post(`/api/runs/${doomed.runId}/cancel`, {});
   await waitRun(doomed.runId, r => r.status === 'cancelled', { label: 'cancelled' });
-  await api('DELETE', `/api/issues/${doomed.id}`, undefined, { expect: 204 });
+  await api('DELETE', `/api/issues/${doomed.id}?force=true`, undefined, { expect: 204 });
 });

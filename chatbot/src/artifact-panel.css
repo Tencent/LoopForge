@@ -278,6 +278,10 @@
   font-size: 11px;
 }
 .chat-shell .artifact-panel > .artifact-preview-toolbar .node-header-meta {
+  /* Status plus a model name (「已完成 · deepseek-v4.1-flash-ioa」) needs more
+     than the 150px other headers allow; the title gives way first. */
+  flex: 0 1 auto;
+  max-width: min(320px, 55%);
   overflow: hidden;
   font-size: 10px;
   text-overflow: ellipsis;

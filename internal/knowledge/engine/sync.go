@@ -74,20 +74,22 @@ func (w *SyncWorker) StartSyncLoop(ctx context.Context, executeRuns bool) {
 			if ctx.Err() != nil {
 				return
 			}
-			if !time.Now().Before(nextVectorCheck) {
-				if err := ReconcileVector(ctx); err != nil {
-					if !errors.Is(err, ErrVectorRebuildBusy) {
-						log.Printf("knowledge vector reconcile: %v", err)
+			if builtinWorkerEnabled(w.control) {
+				if !time.Now().Before(nextVectorCheck) {
+					if err := ReconcileVector(ctx); err != nil {
+						if !errors.Is(err, ErrVectorRebuildBusy) {
+							log.Printf("knowledge vector reconcile: %v", err)
+						}
+						nextVectorCheck = time.Now().Add(2 * time.Second)
+					} else {
+						nextVectorCheck = time.Now().Add(30 * time.Second)
 					}
-					nextVectorCheck = time.Now().Add(2 * time.Second)
-				} else {
-					nextVectorCheck = time.Now().Add(30 * time.Second)
 				}
+				if err := w.SyncOnce(ctx); err != nil {
+					log.Printf("knowledge sync: %v", err)
+				}
+				w.maybeReconcileWritebacks(ctx)
 			}
-			if err := w.SyncOnce(ctx); err != nil {
-				log.Printf("knowledge sync: %v", err)
-			}
-			w.maybeReconcileWritebacks(ctx)
 			select {
 			case <-ctx.Done():
 				return
@@ -96,6 +98,15 @@ func (w *SyncWorker) StartSyncLoop(ctx context.Context, executeRuns bool) {
 		}
 	}()
 }
+func builtinWorkerEnabled(control SyncControl) bool {
+	if store, ok := control.(interface {
+		KnowledgeSettings() domain.KnowledgeSettings
+	}); ok {
+		return store.KnowledgeSettings().EffectiveProvider() == domain.KnowledgeProviderBuiltin
+	}
+	return true
+}
+
 func (w *SyncWorker) SyncOnce(ctx context.Context) error {
 	if recovery, ok := w.control.(interface{ RecoverExpiredKnowledgePublications() error }); ok {
 		if err := recovery.RecoverExpiredKnowledgePublications(); err != nil {

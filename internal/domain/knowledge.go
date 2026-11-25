@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strings"
 	"time"
 )
 
@@ -16,6 +17,67 @@ const KnowledgeUsageRuleID = "agentflow-knowledge-usage"
 // KnowledgeArtifactBasename is the conventional deliverable name a run writes
 // when it has knowledge worth distilling back into the knowledge base.
 const KnowledgeArtifactBasename = "knowledge.md"
+
+const (
+	KnowledgeProviderBuiltin    = "builtin"
+	KnowledgeProviderLightCloud = "lightcloud"
+)
+
+// KnowledgeSettings is the platform-wide engine selection and optional LightCloud connection. Token is the upstream MCP bearer token; it never
+// leaves the server and Public() strips it before any API response.
+type KnowledgeSettings struct {
+	Provider        string `json:"provider"`
+	Enabled         bool   `json:"enabled"`
+	URL             string `json:"url"`
+	Token           string `json:"token,omitempty"`
+	TokenConfigured bool   `json:"tokenConfigured"`
+	// WriteEnabled gates publishing reviewed submissions upstream. Agents never
+	// receive the write tool regardless of this flag.
+	WriteEnabled bool `json:"writeEnabled"`
+	// DefaultSources applies to projects without their own entry; empty means
+	// every source the upstream token can see.
+	DefaultSources []string            `json:"defaultSources,omitempty"`
+	ProjectSources map[string][]string `json:"projectSources,omitempty"`
+	UpdatedBy      string              `json:"updatedBy,omitempty"`
+	UpdatedAt      time.Time           `json:"updatedAt,omitempty"`
+}
+
+// EffectiveProvider keeps configured LightCloud installations on their
+// existing provider. Fresh and previously built-in installations use builtin.
+func (s KnowledgeSettings) EffectiveProvider() string {
+	if s.Provider != "" {
+		return s.Provider
+	}
+	if strings.TrimSpace(s.URL) != "" && strings.TrimSpace(s.Token) != "" {
+		return KnowledgeProviderLightCloud
+	}
+	return KnowledgeProviderBuiltin
+}
+
+func (s KnowledgeSettings) Public() KnowledgeSettings {
+	s.Provider = s.EffectiveProvider()
+	s.TokenConfigured = strings.TrimSpace(s.Token) != ""
+	s.Token = ""
+	return s
+}
+
+// Ready reports whether agents and platform features may call the upstream.
+func (s KnowledgeSettings) Ready() bool {
+	return s.EffectiveProvider() == KnowledgeProviderBuiltin || s.ExternalReady()
+}
+
+func (s KnowledgeSettings) ExternalReady() bool {
+	return s.Enabled && strings.TrimSpace(s.URL) != "" && strings.TrimSpace(s.Token) != ""
+}
+
+// SourcesForProject returns the sources a project may read. A project entry
+// (even an empty one) overrides DefaultSources; empty means unrestricted.
+func (s KnowledgeSettings) SourcesForProject(projectID string) []string {
+	if list, ok := s.ProjectSources[strings.TrimSpace(projectID)]; ok {
+		return list
+	}
+	return s.DefaultSources
+}
 
 const (
 	KnowledgeSubmissionPublishing = "publishing"
@@ -93,6 +155,7 @@ const (
 // KnowledgeSubmission is one distilled document waiting for human review
 // before it is written back to an upstream knowledge source.
 type KnowledgeSubmission struct {
+	Provider       string `json:"provider,omitempty"`
 	ContentKey     string `json:"-"`
 	Version        uint64 `json:"version"`
 	ExpectedStatus string `json:"-"`
@@ -159,6 +222,15 @@ type KnowledgeWriteback struct {
 	CheckedAt    *time.Time `json:"checkedAt,omitempty"`
 	CreatedAt    time.Time  `json:"createdAt,omitempty"`
 	UpdatedAt    time.Time  `json:"updatedAt,omitempty"`
+}
+
+// EffectiveProvider attributes migrated and newly created review items to
+// their original engine. Older built-in rows have no provider field.
+func (s KnowledgeSubmission) EffectiveProvider() string {
+	if s.Provider == "" {
+		return KnowledgeProviderBuiltin
+	}
+	return s.Provider
 }
 
 // KnowledgeCandidate is a run artifact that looks like a distilled knowledge

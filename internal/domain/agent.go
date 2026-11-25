@@ -2,20 +2,24 @@ package domain
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
 
-// ExecutorEffortLevels lists the reasoning-effort levels each built-in CLI
-// accepts on its command line. An empty level keeps the CLI default.
+// ExecutorEffortLevels lists the reasoning-effort values each built-in CLI
+// can apply. An empty level uses the CLI default.
 var ExecutorEffortLevels = map[string][]string{
 	"claude-code": {"low", "medium", "high", "xhigh", "max", "ultracode"},
 	"codebuddy":   {"low", "medium", "high", "xhigh", "max", "ultracode"},
 	"codex":       {"low", "medium", "high", "xhigh", "max", "ultra"},
 	"opencode":    {"low", "medium", "high"},
-	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max"},
+	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
 	"agy":         {"low", "medium", "high", "xhigh", "max"},
+	"kimi":        {"none", "thinking", "low", "high", "max"},
 	"pi":          {"minimal", "low", "medium", "high", "xhigh", "max"},
+	"dsh":         {"none", "low", "high", "max"},
+	"zcode":       {"low", "high", "max"},
 }
 
 // AgentCLIExecutorKinds are the agent CLIs beyond CodeBuddy / Codex / Claude
@@ -25,12 +29,9 @@ var AgentCLIExecutorKinds = []string{"opencode", "cursor", "agy", "kimi", "pi", 
 
 func IsAgentCLIKind(kind string) bool {
 	kind = strings.TrimSpace(kind)
-	for _, k := range AgentCLIExecutorKinds {
-		if strings.EqualFold(k, kind) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(AgentCLIExecutorKinds, func(k string) bool {
+		return strings.EqualFold(k, kind)
+	})
 }
 
 // ValidateAgentEffort checks a role's reasoning-effort choice against the
@@ -44,10 +45,8 @@ func ValidateAgentEffort(effort, executorKind string) error {
 	if !ok {
 		return errors.New("当前 CLI 不支持设置思考强度")
 	}
-	for _, level := range levels {
-		if level == effort {
-			return nil
-		}
+	if slices.Contains(levels, effort) {
+		return nil
 	}
 	return errors.New("思考强度取值不被当前 CLI 支持")
 }

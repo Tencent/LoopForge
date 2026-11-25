@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/runtime"
 )
 
@@ -92,24 +94,51 @@ func (d *Daemon) ensureRunnerBrowser(ctx context.Context, request domain.RunnerW
 	return ""
 }
 
+// handleRunnerWorkspaceBrowser serves the side-panel browser. It needs no
+// workspace root or gate, so readRunnerWorkspace dispatches it first.
+func (d *Daemon) handleRunnerWorkspaceBrowser(ctx context.Context, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+	if request.Browser == nil {
+		return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid browser request"}
+	}
+	if request.Browser.Ensure && !runtime.BrowserRunning(ctx, request.RunID) {
+		if reason := d.ensureRunnerBrowser(ctx, request); reason != "" {
+			return runnerWorkspacePayload(domain.BrowserState{Reason: reason})
+		}
+	}
+	if !runnerBrowserReads[request.Browser.Operation] {
+		d.touchRunSandboxes(request.RunID)
+	}
+	state, err := runtime.HandleBrowser(ctx, request.RunID, *request.Browser)
+	if err != nil {
+		return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
+	}
+	return runnerWorkspacePayload(state)
+}
+
 func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
-	if request.Operation == domain.RunnerWorkspaceOperationBrowser {
-		if request.Browser == nil {
-			return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid browser request"}
-		}
-		if request.Browser.Ensure && !runtime.BrowserRunning(ctx, request.RunID) {
-			if reason := d.ensureRunnerBrowser(ctx, request); reason != "" {
-				return runnerWorkspacePayload(domain.BrowserState{Reason: reason})
-			}
-		}
-		if !runnerBrowserReads[request.Browser.Operation] {
-			d.touchRunSandboxes(request.RunID)
-		}
-		state, err := runtime.HandleBrowser(ctx, request.RunID, *request.Browser)
+	d.updateMu.RLock()
+	defer d.updateMu.RUnlock()
+	if d.updateReady.Load() {
+		return domain.RunnerWorkspaceResponse{Status: http.StatusConflict, Error: "Runner 即将重启，请稍后重试"}
+	}
+	ctx = d.withDockerRunnerHelperWait(ctx)
+	ctx = gitwork.WithSSHKnownHosts(ctx, request.GitSSHKnownHosts)
+	if request.Operation == domain.RunnerWorkspaceOperationConversationCLI {
+		return d.conversationProcess(ctx, request)
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationLoginModels {
+		return d.runnerLoginModels(ctx, request.ModelProvider)
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationSSHHostKeyProbe {
+		dialer := &net.Dialer{}
+		key, err := gitwork.ProbeSSHHostPublicKey(ctx, request.SSHHostKeyAddress, dialer.DialContext)
 		if err != nil {
-			return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
+			return domain.RunnerWorkspaceResponse{Status: http.StatusBadGateway, Error: err.Error()}
 		}
-		return runnerWorkspacePayload(state)
+		return runnerWorkspacePayload(key)
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationBrowser {
+		return d.handleRunnerWorkspaceBrowser(ctx, request)
 	}
 	root, err := d.runnerWorkspaceRoot(request)
 	if err != nil {
@@ -133,6 +162,11 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 				return workspaceBusyResponse("workspace is still in use")
 			}
 			defer gate.Unlock()
+			if request.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
+				if hasContent, err := runtime.WorkspaceDirHasContent(root); err == nil && !hasContent {
+					d.closeRunSandboxes(ctx, request.RunID)
+				}
+			}
 		}
 		return d.checkpointTransfers.Handle(ctx, root, request)
 	}
@@ -145,6 +179,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
+		if hasContent, err := runtime.WorkspaceDirHasContent(root); err == nil && !hasContent {
+			d.closeRunSandboxes(ctx, request.RunID)
+		}
 		if err := runtime.RestoreWorkspaceCheckpoint(root, request.Checkpoint); err != nil {
 			return runnerWorkspaceError(err)
 		}
@@ -166,10 +203,25 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	if request.Operation == domain.RunnerWorkspaceOperationPreparationStatus {
 		return runnerWorkspacePayload(d.runnerWorkspacePreparationStatus(ctx, root, request))
 	}
+	if request.Operation == domain.RunnerWorkspaceOperationPreviewService {
+		return d.workspacePreviewService(ctx, root, request)
+	}
 
-	workspaceWrite := request.RunKind == domain.RunKindWorkspace && (request.RunStatus == "running" || request.RunStatus == "waiting")
+	liveWorkspace := request.RunKind == domain.RunKindWorkspace && (request.RunStatus == "running" || request.RunStatus == "waiting")
+	// A person editing from the IDE only shares the workspace with running
+	// agent tasks (gate readers). Preparation, restore and checkpoints hold the
+	// gate exclusively and must still exclude the edit.
+	concurrentEdit := request.ConcurrentEdit && !liveWorkspace
+	workspaceWrite := liveWorkspace || concurrentEdit
 	switch request.Operation {
 	case domain.RunnerWorkspaceOperationArtifacts:
+		if concurrentEdit {
+			gate := d.requestGate(request)
+			if !gate.TryRLock() {
+				return workspaceBusyResponse("workspace is still in use")
+			}
+			defer gate.RUnlock()
+		}
 		if !workspaceWrite {
 			gate := d.requestGate(request)
 			if !gate.TryLock() {
@@ -191,7 +243,7 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
-		archive, err := runtime.CreateWorkspaceCheckpoint(root)
+		archive, err := runtime.CreateWorkspaceCheckpointContext(ctx, root)
 		if err != nil {
 			return runnerWorkspaceError(err)
 		}
@@ -220,7 +272,15 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	case domain.RunnerWorkspaceOperationWrite:
 		// The same human may save files while their terminal holds the fence.
 		scope := fmt.Sprintf("%s:%d", request.RunID, request.TerminalOwner)
-		if !workspaceWrite && (request.TerminalOwner <= 0 || !d.workspaceTerminals.HasScope(scope)) {
+		ownTerminal := request.TerminalOwner > 0 && d.workspaceTerminals.HasScope(scope)
+		if concurrentEdit && !ownTerminal {
+			gate := d.requestGate(request)
+			if !gate.TryRLock() {
+				return workspaceBusyResponse("workspace is being prepared, restored or saved")
+			}
+			defer gate.RUnlock()
+		}
+		if !workspaceWrite && !ownTerminal {
 			gate := d.requestGate(request)
 			if !gate.TryLock() {
 				return workspaceBusyResponse("execution is still stopping")
@@ -247,6 +307,24 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			"changes": changes, "repositories": runnerCollectWorkspaceGitRepositories(root, request.Repositories), "warning": warning,
 		}
 		return runnerWorkspacePayload(payload)
+	case domain.RunnerWorkspaceOperationCheckouts:
+		if request.Sandbox != nil {
+			task, err := d.workspaceSandboxTask(root, request)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			sandbox, release, err := d.acquireTaskSandbox(ctx, task)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			defer release()
+			checkouts, err := runtime.SandboxCheckouts(ctx, sandbox)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			return runnerWorkspacePayload(map[string]any{"checkouts": checkouts})
+		}
+		return runnerWorkspacePayload(map[string]any{"checkouts": gitwork.Checkouts(ctx, root)})
 	case domain.RunnerWorkspaceOperationTree:
 		entries, truncated, readErr := runnerReadWorkspaceTree(root, request.Path)
 		if readErr != nil {
@@ -641,7 +719,7 @@ func runnerCollectWorkspaceChanges(ctx context.Context, root string, repositorie
 		if _, err := os.Stat(filepath.Join(repository.path, ".git")); err != nil {
 			continue
 		}
-		out, err := exec.CommandContext(ctx, "git", "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all").Output()
+		out, err := exec.CommandContext(ctx, "git", "--no-optional-locks", "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all").Output()
 		if err != nil {
 			return changes, "Git 状态读取失败"
 		}
@@ -687,7 +765,9 @@ func runnerReadWorkspaceDiff(ctx context.Context, root string, repositories []do
 			}
 			rel = strings.TrimPrefix(raw, prefix)
 		}
-		args := []string{"-C", repository.path, "diff", "--no-ext-diff", "--no-color", "HEAD", "--"}
+		// Browsing must never take .git/index.lock: a concurrent preparation
+		// or commit would otherwise fail with "index.lock: File exists".
+		args := []string{"--no-optional-locks", "-C", repository.path, "diff", "--no-ext-diff", "--no-color", "HEAD", "--"}
 		if rel != "" {
 			args = append(args, filepath.FromSlash(rel))
 		}

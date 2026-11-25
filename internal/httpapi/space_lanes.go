@@ -181,7 +181,7 @@ func (h *spacesHandlers) laneWorkspace(run domain.Run) spaceLaneWorkspace {
 		break
 	}
 	switch {
-	case !roomRunTerminal(run.Status) && run.Status != "":
+	case !domain.TerminalRunStatus(run.Status) && run.Status != "":
 		ws.State = "running"
 	case !run.WorkspaceCleanedAt.IsZero():
 		ws.State = "cleaned"
@@ -228,7 +228,7 @@ func (h *spacesHandlers) lane(c *gin.Context) {
 	fillLane(&detail.spaceLane, run, h.agentNamer())
 	if view, ok := h.repo.RunView(runID); ok {
 		// RunState carries raw usage only; RunView aggregates it.
-		detail.Tokens, detail.CostUSD, detail.ToolCalls = maxInt64(detail.Tokens, view.Usage.TotalTokens), maxFloat(detail.CostUSD, view.Usage.CostUSD), maxInt(detail.ToolCalls, view.ToolCalls)
+		detail.Tokens, detail.CostUSD, detail.ToolCalls = max(detail.Tokens, view.Usage.TotalTokens), max(detail.CostUSD, view.Usage.CostUSD), max(detail.ToolCalls, view.ToolCalls)
 	}
 	detail.Workspace = h.laneWorkspace(run)
 	events := run.Events
@@ -242,27 +242,6 @@ func (h *spacesHandlers) lane(c *gin.Context) {
 		detail.Artifacts = append(detail.Artifacts, spaceLaneArtifact{ID: a.ID, NodeID: a.NodeID, Attempt: a.Attempt, Name: a.Name, MediaType: a.MediaType, Size: a.Size, CreatedAt: a.CreatedAt})
 	}
 	c.JSON(http.StatusOK, detail)
-}
-
-func maxInt64(a, b int64) int64 {
-	if b > a {
-		return b
-	}
-	return a
-}
-
-func maxFloat(a, b float64) float64 {
-	if b > a {
-		return b
-	}
-	return a
-}
-
-func maxInt(a, b int) int {
-	if b > a {
-		return b
-	}
-	return a
 }
 
 // startSOPs dispatches SOPs from the space. Inputs pin the artifact versions
@@ -473,7 +452,7 @@ func (h *spacesHandlers) saveFlow(c *gin.Context) {
 		stored = wf
 	}
 	userID, author := h.rooms.roomActor(c)
-	body, _ := json.Marshal(gin.H{"nodes": req.Nodes, "edges": req.Edges, "sandboxProfileId": wf.SandboxProfileID})
+	body, _ := json.Marshal(gin.H{"nodes": req.Nodes, "edges": req.Edges, "sandboxProfileId": stored.SandboxProfileID, "autoSelectSandbox": stored.AutoSelectSandbox})
 	art := domain.SpaceArtifact{ID: req.ArtifactID, SpaceID: room.ID, Kind: "sop", Title: req.Name, Summary: roomTrim(req.Description, 300), Format: "json",
 		Body: string(body), WorkflowID: stored.ID, AuthorID: userID, AuthorName: author}
 	base := 0
@@ -510,7 +489,7 @@ func (h *spacesHandlers) flowWorkflow(room domain.ChatRoom, req spaceFlowRequest
 		}
 		wf.Version, wf.Revision, wf.Status, wf.Tags, wf.Notifications = old.Version, old.Revision, old.Status, old.Tags, old.Notifications
 		if wf.SandboxProfileID == "" {
-			wf.SandboxProfileID = old.SandboxProfileID
+			wf.SandboxProfileID, wf.AutoSelectSandbox = old.SandboxProfileID, old.AutoSelectSandbox
 		}
 		if wf.Version == 0 {
 			wf.Version = 1
@@ -518,24 +497,19 @@ func (h *spacesHandlers) flowWorkflow(room domain.ChatRoom, req spaceFlowRequest
 	} else {
 		wf.ID = newChatID("wf")
 	}
-	if wf.SandboxProfileID == "" {
+	if !wf.AutoSelectSandbox && wf.SandboxProfileID == "" {
 		for _, s := range h.repo.Sandboxes() {
 			if s.ProjectID == room.ProjectID {
 				wf.SandboxProfileID = s.ID
 				break
 			}
-		}
-	}
-	if wf.SandboxProfileID == "" {
-		for _, s := range h.repo.Sandboxes() {
-			if s.Shared {
+			if wf.SandboxProfileID == "" && s.Shared {
 				wf.SandboxProfileID = s.ID
-				break
 			}
 		}
-	}
-	if wf.SandboxProfileID == "" {
-		return wf, "项目还没有可用的沙箱，请先在「沙箱」里创建一个"
+		if wf.SandboxProfileID == "" {
+			return wf, "项目还没有可用的沙箱，请先在「沙箱」里创建一个"
+		}
 	}
 	ids := map[string]bool{}
 	for i, n := range req.Nodes {

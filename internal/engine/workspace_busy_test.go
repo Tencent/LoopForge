@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 func busyPreparationRun(t *testing.T, e *Engine, st *repo.Store, id string) domain.Run {
@@ -99,5 +100,42 @@ func TestRunnerWorkspaceBusyClassification(t *testing.T) {
 		if got := runnerWorkspaceBusy(c.response); got != c.busy {
 			t.Errorf("%+v busy=%v, want %v", c.response, got, c.busy)
 		}
+	}
+}
+
+// An IDE terminal holds the runner fence after the SOP finished. Refilling
+// archived files must not fail the save or terminal input that triggered it.
+func TestArchivedRefillWaitsWhileRunnerIsBusy(t *testing.T) {
+	e, st := cvEEngine(t)
+	run := busyPreparationRun(t, e, st, "refill-busy-run")
+	files := []domain.WorkspaceArtifactFile{{Path: "hello.md", Content: "hi", SHA256: runtime.WorkspaceContentSHA("hi")}}
+	e.WorkspaceCheckpointTransport = func(_ context.Context, _ domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+		if request.Operation != domain.RunnerWorkspaceOperationArtifacts {
+			t.Fatalf("unexpected operation %s", request.Operation)
+		}
+		return domain.RunnerWorkspaceResponse{Status: 409, Code: domain.WorkspaceErrorBusy, Error: "workspace is still in use"}, nil
+	}
+	if restored, err := e.restoreWorkspaceFiles(context.Background(), run, files); err != nil || len(restored) != 0 {
+		t.Fatalf("busy refill must be skipped: %v %v", restored, err)
+	}
+	e.WorkspaceCheckpointTransport = func(context.Context, domain.Run, domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+		return domain.RunnerWorkspaceResponse{Status: 409, Error: "restore failed: disk full"}, nil
+	}
+	if _, err := e.restoreWorkspaceFiles(context.Background(), run, files); err == nil {
+		t.Fatal("a real refill failure must still surface")
+	}
+}
+
+// The readiness shortcut reads node states. A run without them (a bare locked
+// row) would look like it has nothing to prepare.
+func TestPreparationPlanNeedsNodeStates(t *testing.T) {
+	run := domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "setup", Type: "script", Script: "make deps", RunOnWorkspaceRebuild: true}}}}
+	run.Nodes = map[string]*domain.NodeRun{"setup": {NodeID: "setup", Status: "succeeded"}}
+	if runtime.WorkspacePreparationTrivial(workspacePreparationPlan(run)) {
+		t.Fatal("a succeeded preparation step must keep the readiness check")
+	}
+	run.Nodes = nil
+	if !runtime.WorkspacePreparationTrivial(workspacePreparationPlan(run)) {
+		t.Fatal("expected a run without node states to look trivial; callers must pass RunState")
 	}
 }

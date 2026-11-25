@@ -85,9 +85,6 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			if v.OwnerID == 0 {
 				v.OwnerID = existing.OwnerID
 			}
-			if v.Members == nil {
-				v.Members = existing.Members
-			}
 			if v.SOPBindings == nil {
 				v.SOPBindings = existing.SOPBindings
 			}
@@ -112,7 +109,13 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			}
 		}
 		seenMembers := map[int64]bool{}
-		for _, member := range v.Members {
+		for i, member := range v.Members {
+			role, ok := domain.NormalizeProjectMemberRole(member.Role)
+			if !ok {
+				c.JSON(400, map[string]string{"error": "project member role must be maintainer, member or viewer"})
+				return
+			}
+			v.Members[i].Role = role
 			if member.UserID <= 0 || seenMembers[member.UserID] {
 				c.JSON(400, map[string]string{"error": "project members must reference unique existing users"})
 				return
@@ -158,6 +161,10 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 		} else if !v.RunEval.IsZero() {
 			v.RunEval = domain.EffectiveRunEvalPolicy(v.RunEval)
 		}
+		if exists && v.Members != nil && v.MembersVersion == "" {
+			c.JSON(http.StatusConflict, gin.H{"error": "更新成员名单需要 membersVersion，请刷新项目后重试"})
+			return
+		}
 		if err := h.repo.PutProject(v); err != nil {
 			respond(c, err)
 			return
@@ -165,7 +172,7 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 		if isNew {
 			// 新建项目后立即幂等保证一个托管知识库；打开知识中心时再保证一次，
 			// 覆盖安装种子里的既有项目。失败只记日志，不阻断项目创建。
-			if h.knowSvc != nil {
+			if h.knowSvc != nil && h.knowSvc.Builtin() {
 				if _, err := h.knowSvc.EnsureHostedBase(v.ID); err != nil {
 					log.Printf("ensure hosted knowledge base for project %s: %v", v.ID, err)
 				}

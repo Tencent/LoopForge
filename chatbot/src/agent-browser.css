@@ -55,7 +55,8 @@
   background: var(--subtle);
   color: var(--muted);
 }
-.agent-browser-address:focus-within {
+/* Only typing an address highlights the bar, not its 标记元素 button. */
+.agent-browser-address:has(input:focus) {
   border-color: var(--accent);
 }
 .agent-browser-address input {
@@ -153,6 +154,21 @@
 .agent-browser-stage.is-offline .agent-browser-screen {
   filter: grayscale(1);
   opacity: 0.35;
+}
+/* Native preview: the dev server page itself, rendered by this browser. */
+.agent-browser-native {
+  display: flex;
+  background: #fff;
+}
+.agent-browser-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.agent-browser-loading {
+  background: var(--subtle);
 }
 .agent-browser-ime {
   position: absolute;
@@ -262,4 +278,187 @@
 [data-theme="dark"] .markdown .agent-browser-link,
 [data-theme="dark"] .markdown .agent-browser-link code {
   color: #8ab4f8;
+}
+/* Element picking in a native preview: outlines above the frame, a popover
+ * that adds the picked element to the composer. */
+.agent-browser-btn.is-on {
+  background: var(--hover);
+  color: var(--text);
+}
+.agent-browser-pick-outline {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 1.5px solid #3b82f6;
+  border-radius: 3px;
+  background: rgb(59 130 246 / 0.12);
+  pointer-events: none;
+}
+.agent-browser-pick-outline.is-picked {
+  border-width: 2px;
+  background: rgb(59 130 246 / 0.08);
+}
+.agent-browser-pick-tag {
+  position: absolute;
+  display: flex;
+  gap: 6px;
+  bottom: 100%;
+  left: -1.5px;
+  max-width: 260px;
+  margin-bottom: 4px;
+  padding: 2px 6px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* The size stays visible; a long label is the part that gets cut. */
+.agent-browser-pick-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-browser-pick-size {
+  flex: none;
+  opacity: 0.7;
+}
+.agent-browser-pick-tag.is-end {
+  right: -1.5px;
+  left: auto;
+}
+.agent-browser-pick-tag.is-inside.is-end {
+  right: 0;
+  left: auto;
+  border-radius: 0 0 0 4px;
+}
+.agent-browser-pick-tag.is-inside {
+  top: 0;
+  bottom: auto;
+  left: 0;
+  margin: 0;
+  border-radius: 0 0 4px 0;
+}
+.agent-browser-pick-popover {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.06);
+  color: var(--text);
+  font-size: 12.5px;
+  animation: agent-browser-pick-in 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.agent-browser-pick-name {
+  margin-bottom: 8px;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.agent-browser-pick-actions {
+  display: flex;
+  gap: 6px;
+}
+.agent-browser-pick-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+.agent-browser-pick-primary {
+  border: 0;
+  background: var(--accent);
+  color: var(--surface);
+}
+.agent-browser-pick-primary:hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--surface));
+}
+.agent-browser-pick-secondary {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+.agent-browser-pick-secondary:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.agent-browser-pick-hint {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  z-index: 3;
+  padding: 4px 10px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgb(31 41 55 / 0.88);
+  color: #fff;
+  font-size: 12px;
+  pointer-events: none;
+}
+@keyframes agent-browser-pick-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-browser-pick-popover {
+    animation: none;
+  }
+}
+/* Element picking on the screencast: a transparent layer takes the pointer
+ * so hovering and the pick click never reach the Agent browser. */
+.agent-browser-pick-capture {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  cursor: crosshair;
+}
+.agent-browser-pick-primary:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+/* "标记元素" sits at the end of the address bar, like the page's own tool. */
+.agent-browser-annotate {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  margin-right: -6px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+.agent-browser-annotate:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.agent-browser-annotate.is-on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.agent-browser-annotate:disabled {
+  opacity: 0.4;
+  cursor: default;
 }

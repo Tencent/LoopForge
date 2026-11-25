@@ -99,31 +99,10 @@ func isolateCodeBuddyFlags(args []string) []string {
 }
 
 func isolateCodeBuddyFlagsWithSource(args []string, settingSource string) []string {
-	start := 0
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		start = 1
+	out := dropArgWithValue(args, "--setting-sources", "--permission-mode", "--plugin-dir")
+	if !hasArg(out, "-y") && !hasArg(out, "--dangerously-skip-permissions") {
+		out = append(out, "-y")
 	}
-	head := append([]string{}, args[:start]...)
-	rest := make([]string, 0, len(args)-start+4)
-	skipNext := false
-	for _, arg := range args[start:] {
-		if skipNext {
-			skipNext = false
-			continue
-		}
-		if arg == "--setting-sources" || arg == "--permission-mode" || arg == "--plugin-dir" {
-			skipNext = true
-			continue
-		}
-		if strings.HasPrefix(arg, "--setting-sources=") || strings.HasPrefix(arg, "--permission-mode=") || strings.HasPrefix(arg, "--plugin-dir=") {
-			continue
-		}
-		rest = append(rest, arg)
-	}
-	if !hasArg(rest, "-y") && !hasArg(rest, "--dangerously-skip-permissions") {
-		rest = append(rest, "-y")
-	}
-	rest = append(rest, "--permission-mode", "bypassPermissions")
-	rest = append(rest, "--setting-sources", settingSource)
-	return append(head, rest...)
+	out = append(out, "--permission-mode", "bypassPermissions")
+	return append(out, "--setting-sources", settingSource)
 }

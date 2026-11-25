@@ -10,6 +10,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 // PrepareClarifyWorkspace ensures a local, up-to-date checkout of the given
@@ -25,13 +26,13 @@ import (
 // caller only needs to supply the resolved token (see ResolveClarifyGitToken).
 //
 // On success the checkout directory (cacheDir) is returned.
-func PrepareClarifyWorkspace(ctx context.Context, cacheDir string, repo domain.Repository, token string) (string, error) {
-	return PrepareClarifyWorkspaceAtBranch(ctx, cacheDir, repo, "", token)
+func PrepareClarifyWorkspace(ctx context.Context, cacheDir string, repo domain.Repository, credentials runtime.RunCredentials) (string, error) {
+	return PrepareClarifyWorkspaceAtBranch(ctx, cacheDir, repo, "", credentials)
 }
 
 // PrepareClarifyWorkspaceAtBranch checks out the requirement's selected branch.
 // An empty branch uses the repository default, as in PrepareClarifyWorkspace.
-func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo domain.Repository, baseBranch, token string) (string, error) {
+func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo domain.Repository, baseBranch string, credentials runtime.RunCredentials) (string, error) {
 	cloneURL := strings.TrimSpace(repo.CloneURL)
 	if cloneURL == "" {
 		return "", fmt.Errorf("repository %q has no cloneUrl", repo.ID)
@@ -47,14 +48,11 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 		baseBranch = "master"
 	}
 
-	if strings.TrimSpace(token) == "" {
-		// A readable local repository needs no remote credentials. HTTP/SSH
-		// sources still require the responsible user's configured Git token.
-		if info, err := os.Stat(cloneURL); err != nil || !info.IsDir() {
-			return "", fmt.Errorf("需求责任人未配置 Git Token（未指定责任人时用项目 Owner），请让该账号到「个人配置 → 个人凭证」填写。新建需求分析拉代码用的是责任人凭证，不是当前点击的人")
-		}
+	if repo.Provider == domain.RepositoryProviderSSH {
+		ctx = gitwork.WithSSHRemote(ctx, cloneURL)
 	}
-	ctx = withGitToken(ctx, token)
+	ctx = withRunGitCredentials(ctx, credentials)
+	ctx = gitwork.WithHTTPRemote(ctx, cloneURL)
 
 	if _, err := os.Stat(filepath.Join(cacheDir, ".git")); err == nil {
 		// Existing checkout: refresh to the latest base branch.
@@ -74,7 +72,7 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 	args := []string{
 		"clone", "--no-hardlinks", "--single-branch", "--depth", "1",
 		"--branch", baseBranch,
-		"--", gitwork.RewriteRemoteForToken(cloneURL, token), cacheDir,
+		"--", cloneRemoteForGit(ctx, cloneURL), cacheDir,
 	}
 	if _, err := runGit(ctx, cacheDir, args...); err != nil {
 		_ = os.RemoveAll(cacheDir)
@@ -117,7 +115,7 @@ func refreshClarifyWorkspace(ctx context.Context, cacheDir, cloneURL, baseBranch
 	return nil
 }
 
-// ResolveClarifyGitToken resolves the token for the responsible user.
-func ResolveClarifyGitToken(s *repo.Store, responsibleUserID int64) string {
-	return resolveGitToken(s, responsibleUserID)
+// ResolveClarifyGitCredentials resolves only the responsible user's host credentials.
+func ResolveClarifyGitCredentials(s *repo.Store, responsibleUserID int64) runtime.RunCredentials {
+	return runtime.RunCredentials{GitHTTPCredentials: s.GitHTTPCredentialSecrets(context.Background(), responsibleUserID)}
 }

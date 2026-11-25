@@ -66,6 +66,10 @@ func (h *browserHandlers) browser(c *gin.Context) {
 // executor is reported as an unavailable state rather than an error.
 func (h *browserHandlers) dispatch(ctx context.Context, run domain.Run, req domain.BrowserRequest) (json.RawMessage, string) {
 	timeout := 15 * time.Second
+	if req.Operation == "http" || req.Operation == "file" {
+		// A dev server compiles a route on its first request.
+		timeout = devServerTimeout
+	}
 	if req.Ensure {
 		// The first browser of a host may still need its sidecar image built.
 		timeout = 4 * time.Minute
@@ -130,6 +134,9 @@ func (h *browserHandlers) touchWorkspace(runID string) {
 }
 
 func (h *browserHandlers) canControl(r *http.Request, run domain.Run, userID int64) bool {
+	if run.IsPersonalWorkspace() {
+		return userID > 0 && userID == run.ExecutionContext.ResponsibleUserID
+	}
 	if mainBotWorkspaceRun(r.Context()) == run.ID {
 		return true
 	}

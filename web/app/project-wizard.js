@@ -3,7 +3,7 @@
 // and can be skipped. Progress lives only in memory.
 const PROJECT_WIZARD_STEPS=[
   {id:'basic',title:'基本信息',desc:'名称与默认 SOP'},
-  {id:'repos',title:'代码仓库',desc:'绑定 GitHub 仓库'},
+  {id:'repos',title:'代码仓库',desc:'绑定 Git 仓库'},
   {id:'members',title:'项目成员',desc:'Owner 与协作成员'},
   {id:'tapd',title:'TAPD 集成',desc:'可选，导入 TAPD 需求'},
   {id:'done',title:'完成',desc:'开始使用新项目'},
@@ -88,10 +88,7 @@ async function projectWizardCreate(){
   const value=buildProjectPayload(clone(d),{id:ident.id,key:ident.key,defaultRepositoryId:''});
   const invalid=validateProjectPayload(value,{creating:true,projects,workflows:state.data.workflows||[]});
   if(invalid)return projectWizardFail(invalid.field==='id'||invalid.field==='key'?'无法根据名称生成可用的项目标识，请换个名称重试':invalid.message,['name','workflowId','ownerId'].includes(invalid.field)?invalid.field:'');
-  const stored=await projectWizardRequest(async()=>{
-    const result=await api('/api/projects',{method:'POST',body:JSON.stringify(value)});
-    return storeSavedProject(result,value);
-  },'创建失败，可修改项目名称后重试：');
+  const stored=await projectWizardRequest(()=>persistProject(value,'POST'),'创建失败，可修改项目名称后重试：');
   if(!stored||projectWizard!==w)return false;
   w.projectId=stored.id||value.id;
   if(!state.projectFilter){state.projectFilter=w.projectId;localStorage.setItem('agentflow.activeProject',w.projectId)}
@@ -104,9 +101,10 @@ async function projectWizardCreate(){
 async function projectWizardAddRepo(){
   const w=projectWizard,project=projectWizardProject();if(!w||w.saving||!project)return false;
   const url=String(w.repo.url||'').trim(),info=parseGongfengRepoURL(url);
-  if(!info)return projectWizardFail(url?'无法识别为 GitHub 仓库地址，请检查后重试':'请先粘贴 GitHub 仓库地址','repoUrl');
-  if(projectWizardRepos().some(r=>r.gongfengProjectId===info.project))return projectWizardFail(`仓库 ${info.project} 已经绑定到这个项目`,'repoUrl');
-  const payload={projectId:project.id,provider:info.provider||'gongfeng',name:info.name,gongfengProjectId:info.project,webUrl:info.webUrl,cloneUrl:info.cloneUrl,defaultBranch:String(w.repo.branch||'').trim()||'main',integrateBranch:String(w.repo.integrate||'').trim(),localPath:'',repoUrl:url};
+  if(!info)return projectWizardFail(url?'请输入有效的 Git HTTP(S) 链接或 Git SSH 地址。':'请先粘贴 Git 仓库地址','repoUrl');
+  const transportOnly=['ssh','http','https'].includes(info.provider);
+  if(projectWizardRepos().some(r=>transportOnly?r.cloneUrl===info.cloneUrl:r.gongfengProjectId===info.project))return projectWizardFail(`仓库 ${info.project} 已经绑定到这个项目`,'repoUrl');
+  const payload={projectId:project.id,provider:info.provider||'gongfeng',name:info.name,gongfengProjectId:transportOnly?'':info.project,webUrl:info.webUrl,cloneUrl:info.cloneUrl,defaultBranch:String(w.repo.branch||'').trim()||'main',integrateBranch:String(w.repo.integrate||'').trim(),localPath:'',repoUrl:url};
   const makeDefault=projectNeedsDefaultRepository(project);
   let defaultError='';
   const repo=await projectWizardRequest(async()=>{
@@ -146,16 +144,35 @@ async function projectWizardRemoveRepo(repoId){
   renderAll();toast(notice,tone);
   return true;
 }
+// The members step edits the roster it loaded, so it submits that roster's own token: the
+// server rejects the write when someone else changed members meanwhile, instead of letting
+// the step replace the list with one that predates an approved join request.
 async function projectWizardSaveProject(){
   const w=projectWizard,saved=projectWizardProject();
   if(!saved)return projectWizardFail('项目不存在或无权访问');
-  const d=w.draft,fields=w.step==='members'?{ownerId:d.ownerId,members:d.members}:{tapdWorkspaceId:d.tapdWorkspaceId,tapdIterationId:d.tapdIterationId};
+  const d=w.draft,fields=w.step==='members'?{ownerId:d.ownerId,members:d.members,membersVersion:d.membersVersion}:{tapdWorkspaceId:d.tapdWorkspaceId,tapdIterationId:d.tapdIterationId};
   const value=buildProjectPayload(clone(saved),fields);
   const invalid=validateProjectPayload(value,{creating:false,projects:state.data.projects||[],workflows:state.data.workflows||[],saved});
   if(invalid)return projectWizardFail(invalid.message);
-  const stored=await projectWizardRequest(async()=>storeSavedProject(await api('/api/projects',{method:'PUT',body:JSON.stringify(value)}),value));
+  const stored=await projectWizardRequest(async()=>{
+    const project=await persistProject(value);
+    if(project&&projectWizard===w){w.draft=projectDraftFrom(project);w.base=clone(w.draft)}
+    return project;
+  });
   if(stored)renderAll();
+  else if(w.step==='members')await reloadProjectWizardMembers(value.membersVersion);
   return !!stored;
+}
+// A rejected member save usually means the roster moved on; reload it so the step shows the
+// current members and the next save replaces that list rather than the outdated one.
+async function reloadProjectWizardMembers(token){
+  const w=projectWizard,id=w?.projectId;if(!id)return;
+  await refreshProjectJoinMembers(id);
+  const fresh=projectWizardProject();
+  if(projectWizard!==w||w.step!=='members'||w.saving||!fresh||fresh.membersVersion===token)return;
+  w.draft=projectDraftFrom(fresh);w.base=clone(w.draft);
+  w.error='项目成员已经变化，这里已载入最新名单，请确认后重新保存。';
+  renderProjectWizard();
 }
 async function projectWizardNext(){
   const w=projectWizard;if(!w||w.saving)return;
@@ -244,19 +261,20 @@ function projectWizardBasicHTML(w){
 }
 function projectWizardRepoHint(url){
   const raw=String(url||'').trim(),info=raw?parseGongfengRepoURL(raw):null;
-  if(!raw)return '支持 https / ssh 地址，例如 https://github.com/owner/repo';
-  return info?`识别为 <b>${escapeHTML(info.name)}</b> · ${escapeHTML(repoDisplayPath(info,info.project))}`:'无法识别为 GitHub 仓库地址';
+  if(!raw)return '例如 https://github.com/owner/repo 或 git clone http://git.example.org/team/repo.git';
+  if(info?.provider==='ssh')return `识别为 Git SSH · <b>${escapeHTML(info.name)}</b>。请平台管理员在「平台管理 → Git 主机信任」登记主机公钥，并在个人配置中添加 Git SSH 密钥。`;
+  return info?`识别为 <b>${escapeHTML(info.name)}</b> · ${escapeHTML(repoDisplayPath(info,info.project))}`:'请输入 Git HTTP(S) 链接或 Git SSH 地址';
 }
 function projectWizardReposHTML(w){
   const project=projectWizardProject()||{},repos=projectWizardRepos();
-  const list=repos.map(r=>{const path=r.gongfengProjectId||'',name=r.name||path||r.id,shown=repoDisplayPath(parseGongfengRepoURL(r.webUrl||r.cloneUrl||path),path);return `<div class="pw-repo" data-pw-repo="${escapeHTML(r.id)}"><span class="pw-repo-ic">${pwIcon('repo',14,1.9)}</span><b title="${escapeHTML(name)}">${escapeHTML(name)}</b><code title="${escapeHTML(shown)}">${escapeHTML(shown)}</code><small>${escapeHTML(r.defaultBranch||'main')}</small>${r.integrateBranch?`<small title="集成分支">${escapeHTML(r.integrateBranch)}</small>`:''}${r.id===project.defaultRepositoryId?'<small class="is-def">默认</small>':''}<button type="button" class="pw-repo-rm" data-pw-repo-remove="${escapeHTML(r.id)}" title="移除" aria-label="移除仓库 ${escapeHTML(name)}">${pwIcon('x',14)}</button></div>`}).join('');
+  const list=repos.map(r=>{const path=r.cloneUrl||r.gongfengProjectId||'',name=r.name||path||r.id,shown=repoDisplayPath(parseGongfengRepoURL(globalThis.LoopForgeGitRepositoryReference(r)),path);return `<div class="pw-repo" data-pw-repo="${escapeHTML(r.id)}"><span class="pw-repo-ic">${pwIcon('repo',14,1.9)}</span><b title="${escapeHTML(name)}">${escapeHTML(name)}</b><code title="${escapeHTML(shown)}">${escapeHTML(shown)}</code><small>${escapeHTML(r.defaultBranch||'main')}</small>${r.integrateBranch?`<small title="集成分支">${escapeHTML(r.integrateBranch)}</small>`:''}${r.id===project.defaultRepositoryId?'<small class="is-def">默认</small>':''}<button type="button" class="pw-repo-rm" data-pw-repo-remove="${escapeHTML(r.id)}" title="移除" aria-label="移除仓库 ${escapeHTML(name)}">${pwIcon('x',14)}</button></div>`}).join('');
   const body=(list?`<div class="pw-repo-list">${list}</div>`:'')
     +'<div data-github-repositories></div>'
-    +pwField('GitHub 仓库地址',`<input class="pw-input pw-mono" id="pwRepoUrl" name="repoUrl" value="${escapeHTML(w.repo.url)}" placeholder="https://github.com/owner/repo" spellcheck="false" autocomplete="off">`,{for:'pwRepoUrl',hint:projectWizardRepoHint(w.repo.url),hintAttrs:' data-pw-repo-hint'})
+    +pwField('Git 仓库地址',`<input class="pw-input pw-mono" id="pwRepoUrl" name="repoUrl" value="${escapeHTML(w.repo.url)}" placeholder="https://github.com/owner/repo" spellcheck="false" autocomplete="off">`,{for:'pwRepoUrl',hint:projectWizardRepoHint(w.repo.url),hintAttrs:' data-pw-repo-hint'})
     +`<div class="pw-row2">${pwField('主分支',`<input class="pw-input pw-mono" id="pwRepoBranch" name="repoBranch" value="${escapeHTML(w.repo.branch)}" placeholder="main" spellcheck="false">`,{for:'pwRepoBranch'})}${pwField('集成分支',`<input class="pw-input pw-mono" id="pwRepoIntegrate" name="repoIntegrate" value="${escapeHTML(w.repo.integrate)}" placeholder="可选" spellcheck="false">`,{for:'pwRepoIntegrate'})}</div>`
     +`<div><button type="button" class="pw-btn pw-btn-outline pw-btn-sm" data-pw-action="add-repo"${w.saving?' disabled':''}>＋ 添加仓库</button></div>`;
   return projectWizardHeadHTML(w,'代码仓库','Agent 执行 SOP 时会克隆这些仓库并在工作分支上提交。第一个仓库会自动设为默认。')
-    +`<div class="pw-pane"><p class="pw-note is-ok">✓ 项目「${escapeHTML(project.name||'')}」已创建。仓库添加后立即生效，也可以先跳过。</p>${pwCard('绑定 GitHub 仓库','粘贴仓库地址，自动识别名称',pwPill(repos.length?`已绑定 ${repos.length} 个`:'未绑定',repos.length?'ok':''),body)}</div>`;
+    +`<div class="pw-pane"><p class="pw-note is-ok">✓ 项目「${escapeHTML(project.name||'')}」已创建。仓库添加后立即生效，也可以先跳过。</p>${pwCard('绑定代码仓库','粘贴仓库地址，自动识别名称',pwPill(repos.length?`已绑定 ${repos.length} 个`:'未绑定',repos.length?'ok':''),body)}</div>`;
 }
 function projectWizardPeoplePill(d){const count=projectPeopleIds(d).length;return pwPill(`${count} 位`,count>1?'ok':'',' data-pw-people-pill')}
 function projectWizardMembersHTML(w){

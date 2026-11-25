@@ -69,6 +69,8 @@ function defaultPayload(pathname, method) {
   };
   if (pathname === '/api/bootstrap') return sampleBootstrap();
   if (pathname === '/api/assistant/sessions') return [];
+  if (/\/users\/[^/]+\/git-ssh-keys$/.test(pathname)) return [];
+  if (/\/users\/[^/]+\/git-http-credentials$/.test(pathname)) return [];
   if (/\/workflows\/metrics$/.test(pathname)) return sampleBootstrap().workflowMetrics;
   if (pathname === '/api/workflow-metrics') return sampleBootstrap().workflowMetrics;
   if (pathname === '/api/notification-bots') return sampleBootstrap().bots;
@@ -92,11 +94,11 @@ function defaultPayload(pathname, method) {
   };
   if (/^\/api\/knowledge\/(submissions|candidates|sources)$/.test(pathname)) return [];
   if (pathname === '/api/knowledge/usage') return { searches: 3, fetches: 2, agents: 1 };
-  if (/^\/api\/(projects|issues|tasks|runs|flows|workflows|sops|agents|runners|assets|bots|rooms|users|notifications|revisions|approvals|business-domains|rules|skills|mcp|mcp-servers|executors|dockerfiles|environments|sandboxes|schedule-jobs)$/.test(pathname)) {
+  if (/^\/api\/(projects|issues|tasks|runs|flows|workflows|sops|agents|runners|assets|bots|rooms|users|notifications|revisions|approvals|business-domains|rules|skills|mcp|mcp-servers|executors|sandboxes|schedule-jobs)$/.test(pathname)) {
     const key = pathname.split('/').at(-1).replace('flows', 'workflows').replace('mcp-servers', 'mcpServers').replace('schedule-jobs', 'scheduleJobs');
     return sampleBootstrap()[key] || [];
   }
-  const collection = pathname.match(/\/(projects|issues|tasks|runs|workflows|agents|runners|bots|users|rules|skills|mcp-servers|dockerfiles|environments|sandboxes|schedule-jobs)$/)?.[1];
+  const collection = pathname.match(/\/(projects|issues|tasks|runs|workflows|agents|runners|bots|users|rules|skills|mcp-servers|sandboxes|schedule-jobs)$/)?.[1];
   if (collection) {
     const key = collection.replace('mcp-servers', 'mcpServers').replace('schedule-jobs', 'scheduleJobs');
     return sampleBootstrap()[key] || [];
@@ -141,8 +143,7 @@ export function sampleBootstrap() {
     runs: [run], workflows: [workflow], agents: [agent], workflowMetrics: [
       { workflowId: workflow.id, total: 4, succeeded: 3, failed: 1 },
     ], rules: [asset('rule-1', 'Code style')], skills: [asset('skill-1', 'Testing')],
-    dockerfiles: [asset('docker-1', 'Node image')], environments: [asset('env-1', 'Node setup')],
-    sandboxes: [asset('sandbox-1', 'Restricted')], mcpServers: [
+    sandboxes: [{ ...asset('sandbox-1', 'Restricted'), driver: 'docker', dockerfile: { content: 'FROM node:22' } }], mcpServers: [
       { id: 'mcp-1', projectId: project.id, name: 'Filesystem', command: 'npx', args: ['server'], enabled: true },
     ], executors: [{ id: 'runner-1', name: 'Linux Runner', status: 'online', maxConcurrent: 2 }],
     runners: [{ id: 'runner-1', name: 'Linux Runner', status: 'online', maxConcurrent: 2 }],
@@ -161,12 +162,12 @@ class ObserverStub {
   takeRecords() { return []; }
 }
 
-export async function loadApp({ routes = [], hash = '', dispatchReady = true } = {}) {
+export async function loadApp({ routes = [], hash = '', dispatchReady = true, origin = 'http://127.0.0.1' } = {}) {
   const html = await readFile(path.join(WEB_ROOT, 'index.html'), 'utf8');
   const dom = new JSDOM(html, {
     runScripts: 'outside-only',
     pretendToBeVisual: true,
-    url: `http://127.0.0.1/${hash ? `#${hash.replace(/^#/, '')}` : ''}`,
+    url: `${origin}/${hash ? `#${hash.replace(/^#/, '')}` : ''}`,
   });
   const { window } = dom;
   const router = createFetchRouter(routes);

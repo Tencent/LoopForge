@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/runtime"
 )
 
@@ -114,17 +115,26 @@ func safeRunnerPath(v string) string {
 	return b.String()
 }
 
-// requireWorkBranchCapabilities refuses a run whose branch semantics the
-// selected runner cannot honour: an old daemon would ignore the flags and
-// silently check out an existing same-named branch.
-func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []domain.RepositoryContext) error {
-	if runnerID == "" {
+// requireRunnerRepositoryCapabilities checks repository transport and branch
+// requirements before work is sent to the selected runner.
+func (e *Engine) requireRunnerRepositoryCapabilities(runnerID string, repositories []domain.RepositoryContext) error {
+	if runnerID == "" || len(repositories) == 0 {
 		return nil
 	}
+	runner, _ := e.repo.Runner(runnerID)
+	return runnerRepositoryCapabilityError(runner, repositories)
+}
+
+func runnerRepositoryCapabilityError(runner domain.Runner, repositories []domain.RepositoryContext) error {
 	for _, repository := range repositories {
+		if repository.Provider == domain.RepositoryProviderSSH && !runner.SupportsGitSSH() {
+			return fmt.Errorf("Git SSH 仓库需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionGitSSH)
+		}
+		if repository.Provider == domain.RepositoryProviderHTTP && !runner.SupportsGitPlainHTTP() {
+			return errors.New(domain.RunnerGitPlainHTTPUpgradeMessage)
+		}
 		if repository.CreateNewWorkBranch {
-			runner, ok := e.repo.Runner(runnerID)
-			if !ok || !runner.SupportsCreateNewWorkBranch() {
+			if !runner.SupportsCreateNewWorkBranch() {
 				return fmt.Errorf("按指定名字新建分支需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionCreateNewWorkBranch)
 			}
 			continue
@@ -132,8 +142,7 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 		if !repository.RequireExistingWorkBranch {
 			continue
 		}
-		runner, ok := e.repo.Runner(runnerID)
-		if !ok || !runner.SupportsExistingWorkBranch() {
+		if !runner.SupportsExistingWorkBranch() {
 			return fmt.Errorf("继续已有分支需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionExistingWorkBranch)
 		}
 	}
@@ -141,7 +150,14 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 }
 
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
-	if err := e.requireWorkBranchCapabilities(e.defaultExecutionRunner(run), run.RepositoryContexts()); err != nil {
+	runnerID := e.defaultExecutionRunner(run)
+	if runnerID != "" && run.UsesConversationWorkspace() && len(run.RepositoryContexts()) > 0 {
+		runner, ok := e.repo.Runner(runnerID)
+		if !ok || !runner.SupportsConversationSOPWorkspace() {
+			return nil, fmt.Errorf("复用对话中的仓库检出需要执行机器升级至 %s", domain.RunnerVersionConversationSOPWorkspace)
+		}
+	}
+	if err := e.requireRunnerRepositoryCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return nil, err
 	}
 	profile, resources, err := e.workspaceSandboxProfile(run)
@@ -149,11 +165,20 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 		return nil, err
 	}
 	spec := resolvedSandboxSnapshot(profile, resources)
-	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot)
+	var codexLoginRelay bool
+	if profile.Driver == domain.SandboxDriverDocker && runnerID != "" {
+		runner, ok := e.repo.Runner(runnerID)
+		codexLoginRelay = ok && sopRunnerAuthMode(run.ExecutionContext, runner, "codex") == domain.RuntimeAuthLocal
+	}
+	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot, codexLoginRelay)
 	if err != nil {
 		return nil, err
 	}
-	spec.Requirements = &domain.RunnerSandboxRequirements{PrivateHome: requirements.PrivateHome, BunFS: requirements.BunFS}
+	spec.Requirements = &domain.RunnerSandboxRequirements{
+		PrivateHome:      requirements.PrivateHome,
+		BunFS:            requirements.BunFS,
+		RunnerLoginRelay: requirements.RunnerLoginRelay,
+	}
 	for _, state := range requirements.CLIStates {
 		spec.Requirements.CLIStates = append(spec.Requirements.CLIStates, domain.RunnerCLIStateRequirement{Directory: state.Directory, Files: append([]string(nil), state.Files...)})
 	}
@@ -167,28 +192,30 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 // task-scoped invocation. The run's repository travels with the task so the
 // sandbox/workspace is created on that machine.
 func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run domain.Run, node domain.WorkflowNode, sb *runEnvironment, workspace string, ex domain.ExecutorDefinition, agent domain.AgentDefinition, assets domain.AgentAssetBundle, prompt, invocationID string, options runtime.InvocationOptions, sink runtime.EventSink) (string, error) {
-	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return "", err
 	}
 	if err := e.requireRunnerProvider(runnerID, ex.Kind); err != nil {
 		return "", err
 	}
 	runner, _ := e.repo.Runner(runnerID)
-	authMode := runner.RuntimeAuthMode(ex.Kind)
+	authMode := sopRunnerAuthMode(run.ExecutionContext, runner, ex.Kind)
+	projectShare := runner.OwnerUserID > 0 && runner.OwnerUserID != run.ExecutionContext.ResponsibleUserID
 	resumeSessionID := resolveRunnerResumeSessionID(run, node.ID, options)
 	invocation := &domain.RunnerInvocation{
-		ArchivedFiles:    e.legacyArchivedWorkspaceFiles(run, node.ID),
-		RunID:            run.ID,
-		NodeID:           node.ID,
-		InvocationID:     invocationID,
-		ResumeSessionID:  resumeSessionID,
-		Executor:         ex,
-		Agent:            agent,
-		Assets:           assets,
-		Artifacts:        node.ArtifactOutputs,
-		HumanContext:     run.HumanContext,
-		CredentialSource: authMode,
-		GateResultPath:   options.GateResultPath,
+		ArchivedFiles:                 e.legacyArchivedWorkspaceFiles(run, node.ID),
+		RunID:                         run.ID,
+		NodeID:                        node.ID,
+		InvocationID:                  invocationID,
+		ResumeSessionID:               resumeSessionID,
+		Executor:                      ex,
+		Agent:                         agent,
+		Assets:                        assets,
+		Artifacts:                     node.ArtifactOutputs,
+		HumanContext:                  run.HumanContext,
+		CredentialSource:              authMode,
+		GateResultPath:                options.GateResultPath,
+		RepositoryPreparationFallback: firstRepositoryAgent(run.WorkflowSnapshot, node),
 	}
 	if strings.TrimSpace(options.GateResultPath) != "" {
 		invocation.Artifacts = append(invocation.Artifacts, gateResultContract(options.GateResultPath))
@@ -197,22 +224,33 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		switch ex.Kind {
 		case "codex":
 			if strings.TrimSpace(sb.credentialSnapshot().Codex.APIKey) == "" {
+				if projectShare {
+					return "", errors.New("项目共享执行机器需要当前责任人的 Codex API Key，请在个人配置中填写")
+				}
 				return "", errors.New("当前责任人未配置 Codex API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
 			invocation.CodexAPIKey = sb.credentialSnapshot().Codex.APIKey
 			invocation.CodexBaseURL = sb.credentialSnapshot().Codex.BaseURL
 		case "claude-code":
 			if strings.TrimSpace(sb.credentialSnapshot().ClaudeCode.APIKey) == "" {
+				if projectShare {
+					return "", errors.New("项目共享执行机器需要当前责任人的 Claude Code API Key，请在个人配置中填写")
+				}
 				return "", errors.New("当前责任人未配置 Claude Code API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
 			invocation.ClaudeCodeAPIKey = sb.credentialSnapshot().ClaudeCode.APIKey
 			invocation.ClaudeCodeBaseURL = sb.credentialSnapshot().ClaudeCode.BaseURL
 		case "codebuddy":
-			if strings.TrimSpace(sb.credentialSnapshot().CodeBuddy.APIKey) == "" {
+			credential := sb.credentialSnapshot().CodeBuddy
+			if strings.TrimSpace(credential.APIKey) == "" {
 				return "", errors.New("当前责任人未配置 CodeBuddy API Key：请先在个人配置中配置")
 			}
-			invocation.CodeBuddyAPIKey = sb.credentialSnapshot().CodeBuddy.APIKey
-			invocation.CodeBuddyInternetEnvironment = sb.credentialSnapshot().CodeBuddy.InternetEnvironment
+			if credential.BaseURL != "" && !runner.SupportsCodeBuddyBaseURL() {
+				return "", fmt.Errorf("执行机器需升级至 %s 才能使用 CodeBuddy Base URL", domain.RunnerVersionCodeBuddyBaseURL)
+			}
+			invocation.CodeBuddyAPIKey = credential.APIKey
+			invocation.CodeBuddyBaseURL = credential.BaseURL
+			invocation.CodeBuddyInternetEnvironment = credential.InternetEnvironment
 		default:
 			if runtime.IsAgentCLI(ex.Kind) {
 				cred := sb.credentialSnapshot().AgentCLI[ex.Kind]
@@ -222,10 +260,11 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 				invocation.AgentCLIAPIKey = cred.APIKey
 				invocation.AgentCLIBaseURL = cred.BaseURL
 				invocation.AgentCLIProtocol = cred.Protocol
+				invocation.AgentCLIModels = cred.Models
 			}
 		}
 	}
-	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
+	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	reported := sb.reportedOutputs(node.ID)
 	if reported != nil {
 		invocation.Artifacts = nil
@@ -254,6 +293,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	if err != nil {
 		return "", err
 	}
+	task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
 	task.Sandbox = sandboxSpec
 	if err := validateSOPHandoffRunnerPayload(run, task); err != nil {
 		return "", err
@@ -300,7 +340,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		if final.ExitCode != nil {
 			msg = fmt.Sprintf("%s (exit %d)", msg, *final.ExitCode)
 		}
-		return "", explainGitAuthFailure(errors.New(msg), strings.TrimSpace(sb.credentialSnapshot().GitToken) != "")
+		return "", explainGitAuthFailure(errors.New(msg), strings.TrimSpace(sb.credentialSnapshot().GitHTTPCredentials["github.com"].Token) != "")
 	case domain.RunnerTaskCanceled:
 		return "", errors.New("runner task canceled")
 	default:
@@ -324,12 +364,13 @@ func resolveRunnerResumeSessionID(run domain.Run, nodeID string, options runtime
 	return ""
 }
 
-func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run, gitToken, gitUserName, gitUserEmail string) {
+func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run, gitUserName, gitUserEmail string) {
 	if invocation == nil {
 		return
 	}
 	invocation.GitUserName = strings.TrimSpace(gitUserName)
 	invocation.GitUserEmail = strings.TrimSpace(gitUserEmail)
+	invocation.GitHTTPUserID = run.ExecutionContext.ResponsibleUserID
 	if strings.TrimSpace(run.Repository.CloneURL) != "" && len(run.Repositories) == 0 {
 		invocation.Repository = &domain.RunnerRepository{
 			RepositoryID:              run.Repository.RepositoryID,
@@ -339,7 +380,8 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			WorkBranch:                run.Repository.WorkBranch,
 			RequireExistingWorkBranch: run.Repository.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       run.Repository.CreateNewWorkBranch,
-			GitToken:                  gitToken,
+			PreserveCheckout:          run.UsesConversationWorkspace(),
+			UseSSH:                    run.Repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(run.Repository.CloneURL),
 		}
 	}
 	for _, rc := range run.RepositoryContexts() {
@@ -354,9 +396,21 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			WorkBranch:                rc.WorkBranch,
 			RequireExistingWorkBranch: rc.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       rc.CreateNewWorkBranch,
-			GitToken:                  gitToken,
+			PreserveCheckout:          run.UsesConversationWorkspace(),
+			UseSSH:                    rc.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(rc.CloneURL),
 			Dir:                       rc.WorkspaceDir,
 		})
+	}
+	if len(invocation.GitSSHRemotes()) > 0 {
+		invocation.GitSSHUserID = run.ExecutionContext.ResponsibleUserID
+		if invocation.Repository != nil && invocation.Repository.UseSSH {
+			invocation.Repository.GitToken = ""
+		}
+		for i := range invocation.Repositories {
+			if invocation.Repositories[i].UseSSH {
+				invocation.Repositories[i].GitToken = ""
+			}
+		}
 	}
 }
 
@@ -369,7 +423,7 @@ func shellSingleQuote(value string) string {
 // the first node; subsequent shared-layout nodes reuse the same checkout and
 // its workspace-local Git index flags.
 func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run domain.Run, nodeID, workspace, language, script, artifactDirectory string, artifacts []domain.ArtifactContract, sb *runEnvironment, gitToken, gitUserName, gitUserEmail string, assets domain.AgentAssetBundle, sink runtime.EventSink) (string, error) {
-	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return "", err
 	}
 	if err := e.requireRunnerProvider(runnerID, "terminal"); err != nil {
@@ -382,7 +436,7 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 	invocation := &domain.RunnerInvocation{
 		ArchivedFiles: e.legacyArchivedWorkspaceFiles(run, nodeID),
 		RunID:         run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
-	bindRunnerRepositories(invocation, run, gitToken, gitUserName, gitUserEmail)
+	bindRunnerRepositories(invocation, run, gitUserName, gitUserEmail)
 	reported := sb.reportedOutputs(nodeID)
 	if reported != nil {
 		invocation.Artifacts = nil
@@ -413,6 +467,7 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 	if err != nil {
 		return "", err
 	}
+	task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
 	if err := validateSOPHandoffRunnerPayload(run, task); err != nil {
 		return "", err
 	}
@@ -492,11 +547,14 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 		}
 		provider := "terminal"
 		if node.Type != "script" && node.Type != "command" && node.Type != "approval" {
-			agent, found := e.repo.Agent(node.AgentID)
+			agent, found := workflowAgent(e.repo, run.WorkflowSnapshot, node.AgentID)
 			if !found {
 				return fmt.Errorf("无法重连原执行环境：agent %s 不存在", node.AgentID)
 			}
-			executor, err := resolveNodeExecutor(e.repo, node, agent)
+			executor, err := workflowNodeExecutor(e.repo, run.WorkflowSnapshot, node, agent)
+			if errors.Is(err, errSOPExecutorUnconfigured) {
+				return nil
+			}
 			if err != nil {
 				return fmt.Errorf("无法重连原执行环境：%w", err)
 			}
@@ -608,6 +666,7 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 			return "", err
 		}
 		task.Invocation = e.gateCommandInvocation(run, nodeID)
+		task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
 		return "", err
@@ -649,7 +708,7 @@ func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) *domain.Ru
 	invocation := &domain.RunnerInvocation{
 		RunID: run.ID, NodeID: nodeID, Assets: assets, MCPCallServers: assets.MCPServers}
 	identity := resolveGitIdentity(e.repo, run.ExecutionContext.ResponsibleUserID)
-	bindRunnerRepositories(invocation, run, resolveGitToken(e.repo, run.ExecutionContext.ResponsibleUserID), identity.name, identity.email)
+	bindRunnerRepositories(invocation, run, identity.name, identity.email)
 	return invocation
 }
 

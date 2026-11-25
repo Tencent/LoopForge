@@ -91,40 +91,11 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return fail(err)
 	}
-	activated, err := prepareSandboxEnvironment(workspace, profile, resources.Environment)
+	sandbox, err := createDriverSandbox(ctx, "sandbox", id, workspace, profile, requirements, resources.Dockerfile)
 	if err != nil {
 		return fail(err)
 	}
-	if len(activated.Overlay) > 0 {
-		path := activated.Overlay["PATH"]
-		profile.Environment = mergeEnvironmentMaps(activated.Overlay, profile.Environment)
-		if path != "" {
-			profile.Environment["PATH"] = path
-		}
-	}
-	profile, resources.Dockerfile = isolateLocalDriver(profile, resources.Dockerfile)
-	var sandbox Sandbox
-	switch strings.TrimSpace(profile.Driver) {
-	case "", "local":
-		sandbox = &localSandbox{id: id, workspace: workspace, environment: profile.Environment}
-	case "seatbelt":
-		sandbox, err = createSeatbelt(id, workspace, profile, requirements)
-	case "bwrap":
-		sandbox, err = createBwrap(id, workspace, profile, requirements)
-	case "docker":
-		sandbox, err = createDocker(ctx, id, workspace, profile, requirements, resources.Dockerfile)
-	default:
-		err = fmt.Errorf("unsupported sandbox driver %q", profile.Driver)
-	}
-	if err != nil {
-		return fail(err)
-	}
-	managed := &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}
-	if err := runEnvironmentInstall(ctx, managed, activated); err != nil {
-		_ = managed.Close(ctx)
-		return nil, err
-	}
-	return managed, nil
+	return &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}, nil
 }
 
 // DestroyRun deletes the host workspace for a finished SOP run: the persistent
@@ -341,6 +312,15 @@ type managedSandbox struct {
 	credentialsMu sync.RWMutex
 }
 
+// Unwrap returns the underlying driver sandbox so wrappers remain transparent
+// to runtime helpers such as browser provisioning and conversation CLI setup.
+func (s *managedSandbox) Unwrap() Sandbox {
+	if s == nil {
+		return nil
+	}
+	return s.Sandbox
+}
+
 func (s *managedSandbox) Driver() string {
 	if value, ok := s.Sandbox.(interface{ Driver() string }); ok {
 		return value.Driver()
@@ -415,6 +395,18 @@ func (s *managedSandbox) SetCredentials(credentials RunCredentials) {
 	s.credentials = credentials
 }
 
+// CredentialSnapshot returns the current credential snapshot. Read-only use:
+// preparation code validating a node's declared credentials up front.
+func (s *managedSandbox) CredentialSnapshot() RunCredentials {
+	s.credentialsMu.RLock()
+	defer s.credentialsMu.RUnlock()
+	return s.credentials
+}
+
+// sandboxCredentialSnapshot lets runtime preparation code read a sandbox's
+// credentials without widening the public Sandbox interface.
+type sandboxCredentialSnapshot interface{ CredentialSnapshot() RunCredentials }
+
 func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
 	select {
 	case s.slots <- struct{}{}:
@@ -425,13 +417,45 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	s.credentialsMu.RLock()
 	credentials := s.credentials
 	s.credentialsMu.RUnlock()
-	// Binding writes the credential helpers into the workspace; parallel
-	// branches then run their commands concurrently.
+	command, closeGit, err := prepareRunGitBinding(ctx, s.Sandbox, command, credentials)
+	if err != nil {
+		return "", err
+	}
+	defer closeGit()
+	if credentials.GitHTTPCredentials != nil {
+		credentials.GitHTTPHosts = runGitHosts(credentials)
+	}
+	// Binding refreshes workspace config and prepares Runner helpers before
+	// parallel branches execute their commands.
 	s.execMu.Lock()
-	bound, err := bindCommand(s.Sandbox, s.workspace, command, credentials)
+	bound, err := bindCommand(ctx, s.Sandbox, s.workspace, command, credentials)
 	s.execMu.Unlock()
 	if err != nil {
 		return "", err
 	}
-	return s.Sandbox.Exec(ctx, bound, sink)
+	cleanup, err := bindCommandGitSSH(ctx, s.Sandbox, s.workspace, bound, credentials)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	defer scrubRunGitCredentials(ctx, s.Sandbox, s.workspace, bound, credentials)
+	out, err := s.Sandbox.Exec(ctx, bound, runGitEventSink(sink, credentials))
+	return redactRunGitSecrets(out, credentials), err
+}
+
+// createDriverSandbox builds the sandbox for profile.Driver. kind only names
+// the caller in the unsupported-driver error.
+func createDriverSandbox(ctx context.Context, kind, id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements, dockerfile domain.DockerfileDefinition) (Sandbox, error) {
+	switch strings.TrimSpace(profile.Driver) {
+	case "", "local":
+		return &localSandbox{id: id, workspace: workspace, environment: profile.Environment}, nil
+	case "seatbelt":
+		return createSeatbelt(id, workspace, profile, requirements)
+	case "bwrap":
+		return createBwrap(id, workspace, profile, requirements)
+	case "docker":
+		return createDocker(ctx, id, workspace, profile, requirements, dockerfile)
+	default:
+		return nil, fmt.Errorf("unsupported %s driver %q", kind, profile.Driver)
+	}
 }

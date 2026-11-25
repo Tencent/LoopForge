@@ -20,8 +20,6 @@ import (
 	"agentflow/internal/knowledge"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
-
-	"github.com/gin-gonic/gin"
 )
 
 func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
@@ -90,7 +88,7 @@ func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
 func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
 	h, user := workbenchFixture(t)
 	st := h.repo
-	wf := domain.WorkflowDefinition{ID: "scheduled-approval", ProjectID: "workbench", Name: "Scheduled approval", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "scheduled-approval", ProjectID: "workbench", Name: "Scheduled approval", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +103,10 @@ func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
 			_ = en.Cancel(runID)
 		}
 	})
-	h.generate = func(ctx context.Context, _ string, actor domain.User) (string, error) {
+	h.generate = func(ctx context.Context, prompt string, actor domain.User) (string, error) {
+		if !strings.Contains(prompt, "agentflow__runs_wait") {
+			t.Error("scheduled prompt must use the supported SOP wait tool")
+		}
 		text, err := h.callAssistantPlatform(ctx, actor, "workbench", assistantMCPCall{Tool: "issues_dispatch", Path: map[string]any{"id": "scheduled-dispatch"}})
 		if err != nil {
 			return "", err
@@ -115,19 +116,24 @@ func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
 			return "", err
 		}
 		runID = task.RunID
-		return "已启动 SOP", nil
+		text, err = h.callAssistantPlatform(ctx, actor, "workbench", assistantMCPCall{
+			Tool: "runs_wait", Path: map[string]any{"id": runID}, Query: map[string]any{"timeoutSec": "3"},
+		})
+		if err != nil {
+			return "", err
+		}
+		var result runWaitResult
+		if err := json.Unmarshal([]byte(text), &result); err != nil {
+			return "", err
+		}
+		if result.RunID != runID || result.Status != "waiting" || result.Terminal || result.TimedOut {
+			t.Errorf("SOP approval should end the wait: %+v", result)
+		}
+		return "SOP 等待人工审批", nil
 	}
 	if _, err := h.prepareScheduleJob(domain.ScheduleJob{ID: "ai-dispatch", ProjectID: "workbench", OwnerUserID: user.ID, Name: "Dispatch", AssistantPrompt: "启动需求的 SOP", SkipDispatch: true}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if run, ok := st.RunState(runID); ok && run.WorkflowID == wf.ID && run.Status == "waiting" {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("AI schedule did not reach the SOP approval gate: id=%q", runID)
 }
 
 func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testing.T) {
@@ -141,7 +147,6 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 	if err := h.repo.PutIssue(domain.Issue{ID: "native-scheduled-issue", ProjectID: "workbench", Title: "Original", Status: "todo"}); err != nil {
 		t.Fatal(err)
 	}
-	gateway := &agentToolGateway{deps: h.deps}
 	sessionIDs := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := strings.Split(strings.TrimPrefix(r.URL.Path, "/internal/agent-tools/"), "/")[0]
@@ -156,6 +161,7 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 		if !session.Scheduled {
 			t.Error("scheduled execution must retain unattended knowledge-tool policy")
 		}
+		gateway := &agentToolGateway{deps: &deps{repo: h.repo, kb: knowledge.NewService(h.repo, randomID, nil)}}
 		for _, tool := range gateway.buildCatalog(r.Context(), session) {
 			if knowledge.IsAgentTool(tool.Name) {
 				t.Errorf("scheduled execution exposes knowledge tool %s", tool.Name)
@@ -165,16 +171,14 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 			t.Error("scheduled gateway lacks its persisted conversation or full-access workspace lifecycle")
 		}
 		// A binding written during execution must survive the final transcript save.
-		if err := h.repo.SetAssistantSessionWorkspaceRun(user.ID, sessionID, "scheduled-workspace", true); err != nil {
+		if err := h.repo.SetAssistantSessionWorkspaceRun(user.ID, sessionID, conv.ProjectID, "scheduled-workspace", true); err != nil {
 			t.Error(err)
 		}
 		if err := session.attachReplyFile("report.md", "text/markdown", []byte("# Scheduled report")); err != nil {
 			t.Error(err)
 		}
-		c, _ := gin.CreateTestContext(w)
-		c.Request = r
-		c.Params = gin.Params{{Key: "token", Value: token}}
-		gateway.ServeHTTP(c)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer server.Close()
 	previous := config.Current()
@@ -189,6 +193,21 @@ import json, sys, urllib.request
 args = sys.argv[1:]
 config = json.load(open(args[args.index('--mcp-config') + 1]))
 url = config['mcpServers']['agentflow_session']['url']
+# Observe the prepared session explicitly; CLI tools themselves now pass
+# through the execution machine's local relay rather than this fixture.
+token = url.split('/internal/agent-tools/')[1].split('/')[0]
+urllib.request.urlopen(` + "'" + server.URL + `' + '/internal/agent-tools/' + token + '/mcp', timeout=5).read()
+dispatches = [
+    ('runs_start', {'body': {'workflowId': 'wf'}}),
+    ('issues_dispatch', {'path': {'id': 'issue'}, 'body': {}}),
+    ('runs_retry', {'path': {'id': 'run'}, 'body': {'nodeId': 'node'}}),
+]
+for tool, args in dispatches:
+    draft = {'tool':tool, **args}
+    call = {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'submit_assistant_reply','arguments':{'message':'启动并等待','drafts':[draft]}}}
+    req = urllib.request.Request(url, json.dumps(call).encode(), {'Content-Type':'application/json'})
+    result = json.load(urllib.request.urlopen(req, timeout=5))['result']
+    assert result['isError'] and 'agentflow__' + tool in result['content'][0]['text'], result
 payload = {'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'submit_assistant_reply','arguments':{'message':'已完成定时巡检并生成报告。','drafts':[{'tool':'issues_save','body':{'id':'native-scheduled-issue','projectId':'workbench','title':'Scheduled update'}}]}}}
 req = urllib.request.Request(url, json.dumps(payload).encode(), {'Content-Type':'application/json'})
 try:
@@ -203,13 +222,20 @@ raise SystemExit(1)
 	}
 	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
 	task := assistantTask{ID: "native-scheduled", Name: "Native schedule", ProjectID: "workbench", Prompt: "巡检并生成报告"}
-	if err := h.executeAssistantTask(context.Background(), user, &task); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := h.executeAssistantTask(ctx, user, &task); err != nil {
 		t.Fatal(err)
 	}
 	if task.LastStatus != "ok" || !strings.Contains(task.LastMessage, "已完成定时巡检") {
 		t.Fatalf("terminal reply was lost: %+v", task)
 	}
-	sessionID := <-sessionIDs
+	var sessionID string
+	select {
+	case sessionID = <-sessionIDs:
+	case <-time.After(time.Second):
+		t.Fatal("fake CLI did not reach the prepared native session")
+	}
 	issue, _ := h.repo.Issue("native-scheduled-issue")
 	if issue.Title != "Scheduled update" {
 		t.Fatalf("terminal draft was not executed with full access: %+v", issue)

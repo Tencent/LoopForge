@@ -53,7 +53,11 @@ func (e *Engine) knowledgeMCPServerForRun(agentID, projectID string, userID int6
 	if err != nil {
 		return domain.MCPServerDefinition{}, false
 	}
-	return knowledge.MCPServerDefinition(base, token), true
+	definition := knowledge.MCPServerDefinition(base, token)
+	if e.repo.KnowledgeSettings().EffectiveProvider() == domain.KnowledgeProviderLightCloud {
+		definition.Description = "本项目 LightCloud 知识库：kb_search / kb_fetch / kb_list_sources / kb_get_source"
+	}
+	return definition, true
 }
 
 // knowledgeSkippedWarning explains a knowledge toggle that resolveAssets could
@@ -123,27 +127,11 @@ func (e *Engine) resolveAssetsForRun(agent domain.AgentDefinition, projectID, wo
 	}
 	for _, id := range agent.MCPServers {
 		if v, ok := e.repo.MCPServer(id); ok {
-			if v.Scope == "" {
-				continue
-			}
-			if v.Scope == "project" && v.ProjectID != projectID {
-				continue
-			}
-			if v.Scope == "personal" && v.OwnerUserID != userID {
-				continue
-			}
-			if v.Scope == "personal" && v.MarketID != "" {
+			if !roleMCPServerVisible(v, projectID, userID) {
 				continue
 			}
 			bundle.MCPServers = append(bundle.MCPServers, v)
-			if len(v.FileRefs) > 0 {
-				if contents := e.repo.MCPFileContents(v.ID); len(contents) > 0 {
-					if bundle.MCPFiles == nil {
-						bundle.MCPFiles = map[string]map[string][]byte{}
-					}
-					bundle.MCPFiles[v.ID] = contents
-				}
-			}
+			e.loadMCPFiles(&bundle, v)
 			continue
 		}
 		if v, ok := e.projectMarketMCP(id, projectID); ok {
@@ -158,11 +146,28 @@ func (e *Engine) resolveAssetsForRun(agent domain.AgentDefinition, projectID, wo
 	if agent.KnowledgeBase {
 		if v, ok := e.knowledgeMCPServerForRun(agent.ID, projectID, userID, runID); ok {
 			bundle.MCPServers = append(bundle.MCPServers, v)
-			bundle.Rules = append(bundle.Rules, knowledge.UsageRule())
+			bundle.Rules = append(bundle.Rules, knowledge.UsageRuleForProvider(e.repo.KnowledgeSettings().EffectiveProvider()))
 		}
 	}
 	e.appendWorkflowGlobalRules(&bundle, projectID, workflowID)
 	return bundle
+}
+
+// roleMCPServerVisible reports whether a catalog MCP server listed on a role
+// may be injected for this run: servers without a scope are skipped, project
+// servers must belong to the run's project, and personal servers must be the
+// caller's own and not installed from the market.
+func roleMCPServerVisible(server domain.MCPServerDefinition, projectID string, userID int64) bool {
+	switch server.Scope {
+	case "":
+		return false
+	case "project":
+		return server.ProjectID == projectID
+	case "personal":
+		return server.OwnerUserID == userID && server.MarketID == ""
+	default:
+		return true
+	}
 }
 
 // appendWorkflowGlobalRules injects project rules that were marked global and
@@ -209,9 +214,28 @@ func workflowAgent(st *repo.Store, wf domain.WorkflowDefinition, id string) (dom
 	if domain.IsPreviewBuildAgent(id) {
 		return domain.PreviewBuildAgent(wf.Preview), true
 	}
+	if wf.Generic {
+		if template, ok := st.GenericTemplateByWorkflow(wf.ID); ok {
+			for _, role := range template.Agents {
+				if role.ID == id {
+					return role, true
+				}
+			}
+		}
+	}
 	if agent, ok := st.Agent(id); ok {
 		if st.AgentShadowsTemplateOutside(agent, wf.ProjectID) {
 			return st.GenericAgentByID(id)
+		}
+		if wf.ID == BaselineAlignWorkflowID && id == BaselineAlignAgentID {
+			for _, node := range wf.Nodes {
+				if node.Type == "agent" && node.AgentID == id && node.ExecutorID != "" {
+					if agent.ExecutorID != node.ExecutorID {
+						agent.ExecutorID, agent.Model, agent.Effort = node.ExecutorID, "", ""
+					}
+					break
+				}
+			}
 		}
 		return agent, true
 	}

@@ -51,13 +51,81 @@ func render[T any](c *gin.Context, value T, err error) {
 	c.JSON(http.StatusOK, value)
 }
 
+type knowledgeSettingsView struct {
+	domain.KnowledgeSettings
+	Ready     bool   `json:"ready"`
+	CanManage bool   `json:"canManage"`
+	ProxyPath string `json:"proxyPath"`
+	UsageRule string `json:"usageRule"`
+}
+
+// 路由: g.GET("/api/knowledge/settings", h.settings)
+//
+//	g.PUT("/api/knowledge/settings", h.settings)
+func (h *knowledgeHandlers) settings(c *gin.Context) {
+	canManage := h.canManage(c.Request)
+	current := h.svc.Settings()
+	if c.Request.Method == http.MethodPut {
+		if !canManage {
+			c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以修改知识引擎设置"})
+			return
+		}
+		var input knowledge.SettingsInput
+		if !decode(c, &input) {
+			return
+		}
+		var err error
+		current, err = h.svc.UpdateSettings(input, h.actor(c.Request))
+		if err != nil {
+			respond(c, err)
+			return
+		}
+	}
+	view := current.Public()
+	if !canManage {
+		view = domain.KnowledgeSettings{Provider: view.Provider, Enabled: view.Enabled, WriteEnabled: view.WriteEnabled}
+	}
+	c.JSON(http.StatusOK, knowledgeSettingsView{
+		KnowledgeSettings: view, Ready: current.Ready(), CanManage: canManage,
+		ProxyPath: knowledge.ProxyPath, UsageRule: knowledge.UsageRuleForProvider(view.Provider).Content,
+	})
+}
+
+func (h *knowledgeHandlers) builtinOnly(c *gin.Context) {
+	if err := h.svc.RequireBuiltin(); err != nil {
+		respond(c, err)
+		c.Abort()
+	}
+}
+
+func (h *knowledgeHandlers) withEngine(handler func(*knowledgeHandlers, *gin.Context)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		request := *h
+		request.svc = h.svc.Snapshot()
+		handler(&request, c)
+	}
+}
+
 // 路由: g.POST("/api/knowledge/check", h.check)
 func (h *knowledgeHandlers) check(c *gin.Context) {
 	if !h.canManage(c.Request) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以检查知识库连接"})
 		return
 	}
-	c.JSON(http.StatusOK, h.svc.Check(c.Request.Context()))
+	var input struct {
+		Provider string `json:"provider"`
+		URL      string `json:"url"`
+		Token    string `json:"token"`
+	}
+	if !decodeOptional(c, &input) {
+		return
+	}
+	svc := h.svc.Snapshot()
+	if input.Provider == domain.KnowledgeProviderLightCloud || input.URL != "" || input.Token != "" || !svc.Builtin() {
+		c.JSON(http.StatusOK, svc.CheckLightCloud(c.Request.Context(), input.URL, input.Token))
+		return
+	}
+	c.JSON(http.StatusOK, svc.Check(c.Request.Context()))
 }
 
 // 路由: g.GET("/api/knowledge/sources", h.sources)

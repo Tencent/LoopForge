@@ -19,14 +19,6 @@ import (
 // busy room cannot turn every poll into dozens of run loads.
 const roomRunWatchLimit = 12
 
-func roomRunTerminal(status string) bool {
-	switch status {
-	case "succeeded", "failed", "cancelled":
-		return true
-	}
-	return false
-}
-
 // roomProgressID is deterministic, so several API instances reconciling the
 // same run write the same row instead of duplicating the message.
 func roomProgressID(parts ...string) string {
@@ -104,7 +96,7 @@ func roomRunMessages(room domain.ChatRoom, dispatch domain.ChatMessage, run doma
 		}
 		out = append(out, msg)
 	}
-	if roomRunTerminal(run.Status) {
+	if domain.TerminalRunStatus(run.Status) {
 		msg := base
 		msg.ID = roomProgressID(run.ID, "", "final", run.Status)
 		msg.Kind = domain.ChatKindProgress
@@ -192,7 +184,7 @@ func roomRunProgress(m *domain.ChatMessage, run domain.Run) {
 
 func roomApprovalResolved(m domain.ChatMessage, run domain.Run) bool {
 	nr := run.Nodes[m.NodeID]
-	return nr == nil || nr.Status != "waiting_approval" || nr.Attempt != m.Attempt || roomRunTerminal(run.Status)
+	return nr == nil || nr.Status != "waiting_approval" || nr.Attempt != m.Attempt || domain.TerminalRunStatus(run.Status)
 }
 
 // syncRoomRuns reconciles unfinished runs dispatched from this room and
@@ -294,7 +286,7 @@ func (h *roomsHandlers) syncRoomRuns(room domain.ChatRoom, messages []domain.Cha
 				}
 			}
 			roomRunProgress(m, run)
-			if roomRunTerminal(run.Status) {
+			if domain.TerminalRunStatus(run.Status) {
 				m.RunFinal = run.Status
 				m.RunCurrent = nil
 				_ = h.repo.PutMessage(*m)
