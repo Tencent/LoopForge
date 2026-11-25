@@ -14,9 +14,19 @@ import (
 )
 
 // HasWorkspaceSOPRuns reports whether another run relies on this workspace.
-// Status filters let callers distinguish executing runs from saved history.
+// A status-filtered check counts waiting SOPs that still hold a top-level slot.
+// An unfiltered check still protects the workspace from deletion.
 func (r *RunsRepo) HasWorkspaceSOPRuns(runID string, statuses ...string) (bool, error) {
-	return workspaceSOPRunExists(r.workspaceSOPRuns(r.DB, runID, statuses))
+	query := r.workspaceSOPRuns(r.DB, runID, statuses)
+	if len(statuses) > 0 {
+		query = r.workspaceSOPRunsHoldingCheckout(query)
+	}
+	return workspaceSOPRunExists(query)
+}
+
+func (r *RunsRepo) workspaceSOPRunsHoldingCheckout(query *gorm.DB) *gorm.DB {
+	parent := "COALESCE(quota_parent_run_id, " + r.sqlExecutionContextJSONText("parentRunId") + ", '')"
+	return query.Where("status <> ? OR ("+parent+" = '' AND (admission_state IS NULL OR admission_state <> ?))", "waiting", "released")
 }
 
 func (r *RunsRepo) workspaceSOPRuns(tx *gorm.DB, runID string, statuses []string) *gorm.DB {
