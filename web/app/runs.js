@@ -1598,6 +1598,16 @@ function openArtifactPreview({title,icon,details,url,action,download=false,loadi
   }else modal.querySelector('.artifact-close').focus();
   return artifactPreviewRequest.signal;
 }
+/** 页面内预览会整份读入并渲染正文，因此只预览不超过 5 MiB 的文本产物；二进制内容当作文本渲染会卡住页面。 */
+const ARTIFACT_PREVIEW_MAX_BYTES=5*1024*1024;
+function artifactPreviewable(artifact){
+  if((artifact?.size||0)>ARTIFACT_PREVIEW_MAX_BYTES)return false;
+  const type=String(artifact?.mediaType||'').split(';')[0].trim().toLowerCase();
+  return !type||type.startsWith('text/')||/^application\/(json|xml|yaml|x-yaml|javascript|toml|x-sh)$/.test(type)||/\+(json|xml|yaml)$/.test(type);
+}
+function artifactDownloadName(artifact){
+  return String(artifact?.path||'').split('/').pop()||artifact?.name||'artifact.txt';
+}
 async function previewArtifact(run,artifactId,opener){
   const artifact=(run.artifacts||[]).find(a=>a.id===artifactId);
   if(!artifact)return;
@@ -1608,6 +1618,24 @@ async function previewArtifact(run,artifactId,opener){
     url,action:'在新窗口打开 ↗',loading:'正在加载交付物…',opener,
   });
   try{
+    if(!artifactPreviewable(artifact)){
+      const sizeKB=Math.max(1,Math.ceil((artifact.size||0)/1024));
+      const size=sizeKB>=1024?`${(sizeKB/1024).toFixed(1)} MB`:`${sizeKB} KB`;
+      host.innerHTML=`
+        <div class="artifact-preview-toolbar">
+          <div class="artifact-toolbar-left">
+            <div class="artifact-evidence-badges">
+              <span>SHA-256: <code>${escapeHTML((artifact.sha256||'—').slice(0, 16))}…</code></span>
+              <span>${size}</span>
+            </div>
+          </div>
+          <div class="artifact-toolbar-right">
+            <a class="button ghost small" data-download-artifact href="${escapeHTML(url)}" download="${escapeHTML(artifactDownloadName(artifact))}">⬇ 下载文件</a>
+          </div>
+        </div>
+        <div class="empty-properties"><b>此文件不在页面内预览</b><p>文件较大或为二进制内容，请下载后查看。</p></div>`;
+      return;
+    }
     const res=await fetch(url,{signal});
     if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const content=await res.text();
@@ -1633,7 +1661,7 @@ async function previewArtifact(run,artifactId,opener){
           </div>
           <div class="artifact-toolbar-right">
             <button type="button" class="button ghost small" data-copy-artifact>📋 复制内容</button>
-            <button type="button" class="button ghost small" data-download-artifact>⬇ 下载文件</button>
+            <a class="button ghost small" data-download-artifact href="${escapeHTML(url)}" download="${escapeHTML(artifactDownloadName(artifact))}">⬇ 下载文件</a>
           </div>
         </div>
         <div class="artifact-body">
@@ -1650,16 +1678,6 @@ async function previewArtifact(run,artifactId,opener){
       });
 
       host.querySelector('[data-copy-artifact]').onclick=()=>copyText(content, '产物内容已复制到剪贴板');
-
-      host.querySelector('[data-download-artifact]').onclick=()=>{
-        const blob=new Blob([content], {type: artifact.mediaType || 'text/plain'});
-        const url=URL.createObjectURL(blob);
-        const a=document.createElement('a');
-        a.href=url;
-        a.download=artifact.name || 'artifact.txt';
-        a.click();
-        URL.revokeObjectURL(url);
-      };
 
       host.querySelectorAll('.md-code-copy').forEach(b=>{
         b.onclick=()=>{

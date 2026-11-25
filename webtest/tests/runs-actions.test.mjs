@@ -143,7 +143,8 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.deepEqual(result.evalApply, [true,false]);
   app.evaluate(`
     state.activeRun={...state.activeRun,status:'failed',artifacts:[
-      {id:'art-1',nodeId:'b',name:'report.md',path:'report.md',attempt:2,size:1200,sha256:'abcdef',mediaType:'text/markdown'}]};
+      {id:'art-1',nodeId:'b',name:'report.md',path:'out/report.md',attempt:2,size:1200,sha256:'abcdef',mediaType:'text/markdown'},
+      {id:'art-bin',nodeId:'b',name:'model',path:'out/model.bin',attempt:2,size:20971520,sha256:'fedcba',mediaType:'application/octet-stream'}]};
     state.selectedRun='run-x';state.currentUser.codeBuddyApiKeyConfigured=true;
     const host=document.querySelector('#runDetail');host.dataset.runId='run-x';
     host.innerHTML='<div data-run-pane="eval"></div>';
@@ -182,8 +183,21 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   }
   app.document.querySelector('#artifactPreview [data-mode="source"]')?.click();
   assert.match(app.document.querySelector('#artifactPreview .artifact-content').textContent, /console\.log/);
+  const download = artifactModal.querySelector('[data-download-artifact]');
+  assert.equal(download.getAttribute('href'), '/api/runs/run-x/artifacts/art-1');
+  assert.equal(download.getAttribute('download'), 'report.md');
   artifactModal.close();
   assert.equal(artifactModal.querySelector('.toast-item'), null);
+  const artifactCalls = () => app.router.calls.filter(c => c.path.includes('/artifacts/')).length;
+  const callsBefore = artifactCalls();
+  await app.evaluate(`previewArtifact(state.activeRun,'art-bin')`);
+  assert.equal(artifactModal.open, true);
+  assert.equal(artifactCalls(), callsBefore, 'a binary artifact is not read into the page');
+  assert.match(app.document.querySelector('#artifactPreview').textContent, /不在页面内预览/);
+  const binaryDownload = artifactModal.querySelector('[data-download-artifact]');
+  assert.equal(binaryDownload.getAttribute('href'), '/api/runs/run-x/artifacts/art-bin');
+  assert.equal(binaryDownload.getAttribute('download'), 'model.bin');
+  artifactModal.close();
   app.evaluate(`toast('Outside artifact preview')`);
   assert.match(app.document.querySelector('#toastContainer').textContent, /Outside artifact preview/);
   app.evaluate(`
