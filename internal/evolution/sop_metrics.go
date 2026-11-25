@@ -574,16 +574,29 @@ func SplitSOPVersionsWithExternalEdits(
 		}
 	}
 	sourceLabel := "手动修改"
-	if latestEdit.Source == domain.EvoVersionChatbot {
+	tag := "手动"
+	switch latestEdit.Source {
+	case domain.EvoVersionChatbot:
 		sourceLabel = "Chatbot 修改"
+		tag = "Chatbot"
+	case domain.EvoVersionRollback:
+		sourceLabel = "版本回滚"
+		tag = "回滚"
 	}
 	note := fmt.Sprintf("%s「%s」", sourceLabel, firstText(latestEdit.AssetName, latestEdit.AssetID))
+	prevAssetVer := 0
+	if latestEdit.Version > 1 {
+		prevAssetVer = latestEdit.Version - 1
+	}
 
 	out := append([]domain.EvoSOPVersionPoint(nil), points...)
 	if len(before) == 0 {
 		// All runs on current version are after the edit (or no runs yet): annotate current point directly.
 		out[curIdx].Source = latestEdit.Source
 		out[curIdx].ChangeNote = note
+		out[curIdx].AssetKind = latestEdit.AssetKind
+		out[curIdx].AssetID = latestEdit.AssetID
+		out[curIdx].AssetName = latestEdit.AssetName
 		return out
 	}
 
@@ -598,15 +611,20 @@ func SplitSOPVersionsWithExternalEdits(
 
 	out[curIdx].Current = false
 	out[curIdx].Metrics = SummarizeSOPRuns(before, evals)
-	tag := "手动"
-	if latestEdit.Source == domain.EvoVersionChatbot {
-		tag = "Chatbot"
+	if prevAssetVer > 0 {
+		out[curIdx].AssetKind = latestEdit.AssetKind
+		out[curIdx].AssetID = latestEdit.AssetID
+		out[curIdx].AssetName = latestEdit.AssetName
+		out[curIdx].RollbackVersion = prevAssetVer
 	}
 	revPoint := domain.EvoSOPVersionPoint{
 		Version:    fmt.Sprintf("%s · %s", FormatSOPVersion(currentVer), tag),
 		Current:    true,
 		Source:     latestEdit.Source,
 		ChangeNote: note,
+		AssetKind:  latestEdit.AssetKind,
+		AssetID:    latestEdit.AssetID,
+		AssetName:  latestEdit.AssetName,
 		Metrics:    SummarizeSOPRuns(after, evals),
 	}
 	// Insert right after curIdx.

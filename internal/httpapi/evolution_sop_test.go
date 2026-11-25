@@ -213,6 +213,12 @@ func TestEvolutionSOPTracksChatbotAndManualAssetEdits(t *testing.T) {
 	if detail.Versions[0].Metrics.AvgTokens != 90000 || detail.Versions[1].Metrics.AvgTokens != 35000 {
 		t.Fatalf("expected pre/post chatbot metrics split, got v0=%+v v1=%+v", detail.Versions[0].Metrics, detail.Versions[1].Metrics)
 	}
+	if len(detail.Assets) != 1 || detail.Assets[0].ID != env.agent.ID || detail.Assets[0].CurrentVersion != 2 || detail.Assets[0].VersionCount != 2 {
+		t.Fatalf("expected SOP detail assets with version counts for rollback, got %+v", detail.Assets)
+	}
+	if detail.Versions[0].RollbackVersion != 1 || detail.Versions[0].AssetID != env.agent.ID {
+		t.Fatalf("expected pre-edit row to expose direct rollback target v1, got %+v", detail.Versions[0])
+	}
 }
 
 func TestEvolutionSOPAutoBatchOptimizationTriggersAtBatchSize(t *testing.T) {

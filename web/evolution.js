@@ -1247,11 +1247,14 @@ async function evoOpenAsset(kind,id,selected=0){
       return kbRow(kbText(`<span class="mono">v${x.version}</span> <span class="mono evo-hash">${escapeHTML((x.hash||'').slice(0,8))}</span>`,desc),side,{cls:`evo-version${pick?.version===x.version?' is-selected':''}`});
     }).join('');
     const drift=v.drifted?'<div class="kb-note">当前正文不在版本记录里（在进化流程外被修改过）；下次发布或回滚前会先补记为「手动修改」版本。</div>':'';
+    const sopAssets=typeof evoSOPState!=='undefined'&&evoSOPState.view?.detail?.assets?.length>1?evoSOPState.view.detail.assets:null;
+    const switcher=sopAssets?`<div class="evo-sop-seg" role="tablist" aria-label="切换 SOP 关联角色或规则" style="margin-bottom:10px">${sopAssets.map(a=>`<button type="button" role="tab" data-evo-asset="${escapeHTML(a.kind)}" data-id="${escapeHTML(a.id)}" aria-pressed="${a.kind===kind&&a.id===id}">${escapeHTML(a.name||a.id)}${a.currentVersion?` v${a.currentVersion}`:''}</button>`).join('')}</div>`:'';
     const compare=pick?`${kbCaption(`v${pick.version} → 当前正文`)}${evoDiffHTML(pick.content,v.liveContent)}`:`${kbCaption('当前正文')}<pre class="kb-pre evo-content">${escapeHTML(v.liveContent||'')}</pre>`;
     const level=(EVO_LEVELS.find(([l])=>l===v.level)||[])[1]||'';
-    const body=`${drift}${kbCaption(`版本 · ${versions.length}${level?` · 自治级别 ${escapeHTML(level)}`:''}`)}${rows||'<div class="kb-line-note">还没有版本记录；首次发布或回滚时会把当前正文记为基线 v1。</div>'}${compare}`;
+    const body=`${switcher}${drift}${kbCaption(`版本 · ${versions.length}${level?` · 自治级别 ${escapeHTML(level)}`:''}`)}${rows||'<div class="kb-line-note">还没有版本记录；首次发布或回滚时会把当前正文记为基线 v1。</div>'}${compare}`;
     const canPropose=v.level>=2;
-    const foot=`<button type="button" class="kb-btn primary" data-evo-propose-asset="${escapeHTML(kind)}" data-id="${escapeHTML(id)}"${canPropose?'':' disabled title="自治级别低于 L2"'}>生成提案</button>`;
+    const inSop=typeof evoSOPState!=='undefined'&&!!evoSOPState.view;
+    const foot=inSop?'':`<button type="button" class="kb-btn primary" data-evo-propose-asset="${escapeHTML(kind)}" data-id="${escapeHTML(id)}"${canPropose?'':' disabled title="自治级别低于 L2"'}>生成提案</button>`;
     evoDrawerOpen(v.assetName||id,`${evoKindLabel(kind)} · 当前 ${v.currentVersion?`v${v.currentVersion}`:'未登记'}`,body,foot,{wide:true});
   }catch(err){if(evoDrawerLive(seq))$('#kbDrawerBody').innerHTML=`<div class="kb-empty">读取失败：${escapeHTML(err.message)}</div>`}
 }
@@ -1393,7 +1396,13 @@ async function evoRollback(kind,id,version,btn){
   try{
     const v=await api(`/api/evolution/assets/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/rollback`,{method:'POST',body:JSON.stringify({version,note})});
     toast(`已回滚，当前为 v${v.version}`,'ok');
-    await evoRefresh();evoRender();evoOpenAsset(kind,id);
+    await evoRefresh();
+    if(typeof evoSOPState!=='undefined'&&evoSOPState.view&&typeof evoSOPLoadDetail==='function'){
+      await evoSOPLoadDetail(evoSOPState.view);
+    }else{
+      evoRender();
+    }
+    evoOpenAsset(kind,id);
   }catch(err){toast(err.message,'err');if(btn)btn.disabled=false}
 }
 

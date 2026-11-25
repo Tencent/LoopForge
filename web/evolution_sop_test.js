@@ -171,9 +171,10 @@ const { createDOM } = require('./hui_fake_dom');
     lastProposal: null,
     changeFiles: [],
     versions: [
-      { version: 'v3', current: false, metrics: { runs: 5, avgTokens: 70000, avgTools: 18, avgDuration: 95, cleanRate: 0.6, score: 68 } },
+      { version: 'v3', current: false, assetKind: 'agent', assetId: 'coder', assetName: '开发工程师', rollbackVersion: 1, metrics: { runs: 5, avgTokens: 70000, avgTools: 18, avgDuration: 95, cleanRate: 0.6, score: 68 } },
       { version: 'v3 · Chatbot', current: true, source: 'chatbot', changeNote: 'Chatbot 修改「开发工程师」', metrics: { runs: 3, avgTokens: 42000, avgTools: 9, avgDuration: 55, cleanRate: 1, score: 92 } },
     ],
+    assets: [{ kind: 'agent', id: 'coder', name: '开发工程师', currentVersion: 2, versionCount: 2 }],
     recentEdits: [{
       id: 'agent:coder:v2',
       assetKind: 'agent',
@@ -188,6 +189,8 @@ const { createDOM } = require('./hui_fake_dom');
   const chatTrendHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'versions', metric: 'score', detail: chatbotDetail });
   assert.match(chatTrendHTML, /v3 · Chatbot/);
   assert.match(chatTrendHTML, /Chatbot 修改/);
+  assert.match(chatTrendHTML, /版本与回滚 · v2/, 'detail header must expose version & rollback entry');
+  assert.match(chatTrendHTML, /回滚到 v1/, 'historical version table must expose direct rollback button');
   const chatChangeHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'change', scope: 'versions', metric: 'score', diffMode: 'split', detail: chatbotDetail });
   assert.match(chatChangeHTML, /Chatbot 修复后的新指令/);
   assert.match(chatChangeHTML, /evo-sop-split-diff/);

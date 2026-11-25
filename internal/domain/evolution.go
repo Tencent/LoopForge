@@ -553,11 +553,26 @@ type EvoSOPMetrics struct {
 
 // EvoSOPVersionPoint is one historical SOP version row for the trend chart/table.
 type EvoSOPVersionPoint struct {
-	Version    string        `json:"version"`
-	Current    bool          `json:"current,omitempty"`
-	Source     string        `json:"source,omitempty"` // "" | "evolution" | "chatbot" | "manual"
-	ChangeNote string        `json:"changeNote,omitempty"`
-	Metrics    EvoSOPMetrics `json:"metrics"`
+	Version         string        `json:"version"`
+	Current         bool          `json:"current,omitempty"`
+	Source          string        `json:"source,omitempty"` // "" | "evolution" | "chatbot" | "manual" | "rollback"
+	ChangeNote      string        `json:"changeNote,omitempty"`
+	AssetKind       string        `json:"assetKind,omitempty"`
+	AssetID         string        `json:"assetId,omitempty"`
+	AssetName       string        `json:"assetName,omitempty"`
+	RollbackVersion int           `json:"rollbackVersion,omitempty"`
+	Metrics         EvoSOPMetrics `json:"metrics"`
+}
+
+// EvoSOPAssetRef summarizes one evolvable role or rule attached to an SOP so
+// users can inspect its version timeline and roll back to any historical vN.
+type EvoSOPAssetRef struct {
+	Kind           string `json:"kind"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	CurrentVersion int    `json:"currentVersion,omitempty"`
+	VersionCount   int    `json:"versionCount,omitempty"`
+	ReadOnly       bool   `json:"readOnly,omitempty"`
 }
 
 // EvoSOPGrayRunEvent is one recent run inside a grayscale trial.
@@ -647,6 +662,7 @@ type EvoSOPDetail struct {
 	Problems       []EvoSOPProblemItem  `json:"problems,omitempty"`
 	ChangeFiles    []EvoSOPChangeFile   `json:"changeFiles,omitempty"`
 	RecentEdits    []EvoSOPExternalEdit `json:"recentEdits,omitempty"`
+	Assets         []EvoSOPAssetRef     `json:"assets,omitempty"`
 }
 
 // EvoOverview is the 进化中心 dashboard payload.

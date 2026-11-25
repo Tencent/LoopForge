@@ -728,6 +728,7 @@ func (h *evolutionHandlers) buildSOPDetail(projectID, workflowID string, days in
 
 	summary, ctx := h.computeSOPSummary(projectID, wf, policy, projectModel, runs, evals, detections, signals, findings, proposals)
 	recentEdits := h.collectSOPExternalEdits(wf, ctx.sopRuns)
+	assets := h.collectSOPAssets(projectID, wf, ctx.sopRuns)
 	versions := evolution.BuildSOPVersions(wf, ctx.sopRuns, evals, policy.BatchSize)
 	versions = evolution.SplitSOPVersionsWithExternalEdits(wf, versions, ctx.sopRuns, evals, recentEdits, policy.BatchSize)
 	grayRounds := h.buildSOPGrayRounds(projectID, wf, ctx.sopProposals, evals)
@@ -774,7 +775,79 @@ func (h *evolutionHandlers) buildSOPDetail(projectID, workflowID string, days in
 		Problems:       problems,
 		ChangeFiles:    changeFiles,
 		RecentEdits:    recentEdits,
+		Assets:         assets,
 	}, true
+}
+
+func (h *evolutionHandlers) collectSOPAssets(projectID string, wf domain.WorkflowDefinition, sopRuns []domain.Run) []domain.EvoSOPAssetRef {
+	seen := map[string]bool{}
+	var out []domain.EvoSOPAssetRef
+	add := func(kind, id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		key := kind + ":" + id
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		asset, ok := h.loadAsset(kind, id)
+		if !ok {
+			return
+		}
+		vers := h.repo.AssetVersions(kind, id)
+		liveHash := domain.ContentHash(asset.Content)
+		curVer := 0
+		for _, v := range vers {
+			if v.Hash == liveHash {
+				curVer = v.Version
+				break
+			}
+		}
+		if curVer == 0 && len(vers) > 0 {
+			curVer = vers[0].Version
+		}
+		name := strings.TrimSpace(asset.Name)
+		if name == "" {
+			name = asset.ID
+		}
+		out = append(out, domain.EvoSOPAssetRef{
+			Kind:           kind,
+			ID:             id,
+			Name:           name,
+			CurrentVersion: curVer,
+			VersionCount:   len(vers),
+			ReadOnly:       privateEvolutionAsset(asset, projectID) != nil,
+		})
+	}
+	for _, n := range wf.Nodes {
+		if strings.TrimSpace(n.AgentID) == "" {
+			continue
+		}
+		add(domain.EvoAssetAgent, n.AgentID)
+		if agent, ok := h.repo.Agent(n.AgentID); ok {
+			for _, ruleID := range agent.Rules {
+				add(domain.EvoAssetRule, ruleID)
+			}
+		}
+	}
+	for _, r := range sopRuns {
+		for _, n := range r.WorkflowSnapshot.Nodes {
+			if strings.TrimSpace(n.AgentID) == "" {
+				continue
+			}
+			add(domain.EvoAssetAgent, n.AgentID)
+		}
+	}
+	// Put editable project-private assets before read-only shared assets.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ReadOnly != out[j].ReadOnly {
+			return !out[i].ReadOnly
+		}
+		return out[i].VersionCount > out[j].VersionCount
+	})
+	return out
 }
 
 func (h *evolutionHandlers) collectSOPExternalEdits(wf domain.WorkflowDefinition, sopRuns []domain.Run) []domain.EvoSOPExternalEdit {
@@ -799,7 +872,7 @@ func (h *evolutionHandlers) collectSOPExternalEdits(wf domain.WorkflowDefinition
 		sort.SliceStable(asc, func(i, j int) bool { return asc[i].Version < asc[j].Version })
 		for i := 1; i < len(asc); i++ {
 			cur := asc[i]
-			if cur.Source != domain.EvoVersionChatbot && cur.Source != domain.EvoVersionManual {
+			if cur.Source != domain.EvoVersionChatbot && cur.Source != domain.EvoVersionManual && cur.Source != domain.EvoVersionRollback {
 				continue
 			}
 			diff := evolution.BuildAssetDiffFile(kind, id, asset.Name, asc[i-1].Content, cur.Content)

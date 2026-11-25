@@ -568,9 +568,14 @@ function evoSOPDetailHTML(view) {
 
   const normPrefs = evoSOPNormalizePrefs(d.preferences);
   const primaryPref = normPrefs[0];
+  const primaryAsset = (d.assets || [])[0] || null;
   const headActions = [
     `<button type="button" class="kb-btn quiet small" data-evo-sop-pref-open="${escapeHTML(d.workflowId)}" title="${escapeHTML(evoSOPPrefsTitle(normPrefs))}"${busy}>偏好 · P1 ${escapeHTML(EVO_SOP_PREF_MAP[primaryPref]?.short || '省 Token')}</button>`,
   ];
+  if (primaryAsset) {
+    const verSuffix = primaryAsset.currentVersion ? ` · v${primaryAsset.currentVersion}` : '';
+    headActions.push(`<button type="button" class="kb-btn quiet small" data-evo-asset="${escapeHTML(primaryAsset.kind)}" data-id="${escapeHTML(primaryAsset.id)}" title="查看历史版本对比并一键回滚到指定版本">版本与回滚${escapeHTML(verSuffix)}</button>`);
+  }
   if (d.stage === 'monitor' && d.enabled) {
     headActions.push(`<button type="button" class="kb-btn small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${busy}>立即发起优化</button>`);
   }
@@ -767,7 +772,7 @@ function evoSOPTrendTabHTML(view, d) {
       <div id="evoSopChartEmpty" class="evo-sop-chart-empty" hidden></div>
     </div>
 
-    ${scope === 'versions' ? evoSOPVersionsTableHTML(d.versions || []) : evoSOPGrayTableHTML(d.grayRounds || [], view.expandedGray)}
+    ${scope === 'versions' ? evoSOPVersionsTableHTML(d.versions || [], d.assets || []) : evoSOPGrayTableHTML(d.grayRounds || [], view.expandedGray)}
 
     <details class="evo-sop-method">
       <summary>指标与 SOP 评分是怎么算出来的？</summary>
@@ -783,14 +788,27 @@ function evoSOPSourceBadge(source) {
   if (source === 'chatbot') return kbBadge('Chatbot 修改', 'info');
   if (source === 'manual') return kbBadge('手动修改', '');
   if (source === 'evolution') return kbBadge('自动进化', 'ok');
+  if (source === 'rollback') return kbBadge('已回滚', 'warn');
   return '';
 }
 
-function evoSOPVersionsTableHTML(versions) {
+function evoSOPVersionsTableHTML(versions, assets = []) {
   if (!versions.length) return '<div class="kb-empty">暂无历史版本数据</div>';
+  const primaryAsset = assets[0] || null;
+  const hasActions = !!primaryAsset || versions.some(v => v.rollbackVersion > 0 && v.assetKind && v.assetId);
   const rows = [...versions].reverse().map(v => {
     const m = v.metrics || {};
     const srcBadge = evoSOPSourceBadge(v.source);
+    let actionCell = '';
+    if (hasActions) {
+      let actionHTML = '<span class="evo-muted">—</span>';
+      if (!v.current && v.rollbackVersion > 0 && v.assetKind && v.assetId) {
+        actionHTML = `<button type="button" class="kb-btn quiet small" data-evo-rollback="${v.rollbackVersion}" data-kind="${escapeHTML(v.assetKind)}" data-id="${escapeHTML(v.assetId)}" title="将「${escapeHTML(v.assetName || v.assetId)}」回滚到 v${v.rollbackVersion}">回滚到 v${v.rollbackVersion}</button>`;
+      } else if (primaryAsset) {
+        actionHTML = `<button type="button" class="kb-btn quiet small" data-evo-asset="${escapeHTML(primaryAsset.kind)}" data-id="${escapeHTML(primaryAsset.id)}">${v.current ? '版本历史' : '选择版本回滚'}</button>`;
+      }
+      actionCell = `<td class="num">${actionHTML}</td>`;
+    }
     return `<tr>
       <td><span class="mono">${escapeHTML(v.version)}</span>${v.current ? ` ${kbBadge('生效中', 'ok')}` : ''}${srcBadge ? ` ${srcBadge}` : ''}${v.changeNote ? `<small class="evo-sop-cell-sub">${escapeHTML(v.changeNote)}</small>` : ''}</td>
       <td class="num">${m.runs || 0}</td>
@@ -799,10 +817,11 @@ function evoSOPVersionsTableHTML(versions) {
       <td class="num">${m.runs > 0 ? `${escapeHTML(evoSOPNum(m.avgTools, 1))} 次` : '—'}</td>
       <td class="num">${escapeHTML(evoSOPFormatSec(m.avgDuration))}</td>
       <td class="num">${m.runs > 0 ? `${Math.round((m.cleanRate || 0) * 100)}%` : '—'}</td>
+      ${actionCell}
     </tr>`;
   }).join('');
   return `<div class="evo-sop-table-wrap"><table class="evo-sop-data-table">
-    <thead><tr><th>版本</th><th class="num">统计运行数</th><th class="num">SOP 评分</th><th class="num">平均 Token</th><th class="num">平均工具调用</th><th class="num">平均耗时</th><th class="num">一次成功率</th></tr></thead>
+    <thead><tr><th>版本</th><th class="num">统计运行数</th><th class="num">SOP 评分</th><th class="num">平均 Token</th><th class="num">平均工具调用</th><th class="num">平均耗时</th><th class="num">一次成功率</th>${hasActions ? '<th class="num">版本回滚</th>' : ''}</tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
 }
