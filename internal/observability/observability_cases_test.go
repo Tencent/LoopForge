@@ -54,15 +54,16 @@ func TestOTLPProtobufAndMalformedFields(t *testing.T) {
 			t.Fatalf("malformed input produced events: %x", malformed)
 		}
 	}
-	if got := anyString([]byte("plain")); got != "plain" {
-		t.Fatalf("anyString fallback = %q", got)
+	if got := parseProtoAnyValue([]byte("plain")).StringValue; got != "plain" {
+		t.Fatalf("scalar parser fallback = %q", got)
 	}
 }
 
 func TestOTLPValuesAndSpanKinds(t *testing.T) {
+	boolValue, doubleValue := true, 2.5
 	values := kvMap([]otlpKV{
-		{Key: "bool", Value: otlpAnyVal{BoolValue: true}},
-		{Key: "double", Value: otlpAnyVal{DoubleValue: 2.5}},
+		{Key: "bool", Value: otlpAnyVal{BoolValue: &boolValue}},
+		{Key: "double", Value: otlpAnyVal{DoubleValue: &doubleValue}},
 		{Key: "int", Value: otlpAnyVal{IntValue: int64(3)}},
 		{},
 	})
