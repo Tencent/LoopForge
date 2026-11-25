@@ -53,7 +53,7 @@
       defaultAllowedTools: [],
       guide: '在飞书开放平台创建企业自建应用、开启机器人能力并开通 wiki:wiki:readonly 与 docx:document:readonly 权限，发布后将机器人添加为目标知识空间的可阅读成员。',
       brandTone: 'feishu',
-      iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3L3 8l9 5 9-5-9-5z"/><path d="M3 13l9 5 9-5"/><path d="M3 17.5l9 4.5 9-4.5"/></svg>',
+      iconHTML: '<svg viewBox="0 0 48 48" width="22" height="22" aria-hidden="true"><g fill-rule="evenodd" clip-rule="evenodd"><path fill="#00d6b9" d="M41.0716 5.99409L3.31071 16.5187L12.3856 25.8126L20.7998 25.9594L30.4827 16.5187C30.2266 15.9943 30.0985 15.5552 30.0985 15.2013C30.0985 14.4074 30.4104 13.7786 30.8947 13.333C31.7241 12.57 32.7222 12.4558 33.8889 12.9905L41.0716 5.99409Z"/><path fill="#1456f0" d="M42.1021 6.72842L31.5775 44.4893L22.2836 35.4144L22.1367 27.0002L31.5115 17.4816C32.0195 17.8454 32.5743 18.0105 33.1759 17.9769C34.0784 17.9264 34.6614 17.3813 34.9349 17.0602C35.2083 16.7392 35.5293 16.2051 35.5025 15.4113C35.4847 14.8821 35.3109 14.3941 34.9812 13.9472L42.1021 6.72842Z"/></g></svg>',
     },
     {
       key: 'weknora',
@@ -67,7 +67,7 @@
       defaultAllowedTools: [],
       guide: '登录 WeKnora 控制台在「设置 → API Key」生成只读或检索密钥，填写服务基础地址（例如 http://host:8080）与 API Key，使用 X-API-Key 请求头鉴权。',
       brandTone: 'weknora',
-      iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
+      iconHTML: '<svg viewBox="0 0 36 36" width="24" height="24" aria-hidden="true"><path fill="#112233" d="M18.6 7.5c2.5 2.7 4 6.2 4.1 9.9-2.8.5-5.6.5-8.1-.1 2.2-2.6 3.5-6 4-9.8Z"/><path fill="#112233" d="M10.5 19.3c4.6 1.2 10.6.5 17.1-2.5-1.4 3-3.1 4.8-5.1 5.6-3.9.4-8.2-.7-12-3.1Z"/><path fill="#e5b13a" d="M4 23.8c6.7-2.2 13.8-1 22.8 1.5-7.8-.2-15.4-1.3-22.8-1.5Z"/><path fill="#112233" d="M6.8 25.3c5.6.2 12.6 1.7 19.1 1.4-6.3 2.4-13.2.8-19.1-1.4Z"/></svg>',
     },
   ];
 
