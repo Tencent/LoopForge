@@ -18,6 +18,10 @@ func TestValidateSandboxAssets(t *testing.T) {
 		{"native", SandboxProfile{Driver: SandboxDriverNative, Environment: map[string]string{"PHP_VERSION": "8.3.0"}}, true},
 		{"native with dockerfile", SandboxProfile{Driver: SandboxDriverNative, Dockerfile: &SandboxDockerfile{Content: "FROM x"}}, false},
 		{"native bad variable", SandboxProfile{Driver: SandboxDriverNative, Environment: map[string]string{"BAD=NAME": "1"}}, false},
+		{"native with limits", SandboxProfile{Driver: SandboxDriverNative, CPUMillicores: 1000}, false},
+		{"docker with limits", SandboxProfile{Driver: SandboxDriverDocker, Dockerfile: &SandboxDockerfile{Content: "FROM debian"}, CPUMillicores: 1250, MemoryMiB: 768}, true},
+		{"docker CPU too low", SandboxProfile{Driver: SandboxDriverDocker, Dockerfile: &SandboxDockerfile{Content: "FROM debian"}, CPUMillicores: 9}, false},
+		{"docker memory overflow", SandboxProfile{Driver: SandboxDriverDocker, Dockerfile: &SandboxDockerfile{Content: "FROM debian"}, MemoryMiB: DockerSandboxMaxMemoryMiB + 1}, false},
 		{"local", SandboxProfile{Driver: SandboxDriverLocal}, false},
 		{"unknown driver", SandboxProfile{Driver: "vm"}, false},
 	} {

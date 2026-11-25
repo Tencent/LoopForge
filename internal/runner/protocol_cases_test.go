@@ -38,11 +38,9 @@ func TestClaimSSHKnownHostsFitsAfterLegacyPayload(t *testing.T) {
 		t.Fatalf("claim response is %d bytes: %v", len(body), err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			SupportsGitSSHKnownHosts bool `json:"supportsGitSshKnownHosts"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !req.SupportsGitSSHKnownHosts {
-			t.Errorf("claim did not advertise SSH host pin support: %v", err)
+		var req ClaimRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !req.SupportsGitSSHKnownHosts || !req.SupportsDockerSandboxLimits {
+			t.Errorf("claim did not advertise SSH host pin and Docker limit support: %v", err)
 		}
 		_, _ = w.Write(body)
 	}))
@@ -118,6 +116,10 @@ func TestClientOpenControlWebSocketBranches(t *testing.T) {
 			}
 			if r.Header.Get(domain.RunnerSSHHostKeyProbeHeader) != "1" {
 				http.Error(w, "missing SSH host key probe support", http.StatusBadRequest)
+				return
+			}
+			if r.Header.Get(domain.RunnerDockerSandboxLimitsHeader) != "1" {
+				http.Error(w, "missing Docker sandbox limit support", http.StatusBadRequest)
 				return
 			}
 			conn, err := upgrader.Upgrade(w, r, nil)
