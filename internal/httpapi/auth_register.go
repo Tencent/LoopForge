@@ -33,9 +33,12 @@ func signupEnabled() bool {
 
 // Local browser enrollment belongs to password installations. An external
 // identity deployment may never create a password account through this path.
+// SSO counts only when both the app token and login URL are set, the same
+// condition under which auth.Client.LoginURL leaves the password login page.
 func (h *authHandlers) localSignupOptions() (needsSetup, allowed bool, err error) {
 	cfg := h.getAuthClient().Config()
-	if trustGatewayIdentityHeaders() || strings.TrimSpace(cfg.AppToken) != "" || strings.TrimSpace(cfg.LoginURL) != "" {
+	sso := strings.TrimSpace(cfg.AppToken) != "" && strings.TrimSpace(cfg.LoginURL) != ""
+	if trustGatewayIdentityHeaders() || sso {
 		return false, false, nil
 	}
 	count, err := h.repo.LocalAccountCount()
@@ -121,7 +124,7 @@ func (h *authHandlers) authRegister(c *gin.Context) {
 	}
 	if repo.IsAllowlistedPlatformAdmin(input.Login) {
 		registerMu.Unlock()
-		c.JSON(http.StatusConflict, gin.H{"error": "该用户名已被使用"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "该用户名是已配置的平台管理员，请由运维用账号命令创建，不能在浏览器中注册"})
 		return
 	}
 	u, err := h.repo.CreateLocalAccount(input.Login, input.Password, first)

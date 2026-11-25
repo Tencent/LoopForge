@@ -588,17 +588,24 @@ func (h *catalogHandlers) cloneAgentMCPServers(ids []string, projectID string, u
 			}
 		}
 		if !canCopyProject(source.ProjectID) {
+			// A market entry carries no project settings. Install it from
+			// the catalog when the source project's copy is not readable.
+			if source.MarketID != "" {
+				if installed, _, err := installMarketMCP(h.repo, source.MarketID, projectID); err == nil {
+					if !slices.Contains(out, installed.ID) {
+						out = append(out, installed.ID)
+					}
+				} else if !errors.Is(err, errMCPMarketItemMissing) {
+					return nil, err
+				}
+			}
 			continue
 		}
-		source.ID = mcpInstallID("clone-"+source.ID, "project", projectID)
+		source.ID = destinationMCPInstallID(h.repo, h.mcpInstallIDKey(), "clone-"+source.ID, "project", projectID)
 		if slices.Contains(out, source.ID) {
 			continue
 		}
-		if existing, exists := h.repo.MCPServer(source.ID); exists {
-			if existing.Scope != "project" || existing.ProjectID != projectID {
-				return nil, repo.ErrMCPServerChanged
-			}
-		} else {
+		if _, exists := h.repo.MCPServer(source.ID); !exists {
 			source.ProjectID, source.OwnerUserID = projectID, 0
 			changes = append(changes, repo.MCPServerChange{Definition: source})
 		}

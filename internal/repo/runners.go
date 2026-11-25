@@ -171,6 +171,10 @@ func takeRunnerTask(db *gorm.DB, id string) (runnerTaskRow, bool) {
 
 // ---------- Runner registry ----------
 
+// PutRunner upserts the row as given. It does not reset sharing, account
+// settings or default-runner preferences, so it must not move a machine to
+// another owner. Registration goes through RegisterRunner, which only renews
+// a row within its current owner scope.
 func (r *RunnersRepo) PutRunner(v domain.Runner) error {
 	values, err := runnerWriteValues(v)
 	if err != nil {

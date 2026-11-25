@@ -97,7 +97,7 @@ Enterprise authentication gateways can sign users in by header with `AGENTFLOW_T
 - Set `AGENTFLOW_IDENTITY_HEADER_SECRET` to a random value, and have the gateway send it in `X-AgentFlow-Gateway-Secret`. The gateway must overwrite, never pass through, the client's `Staffname`, `Staffid`, `x-staff-name` and `X-AgentFlow-Gateway-Secret` headers.
 - Without a secret, any request carrying `X-Forwarded-For`, `Forwarded` or `X-Real-IP` is treated as a forwarded client, and its identity headers are ignored. This only protects proxies that add one of those headers: a same-host proxy that passes client headers through without adding them (for example nginx `proxy_pass` without `proxy_set_header X-Forwarded-For`), and any other process on the host, can still sign in as any user. Set the secret whenever header sign-in is on; the platform logs a warning at startup when it is missing.
 
-Browser self-registration is available on password-only installations. For gateway or SSO sign-in, provision administrators by setting `AGENTFLOW_PLATFORM_ADMINS` to their authenticated login names or by using the operator account command below.
+Browser self-registration is available on password-only installations. SSO counts as configured only when both `AGENTFLOW_SSO_APP_TOKEN` and `AGENTFLOW_SSO_LOGIN_URL` are set. For gateway or SSO sign-in, provision administrators by setting `AGENTFLOW_PLATFORM_ADMINS` to their authenticated login names or by using the operator account command below. On a password installation that sets `AGENTFLOW_PLATFORM_ADMINS`, the browser offers no first-account setup and the listed login names cannot self-register; create those accounts with the operator account command.
 
 ### Project credentials
 
