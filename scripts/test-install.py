@@ -7,6 +7,7 @@ import pty
 import select
 import shlex
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -593,6 +594,19 @@ esac
         self.assertLess(sql.index('SET @new_mr_auth'), sql.index('-- Align shipped template names'))
         # Recreated containers come first; the old volume then gets the columns.
         self.assertLess(log.index('up -d --no-build --wait'), log.index('exec -T mysql'))
+
+    def test_live_install_fixture_copies_every_replayed_migration(self):
+        # test-install-live.sh runs install.sh from a trimmed copy of the repo,
+        # so each migration the installer replays has to be in its copy list.
+        replayed = set()
+        for name in ('install-schema-extensions.sh', 'install-observability-schema.sh'):
+            replayed.update(re.findall(r'migrations/(\d{3}_[\w-]+\.sql)', (ROOT / 'scripts' / name).read_text()))
+        self.assertIn('043_loop_terminology.sql', replayed)
+        live = (ROOT / 'scripts/test-install-live.sh').read_text()
+        copy = re.search(r'^\s*cp (migrations/\d{3}_.*?)"\$fixture/migrations/"', live, re.M | re.S)
+        self.assertIsNotNone(copy, 'test-install-live.sh no longer copies migrations into the fixture')
+        copied = set(re.findall(r'migrations/(\d{3}_[\w-]+\.sql)', copy.group(1)))
+        self.assertEqual(replayed - copied, set())
 
     def test_start_pull_migrates_legacy_sandboxes_before_startup(self):
         result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='2')
