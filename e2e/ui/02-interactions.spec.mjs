@@ -121,6 +121,8 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   await expect(page.locator('#runReviewFrame')).not.toHaveAttribute('title', /./);
   const review = page.frameLocator('#runReviewFrame');
   await expect(review.getByRole('region', { name: '人工审核' })).toBeVisible();
+  await expect(review.getByRole('separator', { name: '调整产物侧栏宽度' }))
+    .toHaveAttribute('aria-valuenow', '340');
   const artifacts = review.getByRole('complementary', { name: '会话产物' });
   const evidence = artifacts.getByRole('button', { name: /result\.md.*上游待审/ });
   await evidence.click();

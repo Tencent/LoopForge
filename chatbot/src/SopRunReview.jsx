@@ -5,6 +5,11 @@ import { SopNodeDetail, SopNodeList } from "./SopRunPanel";
 import { defaultReviewNode, runPath } from "./sop-review.js";
 import { readThemePreference, resolveTheme, THEME_KEY } from "./theme.js";
 
+const artifactLayout = {
+  defaultWidth: 340,
+  storageKey: "agentflow.runReviewArtifactPanelWidth",
+};
+
 export default function SopRunReview({ search = location.search }) {
   const params = new URLSearchParams(search);
   const runId = params.get("runId");
@@ -131,6 +136,7 @@ export default function SopRunReview({ search = location.search }) {
               <ArtifactPanel
                 {...panel}
                 filesOnly
+                layoutOptions={artifactLayout}
                 runs={[]}
                 chat={{ projectId: run.executionContext?.projectId }}
               />

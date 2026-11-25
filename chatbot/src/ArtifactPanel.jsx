@@ -170,6 +170,7 @@ export default function ArtifactPanel({
   open = true,
   view = "artifacts",
   filesOnly = false,
+  layoutOptions,
   onViewChange = () => {},
   workspaceChanges = null,
   workspaceRunId = "",
@@ -239,6 +240,7 @@ export default function ArtifactPanel({
       (browsing && workspaceRunId ? "agent-browser" : null) ||
       (coding && workspaceRunId ? "workspace-ide" : null),
     open,
+    layoutOptions,
   );
   useEffect(
     () => setNodeId(selected?.kind === "run" ? selected.nodeId || null : null),
