@@ -179,7 +179,7 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 			if rc.RequireExistingWorkBranch {
 				input += fmt.Sprintf("\n  - existing work branch: %s (continue directly on this remote branch; do not create or rename a work branch; fail if the branch does not exist; create or update its MR targeting %s)", rc.WorkBranch, rc.BaseBranch)
 			} else {
-				input += " (create a new work branch from this baseline and target this branch when opening the MR)"
+				input += " (the platform prepares the work branch from this baseline. Target the baseline when opening the MR.)"
 			}
 			if scheduled && strings.TrimSpace(rc.IntegrateBranch) != "" {
 				input += fmt.Sprintf("\n  - scheduled integration branch: %s\n  - configured main branch: %s\n  - before this SOP starts, AgentFlow merges the configured main branch into the integration baseline (never the other way); the workspace is checked out from that baseline. After the SOP, only the work branch is merged back to the integration baseline. Humans merge the baseline into the configured main branch.", rc.IntegrateBranch, rc.DefaultBranch)

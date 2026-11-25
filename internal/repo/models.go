@@ -432,7 +432,8 @@ type runArtifactRow struct {
 	SizeBytes     int64      `gorm:"column:size_bytes"`
 	SHA256        string     `gorm:"column:sha256;size:64"`
 	RepositoryDir string     `gorm:"column:repository_dir;size:128"`
-	Content       string     `gorm:"column:content;type:text"`
+	Content       string     `gorm:"column:content;type:mediumtext"`
+	BlobID        string     `gorm:"column:blob_id;size:64"`
 	Created       *time.Time `gorm:"column:created_at"`
 }
 
@@ -800,7 +801,7 @@ func allModels() []any {
 		sandboxRow{},
 		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
 		issueRow{}, issueCommentRow{}, issueImageRow{}, taskRow{},
-		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
+		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runArtifactBlobRow{}, runArtifactBlobChunk{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
 		mrDeliveryStateRow{}, definitionRevisionRow{},
 		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{}, userProjectRunnerPrefRow{}, platformRunnerSettingsRow{},

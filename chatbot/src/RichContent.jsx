@@ -538,6 +538,15 @@ export function Attachment({ attachment, sessionId, onOpen }) {
     </>
   );
 }
+// Larger files are offered for download instead of being read into the page.
+const PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
+// Deliverables without a declared type are stored as Markdown, so the body
+// decides: NUL bytes or a mostly undecodable start mean binary content.
+function looksBinary(content) {
+  if (content.includes("\u0000")) return true;
+  const head = content.slice(0, 65536);
+  return (head.match(/\uFFFD/g) || []).length > head.length * 0.1;
+}
 export function ArtifactPreview({ artifact }) {
   const [loaded, setLoaded] = useState(null);
   const [sourceView, setSourceView] = useState(false);
@@ -555,6 +564,7 @@ export function ArtifactPreview({ artifact }) {
     /^(text\/|application\/(json|javascript|xml)|image\/svg\+xml)/i.test(
       artifact.mimeType,
     );
+  const oversized = Boolean(url) && (artifact?.size || 0) > PREVIEW_MAX_BYTES;
   // An attached HTML file (e.g. a demo from the workspace) previews in the same
   // script-only sandbox as an html code block.
   const kind =
@@ -582,7 +592,7 @@ export function ArtifactPreview({ artifact }) {
       } catch {
         finish("", "文件读取失败");
       }
-    } else if (url && readable) {
+    } else if (url && readable && !oversized) {
       fetch(url)
         .then((r) => {
           if (!r.ok) throw Error("文件读取失败");
@@ -597,11 +607,13 @@ export function ArtifactPreview({ artifact }) {
     return () => {
       active = false;
     };
-  }, [id, url, localDataUrl, readable]);
+  }, [id, url, localDataUrl, readable, oversized]);
   if (!artifact) return null;
   const source =
     (url ? current?.text : (artifact.content ?? current?.text)) ?? "";
-  const hasSource = typeof source === "string" && source.length > 0 && !error;
+  const binary = Boolean(url) && looksBinary(current?.text || "");
+  const hasSource =
+    typeof source === "string" && source.length > 0 && !error && !binary;
   const isMarkdown =
     artifact.mimeType?.startsWith("text/markdown") ||
     ["markdown", "md"].includes(artifact.language?.toLowerCase()) ||
@@ -715,10 +727,14 @@ export function ArtifactPreview({ artifact }) {
             src={artifact.url}
             alt={artifact.name}
           />
+        ) : oversized ? (
+          <p className="muted">文件较大，不在页面内预览，可通过右上角下载查看。</p>
         ) : (url || localDataUrl) && readable && !current ? (
           <p className="muted" role="status">
             正在读取文件…
           </p>
+        ) : binary ? (
+          <p className="muted">此类型文件可通过右上角下载查看。</p>
         ) : !hasSource && readable ? (
           <p className="muted">文件为空</p>
         ) : artifact.kind === "svg" ? (

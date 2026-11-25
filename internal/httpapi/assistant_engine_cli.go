@@ -246,7 +246,7 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 		if o.RunnerLogin {
 			frameLimit = runtime.ClaudeLoginMaxInputLine
 		}
-		command, err = withAssistantStreamImageInput(command, o.Prompt, o.ImagePaths, frameLimit)
+		command, err = withAssistantStreamInput(command, o.Prompt, o.ImagePaths, frameLimit)
 		if err != nil {
 			return assistantCLIInvocation{}, err
 		}
@@ -259,7 +259,7 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	}, nil
 }
 
-func withAssistantStreamImageInput(command runtime.CommandSpec, prompt string, imagePaths []string, frameLimit int) (runtime.CommandSpec, error) {
+func withAssistantStreamInput(command runtime.CommandSpec, prompt string, imagePaths []string, frameLimit int) (runtime.CommandSpec, error) {
 	input, err := assistantStreamImageInput(prompt, imagePaths)
 	if err != nil {
 		return runtime.CommandSpec{}, err

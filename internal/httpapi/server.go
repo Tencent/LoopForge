@@ -319,6 +319,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicAddress}
 	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1), clarify: stream}
 	e.SelectSOPSandbox = asst.selectSOPSandbox
+	e.GenerateSOPWorkBranch = asst.generateSOPWorkBranch
 	if schedulerEnabled() {
 		d.schedule.StartAfter(bg.gate())
 		if bg != nil {
@@ -667,6 +668,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/runners/tasks/:id/events", api.runners.runnerTaskEventsOut)
 	g.POST("/api/runners/tasks/:id/events", api.runners.runnerTaskEventsIngest)
 	g.POST("/api/runners/tasks/:id/complete", api.runners.runnerTaskComplete)
+	g.PUT("/api/runners/tasks/:id/output-file", api.runners.runnerTaskOutputFile)
+	g.GET("/api/runners/tasks/:id/input-file", api.runners.runnerTaskInputFile)
 	g.GET("/api/runners/tasks/:id/control", api.runners.runnerTaskControl)
 	g.PUT("/api/runners/runtimes", api.runners.runnerRuntimeStatus)
 	g.POST("/api/runners/runtimes", api.runners.runnerRuntimeStatus)
@@ -689,6 +692,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/runners/tasks/:id/lease/renew", api.runners.runnerTaskLeaseRenew)
 	g.POST("/runners/tasks/:id/events", api.runners.runnerTaskEventsIngest)
 	g.POST("/runners/tasks/:id/complete", api.runners.runnerTaskComplete)
+	g.PUT("/runners/tasks/:id/output-file", api.runners.runnerTaskOutputFile)
+	g.GET("/runners/tasks/:id/input-file", api.runners.runnerTaskInputFile)
 	g.GET("/runners/tasks/:id/control", api.runners.runnerTaskControl)
 	g.Any(knowledge.ProxyPath, api.know.proxyMCP)
 	g.PUT("/runners/previews/:previewId/content", api.runners.runnerPreviewContent)

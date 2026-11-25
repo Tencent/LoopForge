@@ -99,6 +99,22 @@ test('approval gate: reject reworks upstream in the same workspace, approve comp
   assert.equal(summary?.status, 'succeeded');
 });
 
+test('evaluation waits for the run to finish and leaves no partial history', async () => {
+  const workflow = await createWorkflow('eval-approval', [script('prepare', 'echo ready'), approval('gate', 'prepare')]);
+  const { id } = await startRun(workflow);
+  await waitRun(id, run => nodeStatus(run, 'gate') === 'waiting_approval');
+
+  const path = `/api/runs/${id}`;
+  await post(`${path}/eval`, {}, { expect: 409 });
+  assert.deepEqual(await get(`${path}/eval`), { runId: id, status: '' });
+  assert.deepEqual(await get(`${path}/evals`), []);
+  await get(`${path}/eval/stream`, { expect: 404 });
+  await post(`${path}/eval/apply`, { recommendationIds: ['missing'] }, { expect: 404 });
+
+  await post(`${path}/approve`, { nodeId: 'gate' });
+  await waitRun(id, run => run.status === 'succeeded');
+});
+
 test('failed script: retry from the node succeeds on the second attempt', {
   todo: 'POST /api/runs/:id/retry tears the failed attempt\'s sandbox down inside the request (docker rm -f of the agentflow-run-*-scripts sidecar, up to dockerTeardownTimeout=60s); under nested Docker that rm hangs, so the call outlives the 60s client timeout',
 }, async () => {

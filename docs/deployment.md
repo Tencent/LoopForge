@@ -242,6 +242,12 @@ The upstream process roles remain `-role api`, `-role worker` and `-role all`. A
 
 Personal runners are connected from the execution-machine page with a short-lived binding code. The installer is served at `/runners/install.sh`. `AGENTFLOW_RUNNER_BINARY` can point to binaries with `{os}` and `{arch}` substitutions. Container images bundle Linux/macOS amd64/arm64 runner and gate binaries. Native source installations can build on demand with Go.
 
+SOP deliverables support up to 20 MiB per file. Runner 0.13.0 and later transfer
+declared files separately from the task completion report, so several files
+can be handed off together. Installations with automatic Runner updates
+enabled receive the bundled version after the platform release. Older Runners
+keep their 1 MiB inline upload limit until they update.
+
 The machine owner can use **Settings → Execution machines → Shared projects** to grant access to one or more projects where they are the owner or a member with write access. Members with write access can select a compatible shared machine for a new conversation. **Use in this project** sets a default for that user and project. Each new turn on a shared machine requires a current grant and project write access for both the machine owner and the sender. Removing a grant clears the saved project defaults that pointed to the machine.
 
 Docker workspaces on macOS use a Linux Runner executable for Git credentials and MCP calls. The installer chooses the architecture of the installed macOS Runner, including Intel binaries running under Rosetta. For a universal Runner on Apple Silicon it installs the arm64 helpers and adds the amd64 helpers when available. Foreground starts and the command printed by `--no-start` select the native arm64 slice, including from a Rosetta shell. On Intel Macs the installer installs the amd64 helpers. By default, it places the helpers next to the host binary. A Runner-side `AGENTFLOW_RUNNER_BINARY` template with `{os}` selects the installation and runtime path. To install both helpers, use `{arch}` and give each architecture a distinct destination. The installer saves the template for upgrades and includes it in launchd and in the startup command printed by `--no-start`. Helper paths must resolve to files separate from the macOS Runner.
@@ -274,6 +280,17 @@ For an external MySQL deployment, review that migration and check column existen
 | Applied before startup by `./start.sh pull` for an existing Compose database | `041_native_sandbox_inline_assets.sql` | See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets) |
 | Required manual upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
+
+Compose runs `migrations/042_run_artifacts_content_mediumtext.sql` before the
+platform starts, including during `./start.sh pull`. The native development
+script runs the same migration against its Compose database. It widens an existing
+`run_artifacts.content` column from `TEXT` to `MEDIUMTEXT` for inline artifacts
+and preserves existing data, character set, collation and nullability. Larger
+files use separate chunk tables added at platform startup.
+For a deployment using an external MySQL server and no Compose startup, run this
+SQL file in the deployment's database upgrade step before starting the new binary.
+If the Compose migration fails, review `docker compose --profile platform logs
+artifact-migration`, resolve the database error and rerun the upgrade.
 
 ### Migrating existing sandboxes to inline assets
 

@@ -242,6 +242,15 @@ func (r Runner) SupportsProjectCredentials() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionProjectCredentials)
 }
 
+// RunnerVersionArtifactTransfer introduced task-scoped streaming for SOP files.
+const RunnerVersionArtifactTransfer = "0.13.0"
+
+const RunnerResultReportError = "执行结果回传失败"
+
+func (r Runner) SupportsArtifactTransfer() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionArtifactTransfer)
+}
+
 // RunnerVersionConversationSOPWorkspace discovers nested conversation checkouts
 // and prepares them inside the SOP sandbox while preserving local work.
 const RunnerVersionConversationSOPWorkspace = "0.12.3"
@@ -684,6 +693,7 @@ type RunnerInvocation struct {
 	// move a missing output file found elsewhere in the workspace into
 	// place, as the control plane does for its own sandboxes.
 	ReportOutputs                bool     `json:"reportOutputs,omitempty"`
+	ArtifactTransfer             bool     `json:"artifactTransfer,omitempty"`
 	OutputFiles                  []string `json:"outputFiles,omitempty"`
 	RecoverOutputs               bool     `json:"recoverOutputs,omitempty"`
 	HumanContext                 string   `json:"humanContext,omitempty"`
@@ -788,8 +798,11 @@ func (inv *RunnerInvocation) GitSSHRemotes() []string {
 
 // RunnerInputFile is one file written into the task workspace before a run.
 type RunnerInputFile struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path       string `json:"path"`
+	Content    string `json:"content,omitempty"`
+	ArtifactID string `json:"artifactId,omitempty"`
+	SHA256     string `json:"sha256,omitempty"`
+	Restore    bool   `json:"restore,omitempty"`
 }
 
 // RunnerTaskOutputs is what a runner reports about the task workspace after
@@ -797,8 +810,10 @@ type RunnerInputFile struct {
 type RunnerTaskOutputs struct {
 	// Files maps a workspace-relative OutputFiles path to its content. Missing
 	// files and non-regular files are absent; oversized ones are in TooLarge.
-	Files    map[string]string `json:"files,omitempty"`
-	TooLarge []string          `json:"tooLarge,omitempty"`
+	Files      map[string]string       `json:"files,omitempty"`
+	TooLarge   []string                `json:"tooLarge,omitempty"`
+	FileBlobs  map[string]ArtifactBlob `json:"fileBlobs,omitempty"`
+	FileErrors map[string]string       `json:"fileErrors,omitempty"`
 	// Patches maps a repository checkout dir ("" is the workspace root) to
 	// its repository-patch inventory. Unchanged checkouts are absent.
 	Patches map[string]string `json:"patches,omitempty"`

@@ -666,6 +666,30 @@ func (r *CatalogRepo) DeleteWorkflow(id string) error {
 
 // ---------- Repositories ----------
 
+// NormalizeRepositoryWorkBranchNaming resolves the repository's CLI and stores
+// a raw model ID, so a model qualifier cannot select a different CLI at runtime.
+func NormalizeRepositoryWorkBranchNaming(naming domain.WorkBranchNaming) (domain.WorkBranchNaming, error) {
+	if naming.Mode != domain.WorkBranchNamingAI || strings.TrimSpace(naming.ExecutorID) == "" {
+		return naming.Normalize()
+	}
+	executor, ok := BuiltInExecutor(naming.ExecutorID)
+	if !ok {
+		return domain.WorkBranchNaming{}, fmt.Errorf("AI 分支命名不支持执行器 %q", naming.ExecutorID)
+	}
+	prefix, model, qualified := strings.Cut(strings.TrimSpace(naming.Model), ":")
+	if modelExecutor, known := BuiltInExecutorForKind(prefix); qualified && known {
+		if modelExecutor.Kind != executor.Kind {
+			return domain.WorkBranchNaming{}, fmt.Errorf("模型 ID 与所选 CLI 不匹配")
+		}
+		next, _, nested := strings.Cut(strings.TrimSpace(model), ":")
+		if _, known := BuiltInExecutorForKind(next); nested && known {
+			return domain.WorkBranchNaming{}, fmt.Errorf("请填写模型的原始 ID")
+		}
+		naming.Model = model
+	}
+	return naming.Normalize()
+}
+
 func (r *CatalogRepo) Repositories() []domain.Repository {
 	out := payloadList[domain.Repository](r.DB, "repositories", "")
 	sort.Slice(out, func(i, j int) bool {

@@ -5137,6 +5137,8 @@ components:
           type: string
         integrateBranch:
           type: string
+        workBranchNaming:
+          $ref: "#/components/schemas/WorkBranchNaming"
         createdAt:
           type: string
           format: date-time
@@ -5145,6 +5147,30 @@ components:
           type: string
           format: date-time
           readOnly: true
+    WorkBranchNaming:
+      type: object
+      description: Naming settings for newly created SOP work branches. Repositories without settings use the feature/ prefix.
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [prefix, ai]
+        prefix:
+          type: string
+          description: Literal prefix in prefix mode. An empty or omitted prefix within this mode produces a name without a prefix.
+          example: feat/
+        executorId:
+          type: string
+          description: Built-in CLI executor ID. Required in AI mode.
+          example: codebuddy
+        model:
+          type: string
+          description: Concrete model ID. Required in AI mode.
+          example: hy4std
+        prompt:
+          type: string
+          maxLength: 2000
+          description: Optional repository naming instructions for AI mode.
     IssueListPage:
       type: object
       required: [items, total, offset, limit, hasMore]

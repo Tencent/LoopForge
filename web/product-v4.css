@@ -655,6 +655,7 @@ body.view-has-heading .topbar .command-trigger{margin-left:0 !important}
 .approval-stats,
 .approval-list,
 .runner-onboarding,
+.runner-platform-section,
 .runner-list-heading,
 .runner-grid,
 .platform-admin-panel,
@@ -2436,7 +2437,12 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
 #runnersView .runner-uninstall summary::-webkit-details-marker{display:none}
 #runnersView .runner-uninstall summary::after{content:"›";display:inline-block;margin-left:4px;transition:transform .16s}
 #runnersView .runner-uninstall[open] summary::after{transform:rotate(90deg)}
-#runnersView .runner-list-heading{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:28px 0 4px}
+#runnersView .runner-platform-section{margin:24px 0 0}
+#runnersView .runner-platform-section[hidden]{display:none}
+#runnersView .runner-section-heading{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 12px;margin:0 0 10px}
+#runnersView .runner-section-heading h2{margin:0;color:var(--rv-text);font-size:15px;font-weight:600}
+#runnersView .runner-section-meta{color:var(--rv-muted-2);font-size:12px}
+#runnersView .runner-list-heading{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:24px 0 10px}
 #runnersView .runner-list-heading h2{margin:0;color:var(--rv-text);font-size:15px;font-weight:600}
 #runnersView #runnerAutoAssign{min-height:28px;padding:0 10px;font-size:12px}
 #runnersView #runnerAutoAssign[hidden]{display:none}
@@ -2450,7 +2456,14 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
 #runnersView .runner-empty{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:96px;border:1px dashed var(--hui-border-strong);border-radius:14px;color:var(--rv-muted);font-size:12.5px;text-align:center}
 #runnersView .runner-empty b{color:var(--rv-text);font-size:13px;font-weight:500}
 #runnersView .runner-card{--runner-auth-width:104px;min-width:0;padding:16px;overflow:visible;border:1px solid var(--rv-line);border-radius:14px;background:var(--rv-surface);box-shadow:none;transition:border-color .16s}
+#runnersView .runner-grid .runner-card{display:flex;flex-direction:column}
 #runnersView .runner-card.is-default{border-color:color-mix(in srgb,var(--hui-accent) 42%,var(--rv-line))}
+#runnersView .runner-platform-card{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 20px;padding:14px 18px;box-shadow:var(--hui-panel-shadow);container:platform-card / inline-size}
+#runnersView .runner-platform-card:has(.runner-tip:hover,.runner-tip:focus-visible){position:relative;z-index:6}
+#runnersView .runner-platform-main{display:flex;align-items:center;gap:12px;flex:1 1 280px;min-width:0}
+#runnersView .runner-platform-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;flex:0 1 auto;min-width:0}
+#runnersView .runner-platform-sep{flex:none;width:1px;height:16px;background:var(--rv-line)}
+#runnersView .runner-platform-controls .runner-status{white-space:nowrap}
 #runnersView .runner-card-head{display:flex;align-items:center;gap:10px;min-height:42px}
 #runnersView .runner-machine-icon{flex:none;display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--rv-line-soft);border-radius:9px;background:var(--rv-fill);color:var(--rv-muted)}
 #runnersView .runner-machine-icon .harness-icon{width:17px;height:17px}
@@ -2501,28 +2514,37 @@ html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code
 #runnersView .runner-runtime-empty{padding:12px 0;border-bottom:1px solid var(--rv-line-soft);color:var(--rv-muted-2);font-size:12px}
 #confirmModal .runner-model-card{box-sizing:border-box;width:min(660px,94vw)}
 #confirmModal .runner-model-editor{max-height:min(55dvh,540px);overflow:auto;margin-top:14px}
-#runnersView .runner-card-action{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px;padding:0;border:0}
+#runnersView .runner-card-action{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:auto;padding:14px 0 0;border:0}
 #runnersView .runner-card-spacer{flex:1}
-#runnersView .runner-card-action .button{height:28px;padding:0 10px;border-radius:8px;font-size:12px;font-weight:500;box-shadow:none;transition:background-color .16s,color .16s,opacity .16s}
-#runnersView .runner-card-action .button.dark{border:1px solid var(--rv-btn-dark);background:var(--rv-btn-dark);color:var(--rv-btn-dark-text)}
-#runnersView .runner-card-action .button.dark:hover{opacity:.9}
-#runnersView .runner-card-action .button:disabled{opacity:.4;cursor:not-allowed}
-#runnersView .runner-card-action .runner-text-button{border:1px solid transparent;background:transparent;color:var(--rv-muted)}
-#runnersView .runner-card-action .runner-text-button:hover{background:var(--rv-hover);color:var(--rv-text)}
+#runnersView :is(.runner-card-action,.runner-platform-controls) .button{height:28px;padding:0 10px;border-radius:8px;font-size:12px;font-weight:500;box-shadow:none;transition:background-color .16s,color .16s,opacity .16s}
+#runnersView :is(.runner-card-action,.runner-platform-controls) .button.dark{border:1px solid var(--rv-btn-dark);background:var(--rv-btn-dark);color:var(--rv-btn-dark-text)}
+#runnersView :is(.runner-card-action,.runner-platform-controls) .button.dark:hover{opacity:.9}
+#runnersView :is(.runner-card-action,.runner-platform-controls) .button:disabled{opacity:.4;cursor:not-allowed}
+#runnersView :is(.runner-card-action,.runner-platform-controls) .runner-text-button{border:1px solid transparent;background:transparent;color:var(--rv-muted)}
+#runnersView :is(.runner-card-action,.runner-platform-controls) .runner-text-button:hover{background:var(--rv-hover);color:var(--rv-text)}
 .runner-share-projects{display:grid;gap:4px;max-height:min(280px,40vh);overflow:auto;margin:0;padding:0;border:0}
 .runner-share-projects label{display:flex;align-items:center;gap:8px;padding:6px 8px;color:var(--hui-text)}
 .runner-share-projects label:hover{background:var(--hui-soft)}
 .runner-share-projects label span{overflow-wrap:anywhere}
 #runnersView .runner-run-limit{display:inline-flex;align-items:center;gap:6px;margin:0;padding:0;border-radius:0;background:none}
 #runnersView .runner-run-limit label{display:inline-flex;flex-direction:row;align-items:center;gap:6px;margin:0;color:var(--rv-muted);font-size:12px;font-weight:400}
-#runnersView .runner-run-limit input{width:56px;height:28px;padding:0 8px;border:1px solid var(--rv-line);border-radius:7px;background:var(--rv-surface);color:var(--rv-text);font-size:12px;text-align:right;box-shadow:none}
+#runnersView .runner-run-limit input{width:60px;height:28px;padding:0 6px;border:1px solid var(--hui-border-strong);border-radius:7px;background:var(--rv-surface);color:var(--rv-text);font-size:12px;font-variant-numeric:tabular-nums;text-align:center;box-shadow:none;transition:border-color .15s ease,box-shadow .15s ease}
 #runnersView .runner-run-limit input::placeholder{color:var(--rv-muted-2)}
-#runnersView .runner-run-limit input:focus{outline:none;border-color:var(--rv-text);box-shadow:none}
+#runnersView .runner-run-limit input:focus{outline:none;border-color:var(--hui-accent);box-shadow:0 0 0 3px var(--hui-accent-soft)}
 #runnersView .runner-tip{position:relative;display:inline-grid;place-items:center;width:16px;height:16px;border:1px solid var(--rv-line);border-radius:50%;color:var(--rv-muted-2);font-size:11px;font-weight:700;line-height:1;cursor:help;outline:none;transition:color .16s,border-color .16s}
 #runnersView .runner-tip:hover,#runnersView .runner-tip:focus-visible{border-color:var(--rv-muted);color:var(--rv-text)}
 #runnersView .runner-tip:focus-visible{box-shadow:0 0 0 3px var(--rv-hover)}
 #runnersView .runner-tip::after{content:attr(data-tip);position:absolute;left:-10px;bottom:calc(100% + 8px);z-index:5;display:none;width:min(240px,calc(100vw - 96px));padding:8px 10px;border-radius:8px;background:var(--rv-tip-bg);color:var(--rv-tip-text);font-size:12px;font-weight:400;line-height:1.5;text-align:left;white-space:normal;pointer-events:none}
 #runnersView .runner-tip:hover::after,#runnersView .runner-tip:focus::after{display:block}
+#runnersView .runner-platform-card .runner-tip::after{left:auto;right:-10px}
+@container platform-card (max-width:680px){
+  #runnersView .runner-platform-controls{flex:1 0 100%;padding-top:12px;border-top:1px solid var(--rv-line-soft)}
+  #runnersView .runner-platform-controls [data-runner-platform-default]{margin-left:auto}
+  #runnersView .runner-platform-card .runner-tip::after{left:-80px;right:auto}
+}
+@container platform-card (max-width:460px){
+  #runnersView .runner-platform-card .runner-tip::after{left:auto;right:-40px}
+}
 @media(max-width:900px){
   #runnersView .runner-steps{grid-template-columns:1fr}
   #runnersView .runner-grid{grid-template-columns:minmax(0,1fr)}

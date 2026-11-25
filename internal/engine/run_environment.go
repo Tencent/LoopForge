@@ -156,7 +156,7 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 			return nil, false, err
 		}
 	}
-	current, ok := e.repo.RunState(run.ID)
+	current, ok := e.repo.RunProgress(run.ID)
 	if !ok || current.Generation != run.Generation || !e.ownsRun(current) {
 		return nil, false, repo.ErrRunLeaseLost
 	}

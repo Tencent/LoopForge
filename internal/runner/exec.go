@@ -49,11 +49,17 @@ type eventBatcher struct {
 // process events back to the control plane.
 func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTask, sandbox flowruntime.Sandbox, command flowruntime.CommandSpec) execResult {
 	batcher := newEventBatcher(task, d.client)
+	command, closeInput, err := batcher.observer.OpenSOPInput(command)
+	if err != nil {
+		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
+	}
+	defer closeInput()
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("start: %v", err)}
 	}
 	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	drainDeadline := batcher.observer.CodeBuddySOPDrainDeadline(execCtx)
 	type outcome struct {
 		output string
 		err    error
@@ -81,6 +87,7 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 	flushTicker := time.NewTicker(eventFlushInterval)
 	defer flushTicker.Stop()
 	canceled := false
+	stoppedAfterDrain := false
 	ctxDone := ctx.Done()
 	for {
 		select {
@@ -88,19 +95,24 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 			ctxDone = nil
 			canceled = true
 			cancel()
+		case <-drainDeadline:
+			drainDeadline = nil
+			stoppedAfterDrain = true
+			cancel()
 		case completed := <-done:
-			batcher.finalizeProtocol(completed.err == nil)
+			err := batcher.protocolProcessError(completed.err, stoppedAfterDrain)
+			batcher.finalizeProtocol(err == nil)
 			batcher.flush(context.Background())
 			result := execResult{result: batcher.taskResult(completed.output)}
-			if canceled {
+			if canceled || (stoppedAfterDrain && ctx.Err() != nil) {
 				result.status = domain.RunnerTaskCanceled
 				result.errMsg = "runner stopped"
 				return result
 			}
-			result.exitCode = exitCode(completed.err)
-			if completed.err != nil {
+			result.exitCode = exitCode(err)
+			if err != nil {
 				result.status = domain.RunnerTaskFailed
-				result.errMsg = completed.err.Error()
+				result.errMsg = err.Error()
 			} else {
 				result.status = domain.RunnerTaskSuccess
 			}
@@ -203,6 +215,13 @@ func (b *eventBatcher) finalizeProtocol(success bool) {
 	}
 }
 
+func (b *eventBatcher) protocolProcessError(err error, stoppedAfterDrain bool) error {
+	if err == nil || stoppedAfterDrain {
+		return b.observer.CodeBuddySOPResultError()
+	}
+	return err
+}
+
 func (b *eventBatcher) flush(ctx context.Context) {
 	b.mu.Lock()
 	pending := b.buf
@@ -269,7 +288,16 @@ type execResult struct {
 // requested through the lease renewal response. extraEnv injects
 // task-scoped credentials (e.g. CODEBUDDY_API_KEY for CodeBuddy tasks).
 func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, argv []string, extraEnv ...map[string]string) execResult {
+	return d.executeHostCommand(ctx, task, flowruntime.CommandSpec{Argv: argv}, extraEnv...)
+}
+
+func (d *Daemon) executeHostCommand(ctx context.Context, task domain.RunnerTask, command flowruntime.CommandSpec, extraEnv ...map[string]string) execResult {
 	batcher := newEventBatcher(task, d.client)
+	command, closeInput, err := batcher.observer.OpenSOPInput(command)
+	if err != nil {
+		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
+	}
+	defer closeInput()
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
 		if err == ErrUnauthorized {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: "runner session rejected"}
@@ -282,8 +310,10 @@ func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, arg
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("workspace %s: %v", dir, err)}
 	}
 
+	argv := command.Argv
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = dir
+	cmd.Stdin = command.Stdin
 	// Agent CLI credentials live in the user environment on this machine;
 	// the platform additionally injects task-scoped credentials (currently
 	// the CodeBuddy API key, which cannot come from a local CLI login).
@@ -342,7 +372,11 @@ func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, arg
 	flushTicker := time.NewTicker(eventFlushInterval)
 	defer flushTicker.Stop()
 
+	drainCtx, stopDrain := context.WithCancel(ctx)
+	defer stopDrain()
+	drainDeadline := batcher.observer.CodeBuddySOPDrainDeadline(drainCtx)
 	canceled := false
+	stoppedAfterDrain := false
 	ctxDone := ctx.Done()
 	for {
 		select {
@@ -352,8 +386,15 @@ func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, arg
 				canceled = true
 				terminateProcessGroup(cmd, processDone)
 			}
+		case <-drainDeadline:
+			drainDeadline = nil
+			if !canceled {
+				stoppedAfterDrain = true
+				terminateProcessGroup(cmd, processDone)
+			}
 		case <-processDone:
-			err := processErr
+			err := batcher.protocolProcessError(processErr, stoppedAfterDrain)
+			canceled = canceled || (stoppedAfterDrain && ctx.Err() != nil)
 			if canceled {
 				err = nil
 			}
