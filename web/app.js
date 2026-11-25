@@ -2087,6 +2087,7 @@ function switchView(name){
   if(name==='observability')refreshObs()
   if(name==='agents'){api('/api/agents',{silent:true}).then(agents=>{state.data.agents=agents;renderAgents()}).catch(e=>toast(e.message));renderAgents();applyAgentRoute()}
   if(name==='settings')renderPersonalSettings();
+  if(name==='knowledge')renderKnowledgeView();
   if(name==='platform')renderPlatformAdminPanel();
   if(name==='projects')renderProjectAdmin();
   if(name==='projectCredentials')loadProjectCredentialsPage();

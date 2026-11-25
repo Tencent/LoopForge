@@ -233,7 +233,8 @@ test('knowledge engine settings switch between builtin and LightCloud views', as
   ] });
   t.after(app.close);
   await settle(3);
-  await app.evaluate('renderKnowledgeView()');
+  await app.evaluate("switchView('knowledge')");
+  await settle(8);
   const doc = app.document;
   doc.querySelector('#kbSettings').click();
   assert.equal(doc.querySelector('#kbExternalConfig').hidden, true);
