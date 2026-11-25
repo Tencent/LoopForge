@@ -16,7 +16,7 @@ import (
 func TestBotBindingHTTPRequiresBrowserLoginOriginAndOriginalSender(t *testing.T) {
 	s, assistant, bot := botFixture(t)
 	assistant.deps.authClient = auth.NewClient(auth.Config{SessionSecret: "bot-binding-http-test"})
-	h := &botIdentityHandlers{deps: assistant.deps, publicURL: "http://platform.example"}
+	h := &botIdentityHandlers{deps: assistant.deps, publicURL: staticPublicURL("http://platform.example")}
 	router := gin.New()
 	router.POST("/api/bot-bindings/claim", h.binding)
 	router.POST("/api/bot-bindings/status", h.binding)
@@ -98,7 +98,7 @@ func TestBotBindingHTTPRequiresBrowserLoginOriginAndOriginalSender(t *testing.T)
 
 func TestBotBindingLinkSurvivesNotificationRedaction(t *testing.T) {
 	_, assistant, bot := botFixture(t)
-	h := &botIdentityHandlers{deps: assistant.deps, publicURL: "http://localhost:33328"}
+	h := &botIdentityHandlers{deps: assistant.deps, publicURL: staticPublicURL("http://localhost:33328")}
 	handled, reply, err := h.message(bot, domain.BotInteraction{SenderID: "link-test", Content: "绑定账号"})
 	if err != nil || !handled {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestBotBindingLinkIsBareURLOnPlainTextChannels(t *testing.T) {
 	for _, channel := range []string{domain.BotChannelFeishu, domain.BotChannelDingTalk} {
 		_, assistant, bot := botFixture(t)
 		bot.Channel = channel
-		h := &botIdentityHandlers{deps: assistant.deps, publicURL: "https://platform.example/"}
+		h := &botIdentityHandlers{deps: assistant.deps, publicURL: staticPublicURL("https://platform.example/")}
 		handled, reply, err := h.message(bot, domain.BotInteraction{SenderID: "plain-" + channel, Content: "绑定账号"})
 		if err != nil || !handled {
 			t.Fatal(channel, err)

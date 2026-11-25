@@ -108,8 +108,11 @@ const RepositoryProviderSSH = "ssh"
 // RepositoryProviderHTTPS uses Git transport without a hosting API adapter.
 const RepositoryProviderHTTPS = "https"
 
+// RepositoryProviderHTTP uses plaintext Git transport without a hosting API adapter.
+const RepositoryProviderHTTP = "http"
+
 func GitOnlyRepositoryProvider(provider string) bool {
-	return provider == RepositoryProviderSSH || provider == RepositoryProviderHTTPS
+	return provider == RepositoryProviderSSH || provider == RepositoryProviderHTTPS || provider == RepositoryProviderHTTP
 }
 
 type Repository struct {

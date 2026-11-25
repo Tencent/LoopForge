@@ -952,6 +952,9 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			}
 			err = domain.ValidateFrozenSandbox(task.Sandbox.Profile)
 			if err == nil {
+				err = runner.ValidateSandboxVersion(task.Sandbox.Profile)
+			}
+			if err == nil {
 				task.ProjectCredentialEnv, err = h.runnerTaskProjectCredentialEnv(c.Request.Context(), task, runner)
 			}
 			if err != nil {
@@ -986,7 +989,8 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			c.Header("Cache-Control", "no-store")
 		}
 		if task.Invocation != nil && task.Invocation.GitHTTPUserID > 0 && runner.SupportsGitHTTP() {
-			task.Invocation.GitHTTPCredentials = h.repo.GitHTTPCredentialSecrets(c.Request.Context(), task.Invocation.GitHTTPUserID)
+			credentials := h.repo.GitHTTPCredentialSecrets(c.Request.Context(), task.Invocation.GitHTTPUserID)
+			task.Invocation.GitHTTPCredentials = runner.FilterGitHTTPCredentials(credentials)
 			task.Invocation.GitHTTPUserID = 0
 			c.Header("Cache-Control", "no-store")
 		}

@@ -74,6 +74,8 @@ type Server struct {
 	users           *usersHandlers // users.go
 	sshHostTrust    *sshHostTrustHandlers
 	httpsHostTrust  *httpsHostTrustHandlers
+	platformSetting *platformSettingsHandlers
+	httpHostTrust   *gitHTTPHostTrustHandlers
 	projects        *projectsHandlers
 	credentials     *projectCredentialsHandlers
 	insights        *insightsHandlers
@@ -160,6 +162,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		users:           &usersHandlers{deps: d},
 		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
 		httpsHostTrust:  &httpsHostTrustHandlers{deps: d, hosts: s.HTTPSHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP},
+		platformSetting: &platformSettingsHandlers{deps: d, envPublicURL: func() string { return notifications.PublicURL }},
+		httpHostTrust:   &gitHTTPHostTrustHandlers{deps: d, hosts: s.GitHTTPHostTrustRepo},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
@@ -197,12 +201,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	sched.SetRunDispatcher(api.schedule.dispatchScheduledRun)
 	// deps 由所有领域共享，schedule 服务就绪后回填一次即全局可见。
 	d.schedule = sched
-	if schedulerEnabled() {
-		d.schedule.StartAfter(bg.gate())
-		if bg != nil {
-			bg.scheduler = d.schedule
-		}
-	}
 	api.runners.startRunnerSweeper()
 	runAfterGate(bg.gate(), stream.recoverClarifyJobs)
 	g := gin.New()
@@ -287,6 +285,13 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/platform/git-https-hosts/:host", api.httpsHostTrust.save)
 	g.DELETE("/api/platform/git-https-hosts/:host", api.httpsHostTrust.remove)
 	g.GET("/api/git-https-hosts", api.httpsHostTrust.choices)
+	g.GET("/api/platform/public-url", api.platformSetting.publicURL)
+	g.PUT("/api/platform/public-url", api.platformSetting.publicURL)
+	g.DELETE("/api/platform/public-url", api.platformSetting.publicURL)
+	g.GET("/api/platform/git-http-hosts", api.httpHostTrust.list)
+	g.POST("/api/platform/git-http-hosts", api.httpHostTrust.save)
+	g.DELETE("/api/platform/git-http-hosts/:host", api.httpHostTrust.remove)
+	g.GET("/api/git-http-hosts", api.httpHostTrust.choices)
 	// master(net/http) 的 /api/users/ 子树只接受 PUT /api/users/<id>/credentials
 	// 一种形态，其余任何方法/子路径都走 method(w) → 405 JSON。
 	g.Any("/api/users/:id/credentials", func(c *gin.Context) {
@@ -311,8 +316,15 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	})
 
-	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
+	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicAddress}
 	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1), clarify: stream}
+	e.SelectSOPSandbox = asst.selectSOPSandbox
+	if schedulerEnabled() {
+		d.schedule.StartAfter(bg.gate())
+		if bg != nil {
+			bg.scheduler = d.schedule
+		}
+	}
 	api.runs.assistant = asst
 	api.runners.assistant = asst
 	api.schedule.assistant = asst

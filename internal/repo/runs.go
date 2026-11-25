@@ -333,17 +333,28 @@ func (r *RunsRepo) RunWorkflowProjectID(id string) (string, error) {
 	return strings.TrimSpace(row.ProjectID), err
 }
 
+// RunWithNodes reads only the run header and node state for workspace checks.
+func (r *RunsRepo) RunWithNodes(id string) (domain.Run, error) {
+	var row runRow
+	err := r.DB.Where("id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.Run{}, nil
+	}
+	if err != nil {
+		return domain.Run{}, err
+	}
+	run := runFromRow(row)
+	err = r.loadRunNodes(&run)
+	return run, err
+}
+
 // RunState returns the durable aggregate needed by the execution engine.
 // Worker logs are append-only and are never read by engine decisions, so
 // loading the entire log history on every state transition only makes long
 // runs progressively slower.
 func (r *RunsRepo) RunState(id string) (domain.Run, bool) {
-	row, ok := takeRun(r.DB, id)
-	if !ok {
-		return domain.Run{}, false
-	}
-	run := runFromRow(row)
-	if err := r.loadRunNodes(&run); err != nil {
+	run, err := r.RunWithNodes(id)
+	if err != nil || run.ID == "" {
 		return domain.Run{}, false
 	}
 	// Engine decisions only need nodes, events and artifacts. Loading thousands
@@ -401,6 +412,21 @@ func (r *RunsRepo) RunView(id string) (domain.Run, bool) {
 			var event domain.RunEvent
 			if json.Unmarshal(rows[i].Payload, &event) == nil {
 				run.Events = append(run.Events, event)
+			}
+		}
+	} else if run.WorkflowSnapshot.AutoSelectSandbox {
+		// This event is written at admission and must remain visible even on
+		// runs with a long history.
+		var rows []runEventRow
+		if err := r.DB.Select("payload").
+			Where("run_id = ? AND type = ?", id, domain.RunEventSandboxSelected).
+			Order("seq").Limit(1).Find(&rows).Error; err != nil {
+			return domain.Run{}, false
+		}
+		if len(rows) > 0 {
+			var event domain.RunEvent
+			if json.Unmarshal(rows[0].Payload, &event) == nil {
+				run.Events = []domain.RunEvent{event}
 			}
 		}
 	}
@@ -555,6 +581,39 @@ func (r *RunsRepo) TerminalWorkspaceCleanupRuns() []domain.Run {
 	return result
 }
 
+func isTopLevelSOP(run domain.Run) bool {
+	return run.ExecutionContext.ParentRunID == "" && !run.IsWorkspace() && run.WorkflowID != domain.FreeCollaborationWorkflowID
+}
+
+// IdleReclaimableSOPRuns lists stopped SOPs old enough for checkpoint cleanup.
+// The engine checks workspace use and active descendants before saving.
+func (r *RunsRepo) IdleReclaimableSOPRuns(idleBefore time.Time) []domain.Run {
+	return r.topLevelSOPCleanupRuns(r.DB.Where("status IN ? AND workspace_cleaned_at IS NULL AND updated_at <= ? AND (workspace_cleanup_not_before IS NULL OR workspace_cleanup_not_before <= ?)",
+		[]string{"failed", "waiting"}, idleBefore, time.Now().UTC()))
+}
+
+// CleanedSOPRunsHoldingAdmission finds cleanup claims still holding a slot.
+func (r *RunsRepo) CleanedSOPRunsHoldingAdmission() []domain.Run {
+	return r.topLevelSOPCleanupRuns(r.DB.Where("status NOT IN ? AND workspace_cleaned_at IS NOT NULL AND (admission_state IS NULL OR admission_state NOT IN ?)",
+		[]string{"running", "queued"}, []string{"released", "unstarted"}))
+}
+
+func (r *RunsRepo) topLevelSOPCleanupRuns(query *gorm.DB) []domain.Run {
+	var rows []runRow
+	if err := query.Where("(kind IS NULL OR kind <> ?) AND (workflow_id IS NULL OR workflow_id <> ?) AND (quota_parent_run_id IS NULL OR quota_parent_run_id = '')",
+		domain.RunKindWorkspace, domain.FreeCollaborationWorkflowID).Find(&rows).Error; err != nil {
+		return nil
+	}
+	var runs []domain.Run
+	for _, row := range rows {
+		run := runFromRow(row)
+		if isTopLevelSOP(run) { // Legacy rows may carry the parent only in execution_context.
+			runs = append(runs, run)
+		}
+	}
+	return runs
+}
+
 // RunsAwaitingBuiltPreview returns runs whose static-site build already
 // succeeded and whose workspace is still on disk, but which have no preview
 // row yet. The run may still be waiting on a later gate.
@@ -588,6 +647,14 @@ func (r *RunsRepo) ClaimRunWorkspaceCleanup(runID string, now time.Time) (bool, 
 // sweep when cleanup could not be safely scheduled or completed.
 func (r *RunsRepo) ResetRunWorkspaceCleanup(runID string) error {
 	return r.DB.Model(&runRow{}).Where("id = ?", runID).Update("workspace_cleaned_at", nil).Error
+}
+
+// ResetSettledRunWorkspaceCleanup retries a failed Runner cleanup without
+// clearing the marker of an activation or restoration already in progress.
+func (r *RunsRepo) ResetSettledRunWorkspaceCleanup(runID string, cleanedAt, now time.Time) error {
+	lease := r.DB.Model(&WorkspaceCheckpoint{}).Select("1").Where("run_id = ? AND lease_until > ?", runID, now)
+	return r.DB.Model(&runRow{}).Where("id = ? AND status NOT IN ? AND workspace_cleaned_at = ?",
+		runID, []string{"running", "queued"}, cleanedAt).Where("NOT EXISTS (?)", lease).Update("workspace_cleaned_at", nil).Error
 }
 
 func (r *RunsRepo) loadRunNodes(run *domain.Run) error {
@@ -952,7 +1019,7 @@ func (r *RunsRepo) PutRun(v domain.Run) error {
 // header and its append-only children go in a single transaction.
 //
 // Most writes keep or release a slot and take no admission lock. A write that
-// turns out to claim one (new running run, restart of a succeeded/unstarted
+// turns out to claim one (new running run, restart of a released/unstarted
 // run) is rolled back and retried with its bucket locked first, so a bucket
 // lock is never awaited while a run row is held.
 func (r *RunsRepo) writeRun(run domain.Run, expectedRevision ...int) error {
@@ -1081,6 +1148,11 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 				}); err != nil {
 					return err
 				}
+			}
+		}
+		if current.ID != "" && current.Status != "queued" && run.Status == "queued" && run.AdmissionState == "queued" {
+			if err := appendAdmissionRunEvent(tx, run.ID, "run.queued", queuedMessage(runAdmissionBucketKey(run)), run.QueueEnteredAt); err != nil {
+				return err
 			}
 		}
 		for _, ev := range run.Telemetry {

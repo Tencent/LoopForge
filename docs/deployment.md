@@ -105,7 +105,7 @@ Enterprise authentication gateways can sign users in by header with `AGENTFLOW_T
 
 ### Project credentials
 
-The installer configures `AGENTFLOW_PROJECT_CREDENTIAL_KEY` in `.env` when the setting is missing. For a custom deployment, set it in the platform environment to a Base64-encoded 32-byte random key, which you can generate with `openssl rand -base64 32`. Share the same key across instances and keep it with database backups. After replacing the key, enter every value again on each existing credential to keep its bindings. Leaving values blank requires the previous ciphertext to be readable with the configured key.
+The installer and `./start.sh pull` configure `AGENTFLOW_PROJECT_CREDENTIAL_KEY` in `.env` when the setting is missing or blank. They preserve an existing nonempty setting. For a custom deployment, set it in the platform environment to a Base64-encoded 32-byte random key, which you can generate with `openssl rand -base64 32`. Share the same key across instances and keep it with database backups. After replacing the key, enter every value again on each existing credential to keep its bindings. Leaving values blank requires the previous ciphertext to be readable with the configured key.
 
 Use a project-specific name for any credential that would otherwise share a variable name with a platform executor, Git authentication, or proxy setting. Runners receive only the variables selected for the current execution. Remote execution of these bindings requires Runner 0.12.1 or later.
 
@@ -122,6 +122,12 @@ The Compose deployment mounts the host Docker socket into the platform container
 Docker SOP nodes using a standard CLI executor first look for the CLI on the sandbox user's PATH. When it is missing, LoopForge uses a shared installation for the platform image where available or runs the same installer as conversation workspaces in the container. The install uses the sandbox's configured proxy, and later nodes in that container reuse the CLI. In-container installation requires a writable filesystem and access to the official package source. Read-only sandboxes can use a CLI from the image or the mounted toolchain. ZCode uses the official executable supplied by the image.
 
 Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: there is no unisolated sandbox type, so every task the platform runs itself is in a sandbox (the `AGENTFLOW_LOCAL_SANDBOX` setting is gone), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. Agent CLIs also apply a bound repository's own configuration as their native rules define, including unattended SOP runs: `AGENTS.md`/`CLAUDE.md` instructions, `.codebuddy/`, `.claude/settings.json` (hooks and environment) and `.mcp.json` can start commands or MCP servers inside the sandbox. Bind only repositories whose contents you trust. To run without the socket, remove the `docker.sock` volume from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for SOPs, including the welcome SOP, which now runs in `generic-docker`.
+
+### Privileged Docker sandboxes
+
+Sandbox editors can request privileged mode for an individual Docker profile. The executing worker or Runner rejects that request unless its own process environment sets `AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX=true`. For Compose, set the variable in `.env` and recreate the platform container. For a native worker or a connected Runner, set it in the foreground command environment or service configuration and restart the process.
+
+Enable this setting only on Docker hosts where the operator trusts every user who can run work there. Privileged containers can access host devices and may gain control of the Docker host. Connected machines need Runner `0.12.5` or later. Automatic SOP sandbox selection considers ordinary sandboxes, and a privileged profile can be selected explicitly. A non-root execution service continues to map default-root images to its UID and GID to keep workspace files accessible.
 
 ### Slow networks: clone and image build limits
 
@@ -147,6 +153,16 @@ Signed-in users see the instance's hostname or IPv6 address and Git provider in 
 The platform checks the approved addresses before dialing for token verification, pull or merge request discovery, and status synchronization. HTTPS connections use the platform's normal TLS trust chain. For each registered hostname and port, the platform dials only the addresses in that authorization. `AGENTFLOW_GIT_EGRESS_ALLOW_CIDRS` applies only to hosts without an HTTPS authorization.
 
 When migrating a host from deployment CIDRs, include every IP the platform should be able to reach in the authorization. To rotate an address, edit the saved list and review the added and removed addresses before confirming.
+
+### Git repositories over HTTP
+
+In **Platform administration → Git Host Trust**, enter an HTTP instance address and select **Authorize**. This accepts hostnames and literal IP addresses, such as `http://git.example.org:8080`, `http://10.0.0.5:8080` or `http://[fd00::2]:8080`. HTTP sends credentials in cleartext.
+
+Under **Personal settings → Git access tokens**, select the authorized HTTP instance and enter your token and the server's Git authentication username if required. Add the repository using its `http://` clone URL. For a host that also has a managed provider, paste the `git clone http://host/team/repo.git` command to explicitly choose HTTP. **Check repository access** runs `git ls-remote` against a repository at that exact endpoint. A successful check confirms read access. A push also requires a server that accepts pushes and credentials with write access.
+
+HTTP and HTTPS have separate authorizations and personal credentials. Git resolves hostnames using the execution environment. Platform-managed Git disables redirects for authorized HTTP credentials. HTTP repositories on an execution machine require Runner 0.12.4 or later. The Git transport supports generic repositories. PR and MR APIs depend on the hosting provider.
+
+If a Docker image lacks Git, the SOP can install it and use the same host-scoped credential helper in that script. The installed Git uses its own HTTP redirect settings.
 
 ### Git repositories over SSH
 

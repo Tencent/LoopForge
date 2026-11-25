@@ -40,7 +40,13 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   const app = await loadApp();
   t.after(app.close);
   app.router.put(/^\/api\/sandboxes$/, (call) => ({ status: 200, body: call.body }));
-  app.evaluate(`state.assetType='sandboxes';state.selectedAsset='__new__';renderAssets()`);
+  app.evaluate(`
+    state.authRequired=true;
+    state.currentUser={...state.currentUser,isGuest:false,isPlatformAdmin:false};
+    state.assetType='sandboxes';
+    state.selectedAsset='__new__';
+    renderAssets();
+  `);
   let form = app.document.querySelector('#assetForm');
   const readOnlyHelp = form.querySelector('.field-help[aria-label="容器根文件系统只读说明"]');
   const dockerFields = form.elements.readOnlyRootFS.closest('[data-sandbox-drivers="docker"]');
@@ -58,6 +64,11 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   const tooltip = app.document.querySelector('#huiTooltip:not([hidden])');
   assert.match(tooltip?.textContent ?? '', /缺少的 CLI 无法在容器内自动安装；工作区 \/workspace 仍可写/);
   assert.equal(form.elements.readOnlyRootFS.checked, false);
+  assert.equal(form.elements.privileged.checked, false);
+  assert.equal(form.elements.privileged.disabled, false);
+  assert.equal(form.elements.privileged.closest('[data-sandbox-drivers]'), dockerFields);
+  form.querySelector('.field-help[aria-label="特权模式说明"]').click();
+  assert.match(app.document.querySelector('#huiTooltip:not([hidden])')?.textContent ?? '', /可能控制执行机器/);
   assert.equal(app.router.calls.some((c) => c.path === '/api/sandboxes' && c.method === 'PUT'), false);
 
   form.elements.id.value = 'sandbox-new';
@@ -66,6 +77,7 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   form.elements.dockerfileContent.value = 'FROM node:22\nCOPY packages.txt /tmp/\n';
   form.elements.dockerfileFiles.value = '{"packages.txt":"git"}';
   form.elements.readOnlyRootFS.checked = true;
+  form.elements.privileged.checked = true;
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(2);
   const sandbox = app.router.calls.find((c) => c.path === '/api/sandboxes' && c.method === 'PUT').body;
@@ -73,10 +85,20 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   assert.deepEqual(sandbox.dockerfile, { content: 'FROM node:22\nCOPY packages.txt /tmp/\n', files: { 'packages.txt': 'git' } });
   assert.equal(sandbox.install, undefined);
   assert.equal(sandbox.readOnlyRootFS, true);
+  assert.equal(sandbox.privileged, true);
   assert.deepEqual(sandbox.environment, { CI: '1' });
+
+  form = app.document.querySelector('#assetForm');
+  assert.equal(form.elements.privileged.checked, true);
+  assert.equal(form.elements.privileged.disabled, false);
+  form.elements.privileged.checked = false;
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(2);
+  assert.equal(app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').at(-1).body.privileged, false);
 
   app.evaluate(`state.selectedAsset='__new__';state.assetDetailKey='';renderAssets()`);
   form = app.document.querySelector('#assetForm');
+  form.elements.privileged.checked = true;
   chooseOption(form.elements.driver, 'native');
   assert.equal(form.querySelector('[data-sandbox-drivers="native"]').hidden, false);
   form.elements.id.value = 'native-new';
@@ -89,6 +111,17 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   assert.deepEqual(native.environment, { JAVA_HOME: '/opt/jdk' });
   assert.equal(native.install, undefined);
   assert.equal(native.dockerfile, undefined);
+  assert.equal(native.privileged, undefined);
+
+  app.evaluate(`
+    state.data.sandboxes.push({id:'shared-docker',name:'Shared Docker',projectId:'other-project',shared:true,driver:'docker',privileged:true});
+    state.selectedAsset='shared-docker';
+    renderAssets();
+  `);
+  form = app.document.querySelector('#assetForm');
+  assert.equal(form.elements.privileged.checked, true);
+  assert.equal(form.elements.privileged.disabled, true);
+  assert.equal(form.querySelector('button[type="submit"]'), null);
 });
 
 test('agent catalog search, presets, validation, persistence, clone, and delete update state', async (t) => {

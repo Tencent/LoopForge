@@ -494,8 +494,8 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	if credentials.GitHTTPCredentials != nil {
 		credentials.GitHTTPHosts = runGitHosts(credentials)
 	}
-	// Binding writes the credential helpers into the workspace; parallel
-	// branches then run their commands concurrently.
+	// Binding refreshes workspace config and prepares Runner helpers before
+	// parallel branches execute their commands.
 	s.execMu.Lock()
 	bound, err := bindCommand(ctx, s.Sandbox, s.workspace, command, credentials)
 	s.execMu.Unlock()

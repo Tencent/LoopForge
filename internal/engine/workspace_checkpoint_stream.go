@@ -183,6 +183,20 @@ func (e *Engine) downloadConversationCheckpoint(ctx context.Context, run domain.
 		return err
 	}
 	if err = workspaceCheckpointResponseError(response); err != nil {
+		if errors.Is(err, os.ErrNotExist) && idleSOPStatus(run) && e.defaultExecutionRunner(run) != "" {
+			// Export may also report a missing file inside the checkout. Only
+			// the Runner's direct probe can confirm that the root is absent.
+			meta, _ := e.repo.WorkspaceCheckpoint(run.ID)
+			if meta.SavedAt == nil {
+				probe, probeErr := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationCheckpointStatus})
+				if probeErr != nil {
+					return probeErr
+				}
+				if probe.Status == 404 && probe.Code == domain.WorkspaceErrorMissing {
+					_, err = destination.Write(runtime.EmptyWorkspaceCheckpoint())
+				}
+			}
+		}
 		return err
 	}
 	var manifest domain.WorkspaceCheckpointTransfer

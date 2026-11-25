@@ -42,7 +42,7 @@ async function main() {
   section.hidden=false;view='issues';refresh.syncQueuedRunRefresh();assert.equal(timers.size,0);
   view='runs';refresh.state.data.runs=[{status:'running'}];refresh.syncQueuedRunRefresh();assert.equal(timers.size,0);
 
-  const calls=[],messages=[],run={id:'run/1',status:'waiting',pauseRequested:true};
+  const calls=[],messages=[],run={id:'run/1',status:'waiting',pauseRequested:true,admissionState:'released',workspaceCleanedAt:'2026-11-25T00:00:00Z'};
   const control={state:{selectedRun:run.id,activeRun:run,data:{runs:[run],issues:[]},issueDetailData:{run}},api:async(path,opts)=>{calls.push([path,opts?.method||'GET']);return{id:run.id,status:'queued',pauseRequested:false,admissionState:'queued'};},toast:m=>messages.push(m),readHumanContext:()=>'',refreshIssues:async()=>{},refreshRuns:async()=>{},startLiveRun:id=>calls.push(['stream',id]),stopLiveRun:()=>{},renderRunDetail:()=>{},renderRuns:()=>{},renderIssueDetailTab:()=>{}};
   load(control,['cachedRun','queuedRunActionBlocked','patchCachedRun','paintRunControl','runStatus','runDisplayStatus','runControlToast','sortRunsDescending','syncRunControlState','resumePausedRun']);
   control.$=()=>null;
@@ -62,7 +62,7 @@ async function main() {
   control.runRetryNeedsContext=()=>false;control.withHumanContext=p=>p;
   assert.equal(control.waitingNodeId({status:'queued',nodes:{old:{status:'waiting_approval'}}}),undefined);
   for (const prior of ['failed','succeeded']) {
-    control.patchCachedRun(run.id,{status:prior});
+    control.patchCachedRun(run.id,{status:prior,admissionState:'released',workspaceCleanedAt:run.workspaceCleanedAt});
     const start=calls.length;
     await control.resumeRun(run.id);
     assert.deepEqual(calls.slice(start,start+2),[['/api/runs/run%2F1/retry','POST'],['/api/runs/run%2F1','GET']]);
@@ -108,6 +108,7 @@ async function main() {
   const unlimited=limitUI.runnerRunLimitHTML({id:'m',name:'mac',ownerUserId:9});
   assert.match(unlimited,/placeholder="不限" value=""/);
   assert.match(unlimited,/class="runner-tip" tabindex="0"[^>]*data-tip="[^"]*默认 10 条[^"]*共享项目共用机器名额/,'run limit rules stay in a focusable tip');
+  assert.match(unlimited,/失败、暂停、待确认.*空闲 1 小时.*回收工作区，释放名额。继续或重试时自动恢复工作区/);
   assert.match(limitUI.runnerRunLimitHTML({id:'m',ownerUserId:9,runLimit:10}),/value="10"/);
   assert.doesNotMatch(limitUI.runnerRunLimitHTML({id:'"><img src=x onerror=alert(1)>',ownerUserId:9}),/<img/,'runner id is escaped');
 

@@ -104,9 +104,9 @@ func VerifyGitPreparation(ctx context.Context, workspace string, repositories []
 
 func canonicalGitRemote(raw string) string {
 	raw = strings.TrimSpace(raw)
-	if u, err := url.Parse(raw); err == nil && u.Scheme == "https" {
-		if host, err := gitwork.HTTPSHostScope("https://" + u.Host); err == nil {
-			u.Host = host
+	if u, err := url.Parse(raw); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		if endpoint, ok := gitwork.GitHTTPRemoteEndpoint(raw); ok {
+			u.Host = endpoint.Authority
 		}
 		u.Path = strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), ".git")
 		return u.String()

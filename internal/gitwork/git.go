@@ -85,7 +85,7 @@ func Watch(ctx context.Context, workspace string, opts procwatch.Options, args .
 
 func command(ctx context.Context, workspace string, sshEnv map[string]string, args []string) *exec.Cmd {
 	dir := CommandDir(workspace)
-	credential, host, urlHost := httpCredentialForCommand(ctx, args)
+	credential, endpoint, remote := httpCredentialForCommand(ctx, args)
 	authArgs := scopedHTTPAuthArgs(credential)
 	cmd := exec.CommandContext(ctx, "git", append(authArgs, args...)...)
 	cmd.Dir = dir
@@ -94,8 +94,17 @@ func command(ctx context.Context, workspace string, sshEnv map[string]string, ar
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_GLOBAL", os.DevNull)
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_NOSYSTEM", "1")
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_PARAMETERS", "")
-		cmd.Env = WithEnvValue(cmd.Env, gitHTTPHostEnv, host)
+		urlHost := ""
+		if remote != nil {
+			// The Git transport can send the original IPv6 authority to the helper.
+			urlHost = strings.ToLower(remote.Host)
+		}
+		if endpoint.Scheme == "http" && credential.Token != "" {
+			cmd.Env = WithPlainHTTPRedirectsDisabled(cmd.Env, remote)
+		}
+		cmd.Env = WithEnvValue(cmd.Env, gitHTTPHostEnv, endpoint.Authority)
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPURLHostEnv, urlHost)
+		cmd.Env = WithEnvValue(cmd.Env, gitHTTPSchemeEnv, endpoint.Scheme)
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPUserEnv, credential.Username)
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPPassEnv, credential.Token)
 	}

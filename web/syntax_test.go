@@ -999,8 +999,14 @@ assert.equal(cloned.provider, 'ssh');
 assert.equal(cloned.cloneUrl, 'git@git.example.com:example/agent-flow.git');
 assert.equal(web.name, 'agent-flow');
 const http = parseGongfengRepoURL('http://git.example.com/example/agent-flow.git');
+assert.equal(http.provider, 'gongfeng');
 assert.equal(http.project, 'example/agent-flow');
+assert.equal(http.cloneUrl, 'https://git.example.com/example/agent-flow.git');
 assert.equal(http.name, 'agent-flow');
+const plain = parseGongfengRepoURL('git clone http://git.example.com/example/agent-flow.git');
+assert.equal(plain.provider, 'http');
+assert.equal(plain.cloneUrl, 'http://git.example.com/example/agent-flow.git');
+assert.equal(parseGongfengRepoURL(globalThis.LoopForgeGitRepositoryReference(plain)).provider, 'http');
 assert.equal(ssh.name, 'agent-flow');
 const html = require('node:fs').readFileSync('index.html', 'utf8');
 assert.ok(html.includes('集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突'));
@@ -1961,10 +1967,15 @@ func TestGenericTemplateEditorUsesBundledRoles(t *testing.T) {
 	if strings.Contains(app, "const foreign=catalogForeign((state.data.agents.find(x=>x.id===state.selectedAgent)||state.agentDraft||{}).projectId)") {
 		t.Fatal("agent wizard still treats a same-id project clone as a foreign generic role")
 	}
-	for _, want := range []string{"renderPlatformAdminPanel", "platformAdminPanel", "谁可以改通用模板"} {
+	for _, want := range []string{"renderPlatformAdminPanel", "platformAdminPanel", "谁可以改通用模板", "platformPublicURLHTML", "loadPlatformPublicURL", "外部访问地址"} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app.js is missing platform admin panel wiring %q", want)
 		}
+	}
+	// The suggested value must come from the admin's own browser, never from a
+	// Host header the platform received: it is pasted into binding links.
+	if !strings.Contains(app, "field.value = location.origin") {
+		t.Fatal("the public address page no longer suggests location.origin")
 	}
 	if strings.Contains(app, `id="platformAdminCard"`) {
 		t.Fatal("platform admin management is still embedded in personal settings")

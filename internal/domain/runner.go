@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strconv"
@@ -98,6 +99,18 @@ func (r Runner) SupportsConversationCLI() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
 }
 
+// SupportsNativeSandbox checks the isolation driver against the Runner's OS
+// and its reported ability to start a native sandbox.
+func (r Runner) SupportsNativeSandbox(driver string) bool {
+	if !r.NativeSandboxAvailable {
+		return false
+	}
+	os := strings.ToLower(strings.TrimSpace(r.OS))
+	resolved, err := ResolveSandboxDriver(driver, os)
+	return err == nil && (resolved == SandboxDriverSeatbelt && os == "darwin" ||
+		resolved == SandboxDriverBwrap && os == "linux")
+}
+
 func (r Runner) SupportsConversationWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
 }
@@ -156,6 +169,40 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 // RunnerVersionRepositoryCache is the first runner that reuses a host cache
 // when checking out repositories for a native workspace. Older runners clone fully.
 const RunnerVersionRepositoryCache = "0.12.0"
+
+// RunnerVersionGitPlainHTTP is the first runner that can supply credentials
+// for an authorized plaintext Git instance.
+const RunnerVersionGitPlainHTTP = "0.12.4"
+
+func (r Runner) SupportsGitPlainHTTP() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitPlainHTTP)
+}
+
+const RunnerGitPlainHTTPUpgradeMessage = "Git HTTP 仓库需要 Runner " + RunnerVersionGitPlainHTTP + " 或更新版本，请先升级执行机器"
+
+// RunnerVersionPrivilegedSandbox is the first runner that applies the Docker
+// privilege setting in a frozen sandbox profile.
+const RunnerVersionPrivilegedSandbox = "0.12.5"
+
+func (r Runner) ValidateSandboxVersion(profile SandboxProfile) error {
+	if profile.Privileged && !versionAtLeast(r.RunnerVersion, RunnerVersionPrivilegedSandbox) {
+		return fmt.Errorf("特权 Docker 沙箱需要 Runner %s 或更新版本，请先升级执行机器", RunnerVersionPrivilegedSandbox)
+	}
+	return nil
+}
+
+// FilterGitHTTPCredentials limits a credential snapshot to the transports the
+// runner supports. The caller's map may also be used by local execution.
+func (r Runner) FilterGitHTTPCredentials(credentials map[string]GitHTTPExecutionCredential) map[string]GitHTTPExecutionCredential {
+	if r.SupportsGitPlainHTTP() {
+		return credentials
+	}
+	filtered := maps.Clone(credentials)
+	maps.DeleteFunc(filtered, func(scope string, _ GitHTTPExecutionCredential) bool {
+		return strings.HasPrefix(scope, "http://")
+	})
+	return filtered
+}
 
 // RunnerVersionProjectCredentials adds in-memory project environment values
 // to authenticated SOP task claims and conversation process starts.

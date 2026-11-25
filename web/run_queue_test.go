@@ -45,7 +45,7 @@ func TestRunQueueAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"取消排队", "host.dataset.controlSignature=runControlSignature(r)", "r.status!=='queued'", "if(r.status==='queued')", "未获准入和成功运行不占名额", "获准入后取消仍占用名额"} {
+	for _, want := range []string{"取消排队", "host.dataset.controlSignature=runControlSignature(r)", "r.status!=='queued'", "if(r.status==='queued')", "未获准入和成功运行不占名额", "空闲 1 小时后释放名额"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("queued run controls missing %q", want)
 		}

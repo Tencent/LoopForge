@@ -117,6 +117,7 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   const limit = list.querySelector('[data-runner-run-limit]');
   assert.equal(limit.value, '10');
   assert.equal(limit.hasAttribute('max'), false);
+  assert.match(list.querySelector('.runner-tip').dataset.tip, /失败、暂停、待确认.*空闲 1 小时.*释放名额.*自动恢复工作区/);
   assert.match(app.evaluate(`runnerConcurrencyLabel(state.runners[0])`), /最多同时运行 10 条 SOP/);
   limit.value = '250';
   limit.dispatchEvent(new app.window.Event('change', { bubbles: true }));

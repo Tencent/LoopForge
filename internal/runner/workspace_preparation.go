@@ -172,6 +172,10 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 // script. The transient wrapper is never closed: the shared base is owned by the
 // run sandbox registry and the acquisition reference held by the caller.
 func (d *Daemon) workspaceExecutionSandbox(ctx context.Context, sb runtime.Sandbox, request domain.RunnerWorkspaceRequest) (runtime.Sandbox, error) {
+	// The workspace preparation gate is held exclusively by the caller.
+	if err := runtime.RefreshWorkspaceGitTools(ctx, sb); err != nil {
+		return nil, err
+	}
 	credentials := runtime.RunCredentials{}
 	inv := request.PreparationInvocation
 	if inv != nil {

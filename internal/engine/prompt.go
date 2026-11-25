@@ -116,6 +116,9 @@ func promptRepositoryLine(run domain.Run) string {
 	if run.Repository.Provider == domain.RepositoryProviderHTTPS {
 		identity = "Git HTTPS"
 	}
+	if run.Repository.Provider == domain.RepositoryProviderHTTP {
+		identity = "Git HTTP"
+	}
 	return fmt.Sprintf("%s (%s), 最新远端基线 %s, 本次工作分支 %s", run.Repository.Name, identity, run.Repository.BaseBranch, run.Repository.WorkBranch)
 }
 
