@@ -2942,6 +2942,10 @@ a.project-entry {
   color: var(--muted);
   font-size: 12px;
 }
+.execution-no-record {
+  color: var(--muted);
+  font-size: 11.5px;
+}
 @media (max-width: 560px) {
   .execution-current {
     gap: 5px;

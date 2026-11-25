@@ -462,6 +462,22 @@ export default function ActivityTrace({
       </div>
     );
   }
+  // Nothing was recorded for this reply: say so up front instead of offering a
+  // chevron that only reveals an empty body, and point at the diagnostics.
+  if (!blocks.length) {
+    return (
+      <div className="reply-timing execution-trace is-empty">
+        <div className="execution-summary-row">
+          <span className="execution-total">已处理{elapsed}</span>
+          <span className="execution-no-record">无过程记录</span>
+        </div>
+        <p className="execution-empty">
+          这条历史回复未保存执行过程，可在回复下方的“诊断信息”中查看。
+        </p>
+        {divider}
+      </div>
+    );
+  }
   return (
     <details
       className="reply-timing execution-trace"
@@ -479,16 +495,12 @@ export default function ActivityTrace({
       </summary>
       {expanded ? (
         <div className="execution-body" aria-label="执行过程">
-          {blocks.length ? (
-            <Narration
-              blocks={blocks}
-              live={false}
-              interrupted={interrupted}
-              expandAll
-            />
-          ) : (
-            <p className="execution-empty">这条历史回复未保存执行过程。</p>
-          )}
+          <Narration
+            blocks={blocks}
+            live={false}
+            interrupted={interrupted}
+            expandAll
+          />
         </div>
       ) : null}
     </details>
