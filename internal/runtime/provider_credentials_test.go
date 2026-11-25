@@ -32,7 +32,7 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 			if strings.Contains(strings.Join(bound.Argv, " "), "user-secret") {
 				t.Fatal("key leaked into command arguments")
 			}
-			if bound.environment["OPENAI_API_KEY"] != "" || bound.environment["ANTHROPIC_AUTH_TOKEN"] != "" {
+			if bound.environment["OPENAI_API_KEY"] != "" || (kind != "claude-code" && bound.environment["ANTHROPIC_AUTH_TOKEN"] != "") {
 				t.Fatal("host credentials not cleared")
 			}
 			home := bound.environment["HOME"]
@@ -59,7 +59,7 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 				if bound.environment["ANTHROPIC_API_KEY"] != "claude-user-secret" || bound.environment["ANTHROPIC_BASE_URL"] != "https://claude.example" || bound.environment["CODEX_API_KEY"] != "" || bound.environment["CLAUDE_CONFIG_DIR"] != filepath.Join(home, ".claude") {
 					t.Fatal("Claude credential routing failed")
 				}
-				bound.Argv = []string{"sh", "-c", `test "$ANTHROPIC_API_KEY" = claude-user-secret && test -z "$CODEX_API_KEY" && test -z "$ANTHROPIC_AUTH_TOKEN" && printf ok`}
+				bound.Argv = []string{"sh", "-c", `test "$ANTHROPIC_API_KEY" = claude-user-secret && test "$ANTHROPIC_AUTH_TOKEN" = claude-user-secret && test -z "$CODEX_API_KEY" && printf ok`}
 			}
 			output, err := sb.Exec(context.Background(), bound, nil)
 			if err != nil || strings.TrimSpace(output) != "ok" {
