@@ -118,6 +118,11 @@ func (r Run) RepositoryContexts() []RepositoryContext {
 	return nil
 }
 
+// UsesConversationWorkspace includes a dispatched SOP and its child runs.
+func (r Run) UsesConversationWorkspace() bool {
+	return r.ExecutionContext.ExecutionPinned && r.ExecutionContext.WorkspaceRunID != "" && !r.IsWorkspace()
+}
+
 // UnmarshalJSON lifts the shared sandbox instance from historical node runs.
 // NodeRun.SandboxID remains readable during the engine transition, but new
 // clients consume the run-level field.
@@ -242,6 +247,8 @@ type TelemetryEvent struct {
 	ModelOperation *ModelObservation `json:"modelOperation,omitempty"`
 	Error          *ErrorObservation `json:"error,omitempty"`
 }
+
+const RunEventSandboxSelected = "sandbox.selected"
 
 type RunEvent struct {
 	ID        string    `json:"id"`

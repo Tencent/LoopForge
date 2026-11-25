@@ -147,10 +147,14 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		return
 	}
 	// One pasted repository reference (web / SSH / clone / git clone)
-	// An unknown HTTPS host is a Git transport, not an unknown hosting adapter.
+	// A generic web Git URL uses Git transport without a hosting adapter.
+	reference, cloneCommand := strings.CutPrefix(sshReference, "git clone ")
+	reference = strings.ToLower(strings.TrimSpace(reference))
+	plainHTTP := strings.HasPrefix(reference, "http://")
 	_, knownHost := domain.ParseRepositoryURL(sshReference)
-	if v.Provider == domain.RepositoryProviderHTTPS || !knownHost && strings.HasPrefix(strings.TrimPrefix(sshReference, "git clone "), "https://") {
-		remote, name, err := gitwork.HTTPSRepositoryURL(sshReference)
+	if v.Provider == domain.RepositoryProviderHTTPS || v.Provider == domain.RepositoryProviderHTTP ||
+		plainHTTP && cloneCommand || !knownHost && (plainHTTP || strings.HasPrefix(reference, "https://")) {
+		remote, name, err := gitwork.GitHTTPRepositoryURL(sshReference)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -159,7 +163,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			if candidate == "" {
 				continue
 			}
-			other, _, err := gitwork.HTTPSRepositoryURL(candidate)
+			other, _, err := gitwork.GitHTTPRepositoryURL(candidate)
 			if err != nil || other != remote {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "仓库地址与 cloneUrl 不一致"})
 				return
@@ -169,7 +173,12 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "仓库网页地址必须是不含凭据的 HTTP(S) 地址"})
 			return
 		}
-		v.Provider, v.CloneURL, v.GongfengProjectID = domain.RepositoryProviderHTTPS, remote, ""
+		endpoint, _ := gitwork.GitHTTPRemoteEndpoint(remote)
+		if (v.Provider == domain.RepositoryProviderHTTPS || v.Provider == domain.RepositoryProviderHTTP) && v.Provider != endpoint.Scheme {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "仓库地址与所选 HTTP(S) 协议不一致"})
+			return
+		}
+		v.Provider, v.CloneURL, v.GongfengProjectID = endpoint.Scheme, remote, ""
 		if v.WebURL == "" {
 			v.WebURL = strings.TrimSuffix(remote, ".git")
 		}
@@ -197,7 +206,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if primary != "" {
 		info, ok := domain.ParseRepositoryURL(primary)
 		if !ok {
-			c.JSON(400, gin.H{"error": "请填写完整的 GitHub、HTTPS 或 Git SSH 仓库地址"})
+			c.JSON(400, gin.H{"error": "请填写完整的 GitHub、HTTP(S) 或 Git SSH 仓库地址"})
 			return
 		}
 		if body.RepoURL != "" && body.URL != "" {
@@ -1033,9 +1042,12 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 	}
 }
 
-// requireWorkflowSandbox 校验 SOP 载荷指定的沙箱档案：标识必填且必须存在。
+// requireWorkflowSandbox 校验固定沙箱：标识必填且档案必须存在。
 // 校验失败时已写好 400 响应，调用方直接返回即可。
 func (h *catalogHandlers) requireWorkflowSandbox(c *gin.Context, wf domain.WorkflowDefinition) (domain.SandboxProfile, bool) {
+	if wf.AutoSelectSandbox {
+		return domain.SandboxProfile{}, true
+	}
 	if strings.TrimSpace(wf.SandboxProfileID) == "" {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "workflow sandboxProfileId is required"})
 		return domain.SandboxProfile{}, false
@@ -1221,11 +1233,12 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		c.JSON(200, stored)
 	case "/api/workflows/:id/clone":
 		var req struct {
-			ID               string `json:"id"`
-			Name             string `json:"name"`
-			Owner            string `json:"owner"`
-			ProjectID        string `json:"projectId"`
-			SandboxProfileID string `json:"sandboxProfileId"`
+			ID                string `json:"id"`
+			Name              string `json:"name"`
+			Owner             string `json:"owner"`
+			ProjectID         string `json:"projectId"`
+			SandboxProfileID  string `json:"sandboxProfileId"`
+			AutoSelectSandbox bool   `json:"autoSelectSandbox"`
 		}
 		if !decode(c, &req) {
 			return
@@ -1249,14 +1262,16 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if !h.requireProjectWriter(c, req.ProjectID, taken.ProjectID) {
 			return
 		}
-		if req.SandboxProfileID != "" {
+		if req.AutoSelectSandbox {
+			v.AutoSelectSandbox, v.SandboxProfileID = true, ""
+		} else if req.SandboxProfileID != "" {
 			profile, ok := h.repo.Sandbox(req.SandboxProfileID)
 			if !ok || !domain.CatalogVisible(profile.ProjectID, profile.Shared, req.ProjectID) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": "所选运行沙箱已不可用，请刷新后重新选择。"})
 				return
 			}
-			v.SandboxProfileID = profile.ID
-		} else if v.Generic {
+			v.AutoSelectSandbox, v.SandboxProfileID = false, profile.ID
+		} else if v.Generic && !v.AutoSelectSandbox {
 			v.SandboxProfileID = h.genericTemplateSandbox(v.SandboxProfileID, req.ProjectID)
 		}
 		if v.Generic {

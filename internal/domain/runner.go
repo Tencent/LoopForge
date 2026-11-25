@@ -3,7 +3,9 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +24,9 @@ const (
 	RunnerStatusOnline  = "online"
 	RunnerStatusOffline = "offline"
 )
+
+// DefaultRunnerRunLimit is the initial SOP run limit for a newly bound machine.
+const DefaultRunnerRunLimit = 10
 
 // RunnerTask states. LEASED sits between QUEUED and RUNNING so a claim that
 // never starts is still recoverable through lease expiry.
@@ -94,6 +99,18 @@ func (r Runner) SupportsConversationCLI() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
 }
 
+// SupportsNativeSandbox checks the isolation driver against the Runner's OS
+// and its reported ability to start a native sandbox.
+func (r Runner) SupportsNativeSandbox(driver string) bool {
+	if !r.NativeSandboxAvailable {
+		return false
+	}
+	os := strings.ToLower(strings.TrimSpace(r.OS))
+	resolved, err := ResolveSandboxDriver(driver, os)
+	return err == nil && (resolved == SandboxDriverSeatbelt && os == "darwin" ||
+		resolved == SandboxDriverBwrap && os == "linux")
+}
+
 func (r Runner) SupportsConversationWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
 }
@@ -153,12 +170,43 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 // when checking out repositories for a native workspace. Older runners clone fully.
 const RunnerVersionRepositoryCache = "0.12.0"
 
+// RunnerVersionGitPlainHTTP is the first runner that can supply credentials
+// for an authorized plaintext Git instance.
+const RunnerVersionGitPlainHTTP = "0.12.4"
+
+func (r Runner) SupportsGitPlainHTTP() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitPlainHTTP)
+}
+
+const RunnerGitPlainHTTPUpgradeMessage = "Git HTTP 仓库需要 Runner " + RunnerVersionGitPlainHTTP + " 或更新版本，请先升级执行机器"
+
+// FilterGitHTTPCredentials limits a credential snapshot to the transports the
+// runner supports. The caller's map may also be used by local execution.
+func (r Runner) FilterGitHTTPCredentials(credentials map[string]GitHTTPExecutionCredential) map[string]GitHTTPExecutionCredential {
+	if r.SupportsGitPlainHTTP() {
+		return credentials
+	}
+	filtered := maps.Clone(credentials)
+	maps.DeleteFunc(filtered, func(scope string, _ GitHTTPExecutionCredential) bool {
+		return strings.HasPrefix(scope, "http://")
+	})
+	return filtered
+}
+
 // RunnerVersionProjectCredentials adds in-memory project environment values
 // to authenticated SOP task claims and conversation process starts.
 const RunnerVersionProjectCredentials = "0.12.1"
 
 func (r Runner) SupportsProjectCredentials() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionProjectCredentials)
+}
+
+// RunnerVersionConversationSOPWorkspace discovers nested conversation checkouts
+// and prepares them inside the SOP sandbox while preserving local work.
+const RunnerVersionConversationSOPWorkspace = "0.12.3"
+
+func (r Runner) SupportsConversationSOPWorkspace() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationSOPWorkspace)
 }
 
 func (r Runner) SupportsSharedPush() bool {
@@ -194,11 +242,15 @@ type Runner struct {
 	LastSeenAt *time.Time      `json:"lastSeenAt,omitempty"`
 	// OwnerUserID is the user who bound this machine via bind-cli.sh; the
 	// personal 执行器 page lists machines by owner.
-	OwnerUserID      int64      `json:"ownerUserId,omitempty"`
-	SessionTokenHash string     `json:"-"`
-	SessionExpiresAt *time.Time `json:"-"`
-	CreatedAt        time.Time  `json:"createdAt"`
-	UpdatedAt        time.Time  `json:"updatedAt"`
+	OwnerUserID int64 `json:"ownerUserId,omitempty"`
+	// SharedProjectIDs holds the projects granted use of this machine by its owner.
+	SharedProjectIDs []string `json:"sharedProjectIds,omitempty"`
+	// LoginModels contains the machine owner's saved account-login catalogs by CLI.
+	LoginModels      map[string][]CLIModel `json:"loginModels,omitempty"`
+	SessionTokenHash string                `json:"-"`
+	SessionExpiresAt *time.Time            `json:"-"`
+	CreatedAt        time.Time             `json:"createdAt"`
+	UpdatedAt        time.Time             `json:"updatedAt"`
 }
 
 // PublicRunner strips credential material before returning runner data to
@@ -215,6 +267,10 @@ func PublicRunners(items []Runner) []Runner {
 		out[i] = PublicRunner(r)
 	}
 	return out
+}
+
+func (r Runner) SharedWithProject(projectID string) bool {
+	return r.OwnerUserID > 0 && projectID != "" && slices.Contains(r.SharedProjectIDs, projectID)
 }
 
 // SupportsExistingWorkBranch guards strict checkout and synchronization;
@@ -333,6 +389,14 @@ func (r Runner) RuntimeAuthMode(provider string) string {
 		return RuntimeAuthPersonal
 	}
 	return RuntimeAuthLocal
+}
+
+// RuntimeAuthModeForUser keeps a user-bound machine's account login with its owner.
+func (r Runner) RuntimeAuthModeForUser(provider string, userID int64) string {
+	if r.OwnerUserID > 0 && r.OwnerUserID != userID && SupportsRunnerLogin(provider) {
+		return RuntimeAuthPersonal
+	}
+	return r.RuntimeAuthMode(provider)
 }
 
 func SupportsRunnerLogin(provider string) bool {
@@ -642,8 +706,11 @@ type RunnerRepository struct {
 	// CreateNewWorkBranch creates WorkBranch from the base ref and fails when a
 	// same-named remote head already exists.
 	CreateNewWorkBranch bool `json:"createNewWorkBranch,omitempty"`
-	// Dir is the workspace-relative checkout directory (empty is only kept
-	// for persisted legacy runs that already checked out at the workspace root).
+	// PreserveCheckout starts a generated SOP branch at the existing local
+	// HEAD when the checkout was supplied by a conversation.
+	PreserveCheckout bool `json:"preserveCheckout,omitempty"`
+	// Dir is the workspace-relative checkout directory. Empty selects the
+	// workspace root for an existing checkout.
 	Dir string `json:"dir,omitempty"`
 	// SyncWorkBranch is the control plane's decision that WorkBranch may
 	// receive intermediate node commits (it is not a shared base/integration

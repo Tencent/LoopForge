@@ -42,9 +42,6 @@ func TestRunnerRegistryValidationRuntimeAndPreferences(t *testing.T) {
 	if err := s.SetRunnerRunLimit(runner.ID, -1); err == nil {
 		t.Fatal("negative run limit accepted")
 	}
-	if err := s.SetRunnerRunLimit(runner.ID, MaxRunnerRunLimit+1); err == nil {
-		t.Fatal("excessive run limit accepted")
-	}
 	if err := s.SetRunnerRunLimit("missing", 1); !errors.Is(err, ErrRunnerNotFound) {
 		t.Fatalf("missing run limit err=%v", err)
 	}

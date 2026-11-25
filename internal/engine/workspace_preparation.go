@@ -94,10 +94,18 @@ func (e *Engine) withPreparationProgress(ctx context.Context, runID string) cont
 func (e *Engine) prepareLocalEnvironment(ctx context.Context, run domain.Run, env *runEnvironment) (runtime.WorkspacePreparationStatus, error) {
 	// The first sandbox call below builds the Docker image when it is missing.
 	ctx = e.withPreparationProgress(ctx, run.ID)
+	if run.UsesConversationWorkspace() {
+		ctx = runtime.WithSandboxGit(ctx, env.sandbox, env.credentialSnapshot())
+	}
 	env.preparing.Store(true)
 	defer env.preparing.Store(false)
 	// Caller owns env.nodeMu so reconstruction is serialized without turning
 	// environment preparation into business-node attempts.
+	if env.activeExecutions.Load() == 0 {
+		if err := runtime.RefreshWorkspaceGitTools(ctx, env.sandbox); err != nil {
+			return runtime.WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []runtime.WorkspacePreparationStep{}}, err
+		}
+	}
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	if len(runtime.PreparationNodes(workspacePreparationPlan(run))) > 0 {
 		if err := runtime.ProvisionMCPAssets(ctx, env, env.Workspace(), assets, nil); err != nil {
@@ -109,11 +117,13 @@ func (e *Engine) prepareLocalEnvironment(ctx context.Context, run domain.Run, en
 
 func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceRequest, error) {
 	runnerID := e.defaultExecutionRunner(run)
+	var runner domain.Runner
 	if runnerID != "" {
 		if run.ExecutionContext.RunnerWorkspaceLayout != domain.RunnerWorkspaceLayoutShared && len(runtime.PreparationNodes(runtime.WorkspacePreparationWorkflow(run.WorkflowSnapshot))) > 0 {
 			return request, fmt.Errorf("此历史运行使用逐节点工作区，不能自动重建共享环境；请重新发起一次运行")
 		}
-		runner, ok := e.repo.Runner(runnerID)
+		var ok bool
+		runner, ok = e.repo.Runner(runnerID)
 		if run.IsWorkspace() && (!ok || !runner.SupportsConversationWorkspace()) {
 			return request, fmt.Errorf("对话工作区需要执行机器升级至 %s", domain.RunnerVersionConversationWorkspace)
 		}
@@ -165,14 +175,14 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	request.TerminalGitHTTPCredentials = nil
 	terminalOpen := request.Operation == domain.RunnerWorkspaceOperationTerminal && request.Terminal != nil && request.Terminal.Operation == "open"
 	if runnerID != "" && (request.Operation == domain.RunnerWorkspaceOperationPrepare || terminalOpen) {
-		invocation.GitHTTPCredentials = credentials.GitHTTPCredentials
+		invocation.GitHTTPCredentials = runner.FilterGitHTTPCredentials(credentials.GitHTTPCredentials)
 		if len(invocation.GitSSHRemotes()) > 0 {
 			invocation.GitSSHKeys = credentials.GitSSHKeys
 		}
 	}
 	if runnerID != "" && terminalOpen {
 		terminalCredentials := e.WorkspaceTerminalGitCredentials(context.Background(), run, request.TerminalOwner)
-		request.TerminalGitHTTPCredentials = terminalCredentials.HTTPS
+		request.TerminalGitHTTPCredentials = runner.FilterGitHTTPCredentials(terminalCredentials.HTTPS)
 		request.TerminalGitSSHKeys = terminalCredentials.SSHKeys
 	}
 	request.RunStatus = run.Status
@@ -394,6 +404,14 @@ func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain
 	e.runEnvMu.Unlock()
 	if env == nil {
 		return runtime.TerminalResult{}, fmt.Errorf("工作区环境尚未准备，请重新打开终端")
+	}
+	if env.Driver() == domain.SandboxDriverDocker {
+		// Keep the readiness check and PTY launch on the same container. This
+		// caller may hold the run row, so it cannot wait for node preparation.
+		if !env.nodeMu.TryLock() {
+			return runtime.TerminalResult{}, repo.ErrWorkspaceInUse
+		}
+		defer env.nodeMu.Unlock()
 	}
 
 	state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())

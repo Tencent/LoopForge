@@ -55,6 +55,23 @@ function effortPreference(executor, model) {
   return `effort.${executor}.${unprefixedModel(executor, model)}`;
 }
 
+const runnerLoginExecutors = ["codex", "claude-code", "agy"];
+
+function usesRunnerLogin(machine, executor) {
+  return runnerLoginExecutors.includes(executor) &&
+    machine?.runtimes?.some((runtime) => runtime.provider === executor && runtime.authMode !== "personal");
+}
+
+function runnerModelEntries(models, executor) {
+  return (models || []).filter((model) => concreteModel(model, executor)).map((model) => ({
+    id: `${executor}:${model.id}`,
+    engine: executor,
+    name: model.name || model.id,
+    efforts: model.reasoningEfforts ?? model.discoveredReasoningEfforts,
+    effortModelIds: model.efforts,
+  }));
+}
+
 // Use the first requested preference that is available for this executor.
 function preferredModel(list, executor, ...preferences) {
   const available = list.filter((model) => !model.disabled && !model.unavailable);
@@ -157,6 +174,7 @@ export function useChat() {
     setError,
     bindExecutionMachine,
     session?.executionTarget,
+    projectId,
   );
   const currentId = useRef(activeId),
     sessionRef = useRef(session),
@@ -657,11 +675,10 @@ export function useChat() {
   const runnerId = composerRunnerId(session);
   const runner = executionMachines.machines.find(machine => machine.id === runnerId && machine.ownerUserId === user?.id);
   const checkServerCLI = executionMachines.machinesReady && !runnerId &&
-    !session?.executionTarget?.runnerId && !session?.runId && session?.runtimeMode !== "workspace";
+    !(session?.executionTarget?.pool === "cloud" && session.executionTarget.runnerId) &&
+    !session?.runId && session?.runtimeMode !== "workspace";
   const availableExecutors = EXECUTORS.flatMap(item => {
-    const local = ["codex", "claude-code", "agy"].includes(item.id) &&
-      runner?.runtimes?.some(runtime => runtime.provider === item.id && runtime.authMode !== "personal");
-    if (local) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
+    if (usesRunnerLogin(runner, item.id)) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
     const option = catalogEngines.find(engine => engine.id === item.id);
     const configured = option?.configured ?? personalEngineConfigured(user, item.id);
     if (!configured && !(item.id === "codebuddy" && sponsoredModel)) return [];
@@ -690,12 +707,15 @@ export function useChat() {
     const personalMachine = machines.find(
       (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
     );
-    const agyRuntime = personalMachine?.runtimes?.find((runtime) => runtime.provider === "agy");
-    const agyAccountKey = executor === "agy" && agyRuntime && agyRuntime.authMode !== "personal"
+    const useLogin = usesRunnerLogin(personalMachine, executor);
+    const agyAccountKey = useLogin && executor === "agy"
       ? `agy-account:${user.id}:${personalMachine.id}` : "";
     const providerCatalog = catalogs[agyAccountKey || executor];
     const codeBuddy = executor === "codebuddy";
-    const listed = engineModels(models, executor);
+    const runnerCatalog = useLogin && executor !== "agy";
+    const listed = runnerCatalog
+      ? runnerModelEntries(personalMachine.loginModels?.[executor], executor)
+      : engineModels(models, executor);
     const usesProviderCatalog = !!executor && !codeBuddy && (!!agyAccountKey || !listed.length);
     const catalogToLoad = usesProviderCatalog && !providerCatalog ? agyAccountKey || executor : "";
     const executorModels = usesProviderCatalog
@@ -704,8 +724,12 @@ export function useChat() {
     const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
     const listedModel = findExecutorModel(executorModels, executor, model);
     const concrete = concreteModel({ id: model }, executor);
+    const changedDraftRunner = conversation?.executionTarget?.pool === "runner" &&
+      conversation.executionTarget.runnerId !== personalMachineId;
+    const keepConversationModel = conversation &&
+      (executionLocked(conversation) || (!runnerCatalog && !changedDraftRunner));
     const hasSelectedModel = concrete && !listedModel?.disabled && !listedModel?.unavailable &&
-      (conversation || !executorModels.length || listedModel);
+      (keepConversationModel || !executorModels.length || listedModel);
     const inheritsDefault = !!conversation && !concrete;
     const saved = (draft || inheritsDefault) && !sponsored && accountDefaults?.executor === executor ? accountDefaults : null;
     const savedModel = saved ? findExecutorModel(executorModels, executor, saved.model) : null;
@@ -750,22 +774,14 @@ export function useChat() {
     const existing = catalogRequests.current.get(key);
     if (existing) return existing;
     const request = runnerId
-      ? write(`/api/runners/${encodeURIComponent(runnerId)}/models/probe`, { provider: "agy", useSaved: true })
+      ? write(`/api/runners/${encodeURIComponent(runnerId)}/models/probe`, { provider: executor, useSaved: true })
       : api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`);
     const loading = request
       .then((catalog) => {
         if (catalogRequests.current.get(key) !== loading)
           throw new ComposerModelError("模型目录已更新，请重新发送。");
         if (catalog.error) throw new Error(catalog.error);
-        const result = runnerId ? {
-          models: (catalog.models || []).filter((model) => concreteModel(model, "agy")).map((model) => ({
-            id: `agy:${model.id}`,
-            engine: "agy",
-            name: model.name || model.id,
-            efforts: model.reasoningEfforts ?? model.discoveredReasoningEfforts,
-            effortModelIds: model.efforts,
-          })),
-        } : catalog;
+        const result = runnerId ? { models: runnerModelEntries(catalog.models, executor) } : catalog;
         setProviderCatalogs((old) => ({ ...old, [key]: result }));
         return result;
       })
@@ -795,7 +811,7 @@ export function useChat() {
     const visibleModel = resolved.activeModel;
     const visibleEffort = resolved.activeEffort;
     let machines = executionMachines.machines;
-    if (selection.executor === "agy" && resolved.personalMachineId && !executionMachines.machinesReady) {
+    if (runnerLoginExecutors.includes(selection.executor) && resolved.personalMachineId && !executionMachines.machinesReady) {
       const rows = await api("/api/runners?mine=1");
       machines = Array.isArray(rows) ? rows : [];
       resolved = resolveComposerModel(selection, conversation, false, providerCatalogs, machines);

@@ -177,11 +177,11 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 ## Sandbox Profile
 
-docker 沙箱的 Dockerfile 存在沙箱里，随沙箱一起共享，没有单独的 Dockerfile 资产。native 沙箱只有环境变量，使用实际执行它的机器（用户的执行机器、云端 Runner 或平台本机）上已安装的工具，仓库从那台机器的仓库缓存共享克隆。旧的 `/api/dockerfiles`、`/api/environments`、环境安装脚本和 `local` 类型已移除；现有部署升级时，在启动新版本前手动执行 `migrations/041_native_sandbox_inline_assets.sql`。
+docker 沙箱的 Dockerfile 存在沙箱里，随沙箱一起共享，没有单独的 Dockerfile 资产。native 沙箱只有环境变量，使用实际执行它的机器（用户的执行机器、云端 Runner 或平台本机）上已安装的工具，仓库从那台机器的仓库缓存共享克隆。旧的 `/api/dockerfiles`、`/api/environments`、环境安装脚本和 `local` 类型已移除；现有部署在启动新版前需要完成 [沙箱迁移 041](../deployment.md#migrating-existing-sandboxes-to-inline-assets)。
 
 ### `GET /api/sandboxes`
 
-返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap；尚未迁移的 `local` 行读出时也是 `native`）、`dockerfile`、`readOnlyRootFS`、`environment`。`dockerfile` 为 `{content, files}`，`files` 是构建上下文文件（相对路径 → 内容）。
+返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap；尚未迁移的 `local` 行读出时也是 `native`）、`dockerfile`、`readOnlyRootFS`、`environment` 和可选的 `toolchain`。`toolchain` 记录沙箱内的工具和版本，供 Agent 选择沙箱。`dockerfile` 为 `{content, files}`，`files` 是构建上下文文件（相对路径 → 内容）。
 
 ### `PUT /api/sandboxes`
 

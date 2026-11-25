@@ -181,6 +181,10 @@ const (
 	// WorkspaceErrorConversationState carries a safe, conversation-relative
 	// preparation error from the execution machine.
 	WorkspaceErrorConversationState = "conversation_state"
+	// Conversation errors distinguish workspace setup from process setup shared
+	// by both runtime modes. Older runners may omit the code.
+	WorkspaceErrorConversationSetup   = "conversation_workspace_setup"
+	WorkspaceErrorConversationProcess = "conversation_process"
 )
 
 // WorkspaceRestoreStatus describes restoration separately from SOP execution.
