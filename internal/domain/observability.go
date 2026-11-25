@@ -11,6 +11,7 @@ const (
 	ExecutionScopeRepositories = "repositories"
 
 	RunnerWorkspaceLayoutShared = "shared"
+	ExecutionPoolProjectAuto    = "project-auto"
 )
 
 // TelemetrySource identifies the layer that produced an observation and the
@@ -35,8 +36,8 @@ type TelemetryContext struct {
 	// user's later default-runner changes.
 	ExecutionMode     string `json:"executionMode,omitempty"` // cloud, runner
 	ExecutionRunnerID string `json:"executionRunnerId,omitempty"`
-	// ExecutionPool is "cloud" when ExecutionRunnerID was picked from the
-	// platform runner pool rather than the user's default machine.
+	// ExecutionPool records cloud-pool or automatic project assignment.
+	// A project-auto run without an ExecutionMode still awaits assignment.
 	ExecutionPool string `json:"executionPool,omitempty"`
 	// RunnerWorkspaceLayout freezes how a self-hosted runner maps workflow
 	// nodes to disk. Empty is the legacy per-node layout; shared gives every

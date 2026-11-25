@@ -143,13 +143,13 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 		{"unshared-compute", "", domain.ExecutionModeCloud},
 	} {
 		ownerExecution := domain.TelemetryContext{ProjectID: tc.projectID, ResponsibleUserID: 42}
-		e.selectSOPExecutionTarget(&ownerExecution)
+		e.selectSOPExecutionTarget(&ownerExecution, false)
 		if ownerExecution.ExecutionRunnerID != tc.runnerID || ownerExecution.ExecutionMode != tc.mode {
 			t.Fatalf("owner target for %q = %+v, want %s %q", tc.projectID, ownerExecution, tc.mode, tc.runnerID)
 		}
 	}
 	execution := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: 1}
-	e.selectSOPExecutionTarget(&execution)
+	e.selectSOPExecutionTarget(&execution, false)
 	if execution.ExecutionRunnerID != runner.ID || execution.ExecutionMode != domain.ExecutionModeRunner {
 		t.Fatalf("project target = %+v", execution)
 	}
@@ -180,7 +180,7 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 		}
 		for _, userID := range []int64{1, 42} {
 			next := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: userID}
-			e.selectSOPExecutionTarget(&next)
+			e.selectSOPExecutionTarget(&next, false)
 			if next.ExecutionRunnerID != "" || next.ExecutionMode != domain.ExecutionModeCloud {
 				t.Fatalf("new run used revoked machine: %+v", next)
 			}

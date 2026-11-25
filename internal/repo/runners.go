@@ -224,7 +224,7 @@ func (r *RunnersRepo) SetRunnerRunLimit(id string, limit int) error {
 		value = limit
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		if err := lockAdmissionGate(r.deps, tx, admissionBucketKey("", id, true)); err != nil {
+		if err := lockAdmissionGate(r.deps, tx, runnerAdmissionBucketKey(id)); err != nil {
 			return err
 		}
 		res := tx.Model(&runnerRow{}).Where("id = ?", id).Updates(map[string]any{"run_limit": value, "updated_at": time.Now().UTC()})
@@ -235,7 +235,40 @@ func (r *RunnersRepo) SetRunnerRunLimit(id string, limit int) error {
 			return ErrRunnerNotFound
 		}
 		return nil
-	})
+	}, r.admissionTxOptions()...)
+}
+
+const platformRunnerSettingsID int64 = 1
+
+func (r *RunnersRepo) PlatformRunnerRunLimit() int {
+	limit, err := platformRunnerRunLimit(r.DB)
+	if err != nil {
+		return domain.DefaultRunnerRunLimit
+	}
+	return limit
+}
+
+func platformRunnerRunLimit(tx *gorm.DB) (int, error) {
+	var row platformRunnerSettingsRow
+	err := tx.Select("run_limit").Take(&row, platformRunnerSettingsID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.DefaultRunnerRunLimit, nil
+	}
+	return row.RunLimit, err
+}
+
+func (r *RunnersRepo) SetPlatformRunnerRunLimit(limit int, actorUserID int64) error {
+	if limit < 0 {
+		return fmt.Errorf("最多同时运行条数需为非负整数（0 表示不限制）")
+	}
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockAdmissionGate(r.deps, tx, PlatformAdmissionBucketKey); err != nil {
+			return err
+		}
+		return upsert(tx, "platform_runner_settings", map[string]any{
+			"id": platformRunnerSettingsID, "run_limit": limit, "updated_by": actorUserID, "updated_at": time.Now().UTC(),
+		})
+	}, r.admissionTxOptions()...)
 }
 
 func (r *RunnersRepo) Runner(id string) (domain.Runner, bool) {

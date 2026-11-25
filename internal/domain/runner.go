@@ -23,10 +23,30 @@ import (
 const (
 	RunnerStatusOnline  = "online"
 	RunnerStatusOffline = "offline"
+
+	RunnerSelectionModeAuto     = "auto"
+	RunnerSelectionModePlatform = "platform"
+	PlatformRunnerName          = "平台执行机器（云端）"
 )
 
-// DefaultRunnerRunLimit is the initial LOOP run limit for a newly bound machine.
+// DefaultRunnerRunLimit is the initial LOOP run limit for each execution machine.
 const DefaultRunnerRunLimit = 10
+
+type RunnerLoad struct {
+	OccupiedRuns int `json:"occupiedRuns"`
+	RunningRuns  int `json:"runningRuns"`
+	QueuedRuns   int `json:"queuedRuns"`
+}
+
+type PlatformRunnerStatus struct {
+	Name            string      `json:"name"`
+	Status          string      `json:"status"`
+	RunLimit        int         `json:"runLimit"`
+	CanEditLimit    bool        `json:"canEditLimit"`
+	CloudPool       bool        `json:"cloudPool"`
+	CloudPoolOnline int         `json:"cloudPoolOnline"`
+	Load            *RunnerLoad `json:"load"`
+}
 
 // RunnerTask states. LEASED sits between QUEUED and RUNNING so a claim that
 // never starts is still recoverable through lease expiry.

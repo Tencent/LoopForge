@@ -61,6 +61,12 @@ const ConversationWorkspaceWorkflowID = "conversation-workspace"
 // IsWorkspace distinguishes an on-demand chat workspace from a scheduled LOOP.
 func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
 
+// FailedBeforeAutoAssignment reports whether a project-auto run failed while waiting for a machine.
+func (r Run) FailedBeforeAutoAssignment() bool {
+	return r.Status == "failed" && r.ExecutionContext.ExecutionPool == ExecutionPoolProjectAuto &&
+		r.ExecutionContext.ExecutionMode == ""
+}
+
 // IsPersonalWorkspace identifies a workspace whose access is scoped to its owner.
 func (r Run) IsPersonalWorkspace() bool {
 	return r.IsWorkspace() && r.ExecutionContext.ProjectID == ""
@@ -248,7 +254,10 @@ type TelemetryEvent struct {
 	Error          *ErrorObservation `json:"error,omitempty"`
 }
 
-const RunEventSandboxSelected = "sandbox.selected"
+const (
+	RunEventSandboxSelected = "sandbox.selected"
+	RunEventFailed          = "run.failed"
+)
 
 type RunEvent struct {
 	ID        string    `json:"id"`
