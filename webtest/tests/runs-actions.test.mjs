@@ -147,6 +147,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
     state.activeRun={...state.activeRun,status:'failed',artifacts:[
       {id:'art-1',nodeId:'b',name:'report.md',path:'out/report.md',attempt:2,size:1200,sha256:'abcdef',mediaType:'text/markdown'},
       {id:'art-bin',nodeId:'b',name:'model',path:'out/model.bin',attempt:2,size:20971520,sha256:'fedcba',mediaType:'application/octet-stream'},
+      {id:'art-image',nodeId:'b',name:'chart',path:'out/chart.png',attempt:2,size:1048576,sha256:'ab',mediaType:'image/png'},
       {id:'art-zip',nodeId:'b',name:'pkg',path:'out/pkg.zip',attempt:2,size:2048,sha256:'aa',mediaType:'text/markdown'},
       {id:'art-ndjson',nodeId:'b',name:'rows',path:'out/rows.ndjson',attempt:2,size:9,sha256:'bb',mediaType:'application/x-ndjson'}]};
     state.selectedRun='run-x';state.currentUser.codeBuddyApiKeyConfigured=true;
@@ -200,13 +201,20 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   const callsBefore = artifactCalls();
   await app.evaluate(`previewArtifact(state.activeRun,'art-bin')`);
   assert.equal(artifactModal.open, true);
-  assert.equal(artifactCalls(), callsBefore, 'a binary artifact is not read into the page');
+  assert.equal(artifactCalls(), callsBefore, 'an oversized artifact is not read into the page');
   assert.match(app.document.querySelector('#artifactPreview').textContent, /不在页面内预览/);
+  assert.match(app.document.querySelector('#artifactPreview').textContent, /超过 5 MiB/);
   artifactModal.querySelector('[data-download-artifact]').click();
   assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-bin', 'model.bin']);
   artifactModal.close();
+  await app.evaluate(`previewArtifact(state.activeRun,'art-image')`);
+  assert.equal(artifactCalls(), callsBefore, 'a declared binary artifact is not read into the page');
+  artifactModal.querySelector('[data-download-artifact]').click();
+  assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-image', 'chart.png']);
+  artifactModal.close();
   await app.evaluate(`previewArtifact(state.activeRun,'art-zip')`);
   assert.match(app.document.querySelector('#artifactPreview').textContent, /不在页面内预览/);
+  assert.match(app.document.querySelector('#artifactPreview').textContent, /无法按文本显示/);
   artifactModal.querySelector('[data-download-artifact]').click();
   assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-zip', 'pkg.zip']);
   artifactModal.close();

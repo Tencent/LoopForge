@@ -1600,6 +1600,12 @@ function openArtifactPreview({title,icon,details,url,action,download=false,loadi
 }
 /** 页面内预览会整份读入并渲染正文，超过 5 MiB 的产物只提供下载。 */
 const ARTIFACT_PREVIEW_MAX_BYTES=5*1024*1024;
+function artifactHasBinaryType(artifact){
+  const type=String(artifact?.mediaType||'').split(';')[0].trim().toLowerCase();
+  return (type.startsWith('image/')&&type!=='image/svg+xml')||type.startsWith('audio/')||type.startsWith('video/')||
+    ['application/octet-stream','application/pdf','application/zip','application/x-zip-compressed',
+      'application/gzip','application/x-gzip','application/x-tar','application/x-7z-compressed'].includes(type);
+}
 /** 未声明类型的产物会登记为 Markdown，因此按正文判断二进制：含 NUL，或开头有大量无法解码的字符。 */
 function artifactLooksBinary(content){
   if(content.includes('\u0000'))return true;
@@ -1628,7 +1634,7 @@ async function previewArtifact(run,artifactId,opener){
     url,action:'在新窗口打开 ↗',loading:'正在加载交付物…',opener,
   });
   try{
-    const renderDownloadOnly=()=>{
+    const renderDownloadOnly=reason=>{
       const sizeKB=Math.max(1,Math.ceil((artifact.size||0)/1024));
       const size=sizeKB>=1024?`${(sizeKB/1024).toFixed(1)} MB`:`${sizeKB} KB`;
       host.innerHTML=`
@@ -1643,15 +1649,16 @@ async function previewArtifact(run,artifactId,opener){
             <button type="button" class="button ghost small" data-download-artifact>⬇ 下载文件</button>
           </div>
         </div>
-        <div class="empty-properties"><b>此文件不在页面内预览</b><p>文件较大或为二进制内容，请下载后查看。</p></div>`;
+        <div class="empty-properties"><b>此文件不在页面内预览</b><p>${escapeHTML(reason)}</p></div>`;
       host.querySelector('[data-download-artifact]').onclick=()=>downloadArtifactFile(url,artifact);
     };
-    if((artifact.size||0)>ARTIFACT_PREVIEW_MAX_BYTES){renderDownloadOnly();return}
+    if((artifact.size||0)>ARTIFACT_PREVIEW_MAX_BYTES){renderDownloadOnly('文件超过 5 MiB，请下载后查看。');return}
+    if(artifactHasBinaryType(artifact)){renderDownloadOnly('此类型请下载后查看。');return}
     const res=await fetch(url,{signal});
     if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const content=await res.text();
     if(signal.aborted)return;
-    if(artifactLooksBinary(content)){renderDownloadOnly();return}
+    if(artifactLooksBinary(content)){renderDownloadOnly('无法按文本显示，请下载后查看。');return}
     const isMd=isMarkdownArtifact(artifact, content);
     $('#artifactPreviewHeading .artifact-preview-icon').textContent=isMd?'MD':'{}';
     let viewMode=isMd?'preview':'source';
