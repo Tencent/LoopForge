@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -58,7 +57,7 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 			t.Fatal(err)
 		}
 	}
-	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	server := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	body := domain.ScheduleJob{
 		ID: "runner-login-job", ProjectID: "workbench", Name: "巡检", SkipDispatch: true, AssistantPrompt: "检查",
 		AssistantModel: cliEngine + ":default", RunAsUserID: owner.ID, IntervalSec: 3600, Enabled: true,

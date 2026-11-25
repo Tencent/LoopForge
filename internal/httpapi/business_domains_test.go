@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -157,7 +156,7 @@ func TestBusinessDomainsPermissionsAndCurrentAttribution(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	a := domain.BusinessDomain{ID: "business-a", Name: "测试 DNS 控制台", Active: true, ManagerIDs: []int64{manager.ID}, ViewerIDs: []int64{viewer.ID}}
 	b := domain.BusinessDomain{ID: "business-b", Name: "测试其他业务", Active: true, ManagerIDs: []int64{manager.ID}, ViewerIDs: []int64{}}
 	empty := domain.BusinessDomain{ID: "business-empty", Name: "测试空业务", Active: true, ManagerIDs: []int64{}, ViewerIDs: []int64{}}

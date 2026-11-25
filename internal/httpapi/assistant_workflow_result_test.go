@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -61,7 +60,7 @@ func TestWorkflowGetReturnsFullDefinition(t *testing.T) {
 	if err := st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	api := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	h := &assistantHandlers{deps: &deps{repo: st}, api: api}
 	got, err := h.callAssistantPlatform(context.Background(), user, "platform", assistantMCPCall{
 		Server: "agentflow", Tool: "workflows_get", Arguments: map[string]any{"path": map[string]any{"id": wf.ID}},

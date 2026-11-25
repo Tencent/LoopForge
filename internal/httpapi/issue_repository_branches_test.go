@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -196,7 +195,7 @@ func TestDispatchRepositoryBranches(t *testing.T) {
 		Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}
-	eng := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	eng := engine.New(st, runtime.NewManager(sandboxRoot(t)))
 	d := &deps{repo: st, engine: eng, sync: tracker.NewService()}
 	for _, scheduled := range []bool{false, true} {
 		for _, mixed := range []bool{false, true} {

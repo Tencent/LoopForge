@@ -16,13 +16,12 @@ import (
 )
 
 func TestCloseAndFilterIssues(t *testing.T) {
-	root := t.TempDir()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	e := engine.New(st, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(st, runtime.NewManager(sandboxRoot(t)))
 	h := New(st, e, tracker.NewService(), "", "")
 
 	now := time.Now().UTC()

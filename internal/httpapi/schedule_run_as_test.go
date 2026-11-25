@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -41,7 +40,7 @@ func TestScheduleJobRunsWithTheSaversKey(t *testing.T) {
 	if err := st.PutProject(project); err != nil {
 		t.Fatal(err)
 	}
-	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	server := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	job := map[string]any{"id": "runas-job", "projectId": "runas-proj", "name": "巡检", "skipDispatch": true, "assistantPrompt": "p", "intervalSec": 3600}
 	put := func(who domain.User, extra map[string]any) domain.ScheduleJob {
 		t.Helper()
@@ -190,7 +189,7 @@ func TestScheduleJobMemberWithoutKeyCanStopIt(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: "stop-proj", Name: "Stop", OwnerID: owner.ID, Members: []domain.ProjectMember{{UserID: nokey.ID, Role: "member"}}}); err != nil {
 		t.Fatal(err)
 	}
-	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	server := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	job := map[string]any{"id": "stop-job", "projectId": "stop-proj", "name": "巡检", "skipDispatch": true, "assistantPrompt": "p", "intervalSec": 3600, "enabled": true}
 	saved := requestJSONAuthed[domain.ScheduleJob](t, server, owner, http.MethodPut, "/api/schedule-jobs", job, http.StatusOK)
 	if saved.RunAsUserID != owner.ID || !saved.Enabled {
@@ -278,7 +277,7 @@ func TestScheduleJobEnabledTogglesOnlyTheFlag(t *testing.T) {
 	if err := st.PutScheduleJob(job); err != nil {
 		t.Fatal(err)
 	}
-	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	server := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	path := "/api/schedule-jobs/toggle-job/enabled"
 	if code := scheduleAuthzStatus(t, server, viewer, http.MethodPost, path, map[string]any{"enabled": false}); code != http.StatusForbidden {
 		t.Fatalf("viewer toggled a job: %d", code)

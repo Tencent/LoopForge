@@ -222,7 +222,6 @@ func TestMRPendingCommandReportsThePushedTip(t *testing.T) {
 
 func TestMRGateRunsInTheNodeLoop(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -235,7 +234,7 @@ func TestMRGateRunsInTheNodeLoop(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
+	e := New(s, runtime.NewManager(sandboxRoot(t)))
 	e.FindBranchMRsInto = func(domain.BranchMRQuery) ([]domain.DeliveryMR, error) {
 		t.Error("a run without repositories must not look up MRs")
 		return nil, nil

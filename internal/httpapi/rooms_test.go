@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 
 func TestRoomDispatchesGenericTemplate(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "room-test-session-secret")
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +26,7 @@ func TestRoomDispatchesGenericTemplate(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	owner, _ := s.User(1)
 	room := requestJSONAuthed[domain.ChatRoomView](t, h, owner, http.MethodPost, "/api/rooms", map[string]any{
@@ -49,7 +47,6 @@ func TestRoomDispatchesGenericTemplate(t *testing.T) {
 
 func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "room-test-session-secret")
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +66,7 @@ func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	owner, _ := s.User(1)
 

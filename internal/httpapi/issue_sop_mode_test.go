@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"net/http"
-	"path/filepath"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -24,7 +23,7 @@ func TestRequirementWithoutSOP(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: "sop-mode", Name: "SOP mode", OwnerID: 1, WorkflowID: "sop-mode-flow"}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e := engine.New(st, runtime.NewManager(sandboxRoot(t)))
 	h := New(st, e, tracker.NewService(), "", "")
 
 	bound := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{

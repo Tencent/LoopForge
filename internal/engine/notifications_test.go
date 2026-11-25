@@ -4,7 +4,6 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -28,7 +27,7 @@ func TestAgentNotificationsFollowRealGateAndApprovalEvents(t *testing.T) {
 	if err = s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e := New(s, runtime.NewManager(sandboxRoot(t)))
 	run, err := e.StartWithExecutionContext(wf.ID, "通知链路验证", domain.RepositoryContext{}, domain.TelemetryContext{ProjectID: "notify-p"})
 	if err != nil {
 		t.Fatal(err)

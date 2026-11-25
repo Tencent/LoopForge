@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -150,7 +149,7 @@ func TestNativeToolTurnActiveKeepsALocalTurnThroughASlowHeartbeat(t *testing.T) 
 // not outlive the turn: the next turn starts with none.
 func TestStartGenerationRecordsTheWorkspaceLeaseItHolds(t *testing.T) {
 	h, a, _, _, session := sharedWorkbenchFixture(t)
-	h.engine = engine.New(h.repo, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	h.engine = engine.New(h.repo, runtime.NewManager(sandboxRoot(t)))
 	entered, release := make(chan struct{}), make(chan struct{})
 	h.generate = func(ctx context.Context, _ string, _ domain.User) (string, error) {
 		close(entered)

@@ -22,7 +22,6 @@ import (
 )
 
 func TestIssueDispatchCreatesTaskAndRun(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +30,7 @@ func TestIssueDispatchCreatesTaskAndRun(t *testing.T) {
 	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "issue-test", Name: "Issue test", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 
 	if err := s.PutIssue(domain.Issue{ID: "iss-audit", ProjectID: "platform", Title: "Implement audit log", Description: "Record mutations", Status: "todo", Priority: "high", AssigneeType: "agent", AssigneeID: "developer", WorkflowID: "issue-test"}); err != nil {
@@ -79,7 +78,6 @@ func TestIssueDispatchCreatesTaskAndRun(t *testing.T) {
 }
 
 func TestDispatchTAPDIssuePutsStoryIdentityInInput(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +86,7 @@ func TestDispatchTAPDIssuePutsStoryIdentityInInput(t *testing.T) {
 	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "tapd-identity", Name: "TAPD identity", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	issue := domain.Issue{
 		ID: "tapd-1010000000100001887", ProjectID: "platform", Kind: "requirement", Source: "tapd",
@@ -130,7 +128,7 @@ func TestCreateIssueDefaultsAssigneeToCurrentUser(t *testing.T) {
 	if err := s.PutUser(creator); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	created := requestJSONAuthed[domain.Issue](t, h, creator, http.MethodPost, "/api/issues", map[string]any{
 		"projectId": "platform", "title": "新人需求", "kind": "requirement",
 	}, http.StatusOK)
@@ -145,7 +143,7 @@ func TestPlatformRequirementOptionalTapdMetricBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	issue := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
 		"projectId": "platform", "title": "平台需求", "kind": "requirement", "syncTarget": "local",
 	}, http.StatusOK)
@@ -187,7 +185,7 @@ func TestIssueClarificationStartPersistsAcrossEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	started := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
 	issue := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
 		"projectId": "platform", "title": "澄清后开发", "kind": "requirement", "syncTarget": "local",
@@ -210,7 +208,6 @@ func TestIssueClarificationStartPersistsAcrossEdit(t *testing.T) {
 
 func TestIssueDispatchUsesTriggerUserCredentials(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "dispatch-trigger-session-secret")
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +220,7 @@ func TestIssueDispatchUsesTriggerUserCredentials(t *testing.T) {
 	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "issue-trigger", Name: "Trigger", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	if err := s.PutIssue(domain.Issue{ID: "iss-trigger", ProjectID: "platform", Title: "Run me", WorkflowID: "issue-trigger"}); err != nil {
 		t.Fatal(err)
@@ -248,7 +245,7 @@ func TestIssueDispatchRejectsMissingOwnerAndResponsibleUser(t *testing.T) {
 	if err := s.PutIssue(domain.Issue{ID: "ownerless-issue", ProjectID: "ownerless", Title: "Cannot run", WorkflowID: "issue-fix-production"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	result := requestJSON[map[string]string](t, h, http.MethodPost, "/api/issues/ownerless-issue/dispatch", map[string]any{}, http.StatusConflict)
 	if !strings.Contains(result["error"], "项目未配置 Owner") {
 		t.Fatalf("unexpected error: %q", result["error"])
@@ -256,7 +253,6 @@ func TestIssueDispatchRejectsMissingOwnerAndResponsibleUser(t *testing.T) {
 }
 
 func TestExternalIssueDispatchKeepsExplicitWorkflow(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -269,7 +265,7 @@ func TestExternalIssueDispatchKeepsExplicitWorkflow(t *testing.T) {
 	if err := s.PutWorkflow(workflow); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	issue := domain.Issue{
 		ID: "gf-custom-flow", ProjectID: "platform", Source: "gongfeng", Kind: "issue", Title: "Use custom flow",
@@ -295,7 +291,6 @@ func TestExternalIssueDispatchKeepsExplicitWorkflow(t *testing.T) {
 }
 
 func TestIssueDispatchSecondLaneKeepsDefaultSOP(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -309,7 +304,7 @@ func TestIssueDispatchSecondLaneKeepsDefaultSOP(t *testing.T) {
 	if err := s.PutWorkflow(frontend); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	if err := s.PutIssue(domain.Issue{ID: "iss-lanes", ProjectID: "platform", Kind: "requirement", Title: "Two lanes", Status: "todo", WorkflowID: backend.ID}); err != nil {
 		t.Fatal(err)
@@ -348,7 +343,6 @@ func TestIssueDispatchSecondLaneKeepsDefaultSOP(t *testing.T) {
 
 func TestIssueSOPBindingsRoundTripAndDispatchOwner(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "sop-bind-session-secret")
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -370,7 +364,7 @@ func TestIssueSOPBindingsRoundTripAndDispatchOwner(t *testing.T) {
 	if err := s.PutWorkflow(backend); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	if err := s.PutIssue(domain.Issue{ID: "iss-sops", ProjectID: "platform", Kind: "requirement", Title: "Orchestrate", Status: "todo", WorkflowID: backend.ID}); err != nil {
 		t.Fatal(err)
@@ -396,7 +390,6 @@ func TestIssueSOPBindingsRoundTripAndDispatchOwner(t *testing.T) {
 }
 
 func TestRequirementInheritsProjectPlaybook(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -419,7 +412,7 @@ func TestRequirementInheritsProjectPlaybook(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	created := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", domain.Issue{
 		ProjectID: "playbook", Kind: "requirement", Title: "Inherit playbook", Status: "todo", AssigneeUserID: 3,
@@ -445,7 +438,6 @@ func TestRequirementInheritsProjectPlaybook(t *testing.T) {
 }
 
 func TestRequirementPicksNamedPlaybook(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -474,7 +466,7 @@ func TestRequirementPicksNamedPlaybook(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	created := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", domain.Issue{
 		ProjectID: "combos", Kind: "requirement", Title: "Backend only", Status: "todo", AssigneeUserID: 3, PlaybookID: "be",
@@ -506,13 +498,12 @@ func TestRequirementPicksNamedPlaybook(t *testing.T) {
 }
 
 func TestWorkflowAPIRequiresExistingWorkflowSandboxProfile(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/workflows", map[string]any{"id": "missing", "name": "Missing", "nodes": []any{}, "edges": []any{}}, http.StatusBadRequest)
@@ -524,13 +515,12 @@ func TestWorkflowAPIRequiresExistingWorkflowSandboxProfile(t *testing.T) {
 }
 
 func TestAssetAPIAcceptsSandboxEnvironmentButExecutorsAreReadOnly(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/executors", map[string]any{"id": "legacy", "name": "Legacy", "kind": "mock"}, http.StatusMethodNotAllowed)
 	executors := requestEmptyJSON[[]domain.ExecutorDefinition](t, h, http.MethodGet, "/api/executors", http.StatusOK)
@@ -556,7 +546,7 @@ func TestAgentAPIOnlyAcceptsBuiltInCLIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 
 	rejected := requestJSON[map[string]string](t, h, http.MethodPut, "/api/agents", map[string]any{"id": "custom-cli", "name": "Custom CLI", "projectId": "platform", "executorId": "custom"}, http.StatusBadRequest)
 	if !strings.Contains(rejected["error"], "不支持的 CLI") {
@@ -571,13 +561,12 @@ func TestAgentAPIOnlyAcceptsBuiltInCLIs(t *testing.T) {
 }
 
 func TestSandboxAPIStoresItsDockerfileAndInstall(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "container-new", "name": "Container", "projectId": "platform", "driver": "docker"}, http.StatusBadRequest)
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "container-new", "name": "Container", "projectId": "platform", "driver": "docker", "dockerfile": map[string]any{"content": " "}}, http.StatusBadRequest)
@@ -608,7 +597,6 @@ func TestSandboxAPIStoresItsDockerfileAndInstall(t *testing.T) {
 }
 
 func TestManualRunKeepsSelectedProjectContext(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -624,7 +612,7 @@ func TestManualRunKeepsSelectedProjectContext(t *testing.T) {
 	if err := s.PutWorkflow(workflow); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 
 	run := requestJSON[domain.Run](t, h, http.MethodPost, "/api/runs", map[string]any{
@@ -665,7 +653,7 @@ func TestRepositoryBindingIsValidatedAndFrozenAtDispatch(t *testing.T) {
 	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "repo-flow", Name: "Repo flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	source := filepath.Join(root, "source")
 	if err := os.MkdirAll(source, 0o700); err != nil {
 		t.Fatal(err)
@@ -745,13 +733,12 @@ func TestRepositoryBindingIsValidatedAndFrozenAtDispatch(t *testing.T) {
 }
 
 func TestSecurityHeadersAndSameOriginCORS(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 
 	req := httptest.NewRequest(http.MethodGet, "http://agentflow.example/api/health", nil)
 	rec := httptest.NewRecorder()
@@ -799,7 +786,6 @@ func TestSecurityHeadersAndSameOriginCORS(t *testing.T) {
 }
 
 func TestSyncConfigUpdatePreservesOperationalStatus(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -809,7 +795,7 @@ func TestSyncConfigUpdatePreservesOperationalStatus(t *testing.T) {
 	if err := s.PutSyncConfig(domain.SyncConfig{LastSyncAt: lastSync, LastSyncStatus: "failed", LastSyncError: "upstream timeout"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 
 	updated := requestJSON[domain.SyncConfig](t, h, http.MethodPut, "/api/sync/config", map[string]any{
 		"gongfengProjectId": "new/project", "autoSyncIntervalSec": 120, "autoSyncEnabled": false,
@@ -916,7 +902,6 @@ func TestSlimTelemetryPreservesSafeHookIdentity(t *testing.T) {
 }
 
 func TestRunLogsArePagedAndOmittedFromDetail(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -929,7 +914,7 @@ func TestRunLogsArePagedAndOmittedFromDetail(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	detail := requestJSON[domain.Run](t, h, http.MethodGet, "/api/runs/run-page", nil, http.StatusOK)
 	if len(detail.Logs) != 0 {
 		t.Fatalf("run detail still embeds logs: %d", len(detail.Logs))
@@ -952,7 +937,6 @@ func TestRunLogsArePagedAndOmittedFromDetail(t *testing.T) {
 }
 
 func TestRunLogsDumpExportsAllNodes(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -967,7 +951,7 @@ func TestRunLogsDumpExportsAllNodes(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/run-dump/logs.txt", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -986,13 +970,12 @@ func TestRunLogsDumpExportsAllNodes(t *testing.T) {
 }
 
 func TestGzipJSONResponses(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
@@ -1006,7 +989,6 @@ func TestGzipJSONResponses(t *testing.T) {
 }
 
 func TestStandardWorkerIngressSeparatesRealtimeLogs(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1016,7 +998,7 @@ func TestStandardWorkerIngressSeparatesRealtimeLogs(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
@@ -1155,7 +1137,7 @@ func TestIssueDispatchReturnsQueuedTask(t *testing.T) {
 	if err := s.PutIssue(domain.Issue{ID: "dispatch-queued-issue", ProjectID: "platform", Title: "Queued dispatch", Status: "todo", WorkflowID: workflow.ID}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	e.ConfigureExecution("queued-dispatch-api", "", time.Minute, false)
 	task, err := dispatchIssue(&deps{repo: s, engine: e}, dispatchRequest{IssueID: "dispatch-queued-issue"})
 	if err != nil {
@@ -1168,13 +1150,12 @@ func TestIssueDispatchReturnsQueuedTask(t *testing.T) {
 }
 
 func TestSyncTasksBindsIssueToLatestSOP(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 
 	if err := s.PutIssue(domain.Issue{ID: "gf-5", ProjectID: "platform", Title: "count", Status: "blocked", LatestTaskID: "task-old"}); err != nil {
 		t.Fatal(err)
@@ -1232,13 +1213,12 @@ func TestSyncTasksBindsIssueToLatestSOP(t *testing.T) {
 }
 
 func TestIssueListFiltersAndPages(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	now := time.Now().UTC()
 	if err := s.PutProject(domain.Project{ID: "list-filter", Key: "LFLT", Name: "List Filter"}); err != nil {
@@ -1281,7 +1261,6 @@ func TestIssueListFiltersAndPages(t *testing.T) {
 }
 
 func TestGongfengClosedIssueRejectsDispatch(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1290,7 +1269,7 @@ func TestGongfengClosedIssueRejectsDispatch(t *testing.T) {
 	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "issue-fix-production", Name: "Issue fix", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 
 	closed := domain.Issue{
@@ -1327,13 +1306,12 @@ func TestGongfengClosedIssueRejectsDispatch(t *testing.T) {
 }
 
 func TestGongfengClosedIssueRejectsRetry(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 
 	closed := domain.Issue{
 		ID: "gf-closed-retry", ProjectID: "platform", Source: "gongfeng", Kind: "issue", Title: "closed but failed",
@@ -1367,7 +1345,6 @@ func TestGongfengClosedIssueRejectsRetry(t *testing.T) {
 }
 
 func TestMergedTAPDDeliveryRequiresExplicitReopen(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1377,7 +1354,7 @@ func TestMergedTAPDDeliveryRequiresExplicitReopen(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	issue := domain.Issue{ID: "tapd-merged", ProjectID: "platform", Source: "tapd", Kind: "requirement", Title: "Delivered", Status: "done", WorkflowID: wf.ID, LatestTaskID: "task-old", DeliveryState: "merged", DeliveryMRURL: "https://git.example.com/org/repo/merge_requests/9", AutomationState: "ignored"}
 	if err := s.PutIssue(issue); err != nil {
@@ -1409,7 +1386,6 @@ func TestMergedTAPDDeliveryRequiresExplicitReopen(t *testing.T) {
 }
 
 func TestRequirementDispatchesWithoutClarificationGate(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1419,7 +1395,7 @@ func TestRequirementDispatchesWithoutClarificationGate(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	// Legacy imports still carry gated/needs_user; neither may block the SOP.
 	if err := s.PutIssue(domain.Issue{ID: "req-gated", ProjectID: "platform", Kind: "requirement", Title: "Build requirement", AssigneeType: "agent", AssigneeID: "developer", WorkflowID: wf.ID, Clarification: domain.ClarificationAssessment{Gated: true, Status: domain.ClarificationNeedsUser}}); err != nil {
@@ -1438,7 +1414,6 @@ func TestRequirementDispatchesWithoutClarificationGate(t *testing.T) {
 }
 
 func TestScheduledDispatchDoesNotRequireClarification(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1454,7 +1429,7 @@ func TestScheduledDispatchDoesNotRequireClarification(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	d := &deps{repo: s, engine: e, sync: tracker.NewService()}
 	task, err := dispatchIssue(d, dispatchRequest{IssueID: "req-sched-gate", WorkflowID: wf.ID, ScheduleJobID: "job-1"})
 	if err != nil {
@@ -1464,7 +1439,6 @@ func TestScheduledDispatchDoesNotRequireClarification(t *testing.T) {
 }
 
 func TestSyncedRequirementCanDispatchWithoutClarification(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1480,7 +1454,7 @@ func TestSyncedRequirementCanDispatchWithoutClarification(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	d := &deps{repo: s, engine: e, sync: tracker.NewService()}
 	task, err := dispatchIssue(d, dispatchRequest{IssueID: "req-sync", WorkflowID: wf.ID, ScheduleJobID: "job-1"})
 	if err != nil {
@@ -1493,7 +1467,6 @@ func TestSyncedRequirementCanDispatchWithoutClarification(t *testing.T) {
 }
 
 func TestReadyClarificationCanDispatch(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1512,7 +1485,7 @@ func TestReadyClarificationCanDispatch(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	d := &deps{repo: s, engine: e, sync: tracker.NewService()}
 	task, err := dispatchIssue(d, dispatchRequest{IssueID: "req-ready-low", WorkflowID: wf.ID})
 	if err != nil {
@@ -1536,7 +1509,6 @@ func TestAppendClarificationDescriptionReplacesPreviousBlock(t *testing.T) {
 }
 
 func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1550,7 +1522,7 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 	if err := s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	updated := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{
 		"summary": "复现条件和预期行为已经确认", "ready": true,
@@ -1579,7 +1551,6 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 }
 
 func TestRequirementClarificationFinishesWithoutScore(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1593,7 +1564,7 @@ func TestRequirementClarificationFinishesWithoutScore(t *testing.T) {
 	if err := s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	updated := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{
 		"summary": "还缺验收和范围", "ready": true,
@@ -1612,13 +1583,12 @@ func TestRequirementClarificationFinishesWithoutScore(t *testing.T) {
 }
 
 func TestCreateLocalIssueWithoutSyncTarget(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	created := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
 		"projectId": "platform", "title": "local only", "description": "用户自己写的描述",
 	}, http.StatusOK)
@@ -1679,7 +1649,6 @@ func TestPushLocalIssueToTAPDKeepsDescription(t *testing.T) {
 }
 
 func TestImportTAPDIssueFromURL(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1724,7 +1693,7 @@ func TestImportTAPDIssueFromURL(t *testing.T) {
 	if err := s.PutSyncConfig(domain.SyncConfig{TAPDMCPURL: gateway.URL, AutoSyncIntervalSec: 300}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues/import-tapd", map[string]any{"projectId": "platform"}, http.StatusBadRequest)
 	imported := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues/import-tapd", map[string]any{
 		"projectId":    "platform",
@@ -1787,7 +1756,6 @@ func TestImportTAPDIssueSaveKeepsExternalBinding(t *testing.T) {
 }
 
 func TestSaveAfterClarificationDoesNotRecreateOrDeleteTAPDIssue(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1815,7 +1783,7 @@ func TestSaveAfterClarificationDoesNotRecreateOrDeleteTAPDIssue(t *testing.T) {
 	if err := s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	saved := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
 		"id":          issue.ID,
 		"projectId":   "platform",
@@ -1845,7 +1813,6 @@ func TestSaveAfterClarificationDoesNotRecreateOrDeleteTAPDIssue(t *testing.T) {
 }
 
 func TestIssuesSaveDoesNotGateSyncedTAPDRequirement(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1868,7 +1835,7 @@ func TestIssuesSaveDoesNotGateSyncedTAPDRequirement(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	saved := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
 		"id":            "tapd-1010000000100001776",
 		"projectId":     "platform",
@@ -1888,7 +1855,6 @@ func TestIssuesSaveDoesNotGateSyncedTAPDRequirement(t *testing.T) {
 }
 
 func TestSaveRestoresTAPDBindingFromStableID(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1897,7 +1863,7 @@ func TestSaveRestoresTAPDBindingFromStableID(t *testing.T) {
 	if err := s.PutIssue(domain.Issue{ID: "tapd-1010000000100000999", ProjectID: "platform", Title: "绑定被清空", Kind: "requirement", Status: "todo"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	saved := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
 		"id":          "tapd-1010000000100000999",
 		"projectId":   "platform",
@@ -2062,7 +2028,7 @@ func newTAPDImportHandler(t *testing.T, s *repo.Store, root, payload string) htt
 	if err := s.PutSyncConfig(domain.SyncConfig{TAPDMCPURL: gateway.URL, AutoSyncIntervalSec: 300}); err != nil {
 		t.Fatal(err)
 	}
-	return New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	return New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 }
 
 func putPlatformImportRepo(t *testing.T, s *repo.Store) string {
@@ -2102,13 +2068,12 @@ func requestJSONAuthed[T any](t *testing.T, h http.Handler, user domain.User, me
 
 func TestUserCredentialsAreStoredAndRedacted(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "credential-test-session-secret")
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	if err := s.PutUser(domain.User{StaffID: 2002, LoginName: "alice", ChineseName: "爱丽丝"}); err != nil {
 		t.Fatal(err)
 	}
@@ -2156,13 +2121,12 @@ func TestUserCredentialsAreStoredAndRedacted(t *testing.T) {
 
 func TestCodeBuddyInternetEnvironmentIsNormalizedOrRejected(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "credential-test-session-secret")
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	if err := s.PutUser(domain.User{StaffID: 2003, LoginName: "bob", ChineseName: "鲍勃"}); err != nil {
 		t.Fatal(err)
 	}

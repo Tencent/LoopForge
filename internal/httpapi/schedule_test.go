@@ -30,7 +30,7 @@ func TestScheduleJobCRUD(t *testing.T) {
 	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "test-native"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	created := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
 		"projectId": "platform", "workflowId": "scheduled-wf",
 		"useIssueWorkflow": true, "intervalSec": 3600, "enabled": true,
@@ -148,7 +148,7 @@ func TestAIScheduleReferencesPersistIdentityAndRefreshDisplayData(t *testing.T) 
 	if err := st.PutIssue(domain.Issue{ID: "scheduled-ref-foreign-issue", ProjectID: "scheduled-ref-foreign", Title: "跨项目"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	saved := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
 		"name": "引用需求", "projectId": "platform", "skipDispatch": true,
 		"intervalSec": 3600, "assistantPrompt": "读取需求", "enabled": true,
@@ -216,7 +216,7 @@ func TestScheduledDispatchUsesIntegrationBranchAndManualDispatchDoesNot(t *testi
 	if err := st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e := engine.New(st, runtime.NewManager(sandboxRoot(t)))
 	s := &Server{deps: &deps{repo: st, engine: e, sync: tracker.NewService()}}
 
 	putIssue := func(id string) {
@@ -283,7 +283,7 @@ func TestSingleSOPDispatchReplacesStaleBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e := engine.New(st, runtime.NewManager(sandboxRoot(t)))
 	s := &Server{deps: &deps{repo: st, engine: e, sync: tracker.NewService()}}
 	if err := st.PutIssue(domain.Issue{ID: "one", ProjectID: project.ID, Title: "one", Source: "gongfeng", Kind: "issue", WorkflowID: bound.ID}); err != nil {
 		t.Fatal(err)
@@ -382,7 +382,7 @@ func TestScheduledJobWaitsWhenIntegrateConflictsWithDefault(t *testing.T) {
 	if err := st.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e := engine.New(st, runtime.NewManager(sandboxRoot(t)))
 	e.ConfigureExecution("test", "test", time.Second, false)
 	s := &Server{deps: &deps{repo: st, engine: e, sync: tracker.NewService()}}
 	s.schedule = &scheduleHandlers{deps: s.deps}
@@ -664,7 +664,7 @@ func TestScheduleUIDemoServer(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	if err := st.PutScheduleJob(domain.ScheduleJob{
 		ID: "job-running-demo", Name: "模拟运行中（关页也不会停）", ProjectID: "dp", SkipDispatch: true,
 		AssistantPrompt: "占位", AssistantModel: "default", Enabled: true, IntervalSec: 3600,

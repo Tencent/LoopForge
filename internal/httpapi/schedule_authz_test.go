@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -57,7 +56,7 @@ func TestScheduleJobsRequireProjectAccess(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: "sched-own", Name: "Outsider own", OwnerID: outsider.ID}); err != nil {
 		t.Fatal(err)
 	}
-	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	server := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	aiJob := func(id, project, prompt string) map[string]any {
 		return map[string]any{"id": id, "projectId": project, "name": "巡检", "skipDispatch": true, "assistantPrompt": prompt, "intervalSec": 3600}
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -254,7 +253,7 @@ func TestAssistantPlatformFieldsAndModelCatalog(t *testing.T) {
 	if err := st.PutAgent(domain.AgentDefinition{ID: "proj-fields-planner", Name: "Planner", ProjectID: "proj-fields", ExecutorID: "claude", Model: "claude-opus-5-5", Prompt: "long instructions"}); err != nil {
 		t.Fatal(err)
 	}
-	api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	api := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	h := &assistantHandlers{deps: &deps{repo: st}, api: api}
 	got, err := h.callAssistantPlatform(context.Background(), user, "proj-fields", assistantMCPCall{Server: "agentflow", Tool: "agents_list", Arguments: map[string]any{"query": map[string]any{"fields": "id,model"}}})
 	if err != nil {

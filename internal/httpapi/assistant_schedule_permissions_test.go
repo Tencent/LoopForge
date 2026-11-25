@@ -30,7 +30,7 @@ func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
 	if err := st.PutIssue(domain.Issue{ID: "scheduled-dispatch", ProjectID: "workbench", Title: "Scheduled dispatch", Status: "todo", WorkflowID: wf.ID}); err != nil {
 		t.Fatal(err)
 	}
-	en := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	en := engine.New(st, runtime.NewManager(sandboxRoot(t)))
 	h.api = New(st, en, tracker.NewService(), "", "")
 	var runID string
 	t.Cleanup(func() {
@@ -77,7 +77,7 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 		t.Skip("python3 is required for the fake CLI")
 	}
 	h, user := workbenchFixture(t)
-	h.engine = engine.New(h.repo, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	h.engine = engine.New(h.repo, runtime.NewManager(sandboxRoot(t)))
 	h.api = New(h.repo, h.engine, tracker.NewService(), "", "")
 	if err := h.repo.PutIssue(domain.Issue{ID: "native-scheduled-issue", ProjectID: "workbench", Title: "Original", Status: "todo"}); err != nil {
 		t.Fatal(err)

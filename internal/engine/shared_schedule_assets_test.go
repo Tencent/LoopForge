@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +33,7 @@ func TestSharedScheduleUsesNormalProjectAssetResolution(t *testing.T) {
 	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Shared", Prompt: "inspect"}, 0)
 	check(err)
 	check(st.ValidateSharedScheduleAssets(v))
-	e := New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	bundle := e.RoleAssets(role, "target", 1)
 	if len(bundle.Rules) != 1 || len(bundle.Skills) != 1 || len(bundle.MCPServers) != 1 || bundle.MCPServers[0].ID != "target-tool" {
 		t.Fatalf("wrong project-scoped bundle: %+v", bundle)

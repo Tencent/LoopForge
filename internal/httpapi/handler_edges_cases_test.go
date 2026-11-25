@@ -546,7 +546,7 @@ func TestBrowserStreamEndpointAndLoops(t *testing.T) {
 	_ = st.PutProject(domain.Project{ID: projectID, Name: "P", OwnerID: user.ID})
 	run := domain.Run{ID: "cva-r3-browser-run", Status: "running", ExecutionContext: domain.TelemetryContext{ProjectID: projectID}, Nodes: map[string]*domain.NodeRun{}}
 	_ = st.PutRun(run)
-	en := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	en := engine.New(st, runtime.NewManager(sandboxRoot(t)))
 	h := &browserHandlers{deps: &deps{repo: st, engine: en}}
 
 	router := gin.New()

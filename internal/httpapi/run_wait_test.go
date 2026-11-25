@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,7 +18,7 @@ import (
 func TestWaitRunReadsOutcomeAndChecksAccess(t *testing.T) {
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
 	h, owner := workbenchFixture(t)
-	en := engine.New(h.repo, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	en := engine.New(h.repo, runtime.NewManager(sandboxRoot(t)))
 	api := New(h.repo, en, nil, "", "")
 	if err := h.repo.PutUser(domain.User{LoginName: "other-user"}); err != nil {
 		t.Fatal(err)

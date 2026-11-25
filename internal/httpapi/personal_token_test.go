@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +33,7 @@ func TestPersonalTokenAuthenticatesRESTAndMCPAndCanBeRevoked(t *testing.T) {
 		t.Fatalf("stored user = %+v, ok=%v", stored, ok)
 	}
 
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	signed, err := auth.NewClientFromEnv().SignUser(&auth.User{
 		ID: stored.ID, LoginName: stored.LoginName, ChineseName: stored.ChineseName,
 		IsGuest: false, AuthTime: time.Now().UTC(),
@@ -167,7 +166,7 @@ func TestPersonalTokenListIsEmptyArrayWhenOwnerHasNoTokens(t *testing.T) {
 		t.Fatal("store returned nil token slice")
 	}
 
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	signed, err := auth.NewClientFromEnv().SignUser(&auth.User{
 		ID: stored.ID, LoginName: stored.LoginName, ChineseName: stored.ChineseName,
 		IsGuest: false, AuthTime: time.Now().UTC(),
@@ -194,7 +193,7 @@ func TestPersonalTokenManagementRequiresInteractiveLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/tokens", strings.NewReader(`{"name":"bad"}`))
 	req.Header.Set("Authorization", "Bearer afp_not-a-session")

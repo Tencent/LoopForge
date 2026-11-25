@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -58,7 +57,7 @@ func TestRunWorkspaceMissingLocalWorkspaceReportsReason(t *testing.T) {
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(store, engine.New(store, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	handler := New(store, engine.New(store, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	info := requestEmptyJSON[workspaceUnavailableView](t, handler, http.MethodGet, "/api/runs/run-local-missing/workspace", http.StatusOK)
 	assertWorkspaceUnavailableView(t, info, "工作区尚未创建或已被清理", "failed")
 }

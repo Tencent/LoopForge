@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -112,7 +111,7 @@ func newRunEvalHarness(t *testing.T) (http.Handler, *repo.Store, domain.User) {
 		t.Fatal(err)
 	}
 	user, _ = store.User(user.ID)
-	h := New(store, engine.New(store, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(store, engine.New(store, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	return h, store, user
 }
 

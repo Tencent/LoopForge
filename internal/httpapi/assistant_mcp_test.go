@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -148,7 +147,7 @@ func TestAssistantPlatformReadsCurrentProjectIssues(t *testing.T) {
 	if err := st.PutIssue(domain.Issue{ID: "iss-other", ProjectID: "other", Title: "其他项目需求", Status: "todo"}); err != nil {
 		t.Fatal(err)
 	}
-	api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	api := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	h := &assistantHandlers{deps: &deps{repo: st}, api: api}
 	listed, err := h.callAssistantPlatform(context.Background(), user, "platform", assistantMCPCall{Server: "agentflow", Tool: "issues_list"})
 	if err != nil || !strings.Contains(listed, "当前项目需求") {
@@ -192,7 +191,7 @@ func TestAssistantScheduledWritesApplyIssuePatches(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	api := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	h := &assistantHandlers{deps: &deps{repo: st}, api: api}
 	if _, err := h.callAssistantPlatform(context.Background(), user, "platform", assistantMCPCall{Tool: "issues_save"}); err == nil {
 		t.Fatal("chat writes must stay drafts")
@@ -237,7 +236,7 @@ func TestScheduledTaskKeepsPlaintextAndDoesNotParseJSON(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	api := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	h := &assistantHandlers{deps: &deps{repo: st}, api: api, generate: func(ctx context.Context, prompt string, u domain.User) (string, error) {
 		if strings.Contains(prompt, "drafts=[]") || strings.Contains(prompt, "走 mcpCalls") || strings.Contains(prompt, "只用 message") {
 			t.Fatalf("native scheduled prompt should not mention JSON protocol: %s", prompt)
@@ -282,7 +281,7 @@ func TestAssistantPlatformReadsSessionByLink(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	api := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	h := &assistantHandlers{deps: &deps{repo: st}, api: api}
 	got, err := h.callAssistantPlatform(context.Background(), user, "platform", assistantMCPCall{Server: "agentflow", Tool: "assistant_sessions_get", Arguments: map[string]any{"path": map[string]any{"id": "chat-link"}}})
 	if err != nil || !strings.Contains(got, "帮我看看构建失败的原因") {

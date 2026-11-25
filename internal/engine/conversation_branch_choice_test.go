@@ -87,7 +87,7 @@ func TestPushConversationWorkspaceRefusesAnotherCheckedOutBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	e := New(st, runtime.NewManager(filepath.Join(root, "workspaces")))
+	e := New(st, runtime.NewManager(sandboxRoot(t)))
 	run := domain.Run{
 		ID:               "run-drifted",
 		Kind:             domain.RunKindWorkspace,

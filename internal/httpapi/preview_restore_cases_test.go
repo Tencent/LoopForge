@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -38,7 +37,7 @@ func TestPreviewDisabledMissingRunAndMissingPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	eng := engine.New(store, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	eng := engine.New(store, runtime.NewManager(sandboxRoot(t)))
 	eng.SetPreview(preview.NewService(store, preview.NewDBStore(store), preview.Config{
 		PublicScheme: "http", MaxFiles: 20, MaxCompressed: 1 << 20, MaxExpanded: 1 << 20,
 		DefaultRetention: time.Hour, FinalizationTimeout: time.Minute, SessionTTL: time.Hour,

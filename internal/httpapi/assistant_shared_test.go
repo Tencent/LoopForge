@@ -158,7 +158,7 @@ func TestRoleAgentFile(t *testing.T) {
 
 func TestRoleMentionKeepsMainBotSession(t *testing.T) {
 	h, _, b, _, session := sharedWorkbenchFixture(t)
-	h.engine = engine.New(h.repo, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	h.engine = engine.New(h.repo, runtime.NewManager(sandboxRoot(t)))
 	for _, skill := range []domain.SkillDefinition{
 		{ID: "project-skill", Name: "project-skill", ProjectID: "workbench", Content: "项目技能", Files: map[string]string{"scripts/run.sh": "echo project"}},
 		{ID: "role-skill", Name: "role-skill", ProjectID: "workbench", Content: "角色技能"},

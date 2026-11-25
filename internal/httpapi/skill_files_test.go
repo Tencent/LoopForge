@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,7 +31,7 @@ func newSkillFileServer(t *testing.T) *repo.Store {
 
 func skillFileHandler(t *testing.T, s *repo.Store) http.Handler {
 	t.Helper()
-	return New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	return New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 }
 
 func requestMultipart(t *testing.T, h http.Handler, method, path string, build func(w *multipart.Writer)) *httptest.ResponseRecorder {

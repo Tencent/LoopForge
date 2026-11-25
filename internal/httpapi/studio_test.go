@@ -31,13 +31,12 @@ func TestStudioIndexStampsAssetsWithContentHash(t *testing.T) {
 	}
 	sum := sha256.Sum256(js)
 	want := hex.EncodeToString(sum[:8])
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -109,13 +108,12 @@ func TestStudioVscodePageStampsAssetsWithContentHash(t *testing.T) {
 	}
 	sum := sha256.Sum256(js)
 	want := hex.EncodeToString(sum[:8])
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	req := httptest.NewRequest(http.MethodGet, "/vscode.html", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -140,13 +138,12 @@ func TestStudioVscodePageStampsAssetsWithContentHash(t *testing.T) {
 
 func TestStudioIndexInjectsAppDomain(t *testing.T) {
 	t.Setenv("AGENTFLOW_APP_DOMAIN", "loopforge-test.example.com")
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -240,13 +237,12 @@ func TestStudioPagesOmitUnsafeOrMissingBuildCommit(t *testing.T) {
 // The OAuth callback lands here in a separate tab; the page must render under
 // the global CSP, so its script is external and nothing secret is on it.
 func TestStudioServesGongfengOAuthDonePage(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	get := func(path string) (*httptest.ResponseRecorder, string) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -285,13 +281,12 @@ func TestStudioServesGongfengOAuthDonePage(t *testing.T) {
 }
 
 func TestStudioServesSiteIcons(t *testing.T) {
-	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	icons := map[string]string{
 		"/favicon.svg":          "image/svg+xml",
 		"/favicon.png":          "image/png",

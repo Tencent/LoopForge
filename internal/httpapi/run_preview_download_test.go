@@ -25,7 +25,7 @@ import (
 
 func previewDownloadFixture(t *testing.T, store *repo.Store) (http.Handler, domain.RunPreview, map[string]string) {
 	t.Helper()
-	eng := engine.New(store, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	eng := engine.New(store, runtime.NewManager(sandboxRoot(t)))
 	blobs := preview.NewDBStore(store)
 	svc := preview.NewService(store, blobs, preview.Config{MaxFiles: 20, MaxCompressed: 1 << 20, MaxExpanded: 1 << 20})
 	eng.SetPreview(svc)

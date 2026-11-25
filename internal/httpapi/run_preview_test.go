@@ -26,8 +26,7 @@ func TestPreviewAPIAndPathGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	root := t.TempDir()
-	eng := engine.New(store, runtime.NewManager(filepath.Join(root, "workspaces")))
+	eng := engine.New(store, runtime.NewManager(sandboxRoot(t)))
 	svc := preview.NewService(store, preview.NewDBStore(store), preview.Config{
 		PublicScheme: "http", FrameAncestors: "http://studio.test", MaxFiles: 20,
 		MaxCompressed: 1 << 20, MaxExpanded: 1 << 20, DefaultRetention: time.Hour,

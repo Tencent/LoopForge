@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -69,7 +68,7 @@ func TestAgentToolMCPProtocolAndSecurity(t *testing.T) {
 	if err := st.PutMCPServer(domain.MCPServerDefinition{ID: "tapd-p", Name: "TAPD", ProjectID: "platform", Scope: "project", MarketID: "70", Transport: "http", URL: upstream.URL}); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "user", "pass")
+	handler := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "user", "pass")
 	session := &AgentToolSession{
 		UserID:     user.ID,
 		ProjectID:  "platform",
@@ -149,7 +148,7 @@ func TestAgentToolMCPDoesNotUseBasicAuthOrCookies(t *testing.T) {
 	}
 	t.Cleanup(st.Close)
 	user, _ := st.UserByLoginName("demo-owner")
-	handler := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "user", "pass")
+	handler := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "user", "pass")
 	session := &AgentToolSession{UserID: user.ID, ProjectID: "platform", Mode: AgentToolAssistant, ExpiresAt: time.Now().Add(time.Minute), User: user, Final: make(chan AgentTerminalResult, 1)}
 	if err := agentToolSessions.create(session); err != nil {
 		t.Fatal(err)
@@ -229,7 +228,7 @@ func TestScheduledAgentToolWritesPlatformAndDefersSOP(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	handler := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	session := &AgentToolSession{
 		UserID:    user.ID,
 		ProjectID: "platform",
@@ -309,7 +308,7 @@ func TestScheduledAgentToolAllowsExternalTAPDWrite(t *testing.T) {
 	if err := st.PutMCPServer(server); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	handler := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	session := &AgentToolSession{
 		UserID: user.ID, ProjectID: "platform", Mode: AgentToolScheduled,
 		ExecMode:  assistantExecMode{AutoWrite: true, DeferSOP: true},
@@ -401,7 +400,7 @@ func TestConversationMCPFollowsApprovalModeOnly(t *testing.T) {
 	if err := st.PutMCPServer(server); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	handler := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	call := func(mode assistantExecMode, review string, body string) string {
 		called = nil
 		session := &AgentToolSession{

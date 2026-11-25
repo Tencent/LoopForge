@@ -3,7 +3,6 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,7 +19,7 @@ func TestMCPServerCredentialsAreMaskedAndSurviveEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
 	server := domain.MCPServerDefinition{
 		ID: "gateway", Name: "Gateway", Transport: "http", URL: "https://gateway.example/mcp", TimeoutSec: 60,
 		Headers: map[string]string{"X-Gateway-Api-Token": "gateway-secret", "X-Env": "prod", "Authorization": "Bearer ${secret:GATEWAY}"},

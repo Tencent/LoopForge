@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -21,7 +20,7 @@ func TestAnalyticsWeekHourHonorsTimeZoneParam(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	e := engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	h := New(s, e, tracker.NewService(), "", "")
 	at := time.Date(2026, 9, 10, 20, 30, 0, 0, time.UTC)
 	wf := domain.WorkflowDefinition{ID: "wf", Name: "WF"}

@@ -3,7 +3,6 @@ package engine
 import (
 	"encoding/json"
 	"math"
-	"path/filepath"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -39,7 +38,7 @@ func TestMessageUsageSurvivesInterruptedSOP(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Cleanup(s.Close)
-				e := New(s, flowruntime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+				e := New(s, flowruntime.NewManager(sandboxRoot(t)))
 				run := domain.Run{ID: "partial-usage", Status: "running", Nodes: map[string]*domain.NodeRun{"work": {Provider: provider, Status: "running"}}}
 				observer := flowruntime.NewProtocolObserver(domain.ExecutorDefinition{Kind: provider, Protocol: "stream-json"}, func(event domain.TelemetryEvent) {
 					event.ID = ""
@@ -91,7 +90,7 @@ func TestMessageUsageMultipleMessagesAndResumedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	e := New(s, flowruntime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e := New(s, flowruntime.NewManager(sandboxRoot(t)))
 	run := domain.Run{ID: "resumed-usage", Status: "running", Nodes: map[string]*domain.NodeRun{"work": {Status: "running"}}}
 	observer := flowruntime.NewProtocolObserver(domain.ExecutorDefinition{Kind: "codebuddy", Protocol: "stream-json"}, func(event domain.TelemetryEvent) {
 		event.ID = ""
@@ -130,7 +129,7 @@ func TestCodeBuddyMessageUsageDoesNotResetCumulativeCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	e := New(s, flowruntime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e := New(s, flowruntime.NewManager(sandboxRoot(t)))
 	run := domain.Run{ID: "usage-snapshots", Status: "running", Nodes: map[string]*domain.NodeRun{"work": {Provider: "codebuddy", Status: "running"}}}
 	observer := flowruntime.NewProtocolObserver(domain.ExecutorDefinition{Kind: "codebuddy", Protocol: "stream-json"}, func(event domain.TelemetryEvent) {
 		event.ID = ""
