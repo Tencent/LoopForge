@@ -700,6 +700,15 @@ function clarifyQuestionOptions(q){
 }
 function safeURL(value){try{const url=new URL(String(value||''),location.origin);return ['http:','https:'].includes(url.protocol)?url.href:'#'}catch{return '#'}}
 function safeColor(value){return /^#[0-9a-f]{3,8}$/i.test(String(value||''))?value:'#74829a'}
+// Mirrors domain.ValidateResourceID: a project or role id is a path segment of
+// its API, so it must fit the 64-character column and avoid URL delimiters.
+function resourceIdProblem(id){
+  const value=String(id||'');
+  if(!value)return '标识不能为空';
+  if([...value].length>64)return '标识不能超过 64 个字符';
+  if(/[\s\/\\?#%\u0000-\u001f\u007f]/.test(value))return '标识不能包含空格或 / \\ ? # % 字符';
+  return '';
+}
 function uid(prefix){return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`}
 const PRODUCTION_SOPS=new Set(['issue-fix-production','requirement-development-production']);
 function catalogOwned(projectId){return !!state.projectFilter&&projectId===state.projectFilter}
@@ -719,9 +728,12 @@ function agentWizardSubject(){
   if(catalogGeneric(state.workflow))return (state.genericTemplateAgents||[]).find(x=>x.id===state.selectedAgent)||state.agentDraft||{};
   return (state.data.agents||[]).find(x=>x.id===state.selectedAgent)||state.agentDraft||{};
 }
+// Platform roles (no project) are used by every project; like platform rules
+// and skills only administrators may change them. Others copy them first.
+function agentPlatformLocked(a){return !!a?.id&&!a.projectId&&(state.data.agents||[]).some(x=>x.id===a.id)&&!isPlatformAdmin()}
 function agentWizardForeign(a){
   if(catalogGeneric(state.workflow))return !isPlatformAdmin();
-  return catalogForeign(a?.projectId);
+  return catalogForeign(a?.projectId)||agentPlatformLocked(a);
 }
 function genericTemplateMCPOptions(selected){
   const wanted=['github'];

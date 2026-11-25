@@ -387,7 +387,9 @@ func (h *runsHandlers) ensureProjectAgent(run domain.Run, projectID, agentID str
 	if !ok {
 		return domain.AgentDefinition{}, fmt.Errorf("角色 %q 不存在", agentID)
 	}
-	if !agent.Shared && (agent.ProjectID == "" || agent.ProjectID == projectID) {
+	// A platform role (no project) is used by every project, so a project's
+	// evaluation edits a project copy, as for shared roles.
+	if !agent.Shared && agent.ProjectID == projectID {
 		return agent, nil
 	}
 	cloneID := runeval.CloneID(agent.ID, firstNonEmpty(projectID, "copy"))

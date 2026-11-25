@@ -56,6 +56,21 @@ func TestRunEvalCloneAndApplyBranches(t *testing.T) {
 	if again, err := h.ensureProjectAgent(run, "cvb-eval-p", "cvb-eval-agent"); err != nil || again.ID != agent.ID {
 		t.Fatalf("agent clone reuse: %+v %v", again, err)
 	}
+	// A platform role serves every project: a project's evaluation edits a copy.
+	if err := f.s.PutAgent(domain.AgentDefinition{ID: "cvb-eval-platform", Name: "Platform agent", ExecutorID: "codebuddy", Prompt: "platform"}); err != nil {
+		t.Fatal(err)
+	}
+	platformCopy, err := h.ensureProjectAgent(run, "cvb-eval-p", "cvb-eval-platform")
+	if err != nil || platformCopy.ID == "cvb-eval-platform" || platformCopy.ProjectID != "cvb-eval-p" {
+		t.Fatalf("platform agent must be copied into the project: %+v %v", platformCopy, err)
+	}
+	if original, _ := f.s.Agent("cvb-eval-platform"); original.ProjectID != "" || original.Prompt != "platform" {
+		t.Fatalf("platform agent changed: %+v", original)
+	}
+	// Without a project there is no copy to make; the role is used as is.
+	if same, err := h.ensureProjectAgent(run, "", "cvb-eval-platform"); err != nil || same.ID != "cvb-eval-platform" {
+		t.Fatalf("project-less run: %+v %v", same, err)
+	}
 	for _, rec := range []domain.RunEvalRecommendation{
 		{Target: "workflow", Action: "update_node", NodeID: "n", Set: map[string]any{"maxAttempts": 3}},
 		{Target: "agent", Action: "append_instructions", TargetID: "cvb-eval-agent", Text: "be careful"},
