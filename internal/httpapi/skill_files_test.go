@@ -219,15 +219,41 @@ func TestSkillFileUploadLimits(t *testing.T) {
 	}
 	h := skillFileHandler(t, s)
 
-	rec := requestMultipart(t, h, http.MethodPost, "/api/skills/limit-skill/files", func(w *multipart.Writer) {
-		addFilePart(w, "files", "big.bin", bytes.Repeat([]byte("x"), int(domain.SkillFileMaxBytes)+1))
-	})
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "1MB") {
-		t.Fatalf("per-file limit not enforced: %d %s", rec.Code, rec.Body.String())
+	const filesPath = "/api/skills/limit-skill/files"
+	const maxFileBytes = 10 << 20
+	content := bytes.Repeat([]byte("x"), maxFileBytes+1)
+	for _, kind := range []string{"file", "zip"} {
+		t.Run(kind, func(t *testing.T) {
+			fileName := kind + ".txt"
+			upload := func(content []byte) *httptest.ResponseRecorder {
+				return requestMultipart(t, h, http.MethodPost, filesPath, func(w *multipart.Writer) {
+					if kind == "zip" {
+						archive := zipBytes(t, map[string]string{fileName: string(content)}, nil)
+						addFilePart(w, "files", "bundle.zip", archive)
+						return
+					}
+					addFilePartWithPath(w, fileName, content)
+				})
+			}
+			rec := upload(content[:maxFileBytes])
+			if rec.Code != http.StatusOK {
+				t.Fatalf("10 MiB upload failed: %d %s", rec.Code, rec.Body.String())
+			}
+			rec = upload(content)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "10MB") {
+				t.Fatalf("per-file limit not enforced: %d %s", rec.Code, rec.Body.String())
+			}
+			req := httptest.NewRequest(http.MethodGet, filesPath+"/"+fileName, nil)
+			dl := httptest.NewRecorder()
+			h.ServeHTTP(dl, req)
+			if dl.Code != http.StatusOK || !bytes.Equal(dl.Body.Bytes(), content[:maxFileBytes]) {
+				t.Fatalf("download after rejected upload: status %d, %d bytes", dl.Code, dl.Body.Len())
+			}
+		})
 	}
 
 	// 501 tiny files exceed the count cap.
-	rec = requestMultipart(t, h, http.MethodPost, "/api/skills/limit-skill/files", func(w *multipart.Writer) {
+	rec := requestMultipart(t, h, http.MethodPost, filesPath, func(w *multipart.Writer) {
 		for i := 0; i < domain.SkillMaxFileCount+1; i++ {
 			addFilePart(w, "files", fmt.Sprintf("f%04d.txt", i), []byte("x"))
 		}

@@ -1,10 +1,12 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -48,6 +50,36 @@ func TestClaimSSHKnownHostsFitsAfterLegacyPayload(t *testing.T) {
 	task, claimed, err := NewClient(server.URL).Claim(t.Context(), ClaimRequest{AvailableRuntimes: []string{"mock"}})
 	if err != nil || !claimed || task.GitSSHKnownHosts == nil || task.GitSSHKnownHosts.Entries != pin {
 		t.Fatalf("claim did not decode the extended response, claimed = %v, err = %v", claimed, err)
+	}
+}
+
+func TestClaimDecodesSkillFilesAtUploadLimits(t *testing.T) {
+	files := map[string][]byte{}
+	for remaining, i := domain.SkillTotalMaxBytes, 0; remaining > 0; i++ {
+		size := min(remaining, domain.SkillFileMaxBytes)
+		files[fmt.Sprintf("assets/%d.bin", i)] = bytes.Repeat([]byte{byte(i + 1)}, int(size))
+		remaining -= size
+	}
+	response := struct {
+		Task domain.RunnerTask `json:"task"`
+	}{Task: domain.RunnerTask{ID: "large-skill-task", Invocation: &domain.RunnerInvocation{
+		Assets: domain.AgentAssetBundle{SkillFiles: map[string]map[string][]byte{"big-skill": files}},
+	}}}
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	task, claimed, err := NewClient(server.URL).Claim(t.Context(), ClaimRequest{AvailableRuntimes: []string{"mock"}})
+	if err != nil || !claimed || task.Invocation == nil {
+		t.Fatalf("claim with %d bytes of skill files failed, claimed = %v, err = %v", domain.SkillTotalMaxBytes, claimed, err)
+	}
+	got := task.Invocation.Assets.SkillFiles["big-skill"]
+	if len(got) != len(files) || !bytes.Equal(got["assets/0.bin"], files["assets/0.bin"]) {
+		t.Fatalf("claim decoded %d skill files, want %d", len(got), len(files))
 	}
 }
 

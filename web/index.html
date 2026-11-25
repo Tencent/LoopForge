@@ -19,7 +19,7 @@
   <link rel="stylesheet" href="/sync.css?v=20261021schedule1">
   <link rel="stylesheet" href="/access.css?v=20261031v1">
   <link rel="stylesheet" href="/product-v3.css?v=20261030runs1">
-  <link rel="stylesheet" href="/product-v4.css?v=20261031req2">
+  <link rel="stylesheet" href="/product-v4.css?v=20261123run-eval">
   <link rel="stylesheet" href="/app/harness-ui.css?v=20261031req1">
   <link rel="stylesheet" href="/app/project-credentials.css">
   <link rel="stylesheet" href="/assistant-models.css">
@@ -861,7 +861,10 @@
               <label class="as-field"><span>职责 <small>一句话，列表和流程卡片里展示</small></span><div class="as-count-wrap"><input name="description" maxlength="160" placeholder="读 Issue 和源码，写出根因与修复计划，不改业务代码"><small class="as-count" id="agentDescCount" aria-hidden="true"></small></div></label>
               <div class="as-section-label">运行方式</div>
               <div class="as-grid agent-runtime-grid">
-                <label class="as-field"><span>CLI</span><select name="executorId" class="select" id="agentExecutorSelect"></select></label>
+                <label class="as-field"><span>CLI</span>
+                  <select name="executorId" class="select" id="agentExecutorSelect" aria-label="CLI" aria-describedby="agentExecutorStatus"></select>
+                  <small class="muted" id="agentExecutorStatus" hidden></small>
+                </label>
                 <div class="as-field"><span>模型</span>
                   <div class="clarify-model-field" id="agentModelPicker" data-clarify-model>
                     <input type="hidden" name="modelChoice">
@@ -921,7 +924,9 @@
       <div class="req-wizard-body">
         <section id="reqStepDescribe" class="req-pane" aria-label="描述需求">
           <div class="req-chat-composer">
-            <textarea id="chatInput" aria-label="需求描述" placeholder="要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。" rows="6"></textarea>
+            <textarea id="chatInput" aria-label="需求描述" aria-describedby="reqMarkdownHint" placeholder="要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。" rows="6"></textarea>
+            <div id="reqMarkdownPreview" class="req-markdown-preview markdown-body" aria-label="需求描述预览" hidden></div>
+            <ul id="reqImages" class="req-images" aria-label="已粘贴的图片" hidden></ul>
             <div class="req-composer-toolbar">
               <div id="reqRepoChip" class="req-ghost-sel">
                 <button type="button" id="reqRepoChipToggle" class="req-ghost-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="reqRepoPopover"><svg class="agent-icon harness-icon" data-icon="folder" width="13" height="13" aria-hidden="true"></svg><span id="reqRepoChipLabel" class="req-ghost-value"></span><svg class="agent-icon harness-icon req-chev" data-icon="chevron-down" width="13" height="13" aria-hidden="true"></svg></button>
@@ -940,6 +945,8 @@
                 </div>
               </div>
               <span class="req-toolbar-sp"></span>
+              <span id="reqMarkdownHint" class="req-markdown-hint">支持 Markdown 和粘贴图片</span>
+              <button type="button" id="reqPreviewToggle" class="button quiet small" aria-pressed="false" aria-controls="reqMarkdownPreview">预览</button>
               <span id="reqCharCount" class="req-count"></span>
             </div>
           </div>

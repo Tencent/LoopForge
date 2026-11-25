@@ -166,14 +166,21 @@ func (r *CatalogRepo) DeleteSkill(id string) error {
 }
 
 func (r *CatalogRepo) MCPServers() []domain.MCPServerDefinition {
-	return payloadList[domain.MCPServerDefinition](r.DB, "mcp_servers", "")
+	servers := payloadList[domain.MCPServerDefinition](r.DB, "mcp_servers", "")
+	for i := range servers {
+		servers[i].Scope = strings.TrimSpace(servers[i].Scope)
+	}
+	return servers
 }
 
 func (r *CatalogRepo) MCPServer(id string) (domain.MCPServerDefinition, bool) {
-	return payloadOne[domain.MCPServerDefinition](r.DB, "mcp_servers", id)
+	server, found := payloadOne[domain.MCPServerDefinition](r.DB, "mcp_servers", id)
+	server.Scope = strings.TrimSpace(server.Scope)
+	return server, found
 }
 
 func (r *CatalogRepo) PutMCPServer(v domain.MCPServerDefinition) error {
+	v.Scope = strings.TrimSpace(v.Scope)
 	// Uploaded contents and their manifest are owned by the mcp_files API.
 	// Definition-only updates (including JSON import) must not orphan existing
 	// rows merely because fileRefs was omitted by an older client.
@@ -185,10 +192,90 @@ func (r *CatalogRepo) PutMCPServer(v domain.MCPServerDefinition) error {
 	if err := domain.ValidateMCPServer(v); err != nil {
 		return err
 	}
+	row := mcpDefinitionRow(&v)
+	return upsert(r.DB, "mcp_servers", map[string]any{"id": row.ID, "name": row.Name, "payload": row.Payload, "updated_at": row.Updated})
+}
+
+func mcpDefinitionRow(v *domain.MCPServerDefinition) mcpServerRow {
 	v.UpdatedAt = time.Now().UTC()
-	return upsert(r.DB, "mcp_servers", map[string]any{
-		"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt),
+	return mcpServerRow{ID: v.ID, Name: v.Name, Payload: mustJSON(*v), Updated: timePtr(v.UpdatedAt)}
+}
+
+var ErrMCPServerChanged = errors.New("MCP 已被创建或更改，请刷新后重试")
+
+// MCPServerChange carries the stored definition used to authorize the write.
+// An empty Previous means the ID must be unused.
+type MCPServerChange struct {
+	Definition domain.MCPServerDefinition
+	Previous   domain.MCPServerDefinition
+}
+
+// SaveMCPServers checks the authorized scope and owner under the write lock.
+// An import either saves every definition or leaves the catalog untouched.
+func (r *CatalogRepo) SaveMCPServers(changes ...MCPServerChange) ([]domain.MCPServerDefinition, error) {
+	saved := make([]domain.MCPServerDefinition, 0, len(changes))
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		for _, change := range changes {
+			v, err := r.saveMCPServer(tx, change)
+			if err != nil {
+				return err
+			}
+			saved = append(saved, v)
+		}
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return saved, nil
+}
+
+func (r *CatalogRepo) saveMCPServer(tx *gorm.DB, change MCPServerChange) (domain.MCPServerDefinition, error) {
+	v := change.Definition
+	v.Scope = strings.TrimSpace(v.Scope)
+	var row mcpServerRow
+	err := r.locking(tx).Where("id = ?", v.ID).Take(&row).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		if change.Previous.ID != "" {
+			return v, ErrMCPServerChanged
+		}
+	case err != nil:
+		return v, err
+	default:
+		var current domain.MCPServerDefinition
+		if err := json.Unmarshal(row.Payload, &current); err != nil {
+			return v, err
+		}
+		current.Scope = strings.TrimSpace(current.Scope)
+		previous := change.Previous
+		if previous.ID == "" || current.Scope != previous.Scope || current.ProjectID != previous.ProjectID ||
+			current.OwnerUserID != previous.OwnerUserID || current.MarketID != previous.MarketID {
+			return v, ErrMCPServerChanged
+		}
+		v.ID = row.ID
+		if v.Scope == current.Scope && v.ProjectID == current.ProjectID && v.OwnerUserID == current.OwnerUserID {
+			domain.RestoreMaskedMCPSecrets(&v, current)
+		}
+		if v.FileRefs == nil {
+			v.FileRefs = current.FileRefs
+		}
+	}
+	if err := domain.ValidateMCPServer(v); err != nil {
+		return v, err
+	}
+	newRow := mcpDefinitionRow(&v)
+	if row.ID != "" {
+		err = tx.Model(&mcpServerRow{}).Where("id = ?", row.ID).Updates(map[string]any{
+			"name": newRow.Name, "payload": newRow.Payload, "updated_at": newRow.Updated,
+		}).Error
+	} else {
+		err = tx.Create(&newRow).Error
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		err = ErrMCPServerChanged
+	}
+	return v, err
 }
 
 func (r *CatalogRepo) DeleteMCPServer(id string) error {

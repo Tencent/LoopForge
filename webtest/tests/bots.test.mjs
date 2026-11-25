@@ -2,6 +2,36 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
+test('bot model picker preserves an unavailable saved executor as a disabled option', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/assistant/models', {
+    engines: [
+      { id: 'codebuddy', name: 'CodeBuddy', configured: true, personal: false },
+      { id: 'codex', name: 'Codex', configured: true, personal: true },
+    ],
+    models: [{ id: 'cb-flash' }, { id: 'codex:codex-model', engine: 'codex' }],
+  });
+  app.evaluate(`
+    botUI.projectId=state.projectFilter;botUI.loading=false;
+    const bot={id:'saved-bot',projectId:state.projectFilter,name:'Bot',botId:'wx-test',model:'cb-flash',enabled:true};
+    botUI.items=[bot];botOpenEditor(bot);
+  `);
+  await settle();
+  const executor = app.document.querySelector('#botModelPicker [data-feature-executor]');
+  const model = app.document.querySelector('#botModelPicker [data-feature-model]');
+  assert.deepEqual([...executor.options].map(option => [option.value, option.disabled]), [['codex', false], ['codebuddy', true]]);
+  assert.equal(executor.value, 'codebuddy');
+  assert.equal(model.value, 'cb-flash');
+  assert.equal(model.disabled, true);
+
+  executor.value = 'codex';
+  executor.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  assert.equal(model.value, 'codex:codex-model');
+  assert.equal(model.disabled, false);
+  assert.equal(executor.querySelector('[value=codebuddy]').disabled, true);
+});
+
 test('bot editor validates, creates, selects a target, sends a test, and renders records', async (t) => {
   const app = await loadApp();
   t.after(app.close);
