@@ -51,10 +51,14 @@ type TelemetryContext struct {
 	// BotOriginID is the chat origin (bot_chat_origins) a top-level run was
 	// started from, stored with the run so that its first events already
 	// go back to that chat.
-	BotOriginID  string `json:"botOriginId,omitempty"`
-	RunID        string `json:"runId"`
-	ParentRunID  string `json:"parentRunId,omitempty"`
-	ParentNodeID string `json:"parentNodeId,omitempty"`
+	BotOriginID string `json:"botOriginId,omitempty"`
+	// ScheduleExecutionID names the schedule execution this context belongs to
+	// ("sjx-<trace>"). The server derives it from the persisted Run context and
+	// overwrites any worker-reported value; empty for manual or legacy runs.
+	ScheduleExecutionID string `json:"scheduleExecutionId,omitempty"`
+	RunID               string `json:"runId"`
+	ParentRunID         string `json:"parentRunId,omitempty"`
+	ParentNodeID        string `json:"parentNodeId,omitempty"`
 	// WorkspaceRunID names the run that owns the checkout, either a
 	// conversation workspace or the root LOOP in a nested run. Empty means
 	// this run owns its workspace.

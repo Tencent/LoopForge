@@ -5847,6 +5847,10 @@ components:
           enum: [primary, scheduled, rerun]
         scheduleJobId:
           type: string
+        scheduleExecutionId:
+          type: string
+          readOnly: true
+          description: Schedule execution identifier ("sjx-<trace>") the server assigned when a scheduled job dispatched this task; inherited by the run and its child SOPs. Empty for manual dispatch and legacy records. Read-only and never accepted from request payloads.
         triggerOrigin:
           type: string
         repository:

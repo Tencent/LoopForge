@@ -114,6 +114,10 @@ func (e *Engine) IngestWorkerEnvelope(runID string, envelope domain.WorkerEnvelo
 			}
 			log.Context.RunID = runID
 			log.Context.TraceID = runID
+			// Attribution is server-authoritative: the persisted Run context always
+			// overwrites worker-reported values, including clearing them for manual
+			// runs that carry no schedule execution.
+			log.Context.ScheduleExecutionID = r.ExecutionContext.ScheduleExecutionID
 			if log.Level == "" {
 				log.Level = "info"
 			}
