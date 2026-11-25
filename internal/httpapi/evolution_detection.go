@@ -159,7 +159,7 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 			if !enabled || !policy.Enabled {
 				continue
 			}
-			user, ok := h.resolveSOPActorUser(policy)
+			user, _, ok := h.resolveSOPActorUser(policy, []domain.Run{run}, 0)
 			if !ok {
 				continue
 			}

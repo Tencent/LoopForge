@@ -145,7 +145,6 @@ function evoSOPHomeHTML() {
             ${evoReviewIcon('search')}
             <input class="kb-input" type="search" data-evo-sop-search aria-label="搜索 SOP" placeholder="搜索 SOP 名称或说明" value="${escapeHTML(evoSOPState.q)}">
           </label>
-          <button type="button" class="kb-btn quiet small" data-evo-sop-mode="assets" title="切换到按角色/规则查看改进任务">按资产任务</button>
         </div>
       </div>
       <div id="evoSopListHost">${evoSOPListHTML(sops)}</div>

@@ -216,6 +216,12 @@ func (h *evolutionHandlers) overview(c *gin.Context) {
 		}
 	}
 	out.SOPs = h.buildSOPSummaries(projectID, days)
+	for _, s := range out.SOPs {
+		if s.Enabled && s.Stage == domain.EvoSOPStageMonitor && s.PendingRuns >= s.BatchSize {
+			go h.triggerProjectSOPBatches(projectID, h.currentUserID(c))
+			break
+		}
+	}
 	c.JSON(http.StatusOK, out)
 }
 

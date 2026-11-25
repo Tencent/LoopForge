@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 func TestEvolutionSOPWorkbenchEndpoints(t *testing.T) {
@@ -326,5 +327,76 @@ func TestEvolutionSOPDetectionRunsForEnabledPolicyWithoutGlobalSwitch(t *testing
 	}
 	if seenModel != "codex:gpt-5" {
 		t.Fatalf("expected SOP policy model codex:gpt-5, got %q", seenModel)
+	}
+}
+
+func TestEvolutionSOPAutoBatchTriggersWithoutSavedPolicyAndWithSharedKey(t *testing.T) {
+	env := newEvoTestEnv(t)
+	now := time.Now().UTC()
+
+	// Remove personal CodeBuddy key from user and configure platform shared CodeBuddy key instead.
+	u := env.user
+	if _, err := env.store.UpdateUserCredentials(u.ID, repo.UserCredentialUpdate{CodeBuddyAPIKeyClear: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.SetPlatformCodeBuddyKey(repo.PlatformCodeBuddyKeyUpdate{
+		APIKey:              "ck_shared_test_key",
+		InternetEnvironment: "internal",
+		Models:              []string{"claude-sonnet-5"},
+	}, u.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Do NOT save an evo_sop_policies row: SOP defaults to Enabled=true, BatchSize=10.
+	// Also seed an older failed proposal to confirm it does not discard accumulated runs.
+	if err := env.store.PutEvoProposal(domain.EvoProposal{
+		ID: "evp-old-failed", ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
+		AssetName: env.agent.Name, Title: "旧失败提案", Status: domain.EvoProposalFailed,
+		CreatedAt: now.Add(-30 * time.Minute), UpdatedAt: now.Add(-25 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 10; i++ {
+		r := domain.Run{
+			ID:               "default-batch-r-" + string(rune('a'+i)),
+			WorkflowID:       env.wf.ID,
+			WorkflowSnapshot: env.wf,
+			Status:           "succeeded",
+			Input:            `{"ticketId":"T-1"}`,
+			ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p", ResponsibleUserID: u.ID},
+			CreatedAt:        now.Add(time.Duration(i-15) * time.Minute),
+			UpdatedAt:        now.Add(time.Duration(i-15) * time.Minute),
+			Usage:            domain.TokenUsage{TotalTokens: 320000},
+			ToolCalls:        14,
+			Timing:           &domain.RunTiming{ExecutionMs: 90000},
+			Nodes:            map[string]*domain.NodeRun{"code": {NodeID: "code", Status: "succeeded", Attempt: 1, Usage: domain.TokenUsage{TotalTokens: 320000}, ToolCalls: 14}},
+		}
+		if err := env.store.PutRun(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Verify resolveSOPActorUser picks up run user + shared key cleanly even without evoImproveOverride.
+	policy := env.store.EvoSOPPolicy("evo-p", env.wf.ID)
+	actor, model, ok := env.h.resolveSOPActorUser(policy, env.h.loadWindowRuns("evo-p", 14, 50), 0)
+	if !ok || actor.CodeBuddyAPIKey != "ck_shared_test_key" || model != "claude-sonnet-5" {
+		t.Fatalf("expected shared key resolution, got ok=%v key=%q model=%q", ok, actor.CodeBuddyAPIKey, model)
+	}
+
+	setEvoImproveForTest(func(_ context.Context, _ domain.EvoProposal, _, _ string, _ domain.User) (string, error) {
+		return `{"title":"精简冗余输出","rationale":"降低 Token 消耗","content":"原始正文：请完成开发任务并自测。\n直接输出精简结果。"}`, nil
+	})
+	defer setEvoImproveForTest(nil)
+
+	// Immediately during failed-proposal cooldown it should not loop; after cooldown it must recover and trigger.
+	env.h.sweepSOPBatches(now)
+	if props := env.store.EvoProposals("evo-p", 20); len(props) != 1 {
+		t.Fatalf("expected cooldown to avoid immediate retry loop, got %d", len(props))
+	}
+	env.h.sweepSOPBatches(now.Add(15 * time.Minute))
+	props := env.store.EvoProposals("evo-p", 20)
+	if len(props) != 2 {
+		t.Fatalf("expected default-enabled SOP to create a new proposal alongside old failed one, got %d (%+v)", len(props), props)
 	}
 }

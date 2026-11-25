@@ -382,6 +382,7 @@ func (h *evolutionHandlers) startReplay(p domain.EvoProposal, plan evolution.Sam
 
 func (h *evolutionHandlers) startReplayMonitor() {
 	go func() {
+		h.maybeSweepSOPBatches(time.Now().UTC())
 		ticker := time.NewTicker(evoReplaySweepInterval)
 		defer ticker.Stop()
 		for range ticker.C {

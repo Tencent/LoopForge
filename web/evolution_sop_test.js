@@ -193,7 +193,7 @@ const { createDOM } = require('./hui_fake_dom');
   assert.match(chatChangeHTML, /evo-sop-split-diff/);
 
   // 3. Preference dialog renders P1/P2 priority badges, supports up/down reorder & presets, and binds real model picker.
-  dom.html(`<section id="evolutionView" class="active"><div id="evoPageHead"></div><div id="evoMetrics"></div><div id="evolutionBody">${homeHTML}</div></section>`);
+  dom.html(`<section id="evolutionView" class="active"><header id="evoPageHead"><button data-evo-tab="assets">进化设置</button><button id="evoRefresh">刷新</button><button id="evoDiagnose">发起诊断</button></header><div id="evoMetrics"></div><div id="evolutionBody">${homeHTML}</div></section>`);
   api.evoSOPOpenPrefDialog('wf-bug');
   assert.equal(boundModel?.model, 'codex:gpt-5', 'custom model must initialize feature picker');
   assert.equal(w.$('#evoSopModelPickerHost').hidden, false);
@@ -225,10 +225,14 @@ const { createDOM } = require('./hui_fake_dom');
   assert.equal(w.$('[data-evo-sop-pref-open="wf-bug"]').disabled, false, 'preference button must re-enable after policy save');
   assert.equal(w.$('[data-evo-sop-toggle="wf-bug"]').disabled, false, 'switch must re-enable after policy save');
 
-  // 5. Evolution Settings page hides legacy global SOP detection block when SOP workbench is active.
+  // 5. SOP workbench hides legacy settings button, diagnose button, and legacy settings view entirely.
   evo.tab = 'assets';
   dom.run('evoRender()');
-  assert.equal(w.$('#evoSOPDetection'), null, 'settings page must not render redundant global SOP detection card');
+  assert.equal(w.$('#evoPageHead [data-evo-tab="assets"]').hidden, true, 'settings button must be hidden in SOP workbench');
+  assert.equal(w.$('#evoDiagnose').hidden, true, 'diagnose button must be hidden in SOP workbench');
+  assert.equal(w.$('#evoSOPDetection'), null, 'must not render legacy global SOP detection card');
+  assert.equal(w.$('.evo-settings-title'), null, 'must not render legacy evolution settings page');
+  assert.equal(evo.tab, 'issues', 'legacy settings tab must redirect back to SOP workbench');
 
   console.log('evolution sop: clean home/detail, fixed switch scope, side-by-side diff, close icon, and standalone model picker passed');
 })().catch(error => {

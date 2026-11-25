@@ -225,7 +225,15 @@ function evoChangeBadge(p){const s=evoChangeState(p);return kbBadge(s.label,s.to
 function evoRenderOverviewHeader(){
   const inSopDetail=typeof evoSOPState!=='undefined'&&!!evoSOPState.view;
   const show=!evo.modal&&!inSopDetail;
-  $('#evoPageHead').hidden=!show;
+  const head=$('#evoPageHead');
+  if(head){
+    head.hidden=!show;
+    const hideLegacy=Array.isArray(evo.overview?.sops)||evo.overview==null;
+    const settingsBtn=head.querySelector('[data-evo-tab="assets"]');
+    const diagnoseBtn=head.querySelector('#evoDiagnose');
+    if(settingsBtn)settingsBtn.hidden=hideLegacy;
+    if(diagnoseBtn)diagnoseBtn.hidden=hideLegacy;
+  }
   const host=$('#evoMetrics');if(!host)return;
   const sopHome=typeof evoSOPIsEnabledView==='function'&&evoSOPIsEnabledView();
   host.hidden=!show||sopHome;
@@ -258,12 +266,14 @@ function evoRender(){
   if(evo.error){root.innerHTML=evoReadErrorHTML();return}
   if(!evo.overview)return;
   const focused=document.activeElement?.closest?.('#evolutionBody')?document.activeElement.dataset.evoKey:'';
-  if(['assets','samples'].includes(evo.tab)){
+  if(['assets','samples'].includes(evo.tab)&&!Array.isArray(evo.overview?.sops)){
     const tabs=[['assets','角色与规则'],['samples','固定验证样本']];
-    const showLegacyDetection=!Array.isArray(evo.overview?.sops);
-    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ RSI工作台</button><h2 class="evo-settings-title">进化设置</h2>${showLegacyDetection?evoSOPDetectionHTML():''}<div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
-    if(showLegacyDetection)evoBindSOPDetection(root.querySelector('#evoSOPDetection'));
-  }else root.innerHTML=evoUnifiedListHTML();
+    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ RSI工作台</button><h2 class="evo-settings-title">进化设置</h2>${evoSOPDetectionHTML()}<div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
+    evoBindSOPDetection(root.querySelector('#evoSOPDetection'));
+  }else{
+    if(['assets','samples'].includes(evo.tab)&&Array.isArray(evo.overview?.sops))evo.tab='issues';
+    root.innerHTML=evoUnifiedListHTML();
+  }
   evoHomeSyncChecking();
   window.AgentFlowHarnessIcons?.hydrate(root);
   if(focused)root.querySelector(`[data-evo-key="${CSS.escape(focused)}"]`)?.focus({preventScroll:true});
@@ -544,7 +554,14 @@ function evoApplyRoute(){
   if(r.type==='finding')return evoOpenFinding(r.id,r.key,true);
   if(r.type==='proposal')return evoOpenProposal(r.id,true);
   const opener=evo.modal;
-  evoCloseFinding(false);if(evoDrawerOwned())evoDrawerClose();evo.tab=r.type==='settings'?r.tab:'issues';evoRender();
+  evoCloseFinding(false);if(evoDrawerOwned())evoDrawerClose();
+  if(r.type==='settings'&&Array.isArray(evo.overview?.sops)){
+    evo.tab='issues';
+    history.replaceState(null,'','#/evolution');
+  }else{
+    evo.tab=r.type==='settings'?r.tab:'issues';
+  }
+  evoRender();
   if(r.type==='list'&&opener)evoFocusTask(opener);
 }
 function evoFindingStats(r){

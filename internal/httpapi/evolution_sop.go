@@ -123,7 +123,7 @@ func (h *evolutionHandlers) putSOPPolicy(c *gin.Context) {
 	}
 	saved := h.repo.EvoSOPPolicy(req.ProjectID, workflowID)
 	if saved.Enabled {
-		go h.checkSOPBatchAutoTrigger(saved)
+		go h.checkSOPBatchAutoTrigger(saved, saved.UpdatedBy)
 	}
 	c.JSON(http.StatusOK, saved)
 }
@@ -171,6 +171,8 @@ func (h *evolutionHandlers) optimizeSOP(c *gin.Context) {
 	c.JSON(http.StatusOK, evoProposalView(p, false))
 }
 
+const evoSOPFailedRetryCooldown = 10 * time.Minute
+
 func (h *evolutionHandlers) maybeSweepSOPBatches(now time.Time) {
 	h.sopBatchM.Lock()
 	due := now.Sub(h.sopBatchAt) >= evoSOPBatchSweepGap
@@ -184,23 +186,94 @@ func (h *evolutionHandlers) maybeSweepSOPBatches(now time.Time) {
 	h.sweepSOPBatches(now)
 }
 
-func (h *evolutionHandlers) sweepSOPBatches(_ time.Time) {
+func (h *evolutionHandlers) triggerProjectSOPBatches(projectID string, hintUserID int64) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("evolution sop project batch trigger panic: %v", r)
+		}
+	}()
+	h.sopBatchM.Lock()
+	now := time.Now().UTC()
+	if now.Sub(h.sopBatchAt) < 10*time.Second {
+		h.sopBatchM.Unlock()
+		return
+	}
+	h.sopBatchAt = now
+	h.sopBatchM.Unlock()
+	h.sweepProjectSOPBatches(projectID, hintUserID, now)
+}
+
+func (h *evolutionHandlers) sweepSOPBatches(now time.Time) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("evolution sop batch sweep panic: %v", r)
 		}
 	}()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	scannedProjects := map[string]bool{}
+	for _, proj := range h.repo.Projects() {
+		if proj.ArchivedAt != nil || strings.TrimSpace(proj.ID) == "" {
+			continue
+		}
+		scannedProjects[proj.ID] = true
+		h.sweepProjectSOPBatches(proj.ID, 0, now)
+	}
+	// Also cover any explicitly saved enabled policies whose project wasn't listed above.
 	for _, policy := range h.repo.AllEnabledEvoSOPPolicies() {
-		h.checkSOPBatchAutoTrigger(policy)
+		if scannedProjects[policy.ProjectID] {
+			continue
+		}
+		h.checkSOPBatchAutoTrigger(policy, 0)
 	}
 }
 
-func (h *evolutionHandlers) checkSOPBatchAutoTrigger(policy domain.EvoSOPPolicy) {
+func (h *evolutionHandlers) sweepProjectSOPBatches(projectID string, hintUserID int64, now time.Time) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	runs := h.loadWindowRuns(projectID, evoDefaultWindowDays, evoSOPWindowLimit)
+	if len(runs) == 0 {
+		return
+	}
+	wfIDs := []string{}
+	seenWF := map[string]bool{}
+	for _, r := range runs {
+		if id := strings.TrimSpace(r.WorkflowID); id != "" && !seenWF[id] {
+			seenWF[id] = true
+			wfIDs = append(wfIDs, id)
+		}
+	}
+	for _, wfID := range wfIDs {
+		policy := h.repo.EvoSOPPolicy(projectID, wfID)
+		if !policy.Enabled {
+			continue
+		}
+		h.checkSOPBatchAutoTriggerWithRuns(policy, runs, hintUserID, now)
+	}
+}
+
+func (h *evolutionHandlers) checkSOPBatchAutoTrigger(policy domain.EvoSOPPolicy, hintUserID int64) {
 	if !policy.Enabled || strings.TrimSpace(policy.ProjectID) == "" || strings.TrimSpace(policy.WorkflowID) == "" {
 		return
 	}
-	policy.BatchSize = evolution.NormalizeSOPBatchSize(policy.BatchSize)
 	runs := h.loadWindowRuns(policy.ProjectID, evoDefaultWindowDays, evoSOPWindowLimit)
+	h.checkSOPBatchAutoTriggerWithRuns(policy, runs, hintUserID, time.Now().UTC())
+}
+
+func (h *evolutionHandlers) checkSOPBatchAutoTriggerWithRuns(policy domain.EvoSOPPolicy, runs []domain.Run, hintUserID int64, now time.Time) {
+	if !policy.Enabled || strings.TrimSpace(policy.ProjectID) == "" || strings.TrimSpace(policy.WorkflowID) == "" {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	policy.BatchSize = evolution.NormalizeSOPBatchSize(policy.BatchSize)
 	wf, ok := h.resolveSOPWorkflow(policy.ProjectID, policy.WorkflowID, runs)
 	if !ok {
 		return
@@ -222,7 +295,7 @@ func (h *evolutionHandlers) checkSOPBatchAutoTrigger(policy domain.EvoSOPPolicy)
 			sopProposals = append(sopProposals, p)
 		}
 	}
-	stage, _, _ := evolution.DetermineSOPStage(sopProposals)
+	stage, _, last := evolution.DetermineSOPStage(sopProposals)
 	if stage != domain.EvoSOPStageMonitor {
 		return
 	}
@@ -230,20 +303,64 @@ func (h *evolutionHandlers) checkSOPBatchAutoTrigger(policy domain.EvoSOPPolicy)
 	if pending < policy.BatchSize {
 		return
 	}
-	user, ok := h.resolveSOPActorUser(policy)
+	// If the most recent proposal failed without any newer run since then, respect
+	// a brief cooldown to avoid tight failure loops while still recovering automatically.
+	if last != nil && last.Status == domain.EvoProposalFailed && len(sopRuns) > 0 && !sopRuns[0].CreatedAt.After(last.UpdatedAt) {
+		if now.Sub(last.UpdatedAt) < evoSOPFailedRetryCooldown {
+			return
+		}
+	}
+	user, resolvedModel, ok := h.resolveSOPActorUser(policy, sopRuns, hintUserID)
 	if !ok {
+		log.Printf("evolution sop auto-batch %s/%s skipped (%d/%d runs): no actor user with available CLI credentials", policy.ProjectID, wf.ID, pending, policy.BatchSize)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, _, created, err := h.startSOPOptimization(ctx, policy.ProjectID, wf.ID, "", user); err != nil {
+	if _, _, created, err := h.startSOPOptimization(ctx, policy.ProjectID, wf.ID, resolvedModel, user); err != nil {
 		log.Printf("evolution sop auto-batch %s/%s: %v", policy.ProjectID, wf.ID, err)
 	} else if created {
 		log.Printf("evolution sop auto-batch triggered optimization for %s/%s (%d/%d runs)", policy.ProjectID, wf.ID, pending, policy.BatchSize)
 	}
 }
 
-func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy) (domain.User, bool) {
+func (h *evolutionHandlers) applySOPModelCredentials(ctx context.Context, user domain.User, requestedModel string) (domain.User, string, bool) {
+	model := strings.TrimSpace(requestedModel)
+	if evoImproveOverride != nil {
+		return user, model, true
+	}
+	reqModel := model
+	if reqModel == "" {
+		reqModel = assistantDefaultModel
+	}
+	if m, err := resolveFeatureModel(user, reqModel); err == nil && m != "" {
+		return user, m, true
+	}
+	if strings.TrimSpace(user.CodeBuddyAPIKey) != "" {
+		catalog := assistantModelsForRequest(ctx, user, model)
+		return user, assistantAllowedModel(model, catalog), true
+	}
+	// Fall back to platform shared CodeBuddy key when the user has no personal CLI credentials.
+	if key, found := h.repo.SharedCodeBuddyKey(); found && strings.TrimSpace(key.APIKey) != "" && len(key.Models) > 0 {
+		if key.SponsorID == 0 || key.SponsorID != user.ID {
+			sharedUser := user
+			sharedUser.CodeBuddyAPIKey = key.APIKey
+			sharedUser.CodeBuddyBaseURL = ""
+			sharedUser.CodeBuddyInternetEnvironment = key.InternetEnvironment
+			sharedUser.CodeBuddyModels = nil
+			chosen := ""
+			if m, ok := key.Model(model); ok && m != "" {
+				chosen = m
+			} else if len(key.Models) > 0 {
+				chosen = key.Models[0]
+			}
+			return sharedUser, chosen, true
+		}
+	}
+	return user, "", false
+}
+
+func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy, sopRuns []domain.Run, hintUserID int64) (domain.User, string, bool) {
 	candidates := []int64{}
 	add := func(id int64) {
 		if id <= 0 {
@@ -256,7 +373,11 @@ func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy) (dom
 		}
 		candidates = append(candidates, id)
 	}
+	add(hintUserID)
 	add(policy.UpdatedBy)
+	for _, r := range sopRuns {
+		add(r.ExecutionContext.ResponsibleUserID)
+	}
 	if proj, ok := h.repo.Project(policy.ProjectID); ok {
 		if proj.SOPDetection != nil {
 			add(proj.SOPDetection.ConfiguredBy)
@@ -268,21 +389,30 @@ func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy) (dom
 	}
 	reqModel := strings.TrimSpace(policy.Model)
 	if reqModel == "" {
-		reqModel = assistantDefaultModel
+		if proj, ok := h.repo.Project(policy.ProjectID); ok && proj.SOPDetection != nil {
+			reqModel = strings.TrimSpace(proj.SOPDetection.Model)
+		}
 	}
+	ctx := context.Background()
 	for _, uid := range candidates {
 		user, ok := h.repo.User(uid)
 		if !ok {
 			continue
 		}
-		if evoImproveOverride != nil || strings.TrimSpace(user.CodeBuddyAPIKey) != "" {
-			return user, true
-		}
-		if _, err := resolveFeatureModel(user, reqModel); err == nil {
-			return user, true
+		if resolvedUser, resolvedModel, ok := h.applySOPModelCredentials(ctx, user, reqModel); ok {
+			return resolvedUser, resolvedModel, true
 		}
 	}
-	return domain.User{}, false
+	// Fallback: check any project writer / platform admin account with configured credentials.
+	for _, user := range h.repo.Users() {
+		if !h.speakerProjectWriter(policy.ProjectID, user, user.ID) {
+			continue
+		}
+		if resolvedUser, resolvedModel, ok := h.applySOPModelCredentials(ctx, user, reqModel); ok {
+			return resolvedUser, resolvedModel, true
+		}
+	}
+	return domain.User{}, "", false
 }
 
 func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID, workflowID, requestedModel string, user domain.User) (domain.EvoProposal, *domain.EvoQueueItem, bool, error) {
@@ -307,23 +437,11 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 			model = strings.TrimSpace(project.SOPDetection.Model)
 		}
 	}
-	resolvedModel := ""
-	if evoImproveOverride == nil {
-		reqModel := model
-		if reqModel == "" {
-			reqModel = assistantDefaultModel
-		}
-		if m, err := resolveFeatureModel(user, reqModel); err == nil && m != "" {
-			resolvedModel = m
-		} else if strings.TrimSpace(user.CodeBuddyAPIKey) != "" {
-			catalog := assistantModelsForRequest(ctx, user, model)
-			resolvedModel = assistantAllowedModel(model, catalog)
-		} else {
-			return domain.EvoProposal{}, nil, false, &evoError{status: http.StatusBadRequest, msg: "请先在个人配置中配置可用的 AI 模型凭据（CodeBuddy / Codex / Claude 等）"}
-		}
-	} else {
-		resolvedModel = model
+	resolvedUser, resolvedModel, credOK := h.applySOPModelCredentials(ctx, user, model)
+	if !credOK {
+		return domain.EvoProposal{}, nil, false, &evoError{status: http.StatusBadRequest, msg: "请先在个人配置中配置可用的 AI 模型凭据（CodeBuddy / Codex / Claude 等）"}
 	}
+	user = resolvedUser
 
 	sopRuns := filterRunsByWorkflow(runs, workflowID)
 	batchRuns := sopRuns
@@ -445,6 +563,7 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 		}
 		targetFinding = f
 	} else if len(batchRuns) > 0 {
+		prefFinding := evolution.BuildSOPPreferenceFinding(projectID, wf, targetAsset.Kind, targetAsset.ID, targetAsset.Name, targetNodeID, policy, batchRuns, batchMetrics)
 		priorityText := evolution.SOPPreferencePriorityText(policy.Preferences)
 		guidance := evolution.SOPPreferencePromptGuidance(policy.Preferences)
 		prefNote := fmt.Sprintf("【SOP 优化优先级：%s】近 %d 次运行平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。%s",
@@ -456,6 +575,29 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 				targetFinding.Summary = prefNote
 			}
 		}
+		seenSample := map[string]bool{}
+		for _, id := range targetFinding.SampleRunIDs {
+			seenSample[id] = true
+		}
+		for _, id := range prefFinding.SampleRunIDs {
+			if !seenSample[id] && len(targetFinding.SampleRunIDs) < 8 {
+				seenSample[id] = true
+				targetFinding.SampleRunIDs = append(targetFinding.SampleRunIDs, id)
+			}
+		}
+		seenPrefSig := map[string]bool{}
+		for _, s := range targetFinding.Signals {
+			if s.Kind == evolution.SignalSOPPreference {
+				seenPrefSig[s.RunID] = true
+			}
+		}
+		for _, s := range prefFinding.Signals {
+			if !seenPrefSig[s.RunID] {
+				seenPrefSig[s.RunID] = true
+				targetFinding.Signals = append(targetFinding.Signals, s)
+			}
+		}
+		_ = h.repo.PutEvoFinding(targetFinding)
 	}
 
 	p := domain.EvoProposal{
@@ -489,6 +631,10 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 func countSOPPendingRuns(sopRuns []domain.Run, sopProposals []domain.EvoProposal, batchSize int) int {
 	var since time.Time
 	for _, p := range sopProposals {
+		// A failed proposal must not discard accumulated runs from the current batch.
+		if p.Status == domain.EvoProposalFailed {
+			continue
+		}
 		at := p.CreatedAt
 		if !p.DecidedAt.IsZero() && p.DecidedAt.After(at) {
 			at = p.DecidedAt
