@@ -218,6 +218,7 @@ func main() {
 	readyStatus := "serving"
 	switch role {
 	case "worker":
+		httpapi.ConfigureWorkerSOPSandboxSelection(s, e)
 		e.ConfigureControl(engine.ControlConfig{Role: role, URL: endpoints.ControlURL, Token: endpoints.ControlToken, APIURL: endpoints.APIBase})
 		e.StartInstanceHeartbeat(claimCtx)
 		srv = &http.Server{Addr: endpoints.ListenAddr, Handler: workerHandler(e), ReadHeaderTimeout: 10 * time.Second}
