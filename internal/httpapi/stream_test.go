@@ -19,7 +19,6 @@ import (
 )
 
 func TestRunStreamDeliversLiveSnapshots(t *testing.T) {
-	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +28,7 @@ func TestRunStreamDeliversLiveSnapshots(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
+	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
