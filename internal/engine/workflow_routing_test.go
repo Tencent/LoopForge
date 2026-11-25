@@ -581,6 +581,142 @@ func TestConditionalRoutingRefreshRejectsPendingHumanRoute(t *testing.T) {
 	}
 }
 
+// A human gate submitted without a route value carries nothing to protect.
+// Refreshing is the only way out when the frozen conditional edge itself is
+// wrong, because approving that gate would fail in decideRoute anyway.
+func TestConditionalRoutingRefreshAllowsPendingHumanGateWithoutRoute(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wf := routingWorkflow("refresh-human-no-route")
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r := domain.Run{ID: "refresh-human-no-route-run", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "waiting", Nodes: map[string]*domain.NodeRun{}}
+	for _, node := range wf.Nodes {
+		r.Nodes[node.ID] = &domain.NodeRun{NodeID: node.ID, Status: "pending"}
+	}
+	r.Nodes["classify"] = &domain.NodeRun{
+		NodeID: "classify", Status: "waiting_approval", Activity: "等待人工确认",
+		GateResult: &domain.GateResult{Decision: "human", ActionRequired: "确认是否可以小改"},
+	}
+	if err := s.PutRun(r); err != nil {
+		t.Fatal(err)
+	}
+	latest, ok := s.Workflow(wf.ID)
+	if !ok {
+		t.Fatal("workflow disappeared")
+	}
+	latest.Version++
+	latest.Nodes = append(latest.Nodes, domain.WorkflowNode{ID: "extra", Type: "script"})
+	// The new SOP drops the conditional edges, so approving the waiting gate no
+	// longer needs a route the old attempt never produced.
+	latest.Edges = []domain.WorkflowEdge{{ID: "route-small", Source: "classify", Target: "small"}}
+	if err := s.PutWorkflow(latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RefreshRunSOP(r.ID); err != nil {
+		t.Fatalf("refresh should be allowed once the new SOP asks for no decision, got %v", err)
+	}
+	updated, ok := s.RunState(r.ID)
+	if !ok {
+		t.Fatal("run disappeared")
+	}
+	found := false
+	for _, node := range updated.WorkflowSnapshot.Nodes {
+		if node.ID == "extra" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("refresh kept the old graph: %+v", updated.WorkflowSnapshot.Nodes)
+	}
+}
+
+// A pending route only matters for a node that actually owns conditional
+// edges; a gate elsewhere in the same conditional SOP stays refreshable.
+func TestConditionalRoutingRefreshAllowsPendingGateOnNonRoutingNode(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wf := routingWorkflow("refresh-gate-no-conditions")
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r := domain.Run{ID: "refresh-gate-no-conditions-run", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "waiting", Nodes: map[string]*domain.NodeRun{}}
+	for _, node := range wf.Nodes {
+		r.Nodes[node.ID] = &domain.NodeRun{NodeID: node.ID, Status: "pending"}
+	}
+	r.Nodes["delivery"] = &domain.NodeRun{
+		NodeID: "delivery", Status: "waiting_approval", Activity: "等待人工确认",
+		GateResult: &domain.GateResult{Decision: "human", Route: domain.RouteValues{"small"}},
+	}
+	if err := s.PutRun(r); err != nil {
+		t.Fatal(err)
+	}
+	latest, ok := s.Workflow(wf.ID)
+	if !ok {
+		t.Fatal("workflow disappeared")
+	}
+	latest.Version++
+	latest.Nodes = append(latest.Nodes, domain.WorkflowNode{ID: "extra", Type: "script"})
+	if err := s.PutWorkflow(latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RefreshRunSOP(r.ID); err != nil {
+		t.Fatalf("refresh should be allowed for a node without conditional edges, got %v", err)
+	}
+}
+
+// A gate that never produced a route becomes un-approvable if the refreshed
+// graph starts asking it for one, so the refresh has to be refused up front.
+func TestConditionalRoutingRefreshRejectsConditionsAddedToWaitingGate(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wf := routingWorkflow("refresh-gate-gains-route")
+	linear := []domain.WorkflowEdge{{ID: "route-small", Source: "classify", Target: "small"}}
+	wf.Edges = linear
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r := domain.Run{ID: "refresh-gate-gains-route-run", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "waiting", Nodes: map[string]*domain.NodeRun{}}
+	for _, node := range wf.Nodes {
+		r.Nodes[node.ID] = &domain.NodeRun{NodeID: node.ID, Status: "pending"}
+	}
+	r.Nodes["classify"] = &domain.NodeRun{
+		NodeID: "classify", Status: "waiting_approval", Activity: "等待人工确认",
+		GateResult: &domain.GateResult{Decision: "human", ActionRequired: "确认是否小改"},
+	}
+	if err := s.PutRun(r); err != nil {
+		t.Fatal(err)
+	}
+	latest, ok := s.Workflow(wf.ID)
+	if !ok {
+		t.Fatal("workflow disappeared")
+	}
+	latest.Version++
+	latest.Edges = []domain.WorkflowEdge{
+		{ID: "small-edge", Source: "classify", Target: "small", Condition: &domain.WorkflowCondition{Type: "route", Values: []string{"small"}}},
+		{ID: "large-edge", Source: "classify", Target: "large", Condition: &domain.WorkflowCondition{Type: "route", Values: []string{"large"}}},
+	}
+	if err := s.PutWorkflow(latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RefreshRunSOP(r.ID); err == nil || !strings.Contains(err.Error(), "classify") || !strings.Contains(err.Error(), "条件分支") {
+		t.Fatalf("expected refresh to be refused, got %v", err)
+	}
+}
+
 func TestConditionalRoutingMissingDecisionFailsInsteadOfHanging(t *testing.T) {
 	s, err := repo.OpenTest()
 	if err != nil {

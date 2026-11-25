@@ -2879,6 +2879,46 @@ func TestOverlayLatestNodeBindingsKeepsConditionalSnapshotFrozen(t *testing.T) {
 	}
 }
 
+// Only the contract an edge condition resolves by name must stay frozen; a
+// node off the routing path still picks up the role the operator just fixed.
+func TestOverlayLatestNodeBindingsRefreshesNonRoutingNodeInConditionalWorkflow(t *testing.T) {
+	t.Parallel()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	current := domain.WorkflowDefinition{
+		ID: "conditional-overlay-partial", Name: "Conditional overlay", SandboxProfileID: "test-native", Version: 2,
+		Nodes: []domain.WorkflowNode{
+			{ID: "classify", Type: "script", ArtifactOutputs: []domain.ArtifactContract{{Name: "classification-v2", Path: "v2.json"}}},
+			{ID: "report", Type: "agent", AgentID: "agent-v2", NodePrompt: "新的提示词", ArtifactOutputs: []domain.ArtifactContract{{Name: "report", Path: "report.md"}}},
+		},
+	}
+	if err := s.PutWorkflow(current); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{WorkflowID: current.ID, WorkflowSnapshot: domain.WorkflowDefinition{
+		ID: current.ID, Version: 1,
+		Nodes: []domain.WorkflowNode{
+			{ID: "classify", Type: "script", ArtifactOutputs: []domain.ArtifactContract{{Name: "classification", Path: "v1.json"}}},
+			{ID: "report", Type: "agent", AgentID: "agent-v1", NodePrompt: "旧的提示词", ArtifactOutputs: []domain.ArtifactContract{{Name: "report", Path: "old.md"}}},
+		},
+		Edges: []domain.WorkflowEdge{{ID: "route", Source: "classify", Target: "report", Condition: &domain.WorkflowCondition{Type: "artifact", Artifact: "classification", Pointer: "/size", Equals: []byte(`"small"`)}}},
+	}}
+	overlayLatestNodeBindings(s, &run, map[string]bool{"classify": true, "report": true})
+	if got := run.WorkflowSnapshot.Nodes[0].ArtifactOutputs[0].Name; got != "classification" {
+		t.Fatalf("routing source lost its frozen contract, got %q", got)
+	}
+	report := run.WorkflowSnapshot.Nodes[1]
+	if report.AgentID != "agent-v2" || report.NodePrompt != "新的提示词" || report.ArtifactOutputs[0].Path != "report.md" {
+		t.Fatalf("non-routing node kept stale bindings: agent=%q prompt=%q artifacts=%+v", report.AgentID, report.NodePrompt, report.ArtifactOutputs)
+	}
+	if run.WorkflowSnapshot.Version != 1 {
+		t.Fatalf("version bumped to %d while a contract is still frozen", run.WorkflowSnapshot.Version)
+	}
+}
+
 func TestOverlayLatestNodeBindingsReadsGenericTemplate(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()

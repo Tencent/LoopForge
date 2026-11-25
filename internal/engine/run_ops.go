@@ -896,25 +896,44 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 		}
 	}
 	// An Agent can be waiting for a human gate after it has submitted a route
-	// value but before the decision is materialised. Treat that pending route
+	// value but before the decision is materialised. Treat that pending value
 	// exactly like a committed decision: refreshing the graph would otherwise
-	// let the old value select a different target in the new SOP. Other gate
-	// outcomes (for example a failed/rework attempt) do not carry a pending
-	// route and remain refreshable.
+	// let the old value select a different target in the new SOP. A gate
+	// submitted without a route value only has to stay refreshable while the
+	// new SOP asks it for no decision — that is the escape hatch for a wrong
+	// conditional edge found while the gate waits. If the new SOP does expect a
+	// decision there, the attempt never produced one and approving it could only
+	// fail, so the refresh must not hand the gate an unanswerable question.
+	// Other gate outcomes (a failed or rework attempt) carry no pending route and
+	// stay refreshable.
+	conditionalSources := map[string]bool{}
+	for _, edge := range r.WorkflowSnapshot.Edges {
+		if edge.Condition != nil {
+			conditionalSources[edge.Source] = true
+		}
+	}
+	latestConditionalSources := map[string]bool{}
+	for _, edge := range latest.Edges {
+		if edge.Condition != nil {
+			latestConditionalSources[edge.Source] = true
+		}
+	}
 	for _, node := range r.WorkflowSnapshot.Nodes {
 		nr := r.Nodes[node.ID]
-		if nr == nil || nr.Status != "waiting_approval" || nr.RouteDecision != nil || nr.GateResult == nil || nr.GateResult.Decision != "human" {
+		if nr == nil || nr.Status != "waiting_approval" || nr.RouteDecision != nil {
 			continue
 		}
-		conditional := false
-		for _, edge := range r.WorkflowSnapshot.Edges {
-			if edge.Source == node.ID && edge.Condition != nil {
-				conditional = true
-				break
-			}
+		if nr.GateResult == nil || nr.GateResult.Decision != "human" {
+			continue
 		}
-		if conditional {
-			return fmt.Errorf("节点 %s 存在待处理的路由决策，不能刷新 SOP；请先审批原 SOP 或重新开始运行", node.ID)
+		if len(nr.GateResult.Route) > 0 {
+			if conditionalSources[node.ID] {
+				return fmt.Errorf("节点 %s 存在待处理的路由决策，不能刷新 SOP；请先审批原 SOP 或重新开始运行", node.ID)
+			}
+			continue
+		}
+		if latestConditionalSources[node.ID] {
+			return fmt.Errorf("节点 %s 正在等待人工确认，但新版 SOP 为它新增了条件分支；请先按原版 SOP 审批，或重新开始运行", node.ID)
 		}
 	}
 	// A graph/role update must not silently replace the environment underneath
@@ -1045,15 +1064,13 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 	if st == nil || r == nil || len(nodeIDs) == 0 {
 		return
 	}
-	// Retries of a conditional workflow must use one coherent frozen graph.
-	// Overlaying a newer node contract here can rename an artifact while the
-	// frozen edge still checks the old name, producing a silently wrong default
-	// branch. Non-routing workflows retain the historical role-binding refresh.
-	for _, edge := range r.WorkflowSnapshot.Edges {
-		if edge.Condition != nil {
-			return
-		}
-	}
+	// A frozen artifact condition checks a contract by name, so refreshing that
+	// node's contract from a newer SOP could rename the artifact while the edge
+	// still looks for the old one, silently taking the default branch. Freeze
+	// only those contracts: role, executor, prompt and retry policy still
+	// refresh, so "fix the role, then retry the node" keeps working. Retries of
+	// a conditional workflow used to skip this whole overlay instead.
+	frozenArtifacts := frozenArtifactContractSources(r.WorkflowSnapshot)
 	latest, ok := latestWorkflowDefinition(st, r.WorkflowID)
 	if !ok {
 		return
@@ -1076,7 +1093,9 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 		}
 		n.AgentID, n.ExecutorID = src.AgentID, src.ExecutorID
 		n.NodePrompt = src.NodePrompt
-		n.ArtifactOutputs = src.ArtifactOutputs
+		if !frozenArtifacts[n.ID] {
+			n.ArtifactOutputs = src.ArtifactOutputs
+		}
 		n.OnFailure, n.RejectTo = src.OnFailure, src.RejectTo
 		n.RetryStrategy, n.CarryOver = src.RetryStrategy, src.CarryOver
 		if src.MaxAttempts > n.MaxAttempts {
@@ -1086,9 +1105,25 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 			n.MaxReworks = src.MaxReworks
 		}
 	}
-	if latest.Version > r.WorkflowSnapshot.Version {
+	// A frozen contract keeps part of the snapshot on its old revision, so the
+	// version stamp must not claim the graph is fully up to date: RefreshRunSOP
+	// treats an equal version as "nothing to do" and would leave the frozen
+	// contract behind for good.
+	if len(frozenArtifacts) == 0 && latest.Version > r.WorkflowSnapshot.Version {
 		r.WorkflowSnapshot.Version = latest.Version
 	}
+}
+
+// frozenArtifactContractSources lists the nodes whose artifact contracts an
+// edge condition resolves by name at run time.
+func frozenArtifactContractSources(wf domain.WorkflowDefinition) map[string]bool {
+	frozen := map[string]bool{}
+	for _, edge := range wf.Edges {
+		if edge.Condition != nil && edge.Condition.Type == "artifact" {
+			frozen[edge.Source] = true
+		}
+	}
+	return frozen
 }
 
 func resumeNodeID(r domain.Run) string {
