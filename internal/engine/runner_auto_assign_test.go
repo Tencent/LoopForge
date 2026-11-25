@@ -157,6 +157,31 @@ func (f autoAssignFixture) release(id string) {
 	}
 }
 
+func (f autoAssignFixture) heartbeat(runner domain.Runner, at time.Time) {
+	f.t.Helper()
+	if err := f.s.RunnerHeartbeat(runner.ID, runner.Runtimes, runner.RunnerVersion, runner.NativeSandboxAvailable, at, at.Add(time.Hour)); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f autoAssignFixture) setQueueEnteredAt(id string, at time.Time) {
+	f.t.Helper()
+	if err := f.s.DB.Table("runs").Where("id = ?", id).Update("queue_entered_at", at).Error; err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f autoAssignFixture) sweepAt(at time.Time) {
+	f.t.Helper()
+	eval := f.e.autoAssignEvaluator()
+	eval.CheckAutoRunReachable = func(run domain.Run, _ time.Time) string {
+		return f.e.checkAutoRunReachable(run, at)
+	}
+	if _, err := f.s.PromoteQueuedRunsWithAuto(eval); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 func TestAutoAssignUnlimitedPlatformAndScope(t *testing.T) {
 	f := newAutoAssignFixture(t)
 	pool := f.machine("cloud-pool", 0, false)
@@ -321,29 +346,90 @@ func TestAutoAssignOfflineGraceAndRevocation(t *testing.T) {
 	runner := f.machine("only-shared", 2, false)
 	f.limit(runner.ID, 1)
 	f.fixed("hold", runner.ID)
-	early := f.start(f.wf.ID, f.ec)
-	late := f.start(f.wf.ID, f.ec)
-	runner.Status = domain.RunnerStatusOffline
-	if err := f.s.PutRunner(runner); err != nil {
+	older := f.start(f.wf.ID, f.ec)
+	offlineAt := time.Now().UTC().Add(-autoAssignOfflineGrace - time.Second)
+	f.setQueueEnteredAt(older.ID, offlineAt.Add(-time.Minute))
+	f.heartbeat(runner, offlineAt.Add(-time.Second))
+	if err := f.s.MarkRunnerOffline(runner.ID, offlineAt); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.DB.Table("runs").Where("id = ?", late.ID).Update("queue_entered_at", time.Now().UTC().Add(-autoAssignOfflineGrace-time.Second)).Error; err != nil {
+
+	other := f.machine("other-shared", 2, false)
+	f.limit(other.ID, 1)
+	f.fixed("other-hold", other.ID)
+	recent := f.start(f.wf.ID, f.ec)
+	if err := f.s.SetRunnerSharedProjects(other.ID, other.OwnerUserID, nil); err != nil {
 		t.Fatal(err)
 	}
 	f.e.promoteQueuedRuns()
-	f.state(early.ID, "queued")
-	if got := f.state(late.ID, "failed"); got.AdmissionState != "unstarted" || !strings.Contains(got.Events[len(got.Events)-1].Message, "2 分钟") {
+	f.state(recent.ID, "queued")
+	if got := f.state(older.ID, "failed"); got.AdmissionState != "unstarted" || !strings.Contains(got.Events[len(got.Events)-1].Message, "2 分钟") {
 		t.Fatalf("offline queue did not explain the timeout: %+v", got)
 	}
 	if err := f.s.SetRunnerSharedProjects(runner.ID, runner.OwnerUserID, nil); err != nil {
 		t.Fatal(err)
 	}
 	f.e.promoteQueuedRuns()
-	if got := f.state(early.ID, "failed"); !strings.Contains(got.Events[len(got.Events)-1].Message, "已无兼容") {
+	if got := f.state(recent.ID, "failed"); !strings.Contains(got.Events[len(got.Events)-1].Message, "已无兼容") {
 		t.Fatalf("revoked queue did not fail immediately: %+v", got)
 	}
 	if f.s.ResolveRunnerDefaults(f.ec.ResponsibleUserID, f.ec.ProjectID).ProjectRunnerMode != domain.RunnerSelectionModeAuto {
 		t.Fatal("revocation removed auto mode")
+	}
+}
+
+func TestAutoAssignOfflineGraceStartsWhenBusyRunnerDisconnects(t *testing.T) {
+	for _, scenario := range []struct {
+		name       string
+		reconnects bool
+	}{
+		{name: "reconnects", reconnects: true},
+		{name: "stays-offline"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			f := newAutoAssignFixture(t)
+			runner := f.machine("busy-shared", 2, false)
+			f.limit(runner.ID, 1)
+			holder := f.start(f.wf.ID, f.ec)
+			waiting := f.start(f.wf.ID, f.ec)
+			f.state(holder.ID, "running")
+			f.state(waiting.ID, "queued")
+
+			disconnectedAt := time.Now().UTC().Truncate(time.Second).Add(-autoAssignOfflineGrace - time.Second)
+			queuedAt := disconnectedAt.Add(-3 * time.Minute)
+			f.setQueueEnteredAt(waiting.ID, queuedAt)
+			other := f.machine("long-offline", 2, false)
+			if err := f.s.MarkRunnerOffline(other.ID, queuedAt.Add(-time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			f.heartbeat(runner, disconnectedAt.Add(-time.Second))
+			f.sweepAt(disconnectedAt.Add(-time.Second))
+			f.state(waiting.ID, "queued")
+
+			if err := f.s.MarkRunnerOffline(runner.ID, disconnectedAt); err != nil {
+				t.Fatal(err)
+			}
+			f.sweepAt(disconnectedAt.Add(time.Second))
+			f.state(waiting.ID, "queued")
+
+			if scenario.reconnects {
+				f.heartbeat(runner, disconnectedAt.Add(10*time.Second))
+				f.release(holder.ID)
+				f.e.promoteQueuedRuns()
+				if got := f.state(waiting.ID, "running"); got.ExecutionContext.ExecutionRunnerID != runner.ID {
+					t.Fatalf("promoted run bound to %s, want %s", got.ExecutionContext.ExecutionRunnerID, runner.ID)
+				}
+				return
+			}
+			f.sweepAt(disconnectedAt.Add(autoAssignOfflineGrace))
+			f.state(waiting.ID, "queued")
+			f.sweepAt(disconnectedAt.Add(autoAssignOfflineGrace + time.Second))
+			failed := f.state(waiting.ID, "failed")
+			event := failed.Events[len(failed.Events)-1]
+			if event.Type != domain.RunEventFailed || !strings.Contains(event.Message, "离线超过 2 分钟") {
+				t.Fatalf("unexpected failure event: %+v", event)
+			}
+		})
 	}
 }
 
@@ -523,17 +609,15 @@ func TestAutoAssignOfflineCloudPoolGracePublishesFailureAndRetries(t *testing.T)
 	default:
 	}
 
-	if err := f.s.MarkRunnerOffline(pool.ID, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	f.e.promoteQueuedRuns()
+	offlineAt := time.Now().UTC().Truncate(time.Second).Add(-autoAssignOfflineGrace - time.Second)
+	const heartbeatTimeout = 90 * time.Second
+	f.setQueueEnteredAt(waiting.ID, offlineAt.Add(-2*time.Minute))
+	f.heartbeat(pool, offlineAt.Add(-heartbeatTimeout-time.Second))
+	f.s.MarkOfflineRunners(heartbeatTimeout, offlineAt)
+	f.sweepAt(offlineAt.Add(30 * time.Second))
 	f.state(waiting.ID, "queued")
 
-	pastGrace := time.Now().UTC().Add(-autoAssignOfflineGrace - time.Second)
-	if err := f.s.DB.Table("runs").Where("id = ?", waiting.ID).Update("queue_entered_at", pastGrace).Error; err != nil {
-		t.Fatal(err)
-	}
-	f.e.promoteQueuedRuns()
+	f.sweepAt(offlineAt.Add(autoAssignOfflineGrace + time.Second))
 	failed := f.state(waiting.ID, "failed")
 	if failed.AdmissionState != "unstarted" {
 		t.Fatalf("failed elastic run should be unstarted, got %q", failed.AdmissionState)
@@ -547,10 +631,7 @@ func TestAutoAssignOfflineCloudPoolGracePublishesFailureAndRetries(t *testing.T)
 		t.Fatal("expected SSE publish when unreachable auto-assign run fails")
 	}
 
-	pool.Status = domain.RunnerStatusOnline
-	if err := f.s.PutRunner(pool); err != nil {
-		t.Fatal(err)
-	}
+	f.heartbeat(pool, time.Now().UTC())
 	f.release(holder.ID)
 	if err := f.e.Retry(waiting.ID, "", "", ""); err != nil {
 		t.Fatalf("retry unbound failed auto-assign run: %v", err)

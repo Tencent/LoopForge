@@ -378,7 +378,7 @@ func (r *RunsRepo) failUnreachableAutoRuns(keys []string, eval *AutoAssignEvalua
 				return result.Error
 			}
 			failed = true
-			return appendAdmissionRunEvent(tx, row.ID, "run.failed", reason, now)
+			return appendAdmissionRunEvent(tx, row.ID, domain.RunEventFailed, reason, now)
 		}, r.admissionTxOptions()...)
 		if err != nil {
 			errs = append(errs, err)

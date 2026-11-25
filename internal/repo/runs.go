@@ -414,23 +414,35 @@ func (r *RunsRepo) RunView(id string) (domain.Run, bool) {
 				run.Events = append(run.Events, event)
 			}
 		}
-	} else if run.WorkflowSnapshot.AutoSelectSandbox {
-		// This event is written at admission and must remain visible even on
-		// runs with a long history.
-		var rows []runEventRow
-		if err := r.DB.Select("payload").
-			Where("run_id = ? AND type = ?", id, domain.RunEventSandboxSelected).
-			Order("seq").Limit(1).Find(&rows).Error; err != nil {
-			return domain.Run{}, false
+	} else {
+		if run.WorkflowSnapshot.AutoSelectSandbox {
+			if err := r.loadRunViewEvent(&run, domain.RunEventSandboxSelected, "seq"); err != nil {
+				return domain.Run{}, false
+			}
 		}
-		if len(rows) > 0 {
-			var event domain.RunEvent
-			if json.Unmarshal(rows[0].Payload, &event) == nil {
-				run.Events = []domain.RunEvent{event}
+		if run.FailedBeforeAutoAssignment() {
+			if err := r.loadRunViewEvent(&run, domain.RunEventFailed, "seq DESC"); err != nil {
+				return domain.Run{}, false
 			}
 		}
 	}
 	return run, true
+}
+
+func (r *RunsRepo) loadRunViewEvent(run *domain.Run, kind, order string) error {
+	var row runEventRow
+	result := r.DB.Select("payload").Where("run_id = ? AND type = ?", run.ID, kind).
+		Order(order).Limit(1).Find(&row)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		var event domain.RunEvent
+		if json.Unmarshal(row.Payload, &event) == nil {
+			run.Events = append(run.Events, event)
+		}
+	}
+	return nil
 }
 
 // RunStreamView matches the SSE contract, which delivers only the latest 80

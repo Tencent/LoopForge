@@ -264,6 +264,7 @@ func (e *Engine) checkAutoRunReachable(run domain.Run, now time.Time) string {
 		return "自动分配缺少已选沙箱，请重新启动 SOP"
 	}
 	offline := false
+	graceStart := run.QueueEnteredAt
 	for _, candidate := range e.autoAssignCandidates(ec, true) {
 		if e.planAutoAssignCandidate(&candidate, wf, ec, run.RepositoryContexts()) != nil ||
 			!e.candidateSupportsSandbox(candidate, wf.SandboxSnapshot.Profile.Driver) {
@@ -273,14 +274,26 @@ func (e *Engine) checkAutoRunReachable(run domain.Run, now time.Time) string {
 			return ""
 		}
 		offline = true
+		if since := runnerOfflineSince(candidate.runner); since.After(graceStart) {
+			graceStart = since
+		}
 	}
 	if offline {
-		if now.Sub(run.QueueEnteredAt) <= autoAssignOfflineGrace {
+		if now.Sub(graceStart) <= autoAssignOfflineGrace {
 			return ""
 		}
 		return "兼容的项目执行机器已离线超过 2 分钟，请启动执行机器后重试"
 	}
 	return "项目已无兼容的执行机器，请检查机器共享、沙箱和执行器凭据后重试"
+}
+
+func runnerOfflineSince(runner domain.Runner) time.Time {
+	// Offline transitions stamp UpdatedAt. Edits to an offline runner can
+	// also advance it, conservatively extending the grace period.
+	if runner.LastSeenAt != nil && runner.LastSeenAt.After(runner.UpdatedAt) {
+		return *runner.LastSeenAt
+	}
+	return runner.UpdatedAt
 }
 
 func (e *Engine) validateAutoAssignBinding(run domain.Run) error {
