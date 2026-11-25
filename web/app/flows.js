@@ -1052,7 +1052,11 @@ function renderProperties(){
     const scriptCountText=scriptLines?`已编写 ${scriptLines} 行 (${n.scriptLanguage==='python'?'Python':'Shell'})`:'未配置 (点击编写)';
     const scriptPreview=scriptLines?`<div class="script-snippet-preview" id="previewScriptNodeEditor" title="点击在代码编辑器中修改"><code>${escapeHTML(n.script.slice(0, 120))}${n.script.length>120?'…':''}</code></div>`:'';
     const scriptPane=n.type==='script'?`<div class="fd-row2"><div class="fd-field"><label>脚本语言</label><select class="select" data-p="scriptLanguage"><option value="shell" ${n.scriptLanguage!=='python'?'selected':''}>Shell</option><option value="python" ${n.scriptLanguage==='python'?'selected':''}>Python</option></select></div><div class="fd-field"><label>执行范围</label><select class="select" data-p="executionScope"><option value="run" ${n.executionScope!=='repositories'?'selected':''}>Run 工作区</option><option value="repositories" ${n.executionScope==='repositories'?'selected':''}>每个代码仓库</option></select></div></div><div class="fd-field"><label>脚本内容</label><button type="button" class="script-editor-launch-btn btn-open-code-editor" id="openScriptNodeEditor"><span>${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span><span class="script-btn-badge">${scriptCountText}</span></button>${scriptPreview}<p class="prop-hint">逐仓库执行时会自动进入每个仓库根目录，无需手写 cd。</p></div>`:'';
-    const approvalPane=n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div><div class="fd-field"><label>审批人（可选）</label><div id="flowApproverRows" class="flow-approver-list prop-hint">正在加载成员…</div><p class="prop-hint">不指定时项目成员都可确认；指定后只有名单内成员和平台管理员能决策该节点。</p></div>`:'';
+    const operatorHint=kind==='approval'
+      ?`不指定时项目成员都可确认；指定后只有名单内成员和平台管理员能决策（含重跑、通过）该节点。`
+      :`不指定时项目成员都可重跑/手动通过该节点；指定后只有名单内成员和平台管理员可以。研发、测试等分工流程可按角色绑定。`;
+    const operatorLabel=kind==='approval'?'审批人（可选）':'操作人（可选）';
+    const approvalPane=(n.type==='approval'||n.type==='script'||n.type==='agent'||n.type==='sop')?`${n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div>`:''}<div class="fd-field"><label>${operatorLabel}</label><div id="flowApproverRows" class="flow-approver-list prop-hint">正在加载成员…</div><p class="prop-hint">${operatorHint}</p></div>`:'';
     const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n):''}${sopSelect}${scriptPane}${approvalPane}</div></section>`;
     const gates=n.type==='agent'?flowFold('gates','校验顺序',`${effectiveNodeArtifacts(n,workflowAgent(n.agentId)).length} 产物 · ${roleGates(workflowAgent(n.agentId)).length} 门禁`,nodeGatePane(n),false):'';
     const wantReject=state.flowWantReject??(n.onFailure==='reject');
@@ -1128,7 +1132,7 @@ function bindNodeProperties(host,n){
   };
   host.querySelector('#addSOPHandoff')?.addEventListener('click',()=>{flowHistory.record();n.artifactOutputs=n.artifactOutputs||[];n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderProperties();dirty()});
   if(n.type==='sop')bindArtifactRows(host,n);
-  if(n.type==='approval')bindFlowApprovers(host,n);
+  if(n.type==='approval'||n.type==='script'||n.type==='agent'||n.type==='sop')bindFlowApprovers(host,n);
   if(catalogGeneric(state.workflow)){
     const agent=workflowAgent(n.agentId);
     host.querySelector('#openBoundAgent')?.addEventListener('click',()=>openAgentWizard(agent));

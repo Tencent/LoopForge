@@ -210,3 +210,69 @@ func TestUnpinnedGatesStayOpenToEveryone(t *testing.T) {
 		t.Fatalf("unpinned gate: %v", err)
 	}
 }
+
+// failedScriptFixture is one failed run parked at a script node that the
+// workflow pins to operator 7 (dev).
+func failedScriptFixture(t *testing.T, operators []int64) (*repo.Store, *Engine, string) {
+	t.Helper()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	wf := domain.WorkflowDefinition{
+		ID: "control-operator", Name: "operator", SandboxProfileID: "test-native",
+		Nodes: []domain.WorkflowNode{{ID: "job", Name: "Job", Type: "script", ScriptLanguage: "shell", Script: "true", Approvers: operators}},
+	}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ID:               "run-control-operator",
+		WorkflowID:       wf.ID,
+		WorkflowSnapshot: wf,
+		Status:           "failed",
+		Nodes: map[string]*domain.NodeRun{
+			"job": {NodeID: "job", Status: "failed", Attempt: 1, Error: "script failed"},
+		},
+	}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(t.TempDir()))
+	return s, e, run.ID
+}
+
+// TestPinnedOperatorsBlockOutsiderPassAndRetry asserts Approvers on a script
+// node gate its manual control decisions, not only approval gates: an
+// outsider cannot pass or replay the node, the owner can.
+func TestPinnedOperatorsBlockOutsiderPassAndRetry(t *testing.T) {
+	s, e, runID := failedScriptFixture(t, []int64{7})
+	outsider := domain.Actor{ID: 8, Name: "outsider"}
+	if err := e.Pass(outsider, runID, "job", ""); err == nil || !strings.Contains(err.Error(), "审批人") {
+		t.Fatalf("outsider pass should be refused, got %v", err)
+	}
+	if err := e.Retry(outsider, runID, "job", "rework", ""); err == nil || !strings.Contains(err.Error(), "审批人") {
+		t.Fatalf("outsider retry should be refused, got %v", err)
+	}
+	if n, _ := s.Run(runID); n.Nodes["job"].Status != "failed" {
+		t.Fatalf("refused operations must not mutate the node: %s", n.Nodes["job"].Status)
+	}
+}
+
+// TestPinnedOperatorCanPass keeps the owner able to pass their own node.
+func TestPinnedOperatorCanPass(t *testing.T) {
+	_, e, runID := failedScriptFixture(t, []int64{7})
+	if err := e.Pass(domain.Actor{ID: 7, Name: "zhang"}, runID, "job", "环境问题，跳过"); err != nil {
+		t.Fatalf("owner pass: %v", err)
+	}
+}
+
+// TestUnpinnedScriptStaysOpenToEveryone keeps the historical behavior for
+// script nodes without configured operators.
+func TestUnpinnedScriptStaysOpenToEveryone(t *testing.T) {
+	_, e, runID := failedScriptFixture(t, nil)
+	if err := e.Pass(domain.Actor{ID: 8, Name: "anyone"}, runID, "job", ""); err != nil {
+		t.Fatalf("unpinned script: %v", err)
+	}
+}

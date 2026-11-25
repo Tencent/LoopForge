@@ -278,6 +278,9 @@ func (e *Engine) pass(actor domain.Actor, runID, nodeID, humanContext string, ex
 			return fmt.Errorf("only a failed node on a failed run can be passed")
 		}
 	}
+	if err := nodeApproverAllowed(r.WorkflowSnapshot, nodeID, actor); err != nil {
+		return err
+	}
 	wf := workflowForRun(e.repo, r)
 	var def domain.WorkflowNode
 	found := false

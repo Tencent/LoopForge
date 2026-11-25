@@ -53,9 +53,11 @@ type WorkflowNode struct {
 	MetricStage string `json:"metricStage,omitempty"` // clarification, development, testing, none
 	AgentID     string `json:"agentId,omitempty"`
 	ExecutorID  string `json:"executorId,omitempty"`
-	// Approvers pins a human gate to specific users. Only they (and platform
-	// administrators) may decide this node once it waits for approval; an
-	// empty list keeps the historical behavior where any project member can.
+	// Approvers pins a node to specific users. On an approval node only they
+	// (and platform administrators) may decide it once it waits; on any node
+	// type they also own the manual control decisions that replay or bypass
+	// its work — retry (从指定节点重跑) and pass (手动通过). An empty list
+	// keeps the historical behavior where any project member can.
 	// Enforcement lives in the engine's control decisions, so every path (web,
 	// IM bots, rooms) obeys it.
 	Approvers []int64 `json:"approvers,omitempty"`
