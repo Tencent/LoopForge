@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -617,6 +618,7 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 		}
 	}
 
+	d.uploadTaskOutputs(ctx, task, result.outputs)
 	releaseGate()
 	completeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -625,10 +627,34 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 		exit := result.exitCode
 		req.ExitCode = &exit
 	}
-	if err := d.client.Complete(completeCtx, task.ID, req); err != nil {
+	if err := d.reportTaskCompletion(completeCtx, task.ID, req); err != nil {
 		log.Printf("task %s complete report: %v", task.ID, err)
+		if !errors.Is(err, ErrTaskLeaseLost) && !errors.Is(err, ErrUnauthorized) {
+			reportCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stop()
+			report := CompleteRequest{Status: domain.RunnerTaskFailed, Error: fmt.Sprintf("%s：%.512s", domain.RunnerResultReportError, err.Error())}
+			if reportErr := retryTaskTransfer(reportCtx, func() error { return d.client.Complete(reportCtx, task.ID, report) }); reportErr != nil && !errors.Is(reportErr, ErrTaskLeaseLost) {
+				log.Printf("task %s report completion failure: %v", task.ID, reportErr)
+			}
+		}
 	}
 	log.Printf("task %s finished (%s)", task.ID, result.status)
+}
+
+func (d *Daemon) reportTaskCompletion(ctx context.Context, taskID string, req CompleteRequest) error {
+	err := retryTaskTransfer(ctx, func() error { return d.client.Complete(ctx, taskID, req) })
+	var response *runnerHTTPError
+	if req.Outputs == nil || len(req.Outputs.Patches)+len(req.Outputs.Recovered) == 0 ||
+		!errors.As(err, &response) || (response.status != http.StatusBadRequest && response.status != http.StatusRequestEntityTooLarge) {
+		return err
+	}
+	// Repository inventories and recovery notes are optional diagnostics.
+	// Preserve the terminal status and declared files if their report is too large.
+	log.Printf("task %s retrying completion without optional diagnostics: %v", taskID, err)
+	outputs := *req.Outputs
+	outputs.Patches, outputs.Recovered = nil, nil
+	req.Outputs = &outputs
+	return retryTaskTransfer(ctx, func() error { return d.client.Complete(ctx, taskID, req) })
 }
 
 func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) execResult {
@@ -768,7 +794,7 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		if err := writeRunnerHumanContext(workspace, task.Invocation.HumanContext); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("write human context: %v", err)}
 		}
-		if err := prepareInvocationWorkspace(workspace, task.Invocation); err != nil {
+		if err := d.prepareTaskInvocation(ctx, workspace, task); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
 		}
 	}
@@ -850,7 +876,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	if err := writeRunnerHumanContext(workspace, inv.HumanContext); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("write human context: %v", err)}, nil
 	}
-	if err := prepareInvocationWorkspace(workspace, inv); err != nil {
+	if err := d.prepareTaskInvocation(ctx, workspace, task); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 	}
 	driver := "runner"
@@ -1449,7 +1475,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionDockerSandboxLimits
+var runnerVersion = domain.RunnerVersionArtifactTransfer
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }
