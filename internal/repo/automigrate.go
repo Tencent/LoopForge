@@ -60,7 +60,7 @@ func autoMigrateIncremental(db *gorm.DB) error {
 
 func needsUTF8MB4Table(model any) bool {
 	switch model.(type) {
-	case domain.BotInteraction, pageFeedbackRow, pageFeedbackImageRow, knowledgeConnectorRow, knowledgeConnectorUsageRow, knowledgeDocumentUsageRow:
+	case domain.BotInteraction, pageFeedbackRow, pageFeedbackImageRow, knowledgeConnectorRow, knowledgeConnectorUsageRow, knowledgeDocumentUsageRow, knowledgeUsageEventRow:
 		return true
 	}
 	return false

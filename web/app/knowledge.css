@@ -810,3 +810,208 @@
 #knowledgeView .kb-usage-doc-sub {
   font-size: 11.5px;
 }
+
+#knowledgeView .kb-usage-badge-btn {
+  cursor: pointer;
+  border: 1px solid var(--hui-border);
+  font: inherit;
+}
+
+#knowledgeView .kb-usage-badge-btn:hover {
+  border-color: var(--hui-border-strong, var(--hui-border));
+  filter: brightness(0.96);
+}
+
+#knowledgeView .kb-usage-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+#knowledgeView .kb-usage-tabs {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid var(--hui-border);
+  background: var(--hui-surface-subtle, var(--hui-surface));
+  gap: 2px;
+}
+
+#knowledgeView .kb-usage-tab {
+  border: 0;
+  background: transparent;
+  color: var(--hui-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#knowledgeView .kb-usage-tab.is-active {
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+#knowledgeView .kb-usage-doc-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--hui-text);
+  font: inherit;
+}
+
+#knowledgeView .kb-usage-doc-link:hover .kb-usage-doc-title {
+  text-decoration: underline;
+}
+
+#knowledgeView .kb-usage-caller-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+#knowledgeView .kb-usage-caller-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--hui-border);
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+#knowledgeView .kb-usage-caller-pill.is-link {
+  cursor: pointer;
+}
+
+#knowledgeView .kb-usage-caller-pill.is-link:hover {
+  border-color: var(--hui-accent, var(--hui-border));
+}
+
+#knowledgeView .kb-usage-caller-tag {
+  color: var(--hui-secondary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+#knowledgeView .kb-usage-caller-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#knowledgeView .kb-usage-caller-cnt {
+  color: var(--hui-secondary);
+  flex-shrink: 0;
+}
+
+#knowledgeView .kb-usage-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+#knowledgeView .kb-usage-select {
+  width: auto;
+  min-width: 132px;
+  height: 30px;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+#knowledgeView .kb-usage-search {
+  flex: 1;
+  min-width: 180px;
+  max-width: 300px;
+  height: 30px;
+  font-size: 12px;
+  padding: 0 10px;
+}
+
+#knowledgeView .kb-usage-doc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--hui-border);
+  background: var(--hui-surface);
+  font-size: 12px;
+  color: var(--hui-text);
+}
+
+#knowledgeView .kb-usage-chip-close {
+  border: 0;
+  background: transparent;
+  color: var(--hui-secondary);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+#knowledgeView .kb-usage-caller-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+#knowledgeView .kb-usage-caller-jump {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--hui-text);
+  font: inherit;
+}
+
+#knowledgeView .kb-usage-caller-jump:hover .kb-usage-caller-main {
+  text-decoration: underline;
+}
+
+#knowledgeView .kb-usage-caller-main {
+  font-weight: 500;
+  color: var(--hui-text);
+}
+
+#knowledgeView .kb-usage-action-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+#knowledgeView .kb-usage-time {
+  white-space: nowrap;
+  color: var(--hui-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+#knowledgeView .kb-usage-query code {
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+#knowledgeView .kb-usage-events-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}

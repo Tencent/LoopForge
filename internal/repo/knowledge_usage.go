@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,8 +15,14 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+const (
+	knowledgeUsageEventRetentionDays = 30
+	knowledgeUsageEventMaxPerUser    = 2000
+	knowledgeTopCallersPerDoc        = 3
+)
+
 // RecordKnowledgeUsage atomically increments connector and document invocation
-// counters for ownerUserID.
+// counters and appends per-document caller events for ownerUserID.
 func (r *KnowledgeRepo) RecordKnowledgeUsage(ctx context.Context, ownerUserID int64, delta domain.KnowledgeUsageDelta) error {
 	if r == nil || r.DB == nil {
 		return nil
@@ -29,6 +36,10 @@ func (r *KnowledgeRepo) RecordKnowledgeUsage(ctx context.Context, ownerUserID in
 		now = time.Now().UTC()
 	}
 	docHits := int64(len(delta.Documents))
+	readID := clipUsageField(delta.ReadID, 64)
+	tool := clipUsageField(delta.Tool, 128)
+	query := clipUsageField(delta.Query, 255)
+	caller := normalizeUsageCaller(delta.Caller)
 
 	return r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		connRow := knowledgeConnectorUsageRow{
@@ -58,6 +69,7 @@ func (r *KnowledgeRepo) RecordKnowledgeUsage(ctx context.Context, ownerUserID in
 			return err
 		}
 
+		events := make([]knowledgeUsageEventRow, 0, len(delta.Documents))
 		for _, doc := range delta.Documents {
 			docID := strings.TrimSpace(doc.DocumentID)
 			if docID == "" {
@@ -67,6 +79,7 @@ func (r *KnowledgeRepo) RecordKnowledgeUsage(ctx context.Context, ownerUserID in
 			sourceName := clipUsageField(doc.SourceName, 255)
 			title := clipUsageField(doc.Title, 255)
 			fileName := clipUsageField(doc.FileName, 255)
+			clippedDocID := clipUsageField(docID, 512)
 			docKey := buildKnowledgeDocumentKey(sourceID, docID)
 
 			docRow := knowledgeDocumentUsageRow{
@@ -75,12 +88,13 @@ func (r *KnowledgeRepo) RecordKnowledgeUsage(ctx context.Context, ownerUserID in
 				DocumentKey:    docKey,
 				SourceID:       sourceID,
 				SourceName:     sourceName,
-				DocumentID:     clipUsageField(docID, 512),
+				DocumentID:     clippedDocID,
 				Title:          title,
 				FileName:       fileName,
 				CallCount:      1,
 				SearchHitCount: doc.SearchHit,
 				ReadCount:      doc.Read,
+				CitedCount:     0,
 				LastCalledAt:   &now,
 				CreatedAt:      &now,
 				UpdatedAt:      &now,
@@ -106,6 +120,139 @@ func (r *KnowledgeRepo) RecordKnowledgeUsage(ctx context.Context, ownerUserID in
 				DoUpdates: clause.Assignments(updates),
 			}).Create(&docRow).Error; err != nil {
 				return err
+			}
+
+			action := domain.KnowledgeUsageActionSearchHit
+			if doc.Read > 0 {
+				action = domain.KnowledgeUsageActionRead
+			}
+			events = append(events, knowledgeUsageEventRow{
+				OwnerUserID:  ownerUserID,
+				ReadID:       readID,
+				ConnectorID:  connID,
+				DocumentKey:  docKey,
+				SourceID:     sourceID,
+				SourceName:   sourceName,
+				DocumentID:   clippedDocID,
+				Title:        title,
+				FileName:     fileName,
+				Action:       action,
+				Tool:         tool,
+				Query:        query,
+				Cited:        false,
+				CallerKind:   caller.Kind,
+				WorkflowID:   caller.WorkflowID,
+				WorkflowName: caller.WorkflowName,
+				RunID:        caller.RunID,
+				NodeID:       caller.NodeID,
+				NodeName:     caller.NodeName,
+				AgentID:      caller.AgentID,
+				AgentName:    caller.AgentName,
+				SessionID:    caller.SessionID,
+				SessionTitle: caller.SessionTitle,
+				SpaceID:      caller.SpaceID,
+				SpaceTitle:   caller.SpaceTitle,
+				IssueID:      caller.IssueID,
+				IssueTitle:   caller.IssueTitle,
+				ProjectID:    caller.ProjectID,
+				CalledAt:     now,
+				CreatedAt:    &now,
+			})
+		}
+
+		if len(events) > 0 {
+			if err := tx.Create(&events).Error; err != nil {
+				return err
+			}
+			if err := pruneKnowledgeUsageEventsTx(tx, ownerUserID, now, knowledgeUsageEventRetentionDays, knowledgeUsageEventMaxPerUser); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func pruneKnowledgeUsageEventsTx(tx *gorm.DB, ownerUserID int64, now time.Time, retentionDays, maxRows int) error {
+	if retentionDays > 0 {
+		cutoff := now.AddDate(0, 0, -retentionDays)
+		if err := tx.Where("owner_user_id = ? AND called_at < ?", ownerUserID, cutoff).
+			Delete(&knowledgeUsageEventRow{}).Error; err != nil {
+			return err
+		}
+	}
+	if maxRows > 0 {
+		var boundary struct {
+			ID       int64
+			CalledAt time.Time
+		}
+		err := tx.Model(&knowledgeUsageEventRow{}).
+			Select("id, called_at").
+			Where("owner_user_id = ?", ownerUserID).
+			Order("called_at DESC, id DESC").
+			Offset(maxRows).
+			Limit(1).
+			Take(&boundary).Error
+		if err == nil && boundary.ID > 0 {
+			if delErr := tx.Where(
+				"owner_user_id = ? AND (called_at < ? OR (called_at = ? AND id <= ?))",
+				ownerUserID, boundary.CalledAt, boundary.CalledAt, boundary.ID,
+			).Delete(&knowledgeUsageEventRow{}).Error; delErr != nil {
+				return delErr
+			}
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
+// MarkKnowledgeUsageCited idempotently marks matching document usage events as
+// cited and increments knowledge_document_usage_counts.cited_count accordingly.
+func (r *KnowledgeRepo) MarkKnowledgeUsageCited(ctx context.Context, ownerUserID int64, marks []domain.KnowledgeCitedDocMark) error {
+	if r == nil || r.DB == nil || len(marks) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	return r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, mark := range marks {
+			readID := clipUsageField(mark.ReadID, 64)
+			connID := strings.TrimSpace(mark.ConnectorID)
+			docID := strings.TrimSpace(mark.DocumentID)
+			if readID == "" || connID == "" || docID == "" {
+				continue
+			}
+			sourceID := clipUsageField(mark.SourceID, 191)
+			docKey := buildKnowledgeDocumentKey(sourceID, docID)
+
+			res := tx.Model(&knowledgeUsageEventRow{}).
+				Where("owner_user_id = ? AND read_id = ? AND connector_id = ? AND document_key = ? AND cited = ?",
+					ownerUserID, readID, connID, docKey, false).
+				Update("cited", true)
+			if res.Error != nil {
+				return res.Error
+			}
+			matchedKey := docKey
+			if res.RowsAffected == 0 && sourceID != "" {
+				fallbackKey := buildKnowledgeDocumentKey("", docID)
+				res = tx.Model(&knowledgeUsageEventRow{}).
+					Where("owner_user_id = ? AND read_id = ? AND connector_id = ? AND document_key = ? AND cited = ?",
+						ownerUserID, readID, connID, fallbackKey, false).
+					Update("cited", true)
+				if res.Error != nil {
+					return res.Error
+				}
+				matchedKey = fallbackKey
+			}
+			if res.RowsAffected > 0 {
+				if err := tx.Model(&knowledgeDocumentUsageRow{}).
+					Where("owner_user_id = ? AND connector_id = ? AND document_key = ?",
+						ownerUserID, connID, matchedKey).
+					Updates(map[string]any{
+						"cited_count": gorm.Expr("cited_count + ?", res.RowsAffected),
+						"updated_at":  &now,
+					}).Error; err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -141,8 +288,8 @@ func (r *KnowledgeRepo) ListKnowledgeConnectorUsage(ownerUserID int64, connector
 	return out
 }
 
-// ListKnowledgeDocumentUsage returns per-document invocation counts for
-// ownerUserID, ordered by call_count DESC.
+// ListKnowledgeDocumentUsage returns per-document invocation counts (including
+// cited counts and top callers) for ownerUserID, ordered by call_count DESC.
 func (r *KnowledgeRepo) ListKnowledgeDocumentUsage(ownerUserID int64, connectorID string, limit int) []domain.KnowledgeDocumentUsage {
 	if r == nil || r.DB == nil {
 		return nil
@@ -162,6 +309,8 @@ func (r *KnowledgeRepo) ListKnowledgeDocumentUsage(ownerUserID int64, connectorI
 		return nil
 	}
 	out := make([]domain.KnowledgeDocumentUsage, 0, len(rows))
+	docKeys := make([]string, 0, len(rows))
+	docKeySet := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
 		out = append(out, domain.KnowledgeDocumentUsage{
 			ConnectorID:    row.ConnectorID,
@@ -173,14 +322,197 @@ func (r *KnowledgeRepo) ListKnowledgeDocumentUsage(ownerUserID int64, connectorI
 			CallCount:      row.CallCount,
 			SearchHitCount: row.SearchHitCount,
 			ReadCount:      row.ReadCount,
+			CitedCount:     row.CitedCount,
 			LastCalledAt:   row.LastCalledAt,
 		})
+		if _, ok := docKeySet[row.DocumentKey]; !ok {
+			docKeySet[row.DocumentKey] = struct{}{}
+			docKeys = append(docKeys, row.DocumentKey)
+		}
+	}
+
+	if len(docKeys) > 0 {
+		topMap := r.loadTopCallersByDoc(ownerUserID, connectorID, docKeys, knowledgeTopCallersPerDoc)
+		for i, row := range rows {
+			composite := row.ConnectorID + "\x00" + row.DocumentKey
+			if callers := topMap[composite]; len(callers) > 0 {
+				out[i].TopCallers = callers
+			}
+		}
 	}
 	return out
 }
 
-// ResetKnowledgeUsage clears usage counters for ownerUserID (scoped to
-// connectorID if non-empty).
+func (r *KnowledgeRepo) loadTopCallersByDoc(ownerUserID int64, connectorID string, docKeys []string, maxPerDoc int) map[string][]domain.KnowledgeUsageCallerSummary {
+	q := r.DB.Where("owner_user_id = ? AND document_key IN ?", ownerUserID, docKeys)
+	if id := strings.TrimSpace(connectorID); id != "" {
+		q = q.Where("connector_id = ?", id)
+	}
+	var events []knowledgeUsageEventRow
+	if err := q.Order("called_at DESC, id DESC").Find(&events).Error; err != nil || len(events) == 0 {
+		return nil
+	}
+
+	type bucket struct {
+		summary domain.KnowledgeUsageCallerSummary
+	}
+	perDoc := make(map[string]map[string]*bucket)
+	for _, ev := range events {
+		docComposite := ev.ConnectorID + "\x00" + ev.DocumentKey
+		groupMap := perDoc[docComposite]
+		if groupMap == nil {
+			groupMap = make(map[string]*bucket)
+			perDoc[docComposite] = groupMap
+		}
+		caller := rowToUsageCaller(ev)
+		key, label, subLabel := callerSummaryIdentity(caller)
+		b := groupMap[key]
+		if b == nil {
+			calledAt := ev.CalledAt
+			b = &bucket{
+				summary: domain.KnowledgeUsageCallerSummary{
+					Kind:         caller.Kind,
+					Label:        label,
+					SubLabel:     subLabel,
+					WorkflowID:   caller.WorkflowID,
+					RunID:        caller.RunID,
+					NodeID:       caller.NodeID,
+					AgentID:      caller.AgentID,
+					SessionID:    caller.SessionID,
+					SpaceID:      caller.SpaceID,
+					IssueID:      caller.IssueID,
+					ProjectID:    caller.ProjectID,
+					LastCalledAt: &calledAt,
+				},
+			}
+			groupMap[key] = b
+		}
+		b.summary.CallCount++
+		if ev.Cited {
+			b.summary.CitedCount++
+		}
+	}
+
+	result := make(map[string][]domain.KnowledgeUsageCallerSummary, len(perDoc))
+	for docComposite, groupMap := range perDoc {
+		list := make([]domain.KnowledgeUsageCallerSummary, 0, len(groupMap))
+		for _, b := range groupMap {
+			list = append(list, b.summary)
+		}
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].CallCount != list[j].CallCount {
+				return list[i].CallCount > list[j].CallCount
+			}
+			var ti, tj time.Time
+			if list[i].LastCalledAt != nil {
+				ti = *list[i].LastCalledAt
+			}
+			if list[j].LastCalledAt != nil {
+				tj = *list[j].LastCalledAt
+			}
+			if !ti.Equal(tj) {
+				return ti.After(tj)
+			}
+			return list[i].Label < list[j].Label
+		})
+		if maxPerDoc > 0 && len(list) > maxPerDoc {
+			list = list[:maxPerDoc]
+		}
+		result[docComposite] = list
+	}
+	return result
+}
+
+// ListKnowledgeUsageEvents returns paginated document-level caller events for
+// ownerUserID, ordered newest first.
+func (r *KnowledgeRepo) ListKnowledgeUsageEvents(ownerUserID int64, filter domain.KnowledgeUsageEventFilter) domain.KnowledgeUsageEventPage {
+	page := domain.KnowledgeUsageEventPage{Items: []domain.KnowledgeUsageEvent{}}
+	if r == nil || r.DB == nil {
+		return page
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	q := r.DB.Model(&knowledgeUsageEventRow{}).Where("owner_user_id = ?", ownerUserID)
+	if connID := strings.TrimSpace(filter.ConnectorID); connID != "" {
+		q = q.Where("connector_id = ?", connID)
+	}
+	if docID := strings.TrimSpace(filter.DocumentID); docID != "" {
+		q = q.Where("document_id = ?", docID)
+	}
+	switch strings.ToLower(strings.TrimSpace(filter.CallerKind)) {
+	case "":
+	case "sop":
+		q = q.Where("caller_kind = ?", domain.KnowledgeCallerSOP)
+	case "role", "agent":
+		q = q.Where("agent_id <> '' OR agent_name <> ''")
+	case "chat":
+		q = q.Where("caller_kind IN ?", []string{
+			domain.KnowledgeCallerChat,
+			domain.KnowledgeCallerSpace,
+			domain.KnowledgeCallerClarify,
+			domain.KnowledgeCallerScheduled,
+			domain.KnowledgeCallerReport,
+		})
+	default:
+		q = q.Where("caller_kind = ?", strings.ToLower(strings.TrimSpace(filter.CallerKind)))
+	}
+	if kw := strings.TrimSpace(filter.Query); kw != "" {
+		like := "%" + kw + "%"
+		q = q.Where(
+			"title LIKE ? OR file_name LIKE ? OR document_id LIKE ? OR source_name LIKE ? OR query LIKE ? OR workflow_name LIKE ? OR agent_name LIKE ? OR node_name LIKE ? OR session_title LIKE ? OR space_title LIKE ? OR issue_title LIKE ?",
+			like, like, like, like, like, like, like, like, like, like, like,
+		)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return page
+	}
+	page.Total = total
+	if total == 0 {
+		return page
+	}
+
+	var rows []knowledgeUsageEventRow
+	if err := q.Order("called_at DESC, id DESC").Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
+		return page
+	}
+	items := make([]domain.KnowledgeUsageEvent, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, domain.KnowledgeUsageEvent{
+			ID:          row.ID,
+			ReadID:      row.ReadID,
+			ConnectorID: row.ConnectorID,
+			SourceID:    row.SourceID,
+			SourceName:  row.SourceName,
+			DocumentID:  row.DocumentID,
+			Title:       row.Title,
+			FileName:    row.FileName,
+			Action:      row.Action,
+			Tool:        row.Tool,
+			Query:       row.Query,
+			Cited:       row.Cited,
+			CalledAt:    row.CalledAt,
+			Caller:      rowToUsageCaller(row),
+		})
+	}
+	page.Items = items
+	page.HasMore = int64(offset+len(items)) < total
+	return page
+}
+
+// ResetKnowledgeUsage clears usage counters and caller events for ownerUserID
+// (scoped to connectorID if non-empty).
 func (r *KnowledgeRepo) ResetKnowledgeUsage(ownerUserID int64, connectorID string) error {
 	if r == nil || r.DB == nil {
 		return nil
@@ -189,15 +521,121 @@ func (r *KnowledgeRepo) ResetKnowledgeUsage(ownerUserID int64, connectorID strin
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		qConn := tx.Where("owner_user_id = ?", ownerUserID)
 		qDoc := tx.Where("owner_user_id = ?", ownerUserID)
+		qEv := tx.Where("owner_user_id = ?", ownerUserID)
 		if connID != "" {
 			qConn = qConn.Where("connector_id = ?", connID)
 			qDoc = qDoc.Where("connector_id = ?", connID)
+			qEv = qEv.Where("connector_id = ?", connID)
 		}
 		if err := qConn.Delete(&knowledgeConnectorUsageRow{}).Error; err != nil {
 			return err
 		}
-		return qDoc.Delete(&knowledgeDocumentUsageRow{}).Error
+		if err := qDoc.Delete(&knowledgeDocumentUsageRow{}).Error; err != nil {
+			return err
+		}
+		return qEv.Delete(&knowledgeUsageEventRow{}).Error
 	})
+}
+
+func normalizeUsageCaller(c domain.KnowledgeUsageCaller) domain.KnowledgeUsageCaller {
+	kind := strings.ToLower(strings.TrimSpace(c.Kind))
+	if kind == "" {
+		switch {
+		case strings.TrimSpace(c.RunID) != "" || strings.TrimSpace(c.WorkflowID) != "":
+			kind = domain.KnowledgeCallerSOP
+		case strings.TrimSpace(c.SpaceID) != "":
+			kind = domain.KnowledgeCallerSpace
+		case strings.TrimSpace(c.IssueID) != "":
+			kind = domain.KnowledgeCallerClarify
+		case strings.TrimSpace(c.SessionID) != "":
+			kind = domain.KnowledgeCallerChat
+		}
+	}
+	return domain.KnowledgeUsageCaller{
+		Kind:         clipUsageField(kind, 32),
+		WorkflowID:   clipUsageField(c.WorkflowID, 64),
+		WorkflowName: clipUsageField(c.WorkflowName, 255),
+		RunID:        clipUsageField(c.RunID, 64),
+		NodeID:       clipUsageField(c.NodeID, 64),
+		NodeName:     clipUsageField(c.NodeName, 255),
+		AgentID:      clipUsageField(c.AgentID, 64),
+		AgentName:    clipUsageField(c.AgentName, 255),
+		SessionID:    clipUsageField(c.SessionID, 64),
+		SessionTitle: clipUsageField(c.SessionTitle, 255),
+		SpaceID:      clipUsageField(c.SpaceID, 64),
+		SpaceTitle:   clipUsageField(c.SpaceTitle, 255),
+		IssueID:      clipUsageField(c.IssueID, 64),
+		IssueTitle:   clipUsageField(c.IssueTitle, 255),
+		ProjectID:    clipUsageField(c.ProjectID, 64),
+	}
+}
+
+func rowToUsageCaller(row knowledgeUsageEventRow) domain.KnowledgeUsageCaller {
+	return domain.KnowledgeUsageCaller{
+		Kind:         row.CallerKind,
+		WorkflowID:   row.WorkflowID,
+		WorkflowName: row.WorkflowName,
+		RunID:        row.RunID,
+		NodeID:       row.NodeID,
+		NodeName:     row.NodeName,
+		AgentID:      row.AgentID,
+		AgentName:    row.AgentName,
+		SessionID:    row.SessionID,
+		SessionTitle: row.SessionTitle,
+		SpaceID:      row.SpaceID,
+		SpaceTitle:   row.SpaceTitle,
+		IssueID:      row.IssueID,
+		IssueTitle:   row.IssueTitle,
+		ProjectID:    row.ProjectID,
+	}
+}
+
+func callerSummaryIdentity(c domain.KnowledgeUsageCaller) (key, label, subLabel string) {
+	firstNonEmptyStr := func(vals ...string) string {
+		for _, v := range vals {
+			if s := strings.TrimSpace(v); s != "" {
+				return s
+			}
+		}
+		return ""
+	}
+	switch c.Kind {
+	case domain.KnowledgeCallerSOP:
+		wfKey := firstNonEmptyStr(c.WorkflowID, c.WorkflowName, c.RunID)
+		agentKey := firstNonEmptyStr(c.AgentID, c.AgentName)
+		nodeKey := firstNonEmptyStr(c.NodeID, c.NodeName)
+		key = "sop|" + wfKey + "|" + agentKey + "|" + nodeKey
+		label = firstNonEmptyStr(c.WorkflowName, c.WorkflowID, "SOP 运行")
+		parts := make([]string, 0, 2)
+		if a := firstNonEmptyStr(c.AgentName, c.AgentID); a != "" {
+			parts = append(parts, a)
+		}
+		if n := firstNonEmptyStr(c.NodeName, c.NodeID); n != "" {
+			parts = append(parts, n)
+		}
+		subLabel = strings.Join(parts, " · ")
+	case domain.KnowledgeCallerSpace:
+		key = "space|" + firstNonEmptyStr(c.SpaceID, c.SpaceTitle)
+		label = firstNonEmptyStr(c.SpaceTitle, c.SpaceID, "协作空间")
+		subLabel = "协作空间"
+	case domain.KnowledgeCallerClarify:
+		key = "clarify|" + firstNonEmptyStr(c.IssueID, c.SessionID, c.IssueTitle)
+		label = firstNonEmptyStr(c.IssueTitle, c.SessionTitle, c.IssueID, "需求澄清")
+		subLabel = "需求澄清"
+	case domain.KnowledgeCallerScheduled:
+		key = "scheduled|" + firstNonEmptyStr(c.SessionID, c.SessionTitle)
+		label = firstNonEmptyStr(c.SessionTitle, "定时任务")
+		subLabel = "定时任务"
+	case domain.KnowledgeCallerReport:
+		key = "report|" + firstNonEmptyStr(c.IssueID, c.SessionID, c.SessionTitle)
+		label = firstNonEmptyStr(c.SessionTitle, c.IssueTitle, "分析报告")
+		subLabel = "分析报告"
+	default:
+		key = "chat|" + firstNonEmptyStr(c.SessionID, c.SessionTitle)
+		label = firstNonEmptyStr(c.SessionTitle, "个人对话")
+		subLabel = "个人对话"
+	}
+	return key, label, subLabel
 }
 
 func buildKnowledgeDocumentKey(sourceID, documentID string) string {

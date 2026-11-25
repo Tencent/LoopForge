@@ -3,6 +3,7 @@ package engine
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
@@ -1194,6 +1195,8 @@ func lostCLISession(output string, err error) bool {
 }
 
 func (e *Engine) markNodeKnowledgeReads(runID, nodeID string, generation, attempt int, output string, artifacts []domain.Artifact) {
+	var ownerUserID int64
+	var citedReads []domain.KnowledgeRead
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[nodeID]
 		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
@@ -1203,7 +1206,16 @@ func (e *Engine) markNodeKnowledgeReads(runID, nodeID string, generation, attemp
 			nr.Output = output
 		}
 		markKnowledgeReadsCited(nr.KnowledgeReads, attempt, output, artifacts)
+		ownerUserID = r.ExecutionContext.ResponsibleUserID
+		for _, read := range nr.KnowledgeReads {
+			if read.Attempt == attempt {
+				citedReads = append(citedReads, read)
+			}
+		}
 	})
+	if len(citedReads) > 0 && e.repo != nil {
+		_ = knowledge.NewUsageCounter(e.repo).MarkCited(context.Background(), ownerUserID, citedReads)
+	}
 }
 
 func markKnowledgeReadsCited(reads []domain.KnowledgeRead, attempt int, output string, artifacts []domain.Artifact) {

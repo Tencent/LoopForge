@@ -75,6 +75,17 @@
     connectorTypes: [],
     connectors: [],
     usage: null,
+    usageTab: 'docs',
+    usageEvents: { items: [], total: 0, hasMore: false },
+    usageEventsLoading: false,
+    usageEventsLoaded: false,
+    usageFilters: {
+      connectorId: '',
+      documentId: '',
+      documentLabel: '',
+      callerKind: '',
+      query: '',
+    },
     sourcesByConn: {},
     checksByConn: {},
     loading: false,
@@ -864,7 +875,7 @@
               <span class="hui-badge" data-size="sm" data-tone="neutral">${kbEsc(meta?.name || conn.type)}</span>
               <span class="hui-badge" data-size="sm" data-tone="${conn.enabled ? 'success' : 'neutral'}">${conn.enabled ? '已启用' : '已停用'}</span>
               ${renderConnectorAuthBadgeHTML(conn)}
-              ${kbState.usage ? `<span class="hui-badge" data-size="sm" data-tone="neutral" data-kb-conn-calls="${kbEsc(conn.id)}">调用 ${callCount} 次</span>` : ''}
+              ${kbState.usage ? `<button type="button" class="hui-badge kb-usage-badge-btn" data-size="sm" data-tone="neutral" data-kb-conn-calls="${kbEsc(conn.id)}" title="查看该连接器的调用明细">调用 ${callCount} 次</button>` : ''}
             </div>
           </div>
           <div class="kb-row-actions">
@@ -968,63 +979,343 @@
     `;
   }
 
-  function renderUsageSummaryHTML() {
-    const usage = kbState.usage;
-    if (!usage) return '';
-    const totalCalls = Number(usage.totalCalls || 0);
-    const totalDocCalls = Number(usage.totalDocumentCalls || 0);
-    const docs = Array.isArray(usage.documents) ? usage.documents : [];
-    if (totalCalls === 0 && docs.length === 0) return '';
+  function formatUsageCallerKindLabel(kind) {
+    switch (String(kind || '').toLowerCase()) {
+      case 'sop': return 'SOP';
+      case 'space': return '协作空间';
+      case 'clarify': return '需求澄清';
+      case 'scheduled': return '定时任务';
+      case 'report': return '分析报告';
+      default: return '个人对话';
+    }
+  }
 
-    const docRowsHTML = docs.length
-      ? `
+  function formatUsageTime(raw) {
+    if (!raw) return '—';
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return String(raw);
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  function usageCallerDisplay(caller) {
+    const c = caller || {};
+    const kind = String(c.kind || 'chat').toLowerCase();
+    const kindLabel = formatUsageCallerKindLabel(kind);
+    if (kind === 'sop') {
+      const label = c.workflowName || c.workflowId || 'SOP 运行';
+      const subParts = [];
+      if (c.agentName || c.agentId) subParts.push(c.agentName || c.agentId);
+      if (c.nodeName || c.nodeId) subParts.push(c.nodeName || c.nodeId);
+      return { kind, kindLabel, label, subLabel: subParts.join(' · ') };
+    }
+    if (kind === 'space') {
+      return { kind, kindLabel, label: c.spaceTitle || c.spaceId || '协作空间', subLabel: '' };
+    }
+    if (kind === 'clarify') {
+      return { kind, kindLabel, label: c.issueTitle || c.sessionTitle || c.issueId || '需求澄清', subLabel: '' };
+    }
+    if (kind === 'scheduled') {
+      return { kind, kindLabel, label: c.sessionTitle || '定时任务', subLabel: '' };
+    }
+    if (kind === 'report') {
+      return { kind, kindLabel, label: c.sessionTitle || c.issueTitle || '分析报告', subLabel: '' };
+    }
+    return { kind, kindLabel, label: c.sessionTitle || '个人对话', subLabel: '' };
+  }
+
+  function callerJumpAttrs(target) {
+    const c = target || {};
+    const kind = String(c.kind || 'chat').toLowerCase();
+    const runId = c.runId || '';
+    const nodeId = c.nodeId || '';
+    const sessionId = c.sessionId || '';
+    const issueId = c.issueId || '';
+    const projectId = c.projectId || '';
+    const agentId = c.agentId || '';
+    const canJump = Boolean(runId || sessionId || issueId || agentId);
+    if (!canJump) return '';
+    return `data-kb-jump-caller="1" data-jump-kind="${kbEsc(kind)}" data-jump-run="${kbEsc(runId)}" data-jump-node="${kbEsc(nodeId)}" data-jump-session="${kbEsc(sessionId)}" data-jump-issue="${kbEsc(issueId)}" data-jump-project="${kbEsc(projectId)}" data-jump-agent="${kbEsc(agentId)}"`;
+  }
+
+  function jumpToUsageCaller(el) {
+    if (!el) return;
+    const kind = el.dataset.jumpKind || '';
+    const runId = el.dataset.jumpRun || '';
+    const nodeId = el.dataset.jumpNode || '';
+    const sessionId = el.dataset.jumpSession || '';
+    const issueId = el.dataset.jumpIssue || '';
+    const projectId = el.dataset.jumpProject || '';
+    const agentId = el.dataset.jumpAgent || '';
+
+    if (kind === 'sop' && runId) {
+      if (window.state && nodeId) window.state.selectedRunNode = nodeId;
+      if (typeof window.openRunFromId === 'function') {
+        window.openRunFromId(runId);
+      } else if (typeof window.openRunDetailFresh === 'function') {
+        if (typeof window.switchView === 'function') window.switchView('runs');
+        window.openRunDetailFresh(runId);
+      } else if (typeof window.switchView === 'function') {
+        window.switchView('runs');
+      }
+      if (nodeId && typeof window.selectRunNode === 'function') {
+        setTimeout(() => {
+          try { window.selectRunNode(nodeId); } catch (_) {}
+        }, 250);
+      }
+      return;
+    }
+
+    if (kind === 'clarify' && issueId && !sessionId && typeof window.openIssueDetail === 'function') {
+      window.openIssueDetail(issueId);
+      return;
+    }
+
+    if (sessionId) {
+      const frame = document.getElementById('chatNextFrame');
+      const pid = projectId || (typeof window.currentProject === 'function' ? window.currentProject()?.id || '' : '');
+      if (frame) {
+        frame.dataset.src = 'native';
+        frame.src = `/chatbot/?projectId=${encodeURIComponent(pid)}&session=${encodeURIComponent(sessionId)}`;
+      }
+      if (typeof window.switchView === 'function') {
+        window.switchView('collaboration');
+      }
+      return;
+    }
+
+    if (issueId && typeof window.openIssueDetail === 'function') {
+      window.openIssueDetail(issueId);
+      return;
+    }
+
+    if (agentId && typeof window.openRunEvalTarget === 'function') {
+      window.openRunEvalTarget('agent', agentId);
+    }
+  }
+
+  function renderTopCallersHTML(callers) {
+    if (!Array.isArray(callers) || !callers.length) {
+      return '<span class="kb-muted">—</span>';
+    }
+    return `
+      <div class="kb-usage-caller-pills">
+        ${callers.map(c => {
+          const kindLabel = formatUsageCallerKindLabel(c.kind);
+          const countText = Number(c.callCount || 0) > 1 ? ` ×${Number(c.callCount)}` : '';
+          const titleText = c.subLabel ? `${kindLabel} · ${c.label} (${c.subLabel})` : `${kindLabel} · ${c.label}`;
+          const jumpAttr = callerJumpAttrs(c);
+          if (jumpAttr) {
+            return `<button type="button" class="kb-usage-caller-pill is-link" ${jumpAttr} title="${kbEsc(titleText)}"><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(c.label)}${c.subLabel ? ` · ${kbEsc(c.subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</button>`;
+          }
+          return `<span class="kb-usage-caller-pill" title="${kbEsc(titleText)}"><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(c.label)}${c.subLabel ? ` · ${kbEsc(c.subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</span>`;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  function renderUsageDocsTabHTML(docs) {
+    if (!docs.length) {
+      return '<p class="kb-muted">暂无文档级调用记录。</p>';
+    }
+    return `
+      <div class="kb-usage-table-wrap">
+        <table class="kb-usage-table">
+          <thead>
+            <tr>
+              <th>文档</th>
+              <th>所属连接器</th>
+              <th>主要调用方</th>
+              <th>检索命中</th>
+              <th>正文读取</th>
+              <th>已引用</th>
+              <th>总调用</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${docs.map(doc => {
+              const docLabel = doc.title || doc.fileName || doc.documentId;
+              const subLabel = doc.sourceName || doc.sourceId || '';
+              const connLabel = doc.connectorName || doc.connectorId;
+              return `
+                <tr class="kb-usage-doc-row" data-kb-usage-doc="${kbEsc(doc.documentId)}" data-kb-usage-doc-conn="${kbEsc(doc.connectorId)}" data-kb-usage-doc-label="${kbEsc(docLabel)}">
+                  <td>
+                    <button type="button" class="kb-usage-doc-link" data-kb-filter-doc="${kbEsc(doc.documentId)}" data-kb-filter-conn="${kbEsc(doc.connectorId)}" data-kb-filter-label="${kbEsc(docLabel)}" title="查看该文档的调用明细">
+                      <span class="kb-usage-doc-title">${kbEsc(docLabel)}</span>
+                    </button>
+                    ${subLabel ? `<div class="kb-muted kb-usage-doc-sub">${kbEsc(subLabel)}</div>` : ''}
+                  </td>
+                  <td>${kbEsc(connLabel)}</td>
+                  <td>${renderTopCallersHTML(doc.topCallers)}</td>
+                  <td>${Number(doc.searchHitCount || 0)}</td>
+                  <td>${Number(doc.readCount || 0)}</td>
+                  <td>${Number(doc.citedCount || 0)}</td>
+                  <td><strong>${Number(doc.callCount || 0)}</strong></td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderUsageEventsTabHTML() {
+    const f = kbState.usageFilters;
+    const events = kbState.usageEvents || { items: [], total: 0, hasMore: false };
+    const items = Array.isArray(events.items) ? events.items : [];
+    const hasFilter = Boolean(f.connectorId || f.documentId || f.callerKind || f.query);
+
+    const connOptions = kbState.connectors.map(c =>
+      `<option value="${kbEsc(c.id)}"${f.connectorId === c.id ? ' selected' : ''}>${kbEsc(c.name)}</option>`
+    ).join('');
+
+    const filterBarHTML = `
+      <div class="kb-usage-filters" data-kb-usage-filters>
+        <select class="kb-input kb-usage-select" data-kb-usage-filter="connectorId" aria-label="按连接器筛选">
+          <option value="">全部连接器</option>
+          ${connOptions}
+        </select>
+        <select class="kb-input kb-usage-select" data-kb-usage-filter="callerKind" aria-label="按调用方类型筛选">
+          <option value=""${f.callerKind === '' ? ' selected' : ''}>全部调用方</option>
+          <option value="sop"${f.callerKind === 'sop' ? ' selected' : ''}>SOP 流程</option>
+          <option value="role"${f.callerKind === 'role' ? ' selected' : ''}>角色 / Agent</option>
+          <option value="chat"${f.callerKind === 'chat' ? ' selected' : ''}>对话 / 助手</option>
+        </select>
+        <input type="search" class="kb-input kb-usage-search" data-kb-usage-filter="query" value="${kbEsc(f.query)}" placeholder="搜索文档、调用方或检索词…" aria-label="搜索调用明细">
+        ${f.documentId ? `<span class="kb-usage-doc-chip"><span>文档：${kbEsc(f.documentLabel || f.documentId)}</span><button type="button" class="kb-usage-chip-close" data-kb-clear-doc-filter aria-label="清除文档筛选">×</button></span>` : ''}
+        ${hasFilter ? '<button type="button" class="kb-btn xs" data-kb-clear-usage-filters>重置筛选</button>' : ''}
+      </div>
+    `;
+
+    let bodyHTML = '';
+    if (kbState.usageEventsLoading && !items.length) {
+      bodyHTML = '<p class="kb-muted">正在加载调用明细…</p>';
+    } else if (!items.length) {
+      bodyHTML = '<p class="kb-muted">暂无匹配的调用明细记录。</p>';
+    } else {
+      bodyHTML = `
         <div class="kb-usage-table-wrap">
-          <table class="kb-usage-table">
+          <table class="kb-usage-table kb-usage-events-table" data-kb-usage-events-table>
             <thead>
               <tr>
+                <th>时间</th>
+                <th>调用方</th>
                 <th>文档</th>
-                <th>所属连接器</th>
-                <th>检索命中</th>
-                <th>正文读取</th>
-                <th>总调用</th>
+                <th>动作与引用</th>
+                <th>检索词</th>
               </tr>
             </thead>
             <tbody>
-              ${docs.map(doc => {
-                const docLabel = doc.title || doc.fileName || doc.documentId;
-                const subLabel = doc.sourceName || doc.sourceId || '';
-                const connLabel = doc.connectorName || doc.connectorId;
+              ${items.map(ev => {
+                const docLabel = ev.title || ev.fileName || ev.documentId;
+                const connLabel = ev.connectorName || ev.connectorId;
+                const docSub = [connLabel, ev.sourceName || ev.sourceId].filter(Boolean).join(' · ');
+                const callerInfo = usageCallerDisplay(ev.caller);
+                const jumpAttr = callerJumpAttrs(ev.caller);
+                const actionLabel = ev.action === 'read' ? '正文读取' : '检索命中';
+                const callerLabelHTML = jumpAttr
+                  ? `<button type="button" class="kb-usage-caller-jump" ${jumpAttr}><span class="kb-usage-caller-main">${kbEsc(callerInfo.label)}</span>${callerInfo.subLabel ? `<span class="kb-muted kb-usage-doc-sub">${kbEsc(callerInfo.subLabel)}</span>` : ''}</button>`
+                  : `<div class="kb-usage-caller-main">${kbEsc(callerInfo.label)}</div>${callerInfo.subLabel ? `<div class="kb-muted kb-usage-doc-sub">${kbEsc(callerInfo.subLabel)}</div>` : ''}`;
                 return `
-                  <tr data-kb-usage-doc="${kbEsc(doc.documentId)}">
+                  <tr data-kb-usage-event="${kbEsc(String(ev.id || ''))}">
+                    <td class="kb-usage-time">${kbEsc(formatUsageTime(ev.calledAt))}</td>
+                    <td>
+                      <div class="kb-usage-caller-cell">
+                        <span class="hui-badge" data-size="sm" data-tone="neutral">${kbEsc(callerInfo.kindLabel)}</span>
+                        <div>${callerLabelHTML}</div>
+                      </div>
+                    </td>
                     <td>
                       <div class="kb-usage-doc-title">${kbEsc(docLabel)}</div>
-                      ${subLabel ? `<div class="kb-muted kb-usage-doc-sub">${kbEsc(subLabel)}</div>` : ''}
+                      ${docSub ? `<div class="kb-muted kb-usage-doc-sub">${kbEsc(docSub)}</div>` : ''}
                     </td>
-                    <td>${kbEsc(connLabel)}</td>
-                    <td>${Number(doc.searchHitCount || 0)}</td>
-                    <td>${Number(doc.readCount || 0)}</td>
-                    <td><strong>${Number(doc.callCount || 0)}</strong></td>
+                    <td>
+                      <div class="kb-usage-action-badges">
+                        <span class="hui-badge" data-size="sm" data-tone="neutral">${kbEsc(actionLabel)}</span>
+                        ${ev.cited ? '<span class="hui-badge" data-size="sm" data-tone="success">已引用</span>' : ''}
+                      </div>
+                    </td>
+                    <td class="kb-usage-query">${ev.query ? `<code>${kbEsc(ev.query)}</code>` : '<span class="kb-muted">—</span>'}</td>
                   </tr>
                 `;
               }).join('')}
             </tbody>
           </table>
         </div>
-      `
-      : '<p class="kb-muted">暂无文档级调用记录。</p>';
+        <div class="kb-usage-events-foot">
+          <span class="kb-muted">已显示 ${items.length} / 共 ${Number(events.total || items.length)} 条（单用户保留最近 30 天内最多 2000 条）</span>
+          ${events.hasMore ? `<button type="button" class="kb-btn xs" data-kb-usage-load-more${kbState.usageEventsLoading ? ' disabled' : ''}>${kbState.usageEventsLoading ? '加载中…' : '加载更多'}</button>` : ''}
+        </div>
+      `;
+    }
+
+    return filterBarHTML + bodyHTML;
+  }
+
+  function renderUsageSummaryHTML() {
+    const usage = kbState.usage;
+    if (!usage) return '';
+    const totalCalls = Number(usage.totalCalls || 0);
+    const totalDocCalls = Number(usage.totalDocumentCalls || 0);
+    const totalCited = Number(usage.totalCitedCount || 0);
+    const docs = Array.isArray(usage.documents) ? usage.documents : [];
+    const hasEvents = Array.isArray(kbState.usageEvents?.items) && kbState.usageEvents.items.length > 0;
+    if (totalCalls === 0 && docs.length === 0 && !hasEvents) return '';
+
+    const activeTab = kbState.usageTab === 'events' ? 'events' : 'docs';
+    const contentHTML = activeTab === 'events' ? renderUsageEventsTabHTML() : renderUsageDocsTabHTML(docs);
 
     return `
       <section class="sh-card kb-usage-section" data-kb-usage-section aria-label="知识库与文档调用统计">
         <div class="kb-usage-head">
           <div>
             <h2>知识库与文档调用统计</h2>
-            <p class="kb-muted">累计调用 ${totalCalls} 次 · 文档命中/读取 ${totalDocCalls} 次</p>
+            <p class="kb-muted">累计调用 ${totalCalls} 次 · 文档命中/读取 ${totalDocCalls} 次 · 已引用 ${totalCited} 次</p>
           </div>
-          <button type="button" class="kb-btn xs" data-kb-reset-usage>清空统计</button>
+          <div class="kb-usage-head-actions">
+            <div class="kb-usage-tabs" role="tablist" aria-label="统计视图">
+              <button type="button" role="tab" class="kb-usage-tab${activeTab === 'docs' ? ' is-active' : ''}" aria-selected="${activeTab === 'docs'}" data-kb-usage-tab="docs">按文档聚合</button>
+              <button type="button" role="tab" class="kb-usage-tab${activeTab === 'events' ? ' is-active' : ''}" aria-selected="${activeTab === 'events'}" data-kb-usage-tab="events">调用明细</button>
+            </div>
+            <button type="button" class="kb-btn xs" data-kb-reset-usage>清空统计</button>
+          </div>
         </div>
-        ${docRowsHTML}
+        ${contentHTML}
       </section>
     `;
+  }
+
+  let usageSearchTimer = null;
+
+  async function loadUsageEvents(append = false) {
+    const f = kbState.usageFilters;
+    const offset = append ? (kbState.usageEvents?.items?.length || 0) : 0;
+    const params = new URLSearchParams();
+    if (f.connectorId) params.set('connectorId', f.connectorId);
+    if (f.documentId) params.set('documentId', f.documentId);
+    if (f.callerKind) params.set('callerKind', f.callerKind);
+    if (f.query) params.set('query', f.query);
+    params.set('limit', '50');
+    if (offset > 0) params.set('offset', String(offset));
+
+    kbState.usageEventsLoading = true;
+    renderKnowledgeView();
+    try {
+      const page = await kbAPI(`/api/knowledge/usage/events?${params.toString()}`);
+      const nextItems = Array.isArray(page?.items) ? page.items : [];
+      kbState.usageEvents = {
+        items: append ? [...(kbState.usageEvents?.items || []), ...nextItems] : nextItems,
+        total: Number(page?.total || nextItems.length),
+        hasMore: Boolean(page?.hasMore),
+      };
+      kbState.usageEventsLoaded = true;
+    } catch (err) {
+      kbToast(err.message || '加载调用明细失败', true);
+    } finally {
+      kbState.usageEventsLoading = false;
+      renderKnowledgeView();
+    }
   }
 
   function renderKnowledgeView() {
@@ -1049,8 +1340,23 @@
       body = renderVendorGalleryHTML() + `<div class="kb-connector-list">${kbState.connectors.map(renderConnectorCardHTML).join('')}</div>` + renderUsageSummaryHTML();
     }
 
+    const activeEl = document.activeElement;
+    const restoreSearchFocus = activeEl && activeEl.dataset && activeEl.dataset.kbUsageFilter === 'query';
+    const selStart = restoreSearchFocus ? activeEl.selectionStart : null;
+    const selEnd = restoreSearchFocus ? activeEl.selectionEnd : null;
+
     root.innerHTML = notice + body;
     bindKnowledgeRootEvents(root);
+
+    if (restoreSearchFocus) {
+      const nextInput = root.querySelector('[data-kb-usage-filter="query"]');
+      if (nextInput) {
+        nextInput.focus();
+        if (typeof selStart === 'number' && typeof nextInput.setSelectionRange === 'function') {
+          try { nextInput.setSelectionRange(selStart, selEnd ?? selStart); } catch (_) {}
+        }
+      }
+    }
   }
 
   function bindKnowledgeRootEvents(root) {
@@ -1166,13 +1472,89 @@
         btn.disabled = true;
         try {
           await kbAPI('/api/knowledge/usage', { method: 'DELETE' });
-          kbState.usage = { totalCalls: 0, totalDocumentCalls: 0, connectors: [], documents: [] };
+          kbState.usage = { totalCalls: 0, totalDocumentCalls: 0, totalCitedCount: 0, connectors: [], documents: [] };
+          kbState.usageEvents = { items: [], total: 0, hasMore: false };
+          kbState.usageEventsLoaded = false;
+          kbState.usageFilters = { connectorId: '', documentId: '', documentLabel: '', callerKind: '', query: '' };
           kbToast('调用统计已清空');
           renderKnowledgeView();
         } catch (err) {
           kbToast(err.message, true);
           btn.disabled = false;
         }
+      });
+    });
+    root.querySelectorAll('[data-kb-conn-calls]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const connId = btn.dataset.kbConnCalls || '';
+        kbState.usageTab = 'events';
+        kbState.usageFilters = { connectorId: connId, documentId: '', documentLabel: '', callerKind: '', query: '' };
+        loadUsageEvents(false).then(() => {
+          const sec = document.querySelector('[data-kb-usage-section]');
+          if (sec && typeof sec.scrollIntoView === 'function') sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      });
+    });
+    root.querySelectorAll('[data-kb-usage-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.kbUsageTab === 'events' ? 'events' : 'docs';
+        if (kbState.usageTab === tab) return;
+        kbState.usageTab = tab;
+        if (tab === 'events' && !kbState.usageEventsLoaded) {
+          loadUsageEvents(false);
+        } else {
+          renderKnowledgeView();
+        }
+      });
+    });
+    root.querySelectorAll('[data-kb-filter-doc]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        kbState.usageTab = 'events';
+        kbState.usageFilters = {
+          connectorId: btn.dataset.kbFilterConn || '',
+          documentId: btn.dataset.kbFilterDoc || '',
+          documentLabel: btn.dataset.kbFilterLabel || '',
+          callerKind: '',
+          query: '',
+        };
+        loadUsageEvents(false);
+      });
+    });
+    root.querySelectorAll('[data-kb-usage-filter]').forEach(el => {
+      const key = el.dataset.kbUsageFilter;
+      if (el.tagName === 'INPUT') {
+        el.addEventListener('input', () => {
+          kbState.usageFilters[key] = el.value.trim();
+          clearTimeout(usageSearchTimer);
+          usageSearchTimer = setTimeout(() => loadUsageEvents(false), 260);
+        });
+      } else {
+        el.addEventListener('change', () => {
+          kbState.usageFilters[key] = el.value;
+          loadUsageEvents(false);
+        });
+      }
+    });
+    root.querySelectorAll('[data-kb-clear-doc-filter]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        kbState.usageFilters.documentId = '';
+        kbState.usageFilters.documentLabel = '';
+        loadUsageEvents(false);
+      });
+    });
+    root.querySelectorAll('[data-kb-clear-usage-filters]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        kbState.usageFilters = { connectorId: '', documentId: '', documentLabel: '', callerKind: '', query: '' };
+        loadUsageEvents(false);
+      });
+    });
+    root.querySelectorAll('[data-kb-usage-load-more]').forEach(btn => {
+      btn.addEventListener('click', () => loadUsageEvents(true));
+    });
+    root.querySelectorAll('[data-kb-jump-caller]').forEach(btn => {
+      btn.addEventListener('click', ev => {
+        ev.stopPropagation();
+        jumpToUsageCaller(btn);
       });
     });
   }
@@ -1205,12 +1587,16 @@
       kbState.connectorTypes = Array.isArray(types) && types.length ? types : defaultConnectorTypes();
       kbState.connectors = Array.isArray(connectors) ? connectors : [];
       kbState.usage = usage && typeof usage === 'object' ? usage : null;
+      kbState.usageEventsLoaded = false;
     } catch (err) {
       kbState.error = err.message || '加载个人知识库连接器失败';
       kbToast(kbState.error, true);
     } finally {
       kbState.loading = false;
       renderKnowledgeView();
+      if (kbState.usageTab === 'events' && kbState.usage && Number(kbState.usage.totalCalls || 0) > 0) {
+        loadUsageEvents(false);
+      }
     }
   }
 

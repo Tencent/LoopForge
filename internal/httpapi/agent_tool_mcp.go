@@ -302,7 +302,8 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 				session.mu.Lock()
 				priorReads := append([]domain.KnowledgeRead(nil), session.knowledgeReads...)
 				session.mu.Unlock()
-				read, text, err := exec.ExecuteReferenceToolWithHistory(ctx, session.UserID, ref, tool.UpstreamName, args, domain.KnowledgeCallOriginModelTool, priorReads)
+				caller := h.buildSessionUsageCaller(session)
+				read, text, err := exec.ExecuteReferenceToolWithHistory(knowledge.WithUsageCaller(ctx, caller), session.UserID, ref, tool.UpstreamName, args, domain.KnowledgeCallOriginModelTool, priorReads)
 				read.Query = knowledge.KnowledgeCallQuerySummary(args)
 				session.mu.Lock()
 				session.knowledgeReads = append(session.knowledgeReads, read)
@@ -496,6 +497,88 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		return "", err
 	}
 	return redactAgentToolResult(text, session.User), nil
+}
+
+func (h *agentToolGateway) buildSessionUsageCaller(session *AgentToolSession) domain.KnowledgeUsageCaller {
+	if session == nil {
+		return domain.KnowledgeUsageCaller{}
+	}
+	caller := domain.KnowledgeUsageCaller{
+		SessionID: strings.TrimSpace(session.ChatSessionID),
+		SpaceID:   strings.TrimSpace(session.SpaceID),
+		IssueID:   strings.TrimSpace(session.IssueID),
+		RunID:     strings.TrimSpace(session.RunID),
+		ProjectID: strings.TrimSpace(session.ProjectID),
+	}
+	switch {
+	case caller.SpaceID != "":
+		caller.Kind = domain.KnowledgeCallerSpace
+	case session.Mode == AgentToolClarify:
+		caller.Kind = domain.KnowledgeCallerClarify
+	case session.Mode == AgentToolScheduled:
+		caller.Kind = domain.KnowledgeCallerScheduled
+	case session.Mode == AgentToolReport:
+		caller.Kind = domain.KnowledgeCallerReport
+	default:
+		caller.Kind = domain.KnowledgeCallerChat
+	}
+
+	if h != nil && h.repo != nil {
+		if caller.SessionID != "" {
+			ownerID := session.ChatOwnerID
+			if ownerID == 0 {
+				ownerID = session.UserID
+			}
+			if sess, ok := h.repo.AssistantSession(ownerID, caller.SessionID); ok {
+				caller.SessionTitle = strings.TrimSpace(sess.Title)
+				if caller.Kind == domain.KnowledgeCallerChat && strings.EqualFold(strings.TrimSpace(sess.Source), "scheduled") {
+					caller.Kind = domain.KnowledgeCallerScheduled
+				}
+				if caller.IssueID == "" {
+					caller.IssueID = strings.TrimSpace(sess.IssueID)
+				}
+				if caller.ProjectID == "" {
+					caller.ProjectID = strings.TrimSpace(sess.ProjectID)
+				}
+			}
+		}
+		if caller.SpaceID != "" {
+			if space, ok := h.repo.Space(caller.SpaceID); ok {
+				caller.SpaceTitle = strings.TrimSpace(space.Summary)
+				if caller.IssueID == "" {
+					caller.IssueID = strings.TrimSpace(space.IssueID)
+				}
+				if caller.ProjectID == "" {
+					caller.ProjectID = strings.TrimSpace(space.ProjectID)
+				}
+			}
+		}
+		if caller.IssueID != "" {
+			if issue, ok := h.repo.Issue(caller.IssueID); ok {
+				caller.IssueTitle = strings.TrimSpace(issue.Title)
+				if caller.SpaceTitle == "" && caller.SpaceID != "" {
+					caller.SpaceTitle = caller.IssueTitle
+				}
+			}
+		}
+	}
+	if caller.SessionTitle == "" && len(session.turnMessages) > 0 {
+		for _, msg := range session.turnMessages {
+			if msg.Role != "user" {
+				continue
+			}
+			if text := strings.TrimSpace(msg.Content); text != "" {
+				runes := []rune(text)
+				if len(runes) > 36 {
+					caller.SessionTitle = string(runes[:36]) + "…"
+				} else {
+					caller.SessionTitle = text
+				}
+				break
+			}
+		}
+	}
+	return caller
 }
 
 func (h *agentToolGateway) serverIDForKind(session *AgentToolSession, kind string) string {

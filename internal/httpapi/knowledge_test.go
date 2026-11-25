@@ -339,6 +339,19 @@ func TestKnowledgeProxyIsReadOnlyAndUserConnectorScoped(t *testing.T) {
 		t.Fatalf("expected 1 recorded document call for x.md, got %+v", summary.Documents)
 	}
 
+	// Verify caller events endpoint returns the SOP caller metadata and query.
+	eventsRec := doJSONAsUser(t, h, dev42, http.MethodGet, "/api/knowledge/usage/events?callerKind=sop", "")
+	if eventsRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/knowledge/usage/events failed: %d %s", eventsRec.Code, eventsRec.Body.String())
+	}
+	var eventsPage domain.KnowledgeUsageEventPage
+	if err := json.Unmarshal(eventsRec.Body.Bytes(), &eventsPage); err != nil {
+		t.Fatal(err)
+	}
+	if eventsPage.Total != 1 || len(eventsPage.Items) != 1 || eventsPage.Items[0].DocumentID != "x.md" || eventsPage.Items[0].Caller.Kind != domain.KnowledgeCallerSOP || eventsPage.Items[0].Caller.AgentID != "dev" || eventsPage.Items[0].Query != "dns" {
+		t.Fatalf("unexpected SOP usage event: %+v", eventsPage)
+	}
+
 	resetRec := doJSONAsUser(t, h, dev42, http.MethodDelete, "/api/knowledge/usage", "")
 	if resetRec.Code != http.StatusOK {
 		t.Fatalf("DELETE /api/knowledge/usage failed: %d %s", resetRec.Code, resetRec.Body.String())

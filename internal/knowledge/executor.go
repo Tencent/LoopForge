@@ -141,6 +141,7 @@ func (e *Executor) ExecuteReferenceToolWithHistory(
 		Origin:   origin,
 		ServerID: ref.ConnectorID,
 		Tool:     strings.TrimSpace(tool),
+		Query:    KnowledgeCallQuerySummary(args),
 		Status:   domain.KnowledgeStatusUnavailable,
 	}
 	if err := domain.ValidateKnowledgeRefs([]domain.KnowledgeRef{ref}); err != nil {

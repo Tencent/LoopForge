@@ -505,8 +505,9 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
   assert.equal(updatedWkCard.getAttribute('data-vendor-state'), 'configured');
 });
 
-test('knowledge center renders connector and document usage counts and supports reset', async (t) => {
-  const { document } = await openKnowledge(t, [
+test('knowledge center renders connector and document usage counts, caller events, and supports reset', async (t) => {
+  const jumpedRuns = [];
+  const { document, window } = await openKnowledge(t, [
     { method: 'GET', path: '/api/knowledge/connector-types', body: DEFAULT_TYPES },
     {
       method: 'GET',
@@ -526,6 +527,7 @@ test('knowledge center renders connector and document usage counts and supports 
       body: {
         totalCalls: 5,
         totalDocumentCalls: 3,
+        totalCitedCount: 2,
         connectors: [{ connectorId: 'kb_1', connectorName: '研发文档库', callCount: 5 }],
         documents: [{
           connectorId: 'kb_1',
@@ -535,12 +537,52 @@ test('knowledge center renders connector and document usage counts and supports 
           title: 'Go 服务开发规范',
           searchHitCount: 2,
           readCount: 1,
+          citedCount: 2,
           callCount: 3,
+          topCallers: [{
+            kind: 'sop',
+            label: '需求交付 SOP',
+            subLabel: '后端架构师 · 研发实现',
+            callCount: 2,
+            runId: 'run-42',
+            nodeId: 'node-dev',
+          }],
+        }],
+      },
+    },
+    {
+      method: 'GET',
+      path: '/api/knowledge/usage/events',
+      body: {
+        total: 1,
+        hasMore: false,
+        items: [{
+          id: 101,
+          readId: 'read-1',
+          connectorId: 'kb_1',
+          connectorName: '研发文档库',
+          sourceName: '后端规范',
+          documentId: 'doc-1',
+          title: 'Go 服务开发规范',
+          action: 'read',
+          query: '规范',
+          cited: true,
+          calledAt: '2026-11-25T10:30:00Z',
+          caller: {
+            kind: 'sop',
+            workflowName: '需求交付 SOP',
+            agentName: '后端架构师',
+            nodeName: '研发实现',
+            runId: 'run-42',
+            nodeId: 'node-dev',
+          },
         }],
       },
     },
     { method: 'DELETE', path: '/api/knowledge/usage', body: { ok: true } },
   ]);
+
+  window.openRunFromId = (runId) => jumpedRuns.push(runId);
 
   const badge = document.querySelector('[data-kb-conn-calls="kb_1"]');
   assert.ok(badge, '应展示连接器调用次数徽标');
@@ -550,6 +592,21 @@ test('knowledge center renders connector and document usage counts and supports 
   assert.ok(usageSection, '应展示知识库与文档调用统计区块');
   assert.match(usageSection.textContent, /Go 服务开发规范/);
   assert.match(usageSection.textContent, /累计调用 5 次/);
+  assert.match(usageSection.textContent, /已引用 2 次/);
+  assert.match(usageSection.textContent, /需求交付 SOP/);
+
+  // Switch to caller history tab and verify SOP caller row + jump link.
+  document.querySelector('[data-kb-usage-tab="events"]').click();
+  await settle(10);
+  const eventsTable = document.querySelector('[data-kb-usage-events-table]');
+  assert.ok(eventsTable, '切换到调用明细 Tab 应展示调用流水表');
+  assert.match(eventsTable.textContent, /需求交付 SOP/);
+  assert.match(eventsTable.textContent, /后端架构师 · 研发实现/);
+  assert.match(eventsTable.textContent, /正文读取/);
+  assert.match(eventsTable.textContent, /已引用/);
+
+  eventsTable.querySelector('[data-kb-jump-caller]').click();
+  assert.deepEqual(jumpedRuns, ['run-42']);
 
   document.querySelector('[data-kb-reset-usage]').click();
   await settle(8);

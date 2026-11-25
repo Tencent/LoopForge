@@ -513,6 +513,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/knowledge/reference-check", api.know.checkReferences)
 	g.GET("/api/knowledge/reference-options", api.know.referenceOptions)
 	g.GET("/api/knowledge/usage", api.know.getUsage)
+	g.GET("/api/knowledge/usage/events", api.know.listUsageEvents)
 	g.DELETE("/api/knowledge/usage", api.know.resetUsage)
 	g.GET("/api/knowledge/oauth/presets", api.know.oauthPresets)
 	g.POST("/api/knowledge/oauth/:type/authorize", api.know.oauthAuthorize)

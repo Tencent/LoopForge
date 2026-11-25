@@ -16,6 +16,10 @@ type memoryUsageStore struct {
 		owner int64
 		delta domain.KnowledgeUsageDelta
 	}
+	cited []struct {
+		owner int64
+		mark  domain.KnowledgeCitedDocMark
+	}
 }
 
 func (m *memoryUsageStore) RecordKnowledgeUsage(_ context.Context, ownerUserID int64, delta domain.KnowledgeUsageDelta) error {
@@ -26,6 +30,56 @@ func (m *memoryUsageStore) RecordKnowledgeUsage(_ context.Context, ownerUserID i
 		delta domain.KnowledgeUsageDelta
 	}{owner: ownerUserID, delta: delta})
 	return nil
+}
+
+func (m *memoryUsageStore) MarkKnowledgeUsageCited(_ context.Context, ownerUserID int64, marks []domain.KnowledgeCitedDocMark) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, mk := range marks {
+		m.cited = append(m.cited, struct {
+			owner int64
+			mark  domain.KnowledgeCitedDocMark
+		}{owner: ownerUserID, mark: mk})
+	}
+	return nil
+}
+
+func (m *memoryUsageStore) ListKnowledgeUsageEvents(ownerUserID int64, filter domain.KnowledgeUsageEventFilter) domain.KnowledgeUsageEventPage {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var items []domain.KnowledgeUsageEvent
+	var nextID int64 = 1
+	for _, item := range m.deltas {
+		if item.owner != ownerUserID {
+			continue
+		}
+		if filter.ConnectorID != "" && item.delta.ConnectorID != filter.ConnectorID {
+			continue
+		}
+		for _, doc := range item.delta.Documents {
+			action := domain.KnowledgeUsageActionSearchHit
+			if doc.Read > 0 {
+				action = domain.KnowledgeUsageActionRead
+			}
+			items = append(items, domain.KnowledgeUsageEvent{
+				ID:          nextID,
+				ReadID:      item.delta.ReadID,
+				ConnectorID: item.delta.ConnectorID,
+				SourceID:    doc.SourceID,
+				SourceName:  doc.SourceName,
+				DocumentID:  doc.DocumentID,
+				Title:       doc.Title,
+				FileName:    doc.FileName,
+				Action:      action,
+				Tool:        item.delta.Tool,
+				Query:       item.delta.Query,
+				CalledAt:    item.delta.CalledAt,
+				Caller:      item.delta.Caller,
+			})
+			nextID++
+		}
+	}
+	return domain.KnowledgeUsageEventPage{Items: items, Total: int64(len(items))}
 }
 
 func (m *memoryUsageStore) ListKnowledgeConnectorUsage(ownerUserID int64, connectorID string) []domain.KnowledgeConnectorUsage {
@@ -181,5 +235,51 @@ func TestUsageCounterIgnoresCatalogProbeAndDeduplicatesDocuments(t *testing.T) {
 	}
 	if len(summary.Documents) != 3 {
 		t.Fatalf("expected 3 deduplicated document usages, got %+v", summary.Documents)
+	}
+}
+
+func TestUsageCounterCallerContextEventsAndMarkCited(t *testing.T) {
+	store := &memoryUsageStore{}
+	counter := NewUsageCounter(store)
+	ctx := WithUsageCaller(context.Background(), domain.KnowledgeUsageCaller{
+		Kind:         domain.KnowledgeCallerSOP,
+		WorkflowID:   "wf-1",
+		WorkflowName: "需求交付",
+		RunID:        "run-9",
+		AgentID:      "dev",
+		AgentName:    "研发角色",
+	})
+
+	read := domain.KnowledgeRead{
+		ID:       "read-xyz",
+		Origin:   domain.KnowledgeCallOriginModelTool,
+		ServerID: "conn-1",
+		Tool:     "search_knowledge",
+		Query:    "路由",
+		Evidences: []domain.KnowledgeEvidence{
+			{SourceID: "kb1", DocumentID: "doc-1", Title: "路由规范", Cited: true},
+			{SourceID: "kb1", DocumentID: "doc-2", Title: "未引用文档", Cited: false},
+		},
+		Cited: true,
+	}
+	if err := counter.RecordExecution(ctx, 7, read, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := counter.MarkCited(ctx, 7, []domain.KnowledgeRead{read}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(store.cited) != 1 || store.cited[0].mark.DocumentID != "doc-1" || store.cited[0].mark.ReadID != "read-xyz" {
+		t.Fatalf("expected only cited doc-1 to be marked, got %+v", store.cited)
+	}
+
+	page := counter.Events([]domain.KnowledgeConnector{
+		{ID: "conn-1", Name: "飞书知识库", Type: domain.ConnectorTypeFeishu},
+	}, 7, domain.KnowledgeUsageEventFilter{})
+	if page.Total != 2 || len(page.Items) != 2 {
+		t.Fatalf("expected 2 enriched events, got %+v", page)
+	}
+	if page.Items[0].ConnectorName != "飞书知识库" || page.Items[0].Caller.WorkflowName != "需求交付" || page.Items[0].Query != "路由" {
+		t.Fatalf("unexpected enriched event: %+v", page.Items[0])
 	}
 }

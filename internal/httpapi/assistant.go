@@ -770,6 +770,11 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					domain.MarkKnowledgeReadCited(&reads[i], reply.Message)
 				}
 				toolSession.mu.Unlock()
+				if len(reads) > 0 {
+					if svc := h.deps.knowledgeService(); svc != nil {
+						_ = svc.MarkUsageCited(ctx, toolSession.UserID, reads)
+					}
+				}
 			}
 			reply.KnowledgeReads = reads
 			stored = append(stored, assistantMessage{KnowledgeReads: reads, Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images, GenerationID: assistantControlScopeFrom(modelCtx).GenerationID})

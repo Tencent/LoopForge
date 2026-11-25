@@ -110,6 +110,23 @@ func (s *Service) UsageSummary(ownerUserID int64, connectorID string, docLimit i
 	return s.usage.Summary(s.ListConnectors(ownerUserID), ownerUserID, connectorID, docLimit)
 }
 
+// UsageEvents returns paginated per-document caller events for ownerUserID.
+func (s *Service) UsageEvents(ownerUserID int64, filter domain.KnowledgeUsageEventFilter) domain.KnowledgeUsageEventPage {
+	if s == nil || s.usage == nil {
+		return domain.KnowledgeUsageEventPage{Items: []domain.KnowledgeUsageEvent{}}
+	}
+	return s.usage.Events(s.ListConnectors(ownerUserID), ownerUserID, filter)
+}
+
+// MarkUsageCited records final-answer citation status on recorded document
+// usage events for ownerUserID.
+func (s *Service) MarkUsageCited(ctx context.Context, ownerUserID int64, reads []domain.KnowledgeRead) error {
+	if s == nil || s.usage == nil {
+		return nil
+	}
+	return s.usage.MarkCited(ctx, ownerUserID, reads)
+}
+
 // ResetUsage clears recorded invocation counts for ownerUserID.
 func (s *Service) ResetUsage(ownerUserID int64, connectorID string) error {
 	if s == nil || s.usage == nil {

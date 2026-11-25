@@ -167,7 +167,8 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 		if claims.RunID != "" && claims.NodeID != "" && h.engine != nil {
 			priorReads = h.engine.NodeKnowledgeReads(claims.RunID, claims.NodeID, claims.Attempt)
 		}
-		read, text, err := exec.ExecuteReferenceToolWithHistory(ctx, claims.UserID, *claims.Ref, name, params.Arguments, domain.KnowledgeCallOriginModelTool, priorReads)
+		caller := h.buildSOPUsageCaller(claims)
+		read, text, err := exec.ExecuteReferenceToolWithHistory(knowledge.WithUsageCaller(ctx, caller), claims.UserID, *claims.Ref, name, params.Arguments, domain.KnowledgeCallOriginModelTool, priorReads)
 		read.Query = knowledge.KnowledgeCallQuerySummary(params.Arguments)
 		read.Attempt = claims.Attempt
 
@@ -215,4 +216,41 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 	default:
 		return fail(-32601, "method not found")
 	}
+}
+
+func (h *knowledgeHandlers) buildSOPUsageCaller(claims knowledge.ProxyClaims) domain.KnowledgeUsageCaller {
+	caller := domain.KnowledgeUsageCaller{
+		Kind:      domain.KnowledgeCallerSOP,
+		RunID:     strings.TrimSpace(claims.RunID),
+		NodeID:    strings.TrimSpace(claims.NodeID),
+		AgentID:   strings.TrimSpace(claims.AgentID),
+		ProjectID: strings.TrimSpace(claims.ProjectID),
+	}
+	if h == nil || h.repo == nil {
+		return caller
+	}
+	if caller.RunID != "" {
+		if run, ok := h.repo.RunState(caller.RunID); ok {
+			caller.WorkflowID = strings.TrimSpace(run.WorkflowID)
+			caller.WorkflowName = strings.TrimSpace(run.WorkflowSnapshot.Name)
+			if caller.ProjectID == "" {
+				caller.ProjectID = strings.TrimSpace(run.ExecutionContext.ProjectID)
+			}
+			for _, node := range run.WorkflowSnapshot.Nodes {
+				if node.ID == caller.NodeID {
+					caller.NodeName = strings.TrimSpace(node.Name)
+					if caller.AgentID == "" {
+						caller.AgentID = strings.TrimSpace(node.AgentID)
+					}
+					break
+				}
+			}
+		}
+	}
+	if caller.AgentID != "" {
+		if agent, ok := h.repo.Agent(caller.AgentID); ok {
+			caller.AgentName = strings.TrimSpace(agent.Name)
+		}
+	}
+	return caller
 }

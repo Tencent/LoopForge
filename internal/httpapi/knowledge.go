@@ -361,6 +361,32 @@ func (h *knowledgeHandlers) getUsage(c *gin.Context) {
 	c.JSON(http.StatusOK, h.service().UsageSummary(uid, connectorID, limit))
 }
 
+// 路由: GET /api/knowledge/usage/events
+func (h *knowledgeHandlers) listUsageEvents(c *gin.Context) {
+	uid, ok := h.ownerUserID(c)
+	if !ok {
+		return
+	}
+	filter := domain.KnowledgeUsageEventFilter{
+		ConnectorID: strings.TrimSpace(c.Query("connectorId")),
+		DocumentID:  strings.TrimSpace(c.Query("documentId")),
+		CallerKind:  strings.TrimSpace(c.Query("callerKind")),
+		Query:       strings.TrimSpace(c.Query("query")),
+		Limit:       50,
+	}
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			filter.Limit = parsed
+		}
+	}
+	if raw := strings.TrimSpace(c.Query("offset")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+			filter.Offset = parsed
+		}
+	}
+	c.JSON(http.StatusOK, h.service().UsageEvents(uid, filter))
+}
+
 // 路由: DELETE /api/knowledge/usage
 func (h *knowledgeHandlers) resetUsage(c *gin.Context) {
 	uid, ok := h.ownerUserID(c)

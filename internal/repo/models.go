@@ -716,12 +716,49 @@ type knowledgeDocumentUsageRow struct {
 	CallCount      int64      `gorm:"column:call_count;index:idx_knowledge_doc_usage_owner_calls;not null;default:0"`
 	SearchHitCount int64      `gorm:"column:search_hit_count;not null;default:0"`
 	ReadCount      int64      `gorm:"column:read_count;not null;default:0"`
+	CitedCount     int64      `gorm:"column:cited_count;not null;default:0"`
 	LastCalledAt   *time.Time `gorm:"column:last_called_at"`
 	CreatedAt      *time.Time `gorm:"column:created_at"`
 	UpdatedAt      *time.Time `gorm:"column:updated_at"`
 }
 
 func (knowledgeDocumentUsageRow) TableName() string { return "knowledge_document_usage_counts" }
+
+type knowledgeUsageEventRow struct {
+	ID           int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	OwnerUserID  int64      `gorm:"column:owner_user_id;not null;default:0;index:idx_kb_usage_events_owner_time,priority:1;index:idx_kb_usage_events_owner_doc,priority:1;index:idx_kb_usage_events_owner_read,priority:1;index:idx_kb_usage_events_owner_caller,priority:1"`
+	ReadID       string     `gorm:"column:read_id;size:64;not null;default:'';index:idx_kb_usage_events_owner_read,priority:2"`
+	ConnectorID  string     `gorm:"column:connector_id;size:64;not null;index:idx_kb_usage_events_owner_doc,priority:2"`
+	DocumentKey  string     `gorm:"column:document_key;size:255;not null;index:idx_kb_usage_events_owner_doc,priority:3"`
+	SourceID     string     `gorm:"column:source_id;size:191;not null;default:''"`
+	SourceName   string     `gorm:"column:source_name;size:255;not null;default:''"`
+	DocumentID   string     `gorm:"column:document_id;size:512;not null;default:''"`
+	Title        string     `gorm:"column:title;size:255;not null;default:''"`
+	FileName     string     `gorm:"column:file_name;size:255;not null;default:''"`
+	Action       string     `gorm:"column:action;size:32;not null;default:'search_hit'"`
+	Tool         string     `gorm:"column:tool;size:128;not null;default:''"`
+	Query        string     `gorm:"column:query;size:255;not null;default:''"`
+	Cited        bool       `gorm:"column:cited;not null;default:false"`
+	CallerKind   string     `gorm:"column:caller_kind;size:32;not null;default:'';index:idx_kb_usage_events_owner_caller,priority:2"`
+	WorkflowID   string     `gorm:"column:workflow_id;size:64;not null;default:''"`
+	WorkflowName string     `gorm:"column:workflow_name;size:255;not null;default:''"`
+	RunID        string     `gorm:"column:run_id;size:64;not null;default:''"`
+	NodeID       string     `gorm:"column:node_id;size:64;not null;default:''"`
+	NodeName     string     `gorm:"column:node_name;size:255;not null;default:''"`
+	AgentID      string     `gorm:"column:agent_id;size:64;not null;default:''"`
+	AgentName    string     `gorm:"column:agent_name;size:255;not null;default:''"`
+	SessionID    string     `gorm:"column:session_id;size:64;not null;default:''"`
+	SessionTitle string     `gorm:"column:session_title;size:255;not null;default:''"`
+	SpaceID      string     `gorm:"column:space_id;size:64;not null;default:''"`
+	SpaceTitle   string     `gorm:"column:space_title;size:255;not null;default:''"`
+	IssueID      string     `gorm:"column:issue_id;size:64;not null;default:''"`
+	IssueTitle   string     `gorm:"column:issue_title;size:255;not null;default:''"`
+	ProjectID    string     `gorm:"column:project_id;size:64;not null;default:''"`
+	CalledAt     time.Time  `gorm:"column:called_at;not null;index:idx_kb_usage_events_owner_time,priority:2;index:idx_kb_usage_events_owner_doc,priority:4;index:idx_kb_usage_events_owner_caller,priority:3"`
+	CreatedAt    *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeUsageEventRow) TableName() string { return "knowledge_usage_events" }
 
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
@@ -744,6 +781,7 @@ func allModels() []any {
 		knowledgeConnectorRow{},
 		knowledgeConnectorUsageRow{},
 		knowledgeDocumentUsageRow{},
+		knowledgeUsageEventRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}
 }
