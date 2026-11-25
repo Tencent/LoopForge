@@ -144,7 +144,7 @@ func testSharedWorkspaceGitHelpers(t *testing.T, driver, root, host, listen, too
 		if err != nil {
 			t.Fatal(err)
 		}
-		mounts, err := inspectDockerWorkspaceMounts(t.Context(), sb.(*dockerSandbox).name)
+		mounts, err := inspectDockerWorkspace(t.Context(), sb.(*dockerSandbox).name)
 		if err != nil || mounts == nil || mounts.gitTools == "" {
 			t.Fatalf("a newly created Docker workspace must already have its read-only Git mount: %+v, %v", mounts, err)
 		}

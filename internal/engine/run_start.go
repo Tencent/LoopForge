@@ -199,6 +199,9 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	if err != nil {
 		return domain.Run{}, err
 	}
+	if err := e.requireRunnerSandboxVersion(executionContext.ExecutionRunnerID, profile); err != nil {
+		return domain.Run{}, err
+	}
 	if executionContext.SharedScheduleID != "" {
 		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile); err != nil {
 			return domain.Run{}, err

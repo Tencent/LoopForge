@@ -180,6 +180,17 @@ func (r Runner) SupportsGitPlainHTTP() bool {
 
 const RunnerGitPlainHTTPUpgradeMessage = "Git HTTP 仓库需要 Runner " + RunnerVersionGitPlainHTTP + " 或更新版本，请先升级执行机器"
 
+// RunnerVersionPrivilegedSandbox is the first runner that applies the Docker
+// privilege setting in a frozen sandbox profile.
+const RunnerVersionPrivilegedSandbox = "0.12.5"
+
+func (r Runner) ValidateSandboxVersion(profile SandboxProfile) error {
+	if profile.Privileged && !versionAtLeast(r.RunnerVersion, RunnerVersionPrivilegedSandbox) {
+		return fmt.Errorf("特权 Docker 沙箱需要 Runner %s 或更新版本，请先升级执行机器", RunnerVersionPrivilegedSandbox)
+	}
+	return nil
+}
+
 // FilterGitHTTPCredentials limits a credential snapshot to the transports the
 // runner supports. The caller's map may also be used by local execution.
 func (r Runner) FilterGitHTTPCredentials(credentials map[string]GitHTTPExecutionCredential) map[string]GitHTTPExecutionCredential {

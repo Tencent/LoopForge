@@ -105,13 +105,13 @@ func TestFirstIssueInProjectStartsAtOne(t *testing.T) {
 }
 
 func TestNormalizeSandboxProfileKeepsOnlyDriverRelevantFields(t *testing.T) {
-	base := domain.SandboxProfile{ReadOnlyRootFS: true, Environment: map[string]string{"TOOL_MODE": "test"}}
+	base := domain.SandboxProfile{ReadOnlyRootFS: true, Privileged: true, Environment: map[string]string{"TOOL_MODE": "test"}}
 	legacy := normalizeSandboxProfile(func() domain.SandboxProfile { p := base; p.Driver = "local"; return p }())
-	if legacy.Driver != domain.SandboxDriverNative || legacy.ReadOnlyRootFS || legacy.Environment["TOOL_MODE"] != "test" {
+	if legacy.Driver != domain.SandboxDriverNative || legacy.ReadOnlyRootFS || legacy.Privileged || legacy.Environment["TOOL_MODE"] != "test" {
 		t.Fatalf("a legacy local sandbox becomes native with its environment: %+v", legacy)
 	}
 	light := normalizeSandboxProfile(func() domain.SandboxProfile { p := base; p.Driver = "seatbelt"; return p }())
-	if light.ReadOnlyRootFS || light.Driver != domain.SandboxDriverNative {
+	if light.ReadOnlyRootFS || light.Privileged || light.Driver != domain.SandboxDriverNative {
 		t.Fatalf("seatbelt normalization mismatch: %+v", light)
 	}
 	for _, driver := range []string{"bwrap", " native "} {
@@ -126,8 +126,8 @@ func TestNormalizeSandboxProfileKeepsOnlyDriverRelevantFields(t *testing.T) {
 		p.Dockerfile = recipe
 		return p
 	}())
-	if docker.Dockerfile != recipe || !docker.ReadOnlyRootFS {
-		t.Fatalf("docker keeps its Dockerfile: %+v", docker)
+	if docker.Dockerfile != recipe || !docker.ReadOnlyRootFS || !docker.Privileged {
+		t.Fatalf("docker keeps its Dockerfile and options: %+v", docker)
 	}
 	if native := normalizeSandboxProfile(domain.SandboxProfile{Driver: "seatbelt", Dockerfile: recipe, DockerfileID: "runtime"}); native.Dockerfile != nil || native.DockerfileID != "" {
 		t.Fatalf("native drops a Dockerfile: %+v", native)
