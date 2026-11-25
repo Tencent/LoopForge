@@ -975,7 +975,7 @@ func TestExecutorModelsConfiguredFollowsTheCloudPool(t *testing.T) {
 		}}); err != nil {
 		t.Fatal(err)
 	}
-	runs := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	runs := engine.New(st, runtime.NewManager(t.TempDir()))
 	runs.ConfigureCloudRunnerPool(engine.CloudRunnerPool{Label: "pool", Projects: []string{"pool-project"}})
 	assistant.deps.engine = runs
 	handler := &catalogHandlers{deps: assistant.deps}
