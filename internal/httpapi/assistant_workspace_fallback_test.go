@@ -4,55 +4,38 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
 )
 
-func TestConversationWorkspaceStartupFailureFallsBackToPlatform(t *testing.T) {
+func TestConversationWorkspaceStartupRecovery(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		startError  string
-		fromHandoff bool
+		name          string
+		startError    string
+		errorCode     string
+		fromHandoff   bool
+		runnerVersion string
+		wantFailure   string
 	}{
-		{"Docker mount failure during handoff", "docker start: invalid mount configuration", true},
-		{"CLI install timeout in saved workspace", "准备 codebuddy 原生CLI失败：context deadline exceeded", false},
+		{name: "Docker mount failure during handoff on an older runner", startError: "docker start: invalid mount configuration", fromHandoff: true},
+		{name: "CLI install timeout in saved workspace", startError: "准备 codebuddy 原生CLI失败：context deadline exceeded", errorCode: domain.WorkspaceErrorConversationSetup},
+		{name: "runner upgrade required", runnerVersion: domain.RunnerVersionConversationWorkspace, wantFailure: "EXECUTION_MACHINE_UPDATE_REQUIRED"},
+		{name: "shared runner process setup failure", startError: "原生工具审批需要 Python3", errorCode: domain.WorkspaceErrorConversationProcess, wantFailure: "GENERATION_FAILED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, user := workbenchFixture(t)
-			h.sourceRoot = t.TempDir()
-			h.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))
-			h.runnerControls = quietRunnerHub()
+			h, user, target, workspaceID := workspaceStartupFixture(t, tc.runnerVersion)
 			const chatID = "workspace-fallback"
-			const workspaceID = "bound-workspace"
-			const runnerID = "workspace-runner"
 			const question = "请查询当前项目的需求"
-			target := domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runnerID}
-			if err := h.repo.PutRunner(domain.Runner{ID: runnerID, OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionConversationCLI}); err != nil {
-				t.Fatal(err)
-			}
-			if err := h.repo.SetRunnerSharedProjects(runnerID, user.ID, []string{"workbench"}); err != nil {
-				t.Fatal(err)
-			}
-			run := domain.Run{
-				ID: workspaceID, Kind: domain.RunKindWorkspace, Status: "waiting",
-				ExecutionContext: domain.TelemetryContext{
-					ProjectID: "workbench", ExecutionMode: target.Pool, ExecutionRunnerID: runnerID, ResponsibleUserID: user.ID,
-				},
-				WorkflowSnapshot: domain.WorkflowDefinition{
-					ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "docker",
-					SandboxSnapshot: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "docker", Driver: domain.SandboxDriverDocker}},
-				},
-			}
-			if err := h.repo.PutRun(run); err != nil {
-				t.Fatal(err)
-			}
 			conversation := domain.AssistantSession{ID: chatID, ProjectID: "workbench", WorkspaceRunID: workspaceID, ExecutionTarget: &target}
 			if !tc.fromHandoff {
 				conversation.Messages = []assistantMessage{{Role: "user", Content: "旧问题"}, {Role: "assistant", Content: "旧回复"}}
@@ -74,21 +57,13 @@ func TestConversationWorkspaceStartupFailureFallsBackToPlatform(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			h.engine.WorkspaceCheckpointTransport = func(_ context.Context, _ domain.Run, req domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
-				if req.Operation == domain.RunnerWorkspaceOperationPrepare {
-					return domain.RunnerWorkspaceResponse{Status: 200}, nil
-				}
-				return domain.RunnerWorkspaceResponse{Status: 404, Error: "no remote workspace files in fixture"}, nil
-			}
-			t.Cleanup(func() { waitWorkspaceCheckpointSettled(t, h.repo, workspaceID) })
-
 			type cliStart struct {
 				workspace string
 				request   runtime.ConversationProcessRequest
 			}
 			var mu sync.Mutex
 			var starts []cliStart
-			fakeRunnerConnection(t, h.runnerControls, runnerID, func(envelope domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+			fakeRunnerConnection(t, h.runnerControls, target.RunnerID, func(envelope domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
 				var req runtime.ConversationProcessRequest
 				if err := json.Unmarshal(envelope.Conversation, &req); err != nil {
 					return domain.RunnerWorkspaceResponse{Status: 400, Error: err.Error()}
@@ -100,7 +75,7 @@ func TestConversationWorkspaceStartupFailureFallsBackToPlatform(t *testing.T) {
 				case "start":
 					starts = append(starts, cliStart{workspace: envelope.RunID, request: req})
 					if envelope.RunID != "" {
-						return domain.RunnerWorkspaceResponse{Status: 409, Error: tc.startError}
+						return domain.RunnerWorkspaceResponse{Status: http.StatusBadRequest, Error: tc.startError, Code: tc.errorCode}
 					}
 					s, ok := agentToolSessions.get(req.Token)
 					if !ok {
@@ -138,7 +113,19 @@ func TestConversationWorkspaceStartupFailureFallsBackToPlatform(t *testing.T) {
 			if response.Code != 202 {
 				t.Fatalf("start generation: %d %s", response.Code, response.Body.String())
 			}
-			g := waitGeneration(t, h, user.ID, chatID, func(g domain.AssistantGeneration) bool { return g.Status != "" && g.Status != "running" })
+			g := waitGeneration(t, h, user.ID, chatID, func(g domain.AssistantGeneration) bool {
+				return g.Status != "" && g.Status != "running"
+			}, 30*time.Second)
+			saved, _ := h.repo.AssistantSession(user.ID, chatID)
+			if tc.wantFailure != "" {
+				if g.Status != "failed" || g.Failure == nil || g.Failure.Code != tc.wantFailure {
+					t.Fatalf("shared startup failure was lost: %+v", g)
+				}
+				if saved.Mode() != domain.AssistantModeWorkspace || g.RuntimeMode == domain.AssistantModePlatform {
+					t.Fatalf("shared startup failure changed the mode to %q, stream mode %q", saved.Mode(), g.RuntimeMode)
+				}
+				return
+			}
 			if g.Status != "completed" || g.RuntimeMode != domain.AssistantModePlatform || g.WorkspaceRunID != workspaceID ||
 				!strings.Contains(string(g.Reply), "已查询项目需求。") {
 				t.Fatalf("generation did not continue in platform mode: %+v", g)
@@ -148,7 +135,6 @@ func TestConversationWorkspaceStartupFailureFallsBackToPlatform(t *testing.T) {
 			}) {
 				t.Fatal("missing fallback notice in the generation stream")
 			}
-			saved, _ := h.repo.AssistantSession(user.ID, chatID)
 			if saved.Mode() != domain.AssistantModePlatform || saved.WorkspaceRunID != workspaceID || saved.Execution() != target ||
 				len(saved.Messages) != len(conversation.Messages)+2 || saved.Messages[len(saved.Messages)-2].Content != question {
 				t.Fatalf("fallback did not preserve the conversation: %+v", saved)
@@ -187,5 +173,75 @@ func TestConversationWorkspaceStartupFailureFallsBackToPlatform(t *testing.T) {
 				t.Errorf("unexpected user prompt replay with handoff=%t", tc.fromHandoff)
 			}
 		})
+	}
+}
+
+func workspaceStartupFixture(t *testing.T, runnerVersion string) (*assistantHandlers, domain.User, domain.AssistantExecutionTarget, string) {
+	t.Helper()
+	h, user := workbenchFixture(t)
+	h.sourceRoot = t.TempDir()
+	h.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))
+	h.runnerControls = quietRunnerHub()
+	const workspaceID = "bound-workspace"
+	const runnerID = "workspace-runner"
+	if runnerVersion == "" {
+		runnerVersion = domain.RunnerVersionConversationCLI
+	}
+	target := domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runnerID}
+	if err := h.repo.PutRunner(domain.Runner{ID: runnerID, OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: runnerVersion}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.SetRunnerSharedProjects(runnerID, user.ID, []string{"workbench"}); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ID: workspaceID, Kind: domain.RunKindWorkspace, Status: "waiting",
+		ExecutionContext: domain.TelemetryContext{
+			ProjectID: "workbench", ExecutionMode: target.Pool, ExecutionRunnerID: runnerID, ResponsibleUserID: user.ID,
+		},
+		WorkflowSnapshot: domain.WorkflowDefinition{
+			ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "docker",
+			SandboxSnapshot: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "docker", Driver: domain.SandboxDriverDocker}},
+		},
+	}
+	if err := h.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	h.engine.WorkspaceCheckpointTransport = func(_ context.Context, _ domain.Run, req domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+		if req.Operation == domain.RunnerWorkspaceOperationPrepare {
+			return domain.RunnerWorkspaceResponse{Status: http.StatusOK}, nil
+		}
+		return domain.RunnerWorkspaceResponse{Status: http.StatusNotFound, Error: "no remote workspace files in fixture"}, nil
+	}
+	t.Cleanup(func() { waitWorkspaceCheckpointSettled(t, h.repo, workspaceID) })
+	return h, user, target, workspaceID
+}
+
+func TestConversationWorkspaceImageInputFailureDoesNotTriggerFallback(t *testing.T) {
+	h, user, target, workspaceID := workspaceStartupFixture(t, "")
+	root := t.TempDir()
+	session := &AgentToolSession{
+		UserID: user.ID, ChatOwnerID: user.ID, ChatSessionID: "workspace-image", ProjectID: "workbench",
+		ExecutionRunnerID: target.RunnerID, RuntimeMode: domain.AssistantModeWorkspace, workspaceRunID: workspaceID,
+	}
+	fakeRunnerConnection(t, h.runnerControls, target.RunnerID, func(envelope domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+		var req runtime.ConversationProcessRequest
+		if err := json.Unmarshal(envelope.Conversation, &req); err != nil || req.Operation != "prepare" {
+			t.Errorf("unexpected runner request while fitting attachments: %q, %v", req.Operation, err)
+			return domain.RunnerWorkspaceResponse{Status: http.StatusBadRequest, Error: "unexpected operation"}
+		}
+		payload, _ := json.Marshal(runtime.ConversationProcessResult{Root: root})
+		return domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: payload}
+	})
+	input := &assistantLimitedImageInput{
+		Buffer: bytes.NewBufferString("image input"), limit: 1, prompt: strings.Repeat("x", 1<<20),
+	}
+	command := runtime.CommandSpec{Argv: []string{"claude"}, Provider: assistantEngineClaude, Stdin: input}
+	_, err := h.conversationExecutor(session, root)(t.Context(), "", command, runtime.RunCredentials{}, nil)
+	if !errors.Is(err, runtime.ErrConversationNotStarted) || !strings.Contains(err.Error(), "Claude Code 输入超过限制") {
+		t.Fatalf("expected the original pre-launch input failure, got %v", err)
+	}
+	if assistantWorkspaceStartupFailed(t.Context(), err) {
+		t.Fatalf("shared image input failure triggered workspace fallback: %v", err)
 	}
 }

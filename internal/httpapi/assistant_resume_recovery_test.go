@@ -131,14 +131,18 @@ func TestPhaseProgressIgnoresStatusOnly(t *testing.T) {
 
 func TestWorkspaceFallbackRequiresConfirmedStartFailure(t *testing.T) {
 	ctx := context.Background()
-	timeout := fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, context.DeadlineExceeded)
+	timeout := conversationNotStarted(context.DeadlineExceeded, true)
 	if !assistantWorkspaceStartupFailed(ctx, timeout) {
 		t.Fatal("a CLI setup deadline must allow recovery while the turn is live")
 	}
 	for _, err := range []error{
 		context.DeadlineExceeded,
-		fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, errAssistantExecutionUnavailable),
-		fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, errAssistantRunnerAccessRevoked),
+		&runtime.ConversationWorkspaceSetupError{Cause: context.DeadlineExceeded},
+		conversationNotStarted(context.DeadlineExceeded, false),
+		conversationNotStarted(&runtime.ConversationStateError{Message: "shared conversation state"}, true),
+		conversationNotStarted(errAssistantExecutionUnavailable, true),
+		conversationNotStarted(errAssistantRunnerAccessRevoked, true),
+		conversationNotStarted(errRunnerWorkspaceUnavailable, true),
 	} {
 		if assistantWorkspaceStartupFailed(ctx, err) {
 			t.Fatalf("attempted fallback for %v", err)

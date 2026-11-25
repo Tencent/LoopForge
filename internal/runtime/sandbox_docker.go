@@ -141,7 +141,7 @@ func DockerReady() bool {
 
 func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
 	if err := s.ensureStarted(ctx); err != nil {
-		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, &ConversationWorkspaceSetupError{Cause: err})
 	}
 	s.execGate.RLock()
 	out, err := s.execOnce(ctx, command, sink)
