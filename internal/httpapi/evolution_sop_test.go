@@ -348,10 +348,10 @@ func TestEvolutionSOPAutoBatchTriggersWithoutSavedPolicyAndWithSharedKey(t *test
 	}
 
 	// Do NOT save an evo_sop_policies row: SOP defaults to Enabled=true, BatchSize=10.
-	// Also seed an older failed proposal to confirm it does not discard accumulated runs.
+	// Verify failed proposal error is surfaced in SOP summary lastRunNote so UI does not stay silent.
 	if err := env.store.PutEvoProposal(domain.EvoProposal{
 		ID: "evp-old-failed", ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
-		AssetName: env.agent.Name, Title: "旧失败提案", Status: domain.EvoProposalFailed,
+		AssetName: env.agent.Name, Title: "旧失败提案", Status: domain.EvoProposalFailed, Error: "测试失败原因",
 		CreatedAt: now.Add(-30 * time.Minute), UpdatedAt: now.Add(-25 * time.Minute),
 	}); err != nil {
 		t.Fatal(err)

@@ -192,6 +192,18 @@ const { createDOM } = require('./hui_fake_dom');
   assert.match(chatChangeHTML, /Chatbot 修复后的新指令/);
   assert.match(chatChangeHTML, /evo-sop-split-diff/);
 
+  // 2c. Failed last proposal surfaces error reason & retry action on detail callout instead of silent monitor state.
+  const failedDetail = {
+    ...detailPayload,
+    stage: 'monitor',
+    activeProposal: null,
+    lastProposal: { id: 'evp-fail-1', status: 'failed', error: '改进器调用失败：模型未配置' },
+  };
+  const failHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'versions', metric: 'score', detail: failedDetail });
+  assert.match(failHTML, /上次优化未通过/);
+  assert.match(failHTML, /改进器调用失败：模型未配置/);
+  assert.match(failHTML, /重试优化/);
+
   // 3. Preference dialog renders P1/P2 priority badges, supports up/down reorder & presets, and binds real model picker.
   dom.html(`<section id="evolutionView" class="active"><header id="evoPageHead"><button data-evo-tab="assets">进化设置</button><button id="evoRefresh">刷新</button><button id="evoDiagnose">发起诊断</button></header><div id="evoMetrics"></div><div id="evolutionBody">${homeHTML}</div></section>`);
   api.evoSOPOpenPrefDialog('wf-bug');

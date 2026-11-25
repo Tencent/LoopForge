@@ -71,7 +71,7 @@ func currentEvoImprove() evoImproveFunc {
 		return evoImproveOverride
 	}
 	return func(ctx context.Context, p domain.EvoProposal, system, prompt string, user domain.User) (string, error) {
-		raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{Prompt: prompt, Model: p.Model, SystemPrompt: system, UserID: user.ID}, user, func(assistantStreamEvent) {})
+		raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{Prompt: prompt, Model: p.Model, SystemPrompt: system, UserID: user.ID, ReviewOnly: true}, user, func(assistantStreamEvent) {})
 		return raw, err
 	}
 }

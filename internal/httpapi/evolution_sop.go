@@ -192,13 +192,20 @@ func (h *evolutionHandlers) triggerProjectSOPBatches(projectID string, hintUserI
 			log.Printf("evolution sop project batch trigger panic: %v", r)
 		}
 	}()
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return
+	}
 	h.sopBatchM.Lock()
 	now := time.Now().UTC()
-	if now.Sub(h.sopBatchAt) < 10*time.Second {
+	if h.sopProjectRunAt == nil {
+		h.sopProjectRunAt = map[string]time.Time{}
+	}
+	if prev, ok := h.sopProjectRunAt[projectID]; ok && now.Sub(prev) < 10*time.Second {
 		h.sopBatchM.Unlock()
 		return
 	}
-	h.sopBatchAt = now
+	h.sopProjectRunAt[projectID] = now
 	h.sopBatchM.Unlock()
 	h.sweepProjectSOPBatches(projectID, hintUserID, now)
 }
@@ -301,12 +308,14 @@ func (h *evolutionHandlers) checkSOPBatchAutoTriggerWithRuns(policy domain.EvoSO
 	}
 	pending := countSOPPendingRuns(sopRuns, sopProposals, policy.BatchSize)
 	if pending < policy.BatchSize {
+		log.Printf("evolution sop auto-batch %s/%s waiting: %d/%d pending runs (total window runs=%d)", policy.ProjectID, wf.ID, pending, policy.BatchSize, len(sopRuns))
 		return
 	}
 	// If the most recent proposal failed without any newer run since then, respect
 	// a brief cooldown to avoid tight failure loops while still recovering automatically.
 	if last != nil && last.Status == domain.EvoProposalFailed && len(sopRuns) > 0 && !sopRuns[0].CreatedAt.After(last.UpdatedAt) {
 		if now.Sub(last.UpdatedAt) < evoSOPFailedRetryCooldown {
+			log.Printf("evolution sop auto-batch %s/%s in cooldown after failed proposal %s (%s)", policy.ProjectID, wf.ID, last.ID, last.Error)
 			return
 		}
 	}
@@ -467,6 +476,12 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 		}
 		targetAsset = asset
 		targetFinding = f
+		for _, node := range wf.Nodes {
+			if asset.Kind == domain.EvoAssetAgent && node.AgentID == asset.ID {
+				targetNodeID = node.ID
+				break
+			}
+		}
 		break
 	}
 
@@ -898,6 +913,15 @@ func (h *evolutionHandlers) computeSOPSummary(
 	}
 
 	lastNote := evolution.LastRunSummaryNote(lastRun, sopSignals, lastDetection)
+	if stage == domain.EvoSOPStageMonitor && last != nil && last.Status == domain.EvoProposalFailed {
+		if lastRun == nil || !lastRun.CreatedAt.After(last.UpdatedAt) {
+			reason := strings.TrimSpace(last.Error)
+			if reason == "" {
+				reason = "优化生成或回放未通过"
+			}
+			lastNote = "上次优化失败 · " + domain.TrimEvoText(reason, 56)
+		}
+	}
 	if latestEdit := h.latestSOPExternalEdit(assetKeys); latestEdit != nil {
 		if lastRun == nil || latestEdit.CreatedAt.After(lastRun.CreatedAt) {
 			src := "手动修改"

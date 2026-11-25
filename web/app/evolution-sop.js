@@ -658,6 +658,35 @@ function evoSOPCalloutHTML(d) {
       </div>
     </div>`;
   }
+  if (d.stage === 'monitor') {
+    const last = d.lastProposal;
+    if (last?.status === 'failed') {
+      const reason = last.error || last.summary?.verdict || '优化生成或回放未通过';
+      return `<div class="evo-sop-callout is-warn" role="status">
+        <div><strong>上次优化未通过</strong><p>${escapeHTML(reason)}</p></div>
+        <div class="evo-sop-callout-actions">
+          ${last.id ? `<button type="button" class="kb-btn quiet small" data-evo-proposal="${escapeHTML(last.id)}">查看失败详情</button>` : ''}
+          <button type="button" class="kb-btn primary small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}">重试优化</button>
+        </div>
+      </div>`;
+    }
+    const batchSize = Number(d.batchSize) || 10;
+    const pending = Number(d.pendingRuns) || 0;
+    const totalRuns = Number(d.latestMetrics?.runs) || 0;
+    if (pending >= batchSize) {
+      return `<div class="evo-sop-callout is-ready" role="status">
+        <div><strong>本轮已达触发阈值（${pending}/${batchSize} 次）</strong><p>系统将在后台自动发起优化；若未自动启动，可点击右侧按钮立即触发并查看具体提示。</p></div>
+        <div class="evo-sop-callout-actions">
+          <button type="button" class="kb-btn primary small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}">立即发起优化</button>
+        </div>
+      </div>`;
+    }
+    if (totalRuns >= batchSize && pending < batchSize) {
+      return `<div class="evo-sop-callout is-muted" role="status">
+        <div><strong>本轮待积累新运行（${pending}/${batchSize} 次）</strong><p>此前已有结束的提案，新运行累计达到 ${batchSize} 次后将自动进入优化，也可直接手动发起。</p></div>
+      </div>`;
+    }
+  }
   return '';
 }
 
