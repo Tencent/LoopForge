@@ -1953,6 +1953,32 @@ function openArtifactPreview({title,icon,details,url,action,download=false,loadi
   }else modal.querySelector('.artifact-close').focus();
   return artifactPreviewRequest.signal;
 }
+/** 页面内预览会整份读入并渲染正文，超过 5 MiB 的产物只提供下载。 */
+const ARTIFACT_PREVIEW_MAX_BYTES=5*1024*1024;
+function artifactHasBinaryType(artifact){
+  const type=String(artifact?.mediaType||'').split(';')[0].trim().toLowerCase();
+  return (type.startsWith('image/')&&type!=='image/svg+xml')||type.startsWith('audio/')||type.startsWith('video/')||
+    ['application/octet-stream','application/pdf','application/zip','application/x-zip-compressed',
+      'application/gzip','application/x-gzip','application/x-tar','application/x-7z-compressed'].includes(type);
+}
+/** 未声明类型的产物会登记为 Markdown，因此按正文判断二进制：含 NUL，或开头有大量无法解码的字符。 */
+function artifactLooksBinary(content){
+  if(content.includes('\u0000'))return true;
+  const head=content.slice(0,65536);
+  return (head.match(/\uFFFD/g)||[]).length>head.length*0.1;
+}
+function artifactDownloadName(artifact){
+  return String(artifact?.path||'').split('/').pop()||artifact?.name||'artifact.txt';
+}
+/** 通过产物地址下载原始字节，二进制文件不会经过文本解码。 */
+function downloadArtifactFile(url,artifact){
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=artifactDownloadName(artifact);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 async function previewArtifact(run,artifactId,opener){
   const artifact=(run.artifacts||[]).find(a=>a.id===artifactId);
   if(!artifact)return;
@@ -1963,10 +1989,31 @@ async function previewArtifact(run,artifactId,opener){
     url,action:'在新窗口打开 ↗',loading:'正在加载交付物…',opener,
   });
   try{
+    const renderDownloadOnly=reason=>{
+      const sizeKB=Math.max(1,Math.ceil((artifact.size||0)/1024));
+      const size=sizeKB>=1024?`${(sizeKB/1024).toFixed(1)} MB`:`${sizeKB} KB`;
+      host.innerHTML=`
+        <div class="artifact-preview-toolbar">
+          <div class="artifact-toolbar-left">
+            <div class="artifact-evidence-badges">
+              <span>SHA-256: <code>${escapeHTML((artifact.sha256||'—').slice(0, 16))}…</code></span>
+              <span>${size}</span>
+            </div>
+          </div>
+          <div class="artifact-toolbar-right">
+            <button type="button" class="button ghost small" data-download-artifact>⬇ 下载文件</button>
+          </div>
+        </div>
+        <div class="empty-properties"><b>此文件不在页面内预览</b><p>${escapeHTML(reason)}</p></div>`;
+      host.querySelector('[data-download-artifact]').onclick=()=>downloadArtifactFile(url,artifact);
+    };
+    if((artifact.size||0)>ARTIFACT_PREVIEW_MAX_BYTES){renderDownloadOnly('文件超过 5 MiB，请下载后查看。');return}
+    if(artifactHasBinaryType(artifact)){renderDownloadOnly('此类型请下载后查看。');return}
     const res=await fetch(url,{signal});
     if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const content=await res.text();
     if(signal.aborted)return;
+    if(artifactLooksBinary(content)){renderDownloadOnly('无法按文本显示，请下载后查看。');return}
     const isMd=isMarkdownArtifact(artifact, content);
     $('#artifactPreviewHeading .artifact-preview-icon').textContent=isMd?'MD':'{}';
     let viewMode=isMd?'preview':'source';
@@ -2005,16 +2052,7 @@ async function previewArtifact(run,artifactId,opener){
       });
 
       host.querySelector('[data-copy-artifact]').onclick=()=>copyText(content, '产物内容已复制到剪贴板');
-
-      host.querySelector('[data-download-artifact]').onclick=()=>{
-        const blob=new Blob([content], {type: artifact.mediaType || 'text/plain'});
-        const url=URL.createObjectURL(blob);
-        const a=document.createElement('a');
-        a.href=url;
-        a.download=artifact.name || 'artifact.txt';
-        a.click();
-        URL.revokeObjectURL(url);
-      };
+      host.querySelector('[data-download-artifact]').onclick=()=>downloadArtifactFile(url,artifact);
 
       host.querySelectorAll('.md-code-copy').forEach(b=>{
         b.onclick=()=>{

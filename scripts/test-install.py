@@ -44,6 +44,8 @@ class InstallerTests(unittest.TestCase):
             '043_loop_terminology.sql',
         ):
             (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
+        artifact_migration = '042_run_artifacts_content_mediumtext.sql'
+        shutil.copyfile(ROOT / 'migrations' / artifact_migration, self.root / 'migrations' / artifact_migration)
         (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
