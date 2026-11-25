@@ -19,6 +19,7 @@ const (
 	SignalRework       = "rework"
 	SignalEvalLow      = "eval_low"
 	SignalUserFeedback = "user_feedback"
+	SignalSOPDetection = "sop_detection"
 )
 
 // DiagnoseInput is everything diagnosis needs, already loaded by the caller.
@@ -29,7 +30,8 @@ type DiagnoseInput struct {
 	// Evolution replays must already be excluded.
 	Runs []domain.Run
 	// Evals holds the latest finished Run Eval per run ID.
-	Evals map[string]domain.RunEvalRecord
+	Evals         map[string]domain.RunEvalRecord
+	SOPDetections map[string]domain.RunEvalRecord
 	// Feedback holds explicit user feedback signals.
 	Feedback []domain.EvoSignal
 	// Agent resolves an evolvable stored role; generic templates return false.
@@ -47,15 +49,16 @@ type DiagnoseInput struct {
 }
 
 type assetBucket struct {
-	ref       domain.EvoAssetRef
-	name      string
-	hash      string
-	signals   []domain.EvoSignal
-	runs      map[string]int // run ID -> worst signal weight
-	workflows map[string]bool
-	failures  int
-	reworks   int
-	feedbacks int
+	ref        domain.EvoAssetRef
+	name       string
+	hash       string
+	signals    []domain.EvoSignal
+	runs       map[string]int // run ID -> worst signal weight
+	workflows  map[string]bool
+	failures   int
+	reworks    int
+	feedbacks  int
+	detections int
 	// triage tallies
 	exposed  map[string]time.Time // runs on the current version -> run time
 	problems map[string]float64   // run ID -> problem weight (max over signals)
@@ -81,7 +84,7 @@ func signalWeight(kind string) int {
 	switch kind {
 	case SignalNodeFailed:
 		return 3
-	case SignalEvalLow, SignalUserFeedback:
+	case SignalEvalLow, SignalUserFeedback, SignalSOPDetection:
 		return 2
 	default:
 		return 1
@@ -168,6 +171,8 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 			b.reworks++
 		case SignalUserFeedback:
 			b.feedbacks++
+		case SignalSOPDetection:
+			b.detections++
 		}
 	}
 	exposeAgent := func(agent domain.AgentDefinition, run domain.Run) *assetBucket {
@@ -209,6 +214,20 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 			}
 			if nr.ReworkCount > 0 {
 				add(b, run.WorkflowID, domain.EvoSignal{RunID: run.ID, NodeID: node.ID, Kind: SignalRework, Detail: domain.TrimEvoText(firstText(nr.Feedback, fmt.Sprintf("被打回 %d 次", nr.ReworkCount)), 400), CreatedAt: at})
+			}
+		}
+		if detection, ok := in.SOPDetections[run.ID]; ok {
+			for _, finding := range detection.Result.Findings {
+				node, found := nodeByID(wf, finding.NodeID)
+				if !found || !agentNode(node) {
+					continue
+				}
+				if agent, ok := resolveAgent(in, wf, node.AgentID); ok {
+					add(exposeAgent(agent, run), run.WorkflowID, domain.EvoSignal{
+						RunID: run.ID, NodeID: node.ID, Kind: SignalSOPDetection,
+						Detail: domain.TrimEvoText(finding.Message, 400), CreatedAt: detection.FinishedAt,
+					})
+				}
 			}
 		}
 		if eval, ok := in.Evals[run.ID]; ok && eval.Status == domain.RunEvalSucceeded && !eval.Passed {
@@ -261,7 +280,7 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 		b := buckets[key]
 		// Explicit human feedback is actionable evidence even when the run
 		// succeeded. Keep the repetition threshold for automatic signals only.
-		if b.failures == 0 && b.feedbacks == 0 && len(b.signals) < 2 {
+		if b.failures == 0 && b.feedbacks == 0 && b.detections == 0 && len(b.signals) < 2 {
 			continue
 		}
 		out = append(out, b.finding(in, baseline))
@@ -321,7 +340,10 @@ func (b *assetBucket) finding(in DiagnoseInput, baseline float64) domain.EvoFind
 	if b.reworks > 0 {
 		parts = append(parts, fmt.Sprintf("%d 次被打回", b.reworks))
 	}
-	other := len(b.signals) - b.failures - b.reworks
+	if b.detections > 0 {
+		parts = append(parts, fmt.Sprintf("%d 条 SOP 自动检测问题", b.detections))
+	}
+	other := len(b.signals) - b.failures - b.reworks - b.detections
 	if other > 0 {
 		parts = append(parts, fmt.Sprintf("%d 条评测/反馈问题", other))
 	}

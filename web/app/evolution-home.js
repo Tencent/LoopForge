@@ -161,3 +161,51 @@ document.addEventListener('click',event=>{
   if(button.hasAttribute('data-evo-home-check'))return evoDiagnose(button);
   switchView('runs');
 });
+
+function evoSOPDetectionHTML(){
+  const setting=evo.overview?.sopDetection;
+  return `<form id="evoSOPDetection" class="evo-sop-detection kb-panel" aria-label="SOP 自动检测设置">
+    <label class="evo-sop-setting">
+      <span><b>SOP 自动检测</b><small>新运行结束后检查重复步骤、工具反复使用和调用失败。</small></span>
+      <input type="checkbox" name="enabled" role="switch" aria-label="SOP 自动检测"${setting?.enabled?' checked':''}>
+    </label>
+    <div class="evo-sop-setting">
+      <span><b>检测模型</b><small>使用保存设置的账号配置。</small></span>
+      <fieldset class="evo-sop-model"${setting?.enabled?'':' disabled'}>${window.AgentFlowAssistantModels?.featurePickerHTML('model')||''}</fieldset>
+    </div>
+    <footer><span data-evo-detection-status role="status"></span><button type="submit" class="kb-btn small" disabled>保存</button></footer>
+  </form>`;
+}
+function evoBindSOPDetection(form){
+  if(!form)return;
+  const pid=evo.projectId,setting=evo.overview?.sopDetection||{},enabled=form.elements.enabled;
+  const model=form.querySelector('[data-feature-model]'),submit=form.querySelector('[type=submit]');
+  const status=form.querySelector('[data-evo-detection-status]');
+  const picker=form.querySelector('.evo-sop-model');
+  let changed=false,pending=false;
+  const refresh=()=>{
+    picker.disabled=pending||!enabled.checked;
+    submit.disabled=pending||!changed||(enabled.checked&&!model?.value);
+  };
+  enabled.onchange=()=>{changed=true;status.textContent='';refresh()};
+  window.AgentFlowAssistantModels?.bindFeaturePicker(picker,{
+    model:setting.model||'',keepSaved:true,onChange:()=>{changed=true;status.textContent='';refresh()}
+  })?.then(refresh);
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    if(submit.disabled||pid!==evoProjectId())return;
+    pending=true;refresh();enabled.disabled=true;
+    try{
+      const next=await api(`/api/evolution/sop-detection?projectId=${encodeURIComponent(pid)}`,{
+        method:'PUT',body:JSON.stringify({enabled:enabled.checked,model:model?.value||''})
+      });
+      if(!form.isConnected||pid!==evoProjectId())return;
+      evo.overview.sopDetection=next;
+      changed=false;status.textContent='已保存';enabled.checked=next.enabled;
+    }catch(err){
+      if(form.isConnected)status.textContent=err.message;
+    }finally{
+      pending=false;enabled.disabled=false;refresh();
+    }
+  };
+}

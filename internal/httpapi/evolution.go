@@ -52,6 +52,7 @@ func newEvolutionHandlers(d *deps) *evolutionHandlers {
 func registerEvolutionRoutes(g *gin.Engine, h *evolutionHandlers) {
 	g.GET("/api/evolution/overview", h.overview)
 	g.POST("/api/evolution/diagnose", h.diagnose)
+	g.PUT("/api/evolution/sop-detection", h.putSOPDetection)
 	g.GET("/api/evolution/findings", h.findings)
 	g.GET("/api/evolution/findings/:id/runs", h.findingRuns)
 	g.POST("/api/evolution/findings/:id/dismiss", h.dismissFinding)
@@ -176,6 +177,9 @@ func (h *evolutionHandlers) overview(c *gin.Context) {
 	}
 	days := evoWindowDays(c.Query("days"))
 	out := domain.EvoOverview{ProjectID: projectID, WindowDays: days, GeneratedAt: time.Now().UTC(), AutoEnabled: evolutionAutoEnabled()}
+	if project, ok := h.repo.Project(projectID); ok && project.SOPDetection != nil {
+		out.SOPDetection = domain.EvoSOPDetectionSetting{Enabled: project.SOPDetection.Enabled, Model: project.SOPDetection.Model}
+	}
 	out.Findings = h.repo.EvoFindings(projectID, domain.EvoFindingOpen)
 	out.Queue = h.repo.EvoQueue(projectID)
 	out.Validating = evoProposalListView(h.repo.EvoProposals(projectID, 50, domain.EvoProposalDrafting, domain.EvoProposalValidating))
@@ -371,21 +375,24 @@ func (h *evolutionHandlers) diagnose(c *gin.Context) {
 // diagnoseInput loads evals, feedback and version pins for a diagnosis.
 func (h *evolutionHandlers) diagnoseInput(projectID string, days int, runs []domain.Run, level func(kind, id string) int) evolution.DiagnoseInput {
 	evals := map[string]domain.RunEvalRecord{}
+	ids := make([]string, 0, len(runs))
 	for _, run := range runs {
+		ids = append(ids, run.ID)
 		if rec, ok := h.repo.LatestRunEval(run.ID); ok && rec.Status == domain.RunEvalSucceeded {
 			evals[run.ID] = rec
 		}
 	}
 	return evolution.DiagnoseInput{
-		ProjectID:  projectID,
-		Runs:       runs,
-		Evals:      evals,
-		Feedback:   h.repo.EvoSignals(projectID, time.Now().UTC().AddDate(0, 0, -days)),
-		Agent:      h.evolvableAgent,
-		Rule:       h.repo.Rule,
-		Level:      level,
-		WindowDays: days,
-		Pins:       h.repo.RunAssetPins,
+		ProjectID:     projectID,
+		Runs:          runs,
+		Evals:         evals,
+		SOPDetections: h.repo.SOPDetectionEvaluations(ids),
+		Feedback:      h.repo.EvoSignals(projectID, time.Now().UTC().AddDate(0, 0, -days)),
+		Agent:         h.evolvableAgent,
+		Rule:          h.repo.Rule,
+		Level:         level,
+		WindowDays:    days,
+		Pins:          h.repo.RunAssetPins,
 	}
 }
 
@@ -602,6 +609,7 @@ func (h *evolutionHandlers) proposal(c *gin.Context) {
 	if !h.requireProjectReader(c, p.ProjectID) {
 		return
 	}
+	h.loadHistoricalReplayMeasurements(&p)
 	c.JSON(http.StatusOK, evoProposalView(p, false))
 }
 

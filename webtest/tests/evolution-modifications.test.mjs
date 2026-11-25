@@ -28,7 +28,7 @@ test('linked issue shows real modification, escaped side-by-side diff and confir
   assert.equal(app.router.calls.filter(c => c.path === '/api/evolution/proposals/change-1').length, 0, 'list does not fetch full bodies');
   $('[data-evo-asset-group]').click(); await settle(5);
   assert.equal($('#evoDetailPage [data-evo-propose]'), null, 'do not offer another proposal when linked');
-  assert.match($('#evoLinkedChange').textContent, /原指令.*AI 修改稿/s);
+  assert.match($('#evoLinkedChange').textContent, /指令修改.*完整 Diff/s);
   assert.equal($('#evoDetailPage img'), null);
   assert.match($('#evoLiveVersion').getAttribute('data-tooltip')||$('#evoLiveVersion').textContent, /当前正文与修改前快照一致/);
   assert.equal(app.document.querySelectorAll('.evo-detail-track li').length,6);
@@ -36,7 +36,7 @@ test('linked issue shows real modification, escaped side-by-side diff and confir
   assert.equal($('#evoEvidenceDialog').open, false);
   assert.match($('#evoReviewDiff').textContent, /校验必填参数 <img src=x onerror=alert\(1\)>/);
   assert.equal($('#evoReviewDiff img'), null);
-  assert.ok($('#evoReviewDiff .evo-diff-line.add'));
+  assert.ok($('#evoReviewDiff .evo-diff-preview-line.add'));
   assert.ok($('#evoEvidenceBody'));
   assert.equal($('#evoPageHead').hidden, true);
   assert.doesNotMatch($('#evoLinkedChange').textContent, /问题未再出现/);
@@ -130,7 +130,7 @@ test('reopened finding retains historical diff and can generate a new suggestion
   const button = app.document.querySelector('#evoDetailActions [data-evo-propose]');
   assert.equal(button.dataset.evoPropose, finding.id);
   assert.equal(button.disabled, false);
-  assert.ok(app.document.querySelector('.evo-before-after'));
+  assert.ok(app.document.querySelector('.evo-diff-preview-line'));
   assert.match(button.textContent, /重新生成修改建议/);
 });
 
@@ -378,13 +378,13 @@ test('modification summary contains only real removed and added lines and treats
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/change-1', body: changed }] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app); $('[data-evo-asset-group]').click(); await settle(5);
-  assert.equal($('#evoReviewDiff .evo-diff-line.del code').textContent, '旧要求');
-  assert.equal($('#evoReviewDiff .evo-diff-line.add code').textContent, '新要求 <img src=x onerror=alert(1)>');
+  assert.equal($('#evoReviewDiff .evo-diff-preview-line.del code').textContent, '旧要求');
+  assert.equal($('#evoReviewDiff .evo-diff-preview-line.add code').textContent, '新要求 <img src=x onerror=alert(1)>');
   assert.doesNotMatch($('#evoReviewDiff').textContent, /保留内容|模型理由/);
   assert.equal($('#evoReviewDiff img'), null);
   app.router.get('/api/evolution/proposals/change-1', { ...changed, candidateContent: changed.baseContent });
   $('[data-evo-detail-refresh]').click(); await settle(5);
-  assert.equal($('#evoReviewDiff .evo-diff-line.add, #evoReviewDiff .evo-diff-line.del'),null);
+  assert.equal($('#evoReviewDiff .evo-diff-preview-line.add, #evoReviewDiff .evo-diff-preview-line.del'),null);
   assert.doesNotMatch($('#evoReviewDiff').textContent, /仅补充要求|仅移除部分要求/);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });

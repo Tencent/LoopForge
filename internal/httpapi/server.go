@@ -119,7 +119,7 @@ func (b *Background) gate() <-chan struct{} {
 // caller's shutdown context. The returned stop function cancels and joins them.
 // Cancelling ctx stops claiming; running work is only cancelled by Stop.
 func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, opts BackgroundOptions) (*gin.Engine, *Background) {
-	bg := &Background{recoveryGate: opts.RecoveryGate}
+	bg := &Background{recoveryGate: opts.RecoveryGate, sopDetectionContext: ctx}
 	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
 		h.startSessionJanitor(ctx)
 		h.startAttachmentSweeper(ctx)
@@ -209,6 +209,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	}
 	api.runners.startRunnerSweeper()
 	runAfterGate(bg.gate(), api.evolution.startReplayMonitor)
+	if bg != nil && bg.sopDetectionContext != nil {
+		go api.evolution.monitorSOPDetection(bg.sopDetectionContext, bg.gate())
+	}
 	runAfterGate(bg.gate(), stream.recoverClarifyJobs)
 	g := gin.New()
 	g.HandleMethodNotAllowed = true

@@ -238,7 +238,7 @@ test('clicking a history cell opens a short summary and restores focus when clos
   await settle(7);
   assert.equal(app.document.querySelectorAll('.evo-detail-track li').length, 6);
   assert.match($('.evo-detail-track [aria-current="step"]').textContent, /小范围试用[\s\S]+待确认试用/);
-  assert.match($('.evo-story-validation-summary').textContent,/原运行成功 1\/2[\s\S]+回放成功 2\/2/);
+  assert.match($('#evoStoryEffects').textContent,/2\/2 条可对比[\s\S]+50%[\s\S]+100%/);
   assert.doesNotMatch($('#evoValidationResults').textContent,/试用|流量/);
   assert.equal($('#evoRolloutDetails'),null);
   assert.doesNotMatch($('#evoDetailBody').textContent,/来源记录与诊断|试用、发布与观察/);
@@ -247,8 +247,9 @@ test('clicking a history cell opens a short summary and restores focus when clos
   assert.equal($('#kbDrawer [data-evo-stage="canary"]').getAttribute('aria-selected'),'true');
   assert.match($('#evoStagePanel').textContent,/可以开始小范围试用/);
   app.evaluate('evoDrawerClose()');
-  assert.equal($('#evoReviewDiff .evo-before-after section:first-child .evo-split-number').textContent,'2');
-  $('[data-evo-diff-split]').click();
+  assert.equal($('#evoReviewDiff .evo-diff-preview-line.del span').textContent,'2');
+  $('[data-evo-diff-expand]').click();
+  $('[data-evo-diff-context]').click();
   const cells = [...$('#evoFullChange .evo-diff-numbered .ctx:last-child').querySelectorAll('.evo-diff-number')];
   assert.deepEqual(cells.map(el => el.textContent), ['3', '4']);
   assert.equal($('#evoEvidenceDialog').open,false);
@@ -283,4 +284,36 @@ test('clicking a history cell opens a short summary and restores focus when clos
   assert.equal(app.document.activeElement.dataset.evoEvidenceClose,'');
   assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length,2);
   assert.equal(app.router.calls.some(call => call.method !== 'GET'), false);
+});
+
+test('SOP detection settings save one project switch and the selected model', async t => {
+  const app = await loadApp({ routes: [...routes,
+    { method: 'GET', path: '/api/assistant/models', body: {
+      engines: [{ id: 'codebuddy', name: 'CodeBuddy', personal: true }],
+      models: [{ id: 'codebuddy:claude-sonnet-5', name: 'Sonnet' }, { id: 'codebuddy:deepseek-v4', name: 'DeepSeek' }]
+    } },
+    { method: 'PUT', path: '/api/evolution/sop-detection?projectId=project-1', body: { enabled: true, model: 'codebuddy:deepseek-v4' } },
+  ] });
+  t.after(app.close);
+  await open(app);
+  app.document.querySelector('#evoPageHead [data-evo-tab="assets"]').click();
+  await settle(6);
+  const form = app.document.querySelector('#evoSOPDetection');
+  const toggle = form.querySelector('[role=switch]');
+  const model = form.querySelector('[data-feature-model]');
+  const save = form.querySelector('[type=submit]');
+  assert.equal(form.querySelectorAll('[role=switch]').length, 1);
+  assert.equal(toggle.checked, false);
+  assert.equal(model.closest('fieldset').disabled, true);
+  assert.equal(save.disabled, true);
+  toggle.click();
+  assert.equal(model.closest('fieldset').disabled, false);
+  model.value = 'codebuddy:deepseek-v4';
+  model.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  assert.equal(save.disabled, false);
+  save.click();
+  await settle(4);
+  const call = app.router.calls.find(item => item.method === 'PUT' && item.path === '/api/evolution/sop-detection');
+  assert.deepEqual(call?.body, { enabled: true, model: 'codebuddy:deepseek-v4' });
+  assert.equal(form.querySelector('[role=status]').textContent, '已保存');
 });

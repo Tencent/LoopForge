@@ -72,12 +72,13 @@ func (t *inflightTracker) Wait(ctx context.Context) error {
 // Background controls the API process's autonomous work during shutdown or
 // handover: StopClaiming → WaitInflight → Stop.
 type Background struct {
-	recoveryGate   <-chan struct{}
-	scheduler      *schedule.Service
-	runnerControls *runnerControlHub
-	handedOver     atomic.Bool
-	stopOnce       sync.Once
-	claimOnce      sync.Once
+	sopDetectionContext context.Context
+	recoveryGate        <-chan struct{}
+	scheduler           *schedule.Service
+	runnerControls      *runnerControlHub
+	handedOver          atomic.Bool
+	stopOnce            sync.Once
+	claimOnce           sync.Once
 }
 
 // BackgroundOptions tunes startup of a process that may be replacing another.

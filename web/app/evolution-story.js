@@ -48,26 +48,59 @@ const EVO_STORY_OUTCOMES=[
   ['blocked','阻塞','warn','alert']
 ];
 function evoStoryHasScore(score){return Number.isInteger(score)&&score>=0&&score<EVO_SCORES.length}
+function evoStoryEffectHTML(p){
+  const rows=p?.replays||[];
+  if(!rows.length)return '';
+  const pairs=rows.filter(r=>evoTime(r.finishedAt)&&r.outcome&&r.outcome!=='blocked'&&
+    evoStoryHasScore(r.sourceScore)&&evoStoryHasScore(r.score));
+  const number=value=>new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value);
+  const token=value=>value>=1000?`${number(value/1000)}k`:number(value);
+  const duration=ms=>{
+    const seconds=ms/1000;
+    return seconds<60?`${number(seconds)}s`:`${Math.floor(seconds/60)}m ${Math.floor(seconds%60)}s`;
+  };
+  const metrics=[
+    ['一次成功率',r=>Number(r.sourceScore===2),r=>Number(r.score===2),n=>`${number(n*100)}%`,true],
+    ['平均 Token',r=>r.sourceMeasurements?.tokens,r=>r.replayMeasurements?.tokens,token],
+    ['平均工具调用',r=>r.sourceMeasurements?.toolCalls,r=>r.replayMeasurements?.toolCalls,n=>`${number(n)} 次`],
+    ['平均执行耗时',r=>r.sourceMeasurements?.executionMs,r=>r.replayMeasurements?.executionMs,duration]
+  ];
+  const average=values=>values.reduce((sum,n)=>sum+n,0)/values.length;
+  const width=(value,scale)=>Math.max(0,Math.min(100,value/scale*100));
+  const cards=metrics.map(([label,before,after,format,rate])=>{
+    const measured=pairs.map(r=>[before(r),after(r)]).filter(([a,b])=>Number.isFinite(a)&&Number.isFinite(b)&&a>=0&&b>=0);
+    if(!measured.length)return `<article class="evo-effect-card"><h3>${label}</h3><div class="evo-effect-empty">暂无</div></article>`;
+    const a=average(measured.map(row=>row[0])),b=average(measured.map(row=>row[1]));
+    const change=rate?(b-a)*100:a?(b/a-1)*100:null;
+    const sign=change===null?null:Math.round(change*10)/10;
+    const tone=sign&&((rate?sign:-sign)>0)?'ok':sign?'err':'';
+    const scale=rate?1:Math.max(1,a,b);
+    return `<article class="evo-effect-card">
+      <header><h3>${label}</h3>${sign!==null?kbBadge(`${sign>0?'+':''}${number(sign)}${rate?' pp':'%'}`,tone):''}</header>
+      <div class="evo-effect-value" aria-label="原运行 ${format(a)}，回放 ${format(b)}"><span>${format(a)}</span><span aria-hidden="true">→</span><b>${format(b)}</b></div>
+      <div class="evo-effect-bars" data-tone="${tone}" aria-hidden="true"><i style="width:${width(a,scale)}%"></i><i style="width:${width(b,scale)}%"></i></div>
+      ${measured.length<pairs.length?`<small>${measured.length} 条有记录</small>`:''}
+    </article>`;
+  }).join('');
+  return `<section id="evoStoryEffects" class="evo-story-section" aria-labelledby="evoEffectTitle">
+    <header class="evo-story-section-head"><h2 id="evoEffectTitle">修改效果</h2><span class="evo-muted" data-tooltip="消耗和耗时按回放执行范围对比，复用节点在两侧均排除。">${pairs.length}/${rows.length} 条可对比 · 回放</span></header>
+    <div class="evo-effect-grid">${cards}</div>
+  </section>`;
+}
 function evoStoryReplayTable(m){
   const all=m.proposal?.replays||[],list=all.filter(r=>m.compareFilter==='all'||r.outcome===m.compareFilter);
   if(!list.length)return '<p class="evo-story-empty">暂无</p>';
   return `<table class="evo-story-results">
     <caption class="evo-review-sr">验证时保存的原运行与回放结果</caption>
-    <thead><tr><th scope="col">案例</th><th scope="col">原运行</th><th scope="col">回放</th><th scope="col">结果</th></tr></thead>
+    <thead><tr><th scope="col">案例</th><th scope="col">结果</th></tr></thead>
     <tbody>${list.map(r=>{
-      const ready=!!evoTime(r.finishedAt)&&!!r.outcome&&r.outcome!=='blocked';
       const [key,label,tone,icon]=EVO_STORY_OUTCOMES.find(([key])=>key===r.outcome)||['pending','待判定','','clock'];
       const selected=m.evidence?.type==='replay'&&m.evidence.id===r.id;
-      const score=(n,complete,missing)=>`<span class="evo-story-score" data-score="${complete?n:'unknown'}">
-        ${evoReviewScoreHTML(n,complete)}<span>${complete?escapeHTML(evoHistoricalScore(n)):missing}</span>
-      </span>`;
       return `<tr data-evo-story-row="${escapeHTML(r.id)}" class="${selected?'is-selected':''}">
         <td><button type="button" aria-haspopup="dialog" aria-controls="evoEvidenceDialog" data-evo-story-replay="${escapeHTML(r.id)}" aria-pressed="${selected}">
           <span class="evo-story-case-mark">${evoReviewIcon(r.group==='pinned'?'pin':'doc')}</span>
-          <span><b>${escapeHTML(evoStorySampleName(m,r,all.indexOf(r)))}</b><small>${escapeHTML(EVO_GROUPS[r.group]?.[0]||r.group||'历史样例')}</small></span>
+          <span><b>${escapeHTML(evoStorySampleName(m,r,all.indexOf(r)))}</b></span>
         </button></td>
-        <td>${score(r.sourceScore,evoStoryHasScore(r.sourceScore),'未记录')}</td>
-        <td>${score(r.score,ready&&evoStoryHasScore(r.score),ready?'未记录':'未完成')}</td>
         <td class="evo-story-outcome" data-outcome="${key}">${kbBadge(`${evoReviewIcon(icon)}${label}`,tone)}</td>
       </tr>`;
     }).join('')}</tbody>
@@ -77,16 +110,13 @@ function evoStoryValidationHTML(p,filter='all'){
   const title=`<h2 id="evoReplayTitle" tabindex="-1"><span class="evo-story-case-mark">${evoReviewIcon('flask')}</span>回放案例</h2>`;
   const s=p?.summary,rows=p?.replays||[];
   if(!rows.length)return `${title}<p class="evo-story-empty">暂无</p>`;
-  const scored=rows.every(r=>evoTime(r.finishedAt)&&r.outcome&&r.outcome!=='blocked'&&evoStoryHasScore(r.sourceScore)&&evoStoryHasScore(r.score));
   const status=s?.passed?kbBadge('验证通过','ok'):p.status==='validating'?kbBadge('回放中','info'):
     s&&s.finished>0&&s.finished>=s.total?kbBadge('验证未通过','err'):'';
   const counts=EVO_STORY_OUTCOMES.map(([key,label,tone,icon])=>[key,label,tone,icon,s?.[key]??rows.filter(r=>r.outcome===key).length]);
   return `${title}
     <div class="evo-story-validation-toolbar">
       <div class="evo-story-validation-summary">
-        ${scored?`<span>原运行成功 <b>${rows.filter(r=>r.sourceScore>0).length}/${rows.length}</b></span> ${evoReviewIcon('arrow-right')}
-          <span>回放成功 <b>${rows.filter(r=>r.score>0).length}/${rows.length}</b></span>`:
-          `<span>已完成 <b>${s?.finished??rows.filter(r=>evoTime(r.finishedAt)).length}/${s?.total||rows.length}</b></span>`}
+        ${!status||p.status==='validating'?`<span>已完成 <b>${s?.finished??rows.filter(r=>evoTime(r.finishedAt)).length}/${s?.total||rows.length}</b></span>`:''}
         ${status}
       </div>
       <div class="evo-story-counts" role="group" aria-label="按回放结果筛选">
@@ -105,7 +135,7 @@ function evoStoryValidationHTML(p,filter='all'){
 }
 const EVO_STORY_SOURCES=[
   ['node_failed','alert','失败案例'],['rework','refresh','返工案例'],
-  ['user_feedback','user','用户反馈'],['eval_low','chart','评测低分']
+  ['user_feedback','user','用户反馈'],['eval_low','chart','评测低分'],['sop_detection','alert','SOP 自动检测']
 ];
 function evoFindingPriorityHTML(finding){
   const label={high:'高',medium:'中',low:'低'}[finding?.severity];
@@ -168,9 +198,10 @@ function evoStoryDetailHTML(m,p){
   return `
     <div id="evoReviewWorkbench" class="evo-review-workbench evo-story-workbench">
       <div id="evoProblemBox" class="evo-review-status" role="status">${p?.error?escapeHTML(p.error):''}</div>
-      ${evoStoryProblemOverviewHTML(m,p)}
+      ${evoStoryEffectHTML(p)}
       ${problems||m.row?`<details id="evoProblemEvidenceDetails" class="evo-story-expand">
         <summary>查看问题证据</summary>
+        ${evoStoryProblemOverviewHTML(m,p)}
         ${problems}
         ${m.row?`<details id="evoSourceDetails" class="evo-detail-more">
           <summary>查看关联运行</summary>

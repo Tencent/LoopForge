@@ -211,3 +211,28 @@
 }
 @media(pointer:coarse){#evoDetailPage .evo-story-workbench button{min-height:40px}}
 @media(prefers-reduced-motion:reduce){.evo-story-workbench *{scroll-behavior:auto}}
+
+.evo-effect-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.evo-effect-card{min-width:0;padding:10px 12px;border:1px solid var(--hui-border);border-radius:9px;background:var(--hui-surface)}
+.evo-effect-card header{display:flex;align-items:center;flex-wrap:wrap;justify-content:space-between;gap:3px 6px}
+.evo-effect-card h3,.evo-effect-card small{margin:0;color:var(--hui-muted);font-size:12px;font-weight:500}
+.evo-effect-value{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 6px;margin-top:6px;color:var(--hui-muted);font-variant-numeric:tabular-nums}
+.evo-effect-value b{color:var(--hui-text);font-size:20px;font-weight:650}
+.evo-effect-empty{margin-top:8px;color:var(--hui-muted)}
+.evo-effect-bars{display:grid;gap:3px;margin-top:5px}
+.evo-effect-bars i{display:block;border-radius:4px;height:3px;background:var(--hui-border-strong,var(--hui-border))}
+.evo-effect-bars i+i{background:var(--hui-muted)}
+.evo-effect-bars[data-tone=ok] i+i{background:var(--hui-success)}
+.evo-effect-bars[data-tone=err] i+i{background:var(--hui-error)}
+.evo-diff-preview-tools{display:flex;flex-wrap:wrap;gap:4px;padding:0 0 5px}
+.evo-diff-preview-line{display:grid;grid-template-columns:32px 16px minmax(0,1fr);align-items:baseline;gap:5px;padding:4px 8px;font-size:12px}
+.evo-diff-preview-line span{color:var(--hui-muted);text-align:right;font-variant-numeric:tabular-nums}
+.evo-diff-preview-line b{text-align:center}
+.evo-diff-preview-line code{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:inherit}
+.evo-diff-preview-line.del{background:color-mix(in srgb,var(--hui-error) 9%,var(--hui-surface))}
+.evo-diff-preview-line.add{background:color-mix(in srgb,var(--hui-success) 9%,var(--hui-surface))}
+.evo-diff-preview-line.del b{color:var(--hui-error)}
+.evo-diff-preview-line.add b{color:var(--hui-success)}
+.evo-story-results th:first-child{width:74%}
+.evo-story-results th:last-child{width:auto}
+@media(max-width:900px){.evo-effect-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}

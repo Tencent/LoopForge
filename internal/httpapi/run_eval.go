@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"agentflow/internal/runeval"
 
 	"github.com/gin-gonic/gin"
@@ -146,6 +147,10 @@ func (h *runsHandlers) getRunEval(c *gin.Context) {
 		return
 	}
 	if rec, ok := h.repo.LatestRunEval(id); ok {
+		c.JSON(http.StatusOK, rec)
+		return
+	}
+	if rec, ok := h.repo.RunEval(repo.SOPDetectionEvalID(id)); ok && rec.Status != domain.RunEvalRunning {
 		c.JSON(http.StatusOK, rec)
 		return
 	}

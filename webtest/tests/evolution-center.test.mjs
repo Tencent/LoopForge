@@ -155,10 +155,11 @@ test('evolution center renders asset list, inspection, proposals, versions, poli
 
   $('[data-evo-asset-group="asset:agent:agent-1"]').click();
   await settle(4);
-  assert.match($('#evoValidationResults').textContent, /已完成\s+3\/3/);
+  assert.match($('#evoValidationResults').textContent, /验证通过/);
+  assert.match($('#evoStoryEffects').textContent, /条可对比/);
   assert.match($('#evoDetailActions').textContent, /小范围试用/);
   assert.equal(app.document.querySelectorAll('.evo-detail-track li').length,6);
-  assert.ok($('#evoDetailPage .evo-diff-line.add'));
+  assert.ok($('#evoDetailPage .evo-diff-preview-line.add'));
   assert.ok(!$('#evoDetailPage').innerHTML.includes('<b>Run unit tests</b>'));
   $('[data-evo-process="evp-1"]').click();
   await settle(4);

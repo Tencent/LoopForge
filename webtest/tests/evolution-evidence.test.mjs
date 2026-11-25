@@ -55,7 +55,7 @@ test('task rows show the problem and change, with diagnosis and the diff on deta
   assert.equal(app.router.calls.some(c => c.path.startsWith('/api/runs/')), false);
   $(app, '[data-evo-asset-group]').click(); await settle(6);
   assert.match($(app, '#evoProblemRecords').textContent, /96%/);
-  assert.match($(app, '#evoLinkedChange .evo-diff-line.add').textContent, /检查关键路径 e2e/);
+  assert.match($(app, '#evoLinkedChange .evo-diff-preview-line.add').textContent, /检查关键路径 e2e/);
   assert.equal(app.document.querySelectorAll('.evo-detail-track li').length, 6);
   assert.ok($(app, '[data-evo-review-regressions]'));
 });
@@ -323,7 +323,7 @@ test('detail shows the true diff, six steps and one primary action', async t => 
   assert.match($(app, '#evoDetailObject').textContent,/评审角色/);
   const ids = [...app.document.querySelectorAll('#evoDetailPage [id]')].map(el => el.id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.match($(app, '#evoLinkedChange .evo-diff-line.add').textContent,/检查关键路径 e2e/);
+  assert.match($(app, '#evoLinkedChange .evo-diff-preview-line.add').textContent,/检查关键路径 e2e/);
   assert.equal(app.document.querySelectorAll('.evo-detail-track li').length,6);
   assert.equal($(app, '#evoEvidenceDialog').open,false);
   assert.equal($(app, '#evoProblemEvidenceDetails').open,false);

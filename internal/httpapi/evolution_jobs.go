@@ -366,6 +366,7 @@ func (h *evolutionHandlers) startReplay(p domain.EvoProposal, plan evolution.Sam
 		replay.RunID = run.ID
 		replay.Status = firstNonEmpty(run.Status, "running")
 		replay.ReusedNodes = reused
+		replay.SourceMeasurements = evoReplayMeasurements(source, reused)
 		current, exists := h.repo.EvoProposal(p.ID)
 		if !exists || current.Status != domain.EvoProposalValidating {
 			_ = h.engine.Cancel(run.ID)
@@ -544,6 +545,7 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 			r.Status = run.Status
 			if score := evolution.RunScore(run); score >= 0 {
 				r.Score = score
+				r.ReplayMeasurements = evoReplayMeasurements(run, r.ReusedNodes)
 				r.FinishedAt = now
 				if run.Status == "cancelled" {
 					blockReplay(r, now, firstNonEmpty(r.Error, "回放运行被取消"))

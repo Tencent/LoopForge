@@ -39,7 +39,7 @@ const { createDOM } = require('./hui_fake_dom');
   const typeChange=api.evoReviewJSONChanges('{"v":1}','{"v":"1"}')[0];
   assert.equal(typeChange.before,'1'); assert.equal(typeChange.after,'"1"','type changes must remain visible');
   const multiline={...p,baseContent:Array.from({length:12},(_,i)=>`old-${i}`).join('\n'),candidateContent:Array.from({length:12},(_,i)=>`new-${i}`).join('\n')};
-  assert.match(api.evoReviewChangeHTML({},multiline),/行改动/,'large changed blocks are compacted');
+  assert.equal((api.evoReviewChangeHTML({},multiline).match(/evo-diff-preview-line/g)||[]).length,2,'the initial diff shows one addition and one deletion');
   assert.match(api.evoReviewChangeHTML({diffExpanded:true},multiline),/new-11/,'expanding restores the whole actual diff');
   const ended=api.evoReviewTrialHTML({status:'failed',canary:{status:'failed',percent:25,minRuns:5,control:{runs:5,clean:5},canary:{runs:5,clean:1}}});
   assert.match(ended,/1\/5/,'failed trials must retain their actual result counts');

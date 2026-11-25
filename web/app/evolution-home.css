@@ -90,3 +90,23 @@
 .evo-feedback-result{display:flex;align-items:center;gap:12px;justify-content:space-between;padding:10px 14px;margin:0 0 14px;border:1px solid var(--hui-border);border-radius:8px;background:var(--hui-surface);color:var(--hui-text);font:12px/1.7 var(--hui-sans);overflow-wrap:anywhere}
 .evo-feedback-result button{flex-shrink:0;border:0;background:none;color:var(--hui-accent);font:inherit;cursor:pointer}
 .evo-feedback-result button:focus-visible{outline:2px solid var(--hui-accent);outline-offset:3px}
+
+.evo-sop-detection{margin:0 0 16px}
+.evo-sop-setting{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px}
+.evo-sop-setting+.evo-sop-setting{border-top:1px solid var(--hui-border)}
+.evo-sop-setting b{display:block;font-size:13px;font-weight:600}
+.evo-sop-setting small,.evo-sop-detection footer{color:var(--hui-muted);font-size:12px}
+.evo-sop-detection footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 14px 10px}
+.evo-sop-model{border:0;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;min-width:0}
+.evo-sop-model select{max-width:220px;min-width:0}
+.evo-sop-setting input[role=switch]{
+  appearance:none;flex:none;width:33px;height:19px;margin:0;padding:2px;border:0;border-radius:20px;
+  background:var(--hui-border);cursor:pointer;
+}
+.evo-sop-setting input[role=switch]::before{
+  content:"";display:block;width:15px;height:15px;border-radius:50%;background:#fff;transition:transform 160ms ease;
+}
+.evo-sop-setting input[role=switch]:checked{background:var(--hui-accent)}
+.evo-sop-setting input[role=switch]:checked::before{transform:translateX(14px)}
+@media(prefers-reduced-motion:reduce){.evo-sop-setting input[role=switch]::before{transition:none}}
+@media(max-width:580px){.evo-sop-setting:not(:first-child){align-items:start;flex-direction:column}.evo-sop-model{justify-content:start}}

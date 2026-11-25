@@ -12,7 +12,7 @@ const EVO_CANARY_PERCENTS=[10,25,50];
 const EVO_CANARY_MIN_RUNS=[5,10,20];
 const EVO_GROUPS={diagnosis:['诊断样本','改进器看过的失败运行'],holdout:['留出样本','改进器没看过的失败运行'],regression:['回归样本','近期一次成功的运行'],pinned:['钉选样本','人工钉住的运行']};
 const EVO_OUTCOMES={fixed:['已修复','ok'],regressed:['退化','err'],unchanged:['无变化',''],changed:['结论改变','info'],blocked:['阻塞','warn']};
-const EVO_SIGNALS={node_failed:'节点失败',rework:'打回返工',eval_low:'评测低分',user_feedback:'用户反馈'};
+const EVO_SIGNALS={node_failed:'节点失败',rework:'打回返工',eval_low:'评测低分',sop_detection:'SOP 自动检测',user_feedback:'用户反馈'};
 const EVO_VERDICTS={fix:['需修复','err'],watch:['观察中','warn'],noise:['可能偶发','']};
 const EVO_SNOOZE_DAYS=7;
 const EVO_SOURCES={baseline:'基线',manual:'手动修改',evolution:'进化发布',rollback:'回滚'};
@@ -174,7 +174,8 @@ async function evoRefresh(){
 
 function evoSchedulePoll(){
   clearTimeout(evo.poll);
-  if(!evoActive()||!((evo.overview?.validating||[]).length||(evo.overview?.trial||[]).length))return;
+  const detect=evo.overview?.sopDetection?.enabled&&!evo.modal&&!['assets','samples'].includes(evo.tab);
+  if(!evoActive()||!((evo.overview?.validating||[]).length||(evo.overview?.trial||[]).length||detect))return;
   evo.poll=setTimeout(async()=>{
     if(!evoActive()||document.hidden)return evoSchedulePoll();
     await evoRefresh();evoRender();
@@ -253,7 +254,8 @@ function evoRender(){
   const focused=document.activeElement?.closest?.('#evolutionBody')?document.activeElement.dataset.evoKey:'';
   if(['assets','samples'].includes(evo.tab)){
     const tabs=[['assets','角色与规则'],['samples','固定验证样本']];
-    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ RSI工作台</button><h2 class="evo-settings-title">进化设置</h2><div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
+    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ RSI工作台</button><h2 class="evo-settings-title">进化设置</h2>${evoSOPDetectionHTML()}<div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
+      evoBindSOPDetection(root.querySelector('#evoSOPDetection'));
   }else root.innerHTML=evoUnifiedListHTML();
   evoHomeSyncChecking();
   window.AgentFlowHarnessIcons?.hydrate(root);
@@ -541,7 +543,7 @@ function evoFindingStats(r){
 function evoMountDetail(title,openerKey,row=null){
   evoCloseFinding(false);if(evoDrawerOwned())evoDrawerClose();
   const asset=row?.f||evoAllProposals().find(p=>openerKey===`proposal:${p.id}`);
-  const m={row,openerKey:asset?`asset:${evoAssetKey(asset.assetKind,asset.assetId)}`:openerKey,routeKey:openerKey,projectId:evo.projectId,status:'',page:0,data:null,evidence:null,evidenceCache:new Map(),compareFilter:'all',viewOpen:[],diffSplit:true};
+  const m={row,openerKey:asset?`asset:${evoAssetKey(asset.assetKind,asset.assetId)}`:openerKey,routeKey:openerKey,projectId:evo.projectId,status:'',page:0,data:null,evidence:null,evidenceCache:new Map(),compareFilter:'all',viewOpen:[]};
   evo.modal=m;evo.tab='issues';
   $('#evolutionBody').innerHTML=`
     <section id="evoDetailPage" aria-labelledby="evoFindingTitle">
@@ -588,7 +590,7 @@ function evoDetailTrackHTML(p,finding){
     watch.state='stop';watch.note='已回滚';
   }
   const current=steps.findIndex(step=>['active','wait','fail','stop'].includes(step.state));
-  const targets=['evoProblemOverview','evoFullChange','evoValidationResults'];
+  const targets=['evoProblemEvidenceDetails','evoFullChange','evoValidationResults'];
   return `<ol class="evo-detail-track" aria-label="进化进度">${steps.map((step,i)=>{
     const active=i===current;
     const note=step.note||EVO_STEP_STATE[step.state];

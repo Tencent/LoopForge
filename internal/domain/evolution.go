@@ -238,10 +238,19 @@ type EvoReplay struct {
 	Overrides    EvoAssetOverride `json:"overrides"`
 	// ReusedNodes are source-run nodes the replay took over instead of
 	// re-executing; empty means the whole SOP was replayed.
-	ReusedNodes  []string  `json:"reusedNodes,omitempty"`
-	StartedAt    time.Time `json:"startedAt,omitempty"`
-	FinishedAt   time.Time `json:"finishedAt,omitempty"`
-	WaitingSince time.Time `json:"waitingSince,omitempty"`
+	ReusedNodes        []string               `json:"reusedNodes,omitempty"`
+	SourceMeasurements *EvoReplayMeasurements `json:"sourceMeasurements,omitempty"`
+	ReplayMeasurements *EvoReplayMeasurements `json:"replayMeasurements,omitempty"`
+	StartedAt          time.Time              `json:"startedAt,omitempty"`
+	FinishedAt         time.Time              `json:"finishedAt,omitempty"`
+	WaitingSince       time.Time              `json:"waitingSince,omitempty"`
+}
+
+// EvoReplayMeasurements compare only the executed scope of each side.
+type EvoReplayMeasurements struct {
+	Tokens      *int64 `json:"tokens,omitempty"`
+	ToolCalls   *int   `json:"toolCalls,omitempty"`
+	ExecutionMs *int64 `json:"executionMs,omitempty"`
 }
 
 // EvoAssetOverride replaces asset bodies inside one replay run only.
@@ -483,13 +492,19 @@ type EvoAssetHealth struct {
 	ReadOnlyReason string  `json:"readOnlyReason,omitempty"`
 }
 
+type EvoSOPDetectionSetting struct {
+	Enabled bool   `json:"enabled"`
+	Model   string `json:"model,omitempty"`
+}
+
 // EvoOverview is the 进化中心 dashboard payload.
 type EvoOverview struct {
-	ProjectID  string         `json:"projectId"`
-	Findings   []EvoFinding   `json:"findings"`
-	Validating []EvoProposal  `json:"validating"`
-	Pending    []EvoProposal  `json:"pending"`
-	Queue      []EvoQueueItem `json:"queue"`
+	SOPDetection EvoSOPDetectionSetting `json:"sopDetection"`
+	ProjectID    string                 `json:"projectId"`
+	Findings     []EvoFinding           `json:"findings"`
+	Validating   []EvoProposal          `json:"validating"`
+	Pending      []EvoProposal          `json:"pending"`
+	Queue        []EvoQueueItem         `json:"queue"`
 	// Trial lists proposals in a canary trial and released ones whose
 	// post-release watch is still running or flagged a degradation.
 	Trial       []EvoProposal    `json:"trial"`

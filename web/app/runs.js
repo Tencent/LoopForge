@@ -1404,6 +1404,12 @@ function runEvalPaneHTML(run){
     return `<section class="run-eval-section">${heroCard}<div class="run-eval-evaluating-card"><div class="evaluating-pulse-head"><span class="evaluating-spinner"></span><div><h4>大模型全链路 Trace 深度评测中...</h4><p>正在分析节点流转拓扑、工具调用频次、异常返工日志与产物交付契约</p></div></div><div class="run-eval-thoughts">${thoughts.map(t=>`<div class="thought-item"><span class="thought-dot"></span><span>${escapeHTML(t)}</span></div>`).join('')||'<div class="thought-item"><span class="thought-dot"></span><span>正在整理执行链路 Trace 并组织评测 Prompt...</span></div>'}</div></div></section>`;
   }
 
+  if(rec?.sopDetection){
+    const findings=(rec.result?.findings||[]).map(f=>`<li><b>${escapeHTML(f.message||'')}</b>${f.evidence?`<p>${escapeHTML(f.evidence)}</p>`:''}</li>`).join('');
+    const content=rec.status==='failed'?escapeHTML(rec.error||'检测执行失败'):escapeHTML(rec.result?.summary||'');
+    return `<section class="run-eval-section">${heroCard}<div class="run-eval-summary-card"><h4>SOP 自动检测</h4><p>${content}</p>${findings?`<ul>${findings}</ul>`:''}</div></section>`;
+  }
+
   if(rec?.status==='failed'){
     return `<section class="run-eval-section">${heroCard}<div class="run-eval-error-card"><div class="error-head"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><b>评测执行失败</b></div><pre>${escapeHTML(rec.error||'模型未返回结果')}</pre><p class="error-tip">请检查所选 CLI 的凭据、安装状态或网络后重新评测。</p></div></section>`;
   }
