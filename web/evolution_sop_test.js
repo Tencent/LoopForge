@@ -156,6 +156,35 @@ const { createDOM } = require('./hui_fake_dom');
   assert.match(changeHTML, /全局 grep/);
   assert.match(changeHTML, /优先查索引/);
 
+  // 2b. External Chatbot edit renders badge on version table and split diff when no RSI proposal is active.
+  const chatbotDetail = {
+    ...detailPayload,
+    stage: 'monitor',
+    activeProposal: null,
+    lastProposal: null,
+    changeFiles: [],
+    versions: [
+      { version: 'v3', current: false, metrics: { runs: 5, avgTokens: 70000, avgTools: 18, avgDuration: 95, cleanRate: 0.6, score: 68 } },
+      { version: 'v3 · Chatbot', current: true, source: 'chatbot', changeNote: 'Chatbot 修改「开发工程师」', metrics: { runs: 3, avgTokens: 42000, avgTools: 9, avgDuration: 55, cleanRate: 1, score: 92 } },
+    ],
+    recentEdits: [{
+      id: 'agent:coder:v2',
+      assetKind: 'agent',
+      assetId: 'coder',
+      assetName: '开发工程师',
+      version: 2,
+      source: 'chatbot',
+      createdAt: new Date().toISOString(),
+      diff: { path: 'roles/coder.md', lines: [['del', '旧指令'], ['add', 'Chatbot 修复后的新指令']] },
+    }],
+  };
+  const chatTrendHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'versions', metric: 'score', detail: chatbotDetail });
+  assert.match(chatTrendHTML, /v3 · Chatbot/);
+  assert.match(chatTrendHTML, /Chatbot 修改/);
+  const chatChangeHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'change', scope: 'versions', metric: 'score', diffMode: 'split', detail: chatbotDetail });
+  assert.match(chatChangeHTML, /Chatbot 修复后的新指令/);
+  assert.match(chatChangeHTML, /evo-sop-split-diff/);
+
   // 3. Preference dialog binds real AgentFlowAssistantModels feature picker for standalone model selection.
   dom.html(`<section id="evolutionView" class="active"><div id="evoPageHead"></div><div id="evoMetrics"></div><div id="evolutionBody">${homeHTML}</div></section>`);
   api.evoSOPOpenPrefDialog('wf-bug');

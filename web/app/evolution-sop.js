@@ -627,12 +627,20 @@ function evoSOPTrendTabHTML(view, d) {
   </div>`;
 }
 
+function evoSOPSourceBadge(source) {
+  if (source === 'chatbot') return kbBadge('Chatbot 修改', 'info');
+  if (source === 'manual') return kbBadge('手动修改', '');
+  if (source === 'evolution') return kbBadge('自动进化', 'ok');
+  return '';
+}
+
 function evoSOPVersionsTableHTML(versions) {
   if (!versions.length) return '<div class="kb-empty">暂无历史版本数据</div>';
   const rows = [...versions].reverse().map(v => {
     const m = v.metrics || {};
+    const srcBadge = evoSOPSourceBadge(v.source);
     return `<tr>
-      <td><span class="mono">${escapeHTML(v.version)}</span>${v.current ? ` ${kbBadge('生效中', 'ok')}` : ''}</td>
+      <td><span class="mono">${escapeHTML(v.version)}</span>${v.current ? ` ${kbBadge('生效中', 'ok')}` : ''}${srcBadge ? ` ${srcBadge}` : ''}${v.changeNote ? `<small class="evo-sop-cell-sub">${escapeHTML(v.changeNote)}</small>` : ''}</td>
       <td class="num">${m.runs || 0}</td>
       <td class="num"><b>${m.score != null ? `${m.score} 分` : '—'}</b></td>
       <td class="num">${escapeHTML(evoSOPFormatTokens(m.avgTokens))}</td>
@@ -906,10 +914,33 @@ function evoSOPInlineDiffHTML(lines) {
   </div>`;
 }
 
+function evoSOPExternalEditsCardHTML(edits, editIndex, diffMode) {
+  const idx = Math.min(Math.max(0, Number(editIndex) || 0), edits.length - 1);
+  const active = edits[idx] || edits[0];
+  if (!active) return '';
+  const when = evoTime(active.createdAt) ? relativeTime(active.createdAt) : '';
+  return `<div class="evo-sop-diff-card">
+    <div class="evo-sop-file-bar" role="tablist" aria-label="外部修改记录">
+      <div class="evo-sop-file-tabs">
+        ${edits.map((ed, i) => `<button type="button" role="tab" class="evo-sop-file-tab" data-evo-sop-edit="${i}" aria-selected="${i === idx}">${evoSOPSourceBadge(ed.source)}<span class="mono">${escapeHTML(ed.diff?.path || ed.assetId)}</span><small>v${ed.version}</small></button>`).join('')}
+      </div>
+      <div class="evo-sop-file-actions">
+        ${when ? `<span class="evo-sop-edit-time">${escapeHTML(when)}</span>` : ''}
+        <div class="evo-sop-seg" role="group" aria-label="差异展示方式">
+          <button type="button" data-evo-sop-diff-mode="split" aria-pressed="${diffMode === 'split'}">左右对比</button>
+          <button type="button" data-evo-sop-diff-mode="inline" aria-pressed="${diffMode === 'inline'}">行内视图</button>
+        </div>
+      </div>
+    </div>
+    ${diffMode === 'split' ? evoSOPSplitDiffHTML(active.diff?.lines) : evoSOPInlineDiffHTML(active.diff?.lines)}
+  </div>`;
+}
+
 function evoSOPChangeTabHTML(view, d) {
   const bm = d.batchMetrics || d.latestMetrics || {};
   const problems = d.problems || [];
   const files = d.changeFiles || [];
+  const edits = d.recentEdits || [];
   const activeFile = files[view.fileIndex] || files[0] || null;
   const prop = d.activeProposal || d.lastProposal;
   const diffMode = view.diffMode === 'inline' ? 'inline' : 'split';
@@ -938,7 +969,7 @@ function evoSOPChangeTabHTML(view, d) {
     : '<div class="evo-sop-empty-card">本轮暂未扫描出重复步骤、工具反复调用或失败问题。</div>';
 
   const diffHTML = activeFile
-    ? `<div class="evo-sop-file-bar" role="tablist" aria-label="修改的文件">
+    ? `<div class="evo-sop-diff-card"><div class="evo-sop-file-bar" role="tablist" aria-label="修改的文件">
         <div class="evo-sop-file-tabs">
           ${files.map((f, idx) => `<button type="button" role="tab" class="evo-sop-file-tab" data-evo-sop-file="${idx}" aria-selected="${idx === (view.fileIndex || 0)}"><span class="mono">${escapeHTML(f.path)}</span>${f.assetName ? `<small>${escapeHTML(f.assetName)}</small>` : ''}</button>`).join('')}
         </div>
@@ -950,8 +981,17 @@ function evoSOPChangeTabHTML(view, d) {
           ${prop?.id ? `<button type="button" class="kb-btn quiet small" data-evo-proposal="${escapeHTML(prop.id)}">查看完整提案 ↗</button>` : ''}
         </div>
       </div>
-      ${diffMode === 'split' ? evoSOPSplitDiffHTML(activeFile.lines) : evoSOPInlineDiffHTML(activeFile.lines)}`
-    : `<div class="evo-sop-empty-card">本轮尚未生成修改文件；当运行达到 ${Number(d.batchSize) || 10} 次或点击「立即发起优化」后，这里会展示具体改动的文件与左右对比 Diff。</div>`;
+      ${diffMode === 'split' ? evoSOPSplitDiffHTML(activeFile.lines) : evoSOPInlineDiffHTML(activeFile.lines)}</div>`
+    : edits.length
+      ? evoSOPExternalEditsCardHTML(edits, view.editIndex, diffMode)
+      : `<div class="evo-sop-empty-card">本轮尚未生成修改文件；当运行达到 ${Number(d.batchSize) || 10} 次、点击「立即发起优化」，或通过 Chatbot / 手动修改关联角色与规则后，这里会展示左右对比 Diff。</div>`;
+
+  const extraExternalSection = activeFile && edits.length
+    ? `<section class="evo-sop-section">
+        <h3>外部修改记录（Chatbot / 手动）</h3>
+        ${evoSOPExternalEditsCardHTML(edits, view.editIndex, diffMode)}
+      </section>`
+    : '';
 
   return `<div class="evo-sop-change-wrap">
     ${batchStrip}
@@ -960,9 +1000,10 @@ function evoSOPChangeTabHTML(view, d) {
       ${problemHTML}
     </section>
     <section class="evo-sop-section">
-      <h3>本次修改的文件</h3>
-      <div class="evo-sop-diff-card">${diffHTML}</div>
+      <h3>${activeFile ? '本次修改的文件' : edits.length ? '最近修改的文件（Chatbot / 手动）' : '本次修改的文件'}</h3>
+      ${diffHTML}
     </section>
+    ${extraExternalSection}
   </div>`;
 }
 
@@ -1138,6 +1179,12 @@ document.addEventListener('click', e => {
   const fileBtn = e.target.closest('[data-evo-sop-file]');
   if (fileBtn && evoSOPState.view) {
     evoSOPState.view.fileIndex = Number(fileBtn.dataset.evoSopFile) || 0;
+    evoSOPRenderDetail();
+    return;
+  }
+  const editBtn = e.target.closest('[data-evo-sop-edit]');
+  if (editBtn && evoSOPState.view) {
+    evoSOPState.view.editIndex = Number(editBtn.dataset.evoSopEdit) || 0;
     evoSOPRenderDetail();
     return;
   }

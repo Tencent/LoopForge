@@ -779,6 +779,48 @@ func (r *EvolutionRepo) versionLive(kind, id, content string, userID int64) (dom
 	return r.appendVersion(domain.AssetVersion{AssetKind: kind, AssetID: id, Content: content, Source: source, CreatedBy: userID})
 }
 
+// RecordAssetEdit snapshots an external (chatbot or manual) body edit into
+// asset_versions immediately, seeding the previous body as baseline v1 first
+// when no prior version exists so RSI can always render a before/after diff.
+func (r *EvolutionRepo) RecordAssetEdit(kind, id, prevContent, nextContent, source, note string, userID int64) (domain.AssetVersion, bool, error) {
+	if !domain.ValidEvoAssetKind(kind) || strings.TrimSpace(id) == "" {
+		return domain.AssetVersion{}, false, nil
+	}
+	if domain.ContentHash(prevContent) == domain.ContentHash(nextContent) {
+		return domain.AssetVersion{}, false, nil
+	}
+	if source != domain.EvoVersionChatbot {
+		source = domain.EvoVersionManual
+	}
+	var saved domain.AssetVersion
+	var recorded bool
+	err := r.assetTx(kind, id, func(tr *EvolutionRepo) error {
+		latest, ok := tr.LatestAssetVersion(kind, id)
+		if !ok {
+			if _, err := tr.appendVersion(domain.AssetVersion{
+				AssetKind: kind, AssetID: id, Content: prevContent,
+				Source: domain.EvoVersionBaseline, CreatedBy: userID,
+			}); err != nil {
+				return err
+			}
+		} else if latest.Hash == domain.ContentHash(nextContent) {
+			saved = latest
+			return nil
+		}
+		v, err := tr.appendVersion(domain.AssetVersion{
+			AssetKind: kind, AssetID: id, Content: nextContent,
+			Source: source, Note: domain.TrimEvoText(note, 200), CreatedBy: userID,
+		})
+		if err != nil {
+			return err
+		}
+		saved = v
+		recorded = true
+		return nil
+	})
+	return saved, recorded, err
+}
+
 func (r *EvolutionRepo) ReleaseEvoProposal(expected domain.EvoProposal, userID int64, note string, force bool, minRuns int) (domain.EvoProposal, error) {
 	out := expected
 	err := r.assetTx(expected.AssetKind, expected.AssetID, func(tr *EvolutionRepo) error {

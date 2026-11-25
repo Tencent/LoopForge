@@ -82,6 +82,7 @@ const (
 const (
 	EvoVersionBaseline  = "baseline"
 	EvoVersionManual    = "manual"
+	EvoVersionChatbot   = "chatbot"
 	EvoVersionEvolution = "evolution"
 	EvoVersionRollback  = "rollback"
 )
@@ -552,9 +553,11 @@ type EvoSOPMetrics struct {
 
 // EvoSOPVersionPoint is one historical SOP version row for the trend chart/table.
 type EvoSOPVersionPoint struct {
-	Version string        `json:"version"`
-	Current bool          `json:"current,omitempty"`
-	Metrics EvoSOPMetrics `json:"metrics"`
+	Version    string        `json:"version"`
+	Current    bool          `json:"current,omitempty"`
+	Source     string        `json:"source,omitempty"` // "" | "evolution" | "chatbot" | "manual"
+	ChangeNote string        `json:"changeNote,omitempty"`
+	Metrics    EvoSOPMetrics `json:"metrics"`
 }
 
 // EvoSOPGrayRunEvent is one recent run inside a grayscale trial.
@@ -619,6 +622,20 @@ type EvoSOPSummary struct {
 	OpenFindings     int           `json:"openFindings,omitempty"`
 }
 
+// EvoSOPExternalEdit records an edit to an SOP's role/rule made outside RSI
+// (via Chatbot or manual asset editor) so it stays visible in RSI history & diffs.
+type EvoSOPExternalEdit struct {
+	ID        string           `json:"id"`
+	AssetKind string           `json:"assetKind"`
+	AssetID   string           `json:"assetId"`
+	AssetName string           `json:"assetName"`
+	Version   int              `json:"version"`
+	Source    string           `json:"source"` // "chatbot" | "manual"
+	Note      string           `json:"note,omitempty"`
+	CreatedAt time.Time        `json:"createdAt"`
+	Diff      EvoSOPChangeFile `json:"diff"`
+}
+
 // EvoSOPDetail is the full SOP detail payload for #/evolution/sops/:workflowId.
 type EvoSOPDetail struct {
 	EvoSOPSummary
@@ -629,6 +646,7 @@ type EvoSOPDetail struct {
 	BatchMetrics   *EvoSOPMetrics       `json:"batchMetrics,omitempty"`
 	Problems       []EvoSOPProblemItem  `json:"problems,omitempty"`
 	ChangeFiles    []EvoSOPChangeFile   `json:"changeFiles,omitempty"`
+	RecentEdits    []EvoSOPExternalEdit `json:"recentEdits,omitempty"`
 }
 
 // EvoOverview is the 进化中心 dashboard payload.

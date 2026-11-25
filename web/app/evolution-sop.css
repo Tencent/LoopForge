@@ -747,6 +747,12 @@
   color: var(--hui-muted);
 }
 
+.evo-sop-edit-time {
+  font-size: 11px;
+  color: var(--hui-muted);
+  white-space: nowrap;
+}
+
 /* 左右对比 Diff */
 .evo-sop-split-diff {
   display: grid;

@@ -319,33 +319,145 @@ func DetermineSOPStage(proposals []domain.EvoProposal) (string, *domain.EvoPropo
 	return domain.EvoSOPStageMonitor, nil, &last
 }
 
-// BuildSOPChangeFiles extracts compact unified diff hunks for a proposal's modified asset.
-func BuildSOPChangeFiles(p *domain.EvoProposal) []domain.EvoSOPChangeFile {
-	if p == nil || (strings.TrimSpace(p.BaseContent) == "" && strings.TrimSpace(p.CandidateContent) == "") {
+// BuildAssetDiffFile builds a compact unified diff for a single asset edit.
+func BuildAssetDiffFile(kind, id, name, oldText, newText string) *domain.EvoSOPChangeFile {
+	if strings.TrimSpace(oldText) == "" && strings.TrimSpace(newText) == "" {
 		return nil
 	}
 	prefix := "assets/"
-	switch p.AssetKind {
+	switch kind {
 	case domain.EvoAssetAgent:
 		prefix = "roles/"
 	case domain.EvoAssetRule:
 		prefix = "rules/"
 	}
-	name := strings.TrimSpace(p.AssetID)
-	if name == "" {
-		name = strings.TrimSpace(p.AssetName)
+	fileKey := strings.TrimSpace(id)
+	if fileKey == "" {
+		fileKey = strings.TrimSpace(name)
 	}
-	lines := compactUnifiedDiff(p.BaseContent, p.CandidateContent, 2, 120)
+	lines := compactUnifiedDiff(oldText, newText, 2, 120)
 	if len(lines) == 0 {
 		return nil
 	}
-	return []domain.EvoSOPChangeFile{{
-		Path:      prefix + name + ".md",
-		AssetKind: p.AssetKind,
-		AssetID:   p.AssetID,
-		AssetName: p.AssetName,
+	return &domain.EvoSOPChangeFile{
+		Path:      prefix + fileKey + ".md",
+		AssetKind: kind,
+		AssetID:   id,
+		AssetName: name,
 		Lines:     lines,
-	}}
+	}
+}
+
+// BuildSOPChangeFiles extracts compact unified diff hunks for a proposal's modified asset.
+func BuildSOPChangeFiles(p *domain.EvoProposal) []domain.EvoSOPChangeFile {
+	if p == nil {
+		return nil
+	}
+	file := BuildAssetDiffFile(p.AssetKind, p.AssetID, p.AssetName, p.BaseContent, p.CandidateContent)
+	if file == nil {
+		return nil
+	}
+	return []domain.EvoSOPChangeFile{*file}
+}
+
+// SplitSOPVersionsWithExternalEdits reflects external (chatbot / manual) role or rule
+// edits on the SOP version trend timeline so runs before vs after the edit are directly
+// comparable even when wf.Version itself did not increment.
+func SplitSOPVersionsWithExternalEdits(
+	wf domain.WorkflowDefinition,
+	points []domain.EvoSOPVersionPoint,
+	runs []domain.Run,
+	evals map[string]domain.RunEvalRecord,
+	edits []domain.EvoSOPExternalEdit,
+	batchSize int,
+) []domain.EvoSOPVersionPoint {
+	if len(points) == 0 || len(edits) == 0 {
+		return points
+	}
+	batchSize = NormalizeSOPBatchSize(batchSize)
+	latestEdit := edits[0] // edits are sorted newest-first
+	if latestEdit.CreatedAt.IsZero() {
+		return points
+	}
+	currentVer := wf.Version
+	if currentVer <= 0 {
+		currentVer = 1
+	}
+	curIdx := -1
+	for i := range points {
+		if points[i].Current {
+			curIdx = i
+			break
+		}
+	}
+	if curIdx < 0 {
+		return points
+	}
+
+	var curRuns []domain.Run
+	for _, r := range runs {
+		if RunScore(r) < 0 {
+			continue
+		}
+		v := r.WorkflowSnapshot.Version
+		if v <= 0 {
+			v = 1
+		}
+		if v == currentVer {
+			curRuns = append(curRuns, r)
+		}
+	}
+
+	var before, after []domain.Run
+	for _, r := range curRuns {
+		if !r.CreatedAt.Before(latestEdit.CreatedAt) {
+			after = append(after, r)
+		} else {
+			before = append(before, r)
+		}
+	}
+	sourceLabel := "手动修改"
+	if latestEdit.Source == domain.EvoVersionChatbot {
+		sourceLabel = "Chatbot 修改"
+	}
+	note := fmt.Sprintf("%s「%s」", sourceLabel, firstText(latestEdit.AssetName, latestEdit.AssetID))
+
+	out := append([]domain.EvoSOPVersionPoint(nil), points...)
+	if len(before) == 0 {
+		// All runs on current version are after the edit (or no runs yet): annotate current point directly.
+		out[curIdx].Source = latestEdit.Source
+		out[curIdx].ChangeNote = note
+		return out
+	}
+
+	sort.SliceStable(before, func(i, j int) bool { return before[i].CreatedAt.After(before[j].CreatedAt) })
+	if len(before) > batchSize {
+		before = before[:batchSize]
+	}
+	sort.SliceStable(after, func(i, j int) bool { return after[i].CreatedAt.After(after[j].CreatedAt) })
+	if len(after) > batchSize {
+		after = after[:batchSize]
+	}
+
+	out[curIdx].Current = false
+	out[curIdx].Metrics = SummarizeSOPRuns(before, evals)
+	tag := "手动"
+	if latestEdit.Source == domain.EvoVersionChatbot {
+		tag = "Chatbot"
+	}
+	revPoint := domain.EvoSOPVersionPoint{
+		Version:    fmt.Sprintf("%s · %s", FormatSOPVersion(currentVer), tag),
+		Current:    true,
+		Source:     latestEdit.Source,
+		ChangeNote: note,
+		Metrics:    SummarizeSOPRuns(after, evals),
+	}
+	// Insert right after curIdx.
+	res := make([]domain.EvoSOPVersionPoint, 0, len(out)+1)
+	res = append(res, out[:curIdx+1]...)
+	res = append(res, revPoint)
+	res = append(res, out[curIdx+1:]...)
+	return res
 }
 
 func compactUnifiedDiff(oldText, newText string, contextLines, maxLines int) [][2]string {

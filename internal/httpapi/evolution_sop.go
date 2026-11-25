@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -11,6 +13,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+type assistantEditSourceContextKey struct{}
+
+func catalogEditSource(ctx context.Context) (string, string) {
+	if ctx != nil {
+		if src, ok := ctx.Value(assistantEditSourceContextKey{}).(string); ok && src == domain.EvoVersionChatbot {
+			return domain.EvoVersionChatbot, "通过 Chatbot 修改"
+		}
+	}
+	return domain.EvoVersionManual, "手动修改"
+}
 
 const evoSOPWindowLimit = 200
 
@@ -287,7 +300,9 @@ func (h *evolutionHandlers) buildSOPDetail(projectID, workflowID string, days in
 	}
 
 	summary, ctx := h.computeSOPSummary(projectID, wf, policy, projectModel, runs, evals, detections, signals, findings, proposals)
+	recentEdits := h.collectSOPExternalEdits(wf, ctx.sopRuns)
 	versions := evolution.BuildSOPVersions(wf, ctx.sopRuns, evals, policy.BatchSize)
+	versions = evolution.SplitSOPVersionsWithExternalEdits(wf, versions, ctx.sopRuns, evals, recentEdits, policy.BatchSize)
 	grayRounds := h.buildSOPGrayRounds(projectID, wf, ctx.sopProposals, evals)
 
 	var activeFull *domain.EvoProposal
@@ -331,7 +346,59 @@ func (h *evolutionHandlers) buildSOPDetail(projectID, workflowID string, days in
 		BatchMetrics:   &batchMetrics,
 		Problems:       problems,
 		ChangeFiles:    changeFiles,
+		RecentEdits:    recentEdits,
 	}, true
+}
+
+func (h *evolutionHandlers) collectSOPExternalEdits(wf domain.WorkflowDefinition, sopRuns []domain.Run) []domain.EvoSOPExternalEdit {
+	assetKeys := h.collectSOPAssetKeys(wf, sopRuns)
+	var out []domain.EvoSOPExternalEdit
+	for key := range assetKeys {
+		parts := strings.SplitN(key, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		kind, id := parts[0], parts[1]
+		asset, ok := h.loadAsset(kind, id)
+		if !ok {
+			continue
+		}
+		vers := h.repo.AssetVersions(kind, id)
+		if len(vers) < 2 {
+			continue
+		}
+		// AssetVersions returns newest-first; sort ascending to diff v[i-1] -> v[i].
+		asc := append([]domain.AssetVersion(nil), vers...)
+		sort.SliceStable(asc, func(i, j int) bool { return asc[i].Version < asc[j].Version })
+		for i := 1; i < len(asc); i++ {
+			cur := asc[i]
+			if cur.Source != domain.EvoVersionChatbot && cur.Source != domain.EvoVersionManual {
+				continue
+			}
+			diff := evolution.BuildAssetDiffFile(kind, id, asset.Name, asc[i-1].Content, cur.Content)
+			if diff == nil {
+				continue
+			}
+			out = append(out, domain.EvoSOPExternalEdit{
+				ID:        fmt.Sprintf("%s:%s:v%d", kind, id, cur.Version),
+				AssetKind: kind,
+				AssetID:   id,
+				AssetName: asset.Name,
+				Version:   cur.Version,
+				Source:    cur.Source,
+				Note:      cur.Note,
+				CreatedAt: cur.CreatedAt,
+				Diff:      *diff,
+			})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if len(out) > 10 {
+		out = out[:10]
+	}
+	return out
 }
 
 type sopSummaryContext struct {
@@ -432,6 +499,21 @@ func (h *evolutionHandlers) computeSOPSummary(
 		activeID = active.ID
 	}
 
+	lastNote := evolution.LastRunSummaryNote(lastRun, sopSignals, lastDetection)
+	if latestEdit := h.latestSOPExternalEdit(assetKeys); latestEdit != nil {
+		if lastRun == nil || latestEdit.CreatedAt.After(lastRun.CreatedAt) {
+			src := "手动修改"
+			if latestEdit.Source == domain.EvoVersionChatbot {
+				src = "Chatbot 已调整"
+			}
+			name := latestEdit.AssetName
+			if name == "" {
+				name = latestEdit.AssetID
+			}
+			lastNote = fmt.Sprintf("%s「%s」 · 等待新运行验证", src, name)
+		}
+	}
+
 	summary := domain.EvoSOPSummary{
 		WorkflowID:       wf.ID,
 		WorkflowName:     wf.Name,
@@ -443,7 +525,7 @@ func (h *evolutionHandlers) computeSOPSummary(
 		Model:            model,
 		Stage:            stage,
 		PendingRuns:      pendingRuns,
-		LastRunNote:      evolution.LastRunSummaryNote(lastRun, sopSignals, lastDetection),
+		LastRunNote:      lastNote,
 		LatestMetrics:    latestMetrics,
 		ActiveProposalID: activeID,
 		OpenFindings:     openFindings,
@@ -732,4 +814,34 @@ func (h *evolutionHandlers) sopFindings(all []domain.EvoFinding, workflowID stri
 		}
 	}
 	return out
+}
+
+func (h *evolutionHandlers) latestSOPExternalEdit(assetKeys map[string]bool) *domain.EvoSOPExternalEdit {
+	var best *domain.EvoSOPExternalEdit
+	for key := range assetKeys {
+		parts := strings.SplitN(key, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		latest, ok := h.repo.LatestAssetVersion(parts[0], parts[1])
+		if !ok || (latest.Source != domain.EvoVersionChatbot && latest.Source != domain.EvoVersionManual) {
+			continue
+		}
+		if best == nil || latest.CreatedAt.After(best.CreatedAt) {
+			name := parts[1]
+			if asset, loaded := h.loadAsset(parts[0], parts[1]); loaded && asset.Name != "" {
+				name = asset.Name
+			}
+			best = &domain.EvoSOPExternalEdit{
+				AssetKind: parts[0],
+				AssetID:   parts[1],
+				AssetName: name,
+				Version:   latest.Version,
+				Source:    latest.Source,
+				Note:      latest.Note,
+				CreatedAt: latest.CreatedAt,
+			}
+		}
+	}
+	return best
 }

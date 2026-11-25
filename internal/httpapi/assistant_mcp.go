@@ -139,6 +139,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 		ctx = context.Background()
 	}
 	ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(user))
+	ctx = context.WithValue(ctx, assistantEditSourceContextKey{}, domain.EvoVersionChatbot)
 	input := assistantToolInput(call)
 	if scope := scheduledAssetsFrom(ctx); scope.Version.ID != "" && op.Name == "runs_start" {
 		if body, ok := input.Body.(map[string]any); ok {
