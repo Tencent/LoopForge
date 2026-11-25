@@ -1023,9 +1023,9 @@ function bind(){
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
   $('#settingsSidebarExpand')?.addEventListener('click',()=>{
     cancelSettingsRouteTransition();
-    setSettingsSidebarExpanded(true);
-    // Wait for the sidebar's descendants to inherit the restored visibility; reduced
-    // motion still runs a near-zero visibility transition, so retry for a few frames.
+    setSettingsSidebarExpanded(true,document.activeElement===document.body);
+    // Focus normally moves before the opener hides. If the toggle cannot take
+    // focus yet, focus falls back to the body; retry for a few frames.
     let frames=0;
     const focusToggle=()=>requestAnimationFrame(()=>{
       if(!settingsSidebarExpanded()||document.activeElement!==document.body)return;
@@ -1033,7 +1033,7 @@ function bind(){
       toggle?.focus({preventScroll:true});
       if(toggle&&document.activeElement!==toggle&&++frames<30)focusToggle();
     });
-    requestAnimationFrame(focusToggle);
+    if(document.activeElement!==$('#settingsSidebarToggle'))focusToggle();
   });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
@@ -1781,7 +1781,7 @@ settingsRouteMotion.addEventListener('change',()=>{
   if(pending)switchView(pending);
   setSettingsSidebarExpanded(settingsSidebarExpanded());
 });
-function setSettingsSidebarExpanded(expanded){
+function setSettingsSidebarExpanded(expanded,focusToggle=false){
   const managing=document.body.classList.contains('management-mode');
   const open=managing&&expanded;
   const entering=managing&&!settingsSidebarWasManaged;
@@ -1808,7 +1808,7 @@ function setSettingsSidebarExpanded(expanded){
     toggle.title=open?'收起设置导航':'展开设置导航';
   }
   const reopen=$('#settingsSidebarExpand');
-  if(reopen)reopen.hidden=!managing||open;
+  if(reopen&&!open)reopen.hidden=!managing;
   const mobileToggle=$('.collab-rail-toggle');
   if(mobileToggle){
     mobileToggle.setAttribute('aria-expanded',String(open));
@@ -1824,6 +1824,11 @@ function setSettingsSidebarExpanded(expanded){
     sidebar.inert=managing&&!open;
     if(managing&&!open)sidebar.setAttribute('aria-hidden','true');
     else sidebar.removeAttribute('aria-hidden');
+  }
+  if(reopen&&open){
+    // Transfer focus before hiding the expand button.
+    if(focusToggle||document.activeElement===reopen)toggle?.focus({preventScroll:true});
+    reopen.hidden=true;
   }
   if(animateEntry){
     // Keep the mounted panel at its closed geometry for one layout before reveal.
