@@ -175,6 +175,7 @@ func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.Teleme
 	roleIDs := templateSOPRoleIDs(e.repo, wf)
 	access := e.sopExecutorAccess(ec)
 	defaults := access.defaults()
+	preferred := access.user.AssistantDefaults
 	selected := make(map[string]domain.AssistantDefaults)
 	requirements := make([]SOPExecutorRequirement, 0)
 	seen := make(map[string]bool)
@@ -191,8 +192,12 @@ func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.Teleme
 		}
 		legacyTemplate := roleIDs[role.ID] && role.ProjectID == wf.ProjectID
 		baselineResolver := wf.ID == BaselineAlignWorkflowID && role.ID == BaselineAlignAgentID
+		// A role pinned to the same executor can use the responsible user's
+		// selected model without changing its executor.
+		matchesPreferredExecutor := role.ExecutorID == defaults.Executor && role.ExecutorID == preferred.Executor &&
+			strings.TrimSpace(preferred.Model) != ""
 		var ex domain.ExecutorDefinition
-		if (role.ExecutorID == "" || legacyTemplate || baselineResolver) && followsSOPExecutorDefault(node, role) {
+		if (role.ExecutorID == "" || legacyTemplate || baselineResolver || matchesPreferredExecutor) && followsSOPExecutorDefault(node, role) {
 			selected[node.ID] = defaults
 			if defaults.Executor != "" {
 				ex, _ = repo.BuiltInExecutor(defaults.Executor)

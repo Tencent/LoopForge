@@ -368,3 +368,46 @@ func TestSOPExecutorDefaultForBaselinePreviewAndProjectRole(t *testing.T) {
 		t.Fatalf("project role and preview defaults = %+v, %v", defaults, err)
 	}
 }
+
+func TestProjectSOPUsesPersonalModelForMatchingExecutor(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	preference := domain.AssistantDefaults{Executor: "codebuddy", Model: "deepseek-v4.1-flash"}
+	models := []domain.CLIModel{{ID: "hy4-free"}, {ID: preference.Model}}
+	if _, err := st.UpdateUserCredentials(1, repo.UserCredentialUpdate{
+		CodeBuddyAPIKey: "fixture-key", CodeBuddyModels: &models, AssistantDefaults: &preference,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	workflow := domain.WorkflowDefinition{ID: "project-flow", ProjectID: "demo"}
+	for _, role := range []domain.AgentDefinition{
+		{ID: "use-default", Name: "Use default", ProjectID: "demo", ExecutorID: "codebuddy"},
+		{ID: "explicit-model", Name: "Explicit model", ProjectID: "demo", ExecutorID: "codebuddy", Model: "hy4-free"},
+	} {
+		if err := st.PutAgent(role); err != nil {
+			t.Fatal(err)
+		}
+		workflow.Nodes = append(workflow.Nodes, domain.WorkflowNode{ID: role.ID, Type: "agent", AgentID: role.ID})
+	}
+
+	e := &Engine{repo: st}
+	workflow.ExecutorDefaults, _, err = e.planSOPExecutors(workflow, domain.TelemetryContext{ResponsibleUserID: 1}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{preference.Model, "hy4-free"} {
+		node := workflow.Nodes[i]
+		role, ok := workflowAgent(st, workflow, node.AgentID)
+		if !ok {
+			t.Fatalf("role %q not found", node.AgentID)
+		}
+		got, err := workflowNodeExecutor(st, workflow, node, role)
+		if err != nil || got.Kind != "codebuddy" || got.Model != want {
+			t.Fatalf("%s executor = %+v, err = %v; want codebuddy / %s", node.ID, got, err, want)
+		}
+	}
+}
