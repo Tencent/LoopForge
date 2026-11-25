@@ -396,6 +396,7 @@ func workerHandler(e *engine.Engine) http.Handler {
 		_, _ = fmt.Fprintf(w, `{"status":"ok","role":"worker","activeRuns":%d}`, e.ActiveRunCount())
 	})
 	mux.HandleFunc("POST /internal/runs/{id}/interrupt", e.HandleRunInterrupt)
+	mux.HandleFunc("POST /internal/runs/promote", e.HandleQueuedRunPromotion)
 	mux.HandleFunc("POST /internal/workspace-checkpoint", e.HandleWorkspaceCheckpoint)
 	return mux
 }

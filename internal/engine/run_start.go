@@ -141,12 +141,22 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 		return domain.Run{}, err
 	}
 	var workspaceSandboxID string
-	if wf.AutoSelectSandbox && executionContext.ParentRunID != "" {
-		parent, ok := e.repo.RunState(executionContext.ParentRunID)
+	var parent domain.Run
+	if executionContext.ParentRunID != "" {
+		var ok bool
+		parent, ok = e.repo.RunState(executionContext.ParentRunID)
 		if !ok {
 			return domain.Run{}, fmt.Errorf("父 SOP 运行不存在")
 		}
-		workspaceSandboxID = parent.WorkflowSnapshot.SandboxProfileID
+		if wf.AutoSelectSandbox {
+			workspaceSandboxID = parent.WorkflowSnapshot.SandboxProfileID
+		}
+		if target := parent.ExecutionContext; target.ExecutionPool == domain.ExecutionPoolProjectAuto {
+			executionContext.ExecutionPool = target.ExecutionPool
+			executionContext.ExecutionMode = target.ExecutionMode
+			executionContext.ExecutionRunnerID = target.ExecutionRunnerID
+			executionContext.RunnerWorkspaceLayout = target.RunnerWorkspaceLayout
+		}
 	}
 	if !workspace && executionContext.ParentRunID == "" && executionContext.WorkspaceRunID != "" {
 		owner, err := e.sopConversationWorkspace(executionContext)
@@ -173,7 +183,7 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 		executionContext.ExecutionPinned = true
 		executionContext.ExecutionPool = ""
 	}
-	e.selectSOPExecutionTarget(&executionContext)
+	autoAssign := e.selectSOPExecutionTarget(&executionContext, !workspace)
 	if len(wf.ProjectCredentialIDs) > 0 {
 		if _, err := e.ResolveRunProjectCredentialEnv(context.Background(), domain.Run{WorkflowSnapshot: wf, ExecutionContext: executionContext}); err != nil {
 			return domain.Run{}, err
@@ -181,9 +191,12 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	}
 	var profile domain.SandboxProfile
 	var sandboxSelection string
+	var candidates []autoAssignCandidate
 	switch {
 	case workspace:
 		profile, err = e.repo.ConversationSandbox(executionContext.ProjectID, wf.SandboxProfileID)
+	case autoAssign:
+		candidates, profile, sandboxSelection, err = e.prepareAutoAssign(ctx, wf, executionContext, repositories, input)
 	case wf.AutoSelectSandbox:
 		profile, sandboxSelection, err = e.selectSOPSandbox(ctx, wf, &executionContext, repositories, input, workspaceSandboxID)
 	default:
@@ -210,21 +223,23 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	if wf.AutoSelectSandbox {
 		wf.SandboxProfileID = profile.ID
 	}
-	if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
-		return domain.Run{}, err
-	}
-	if err := e.requireProjectCredentialRunner(wf, executionContext.ExecutionRunnerID); err != nil {
-		return domain.Run{}, err
-	}
 	wf.ExecutorDefaults = nil
-	if executionContext.ResponsibleUserID > 0 {
-		wf.ExecutorDefaults, _, err = e.planSOPExecutors(wf, executionContext, false)
-		if err != nil {
+	if !autoAssign {
+		if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 			return domain.Run{}, err
 		}
-	}
-	if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
-		return domain.Run{}, err
+		if err := e.requireProjectCredentialRunner(wf, executionContext.ExecutionRunnerID); err != nil {
+			return domain.Run{}, err
+		}
+		if executionContext.ResponsibleUserID > 0 {
+			wf.ExecutorDefaults, _, err = e.planSOPExecutors(wf, executionContext, false)
+			if err != nil {
+				return domain.Run{}, err
+			}
+		}
+		if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
+			return domain.Run{}, err
+		}
 	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("run-%d", now.UnixNano())
@@ -254,11 +269,7 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	for _, n := range wf.Nodes {
 		r.Nodes[n.ID] = &domain.NodeRun{NodeID: n.ID, Status: "pending"}
 	}
-	if executionContext.ParentRunID != "" {
-		parent, ok := e.repo.RunState(executionContext.ParentRunID)
-		if !ok {
-			return domain.Run{}, fmt.Errorf("父 SOP 运行不存在")
-		}
+	if parent.ID != "" {
 		if err := inheritSOPHandoff(parent, &r); err != nil {
 			return domain.Run{}, err
 		}
@@ -288,13 +299,21 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	// Control plane persists an unowned running row. The worker claims it
 	// through ResumeInterruptedRuns. Combined instances still insert already
 	// leased so another process cannot start a second execute() on the same run.
-	if err := e.repo.PutRun(r); err != nil {
+	if autoAssign {
+		err = e.submitAutoAssignRun(r, candidates)
+	} else {
+		err = e.repo.PutRun(r)
+	}
+	if err != nil {
 		return domain.Run{}, err
 	}
 	if current, ok := e.repo.RunState(r.ID); ok {
 		r = current
 	}
 	e.publish(r.ID)
+	if r.Status == "queued" {
+		e.PromoteQueuedRunsAsync()
+	}
 	if !executeHere || r.Status == "queued" {
 		return r, nil
 	}
@@ -307,9 +326,20 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	return r, nil
 }
 
-func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryContext) {
+func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryContext, allowAuto bool) bool {
+	if executionContext.ParentRunID != "" && executionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		return false
+	}
 	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
 		defaults := e.repo.ResolveRunnerDefaults(executionContext.ResponsibleUserID, executionContext.ProjectID)
+		if allowAuto && executionContext.WorkspaceRunID == "" && executionContext.ProjectID != "" &&
+			defaults.ProjectRunnerMode == domain.RunnerSelectionModeAuto {
+			executionContext.ExecutionPool = domain.ExecutionPoolProjectAuto
+			executionContext.ExecutionMode = ""
+			executionContext.ExecutionRunnerID = ""
+			executionContext.RunnerWorkspaceLayout = ""
+			return true
+		}
 		executionContext.ExecutionRunnerID = defaults.Runner.ID
 		executionContext.WorkspaceRunID = ""
 	}
@@ -328,6 +358,7 @@ func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryCont
 	} else {
 		executionContext.ExecutionMode = domain.ExecutionModeCloud
 	}
+	return false
 }
 
 func (e *Engine) executes() bool {

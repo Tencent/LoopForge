@@ -34,6 +34,10 @@ func (e *Engine) persistControlDecision(runID string, r domain.Run, expected ...
 		return err
 	}
 	e.publish(runID)
+	if current, ok := e.repo.RunState(runID); ok && current.Status == "queued" {
+		e.PromoteQueuedRunsAsync()
+		return nil
+	}
 	if e.executes() {
 		e.resume(runID)
 		return nil
@@ -51,6 +55,7 @@ func (e *Engine) Cancel(runID string) error {
 	}
 	if cancelled {
 		e.publish(runID)
+		e.PromoteQueuedRunsAsync()
 		return nil
 	}
 	r, ok := e.repo.RunState(runID)
