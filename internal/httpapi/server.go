@@ -74,6 +74,7 @@ type Server struct {
 	users           *usersHandlers // users.go
 	sshHostTrust    *sshHostTrustHandlers
 	httpsHostTrust  *httpsHostTrustHandlers
+	platformSetting *platformSettingsHandlers
 	httpHostTrust   *gitHTTPHostTrustHandlers
 	projects        *projectsHandlers
 	credentials     *projectCredentialsHandlers
@@ -161,6 +162,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		users:           &usersHandlers{deps: d},
 		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
 		httpsHostTrust:  &httpsHostTrustHandlers{deps: d, hosts: s.HTTPSHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP},
+		platformSetting: &platformSettingsHandlers{deps: d, envPublicURL: func() string { return notifications.PublicURL }},
 		httpHostTrust:   &gitHTTPHostTrustHandlers{deps: d, hosts: s.GitHTTPHostTrustRepo},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
@@ -283,6 +285,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/platform/git-https-hosts/:host", api.httpsHostTrust.save)
 	g.DELETE("/api/platform/git-https-hosts/:host", api.httpsHostTrust.remove)
 	g.GET("/api/git-https-hosts", api.httpsHostTrust.choices)
+	g.GET("/api/platform/public-url", api.platformSetting.publicURL)
+	g.PUT("/api/platform/public-url", api.platformSetting.publicURL)
+	g.DELETE("/api/platform/public-url", api.platformSetting.publicURL)
 	g.GET("/api/platform/git-http-hosts", api.httpHostTrust.list)
 	g.POST("/api/platform/git-http-hosts", api.httpHostTrust.save)
 	g.DELETE("/api/platform/git-http-hosts/:host", api.httpHostTrust.remove)
@@ -311,7 +316,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	})
 
-	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
+	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicAddress}
 	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1), clarify: stream}
 	e.SelectSOPSandbox = asst.selectSOPSandbox
 	if schedulerEnabled() {

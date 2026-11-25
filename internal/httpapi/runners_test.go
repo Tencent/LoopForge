@@ -532,7 +532,7 @@ func TestRunnerSessionRequiredForTaskAPI(t *testing.T) {
 	}
 }
 
-func TestRunnerClaimRejectsQueuedFrozenLocalSandbox(t *testing.T) {
+func TestRunnerClaimRejectsQueuedUnsupportedSandboxes(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -540,10 +540,14 @@ func TestRunnerClaimRejectsQueuedFrozenLocalSandbox(t *testing.T) {
 	t.Cleanup(st.Close)
 	h := New(st, engine.New(st, runtime.NewManager(t.TempDir())), tracker.NewService(), "", "")
 	runnerID, session := registerTestRunner(t, h)
-	for i, driver := range []string{domain.SandboxDriverLocal, domain.SandboxDriverNative} {
+	for i, profile := range []domain.SandboxProfile{
+		{ID: "old-local", Driver: domain.SandboxDriverLocal},
+		{ID: "privileged", Driver: domain.SandboxDriverDocker, Privileged: true},
+		{ID: "native", Driver: domain.SandboxDriverNative},
+	} {
 		task := domain.RunnerTask{
-			ID: driver, RunID: "run-" + driver, RunnerID: runnerID, Provider: "mock", Command: "true",
-			Sandbox:   &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: driver, Driver: driver}},
+			ID: profile.ID, RunID: "run-" + profile.ID, RunnerID: runnerID, Provider: "mock", Command: "true",
+			Sandbox:   &domain.RunnerSandboxSpec{Profile: profile},
 			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Second),
 		}
 		if err := st.PutRunnerTask(task); err != nil {
@@ -559,8 +563,11 @@ func TestRunnerClaimRejectsQueuedFrozenLocalSandbox(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &response) != nil || response.Task.ID != domain.SandboxDriverNative {
 		t.Fatalf("claim returned %d: %s", rec.Code, rec.Body.String())
 	}
-	if old, _ := st.RunnerTask(domain.SandboxDriverLocal); old.Status != domain.RunnerTaskFailed || !strings.Contains(old.Error, "已移除的 local") {
+	if old, _ := st.RunnerTask("old-local"); old.Status != domain.RunnerTaskFailed || !strings.Contains(old.Error, "已移除的 local") {
 		t.Fatalf("legacy task status = %q, error = %q", old.Status, old.Error)
+	}
+	if task, _ := st.RunnerTask("privileged"); task.Status != domain.RunnerTaskFailed || !strings.Contains(task.Error, domain.RunnerVersionPrivilegedSandbox) {
+		t.Fatalf("privileged task status = %q, error = %q", task.Status, task.Error)
 	}
 }
 

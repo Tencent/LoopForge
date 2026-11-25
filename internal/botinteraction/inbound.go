@@ -17,7 +17,10 @@ const (
 	// New channels accept private text up to this many characters.
 	channelTextLimit = 8000
 
-	noticeTenantPending = "机器人正在完成企业确认，请稍后重发消息。"
+	// The first message of an unlocked configuration only discovers the
+	// candidate enterprise; it is not processed. Say what unblocks it, so the
+	// sender is not left waiting for a retry that cannot succeed.
+	noticeTenantPending = "机器人正在完成企业确认：请 Bot 管理员在平台「项目 → 机器人」打开本 Bot，到第②步「企业确认」点击“确认企业”，然后重发消息。"
 	noticeUnsupported   = "目前只支持文字消息，请发送文字。"
 	noticeTooLong       = "消息超过 8000 字，请精简后重新发送。"
 )
@@ -44,6 +47,7 @@ func interactionFromEvent(bot domain.NotificationBot, ev InboundEvent) (domain.B
 		BotID:           bot.ID,
 		ProjectID:       bot.ProjectID,
 		SenderID:        ev.SenderID,
+		SenderName:      ev.SenderName,
 		RequestID:       ev.Route.RequestID,
 		Content:         ev.Text,
 		Quote:           ev.Quote,

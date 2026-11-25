@@ -51,7 +51,7 @@ func (l dockerSandboxLimits) createArgs() []string {
 	return append(args, "--label", dockerSandboxLimitsLabel+"="+l.labelValue())
 }
 
-func (l dockerSandboxLimits) matches(metadata *dockerWorkspaceMounts) bool {
+func (l dockerSandboxLimits) matches(metadata *dockerWorkspaceInspection) bool {
 	return metadata != nil && metadata.limitsLabel == l.labelValue() &&
 		(l.cpuMillicores == 0 || metadata.limits.NanoCPUs == l.cpuMillicores*1_000_000) &&
 		(l.memoryBytes == 0 || metadata.limits.Memory == l.memoryBytes) &&

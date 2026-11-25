@@ -19,6 +19,7 @@ const ctx = {
   location: { hash: '' },
   history: { state: null, pushState() {}, replaceState() {}, back() {} },
   escapeHTML: v => String(v ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])),
+  lfT: zh => zh,
   huiIcon: name => `<i data-icon="${name}"></i>`,
   catalogOwned: projectId => !!ctx.state.projectFilter && projectId === ctx.state.projectFilter,
   catalogForeign: projectId => !!projectId && projectId !== ctx.state.projectFilter,
@@ -185,7 +186,7 @@ async function save(type, existing, values) {
   const base = { name: 'N', description: 'D' };
   const sandboxFields = [
     'cpuCores', 'description', 'dockerfileContent', 'dockerfileFiles', 'driver',
-    'environment', 'id', 'memoryMiB', 'name', 'readOnlyRootFS', 'toolchain',
+    'environment', 'id', 'memoryMiB', 'name', 'privileged', 'readOnlyRootFS', 'toolchain',
   ];
   const cases = [
     ['rules', { id: 'r', projectId: 'p1', shared: true, priority: 100, content: 'x' },
@@ -200,19 +201,19 @@ async function save(type, existing, values) {
       {
         id: 'x', ...base, driver: 'docker', toolchain: ' Python 3.12 ', environment: '{}',
         dockerfileContent: 'FROM x', dockerfileFiles: '{"a":"b"}', readOnlyRootFS: true,
-        cpuCores: '1.25', memoryMiB: '1536',
+        privileged: true, cpuCores: '1.25', memoryMiB: '1536',
       },
       {
         id: 'x', ...base, projectId: 'p1', shared: false, driver: 'docker', toolchain: 'Python 3.12',
         environment: {}, dockerfile: { content: 'FROM x', files: { a: 'b' } }, readOnlyRootFS: true,
-        cpuMillicores: 1250, memoryMiB: 1536,
+        privileged: true, cpuMillicores: 1250, memoryMiB: 1536,
       },
       sandboxFields],
     ['sandboxes', { id: 'n', projectId: 'p1', driver: 'native', toolchain: 'JDK 21' },
       {
         id: 'n', ...base, driver: 'native', toolchain: '', environment: '{"JAVA_HOME":"/opt/jdk"}',
         dockerfileContent: 'FROM x', dockerfileFiles: '{}', readOnlyRootFS: true,
-        cpuCores: '1.25', memoryMiB: '1536',
+        privileged: true, cpuCores: '1.25', memoryMiB: '1536',
       },
       { id: 'n', name: 'N', description: 'D', projectId: 'p1', shared: false, driver: 'native', toolchain: '', environment: { JAVA_HOME: '/opt/jdk' } },
       sandboxFields],

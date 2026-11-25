@@ -27,7 +27,7 @@ func TestDockerSandboxResourceLimitConfig(t *testing.T) {
 	if args := strings.Join(limits.createArgs(), " "); !strings.HasPrefix(args, "--cpus 1.250 --memory 67108864 --label ") {
 		t.Fatalf("Docker flags = %s", args)
 	}
-	want := &dockerWorkspaceMounts{
+	want := &dockerWorkspaceInspection{
 		limitsLabel: limits.labelValue(),
 		limits:      dockerHostLimits{NanoCPUs: 1_250_000_000, Memory: 64 << 20},
 	}

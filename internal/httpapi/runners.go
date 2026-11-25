@@ -958,6 +958,9 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			case task.RunID != "" && task.Action == "":
 				err = domain.ValidateFrozenSandbox(profile)
 				if err == nil {
+					err = runner.ValidatePrivilegedSandboxVersion(profile)
+				}
+				if err == nil {
 					task.ProjectCredentialEnv, err = h.runnerTaskProjectCredentialEnv(c.Request.Context(), task, runner)
 				}
 			}

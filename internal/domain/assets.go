@@ -142,6 +142,7 @@ type SandboxProfile struct {
 	Shared         bool              `json:"shared,omitempty"`
 	Driver         string            `json:"driver"` // native, docker (seatbelt / bwrap are resolved native values)
 	ReadOnlyRootFS bool              `json:"readOnlyRootFS"`
+	Privileged     bool              `json:"privileged,omitempty"`
 	CPUMillicores  int64             `json:"cpuMillicores,omitempty"`
 	MemoryMiB      int64             `json:"memoryMiB,omitempty"`
 	Environment    map[string]string `json:"environment,omitempty"`

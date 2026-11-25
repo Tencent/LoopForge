@@ -757,6 +757,16 @@ type knowledgeSettingsRow struct {
 
 func (knowledgeSettingsRow) TableName() string { return "knowledge_settings" }
 
+// platformSettingsRow is the single row of platform-wide settings a platform
+// administrator maintains on the management page (see domain.PlatformSettings).
+type platformSettingsRow struct {
+	ID      string     `gorm:"column:id;primaryKey;size:64"`
+	Payload []byte     `gorm:"column:payload;type:json"`
+	Updated *time.Time `gorm:"column:updated_at"`
+}
+
+func (platformSettingsRow) TableName() string { return "platform_settings" }
+
 type knowledgeSubmissionRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
 	ProjectID  string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64"`
@@ -789,6 +799,7 @@ func allModels() []any {
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
+		platformSettingsRow{},
 		PlatformGitSSHHost{}, PlatformGitHTTPSHost{}, PlatformGitHTTPHost{},
 	}
 }

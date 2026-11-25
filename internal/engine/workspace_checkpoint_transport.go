@@ -77,6 +77,9 @@ func (e *Engine) requestWorkspaceCheckpoint(ctx context.Context, run domain.Run,
 		}
 		return domain.RunnerWorkspaceResponse{}, fmt.Errorf("%w：无法%s；%s", ErrWorkspaceControlConfiguration, operation, hint)
 	}
+	if request.CheckpointLease == "" {
+		request.CheckpointLease = ConversationWorkspaceToken(ctx, request.RunID)
+	}
 	return postWorkspaceRequest(ctx, base, token, request)
 }
 
@@ -166,7 +169,10 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	artifactsAllowed := request.Operation == domain.RunnerWorkspaceOperationArtifacts && (run.IsWorkspace() || run.Status != "running" && run.Status != "queued" && !run.HasActiveNode())
 	interactive := request.Operation == domain.RunnerWorkspaceOperationPreparationRecord || request.Operation == domain.RunnerWorkspaceOperationPrepare || request.Operation == domain.RunnerWorkspaceOperationPreparationStatus || request.Operation == domain.RunnerWorkspaceOperationTerminal
 	transferAux := transfer && request.Operation != domain.RunnerWorkspaceOperationCheckpointExport && request.Operation != domain.RunnerWorkspaceOperationCheckpointCommit
-	if !probe && !interactive && (sharesWorkspace(run) || !artifactsAllowed && !transferAux && !e.conversationWorkspaceIdle(run)) {
+	restoreDuringExecution := e.ownsExecutionRestoreLease(run, request)
+	idleForCheckpoint := e.conversationWorkspaceIdle(run) &&
+		(run.Status != "waiting" || run.IsWorkspace() || !run.WorkspaceCleanedAt.IsZero() || e.ownsWorkspaceCheckpointLease(run, request))
+	if !probe && !interactive && (sharesWorkspace(run) || !artifactsAllowed && !transferAux && !restoreDuringExecution && !idleForCheckpoint) {
 		http.Error(w, "workspace in use", 409)
 		return
 	}
@@ -188,6 +194,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "runner transport unavailable", 503)
 			return
 		}
+		request.CheckpointLease = ""
 		var err error
 		result, err = e.WorkspaceCheckpointTransport(r.Context(), run, request)
 		if err != nil {
@@ -256,7 +263,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if probe {
-			if !e.conversationWorkspaceIdle(run) {
+			if !restoreDuringExecution && !e.conversationWorkspaceIdle(run) {
 				result = domain.RunnerWorkspaceResponse{Status: 409, Code: domain.WorkspaceErrorBusy, Error: "workspace is still in use"}
 			} else {
 				result = runtime.WorkspaceCheckpointStatus(root)
@@ -276,7 +283,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				http.Error(w, "workspace cleanup not reserved", 409)
 				return
 			}
-			if err := e.releaseRunEnvironment(run.ID, true); err != nil {
+			if err := e.reclaimLocalRunWorkspace(run.ID); err != nil {
 				result.Error = err.Error()
 			} else {
 				result.Payload = json.RawMessage(`{"reclaimed":true}`)
@@ -305,6 +312,34 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+// ownsWorkspaceCheckpointLease verifies an explicit workspace checkpoint lease
+// for operations on a waiting SOP whose checkout is still hot.
+func (e *Engine) ownsWorkspaceCheckpointLease(run domain.Run, request domain.RunnerWorkspaceRequest) bool {
+	if request.CheckpointLease == "" {
+		return false
+	}
+	meta, ok := e.repo.WorkspaceCheckpoint(run.ID)
+	return ok && meta.LeaseToken == request.CheckpointLease && meta.LeaseUntil != nil && meta.LeaseUntil.After(time.Now())
+}
+
+// An admitted run can fetch its checkout before its first node starts. The
+// cleanup marker and workspace lease fence that restore from ordinary RPCs.
+func (e *Engine) ownsExecutionRestoreLease(run domain.Run, request domain.RunnerWorkspaceRequest) bool {
+	if run.Status != "running" || run.WorkspaceCleanedAt.IsZero() || request.CheckpointLease == "" {
+		return false
+	}
+	switch request.Operation {
+	case domain.RunnerWorkspaceOperationRestore, domain.RunnerWorkspaceOperationCheckpointCommit,
+		domain.RunnerWorkspaceOperationCheckpointStatus, domain.RunnerWorkspaceOperationCheckpointExport,
+		domain.RunnerWorkspaceOperationCheckpoint:
+		meta, ok := e.repo.WorkspaceCheckpoint(run.ID)
+		return ok && meta.LeaseToken == request.CheckpointLease && meta.LeaseUntil != nil && meta.LeaseUntil.After(time.Now()) &&
+			meta.SavedAt != nil && meta.Error == "" && !e.workspaceTerminals.HasRunScope(run.ID) && (e.WorkspaceActive == nil || !e.WorkspaceActive(run))
+	default:
+		return false
+	}
 }
 
 func (e *Engine) discardEmptyWorkspaceContainer(ctx context.Context, runID, root string) error {

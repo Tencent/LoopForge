@@ -9,6 +9,8 @@ import (
 	"agentflow/internal/tracker"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +36,7 @@ func botFixture(t *testing.T) (*repo.Store, *assistantHandlers, domain.Notificat
 	d := &deps{repo: s, engine: e}
 	h := &assistantHandlers{deps: d, notifications: &notificationHandlers{deps: d, service: notification.New(s)}}
 	h.notifications.service.PublicURL = "http://platform.example"
-	h.identities = &botIdentityHandlers{deps: d, publicURL: h.notifications.service.PublicURL}
+	h.identities = &botIdentityHandlers{deps: d, publicURL: h.notifications.service.PublicAddress}
 	bindBotTestUser(t, s, bot, "new-wecom-user", 43)
 	bindBotTestUser(t, s, bot, "bound-member", 42)
 	return s, h, bot
@@ -97,6 +99,7 @@ func TestBotUsesBoundSenderIdentityAutoModeAndSharedChatContext(t *testing.T) {
 // In auto mode the Bot writes during the turn: a run it starts with a write
 // tool or a final draft reports back to the chat it was asked in.
 func TestAutoModeStartsRecordTheChat(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "bot-attribution-mcp-session-secret")
 	s, h, bot := botFixture(t)
 	if err := s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
 		t.Fatal(err)
@@ -119,12 +122,24 @@ func TestAutoModeStartsRecordTheChat(t *testing.T) {
 	stored, _ := s.BotInteraction(item.ID)
 	conv, _ := s.BotConversation(stored.ConversationID)
 	h.api = New(s, h.engine, tracker.NewService(), "", "")
-	h.deps.api = h.api
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		session := botTestToolSession(t, user.ID)
-		result, err := (&agentToolGateway{deps: h.deps}).callTool(context.Background(), session, json.RawMessage(`{"name":"agentflow__issues_dispatch","arguments":{"path":{"id":"by-tool"}}}`))
-		if err != nil || result["isError"] == true {
-			t.Fatalf("tool dispatch = %v %v", result, err)
+		for _, body := range []string{
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agentflow__issues_save","arguments":{"body":{"projectId":"p","title":"MCP 创建的需求"}}}}`,
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"agentflow__issues_dispatch","arguments":{"path":{"id":"by-tool"}}}}`,
+		} {
+			req := httptest.NewRequest(http.MethodPost, "/internal/agent-tools/"+session.Token+"/mcp", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			h.api.ServeHTTP(rec, req)
+			var out struct {
+				Result *struct {
+					IsError bool `json:"isError"`
+				} `json:"result"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); rec.Code != http.StatusOK || err != nil || out.Result == nil || out.Result.IsError {
+				t.Fatalf("native MCP write = %d %s", rec.Code, rec.Body.String())
+			}
 		}
 		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{Message: "已启动", Drafts: []assistantDraft{{Tool: "issues_dispatch", Path: map[string]any{"id": "by-draft"}}}}})
 		return "", context.Canceled
@@ -132,7 +147,19 @@ func TestAutoModeStartsRecordTheChat(t *testing.T) {
 	if _, err := h.generateBotReply(context.Background(), bot, conv, nil, stored); err != nil {
 		t.Fatal(err)
 	}
+	assertActor := func(op domain.IssueOperation) {
+		t.Helper()
+		if op.ActorUserID != 43 || op.ActorChannel != domain.BotChannelWeCom || op.ActorSender != "new-wecom-user" {
+			t.Fatalf("%s audit attribution = %+v", op.Action, op)
+		}
+	}
+	assertActor(latestIssueOperation(t, s, "create"))
 	for _, issueID := range []string{"by-tool", "by-draft"} {
+		issue, _ := s.Issue(issueID)
+		if len(issue.Operations) != 1 || issue.Operations[0].Action != "dispatch" {
+			t.Fatalf("%s audit operations = %+v", issueID, issue.Operations)
+		}
+		assertActor(issue.Operations[0])
 		var runID string
 		for _, task := range s.Tasks() {
 			if task.IssueID == issueID {

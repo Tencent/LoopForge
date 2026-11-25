@@ -117,11 +117,17 @@ Docker SOP nodes using a standard CLI executor first look for the CLI on the san
 
 Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: there is no unisolated sandbox type, so every task the platform runs itself is in a sandbox (the `AGENTFLOW_LOCAL_SANDBOX` setting is gone), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. Agent CLIs also apply a bound repository's own configuration as their native rules define, including unattended SOP runs: `AGENTS.md`/`CLAUDE.md` instructions, `.codebuddy/`, `.claude/settings.json` (hooks and environment) and `.mcp.json` can start commands or MCP servers inside the sandbox. Bind only repositories whose contents you trust. To run without the socket, remove the `docker.sock` volume from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for SOPs, including the welcome SOP, which now runs in `generic-docker`.
 
+### Privileged Docker sandboxes
+
+Sandbox editors can request privileged mode for an individual Docker profile. The executing worker or Runner rejects that request unless its own process environment sets `AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX=true`. For Compose, set the variable in `.env` and recreate the platform container. For a native worker or a connected Runner, set it in the foreground command environment or service configuration and restart the process.
+
+Enable this setting only on Docker hosts where the operator trusts every user who can run work there. Privileged containers can access host devices and may gain control of the Docker host. Connected machines need Runner `0.12.5` or later. Automatic SOP sandbox selection considers ordinary sandboxes, and a privileged profile can be selected explicitly. A non-root execution service continues to map default-root images to its UID and GID to keep workspace files accessible.
+
 ### Docker sandbox resource limits
 
 Set CPU and memory limits in a Docker sandbox's configuration. Each new run or
 conversation workspace records those settings in its sandbox snapshot. To use
-profile limits on a remote execution machine, upgrade it to Runner 0.12.5 or
+profile limits on a remote execution machine, upgrade it to Runner 0.12.6 or
 later.
 
 Set machine-wide caps in the environment of each platform process or Runner
