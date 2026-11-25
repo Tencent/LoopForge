@@ -429,7 +429,7 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
   assert.equal(document.querySelector('[data-kb-vendor-auth]'), null);
 
   // 2. 展示四大主力个人知识库原生卡片
-  for (const key of ['obsidian', 'notion', 'siyuan', 'feishu']) {
+  for (const key of ['obsidian', 'notion', 'feishu', 'weknora']) {
     const card = document.querySelector(`.kb-vendor-card[data-vendor-key="${key}"]`);
     assert.ok(card, `应渲染 ${key} 模板卡片`);
     assert.equal(card.getAttribute('data-vendor-state'), 'unconfigured');
@@ -483,5 +483,25 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
   const updatedFeishuCard = document.querySelector('.kb-vendor-card[data-vendor-key="feishu"]');
   assert.equal(updatedFeishuCard.getAttribute('data-vendor-state'), 'configured');
   assert.equal(document.querySelector('[data-kb-authorize]'), null);
+
+  // 5. 点击 WeKnora「快速配置」，验证自动选中原生 weknora 类型并保存成功
+  document.querySelector('[data-kb-vendor-setup="weknora"]').click();
+  await settle(6);
+
+  assert.equal(drawer.querySelector('#kbConnType').value, 'weknora');
+  assert.equal(drawer.querySelector('#kbField-endpoint').value, 'https://weknora.example.com');
+  assert.ok(drawer.querySelector('#kbField-token'), 'WeKnora 抽屉应渲染 API Key 输入框');
+
+  drawer.querySelector('#kbField-token').value = 'wk-api-key-789';
+  drawer.querySelector('#kbDrawerSaveBtn').click();
+  await settle(12);
+
+  const wkPayload = savedPayloads.at(-1);
+  assert.equal(wkPayload.type, 'weknora');
+  assert.equal(wkPayload.endpoint, 'https://weknora.example.com');
+  assert.equal(wkPayload.secret.token, 'wk-api-key-789');
+
+  const updatedWkCard = document.querySelector('.kb-vendor-card[data-vendor-key="weknora"]');
+  assert.equal(updatedWkCard.getAttribute('data-vendor-state'), 'configured');
 });
 

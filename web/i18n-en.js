@@ -182,6 +182,8 @@ Object.assign(window.LF_I18N_EN,{
   "检索词":"Query",
   "命中":"Hits",
   "产物已引用":"Cited in artifacts",
+  "开启后，在 SOP 节点运行或对话 @角色 时自动挂载当前执行人已启用的个人知识库连接器作为默认保底（只读检索并标注引用来源），若节点同时关联了知识库则自动取并集。":"When enabled, the current executor's enabled personal knowledge connectors are automatically mounted as a default baseline during SOP node execution or when @mentioning this role in Chat (read-only retrieval with source citations), and merged with any node-bound knowledge bases.",
+  "为当前节点指定要检索的个人知识库连接器（若角色开启了「接入我的知识库」则自动取并集，同一连接器以节点指定的子知识库范围为准），引用会标记在产物里。":"Specify personal knowledge connectors for this node (automatically merged if the role enables 'Connect my knowledge base', with this node's sub-knowledge base scope taking precedence for the same connector); citations are marked in artifacts.",
   "知识库与文档":"Knowledge bases & docs",
   "检索调试":"Search test",
   "知识沉淀":"Distillation",
@@ -662,5 +664,9 @@ Object.assign(window.LF_I18N_EN, {
   "通过飞书企业自建应用（App ID + App Secret）自动续期读取已授权知识空间与新版云文档": "Read-only access to authorized Feishu Wiki spaces and Docx via self-built app with auto-renewed token",
   "飞书开放平台地址（可选）": "Feishu Open API URL (Optional)",
   "例如：Obsidian 个人笔记 / 飞书知识库": "e.g. Obsidian Personal Vault / Feishu Wiki",
-  "统一原生只读连接器，免 OAuth 回调并自动管理鉴权、子库范围隔离与出处引用；WeKnora、RAGFlow、乐享等可从「添加连接器」继续接入。": "Unified native read-only connectors with zero OAuth callback, managed auth, sub-source isolation and citations; WeKnora, RAGFlow and Lexiang remain available via Add Connector."
+  "统一原生只读连接器，免 OAuth 回调并自动管理鉴权、子库范围隔离与出处引用；WeKnora、RAGFlow、乐享等可从「添加连接器」继续接入。": "Unified native read-only connectors with zero OAuth callback, managed auth, sub-source isolation and citations; WeKnora, RAGFlow and Lexiang remain available via Add Connector.",
+  "统一原生只读连接器，免 OAuth 回调并自动管理鉴权、子库范围隔离与出处引用；思源笔记、RAGFlow、乐享等可从「添加连接器」继续接入。": "Unified native read-only connectors with zero OAuth callback, managed auth, sub-source isolation and citations; SiYuan, RAGFlow and Lexiang remain available via Add Connector.",
+  "WeKnora 知识库": "WeKnora Knowledge Base",
+  "原生 REST API": "Native REST API",
+  "通过只读 REST API 接入个人或团队 WeKnora 实例，支持列子库、混合检索与分块原文读取": "Connect personal or team WeKnora instances via read-only REST API for knowledge base listing, hybrid search and chunk reading"
 });

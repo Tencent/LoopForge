@@ -525,6 +525,11 @@
   color: var(--hui-success);
 }
 
+#knowledgeView .kb-vendor-icon[data-brand="weknora"] {
+  background: color-mix(in srgb, var(--hui-accent) 14%, var(--hui-surface));
+  color: var(--hui-accent);
+}
+
 #knowledgeView .kb-vendor-icon[data-brand="tencent_docs"] {
   background: var(--hui-accent-soft);
   color: var(--hui-accent);

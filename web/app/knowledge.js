@@ -42,20 +42,6 @@
       iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 16V8l6 8V8"/></svg>',
     },
     {
-      key: 'siyuan',
-      name: '思源笔记（SiYuan）',
-      badge: '内置内核 API',
-      desc: '通过思源内置内核 API（:6806）只读检索本地或局域网笔记本、块全文与 Markdown 原文',
-      type: 'siyuan',
-      defaultEndpoint: 'http://127.0.0.1:6806',
-      defaultHeaders: {},
-      defaultExtra: {},
-      defaultAllowedTools: [],
-      guide: '打开思源笔记「设置 → 关于 → API token」复制密钥填入下方；若 LoopForge 运行在 Docker 容器内，请同时在思源「设置 → 关于」中开启「网络伺服」。',
-      brandTone: 'siyuan',
-      iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>',
-    },
-    {
       key: 'feishu',
       name: '飞书知识库 / 云文档',
       badge: '自建应用免签',
@@ -68,6 +54,20 @@
       guide: '在飞书开放平台创建企业自建应用、开启机器人能力并开通 wiki:wiki:readonly 与 docx:document:readonly 权限，发布后将机器人添加为目标知识空间的可阅读成员。',
       brandTone: 'feishu',
       iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3L3 8l9 5 9-5-9-5z"/><path d="M3 13l9 5 9-5"/><path d="M3 17.5l9 4.5 9-4.5"/></svg>',
+    },
+    {
+      key: 'weknora',
+      name: 'WeKnora 知识库',
+      badge: '原生 REST API',
+      desc: '通过只读 REST API 接入个人或团队 WeKnora 实例，支持列子库、混合检索与分块原文读取',
+      type: 'weknora',
+      defaultEndpoint: 'https://weknora.example.com',
+      defaultHeaders: {},
+      defaultExtra: {},
+      defaultAllowedTools: [],
+      guide: '登录 WeKnora 控制台在「设置 → API Key」生成只读或检索密钥，填写服务基础地址（例如 http://host:8080）与 API Key，使用 X-API-Key 请求头鉴权。',
+      brandTone: 'weknora',
+      iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
     },
   ];
 
@@ -924,7 +924,7 @@
         <div class="kb-vendor-section-head">
           <div>
             <h2>常用知识库 · 快速接入</h2>
-            <p class="kb-muted">统一原生只读连接器，免 OAuth 回调并自动管理鉴权、子库范围隔离与出处引用；WeKnora、RAGFlow、乐享等可从「添加连接器」继续接入。</p>
+            <p class="kb-muted">统一原生只读连接器，免 OAuth 回调并自动管理鉴权、子库范围隔离与出处引用；思源笔记、RAGFlow、乐享等可从「添加连接器」继续接入。</p>
           </div>
         </div>
         <div class="kb-vendor-grid">
