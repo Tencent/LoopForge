@@ -94,7 +94,7 @@ func prepareSharedRepository(ctx context.Context, dir string, repository domain.
 			return err
 		}
 	}
-	if !existing || repository.RequireExistingWorkBranch || repository.CreateNewWorkBranch {
+	if !existing || repository.RequireExistingWorkBranch {
 		return prepareRepository(ctx, dir, repository)
 	}
 	ctx = withRepositoryGit(ctx, repository)
@@ -103,6 +103,13 @@ func prepareSharedRepository(ctx context.Context, dir string, repository domain.
 	}
 	if err := applyWorkspaceGitIdentity(ctx, dir); err != nil {
 		return err
+	}
+	if repository.CreateNewWorkBranch {
+		if _, created := gitRevParse(ctx, dir, "refs/heads/"+repository.WorkBranch); !created {
+			if err := gitwork.RequireNewRemoteWorkBranch(ctx, dir, repository.WorkBranch); err != nil {
+				return err
+			}
+		}
 	}
 	if err := gitwork.ContinueSOPCheckout(ctx, dir, repository.WorkBranch); err != nil {
 		return err
@@ -468,7 +475,12 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 			// (and may have pushed), so it is resumed. Without it the branch is
 			// still to be created here, and a same-named remote branch belongs to
 			// someone else: refuse it exactly as a fresh clone does.
-			if _, created := gitRevParse(ctx, workspace, "refs/heads/"+strings.TrimSpace(repository.WorkBranch)); !created {
+			if _, created := gitRevParse(ctx, workspace, "refs/heads/"+strings.TrimSpace(repository.WorkBranch)); created {
+				checkout = func() error {
+					_, err := gitC(ctx, workspace, "checkout", "--quiet", repository.WorkBranch)
+					return err
+				}
+			} else {
 				checkout = func() error { return checkoutNewWorkBranch(ctx, workspace, repository.WorkBranch) }
 			}
 		}
@@ -521,20 +533,16 @@ func checkoutNewWorkBranch(ctx context.Context, workspace, workBranch string) er
 	if _, ok := gitRevParse(ctx, workspace, "refs/heads/"+workBranch); ok {
 		return fmt.Errorf("本地已存在分支 %s，不能按新建分支处理", workBranch)
 	}
-	out, err := gitC(ctx, workspace, "ls-remote", "--heads", "origin", "refs/heads/"+workBranch)
-	if err != nil {
-		return fmt.Errorf("无法确认远端分支 %s 是否存在：%w", workBranch, err)
-	}
-	for _, line := range strings.Split(out, "\n") {
-		_, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
-		if ok && ref == "refs/heads/"+workBranch {
-			return fmt.Errorf("远端已存在分支 %s，不能按新建分支处理；继续该分支请用 branchMode=continue", workBranch)
-		}
+	if err := gitwork.RequireNewRemoteWorkBranch(ctx, workspace, workBranch); err != nil {
+		return err
 	}
 	return createWorkBranchFromBase(ctx, workspace, workBranch)
 }
 
 func fetchRepositoryWorkBranch(ctx context.Context, workspace string, repository domain.RepositoryContext) error {
+	if repository.CreateNewWorkBranch {
+		return nil
+	}
 	err := fetchRemoteWorkBranch(ctx, workspace, repository.WorkBranch)
 	if err != nil && repository.RequireExistingWorkBranch {
 		return fmt.Errorf("继续开发的分支 %q 不存在或无法读取，请确认已有分支名称和权限：%w", repository.WorkBranch, err)
@@ -677,7 +685,7 @@ func defaultWorkBranch(issueNumber int, issueID string, now time.Time) string {
 	} else if issueID != "" {
 		branchOwner = "fix-" + domain.SafeGitRefSegment(issueID)
 	}
-	branch := "feature/" + branchOwner + "-" + now.In(time.Local).Format("20060102-1504")
+	branch := domain.DefaultWorkBranchPrefix + branchOwner + "-" + now.In(time.Local).Format("20060102-1504")
 	if issueNumber <= 0 && issueID == "" {
 		// Nothing ties these runs together (chat workspaces, free
 		// collaboration), so two started in the same minute must not share
