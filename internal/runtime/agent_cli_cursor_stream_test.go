@@ -174,16 +174,16 @@ func TestCursorRouteFilterStreamsLikeStrip(t *testing.T) {
 		"x > y\n  > Auto routed to Composer 2.5  \nx > y",
 	} {
 		want := stripCursorAutoRoute(text)
-		var f cursorRouteFilter
+		var f CursorRouteFilter
 		var got strings.Builder
 		for _, r := range text {
-			streamed := f.feed(string(r))
+			streamed := f.Feed(string(r))
 			got.WriteString(streamed)
 			if !strings.HasPrefix(want, got.String()) {
 				t.Fatalf("%q: streamed %q is not a prefix of %q", text, got.String(), want)
 			}
 		}
-		got.WriteString(f.finish())
+		got.WriteString(f.Finish())
 		if got.String() != want || strings.Contains(want, "Auto routed") {
 			t.Errorf("%q: streamed %q, strip %q", text, got.String(), want)
 		}

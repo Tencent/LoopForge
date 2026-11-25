@@ -24,6 +24,8 @@ async function refreshRunners(silent){
     state.defaultRunnerId=def?.runnerId||'';
     state.personalDefaultRunnerId=def?.personalRunnerId??state.defaultRunnerId;
     state.projectDefaultRunnerId=def?.projectRunnerId||'';
+    state.projectRunnerMode=def?.projectRunnerMode||'';
+    state.platformRunner=def?.platformRunner||null;
     state.cloudPool=def?.cloudPool||null;
     state.minRunnerVersion=def?.minRunnerVersion||'';
     renderRunnersView();
@@ -39,31 +41,53 @@ async function ensureRunnerBindCode(silent){
   }catch(e){if(!silent)toast(e.message)}
 }
 function runnerConcurrencyLabel(runner){
-  if(!(Number(runner?.ownerUserId)>0))return '项目共享执行机器';
   const limit=Number(runner?.runLimit)||0;
-  return limit>0?`个人机器 · 最多同时运行 ${limit} 条 SOP（不受项目 10 条限额）`:'个人机器 · 不限同时运行数（不受项目 10 条限额）';
+  return limit>0?`最多同时运行 ${limit} 条`:'不限同时运行数';
 }
-function runnerRunLimitHTML(runner){
-  if(!(Number(runner?.ownerUserId)>0))return '';
+function runnerRunLimitHTML(runner,platform=false){
+  if(platform?!runner.canEditLimit:!(Number(runner?.ownerUserId)>0))return '';
   const limit=Number(runner?.runLimit)||0;
-  const tip='新绑定机器默认 10 条。按顶层 SOP 计数，共享项目共用机器名额。超出名额后排队。失败、暂停、待确认的 SOP 空闲 1 小时后自动归档并回收工作区，释放名额。继续或重试时自动恢复工作区。输入 0 或留空表示不限。';
-  return `<div class="runner-run-limit"><label for="runLimit-${escapeHTML(runner.id)}">最多同时运行<input id="runLimit-${escapeHTML(runner.id)}" type="number" inputmode="numeric" min="0" step="1" placeholder="不限" value="${limit>0?limit:''}" data-runner-run-limit="${escapeHTML(runner.id)}" aria-label="${escapeHTML(runner.name||runner.id)} 最多同时运行条数">条</label><span class="runner-tip" tabindex="0" role="note" aria-label="${tip}" data-tip="${tip}">?</span></div>`;
+  const scope=platform?'默认 10 条，平台所有项目共用此名额。按顶层 SOP 计数。':'新绑定机器默认 10 条。按顶层 SOP 计数，共享项目共用机器名额。';
+  const tip=scope+'超出名额后排队。失败、暂停、待确认的 SOP 空闲 1 小时后自动归档并回收工作区，释放名额。继续或重试时自动恢复工作区。输入 0 或留空表示不限。';
+  const id=platform?'runLimit-platform-runner':`runLimit-${escapeHTML(runner.id)}`;
+  const control=platform?'data-platform-run-limit':`data-runner-run-limit="${escapeHTML(runner.id)}"`;
+  return `<div class="runner-run-limit"><label for="${id}">最多同时运行<input id="${id}" type="number" inputmode="numeric" min="0" step="1" placeholder="不限" value="${limit>0?limit:''}" ${control} aria-label="${escapeHTML(runner.name||runner.id)} 最多同时运行条数">条</label><span class="runner-tip" tabindex="0" role="note" aria-label="${tip}" data-tip="${tip}">?</span></div>`;
 }
-async function saveRunnerRunLimit(runnerId,raw){
+async function saveRunnerRunLimit(runnerId,raw,platform=false){
   const text=String(raw??'').trim();
   const value=text===''?0:Number(text);
   if(!Number.isSafeInteger(value)||value<0){toast('请输入非负整数，0 或留空表示不限');refreshRunners(true);return}
   try{
-    const runner=await api(`/api/runners/${encodeURIComponent(runnerId)}/run-limit`,{method:'PUT',body:JSON.stringify({runLimit:value})});
-    const i=(state.runners||[]).findIndex(r=>r.id===runnerId);
-    if(i>=0&&runner?.id)state.runners[i]={...runner,canUseInProject:state.runners[i].canUseInProject};
+    const target=platform?'platform':encodeURIComponent(runnerId);
+    const projectId=platform?currentProject()?.id||'':'';
+    const query=projectId?`?projectId=${encodeURIComponent(projectId)}`:'';
+    const runner=await api(`/api/runners/${target}/run-limit${query}`,{method:'PUT',body:JSON.stringify({runLimit:value})});
+    if(platform){
+      if(state.runnerProjectId===projectId)state.platformRunner=runner;
+    }else{
+      const i=(state.runners||[]).findIndex(r=>r.id===runnerId);
+      if(i>=0&&runner?.id)state.runners[i]={...state.runners[i],...runner};
+    }
     toast(value>0?`已设置：最多同时运行 ${value} 条`:'已设为不限','ok');renderRunnersView();
+    void refreshRunners(true);
   }catch(err){toast(err.message);refreshRunners(true)}
+}
+function runnerLoadHTML(runner){
+  const parts=[];
+  const limit=Number(runner.runLimit)||0;
+  if(runner.load){
+    parts.push(`运行中 ${Number(runner.load.runningRuns)||0}`);
+    parts.push(limit>0?`已占 ${Number(runner.load.occupiedRuns)||0} / ${limit}`:'不限');
+    if(runner.load.queuedRuns>0)parts.push(`排队 ${Number(runner.load.queuedRuns)}`);
+  }
+  if(runner.cloudPool)parts.push(`云端池 ${Number(runner.cloudPoolOnline)||0} 台在线`);
+  return parts.length?`<small class="runner-load">${parts.join(' · ')}</small>`:'';
 }
 function runnerStatusLabel(status,lastSeen){
   const label=status==='online'?'在线':status==='offline'?'离线':(status||'未知');
   const style=status==='online'?' online':status==='offline'?' offline':'';
-  return `<span class="runner-status${style}" title="${escapeHTML(runnerLastSeen(lastSeen))}"><i></i>${escapeHTML(label)}</span>`;
+  const seen=lastSeen?` title="${escapeHTML(runnerLastSeen(lastSeen))}"`:'';
+  return `<span class="runner-status${style}"${seen}><i aria-hidden="true"></i>${escapeHTML(label)}</span>`;
 }
 const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
 const runnerAuthLabel={local:'账号登录',personal:'API Key'};
@@ -133,6 +157,30 @@ function runnerCopyCommand(btn,text,message){
   if(!navigator.clipboard){toast('复制失败，请手动选择复制');return}
   navigator.clipboard.writeText(text).then(done).catch(()=>toast('复制失败，请手动选择复制'));
 }
+function runnerProjectWritable(project){
+  const userId=Number(state.currentUser?.id)||0;
+  return !!(userId>0&&project&&!project.archivedAt&&(Number(project.ownerId)===userId||
+    project.members?.some(m=>Number(m.userId)===userId&&String(m.role||'').trim().toLowerCase()!=='viewer')));
+}
+function platformRunnerCardHTML(runner,isDefault,canSetDefault){
+  const name=escapeHTML(runner.name||'平台执行机器（云端）');
+  const limit=runner.canEditLimit?runnerRunLimitHTML(runner,true):`<span class="runner-limit-label">${runnerConcurrencyLabel(runner)}</span>`;
+  return `<article class="runner-card runner-platform-card panel ${isDefault?'is-default':''}">
+    <div class="runner-platform-main">
+      <span class="runner-machine-icon" aria-hidden="true">${huiIcon('server')}</span>
+      <div class="runner-card-title">
+        <div class="runner-card-name"><b title="${name}">${name}</b><span class="runner-tag">平台自带</span>${isDefault?'<span class="runner-tag default">此项目默认</span>':''}</div>
+        ${runnerLoadHTML(runner)}
+      </div>
+    </div>
+    <div class="runner-platform-controls">
+      ${runnerStatusLabel(runner.status)}
+      <span class="runner-platform-sep" aria-hidden="true"></span>
+      ${limit}
+      ${canSetDefault?`<button type="button" class="button small ${isDefault?'ghost runner-text-button':'hui-btn-soft'}" data-runner-platform-default>${isDefault?'清除项目默认':'设为项目默认'}</button>`:''}
+    </div>
+  </article>`;
+}
 function renderRunnersView(){
   const list=$('#runnersList');if(!list)return;
   const host=location.host;
@@ -153,22 +201,46 @@ function renderRunnersView(){
     const text=e.currentTarget.parentElement?.querySelector('pre')?.innerText||'';
     runnerCopyCommand(copyUnBtn,text,'已复制卸载命令');
   };
-  const projectId=currentProject()?.id||'';
+  const project=currentProject();
+  const projectId=project?.id||'';
   const projectLoaded=state.runnerProjectId===projectId;
+  const canSetMode=projectLoaded&&!!projectId&&runnerProjectWritable(project);
+  const projectMode=projectLoaded?state.projectRunnerMode||'':'';
+  const platform=projectLoaded?state.platformRunner:null;
   const own=r=>r.ownerUserId===state.currentUser?.id;
   const runners=(state.runners||[]).filter(r=>own(r)||projectLoaded);
   const personalDefaultId=state.personalDefaultRunnerId??state.defaultRunnerId??'';
   const projectDefaultId=projectLoaded?state.projectDefaultRunnerId||'':'';
   const defaultId=projectLoaded?state.defaultRunnerId||'':'';
   $('#runnerCount').textContent=String(runners.length);
+  const autoAssign=$('#runnerAutoAssign');
+  if(autoAssign){
+    const active=projectMode==='auto';
+    autoAssign.hidden=!canSetMode;
+    autoAssign.classList.toggle('hui-btn-soft',active);
+    autoAssign.classList.toggle('ghost',!active);
+    autoAssign.setAttribute('aria-pressed',String(active));
+    autoAssign.textContent=active?'已开启自动分配':'自动分配';
+    autoAssign.onclick=()=>setDefaultRunner('',projectId,active?'':'auto');
+  }
   const poolStatus=$('#runnerPoolStatus');
   if(poolStatus){
     const def=runners.find(r=>r.id===defaultId),pool=state.cloudPool;
     let text='',warn=false;
-    if(def){
+    if(projectMode==='auto'){
+      const usable=runners.filter(r=>r.canUseInProject&&!runnerDefaultBlocker(r)).length+(platform?.status==='online'?1:0);
+      text=`此项目 SOP 自动分配 · ${usable} 台在线机器可用`;
+      warn=usable===0;
+    }else if(projectMode==='platform'){
+      text='此项目默认 · 平台执行机器（云端）';
+      warn=platform?.status==='offline';
+    }else if(def){
       warn=def.status!=='online';
       const label=projectDefaultId?'此项目默认':'个人默认';
       text=warn?`${label}执行机器已离线，请启动机器或更改默认`:`${label} · ${def.name||def.id}`;
+    }else if(platform){
+      warn=platform.status!=='online';
+      text=warn?'平台执行机器离线':'在平台云端执行';
     }else if(pool?.configured){
       warn=!pool.online;
       text=pool.online?`云端执行 · ${pool.online} 台在线`:'云端暂无在线机器，新任务最多等待 10 分钟';
@@ -180,8 +252,15 @@ function renderRunnersView(){
   const focusedMenu=document.activeElement?.dataset.runnerRuntimeMenu;
   const focusedUpdate=document.activeElement?.dataset.runnerCheckUpdate;
   const focusedShare=document.activeElement?.dataset.runnerShare;
+  const focusedPlatform=document.activeElement?.hasAttribute('data-runner-platform-default');
   closeRunnerRuntimeMenu();
-  list.innerHTML=runners.map(r=>{
+  const platformSection=$('#platformRunnerSection');
+  const platformHost=$('#platformRunnerHost');
+  if(platformSection&&platformHost){
+    platformSection.hidden=!platform;
+    platformHost.innerHTML=platform?platformRunnerCardHTML(platform,projectMode==='platform',canSetMode):'';
+  }
+  const runnerCards=runners.map(r=>{
     const isDefault=r.id===defaultId;
     const discoveredCLIs=(r.runtimes||[]).filter(rt=>runnerCLILabels[rt.provider]);
     const shared=!own(r);
@@ -199,6 +278,7 @@ function renderRunnersView(){
         <div class="runner-card-title">
           <div class="runner-card-name"><b title="${escapeHTML(r.name||r.id)}">${escapeHTML(r.name||r.id)}</b>${isProjectDefault?'<span class="runner-tag default">此项目默认</span>':isPersonalDefault?'<span class="runner-tag default">个人默认</span>':''}${shared?'<span class="runner-tag">项目共享</span>':''}</div>
           <small>${escapeHTML(osLabel)} · ${escapeHTML(r.arch||'?')} · Runner ${escapeHTML(r.runnerVersion||'未知')}</small>
+          ${runnerLoadHTML(r)}
         </div>
         <div class="runner-head-actions">${runnerStatusLabel(r.status,r.lastSeenAt)}${shared?'':`<button class="button ghost runner-check-update" type="button" data-runner-check-update="${escapeHTML(r.id)}" ${r.status!=='online'?'disabled':checking?'aria-disabled="true"':''}>${huiIcon(checking?'arc-spinner':'refresh')}${checking?'处理中…':'检查更新'}</button>`}</div>
       </div>
@@ -207,17 +287,23 @@ function renderRunnersView(){
         ${cliSection}
       </div>
       <div class="runner-card-action">
-        ${shared?'':runnerRunLimitHTML(r)}
+        ${shared?`<span class="runner-limit-label">${runnerConcurrencyLabel(r)}</span>`:runnerRunLimitHTML(r)}
         <span class="runner-card-spacer"></span>
         ${shared?'':`<button class="button ghost small runner-text-button" type="button" data-runner-share="${escapeHTML(r.id)}" aria-haspopup="dialog">共享项目${r.sharedProjectIds?.length?`（${r.sharedProjectIds.length}）`:''}</button>`}
         ${isPersonalDefault?'<button class="button ghost small runner-text-button" type="button" data-set-default="">清除个人默认</button>':''}
         ${shared||r.status==='online'?'':`<button class="button ghost small runner-text-button" type="button" data-remove-runner="${escapeHTML(r.id)}" title="机器已不再使用时移除绑定">移除</button>`}
         ${!shared&&!isPersonalDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-default="${escapeHTML(r.id)}">设为个人默认</button>`:''}
         ${isProjectDefault?'<button class="button ghost small runner-text-button" type="button" data-set-project-default="">清除项目默认</button>':''}
-        ${canSetProjectDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-project-default="${escapeHTML(r.id)}">在此项目使用</button>`:''}
+        ${canSetProjectDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-project-default="${escapeHTML(r.id)}">设为项目默认</button>`:''}
       </div>
     </article>`;
-  }).join('')||'<div class="runner-empty"><b>还没有机器</b><span>执行上方命令后自动出现</span></div>';
+  }).join('');
+  list.innerHTML=runnerCards||'<div class="runner-empty"><b>还没有机器</b><span>执行上方命令后自动出现</span></div>';
+  const platformDefault=platformHost?.querySelector('[data-runner-platform-default]');
+  if(platformDefault){
+    platformDefault.onclick=()=>setDefaultRunner('',projectId,projectMode==='platform'?'':'platform');
+    if(focusedPlatform)platformDefault.focus({preventScroll:true});
+  }
   // Bind click handlers via JS (CSP blocks inline onclick attributes).
   list.querySelectorAll('[data-set-default]').forEach(btn=>btn.onclick=()=>{
     setDefaultRunner(btn.dataset.setDefault||'');
@@ -235,10 +321,12 @@ function renderRunnersView(){
     const [runnerId,provider]=cb.dataset.runnerCli.split('|');
     toggleRunnerRuntime(runnerId,provider,cb.checked);
   });
-  list.querySelectorAll('[data-runner-run-limit]').forEach(input=>{
-    input.onchange=()=>saveRunnerRunLimit(input.dataset.runnerRunLimit,input.value);
-    input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();input.blur()}};
-  });
+  for(const scope of [platformHost,list]){
+    scope?.querySelectorAll('[data-runner-run-limit],[data-platform-run-limit]').forEach(input=>{
+      input.onchange=()=>saveRunnerRunLimit(input.dataset.runnerRunLimit,input.value,input.hasAttribute('data-platform-run-limit'));
+      input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();input.blur()}};
+    });
+  }
   list.querySelectorAll('[data-runner-auth]').forEach(select=>select.onchange=()=>{
     const [runnerId,provider]=select.dataset.runnerAuth.split('|');
     setRunnerRuntimeAuth(runnerId,provider,select.value);
@@ -263,15 +351,13 @@ function renderRunnersView(){
     btn.onclick=()=>checkRunnerUpdate(btn.dataset.runnerCheckUpdate);
     if(!btn.disabled&&btn.dataset.runnerCheckUpdate===focusedUpdate)btn.focus({preventScroll:true});
   });
-  window.AgentFlowHarnessIcons?.hydrate?.(list);
+  [platformHost,list].forEach(el=>el&&window.AgentFlowHarnessIcons?.hydrate?.(el));
   if(!runnerRefreshTimer)runnerRefreshTimer=setInterval(()=>{
-    if(!document.hidden&&activeViewName()==='runners'&&!runnerRuntimeTrigger&&!$('#confirmModal.open')&&!document.activeElement?.matches?.('[data-runner-run-limit],[data-runner-auth],[data-runner-key-help]'))refreshRunners(true);
+    if(!document.hidden&&activeViewName()==='runners'&&!runnerRuntimeTrigger&&!$('#confirmModal.open')&&!document.activeElement?.matches?.('[data-runner-run-limit],[data-platform-run-limit],[data-runner-auth],[data-runner-key-help]'))refreshRunners(true);
   },15000);
 }
 async function editRunnerSharing(runner){
-  const userId=state.currentUser?.id;
-  const projects=(state.data.projects||[]).filter(p=>p.ownerId===userId||
-    p.members?.some(m=>m.userId===userId&&String(m.role||'').trim().toLowerCase()!=='viewer'));
+  const projects=(state.data.projects||[]).filter(runnerProjectWritable);
   const shared=new Set(runner.sharedProjectIds||[]);
   const projectIds=await afOpenDialog(modal=>{
     $('#confirmTitle').textContent=`共享 ${runner.name||runner.id}`;
@@ -324,12 +410,16 @@ function runnerDefaultBlocker(r){
   if(min&&!runnerVersionAtLeast(r.runnerVersion,min))return `执行机器版本 ${r.runnerVersion||'未知'} 过低，需升级至 ${min} 及以上`;
   return '';
 }
-async function setDefaultRunner(runnerId,projectId=''){
+let runnerPreferenceSaving=false;
+async function setDefaultRunner(runnerId,projectId='',mode=''){
+  if(runnerPreferenceSaving)return;
+  runnerPreferenceSaving=true;
   try{
     const query=projectId?`?projectId=${encodeURIComponent(projectId)}`:'';
-    const out=await api('/api/runners/default'+query,{method:'PUT',body:JSON.stringify({runnerId})});
-    toast(out?.message||'已更新','ok');refreshRunners(true);
+    const out=await api('/api/runners/default'+query,{method:'PUT',body:JSON.stringify(mode?{mode}:{runnerId,mode})});
+    toast(out?.message||'已更新','ok');await refreshRunners(true);
   }catch(err){toast(err.message)}
+  finally{runnerPreferenceSaving=false}
 }
 function toggleRunnerRuntime(runnerId,provider,enabled){
   return runnerRuntimeRequest(runnerId,provider,enabled?'online':'disabled');

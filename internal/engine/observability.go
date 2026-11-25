@@ -274,8 +274,10 @@ func (e *Engine) attachLoopRetro(runID, nodeID, workspace string, iterations int
 		_ = os.MkdirAll(filepath.Join(workspace, ".agentflow"), 0o755)
 		_ = os.WriteFile(filepath.Join(workspace, rel), body, 0o644)
 	}
-	e.updateRun(runID, func(r *domain.Run) {
+	if !e.updateRunAt(runID, false, func(r *domain.Run) {
 		appendArtifact(r, nodeID, attempt, "loop-retro", rel, "text/markdown", body)
-	})
+	}) {
+		return
+	}
 	e.observe(runID, nodeID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: "loop-retro", Attributes: map[string]any{"path": rel, "size": len(body)}})
 }

@@ -216,6 +216,51 @@ describe("content and panels", () => {
     globalThis.fetch = originalFetch;
   });
 
+  test("offers oversized text artifacts for download instead of loading them", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({ ok: true, text: async () => "body" }));
+    render(
+      <>
+        <ArtifactPreview artifact={{
+          id: "big",
+          name: "big.log",
+          mimeType: "text/plain",
+          url: "/big.log",
+          size: 6 * 1024 * 1024,
+        }} />
+        <ArtifactPreview artifact={{
+          id: "small",
+          name: "small.log",
+          mimeType: "text/plain",
+          url: "/small.log",
+          size: 1024,
+        }} />
+      </>,
+    );
+    expect(await screen.findByText("body")).toBeInTheDocument();
+    expect(screen.getByText("文件较大，不在页面内预览，可通过右上角下载查看。")).toBeInTheDocument();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(globalThis.fetch).toHaveBeenCalledWith("/small.log");
+    globalThis.fetch = originalFetch;
+  });
+
+  test("offers binary content declared as Markdown for download", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({ ok: true, text: async () => "PK\u0003\u0004\u0000\u0000garbage" }));
+    render(
+      <ArtifactPreview artifact={{
+        id: "zip",
+        name: "pkg.zip",
+        mimeType: "text/markdown",
+        url: "/pkg.zip",
+        size: 2048,
+      }} />,
+    );
+    expect(await screen.findByText("此类型文件可通过右上角下载查看。")).toBeInTheDocument();
+    expect(screen.queryByText(/garbage/)).not.toBeInTheDocument();
+    globalThis.fetch = originalFetch;
+  });
+
   test("previews an attached HTML file in the script-only sandbox", async () => {
     const user = userEvent.setup();
     const originalFetch = globalThis.fetch;

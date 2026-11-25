@@ -243,8 +243,24 @@ func (h *runnersHandlers) runners(c *gin.Context) {
 		projectID = ""
 	}
 	list := h.repo.RunnersForUser(user.ID, projectID)
+	var loads map[string]domain.RunnerLoad
+	if mine || projectID != "" {
+		ids := make([]string, 0, len(list))
+		for _, runner := range list {
+			ids = append(ids, runner.ID)
+		}
+		var err error
+		loads, err = h.repo.RunnerLoadSnapshots(ids)
+		if err != nil {
+			respond(c, err)
+			return
+		}
+	}
 	for i := range list {
 		list[i].Runner = runnerViewForUser(list[i].Runner, user.ID)
+		if load, ok := loads[list[i].ID]; ok {
+			list[i].Load = &load
+		}
 	}
 	c.JSON(http.StatusOK, list)
 }
@@ -283,16 +299,17 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 		defaults = h.repo.ResolveRunnerDefaults(user.ID, projectID)
 	}
 	runner := defaults.Runner
-	var poolConfigured bool
-	var poolOnline int
-	if h.engine != nil {
-		poolConfigured, poolOnline = h.engine.CloudPoolStatus()
+	platform, err := h.platformRunnerStatus(projectID, h.isPlatformAdmin(c.Request))
+	if err != nil {
+		respond(c, err)
+		return
 	}
 	result := map[string]any{
-		"runnerId":  runner.ID,
-		"runner":    runnerViewForUser(runner, user.ID),
-		"online":    runner.Status == domain.RunnerStatusOnline,
-		"cloudPool": map[string]any{"configured": poolConfigured, "online": poolOnline},
+		"runnerId":       runner.ID,
+		"runner":         runnerViewForUser(runner, user.ID),
+		"online":         runner.Status == domain.RunnerStatusOnline,
+		"cloudPool":      gin.H{"configured": platform.CloudPool, "online": platform.CloudPoolOnline},
+		"platformRunner": platform,
 		// minRunnerVersion lets the runners page disable「设为默认」with the
 		// same rule PUT /api/runners/default enforces.
 		"minRunnerVersion": domain.RunnerVersionDefaultSelection,
@@ -300,8 +317,28 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 	if projectID != "" {
 		result["personalRunnerId"] = defaults.PersonalRunnerID
 		result["projectRunnerId"] = defaults.ProjectRunnerID
+		result["projectRunnerMode"] = defaults.ProjectRunnerMode
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func (h *runnersHandlers) platformRunnerStatus(projectID string, canEdit bool) (domain.PlatformRunnerStatus, error) {
+	loads, err := h.repo.LoadSnapshots(nil)
+	if err != nil {
+		return domain.PlatformRunnerStatus{}, err
+	}
+	load := loads[repo.PlatformAdmissionBucketKey]
+	status := domain.PlatformRunnerStatus{
+		Name: domain.PlatformRunnerName, Status: domain.RunnerStatusOffline,
+		RunLimit: h.repo.PlatformRunnerRunLimit(), CanEditLimit: canEdit, Load: &load,
+	}
+	if h.engine != nil {
+		status.CloudPool, status.CloudPoolOnline = h.engine.CloudPoolStatus()
+		if h.engine.PlatformRunnerOnline(projectID) {
+			status.Status = domain.RunnerStatusOnline
+		}
+	}
+	return status, nil
 }
 
 // 路由: g.PUT("/api/runners/:id/shared-projects", h.runnerSharedProjectsSet)
@@ -409,8 +446,46 @@ func (h *runnersHandlers) runnerRunLimitSet(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	if h.engine != nil && (*input.RunLimit == 0 || (runner.RunLimit > 0 && *input.RunLimit > runner.RunLimit)) {
+		h.engine.PromoteQueuedRunsAsync()
+	}
 	runner, _ = h.repo.Runner(runner.ID)
 	c.JSON(http.StatusOK, domain.PublicRunner(runner))
+}
+
+func (h *runnersHandlers) platformRunnerRunLimitSet(c *gin.Context) {
+	if !h.platformAdminWrite(c) {
+		return
+	}
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以执行该操作"})
+		return
+	}
+	var input struct {
+		RunLimit *int `json:"runLimit"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	if input.RunLimit == nil || *input.RunLimit < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "runLimit 需为非负整数，0 表示不限制"})
+		return
+	}
+	previous := h.repo.PlatformRunnerRunLimit()
+	if err := h.repo.SetPlatformRunnerRunLimit(*input.RunLimit, user.ID); err != nil {
+		respond(c, err)
+		return
+	}
+	if h.engine != nil && (*input.RunLimit == 0 || (previous > 0 && *input.RunLimit > previous)) {
+		h.engine.PromoteQueuedRunsAsync()
+	}
+	status, err := h.platformRunnerStatus(strings.TrimSpace(c.Query("projectId")), true)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, status)
 }
 
 // runnerDefaultSet selects the user's personal default or a project override.
@@ -423,12 +498,30 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 	}
 	var input struct {
 		RunnerID string `json:"runnerId"`
+		Mode     string `json:"mode"`
 	}
 	if !decode(c, &input) {
 		return
 	}
 	runnerID := strings.TrimSpace(input.RunnerID)
 	projectID := strings.TrimSpace(c.Query("projectId"))
+	mode := strings.TrimSpace(input.Mode)
+	switch mode {
+	case "", domain.RunnerSelectionModeAuto, domain.RunnerSelectionModePlatform:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的项目执行模式"})
+		return
+	}
+	if mode != "" {
+		if projectID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "仅支持按项目配置执行模式"})
+			return
+		}
+		if runnerID != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "执行模式与指定执行机器只能选择一项"})
+			return
+		}
+	}
 	if runnerID != "" {
 		runner, found := h.repo.Runner(runnerID)
 		if !found {
@@ -449,16 +542,21 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 		}
 	}
 	if projectID != "" {
-		if err := h.repo.SetProjectDefaultRunner(user.ID, projectID, runnerID); err != nil {
+		if err := h.repo.SetProjectRunnerPreference(user.ID, projectID, runnerID, mode); err != nil {
 			runnerPreferenceError(c, err)
 			return
 		}
 		message := "已设为你在此项目的默认执行机器"
-		if runnerID == "" {
+		switch {
+		case mode == domain.RunnerSelectionModeAuto:
+			message = "已开启此项目 SOP 自动分配"
+		case mode == domain.RunnerSelectionModePlatform:
+			message = "已设为此项目使用平台执行机器"
+		case runnerID == "":
 			message = "已清除此项目的默认执行机器"
 		}
 		defaults := h.repo.ResolveRunnerDefaults(user.ID, projectID)
-		c.JSON(http.StatusOK, gin.H{"runnerId": defaults.Runner.ID, "message": message})
+		c.JSON(http.StatusOK, gin.H{"runnerId": defaults.Runner.ID, "projectRunnerMode": defaults.ProjectRunnerMode, "message": message})
 		return
 	}
 	if err := h.repo.SetDefaultRunner(user.ID, runnerID, time.Now().UTC()); err != nil {
@@ -470,9 +568,9 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 		return
 	}
 	if runnerID == "" {
-		c.JSON(http.StatusOK, map[string]any{"runnerId": "", "message": "已切回云端执行"})
+		c.JSON(http.StatusOK, gin.H{"runnerId": "", "projectRunnerMode": "", "message": "已切回云端执行"})
 	} else {
-		c.JSON(http.StatusOK, map[string]any{"runnerId": runnerID, "message": "已设为默认执行机器，你的任务和沙箱将在这台机器上执行"})
+		c.JSON(http.StatusOK, gin.H{"runnerId": runnerID, "projectRunnerMode": "", "message": "已设为默认执行机器，你的任务和沙箱将在这台机器上执行"})
 	}
 }
 
@@ -727,8 +825,8 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 	if input.MaxConcurrency > 32 {
 		input.MaxConcurrency = 32
 	}
-	// The binding owner or the platform bootstrap can re-register a known
-	// machine. Other users bind a fresh ID, even if they know the old ID.
+	// Only the original binding may reuse an ID. Platform bootstrap
+	// credentials can renew platform runners, whose owner is zero.
 	now := time.Now().UTC()
 	runner := domain.Runner{
 		Name:                   strings.TrimSpace(input.Name),
@@ -743,7 +841,9 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 		OwnerUserID:            owner,
 		LastSeenAt:             &now,
 	}
-	if existing, ok := h.repo.Runner(strings.TrimSpace(input.RunnerID)); ok && (existing.OwnerUserID == owner || owner == 0) {
+	existing, found := h.repo.Runner(strings.TrimSpace(input.RunnerID))
+	renew := found && existing.OwnerUserID == owner
+	if renew {
 		runner.ID = existing.ID
 		runner.CreatedAt = existing.CreatedAt
 		runner.Runtimes = normalizeRunnerRuntimes(input.Runtimes, existing.Runtimes)
@@ -758,7 +858,11 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 	expires := now.Add(runnerSessionTTL)
 	runner.SessionTokenHash = hash
 	runner.SessionExpiresAt = &expires
-	if err := h.repo.PutRunner(runner); err != nil {
+	if err := h.repo.RegisterRunner(runner, renew); err != nil {
+		if errors.Is(err, repo.ErrRunnerNotFound) {
+			c.JSON(http.StatusConflict, gin.H{"error": "runner registration changed; retry"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -1262,7 +1366,8 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 		Artifacts map[string]string         `json:"artifacts"`
 		Outputs   *domain.RunnerTaskOutputs `json:"outputs"`
 	}
-	if !decode(c, &input) {
+	// Legacy runners still post several inline files in one completion.
+	if !decodeLimit(c, &input, 16<<20) {
 		return
 	}
 	if input.Status == "" {
@@ -1280,6 +1385,9 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 	}
 	if message := validateRunnerTaskOutputs(input.Outputs); message != "" {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": message})
+		return
+	}
+	if input.Outputs != nil && (len(input.Outputs.FileBlobs) != 0 || len(input.Outputs.FileErrors) != 0) && !h.validateRunnerOutputTransfer(c, runner.ID, input.Outputs) {
 		return
 	}
 	if err := h.repo.CompleteRunnerTask(c.Param("id"), runner.ID, input.Status, input.ExitCode, input.Result, input.Error, input.Artifacts, input.Outputs, time.Now().UTC()); err != nil {
@@ -1343,8 +1451,18 @@ func validateRunnerTaskOutputs(outputs *domain.RunnerTaskOutputs) string {
 		if !domain.SafeWorkspaceRelPath(path) {
 			return fmt.Sprintf("产物路径 %q 不合法", path)
 		}
-		if len(content) > 1<<20 {
-			return fmt.Sprintf("产物 %s 超过 1MB 上传限制", path)
+		if len(content) > domain.MaxInlineRunnerArtifactBytes {
+			return fmt.Sprintf("旧版行内产物 %s 超过 1 MiB 上传限制", path)
+		}
+	}
+	for path, message := range outputs.FileErrors {
+		if !domain.SafeWorkspaceRelPath(path) || len(message) > 2048 {
+			return "无效的产物错误报告"
+		}
+	}
+	for _, path := range outputs.TooLarge {
+		if !domain.SafeWorkspaceRelPath(path) {
+			return fmt.Sprintf("产物路径 %q 不合法", path)
 		}
 	}
 	for dir, patch := range outputs.Patches {
@@ -1382,7 +1500,7 @@ func isRunnerAgentPath(path string) bool {
 			return true
 		}
 		switch strings.Join(parts[1:], "/") {
-		case "start", "lease/renew", "events", "complete", "control":
+		case "start", "lease/renew", "events", "complete", "control", "input-file", "output-file":
 			return true
 		}
 	}

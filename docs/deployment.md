@@ -86,7 +86,7 @@ MIRROR=ghcr.nju.edu.cn ./start.sh pull
 
 Pushing a `vX.Y.Z` tag on `main` runs the `release` workflow once the `platform` workflow has passed on that commit. The tagged `compose.yaml` must already pin `loopforge:X.Y.Z`. It publishes `ghcr.io/<owner>/loopforge` as `X.Y.Z`, `X.Y`, `latest` and `sha-<commit>`, smoke-tests the pushed digest with `./start.sh`, and creates the GitHub Release. Forks publish under their own owner; set the GHCR package visibility/access for your team before distributing the image. Images are pulled only when missing by default; use an immutable tag/digest, or set `LOOPFORGE_PULL_POLICY=always` when updating a mutable tag. Existing `.env` values take precedence; change the saved image or URL there when updating an installation. Compose waits for the API's health check with a bounded timeout before installing schema extensions and seeds.
 
-Open the platform and create the first account in the browser; it receives platform administration. Until that account exists the login page only offers this setup step.
+On a password-only installation, open the platform and create the first account in the browser. If no administrator is configured, the login page offers this setup step and grants the account platform administration.
 
 During initial setup, restrict the cloud security group or firewall to the operator's IP. Do not expose the first-account setup page to arbitrary Internet clients before the administrator account has been created.
 
@@ -96,6 +96,8 @@ Enterprise authentication gateways can sign users in by header with `AGENTFLOW_T
 
 - Set `AGENTFLOW_IDENTITY_HEADER_SECRET` to a random value, and have the gateway send it in `X-AgentFlow-Gateway-Secret`. The gateway must overwrite, never pass through, the client's `Staffname`, `Staffid`, `x-staff-name` and `X-AgentFlow-Gateway-Secret` headers.
 - Without a secret, any request carrying `X-Forwarded-For`, `Forwarded` or `X-Real-IP` is treated as a forwarded client, and its identity headers are ignored. This only protects proxies that add one of those headers: a same-host proxy that passes client headers through without adding them (for example nginx `proxy_pass` without `proxy_set_header X-Forwarded-For`), and any other process on the host, can still sign in as any user. Set the secret whenever header sign-in is on; the platform logs a warning at startup when it is missing.
+
+Browser self-registration is available on password-only installations. SSO counts as configured only when both `AGENTFLOW_SSO_APP_TOKEN` and `AGENTFLOW_SSO_LOGIN_URL` are set. For gateway or SSO sign-in, provision administrators by setting `AGENTFLOW_PLATFORM_ADMINS` to their authenticated login names or by using the operator account command below. On a password installation that sets `AGENTFLOW_PLATFORM_ADMINS`, the browser offers no first-account setup and the listed login names cannot self-register; create those accounts with the operator account command.
 
 ### Project credentials
 
@@ -217,7 +219,7 @@ The retention cleanup runs hourly in each process that runs the Bot workers and 
 
 ## Accounts
 
-The first account created in the browser becomes the platform administrator. After that, anyone who can reach the login page may sign up as a regular user while `AGENTFLOW_ALLOW_SIGNUP` is `true` (the default). Registered users can create requirements and run SOPs on your workers, so set `AGENTFLOW_ALLOW_SIGNUP=false` for any installation reachable from untrusted networks and create accounts explicitly instead.
+On a password-only installation, the first browser account becomes the platform administrator when there is no existing password account or configured administrator. Regular users can sign up while `AGENTFLOW_ALLOW_SIGNUP` is `true` (the default). Registered users can create requirements and run SOPs on your workers, so set `AGENTFLOW_ALLOW_SIGNUP=false` for any installation reachable from untrusted networks and provision accounts explicitly.
 
 Platform administrators create accounts under **Platform administration → Member accounts** (平台管理 → 成员账号): enter a login name and an initial password, optionally grant administration, and hand the password to the teammate. The same page lists every account and resets the password of a password account; accounts that sign in through GitHub or a gateway cannot be given a password there. New accounts join the welcome project, like self sign-ups.
 
@@ -239,6 +241,12 @@ Use `-admin` only when granting platform administration. Running the command aga
 The upstream process roles remain `-role api`, `-role worker` and `-role all`. API and worker instances must share the MySQL database and configuration appropriate to their deployment. Set `AGENTFLOW_CONTROL_TOKEN`, `AGENTFLOW_CONTROL_URL` and `AGENTFLOW_WORKER_URL` when separating control and execution. Set `AGENTFLOW_PLATFORM_MCP_URL` to the actual platform URL reachable from execution containers.
 
 Personal runners are connected from the execution-machine page with a short-lived binding code. The installer is served at `/runners/install.sh`. `AGENTFLOW_RUNNER_BINARY` can point to binaries with `{os}` and `{arch}` substitutions. Container images bundle Linux/macOS amd64/arm64 runner and gate binaries. Native source installations can build on demand with Go.
+
+SOP deliverables support up to 20 MiB per file. Runner 0.13.0 and later transfer
+declared files separately from the task completion report, so several files
+can be handed off together. Installations with automatic Runner updates
+enabled receive the bundled version after the platform release. Older Runners
+keep their 1 MiB inline upload limit until they update.
 
 The machine owner can use **Settings → Execution machines → Shared projects** to grant access to one or more projects where they are the owner or a member with write access. Members with write access can select a compatible shared machine for a new conversation. **Use in this project** sets a default for that user and project. Each new turn on a shared machine requires a current grant and project write access for both the machine owner and the sender. Removing a grant clears the saved project defaults that pointed to the machine.
 
@@ -272,6 +280,17 @@ For an external MySQL deployment, review that migration and check column existen
 | Applied before startup by `./start.sh pull` for an existing Compose database | `041_native_sandbox_inline_assets.sql` | See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets) |
 | Required manual upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
+
+Compose runs `migrations/042_run_artifacts_content_mediumtext.sql` before the
+platform starts, including during `./start.sh pull`. The native development
+script runs the same migration against its Compose database. It widens an existing
+`run_artifacts.content` column from `TEXT` to `MEDIUMTEXT` for inline artifacts
+and preserves existing data, character set, collation and nullability. Larger
+files use separate chunk tables added at platform startup.
+For a deployment using an external MySQL server and no Compose startup, run this
+SQL file in the deployment's database upgrade step before starting the new binary.
+If the Compose migration fails, review `docker compose --profile platform logs
+artifact-migration`, resolve the database error and rerun the upgrade.
 
 ### Migrating existing sandboxes to inline assets
 

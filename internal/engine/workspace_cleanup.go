@@ -214,6 +214,7 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 			log.Printf("release borrowed SOP admission %s: %v", run.ID, err)
 		} else if released {
 			e.publish(run.ID)
+			e.wakeRunClaimLoop()
 		}
 		return
 	}
@@ -309,6 +310,7 @@ func (e *Engine) releaseCleanedRunAdmission(run domain.Run, message string) {
 		log.Printf("release cleaned run admission %s: %v", run.ID, err)
 	} else if released {
 		e.publish(run.ID)
+		e.wakeRunClaimLoop()
 	}
 }
 
@@ -428,7 +430,13 @@ func (e *Engine) DeleteRun(runID string) error {
 	if err := e.releaseRunEnvironment(runID, true); err != nil {
 		return fmt.Errorf("destroy run sandbox: %w", err)
 	}
-	return e.repo.DeleteRun(runID)
+	if err := e.repo.DeleteRun(runID); err != nil {
+		return err
+	}
+	if run.AdmissionState == "held" && run.ExecutionContext.ParentRunID == "" && !run.IsWorkspace() {
+		e.PromoteQueuedRunsAsync()
+	}
+	return nil
 }
 
 func (e *Engine) settleDeletedRunTasks(run domain.Run) error {

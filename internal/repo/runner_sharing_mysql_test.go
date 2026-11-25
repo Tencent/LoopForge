@@ -24,6 +24,7 @@ func TestMySQLRunnerSharingPreservesGrantsAndClearsRevokedDefaults(t *testing.T)
 	projects := []string{prefix + "-one", prefix + "-two"}
 	t.Cleanup(func() {
 		_ = store.DeregisterRunner(runner.ID, time.Now().UTC())
+		_ = store.DB.Where("project_id IN ?", projects).Delete(&userProjectRunnerPrefRow{}).Error
 		_ = store.DB.Where("project_id IN ?", projects).Delete(&projectMemberRow{}).Error
 		_ = store.DB.Where("id IN ?", projects).Delete(&projectRow{}).Error
 	})
@@ -72,8 +73,22 @@ func TestMySQLRunnerSharingPreservesGrantsAndClearsRevokedDefaults(t *testing.T)
 	if got := store.ProjectDefaultRunner(2, projects[1]); got.ID != runner.ID {
 		t.Fatalf("revoking one project changed the other's default: %+v", got)
 	}
+	modes := []string{domain.RunnerSelectionModeAuto, domain.RunnerSelectionModePlatform}
+	for i, mode := range modes {
+		if err := store.SetProjectRunnerPreference(1, projects[i], "", mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SetRunnerSharedProjects(runner.ID, 1, nil); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.DeregisterRunner(runner.ID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
+	}
+	for i, mode := range modes {
+		if got := store.ResolveRunnerDefaults(1, projects[i]); got.ProjectRunnerMode != mode || got.Runner.ID != "" || got.ProjectRunnerID != "" {
+			t.Fatalf("revocation or deregistration removed mode %s: %+v", mode, got)
+		}
 	}
 	var count int64
 	if err := store.DB.Model(&userProjectRunnerPrefRow{}).Where("default_runner_id = ?", runner.ID).Count(&count).Error; err != nil || count != 0 {
