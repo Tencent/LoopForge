@@ -17,20 +17,7 @@ func normalizeIssueBaseBranch(raw string) (string, error) {
 	if branch == "" {
 		return "", nil
 	}
-	invalid := branch == "HEAD" || strings.HasPrefix(branch, "-") ||
-		strings.HasSuffix(branch, ".") || strings.Contains(branch, "..") ||
-		strings.Contains(branch, "@{") || strings.ContainsAny(branch, "~^:?*[\\")
-	for _, r := range branch {
-		if r <= ' ' || r == 127 {
-			invalid = true
-		}
-	}
-	for _, component := range strings.Split(branch, "/") {
-		if component == "" || strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".lock") {
-			invalid = true
-		}
-	}
-	if invalid {
+	if !domain.ValidGitBranchName(branch) {
 		return "", fmt.Errorf("工作分支名称无效，请填写已有分支名称，例如 feature/my-feature")
 	}
 	return branch, nil

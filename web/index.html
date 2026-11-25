@@ -1015,6 +1015,52 @@
             <label class="pa-field"><span class="pa-field-l">集成分支 <i>可选</i></span><input class="pa-input mono" name="integrateBranch" placeholder="agentflow/integration"></label>
           </div>
           <p class="pa-fs-hint">集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突；留空则跳过（部分仓库不允许创建 agentflow/ 分支）。</p>
+          <label class="pa-field pa-repo-branch-naming">
+            <span class="pa-field-l">工作分支命名</span>
+            <select class="pa-input" name="workBranchNamingMode">
+              <option value="prefix">按前缀生成</option>
+              <option value="ai">AI 生成</option>
+            </select>
+          </label>
+          <div class="pa-repo-branch-naming" data-work-branch-prefix>
+            <label class="pa-field">
+              <span class="pa-field-l">分支前缀</span>
+              <select class="pa-input mono" name="workBranchPrefix">
+                <option value="feature/">feature/</option>
+                <option value="custom">自定义</option>
+                <option value="">无前缀</option>
+              </select>
+            </label>
+            <div class="pa-repo-branch-naming" data-work-branch-custom-prefix hidden>
+              <label class="pa-field">
+                <span class="pa-field-l">自定义前缀</span>
+                <input class="pa-input mono" name="workBranchCustomPrefix" placeholder="team-a/">
+              </label>
+            </div>
+          </div>
+          <div class="pa-repo-branch-naming" data-work-branch-prompt hidden>
+            <div class="pa-g2">
+              <label class="pa-field">
+                <span class="pa-field-l">CLI</span>
+                <select class="pa-input select" name="workBranchExecutorId"></select>
+              </label>
+              <label class="pa-field">
+                <span class="pa-field-l">模型</span>
+                <select class="pa-input select" name="workBranchModelChoice"></select>
+              </label>
+            </div>
+            <div class="pa-repo-branch-naming" data-work-branch-custom-model hidden>
+              <label class="pa-field">
+                <span class="pa-field-l">模型 ID</span>
+                <input class="pa-input mono" name="workBranchCustomModel" maxlength="128" spellcheck="false">
+              </label>
+            </div>
+            <label class="pa-field pa-repo-branch-naming">
+              <span class="pa-field-l">命名要求 <i>可选</i></span>
+              <textarea class="pa-input" name="workBranchPrompt" rows="3" maxlength="2000" placeholder="用小写英文概括改动，带上需求编号"></textarea>
+              <span class="pa-field-h">AI 根据任务和命名要求生成完整的分支名。</span>
+            </label>
+          </div>
         </div>
         <div class="pa-fs"><div class="pa-toggle-card"><div><b>设为项目默认仓库</b><span>新需求默认在此仓库上执行。</span></div><button type="button" class="pa-switch" id="repoDrawerDefault" role="switch" aria-checked="false" aria-label="设为项目默认仓库"></button></div></div>
         <details class="pa-fs pa-adv" id="repoDrawerAdvanced">
