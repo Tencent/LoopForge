@@ -337,7 +337,7 @@ Object.assign(window.LF_I18N_EN, {
 });
 
 Object.assign(window.LF_I18N_EN, {
-  "SOP 运行评测": "SOP run evaluation",
+  "LOOP 运行评测": "LOOP run evaluation",
   "重试评测": "Retry evaluation",
   "评测中…": "Evaluating…",
   "运行结束后可评测": "Available when the run ends",
@@ -394,7 +394,7 @@ Object.assign(window.LF_I18N_EN, {
   "执行命令": "Commands",
   "将写入当前项目的评测副本": "Applies to the evaluation copy in this project.",
   "打开角色": "Open role",
-  "打开 SOP": "Open SOP",
+  "打开 LOOP": "Open LOOP",
   "应用建议": "Apply recommendation",
   "正在回写…": "Applying…",
   "将建议写入以下目标？": "Apply this recommendation to the following target?",
@@ -402,7 +402,7 @@ Object.assign(window.LF_I18N_EN, {
   "建议已回写": "Recommendation applied",
   "回写未完成，请刷新评测结果后重试。": "Apply did not complete. Refresh the evaluation and try again.",
   "暂时无法打开回写后的角色，请刷新后再试。": "Could not open the updated role. Refresh and try again.",
-  "暂时无法打开回写后的 SOP，请刷新后再试。": "Could not open the updated SOP. Refresh and try again.",
+  "暂时无法打开回写后的 LOOP，请刷新后再试。": "Could not open the updated LOOP. Refresh and try again.",
   "最大尝试次数": "Maximum attempts",
   "最大返工次数": "Maximum reworks",
   "失败处理": "On failure",

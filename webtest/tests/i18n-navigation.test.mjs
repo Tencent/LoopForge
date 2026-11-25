@@ -59,6 +59,22 @@ test('English mode translates every page title and the copy the app renders into
   window.close();
 });
 
+test('English mode translates the LOOP evaluation and writeback action', async (t) => {
+  const app = await loadApp({ dispatchReady: false });
+  t.after(app.close);
+  const window = await englishPage('<html><body></body></html>');
+  t.after(() => window.close());
+  const panel = window.document.createElement('div');
+  panel.innerHTML = app.evaluate("runEvalPaneHTML({id:'run-english',status:'succeeded'})");
+  window.document.body.append(panel);
+  await new Promise(resolve => window.setTimeout(resolve, 0));
+
+  assert.equal(panel.querySelector('h3').textContent, 'LOOP run evaluation');
+  assert.equal(window.lfTranslate('打开 LOOP'), 'Open LOOP');
+  assert.equal(window.lfTranslate('暂时无法打开回写后的 LOOP，请刷新后再试。'),
+    'Could not open the updated LOOP. Refresh and try again.');
+});
+
 test('English mode translates the 个人配置 credential panel and the hints that point to it', async (t) => {
   const app = await loadApp({ dispatchReady: false });
   t.after(app.close);
