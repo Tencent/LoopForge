@@ -176,20 +176,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	old, exists := h.repo.AssistantSession(ownerID, req.SessionID)
-	if exists {
-		target := old.Execution()
-		if req.ExecutionTarget != nil && *req.ExecutionTarget != target {
-			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换；请新建对话"})
-			return
-		}
-		req.ExecutionTarget = &target
-	} else {
-		target, err := h.newExecutionTarget(stored.ID, req.ProjectID, req.ExecutionTarget)
-		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		req.ExecutionTarget = target
+	if !h.bindTurnExecutionTarget(c, &req, stored.ID, old) {
+		return
 	}
 	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
@@ -290,10 +278,29 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 	}
 	req.workspaceMode = savedConversation.Mode() == domain.AssistantModeWorkspace
+	var projectCredentialNote string
+	if len(savedConversation.ProjectCredentialIDs) > 0 && !req.sopDesigner() {
+		if savedConversation.ProjectID != req.ProjectID {
+			c.JSON(403, gin.H{"error": "会话项目与凭据项目不一致"})
+			return
+		}
+		names, ok := h.sessionProjectCredentialNames(c, savedConversation, user.ID)
+		if !ok {
+			return
+		}
+		projectCredentialNote = "\n项目凭据的环境变量为 " + strings.Join(names, "、") + "。需要时在项目工作区通过进程环境使用，避免输出值。\n"
+	}
 	if req.workspaceMode && req.RunID == "" && h.sopWorkspaceReadOnly(c, savedConversation, req.ProjectID, user.ID) {
 		// Another member left this shared conversation working in an SOP
 		// workspace; a read-only speaker continues in platform mode.
 		req.workspaceMode = false
+	}
+	if req.workspaceMode && req.RunID == "" && savedConversation.WorkspaceRunID != "" {
+		// A dispatched SOP can be working in this checkout while the chat
+		// discusses its progress. Keep the conversation in platform mode then.
+		if running, err := h.repo.HasWorkspaceSOPRuns(savedConversation.WorkspaceRunID, "running"); err == nil && running {
+			req.workspaceMode = false
+		}
 	}
 	sourceRoot := h.resolvedSourceRoot()
 	ctx, cancel := context.WithCancel(c.Request.Context())
@@ -346,6 +353,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.ExecutionRunnerID = savedConversation.Execution().RunnerID
 		sess.runnerLogin = runnerLogin
 		sess.RuntimeMode = savedConversation.Mode()
+		if projectCredentialNote != "" {
+			sess.projectCredentialIDs = savedConversation.ProjectCredentialIDs
+		}
 		if sess.RuntimeMode == domain.AssistantModeWorkspace && !req.workspaceMode {
 			sess.RuntimeMode = domain.AssistantModePlatform
 		}
@@ -435,7 +445,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			emit = sink
 		}
 		forward := emit
-		var secretStream assistantSecretStream
+		secretStream := assistantSecretStream{projectSecrets: toolSession.projectSecrets}
 		publish := func(events []assistantStreamEvent) {
 			for _, event := range events {
 				activity.add(event)
@@ -591,9 +601,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 						// The journal's catalogue is uncertain until the phase completes.
 						workspaceRepositoryHash = ""
 					}
-					prompt = prefix + repositoryPrompt + prompt
+					prompt = prefix + repositoryPrompt + projectCredentialNote + prompt
 				} else if !req.sopDesigner() {
-					prompt = assistantPlatformExecutionReminder + "\n" + prompt
+					prompt = assistantPlatformExecutionReminder + "\n" + projectCredentialNote + prompt
 				}
 				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: func(usage domain.TokenUsage) {
 					turnUsage.add(domain.PriceScheduleExecutionUsage(replyModel, usage))
@@ -819,6 +829,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			emit("flush", nil)
 		}
 		reply.Message = redactAssistantSecrets(reply.Message, user)
+		reply.Message = maskProjectSecrets(reply.Message, toolSession.projectSecrets())
 		// Join every streamed paragraph before slides and path cleanup, so a
 		// result that only repeats the last paragraph cannot replace them.
 		activityEvents := activity.forUser(user)

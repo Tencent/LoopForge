@@ -2640,6 +2640,10 @@ html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code
 #runnersView .runner-card-action .button:disabled{opacity:.4;cursor:not-allowed}
 #runnersView .runner-card-action .runner-text-button{border:1px solid transparent;background:transparent;color:var(--rv-muted)}
 #runnersView .runner-card-action .runner-text-button:hover{background:var(--rv-hover);color:var(--rv-text)}
+.runner-share-projects{display:grid;gap:4px;max-height:min(280px,40vh);overflow:auto;margin:0;padding:0;border:0}
+.runner-share-projects label{display:flex;align-items:center;gap:8px;padding:6px 8px;color:var(--hui-text)}
+.runner-share-projects label:hover{background:var(--hui-soft)}
+.runner-share-projects label span{overflow-wrap:anywhere}
 #runnersView .runner-run-limit{display:inline-flex;align-items:center;gap:6px;margin:0;padding:0;border-radius:0;background:none}
 #runnersView .runner-run-limit label{display:inline-flex;flex-direction:row;align-items:center;gap:6px;margin:0;color:var(--rv-muted);font-size:12px;font-weight:400}
 #runnersView .runner-run-limit input{width:56px;height:28px;padding:0 8px;border:1px solid var(--rv-line);border-radius:7px;background:var(--rv-surface);color:var(--rv-text);font-size:12px;text-align:right;box-shadow:none}

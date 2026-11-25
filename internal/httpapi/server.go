@@ -75,7 +75,9 @@ type Server struct {
 	sshHostTrust    *sshHostTrustHandlers
 	httpsHostTrust  *httpsHostTrustHandlers
 	platformSetting *platformSettingsHandlers
+	httpHostTrust   *gitHTTPHostTrustHandlers
 	projects        *projectsHandlers
+	credentials     *projectCredentialsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
 	catalog         *catalogHandlers  // catalog.go
@@ -161,10 +163,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
 		httpsHostTrust:  &httpsHostTrustHandlers{deps: d, hosts: s.HTTPSHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP},
 		platformSetting: &platformSettingsHandlers{deps: d, envPublicURL: func() string { return notifications.PublicURL }},
+		httpHostTrust:   &gitHTTPHostTrustHandlers{deps: d, hosts: s.GitHTTPHostTrustRepo},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
 		projects:        &projectsHandlers{deps: d},
+		credentials:     &projectCredentialsHandlers{deps: d},
 		mcp:             &mcpHandlers{deps: d},
 		market:          &marketHandlers{deps: d},
 		skillhub:        &skillhubHandlers{deps: d, client: newSkillhubClientFromEnv()},
@@ -290,6 +294,10 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/platform/public-url", api.platformSetting.publicURL)
 	g.PUT("/api/platform/public-url", api.platformSetting.publicURL)
 	g.DELETE("/api/platform/public-url", api.platformSetting.publicURL)
+	g.GET("/api/platform/git-http-hosts", api.httpHostTrust.list)
+	g.POST("/api/platform/git-http-hosts", api.httpHostTrust.save)
+	g.DELETE("/api/platform/git-http-hosts/:host", api.httpHostTrust.remove)
+	g.GET("/api/git-http-hosts", api.httpHostTrust.choices)
 	// master(net/http) 的 /api/users/ 子树只接受 PUT /api/users/<id>/credentials
 	// 一种形态，其余任何方法/子路径都走 method(w) → 405 JSON。
 	g.Any("/api/users/:id/credentials", func(c *gin.Context) {
@@ -371,6 +379,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
 	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
+	g.PUT("/api/assistant/sessions/:id/project-credentials", asst.sessionProjectCredentials)
 	g.PUT("/api/assistant/sessions/:id/mode", asst.sessionMode)
 	g.GET("/api/assistant/sessions/:id/native-approvals", asst.nativeApprovals)
 	g.POST("/api/assistant/sessions/:id/native-approvals/:approvalId", asst.nativeApprovals)
@@ -396,8 +405,17 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/projects", api.projects.projects)
 	g.POST("/api/projects", api.projects.projects)
 	g.GET("/api/projects/:id", api.projects.project)
+	g.GET("/api/projects/:id/credentials", api.credentials.list)
+	g.POST("/api/projects/:id/credentials", api.credentials.save)
+	g.PUT("/api/projects/:id/credentials/:credentialId", api.credentials.save)
+	g.DELETE("/api/projects/:id/credentials/:credentialId", api.credentials.delete)
 	g.DELETE("/api/projects/:id", api.projects.deleteProject)
 	g.POST("/api/projects/:id/restore", api.projects.restoreProject)
+	g.POST("/api/projects/:id/join-requests", api.projects.createJoinRequest)
+	g.GET("/api/project-join-requests", api.projects.joinRequests)
+	g.POST("/api/project-join-requests/:id/approve", api.projects.approveJoinRequest)
+	g.POST("/api/project-join-requests/:id/reject", api.projects.rejectJoinRequest)
+	g.POST("/api/project-join-requests/:id/withdraw", api.projects.withdrawJoinRequest)
 	g.GET("/api/repositories", api.catalog.repositories)
 	g.POST("/api/repositories", api.catalog.repositories)
 	g.PUT("/api/repositories", api.catalog.repositories)
@@ -627,9 +645,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/runners/default", api.runners.runnerDefaultSet)
 	g.DELETE("/api/runners/:id", api.runners.runnerRemove)
 	g.PUT("/api/runners/:id/run-limit", api.runners.runnerRunLimitSet)
+	g.PUT("/api/runners/:id/shared-projects", api.runners.runnerSharedProjectsSet)
 	g.GET("/api/runners/:id/maintenance", api.runners.runnerMaintenance)
 	g.POST("/api/runners/:id/maintenance", api.runners.runnerMaintenance)
 	g.POST("/api/runners/:id/models/probe", api.runners.probeRunnerModels)
+	g.PUT("/api/runners/:id/models", api.runners.saveRunnerLoginModels)
 	g.POST("/api/runners/heartbeat", api.runners.runnerHeartbeat)
 	g.GET("/api/runners/tasks", api.runners.runnerTasksCollection)
 	g.POST("/api/runners/tasks", api.runners.runnerTasksCollection)

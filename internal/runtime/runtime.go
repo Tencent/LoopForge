@@ -68,7 +68,7 @@ type RunCredentials struct {
 	// conversation workspace. It travels to the execution machine on the
 	// authenticated control connection only, in the start request of the CLI.
 	GitSSHHostKeys map[string]string `json:",omitempty"`
-	// GitHTTPHosts maps each HTTPS host the requester exposes to a workspace
+	// GitHTTPHosts maps each HTTP(S) endpoint the requester exposes to a workspace
 	// to its platform. It holds no tokens; the helper asks for them per host.
 	GitHTTPHosts map[string]string `json:",omitempty"`
 	// GitHTTPCredentials travels only on authenticated execution dispatches.
@@ -133,9 +133,13 @@ type CommandSpec struct {
 	// Extra credentials (set by bindCommand) so process telemetry can redact
 	// them by origin instead of relying on naming conventions.
 	credentialEnvKeys []string
+	// Project values are set just before launching a sandbox command.
+	projectCredentialEnv map[string]string
 	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string
+	// observeOutput receives raw bytes before process telemetry splits lines.
+	observeOutput func(stream string, data []byte)
 	// privateBinds are host directories bwrap binds into this one process
 	// only (for example a terminal's own SSH agent).
 	privateBinds []string

@@ -1053,6 +1053,73 @@ paths:
             application/json:
               schema: {type: array, items: {$ref: "#/components/schemas/GitHTTPSHostChoice"}}
         "403": {$ref: "#/components/responses/Forbidden"}
+  /api/git-http-hosts:
+    get:
+      tags: [Repositories]
+      operationId: listGitHTTPHostChoices
+      summary: List explicitly authorized plaintext Git instances for the signed-in user
+      responses:
+        "200":
+          description: Endpoint and provider choices for personal access tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [host, platform]
+                  properties:
+                    host: {type: string, example: "http://git.example.org:8080"}
+                    platform: {type: string, enum: [other]}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/platform/git-http-hosts:
+    get:
+      tags: [Repositories]
+      operationId: listPlatformGitHTTPHosts
+      summary: List plaintext Git host authorizations
+      responses:
+        "200":
+          description: Authorized hosts and ports
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/PlatformGitHTTPHost"}}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      tags: [Repositories]
+      operationId: createPlatformGitHTTPHost
+      summary: Authorize a plaintext Git host and port
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PlatformGitHTTPHost"}
+      responses:
+        "201":
+          description: Saved authorization
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformGitHTTPHost"}
+        "400": {description: Invalid HTTP host}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {description: The HTTP host and port are already authorized}
+  /api/platform/git-http-hosts/{host}:
+    parameters:
+      - {name: host, in: path, required: true, schema: {type: string}, example: "git.example.org:8080"}
+      - name: If-Match
+        in: header
+        required: true
+        schema: {type: string}
+        description: Quote the revision returned when the authorization was read or saved.
+    delete:
+      tags: [Repositories]
+      operationId: deletePlatformGitHTTPHost
+      summary: Revoke authorization for a plaintext Git host
+      responses:
+        "204": {description: Authorization revoked}
+        "400": {description: Invalid host or revision}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412": {description: The registration has changed or been removed}
+        "428": {description: The current registration revision is required}
   /api/platform/git-https-hosts:
     get:
       tags: [Repositories]
@@ -1304,6 +1371,7 @@ paths:
     put:
       tags: [Projects]
       operationId: upsertProject
+      description: When replacing members of an existing project, send membersVersion from the last project read. Omit members to preserve the current roster.
       requestBody:
         $ref: "#/components/requestBodies/Project"
       responses:
@@ -1313,6 +1381,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: The member list has changed or membersVersion is missing. Reload the project before retrying.
   /api/projects/{projectId}:
     parameters:
       - name: projectId
@@ -1367,6 +1437,111 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/projects/{projectId}/join-requests:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [Projects]
+      operationId: createProjectJoinRequest
+      description: Ask to join a project. One pending request per user and project; owners, members and open projects (no owner and no members) are refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: {type: string, enum: [member, viewer], default: member}
+                reason: {type: string, maxLength: 500}
+      responses:
+        "200": {$ref: "#/components/responses/ProjectJoinRequest"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Already a member or a pending request exists}
+  /api/project-join-requests:
+    get:
+      tags: [Projects]
+      operationId: listProjectJoinRequests
+      description: The caller's own requests plus every request of projects the caller owns or maintains (platform admins see all), newest first.
+      parameters:
+        - name: projectId
+          in: query
+          schema: {type: string}
+        - name: status
+          in: query
+          schema: {type: string, enum: [pending, approved, rejected, withdrawn]}
+      responses:
+        "200":
+          description: Join requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/ProjectJoinRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /api/project-join-requests/{requestId}/approve:
+    parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    post:
+      tags: [Projects]
+      operationId: approveProjectJoinRequest
+      description: Approve a pending request and add the applicant as a member; project owner, maintainer or platform admin. Archived projects cannot be reviewed.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum: [maintainer, member, viewer]
+                  description: Granted role; defaults to the requested role. Only owners and platform admins grant maintainer.
+      responses:
+        "200": {$ref: "#/components/responses/ProjectJoinRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Request is no longer pending or the applicant is already a project owner or member}
+  /api/project-join-requests/{requestId}/reject:
+    parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    post:
+      tags: [Projects]
+      operationId: rejectProjectJoinRequest
+      description: Reject a pending request; project owner, maintainer or platform admin.
+      responses:
+        "200": {$ref: "#/components/responses/ProjectJoinRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Request is no longer pending}
+  /api/project-join-requests/{requestId}/withdraw:
+    parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    post:
+      tags: [Projects]
+      operationId: withdrawProjectJoinRequest
+      description: Withdraw the caller's own pending request.
+      responses:
+        "200": {$ref: "#/components/responses/ProjectJoinRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Request is no longer pending}
   /api/repositories:
     get:
       tags: [Repositories]
@@ -4314,6 +4489,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Project"
+    ProjectJoinRequest:
+      description: Project join request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProjectJoinRequest"
     ProjectList:
       description: Project list
       content:
@@ -4652,6 +4833,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectMember"
+        membersVersion:
+          type: string
+          description: Opaque membership snapshot token. Required when replacing members of an existing project; stale tokens return 409.
         tapdWorkspaceId:
           type: string
         tapdIterationId:
@@ -4674,6 +4858,23 @@ components:
         role:
           type: string
           enum: [maintainer, member, viewer]
+    ProjectJoinRequest:
+      type: object
+      required: [id, projectId, userId, role, status]
+      properties:
+        id: {type: integer, format: int64}
+        projectId: {type: string}
+        userId: {type: integer, format: int64}
+        role:
+          type: string
+          enum: [maintainer, member, viewer]
+          description: Requested role while pending, granted role once approved.
+        reason: {type: string}
+        status: {type: string, enum: [pending, approved, rejected, withdrawn]}
+        reviewerId: {type: integer, format: int64}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        reviewedAt: {type: string, format: date-time}
     PlatformAccount:
       type: object
       properties:
@@ -4706,6 +4907,15 @@ components:
           example: "[fd00::2]:8443"
           description: Git hostname or IPv6 address. An IPv6 address with a port uses brackets.
         platform: {type: string, enum: [github, gitlab, other]}
+    PlatformGitHTTPHost:
+      type: object
+      required: [host]
+      properties:
+        host:
+          type: string
+          example: "10.0.0.5:8080"
+          description: Plaintext Git hostname or IP address. The default port is 80.
+        revision: {type: string, readOnly: true, description: Opaque revision for conditional removal.}
     PlatformGitHTTPSHost:
       allOf:
         - $ref: "#/components/schemas/GitHTTPSHostChoice"

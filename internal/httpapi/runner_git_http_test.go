@@ -8,17 +8,28 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 func TestSOPGitCredentialsAreHydratedOnlyOnAuthenticatedRunnerClaim(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	runnerID, session := registerTestRunner(t, f.h)
 	runner, _ := f.s.Runner(runnerID)
-	runner.RunnerVersion = domain.RunnerVersionGitHTTP
+	runner.RunnerVersion = domain.RunnerVersionConversationSOPWorkspace
 	if err := f.s.PutRunner(runner); err != nil {
 		t.Fatal(err)
 	}
 	const host, token = "unfamiliar.example.org", "fake-runner-http-secret"
+	const plainHost, plainToken = "http://git.example.org:8080", "fixture-plain-runner-token"
+	if err := f.s.CreatePlatformGitHTTPHost(t.Context(), &repo.PlatformGitHTTPHost{Host: "git.example.org:8080"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.SaveGitHTTPCredential(f.user.ID, "", domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Host: plainHost},
+		Token:             plainToken,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.s.SaveGitHTTPCredential(f.user.ID, "", domain.GitHTTPCredentialSecret{
 		GitHTTPCredential: domain.GitHTTPCredential{Host: host, Platform: domain.GitPlatformOther},
 		Token:             token,
@@ -54,6 +65,9 @@ func TestSOPGitCredentialsAreHydratedOnlyOnAuthenticatedRunnerClaim(t *testing.T
 	}
 	if resp.Header().Get("Cache-Control") != "no-store" || claimed.Task.Invocation.GitHTTPUserID != 0 || claimed.Task.Invocation.GitHTTPCredentials[host].Token != token {
 		t.Fatal("the authenticated claim lost the transient host credential")
+	}
+	if _, ok := claimed.Task.Invocation.GitHTTPCredentials[plainHost]; ok || strings.Contains(resp.Body.String(), plainToken) {
+		t.Fatal("an HTTPS-only runner received a plaintext HTTP credential")
 	}
 	stored, _ = f.s.RunnerTask(task.ID)
 	if stored.Invocation.GitHTTPCredentials != nil {

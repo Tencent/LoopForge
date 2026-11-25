@@ -108,7 +108,7 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 	if err != nil {
 		return result, err
 	}
-	model := scheduledAssistantDefault(h.repo, user, job.AssistantModel)
+	model := scheduledAssistantDefault(h.repo, user, job.ProjectID, job.AssistantModel)
 	if shared != nil {
 		// On the shared key a run only uses the models the administrator
 		// allows, and never silently switches to another one.
@@ -268,14 +268,14 @@ func (h *assistantHandlers) scheduleJobAssistantUser(job domain.ScheduleJob, mod
 	}
 	// Try each candidate's own credentials before considering the shared key.
 	for _, user := range candidates {
-		engine, _ := assistantModelEngine(scheduledAssistantDefault(h.repo, user, model))
-		if scheduleHasPersonalCredential(h.repo, user, engine) {
+		engine, _ := assistantModelEngine(scheduledAssistantDefault(h.repo, user, job.ProjectID, model))
+		if scheduleHasPersonalCredential(h.repo, user, job.ProjectID, engine) {
 			return user, nil, nil
 		}
 	}
 	engine, _ := assistantModelEngine(model)
 	for _, user := range candidates {
-		if user, shared, ok := scheduleCredentialUser(h.repo, user, engine); ok {
+		if user, shared, ok := scheduleCredentialUser(h.repo, user, job.ProjectID, engine); ok {
 			return user, shared, nil
 		}
 	}
@@ -296,14 +296,14 @@ func (h *assistantHandlers) scheduleJobRunAsUser(job domain.ScheduleJob, model s
 	if !scheduleProjectWriter(h.repo, job.ProjectID, user) {
 		return domain.User{}, nil, fmt.Errorf("%s 已不是该项目的可写成员，请编辑并保存一次任务，以你的凭据执行", name)
 	}
-	engine, _ := assistantModelEngine(scheduledAssistantDefault(h.repo, user, model))
-	runUser, shared, ok := scheduleCredentialUser(h.repo, user, engine)
+	engine, _ := assistantModelEngine(scheduledAssistantDefault(h.repo, user, job.ProjectID, model))
+	runUser, shared, ok := scheduleCredentialUser(h.repo, user, job.ProjectID, engine)
 	if !ok {
 		if assistantModelUnspecified(model) {
 			return domain.User{}, nil, fmt.Errorf("任务保存人 %s 缺少可用的执行器凭据，请在个人配置中设置", name)
 		}
 		if assistantSupportsRunnerLogin(engine) {
-			return domain.User{}, nil, fmt.Errorf("任务保存人 %s 缺少 %s 凭据，请在其默认执行机器启用账号登录，或在个人配置填写 API Key", name, assistantEngineLabel(engine))
+			return domain.User{}, nil, fmt.Errorf("任务保存人 %s 缺少 %s 凭据，请将其默认执行机器共享给该项目并启用账号登录，或在个人配置填写 API Key", name, assistantEngineLabel(engine))
 		}
 		if engine != assistantEngineCodeBuddy {
 			return domain.User{}, nil, fmt.Errorf("执行提示词需要 %s 的 %s API Key：请在该账号的个人配置中配置", name, assistantEngineLabel(engine))
@@ -313,9 +313,9 @@ func (h *assistantHandlers) scheduleJobRunAsUser(job domain.ScheduleJob, model s
 	return runUser, shared, nil
 }
 
-// scheduleLoginRunner resolves the actor's configured personal machine at
-// save and run time. At run time an offline machine uses the API Key path.
-func scheduleLoginRunner(r *repo.Store, userID int64, engine string) domain.Runner {
+// scheduleLoginRunner resolves the actor's personal default machine for the
+// task's project. At run time an offline machine uses the API Key path.
+func scheduleLoginRunner(r *repo.Store, userID int64, projectID, engine string) domain.Runner {
 	if r == nil || userID <= 0 || !assistantSupportsRunnerLogin(engine) {
 		return domain.Runner{}
 	}
@@ -325,20 +325,21 @@ func scheduleLoginRunner(r *repo.Store, userID int64, engine string) domain.Runn
 	}
 	machine, ok := r.Runner(id)
 	if !ok || machine.OwnerUserID != userID || !machine.SupportsCLISettings() ||
-		!machine.SupportsProvider(engine) || !runnerUsesLocalLogin(machine, engine) {
+		!machine.SupportsProvider(engine) || !runnerUsesLocalLogin(machine, engine) ||
+		!r.CanUseRunner(machine, projectID, userID) {
 		return domain.Runner{}
 	}
 	return machine
 }
 
-func scheduleHasPersonalCredential(r *repo.Store, user domain.User, engine string) bool {
+func scheduleHasPersonalCredential(r *repo.Store, user domain.User, projectID, engine string) bool {
 	key, _ := assistantEngineCredential(user, engine)
-	return key != "" || scheduleLoginRunner(r, user.ID, engine).ID != ""
+	return key != "" || scheduleLoginRunner(r, user.ID, projectID, engine).ID != ""
 }
 
 // Keep explicit schedule selections, including a CLI's own default. Unset
 // legacy selections can use the actor's default or another available CLI.
-func scheduledAssistantDefault(r *repo.Store, user domain.User, model string) string {
+func scheduledAssistantDefault(r *repo.Store, user domain.User, projectID, model string) string {
 	model = strings.TrimSpace(model)
 	if !assistantModelUnspecified(model) {
 		return model
@@ -347,7 +348,7 @@ func scheduledAssistantDefault(r *repo.Store, user domain.User, model string) st
 		return preferred
 	}
 	for _, option := range assistantEngineOptions(user, false) {
-		if !scheduleHasPersonalCredential(r, user, option.ID) {
+		if !scheduleHasPersonalCredential(r, user, projectID, option.ID) {
 			continue
 		}
 		if option.ID == assistantEngineCodeBuddy {
@@ -361,8 +362,8 @@ func scheduledAssistantDefault(r *repo.Store, user domain.User, model string) st
 
 // scheduleCredentialUser keeps the actor's identity, substituting only the
 // CodeBuddy key and its environment when the platform sponsors the run.
-func scheduleCredentialUser(r *repo.Store, user domain.User, engine string) (domain.User, []string, bool) {
-	if scheduleHasPersonalCredential(r, user, engine) {
+func scheduleCredentialUser(r *repo.Store, user domain.User, projectID, engine string) (domain.User, []string, bool) {
+	if scheduleHasPersonalCredential(r, user, projectID, engine) {
 		return user, nil, true
 	}
 	if engine != assistantEngineCodeBuddy || r == nil {
@@ -387,16 +388,5 @@ func scheduleProjectWriter(r interface {
 		return true
 	}
 	project, ok := r.Project(projectID)
-	if !ok {
-		return false
-	}
-	if project.OwnerID == user.ID {
-		return true
-	}
-	for _, member := range project.Members {
-		if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
-			return true
-		}
-	}
-	return false
+	return ok && project.HasWritableMember(user.ID)
 }
