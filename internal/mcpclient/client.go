@@ -91,7 +91,8 @@ type toolCallResult struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
-	IsError bool `json:"isError,omitempty"`
+	IsError           bool            `json:"isError,omitempty"`
+	StructuredContent json.RawMessage `json:"structuredContent,omitempty"`
 }
 
 // CallTool invokes a named MCP tool with the given arguments and returns the
@@ -179,16 +180,23 @@ func (c *Client) CallToolContext(ctx context.Context, name string, args map[stri
 	if err := json.Unmarshal(rpcResp.Result, &result); err != nil {
 		return strings.TrimSpace(string(rpcResp.Result)), nil
 	}
-	if result.IsError && len(result.Content) > 0 {
-		return "", fmt.Errorf("mcp tool %s: %s", name, result.Content[0].Text)
-	}
 	var textBlocks []string
 	for _, block := range result.Content {
 		if block.Type == "text" && block.Text != "" {
 			textBlocks = append(textBlocks, block.Text)
 		}
 	}
-	return strings.Join(textBlocks, "\n"), nil
+	text := strings.Join(textBlocks, "\n")
+	if result.IsError {
+		if text == "" {
+			text = "tool reported an error without text"
+		}
+		return "", fmt.Errorf("mcp tool %s: %s", name, text)
+	}
+	if text == "" && len(result.StructuredContent) > 0 {
+		text = string(result.StructuredContent)
+	}
+	return text, nil
 }
 
 type Tool struct {
