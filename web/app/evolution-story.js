@@ -83,7 +83,7 @@ function evoStoryEffectHTML(p){
     </article>`;
   }).join('');
   return `<section id="evoStoryEffects" class="evo-story-section" aria-labelledby="evoEffectTitle">
-    <header class="evo-story-section-head"><h2 id="evoEffectTitle">修改效果</h2><span class="evo-muted" data-tooltip="消耗和耗时按回放执行范围对比，复用节点在两侧均排除。">${pairs.length}/${rows.length} 条可对比 · 回放</span></header>
+    <header class="evo-story-section-head"><h2 id="evoEffectTitle">${evoReviewIcon('chart')}修改效果</h2><span class="evo-muted" data-tooltip="消耗和耗时按回放执行范围对比，复用节点在两侧均排除。">${pairs.length}/${rows.length} 条可对比 · 回放</span></header>
     <div class="evo-effect-grid">${cards}</div>
   </section>`;
 }
@@ -141,23 +141,6 @@ function evoFindingPriorityHTML(finding){
   const label={high:'高',medium:'中',low:'低'}[finding?.severity];
   return label?`<span class="evo-priority" data-severity="${finding.severity}" aria-label="${label}优先级">${label}</span>`:'';
 }
-function evoStoryProblemOverviewHTML(m,p){
-  const f=m.row?.f,t=f?.triage,issues=evoStoryCurrentIssues(m,p);
-  const summary=evoStoryProblemText(m,p);
-  const runs=new Set([...(f?.sampleRunIds||[]),...issues.flatMap(r=>(r.c.occurrences||[]).map(o=>o.runId))].filter(Boolean));
-  const failed=t?.kinds?.node_failed??(t?.kinds?0:undefined);
-  const rate=t?.runs>0&&Number.isFinite(failed)&&failed>=0&&failed<=t.runs?evoPct(failed/t.runs):'';
-  const facts=[
-    runs.size?`<div><dt>问题运行</dt><dd>${runs.size} 次</dd></div>`:'',
-    rate?`<div><dt title="本次诊断窗口内当前资产版本的失败运行占比">当前失败率</dt><dd>${rate}</dd></div>`:''
-  ].join('');
-  const short=evoStoryBrief(summary,34),detail=evoStoryBrief(summary,72);
-  if(detail===short&&!facts)return '';
-  return `<section id="evoProblemOverview" class="evo-story-section evo-story-overview">
-    <div><h2>${evoReviewIcon('doc')}问题与影响</h2>${detail!==short?`<p>${escapeHTML(detail)}</p>`:''}</div>
-    ${facts?`<dl>${facts}</dl>`:''}
-  </section>`;
-}
 function evoStorySourceExampleHTML(issues,kind){
   const issue=issues.find(r=>r.c.kind===kind);
   if(!issue)return '';
@@ -180,12 +163,64 @@ function evoStoryProblemEvidenceHTML(m,p){
   if(!issues.length&&!cards.length)return '';
   const expanded=evoStorySourceExampleHTML(issues,m.sourceKind);
   return `<section class="evo-story-section evo-story-signal-section">
-    <header class="evo-story-section-head"><h2>${evoReviewIcon('doc')}取证依据</h2></header>
     <div class="evo-story-signals">${cards.join('')||`<article class="evo-story-signal">
       <h3>${evoReviewIcon('alert')}关联问题 <b>${issues.length} 类</b></h3>
       <button type="button" class="kb-btn quiet small" data-evo-open-sources aria-controls="evoSourceDetails">查看记录 ${evoReviewIcon('arrow-right')}</button>
     </article>`}</div>
     <div id="evoStorySourceExample" class="evo-story-source-example"${expanded?'':' hidden'}>${expanded}</div>
+  </section>`;
+}
+function evoStoryReleaseAdvice(m,p){
+  const scores=p.releaseEvaluation?.scores,canary=p.canary,version=m.liveVersion;
+  const review=scores&&(scores.after<scores.threshold?'修改稿低于评测通过线。':scores.after<scores.before?'修改稿评分低于原版。':'');
+  if(p.status==='released')return p.watch?.status==='degraded'?['err','建议回滚','发布后检测到退化。']:['ok','已发布',''];
+  if(p.status==='rolled_back')return ['','已回滚',''];
+  if(p.status==='rejected')return ['','未采用',''];
+  if(p.status==='failed')return ['err','暂不发布',canary?.status==='failed'?'试用检测到退化。':'查看上方失败原因。'];
+  if(p.status==='drafting'||p.status==='validating')return ['info','等待回放验证',''];
+  if(!p.summary?.passed)return ['warn','暂不发布','回放尚未通过。'];
+  if(!p.candidateContent)return ['warn','暂不发布','暂无修改稿。'];
+  if(evoGroupForAsset(p)?.conflict)return ['warn','暂不发布','此对象有并行修改。'];
+  if(version?.liveHash&&version.liveHash!==p.baseHash)return ['err','暂不发布','线上正文已变化，请重新生成修改。'];
+  if(p.status==='canary'&&canary?.status!=='passed'){
+    return ['warn','继续试用',canary?.minRuns>0?`每组达到 ${canary.minRuns} 次有效运行后判定。`:'等待试用结果。'];
+  }
+  if(p.summary.regressed>0)return ['warn','建议复核回放','回放中有退化案例。'];
+  if(review)return ['warn','建议复核评分',review];
+  if(p.status==='pending')return ['info','建议先试用','回放已通过，可用新运行验证。'];
+  if(!version?.liveHash)return ['warn',m.liveVersionError?'请刷新版本':'正在核对版本',''];
+  return scores?['ok','建议发布','试用通过，评测达标。']:['ok','试用通过',''];
+}
+function evoStoryReleaseAdviceHTML(m,p){
+  const [tone,title,note]=evoStoryReleaseAdvice(m,p);
+  const icon=tone==='ok'?'check':tone==='err'?'alert':'clock';
+  return `<div class="evo-release-advice" data-tone="${tone}"><strong>${evoReviewIcon(icon)}${title}</strong>${note?`<p>${note}</p>`:''}</div>`;
+}
+function evoStoryReleaseHTML(m,p){
+  const evaluation=p.releaseEvaluation,scores=evaluation?.scores;
+  const replay=p.replays?.find(r=>r.id===evaluation?.replayId);
+  const sample=replay?evoStorySampleName(m,replay,p.replays.indexOf(replay)):'';
+  const links=evaluation?`<div class="evo-release-eval-links">${[['原运行智能评测',evaluation.sourceRunId],['回放智能评测',evaluation.replayRunId]].map(([label,id])=>
+    `<a href="#/runs/${encodeURIComponent(id)}" data-evo-record-run="${escapeHTML(id)}" data-evo-run-eval>${label} ↗</a>`).join('')}</div>`:'';
+  const delta=scores?scores.after-scores.before:0;
+  return `<section id="evoStoryRelease" class="evo-story-section evo-story-card" aria-labelledby="evoReleaseTitle">
+    <header class="evo-story-section-head"><h2 id="evoReleaseTitle">${evoReviewIcon('sparkles')}发布建议</h2></header>
+    <div id="evoReleaseAdvice" role="status">${evoStoryReleaseAdviceHTML(m,p)}</div>
+    <div class="evo-release-eval">
+      <div class="evo-release-eval-head"><b>智能评测</b>${scores?`<span>通过线 ${scores.threshold} 分</span>`:''}</div>
+      ${scores?`<div class="evo-release-score">
+        <span>原版 <b>${scores.before}</b></span><span aria-hidden="true">→</span><span>修改稿 <strong>${scores.after}</strong> 分</span>
+        ${kbBadge(`${delta>0?'+':''}${delta} 分`,delta>0?'ok':delta<0?'err':'')}
+      </div>
+      <details id="evoReleaseEvalDetails">
+        <summary>查看评分明细</summary>
+        <p>${[sample,scores.model].filter(Boolean).map(escapeHTML).join(' · ')}</p>
+        <table><thead><tr><th scope="col">维度</th><th scope="col">权重</th><th scope="col">原版</th><th scope="col">修改稿</th></tr></thead>
+          <tbody>${scores.dimensions.map(d=>`<tr><th scope="row">${escapeHTML(d.name)}</th><td>${d.weight}%</td><td>${d.before}</td><td>${d.after}</td></tr>`).join('')}</tbody>
+        </table>
+        ${links}
+      </details>`:`<p>暂无可对比评分${links?'，请用同一模型评测两侧运行。':''}</p>${links}`}
+    </div>
   </section>`;
 }
 function evoStoryDetailHTML(m,p){
@@ -198,20 +233,23 @@ function evoStoryDetailHTML(m,p){
   return `
     <div id="evoReviewWorkbench" class="evo-review-workbench evo-story-workbench">
       <div id="evoProblemBox" class="evo-review-status" role="status">${p?.error?escapeHTML(p.error):''}</div>
-      ${evoStoryEffectHTML(p)}
-      ${problems||m.row?`<details id="evoProblemEvidenceDetails" class="evo-story-expand">
-        <summary>查看问题证据</summary>
-        ${evoStoryProblemOverviewHTML(m,p)}
-        ${problems}
-        ${m.row?`<details id="evoSourceDetails" class="evo-detail-more">
-          <summary>查看关联运行</summary>
-          <div id="evoProblemRecords">${evoReviewProblemsHTML(m,p)}</div>
-        </details>`:''}
-      </details>`:''}
-      <section id="evoFullChange" class="evo-story-section"><div id="evoLinkedChange">${evoReviewChangeHTML(m,p)}</div></section>
-      <section id="evoValidationResults" class="evo-story-validation" aria-labelledby="evoReplayTitle">
-        ${evoStoryValidationHTML(p,m.compareFilter)}
-      </section>
+      <div class="evo-story-layout">
+        <div class="evo-story-main">
+          <section id="evoFullChange" class="evo-story-section evo-story-card"><div id="evoLinkedChange">${evoReviewChangeHTML(m,p)}</div></section>
+          <section id="evoValidationResults" class="evo-story-validation" aria-labelledby="evoReplayTitle">
+            ${evoStoryValidationHTML(p,m.compareFilter)}
+          </section>
+          ${problems||m.row?`<details id="evoProblemEvidenceDetails" class="evo-story-expand">
+            <summary>查看问题证据</summary>
+            ${problems}
+            ${m.row?`<details id="evoSourceDetails" class="evo-detail-more">
+              <summary>查看关联运行</summary>
+              <div id="evoProblemRecords">${evoReviewProblemsHTML(m,p)}</div>
+            </details>`:''}
+          </details>`:''}
+        </div>
+        ${p?`<aside class="evo-story-rail" aria-label="修改效果与发布建议">${evoStoryEffectHTML(p)}${evoStoryReleaseHTML(m,p)}</aside>`:''}
+      </div>
       <footer class="evo-review-footer">
         <span>${evoReviewIcon('history')}<span id="evoLiveVersion">${p?'正在核对线上版本':'尚无正文修改'}</span></span>
         <div>${asset?`

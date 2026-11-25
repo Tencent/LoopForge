@@ -1,12 +1,25 @@
 /* 进化中心：同页审查问题、修改和证据；沿用 Harness UI（MIT）令牌。 */
+#evolutionView .evo-page:has(#evoDetailPage){padding-top:12px}
 #evoDetailPage .evo-story-workbench{border:0;border-radius:0;overflow:visible;background:transparent}
 #evoDetailPage>.evo-detail-head{
   display:flex;align-items:center;justify-content:space-between;gap:8px 12px;margin:0 0 12px;flex-wrap:wrap;
 }
 #evoDetailProgress{
-  padding:10px 8px 8px;border:1px solid var(--hui-border);border-radius:10px;background:var(--hui-soft);
+  padding:12px 8px;border:1px solid var(--hui-border);border-radius:10px;
+  background:linear-gradient(150deg,var(--hui-surface),var(--hui-soft));
 }
 #evoDetailProgress:empty{display:none}
+#evoDetailProgress .evo-detail-track li::after{z-index:1}
+#evoDetailProgress .evo-detail-track button>span{position:relative;z-index:2}
+#evoDetailProgress .evo-detail-track li[aria-current=step] button{
+  color:var(--hui-accent);background:var(--hui-accent-soft);
+}
+#evoDetailProgress .evo-detail-track li.is-fail[aria-current=step] button{
+  color:var(--hui-error);background:color-mix(in srgb,var(--hui-error) 9%,var(--hui-surface));
+}
+#evoDetailProgress .evo-detail-track li.is-stop[aria-current=step] button{
+  color:var(--hui-secondary);background:var(--hui-soft);
+}
 .evo-workspace-heading{flex:1 1 300px;min-width:0}
 #evoDetailPage #evoDetailActions{margin:0 0 0 auto;justify-content:flex-end}
 #evoDetailPage #evoDetailActions:empty{display:none}
@@ -19,10 +32,18 @@
 .evo-priority[data-severity=high]{--priority-tone:var(--hui-error)}
 .evo-priority[data-severity=low]{--priority-tone:var(--hui-success)}
 .evo-story-section{border-top:1px solid var(--hui-border);margin:11px 0 0;padding-top:10px;min-width:0}
+.evo-story-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(348px,34%);gap:14px;align-items:start;margin-top:14px}
+.evo-story-layout:not(:has(.evo-story-rail)){grid-template-columns:minmax(0,1fr)}
+.evo-story-main,.evo-story-rail{display:grid;gap:14px;min-width:0}
+.evo-story-layout :is(.evo-story-card,.evo-story-validation,#evoStoryEffects){
+  margin:0;padding:14px;border:1px solid var(--hui-border);border-radius:10px;
+  background:var(--hui-surface);box-shadow:var(--hui-panel-shadow);
+}
+.evo-story-main>#evoProblemEvidenceDetails{margin:0}
 .evo-story-section-head{
   display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;font-size:12px;
 }
-.evo-story-section-head :is(h2,h3),.evo-story-overview h2{
+.evo-story-section-head :is(h2,h3){
   display:flex;align-items:center;gap:7px;margin:0;font-size:14px;font-weight:600;
 }
 .evo-story-section-head .evo-review-icon{width:15px;height:15px}
@@ -146,13 +167,6 @@
 .evo-story-live-note{color:var(--hui-muted);font-size:12px}
 .evo-list-row .evo-story-list-effect{display:flex;align-items:center;gap:9px;font-size:11px;margin-top:6px;color:var(--hui-muted);flex-wrap:wrap}
 .evo-list-row .evo-story-list-effect .evo-good{color:var(--hui-success)}
-.evo-story-overview{display:flex;gap:10px 16px;align-items:center;flex-wrap:wrap}
-.evo-story-overview>div{flex:1 1 240px;min-width:0}
-.evo-story-overview p{margin:6px 0 0;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
-.evo-story-overview dl{display:flex;flex:1 1 220px;gap:6px;flex-wrap:wrap;margin:0}
-.evo-story-overview dl>div{padding:6px 8px;background:var(--hui-soft);border-radius:7px;min-width:0;flex:1 1 auto}
-.evo-story-overview dt{font-size:11px;color:var(--hui-muted)}
-.evo-story-overview dd{display:flex;gap:4px;flex-wrap:wrap;margin:3px 0 0;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
 .evo-story-signals{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:8px}
 .evo-story-signal{
   min-width:0;padding:8px 10px;border:1px solid var(--hui-border-soft);border-radius:8px;background:var(--hui-canvas);
@@ -212,10 +226,11 @@
 @media(pointer:coarse){#evoDetailPage .evo-story-workbench button{min-height:40px}}
 @media(prefers-reduced-motion:reduce){.evo-story-workbench *{scroll-behavior:auto}}
 
-.evo-effect-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-.evo-effect-card{min-width:0;padding:10px 12px;border:1px solid var(--hui-border);border-radius:9px;background:var(--hui-surface)}
+.evo-effect-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.evo-effect-card{min-width:0;padding:8px;border:1px solid var(--hui-border);border-radius:9px;background:var(--hui-surface)}
 .evo-effect-card header{display:flex;align-items:center;flex-wrap:wrap;justify-content:space-between;gap:3px 6px}
 .evo-effect-card h3,.evo-effect-card small{margin:0;color:var(--hui-muted);font-size:12px;font-weight:500}
+.evo-effect-card h3{font-size:11px}
 .evo-effect-value{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 6px;margin-top:6px;color:var(--hui-muted);font-variant-numeric:tabular-nums}
 .evo-effect-value b{color:var(--hui-text);font-size:20px;font-weight:650}
 .evo-effect-empty{margin-top:8px;color:var(--hui-muted)}
@@ -224,6 +239,29 @@
 .evo-effect-bars i+i{background:var(--hui-muted)}
 .evo-effect-bars[data-tone=ok] i+i{background:var(--hui-success)}
 .evo-effect-bars[data-tone=err] i+i{background:var(--hui-error)}
+.evo-release-advice{
+  --advice-tone:var(--hui-muted);padding:9px 10px;border-radius:8px;
+  background:color-mix(in srgb,var(--advice-tone) 10%,var(--hui-surface));color:var(--advice-tone);
+}
+.evo-release-advice[data-tone=info]{--advice-tone:var(--hui-accent)}
+.evo-release-advice[data-tone=ok]{--advice-tone:var(--hui-success)}
+.evo-release-advice[data-tone=warn]{--advice-tone:var(--hui-warn)}
+.evo-release-advice[data-tone=err]{--advice-tone:var(--hui-error)}
+.evo-release-advice strong{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600}
+.evo-release-advice p,.evo-release-eval p{margin:4px 0 0;color:var(--hui-muted);font-size:12px;overflow-wrap:anywhere}
+.evo-release-eval{margin-top:9px;padding:9px 10px;border:1px solid var(--hui-border-soft);border-radius:8px;background:var(--hui-soft)}
+.evo-release-eval-head,.evo-release-score,.evo-release-eval-links{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px}
+.evo-release-eval-head{justify-content:space-between;color:var(--hui-muted);font-size:12px}
+.evo-release-eval-head b{color:var(--hui-text);font-weight:600}
+.evo-release-score{margin-top:4px;color:var(--hui-muted);font-size:12px;font-variant-numeric:tabular-nums}
+.evo-release-score b{font-size:17px}
+.evo-release-score strong{color:var(--hui-text);font-size:20px}
+.evo-release-eval details,.evo-release-eval-links{margin-top:7px;font-size:12px}
+.evo-release-eval summary,.evo-release-eval a{color:var(--hui-accent)}
+.evo-release-eval summary{width:fit-content;cursor:pointer}
+.evo-release-eval table{width:100%;margin-top:5px;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums}
+.evo-release-eval :is(th,td){padding:4px 2px;border-bottom:1px solid var(--hui-border);text-align:right}
+.evo-release-eval th:first-child{text-align:left;overflow-wrap:anywhere}
 .evo-diff-preview-tools{display:flex;flex-wrap:wrap;gap:4px;padding:0 0 5px}
 .evo-diff-preview-line{display:grid;grid-template-columns:32px 16px minmax(0,1fr);align-items:baseline;gap:5px;padding:4px 8px;font-size:12px}
 .evo-diff-preview-line span{color:var(--hui-muted);text-align:right;font-variant-numeric:tabular-nums}
@@ -235,4 +273,4 @@
 .evo-diff-preview-line.add b{color:var(--hui-success)}
 .evo-story-results th:first-child{width:74%}
 .evo-story-results th:last-child{width:auto}
-@media(max-width:900px){.evo-effect-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:730px){.evo-story-layout{grid-template-columns:minmax(0,1fr)}}

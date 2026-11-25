@@ -4,11 +4,10 @@ function evoReviewIcon(name){return `<svg class="agent-icon evo-review-icon harn
 function evoReviewVersionHTML(asset,p,finding){
   if(!asset)return '';
   const version=p?.baseVersion?`v${p.baseVersion}`:'修改前',after=p?.releasedVersion?`v${p.releasedVersion}`:'修改稿';
-  const labels={drafting:'生成中',validating:'验证中',pending:'待试用',canary:'试用中',released:'已发布',rejected:'未采用',failed:'未通过',rolled_back:'已回滚'};
   const workflows=evoFindingWorkflows(finding).map(w=>w.name);
   const object=`${evoKindLabel(asset.assetKind)} · ${asset.assetName||asset.assetId}`;
   const workflow=workflows.length===1?`<span>SOP · ${escapeHTML(workflows[0])}</span>`:workflows.length>1?`<span data-tooltip="${escapeHTML(workflows.join('、'))}">${workflows.length} 个 SOP</span>`:'';
-  return `${workflow}<span>${escapeHTML(object)}</span>${p?`<span>${version}</span>${evoReviewIcon('arrow-right')}<span>${after}</span>${kbBadge(labels[p.status]||p.status,evoChangeState(p).tone)}`:''}`;
+  return `${workflow}<span>${escapeHTML(object)}</span>${p?`<span>${version}</span>${evoReviewIcon('arrow-right')}<span>${after}</span>`:''}`;
 }
 function evoReviewDiffPreview(lines){
   let oldLine=0,newLine=0;

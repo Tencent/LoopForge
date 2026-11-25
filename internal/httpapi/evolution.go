@@ -610,7 +610,7 @@ func (h *evolutionHandlers) proposal(c *gin.Context) {
 		return
 	}
 	h.loadHistoricalReplayMeasurements(&p)
-	c.JSON(http.StatusOK, evoProposalView(p, false))
+	c.JSON(http.StatusOK, evoProposalDetailResponse{EvoProposal: evoProposalView(p, false), ReleaseEvaluation: h.releaseEvaluation(p)})
 }
 
 func (h *evolutionHandlers) createProposal(c *gin.Context) {

@@ -321,6 +321,11 @@ test('detail shows the true diff, six steps and one primary action', async t => 
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/p-evidence', body: clean }] }); t.after(app.close);
   await detail(app);
   assert.match($(app, '#evoDetailObject').textContent,/评审角色/);
+  const title = $(app, '#evoFindingTitle');
+  assert.match(title.textContent, /上线前漏测/);
+  assert.ok(title.compareDocumentPosition($(app, '#evoStoryEffects')) & app.window.Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.equal($(app, '#evoProblemOverview'), null);
+  assert.ok($(app, '#evoValidationResults').compareDocumentPosition($(app, '#evoProblemEvidenceDetails')) & app.window.Node.DOCUMENT_POSITION_FOLLOWING);
   const ids = [...app.document.querySelectorAll('#evoDetailPage [id]')].map(el => el.id);
   assert.equal(new Set(ids).size, ids.length);
   assert.match($(app, '#evoLinkedChange .evo-diff-preview-line.add').textContent,/检查关键路径 e2e/);
@@ -329,6 +334,50 @@ test('detail shows the true diff, six steps and one primary action', async t => 
   assert.equal($(app, '#evoProblemEvidenceDetails').open,false);
   assert.equal(app.document.querySelectorAll('#evoDetailActions .kb-btn.primary').length,1);
   assert.equal($(app, '#evoDetailCanary').open,false);
+  assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
+});
+
+test('release advice shows the saved evaluation and uses the current rollout and baseline', async t => {
+  const releaseEvaluation = {
+    replayId: replay.id, sourceRunId: source.id, replayRunId: candidate.id,
+    scores: { before: 64, after: 90, threshold: 75, model: 'recorded-model',
+      dimensions: [{ name: '工具浪费', weight: 20, before: 60, after: 92 }] },
+  };
+  const canary = { ...proposal, status: 'canary', replays: [replay], summary: { total: 1, finished: 1, fixed: 1, passed: true },
+    canary: { status: 'running', minRuns: 5 }, releaseEvaluation };
+  const proposalPath = '/api/evolution/proposals/p-evidence';
+  const app = await loadApp({ routes: [...routes, { method: 'GET', path: proposalPath, body: canary }] });
+  t.after(app.close);
+  await detail(app);
+  assert.match($(app, '#evoReleaseAdvice').textContent, /继续试用/);
+  assert.match($(app, '.evo-release-score').textContent, /64.*90.*\+26/s);
+  assert.match($(app, '#evoStoryRelease').textContent, /通过线 75 分/);
+  assert.equal($(app, '#evoReleaseEvalDetails').open, false);
+  $(app, '#evoReleaseEvalDetails').open = true;
+  assert.match($(app, '#evoReleaseEvalDetails tbody tr').textContent, /工具浪费.*20%.*60.*92/s);
+  assert.equal($(app, '#evoDetailActions [data-evo-approve]').disabled, true);
+  assert.ok($(app, '.evo-story-layout .evo-story-main #evoValidationResults'));
+  assert.ok($(app, '.evo-story-layout .evo-story-rail #evoStoryRelease'));
+  assert.doesNotMatch($(app, '#evoDetailPage').textContent, /当前状态|试用摘要/);
+
+  const passed = { ...canary, canary: { ...canary.canary, status: 'passed' } };
+  app.router.get(proposalPath, passed);
+  await app.evaluate('evoLoadDetailProposal(evo.modal)'); await settle(4);
+  assert.match($(app, '#evoReleaseAdvice').textContent, /建议发布/);
+  assert.equal($(app, '#evoDetailActions [data-evo-approve]').disabled, false);
+  assert.equal($(app, '#evoReleaseEvalDetails').open, true);
+
+  app.router.get(proposalPath, { ...passed, releaseEvaluation: { ...releaseEvaluation, scores: undefined } });
+  await app.evaluate('evoLoadDetailProposal(evo.modal)'); await settle(4);
+  assert.match($(app, '#evoStoryRelease').textContent, /暂无可对比评分/);
+  assert.equal($(app, '.evo-release-score'), null);
+  app.router.get('/api/evolution/assets/agent/reviewer/versions', { currentVersion: 2, liveHash: 'changed', drifted: true });
+  await app.evaluate('evoLoadDetailProposal(evo.modal)'); await settle(4);
+  assert.match($(app, '#evoReleaseAdvice').textContent, /暂不发布.*线上正文已变化/s);
+  assert.equal($(app, '#evoDetailActions [data-evo-approve]').disabled, true);
+  $(app, '#evoStoryRelease [data-evo-run-eval]').click(); await settle(5);
+  assert.equal(app.window.location.hash, '#/runs/source-1');
+  assert.equal($(app, '[data-run-pane="eval"]').hidden, false);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
