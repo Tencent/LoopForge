@@ -33,14 +33,22 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	}
 	prompt = strings.ReplaceAll(prompt, "{{input}}", run.Input)
 	prompt = strings.ReplaceAll(prompt, "{{repository}}", promptRepositoryLine(run))
+	repositories := run.RepositoryContexts()
 	if run.UsesConversationWorkspace() {
 		prompt += "\n\n## 对话工作区\n\n在交接的工作区内继续，保留已有文件和本地改动。"
-		for _, repository := range run.RepositoryContexts() {
+		for _, repository := range repositories {
 			dir := repository.WorkspaceDir
 			if dir == "" {
 				dir = "."
 			}
 			prompt += fmt.Sprintf("\n- %s 在 `%s`，工作分支 `%s`，PR/MR 目标分支 `%s`。", repository.Name, dir, repository.WorkBranch, repositoryBaseBranch(repository))
+		}
+	} else if len(repositories) > 1 || run.Repository.CreateNewWorkBranch {
+		prompt += "\n\n## 仓库工作分支\n\n使用各仓库已分配的工作分支作为 PR/MR 的源分支。"
+		for _, repository := range repositories {
+			if !repository.ReadOnly && repository.WorkBranch != "" {
+				prompt += fmt.Sprintf("\n- %s 在 %q，工作分支 %q，PR/MR 目标分支 %q。", repository.Name, repository.WorkspaceDir, repository.WorkBranch, repositoryBaseBranch(repository))
+			}
 		}
 	}
 	pipelineURL := "未配置 Pipeline"

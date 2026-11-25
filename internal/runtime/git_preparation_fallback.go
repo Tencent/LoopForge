@@ -24,6 +24,9 @@ func GitPreparationFallbackPrompt(repositories []domain.RepositoryContext, failu
 			base = r.DefaultBranch
 		}
 		fmt.Fprintf(&b, "- clone URL: %q; 目录: %q; 基线: %q; 工作分支: %q; 必须继续已有远端分支: %t\n", r.CloneURL, r.WorkspaceDir, base, r.WorkBranch, r.RequireExistingWorkBranch)
+		if r.CreateNewWorkBranch {
+			b.WriteString("  新建工作分支前须确认远端没有同名分支。若远端已存在同名分支或无法确认，以 fail 结束并报告原因。\n")
+		}
 	}
 	if len(failure) > 4000 {
 		failure = failure[:4000]

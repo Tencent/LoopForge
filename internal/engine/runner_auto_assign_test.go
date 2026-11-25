@@ -309,6 +309,51 @@ func TestAutoAssignFreezesAutomaticSandboxAndSkipsIncompatibleHead(t *testing.T)
 	}
 }
 
+func TestAutoAssignFreezesGeneratedWorkBranchAndSkipsOlderRunners(t *testing.T) {
+	f := newAutoAssignFixture(t)
+	older := f.machine("older-pool", 0, false)
+	older.RunnerVersion = domain.RunnerVersionDefaultSelection
+	if err := f.s.PutRunner(older); err != nil {
+		t.Fatal(err)
+	}
+	compatible := f.machine("compatible-owner", f.ec.ResponsibleUserID, false)
+	f.limit(compatible.ID, 1)
+	f.fixed("holder", compatible.ID)
+
+	repository := domain.Repository{
+		ID: "auto-branch", ProjectID: f.ec.ProjectID, Name: "Auto branch", DefaultBranch: "main", LocalPath: t.TempDir(),
+		WorkBranchNaming: &domain.WorkBranchNaming{Mode: domain.WorkBranchNamingAI, ExecutorID: "codex", Model: "branch-model"},
+	}
+	if err := f.s.PutRepository(repository); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	f.e.GenerateSOPWorkBranch = func(_ context.Context, req SOPWorkBranchRequest) (string, error) {
+		calls++
+		if req.Execution.ExecutionRunnerID != compatible.ID || req.Executor.Executor != "codex" || req.Executor.Model != "branch-model" {
+			t.Fatalf("branch naming lost the requested executor, model or eligible machine: %+v", req)
+		}
+		return "topic/approved-branch", nil
+	}
+	run, err := f.e.StartWithRepositoriesContext(f.wf.ID, "Name the task branch", []domain.RepositoryContext{
+		{RepositoryID: repository.ID, Name: repository.Name, BaseBranch: repository.DefaultBranch, LocalPath: repository.LocalPath},
+	}, f.ec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != "queued" || run.ExecutionContext.ExecutionRunnerID != "" ||
+		run.Repository.WorkBranch != "topic/approved-branch" || !run.Repository.CreateNewWorkBranch {
+		t.Fatalf("expected an unbound run with its generated branch: %+v", run)
+	}
+	f.release("holder")
+	f.e.promoteQueuedRuns()
+	bound := f.state(run.ID, "running")
+	if bound.ExecutionContext.ExecutionRunnerID != compatible.ID || bound.Repository != run.Repository || calls != 1 {
+		t.Fatalf("promotion changed the selected branch or ran on an incompatible machine: runner=%s repo=%+v calls=%d",
+			bound.ExecutionContext.ExecutionRunnerID, bound.Repository, calls)
+	}
+}
+
 func TestAutoAssignRequiresResponsibleUsersCredentials(t *testing.T) {
 	f := newAutoAssignFixture(t)
 	pool := f.machine("pool-local-login", 0, false)

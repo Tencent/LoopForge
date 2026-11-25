@@ -52,30 +52,33 @@ test('list supports project filter, search and pagination', async () => {
 
 const detailOf = async id => get(`/api/issues/${id}`);
 
-test('requirement markdown and a pasted image are available after saving', async () => {
-  const description = '# Acceptance criteria\n\n- Keep existing orders';
-  const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9EwAAAAASUVORK5CYII=', 'base64');
+test('creates a Markdown requirement and serves its attached image to authenticated users', async () => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPQc/8PAAIbAXVXkdKiAAAAAElFTkSuQmCC', 'base64');
+  const description = '## Reproduction\n\nSee the **attached image**.';
   const form = new FormData();
-  form.set('issue', JSON.stringify({ projectId: P, title: 'E2E requirement with image', description }));
-  form.append('images', new Blob([bytes], { type: 'image/png' }), 'acceptance.png');
-  const saved = await post('/api/issues', form);
-  removeLater(saved.id);
+  form.set('issue', JSON.stringify({ projectId: P, kind: 'requirement', title: `E2E requirement image ${cfg.runTag}`, description }));
+  form.append('images', new Blob([png], { type: 'image/png' }), 'reproduction.png');
 
-  const path = `/api/issues/${saved.id}`;
-  const detail = await get(path);
+  const created = await post('/api/issues', form);
+  removeLater(created.id);
+  const detail = await detailOf(created.id);
   assert.equal(detail.issue.description, description);
   assert.equal(detail.images.length, 1);
   const [image] = detail.images;
-  assert.equal(image.name, 'acceptance.png');
-  const stored = await fetch(`${cfg.base}${path}/images/${image.id}`, {
-    headers: { Authorization: `Bearer ${requireToken()}` },
-    signal: AbortSignal.timeout(30_000),
-  });
-  assert.equal(stored.status, 200);
-  assert.equal(stored.headers.get('content-type'), 'image/png');
-  assert.deepEqual(Buffer.from(await stored.arrayBuffer()), bytes);
+  assert.ok(image.id);
+  assert.equal(image.name, 'reproduction.png');
 
-  const catalog = await get(`${path}/clarify-models`);
+  const path = `/api/issues/${created.id}/images/${image.id}`;
+  await get(path, { auth: false, expect: 401 });
+  const response = await fetch(cfg.base + path, {
+    headers: { Authorization: `Bearer ${requireToken()}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+
+  const catalog = await get(`/api/issues/${created.id}/clarify-models`);
   assert.ok(Array.isArray(catalog.engines) && catalog.engines.length > 0);
 });
 

@@ -125,10 +125,30 @@ test('archive flags the conversation and can be undone', async () => {
 });
 
 test('generation endpoints answer for an idle conversation', async () => {
-  await api('GET', `${S}/${session.id}/generation`, undefined, { expect: 404 });
-  await api('POST', `${S}/${session.id}/generation/cancel`, {}, { expect: [404, 409] });
+  const path = `${S}/${session.id}`;
+  await get(`${path}/generation`, { expect: 404 });
+  await post(`${path}/generation/cancel`, {}, { expect: [404, 409] });
+  const steer = await post(`${path}/generation/steer`, { content: 'This should require a running turn' }, { expect: 409 });
+  assert.match(steer.error, /没有进行中的回复/);
+  const diagnostics = await get(`${path}/generations/${newId('missing-generation')}/diagnostics`, { expect: 404 });
+  assert.match(diagnostics.error, /没有可用的诊断记录/);
+  assert.deepEqual((await get(path)).messages, session.messages);
   // No native CLI approvals are pending without a generation.
-  assert.deepEqual(list(await get(`${S}/${session.id}/native-approvals`)), []);
+  assert.deepEqual(list(await get(`${path}/native-approvals`)), []);
+});
+
+test('workspace sandbox selection persists and can return to the project default', async () => {
+  const path = `${S}/${session.id}`;
+  const selected = await put(`${path}/sandbox`, { sandboxProfileId: cfg.sandbox });
+  assert.equal(selected.sandboxProfileId, cfg.sandbox);
+  await put(`${path}/sandbox`, { sandboxProfileId: newId('missing-sandbox') }, { expect: 400 });
+  const stored = await get(path);
+  assert.equal(stored.sandboxProfileId, cfg.sandbox);
+  assert.deepEqual(stored.messages, session.messages);
+  const reset = await put(`${path}/sandbox`, { sandboxProfileId: '' });
+  assert.equal(reset.sandboxProfileId ?? '', '');
+  session = await get(path);
+  assert.equal(session.sandboxProfileId ?? '', '');
 });
 
 test('runtime mode: platform is accepted, workspace needs an open workspace, unknown is refused', async () => {
