@@ -38,6 +38,8 @@ class InstallerTests(unittest.TestCase):
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
         for name in ('001_run_obs_generated_columns.sql', '033_generic_sop_mr_node.sql', '038_generic_sop_host_credentials.sql', '041_native_sandbox_inline_assets.sql'):
             (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
+        artifact_migration = '042_run_artifacts_content_mediumtext.sql'
+        shutil.copyfile(ROOT / 'migrations' / artifact_migration, self.root / 'migrations' / artifact_migration)
         (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
@@ -527,6 +529,42 @@ esac
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull --ignore-buildable --policy always', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
+
+    def test_start_pull_configures_project_credential_key_once(self):
+        import base64
+
+        env = self.root / '.env'
+        key_name = 'AGENTFLOW_PROJECT_CREDENTIAL_KEY'
+        legacy = "COMPOSE_PROJECT_NAME=existing\nAGENTFLOW_SESSION_SECRET=existing-session\n"
+        provided = base64.b64encode(bytes(32)).decode()
+        scenarios = (
+            ('missing', '', '', None),
+            ('empty', f'{key_name}=\n', '', None),
+            ('quoted empty', f'{key_name}="" # project key\n', '', None),
+            ('provided', '', provided, provided),
+            ('configured', f'{key_name}={provided}\n', '', provided),
+        )
+        for name, setting, override, expected in scenarios:
+            with self.subTest(name=name):
+                env.write_text(legacy + setting)
+                env.chmod(0o600)
+                result = self.pull(MIRROR='ghcr.io', AGENTFLOW_PROJECT_CREDENTIAL_KEY=override)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                configured = env.read_text()
+                self.assertTrue(configured.startswith(legacy))
+                entries = [line for line in configured.splitlines() if line.startswith(key_name + '=')]
+                self.assertEqual(len(entries), 1)
+                key = shlex.split(entries[0], comments=True)[0].split('=', 1)[1]
+                self.assertEqual(len(base64.b64decode(key, validate=True)), 32)
+                if expected is not None:
+                    self.assertEqual(key, expected)
+                self.assertNotIn(key, result.stdout + result.stderr)
+                self.assertNotIn('LOOPFORGE_DATA_DIR=', configured)
+                self.assertNotIn('AGENTFLOW_CREDENTIAL_KEYS=', configured)
+                self.assertEqual(env.stat().st_mode & 0o777, 0o600)
+                result = self.pull(MIRROR='ghcr.io')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(env.read_text(), configured)
 
     def test_start_pull_reapplies_schema_extensions_after_containers_are_up(self):
         self.assert_success(self.install())

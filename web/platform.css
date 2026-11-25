@@ -524,6 +524,11 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .detail-fact span{font-size:9px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.05em}
 .detail-fact b{margin-top:3px;font-size:12px;word-break:break-all}
 .detail-desc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px;font-size:12.5px;line-height:1.7;white-space:pre-wrap;color:var(--muted)}
+.issue-description{margin-top:12px;white-space:normal;overflow:auto}
+.issue-description-images{display:flex;flex-wrap:wrap;gap:10px;list-style:none;margin:0;padding:0}
+.issue-description .markdown-body+.issue-description-images{margin-top:12px}
+.issue-description-images li{max-width:100%}
+.issue-description-images img{display:block;width:auto;height:auto;max-width:100%;max-height:240px;border:1px solid var(--line);border-radius:8px}
 .clarify-dim{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:9px}
 .clarify-dim-head{display:flex;align-items:center;gap:8px;font-size:12px}
 .clarify-dim-head b{font-size:12.5px}
@@ -948,6 +953,7 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .pa-fs h5{margin:0 0 10px;color:var(--muted-2);font-size:11px;font-weight:600;letter-spacing:.04em}
 .pa-field{display:block}
 .pa-field+.pa-field,.pa-detect+.pa-field{margin-top:12px}
+.pa-repo-branch-naming{margin-top:12px}
 .pa-field-l{display:block;margin-bottom:6px;color:var(--muted);font-size:12px;font-weight:500}
 .pa-field-l i{color:var(--muted-2);font-style:normal;font-weight:400}
 .pa-field-h,.pa-fs-hint{display:block;margin:6px 0 0;color:var(--muted-2);font-size:12px;line-height:1.5}

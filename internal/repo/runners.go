@@ -171,9 +171,57 @@ func takeRunnerTask(db *gorm.DB, id string) (runnerTaskRow, bool) {
 
 // ---------- Runner registry ----------
 
+// PutRunner upserts the row as given. It does not reset sharing, account
+// settings or default-runner preferences, so it must not move a machine to
+// another owner. Registration goes through RegisterRunner, which only renews
+// a row within its current owner scope.
 func (r *RunnersRepo) PutRunner(v domain.Runner) error {
+	values, err := runnerWriteValues(v)
+	if err != nil {
+		return err
+	}
+	updateCols := slices.Sorted(maps.Keys(values))
+	if v.OwnerUserID > 0 {
+		values["run_limit"] = domain.DefaultRunnerRunLimit
+	}
+	return upsertColumns(r.DB, "runners", values, updateCols)
+}
+
+// RegisterRunner creates a new machine or renews a session in its existing
+// owner scope. A renewal cannot replace a row that changed after the lookup.
+func (r *RunnersRepo) RegisterRunner(v domain.Runner, renew bool) error {
+	values, err := runnerWriteValues(v)
+	if err != nil {
+		return err
+	}
+	if !renew {
+		if v.OwnerUserID > 0 {
+			values["run_limit"] = domain.DefaultRunnerRunLimit
+		}
+		return r.DB.Table("runners").Create(values).Error
+	}
+	q := r.DB.Model(&runnerRow{}).Where("id = ?", v.ID)
+	if v.OwnerUserID > 0 {
+		q = q.Where("owner_user_id = ?", v.OwnerUserID)
+	} else {
+		q = q.Where("(owner_user_id IS NULL OR owner_user_id = 0)")
+	}
+	delete(values, "id")
+	delete(values, "owner_user_id")
+	delete(values, "created_at")
+	result := q.Updates(values)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrRunnerNotFound
+	}
+	return nil
+}
+
+func runnerWriteValues(v domain.Runner) (map[string]any, error) {
 	if strings.TrimSpace(v.ID) == "" {
-		return fmt.Errorf("runner id is required")
+		return nil, fmt.Errorf("runner id is required")
 	}
 	now := time.Now().UTC()
 	if v.CreatedAt.IsZero() {
@@ -186,29 +234,14 @@ func (r *RunnersRepo) PutRunner(v domain.Runner) error {
 	if v.MaxConcurrency < 1 {
 		v.MaxConcurrency = 1
 	}
-	values := map[string]any{
+	return map[string]any{
 		"id": v.ID, "name": v.Name, "status": v.Status, "os": v.OS, "arch": v.Arch,
 		"runner_version": v.RunnerVersion, "labels": jsonBytes(v.Labels), "max_concurrency": v.MaxConcurrency,
 		"native_sandbox_available": v.NativeSandboxAvailable,
 		"owner_user_id":            nullableInt64(v.OwnerUserID), "session_token_hash": v.SessionTokenHash,
 		"session_expires_at": v.SessionExpiresAt, "runtimes": jsonBytes(v.Runtimes),
 		"last_seen_at": v.LastSeenAt, "created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
-	}
-	if v.OwnerUserID > 0 {
-		updateCols := slices.Sorted(maps.Keys(values))
-		values["run_limit"] = domain.DefaultRunnerRunLimit
-		return upsertColumns(r.DB, "runners", values, updateCols)
-	}
-	// A platform bootstrap can adopt a formerly user-bound machine. Clear
-	// its sharing and account settings together with the owner change.
-	values["shared_project_ids"] = nil
-	values["login_model_catalogs"] = nil
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		if err := upsert(tx, "runners", values); err != nil {
-			return err
-		}
-		return tx.Where("default_runner_id = ?", v.ID).Delete(&userProjectRunnerPrefRow{}).Error
-	})
+	}, nil
 }
 
 // SetRunnerRunLimit updates the owner-configured limit. PutRunner sets the
@@ -224,7 +257,7 @@ func (r *RunnersRepo) SetRunnerRunLimit(id string, limit int) error {
 		value = limit
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		if err := lockAdmissionGate(r.deps, tx, admissionBucketKey("", id, true)); err != nil {
+		if err := lockAdmissionGate(r.deps, tx, runnerAdmissionBucketKey(id)); err != nil {
 			return err
 		}
 		res := tx.Model(&runnerRow{}).Where("id = ?", id).Updates(map[string]any{"run_limit": value, "updated_at": time.Now().UTC()})
@@ -235,7 +268,40 @@ func (r *RunnersRepo) SetRunnerRunLimit(id string, limit int) error {
 			return ErrRunnerNotFound
 		}
 		return nil
-	})
+	}, r.admissionTxOptions()...)
+}
+
+const platformRunnerSettingsID int64 = 1
+
+func (r *RunnersRepo) PlatformRunnerRunLimit() int {
+	limit, err := platformRunnerRunLimit(r.DB)
+	if err != nil {
+		return domain.DefaultRunnerRunLimit
+	}
+	return limit
+}
+
+func platformRunnerRunLimit(tx *gorm.DB) (int, error) {
+	var row platformRunnerSettingsRow
+	err := tx.Select("run_limit").Take(&row, platformRunnerSettingsID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.DefaultRunnerRunLimit, nil
+	}
+	return row.RunLimit, err
+}
+
+func (r *RunnersRepo) SetPlatformRunnerRunLimit(limit int, actorUserID int64) error {
+	if limit < 0 {
+		return fmt.Errorf("最多同时运行条数需为非负整数（0 表示不限制）")
+	}
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockAdmissionGate(r.deps, tx, PlatformAdmissionBucketKey); err != nil {
+			return err
+		}
+		return upsert(tx, "platform_runner_settings", map[string]any{
+			"id": platformRunnerSettingsID, "run_limit": limit, "updated_by": actorUserID, "updated_at": time.Now().UTC(),
+		})
+	}, r.admissionTxOptions()...)
 }
 
 func (r *RunnersRepo) Runner(id string) (domain.Runner, bool) {
@@ -517,13 +583,25 @@ func (r *RunnersRepo) RunnerTaskControl(id string) (domain.RunnerTask, bool) {
 }
 
 func (r *RunnersRepo) RunnerTasks() []domain.RunnerTask {
-	var rows []runnerTaskRow
-	if err := r.DB.Order("created_at DESC").Limit(200).Find(&rows).Error; err != nil {
+	// Sort ids only: MySQL filesort fails with "Out of sort memory" when one
+	// row's payload (e.g. embedded skill files) exceeds sort_buffer_size.
+	var ids []string
+	if err := r.DB.Model(&runnerTaskRow{}).Order("created_at DESC").Limit(200).Pluck("id", &ids).Error; err != nil || len(ids) == 0 {
 		return []domain.RunnerTask{}
 	}
-	out := make([]domain.RunnerTask, 0, len(rows))
+	var rows []runnerTaskRow
+	if err := r.DB.Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return []domain.RunnerTask{}
+	}
+	byID := make(map[string]runnerTaskRow, len(rows))
 	for _, row := range rows {
-		out = append(out, runnerTaskFromRow(row))
+		byID[row.ID] = row
+	}
+	out := make([]domain.RunnerTask, 0, len(rows))
+	for _, id := range ids {
+		if row, ok := byID[id]; ok {
+			out = append(out, runnerTaskFromRow(row))
+		}
 	}
 	return out
 }
@@ -571,7 +649,8 @@ func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now t
 	var found bool
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var rows []runnerTaskRow
-		if err := r.locking(tx).
+		// Select only what the lease update needs; see RunnerTasks.
+		if err := r.locking(tx).Select("id", "attempt").
 			Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed).
 			Order("created_at").Limit(1).
 			Find(&rows).Error; err != nil {

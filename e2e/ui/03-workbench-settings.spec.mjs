@@ -109,7 +109,15 @@ test('desktop settings navigation reopens on the current page', async ({ page })
     await collapse.click();
     await expect(page.locator('#settingsSidebar')).toHaveAttribute('aria-hidden', 'true');
     await expect(expand).toBeFocused();
+    await expand.evaluate(button => {
+      delete button.dataset.focusAfterClick;
+      button.addEventListener('click', () => {
+        button.dataset.focusAfterClick = document.activeElement?.id || '';
+      }, { once: true });
+    });
     await expand.press('Enter');
+    const focusAfterClick = await page.locator('#settingsSidebarExpand').getAttribute('data-focus-after-click');
+    expect(focusAfterClick).toBe('settingsSidebarToggle');
     await expect(collapse).toBeVisible();
     await expect(collapse).toBeFocused();
     await expect(page).toHaveURL(/#\/settings$/);
@@ -139,6 +147,32 @@ test('desktop settings returns keyboard focus after the reopened button becomes 
   await visibilityDelay.evaluate(style => style.remove());
   await expect(collapse).toBeFocused();
 });
+
+for (const width of [900, 480]) {
+  test(`settings navigation reopens and restores keyboard focus at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await openView(page, 'settings');
+
+    const sidebar = page.locator('#settingsSidebar');
+    const collapse = page.locator('#settingsSidebarToggle');
+    const expand = page.locator('#settingsSidebarExpand');
+    if (await sidebar.getAttribute('aria-hidden') === 'true') {
+      await expect(expand).toBeVisible();
+      await expand.press('Enter');
+    }
+
+    await collapse.press('Enter');
+    await expect(sidebar).toHaveAttribute('aria-hidden', 'true');
+    await expect(expand).toBeVisible();
+    await expect(expand).toBeFocused();
+
+    await expand.press('Space');
+    await expect(sidebar).not.toHaveAttribute('aria-hidden', 'true');
+    await expect(collapse).toBeFocused();
+    await expect(page).toHaveURL(/#\/settings$/);
+  });
+}
 
 test('personal credentials: the add wizard validates, saves write-only, and the row clears it', async ({ page, identity }) => {
   const me = identity.user;

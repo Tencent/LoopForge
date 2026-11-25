@@ -91,7 +91,7 @@ function assistantReviewCatalogData(){
  const hasEngineList=Array.isArray(cat.engines)&&cat.engines.length>0;
  for(const e of cat.engines||[]){
   if(!e?.id)continue;
-  const entry={id:e.id,name:e.name||e.id,configured:e.configured===true};
+  const entry={id:e.id,name:e.name||e.id,configured:(e.personal??e.configured)===true};
   allEngines.set(entry.id,entry);
   if(entry.configured)engines.push(entry);
  }
@@ -279,14 +279,14 @@ function assistantReviewCliBoxHTML(mode,reviewModel,catalogData){
    <div class="asst-field">
     <span>模型</span>
     <div class="asst-picker-anchor">
-     <button type="button" id="assistantPrefsReviewModelBtn" class="asst-picker-trigger" aria-haspopup="menu" aria-expanded="false" data-active-model="${escapeHTML(canonical)}">
+     <button type="button" id="assistantPrefsReviewModelBtn" class="asst-picker-trigger" aria-haspopup="menu" aria-expanded="false" data-active-model="${escapeHTML(canonical)}"${hasUnconfiguredSaved?' disabled':''}>
       ${assistantReviewModelTriggerHTML(activeCli,canonical,effectiveRaw,catalogData)}
      </button>
      <div id="assistantPrefsReviewModelMenu" class="asst-picker-menu asst-model-picker-menu" role="menu" aria-label="选择审查模型" hidden>${assistantReviewModelMenuHTML(activeCli,canonical,catalogData)}</div>
     </div>
    </div>
   </div>
-  <label id="assistantPrefsReviewCustomWrap" class="asst-field asst-custom-wrap"${showCustomInput?'':' hidden'}><span>自定义模型 ID</span><input type="text" id="assistantPrefsReviewModelCustom" class="input asst-model-input" name="approvalReviewModelCustom" maxlength="${ASSISTANT_REVIEW_MODEL_MAX}" value="${escapeHTML(effectiveRaw)}" placeholder="例如 claude-haiku-4-5、gpt-5.4-mini" autocomplete="off" spellcheck="false"></label>
+  <label id="assistantPrefsReviewCustomWrap" class="asst-field asst-custom-wrap"${showCustomInput?'':' hidden'}><span>自定义模型 ID</span><input type="text" id="assistantPrefsReviewModelCustom" class="input asst-model-input" name="approvalReviewModelCustom" maxlength="${ASSISTANT_REVIEW_MODEL_MAX}" value="${escapeHTML(effectiveRaw)}" placeholder="例如 claude-haiku-4-5、gpt-5.4-mini" autocomplete="off" spellcheck="false"${hasUnconfiguredSaved?' disabled':''}></label>
  </div>`;
 }
 function assistantReviewApiProbeListHTML(models,selectedModel){
@@ -511,11 +511,15 @@ function renderAssistantSettings(draftOverride){
   const effectiveCanonical=customMode?assistantReviewComposeModel(cli,rawModel):canonical;
   hiddenModel.value=effectiveCanonical;
   modelBtn.dataset.activeModel=effectiveCanonical;
+  modelBtn.disabled=unconfigured;
   modelBtn.innerHTML=assistantReviewModelTriggerHTML(cli,effectiveCanonical,rawModel,catalogData);
   if(modelMenu)modelMenu.innerHTML=assistantReviewModelMenuHTML(cli,effectiveCanonical,catalogData);
   const matched=effectiveCanonical&&models.some(m=>m.id===effectiveCanonical);
   if(customWrap)customWrap.hidden=!(customMode||(!matched&&!models.length));
-  if(customInput&&!customMode)customInput.value=rawModel;
+  if(customInput){
+   customInput.disabled=unconfigured;
+   if(!customMode)customInput.value=rawModel;
+  }
  };
 
  const filterModelMenu=()=>{

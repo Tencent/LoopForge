@@ -906,6 +906,39 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/assistant/sessions/{id}/title:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    put:
+      tags: [Assistant]
+      operationId: renameAssistantSession
+      summary: Rename a conversation, including during generation
+      description: Available to the owner of a private conversation and authorized members of a project conversation. Shared flow-run conversations keep their assigned titles.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: {type: string, minLength: 1, maxLength: 128, description: Leading and trailing whitespace is trimmed}
+      responses:
+        "200":
+          description: Saved title
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [title, titleEdited]
+                properties:
+                  title: {type: string}
+                  titleEdited: {type: boolean, enum: [true]}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: The conversation's project binding changed}
   /api/assistant/sessions/{id}/sandbox:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
@@ -2990,7 +3023,12 @@ paths:
     get:
       tags: [Assets]
       operationId: listExecutorModels
-      description: Returns, per built-in CLI, the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs.
+      description: Returns, per built-in CLI, the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs. `configured` reports whether a SOP run can use the CLI for the caller, and `personal` whether the caller saved their own key for it.
+      parameters:
+        - name: projectId
+          in: query
+          schema: {type: string}
+          description: Resolve `configured` against the execution machine a SOP in this project uses, which is the caller's project default before the personal default. Omit it for personal SOPs.
       responses:
         "200":
           description: Model catalog keyed by CLI id
@@ -3019,6 +3057,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [Assets]
       operationId: deleteSandbox
@@ -3169,6 +3209,12 @@ paths:
                 projectId:
                   type: string
                   description: Target project. Empty or omitted retains the source project; generic templates require a target project.
+                sandboxProfileId:
+                  type: string
+                  description: Use this fixed sandbox in the copy.
+                autoSelectSandbox:
+                  type: boolean
+                  description: Choose a sandbox at runtime. With neither option supplied, inherit the source SOP setting.
       responses:
         "201":
           $ref: "#/components/responses/Workflow"
@@ -5165,6 +5211,7 @@ components:
       properties:
         id: {type: string}
         name: {type: string}
+        toolchain: {type: string, description: Tool and version hints used when an Agent chooses a sandbox}
         projectId: {type: string, description: Owning project (required)}
         shared: {type: boolean, description: Visible to every project}
         driver: {type: string, enum: [native, docker]}
@@ -5176,6 +5223,9 @@ components:
             content: {type: string, description: Dockerfile text}
             files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
         readOnlyRootFS: {type: boolean, description: "driver=docker only"}
+        privileged: {type: boolean, default: false, description: "Docker only. Requests privileged workspace containers on an execution host that allows them."}
+        cpuMillicores: {type: integer, format: int64, minimum: 0, maximum: 9223372036854, description: "Docker CPU limit in millicores. 1000 is one CPU, 0 or omitted inherits machine settings, and the minimum configured limit is 10."}
+        memoryMiB: {type: integer, format: int64, minimum: 0, maximum: 8796093022207, description: "Docker memory limit in MiB. 0 or omitted inherits machine settings, and the minimum configured limit is 6."}
         environment: {type: object, additionalProperties: {type: string}, description: Variables added to every command; a native sandbox keeps the execution machine's PATH unless this sets one}
     APIToken:
       type: object
@@ -5507,6 +5557,8 @@ components:
           type: string
         integrateBranch:
           type: string
+        workBranchNaming:
+          $ref: "#/components/schemas/WorkBranchNaming"
         createdAt:
           type: string
           format: date-time
@@ -5515,6 +5567,30 @@ components:
           type: string
           format: date-time
           readOnly: true
+    WorkBranchNaming:
+      type: object
+      description: Naming settings for newly created SOP work branches. Repositories without settings use the feature/ prefix.
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [prefix, ai]
+        prefix:
+          type: string
+          description: Literal prefix in prefix mode. An empty or omitted prefix within this mode produces a name without a prefix.
+          example: feat/
+        executorId:
+          type: string
+          description: Built-in CLI executor ID. Required in AI mode.
+          example: codebuddy
+        model:
+          type: string
+          description: Concrete model ID. Required in AI mode.
+          example: hy4std
+        prompt:
+          type: string
+          maxLength: 2000
+          description: Optional repository naming instructions for AI mode.
     IssueListPage:
       type: object
       required: [items, total, offset, limit, hasMore]
@@ -5866,7 +5942,7 @@ components:
           description: Run once in the task workspace or once per repository checkout.
     WorkflowDefinition:
       type: object
-      required: [id, name, sandboxProfileId, nodes, edges]
+      required: [id, name, nodes, edges]
       additionalProperties: true
       properties:
         notifications: {type: array, maxItems: 1, items: {$ref: "#/components/schemas/NotificationBinding"}, description: Single SOP Bot; all nodes automatically notify waiting/failed and SOP completion. Template and AI instruction customize completion only}
@@ -5891,6 +5967,10 @@ components:
           type: string
         sandboxProfileId:
           type: string
+          description: Required for a fixed workflow. A run snapshot contains the concrete profile ID.
+        autoSelectSandbox:
+          type: boolean
+          description: Select a sandbox for each new run from the target project's own and shared profiles.
         generic:
           type: boolean
           description: >-

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sort"
@@ -86,7 +87,7 @@ func (e *Engine) StartEvolutionReplay(source domain.Run, repositories []domain.R
 			}
 		}
 	}
-	run, err := e.startWorkflowDefinitionSeeded(wf, source.Input, repositories, exec, false, seed)
+	run, err := e.startWorkflowDefinitionSeeded(context.Background(), wf, source.Input, repositories, exec, false, seed)
 	if err != nil {
 		return domain.Run{}, nil, err
 	}

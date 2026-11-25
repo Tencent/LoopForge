@@ -115,8 +115,9 @@ function toast(message, type='info', duration=2600){
     legacy.textContent=message;
     legacy.className=`toast show toast-${kind}`;
     clearTimeout(toastTimer);
-    toastTimer=setTimeout(()=>legacy.classList.remove('show'), 2200);
-    return;
+    const hide=()=>{if(legacy.textContent===message)legacy.classList.remove('show')};
+    if(duration>0)toastTimer=setTimeout(hide,2200);
+    return hide;
   }
   if(!container)return;
   const kind=['ok','err','warn','info'].includes(type)?type:'info';
@@ -134,14 +135,18 @@ function toast(message, type='info', duration=2600){
   window.AgentFlowHarnessIcons?.hydrate?.(item);
   let timer=null;
   const remove=()=>{
+    clearTimeout(timer);
     if(item.classList.contains('leaving'))return;
     item.classList.add('leaving');
     setTimeout(()=>{try{item.remove()}catch{}}, 200);
   };
-  timer=setTimeout(remove, duration);
-  item.onmouseenter=()=>clearTimeout(timer);
-  item.onmouseleave=()=>{timer=setTimeout(remove, 1400)};
+  if(duration>0){
+    timer=setTimeout(remove,duration);
+    item.onmouseenter=()=>clearTimeout(timer);
+    item.onmouseleave=()=>{timer=setTimeout(remove,1400)};
+  }
   item.querySelector('.toast-item-close').onclick=remove;
+  return remove;
 }
 
 // Platform dialogs (#confirmModal) replace window.confirm/prompt/alert. Calls
@@ -397,9 +402,11 @@ function highlightJSON(src){
   return html;
 }
 
-function renderMarkdown(md){
+function renderMarkdown(md, options={}){
   if(!md)return '';
   const text=String(md).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const inline=text=>parseInlineMarkdown(text,options.images);
+  const copyButton=options.copyCode===false?'':'<button type="button" class="md-code-copy">复制</button>';
   const lines=text.split('\n');
   const out=[];
   let inCode=false, codeLang='', codeLines=[];
@@ -418,10 +425,10 @@ function renderMarkdown(md){
     const parseRow=(r)=>r.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c=>c.trim());
     const headers=parseRow(tableRows[0]);
     const bodyRows=tableRows.slice(2);
-    const thead=`<thead><tr>${headers.map(h=>`<th>${parseInlineMarkdown(h)}</th>`).join('')}</tr></thead>`;
+    const thead=`<thead><tr>${headers.map(h=>`<th>${inline(h)}</th>`).join('')}</tr></thead>`;
     const tbody=`<tbody>${bodyRows.map(row=>{
       const cells=parseRow(row);
-      return `<tr>${headers.map((_,idx)=>`<td>${parseInlineMarkdown(cells[idx]||'')}</td>`).join('')}</tr>`;
+      return `<tr>${headers.map((_,idx)=>`<td>${inline(cells[idx]||'')}</td>`).join('')}</tr>`;
     }).join('')}</tbody>`;
     out.push(`<table>${thead}${tbody}</table>`);
     inTable=false;tableRows=[];
@@ -434,7 +441,7 @@ function renderMarkdown(md){
       if(inCode){
         const rawCode=codeLines.join('\n');
         const highlighted=highlightCode(rawCode, codeLang);
-        out.push(`<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${escapeHTML(codeLang||'TEXT')}</span><button type="button" class="md-code-copy">复制</button></div><pre><code>${highlighted}</code></pre></div>`);
+        out.push(`<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${escapeHTML(codeLang||'TEXT')}</span>${copyButton}</div><pre><code>${highlighted}</code></pre></div>`);
         inCode=false;codeLang='';codeLines=[];
       } else {
         flushList();
@@ -483,7 +490,7 @@ function renderMarkdown(md){
       }
       const titleIcons={note:'ℹ️ NOTE', tip:'💡 TIP', important:'🟣 IMPORTANT', warning:'⚠️ WARNING', caution:'🛑 CAUTION'};
       const titleText=titleIcons[kind]||kind.toUpperCase();
-      out.push(`<div class="md-alert md-alert-${kind}"><div class="md-alert-title">${titleText}</div><div class="md-alert-content">${renderMarkdown(alertLines.join('\n'))}</div></div>`);
+      out.push(`<div class="md-alert md-alert-${kind}"><div class="md-alert-title">${titleText}</div><div class="md-alert-content">${renderMarkdown(alertLines.join('\n'),options)}</div></div>`);
       continue;
     }
 
@@ -494,7 +501,7 @@ function renderMarkdown(md){
         i++;
         bqLines.push(lines[i].replace(/^>\s?/, ''));
       }
-      out.push(`<blockquote>${renderMarkdown(bqLines.join('\n'))}</blockquote>`);
+      out.push(`<blockquote>${renderMarkdown(bqLines.join('\n'),options)}</blockquote>`);
       continue;
     }
 
@@ -508,7 +515,7 @@ function renderMarkdown(md){
     if(hMatch){
       flushList();
       const level=hMatch[1].length;
-      out.push(`<h${level}>${parseInlineMarkdown(hMatch[2])}</h${level}>`);
+      out.push(`<h${level}>${inline(hMatch[2])}</h${level}>`);
       continue;
     }
 
@@ -519,7 +526,7 @@ function renderMarkdown(md){
         inList=true;listType='ul';
       }
       const checked=taskMatch[1].toLowerCase()==='x';
-      listItems.push(`<li class="task-list-item"><input type="checkbox" class="task-checkbox" disabled ${checked?'checked':''}><span>${parseInlineMarkdown(taskMatch[2])}</span></li>`);
+      listItems.push(`<li class="task-list-item"><input type="checkbox" class="task-checkbox" disabled ${checked?'checked':''}><span>${inline(taskMatch[2])}</span></li>`);
       continue;
     }
 
@@ -529,7 +536,7 @@ function renderMarkdown(md){
         flushList();
         inList=true;listType='ul';
       }
-      listItems.push(`<li>${parseInlineMarkdown(ulMatch[1])}</li>`);
+      listItems.push(`<li>${inline(ulMatch[1])}</li>`);
       continue;
     }
 
@@ -539,12 +546,12 @@ function renderMarkdown(md){
         flushList();
         inList=true;listType='ol';
       }
-      listItems.push(`<li>${parseInlineMarkdown(olMatch[1])}</li>`);
+      listItems.push(`<li>${inline(olMatch[1])}</li>`);
       continue;
     }
 
     flushList();
-    out.push(`<p>${parseInlineMarkdown(line)}</p>`);
+    out.push(`<p>${inline(line)}</p>`);
   }
 
   flushList();
@@ -556,7 +563,26 @@ function renderMarkdown(md){
   return out.join('');
 }
 
-function parseInlineMarkdown(text){
+function renderRequirementMarkdown(text){
+  return renderMarkdown(text,{images:true,copyCode:false});
+}
+
+function parseInlineMarkdown(text, allowImages=false){
+  if(allowImages){
+    const parts=[];
+    let offset=0;
+    for(const match of text.matchAll(/`[^`]+`|!\[([^\]]*)\]\(([^()\s]+)\)/g)){
+      const [,alt,src]=match;
+      if(!src)continue;
+      parts.push(parseInlineMarkdown(text.slice(offset,match.index)));
+      const url=safeURL(src);
+      if(url==='#')parts.push(escapeHTML(match[0]));
+      else if(new URL(url).origin===location.origin)parts.push(`<img src="${escapeHTML(url)}" alt="${escapeHTML(alt)}" loading="lazy">`);
+      else parts.push(`<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(alt||src)}</a>`);
+      offset=match.index+match[0].length;
+    }
+    if(parts.length)return parts.join('')+parseInlineMarkdown(text.slice(offset));
+  }
   let s=escapeHTML(text);
   s=s.replace(/`([^`]+)`/g, '<code>$1</code>');
   s=s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
@@ -1019,9 +1045,9 @@ function bind(){
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
   $('#settingsSidebarExpand')?.addEventListener('click',()=>{
     cancelSettingsRouteTransition();
-    setSettingsSidebarExpanded(true);
-    // Wait for the sidebar's descendants to inherit the restored visibility; reduced
-    // motion still runs a near-zero visibility transition, so retry for a few frames.
+    setSettingsSidebarExpanded(true,document.activeElement===document.body);
+    // Focus normally moves before the opener hides. If the toggle cannot take
+    // focus yet, focus falls back to the body; retry for a few frames.
     let frames=0;
     const focusToggle=()=>requestAnimationFrame(()=>{
       if(!settingsSidebarExpanded()||document.activeElement!==document.body)return;
@@ -1029,7 +1055,7 @@ function bind(){
       toggle?.focus({preventScroll:true});
       if(toggle&&document.activeElement!==toggle&&++frames<30)focusToggle();
     });
-    requestAnimationFrame(focusToggle);
+    if(document.activeElement!==$('#settingsSidebarToggle'))focusToggle();
   });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
@@ -1042,7 +1068,7 @@ function bind(){
   $('#workflowSelect').onchange=e=>switchFlowWorkflow(e.target.value);
   $('#workflowName').oninput=e=>{if(!state.workflow)return;state.workflow.name=e.target.value;dirty()};
   $('#workflowOwner').oninput=e=>{if(!state.workflow)return;state.workflow.owner=e.target.value;dirty()};
-  $('#workflowSandbox').onchange=e=>{if(!state.workflow)return;state.workflow.sandboxProfileId=e.target.value;dirty()};
+  $('#workflowSandbox').onchange=e=>{if(!state.workflow)return;setSOPSandboxChoice(state.workflow,e.target.value);dirty()};
   $('#workflowStatus').onchange=e=>{if(!state.workflow)return;state.workflow.status=e.target.value;dirty()};
   $('#workflowTags').oninput=e=>{if(!state.workflow)return;state.workflow.tags=e.target.value.split(',').map(x=>x.trim()).filter(Boolean);dirty()};
   $('#workflowMetricCategory').onchange=e=>{if(!state.workflow)return;state.workflow.metricCategory=e.target.value;dirty()};
@@ -1271,6 +1297,8 @@ function bind(){
   $('#reqWorkflow')&&($('#reqWorkflow').onchange=()=>{renderReqFooter();persistRequirementComposer()});
   $('#reqBaseBranch')?.addEventListener('input',onReqBaseBranchInput);
   $('#chatInput').addEventListener('input',onReqDescriptionInput);
+  $('#chatInput').addEventListener('paste',onReqDescriptionPaste);
+  $('#reqPreviewToggle').onclick=()=>setReqPreview($('#reqMarkdownPreview').hidden);
   window.addEventListener('beforeunload',()=>persistRequirementComposer());
   if($('#sopCreateForm')){$('#sopCreateForm').onsubmit=createSOPFromWizard;$('#sopPrev').onclick=()=>setSOPWizardStep(state.sopWizardStep-1);$('#sopNext').onclick=()=>setSOPWizardStep(state.sopWizardStep+1);$$('[data-wizard-steps="sop"] [data-step-target]').forEach(b=>b.onclick=()=>setSOPWizardStep(Number(b.dataset.stepTarget)));$$('.sop-create-close').forEach(b=>b.onclick=()=>$('#sopCreateModal').classList.remove('open'))}
   $('#newSOP')&&($('#newSOP').onclick=openSOPWizard);
@@ -1778,7 +1806,7 @@ settingsRouteMotion.addEventListener('change',()=>{
   if(pending)switchView(pending);
   setSettingsSidebarExpanded(settingsSidebarExpanded());
 });
-function setSettingsSidebarExpanded(expanded){
+function setSettingsSidebarExpanded(expanded,focusToggle=false){
   const managing=document.body.classList.contains('management-mode');
   const open=managing&&expanded;
   const entering=managing&&!settingsSidebarWasManaged;
@@ -1805,7 +1833,7 @@ function setSettingsSidebarExpanded(expanded){
     toggle.title=open?'收起设置导航':'展开设置导航';
   }
   const reopen=$('#settingsSidebarExpand');
-  if(reopen)reopen.hidden=!managing||open;
+  if(reopen&&!open)reopen.hidden=!managing;
   const mobileToggle=$('.collab-rail-toggle');
   if(mobileToggle){
     mobileToggle.setAttribute('aria-expanded',String(open));
@@ -1821,6 +1849,11 @@ function setSettingsSidebarExpanded(expanded){
     sidebar.inert=managing&&!open;
     if(managing&&!open)sidebar.setAttribute('aria-hidden','true');
     else sidebar.removeAttribute('aria-hidden');
+  }
+  if(reopen&&open){
+    // Transfer focus before hiding the expand button.
+    if(focusToggle||document.activeElement===reopen)toggle?.focus({preventScroll:true});
+    reopen.hidden=true;
   }
   if(animateEntry){
     // Keep the mounted panel at its closed geometry for one layout before reveal.

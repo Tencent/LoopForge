@@ -45,6 +45,7 @@ type providerInvocation struct {
 	PromptFile string
 	Driver     string
 	Options    InvocationOptions
+	SOP        bool
 }
 
 // Provider owns all behavior that varies by executor kind. The runtime remains

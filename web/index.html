@@ -19,7 +19,7 @@
   <link rel="stylesheet" href="/sync.css?v=20261021schedule1">
   <link rel="stylesheet" href="/access.css?v=20261031v1">
   <link rel="stylesheet" href="/product-v3.css?v=20261030runs1">
-  <link rel="stylesheet" href="/product-v4.css?v=20261031req2">
+  <link rel="stylesheet" href="/product-v4.css?v=20261123run-eval">
   <link rel="stylesheet" href="/app/harness-ui.css?v=20261031req1">
   <link rel="stylesheet" href="/app/project-credentials.css">
   <link rel="stylesheet" href="/assistant-models.css">
@@ -357,7 +357,7 @@
     <!-- 运行记录 -->
     <section id="runsView" class="view page-view">
       <div class="page-heading runs-heading">
-        <h1>运行记录<span class="info-tip" tabindex="0" role="note" aria-label="并发规则：云端执行时，每个项目最多同时运行 10 条 SOP，超出的进入排队中。"><span class="run-hint-icon" data-run-icon="info" aria-hidden="true"><svg width="15" height="15"></svg></span><span class="info-tip-panel" role="tooltip"><b>并发规则</b><span>云端执行时，<strong>每个项目最多同时运行 10 条 SOP</strong>，超出的进入「排队中」，名额空出后按提交顺序自动开始。</span><span>失败、暂停、待确认、开始后被取消的运行仍占用名额；只有成功完成或排队时取消的不占用。</span><span>嵌套的子 SOP 不单独计数；未归属项目的运行共用一组 10 个名额。</span><span>个人执行机器不受此限制，可在「执行机器」页单独设置上限。</span></span></span></h1>
+        <h1>运行记录<span class="info-tip" tabindex="0" role="note" aria-label="平台执行机器默认同时运行 10 条顶层 SOP，所有项目共用，平台管理员可调整。"><span class="run-hint-icon" data-run-icon="info" aria-hidden="true"><svg width="15" height="15"></svg></span><span class="info-tip-panel" role="tooltip"><b>并发规则</b><span><strong>平台所有项目共用执行名额</strong>，默认 10 条顶层 SOP，平台管理员可在「执行机器」调整。个人和共享机器按各自上限计数。</span><span>超出名额后按排队顺序启动。开启自动分配的 SOP 等待兼容的执行机器，子 SOP 共用父流程名额。</span><span>失败、暂停、待确认的 SOP 空闲 1 小时后自动归档工作区并释放名额，继续或重试时自动恢复。已开始的 SOP 取消后，工作区清理完成即释放名额。</span></span></span></h1>
         <span id="runsLiveState" class="run-live" role="status"><span class="run-lamp" aria-hidden="true"><i></i></span><span data-live-text>实时更新中</span></span>
         <div id="runOverview" class="run-kpis" aria-label="运行指标"></div>
         <button id="refreshRuns" class="run-icon-btn" type="button" aria-label="刷新" title="刷新"><span data-run-icon="refresh" aria-hidden="true"><svg width="15" height="15"></svg></span></button>
@@ -506,7 +506,7 @@
             <div id="workflowSandboxField" class="flow-field-wrap">
               <label for="workflowSandbox" class="flow-field-label">运行沙箱环境</label>
               <select id="workflowSandbox" class="select flow-select"></select>
-              <div class="flow-field-hint">当前 SOP 节点执行 Shell/Python 及构建命令所绑定的隔离沙箱</div>
+              <div class="flow-field-hint">本次运行的所有节点共用所选沙箱。选「由 Agent 选择」后，每次运行按项目和任务决定。</div>
             </div>
             <div id="workflowProjectCredentials" class="flow-field-wrap" hidden>
               <div class="flow-field-label">项目凭据</div>
@@ -688,10 +688,18 @@
 
     <section id="projectCredentialsView" class="view page-view">
       <header class="page-heading">
-        <div><h1>凭据管理</h1><p id="projectCredentialsProject" data-i18n-skip></p></div>
-        <button id="newProjectCredential" type="button" class="button primary" hidden>新增凭据</button>
+        <div>
+          <div class="project-credential-heading-title">
+            <h1>凭据管理</h1>
+            <span id="projectCredentialsProject" class="project-credential-project-chip" data-i18n-skip hidden></span>
+          </div>
+          <p class="project-credential-page-desc">加密保存项目级账号、令牌与密钥；在 SOP 或 AI 工作台选用后，将作为环境变量注入沙箱进程，并在输出中自动脱敏。</p>
+        </div>
+        <div class="heading-actions">
+          <button id="newProjectCredential" type="button" class="button primary" hidden><svg class="agent-icon harness-icon" data-icon="plus" width="14" height="14" aria-hidden="true" focusable="false"></svg>新增凭据</button>
+        </div>
       </header>
-      <div id="projectCredentialsContent" class="project-credential-panel" aria-live="polite"></div>
+      <div id="projectCredentialsContent" class="project-credential-shell" aria-live="polite"></div>
     </section>
 
     <!-- 能力资产 · MCP -->
@@ -799,7 +807,12 @@
         </div>
       </div>
 
-      <div class="runner-list-heading"><h2>可用机器</h2><span class="runner-count" id="runnerCount">0</span><p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p></div>
+      <div id="platformRunnerSection" class="runner-platform-section" hidden>
+        <div class="runner-section-heading"><h2>平台机器</h2><span class="runner-section-meta">所有项目共用名额</span></div>
+        <div id="platformRunnerHost"></div>
+      </div>
+
+      <div class="runner-list-heading"><h2>可用机器</h2><span class="runner-count" id="runnerCount">0</span><button type="button" class="button ghost small" id="runnerAutoAssign" aria-pressed="false" hidden>自动分配</button><p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p></div>
       <div id="runnersList" class="runner-grid"></div>
     </section>
 
@@ -878,7 +891,10 @@
               <label class="as-field"><span>职责 <small>一句话，列表和流程卡片里展示</small></span><div class="as-count-wrap"><input name="description" maxlength="160" placeholder="读 Issue 和源码，写出根因与修复计划，不改业务代码"><small class="as-count" id="agentDescCount" aria-hidden="true"></small></div></label>
               <div class="as-section-label">运行方式</div>
               <div class="as-grid agent-runtime-grid">
-                <label class="as-field"><span>CLI</span><select name="executorId" class="select" id="agentExecutorSelect"></select></label>
+                <label class="as-field"><span>CLI</span>
+                  <select name="executorId" class="select" id="agentExecutorSelect" aria-label="CLI" aria-describedby="agentExecutorStatus"></select>
+                  <small class="muted" id="agentExecutorStatus" hidden></small>
+                </label>
                 <div class="as-field"><span>模型</span>
                   <div class="clarify-model-field" id="agentModelPicker" data-clarify-model>
                     <input type="hidden" name="modelChoice">
@@ -938,7 +954,9 @@
       <div class="req-wizard-body">
         <section id="reqStepDescribe" class="req-pane" aria-label="描述需求">
           <div class="req-chat-composer">
-            <textarea id="chatInput" aria-label="需求描述" placeholder="要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。" rows="6"></textarea>
+            <textarea id="chatInput" aria-label="需求描述" aria-describedby="reqMarkdownHint" placeholder="要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。" rows="6"></textarea>
+            <div id="reqMarkdownPreview" class="req-markdown-preview markdown-body" aria-label="需求描述预览" hidden></div>
+            <ul id="reqImages" class="req-images" aria-label="已粘贴的图片" hidden></ul>
             <div class="req-composer-toolbar">
               <div id="reqRepoChip" class="req-ghost-sel">
                 <button type="button" id="reqRepoChipToggle" class="req-ghost-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="reqRepoPopover"><svg class="agent-icon harness-icon" data-icon="folder" width="13" height="13" aria-hidden="true"></svg><span id="reqRepoChipLabel" class="req-ghost-value"></span><svg class="agent-icon harness-icon req-chev" data-icon="chevron-down" width="13" height="13" aria-hidden="true"></svg></button>
@@ -957,6 +975,8 @@
                 </div>
               </div>
               <span class="req-toolbar-sp"></span>
+              <span id="reqMarkdownHint" class="req-markdown-hint">支持 Markdown 和粘贴图片</span>
+              <button type="button" id="reqPreviewToggle" class="button quiet small" aria-pressed="false" aria-controls="reqMarkdownPreview">预览</button>
               <span id="reqCharCount" class="req-count"></span>
             </div>
           </div>
@@ -1024,6 +1044,52 @@
             <label class="pa-field"><span class="pa-field-l">集成分支 <i>可选</i></span><input class="pa-input mono" name="integrateBranch" placeholder="agentflow/integration"></label>
           </div>
           <p class="pa-fs-hint">集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突；留空则跳过（部分仓库不允许创建 agentflow/ 分支）。</p>
+          <label class="pa-field pa-repo-branch-naming">
+            <span class="pa-field-l">工作分支命名</span>
+            <select class="pa-input" name="workBranchNamingMode">
+              <option value="prefix">按前缀生成</option>
+              <option value="ai">AI 生成</option>
+            </select>
+          </label>
+          <div class="pa-repo-branch-naming" data-work-branch-prefix>
+            <label class="pa-field">
+              <span class="pa-field-l">分支前缀</span>
+              <select class="pa-input mono" name="workBranchPrefix">
+                <option value="feature/">feature/</option>
+                <option value="custom">自定义</option>
+                <option value="">无前缀</option>
+              </select>
+            </label>
+            <div class="pa-repo-branch-naming" data-work-branch-custom-prefix hidden>
+              <label class="pa-field">
+                <span class="pa-field-l">自定义前缀</span>
+                <input class="pa-input mono" name="workBranchCustomPrefix" placeholder="team-a/">
+              </label>
+            </div>
+          </div>
+          <div class="pa-repo-branch-naming" data-work-branch-prompt hidden>
+            <div class="pa-g2">
+              <label class="pa-field">
+                <span class="pa-field-l">CLI</span>
+                <select class="pa-input select" name="workBranchExecutorId"></select>
+              </label>
+              <label class="pa-field">
+                <span class="pa-field-l">模型</span>
+                <select class="pa-input select" name="workBranchModelChoice"></select>
+              </label>
+            </div>
+            <div class="pa-repo-branch-naming" data-work-branch-custom-model hidden>
+              <label class="pa-field">
+                <span class="pa-field-l">模型 ID</span>
+                <input class="pa-input mono" name="workBranchCustomModel" maxlength="128" spellcheck="false">
+              </label>
+            </div>
+            <label class="pa-field pa-repo-branch-naming">
+              <span class="pa-field-l">命名要求 <i>可选</i></span>
+              <textarea class="pa-input" name="workBranchPrompt" rows="3" maxlength="2000" placeholder="用小写英文概括改动，带上需求编号"></textarea>
+              <span class="pa-field-h">AI 根据任务和命名要求生成完整的分支名。</span>
+            </label>
+          </div>
         </div>
         <div class="pa-fs"><div class="pa-toggle-card"><div><b>设为项目默认仓库</b><span>新需求默认在此仓库上执行。</span></div><button type="button" class="pa-switch" id="repoDrawerDefault" role="switch" aria-checked="false" aria-label="设为项目默认仓库"></button></div></div>
         <details class="pa-fs pa-adv" id="repoDrawerAdvanced">
@@ -1358,6 +1424,7 @@
   <script src="/app/run-activation.js"></script>
   <script src="/app/platform-ssh-hosts.js"></script>
   <script src="/app/platform-https-hosts.js"></script>
+  <script src="/app/platform-public-url.js"></script>
   <script src="/app/workbench.js?v=20261121settingsrows"></script>
   <script src="/app/git-ssh-keys.js?v=20261121settings"></script>
   <script src="/app/git-http-credentials.js?v=20261121settings"></script>
