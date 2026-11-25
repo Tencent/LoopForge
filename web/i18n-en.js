@@ -418,6 +418,7 @@ Object.assign(window.LF_I18N_EN, {
   "发布前": "Before publication",
   "运行工作区": "Run workspace",
   "是否必需": "Required",
+  "这次运行已有评测在进行": "An evaluation is already running for this run.",
   "隔离方式、Dockerfile 与环境变量": "Isolation, Dockerfile and environment variables",
   "Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。": "Docker runs in an OCI container. Lightweight system isolation picks seatbelt (macOS) or bwrap (Linux) from the execution machine's OS, and runs on a user's execution machine, a cloud Runner or the platform host.",
   "系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。": "Lightweight system isolation uses the languages and tools installed on the execution machine. System directories are read-only and only the workspace is writable. Put settings such as JAVA_HOME or a proxy in the environment variables below. Repositories are shared clones of the execution machine's repository cache, so they are not downloaded again.",
