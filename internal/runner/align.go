@@ -23,7 +23,9 @@ func (d *Daemon) executeAlignBaseline(ctx context.Context, task domain.RunnerTas
 	defer os.RemoveAll(dir)
 	result, err := alignBaseline(ctx, dir, task.Invocation)
 	if err != nil {
-		return execResult{status: domain.RunnerTaskFailed, exitCode: 1, errMsg: err.Error()}
+		// alignBaseline shells out to git, so the helper did run: keep the exit
+		// status instead of letting reportedExitCode drop it as a pre-flight miss.
+		return execResult{status: domain.RunnerTaskFailed, exitCode: 1, ran: true, errMsg: err.Error()}
 	}
 	body, _ := json.Marshal(result)
 	return execResult{status: domain.RunnerTaskSuccess, exitCode: 0, result: string(body)}

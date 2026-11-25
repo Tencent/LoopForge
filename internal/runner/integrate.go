@@ -34,7 +34,8 @@ func (d *Daemon) executeIntegrate(ctx context.Context, task domain.RunnerTask) e
 		_ = d.client.SendEvents(ctx, task.ID, lines)
 	}
 	if err != nil {
-		return execResult{status: domain.RunnerTaskFailed, exitCode: 1, errMsg: err.Error()}
+		// integrateTaskRepositories shells out to git, so the helper did run.
+		return execResult{status: domain.RunnerTaskFailed, exitCode: 1, ran: true, errMsg: err.Error()}
 	}
 	body, _ := json.Marshal(results)
 	return execResult{status: domain.RunnerTaskSuccess, exitCode: 0, result: string(body)}
