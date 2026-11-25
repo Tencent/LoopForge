@@ -7,6 +7,59 @@ function hydrateReqIcons(root){
 function reqDescription(){
   return ($('#chatInput')?.value||'').trim();
 }
+const reqImageTypes=new Set(['image/png','image/jpeg','image/webp','image/gif']);
+const reqImages=[];
+
+function setReqPreview(show){
+  const preview=$('#reqMarkdownPreview');
+  preview.hidden=!show;
+  $('#chatInput').hidden=show;
+  $('#reqPreviewToggle').setAttribute('aria-pressed',String(show));
+  if(show)preview.innerHTML=renderRequirementMarkdown(reqDescription())||'<p class="req-preview-empty">暂无文字描述</p>';
+  else preview.replaceChildren();
+}
+function renderReqImages(){
+  const list=$('#reqImages');
+  list.hidden=!reqImages.length;
+  list.innerHTML=reqImages.map(({file,url},index)=>{
+    const name=escapeHTML(file.name||'图片');
+    return `<li><img src="${escapeHTML(url)}" alt="${name}"><button type="button" data-remove-req-image="${index}" aria-label="移除图片 ${name}">${reqIcon('close',12)}</button></li>`;
+  }).join('');
+  const buttons=list.querySelectorAll('[data-remove-req-image]');
+  buttons.forEach((button,index)=>button.onclick=()=>{
+    if(requirementComposerBusy())return;
+    URL.revokeObjectURL(reqImages.splice(index,1)[0].url);
+    renderReqImages();
+    renderReqFooter();
+    const next=list.querySelectorAll('[data-remove-req-image]');
+    (next[index]||next[index-1]||($('#chatInput').hidden?$('#reqPreviewToggle'):$('#chatInput'))).focus();
+  });
+  hydrateReqIcons(list);
+}
+function onReqDescriptionPaste(event){
+  const clipboard=event.clipboardData;
+  if(!clipboard||requirementComposerBusy())return;
+  const files=Array.from(clipboard.files||[]);
+  const images=(files.length?files:Array.from(clipboard.items||[]).filter(item=>item.kind==='file').map(item=>item.getAsFile()))
+    .filter(file=>file?.type.startsWith('image/'));
+  if(!images.length)return;
+  event.preventDefault();
+  const text=clipboard.getData('text/plain');
+  const input=event.currentTarget;
+  if(text)input.setRangeText(text,input.selectionStart,input.selectionEnd,'end');
+  let error='';
+  let bytes=reqImages.reduce((total,{file})=>total+file.size,0);
+  for(const file of images){
+    if(!reqImageTypes.has(file.type)){error='图片格式须为 PNG、JPEG、WebP 或 GIF';continue}
+    if(reqImages.length>=8){error='每条需求最多添加 8 张图片';break}
+    if(!file.size||file.size>10*1024*1024||bytes+file.size>20*1024*1024){error='单张图片最多 10 MB，合计最多 20 MB';continue}
+    reqImages.push({file,url:URL.createObjectURL(file)});
+    bytes+=file.size;
+  }
+  renderReqImages();
+  onReqDescriptionInput();
+  if(error)toast(error,'err');
+}
 function projectTAPDReady(project){
   project=project||currentProject();
   if(!project)return false;
@@ -188,7 +241,9 @@ function reqFooterNote(){
 }
 function renderReqFooter(){
   const creating=!!state.reqCreating;
-  const reason=reqDescription()?'':'先写一句需求';
+  const reason=reqDescription()||reqImages.length?'':'先写一句需求';
+  $('#chatInput').readOnly=creating;
+  $$('#reqImages button').forEach(button=>{button.disabled=creating});
   const create=$('#reqCreate'),chat=$('#reqCreateChat');
   if(create){
     create.disabled=creating||!!reason;
@@ -280,6 +335,9 @@ function clearRequirementComposer(){
 function resetRequirementComposer(){
   Object.assign(state,{reqCreating:'',reqTarget:'local',reqDelivery:'sop'});
   ['#reqBaseBranch','#chatInput'].forEach(id=>{const el=$(id);if(el)el.value=''});
+  reqImages.splice(0).forEach(({url})=>URL.revokeObjectURL(url));
+  renderReqImages();
+  setReqPreview(false);
   renderReqContext();
   renderReqTarget();
   updateReqCharCount();
@@ -355,7 +413,7 @@ function clarifyToolLabel(tool){
 }
 function collectRequirementDraft(){
   const description=reqDescription();
-  const first=(description.split('\n').map(l=>l.trim()).find(Boolean)||'');
+  const first=(description.split('\n').map(l=>l.trim()).find(Boolean)||'').replace(/^#{1,6}\s+/,'');
   return {title:first.slice(0,80),description};
 }
 function rememberIssue(saved, prevId){
@@ -393,7 +451,7 @@ async function createIssueFromChat(target,mode){
   const toChat=mode==='chat';
   if(target!=='local'&&target!=='tapd')return toast('请选择平台或 TAPD');
   const draft=collectRequirementDraft();
-  if(!draft.description){$('#chatInput')?.focus();return toast('先写一句需求')}
+  if(!draft.description&&!reqImages.length){$('#chatInput')?.focus();return toast('先写一句需求')}
   if(target==='tapd'&&!projectTAPDReady())return toast('当前项目未配置 TAPD');
   if(state.reqCreating)return toast('正在建单，请勿重复点击');
   const useSOP=reqUsesSOP();
@@ -403,7 +461,7 @@ async function createIssueFromChat(target,mode){
   renderReqFooter();
   const project=currentProject();
   try{
-    let issue=await api('/api/issues',{method:'POST',body:JSON.stringify({
+    let body=JSON.stringify({
       projectId:project?.id,
       status:'backlog',
       kind:'requirement',
@@ -417,7 +475,14 @@ async function createIssueFromChat(target,mode){
       title:draft.title||'新工作项',
       description:draft.description,
       priority:'medium',
-    })});
+    });
+    if(reqImages.length){
+      const form=new FormData();
+      form.append('issue',body);
+      for(const {file} of reqImages)form.append('images',file,file.name||'image');
+      body=form;
+    }
+    let issue=await api('/api/issues',{method:'POST',body});
     rememberIssue(issue);
     let syncError='';
     if(target==='tapd'){

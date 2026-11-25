@@ -825,8 +825,8 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 	if input.MaxConcurrency > 32 {
 		input.MaxConcurrency = 32
 	}
-	// The binding owner or the platform bootstrap can re-register a known
-	// machine. Other users bind a fresh ID, even if they know the old ID.
+	// Only the original binding may reuse an ID. Platform bootstrap
+	// credentials can renew platform runners, whose owner is zero.
 	now := time.Now().UTC()
 	runner := domain.Runner{
 		Name:                   strings.TrimSpace(input.Name),
@@ -841,7 +841,9 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 		OwnerUserID:            owner,
 		LastSeenAt:             &now,
 	}
-	if existing, ok := h.repo.Runner(strings.TrimSpace(input.RunnerID)); ok && (existing.OwnerUserID == owner || owner == 0) {
+	existing, found := h.repo.Runner(strings.TrimSpace(input.RunnerID))
+	renew := found && existing.OwnerUserID == owner
+	if renew {
 		runner.ID = existing.ID
 		runner.CreatedAt = existing.CreatedAt
 		runner.Runtimes = normalizeRunnerRuntimes(input.Runtimes, existing.Runtimes)
@@ -856,7 +858,11 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 	expires := now.Add(runnerSessionTTL)
 	runner.SessionTokenHash = hash
 	runner.SessionExpiresAt = &expires
-	if err := h.repo.PutRunner(runner); err != nil {
+	if err := h.repo.RegisterRunner(runner, renew); err != nil {
+		if errors.Is(err, repo.ErrRunnerNotFound) {
+			c.JSON(http.StatusConflict, gin.H{"error": "runner registration changed; retry"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

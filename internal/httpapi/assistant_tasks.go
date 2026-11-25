@@ -386,6 +386,8 @@ func (h *assistantHandlers) readScheduledTurn(user domain.User, task *assistantT
 		if json.Unmarshal([]byte(reply.Content), &payload) == nil {
 			payload["message"] = message
 			reply.Content = jsonObject(payload)
+			// Keep the title stored now; the user may have renamed it during the run.
+			session.TitleEdited = false
 			if err := saveAssistantConversation(h.repo, user.ID, session); err != nil {
 				log.Printf("scheduled assistant notification strip session=%s: %v", g.SessionID, err)
 			}

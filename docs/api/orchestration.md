@@ -291,7 +291,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 ### `GET /api/runs/{runId}/eval/stream`
 
-SSE：`thought` / `done` / `error`。
+SSE 的 `thought` 事件报告平台阶段，`stage` 依次为 `queued`、`collecting`、`evaluating`、`validating`，`text` 为阶段说明。评测完成后发送 `done`，失败时发送 `error`。
 
 ### `POST /api/runs/{runId}/eval/apply`
 

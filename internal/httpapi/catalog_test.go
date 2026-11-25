@@ -474,7 +474,7 @@ func TestCloneAgentMCPServersCopiesByTargetScope(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 	for _, server := range []domain.MCPServerDefinition{
 		{ID: "project-source", Name: "Project", Scope: "project", ProjectID: "source", Transport: "http", URL: "https://example.com/project"},
-		{ID: "personal-source", Name: "Personal", Scope: "personal", OwnerUserID: 9, Transport: "http", URL: "https://example.com/personal"},
+		{ID: "personal-source", Name: "Personal", Scope: "personal", OwnerUserID: 2, Transport: "http", URL: "https://example.com/personal"},
 	} {
 		if err := s.PutMCPServer(server); err != nil {
 			t.Fatal(err)
@@ -482,7 +482,9 @@ func TestCloneAgentMCPServersCopiesByTargetScope(t *testing.T) {
 	}
 	server := &Server{deps: &deps{repo: s}}
 	server.catalog = &catalogHandlers{deps: server.deps}
-	ids, err := server.catalog.cloneAgentMCPServers([]string{"project-source", "personal-source"}, "target", 2)
+	ids, err := server.catalog.cloneAgentMCPServers([]string{"project-source", "personal-source"}, "target", 2, func(projectID string) bool {
+		return projectID == "source"
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,8 +496,8 @@ func TestCloneAgentMCPServersCopiesByTargetScope(t *testing.T) {
 		t.Fatalf("project MCP copy = %+v", project)
 	}
 	personal, ok := s.MCPServer(ids[1])
-	if !ok || personal.Scope != "personal" || personal.OwnerUserID != 2 || personal.ProjectID != "" {
-		t.Fatalf("personal MCP copy = %+v", personal)
+	if !ok || personal.ID != "personal-source" || personal.Scope != "personal" || personal.OwnerUserID != 2 || personal.ProjectID != "" {
+		t.Fatalf("personal MCP reference = %+v", personal)
 	}
 }
 
@@ -793,6 +795,7 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 		ClaudeCodeModels: []domain.CLIModel{{ID: "custom-sonnet", Name: "Personal Sonnet"}},
 		AgentCLICredentials: map[string]domain.AgentCLICredential{
 			"opencode": {Models: []domain.CLIModel{{ID: "alibaba/qwen3.7-plus", Name: "Qwen3.7 Plus"}}},
+			"dsh":      {APIKey: "fixture-dsh-secret"},
 		},
 	}
 	if err := assistant.repo.PutUser(user); err != nil {
@@ -821,10 +824,173 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 	if !catalogs["codex"].CustomModel || len(catalogs["codex"].Efforts) == 0 {
 		t.Fatalf("built-in Codex options disappeared: %+v", catalogs["codex"])
 	}
+	for id, want := range map[string]bool{"codex": true, "dsh": true, "claude": false, "opencode": false, "codebuddy": false} {
+		if got := catalogs[id].Configured; got != want {
+			t.Errorf("%s configured = %t, want %t", id, got, want)
+		}
+	}
 	other, _ := assistant.repo.UserByLoginName("workbench-owner")
 	c, rec = workbenchContext(other, "GET", "/api/executor-models", bytes.NewBuffer(nil))
 	handler.executorModels(c)
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "gateway/second") || !strings.Contains(rec.Body.String(), "gpt-6.1-sol") {
 		t.Fatalf("other user did not receive built-in models: %d %s", rec.Code, rec.Body)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &catalogs); err != nil || catalogs["codex"].Configured || catalogs["dsh"].Configured {
+		t.Fatal("other user received executor availability from the editor's account")
+	}
+}
+
+// Role and SOP pickers offer the executors a SOP run can use: a personal key,
+// the platform's shared CodeBuddy Key, or account login on the default runner.
+func TestExecutorModelsConfiguredMatchesRunTimeCredentials(t *testing.T) {
+	assistant, _ := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	st := assistant.repo
+	for _, user := range []domain.User{
+		{LoginName: "picker-personal", CodexAPIKey: "fixture-codex"},
+		{LoginName: "picker-shared"},
+		{LoginName: "picker-login"},
+	} {
+		if err := st.PutUser(user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	personal, _ := st.UserByLoginName("picker-personal")
+	shared, _ := st.UserByLoginName("picker-shared")
+	login, _ := st.UserByLoginName("picker-login")
+	machine := domain.Runner{ID: "picker-login-machine", OwnerUserID: login.ID, Status: domain.RunnerStatusOnline,
+		RunnerVersion: domain.RunnerVersionCLISettings, Runtimes: []domain.RunnerRuntime{
+			{Provider: assistantEngineCodex, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
+			{Provider: assistantEngineClaude, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthPersonal},
+		},
+	}
+	if err := st.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDefaultRunner(login.ID, machine.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	handler := &catalogHandlers{deps: assistant.deps}
+	executorModels := func(user domain.User) map[string]map[string]any {
+		t.Helper()
+		c, rec := workbenchContext(user, http.MethodGet, "/api/executor-models", &bytes.Buffer{})
+		handler.executorModels(c)
+		var catalogs map[string]map[string]any
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalogs) != nil {
+			t.Fatalf("executor models: %d %s", rec.Code, rec.Body)
+		}
+		return catalogs
+	}
+	assistantEngines := func(user domain.User, query string) map[string]assistantEngineOption {
+		t.Helper()
+		c, rec := workbenchContext(user, http.MethodGet, "/api/assistant/models"+query, &bytes.Buffer{})
+		assistant.models(c)
+		var catalog assistantModelCatalog
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalog) != nil {
+			t.Fatalf("assistant models: %d %s", rec.Code, rec.Body)
+		}
+		out := map[string]assistantEngineOption{}
+		for _, option := range catalog.Engines {
+			out[option.ID] = option
+		}
+		return out
+	}
+	type availability struct{ configured, personal bool }
+	check := func(name string, user domain.User, want map[string]availability) {
+		t.Helper()
+		catalogs := executorModels(user)
+		for id, entry := range catalogs {
+			expected := want[id]
+			if entry["configured"] != expected.configured || entry["personal"] != expected.personal {
+				t.Errorf("%s: %s configured=%v personal=%v, want %+v", name, id, entry["configured"], entry["personal"], expected)
+			}
+		}
+	}
+
+	check("no credentials", shared, nil)
+	check("personal key", personal, map[string]availability{"codex": {true, true}})
+	if err := st.SetPlatformCodeBuddyKey(repo.PlatformCodeBuddyKeyUpdate{APIKey: "shared-fixture", Models: []string{"glm-5.1"}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	check("shared CodeBuddy key", shared, map[string]availability{"codebuddy": {true, false}})
+	if engine := assistantEngines(shared, "")[assistantEngineCodeBuddy]; !engine.Configured || engine.Personal {
+		t.Fatalf("assistant models disagree for the shared key: %+v", engine)
+	}
+	check("runner login", login, map[string]availability{"codebuddy": {true, false}, "codex": {true, false}})
+	engines := assistantEngines(login, "?schedule=1")
+	if !engines[assistantEngineCodex].Configured || engines[assistantEngineClaude].Configured {
+		t.Fatalf("assistant models disagree for runner login: %+v", engines)
+	}
+	check("personal key with a shared key", personal, map[string]availability{"codebuddy": {true, false}, "codex": {true, true}})
+
+	// A project SOP runs on the user's project default machine, even when the
+	// user has no personal default.
+	if err := st.PutUser(domain.User{LoginName: "picker-project"}); err != nil {
+		t.Fatal(err)
+	}
+	member, _ := st.UserByLoginName("picker-project")
+	if err := st.PutProject(domain.Project{ID: "picker-project", Name: "Picker project", OwnerID: member.ID}); err != nil {
+		t.Fatal(err)
+	}
+	projectMachine := machine
+	projectMachine.ID, projectMachine.OwnerUserID = "picker-project-machine", member.ID
+	if err := st.PutRunner(projectMachine); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRunnerSharedProjects(projectMachine.ID, member.ID, []string{"picker-project"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProjectDefaultRunner(member.ID, "picker-project", projectMachine.ID); err != nil {
+		t.Fatal(err)
+	}
+	for query, want := range map[string]bool{"": false, "?projectId=picker-project": true, "?projectId=other-project": false} {
+		c, rec := workbenchContext(member, http.MethodGet, "/api/executor-models"+query, &bytes.Buffer{})
+		handler.executorModels(c)
+		var catalogs map[string]map[string]any
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalogs) != nil {
+			t.Fatalf("executor models%s: %d %s", query, rec.Code, rec.Body)
+		}
+		if catalogs["codex"]["configured"] != want || catalogs["claude"]["configured"] != false {
+			t.Errorf("project default%s: codex=%v claude=%v, want codex=%t", query, catalogs["codex"]["configured"], catalogs["claude"]["configured"], want)
+		}
+	}
+}
+
+// Without a default machine a project SOP runs on a cloud pool runner with
+// that runner's account login, so the picker offers those CLIs too.
+func TestExecutorModelsConfiguredFollowsTheCloudPool(t *testing.T) {
+	assistant, _ := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	st := assistant.repo
+	if err := st.PutUser(domain.User{LoginName: "picker-pool"}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := st.UserByLoginName("picker-pool")
+	for _, id := range []string{"pool-project", "plain-project"} {
+		if err := st.PutProject(domain.Project{ID: id, Name: id, OwnerID: user.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PutRunner(domain.Runner{ID: "pool-machine", Status: domain.RunnerStatusOnline, RunnerVersion: "99.0.0",
+		Labels: []string{"pool"}, Runtimes: []domain.RunnerRuntime{
+			{Provider: assistantEngineCodex, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	runs := engine.New(st, runtime.NewManager(t.TempDir()))
+	runs.ConfigureCloudRunnerPool(engine.CloudRunnerPool{Label: "pool", Projects: []string{"pool-project"}})
+	assistant.deps.engine = runs
+	handler := &catalogHandlers{deps: assistant.deps}
+	for query, want := range map[string]bool{"": false, "?projectId=pool-project": true, "?projectId=plain-project": false} {
+		c, rec := workbenchContext(user, http.MethodGet, "/api/executor-models"+query, &bytes.Buffer{})
+		handler.executorModels(c)
+		var catalogs map[string]map[string]any
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalogs) != nil {
+			t.Fatalf("executor models%s: %d %s", query, rec.Code, rec.Body)
+		}
+		if catalogs["codex"]["configured"] != want || catalogs["codex"]["personal"] != false || catalogs["claude"]["configured"] != false {
+			t.Errorf("cloud pool%s: codex=%v/%v claude=%v, want codex configured=%t", query,
+				catalogs["codex"]["configured"], catalogs["codex"]["personal"], catalogs["claude"]["configured"], want)
+		}
 	}
 }

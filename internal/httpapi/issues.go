@@ -208,13 +208,12 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		return
 	}
 	if r.Method == http.MethodPut || r.Method == http.MethodPost {
-		var req struct {
-			domain.Issue
-			SyncTarget string  `json:"syncTarget"`
-			TapdID     *string `json:"tapdId"`
-			BaseBranch *string `json:"baseBranch"`
+		var req issueWriteRequest
+		files, ok := decodeIssueWrite(c, &req)
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
 		}
-		if !decode(c, &req) {
+		if !ok {
 			return
 		}
 		v := req.Issue
@@ -242,6 +241,10 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			}
 			v = mergeIssueEdit(v, existing)
 		} else if !h.requireProjectWriter(c, v.ProjectID) {
+			return
+		}
+		if len(files) > 0 && (v.ID != "" || (req.SyncTarget != "" && !strings.EqualFold(req.SyncTarget, "local"))) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "图片只能随新需求一起保存到平台"})
 			return
 		}
 		// Clients such as the AI assistant echo a fetched issue back. Resending
@@ -352,7 +355,17 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		} else if detail := issueChangeDetail(existing, v); detail != "" {
 			h.recordIssueOperation(c, &v, "update", detail)
 		}
-		if err := h.repo.PutIssue(v); err != nil {
+		var err error
+		if len(files) > 0 {
+			images, ok := readIssueImages(c, files)
+			if !ok {
+				return
+			}
+			err = h.repo.CreateIssueWithImages(v, images)
+		} else {
+			err = h.repo.PutIssue(v)
+		}
+		if err != nil {
 			respond(c, err)
 			return
 		}
@@ -445,6 +458,7 @@ type issueRoute struct {
 
 var issueRoutes = map[string]issueRoute{
 	"/api/issues/:id":                     {handle: issuesHandlers.issueDetail, methods: []string{http.MethodGet, http.MethodDelete}},
+	"/api/issues/:id/images/:imageId":     {handle: issuesHandlers.issueImage, methods: []string{http.MethodGet}},
 	"/api/issues/:id/comments":            {handle: issuesHandlers.addIssueComment, methods: []string{http.MethodPost}},
 	"/api/issues/:id/runs":                {handle: issuesHandlers.issueRuns, methods: []string{http.MethodGet}},
 	"/api/issues/:id/clarification":       {handle: issuesHandlers.submitIssueClarification, methods: []string{http.MethodPost}},

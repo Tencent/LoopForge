@@ -463,13 +463,14 @@ func TestCatalogMCPAndGenericHelperBranches(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	noProjectCopy := func(string) bool { return false }
 	got, err := h.cloneAgentMCPServers([]string{
 		"missing", definitions[0].ID, definitions[1].ID, definitions[3].ID,
-	}, "platform", f.user.ID)
+	}, "platform", f.user.ID, noProjectCopy)
 	if err != nil || len(got) != 3 {
 		t.Fatalf("cloned MCPs: %#v %v", got, err)
 	}
-	if _, err := h.cloneAgentMCPServers([]string{definitions[3].ID}, "platform", 0); err == nil {
+	if _, err := h.cloneAgentMCPServers([]string{definitions[3].ID}, "platform", 0, noProjectCopy); err == nil {
 		t.Fatal("anonymous personal MCP clone accepted")
 	}
 

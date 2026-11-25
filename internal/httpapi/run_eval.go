@@ -109,18 +109,6 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if rec, busy := h.repo.ActiveRunEval(id); busy {
-		hub := h.evalHub()
-		hub.mu.Lock()
-		job := hub.jobs[id]
-		hub.mu.Unlock()
-		if job != nil {
-			c.JSON(http.StatusConflict, map[string]string{"error": "这次运行已有评测在进行"})
-			return
-		}
-		// The row was saved as running, then startup failed before a job existed.
-		h.failRunEval(rec, "上次评测没有真正启动")
-	}
 	project, _ := h.repo.Project(run.ExecutionContext.ProjectID)
 	rec := domain.RunEvalRecord{
 		ID:        "eval-" + randomID(),
@@ -131,8 +119,21 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 		CreatedBy: user.ID,
 		CreatedAt: time.Now().UTC(),
 	}
-	if err := h.repo.PutRunEval(rec); err != nil {
+	hub := h.evalHub()
+	started, err := h.repo.StartRunEval(rec, func(active domain.RunEvalRecord) bool {
+		hub.mu.Lock()
+		job := hub.jobs[id]
+		hub.mu.Unlock()
+		// Without a local job, a recent row may belong to another API process,
+		// as in streamRunEval. Starting again there would run a second evaluation.
+		return job != nil || time.Since(active.CreatedAt) < runEvalTimeout
+	}, "评测已中断，请重新评测。")
+	if err != nil {
 		respond(c, err)
+		return
+	}
+	if !started {
+		c.JSON(http.StatusConflict, map[string]string{"error": "这次运行已有评测在进行"})
 		return
 	}
 	h.launchRunEval(rec, run, user)
@@ -173,6 +174,12 @@ func (h *runsHandlers) streamRunEval(c *gin.Context) {
 	hub.mu.Unlock()
 	if job == nil {
 		if rec, ok := h.repo.LatestRunEval(id); ok {
+			// The job may live in another API process. A recent running
+			// record is still active even when this process has no progress.
+			if rec.Status == domain.RunEvalRunning && time.Since(rec.CreatedAt) >= runEvalTimeout {
+				rec.Status = domain.RunEvalFailed
+				rec.Error = "评测已中断，请重新评测。"
+			}
 			c.Header("Content-Type", "text/event-stream; charset=utf-8")
 			c.Status(http.StatusOK)
 			writeSSE(c, "done", rec)
@@ -190,6 +197,9 @@ func (h *runsHandlers) streamRunEval(c *gin.Context) {
 	c.Status(http.StatusOK)
 	for _, ev := range replay {
 		writeSSE(c, ev.Type, ev.Payload)
+		if ev.Type == "done" || ev.Type == "error" {
+			return
+		}
 	}
 	notify := c.Request.Context().Done()
 	for {
@@ -297,7 +307,12 @@ func (h *runsHandlers) applyOneRecommendation(run domain.Run, projectID string, 
 	action := domain.NormalizeRunEvalAction(rec.Target, rec.Action)
 	switch {
 	case strings.HasPrefix(action, "workflow."):
-		wf, err := h.ensureProjectWorkflow(run, projectID, firstNonEmpty(rec.TargetID, run.WorkflowID))
+		// Model output can name a node instead of the SOP; use the run's SOP then.
+		workflowID := run.WorkflowID
+		if _, ok := h.repo.Workflow(strings.TrimSpace(rec.TargetID)); ok {
+			workflowID = strings.TrimSpace(rec.TargetID)
+		}
+		wf, err := h.ensureProjectWorkflow(run, projectID, workflowID)
 		if err != nil {
 			return rec, err
 		}
@@ -310,7 +325,11 @@ func (h *runsHandlers) applyOneRecommendation(run domain.Run, projectID string, 
 		rec.AppliedTargetID = wf.ID
 		return rec, nil
 	case strings.HasPrefix(action, "agent."):
-		agentID := firstNonEmpty(rec.TargetID, agentIDFromRun(run, rec.NodeID))
+		// Model output can name a node instead of the role; use the node's role then.
+		agentID := strings.TrimSpace(rec.TargetID)
+		if _, ok := h.repo.Agent(agentID); !ok {
+			agentID = firstNonEmpty(agentIDFromRun(run, rec.NodeID), agentID)
+		}
 		agent, err := h.ensureProjectAgent(run, projectID, agentID)
 		if err != nil {
 			return rec, err
@@ -439,6 +458,8 @@ func (h *runsHandlers) runEvalJob(ctx context.Context, job *runEvalJob, rec doma
 		hub.mu.Unlock()
 	}()
 	hub := h.evalHub()
+	emit := func(event string, payload any) { job.publish(event, payload) }
+	emitRunEvalStage(emit, "queued", "评测已提交，正在等待执行")
 	select {
 	case hub.tokens <- struct{}{}:
 		defer func() { <-hub.tokens }()
@@ -447,8 +468,7 @@ func (h *runsHandlers) runEvalJob(ctx context.Context, job *runEvalJob, rec doma
 		job.publish("error", map[string]string{"error": "评测排队超时"})
 		return
 	}
-	emit := func(event string, payload any) { job.publish(event, payload) }
-	emit("thought", map[string]string{"kind": "thinking", "text": "正在整理本次 LOOP 轨迹…"})
+	emitRunEvalStage(emit, "collecting", "正在整理本次 LOOP 轨迹")
 	exec := currentRunEvalExec()
 	if exec == nil {
 		exec = h.executeRunEval
@@ -482,24 +502,22 @@ func (h *runsHandlers) executeRunEval(ctx context.Context, rec domain.RunEvalRec
 	facts := runeval.BuildFacts(run, catalog)
 	rec.Facts = facts
 	_ = h.repo.PutRunEval(rec)
-	emit("thought", map[string]string{"kind": "thinking", "text": "正在用 " + rec.Model + " 评测…"})
 	system, prompt := runeval.BuildPrompt(rec.Policy, facts)
-	raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{Prompt: prompt, Model: rec.Model, SystemPrompt: system, UserID: user.ID, ReviewOnly: true}, user, func(ev assistantStreamEvent) {
-		if emit == nil {
-			return
-		}
-		if text := strings.TrimSpace(ev.Text); text != "" {
-			emit("thought", map[string]string{"kind": ev.Kind, "text": text})
-		}
-	})
+	emitRunEvalStage(emit, "evaluating", "正在用 "+rec.Model+" 分析并评分")
+	raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{Prompt: prompt, Model: rec.Model, SystemPrompt: system, UserID: user.ID, ReviewOnly: true}, user, nil)
 	if err != nil {
 		return domain.RunEvalResult{}, err
 	}
+	emitRunEvalStage(emit, "validating", "正在校验评分并保存报告")
 	result, err := runeval.ParseModelResult(raw, rec.Policy)
 	if err != nil {
 		return domain.RunEvalResult{}, err
 	}
 	return result, nil
+}
+
+func emitRunEvalStage(emit func(string, any), stage, text string) {
+	emit("thought", map[string]string{"kind": "thinking", "stage": stage, "text": text})
 }
 
 func (h *runsHandlers) failRunEval(rec domain.RunEvalRecord, message string) {

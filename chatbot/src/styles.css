@@ -271,6 +271,13 @@ small {
 [data-theme="dark"] .conversation-status[data-conversation-status="interrupted"] {
   color: #e7b76b;
 }
+/* Waiting for the speaker to approve an external write: amber, and still. */
+.conversation-status[data-conversation-status="waiting_approval"] {
+  color: #b7791f;
+}
+[data-theme="dark"] .conversation-status[data-conversation-status="waiting_approval"] {
+  color: #f2c46d;
+}
 .conversation-status[data-conversation-status="running"] .conversation-status-dot {
   opacity: 1;
   transform-box: fill-box;
@@ -304,6 +311,21 @@ small {
     animation: none !important;
     transition: none;
   }
+}
+/* Amber alone is easy to miss, so the header also says the state in words. */
+.conversation-status-chip {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: #b7791f;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+[data-theme="dark"] .conversation-status-chip {
+  color: #f2c46d;
 }
 /* The ellipsis returns once the spans are swapped back for plain text. */
 .conversation-title > button.title-typing {
@@ -2859,6 +2881,38 @@ a.project-entry {
 }
 .execution-step.is-failed {
   color: var(--error);
+}
+/* A row that waits for a person is not running: it says so and keeps still. */
+.execution-step[data-status="waiting_approval"] {
+  color: var(--text);
+}
+.execution-step-badge {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: #b7791f;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+[data-theme="dark"] .execution-step-badge {
+  color: #f2c46d;
+}
+.execution-waiting {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text);
+}
+.execution-waiting > svg {
+  flex: none;
+  color: #b7791f;
+}
+[data-theme="dark"] .execution-waiting > svg {
+  color: #f2c46d;
 }
 .execution-thought {
   margin-top: 5px;

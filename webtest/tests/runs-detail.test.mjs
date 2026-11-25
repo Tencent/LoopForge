@@ -42,8 +42,8 @@ test('run detail loads logs, telemetry, preview, workspace, evaluation, and chil
     changes: [{ path: 'web/app.js', index: 'M', worktree: 'M' }],
   });
   app.router.get('/api/runs/run-1/eval', {
-    id: 'eval-1', status: 'completed', score: 88, summary: 'Strong result',
-    recommendations: [{ id: 'rec-1', title: 'Add regression test', type: 'workflow', applied: false }],
+    id: 'eval-1', status: 'succeeded', score: 88, passed: true,
+    result: { summary: 'Strong result', recommendations: [{ id: 'rec-1', title: 'Add regression test' }] },
   });
 
   app.evaluate(`state.data.runs=[${JSON.stringify(run)}];state.selectedRun='run-1';state.activeRun=state.data.runs[0]`);

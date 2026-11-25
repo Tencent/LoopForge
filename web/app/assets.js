@@ -1,3 +1,5 @@
+const SKILL_FILE_MAX_BYTES=10*1024*1024;
+
 function assetScopeKey(type){return ({rules:'ruleScope',skills:'skillScope',sandboxes:'sandboxScope'})[type]||'ruleScope'}
 function isProjectSharedAsset(type){return ['rules','skills','sandboxes'].includes(type)}
 function assetPageCopy(type=state.assetType){
@@ -377,7 +379,7 @@ function assetMainPanesHTML(a,{creating,readonly}){
     </div>
     <div id="skillUploadStatus" class="skill-upload-status">${state.skillUploadStatus||''}</div>
     ${skillFileRowsHTML(a)}
-    ${locked?'':`<div class="json-help">每次上传都是<b>完全替换</b>：文件夹 / zip 替换为整批文件；单独上传 SKILL.md 会先弹出确认，然后该技能<b>只保留这一份 SKILL.md</b>。单文件 ≤1MB，最多 500 个，单技能 ≤64MB。<b>zip 自动解包并保留可执行位</b>；markdown / 代码 / 图片可直接预览。</div>`}
+    ${locked?'':`<div class="json-help">每次上传都是<b>完全替换</b>：文件夹 / zip 替换为整批文件；单独上传 SKILL.md 会先弹出确认，然后该技能<b>只保留这一份 SKILL.md</b>。单文件 ≤10MB，最多 500 个，单技能 ≤64MB。<b>zip 自动解包并保留可执行位</b>；markdown / 代码 / 图片可直接预览。</div>`}
   </div>`);
   }
   if(state.assetType==='sandboxes')return pane('setup',sandboxSetupHTML(a));
@@ -641,7 +643,7 @@ async function uploadSkillMd(input){
   const file=files[0];
   const lower=(file.name||'').toLowerCase();
   if(!lower.endsWith('.md')&&!lower.endsWith('.markdown'))return toast('请选择 SKILL.md 或 .md 文件');
-  if(file.size>1024*1024)return toast('SKILL.md 超过 1MB 限制','err');
+  if(file.size>SKILL_FILE_MAX_BYTES)return toast('SKILL.md 超过 10MB 限制','err');
   const id=state.selectedAsset;
   if(!id||id==='__new__')return toast('先保存技能，再上传文件');
   if(skillWriteBlocked())return toast('共享资产只读');

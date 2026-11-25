@@ -86,7 +86,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	}
 	responseLimit := int64(8 << 20)
 	if path == runnerTaskClaimPath {
-		responseLimit += domain.RunnerSSHKnownHostsWireLimit
+		responseLimit += domain.RunnerSSHKnownHostsWireLimit + domain.RunnerTaskAssetWireLimit
 	}
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, responseLimit))
 	if resp.StatusCode >= 400 {

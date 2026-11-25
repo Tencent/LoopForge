@@ -155,6 +155,16 @@ func ProjectSharedAssistantSession(s domain.AssistantSession) bool {
 
 const assistantSessionMetadataColumns = "id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload"
 
+// AssistantSessionMetadata looks up a conversation without its transcript.
+// Callers authorize access using the returned owner and project.
+func (r *AssistantRepo) AssistantSessionMetadata(id string) (domain.AssistantSession, bool) {
+	var row assistantSessionRow
+	if r.DB.Select(assistantSessionMetadataColumns).Where("id = ?", assistantRecordID(id)).Take(&row).Error != nil {
+		return domain.AssistantSession{}, false
+	}
+	return decodeAssistantSession(row), true
+}
+
 // ProjectAssistantSession returns the metadata of a project-shared
 // conversation regardless of who created it. Callers must authorize the
 // project before exposing or writing the conversation.
@@ -163,12 +173,8 @@ func (r *AssistantRepo) ProjectAssistantSession(id string) (domain.AssistantSess
 	if id == "" || strings.HasPrefix(id, "sop-") {
 		return domain.AssistantSession{}, false
 	}
-	var row assistantSessionRow
-	if r.DB.Table("assistant_sessions").Select(assistantSessionMetadataColumns).Where("id = ?", id).Take(&row).Error != nil {
-		return domain.AssistantSession{}, false
-	}
-	item := decodeAssistantSession(row)
-	return item, ProjectSharedAssistantSession(item)
+	item, ok := r.AssistantSessionMetadata(id)
+	return item, ok && ProjectSharedAssistantSession(item)
 }
 
 // Freeze the source under its generation lock; a branch never overwrites it.

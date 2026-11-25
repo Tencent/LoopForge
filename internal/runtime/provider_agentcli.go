@@ -1,11 +1,15 @@
 package runtime
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -104,11 +108,68 @@ type AgentCLICommandOptions struct {
 	RunnerLogin bool
 	// AgentFile is Kimi Code's chat agent definition (WriteKimiChatAgent).
 	AgentFile string
+	// CursorACP keeps a resumed Cursor session on its original transport.
+	CursorACP bool
 }
 
-// AgentCLICommand builds the argv of an agent CLI turn; the caller adds
+// AgentCLICommand builds the command for an agent CLI turn; the caller adds
 // credential bindings and the HOME policy.
 func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
+	command, _ := agentCLICommand(kind, o, nil)
+	return command
+}
+
+// AgentCLIConversationInput holds prompt data handled by the caller or staged
+// as a native attachment for the duration of one conversation turn.
+type AgentCLIConversationInput struct {
+	ACPPrompt  *string
+	root       string
+	dir        string
+	paths      []string
+	promptFile string
+}
+
+func (i *AgentCLIConversationInput) Close() {
+	if i.dir != "" {
+		_ = os.RemoveAll(i.dir)
+	}
+}
+
+// StageAgentCLIConversationCommand prepares the native command and any
+// long-prompt input the caller must drive or clean up after execution.
+func StageAgentCLIConversationCommand(root, kind string, o AgentCLICommandOptions) (CommandSpec, *AgentCLIConversationInput, error) {
+	input := &AgentCLIConversationInput{root: root}
+	command, err := agentCLICommand(kind, o, input)
+	if err != nil {
+		input.Close()
+		return CommandSpec{}, nil, err
+	}
+	return command, input, nil
+}
+
+func (i *AgentCLIConversationInput) stageText(prompt string, limit int) error {
+	parent := filepath.Join(i.root, conversationPromptInputDir)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return err
+	}
+	var err error
+	i.dir, err = os.MkdirTemp(parent, "turn-")
+	if err != nil {
+		return err
+	}
+	for len(prompt) > 0 {
+		end := ConversationTextChunkLen(prompt, limit, i.root)
+		path := filepath.Join(i.dir, "prompt-"+strconv.Itoa(len(i.paths)+1)+".md")
+		if err := os.WriteFile(path, []byte(prompt[:end]), 0o600); err != nil {
+			return err
+		}
+		i.paths = append(i.paths, path)
+		prompt = prompt[end:]
+	}
+	return nil
+}
+
+func agentCLICommand(kind string, o AgentCLICommandOptions, input *AgentCLIConversationInput) (CommandSpec, error) {
 	binary := strings.TrimSpace(o.Binary)
 	if binary == "" {
 		binary = AgentCLIBinary(kind)
@@ -123,10 +184,18 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	if inline && !(o.Chat && resume != "") {
 		prompt = AgentCLITaskPrompt(o.SystemPrompt, o.SystemPromptFile, prompt)
 	}
+	promptArgs, stdin, err := agentCLIPromptInput(kind, prompt, input, o.CursorACP)
+	if err != nil {
+		return CommandSpec{}, err
+	}
 	extra := append([]string{}, o.Extra...)
 	var argv []string
+	acp := input != nil && input.ACPPrompt != nil
 	readOnly := o.Chat && !o.Workspace
 	options := AgentCLIOptions{Model: model, Effort: effort, ReadOnly: readOnly}
+	if input != nil {
+		options.PromptFile = input.promptFile
+	}
 	switch kind {
 	case AgentCLIOpenCode, AgentCLIPi, AgentCLIKimi, AgentCLIDeepSeek:
 		options.ImageInput = o.ImageInput || len(o.ImagePaths) > 0
@@ -152,20 +221,23 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			// --file accepts an array. Keep the prompt out of that array.
 			argv = append(argv, "--")
 		}
-		argv = append(argv, prompt)
+		argv = append(argv, promptArgs...)
 	case AgentCLICursor:
 		// Chat relies on the deny rules of .cursor/cli-config.json; --force
 		// still approves the MCP tools.
 		argv = []string{binary, "-p", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--force", "--approve-mcps"}
+		if acp {
+			argv = []string{binary, "--trust", "--force", "--approve-mcps"}
+		}
 		if model != "" {
 			// ApplyAgentCLICredential re-resolves this against the owner's
 			// saved catalog, which only the credential carries.
 			argv = append(argv, "--model", CursorModelID(model, effort, nil))
 		}
-		if resume != "" {
+		if resume != "" && !acp {
 			argv = append(argv, "--resume", resume)
 		}
-		argv = append(append(argv, extra...), prompt)
+		argv = append(append(argv, extra...), promptArgs...)
 	case AgentCLIAntigravity:
 		// Chat deny rules travel as --settings (ApplyAgentCLICredential);
 		// they hold even with --dangerously-skip-permissions.
@@ -185,7 +257,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if resume != "" {
 			argv = append(argv, "--conversation", resume)
 		}
-		argv = append(append(argv, extra...), "-p", prompt)
+		argv = append(append(argv, extra...), promptArgs...)
 	case AgentCLIKimi:
 		argv = []string{binary, "--output-format", "stream-json"}
 		if resume != "" {
@@ -195,7 +267,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			// The session keeps the agent, so resumed turns cannot pass it again.
 			argv = append(argv, "--agent-file", o.AgentFile)
 		}
-		argv = append(append(argv, extra...), "-p", prompt)
+		argv = append(append(argv, extra...), promptArgs...)
 	case AgentCLIPi:
 		session := resume
 		if session == "" {
@@ -229,7 +301,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 				argv = append(argv, "@"+path)
 			}
 		}
-		argv = append(argv, prompt)
+		argv = append(argv, promptArgs...)
 	case AgentCLIDeepSeek:
 		mode := "danger-full-access"
 		if readOnly {
@@ -239,13 +311,14 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if resume != "" {
 			argv = append(argv, "--session-id", resume)
 		}
-		argv = append(append(argv, extra...), prompt)
+		argv = append(append(argv, extra...), promptArgs...)
 	case AgentCLIZCode:
 		disallowed := zcodeSOPDisallowedTools
 		if readOnly {
 			disallowed = zcodeChatDisallowedTools
 		}
-		argv = []string{binary, "--prompt", prompt, "--output-format", "stream-json", "--mode", "yolo", "--no-color", "--disallowed-tools", disallowed}
+		argv = append([]string{binary}, promptArgs...)
+		argv = append(argv, "--output-format", "stream-json", "--mode", "yolo", "--no-color", "--disallowed-tools", disallowed)
 		if resume != "" {
 			argv = append(argv, "--resume", resume)
 		}
@@ -254,7 +327,56 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		}
 		argv = append(argv, extra...)
 	}
-	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
+	return CommandSpec{Argv: argv, Stdin: stdin, Provider: kind, AgentCLI: options}, nil
+}
+
+func agentCLIPromptInput(kind, prompt string, input *AgentCLIConversationInput, cursorACP bool) ([]string, io.Reader, error) {
+	long := !PromptFitsArgv(len(prompt))
+	if kind == AgentCLICursor && input != nil && (long || cursorACP) {
+		input.ACPPrompt = &prompt
+		return []string{"acp"}, nil, nil
+	}
+	if long {
+		switch kind {
+		case AgentCLIOpenCode, AgentCLIPi, AgentCLIDeepSeek:
+			return nil, strings.NewReader(prompt), nil
+		case AgentCLIAntigravity:
+			if input != nil {
+				message, _ := json.Marshal(map[string]any{
+					"event": "user", "message": map[string]string{"content": prompt},
+				})
+				return []string{"--input-format", "stream-json"}, bytes.NewReader(append(message, '\n')), nil
+			}
+		case AgentCLIZCode:
+			if input != nil {
+				// ZCode previews files above its per-file token budget.
+				if err := input.stageText(prompt, 16<<10); err != nil {
+					return nil, nil, err
+				}
+				args := []string{"--prompt", "The text attachments contain the user request in order. Respond to the full request."}
+				for _, path := range input.paths {
+					args = append(args, "--attach", path)
+				}
+				return args, nil, nil
+			}
+		case AgentCLIKimi:
+			if input != nil {
+				if err := input.stageText(prompt, len(prompt)); err != nil {
+					return nil, nil, err
+				}
+				input.promptFile = input.paths[0]
+				return []string{"-p", "The <user_request> block contains the original user request. Respond to it."}, nil, nil
+			}
+		}
+	}
+	switch kind {
+	case AgentCLIAntigravity, AgentCLIKimi:
+		return []string{"-p", prompt}, nil, nil
+	case AgentCLIZCode:
+		return []string{"--prompt", prompt}, nil, nil
+	default:
+		return []string{prompt}, nil, nil
+	}
 }
 
 // AgyModelEfforts returns the separate effort choices for Gemini API models.

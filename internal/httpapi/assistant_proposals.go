@@ -425,6 +425,8 @@ func (h *assistantHandlers) decideProposal(c *gin.Context) {
 	next := existing
 	next.Messages = append([]assistantMessage(nil), existing.Messages...)
 	next.Messages[body.MessageIndex].Content = jsonObject(content)
+	// Recording a decision never renames; keep a title saved since the read.
+	next.TitleEdited = false
 	var saveErr error
 	if shared {
 		saveErr = h.repo.PutSharedAssistantReceipt(ownerID, next, existing)

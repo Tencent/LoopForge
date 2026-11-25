@@ -54,6 +54,7 @@
 .markdown-body h3{font-size:14px}
 .markdown-body h4{font-size:13px}
 .markdown-body p{margin:0 0 14px}
+.markdown-body img{max-width:100%;height:auto}
 .markdown-body strong{font-weight:700;color:var(--text-strong, inherit)}
 .markdown-body em{font-style:italic}
 .markdown-body del{text-decoration:line-through;color:var(--muted-2)}

@@ -69,7 +69,7 @@ func (r *IssuesRepo) DeleteIssue(id string) error {
 }
 
 // DeleteIssueAfterRunCleanup rechecks the deletion conditions and removes the
-// issue, comments and tasks atomically after the engine has cleaned all runs.
+// issue, comments, images and tasks atomically after the engine has cleaned all runs.
 func (r *IssuesRepo) DeleteIssueAfterRunCleanup(id string, mode IssueDeletionMode) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -85,6 +85,9 @@ func (r *IssuesRepo) DeleteIssueAfterRunCleanup(id string, mode IssueDeletionMod
 			return err
 		}
 		if err := tx.Where("issue_id = ?", id).Delete(&issueCommentRow{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("issue_id = ?", id).Delete(&issueImageRow{}).Error; err != nil {
 			return err
 		}
 		return tx.Where("id = ?", id).Delete(&issueRow{}).Error

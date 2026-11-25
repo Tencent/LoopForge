@@ -305,13 +305,13 @@ func ValidateManagedFiles(files map[string]string) error {
 
 // Binary skill upload limits, enforced by the HTTP API.
 const (
-	// SkillFileMaxBytes caps one uploaded skill file (1MB).
-	SkillFileMaxBytes int64 = 1 << 20
+	// SkillFileMaxBytes caps one uploaded skill file (10 MiB).
+	SkillFileMaxBytes int64 = 10 << 20
 	// SkillMaxFileCount caps the number of files per skill (text + binary).
 	SkillMaxFileCount = 500
 	// SkillTotalMaxBytes caps the combined size of all files per skill (64MB).
 	SkillTotalMaxBytes int64 = 64 << 20
-	MCPFileMaxBytes          = SkillFileMaxBytes
+	MCPFileMaxBytes    int64 = 1 << 20
 	MCPMaxFileCount          = SkillMaxFileCount
 	MCPTotalMaxBytes         = SkillTotalMaxBytes
 )
@@ -332,7 +332,7 @@ func ValidateSkillFileRefs(refs []SkillFileRef) error {
 			return err
 		}
 		if ref.Size < 0 || ref.Size > SkillFileMaxBytes {
-			return fmt.Errorf("skill file %s exceeds the 1MB limit", ref.Path)
+			return fmt.Errorf("skill file %s exceeds the %dMB limit", ref.Path, SkillFileMaxBytes>>20)
 		}
 	}
 	return nil

@@ -150,9 +150,6 @@ func (d deps) assetOwner(kind, id string) (project string, global bool, found bo
 		}
 		v, ok := d.repo.Sandbox(id)
 		return v.ProjectID, v.ProjectID == "" || v.ID == repo.DefaultSandboxProfileID, ok
-	case "mcp-servers":
-		v, ok := d.repo.MCPServer(id)
-		return v.ProjectID, v.ProjectID == "" && v.Scope != "personal", ok
 	case "schedule-jobs":
 		v, ok := d.repo.ScheduleJob(id)
 		return v.ProjectID, false, ok
@@ -219,12 +216,10 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 		return d.requireProjectWriter(c, project)
 	case "/api/skills/:id/files", "/api/skills/:id/files/*path":
 		return d.allowStoredAsset(c, "skills", c.Param("id"))
-	case "/api/mcp-servers/:id/files", "/api/mcp-servers/:id/files/*path":
-		return d.allowStoredAsset(c, "mcp-servers", c.Param("id"))
 	}
 	kind := strings.TrimPrefix(path, "/api/")
 	switch kind {
-	case "rules", "skills", "sandboxes", "mcp-servers", "schedule-jobs":
+	case "rules", "skills", "sandboxes", "schedule-jobs":
 	default:
 		return true
 	}
@@ -234,7 +229,6 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 	var body struct {
 		ID        string `json:"id"`
 		ProjectID string `json:"projectId"`
-		Scope     string `json:"scope"`
 	}
 	peekJSON(c, &body)
 	id, project := strings.TrimSpace(body.ID), strings.TrimSpace(body.ProjectID)
@@ -251,7 +245,7 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 	if !d.allowStoredAsset(c, kind, id) {
 		return false
 	}
-	if project == "" && kind != "schedule-jobs" && !(kind == "mcp-servers" && strings.TrimSpace(body.Scope) == "personal") {
+	if project == "" && kind != "schedule-jobs" {
 		if storedProject, _, found := d.assetOwner(kind, id); found && storedProject != "" {
 			return true
 		}

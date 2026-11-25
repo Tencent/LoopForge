@@ -136,6 +136,49 @@
 }
 #requirementModal .req-chat-composer textarea::placeholder { color: color-mix(in srgb, var(--hui-muted) 80%, transparent); }
 #requirementModal .req-chat-composer.is-compact textarea { min-height: 64px; padding: 12px 14px 4px; font-size: 14px; }
+#requirementModal .req-markdown-preview {
+  box-sizing: border-box;
+  min-height: 148px;
+  max-height: 260px;
+  padding: 16px 18px 6px;
+  overflow: auto;
+}
+#requirementModal .req-preview-empty { color: var(--hui-muted); }
+#requirementModal .req-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 16px;
+  list-style: none;
+}
+#requirementModal .req-images li { position: relative; }
+#requirementModal .req-images img {
+  display: block;
+  width: 74px;
+  height: 54px;
+  object-fit: contain;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  background: var(--hui-canvas);
+}
+#requirementModal .req-images button {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 50%;
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  cursor: pointer;
+}
+#requirementModal .req-images button:focus-visible { outline: 2px solid var(--hui-accent); }
+#requirementModal .req-images button:disabled { opacity: .5; cursor: default; }
 #requirementModal .req-composer-toolbar {
   display: flex;
   align-items: center;
@@ -146,6 +189,8 @@
   font-size: 12px;
 }
 #requirementModal .req-toolbar-sp { flex: 1; }
+#requirementModal .req-markdown-hint { min-width: 0; }
+#requirementModal #reqPreviewToggle[aria-pressed="true"] { background: var(--hui-accent-soft); color: var(--hui-accent); }
 #requirementModal .req-count { padding-right: 6px; color: var(--hui-tertiary); font-variant-numeric: tabular-nums; }
 
 /* ghost 选择器：外层容器无边框，只有触发按钮在悬浮/展开时带一层框 */

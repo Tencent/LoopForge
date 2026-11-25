@@ -17,6 +17,31 @@ test("a finished reply does not claim that a task is finished or infer approval 
   assert.equal(sessionReplyStatus({ id: "three" }).state, "idle");
 });
 
+test("a reply paused for an external write waits instead of spinning", () => {
+  const row = { id: "current", generationStatus: "running" };
+  const waiting = sessionReplyStatus(row, {
+    generation: { sessionId: "current", status: "running" },
+    busy: true,
+    approvalCount: 1,
+  });
+  assert.equal(waiting.state, "waiting_approval");
+  assert.equal(waiting.label, "待审批");
+  // 静态时钟图标，且没有 busy，头部与侧栏都不会继续转圈。
+  assert.equal(waiting.icon, "pending-approval");
+  assert.equal(waiting.busy, undefined);
+  // 没有待审批项时仍是运行态；本轮结束后不残留待审批。
+  assert.equal(sessionReplyStatus(row, { busy: true, approvalCount: 0 }).state, "running");
+  assert.equal(
+    sessionReplyStatus(row, { generation: { sessionId: "current", status: "failed" }, approvalCount: 2 }).state,
+    "failed",
+  );
+  // 未知状态不被推断成待审批。
+  assert.equal(
+    sessionReplyStatus({ id: "x", generationStatus: "future-provider-state" }, { approvalCount: 3 }).state,
+    "idle",
+  );
+});
+
 test("a manually stopped reply leaves no stop mark in the session list", () => {
   const stopped = sessionReplyStatus({ id: "stopped", generationStatus: "cancelled" });
   assert.equal(stopped.state, "cancelled");

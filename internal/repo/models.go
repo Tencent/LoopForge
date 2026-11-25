@@ -799,7 +799,7 @@ func allModels() []any {
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
 		sandboxRow{},
 		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
-		issueRow{}, issueCommentRow{}, taskRow{},
+		issueRow{}, issueCommentRow{}, issueImageRow{}, taskRow{},
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
 		mrDeliveryStateRow{}, definitionRevisionRow{},

@@ -49,7 +49,7 @@ async function openIssueDetail(id,tab){
       try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true})}catch(e){}
       if(deletionTask?.issueId!==issueId)deletionTask=null;
     }
-    state.issueDetailData={issue,comments,run,task,requirement,deletionTask};
+    state.issueDetailData={issue,comments,run,task,requirement,deletionTask,images:detail.images||[]};
     const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsConfirm=clarificationNeedsConfirm(issue);
     state.issueDetailTab=tab||(issueClarifying(issueId)||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
     $$('#issueDetailTabs .drawer-tab').forEach(b=>b.classList.toggle('active',b.dataset.dtab===state.issueDetailTab));
@@ -548,7 +548,15 @@ function overviewPane(issue,data){
   const banner=ch?`<div class="issue-outcome conv-outcome ${escapeHTML(ch.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(ch.label)}</b><p>${escapeHTML(ch.hint||'')}</p><div class="issue-outcome-actions">${actions}</div></div>`
     :`<div class="issue-outcome ${out.key}"><b>${escapeHTML(out.title)}</b><p>${escapeHTML(out.body)}</p><div class="issue-outcome-actions">${actions}</div></div>`;
   const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 LOOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 LOOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
-  return `<div class="detail-section">${banner}${facts}${issue.description?`<div class="detail-desc" style="margin-top:12px">${escapeHTML(issue.description)}</div>`:''}${clarificationOverviewCard(issue)}</div>`;
+  const description=issue.description?`<div class="markdown-body">${renderRequirementMarkdown(issue.description)}</div>`:'';
+  const images=(data.images||[]).map(image=>{
+    const url=`/api/issues/${encodeURIComponent(issue.id)}/images/${encodeURIComponent(image.id)}`;
+    const name=escapeHTML(image.name||'需求图片');
+    return `<li><a href="${url}" target="_blank" rel="noopener noreferrer"><img src="${url}" alt="${name}" loading="lazy"></a></li>`;
+  }).join('');
+  const gallery=images?`<ul class="issue-description-images" aria-label="需求图片">${images}</ul>`:'';
+  const content=description||gallery?`<div class="detail-desc issue-description">${description}${gallery}</div>`:'';
+  return `<div class="detail-section">${banner}${facts}${content}${clarificationOverviewCard(issue)}</div>`;
 }
 function clarifyHistoryHTML(c){
   const rows=[];

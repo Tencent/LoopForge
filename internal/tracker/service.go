@@ -67,6 +67,7 @@ type IssueStoreAdapter interface {
 	Projects() []domain.Project
 	Project(id string) (domain.Project, bool)
 	PutIssue(v domain.Issue) error
+	PutIssueWithCopiedImages(v domain.Issue, previousID string) error
 	PutSyncedIssue(v domain.Issue) error
 	DeleteIssue(id string) error
 	PutSyncConfig(cfg domain.SyncConfig) error
@@ -599,16 +600,14 @@ func (s *Service) CreateGongfengIssue(store IssueStoreAdapter, issue domain.Issu
 		ExternalType:  "issue",
 		SyncedAt:      time.Now().UTC(),
 	}
+	previousID := issue.ID
 	if gi.IID > 0 {
 		issue.Number = gi.IID
-		stableID := fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
-		oldID := issue.ID
-		issue.ID = stableID
-		if oldID != "" && oldID != stableID && !strings.HasPrefix(oldID, "gf-") {
-			_ = store.DeleteIssue(oldID)
-		}
+		issue.ID = fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
 	}
-	_ = store.PutIssue(issue)
+	if err := saveCreatedTrackerIssue(store, issue, previousID, "gf-"); err != nil {
+		return issue, err
+	}
 
 	s.addLog(domain.SyncLog{
 		ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "push", Source: "gongfeng",
@@ -618,6 +617,17 @@ func (s *Service) CreateGongfengIssue(store IssueStoreAdapter, issue domain.Issu
 		StartedAt: started, FinishedAt: time.Now().UTC(),
 	})
 	return issue, nil
+}
+
+func saveCreatedTrackerIssue(store IssueStoreAdapter, issue domain.Issue, previousID, trackerPrefix string) error {
+	if previousID == "" || previousID == issue.ID || strings.HasPrefix(previousID, trackerPrefix) {
+		return store.PutIssue(issue)
+	}
+	if err := store.PutIssueWithCopiedImages(issue, previousID); err != nil {
+		return err
+	}
+	_ = store.DeleteIssue(previousID)
+	return nil
 }
 
 // WriteBackClarification appends a clarification summary to the linked external
@@ -1353,15 +1363,13 @@ func (s *Service) CreateTAPDStory(store IssueStoreAdapter, issue domain.Issue) (
 		SyncedAt:      time.Now().UTC(),
 		Imported:      true,
 	}
+	previousID := issue.ID
 	if st.ID != "" {
-		stableID := fmt.Sprintf("tapd-%s", st.ID)
-		oldID := issue.ID
-		issue.ID = stableID
-		if oldID != "" && oldID != stableID && !strings.HasPrefix(oldID, "tapd-") {
-			_ = store.DeleteIssue(oldID)
-		}
+		issue.ID = fmt.Sprintf("tapd-%s", st.ID)
 	}
-	_ = store.PutIssue(issue)
+	if err := saveCreatedTrackerIssue(store, issue, previousID, "tapd-"); err != nil {
+		return issue, err
+	}
 
 	s.addLog(domain.SyncLog{
 		ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "push", Source: "tapd",

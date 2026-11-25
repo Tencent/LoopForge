@@ -304,7 +304,7 @@ type cursorStream struct {
 	// immediately before a tool call. The next event decides which it was.
 	hold   string
 	held   bool
-	routes cursorRouteFilter
+	routes CursorRouteFilter
 }
 
 func (c *cursorStream) flushText(s *ClaudeStream) []string {
@@ -315,7 +315,7 @@ func (c *cursorStream) flushText(s *ClaudeStream) []string {
 
 func (c *cursorStream) resetPartial() {
 	c.partial.Reset()
-	c.routes = cursorRouteFilter{}
+	c.routes = CursorRouteFilter{}
 	c.segment++
 }
 
@@ -349,7 +349,7 @@ func (c *cursorStream) acceptPartial(text string) string {
 
 func (c *cursorStream) appendPartial(text string) string {
 	c.partial.WriteString(text)
-	return c.routes.feed(text)
+	return c.routes.Feed(text)
 }
 
 func (c *cursorStream) flushThinking(s *ClaudeStream) []string {
@@ -495,13 +495,13 @@ func cursorAutoRouteMayStart(rest string, afterMarker bool) bool {
 	return strings.HasPrefix(rest, cursorAutoRoutePrefix) && cursorAutoRouteModelRe.MatchString(rest[len(cursorAutoRoutePrefix):])
 }
 
-// cursorRouteFilter drops Cursor Auto's routing notice from assistant text as
+// CursorRouteFilter drops Cursor Auto's routing notice from assistant text as
 // it streams. Only the first non-empty line after a notice is compared with
 // the line before it; a repeat there is the same progress sentence and is
 // dropped. Repeated lines elsewhere stay. Text that may still turn into a
 // notice or that repeat is held until the line settles, so every chunk only
 // costs work on the unfinished line.
-type cursorRouteFilter struct {
+type CursorRouteFilter struct {
 	line    string   // unfinished line
 	shown   int      // bytes of line already emitted
 	open    bool     // line is started in the output
@@ -512,7 +512,8 @@ type cursorRouteFilter struct {
 	blanks  []string // blank lines held while pending
 }
 
-func (f *cursorRouteFilter) feed(text string) string {
+// Feed returns the visible text from the next chunk.
+func (f *CursorRouteFilter) Feed(text string) string {
 	var w strings.Builder
 	for {
 		i := strings.IndexByte(text, '\n')
@@ -533,14 +534,15 @@ func (f *cursorRouteFilter) feed(text string) string {
 	return w.String()
 }
 
-func (f *cursorRouteFilter) finish() string {
+// Finish releases the last line when the response is complete.
+func (f *CursorRouteFilter) Finish() string {
 	var w strings.Builder
 	f.endLine(&w)
 	return w.String()
 }
 
 // safe is how much of the unfinished line can be shown now.
-func (f *cursorRouteFilter) safe() int {
+func (f *CursorRouteFilter) safe() int {
 	line := f.line
 	if f.pending && !f.open {
 		trimmed := strings.TrimSpace(line)
@@ -560,7 +562,7 @@ func (f *cursorRouteFilter) safe() int {
 	return limit
 }
 
-func (f *cursorRouteFilter) startLine(w *strings.Builder) {
+func (f *CursorRouteFilter) startLine(w *strings.Builder) {
 	if f.open {
 		return
 	}
@@ -573,14 +575,14 @@ func (f *cursorRouteFilter) startLine(w *strings.Builder) {
 	f.open = true
 }
 
-func (f *cursorRouteFilter) newline(w *strings.Builder) {
+func (f *CursorRouteFilter) newline(w *strings.Builder) {
 	if f.any {
 		w.WriteByte('\n')
 	}
 	f.any = true
 }
 
-func (f *cursorRouteFilter) endLine(w *strings.Builder) {
+func (f *CursorRouteFilter) endLine(w *strings.Builder) {
 	line := f.line
 	defer func() { f.line, f.shown, f.open = "", 0, false }()
 	if before, ok := cursorAutoRouteNotice(line); ok {
@@ -612,13 +614,13 @@ func (f *cursorRouteFilter) endLine(w *strings.Builder) {
 	}
 }
 
-// stripCursorAutoRoute is cursorRouteFilter applied to a finished text.
+// stripCursorAutoRoute is CursorRouteFilter applied to a finished text.
 func stripCursorAutoRoute(text string) string {
 	if !strings.Contains(text, cursorAutoRoutePrefix) {
 		return text
 	}
-	var f cursorRouteFilter
-	return f.feed(text) + f.finish()
+	var f CursorRouteFilter
+	return f.Feed(text) + f.Finish()
 }
 
 // antigravityStream: `agy -p --output-format stream-json`.
