@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -44,6 +46,8 @@ type runnerTaskPayload struct {
 	// workspace and reuse the existing verification/handoff pipeline.
 	Artifacts map[string]string         `json:"artifacts,omitempty"`
 	Outputs   *domain.RunnerTaskOutputs `json:"outputs,omitempty"`
+
+	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
 }
 
 // runnerTaskTime decodes timestamps written by both write paths: Go struct
@@ -116,6 +120,7 @@ func runnerTaskFromRow(row runnerTaskRow) domain.RunnerTask {
 		t.CompletedAt = p.CompletedAt.toTime()
 		t.RunID = p.RunID
 		t.NodeID = p.NodeID
+		t.ProjectCredentialIDs = p.ProjectCredentialIDs
 		t.Invocation = p.Invocation
 		t.Sandbox = p.Sandbox
 		t.Command = p.Command
@@ -143,6 +148,7 @@ func runnerTaskPayloadBytes(v domain.RunnerTask) []byte {
 		Invocation: v.Invocation, Sandbox: v.Sandbox, Command: v.Command, Action: v.Action,
 		PreviewArchive: v.PreviewArchive, WorkBranchMessage: v.WorkBranchMessage, Artifacts: v.Artifacts,
 		Outputs: v.Outputs, IntegrationLabel: v.IntegrationLabel,
+		ProjectCredentialIDs: v.ProjectCredentialIDs,
 	})
 }
 
@@ -180,25 +186,38 @@ func (r *RunnersRepo) PutRunner(v domain.Runner) error {
 	if v.MaxConcurrency < 1 {
 		v.MaxConcurrency = 1
 	}
-	return upsert(r.DB, "runners", map[string]any{
+	values := map[string]any{
 		"id": v.ID, "name": v.Name, "status": v.Status, "os": v.OS, "arch": v.Arch,
 		"runner_version": v.RunnerVersion, "labels": jsonBytes(v.Labels), "max_concurrency": v.MaxConcurrency,
-		"owner_user_id": nullableInt64(v.OwnerUserID), "session_token_hash": v.SessionTokenHash,
+		"native_sandbox_available": v.NativeSandboxAvailable,
+		"owner_user_id":            nullableInt64(v.OwnerUserID), "session_token_hash": v.SessionTokenHash,
 		"session_expires_at": v.SessionExpiresAt, "runtimes": jsonBytes(v.Runtimes),
 		"last_seen_at": v.LastSeenAt, "created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
+	}
+	if v.OwnerUserID > 0 {
+		updateCols := slices.Sorted(maps.Keys(values))
+		values["run_limit"] = domain.DefaultRunnerRunLimit
+		return upsertColumns(r.DB, "runners", values, updateCols)
+	}
+	// A platform bootstrap can adopt a formerly user-bound machine. Clear
+	// its sharing and account settings together with the owner change.
+	values["shared_project_ids"] = nil
+	values["login_model_catalogs"] = nil
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := upsert(tx, "runners", values); err != nil {
+			return err
+		}
+		return tx.Where("default_runner_id = ?", v.ID).Delete(&userProjectRunnerPrefRow{}).Error
 	})
 }
 
-// MaxRunnerRunLimit bounds the user-configurable per-machine run limit.
-const MaxRunnerRunLimit = 100
-
-// SetRunnerRunLimit is the only writer of run_limit; PutRunner (register and
-// heartbeat) deliberately omits the column so a reconnect never resets it.
+// SetRunnerRunLimit updates the owner-configured limit. PutRunner sets the
+// initial limit on insert, and re-registration preserves the stored value.
 // It takes only this machine's admission bucket so a limit change cannot
 // interleave with an admission decision on the same machine.
 func (r *RunnersRepo) SetRunnerRunLimit(id string, limit int) error {
-	if limit < 0 || limit > MaxRunnerRunLimit {
-		return fmt.Errorf("最多同时运行条数需在 0-%d 之间（0 表示不限制）", MaxRunnerRunLimit)
+	if limit < 0 {
+		return fmt.Errorf("最多同时运行条数需为非负整数（0 表示不限制）")
 	}
 	var value any
 	if limit > 0 {
@@ -235,10 +254,17 @@ func runnerFromRow(row runnerRow) domain.Runner {
 	v := domain.Runner{
 		ID: row.ID, Name: row.Name, Status: row.Status, OS: row.OS, Arch: row.Arch,
 		RunnerVersion: row.RunnerVersion, MaxConcurrency: row.MaxConcurrency,
-		SessionTokenHash: row.SessionTokenHash,
+		NativeSandboxAvailable: row.NativeSandboxAvailable,
+		SessionTokenHash:       row.SessionTokenHash,
 	}
 	if row.OwnerUserID != nil {
 		v.OwnerUserID = *row.OwnerUserID
+	}
+	if len(row.SharedProjectIDs) > 0 {
+		_ = json.Unmarshal(row.SharedProjectIDs, &v.SharedProjectIDs)
+	}
+	if len(row.LoginModels) > 0 {
+		_ = json.Unmarshal(row.LoginModels, &v.LoginModels)
 	}
 	if row.RunLimit != nil && *row.RunLimit > 0 {
 		v.RunLimit = *row.RunLimit
@@ -298,7 +324,7 @@ func (r *RunnersRepo) RunnerSessionByHash(hash string) (domain.Runner, bool) {
 // RunnerHeartbeat records liveness and the latest runtime inventory. The
 // server-side disabled flag survives: a CLI disabled from the 执行器 page
 // stays disabled even though the daemon keeps reporting it online.
-func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime, version string, now, sessionExpiresAt time.Time) error {
+func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime, version string, nativeSandboxAvailable bool, now, sessionExpiresAt time.Time) error {
 	current, ok := r.runnerRow(id)
 	disabled := map[string]bool{}
 	authModes := map[string]string{}
@@ -331,7 +357,8 @@ func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime
 		return err
 	}
 	updates := map[string]any{
-		"status": domain.RunnerStatusOnline, "last_seen_at": now, "runtimes": string(raw),
+		"native_sandbox_available": nativeSandboxAvailable,
+		"status":                   domain.RunnerStatusOnline, "last_seen_at": now, "runtimes": string(raw),
 		"session_expires_at": sessionExpiresAt, "updated_at": now,
 	}
 	if version = strings.TrimSpace(version); version != "" {
@@ -820,6 +847,9 @@ func (r *RunnersRepo) DeregisterRunner(id string, now time.Time) error {
 		return fmt.Errorf("runner id is required")
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := r.lockRunner(tx, id); err != nil {
+			return err
+		}
 		var rows []runnerTaskRow
 		if err := tx.Where("runner_id = ? AND status = ?", id, domain.RunnerTaskQueued).Find(&rows).Error; err != nil {
 			return err
@@ -838,6 +868,9 @@ func (r *RunnersRepo) DeregisterRunner(id string, now time.Time) error {
 			}
 		}
 		if err := tx.Where("default_runner_id = ?", id).Delete(&userRunnerPrefRow{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("default_runner_id = ?", id).Delete(&userProjectRunnerPrefRow{}).Error; err != nil {
 			return err
 		}
 		res := tx.Where("id = ?", id).Delete(&runnerRow{})
@@ -861,7 +894,10 @@ func (r *RunnersRepo) DefaultRunner(userID int64) string {
 		return ""
 	}
 	var row userRunnerPrefRow
-	if err := r.DB.Where("user_id = ?", userID).Take(&row).Error; err != nil {
+	// A former binding can leave a stale preference after older daemons
+	// re-register under another owner. Preserve legacy ownerless pool choices.
+	machines := r.DB.Model(&runnerRow{}).Select("id").Where("owner_user_id IS NULL OR owner_user_id IN ?", []int64{0, userID})
+	if err := r.DB.Where("user_id = ? AND default_runner_id IN (?)", userID, machines).Take(&row).Error; err != nil {
 		return ""
 	}
 	return strings.TrimSpace(row.DefaultRunnerID)

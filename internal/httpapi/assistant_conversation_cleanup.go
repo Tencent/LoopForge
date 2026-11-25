@@ -137,6 +137,9 @@ func (h *assistantHandlers) endConversationWorkspace(runID string) bool {
 	if !ok || !run.IsWorkspace() || run.PauseRequested {
 		return false
 	}
+	if inUse, err := h.repo.HasWorkspaceSOPRuns(runID); err != nil || inUse {
+		return false
+	}
 	if domain.TerminalRunStatus(run.Status) {
 		return true
 	}

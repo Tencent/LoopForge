@@ -201,7 +201,7 @@ func (h *runnerControlHub) connFor(ctx context.Context, runnerID string, mayRela
 			return nil, nil, errRunnerWorkspaceUnavailable
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, nil, ctx.Err()
+			return nil, nil, fmt.Errorf("%w: %w", errRunnerWorkspaceUnavailable, ctx.Err())
 		}
 	}
 }

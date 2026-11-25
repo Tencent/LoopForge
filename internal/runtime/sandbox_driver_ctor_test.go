@@ -2,42 +2,53 @@ package runtime
 
 import (
 	"context"
-	"reflect"
+	"os"
+	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
 )
 
-func TestOverlayEnvironmentEmptyOverlayKeepsEnv(t *testing.T) {
-	env := map[string]string{"A": "1"}
-	got := overlayEnvironment(env, nil)
-	if !reflect.DeepEqual(got, env) {
-		t.Fatalf("overlayEnvironment(env, nil) = %v, want %v", got, env)
+func TestNativeSandboxAvailabilityRequiresSuccessfulLaunch(t *testing.T) {
+	var binary string
+	switch goruntime.GOOS {
+	case "darwin":
+		binary = "sandbox-exec"
+	case "linux":
+		binary = "bwrap"
+	default:
+		t.Skip("native sandbox probe requires macOS or Linux")
 	}
-	if got := overlayEnvironment(nil, map[string]string{}); got != nil {
-		t.Fatalf("empty overlay must keep nil env, got %v", got)
-	}
-}
-
-func TestOverlayEnvironmentProfileWinsExceptPath(t *testing.T) {
-	env := map[string]string{"PATH": "/profile/bin", "LANG": "profile", "ONLY_PROFILE": "p"}
-	overlay := map[string]string{"PATH": "/overlay/bin:/usr/bin", "LANG": "overlay", "ONLY_OVERLAY": "o"}
-	got := overlayEnvironment(env, overlay)
-	want := map[string]string{"PATH": "/overlay/bin:/usr/bin", "LANG": "profile", "ONLY_PROFILE": "p", "ONLY_OVERLAY": "o"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("overlayEnvironment = %v, want %v", got, want)
-	}
-	if env["PATH"] != "/profile/bin" {
-		t.Fatalf("input env must not be mutated, got %v", env)
-	}
-}
-
-func TestOverlayEnvironmentEmptyOverlayPathKeepsProfilePath(t *testing.T) {
-	got := overlayEnvironment(map[string]string{"PATH": "/profile/bin"}, map[string]string{"PATH": "", "X": "1"})
-	if got["PATH"] != "/profile/bin" || got["X"] != "1" {
-		t.Fatalf("overlayEnvironment = %v", got)
-	}
+	t.Run("blocked runtime", func(t *testing.T) {
+		dir := t.TempDir()
+		marker := filepath.Join(dir, "probe.log")
+		t.Setenv("PATH", dir)
+		// The executable exists but fails to start the sandbox.
+		script := "#!/bin/sh\necho probe >> '" + marker + "'\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(dir, binary), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			if NativeSandboxAvailable(domain.SandboxDriverNative) {
+				t.Fatal("failed probe reported a usable sandbox")
+			}
+		}
+		if got, err := os.ReadFile(marker); err != nil || string(got) != "probe\n" {
+			t.Fatalf("probe was not executed once: %q, %v", got, err)
+		}
+	})
+	t.Run("usable runtime", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("PATH", dir)
+		if err := os.WriteFile(filepath.Join(dir, binary), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if !NativeSandboxAvailable(domain.SandboxDriverNative) {
+			t.Fatal("successful probe did not report a usable sandbox")
+		}
+	})
 }
 
 func TestCreateDriverSandboxLocal(t *testing.T) {

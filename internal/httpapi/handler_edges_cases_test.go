@@ -1115,7 +1115,7 @@ func TestRunnerAdditionalSuccessAndDecodePaths(t *testing.T) {
 func TestCatalogWorkflowOperations(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	const sandboxID = "cvb-r2-ops-sandbox"
-	if err := f.s.PutSandbox(domain.SandboxProfile{ID: sandboxID, Name: "Ops sandbox", ProjectID: "platform", Driver: "local"}); err != nil {
+	if err := f.s.PutSandbox(domain.SandboxProfile{ID: sandboxID, Name: "Ops sandbox", ProjectID: "platform", Driver: "native"}); err != nil {
 		t.Fatal(err)
 	}
 	makeWorkflow := func(id string) domain.WorkflowDefinition {

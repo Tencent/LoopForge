@@ -43,6 +43,10 @@ func ConversationWorkspaceToken(ctx context.Context, runID ...string) string {
 }
 func (e *Engine) BeginConversationWorkspaceUse(id string) (string, error) {
 	token, previous, err := e.repo.BeginWorkspaceUsePreemptingSave(id, time.Now().UTC())
+	return e.finishTakingWorkspaceLease(id, token, previous, err)
+}
+
+func (e *Engine) finishTakingWorkspaceLease(id, token, previous string, err error) (string, error) {
 	if err != nil || previous == "" {
 		return token, err
 	}
@@ -159,6 +163,7 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 	ctx = e.withPreparationProgress(ctx, run.ID)
 	ctx = withRunGitCredentials(ctx, credentials)
 	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), credentials.GitSSHKeys)
+	ctx = runtime.WithRepositoryCacheIn(ctx, env.Unwrap())
 	return env.prepareRepositoriesOnce(func() error {
 		if err := prepareRepositories(ctx, env.Workspace(), run.RepositoryContexts()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), len(credentials.GitHTTPCredentials) > 0)
@@ -265,6 +270,9 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 		if info, err := os.Lstat(root); err == nil {
 			if !info.IsDir() {
 				return fmt.Errorf("工作区路径不是目录")
+			}
+			if run.IsWorkspace() && run.WorkspaceRoot == "" {
+				return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
 			}
 			return nil
 		} else if !os.IsNotExist(err) {
@@ -392,6 +400,12 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	}
 	if !run.WorkspaceCleanedAt.IsZero() {
 		return false, false, nil, nil
+	}
+	if run.IsWorkspace() {
+		busy, err := e.repo.HasWorkspaceSOPRuns(run.ID, "running", "queued", "waiting")
+		if err != nil || busy {
+			return true, false, nil, err
+		}
 	}
 	if !e.conversationWorkspaceIdle(run) || e.conversationGenerationRunning(run) {
 		return true, false, nil, nil

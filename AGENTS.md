@@ -13,7 +13,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 
 | 领域 Repo | 拥有 |
 |---|---|
-| `CatalogRepo` | agents/rules/skills/MCP servers/executors/dockerfiles/environments/sandboxes/workflows/repositories/sync config/schedule jobs/definition revisions/generic templates |
+| `CatalogRepo` | agents/rules/skills/MCP servers/executors/sandboxes（docker 内嵌 Dockerfile，native 只有环境变量）/workflows/repositories/sync config/schedule jobs/definition revisions/generic templates |
 | `ProjectsRepo` | projects、project members |
 | `IssuesRepo` | issues、issue comments |
 | `TasksRepo` | tasks（跨实例幂等记录） |
@@ -49,7 +49,9 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 1. **代码不做迁移、不做 seed。** `repo.Open()` 只负责连接和 gorm
    AutoMigrate 的增量 DDL（补缺失的表/列/索引）。基线 schema、数据迁移
    （改数据、删行、删列）和 seed 数据一律写成 `migrations/` 下的 SQL
-   脚本，由运维**手动执行**，部署时不会自动跑。
+   脚本。官方 Compose 安装与升级按部署文档执行指定的 SQL。迁移 041 由
+   `./start.sh pull` 在确认目标镜像兼容且数据库仍有旧资产表后、启动新版前执行。
+   其余需要运维处理的迁移按发布说明手动执行。
 2. 每个分支自带自己的迁移脚本，不做任何自动化生成（没有 seedgen 之类的
    工具）。脚本命名 `NNN_描述.sql`，按序号递增。
 3. 禁止新增 `ensureXxx`/`migrateXxx`/`seedXxx` 之类的启动自愈逻辑写入

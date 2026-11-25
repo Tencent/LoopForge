@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -184,15 +185,16 @@ func TestConnectionReconnectsAfterLocalClose(t *testing.T) {
 	}
 	connected := make(chan struct{}, 3)
 	var upgrader websocket.Upgrader
-	attempts := 0
+	// Handlers run on separate server goroutines; count attempts atomically.
+	var attempts atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
-		attempts++
+		attempt := attempts.Add(1)
 		connected <- struct{}{}
-		if attempts%2 == 0 {
+		if attempt%2 == 0 {
 			var frame Frame
 			if ws.ReadJSON(&frame) == nil {
 				_ = ws.WriteJSON(map[string]any{"headers": frame.Headers, "errcode": 400})
@@ -421,6 +423,24 @@ func TestNotificationCardTaskBranches(t *testing.T) {
 	if got, err := svc.NotificationCardTask(bot, interaction, conv); err != nil || got.ID != delivery.ID {
 		t.Fatalf("card task = %#v, %v", got, err)
 	}
+	delivery.DeliveryGeneration++
+	if err := st.DB.Save(&delivery).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.NotificationCardTask(bot, interaction, conv); err != nil {
+		t.Fatalf("previously sent legacy card = %v", err)
+	}
+	newCard := domain.BotInteraction{ID: notificationInteractionID(bot.ID, "notification", delivery), BotID: bot.ID, CardTaskID: "task-2", Status: domain.BotReplied}
+	if err := st.DB.Create(&newCard).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.NotificationCardTask(bot, interaction, conv); !errors.Is(err, ErrCardExpired) {
+		t.Fatalf("superseded card = %v", err)
+	}
+	interaction.CardTaskID = newCard.CardTaskID
+	if _, err := svc.NotificationCardTask(bot, interaction, conv); err != nil {
+		t.Fatalf("resent card = %v", err)
+	}
 	interaction.CardTaskID = "wrong"
 	if _, err := svc.NotificationCardTask(bot, interaction, conv); !errors.Is(err, ErrCardExpired) {
 		t.Fatalf("wrong task = %v", err)
@@ -466,6 +486,16 @@ func TestNotificationCardTaskBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{
+		"msgid": "single-action", "aibotid": bot.BotID, "chattype": "single",
+		"from": map[string]string{"userid": "internal-user"}, "msgtype": "event",
+		"event": map[string]string{"eventtype": "template_card_event", "event_key": "approve", "task_id": singleTask},
+	})
+	// The inbound path reads the current configuration, so the Bot exists.
+	bot.BotID, bot.OwnerID, bot.Enabled, bot.InteractionEnabled = "external-task", 1, true, true
+	if err := st.SaveNotificationBot(bot, "s"); err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(map[string]any{
 		"msgid": "single-action", "aibotid": bot.BotID, "chattype": "single",
 		"from": map[string]string{"userid": "internal-user"}, "msgtype": "event",
 		"event": map[string]string{"eventtype": "template_card_event", "event_key": "approve", "task_id": singleTask},

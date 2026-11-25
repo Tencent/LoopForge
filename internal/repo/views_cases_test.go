@@ -265,19 +265,22 @@ func TestCatalogValidationDeletionAndBuiltins(t *testing.T) {
 	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-sandbox", Name: "Sandbox", Driver: "docker"}); err == nil {
 		t.Fatal("docker sandbox without Dockerfile accepted")
 	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-sandbox", Name: "Sandbox", Driver: "docker", DockerfileID: "missing"}); err == nil {
-		t.Fatal("missing Dockerfile accepted")
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-sandbox", Name: "Sandbox", Driver: "docker", Dockerfile: &domain.SandboxDockerfile{Content: " "}}); err == nil {
+		t.Fatal("blank Dockerfile accepted")
 	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-sandbox", Name: "Sandbox", Driver: "local", EnvironmentID: "missing"}); err == nil {
-		t.Fatal("missing environment accepted")
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-native-sandbox", Name: "Native", Driver: "native", Environment: map[string]string{"A=B": "x"}}); err == nil {
+		t.Fatal("invalid environment variable name accepted")
 	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-local-sandbox", Name: "Local", Driver: "local"}); err != nil {
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-local-sandbox", Name: "Local", Driver: "local"}); err == nil {
+		t.Fatal("local sandbox accepted")
+	}
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-native-sandbox", Name: "Native", Driver: "native"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteSandbox("missing"); err == nil {
 		t.Fatal("missing sandbox deleted")
 	}
-	if err := s.DeleteSandbox("cve-local-sandbox"); err != nil {
+	if err := s.DeleteSandbox("cve-native-sandbox"); err != nil {
 		t.Fatal(err)
 	}
 

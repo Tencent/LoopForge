@@ -42,8 +42,8 @@ func workflowForRun(s *repo.Store, run domain.Run) domain.WorkflowDefinition {
 	if run.WorkflowSnapshot.ID != "" {
 		// Compatibility: runs created before sandbox ownership moved to the
 		// workflow may have a frozen snapshot without sandboxProfileId. Keep
-		// the frozen graph and use the legacy default local profile so retries
-		// and approvals do not depend on later workflow edits.
+		// the frozen graph and use the default sandbox so retries and
+		// approvals do not depend on later workflow edits.
 		return defaultWorkflowSandboxProfile(run.WorkflowSnapshot)
 	}
 	wf, _ := latestWorkflowDefinition(s, run.WorkflowID)
@@ -52,7 +52,7 @@ func workflowForRun(s *repo.Store, run domain.Run) domain.WorkflowDefinition {
 
 func defaultWorkflowSandboxProfile(wf domain.WorkflowDefinition) domain.WorkflowDefinition {
 	if strings.TrimSpace(wf.SandboxProfileID) == "" {
-		wf.SandboxProfileID = "local"
+		wf.SandboxProfileID = repo.DefaultSandboxProfileID
 	}
 	return wf
 }

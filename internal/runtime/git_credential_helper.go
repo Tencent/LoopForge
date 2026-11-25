@@ -44,6 +44,8 @@ type gitCredentialReply struct {
 //
 //	git-credential <get|store|erase>   Git credential helper protocol
 //	cli-shim <gh|glab> [args...]       run gh/glab with the host's token
+//	git-workspace [args...]            run Git with a scoped HTTP transport
+//	git-remote-http [remote] [url]     run the workspace HTTP transport
 func RunGitHelperCLI(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -53,6 +55,10 @@ func RunGitHelperCLI(args []string) bool {
 		os.Exit(gitCredentialMain(args[1:], os.Stdin, os.Stdout, os.Stderr))
 	case "cli-shim":
 		os.Exit(cliShimMain(args[1:]))
+	case "git-workspace":
+		os.Exit(workspaceGitMain(args[1:]))
+	case "git-remote-http":
+		os.Exit(workspaceGitHTTPMain(args[1:]))
 	default:
 		return false
 	}
@@ -68,12 +74,19 @@ func gitCredentialMain(args []string, in io.Reader, out, errOut io.Writer) int {
 		return 2
 	}
 	attrs := readGitCredentialAttrs(in)
-	if args[0] != "get" || attrs["protocol"] != "https" || attrs["host"] == "" {
+	protocol := attrs["protocol"]
+	if args[0] != "get" || attrs["host"] == "" || (protocol != "https" && protocol != "http") {
 		return 0
+	}
+	if protocol == "http" {
+		scope := workspacePlainHTTPHost(attrs["host"])
+		if scope == "" || (scope != os.Getenv(workspaceGitHTTPOriginEnv) && os.Getenv(workspaceGitHTTPSystemGitEnv) != "1") {
+			return 0
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	reply, err := requestGitCredential(ctx, attrs["protocol"], attrs["host"], "git")
+	reply, err := requestGitCredential(ctx, protocol, attrs["host"], "git")
 	if err != nil {
 		fmt.Fprintln(errOut, "agentflow: "+err.Error())
 		return 0
@@ -179,12 +192,13 @@ func cliShimMain(args []string) int {
 	return 0
 }
 
-// lookPathSkipping finds name on PATH, skipping skip (the wrapper's own bin
-// directory) so the shim never executes itself.
+// lookPathSkipping keeps the CLI shim from finding itself or a workspace's
+// mutable runtime bin, where older releases installed their shims.
 func lookPathSkipping(name, skip, path string) (string, error) {
 	skip = filepath.Clean(skip)
 	for _, dir := range filepath.SplitList(path) {
-		if dir == "" || filepath.Clean(dir) == skip {
+		clean := filepath.Clean(dir)
+		if dir == "" || clean == skip || strings.HasSuffix(filepath.ToSlash(clean), "/.agentflow/runtime/bin") {
 			continue
 		}
 		candidate := filepath.Join(dir, name)

@@ -312,23 +312,8 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 			return []string{fmt.Sprintf("技能 %s 不存在，执行将失败", id)}
 		}
 		return sharedAssetWarnings("技能", skill.Shared, h.agentNamesReferencing("skill", id), "角色")
-	case "dockerfiles_delete":
-		item, ok := h.repo.Dockerfile(id)
-		if !ok {
-			return []string{fmt.Sprintf("Dockerfile %s 不存在，执行将失败", id)}
-		}
-		if id == repo.GenericBackendDockerfileID {
-			return []string{"内置 Dockerfile generic-backend 不能删除"}
-		}
-		return sharedAssetWarnings("Dockerfile", item.Shared, h.sandboxNamesReferencing("dockerfile", id), "沙箱")
-	case "environments_delete":
-		item, ok := h.repo.Environment(id)
-		if !ok {
-			return []string{fmt.Sprintf("环境安装脚本 %s 不存在，执行将失败", id)}
-		}
-		return sharedAssetWarnings("环境安装脚本", item.Shared, h.sandboxNamesReferencing("environment", id), "沙箱")
 	case "sandboxes_delete":
-		if id == "local" || id == repo.GenericDockerSandboxID {
+		if id == repo.GenericDockerSandboxID {
 			return []string{fmt.Sprintf("内置沙箱 %s 不能删除", id)}
 		}
 		item, ok := h.repo.Sandbox(id)
@@ -398,16 +383,6 @@ func (h *assistantHandlers) agentNamesReferencing(kind, id string) []string {
 				names = append(names, agent.Name)
 				break
 			}
-		}
-	}
-	return names
-}
-
-func (h *assistantHandlers) sandboxNamesReferencing(kind, id string) []string {
-	var names []string
-	for _, sandbox := range h.repo.Sandboxes() {
-		if (kind == "dockerfile" && sandbox.DockerfileID == id) || (kind == "environment" && sandbox.EnvironmentID == id) {
-			names = append(names, sandbox.Name)
 		}
 	}
 	return names

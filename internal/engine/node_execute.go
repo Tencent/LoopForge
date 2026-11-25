@@ -70,6 +70,12 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		cancel()
 		nodesWG.Wait()
 	}
+	var prepareWorkspace func() error
+	if borrowsConversationWorkspace(r) {
+		prepareWorkspace = sync.OnceValue(func() error {
+			return e.prepareBorrowedConversationWorkspace(ctx, r)
+		})
+	}
 	defer func() {
 		cancel()
 		nodesWG.Wait()
@@ -180,7 +186,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 					default:
 					}
 				}()
-				e.executeNode(ctx, runID, wf, node)
+				e.executeNode(ctx, runID, wf, node, prepareWorkspace)
 			}()
 		}
 	}
@@ -293,6 +299,11 @@ func (e *Engine) bindDockerWorkspace(ctx context.Context, runID, nodeID string, 
 		e.flushAllObservations()
 	}
 	started := time.Now()
+	if sb.activeExecutions.Load() == 0 {
+		if err := runtime.RefreshWorkspaceGitTools(ctx, sb); err != nil {
+			return err
+		}
+	}
 	if err := sb.BindWorkspace(ctx); err != nil {
 		return err
 	}
@@ -316,7 +327,7 @@ func dockerfileID(snap *domain.RunnerSandboxSpec) string {
 	return snap.Dockerfile.ID
 }
 
-func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode) {
+func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, prepareWorkspace ...func() error) {
 	currentLease, ok := e.repo.RunState(runID)
 	if !ok || !e.ownsRun(currentLease) {
 		return
@@ -378,6 +389,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return
 		}
 	}
+	if len(prepareWorkspace) > 0 && prepareWorkspace[0] != nil && node.Type != "approval" {
+		if err := prepareWorkspace[0](); err != nil {
+			failNode(fmt.Errorf("准备对话工作区：%w", err), false)
+			return
+		}
+	}
 	if node.Type == "sop" {
 		e.executeSOPNode(ctx, runID, wf, node, executionAttempt, executionGeneration)
 		return
@@ -432,6 +449,32 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return
 		}
 	}
+	if err := domain.ValidateFrozenSandbox(profile); err != nil {
+		failNode(err, false)
+		return
+	}
+	executionRunner := e.defaultExecutionRunner(current)
+	if err := e.requireProjectCredentialRunner(current.WorkflowSnapshot, executionRunner); err != nil {
+		failNode(err, false)
+		return
+	}
+	var projectCredentialNote string
+	if len(current.WorkflowSnapshot.ProjectCredentialIDs) > 0 {
+		names, err := e.repo.ProjectCredentialVariableNames(ctx, current.ExecutionContext.ProjectID, current.WorkflowSnapshot.ProjectCredentialIDs)
+		if err != nil {
+			failNode(err, false)
+			return
+		}
+		projectCredentialNote = "\n\n项目凭据的环境变量为 " + strings.Join(names, "、") + "。访问对应服务时从进程环境读取，避免输出变量值。"
+	}
+	if executionRunner == "" {
+		env, err := e.ResolveRunProjectCredentialEnv(ctx, current)
+		if err != nil {
+			failNode(err, false)
+			return
+		}
+		ctx = runtime.WithProjectCredentialEnv(ctx, env)
+	}
 	requirements, err := workflowSandboxRequirements(e.repo, wf)
 	if err != nil {
 		failNode(err, nodeRejects(node))
@@ -442,7 +485,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	// plane keeps only a local staging workspace for prompt/materialization and
 	// artifact handoff; creating Docker here would put isolation on the wrong
 	// host and leave the runner CLI outside it.
-	if e.defaultExecutionRunner(current) != "" {
+	if executionRunner != "" {
 		acquireProfile = domain.SandboxProfile{ID: profile.ID + "-runner-staging", Name: profile.Name + " staging", Driver: "local"}
 	}
 	sb, created, err := e.acquireRunEnvironment(ctx, current, acquireProfile, requirements, func() {
@@ -497,15 +540,20 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	// A runner that integrates on its own checkout needs nothing from a
 	// control-plane clone, so none is made.
 	stagingCheckout := true
-	if runner, ok := e.repo.Runner(e.defaultExecutionRunner(current)); ok && runner.SupportsIntegrate() {
-		stagingCheckout = false
+	if runnerID := e.defaultExecutionRunner(current); runnerID != "" {
+		runner, _ := e.repo.Runner(runnerID)
+		stagingCheckout = !current.UsesConversationWorkspace() && !runner.SupportsIntegrate()
+	}
+	checkoutCtx := runtime.WithRepositoryCacheIn(ctx, sb.Unwrap())
+	if current.UsesConversationWorkspace() {
+		checkoutCtx = runtime.WithSandboxGit(ctx, sb.Unwrap(), gitCredentials)
 	}
 	repositoryFallback := ""
 	if err := sb.prepareRepositoriesOnce(func() error {
 		if !stagingCheckout {
 			return nil
 		}
-		if err := prepareRepositories(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
+		if err := prepareRepositories(checkoutCtx, sb.Workspace(), current.RepositoryContexts(), current.UsesConversationWorkspace()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "" || len(gitCredentials.GitHTTPCredentials) > 0)
 		}
 		for _, rc := range current.RepositoryContexts() {
@@ -599,6 +647,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	}
 	// The environment is ready and this node's inputs are in place; parallel
 	// branches execute from here on without holding the environment lock.
+	sb.activeExecutions.Add(1)
+	defer sb.activeExecutions.Add(-1)
 	if repositoryFallback == "" {
 		preparing = false
 		sb.nodeMu.Unlock()
@@ -610,7 +660,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return nil
 		}
 		if e.defaultExecutionRunner(current) == "" {
-			if err := runtime.VerifyGitPreparation(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
+			if err := runtime.VerifyGitPreparation(checkoutCtx, sb.Workspace(), current.RepositoryContexts()); err != nil {
 				return fmt.Errorf("Agent 仓库准备兜底校验失败: %w", err)
 			}
 		}
@@ -624,8 +674,6 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.preparation.recovered", Phase: "finish", Message: "Agent 已完成仓库准备，冻结仓库和工作分支校验通过"})
 		return nil
 	}
-	sb.activeExecutions.Add(1)
-	defer sb.activeExecutions.Add(-1)
 	var output string
 	defaultFailure := "fail"
 	if nodeRejects(node) {
@@ -778,6 +826,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if repositoryFallback != "" {
 				prompt = runtime.GitPreparationFallbackPrompt(current.RepositoryContexts(), repositoryFallback) + prompt
 			}
+			prompt += projectCredentialNote
 			if current.ExecutionContext.SharedScheduleID != "" {
 				version, assetErr := e.repo.SharedScheduleVersion(current.ExecutionContext.SharedScheduleID, current.ExecutionContext.SharedScheduleVersion)
 				if assetErr != nil {

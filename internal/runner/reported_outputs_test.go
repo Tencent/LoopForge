@@ -80,7 +80,7 @@ func TestRunnerReportedOutputsDriveArtifactsAndHandoff(t *testing.T) {
 	remote := bareRemoteWithBaseline(t)
 	startReportingRunner(t, s, server.URL)
 	wf := domain.WorkflowDefinition{
-		ID: "runner-reported-outputs", Name: "Runner reported outputs", SandboxProfileID: "local",
+		ID: "runner-reported-outputs", Name: "Runner reported outputs", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "plan", Name: "方案", Type: "script", ScriptLanguage: "shell", MaxAttempts: 1,
 				Script:          "printf 'plan body\\n' > plan.md && for f in README.md */README.md; do if [ -f \"$f\" ]; then printf 'changed\\n' >> \"$f\"; fi; done",
@@ -121,7 +121,7 @@ func TestRunnerReportedOutputsKeepFailedNodeArtifacts(t *testing.T) {
 	server, s, e := newDaemonTestServer(t)
 	startReportingRunner(t, s, server.URL)
 	wf := domain.WorkflowDefinition{
-		ID: "runner-reported-failure", Name: "Runner reported failure", SandboxProfileID: "local",
+		ID: "runner-reported-failure", Name: "Runner reported failure", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "diagnose", Name: "诊断", Type: "script", ScriptLanguage: "shell", MaxAttempts: 1,
 				Script:          "printf 'what went wrong\\n' > diagnosis.md && exit 3",
