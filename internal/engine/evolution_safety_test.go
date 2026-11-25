@@ -45,9 +45,6 @@ func TestEvolutionReplayRejectsExternalWorkflows(t *testing.T) {
 		{"MR verification", func(_ *domain.WorkflowDefinition, a *domain.AgentDefinition, _ *domain.Run) {
 			a.Verification = []domain.VerificationGate{{ID: "mr", Mode: "mr"}}
 		}, "MR 验证"},
-		{"command verification", func(_ *domain.WorkflowDefinition, a *domain.AgentDefinition, _ *domain.Run) {
-			a.Verification = []domain.VerificationGate{{ID: "command", Mode: "command", Commands: []string{"exit 0"}, ExecutionScope: "run"}}
-		}, "命令"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w, a := wf, agent
@@ -81,6 +78,22 @@ func TestEvolutionReplayRejectsExternalWorkflows(t *testing.T) {
 	}
 	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: wf.ID}); err != nil {
 		t.Fatal(err)
+	}
+	// Local command verification gates without bound repos or external credentials are allowed in replay.
+	cmdAgent := agent
+	cmdAgent.ID = "replay-safe-cmd"
+	cmdAgent.Verification = []domain.VerificationGate{{ID: "command", Mode: "command", Commands: []string{"exit 0"}, ExecutionScope: "run"}}
+	cmdWF := wf
+	cmdWF.ID = "replay-safety-cmd"
+	cmdWF.Nodes = []domain.WorkflowNode{{ID: "work", Type: "agent", AgentID: cmdAgent.ID}}
+	if err := st.PutAgent(cmdAgent); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutWorkflow(cmdWF); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdWF.ID}); err != nil {
+		t.Fatalf("expected local command verification gate to be allowed in replay, got: %v", err)
 	}
 }
 

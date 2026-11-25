@@ -47,8 +47,8 @@ func (e *Engine) validateEvolutionReplayDefinition(wf domain.WorkflowDefinition,
 			return fmt.Errorf("进化回放暂不支持角色「%s」的生命周期脚本", agent.ID)
 		}
 		for _, gate := range agent.Verification {
-			if gate.Mode == domain.VerificationModeMR || len(gate.Commands) > 0 {
-				return fmt.Errorf("进化回放暂不支持角色「%s」的命令或 MR 验证", agent.ID)
+			if strings.EqualFold(gate.Mode, domain.VerificationModeMR) {
+				return fmt.Errorf("进化回放暂不支持角色「%s」的 MR 验证", agent.ID)
 			}
 		}
 	}

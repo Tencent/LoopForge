@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -224,7 +225,7 @@ func TestEvolutionSOPAutoBatchOptimizationTriggersAtBatchSize(t *testing.T) {
 		case promptSeen <- prompt:
 		default:
 		}
-		return `{"title":"精简重复核对降低 Token","rationale":"去除基线中的两次重复核对，直接输出三字段 JSON","content":"原始正文：请完成开发任务并自测。\n直接输出三字段 JSON，不做重复核对。"}`, nil
+		return "", errors.New("test-stop-after-prompt")
 	})
 	defer setEvoImproveForTest(nil)
 
@@ -384,8 +385,13 @@ func TestEvolutionSOPAutoBatchTriggersWithoutSavedPolicyAndWithSharedKey(t *test
 		t.Fatalf("expected shared key resolution, got ok=%v key=%q model=%q", ok, actor.CodeBuddyAPIKey, model)
 	}
 
+	done := make(chan struct{}, 1)
 	setEvoImproveForTest(func(_ context.Context, _ domain.EvoProposal, _, _ string, _ domain.User) (string, error) {
-		return `{"title":"精简冗余输出","rationale":"降低 Token 消耗","content":"原始正文：请完成开发任务并自测。\n直接输出精简结果。"}`, nil
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+		return "", errors.New("test-stop-after-trigger")
 	})
 	defer setEvoImproveForTest(nil)
 
@@ -398,5 +404,10 @@ func TestEvolutionSOPAutoBatchTriggersWithoutSavedPolicyAndWithSharedKey(t *test
 	props := env.store.EvoProposals("evo-p", 20)
 	if len(props) != 2 {
 		t.Fatalf("expected default-enabled SOP to create a new proposal alongside old failed one, got %d (%+v)", len(props), props)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for background improver job to finish")
 	}
 }
