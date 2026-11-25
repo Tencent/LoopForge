@@ -46,7 +46,7 @@ function runnerConcurrencyLabel(runner){
 function runnerRunLimitHTML(runner){
   if(!(Number(runner?.ownerUserId)>0))return '';
   const limit=Number(runner?.runLimit)||0;
-  const tip='新绑定机器默认 10 条。按顶层 SOP 计数，共享项目共用机器名额。超出名额后排队。失败、暂停、待确认也占用名额。输入 0 或留空表示不限。';
+  const tip='新绑定机器默认 10 条。按顶层 SOP 计数，共享项目共用机器名额。超出名额后排队。失败、暂停、待确认的 SOP 空闲 1 小时后自动归档并回收工作区，释放名额。继续或重试时自动恢复工作区。输入 0 或留空表示不限。';
   return `<div class="runner-run-limit"><label for="runLimit-${escapeHTML(runner.id)}">最多同时运行<input id="runLimit-${escapeHTML(runner.id)}" type="number" inputmode="numeric" min="0" step="1" placeholder="不限" value="${limit>0?limit:''}" data-runner-run-limit="${escapeHTML(runner.id)}" aria-label="${escapeHTML(runner.name||runner.id)} 最多同时运行条数">条</label><span class="runner-tip" tabindex="0" role="note" aria-label="${tip}" data-tip="${tip}">?</span></div>`;
 }
 async function saveRunnerRunLimit(runnerId,raw){

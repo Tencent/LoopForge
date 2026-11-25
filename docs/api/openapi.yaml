@@ -2535,6 +2535,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [Assets]
       operationId: deleteSandbox
@@ -4699,6 +4701,7 @@ components:
             content: {type: string, description: Dockerfile text}
             files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
         readOnlyRootFS: {type: boolean, description: "driver=docker only"}
+        privileged: {type: boolean, default: false, description: "Docker only. Requests privileged workspace containers on an execution host that allows them."}
         environment: {type: object, additionalProperties: {type: string}, description: Variables added to every command; a native sandbox keeps the execution machine's PATH unless this sets one}
     APIToken:
       type: object

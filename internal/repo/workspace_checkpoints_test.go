@@ -8,6 +8,83 @@ import (
 	"time"
 )
 
+func TestClaimCheckpointWorkspaceCleanupRequiresIdleHourForSOP(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, tc := range []struct {
+		status            string
+		updated, lastUsed time.Time
+	}{
+		{"failed", now.Add(-time.Hour), now.Add(-2 * time.Hour)},
+		{"waiting", now.Add(-2 * time.Hour), now.Add(-time.Hour)},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			row := runRow{ID: tc.status, Status: tc.status, Revision: 3, Updated: &tc.updated}
+			if err := s.DB.Create(&row).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ReleaseWorkspace(row.ID, tc.lastUsed); err != nil {
+				t.Fatal(err)
+			}
+			token, err := s.BeginWorkspaceCheckpointSave(row.ID, now.Add(-time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SaveWorkspaceCheckpoint(row.ID, token, now, []byte("snapshot")); err != nil {
+				t.Fatal(err)
+			}
+			if claimed, err := s.ClaimCheckpointWorkspaceCleanup(row.ID, token, row.Revision, now.Add(-time.Second)); err != nil || claimed {
+				t.Fatalf("claim before hour = %v, %v", claimed, err)
+			}
+			if claimed, err := s.ClaimCheckpointWorkspaceCleanup(row.ID, token, row.Revision, now); err != nil || !claimed {
+				t.Fatalf("claim at hour = %v, %v", claimed, err)
+			}
+		})
+	}
+}
+
+func TestIdleReclaimableSOPRunsIncludesLegacyTopLevelRuns(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	now := time.Now().UTC()
+	cutoff := now.Add(-time.Hour)
+	later := now.Add(time.Hour)
+	child := jsonBytes(domain.TelemetryContext{ParentRunID: "legacy"})
+	for _, row := range []runRow{
+		{ID: "legacy", Status: "failed", Updated: &cutoff},
+		{ID: "paused", Status: "waiting", PauseRequested: true, Updated: &cutoff},
+		{ID: "fresh", Status: "failed", Updated: &now},
+		{ID: "delayed", Status: "waiting", Updated: &cutoff, CleanupNotBefore: &later},
+		{ID: "child", Status: "failed", Updated: &cutoff, ExecutionContext: child},
+		{ID: "conversation", Kind: domain.RunKindWorkspace, Status: "waiting", Updated: &cutoff},
+		{ID: "legacy-group", WorkflowID: domain.FreeCollaborationWorkflowID, Status: "waiting", Updated: &cutoff},
+		{ID: "running", Status: "running", Updated: &cutoff},
+		{ID: "cleaned", Status: "failed", Updated: &cutoff, WorkspaceCleaned: &now},
+	} {
+		if err := s.DB.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := map[string]bool{}
+	for _, run := range s.IdleReclaimableSOPRuns(cutoff) {
+		got[run.ID] = true
+	}
+	if len(got) != 2 || !got["legacy"] || !got["paused"] {
+		t.Fatalf("idle SOPs = %v", got)
+	}
+	cleaned := s.CleanedSOPRunsHoldingAdmission()
+	if len(cleaned) != 1 || cleaned[0].ID != "cleaned" {
+		t.Fatalf("cleaned SOPs holding slots = %+v", cleaned)
+	}
+}
+
 // A reaped turn releases only the lease it recorded, and only once nothing
 // renews it any more. A live holder on any replica, a newer turn's lease and a
 // background save all keep theirs.

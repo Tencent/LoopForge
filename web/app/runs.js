@@ -1325,7 +1325,7 @@ function renderRunDetail(r){
   const focusNr=focusNode?(r.nodes?.[focusNode.id]||{}):nr;
   if(r.status==='queued'){
     host.querySelector('[data-cancel-run]')?.replaceChildren(document.createTextNode('取消排队'));
-    host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend','<div class="approval-callout queued-run-callout"><b>排队中，获得项目名额后自动启动</b><p>每个项目最多同时占用 10 条顶层 SOP，子 SOP 共享父级名额；未获准入和成功运行不占名额；一旦获准入即占用，失败、待确认、暂停及获准入后取消仍占用名额。可取消排队后删除记录。</p></div>');
+    host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend','<div class="approval-callout queued-run-callout"><b>排队中，获得运行名额后自动启动</b><p>子 SOP 共享父级名额。未获准入和成功运行不占名额。失败、暂停、待确认的 SOP 空闲 1 小时后释放名额。排队期间可以取消运行。</p></div>');
   }else if(!nonSOP&&r.pauseRequested){
     const header=host.querySelector('.run-detail-header');header?.insertAdjacentHTML('afterend',pausedRunPanelHTML(r));
     host.querySelector('.node-inspector .approval-callout')?.remove();
