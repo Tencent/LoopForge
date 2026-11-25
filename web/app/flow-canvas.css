@@ -301,6 +301,10 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-mm-view{fill:rgb(var(--fd-accent) / .07);stroke:rgb(var(--fd-accent) / .75);stroke-width:1.2}
 #flowView .fd-stagewrap.check-mode .fd-bl,#flowView .fd-stagewrap.check-mode .fd-minimap{display:none}
 #flowView .flow-check-panel{position:absolute;inset:0;overflow:auto;padding:64px 24px 24px;background:var(--fd-canvas)}
+/* 属性抽屉打开时让出右侧宽度，检查卡片按剩余宽度自适应列数，长文字换行 */
+#flowView .fd-stagewrap.has-drawer .flow-check-panel{right:368px}
+#flowView .flow-check-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}
+#flowView .flow-check-item{min-width:0;overflow-wrap:anywhere}
 
 /* empty state */
 #flowView .fd-empty{position:absolute;inset:0;z-index:4;display:grid;place-items:center;pointer-events:none}
