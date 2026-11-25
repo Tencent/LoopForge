@@ -81,7 +81,11 @@ func TestPrivateCardCallbackResolvesExactTaskToFrozenRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	bot := domain.NotificationBot{ID: "bot", BotID: "external", ProjectID: "project"}
+	// The inbound path reads the current configuration, so the Bot exists.
+	bot := domain.NotificationBot{ID: "bot", BotID: "external", ProjectID: "project", OwnerID: 1, Enabled: true, InteractionEnabled: true}
+	if err = store.SaveNotificationBot(bot, "s"); err != nil {
+		t.Fatal(err)
+	}
 	delivery := domain.NotificationDelivery{ID: "delivery", BotID: bot.ID, ProjectID: bot.ProjectID, TargetID: "openid-recipient", TargetType: "single"}
 	if err = store.DB.Create(&delivery).Error; err != nil {
 		t.Fatal(err)

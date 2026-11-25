@@ -57,16 +57,57 @@ func repositoryWorkspaceDirs(workspace string, repositories []domain.RepositoryC
 
 // prepareRepositories checks out every run repository into its WorkspaceDir
 // (a first-level sub-directory of the run workspace).
-func prepareRepositories(ctx context.Context, workspace string, repositories []domain.RepositoryContext) error {
+func prepareRepositories(ctx context.Context, workspace string, repositories []domain.RepositoryContext, preserveCheckout ...bool) error {
+	prepare := prepareRepository
+	if len(preserveCheckout) > 0 && preserveCheckout[0] {
+		if !gitwork.HasWorkspaceExecutor(ctx) {
+			return fmt.Errorf("shared checkout preparation requires the SOP sandbox")
+		}
+		prepare = prepareSharedRepository
+	}
 	if err := runtime.RestoreLegacyWorkspaceAgentConfig(ctx, workspace, repositories); err != nil {
 		return err
 	}
 	for _, rc := range repositories {
-		if err := prepareRepository(ctx, repositoryWorkspacePath(workspace, rc), rc); err != nil {
+		dir := repositoryWorkspacePath(workspace, rc)
+		if err := prepare(ctx, dir, rc); err != nil {
 			return fmt.Errorf("repository %s: %w", rc.Name, err)
 		}
 	}
 	return nil
+}
+
+func repositoryCheckoutRemote(repository domain.RepositoryContext) string {
+	if remote := strings.TrimSpace(repository.CloneURL); remote != "" {
+		return remote
+	}
+	return strings.TrimSpace(repository.LocalPath)
+}
+
+func prepareSharedRepository(ctx context.Context, dir string, repository domain.RepositoryContext) error {
+	existing, err := gitwork.ExistingSOPCheckout(ctx, dir, repositoryCheckoutRemote(repository))
+	if err != nil {
+		return err
+	}
+	if existing {
+		if err := runtime.RestoreLegacyProjectAgentConfig(ctx, dir); err != nil {
+			return err
+		}
+	}
+	if !existing || repository.RequireExistingWorkBranch || repository.CreateNewWorkBranch {
+		return prepareRepository(ctx, dir, repository)
+	}
+	ctx = withRepositoryGit(ctx, repository)
+	if err := applyWorkspaceGitAuth(ctx, dir); err != nil {
+		return err
+	}
+	if err := applyWorkspaceGitIdentity(ctx, dir); err != nil {
+		return err
+	}
+	if err := gitwork.ContinueSOPCheckout(ctx, dir, repository.WorkBranch); err != nil {
+		return err
+	}
+	return gitwork.RecordBaselineContext(ctx, dir, repositoryBaseBranch(repository))
 }
 
 func repositoryBaseBranch(repository domain.RepositoryContext) string {
@@ -149,6 +190,11 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	}
 	baseBranch := repositoryBaseBranch(repository)
 	clone := func(branch string, useReference bool) error {
+		if useReference {
+			if cloned, err := cloneFromRepositoryCache(ctx, workspace, repository, branch); cloned || err != nil {
+				return err
+			}
+		}
 		// --progress: without a terminal git prints nothing until it finishes,
 		// which is what made a slow clone indistinguishable from a hung one.
 		args := []string{"clone", "--progress", "--no-hardlinks", "--single-branch", "--branch", branch}
@@ -259,7 +305,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 			return err
 		}
 	}
-	return recordRepositoryBaseline(workspace, baseBranch)
+	return gitwork.RecordBaselineContext(ctx, workspace, baseBranch)
 }
 
 // prepareLocalSnapshotRepository copies a non-Git local source directory into
@@ -281,15 +327,14 @@ func prepareLocalSnapshotRepository(ctx context.Context, workspace, localPath st
 		return fmt.Errorf("copy local source: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	for _, args := range [][]string{{"init", "-b", "agentflow-base"}, {"config", "user.email", "loopforge@local"}, {"config", "user.name", "LoopForge"}, {"add", "-A"}, {"commit", "-m", "LoopForge baseline", "--quiet"}} {
-		cmd = exec.CommandContext(ctx, "git", append([]string{"-C", workspace}, args...)...)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("snapshot local source: %w: %s", err, strings.TrimSpace(string(output)))
+		if _, err := gitC(ctx, workspace, args...); err != nil {
+			return fmt.Errorf("snapshot local source: %w", err)
 		}
 	}
 	if err := applyWorkspaceGitIdentity(ctx, workspace); err != nil {
 		return err
 	}
-	return recordRepositoryBaseline(workspace, "")
+	return gitwork.RecordBaselineContext(ctx, workspace, "")
 }
 
 // seedEmptyRepository handles a freshly created Gongfeng repository with no
@@ -396,7 +441,7 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 		branch, _ := gitC(ctx, workspace, "branch", "--show-current")
 		if strings.TrimSpace(branch) == repository.WorkBranch {
 			if _, err := gitC(ctx, workspace, "rev-parse", "--verify", "MERGE_HEAD"); err == nil {
-				return recordRepositoryBaseline(workspace, baseBranch)
+				return gitwork.RecordBaselineContext(ctx, workspace, baseBranch)
 			}
 		}
 	}
@@ -431,7 +476,7 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 			return err
 		}
 	}
-	return recordRepositoryBaseline(workspace, baseBranch)
+	return gitwork.RecordBaselineContext(ctx, workspace, baseBranch)
 }
 
 // A continued branch is user-selected work. Never apply the legacy namesake
@@ -648,8 +693,4 @@ func workBranchNonce() string {
 		return strconv.FormatInt(time.Now().UnixNano()%(1<<24), 36)
 	}
 	return hex.EncodeToString(b[:])
-}
-
-func recordRepositoryBaseline(workspace, baseBranch string) error {
-	return gitwork.RecordBaseline(workspace, baseBranch)
 }

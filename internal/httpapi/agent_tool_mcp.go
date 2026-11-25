@@ -341,6 +341,9 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 		}
 		return mcpToolTextResult("提交成功，本轮结束。", false), nil
 	case name == submitAssistantReplyTool && session.Mode == AgentToolAssistant:
+		if session.ExecMode.ReviewWrites && !session.sopDesigner() {
+			return mcpToolTextResult("当前为「帮我批准」模式，不需要人工审批草稿。请直接调用对应的平台写入工具（由 AI 独立审查并直接决定放行或拒绝），或用自然语言直接回复用户说明执行结果或被拒原因。", true), nil
+		}
 		if session.sopDesigner() {
 			expanded, err := expandSOPDesignerReply(raw, session.DesignerCanvas)
 			if err != nil {
@@ -391,6 +394,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		return readClarifySource(session, tool.Name, args)
 	}
 	if tool.Kind == "workspace" {
+		if session.ExecMode.ReadOnly {
+			return "", fmt.Errorf("%w: 只读模式不开放工作区工具 %s", errAgentToolForbidden, tool.Name)
+		}
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}
 	if tool.Kind == "agentflow" {
@@ -410,6 +416,14 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		}
 		if session.Mode == AgentToolScheduled {
 			ctx = withAssistantExecMode(ctx, session.ExecMode)
+		}
+		if scope := scheduledAssetsFrom(session.ctx); scope.Version.ID != "" {
+			ctx = context.WithValue(ctx, scheduledAssetsKey{}, scope)
+		}
+		if session.ctx != nil {
+			if origin, ok := botStartOriginFrom(session.ctx); ok {
+				ctx = withBotStartOrigin(ctx, origin)
+			}
 		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}
 		if session.canOpenConversationWorkspace() {
@@ -472,6 +486,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	}
 	if session.Mode == AgentToolAssistant && mcpCallMayWrite(kind, call) {
 		name := mcpCallName(kind, call)
+		if session.ExecMode.ReadOnly {
+			return "", fmt.Errorf("只读模式拒绝可能写入外部系统的 MCP 调用 %s，请到平台页面操作", name)
+		}
 		if !session.ExecMode.AutoWrite {
 			if err := h.waitForMCPWriteApproval(ctx, session, name, call); err != nil {
 				return "", err
@@ -480,7 +497,7 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 				return "", errMCPApprovalExpired
 			}
 		} else if session.ExecMode.ReviewWrites {
-			review := reviewAssistantAction(ctx, name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
+			review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceExternalMCP), name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
 			if !review.allows() {
 				return "", assistantReviewRefusal(name, review)
 			}

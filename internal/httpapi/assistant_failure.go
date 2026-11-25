@@ -17,6 +17,7 @@ import (
 
 var errAssistantMissingResult = errors.New("CLI did not return a non-empty answer in type=result")
 var errAssistantExecutionUnavailable = errors.New("conversation execution machine unavailable")
+var errAssistantRunnerAccessRevoked = errors.New("当前无法使用会话绑定的执行机器，请新建对话或联系机器绑定人恢复共享")
 
 func assistantCLIMaxTurns(text string) bool {
 	text = strings.ToLower(strings.TrimSpace(text))
@@ -69,9 +70,16 @@ func assistantCLIStreamFailure(line string) error {
 func assistantGenerationFailure(ctx context.Context, err error) (int, string) {
 	failure := classifyAssistantFailure(ctx, err)
 	status := http.StatusBadGateway
-	if failure.Code == "EXECUTION_MACHINE_UNAVAILABLE" || failure.Code == "WORKSPACE_BOUND_ELSEWHERE" || failure.Code == "WORKSPACE_REBOUND" {
+	switch failure.Code {
+	case "EXECUTION_MACHINE_ACCESS_REVOKED":
+		status = http.StatusForbidden
+	case "SHARED_SESSION_BUSY":
+		status = http.StatusConflict
+	case "CONVERSATION_STATE_ERROR":
+		status = http.StatusInternalServerError
+	case "EXECUTION_MACHINE_UNAVAILABLE", "WORKSPACE_BOUND_ELSEWHERE", "WORKSPACE_REBOUND":
 		status = http.StatusServiceUnavailable
-	} else if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	case "EXECUTION_CANCELLED", "EXECUTION_TIMEOUT":
 		status = http.StatusGatewayTimeout
 	}
 	return status, failure.Message
@@ -94,6 +102,19 @@ func classifyAssistantFailure(ctx context.Context, err error) domain.AssistantFa
 		f.Code, f.Message = "EXECUTION_LIMIT", "AI 助手已达到执行轮数上限，未能完成回答，请重试"
 		return f
 	}
+	if errors.Is(err, errAssistantNativeBusy) {
+		f.Code, f.Phase, f.Message, f.Suggestion = "SHARED_SESSION_BUSY", "setup", errAssistantNativeBusy.Error(), "等待正在执行的请求结束后再发送消息。"
+		return f
+	}
+	var stateErr *runtime.ConversationStateError
+	if errors.As(err, &stateErr) {
+		f.Code, f.Phase, f.Message, f.Suggestion = "CONVERSATION_STATE_ERROR", "setup", stateErr.Error(), "请联系管理员检查提示中的会话路径。"
+		return f
+	}
+	if errors.Is(err, errAssistantRunnerAccessRevoked) {
+		f.Code, f.Phase, f.Message, f.Suggestion = "EXECUTION_MACHINE_ACCESS_REVOKED", "setup", errAssistantRunnerAccessRevoked.Error(), ""
+		return f
+	}
 	if errors.Is(err, errAssistantExecutionUnavailable) {
 		f.Code, f.Phase, f.Message, f.Suggestion = "EXECUTION_MACHINE_UNAVAILABLE", "setup", "会话绑定的执行机器暂不可用，请等待原机器恢复后重试", "会话已固定在原执行机器上，请确认该 Runner 在线后再重试。"
 		return f
@@ -108,7 +129,10 @@ func classifyAssistantFailure(ctx context.Context, err error) domain.AssistantFa
 	}
 	var missing assistantCLIMissingError
 	if errors.As(err, &missing) {
-		f.Code, f.Phase, f.Message, f.Suggestion = "CLI_NOT_INSTALLED", "setup", missing.Error(), "请管理员检查执行器的安装与配置。"
+		f.Code, f.Phase, f.Message = "CLI_NOT_INSTALLED", "setup", missing.Error()
+		if runtime.OnDemandInstallable(missing.engine) {
+			f.Suggestion = "可在对话中安装此执行器，安装后重新发送。"
+		}
 		return f
 	}
 	// The process error usually carries the CLI's stderr tail. Classify the

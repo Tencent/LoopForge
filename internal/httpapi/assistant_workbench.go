@@ -205,6 +205,9 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 	if req.sopDesigner() {
 		return h.prepareSOPDesignerContext(c, req, user)
 	}
+	if err := h.validateScheduledAssets(c.Request.Context(), req.ProjectID); err != nil {
+		return err
+	}
 	// Existing personal attachments remain usable when an unassigned conversation
 	// is explicitly bound to an authorized project. Never infer another user's files.
 	historicalAttachments := map[string]bool{}
@@ -1282,6 +1285,8 @@ func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user dom
 		fmt.Fprintf(&b, "本对话当前绑定的工作区：%s。", describeConversationWorkspace(current))
 		if !current.IsWorkspace() {
 			b.WriteString(borrowedSOPNotice(current))
+		} else if req.ProjectID != "" {
+			b.WriteString("从这里派发 SOP 会复用该工作区。如果本轮仍在使用它，派发后先结束回复，SOP 会在工作区释放后开始。")
 		}
 		b.WriteString("\n")
 	}
@@ -1357,7 +1362,9 @@ func (h *assistantHandlers) linkMentionedIssue(req *assistantRequest, user domai
 	}
 	ownerID := assistantStorageOwner(h.repo, req.SessionID, user.ID)
 	session, ok := h.repo.AssistantSession(ownerID, req.SessionID)
-	if !ok || session.Shared || session.RunID != "" || session.IssueID != "" {
+	// Scheduled references belong to each execution and must not become a
+	// persistent issue binding when a fixed session is reused.
+	if !ok || session.Shared || session.Source == domain.AssistantSourceScheduled || session.RunID != "" || session.IssueID != "" {
 		return ""
 	}
 	issueID := ""

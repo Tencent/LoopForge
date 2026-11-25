@@ -239,8 +239,8 @@ func TestEnvironmentIdentityGitAndMCPHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeDocker()
-	if !strings.Contains(env["GIT_CONFIG_VALUE_1"], "/workspace/") {
-		t.Fatal("Docker helper must be inside the workspace")
+	if !strings.Contains(env["GIT_CONFIG_VALUE_1"], dockerGitToolsMount+"/bin/") {
+		t.Fatal("Docker helper must use the Runner's Git tools mount")
 	}
 	env, closeEmpty, err := RunGitEnvironment(context.Background(), nil, workspace, RunCredentials{})
 	if err != nil {

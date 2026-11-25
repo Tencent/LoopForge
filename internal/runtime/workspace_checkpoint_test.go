@@ -58,6 +58,46 @@ func TestWorkspaceCheckpointRoundTrip(t *testing.T) {
 		t.Fatal("existing destination overwritten")
 	}
 }
+
+type checkpointTestWriter func([]byte) (int, error)
+
+func (w checkpointTestWriter) Write(p []byte) (int, error) { return w(p) }
+
+func TestWorkspaceCheckpointHandlesEntriesRemovedDuringCapture(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a-opened.txt", "b-expired.txt"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var archive bytes.Buffer
+	destination := checkpointTestWriter(func(p []byte) (int, error) {
+		if archive.Len() == 0 {
+			// The gzip header is emitted while writing the first tar header.
+			// The second entry is still in the directory walk's listing.
+			for _, name := range []string{"a-opened.txt", "b-expired.txt"} {
+				if err := os.Remove(filepath.Join(root, name)); err != nil {
+					return 0, err
+				}
+			}
+		}
+		return archive.Write(p)
+	})
+	if err := CreateWorkspaceCheckpointTo(root, destination); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "restored")
+	if err := RestoreWorkspaceCheckpoint(dest, archive.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(filepath.Join(dest, "a-opened.txt")); err != nil || string(body) != "a-opened.txt" {
+		t.Fatalf("open file was not captured: %q, %v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "b-expired.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expired entry was captured: %v", err)
+	}
+}
+
 func makeCheckpoint(t *testing.T, headers ...*tar.Header) []byte {
 	t.Helper()
 	var b bytes.Buffer
@@ -209,6 +249,7 @@ func TestWorkspaceCheckpointPreservesTrackedFilesUnderExcludedDirsWhileSkippingU
 	write("repo/web/vscode-web/node_modules/pkg/target.txt", "target\n")
 	write("repo/assets/.cache/manifest.json", "{\"ok\":true}\n")
 	write("repo/py/__pycache__/keep.pyc", "pyc-tracked")
+	write("repo/app/.next/keep.txt", "tracked")
 	write("repo/.agentflow/committed-secret", "must-never-capture")
 	if err := os.Symlink("../pkg/target.txt", filepath.Join(repoDir, "web/vscode-web/node_modules/@microsoft/link")); err != nil {
 		t.Fatal(err)
@@ -219,6 +260,7 @@ func TestWorkspaceCheckpointPreservesTrackedFilesUnderExcludedDirsWhileSkippingU
 		"web/vscode-web/node_modules/@microsoft/link",
 		"assets/.cache/manifest.json",
 		"py/__pycache__/keep.pyc",
+		"app/.next/keep.txt",
 		".agentflow/committed-secret",
 	)
 	git(repoDir, "commit", "-qm", "track vendored assets")
@@ -234,6 +276,7 @@ func TestWorkspaceCheckpointPreservesTrackedFilesUnderExcludedDirsWhileSkippingU
 	write("repo/assets/.cache/ephemeral.bin", "tmp")
 	write("repo/py/__pycache__/ephemeral.pyc", "tmp")
 	write("repo/.zvec-grep/index", "idx")
+	write("repo/app/.next/server/chunk-1.js", "generated")
 	write(".agentflow/auth/token", "host-secret")
 
 	archive, err := CreateWorkspaceCheckpoint(root)
@@ -251,6 +294,7 @@ func TestWorkspaceCheckpointPreservesTrackedFilesUnderExcludedDirsWhileSkippingU
 		"repo/web/vscode-web/node_modules/staged.js":                          "staged\n",
 		"repo/assets/.cache/manifest.json":                                    "{\"ok\":true}\n",
 		"repo/py/__pycache__/keep.pyc":                                        "pyc-tracked",
+		"repo/app/.next/keep.txt":                                             "tracked",
 	}
 	for rel, want := range wantPreserved {
 		got, err := os.ReadFile(filepath.Join(dest, filepath.FromSlash(rel)))
@@ -267,6 +311,7 @@ func TestWorkspaceCheckpointPreservesTrackedFilesUnderExcludedDirsWhileSkippingU
 		"repo/assets/.cache/ephemeral.bin",
 		"repo/py/__pycache__/ephemeral.pyc",
 		"repo/.zvec-grep",
+		"repo/app/.next/server",
 		"repo/.agentflow",
 		".agentflow",
 	} {

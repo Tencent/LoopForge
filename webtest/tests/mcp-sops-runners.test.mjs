@@ -96,10 +96,10 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   t.after(app.close);
   const runner = {
     id: 'runner-local', name: 'Laptop', ownerUserId: 1, status: 'online', os: 'darwin', arch: 'arm64',
-    runLimit: 2, lastSeenAt: new Date().toISOString(),
+    runLimit: 10, lastSeenAt: new Date().toISOString(),
     runtimes: [{ provider: 'codex', status: 'online', authMode: 'local', version: '1.0' }],
   };
-  app.router.put('/api/runners/runner-local/run-limit', { ...runner, runLimit: 5 });
+  app.router.put('/api/runners/runner-local/run-limit', { ...runner, runLimit: 250 });
   app.router.put('/api/runners/default', { message: 'default updated' });
   app.router.put('/api/runners/runtimes', { ok: true });
   app.router.delete('/api/runners/runner-local', { ok: true });
@@ -115,12 +115,13 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   const list = app.document.querySelector('#runnersList');
   assert.match(list.textContent, /Laptop/);
   const limit = list.querySelector('[data-runner-run-limit]');
-  assert.equal(limit.value, '2');
-  assert.match(app.evaluate(`runnerConcurrencyLabel(state.runners[0])`), /最多同时运行 2 条 SOP/);
-  limit.value = '5';
+  assert.equal(limit.value, '10');
+  assert.equal(limit.hasAttribute('max'), false);
+  assert.match(app.evaluate(`runnerConcurrencyLabel(state.runners[0])`), /最多同时运行 10 条 SOP/);
+  limit.value = '250';
   limit.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   await settle(6);
-  assert.deepEqual(app.router.calls.find(c => c.path.endsWith('/run-limit')).body, { runLimit: 5 });
+  assert.deepEqual(app.router.calls.find(c => c.path.endsWith('/run-limit')).body, { runLimit: 250 });
   await app.evaluate(`setDefaultRunner('runner-local');setRunnerRuntimeAuth('runner-local','codex','personal')`);
   await settle(6);
   assert.ok(app.router.calls.some(c => c.path === '/api/runners/default' && c.body.runnerId === 'runner-local'));
@@ -132,4 +133,68 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   app.document.querySelector('#confirmOkBtn').click();
   await app.evaluate(`window.__removeRunner`);
   assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/runners/runner-local'));
+});
+
+test('runner sharing saves multiple projects and offers project defaults for eligible machines', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const mine = {id: 'mine', name: 'Laptop', ownerUserId: 1, status: 'online', canUseInProject: true};
+  const desktop = {id: 'desktop', name: 'Desktop', ownerUserId: 1, status: 'online', canUseInProject: true};
+  const shared = {id: 'team', name: 'Team host', ownerUserId: 2, status: 'online', canUseInProject: true};
+  let projectRunnerId = '';
+  app.router.get('/api/runners?projectId=one', [mine, desktop, shared]);
+  app.router.get('/api/runners?projectId=two', [{...mine, canUseInProject: false}]);
+  app.router.get('/api/runners/default?projectId=one', () => ({
+    runnerId: projectRunnerId || mine.id, personalRunnerId: mine.id, projectRunnerId,
+  }));
+  app.router.put('/api/runners/default?projectId=one', ({body}) => {
+    projectRunnerId = body.runnerId;
+    return { runnerId: projectRunnerId || mine.id };
+  });
+  app.router.put('/api/runners/desktop/run-limit', {id: desktop.id, name: desktop.name, ownerUserId: 1, status: 'online', runLimit: 25});
+  app.router.get('/api/runners/default?projectId=two', { runnerId: '', personalRunnerId: mine.id, projectRunnerId: '' });
+  app.evaluate(`
+    state.currentUser={id:1};
+    state.projectFilter='one';
+    state.runnerBindCode={code:'fixture',expiresAt:'2099-01-01T00:00:00Z'};
+    state.data.projects=[
+      {id:'one',name:'One',ownerId:1},
+      {id:'two',name:'Two',ownerId:2,members:[{userId:1,role:'member'}]},
+      {id:'viewer',name:'Viewer',ownerId:2,members:[{userId:1,role:'viewer'}]},
+    ];
+  `);
+  await app.evaluate('refreshRunners()');
+  assert.match(app.document.querySelector('#runnerPoolStatus').textContent, /个人默认 · Laptop/);
+  app.evaluate(`state.runners.find(r=>r.id==='mine').status='offline';renderRunnersView()`);
+  assert.equal(app.document.querySelector('[data-set-project-default="mine"]').disabled, true);
+  await app.evaluate('refreshRunners()');
+  app.document.querySelector('[data-runner-share="mine"]').click();
+  const projects = [...app.document.querySelectorAll('.runner-share-projects input')];
+  assert.deepEqual(projects.map(box => box.value), ['one', 'two']);
+  projects.forEach(box => box.click());
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle();
+  assert.deepEqual(app.router.calls.find(c => c.path === '/api/runners/mine/shared-projects').body, {projectIds: ['one', 'two']});
+  assert.equal(app.document.querySelector('[data-runner-share="team"]'), null);
+  await app.evaluate(`saveRunnerRunLimit('desktop','25')`);
+  const ownerChoice = app.document.querySelector('[data-set-project-default="desktop"]');
+  assert.ok(ownerChoice, 'an eligible owned machine offers the project default action');
+  ownerChoice.click();
+  await settle();
+  assert.equal(projectRunnerId, desktop.id);
+  assert.equal(app.evaluate('state.personalDefaultRunnerId'), mine.id);
+  assert.match(app.document.querySelector('#runnerPoolStatus').textContent, /此项目默认 · Desktop/);
+  assert.equal(app.document.querySelector('[data-set-project-default="desktop"]'), null);
+
+  app.document.querySelector('[data-set-project-default="team"]').click();
+  await settle();
+  assert.ok(app.router.calls.some(c => c.method === 'PUT' && c.path === '/api/runners/default' &&
+    c.search === '?projectId=one' && c.body.runnerId === 'team'));
+
+  await app.evaluate("state.projectFilter='two';refreshRunners()");
+  assert.equal(app.document.querySelector('[data-set-project-default="team"]'), null);
+  assert.equal(app.document.querySelector('[data-set-project-default="mine"]'), null);
+  assert.equal(app.document.querySelector('#runnerPoolStatus').textContent, '在平台云端执行');
+  assert.equal(app.document.querySelector('.runner-card.is-default'), null);
+  assert.match(app.document.querySelector('.runner-card').textContent, /个人默认/);
 });

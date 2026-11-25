@@ -204,6 +204,143 @@ func TestDeleteFailedRunCleansRunnerWorkspace(t *testing.T) {
 	})
 }
 
+func TestSOPReusesRunnerConversationCheckout(t *testing.T) {
+	testSOPReusesRunnerConversationCheckout(t, false)
+}
+
+func TestSOPReusesRunnerConversationCheckoutInDocker(t *testing.T) {
+	if os.Getenv("AGENTFLOW_TEST_DOCKER") != "1" {
+		t.Skip("set AGENTFLOW_TEST_DOCKER=1 for local Docker sandbox tests")
+	}
+	useTempDirOutsideTmp(t, os.Getenv("AGENTFLOW_DOCKER_TEST_ROOT"))
+	t.Setenv("AGENTFLOW_DOCKER_NETWORK", "none")
+	testSOPReusesRunnerConversationCheckout(t, true)
+}
+
+func testSOPReusesRunnerConversationCheckout(t *testing.T, docker bool) {
+	t.Helper()
+	server, st, en := newDaemonTestServer(t)
+	machineRoot := t.TempDir()
+	daemon, err := New(Config{
+		ServerURL: server.URL, BootstrapToken: "boot-secret", StatePath: filepath.Join(t.TempDir(), "state.json"),
+		Name: "conversation-workspace-runner", MaxConcurrency: 1, HeartbeatInterval: time.Second,
+		LongPollTimeout: 2 * time.Second, DefaultWorkspaceRoot: machineRoot, DisableAutoUpdate: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Error("test runner did not stop")
+		}
+	})
+	go func() {
+		defer close(done)
+		_ = daemon.Run(ctx)
+	}()
+	waitFor(t, 10*time.Second, "runner workspace control", daemon.wsOnline.Load)
+	runner := st.Runners()[0]
+	const projectID = "runner-handoff"
+	if err := st.PutProject(domain.Project{ID: projectID, Name: "Runner Handoff"}); err != nil {
+		t.Fatal(err)
+	}
+	sopSandbox := repo.TestNativeSandboxID
+	if docker {
+		sopSandbox = "runner-conversation-sop-docker"
+		if err := st.PutSandbox(domain.SandboxProfile{ID: sopSandbox, Name: "SOP Docker", ProjectID: projectID,
+			Driver: domain.SandboxDriverDocker, Dockerfile: &domain.SandboxDockerfile{
+				Content: "FROM golang:1.26.11-bookworm\nCOPY --chmod=0755 git /usr/local/bin/git\n",
+				Files: map[string]string{"git": `#!/bin/sh
+mkdir -p /workspace/.agentflow
+printf '%s\t%s\n' "$PWD" "$*" >> /workspace/.agentflow/sop-git.log
+exec /usr/bin/git "$@"
+`},
+			}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owner, err := en.StartConversationWorkspace("Conversation", domain.TelemetryContext{
+		ProjectID: projectID, ExecutionPinned: true, ExecutionRunnerID: runner.ID,
+	}, repo.TestNativeSandboxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := bareRemoteWithBaseline(t)
+	root := filepath.Join(machineRoot, "runs", owner.ID, "workspace")
+	const checkout = "custom/checkout"
+	dir := filepath.Join(root, checkout)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, root, "init", "-q", "-b", "outer")
+	runGitT(t, root, "remote", "add", "origin", "https://example.invalid/outer.git")
+	runGitT(t, dir, "clone", "-q", remote, ".")
+	localFile := filepath.Join(dir, "local-commit.txt")
+	if err := os.WriteFile(localFile, []byte("local commit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, dir, "add", "local-commit.txt")
+	runGitT(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "local commit")
+	head := runGitT(t, dir, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("staged edit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, dir, "add", "README.md")
+	if err := os.WriteFile(localFile, []byte("unstaged edit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wf := domain.WorkflowDefinition{
+		ID: "edit-runner-workspace", Name: "Continue on the runner", SandboxProfileID: sopSandbox,
+		Nodes: []domain.WorkflowNode{{
+			ID: "verify", Name: "Verify", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, MaxAttempts: 1,
+			Script: `test "$(git branch --show-current)" = "$AGENTFLOW_WORK_BRANCH" &&
+test "$(git diff --cached --name-only)" = README.md &&
+test "$(git diff --name-only)" = local-commit.txt &&
+test "$(cat local-commit.txt)" = 'unstaged edit' &&
+printf done > sop-result.txt`,
+		}},
+	}
+	if err := st.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	run, err := en.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{
+		RepositoryID: "repo", Name: "Different catalog name", CloneURL: remote, BaseBranch: "master",
+	}, domain.TelemetryContext{ProjectID: projectID, WorkspaceRunID: owner.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var finished domain.Run
+	timeout := 15 * time.Second
+	if docker {
+		timeout = time.Minute
+	}
+	waitFor(t, timeout, "SOP in the conversation checkout", func() bool {
+		finished, _ = st.RunState(run.ID)
+		return domain.TerminalRunStatus(finished.Status)
+	})
+	if finished.Status != "succeeded" || finished.Repository.WorkspaceDir != checkout {
+		t.Fatalf("SOP %s in %q: %+v", finished.Status, finished.Repository.WorkspaceDir, finished.Nodes["verify"])
+	}
+	if got := runGitT(t, dir, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("SOP did not start at the conversation HEAD: %s, want %s", got, head)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "sop-result.txt")); err != nil || string(data) != "done" {
+		t.Fatalf("output in the conversation checkout = %q, %v", data, err)
+	}
+	if docker {
+		log, err := os.ReadFile(filepath.Join(root, ".agentflow", "sop-git.log"))
+		if err != nil || !strings.Contains(string(log), "config --local --no-includes --get-regexp") ||
+			!strings.Contains(string(log), "checkout --quiet -b "+finished.Repository.WorkBranch) {
+			t.Fatalf("SOP sandbox did not discover and switch the shared checkout: %s (%v)", log, err)
+		}
+	}
+}
+
 func TestWorkflowScriptsShareRunnerRunWorkspace(t *testing.T) {
 	server, s, e := newDaemonTestServer(t)
 	repository := t.TempDir()
@@ -251,7 +388,7 @@ func TestWorkflowScriptsShareRunnerRunWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{
-		ID: "runner-shared-scripts", Name: "Runner shared scripts", SandboxProfileID: "local",
+		ID: "runner-shared-scripts", Name: "Runner shared scripts", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "prepare", Name: "Prepare", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "test \"$(git branch --show-current)\" = fix/shared-runner-workspace && mkdir -p .git/info vendor/new && printf '/vendor/\\n' >> .git/info/exclude && git ls-files -z -- vendor/ | git update-index --skip-worktree -z --stdin && printf 'changed\\n' > vendor/tracked/dependency.php && printf 'new\\n' > vendor/new/dependency.php && printf 'shared-ready\\n' > workspace-marker", MaxAttempts: 1},
 			{ID: "consume", Name: "Consume", Type: "script", ScriptLanguage: "python", ExecutionScope: domain.ExecutionScopeRepositories, Script: "from pathlib import Path\nimport subprocess\nassert subprocess.check_output(['git', 'status', '--short', '--', 'vendor']).decode() == ''\nprint(Path(\"workspace-marker\").read_text().strip() + \" it's visible\")", MaxAttempts: 1},
@@ -765,7 +902,7 @@ func TestWorkflowAgentNodeDispatchesToRunner(t *testing.T) {
 	}
 	putMockDeveloperPlaybook(t, s)
 	wf := domain.WorkflowDefinition{
-		ID: "runner-e2e", Name: "Runner e2e", SandboxProfileID: "local",
+		ID: "runner-e2e", Name: "Runner e2e", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "agent", AgentID: "developer", ExecutorID: "mock", MaxAttempts: 1}},
 	}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -852,7 +989,7 @@ func TestRunnerPauseWaitsForRemoteStopAndRestartsScriptInSameWorkspace(t *testin
 	if err := s.SetDefaultRunner(42, runner.ID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "runner-pause", Name: "Runner pause", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "runner-pause", Name: "Runner pause", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "work", Name: "Work", Type: "command", Command: "if test -f .script-started; then printf restarted; else touch .script-started; sleep 30; fi", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -940,7 +1077,7 @@ func TestRunnerBoundRoleRunsGatesOnRunnerMachine(t *testing.T) {
 	}
 	putMockDeveloperPlaybook(t, s)
 	wf := domain.WorkflowDefinition{
-		ID: "runner-gate-e2e", Name: "Runner gate e2e", SandboxProfileID: "local",
+		ID: "runner-gate-e2e", Name: "Runner gate e2e", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{
 			ID: "work", Name: "Work", Type: "agent", AgentID: "developer", ExecutorID: "mock",
 			MaxAttempts: 1,

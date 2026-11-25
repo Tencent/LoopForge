@@ -34,6 +34,16 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	}
 	prompt = strings.ReplaceAll(prompt, "{{input}}", run.Input)
 	prompt = strings.ReplaceAll(prompt, "{{repository}}", promptRepositoryLine(run))
+	if run.UsesConversationWorkspace() {
+		prompt += "\n\n## 对话工作区\n\n在交接的工作区内继续，保留已有文件和本地改动。"
+		for _, repository := range run.RepositoryContexts() {
+			dir := repository.WorkspaceDir
+			if dir == "" {
+				dir = "."
+			}
+			prompt += fmt.Sprintf("\n- %s 在 `%s`，工作分支 `%s`，PR/MR 目标分支 `%s`。", repository.Name, dir, repository.WorkBranch, repositoryBaseBranch(repository))
+		}
+	}
 	pipelineURL := "未配置 Pipeline"
 	if run.Repository.PipelineURLPattern != "" {
 		pipelineURL = strings.ReplaceAll(run.Repository.PipelineURLPattern, "{build_id}", "current")
@@ -106,6 +116,9 @@ func promptRepositoryLine(run domain.Run) string {
 	}
 	if run.Repository.Provider == domain.RepositoryProviderHTTPS {
 		identity = "Git HTTPS"
+	}
+	if run.Repository.Provider == domain.RepositoryProviderHTTP {
+		identity = "Git HTTP"
 	}
 	return fmt.Sprintf("%s (%s), 最新远端基线 %s, 本次工作分支 %s", run.Repository.Name, identity, run.Repository.BaseBranch, run.Repository.WorkBranch)
 }
@@ -253,7 +266,7 @@ func appendArtifactContract(prompt string, node domain.WorkflowNode, repositorie
 		}
 	}
 	if len(checkouts) > 0 {
-		b.WriteString("\n\n# Workspace layout\n\nRepository checkouts live in first-level subdirectories. Write code changes inside those directories. SOP deliverables such as `fix-plan.md` go at the run workspace root (the current working directory), never inside a repository directory.\n")
+		b.WriteString("\n\n# Workspace layout\n\nWrite code changes in the checkout directories below. Keep SOP deliverables such as `fix-plan.md` at the run workspace root.\n")
 		for _, rc := range checkouts {
 			name := strings.TrimSpace(rc.Name)
 			if name == "" {

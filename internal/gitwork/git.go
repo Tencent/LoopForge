@@ -14,6 +14,10 @@ import (
 // Run executes git with the context's host-scoped credential helper or SSH
 // key. Output is trimmed and redacted; on failure it is part of the error.
 func Run(ctx context.Context, workspace string, args ...string) (string, error) {
+	if run := workspaceExecutor(ctx); run != nil {
+		out, err := run(ctx, workspace, WorkspaceCommand{Args: args})
+		return strings.TrimSpace(out), err
+	}
 	token := TokenFrom(ctx)
 	sshEnv, cleanup, err := sshCommandEnvironment(ctx, args)
 	if err != nil {
@@ -52,6 +56,10 @@ const (
 // is killed, and the error carries only the last lines of output.
 func Watch(ctx context.Context, workspace string, opts procwatch.Options, args ...string) (string, error) {
 	token := TokenFrom(ctx)
+	opts.Redact = func(line string) string { return redactContextGitSecrets(ctx, Redact(line, token)) }
+	if run := workspaceExecutor(ctx); run != nil {
+		return run(ctx, workspace, WorkspaceCommand{Args: args, Watch: &opts})
+	}
 	sshEnv, cleanup, err := sshCommandEnvironment(ctx, args)
 	if err != nil {
 		return "", err
@@ -62,7 +70,6 @@ func Watch(ctx context.Context, workspace string, opts procwatch.Options, args .
 		return "", err
 	}
 	defer closeHome()
-	opts.Redact = func(line string) string { return redactContextGitSecrets(ctx, Redact(line, token)) }
 	text, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd {
 		cmd := command(ctx, workspace, sshEnv, args)
 		if home != "" {
@@ -78,7 +85,7 @@ func Watch(ctx context.Context, workspace string, opts procwatch.Options, args .
 
 func command(ctx context.Context, workspace string, sshEnv map[string]string, args []string) *exec.Cmd {
 	dir := CommandDir(workspace)
-	credential, host, _ := httpCredentialForCommand(ctx, args)
+	credential, endpoint, remote := httpCredentialForCommand(ctx, args)
 	authArgs := scopedHTTPAuthArgs(credential)
 	cmd := exec.CommandContext(ctx, "git", append(authArgs, args...)...)
 	cmd.Dir = dir
@@ -87,7 +94,17 @@ func command(ctx context.Context, workspace string, sshEnv map[string]string, ar
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_GLOBAL", os.DevNull)
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_NOSYSTEM", "1")
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_PARAMETERS", "")
-		cmd.Env = WithEnvValue(cmd.Env, gitHTTPHostEnv, host)
+		urlHost := ""
+		if remote != nil {
+			// The Git transport can send the original IPv6 authority to the helper.
+			urlHost = strings.ToLower(remote.Host)
+		}
+		if endpoint.Scheme == "http" && credential.Token != "" {
+			cmd.Env = WithPlainHTTPRedirectsDisabled(cmd.Env, remote)
+		}
+		cmd.Env = WithEnvValue(cmd.Env, gitHTTPHostEnv, endpoint.Authority)
+		cmd.Env = WithEnvValue(cmd.Env, gitHTTPURLHostEnv, urlHost)
+		cmd.Env = WithEnvValue(cmd.Env, gitHTTPSchemeEnv, endpoint.Scheme)
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPUserEnv, credential.Username)
 		cmd.Env = WithEnvValue(cmd.Env, gitHTTPPassEnv, credential.Token)
 	}
@@ -112,6 +129,9 @@ func command(ctx context.Context, workspace string, sshEnv map[string]string, ar
 
 // C runs `git -C workspace args...`.
 func C(ctx context.Context, workspace string, args ...string) (string, error) {
+	if HasWorkspaceExecutor(ctx) {
+		return Run(ctx, workspace, args...)
+	}
 	return Run(ctx, workspace, append([]string{"-C", workspace}, args...)...)
 }
 

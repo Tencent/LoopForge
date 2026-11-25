@@ -12,9 +12,9 @@ const state = {
   selectedAgent:null, selectedRun:null, selectedRunNode:null, runFilter:'all', runQuery:'', runWorkflowFilter:'',
   selectedIssue:null, projectFilter:'', projectDraft:null, requirementIssueId:null, sourceFilter:'',
   projectAdminDetailId:null, projectAdminTab:'basic', projectAdminQuery:'', projectAdminFilter:'all', projectDraftFor:'', projectDraftBase:null, projectIdentCustom:false, projectIdentSeed:'', projectAdminErrors:{},
-  sopScope:'project', agentScope:'project', ruleScope:'project', skillScope:'project', dockerfileScope:'project', environmentScope:'project', sandboxScope:'project',
+  sopScope:'project', agentScope:'project', ruleScope:'project', skillScope:'project', sandboxScope:'project',
   issueRunFilter:'', issueStatusFilter:'', issueAssigneeFilter:'', issueQuery:'', issueView:localStorage.getItem('agentflow.issueView')||'table',
-  assetType:'dockerfiles', selectedAsset:null, assetQuery:'', assetDirty:false, mcpTab:'installed', mcpScope:'project', mcpMarket:[], mcpQuery:'', editingMCPId:'', poll:null, runStream:null,
+  assetType:'sandboxes', selectedAsset:null, assetQuery:'', assetDirty:false, mcpTab:'installed', mcpScope:'project', mcpMarket:[], mcpQuery:'', editingMCPId:'', poll:null, runStream:null,
   obsTab:'overview', obsDeliveryFilter:'all', obsTraceRunId:null, obsTraceAdapter:'live', obsScope:localStorage.getItem('agentflow.obsScope')==='project'?'project':'user', obsUserFilter:'', obsSourceFilter:'', obsUserFilterReady:false, obsTrendGrain:['day','week','month','all'].includes(localStorage.getItem('agentflow.obsTrendGrain'))?localStorage.getItem('agentflow.obsTrendGrain'):'all', obsPeriodKey:'', obsTrendMetric:['runs','issues','cost'].includes(localStorage.getItem('agentflow.obsTrendMetric'))?localStorage.getItem('agentflow.obsTrendMetric'):'tokens', obsCrossProject:null, drawerOpen:false, issueDetailTab:'overview', issueDetailData:null, propTab:'basic',
   uiScroll:{runId:'', nodeId:'', graphLeft:0, feedTop:0, telTop:0, feedStick:true, telStick:true},
   runLogs:null, runTelemetry:null, runTelemetryAdapter:'live', runWorkspace:null,
@@ -108,7 +108,7 @@ async function api(path, options={}) {
 }
 const toastActions=new Map();
 function toast(message, type='info', duration=2600){
-  const container=$('#toastContainer');
+  const container=$('#artifactModal[open] #artifactToastContainer')||$('#toastContainer');
   const legacy=$('#toast');
   if(!container&&legacy){
     const kind=type==='ok'||type==='err'?type:'info';
@@ -228,7 +228,7 @@ function afNextDialog(){
   };
 }
 function afDialogFocusables(modal){
-  return [...modal.querySelectorAll('button,input,textarea,select,[tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&!el.closest('[hidden]')&&el.tabIndex!==-1&&el.getClientRects().length);
+  return [...modal.querySelectorAll('a[href],button,input,textarea,select,[tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&!el.closest('[hidden]')&&el.tabIndex!==-1&&el.getClientRects().length);
 }
 function bindConfirmModal(modal){
   if(!modal||modal.dataset.dialogBound)return;
@@ -857,7 +857,7 @@ function shouldAutoSSORedirect({isGuest, hostname, bypassAutoAuth, authErr, logi
 }
 
 async function boot(){
-  state.data = {runs:[],issues:[],tasks:[],workflowMetrics:[],syncLogs:[],agents:[],workflows:[],projects:[],repositories:[],users:[],rules:[],skills:[],mcpServers:[],executors:[],dockerfiles:[],environments:[],sandboxes:[]};
+  state.data = {runs:[],issues:[],tasks:[],workflowMetrics:[],syncLogs:[],agents:[],workflows:[],projects:[],repositories:[],users:[],rules:[],skills:[],mcpServers:[],executors:[],sandboxes:[]};
   bind(); renderProjectSwitcher(); updateApprovalBadge();
 
   // 1. 检查 URL 中是否有 SSO 回调的 code
@@ -922,8 +922,7 @@ async function boot(){
   if(isGuest&&state.authRequired){location.replace('/login.html');return}
   renderUserBadge();
 
-  const view=restoredView();
-  const shell = await api('/api/bootstrap', {silent: view==='runs'});
+  const shell = await api('/api/bootstrap', {silent: restoredView()==='runs'});
   state.data = Object.assign(state.data, shell);
   const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');
   state.projectFilter=(state.data.projects||[]).some(p=>p.id===savedProject)?savedProject:defaultProjectId(state.data.projects,state.currentUser?.id);
@@ -964,6 +963,7 @@ async function boot(){
       if(id){const url=new URL(location.href);url.searchParams.set('chatSession',id);history.replaceState({},'',url);const frame=$('#chatNextFrame');if(frame){frame.dataset.src='';mountNativeChat()}}
     }
   });
+  const view=restoredView();
   if(view==='projects')syncProjectAdminRouteState();
   renderAll();
   if(view==='settings'&&routePart(1)==='executors')gotoCredential('executors');
@@ -1017,6 +1017,20 @@ function bind(){
     }else switchView(btn.dataset.view);
   });
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
+  $('#settingsSidebarExpand')?.addEventListener('click',()=>{
+    cancelSettingsRouteTransition();
+    setSettingsSidebarExpanded(true);
+    // Wait for the sidebar's descendants to inherit the restored visibility; reduced
+    // motion still runs a near-zero visibility transition, so retry for a few frames.
+    let frames=0;
+    const focusToggle=()=>requestAnimationFrame(()=>{
+      if(!settingsSidebarExpanded()||document.activeElement!==document.body)return;
+      const toggle=$('#settingsSidebarToggle');
+      toggle?.focus({preventScroll:true});
+      if(toggle&&document.activeElement!==toggle&&++frames<30)focusToggle();
+    });
+    requestAnimationFrame(focusToggle);
+  });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
       event.preventDefault();event.stopImmediatePropagation();
@@ -1137,7 +1151,7 @@ function bind(){
     if(previewBtn){
       e.preventDefault();
       if(previewBtn.disabled)return;
-      openSkillFilePreview(selectedSkill(), previewBtn.getAttribute('data-skill-file-preview'));
+      openSkillFilePreview(selectedSkill(), previewBtn.getAttribute('data-skill-file-preview'), previewBtn);
       return;
     }
     const delBtn=e.target.closest('[data-skill-file-del]');
@@ -1294,7 +1308,7 @@ function bind(){
   $$('.sync-close').forEach(b=>b.onclick=()=>$('#syncModal').classList.remove('open'));
   $$('.schedule-close').forEach(b=>b.onclick=closeScheduleJobModal);
   $('#syncAutoEnabledInline').onchange=e=>{$('#syncAutoEnabled').checked=e.target.checked;saveSyncConfig()};
-  $$('.artifact-close').forEach(b=>b.onclick=()=>$('#artifactModal').classList.remove('open'));
+  bindArtifactPreview();
   $$('.modal').forEach(modal=>modal.addEventListener('pointerdown',e=>{
     if(e.target!==modal)return;
     if(modal.id==='requirementModal')return;
@@ -1303,6 +1317,7 @@ function bind(){
     modal.classList.remove('open');
   }));
   document.addEventListener('keydown',e=>{
+    if($('#artifactModal').open)return;
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommandPalette();return}
     if(!$('#commandPalette').hidden){
       if(e.key==='Escape'){closeCommandPalette();return}
@@ -1312,7 +1327,6 @@ function bind(){
     }
     if(e.key==='Escape'){
       if(flowDesignerEscape(e))return;
-      if($('#artifactModal')?.classList.contains('open')){$('#artifactModal').classList.remove('open');return}
       if(state.drawerOpen)return closeIssueDrawer();
       if($('#requirementModal')?.classList.contains('open')){
         if(!$('#reqRepoPopover')?.hidden){toggleReqRepoPopover(false);return}
@@ -1369,8 +1383,10 @@ function bind(){
     closeScheduleJobModal();
     state.projectFilter=e.target.value;state.selectedIssue=null;
     if(state.currentView==='aiSchedules')refreshAISchedules();
+    if(state.currentView==='runners')refreshRunners(true);
     localStorage.setItem('agentflow.activeProject',state.projectFilter);
     if($('#botsView')?.classList.contains('active'))loadBots();
+    if(state.currentView==='projectCredentials')loadProjectCredentialsPage();
     resetListPages();
     syncWorkflowToProject();
     renderProjectSwitcher();renderIssues();renderSync();renderProjectAdmin();
@@ -1560,7 +1576,7 @@ function mountNativeChat(){
         const url=new URL(location.href);
         if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');
         url.searchParams.delete('chatIssue');
-        if(activeViewName()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
+        if(activeViewName()==='collaboration'&&restoredView()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
         history.replaceState({},'',url);
       }
       if(message.type==='agentflow-chat-project'){
@@ -1598,7 +1614,7 @@ function mountNativeChat(){
           renderAll();
         }).catch(()=>{});
       }
-      if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','environments','dockerfiles','sandboxes','flow','mcp'].includes(message.view)){
+      if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','sandboxes','flow','mcp'].includes(message.view)){
         if(message.view==='settings'&&message.credential){
           if(message.credential==='executors'&&message.returnToQuickAccess===true&&activeViewName()==='collaboration'&&location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS){
             history.pushState({quickAccessExecutorReturn:true},'',QUICK_ACCESS_EXECUTOR_SETTINGS);
@@ -1640,7 +1656,7 @@ function settingsSidebarExpanded(){
 }
 let settingsSidebarEntryFrame=0;
 let settingsSidebarWasManaged=false;
-const settingsManagementViews=['settings','assistant','projects','bots','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','dockerfiles','environments','sandboxes','evolution','guide','platform'];
+const settingsManagementViews=['settings','assistant','projects','bots','projectCredentials','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','sandboxes','evolution','guide','platform'];
 const settingsRouteMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let settingsRouteTransition=null;
 let settingsRouteApplying=false;
@@ -1788,6 +1804,8 @@ function setSettingsSidebarExpanded(expanded){
     toggle.setAttribute('aria-label',open?'收起设置导航':'展开设置导航');
     toggle.title=open?'收起设置导航':'展开设置导航';
   }
+  const reopen=$('#settingsSidebarExpand');
+  if(reopen)reopen.hidden=!managing||open;
   const mobileToggle=$('.collab-rail-toggle');
   if(mobileToggle){
     mobileToggle.setAttribute('aria-expanded',String(open));
@@ -1795,7 +1813,8 @@ function setSettingsSidebarExpanded(expanded){
   }
   const sidebar=$('#settingsSidebar');
   if(!open&&sidebar?.contains(document.activeElement)){
-    const focusTarget=managing&&mobileToggle?.getClientRects().length?mobileToggle:settingsEntry;
+    const focusTarget=managing&&reopen?.getClientRects().length
+      ?reopen:managing&&mobileToggle?.getClientRects().length?mobileToggle:settingsEntry;
     focusTarget?.focus({preventScroll:true});
   }
   if(sidebar){
@@ -1812,12 +1831,11 @@ function setSettingsSidebarExpanded(expanded){
     });
   }
 }
-function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',dockerfiles:'环境资产',environments:'环境资产',sandboxes:'环境资产',observability:'统计',projects:'项目配置',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥',evolution:'RSI工作台'}}
-
-// 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产、环境资产的类型 Tab，
+function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',projectCredentials:'凭据管理',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥',evolution:'RSI工作台'}}
+// 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产的类型 Tab，
 // 从流程模板打开的流程设计）按 data-nav-match 高亮它们所属的入口。
 function settingsNavMatches(btn,name){return btn.dataset.view===name||String(btn.dataset.navMatch||'').split(/\s+/).includes(name)}
-const assetTypeGroups={capability:['mcp','rules','skills'],environment:['dockerfiles','environments','sandboxes']};
+const assetTypeGroups={capability:['mcp','rules','skills']};
 function assetTypeGroup(name){return Object.keys(assetTypeGroups).find(key=>assetTypeGroups[key].includes(name))||''}
 function syncAssetTypeTabs(name){
   const group=assetTypeGroup(name);
@@ -1829,7 +1847,7 @@ function restoredView(){
   const titles=viewTitles();
   const hash=(location.hash||'').replace(/^#\/?/,'').split(/[/?]/)[0];
   if(hash==='access')return 'guide';
-  if(hash==='assets')return 'dockerfiles';
+  if(['assets','dockerfiles','environments'].includes(hash))return 'sandboxes';
   if(hash==='playbooks')return 'sops';
   if(hash==='management')return 'settings';
   if(titles[hash])return hash;
@@ -1957,15 +1975,16 @@ function switchView(name){
   const titles=viewTitles();
   if(name==='dashboard')name='collaboration';
   if(name==='access')name='guide';
-  if(name==='assets')name='dockerfiles';
+  if(['assets','dockerfiles','environments'].includes(name))name='sandboxes';
   if(name==='playbooks')name='sops';
   if(name==='management')name='settings';
-  const assetViews=['rules','skills','dockerfiles','environments','sandboxes'];
+  const assetViews=['rules','skills','sandboxes'];
   const targetView=assetViews.includes(name)?'assets':name;
   if(!titles[name]||!$(`#${targetView}View`)){name='collaboration'}
   // 手敲 #/platform 或者从别的账号留下的 localStorage 恢复进来，都要挡住。
   if(name==='platform'&&!isPlatformAdmin())name='collaboration';
   const previous=activeViewName();
+  if(previous==='projectCredentials'&&name!=='projectCredentials')closeProjectCredentialsPage();
   if(name!=='settings')cancelCredentialFocus();
   if(previous==='settings'&&name!=='settings'){
     window.HuiPopover?.closeAll?.();
@@ -2060,6 +2079,7 @@ function switchView(name){
   if(name==='settings')renderPersonalSettings();
   if(name==='platform')renderPlatformAdminPanel();
   if(name==='projects')renderProjectAdmin();
+  if(name==='projectCredentials')loadProjectCredentialsPage();
   if(assetViews.includes(name)){
     if(staying&&state.assetType===name){if(state.selectedAsset)closeAssetDetail({force:true});else renderAssets()}
     else{

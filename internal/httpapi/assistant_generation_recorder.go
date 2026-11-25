@@ -71,10 +71,12 @@ func (r *assistantGenerationRecorder) sink(kind string, value any) {
 	switch kind {
 	case "runtime_mode":
 		var update struct {
-			Mode string `json:"mode"`
+			Mode           string `json:"mode"`
+			WorkspaceRunID string `json:"workspaceRunId"`
 		}
 		if json.Unmarshal(raw, &update) == nil && (update.Mode == domain.AssistantModePlatform || update.Mode == domain.AssistantModeWorkspace) {
 			r.g.RuntimeMode = update.Mode
+			r.g.WorkspaceRunID = update.WorkspaceRunID
 		}
 	case "thought":
 		if len(raw) > 256<<10 {

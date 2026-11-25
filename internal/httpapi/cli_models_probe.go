@@ -25,7 +25,9 @@ type cliModelProbeResult struct {
 	Models []domain.CLIModel `json:"models"`
 	// Source identifies the configured gateway, official provider, Runner or built-in catalog.
 	Source string `json:"source,omitempty"`
-	Error  string `json:"error,omitempty"`
+	// Connected means the provider answered a live model request.
+	Connected bool   `json:"connected,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 const assistantAnthropicAPIBase = "https://api.anthropic.com"
@@ -166,26 +168,38 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		return
 	}
 	if len(models) == 0 {
-		c.JSON(http.StatusOK, cliModelProbeResult{Error: "服务没有返回可用模型，可以手动添加模型"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Connected: true, Error: "服务没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(models), configuredBaseURL), Source: source})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(models), configuredBaseURL), Source: source, Connected: true})
 }
 
 func discoverGeminiModels(ctx context.Context, key, baseURL string) ([]assistantDiscoveredModel, error) {
+	client := *http.DefaultClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return discoverGeminiModelsWithClient(ctx, &client, key, baseURL)
+}
+
+func discoverGeminiModelsWithClient(ctx context.Context, client *http.Client, key, baseURL string) ([]assistantDiscoveredModel, error) {
+	if client == nil {
+		c := *http.DefaultClient
+		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &c
+	}
 	baseURL = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1beta")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1beta/models?pageSize=1000", nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("x-goog-api-key", key)
-	client := *http.DefaultClient
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("Gemini 模型接口返回重定向 HTTP %d，已拒绝跟随跳转", resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Gemini 模型接口返回 HTTP %d", resp.StatusCode)
 	}

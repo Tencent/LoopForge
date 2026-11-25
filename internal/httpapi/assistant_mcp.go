@@ -72,6 +72,9 @@ func assistantPlatformServer(server string) bool {
 }
 
 func (h *assistantHandlers) dispatchAssistantMCPCall(ctx context.Context, user domain.User, projectID string, call assistantMCPCall) (string, error) {
+	if err := h.validateScheduledAssets(ctx, projectID); err != nil {
+		return "", err
+	}
 	if h != nil && h.repo != nil {
 		if _, ok := h.lookupAssistantMCP(projectID, user.ID, call.Server); ok {
 			return h.callAssistantMCP(user, projectID, call)
@@ -93,6 +96,9 @@ func (h *assistantHandlers) dispatchAssistantMCPCall(ctx context.Context, user d
 func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user domain.User, projectID string, call assistantMCPCall) (string, error) {
 	if h == nil || h.api == nil {
 		return "", fmt.Errorf("未连接数据源")
+	}
+	if err := h.validateScheduledAssets(ctx, projectID); err != nil {
+		return "", err
 	}
 	tool := strings.TrimSpace(call.Tool)
 	if tool == "" || tool == "tools/list" {
@@ -134,6 +140,14 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	}
 	ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(user))
 	input := assistantToolInput(call)
+	if scope := scheduledAssetsFrom(ctx); scope.Version.ID != "" && op.Name == "runs_start" {
+		if body, ok := input.Body.(map[string]any); ok {
+			if id, _ := body["projectId"].(string); id != "" && id != projectID {
+				return "", fmt.Errorf("只能在当前项目启动 SOP")
+			}
+			body["projectId"] = projectID
+		}
+	}
 	if op.Name == "runs_control_get" {
 		run, ok := h.repo.RunState(input.Path["id"])
 		if !ok || run.ExecutionContext.ProjectID != projectID {
@@ -178,7 +192,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	}
 	if !op.ReadOnly && mode.ReviewWrites {
 		// Review the final merged payload immediately before the real handler.
-		review := reviewAssistantAction(ctx, op.Name, op.Description, map[string]any{"path": input.Path, "query": input.Query, "body": input.Body})
+		review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceBuiltinPlatform), op.Name, op.Description, map[string]any{"path": input.Path, "query": input.Query, "body": input.Body})
 		if !review.allows() {
 			return "", assistantReviewRefusal(op.Name, review)
 		}
@@ -196,7 +210,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	}
 	// Conversations legitimately belong to a project other than the current one;
 	// the handler already scopes them by owner / shared run / membership.
-	if !assistantSessionReadOperation(op.Name) {
+	if !assistantSessionReadOperation(op.Name) && !scheduledAssetRead(ctx, projectID, op.Name, input.Path["id"]) {
 		if err := assistantRejectForeignProject(projectID, result.Body); err != nil {
 			return "", err
 		}

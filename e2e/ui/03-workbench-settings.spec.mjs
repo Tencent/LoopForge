@@ -81,6 +81,65 @@ test('AI workbench: a saved conversation is listed, opened, searched, renamed, a
   expect(errors).toEqual([]);
 });
 
+test('ZCode reports platform CLI availability before credentials are saved', async ({ page, identity }) => {
+  const me = await userById(identity.user.id);
+  test.skip(!!me?.agentCliCredentials?.zcode?.apiKeyConfigured, 'ZCode is already configured for this user');
+  await openView(page, 'settings');
+  await page.locator('#credentialPanel').getByRole('button', { name: '新增执行器', exact: true }).click();
+  const probe = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === '/api/assistant/cli-install' && url.searchParams.get('engine') === 'zcode';
+  });
+  await page.getByRole('listbox', { name: '新增执行器', exact: true }).getByRole('option', { name: 'ZCode', exact: true }).click();
+  const response = await probe;
+  expect(response.ok()).toBe(true);
+  const { status } = await response.json();
+  expect(['installed', 'missing']).toContain(status);
+  await expect(page.locator('#credentialWizard [data-credential-runtime]'))
+    .toContainText(status === 'installed' ? '平台服务器已检测到 ZCode CLI' : '平台服务器缺少 ZCode CLI');
+  await expect(page.locator('#credentialWizard .credential-runtime-status')).toHaveCount(0);
+});
+
+test('desktop settings navigation reopens on the current page', async ({ page }) => {
+  await openView(page, 'settings');
+  const collapse = page.locator('#settingsSidebarToggle');
+  const expand = page.getByRole('button', { name: '展开设置导航', exact: true });
+  for (const reducedMotion of ['reduce', 'no-preference']) {
+    await page.emulateMedia({ reducedMotion });
+    await collapse.click();
+    await expect(page.locator('#settingsSidebar')).toHaveAttribute('aria-hidden', 'true');
+    await expect(expand).toBeFocused();
+    await expand.press('Enter');
+    await expect(collapse).toBeVisible();
+    await expect(collapse).toBeFocused();
+    await expect(page).toHaveURL(/#\/settings$/);
+  }
+});
+
+test('desktop settings returns keyboard focus after the reopened button becomes visible', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openView(page, 'settings');
+  const collapse = page.locator('#settingsSidebarToggle');
+  const expand = page.getByRole('button', { name: '展开设置导航', exact: true });
+  await expect(collapse).toBeVisible();
+  await collapse.press('Enter');
+  await expect(expand).toBeFocused();
+
+  const visibilityDelay = await page.addStyleTag({ content: '#settingsSidebarToggle { visibility: hidden !important; }' });
+  await expand.press('Enter');
+  await expect(page.locator('#settingsSidebar')).not.toHaveAttribute('aria-hidden', 'true');
+  await expect(collapse).toBeHidden();
+
+  // The sidebar can be expanded several frames before its button can take focus.
+  await page.evaluate(async () => {
+    for (let frame = 0; frame < 3; frame++) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+  });
+  await visibilityDelay.evaluate(style => style.remove());
+  await expect(collapse).toBeFocused();
+});
+
 test('personal credentials: the add wizard validates, saves write-only, and the row clears it', async ({ page, identity }) => {
   const me = identity.user;
   test.skip(!!(await userById(me.id))?.codexApiKeyConfigured, 'the token owner already has a Codex API Key; not overwriting a real credential');

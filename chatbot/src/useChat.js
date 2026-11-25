@@ -55,6 +55,23 @@ function effortPreference(executor, model) {
   return `effort.${executor}.${unprefixedModel(executor, model)}`;
 }
 
+const runnerLoginExecutors = ["codex", "claude-code", "agy"];
+
+function usesRunnerLogin(machine, executor) {
+  return runnerLoginExecutors.includes(executor) &&
+    machine?.runtimes?.some((runtime) => runtime.provider === executor && runtime.authMode !== "personal");
+}
+
+function runnerModelEntries(models, executor) {
+  return (models || []).filter((model) => concreteModel(model, executor)).map((model) => ({
+    id: `${executor}:${model.id}`,
+    engine: executor,
+    name: model.name || model.id,
+    efforts: model.reasoningEfforts ?? model.discoveredReasoningEfforts,
+    effortModelIds: model.efforts,
+  }));
+}
+
 // Use the first requested preference that is available for this executor.
 function preferredModel(list, executor, ...preferences) {
   const available = list.filter((model) => !model.disabled && !model.unavailable);
@@ -97,10 +114,9 @@ export function useChat() {
     [projects, setProjects] = useState([]),
     [sandboxes, setSandboxes] = useState([]),
     [sandboxProfileId, setSandboxProfileId] = useState(""),
+    [draftProjectCredentialIds, setDraftProjectCredentialIds] = useState([]),
     [sandboxBusy, setSandboxBusy] = useState(false),
-    [workspaceSandbox, setWorkspaceSandbox] = useState(null),
-    [workspaceExecution, setWorkspaceExecution] = useState(null),
-    [workspaceExecutionError, setWorkspaceExecutionError] = useState(""),
+    [loadedWorkspace, setLoadedWorkspace] = useState(null),
     [users, setUsers] = useState([]),
     [draftIssueId, setDraftIssueId] = useState(
       new URLSearchParams(location.search).get("issueId") || "",
@@ -158,6 +174,7 @@ export function useChat() {
     setError,
     bindExecutionMachine,
     session?.executionTarget,
+    projectId,
   );
   const currentId = useRef(activeId),
     sessionRef = useRef(session),
@@ -222,6 +239,7 @@ export function useChat() {
       draftExecutorPicked.current = false;
       setSelection((options) => ({ executor: id ? options.executor : accountDefaultsRef.current?.executor || storedExecutor(), model: null, effort: null }));
       setSandboxProfileId("");
+      setDraftProjectCredentialIds([]);
       currentId.current = id;
       setActiveId(id);
       if (id) setRevealId(id);
@@ -469,7 +487,12 @@ export function useChat() {
       setGenerationKnown(activeId);
       if (!running) setStopRequest((old) => old?.generationId === g.id ? null : old);
       if (running && ["platform", "workspace"].includes(g.runtimeMode)) {
-        setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
+        setSession((stored) => {
+          if (stored?.id !== activeId) return stored;
+          const workspaceRunId = g.workspaceRunId || stored.workspaceRunId;
+          if (stored.runtimeMode === g.runtimeMode && workspaceRunId === stored.workspaceRunId) return stored;
+          return { ...stored, runtimeMode: g.runtimeMode, workspaceRunId };
+        });
       }
       if (!running && needsTranscript) {
         await refreshSessions();
@@ -579,6 +602,7 @@ export function useChat() {
       if (strategy === "new") newChat();
       if (id !== projectRef.current) {
         setSandboxProfileId("");
+        setDraftProjectCredentialIds([]);
         setDraftIssueId("");
         const url = new URL(location.href);
         url.searchParams.delete("issueId");
@@ -650,13 +674,17 @@ export function useChat() {
   }
   const runnerId = composerRunnerId(session);
   const runner = executionMachines.machines.find(machine => machine.id === runnerId && machine.ownerUserId === user?.id);
+  const checkServerCLI = executionMachines.machinesReady && !runnerId &&
+    !(session?.executionTarget?.pool === "cloud" && session.executionTarget.runnerId) &&
+    !session?.runId && session?.runtimeMode !== "workspace";
   const availableExecutors = EXECUTORS.flatMap(item => {
-    const local = ["codex", "claude-code", "agy"].includes(item.id) &&
-      runner?.runtimes?.some(runtime => runtime.provider === item.id && runtime.authMode !== "personal");
-    if (local) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
-    const configured = catalogEngines.find(engine => engine.id === item.id)?.configured ??
-      personalEngineConfigured(user, item.id);
-    return configured || (item.id === "codebuddy" && sponsoredModel) ? [item] : [];
+    if (usesRunnerLogin(runner, item.id)) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
+    const option = catalogEngines.find(engine => engine.id === item.id);
+    const configured = option?.configured ?? personalEngineConfigured(user, item.id);
+    if (!configured && !(item.id === "codebuddy" && sponsoredModel)) return [];
+    return [checkServerCLI && option?.serverMissing
+      ? { ...item, detail: "平台服务器未安装 CLI" }
+      : item];
   });
   // Drafts can use any available executor. A recorded conversation keeps its
   // executor even if its authentication changes.
@@ -667,6 +695,9 @@ export function useChat() {
     (session?.executionTarget?.pool === "runner" && !executionMachines.machinesReady));
   const executor = keepSessionExecutor || !user || user.isGuest ? selection.executor :
     (preferred || availableExecutor(selection.executor) || availableExecutors[0])?.id || "";
+  const missingServerCLI = checkServerCLI
+    ? catalogEngines.find(item => item.id === executor && item.serverMissing)
+    : undefined;
   const { model, effort } = executor === selection.executor ? selection : { model: null, effort: null };
   function resolveComposerModel(
     { executor, model, effort }, conversation, draft,
@@ -676,12 +707,15 @@ export function useChat() {
     const personalMachine = machines.find(
       (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
     );
-    const agyRuntime = personalMachine?.runtimes?.find((runtime) => runtime.provider === "agy");
-    const agyAccountKey = executor === "agy" && agyRuntime && agyRuntime.authMode !== "personal"
+    const useLogin = usesRunnerLogin(personalMachine, executor);
+    const agyAccountKey = useLogin && executor === "agy"
       ? `agy-account:${user.id}:${personalMachine.id}` : "";
     const providerCatalog = catalogs[agyAccountKey || executor];
     const codeBuddy = executor === "codebuddy";
-    const listed = engineModels(models, executor);
+    const runnerCatalog = useLogin && executor !== "agy";
+    const listed = runnerCatalog
+      ? runnerModelEntries(personalMachine.loginModels?.[executor], executor)
+      : engineModels(models, executor);
     const usesProviderCatalog = !!executor && !codeBuddy && (!!agyAccountKey || !listed.length);
     const catalogToLoad = usesProviderCatalog && !providerCatalog ? agyAccountKey || executor : "";
     const executorModels = usesProviderCatalog
@@ -690,8 +724,12 @@ export function useChat() {
     const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
     const listedModel = findExecutorModel(executorModels, executor, model);
     const concrete = concreteModel({ id: model }, executor);
+    const changedDraftRunner = conversation?.executionTarget?.pool === "runner" &&
+      conversation.executionTarget.runnerId !== personalMachineId;
+    const keepConversationModel = conversation &&
+      (executionLocked(conversation) || (!runnerCatalog && !changedDraftRunner));
     const hasSelectedModel = concrete && !listedModel?.disabled && !listedModel?.unavailable &&
-      (conversation || !executorModels.length || listedModel);
+      (keepConversationModel || !executorModels.length || listedModel);
     const inheritsDefault = !!conversation && !concrete;
     const saved = (draft || inheritsDefault) && !sponsored && accountDefaults?.executor === executor ? accountDefaults : null;
     const savedModel = saved ? findExecutorModel(executorModels, executor, saved.model) : null;
@@ -736,22 +774,14 @@ export function useChat() {
     const existing = catalogRequests.current.get(key);
     if (existing) return existing;
     const request = runnerId
-      ? write(`/api/runners/${encodeURIComponent(runnerId)}/models/probe`, { provider: "agy", useSaved: true })
+      ? write(`/api/runners/${encodeURIComponent(runnerId)}/models/probe`, { provider: executor, useSaved: true })
       : api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`);
     const loading = request
       .then((catalog) => {
         if (catalogRequests.current.get(key) !== loading)
           throw new ComposerModelError("模型目录已更新，请重新发送。");
         if (catalog.error) throw new Error(catalog.error);
-        const result = runnerId ? {
-          models: (catalog.models || []).filter((model) => concreteModel(model, "agy")).map((model) => ({
-            id: `agy:${model.id}`,
-            engine: "agy",
-            name: model.name || model.id,
-            efforts: model.reasoningEfforts ?? model.discoveredReasoningEfforts,
-            effortModelIds: model.efforts,
-          })),
-        } : catalog;
+        const result = runnerId ? { models: runnerModelEntries(catalog.models, executor) } : catalog;
         setProviderCatalogs((old) => ({ ...old, [key]: result }));
         return result;
       })
@@ -781,7 +811,7 @@ export function useChat() {
     const visibleModel = resolved.activeModel;
     const visibleEffort = resolved.activeEffort;
     let machines = executionMachines.machines;
-    if (selection.executor === "agy" && resolved.personalMachineId && !executionMachines.machinesReady) {
+    if (runnerLoginExecutors.includes(selection.executor) && resolved.personalMachineId && !executionMachines.machinesReady) {
       const rows = await api("/api/runners?mine=1");
       machines = Array.isArray(rows) ? rows : [];
       resolved = resolveComposerModel(selection, conversation, false, providerCatalogs, machines);
@@ -1060,7 +1090,7 @@ export function useChat() {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }
-    if (!executor) return false;
+    if (!executor || missingServerCLI) return false;
     const currentProjectId = sessionRef.current?.projectId || "";
     const approval = fromQueue
       ? queuedApproval({ approvalMode, approvalUserId, approvalProjectId }, user?.id, currentProjectId)
@@ -1143,6 +1173,7 @@ export function useChat() {
             projectId: draft.projectId,
             issueId: draft.issueId,
             sandboxProfileId,
+            projectCredentialIds: draftProjectCredentialIds,
             executionTarget: {pool: executionMachines.defaultRunnerId ? "runner" : "cloud", runnerId: executionMachines.defaultRunnerId || ""},
             ...chosen,
             executor,
@@ -1353,7 +1384,7 @@ export function useChat() {
       let stored = await api(sessionPath(id));
       let reply = JSON.parse(stored.messages[messageIndex].content);
       let draft = reply.drafts[draftIndex];
-      if (draft.saved || draft.inherited) return null;
+      if (draft.saved || draft.inherited || draft.decision === "rejected") return null;
       if (generation?.status === "running")
         throw Error("请等待回复结束后再确认操作。");
       if (draft.proposal && !draft.decision) {
@@ -1541,22 +1572,60 @@ export function useChat() {
     } catch (e) { setError(e.message); return false; }
     finally { sandboxBusyRef.current = false; setSandboxBusy(false); }
   }
-  useEffect(() => {
-    let current = true;
-    setWorkspaceSandbox(null);
-    setWorkspaceExecution(null);
-    setWorkspaceExecutionError("");
-    const id = session?.workspaceRunId || session?.runId;
-    if (id) void api(`/api/runs/${encodeURIComponent(id)}`).then((run) => {
-      if (current) {
-        setWorkspaceSandbox(run.workflowSnapshot?.sandboxSnapshot?.profile || { id: run.workflowSnapshot?.sandboxProfileId });
-        setWorkspaceExecution(run.executionContext || {});
+  async function selectProjectCredentials(ids) {
+    const current = sessionRef.current;
+    if (submittingRef.current || sandboxBusyRef.current || generation?.status === "running") return false;
+    if (!currentId.current) {
+      setDraftProjectCredentialIds(ids);
+      return true;
+    }
+    if (!current || current.id !== currentId.current || current.shared || current.runId) return false;
+    sandboxBusyRef.current = true;
+    setSandboxBusy(true);
+    setError("");
+    try {
+      const saved = await write(
+        `${sessionPath(current.id)}/project-credentials`,
+        { projectCredentialIds: ids },
+        "PUT",
+      );
+      if (currentId.current === current.id) {
+        sessionRef.current = saved;
+        setSession(saved);
       }
+      return true;
+    } catch (error) {
+      setError(error.message);
+      return false;
+    } finally {
+      sandboxBusyRef.current = false;
+      setSandboxBusy(false);
+    }
+  }
+  const workspaceRunId = session?.workspaceRunId || session?.runId;
+  useEffect(() => {
+    if (!workspaceRunId) return;
+    let current = true;
+    void api(`/api/runs/${encodeURIComponent(workspaceRunId)}`).then((run) => {
+      if (!current) return;
+      setLoadedWorkspace({
+        id: workspaceRunId,
+        workflow: run.workflowSnapshot,
+        execution: run.executionContext || {},
+      });
     }).catch(() => {
-      if (current) setWorkspaceExecutionError("无法加载工作区执行机器");
+      if (current) setLoadedWorkspace({ id: workspaceRunId, error: "无法加载工作区执行机器" });
     });
     return () => { current = false; };
-  }, [session?.workspaceRunId, session?.runId]);
+  }, [workspaceRunId]);
+  const workspace = loadedWorkspace?.id === workspaceRunId ? loadedWorkspace : null;
+  const sandboxSnapshot = workspace?.workflow?.sandboxSnapshot?.profile;
+  const workspaceSandboxId = sandboxSnapshot?.id || workspace?.workflow?.sandboxProfileId;
+  const workspaceSandbox = workspaceSandboxId && (
+    sandboxSnapshot
+      ? { ...sandboxSnapshot, id: workspaceSandboxId }
+      : sandboxes.find((row) => row.id === workspaceSandboxId) || { id: workspaceSandboxId }
+  );
   async function refresh() {
     await executionMachines.refreshMachines();
     const sandboxRows = await api("/api/sandboxes").catch(() => null);
@@ -1607,16 +1676,19 @@ export function useChat() {
     projects,
     sandboxes,
     sandboxProfileId: activeId ? session?.sandboxProfileId || "" : sandboxProfileId,
+    projectCredentialIds: activeId ? session?.projectCredentialIds || [] : draftProjectCredentialIds,
+    selectProjectCredentials,
     sandboxLocked: !!session?.runId,
     sandboxBusy,
-    workspaceSandbox,
-    workspaceExecution,
-    workspaceExecutionError,
+    workspaceSandbox: workspaceSandbox || null,
+    workspaceExecution: workspace?.execution || null,
+    workspaceExecutionError: workspace?.error || "",
     ...executionMachines,
     selectSandbox,
     models: executorModels,
     executor,
     executors: user ? availableExecutors : [],
+    missingServerCLI,
     setExecutor: chooseExecutor,
     sessions,
     session,

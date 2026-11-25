@@ -30,6 +30,7 @@ const (
 	RunnerWorkspaceOperationLog               = "log"
 	RunnerWorkspaceOperationCommit            = "commit"
 	RunnerWorkspaceOperationBrowser           = "browser"
+	RunnerWorkspaceOperationPreviewService    = "preview_service"
 	RunnerWorkspaceOperationCheckouts         = "checkouts"
 	RunnerWorkspaceOperationMaintenance       = "maintenance"
 	RunnerWorkspaceOperationLoginModels       = "login_models"
@@ -89,6 +90,7 @@ type RunnerWorkspaceRequest struct {
 	GitSSHKnownHosts      *GitSSHKnownHosts         `json:"gitSshKnownHosts,omitempty"`
 	// TerminalGitHTTPCredentials belongs to TerminalOwner and is sent only on open.
 	TerminalGitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"terminalGitHttpCredentials,omitempty"`
+	PreviewService             *WorkspacePreviewServiceRequest       `json:"previewService,omitempty"`
 	// WorkspaceRunID selects the shared checkout owner; RunID continues to
 	// identify this run's independent sandbox, terminal scope and locks.
 	Browser         *BrowserRequest     `json:"browser,omitempty"`
@@ -151,7 +153,8 @@ type WorkspaceCheckpointTransfer struct {
 // IsCancelableRunnerWorkspaceOperation identifies synchronous requests that
 // hold a workspace fence. Conversation processes have their own stop protocol.
 func IsCancelableRunnerWorkspaceOperation(op string) bool {
-	return IsWorkspaceCheckpointTransferOperation(op) || op == RunnerWorkspaceOperationCheckpoint || op == RunnerWorkspaceOperationPrepare
+	return IsWorkspaceCheckpointTransferOperation(op) || op == RunnerWorkspaceOperationCheckpoint ||
+		op == RunnerWorkspaceOperationPrepare || op == RunnerWorkspaceOperationPreviewService
 }
 
 func IsWorkspaceCheckpointTransferOperation(op string) bool {
@@ -175,6 +178,9 @@ const (
 	// WorkspaceErrorTerminalActive: an exclusive human terminal holds the
 	// workspace; waiting does not help until the user closes it.
 	WorkspaceErrorTerminalActive = "workspace_terminal_active"
+	// WorkspaceErrorConversationState carries a safe, conversation-relative
+	// preparation error from the execution machine.
+	WorkspaceErrorConversationState = "conversation_state"
 )
 
 // WorkspaceRestoreStatus describes restoration separately from SOP execution.

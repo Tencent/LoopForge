@@ -14,13 +14,14 @@
   <link rel="stylesheet" href="/assets.css?v=20260823v1">
   <link rel="stylesheet" href="/platform.css?v=20261121settingsrows">
   <link rel="stylesheet" href="/observability.css?v=20261031metrics2">
-  <link rel="stylesheet" href="/artifacts.css?v=20260914r3">
+  <link rel="stylesheet" href="/artifacts.css?v=20261122artifactfeedback">
   <link rel="stylesheet" href="/sops.css?v=20261030cards1">
   <link rel="stylesheet" href="/sync.css?v=20261021schedule1">
   <link rel="stylesheet" href="/access.css?v=20261031v1">
   <link rel="stylesheet" href="/product-v3.css?v=20261030runs1">
   <link rel="stylesheet" href="/product-v4.css?v=20261031req2">
   <link rel="stylesheet" href="/app/harness-ui.css?v=20261031req1">
+  <link rel="stylesheet" href="/app/project-credentials.css">
   <link rel="stylesheet" href="/assistant-models.css">
   <link rel="stylesheet" href="/bots.css">
   <link rel="stylesheet" href="/knowledge.css?v=20261113evo1">
@@ -45,6 +46,7 @@
   <link rel="stylesheet" href="/app/sops-harness.css">
   <link rel="stylesheet" href="/app/sop-catalog.css">
   <link rel="stylesheet" href="/app/observability-harness.css?v=20261030obs1">
+  <link rel="stylesheet" href="/app/observability-dashboard.css">
   <link rel="stylesheet" href="/app/topbar-harness.css?v=20261030tb1">
   <link rel="stylesheet" href="/app/approvals-harness.css?v=20261030ap1">
   <style>
@@ -143,6 +145,7 @@
       <p>项目</p>
       <button class="nav" data-view="projects"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="users" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><g class="team-front"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1"/></g><g class="team-back"><path d="M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5v1"/></g></svg></span><span class="nav-label">项目配置</span></button>
       <button class="nav" data-view="bots" aria-label="通道管理" title="通道管理"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="robot" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="8" width="16" height="11" rx="2"/><path class="antenna" d="M12 3v5"/><path class="eyes" d="M8 13h.01M16 13h.01"/><path class="mouth" d="M9 17h6"/></svg></span><span class="nav-label">通道管理</span></button>
+      <button class="nav" data-view="projectCredentials"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="key" data-icon-motion="idle" width="15" height="15" aria-hidden="true"></svg></span><span class="nav-label">凭据管理</span></button>
       <p>流程与任务</p>
       <button class="nav" data-view="sops" data-nav-match="flow"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="workflow" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="node-a" cx="6" cy="6" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-b" cx="6" cy="18" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-c" cx="18" cy="12" r="2.2" fill="currentColor" fill-opacity="0"/><path pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55"/><path class="signal" pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55" opacity="0" stroke-width="2.5"/></svg></span><span class="nav-label">流程模板</span></button>
       <button class="nav" data-view="runs"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="runs" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path class="motion-target" d="M10 9l5 3-5 3z"/></svg></span><span class="nav-label">运行记录</span></button>
@@ -153,7 +156,7 @@
       <button class="nav" data-view="evolution"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="sparkles" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8z"/></svg></span><span class="nav-label">RSI工作台</span></button>
       <p>运行环境</p>
       <button class="nav" data-view="runners"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="server" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01"/><path d="M7 17.5h.01"/></svg></span><span class="nav-label">执行机器</span></button>
-      <button class="nav" data-view="dockerfiles" data-nav-match="environments sandboxes" data-nav-icon="layers"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="layers" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg></span><span class="nav-label">环境资产</span></button>
+      <button class="nav" data-view="sandboxes" data-nav-icon="layers"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="layers" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg></span><span class="nav-label">沙箱管理</span></button>
       <p>开放与平台</p>
       <button class="nav" data-view="guide"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="key" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3"/><path d="M16 7l3 3"/><path d="M18 5l2 2"/></svg></span><span class="nav-label">访问密钥</span></button>
       <div id="platformNavGroup" hidden><button class="nav" data-view="platform"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="gate" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="gate-shield" d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path class="gate-check agent-check-draw" pathLength="1" d="m9 12 2 2 4-4"/></svg></span><span class="nav-label">平台管理</span></button></div>
@@ -166,6 +169,7 @@
   <div class="shell-main">
   <!-- 顶栏：页面上下文 + 全局项目切换 + 关键操作 -->
   <header class="topbar">
+    <button type="button" id="settingsSidebarExpand" class="settings-navigation-toggle settings-navigation-reopen" aria-label="展开设置导航" title="展开设置导航" aria-controls="settingsSidebar" aria-expanded="false" hidden><svg class="agent-icon harness-icon" data-icon="panel-left" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m13 9 3 3-3 3"/></svg></button>
     <div class="page-context"><b id="pageTitle">AI 工作台</b><span>／ Agent 原生研发协作平台</span></div>
     <button id="commandPaletteTrigger" class="command-trigger" type="button"><span><svg class="agent-icon harness-icon" data-icon="search" data-icon-motion="idle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></span><b>搜索需求、运行、SOP 或 Agent</b><kbd>⌘K</kbd></button>
     <div class="topbar-spacer"></div>
@@ -338,7 +342,7 @@
 
     <section id="botsView" class="view page-view">
       <div class="page-heading bot-heading">
-        <div><h1>通道管理</h1><p>配置企业微信单聊或群聊通知通道，把任务进展发出去；在 SOP 设置或定时任务中选用这些通道。</p></div>
+        <div><h1>通道管理</h1><p>配置企业微信、飞书、钉钉机器人通道：在聊天中查询项目，并把任务进展发出去；在 SOP 设置或定时任务中选用这些通道。点“添加通道”后在“渠道”中选择。</p></div>
         <div class="heading-actions"><button id="botNew" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>添加通道</button></div>
       </div>
       <div id="botsContent"></div>
@@ -503,6 +507,11 @@
               <select id="workflowSandbox" class="select flow-select"></select>
               <div class="flow-field-hint">当前 SOP 节点执行 Shell/Python 及构建命令所绑定的隔离沙箱</div>
             </div>
+            <div id="workflowProjectCredentials" class="flow-field-wrap" hidden>
+              <div class="flow-field-label">项目凭据</div>
+              <div class="project-credential-choices" data-workflow-credential-list role="group" aria-label="项目凭据"></div>
+              <div class="flow-field-hint">选中的凭据会作为环境变量注入本 SOP 的沙箱进程。</div>
+            </div>
             <div class="flow-form-row two-col">
               <div class="flow-field-wrap">
                 <label for="workflowStatus" class="flow-field-label">发布状态</label>
@@ -539,7 +548,7 @@
               <div class="callout-icon"><span data-fd-ic="info" data-s="16"></span></div>
               <div class="callout-text">
                 <b>沙箱与凭证提示</b>
-                <p>沙箱提供统一基础工具与依赖库；执行时凭证按任务责任人个人令牌注入。</p>
+                <p>沙箱提供运行工具与依赖。模型和 Git 根据任务责任人的执行凭据认证。</p>
               </div>
             </div>
           </div>
@@ -589,15 +598,15 @@
             <button id="openAIOrchestrator" class="fd-ai-btn" type="button"><span data-fd-ic="sparkles" data-s="14"></span>AI 编排</button>
           </div>
           <div class="fd-chrome fd-bl" id="canvasToolbar">
-            <button type="button" class="fd-icon-btn" id="canvasUndo" data-tip="撤销 ⌘Z" disabled><span data-fd-ic="undo"></span></button>
-            <button type="button" class="fd-icon-btn" id="canvasRedo" data-tip="重做 ⇧⌘Z" disabled><span data-fd-ic="redo"></span></button>
+            <button type="button" class="fd-icon-btn" id="canvasUndo" aria-label="撤销" data-tip="撤销 ⌘Z" disabled><span data-fd-ic="undo"></span></button>
+            <button type="button" class="fd-icon-btn" id="canvasRedo" aria-label="重做" data-tip="重做 ⇧⌘Z" disabled><span data-fd-ic="redo"></span></button>
             <span class="fd-sep"></span>
-            <button type="button" class="fd-icon-btn" id="canvasZoomOut" data-tip="缩小"><span data-fd-ic="minus"></span></button>
-            <button type="button" class="fd-zoomv" id="canvasZoomValue" data-tip="重置为 100%">100%</button>
-            <button type="button" class="fd-icon-btn" id="canvasZoomIn" data-tip="放大"><span data-fd-ic="plus"></span></button>
-            <button type="button" class="fd-icon-btn" id="canvasFit" data-tip="适应视图"><span data-fd-ic="fit"></span></button>
-            <button type="button" class="fd-icon-btn" id="canvasArrange" data-tip="自动整理"><span data-fd-ic="layout"></span></button>
-            <button type="button" class="fd-icon-btn on" id="canvasMinimapToggle" data-tip="小地图"><span data-fd-ic="map"></span></button>
+            <button type="button" class="fd-icon-btn" id="canvasZoomOut" aria-label="缩小" data-tip="缩小"><span data-fd-ic="minus"></span></button>
+            <button type="button" class="fd-zoomv" id="canvasZoomValue" aria-label="重置缩放" data-tip="重置为 100%">100%</button>
+            <button type="button" class="fd-icon-btn" id="canvasZoomIn" aria-label="放大" data-tip="放大"><span data-fd-ic="plus"></span></button>
+            <button type="button" class="fd-icon-btn" id="canvasFit" aria-label="适应视图" data-tip="适应视图"><span data-fd-ic="fit"></span></button>
+            <button type="button" class="fd-icon-btn" id="canvasArrange" aria-label="自动整理" data-tip="自动整理"><span data-fd-ic="layout"></span></button>
+            <button type="button" class="fd-icon-btn on" id="canvasMinimapToggle" aria-label="小地图" data-tip="小地图"><span data-fd-ic="map"></span></button>
             <span class="fd-sep fd-lg-sep"></span>
             <div class="fd-legend"><span><i></i>成功</span><span><i class="rj"></i>失败打回</span></div>
           </div>
@@ -642,7 +651,7 @@
       <div class="page-heading obs-heading">
         <div class="obs-title-row"><h1>统计</h1>
           <div class="obs-tabs" id="obsTabs" role="tablist" aria-label="统计分类">
-            <button class="obs-tab active" role="tab" data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量</button>
+            <button class="obs-tab active" role="tab" data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>总览</button>
             <button class="obs-tab" role="tab" data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付<i id="obsDeliveryCount" hidden></i></button>
           </div>
         </div>
@@ -674,6 +683,14 @@
         <div class="pa-tabs-wrap"><div class="pa-tabs" role="tablist" id="projectAdminTabs" aria-label="项目配置分区"></div></div>
         <form id="projectAdminForm" class="pa-body" autocomplete="off"></form>
       </div>
+    </section>
+
+    <section id="projectCredentialsView" class="view page-view">
+      <header class="page-heading">
+        <div><h1>凭据管理</h1><p id="projectCredentialsProject" data-i18n-skip></p></div>
+        <button id="newProjectCredential" type="button" class="button primary" hidden>新增凭据</button>
+      </header>
+      <div id="projectCredentialsContent" class="project-credential-panel" aria-live="polite"></div>
     </section>
 
     <!-- 能力资产 · MCP -->
@@ -712,15 +729,14 @@
       <footer id="kbDrawerFoot" class="kb-drawer-foot" hidden></footer>
     </aside>
 
-    <!-- 项目环境资产 -->
+    <!-- 项目资产：规则、技能与沙箱 -->
     <section id="assetsView" class="view page-view">
       <div id="assetListPane" class="asset-list-pane">
         <div class="page-heading asset-heading">
-          <div><p id="assetPageEyebrow" class="eyebrow">运行环境</p><h1 id="assetPageTitle">环境资产</h1><p id="assetPageDescription">维护当前项目的容器构建定义。</p></div>
+          <div><p id="assetPageEyebrow" class="eyebrow">运行环境</p><h1 id="assetPageTitle">沙箱管理</h1><p id="assetPageDescription">维护当前项目的运行沙箱。</p></div>
           <div class="heading-actions"><button id="newAsset" type="button" class="button primary"><svg class="agent-icon harness-icon" data-icon="plus" width="14" height="14" aria-hidden="true" focusable="false"></svg><span id="newAssetLabel">新建配置</span></button></div>
         </div>
         <div class="asset-type-tabs" role="tablist" aria-label="能力资产类型" data-asset-type-group="capability" hidden><button type="button" role="tab" data-asset-type-tab="mcp" aria-selected="false" tabindex="-1">MCP</button><button type="button" role="tab" data-asset-type-tab="rules" aria-selected="false" tabindex="-1">规则</button><button type="button" role="tab" data-asset-type-tab="skills" aria-selected="false" tabindex="-1">技能</button></div>
-        <div class="asset-type-tabs" role="tablist" aria-label="环境资产类型" data-asset-type-group="environment"><button type="button" role="tab" data-asset-type-tab="dockerfiles" class="active" aria-selected="true">Dockerfile</button><button type="button" role="tab" data-asset-type-tab="environments" aria-selected="false" tabindex="-1">安装脚本</button><button type="button" role="tab" data-asset-type-tab="sandboxes" aria-selected="false" tabindex="-1">沙箱</button></div>
         <div id="assetScopeToolbar" class="asset-toolbar">
           <div id="assetScopeSwitch" class="mcp-scope-switch asset-scope-tabs" aria-label="资产范围"><button type="button" data-asset-scope="project" class="active">本项目<span class="sliding-tab-count" data-asset-scope-count="project">0</span></button><button type="button" data-asset-scope="shared">共享<span class="sliding-tab-count" data-asset-scope-count="shared">0</span></button><button type="button" data-asset-scope="skillhub" hidden>SkillHub 市场</button></div>
           <label id="assetSearchBox" class="asset-search"><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="assetSearch" type="search" placeholder="搜索名称或标识…" aria-label="搜索资产" autocomplete="off"></label>
@@ -752,10 +768,10 @@
       </div>
     </section>
 
-    <!-- 执行机器：本机 / CVM 执行环境（个人） -->
+    <!-- 执行机器：本机 / CVM 执行环境 -->
     <section id="runnersView" class="view page-view">
       <div class="page-heading">
-        <div><h1>执行机器</h1><p>用自己的电脑或 CVM 跑任务，未设默认时在云端执行。</p></div>
+        <div><h1>执行机器</h1><p>连接电脑或 CVM，可将机器共享给多个项目。</p></div>
         <div class="heading-actions"><button id="refreshRunners" class="button ghost" type="button">刷新</button></div>
       </div>
 
@@ -782,7 +798,7 @@
         </div>
       </div>
 
-      <div class="runner-list-heading"><h2>我的机器</h2><span class="runner-count" id="runnerCount">0</span><p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p></div>
+      <div class="runner-list-heading"><h2>可用机器</h2><span class="runner-count" id="runnerCount">0</span><p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p></div>
       <div id="runnersList" class="runner-grid"></div>
     </section>
 
@@ -988,10 +1004,10 @@
         <div class="pa-fs">
           <h5>仓库地址</h5>
           <div data-github-repositories></div>
-          <label class="pa-field"><span class="pa-field-l">Git HTTPS 链接或 Git SSH 地址</span>
+          <label class="pa-field"><span class="pa-field-l">Git 仓库地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
-            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code></span>
-            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。</span>
+            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code><code>git clone http://git.example.org/team/repo.git</code></span>
+            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 Git HTTP(S) 地址或 Git SSH 克隆地址。</span>
           </label>
           <div class="pa-detect" id="repoDrawerDetect" hidden><span class="pa-detect-ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span><div class="pa-detect-m"><b id="repoDrawerDetectName"></b><code id="repoDrawerDetectPath"></code></div><button type="button" class="button ghost small" id="repoDrawerRename">改名</button></div>
           <label class="pa-field" id="repoDrawerNameField" hidden><span class="pa-field-l">仓库名称</span><input class="pa-input mono" name="name" placeholder="留空则自动取项目路径末段"></label>
@@ -1018,7 +1034,14 @@
     </form>
   </aside>
 
-  <div id="artifactModal" class="modal"><div class="modal-card artifact-preview-modal"><button type="button" class="modal-close artifact-close">×</button><div id="artifactPreview"></div></div></div>
+  <dialog id="artifactModal" class="artifact-preview-modal" aria-labelledby="artifactPreviewTitle">
+    <div class="artifact-preview-head">
+      <div id="artifactPreviewHeading" class="artifact-preview-heading"></div>
+      <button type="button" class="button ghost small artifact-close" aria-label="关闭" autofocus>×</button>
+    </div>
+    <div id="artifactPreview"></div>
+    <div id="artifactToastContainer" class="toast-container" aria-live="polite"></div>
+  </dialog>
 
   <div id="syncModal" class="modal">
     <div class="modal-card sync-modal-card">
@@ -1168,9 +1191,12 @@
               </div>
             </div>
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
-              <label>提示词</label>
-              <textarea name="assistantPrompt" class="input" rows="4" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
+              <label for="schedulePromptFallback">提示词</label>
+              <textarea id="schedulePromptFallback" name="assistantPrompt" class="input" rows="4" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
               <p class="schedule-field-hint">到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动 SOP、操作工作区及浏览器。</p>
+            </div>
+            <div data-schedule-reference-editor hidden>
+              <div id="schedulePromptEditor"></div>
             </div>
           </div>
           <div data-schedule-kind="assistant" class="schedule-notifications" hidden><h3>Bot 通知</h3><p class="schedule-field-hint">可把执行结果、AI 摘要或自定义消息发送到项目 Bot。</p><div id="scheduleNotificationEditor"></div></div>
@@ -1194,6 +1220,7 @@
         <div class="shared-schedule-section-head"><b>业务参数</b><button id="sharedScheduleAddParameter" type="button" class="button ghost small">添加参数</button></div>
         <div id="sharedScheduleParameterRows" class="shared-schedule-parameter-rows"></div>
         <label>版本说明<input class="input" name="changeNote" maxlength="1000" placeholder="说明本次调整，供订阅项目决定是否升级"></label>
+        <p id="sharedSchedulePublishReferences" class="schedule-field-hint"></p>
         <p id="sharedSchedulePublishError" class="schedule-field-hint" role="status"></p>
         <div class="shared-schedule-actions"><button class="button primary" type="submit">发布 v1</button></div>
       </form>
@@ -1299,6 +1326,7 @@
   <script src="/app/sops.js"></script>
   <script src="/app/issue-model.js"></script>
   <script src="/app/projects.js"></script>
+  <script src="/app/project-credentials.js"></script>
   <script src="/app/github-connect.js"></script>
   <script src="/app/project-wizard.js"></script>
   <script src="/app/repo_drawer.js"></script>
@@ -1328,12 +1356,14 @@
   <script src="/app/runs.js"></script>
   <script src="/app/run-activation.js"></script>
   <script src="/app/platform-ssh-hosts.js"></script>
+  <script src="/app/platform-https-hosts.js"></script>
   <script src="/app/workbench.js?v=20261121settingsrows"></script>
   <script src="/app/git-ssh-keys.js?v=20261121settings"></script>
   <script src="/app/git-http-credentials.js?v=20261121settings"></script>
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>
+  <script src="/app/observability-dashboard.js"></script>
   <script src="/app/issue-drawer.js"></script>
   <script src="/app/revisions.js"></script>
   <script src="/app/harness-motion.js"></script>

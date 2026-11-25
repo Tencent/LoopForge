@@ -188,7 +188,7 @@ func TestSkillMentionsAreScopedHintedAndWrittenToHome(t *testing.T) {
 	root := t.TempDir()
 	// Sharing installs the skill on a project turn that never mentions it.
 	plain := assistantRequest{ProjectID: "workbench", Messages: []assistantMessage{{Role: "user", Content: "写一下"}}}
-	if err := h.writeConversationAssets(root, plain); err != nil {
+	if err := h.writeConversationAssets(root, plain, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"lint", "shareddoc"} {
@@ -257,7 +257,7 @@ func TestEverySharedSkillIsInstalledWithItsSkillMD(t *testing.T) {
 				req.skills = []domain.SkillDefinition{stored}
 			}
 			root := t.TempDir()
-			if err := h.writeConversationAssets(root, req); err != nil {
+			if err := h.writeConversationAssets(root, req, nil); err != nil {
 				t.Fatal(err)
 			}
 			dir := filepath.Join(root, "home", ".codebuddy", "skills")
@@ -320,7 +320,7 @@ func TestEverySharedSkillIsInstalledHoweverManyAreShared(t *testing.T) {
 	}
 	for _, project := range []string{"workbench", ""} {
 		root := t.TempDir()
-		if err := h.writeConversationAssets(root, assistantRequest{ProjectID: project}); err != nil {
+		if err := h.writeConversationAssets(root, assistantRequest{ProjectID: project}, nil); err != nil {
 			t.Fatal(err)
 		}
 		entries, err := os.ReadDir(filepath.Join(root, "home", ".codebuddy", "skills"))

@@ -300,6 +300,66 @@ describe("conversation hooks", () => {
     }
   });
 
+  test.each([
+    ["codex", "gpt-5.5", false],
+    ["claude-code", "claude-sonnet-4-6", true],
+  ])("uses the selected runner authentication to choose %s models", async (executor, accountID, saved) => {
+    const original = apiMock.getMockImplementation();
+    const gatewayModel = { id: `${executor}:gateway/model`, engine: executor, efforts: ["low"] };
+    const accountModel = { id: accountID, discoveredReasoningEfforts: ["high"] };
+    const localRunner = {
+      id: "login-machine",
+      ownerUserId: 1,
+      runtimes: [{ provider: executor, authMode: "local" }],
+      loginModels: saved ? { [executor]: [accountModel] } : {},
+    };
+    const keyRunner = {
+      id: "key-machine",
+      ownerUserId: 1,
+      runtimes: [{ provider: executor, authMode: "personal" }],
+      loginModels: { [executor]: [accountModel] },
+    };
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/runners?mine=1") return [localRunner, keyRunner];
+      if (path === "/api/assistant/models") {
+        const catalog = await original(path, options);
+        return { ...catalog, engines: [{ id: executor, configured: true }], models: [gatewayModel] };
+      }
+      if (path === `/api/assistant/models?executor=${executor}`)
+        return { models: [{ id: accountID, efforts: ["high"] }] };
+      return original(path, options);
+    });
+    const view = renderHook(useChat);
+    try {
+      const { result } = view;
+      await waitFor(() => expect(result.current).toMatchObject({ ready: true, machinesReady: true }));
+      act(() => result.current.setExecutor(executor));
+      await waitFor(() => expect(result.current.model).toBe(gatewayModel.id));
+      await act(() => result.current.selectMachine(localRunner.id));
+      const accountModelID = saved ? `${executor}:${accountID}` : accountID;
+      await waitFor(() => expect(result.current.models.map(model => model.id)).toEqual([accountModelID]));
+      expect(result.current.modelDetails.efforts).toEqual(["high"]);
+
+      await act(() => result.current.selectMachine(keyRunner.id));
+      expect(result.current.models).toEqual([gatewayModel]);
+      expect(result.current.modelDetails.efforts).toEqual(["low"]);
+      act(() => result.current.setEffort("low"));
+      await act(() => result.current.selectMachine(localRunner.id));
+      act(() => result.current.setEffort("high"));
+      await act(async () => expect(await result.current.send({ text: "使用账号登录" })).toBe(true));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        executor, model: accountModelID, effort: "high",
+        executionTarget: { pool: "runner", runnerId: localRunner.id },
+      }));
+    } finally {
+      view.unmount();
+      apiMock.mockImplementation(original);
+      localStorage.removeItem("loopforge.assistant.executor");
+      localStorage.removeItem(`loopforge.assistant.effort.${executor}.${accountID}`);
+      localStorage.removeItem(`loopforge.assistant.effort.${executor}.gateway/model`);
+    }
+  });
+
   test("restores the conversation's unsent choices even after choosing a stronger model elsewhere", async () => {
     const original = apiMock.getMockImplementation();
     apiMock.mockImplementation(async (path, options) => {
@@ -539,7 +599,7 @@ describe("conversation hooks", () => {
         { id: "mac", name: "Mac", status: "online", ownerUserId: 1,
           runtimes: [{ provider: "agy", authMode: "local" }] },
       ]);
-      if (path === "/api/runners/default") return Promise.resolve({ runnerId: "mac" });
+      if (path === "/api/runners/default?conversation=1") return Promise.resolve({ runnerId: "mac" });
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body) => path === "/api/runners/mac/models/probe"
@@ -639,7 +699,7 @@ describe("conversation hooks", () => {
     let completeProbe;
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/runners?mine=1") return runners;
-      if (path === "/api/runners/default") return { runnerId: "runner-a" };
+      if (path === "/api/runners/default?conversation=1") return { runnerId: "runner-a" };
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body, method) => {
@@ -709,7 +769,7 @@ describe("conversation hooks", () => {
       ? new Promise((resolve) => { completeMachines = () => resolve(runners); })
       : Promise.resolve(runners);
     apiMock.mockImplementation((path, options) => {
-      if (path === "/api/runners?mine=1") return machines;
+      if (path === "/api/runners?mine=1" || path === "/api/runners?projectId=p1") return machines;
       if (path === "/api/assistant/sessions/agy-session") return Promise.resolve(stored);
       return originalAPI(path, options);
     });
@@ -1122,26 +1182,38 @@ describe("conversation hooks", () => {
   });
 
   test("keeps machine choices local and binds the final choice on the first send", async () => {
-    const { result } = renderHook(() => useChat());
-    await waitFor(() => expect(result.current.machinesReady).toBe(true));
-    await act(() => result.current.selectMachine(""));
-    await act(() => result.current.selectMachine("mac"));
-    await act(() => result.current.refreshMachines());
-    expect(result.current.defaultRunnerId).toBe("mac");
-    expect(result.current.session).toBeNull();
-    expect(result.current.activeId).toBeNull();
-    expect(location.search).not.toContain("session=");
-    expect(writeMock).not.toHaveBeenCalled();
-    await act(() => result.current.send({text:"开始"}));
-    expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations",expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"}}));
-    await act(async () => expect(await result.current.selectMachine("")).toBe(false));
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation((path, options) => path === "/api/runners?mine=1"
+      ? Promise.resolve([{ id: "mac", ownerUserId: 1, status: "online" }])
+      : original(path, options));
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.machinesReady).toBe(true));
+      await act(() => result.current.selectMachine(""));
+      await act(() => result.current.selectMachine("mac"));
+      await act(() => result.current.refreshMachines());
+      expect(result.current.defaultRunnerId).toBe("mac");
+      expect(result.current.session).toBeNull();
+      expect(result.current.activeId).toBeNull();
+      expect(location.search).not.toContain("session=");
+      expect(writeMock).not.toHaveBeenCalled();
+      await act(() => result.current.send({text:"开始"}));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations",expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"}}));
+      await act(async () => expect(await result.current.selectMachine("")).toBe(false));
+    } finally {
+      apiMock.mockImplementation(original);
+    }
   });
 
   test("waits for the personal machine default before allowing the first send", async () => {
     const original=apiMock.getMockImplementation();
     let release;
     const delayed=new Promise(resolve=>{release=resolve;});
-    apiMock.mockImplementation((path,opts)=>path==="/api/runners/default"?delayed:original(path,opts));
+    apiMock.mockImplementation((path, opts) => {
+      if (path === "/api/runners/default?conversation=1") return delayed;
+      if (path === "/api/runners?mine=1") return Promise.resolve([{ id: "mac", ownerUserId: 1 }]);
+      return original(path, opts);
+    });
     try {
       const {result}=renderHook(()=>useChat());
       await waitFor(()=>expect(result.current.ready).toBe(true));
@@ -1419,6 +1491,14 @@ describe("conversation hooks", () => {
       if (path === "/api/users")
         return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }];
       if (path === "/api/assistant/sessions") return [];
+      if (path === "/api/runs/active-workspace") {
+        return {
+          workflowSnapshot: {
+            sandboxProfileId: "mac-tools",
+            sandboxSnapshot: { profile: { id: "mac-tools", driver: "native" } },
+          },
+        };
+      }
       if (path.includes("/generation"))
         return {
           id: "g-stream",
@@ -1436,6 +1516,19 @@ describe("conversation hooks", () => {
     await waitFor(() => expect(result.current.ready).toBe(true));
     act(() => result.current.open("s1"));
     await waitFor(() => expect(sources).toHaveLength(1));
+    expect(result.current.workspaceSandbox).toBeNull();
+    await act(async () => {
+      sources[0].generation({
+        data: JSON.stringify({
+          id: "g-stream",
+          status: "running",
+          runtimeMode: "workspace",
+          workspaceRunId: "active-workspace",
+          events: [],
+        }),
+      });
+    });
+    await waitFor(() => expect(result.current.workspaceSandbox).toEqual({ id: "mac-tools", driver: "native" }));
     await act(async () => {
       sources[0].generation({
         data: JSON.stringify({

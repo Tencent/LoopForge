@@ -124,6 +124,9 @@ func (e assistantCLIMissingError) Error() string {
 	if runtime.OnDemandInstallable(e.engine) {
 		return fmt.Sprintf("%s（%s）没有安装在当前服务器上。安装后即可在对话里使用。", label, e.engine)
 	}
+	if e.engine == runtime.AgentCLIZCode {
+		return "当前平台服务器未检测到 ZCode CLI。请管理员安装官方 ZCode CLI 并将 zcode 加入 PATH；使用 Docker 工作区时，也需在工作区镜像中预装。"
+	}
 	return fmt.Sprintf("服务器没有安装 %s（%s）。请联系管理员安装后再使用。", label, e.binary)
 }
 
@@ -208,9 +211,15 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 		return assistantCLIInvocation{}, err
 	}
 	sessionID := assistantClaudeSessionID(o.SessionID)
+	maxTurns := nativeAssistantUnlimitedTurns
+	settingSources := "user"
+	if o.ReviewOnly {
+		maxTurns = "1"
+		settingSources = ""
+	}
 	argv := []string{o.Bin, "-p", "--verbose", "--output-format", "stream-json", "--include-partial-messages",
-		"--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", o.SystemPrompt,
-		"--mcp-config", mcpPath, "--strict-mcp-config", "--settings", settingsPath, "--setting-sources", "user",
+		"--max-turns", maxTurns, "--system-prompt", o.SystemPrompt,
+		"--mcp-config", mcpPath, "--strict-mcp-config", "--settings", settingsPath, "--setting-sources", settingSources,
 		"--permission-mode", "bypassPermissions"}
 	if o.Model != "" {
 		argv = append(argv, "--model", o.Model)

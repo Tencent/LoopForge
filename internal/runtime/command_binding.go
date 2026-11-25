@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"agentflow/internal/domain"
-	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
 	"context"
 	"fmt"
@@ -50,6 +49,7 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
 	bound.environment["GH_TOKEN"] = ""
 	bound.environment["GITHUB_TOKEN"] = ""
+	bound.environment[workspaceGitBinsEnv] = ""
 	for _, key := range workspaceGitSecretEnvironment {
 		bound.environment[key] = ""
 	}
@@ -115,13 +115,17 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			}
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
 			bound.environment["CODEBUDDY_BASE_URL"] = strings.TrimSpace(credentials.CodeBuddy.BaseURL)
-		case BindGit:
+		case BindGit, BindGitWorkspace:
 			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err
 			}
-		case BindGitWorkspace:
-			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
-				return CommandSpec{}, err
+			// A direct native command can resolve its executable before the
+			// bound PATH takes effect. Launch the same Git shim as a shell would.
+			if len(bound.Argv) > 0 && bound.Argv[0] == "git" && sandboxDriver(sandbox) != "docker" {
+				httpBin, _, _ := strings.Cut(bound.environment[workspaceGitBinsEnv], string(os.PathListSeparator))
+				if filepath.Base(httpBin) == workspaceGitHTTPBin {
+					bound.Argv = append([]string{filepath.Join(httpBin, "git")}, bound.Argv[1:]...)
+				}
 			}
 		case BindExtra:
 			// Missing credentials export as empty strings on purpose: a child
@@ -151,11 +155,7 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			if bound.environment["ANTHROPIC_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人配置中配置")
 			}
-			baseURL := strings.TrimSpace(credentials.ClaudeCode.BaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.anthropic.com"
-			}
-			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
+			BindClaudeCodeEndpoint(bound.environment, credentials.ClaudeCode.BaseURL)
 		case BindAgentCLI:
 			var home AgentCLIHome
 			homeEnv := bound.environment["HOME"]
@@ -316,10 +316,14 @@ func privateHomePaths(sandbox Sandbox, workspace string, command CommandSpec) (h
 // It requests credentials through a live relay rather than writing tokens.
 func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
 	environment["GIT_TERMINAL_PROMPT"] = "0"
-	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
+	runtimeHost, err := EnsureControlDirectory(workspace, "runtime")
+	if err != nil {
 		return fmt.Errorf("create git runtime dir: %w", err)
 	}
-	runtimeHost := mcpCallHostDir(workspace)
+	runtimeHost, err = filepath.Abs(runtimeHost)
+	if err != nil {
+		return fmt.Errorf("resolve git runtime dir: %w", err)
+	}
 	runtimePath := func(rel string) string {
 		if sandboxDriver(sandbox) == "docker" {
 			return mcpCallGuestPath(rel)
@@ -349,50 +353,56 @@ func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace
 	environment["GIT_CONFIG_COUNT"] = "1"
 	environment["GIT_CONFIG_KEY_0"] = "credential.helper"
 	environment["GIT_CONFIG_VALUE_0"] = ""
+	environment[workspaceGitBinsEnv] = ""
 	if gateway == "" || hosts == "" {
 		delete(environment, SessionGatewayEnv)
 		environment[GitHostsEnv] = ""
 		return nil
 	}
-	hostBin := filepath.Join(runtimeHost, "bin")
-	if _, err := EnsureControlDirectory(workspace, "runtime", "bin"); err != nil {
-		return fmt.Errorf("create git helper dir: %w", err)
+	hasPlainHTTP := strings.Contains(","+hosts, ",http://")
+	tools, httpBin, err := prepareWorkspaceGitTools(ctx, sandbox, workspace, hasPlainHTTP)
+	if err != nil {
+		return fmt.Errorf("prepare Runner Git helpers: %w", err)
 	}
-	if err := installMCPCallHelperForSandbox(ctx, sandbox, workspace, filepath.Join(hostBin, "agentflow-helper")); err != nil {
-		return fmt.Errorf("install git credential helper: %w", err)
-	}
-	helper := runtimePath("bin/agentflow-helper")
-	for _, name := range []string{"gh", "glab"} {
-		script := "#!/bin/sh\nexec " + shellSingleQuote(helper) + " cli-shim " + name + " \"$@\"\n"
-		if err := writeManagedFile(workspace, filepath.Join(hostBin, name), []byte(script), 0o700); err != nil {
-			return fmt.Errorf("write %s wrapper: %w", name, err)
-		}
-	}
+	bin := filepath.Join(tools, "bin")
+	helper := filepath.Join(bin, "agentflow-helper")
 	// The empty helper entry drops every helper configured before it (system,
 	// global, repository), so a stored credential never answers instead.
-	environment["GIT_CONFIG_COUNT"] = "2"
 	environment["GIT_CONFIG_KEY_0"] = "credential.helper"
 	environment["GIT_CONFIG_VALUE_0"] = ""
 	environment["GIT_CONFIG_KEY_1"] = "credential.helper"
 	environment["GIT_CONFIG_VALUE_1"] = "!" + shellSingleQuote(helper) + " git-credential"
-	environment[GitHostsEnv] = hosts
+	environment["GIT_CONFIG_COUNT"] = "2"
+	bins := bin
+	if hasPlainHTTP {
+		environment[workspaceGitHTTPOriginEnv] = ""
+		environment[workspaceGitHTTPSystemGitEnv] = ""
+	}
+	if httpBin != "" {
+		bins = httpBin + string(os.PathListSeparator) + bins
+	}
+	environment[workspaceGitBinsEnv] = bins
 	if sandboxDriver(sandbox) != "docker" {
+		// Login shells can reset PATH before the agent calls Git.
+		if httpBin != "" {
+			environment["GIT_EXEC_PATH"] = filepath.Join(tools, workspaceGitDistribution, "exec")
+		}
 		base := environment["PATH"]
 		if base == "" {
 			base = sandboxBasePath(sandbox)
 		}
-		environment["PATH"] = hostBin + string(os.PathListSeparator) + base
+		environment["PATH"] = bins + string(os.PathListSeparator) + base
 	}
 	return nil
 }
 
 // workspaceGitHosts renders host→platform as the sorted "host=platform" list
-// of GitHostsEnv, skipping anything that is not a plain HTTPS host.
+// of GitHostsEnv, skipping anything that is not a canonical Git endpoint.
 func workspaceGitHosts(hosts map[string]string) string {
 	pairs := make([]string, 0, len(hosts))
 	for host, platform := range hosts {
-		scope, err := gitwork.HTTPSHostScope(host)
-		if err != nil || scope != host {
+		endpoint, err := domain.ParseGitHTTPEndpoint(host)
+		if err != nil || endpoint.Scope() != host {
 			continue
 		}
 		var ok bool

@@ -142,7 +142,7 @@ func TestSponsoredExecutorPinsModelAndExplains(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	wf := domain.WorkflowDefinition{ID: "sponsored", Name: "Sponsored", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "sponsored", Name: "Sponsored", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}
 	if err = st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}

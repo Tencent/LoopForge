@@ -80,6 +80,16 @@
 .schedule-tabs button{height:32px;border:0;border-radius:8px;padding:0 10px;background:transparent;color:var(--muted);font-size:12px;font-weight:620;cursor:pointer}
 .schedule-tabs button.is-active{background:var(--panel);color:var(--text);box-shadow:0 1px 2px color-mix(in srgb,var(--text) 10%,transparent)}
 .schedule-field-hint{margin:6px 0 0;font-size:11px;line-height:1.5;color:var(--muted-2)}
+.schedule-reference-list{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;min-height:4px}
+.schedule-reference-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--line-strong);border-radius:8px;background:var(--bg-soft);font-size:11px;color:var(--text)}
+.schedule-reference-chip button{padding:0;border:0;background:none;color:var(--muted);cursor:pointer;font-size:14px;line-height:1}
+.schedule-reference-picker{margin-top:9px;padding:9px;border:1px solid var(--line-strong);border-radius:9px;background:var(--bg-soft)}
+.schedule-reference-toolbar{display:grid;grid-template-columns:minmax(110px,.4fr) minmax(0,1fr);gap:7px;margin-bottom:8px}
+.schedule-reference-option{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:7px;background:transparent;color:var(--text);text-align:left;cursor:pointer}
+.schedule-reference-option:hover{background:var(--hover)}
+.schedule-reference-option:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+.schedule-reference-option small{color:var(--muted-2)}
+.schedule-references .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .schedule-check{display:flex;align-items:flex-start;gap:8px;margin:0;font-size:12px;line-height:1.45;color:var(--text);font-weight:600;cursor:pointer}
 .schedule-check input{margin-top:2px}
 .schedule-check-follow{margin-top:10px}
@@ -130,6 +140,10 @@
 @media(max-width:900px){.align-conflict-sides{grid-template-columns:1fr}}
 @media(max-width:700px){.schedule-job-row{align-items:flex-start;flex-wrap:wrap}.schedule-job-main{flex-basis:100%}}
 
+/* AI 定时任务：提示词与项目资产共用主页的编辑器。 */
+[data-schedule-reference-editor] { grid-column:1 / -1; min-width:0; }
+#schedulePromptEditor { min-width:0; }
+
 /* AI 定时任务：业务导航页与触发配置共用编辑器。 */
 #aiSchedulesView { color:var(--hui-text); }
 #aiSchedulesView .page-heading { display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:22px; }
@@ -154,6 +168,23 @@
 #aiSchedulesView .schedule-enabled { display:inline-flex;align-items:center;gap:6px;flex:none;margin-right:4px;color:var(--hui-secondary);font-size:12px;white-space:nowrap;cursor:pointer; }
 #aiSchedulesView .schedule-enabled span { min-width:3em; }
 #aiSchedulesView .schedule-job-item.is-paused .schedule-job-main b { color:var(--hui-secondary); }
+/* 同名 AI 任务折叠为一组：组头沿用任务行的排版，展开后子行缩进 */
+#aiSchedulesView .schedule-job-group { border-top:1px solid var(--hui-border-soft); }
+#aiSchedulesView .schedule-job-group-head { display:flex;align-items:center;gap:10px;width:100%;padding:14px 16px;border:0;background:transparent;color:var(--hui-text);text-align:left;cursor:pointer;transition:background .18s var(--hui-ease-flow); }
+#aiSchedulesView .schedule-job-group-head:is(:hover, :focus-visible) { background:var(--hui-canvas); }
+#aiSchedulesView .schedule-job-group-head:focus-visible { outline:2px solid var(--hui-focus-ring);outline-offset:-3px; }
+#aiSchedulesView .schedule-job-group-chevron { flex:none;color:var(--hui-muted);transition:transform .18s var(--hui-ease-flow); }
+#aiSchedulesView .schedule-job-group.is-open .schedule-job-group-chevron { transform:rotate(90deg); }
+#aiSchedulesView .schedule-job-group-text { min-width:0;flex:1;display:flex;flex-direction:column;gap:5px; }
+#aiSchedulesView .schedule-job-group-text b { display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:500; }
+#aiSchedulesView .schedule-job-group-name { min-width:0;overflow-wrap:anywhere; }
+#aiSchedulesView .schedule-job-group-text .schedule-kind-tag { flex:none; }
+#aiSchedulesView .schedule-job-group-text > span, #aiSchedulesView .schedule-job-group-text small { color:var(--hui-secondary);font-size:12px;overflow-wrap:anywhere; }
+#aiSchedulesView .schedule-job-group-text > span.schedule-run-live { color:var(--hui-info); }
+#aiSchedulesView .schedule-job-group.is-paused .schedule-job-group-text b { color:var(--hui-secondary); }
+#aiSchedulesView .schedule-job-group-body[hidden] { display:none; }
+#aiSchedulesView .schedule-job-group-body .schedule-job-row { padding-left:42px; }
+@media (prefers-reduced-motion: reduce) { #aiSchedulesView .schedule-job-group-chevron, #aiSchedulesView .schedule-job-group-head { transition:none; } }
 /* AI 任务行的 ⋯ 菜单：面板与选项沿用 .hui-menu 的尺寸与阴影 */
 #aiSchedulesView .schedule-row-more { position:relative;display:inline-flex;flex:none; }
 #aiSchedulesView .schedule-row-more-btn { width:28px;padding:0;justify-content:center;color:var(--hui-muted); }

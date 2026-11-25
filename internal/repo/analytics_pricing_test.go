@@ -45,8 +45,8 @@ func checkAnalyticsPublicPrices(t *testing.T, s *Store) {
 		}
 	})
 	run := domain.Run{ID: id, WorkflowID: "priced", ExecutionContext: domain.TelemetryContext{ProjectID: id}, Status: "succeeded", Usage: domain.TokenUsage{InputTokens: 2e6, OutputTokens: 2e6, TotalTokens: 4e6, CostUSD: .002, CostStatus: "reported"}, Nodes: map[string]*domain.NodeRun{
-		"cn":  {Model: "glm-5.3-flash-ioa", Usage: domain.TokenUsage{InputTokens: 1e6, OutputTokens: 1e6, TotalTokens: 2e6, CostUSD: .001, CostStatus: "reported"}},
-		"usd": {Model: "claude-opus-4-6", Usage: domain.TokenUsage{InputTokens: 1e6, OutputTokens: 1e6, TotalTokens: 2e6, CostUSD: .001, CostStatus: "reported"}},
+		"cn":  {Model: "glm-5.3-flash-ioa", Usage: domain.TokenUsage{InputTokens: 1e6, OutputTokens: 1e6, TotalTokens: 2e6, CostUSD: .001, CostStatus: "estimated"}},
+		"usd": {Model: "claude-opus-4-6", Usage: domain.TokenUsage{InputTokens: 1e6, OutputTokens: 1e6, TotalTokens: 2e6, CostUSD: .001, CostStatus: "estimated"}},
 	}}
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
@@ -70,5 +70,56 @@ func checkAnalyticsPublicPrices(t *testing.T, s *Store) {
 	priced := analyticsPricedRun(partial)
 	if usageCostKnown(priced.Usage) || math.Abs(priced.Usage.CostUSD*7-3.6) > 1e-8 {
 		t.Fatalf("partial recognized amount must survive with incomplete coverage: %+v", priced.Usage)
+	}
+}
+
+func TestAnalyticsReportedCostsAndFallbackReconcile(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	u := domain.TokenUsage{InputTokens: 1e6, OutputTokens: 1e6, TotalTokens: 2e6}
+	zero, reported := u, u
+	zero.CostStatus = "reported"
+	reported.CostStatus, reported.CostUSD = "reported", .25
+	run := domain.Run{ID: "reported-priority", Status: "succeeded", WorkflowID: "reported-priority", ExecutionContext: domain.TelemetryContext{ProjectID: "reported-priority"},
+		Usage: domain.TokenUsage{InputTokens: 3e6, OutputTokens: 3e6, TotalTokens: 6e6}, Nodes: map[string]*domain.NodeRun{
+			"free":     {Model: "glm-5.3-flash", Usage: zero},
+			"reported": {Model: "unknown-model", Usage: reported},
+			"fallback": {Model: "claude-opus-4-6", Usage: u},
+		}}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []string{"", "overview"} {
+		out := s.Analytics(domain.AnalyticsFilter{ProjectID: "reported-priority", Scope: scope})
+		want := (.25 + 30) * 7
+		if math.Abs(out.Summary.TotalCostCNY-want) > 1e-9 || out.Summary.CostUnknownRuns != 0 {
+			t.Fatalf("scope %q: %+v", scope, out.Summary)
+		}
+		modelCost := 0.0
+		for _, model := range out.Models {
+			modelCost += model.CostCNY
+		}
+		if math.Abs(modelCost-want) > 1e-9 || out.RunTraces[0].CostCNY != out.Summary.TotalCostCNY || out.ProjectUsage[0].CostCNY != out.Summary.TotalCostCNY {
+			t.Fatalf("reported and estimated parts do not reconcile: %+v", out)
+		}
+	}
+	stored, _ := s.Run(run.ID)
+	if stored.Nodes["reported"].Usage.CostUSD != .25 || stored.Nodes["free"].Usage.CostStatus != "reported" {
+		t.Fatal("analytics rewrote original billing facts")
+	}
+}
+
+func TestAnalyticsCodeBuddyPlaceholderZeroFallsBack(t *testing.T) {
+	u := domain.TokenUsage{InputTokens: 100, OutputTokens: 10, TotalTokens: 110, CostStatus: "reported"}
+	run := domain.Run{Usage: u, Nodes: map[string]*domain.NodeRun{"work": {Provider: "codebuddy", Model: "claude-sonnet-4-6", Usage: u}}}
+	got := analyticsPricedRun(run)
+	if got.Usage.CostStatus != "estimated" || math.Abs(got.Usage.CostUSD*7-.00315) > 1e-10 {
+		t.Fatalf("historical compatibility zero was treated as free: %+v", got.Usage)
+	}
+	if run.Nodes["work"].Usage.CostStatus != "reported" {
+		t.Fatal("analytics modified the persisted source fact")
 	}
 }

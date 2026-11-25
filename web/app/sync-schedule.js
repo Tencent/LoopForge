@@ -2,6 +2,9 @@ let scheduleNotificationBindings=[];
 let scheduleEditorKind='dispatch';
 let scheduleModalVersion=0;
 let scheduleModalOpener=null;
+let scheduleAssistantReferences=[];
+let schedulePromptEditor=null;
+let scheduleSharedPrompt='';
 // --- Sync Panel (embedded in Issues view) ---
 function sourceBadge(issue){if(!issue.source||issue.source==='local')return '<span class="sync-badge local">本地</span>';if(issue.source==='github')return '<span class="sync-badge local">GitHub</span>';if(issue.source==='gongfeng')return '<span class="sync-badge gongfeng">工蜂</span>';if(issue.source==='tapd')return '<span class="sync-badge tapd">TAPD</span>';return ''}
 function externalLink(issue){if(!issue.externalRef)return '';return `<a href="${escapeHTML(safeURL(issue.externalRef.externalUrl))}" target="_blank" rel="noopener noreferrer" class="ext-link" title="${escapeHTML(issue.externalRef.externalUrl)}">↗</a>`}
@@ -98,6 +101,45 @@ function scheduleIssueStatusValues(job){
   return ['backlog','todo'];
 }
 function scheduleModelAPI(){return window.AgentFlowAssistantModels}
+function scheduleReferenceIdentity(ref){
+  const type=String(ref?.type||'').trim(),id=String(ref?.id||'').trim();
+  return {type,id};
+}
+function scheduleReferenceIdentities(refs){
+  const seen=new Set(),out=[];
+  for(const ref of Array.isArray(refs)?refs:[]){
+    const identity=scheduleReferenceIdentity(ref);
+    const key=`${identity.type}:${identity.id}`;if(seen.has(key))continue;
+    seen.add(key);out.push(identity);
+  }
+  return out;
+}
+function syncSchedulePromptEditor(){
+  const f=$('#scheduleJobForm'),host=$('#schedulePromptEditor');
+  if(!f||!host||f.elements.jobKind.value!=='assistant')return;
+  const mount=window.LoopForgePromptEditor?.mount;
+  if(!mount){
+    if(!document.getElementById('schedulePromptEditorModule')){
+      const script=document.createElement('script');script.id='schedulePromptEditorModule';
+      script.type='module';script.src='/chatbot/prompt-editor.js';
+      script.onerror=()=>{script.remove();if($('#scheduleModal').classList.contains('open'))toast('项目资产输入组件加载失败，提示词仍可编辑；请重新打开任务重试','err')};
+      document.head.append(script);
+    }
+    return;
+  }
+  const version=scheduleModalVersion,projectId=state.projectFilter;
+  const value={scope:version,projectId,text:f.elements.sharedTaskId.value?scheduleSharedPrompt:f.elements.assistantPrompt.value,references:structuredClone(scheduleAssistantReferences),readOnly:!!f.elements.sharedTaskId.value};
+  if(schedulePromptEditor)schedulePromptEditor.setValue(value);
+  else schedulePromptEditor=mount(host,{value,onChange:draft=>{
+    if(version!==scheduleModalVersion||projectId!==state.projectFilter||f.elements.jobKind.value!=='assistant')return;
+    scheduleAssistantReferences=structuredClone(draft.references||[]);
+    if(!f.elements.sharedTaskId.value)f.elements.assistantPrompt.value=draft.text;
+  },onError:message=>toast(message,'err')});
+  f.querySelector('[data-schedule-prompt]').hidden=true;
+  f.querySelector('[data-schedule-reference-editor]').hidden=false;
+  f.elements.assistantPrompt.required=false;
+}
+window.addEventListener('loopforge-prompt-editor-ready',()=>{if($('#scheduleModal')?.classList.contains('open'))syncSchedulePromptEditor()});
 function clarifyModelPickerHTML(disabled){
   return `<div class="feature-model-picker clarify-model-picker" data-clarify-model ${disabled?'data-picker-readonly':''}>${scheduleModelAPI()?.featurePickerHTML()||''}</div>`;
 }
@@ -213,14 +255,15 @@ function bindScheduleModelPicker(){
 async function loadScheduleModels(){
   const picker=scheduleModelAPI();
   if(!picker)return;
-  const version=scheduleModalVersion;
+  const version=scheduleModalVersion,projectId=state.projectFilter;
+  const projectQuery=projectId?`&projectId=${encodeURIComponent(projectId)}`:'';
   let catalog;
   try{
-    catalog=await api('/api/assistant/models?schedule=1',{silent:true});
+    catalog=await api('/api/assistant/models?schedule=1'+projectQuery,{silent:true});
   }catch{
     catalog=await picker.load();
   }
-  if(version!==scheduleModalVersion)return;
+  if(version!==scheduleModalVersion||projectId!==state.projectFilter)return;
   scheduleCatalog=catalog;
   const form=$('#scheduleJobForm');
   const selected=form.elements.assistantModel.value;
@@ -263,6 +306,7 @@ function syncScheduleJobKind(){
   const kind=f.elements.jobKind.value==='assistant'?'assistant':'dispatch';
   f.elements.jobKind.value=kind;
   f.querySelectorAll('[data-schedule-kind]').forEach(el=>{el.hidden=el.dataset.scheduleKind!==kind});
+  f.querySelector('[data-schedule-reference-editor]').hidden=true;
   f.elements.workflowId.required=kind==='dispatch';
   f.elements.maxDispatch.disabled=kind==='assistant';
   f.elements.assistantPrompt.required=kind==='assistant'&&!f.elements.sharedTaskId?.value;
@@ -314,6 +358,8 @@ function fillScheduleJobForm(job={}){
   }
   if(!cron)f.elements.intervalSec.value=interval;
   f.elements.jobKind.value=job.id?scheduleJobKind(job):scheduleEditorKind;
+  scheduleAssistantReferences=Array.isArray(job.references)?structuredClone(job.references):[];
+  scheduleSharedPrompt='';
   f.elements.assistantPrompt.value=job.assistantPrompt||'';
   f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.DEFAULT||'default';
   f.elements.timeoutMinutes.value=job.timeoutMinutes||'';
@@ -333,6 +379,7 @@ function fillScheduleJobForm(job={}){
   syncScheduleJobTiming();
   syncScheduleJobKind();
   fillSharedScheduleForm(job);
+  syncSchedulePromptEditor();
 }
 function projectTriggerJob(){return scheduleJobsInView(state.data.scheduleJobs,state.projectFilter).find(job=>!job.skipDispatch)}
 function resetScheduleJobForm(){fillScheduleJobForm(scheduleEditorKind==='dispatch'?(projectTriggerJob()||{}):{})}
@@ -341,6 +388,7 @@ function closeScheduleJobModal(){
   const modal=$('#scheduleModal');
   if(!modal.classList.contains('open'))return;
   modal.classList.remove('open');
+  schedulePromptEditor?.destroy();schedulePromptEditor=null;
   const editId=scheduleModalOpener?.dataset?.editSchedule;
   const replacement=editId?[...$$('#aiScheduleJobList [data-edit-schedule]')].find(el=>el.dataset.editSchedule===editId):null;
   const versionId=scheduleModalOpener?.dataset?.sharedVersions;
@@ -352,6 +400,7 @@ function closeScheduleJobModal(){
 async function openScheduleJobModal(kind='dispatch',job){
   if(!state.projectFilter)return toast('请先选择项目');
   const version=++scheduleModalVersion,projectId=state.projectFilter;
+  schedulePromptEditor?.destroy();schedulePromptEditor=null;
   scheduleEditorKind=kind==='assistant'?'assistant':'dispatch';
   scheduleModalOpener=document.activeElement;
   if(scheduleModalOpener?.closest('#issueHeadingMenu'))scheduleModalOpener=$('#issueHeadingMore');
@@ -539,10 +588,32 @@ function bindScheduleRowMenus(list){
   document.addEventListener('scroll',e=>{if(!e.target.closest?.('.schedule-row-menu'))closeScheduleRowMenus()},true);
   window.addEventListener('resize',()=>closeScheduleRowMenus());
 }
+// AI jobs sharing a name fold into one collapsed group, placed where the first
+// of them sits; expanded groups stay open across poll re-renders.
+const scheduleGroupExpanded=new Set();
+function scheduleJobGroups(jobs){
+  const groups=new Map();
+  for(const j of jobs){
+    const name=String(j.name||'').trim(),key=JSON.stringify([j.projectId||'',name]);
+    if(!groups.has(key))groups.set(key,{key,name,jobs:[]});
+    groups.get(key).jobs.push(j);
+  }
+  return [...groups.values()];
+}
+function scheduleJobGroupHTML(g,rowHTML){
+  const open=scheduleGroupExpanded.has(g.key);
+  const running=g.jobs.filter(scheduleJobRunning).length,failed=g.jobs.filter(j=>j.lastStatus==='failed').length,enabled=g.jobs.filter(j=>j.enabled).length;
+  const updates=g.jobs.filter(sharedScheduleAvailableUpdate).length;
+  const timings=[...new Set(g.jobs.map(scheduleJobTimingLabel))];
+  const last=g.jobs.map(j=>knownTime(j.lastRunAt)).filter(Boolean).sort((a,b)=>b-a)[0];
+  const summary=[timings.slice(0,3).join('、')+(timings.length>3?` 等 ${timings.length} 种`:''),`已启用 ${enabled}/${g.jobs.length}`,running?`${running} 个运行中`:'',failed?`${failed} 个失败`:'',updates?`${updates} 个待升级`:''].filter(Boolean).join(' · ');
+  const key=escapeHTML(g.key),id=`schedule-group-${g.jobs[0].id}`;
+  return `<div class="schedule-job-group${open?' is-open':''}${running?' is-running':''}${enabled?'':' is-paused'}" data-group-for="${key}"><button type="button" class="schedule-job-group-head" data-schedule-group="${key}" aria-expanded="${open}" aria-controls="${escapeHTML(id)}"><svg class="agent-icon harness-icon schedule-job-group-chevron" data-icon="chevron-right" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="schedule-job-group-text"><b><span class="schedule-kind-tag is-assistant">AI</span><span class="schedule-job-group-name">${escapeHTML(g.name)}</span><span class="hui-badge" data-tone="neutral" data-size="sm">${g.jobs.length} 个</span></b><span class="${running?'schedule-run-live':''}">${escapeHTML(summary)}</span><small>${last?`最近：${last.toLocaleString()}`:'尚未运行'}</small></span></button><div class="schedule-job-group-body" id="${escapeHTML(id)}" ${open?'':'hidden'}>${g.jobs.map(rowHTML).join('')}</div></div>`;
+}
 function renderScheduleJobList(list,jobs,kind,canRun){
   if(!list)return;
   const focused=document.activeElement;
-  const focusAction=['editSchedule','runSchedule','deleteSchedule','scheduleMenu','toggleSchedule'].find(key=>focused?.dataset?.[key]);
+  const focusAction=['editSchedule','runSchedule','deleteSchedule','scheduleMenu','toggleSchedule','scheduleGroup'].find(key=>focused?.dataset?.[key]);
   const focusId=list.contains(focused)&&focusAction&&!focused.closest('.schedule-row-menu')?focused.dataset[focusAction]:null;
   // A poll re-render keeps an open ⋯ menu open (and focused) on its job.
   const openMenu=list.querySelector('.schedule-row-menu:not([hidden])');
@@ -550,7 +621,8 @@ function renderScheduleJobList(list,jobs,kind,canRun){
   if(kind==='dispatch'){
     const job=jobs[0];
     list.innerHTML=job?`<div class="schedule-config-runtime"><div><b>${job.enabled?'已启用':'未启用'} · ${escapeHTML(scheduleJobTimingLabel(job))}</b><span>${escapeHTML(scheduleSourceLabel(job))} · ${scheduleIssueStatusValues(job).map(issueStatusLabel).join('、')}</span><small>${knownTime(job.lastRunAt)?`最近：${knownTime(job.lastRunAt).toLocaleString()} · 候选 ${job.lastPulled||0}，启动 ${job.lastDispatched||0}`:'尚未运行'}${scheduleJobStatusText(job)?` · ${escapeHTML(scheduleJobStatusText(job))}`:''}</small></div>${scheduleJobTraceActionsHTML(job)}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(job.id)}" ${scheduleJobRunning(job)||!canRun?'disabled':''}>${scheduleJobRunning(job)?'运行中…':'立即运行'}</button></div>${scheduleBlockerHTML(job)}`:'';
-  }else list.innerHTML=jobs.map(j=>{
+  }else{
+  const rowHTML=j=>{
     const assistant=!!j.skipDispatch;
     const kind=assistant?'AI':'触发';
     const running=scheduleJobRunning(j);
@@ -561,7 +633,15 @@ function renderScheduleJobList(list,jobs,kind,canRun){
     const runTitle=running?'任务正在服务端运行，关闭页面不会中断':(canRun?'':'本实例未启用 scheduler');
     const session=assistant&&j.sessionMode==='fixed'?' · 同一会话':'';
     return `<div class="schedule-job-item${running?' is-running':''}${assistant&&!j.enabled?' is-paused':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))}${assistant?'':` · ${j.enabled?'已启用':'已停用'}`}${assistant?session:` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${assistant?scheduleEnabledSwitchHTML(j):''}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button>${scheduleRowMenuHTML(j)}</div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
-  }).join('')||'<div class="sync-empty">当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。</div>';
+  };
+  list.innerHTML=scheduleJobGroups(jobs).map(g=>g.jobs.length>1?scheduleJobGroupHTML(g,rowHTML):rowHTML(g.jobs[0])).join('')||'<div class="sync-empty">当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。</div>';
+  list.querySelectorAll('[data-schedule-group]').forEach(b=>b.onclick=()=>{
+    const key=b.dataset.scheduleGroup;
+    if(scheduleGroupExpanded.has(key))scheduleGroupExpanded.delete(key);else scheduleGroupExpanded.add(key);
+    renderScheduleJobs();
+  });
+  window.AgentFlowHarnessIcons?.hydrate(list);
+  }
   list.querySelectorAll('[data-edit-schedule]').forEach(b=>b.onclick=()=>{
     const job=(state.data.scheduleJobs||[]).find(j=>j.id===b.dataset.editSchedule);
     if(!job)return;
@@ -577,7 +657,7 @@ function renderScheduleJobList(list,jobs,kind,canRun){
   list.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
   bindScheduleRowMenus(list);
   if(reopenId){const trigger=[...list.querySelectorAll('[data-schedule-menu]')].find(b=>b.dataset.scheduleMenu===reopenId);if(trigger)openScheduleRowMenu(trigger,{focus:reopenFocus})}
-  if(focusId){const next=[...list.querySelectorAll('[data-edit-schedule],[data-run-schedule],[data-delete-schedule],[data-schedule-menu],[data-toggle-schedule]')].find(el=>el.dataset[focusAction]===focusId&&!el.closest('.schedule-row-menu'));next?.focus()}
+  if(focusId){const next=[...list.querySelectorAll('[data-edit-schedule],[data-run-schedule],[data-delete-schedule],[data-schedule-menu],[data-toggle-schedule],[data-schedule-group]')].find(el=>el.dataset[focusAction]===focusId&&!el.closest('.schedule-row-menu'));next?.focus()}
 
 }
 async function saveScheduleJob(e){
@@ -603,6 +683,7 @@ async function saveScheduleJob(e){
     cron:cron?f.elements.cron.value.trim():'',
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
+    references:assistant?scheduleReferenceIdentities(scheduleAssistantReferences):[],
     timeoutMinutes:assistant&&f.elements.timeoutMinutes.value!==''?Number(f.elements.timeoutMinutes.value):undefined,
     sessionMode:assistant&&f.elements.sessionMode?f.elements.sessionMode.value:'',
     sessionKeep:assistant&&f.elements.sessionKeep?Number(f.elements.sessionKeep.value)||50:0,
@@ -610,6 +691,9 @@ async function saveScheduleJob(e){
   };
   if(assistant&&typeof sharedScheduleFormPayload==='function')Object.assign(payload,sharedScheduleFormPayload(f));
   if(!payload.name)return toast('请填写任务名称');
+  if(assistant&&!payload.assistantPrompt&&!payload.sharedTaskId){schedulePromptEditor?.focus();return toast('请填写 AI 定时任务的提示词')}
+  if(assistant&&payload.references.some(ref=>!['agent','skill','sop','issue','run','repository'].includes(ref.type)||!ref.id))return toast('AI 定时任务引用的项目资产无效，请重新选择后保存');
+  if(assistant&&payload.references.length>12)return toast('AI 定时任务最多引用 12 个项目资产');
   if(assistant&&!payload.assistantPrompt&&!payload.sharedTaskId)return toast('请填写 AI 定时任务的提示词');
   if(assistant&&!f.elements.timeoutMinutes.validity.valid)return toast('执行超时必须为 1–240 分钟');
   if(!assistant&&!payload.workflowId)return toast('请选择默认 SOP');

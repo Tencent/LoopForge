@@ -84,6 +84,7 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 	if h == nil || h.repo == nil {
 		return result, fmt.Errorf("未连接数据源")
 	}
+	ctx := withAssistantExecMode(context.Background(), assistantExecModeForApproval(AssistantApprovalAuto))
 	prompt := strings.TrimSpace(job.AssistantPrompt)
 	if job.SharedTaskID != "" {
 		version, verr := h.repo.SharedScheduleVersion(job.SharedTaskID, job.SharedTaskVersion)
@@ -94,6 +95,11 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 		if err != nil {
 			return result, err
 		}
+		if err := h.repo.ValidateSharedScheduleAssets(version); err != nil {
+			return result, err
+		}
+		job.References = domain.CloneAssistantReferences(version.References)
+		ctx = context.WithValue(ctx, scheduledAssetsKey{}, scheduledAssets{ProjectID: job.ProjectID, Version: version})
 	}
 	if prompt == "" {
 		return result, nil
@@ -102,7 +108,7 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 	if err != nil {
 		return result, err
 	}
-	model := scheduledAssistantDefault(h.repo, user, job.AssistantModel)
+	model := scheduledAssistantDefault(h.repo, user, job.ProjectID, job.AssistantModel)
 	if shared != nil {
 		// On the shared key a run only uses the models the administrator
 		// allows, and never silently switches to another one.
@@ -112,14 +118,18 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 		}
 		model = allowed
 	}
+	refs, err := h.normalizeScheduledReferencesIn(ctx, job.ProjectID, job.References)
+	if err != nil {
+		return result, err
+	}
 	task := assistantTask{
 		Name:          job.Name,
 		Prompt:        prompt,
+		References:    refs,
 		Model:         model,
 		ProjectID:     job.ProjectID,
 		Notifications: domain.CloneNotificationBindings(job.Notifications),
 	}
-	ctx := withAssistantExecMode(context.Background(), assistantExecModeForApproval(AssistantApprovalAuto))
 	ctx = withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, job.ID)
 	policy := scheduledSessionPolicy{KeepHistory: true, Timeout: job.ExecutionTimeout(), Opened: opened, ReportUsage: func(model string, usage *domain.TokenUsage) {
 		result.Model, result.Usage = model, usage
@@ -142,6 +152,96 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 	}
 	result.Message = firstNonEmpty(task.NotificationResult, task.LastMessage)
 	return result, nil
+}
+
+// normalizeScheduledReferences shares the homepage resolver and stores only
+// stable asset identity. Names and project metadata are presentation details;
+// every execution resolves the current record again through prepareWorkbenchContext.
+func (h *assistantHandlers) normalizeScheduledReferences(projectID string, refs []domain.AssistantReference) ([]domain.AssistantReference, error) {
+	return h.normalizeScheduledReferencesIn(context.Background(), projectID, refs)
+}
+
+func (h *assistantHandlers) normalizeScheduledReferencesIn(ctx context.Context, projectID string, refs []domain.AssistantReference) ([]domain.AssistantReference, error) {
+	if err := h.validateScheduledAssets(ctx, projectID); err != nil {
+		return nil, err
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	if len(refs) > 12 {
+		return nil, fmt.Errorf("AI 定时任务最多引用 12 个项目资产")
+	}
+	// Scheduled prompts use the same reference resolver as the homepage. The
+	// stricter shareability check is applied only when a job is published as a
+	// shared definition; a private job may use any project-visible reference.
+	allowed := map[string]bool{"agent": true, "skill": true, "sop": true, "issue": true, "run": true, "repository": true}
+	seen := map[string]bool{}
+	out := make([]domain.AssistantReference, 0, len(refs))
+	for _, raw := range refs {
+		typ, id := strings.TrimSpace(raw.Type), strings.TrimSpace(raw.ID)
+		if !allowed[typ] {
+			return nil, fmt.Errorf("定时任务引用的项目资产类型无效")
+		}
+		if id == "" {
+			return nil, fmt.Errorf("定时任务引用的项目资产无效")
+		}
+		key := typ + "\x00" + id
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		canonical, _, err := h.workbenchReference(domain.AssistantReference{Type: typ, ID: id}, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("定时任务引用资产 %s/%s 不可用：%w", typ, id, err)
+		}
+		out = append(out, domain.AssistantReference{Type: canonical.Type, ID: canonical.ID})
+	}
+	return out, nil
+}
+
+func (h *assistantHandlers) scheduledMessageReferences(projectID string, refs []domain.AssistantReference) ([]domain.AssistantReference, error) {
+	out := make([]domain.AssistantReference, 0, len(refs))
+	for _, ref := range refs {
+		canonical, _, err := h.workbenchReference(ref, projectID)
+		if err != nil {
+			return nil, err
+		}
+		ownerProject := projectID
+		switch ref.Type {
+		case "issue":
+			if v, ok := h.repo.Issue(ref.ID); ok {
+				ownerProject = v.ProjectID
+			}
+		case "run":
+			if v, ok := h.repo.RunState(ref.ID); ok {
+				ownerProject = v.ExecutionContext.ProjectID
+			}
+		case "repository":
+			if v, ok := h.repo.Repository(ref.ID); ok {
+				ownerProject = v.ProjectID
+			}
+		case "agent":
+			if v, ok := h.repo.Agent(ref.ID); ok && v.Shared {
+				ownerProject = v.ProjectID
+			}
+		case "skill":
+			if v, ok := h.repo.Skill(ref.ID); ok && v.Shared {
+				ownerProject = v.ProjectID
+			}
+		case "sop":
+			if v, ok := h.repo.Workflow(ref.ID); ok && (v.Shared || v.Generic) {
+				if v.ProjectID != "" {
+					ownerProject = v.ProjectID
+				}
+			}
+		}
+		canonical.ProjectID = ownerProject
+		if p, ok := h.repo.Project(ownerProject); ok {
+			canonical.ProjectName = p.Name
+		}
+		out = append(out, canonical)
+	}
+	return out, nil
 }
 
 // scheduleJobAssistantUser picks the saved run-as member, or the project or
@@ -168,14 +268,14 @@ func (h *assistantHandlers) scheduleJobAssistantUser(job domain.ScheduleJob, mod
 	}
 	// Try each candidate's own credentials before considering the shared key.
 	for _, user := range candidates {
-		engine, _ := assistantModelEngine(scheduledAssistantDefault(h.repo, user, model))
-		if scheduleHasPersonalCredential(h.repo, user, engine) {
+		engine, _ := assistantModelEngine(scheduledAssistantDefault(h.repo, user, job.ProjectID, model))
+		if scheduleHasPersonalCredential(h.repo, user, job.ProjectID, engine) {
 			return user, nil, nil
 		}
 	}
 	engine, _ := assistantModelEngine(model)
 	for _, user := range candidates {
-		if user, shared, ok := scheduleCredentialUser(h.repo, user, engine); ok {
+		if user, shared, ok := scheduleCredentialUser(h.repo, user, job.ProjectID, engine); ok {
 			return user, shared, nil
 		}
 	}
@@ -196,14 +296,14 @@ func (h *assistantHandlers) scheduleJobRunAsUser(job domain.ScheduleJob, model s
 	if !scheduleProjectWriter(h.repo, job.ProjectID, user) {
 		return domain.User{}, nil, fmt.Errorf("%s 已不是该项目的可写成员，请编辑并保存一次任务，以你的凭据执行", name)
 	}
-	engine, _ := assistantModelEngine(scheduledAssistantDefault(h.repo, user, model))
-	runUser, shared, ok := scheduleCredentialUser(h.repo, user, engine)
+	engine, _ := assistantModelEngine(scheduledAssistantDefault(h.repo, user, job.ProjectID, model))
+	runUser, shared, ok := scheduleCredentialUser(h.repo, user, job.ProjectID, engine)
 	if !ok {
 		if assistantModelUnspecified(model) {
 			return domain.User{}, nil, fmt.Errorf("任务保存人 %s 缺少可用的执行器凭据，请在个人配置中设置", name)
 		}
 		if assistantSupportsRunnerLogin(engine) {
-			return domain.User{}, nil, fmt.Errorf("任务保存人 %s 缺少 %s 凭据，请在其默认执行机器启用账号登录，或在个人配置填写 API Key", name, assistantEngineLabel(engine))
+			return domain.User{}, nil, fmt.Errorf("任务保存人 %s 缺少 %s 凭据，请将其默认执行机器共享给该项目并启用账号登录，或在个人配置填写 API Key", name, assistantEngineLabel(engine))
 		}
 		if engine != assistantEngineCodeBuddy {
 			return domain.User{}, nil, fmt.Errorf("执行提示词需要 %s 的 %s API Key：请在该账号的个人配置中配置", name, assistantEngineLabel(engine))
@@ -213,9 +313,9 @@ func (h *assistantHandlers) scheduleJobRunAsUser(job domain.ScheduleJob, model s
 	return runUser, shared, nil
 }
 
-// scheduleLoginRunner resolves the actor's configured personal machine at
-// save and run time. At run time an offline machine uses the API Key path.
-func scheduleLoginRunner(r *repo.Store, userID int64, engine string) domain.Runner {
+// scheduleLoginRunner resolves the actor's personal default machine for the
+// task's project. At run time an offline machine uses the API Key path.
+func scheduleLoginRunner(r *repo.Store, userID int64, projectID, engine string) domain.Runner {
 	if r == nil || userID <= 0 || !assistantSupportsRunnerLogin(engine) {
 		return domain.Runner{}
 	}
@@ -225,20 +325,21 @@ func scheduleLoginRunner(r *repo.Store, userID int64, engine string) domain.Runn
 	}
 	machine, ok := r.Runner(id)
 	if !ok || machine.OwnerUserID != userID || !machine.SupportsCLISettings() ||
-		!machine.SupportsProvider(engine) || !runnerUsesLocalLogin(machine, engine) {
+		!machine.SupportsProvider(engine) || !runnerUsesLocalLogin(machine, engine) ||
+		!r.CanUseRunner(machine, projectID, userID) {
 		return domain.Runner{}
 	}
 	return machine
 }
 
-func scheduleHasPersonalCredential(r *repo.Store, user domain.User, engine string) bool {
+func scheduleHasPersonalCredential(r *repo.Store, user domain.User, projectID, engine string) bool {
 	key, _ := assistantEngineCredential(user, engine)
-	return key != "" || scheduleLoginRunner(r, user.ID, engine).ID != ""
+	return key != "" || scheduleLoginRunner(r, user.ID, projectID, engine).ID != ""
 }
 
 // Keep explicit schedule selections, including a CLI's own default. Unset
 // legacy selections can use the actor's default or another available CLI.
-func scheduledAssistantDefault(r *repo.Store, user domain.User, model string) string {
+func scheduledAssistantDefault(r *repo.Store, user domain.User, projectID, model string) string {
 	model = strings.TrimSpace(model)
 	if !assistantModelUnspecified(model) {
 		return model
@@ -247,7 +348,7 @@ func scheduledAssistantDefault(r *repo.Store, user domain.User, model string) st
 		return preferred
 	}
 	for _, option := range assistantEngineOptions(user, false) {
-		if !scheduleHasPersonalCredential(r, user, option.ID) {
+		if !scheduleHasPersonalCredential(r, user, projectID, option.ID) {
 			continue
 		}
 		if option.ID == assistantEngineCodeBuddy {
@@ -261,8 +362,8 @@ func scheduledAssistantDefault(r *repo.Store, user domain.User, model string) st
 
 // scheduleCredentialUser keeps the actor's identity, substituting only the
 // CodeBuddy key and its environment when the platform sponsors the run.
-func scheduleCredentialUser(r *repo.Store, user domain.User, engine string) (domain.User, []string, bool) {
-	if scheduleHasPersonalCredential(r, user, engine) {
+func scheduleCredentialUser(r *repo.Store, user domain.User, projectID, engine string) (domain.User, []string, bool) {
+	if scheduleHasPersonalCredential(r, user, projectID, engine) {
 		return user, nil, true
 	}
 	if engine != assistantEngineCodeBuddy || r == nil {
@@ -287,16 +388,5 @@ func scheduleProjectWriter(r interface {
 		return true
 	}
 	project, ok := r.Project(projectID)
-	if !ok {
-		return false
-	}
-	if project.OwnerID == user.ID {
-		return true
-	}
-	for _, member := range project.Members {
-		if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
-			return true
-		}
-	}
-	return false
+	return ok && project.HasWritableMember(user.ID)
 }

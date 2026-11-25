@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 
@@ -18,10 +18,12 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
       id: 1, loginName: "tester", chineseName: "测试",
       gitHubCredentialConfigured: false, codeBuddyApiKeyConfigured: false,
       ...mockState.savedCredentials,
-    } : user];
+    } : { ...user, gitHttpCredentialsConfigured: Boolean(mockState.httpCredentials.length) }];
   if (path === "/api/projects") return [project];
   if (path === "/api/repositories") return [];
   if (path === "/api/users/1/git-ssh-keys") return mockState.sshKeys || [];
+  if (path === "/api/users/1/git-http-credentials") return mockState.httpCredentials;
+  if (path === "/api/git-http-hosts") return mockState.httpAuthorizations;
   if (path === "/api/workflows")
     return [
       {
@@ -35,7 +37,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
   if (path.includes("/agents")) return [];
   return [];
   });
-  const mockState = { failClone: false, unconfigured: false, sshKeys: null, savedCredentials: {}, gitVerification: null };
+  const mockState = { failClone: false, unconfigured: false, sshKeys: null, httpCredentials: [], httpAuthorizations: [], savedCredentials: {}, gitVerification: null };
   const writeMock = vi.fn(async (path, body) => {
     if (path === "/api/users/1/git-token/verify") return mockState.gitVerification;
     if (path === "/api/projects") return { ...project, ...body };
@@ -74,6 +76,12 @@ describe("QuickAccessWizard", () => {
     expect(parseGongfengRepo("acme/widgets")).toBeNull();
     expect(parseGongfengRepo("https://git.review.test:8443/acme/widgets", "git.review.test:8443")).toMatchObject({
       provider: "gongfeng", project: "acme/widgets", cloneUrl: "https://git.review.test:8443/acme/widgets.git",
+    });
+    expect(parseGongfengRepo("http://git.review.test:8443/acme/widgets.git", "git.review.test:8443")).toMatchObject({
+      provider: "gongfeng", project: "acme/widgets", cloneUrl: "https://git.review.test:8443/acme/widgets.git",
+    });
+    expect(parseGongfengRepo("git clone http://git.review.test:8443/acme/widgets.git", "git.review.test:8443")).toMatchObject({
+      provider: "http", host: "http://git.review.test:8443", cloneUrl: "http://git.review.test:8443/acme/widgets.git",
     });
     expect(parseGongfengRepo("https://github.com/acme/widgets")).toEqual({
       project: "github:acme/widgets",
@@ -147,6 +155,9 @@ describe("QuickAccessWizard", () => {
     await userAction.click(screen.getByRole("button", { name: "完成接入" }));
 
     expect(await screen.findByText("快速接入已完成")).toBeInTheDocument();
+    const roles = screen.getByText("默认角色与流程").closest("section");
+    expect(within(roles).getAllByText("默认角色")).toHaveLength(7);
+    expect(within(roles).getByText("交付汇总")).toBeInTheDocument();
     expect(completed).toHaveBeenCalledWith("p1");
   });
 
@@ -187,6 +198,35 @@ describe("QuickAccessWizard", () => {
       expect(writeMock).toHaveBeenCalledWith("/api/repositories", expect.objectContaining({ provider: "ssh", cloneUrl: "git@gitea.example.org:team/repo.git" }));
     } finally {
       mockState.sshKeys = null;
+    }
+  });
+
+  test("shows the HTTP token as unavailable when the instance authorization is revoked", async () => {
+    const host = "http://git.review.test:8080";
+    mockState.httpCredentials = [{ id: "token", host }];
+    mockState.httpAuthorizations = [{ host, platform: "other" }];
+    const userAction = userEvent.setup();
+    try {
+      render(<QuickAccessWizard open user={user} projects={[project]} projectId="p1" sponsoredModel="m1" />);
+      await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/git-http-hosts"));
+      await userAction.click(screen.getByRole("button", { name: "下一步" }));
+      const address = await screen.findByPlaceholderText(/https:\/\/github.com\/owner\/repo/);
+      await userAction.type(address, `${host}/team/repo.git`);
+      await userAction.click(screen.getByRole("button", { name: "下一步" }));
+      expect(await screen.findByText(/Git HTTP 已配置/)).toBeVisible();
+
+      mockState.httpAuthorizations = [];
+      await act(async () => {
+        window.dispatchEvent(new MessageEvent("message", {
+          origin: location.origin,
+          source: window.parent,
+          data: { type: "agentflow-credentials-changed" },
+        }));
+      });
+      expect(await screen.findByText(/Git HTTP 未配置/)).toBeVisible();
+    } finally {
+      mockState.httpCredentials = [];
+      mockState.httpAuthorizations = [];
     }
   });
 

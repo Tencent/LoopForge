@@ -6,6 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,7 +31,7 @@ func TestRetryAsyncRestoreSurvivesDisconnectAndReusesBackgroundOperation(t *test
 	run, _ := a.repo.RunState("shared-run")
 	run.Status = "failed"
 	run.WorkflowSnapshot.Nodes = []domain.WorkflowNode{{ID: "work", Type: "script", Script: "true", MaxAttempts: 1}}
-	run.WorkflowSnapshot.SandboxProfileID = "local"
+	run.WorkflowSnapshot.SandboxProfileID = "test-native"
 	run.Nodes = map[string]*domain.NodeRun{"work": {NodeID: "work", Status: "failed", Attempt: 1}}
 	run.ExecutionContext.ExecutionMode, run.ExecutionContext.ExecutionRunnerID = domain.ExecutionModeRunner, "restore-runner"
 	if err := a.repo.PutRun(run); err != nil {
@@ -180,7 +184,14 @@ func TestWorkspaceRestoreEligibilityUsesWorkspaceEditAccess(t *testing.T) {
 	}
 	run.Status = "succeeded"
 	run.WorkspaceCleanedAt = now
+	run.Nodes = map[string]*domain.NodeRun{"sub": {NodeID: "sub", Status: "succeeded", ChildRunID: "shared-child"}}
 	if err = h.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	child := domain.Run{ID: "shared-child", Status: "succeeded", ExecutionContext: run.ExecutionContext}
+	child.ExecutionContext.ParentRunID = run.ID
+	child.ExecutionContext.WorkspaceRunID = run.ID
+	if err = h.repo.PutRun(child); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,20 +210,22 @@ func TestWorkspaceRestoreEligibilityUsesWorkspaceEditAccess(t *testing.T) {
 		{"owner", owner, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			request, response := workbenchContext(tc.user, http.MethodGet, workspace, bytes.NewBuffer(nil))
-			router.ServeHTTP(response, request.Request)
-			var result struct {
-				Available         bool       `json:"available"`
-				Restorable        *bool      `json:"restorable"`
-				CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
-			}
-			err := json.Unmarshal(response.Body.Bytes(), &result)
-			if response.Code != http.StatusOK || err != nil || result.Available || result.CheckpointSavedAt == nil || result.Restorable == nil || *result.Restorable != tc.restorable {
-				t.Fatalf("restorable should be %v for %s: %d %s", tc.restorable, tc.name, response.Code, response.Body)
+			for _, path := range []string{workspace, "/api/runs/shared-child/workspace"} {
+				request, response := workbenchContext(tc.user, http.MethodGet, path, bytes.NewBuffer(nil))
+				router.ServeHTTP(response, request.Request)
+				var result struct {
+					Available         bool       `json:"available"`
+					Restorable        *bool      `json:"restorable"`
+					CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
+				}
+				err := json.Unmarshal(response.Body.Bytes(), &result)
+				if response.Code != http.StatusOK || err != nil || result.Available || result.CheckpointSavedAt == nil || result.Restorable == nil || *result.Restorable != tc.restorable {
+					t.Fatalf("restorable should be %v for %s at %s: %d %s", tc.restorable, tc.name, path, response.Code, response.Body)
+				}
 			}
 		})
 	}
-	request, response := workbenchContext(viewer, http.MethodPost, workspace+"/restore", bytes.NewBuffer(nil))
+	request, response := workbenchContext(viewer, http.MethodPost, "/api/runs/shared-child/workspace/restore", bytes.NewBuffer(nil))
 	request.Request.Header.Set("Prefer", "respond-async")
 	router.ServeHTTP(response, request.Request)
 	if response.Code != http.StatusForbidden {
@@ -222,5 +235,317 @@ func TestWorkspaceRestoreEligibilityUsesWorkspaceEditAccess(t *testing.T) {
 	router.ServeHTTP(response, request.Request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("owner restore: %d %s", response.Code, response.Body)
+	}
+}
+
+func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
+	for _, mode := range []string{"sync", "async"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+			a, owner, _, viewer, _ := sharedWorkbenchFixture(t)
+			project, _ := a.repo.Project("workbench")
+			project.Members = append(project.Members, domain.ProjectMember{UserID: viewer.ID, Role: "viewer"})
+			if err := a.repo.PutProject(project); err != nil {
+				t.Fatal(err)
+			}
+			manager := runtime.NewManager(t.TempDir())
+			en := engine.New(a.repo, manager)
+			en.ConfigureExecution("restore-api", "restore-api", time.Minute, false)
+			a.engine = en
+			ctx := domain.TelemetryContext{ProjectID: project.ID, ResponsibleUserID: owner.ID, ExecutionPinned: true}
+			workspace, err := en.StartConversationWorkspace("Conversation", ctx, repo.TestNativeSandboxID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const name, content = "handoff.txt", "unsent changes from chat"
+			source := t.TempDir()
+			if err := os.WriteFile(filepath.Join(source, name), []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := runtime.CreateWorkspaceCheckpoint(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token, err := en.BeginConversationWorkspaceUse(workspace.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			if err := a.repo.SaveWorkspaceCheckpoint(workspace.ID, token, now, snapshot); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.repo.FinishWorkspaceUse(workspace.ID, token, now, nil, ""); err != nil {
+				t.Fatal(err)
+			}
+			workspace.WorkspaceCleanedAt = now
+			if err := a.repo.PutRun(workspace); err != nil {
+				t.Fatal(err)
+			}
+			ctx.WorkspaceRunID = workspace.ID
+			sop := domain.Run{ID: "borrowing-sop", Status: "succeeded", ExecutionContext: ctx}
+			if err := a.repo.PutRun(sop); err != nil {
+				t.Fatal(err)
+			}
+
+			h := &runsHandlers{deps: a.deps}
+			router := gin.New()
+			router.Use(h.runWriteGuard())
+			router.GET("/api/runs/:id/workspace", h.runWorkspace)
+			router.GET("/api/runs/:id/workspace/file", h.runWorkspace)
+			router.GET("/api/runs/:id/workspace/restore", h.workspaceRestoreStatus)
+			router.POST("/api/runs/:id/workspace/restore", h.workspaceRestore)
+			router.POST("/api/runs/:id/workspace/use", h.workspaceActivity)
+			path := "/api/runs/" + sop.ID + "/workspace"
+			request := func(actor domain.User, method, suffix string) *httptest.ResponseRecorder {
+				c, rec := workbenchContext(actor, method, path+suffix, bytes.NewBuffer(nil))
+				if mode == "async" {
+					c.Request.Header.Set("Prefer", "respond-async")
+				}
+				router.ServeHTTP(rec, c.Request)
+				return rec
+			}
+			view := request(owner, http.MethodGet, "")
+			var info struct {
+				Available         bool       `json:"available"`
+				Restorable        bool       `json:"restorable"`
+				CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
+			}
+			if err := json.Unmarshal(view.Body.Bytes(), &info); err != nil || view.Code != 200 ||
+				info.Available || !info.Restorable || info.CheckpointSavedAt == nil {
+				t.Fatalf("borrowed workspace should be restorable: %d %s", view.Code, view.Body)
+			}
+			if rec := request(viewer, http.MethodGet, ""); rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"restorable":false`)) {
+				t.Fatalf("viewer workspace info = %d: %s", rec.Code, rec.Body)
+			}
+			if rec := request(viewer, http.MethodPost, "/restore"); rec.Code != http.StatusForbidden {
+				t.Fatalf("viewer restore = %d: %s", rec.Code, rec.Body)
+			}
+			foreign := sop
+			foreign.ID, foreign.ExecutionContext.ProjectID = "foreign-sop", "foreign-project"
+			if err := a.repo.PutProject(domain.Project{ID: foreign.ExecutionContext.ProjectID, Name: "Foreign", OwnerID: owner.ID}); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.repo.PutRun(foreign); err != nil {
+				t.Fatal(err)
+			}
+			for _, action := range []string{"restore", "use"} {
+				c, response := workbenchContext(owner, http.MethodPost, "/api/runs/"+foreign.ID+"/workspace/"+action, bytes.NewBuffer(nil))
+				router.ServeHTTP(response, c.Request)
+				if response.Code != http.StatusGone {
+					t.Fatalf("cross-project workspace %s = %d: %s", action, response.Code, response.Body)
+				}
+			}
+			sop.Status = "running"
+			if err := a.repo.PutRun(sop); err != nil {
+				t.Fatal(err)
+			}
+			if rec := request(owner, http.MethodPost, "/restore"); rec.Code != http.StatusConflict || !bytes.Contains(rec.Body.Bytes(), []byte(repo.ErrWorkspaceInUse.Error())) {
+				t.Fatalf("running SOP restore = %d: %s", rec.Code, rec.Body)
+			}
+			sop.Status = "succeeded"
+			if err := a.repo.PutRun(sop); err != nil {
+				t.Fatal(err)
+			}
+			rec := request(owner, http.MethodPost, "/restore")
+			if rec.Code != http.StatusOK && (mode != "async" || rec.Code != http.StatusAccepted) {
+				t.Fatalf("SOP restore = %d: %s", rec.Code, rec.Body)
+			}
+			for deadline := time.Now().Add(5 * time.Second); ; {
+				status := request(owner, http.MethodGet, "/restore")
+				var state domain.WorkspaceRestoreStatus
+				if err := json.Unmarshal(status.Body.Bytes(), &state); err != nil || status.Code != http.StatusOK {
+					t.Fatalf("SOP restore status = %d: %s", status.Code, status.Body)
+				}
+				if state.Status == "ready" {
+					break
+				}
+				if state.Status != "restoring" || time.Now().After(deadline) {
+					t.Fatalf("SOP restore did not finish: %s", status.Body)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			file := request(owner, http.MethodGet, "/file?path="+name)
+			var result struct{ Content string }
+			if err := json.Unmarshal(file.Body.Bytes(), &result); err != nil || file.Code != http.StatusOK || result.Content != content {
+				t.Fatalf("restored file = %d: %s", file.Code, file.Body)
+			}
+			if restored, ok := a.repo.RunState(workspace.ID); !ok || !restored.WorkspaceCleanedAt.IsZero() {
+				t.Fatal("the owning workspace still has a cleanup mark")
+			}
+			if _, err := os.Stat(manager.RunWorkspace(sop.ID)); !os.IsNotExist(err) {
+				t.Fatalf("restore created a separate SOP workspace: %v", err)
+			}
+		})
+	}
+}
+
+func TestSOPWorkspaceActivityTouchesConversationOwner(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	a, owner, member, outsider, _ := sharedWorkbenchFixture(t)
+	en := engine.New(a.repo, runtime.NewManager(t.TempDir()))
+	en.ConfigureExecution("activity-api", "activity-api", time.Minute, false)
+	a.engine = en
+	ctx := domain.TelemetryContext{ProjectID: "workbench", ResponsibleUserID: owner.ID, ExecutionPinned: true}
+	workspace, err := en.StartConversationWorkspace("Conversation", ctx, repo.TestNativeSandboxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(en.RunWorkspace(workspace.ID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	previous := time.Now().UTC().Add(-30 * time.Minute)
+	if err := a.repo.TouchWorkspaceUse(workspace.ID, previous); err != nil {
+		t.Fatal(err)
+	}
+	ctx.WorkspaceRunID = workspace.ID
+	sop := domain.Run{ID: "settled-sop", Status: "succeeded", WorkspaceCleanedAt: time.Now().UTC(), ExecutionContext: ctx}
+	if err := a.repo.PutRun(sop); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &runsHandlers{deps: a.deps}
+	router := gin.New()
+	router.Use(h.runWriteGuard())
+	router.GET("/api/runs/:id/workspace", h.runWorkspace)
+	router.POST("/api/runs/:id/workspace/use", h.workspaceActivity)
+	request := func(actor domain.User, method, suffix string) *httptest.ResponseRecorder {
+		c, response := workbenchContext(actor, method, "/api/runs/"+sop.ID+"/workspace"+suffix, bytes.NewBuffer(nil))
+		router.ServeHTTP(response, c.Request)
+		return response
+	}
+	if rec := request(member, http.MethodGet, ""); rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"available":true`)) {
+		t.Fatalf("shared workspace should be available: %d %s", rec.Code, rec.Body)
+	}
+	if rec := request(outsider, http.MethodPost, "/use"); rec.Code != http.StatusForbidden {
+		t.Fatalf("outsider workspace activity = %d: %s", rec.Code, rec.Body)
+	}
+	if rec := request(member, http.MethodPost, "/use"); rec.Code != http.StatusOK {
+		t.Fatalf("shared workspace activity = %d: %s", rec.Code, rec.Body)
+	}
+	if checkpoint, ok := a.repo.WorkspaceCheckpoint(workspace.ID); !ok || !checkpoint.LastUsedAt.After(previous) {
+		t.Fatal("activity did not update the conversation workspace")
+	}
+	if _, ok := a.repo.WorkspaceCheckpoint(sop.ID); ok {
+		t.Fatal("activity created a checkpoint for the borrowing SOP")
+	}
+	workspace.WorkspaceCleanedAt = time.Now().UTC()
+	if err := a.repo.PutRun(workspace); err != nil {
+		t.Fatal(err)
+	}
+	if rec := request(member, http.MethodPost, "/use"); rec.Code != http.StatusConflict {
+		t.Fatalf("reclaimed workspace activity = %d: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestSharedRunnerWorkspaceRestoreRequiresConnectedRunner(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	a, user := workbenchFixture(t)
+	en := engine.New(a.repo, runtime.NewManager(t.TempDir()))
+	a.deps.engine = en
+	runner := domain.Runner{ID: "shared-runner", Status: domain.RunnerStatusOnline}
+	if err := a.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	parent := domain.Run{
+		ID: "runner-parent", Status: "succeeded",
+		ExecutionContext: domain.TelemetryContext{
+			ProjectID: "workbench", ExecutionMode: domain.ExecutionModeRunner,
+			ExecutionRunnerID: runner.ID, RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		},
+		Nodes: map[string]*domain.NodeRun{"sub": {NodeID: "sub", Status: "succeeded", ChildRunID: "runner-child"}},
+	}
+	child := domain.Run{ID: "runner-child", Status: "succeeded", ExecutionContext: parent.ExecutionContext}
+	child.ExecutionContext.ParentRunID = parent.ID
+	child.ExecutionContext.WorkspaceRunID = parent.ID
+	for _, run := range []domain.Run{parent, child} {
+		if err := a.repo.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	token, err := en.BeginConversationWorkspaceUse(parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.repo.SaveWorkspaceCheckpoint(parent.ID, token, now, runtime.EmptyWorkspaceCheckpoint()); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.repo.FinishWorkspaceUse(parent.ID, token, now, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	hub := newRunnerControlHub()
+	hub.startupGrace, hub.reconnectWait = 0, 0
+	h := &runsHandlers{deps: a.deps, runnerControls: hub}
+	router := gin.New()
+	router.Use(h.runWriteGuard())
+	router.GET("/api/runs/:id/workspace", h.runWorkspace)
+	router.POST("/api/runs/:id/workspace/restore", h.workspaceRestore)
+	request := func(id, method, suffix string) *httptest.ResponseRecorder {
+		c, response := workbenchContext(user, method, "/api/runs/"+id+"/workspace"+suffix, bytes.NewBuffer(nil))
+		c.Request.Header.Set("Prefer", "respond-async")
+		router.ServeHTTP(response, c.Request)
+		return response
+	}
+	connect := func(result domain.RunnerWorkspaceResponse) *runnerControlConn {
+		conn := hub.register(runner, nil, false)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				select {
+				case message := <-conn.send:
+					if message.WorkspaceRequest.RunID != parent.ID || message.WorkspaceRequest.WorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
+						t.Errorf("workspace request did not reach the shared checkout: %+v", message.WorkspaceRequest)
+					}
+					hub.resolveWorkspace(conn, message.RequestID, result)
+				case <-conn.done:
+					return
+				}
+			}
+		}()
+		t.Cleanup(func() {
+			hub.unregister(conn)
+			<-done
+		})
+		return conn
+	}
+	checkInfo := func(id string, available, restorable bool, reason string) {
+		t.Helper()
+		response := request(id, http.MethodGet, "")
+		var info struct {
+			Available         bool       `json:"available"`
+			Restorable        *bool      `json:"restorable"`
+			CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
+			Reason            string     `json:"reason"`
+		}
+		err := json.Unmarshal(response.Body.Bytes(), &info)
+		if response.Code != http.StatusOK || err != nil || info.Available != available ||
+			info.Restorable == nil || *info.Restorable != restorable || info.CheckpointSavedAt == nil || !strings.Contains(info.Reason, reason) {
+			t.Errorf("%s workspace want available=%t restorable=%t reason=%q, got %d %s", id, available, restorable, reason, response.Code, response.Body)
+		}
+	}
+	conn := connect(domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: json.RawMessage(`{"available":true}`)})
+	for _, id := range []string{parent.ID, child.ID} {
+		checkInfo(id, true, true, "")
+	}
+	hub.unregister(conn)
+
+	checkOffline := func() {
+		for _, id := range []string{parent.ID, child.ID} {
+			checkInfo(id, false, false, "当前离线")
+			response := request(id, http.MethodPost, "/restore")
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "当前离线") {
+				t.Errorf("%s restore must report offline: %d %s", id, response.Code, response.Body)
+			}
+		}
+	}
+	checkOffline()
+	if err := a.repo.DB.Table("runs").Where("id = ?", parent.ID).Update("workspace_cleaned_at", now).Error; err != nil {
+		t.Fatal(err)
+	}
+	checkOffline()
+	connect(domain.RunnerWorkspaceResponse{Status: http.StatusNotFound, Error: "workspace directory missing"})
+	for _, id := range []string{parent.ID, child.ID} {
+		checkInfo(id, false, true, "工作区已回收")
 	}
 }

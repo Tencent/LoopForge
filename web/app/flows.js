@@ -142,6 +142,7 @@ function renderFlowHeader(){
 function renderWorkflowMeta(){
   const workflows=catalogWorkflows();
   const wf=state.workflow;
+  if(typeof renderWorkflowProjectCredentials==='function')renderWorkflowProjectCredentials(wf);
   // Generic templates and an unsaved AI draft are not in the project SOP list.
   // Keep the open workflow selected while it is being previewed.
   const options=wf&&!workflows.some(w=>w.id===wf.id)?[wf,...workflows]:workflows;
@@ -401,7 +402,7 @@ function setThemePreference(preference){if(!['light','dark','system'].includes(p
 function renderThemeSegment({snap=false}={}){const preference=typeof activeThemePreference==='string'?activeThemePreference:readThemePreference();document.querySelectorAll('.upp-theme-seg').forEach(seg=>{seg.querySelectorAll('[data-theme-pref]').forEach(button=>{const on=button.dataset.themePref===preference;button.classList.toggle('active',on);if(button.getAttribute('aria-checked')!==String(on))button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1});const tabs=window.AgentFlowSlidingTabs;if(!tabs)return;const indicator=seg.querySelector(':scope > [data-sliding-indicator]');if(snap&&indicator)indicator.style.transition='none';tabs.mount(seg,{activeSelector:'.active',auto:true,compact:true,cacheKey:'upp-theme-seg'}).refresh();if(snap&&indicator){indicator.getBoundingClientRect();requestAnimationFrame(()=>{indicator.style.transition=''})}})}
 function renderThemeToggle(){renderThemeSegment();const light=document.documentElement.dataset.theme==='light',button=$('#themeToggle');if(!button)return;window.AgentFlowHarnessIcons?.render(button.querySelector('span'),light?'moon':'sun');button.querySelector('b').textContent=light?'深色':'亮色';button.title=light?'切换到深色主题':'切换到亮色主题'}
 function toggleTheme(){const theme=document.documentElement.dataset.theme==='light'?'dark':'light';try{localStorage.setItem(THEME_KEY,theme)}catch{}applyTheme(theme)}
-function statusText(s){return ({pending:'待执行',running:'运行中',succeeded:'已完成',failed:'失败',waiting_approval:'待审批',cancelled:'已取消'}[s]||'')}
+function statusText(s){return ({pending:'待执行',running:'运行中',succeeded:'已完成',failed:'失败',waiting_approval:'待确认',cancelled:'已取消'}[s]||'')}
 function canvasPoint(e){return flowViewport.toWorld(e.clientX,e.clientY)}
 function flowReaches(from,to){
   const seen=new Set([from]),queue=[from];
@@ -630,7 +631,7 @@ function bindFlowDesigner(){
   document.addEventListener('pointerdown',e=>{if(!e.target.closest('#flowNodeMenu,[data-node-menu]'))closeNodeMenu()});
   document.addEventListener('keydown',e=>{
     if(!$('#flowView')?.classList.contains('active')||e.defaultPrevented)return;
-    const mod=e.metaKey||e.ctrlKey,key=(e.key||'').toLowerCase(),blocked=!!$('.modal.open')||$('#commandPalette')?.hidden===false;
+    const mod=e.metaKey||e.ctrlKey,key=(e.key||'').toLowerCase(),blocked=!!$('.modal.open, dialog:modal')||$('#commandPalette')?.hidden===false;
     if(mod&&key==='s'){e.preventDefault();if(!blocked&&!$('#saveWorkflow')?.disabled)saveWorkflow().catch(()=>{});return}
     if(blocked||e.target.closest?.('input,textarea,select,[contenteditable="true"],[contenteditable=""]'))return;
     if(mod&&key==='z'){e.preventDefault();if(e.shiftKey?flowHistory.redo():flowHistory.undo())flowToast(e.shiftKey?'已重做':'已撤销');return}
@@ -878,7 +879,7 @@ function renderAgentAssetsPanel(a){
   const host=$('#agentAssetsPanel');if(!host)return;
   const d=ensureAgentDraft(a);
   const generic=catalogGeneric(state.workflow);
-  const col=(title,sub,name,items,selected)=>{const vis=name==='mcpServers'?(generic?(items||[]):visibleMCPAssets(items)):(name==='rules'||name==='skills'?(items||[]).filter(item=>catalogVisible(item.projectId,item.shared)):visibleAssets(items));const picked=vis.filter(item=>name==='mcpServers'&&generic?genericMCPChecked(item.id,selected):(selected||[]).includes(item.id)).length;const empty=name==='mcpServers'?(generic?'通用模板绑定市场别名（如 github），运行时落到当前项目已安装的 MCP':'这个项目或你的个人范围还没有 MCP，先到「MCP 管理」里添加'):name==='rules'?'这个项目还没有可用规则，先到「规则管理」里添加或共享':name==='skills'?'这个项目还没有可用技能，先到「技能管理」里添加或共享':'这个项目还没有此类配置，先到「环境资产」里添加';return `<div class="as-asset-col"><div class="as-asset-col-head"><b>${title}</b><span>${sub}${picked?` · 已选 ${picked}`:''}</span></div><div class="as-asset-search"><span>⌕</span><input type="search" data-asset-filter="${name}" placeholder="搜索名称…"></div><div class="as-asset-list" data-asset-list="${name}">${vis.map(x=>`<label class="as-asset-item"><input type="checkbox" name="${name}" value="${escapeHTML(x.id)}" ${(name==='mcpServers'&&generic?genericMCPChecked(x.id,selected):(selected||[]).includes(x.id))?'checked':''}><div><b>${escapeHTML(x.name)}</b><small>${escapeHTML(x.description||x.id)}${x.shared&&x.projectId!==state.projectFilter?' · 共享':''}</small></div></label>`).join('')||`<div class="as-empty">${empty}</div>`}</div></div>`};
+  const col=(title,sub,name,items,selected)=>{const vis=name==='mcpServers'?(generic?(items||[]):visibleMCPAssets(items)):(name==='rules'||name==='skills'?(items||[]).filter(item=>catalogVisible(item.projectId,item.shared)):visibleAssets(items));const picked=vis.filter(item=>name==='mcpServers'&&generic?genericMCPChecked(item.id,selected):(selected||[]).includes(item.id)).length;const empty=name==='mcpServers'?(generic?'通用模板绑定市场别名（如 github），运行时落到当前项目已安装的 MCP':'这个项目或你的个人范围还没有 MCP，先到「MCP 管理」里添加'):name==='rules'?'这个项目还没有可用规则，先到「规则管理」里添加或共享':name==='skills'?'这个项目还没有可用技能，先到「技能管理」里添加或共享':'这个项目还没有此类配置，先到「沙箱管理」里添加';return `<div class="as-asset-col"><div class="as-asset-col-head"><b>${title}</b><span>${sub}${picked?` · 已选 ${picked}`:''}</span></div><div class="as-asset-search"><span>⌕</span><input type="search" data-asset-filter="${name}" placeholder="搜索名称…"></div><div class="as-asset-list" data-asset-list="${name}">${vis.map(x=>`<label class="as-asset-item"><input type="checkbox" name="${name}" value="${escapeHTML(x.id)}" ${(name==='mcpServers'&&generic?genericMCPChecked(x.id,selected):(selected||[]).includes(x.id))?'checked':''}><div><b>${escapeHTML(x.name)}</b><small>${escapeHTML(x.description||x.id)}${x.shared&&x.projectId!==state.projectFilter?' · 共享':''}</small></div></label>`).join('')||`<div class="as-empty">${empty}</div>`}</div></div>`};
   host.innerHTML=`<section class="as-section-block as-platform-mcp-section"><div class="as-section-head"><b>平台能力</b><small>独立开关，不占用 MCP 列表</small></div><label class="as-switch-row"><span><b>接入平台 MCP（LoopForge）</b><small>开启后，这个角色运行时通过平台 MCP（agentflow-platform）直接调用平台侧功能：需求、任务、运行、项目等平台操作。</small></span><input type="checkbox" name="platformMcp" ${d.platformMcp?'checked':''} role="switch"></label><label class="as-switch-row"><span><b>接入团队知识库</b><small>开启后，这个角色运行时可只读检索团队知识库（agentflow-knowledge），并自动附带「知识库使用规范」规则；产出的 knowledge.md 会进入知识沉淀审核队列。</small></span><input type="checkbox" name="knowledgeBase" ${d.knowledgeBase?'checked':''} role="switch"></label></section><div class="as-assets">${col('必须遵守','规则','rules',state.data.rules,d.rules)}${col('怎么干活','技能','skills',state.data.skills,d.skills)}${col('外部工具','MCP','mcpServers',generic?genericTemplateMCPOptions(d.mcpServers):state.data.mcpServers,d.mcpServers)}</div><section class="as-section-block as-hook-section"><div class="as-section-head"><b>运行时 Hook</b><small>在工具调用前后插一段脚本，比如拦危险命令。一般可以先不配。</small></div><div id="agentHookPanel"></div></section>`;
   host.querySelectorAll('[data-asset-filter]').forEach(input=>input.oninput=()=>{const q=input.value.trim().toLowerCase();input.closest('.as-asset-col').querySelectorAll('.as-asset-item').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q))});
   host.querySelectorAll('input[type=checkbox]').forEach(el=>el.onchange=()=>{renderAgentSummary();dirty()});
@@ -1153,8 +1154,7 @@ function sopSandboxChoices(){
   return (state.data.sandboxes||[]).filter(s=>s.id&&catalogVisible(s.projectId,s.shared));
 }
 function defaultSOPSandbox(choices=sopSandboxChoices(),preferredId){
-  const isolated=choices.filter(s=>sandboxDriverOption(s.driver)!=='local');
-  return isolated.find(s=>s.id===preferredId)||isolated.find(s=>catalogOwned(s.projectId))||isolated[0];
+  return choices.find(s=>s.id===preferredId)||choices.find(s=>catalogOwned(s.projectId))||choices[0];
 }
 function syncSOPSandboxSelection(){
   const select=$('#sopCreateSandbox'),template=(state.data.workflows||[]).find(w=>w.id===state.sopTemplate);

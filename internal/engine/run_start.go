@@ -1,11 +1,14 @@
 package engine
 
 import (
-	"agentflow/internal/domain"
 	"context"
 	"fmt"
 	"strings"
 	"time"
+
+	"agentflow/internal/apperr"
+	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 // assignWorkBranches gives every repository without a branch the first
@@ -59,6 +62,30 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 	if !ok {
 		return domain.Run{}, fmt.Errorf("workflow not found")
 	}
+	if executionContext.SharedScheduleID != "" {
+		version, err := e.repo.SharedScheduleVersion(executionContext.SharedScheduleID, executionContext.SharedScheduleVersion)
+		if err != nil {
+			return domain.Run{}, err
+		}
+		if err := e.repo.ValidateSharedScheduleAssets(version); err != nil {
+			return domain.Run{}, err
+		}
+		allowed := version.HasAsset("sop", workflowID)
+		if !allowed && executionContext.ParentRunID != "" {
+			if parent, ok := e.repo.RunState(executionContext.ParentRunID); ok && parent.ExecutionContext.SharedScheduleID == executionContext.SharedScheduleID && parent.ExecutionContext.SharedScheduleVersion == executionContext.SharedScheduleVersion &&
+				parent.ExecutionContext.ProjectID == executionContext.ProjectID && parent.ExecutionContext.ResponsibleUserID == executionContext.ResponsibleUserID {
+				for _, node := range parent.WorkflowSnapshot.Nodes {
+					if node.Type == "sop" && node.SOPWorkflowID == workflowID && node.ID == executionContext.ParentNodeID {
+						allowed = true
+						break
+					}
+				}
+			}
+		}
+		if !allowed {
+			return domain.Run{}, fmt.Errorf("SOP 不在共享任务的引用范围内")
+		}
+	}
 	return e.startWorkflowDefinition(wf, input, repositories, executionContext, workspace)
 }
 
@@ -73,7 +100,9 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool, seed func(*domain.Run)) (domain.Run, error) {
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
-	domain.AssignRepositoryDirs(repositories)
+	if executionContext.ParentRunID == "" || !executionContext.ExecutionPinned || executionContext.WorkspaceRunID == "" {
+		domain.AssignRepositoryDirs(repositories)
+	}
 	e.mu.Lock()
 	draining, executeRuns := e.draining, e.executeRuns
 	instanceID, ttl := e.instanceID, e.leaseTTL
@@ -116,11 +145,48 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 			return domain.Run{}, err
 		}
 	}
-	resources, err := resolveSandboxResources(e.repo, profile)
+	sandbox, err := resolveSandbox(profile)
 	if err != nil {
 		return domain.Run{}, err
 	}
+	if executionContext.SharedScheduleID != "" {
+		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile); err != nil {
+			return domain.Run{}, err
+		}
+	}
+	if !workspace && executionContext.ParentRunID == "" && executionContext.WorkspaceRunID != "" {
+		owner, err := e.sopConversationWorkspace(executionContext)
+		if err != nil {
+			return domain.Run{}, err
+		}
+		if domain.TerminalRunStatus(owner.Status) || owner.CancelRequested {
+			return domain.Run{}, fmt.Errorf("对话工作区已结束")
+		}
+		executionContext.ExecutionRunnerID = e.defaultExecutionRunner(owner)
+		if executionContext.ExecutionRunnerID != "" {
+			runner, ok := e.repo.Runner(executionContext.ExecutionRunnerID)
+			if !ok || !runner.SupportsWorkspaceOwnerPreparation() || owner.ExecutionContext.RunnerWorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
+				return domain.Run{}, fmt.Errorf("原执行机器或工作区不支持共享检出目录，请更新执行机器并重新打开工作区")
+			}
+			if runner.OwnerUserID > 0 && !e.repo.CanUseRunner(runner, executionContext.ProjectID, executionContext.ResponsibleUserID) {
+				return domain.Run{}, apperr.New(apperr.Forbidden, repo.ErrRunnerProjectDenied.Error())
+			}
+			if len(repositories) > 0 && !runner.SupportsConversationSOPWorkspace() {
+				return domain.Run{}, fmt.Errorf("复用对话中的仓库检出需要执行机器升级至 %s", domain.RunnerVersionConversationSOPWorkspace)
+			}
+		}
+		executionContext.ExecutionPinned = true
+		executionContext.ExecutionPool = ""
+	}
 	e.selectSOPExecutionTarget(&executionContext)
+	if len(wf.ProjectCredentialIDs) > 0 {
+		if _, err := e.ResolveRunProjectCredentialEnv(context.Background(), domain.Run{WorkflowSnapshot: wf, ExecutionContext: executionContext}); err != nil {
+			return domain.Run{}, err
+		}
+		if err := e.requireProjectCredentialRunner(wf, executionContext.ExecutionRunnerID); err != nil {
+			return domain.Run{}, err
+		}
+	}
 	wf.ExecutorDefaults = nil
 	if executionContext.ResponsibleUserID > 0 {
 		wf.ExecutorDefaults, _, err = e.planSOPExecutors(wf, executionContext, false)
@@ -147,10 +213,10 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 		firstRepository = repositories[0]
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
-	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err
 	}
-	wf.SandboxSnapshot = resolvedSandboxSnapshot(profile, resources)
+	wf.SandboxSnapshot = sandbox
 	var canaryNames []string
 	if !workspace {
 		executionContext.EvolutionCanaryIDs, canaryNames = e.assignEvolutionCanaries(id, wf, executionContext)
@@ -183,6 +249,9 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 		e.event(&r, "", "workspace.created", "对话工作区已创建")
 	} else {
 		e.event(&r, "", "run.started", "流水线开始执行")
+		if borrowsConversationWorkspace(r) {
+			e.event(&r, "", "workspace.shared", "复用对话工作区 "+workspaceRunID(r))
+		}
 	}
 	if len(canaryNames) > 0 {
 		e.event(&r, "", "evolution.canary", "本次运行参与进化试用，使用「"+strings.Join(canaryNames, "、")+"」的候选正文")
@@ -190,7 +259,8 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 	if seed != nil {
 		seed(&r)
 	}
-	if executeRuns && !workspace {
+	executeHere := executeRuns && !workspace && (!borrowsConversationWorkspace(r) || !e.workspaceBlocked(r))
+	if executeHere {
 		if strings.TrimSpace(instanceID) == "" || ttl <= 0 {
 			return domain.Run{}, ErrExecutionDisabled
 		}
@@ -209,7 +279,7 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 		e.recordRunAssetPins(r)
 	}
 	e.publish(r.ID)
-	if !executeRuns || r.Status == "queued" || workspace {
+	if !executeHere || r.Status == "queued" {
 		return r, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -223,7 +293,8 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 
 func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryContext) {
 	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
-		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
+		defaults := e.repo.ResolveRunnerDefaults(executionContext.ResponsibleUserID, executionContext.ProjectID)
+		executionContext.ExecutionRunnerID = defaults.Runner.ID
 		executionContext.WorkspaceRunID = ""
 	}
 	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {

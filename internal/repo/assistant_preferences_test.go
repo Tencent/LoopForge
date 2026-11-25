@@ -48,3 +48,22 @@ func TestAssistantMessageSendPreference(t *testing.T) {
 		})
 	}
 }
+
+func TestAssistantWorkspaceDriverPreference(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	const userID = int64(801042)
+	if got := st.AssistantPreferences(userID).WorkspaceDriver; got != "" {
+		t.Fatalf("the agent should choose by default, got %q", got)
+	}
+	saved, err := st.PutAssistantPreferences(userID, domain.AssistantPreferences{WorkspaceDriver: " native ", SteerOnSend: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.WorkspaceDriver != "native" || !saved.SteerOnSend || st.AssistantPreferences(userID+1).WorkspaceDriver != "" {
+		t.Fatalf("saved preferences: %+v", saved)
+	}
+}

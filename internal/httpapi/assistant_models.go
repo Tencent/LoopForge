@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"os/exec"
 	"regexp"
@@ -255,13 +256,30 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		if user.AssistantDefaults != (domain.AssistantDefaults{}) {
 			catalog.Preferences = &user.AssistantDefaults
 		}
+		if strings.TrimSpace(c.Query("refresh")) == "1" {
+			invalidateAssistantEngineDiscoveryCache(user)
+		}
 		catalog.Engines = assistantEngineOptions(user, usingSharedKey)
+		cloudPool := false
+		if h.engine != nil {
+			cloudPool, _ = h.engine.CloudPoolStatus()
+		}
+		if !cloudPool {
+			for i := range catalog.Engines {
+				option := &catalog.Engines[i]
+				if _, err := resolveAssistantEngineBin(option.ID); errors.Is(err, errAssistantCLIMissing) {
+					option.ServerMissing = true
+					option.ServerInstallable = runtime.OnDemandInstallable(option.ID)
+				}
+			}
+		}
 		var runnerLogin map[string]bool
 		if c.Query("schedule") == "1" {
+			projectID := strings.TrimSpace(c.Query("projectId"))
 			runnerLogin = make(map[string]bool)
 			for i := range catalog.Engines {
 				engine := catalog.Engines[i].ID
-				if scheduleLoginRunner(h.repo, user.ID, engine).ID != "" {
+				if scheduleLoginRunner(h.repo, user.ID, projectID, engine).ID != "" {
 					runnerLogin[engine] = true
 					catalog.Engines[i].Configured = true
 				}

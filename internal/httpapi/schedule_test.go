@@ -27,7 +27,7 @@ func TestScheduleJobCRUD(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "local"}); err != nil {
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "test-native"}); err != nil {
 		t.Fatal(err)
 	}
 	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
@@ -66,6 +66,13 @@ func TestScheduleJobCRUD(t *testing.T) {
 	}, http.StatusOK)
 	if custom.MaxDispatch != 3 {
 		t.Fatalf("custom dispatch limit = %d", custom.MaxDispatch)
+	}
+	dispatchRefs := requestJSON[domain.ScheduleJob](t, h, http.MethodPut, "/api/schedule-jobs", map[string]any{
+		"id": custom.ID, "name": custom.Name, "workflowId": custom.WorkflowID,
+		"references": []map[string]any{{"type": "issue", "id": "missing"}},
+	}, http.StatusOK)
+	if len(dispatchRefs.References) != 0 {
+		t.Fatalf("dispatch job retained AI references: %+v", dispatchRefs.References)
 	}
 	if got := strings.Join(custom.IssueStatuses, ","); got != "todo,in_progress" {
 		t.Fatalf("normalized issue statuses = %q", got)
@@ -125,6 +132,73 @@ func TestScheduleJobCRUD(t *testing.T) {
 	}
 }
 
+func TestAIScheduleReferencesPersistIdentityAndRefreshDisplayData(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	issue := domain.Issue{ID: "scheduled-ref-issue", ProjectID: "platform", Title: "初始标题", Description: "详情", Status: "todo"}
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutProject(domain.Project{ID: "scheduled-ref-foreign", Name: "Foreign", OwnerID: 99}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutIssue(domain.Issue{ID: "scheduled-ref-foreign-issue", ProjectID: "scheduled-ref-foreign", Title: "跨项目"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	saved := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+		"name": "引用需求", "projectId": "platform", "skipDispatch": true,
+		"intervalSec": 3600, "assistantPrompt": "读取需求", "enabled": true,
+		"references": []map[string]any{{"type": "issue", "id": issue.ID, "name": "伪造名称", "projectId": "别的项目"}},
+	}, http.StatusOK)
+	if len(saved.References) != 1 || saved.References[0].Type != "issue" || saved.References[0].ID != issue.ID {
+		t.Fatalf("saved references = %+v", saved.References)
+	}
+	if saved.References[0].Name != issue.Title || saved.References[0].ProjectID != issue.ProjectID {
+		t.Fatalf("response should resolve current display data: %+v", saved.References[0])
+	}
+	stored, ok := st.ScheduleJob(saved.ID)
+	if !ok || len(stored.References) != 1 || stored.References[0].Name != "" || stored.References[0].ProjectID != "" {
+		t.Fatalf("stored references must keep only identity: %+v", stored.References)
+	}
+	issue.Title = "更新后的标题"
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	assistant := &assistantHandlers{deps: &deps{repo: st}}
+	canonical, data, err := assistant.workbenchReference(domain.AssistantReference{Type: "issue", ID: issue.ID}, "platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical.Name != issue.Title || !strings.Contains(data, "更新后的标题") {
+		t.Fatalf("runtime reference did not refresh: canonical=%+v data=%s", canonical, data)
+	}
+	if _, err := assistant.normalizeScheduledReferences("platform", []domain.AssistantReference{{Type: "issue", ID: "missing"}}); err == nil {
+		t.Fatal("missing scheduled reference should be rejected")
+	}
+	if _, err := assistant.normalizeScheduledReferences("platform", []domain.AssistantReference{{Type: "element", ID: "x"}}); err == nil {
+		t.Fatal("unsupported scheduled reference type should be rejected")
+	}
+	for _, typ := range []string{"element", "unknown"} {
+		response := requestJSON[map[string]string](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+			"name": "不可复用的引用", "projectId": "platform", "skipDispatch": true,
+			"intervalSec": 3600, "assistantPrompt": "读取资产",
+			"references": []map[string]any{{"type": typ, "id": "legacy-reference"}},
+		}, http.StatusBadRequest)
+		if !strings.Contains(response["error"], "无效") {
+			t.Fatalf("unsupported type %s: %+v", typ, response)
+		}
+	}
+	requestJSON[map[string]string](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+		"name": "跨项目引用", "projectId": "platform", "skipDispatch": true,
+		"intervalSec": 3600, "assistantPrompt": "读取需求", "enabled": true,
+		"references": []map[string]any{{"type": "issue", "id": "scheduled-ref-foreign-issue"}},
+	}, http.StatusBadRequest)
+}
+
 func TestScheduledDispatchUsesIntegrationBranchAndManualDispatchDoesNot(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
@@ -138,7 +212,7 @@ func TestScheduledDispatchUsesIntegrationBranchAndManualDispatchDoesNot(t *testi
 	if err := st.PutRepository(domain.Repository{ID: "repo", ProjectID: project.ID, Name: "Repo", Provider: "gongfeng", DefaultBranch: "master", IntegrateBranch: "agentflow/integration"}); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
+	wf := domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
 	if err := st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -202,8 +276,8 @@ func TestSingleSOPDispatchReplacesStaleBinding(t *testing.T) {
 	if err := st.PutProject(project); err != nil {
 		t.Fatal(err)
 	}
-	bound := domain.WorkflowDefinition{ID: "issue-fix-production", Name: "生产闭环", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Type: "approval"}}}
-	started := domain.WorkflowDefinition{ID: "sop-sandbox", Name: "沙箱", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Type: "approval"}}}
+	bound := domain.WorkflowDefinition{ID: "issue-fix-production", Name: "生产闭环", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Type: "approval"}}}
+	started := domain.WorkflowDefinition{ID: "sop-sandbox", Name: "沙箱", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Type: "approval"}}}
 	for _, wf := range []domain.WorkflowDefinition{bound, started} {
 		if err := st.PutWorkflow(wf); err != nil {
 			t.Fatal(err)
@@ -300,7 +374,7 @@ func TestScheduledJobWaitsWhenIntegrateConflictsWithDefault(t *testing.T) {
 	if err := st.PutRepository(domain.Repository{ID: "repo", ProjectID: project.ID, Name: "Repo", Provider: "gongfeng", DefaultBranch: "master", IntegrateBranch: "agentflow/integration", CloneURL: remote}); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
+	wf := domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
 	if err := st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -379,14 +453,14 @@ func TestEnsureBaselineAlignWorkflowUsesPlatformAgentNotProjectFixer(t *testing.
 		t.Fatal(err)
 	}
 	if err := st.PutWorkflow(domain.WorkflowDefinition{
-		ID: "issue-fix-production", Name: "Issue 修复", ProjectID: "skillhub", SandboxProfileID: "local",
+		ID: "issue-fix-production", Name: "Issue 修复", ProjectID: "skillhub", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "fix", Type: "agent", AgentID: "issue-fix-engineer", Name: "修复并提交"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.PutWorkflow(domain.WorkflowDefinition{
 		ID: engine.BaselineAlignWorkflowID, Name: "对齐默认分支到基线", ProjectID: "skillhub",
-		Version: 3, Status: "published", SandboxProfileID: "local",
+		Version: 3, Status: "published", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "resolve", Type: "agent", AgentID: "issue-fix-engineer"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -396,7 +470,7 @@ func TestEnsureBaselineAlignWorkflowUsesPlatformAgentNotProjectFixer(t *testing.
 		t.Fatal("ensure should rewrite project fixer onto the platform align role")
 	}
 	wf, ok := st.Workflow(engine.BaselineAlignWorkflowID)
-	if !ok || wf.Version < baselineAlignWorkflowVersion || wf.SandboxProfileID != "local" {
+	if !ok || wf.Version < baselineAlignWorkflowVersion || wf.SandboxProfileID != repo.DefaultSandboxProfileID {
 		t.Fatalf("upgraded workflow = %+v", wf)
 	}
 	if !alignWorkflowUsesPlatformAgent(wf) {
@@ -405,6 +479,16 @@ func TestEnsureBaselineAlignWorkflowUsesPlatformAgentNotProjectFixer(t *testing.
 	agent, ok := st.Agent(engine.BaselineAlignAgentID)
 	if !ok || !agent.Shared || len(agent.Verification) != 0 || len(agent.Hooks) != 0 {
 		t.Fatalf("platform align agent = %+v", agent)
+	}
+	wf.SandboxProfileID = repo.TestNativeSandboxID
+	if err := st.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	if !h.ensureBaselineAlignWorkflow(domain.ScheduleJob{}) {
+		t.Fatal("existing align workflow was rejected")
+	}
+	if saved, _ := st.Workflow(wf.ID); saved.SandboxProfileID != repo.TestNativeSandboxID {
+		t.Fatalf("explicit align sandbox was overwritten: %q", saved.SandboxProfileID)
 	}
 }
 
@@ -416,7 +500,7 @@ func TestEnsureBaselineAlignWorkflowUpgradesExistingRevision(t *testing.T) {
 	t.Cleanup(st.Close)
 	if err := st.PutWorkflow(domain.WorkflowDefinition{
 		ID: engine.BaselineAlignWorkflowID, Name: "对齐默认分支到基线", ProjectID: "platform",
-		Version: 1, Status: "published", SandboxProfileID: "local",
+		Version: 1, Status: "published", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "resolve", Name: "解决冲突", Type: "agent", AgentID: "developer"},
 			{ID: "confirm", Name: "确认对齐", Type: "approval"},
@@ -547,8 +631,8 @@ func TestScheduleUIDemoServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, wf := range []domain.WorkflowDefinition{
-		{ID: "demodns-issue-fix", Name: "Issue 修复", ProjectID: "dp", Status: "published", SandboxProfileID: "local", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
-		{ID: "demodns-feature-dev", Name: "功能开发", ProjectID: "dp", Status: "published", SandboxProfileID: "local", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
+		{ID: "demodns-issue-fix", Name: "Issue 修复", ProjectID: "dp", Status: "published", SandboxProfileID: "test-native", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
+		{ID: "demodns-feature-dev", Name: "功能开发", ProjectID: "dp", Status: "published", SandboxProfileID: "test-native", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
 	} {
 		if err := st.PutWorkflow(wf); err != nil {
 			t.Fatal(err)

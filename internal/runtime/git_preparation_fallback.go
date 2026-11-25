@@ -95,7 +95,7 @@ func VerifyGitPreparation(ctx context.Context, workspace string, repositories []
 		} else if _, err := gitwork.C(ctx, dir, "merge-base", "--is-ancestor", baseTip, "HEAD"); err != nil {
 			return fmt.Errorf("repository %s: HEAD does not contain the frozen remote base branch origin/%s: %w", r.Name, base, err)
 		}
-		if err := gitwork.RecordBaseline(dir, base); err != nil {
+		if err := gitwork.RecordBaselineContext(ctx, dir, base); err != nil {
 			return err
 		}
 	}
@@ -104,9 +104,9 @@ func VerifyGitPreparation(ctx context.Context, workspace string, repositories []
 
 func canonicalGitRemote(raw string) string {
 	raw = strings.TrimSpace(raw)
-	if u, err := url.Parse(raw); err == nil && u.Scheme == "https" {
-		if host, err := gitwork.HTTPSHostScope(u.Host); err == nil {
-			u.Host = host
+	if u, err := url.Parse(raw); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		if endpoint, ok := gitwork.GitHTTPRemoteEndpoint(raw); ok {
+			u.Host = endpoint.Authority
 		}
 		u.Path = strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), ".git")
 		return u.String()

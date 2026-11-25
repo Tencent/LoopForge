@@ -25,7 +25,9 @@ type Project struct {
 	DefaultRepositoryID string            `json:"defaultRepositoryId,omitempty"`
 	OwnerID             int64             `json:"ownerId,omitempty"`
 	Members             []ProjectMember   `json:"members,omitempty"`
-	RunEval             RunEvalPolicy     `json:"runEval,omitempty"`
+	// MembersVersion is an opaque snapshot token for replacing the member list.
+	MembersVersion string        `json:"membersVersion,omitempty"`
+	RunEval        RunEvalPolicy `json:"runEval,omitempty"`
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`
@@ -65,14 +67,52 @@ type ProjectMember struct {
 	Role   string `json:"role"` // maintainer, member, viewer
 }
 
+const (
+	ProjectRoleMaintainer = "maintainer"
+	ProjectRoleMember     = "member"
+	ProjectRoleViewer     = "viewer"
+)
+
+// NormalizeProjectMemberRole maps an empty role to member and reports whether
+// the role is one of maintainer, member or viewer.
+func NormalizeProjectMemberRole(role string) (string, bool) {
+	switch r := strings.ToLower(strings.TrimSpace(role)); r {
+	case "":
+		return ProjectRoleMember, true
+	case ProjectRoleMaintainer, ProjectRoleMember, ProjectRoleViewer:
+		return r, true
+	default:
+		return r, false
+	}
+}
+
+// HasWritableMember checks explicit project membership, including the owner.
+func (p Project) HasWritableMember(userID int64) bool {
+	if userID <= 0 {
+		return false
+	}
+	if p.OwnerID == userID {
+		return true
+	}
+	for _, member := range p.Members {
+		if member.UserID == userID && !strings.EqualFold(strings.TrimSpace(member.Role), ProjectRoleViewer) {
+			return true
+		}
+	}
+	return false
+}
+
 // RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.
 const RepositoryProviderSSH = "ssh"
 
 // RepositoryProviderHTTPS uses Git transport without a hosting API adapter.
 const RepositoryProviderHTTPS = "https"
 
+// RepositoryProviderHTTP uses plaintext Git transport without a hosting API adapter.
+const RepositoryProviderHTTP = "http"
+
 func GitOnlyRepositoryProvider(provider string) bool {
-	return provider == RepositoryProviderSSH || provider == RepositoryProviderHTTPS
+	return provider == RepositoryProviderSSH || provider == RepositoryProviderHTTPS || provider == RepositoryProviderHTTP
 }
 
 type Repository struct {
@@ -150,11 +190,9 @@ type RepositoryContext struct {
 	// be read, built and tested, but is never committed or pushed. It is the
 	// only way to sit on a shared branch such as preview.
 	ReadOnly bool `json:"readOnly,omitempty"`
-	// WorkspaceDir is the first-level sub-directory of the run workspace this
-	// repository is checked out into (slash-separated, relative). Empty is
-	// only kept for persisted legacy runs that already checked out at the
-	// workspace root; new runs always get a sub-directory so SOP deliverables
-	// at the run root cannot pollute the git checkout.
+	// WorkspaceDir is the workspace-relative checkout path. New checkouts
+	// default to a first-level directory. An existing checkout can be at the
+	// workspace root (empty) or in a nested directory.
 	WorkspaceDir string `json:"workspaceDir,omitempty"`
 }
 
