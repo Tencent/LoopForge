@@ -278,6 +278,7 @@
     featurePickerHTML,
     fetchCatalog,
     load,
+    modelIcon: item => FAMILY_ICON[item?.family || familyOf(item?.id)] || '',
     paint,
     paintItem,
     preferredFeatureModel,

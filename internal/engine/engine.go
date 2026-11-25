@@ -94,6 +94,7 @@ type Engine struct {
 	WorkspaceActive              func(domain.Run) bool
 	WorkspaceCheckpointTransport func(context.Context, domain.Run, domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error)
 	SelectSOPSandbox             func(context.Context, SOPSandboxSelection) string
+	GenerateSOPWorkBranch        func(context.Context, SOPWorkBranchRequest) (string, error)
 	maintenanceOnce              sync.Once
 }
 

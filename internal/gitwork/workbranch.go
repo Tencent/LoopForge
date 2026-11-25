@@ -2,6 +2,7 @@ package gitwork
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,25 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrWorkBranchExists = errors.New("远端已存在分支")
+
+// RequireNewRemoteWorkBranch prevents checkout from attaching a new run to
+// work already published under the requested name.
+func RequireNewRemoteWorkBranch(ctx context.Context, workspace, branch string) error {
+	ref := "refs/heads/" + branch
+	out, err := C(ctx, workspace, "ls-remote", "--heads", "origin", ref)
+	if err != nil {
+		return fmt.Errorf("无法确认远端分支 %s 是否存在：%w", branch, err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		_, name, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if ok && name == ref {
+			return fmt.Errorf("%w %s，请选择继续已有分支或调整命名设置", ErrWorkBranchExists, branch)
+		}
+	}
+	return nil
+}
 
 // PushWorkBranch makes the remote work branch the durable state of a
 // checkout: whatever changed is committed and pushed, so any machine can

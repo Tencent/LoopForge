@@ -840,7 +840,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	defer release()
 	checkoutCtx := taskRepositoryContext(ctx, task, sandbox, inv)
 	checkoutErr := checkoutInvocationRepositories(checkoutCtx, workspace, inv)
-	repositoryFallback := checkoutErr != nil && inv.RepositoryPreparationFallback && ctx.Err() == nil
+	repositoryFallback := checkoutErr != nil && !errors.Is(checkoutErr, gitwork.ErrWorkBranchExists) && inv.RepositoryPreparationFallback && ctx.Err() == nil
 	if checkoutErr != nil {
 		if !repositoryFallback {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", checkoutErr)}, nil
@@ -1075,6 +1075,7 @@ func invocationRepositoryContexts(inv *domain.RunnerInvocation) []domain.Reposit
 			BaseBranch:                repository.Ref,
 			WorkBranch:                repository.WorkBranch,
 			RequireExistingWorkBranch: repository.RequireExistingWorkBranch,
+			CreateNewWorkBranch:       repository.CreateNewWorkBranch,
 		})
 	}
 	return out
@@ -1348,15 +1349,8 @@ func createNewRepositoryBranch(ctx context.Context, workspace string, repo *doma
 		return fmt.Errorf("新建分支时必须指定工作分支")
 	}
 	repoCtx := repositoryGitContext(ctx, *repo)
-	out, err := gitwork.C(repoCtx, workspace, "ls-remote", "--heads", "origin", "refs/heads/"+branch)
-	if err != nil {
-		return fmt.Errorf("无法确认远端分支 %s 是否存在: %w", branch, err)
-	}
-	for _, line := range strings.Split(out, "\n") {
-		_, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
-		if ok && ref == "refs/heads/"+branch {
-			return fmt.Errorf("远端已存在分支 %s，不能按新建分支处理；继续该分支请用 branchMode=continue", branch)
-		}
+	if err := gitwork.RequireNewRemoteWorkBranch(repoCtx, workspace, branch); err != nil {
+		return err
 	}
 	if _, err := gitwork.C(ctx, workspace, "checkout", "--quiet", "-b", branch); err != nil {
 		return fmt.Errorf("git create work branch %s: %w", branch, err)
@@ -1380,6 +1374,9 @@ func checkoutCreatedRepositoryBranch(ctx context.Context, workspace string, repo
 			return fmt.Errorf("检出工作分支 %s: %w", branch, err)
 		}
 		return nil
+	}
+	if err := gitwork.RequireNewRemoteWorkBranch(repoCtx, workspace, branch); err != nil {
+		return err
 	}
 	base := strings.TrimSpace(repo.Ref)
 	if base == "" {
