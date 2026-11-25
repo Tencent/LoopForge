@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+const evoSOPBatchSweepGap = 30 * time.Second
 
 type assistantEditSourceContextKey struct{}
 
@@ -118,7 +121,11 @@ func (h *evolutionHandlers) putSOPPolicy(c *gin.Context) {
 		respond(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, h.repo.EvoSOPPolicy(req.ProjectID, workflowID))
+	saved := h.repo.EvoSOPPolicy(req.ProjectID, workflowID)
+	if saved.Enabled {
+		go h.checkSOPBatchAutoTrigger(saved)
+	}
+	c.JSON(http.StatusOK, saved)
 }
 
 // optimizeSOP initiates an optimization proposal for the SOP's highest-impact evolvable asset.
@@ -138,95 +145,17 @@ func (h *evolutionHandlers) optimizeSOP(c *gin.Context) {
 	if !h.requireProjectReader(c, req.ProjectID) || !h.requireProjectWriter(c, req.ProjectID) {
 		return
 	}
-	wf, ok := h.resolveSOPWorkflow(req.ProjectID, workflowID, nil)
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "SOP 不存在"})
-		return
-	}
-	policy := h.repo.EvoSOPPolicy(req.ProjectID, workflowID)
-	if !policy.Enabled {
-		c.JSON(http.StatusConflict, gin.H{"error": "该 SOP 已关闭自动进化，请先开启进化开关"})
-		return
-	}
 	current, loggedIn := h.requestUser(c.Request, true)
 	if !loggedIn {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录后再发起优化"})
 		return
 	}
 	user, ok := h.repo.User(current.ID)
-	if !ok || strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在个人配置中配置自己的 CodeBuddy API Key"})
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号不可用"})
 		return
 	}
-
-	runs := h.loadWindowRuns(req.ProjectID, evoDefaultWindowDays, evoSOPWindowLimit)
-	sopRuns := filterRunsByWorkflow(runs, workflowID)
-	assetSet := h.collectSOPAssetKeys(wf, sopRuns)
-	findings := h.sopFindings(h.repo.EvoFindings(req.ProjectID, domain.EvoFindingOpen), workflowID, assetSet)
-
-	var targetAsset evoAsset
-	var targetFinding domain.EvoFinding
-	for _, f := range findings {
-		asset, loaded := h.loadAsset(f.AssetKind, f.AssetID)
-		if !loaded || privateEvolutionAsset(asset, req.ProjectID) != nil {
-			continue
-		}
-		if h.repo.EvoLevel(asset.Kind, asset.ID) < domain.EvoLevelPropose {
-			continue
-		}
-		targetAsset = asset
-		targetFinding = f
-		break
-	}
-	if targetAsset.ID == "" {
-		for _, node := range wf.Nodes {
-			if node.AgentID == "" {
-				continue
-			}
-			asset, loaded := h.loadAsset(domain.EvoAssetAgent, node.AgentID)
-			if !loaded || privateEvolutionAsset(asset, req.ProjectID) != nil {
-				continue
-			}
-			if h.repo.EvoLevel(asset.Kind, asset.ID) < domain.EvoLevelPropose {
-				continue
-			}
-			if f, found := h.findingForAsset(req.ProjectID, asset); found {
-				targetAsset = asset
-				targetFinding = f
-				break
-			}
-		}
-	}
-	if targetAsset.ID == "" {
-		c.JSON(http.StatusConflict, gin.H{"error": "当前 SOP 暂无可自动优化的私有角色或待修复问题样本"})
-		return
-	}
-
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = strings.TrimSpace(policy.Model)
-	}
-	if model == "" {
-		if project, ok := h.repo.Project(req.ProjectID); ok && project.SOPDetection != nil {
-			model = strings.TrimSpace(project.SOPDetection.Model)
-		}
-	}
-	catalog := assistantModelsForRequest(c.Request.Context(), user, model)
-	p := domain.EvoProposal{
-		ID:          "evp-" + randomID(),
-		ProjectID:   req.ProjectID,
-		FindingID:   targetFinding.ID,
-		AssetKind:   targetAsset.Kind,
-		AssetID:     targetAsset.ID,
-		AssetName:   targetAsset.Name,
-		Title:       "正在根据偏好生成 SOP 优化提案…",
-		BaseContent: targetAsset.Content,
-		BaseHash:    domain.ContentHash(targetAsset.Content),
-		Status:      domain.EvoProposalDrafting,
-		Model:       assistantAllowedModel(model, catalog),
-		CreatedBy:   user.ID,
-	}
-	p, queued, created, err := h.repo.SubmitEvoProposal(p, "evq-"+randomID(), "")
+	p, queued, created, err := h.startSOPOptimization(c.Request.Context(), req.ProjectID, workflowID, req.Model, user)
 	if err != nil {
 		respondEvoError(c, err)
 		return
@@ -236,11 +165,312 @@ func (h *evolutionHandlers) optimizeSOP(c *gin.Context) {
 		return
 	}
 	if created {
-		h.launchProposalJob(p, targetFinding, user)
 		c.JSON(http.StatusAccepted, evoProposalView(p, false))
 		return
 	}
 	c.JSON(http.StatusOK, evoProposalView(p, false))
+}
+
+func (h *evolutionHandlers) maybeSweepSOPBatches(now time.Time) {
+	h.sopBatchM.Lock()
+	due := now.Sub(h.sopBatchAt) >= evoSOPBatchSweepGap
+	if due {
+		h.sopBatchAt = now
+	}
+	h.sopBatchM.Unlock()
+	if !due {
+		return
+	}
+	h.sweepSOPBatches(now)
+}
+
+func (h *evolutionHandlers) sweepSOPBatches(_ time.Time) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("evolution sop batch sweep panic: %v", r)
+		}
+	}()
+	for _, policy := range h.repo.AllEnabledEvoSOPPolicies() {
+		h.checkSOPBatchAutoTrigger(policy)
+	}
+}
+
+func (h *evolutionHandlers) checkSOPBatchAutoTrigger(policy domain.EvoSOPPolicy) {
+	if !policy.Enabled || strings.TrimSpace(policy.ProjectID) == "" || strings.TrimSpace(policy.WorkflowID) == "" {
+		return
+	}
+	policy.BatchSize = evolution.NormalizeSOPBatchSize(policy.BatchSize)
+	runs := h.loadWindowRuns(policy.ProjectID, evoDefaultWindowDays, evoSOPWindowLimit)
+	wf, ok := h.resolveSOPWorkflow(policy.ProjectID, policy.WorkflowID, runs)
+	if !ok {
+		return
+	}
+	sopRuns := filterRunsByWorkflow(runs, wf.ID)
+	if len(sopRuns) < policy.BatchSize {
+		return
+	}
+	assetKeys := h.collectSOPAssetKeys(wf, sopRuns)
+	findings := h.sopFindings(h.repo.EvoFindings(policy.ProjectID, domain.EvoFindingOpen, domain.EvoFindingProposed), wf.ID, assetKeys)
+	proposals := h.repo.EvoProposals(policy.ProjectID, 200)
+	findingIDSet := map[string]bool{}
+	for _, f := range findings {
+		findingIDSet[f.ID] = true
+	}
+	var sopProposals []domain.EvoProposal
+	for _, p := range proposals {
+		if findingIDSet[p.FindingID] || assetKeys[p.AssetKind+":"+p.AssetID] {
+			sopProposals = append(sopProposals, p)
+		}
+	}
+	stage, _, _ := evolution.DetermineSOPStage(sopProposals)
+	if stage != domain.EvoSOPStageMonitor {
+		return
+	}
+	pending := countSOPPendingRuns(sopRuns, sopProposals, policy.BatchSize)
+	if pending < policy.BatchSize {
+		return
+	}
+	user, ok := h.resolveSOPActorUser(policy)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, _, created, err := h.startSOPOptimization(ctx, policy.ProjectID, wf.ID, "", user); err != nil {
+		log.Printf("evolution sop auto-batch %s/%s: %v", policy.ProjectID, wf.ID, err)
+	} else if created {
+		log.Printf("evolution sop auto-batch triggered optimization for %s/%s (%d/%d runs)", policy.ProjectID, wf.ID, pending, policy.BatchSize)
+	}
+}
+
+func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy) (domain.User, bool) {
+	candidates := []int64{}
+	add := func(id int64) {
+		if id <= 0 {
+			return
+		}
+		for _, c := range candidates {
+			if c == id {
+				return
+			}
+		}
+		candidates = append(candidates, id)
+	}
+	add(policy.UpdatedBy)
+	if proj, ok := h.repo.Project(policy.ProjectID); ok {
+		if proj.SOPDetection != nil {
+			add(proj.SOPDetection.ConfiguredBy)
+		}
+		add(proj.OwnerID)
+		for _, m := range proj.Members {
+			add(m.UserID)
+		}
+	}
+	reqModel := strings.TrimSpace(policy.Model)
+	if reqModel == "" {
+		reqModel = assistantDefaultModel
+	}
+	for _, uid := range candidates {
+		user, ok := h.repo.User(uid)
+		if !ok {
+			continue
+		}
+		if evoImproveOverride != nil || strings.TrimSpace(user.CodeBuddyAPIKey) != "" {
+			return user, true
+		}
+		if _, err := resolveFeatureModel(user, reqModel); err == nil {
+			return user, true
+		}
+	}
+	return domain.User{}, false
+}
+
+func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID, workflowID, requestedModel string, user domain.User) (domain.EvoProposal, *domain.EvoQueueItem, bool, error) {
+	runs := h.loadWindowRuns(projectID, evoDefaultWindowDays, evoSOPWindowLimit)
+	wf, ok := h.resolveSOPWorkflow(projectID, workflowID, runs)
+	if !ok {
+		return domain.EvoProposal{}, nil, false, &evoError{status: http.StatusNotFound, msg: "SOP 不存在"}
+	}
+	policy := h.repo.EvoSOPPolicy(projectID, workflowID)
+	if !policy.Enabled {
+		return domain.EvoProposal{}, nil, false, evoConflict("该 SOP 已关闭自动进化，请先开启进化开关")
+	}
+	policy.Preferences = evolution.NormalizeSOPPreferences(policy.Preferences)
+	policy.BatchSize = evolution.NormalizeSOPBatchSize(policy.BatchSize)
+
+	model := strings.TrimSpace(requestedModel)
+	if model == "" {
+		model = strings.TrimSpace(policy.Model)
+	}
+	if model == "" {
+		if project, ok := h.repo.Project(projectID); ok && project.SOPDetection != nil {
+			model = strings.TrimSpace(project.SOPDetection.Model)
+		}
+	}
+	resolvedModel := ""
+	if evoImproveOverride == nil {
+		reqModel := model
+		if reqModel == "" {
+			reqModel = assistantDefaultModel
+		}
+		if m, err := resolveFeatureModel(user, reqModel); err == nil && m != "" {
+			resolvedModel = m
+		} else if strings.TrimSpace(user.CodeBuddyAPIKey) != "" {
+			catalog := assistantModelsForRequest(ctx, user, model)
+			resolvedModel = assistantAllowedModel(model, catalog)
+		} else {
+			return domain.EvoProposal{}, nil, false, &evoError{status: http.StatusBadRequest, msg: "请先在个人配置中配置可用的 AI 模型凭据（CodeBuddy / Codex / Claude 等）"}
+		}
+	} else {
+		resolvedModel = model
+	}
+
+	sopRuns := filterRunsByWorkflow(runs, workflowID)
+	batchRuns := sopRuns
+	if len(batchRuns) > policy.BatchSize {
+		batchRuns = batchRuns[:policy.BatchSize]
+	}
+	evals, _ := h.loadSOPRunEvals(batchRuns)
+	batchMetrics := evolution.SummarizeSOPRuns(batchRuns, evals)
+	assetSet := h.collectSOPAssetKeys(wf, sopRuns)
+	findings := h.sopFindings(h.repo.EvoFindings(projectID, domain.EvoFindingOpen), workflowID, assetSet)
+
+	var targetAsset evoAsset
+	var targetNodeID string
+	var targetFinding domain.EvoFinding
+
+	for _, f := range findings {
+		asset, loaded := h.loadAsset(f.AssetKind, f.AssetID)
+		if !loaded || privateEvolutionAsset(asset, projectID) != nil {
+			continue
+		}
+		if h.repo.EvoLevel(asset.Kind, asset.ID) < domain.EvoLevelPropose {
+			continue
+		}
+		targetAsset = asset
+		targetFinding = f
+		break
+	}
+
+	if targetAsset.ID == "" {
+		// Pick the highest-cost private evolvable agent on this SOP.
+		type cand struct {
+			asset  evoAsset
+			nodeID string
+			tokens int64
+			tools  int
+		}
+		var best *cand
+		for _, node := range wf.Nodes {
+			if node.AgentID == "" {
+				continue
+			}
+			asset, loaded := h.loadAsset(domain.EvoAssetAgent, node.AgentID)
+			if !loaded || privateEvolutionAsset(asset, projectID) != nil {
+				continue
+			}
+			if h.repo.EvoLevel(asset.Kind, asset.ID) < domain.EvoLevelPropose {
+				continue
+			}
+			var tok int64
+			var tools int
+			for _, r := range batchRuns {
+				if nr := r.Nodes[node.ID]; nr != nil {
+					tok += evolution.NodeTokens(*nr)
+					tools += nr.ToolCalls
+				}
+			}
+			if best == nil || tok > best.tokens || (tok == best.tokens && tools > best.tools) {
+				best = &cand{asset: asset, nodeID: node.ID, tokens: tok, tools: tools}
+			}
+		}
+		if best != nil {
+			targetAsset = best.asset
+			targetNodeID = best.nodeID
+			if f, found := h.findingForAsset(projectID, targetAsset); found {
+				targetFinding = f
+			}
+		}
+	}
+
+	if targetAsset.ID == "" {
+		return domain.EvoProposal{}, nil, false, evoConflict("当前 SOP 暂无可自动优化的私有角色（共享/平台角色请先复制为项目私有角色）")
+	}
+
+	// Build or enrich finding with the user's selected SOP optimization preferences & batch runs
+	// so Token/Tools/Duration optimization works even when runs succeeded without hard errors.
+	if targetFinding.ID == "" {
+		if len(batchRuns) == 0 {
+			return domain.EvoProposal{}, nil, false, evoConflict("当前 SOP 尚无已完成的业务运行样本，至少完成 1 次运行后再优化")
+		}
+		f := evolution.BuildSOPPreferenceFinding(projectID, wf, targetAsset.Kind, targetAsset.ID, targetAsset.Name, targetNodeID, policy, batchRuns, batchMetrics)
+		f.ID = "evf-" + randomID()
+		if err := h.repo.PutEvoFinding(f); err != nil {
+			return domain.EvoProposal{}, nil, false, err
+		}
+		targetFinding = f
+	} else if len(batchRuns) > 0 {
+		prefText := strings.Join(evolution.SOPPreferenceLabels(policy.Preferences), "、")
+		prefNote := fmt.Sprintf("【SOP 优化偏好：%s】近 %d 次运行平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。",
+			prefText, batchMetrics.Runs, batchMetrics.AvgTokens, batchMetrics.AvgTools, batchMetrics.AvgDuration, batchMetrics.CleanRate*100)
+		if !strings.Contains(targetFinding.Summary, "SOP 优化偏好") {
+			if targetFinding.Summary != "" {
+				targetFinding.Summary = prefNote + "\n" + targetFinding.Summary
+			} else {
+				targetFinding.Summary = prefNote
+			}
+		}
+	}
+
+	p := domain.EvoProposal{
+		ID:          "evp-" + randomID(),
+		ProjectID:   projectID,
+		FindingID:   targetFinding.ID,
+		AssetKind:   targetAsset.Kind,
+		AssetID:     targetAsset.ID,
+		AssetName:   targetAsset.Name,
+		Title:       "正在根据偏好生成 SOP 优化提案…",
+		BaseContent: targetAsset.Content,
+		BaseHash:    domain.ContentHash(targetAsset.Content),
+		Status:      domain.EvoProposalDrafting,
+		Model:       resolvedModel,
+		CreatedBy:   user.ID,
+	}
+	p, queued, created, err := h.repo.SubmitEvoProposal(p, "evq-"+randomID(), "")
+	if err != nil {
+		return domain.EvoProposal{}, nil, false, err
+	}
+	if queued != nil {
+		return p, queued, false, nil
+	}
+	if created {
+		h.launchProposalJob(p, targetFinding, user)
+		return p, nil, true, nil
+	}
+	return p, nil, false, nil
+}
+
+func countSOPPendingRuns(sopRuns []domain.Run, sopProposals []domain.EvoProposal, batchSize int) int {
+	var since time.Time
+	for _, p := range sopProposals {
+		at := p.CreatedAt
+		if !p.DecidedAt.IsZero() && p.DecidedAt.After(at) {
+			at = p.DecidedAt
+		}
+		if at.After(since) {
+			since = at
+		}
+	}
+	pending := 0
+	for _, r := range sopRuns {
+		if since.IsZero() || r.CreatedAt.After(since) {
+			pending++
+		}
+	}
+	if pending > batchSize {
+		pending = batchSize
+	}
+	return pending
 }
 
 func (h *evolutionHandlers) buildSOPSummaries(projectID string, days int) []domain.EvoSOPSummary {
@@ -474,21 +704,7 @@ func (h *evolutionHandlers) computeSOPSummary(
 		}
 	}
 
-	var since time.Time
-	for _, p := range sopProposals {
-		if p.Status == domain.EvoProposalReleased && !p.DecidedAt.IsZero() && p.DecidedAt.After(since) {
-			since = p.DecidedAt
-		}
-	}
-	pendingRuns := 0
-	for _, r := range sopRuns {
-		if since.IsZero() || r.CreatedAt.After(since) {
-			pendingRuns++
-		}
-	}
-	if pendingRuns > policy.BatchSize {
-		pendingRuns = policy.BatchSize
-	}
+	pendingRuns := countSOPPendingRuns(sopRuns, sopProposals, policy.BatchSize)
 
 	model := strings.TrimSpace(policy.Model)
 	if model == "" {

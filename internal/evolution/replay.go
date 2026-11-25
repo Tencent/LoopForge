@@ -65,7 +65,7 @@ func FeedbackSample(run domain.Run, finding domain.EvoFinding) bool {
 		return false
 	}
 	for _, sig := range finding.Signals {
-		if sig.RunID == run.ID && (sig.Kind == SignalUserFeedback || sig.Kind == SignalEvalLow || sig.Kind == SignalSOPDetection) {
+		if sig.RunID == run.ID && (sig.Kind == SignalUserFeedback || sig.Kind == SignalEvalLow || sig.Kind == SignalSOPDetection || sig.Kind == SignalSOPPreference) {
 			return true
 		}
 	}

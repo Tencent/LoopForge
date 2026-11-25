@@ -28,6 +28,8 @@ type evolutionHandlers struct {
 	trialM      sync.Mutex
 	trialAt     time.Time
 	trialScores map[string]int
+	sopBatchM   sync.Mutex
+	sopBatchAt  time.Time
 }
 
 type evoHealthCache struct {

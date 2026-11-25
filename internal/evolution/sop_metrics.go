@@ -5,15 +5,106 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 )
+
+const SignalSOPPreference = "sop_preference"
 
 var sopPreferenceOrder = []string{
 	domain.EvoPrefTokens,
 	domain.EvoPrefTools,
 	domain.EvoPrefDuration,
 	domain.EvoPrefClean,
+}
+
+// SOPPreferenceLabels maps preference keys into human-readable Chinese labels.
+func SOPPreferenceLabels(prefs []string) []string {
+	labels := map[string]string{
+		domain.EvoPrefTokens:   "减少 Token 消耗",
+		domain.EvoPrefTools:    "减少工具调用次数",
+		domain.EvoPrefDuration: "缩短执行耗时",
+		domain.EvoPrefClean:    "提高一次成功率",
+	}
+	norm := NormalizeSOPPreferences(prefs)
+	out := make([]string, 0, len(norm))
+	for _, k := range norm {
+		if l, ok := labels[k]; ok {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// BuildSOPPreferenceFinding constructs a concrete, preference-guided finding from
+// a completed SOP batch so the improver can optimize Token/Tools/Duration/Clean rate
+// even when most runs succeeded without hard errors.
+func BuildSOPPreferenceFinding(
+	projectID string,
+	wf domain.WorkflowDefinition,
+	assetKind, assetID, assetName, nodeID string,
+	policy domain.EvoSOPPolicy,
+	batchRuns []domain.Run,
+	metrics domain.EvoSOPMetrics,
+) domain.EvoFinding {
+	prefs := NormalizeSOPPreferences(policy.Preferences)
+	prefText := strings.Join(SOPPreferenceLabels(prefs), "、")
+	scored := append([]domain.Run(nil), batchRuns...)
+	sort.SliceStable(scored, func(i, j int) bool {
+		// Prioritize highest-cost or non-clean runs according to primary preference.
+		switch prefs[0] {
+		case domain.EvoPrefTools:
+			if RunToolCalls(scored[i]) != RunToolCalls(scored[j]) {
+				return RunToolCalls(scored[i]) > RunToolCalls(scored[j])
+			}
+		case domain.EvoPrefDuration:
+			if RunDurationMs(scored[i]) != RunDurationMs(scored[j]) {
+				return RunDurationMs(scored[i]) > RunDurationMs(scored[j])
+			}
+		case domain.EvoPrefClean:
+			if RunScore(scored[i]) != RunScore(scored[j]) {
+				return RunScore(scored[i]) < RunScore(scored[j])
+			}
+		}
+		return RunTokens(scored[i]) > RunTokens(scored[j])
+	})
+
+	signals := make([]domain.EvoSignal, 0, min(len(scored), 6))
+	sampleIDs := make([]string, 0, min(len(scored), 6))
+	for _, r := range scored {
+		if len(sampleIDs) >= 6 {
+			break
+		}
+		sampleIDs = append(sampleIDs, r.ID)
+		detail := fmt.Sprintf("偏好目标：%s。本运行消耗 %d Token、%d 次工具调用、耗时 %.1fs（状态 %s）。请在保证最终产物与验收标准完全一致的前提下，精简多余步骤、重复核对与冗余输出。",
+			prefText, RunTokens(r), RunToolCalls(r), float64(RunDurationMs(r))/1000.0, r.Status)
+		signals = append(signals, domain.EvoSignal{
+			ProjectID: projectID,
+			RunID:     r.ID,
+			NodeID:    nodeID,
+			Kind:      SignalSOPPreference,
+			Detail:    detail,
+			CreatedAt: r.CreatedAt,
+		})
+	}
+	summary := fmt.Sprintf("SOP「%s」近 %d 次运行统计：平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。请严格围绕用户优化偏好【%s】精简该角色/规则正文，去除重复检索、重复核对和冗余输出，同时不得破坏正确性与验收门禁。",
+		firstText(wf.Name, wf.ID), metrics.Runs, metrics.AvgTokens, metrics.AvgTools, metrics.AvgDuration, metrics.CleanRate*100, prefText)
+	now := time.Now().UTC()
+	return domain.EvoFinding{
+		ProjectID:    projectID,
+		AssetKind:    assetKind,
+		AssetID:      assetID,
+		AssetName:    firstText(assetName, assetID),
+		Title:        fmt.Sprintf("按偏好优化（%s）", prefText),
+		Summary:      summary,
+		Signals:      signals,
+		SampleRunIDs: sampleIDs,
+		WorkflowIDs:  []string{wf.ID},
+		Status:       domain.EvoFindingOpen,
+		FirstSeenAt:  now,
+		LastSeenAt:   now,
+	}
 }
 
 // RunTokens returns the best available total tokens for a run.

@@ -1255,3 +1255,23 @@ func (r *EvolutionRepo) EvoSOPPolicies(projectID string) map[string]domain.EvoSO
 	}
 	return out
 }
+
+func (r *EvolutionRepo) AllEnabledEvoSOPPolicies() []domain.EvoSOPPolicy {
+	var rows []evoSOPPolicyRow
+	if r.DB.Find(&rows).Error != nil {
+		return nil
+	}
+	out := make([]domain.EvoSOPPolicy, 0, len(rows))
+	for _, row := range rows {
+		var p domain.EvoSOPPolicy
+		if json.Unmarshal(row.Payload, &p) == nil && p.Enabled && strings.TrimSpace(row.WorkflowID) != "" && strings.TrimSpace(row.ProjectID) != "" {
+			p.WorkflowID = row.WorkflowID
+			p.ProjectID = row.ProjectID
+			if p.BatchSize <= 0 {
+				p.BatchSize = 10
+			}
+			out = append(out, p)
+		}
+	}
+	return out
+}

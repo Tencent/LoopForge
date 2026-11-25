@@ -212,3 +212,79 @@ func TestEvolutionSOPTracksChatbotAndManualAssetEdits(t *testing.T) {
 		t.Fatalf("expected pre/post chatbot metrics split, got v0=%+v v1=%+v", detail.Versions[0].Metrics, detail.Versions[1].Metrics)
 	}
 }
+
+func TestEvolutionSOPAutoBatchOptimizationTriggersAtBatchSize(t *testing.T) {
+	env := newEvoTestEnv(t)
+	now := time.Now().UTC()
+
+	promptSeen := make(chan string, 1)
+	setEvoImproveForTest(func(_ context.Context, _ domain.EvoProposal, _, prompt string, _ domain.User) (string, error) {
+		select {
+		case promptSeen <- prompt:
+		default:
+		}
+		return `{"title":"精简重复核对降低 Token","rationale":"去除基线中的两次重复核对，直接输出三字段 JSON","content":"原始正文：请完成开发任务并自测。\n直接输出三字段 JSON，不做重复核对。"}`, nil
+	})
+	defer setEvoImproveForTest(nil)
+
+	// Configure SOP with batchSize=5 and tokens preference (matching acceptance case).
+	if err := env.store.PutEvoSOPPolicy(domain.EvoSOPPolicy{
+		WorkflowID:  env.wf.ID,
+		ProjectID:   "evo-p",
+		Enabled:     true,
+		Preferences: []string{domain.EvoPrefTokens},
+		BatchSize:   5,
+		UpdatedBy:   env.user.ID,
+		UpdatedAt:   now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 5 high-token runs (4 clean, 1 reworked).
+	for i := 0; i < 5; i++ {
+		rework := 0
+		if i == 0 {
+			rework = 1
+		}
+		r := domain.Run{
+			ID:               "batch-r-" + string(rune('1'+i)),
+			WorkflowID:       env.wf.ID,
+			WorkflowSnapshot: env.wf,
+			Status:           "succeeded",
+			Input:            `{"ticketId":"TOKEN-01","message":"我想看看包裹送到哪了"}`,
+			ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"},
+			CreatedAt:        now.Add(time.Duration(i-10) * time.Minute),
+			UpdatedAt:        now.Add(time.Duration(i-10) * time.Minute),
+			Usage:            domain.TokenUsage{TotalTokens: 438500},
+			ToolCalls:        12,
+			Timing:           &domain.RunTiming{ExecutionMs: 191000},
+			Nodes:            map[string]*domain.NodeRun{"code": {NodeID: "code", Status: "succeeded", Attempt: 1 + rework, ReworkCount: rework, Usage: domain.TokenUsage{TotalTokens: 438500}, ToolCalls: 12}},
+		}
+		if err := env.store.PutRun(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Sweep should automatically trigger optimization once 5/5 runs are collected.
+	env.h.sweepSOPBatches(now)
+
+	props := env.store.EvoProposals("evo-p", 20)
+	if len(props) != 1 {
+		t.Fatalf("expected 1 auto-triggered proposal after 5 runs, got %d", len(props))
+	}
+
+	select {
+	case prompt := <-promptSeen:
+		if !strings.Contains(prompt, "减少 Token 消耗") || !strings.Contains(prompt, "438500") {
+			t.Fatalf("expected improver prompt to include token preference and batch token stats, got: %s", prompt)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for auto-triggered improver invocation")
+	}
+
+	// Second sweep must NOT create a duplicate proposal.
+	env.h.sweepSOPBatches(now.Add(time.Minute))
+	if again := env.store.EvoProposals("evo-p", 20); len(again) != 1 {
+		t.Fatalf("expected no duplicate auto-trigger, got %d proposals", len(again))
+	}
+}

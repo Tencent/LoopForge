@@ -12,14 +12,17 @@ import (
 // Evidence is one diagnosis sample shown to the improver. Holdout,
 // regression and pinned samples are never passed here.
 type Evidence struct {
-	RunID      string `json:"runId"`
-	WorkflowID string `json:"workflowId,omitempty"`
-	Status     string `json:"status"`
-	NodeID     string `json:"nodeId,omitempty"`
-	Input      string `json:"input,omitempty"`
-	Error      string `json:"error,omitempty"`
-	Feedback   string `json:"feedback,omitempty"`
-	Output     string `json:"output,omitempty"`
+	RunID       string  `json:"runId"`
+	WorkflowID  string  `json:"workflowId,omitempty"`
+	Status      string  `json:"status"`
+	NodeID      string  `json:"nodeId,omitempty"`
+	Tokens      int64   `json:"tokens,omitempty"`
+	ToolCalls   int     `json:"toolCalls,omitempty"`
+	DurationSec float64 `json:"durationSec,omitempty"`
+	Input       string  `json:"input,omitempty"`
+	Error       string  `json:"error,omitempty"`
+	Feedback    string  `json:"feedback,omitempty"`
+	Output      string  `json:"output,omitempty"`
 }
 
 // Candidate is the improver's proposed body.
@@ -34,7 +37,15 @@ const maxCandidateBytes = 60000
 
 // BuildEvidence extracts what the improver may see from a diagnosis run.
 func BuildEvidence(run domain.Run, finding domain.EvoFinding) Evidence {
-	ev := Evidence{RunID: run.ID, WorkflowID: run.WorkflowID, Status: run.Status, Input: domain.TrimEvoText(run.Input, 1200)}
+	ev := Evidence{
+		RunID:       run.ID,
+		WorkflowID:  run.WorkflowID,
+		Status:      run.Status,
+		Tokens:      RunTokens(run),
+		ToolCalls:   RunToolCalls(run),
+		DurationSec: round1(float64(RunDurationMs(run)) / 1000.0),
+		Input:       domain.TrimEvoText(run.Input, 1200),
+	}
 	for _, sig := range finding.Signals {
 		if sig.RunID != run.ID {
 			continue

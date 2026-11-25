@@ -388,6 +388,7 @@ func (h *evolutionHandlers) startReplayMonitor() {
 			now := time.Now().UTC()
 			h.sweepReplays(now)
 			h.maybeSweepTrials(now)
+			h.maybeSweepSOPBatches(now)
 		}
 	}()
 }
