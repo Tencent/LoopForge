@@ -1615,7 +1615,7 @@ func TestIssueFilterAndManualCloseUI(t *testing.T) {
 		`id="issueStatusFilter"`,
 		`id="issueAssigneeFilter"`,
 		`<option value="backlog">待规划</option>`,
-		`<option value="todo">待处理 / 待执行</option>`,
+		`<option value="todo">待处理</option>`,
 		`<option value="done">已完成</option>`,
 		`<option value="closed">已关闭</option>`,
 		`data-dtab="operations"`,
