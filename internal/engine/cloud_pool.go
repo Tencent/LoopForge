@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strings"
 	"time"
 
@@ -82,8 +83,13 @@ func (pool CloudRunnerPool) serves(projectID string) bool {
 	return pool.Label != "" && cloudPoolServes(pool.Projects, projectID)
 }
 
-func (e *Engine) pickPoolRunner(label string) (domain.Runner, bool) {
+func (e *Engine) pickPoolRunner(label string, nativeDriver ...string) (domain.Runner, bool) {
 	candidates := e.eligiblePoolRunners(label)
+	if len(nativeDriver) > 0 && nativeDriver[0] != "" {
+		candidates = slices.DeleteFunc(candidates, func(runner domain.Runner) bool {
+			return !runner.SupportsNativeSandbox(nativeDriver[0])
+		})
+	}
 	if len(candidates) == 0 {
 		return domain.Runner{}, false
 	}
@@ -210,11 +216,15 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 		return run, errors.New("云端执行池未配置，无法为该运行分配执行机器")
 	}
 	deadline := time.Now().Add(poolBindWait)
+	var nativeDriver string
+	if snapshot := run.WorkflowSnapshot.SandboxSnapshot; run.WorkflowSnapshot.AutoSelectSandbox && snapshot != nil && snapshot.Profile.Driver != domain.SandboxDriverDocker {
+		nativeDriver = snapshot.Profile.Driver
+	}
 	var runner domain.Runner
 	announced := false
 	for {
 		var ok bool
-		if runner, ok = e.pickPoolRunner(label); ok {
+		if runner, ok = e.pickPoolRunner(label, nativeDriver); ok {
 			break
 		}
 		if time.Now().After(deadline) {

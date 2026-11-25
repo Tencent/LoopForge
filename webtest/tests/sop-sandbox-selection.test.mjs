@@ -27,7 +27,7 @@ test('blank SOP prefers project isolation over local and shared profiles and sav
   ]);
   const select=app.document.querySelector('#sopCreateSandbox');
   assert.equal(select.value,'project-docker');
-  assert.deepEqual([...select.options].filter(o=>o.value).map(o=>o.value),['local','shared-docker','project-docker']);
+  assert.deepEqual([...select.options].filter(o=>o.value.trim()).map(o=>o.value),['local','shared-docker','project-docker']);
   select.value='shared-docker';select.dispatchEvent(new app.window.Event('change',{bubbles:true}));
   app.evaluate('setSOPWizardStep(3)');
   assert.match(app.document.querySelector('#sopCreateSummary').textContent,/Shared Docker/);
@@ -36,6 +36,29 @@ test('blank SOP prefers project isolation over local and shared profiles and sav
   const call=app.router.calls.find(c=>c.path==='/api/workflows'&&c.method==='PUT');
   assert.equal(call.body.sandboxProfileId,'shared-docker');
   assert.equal(app.evaluate('state.workflow.sandboxProfileId'),'shared-docker');
+});
+
+test('automatic sandbox selection saves and reopens in the SOP designer', async t=>{
+  const app=await loadApp();t.after(app.close);
+  openBlank(app,[{id:'project-docker',name:'Project Docker',projectId:'project-1',driver:'docker'}]);
+  const select=app.document.querySelector('#sopCreateSandbox');
+  const automatic=[...select.options].find(option=>option.textContent==='由 Agent 选择');
+  assert.ok(automatic);
+  select.value=automatic.value;
+  select.dispatchEvent(new app.window.Event('change',{bubbles:true}));
+  app.evaluate('setSOPWizardStep(3)');
+  assert.match(app.document.querySelector('#sopCreateSummary').textContent,/由 Agent 选择/);
+  app.router.put('/api/workflows',call=>({status:200,body:{...call.body,revision:1}}));
+  await submit(app);
+  const call=app.router.calls.find(c=>c.path==='/api/workflows'&&c.method==='PUT');
+  assert.equal(call.body.autoSelectSandbox,true);
+  assert.equal(call.body.sandboxProfileId,'');
+  const editor=app.document.querySelector('#workflowSandbox');
+  assert.equal(editor.selectedOptions[0].textContent,'由 Agent 选择');
+  editor.value='project-docker';
+  editor.dispatchEvent(new app.window.Event('change',{bubbles:true}));
+  assert.equal(app.evaluate('state.workflow.sandboxProfileId'),'project-docker');
+  assert.equal(app.evaluate('!!state.workflow.autoSelectSandbox'),false);
 });
 
 test('missing sandboxes block submission and refresh keeps the entered SOP fields', async t=>{

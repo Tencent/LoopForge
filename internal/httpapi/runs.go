@@ -156,7 +156,7 @@ func (h *runsHandlers) runs(c *gin.Context) {
 		if scopedWorkflow {
 			executionContext.SharedScheduleID, executionContext.SharedScheduleVersion = scope.Version.ID, scope.Version.Version
 		}
-		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, executionContext)
+		v, err := h.engine.StartWithRepositories(r.Context(), req.WorkflowID, req.Input, repositories, executionContext)
 		if err != nil {
 			if errors.Is(err, repo.ErrWorkspaceInUse) {
 				respond(c, HTTPError{http.StatusConflict, err.Error()})
