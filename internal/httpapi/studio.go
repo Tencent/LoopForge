@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	htmlpkg "html"
 	"io/fs"
@@ -109,13 +110,18 @@ func studioFileServer(static fs.FS) http.Handler {
 	nativeFiles := http.StripPrefix(chatPath, http.FileServer(http.FS(native)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if name, ok := strings.CutPrefix(r.URL.Path, chatPath); ok {
-			cache := "no-store"
+			w.Header().Set("Cache-Control", "no-store")
 			if studioHashedChatAsset.MatchString(name) {
-				if info, err := fs.Stat(native, name); err == nil && info.Mode().IsRegular() {
-					cache = "public, max-age=31536000, immutable"
+				info, err := fs.Stat(native, name)
+				if errors.Is(err, fs.ErrNotExist) {
+					// FileServer removes Cache-Control from its error responses.
+					http.NotFound(w, r)
+					return
+				}
+				if err == nil && info.Mode().IsRegular() {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 				}
 			}
-			w.Header().Set("Cache-Control", cache)
 			nativeFiles.ServeHTTP(w, r)
 			return
 		}

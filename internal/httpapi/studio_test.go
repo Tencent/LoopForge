@@ -133,8 +133,8 @@ func TestStudioChatbotCacheControl(t *testing.T) {
 
 	missing := httptest.NewRecorder()
 	h.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/chatbot/assets/missing-AbCd1234.js", nil))
-	if cache := missing.Header().Get("Cache-Control"); missing.Code != http.StatusNotFound || strings.Contains(cache, "immutable") {
-		t.Fatalf("missing asset must not be cached as immutable: status=%d cache=%q", missing.Code, cache)
+	if cache := missing.Header().Get("Cache-Control"); missing.Code != http.StatusNotFound || cache != "no-store" {
+		t.Fatalf("missing asset: status=%d cache=%q, want status=404 cache=no-store", missing.Code, cache)
 	}
 }
 
