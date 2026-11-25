@@ -743,6 +743,38 @@ describe("content and panels", () => {
     }
   });
 
+  test("lets a node discussion send when the default CLI is missing on the platform server", async () => {
+    // A node discussion runs in the run's environment, like the run
+    // conversation, so a CLI missing on the platform server must not
+    // silently disable sending.
+    const fallback = apiMock.getMockImplementation();
+    apiMock.mockImplementation(async (path) => {
+      if (path.includes("/conversation?")) return null;
+      if (path === "/api/auth/current") return { user: { id: 7, loginName: "member" } };
+      if (path.startsWith("/api/assistant/models")) return {
+        models: [], preferences: { executor: "cursor" },
+        engines: [{ id: "cursor", name: "Cursor", configured: true, serverMissing: true }],
+      };
+      return fallback(path);
+    });
+    try {
+      render(<SopRunPanel runs={[{
+        ...run, reviewAccess: { canDiscuss: true },
+        workflowSnapshot: { ...run.workflowSnapshot, nodes: [{ id: "n1", name: "收集证据", type: "script" }] },
+        nodes: { n1: { nodeId: "n1", status: "succeeded", output: "已收集检查证据" } },
+        artifacts: [],
+      }]} onClose={vi.fn()} />);
+      const user = userEvent.setup();
+      await user.click(screen.getByText("收集证据"));
+      const box = await screen.findByRole("textbox", { name: "询问此节点" });
+      await waitFor(() => expect(box).toBeEnabled());
+      await user.type(box, "这个节点做了什么？");
+      await waitFor(() => expect(screen.getByRole("button", { name: "发送节点消息" })).toBeEnabled());
+    } finally {
+      apiMock.mockImplementation(fallback);
+    }
+  });
+
   test("switches among runs and renders mixed node statuses", async () => {
     const user = userEvent.setup();
     const mixed = {

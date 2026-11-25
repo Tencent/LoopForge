@@ -13,12 +13,14 @@ import {
   UserTurn,
   replyText,
 } from "./ChatTurns";
+import { CLIInstallAction } from "./cli-install.jsx";
 import { openCredentialSettings } from "./credentials";
 import HarnessIcon from "./HarnessIcon";
 import MessageInfo from "./MessageInfo";
 import NativeApprovalPanel from "./NativeApprovalPanel";
 import { CopyButton } from "./RichContent";
 import { findNodeConversation, openNodeConversation } from "./sop-review.js";
+import { CredentialAction } from "./ui";
 import { useChat } from "./useChat";
 
 export default function SopNodeChat({
@@ -99,6 +101,7 @@ export default function SopNodeChat({
         <NodeComposer
           sessionId={sessionId}
           projectId={run.executionContext?.projectId}
+          runId={run.id}
           createSession={async () =>
             api(sessionPath((await openNodeConversation(run, node)).id))
           }
@@ -185,12 +188,13 @@ function NodeQuestionForm({
 function NodeComposer({
   sessionId,
   projectId,
+  runId,
   createSession,
   text,
   onTextChange,
   children,
 }) {
-  const chat = useChat({ sessionId, projectId, createSession });
+  const chat = useChat({ sessionId, projectId, runId, createSession });
   const follow = useRef(false);
   const bottom = useRef(null);
   const saved = chat.session?.messages || [];
@@ -238,9 +242,14 @@ function NodeComposer({
             }
           />
           {chat.error ? (
-            <p className="sop-inline-error" role="alert">
-              {chat.error}
-            </p>
+            <div className="sop-inline-error" role="alert">
+              <span>{chat.error}</span>
+              <CredentialAction text={chat.error} />
+              <CLIInstallAction
+                text={chat.error}
+                onResult={chat.adoptCLIInstall}
+              />
+            </div>
           ) : null}
           {chat.ready && !chat.executor ? (
             <button

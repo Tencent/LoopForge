@@ -679,9 +679,11 @@ export function useChat(embedded = null) {
   }
   const runnerId = composerRunnerId(session);
   const runner = executionMachines.machines.find(machine => machine.id === runnerId && machine.ownerUserId === user?.id);
+  // Run conversations, including a node discussion that is not created yet,
+  // execute in the run's environment rather than on the platform server.
   const checkServerCLI = executionMachines.machinesReady && !runnerId &&
     !(session?.executionTarget?.pool === "cloud" && session.executionTarget.runnerId) &&
-    !session?.runId && session?.runtimeMode !== "workspace";
+    !session?.runId && !embedded?.runId && session?.runtimeMode !== "workspace";
   const availableExecutors = EXECUTORS.flatMap(item => {
     if (usesRunnerLogin(runner, item.id)) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
     const option = catalogEngines.find(engine => engine.id === item.id);
