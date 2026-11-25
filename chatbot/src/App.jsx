@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { useChat } from "./useChat";
 import NativeApprovalPanel from "./NativeApprovalPanel";
+import { useNativeApprovals } from "./useNativeApprovals";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
@@ -255,7 +256,7 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
     </>
   );
 }
-function LiveMessage({ live, generation, finished = false, local = false, readOnly = false }) {
+function LiveMessage({ live, generation, finished = false, local = false, readOnly = false, approvals = [] }) {
   const steps = live.activity || [];
   const textual = hasTextSegments(steps);
   // A streamed paragraph followed by tool calls stays in the process above;
@@ -279,6 +280,7 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
           finishedAt={generation?.updatedAt}
           live={!finished}
           interrupted={finished}
+          approvals={approvals}
         />
       ) : (
         <div className="reply-heading">
@@ -288,6 +290,7 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
             finishedAt={generation?.updatedAt}
             live={!finished}
             interrupted={finished}
+            approvals={approvals}
           />
         </div>
       )}
@@ -367,6 +370,9 @@ function RenameSessionDialog({ session, rename, onClose }) {
 export default function App() {
   const realChat = useChat();
   const chat = useLocalConversations(realChat);
+  // One poll feeds the cards, the reply status and the tool rows alike.
+  const approvals = useNativeApprovals(chat);
+  const waitingApproval = Boolean(chat.busy) && approvals.count > 0;
   const sessionTitle = chat.session?.displayTitle || chat.session?.title || "新对话";
   const canRenameSession = !chat.readOnly && !chat.session?.shared;
   const titleReveal = useTitleReveal(
@@ -1156,6 +1162,7 @@ export default function App() {
       sessionReplyStatus(s, s.id === chat.activeId ? {
         generation: chat.generation,
         busy: chat.busy,
+        approvalCount: approvals.count,
       } : undefined),
       unreadReply(s, { activeId: chat.activeId, read: readReplies }),
     );
@@ -1337,8 +1344,14 @@ export default function App() {
                 status={sessionReplyStatus(chat.session, {
                   generation: chat.generation,
                   busy: chat.busy,
+                  approvalCount: approvals.count,
                 })}
               />
+              {waitingApproval ? (
+                <span className="conversation-status-chip" title="等待你批准外部写入">
+                  待审批
+                </span>
+              ) : null}
               <button
                 disabled={!canRenameSession}
                 title={sessionTitle}
@@ -1863,7 +1876,7 @@ export default function App() {
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
-                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} />
+                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} approvals={approvals.items} />
               ) : chat.generation &&
                 !generationStored(messages, chat.generation) &&
                 !["completed", "running"].includes(chat.generation.status) &&
@@ -1877,7 +1890,7 @@ export default function App() {
                   readOnly={chat.readOnly}
                 />
               ) : null}
-              <NativeApprovalPanel chat={chat} onChange={() => {
+              <NativeApprovalPanel approvals={approvals} onChange={() => {
                 if (follow.current && scroll.current)
                   scroll.current.scrollTop = scroll.current.scrollHeight;
               }} />
