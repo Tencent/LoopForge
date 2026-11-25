@@ -2,6 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp } from '../lib/load-app.mjs';
 
+test('artifact preview downloads the original file name', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/runs/run-a/artifacts/art-1', '# Test report');
+  app.evaluate(`
+    HTMLAnchorElement.prototype.click = function () { window.downloadedFile = this.download; };
+  `);
+  await app.evaluate(`previewArtifact({id:'run-a', artifacts:[
+    {id:'art-1',name:'test',path:'reports/test-report.md',attempt:1,mediaType:'text/markdown'},
+  ]},'art-1')`);
+
+  app.document.querySelector('#artifactPreview [data-download-artifact]').click();
+
+  assert.equal(app.evaluate('window.downloadedFile'), 'test-report.md');
+});
+
 test('run helpers merge streams and format timing, output, logs, telemetry, preview, and workspace states', async (t) => {
   const app = await loadApp();
   t.after(app.close);
