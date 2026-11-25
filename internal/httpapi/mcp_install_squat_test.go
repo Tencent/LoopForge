@@ -1,6 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -116,5 +120,65 @@ func TestMCPInstallIDsIgnorePredictableSquatters(t *testing.T) {
 		if squatter, ok := s.MCPServer(id); !ok || squatter.OwnerUserID != 9 || squatter.Scope != "personal" {
 			t.Fatalf("squatter %s changed: %+v", id, squatter)
 		}
+	}
+}
+
+// HTTP coverage for the ownership boundaries: an import that touches another
+// user's personal MCP is rejected as a whole, and a role that its project did
+// not share cannot be cloned by someone outside that project.
+func TestMCPImportRollbackAndUnsharedRoleCloneHTTP(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	f := cvBNewHTTPFixture(t)
+	if err := f.s.PutUser(domain.User{LoginName: "outsider"}); err != nil {
+		t.Fatal(err)
+	}
+	outsider, ok := f.s.UserByLoginName("outsider")
+	if !ok {
+		t.Fatal("outsider missing")
+	}
+	if err := f.s.PutProject(domain.Project{ID: "source", Name: "Source", Members: []domain.ProjectMember{{UserID: f.user.ID, Role: "member"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.PutProject(domain.Project{ID: "target", Name: "Target", Members: []domain.ProjectMember{{UserID: outsider.ID, Role: "member"}}}); err != nil {
+		t.Fatal(err)
+	}
+	owned := domain.MCPServerDefinition{ID: "owned-personal", Name: "Owned", Scope: "personal", OwnerUserID: f.user.ID, Transport: "http", URL: "https://example.test/owned"}
+	if err := f.s.PutMCPServer(owned); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.PutAgent(domain.AgentDefinition{ID: "private-role", Name: "Private", ProjectID: "source", Prompt: "private"}); err != nil {
+		t.Fatal(err)
+	}
+	as := func(user domain.User, method, path string, body any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest(method, path, bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		f.h.ServeHTTP(rec, authedRequest(t, req, user))
+		return rec
+	}
+
+	hijack := owned
+	hijack.URL = "https://evil.example.test"
+	w := as(outsider, http.MethodPost, "/api/mcp-servers/import", []domain.MCPServerDefinition{
+		{ID: "target-tool", Name: "Target tool", Scope: "project", ProjectID: "target", Transport: "http", URL: "https://example.test/target"},
+		hijack,
+	})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("import touching another user's MCP: %d %s", w.Code, w.Body.String())
+	}
+	if _, found := f.s.MCPServer("target-tool"); found {
+		t.Fatal("rejected import saved its first entry")
+	}
+	if stored, _ := f.s.MCPServer(owned.ID); stored.URL != owned.URL || stored.OwnerUserID != f.user.ID {
+		t.Fatalf("personal MCP changed: %+v", stored)
+	}
+
+	w = as(outsider, http.MethodPost, "/api/agents/private-role/clone", map[string]string{"id": "copied-role", "name": "Copied", "projectId": "target"})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("clone of an unshared role: %d %s", w.Code, w.Body.String())
+	}
+	if _, found := f.s.Agent("copied-role"); found {
+		t.Fatal("forbidden clone saved a role")
 	}
 }
