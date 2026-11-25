@@ -368,7 +368,7 @@ case "$*" in
       exited) echo "false|id-$(cat "$state/generation")|start-$(cat "$state/starts")"; exit 0 ;;
     esac
     echo 'Error: No such object: box' >&2; exit 1 ;;
-  'inspect --type container --format {"mounts":{{json .Mounts}},"privileged":{{.HostConfig.Privileged}}} box')
+  "inspect --type container --format "*" box")
     [ -n "$(status)" ] || { echo 'Error: No such container: box' >&2; exit 1; }
     printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false}\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
   "start box") [ -n "$(status)" ] || exit 1; echo running > "$state/status"; count starts; exit 0 ;;
@@ -436,7 +436,7 @@ if [ "${1-}" = inspect ] && [ "${2-}" = -f ]; then
   exit 0
 fi
 case "$*" in
-  'inspect --type container --format {"mounts":{{json .Mounts}},"privileged":{{.HostConfig.Privileged}}} box')
+  "inspect --type container --format "*" box")
     printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":%s}\n' "$workspace" "${CVR_DOCKER_EXISTING_PRIVILEGED:-false}"; exit 0 ;;
   "inspect --type container "*) echo 'Error: No such container' >&2; exit 1 ;;
   "inspect --format {{.State.Running}}|{{.Id}}|{{.State.StartedAt}} "*) echo 'true|container-id|now'; exit 0 ;;
