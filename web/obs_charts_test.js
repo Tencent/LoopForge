@@ -505,11 +505,13 @@ function fireVisible(ctx) {
     '编排类型分布': ['统计标签', '执行', '成功', '完成需求', 'Tokens', '成本'],
     'LOOP 版本对比': ['LOOP', '版本', '运行', '成功率', '均执行耗时', 'Tokens', '成本', '提示'],
     'LOOP 编排画像': ['LOOP', '节点数', '节点类型构成', '统计标签', '使用频次'],
-    '节点质量明细': ['节点', '执行', '成功', '失败', '返工', '重试率', '均执行耗时', 'Tokens', '工具调用'],
+    '节点质量明细': ['节点', '节点记录', '未启动 / 跳过', '成功', '失败', '返工', '重试率', '均执行耗时', 'Tokens', '工具调用'],
     '失败原因': ['节点', '错误', '次数'],
     '慢节点': ['节点', '执行', '均耗时', 'P95', '成功率', 'Tokens'],
   };
   for (const [name, headers] of Object.entries(legacy)) assert.ok(has(headers), `detail keeps ${name}`);
+  const nodeQuality = tables.find(t => t.headers[0] === '节点' && t.headers[1] === '节点记录');
+  assert.equal(nodeQuality.rows[0].cells[2], '1', 'a node record with no terminal or active status is counted as not started');
   const keys = groups.flatMap(g => g.items).map(i => i.key);
   for (const key of ['traces', 'recent', 'trend', 'sops', 'models', 'users', 'dist', 'nodes', 'fails', 'versions']) assert.ok(keys.includes(key), key);
   const delivery = ctx.obsDeliveryTableDef();
