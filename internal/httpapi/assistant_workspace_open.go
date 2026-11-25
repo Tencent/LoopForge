@@ -221,6 +221,9 @@ func parseWorkspaceOpenChoice(args map[string]any) (workspaceOpenChoice, error) 
 // and hands the CLI over to it. A task conversation enters its task's
 // workspace once the SOP has stopped.
 func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *AgentToolSession, args map[string]any) (string, error) {
+	if s.workspaceStartFailed.Load() {
+		return "", errors.New(assistantWorkspaceFallbackPrompt)
+	}
 	choice, err := parseWorkspaceOpenChoice(args)
 	if err != nil {
 		return "", err

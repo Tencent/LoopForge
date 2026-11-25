@@ -404,7 +404,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.AttachmentOwners = req.attachmentOwners
 		toolFiles = files
 		defer sess.Close()
-		defer files.Cleanup()
+		defer func() { toolFiles.Cleanup() }()
 		if req.RunID == "" && h.engine != nil {
 			sess.workspaceTurn = newAssistantWorkspaceTurn(h.engine, cancelModel)
 			if scope := assistantControlScopeFrom(modelCtx); scope.GenerationID != "" {
@@ -511,6 +511,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if generate == nil {
 		resume := false
 		var workspaceRepositoryHash string
+		var initialCheckpoint assistantNativeCheckpoint
 		branch := false
 		rewritten := false
 		if saved, err := loadAssistantConversation(h.repo, assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); err == nil {
@@ -539,13 +540,11 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 			defer nativeSession.Close()
 			resume = nativeSession.resume
-			cliSessionID = nativeSession.checkpoint.SessionID
-			workspaceRepositoryHash = nativeSession.checkpoint.WorkspaceRepositoryHash
-			if resume {
-				turn = assistantIncrementalPrompt(req, nativeSession.checkpoint)
-			} else {
-				turn = h.turnPrompt(req, sourceRoot, false)
-			}
+			// begin records the submitted messages. Keep the preceding checkpoint
+			// for rebuilding this turn's input if the first phase cannot start.
+			initialCheckpoint = nativeSession.checkpoint
+			cliSessionID = initialCheckpoint.SessionID
+			workspaceRepositoryHash = initialCheckpoint.WorkspaceRepositoryHash
 			if err = nativeSession.begin(); err != nil {
 				failSetup(err)
 				return
@@ -564,7 +563,25 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				resume = !state.Unstarted
 				workspaceRepositoryHash = state.WorkspaceRepositoryHash
 			}
-			turn = h.turnPrompt(req, sourceRoot, resume)
+		}
+		promptForTurn := func() string {
+			if nativeSession != nil && resume {
+				return assistantIncrementalPrompt(req, initialCheckpoint)
+			}
+			return h.turnPrompt(req, sourceRoot, resume)
+		}
+		turn = promptForTurn()
+		switchMode := func(mode string) error {
+			next, err := h.switchConversationProcessMode(toolSession, cliRoot, mode)
+			if err != nil {
+				return err
+			}
+			toolFiles.Cleanup()
+			toolFiles = next
+			if streaming {
+				emit("runtime_mode", map[string]string{"mode": mode, "workspaceRunId": toolSession.conversationWorkspace()})
+			}
+			return nil
 		}
 		generate = func(ctx context.Context, prompt string, u domain.User) (string, error) {
 			// A mode request completes its CLI phase normally. Waiting for exit
@@ -587,13 +604,13 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					return "", err
 				}
 				system := assistantSystemPromptForRequest(req, approvalMode)
-				prompt += conversationAttachmentNote(cliRoot, req, turnEngine)
+				phasePrompt := prompt + conversationAttachmentNote(cliRoot, req, turnEngine)
 				var sentRepositoryHash string
 				if req.workspaceMode {
 					system = assistantWorkspaceSystemPrompt
 					prefix := assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n"
 					var repositoryPrompt string
-					repositoryPrompt, sentRepositoryHash, err = h.workspaceRepositoryPrompt(toolSession, cliRoot, workspaceRepositoryHash, len(prefix)+len(prompt))
+					repositoryPrompt, sentRepositoryHash, err = h.workspaceRepositoryPrompt(toolSession, cliRoot, workspaceRepositoryHash, len(prefix)+len(phasePrompt))
 					if err != nil {
 						return "", err
 					}
@@ -601,11 +618,14 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 						// The journal's catalogue is uncertain until the phase completes.
 						workspaceRepositoryHash = ""
 					}
-					prompt = prefix + repositoryPrompt + projectCredentialNote + prompt
+					phasePrompt = prefix + repositoryPrompt + projectCredentialNote + phasePrompt
 				} else if !req.sopDesigner() {
-					prompt = assistantPlatformExecutionReminder + "\n" + projectCredentialNote + prompt
+					phasePrompt = assistantPlatformExecutionReminder + "\n" + projectCredentialNote + phasePrompt
 				}
-				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: func(usage domain.TokenUsage) {
+				if toolSession.workspaceStartFailed.Load() {
+					phasePrompt += "\n" + assistantWorkspaceFallbackPrompt
+				}
+				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: phasePrompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: func(usage domain.TokenUsage) {
 					turnUsage.add(domain.PriceScheduleExecutionUsage(replyModel, usage))
 				}, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
 				cliReq.ImageInput = conversationHasImageAttachments(req)
@@ -670,6 +690,27 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					assistantDiagnosticsFrom(ctx).platform("cli.handoff_phase_error", "交接已开始，旧阶段异常结束："+err.Error()+"；继续交接", u)
 					err = nil
 				}
+				if req.workspaceMode && !progressed.Load() && assistantWorkspaceStartupFailed(ctx, err) {
+					toolSession.workspaceStartFailed.Store(true)
+					if err := switchMode(domain.AssistantModePlatform); err != nil {
+						return "", fmt.Errorf("回退平台模式失败：%w", err)
+					}
+					assistantDiagnosticsFrom(ctx).platform("cli.workspace_fallback", assistantWorkspaceFallbackStatus, u)
+					toolSession.Notify("thought", assistantStreamEvent{Kind: "status", Text: assistantWorkspaceFallbackStatus})
+					req.workspaceMode = false
+					switch {
+					case !nativeContinuationReady:
+						prompt = promptForTurn()
+					case !resume:
+						prompt = h.freshPhasePrompt(req, sourceRoot, switches)
+					case switches > 0:
+						prompt = "沿用当前原生会话和已有的工具结果，先核对已执行的操作，避免重复执行。"
+					}
+					// Retry this phase with the same input and journal. In particular,
+					// a failed first phase has not sent its image inputs yet.
+					switches--
+					continue
+				}
 				if err != nil && resume && !restarted && !progressed.Load() && assistantResumeRecoverable(ctx, err) {
 					// The native journal is missing or the provider rejected it
 					// before this phase produced anything, so no tool ran. Start
@@ -710,14 +751,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				if ctx.Err() != nil {
 					return "", ctx.Err()
 				}
-				next, err := h.switchConversationProcessMode(toolSession, cliRoot, mode)
-				if err != nil {
+				if err := switchMode(mode); err != nil {
 					return "", err
-				}
-				toolFiles = next
-				defer next.Cleanup()
-				if streaming {
-					emit("runtime_mode", map[string]string{"mode": mode, "workspaceRunId": toolSession.conversationWorkspace()})
 				}
 				prompt = "内部控制信息，不向用户解释或复述：运行环境已切换为「" + mode + "」，当前原生会话及之前的工具结果全部保留。直接使用当前工具继续完成本轮用户请求，先核对已执行操作，避免重复执行。面向用户只说明任务进展和结果，不提交接、进程重启、工具注入或运行模式。"
 				// Each phase may start over once: a journal that a new
