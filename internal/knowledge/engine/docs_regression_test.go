@@ -180,13 +180,13 @@ func TestMySQLKeywordIndexLoopForgeDocsQuestions(t *testing.T) {
 	t.Setenv("AGENTFLOW_KNOWLEDGE_MYSQL_DSN", "")
 	s, cleanup := openDocsRegressionStore(t, dsn)
 	defer cleanup()
-	script, err := os.ReadFile("../../../migrations/028_builtin_knowledge.sql")
+	script, err := os.ReadFile("../../../migrations/043_builtin_knowledge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, stmt := range s5SplitSQL(string(script)) {
 		if err := s.DB.Exec(stmt).Error; err != nil && !s5IsDuplicateSchemaError(err) {
-			t.Fatalf("执行 028 失败：%v\nSQL: %s", err, stmt)
+			t.Fatalf("执行 043 失败：%v\nSQL: %s", err, stmt)
 		}
 	}
 

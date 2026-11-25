@@ -1,4 +1,4 @@
--- Run manually on the control database after 028_builtin_knowledge.sql.
+-- Run manually on the control database after 043_builtin_knowledge.sql.
 -- No content-plane DDL: D11 uses the existing bases and bindings tables.
 -- Safe to repeat. Shared libraries never grant project write permissions.
 UPDATE project_knowledge_bindings AS binding

@@ -662,7 +662,7 @@ type knowledgeContentFenceRow struct {
 
 func (knowledgeContentFenceRow) TableName() string { return "knowledge_content_fences" }
 
-// 内置知识引擎的 schema 基线以 migrations/028+ 的 SQL 为准。下面的 gorm tag
+// 内置知识引擎的 schema 基线以 migrations/043+ 的 SQL 为准。下面的 gorm tag
 // 只保证缺表时服务能启动；AutoMigrate 不会改已有列的类型、collation 或默认值，
 // 安装/升级脚本必须先按序执行迁移（见 docs/deployment.md）。
 
@@ -687,7 +687,7 @@ type knowledgeSubmissionRow struct {
 
 func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions" }
 
-// 内置知识引擎控制面（主库，KnowledgeRepo）。向量配置列由 030 脚本补建；
+// 内置知识引擎控制面（主库，KnowledgeRepo）。向量配置列由 045 脚本补建；
 // gorm 的增量 DDL 建得出普通列，这里注册后新装也能带全列。
 type knowledgeBaseRow struct {
 	ID                  string     `gorm:"column:id;primaryKey;size:64"`

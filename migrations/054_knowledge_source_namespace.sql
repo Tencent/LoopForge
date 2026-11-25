@@ -1,4 +1,4 @@
--- 039: 托管知识库/来源 ID 命名空间迁移。可重复执行。
+-- 054: 托管知识库/来源 ID 命名空间迁移。可重复执行。
 --
 -- 运行前必须停止所有 API 和 worker 实例（不只是本机 Compose 平台）：
 -- 本脚本会改控制面来源 ID，同时改内容面的 source_id 和撤回 fence；旧实例
@@ -12,7 +12,7 @@
 --            knowledge_content_fences。独立内容库由
 --            scripts/knowledge-schema.sh 在执行本段前导入控制面的映射表；
 --            同一 MySQL 服务器上也可由本段从 @knowledge_control_schema 复制。
---   control：更新控制面引用，最后写入 knowledge_schema_versions(39)。
+--   control：更新控制面引用，最后写入 knowledge_schema_versions(54)。
 --
 -- Git 来源 ID 不改：AES-GCM 用来源 ID 做 AAD。重新登记时只在已核实归属的
 -- 库内复用完全相同的旧配置；新 Git ID 以 git:<baseID>\0<url>\0<branch>\0<prefix>
@@ -153,6 +153,6 @@ UPDATE knowledge_bases s JOIN knowledge_id_migration_039 m ON m.kind='base' AND 
 -- The version row is written only after both planes and the control updates
 -- succeeded. A failed run leaves the old version and is safe to retry.
 INSERT INTO knowledge_schema_versions (version, applied_at)
-VALUES (39, UTC_TIMESTAMP(3))
+VALUES (54, UTC_TIMESTAMP(3))
 ON DUPLICATE KEY UPDATE version = VALUES(version);
 COMMIT;

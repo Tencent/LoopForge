@@ -1,4 +1,4 @@
--- 028: 内置知识引擎（阶段一最小切片）的控制面与内容面表。
+-- 043: 内置知识引擎（阶段一最小切片）的控制面与内容面表。
 --
 -- 分两段，段内都不含跨库外键或跨库事务。同一 MySQL 时整份执行；配置了独立
 -- 内容库时，第一段在主库执行，第二段在内容库执行。由安装/升级脚本
@@ -16,8 +16,6 @@
 -- @plane control
 -- ===== 第一段：主库（控制面，KnowledgeRepo） =====
 
--- 外部客户端与「地址加 Token」配置下线，这张表不再使用。
-DROP TABLE IF EXISTS knowledge_settings;
 
 CREATE TABLE IF NOT EXISTS knowledge_bases (
   id            VARCHAR(64)  NOT NULL PRIMARY KEY,

@@ -1,4 +1,4 @@
--- 037: knowledge concurrency and recovery. Safe to execute repeatedly.
+-- 052: knowledge concurrency and recovery. Safe to execute repeatedly.
 -- @plane control
 -- CONTROL DATABASE: run this section on the primary database.
 CREATE TABLE IF NOT EXISTS knowledge_operation_leases (
@@ -117,7 +117,7 @@ EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- Immutable staging versions keep failed control CAS writes invisible. The
--- empty version key remains the legacy 038 migration target and read fallback.
+-- empty version key remains the legacy 053 migration target and read fallback.
 CREATE TABLE IF NOT EXISTS knowledge_submission_contents (
  submission_id VARCHAR(64) NOT NULL,
  version_key VARCHAR(64) NOT NULL DEFAULT '',

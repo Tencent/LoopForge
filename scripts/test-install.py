@@ -97,7 +97,7 @@ exec "$@"
         concurrency = log.find('ALTER TABLE knowledge_submissions ADD COLUMN version')
         self.assertGreaterEqual(baseline, 0, log)
         self.assertGreaterEqual(concurrency, 0, log)
-        self.assertLess(baseline, concurrency, '002 baseline must run before 037')
+        self.assertLess(baseline, concurrency, '002 baseline must run before 052')
         # The runner has an explicit knowledge-migration list, so upstream
         # optional manual DDL is never swept into an install/upgrade.
         self.assertNotIn('assistant_session_reads', log)
@@ -372,7 +372,7 @@ class KnowledgeSchemaScriptTests(unittest.TestCase):
     """Exercise the real migration files and knowledge-schema.sh segmentation.
 
     No MySQL server is needed: a fake mysql client records every statement and
-    returns canned catalog answers. This catches baseline ordering, the 039
+    returns canned catalog answers. This catches baseline ordering, the 054
     control/content/control split, mapping import into a separate content
     database, fence migration and DSN-driven seeding without Docker.
     """
@@ -436,9 +436,9 @@ esac
         version = log.find('ALTER TABLE knowledge_submissions ADD COLUMN version')
         self.assertGreaterEqual(baseline, 0, log)
         self.assertGreaterEqual(version, 0, log)
-        self.assertLess(baseline, version, '002 baseline must run before 037')
+        self.assertLess(baseline, version, '002 baseline must run before 052')
 
-        # 039 content work goes to the content DSN, not the control DSN.
+        # 054 content work goes to the content DSN, not the control DSN.
         fences = log.find('knowledge_content_fences')
         docs = log.find('knowledge_documents d JOIN knowledge_id_migration_039')
         self.assertGreaterEqual(fences, 0, log)
@@ -457,8 +457,8 @@ esac
     def test_apply_runs_only_explicit_knowledge_migrations(self):
         result = self.run_schema('apply')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('Applying 028_builtin_knowledge.sql', result.stdout)
-        self.assertIn('Applying 040_knowledge_governance_noise.sql', result.stdout)
+        self.assertIn('Applying 043_builtin_knowledge.sql', result.stdout)
+        self.assertIn('Applying 055_knowledge_governance_noise.sql', result.stdout)
         self.assertNotIn('026_assistant_session_reads.sql', result.stdout)
         self.assertNotIn('027_cli_model_catalog.sql', result.stdout)
         log = self.log.read_text()
