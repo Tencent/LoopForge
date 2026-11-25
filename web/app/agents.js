@@ -129,6 +129,7 @@ function storedAgentExecutorId(agent){
   return agent?.executorId||(agent?.model||agent?.effort?'codebuddy':'');
 }
 const AGENT_CUSTOM_MODEL='__custom__';
+const agentPickerBindings=new WeakMap();
 let executorModelCatalogUser, executorModelCatalogRequest, agentModelRevision=0;
 function executorModelCatalogs(){
   return executorModelCatalogUser===state.currentUser?.id?(window.AgentFlowExecutorModels||{}):{};
@@ -171,21 +172,32 @@ function paintAgentPicker(pickerId,item){
   // Only a clipped label needs the hover hint.
   const label=toggle?.querySelector('[data-model-label]');
   if(toggle&&label&&label.scrollWidth<=label.clientWidth){toggle.removeAttribute('title');toggle.removeAttribute('data-hui-title')}
+  agentPickerBindings.get(toggle)?.refresh();
+}
+// The CLI list comes from the hidden <select name="executorId">, which keeps
+// the value, the legacy-executor option and the change event for the form.
+function agentExecutorItems(){
+  const select=$('#agentForm')?.elements?.executorId,api=agentModelAPI();
+  return [...(select?.options||[])].map(o=>{
+    const count=(executorModelCatalogs()[o.value]?.models||[]).length;
+    // "Follow the owner's default" has no CLI of its own, so no logo.
+    return {id:o.value,name:o.textContent,brand:api?.engineBrand?.(o.value)||'',disabled:o.disabled,detail:count?`${count} 个可用模型`:'',...(o.value?{}:{icon:false})};
+  });
+}
+function agentModelChoices(){
+  const current=$('#agentModelPicker')?.querySelector('[name="modelChoice"]')?.value||'';
+  return agentModelItems(currentAgentExecutorId(),current);
+}
+function renderAgentExecutorPicker(){
+  const select=$('#agentForm')?.elements?.executorId;if(!select)return;
+  const item=agentExecutorItems().find(x=>x.id===select.value);
+  paintAgentPicker('#agentExecutorPicker',item||{id:select.value,name:select.value||'CLI',icon:false});
 }
 function renderAgentModelPicker(){
   const picker=$('#agentModelPicker');if(!picker)return;
   const current=picker.querySelector('[name="modelChoice"]').value;
-  const items=agentModelItems(currentAgentExecutorId(),current);
-  const menu=picker.querySelector('.ai-model-menu');
-  agentModelAPI()?.renderOptions?.(menu,items,current,id=>{
-    picker.querySelector('[name="modelChoice"]').value=id;
-    syncAgentModelCustomField();
-    paintAgentPicker('#agentModelPicker',items.find(x=>x.id===id));
-    renderAgentEffortPicker(id!==current);
-    menu.hidden=true;picker.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false');
-  });
   syncAgentModelCustomField();
-  paintAgentPicker('#agentModelPicker',items.find(x=>x.id===current));
+  paintAgentPicker('#agentModelPicker',agentModelChoices().find(x=>x.id===current)||{id:current,name:current});
 }
 function syncAgentModelCustomField(){
   const picker=$('#agentModelPicker'),field=$('#agentModelCustomField');
@@ -198,12 +210,6 @@ function renderAgentEffortPicker(modelChanged=false){
   const field=picker.querySelector('[name="effort"]');
   if(modelChanged&&executorModelCatalogs()[currentAgentExecutorId()]&&!items.some(item=>item.id===field.value))field.value='';
   const current=field.value;
-  const menu=picker.querySelector('.ai-model-menu');
-  agentModelAPI()?.renderOptions?.(menu,items,current,id=>{
-    picker.querySelector('[name="effort"]').value=id;
-    paintAgentPicker('#agentEffortPicker',items.find(x=>x.id===id));
-    menu.hidden=true;picker.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false');
-  });
   paintAgentPicker('#agentEffortPicker',items.find(x=>x.id===current)||{id:current,name:current,icon:false});
 }
 function applyAgentModelUI(executorId,model,effort,pickFirst=false){
@@ -213,7 +219,7 @@ function applyAgentModelUI(executorId,model,effort,pickFirst=false){
     if(!toggle)continue;
     toggle.disabled=!executorId;
     if(!executorId){
-      control.querySelector('.ai-model-menu').hidden=true;
+      agentPickerBindings.get(toggle)?.close(false);
       toggle.setAttribute('aria-expanded','false');
     }
   }
@@ -224,32 +230,49 @@ function applyAgentModelUI(executorId,model,effort,pickFirst=false){
   picker.querySelector('[name="modelChoice"]').value=choice;
   const customInput=$('#agentModelCustomField')?.querySelector('input[name="model"]');
   if(customInput&&choice===AGENT_CUSTOM_MODEL)customInput.value=model||'';
+  renderAgentExecutorPicker();
   renderAgentModelPicker();
   effortPicker.querySelector('[name="effort"]').value=executorId?effort||'':'';
   renderAgentEffortPicker();
 }
-function bindAgentPicker(pickerId,render){
-  const picker=$(pickerId);if(!picker||picker.dataset.bound)return;
-  picker.dataset.bound='1';
-  picker.querySelector('[data-model-toggle]').onclick=e=>{
-    e.stopPropagation();
-    const menu=picker.querySelector('.ai-model-menu'),toggle=picker.querySelector('[data-model-toggle]');
-    const open=menu.hidden;menu.hidden=!open;
-    toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open){render();placeAgentPickerMenu(toggle,menu);toggle.removeAttribute('title');toggle.removeAttribute('data-hui-title')}
+// CLI, model and effort open the same menu as the chat composer
+// (AgentFlowAssistantModels.bindPicker). It hangs from <body>, so the
+// scrolling wizard body no longer clips it. A pick writes the hidden field
+// and fires change, so the CLI switch and the summary line stay wired.
+function bindAgentPickers(){
+  const api=agentModelAPI();if(!api?.bindPicker)return;
+  const field=(pickerId,name)=>$(pickerId)?.querySelector(`[name="${name}"]`);
+  const commit=(input,id)=>{if(!input||input.value===id)return;input.value=id;input.dispatchEvent(new Event('change',{bubbles:true}))};
+  const bind=(pickerId,options)=>{
+    const toggle=$(pickerId)?.querySelector('[data-model-toggle]');
+    if(!toggle)return;
+    // The open menu already shows the full name; drop the hover hint.
+    agentPickerBindings.set(toggle,api.bindPicker(toggle,{...options,onOpen:()=>{toggle.removeAttribute('title');toggle.removeAttribute('data-hui-title')}}));
   };
-}
-// The wizard body (.as-main) scrolls and clips its children, so the menu opens
-// toward whichever side of the trigger has more room and never grows past it.
-function placeAgentPickerMenu(toggle,menu){
-  const box=toggle.closest('.as-main')?.getBoundingClientRect(),at=toggle.getBoundingClientRect();
-  if(!box)return;
-  const gap=6,margin=8;
-  const above=at.top-box.top-gap-margin,below=box.bottom-at.bottom-gap-margin;
-  const down=below>=above;
-  menu.style.setProperty('top',down?`calc(100% + ${gap}px)`:'auto','important');
-  menu.style.setProperty('bottom',down?'auto':`calc(100% + ${gap}px)`,'important');
-  menu.style.setProperty('max-height',`${Math.max(120,Math.min(320,Math.floor(down?below:above)))}px`,'important');
+  bind('#agentExecutorPicker',{
+    label:'CLI',search:'auto',searchPlaceholder:'搜索 CLI',emptyText:'没有匹配的 CLI',
+    items:agentExecutorItems,
+    value:()=>field('#agentExecutorPicker','executorId')?.value,
+    onPick:id=>commit(field('#agentExecutorPicker','executorId'),id),
+  });
+  bind('#agentModelPicker',{
+    label:'模型',searchPlaceholder:'搜索模型',emptyText:'没有匹配的模型',
+    items:agentModelChoices,
+    value:()=>field('#agentModelPicker','modelChoice')?.value||'',
+    onPick:id=>{
+      const choice=field('#agentModelPicker','modelChoice');
+      const changed=choice.value!==id;
+      commit(choice,id);
+      renderAgentModelPicker();
+      renderAgentEffortPicker(changed);
+    },
+  });
+  bind('#agentEffortPicker',{
+    label:'思考强度',search:false,
+    items:()=>agentEffortItems(currentAgentExecutorId()),
+    value:()=>field('#agentEffortPicker','effort')?.value||'',
+    onPick:id=>{commit(field('#agentEffortPicker','effort'),id);renderAgentEffortPicker()},
+  });
 }
 function agentEffectiveModel(f){
   const choice=f?.elements?.modelChoice?.value;
@@ -274,6 +297,7 @@ function selectAgent(a,rerender=true){
     if(modelRevision!==agentModelRevision||modelUser!==state.currentUser?.id)return;
     const model=agentEffectiveModel(f);
     if(!model&&f.elements.modelChoice?.value===AGENT_CUSTOM_MODEL){
+      renderAgentExecutorPicker();
       renderAgentModelPicker();
       renderAgentEffortPicker();
     }else{

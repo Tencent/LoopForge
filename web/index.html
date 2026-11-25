@@ -853,23 +853,28 @@
               <label class="as-field"><span>职责 <small>一句话，列表和流程卡片里展示</small></span><div class="as-count-wrap"><input name="description" maxlength="160" placeholder="读 Issue 和源码，写出根因与修复计划，不改业务代码"><small class="as-count" id="agentDescCount" aria-hidden="true"></small></div></label>
               <div class="as-section-label">运行方式</div>
               <div class="as-grid agent-runtime-grid">
-                <label class="as-field"><span>CLI</span><select name="executorId" class="select" id="agentExecutorSelect"></select></label>
-                <div class="as-field"><span>模型</span>
-                  <div class="clarify-model-field" id="agentModelPicker" data-clarify-model>
-                    <input type="hidden" name="modelChoice">
-                    <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
-                      <span class="ai-model-icon"></span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span>
+                <div class="as-field"><span id="agentExecutorLabel">CLI</span>
+                  <div class="clarify-model-field" id="agentExecutorPicker">
+                    <select name="executorId" id="agentExecutorSelect" hidden data-native aria-labelledby="agentExecutorLabel"></select>
+                    <button type="button" class="ai-model-toggle" data-model-toggle aria-labelledby="agentExecutorLabel agentExecutorValue" aria-haspopup="menu" aria-expanded="false">
+                      <span class="ai-model-icon"></span><span id="agentExecutorValue" data-model-label>CLI</span><span class="ai-model-caret" aria-hidden="true"></span>
                     </button>
-                    <div class="ai-model-menu" hidden role="listbox"></div>
                   </div>
                 </div>
-                <div class="as-field"><span>思考强度</span>
-                  <div class="clarify-model-field" id="agentEffortPicker" data-clarify-model>
-                    <input type="hidden" name="effort" value="">
-                    <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
-                      <span data-model-label>默认</span><span class="ai-model-caret" aria-hidden="true"></span>
+                <div class="as-field"><span id="agentModelLabel">模型</span>
+                  <div class="clarify-model-field" id="agentModelPicker">
+                    <input type="hidden" name="modelChoice">
+                    <button type="button" class="ai-model-toggle" data-model-toggle aria-labelledby="agentModelLabel agentModelValue" aria-haspopup="menu" aria-expanded="false">
+                      <span class="ai-model-icon"></span><span id="agentModelValue" data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span>
                     </button>
-                    <div class="ai-model-menu" hidden role="listbox"></div>
+                  </div>
+                </div>
+                <div class="as-field"><span id="agentEffortLabel">思考强度</span>
+                  <div class="clarify-model-field" id="agentEffortPicker">
+                    <input type="hidden" name="effort" value="">
+                    <button type="button" class="ai-model-toggle" data-model-toggle aria-labelledby="agentEffortLabel agentEffortValue" aria-haspopup="menu" aria-expanded="false">
+                      <span id="agentEffortValue" data-model-label>默认</span><span class="ai-model-caret" aria-hidden="true"></span>
+                    </button>
                   </div>
                 </div>
               </div>
