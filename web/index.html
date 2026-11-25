@@ -861,7 +861,10 @@
               <label class="as-field"><span>职责 <small>一句话，列表和流程卡片里展示</small></span><div class="as-count-wrap"><input name="description" maxlength="160" placeholder="读 Issue 和源码，写出根因与修复计划，不改业务代码"><small class="as-count" id="agentDescCount" aria-hidden="true"></small></div></label>
               <div class="as-section-label">运行方式</div>
               <div class="as-grid agent-runtime-grid">
-                <label class="as-field"><span>CLI</span><select name="executorId" class="select" id="agentExecutorSelect"></select></label>
+                <label class="as-field"><span>CLI</span>
+                  <select name="executorId" class="select" id="agentExecutorSelect" aria-label="CLI" aria-describedby="agentExecutorStatus"></select>
+                  <small class="muted" id="agentExecutorStatus" hidden></small>
+                </label>
                 <div class="as-field"><span>模型</span>
                   <div class="clarify-model-field" id="agentModelPicker" data-clarify-model>
                     <input type="hidden" name="modelChoice">

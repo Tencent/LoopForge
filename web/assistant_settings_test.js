@@ -9,7 +9,7 @@ const ctx = {
   AgentFlowAssistantModels: {
     catalog: () => ({
       engines: [
-        { id: 'codebuddy', name: 'CodeBuddy', configured: false },
+        { id: 'codebuddy', name: 'CodeBuddy', configured: true, personal: false },
         { id: 'claude-code', name: 'Claude Code', configured: true },
         { id: 'codex', name: 'Codex', configured: true },
       ],
@@ -32,6 +32,9 @@ const mb = ctx.__mb;
 const catData = mb.assistantReviewCatalogData();
 assert.deepEqual(Array.from(catData.engines, e => e.id), ['claude-code', 'codex']);
 assert.equal(catData.modelsByEngine.has('codebuddy'), false);
+const unavailable = mb.assistantPrefsFormHTML({ approvalReviewModel: 'glm-5.3-flash' });
+assert.match(unavailable, /id="assistantPrefsReviewModelBtn"[^>]* disabled>/);
+assert.match(unavailable, /id="assistantPrefsReviewModelCustom"[^>]* disabled>/);
 
 // 1. CLI mode rendering & backward compatibility when approvalReviewMode is omitted.
 const html = mb.assistantPrefsFormHTML({
