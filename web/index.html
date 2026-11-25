@@ -921,7 +921,9 @@
       <div class="req-wizard-body">
         <section id="reqStepDescribe" class="req-pane" aria-label="描述需求">
           <div class="req-chat-composer">
-            <textarea id="chatInput" aria-label="需求描述" placeholder="要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。" rows="6"></textarea>
+            <textarea id="chatInput" aria-label="需求描述" aria-describedby="reqMarkdownHint" placeholder="要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。" rows="6"></textarea>
+            <div id="reqMarkdownPreview" class="req-markdown-preview markdown-body" aria-label="需求描述预览" hidden></div>
+            <ul id="reqImages" class="req-images" aria-label="已粘贴的图片" hidden></ul>
             <div class="req-composer-toolbar">
               <div id="reqRepoChip" class="req-ghost-sel">
                 <button type="button" id="reqRepoChipToggle" class="req-ghost-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="reqRepoPopover"><svg class="agent-icon harness-icon" data-icon="folder" width="13" height="13" aria-hidden="true"></svg><span id="reqRepoChipLabel" class="req-ghost-value"></span><svg class="agent-icon harness-icon req-chev" data-icon="chevron-down" width="13" height="13" aria-hidden="true"></svg></button>
@@ -940,6 +942,8 @@
                 </div>
               </div>
               <span class="req-toolbar-sp"></span>
+              <span id="reqMarkdownHint" class="req-markdown-hint">支持 Markdown 和粘贴图片</span>
+              <button type="button" id="reqPreviewToggle" class="button quiet small" aria-pressed="false" aria-controls="reqMarkdownPreview">预览</button>
               <span id="reqCharCount" class="req-count"></span>
             </div>
           </div>

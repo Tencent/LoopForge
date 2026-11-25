@@ -431,6 +431,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	//（404 JSON），再按 (子路径, method) 分派，不匹配的组合兜底 404 text。
 	// gin 用 Any 注册 + handler 内方法分派复刻该语义。
 	g.Any("/api/issues/:id", api.issues.issue)
+	g.GET("/api/issues/:id/images/:imageId", api.issues.issue)
 	g.Any("/api/issues/:id/comments", api.issues.issue)
 	g.Any("/api/issues/:id/runs", api.issues.issue)
 	g.Any("/api/issues/:id/clarification", api.issues.issue)
