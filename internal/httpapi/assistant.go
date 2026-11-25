@@ -997,7 +997,7 @@ func (h *assistantHandlers) turnPrompt(req assistantRequest, sourceRoot string, 
 		}
 		sourceInfo = "当前版本源码文件列表仅作参考：" + string(data)
 	}
-	history, _ := json.Marshal(assistantPromptMessages(req.Messages))
+	history, _ := json.Marshal(assistantHistoryProjection(assistantPromptMessages(req.Messages), assistantTurnTokenBudget(req.Model), estimateTokens))
 	return sourceInfo + "\n" + context + "\n对话：\n" + string(history)
 }
 
