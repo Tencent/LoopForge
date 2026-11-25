@@ -55,6 +55,13 @@ func (e *Engine) updateRunAtErr(id string, allowExpiredLease bool, mutate func(*
 		mutate(&r)
 	}
 	if err := e.repo.PutRun(r); err != nil {
+		code := runWriteLockErrorCode(err)
+		if len(pending) > 0 && (code == mysqlLockWaitTimeout || code == mysqlDeadlock) {
+			// Restore the rolled-back observations ahead of newer observations.
+			e.obsMu.Lock()
+			e.obsPending = append(pending, e.obsPending...)
+			e.obsMu.Unlock()
+		}
 		log.Printf("put run %s: %v", id, err)
 		return false, err
 	}

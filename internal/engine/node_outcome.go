@@ -1,13 +1,17 @@
 package engine
 
 import (
+	"errors"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
-	"errors"
-	"fmt"
-	"strings"
-	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 func (e *Engine) waitApproval(runID string, node domain.WorkflowNode, msg string) {
@@ -48,13 +52,14 @@ func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attem
 }
 
 func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, generation int, err error, allowReject bool) {
-	shouldReject := false
+	var rejectFrom NodeExpectation
 	configurationFailure := errors.Is(err, ErrWorkspaceControlConfiguration)
 	storeFailure := func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
 			return
 		}
+		previousStatus := nr.Status
 		nr.Error = err.Error()
 		nr.FinishedAt = time.Now().UTC()
 		reworkBudget := node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount >= max(1, node.MaxReworks)
@@ -79,14 +84,21 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 			nr.Status = "failed"
 			e.event(r, node.ID, "node.failed", err.Error())
 		}
-		shouldReject = !configurationFailure && allowReject && nr.Status == "failed" && node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount < max(1, node.MaxReworks)
+		if !configurationFailure && allowReject && nr.Status == "failed" && node.RejectTo != "" &&
+			r.Nodes[node.RejectTo] != nil && !reworkBudget {
+			rejectFrom = NodeExpectation{NodeID: node.ID, Status: previousStatus, Attempt: nr.Attempt, ReworkCount: nr.ReworkCount}
+		}
 	}
-	// MySQL rolls back a deadlock victim. Retry only that write, reloading
-	// the run so the lease, generation and attempt checks still apply.
-	writeErr := repo.RetryDeadlock(func() error {
-		shouldReject = false
+	// Every attempt reloads the run and checks the lease, generation and attempt.
+	writeFailure := func() error {
+		rejectFrom = NodeExpectation{}
 		return e.updateRunErr(runID, storeFailure)
-	})
+	}
+	writeErr := repo.RetryDeadlock(writeFailure)
+	if runWriteLockErrorCode(writeErr) == mysqlLockWaitTimeout {
+		// PutRun rolls back the transaction on a lock wait timeout.
+		writeErr = repo.RetryDeadlock(writeFailure)
+	}
 	if errors.Is(writeErr, repo.ErrRunLeaseLost) || errors.Is(writeErr, repo.ErrRunLeaseHeld) {
 		// Another worker owns the run now; it decides what happens next.
 		return
@@ -94,9 +106,28 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 	// Any other write failure keeps the auto-reject: Reject reloads the run
 	// and resets this node with its upstream, so the run still moves on
 	// instead of leaving a running node that nobody executes.
-	if shouldReject {
-		_ = e.Reject(runID, domain.RejectRequest{NodeID: node.ID, TargetID: node.RejectTo, Reason: "节点失败自动打回：" + err.Error()})
+	if rejectFrom.NodeID != "" {
+		if writeErr == nil {
+			rejectFrom.Status = "failed"
+		}
+		req := domain.RejectRequest{NodeID: node.ID, TargetID: node.RejectTo, Reason: "节点失败自动打回：" + err.Error()}
+		if rejectErr := e.Reject(runID, req, rejectFrom); rejectErr != nil {
+			log.Printf("automatically reject run %s node %s: %v", runID, node.ID, rejectErr)
+		}
 	}
+}
+
+const (
+	mysqlLockWaitTimeout = 1205
+	mysqlDeadlock        = 1213
+)
+
+func runWriteLockErrorCode(err error) uint16 {
+	var sqlErr *mysql.MySQLError
+	if errors.As(err, &sqlErr) {
+		return sqlErr.Number
+	}
+	return 0
 }
 
 var errNodeArtifactCommit = errors.New("保存节点终态和产物失败")
