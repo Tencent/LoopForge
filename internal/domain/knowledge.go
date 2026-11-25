@@ -17,9 +17,25 @@ const KnowledgeUsageRuleID = "agentflow-knowledge-usage"
 // Built-in extensible connector types. Additional connectors can register new
 // type strings via knowledge.Registry without changing core schemas.
 const (
-	ConnectorTypeWeKnora = "weknora"
-	ConnectorTypeMCP     = "mcp"
+	ConnectorTypeWeKnora  = "weknora"
+	ConnectorTypeObsidian = "obsidian"
+	ConnectorTypeNotion   = "notion"
+	ConnectorTypeSiYuan   = "siyuan"
+	ConnectorTypeFeishu   = "feishu"
+	ConnectorTypeMCP      = "mcp"
 )
+
+// IsNativeRESTConnectorType reports whether typ uses the canonical 4-tool
+// native read-only REST contract (list_knowledge_bases, search_knowledge,
+// list_documents, read_document).
+func IsNativeRESTConnectorType(typ string) bool {
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case ConnectorTypeWeKnora, ConnectorTypeObsidian, ConnectorTypeNotion, ConnectorTypeSiYuan, ConnectorTypeFeishu:
+		return true
+	default:
+		return false
+	}
+}
 
 // Credential auth types stored inside the encrypted secret payload. Reserving
 // oauth + refresh metadata allows future providers (Feishu/Notion/Confluence)
@@ -106,7 +122,7 @@ func publicConnectorEndpoint(raw, typ string) string {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		if strings.EqualFold(strings.TrimSpace(typ), ConnectorTypeWeKnora) {
+		if IsNativeRESTConnectorType(typ) {
 			if cut := strings.IndexAny(raw, "?#"); cut >= 0 {
 				return raw[:cut]
 			}
@@ -114,7 +130,7 @@ func publicConnectorEndpoint(raw, typ string) string {
 		return raw
 	}
 	u.User = nil
-	if strings.EqualFold(strings.TrimSpace(typ), ConnectorTypeWeKnora) {
+	if IsNativeRESTConnectorType(typ) {
 		u.RawQuery, u.ForceQuery, u.Fragment = "", false, ""
 	}
 	return u.String()

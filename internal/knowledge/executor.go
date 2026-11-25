@@ -179,7 +179,7 @@ func (e *Executor) ExecuteReferenceToolWithHistory(
 	}
 
 	text := strings.TrimSpace(res.Text)
-	if origin == domain.KnowledgeCallOriginCatalogProbe || meta.Type != domain.ConnectorTypeWeKnora {
+	if origin == domain.KnowledgeCallOriginCatalogProbe || !domain.IsNativeRESTConnectorType(meta.Type) {
 		text = truncateRunes(text, 32000)
 	}
 	if rule.Role == ToolRoleCatalog || domain.IsKnowledgeCatalogTool(read.Tool) || !res.Citeable {

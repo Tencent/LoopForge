@@ -14,63 +14,58 @@
 
   const KB_VENDORS = [
     {
-      key: 'ragflow',
-      name: 'RAGFlow 知识库',
-      badge: 'Bearer Token',
-      desc: '通过内置 Streamable HTTP 端点（:9380/api/v1/mcp）与 API Key 接入，支持列出子库与范围检索',
-      type: 'mcp',
-      defaultEndpoint: 'http://127.0.0.1:9380/api/v1/mcp',
+      key: 'obsidian',
+      name: 'Obsidian 知识库',
+      badge: '本地插件 API',
+      desc: '通过 Local REST API 插件只读检索 Obsidian Vault 顶层目录、笔记全文与标签元数据',
+      type: 'obsidian',
+      defaultEndpoint: 'https://127.0.0.1:27124',
       defaultHeaders: {},
-      defaultAllowedTools: ['ragflow_list_datasets', 'ragflow_retrieval'],
-      guide: '登录 RAGFlow 控制台 → 右上角头像 → API 生成 RAGFLOW_API_KEY，填入下方「Bearer Token」；请确保文档解析状态均为 Success。',
-      brandTone: 'ragflow',
-      iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>',
-    },
-    {
-      key: 'lexiang',
-      name: '腾讯乐享',
-      badge: '免鉴权直连',
-      desc: '使用企业专属带参 MCP 地址直连乐享知识库，无需填写 Token 或认证请求头',
-      type: 'mcp',
-      defaultEndpoint: 'https://mcp.lexiang-app.com/mcp?company_from=<企业ID>&preset=meta',
-      defaultHeaders: {},
+      defaultExtra: { tlsInsecureSkipVerify: 'true' },
       defaultAllowedTools: [],
-      guide: '在腾讯乐享管理后台「应用 / 开放平台 → MCP 集成配置」开启服务并复制含 company_from 参数的专属地址；Bearer Token 与认证请求头保持留空。',
-      brandTone: 'lexiang',
-      iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg>',
+      guide: '在 Obsidian 安装并启用社区插件 Local REST API，复制 API Key 填入下方密钥框；HTTPS 默认端口 27124（本地自签证书自动信任），Docker 部署请在插件设置中绑定 0.0.0.0。',
+      brandTone: 'obsidian',
+      iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 19 7 17 20 12 22 6 18 5 8 12 2"/><polyline points="12 2 11 12 17 20"/><polyline points="5 8 11 12 19 7"/></svg>',
     },
     {
-      key: 'tencent_docs',
-      name: '腾讯文档',
-      badge: '静态 Token',
-      desc: '使用官方扫码授权生成的静态 Token 接入（预置 6 个核心只读工具白名单，避免暴露写工具）',
-      type: 'mcp',
-      defaultEndpoint: 'https://docs.qq.com/openapi/mcp',
-      defaultHeaders: {
-        Authorization: '<替换为你的 TENCENT_DOCS_TOKEN>',
-      },
-      defaultAllowedTools: [
-        'manage.search_file',
-        'get_content',
-        'smartcanvas.read',
-        'query_space_list',
-        'query_space_node',
-        'sheet.get_cell_data',
-      ],
-      guide: '打开 https://docs.qq.com/open/auth/mcp.html 扫码获取 TENCENT_DOCS_TOKEN；Bearer Token 必须留空（禁止加 Bearer 前缀），仅在「认证请求头」中替换 Authorization 的值。',
-      brandTone: 'tencent_docs',
-      iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>',
+      key: 'notion',
+      name: 'Notion 知识库',
+      badge: 'Integration Token',
+      desc: '通过 Notion Internal Integration Token 只读检索已授权页面、数据库与结构化块正文',
+      type: 'notion',
+      defaultEndpoint: 'https://api.notion.com',
+      defaultHeaders: {},
+      defaultExtra: {},
+      defaultAllowedTools: [],
+      guide: '前往 notion.so/profile/integrations 创建只读 Internal Integration 并复制 ntn_... 密钥；然后在目标页面右上角 ••• → Connections 关联该集成。',
+      brandTone: 'notion',
+      iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 16V8l6 8V8"/></svg>',
+    },
+    {
+      key: 'siyuan',
+      name: '思源笔记（SiYuan）',
+      badge: '内置内核 API',
+      desc: '通过思源内置内核 API（:6806）只读检索本地或局域网笔记本、块全文与 Markdown 原文',
+      type: 'siyuan',
+      defaultEndpoint: 'http://127.0.0.1:6806',
+      defaultHeaders: {},
+      defaultExtra: {},
+      defaultAllowedTools: [],
+      guide: '打开思源笔记「设置 → 关于 → API token」复制密钥填入下方；若 LoopForge 运行在 Docker 容器内，请同时在思源「设置 → 关于」中开启「网络伺服」。',
+      brandTone: 'siyuan',
+      iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>',
     },
     {
       key: 'feishu',
-      name: '飞书知识库',
-      badge: '本地桥接 / 静态 TAT',
-      desc: '推荐本机常驻 @larksuiteoapi/lark-mcp（免鉴权自动续期）；也支持官方远程端点 + 静态 TAT',
-      type: 'mcp',
-      defaultEndpoint: 'http://127.0.0.1:3000/mcp',
+      name: '飞书知识库 / 云文档',
+      badge: '自建应用免签',
+      desc: '通过飞书企业自建应用（App ID + App Secret）自动续期读取已授权知识空间与新版云文档',
+      type: 'feishu',
+      defaultEndpoint: 'https://open.feishu.cn',
       defaultHeaders: {},
-      defaultAllowedTools: ['fetch-doc', 'search-doc'],
-      guide: '推荐本地常驻 lark-mcp（http://127.0.0.1:3000/mcp，Token 与请求头均留空）；若改用官方远程端点 https://mcp.feishu.cn/mcp，Bearer Token 留空，在「认证请求头」填写 X-Lark-MCP-TAT 与 X-Lark-MCP-Allowed-Tools: fetch-doc,search-doc，并保留下方工具白名单。',
+      defaultExtra: {},
+      defaultAllowedTools: [],
+      guide: '在飞书开放平台创建企业自建应用、开启机器人能力并开通 wiki:wiki:readonly 与 docx:document:readonly 权限，发布后将机器人添加为目标知识空间的可阅读成员。',
       brandTone: 'feishu',
       iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3L3 8l9 5 9-5-9-5z"/><path d="M3 13l9 5 9-5"/><path d="M3 17.5l9 4.5 9-4.5"/></svg>',
     },
@@ -93,6 +88,126 @@
 
   function defaultConnectorTypes() {
     return [
+      {
+        type: 'obsidian',
+        name: 'Obsidian 本地知识库',
+        description: '通过 Local REST API 插件只读检索 Obsidian Vault 目录、笔记全文与标签元数据',
+        supportsSubSources: true,
+        defaultAuthType: 'bearer',
+        fields: [
+          {
+            key: 'endpoint',
+            label: 'Local REST API 地址',
+            kind: 'url',
+            placeholder: 'https://127.0.0.1:27124',
+            required: true,
+            help: 'Local REST API 地址（HTTPS 默认 27124，HTTP 默认 27123；Docker 部署需在插件设置绑定 0.0.0.0）',
+          },
+          {
+            key: 'token',
+            label: 'API Key',
+            kind: 'secret',
+            placeholder: '填写 Local REST API Key（编辑留空则保留原密钥）',
+            required: true,
+            secret: true,
+            help: '在 Obsidian「设置 → Local REST API → Copy API Key」获取',
+          },
+          {
+            key: 'tlsInsecureSkipVerify',
+            label: '信任本地自签名证书（true/false）',
+            kind: 'text',
+            placeholder: 'true',
+            required: false,
+            help: '默认 true（仅对本地/内网地址生效），用于直连插件默认的 27124 自签名 HTTPS 端口',
+          },
+        ],
+      },
+      {
+        type: 'notion',
+        name: 'Notion 知识库',
+        description: '通过 Notion Internal Integration Token 只读检索已授权的页面、数据库与结构化块正文',
+        supportsSubSources: true,
+        defaultAuthType: 'bearer',
+        fields: [
+          {
+            key: 'endpoint',
+            label: 'Notion API 地址（可选）',
+            kind: 'url',
+            placeholder: 'https://api.notion.com',
+            required: false,
+            help: '默认 https://api.notion.com，留空自动使用官方地址',
+          },
+          {
+            key: 'token',
+            label: 'Integration Token',
+            kind: 'secret',
+            placeholder: 'ntn_...',
+            required: true,
+            secret: true,
+            help: '填入 Notion Internal Integration Secret，并在目标页面右上角 ••• → Connections 添加该集成',
+          },
+        ],
+      },
+      {
+        type: 'siyuan',
+        name: '思源笔记（SiYuan）',
+        description: '通过思源内置内核 API（:6806）只读检索本地或局域网笔记本、块全文与 Markdown 原文',
+        supportsSubSources: true,
+        defaultAuthType: 'api_key',
+        fields: [
+          {
+            key: 'endpoint',
+            label: '思源服务地址',
+            kind: 'url',
+            placeholder: 'http://127.0.0.1:6806',
+            required: true,
+            help: '思源笔记服务地址；Docker 部署请开启思源「设置 → 关于 → 网络伺服」',
+          },
+          {
+            key: 'token',
+            label: 'API Token',
+            kind: 'secret',
+            placeholder: '填写思源 API Token（编辑留空则保留原密钥）',
+            required: true,
+            secret: true,
+            help: '在思源笔记「设置 → 关于 → API token」复制，使用 Authorization: Token 鉴权',
+          },
+        ],
+      },
+      {
+        type: 'feishu',
+        name: '飞书知识库 / 云文档',
+        description: '通过飞书企业自建应用（App ID + App Secret）自动续期读取已授权知识空间与新版云文档',
+        supportsSubSources: true,
+        defaultAuthType: 'headers',
+        fields: [
+          {
+            key: 'endpoint',
+            label: '飞书开放平台地址（可选）',
+            kind: 'url',
+            placeholder: 'https://open.feishu.cn',
+            required: false,
+            help: '默认 https://open.feishu.cn（国际版 Lark 请填 https://open.larksuite.com）',
+          },
+          {
+            key: 'appId',
+            label: 'App ID',
+            kind: 'text',
+            placeholder: 'cli_a58291...',
+            required: true,
+            help: '飞书开放平台企业自建应用的 App ID',
+          },
+          {
+            key: 'token',
+            label: 'App Secret',
+            kind: 'secret',
+            placeholder: '填写自建应用 App Secret（加密存储，自动换取并续期访问令牌）',
+            required: true,
+            secret: true,
+            help: '开启应用机器人能力并开通 wiki:wiki:readonly、docx:document:readonly 后，将机器人添加为目标知识空间成员',
+          },
+        ],
+      },
       {
         type: 'weknora',
         name: 'WeKnora 知识库',
@@ -520,9 +635,9 @@
         headers: {},
         defaultSources: [],
         allowedTools: Array.isArray(v.defaultAllowedTools) ? [...v.defaultAllowedTools] : [],
-        extra: {
+        extra: Object.assign({}, v.defaultExtra || {}, {
           vendorKey: v.key,
-        },
+        }),
       },
     };
   }
@@ -533,12 +648,8 @@
     return (kbState.connectors || []).find(conn => {
       const tagged = String(conn.config?.extra?.vendorKey || conn.config?.extra?.oauthPreset || '').trim().toLowerCase();
       if (tagged === v.key) return true;
-      const endpoint = String(conn.endpoint || '').toLowerCase();
-      const name = String(conn.name || '').toLowerCase();
-      if (v.key === 'ragflow' && (endpoint.includes('/api/v1/mcp') || endpoint.includes('ragflow') || name.includes('ragflow'))) return true;
-      if (v.key === 'lexiang' && (endpoint.includes('lexiang-app.com') || endpoint.includes('lexiang.tencent.com') || endpoint.includes('lexiangla.com'))) return true;
-      if (v.key === 'tencent_docs' && endpoint.includes('docs.qq.com')) return true;
-      if (v.key === 'feishu' && (endpoint.includes('feishu.cn') || endpoint.includes('larksuite.com') || name.includes('飞书') || name.includes('lark'))) return true;
+      const connType = String(conn.type || '').trim().toLowerCase();
+      if (v.type && v.type !== 'mcp' && connType === v.type) return true;
       return false;
     }) || null;
   }
@@ -576,7 +687,7 @@
       </div>
       <div class="kb-field">
         <label for="kbConnName">连接器名称 <span class="kb-req">*</span></label>
-        <input id="kbConnName" class="kb-input" type="text" value="${kbEsc(formTargetConn?.name || '')}" placeholder="例如：RAGFlow 研发规范库 / 飞书知识库" autocomplete="off">
+        <input id="kbConnName" class="kb-input" type="text" value="${kbEsc(formTargetConn?.name || '')}" placeholder="例如：Obsidian 个人笔记 / 飞书知识库" autocomplete="off">
       </div>
       <div id="kbDynamicFields" class="kb-dynamic-fields">${renderDynamicFieldsHTML(initialMeta, formTargetConn)}</div>
       <div class="kb-drawer-row">
@@ -813,7 +924,7 @@
         <div class="kb-vendor-section-head">
           <div>
             <h2>常用知识库 · 快速接入</h2>
-            <p class="kb-muted">内置已验证的免鉴权直连、静态 Token 与本地桥接配置模板，点击即可预填服务地址、请求头与只读工具白名单。</p>
+            <p class="kb-muted">统一原生只读连接器，免 OAuth 回调并自动管理鉴权、子库范围隔离与出处引用；WeKnora、RAGFlow、乐享等可从「添加连接器」继续接入。</p>
           </div>
         </div>
         <div class="kb-vendor-grid">
@@ -881,7 +992,8 @@
       btn.addEventListener('click', () => {
         const vendorKey = btn.dataset.kbVendorSetup;
         const existing = findConnectorForVendor(vendorKey);
-        openConnectorDrawer(existing, 'mcp', vendorKey);
+        const v = vendorMetaFor(vendorKey);
+        openConnectorDrawer(existing, v?.type || 'mcp', vendorKey);
       });
     });
     root.querySelectorAll('[data-kb-edit]').forEach(btn => {

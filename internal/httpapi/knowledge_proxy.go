@@ -109,8 +109,8 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 	case "initialize":
 		connName, connType := knowledgeServerMeta(h.deps, claims.UserID, claims.Ref.ConnectorID)
 		instructions := "用户为当前任务绑定的只读知识连接器（" + connName + "）。请先检索与读取原文再下结论，采用事实时在引用处紧跟输出直接支撑该句事实的 [[knowledge:<id>]] 标记（勿放入反引号，不漏标不多标）。"
-		if connType == domain.ConnectorTypeWeKnora {
-			instructions = "个人知识连接器（" + connName + " · WeKnora，只读）。先 list_knowledge_bases 或 search_knowledge 检索，再用 read_document 读原文；采用结论时在引用处紧跟输出直接支撑该句事实的 [[knowledge:<id>]] 标记（勿放入反引号，不漏标不多标）。"
+		if domain.IsNativeRESTConnectorType(connType) {
+			instructions = "个人知识连接器（" + connName + " · " + connType + "，只读）。先 list_knowledge_bases 或 search_knowledge 检索，再用 read_document 读原文；采用结论时在引用处紧跟输出直接支撑该句事实的 [[knowledge:<id>]] 标记（勿放入反引号，不漏标不多标）。"
 		}
 		return reply(map[string]any{
 			"protocolVersion": agentToolProtocolVersion(request.Params),

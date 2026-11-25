@@ -153,10 +153,13 @@ func NewRegistry() *Registry {
 	}
 }
 
-// DefaultRegistry returns a Registry preloaded with built-in connector backends
-// (WeKnora REST and Generic Read-Only MCP).
+// DefaultRegistry returns a Registry preloaded with built-in connector backends.
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
+	r.Register(newObsidianFactory())
+	r.Register(newNotionFactory())
+	r.Register(newSiYuanFactory())
+	r.Register(newFeishuFactory())
 	r.Register(newWeKnoraFactory())
 	r.Register(newMCPFactory())
 	return r

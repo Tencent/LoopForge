@@ -495,6 +495,21 @@
   border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
 }
 
+#knowledgeView .kb-vendor-icon[data-brand="obsidian"] {
+  background: color-mix(in srgb, #7c3aed 14%, var(--hui-surface));
+  color: #7c3aed;
+}
+
+#knowledgeView .kb-vendor-icon[data-brand="notion"] {
+  background: color-mix(in srgb, var(--hui-text) 10%, var(--hui-surface));
+  color: var(--hui-text);
+}
+
+#knowledgeView .kb-vendor-icon[data-brand="siyuan"] {
+  background: color-mix(in srgb, #dc2626 13%, var(--hui-surface));
+  color: #dc2626;
+}
+
 #knowledgeView .kb-vendor-icon[data-brand="ragflow"] {
   background: color-mix(in srgb, var(--hui-warn, #d97706) 14%, var(--hui-surface));
   color: var(--hui-warn, #d97706);

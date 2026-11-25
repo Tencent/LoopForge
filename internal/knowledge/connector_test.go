@@ -313,8 +313,8 @@ func TestMCPConnectorReadOnlyFilterAndCustomRegistryExtension(t *testing.T) {
 	exec := NewExecutor(svc)
 	ctx := context.Background()
 
-	// Registry exposes 3 types cleanly.
-	if types := svc.ConnectorTypes(); len(types) != 3 || types[2].Type != "feishu_wiki" {
+	// Registry exposes all built-in types plus the custom plugin cleanly.
+	if types := svc.ConnectorTypes(); len(types) != 7 || types[len(types)-1].Type != "feishu_wiki" {
 		t.Fatalf("unexpected registered connector types: %+v", types)
 	}
 

@@ -4,6 +4,52 @@ import { loadApp, settle } from '../lib/load-app.mjs';
 
 const DEFAULT_TYPES = [
   {
+    type: 'obsidian',
+    name: 'Obsidian 本地知识库',
+    description: '通过 Local REST API 插件只读检索 Obsidian Vault 目录、笔记全文与标签元数据',
+    supportsSubSources: true,
+    defaultAuthType: 'bearer',
+    fields: [
+      { key: 'endpoint', label: 'Local REST API 地址', kind: 'url', required: true },
+      { key: 'token', label: 'API Key', kind: 'secret', required: true, secret: true },
+      { key: 'tlsInsecureSkipVerify', label: '信任本地自签名证书（true/false）', kind: 'text', required: false },
+    ],
+  },
+  {
+    type: 'notion',
+    name: 'Notion 知识库',
+    description: '通过 Notion Internal Integration Token 只读检索已授权的页面、数据库与结构化块正文',
+    supportsSubSources: true,
+    defaultAuthType: 'bearer',
+    fields: [
+      { key: 'endpoint', label: 'Notion API 地址（可选）', kind: 'url', required: false },
+      { key: 'token', label: 'Integration Token', kind: 'secret', required: true, secret: true },
+    ],
+  },
+  {
+    type: 'siyuan',
+    name: '思源笔记（SiYuan）',
+    description: '通过思源内置内核 API（:6806）只读检索本地或局域网笔记本、块全文与 Markdown 原文',
+    supportsSubSources: true,
+    defaultAuthType: 'api_key',
+    fields: [
+      { key: 'endpoint', label: '思源服务地址', kind: 'url', required: true },
+      { key: 'token', label: 'API Token', kind: 'secret', required: true, secret: true },
+    ],
+  },
+  {
+    type: 'feishu',
+    name: '飞书知识库 / 云文档',
+    description: '通过飞书企业自建应用（App ID + App Secret）自动续期读取已授权知识空间与新版云文档',
+    supportsSubSources: true,
+    defaultAuthType: 'headers',
+    fields: [
+      { key: 'endpoint', label: '飞书开放平台地址（可选）', kind: 'url', required: false },
+      { key: 'appId', label: 'App ID', kind: 'text', required: true },
+      { key: 'token', label: 'App Secret', kind: 'secret', required: true, secret: true },
+    ],
+  },
+  {
     type: 'weknora',
     name: 'WeKnora 知识库',
     description: '通过只读 REST API 接入个人或团队 WeKnora 实例（支持列子库、混合检索与分块原文读取）',
@@ -54,7 +100,11 @@ test('我的知识库页展示空状态与已注册连接器类型卡片', async
   assert.ok(lastCall(app, 'GET', '/api/knowledge/connectors'));
 
   const typeCards = [...document.querySelectorAll('#knowledgeRoot .kb-type-card')];
-  assert.equal(typeCards.length, 2);
+  assert.equal(typeCards.length, 6);
+  assert.ok(typeCards.some((el) => el.textContent.includes('Obsidian 本地知识库')));
+  assert.ok(typeCards.some((el) => el.textContent.includes('Notion 知识库')));
+  assert.ok(typeCards.some((el) => el.textContent.includes('思源笔记（SiYuan）')));
+  assert.ok(typeCards.some((el) => el.textContent.includes('飞书知识库 / 云文档')));
   assert.ok(typeCards.some((el) => el.textContent.includes('WeKnora 知识库')));
   assert.ok(typeCards.some((el) => el.textContent.includes('通用知识 MCP')));
 });
@@ -331,35 +381,17 @@ test('手动发起 SOP 运行弹窗支持覆盖个人知识库并在重开后重
   assert.equal(document.querySelector('#runKnowledgeRefsResetBtn').hidden, true);
 });
 
-test('前端隐藏 OAuth 入口，常用知识库模板预填免授权/静态 Token/工具白名单并正常保存', async t => {
-  let createdConn = null;
-  let lastSavedPayload = null;
-
-  const mcpTypes = [
-    ...DEFAULT_TYPES.filter(item => item.type !== 'mcp'),
-    {
-      type: 'mcp',
-      name: '通用知识 MCP（Streamable HTTP）',
-      description: '对接任意实现 search/fetch 工具的远端 MCP 服务',
-      supportsSubSources: true,
-      defaultAuthType: 'bearer',
-      fields: [
-        { key: 'endpoint', label: 'MCP 服务地址', kind: 'url', required: true },
-        { key: 'token', label: 'Bearer Token（可选）', kind: 'secret', required: false, secret: true },
-        { key: 'headers', label: '认证请求头（可选）', kind: 'kv', required: false, secret: true },
-        { key: 'allowedTools', label: '允许工具白名单（可选）', kind: 'text', required: false },
-        { key: 'oauth', label: 'OAuth 2.0 授权', kind: 'oauth', required: false },
-      ],
-    },
-  ];
+test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应原生类型与字段并正常保存', async t => {
+  const savedConnectors = [];
+  const savedPayloads = [];
 
   const app = await loadApp({
     routes: [
-      { method: 'GET', path: '/api/knowledge/connector-types', body: mcpTypes },
+      { method: 'GET', path: '/api/knowledge/connector-types', body: DEFAULT_TYPES },
       {
         method: 'GET',
         path: '/api/knowledge/connectors',
-        body: () => (createdConn ? [createdConn] : []),
+        body: () => savedConnectors,
       },
       {
         method: 'POST',
@@ -367,9 +399,9 @@ test('前端隐藏 OAuth 入口，常用知识库模板预填免授权/静态 To
         status: 201,
         body: call => {
           const body = call.body;
-          lastSavedPayload = body;
-          createdConn = {
-            id: 'conn-tdocs-1',
+          savedPayloads.push(body);
+          const created = {
+            id: `conn-${body.type}-${savedConnectors.length + 1}`,
             name: body.name,
             type: body.type,
             endpoint: body.endpoint,
@@ -377,17 +409,8 @@ test('前端隐藏 OAuth 入口，常用知识库模板预填免授权/静态 To
             secretConfigured: Boolean(body.secret),
             config: body.config || {},
           };
-          return createdConn;
-        },
-      },
-      {
-        method: 'POST',
-        path: '/api/knowledge/connectors/conn-tdocs-1/check',
-        body: {
-          ok: true,
-          latencyMs: 18,
-          tools: ['manage.search_file', 'get_content'],
-          sources: [{ id: 'space-1', name: '云栖居家庭装修项目' }],
+          savedConnectors.push(created);
+          return created;
         },
       },
     ],
@@ -405,53 +428,60 @@ test('前端隐藏 OAuth 入口，常用知识库模板预填免授权/静态 To
   assert.equal(callsTo(app, 'GET', '/api/knowledge/oauth/presets').length, 0);
   assert.equal(document.querySelector('[data-kb-vendor-auth]'), null);
 
-  // 2. 展示已验证的 4 个常用知识库模板卡片
-  for (const key of ['ragflow', 'lexiang', 'tencent_docs', 'feishu']) {
+  // 2. 展示四大主力个人知识库原生卡片
+  for (const key of ['obsidian', 'notion', 'siyuan', 'feishu']) {
     const card = document.querySelector(`.kb-vendor-card[data-vendor-key="${key}"]`);
     assert.ok(card, `应渲染 ${key} 模板卡片`);
     assert.equal(card.getAttribute('data-vendor-state'), 'unconfigured');
   }
 
-  // 3. 点击腾讯文档「快速配置」，验证端点、认证请求头模板、6 个只读工具白名单预填，且隐藏 OAuth 字段
-  document.querySelector('[data-kb-vendor-setup="tencent_docs"]').click();
+  // 3. 点击 Obsidian「快速配置」，验证自动选中原生 obsidian 类型并预填端点与本地 TLS 字段
+  document.querySelector('[data-kb-vendor-setup="obsidian"]').click();
   await settle(6);
 
   const drawer = document.querySelector('#kbDrawer');
   assert.equal(drawer.querySelector('#kbOAuthCard'), null, '前端应完全隐藏 OAuth 授权卡片');
-  assert.equal(drawer.querySelector('#kbField-endpoint').value, 'https://docs.qq.com/openapi/mcp');
-  assert.equal(drawer.querySelector('#kbField-token').value, '');
-  assert.match(drawer.querySelector('#kbField-headers').value, /Authorization:/);
-  assert.match(drawer.querySelector('#kbField-allowedTools').value, /manage\.search_file/);
-  assert.match(drawer.querySelector('#kbField-allowedTools').value, /sheet\.get_cell_data/);
+  assert.equal(drawer.querySelector('#kbConnType').value, 'obsidian');
+  assert.equal(drawer.querySelector('#kbField-endpoint').value, 'https://127.0.0.1:27124');
+  assert.equal(drawer.querySelector('#kbField-tlsInsecureSkipVerify').value, 'true');
 
-  // 填入真实静态 Token 并保存
-  drawer.querySelector('#kbField-headers').value = 'Authorization: td-static-token-123';
+  drawer.querySelector('#kbField-token').value = 'obs-api-key-123';
   drawer.querySelector('#kbDrawerSaveBtn').click();
   await settle(12);
 
-  assert.ok(lastSavedPayload);
-  assert.equal(lastSavedPayload.endpoint, 'https://docs.qq.com/openapi/mcp');
-  assert.equal(lastSavedPayload.secret.headers.Authorization, 'td-static-token-123');
-  assert.equal(lastSavedPayload.secret.token, undefined);
-  assert.equal(lastSavedPayload.config.extra.oauthMode, undefined);
-  assert.deepEqual(normalizeRealm(lastSavedPayload.config.allowedTools), [
-    'manage.search_file',
-    'get_content',
-    'smartcanvas.read',
-    'query_space_list',
-    'query_space_node',
-    'sheet.get_cell_data',
-  ]);
+  const obsPayload = savedPayloads.at(-1);
+  assert.equal(obsPayload.type, 'obsidian');
+  assert.equal(obsPayload.endpoint, 'https://127.0.0.1:27124');
+  assert.equal(obsPayload.config.extra.tlsInsecureSkipVerify, 'true');
+  assert.equal(obsPayload.secret.token, 'obs-api-key-123');
+  assert.equal(obsPayload.config.extra.oauthMode, undefined);
 
-  // 4. 保存后腾讯文档模板卡片变为已接入状态，连接器卡片展示工具白名单且无 OAuth 按钮
-  const updatedCard = document.querySelector('.kb-vendor-card[data-vendor-key="tencent_docs"]');
-  assert.equal(updatedCard.getAttribute('data-vendor-state'), 'configured');
-  assert.equal(updatedCard.classList.contains('is-authorized'), true);
+  const updatedObsCard = document.querySelector('.kb-vendor-card[data-vendor-key="obsidian"]');
+  assert.equal(updatedObsCard.getAttribute('data-vendor-state'), 'configured');
+  assert.equal(updatedObsCard.classList.contains('is-authorized'), true);
+
+  // 4. 点击飞书「快速配置」，验证自动选中原生 feishu 类型并渲染 appId + App Secret 字段
+  document.querySelector('[data-kb-vendor-setup="feishu"]').click();
+  await settle(6);
+
+  assert.equal(drawer.querySelector('#kbConnType').value, 'feishu');
+  assert.equal(drawer.querySelector('#kbField-endpoint').value, 'https://open.feishu.cn');
+  assert.ok(drawer.querySelector('#kbField-appId'), '飞书抽屉应渲染 App ID 输入框');
+  assert.ok(drawer.querySelector('#kbField-token'), '飞书抽屉应渲染 App Secret 输入框');
+
+  drawer.querySelector('#kbField-appId').value = 'cli_a5829100';
+  drawer.querySelector('#kbField-token').value = 'feishu-secret-456';
+  drawer.querySelector('#kbDrawerSaveBtn').click();
+  await settle(12);
+
+  const feishuPayload = savedPayloads.at(-1);
+  assert.equal(feishuPayload.type, 'feishu');
+  assert.equal(feishuPayload.endpoint, 'https://open.feishu.cn');
+  assert.equal(feishuPayload.config.extra.appId, 'cli_a5829100');
+  assert.equal(feishuPayload.secret.token, 'feishu-secret-456');
+
+  const updatedFeishuCard = document.querySelector('.kb-vendor-card[data-vendor-key="feishu"]');
+  assert.equal(updatedFeishuCard.getAttribute('data-vendor-state'), 'configured');
   assert.equal(document.querySelector('[data-kb-authorize]'), null);
-
-  const connCard = document.querySelector('[data-kb-card="conn-tdocs-1"]');
-  assert.ok(connCard);
-  assert.match(connCard.textContent, /工具白名单/);
-  assert.match(connCard.textContent, /manage\.search_file/);
 });
 
