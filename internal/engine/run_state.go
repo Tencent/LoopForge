@@ -107,16 +107,20 @@ func (e *Engine) pollRun(runID string, stop <-chan struct{}, revision int) {
 		case <-stop:
 			return
 		case <-ticker.C:
-			latestRevision, ok := e.repo.RunRevision(runID)
+			revisions := e.repo.RunRevisions([]string{runID})
+			if revisions == nil {
+				continue // A failed read can recover on the next poll.
+			}
+			latestRevision, ok := revisions[runID]
 			if !ok {
-				return
+				return // The read succeeded and the run no longer exists.
 			}
 			if latestRevision == revision {
 				continue
 			}
 			current, ok := e.repo.RunStreamView(runID)
 			if !ok {
-				return
+				continue
 			}
 			if current.Revision == revision {
 				continue
