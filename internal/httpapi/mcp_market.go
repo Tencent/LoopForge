@@ -81,25 +81,51 @@ func mcpInstallID(marketID, scope, owner string) string {
 // IDs are predictable, so another user may already hold one with a personal
 // MCP or an MCP in another project. The install then uses an alternate ID
 // instead of failing for every later caller in this destination. With a key
-// the alternate is a keyed digest, so repeated installs find the same row
-// while other users cannot predict it. Without a key it is random.
+// the alternates are a fixed sequence of keyed digests that other users cannot
+// predict. A row this destination already holds under any candidate wins over
+// a free one, so repeated installs and clones find the same row even after an
+// earlier candidate was squatted or freed. Without a key, or when every
+// candidate is taken elsewhere, the alternate is random.
 func destinationMCPInstallID(st *repo.Store, key []byte, base, scope, owner string) string {
 	id := mcpInstallID(base, scope, owner)
-	if existing, found := st.MCPServer(id); !found || mcpInDestination(existing, scope, owner) {
+	existing, found := st.MCPServer(id)
+	if found && mcpInDestination(existing, scope, owner) {
 		return id
 	}
+	candidates := []string{id}
 	if len(key) > 0 {
-		mac := hmac.New(sha256.New, key)
-		mac.Write([]byte("loopforge-mcp-install-id\x00" + id))
-		alternate := mcpInstallID(fmt.Sprintf("%s-%x", base, mac.Sum(nil)[:6]), scope, owner)
-		if existing, found := st.MCPServer(alternate); !found || mcpInDestination(existing, scope, owner) {
-			return alternate
+		for i := range mcpInstallIDAlternates {
+			mac := hmac.New(sha256.New, key)
+			mac.Write([]byte("loopforge-mcp-install-id\x00" + id))
+			if i > 0 {
+				mac.Write([]byte("\x00" + strconv.Itoa(i)))
+			}
+			candidates = append(candidates, mcpInstallID(fmt.Sprintf("%s-%x", base, mac.Sum(nil)[:6]), scope, owner))
 		}
+	}
+	free := ""
+	if !found {
+		free = id
+	}
+	for _, candidate := range candidates[1:] {
+		existing, found := st.MCPServer(candidate)
+		if found && mcpInDestination(existing, scope, owner) {
+			return candidate
+		}
+		if !found && free == "" {
+			free = candidate
+		}
+	}
+	if free != "" {
+		return free
 	}
 	var suffix [6]byte
 	_, _ = rand.Read(suffix[:])
 	return mcpInstallID(fmt.Sprintf("%s-%x", base, suffix), scope, owner)
 }
+
+// mcpInstallIDAlternates bounds the keyed alternates tried before a random ID.
+const mcpInstallIDAlternates = 8
 
 // mcpInstallIDKey keys alternate install IDs with the deployment's session
 // secret.

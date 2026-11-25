@@ -182,3 +182,49 @@ func TestMCPImportRollbackAndUnsharedRoleCloneHTTP(t *testing.T) {
 		t.Fatal("forbidden clone saved a role")
 	}
 }
+
+// Squatting the base ID and the first keyed alternate must still give the
+// destination one stable ID: repeated clones reuse the copy and a repeated
+// custom install conflicts instead of adding a row under a random ID. A copy
+// the destination already holds under an alternate also wins once the base
+// ID is free again.
+func TestMCPInstallIDsStayStableWhenAlternatesAreSquatted(t *testing.T) {
+	s, _ := newMCPCloneTestServer(t)
+	key := []byte("key")
+	if err := s.PutMCPServer(domain.MCPServerDefinition{ID: "role-source", Name: "Role MCP", Scope: "project", ProjectID: "source", Transport: "http", URL: "https://example.com/role"}); err != nil {
+		t.Fatal(err)
+	}
+	base := mcpInstallID("clone-role-source", "project", "target")
+	squat := func(id string) {
+		t.Helper()
+		if err := s.PutMCPServer(domain.MCPServerDefinition{ID: id, Name: "squatter", Scope: "personal", OwnerUserID: 9, Transport: "http", URL: "https://example.com/squat"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	squat(base)
+	firstAlternate := destinationMCPInstallID(s, key, "clone-role-source", "project", "target")
+	squat(firstAlternate)
+
+	id := destinationMCPInstallID(s, key, "clone-role-source", "project", "target")
+	if id == base || id == firstAlternate {
+		t.Fatalf("install id = %q, want a free alternate", id)
+	}
+	if again := destinationMCPInstallID(s, key, "clone-role-source", "project", "target"); again != id {
+		t.Fatalf("free alternate is not stable: %q then %q", id, again)
+	}
+	if err := s.PutMCPServer(domain.MCPServerDefinition{ID: id, Name: "copy", Scope: "project", ProjectID: "target", Transport: "http", URL: "https://example.com/role"}); err != nil {
+		t.Fatal(err)
+	}
+	if again := destinationMCPInstallID(s, key, "clone-role-source", "project", "target"); again != id {
+		t.Fatalf("repeated install = %q, want the destination's copy %q", again, id)
+	}
+	// The squatters go away: the existing copy still wins over the free base.
+	for _, squatted := range []string{base, firstAlternate} {
+		if err := s.DeleteMCPServer(squatted); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if again := destinationMCPInstallID(s, key, "clone-role-source", "project", "target"); again != id {
+		t.Fatalf("after squatters left = %q, want the destination's copy %q", again, id)
+	}
+}
