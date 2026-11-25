@@ -146,6 +146,7 @@ test('runner task plane requires a runner session', async () => {
     ['POST', `/api/runners/tasks/${MISSING}/start`], ['POST', `/api/runners/tasks/${MISSING}/lease/renew`],
     ['GET', `/api/runners/tasks/${MISSING}/events`], ['POST', `/api/runners/tasks/${MISSING}/events`],
     ['POST', `/api/runners/tasks/${MISSING}/complete`], ['GET', `/api/runners/tasks/${MISSING}/control`],
+    ['GET', `/api/runners/tasks/${MISSING}/input-file?path=plan.md`], ['PUT', `/api/runners/tasks/${MISSING}/output-file?path=plan.md`],
     ['POST', '/runners/tasks/claim'], ['GET', `/runners/tasks/${MISSING}/control`],
     ['POST', `/runners/previews/${MISSING}/complete`], ['PUT', `/runners/previews/${MISSING}/content`],
   ];
@@ -178,6 +179,7 @@ test('runner management: register, heartbeat, runtime status, run limit, unknown
   for (const [method, path] of [
     ['GET', `/api/runners/tasks/${MISSING}`], ['POST', `/api/runners/tasks/${MISSING}/start`],
     ['POST', `/api/runners/tasks/${MISSING}/lease/renew`], ['GET', `/api/runners/tasks/${MISSING}/control`],
+    ['GET', `/api/runners/tasks/${MISSING}/input-file?path=plan.md`], ['PUT', `/api/runners/tasks/${MISSING}/output-file?path=plan.md`],
   ]) {
     await status(method, path, method === 'GET' ? undefined : {}, [400, 403, 404, 409], session);
   }

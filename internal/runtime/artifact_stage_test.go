@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +18,10 @@ func TestStageArchivedArtifactWritesPrivateTempFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer base.Close()
-	temp, err := stageArchivedArtifact(base, "out", "hello\n")
+	temp, err := stageArchivedArtifact(base, "out", func(out io.Writer) error {
+		_, err := io.WriteString(out, "hello\n")
+		return err
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,10 +52,11 @@ func TestStageArchivedArtifactGivesUpAfterCollisions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := stageArchivedArtifact(base, ".", "x"); err == nil || err.Error() != "cannot stage archived artifact" {
+	write := func(io.Writer) error { return nil }
+	if _, err := stageArchivedArtifact(base, ".", write); err == nil || err.Error() != "cannot stage archived artifact" {
 		t.Fatalf("err = %v", err)
 	}
-	if _, err := stageArchivedArtifact(base, ".", "x"); err != nil {
+	if _, err := stageArchivedArtifact(base, ".", write); err != nil {
 		t.Fatalf("staging after collisions: %v", err)
 	}
 }

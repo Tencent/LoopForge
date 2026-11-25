@@ -22,7 +22,10 @@ for actor in "${actors[@]}"; do
   fixture="$task_dir/$actor"
   mkdir -p "$fixture/scripts" "$fixture/migrations/seed" "$fixture/user-home"
   cp scripts/{install.sh,configure.sh,docker-access.sh,ghcr-mirror.sh,install-address.py,install-compose.py,install-observability-schema.sh,install-schema-extensions.sh} "$fixture/scripts/"
-  cp migrations/001_run_obs_generated_columns.sql migrations/033_generic_sop_mr_node.sql migrations/038_generic_sop_host_credentials.sql "$fixture/migrations/"
+  cp migrations/001_run_obs_generated_columns.sql \
+    migrations/033_generic_sop_mr_node.sql \
+    migrations/038_generic_sop_host_credentials.sql \
+    migrations/042_run_artifacts_content_mediumtext.sql "$fixture/migrations/"
   cp migrations/seed/*.sql "$fixture/migrations/seed/"
   cp compose.yaml "$fixture/"
   read -r http_port mysql_port < <(python3 - <<'PY'
@@ -48,7 +51,12 @@ PY
     "${prefix[@]}" bash -c 'if docker info >/dev/null 2>&1; then exit 1; fi; sudo -n docker info >/dev/null'
   fi
   started=$SECONDS
-  for attempt in first repeat; do
+  for attempt in first legacy-upgrade repeat; do
+    if [[ "$attempt" == legacy-upgrade ]]; then
+      docker compose -f "$fixture/compose.yaml" --env-file "$fixture/.env" exec -T mysql \
+        sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql -u loopforge loopforge' \
+        <<<'ALTER TABLE run_artifacts MODIFY COLUMN content TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL;'
+    fi
     "${prefix[@]}" env HOME="$fixture/user-home" PATH=/usr/local/bin:/usr/bin:/bin LOOPFORGE_YES=1 COMPOSE_PROJECT_NAME="lf-install-${actor}-$$" LOOPFORGE_IMAGE="$image" LOOPFORGE_DATA_DIR="$fixture/data" LOOPFORGE_BIND=0.0.0.0 LOOPFORGE_PUBLIC_URL="http://192.0.2.10:$http_port" LOOPFORGE_DOCKER_SOCKET="$docker_socket" AGENTFLOW_HTTP_PORT="$http_port" LOOPFORGE_MYSQL_PORT="$mysql_port" bash "$fixture/scripts/install.sh" > "$fixture/$attempt.log" 2>&1 || { cat "$fixture/$attempt.log"; exit 1; }
     grep -q "Access: http://192.0.2.10:$http_port" "$fixture/$attempt.log"
     curl -fsS "http://127.0.0.1:$http_port/api/health" >/dev/null
@@ -56,6 +64,10 @@ PY
       cp "$fixture/.env" "$fixture/initial.env"
     else
       cmp "$fixture/initial.env" "$fixture/.env"
+      column=$(docker compose -f "$fixture/compose.yaml" --env-file "$fixture/.env" exec -T mysql \
+        sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql -NB -u loopforge loopforge' \
+        <<<'SELECT CONCAT_WS("/", DATA_TYPE, COLLATION_NAME, IS_NULLABLE) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "run_artifacts" AND COLUMN_NAME = "content";')
+      [[ "$column" == mediumtext/utf8mb4_bin/NO ]] || { printf 'Unexpected artifact column after %s: %s\n' "$attempt" "$column" >&2; exit 1; }
     fi
   done
   docker compose -f "$fixture/compose.yaml" --env-file "$fixture/.env" --profile platform port platform 8080 | grep -q "0.0.0.0:$http_port"
@@ -108,5 +120,5 @@ api('POST','/api/runs/'+run_id+'/approve',{'nodeId':'approve'})
 wait_for('succeeded')
 print('Verified access, administrator creation, seeded sandboxes/templates/executors, and a real no-key welcome SOP through approval and completion')
 PY
-  printf '%s install + repeat: %ss (UID %s)\n' "$actor" "$((SECONDS-started))" "$("${prefix[@]}" id -u)"
+  printf '%s install + legacy upgrade + repeat: %ss (UID %s)\n' "$actor" "$((SECONDS-started))" "$("${prefix[@]}" id -u)"
 done

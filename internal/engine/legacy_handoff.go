@@ -109,7 +109,7 @@ func readSOPHandoffTranscript(artifacts []domain.Artifact) ([]byte, error) {
 
 // Inputs are independent of graph ancestry, and use archived content on every
 // dispatch so retries and reconstructed/remote workspaces retain the handoff.
-func sopHandoffInputs(run domain.Run) (string, []domain.RunnerInputFile) {
+func sopHandoffInputs(run domain.Run, stream ...bool) (string, []domain.RunnerInputFile) {
 	ref := run.WorkflowSnapshot.GroupSOPHandoff
 	if ref == nil || run.WorkflowSnapshot.CollaborationMode == "group" {
 		return "", nil
@@ -122,7 +122,7 @@ func sopHandoffInputs(run domain.Run) (string, []domain.RunnerInputFile) {
 	}
 	for _, a := range artifacts {
 		inputPath := sopHandoffInputPath(ref, a.Name)
-		files = append(files, domain.RunnerInputFile{Path: inputPath, Content: a.Content})
+		files = append(files, runnerInputFile(a, inputPath, len(stream) != 0 && stream[0]))
 		writeInputManifestEntry(&manifest, a, inputPath)
 	}
 	return manifest.String(), files
@@ -227,6 +227,26 @@ func validateSOPHandoffRunnerPayload(run domain.Run, task domain.RunnerTask) err
 	}
 	if len(payload) > (8<<20)-(4<<10) {
 		return fmt.Errorf("完整交接输入超出执行机器的 8 MiB 任务响应上限；原始归档完整保留，未截断，请查看交接摘要与归档后调整继续任务")
+	}
+	return nil
+}
+
+func validateRunnerArtifactPayload(run domain.Run, task domain.RunnerTask) error {
+	if task.Invocation == nil || task.Invocation.ArtifactTransfer {
+		return nil
+	}
+	if err := validateSOPHandoffRunnerPayload(run, task); err != nil {
+		return err
+	}
+	if len(task.Invocation.Inputs) == 0 && len(task.Invocation.ArchivedFiles) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{"task": task})
+	if err != nil {
+		return err
+	}
+	if len(payload) > (8<<20)-(4<<10) {
+		return fmt.Errorf("交接输入超出旧版执行机器的任务响应上限，归档已保留。请将执行机器升级到 %s", domain.RunnerVersionArtifactTransfer)
 	}
 	return nil
 }

@@ -121,6 +121,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 	// Promotion is per bucket; a failing bucket still returns the others and
 	// must not stop interrupted-run recovery below.
 	e.promoteQueuedRuns()
+	// This scan repeats every few seconds; artifact bodies are not needed here.
 	for _, listed := range e.repo.Runs() {
 		if listed.IsWorkspace() || listed.HistoricalGroup() {
 			continue
@@ -129,7 +130,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 		// request that raced with the last worker write must therefore be claimed
 		// and settled by the recovery loop instead of waiting forever.
 		if listed.Status == "waiting" && !listed.CancelRequested && alignRunWaitingApproval(listed) {
-			r, ok := e.repo.RunState(listed.ID)
+			r, ok := e.repo.RunProgress(listed.ID)
 			if !ok || r.Status != "waiting" || r.CancelRequested || !alignRunWaitingApproval(r) {
 				continue
 			}
@@ -149,7 +150,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 			continue
 		}
 		if listed.Status == "waiting" && listed.CancelRequested {
-			r, ok := e.repo.RunState(listed.ID)
+			r, ok := e.repo.RunProgress(listed.ID)
 			if !ok || r.Status != "waiting" || !r.CancelRequested {
 				continue
 			}
@@ -166,7 +167,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 			continue
 		}
 		if listed.Status == "running" {
-			fresh, ok := e.repo.RunState(listed.ID)
+			fresh, ok := e.repo.RunProgress(listed.ID)
 			if !ok || fresh.Status != "running" {
 				continue
 			}
@@ -181,7 +182,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 		if listed.Status != "running" {
 			continue
 		}
-		r, ok := e.repo.RunState(listed.ID)
+		r, ok := e.repo.RunProgress(listed.ID)
 		if !ok || r.Status != "running" {
 			continue
 		}
