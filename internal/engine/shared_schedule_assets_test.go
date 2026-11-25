@@ -46,6 +46,53 @@ func TestSharedScheduleUsesNormalProjectAssetResolution(t *testing.T) {
 	}
 }
 
+func TestSharedScheduleRunsSOPWithNewlySharedRoleInAnotherProject(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	check := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rule := domain.RuleDefinition{ID: "review-rule", Name: "Review rule", ProjectID: "source", Content: "Check the result."}
+	skill := domain.SkillDefinition{ID: "review-skill", Name: "Review skill", ProjectID: "source", Content: "# Review"}
+	role := domain.AgentDefinition{ID: "source-schedule-reviewer", Name: "Reviewer", ProjectID: "source", ExecutorID: "mock", Rules: []string{rule.ID}, Skills: []string{skill.ID}}
+	check(st.PutRule(rule))
+	check(st.PutSkill(skill))
+	check(st.PutAgent(role))
+	wf := domain.WorkflowDefinition{
+		ID: "review-sop", Name: "Review SOP", ProjectID: "source", SandboxProfileID: repo.TestNativeSandboxID,
+		Nodes: []domain.WorkflowNode{{ID: "review", Name: "Review", Type: "agent", AgentID: role.ID}},
+	}
+	check(st.PutWorkflow(wf))
+	job := domain.ScheduleJob{
+		ID: "review-job", Name: "Scheduled review", ProjectID: "source", SkipDispatch: true,
+		AssistantPrompt: "Review the result", References: []domain.AssistantReference{{Type: "sop", ID: wf.ID}},
+	}
+	check(st.PutScheduleJob(job))
+	version, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: job.Name, Prompt: job.AssistantPrompt}, 0)
+	check(err)
+	if len(version.Assets) != 1 || !version.HasAsset("sop", wf.ID) {
+		t.Fatalf("expected the schedule to reference only the SOP, got %+v", version.Assets)
+	}
+
+	e := New(st, runtime.NewManager(t.TempDir()))
+	exec := domain.TelemetryContext{ProjectID: "subscriber", ResponsibleUserID: 42, SharedScheduleID: version.ID, SharedScheduleVersion: version.Version}
+	run, err := e.StartWithRepositoriesContext(wf.ID, job.AssistantPrompt, nil, exec)
+	check(err)
+	waitFor(t, st, run.ID, "succeeded")
+
+	assets := e.RoleAssets(role, exec.ProjectID, exec.ResponsibleUserID)
+	if len(assets.Rules) != 1 || assets.Rules[0].ID != rule.ID || len(assets.Skills) != 1 || assets.Skills[0].ID != skill.ID {
+		t.Fatalf("subscriber could not resolve the role's rule and skill: %+v", assets)
+	}
+}
+
 func TestSharedScheduleNestedSOPUsesImmediateParentBinding(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
@@ -230,6 +277,15 @@ func TestSharedScheduleRejectsPrivateNestedDependencies(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := st.PutWorkflow(child); err != nil {
+				t.Fatal(err)
+			}
+			// The source can revoke a role after sharing the child SOP.
+			role, ok := st.Agent(child.Nodes[0].AgentID)
+			if !ok {
+				t.Fatal("missing test role")
+			}
+			role.Shared = false
+			if err := st.PutAgent(role); err != nil {
 				t.Fatal(err)
 			}
 			parent := domain.WorkflowDefinition{

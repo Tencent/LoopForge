@@ -453,7 +453,15 @@ func (r *CatalogRepo) storedWorkflow(id string) (domain.WorkflowDefinition, bool
 }
 
 func (r *CatalogRepo) PutWorkflow(v domain.WorkflowDefinition) error {
-	return r.putWorkflow(v, false)
+	if !v.Shared {
+		return r.putWorkflow(v, false)
+	}
+	// Commit the shared SOP, its direct roles and their assets together.
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		catalog := *r
+		catalog.deps = &deps{DB: tx}
+		return catalog.putWorkflow(v, false)
+	})
 }
 
 func workflowContent(v domain.WorkflowDefinition) string {
@@ -528,6 +536,19 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 		if v.Revision != old.Revision {
 			return fmt.Errorf("workflow revision conflict: current revision is %d", old.Revision)
 		}
+	}
+	if v.Shared {
+		roles, err := r.privateWorkflowAgents(v)
+		if err != nil {
+			return err
+		}
+		for _, id := range roles {
+			if err := r.ShareAgent(id); err != nil {
+				return fmt.Errorf("share SOP role %q: %w", id, err)
+			}
+		}
+	}
+	if ok {
 		if !publishing && workflowContent(v) == workflowContent(old) {
 			return nil
 		}
