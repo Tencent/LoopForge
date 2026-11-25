@@ -230,10 +230,25 @@ func (r *IssuesRepo) putIssueLocked(v domain.Issue) error {
 }
 
 func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool) error {
+	v, err := r.prepareIssueForSave(v, fromSync, existingOnly)
+	if err != nil {
+		return err
+	}
+	if existingOnly {
+		result := r.DB.Model(&issueRow{}).Where("id = ?", v.ID).Updates(issueValues(v))
+		if result.Error == nil && result.RowsAffected == 0 {
+			return ErrIssueNotFound
+		}
+		return result.Error
+	}
+	return r.writeIssue(v)
+}
+
+func (r *IssuesRepo) prepareIssueForSave(v domain.Issue, fromSync, existingOnly bool) (domain.Issue, error) {
 	now := time.Now().UTC()
 	old, ok := r.Issue(v.ID)
 	if existingOnly && !ok {
-		return ErrIssueNotFound
+		return v, ErrIssueNotFound
 	}
 	preserveStatus := fromSync && ok
 	if ok {
@@ -268,7 +283,7 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 			v.Number = 1
 			var maxNumber sql.NullInt64
 			if err := r.DB.Raw(`SELECT MAX(number) FROM issues WHERE project_id=?`, v.ProjectID).Scan(&maxNumber).Error; err != nil {
-				return err
+				return v, err
 			}
 			if maxNumber.Valid {
 				v.Number = int(maxNumber.Int64) + 1
@@ -324,14 +339,7 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 		bindDefaultWorkflow(&v, r.projectWorkflowID(v.ProjectID), r.projectIssueWorkflowID(v.ProjectID))
 	}
 	v.UpdatedAt = now
-	if existingOnly {
-		result := r.DB.Model(&issueRow{}).Where("id = ?", v.ID).Updates(issueValues(v))
-		if result.Error == nil && result.RowsAffected == 0 {
-			return ErrIssueNotFound
-		}
-		return result.Error
-	}
-	return r.writeIssue(v)
+	return v, nil
 }
 
 func (r *IssuesRepo) writeIssue(v domain.Issue) error {

@@ -81,6 +81,16 @@ func (r *EngineInstancesRepo) EngineInstanceControlURL(instanceID string) string
 	return strings.TrimRight(strings.TrimSpace(row.ControlURL), "/")
 }
 
+// HasLiveWorker reports whether at least one worker (or combined) process has
+// a non-expired heartbeat in engine_instances.
+func (r *EngineInstancesRepo) HasLiveWorker() bool {
+	var count int64
+	err := r.DB.Model(&engineInstanceRow{}).
+		Where("lease_until > ? AND role IN ?", time.Now().UTC(), []string{"worker", "all"}).
+		Count(&count).Error
+	return err == nil && count > 0
+}
+
 func (r *EngineInstancesRepo) LiveWorkerControlURLs() []string {
 	var rows []engineInstanceRow
 	if err := r.DB.Where("control_url <> '' AND lease_until > ? AND role IN ?", time.Now().UTC(), []string{"worker", "all"}).Find(&rows).Error; err != nil {

@@ -15,9 +15,6 @@ import (
 
 const processWaitDelay = time.Second
 
-// Bound how long protocol output and hooks may linger after completion.
-const processTerminalResultDrain = 2500 * time.Millisecond
-
 var errProcessNotStarted = errors.New("process was not started")
 
 func waitForProcessTerminalDrain(ctx context.Context, terminal, finished <-chan struct{}) bool {
@@ -28,7 +25,7 @@ func waitForProcessTerminalDrain(ctx context.Context, terminal, finished <-chan 
 	case <-finished:
 		return false
 	}
-	timer := time.NewTimer(processTerminalResultDrain)
+	timer := time.NewTimer(ConversationTerminalResultDrain)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
