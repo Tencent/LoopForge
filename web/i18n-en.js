@@ -528,4 +528,7 @@ Object.assign(window.LF_I18N_EN, {
   "用小写英文概括改动，带上需求编号": "Summarize the change in lowercase English and include the issue number",
   "AI 根据任务和命名要求生成完整的分支名。": "AI uses the task and naming instructions to generate the full branch name.",
   "请输入自定义前缀，或选择无前缀": "Enter a custom prefix or choose No prefix",
+  "未找到与当前关键词匹配的需求": "No requirements match the current keyword",
+  "没有符合当前筛选条件的需求": "No requirements match the current filters",
+  "调整或清除筛选条件后再试。": "Adjust or clear the filters and try again.",
 });
