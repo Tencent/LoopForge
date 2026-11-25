@@ -205,6 +205,14 @@ function NodeComposer({
   const messages = firstQuestion < 0 ? [] : saved.slice(firstQuestion);
   const loading =
     !chat.ready || (!!chat.activeId && !chat.session) || chat.replyStatePending;
+  // The failed reply already explains this error and offers its fix.
+  const failureShown =
+    !!chat.generation?.failure &&
+    chat.error === chat.generation.error &&
+    messages.some(
+      (message) =>
+        message.generationId === chat.generation.id && message.failure,
+    );
   const canSend =
     !loading &&
     !!chat.executor &&
@@ -241,7 +249,7 @@ function NodeComposer({
                 : undefined
             }
           />
-          {chat.error ? (
+          {chat.error && !failureShown ? (
             <div className="sop-inline-error" role="alert">
               <span>{chat.error}</span>
               <CredentialAction text={chat.error} />

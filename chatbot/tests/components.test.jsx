@@ -775,6 +775,60 @@ describe("content and panels", () => {
     }
   });
 
+  test.each([
+    ["the failed reply carries the install action", true, 1],
+    ["no message keeps the failure", false, 1],
+  ])("shows one install button for a missing CLI when %s", async (_name, stored, count) => {
+    const failure = {
+      code: "CLI_NOT_INSTALLED",
+      message: "Codex（codex）没有安装在当前服务器上。安装后即可在对话里使用。",
+    };
+    const fallback = apiMock.getMockImplementation();
+    const generation = {
+      id: "g1", status: "failed", error: failure.message, failure,
+      startedAt: "2026-11-25T10:00:00Z", events: [],
+    };
+    apiMock.mockImplementation(async (path) => {
+      if (path.includes("/conversation?")) return { id: "s1" };
+      if (path.startsWith("/api/assistant/sessions/s1/generation")) return generation;
+      if (path.startsWith("/api/assistant/sessions/s1/messages")) return {};
+      if (path.startsWith("/api/assistant/sessions/s1"))
+        return {
+          id: "s1", runId: "r1", messages: [
+            { role: "user", content: "这个节点做了什么？", authorId: 7, startedAt: "2026-11-25T10:00:00Z" },
+            {
+              role: "assistant", content: "", generationId: "g1", unfinished: failure.message,
+              ...(stored ? { failure } : {}),
+            },
+          ],
+        };
+      if (path === "/api/auth/current") return { user: { id: 7, loginName: "member" } };
+      if (path.startsWith("/api/assistant/models")) return {
+        models: [], preferences: { executor: "codex" },
+        engines: [{ id: "codex", name: "Codex", configured: true, serverInstallable: true }],
+      };
+      return fallback(path);
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true, status: 200, json: async () => ({ engine: "codex", status: "missing" }),
+    })));
+    try {
+      render(<SopRunPanel runs={[{
+        ...run, reviewAccess: { canDiscuss: true },
+        workflowSnapshot: { ...run.workflowSnapshot, nodes: [{ id: "n1", name: "收集证据", type: "script" }] },
+        nodes: { n1: { nodeId: "n1", status: "succeeded", output: "已收集检查证据" } },
+        artifacts: [],
+      }]} onClose={vi.fn()} />);
+      await userEvent.setup().click(screen.getByText("收集证据"));
+      await waitFor(() => expect(screen.getAllByRole("button", { name: "安装 Codex" }).length).toBeGreaterThan(0));
+      await waitFor(() => expect(screen.queryAllByRole("button", { name: "安装 Codex" })).toHaveLength(count));
+      if (!stored) expect(screen.getByRole("alert")).toHaveTextContent(failure.message);
+    } finally {
+      apiMock.mockImplementation(fallback);
+      vi.unstubAllGlobals();
+    }
+  });
+
   test("switches among runs and renders mixed node statuses", async () => {
     const user = userEvent.setup();
     const mixed = {
