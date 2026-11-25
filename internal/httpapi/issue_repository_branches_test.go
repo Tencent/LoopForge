@@ -218,7 +218,7 @@ func TestDispatchRepositoryBranches(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(func() { _ = eng.Cancel(task.RunID) })
+				t.Cleanup(func() { _ = eng.Cancel(controlTestActor, task.RunID) })
 				run, _ := st.Run(task.RunID)
 				if len(run.Repositories) != 2 {
 					t.Fatalf("run lost multi-repo context: %+v", run)

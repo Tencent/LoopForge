@@ -184,7 +184,7 @@ func TestControlPlaneEnqueuesWithoutExecute(t *testing.T) {
 	if worker.ActiveRunCount() != 1 {
 		t.Fatalf("worker active=%d", worker.ActiveRunCount())
 	}
-	t.Cleanup(func() { _ = worker.Cancel(run.ID) })
+	t.Cleanup(func() { _ = worker.Cancel(controlTestActor, run.ID) })
 }
 
 func TestControlPlaneCancelRequestsRunningWorker(t *testing.T) {
@@ -218,7 +218,7 @@ func TestControlPlaneCancelRequestsRunningWorker(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if err := api.Cancel(run.ID); err != nil {
+	if err := api.Cancel(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.RunState(run.ID)
@@ -271,7 +271,7 @@ func TestControlPlaneCancelNotifiesWorkerOverHTTP(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	started := time.Now()
-	if err := api.Cancel(run.ID); err != nil {
+	if err := api.Cancel(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	deadline = time.Now().Add(15 * time.Second)
@@ -316,7 +316,7 @@ func TestInterruptRequiresDurableControlFlag(t *testing.T) {
 	if worker.ActiveRunCount() == 0 {
 		t.Fatal("worker never started the run")
 	}
-	t.Cleanup(func() { _ = worker.Cancel(run.ID) })
+	t.Cleanup(func() { _ = worker.Cancel(controlTestActor, run.ID) })
 	if worker.Interrupt(run.ID) {
 		t.Fatal("interrupt without pause/cancel flag should be a no-op")
 	}
@@ -384,7 +384,7 @@ func TestControlPlaneCancelRoutesToOwningWorker(t *testing.T) {
 	}
 
 	started := time.Now()
-	if err := api.Cancel(run.ID); err != nil {
+	if err := api.Cancel(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	deadline = time.Now().Add(15 * time.Second)
@@ -483,13 +483,13 @@ func TestAPIResumePausedIsClaimedOnlyByBoundWorker(t *testing.T) {
 	bound := waitRun(t, s, run.ID, 2*time.Second, func(got domain.Run) bool {
 		return got.OwnerInstanceID == "worker-a" && got.WorkspaceHost == "worker-a-host" && got.WorkspaceRoot != "" && workerA.ActiveRunCount() > 0
 	})
-	if err := api.Pause(run.ID); err != nil {
+	if err := api.Pause(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitRun(t, s, run.ID, 2*time.Second, func(got domain.Run) bool {
 		return got.Status == "waiting" && got.PauseRequested
 	})
-	if err := api.ResumePaused(run.ID, ""); err != nil {
+	if err := api.ResumePaused(controlTestActor, run.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	resumed := waitRun(t, s, run.ID, 2*time.Second, func(got domain.Run) bool {
@@ -504,7 +504,7 @@ func TestAPIResumePausedIsClaimedOnlyByBoundWorker(t *testing.T) {
 	if claimed := workerA.ResumeInterruptedRuns(); len(claimed) != 1 || claimed[0] != run.ID {
 		t.Fatalf("worker-a did not reclaim paused resume: %v", claimed)
 	}
-	t.Cleanup(func() { _ = api.Cancel(run.ID); workerA.Interrupt(run.ID) })
+	t.Cleanup(func() { _ = api.Cancel(controlTestActor, run.ID); workerA.Interrupt(run.ID) })
 	waitRun(t, s, run.ID, 2*time.Second, func(got domain.Run) bool {
 		return got.OwnerInstanceID == "worker-a"
 	})
@@ -538,7 +538,7 @@ func TestAPIRetryIsClaimedOnlyByBoundWorker(t *testing.T) {
 	bound := waitRun(t, s, run.ID, 2*time.Second, func(got domain.Run) bool {
 		return got.Status == "failed" && got.WorkspaceHost == "worker-a-host" && got.WorkspaceRoot != ""
 	})
-	if err := api.Retry(run.ID, "fail", "retry", ""); err != nil {
+	if err := api.Retry(controlTestActor, run.ID, "fail", "retry", ""); err != nil {
 		t.Fatal(err)
 	}
 	retried := waitRun(t, s, run.ID, 2*time.Second, func(got domain.Run) bool {
@@ -553,7 +553,7 @@ func TestAPIRetryIsClaimedOnlyByBoundWorker(t *testing.T) {
 	if claimed := workerA.ResumeInterruptedRuns(); len(claimed) != 1 || claimed[0] != run.ID {
 		t.Fatalf("worker-a did not reclaim retry: %v", claimed)
 	}
-	t.Cleanup(func() { _ = api.Cancel(run.ID) })
+	t.Cleanup(func() { _ = api.Cancel(controlTestActor, run.ID) })
 	waitRun(t, s, run.ID, 2*time.Second, func(got domain.Run) bool {
 		return got.OwnerInstanceID == "worker-a"
 	})
@@ -577,7 +577,7 @@ func TestStartInsertsLeasedRunAndBlocksOtherResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = a.Cancel(run.ID) })
+	t.Cleanup(func() { _ = a.Cancel(controlTestActor, run.ID) })
 	if run.OwnerInstanceID != "instance-a" || run.Generation != 1 || run.LeaseUntil.IsZero() {
 		t.Fatalf("start did not persist lease: owner=%s generation=%d lease=%v", run.OwnerInstanceID, run.Generation, run.LeaseUntil)
 	}
@@ -649,7 +649,7 @@ func TestSameInstanceResumeDoesNotStartSecondExecute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = a.Cancel(run.ID) })
+	t.Cleanup(func() { _ = a.Cancel(controlTestActor, run.ID) })
 	if resumed := b.ResumeInterruptedRuns(); len(resumed) != 0 {
 		t.Fatalf("same instance resumed live start: %v", resumed)
 	}
@@ -850,7 +850,7 @@ func TestDrainParksRunningRunForResume(t *testing.T) {
 	// Wait for the cancelled run to stop writing under root before TempDir
 	// removes it; otherwise cleanup races the runtime ("directory not empty").
 	t.Cleanup(func() {
-		_ = b.Cancel(run.ID)
+		_ = b.Cancel(controlTestActor, run.ID)
 		for stop := time.Now().Add(10 * time.Second); b.ActiveRunCount() > 0 && time.Now().Before(stop); {
 			time.Sleep(20 * time.Millisecond)
 		}

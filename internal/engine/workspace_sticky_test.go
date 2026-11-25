@@ -69,7 +69,7 @@ func TestApproveRejectsForeignWorkspaceBind(t *testing.T) {
 	heartbeatHost(t, s, "someone-else", "host-b")
 	time.Sleep(30 * time.Millisecond) // lease expired so only the bind check can reject
 
-	err := e.Approve(r.ID, "gate", "")
+	err := e.Approve(controlTestActor, r.ID, "gate", "")
 	if err == nil || !strings.Contains(err.Error(), "工作区绑定") {
 		t.Fatalf("Approve error = %v, want foreign workspace bind error", err)
 	}

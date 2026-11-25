@@ -730,7 +730,7 @@ func (h *scheduleHandlers) cancelStaleAlignRuns(repoID string) {
 			continue
 		}
 		if run.Status == "running" || run.Status == "waiting" {
-			_ = h.engine.Cancel(run.ID)
+			_ = h.engine.Cancel(domain.Actor{Name: "baseline-scheduler"}, run.ID)
 		}
 	}
 }

@@ -208,7 +208,7 @@ func TestLegacyNodeReplayCanReadOriginalReportPaths(t *testing.T) {
 	if err := s.DB.Model(&repo.WorkspaceCheckpoint{}).Where("run_id = ?", r.ID).Updates(map[string]any{"archive": nil, "saved_at": nil, "sha256": ""}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Retry(r.ID, "implement", "legacy replay", ""); err != nil {
+	if err := e.Retry(controlTestActor, r.ID, "implement", "legacy replay", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "succeeded")

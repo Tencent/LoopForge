@@ -229,7 +229,7 @@ func TestScheduledDispatchUsesIntegrationBranchAndManualDispatchDoesNot(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = e.Cancel(scheduled.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, scheduled.RunID) })
 	run, _ := st.Run(scheduled.RunID)
 	if scheduled.DispatchMode != "scheduled" || scheduled.TriggerOrigin != "timer" {
 		t.Fatalf("scheduled trigger: %+v", scheduled)
@@ -246,7 +246,7 @@ func TestScheduledDispatchUsesIntegrationBranchAndManualDispatchDoesNot(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = e.Cancel(manual.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, manual.RunID) })
 	run, _ = st.Run(manual.RunID)
 	if manual.DispatchMode != "primary" || manual.TriggerOrigin != "manual" {
 		t.Fatalf("manual trigger: %+v", manual)
@@ -260,7 +260,7 @@ func TestScheduledDispatchUsesIntegrationBranchAndManualDispatchDoesNot(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = e.Cancel(runNow.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, runNow.RunID) })
 	if runNow.DispatchMode != "scheduled" || runNow.TriggerOrigin != "manual_run" {
 		t.Fatalf("run-now trigger: %+v", runNow)
 	}
@@ -292,7 +292,7 @@ func TestSingleSOPDispatchReplacesStaleBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	got, ok := st.Issue("one")
 	if !ok || got.WorkflowID != started.ID {
 		t.Fatalf("single SOP binding = %q, want %s", got.WorkflowID, started.ID)
@@ -308,7 +308,7 @@ func TestSingleSOPDispatchReplacesStaleBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = e.Cancel(second.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, second.RunID) })
 	got, ok = st.Issue("multi")
 	if !ok || got.WorkflowID != bound.ID || got.SOPBindings[0].WorkflowID != bound.ID {
 		t.Fatalf("multi SOP bindings were rewritten: %+v", got)
@@ -411,7 +411,7 @@ func TestScheduledJobWaitsWhenIntegrateConflictsWithDefault(t *testing.T) {
 	if alignRun.ID == "" {
 		t.Fatal("conflict did not start a baseline alignment run")
 	}
-	t.Cleanup(func() { _ = e.Cancel(alignRun.ID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, alignRun.ID) })
 	if alignRun.ExecutionContext.ResponsibleUserID != 1 {
 		t.Fatalf("baseline alignment responsible user = %d, want issue owner 1", alignRun.ExecutionContext.ResponsibleUserID)
 	}

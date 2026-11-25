@@ -83,9 +83,9 @@ func TestMainBotControlReusesRunWorkspaceLease(t *testing.T) {
 				var err error
 				switch op {
 				case "retry":
-					err = e.RetryContext(ctx, id, "step", "retry", "")
+					err = e.RetryContext(controlTestActor, ctx, id, "step", "retry", "")
 				case "resume":
-					err = e.ResumePausedContext(ctx, id, "")
+					err = e.ResumePausedContext(controlTestActor, ctx, id, "")
 
 				}
 				if err != nil {
@@ -135,7 +135,7 @@ func TestMainBotControlCannotBorrowAnotherRunOrWriterLease(t *testing.T) {
 					callerToken = "another-writer"
 				}
 				ctx = WithConversationWorkspaceToken(ctx, callerToken, scope)
-				err := e.RetryContext(ctx, "blocked", "step", "retry", "")
+				err := e.RetryContext(controlTestActor, ctx, "blocked", "step", "retry", "")
 				cancel()
 				if !errors.Is(err, repo.ErrWorkspaceInUse) && !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("other writer lease was bypassed: %v", err)
@@ -171,7 +171,7 @@ func TestResumeChildSOPDoesNotReuseParentWorkspaceLease(t *testing.T) {
 	defer cancel()
 	// Even an accidentally matching token cannot cross the parent run boundary.
 	ctx = WithConversationWorkspaceToken(ctx, token, parent.ID)
-	err := e.ResumePausedContext(ctx, parent.ID, "")
+	err := e.ResumePausedContext(controlTestActor, ctx, parent.ID, "")
 	if err == nil || !strings.Contains(err.Error(), "继续子 SOP child") || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("child accepted parent's workspace lease: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestMainBotRetryExecutesAfterWorkspaceOwnerReleasesLease(t *testing.T) {
 				t.Fatal(err)
 			}
 			ctx := WithConversationWorkspaceToken(context.Background(), token, run.ID)
-			if err := e.RetryContext(ctx, run.ID, "step", "retry", ""); err != nil {
+			if err := e.RetryContext(controlTestActor, ctx, run.ID, "step", "retry", ""); err != nil {
 				t.Fatal(err)
 			}
 			if !saved {
@@ -274,7 +274,7 @@ func TestCancelResumedScriptWhileWorkspaceIsBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := WithConversationWorkspaceToken(context.Background(), token, run.ID)
-	if err := e.RetryContext(ctx, run.ID, "step", "retry", ""); err != nil {
+	if err := e.RetryContext(controlTestActor, ctx, run.ID, "step", "retry", ""); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(15 * time.Second)
@@ -285,7 +285,7 @@ func TestCancelResumedScriptWhileWorkspaceIsBusy(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if err := e.Cancel(run.ID); err != nil {
+	if err := e.Cancel(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	deadline = time.Now().Add(15 * time.Second)
@@ -326,7 +326,7 @@ func TestMainBotResumeLegacyScriptCreatesUsableWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := WithConversationWorkspaceToken(context.Background(), token, run.ID)
-	if err := e.ResumePausedContext(ctx, run.ID, ""); err != nil {
+	if err := e.ResumePausedContext(controlTestActor, ctx, run.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)

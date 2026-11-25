@@ -152,7 +152,7 @@ func TestSponsoredExecutorPinsModelAndExplains(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, st, run.ID, "waiting")
-	defer func() { _ = e.Cancel(run.ID) }()
+	defer func() { _ = e.Cancel(controlTestActor, run.ID) }()
 	var observed []domain.TelemetryEvent
 	sink := func(event domain.TelemetryEvent) { observed = append(observed, event) }
 	for range 2 {

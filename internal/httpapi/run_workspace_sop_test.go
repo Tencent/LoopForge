@@ -129,7 +129,7 @@ func TestNestedSOPWorkspaceReviewAndRestore(t *testing.T) {
 	if _, ok := f.s.WorkspaceCheckpoint(childID); ok {
 		t.Fatal("browsing created a separate workspace checkpoint on the child")
 	}
-	if err := f.e.Approve(childID, "done", ""); err != nil {
+	if err := f.e.Approve(controlTestActor, childID, "done", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitRun(childID, func(run domain.Run) bool { return run.Status == "succeeded" && !run.WorkspaceCleanedAt.IsZero() })
@@ -142,7 +142,7 @@ func TestNestedSOPWorkspaceReviewAndRestore(t *testing.T) {
 	if err := f.e.ReleaseConversationWorkspace(parentRun.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.e.Approve(parentRun.ID, "gate", ""); err != nil {
+	if err := f.e.Approve(controlTestActor, parentRun.ID, "gate", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitRun(parentRun.ID, func(run domain.Run) bool { return run.Status == "succeeded" && !run.WorkspaceCleanedAt.IsZero() })

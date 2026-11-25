@@ -132,7 +132,7 @@ func TestCancelGhostRunWithRunningNode(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Cancel("run-ghost"); err != nil {
+	if err := e.Cancel(controlTestActor, "run-ghost"); err != nil {
 		t.Fatalf("cancel ghost run: %v", err)
 	}
 	got, _ := s.Run("run-ghost")
@@ -154,7 +154,7 @@ func TestCancelWaitingRunWithoutScheduler(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Cancel("run-waiting"); err != nil {
+	if err := e.Cancel(controlTestActor, "run-waiting"); err != nil {
 		t.Fatalf("cancel waiting run: %v", err)
 	}
 	got, _ := s.Run("run-waiting")
@@ -216,7 +216,7 @@ func TestResumePausedResumesAgentSessionAndRestartsScriptWithoutContext(t *testi
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ResumePaused(run.ID, "new fact from operator"); err != nil {
+	if err := e.ResumePaused(controlTestActor, run.ID, "new fact from operator"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Run(run.ID)
@@ -245,7 +245,7 @@ func TestResumePausedScriptIgnoresSubmittedContext(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ResumePaused(run.ID, "must be ignored"); err != nil {
+	if err := e.ResumePaused(controlTestActor, run.ID, "must be ignored"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Run(run.ID)
@@ -284,7 +284,7 @@ func TestPassPausedScriptContinuesDownstream(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Pass(run.ID, "hard", "脚本卡在环境问题上，人工确认跳过"); err != nil {
+	if err := e.Pass(controlTestActor, run.ID, "hard", "脚本卡在环境问题上，人工确认跳过"); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, run.ID, "succeeded")
@@ -326,7 +326,7 @@ func TestPassRejectsPausedAgentNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := New(s, runtime.NewManager(t.TempDir()))
-	if err := e.Pass(run.ID, "agent", ""); err == nil || !strings.Contains(err.Error(), "script") {
+	if err := e.Pass(controlTestActor, run.ID, "agent", ""); err == nil || !strings.Contains(err.Error(), "script") {
 		t.Fatalf("Pass error = %v, want script-only", err)
 	}
 }
@@ -466,7 +466,7 @@ func TestRetryFromChosenNodeInStoppedRun(t *testing.T) {
 			if err := s.PutRun(run); err != nil {
 				t.Fatal(err)
 			}
-			err := e.Retry(run.ID, "first", "补充说明", "请重新检查约束")
+			err := e.Retry(controlTestActor, run.ID, "first", "补充说明", "请重新检查约束")
 			if (err != nil) != tc.wantError {
 				t.Fatalf("retry error = %v, wantError = %t", err, tc.wantError)
 			}
@@ -501,14 +501,14 @@ func TestRetryRejectsNodeWithUnfinishedUpstream(t *testing.T) {
 			if err := s.PutRun(run); err != nil {
 				t.Fatal(err)
 			}
-			if err := e.Retry(run.ID, "second", "", ""); err == nil || !strings.Contains(err.Error(), "upstream") {
+			if err := e.Retry(controlTestActor, run.ID, "second", "", ""); err == nil || !strings.Contains(err.Error(), "upstream") {
 				t.Fatalf("expected upstream error, got %v", err)
 			}
 			got, _ := s.Run(run.ID)
 			if got.Status != tc.runStatus || got.Nodes["first"].Status != tc.firstStatus || got.Nodes["second"].Status != "pending" {
 				t.Fatalf("rejected replay changed run: %+v", got)
 			}
-			if err := e.Retry(run.ID, "first", "", ""); err != nil {
+			if err := e.Retry(controlTestActor, run.ID, "first", "", ""); err != nil {
 				t.Fatalf("first node should remain replayable: %v", err)
 			}
 		})
@@ -534,7 +534,7 @@ func TestFailedRunCanRefreshSOPThenReplayWithContext(t *testing.T) {
 	if err := e.RefreshRunSOP(run.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Retry(run.ID, "broken", "SOP 修正后重跑", "按新检查步骤执行"); err != nil {
+	if err := e.Retry(controlTestActor, run.ID, "broken", "SOP 修正后重跑", "按新检查步骤执行"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Run(run.ID)
@@ -554,7 +554,7 @@ func TestResumePausedAfterLastStepWithoutInterruptedNode(t *testing.T) {
 	if err := s.PutRun(finished); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ResumePaused(finished.ID, ""); err != nil {
+	if err := e.ResumePaused(controlTestActor, finished.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Run(finished.ID)
@@ -570,7 +570,7 @@ func TestResumePausedAfterLastStepWithoutInterruptedNode(t *testing.T) {
 	if err := s.PutRun(gated); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ResumePaused(gated.ID, ""); err == nil || !strings.Contains(err.Error(), "paused node not found") {
+	if err := e.ResumePaused(controlTestActor, gated.ID, ""); err == nil || !strings.Contains(err.Error(), "paused node not found") {
 		t.Fatalf("human gate resume err = %v", err)
 	}
 }

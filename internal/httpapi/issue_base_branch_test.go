@@ -211,7 +211,7 @@ func TestDispatchCustomBaseBranchSkipsScheduledIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = eng.Cancel(task.RunID) })
+		t.Cleanup(func() { _ = eng.Cancel(controlTestActor, task.RunID) })
 		run, _ := st.Run(task.RunID)
 		if task.Repository.BaseBranch != "master" || run.Repository.BaseBranch != "master" || run.Repository.WorkBranch != "feature/continue-work" || !run.Repository.RequireExistingWorkBranch || run.Repository.IntegrateBranch != "" {
 			t.Fatalf("custom selection was overridden: task=%+v run=%+v", task.Repository, run.Repository)
@@ -319,7 +319,7 @@ func TestDispatchEmptyBaseBranchUsesCurrentConfiguredMainBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", map[string]any{}, http.StatusCreated)
-	t.Cleanup(func() { _ = eng.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = eng.Cancel(controlTestActor, task.RunID) })
 	run, _ := st.Run(task.RunID)
 	if task.Repository.BaseBranch != repository.DefaultBranch || run.Repository.BaseBranch != repository.DefaultBranch || run.Repository.DefaultBranch != repository.DefaultBranch || run.Repository.RequireExistingWorkBranch || run.Repository.WorkBranch == "" {
 		t.Fatalf("blank baseline ignored current configured main branch: task=%+v run=%+v", task.Repository, run.Repository)
@@ -381,7 +381,7 @@ func TestDispatchLegacyDefaultBranchCreatesNewWorkBranchWithoutChangingRecord(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = eng.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = eng.Cancel(controlTestActor, task.RunID) })
 	if task.Repository.BaseBranch != repository.DefaultBranch || task.Repository.WorkBranch == "" || task.Repository.WorkBranch == repository.DefaultBranch || task.Repository.RequireExistingWorkBranch {
 		t.Fatalf("legacy main value must create a fresh work branch: %+v", task.Repository)
 	}

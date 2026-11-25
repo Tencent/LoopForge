@@ -106,7 +106,7 @@ func TestSharedWorkspaceFlaggedChildDoesNotRepeatParentScript(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(raw)) != "parent\nchild\nafter" {
 		t.Fatal(string(raw), err)
 	}
-	_ = e.Cancel(run.ID)
+	_ = e.Cancel(controlTestActor, run.ID)
 }
 
 func TestSharedWorkspacePreparationRequestCarriesOwnerWithoutChangingChildIdentity(t *testing.T) {

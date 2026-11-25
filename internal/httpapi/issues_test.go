@@ -70,7 +70,7 @@ func TestIssueDispatchCreatesTaskAndRun(t *testing.T) {
 			if rerun.ID == task.ID || rerun.DispatchMode != "rerun" {
 				t.Fatalf("unexpected rerun task: %+v", rerun)
 			}
-			t.Cleanup(func() { _ = e.Cancel(rerun.RunID) })
+			t.Cleanup(func() { _ = e.Cancel(controlTestActor, rerun.RunID) })
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -100,7 +100,7 @@ func TestDispatchTAPDIssuePutsStoryIdentityInInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := requestEmptyJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	run, ok := s.Run(task.RunID)
 	if !ok {
 		t.Fatal("dispatch did not create run")
@@ -229,7 +229,7 @@ func TestIssueDispatchUsesTriggerUserCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := requestJSONAuthed[domain.Task](t, h, operator, http.MethodPost, "/api/issues/iss-trigger/dispatch", map[string]any{}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	run, ok := s.Run(task.RunID)
 	if !ok || run.ExecutionContext.ResponsibleUserID != 88 {
 		t.Fatalf("run responsible=%d want trigger user 88", run.ExecutionContext.ResponsibleUserID)
@@ -284,7 +284,7 @@ func TestExternalIssueDispatchKeepsExplicitWorkflow(t *testing.T) {
 	}
 
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", map[string]any{}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	if task.WorkflowID != workflow.ID {
 		t.Fatalf("dispatch used workflow %q, want %q", task.WorkflowID, workflow.ID)
 	}
@@ -315,12 +315,12 @@ func TestIssueDispatchSecondLaneKeepsDefaultSOP(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/iss-lanes/dispatch", map[string]any{}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(first.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, first.RunID) })
 	if first.WorkflowID != backend.ID {
 		t.Fatalf("first task workflow=%q", first.WorkflowID)
 	}
 	second := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/iss-lanes/dispatch", map[string]any{"workflowId": frontend.ID}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(second.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, second.RunID) })
 	if second.WorkflowID != frontend.ID || second.ID == first.ID {
 		t.Fatalf("second task=%#v", second)
 	}
@@ -385,7 +385,7 @@ func TestIssueSOPBindingsRoundTripAndDispatchOwner(t *testing.T) {
 		t.Fatalf("saved=%#v", saved)
 	}
 	task := requestJSONAuthed[domain.Task](t, h, operator, http.MethodPost, "/api/issues/iss-sops/dispatch", map[string]any{"workflowId": backend.ID}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	run, ok := s.Run(task.RunID)
 	if !ok || run.ExecutionContext.ResponsibleUserID != 7 {
 		t.Fatalf("responsible=%d want step owner 7, run=%+v", run.ExecutionContext.ResponsibleUserID, run.ExecutionContext)
@@ -438,7 +438,7 @@ func TestRequirementInheritsProjectPlaybook(t *testing.T) {
 		t.Fatalf("bound lanes=%#v", snap.Lanes)
 	}
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+created.ID+"/dispatch", map[string]any{"workflowId": backend.ID}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	if task.WorkflowID != backend.ID {
 		t.Fatalf("dispatch workflow=%q", task.WorkflowID)
 	}
@@ -632,7 +632,7 @@ func TestManualRunKeepsSelectedProjectContext(t *testing.T) {
 		"input":      "manual smoke",
 		"projectId":  "project-a",
 	}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(run.ID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, run.ID) })
 	if run.ExecutionContext.ProjectID != "project-a" {
 		t.Fatalf("manual run project context = %q", run.ExecutionContext.ProjectID)
 	}
@@ -1320,7 +1320,7 @@ func TestGongfengClosedIssueRejectsDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+openIssue.ID+"/dispatch", map[string]any{}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	if task.IssueID != openIssue.ID || task.RunID == "" {
 		t.Fatalf("opened Gongfeng issue should still dispatch: %+v", task)
 	}
@@ -1402,7 +1402,7 @@ func TestMergedTAPDDeliveryRequiresExplicitReopen(t *testing.T) {
 		t.Fatalf("newer MR check must not relock a reopened issue: %+v", stillOpen)
 	}
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", map[string]any{"rerun": true}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	if task.RunID == "" || task.IssueID != issue.ID {
 		t.Fatalf("reopened issue did not dispatch: %+v", task)
 	}
@@ -1431,7 +1431,7 @@ func TestRequirementDispatchesWithoutClarificationGate(t *testing.T) {
 		t.Fatalf("score endpoint must be gone, got %d", rec.Code)
 	}
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/req-gated/dispatch", map[string]any{}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	if task.RunID == "" {
 		t.Fatal("unclarified requirement must dispatch")
 	}
@@ -1460,7 +1460,7 @@ func TestScheduledDispatchDoesNotRequireClarification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scheduled dispatch must not be gated: %v", err)
 	}
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 }
 
 func TestSyncedRequirementCanDispatchWithoutClarification(t *testing.T) {
@@ -1486,7 +1486,7 @@ func TestSyncedRequirementCanDispatchWithoutClarification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	if task.RunID == "" {
 		t.Fatal("synced requirement must dispatch")
 	}
@@ -1518,7 +1518,7 @@ func TestReadyClarificationCanDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	if task.RunID == "" {
 		t.Fatal("finished clarification must dispatch")
 	}
@@ -1575,7 +1575,7 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 	if task.RunID == "" {
 		t.Fatal("existing issue SOP should still dispatch normally")
 	}
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 }
 
 func TestRequirementClarificationFinishesWithoutScore(t *testing.T) {
@@ -1608,7 +1608,7 @@ func TestRequirementClarificationFinishesWithoutScore(t *testing.T) {
 	if task.RunID == "" {
 		t.Fatal("ready clarification must dispatch")
 	}
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 }
 
 func TestCreateLocalIssueWithoutSyncTarget(t *testing.T) {

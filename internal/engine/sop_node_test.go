@@ -283,14 +283,14 @@ func TestSOPNodePauseCascadesAndReusesFinishedChild(t *testing.T) {
 		}
 		return false
 	})
-	if err := e.Pause(run.ID); err != nil {
+	if err := e.Pause(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitRun(t, s, run.ID, 3*time.Second, func(got domain.Run) bool { return got.Status == "waiting" && got.PauseRequested })
 	waitRun(t, s, childID, 3*time.Second, func(got domain.Run) bool { return got.Status == "waiting" && got.PauseRequested })
 
 	// The operator continues only the child; it finishes while the parent is still paused.
-	if err := e.ResumePaused(childID, ""); err != nil {
+	if err := e.ResumePaused(controlTestActor, childID, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(marker, nil, 0o600); err != nil {
@@ -300,7 +300,7 @@ func TestSOPNodePauseCascadesAndReusesFinishedChild(t *testing.T) {
 	if got, _ := s.RunState(run.ID); got.Status != "waiting" {
 		t.Fatalf("parent status = %s, want still paused", got.Status)
 	}
-	if err := e.ResumePaused(run.ID, ""); err != nil {
+	if err := e.ResumePaused(controlTestActor, run.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	got := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool { return got.Status == "succeeded" })
@@ -349,12 +349,12 @@ func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
 		}
 		return false
 	})
-	if err := e.Pause(run.ID); err != nil {
+	if err := e.Pause(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitRun(t, s, oldID, 3*time.Second, func(got domain.Run) bool { return got.Status == "waiting" && got.PauseRequested })
 	waitRun(t, s, run.ID, 3*time.Second, func(got domain.Run) bool { return got.Status == "waiting" })
-	if err := e.ResumePaused(oldID, ""); err != nil {
+	if err := e.ResumePaused(controlTestActor, oldID, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(marker, nil, 0o600); err != nil {
@@ -370,7 +370,7 @@ func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
 	if err := e.RefreshRunSOP(run.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ResumePaused(run.ID, ""); err != nil {
+	if err := e.ResumePaused(controlTestActor, run.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	got := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool { return domain.TerminalRunStatus(got.Status) })
@@ -430,19 +430,19 @@ func pauseParentThen(t *testing.T, cancelInstead bool) {
 		}
 		return false
 	})
-	if err := e.Pause(run.ID); err != nil {
+	if err := e.Pause(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitRun(t, s, childID, 3*time.Second, func(got domain.Run) bool { return got.Status == "waiting" && got.PauseRequested })
 	waitRun(t, s, run.ID, 3*time.Second, func(got domain.Run) bool { return got.Status == "waiting" })
 	if cancelInstead {
-		if err := e.Cancel(run.ID); err != nil {
+		if err := e.Cancel(controlTestActor, run.ID); err != nil {
 			t.Fatal(err)
 		}
 		waitRun(t, s, childID, 3*time.Second, func(got domain.Run) bool { return got.Status == "cancelled" })
 		return
 	}
-	if err := e.ResumePaused(run.ID, ""); err != nil {
+	if err := e.ResumePaused(controlTestActor, run.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	waitRun(t, s, childID, 3*time.Second, func(got domain.Run) bool { return got.Status == "running" })
@@ -494,7 +494,7 @@ func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 	if err := os.WriteFile(marker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Retry(childID, "check", "", ""); err != nil {
+	if err := e.Retry(controlTestActor, childID, "check", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	got := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool { return got.Status == "succeeded" })
@@ -540,7 +540,7 @@ func startPausedParentWithChild(t *testing.T, s *repo.Store, e *Engine, prefix s
 		}
 		return false
 	})
-	if err := e.Pause(run.ID); err != nil {
+	if err := e.Pause(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitRun(t, s, childID, 3*time.Second, func(got domain.Run) bool { return got.Status == "waiting" && got.PauseRequested })
@@ -558,11 +558,11 @@ func TestSOPNodeFollowsCancelledChildOnResume(t *testing.T) {
 	defer s.Close()
 	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
 	parentID, childID, _ := startPausedParentWithChild(t, s, e, "cancelled", false)
-	if err := e.Cancel(childID); err != nil {
+	if err := e.Cancel(controlTestActor, childID); err != nil {
 		t.Fatal(err)
 	}
 	waitRun(t, s, childID, 3*time.Second, func(got domain.Run) bool { return got.Status == "cancelled" })
-	if err := e.ResumePaused(parentID, ""); err != nil {
+	if err := e.ResumePaused(controlTestActor, parentID, ""); err != nil {
 		t.Fatal(err)
 	}
 	got := waitRun(t, s, parentID, 5*time.Second, func(got domain.Run) bool { return domain.TerminalRunStatus(got.Status) })
@@ -581,7 +581,7 @@ func TestSOPRetryEarlierNodeCancelsLiveChild(t *testing.T) {
 	defer s.Close()
 	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 2))
 	parentID, oldChild, marker := startPausedParentWithChild(t, s, e, "orphan", true)
-	if err := e.Retry(parentID, "first", "", ""); err != nil {
+	if err := e.Retry(controlTestActor, parentID, "first", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitRun(t, s, oldChild, 3*time.Second, func(got domain.Run) bool { return got.Status == "cancelled" })
@@ -627,7 +627,7 @@ func TestSOPChildPassResumesFailedParent(t *testing.T) {
 	failed := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool { return got.Status == "failed" })
 	childID := failed.Nodes["sub"].ChildRunID
 	waitRun(t, s, childID, 3*time.Second, func(got domain.Run) bool { return got.Status == "failed" })
-	if err := e.Pass(childID, "check", ""); err != nil {
+	if err := e.Pass(controlTestActor, childID, "check", ""); err != nil {
 		t.Fatal(err)
 	}
 	got := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool { return got.Status == "succeeded" })

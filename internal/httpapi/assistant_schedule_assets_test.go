@@ -87,7 +87,7 @@ func TestSharedSchedulePinsDirectReferencesAndKeepsNestedBindingsScoped(t *testi
 	check(err)
 	var run domain.Run
 	check(json.Unmarshal([]byte(result), &run))
-	t.Cleanup(func() { _ = h.engine.Cancel(run.ID) })
+	t.Cleanup(func() { _ = h.engine.Cancel(controlTestActor, run.ID) })
 	stored, ok := st.RunState(run.ID)
 	if !ok || stored.ExecutionContext.ProjectID != "target" || stored.ExecutionContext.ResponsibleUserID != owner.ID || stored.ExecutionContext.SharedScheduleID != v.ID {
 		t.Fatalf("incorrect SOP execution scope: %+v", stored.ExecutionContext)

@@ -44,7 +44,7 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 	cancelRuns := func(res roomIssueResult) {
 		for _, task := range res.Tasks {
 			runID := task.RunID
-			t.Cleanup(func() { _ = e.Cancel(runID) })
+			t.Cleanup(func() { _ = e.Cancel(controlTestActor, runID) })
 		}
 	}
 

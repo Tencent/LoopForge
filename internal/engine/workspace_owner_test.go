@@ -125,7 +125,7 @@ func TestRetryOnDeadBoundHostIsTakenOverByLiveWorker(t *testing.T) {
 	if err := os.WriteFile(marker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := api.Retry(run.ID, "work", "从指定节点重跑", ""); err != nil {
+	if err := api.Retry(controlTestActor, run.ID, "work", "从指定节点重跑", ""); err != nil {
 		t.Fatal(err)
 	}
 	if claimed := workerB.ResumeInterruptedRuns(); len(claimed) != 1 || claimed[0] != run.ID {

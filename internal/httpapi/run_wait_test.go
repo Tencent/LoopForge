@@ -103,7 +103,7 @@ func TestWaitRunUsesFrozenWorkflowProjectWhenStartOmitsProject(t *testing.T) {
 	if run.ExecutionContext.ProjectID != "" || run.WorkflowSnapshot.ProjectID != wf.ProjectID {
 		t.Fatalf("unexpected run scope: context=%q snapshot=%q", run.ExecutionContext.ProjectID, run.WorkflowSnapshot.ProjectID)
 	}
-	t.Cleanup(func() { _ = en.Cancel(run.ID) })
+	t.Cleanup(func() { _ = en.Cancel(controlTestActor, run.ID) })
 
 	path := "/api/runs/" + run.ID + "/wait?timeoutSec=0"
 	c, rec = workbenchContext(owner, http.MethodGet, path, bytes.NewBuffer(nil))

@@ -151,7 +151,7 @@ func (h *assistantHandlers) endConversationWorkspace(runID string) bool {
 		log.Printf("keep workspace run=%s of a deleted conversation: it is %s or has work in progress", runID, run.Status)
 		return false
 	}
-	if err := h.engine.Cancel(runID); err != nil {
+	if err := h.engine.Cancel(domain.Actor{Name: "conversation-cleanup"}, runID); err != nil {
 		log.Printf("end workspace run=%s of a deleted conversation: %v", runID, err)
 		return false
 	}

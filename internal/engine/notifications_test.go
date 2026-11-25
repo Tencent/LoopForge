@@ -45,7 +45,7 @@ func TestAgentNotificationsFollowRealGateAndApprovalEvents(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].EventType != "waiting" {
 		t.Fatalf("gate event did not enqueue: %v %+v", err, items)
 	}
-	if err = e.Approve(run.ID, "agent", ""); err != nil {
+	if err = e.Approve(controlTestActor, run.ID, "agent", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, run.ID, "succeeded")

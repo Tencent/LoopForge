@@ -175,7 +175,7 @@ func TestNodeQuestionAnsweredOnlyOnce(t *testing.T) {
 	// The platform page answers first ("补充信息，重跑当前节点").
 	f.ask("run-p", nodeQuestionText)
 	sent := f.question("run-p")
-	if err := f.h.engine.Retry("run-p", "define", "", "平台上的答案", engine.NodeExpectation{NodeID: "define", Status: "waiting_approval", Attempt: 1}); err != nil {
+	if err := f.h.engine.Retry(controlTestActor, "run-p", "define", "", "平台上的答案", engine.NodeExpectation{NodeID: "define", Status: "waiting_approval", Attempt: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if reply := f.say("ou-member", "回答：群里的答案", sent); !strings.Contains(reply, "已经回答过") {
@@ -190,7 +190,7 @@ func TestNodeQuestionOfCancelledRunIsRefused(t *testing.T) {
 	f := newNodeQuestionFixture(t, domain.BotChannelFeishu)
 	f.ask("run-q", nodeQuestionText)
 	sent := f.question("run-q")
-	if err := f.h.engine.Cancel("run-q"); err != nil {
+	if err := f.h.engine.Cancel(controlTestActor, "run-q"); err != nil {
 		t.Fatal(err)
 	}
 	if reply := f.say("ou-member", "回答：都要", sent); !strings.Contains(reply, "运行已取消") {

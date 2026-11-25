@@ -45,7 +45,7 @@ func TestQueuedSOPDoesNotStartAndCancelDoesNotOccupy(t *testing.T) {
 	if err := e.DeleteRun(r.ID); err == nil {
 		t.Fatal("queued deletion allowed")
 	}
-	if err := e.Cancel(r.ID); err != nil {
+	if err := e.Cancel(controlTestActor, r.ID); err != nil {
 		t.Fatal(err)
 	}
 	cancelled, _ := s.RunState(r.ID)
@@ -97,7 +97,7 @@ func TestQueuedSOPAutomaticallyStartsAfterSuccess(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("no promotion event")
 	}
-	if err := e.Cancel(r.ID); err != nil {
+	if err := e.Cancel(controlTestActor, r.ID); err != nil {
 		t.Fatal(err)
 	}
 	e.Drain(context.Background())

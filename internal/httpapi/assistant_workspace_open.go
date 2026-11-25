@@ -421,7 +421,7 @@ func (h *agentToolGateway) rollbackConversationWorkspaceBinding(ctx context.Cont
 
 func (h *agentToolGateway) cancelUnpreparedConversationWorkspace(runID string) {
 	if h.engine != nil {
-		if err := h.engine.Cancel(runID); err != nil {
+		if err := h.engine.Cancel(domain.Actor{Name: "workspace-prepare"}, runID); err != nil {
 			log.Printf("cancel unprepared conversation workspace %s: %v", runID, err)
 		}
 		if err := h.engine.ReleaseConversationWorkspace(runID); err != nil {

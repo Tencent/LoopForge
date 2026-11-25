@@ -147,7 +147,7 @@ func TestFailedTransitionsKeepRunEnvironmentUntouched(t *testing.T) {
 		{
 			name: "declined retry",
 			run:  domain.Run{ID: "failed-declined", Status: "waiting", Nodes: map[string]*domain.NodeRun{"work": {Status: "waiting_approval"}}},
-			fail: func(e *Engine) error { return e.DeclineRetry("failed-declined", "work") },
+			fail: func(e *Engine) error { return e.DeclineRetry(controlTestActor, "failed-declined", "work") },
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

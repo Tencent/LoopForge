@@ -71,7 +71,7 @@ func TestPassFailedScriptContinuesDownstreamHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = e.Cancel(run.ID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, run.ID) })
 	waitRunStatus(t, s, run.ID, "failed")
 	resp := requestJSON[map[string]any](t, h, http.MethodPost, "/api/runs/"+run.ID+"/pass", map[string]any{"nodeId": "hard", "context": "脚本误报"}, http.StatusOK)
 	if ok, _ := resp["ok"].(bool); !ok {

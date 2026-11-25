@@ -487,7 +487,7 @@ func TestBorrowedSOPWorkspaceEditsSurviveReclaimAndNodeRetry(t *testing.T) {
 	}
 
 	// 4. Retry SOP from the downstream "test" node.
-	if err := en.RetryContext(context.Background(), sop.ID, "test", "验证对话微调后的结果", ""); err != nil {
+	if err := en.RetryContext(controlTestActor, context.Background(), sop.ID, "test", "验证对话微调后的结果", ""); err != nil {
 		t.Fatalf("RetryContext on test node failed: %v", err)
 	}
 	afterRetry, _ := h.repo.RunState(sop.ID)

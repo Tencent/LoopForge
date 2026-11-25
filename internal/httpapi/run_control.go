@@ -20,6 +20,17 @@ func assistantControlScopeFrom(ctx context.Context) assistantControlScope {
 	return assistantControlScope{}
 }
 
+// controlActor resolves the authenticated identity behind a run control
+// request for the audit trail. Service-token and no-auth deployments resolve
+// to the zero Actor, which records the decision as system-initiated.
+func (h *runsHandlers) controlActor(c *gin.Context) domain.Actor {
+	user, ok := h.deps.requestUser(c.Request, true)
+	if !ok || user == nil || user.ID <= 0 {
+		return domain.Actor{}
+	}
+	return domain.Actor{ID: user.ID, Name: user.LoginName}
+}
+
 func (h *runsHandlers) runControl(c *gin.Context) {
 	run, ok := h.repo.RunState(c.Param("id"))
 	if !ok {
@@ -55,6 +66,7 @@ func (h *runsHandlers) runControlPayload(run domain.Run) gin.H {
 	}
 	return gin.H{"runId": run.ID, "projectId": run.ExecutionContext.ProjectID, "mode": mode, "status": run.Status, "pauseRequested": run.PauseRequested, "waitingReason": reason, "allowedActions": actions, "acceptance": run.WorkflowSnapshot.GroupCompletion, "notice": "节点执行完成不等于测试通过或用户验收；以实际记录为准"}
 }
+
 func (h *runsHandlers) rejectNonSOPControl(c *gin.Context, id string) bool {
 	run, ok := h.repo.RunState(id)
 	if !ok || (!run.IsWorkspace() && !run.HistoricalGroup()) {

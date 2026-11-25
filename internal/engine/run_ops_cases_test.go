@@ -36,10 +36,10 @@ func TestRunOpsApproveRejectRetryDecline(t *testing.T) {
 	approve := base
 	approve.ID, approve.Status = "ops-approve", "waiting"
 	cvEPutRun(t, e, approve)
-	if err := e.Approve(approve.ID, "missing", ""); err == nil {
+	if err := e.Approve(controlTestActor, approve.ID, "missing", ""); err == nil {
 		t.Fatal("missing approval node accepted")
 	}
-	if err := e.Approve(approve.ID, "gate", "human context"); err != nil {
+	if err := e.Approve(controlTestActor, approve.ID, "gate", "human context"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := e.repo.RunState(approve.ID)
@@ -55,10 +55,10 @@ func TestRunOpsApproveRejectRetryDecline(t *testing.T) {
 		"after": {NodeID: "after", Status: "succeeded", Output: "stale"},
 	}
 	cvEPutRun(t, e, reject)
-	if err := e.Reject(reject.ID, domain.RejectRequest{NodeID: "gate", TargetID: "missing"}); err == nil {
+	if err := e.Reject(controlTestActor, reject.ID, domain.RejectRequest{NodeID: "gate", TargetID: "missing"}); err == nil {
 		t.Fatal("missing reject target accepted")
 	}
-	if err := e.Reject(reject.ID, domain.RejectRequest{NodeID: "gate", Reason: "redo", Context: "details"}); err != nil {
+	if err := e.Reject(controlTestActor, reject.ID, domain.RejectRequest{NodeID: "gate", Reason: "redo", Context: "details"}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = e.repo.RunState(reject.ID)
@@ -74,7 +74,7 @@ func TestRunOpsApproveRejectRetryDecline(t *testing.T) {
 		"after": {NodeID: "after", Status: "pending"},
 	}
 	cvEPutRun(t, e, limit)
-	if err := e.Reject(limit.ID, domain.RejectRequest{NodeID: "gate"}); err == nil || !strings.Contains(err.Error(), "limit") {
+	if err := e.Reject(controlTestActor, limit.ID, domain.RejectRequest{NodeID: "gate"}); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("rework limit = %v", err)
 	}
 
@@ -86,10 +86,10 @@ func TestRunOpsApproveRejectRetryDecline(t *testing.T) {
 		"after": {NodeID: "after", Status: "pending"},
 	}
 	cvEPutRun(t, e, retry)
-	if err := e.Retry(retry.ID, "missing", "", ""); err == nil {
+	if err := e.Retry(controlTestActor, retry.ID, "missing", "", ""); err == nil {
 		t.Fatal("missing retry node accepted")
 	}
-	if err := e.Retry(retry.ID, "fix", "", "context ignored for agent?"); err != nil {
+	if err := e.Retry(controlTestActor, retry.ID, "fix", "", "context ignored for agent?"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = e.repo.RunState(retry.ID)
@@ -100,10 +100,10 @@ func TestRunOpsApproveRejectRetryDecline(t *testing.T) {
 	decline := base
 	decline.ID, decline.Status = "ops-decline", "waiting"
 	cvEPutRun(t, e, decline)
-	if err := e.DeclineRetry(decline.ID, "missing"); err == nil {
+	if err := e.DeclineRetry(controlTestActor, decline.ID, "missing"); err == nil {
 		t.Fatal("missing decline node accepted")
 	}
-	if err := e.DeclineRetry(decline.ID, "gate"); err != nil {
+	if err := e.DeclineRetry(controlTestActor, decline.ID, "gate"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = e.repo.RunState(decline.ID)
@@ -125,10 +125,10 @@ func TestRunOpsPassResumePausedRefreshAndHelpers(t *testing.T) {
 		"next":   {NodeID: "next", Status: "pending"},
 	}}
 	cvEPutRun(t, e, failed)
-	if err := e.Pass(failed.ID, "next", ""); err == nil {
+	if err := e.Pass(controlTestActor, failed.ID, "next", ""); err == nil {
 		t.Fatal("agent pass accepted")
 	}
-	if err := e.Pass(failed.ID, "script", "accepted risk"); err != nil {
+	if err := e.Pass(controlTestActor, failed.ID, "script", "accepted risk"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := st.RunState(failed.ID)
@@ -149,7 +149,7 @@ func TestRunOpsPassResumePausedRefreshAndHelpers(t *testing.T) {
 	if err := st.PutRun(current); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ResumePaused(paused.ID, "continue"); err != nil {
+	if err := e.ResumePaused(controlTestActor, paused.ID, "continue"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = st.RunState(paused.ID)

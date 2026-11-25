@@ -62,7 +62,7 @@ func TestRetryFromEntryNodeDiscardsSandbox(t *testing.T) {
 	sandbox := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace(run.ID)}
 	engine.runEnvs[run.ID] = &runEnvironment{sandbox: sandbox}
 
-	if err := engine.Retry(run.ID, "a", "从头重跑", ""); err != nil {
+	if err := engine.Retry(controlTestActor, run.ID, "a", "从头重跑", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -216,7 +216,7 @@ func TestRetryFromInterruptedNodeKeepsSandbox(t *testing.T) {
 	sandbox := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace(run.ID)}
 	engine.runEnvs[run.ID] = &runEnvironment{sandbox: sandbox}
 
-	if err := engine.Retry(run.ID, "b", "从中断处继续", ""); err != nil {
+	if err := engine.Retry(controlTestActor, run.ID, "b", "从中断处继续", ""); err != nil {
 		t.Fatal(err)
 	}
 

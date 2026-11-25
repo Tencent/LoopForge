@@ -61,7 +61,7 @@ func TestRequirementWithoutSOP(t *testing.T) {
 	}
 
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+created.ID+"/dispatch", map[string]any{"workflowId": "sop-mode-flow"}, http.StatusCreated)
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, task.RunID) })
 	stored, _ := st.Issue(created.ID)
 	if task.WorkflowID != "sop-mode-flow" || stored.SOPMode != "" || stored.WorkflowID != "sop-mode-flow" || stored.AutomationState != "eligible" {
 		t.Fatalf("running a chosen SOP must switch the requirement to SOP delivery: task=%+v issue=%+v", task, stored)

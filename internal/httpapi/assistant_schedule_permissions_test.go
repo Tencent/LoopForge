@@ -35,7 +35,7 @@ func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
 	var runID string
 	t.Cleanup(func() {
 		if runID != "" {
-			_ = en.Cancel(runID)
+			_ = en.Cancel(controlTestActor, runID)
 		}
 	})
 	h.generate = func(ctx context.Context, prompt string, actor domain.User) (string, error) {

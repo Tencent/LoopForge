@@ -320,16 +320,16 @@ func TestCancelSettlesOrphanedRunWithoutScheduler(t *testing.T) {
 		Nodes: map[string]*domain.NodeRun{"a": {NodeID: "a", Status: "running"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Cancel("run-stale"); err != nil {
+	if err := e.Cancel(controlTestActor, "run-stale"); err != nil {
 		t.Fatalf("cancel orphaned run: %v", err)
 	}
 	if got, _ := s.Run("run-stale"); got.Status != "cancelled" {
 		t.Fatalf("status = %q, want cancelled", got.Status)
 	}
-	if err := e.Cancel("run-stale"); err == nil {
+	if err := e.Cancel(controlTestActor, "run-stale"); err == nil {
 		t.Fatal("expected error when cancelling a settled run")
 	}
-	if err := e.Cancel("run-missing"); err == nil {
+	if err := e.Cancel(controlTestActor, "run-missing"); err == nil {
 		t.Fatal("expected error when cancelling a missing run")
 	}
 }

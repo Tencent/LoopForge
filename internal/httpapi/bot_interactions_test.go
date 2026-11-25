@@ -185,7 +185,7 @@ func TestCardActionsAreScopedAndCannotApproveAnotherAttempt(t *testing.T) {
 	if actions := botinteraction.ActionsForDelivery(s, delivery); len(actions) != 0 {
 		t.Fatal("old card applies to new attempt")
 	}
-	err = h.engine.Approve(run.ID, "gate", "old click", engine.NodeExpectation{NodeID: "gate", Status: "waiting_approval", Attempt: 1})
+	err = h.engine.Approve(controlTestActor, run.ID, "gate", "old click", engine.NodeExpectation{NodeID: "gate", Status: "waiting_approval", Attempt: 1})
 	if err == nil {
 		t.Fatal("engine accepted stale expectation")
 	}

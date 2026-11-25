@@ -7,6 +7,31 @@ import (
 	"time"
 )
 
+// Actor identifies the authenticated identity behind a human control decision
+// on a run (approve, reject, retry, pass, resume, cancel). A zero Actor marks
+// a system- or automation-initiated action, so an audit reader can always
+// tell a person from the engine itself.
+type Actor struct {
+	ID   int64  `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+// Label renders the actor for audit text: a person by name, a named
+// automation by its label, and a zero Actor as "system".
+func (a Actor) Label() string {
+	if name := strings.TrimSpace(a.Name); name != "" {
+		return name
+	}
+	if a.ID != 0 {
+		return fmt.Sprintf("user %d", a.ID)
+	}
+	return "system"
+}
+
+// IsPerson reports whether an authenticated user made the decision, as
+// opposed to the engine or a named automation.
+func (a Actor) IsPerson() bool { return a.ID != 0 }
+
 type Run struct {
 	Kind               string             `json:"kind,omitempty"`
 	ID                 string             `json:"id"`
@@ -170,6 +195,14 @@ type NodeRun struct {
 	ChildRunID      string      `json:"childRunId,omitempty"`
 	StartedAt       time.Time   `json:"startedAt,omitzero"`
 	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
+
+	// DecisionBy/DecisionByID record the authenticated identity behind the
+	// last human control decision on this node (approve, reject, retry,
+	// pass, resume, decline). A zero ID with an empty name marks a
+	// system-initiated action, so an audit reader can always tell a person
+	// from automation.
+	DecisionBy   string `json:"decisionBy,omitempty"`
+	DecisionByID int64  `json:"decisionById,omitempty"`
 
 	// Stream cursors are message-scoped; pending usage is already included in
 	// Usage until a session result replaces it with authoritative totals.

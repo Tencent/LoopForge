@@ -82,7 +82,7 @@ func TestRetryCancelsQueuedRunnerCleanupAndAllowsLaterCleanup(t *testing.T) {
 		t.Fatal("legacy retry attempted a snapshot RPC without a saved archive")
 		return domain.RunnerWorkspaceResponse{}, nil
 	}
-	if err := e.Retry(run.ID, "work", "重跑", "补充上下文"); err != nil {
+	if err := e.Retry(controlTestActor, run.ID, "work", "重跑", "补充上下文"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := store.Run(run.ID)

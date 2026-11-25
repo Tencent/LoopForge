@@ -82,7 +82,7 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 		shouldReject = !configurationFailure && allowReject && nr.Status == "failed" && node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount < max(1, node.MaxReworks)
 	})
 	if shouldReject {
-		_ = e.Reject(runID, domain.RejectRequest{NodeID: node.ID, TargetID: node.RejectTo, Reason: "节点失败自动打回：" + err.Error()})
+		_ = e.Reject(domain.Actor{Name: "auto"}, runID, domain.RejectRequest{NodeID: node.ID, TargetID: node.RejectTo, Reason: "节点失败自动打回：" + err.Error()})
 	}
 }
 

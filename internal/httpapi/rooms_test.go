@@ -44,7 +44,7 @@ func TestRoomDispatchesGenericTemplate(t *testing.T) {
 	if got.DispatchError != "" || got.Message.RunID == "" {
 		t.Fatalf("generic dispatch without a repository should start: %+v", got)
 	}
-	_ = e.Cancel(got.Message.RunID)
+	_ = e.Cancel(controlTestActor, got.Message.RunID)
 }
 
 func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
@@ -204,7 +204,7 @@ func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
 	}
 	for _, task := range multi.Tasks {
 		runID := task.RunID
-		t.Cleanup(func() { _ = e.Cancel(runID) })
+		t.Cleanup(func() { _ = e.Cancel(controlTestActor, runID) })
 	}
 	requestJSONAuthed[map[string]any](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
 		"title": "没有派发目标",

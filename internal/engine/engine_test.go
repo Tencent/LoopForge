@@ -1091,7 +1091,7 @@ func TestStartUsesFreshWorkBranchPerSOP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = e.Cancel(run.ID) })
+	t.Cleanup(func() { _ = e.Cancel(controlTestActor, run.ID) })
 	if run.Repository.WorkBranch == "" || run.Repository.WorkBranch == "feature/old-sop-branch" {
 		t.Fatalf("new SOP reused previous branch: %q", run.Repository.WorkBranch)
 	}
@@ -1411,7 +1411,7 @@ func TestRunWaitsForGateAndCompletes(t *testing.T) {
 	if current.Nodes["review"].Status != "waiting_approval" {
 		t.Fatalf("review status = %s", current.Nodes["review"].Status)
 	}
-	if err := e.Approve(r.ID, "review", ""); err != nil {
+	if err := e.Approve(controlTestActor, r.ID, "review", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "succeeded")
@@ -1443,7 +1443,7 @@ func TestHumanGateFailureWaitsForApprove(t *testing.T) {
 	if current.Nodes["check"].Status != "waiting_approval" {
 		t.Fatalf("check status = %s error=%s", current.Nodes["check"].Status, current.Nodes["check"].Error)
 	}
-	if err := e.Approve(r.ID, "check", ""); err != nil {
+	if err := e.Approve(controlTestActor, r.ID, "check", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "succeeded")
@@ -1567,7 +1567,7 @@ func TestSubmitReworkBudgetExhaustedWaitsForHuman(t *testing.T) {
 		t.Fatalf("budget-exhausted rework must explain itself: %q", review.Error)
 	}
 	// A human approval accepts the upstream output and completes the run.
-	if err := e.Approve(run.ID, "review", ""); err != nil {
+	if err := e.Approve(controlTestActor, run.ID, "review", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, run.ID, "succeeded")
@@ -1732,7 +1732,7 @@ func TestHumanGateFailureRetryRerunsNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "waiting")
-	if err := e.Retry(r.ID, "check", "人工确认重试本节点", ""); err != nil {
+	if err := e.Retry(controlTestActor, r.ID, "check", "人工确认重试本节点", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "waiting")
@@ -1774,7 +1774,7 @@ func TestCancelMarksActiveNodeCancelled(t *testing.T) {
 	if !running {
 		t.Fatal("node did not start before cancellation")
 	}
-	if err := e.Cancel(r.ID); err != nil {
+	if err := e.Cancel(controlTestActor, r.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "cancelled")
@@ -1816,15 +1816,15 @@ func TestRetryCancelledRunFromNodeAfterImmediateCleanup(t *testing.T) {
 	if current.Nodes["analyze"].Status != "succeeded" || current.Nodes["fix"].Status != "running" {
 		t.Fatalf("expected analyze succeeded and fix running before cancel, got analyze=%+v fix=%+v", current.Nodes["analyze"], current.Nodes["fix"])
 	}
-	if err := e.Cancel(r.ID); err != nil {
+	if err := e.Cancel(controlTestActor, r.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "cancelled")
 	current = waitForWorkspaceCleanup(t, s, r.ID)
-	if err := e.Retry(r.ID, "", "", ""); err == nil || !strings.Contains(err.Error(), "workspace has been cleaned") {
+	if err := e.Retry(controlTestActor, r.ID, "", "", ""); err == nil || !strings.Contains(err.Error(), "workspace has been cleaned") {
 		t.Fatalf("retry error = %v", err)
 	}
-	if err := e.Retry(r.ID, "fix", "从指定节点重跑", "确认上游方案后继续"); err != nil {
+	if err := e.Retry(controlTestActor, r.ID, "fix", "从指定节点重跑", "确认上游方案后继续"); err != nil {
 		t.Fatalf("retry cancelled run from chosen node: %v", err)
 	}
 	waitFor(t, s, r.ID, "succeeded")
@@ -1859,7 +1859,7 @@ func TestRetrySucceededRunFromNodeAfterCleanup(t *testing.T) {
 	if cleaned.WorkspaceCleanedAt.IsZero() {
 		t.Fatal("expected succeeded run workspace to be cleaned before replay")
 	}
-	if err := e.Retry(r.ID, "second", "结果不符合预期", "请按补充说明重做第二步"); err != nil {
+	if err := e.Retry(controlTestActor, r.ID, "second", "结果不符合预期", "请按补充说明重做第二步"); err != nil {
 		t.Fatalf("retry succeeded run: %v", err)
 	}
 	waitFor(t, s, r.ID, "succeeded")
@@ -1918,7 +1918,7 @@ func TestRetryLegacySucceededRunAfterMainBotMissingSnapshot(t *testing.T) {
 	if err = e.RestoreConversationWorkspaceIfNeeded(context.Background(), r.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Retry(r.ID, "second", "结果不符合预期", "请按补充说明重做第二步"); err != nil {
+	if err := e.Retry(controlTestActor, r.ID, "second", "结果不符合预期", "请按补充说明重做第二步"); err != nil {
 		t.Fatalf("retry succeeded run: %v", err)
 	}
 	waitFor(t, s, r.ID, "succeeded")
@@ -1949,7 +1949,7 @@ func TestRejectResetsTargetAndDescendants(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "waiting")
-	if err := e.Reject(r.ID, domain.RejectRequest{NodeID: "review", TargetID: "implement", Reason: "needs changes"}); err != nil {
+	if err := e.Reject(controlTestActor, r.ID, domain.RejectRequest{NodeID: "review", TargetID: "implement", Reason: "needs changes"}); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "waiting")
@@ -2217,7 +2217,7 @@ func TestPassFailedScriptContinuesDownstream(t *testing.T) {
 		t.Fatalf("hard status = %s", before.Nodes["hard"].Status)
 	}
 	attempt := before.Nodes["hard"].Attempt
-	if err := e.Pass(r.ID, "hard", "人工确认脚本误报"); err != nil {
+	if err := e.Pass(controlTestActor, r.ID, "hard", "人工确认脚本误报"); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "succeeded")
@@ -2265,7 +2265,7 @@ func TestPassAfterReworkLimitReached(t *testing.T) {
 	if current.Nodes["verify"].Status != "failed" {
 		t.Fatalf("verify status = %s error=%s", current.Nodes["verify"].Status, current.Nodes["verify"].Error)
 	}
-	if err := e.Pass(r.ID, "verify", ""); err != nil {
+	if err := e.Pass(controlTestActor, r.ID, "verify", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "succeeded")
@@ -2295,7 +2295,7 @@ func TestPassRejectsAgentNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := New(s, runtime.NewManager(t.TempDir()))
-	if err := e.Pass(run.ID, "agent", "补充信息"); err == nil || !strings.Contains(err.Error(), "script") {
+	if err := e.Pass(controlTestActor, run.ID, "agent", "补充信息"); err == nil || !strings.Contains(err.Error(), "script") {
 		t.Fatalf("Pass error = %v, want script-only", err)
 	}
 }
@@ -2314,7 +2314,7 @@ func TestPassRejectsActiveRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := New(s, runtime.NewManager(t.TempDir()))
-	if err := e.Pass(run.ID, "gate", ""); err == nil || !strings.Contains(err.Error(), "still active") {
+	if err := e.Pass(controlTestActor, run.ID, "gate", ""); err == nil || !strings.Contains(err.Error(), "still active") {
 		t.Fatalf("Pass error = %v, want still active", err)
 	}
 }
@@ -2515,7 +2515,7 @@ func TestAutomaticGatesAndArtifactsCompleteBeforeManualApproval(t *testing.T) {
 	if artifactValidatedSequence == 0 || gateStartedSequence == 0 || artifactValidatedSequence >= gateStartedSequence {
 		t.Fatalf("artifact validation must precede the automatic gate: artifact=%d gate=%d", artifactValidatedSequence, gateStartedSequence)
 	}
-	if err := e.Approve(r.ID, "deliver", ""); err != nil {
+	if err := e.Approve(controlTestActor, r.ID, "deliver", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "succeeded")
@@ -2632,7 +2632,7 @@ func TestRunUsesFrozenWorkflowSnapshotDuringConcurrentEdits(t *testing.T) {
 	if err := s.PutWorkflow(edited); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Approve(r.ID, "approve", ""); err != nil {
+	if err := e.Approve(controlTestActor, r.ID, "approve", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "succeeded")
@@ -3800,7 +3800,7 @@ func TestRecordHumanContextPersistsForRetryAndPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "waiting")
-	if err := e.Retry(r.ID, "check", "人工确认重试本节点", "QTA 失败用例 TestCanonicalPayloadMarshal"); err != nil {
+	if err := e.Retry(controlTestActor, r.ID, "check", "人工确认重试本节点", "QTA 失败用例 TestCanonicalPayloadMarshal"); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "waiting")
@@ -3859,7 +3859,7 @@ func TestApproveWithHumanContextReachesDownstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "waiting")
-	if err := e.Approve(r.ID, "gate", "QTA 失败用例 TestFoo"); err != nil {
+	if err := e.Approve(controlTestActor, r.ID, "gate", "QTA 失败用例 TestFoo"); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, r.ID, "succeeded")

@@ -13,31 +13,31 @@ func TestRunOperationsAdditionalValidationAndSettling(t *testing.T) {
 	e.mu.Lock()
 	e.executeRuns = false
 	e.mu.Unlock()
-	if err := e.Cancel("missing"); err == nil {
+	if err := e.Cancel(controlTestActor, "missing"); err == nil {
 		t.Fatal("missing cancel succeeded")
 	}
-	if err := e.Pause("missing"); err == nil {
+	if err := e.Pause(controlTestActor, "missing"); err == nil {
 		t.Fatal("missing pause succeeded")
 	}
-	if err := e.Approve("missing", "node", ""); err == nil {
+	if err := e.Approve(controlTestActor, "missing", "node", ""); err == nil {
 		t.Fatal("missing approve succeeded")
 	}
-	if err := e.Pass("missing", "node", ""); err == nil {
+	if err := e.Pass(controlTestActor, "missing", "node", ""); err == nil {
 		t.Fatal("missing pass succeeded")
 	}
-	if err := e.Reject("missing", domain.RejectRequest{}); err == nil {
+	if err := e.Reject(controlTestActor, "missing", domain.RejectRequest{}); err == nil {
 		t.Fatal("missing reject succeeded")
 	}
-	if err := e.Retry("missing", "node", "", ""); err == nil {
+	if err := e.Retry(controlTestActor, "missing", "node", "", ""); err == nil {
 		t.Fatal("missing retry succeeded")
 	}
-	if err := e.ResumePaused("missing", ""); err == nil {
+	if err := e.ResumePaused(controlTestActor, "missing", ""); err == nil {
 		t.Fatal("missing resume succeeded")
 	}
 	if err := e.RefreshRunSOP("missing"); err == nil {
 		t.Fatal("missing refresh succeeded")
 	}
-	if err := e.DeclineRetry("missing", "node"); err == nil {
+	if err := e.DeclineRetry(controlTestActor, "missing", "node"); err == nil {
 		t.Fatal("missing decline succeeded")
 	}
 
@@ -45,7 +45,7 @@ func TestRunOperationsAdditionalValidationAndSettling(t *testing.T) {
 	if err := st.PutRun(terminal); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Cancel(terminal.ID); err == nil || !strings.Contains(err.Error(), "not active") {
+	if err := e.Cancel(controlTestActor, terminal.ID); err == nil || !strings.Contains(err.Error(), "not active") {
 		t.Fatalf("terminal cancel err=%v", err)
 	}
 	terminal.ID = "ops-stale-terminal"
@@ -53,7 +53,7 @@ func TestRunOperationsAdditionalValidationAndSettling(t *testing.T) {
 	if err := st.PutRun(terminal); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Cancel(terminal.ID); err != nil {
+	if err := e.Cancel(controlTestActor, terminal.ID); err != nil {
 		t.Fatal(err)
 	}
 	stale, _ := st.RunState(terminal.ID)
@@ -76,13 +76,13 @@ func TestRunOperationsAdditionalValidationAndSettling(t *testing.T) {
 	if err := st.PutRun(waiting); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Approve(waiting.ID, "missing", ""); err == nil {
+	if err := e.Approve(controlTestActor, waiting.ID, "missing", ""); err == nil {
 		t.Fatal("missing approval node accepted")
 	}
-	if err := e.Approve(waiting.ID, "gate", "", NodeExpectation{NodeID: "gate", Status: "waiting_approval", Attempt: 9}); err == nil {
+	if err := e.Approve(controlTestActor, waiting.ID, "gate", "", NodeExpectation{NodeID: "gate", Status: "waiting_approval", Attempt: 9}); err == nil {
 		t.Fatal("stale approval accepted")
 	}
-	if err := e.Approve(waiting.ID, "gate", "approved context"); err != nil {
+	if err := e.Approve(controlTestActor, waiting.ID, "gate", "approved context"); err != nil {
 		t.Fatal(err)
 	}
 	approved, _ := st.RunState(waiting.ID)
@@ -101,10 +101,10 @@ func TestRunOperationsAdditionalValidationAndSettling(t *testing.T) {
 	if err := st.PutRun(failed); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Pass(failed.ID, "missing", ""); err == nil {
+	if err := e.Pass(controlTestActor, failed.ID, "missing", ""); err == nil {
 		t.Fatal("missing pass node accepted")
 	}
-	if err := e.Pass(failed.ID, "work", "operator pass context"); err != nil {
+	if err := e.Pass(controlTestActor, failed.ID, "work", "operator pass context"); err != nil {
 		t.Fatal(err)
 	}
 	passed, _ := st.RunState(failed.ID)
@@ -121,13 +121,13 @@ func TestRunOperationsAdditionalValidationAndSettling(t *testing.T) {
 	if err := st.PutRun(rejectRun); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Reject(rejectRun.ID, domain.RejectRequest{NodeID: "other"}); err == nil {
+	if err := e.Reject(controlTestActor, rejectRun.ID, domain.RejectRequest{NodeID: "other"}); err == nil {
 		t.Fatal("reject without target accepted")
 	}
-	if err := e.Reject(rejectRun.ID, domain.RejectRequest{NodeID: "gate", TargetID: "missing"}); err == nil {
+	if err := e.Reject(controlTestActor, rejectRun.ID, domain.RejectRequest{NodeID: "gate", TargetID: "missing"}); err == nil {
 		t.Fatal("missing reject target accepted")
 	}
-	if err := e.Reject(rejectRun.ID, domain.RejectRequest{NodeID: "gate", TargetID: "work", Reason: "redo", Context: "details"}); err != nil {
+	if err := e.Reject(controlTestActor, rejectRun.ID, domain.RejectRequest{NodeID: "gate", TargetID: "work", Reason: "redo", Context: "details"}); err != nil {
 		t.Fatal(err)
 	}
 	rejected, _ := st.RunState(rejectRun.ID)
@@ -140,7 +140,7 @@ func TestRunOperationsAdditionalValidationAndSettling(t *testing.T) {
 	if err := st.PutRun(cancelWaiting); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Cancel(cancelWaiting.ID); err != nil {
+	if err := e.Cancel(controlTestActor, cancelWaiting.ID); err != nil {
 		t.Fatal(err)
 	}
 	canceled, _ := st.RunState(cancelWaiting.ID)
@@ -156,10 +156,10 @@ func TestRunOperationsAdditionalValidationAndSettling(t *testing.T) {
 	if err := st.PutRun(retryRun); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Retry(retryRun.ID, "missing", "", ""); err == nil {
+	if err := e.Retry(controlTestActor, retryRun.ID, "missing", "", ""); err == nil {
 		t.Fatal("missing retry node accepted")
 	}
-	if err := e.Retry(retryRun.ID, retryNode.ID, "", "ignored for scripts"); err != nil {
+	if err := e.Retry(controlTestActor, retryRun.ID, retryNode.ID, "", "ignored for scripts"); err != nil {
 		t.Fatal(err)
 	}
 	retried, _ := st.RunState(retryRun.ID)
@@ -176,7 +176,7 @@ func TestRunOperationsAdditionalValidationAndSettling(t *testing.T) {
 	if err := st.PutRun(paused); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ResumePaused(paused.ID, "continue with context"); err != nil {
+	if err := e.ResumePaused(controlTestActor, paused.ID, "continue with context"); err != nil {
 		t.Fatal(err)
 	}
 	resumed, _ := st.RunState(paused.ID)
@@ -188,10 +188,10 @@ func TestRunOperationsAdditionalValidationAndSettling(t *testing.T) {
 	if err := st.PutRun(decline); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.DeclineRetry(decline.ID, "missing"); err == nil {
+	if err := e.DeclineRetry(controlTestActor, decline.ID, "missing"); err == nil {
 		t.Fatal("missing decline node accepted")
 	}
-	if err := e.DeclineRetry(decline.ID, "node"); err != nil {
+	if err := e.DeclineRetry(controlTestActor, decline.ID, "node"); err != nil {
 		t.Fatal(err)
 	}
 	declined, _ := st.RunState(decline.ID)

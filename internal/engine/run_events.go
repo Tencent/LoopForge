@@ -286,7 +286,15 @@ func compactProgressText(value string) string {
 }
 
 func appendControlTelemetry(r *domain.Run, nodeID, name, message string) {
+	appendControlTelemetryBy(r, nodeID, name, message, domain.Actor{})
+}
+
+// appendControlTelemetryBy records a control-decision telemetry event with the
+// acting identity in its attributes, so run telemetry answers "who did this"
+// for every human gate decision.
+func appendControlTelemetryBy(r *domain.Run, nodeID, name, message string, actor domain.Actor) {
 	now := time.Now().UTC()
 	r.TelemetrySequence++
-	r.Telemetry = append(r.Telemetry, domain.TelemetryEvent{ID: fmt.Sprintf("obs-%d", now.UnixNano()), RunID: r.ID, NodeID: nodeID, Sequence: r.TelemetrySequence, Timestamp: now, Category: "verification", Name: name, Phase: "finish", Level: "info", Message: message})
+	attrs := map[string]any{"actorId": actor.ID, "actorName": actor.Label(), "actorIsPerson": actor.IsPerson()}
+	r.Telemetry = append(r.Telemetry, domain.TelemetryEvent{ID: fmt.Sprintf("obs-%d", now.UnixNano()), RunID: r.ID, NodeID: nodeID, Sequence: r.TelemetrySequence, Timestamp: now, Category: "verification", Name: name, Phase: "finish", Level: "info", Message: message, Attributes: attrs})
 }

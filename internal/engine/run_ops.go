@@ -44,7 +44,7 @@ func (e *Engine) persistControlDecision(runID string, r domain.Run, expected ...
 	return nil
 }
 
-func (e *Engine) Cancel(runID string) error {
+func (e *Engine) Cancel(actor domain.Actor, runID string) error {
 	cancelled, err := e.repo.CancelQueuedRun(runID)
 	if err != nil {
 		return err
@@ -64,6 +64,9 @@ func (e *Engine) Cancel(runID string) error {
 		}
 		return fmt.Errorf("run is not active")
 	}
+	if actor.IsPerson() {
+		e.AppendRunEvent(runID, "run.cancel_requested", "人工取消运行，操作人："+actor.Label())
+	}
 	r, err = e.repo.RequestRunCancel(runID)
 	if err != nil {
 		return err
@@ -71,7 +74,7 @@ func (e *Engine) Cancel(runID string) error {
 	full, _ := e.repo.RunState(runID)
 	for _, childID := range childRunIDs(full) {
 		if child, ok := e.repo.RunState(childID); ok && isLiveStatus(child.Status) {
-			_ = e.Cancel(childID)
+			_ = e.Cancel(actor, childID)
 		}
 	}
 	if err := e.cancelRunnerTasksForRun(runID); err != nil {
@@ -106,7 +109,10 @@ func (e *Engine) Cancel(runID string) error {
 // Pause interrupts the active node without finalising the Run or destroying
 // its workspace. The worker settles at a human decision point where an
 // operator can add context and continue the interrupted node.
-func (e *Engine) Pause(runID string) error {
+func (e *Engine) Pause(actor domain.Actor, runID string) error {
+	if actor.IsPerson() {
+		e.AppendRunEvent(runID, "run.pause_requested", "人工暂停运行，操作人："+actor.Label())
+	}
 	r, err := e.repo.RequestRunPause(runID)
 	if err != nil {
 		return err
@@ -114,7 +120,7 @@ func (e *Engine) Pause(runID string) error {
 	full, _ := e.repo.RunState(runID)
 	for _, childID := range childRunIDs(full) {
 		if child, ok := e.repo.RunState(childID); ok && child.Status == "running" {
-			_ = e.Pause(childID)
+			_ = e.Pause(actor, childID)
 		}
 	}
 	if err := e.cancelRunnerTasksForRun(runID); err != nil {
@@ -137,7 +143,7 @@ func (e *Engine) Pause(runID string) error {
 	return nil
 }
 
-func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExpectation) error {
+func (e *Engine) Approve(actor domain.Actor, runID, nodeID, humanContext string, expected ...NodeExpectation) error {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	r, ok := e.repo.RunState(runID)
@@ -166,14 +172,15 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	}
 	n.Status = "succeeded"
 	n.FinishedAt = time.Now().UTC()
+	n.DecisionBy, n.DecisionByID = actor.Name, actor.ID
 	note := recordHumanContext(&r, nodeID, "人工批准继续", humanContext)
-	decision := "# Approval\n\nApproved by a human gate.\n"
+	decision := fmt.Sprintf("# Approval\n\nApproved by a human gate (%s).\n", actor.Label())
 	if note != "" {
 		decision += "\n" + note + "\n"
 	}
 	appendArtifact(&r, nodeID, n.Attempt, "decision", "decision.md", "text/markdown", []byte(decision))
 	e.event(&r, nodeID, "gate.approved", "人工门禁已通过")
-	appendControlTelemetry(&r, nodeID, "gate.approved", "人工门禁已通过")
+	appendControlTelemetryBy(&r, nodeID, "gate.approved", "人工门禁已通过", actor)
 	r.Status = "running"
 	return e.persistControlDecision(runID, r, expected...)
 }
@@ -183,15 +190,15 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 // when reject reworks are exhausted, or when a hard script is paused
 // mid-execution and retrying from scratch won't help (e.g. an environment
 // problem) — hard scripts can otherwise stall a run forever.
-func (e *Engine) Pass(runID, nodeID, humanContext string, expected ...NodeExpectation) error {
-	if err := e.pass(runID, nodeID, humanContext, expected...); err != nil {
+func (e *Engine) Pass(actor domain.Actor, runID, nodeID, humanContext string, expected ...NodeExpectation) error {
+	if err := e.pass(actor, runID, nodeID, humanContext, expected...); err != nil {
 		return err
 	}
 	e.resumeParentAfterChildRecovery(runID)
 	return nil
 }
 
-func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpectation) error {
+func (e *Engine) pass(actor domain.Actor, runID, nodeID, humanContext string, expected ...NodeExpectation) error {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	r, ok := e.repo.RunState(runID)
@@ -249,18 +256,19 @@ func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpect
 	n.Status = "succeeded"
 	n.FinishedAt = time.Now().UTC()
 	n.Activity = "人工通过，未重新执行"
+	n.DecisionBy, n.DecisionByID = actor.Name, actor.ID
 	note := recordHumanContext(&r, nodeID, "人工通过该节点，继续下游", humanContext)
 	decisionReason := "after the node failed"
 	if pausedScript {
 		decisionReason = "while the run was paused mid-execution"
 	}
-	decision := fmt.Sprintf("# Pass\n\nManually passed by a human %s.\n", decisionReason)
+	decision := fmt.Sprintf("# Pass\n\nManually passed by a human (%s) %s.\n", actor.Label(), decisionReason)
 	if note != "" {
 		decision += "\n" + note + "\n"
 	}
 	appendArtifact(&r, nodeID, n.Attempt, "decision", "decision.md", "text/markdown", []byte(decision))
 	e.event(&r, nodeID, "node.passed", "人工通过该节点，继续下游")
-	appendControlTelemetry(&r, nodeID, "node.passed", "人工通过该节点，继续下游")
+	appendControlTelemetryBy(&r, nodeID, "node.passed", "人工通过该节点，继续下游", actor)
 	r.CancelRequested = false
 	r.PauseRequested = false
 	r.Status = "running"
@@ -268,7 +276,7 @@ func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpect
 	return e.persistControlDecision(runID, r, expected...)
 }
 
-func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...NodeExpectation) error {
+func (e *Engine) Reject(actor domain.Actor, runID string, req domain.RejectRequest, expected ...NodeExpectation) error {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	r, ok := e.repo.RunState(runID)
@@ -314,6 +322,9 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 	reset := descendants(wf, target)
 	reset[target] = true
 	overlayLatestNodeBindings(e.repo, &r, reset)
+	if gate := r.Nodes[req.NodeID]; gate != nil {
+		gate.DecisionBy, gate.DecisionByID = actor.Name, actor.ID
+	}
 	var stale []string
 	interrupted := map[string]bool{}
 	for id := range reset {
@@ -340,7 +351,7 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 		}
 	}
 	e.event(&r, req.NodeID, "gate.rejected", fmt.Sprintf("打回到 %s：%s", target, req.Reason))
-	appendControlTelemetry(&r, req.NodeID, "gate.rejected", fmt.Sprintf("打回到 %s：%s", target, req.Reason))
+	appendControlTelemetryBy(&r, req.NodeID, "gate.rejected", fmt.Sprintf("打回到 %s：%s", target, req.Reason), actor)
 	r.Status = "running"
 	e.cancelLiveChildRuns(stale)
 	if err := e.persistControlDecision(runID, r, expected...); err != nil {
@@ -356,13 +367,13 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 // are revived so the operator can adjust context and replay from a node.
 // A manual retry grants exactly one extra attempt when the node has exhausted
 // its configured automatic attempts. Empty nodeID resumes from the interrupted node.
-func (e *Engine) Retry(runID, nodeID, reason, humanContext string, expected ...NodeExpectation) error {
-	return e.RetryContext(context.Background(), runID, nodeID, reason, humanContext, expected...)
+func (e *Engine) Retry(actor domain.Actor, runID, nodeID, reason, humanContext string, expected ...NodeExpectation) error {
+	return e.RetryContext(actor, context.Background(), runID, nodeID, reason, humanContext, expected...)
 }
 
 // RetryContext reuses the caller's workspace lease while restoring a reclaimed run.
-func (e *Engine) RetryContext(ctx context.Context, runID, nodeID, reason, humanContext string, expected ...NodeExpectation) error {
-	if err := e.retryContext(ctx, runID, nodeID, reason, humanContext, "", expected...); err != nil {
+func (e *Engine) RetryContext(actor domain.Actor, ctx context.Context, runID, nodeID, reason, humanContext string, expected ...NodeExpectation) error {
+	if err := e.retryContext(actor, ctx, runID, nodeID, reason, humanContext, "", expected...); err != nil {
 		return err
 	}
 	e.resumeParentAfterChildRecoveryContext(ctx, runID)
@@ -386,7 +397,7 @@ func (e *Engine) cancelLiveChildRuns(ids []string) {
 	go func() {
 		for _, id := range live {
 			if child, ok := e.repo.RunState(id); ok && isLiveStatus(child.Status) {
-				_ = e.Cancel(id)
+				_ = e.Cancel(domain.Actor{Name: "auto"}, id)
 			}
 		}
 	}()
@@ -427,14 +438,14 @@ func (e *Engine) resumeParentAfterChildRecoveryContext(ctx context.Context, chil
 	if !pointsAtChild {
 		return
 	}
-	if err := e.retryContext(ctx, parentID, nodeID, "子 SOP "+childID+" 已恢复，父流程重新接上", "", childID); err != nil {
+	if err := e.retryContext(domain.Actor{Name: "auto"}, ctx, parentID, nodeID, "子 SOP "+childID+" 已恢复，父流程重新接上", "", childID); err != nil {
 		log.Printf("resume parent %s after child %s recovery: %v", parentID, childID, err)
 		return
 	}
 	e.resumeParentAfterChildRecoveryContext(ctx, parentID)
 }
 
-func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanContext, keepChildRunID string, expected ...NodeExpectation) error {
+func (e *Engine) retryContext(actor domain.Actor, ctx context.Context, runID, nodeID, reason, humanContext, keepChildRunID string, expected ...NodeExpectation) error {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	r, ok := e.repo.RunState(runID)
@@ -603,11 +614,14 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	if explicitNode {
 		retryLabel = "从指定节点重跑"
 	}
+	if nr := r.Nodes[nodeID]; nr != nil {
+		nr.DecisionBy, nr.DecisionByID = actor.Name, actor.ID
+	}
 	e.event(&r, nodeID, "node.retry_requested", retryLabel+"："+note)
 	if len(revived) > 0 {
 		e.event(&r, "", "node.retry_requested", "一并恢复被取消的并行分支："+strings.Join(revived, "、"))
 	}
-	appendControlTelemetry(&r, nodeID, "node.retry_requested", retryLabel+"："+strings.TrimSpace(reason))
+	appendControlTelemetryBy(&r, nodeID, "node.retry_requested", retryLabel+"："+strings.TrimSpace(reason), actor)
 	r.CancelRequested = false
 	r.PauseRequested = false
 	r.Status = "running"
@@ -634,12 +648,12 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 // Child SOP runs paused together with the parent are resumed with it.
 // Children are resumed first so a resumed parent never waits on a child that
 // is still paused.
-func (e *Engine) ResumePaused(runID, humanContext string, expected ...NodeExpectation) error {
-	return e.ResumePausedContext(context.Background(), runID, humanContext, expected...)
+func (e *Engine) ResumePaused(actor domain.Actor, runID, humanContext string, expected ...NodeExpectation) error {
+	return e.ResumePausedContext(actor, context.Background(), runID, humanContext, expected...)
 }
 
 // ResumePausedContext retains workspace ownership while restoring a paused SOP.
-func (e *Engine) ResumePausedContext(ctx context.Context, runID, humanContext string, expected ...NodeExpectation) error {
+func (e *Engine) ResumePausedContext(actor domain.Actor, ctx context.Context, runID, humanContext string, expected ...NodeExpectation) error {
 	if len(expected) > 0 {
 		r, ok := e.repo.RunState(runID)
 		if !ok {
@@ -662,7 +676,7 @@ func (e *Engine) ResumePausedContext(ctx context.Context, runID, humanContext st
 			case "running":
 				return fmt.Errorf("子 SOP %s 仍在停止当前任务，请稍后再继续", child.ID)
 			case "waiting":
-				if err := e.ResumePausedContext(ctx, child.ID, humanContext); err != nil {
+				if err := e.ResumePausedContext(actor, ctx, child.ID, humanContext); err != nil {
 					return fmt.Errorf("继续子 SOP %s：%w", child.ID, err)
 				}
 			}
@@ -671,7 +685,7 @@ func (e *Engine) ResumePausedContext(ctx context.Context, runID, humanContext st
 	if err := e.RestoreConversationWorkspaceIfNeeded(ctx, runID); err != nil {
 		return err
 	}
-	return e.resumePaused(runID, humanContext, expected...)
+	return e.resumePaused(actor, runID, humanContext, expected...)
 }
 
 // childRunIDs lists the child SOP runs referenced by the run's SOP nodes.
@@ -686,7 +700,7 @@ func childRunIDs(r domain.Run) []string {
 	return ids
 }
 
-func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpectation) error {
+func (e *Engine) resumePaused(actor domain.Actor, runID, humanContext string, expected ...NodeExpectation) error {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	r, ok := e.repo.RunState(runID)
@@ -753,7 +767,7 @@ func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpect
 			message = "继续自由协作"
 		}
 		e.event(&r, "", "run.resumed", message)
-		appendControlTelemetry(&r, "", "run.resumed", message)
+		appendControlTelemetryBy(&r, "", "run.resumed", message, actor)
 		if r.Status == "running" {
 			markRunRelationsRunning(e.repo, r)
 		}
@@ -802,12 +816,17 @@ func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpect
 	r.CancelRequested = false
 	r.PauseRequested = false
 	r.Status = "running"
+	for _, id := range paused {
+		if nr := r.Nodes[id]; nr != nil {
+			nr.DecisionBy, nr.DecisionByID = actor.Name, actor.ID
+		}
+	}
 	message := "人工确认直接继续运行"
 	if note != "" {
 		message = "人工补充信息后继续运行"
 	}
 	e.event(&r, paused[0], "run.resumed", message)
-	appendControlTelemetry(&r, paused[0], "run.resumed", message)
+	appendControlTelemetryBy(&r, paused[0], "run.resumed", message, actor)
 	markRunRelationsRunning(e.repo, r)
 	return e.persistControlDecision(runID, r, expected...)
 }
@@ -924,7 +943,7 @@ func markRunRelationsRunning(st *repo.Store, r domain.Run) {
 	}
 }
 
-func (e *Engine) DeclineRetry(runID, nodeID string, expected ...NodeExpectation) error {
+func (e *Engine) DeclineRetry(actor domain.Actor, runID, nodeID string, expected ...NodeExpectation) error {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	r, ok := e.repo.RunState(runID)
@@ -944,8 +963,9 @@ func (e *Engine) DeclineRetry(runID, nodeID string, expected ...NodeExpectation)
 	}
 	n.Activity = "人工选择不重试"
 	n.FinishedAt = time.Now().UTC()
+	n.DecisionBy, n.DecisionByID = actor.Name, actor.ID
 	e.event(&r, nodeID, "agent.turns.declined", "人工选择不重试本节点")
-	appendControlTelemetry(&r, nodeID, "agent.turns.declined", "人工选择不重试本节点")
+	appendControlTelemetryBy(&r, nodeID, "agent.turns.declined", "人工选择不重试本节点", actor)
 	r.Status = "failed"
 	var err error
 	if len(expected) > 0 {

@@ -145,7 +145,7 @@ func TestResumePausedWaitsForActiveRunnerTask(t *testing.T) {
 	if err := s.PutRunnerTask(domain.RunnerTask{ID: "rt-active", RunnerID: "runner-a", Provider: "codex", RunID: run.ID, Status: domain.RunnerTaskRunning}); err != nil {
 		t.Fatal(err)
 	}
-	err = e.ResumePaused(run.ID, "continue")
+	err = e.ResumePaused(controlTestActor, run.ID, "continue")
 	if err == nil || !strings.Contains(err.Error(), "执行机器仍在停止") {
 		t.Fatalf("resume error=%v", err)
 	}
@@ -228,7 +228,7 @@ func TestRetryFailsBeforeMutationWhenFrozenRunnerIsOffline(t *testing.T) {
 	}
 	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	e.ConfigureExecution("", "", 0, false)
-	err = e.Retry(run.ID, "work", "retry", "")
+	err = e.Retry(controlTestActor, run.ID, "work", "retry", "")
 	if err == nil || !strings.Contains(err.Error(), "无法重连原执行环境") || !strings.Contains(err.Error(), "当前离线") {
 		t.Fatalf("retry error = %v", err)
 	}

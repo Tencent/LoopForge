@@ -384,7 +384,7 @@ func TestLegacyWorkspaceReplayAfterMainBotCreatedEmptyCheckpoint(t *testing.T) {
 	if err = e.RestoreConversationWorkspaceIfNeeded(context.Background(), r.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = e.Retry(r.ID, "second", "重新执行", ""); err != nil {
+	if err = e.Retry(controlTestActor, r.ID, "second", "重新执行", ""); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.RunState(r.ID)

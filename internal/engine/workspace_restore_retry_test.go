@@ -153,7 +153,7 @@ func TestConversationWorkspaceRetryAfterLostRestoreReply(t *testing.T) {
 			if err := controller.RestoreConversationWorkspaceIfNeeded(context.Background(), id); err != nil {
 				t.Fatalf("retry could not reuse the restored workspace: %v", err)
 			}
-			if err := controller.RetryContext(context.Background(), id, "", "继续", "保留代码，重新核验收尾"); err != nil {
+			if err := controller.RetryContext(controlTestActor, context.Background(), id, "", "继续", "保留代码，重新核验收尾"); err != nil {
 				t.Fatal(err)
 			}
 			run, _ = worker.repo.RunState(id)

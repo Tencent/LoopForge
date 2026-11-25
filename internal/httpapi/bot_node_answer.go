@@ -216,7 +216,7 @@ func (h *assistantHandlers) submitBotNodeAnswer(ctx context.Context, bot domain.
 	}
 	reason := botChannelName(bot) + "回答节点问题，平台账号：" + user.LoginName + "，发送者：" + item.SenderID
 	expected := engine.NodeExpectation{NodeID: d.NodeID, Status: "waiting_approval", Attempt: d.Attempt, ReworkCount: d.ReworkCount}
-	if err := h.engine.RetryContext(ctx, d.RunID, d.NodeID, reason, answer, expected); err != nil {
+	if err := h.engine.RetryContext(domain.Actor{ID: user.ID, Name: user.LoginName}, ctx, d.RunID, d.NodeID, reason, answer, expected); err != nil {
 		if current, ok := h.repo.RunState(d.RunID); ok {
 			if stale := botNodeQuestionStale(current, d); stale != "" {
 				return stale

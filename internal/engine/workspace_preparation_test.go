@@ -144,7 +144,7 @@ func TestWorkspacePreparationNormalOrderAndFlaggedRetryAlwaysExecutes(t *testing
 	if count("env") != 1 || count("index") != 1 {
 		t.Fatal("initial SOP scripts ran more than once")
 	}
-	if err = e.Retry(run.ID, "index", "normal retry", ""); err != nil {
+	if err = e.Retry(controlTestActor, run.ID, "index", "normal retry", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, st, run.ID, "waiting")
@@ -155,7 +155,7 @@ func TestWorkspacePreparationNormalOrderAndFlaggedRetryAlwaysExecutes(t *testing
 	if current.Nodes["env"].Attempt != 1 || current.Nodes["index"].Attempt != 2 {
 		t.Fatal(current.Nodes)
 	}
-	_ = e.Cancel(run.ID)
+	_ = e.Cancel(controlTestActor, run.ID)
 }
 func TestWorkspacePreparationDoesNotAdvanceFutureScriptPastBusinessNode(t *testing.T) {
 	t.Parallel()
@@ -183,7 +183,7 @@ func TestWorkspacePreparationDoesNotAdvanceFutureScriptPastBusinessNode(t *testi
 	if err != nil || string(raw) != "env-business-index" {
 		t.Fatal(string(raw), err)
 	}
-	_ = e.Cancel(run.ID)
+	_ = e.Cancel(controlTestActor, run.ID)
 }
 func TestWorkspacePreparationRebuildPreservesHistoryAndWarmEditsDoNotReplay(t *testing.T) {
 	t.Parallel()
@@ -418,7 +418,7 @@ func TestWorkspacePreparationRecordFailureDoesNotRetrySuccessfulBusinessScript(t
 	if !warned {
 		t.Fatal("record failure warning missing")
 	}
-	_ = e.Cancel(run.ID)
+	_ = e.Cancel(controlTestActor, run.ID)
 }
 
 func TestWorkspacePreparationTrustedRequestCarriesWorkspaceKind(t *testing.T) {

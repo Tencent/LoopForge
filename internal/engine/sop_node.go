@@ -55,7 +55,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 			} else if isLiveStatus(prev.Status) {
 				// The node was re-pointed to another SOP (RefreshRunSOP); the old
 				// child's work does not belong to this node any more.
-				_ = e.Cancel(prev.ID)
+				_ = e.Cancel(domain.Actor{Name: "auto"}, prev.ID)
 			}
 		}
 	}
@@ -234,12 +234,12 @@ func (e *Engine) waitChildRun(ctx context.Context, parentID, childID string) (do
 			// Drain, pause or lease loss: the child is resumed on its own and the
 			// parent re-attaches to it. Only an explicit parent cancel stops it.
 			if parent, ok := e.repo.RunState(parentID); ok && (parent.CancelRequested || parent.Status == "cancelled") {
-				_ = e.Cancel(childID)
+				_ = e.Cancel(domain.Actor{Name: "auto"}, childID)
 			}
 			return domain.Run{}, ctx.Err()
 		case <-ticker.C:
 			if parent, ok := e.repo.RunState(parentID); ok && (parent.CancelRequested || parent.Status == "cancelled") {
-				_ = e.Cancel(childID)
+				_ = e.Cancel(domain.Actor{Name: "auto"}, childID)
 				return domain.Run{}, fmt.Errorf("父流程已取消")
 			}
 			child, ok := e.repo.RunState(childID)

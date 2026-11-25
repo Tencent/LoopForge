@@ -140,7 +140,7 @@ func TestWaitingBranchDoesNotStopRunningSibling(t *testing.T) {
 	if got.Nodes["after-slow"].Status != "succeeded" {
 		t.Fatalf("after-slow = %s", got.Nodes["after-slow"].Status)
 	}
-	if err := e.Approve(run.ID, "gate", ""); err != nil {
+	if err := e.Approve(controlTestActor, run.ID, "gate", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, run.ID, "succeeded")
@@ -167,7 +167,7 @@ func TestReworkResetsRunningSiblingWithoutDoubleCommit(t *testing.T) {
 	waitRun(t, s, run.ID, 30*time.Second, func(r domain.Run) bool {
 		return r.Nodes["gate"] != nil && r.Nodes["gate"].Status == "waiting_approval" && r.Nodes["slow"] != nil && r.Nodes["slow"].Status == "running"
 	})
-	if err := e.Reject(run.ID, domain.RejectRequest{NodeID: "gate", TargetID: "start", Reason: "redo"}); err != nil {
+	if err := e.Reject(controlTestActor, run.ID, domain.RejectRequest{NodeID: "gate", TargetID: "start", Reason: "redo"}); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, run.ID, "waiting")
@@ -184,7 +184,7 @@ func TestReworkResetsRunningSiblingWithoutDoubleCommit(t *testing.T) {
 	if n := nodeEvents(got, "start", "node.succeeded"); n != 2 {
 		t.Fatalf("start succeeded %d times, want 2", n)
 	}
-	if err := e.Approve(run.ID, "gate", ""); err != nil {
+	if err := e.Approve(controlTestActor, run.ID, "gate", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, run.ID, "succeeded")
@@ -211,11 +211,11 @@ func TestPauseThenImmediateResumeParallelBranches(t *testing.T) {
 	waitRun(t, s, run.ID, 30*time.Second, func(r domain.Run) bool {
 		return r.Nodes["left"] != nil && r.Nodes["left"].Status == "running" && r.Nodes["right"] != nil && r.Nodes["right"].Status == "running"
 	})
-	if err := e.Pause(run.ID); err != nil {
+	if err := e.Pause(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, run.ID, "waiting")
-	if err := e.ResumePaused(run.ID, ""); err != nil {
+	if err := e.ResumePaused(controlTestActor, run.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, run.ID, "succeeded")
@@ -308,14 +308,14 @@ func TestRetryAfterCancelResumesCancelledParallelSibling(t *testing.T) {
 	waitRun(t, s, run.ID, 30*time.Second, func(r domain.Run) bool {
 		return r.Nodes["left"] != nil && r.Nodes["left"].Status == "running" && r.Nodes["right"] != nil && r.Nodes["right"].Status == "running"
 	})
-	if err := e.Cancel(run.ID); err != nil {
+	if err := e.Cancel(controlTestActor, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	cancelled := waitRun(t, s, run.ID, 30*time.Second, func(r domain.Run) bool { return r.Status == "cancelled" && !r.HasActiveNode() })
 	if cancelled.Nodes["left"].Status != "cancelled" || cancelled.Nodes["right"].Status != "cancelled" {
 		t.Fatalf("cancel left left=%s right=%s", cancelled.Nodes["left"].Status, cancelled.Nodes["right"].Status)
 	}
-	if err := e.Retry(run.ID, "left", "", ""); err != nil {
+	if err := e.Retry(controlTestActor, run.ID, "left", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, run.ID, "succeeded")

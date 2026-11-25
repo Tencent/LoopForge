@@ -269,19 +269,20 @@ func (h *assistantHandlers) handleBotCardAction(ctx context.Context, bot domain.
 	}
 	expected := engine.NodeExpectation{NodeID: delivery.NodeID, Status: node.Status, Attempt: delivery.Attempt, ReworkCount: delivery.ReworkCount}
 	note := botChannelName(bot) + "操作，平台账号：" + user.LoginName + "，发送者：" + item.SenderID
+	botActor := domain.Actor{ID: user.ID, Name: user.LoginName}
 	switch item.Action {
 	case "approve":
-		err = h.engine.Approve(delivery.RunID, delivery.NodeID, note, expected)
+		err = h.engine.Approve(botActor, delivery.RunID, delivery.NodeID, note, expected)
 	case "retry":
-		err = h.engine.Retry(delivery.RunID, delivery.NodeID, note, note, expected)
+		err = h.engine.Retry(botActor, delivery.RunID, delivery.NodeID, note, note, expected)
 	case "pass":
-		err = h.engine.Pass(delivery.RunID, delivery.NodeID, note, expected)
+		err = h.engine.Pass(botActor, delivery.RunID, delivery.NodeID, note, expected)
 	case "decline":
-		err = h.engine.DeclineRetry(delivery.RunID, delivery.NodeID, expected)
+		err = h.engine.DeclineRetry(botActor, delivery.RunID, delivery.NodeID, expected)
 	case "resume":
-		err = h.engine.ResumePaused(delivery.RunID, note, expected)
+		err = h.engine.ResumePaused(botActor, delivery.RunID, note, expected)
 	case "reject":
-		err = h.engine.Reject(delivery.RunID, domain.RejectRequest{NodeID: delivery.NodeID, Reason: note}, expected)
+		err = h.engine.Reject(botActor, delivery.RunID, domain.RejectRequest{NodeID: delivery.NodeID, Reason: note}, expected)
 	default:
 		return "此按钮已处理，请查看最新消息。", nil
 	}

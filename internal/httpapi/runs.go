@@ -279,7 +279,7 @@ func (h *runsHandlers) run(c *gin.Context) {
 			if rejectBlockedIssueRun(h.deps, c, id) {
 				return
 			}
-			respond(c, h.engine.Approve(id, req.NodeID, req.Context, decisionExpectation(req.NodeID, req.Expected)...))
+			respond(c, h.engine.Approve(h.controlActor(c), id, req.NodeID, req.Context, decisionExpectation(req.NodeID, req.Expected)...))
 		}
 	case "/api/runs/:id/reject":
 		var req domain.RejectRequest
@@ -287,7 +287,7 @@ func (h *runsHandlers) run(c *gin.Context) {
 			if rejectBlockedIssueRun(h.deps, c, id) {
 				return
 			}
-			respond(c, h.engine.Reject(id, req, decisionExpectation(req.NodeID, req.Expected)...))
+			respond(c, h.engine.Reject(h.controlActor(c), id, req, decisionExpectation(req.NodeID, req.Expected)...))
 		}
 	case "/api/runs/:id/retry":
 		var req domain.HumanDecision
@@ -298,19 +298,19 @@ func (h *runsHandlers) run(c *gin.Context) {
 			if h.prepareRunActivationWorkspace(c, id) {
 				return
 			}
-			respond(c, h.engine.RetryContext(c.Request.Context(), id, req.NodeID, req.Reason, req.Context, decisionExpectation(req.NodeID, req.Expected)...))
+			respond(c, h.engine.RetryContext(h.controlActor(c), c.Request.Context(), id, req.NodeID, req.Reason, req.Context, decisionExpectation(req.NodeID, req.Expected)...))
 		}
 	case "/api/runs/:id/decline-retry":
 		var req struct {
 			NodeID string `json:"nodeId"`
 		}
 		if decode(c, &req) {
-			respond(c, h.engine.DeclineRetry(id, req.NodeID))
+			respond(c, h.engine.DeclineRetry(h.controlActor(c), id, req.NodeID))
 		}
 	case "/api/runs/:id/cancel":
-		respond(c, h.engine.Cancel(id))
+		respond(c, h.engine.Cancel(h.controlActor(c), id))
 	case "/api/runs/:id/pause":
-		respond(c, h.engine.Pause(id))
+		respond(c, h.engine.Pause(h.controlActor(c), id))
 	case "/api/runs/:id/resume":
 		var req domain.HumanDecision
 		if decode(c, &req) {
@@ -320,7 +320,7 @@ func (h *runsHandlers) run(c *gin.Context) {
 			if h.prepareRunActivationWorkspace(c, id) {
 				return
 			}
-			respond(c, h.engine.ResumePausedContext(c.Request.Context(), id, req.Context))
+			respond(c, h.engine.ResumePausedContext(h.controlActor(c), c.Request.Context(), id, req.Context))
 		}
 	case "/api/runs/:id/refresh-sop":
 		respond(c, h.engine.RefreshRunSOP(id))
@@ -330,7 +330,7 @@ func (h *runsHandlers) run(c *gin.Context) {
 			if rejectBlockedIssueRun(h.deps, c, id) {
 				return
 			}
-			respond(c, h.engine.Pass(id, req.NodeID, req.Context))
+			respond(c, h.engine.Pass(h.controlActor(c), id, req.NodeID, req.Context))
 		}
 	default:
 		c.Status(http.StatusNotFound)
@@ -488,6 +488,17 @@ func slimTelemetryEvent(e domain.TelemetryEvent) domain.TelemetryEvent {
 		}
 		e.Attributes = safe
 		e.Source = domain.TelemetrySource{Layer: e.Source.Layer, Adapter: e.Source.Adapter, Provider: e.Source.Provider, Protocol: e.Source.Protocol}
+	} else if _, ok := e.Attributes["actorId"]; ok {
+		// Control decisions keep their audit identity: who approved,
+		// rejected, retried or cancelled. Everything else is dropped.
+		safe := map[string]any{}
+		for _, key := range []string{"actorId", "actorName", "actorIsPerson"} {
+			if value, ok := e.Attributes[key]; ok {
+				safe[key] = value
+			}
+		}
+		e.Attributes = safe
+		e.Source = domain.TelemetrySource{Adapter: e.Source.Adapter, Protocol: e.Source.Protocol}
 	} else {
 		e.Attributes = nil
 		e.Source = domain.TelemetrySource{Adapter: e.Source.Adapter, Protocol: e.Source.Protocol}
