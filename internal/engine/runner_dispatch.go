@@ -150,11 +150,14 @@ func runnerRepositoryCapabilityError(runner domain.Runner, repositories []domain
 }
 
 func (e *Engine) requireRunnerSandboxVersion(runnerID string, profile domain.SandboxProfile) error {
-	if runnerID == "" || !profile.Privileged {
+	if runnerID == "" || !profile.Privileged && !profile.HasResourceLimits() {
 		return nil
 	}
 	runner, _ := e.repo.Runner(runnerID)
-	return runner.ValidateSandboxVersion(profile)
+	if profile.HasResourceLimits() && !runner.SupportsDockerSandboxLimits() {
+		return errors.New(domain.RunnerDockerSandboxLimitsUpgradeMessage)
+	}
+	return runner.ValidatePrivilegedSandboxVersion(profile)
 }
 
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
