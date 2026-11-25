@@ -294,6 +294,11 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		}
 		for _, ref := range session.KnowledgeRefs {
 			if ref.ConnectorID == tool.ServerID {
+				if session.Mode == AgentToolAssistant && exec.ToolMayWrite(ctx, session.UserID, ref, tool.UpstreamName) {
+					if reason, allowed := h.approveKnowledgeWrite(ctx, session, tool.Name, params.Arguments); !allowed {
+						return mcpToolTextResult(reason, true), nil
+					}
+				}
 				session.mu.Lock()
 				priorReads := append([]domain.KnowledgeRead(nil), session.knowledgeReads...)
 				session.mu.Unlock()

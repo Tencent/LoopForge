@@ -91,6 +91,23 @@ func (e *Executor) ReferenceTools(ctx context.Context, ownerUserID int64, ref do
 	return meta, tools, nil
 }
 
+// ToolMayWrite reports whether the named tool on ref may mutate external data.
+func (e *Executor) ToolMayWrite(ctx context.Context, ownerUserID int64, ref domain.KnowledgeRef, toolName string) bool {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return false
+	}
+	_, tools, err := e.ReferenceTools(ctx, ownerUserID, ref)
+	if err == nil {
+		for _, t := range tools {
+			if t.Name == toolName {
+				return IsKnowledgeToolMayWrite(t)
+			}
+		}
+	}
+	return IsKnowledgeToolMayWrite(mcpclient.Tool{Name: toolName})
+}
+
 // ExecuteReferenceTool executes a single read-only tool call on a user-owned
 // connector, builds a KnowledgeRead with evidence IDs, and appends the
 // citation marker suffix for the LLM when the result is citable.

@@ -21,7 +21,7 @@
       type: 'mcp',
       defaultEndpoint: 'http://127.0.0.1:9380/api/v1/mcp',
       defaultHeaders: {},
-      defaultAllowedTools: [],
+      defaultAllowedTools: ['ragflow_list_datasets', 'ragflow_retrieval'],
       guide: '登录 RAGFlow 控制台 → 右上角头像 → API 生成 RAGFLOW_API_KEY，填入下方「Bearer Token」；请确保文档解析状态均为 Success。',
       brandTone: 'ragflow',
       iconHTML: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>',
@@ -352,9 +352,14 @@
       const control = kind === 'kv'
         ? `<textarea id="${kbEsc(id)}" class="kb-input kb-kv-input" rows="3" data-field-key="${kbEsc(key)}" data-field-kind="${kbEsc(kind)}" data-field-secret="${isSecret ? '1' : '0'}" placeholder="${kbEsc(placeholder)}">${kbEsc(val)}</textarea>`
         : `<input id="${kbEsc(id)}" class="kb-input" type="${kbEsc(kind === 'url' ? 'url' : isSecret ? 'password' : kind === 'number' ? 'number' : 'text')}" data-field-key="${kbEsc(key)}" data-field-kind="${kbEsc(kind)}" data-field-secret="${isSecret ? '1' : '0'}" value="${kbEsc(val)}" placeholder="${kbEsc(placeholder)}" autocomplete="off">`;
+      const vendorKey = String(formConn?.config?.extra?.vendorKey || '').trim().toLowerCase();
+      const vendorRec = (key === 'allowedTools' && vendorKey) ? vendorMetaFor(vendorKey)?.defaultAllowedTools : null;
+      const fillBtn = Array.isArray(vendorRec) && vendorRec.length
+        ? ` <button type="button" class="btn sm ghost" data-kb-fill-tools="${kbEsc(vendorRec.join(', '))}">填入推荐白名单</button>`
+        : '';
       return `
         <div class="kb-field" data-kb-field-wrap="${kbEsc(key)}">
-          <label for="${kbEsc(id)}">${kbEsc(field.label || key)}${requiredMark}</label>
+          <label for="${kbEsc(id)}">${kbEsc(field.label || key)}${requiredMark}${fillBtn}</label>
           ${control}
           ${field.help ? `<small>${kbEsc(field.help)}</small>` : ''}
         </div>
@@ -605,6 +610,19 @@
     if (!drawer) return;
 
     const isStaleDrawer = () => kbState.drawerSessionSeq !== drawerSeq || drawer.hidden;
+
+    const dynHost = drawer.querySelector('#kbDynamicFields');
+    if (dynHost) {
+      dynHost.addEventListener('click', e => {
+        const btn = e.target.closest('[data-kb-fill-tools]');
+        if (!btn) return;
+        const input = dynHost.querySelector('[data-field-key="allowedTools"]');
+        if (input) {
+          input.value = btn.getAttribute('data-kb-fill-tools') || '';
+          input.focus();
+        }
+      });
+    }
 
     const typeSel = drawer.querySelector('#kbConnType');
     if (typeSel && !activeEditingConn) {

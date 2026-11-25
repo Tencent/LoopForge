@@ -159,6 +159,9 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 			return fail(-32602, err.Error())
 		}
 		name := strings.TrimSpace(params.Name)
+		if exec.ToolMayWrite(ctx, claims.UserID, *claims.Ref, name) {
+			return reply(mcpToolTextResult("SOP 无人值守运行未开放只读工具外的写入操作（"+name+"），请走知识沉淀审核队列", true))
+		}
 		started := time.Now()
 		var priorReads []domain.KnowledgeRead
 		if claims.RunID != "" && claims.NodeID != "" && h.engine != nil {

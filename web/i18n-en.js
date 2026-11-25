@@ -640,5 +640,6 @@ Object.assign(window.LF_I18N_EN, {
   "自定义 OAuth 2.0": "Custom OAuth 2.0",
   "探测通过": "Probe passed",
   "探测通过 · 连接正常": "Probe passed · Connection OK",
-  "OAuth 授权超时，请重新发起授权": "OAuth authorization timed out — please start authorization again"
+  "OAuth 授权超时，请重新发起授权": "OAuth authorization timed out — please start authorization again",
+  "填入推荐白名单": "Fill recommended allowlist"
 });

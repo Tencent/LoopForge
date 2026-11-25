@@ -21,7 +21,19 @@ import (
 type HTTPError struct {
 	StatusCode      int
 	WWWAuthenticate string
+	RetryAfter      string
 	Body            string
+}
+
+// RPCError is returned when the remote MCP server returns a JSON-RPC error object.
+type RPCError struct {
+	Code    int
+	Message string
+	Label   string
+}
+
+func (e *RPCError) Error() string {
+	return fmt.Sprintf("mcp %s error [%d]: %s", e.Label, e.Code, e.Message)
 }
 
 func (e *HTTPError) Error() string {
@@ -161,7 +173,8 @@ type toolCallResult struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
-	IsError bool `json:"isError,omitempty"`
+	StructuredContent json.RawMessage `json:"structuredContent,omitempty"`
+	IsError           bool            `json:"isError,omitempty"`
 }
 
 // CallTool invokes a named MCP tool with the given arguments and returns the
@@ -172,21 +185,34 @@ func (c *Client) CallTool(name string, args map[string]any) (string, error) {
 
 // CallToolContext is CallTool with a caller-supplied deadline/cancellation.
 func (c *Client) CallToolContext(ctx context.Context, name string, args map[string]any) (string, error) {
+	text, structured, err := c.CallToolStructuredContext(ctx, name, args)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(text) == "" && len(structured) > 0 && string(structured) != "null" {
+		return strings.TrimSpace(string(structured)), nil
+	}
+	return text, nil
+}
+
+// CallToolStructuredContext invokes a named MCP tool and returns both the
+// concatenated text content blocks and any MCP 2025-06-18 structuredContent.
+func (c *Client) CallToolStructuredContext(ctx context.Context, name string, args map[string]any) (string, json.RawMessage, error) {
 	params := map[string]any{
 		"name":      name,
 		"arguments": args,
 	}
 	raw, err := c.callRPC(ctx, "tools/call", params, "tool "+name)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	var result toolCallResult
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return strings.TrimSpace(string(raw)), nil
+		return strings.TrimSpace(string(raw)), nil, nil
 	}
 	if result.IsError && len(result.Content) > 0 {
-		return "", fmt.Errorf("mcp tool %s: %s", name, result.Content[0].Text)
+		return "", nil, fmt.Errorf("mcp tool %s: %s", name, result.Content[0].Text)
 	}
 	var textBlocks []string
 	for _, block := range result.Content {
@@ -194,7 +220,11 @@ func (c *Client) CallToolContext(ctx context.Context, name string, args map[stri
 			textBlocks = append(textBlocks, block.Text)
 		}
 	}
-	return strings.Join(textBlocks, "\n"), nil
+	var structured json.RawMessage
+	if trimmed := bytes.TrimSpace(result.StructuredContent); len(trimmed) > 0 && string(trimmed) != "null" {
+		structured = trimmed
+	}
+	return strings.Join(textBlocks, "\n"), structured, nil
 }
 
 type Tool struct {
@@ -244,7 +274,7 @@ func (c *Client) callRPC(ctx context.Context, method string, params any, label s
 				return nil, fmt.Errorf("mcp decode %s: %w (body: %s)", label, uerr, string(raw))
 			}
 			if rpcResp.Error != nil {
-				return nil, fmt.Errorf("mcp %s error [%d]: %s", label, rpcResp.Error.Code, rpcResp.Error.Message)
+				return nil, &RPCError{Code: rpcResp.Error.Code, Message: rpcResp.Error.Message, Label: label}
 			}
 			return rpcResp.Result, nil
 		}
@@ -281,6 +311,7 @@ func (c *Client) doRPC(ctx context.Context, method string, params any, session s
 		return nil, &HTTPError{
 			StatusCode:      resp.StatusCode,
 			WWWAuthenticate: resp.Header.Get("WWW-Authenticate"),
+			RetryAfter:      resp.Header.Get("Retry-After"),
 			Body:            strings.TrimSpace(string(raw)),
 		}
 	}
@@ -375,55 +406,63 @@ func (c *Client) ensureInit() error {
 	if c.init {
 		return nil
 	}
-	c.nextID++
-	id := c.nextID
+	for idx, version := range []string{"2025-06-18", "2024-11-05"} {
+		c.nextID++
+		id := c.nextID
 
-	req := rpcRequest{
-		JSONRPC: "2.0",
-		ID:      id,
-		Method:  "initialize",
-		Params: map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{},
-			"clientInfo": map[string]any{
-				"name":    "agentflow",
-				"version": "1.0.0",
+		req := rpcRequest{
+			JSONRPC: "2.0",
+			ID:      id,
+			Method:  "initialize",
+			Params: map[string]any{
+				"protocolVersion": version,
+				"capabilities":    map[string]any{},
+				"clientInfo": map[string]any{
+					"name":    "agentflow",
+					"version": "1.0.0",
+				},
 			},
-		},
-	}
-	body, _ := json.Marshal(req)
-	httpReq, err := c.newRequestLocked(body, "")
-	if err != nil {
-		return err
-	}
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		c.init = true
-		return nil
-	}
-	defer resp.Body.Close()
-	// Authentication failures must reach the caller so an OAuth connector can
-	// refresh and retry; other initialize failures stay non-fatal as before.
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
-		return &HTTPError{
-			StatusCode:      resp.StatusCode,
-			WWWAuthenticate: resp.Header.Get("WWW-Authenticate"),
-			Body:            strings.TrimSpace(string(raw)),
 		}
-	}
-	if sid := strings.TrimSpace(resp.Header.Get("Mcp-Session-Id")); sid != "" {
-		c.sessionID = sid
-		c.sessionGen++
-	}
-	raw, err := c.readResponse(resp)
-	if err != nil {
-		c.init = true
-		return nil
-	}
-	var rpcResp rpcResponse
-	if json.Unmarshal(raw, &rpcResp) == nil && rpcResp.Error != nil {
-		// Non-fatal: continue even if init fails.
+		body, _ := json.Marshal(req)
+		httpReq, err := c.newRequestLocked(body, "")
+		if err != nil {
+			return err
+		}
+		resp, err := c.http.Do(httpReq)
+		if err != nil {
+			c.init = true
+			return nil
+		}
+		// Authentication failures must reach the caller so an OAuth connector can
+		// refresh and retry; other initialize failures stay non-fatal as before.
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
+			resp.Body.Close()
+			return &HTTPError{
+				StatusCode:      resp.StatusCode,
+				WWWAuthenticate: resp.Header.Get("WWW-Authenticate"),
+				RetryAfter:      resp.Header.Get("Retry-After"),
+				Body:            strings.TrimSpace(string(raw)),
+			}
+		}
+		if sid := strings.TrimSpace(resp.Header.Get("Mcp-Session-Id")); sid != "" {
+			c.sessionID = sid
+			c.sessionGen++
+		}
+		raw, readErr := c.readResponse(resp)
+		statusCode := resp.StatusCode
+		resp.Body.Close()
+		if readErr != nil {
+			c.init = true
+			return nil
+		}
+		var rpcResp rpcResponse
+		hasRPCError := json.Unmarshal(raw, &rpcResp) == nil && rpcResp.Error != nil
+		// If the server rejected 2025-06-18 (HTTP 400 or JSON-RPC error), fall back once to 2024-11-05.
+		if idx == 0 && (statusCode == http.StatusBadRequest || hasRPCError) {
+			continue
+		}
+		break
 	}
 
 	c.nextID++

@@ -54,10 +54,20 @@ var builtinToolRules = []KnowledgeToolRule{
 		DocIDArgs: []string{"knowledge_id", "document_id", "doc_id", "path", "id"},
 	},
 	{
-		// 腾讯文档 MCP: get_content
+		// 腾讯文档 MCP: get_content / smartcanvas.read / sheet.get_cell_data
 		Tool:      "get_content",
 		Role:      ToolRoleRead,
 		DocIDArgs: []string{"file_id", "doc_id", "document_id", "url", "path", "id"},
+	},
+	{
+		Tool:      "smartcanvas.read",
+		Role:      ToolRoleRead,
+		DocIDArgs: []string{"file_id", "doc_id", "document_id", "url", "id"},
+	},
+	{
+		Tool:      "sheet.get_cell_data",
+		Role:      ToolRoleRead,
+		DocIDArgs: []string{"file_id", "doc_id", "document_id", "url", "id"},
 	},
 	{
 		// 腾讯文档 MCP: manage.search_file
