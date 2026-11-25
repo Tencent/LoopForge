@@ -940,6 +940,7 @@ func (h *assistantHandlers) botClarifyCardAction(ctx context.Context, bot domain
 	case botinteraction.ClarifyActionEnd:
 		return h.botClarifyEnd(bot, sess, user), nil
 	case botinteraction.ClarifyActionSave, botinteraction.ClarifyActionSaveStart:
+		ctx = withBotChatActor(ctx, bot.ChannelKind(), item.SenderID, h.botSenderName(bot, item.SenderID, item.SenderName))
 		return h.botClarifySave(ctx, bot, sess, user, item.Action == botinteraction.ClarifyActionSaveStart), nil
 	case botinteraction.ClarifyActionYes, botinteraction.ClarifyActionNo:
 		return h.botClarifyConfirm(bot, sess, item.SenderID, item.Quote, item.Action == botinteraction.ClarifyActionYes), nil

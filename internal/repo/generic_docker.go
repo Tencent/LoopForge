@@ -79,6 +79,7 @@ func GenericDockerSandbox() domain.SandboxProfile {
 	return domain.SandboxProfile{
 		ID:         GenericDockerSandboxID,
 		Name:       "通用后端容器沙箱",
+		Toolchain:  "Node.js 22、npm、Go 1.22、Python 3、Git、GCC",
 		ProjectID:  "platform",
 		Shared:     true,
 		Driver:     "docker",
