@@ -2,10 +2,12 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const genericFakeNPM = `#!/bin/sh
@@ -194,5 +196,59 @@ func TestInstallOnDemandClaudeCodeUsesPinnedRelease(t *testing.T) {
 	calls, _ := os.ReadFile(log)
 	if !strings.Contains(string(calls), "@anthropic-ai/claude-code@"+ClaudeCodeVersion) {
 		t.Fatalf("npm calls: %s", calls)
+	}
+}
+
+func TestInstallOnDemandCLIHonorsCancellationWhileQueued(t *testing.T) {
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", t.TempDir())
+	control := t.TempDir()
+	t.Setenv("NPM_TEST_CONTROL", control)
+	t.Setenv("NPM_TEST_LOG", filepath.Join(t.TempDir(), "npm.log"))
+	t.Setenv("NPM_TEST_BIN", "opencode")
+	useFakeCommands(t, map[string]string{"npm": strings.Replace(genericFakeNPM, "#!/bin/sh\n", `#!/bin/sh
+touch "$NPM_TEST_CONTROL/started"
+while [ ! -e "$NPM_TEST_CONTROL/release" ]; do sleep 0.01; done
+`, 1)})
+
+	firstCtx, stopFirst := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopFirst()
+	first := make(chan error, 1)
+	go func() {
+		_, err := InstallOnDemandCLI(firstCtx, "opencode")
+		first <- err
+	}()
+	defer func() {
+		if err := os.WriteFile(filepath.Join(control, "release"), nil, 0o600); err != nil {
+			t.Errorf("release fake npm: %v", err)
+		}
+		if err := <-first; err != nil {
+			t.Errorf("first install: %v", err)
+		}
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(control, "started")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("fake npm did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	second := make(chan error, 1)
+	go func() {
+		_, err := InstallOnDemandCLI(ctx, "opencode")
+		second <- err
+	}()
+	select {
+	case err := <-second:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("queued installation: %v, want deadline exceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued installation waited for the earlier download after its deadline")
 	}
 }

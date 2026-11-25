@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 // CLIs the published platform image does not guarantee. Codex, CodeBuddy and
@@ -37,7 +36,7 @@ type onDemandCLI struct {
 	Bundled bool
 }
 
-var onDemandInstallMu sync.Mutex
+var onDemandInstallGate = make(chan struct{}, 1)
 
 func onDemandCLICatalog() map[string]onDemandCLI {
 	return map[string]onDemandCLI{
@@ -104,8 +103,14 @@ func InstallOnDemandCLI(ctx context.Context, engine string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("不能从对话安装 %s", engine)
 	}
-	onDemandInstallMu.Lock()
-	defer onDemandInstallMu.Unlock()
+	select {
+	case onDemandInstallGate <- struct{}{}:
+		defer func() { <-onDemandInstallGate }()
+	case <-ctx.Done():
+	}
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("安装 %s 超时或已取消：%w", onDemandCLILabel(engine), err)
+	}
 	if path, ok := OnDemandCLIPath(engine); ok {
 		return path, nil
 	}
