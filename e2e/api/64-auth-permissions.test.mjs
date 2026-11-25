@@ -101,6 +101,46 @@ test('user B as a non-member: project data and admin surfaces are refused', { sk
   assert.equal((await get(`/api/projects/${P}`)).name, project.name, 'a refused write must not change the project');
 });
 
+test('builtin knowledge routes keep project data private and restrict management', { skip: tokenBSkip }, async t => {
+  if ((await get('/api/knowledge/settings')).provider !== 'builtin') return t.skip('builtin knowledge engine required');
+  userB ||= await tokenOwner(cfg.tokenB);
+  assert.ok(!userB.isPlatformAdmin);
+  const restore = await withProjectMember(userB.id, null);
+  try {
+    const kb = '/api/knowledge';
+    const project = `projectId=${encodeURIComponent(P)}`;
+    const reads = ['bases', 'bases/bindings', 'bases/documents', 'bases/document', 'bases/sediment', 'citations', 'governance'];
+    for (const path of reads) await B('GET', `${kb}/${path}?${project}`, undefined, 403);
+    const input = { projectId: P, sourceId: uid('missing-source') };
+    for (const path of ['bases/search', 'citations/freshness', 'bases/documents', 'bases/sources',
+      'bases/sources/metadata', 'bases/sync', 'governance/scan', 'governance/gaps', 'governance/dispose', 'feedback']) {
+      await B('POST', `${kb}/${path}`, input, 403);
+    }
+    for (const path of ['bases/bindings', 'bases/sources/credential', 'bases/sediment']) {
+      await B('PUT', `${kb}/${path}`, input, 403);
+    }
+    await B('DELETE', `${kb}/bases/sources?${project}&sourceId=${encodeURIComponent(input.sourceId)}`, undefined, 403);
+    await B('POST', `${kb}/bases/shared`, {}, 403);
+    assert.ok((await B('GET', `${kb}/bases/vector`, undefined, 200)).status);
+    await B('POST', `${kb}/bases/vector`, input, 403);
+  } finally {
+    await restore();
+  }
+});
+
+test('ordinary users cannot withdraw or delete their own projectless knowledge submission', { skip: tokenBSkip }, async t => {
+  if ((await get('/api/knowledge/settings')).provider !== 'builtin') return t.skip('builtin knowledge engine required');
+  const probe = await B('POST', '/api/knowledge/submissions', { title: uid('knowledge-probe'), content: 'noop' }, [200, 201]);
+  const path = `/api/knowledge/submissions/${probe.id}`;
+  try {
+    await B('POST', `${path}/retract`, {}, 403);
+    await B('DELETE', path, undefined, 403);
+    assert.equal((await B('GET', path, undefined, 200)).id, probe.id);
+  } finally {
+    await del(path, { expect: [200, 204] });
+  }
+});
+
 test('user B as viewer reads the project space but cannot speak or manage', { skip: tokenBSkip }, async () => {
   userB ||= await tokenOwner(cfg.tokenB);
   const restore = await withProjectMember(userB.id, 'viewer');
