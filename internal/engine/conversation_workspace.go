@@ -74,20 +74,40 @@ func (e *Engine) ConversationWorkspaceStatus(id string) (repo.WorkspaceCheckpoin
 	return e.repo.WorkspaceCheckpoint(id)
 }
 func (e *Engine) conversationWorkspaceIdle(run domain.Run) bool {
-	if sharesWorkspace(run) || e.workspaceTerminals.HasRunScope(run.ID) {
+	return !sharesWorkspace(run) && e.sopWorkspaceTreeIdle(run)
+}
+
+func (e *Engine) sopWorkspaceTreeIdle(run domain.Run) bool {
+	if e.workspaceTerminals.HasRunScope(run.ID) || e.WorkspaceActive != nil && e.WorkspaceActive(run) {
 		return false
 	}
-	if e.WorkspaceActive != nil && e.WorkspaceActive(run) {
-		return false
+	pending := []domain.Run{run}
+	seen := map[string]bool{run.ID: true}
+	for len(pending) > 0 {
+		current := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if current.Status == "running" || current.Status == "queued" || current.HasActiveNode() {
+			return false
+		}
+		tasks, err := e.repo.ActiveRunnerTasksForRun(current.ID)
+		if err != nil || len(tasks) > 0 {
+			return false
+		}
+		for _, id := range childRunIDs(current) {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			child, err := e.repo.RunWithNodes(id)
+			if err != nil {
+				return false
+			}
+			if child.ID != "" {
+				pending = append(pending, child)
+			}
+		}
 	}
-	if run.Status == "running" || run.Status == "queued" || run.HasActiveNode() {
-		return false
-	}
-	if run.Status == "waiting" && !run.IsWorkspace() {
-		return false
-	}
-	tasks, err := e.repo.ActiveRunnerTasksForRun(run.ID)
-	return err == nil && len(tasks) == 0
+	return true
 }
 func (e *Engine) conversationGenerationRunning(run domain.Run) bool {
 	session, ok := e.repo.SharedAssistantSession(repo.RunAssistantSessionID(run.ID))
@@ -239,6 +259,7 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 	if !ok || meta.LeaseToken != token || meta.LeaseUntil == nil || meta.LeaseUntil.Before(time.Now()) {
 		return repo.ErrWorkspaceInUse
 	}
+	ctx = WithConversationWorkspaceToken(ctx, token, id)
 	if err := e.repo.MarkWorkspaceFollowUp(id, token, time.Now().UTC()); err != nil {
 		return err
 	}
@@ -247,12 +268,12 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 		return fmt.Errorf("运行不存在")
 	}
 	runner := e.defaultExecutionRunner(run)
-	if runner == "" && e.foreignWorkspaceBind(run) {
+	if runner == "" && e.foreignWorkspaceBind(run) && (run.WorkspaceCleanedAt.IsZero() || e.workspaceBlocked(run)) {
 		if !run.WorkspaceCleanedAt.IsZero() {
 			if err := e.restoreOrReuseRemoteConversationCheckpoint(ctx, run); err != nil {
 				return err
 			}
-			return e.repo.RestoreCheckpointWorkspaceBinding(id, token, "", "", time.Now().UTC())
+			return e.repo.RestoreCheckpointWorkspaceBinding(id, token, run.WorkspaceHost, run.WorkspaceRoot, time.Now().UTC())
 		}
 		// An uncleaned checkout still belongs to a live instance. Returning
 		// success here used to let the chat start, then fail in
@@ -283,23 +304,21 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 	}
 	var err error
 	if runner != "" {
-		if task, exists := e.repo.RunnerTask("rt-cleanup-" + safeRunnerPath(id)); exists {
-			if task.Status == domain.RunnerTaskQueued {
-				if err = e.repo.CancelRunnerTask(task.ID, time.Now().UTC()); err != nil {
-					return err
-				}
-				// A claim may have raced cancellation. In that case cancellation
-				// only requests a stop; wait for the cleanup to actually finish.
-				task, _ = e.repo.RunnerTask(task.ID)
-			}
-			if task.Status == domain.RunnerTaskLeased || task.Status == domain.RunnerTaskRunning {
-				return fmt.Errorf("工作区尚在回收，请稍后恢复")
-			}
+		if err := e.cancelQueuedRunnerWorkspaceCleanup(id); err != nil {
+			return err
 		}
 		if err = e.restoreOrReuseRemoteConversationCheckpoint(ctx, run); err != nil {
 			return err
 		}
-		return e.repo.RestoreCheckpointWorkspaceBinding(id, token, "", "", time.Now().UTC())
+		// The Runner owns the checkout. A reclaimed SOP can rebuild its
+		// control-plane staging directory on the worker executing it now.
+		host, root := run.WorkspaceHost, run.WorkspaceRoot
+		if e.ownsRun(run) {
+			host, root = e.workspaceHost, e.sandboxes.Root()
+		} else if !run.IsWorkspace() && e.foreignWorkspaceBind(run) && !e.workspaceBlocked(run) {
+			host, root = "", ""
+		}
+		return e.repo.RestoreCheckpointWorkspaceBinding(id, token, host, root, time.Now().UTC())
 	}
 	root := e.sandboxes.RunWorkspace(id)
 	if info, statErr := os.Lstat(root); statErr == nil && info.IsDir() && !e.foreignWorkspaceBind(run) {
@@ -393,13 +412,30 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	if sharesWorkspace(run) {
 		return false, false, nil, nil
 	}
+	sopIdleReclaim := idleSOPStatus(run)
+	if !run.IsWorkspace() && (run.Status == "failed" || run.Status == "waiting") && !sopIdleReclaim {
+		return true, false, nil, nil
+	}
 	meta, exists := e.repo.WorkspaceCheckpoint(run.ID)
-	session, shared := e.repo.SharedAssistantSession(repo.RunAssistantSessionID(run.ID))
-	if !exists && !run.IsWorkspace() && run.Status != "succeeded" && run.Status != "cancelled" && (!shared || session.Archived) {
+	if !exists && !run.IsWorkspace() && !sopIdleReclaim && run.Status != "succeeded" && run.Status != "cancelled" {
 		return false, false, nil, nil
 	}
 	if !run.WorkspaceCleanedAt.IsZero() {
 		return false, false, nil, nil
+	}
+	// Recent edits and save backoff take precedence over a maintenance lease.
+	idleSinceBeforeLease := run.UpdatedAt
+	if exists && meta.LastUsedAt.After(idleSinceBeforeLease) {
+		idleSinceBeforeLease = meta.LastUsedAt
+	}
+	if sopIdleReclaim && (idleSinceBeforeLease.IsZero() || now.Before(idleSinceBeforeLease.Add(ConversationWorkspaceIdleTTL)) || now.Before(run.WorkspaceCleanupNotBefore)) ||
+		meta.SaveRetryAt != nil && now.Before(*meta.SaveRetryAt) {
+		return true, false, nil, nil
+	}
+	released := exists && meta.Released()
+	retryDue := meta.SaveRetryAt != nil
+	if exists && meta.FollowUp && !retryDue && !released && now.Before(idleSinceBeforeLease.Add(ConversationWorkspaceIdleTTL)) {
+		return true, false, nil, nil
 	}
 	if run.IsWorkspace() {
 		busy, err := e.repo.HasWorkspaceSOPRuns(run.ID, "running", "queued", "waiting")
@@ -410,31 +446,17 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	if !e.conversationWorkspaceIdle(run) || e.conversationGenerationRunning(run) {
 		return true, false, nil, nil
 	}
-	// Recent conversation/IDE activity must not compete with maintenance for
-	// the lease. Foreground completion saves changes; reclamation waits an hour.
-	idleSinceBeforeLease := meta.LastUsedAt
-	if run.UpdatedAt.After(idleSinceBeforeLease) {
-		idleSinceBeforeLease = run.UpdatedAt
-	}
-	released := exists && meta.Released()
-	retryDue := meta.SaveRetryAt != nil && !now.Before(*meta.SaveRetryAt)
-	if exists && meta.FollowUp && !retryDue && !released && now.Before(idleSinceBeforeLease.Add(ConversationWorkspaceIdleTTL)) {
-		return true, false, nil, nil
-	}
 	token, err := e.repo.BeginWorkspaceCheckpointSave(run.ID, now)
 	if err != nil {
 		return true, false, nil, nil
 	}
 	meta, _ = e.repo.WorkspaceCheckpoint(run.ID)
 	idleSince := meta.LastUsedAt
-	if !exists {
-		idleSince = run.UpdatedAt
-		if idleSince.IsZero() {
-			idleSince = now
-		}
-	}
 	if run.UpdatedAt.After(idleSince) {
 		idleSince = run.UpdatedAt
+	}
+	if idleSince.IsZero() {
+		idleSince = now
 	}
 	// An idle group is still an ongoing conversation, even if Main Bot has
 	// only delegated and never invoked a workspace tool. Give it the same hour.
@@ -458,9 +480,17 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 			finish()
 		}
 	}()
+	if sopIdleReclaim {
+		current, err := e.repo.RunWithNodes(run.ID)
+		if err != nil || current.ID == "" || current.Revision != run.Revision || !current.WorkspaceCleanedAt.IsZero() ||
+			now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) || !e.conversationWorkspaceIdle(current) {
+			return true, false, nil, nil
+		}
+	}
 	if retryDue || released || meta.SavedAt == nil || run.UpdatedAt.After(*meta.SavedAt) || meta.Error != "" || !now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
+		ctx = WithConversationWorkspaceToken(ctx, token, run.ID)
 		captureErr := e.saveConversationWorkspace(ctx, run, token)
 		if captureErr != nil {
 			saveError = captureErr.Error()
@@ -468,6 +498,9 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 		}
 	}
 	if meta.FollowUp && !released && now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
+		return true, false, nil, nil
+	}
+	if sopIdleReclaim && !e.conversationWorkspaceIdle(run) {
 		return true, false, nil, nil
 	}
 	// Revision and node checks serialize the deletion claim against SOP or group dispatch.
@@ -478,21 +511,26 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	return true, claimed, release, err
 }
 
+func idleSOPStatus(run domain.Run) bool {
+	return !run.IsWorkspace() && run.WorkflowID != domain.FreeCollaborationWorkflowID && run.ExecutionContext.ParentRunID == "" &&
+		(run.Status == "failed" || run.Status == "waiting")
+}
+
 func (e *Engine) restoreCheckpointBeforeExecution(ctx context.Context, run domain.Run) error {
 	if sharesWorkspace(run) {
 		return e.RestoreConversationWorkspaceIfNeeded(ctx, workspaceRunID(run))
 	}
-	checkpoint, exists := e.repo.WorkspaceCheckpoint(run.ID)
+	checkpoint, _ := e.repo.WorkspaceCheckpoint(run.ID)
 	// A Main Bot turn or IDE heartbeat also creates this metadata row. Old
 	// reclaimed runs may therefore have a lease but no saved archive. Execution
 	// must still be able to prepare repositories and archived upstream inputs;
 	// EnsureConversationWorkspace remains strict for exact history restoration.
-	if !exists {
-		return nil
-	}
 	if checkpoint.SavedAt == nil {
 		if checkpoint.LeaseUntil != nil && checkpoint.LeaseUntil.After(time.Now()) && checkpoint.LeaseToken != ConversationWorkspaceToken(ctx, run.ID) {
 			return repo.ErrWorkspaceInUse
+		}
+		if !run.WorkspaceCleanedAt.IsZero() && e.defaultExecutionRunner(run) != "" {
+			return e.cancelQueuedRunnerWorkspaceCleanup(run.ID)
 		}
 		return nil
 	}
@@ -509,6 +547,22 @@ func (e *Engine) restoreCheckpointBeforeExecution(ctx context.Context, run domai
 		defer func() { _ = e.repo.FinishWorkspaceUse(run.ID, token, time.Now().UTC(), nil, "") }()
 	}
 	return e.EnsureConversationWorkspace(ctx, run.ID, token)
+}
+
+func (e *Engine) cancelQueuedRunnerWorkspaceCleanup(runID string) error {
+	task, _ := e.repo.RunnerTask("rt-cleanup-" + safeRunnerPath(runID))
+	if task.Status == domain.RunnerTaskQueued {
+		if err := e.repo.CancelRunnerTask(task.ID, time.Now().UTC()); err != nil {
+			return err
+		}
+		// Cancellation may only have requested a stop if the Runner took the
+		// task in the meantime. Wait for that cleanup to settle before use.
+		task, _ = e.repo.RunnerTask(task.ID)
+	}
+	if task.Status == domain.RunnerTaskLeased || task.Status == domain.RunnerTaskRunning {
+		return fmt.Errorf("工作区尚在回收，请稍后恢复：%w", repo.ErrWorkspaceInUse)
+	}
+	return nil
 }
 
 // restoreCheckpointForExecution waits for a concurrent workspace operation at

@@ -305,7 +305,10 @@ function resolveAssetSaveIdentity(items,selectedID,requestedID){if(selectedID!==
 function assetPaneTabs(type=state.assetType){return ({rules:[['edit','编辑'],['preview','预览']],skills:[['files','文件']],sandboxes:[['setup','配置']]})[type]||[['edit','编辑']]}
 function assetPaneHint(type=state.assetType){return ({rules:'支持 Markdown',skills:'每次上传都会完整替换现有文件',sandboxes:'隔离方式决定沙箱在哪里、怎样执行'})[type]||''}
 function assetFieldLabel(text,help,forId=''){return `<div class="asset-field-label">${forId?`<label for="${forId}">${escapeHTML(text)}</label>`:`<span>${escapeHTML(text)}</span>`}${help?`<button type="button" class="field-help" aria-label="${escapeHTML(text)}说明" title="${escapeHTML(help)}">?</button>`:''}</div>`}
-function sandboxSetupHTML(a){const driver=sandboxDriverOption(a.driver);return `<div class="sandbox-setup">
+function sandboxSetupHTML(a){
+  const driver=sandboxDriverOption(a.driver);
+  const privilegeHelp=lfT('执行机器须允许特权沙箱。容器内进程可访问宿主机设备，并可能控制执行机器。','The execution machine must allow privileged sandboxes. Processes in the container can access host devices and may take control of the machine.');
+  return `<div class="sandbox-setup">
   ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
   <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>
   ${assetFieldLabel('工具链说明','Agent 自动选择沙箱时参考这些工具和版本。','assetSandboxToolchain')}
@@ -320,6 +323,13 @@ function sandboxSetupHTML(a){const driver=sandboxDriverOption(a.driver);return `
       <span class="asset-switch-controls">
         <button type="button" class="field-help" aria-label="容器根文件系统只读说明" title="开启后 /usr、/etc 等系统目录只读，/tmp 使用临时内存盘，缺少的 CLI 无法在容器内自动安装；工作区 /workspace 仍可写。默认建议关闭。">?</button>
         <input id="assetReadOnlyRootFS" name="readOnlyRootFS" type="checkbox" class="asset-switch" role="switch" ${a.readOnlyRootFS?'checked':''}>
+      </span>
+    </div>
+    <div class="asset-switch-row">
+      <label for="assetPrivileged"><b>${lfT('特权模式','Privileged mode')}</b></label>
+      <span class="asset-switch-controls">
+        <button type="button" class="field-help" aria-label="${lfT('特权模式说明','About privileged mode')}" title="${escapeHTML(privilegeHelp)}">?</button>
+        <input id="assetPrivileged" name="privileged" type="checkbox" class="asset-switch" role="switch" ${a.privileged?'checked':''}>
       </span>
     </div>
   </div>
@@ -713,6 +723,7 @@ async function saveAsset(e){e.preventDefault();const f=e.currentTarget,items=sta
     if(driver==='docker'){
       sandbox.dockerfile={content:f.elements.dockerfileContent.value,files:JSON.parse(f.elements.dockerfileFiles.value||'{}')};
       sandbox.readOnlyRootFS=f.elements.readOnlyRootFS.checked;
+      sandbox.privileged=f.elements.privileged.checked;
     }
     Object.assign(value,sandbox);
   }

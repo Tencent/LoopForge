@@ -149,6 +149,14 @@ func runnerRepositoryCapabilityError(runner domain.Runner, repositories []domain
 	return nil
 }
 
+func (e *Engine) requireRunnerSandboxVersion(runnerID string, profile domain.SandboxProfile) error {
+	if runnerID == "" || !profile.Privileged {
+		return nil
+	}
+	runner, _ := e.repo.Runner(runnerID)
+	return runner.ValidateSandboxVersion(profile)
+}
+
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
 	runnerID := e.defaultExecutionRunner(run)
 	if runnerID != "" && run.UsesConversationWorkspace() && len(run.RepositoryContexts()) > 0 {
@@ -162,6 +170,9 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 	}
 	profile, resources, err := e.workspaceSandboxProfile(run)
 	if err != nil {
+		return nil, err
+	}
+	if err := e.requireRunnerSandboxVersion(runnerID, profile); err != nil {
 		return nil, err
 	}
 	spec := resolvedSandboxSnapshot(profile, resources)

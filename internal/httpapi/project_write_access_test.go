@@ -200,8 +200,29 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	if err := s.PutSandbox(domain.SandboxProfile{ID: "sb-global", Name: "Base", Driver: domain.SandboxDriverDocker, Dockerfile: &domain.SandboxDockerfile{Content: "FROM alpine"}}); err != nil {
 		t.Fatal(err)
 	}
-	if code := call(owner, "PUT", "/api/sandboxes", `{"id":"sb-global","name":"Base","driver":"docker","dockerfile":{"content":"FROM evil"}}`); code != 403 {
+	if code := call(owner, "PUT", "/api/sandboxes", `{"id":"sb-global","name":"Base","driver":"docker","dockerfile":{"content":"FROM alpine"},"privileged":true}`); code != 403 {
 		t.Fatalf("non-admin edit platform sandbox: %d", code)
+	}
+	const sandboxBody = `{"id":"sb-project","projectId":"p1","name":"Docker","driver":"docker","dockerfile":{"content":"FROM alpine"},"privileged":%t}`
+	enable := fmt.Sprintf(sandboxBody, true)
+	if code := call(viewer, "PUT", "/api/sandboxes", enable); code != 403 {
+		t.Fatalf("viewer create privileged sandbox: %d", code)
+	}
+	if code := call(member, "PUT", "/api/sandboxes", enable); code != 200 {
+		t.Fatalf("project member create privileged sandbox: %d", code)
+	}
+	if saved, ok := s.Sandbox("sb-project"); !ok || !saved.Privileged {
+		t.Fatalf("privileged mode was not saved: %+v", saved)
+	}
+	disable := fmt.Sprintf(sandboxBody, false)
+	if code := call(other, "PUT", "/api/sandboxes", disable); code != 403 {
+		t.Fatalf("non-member edit project sandbox: %d", code)
+	}
+	if code := call(member, "PUT", "/api/sandboxes", disable); code != 200 {
+		t.Fatalf("project member disable privileged mode: %d", code)
+	}
+	if saved, ok := s.Sandbox("sb-project"); !ok || saved.Privileged {
+		t.Fatalf("disabling privileged mode was not saved: %+v", saved)
 	}
 	if code := call(other, "PUT", "/api/sync/config", `{}`); code != 403 {
 		t.Fatalf("non-admin sync config: %d", code)
