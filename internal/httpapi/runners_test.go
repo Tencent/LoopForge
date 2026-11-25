@@ -564,6 +564,45 @@ func TestRunnerClaimRejectsQueuedFrozenLocalSandbox(t *testing.T) {
 	}
 }
 
+func TestRunnerClaimRequiresDockerSandboxLimitSupport(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	runnerID, session := registerTestRunner(t, f.h)
+	task := domain.RunnerTask{
+		ID: "limited-task", RunID: "limited-run", RunnerID: runnerID, Provider: "mock", Command: "true",
+		Sandbox: &domain.RunnerSandboxSpec{
+			Profile: domain.SandboxProfile{Driver: domain.SandboxDriverDocker, CPUMillicores: 500, MemoryMiB: 256},
+		},
+	}
+	claim := func(supportsLimits bool) *httptest.ResponseRecorder {
+		return requestWithHeaders(t, f.h, http.MethodPost, "/api/runners/tasks/claim", map[string]any{
+			"availableRuntimes": []string{"mock"}, "noWait": true, "supportsDockerSandboxLimits": supportsLimits,
+		}, map[string]string{"Authorization": "Bearer " + session})
+	}
+	if err := f.s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if rec := claim(false); rec.Code != http.StatusNoContent {
+		t.Fatalf("legacy claim: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	if rejected, _ := f.s.RunnerTask(task.ID); rejected.Status != domain.RunnerTaskFailed || rejected.Error != domain.RunnerDockerSandboxLimitsUpgradeMessage {
+		t.Fatalf("legacy task status = %q, error = %q", rejected.Status, rejected.Error)
+	}
+	// A compatible Runner may claim before its first post-upgrade heartbeat.
+	task.ID = "supported-limited-task"
+	if err := f.s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Task domain.RunnerTask `json:"task"`
+	}
+	if rec := claim(true); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &response) != nil {
+		t.Fatalf("updated claim: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	if sandbox := response.Task.Sandbox; sandbox == nil || sandbox.Profile.CPUMillicores != 500 || sandbox.Profile.MemoryMiB != 256 {
+		t.Fatalf("claimed sandbox lost resource limits: %+v", sandbox)
+	}
+}
+
 func TestRunnerTaskClaimLongPollWaitsForNewTask(t *testing.T) {
 	h := newRunnerTestServer(t)
 	_, session := registerTestRunner(t, h)

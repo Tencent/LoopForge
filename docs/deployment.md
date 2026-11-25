@@ -117,6 +117,33 @@ Docker SOP nodes using a standard CLI executor first look for the CLI on the san
 
 Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: there is no unisolated sandbox type, so every task the platform runs itself is in a sandbox (the `AGENTFLOW_LOCAL_SANDBOX` setting is gone), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. Agent CLIs also apply a bound repository's own configuration as their native rules define, including unattended SOP runs: `AGENTS.md`/`CLAUDE.md` instructions, `.codebuddy/`, `.claude/settings.json` (hooks and environment) and `.mcp.json` can start commands or MCP servers inside the sandbox. Bind only repositories whose contents you trust. To run without the socket, remove the `docker.sock` volume from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for SOPs, including the welcome SOP, which now runs in `generic-docker`.
 
+### Docker sandbox resource limits
+
+Set CPU and memory limits in a Docker sandbox's configuration. Each new run or
+conversation workspace records those settings in its sandbox snapshot. To use
+profile limits on a remote execution machine, upgrade it to Runner 0.12.5 or
+later.
+
+Set machine-wide caps in the environment of each platform process or Runner
+that starts Docker sandboxes. With the published Compose stack, set these
+variables in `.env`. Restart the process to apply environment changes. Each
+sandbox uses the lower configured value for a resource. An empty value or
+`0` omits that setting. When both settings are omitted, Docker uses the
+daemon's default.
+
+| Setting | Limit |
+|---|---|
+| `AGENTFLOW_DOCKER_SANDBOX_CPU_MILLICORES` | CPU bandwidth. `1000` is one CPU. The minimum enabled value is `10`. |
+| `AGENTFLOW_DOCKER_SANDBOX_MEMORY_MIB` | Memory in MiB. The minimum enabled value is `6`. Swap follows the Docker daemon's policy. |
+| `AGENTFLOW_DOCKER_SANDBOX_PIDS` | Total tasks, including threads. |
+
+Docker applies the budget to the whole workspace container, including terminal
+sessions and later `docker exec` commands. When a container's effective limits change,
+LoopForge replaces the container the next time it opens the sandbox. The bind
+mounted checkout survives. The daemon must support the requested controllers.
+
+Image builds and browser sidecars run separately from the workspace container.
+
 ### Slow networks: clone and image build limits
 
 Cloning a repository and building a custom sandbox image report progress while they work, and their errors keep the last lines of Git or Docker output. Conversations show the current Docker build step on the platform and on connected runners. A long, quiet Dockerfile step can continue until its caller or a configured limit stops the build. All settings take Go durations such as `90s` or `20m`. `0` turns a limit off. Set the variables on the platform process or execution machine that runs the command.

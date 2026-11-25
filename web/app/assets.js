@@ -300,7 +300,13 @@ function bindRuleGlobalPicker(a){const host=$('#ruleSOPPicker');if(!host)return;
 // Rows saved as local before it was removed read as native.
 function sandboxDriverOption(driver){return ['seatbelt','bwrap','native','local'].includes(driver)?'native':'docker'}
 function sandboxDriverLabel(driver){return sandboxDriverOption(driver)==='native'?'系统轻量隔离':'Docker'}
-function syncSandboxDriverFields(select){const driver=select?.value||'docker';select?.form?.querySelectorAll('[data-sandbox-drivers]').forEach(el=>{el.hidden=!el.dataset.sandboxDrivers.split(' ').includes(driver)})}
+function syncSandboxDriverFields(select){
+  const driver=select?.value||'docker';
+  select?.form?.querySelectorAll('[data-sandbox-drivers]').forEach(fields=>{
+    fields.hidden=!fields.dataset.sandboxDrivers.split(' ').includes(driver);
+    fields.querySelectorAll('input,textarea').forEach(input=>{input.disabled=fields.hidden||select.disabled});
+  });
+}
 function resolveAssetSaveIdentity(items,selectedID,requestedID){if(selectedID!=='__new__'){const existing=(items||[]).find(item=>item.id===selectedID);return existing?{id:existing.id,existing,created:false}:{error:'选中的资产已不存在，请刷新后重试'}}if((items||[]).some(item=>item.id===requestedID))return {error:'该标识已存在，请换一个标识，或回到列表打开已有资产修改'};return {id:requestedID,existing:null,created:true}}
 function assetPaneTabs(type=state.assetType){return ({rules:[['edit','编辑'],['preview','预览']],skills:[['files','文件']],sandboxes:[['setup','配置']]})[type]||[['edit','编辑']]}
 function assetPaneHint(type=state.assetType){return ({rules:'支持 Markdown',skills:'每次上传都会完整替换现有文件',sandboxes:'隔离方式决定沙箱在哪里、怎样执行'})[type]||''}
@@ -311,6 +317,17 @@ function sandboxSetupHTML(a){const driver=sandboxDriverOption(a.driver);return `
   ${assetFieldLabel('工具链说明','Agent 自动选择沙箱时参考这些工具和版本。','assetSandboxToolchain')}
   <input id="assetSandboxToolchain" name="toolchain" class="asset-input" maxlength="500" value="${escapeHTML(a.toolchain||'')}" placeholder="例如 Python 3.12、uv、PostgreSQL 客户端">
   <div data-sandbox-drivers="docker">
+    <div class="sandbox-resource-fields">
+      <div>
+        <label for="assetSandboxCPU" class="asset-field-label">CPU 上限（核）</label>
+        <input id="assetSandboxCPU" name="cpuCores" class="asset-input" type="number" inputmode="decimal" min="0.01" max="9223372036.854" step="0.001" aria-describedby="assetSandboxResourceHint" value="${a.cpuMillicores?a.cpuMillicores/1000:''}">
+      </div>
+      <div>
+        <label for="assetSandboxMemory" class="asset-field-label">内存上限（MiB）</label>
+        <input id="assetSandboxMemory" name="memoryMiB" class="asset-input" type="number" inputmode="numeric" min="6" max="8796093022207" step="1" aria-describedby="assetSandboxResourceHint" value="${escapeHTML(a.memoryMiB||'')}">
+      </div>
+    </div>
+    <div id="assetSandboxResourceHint" class="asset-field-hint">留空使用执行机器配置。两处都配置上限时，较低值生效。</div>
     ${assetFieldLabel('Dockerfile','保存在这个沙箱里。沙箱初始化时用它 docker build 出镜像；内容相同的沙箱共用同一个镜像。不要指向仓库目录或现成镜像名。','assetDockerfile')}
     <textarea id="assetDockerfile" name="dockerfileContent" class="asset-editor" rows="14" spellcheck="false" placeholder="FROM node:22-bookworm-slim">${escapeHTML(a.dockerfile?.content||'')}</textarea>
     ${assetFieldLabel('构建上下文文件','JSON 对象：键是构建上下文里的相对路径，值是文件内容，和 Dockerfile 一起保存，可在 Dockerfile 里 COPY。','assetDockerfileFiles')}
@@ -713,6 +730,8 @@ async function saveAsset(e){e.preventDefault();const f=e.currentTarget,items=sta
     if(driver==='docker'){
       sandbox.dockerfile={content:f.elements.dockerfileContent.value,files:JSON.parse(f.elements.dockerfileFiles.value||'{}')};
       sandbox.readOnlyRootFS=f.elements.readOnlyRootFS.checked;
+      if(f.elements.cpuCores.value)sandbox.cpuMillicores=Math.round(Number(f.elements.cpuCores.value)*1000);
+      if(f.elements.memoryMiB.value)sandbox.memoryMiB=Number(f.elements.memoryMiB.value);
     }
     Object.assign(value,sandbox);
   }

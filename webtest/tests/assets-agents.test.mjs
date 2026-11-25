@@ -36,7 +36,7 @@ test('asset catalog filters, opens, marks dirty, shares, saves, and deletes asse
   assert.equal(app.evaluate(`state.data.rules.some(x=>x.id==='rule-1')`), false);
 });
 
-test('sandbox form saves its own Dockerfile, or only environment variables for native', async (t) => {
+test('sandbox form saves Docker resource limits and clears them when omitted', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.router.put(/^\/api\/sandboxes$/, (call) => ({ status: 200, body: call.body }));
@@ -48,12 +48,18 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   assert.deepEqual([...form.elements.driver.options].map((o) => [o.value, o.textContent]), [['docker', 'Docker'], ['native', '系统轻量隔离']]);
   assert.equal(dockerFields.hidden, false, 'a new sandbox starts as docker');
   assert.equal(nativeFields.hidden, true);
+  assert.equal(form.elements.cpuCores.value, '');
+  assert.equal(form.elements.memoryMiB.value, '');
   chooseOption(form.elements.driver, 'native');
   assert.deepEqual([dockerFields.hidden, nativeFields.hidden], [true, false]);
+  assert.equal(form.elements.cpuCores.disabled, true);
+  assert.equal(form.elements.memoryMiB.disabled, true);
   assert.match(nativeFields.textContent, /系统轻量隔离直接使用执行机器上已安装的语言和工具/);
   assert.equal(form.elements.installScript, undefined);
   chooseOption(form.elements.driver, 'docker');
   assert.deepEqual([dockerFields.hidden, nativeFields.hidden], [false, true]);
+  assert.equal(form.elements.cpuCores.disabled, false);
+  assert.equal(form.elements.memoryMiB.disabled, false);
   readOnlyHelp.click();
   const tooltip = app.document.querySelector('#huiTooltip:not([hidden])');
   assert.match(tooltip?.textContent ?? '', /缺少的 CLI 无法在容器内自动安装；工作区 \/workspace 仍可写/);
@@ -65,6 +71,8 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   form.elements.environment.value = '{"CI":"1"}';
   form.elements.dockerfileContent.value = 'FROM node:22\nCOPY packages.txt /tmp/\n';
   form.elements.dockerfileFiles.value = '{"packages.txt":"git"}';
+  form.elements.cpuCores.value = '1.25';
+  form.elements.memoryMiB.value = '1536';
   form.elements.readOnlyRootFS.checked = true;
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(2);
@@ -73,10 +81,26 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   assert.deepEqual(sandbox.dockerfile, { content: 'FROM node:22\nCOPY packages.txt /tmp/\n', files: { 'packages.txt': 'git' } });
   assert.equal(sandbox.install, undefined);
   assert.equal(sandbox.readOnlyRootFS, true);
+  assert.equal(sandbox.cpuMillicores, 1250);
+  assert.equal(sandbox.memoryMiB, 1536);
   assert.deepEqual(sandbox.environment, { CI: '1' });
+
+  app.evaluate(`state.assetDetailKey='';renderAssets()`);
+  form = app.document.querySelector('#assetForm');
+  assert.equal(form.elements.cpuCores.value, '1.25');
+  assert.equal(form.elements.memoryMiB.value, '1536');
+  form.elements.cpuCores.value = '';
+  form.elements.memoryMiB.value = '';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(2);
+  const cleared = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').at(-1).body;
+  assert.equal(cleared.cpuMillicores, undefined);
+  assert.equal(cleared.memoryMiB, undefined);
 
   app.evaluate(`state.selectedAsset='__new__';state.assetDetailKey='';renderAssets()`);
   form = app.document.querySelector('#assetForm');
+  form.elements.cpuCores.value = '0.001';
+  form.elements.memoryMiB.value = '128';
   chooseOption(form.elements.driver, 'native');
   assert.equal(form.querySelector('[data-sandbox-drivers="native"]').hidden, false);
   form.elements.id.value = 'native-new';
@@ -89,6 +113,8 @@ test('sandbox form saves its own Dockerfile, or only environment variables for n
   assert.deepEqual(native.environment, { JAVA_HOME: '/opt/jdk' });
   assert.equal(native.install, undefined);
   assert.equal(native.dockerfile, undefined);
+  assert.equal(native.cpuMillicores, undefined);
+  assert.equal(native.memoryMiB, undefined);
 });
 
 test('agent catalog search, presets, validation, persistence, clone, and delete update state', async (t) => {

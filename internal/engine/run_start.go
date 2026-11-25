@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -194,6 +195,12 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	}
 	if err != nil {
 		return domain.Run{}, err
+	}
+	if profile.HasResourceLimits() && executionContext.ExecutionRunnerID != "" {
+		runner, _ := e.repo.Runner(executionContext.ExecutionRunnerID)
+		if !runner.SupportsDockerSandboxLimits() {
+			return domain.Run{}, errors.New(domain.RunnerDockerSandboxLimitsUpgradeMessage)
+		}
 	}
 	sandbox, err := resolveSandbox(profile)
 	if err != nil {

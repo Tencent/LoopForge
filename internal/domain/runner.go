@@ -180,6 +180,16 @@ func (r Runner) SupportsGitPlainHTTP() bool {
 
 const RunnerGitPlainHTTPUpgradeMessage = "Git HTTP 仓库需要 Runner " + RunnerVersionGitPlainHTTP + " 或更新版本，请先升级执行机器"
 
+const RunnerVersionDockerSandboxLimits = "0.12.5"
+
+const RunnerDockerSandboxLimitsUpgradeMessage = "配置了 CPU 或内存上限的 Docker 沙箱需要 Runner " + RunnerVersionDockerSandboxLimits + " 或更新版本，请先升级执行机器"
+
+const RunnerDockerSandboxLimitsHeader = "X-AgentFlow-Docker-Sandbox-Limits"
+
+func (r Runner) SupportsDockerSandboxLimits() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionDockerSandboxLimits)
+}
+
 // FilterGitHTTPCredentials limits a credential snapshot to the transports the
 // runner supports. The caller's map may also be used by local execution.
 func (r Runner) FilterGitHTTPCredentials(credentials map[string]GitHTTPExecutionCredential) map[string]GitHTTPExecutionCredential {

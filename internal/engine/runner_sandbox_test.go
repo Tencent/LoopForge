@@ -44,7 +44,10 @@ func TestRunnerSandboxSpecUsesFrozenSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	frozen := &domain.RunnerSandboxSpec{
-		Profile:    domain.SandboxProfile{ID: "docker", Name: "original", Driver: "docker", DockerfileID: "image", Environment: map[string]string{"SNAPSHOT": "yes"}},
+		Profile: domain.SandboxProfile{
+			ID: "docker", Name: "original", Driver: "docker", DockerfileID: "image",
+			Environment: map[string]string{"SNAPSHOT": "yes"}, CPUMillicores: 750, MemoryMiB: 1536,
+		},
 		Dockerfile: &domain.DockerfileDefinition{ID: "image", Name: "original", Content: "FROM alpine:3.20\n"},
 	}
 	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
@@ -54,6 +57,9 @@ func TestRunnerSandboxSpecUsesFrozenSnapshot(t *testing.T) {
 	}
 	if spec == nil || spec.Profile.Driver != "docker" || spec.Profile.Environment["SNAPSHOT"] != "yes" || spec.Dockerfile == nil || spec.Dockerfile.Content != "FROM alpine:3.20\n" {
 		t.Fatalf("runner sandbox did not use frozen snapshot: %+v", spec)
+	}
+	if spec.Profile.CPUMillicores != 750 || spec.Profile.MemoryMiB != 1536 {
+		t.Fatalf("runner sandbox lost frozen limits: %+v", spec.Profile)
 	}
 }
 

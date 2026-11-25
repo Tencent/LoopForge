@@ -245,7 +245,7 @@ func TestDockerExecRecoversFromUnsafeCWD(t *testing.T) {
 workspace="${CVR_DOCKER_WORKSPACE}"
 marker="${CVR_DOCKER_MARKER}"
 if [ "${1-}" = inspect ]; then
-  printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$workspace"
+  printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}]}\n' "$workspace"
   exit 0
 fi
 if [ "${1-}" = exec ]; then
@@ -300,9 +300,9 @@ case "$*" in
       exited) echo "false|id-$(cat "$state/generation")|start-$(cat "$state/starts")"; exit 0 ;;
     esac
     echo 'Error: No such object: box' >&2; exit 1 ;;
-  "inspect --type container --format {{json .Mounts}} box")
+  "inspect --type container --format "*" box")
     [ -n "$(status)" ] || { echo 'Error: No such container: box' >&2; exit 1; }
-    printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
+    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}]}\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
   "start box") [ -n "$(status)" ] || exit 1; echo running > "$state/status"; count starts; exit 0 ;;
   "create --name box "*) echo exited > "$state/status"; count generation; exit 0 ;;
   "rm -f box") rm -f "$state/status"; exit 0 ;;
@@ -368,8 +368,8 @@ if [ "${1-}" = inspect ] && [ "${2-}" = -f ]; then
   exit 0
 fi
 case "$*" in
-  "inspect --type container --format {{json .Mounts}} box")
-    printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$workspace"; exit 0 ;;
+  "inspect --type container --format "*" box")
+    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}]}\n' "$workspace"; exit 0 ;;
   "inspect --type container "*) echo 'Error: No such container' >&2; exit 1 ;;
   "inspect --format {{.State.Running}}|{{.Id}}|{{.State.StartedAt}} "*) echo 'true|container-id|now'; exit 0 ;;
   "image inspect --format {{.Config.User}} "*) exit 0 ;;

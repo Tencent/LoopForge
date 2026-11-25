@@ -4699,6 +4699,8 @@ components:
             content: {type: string, description: Dockerfile text}
             files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
         readOnlyRootFS: {type: boolean, description: "driver=docker only"}
+        cpuMillicores: {type: integer, format: int64, minimum: 0, maximum: 9223372036854, description: "Docker CPU limit in millicores. 1000 is one CPU, 0 or omitted inherits machine settings, and the minimum configured limit is 10."}
+        memoryMiB: {type: integer, format: int64, minimum: 0, maximum: 8796093022207, description: "Docker memory limit in MiB. 0 or omitted inherits machine settings, and the minimum configured limit is 6."}
         environment: {type: object, additionalProperties: {type: string}, description: Variables added to every command; a native sandbox keeps the execution machine's PATH unless this sets one}
     APIToken:
       type: object
