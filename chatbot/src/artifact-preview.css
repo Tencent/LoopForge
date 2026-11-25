@@ -78,7 +78,8 @@
 }
 /* The preview/source switch is a secondary control: size it like the 30px
  * icon actions beside it instead of the 48px page-level segmented tabs. */
-.artifact-preview .artifact-preview-view-options.sliding-tabs[data-sliding-tabs] {
+.artifact-preview
+  .artifact-preview-view-options.sliding-tabs[data-sliding-tabs] {
   display: inline-flex !important;
   height: 30px !important;
   min-height: 30px !important;
@@ -167,7 +168,8 @@ html[data-theme="dark"] .artifact-preview .artifact-preview-actions a:hover {
     height: 36px;
     min-width: 36px;
   }
-  .artifact-preview .artifact-preview-view-options.sliding-tabs[data-sliding-tabs] {
+  .artifact-preview
+    .artifact-preview-view-options.sliding-tabs[data-sliding-tabs] {
     height: 36px !important;
     min-height: 36px !important;
   }
@@ -187,4 +189,39 @@ html[data-theme="dark"] .artifact-preview .artifact-preview-actions a:hover {
   .artifact-preview .artifact-preview-actions a {
     transition: none;
   }
+}
+.artifact-table-wrap {
+  overflow: auto;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.artifact-table-wrap table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.artifact-table-wrap :is(th, td) {
+  min-width: 4em;
+  max-width: 42ch;
+  border-bottom: 1px solid var(--line);
+  padding: 9px 10px;
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.artifact-table-wrap th {
+  background: var(--hui-canvas);
+  white-space: nowrap;
+}
+.artifact-table-wrap tbody tr:last-child td {
+  border-bottom: 0;
+}
+.artifact-table-wrap > p {
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
 }

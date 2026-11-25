@@ -370,6 +370,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/assistant/attachments/:id", asst.downloadAttachment)
 	g.GET("/api/assistant/references", asst.workbenchReferences)
 	g.GET("/api/runs/:id/conversation", asst.runConversation)
+	g.GET("/api/runs/:id/nodes/:nodeId/conversation", asst.runNodeConversation)
+	g.POST("/api/runs/:id/nodes/:nodeId/conversation", asst.runNodeConversation)
 	g.GET("/api/runs/:id/control", api.runs.runControl)
 	g.POST("/api/assistant/sessions/:id/edit", asst.editSession)
 	g.GET("/api/issues/:id/conversations", asst.issueConversations)

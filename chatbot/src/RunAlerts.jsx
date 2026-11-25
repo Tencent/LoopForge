@@ -28,14 +28,6 @@ function readDismissed() {
     return [];
   }
 }
-function openRunPage(runId) {
-  if (window.parent !== window)
-    window.parent.postMessage(
-      { type: "agentflow-chat-open-view", view: "runs", runId },
-      location.origin,
-    );
-  else location.href = `/#/runs/${encodeURIComponent(runId)}`;
-}
 const prefersReducedMotion = () =>
   !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
@@ -95,15 +87,27 @@ export default function RunAlerts({
   };
   const items = runs
     .flatMap((run) => runProblems(run).map((problem) => ({ ...problem, run })))
-    .filter((item) => !dismissed.includes(item.key));
+    .filter((item) => item.kind !== "failed" || !dismissed.includes(item.key));
   if (!items.length) return null;
   let entering = 0;
   for (const item of items)
-    if (!settled.current.has(item.key) && !slots.current.has(item.key))
+    if (item.kind === "failed" && !settled.current.has(item.key) && !slots.current.has(item.key))
       slots.current.set(item.key, entering++);
   return (
     <div className="run-alerts" aria-label="运行提醒">
       {items.map((item) => {
+        if (item.kind !== "failed") {
+          const actionable = !readOnly && !item.run.pauseRequested && item.run.reviewAccess?.canOperate !== false;
+          return (
+            <button type="button" className="run-review-link" key={item.key}
+              aria-label={actionable ? "去审核" : "查看节点"} onClick={() => onOpenNode(item.run, item.nodeId)}>
+              <HarnessIcon name={item.run.pauseRequested ? "pause" : "user-hold"} size={16} />
+              <span>{item.run.pauseRequested ? "已暂停" : "待审核"}</span>
+              <span className="run-review-link-node">{item.nodeName}</span>
+              <HarnessIcon name="chevron-right" size={14} />
+            </button>
+          );
+        }
         const isSettled = settled.current.has(item.key);
         const order = isSettled ? 0 : (slots.current.get(item.key) ?? 0);
         const isLeaving = leaving.has(item.key);
@@ -158,7 +162,6 @@ function RunAlert({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const { run } = item;
-  const failed = item.kind === "failed";
   const hint = credentialHint(item.reason);
   const ownerId = run.executionContext?.responsibleUserId;
   const mine = !ownerId || ownerId === user?.id;
@@ -180,13 +183,7 @@ function RunAlert({
   const showFix = !!(hint && guide);
   // At most one filled button per card: fixing the credential comes first.
   const retryPrimary = !showFix || fixedSince;
-  const tag = busy
-    ? "重试中"
-    : failed
-      ? "执行失败"
-      : item.gate === "approval"
-        ? "人工门禁"
-        : "待确认";
+  const tag = busy ? "重试中" : "执行失败";
   async function retry() {
     setBusy(true);
     setError("");
@@ -206,7 +203,7 @@ function RunAlert({
     <section
       className={[
         "run-alert",
-        `run-alert-${failed ? "failed" : "waiting"}`,
+        "run-alert-failed",
         busy ? "is-busy" : "",
         settled ? "is-settled" : "",
       ]
@@ -303,7 +300,7 @@ function RunAlert({
           </div>
         ) : null}
         <div className="run-alert-actions">
-          {failed && !readOnly ? (
+          {!readOnly && run.reviewAccess?.canOperate !== false ? (
             <button
               type="button"
               className={`run-alert-btn${retryPrimary ? " primary" : ""}${busy ? " is-spinning" : ""}`}
@@ -312,16 +309,6 @@ function RunAlert({
             >
               <HarnessIcon name="refresh" size={14} aria-hidden="true" />
               {busy ? "正在重试…" : "重试节点"}
-            </button>
-          ) : null}
-          {!failed ? (
-            <button
-              type="button"
-              className={`run-alert-btn${readOnly ? "" : " primary"}`}
-              onClick={() => openRunPage(run.id)}
-            >
-              <HarnessIcon name="arrow-right" size={14} aria-hidden="true" />
-              去确认
             </button>
           ) : null}
           <button

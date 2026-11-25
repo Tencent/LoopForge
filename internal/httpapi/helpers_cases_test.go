@@ -338,6 +338,18 @@ func TestRunAndTaskPureBranches(t *testing.T) {
 			t.Errorf("extension(%q)=%q", media, got)
 		}
 	}
+	for _, tt := range []struct {
+		artifact domain.Artifact
+		want     string
+	}{
+		{domain.Artifact{Name: "checklist.csv", MediaType: "text/csv"}, "checklist.csv"},
+		{domain.Artifact{Name: "流程", Path: "out/flow.mmd"}, "流程.mmd"},
+		{domain.Artifact{Name: "report", MediaType: "text/markdown"}, "report.md"},
+	} {
+		if got := runArtifactFilename(tt.artifact); got != tt.want {
+			t.Errorf("artifact filename = %q, want %q", got, tt.want)
+		}
+	}
 	run := domain.Run{
 		ID: "r", Input: strings.Repeat("i", 700), Status: "succeeded",
 		Artifacts: []domain.Artifact{{Name: "a", Content: "secret"}},

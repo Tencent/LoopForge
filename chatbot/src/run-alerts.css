@@ -9,6 +9,32 @@
   margin: 4px 0 16px;
 }
 
+.run-review-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  max-width: 100%;
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 5px 9px;
+  color: var(--hui-warn);
+  font-size: 12px;
+  white-space: nowrap;
+  text-align: left;
+}
+.run-review-link:hover {
+  background: var(--hui-surface-2, var(--subtle));
+}
+.run-review-link svg {
+  flex: none;
+}
+.run-review-link-node {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+
 /* The shell collapses on dismiss so the cards below glide up. */
 .run-alert-shell {
   display: grid;
@@ -62,9 +88,6 @@
 .run-alert:hover {
   border-color: var(--hui-border-strong);
 }
-.run-alert-waiting {
-  --ra-tone: var(--hui-warn);
-}
 .run-alert.is-busy {
   --ra-tone: var(--hui-info);
 }
@@ -109,9 +132,6 @@
   border-radius: 50%;
   background: var(--ra-tone);
   opacity: 0;
-}
-.run-alert-waiting .run-alert-lamp::after {
-  animation: raHalo 1.8s var(--hui-ease-flow) infinite;
 }
 .run-alert-failed .run-alert-lamp::after {
   animation: raHalo 1.2s var(--hui-ease-flow) 2;

@@ -2,8 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
 import { api } from "./api";
 import { ArtifactPreview, RichContent } from "./RichContent";
+import ArtifactFileRow from "./ArtifactFileRow";
 import { DraftCard } from "./SidePanel";
 import SopRunPanel, { runStatus } from "./SopRunPanel";
+import { openRunPage } from "./sop-review.js";
 import ChangesPanel from "./ChangesPanel";
 import AgentBrowser from "./AgentBrowser";
 import WorkspaceIDE from "./WorkspaceIDE";
@@ -14,14 +16,7 @@ import { definitionTarget, actionName } from "./platform.js";
 import { useArtifactPanelLayout } from "./useArtifactPanelLayout";
 import "./artifact-panel.css";
 
-const FileText = (props) => <HarnessIcon name="doc" {...props} />;
-const FileImage = (props) => <HarnessIcon name="image" {...props} />;
-const FileCode = (props) => <HarnessIcon name="stage-ide" {...props} />;
-const Presentation = (props) => <HarnessIcon name="monitor" {...props} />;
-const Globe = (props) => <HarnessIcon name="globe" {...props} />;
 const GitBranch = (props) => <HarnessIcon name="workflow" {...props} />;
-const MergeRequest = (props) => <HarnessIcon name="branch" {...props} />;
-const UserRound = (props) => <HarnessIcon name="user" {...props} />;
 const ChevronLeft = (props) => <HarnessIcon name="chevron-left" {...props} />;
 const ChevronRight = (props) => <HarnessIcon name="chevron-right" {...props} />;
 const X = (props) => <HarnessIcon name="close" {...props} />;
@@ -29,20 +24,6 @@ const ExternalLink = (props) => (
   <HarnessIcon name="preview-expand" {...props} />
 );
 
-export function artifactIcon(a) {
-  if (a.mimeType?.startsWith("image/")) return FileImage;
-  return (
-    {
-      html: Globe,
-      slides: Presentation,
-      ppt: Presentation,
-      sop: GitBranch,
-      "merge-request": MergeRequest,
-      role: UserRound,
-      code: FileCode,
-    }[a.kind] || FileText
-  );
-}
 function DefinitionPreview({ artifact }) {
   const [data, setData] = useState(null),
     [error, setError] = useState("");
@@ -188,16 +169,18 @@ export default function ArtifactPanel({
   onClose,
   open = true,
   view = "artifacts",
+  filesOnly = false,
   onViewChange = () => {},
   workspaceChanges = null,
   workspaceRunId = "",
   browserRequest = null,
   onBrowserRequestHandled = () => {},
   onAddElement = null,
+  onRunChanged,
 }) {
   const root = useRef(null);
   const searchInput = useRef(null);
-  const [nodeId, setNodeId] = useState(selected?.nodeId || null);
+  const [nodeId, setNodeId] = useState(selected?.kind === "run" ? selected.nodeId || null : null);
   const [search, setSearch] = useState("");
   const browsing = view === "browser";
   const coding = view === "ide";
@@ -258,8 +241,8 @@ export default function ArtifactPanel({
     open,
   );
   useEffect(
-    () => setNodeId(selected?.nodeId || null),
-    [selected?.id, selected?.nodeId],
+    () => setNodeId(selected?.kind === "run" ? selected.nodeId || null : null),
+    [selected?.id, selected?.kind, selected?.nodeId],
   );
   useEffect(() => setSearch(""), [chat.session?.id]);
   const selectedRun =
@@ -360,50 +343,15 @@ export default function ArtifactPanel({
     visibleMergeRequests.length +
     visibleRuns.length +
     visibleSubagents.length;
-  const row = (artifact) => {
-    const Icon = artifactIcon(artifact);
-    const target = definitionTarget(artifact, projectId);
-    // External deliverables (a submitted pull request) live on the code host,
-    // so the row opens them in a new tab instead of opening a local preview.
-    const href = target?.href || (artifact.external ? artifact.url : "");
-    const Row = href ? "a" : "button";
-    const title = target
-      ? `${artifact.name} · ${target.label}`
-      : artifact.external
-        ? `${artifact.name} · 在代码仓库打开`
-        : artifact.name;
-    return (
-      <Row
-        className={`artifact-row artifact-file-row ${selected?.id === artifact.id ? "is-selected" : ""}`}
-        key={artifact.id}
-        title={title}
-        aria-current={selected?.id === artifact.id ? "true" : undefined}
-        {...(href
-          ? { href, target: "_blank", rel: "noopener noreferrer" }
-          : { type: "button", onClick: () => setSelected(artifact) })}
-      >
-        <span className="artifact-file-icon">
-          <Icon size={16} />
-        </span>
-        <span className="artifact-file-copy">
-          <strong>{artifact.name}</strong>
-          <small>
-            {target
-              ? `${artifact.kind === "sop" ? "SOP" : "角色"} · ${artifact.asset?.status === "published" ? "已发布" : "已保存"}`
-              : artifact.source}
-            {artifact.size
-              ? ` · ${artifact.size < 1024 ? `${artifact.size} B` : `${Math.ceil(artifact.size / 1024)} KB`}`
-              : ""}
-          </small>
-        </span>
-        {href ? (
-          <ExternalLink className="artifact-row-action" size={13} />
-        ) : (
-          <ChevronRight className="artifact-row-action" size={13} />
-        )}
-      </Row>
-    );
-  };
+  const row = (artifact) => (
+    <ArtifactFileRow
+      key={artifact.id}
+      artifact={artifact}
+      projectId={projectId}
+      selected={selected?.id === artifact.id}
+      onSelect={setSelected}
+    />
+  );
   return (
     <>
       {!layout.compact ? (
@@ -452,55 +400,59 @@ export default function ArtifactPanel({
               <span>产物</span>
               <small>{count}</small>
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "changes"}
-              className={view === "changes" ? "is-active" : ""}
-              onClick={() => onViewChange("changes")}
-              disabled={!workspaceRunId}
-              title={
-                workspaceRunId
-                  ? "查看本次会话写入工作区的改动"
-                  : "本次会话还没有工作区"
-              }
-            >
-              <HarnessIcon name="edit" size={14} />
-              <span>改动</span>
-              <small>{workspaceChanges?.files?.length || 0}</small>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={browsing}
-              className={browsing ? "is-active" : ""}
-              onClick={() => onViewChange("browser")}
-              disabled={!workspaceRunId}
-              title={
-                workspaceRunId
-                  ? "实时查看并操作 Agent 正在用的浏览器"
-                  : "本次会话还没有工作区"
-              }
-            >
-              <HarnessIcon name="stage-browser" size={14} />
-              <span>浏览器</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={coding}
-              className={coding ? "is-active" : ""}
-              onClick={() => onViewChange("ide")}
-              disabled={!workspaceRunId}
-              title={
-                workspaceRunId
-                  ? "在 VS Code 里浏览、编辑本次会话的工作区"
-                  : "本次会话还没有工作区"
-              }
-            >
-              <HarnessIcon name="stage-ide" size={14} />
-              <span>IDE</span>
-            </button>
+            {!filesOnly ? (
+              <>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={view === "changes"}
+                  className={view === "changes" ? "is-active" : ""}
+                  onClick={() => onViewChange("changes")}
+                  disabled={!workspaceRunId}
+                  title={
+                    workspaceRunId
+                      ? "查看本次会话写入工作区的改动"
+                      : "本次会话还没有工作区"
+                  }
+                >
+                  <HarnessIcon name="edit" size={14} />
+                  <span>改动</span>
+                  <small>{workspaceChanges?.files?.length || 0}</small>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={browsing}
+                  className={browsing ? "is-active" : ""}
+                  onClick={() => onViewChange("browser")}
+                  disabled={!workspaceRunId}
+                  title={
+                    workspaceRunId
+                      ? "实时查看并操作 Agent 正在用的浏览器"
+                      : "本次会话还没有工作区"
+                  }
+                >
+                  <HarnessIcon name="stage-browser" size={14} />
+                  <span>浏览器</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={coding}
+                  className={coding ? "is-active" : ""}
+                  onClick={() => onViewChange("ide")}
+                  disabled={!workspaceRunId}
+                  title={
+                    workspaceRunId
+                      ? "在 VS Code 里浏览、编辑本次会话的工作区"
+                      : "本次会话还没有工作区"
+                  }
+                >
+                  <HarnessIcon name="stage-ide" size={14} />
+                  <span>IDE</span>
+                </button>
+              </>
+            ) : null}
           </div>
           <div className="artifact-panel-actions">
             {layout.compact ? (
@@ -644,6 +596,7 @@ export default function ArtifactPanel({
               embedded
               selectedNodeId={nodeId}
               onSelectNode={setNodeId}
+              onChanged={onRunChanged}
               onClose={() => setSelected(null)}
             />
           ) : selectedAgent ? (
@@ -709,10 +662,10 @@ export default function ArtifactPanel({
                 <section className="artifact-section">
                   <h3>SOP 运行</h3>
                   {visibleRuns.map((run) => (
+                    <div className="sop-artifact-run" key={run.id}>
                     <button
                       type="button"
                       className="artifact-row artifact-run-row"
-                      key={run.id}
                       onClick={() =>
                         setSelected({
                           kind: "run",
@@ -744,6 +697,13 @@ export default function ArtifactPanel({
                       </span>
                       <ChevronRight className="artifact-row-action" size={13} />
                     </button>
+                    <IconButton className="sop-artifact-record"
+                      label={`查看运行记录：${run.workflowSnapshot?.name || run.id}`}
+                      onClick={() => openRunPage(run.id)}
+                    >
+                      <HarnessIcon name="runs" size={16} />
+                    </IconButton>
+                    </div>
                   ))}
                 </section>
               ) : null}

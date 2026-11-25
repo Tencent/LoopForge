@@ -60,11 +60,38 @@ func (r *AssistantRepo) EnsureRunAssistantSession(runID, projectID, title string
 		item.ExecutionTarget = &target
 	}
 	deriveAssistantParticipants(&item, item.Messages)
-	row := assistantSessionRow{ID: id, UserID: userID, ProjectID: projectID, Title: title, Source: item.Source, TaskID: item.TaskID, Payload: mustJSON(item), Created: &now, Updated: &now}
+	return r.createSharedAssistantSession(item)
+}
+
+func RunNodeAssistantSessionID(runID string, node domain.AssistantRunNodeReview) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d", runID, node.NodeID, node.Attempt, node.ReworkCount)))
+	return fmt.Sprintf("sop-branch-%x", sum[:20])
+}
+
+func (r *AssistantRepo) EnsureRunNodeAssistantSession(root domain.AssistantSession, node domain.AssistantRunNodeReview, title string, userID int64, messages []domain.AssistantMessage) (domain.AssistantSession, error) {
+	id := RunNodeAssistantSessionID(root.RunID, node)
+	if item, ok := r.SharedAssistantSession(id); ok {
+		return item, nil
+	}
+	now := time.Now().UTC()
+	target := root.Execution()
+	return r.createSharedAssistantSession(domain.AssistantSession{
+		ID: id, RunID: root.RunID, ProjectID: root.ProjectID, IssueID: root.IssueID, UserID: userID,
+		Title: title, TitleGenerated: true, Shared: true, Source: domain.AssistantSourceSOP,
+		ParentSessionID: root.ID, RootSessionID: root.ID, RunNodeReview: &node,
+		ExecutionTarget: &target, Messages: messages, CreatedAt: now, UpdatedAt: now,
+	})
+}
+
+func (r *AssistantRepo) createSharedAssistantSession(item domain.AssistantSession) (domain.AssistantSession, error) {
+	row := assistantSessionRow{
+		ID: item.ID, UserID: item.UserID, ProjectID: item.ProjectID, Title: item.Title,
+		Source: item.Source, TaskID: item.TaskID, Payload: mustJSON(item), Created: &item.CreatedAt, Updated: &item.UpdatedAt,
+	}
 	if err := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return item, err
 	}
-	saved, ok := r.SharedAssistantSession(id)
+	saved, ok := r.SharedAssistantSession(item.ID)
 	if !ok {
 		return item, fmt.Errorf("shared session unavailable")
 	}

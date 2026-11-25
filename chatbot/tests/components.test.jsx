@@ -237,6 +237,16 @@ describe("content and panels", () => {
     globalThis.fetch = originalFetch;
   });
 
+  test("keeps quoted fields and omits trailing blank lines in a CSV preview", () => {
+    render(<ArtifactPreview artifact={{
+      id: "checks", name: "checks.csv", mimeType: "text/csv",
+      content: '检查项,结果\r\n回归,"通过, 42 项"\r\n\r\n',
+    }} />);
+    expect(screen.getByRole("table", { name: "checks.csv" })).toBeVisible();
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    expect(screen.getByRole("cell", { name: "通过, 42 项" })).toBeVisible();
+  });
+
   test("exercises common UI primitives", async () => {
     const user = userEvent.setup();
     const close = vi.fn();
@@ -711,6 +721,28 @@ describe("content and panels", () => {
     expect(screen.getByText("返回节点产物")).toBeInTheDocument();
   });
 
+  test("shows the node composer under a finished script result", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url) => {
+      const path = String(url);
+      if (path.includes("/conversation?")) return new Response(null, { status: 204 });
+      const list = /^\/api\/(projects|users|sandboxes)(\?|$)/.test(path);
+      return new Response(list ? "[]" : "{}", { headers: { "Content-Type": "application/json" } });
+    });
+    try {
+      render(<SopRunPanel runs={[{
+        ...run, reviewAccess: { canDiscuss: true },
+        workflowSnapshot: { ...run.workflowSnapshot, nodes: [{ id: "n1", name: "收集证据", type: "script" }] },
+        nodes: { n1: { nodeId: "n1", status: "succeeded", output: "已收集检查证据" } },
+        artifacts: [],
+      }]} onClose={vi.fn()} />);
+      await userEvent.setup().click(screen.getByText("收集证据"));
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "询问此节点" })).toBeEnabled());
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("switches among runs and renders mixed node statuses", async () => {
     const user = userEvent.setup();
     const mixed = {
@@ -739,7 +771,7 @@ describe("content and panels", () => {
     await user.click(screen.getByText("运行节点"));
     expect(await screen.findByText("执行混合流程")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: /产物/ }));
-    expect(screen.getByText("这个节点尚未生成产物。")).toBeInTheDocument();
+    expect(screen.getByText("暂无产物")).toBeInTheDocument();
   });
 
   test("shows and operates a failed run alert", async () => {
@@ -796,20 +828,24 @@ describe("content and panels", () => {
     );
   });
 
-  test("renders a waiting approval alert", () => {
+  test("opens the waiting approval in the chat sidebar", async () => {
+    const onOpenNode = vi.fn();
+    const waiting = { ...run, status: "waiting", nodes: { n1: { nodeId: "n1", status: "waiting_approval" } } };
     render(
       <RunAlerts
-        runs={[{ ...run, status: "waiting", nodes: { n1: { nodeId: "n1", status: "waiting_approval" } } }]}
+        runs={[waiting]}
         user={{ id: 1 }}
         users={[]}
-        readOnly
-        onOpenNode={vi.fn()}
+        readOnly={false}
+        onOpenNode={onOpenNode}
         onAsk={vi.fn()}
         onChanged={vi.fn()}
       />,
     );
-    expect(screen.getAllByText(/等待人工确认/).length).toBeGreaterThan(0);
-    expect(screen.getByText("去确认")).toBeInTheDocument();
+    expect(screen.getByText("待审核")).toBeInTheDocument();
+    expect(screen.queryByText("人工门禁")).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "去审核" }));
+    expect(onOpenNode).toHaveBeenCalledWith(waiting, "n1");
   });
 
   test("lists a submitted merge request in the artifact panel and opens it on 工蜂", () => {

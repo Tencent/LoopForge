@@ -8,10 +8,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -47,6 +49,117 @@ func sharedWorkbenchFixture(t *testing.T) (*assistantHandlers, domain.User, doma
 	var session domain.AssistantSession
 	json.Unmarshal(w.Body.Bytes(), &session)
 	return h, a, b, out, session
+}
+
+func TestRunNodeDiscussionReusesAttemptContextWithProjectPermissions(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	h, owner, peer, outsider, _ := sharedWorkbenchFixture(t)
+	if err := h.repo.PutUser(domain.User{LoginName: "review-viewer"}); err != nil {
+		t.Fatal(err)
+	}
+	viewer, _ := h.repo.UserByLoginName("review-viewer")
+	project, _ := h.repo.Project("workbench")
+	project.Members = append(project.Members, domain.ProjectMember{UserID: viewer.ID, Role: "viewer"})
+	if err := h.repo.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ID: "run-node-review", WorkflowID: "review-sop", Status: "waiting",
+		Input: "检查假日发布", CreatedAt: time.Now().UTC(),
+		ExecutionContext: domain.TelemetryContext{ProjectID: project.ID},
+		WorkflowSnapshot: domain.WorkflowDefinition{
+			ID: "review-sop", Name: "发布检查",
+			Nodes: []domain.WorkflowNode{{ID: "prepare", Name: "准备"}, {ID: "check", Name: "检查"}, {ID: "other", Name: "并行步骤"}},
+			Edges: []domain.WorkflowEdge{{Source: "prepare", Target: "check"}},
+		},
+		Nodes: map[string]*domain.NodeRun{
+			"prepare": {NodeID: "prepare", Status: "succeeded", Attempt: 1, Output: "上游交接内容"},
+			"check":   {NodeID: "check", Status: "succeeded", Attempt: 2, ReworkCount: 1, Output: "第二次检查结果"},
+			"other":   {NodeID: "other", Status: "succeeded", Attempt: 1, Output: "无关步骤"},
+		},
+	}
+	if err := h.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	open := func(user domain.User, body string, status int) string {
+		t.Helper()
+		c, w := workbenchContext(user, "POST", "/", bytes.NewBufferString(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Params = gin.Params{{Key: "id", Value: run.ID}, {Key: "nodeId", Value: "check"}}
+		h.runNodeConversation(c)
+		if w.Code != status {
+			t.Fatalf("open as %s: got %d, want %d: %s", user.LoginName, w.Code, status, w.Body)
+		}
+		if status != http.StatusOK {
+			return ""
+		}
+		var response struct{ ID string }
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || response.ID == "" {
+			t.Fatalf("missing session: %s (%v)", w.Body, err)
+		}
+		return response.ID
+	}
+	expected := `{"status":"succeeded","attempt":2,"reworkCount":1}`
+	lookup := func(user domain.User, status int, wantID string) {
+		t.Helper()
+		c, w := workbenchContext(user, "GET", "/?status=succeeded&attempt=2&reworkCount=1", bytes.NewBuffer(nil))
+		c.Params = gin.Params{{Key: "id", Value: run.ID}, {Key: "nodeId", Value: "check"}}
+		h.runNodeConversation(c)
+		c.Writer.WriteHeaderNow()
+		if w.Code != status {
+			t.Fatalf("lookup as %s: got %d, want %d: %s", user.LoginName, w.Code, status, w.Body)
+		}
+		if wantID != "" && !strings.Contains(w.Body.String(), wantID) {
+			t.Fatalf("lookup did not return the existing session: %s", w.Body)
+		}
+	}
+	lookup(owner, http.StatusNoContent, "")
+	lookup(viewer, http.StatusForbidden, "")
+	open(outsider, expected, http.StatusForbidden)
+	open(viewer, expected, http.StatusForbidden)
+	open(owner, `{"status":"succeeded","attempt":1,"reworkCount":0}`, http.StatusConflict)
+	id := open(owner, expected, http.StatusOK)
+	lookup(peer, http.StatusOK, id)
+	if actual := open(peer, expected, http.StatusOK); actual != id {
+		t.Fatalf("the same attempt opened another discussion: %s", actual)
+	}
+	session, ok := h.repo.SharedAssistantSession(id)
+	if !ok || session.RunNodeReview == nil || session.RunNodeReview.Attempt != 2 ||
+		len(session.Messages) != 2 || !strings.Contains(session.Messages[0].Content, "上游交接内容") ||
+		strings.Contains(session.Messages[0].Content, "无关步骤") || !strings.Contains(session.Messages[1].Content, "第二次检查结果") {
+		t.Fatalf("wrong attempt context: %#v", session)
+	}
+	listContext, listResponse := workbenchContext(peer, "GET", "/", bytes.NewBuffer(nil))
+	h.listSessions(listContext)
+	if listResponse.Code != http.StatusOK || strings.Contains(listResponse.Body.String(), id) {
+		t.Fatalf("node conversation should only appear inside the run: %d: %s", listResponse.Code, listResponse.Body)
+	}
+	h.generate = func(_ context.Context, prompt string, actor domain.User) (string, error) {
+		if actor.ID != peer.ID || !strings.Contains(prompt, "第二次检查结果") {
+			t.Error("continuation lost its actor or node output")
+		}
+		return "检查已通过，可以进入下一步。", nil
+	}
+	messages := append(session.Messages, domain.AssistantMessage{Role: "user", Content: "为什么通过？"})
+	body, _ := json.Marshal(assistantRequest{ProjectID: project.ID, RunID: run.ID, SessionID: id, Messages: messages})
+	c, w := workbenchContext(peer, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
+	h.chat(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("continue node discussion: %d: %s", w.Code, w.Body)
+	}
+	saved, _ := h.repo.SharedAssistantSession(id)
+	if saved.RunNodeReview == nil || len(saved.Messages) != 4 || saved.Messages[2].AuthorID != peer.ID {
+		t.Fatalf("continued discussion lost its metadata or author: %#v", saved)
+	}
+	run.Nodes["check"].Attempt++
+	if err := h.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	open(owner, expected, http.StatusConflict)
+	lookup(owner, http.StatusConflict, "")
+	if latest := open(owner, `{"status":"succeeded","attempt":3,"reworkCount":1}`, http.StatusOK); latest == id {
+		t.Fatal("a different attempt reused earlier discussion history")
+	}
 }
 func TestSharedRunConversationVisibilityAndAttribution(t *testing.T) {
 	h, a, b, out, s := sharedWorkbenchFixture(t)

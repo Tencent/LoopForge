@@ -356,6 +356,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		v.ParentSessionID = old.ParentSessionID
 		v.RootSessionID = old.RootSessionID
 		v.ForkMessageIndex = old.ForkMessageIndex
+		v.RunNodeReview = old.RunNodeReview
 		if old.ParentSessionID != "" && !v.TitleEdited {
 			v.Title = old.Title
 		}
@@ -392,6 +393,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		}
 	} else {
 		v.OwnWorkspaceRunIDs = nil
+		v.RunNodeReview = nil
 		if v.CreatedAt.IsZero() {
 			v.CreatedAt = now
 		}

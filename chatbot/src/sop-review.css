@@ -1,0 +1,352 @@
+.sop-artifact-run {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sop-artifact-run .artifact-run-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.sop-artifact-record {
+  flex: none;
+  color: var(--muted);
+}
+
+.sop-run-heading-actions,
+.sop-node-toolbar,
+.sop-decision-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sop-run-heading-actions {
+  justify-content: space-between;
+}
+
+.sop-run-heading > small {
+  display: block;
+  color: var(--muted);
+  margin: 12px 0 7px;
+}
+
+.sop-node-list .is-selected {
+  background: var(--subtle);
+}
+
+.sop-node-review-label {
+  color: var(--hui-warn);
+  font-size: 11px;
+  padding-right: 2px;
+}
+
+.sop-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.sop-action-button:hover:not(:disabled) {
+  background: var(--subtle);
+}
+
+.sop-action-button.primary {
+  background: var(--hui-accent);
+  border-color: var(--hui-accent);
+  color: var(--hui-on-accent);
+}
+
+.sop-action-button.primary:hover:not(:disabled) {
+  background: var(--hui-accent-hover, var(--hui-accent));
+}
+
+.sop-action-button:disabled {
+  opacity: 0.55;
+}
+
+.sop-node-toolbar {
+  justify-content: flex-end;
+  margin-block: 4px 10px;
+}
+
+.sop-review-decision {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  margin-block: 22px 14px;
+  padding-top: 16px;
+}
+
+.sop-decision-icon {
+  box-sizing: content-box;
+  padding: 5px;
+  border-radius: 8px;
+  background: var(--subtle);
+  color: var(--hui-warn);
+}
+
+.sop-decision-instruction {
+  margin: 3px 0 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.sop-inline-note,
+.sop-inline-error {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.sop-inline-error {
+  color: var(--hui-error);
+}
+
+.sop-feedback {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sop-feedback textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 9px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.sop-node-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sop-run-embedded.node-conversation-view:has(.sop-node-chat) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.sop-run-panel.node-conversation-view .sop-panel-scroll:has(.sop-node-chat) {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.sop-panel-scroll .sop-node-chat .message-column {
+  padding-inline: 0;
+}
+
+.sop-panel-scroll .sop-node-chat .composer-region {
+  padding-inline: 0;
+}
+
+.sop-findings {
+  margin-block: 12px;
+}
+
+.sop-findings summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sop-findings li {
+  margin-block: 8px;
+}
+
+.sop-review-page {
+  --sop-review-bar-height: 54px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.sop-review-load {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sop-review-workspace {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: clamp(144px, 16%, 176px) minmax(0, 1fr);
+}
+
+.sop-review-navigation {
+  min-width: 0;
+  overflow: auto;
+  padding: 0 10px 14px;
+  border-right: 1px solid var(--line);
+  background: var(--hui-canvas);
+}
+
+.sop-review-navigation h2 {
+  display: flex;
+  align-items: center;
+  min-height: var(--sop-review-bar-height);
+  margin: 0;
+  padding-inline: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sop-review-navigation .sop-node-list {
+  margin: 0;
+}
+
+.sop-review-navigation .sop-node-list button {
+  gap: 8px;
+  min-height: 48px;
+  padding: 7px 8px;
+}
+
+.sop-review-navigation .sop-node-list button.is-selected {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.sop-review-navigation .sop-node-list strong {
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.sop-review-navigation .sop-node-list small {
+  margin-top: 3px;
+}
+
+.sop-review-navigation .sop-node-list li:not(:last-child):before {
+  left: 17px;
+  top: calc(50% + 9px);
+  bottom: -12px;
+}
+
+.sop-review-navigation .sop-node-marker {
+  z-index: 1;
+  width: 19px;
+  height: 19px;
+  border: 0;
+  background: var(--hui-canvas);
+}
+
+.sop-review-navigation .is-selected .sop-node-marker {
+  background: var(--surface);
+}
+
+.sop-review-navigation .status-succeeded .sop-node-marker {
+  color: var(--hui-success);
+}
+
+.chat-shell.sop-review-node {
+  --navigation-header-height: var(--sop-review-bar-height);
+  min-width: 0;
+  min-height: 0;
+}
+
+.chat-shell.sidebar-hidden.sop-review-node > .conversation-header {
+  gap: 8px;
+  padding-inline: 20px 14px;
+}
+
+.sop-review-node-name {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.sop-review-node-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.sop-review-node-model {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.sop-review-node-header .sop-node-toolbar {
+  margin: 0;
+}
+
+.sop-review-node-header .sop-node-toolbar:empty {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .sop-review-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .sop-review-navigation {
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 8px;
+  }
+
+  .sop-review-navigation .sop-node-list {
+    display: flex;
+    gap: 5px;
+    overflow: auto;
+  }
+
+  .sop-review-navigation h2 {
+    display: none;
+  }
+
+  .sop-review-navigation .sop-node-list li {
+    flex: none;
+    max-width: 180px;
+  }
+
+  .sop-review-navigation .sop-node-list li::before {
+    display: none;
+  }
+}

@@ -116,6 +116,19 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
 
   const errors = watchErrors(page);
   await page.goto(`/#/runs/${encodeURIComponent(id)}`);
+  await expect(page.locator('[data-run-tab="review"]')).toHaveClass(/active/);
+  await expect(page.locator('#runReviewFrame')).toHaveAttribute('aria-label', 'SOP 会话审阅');
+  await expect(page.locator('#runReviewFrame')).not.toHaveAttribute('title', /./);
+  const review = page.frameLocator('#runReviewFrame');
+  await expect(review.getByRole('region', { name: '人工审核' })).toBeVisible();
+  const artifacts = review.getByRole('complementary', { name: '会话产物' });
+  const evidence = artifacts.getByRole('button', { name: /result\.md.*上游待审/ });
+  await evidence.click();
+  await expect(artifacts.getByRole('heading', { name: 'UI E2E' })).toBeVisible();
+  await expect(review.getByRole('textbox', { name: '询问此节点' })).toBeVisible();
+  await artifacts.getByRole('button', { name: '返回产物列表' }).click();
+  await expect(evidence).toBeVisible();
+  await page.locator('[data-run-tab="overview"]').click();
   const approve = page.locator('[data-approve="gate"]').first();
   const gate = page.locator('[data-run-node="gate"]');
   await gate.click();
@@ -140,10 +153,10 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   await expect(dialog).toBeHidden();
   await expect(preview).toBeFocused();
 
-  for (const tab of ['trace', 'logs', 'workspace', 'eval', 'overview']) {
+  for (const tab of ['trace', 'logs', 'workspace', 'eval', 'review', 'overview']) {
     await page.locator(`[data-run-tab="${tab}"]`).click();
     const pane = page.locator(`[data-run-pane="${tab}"]`);
-    // These five panes are required by this fixture. Preview is optional
+    // These panes are required by this fixture. Preview is optional
     // and deliberately not part of this list.
     await expect(pane).toBeVisible();
     await expect(page.locator('#runDetail [data-run-tab].active')).toHaveAttribute('data-run-tab', tab);

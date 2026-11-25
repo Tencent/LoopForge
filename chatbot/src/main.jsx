@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import SopDesigner from "./SopDesigner";
+import SopRunReview from "./SopRunReview";
 import { isDesignerSurface } from "./sop-designer.js";
 import "./styles.css";
 import "./home.css";
@@ -31,8 +32,9 @@ class Boundary extends React.Component {
     );
   }
 }
+const surface = new URLSearchParams(location.search).get("surface");
 createRoot(document.getElementById("root")).render(
   <Boundary>
-    {isDesignerSurface(location.search) ? <SopDesigner /> : <App />}
+    {surface === "run-review" ? <SopRunReview /> : isDesignerSurface(location.search) ? <SopDesigner /> : <App />}
   </Boundary>,
 );

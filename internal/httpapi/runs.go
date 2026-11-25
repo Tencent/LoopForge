@@ -3,7 +3,9 @@ package httpapi
 import (
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -185,7 +187,10 @@ func (h *runsHandlers) run(c *gin.Context) {
 				c.JSON(404, map[string]string{"error": "run not found"})
 				return
 			}
-			c.JSON(200, publicRun(v, false))
+			c.JSON(200, struct {
+				domain.Run
+				ReviewAccess runReviewAccess `json:"reviewAccess"`
+			}{publicRun(v, false), h.reviewAccess(c, v)})
 			return
 		}
 		if err := h.engine.DeleteRun(id); err != nil {
@@ -270,7 +275,8 @@ func (h *runsHandlers) run(c *gin.Context) {
 			return
 		}
 		c.Header("Content-Type", artifact.MediaType+"; charset=utf-8")
-		c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", artifact.Name+artifactExtension(artifact.MediaType)))
+		c.Writer.Header().Add("Content-Security-Policy", "sandbox")
+		c.Header("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": runArtifactFilename(artifact)}))
 		c.Header("ETag", `"`+artifact.SHA256+`"`)
 		_, _ = c.Writer.Write([]byte(artifact.Content))
 	case "/api/runs/:id/approve":
@@ -301,11 +307,9 @@ func (h *runsHandlers) run(c *gin.Context) {
 			respond(c, h.engine.RetryContext(c.Request.Context(), id, req.NodeID, req.Reason, req.Context, decisionExpectation(req.NodeID, req.Expected)...))
 		}
 	case "/api/runs/:id/decline-retry":
-		var req struct {
-			NodeID string `json:"nodeId"`
-		}
+		var req domain.HumanDecision
 		if decode(c, &req) {
-			respond(c, h.engine.DeclineRetry(id, req.NodeID))
+			respond(c, h.engine.DeclineRetry(id, req.NodeID, decisionExpectation(req.NodeID, req.Expected)...))
 		}
 	case "/api/runs/:id/cancel":
 		respond(c, h.engine.Cancel(id))
@@ -335,6 +339,18 @@ func (h *runsHandlers) run(c *gin.Context) {
 	default:
 		c.Status(http.StatusNotFound)
 	}
+}
+
+func runArtifactFilename(artifact domain.Artifact) string {
+	name := artifact.Name
+	if path.Ext(name) != "" {
+		return name
+	}
+	extension := path.Ext(artifact.Path)
+	if extension == "" {
+		extension = artifactExtension(artifact.MediaType)
+	}
+	return name + extension
 }
 
 func artifactExtension(mediaType string) string {

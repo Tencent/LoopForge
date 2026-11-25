@@ -84,6 +84,16 @@ func (h *assistantHandlers) runConversation(c *gin.Context) {
 		c.JSON(403, gin.H{"error": "无权访问项目"})
 		return
 	}
+	session, err := h.ensureRunConversation(r, user.ID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "读取共享会话失败"})
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(200, session)
+}
+
+func (h *assistantHandlers) ensureRunConversation(r domain.Run, userID int64) (domain.AssistantSession, error) {
 	title := r.WorkflowSnapshot.Name
 	if title == "" {
 		title = r.WorkflowID
@@ -92,14 +102,9 @@ func (h *assistantHandlers) runConversation(c *gin.Context) {
 	if target.Pool != domain.ExecutionModeRunner {
 		target.Pool = domain.ExecutionModeCloud
 	}
-	session, err := h.repo.EnsureRunAssistantSession(r.ID, project, title, user.ID, target)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "读取共享会话失败"})
-		return
-	}
-	c.Header("Cache-Control", "no-store")
+	session, err := h.repo.EnsureRunAssistantSession(r.ID, r.ExecutionContext.ProjectID, title, userID, target)
 	session.IssueID = r.ExecutionContext.IssueID
-	c.JSON(200, session)
+	return session, err
 }
 func sharedTranscriptPrefix(old []assistantMessage, next []assistantMessage) bool {
 	if len(next) < len(old) {

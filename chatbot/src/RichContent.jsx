@@ -539,12 +539,22 @@ export function Attachment({ attachment, sessionId, onOpen }) {
   );
 }
 export function ArtifactPreview({ artifact }) {
-  const [text, setText] = useState("");
-  const [error, setError] = useState("");
-  const [mode, setMode] = useState("preview");
+  const [loaded, setLoaded] = useState(null);
+  const [sourceView, setSourceView] = useState(false);
+  const { id, url, localDataUrl } = artifact || {};
+  const current =
+    loaded?.id === id &&
+    loaded?.url === url &&
+    loaded?.localDataUrl === localDataUrl
+      ? loaded
+      : null;
+  const error = current?.error;
+  const mode = sourceView && current ? "source" : "preview";
   const readable =
     !artifact?.mimeType ||
-    /^(text\/|application\/(json|javascript|xml))/.test(artifact.mimeType);
+    /^(text\/|application\/(json|javascript|xml)|image\/svg\+xml)/i.test(
+      artifact.mimeType,
+    );
   // An attached HTML file (e.g. a demo from the workspace) previews in the same
   // script-only sandbox as an html code block.
   const kind =
@@ -553,55 +563,61 @@ export function ArtifactPreview({ artifact }) {
       ? "html"
       : artifact?.kind;
   useEffect(() => {
-    let current = true;
-    setText("");
-    setError("");
-    setMode("preview");
+    let active = true;
+    setSourceView(false);
+    const finish = (text, error) => {
+      if (active) setLoaded({ id, url, localDataUrl, text, error });
+    };
     if (
       readable &&
-      artifact?.id?.startsWith("local-attachment-") &&
-      /^data:[^,]*;base64,/.test(artifact.localDataUrl || "")
+      id?.startsWith("local-attachment-") &&
+      /^data:[^,]*;base64,/.test(localDataUrl || "")
     ) {
       try {
-        const encoded = artifact.localDataUrl.slice(
-          artifact.localDataUrl.indexOf(",") + 1,
-        );
+        const encoded = localDataUrl.slice(localDataUrl.indexOf(",") + 1);
         const bytes = Uint8Array.from(atob(encoded), (character) =>
           character.charCodeAt(0),
         );
-        setText(new TextDecoder().decode(bytes));
+        finish(new TextDecoder().decode(bytes));
       } catch {
-        setError("文件读取失败");
+        finish("", "文件读取失败");
       }
-      return () => {
-        current = false;
-      };
-    }
-    if (artifact?.url && readable)
-      fetch(artifact.url)
+    } else if (url && readable) {
+      fetch(url)
         .then((r) => {
           if (!r.ok) throw Error("文件读取失败");
           return r.text();
         })
-        .then((value) => {
-          if (current) setText(value);
-        })
-        .catch((e) => {
-          if (current) setError(e.message);
-        });
+        .then((value) => finish(value))
+        .catch((e) => finish("", e.message));
+    } else {
+      // Inline artifacts already carry their body in the message.
+      finish("");
+    }
     return () => {
-      current = false;
+      active = false;
     };
-  }, [artifact?.id, artifact?.url, artifact?.localDataUrl, readable]);
+  }, [id, url, localDataUrl, readable]);
   if (!artifact) return null;
-  const source = artifact.url ? text : (artifact.content ?? text);
+  const source =
+    (url ? current?.text : (artifact.content ?? current?.text)) ?? "";
   const hasSource = typeof source === "string" && source.length > 0 && !error;
   const isMarkdown =
     artifact.mimeType?.startsWith("text/markdown") ||
-    ["markdown", "md"].includes(artifact.language?.toLowerCase());
+    ["markdown", "md"].includes(artifact.language?.toLowerCase()) ||
+    /\.(md|markdown)$/i.test(artifact.name || "");
+  const isDelimited =
+    /\.(csv|tsv)$/i.test(artifact.name || "") ||
+    /^(text\/csv|text\/tab-separated-values)/i.test(artifact.mimeType || "");
+  const isJSON =
+    /\.json$/i.test(artifact.name || "") ||
+    /^application\/json/i.test(artifact.mimeType || "");
   const canPreview =
     hasSource &&
-    (["svg", "mermaid", "html", "slides", "ppt"].includes(kind) || isMarkdown);
+    (["svg", "mermaid", "html", "slides", "ppt"].includes(kind) ||
+      isMarkdown ||
+      isDelimited ||
+      isJSON);
   return (
     <article className="artifact-preview">
       <header className="artifact-preview-header">
@@ -627,7 +643,7 @@ export function ArtifactPreview({ artifact }) {
                 role="tab"
                 className={mode === "preview" ? "is-selected" : ""}
                 aria-selected={mode === "preview"}
-                onClick={() => setMode("preview")}
+                onClick={() => setSourceView(false)}
               >
                 预览
               </button>
@@ -636,7 +652,7 @@ export function ArtifactPreview({ artifact }) {
                 role="tab"
                 className={mode === "source" ? "is-selected" : ""}
                 aria-selected={mode === "source"}
-                onClick={() => setMode("source")}
+                onClick={() => setSourceView(true)}
               >
                 源码
               </button>
@@ -689,16 +705,22 @@ export function ArtifactPreview({ artifact }) {
       <div className="artifact-preview-stage">
         {error ? (
           <p className="error">{error}</p>
+        ) : mode === "source" && canPreview ? (
+          <pre className="artifact-source">
+            <code>{source}</code>
+          </pre>
         ) : artifact.mimeType?.startsWith("image/") && artifact.url ? (
           <ZoomableImage
             className="artifact-image"
             src={artifact.url}
             alt={artifact.name}
           />
-        ) : mode === "source" && canPreview ? (
-          <pre className="artifact-source">
-            <code>{source}</code>
-          </pre>
+        ) : (url || localDataUrl) && readable && !current ? (
+          <p className="muted" role="status">
+            正在读取文件…
+          </p>
+        ) : !hasSource && readable ? (
+          <p className="muted">文件为空</p>
         ) : artifact.kind === "svg" ? (
           <div
             className="svg-preview"
@@ -726,10 +748,111 @@ export function ArtifactPreview({ artifact }) {
           <p className="muted">此类型文件可通过右上角下载查看。</p>
         ) : isMarkdown ? (
           <RichContent message={source} />
+        ) : hasSource && isDelimited ? (
+          <DelimitedArtifact
+            source={source}
+            label={artifact.name}
+            separator={
+              /\.tsv$/i.test(artifact.name || "") ||
+              artifact.mimeType?.startsWith("text/tab-separated-values")
+                ? "\t"
+                : ","
+            }
+          />
+        ) : hasSource && isJSON ? (
+          <pre className="artifact-source">
+            <code>{formattedArtifactJSON(source)}</code>
+          </pre>
         ) : (
-          <pre className="artifact-source">{source || "正在加载…"}</pre>
+          <pre className="artifact-source">{source}</pre>
         )}
       </div>
     </article>
+  );
+}
+
+function formattedArtifactJSON(source) {
+  try {
+    return JSON.stringify(JSON.parse(source), null, 2);
+  } catch {
+    return source;
+  }
+}
+
+function DelimitedArtifact({ source, label, separator }) {
+  const rowLimit = 101;
+  const columnLimit = 30;
+  const rows = [];
+  let row = [],
+    field = "",
+    quoted = false,
+    truncated = false;
+  const pushField = () => {
+    if (row.length < columnLimit) row.push(field);
+    else truncated = true;
+    field = "";
+  };
+  let end = source.length;
+  while (end && (source[end - 1] === "\n" || source[end - 1] === "\r")) end--;
+  for (let i = source.charCodeAt(0) === 0xfeff ? 1 : 0; i < end; i++) {
+    const char = source[i];
+    if (char === '"') {
+      if (quoted && source[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (!quoted && char === separator) {
+      pushField();
+    } else if (!quoted && (char === "\n" || char === "\r")) {
+      pushField();
+      rows.push(row);
+      row = [];
+      if (char === "\r" && source[i + 1] === "\n") i++;
+      if (rows.length >= rowLimit) {
+        truncated ||= i + 1 < end;
+        break;
+      }
+    } else {
+      field += char;
+    }
+  }
+  if (row.length || field) {
+    pushField();
+    rows.push(row);
+  }
+  if (!rows.length) return <p className="muted">表格为空</p>;
+  const width = Math.max(...rows.map((cells) => cells.length));
+  const cells = (values) =>
+    Array.from({ length: width }, (_, index) => values[index] ?? "");
+  return (
+    <div className="artifact-table-wrap">
+      <table aria-label={label}>
+        <thead>
+          <tr>
+            {cells(rows[0]).map((name, index) => (
+              <th key={index} scope="col">
+                {name}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(1).map((values, index) => (
+            <tr key={index}>
+              {cells(values).map((value, column) => (
+                <td key={column}>{value}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {truncated ? (
+        <p className="muted">
+          预览最多显示 100 行、30 列，可下载查看完整数据。
+        </p>
+      ) : null}
+    </div>
   );
 }

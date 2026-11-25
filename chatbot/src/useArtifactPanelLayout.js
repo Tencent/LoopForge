@@ -5,6 +5,7 @@ const storageKey = "agentflow.artifactPanelWidth";
 const defaultWidth = 440;
 const sashWidth = 4;
 const snapDistance = 16;
+export const ARTIFACT_COMPACT_WIDTH = 800;
 
 function readWidth() {
   try {
@@ -53,7 +54,7 @@ export function useArtifactPanelLayout(root, onClose, nodeId = null, open = true
   const current = useRef(null);
   closeRef.current = onClose;
   openRef.current = open;
-  const compact = available > 0 && available < 800;
+  const compact = available > 0 && available < ARTIFACT_COMPACT_WIDTH;
   const maxWidth = available ? Math.max(0, Math.round(available - sashWidth)) : defaultWidth;
   const width = compact ? available : layout.covered ? maxWidth : Math.min(layout.preferred, maxWidth);
   current.current = { ...layout, width, compact, maxWidth };
@@ -223,7 +224,9 @@ export function useArtifactPanelLayout(root, onClose, nodeId = null, open = true
   useLayoutEffect(() => {
     if (!compact || !open) return;
     const frame = requestAnimationFrame(() => {
-      root.current?.querySelector('[aria-label="返回聊天"], button')?.focus({ preventScroll: true });
+      const panel = root.current;
+      const back = panel?.querySelector('[aria-label="返回聊天"]');
+      (back || panel?.querySelector("button"))?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
   }, [compact, open]);
