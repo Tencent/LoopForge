@@ -528,4 +528,7 @@ Object.assign(window.LF_I18N_EN, {
   "用小写英文概括改动，带上需求编号": "Summarize the change in lowercase English and include the issue number",
   "AI 根据任务和命名要求生成完整的分支名。": "AI uses the task and naming instructions to generate the full branch name.",
   "请输入自定义前缀，或选择无前缀": "Enter a custom prefix or choose No prefix",
+  "换个关键词或筛选条件，或到需求列表查看对应需求的执行结果。": "Try another keyword or filter, or open the requirement list to see its runs.",
+  "尚无运行": "No runs yet",
+  "到需求列表启动一条需求后，运行记录会出现在这里。": "Start a requirement from the requirement list and its runs will appear here.",
 });
