@@ -50,7 +50,10 @@ func TestEvolutionTrafficEndpointRejectsViewerAndForeignProject(t *testing.T) {
 	}
 	viewer, _ := env.store.UserByLoginName("traffic-viewer")
 	outsider, _ := env.store.UserByLoginName("traffic-outsider")
-	if err := env.store.PutProject(domain.Project{ID: "evo-p", Name: "进化测试", OwnerID: env.user.ID, Members: []domain.ProjectMember{{UserID: viewer.ID, Role: "viewer"}}}); err != nil {
+	project, _ := env.store.Project("evo-p")
+	project.OwnerID = env.user.ID
+	project.Members = []domain.ProjectMember{{UserID: viewer.ID, Role: "viewer"}}
+	if err := env.store.PutProject(project); err != nil {
 		t.Fatal(err)
 	}
 	p := env.seedPendingProposal(t, "traffic-permissions")

@@ -13,7 +13,7 @@ import (
 
 func evoReplayTestWorkflow() domain.WorkflowDefinition {
 	return domain.WorkflowDefinition{
-		ID: "evo-replay", Name: "evo replay", SandboxProfileID: "local",
+		ID: "evo-replay", Name: "evo replay", SandboxProfileID: repo.TestNativeSandboxID,
 		Nodes: []domain.WorkflowNode{
 			{ID: "clarify", Name: "需求定型", Type: "agent", AgentID: "developer", ExecutorID: "mock", MaxAttempts: 1,
 				ArtifactOutputs: []domain.ArtifactContract{{Name: "clarify", Path: "requirement.md", MediaType: "text/markdown", Required: true}}},

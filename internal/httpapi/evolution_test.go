@@ -53,7 +53,7 @@ func newEvoTestEnv(t *testing.T) *evoTestEnv {
 	if err := s.PutAgent(agent); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "evo-wf", Name: "进化流程", ProjectID: "evo-p", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "evo-wf", Name: "进化流程", ProjectID: "evo-p", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{
 		{ID: "code", Name: "开发", Type: "agent", AgentID: agent.ID, ExecutorID: "mock", MaxAttempts: 1},
 	}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -399,7 +399,10 @@ func TestEvolutionQueuePermissionsAndCrossProjectIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	viewer, _ := env.store.UserByLoginName("queue-viewer")
-	if err := env.store.PutProject(domain.Project{ID: "evo-p", Name: "进化测试", OwnerID: env.user.ID, Members: []domain.ProjectMember{{UserID: viewer.ID, Role: "viewer"}}}); err != nil {
+	project, _ := env.store.Project("evo-p")
+	project.OwnerID = env.user.ID
+	project.Members = []domain.ProjectMember{{UserID: viewer.ID, Role: "viewer"}}
+	if err := env.store.PutProject(project); err != nil {
 		t.Fatal(err)
 	}
 	shared, _ := env.store.Agent(env.agent.ID)

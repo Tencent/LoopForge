@@ -68,6 +68,7 @@ func TestEvolutionFindingRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	requestJSONAuthed[map[string]any](t, env.router, env.user, http.MethodGet, url, nil, http.StatusForbidden)
+	p, _ = env.store.Project("evo-p")
 	p.OwnerID = env.user.ID
 	if err := env.store.PutProject(p); err != nil {
 		t.Fatal(err)

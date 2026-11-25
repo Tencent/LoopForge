@@ -28,53 +28,51 @@ const routes = [
   { method: 'GET', path: '/api/runs/candidate-2', body: { ...candidate, id: 'candidate-2' } },
 ];
 async function open(app) { await app.evaluate(`state.projectFilter='project-1';switchView('evolution');renderEvolutionView()`); await settle(4); }
-async function detail(app, inspection = 'validation') {
+async function detail(app) {
   await open(app); app.document.querySelector('[data-evo-asset-group]').click(); await settle(6);
-  if (inspection) { app.document.querySelector(`[data-evo-inspect="${inspection}"]`).click(); await settle(5); }
 }
 const $ = (app, s) => app.document.querySelector(s);
+function issueRecords(app) {
+  for (const id of ['evoProblemEvidenceDetails','evoSourceDetails','evoRunDetails']) $(app, '#'+id).open=true;
+}
+function evidence(app,type,id) {
+  if ($(app, '#evoEvidenceDialog').open) $(app, '[data-evo-evidence-close]').click();
+  if (type==='run') issueRecords(app);
+  $(app, `[data-evo-${type==='run'?'evidence-run':'story-replay'}="${id}"]`).click();
+  $(app, '#evoEvidenceDetails').open=true;
+}
+function selectNode(app,id) {
+  const select = $(app, '[data-evo-evidence-node]');
+  select.value=id;
+  select.dispatchEvent(new app.window.Event('change',{bubbles:true}));
+}
 
-test('problem-first list exposes real impact and object-level recommendation without technical stages', async t => {
+test('task rows show the problem and change, with diagnosis and the diff on detail', async t => {
   const app = await loadApp({ routes }); t.after(app.close);
   await open(app);
-  assert.match($(app, '.evo-list-row').textContent, /评审角色.*角色 · 1 类关联问题.*补充 e2e 检查.*待你确认.*1 条退化/s);
-  assert.equal($(app, '.evo-list-steps'), null);
-  assert.equal($(app, '.evo-list-effect'), null);
-  assert.equal($(app, '.evo-list-judgment'), null);
-  assert.equal($(app, '#evoInspection'), null);
-  assert.equal($(app, '.evo-evidence-panel'), null);
+  assert.match($(app, '.evo-home-row').textContent, /上线前漏测.*评审角色.*补充 e2e 检查/s);
+  assert.equal($(app, '#evoDetailPage'), null);
   assert.equal(app.router.calls.some(c => c.path.startsWith('/api/runs/')), false);
   $(app, '[data-evo-asset-group]').click(); await settle(6);
-  assert.match($(app, '#evoProblemRecords').textContent, /预计每周额外 2.6 次问题运行/);
-  assert.match($(app, '#evoProblemRecords').textContent, /模型建议，待验证/);
-  assert.equal($(app, '#evoInspection').open, false);
-  assert.match($(app, '#evoChangeSummary').textContent, /从真实正文差异提取/);
-  assert.equal($(app, '#evoDetailTrack').children.length, 4);
-  assert.match($(app, '#evoDetailActions').textContent, /查看退化样本/);
+  assert.match($(app, '#evoProblemRecords').textContent, /96%/);
+  assert.match($(app, '#evoLinkedChange .evo-diff-line.add').textContent, /检查关键路径 e2e/);
+  assert.equal(app.document.querySelectorAll('.evo-detail-track li').length, 6);
+  assert.ok($(app, '[data-evo-review-regressions]'));
 });
 
-test('home separates historical impact from post-release runs and keeps watching releases active', async t => {
+test('a release under observation appears in the task and release lists', async t => {
   const released = { ...proposal, status: 'released', releasedVersion: 2, watch: { status: 'watching', minRuns: 5, current: { runs: 0 } } };
-  const closed = { ...finding, status: 'resolved' };
   const app = await loadApp({ routes: [...routes,
     { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { projectId: 'project-1', recent: [released], pending: [], trial: [], validating: [], health: [] } },
-    { method: 'GET', path: '/api/evolution/findings?projectId=project-1', body: [closed] },
+    { method: 'GET', path: '/api/evolution/findings?projectId=project-1', body: [{...finding,status:'resolved'}] },
+    { method: 'GET', path: '/api/evolution/proposals/p-evidence', body: released },
   ] }); t.after(app.close);
   await open(app);
-  assert.equal($(app, '[data-evo-list-status="active"]').getAttribute('aria-pressed'), 'true');
-  assert.match($(app, '.evo-list-context').textContent, /1 类关联问题/);
-  assert.match($(app, '.evo-list-progress').textContent, /已发布 v2 · 观察中.*新版本 0\/5 次.*等待新建运行/s);
-  assert.doesNotMatch($(app, '.evo-list-progress').textContent, /继续观察|待开始修改/);
-  $(app, '[data-evo-list-status="done"]').click();
-  assert.equal($(app, '.evo-list-row'), null);
-  $(app, '[data-evo-list-status="doing"]').click();
-  assert.ok($(app, '[data-evo-asset-group]'));
-  released.watch.current.runs = 2;
-  app.router.get('/api/evolution/overview?projectId=project-1', { projectId: 'project-1', recent: [released], pending: [], trial: [], validating: [], health: [] });
-  $(app, '#evoRefresh').click(); await settle(4);
-  assert.match($(app, '.evo-list-context').textContent, /1 类关联问题/);
-  assert.match($(app, '.evo-list-progress').textContent, /新版本 2\/5 次/);
-  assert.doesNotMatch($(app, '.evo-list-progress').textContent, /等待新建运行/);
+  assert.match($(app, '.evo-home-next').textContent, /观察中/);
+  $(app, '[data-evo-list-section="released"]').click();
+  $(app, '[data-evo-proposal="p-evidence"]').click(); await settle(5);
+  $(app, '[data-evo-progress-stage="watch"]').click(); await settle(4);
+  assert.match($(app, '#evoStagePanel').textContent, /至少 5 次运行/);
   assert.equal(app.router.calls.some(c => c.method !== 'GET' || c.path.startsWith('/api/runs/')), false);
 });
 
@@ -86,12 +84,9 @@ test('home shows both trial arms and archives older failed suggestions without h
     { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { projectId: 'project-1', pending: [], trial: [trial], recent: [old,rejected], validating: [], health: [] } },
   ] }); t.after(app.close);
   await open(app);
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 1);
-  assert.match($(app, '.evo-list-progress').textContent, /试用中.*试用版 3\/5 · 当前版 1\/5 次/s);
+  assert.equal(app.document.querySelectorAll('.evo-home-row').length, 1);
+  assert.match($(app, '.evo-home-next').textContent, /试用/);
   assert.equal($(app, '[data-evo-proposal="old-failed"]'), null);
-  $(app, '[data-evo-list-status="all"]').click();
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 1);
-  assert.match($(app, '.evo-list-context').textContent, /2 次历史尝试/);
   $(app, '[data-evo-asset-group]').click(); await settle(5);
   $(app, '[data-evo-queue]').click(); await settle(3);
   assert.ok($(app, '#kbDrawer [data-evo-proposal="old-failed"]'));
@@ -99,36 +94,29 @@ test('home shows both trial arms and archives older failed suggestions without h
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
-test('home preserves actual feedback titles and does not mistake changed verdicts for fixed problems', async t => {
-  const feedback = '<img src=x onerror=alert(1)> review.md 只检查文档结构，未检查关键路径的 e2e 验收用例';
+test('a feedback title is escaped and a changed verdict is labeled separately', async t => {
+  const feedback = '<img src=x onerror=alert(1)> review.md 缺少验收用例';
   const f = { ...finding, clusters: [{ id: 'feedback', label: feedback, kind: 'user_feedback', runs: 2 }] };
-  const p = { ...proposal, summary: { total: 2, finished: 2, passed: true, changed: 2, fixed: 0, regressed: 0 } };
+  const p = { ...proposal, replays: [changed], summary: { total: 1, finished: 1, changed: 1, fixed: 0 } };
   const app = await loadApp({ routes: [...routes,
     { method: 'GET', path: '/api/evolution/findings?projectId=project-1', body: [f] },
-    { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { projectId: 'project-1', pending: [p], recent: [], trial: [], validating: [], health: [] } },
+    { method: 'GET', path: '/api/evolution/proposals/p-evidence', body: p },
   ] }); t.after(app.close);
-  await open(app);
-  assert.equal($(app, '.evo-list-problem b').textContent, finding.assetName);
-  assert.match($(app, '.evo-list-context').textContent, /角色 · 1 类关联问题/);
-  assert.match($(app, '.evo-list-progress').textContent, /2 条结论改变，待核对/);
-  assert.doesNotMatch($(app, '.evo-list-progress').textContent, /已修复/);
-  assert.equal($(app, '#evoUnifiedList img'), null);
-  assert.equal($(app, '#evoUnifiedList script'), null);
-  $(app, '[data-evo-asset-group]').click(); await settle(5);
-  $(app, '[data-evo-inspect="records"]').click(); await settle(3);
-  assert.equal($(app, '[data-evo-related-finding]').textContent, feedback);
-  assert.equal($(app, '#evoInspection img'), null);
+  await detail(app);
+  assert.match($(app, '#evoFindingTitle').textContent,/^<img/);
+  assert.equal($(app, '#evoDetailPage img'), null);
+  assert.equal($(app, '[data-evo-story-row="rp-changed"] [data-outcome]').textContent,'结论变化');
 });
 
 test('run samples open in the evidence pane and arbitrary run IDs do not issue a read', async t => {
   const app = await loadApp({ routes }); t.after(app.close);
   await detail(app);
-  $(app, '[data-evo-detail-tab="records"]').click(); await settle(4);
+  evidence(app, 'run', 'source-1'); await settle(4);
   assert.match($(app, '#evoEvidenceBody').textContent, /旧输出：缺少 e2e/);
   assert.equal($(app, '#evoEvidenceBody img'), null);
   assert.equal($(app, '#evoEvidenceBody script'), null);
   const hash = app.window.location.hash;
-  $(app, '[data-evo-evidence-run="other-run"]').click(); await settle(5);
+  evidence(app, 'run', 'other-run'); await settle(5);
   assert.match($(app, '#evoEvidenceBody').textContent, /第二条报错的原始证据/);
   assert.equal(app.window.location.hash, hash);
   const calls = app.router.calls.length;
@@ -139,40 +127,38 @@ test('run samples open in the evidence pane and arbitrary run IDs do not issue a
 test('comparison uses server outcomes, shows original and replay output, and marks reused nodes', async t => {
   const app = await loadApp({ routes }); t.after(app.close);
   await detail(app);
-  assert.equal(app.document.querySelectorAll('.evo-compare-row').length, 4);
+  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length, 4);
   $(app, '[data-evo-sample-filter="changed"]').click();
-  assert.equal(app.document.querySelectorAll('.evo-compare-row').length, 1);
-  assert.match($(app, '.evo-compare-row').textContent, /结论改变/);
-  assert.doesNotMatch($(app, '.evo-compare-row').textContent, /已修复/);
+  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length, 1);
+  assert.match($(app, '[data-evo-story-row]').textContent, /结论变化/);
+  assert.doesNotMatch($(app, '[data-evo-story-row]').textContent, /已修复/);
   $(app, '[data-evo-sample-filter="blocked"]').click();
-  assert.match($(app, '.evo-compare-row').textContent, /阻塞/);
+  assert.match($(app, '[data-evo-story-row]').textContent, /阻塞/);
   $(app, '[data-evo-sample-filter="fixed"]').click();
-  $(app, '[data-evo-evidence-replay="rp-fixed"]').click(); await settle(6);
+  evidence(app, 'replay', 'rp-fixed'); await settle(6);
   assert.match($(app, '.evo-output-pair').textContent, /旧输出：缺少 e2e.*新输出：完成端到端验收/s);
   assert.equal($(app, '.evo-output-pair img'), null);
-  const select = $(app, '[data-evo-evidence-node]'); select.value = 'plan';
-  select.dispatchEvent(new app.window.Event('change', { bubbles: true }));
-  assert.match($(app, '.evo-output-pair').textContent, /回放保存的沿用产出.*此节点未重跑/s);
+  selectNode(app,'plan');
+  assert.match($(app, '.evo-output-pair').textContent, /沿用的需求方案/);
   assert.equal(($(app, '.evo-output-pair').textContent.match(/沿用的需求方案/g) || []).length, 2);
-  assert.match($(app, '#evoComparisonList').textContent, /环境不保证完全一致/);
+  assert.match($(app, '#evoEvidenceBody').textContent, /回放时未重跑/);
   await app.evaluate(`evoLoadDetailProposal(evo.modal)`); await settle(6);
   assert.equal($(app, '[data-evo-sample-filter="fixed"]').getAttribute('aria-pressed'), 'true');
-  assert.equal($(app, '[data-evo-evidence-replay="rp-fixed"]').getAttribute('aria-pressed'), 'true');
+  assert.equal($(app, '[data-evo-story-replay="rp-fixed"]').getAttribute('aria-pressed'), 'true');
 });
 
 test('history judgment is preserved when the original run has been retried successfully', async t => {
   const retried = { ...source, status: 'succeeded', nodes: { plan: { status: 'succeeded', output: '重试后的新方案' }, check: { status: 'succeeded', output: '重试后已通过，不是历史失败输出' } } };
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/runs/source-1', body: retried }] }); t.after(app.close);
   await detail(app);
-  $(app, '[data-evo-evidence-replay="rp-fixed"]').click(); await settle(5);
-  assert.match($(app, '.evo-evidence-context').textContent, /已修复.*仅限本样本/);
+  evidence(app, 'replay', 'rp-fixed'); await settle(5);
+  assert.match($(app, '#evoStoryBehavior').textContent, /原运行 失败.*回放 一次成功/s);
   assert.match($(app, '.evo-replay-judgment').textContent, /验证时整次运行：失败 → 一次成功/);
   assert.match($(app, '.evo-replay-judgment').textContent, /原运行当前状态已不同.*可能已重试/);
-  assert.match($(app, '.evo-output-pair section:first-child').textContent, /原运行最新记录.*不是验证时的历史快照.*成功.*重试后已通过/s);
-  assert.match($(app, '.evo-output-pair section:last-child').textContent, /候选回放记录.*新输出/s);
+  assert.match($(app, '.evo-output-pair section:first-child').textContent, /原运行.*成功.*重试后已通过/s);
+  assert.match($(app, '.evo-output-pair section:last-child').textContent, /修改稿回放.*新输出/s);
   assert.doesNotMatch($(app, '.evo-output-pair').textContent, /旧输出/);
-  const select = $(app, '[data-evo-evidence-node]'); select.value = 'plan';
-  select.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  selectNode(app,'plan');
   assert.match($(app, '.evo-output-pair section:first-child').textContent, /重试后的新方案/);
   assert.match($(app, '.evo-output-pair section:last-child').textContent, /沿用的需求方案/);
   assert.doesNotMatch($(app, '.evo-output-pair section:last-child').textContent, /重试后的新方案/);
@@ -182,10 +168,9 @@ test('history judgment is preserved when the original run has been retried succe
 test('missing reused output is never filled from the original current run', async t => {
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/runs/candidate-1', body: { ...candidate, nodes: { check: candidate.nodes.check } } }] }); t.after(app.close);
   await detail(app);
-  $(app, '[data-evo-evidence-replay="rp-fixed"]').click(); await settle(5);
-  const select = $(app, '[data-evo-evidence-node]'); select.value = 'plan';
-  select.dispatchEvent(new app.window.Event('change', { bubbles: true }));
-  assert.match($(app, '.evo-output-pair section:last-child').textContent, /未保存该节点的沿用产出/);
+  evidence(app, 'replay', 'rp-fixed'); await settle(5);
+  selectNode(app,'plan');
+  assert.match($(app, '.evo-output-pair section:last-child').textContent, /未跑到此节点或无记录/);
   assert.doesNotMatch($(app, '.evo-output-pair section:last-child').textContent, /沿用的需求方案/);
 });
 
@@ -199,8 +184,6 @@ test('historical zero and reworked scores are preserved and missing baselines ar
     assert.match(el.textContent, new RegExp('验证时整次运行：'+label+' → 一次成功'));
     assert.match(el.textContent, /仅表示这条历史样本的运行评分改善/);
   }
-  assert.match($(app, '#evoLinkedChange').textContent, /可修改范围：角色提示词、规则正文/);
-  assert.match($(app, '#evoLinkedChange').textContent, /不直接修改业务数据.*SOP.*技能.*知识库.*MCP.*代码/);
   const summary = await app.evaluate(`evoValidationSummary({summary:{total:1,finished:1,fixed:1,verdict:'通过：修好 1 条'}})`);
   assert.match(summary, /已修复 1 条/);
   assert.doesNotMatch(summary, /修好/);
@@ -210,22 +193,22 @@ test('missing candidate output is not filled with original output and evidence e
   const app = await loadApp({ routes }); t.after(app.close);
   await detail(app);
   app.router.get('/api/runs/candidate-1', { status: 404, body: { error: 'run deleted' } });
-  $(app, '[data-evo-evidence-replay="rp-fixed"]').click(); await settle(6);
-  assert.match($(app, '.evo-output-pair section:last-child').textContent, /回放输出不可用.*run deleted/);
+  evidence(app, 'replay', 'rp-fixed'); await settle(6);
+  assert.match($(app, '.evo-output-pair section:last-child').textContent, /记录不可用.*run deleted/);
   assert.doesNotMatch($(app, '.evo-output-pair section:last-child').textContent, /旧输出/);
   app.router.get('/api/runs/other-run', { status: 403, body: { error: 'no access' } });
-  $(app, '[data-evo-evidence-run="other-run"]').click(); await settle(5);
+  evidence(app, 'run', 'other-run'); await settle(5);
   assert.match($(app, '#evoEvidenceBody').textContent, /读取证据失败.*no access/);
   app.router.get('/api/runs/other-run', { id: 'other-run', executionContext: { projectId: 'project-1' }, nodes: {} });
   $(app, '[data-evo-evidence-retry]').click(); await settle(4);
-  assert.match($(app, '#evoEvidenceBody').textContent, /未跑到此节点或记录不可用/);
+  assert.match($(app, '#evoEvidenceBody').textContent, /未跑到此节点或无记录/);
 });
 
 test('mismatched or inaccessible comparison stops before fetching its run outputs', async t => {
   const app = await loadApp({ routes }); t.after(app.close);
   await detail(app);
   app.router.get(path, { ...comparison, runId: 'foreign-run' });
-  $(app, '[data-evo-evidence-replay="rp-fixed"]').click(); await settle(4);
+  evidence(app, 'replay', 'rp-fixed'); await settle(4);
   assert.match($(app, '#evoEvidenceBody').textContent, /证据与当前样本不匹配/);
   assert.equal(app.router.calls.some(c => c.path === '/api/runs/candidate-1'), false);
   assert.equal(app.router.calls.some(c => c.path === '/api/runs/foreign-run'), false);
@@ -236,7 +219,7 @@ test('run evidence rejects foreign or unknown projects even when workflow snapsh
   await detail(app);
   for (const executionContext of [{ projectId: 'project-2' }, {}]) {
     app.router.get('/api/runs/other-run', { id: 'other-run', projectId: 'project-1', executionContext, workflowSnapshot: { projectId: 'project-1' }, nodes: { check: { output: '不应展示的其他项目输出' } } });
-    $(app, '[data-evo-evidence-run="other-run"]').click(); await settle(4);
+    evidence(app, 'run', 'other-run'); await settle(4);
     assert.match($(app, '#evoEvidenceBody').textContent, /运行不可用或不属于当前项目/);
     assert.doesNotMatch($(app, '#evoEvidenceBody').textContent, /不应展示/);
   }
@@ -246,9 +229,9 @@ test('replay sides use execution context rather than matching workflow snapshots
   const app = await loadApp({ routes }); t.after(app.close);
   await detail(app);
   app.router.get('/api/runs/candidate-1', { ...candidate, projectId: 'project-1', executionContext: { projectId: 'project-2' }, nodes: { check: { output: '其他项目候选内容' } } });
-  $(app, '[data-evo-evidence-replay="rp-fixed"]').click(); await settle(6);
+  evidence(app, 'replay', 'rp-fixed'); await settle(6);
   assert.match($(app, '.evo-output-pair section:first-child').textContent, /旧输出/);
-  assert.match($(app, '.evo-output-pair section:last-child').textContent, /回放输出不可用.*不属于当前项目/);
+  assert.match($(app, '.evo-output-pair section:last-child').textContent, /记录不可用.*不属于当前项目/);
   assert.doesNotMatch($(app, '.evo-output-pair').textContent, /其他项目候选内容/);
 });
 
@@ -257,8 +240,8 @@ test('late comparison does not replace a newly selected sample or trigger output
   await detail(app);
   let resolve;
   app.router.get(path, () => new Promise(r => { resolve = r; }));
-  $(app, '[data-evo-evidence-replay="rp-fixed"]').click(); await settle(2);
-  $(app, '[data-evo-evidence-run="other-run"]').click(); await settle(4);
+  evidence(app, 'replay', 'rp-fixed'); await settle(2);
+  evidence(app, 'run', 'other-run'); await settle(4);
   resolve(comparison); await settle(4);
   assert.match($(app, '#evoEvidenceBody').textContent, /第二条报错的原始证据/);
   assert.equal(app.router.calls.some(c => c.path === '/api/runs/candidate-1'), false);
@@ -269,7 +252,7 @@ test('late run output is discarded after changing project and cache is not share
   await detail(app);
   let resolve;
   app.router.get('/api/runs/other-run', () => new Promise(r => { resolve = r; }));
-  $(app, '[data-evo-evidence-run="other-run"]').click(); await settle(2);
+  evidence(app, 'run', 'other-run'); await settle(2);
   app.router.get('/api/evolution/overview?projectId=project-2', { projectId: 'project-2', pending: [], health: [] });
   app.router.get('/api/evolution/findings?projectId=project-2', []);
   await app.evaluate(`state.projectFilter='project-2';renderEvolutionView()`);
@@ -286,8 +269,8 @@ test('recommended review action opens a real regressed sample without publishing
   app.router.get('/api/runs/candidate-2', { ...candidate, id: 'candidate-2' });
   $(app, '[data-evo-review-regressions]').click(); await settle(6);
   assert.equal($(app, '[data-evo-sample-filter="regressed"]').getAttribute('aria-pressed'), 'true');
-  assert.equal($(app, '[data-evo-evidence-replay="rp-regressed"]').getAttribute('aria-pressed'), 'true');
-  assert.match($(app, '#evoEvidenceBody').textContent, /退化/);
+  assert.equal($(app, '[data-evo-story-replay="rp-regressed"]').getAttribute('aria-pressed'), 'true');
+  assert.match($(app, '#evoStoryBehavior').textContent, /退化/);
   assert.equal(app.router.calls.some(c => c.method === 'POST'), false);
 });
 
@@ -300,123 +283,80 @@ test('refresh preserves unconfirmed trial inputs and expanded diagnostics', asyn
   $(app, '#evoCanaryMinRuns').value = '20';
   $(app, '#evoCanaryMinRuns').focus();
   await app.evaluate(`evoLoadDetailProposal(evo.modal)`); await settle(5);
-  assert.equal($(app, '#evoDetailCanary').hidden, false);
+  assert.equal($(app, '#evoDetailCanary').open, true);
   assert.equal($(app, '#evoCanaryPercent').value, '25');
   assert.equal($(app, '#evoCanaryMinRuns').value, '20');
   assert.equal(app.document.activeElement.id, 'evoCanaryMinRuns');
   assert.equal($(app, '#evoDiagnosisDetails').open, true);
 });
 
-test('detail defaults to candidate comparison and moves one evidence pane between bounded workspaces', async t => {
+test('detail renders cases without loading run evidence until selected', async t => {
   const app = await loadApp({ routes }); t.after(app.close);
   await detail(app);
-  assert.equal($(app, '[data-evo-detail-tab="validation"]').getAttribute('aria-selected'), 'true');
-  assert.equal($(app, '#evoDetailPanel-change').hidden, true);
-  assert.equal($(app, '#evoDetailPanel-records').hidden, true);
-  assert.equal($(app, '#evoRationaleDetails').open, false);
-  assert.equal($(app, '#evoRunPreview').parentElement.id, 'evoProblemRecords');
-  assert.equal($(app, '.evo-evidence-panel').parentElement.dataset.evoEvidenceSlot, 'validation');
-  assert.equal($(app, '[data-evo-evidence-replay="rp-regressed"]').getAttribute('aria-pressed'), 'true');
-  assert.match($(app, '#evoEvidenceTitle').textContent, /验证证据.*新旧对比/);
-  assert.match($(app, '#evoLinkedChange').textContent, /单候选.*不会自动反馈再改.*Harness²/s);
-  assert.equal($(app, '#evoDetailCanary').parentElement.id, 'evoTrialHost');
-  $(app, '[data-evo-detail-tab="records"]').click(); await settle(4);
-  assert.equal($(app, '#evoDetailPanel-validation').hidden, true);
-  assert.equal($(app, '#evoDetailPanel-records').hidden, false);
-  assert.equal($(app, '.evo-evidence-panel').parentElement.dataset.evoEvidenceSlot, 'records');
-  assert.match($(app, '#evoEvidenceTitle').textContent, /原问题/);
-  const reads = app.router.calls.length;
-  $(app, '[data-evo-detail-tab="change"]').click(); await settle(2);
-  assert.equal($(app, '#evoDetailPanel-change').hidden, false);
-  assert.equal($(app, '#evoDetailPanel-records').hidden, true);
-  assert.equal(app.router.calls.length, reads);
-  await app.evaluate(`evoLoadDetailProposal(evo.modal)`); await settle(5);
-  assert.equal($(app, '[data-evo-detail-tab="change"]').getAttribute('aria-selected'), 'true');
-  assert.equal(app.document.querySelectorAll('.evo-evidence-panel').length, 1);
-  $(app, '[data-evo-detail-tab="validation"]').click(); await settle(4);
-  assert.equal($(app, '[data-evo-evidence-replay="rp-regressed"]').getAttribute('aria-pressed'), 'true');
-  assert.match($(app, '#evoEvidenceTitle').textContent, /新旧对比/);
+  assert.equal($(app, '#evoEvidenceDialog').open,false);
+  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length,4);
+  assert.equal(app.router.calls.some(c => c.path.startsWith('/api/runs/')||c.path.endsWith('/compare')),false);
+  evidence(app,'replay','rp-regressed'); await settle(5);
+  assert.equal($(app, '#evoEvidenceDialog').open,true);
+  assert.equal($(app, '[data-evo-story-replay="rp-regressed"]').getAttribute('aria-pressed'),'true');
+  assert.ok(app.router.calls.some(c=>c.path==='/api/runs/candidate-2'));
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
-test('a single fixed replay is the default and original issue samples do not replace it after loading', async t => {
-  const app = await loadApp({ routes: [...routes, { method: 'GET', path: `/api/evolution/proposals/${proposal.id}`, body: { ...proposal, replays: [replay] } }] }); t.after(app.close);
+test('a single replay stays visible when problem evidence is opened and refreshed', async t => {
+  const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/p-evidence', body: { ...proposal, replays:[replay] } }] }); t.after(app.close);
   await detail(app);
-  assert.equal($(app, '[data-evo-evidence-replay="rp-fixed"]').getAttribute('aria-pressed'), 'true');
-  assert.match($(app, '#evoEvidenceCount').textContent, /1 条验证样本/);
-  assert.match($(app, '.evo-output-pair section:last-child').textContent, /新输出/);
-  $(app, '[data-evo-detail-tab="records"]').click(); await settle(3);
-  $(app, '[data-evo-evidence-run="other-run"]').click(); await settle(3);
-  await app.evaluate(`evoLoadDetailProposal(evo.modal)`); await settle(5);
-  assert.equal($(app, '[data-evo-detail-tab="records"]').getAttribute('aria-selected'), 'true');
-  assert.match($(app, '#evoEvidenceBody').textContent, /第二条报错/);
+  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length,1);
+  evidence(app,'replay','rp-fixed'); await settle(5);
+  assert.match($(app, '.evo-output-pair section:last-child').textContent,/新输出/);
+  evidence(app,'run','other-run'); await settle(4);
+  await app.evaluate('evoLoadDetailProposal(evo.modal)'); await settle(5);
+  assert.equal($(app, '#evoEvidenceDialog').open,true);
+  assert.match($(app, '#evoEvidenceBody').textContent,/第二条报错/);
+  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length,1);
 });
 
-test('simple detail contains a true diff summary, four steps, one primary action and hidden diagnostic records', async t => {
-  const clean = { ...proposal, summary: { total: 1, finished: 1, fixed: 1, regressed: 0, unchanged: 0, passed: true }, replays: [replay] };
-  const app = await loadApp({ routes: [...routes, { method: 'GET', path: `/api/evolution/proposals/${proposal.id}`, body: clean }] }); t.after(app.close);
-  await detail(app, '');
-  const bar = $(app, '.evo-gray-decision');
-  assert.match($(app, '#evoDetailObject').textContent, /评审角色.*1 类关联问题/);
-  assert.match($(app, '#evoProblemRecords').textContent, /3 次运行受影响/);
-  assert.equal($(app, '#evoFindingTitle').textContent, proposal.title);
+test('detail shows the true diff, six steps and one primary action', async t => {
+  const clean = { ...proposal, summary: { total: 1, finished: 1, fixed: 1, passed: true }, replays: [replay] };
+  const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/p-evidence', body: clean }] }); t.after(app.close);
+  await detail(app);
+  assert.match($(app, '#evoDetailObject').textContent,/评审角色/);
   const ids = [...app.document.querySelectorAll('#evoDetailPage [id]')].map(el => el.id);
-  assert.equal(new Set(ids).size, ids.length, 'detail and inspection must never duplicate IDs');
-  assert.equal(bar.querySelectorAll('.evo-detail-box, h2, h3, #evoRationaleDetails').length, 0);
-  assert.doesNotMatch(bar.textContent, /上线前漏测|问题判断|建议下一步|预计每周|模型建议|待你确认/);
-  assert.match($(app, '#evoChangeSummary').textContent, /检查关键路径 e2e.*从真实正文差异提取.*历史验证 1 条 · 通过/s);
-  assert.doesNotMatch($(app, '#evoChangeSummary').textContent, /可能缺少验收要求/);
-  assert.equal($(app, '#evoDetailTrack').children.length, 4);
-  assert.equal($(app, '#evoInspection').open, false);
-  assert.equal($(app, '.evo-evidence-panel').closest('dialog').id, 'evoInspection');
-  assert.equal([...bar.querySelectorAll('button')].filter(button => button.textContent === '先小范围试用').length, 1);
-  assert.equal($(app, '#evoDetailActions').querySelectorAll('.kb-btn.primary').length, 1);
-  assert.equal($(app, '#evoDetailCanary').hidden, true);
-  assert.ok($(app, '#evoDetailPanel-records #evoRationaleDetails'));
-  assert.equal($(app, '#evoDetailState'), null);
-  $(app, '#evoRationaleDetails').open = true;
-  await app.evaluate(`evoLoadDetailProposal(evo.modal)`); await settle(5);
-  assert.equal($(app, '#evoRationaleDetails').open, true);
-  assert.equal($(app, '#evoInspection').open, false);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.match($(app, '#evoLinkedChange .evo-diff-line.add').textContent,/检查关键路径 e2e/);
+  assert.equal(app.document.querySelectorAll('.evo-detail-track li').length,6);
+  assert.equal($(app, '#evoEvidenceDialog').open,false);
+  assert.equal($(app, '#evoProblemEvidenceDetails').open,false);
+  assert.equal(app.document.querySelectorAll('#evoDetailActions .kb-btn.primary').length,1);
+  assert.equal($(app, '#evoDetailCanary').open,false);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
-test('compact decision does not claim a fix for incomplete validation and distinguishes later states', async t => {
+test('incomplete validation, trial and release are labeled with their own progress', async t => {
   const app = await loadApp({ routes }); t.after(app.close);
-  await detail(app);
   const cases = [
-    [{ status: 'pending', summary: { total: 1, finished: 0, passed: true } }, /等待有效验证结果.*暂不发布/, /历史验证通过/],
-    [{ status: 'pending', summary: { total: 1, finished: 1, passed: false } }, /等待有效验证结果.*暂不发布/, /历史验证通过/],
-    [{ status: 'pending', summary: { total: 2, finished: 2, passed: true, regressed: 1 } }, /历史验证含 1 条退化.*先检查退化样本/, /历史验证通过/],
-    [{ status: 'validating', summary: { total: 4, finished: 2 } }, /历史验证中.*2\/4.*当前正文未改变/, /历史验证通过/],
-    [{ status: 'drafting' }, /正在生成修改.*当前正文未改变/, /历史验证通过/],
-    [{ status: 'canary', canary: { status: 'passed' } }, /试用通过.*不代表已经证明质量提升/, /历史验证通过/],
-    [{ status: 'released', releasedVersion: 3, watch: { status: 'degraded' } }, /已发布 v3.*发布后出现退化/, /历史验证通过/],
-    [{ status: 'failed' }, /未通过.*不要把失败候选/, /历史验证通过/],
-    [{ status: 'rejected' }, /未采用/, /历史验证通过/],
-    [{ status: 'rolled_back' }, /已回滚/, /历史验证通过/],
+    [{ status:'validating', summary:{total:4,finished:2} }, 'replay', /回放验证/],
+    [{ status:'drafting' }, 'draft', /生成修改/],
+    [{ status:'canary',canary:{status:'passed'} }, 'release', /待确认发布/],
+    [{ status:'released',releasedVersion:3,watch:{status:'degraded'} }, 'watch', /观察.*变差/s],
+    [{ status:'rolled_back' }, 'watch', /已回滚/],
   ];
-  for (const [p,expected,absent] of cases) {
-    const html = await app.evaluate(`evoDecisionHTML(evo.modal.row, ${JSON.stringify({ ...proposal, ...p })})`);
-    const el = app.document.createElement('div'); el.innerHTML = html;
-    assert.match(el.textContent, expected);
-    assert.doesNotMatch(el.textContent, absent);
+  for (const [state,key,expected] of cases) {
+    const html = await app.evaluate(`evoDetailTrackHTML(${JSON.stringify({...proposal,...state})})`);
+    const el = app.document.createElement('div'); el.innerHTML=html;
+    assert.match(el.querySelector('[aria-current="step"]').textContent,expected,key);
   }
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
-test('detail tabs support keyboard navigation without starting a mutation', async t => {
+test('a replay button opens its dialog and returns focus without starting a mutation', async t => {
   const app = await loadApp({ routes }); t.after(app.close);
   await detail(app);
-  $(app, '[data-evo-detail-tab="validation"]').focus();
-  app.document.activeElement.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
-  await settle(2);
-  assert.equal(app.document.activeElement.id, 'evoDetailTab-change');
-  assert.equal($(app, '#evoDetailPanel-change').hidden, false);
-  app.document.activeElement.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
-  await settle(3);
-  assert.equal(app.document.activeElement.id, 'evoDetailTab-records');
-  assert.equal($(app, '#evoDetailPanel-records').hidden, false);
+  $(app, '[data-evo-story-replay="rp-fixed"]').focus();
+  app.document.activeElement.click(); await settle(5);
+  assert.equal(app.document.activeElement, $(app, '[data-evo-evidence-close]'));
+  app.document.activeElement.click();
+  assert.equal(app.document.activeElement.dataset.evoStoryReplay,'rp-fixed');
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
@@ -430,51 +370,39 @@ test('verification failures have readable titles while raw evidence and node err
     { method: 'GET', path: '/api/runs/source-1', body: { ...source, nodes: { check: { status: 'failed', output: '已生成报告', error: raw } } } },
   ] }); t.after(app.close);
   await open(app);
-  assert.equal($(app, '.evo-list-problem b').textContent, finding.assetName);
-  assert.equal($(app, '.evo-list-impact b').textContent, '报告结构检查未通过');
+  assert.equal($(app, '.evo-home-problem b').textContent, '报告结构检查未通过');
   $(app, '[data-evo-asset-group]').click(); await settle(6);
-  $(app, '[data-evo-inspect="records"]').click(); await settle(4);
+  evidence(app,'run','source-1'); await settle(4);
   assert.equal($(app, '#evoFindingTitle').textContent, '报告结构检查未通过');
-  assert.doesNotMatch($(app, '#evoFindingEvidence').textContent, /python3|import json/);
   assert.doesNotMatch($(app, '#evoRunPreview').textContent, /python3|import json/);
-  assert.equal($(app, '.evo-evidence-signal p').textContent, '报告结构检查未通过');
-  assert.equal($(app, '.evo-evidence-signal details pre').textContent, raw);
-  assert.match($(app, '.evo-evidence-single').textContent, /已生成报告.*节点错误.*import json/s);
+  assert.equal($(app, '#evoStoryBehavior p').textContent,'报告结构检查未通过');
+  assert.equal($(app, '.evo-evidence-signal p').textContent,raw);
+  assert.match($(app, '.evo-review-output').textContent,/已生成报告/);
   assert.equal($(app, '#evoEvidenceBody img'), null);
   assert.equal($(app, '#evoEvidenceBody script'), null);
-  assert.equal($(app, '.evo-evidence-signal details').open, false);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
 test('sample index read errors are visible in the evidence pane and retry restores samples', async t => {
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/findings/f-evidence/runs?cluster=e2e', status: 503, body: { error: 'index unavailable' } }] }); t.after(app.close);
   await detail(app);
-  $(app, '[data-evo-detail-tab="records"]').click(); await settle(3);
-  assert.match($(app, '#evoEvidenceBody').textContent, /读取问题样本失败.*index unavailable/);
+  issueRecords(app);
+  assert.match($(app, '#evoFindingRecords').textContent, /读取问题样本失败.*index unavailable/);
   app.router.get('/api/evolution/findings/f-evidence/runs?cluster=e2e', { complete: true, total: 1, items: [{ runId: source.id, nodeId: 'check', detail: '验收缺失', status: 'failed' }] });
-  $(app, '#evoEvidenceBody [data-evo-record-retry]').click(); await settle(6);
+  $(app, '#evoFindingRecords [data-evo-record-retry]').click(); await settle(6);
+  evidence(app,'run','source-1'); await settle(4);
   assert.match($(app, '#evoEvidenceBody').textContent, /旧输出：缺少 e2e/);
 });
 
-test('inspection entry switches real evidence, retains its tab across refresh and restores focus on close', async t => {
+test('refresh keeps the selected replay and raw record disclosure open', async t => {
   const app = await loadApp({ routes }); t.after(app.close);
-  await detail(app, '');
-  assert.equal($(app, '#evoInspection').open, false);
-  const records = $(app, '[data-evo-inspect="records"]'); records.click(); await settle(4);
-  assert.equal($(app, '#evoInspection').open, true);
-  assert.equal($(app, '[data-evo-detail-tab="records"]').getAttribute('aria-selected'), 'true');
-  assert.match($(app, '#evoEvidenceTitle').textContent, /原问题/);
-  assert.match($(app, '#evoEvidenceBody').textContent, /旧输出：缺少 e2e/);
+  await detail(app);
+  evidence(app,'replay','rp-fixed'); await settle(5);
   await app.evaluate('evoLoadDetailProposal(evo.modal)'); await settle(5);
-  assert.equal($(app, '#evoInspection').open, true);
-  assert.equal($(app, '[data-evo-detail-tab="records"]').getAttribute('aria-selected'), 'true');
-  $(app, '[data-evo-inspection-close]').click();
-  assert.equal($(app, '#evoInspection').open, false);
-  assert.equal(app.document.activeElement.dataset.evoInspect, 'records');
-  $(app, '[data-evo-inspect="validation"]').click(); await settle(4);
-  assert.match($(app, '#evoEvidenceTitle').textContent, /新旧对比/);
-  $(app, '#evoInspection').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  assert.equal($(app, '#evoInspection').open, false);
-  assert.equal(app.document.activeElement.dataset.evoInspect, 'validation');
+  assert.equal($(app, '#evoEvidenceDialog').open,true);
+  assert.equal($(app, '#evoEvidenceDetails').open,true);
+  assert.match($(app, '#evoEvidenceBody').textContent,/新输出/);
+  $(app, '[data-evo-evidence-close]').click();
+  assert.equal(app.document.activeElement.dataset.evoStoryReplay,'rp-fixed');
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });

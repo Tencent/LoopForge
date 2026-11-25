@@ -22,7 +22,7 @@ func TestEvolutionReplayRejectsExternalWorkflows(t *testing.T) {
 	t.Cleanup(st.Close)
 	e := New(st, runtime.NewManager(t.TempDir()))
 	agent := domain.AgentDefinition{ID: "replay-safe", Name: "Replay", ProjectID: "welcome", ExecutorID: "mock"}
-	wf := domain.WorkflowDefinition{ID: "replay-safety", Name: "Replay", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "work", Type: "agent", AgentID: agent.ID}}}
+	wf := domain.WorkflowDefinition{ID: "replay-safety", Name: "Replay", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "work", Type: "agent", AgentID: agent.ID}}}
 	for _, tc := range []struct {
 		name   string
 		change func(*domain.WorkflowDefinition, *domain.AgentDefinition, *domain.Run)

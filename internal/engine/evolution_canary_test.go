@@ -26,7 +26,7 @@ func TestEvolutionCanarySplitsNewRuns(t *testing.T) {
 	if err := s.PutAgent(developer); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "evo-canary", Name: "evo canary", SandboxProfileID: "local",
+	wf := domain.WorkflowDefinition{ID: "evo-canary", Name: "evo canary", SandboxProfileID: repo.TestNativeSandboxID,
 		Nodes: []domain.WorkflowNode{{ID: "work", Name: "work", Type: "agent", AgentID: "developer", ExecutorID: "mock", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)

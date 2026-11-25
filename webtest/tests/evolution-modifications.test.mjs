@@ -22,33 +22,28 @@ test('linked issue shows real modification, escaped side-by-side diff and confir
   const app = await loadApp({ routes }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app);
-  assert.match($('.evo-list-row').textContent, /后端开发角色.*1 类关联问题.*增加必填参数校验.*待你确认/s);
+  assert.match($('.evo-home-row').textContent, /空输入返回 500.*后端开发角色.*增加必填参数校验/s);
   assert.equal($('#evoDetailPage'), null);
   assert.equal($('#evoPageHead .kb-head-desc'), null);
   assert.equal(app.router.calls.filter(c => c.path === '/api/evolution/proposals/change-1').length, 0, 'list does not fetch full bodies');
   $('[data-evo-asset-group]').click(); await settle(5);
   assert.equal($('#evoDetailPage [data-evo-propose]'), null, 'do not offer another proposal when linked');
-  assert.match($('#evoLinkedChange').textContent, /生成建议时的正文.*候选正文/s);
+  assert.match($('#evoLinkedChange').textContent, /原指令.*AI 修改稿/s);
   assert.equal($('#evoDetailPage img'), null);
-  assert.match($('#evoLiveVersion').textContent, /当前正文与修改前快照一致/);
-  assert.match($('#evoEffectSummary').textContent, /结论改变1/);
-  assert.equal($('#evoDetailTrack').children.length, 4);
-  assert.match($('#evoDetailActions').textContent, /先小范围试用/);
-  assert.equal($('#evoInspection').open, false);
-  assert.match($('#evoChangeSummary').textContent, /校验必填参数 <img src=x onerror=alert\(1\)>/);
-  assert.equal($('#evoChangeSummary img'), null);
-  $('[data-evo-inspect="change"]').click(); await settle(2);
-  assert.equal($('#evoInspection').open, true);
-  assert.ok($('#evoInspection .evo-diff-line.add'));
-  $('[data-evo-inspection-close]').click();
-  assert.equal(app.document.activeElement.dataset.evoInspect, 'change');
+  assert.match($('#evoLiveVersion').getAttribute('data-tooltip')||$('#evoLiveVersion').textContent, /当前正文与修改前快照一致/);
+  assert.equal(app.document.querySelectorAll('.evo-detail-track li').length,6);
+  assert.match($('#evoDetailActions').textContent, /小范围试用/);
+  assert.equal($('#evoEvidenceDialog').open, false);
+  assert.match($('#evoReviewDiff').textContent, /校验必填参数 <img src=x onerror=alert\(1\)>/);
+  assert.equal($('#evoReviewDiff img'), null);
+  assert.ok($('#evoReviewDiff .evo-diff-line.add'));
   assert.ok($('#evoEvidenceBody'));
   assert.equal($('#evoPageHead').hidden, true);
   assert.doesNotMatch($('#evoLinkedChange').textContent, /问题未再出现/);
-  assert.equal($('#evoDetailCanary').hidden, true);
+  assert.equal($('#evoDetailCanary').open, false);
   assert.equal($('#evoDetailActions [data-evo-approve]').disabled, false);
   $('#evoDetailActions [data-evo-canary]').click();
-  assert.equal($('#evoDetailCanary').hidden, false);
+  assert.equal($('#evoDetailCanary').open, true);
   assert.equal(app.document.activeElement.id, 'evoCanaryPercent');
   assert.equal(app.router.calls.some(c => c.method === 'POST'), false);
   $('#evoCanaryPercent').value = '25'; $('#evoCanaryMinRuns').value = '10';
@@ -68,23 +63,17 @@ test('modification records distinguish pending, partial trial, release and rollb
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { ...overview, trial: [trial, released], recent: [released, rolled, ...others] } }] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app);
-  assert.equal($('#evoMetrics').textContent, '');
-  assert.match($('[data-evo-list-status="all"]').textContent, /全部记录14/);
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 3);
-  $('[data-evo-list-status="all"]').click();
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 10);
+  assert.equal(app.document.querySelectorAll('.evo-home-row').length,10);
   $('[data-evo-unified-page="1"]').click();
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 4);
-  $('[data-evo-list-status="todo"]').click();
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 3);
-  assert.match($('#evoUnifiedList').textContent, /试用通过 · 待全量/);
-  assert.doesNotMatch($('#evoUnifiedList').textContent, /当前仍生效/);
-  $('[data-evo-list-status="done"]').click();
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 10);
-  $('[data-evo-unified-page="1"]').click();
-  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 1);
-  assert.equal($('#evolutionBody select'), null);
-  assert.equal($('#evolutionBody input[type="checkbox"]'), null);
+  assert.equal(app.document.querySelectorAll('.evo-home-row').length,4);
+  const status=$('[data-evo-task-filter="status"]');
+  status.value='active'; change(app,status);
+  assert.match($('#evoUnifiedList').textContent,/试用通过 · 待全量/);
+  $('[data-evo-list-section="released"]').click();
+  assert.ok($('[data-evo-proposal="published"]'));
+  $('[data-evo-list-section="rolled_back"]').click();
+  assert.ok($('[data-evo-proposal="rolled"]'));
+  assert.doesNotMatch($('#evoUnifiedList').textContent,/当前仍生效/);
 });
 
 test('live version checks distinguish historical release, drift and unknown status', async t => {
@@ -94,21 +83,21 @@ test('live version checks distinguish historical release, drift and unknown stat
   app.router.get('/api/evolution/proposals/change-1', { ...detail, status: 'released', releasedVersion: 3 });
   app.router.get('/api/evolution/assets/agent/developer/versions', { ...live, currentVersion: 4, liveHash: 'newer' });
   await app.evaluate(`evoOpenProposal('change-1')`); await settle(5);
-  assert.match($('#evoLiveVersion').textContent, /已被替换/);
-  assert.doesNotMatch($('#evoLiveVersion').textContent, /当前仍生效/);
+  assert.match($('#evoLiveVersion').getAttribute('data-tooltip')||$('#evoLiveVersion').textContent, /已被替换/);
+  assert.doesNotMatch($('#evoLiveVersion').getAttribute('data-tooltip')||$('#evoLiveVersion').textContent, /当前仍生效/);
   app.router.get('/api/evolution/assets/agent/developer/versions', { ...live, currentVersion: 3 });
   $('[data-evo-detail-refresh]').click(); await settle(4);
-  assert.match($('#evoLiveVersion').textContent, /当前仍生效/);
+  assert.match($('#evoLiveVersion').getAttribute('data-tooltip')||$('#evoLiveVersion').textContent, /当前仍生效/);
   app.router.get('/api/evolution/proposals/change-1', detail);
   app.router.get('/api/evolution/assets/agent/developer/versions', { ...live, liveHash: 'changed' });
   $('[data-evo-detail-refresh]').click(); await settle(4);
-  assert.match($('#evoLiveVersion').textContent, /不能直接发布这份旧候选/);
+  assert.match($('#evoLiveVersion').getAttribute('data-tooltip')||$('#evoLiveVersion').textContent, /不能直接发布这份旧修改稿/);
   assert.equal($('#evoDetailActions [data-evo-approve]').disabled, true);
   assert.equal($('#evoDetailActions [data-evo-canary]').disabled, true);
   app.router.get('/api/evolution/assets/agent/developer/versions', { status: 503, body: { error: 'unavailable' } });
   $('[data-evo-detail-refresh]').click(); await settle(4);
-  assert.match($('#evoLiveVersion').textContent, /当前版本核对失败/);
-  assert.doesNotMatch($('#evoLiveVersion').textContent, /当前仍生效/);
+  assert.match($('#evoLiveVersion').textContent, /版本核对失败/);
+  assert.doesNotMatch($('#evoLiveVersion').getAttribute('data-tooltip')||$('#evoLiveVersion').textContent, /当前仍生效/);
 });
 
 test('proposal errors retry and missing candidate cannot be approved or silently presented as a diff', async t => {
@@ -122,7 +111,7 @@ test('proposal errors retry and missing candidate cannot be approved or silently
   assert.equal($('#evoDetailActions [data-evo-approve]'), null);
   app.router.get('/api/evolution/proposals/change-1', { ...detail, candidateContent: '' });
   $('[data-evo-detail-refresh]').click(); await settle(4);
-  assert.match($('#evoLinkedChange').textContent, /没有候选正文/);
+  assert.match($('#evoLinkedChange').textContent, /暂无正文修改/);
   assert.equal($('.evo-before-after'), null);
   assert.equal($('#evoDetailActions [data-evo-approve]').disabled, true);
   assert.equal($('#evoDetailActions [data-evo-canary]').disabled, true);
@@ -187,7 +176,7 @@ test('no percentages are fabricated for empty arms and version recheck blocks pu
   app.router.get('/api/evolution/assets/agent/developer/versions', () => { throw new Error('version offline'); });
   $('[data-evo-detail-refresh]').click(); await settle(4);
   assert.equal($('[data-evo-approve]').disabled, true);
-  assert.match($('#evoLiveVersion').textContent, /当前版本核对失败/);
+  assert.match($('#evoLiveVersion').textContent, /版本核对失败/);
 });
 
 test('late reject response does not reopen detail after returning to the list', async t => {
@@ -213,7 +202,7 @@ test('late proposal and version responses do not replace a newer detail or cross
   app.evaluate(`evoOpenProposal('late')`); await settle(2);
   app.evaluate(`evoOpenProposal('change-1')`); await settle(4);
   resolveProposal({ ...detail, id: 'late', title: '过期修改' }); await settle(3);
-  assert.equal($('#evoFindingTitle').textContent, proposal.title);
+  assert.equal($('#evoFindingTitle').textContent, '空输入返回 500');
   let resolveVersion;
   app.router.get('/api/evolution/assets/agent/developer/versions', () => new Promise(resolve => { resolveVersion = resolve; }));
   $('[data-evo-detail-refresh]').click(); await settle(3);
@@ -225,39 +214,27 @@ test('late proposal and version responses do not replace a newer detail or cross
   assert.doesNotMatch($('#evolutionBody').textContent, /后端开发角色/);
 });
 
-test('gray board renders classified squares for both arms without mixing historical replay totals', async t => {
+test('trial details show server totals for both arms without mixing historical replay totals', async t => {
   const trial = { ...detail, status: 'canary', canary: { status: 'running', percent: 25, minRuns: 5, canary: { runs: 5, clean: 3, reworked: 1, failed: 1 }, control: { runs: 4, clean: 2, reworked: 1, failed: 1 } } };
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/change-1', body: trial }] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app); $('[data-evo-asset-group]').click(); await settle(5);
-  assert.equal($('#evoInspection').open, false);
-  const arms = [...app.document.querySelectorAll('.evo-gray-board .evo-sample-arm')];
-  assert.equal(arms.length, 2);
-  assert.deepEqual(arms.map(arm => arm.getAttribute('aria-label')), ['试用版', '原版']);
-  assert.deepEqual(arms.map(arm => arm.querySelector('.evo-arm-rate b').textContent), ['60%', '50%']);
-  assert.equal(arms[0].querySelectorAll('.evo-sample-dot.clean').length, 3);
-  assert.equal(arms[0].querySelectorAll('.evo-sample-dot.rework').length, 1);
-  assert.equal(arms[0].querySelectorAll('.evo-sample-dot.failed').length, 1);
-  assert.equal(arms[1].querySelectorAll('.evo-sample-dot.waiting').length, 1);
-  assert.match(arms[1].querySelector('[role="img"]').getAttribute('aria-label'), /一次成功 2，返工后成功 1，失败 1.*还需 1/);
-  assert.match($('.evo-traffic-track').getAttribute('aria-label'), /25%.*75%/);
-  assert.match($('.evo-gray-board').textContent, /非时间序列.*不是整次运行的语义质量.*历史回放不计入灰度/s);
+  $('[data-evo-progress-stage="canary"]').click(); await settle(4);
+  const rows=[...app.document.querySelectorAll('#evoStagePanel .evo-review-trial tbody tr')];
+  assert.deepEqual(rows.map(row=>Array.from(row.cells,cell=>cell.textContent)),[['原版','4 / 5','2/4'],['试用版','5 / 5','3/5']]);
+  assert.match($('.evo-traffic-legend').textContent,/试用版 25%.*原版 75%/s);
+  assert.equal($('#evoValidationResults .evo-story-empty').textContent,'暂无');
   assert.equal($('#evoDetailActions [data-evo-approve]').disabled, true);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
-test('zero-sample trial arms show waiting squares and no fabricated success percentages', async t => {
+test('zero-sample trial arms have no inferred success counts', async t => {
   const trial = { ...detail, status: 'canary', canary: { status: 'running', percent: 50, minRuns: 5, canary: { runs: 0, clean: 0 }, control: { runs: 0, clean: 0 } } };
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/change-1', body: trial }] }); t.after(app.close);
   await open(app); app.document.querySelector('[data-evo-asset-group]').click(); await settle(5);
-  const arms = [...app.document.querySelectorAll('.evo-gray-board .evo-sample-arm')];
-  assert.equal(arms.length, 2);
-  for (const arm of arms) {
-    assert.equal(arm.querySelector('.evo-arm-rate b').textContent, '—');
-    assert.doesNotMatch(arm.querySelector('.evo-arm-rate').textContent, /\d+%/);
-    assert.equal(arm.querySelectorAll('.evo-sample-dot.waiting').length, 5);
-    assert.equal(arm.querySelectorAll('.evo-sample-dot.clean, .evo-sample-dot.failed, .evo-sample-dot.rework').length, 0);
-  }
+  app.document.querySelector('[data-evo-progress-stage="canary"]').click(); await settle(4);
+  const rows=[...app.document.querySelectorAll('#evoStagePanel .evo-review-trial tbody tr')];
+  assert.deepEqual(rows.map(row=>row.cells[2].textContent),['—','—']);
   assert.equal(app.document.querySelector('[data-evo-approve]').disabled, true);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
@@ -267,20 +244,13 @@ test('post-release board counts only new-version observations and never claims i
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/change-1', body: released }] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app); $('[data-evo-asset-group]').click(); await settle(5);
-  const board = $('.evo-gray-board'), arms = [...board.querySelectorAll('.evo-sample-arm')];
-  assert.equal(arms.length, 1);
-  assert.equal(arms[0].getAttribute('aria-label'), '新版 v3');
-  assert.match(arms[0].textContent, /2 \/ 5 次运行.*50%.*1\/2/s);
-  assert.equal(arms[0].querySelectorAll('.evo-sample-dot.clean').length, 1);
-  assert.equal(arms[0].querySelectorAll('.evo-sample-dot.rework').length, 1);
-  assert.equal(arms[0].querySelectorAll('.evo-sample-dot.waiting').length, 3);
-  assert.match(board.textContent, /发布前基线尚未就绪，不能宣称新版本改善/);
-  assert.doesNotMatch(board.textContent, /17 条|13 次|11 次|质量提升|已彻底解决/);
-  assert.equal(board.querySelector('[data-evo-approve]'), null);
-  assert.equal(board.querySelector('[data-evo-canary]'), null);
-  assert.equal(board.querySelector('[data-evo-rollback]').dataset.evoRollback, '2');
-  $('[data-evo-inspect="validation"]').click(); await settle(2);
-  assert.match($('#evoEffectSummary').textContent, /历史验证 · 已修复17/);
+  $('[data-evo-progress-stage="watch"]').click(); await settle(4);
+  const board=$('#evoStagePanel'), arms=[...board.querySelectorAll('.evo-arm:not(.evo-arm-head)')];
+  assert.equal(arms.length,2);
+  assert.match(arms[1].textContent,/发布后 v3.*2.*1.*1.*0/s);
+  assert.doesNotMatch(board.textContent,/17 条|13 次|11 次|质量提升|已彻底解决/);
+  assert.equal($('#evoValidationResults .evo-story-empty').textContent,'暂无');
+  assert.equal($('#evoDetailActions [data-evo-rollback]').dataset.evoRollback,'2');
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
@@ -306,7 +276,7 @@ test('passed trial publish and stop actions require explicit confirmation', asyn
   await open(app); $('[data-evo-asset-group]').click(); await settle(5);
   assert.equal($('#evoDetailActions [data-evo-approve]').disabled, false);
   $('#evoDetailActions [data-evo-reject]').click(); await settle(2);
-  assert.match($('#confirmModal').textContent, /终止试用.*新运行不再使用候选/s);
+  assert.match($('#confirmModal').textContent, /终止试用.*新运行不再使用修改稿/s);
   $('#confirmCancelBtn').click(); await settle(2);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
   $('#evoDetailActions [data-evo-approve]').click(); await settle(2);
@@ -329,15 +299,15 @@ test('queue cannot start while the asset is occupied, and cancel is confirmed wi
   const $ = s => app.document.querySelector(s);
   await open(app);
   assert.equal(app.document.querySelectorAll('[data-evo-asset-group]').length, 1);
-  assert.match($('#evoUnifiedList').textContent, /2 项后续改进排队/);
   $('[data-evo-asset-group]').click(); await settle(5);
+  assert.match($('[data-evo-queue]').textContent, /后续建议 2/);
   $('[data-evo-queue]').click(); await settle(3);
   assert.equal($('#kbDrawer img'), null);
   assert.equal($('#kbDrawer [data-evo-queue-start="queue-1"]').disabled, true);
   $('#kbDrawer [data-evo-queue-start="queue-1"]').click(); await settle(2);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
   $('#kbDrawer [data-evo-queue-reject="queue-1"]').click(); await settle(2);
-  assert.match($('#confirmModal').textContent, /尚未生成候选.*退出队列/s);
+  assert.match($('#confirmModal').textContent, /尚未生成修改稿.*退出队列/s);
   $('#confirmCancelBtn').click(); await settle(2);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
   app.router.post('/api/evolution/queue/queue-1/reject', () => { app.router.get('/api/evolution/overview?projectId=project-1', { ...overview, queue: [{ ...queued, id: 'queue-2' }] }); return { ...queued, status: 'rejected' }; });
@@ -366,7 +336,7 @@ test('queue start waits for confirmation and opens a newly generated proposal us
   $('[data-evo-queue]').click(); await settle(3);
   const start = $('#kbDrawer [data-evo-queue-start="queue-1"]');
   assert.equal(start.disabled, false); start.click(); await settle(2);
-  assert.match($('#confirmModal').textContent, /当前最新正文.*重新生成候选.*不直接使用旧候选/s);
+  assert.match($('#confirmModal').textContent, /当前最新正文.*重新生成修改稿.*不直接使用旧修改稿/s);
   $('#confirmCancelBtn').click(); await settle(2);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
   app.router.post('/api/evolution/queue/queue-1/start', () => { app.router.get('/api/evolution/overview?projectId=project-1', { ...queueOverview, queue: [], validating: [next] }); return next; }, 202);
@@ -377,7 +347,7 @@ test('queue start waits for confirmation and opens a newly generated proposal us
   assert.deepEqual(writes[0].body, {});
   assert.equal(app.window.location.hash, '#/evolution/proposals/change-next');
   assert.equal($('#evoFindingTitle').textContent, next.title);
-  assert.match($('#evoChangeSummary').textContent, /没有候选正文.*不展示虚构/s);
+  assert.match($('#evoReviewDiff').textContent, /暂无正文修改/s);
   assert.equal($('#evoDetailActions [data-evo-approve]'), null);
   assert.equal($('#evoDetailActions [data-evo-canary]'), null);
 });
@@ -399,7 +369,7 @@ for (const reply of [{ queued: true, queueId: queued.id }, queued, { status: 'qu
     assert.equal(app.router.calls.some(c => /\/proposals\/(undefined|queue-1)$/.test(c.path)), false);
     assert.ok($('#kbDrawer [data-evo-queue-reject="queue-1"]'));
     assert.equal($('#kbDrawer [data-evo-queue-start="queue-1"]').disabled, true);
-    assert.equal($('#evoFindingTitle').textContent, proposal.title);
+    assert.equal($('#evoFindingTitle').textContent, '空输入返回 500');
   });
 }
 
@@ -408,14 +378,14 @@ test('modification summary contains only real removed and added lines and treats
   const app = await loadApp({ routes: [...routes, { method: 'GET', path: '/api/evolution/proposals/change-1', body: changed }] }); t.after(app.close);
   const $ = s => app.document.querySelector(s);
   await open(app); $('[data-evo-asset-group]').click(); await settle(5);
-  assert.equal($('#evoChangeSummary .evo-change-lines > div:first-child p').textContent, '旧要求');
-  assert.equal($('#evoChangeSummary .evo-change-lines > div:last-child p').textContent, '新要求 <img src=x onerror=alert(1)>');
-  assert.doesNotMatch($('#evoChangeSummary .evo-change-lines').textContent, /保留内容|模型理由/);
-  assert.equal($('#evoChangeSummary img'), null);
+  assert.equal($('#evoReviewDiff .evo-diff-line.del code').textContent, '旧要求');
+  assert.equal($('#evoReviewDiff .evo-diff-line.add code').textContent, '新要求 <img src=x onerror=alert(1)>');
+  assert.doesNotMatch($('#evoReviewDiff').textContent, /保留内容|模型理由/);
+  assert.equal($('#evoReviewDiff img'), null);
   app.router.get('/api/evolution/proposals/change-1', { ...changed, candidateContent: changed.baseContent });
   $('[data-evo-detail-refresh]').click(); await settle(5);
-  assert.match($('#evoChangeSummary').textContent, /无差异|没有.*(?:差异|变化|改动)|未.*(?:改变|修改)/);
-  assert.doesNotMatch($('#evoChangeSummary').textContent, /仅补充要求|仅移除部分要求/);
+  assert.equal($('#evoReviewDiff .evo-diff-line.add, #evoReviewDiff .evo-diff-line.del'),null);
+  assert.doesNotMatch($('#evoReviewDiff').textContent, /仅补充要求|仅移除部分要求/);
   assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
 });
 
@@ -544,7 +514,7 @@ test('queue-only asset shows one waiting improvement and opens its queue without
   const $ = s => app.document.querySelector(s);
   await open(app);
   assert.equal(app.document.querySelectorAll('[data-evo-asset-group]').length, 1);
-  assert.match($('#evoUnifiedList').textContent, /1 项后续改进排队.*等待开始下一项/s);
+  assert.match($('#evoUnifiedList').textContent, /等待处理的改进.*等待开始下一项/s);
   $('[data-evo-asset-group]').click(); await settle(4);
   assert.equal($('#evoDetailPage'), null);
   assert.equal($('#kbDrawer').classList.contains('open'), true);
