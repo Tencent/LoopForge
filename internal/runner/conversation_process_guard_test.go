@@ -170,7 +170,7 @@ func TestConversationProcessNativeStartRequiresInstalledCLI(t *testing.T) {
 			Command:    &runtime.ConversationCommand{Argv: []string{"fixture-missing-cli", "--version"}, Provider: "fixture-missing-cli"},
 		}),
 	})
-	if got.Status != 400 || !strings.Contains(got.Error, "执行机器未安装 CLI fixture-missing-cli") {
+	if got.Status != 400 || got.Code != domain.WorkspaceErrorConversationProcess || !strings.Contains(got.Error, "执行机器未安装 CLI fixture-missing-cli") {
 		t.Fatalf("start without CLI = %+v", got)
 	}
 	// The failed start releases its root, so a later prepare is not blocked.
@@ -179,5 +179,21 @@ func TestConversationProcessNativeStartRequiresInstalledCLI(t *testing.T) {
 	})
 	if again.Status != 200 {
 		t.Fatalf("prepare after failed start = %+v", again)
+	}
+}
+
+func TestConversationProcessReportsWorkspaceSetupFailure(t *testing.T) {
+	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}}
+	d.conversationForward = func(context.Context, string, json.RawMessage) (json.RawMessage, error) { return nil, nil }
+	got := d.conversationProcess(t.Context(), domain.RunnerWorkspaceRequest{
+		RunID:   "legacy-workspace",
+		Sandbox: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: domain.SandboxDriverDocker}},
+		Conversation: conversationRequest(t, runtime.ConversationProcessRequest{
+			Operation: "start", SessionKey: strings.Repeat("a", 64),
+			Command: &runtime.ConversationCommand{Argv: []string{"codebuddy"}},
+		}),
+	})
+	if got.Status != 400 || got.Code != domain.WorkspaceErrorConversationSetup || !strings.Contains(got.Error, "legacy per-node workspace layout") {
+		t.Fatalf("workspace startup failure lost its cause or code: %+v", got)
 	}
 }

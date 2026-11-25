@@ -207,6 +207,35 @@ test('users: per-host Git access tokens are write-only and scoped to their owner
   }
 });
 
+test('platform: saves and clears the external access address', async t => {
+  const path = '/api/platform/public-url';
+  const initial = await get(path, { expect: 200 });
+  const address = 'https://loopforge-e2e.example.com:8443';
+  t.after(async () => {
+    const { stored } = await get(path, { expect: 200 });
+    if (stored === initial.stored) return;
+    if (initial.stored) await put(path, { value: initial.stored }, { expect: 200 });
+    else await del(path, { expect: 200 });
+  });
+
+  const saved = await put(path, { value: `${address}/` }, { expect: 200 });
+  assert.equal(saved.source, 'settings');
+  assert.equal(saved.value, address);
+  assert.equal(saved.stored, address);
+  assert.equal(saved.envValue, initial.envValue);
+  assert.ok(saved.updatedBy);
+
+  await put(path, { value: 'https://loopforge-e2e.example.com:65536' }, { expect: 400 });
+  assert.deepEqual(await get(path, { expect: 200 }), saved);
+
+  const cleared = await del(path, { expect: 200 });
+  assert.equal(cleared.source, initial.envValue ? 'env' : 'none');
+  assert.equal(cleared.value, initial.envValue);
+  assert.equal(cleared.stored, '');
+  assert.equal(cleared.updatedBy, saved.updatedBy);
+  assert.deepEqual(await get(path, { expect: 200 }), cleared);
+});
+
 function newSSHHostKey() {
   const algorithm = Buffer.from('ssh-ed25519');
   const { publicKey } = generateKeyPairSync('ed25519');

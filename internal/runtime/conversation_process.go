@@ -28,6 +28,13 @@ import (
 // response may hide a running CLI and must never be treated as safe to restart.
 var ErrConversationNotStarted = errors.New("conversation process was not started")
 
+// ConversationWorkspaceSetupError marks a failure specific to preparing
+// or launching the workspace used by a conversation.
+type ConversationWorkspaceSetupError struct{ Cause error }
+
+func (e *ConversationWorkspaceSetupError) Error() string { return e.Cause.Error() }
+func (e *ConversationWorkspaceSetupError) Unwrap() error { return e.Cause }
+
 // ConversationProcessRequest travels only over the authenticated runner
 // control connection. Keys and process input never enter durable task rows.
 type ConversationProcessRequest struct {
@@ -79,6 +86,7 @@ type ConversationProcessResult struct {
 	Sequence      int64                   `json:"sequence,omitempty"`
 	Done          bool                    `json:"done,omitempty"`
 	Error         string                  `json:"error,omitempty"`
+	ErrorCode     string                  `json:"errorCode,omitempty"`
 	NotStarted    bool                    `json:"notStarted,omitempty"`
 	CLIVersion    string                  `json:"cliVersion,omitempty"`
 	VersionSource string                  `json:"versionSource,omitempty"`
@@ -155,6 +163,7 @@ type conversationProcess struct {
 	base          int64
 	done          bool
 	err           string
+	errorCode     string
 	wake          chan struct{}
 	lastPoll      time.Time
 	closeRelay    func()
@@ -355,7 +364,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		n := min(len(proc.events), 256)
 		result := ConversationProcessResult{
 			ID: req.ID, Events: append([]domain.TelemetryEvent(nil), proc.events[:n]...), Sequence: proc.base + int64(n),
-			Done: proc.done && n == len(proc.events), Error: proc.err, NotStarted: proc.notStarted,
+			Done: proc.done && n == len(proc.events), Error: proc.err, ErrorCode: proc.errorCode, NotStarted: proc.notStarted,
 			CLIVersion: proc.cliVersion, VersionSource: proc.versionSource,
 		}
 		if result.Done {
@@ -525,6 +534,13 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			proc.err = runErr.Error()
 			proc.notStarted = notStarted
 		}
+		if proc.notStarted {
+			proc.errorCode = domain.WorkspaceErrorConversationProcess
+			var workspaceErr *ConversationWorkspaceSetupError
+			if errors.As(runErr, &workspaceErr) {
+				proc.errorCode = domain.WorkspaceErrorConversationSetup
+			}
+		}
 		proc.done = true
 		proc.mu.Unlock()
 		select {
@@ -565,11 +581,11 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		profile := spec.Profile
 		if profile.Driver == domain.SandboxDriverNative {
 			if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
-				return ConversationProcessResult{}, err
+				return ConversationProcessResult{}, &ConversationWorkspaceSetupError{Cause: err}
 			}
 		}
 		if profile.Driver != domain.SandboxDriverDocker && profile.Driver != domain.SandboxDriverBwrap && profile.Driver != domain.SandboxDriverSeatbelt {
-			return ConversationProcessResult{}, fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
+			return ConversationProcessResult{}, &ConversationWorkspaceSetupError{Cause: errors.New("对话工作区只支持 Docker 或 native 沙箱")}
 		}
 		resolved := *spec
 		resolved.Profile = profile
@@ -587,7 +603,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			}
 		}
 		if err != nil {
-			return ConversationProcessResult{}, err
+			return ConversationProcessResult{}, &ConversationWorkspaceSetupError{Cause: err}
 		}
 	} else if len(factories) > 0 && factories[0] != nil {
 		sb, release, err = factories[0](procCtx, root)
@@ -668,7 +684,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	if spec != nil {
 		binary, err := ensureConversationCLI(procCtx, sb, command.Provider, filepath.Join(root, "home"))
 		if err != nil {
-			return ConversationProcessResult{}, err
+			return ConversationProcessResult{}, &ConversationWorkspaceSetupError{Cause: err}
 		}
 		command.Argv[0] = binary
 	}
@@ -929,7 +945,7 @@ func startConversationRelay(ctx context.Context, token string, forward Conversat
 		if err != nil {
 			stopContext()
 			stop()
-			return "", nil, err
+			return "", nil, &ConversationWorkspaceSetupError{Cause: err}
 		}
 	}
 	return "http://" + net.JoinHostPort(host, fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)), func() { stopContext(); stop() }, nil
