@@ -168,24 +168,20 @@ func (e *Engine) resolveNodeAssets(ctx context.Context, agent domain.AgentDefini
 	uid := run.ExecutionContext.ResponsibleUserID
 	exec := e.knowledgeExecutor()
 
-	// Priority:
-	// 1) Explicit run-level override (ExecutionContext.KnowledgeRefs != nil)
-	// 2) Node-level KnowledgeRefs (strictly filtered to connectors owned by uid)
-	// 3) Role-level KnowledgeBase toggle (all enabled connectors owned by uid)
-	var effectiveRefs []domain.KnowledgeRef
-	hasExplicitOverride := run.ExecutionContext.KnowledgeRefs != nil
-	switch {
-	case hasExplicitOverride:
-		effectiveRefs = append([]domain.KnowledgeRef(nil), (*run.ExecutionContext.KnowledgeRefs)...)
-	case len(node.KnowledgeRefs) > 0:
-		effectiveRefs = append([]domain.KnowledgeRef(nil), node.KnowledgeRefs...)
-	case agent.KnowledgeBase && exec != nil && exec.Service() != nil:
-		for _, conn := range exec.Service().ListConnectors(uid) {
-			if conn.Enabled {
-				effectiveRefs = append(effectiveRefs, domain.KnowledgeRef{ConnectorID: conn.ID, Mode: "all"})
-			}
-		}
+	// Priority (A-Union):
+	// 1) Explicit run-level override (ExecutionContext.KnowledgeRefs != nil) wins exclusively.
+	// 2) Otherwise, union of node-level KnowledgeRefs (taking precedence per ConnectorID)
+	//    and role-level KnowledgeBase toggle (appending remaining enabled connectors owned by uid with mode="all").
+	var userConnectors []domain.KnowledgeConnector
+	if agent.KnowledgeBase && exec != nil && exec.Service() != nil {
+		userConnectors = exec.Service().ListConnectors(uid)
 	}
+	effectiveRefs := mergeNodeAndRoleKnowledgeRefs(
+		run.ExecutionContext.KnowledgeRefs,
+		node.KnowledgeRefs,
+		agent.KnowledgeBase,
+		userConnectors,
+	)
 
 	// Suppress role-level generic tokens so we mint node/run/attempt-bound tokens below.
 	agent.KnowledgeBase = false
@@ -234,6 +230,42 @@ func (e *Engine) resolveNodeAssets(ctx context.Context, agent domain.AgentDefini
 		})
 	}
 	return bundle
+}
+
+// mergeNodeAndRoleKnowledgeRefs computes the effective KnowledgeRefs for an SOP node:
+//   - If runOverride != nil: explicit run-level override wins exclusively.
+//   - Otherwise: nodeRefs take precedence per ConnectorID (preserving allowlist/sources),
+//     and if roleToggle is true, any other enabled connectors owned by the responsible
+//     user are appended with mode="all" (A-Union).
+func mergeNodeAndRoleKnowledgeRefs(
+	runOverride *[]domain.KnowledgeRef,
+	nodeRefs []domain.KnowledgeRef,
+	roleToggle bool,
+	userConnectors []domain.KnowledgeConnector,
+) []domain.KnowledgeRef {
+	if runOverride != nil {
+		return append([]domain.KnowledgeRef(nil), (*runOverride)...)
+	}
+	seen := make(map[string]bool, len(nodeRefs)+len(userConnectors))
+	var out []domain.KnowledgeRef
+	for _, ref := range nodeRefs {
+		id := strings.TrimSpace(ref.ConnectorID)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, ref)
+	}
+	if roleToggle {
+		for _, conn := range userConnectors {
+			if !conn.Enabled || seen[conn.ID] {
+				continue
+			}
+			seen[conn.ID] = true
+			out = append(out, domain.KnowledgeRef{ConnectorID: conn.ID, Mode: "all"})
+		}
+	}
+	return out
 }
 
 func fallbackSOPKnowledgeCatalog(servers []domain.MCPServerDefinition) string {

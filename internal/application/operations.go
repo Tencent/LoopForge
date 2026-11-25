@@ -65,6 +65,7 @@ func PublicOperations() []Operation {
 		{Name: "skills_save", Description: "Create or update a Skill asset", Method: "PUT", Path: "/api/skills"},
 		{Name: "skills_delete", Description: "Delete a Skill that is not shared and not referenced by any agent", Method: "DELETE", Path: "/api/skills"},
 		{Name: "mcp_servers_list", Description: "List managed external MCP server assets", Method: "GET", Path: "/api/mcp-servers", ReadOnly: true},
+		{Name: "knowledge_connectors_list", Description: "List the current user's personal knowledge connectors (Obsidian, Notion, SiYuan, Feishu, WeKnora, MCP) with secrets redacted", Method: "GET", Path: "/api/knowledge/connectors", ReadOnly: true},
 		{Name: "mcp_servers_save", Description: "Create or update an external MCP server asset", Method: "PUT", Path: "/api/mcp-servers"},
 		{Name: "mcp_servers_import", Description: "Import external MCP server definitions from JSON", Method: "POST", Path: "/api/mcp-servers/import"},
 		{Name: "executors_list", Description: "List executor definitions", Method: "GET", Path: "/api/executors", ReadOnly: true},

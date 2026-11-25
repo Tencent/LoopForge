@@ -721,6 +721,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if current.ExecutionContext.KnowledgeRefs != nil {
 				effectiveRefs = *current.ExecutionContext.KnowledgeRefs
 			}
+			hasMountedKB := false
+			for _, server := range assets.MCPServers {
+				if server.ID == domain.KnowledgeMCPServerID || strings.HasPrefix(server.ID, domain.KnowledgeMCPServerID+"-") {
+					hasMountedKB = true
+					break
+				}
+			}
 			for _, ref := range effectiveRefs {
 				id := domain.KnowledgeMCPServerID + "-" + ref.ConnectorID
 				found := false
@@ -731,10 +738,14 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					}
 				}
 				if !found {
-					warnMCPSkipped("知识连接器未装配：" + ref.ConnectorID + "（不存在、已停用或不属于当前执行人）")
+					msg := "知识连接器未装配：" + ref.ConnectorID + "（不存在、已停用或不属于当前执行人）"
+					if current.ExecutionContext.KnowledgeRefs == nil && agent.KnowledgeBase && hasMountedKB {
+						msg = "知识连接器未装配：" + ref.ConnectorID + "（不存在、已停用或不属于当前执行人；已由角色级个人知识库继续提供保底检索）"
+					}
+					warnMCPSkipped(msg)
 				}
 			}
-			if current.ExecutionContext.KnowledgeRefs == nil && len(effectiveNode.KnowledgeRefs) == 0 {
+			if current.ExecutionContext.KnowledgeRefs == nil {
 				if warning := knowledgeSkippedWarning(agent, assets); warning != "" {
 					warnMCPSkipped(warning)
 				}
@@ -833,9 +844,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					err = fmt.Errorf("%s，且执行器没有返回可恢复的 CLI session ID", firstProblem)
 				} else {
 					e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.submit.missing", Phase: "progress", Level: "warn", Message: firstProblem + "，恢复同一 CLI session 要求重新提交", Attributes: map[string]any{"iteration": iteration, "sessionId": sessionID}})
+					prevOutput := output
 					output, err = runOnce(gateMissingRetryMarker)
 					if e.dropLostCLISession(runID, node.ID, output, err) {
 						output, err = runOnce("")
+					} else if err == nil && domain.HasKnowledgeCitationMarkers(prevOutput) && !domain.HasKnowledgeCitationMarkers(output) {
+						output = prevOutput
 					}
 					if err == nil {
 						submitted, err = readGateResultFrom(outputs, submitPath)

@@ -318,3 +318,93 @@ func TestMarkNodeKnowledgeReadsOnFailurePreservesFrozenArtifactCitations(t *test
 		t.Fatalf("unexpected ev_2 state: %+v", evs[1])
 	}
 }
+
+func TestResolveNodeAssetsUnionOfNodeAndRoleKnowledgeRefs(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "test-secret-key")
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	svc := knowledge.NewService(store, nil)
+	connA1, err := svc.CreateConnector(context.Background(), 42, domainConnectorWeKnora("User42 KB1", "https://kb1.invalid", "tok1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	connA2, err := svc.CreateConnector(context.Background(), 42, domainConnectorWeKnora("User42 KB2", "https://kb2.invalid", "tok2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	connForeign, err := svc.CreateConnector(context.Background(), 99, domainConnectorWeKnora("User99 Foreign", "https://foreign.invalid", "tok99"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	eng := &Engine{repo: store}
+	agent := domain.AgentDefinition{ID: "agent-union", Name: "UnionDev", KnowledgeBase: true}
+	run := domain.Run{
+		ID: "run-union-1",
+		ExecutionContext: domain.TelemetryContext{
+			ProjectID:         "p1",
+			ResponsibleUserID: 42,
+		},
+		Nodes: map[string]*domain.NodeRun{
+			"n1": {NodeID: "n1", Attempt: 1},
+		},
+	}
+
+	// Case 1: Node narrows connA1 to allowlist ["arch"] and also references foreign connForeign.
+	// Role toggle should union connA2(all) while preserving connA1(allowlist:["arch"]) and dropping connForeign.
+	node := domain.WorkflowNode{
+		ID:      "n1",
+		Type:    "agent",
+		AgentID: agent.ID,
+		KnowledgeRefs: []domain.KnowledgeRef{
+			{ConnectorID: connA1.ID, Mode: "allowlist", Sources: []string{"arch"}},
+			{ConnectorID: connForeign.ID, Mode: "all"},
+		},
+	}
+	bundle := eng.resolveNodeAssets(context.Background(), agent, run, "wf-1", node)
+	if len(bundle.MCPServers) != 2 {
+		t.Fatalf("expected 2 unioned MCP servers (connA1 + connA2), got %d: %+v", len(bundle.MCPServers), bundle.MCPServers)
+	}
+	claimsByConn := map[string]*knowledge.ProxyClaims{}
+	for _, srv := range bundle.MCPServers {
+		tok := strings.TrimPrefix(srv.Headers["Authorization"], "Bearer ")
+		c, err := knowledge.VerifyProxyToken(tok, time.Now())
+		if err != nil {
+			t.Fatalf("VerifyProxyToken(%s): %v", srv.ID, err)
+		}
+		claimsByConn[c.Ref.ConnectorID] = &c
+	}
+	if c1 := claimsByConn[connA1.ID]; c1 == nil || c1.Ref.Mode != "allowlist" || len(c1.Ref.Sources) != 1 || c1.Ref.Sources[0] != "arch" {
+		t.Fatalf("expected connA1 to preserve node allowlist [arch], got %+v", c1)
+	}
+	if c2 := claimsByConn[connA2.ID]; c2 == nil || c2.Ref.Mode != "all" {
+		t.Fatalf("expected connA2 to be appended from role baseline with mode=all, got %+v", c2)
+	}
+
+	// Case 2: Node binds ONLY foreign connector (cross-user authoring), role toggle falls back to connA1 + connA2.
+	nodeForeignOnly := domain.WorkflowNode{
+		ID:      "n1",
+		Type:    "agent",
+		AgentID: agent.ID,
+		KnowledgeRefs: []domain.KnowledgeRef{
+			{ConnectorID: connForeign.ID, Mode: "all"},
+		},
+	}
+	bundleFallback := eng.resolveNodeAssets(context.Background(), agent, run, "wf-1", nodeForeignOnly)
+	if len(bundleFallback.MCPServers) != 2 {
+		t.Fatalf("expected role fallback to mount connA1 and connA2 when node refs belong to another user, got %+v", bundleFallback.MCPServers)
+	}
+
+	// Case 3: Explicit run-level override exclusively overrides both node and role.
+	override := []domain.KnowledgeRef{{ConnectorID: connA2.ID, Mode: "allowlist", Sources: []string{"ops"}}}
+	runOverride := run
+	runOverride.ExecutionContext.KnowledgeRefs = &override
+	bundleOverride := eng.resolveNodeAssets(context.Background(), agent, runOverride, "wf-1", node)
+	if len(bundleOverride.MCPServers) != 1 || bundleOverride.MCPServers[0].ID != domain.KnowledgeMCPServerID+"-"+connA2.ID {
+		t.Fatalf("expected explicit run override to mount only connA2, got %+v", bundleOverride.MCPServers)
+	}
+}

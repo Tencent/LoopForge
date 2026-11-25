@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
@@ -250,5 +251,192 @@ func TestStripLocalMediaPathsKeepsTheSentence(t *testing.T) {
 	}
 	if strings.Contains(stripLocalMediaPaths("看这张 https://cdn.example.com/a.png"), "https") == false {
 		t.Fatal("remote image url was removed")
+	}
+}
+
+func TestWorkbenchMentionedSOPInjectsDispatchGuidanceOnlyOutsideRun(t *testing.T) {
+	h, u := workbenchFixture(t)
+	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
+		ID: "wf-kb-audit", Name: "知识库验收 SOP", ProjectID: "workbench", SandboxProfileID: "local",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := workbenchContext(u, "POST", "/", bytes.NewBuffer(nil))
+	req := assistantRequest{
+		ProjectID: "workbench",
+		Messages: []assistantMessage{{
+			Role:       "user",
+			Content:    "按 @知识库验收 SOP 执行一次验收",
+			References: []domain.AssistantReference{{Type: "sop", ID: "wf-kb-audit"}},
+		}},
+	}
+	if err := h.prepareWorkbenchContext(c, &req, u); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"用户本轮 @ 了 SOP", "wf-kb-audit", "runs_start", "严禁在当前对话内直接代跑 SOP"} {
+		if !strings.Contains(req.contextText, want) {
+			t.Fatalf("expected contextText to contain %q, got:\n%s", want, req.contextText)
+		}
+	}
+
+	if err := h.repo.PutRun(domain.Run{
+		ID: "run-active", WorkflowID: "wf-kb-audit", Status: "running",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "workbench"},
+		Nodes:            map[string]*domain.NodeRun{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runReq := assistantRequest{
+		ProjectID: "workbench",
+		RunID:     "run-active",
+		Messages: []assistantMessage{{
+			Role:       "user",
+			Content:    "解释下 @知识库验收 SOP",
+			References: []domain.AssistantReference{{Type: "sop", ID: "wf-kb-audit"}},
+		}},
+	}
+	if err := h.prepareWorkbenchContext(c, &runReq, u); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(runReq.contextText, "严禁在当前对话内直接代跑 SOP") {
+		t.Fatalf("active run conversation should not inject new-SOP dispatch guidance:\n%s", runReq.contextText)
+	}
+}
+
+func TestAssistantCatalogIncludesKnowledgeConnectorsList(t *testing.T) {
+	found := false
+	for _, name := range agentflowAssistantReadToolNames() {
+		if name == "knowledge_connectors_list" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected knowledge_connectors_list in assistant read-only tool catalog")
+	}
+	if !assistantPlatformToolAllowed(assistantExecMode{}, "knowledge_connectors_list") {
+		t.Fatal("expected knowledge_connectors_list to be allowed in confirm mode")
+	}
+}
+
+func TestResolveMentionedKnowledgeRefsForAgentAndSOP(t *testing.T) {
+	h, u := workbenchFixture(t)
+	svc := knowledge.NewService(h.repo, randomID)
+	h.deps.knowledgeSvc = svc
+	h.deps.knowledgeExec = knowledge.NewExecutor(svc)
+
+	connA1, err := svc.CreateConnector(context.Background(), u.ID, knowledge.ConnectorInput{
+		Type: domain.ConnectorTypeWeKnora, Name: "OwnerKB1", Enabled: new(true),
+		Endpoint: "https://kb1.invalid", Secret: domain.KnowledgeConnectorSecret{Token: "tok1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connA2, err := svc.CreateConnector(context.Background(), u.ID, knowledge.ConnectorInput{
+		Type: domain.ConnectorTypeWeKnora, Name: "OwnerKB2", Enabled: new(true),
+		Endpoint: "https://kb2.invalid", Secret: domain.KnowledgeConnectorSecret{Token: "tok2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connForeign, err := svc.CreateConnector(context.Background(), u.ID+999, knowledge.ConnectorInput{
+		Type: domain.ConnectorTypeWeKnora, Name: "ForeignKB", Enabled: new(true),
+		Endpoint: "https://foreign.invalid", Secret: domain.KnowledgeConnectorSecret{Token: "tok-foreign"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.repo.PutAgent(domain.AgentDefinition{
+		ID: "agent-kb", Name: "架构师", ProjectID: "workbench", KnowledgeBase: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
+		ID: "wf-kb-union", Name: "知识库巡检 SOP", ProjectID: "workbench", SandboxProfileID: "local",
+		Nodes: []domain.WorkflowNode{
+			{
+				ID: "n1", Name: "架构节点", Type: "agent", AgentID: "agent-kb",
+				KnowledgeRefs: []domain.KnowledgeRef{
+					{ConnectorID: connA1.ID, Mode: "allowlist", Sources: []string{"arch"}},
+					{ConnectorID: connForeign.ID, Mode: "all"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := assistantConversation{ID: "sess-1", ProjectID: "workbench"}
+	if err := h.repo.PutAssistantSession(u.ID, sess); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Plain message without @角色/@SOP does not mount knowledge even though project has agent-kb.
+	refsPlain, changedPlain := h.resolveMentionedKnowledgeRefs(u.ID, "workbench", sess, []assistantMessage{
+		{Role: "user", Content: "普通消息不带引用"},
+	})
+	if changedPlain || len(refsPlain) != 0 {
+		t.Fatalf("expected plain message not to mount knowledge refs, got changed=%v refs=%+v", changedPlain, refsPlain)
+	}
+
+	// 2. Mentioning @SOP unions node's connA1(allowlist:["arch"]) with node role's connA2(all) and drops foreign connector.
+	refsSOP, changedSOP := h.resolveMentionedKnowledgeRefs(u.ID, "workbench", sess, []assistantMessage{
+		{
+			Role:       "user",
+			Content:    "读一下 @知识库巡检 SOP 的知识库做个概述",
+			References: []domain.AssistantReference{{Type: "sop", ID: "wf-kb-union"}},
+		},
+	})
+	if !changedSOP || len(refsSOP) != 2 {
+		t.Fatalf("expected 2 unioned knowledge refs from @SOP, got changed=%v refs=%+v", changedSOP, refsSOP)
+	}
+	if refsSOP[0].ConnectorID != connA1.ID || refsSOP[0].Mode != "allowlist" || len(refsSOP[0].Sources) != 1 || refsSOP[0].Sources[0] != "arch" {
+		t.Fatalf("expected first ref to preserve SOP node allowlist [arch], got %+v", refsSOP[0])
+	}
+	if refsSOP[1].ConnectorID != connA2.ID || refsSOP[1].Mode != "all" {
+		t.Fatalf("expected second ref to append connA2(all) from role baseline, got %+v", refsSOP[1])
+	}
+
+	// Persist and verify KnowledgeRestricted privacy watermark is set.
+	if err := h.repo.SetAssistantSessionKnowledge(u.ID, sess.ID, refsSOP); err != nil {
+		t.Fatal(err)
+	}
+	savedAfter, ok := h.repo.AssistantSession(u.ID, sess.ID)
+	if !ok || !savedAfter.KnowledgeRestricted || len(savedAfter.KnowledgeRefs) != 2 {
+		t.Fatalf("expected KnowledgeRestricted=true and 2 saved refs, got %+v", savedAfter)
+	}
+
+	// 3. Explicit manual clear (KnowledgeRestricted=true, KnowledgeRefs=empty) stays cleared on plain message,
+	// and direct @Agent mention mounts all enabled owner connectors.
+	if err := h.repo.SetAssistantSessionKnowledge(u.ID, sess.ID, []domain.KnowledgeRef{}); err != nil {
+		t.Fatal(err)
+	}
+	clearedSess, _ := h.repo.AssistantSession(u.ID, sess.ID)
+	refsAfterClear, changedAfterClear := h.resolveMentionedKnowledgeRefs(u.ID, "workbench", clearedSess, []assistantMessage{
+		{Role: "user", Content: "我已经手动清空了知识库，这轮不带引用"},
+	})
+	if changedAfterClear || len(refsAfterClear) != 0 {
+		t.Fatalf("expected manual clear to stay empty on plain message, got changed=%v refs=%+v", changedAfterClear, refsAfterClear)
+	}
+	refsAgent, changedAgent := h.resolveMentionedKnowledgeRefs(u.ID, "workbench", clearedSess, []assistantMessage{
+		{
+			Role:       "user",
+			Content:    "请 @架构师 检索知识库",
+			References: []domain.AssistantReference{{Type: "agent", ID: "agent-kb"}},
+		},
+	})
+	if !changedAgent || len(refsAgent) != 2 {
+		t.Fatalf("expected direct @Agent mention to mount 2 owner connectors, got changed=%v refs=%+v", changedAgent, refsAgent)
+	}
+
+	// 4. workbenchReference metadata exposes knowledgeBase on agent and roleKnowledgeBase on sop.
+	_, agentBlock, err := h.workbenchReference(domain.AssistantReference{Type: "agent", ID: "agent-kb"}, "workbench")
+	if err != nil || !strings.Contains(agentBlock, `"knowledgeBase":true`) {
+		t.Fatalf("expected agent workbenchReference to expose knowledgeBase:true, got err=%v block=%s", err, agentBlock)
+	}
+	_, sopBlock, err := h.workbenchReference(domain.AssistantReference{Type: "sop", ID: "wf-kb-union"}, "workbench")
+	if err != nil || !strings.Contains(sopBlock, `"roleKnowledgeBase"`) {
+		t.Fatalf("expected sop workbenchReference to expose roleKnowledgeBase, got err=%v block=%s", err, sopBlock)
 	}
 }
