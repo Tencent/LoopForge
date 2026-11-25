@@ -21,8 +21,8 @@ test('conditional routing designer and real engine', { skip: !process.env.LOOPFO
   app.window.fetch = (path, options) => /^\/api\/(workflows|runs)(\/|\?|$)/.test(String(path))
     ? fetch(new URL(path, base), options) : app.router.fetch(path, options);
   const workflowID = `issue354-ui-smoke-${Date.now()}`;
-  app.evaluate(`switchView('flow');state.projectFilter='platform';state.data.projects=[{id:'platform',name:'Test'}];state.data.sandboxes=[{id:'local',projectId:'platform',driver:'local'}];
-    state.workflow={id:${JSON.stringify(workflowID)},projectId:'platform',name:'Conditional routing simulation',status:'draft',sandboxProfileId:'local',nodes:[
+  app.evaluate(`switchView('flow');state.projectFilter='platform';state.data.projects=[{id:'platform',name:'Test'}];state.data.sandboxes=[{id:'test-native',projectId:'platform',driver:'native',name:'测试轻量沙箱'}];
+    state.workflow={id:${JSON.stringify(workflowID)},projectId:'platform',name:'Conditional routing simulation',status:'draft',sandboxProfileId:'test-native',nodes:[
       {id:'route',name:'Classify',type:'script',script:${JSON.stringify(`printf '%s' '{"route":"small"}' > "$LOOPFORGE_ROUTE_FILE"`)},maxAttempts:1,position:{x:20,y:30}},
       {id:'small',name:'Small branch',type:'script',script:'echo small',maxAttempts:1,position:{x:300,y:30}},
       {id:'large',name:'Large branch',type:'script',script:'echo large',maxAttempts:1,position:{x:300,y:150}},

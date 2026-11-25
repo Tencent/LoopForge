@@ -1108,6 +1108,20 @@ function flowRouteOptionAllowed(n,type){
   if(type==='artifact')return (n.type==='agent'||n.type==='script'||n.type==='command')&&n.executionScope!=='repositories';
   return true;
 }
+function clearedRoutingSummary(n,conditioned){
+  const parts=[];
+  if(conditioned.length)parts.push(`${conditioned.length} 条分支条件`);
+  if(n.defaultTarget)parts.push('默认分支');
+  return parts.join('和');
+}
+function confirmRepositoryScopeSwitch(n,conditioned){
+  return afConfirm({title:'切换到每个代码仓库？',message:`仓库级脚本不能按路由标签或 JSON 产物选路，切换后会清除该节点的${clearedRoutingSummary(n,conditioned)}。`,danger:true,confirmText:'清除并切换',cancelText:'保持当前范围'});
+}
+function clearRoutingForRepositoryScope(n,conditioned){
+  conditioned.forEach(edge=>{delete edge.condition});
+  n.defaultTarget='';
+  clearInvalidDefaultTargets(state.workflow);
+}
 function flowRoutingPane(n){
   const approval=n.type==='approval';
   const outgoing=approval?[]:(state.workflow.edges||[]).filter(e=>e.source===n.id);
@@ -1175,8 +1189,7 @@ function renderProperties(){
   if(refocus){refocus.focus({preventScroll:true});if(caret)try{refocus.setSelectionRange(caret[0],caret[1])}catch{}}
   setFlowDrawer(true,n.id);
 }
-function bindNodeProperties(host,n){
-  host.querySelectorAll('[data-route-edge]').forEach(row=>{
+function bindNodeProperties(host,n){  host.querySelectorAll('[data-route-edge]').forEach(row=>{
     const edge=state.workflow.edges.find(e=>e.id===row.dataset.routeEdge);if(!edge)return;
     row.querySelectorAll('[data-route-field]').forEach(el=>el.onchange=()=>{
       const key=el.dataset.routeField;flowHistory.record();
@@ -1191,8 +1204,22 @@ function bindNodeProperties(host,n){
       dirty();renderCanvas();
     });
   });
-  host.querySelectorAll('[data-p]').forEach(el=>el.oninput=()=>{
+  host.querySelectorAll('[data-p]').forEach(el=>el.oninput=async()=>{
     const key=el.dataset.p;
+    // A repository-scoped script cannot select a branch, so keeping the old
+    // conditions would only fail at save time. Offer to clear them instead of
+    // leaving a greyed-out option next to a condition nothing can evaluate.
+    if(key==='executionScope'&&el.value==='repositories'){
+      const conditioned=(state.workflow.edges||[]).filter(edge=>edge.source===n.id&&edge.condition);
+      if(conditioned.length||n.defaultTarget){
+        if(!await confirmRepositoryScopeSwitch(n,conditioned)){renderProperties();return}
+        flowHistory.record({merge:`p:${n.id}:${key}`});
+        clearRoutingForRepositoryScope(n,conditioned);
+        n[key]=el.value;
+        toast('已清除该节点的分支条件：仓库级脚本不能选路');
+        dirty();renderProperties();renderCanvas();return;
+      }
+    }
     if(key!=='sopWorkflowId')flowHistory.record({merge:`p:${n.id}:${key}`});
     n[key]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
     if(key==='defaultTarget'&&n.defaultTarget){const edge=state.workflow.edges.find(e=>e.source===n.id&&e.target===n.defaultTarget);if(edge)delete edge.condition;clearInvalidDefaultTargets(state.workflow);renderProperties()}

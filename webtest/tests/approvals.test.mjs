@@ -106,3 +106,22 @@ test('approval list sends context and removes the approved run after refreshing'
   await app.evaluate(`window.__pauseRun`);
   assert.ok(app.router.calls.some(c => c.method === 'POST' && c.path === '/api/runs/approval-run/pause'));
 });
+
+test('skip reasons keep route labels verbatim while naming upstream nodes', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const texts = app.evaluate(`
+    (() => {
+      const wf={nodes:[{id:'classify',name:'Classify'},{id:'small',name:'Small branch'},{id:'large',name:'Large branch'}]};
+      return {
+        route: skipReasonText({skipReason:'classify 路由 [small] 未选择此分支'},wf,{name:'Large branch'}),
+        artifact: skipReasonText({skipReason:'classify 的产物 classification 字段 /size 未匹配条件 "small"'},wf,{name:'Large branch'}),
+        plain: skipReasonText({skipReason:'classify 已跳过'},wf,{name:'Large branch'}),
+      };
+    })()
+  `);
+  // The upstream node keeps its display name; the reported route label does not.
+  assert.equal(texts.route, '上游Classify 路由 [small] 未选择此分支，因此跳过 Large branch');
+  assert.equal(texts.artifact, '上游Classify 的产物 classification 字段 /size 未匹配条件 "small"，因此跳过 Large branch');
+  assert.equal(texts.plain, '上游Classify 已跳过，因此跳过 Large branch');
+});

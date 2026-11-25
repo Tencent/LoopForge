@@ -227,3 +227,31 @@ test('switching workflows explicitly offers to discard edits or continue editing
   app.document.querySelector('#confirmCancelBtn').click();
   assert.equal(await pending,false);
 });
+
+test('switching a routed script to repository scope clears its conditions after confirmation', async (t) => {
+  const app = await loadApp(); t.after(app.close);
+  const build = () => app.evaluate(`switchView('flow');state.workflow={id:'scope-guard',projectId:'project-1',name:'Scope guard',nodes:[
+    {id:'route',name:'Route',type:'script',executionScope:'run',position:{x:20,y:30}},
+    {id:'small',name:'Small',type:'script',position:{x:300,y:30}},
+    {id:'large',name:'Large',type:'script',position:{x:300,y:160}}
+  ],edges:[{id:'small-edge',source:'route',target:'small',when:'success',condition:{type:'route',values:['small']}},{id:'large-edge',source:'route',target:'large',when:'success'}]};
+  state.selectedNode='route';renderProperties()`);
+  const switchScope = async (confirmed) => {
+    app.evaluate(`afConfirm=async()=>${confirmed}`);
+    const scope = app.document.querySelector('#properties [data-p="executionScope"]');
+    scope.value = 'repositories';
+    scope.dispatchEvent(new app.window.Event('input'));
+    await new Promise(resolve => setTimeout(resolve, 50));
+  };
+  build();
+  await switchScope(false);
+  assert.equal(app.evaluate(`state.workflow.nodes[0].executionScope`), 'run');
+  assert.equal(app.evaluate(`!!state.workflow.edges[0].condition`), true);
+  await switchScope(true);
+  assert.equal(app.evaluate(`state.workflow.nodes[0].executionScope`), 'repositories');
+  assert.equal(app.evaluate(`state.workflow.edges[0].condition==null`), true);
+  assert.equal(app.evaluate(`!!state.workflow.nodes[0].defaultTarget`), false);
+  // Undo restores the condition the switch removed.
+  assert.equal(app.evaluate(`flowHistory.undo()`), true);
+  assert.equal(app.evaluate(`!!state.workflow.edges[0].condition`), true);
+});

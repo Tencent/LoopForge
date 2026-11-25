@@ -534,8 +534,13 @@ function liveUsageHTML(r){
 function skipReasonText(nr,wf,node){
   const raw=String(nr?.skipReason||'上游分支未被选中');
   const names=new Map((wf?.nodes||[]).map(n=>[n.id,n.name||n.id]));
-  let text=raw;
+  // Node ids become names for readability, but a route label or a comparison
+  // value inside [...] or "..." may legally reuse a node id. Keeping those
+  // verbatim stops the reason from renaming the branch it reports.
+  const guarded=[];
+  let text=raw.replace(/\[[^\]]*\]|"[^"]*"/g,m=>{guarded.push(m);return `\u0001${guarded.length-1}\u0001`});
   for(const [id,name] of names)text=text.replaceAll(id,name);
+  text=text.replace(/\u0001(\d+)\u0001/g,(_,i)=>guarded[Number(i)]);
   const current=node?.name||'';
   return current&&text!==raw?`上游${text}，因此跳过 ${current}`:text;
 }
