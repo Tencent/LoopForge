@@ -898,6 +898,7 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	// A graph/role update must not silently replace the environment underneath
 	// an existing workspace. A new Run will pick up the latest sandbox asset.
 	latest.SandboxProfileID = r.WorkflowSnapshot.SandboxProfileID
+	latest.AutoSelectSandbox = r.WorkflowSnapshot.AutoSelectSandbox
 	latest.SandboxSnapshot = r.WorkflowSnapshot.SandboxSnapshot
 	latest, err := configureBaselineAlignCLI(latest)
 	if err != nil {

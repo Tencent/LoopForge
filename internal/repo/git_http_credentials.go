@@ -20,6 +20,7 @@ var (
 	ErrGitHTTPCredentialExists  = errors.New("该主机已有访问令牌，请编辑现有凭据")
 	ErrGitHTTPTokenRequired     = errors.New("添加凭据时请填写访问令牌")
 	ErrGitHTTPCredentialManaged = errors.New("内部托管凭据由平台维护，不能在这里修改或删除")
+	ErrGitHTTPHostUnauthorized  = errors.New("请联系平台管理员先授权该 HTTP Git 主机")
 )
 
 func gitHTTPCredentialID(host string) string {
@@ -27,9 +28,13 @@ func gitHTTPCredentialID(host string) string {
 }
 
 func (row gitHTTPCredentialRow) secret() domain.GitHTTPCredentialSecret {
+	host := row.Host
+	if row.HTTPHost != "" {
+		host = row.HTTPHost
+	}
 	return domain.GitHTTPCredentialSecret{
 		GitHTTPCredential: domain.GitHTTPCredential{
-			ID: row.ID, Name: row.Name, Platform: row.Platform, Host: row.Host,
+			ID: row.ID, Name: row.Name, Platform: row.Platform, Host: host,
 			Username: row.Username},
 		Token: row.Token,
 	}
@@ -72,12 +77,12 @@ func managedGitHTTPCredential(user domain.User) (domain.GitHTTPCredentialSecret,
 	return secret, true
 }
 
-// GitHTTPCredentials describes the user's HTTPS Git credentials, followed by
+// GitHTTPCredentials describes the user's HTTP(S) Git credentials, followed by
 // the managed internal credential unless a personal one covers its host.
 // Tokens are never read into the description.
 func (r *UsersRepo) GitHTTPCredentials(userID int64) ([]domain.GitHTTPCredential, error) {
 	var rows []gitHTTPCredentialRow
-	err := r.DB.Select("id", "name", "platform", "host", "username").
+	err := r.DB.Select("id", "name", "platform", "host", "http_host", "username").
 		Where("user_id = ?", userID).Order("name, id").Find(&rows).Error
 	if err != nil {
 		return nil, err
@@ -85,8 +90,9 @@ func (r *UsersRepo) GitHTTPCredentials(userID int64) ([]domain.GitHTTPCredential
 	out := make([]domain.GitHTTPCredential, 0, len(rows)+1)
 	hosts := make(map[string]bool, len(rows))
 	for _, row := range rows {
-		out = append(out, row.secret().GitHTTPCredential)
-		hosts[row.Host] = true
+		credential := row.secret().GitHTTPCredential
+		out = append(out, credential)
+		hosts[credential.Host] = true
 	}
 	if user, ok := r.User(userID); ok {
 		if managed, ok := managedGitHTTPCredential(user); ok && !hosts[managed.Host] {
@@ -103,18 +109,30 @@ func (r *UsersRepo) SaveGitHTTPCredential(userID int64, existingID string, input
 	if existingID == domain.ManagedGitHTTPCredentialID {
 		return ErrGitHTTPCredentialManaged
 	}
-	host, err := gitwork.HTTPSHostScope(input.Host)
+	endpoint, err := domain.ParseGitHTTPEndpoint(input.Host)
 	if err != nil {
 		return err
 	}
+	host, httpHost := endpoint.Scope(), ""
 	id := gitHTTPCredentialID(host)
+	if endpoint.Scheme == "http" {
+		authorized, err := r.gitHTTPHosts.PlatformGitHTTPHostAuthorized(context.Background(), endpoint.Authority)
+		if err != nil {
+			return err
+		}
+		if !authorized {
+			return ErrGitHTTPHostUnauthorized
+		}
+		httpHost, host = host, ""
+		input.Platform = domain.GitPlatformOther
+	}
 	now := time.Now().UTC()
 	if existingID == "" {
 		if input.Token == "" {
 			return ErrGitHTTPTokenRequired
 		}
 		row := gitHTTPCredentialRow{
-			UserID: userID, ID: id, Name: input.Name, Platform: input.Platform, Host: host,
+			UserID: userID, ID: id, Name: input.Name, Platform: input.Platform, Host: host, HTTPHost: httpHost,
 			Username: input.Username, Token: input.Token, Created: &now, Updated: &now,
 		}
 		err := r.DB.Create(&row).Error
@@ -156,19 +174,27 @@ func (r *UsersRepo) DeleteGitHTTPCredential(userID int64, id string) error {
 	return r.DB.Where("user_id = ? AND id = ?", userID, id).Delete(&gitHTTPCredentialRow{}).Error
 }
 
-// GitHTTPCredentialForHost returns the user's credential for exactly one
-// host[:port], refreshing a managed OAuth token first.
+// GitHTTPCredentialForHost returns the user's credential for one HTTP(S)
+// endpoint, refreshing a managed OAuth token when applicable.
 func (r *UsersRepo) GitHTTPCredentialForHost(ctx context.Context, userID int64, host string) (domain.GitHTTPCredentialSecret, bool) {
-	host, err := gitwork.HTTPSHostScope(host)
+	endpoint, err := domain.ParseGitHTTPEndpoint(host)
 	if err != nil || userID <= 0 {
 		return domain.GitHTTPCredentialSecret{}, false
 	}
+	host = endpoint.Scope()
 	var row gitHTTPCredentialRow
-	if err := r.DB.Where("user_id = ? AND id = ?", userID, gitHTTPCredentialID(host)).Limit(1).Find(&row).Error; err != nil {
+	if err := r.DB.WithContext(ctx).Where("user_id = ? AND id = ?", userID, gitHTTPCredentialID(host)).Limit(1).Find(&row).Error; err != nil {
 		return domain.GitHTTPCredentialSecret{}, false
 	}
-	if row.ID != "" && row.Host == host && row.Token != "" {
-		return row.secret(), true
+	secret := row.secret()
+	if row.ID != "" && secret.Host == host && secret.Token != "" {
+		if endpoint.Scheme == "http" {
+			authorized, err := r.gitHTTPHosts.PlatformGitHTTPHostAuthorized(ctx, endpoint.Authority)
+			if err != nil || !authorized {
+				return domain.GitHTTPCredentialSecret{}, false
+			}
+		}
+		return secret, true
 	}
 	if host != managedGitHost() {
 		return domain.GitHTTPCredentialSecret{}, false
@@ -186,7 +212,9 @@ func (r *UsersRepo) GitHTTPCredentialSecrets(ctx context.Context, userID int64) 
 	}
 	for _, credential := range credentials {
 		if secret, ok := r.GitHTTPCredentialForHost(ctx, userID, credential.Host); ok {
-			out[credential.Host] = domain.GitHTTPExecutionCredential{GitHTTPCredential: secret.GitHTTPCredential, Token: secret.Token, ExpiresAt: secret.ExpiresAt}
+			out[credential.Host] = domain.GitHTTPExecutionCredential{
+				GitHTTPCredential: secret.GitHTTPCredential, Token: secret.Token, ExpiresAt: secret.ExpiresAt,
+			}
 		}
 	}
 	return out
@@ -228,6 +256,12 @@ func (r *UsersRepo) GitHTTPWorkspaceHosts(userID int64) map[string]string {
 	}
 	hosts := make(map[string]string, len(creds))
 	for _, cred := range creds {
+		if authority, plain := strings.CutPrefix(cred.Host, "http://"); plain {
+			authorized, err := r.gitHTTPHosts.PlatformGitHTTPHostAuthorized(context.Background(), authority)
+			if err != nil || !authorized {
+				continue
+			}
+		}
 		hosts[cred.Host] = cred.Platform
 	}
 	return hosts

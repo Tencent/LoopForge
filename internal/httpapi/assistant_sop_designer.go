@@ -60,7 +60,7 @@ const assistantSOPDesignerSystemPrompt = `你是 LoopForge SOP 设计器里的�
   例如在「实现」后加一个人工评审：{"tool":"workflows_save","body":{"operations":[{"op":"add_node","node":{"id":"review","name":"人工评审","type":"approval"}},{"op":"add_edge","source":"impl","target":"review"}]}}
   操作有误时平台会退回具体原因，按原因修正后重新提交。
 - 画布为空，或用户明确要求从头新建、重新搭一条、清空画布时，才在 body 里提交完整流程（name、description、nodes、edges），不要用 operations。画布上已有 SOP 时整体重搭沿用画布的 id（替换这条 SOP 的流程）；用户明确要另建一条新 SOP 时才用新 id，新 id 用项目 ID 前缀加语义英文短名（如 <projectId>-bugfix），projectId 填当前项目。
-- id、projectId、sandboxProfileId 是保存必填字段：沿用画布上的值；画布没有 sandboxProfileId 时先用 agentflow__sandboxes_list 选一个可用沙箱。
+- id 和 projectId 是保存必填字段。沿用画布的运行沙箱设置：固定环境填 sandboxProfileId；由 Agent 按项目和任务自动选择时填 autoSelectSandbox=true 并清空 sandboxProfileId。用户明确指定固定环境时先用 agentflow__sandboxes_list 确认可用沙箱。
 节点规则：
 - agent 节点必须绑定可用角色列表里已有的 agentId，并写清这个节点要做什么的 prompt；需要新角色时先提交角色草稿。人工确认用 approval，确定的脚本任务用 script。
 - script 节点必须带非空脚本；sop 节点必须填 sopWorkflowId，且不能引用正在编辑的这条 SOP。
@@ -242,7 +242,7 @@ func compactSOPDesignerWorkflow(raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 	out := map[string]any{}
-	for _, key := range []string{"id", "name", "description", "sandboxProfileId", "preview"} {
+	for _, key := range []string{"id", "name", "description", "sandboxProfileId", "autoSelectSandbox", "preview"} {
 		if v, ok := wf[key]; ok && v != nil {
 			out[key] = v
 		}

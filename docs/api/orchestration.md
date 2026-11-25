@@ -32,7 +32,7 @@
 
 ### `PUT /api/workflows`
 
-按 `id` 保存。`id` 和 `sandboxProfileId` 必填；`version=0` 时改为 `1`。成功 `200` 返回保存后的 SOP；revision 冲突返回 `409`，其他校验/存储错误 `400`。`id` 命中通用模板时返回 `409`（通用模板只读）。
+按 `id` 保存。固定环境填写 `sandboxProfileId`。由 Agent 选择时填写 `autoSelectSandbox: true`，沙箱在每次运行启动时决定，实际 ID 保存在 `workflowSnapshot.sandboxProfileId`。`version=0` 时改为 `1`。成功 `200` 返回保存后的 SOP；revision 冲突返回 `409`，其他校验/存储错误 `400`。`id` 命中通用模板时返回 `409`（通用模板只读）。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
@@ -70,6 +70,8 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 ```
 
 `id`、`name` 必填。副本固定为 `draft`、`version=1`、`revision=0`，成功 `201`；字段/存储错误 `400`，源 SOP 不存在 `404`。
+
+可用 `sandboxProfileId` 为副本指定固定沙箱，或用 `autoSelectSandbox: true` 让 Agent 选择。省略两项时继承来源 SOP 的设置。
 
 源 SOP 是通用模板时，复制会同时把模板引用的角色创建到 `projectId` 指定的项目（已存在的同名角色直接复用），并把节点上的 `agentId` 重写到本项目角色，因此复制出的 SOP 可直接运行；此时 `projectId` 必填，缺失返回 `400`。模板声明的 `requirements` 会保留在副本上，Studio 继续据此提示依赖（例如发起 MR 节点需要工蜂 Git Token / 工蜂 MCP）。
 

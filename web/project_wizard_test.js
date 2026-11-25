@@ -88,7 +88,7 @@ ctx.document={activeElement:null,contains:()=>false,addEventListener(){},body:{d
 dom["#projectSwitcher"]={value:"",dispatchEvent(e){switcherEvents.push({type:e.type,value:this.value})}};
 vm.createContext(ctx);
 const gitParsers = fs.readFileSync(require("node:path").join(__dirname, "app", "git-ssh.js"), "utf8");
-vm.runInContext(gitParsers.slice(gitParsers.indexOf("globalThis.LoopForgeGongfengRepository")), ctx);
+vm.runInContext(gitParsers, ctx);
 
 for (const name of ["parseGongfengRepoURL","repoDisplayPath","repoProviderLabel"]) vm.runInContext(extract(fs.readFileSync(issuesPath,"utf8"),name),ctx);
 vm.runInContext(fs.readFileSync(projectsPath,"utf8"),ctx);
@@ -176,10 +176,10 @@ function assertFooterLayout(step){
 
   // Repositories: invalid URL is rejected locally; the first saved repo becomes the default.
   requests.length=0;
-  W().repo.url="https://bitbucket.org/foo/bar";
+  W().repo.url="https://bitbucket.org";
   assert.equal(await ctx.projectWizardAddRepo(),false);
   assert.equal(requests.length,0);
-  assert.match(html(),/请输入 GitHub 链接或有效的 Git SSH 地址/);
+  assert.match(html(),/请输入有效的 Git HTTP\(S\) 链接或 Git SSH 地址/);
   Object.assign(W().repo,{url:"https://github.com/example/web-console",branch:"",integrate:"agentflow/integration"});
   assert.equal(await ctx.projectWizardAddRepo(),true);
   assert.equal(requests[0].url,"/api/repositories");assert.equal(requests[0].method,"POST");
@@ -194,9 +194,11 @@ function assertFooterLayout(step){
   assert.equal(W().repo.url,"","inputs reset after adding");
   assert.match(html(),/data-pw-repo="r9"[^]*is-def">默认/);
   requests.length=0;
-  W().repo.url="git@git.example.com:example/api-service.git";
+  W().repo.url="http://git.example.com/example/api-service.git";
   await ctx.projectWizardAddRepo();
   assert.equal(requests.length,1,"second repository does not touch the default");
+  assert.equal(requests[0].body.provider,"gongfeng");
+  assert.equal(requests[0].body.cloneUrl,"https://git.example.com/example/api-service.git");
   W().repo.url="https://git.example.com/example/api-service";
   assert.equal(await ctx.projectWizardAddRepo(),false,"duplicate repository");
   W().repo.url="";

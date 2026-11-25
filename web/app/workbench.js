@@ -236,10 +236,10 @@ function credentialCatalogDetailHTML(mode,kind,protocol){
   const copy=credentialCatalogCopy(mode,kind);
   return mode!=='remote'?escapeHTML(copy.detail):`目录为空时，AI 对话列出 Base URL 的 <code data-catalog-endpoint>${escapeHTML(credentialModelsEndpoint(kind,protocol))}</code> 返回的模型。`;
 }
-function credentialCatalogHTML(kind,user,{runnerLogin=false,label='模型目录'}={}){
+function credentialCatalogHTML(kind,user,{runnerLogin=false,label='模型目录',savedModels=credentialValue(user,kind.models.name)}={}){
   const baseUrl=credentialValue(user,kind.baseURL||(kind.extra?.url?kind.extra.name:'')),protocol=credentialProtocol(kind,user);
   const cursorAutomatic=kind.agentCli==='cursor'&&!user?.agentCliCredentials?.cursor?.modelsCustomized;
-  const models=credentialCatalogModels(cursorAutomatic?[]:credentialValue(user,kind.models.name)),empty=!models.length;
+  const models=credentialCatalogModels(cursorAutomatic?[]:savedModels),empty=!models.length;
   const mode=runnerLogin?'runner':!String(baseUrl||'').trim()?'official':'remote';
   const copy=credentialCatalogCopy(mode,kind);
   return `<section class="credential-catalog" data-credential-catalog data-catalog-engine="${escapeHTML(kind.models.engine)}" data-catalog-mode="${mode}" data-catalog-protocol="${escapeHTML(protocol)}" data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
@@ -785,7 +785,7 @@ function credentialGitRowsHTML(http,ssh,showGitHub){
   return [...http.filter(item=>item.host!=='github.com'||!showGitHub).map(item=>({...item,kind:'http'})),...ssh.map(item=>({...item,kind:'ssh'}))].map(item=>{
     const isSSH=item.kind==='ssh';
     const platform=GIT_ADD_OPTIONS.find(type=>type.id===(isSSH?'gitSshKey':item.platform))||GIT_ADD_OPTIONS.find(type=>type.id==='other');
-    const endpoint=`${isSSH?'ssh':'https'}://${item.host}`;
+    const endpoint=item.host.startsWith('http://')?item.host:`${isSSH?'ssh':'https'}://${item.host}`;
     return `<div class="credential-row"><div class="credential-row-main">
       ${credentialLogo(platform)}<div class="credential-row-who"><b>${escapeHTML(item.name)}</b><small><span>${platform.name} · ${escapeHTML(endpoint)}</span></small></div>
       <div class="credential-row-end"><button type="button" class="credential-btn ghost credential-row-link" aria-haspopup="dialog" data-credential-git-kind="${item.kind}" data-credential-git-id="${escapeHTML(item.id)}">${item.managed?'查看':'编辑'}${credentialGlyph('chevron-right',14)}</button></div>
@@ -1830,13 +1830,14 @@ function renderPlatformAdminPanel(){
     </div>
     `)}
     ${platformTabPanel('sharedKey',tab,platformSharedKeyHTML())}
-    ${platformTabPanel('gitHostTrust',tab,platformSSHHostTrustHTML()+platformHTTPSHostTrustHTML())}
+    ${platformTabPanel('gitHostTrust',tab,platformSSHHostTrustHTML()+platformHTTPSHostTrustHTML()+platformHTTPHostTrustHTML())}
   `;
   bindPlatformTabs(host);
   loadPlatformAccounts(host);
   loadPlatformSharedKey(host);
   loadPlatformSSHHosts(host);
   loadPlatformHTTPSHosts(host);
+  loadPlatformHTTPHosts(host);
   loadPlatformAdmins(host);
 }
 

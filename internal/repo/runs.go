@@ -404,6 +404,21 @@ func (r *RunsRepo) RunView(id string) (domain.Run, bool) {
 				run.Events = append(run.Events, event)
 			}
 		}
+	} else if run.WorkflowSnapshot.AutoSelectSandbox {
+		// This event is written at admission and must remain visible even on
+		// runs with a long history.
+		var rows []runEventRow
+		if err := r.DB.Select("payload").
+			Where("run_id = ? AND type = ?", id, domain.RunEventSandboxSelected).
+			Order("seq").Limit(1).Find(&rows).Error; err != nil {
+			return domain.Run{}, false
+		}
+		if len(rows) > 0 {
+			var event domain.RunEvent
+			if json.Unmarshal(rows[0].Payload, &event) == nil {
+				run.Events = []domain.RunEvent{event}
+			}
+		}
 	}
 	return run, true
 }
@@ -961,8 +976,13 @@ func (r *RunsRepo) writeRun(run domain.Run, expectedRevision ...int) error {
 }
 
 func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision ...int) error {
+	workspaceAdmission := run.UsesConversationWorkspace() && run.ExecutionContext.ParentRunID == "" &&
+		(run.Status == "running" || run.Status == "queued")
 	var opts []*sql.TxOptions
-	if lockKey != "" {
+	// Under MySQL REPEATABLE READ, a missing run ID takes a gap lock.
+	// A dispatch waiting on the workspace owner could then block the holder's
+	// insert. READ COMMITTED lets the owner row serialize these dispatches.
+	if lockKey != "" || workspaceAdmission {
 		opts = r.admissionTxOptions()
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
@@ -994,6 +1014,11 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 			}
 		} else if err != gorm.ErrRecordNotFound {
 			return err
+		}
+		if workspaceAdmission && current.Status != "running" && current.Status != "queued" {
+			if err := r.checkConversationWorkspaceForSOP(tx, run, current.ID == ""); err != nil {
+				return err
+			}
 		}
 		if len(expectedRevision) > 0 {
 			if err != nil {
@@ -1116,6 +1141,15 @@ func (r *RunsRepo) DeleteRun(id string) error {
 		}
 		if row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
 			return fmt.Errorf("run %s is %s: cancel it before deleting", id, row.Status)
+		}
+		if row.Kind == domain.RunKindWorkspace {
+			inUse, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, id, nil))
+			if err != nil {
+				return err
+			}
+			if inUse {
+				return fmt.Errorf("工作区仍有关联的 SOP 运行：%w", ErrWorkspaceInUse)
+			}
 		}
 		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_evals", "run_workspace_checkpoint_chunks", "run_workspace_checkpoints"} {
 			if err := tx.Table(table).Where("run_id = ?", id).Delete(nil).Error; err != nil {

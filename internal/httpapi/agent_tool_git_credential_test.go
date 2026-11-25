@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
 
@@ -105,27 +106,40 @@ func TestBindWorkspaceGitCarriesHostsNotTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, r := range []domain.Runner{{ID: "old", RunnerVersion: "0.10.1"}, {ID: "new", RunnerVersion: domain.RunnerVersionGitHTTP}} {
+	const plainHost = "git.example.org:8080"
+	if err := f.s.CreatePlatformGitHTTPHost(t.Context(), &repo.PlatformGitHTTPHost{Host: plainHost}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.SaveGitHTTPCredential(f.user.ID, "", domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "Internal Git", Host: "http://" + plainHost},
+		Token:             "speaker-http",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []domain.Runner{{ID: "old", RunnerVersion: "0.10.1"}, {ID: "base", RunnerVersion: "0.11.2"}, {ID: "new", RunnerVersion: domain.RunnerVersionGitPlainHTTP}} {
 		if err := f.s.PutRunner(r); err != nil {
 			t.Fatal(err)
 		}
 	}
 	h := &assistantHandlers{deps: &deps{repo: f.s}}
 	for _, tc := range []struct {
-		runner string
-		bound  bool
-	}{{"", true}, {"new", true}, {"old", false}} {
+		runner       string
+		https, plain bool
+	}{{"", true, true}, {"new", true, true}, {"base", true, false}, {"old", false, false}} {
 		s := &AgentToolSession{Token: "bind-" + tc.runner, UserID: f.user.ID, User: f.user, ExecutionRunnerID: tc.runner}
 		command, credentials := h.bindWorkspaceGit(context.Background(), s, runtime.CommandSpec{}, runtime.RunCredentials{GitHTTPCredentials: map[string]domain.GitHTTPExecutionCredential{"github.com": {Token: "must-not-travel-with-main-bot-command"}}})
 		env := runtime.CommandEnvironment(command)
 		if credentials.GitHTTPCredentials != nil || !slices.Contains(command.CredentialBindings, runtime.BindGitWorkspace) {
 			t.Fatalf("runner %q: credentials %v, bindings %v", tc.runner, credentials.GitHTTPCredentials, command.CredentialBindings)
 		}
-		if got := credentials.GitHTTPHosts["github.com"] == domain.GitPlatformGitHub && env[runtime.SessionGatewayEnv] == agentToolMCPURL(s.Token); got != tc.bound {
+		if got := credentials.GitHTTPHosts["github.com"] == domain.GitPlatformGitHub && env[runtime.SessionGatewayEnv] == agentToolMCPURL(s.Token); got != tc.https {
 			t.Fatalf("runner %q: hosts %v, gateway %q", tc.runner, credentials.GitHTTPHosts, env[runtime.SessionGatewayEnv])
 		}
+		if got := credentials.GitHTTPHosts["http://"+plainHost] == domain.GitPlatformOther; got != tc.plain {
+			t.Fatalf("runner %q: unexpected HTTP authorization in %v", tc.runner, credentials.GitHTTPHosts)
+		}
 		for key, value := range env {
-			if strings.Contains(value, "speaker-github") {
+			if strings.Contains(value, "speaker-github") || strings.Contains(value, "speaker-http") {
 				t.Fatalf("runner %q: %s carries the token", tc.runner, key)
 			}
 		}

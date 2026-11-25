@@ -57,6 +57,9 @@ func (e *Engine) workspaceLost(r domain.Run) bool {
 
 func (e *Engine) workspaceLostMessage(r domain.Run) string {
 	host, root := e.workspaceBind(r)
+	if borrowsConversationWorkspace(r) {
+		return fmt.Sprintf("对话工作区所在机器 %s:%s 已下线，请恢复原工作区后重试", host, root)
+	}
 	if sharesWorkspace(r) {
 		return fmt.Sprintf("父流程工作区所在机器 %s:%s 已下线，之前节点的代码改动随之丢失，请从头重跑父流程", host, root)
 	}
@@ -224,7 +227,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 			_ = e.repo.ReleaseRunLease(r.ID, e.instanceID, acquired.Generation)
 			continue
 		}
-		if e.workspaceLost(acquired) {
+		if e.workspaceLost(acquired) && !borrowsConversationWorkspace(acquired) {
 			message := e.workspaceLostMessage(acquired)
 			// Move the bind here so a rerun starts from a fresh checkout
 			// instead of failing on the dead host again. A child follows its

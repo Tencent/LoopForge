@@ -45,8 +45,8 @@ func lockAdmissionGate(d *deps, tx *gorm.DB, key string) error {
 	return d.locking(tx.Where("id = ?", row.ID)).Take(&row).Error
 }
 
-// admissionTxOptions makes plain reads inside a bucket-locked transaction see
-// every commit up to the lock (MySQL defaults to REPEATABLE READ snapshots).
+// admissionTxOptions makes plain reads after a bucket or workspace lock see
+// every commit up to that lock, and avoids gap locks on missing run IDs.
 // sqlite serializes writers on its single test connection already.
 func (d *deps) admissionTxOptions() []*sql.TxOptions {
 	if d.isMySQL() {
