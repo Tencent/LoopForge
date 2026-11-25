@@ -686,7 +686,7 @@
             <h1>凭据管理</h1>
             <span id="projectCredentialsProject" class="project-credential-project-chip" data-i18n-skip hidden></span>
           </div>
-          <p class="project-credential-page-desc">加密保存项目级账号、令牌与密钥；在 SOP 或 AI 工作台选用后，将作为环境变量注入沙箱进程，并在输出中自动脱敏。</p>
+          <p class="project-credential-page-desc">加密保存项目级账号、令牌与密钥；在 SOP 中选用后，将作为环境变量注入沙箱进程，并在输出中自动脱敏。</p>
         </div>
         <div class="heading-actions">
           <button id="newProjectCredential" type="button" class="button primary" hidden><svg class="agent-icon harness-icon" data-icon="plus" width="14" height="14" aria-hidden="true" focusable="false"></svg>新增凭据</button>
@@ -782,12 +782,23 @@
         </div>
       </div>
 
+      <div id="runnerDispatchBar" class="runner-dispatch-bar panel">
+        <div class="runner-dispatch-copy">
+          <div class="runner-dispatch-head">
+            <span class="runner-dispatch-label" id="runnerDispatchLabel">当前执行调度</span>
+            <p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p>
+          </div>
+          <p class="runner-dispatch-hint" id="runnerDispatchHint" hidden></p>
+        </div>
+        <button type="button" class="button ghost small" id="runnerAutoAssign" aria-pressed="false" hidden>自动分配</button>
+      </div>
+
       <div id="platformRunnerSection" class="runner-platform-section" hidden>
         <div class="runner-section-heading"><h2>平台机器</h2><span class="runner-section-meta">所有项目共用名额</span></div>
         <div id="platformRunnerHost"></div>
       </div>
 
-      <div class="runner-list-heading"><h2>可用机器</h2><span class="runner-count" id="runnerCount">0</span><button type="button" class="button ghost small" id="runnerAutoAssign" aria-pressed="false" hidden>自动分配</button><p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p></div>
+      <div class="runner-list-heading"><h2>可用机器</h2><span class="runner-count" id="runnerCount">0</span></div>
       <div id="runnersList" class="runner-grid"></div>
     </section>
 

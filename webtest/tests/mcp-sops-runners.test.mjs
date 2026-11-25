@@ -263,15 +263,24 @@ test('platform runner card and auto assignment respect project and admin permiss
   assert.match(card().textContent, /运行中 2 · 不限/);
 
   const poolStatus = app.document.querySelector('#runnerPoolStatus');
+  const dispatchBar = app.document.querySelector('#runnerDispatchBar');
+  const dispatchHint = app.document.querySelector('#runnerDispatchHint');
   const toggle = app.document.querySelector('#runnerAutoAssign');
+  assert.ok(dispatchBar.contains(toggle) && dispatchBar.contains(poolStatus), 'auto-assign and pool status belong to the shared dispatch bar');
+  assert.equal(app.document.querySelector('.runner-list-heading')?.contains(toggle), false, 'auto-assign is not scoped to available machines only');
+  assert.ok(Boolean(dispatchBar.compareDocumentPosition(section) & app.window.Node.DOCUMENT_POSITION_FOLLOWING), 'dispatch bar precedes platform and available machine sections');
+  assert.equal(dispatchHint.hidden, false);
+  assert.match(dispatchHint.textContent, /平台机器.*可用机器/);
   assert.equal(toggle.hidden, false);
   toggle.click();
   await settle(8);
   assert.equal(toggle.getAttribute('aria-pressed'), 'true');
+  assert.equal(dispatchBar.classList.contains('is-auto'), true);
   assert.match(poolStatus.textContent, /此项目 SOP 自动分配 · 2 台在线机器可用/);
   toggle.click();
   await settle(8);
   assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+  assert.equal(dispatchBar.classList.contains('is-auto'), false);
 
   const platformDefaultBtn = () => card().querySelector('[data-runner-platform-default]');
   assert.equal(platformDefaultBtn().textContent, '设为项目默认');
@@ -292,6 +301,7 @@ test('platform runner card and auto assignment respect project and admin permiss
   platform.status = 'offline';
   await app.evaluate(`state.projectFilter='read';refreshRunners()`);
   assert.equal(toggle.hidden, true);
+  assert.equal(dispatchHint.hidden, true);
   assert.equal(card().querySelector('[data-runner-platform-default], [data-platform-run-limit]'), null);
   assert.match(card().textContent, /不限同时运行数/);
   assert.equal(card().querySelector('.runner-status').textContent, '离线');
