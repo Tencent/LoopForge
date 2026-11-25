@@ -924,11 +924,12 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		return
 	}
 	var input struct {
-		AvailableRuntimes        []string `json:"availableRuntimes"`
-		Capacity                 int      `json:"capacity"`
-		Preflight                bool     `json:"preflight"`
-		NoWait                   bool     `json:"noWait"`
-		SupportsGitSSHKnownHosts bool     `json:"supportsGitSshKnownHosts"`
+		AvailableRuntimes           []string `json:"availableRuntimes"`
+		Capacity                    int      `json:"capacity"`
+		Preflight                   bool     `json:"preflight"`
+		NoWait                      bool     `json:"noWait"`
+		SupportsGitSSHKnownHosts    bool     `json:"supportsGitSshKnownHosts"`
+		SupportsDockerSandboxLimits bool     `json:"supportsDockerSandboxLimits"`
 	}
 	if !decode(c, &input) {
 		return
@@ -947,16 +948,24 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		}
 		for {
 			task, claimed, err := h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, time.Now().UTC(), runnerTaskLeaseTTL)
-			if err != nil || !claimed || task.RunID == "" || task.Action != "" || task.Sandbox == nil {
+			if err != nil || !claimed || task.Sandbox == nil {
 				return task, claimed, err
 			}
-			err = domain.ValidateFrozenSandbox(task.Sandbox.Profile)
-			if err == nil {
-				task.ProjectCredentialEnv, err = h.runnerTaskProjectCredentialEnv(c.Request.Context(), task, runner)
+			profile := task.Sandbox.Profile
+			switch {
+			case profile.HasResourceLimits() && !input.SupportsDockerSandboxLimits:
+				err = errors.New(domain.RunnerDockerSandboxLimitsUpgradeMessage)
+			case task.RunID != "" && task.Action == "":
+				err = domain.ValidateFrozenSandbox(profile)
+				if err == nil {
+					err = runner.ValidatePrivilegedSandboxVersion(profile)
+				}
+				if err == nil {
+					task.ProjectCredentialEnv, err = h.runnerTaskProjectCredentialEnv(c.Request.Context(), task, runner)
+				}
 			}
 			if err != nil {
-				// A task queued before the upgrade still carries its old
-				// profile. Finish it without sending it to an older runner.
+				// Finish the task before sending an unusable sandbox to the runner.
 				if finishErr := h.repo.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskFailed, nil, "", err.Error(), nil, nil, time.Now().UTC()); finishErr != nil {
 					return domain.RunnerTask{}, false, finishErr
 				}

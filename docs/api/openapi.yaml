@@ -2535,6 +2535,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [Assets]
       operationId: deleteSandbox
@@ -2685,6 +2687,12 @@ paths:
                 projectId:
                   type: string
                   description: Target project. Empty or omitted retains the source project; generic templates require a target project.
+                sandboxProfileId:
+                  type: string
+                  description: Use this fixed sandbox in the copy.
+                autoSelectSandbox:
+                  type: boolean
+                  description: Choose a sandbox at runtime. With neither option supplied, inherit the source SOP setting.
       responses:
         "201":
           $ref: "#/components/responses/Workflow"
@@ -4681,6 +4689,7 @@ components:
       properties:
         id: {type: string}
         name: {type: string}
+        toolchain: {type: string, description: Tool and version hints used when an Agent chooses a sandbox}
         projectId: {type: string, description: Owning project (required)}
         shared: {type: boolean, description: Visible to every project}
         driver: {type: string, enum: [native, docker]}
@@ -4692,6 +4701,9 @@ components:
             content: {type: string, description: Dockerfile text}
             files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
         readOnlyRootFS: {type: boolean, description: "driver=docker only"}
+        privileged: {type: boolean, default: false, description: "Docker only. Requests privileged workspace containers on an execution host that allows them."}
+        cpuMillicores: {type: integer, format: int64, minimum: 0, maximum: 9223372036854, description: "Docker CPU limit in millicores. 1000 is one CPU, 0 or omitted inherits machine settings, and the minimum configured limit is 10."}
+        memoryMiB: {type: integer, format: int64, minimum: 0, maximum: 8796093022207, description: "Docker memory limit in MiB. 0 or omitted inherits machine settings, and the minimum configured limit is 6."}
         environment: {type: object, additionalProperties: {type: string}, description: Variables added to every command; a native sandbox keeps the execution machine's PATH unless this sets one}
     APIToken:
       type: object
@@ -5382,7 +5394,7 @@ components:
           description: Run once in the task workspace or once per repository checkout.
     WorkflowDefinition:
       type: object
-      required: [id, name, sandboxProfileId, nodes, edges]
+      required: [id, name, nodes, edges]
       additionalProperties: true
       properties:
         notifications: {type: array, maxItems: 1, items: {$ref: "#/components/schemas/NotificationBinding"}, description: Single SOP Bot; all nodes automatically notify waiting/failed and SOP completion. Template and AI instruction customize completion only}
@@ -5407,6 +5419,10 @@ components:
           type: string
         sandboxProfileId:
           type: string
+          description: Required for a fixed workflow. A run snapshot contains the concrete profile ID.
+        autoSelectSandbox:
+          type: boolean
+          description: Select a sandbox for each new run from the target project's own and shared profiles.
         generic:
           type: boolean
           description: >-

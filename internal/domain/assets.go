@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -136,10 +137,14 @@ type DockerfileDefinition struct {
 type SandboxProfile struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
+	Toolchain      string            `json:"toolchain,omitempty"`
 	ProjectID      string            `json:"projectId,omitempty"`
 	Shared         bool              `json:"shared,omitempty"`
 	Driver         string            `json:"driver"` // native, docker (seatbelt / bwrap are resolved native values)
 	ReadOnlyRootFS bool              `json:"readOnlyRootFS"`
+	Privileged     bool              `json:"privileged,omitempty"`
+	CPUMillicores  int64             `json:"cpuMillicores,omitempty"`
+	MemoryMiB      int64             `json:"memoryMiB,omitempty"`
 	Environment    map[string]string `json:"environment,omitempty"`
 	// Dockerfile is the image recipe of a docker sandbox.
 	Dockerfile *SandboxDockerfile `json:"dockerfile,omitempty"`
@@ -154,6 +159,33 @@ type SandboxDockerfile struct {
 	Files   map[string]string `json:"files,omitempty"`
 }
 
+const (
+	DockerSandboxMinCPUMillicores = 10
+	DockerSandboxMaxCPUMillicores = math.MaxInt64 / 1_000_000
+	DockerSandboxMinMemoryMiB     = 6
+	DockerSandboxMaxMemoryMiB     = math.MaxInt64 >> 20
+)
+
+func (p SandboxProfile) HasResourceLimits() bool {
+	return p.CPUMillicores != 0 || p.MemoryMiB != 0
+}
+
+func (p SandboxProfile) ValidateResourceLimits() error {
+	if !p.HasResourceLimits() {
+		return nil
+	}
+	if strings.TrimSpace(p.Driver) != SandboxDriverDocker {
+		return fmt.Errorf("只有 Docker 沙箱可以配置 CPU 和内存上限")
+	}
+	if p.CPUMillicores != 0 && (p.CPUMillicores < DockerSandboxMinCPUMillicores || p.CPUMillicores > DockerSandboxMaxCPUMillicores) {
+		return fmt.Errorf("cpuMillicores 必须为 0 或 %d 至 %d 之间的整数", DockerSandboxMinCPUMillicores, DockerSandboxMaxCPUMillicores)
+	}
+	if p.MemoryMiB != 0 && (p.MemoryMiB < DockerSandboxMinMemoryMiB || p.MemoryMiB > DockerSandboxMaxMemoryMiB) {
+		return fmt.Errorf("memoryMiB 必须为 0 或 %d 至 %d 之间的整数", DockerSandboxMinMemoryMiB, DockerSandboxMaxMemoryMiB)
+	}
+	return nil
+}
+
 // ValidateSandboxAssets checks the sandbox driver and the recipe it needs:
 // docker requires a Dockerfile, native carries only environment variables.
 func ValidateSandboxAssets(v SandboxProfile) error {
@@ -163,6 +195,9 @@ func ValidateSandboxAssets(v SandboxProfile) error {
 		return fmt.Errorf("local 沙箱已移除，请改用 native 沙箱")
 	default:
 		return fmt.Errorf("不支持的沙箱类型 %q", v.Driver)
+	}
+	if err := v.ValidateResourceLimits(); err != nil {
+		return err
 	}
 	docker := strings.TrimSpace(v.Driver) == SandboxDriverDocker
 	switch {
@@ -218,13 +253,13 @@ func ConversationSandboxDriver(driver string) bool {
 	}
 }
 
-// ValidateFrozenSandbox rejects the removed local driver in a sandbox frozen
-// into a run before it was removed: the runtime would run it unisolated.
+// ValidateFrozenSandbox validates settings carried by a frozen run or task.
+// The removed local driver would run unisolated.
 func ValidateFrozenSandbox(profile SandboxProfile) error {
 	if strings.TrimSpace(profile.Driver) == SandboxDriverLocal {
 		return fmt.Errorf("沙箱 %s 使用已移除的 local 类型，请改用 native 沙箱后重新发起", profile.ID)
 	}
-	return nil
+	return profile.ValidateResourceLimits()
 }
 
 // ResolveSandboxDriver maps native onto the lightweight sandbox of goos and

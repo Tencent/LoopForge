@@ -1,4 +1,35 @@
-async function startRun(){const button=$('#confirmRun');try{const workflowId=$('#runWorkflowChoice').value||state.workflow?.id,projectId=currentProject()?.id||'';if(!workflowId)return toast('暂无可运行 SOP');button.disabled=true;button.textContent='正在启动…';if($('#flowView').classList.contains('active')&&workflowId===state.workflow.id&&!catalogForeign(state.workflow.projectId)&&(!catalogGeneric(state.workflow)||isPlatformAdmin()))await saveWorkflow();const run=await api('/api/runs',{method:'POST',body:JSON.stringify({workflowId,input:$('#runInput').value.trim(),projectId})});state.activeRun=run;state.selectedRun=run.id;state.selectedRunNode=null;if(run?.id){if(!state.data.runs)state.data.runs=[];const existing=state.data.runs.findIndex(x=>x.id===run.id);if(existing>=0)state.data.runs[existing]={...state.data.runs[existing],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}$('#runModal').classList.remove('open');$('#runInput').value='';switchView('runs');showRunDetail(run.id);toast(run.status==='queued'?'已进入项目排队，获得名额后自动启动':'流水线已开始，实时事件流已连接')}catch(e){toast(e.message)}finally{button.disabled=false;button.textContent='开始运行'}}
+async function startRun(){
+  const button=$('#confirmRun');
+  const workflowId=$('#runWorkflowChoice').value||state.workflow?.id,projectId=currentProject()?.id||'';
+  if(!workflowId)return toast('暂无可运行 SOP');
+  if(button.getAttribute('aria-busy')==='true')return;
+  button.disabled=true;
+  button.setAttribute('aria-busy','true');
+  button.textContent='正在启动…';
+  try{
+    if($('#flowView').classList.contains('active')&&workflowId===state.workflow?.id&&!catalogForeign(state.workflow.projectId)&&(!catalogGeneric(state.workflow)||isPlatformAdmin()))await saveWorkflow();
+    button.textContent=sopSandboxPendingText(workflowId)||'正在启动…';
+    const run=await api('/api/runs',{method:'POST',body:JSON.stringify({workflowId,input:$('#runInput').value.trim(),projectId})});
+    state.activeRun=run;state.selectedRun=run.id;state.selectedRunNode=null;
+    if(run?.id){
+      if(!state.data.runs)state.data.runs=[];
+      const existing=state.data.runs.findIndex(x=>x.id===run.id);
+      if(existing>=0)state.data.runs[existing]={...state.data.runs[existing],...run};
+      else state.data.runs=sortRunsDescending([run,...state.data.runs]);
+    }
+    $('#runModal').classList.remove('open');
+    $('#runInput').value='';
+    switchView('runs');
+    showRunDetail(run.id);
+    toast(run.status==='queued'?'已进入项目排队，获得名额后自动启动':'流水线已开始，实时事件流已连接');
+  }catch(e){
+    toast(e.message);
+  }finally{
+    button.disabled=false;
+    button.removeAttribute('aria-busy');
+    button.textContent='开始运行';
+  }
+}
 function stopLiveRun(){if(state.runStream){state.runStream.close();state.runStream=null}clearInterval(state.poll);state.poll=null}
 function mergeSeqItems(prev, incoming, seqOf){
   const bySeq=new Map();
@@ -621,6 +652,12 @@ function patchRunLive(r){
   const usageHost=host.querySelector('[data-run-usage]');
   if(usageHost){const html=liveUsageHTML(r);if(usageHost.innerHTML!==html)usageHost.innerHTML=html}
   if(inspectorNeedsRefresh(host,r)){renderRunDetail(r);return}
+  const sandboxChip=host.querySelector('[data-run-sandbox]');
+  if(sandboxChip){
+    const sandbox=runSandboxDetails(r), label=sandboxChip.querySelector('code');
+    if(sandboxChip.title!==sandbox.title)sandboxChip.title=sandbox.title;
+    if(label.textContent!==sandbox.id)label.textContent=sandbox.id;
+  }
   const headerStatus=host.querySelector('.run-header-main .status');if(headerStatus){headerStatus.className=`status ${runDisplayStatusClass(r)}`;headerStatus.textContent=runDisplayStatus(r)}
   const progress=runProgress(r),bar=host.querySelector('.run-progress.large i'),pct=host.querySelector('.run-progress-pct'),count=host.querySelector('.run-progress-cell>b');
   if(bar)bar.style.width=progress.pct+'%';if(pct)pct.textContent=progress.pct+'% 已完成';if(count)count.textContent=`${progress.done} / ${progress.total} 节点已结束`;
@@ -1231,6 +1268,11 @@ function bindRunDetailTabs(run,host){
   if(restoreButton)restoreButton.onclick=()=>selectTab('workspace');
   syncRunWorkspaceRestoreButton(run,host);
 }
+function runSandboxDetails(run){
+  const id=run.workflowSnapshot?.sandboxProfileId||run.sandboxId||'—';
+  const decision=run.events?.find(event=>event.type==='sandbox.selected');
+  return {id,title:decision?.message||run.sandboxId||id};
+}
 function renderRunDetail(r){
   const host=$('#runDetail');if(!r){host.innerHTML='<div class="empty-properties"><div>◷</div><b>选择一次运行</b><p>节点状态、产物和执行轨迹会显示在这里</p></div>';delete host.dataset.runId;delete host.dataset.nodeId;return}
   if(host.dataset.runId&&host.dataset.runId!==r.id){
@@ -1283,7 +1325,7 @@ function renderRunDetail(r){
   const focusNr=focusNode?(r.nodes?.[focusNode.id]||{}):nr;
   if(r.status==='queued'){
     host.querySelector('[data-cancel-run]')?.replaceChildren(document.createTextNode('取消排队'));
-    host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend','<div class="approval-callout queued-run-callout"><b>排队中，获得项目名额后自动启动</b><p>每个项目最多同时占用 10 条顶层 SOP，子 SOP 共享父级名额；未获准入和成功运行不占名额；一旦获准入即占用，失败、待确认、暂停及获准入后取消仍占用名额。可取消排队后删除记录。</p></div>');
+    host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend','<div class="approval-callout queued-run-callout"><b>排队中，获得运行名额后自动启动</b><p>子 SOP 共享父级名额。未获准入和成功运行不占名额。失败、暂停、待确认的 SOP 空闲 1 小时后释放名额。排队期间可以取消运行。</p></div>');
   }else if(!nonSOP&&r.pauseRequested){
     const header=host.querySelector('.run-detail-header');header?.insertAdjacentHTML('afterend',pausedRunPanelHTML(r));
     host.querySelector('.node-inspector .approval-callout')?.remove();
@@ -1296,7 +1338,9 @@ function renderRunDetail(r){
   }
   const childCallout=r.status==='queued'?'':childSOPCalloutHTML(r);if(childCallout)host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend',childCallout);
   if(pg.child){const note=`<p class="child-sop-trace-note">这是 SOP 节点，下面显示的是子 SOP 运行 <code>${escapeHTML(pg.runId.slice(-12))}</code> 全部节点的内容。</p>`;host.querySelectorAll('.trace-section>.section-heading,.worker-log-section>.section-heading').forEach(h=>h.insertAdjacentHTML('afterend',note))}
-  const runMeta=host.querySelector('.run-header-meta');if(runMeta)runMeta.insertAdjacentHTML('beforeend',`${taskTriggerBadge(ctx.task)}<span class="run-meta-chip">Sandbox <code>${escapeHTML(r.sandboxId||'—')}</code></span>`);
+  const runMeta=host.querySelector('.run-header-meta');
+  const sandbox=runSandboxDetails(r);
+  if(runMeta)runMeta.insertAdjacentHTML('beforeend',`${taskTriggerBadge(ctx.task)}<span class="run-meta-chip" data-run-sandbox title="${escapeHTML(sandbox.title)}">Sandbox <code>${escapeHTML(sandbox.id)}</code></span>`);
   const nodeSandbox=host.querySelector('.runtime-details span:first-child');if(nodeSandbox)nodeSandbox.remove();
   const graph=host.querySelector('.run-graph');if(graph){graph.querySelectorAll('.graph-arrow').forEach(arrow=>arrow.remove());const stages=workflowStages(runIsGroupMode(r)?{...wf,nodes:graphNodes}:wf);graph.classList.add('is-staged');stages.forEach((stage,index)=>{const column=document.createElement('div');column.className='graph-stage'+(stage.length>1?' is-parallel':'');const caption=document.createElement('span');caption.className='graph-stage-label';const captionName=document.createElement('span');captionName.className='graph-stage-name';captionName.textContent=`阶段 ${index+1}${stage.length>1?` · 并行 ${stage.length}`:''}`;caption.append(captionName);const stageTime=stageTimeLabel(r,stage);if(stageTime){const stageTimeEl=document.createElement('em');stageTimeEl.className='graph-stage-time';stageTimeEl.textContent=stageTime;caption.append(stageTimeEl)}column.append(caption);for(const node of stage){const button=graph.querySelector(`[data-run-node="${CSS.escape(node.id)}"]`),parents=(wf.edges||[]).filter(edge=>edge.target===node.id).map(edge=>nodes.find(item=>item.id===edge.source)?.name).filter(Boolean);if(!button)continue;if(parents.length)button.querySelector('small').append(` · 上游 ${parents.join('、')}`);column.append(button)}if(column.children.length>1)graph.append(column)})}
   host.querySelector('[data-run-back]')?.addEventListener('click',()=>showRunList());

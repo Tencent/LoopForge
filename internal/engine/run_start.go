@@ -50,14 +50,16 @@ func (e *Engine) StartWithExecutionContext(workflowID, input string, repository 
 }
 
 // StartWithRepositoriesContext starts a run with one or more repositories.
-// All repositories are equals: each is checked out into a first-level
+// Each repository is checked out into a first-level
 // sub-directory, gets the same work branch and, on scheduled runs, its own
 // integration merge and MR. SOP deliverables stay at the run workspace root.
 func (e *Engine) StartWithRepositoriesContext(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext) (domain.Run, error) {
-	return e.startWorkflow(workflowID, input, repositories, executionContext, false)
+	return e.StartWithRepositories(context.Background(), workflowID, input, repositories, executionContext)
 }
 
-func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
+// StartWithRepositories allows cancellation while resolving an automatic
+// sandbox. Once admitted, the run continues independently of the caller.
+func (e *Engine) StartWithRepositories(ctx context.Context, workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext) (domain.Run, error) {
 	wf, ok := e.repo.Workflow(workflowID)
 	if !ok {
 		return domain.Run{}, fmt.Errorf("workflow not found")
@@ -86,12 +88,12 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 			return domain.Run{}, fmt.Errorf("SOP 不在共享任务的引用范围内")
 		}
 	}
-	return e.startWorkflowDefinition(wf, input, repositories, executionContext, workspace)
+	return e.startWorkflowDefinition(ctx, wf, input, repositories, executionContext, false)
 }
 
 // startWorkflowDefinition also accepts a run-only conversation workspace definition.
 // It never writes a template to the catalog.
-func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
+func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	if executionContext.ParentRunID == "" || !executionContext.ExecutionPinned || executionContext.WorkspaceRunID == "" {
@@ -118,6 +120,14 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 			return domain.Run{}, fmt.Errorf("项目 %q 不存在，请刷新后重试", executionContext.ProjectID)
 		}
 	}
+	if wf.AutoSelectSandbox && !wf.Shared && !wf.Generic && wf.ProjectID != "" {
+		if executionContext.ProjectID == "" {
+			executionContext.ProjectID = wf.ProjectID
+		}
+		if executionContext.ProjectID != wf.ProjectID {
+			return domain.Run{}, apperr.New(apperr.Forbidden, "只能在当前项目运行其私有 SOP")
+		}
+	}
 	wf = defaultWorkflowSandboxProfile(wf)
 	wf, err := configureBaselineAlignCLI(wf)
 	if err != nil {
@@ -130,23 +140,13 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if err := validate(wf); err != nil {
 		return domain.Run{}, err
 	}
-	profile, ok := e.repo.Sandbox(wf.SandboxProfileID)
-	if !ok {
-		return domain.Run{}, fmt.Errorf("sandbox profile %q not found", wf.SandboxProfileID)
-	}
-	if workspace {
-		if _, err := e.repo.ConversationSandbox(executionContext.ProjectID, profile.ID); err != nil {
-			return domain.Run{}, err
+	var workspaceSandboxID string
+	if wf.AutoSelectSandbox && executionContext.ParentRunID != "" {
+		parent, ok := e.repo.RunState(executionContext.ParentRunID)
+		if !ok {
+			return domain.Run{}, fmt.Errorf("父 SOP 运行不存在")
 		}
-	}
-	sandbox, err := resolveSandbox(profile)
-	if err != nil {
-		return domain.Run{}, err
-	}
-	if executionContext.SharedScheduleID != "" {
-		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile); err != nil {
-			return domain.Run{}, err
-		}
+		workspaceSandboxID = parent.WorkflowSnapshot.SandboxProfileID
 	}
 	if !workspace && executionContext.ParentRunID == "" && executionContext.WorkspaceRunID != "" {
 		owner, err := e.sopConversationWorkspace(executionContext)
@@ -156,6 +156,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		if domain.TerminalRunStatus(owner.Status) || owner.CancelRequested {
 			return domain.Run{}, fmt.Errorf("对话工作区已结束")
 		}
+		workspaceSandboxID = owner.WorkflowSnapshot.SandboxProfileID
 		executionContext.ExecutionRunnerID = e.defaultExecutionRunner(owner)
 		if executionContext.ExecutionRunnerID != "" {
 			runner, ok := e.repo.Runner(executionContext.ExecutionRunnerID)
@@ -177,9 +178,43 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		if _, err := e.ResolveRunProjectCredentialEnv(context.Background(), domain.Run{WorkflowSnapshot: wf, ExecutionContext: executionContext}); err != nil {
 			return domain.Run{}, err
 		}
-		if err := e.requireProjectCredentialRunner(wf, executionContext.ExecutionRunnerID); err != nil {
+	}
+	var profile domain.SandboxProfile
+	var sandboxSelection string
+	switch {
+	case workspace:
+		profile, err = e.repo.ConversationSandbox(executionContext.ProjectID, wf.SandboxProfileID)
+	case wf.AutoSelectSandbox:
+		profile, sandboxSelection, err = e.selectSOPSandbox(ctx, wf, &executionContext, repositories, input, workspaceSandboxID)
+	default:
+		var ok bool
+		if profile, ok = e.repo.Sandbox(wf.SandboxProfileID); !ok {
+			err = fmt.Errorf("sandbox profile %q not found", wf.SandboxProfileID)
+		}
+	}
+	if err != nil {
+		return domain.Run{}, err
+	}
+	sandbox, err := resolveSandbox(profile)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	if err := e.requireRunnerSandboxVersion(executionContext.ExecutionRunnerID, profile); err != nil {
+		return domain.Run{}, err
+	}
+	if executionContext.SharedScheduleID != "" {
+		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile); err != nil {
 			return domain.Run{}, err
 		}
+	}
+	if wf.AutoSelectSandbox {
+		wf.SandboxProfileID = profile.ID
+	}
+	if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
+		return domain.Run{}, err
+	}
+	if err := e.requireProjectCredentialRunner(wf, executionContext.ExecutionRunnerID); err != nil {
+		return domain.Run{}, err
 	}
 	wf.ExecutorDefaults = nil
 	if executionContext.ResponsibleUserID > 0 {
@@ -207,9 +242,6 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		firstRepository = repositories[0]
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
-	if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
-		return domain.Run{}, err
-	}
 	wf.SandboxSnapshot = sandbox
 	r := domain.Run{
 		ID: id, WorkflowID: workflowID, WorkflowSnapshot: wf, Status: "running", Input: input,
@@ -223,8 +255,8 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		r.Nodes[n.ID] = &domain.NodeRun{NodeID: n.ID, Status: "pending"}
 	}
 	if executionContext.ParentRunID != "" {
-		parent, exists := e.repo.RunState(executionContext.ParentRunID)
-		if !exists {
+		parent, ok := e.repo.RunState(executionContext.ParentRunID)
+		if !ok {
 			return domain.Run{}, fmt.Errorf("父 SOP 运行不存在")
 		}
 		if err := inheritSOPHandoff(parent, &r); err != nil {
@@ -239,6 +271,9 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		e.event(&r, "", "workspace.created", "对话工作区已创建")
 	} else {
 		e.event(&r, "", "run.started", "流水线开始执行")
+		if sandboxSelection != "" {
+			e.event(&r, "", domain.RunEventSandboxSelected, sandboxSelection)
+		}
 		if borrowsConversationWorkspace(r) {
 			e.event(&r, "", "workspace.shared", "复用对话工作区 "+workspaceRunID(r))
 		}
@@ -263,12 +298,12 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if !executeHere || r.Status == "queued" {
 		return r, nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(context.Background())
 	if !e.claimRunning(id, cancel) {
 		cancel()
 		return r, nil
 	}
-	go e.execute(ctx, id)
+	go e.execute(runCtx, id)
 	return r, nil
 }
 

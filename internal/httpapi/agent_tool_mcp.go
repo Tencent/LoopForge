@@ -424,6 +424,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 			if origin, ok := botStartOriginFrom(session.ctx); ok {
 				ctx = withBotStartOrigin(ctx, origin)
 			}
+			if actor, ok := botChatActorFrom(session.ctx); ok {
+				ctx = withBotChatActor(ctx, actor.Channel, actor.SenderID, actor.SenderName)
+			}
 		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}
 		if session.canOpenConversationWorkspace() {

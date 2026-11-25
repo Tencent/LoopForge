@@ -49,6 +49,9 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 			if profile.Driver != "" && profile.Driver != domain.SandboxDriverDocker {
 				name += "，" + profile.Driver + " 沙箱"
 			}
+			if toolchain := strings.TrimSpace(profile.Toolchain); toolchain != "" {
+				name += " · " + toolchain
+			}
 			fmt.Fprintf(&b, "\n- %s：%s", profile.ID, truncateRunes(name, 80))
 		}
 	}
@@ -85,15 +88,7 @@ func (h *agentToolGateway) conversationSandboxChoices(s *AgentToolSession) ([]do
 	nativeAvailable := runtime.NativeSandboxAvailable
 	if s.ExecutionRunnerID != "" {
 		runner, _ := h.repo.Runner(s.ExecutionRunnerID)
-		targetOS := strings.ToLower(strings.TrimSpace(runner.OS))
-		nativeAvailable = func(driver string) bool {
-			if !runner.NativeSandboxAvailable {
-				return false
-			}
-			driver, err := domain.ResolveSandboxDriver(driver, targetOS)
-			return err == nil && (driver == domain.SandboxDriverSeatbelt && targetOS == "darwin" ||
-				driver == domain.SandboxDriverBwrap && targetOS == "linux")
-		}
+		nativeAvailable = runner.SupportsNativeSandbox
 	}
 	choices = slices.DeleteFunc(choices, func(profile domain.SandboxProfile) bool {
 		return conversationSandboxKind(profile) == domain.SandboxDriverNative && !nativeAvailable(profile.Driver)
@@ -226,6 +221,9 @@ func parseWorkspaceOpenChoice(args map[string]any) (workspaceOpenChoice, error) 
 // and hands the CLI over to it. A task conversation enters its task's
 // workspace once the SOP has stopped.
 func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *AgentToolSession, args map[string]any) (string, error) {
+	if s.workspaceStartFailed.Load() {
+		return "", errors.New(assistantWorkspaceFallbackPrompt)
+	}
 	choice, err := parseWorkspaceOpenChoice(args)
 	if err != nil {
 		return "", err

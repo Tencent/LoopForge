@@ -181,11 +181,15 @@ docker 沙箱的 Dockerfile 存在沙箱里，随沙箱一起共享，没有单�
 
 ### `GET /api/sandboxes`
 
-返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap；尚未迁移的 `local` 行读出时也是 `native`）、`dockerfile`、`readOnlyRootFS`、`environment`。`dockerfile` 为 `{content, files}`，`files` 是构建上下文文件（相对路径 → 内容）。
+返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap；尚未迁移的 `local` 行读出时也是 `native`）、`dockerfile`、`readOnlyRootFS`、`environment` 和可选的 `toolchain`、`cpuMillicores`、`memoryMiB`。`toolchain` 记录沙箱内的工具和版本，供 Agent 选择沙箱。`dockerfile` 为 `{content, files}`，`files` 是构建上下文文件（相对路径 → 内容）。
 
 ### `PUT /api/sandboxes`
 
 `id` 必填，成功 `200 {"ok":true}`；校验/存储失败 `400`。`docker` 必须带非空的 `dockerfile.content`；`dockerfile` 和 `readOnlyRootFS` 只对 `docker` 生效，改成 `native` 后在保存时丢弃。`files` 的 key 必须是安全的相对路径，变量名不得含 `=`/NUL。`driver` 为 `local` 时返回 `400`。
+
+Docker 沙箱可设置整数 `cpuMillicores` 和 `memoryMiB`。`1000` 毫核等于 1 核，
+启用时 CPU 至少 `10` 毫核，内存至少 `6` MiB。省略或传 `0` 使用执行机器的配置。
+两处均设置时采用较小值。Native 沙箱的这两个字段可省略或传 `0`。
 
 ### `DELETE /api/sandboxes?id={id}`
 
@@ -194,7 +198,7 @@ docker 沙箱的 Dockerfile 存在沙箱里，随沙箱一起共享，没有单�
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
   -H 'Content-Type: application/json' \
-  -d '{"id":"sandbox-go","name":"Go 隔离环境","driver":"docker","dockerfile":{"content":"FROM golang:1.23\nWORKDIR /workspace\n"},"readOnlyRootFS":false}' \
+  -d '{"id":"sandbox-go","name":"Go 隔离环境","projectId":"my-project","driver":"docker","cpuMillicores":1500,"memoryMiB":2048,"dockerfile":{"content":"FROM golang:1.23\nWORKDIR /workspace\n"},"readOnlyRootFS":false}' \
   "$AGENTFLOW_URL/api/sandboxes"
 ```
 
