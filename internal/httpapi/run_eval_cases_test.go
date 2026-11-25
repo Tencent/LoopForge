@@ -78,6 +78,11 @@ func TestRunEvalCloneAndApplyBranches(t *testing.T) {
 	} {
 		_, _ = h.applyOneRecommendation(run, "cvb-eval-p", rec)
 	}
+	// Editing a role through a recommendation is a new version, like a save from
+	// the role editor; otherwise two revisions share one version number.
+	if updated, ok := f.s.Agent(agent.ID); !ok || updated.Version != agent.Version+1 {
+		t.Fatalf("role recommendation did not bump the version: %+v", updated)
+	}
 
 	failure := domain.RunEvalRecord{ID: "cvb-fail-eval", RunID: run.ID, Status: domain.RunEvalRunning}
 	if err := f.s.PutRun(run); err != nil {

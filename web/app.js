@@ -583,18 +583,21 @@ function parseInlineMarkdown(text, allowImages=false){
     }
     if(parts.length)return parts.join('')+parseInlineMarkdown(text.slice(offset));
   }
-  let s=escapeHTML(text);
-  s=s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Inline code is literal: hold each span aside so emphasis syntax inside it
+  // (snake_case identifiers such as `todo_id`) is not rewritten.
+  const codeSpans=[];
+  let s=escapeHTML(text).replace(/`([^`]+)`/g,(match,code)=>{codeSpans.push(code);return `\u0000${codeSpans.length-1}\u0000`});
   s=s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  s=s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  // Emphasis underscores must sit on word boundaries; intraword `_` is literal.
+  s=s.replace(/(^|[^A-Za-z0-9_])__([^_\n]+?)__(?![\w])/g, '$1<strong>$2</strong>');
   s=s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  s=s.replace(/_([^_]+)_/g, '<em>$1</em>');
+  s=s.replace(/(^|[^A-Za-z0-9_])_([^_\n]+?)_(?![\w])/g, '$1<em>$2</em>');
   s=s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
   s=s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url)=>{
     const cleanUrl=safeURL(url.trim());
     return `<a href="${escapeHTML(cleanUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   });
-  return s;
+  return s.replace(/\u0000(\d+)\u0000/g,(match,i)=>`<code>${codeSpans[Number(i)]}</code>`);
 }
 
 function isMarkdownArtifact(artifact, content){

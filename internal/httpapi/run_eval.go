@@ -337,6 +337,14 @@ func (h *runsHandlers) applyOneRecommendation(run domain.Run, projectID string, 
 		if err := runeval.ApplyRecommendation(rec, nil, &agent); err != nil {
 			return rec, err
 		}
+		// Applying a recommendation edits the role, so it is a new version, the
+		// same as saving the role from its editor. Without the bump the previous
+		// revision and this one share a version number and cannot be told apart.
+		if agent.Version < 1 {
+			agent.Version = 1
+		} else {
+			agent.Version++
+		}
 		if err := h.repo.PutAgent(agent); err != nil {
 			return rec, err
 		}
