@@ -571,7 +571,14 @@ func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now t
 	var found bool
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var rows []runnerTaskRow
+		// Only the id and attempt are needed here, and every column selected ends
+		// up in the ORDER BY sort record. A queued Agent task carries its whole
+		// artifact contract in payload — several hundred KB for a reviewer — and
+		// sorting that record overflows MySQL's sort_buffer_size, which failed the
+		// whole claim with "Error 1038 (HY001): Out of sort memory" and left the
+		// run queued while the runner retried forever.
 		if err := r.locking(tx).
+			Select("id", "attempt").
 			Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed).
 			Order("created_at").Limit(1).
 			Find(&rows).Error; err != nil {
