@@ -687,7 +687,7 @@ func (h *notificationHandlers) preview(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	link := strings.TrimRight(h.service.PublicURL, "/") + "/#/runs/example"
+	link := h.service.PublicAddress() + "/#/runs/example"
 	content = strings.ReplaceAll(content, domain.NotificationURLMarker, link)
 	c.JSON(200, gin.H{"content": content, "contentSource": source, "note": "示例预览，不发送消息；AI 内容在实际执行时生成"})
 }

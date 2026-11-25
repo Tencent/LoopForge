@@ -924,29 +924,40 @@ function activityEventLabel(type){
 function issueOperationLabel(action){
   return {create:'创建需求',update:'编辑需求',close:'关闭需求',reopen:'重新打开',dispatch:'触发 LOOP'}[action]||action||'操作';
 }
+// 聊天 Bot 发起的操作：actor 仍是执行所用的平台账号，这里补出是哪个 IM 用户发起的。
+// 渠道报了显示名就用名字，没报（企业微信、飞书只给 ID）就用 ID，后面的平台账号本身带真名。
+function issueOperationOrigin(op){
+  const sender=(op?.actorSender||'').trim();
+  if(!sender)return '';
+  const channel={wecom:'企业微信',feishu:'飞书',dingtalk:'钉钉'}[op.actorChannel]||op.actorChannel||'聊天';
+  const named=(op.actorSenderName||'').trim();
+  return `${channel} ${named?`${named}（${sender}）`:sender}`;
+}
 function issueOperationEntries(issue){
   const stored=(issue?.operations||[]).map(op=>({
     t:new Date(op.at).getTime(),
     action:op.action||'',
     actor:op.actor||'',
+    origin:issueOperationOrigin(op),
     label:issueOperationLabel(op.action),
     detail:op.detail||''
   })).filter(op=>!Number.isNaN(op.t));
   const inferred=[];
   if(issue?.createdAt&&!stored.some(op=>op.action==='create')){
-    inferred.push({t:new Date(issue.createdAt).getTime(),action:'create',actor:'',label:'创建需求',detail:'按创建时间补记'});
+    inferred.push({t:new Date(issue.createdAt).getTime(),action:'create',actor:'',origin:'',label:'创建需求',detail:'按创建时间补记'});
   }
   if(issueManuallyClosed(issue)&&issue.deliveryUpdatedAt&&!stored.some(op=>op.action==='close')){
-    inferred.push({t:new Date(issue.deliveryUpdatedAt).getTime(),action:'close',actor:'',label:'关闭需求',detail:'手动关闭'});
+    inferred.push({t:new Date(issue.deliveryUpdatedAt).getTime(),action:'close',actor:'',origin:'',label:'关闭需求',detail:'手动关闭'});
   }
   return stored.concat(inferred).filter(op=>!Number.isNaN(op.t)).sort((a,b)=>b.t-a.t);
 }
 function operationsPane(issue){
   const rows=issueOperationEntries(issue).map(e=>{
-    const detail=[e.actor,e.detail].filter(Boolean).join(' · ');
+    const who=e.origin?(e.actor?`${e.origin}（平台账号 ${e.actor}）`:e.origin):e.actor;
+    const detail=[who,e.detail].filter(Boolean).join(' · ');
     return `<div class="activity-row"><time>${formatActivityTime(e.t)}</time><b>${escapeHTML(e.label)}</b><p>${escapeHTML(detail||'—')}</p></div>`;
   }).join('');
-  return `<div class="detail-section"><h3>操作日志<span class="sub">关闭、重新打开、编辑和触发都会记在这里</span></h3>${rows?`<div class="activity-list">${rows}</div>`:'<div class="detail-empty compact">还没有操作记录</div>'}</div>`;
+  return `<div class="detail-section"><h3>操作日志<span class="sub">关闭、重新打开、编辑和触发都会记在这里；聊天发起的操作会标明 IM 用户</span></h3>${rows?`<div class="activity-list">${rows}</div>`:'<div class="detail-empty compact">还没有操作记录</div>'}</div>`;
 }
 function activityPane(issue,data){
   const comments=data.comments||[],task=data.task,run=data.run;

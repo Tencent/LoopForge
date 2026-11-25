@@ -246,9 +246,9 @@ func plainNotificationText(content string) string {
 
 // runURL is the run page on the platform, or empty without a public URL.
 func (s *Service) runURL(runID string) string {
-	base, err := url.Parse(s.PublicURL)
-	if runID == "" || err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
+	address := s.PublicAddress()
+	if runID == "" || !domain.UsablePublicURL(address) {
 		return ""
 	}
-	return strings.TrimRight(s.PublicURL, "/") + "/#/runs/" + url.PathEscape(runID)
+	return address + "/#/runs/" + url.PathEscape(runID)
 }

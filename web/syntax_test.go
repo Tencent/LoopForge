@@ -1967,10 +1967,15 @@ func TestGenericTemplateEditorUsesBundledRoles(t *testing.T) {
 	if strings.Contains(app, "const foreign=catalogForeign((state.data.agents.find(x=>x.id===state.selectedAgent)||state.agentDraft||{}).projectId)") {
 		t.Fatal("agent wizard still treats a same-id project clone as a foreign generic role")
 	}
-	for _, want := range []string{"renderPlatformAdminPanel", "platformAdminPanel", "谁可以改通用模板"} {
+	for _, want := range []string{"renderPlatformAdminPanel", "platformAdminPanel", "谁可以改通用模板", "platformPublicURLHTML", "loadPlatformPublicURL", "外部访问地址"} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app.js is missing platform admin panel wiring %q", want)
 		}
+	}
+	// The suggested value must come from the admin's own browser, never from a
+	// Host header the platform received: it is pasted into binding links.
+	if !strings.Contains(app, "field.value = location.origin") {
+		t.Fatal("the public address page no longer suggests location.origin")
 	}
 	if strings.Contains(app, `id="platformAdminCard"`) {
 		t.Fatal("platform admin management is still embedded in personal settings")

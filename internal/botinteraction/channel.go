@@ -51,11 +51,15 @@ type InboundEvent struct {
 	MessageID string // platform business message id, used for de-duplication
 
 	SenderID string
-	ChatID   string
-	ChatType string // "single" or "group"
-	MsgType  string
-	Text     string
-	Quote    string
+	// SenderName is the display name the channel reports for SenderID.
+	// DingTalk carries it on every message; WeCom and Feishu bot callbacks
+	// carry the ID alone and leave it empty.
+	SenderName string
+	ChatID     string
+	ChatType   string // "single" or "group"
+	MsgType    string
+	Text       string
+	Quote      string
 	// Mentioned is set for group messages that @ the Bot (Feishu,
 	// DingTalk); other group messages are ignored.
 	Mentioned bool

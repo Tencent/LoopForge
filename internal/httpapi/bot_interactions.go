@@ -94,6 +94,9 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	if err != nil {
 		return "绑定的平台账号不可用或已失去项目权限，请在平台检查配置。", nil
 	}
+	// Writes this turn makes run as user; the audit trail also names the IM
+	// sender that asked for them.
+	ctx = withBotChatActor(ctx, bot.ChannelKind(), item.SenderID, h.botSenderName(bot, item.SenderID, item.SenderName))
 	model, err := resolveFeatureModel(user, bot.Model)
 	if err != nil {
 		if errors.Is(err, errFeatureModel) {
@@ -268,7 +271,7 @@ func (h *assistantHandlers) handleBotCardAction(ctx context.Context, bot domain.
 		return "节点已不存在。", nil
 	}
 	expected := engine.NodeExpectation{NodeID: delivery.NodeID, Status: node.Status, Attempt: delivery.Attempt, ReworkCount: delivery.ReworkCount}
-	note := botChannelName(bot) + "操作，平台账号：" + user.LoginName + "，发送者：" + item.SenderID
+	note := botChannelName(bot) + "操作，平台账号：" + user.LoginName + "，发送者：" + h.botSenderNote(bot, item)
 	switch item.Action {
 	case "approve":
 		err = h.engine.Approve(delivery.RunID, delivery.NodeID, note, expected)
