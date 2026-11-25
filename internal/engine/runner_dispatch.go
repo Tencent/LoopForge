@@ -218,6 +218,9 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	if run.ExecutionContext.IsEvolutionReplay() && authMode != domain.RuntimeAuthPersonal {
 		return "", errors.New("进化回放只允许个人模型 Key，不能使用执行机器的本机登录凭据")
 	}
+	if run.ExecutionContext.IsEvolutionReplay() && !runner.SupportsEvolutionReplayDisableBrowser() {
+		return "", fmt.Errorf("进化回放需要执行机器升级至 %s 或更新版本以禁用浏览器 MCP", domain.RunnerVersionEvolutionReplay)
+	}
 	resumeSessionID := resolveRunnerResumeSessionID(run, node.ID, options)
 	invocation := &domain.RunnerInvocation{
 		RunID:                         run.ID,

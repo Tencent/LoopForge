@@ -135,7 +135,7 @@ test('asset grouping deduplicates proposal appearances and merges findings witho
   assert.equal(app.router.calls.some(c => c.path.startsWith('/api/runs/') || c.path === '/api/evolution/proposals/p-grouped'), false);
   $('[data-evo-asset-group="asset:agent:a"]').click(); await settle(5);
   $('#evoProblemEvidenceDetails > summary').click();
-  assert.match($('.evo-story-signal-section').textContent, /取证依据/);
+  assert.match($('.evo-story-signal-section').textContent, /失败案例/);
   $('[data-evo-source-example="node_failed"]').click();
   assert.equal($('#evoStorySourceExample').hidden,false);
   assert.match($('#evoStorySourceExample').textContent,/Error 0/);

@@ -517,6 +517,176 @@ func BuildSOPChangeFiles(p *domain.EvoProposal) []domain.EvoSOPChangeFile {
 	return []domain.EvoSOPChangeFile{*file}
 }
 
+// SplitSOPVersionsByAssetHistory groups runs on the current workflow version by
+// the primary asset's exact version (using run asset pins first, falling back to
+// version timestamps). Each resulting row reflects only the runs that actually
+// used that asset version, so RollbackVersion always matches the row's metrics.
+func SplitSOPVersionsByAssetHistory(
+	wf domain.WorkflowDefinition,
+	points []domain.EvoSOPVersionPoint,
+	runs []domain.Run,
+	evals map[string]domain.RunEvalRecord,
+	asset domain.EvoSOPAssetRef,
+	versions []domain.AssetVersion,
+	runPinVersion map[string]int,
+	batchSize int,
+) []domain.EvoSOPVersionPoint {
+	if len(points) == 0 || len(versions) < 2 || strings.TrimSpace(asset.ID) == "" {
+		return points
+	}
+	batchSize = NormalizeSOPBatchSize(batchSize)
+	currentVer := wf.Version
+	if currentVer <= 0 {
+		currentVer = 1
+	}
+	curIdx := -1
+	for i := range points {
+		if points[i].Current {
+			curIdx = i
+			break
+		}
+	}
+	if curIdx < 0 {
+		return points
+	}
+
+	asc := append([]domain.AssetVersion(nil), versions...)
+	sort.SliceStable(asc, func(i, j int) bool { return asc[i].Version < asc[j].Version })
+	verByNum := map[int]domain.AssetVersion{}
+	for _, v := range asc {
+		verByNum[v.Version] = v
+	}
+	latestVer := asc[len(asc)-1]
+	liveVerNum := asset.CurrentVersion
+	if liveVerNum <= 0 {
+		liveVerNum = latestVer.Version
+	}
+	liveHash := verByNum[liveVerNum].Hash
+
+	resolveRunVer := func(r domain.Run) int {
+		if runPinVersion != nil {
+			if v := runPinVersion[r.ID]; v > 0 {
+				if _, ok := verByNum[v]; ok {
+					return v
+				}
+			}
+		}
+		matched := asc[0].Version
+		for _, v := range asc {
+			if !v.CreatedAt.IsZero() && !r.CreatedAt.Before(v.CreatedAt) {
+				matched = v.Version
+			}
+		}
+		return matched
+	}
+
+	runsByAssetVer := map[int][]domain.Run{}
+	for _, r := range runs {
+		if RunScore(r) < 0 {
+			continue
+		}
+		v := r.WorkflowSnapshot.Version
+		if v <= 0 {
+			v = 1
+		}
+		if v != currentVer {
+			continue
+		}
+		av := resolveRunVer(r)
+		runsByAssetVer[av] = append(runsByAssetVer[av], r)
+	}
+
+	activeNums := make([]int, 0, len(asc))
+	for _, v := range asc {
+		if len(runsByAssetVer[v.Version]) > 0 || v.Version == liveVerNum {
+			activeNums = append(activeNums, v.Version)
+		}
+	}
+	if len(activeNums) < 2 {
+		// Single active version: still annotate source/changeNote if it's a non-baseline version.
+		out := append([]domain.EvoSOPVersionPoint(nil), points...)
+		v := verByNum[liveVerNum]
+		if v.Source != "" && v.Source != domain.EvoVersionBaseline {
+			out[curIdx].Source = v.Source
+			out[curIdx].ChangeNote = assetVersionChangeNote(v, asset.Name)
+			out[curIdx].AssetKind = asset.Kind
+			out[curIdx].AssetID = asset.ID
+			out[curIdx].AssetName = asset.Name
+		}
+		return out
+	}
+
+	splitPoints := make([]domain.EvoSOPVersionPoint, 0, len(activeNums))
+	for _, num := range activeNums {
+		v := verByNum[num]
+		group := append([]domain.Run(nil), runsByAssetVer[num]...)
+		sort.SliceStable(group, func(i, j int) bool { return group[i].CreatedAt.After(group[j].CreatedAt) })
+		if len(group) > batchSize {
+			group = group[:batchSize]
+		}
+		isCurrent := num == liveVerNum
+		label := fmt.Sprintf("%s · %s v%d", FormatSOPVersion(currentVer), assetVersionShortTag(v.Source), num)
+		if v.Source == domain.EvoVersionBaseline || v.Source == "" {
+			label = fmt.Sprintf("%s · 角色 v%d", FormatSOPVersion(currentVer), num)
+		}
+		rollbackVer := 0
+		if !isCurrent && !asset.ReadOnly && (liveHash == "" || v.Hash != liveHash) {
+			rollbackVer = num
+		}
+		splitPoints = append(splitPoints, domain.EvoSOPVersionPoint{
+			Version:         label,
+			Current:         isCurrent,
+			Source:          v.Source,
+			ChangeNote:      assetVersionChangeNote(v, asset.Name),
+			AssetKind:       asset.Kind,
+			AssetID:         asset.ID,
+			AssetName:       asset.Name,
+			RollbackVersion: rollbackVer,
+			Metrics:         SummarizeSOPRuns(group, evals),
+		})
+	}
+
+	res := make([]domain.EvoSOPVersionPoint, 0, len(points)-1+len(splitPoints))
+	res = append(res, points[:curIdx]...)
+	res = append(res, splitPoints...)
+	res = append(res, points[curIdx+1:]...)
+	return res
+}
+
+func assetVersionShortTag(source string) string {
+	switch source {
+	case domain.EvoVersionChatbot:
+		return "Chatbot"
+	case domain.EvoVersionManual:
+		return "手动"
+	case domain.EvoVersionEvolution:
+		return "进化"
+	case domain.EvoVersionRollback:
+		return "回滚"
+	default:
+		return "角色"
+	}
+}
+
+func assetVersionChangeNote(v domain.AssetVersion, assetName string) string {
+	name := firstText(assetName, v.AssetID)
+	switch v.Source {
+	case domain.EvoVersionChatbot:
+		return fmt.Sprintf("Chatbot 修改「%s」", name)
+	case domain.EvoVersionManual:
+		return fmt.Sprintf("手动修改「%s」", name)
+	case domain.EvoVersionEvolution:
+		return fmt.Sprintf("自动进化发布「%s」", name)
+	case domain.EvoVersionRollback:
+		if strings.TrimSpace(v.Note) != "" {
+			return fmt.Sprintf("「%s」%s", name, strings.TrimSpace(v.Note))
+		}
+		return fmt.Sprintf("版本回滚「%s」", name)
+	default:
+		return fmt.Sprintf("基线版本「%s」", name)
+	}
+}
+
 // SplitSOPVersionsWithExternalEdits reflects external (chatbot / manual) role or rule
 // edits on the SOP version trend timeline so runs before vs after the edit are directly
 // comparable even when wf.Version itself did not increment.

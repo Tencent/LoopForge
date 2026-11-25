@@ -192,6 +192,14 @@ func TestEvolutionReplayRunnerDispatchHasNoExternalBindings(t *testing.T) {
 		t.Fatalf("replay used machine login: %v", err)
 	}
 	runner.Runtimes[0].AuthMode = domain.RuntimeAuthPersonal
+	runner.RunnerVersion = "0.13.0"
+	if err := e.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.dispatchRunnerTask(context.Background(), runner.ID, run, node, sb, "workspace", domain.ExecutorDefinition{Kind: "codex"}, domain.AgentDefinition{ID: "role"}, domain.AgentAssetBundle{}, "test", "inv", runtime.InvocationOptions{}, nil); err == nil || !strings.Contains(err.Error(), domain.RunnerVersionEvolutionReplay) {
+		t.Fatalf("old runner must be rejected for evolution replay: %v", err)
+	}
+	runner.RunnerVersion = domain.RunnerVersionEvolutionReplay
 	if err := e.repo.PutRunner(runner); err != nil {
 		t.Fatal(err)
 	}

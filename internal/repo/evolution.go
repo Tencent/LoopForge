@@ -1184,36 +1184,41 @@ func (r *EvolutionRepo) EvoSamples(projectID string) []domain.EvoSample {
 // ---------- per-SOP evolution policies ----------
 
 type evoSOPPolicyRow struct {
+	ProjectID  string     `gorm:"column:project_id;primaryKey;size:64;index:idx_evo_sop_policies_project"`
 	WorkflowID string     `gorm:"column:workflow_id;primaryKey;size:128"`
-	ProjectID  string     `gorm:"column:project_id;size:64;index:idx_evo_sop_policies_project"`
 	Payload    []byte     `gorm:"column:payload;type:json"`
 	Updated    *time.Time `gorm:"column:updated_at"`
 }
 
 func (evoSOPPolicyRow) TableName() string { return "evo_sop_policies" }
 
-func (r *EvolutionRepo) EvoSOPPolicy(projectID, workflowID string) domain.EvoSOPPolicy {
+func (r *EvolutionRepo) EvoSOPPolicyStored(projectID, workflowID string) (domain.EvoSOPPolicy, bool) {
+	projectID = strings.TrimSpace(projectID)
 	workflowID = strings.TrimSpace(workflowID)
-	def := domain.DefaultEvoSOPPolicy(projectID, workflowID)
-	if workflowID == "" {
-		return def
+	if projectID == "" || workflowID == "" {
+		return domain.EvoSOPPolicy{}, false
 	}
 	var row evoSOPPolicyRow
-	if r.DB.Where("workflow_id = ?", workflowID).Take(&row).Error != nil {
-		return def
+	if r.DB.Where("project_id = ? AND workflow_id = ?", projectID, workflowID).Take(&row).Error != nil {
+		return domain.EvoSOPPolicy{}, false
 	}
 	var p domain.EvoSOPPolicy
 	if json.Unmarshal(row.Payload, &p) != nil {
-		return def
+		return domain.EvoSOPPolicy{}, false
 	}
-	p.WorkflowID = workflowID
-	if p.ProjectID == "" {
-		p.ProjectID = strings.TrimSpace(projectID)
-	}
+	p.ProjectID = row.ProjectID
+	p.WorkflowID = row.WorkflowID
 	if p.BatchSize <= 0 {
 		p.BatchSize = 10
 	}
-	return p
+	return p, true
+}
+
+func (r *EvolutionRepo) EvoSOPPolicy(projectID, workflowID string) domain.EvoSOPPolicy {
+	if p, ok := r.EvoSOPPolicyStored(projectID, workflowID); ok {
+		return p
+	}
+	return domain.DefaultEvoSOPPolicy(projectID, workflowID)
 }
 
 func (r *EvolutionRepo) PutEvoSOPPolicy(p domain.EvoSOPPolicy) error {

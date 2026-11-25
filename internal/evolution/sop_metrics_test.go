@@ -151,3 +151,56 @@ func TestSOPPreferencePriorityGuidanceAndSampleRanking(t *testing.T) {
 		t.Fatalf("expected priority chain in finding title, got %q", finding.Title)
 	}
 }
+
+func TestSplitSOPVersionsByAssetHistoryHandlesMultipleEditsRollbackAndReadOnly(t *testing.T) {
+	now := time.Now().UTC()
+	wf := domain.WorkflowDefinition{ID: "wf-1", Name: "Test SOP", Version: 2}
+	asset := domain.EvoSOPAssetRef{Kind: domain.EvoAssetAgent, ID: "coder", Name: "开发工程师", CurrentVersion: 4}
+	v1Hash := domain.ContentHash("prompt v1")
+	v2Hash := domain.ContentHash("prompt v2")
+	v3Hash := domain.ContentHash("prompt v3")
+	versionsDesc := []domain.AssetVersion{
+		{AssetKind: domain.EvoAssetAgent, AssetID: "coder", Version: 4, Source: domain.EvoVersionRollback, Hash: v1Hash, CreatedAt: now.Add(-1 * time.Hour)},
+		{AssetKind: domain.EvoAssetAgent, AssetID: "coder", Version: 3, Source: domain.EvoVersionManual, Hash: v3Hash, CreatedAt: now.Add(-2 * time.Hour)},
+		{AssetKind: domain.EvoAssetAgent, AssetID: "coder", Version: 2, Source: domain.EvoVersionChatbot, Hash: v2Hash, CreatedAt: now.Add(-3 * time.Hour)},
+		{AssetKind: domain.EvoAssetAgent, AssetID: "coder", Version: 1, Source: domain.EvoVersionBaseline, Hash: v1Hash, CreatedAt: now.Add(-5 * time.Hour)},
+	}
+	runs := []domain.Run{
+		{ID: "r-v4", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded", CreatedAt: now.Add(-30 * time.Minute), Usage: domain.TokenUsage{TotalTokens: 30000}},
+		{ID: "r-v3", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded", CreatedAt: now.Add(-90 * time.Minute), Usage: domain.TokenUsage{TotalTokens: 50000}},
+		// Note: no runs on v2 (double-edit before running).
+		{ID: "r-v1", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded", CreatedAt: now.Add(-4 * time.Hour), Usage: domain.TokenUsage{TotalTokens: 90000}},
+	}
+	pinsByRun := map[string]int{
+		"r-v1": 1,
+		"r-v3": 3,
+		"r-v4": 4,
+	}
+	base := BuildSOPVersions(wf, runs, nil, 10)
+	got := SplitSOPVersionsByAssetHistory(wf, base, runs, nil, asset, versionsDesc, pinsByRun, 10)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 buckets (v1, v3, v4 — skipping unrun v2), got %d: %+v", len(got), got)
+	}
+	// v1 has same hash as live v4 (after rollback) -> must NOT offer redundant rollback.
+	if got[0].RollbackVersion != 0 {
+		t.Fatalf("expected v1 matching live hash to omit rollback, got %+v", got[0])
+	}
+	// v3 differs from live v4 -> must offer exact rollback target 3 (not v2).
+	if got[1].RollbackVersion != 3 || got[1].Metrics.AvgTokens != 50000 {
+		t.Fatalf("expected v3 row with rollbackVersion=3 and 50000 tokens, got %+v", got[1])
+	}
+	// v4 is current -> must be marked Current and omit rollback.
+	if !got[2].Current || got[2].RollbackVersion != 0 || got[2].Source != domain.EvoVersionRollback {
+		t.Fatalf("expected current v4 rollback row, got %+v", got[2])
+	}
+
+	// Read-only asset must never expose RollbackVersion on any row.
+	roAsset := asset
+	roAsset.ReadOnly = true
+	gotRO := SplitSOPVersionsByAssetHistory(wf, base, runs, nil, roAsset, versionsDesc, pinsByRun, 10)
+	for _, row := range gotRO {
+		if row.RollbackVersion != 0 {
+			t.Fatalf("readOnly asset must not set RollbackVersion, got %+v", row)
+		}
+	}
+}

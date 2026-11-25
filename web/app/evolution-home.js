@@ -181,7 +181,8 @@ function evoSOPDetectionHTML(){
 }
 function evoBindSOPDetection(form){
   if(!form)return;
-  const pid=evo.projectId,setting=evo.overview?.sopDetection||{},enabled=form.elements.enabled;
+  const pid=evo.projectId,setting=evo.overview?.sopDetection||{},enabled=form.elements?.enabled||form.querySelector('[name="enabled"]');
+  if(!enabled)return;
   const model=form.querySelector('[data-feature-model]'),submit=form.querySelector('[type=submit]');
   const status=form.querySelector('[data-evo-detection-status]');
   const picker=form.querySelector('.evo-sop-model');

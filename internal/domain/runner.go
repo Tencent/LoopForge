@@ -245,10 +245,18 @@ func (r Runner) SupportsProjectCredentials() bool {
 // RunnerVersionArtifactTransfer introduced task-scoped streaming for SOP files.
 const RunnerVersionArtifactTransfer = "0.13.0"
 
+// RunnerVersionEvolutionReplay is the first runner version that honors
+// RunnerInvocation.DisableBrowser during isolated evolution replays.
+const RunnerVersionEvolutionReplay = "0.13.1"
+
 const RunnerResultReportError = "执行结果回传失败"
 
 func (r Runner) SupportsArtifactTransfer() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionArtifactTransfer)
+}
+
+func (r Runner) SupportsEvolutionReplayDisableBrowser() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionEvolutionReplay)
 }
 
 // RunnerVersionConversationSOPWorkspace discovers nested conversation checkouts

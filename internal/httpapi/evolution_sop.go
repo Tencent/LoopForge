@@ -81,9 +81,18 @@ func (h *evolutionHandlers) putSOPPolicy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 workflowId"})
 		return
 	}
-	cur := h.repo.EvoSOPPolicy(req.ProjectID, workflowID)
+	wf, exists := h.resolveSOPWorkflow(req.ProjectID, workflowID, nil)
+	if !exists {
+		runs := h.loadWindowRuns(req.ProjectID, evoDefaultWindowDays, evoSOPWindowLimit)
+		wf, exists = h.resolveSOPWorkflow(req.ProjectID, workflowID, runs)
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "SOP 不存在或不属于当前项目"})
+		return
+	}
+	cur := h.repo.EvoSOPPolicy(req.ProjectID, wf.ID)
 	cur.ProjectID = req.ProjectID
-	cur.WorkflowID = workflowID
+	cur.WorkflowID = wf.ID
 	if req.Enabled != nil {
 		cur.Enabled = *req.Enabled
 	}
@@ -100,16 +109,29 @@ func (h *evolutionHandlers) putSOPPolicy(c *gin.Context) {
 	if req.Model != nil {
 		model := strings.TrimSpace(*req.Model)
 		if model != "" {
-			if current, loggedIn := h.requestUser(c.Request, true); loggedIn {
-				if user, ok := h.repo.User(current.ID); ok {
-					if resolved, err := resolveFeatureModel(user, model); err == nil && resolved != "" {
-						model = resolved
-					} else {
-						catalog := assistantModelsForRequest(c.Request.Context(), user, model)
-						if allowed := assistantAllowedModel(model, catalog); allowed != "" {
-							model = allowed
+			if assistantModelUnspecified(model) {
+				model = ""
+			} else {
+				norm, err := normalizeFeatureModel(model)
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+				if current, loggedIn := h.requestUser(c.Request, true); loggedIn {
+					if user, ok := h.repo.User(current.ID); ok {
+						if resolved, err := resolveFeatureModel(user, norm); err == nil && resolved != "" {
+							model = resolved
+						} else if catalog := assistantModelsForRequest(c.Request.Context(), user, norm); assistantCatalogLists(catalog, norm) {
+							model = norm
+						} else {
+							c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+							return
 						}
+					} else {
+						model = norm
 					}
+				} else {
+					model = norm
 				}
 			}
 		}
@@ -121,9 +143,9 @@ func (h *evolutionHandlers) putSOPPolicy(c *gin.Context) {
 		respond(c, err)
 		return
 	}
-	saved := h.repo.EvoSOPPolicy(req.ProjectID, workflowID)
+	saved := h.repo.EvoSOPPolicy(req.ProjectID, wf.ID)
 	if saved.Enabled {
-		go h.checkSOPBatchAutoTrigger(saved, saved.UpdatedBy)
+		go h.checkSOPBatchAutoTrigger(saved)
 	}
 	c.JSON(http.StatusOK, saved)
 }
@@ -186,30 +208,6 @@ func (h *evolutionHandlers) maybeSweepSOPBatches(now time.Time) {
 	h.sweepSOPBatches(now)
 }
 
-func (h *evolutionHandlers) triggerProjectSOPBatches(projectID string, hintUserID int64) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("evolution sop project batch trigger panic: %v", r)
-		}
-	}()
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
-		return
-	}
-	h.sopBatchM.Lock()
-	now := time.Now().UTC()
-	if h.sopProjectRunAt == nil {
-		h.sopProjectRunAt = map[string]time.Time{}
-	}
-	if prev, ok := h.sopProjectRunAt[projectID]; ok && now.Sub(prev) < 10*time.Second {
-		h.sopBatchM.Unlock()
-		return
-	}
-	h.sopProjectRunAt[projectID] = now
-	h.sopBatchM.Unlock()
-	h.sweepProjectSOPBatches(projectID, hintUserID, now)
-}
-
 func (h *evolutionHandlers) sweepSOPBatches(now time.Time) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -219,61 +217,30 @@ func (h *evolutionHandlers) sweepSOPBatches(now time.Time) {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	scannedProjects := map[string]bool{}
-	for _, proj := range h.repo.Projects() {
-		if proj.ArchivedAt != nil || strings.TrimSpace(proj.ID) == "" {
-			continue
-		}
-		scannedProjects[proj.ID] = true
-		h.sweepProjectSOPBatches(proj.ID, 0, now)
-	}
-	// Also cover any explicitly saved enabled policies whose project wasn't listed above.
+	// Only sweep explicitly saved & enabled SOP policies so unconfigured SOPs never burn tokens unexpectedly.
+	runsByProject := map[string][]domain.Run{}
 	for _, policy := range h.repo.AllEnabledEvoSOPPolicies() {
-		if scannedProjects[policy.ProjectID] {
+		if !policy.Enabled || strings.TrimSpace(policy.ProjectID) == "" || strings.TrimSpace(policy.WorkflowID) == "" {
 			continue
 		}
-		h.checkSOPBatchAutoTrigger(policy, 0)
+		runs, loaded := runsByProject[policy.ProjectID]
+		if !loaded {
+			runs = h.loadWindowRuns(policy.ProjectID, evoDefaultWindowDays, evoSOPWindowLimit)
+			runsByProject[policy.ProjectID] = runs
+		}
+		h.checkSOPBatchAutoTriggerWithRuns(policy, runs, now)
 	}
 }
 
-func (h *evolutionHandlers) sweepProjectSOPBatches(projectID string, hintUserID int64, now time.Time) {
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
-		return
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	runs := h.loadWindowRuns(projectID, evoDefaultWindowDays, evoSOPWindowLimit)
-	if len(runs) == 0 {
-		return
-	}
-	wfIDs := []string{}
-	seenWF := map[string]bool{}
-	for _, r := range runs {
-		if id := strings.TrimSpace(r.WorkflowID); id != "" && !seenWF[id] {
-			seenWF[id] = true
-			wfIDs = append(wfIDs, id)
-		}
-	}
-	for _, wfID := range wfIDs {
-		policy := h.repo.EvoSOPPolicy(projectID, wfID)
-		if !policy.Enabled {
-			continue
-		}
-		h.checkSOPBatchAutoTriggerWithRuns(policy, runs, hintUserID, now)
-	}
-}
-
-func (h *evolutionHandlers) checkSOPBatchAutoTrigger(policy domain.EvoSOPPolicy, hintUserID int64) {
+func (h *evolutionHandlers) checkSOPBatchAutoTrigger(policy domain.EvoSOPPolicy) {
 	if !policy.Enabled || strings.TrimSpace(policy.ProjectID) == "" || strings.TrimSpace(policy.WorkflowID) == "" {
 		return
 	}
 	runs := h.loadWindowRuns(policy.ProjectID, evoDefaultWindowDays, evoSOPWindowLimit)
-	h.checkSOPBatchAutoTriggerWithRuns(policy, runs, hintUserID, time.Now().UTC())
+	h.checkSOPBatchAutoTriggerWithRuns(policy, runs, time.Now().UTC())
 }
 
-func (h *evolutionHandlers) checkSOPBatchAutoTriggerWithRuns(policy domain.EvoSOPPolicy, runs []domain.Run, hintUserID int64, now time.Time) {
+func (h *evolutionHandlers) checkSOPBatchAutoTriggerWithRuns(policy domain.EvoSOPPolicy, runs []domain.Run, now time.Time) {
 	if !policy.Enabled || strings.TrimSpace(policy.ProjectID) == "" || strings.TrimSpace(policy.WorkflowID) == "" {
 		return
 	}
@@ -290,18 +257,10 @@ func (h *evolutionHandlers) checkSOPBatchAutoTriggerWithRuns(policy domain.EvoSO
 		return
 	}
 	assetKeys := h.collectSOPAssetKeys(wf, sopRuns)
-	findings := h.sopFindings(h.repo.EvoFindings(policy.ProjectID, domain.EvoFindingOpen, domain.EvoFindingProposed), wf.ID, assetKeys)
+	allFindings := h.repo.EvoFindings(policy.ProjectID, domain.EvoFindingOpen, domain.EvoFindingProposed)
+	findings := h.sopFindings(allFindings, wf.ID, assetKeys)
 	proposals := h.repo.EvoProposals(policy.ProjectID, 200)
-	findingIDSet := map[string]bool{}
-	for _, f := range findings {
-		findingIDSet[f.ID] = true
-	}
-	var sopProposals []domain.EvoProposal
-	for _, p := range proposals {
-		if findingIDSet[p.FindingID] || assetKeys[p.AssetKind+":"+p.AssetID] {
-			sopProposals = append(sopProposals, p)
-		}
-	}
+	sopProposals := h.filterSOPProposals(wf.ID, assetKeys, allFindings, findings, proposals, len(sopRuns) > 0)
 	stage, _, last := evolution.DetermineSOPStage(sopProposals)
 	if stage != domain.EvoSOPStageMonitor {
 		return
@@ -319,9 +278,9 @@ func (h *evolutionHandlers) checkSOPBatchAutoTriggerWithRuns(policy domain.EvoSO
 			return
 		}
 	}
-	user, resolvedModel, ok := h.resolveSOPActorUser(policy, sopRuns, hintUserID)
+	user, resolvedModel, ok := h.resolveSOPActorUser(policy, wf)
 	if !ok {
-		log.Printf("evolution sop auto-batch %s/%s skipped (%d/%d runs): no actor user with available CLI credentials", policy.ProjectID, wf.ID, pending, policy.BatchSize)
+		log.Printf("evolution sop auto-batch %s/%s skipped (%d/%d runs): policy owner %d lacks project write permission or CLI credentials", policy.ProjectID, wf.ID, pending, policy.BatchSize, policy.UpdatedBy)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -333,8 +292,36 @@ func (h *evolutionHandlers) checkSOPBatchAutoTriggerWithRuns(policy domain.EvoSO
 	}
 }
 
-func (h *evolutionHandlers) applySOPModelCredentials(ctx context.Context, user domain.User, requestedModel string) (domain.User, string, bool) {
+func (h *evolutionHandlers) workflowPreferredModel(wf domain.WorkflowDefinition) string {
+	for _, node := range wf.Nodes {
+		if strings.TrimSpace(node.AgentID) == "" {
+			continue
+		}
+		agent, ok := h.repo.Agent(node.AgentID)
+		if !ok {
+			continue
+		}
+		m := strings.TrimSpace(agent.Model)
+		if m == "" || assistantModelUnspecified(m) {
+			continue
+		}
+		if strings.Contains(m, ":") {
+			return m
+		}
+		execID := strings.TrimSpace(agent.ExecutorID)
+		if execID != "" && execID != assistantEngineCodeBuddy {
+			return execID + ":" + m
+		}
+		return m
+	}
+	return ""
+}
+
+func (h *evolutionHandlers) applySOPModelCredentials(ctx context.Context, user domain.User, requestedModel string, wf domain.WorkflowDefinition) (domain.User, string, bool) {
 	model := strings.TrimSpace(requestedModel)
+	if model == "" {
+		model = h.workflowPreferredModel(wf)
+	}
 	if evoImproveOverride != nil {
 		return user, model, true
 	}
@@ -349,7 +336,7 @@ func (h *evolutionHandlers) applySOPModelCredentials(ctx context.Context, user d
 		catalog := assistantModelsForRequest(ctx, user, model)
 		return user, assistantAllowedModel(model, catalog), true
 	}
-	// Fall back to platform shared CodeBuddy key when the user has no personal CLI credentials.
+	// Fall back to platform shared CodeBuddy key when the policy owner has no personal CLI credentials.
 	if key, found := h.repo.SharedCodeBuddyKey(); found && strings.TrimSpace(key.APIKey) != "" && len(key.Models) > 0 {
 		if key.SponsorID == 0 || key.SponsorID != user.ID {
 			sharedUser := user
@@ -369,32 +356,21 @@ func (h *evolutionHandlers) applySOPModelCredentials(ctx context.Context, user d
 	return user, "", false
 }
 
-func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy, sopRuns []domain.Run, hintUserID int64) (domain.User, string, bool) {
-	candidates := []int64{}
-	add := func(id int64) {
-		if id <= 0 {
-			return
-		}
-		for _, c := range candidates {
-			if c == id {
-				return
-			}
-		}
-		candidates = append(candidates, id)
+// resolveSOPActorUser strictly authorizes automated SOP jobs using ONLY the
+// user who explicitly enabled the SOP policy (policy.UpdatedBy) and confirms
+// they still hold project write permission. It never borrows keys from viewers,
+// other members, or platform administrators.
+func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy, wf domain.WorkflowDefinition) (domain.User, string, bool) {
+	if policy.UpdatedBy <= 0 {
+		return domain.User{}, "", false
 	}
-	add(hintUserID)
-	add(policy.UpdatedBy)
-	for _, r := range sopRuns {
-		add(r.ExecutionContext.ResponsibleUserID)
+	user, ok := h.repo.User(policy.UpdatedBy)
+	if !ok {
+		return domain.User{}, "", false
 	}
-	if proj, ok := h.repo.Project(policy.ProjectID); ok {
-		if proj.SOPDetection != nil {
-			add(proj.SOPDetection.ConfiguredBy)
-		}
-		add(proj.OwnerID)
-		for _, m := range proj.Members {
-			add(m.UserID)
-		}
+	isAdmin := strings.TrimSpace(user.LoginName) != "" && h.repo.IsPlatformAdmin(strings.TrimSpace(user.LoginName))
+	if !isAdmin && !h.projectMemberWrites(policy.ProjectID, user.ID) {
+		return domain.User{}, "", false
 	}
 	reqModel := strings.TrimSpace(policy.Model)
 	if reqModel == "" {
@@ -402,26 +378,7 @@ func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy, sopR
 			reqModel = strings.TrimSpace(proj.SOPDetection.Model)
 		}
 	}
-	ctx := context.Background()
-	for _, uid := range candidates {
-		user, ok := h.repo.User(uid)
-		if !ok {
-			continue
-		}
-		if resolvedUser, resolvedModel, ok := h.applySOPModelCredentials(ctx, user, reqModel); ok {
-			return resolvedUser, resolvedModel, true
-		}
-	}
-	// Fallback: check any project writer / platform admin account with configured credentials.
-	for _, user := range h.repo.Users() {
-		if !h.speakerProjectWriter(policy.ProjectID, user, user.ID) {
-			continue
-		}
-		if resolvedUser, resolvedModel, ok := h.applySOPModelCredentials(ctx, user, reqModel); ok {
-			return resolvedUser, resolvedModel, true
-		}
-	}
-	return domain.User{}, "", false
+	return h.applySOPModelCredentials(context.Background(), user, reqModel, wf)
 }
 
 func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID, workflowID, requestedModel string, user domain.User) (domain.EvoProposal, *domain.EvoQueueItem, bool, error) {
@@ -446,7 +403,7 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 			model = strings.TrimSpace(project.SOPDetection.Model)
 		}
 	}
-	resolvedUser, resolvedModel, credOK := h.applySOPModelCredentials(ctx, user, model)
+	resolvedUser, resolvedModel, credOK := h.applySOPModelCredentials(ctx, user, model, wf)
 	if !credOK {
 		return domain.EvoProposal{}, nil, false, &evoError{status: http.StatusBadRequest, msg: "请先在个人配置中配置可用的 AI 模型凭据（CodeBuddy / Codex / Claude 等）"}
 	}
@@ -730,7 +687,32 @@ func (h *evolutionHandlers) buildSOPDetail(projectID, workflowID string, days in
 	recentEdits := h.collectSOPExternalEdits(wf, ctx.sopRuns)
 	assets := h.collectSOPAssets(projectID, wf, ctx.sopRuns)
 	versions := evolution.BuildSOPVersions(wf, ctx.sopRuns, evals, policy.BatchSize)
-	versions = evolution.SplitSOPVersionsWithExternalEdits(wf, versions, ctx.sopRuns, evals, recentEdits, policy.BatchSize)
+	if len(assets) > 0 && assets[0].VersionCount >= 2 {
+		primary := assets[0]
+		assetVers := h.repo.AssetVersions(primary.Kind, primary.ID)
+		runPinVer := map[string]int{}
+		hashToVer := map[string]int{}
+		for _, av := range assetVers {
+			if hashToVer[av.Hash] == 0 {
+				hashToVer[av.Hash] = av.Version
+			}
+		}
+		for _, r := range ctx.sopRuns {
+			for _, pin := range h.repo.RunAssetPins(r.ID) {
+				if pin.AssetKind == primary.Kind && pin.AssetID == primary.ID {
+					if pin.Version > 0 {
+						runPinVer[r.ID] = pin.Version
+					} else if v := hashToVer[pin.Hash]; v > 0 {
+						runPinVer[r.ID] = v
+					}
+					break
+				}
+			}
+		}
+		versions = evolution.SplitSOPVersionsByAssetHistory(wf, versions, ctx.sopRuns, evals, primary, assetVers, runPinVer, policy.BatchSize)
+	} else {
+		versions = evolution.SplitSOPVersionsWithExternalEdits(wf, versions, ctx.sopRuns, evals, recentEdits, policy.BatchSize)
+	}
 	grayRounds := h.buildSOPGrayRounds(projectID, wf, ctx.sopProposals, evals)
 
 	var activeFull *domain.EvoProposal
@@ -939,21 +921,14 @@ func (h *evolutionHandlers) computeSOPSummary(
 
 	assetKeys := h.collectSOPAssetKeys(wf, sopRuns)
 	sopFindings := h.sopFindings(allFindings, wf.ID, assetKeys)
-	findingIDSet := map[string]bool{}
 	openFindings := 0
 	for _, f := range sopFindings {
-		findingIDSet[f.ID] = true
 		if f.Status == domain.EvoFindingOpen {
 			openFindings++
 		}
 	}
 
-	var sopProposals []domain.EvoProposal
-	for _, p := range allProposals {
-		if findingIDSet[p.FindingID] || assetKeys[p.AssetKind+":"+p.AssetID] {
-			sopProposals = append(sopProposals, p)
-		}
-	}
+	sopProposals := h.filterSOPProposals(wf.ID, assetKeys, allFindings, sopFindings, allProposals, len(sopRuns) > 0)
 
 	stage, active, last := evolution.DetermineSOPStage(sopProposals)
 
@@ -1078,7 +1053,6 @@ func (h *evolutionHandlers) buildSOPGrayRounds(
 		candHash := domain.ContentHash(p.CandidateContent)
 
 		var ctrlRuns, candRuns []domain.Run
-		var ctrlAll, candAll []domain.Run
 		seen := map[string]bool{}
 		for _, pin := range pins {
 			if seen[pin.RunID] {
@@ -1086,7 +1060,7 @@ func (h *evolutionHandlers) buildSOPGrayRounds(
 			}
 			seen[pin.RunID] = true
 			run, loaded := h.repo.RunState(pin.RunID)
-			if !loaded || !domain.TerminalRunStatus(run.Status) || run.ExecutionContext.IsEvolutionReplay() || h.runProject(run) != projectID {
+			if !loaded || !domain.TerminalRunStatus(run.Status) || run.ExecutionContext.IsEvolutionReplay() || h.runProject(run) != projectID || run.WorkflowID != wf.ID {
 				continue
 			}
 			if _, ok := evals[run.ID]; !ok {
@@ -1096,33 +1070,16 @@ func (h *evolutionHandlers) buildSOPGrayRounds(
 			}
 			switch pin.Hash {
 			case p.BaseHash:
-				ctrlAll = append(ctrlAll, run)
-				if run.WorkflowID == wf.ID {
-					ctrlRuns = append(ctrlRuns, run)
-				}
+				ctrlRuns = append(ctrlRuns, run)
 			case candHash:
-				candAll = append(candAll, run)
-				if run.WorkflowID == wf.ID {
-					candRuns = append(candRuns, run)
-				}
+				candRuns = append(candRuns, run)
 			}
-		}
-		if len(ctrlRuns) == 0 && len(candRuns) == 0 {
-			ctrlRuns, candRuns = ctrlAll, candAll
 		}
 
 		ctrlMetrics := evolution.SummarizeSOPRuns(ctrlRuns, evals)
 		candMetrics := evolution.SummarizeSOPRuns(candRuns, evals)
-
-		if ctrlMetrics.Runs == 0 && p.Canary.Control.Runs > 0 {
-			ctrlMetrics.Runs = p.Canary.Control.Runs
-			ctrlMetrics.CleanCount = p.Canary.Control.Clean
-			ctrlMetrics.CleanRate = p.Canary.Control.Rate
-		}
-		if candMetrics.Runs == 0 && p.Canary.Canary.Runs > 0 {
-			candMetrics.Runs = p.Canary.Canary.Runs
-			candMetrics.CleanCount = p.Canary.Canary.Clean
-			candMetrics.CleanRate = p.Canary.Canary.Rate
+		if ctrlMetrics.Runs == 0 && candMetrics.Runs == 0 && p.Status != domain.EvoProposalCanary {
+			continue
 		}
 
 		type taggedRun struct {
@@ -1295,17 +1252,69 @@ func (h *evolutionHandlers) collectSOPAssetKeys(wf domain.WorkflowDefinition, ru
 func (h *evolutionHandlers) sopFindings(all []domain.EvoFinding, workflowID string, assetKeys map[string]bool) []domain.EvoFinding {
 	var out []domain.EvoFinding
 	for _, f := range all {
-		matched := assetKeys[f.AssetKind+":"+f.AssetID]
-		if !matched {
+		if len(f.WorkflowIDs) > 0 {
+			matched := false
 			for _, wid := range f.WorkflowIDs {
 				if wid == workflowID {
 					matched = true
 					break
 				}
 			}
+			if matched {
+				out = append(out, f)
+			}
+			continue
 		}
-		if matched {
+		if assetKeys[f.AssetKind+":"+f.AssetID] {
 			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func (h *evolutionHandlers) filterSOPProposals(
+	workflowID string,
+	assetKeys map[string]bool,
+	allFindings []domain.EvoFinding,
+	sopFindings []domain.EvoFinding,
+	allProposals []domain.EvoProposal,
+	hasSOPRuns bool,
+) []domain.EvoProposal {
+	findingIDSet := map[string]bool{}
+	for _, f := range sopFindings {
+		findingIDSet[f.ID] = true
+	}
+	findingByID := map[string]domain.EvoFinding{}
+	for _, f := range allFindings {
+		findingByID[f.ID] = f
+	}
+	var out []domain.EvoProposal
+	for _, p := range allProposals {
+		if p.FindingID != "" {
+			if findingIDSet[p.FindingID] {
+				out = append(out, p)
+				continue
+			}
+			if f, ok := findingByID[p.FindingID]; ok {
+				if len(f.WorkflowIDs) > 0 {
+					continue
+				}
+			} else if f, ok := h.repo.EvoFinding(p.FindingID); ok && len(f.WorkflowIDs) > 0 {
+				matched := false
+				for _, wid := range f.WorkflowIDs {
+					if wid == workflowID {
+						matched = true
+						break
+					}
+				}
+				if matched {
+					out = append(out, p)
+				}
+				continue
+			}
+		}
+		if hasSOPRuns && assetKeys[p.AssetKind+":"+p.AssetID] {
+			out = append(out, p)
 		}
 	}
 	return out

@@ -1,6 +1,6 @@
 // RSI工作台：具体报错列表与记录弹窗；提案、资产、样本沿用 kb-* 面板与抽屉。
 // 依赖 app.js 与 knowledge.js 的公共状态、API 和组件。
-const evo={tab:'issues',projectId:null,overview:null,findings:null,samples:null,error:'',seq:0,poll:0,busy:new Set(),drawerProposal:null,stage:'',filter:{kind:'',q:'',status:'open',sort:'value',days:''},changes:{q:'',status:'all',page:0},list:evoInitialTaskList(),groups:{},modal:null,page:0,selected:new Set(),diagnosing:false,lastCheck:null,checkError:''};
+const evo={tab:'issues',projectId:null,overview:null,findings:null,samples:null,error:'',seq:0,poll:0,busy:new Set(),drawerProposal:null,stage:'',filter:{kind:'',q:'',status:'open',sort:'value',days:''},changes:{q:'',status:'all',page:0},list:evoInitialTaskList(),groups:{},modal:null,page:0,selected:new Set(),diagnosing:false,composing:false,lastCheck:null,checkError:''};
 
 function evoInitialTaskList(){return {section:'tasks',status:'all',sop:'',q:'',sort:'impact',page:0}}
 
@@ -172,13 +172,30 @@ async function evoRefresh(){
   }catch(err){if(seq===evo.seq){evo.error=err.message;evo.overview=null;evo.findings=null}}
 }
 
+function evoPollInteractionPaused(){
+  if(evo.composing||$('#evoSopPrefDialog')?.open)return true;
+  const active=document.activeElement;
+  return !!active?.matches?.('#evolutionView input[type="search"], #evolutionView [data-evo-sop-search], #evolutionView [data-evo-search], #evolutionView [data-evo-task-search], #evolutionView [data-evo-change-search]');
+}
 function evoSchedulePoll(){
   clearTimeout(evo.poll);
   const detect=(evo.overview?.sopDetection?.enabled||(evo.overview?.sops||[]).some(s=>s.enabled))&&!evo.modal&&!['assets','samples'].includes(evo.tab);
   if(!evoActive()||!((evo.overview?.validating||[]).length||(evo.overview?.trial||[]).length||detect))return;
   evo.poll=setTimeout(async()=>{
-    if(!evoActive()||document.hidden)return evoSchedulePoll();
-    await evoRefresh();evoRender();
+    if(!evoActive()||document.hidden||evoPollInteractionPaused())return evoSchedulePoll();
+    await evoRefresh();
+    if(!evoActive()||evoPollInteractionPaused())return evoSchedulePoll();
+    if(typeof evoSOPState!=='undefined'&&evoSOPState.view){
+      await evoSOPLoadDetail(evoSOPState.view);
+      evoSchedulePoll();
+      return;
+    }
+    if(typeof evoSOPIsEnabledView==='function'&&evoSOPIsEnabledView()&&$('#evoSopListHost')&&!evo.modal&&!['assets','samples'].includes(evo.tab)){
+      evoSOPUpdateList();
+      evoSchedulePoll();
+      return;
+    }
+    evoRender();
   },EVO_POLL_MS);
 }
 
@@ -228,11 +245,11 @@ function evoRenderOverviewHeader(){
   const head=$('#evoPageHead');
   if(head){
     head.hidden=!show;
-    const hideLegacy=Array.isArray(evo.overview?.sops)||evo.overview==null;
+    const isSopWorkbench=Array.isArray(evo.overview?.sops);
     const settingsBtn=head.querySelector('[data-evo-tab="assets"]');
     const diagnoseBtn=head.querySelector('#evoDiagnose');
-    if(settingsBtn)settingsBtn.hidden=hideLegacy;
-    if(diagnoseBtn)diagnoseBtn.hidden=hideLegacy;
+    if(settingsBtn)settingsBtn.hidden=evo.overview==null;
+    if(diagnoseBtn)diagnoseBtn.hidden=isSopWorkbench||evo.overview==null;
   }
   const host=$('#evoMetrics');if(!host)return;
   const sopHome=typeof evoSOPIsEnabledView==='function'&&evoSOPIsEnabledView();
@@ -266,12 +283,12 @@ function evoRender(){
   if(evo.error){root.innerHTML=evoReadErrorHTML();return}
   if(!evo.overview)return;
   const focused=document.activeElement?.closest?.('#evolutionBody')?document.activeElement.dataset.evoKey:'';
-  if(['assets','samples'].includes(evo.tab)&&!Array.isArray(evo.overview?.sops)){
+  if(['assets','samples'].includes(evo.tab)){
     const tabs=[['assets','角色与规则'],['samples','固定验证样本']];
-    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ RSI工作台</button><h2 class="evo-settings-title">进化设置</h2>${evoSOPDetectionHTML()}<div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
-    evoBindSOPDetection(root.querySelector('#evoSOPDetection'));
+    const showLegacyDetect=!Array.isArray(evo.overview?.sops)||!!evo.overview?.sopDetection?.enabled;
+    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ RSI工作台</button><h2 class="evo-settings-title">进化设置</h2>${showLegacyDetect?evoSOPDetectionHTML():''}<div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
+    if(showLegacyDetect)evoBindSOPDetection(root.querySelector('#evoSOPDetection'));
   }else{
-    if(['assets','samples'].includes(evo.tab)&&Array.isArray(evo.overview?.sops))evo.tab='issues';
     root.innerHTML=evoUnifiedListHTML();
   }
   evoHomeSyncChecking();
@@ -555,12 +572,7 @@ function evoApplyRoute(){
   if(r.type==='proposal')return evoOpenProposal(r.id,true);
   const opener=evo.modal;
   evoCloseFinding(false);if(evoDrawerOwned())evoDrawerClose();
-  if(r.type==='settings'&&Array.isArray(evo.overview?.sops)){
-    evo.tab='issues';
-    history.replaceState(null,'','#/evolution');
-  }else{
-    evo.tab=r.type==='settings'?r.tab:'issues';
-  }
+  evo.tab=r.type==='settings'?r.tab:'issues';
   evoRender();
   if(r.type==='list'&&opener)evoFocusTask(opener);
 }
@@ -1580,6 +1592,8 @@ document.addEventListener('click',e=>{
   if(run){e.preventDefault();switchView('runs');showRunDetail(run.dataset.kbRun)}
 });
 // 搜索只重绘问题列表，保留输入框焦点与光标。
+document.addEventListener('compositionstart',e=>{if(e.target.closest?.('#evolutionView'))evo.composing=true});
+document.addEventListener('compositionend',e=>{if(e.target.closest?.('#evolutionView'))evo.composing=false});
 document.addEventListener('input',e=>{
   if(e.target.matches('#evoWorkspaceTasks [data-evo-task-search]')){
     evo.list.q=e.target.value;evo.list.page=0;evoUpdateHomeResults();return;

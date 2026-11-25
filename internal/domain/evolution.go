@@ -530,7 +530,7 @@ func DefaultEvoSOPPolicy(projectID, workflowID string) EvoSOPPolicy {
 	return EvoSOPPolicy{
 		WorkflowID:  strings.TrimSpace(workflowID),
 		ProjectID:   strings.TrimSpace(projectID),
-		Enabled:     true,
+		Enabled:     false,
 		Preferences: []string{EvoPrefTokens, EvoPrefTools},
 		BatchSize:   10,
 	}

@@ -143,7 +143,14 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 		if ctx.Err() != nil {
 			return
 		}
-		ids, err := h.repo.PendingSOPDetections(projectID, since, staleBefore, 4)
+		wfIDs := make([]string, 0, len(wfPolicies))
+		for wfID := range wfPolicies {
+			wfIDs = append(wfIDs, wfID)
+		}
+		if len(wfIDs) == 0 {
+			continue
+		}
+		ids, err := h.repo.PendingSOPDetectionsForWorkflows(projectID, wfIDs, since, staleBefore, 4)
 		if err != nil {
 			continue
 		}
@@ -159,18 +166,22 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 			if !enabled || !policy.Enabled {
 				continue
 			}
-			user, _, ok := h.resolveSOPActorUser(policy, []domain.Run{run}, 0)
+			wf, _ := h.resolveSOPWorkflow(projectID, run.WorkflowID, []domain.Run{run})
+			user, resolvedModel, ok := h.resolveSOPActorUser(policy, wf)
 			if !ok {
 				continue
 			}
 			model := strings.TrimSpace(policy.Model)
+			if model == "" {
+				model = strings.TrimSpace(resolvedModel)
+			}
 			if model == "" {
 				if proj, ok := h.repo.Project(projectID); ok && proj.SOPDetection != nil {
 					model = strings.TrimSpace(proj.SOPDetection.Model)
 				}
 			}
 			if model == "" {
-				model = assistantDefaultModel
+				continue
 			}
 			cfg := domain.SOPDetectionConfig{Enabled: true, Model: model, EnabledAt: since, ConfiguredBy: user.ID}
 			if err := h.detectSOPRunWithConfig(ctx, projectID, cfg, run, evaluate); err != nil {
@@ -192,12 +203,13 @@ func (h *evolutionHandlers) detectSOPRun(ctx context.Context, project repo.SOPDe
 	}
 	cfg := project.Config
 	if strings.TrimSpace(run.WorkflowID) != "" {
-		policy := h.repo.EvoSOPPolicy(project.ID, run.WorkflowID)
-		if !policy.Enabled {
-			return nil
-		}
-		if strings.TrimSpace(policy.Model) != "" {
-			cfg.Model = strings.TrimSpace(policy.Model)
+		if policy, stored := h.repo.EvoSOPPolicyStored(project.ID, run.WorkflowID); stored {
+			if !policy.Enabled {
+				return nil
+			}
+			if strings.TrimSpace(policy.Model) != "" {
+				cfg.Model = strings.TrimSpace(policy.Model)
+			}
 		}
 	}
 	return h.detectSOPRunWithConfig(ctx, project.ID, cfg, run, evaluate)

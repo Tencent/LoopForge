@@ -19,6 +19,10 @@ func SOPDetectionEvalID(runID string) string {
 }
 
 func (r *RunsRepo) PendingSOPDetections(projectID string, since, staleBefore time.Time, limit int) ([]string, error) {
+	return r.PendingSOPDetectionsForWorkflows(projectID, nil, since, staleBefore, limit)
+}
+
+func (r *RunsRepo) PendingSOPDetectionsForWorkflows(projectID string, workflowIDs []string, since, staleBefore time.Time, limit int) ([]string, error) {
 	project := r.sqlExecutionContextJSONText("projectId")
 	issue := r.sqlExecutionContextJSONText("issueId")
 	purpose := r.sqlExecutionContextJSONText("purpose")
@@ -27,15 +31,18 @@ func (r *RunsRepo) PendingSOPDetections(projectID string, since, staleBefore tim
 		snapshotMode = "JSON_UNQUOTE(" + snapshotMode + ")"
 	}
 	var ids []string
-	err := r.DB.Table("runs").
+	q := r.DB.Table("runs").
 		Joins("LEFT JOIN run_evals AS checks ON checks.run_id = runs.id AND checks.id LIKE ?", sopDetectionIDPrefix+"%").
 		Where("runs.status IN ?", []string{"succeeded", "failed"}).
 		Where("runs.workflow_id <> '' AND COALESCE(runs.kind, '') <> ? AND runs.created_at >= ?", domain.RunKindWorkspace, since).
 		Where("COALESCE("+snapshotMode+", '') <> ?", "group").
 		Where("COALESCE("+purpose+", '') <> ?", domain.RunPurposeEvolutionReplay).
 		Where("("+project+" = ? OR (COALESCE("+project+", '') = '' AND EXISTS (SELECT 1 FROM issues WHERE issues.id = "+issue+" AND issues.project_id = ?)))", projectID, projectID).
-		Where("(checks.id IS NULL OR (checks.status = ? AND checks.created_at < ?))", domain.RunEvalRunning, staleBefore).
-		Order("runs.created_at, runs.id").Limit(limit).Pluck("runs.id", &ids).Error
+		Where("(checks.id IS NULL OR (checks.status = ? AND checks.created_at < ?))", domain.RunEvalRunning, staleBefore)
+	if len(workflowIDs) > 0 {
+		q = q.Where("runs.workflow_id IN ?", workflowIDs)
+	}
+	err := q.Order("runs.created_at, runs.id").Limit(limit).Pluck("runs.id", &ids).Error
 	return ids, err
 }
 

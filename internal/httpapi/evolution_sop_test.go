@@ -337,7 +337,7 @@ func TestEvolutionSOPDetectionRunsForEnabledPolicyWithoutGlobalSwitch(t *testing
 	}
 }
 
-func TestEvolutionSOPAutoBatchTriggersWithoutSavedPolicyAndWithSharedKey(t *testing.T) {
+func TestEvolutionSOPAutoBatchOptInSharedKeyAndViewerIsolation(t *testing.T) {
 	env := newEvoTestEnv(t)
 	now := time.Now().UTC()
 
@@ -354,8 +354,24 @@ func TestEvolutionSOPAutoBatchTriggersWithoutSavedPolicyAndWithSharedKey(t *test
 		t.Fatal(err)
 	}
 
-	// Do NOT save an evo_sop_policies row: SOP defaults to Enabled=true, BatchSize=10.
-	// Verify failed proposal error is surfaced in SOP summary lastRunNote so UI does not stay silent.
+	// Add a viewer with a personal API key to ensure automated SOP jobs NEVER borrow a viewer's key.
+	if err := env.store.PutUser(domain.User{StaffID: 3102, LoginName: "evo-viewer", ChineseName: "只读成员"}); err != nil {
+		t.Fatal(err)
+	}
+	viewer, _ := env.store.UserByLoginName("evo-viewer")
+	if _, err := env.store.UpdateUserCredentials(viewer.ID, repo.UserCredentialUpdate{CodeBuddyAPIKey: "ck_viewer_secret"}); err != nil {
+		t.Fatal(err)
+	}
+	proj, _ := env.store.Project("evo-p")
+	proj.OwnerID = u.ID
+	proj.Members = []domain.ProjectMember{
+		{UserID: u.ID, Role: "owner"},
+		{UserID: viewer.ID, Role: "viewer"},
+	}
+	if err := env.store.PutProject(proj); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := env.store.PutEvoProposal(domain.EvoProposal{
 		ID: "evp-old-failed", ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
 		AssetName: env.agent.Name, Title: "旧失败提案", Status: domain.EvoProposalFailed, Error: "测试失败原因",
@@ -371,7 +387,7 @@ func TestEvolutionSOPAutoBatchTriggersWithoutSavedPolicyAndWithSharedKey(t *test
 			WorkflowSnapshot: env.wf,
 			Status:           "succeeded",
 			Input:            `{"ticketId":"T-1"}`,
-			ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p", ResponsibleUserID: u.ID},
+			ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p", ResponsibleUserID: viewer.ID},
 			CreatedAt:        now.Add(time.Duration(i-15) * time.Minute),
 			UpdatedAt:        now.Add(time.Duration(i-15) * time.Minute),
 			Usage:            domain.TokenUsage{TotalTokens: 320000},
@@ -384,11 +400,44 @@ func TestEvolutionSOPAutoBatchTriggersWithoutSavedPolicyAndWithSharedKey(t *test
 		}
 	}
 
-	// Verify resolveSOPActorUser picks up run user + shared key cleanly even without evoImproveOverride.
-	policy := env.store.EvoSOPPolicy("evo-p", env.wf.ID)
-	actor, model, ok := env.h.resolveSOPActorUser(policy, env.h.loadWindowRuns("evo-p", 14, 50), 0)
+	// P1-2: Unconfigured SOP defaults to Enabled=false and must NOT auto-trigger.
+	if def := env.store.EvoSOPPolicy("evo-p", env.wf.ID); def.Enabled {
+		t.Fatalf("expected DefaultEvoSOPPolicy.Enabled=false, got true")
+	}
+	env.h.sweepSOPBatches(now.Add(20 * time.Minute))
+	if props := env.store.EvoProposals("evo-p", 20); len(props) != 1 {
+		t.Fatalf("unconfigured SOP must not auto-trigger, got %d proposals", len(props))
+	}
+
+	// P1-3: Viewer policy UpdatedBy must be rejected and never borrow viewer's personal key.
+	viewerPolicy := domain.EvoSOPPolicy{WorkflowID: env.wf.ID, ProjectID: "evo-p", Enabled: true, BatchSize: 10, UpdatedBy: viewer.ID}
+	if _, _, ok := env.h.resolveSOPActorUser(viewerPolicy, env.wf); ok {
+		t.Fatal("resolveSOPActorUser must reject project viewer")
+	}
+
+	// Explicitly enable policy as writable owner u.
+	ownerPolicy := domain.EvoSOPPolicy{
+		WorkflowID: env.wf.ID, ProjectID: "evo-p", Enabled: true,
+		Preferences: []string{domain.EvoPrefTokens}, BatchSize: 10,
+		UpdatedBy: u.ID, UpdatedAt: now.Add(-time.Hour),
+	}
+	if err := env.store.PutEvoSOPPolicy(ownerPolicy); err != nil {
+		t.Fatal(err)
+	}
+
+	actor, model, ok := env.h.resolveSOPActorUser(ownerPolicy, env.wf)
 	if !ok || actor.CodeBuddyAPIKey != "ck_shared_test_key" || model != "claude-sonnet-5" {
-		t.Fatalf("expected shared key resolution, got ok=%v key=%q model=%q", ok, actor.CodeBuddyAPIKey, model)
+		t.Fatalf("expected shared key resolution for policy owner, got ok=%v key=%q model=%q", ok, actor.CodeBuddyAPIKey, model)
+	}
+
+	// P1-3: GET /api/evolution/overview must be strictly read-only and never create proposals.
+	rec := httptest.NewRecorder()
+	env.router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/evolution/overview?projectId=evo-p", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("overview status=%d", rec.Code)
+	}
+	if props := env.store.EvoProposals("evo-p", 20); len(props) != 1 {
+		t.Fatalf("GET overview must not have write side effects, got %d proposals", len(props))
 	}
 
 	done := make(chan struct{}, 1)
@@ -409,11 +458,163 @@ func TestEvolutionSOPAutoBatchTriggersWithoutSavedPolicyAndWithSharedKey(t *test
 	env.h.sweepSOPBatches(now.Add(15 * time.Minute))
 	props := env.store.EvoProposals("evo-p", 20)
 	if len(props) != 2 {
-		t.Fatalf("expected default-enabled SOP to create a new proposal alongside old failed one, got %d (%+v)", len(props), props)
+		t.Fatalf("expected enabled SOP to create a new proposal alongside old failed one, got %d (%+v)", len(props), props)
 	}
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for background improver job to finish")
+	}
+}
+
+func TestEvolutionSOPPolicyIsolationAndValidation(t *testing.T) {
+	env := newEvoTestEnv(t)
+	if err := env.store.PutProject(domain.Project{ID: "evo-other", Name: "其他项目"}); err != nil {
+		t.Fatal(err)
+	}
+	// Save a policy for env.wf in evo-p.
+	if err := env.store.PutEvoSOPPolicy(domain.EvoSOPPolicy{
+		WorkflowID: env.wf.ID, ProjectID: "evo-p", Enabled: true, BatchSize: 12, Preferences: []string{domain.EvoPrefTokens}, UpdatedBy: env.user.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// P1-1: Attempting to update evo-p's workflow policy under another project must fail 404 and not overwrite evo-p.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/evolution/sops/"+env.wf.ID+"/policy",
+		strings.NewReader(`{"projectId":"evo-other","enabled":false,"batchSize":30}`))
+	req.Header.Set("Content-Type", "application/json")
+	env.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for cross-project policy PUT, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	after := env.store.EvoSOPPolicy("evo-p", env.wf.ID)
+	if !after.Enabled || after.BatchSize != 12 {
+		t.Fatalf("project A policy was overwritten: %+v", after)
+	}
+
+	// Non-existent workflow returns 404.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/evolution/sops/nonexistent-wf/policy",
+		strings.NewReader(`{"projectId":"evo-p","enabled":true,"batchSize":10}`))
+	req.Header.Set("Content-Type", "application/json")
+	env.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing workflow, got %d", rec.Code)
+	}
+
+	// Invalid model format returns 400 instead of silently saving "default".
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/evolution/sops/"+env.wf.ID+"/policy",
+		strings.NewReader(`{"projectId":"evo-p","enabled":true,"batchSize":10,"model":"bad model with spaces!"}`))
+	req.Header.Set("Content-Type", "application/json")
+	env.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid model, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEvolutionSOPSharedAgentIsolation(t *testing.T) {
+	env := newEvoTestEnv(t)
+	now := time.Now().UTC()
+
+	// Create a second SOP sharing the exact same agent.
+	wfB := domain.WorkflowDefinition{
+		ID: "evo-wf-b", Name: "另一条共享角色 SOP", ProjectID: "evo-p", SandboxProfileID: repo.TestNativeSandboxID,
+		Nodes: []domain.WorkflowNode{{ID: "code", Name: "开发", Type: "agent", AgentID: env.agent.ID, ExecutorID: "mock", MaxAttempts: 1}},
+	}
+	if err := env.store.PutWorkflow(wfB); err != nil {
+		t.Fatal(err)
+	}
+	// Only env.wf has a run & finding & canary proposal; wfB has its own run with no proposal/canary participation.
+	if err := env.store.PutRun(domain.Run{
+		ID: "run-wf-a", WorkflowID: env.wf.ID, WorkflowSnapshot: env.wf, Status: "succeeded",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"}, CreatedAt: now.Add(-10 * time.Minute), UpdatedAt: now.Add(-10 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.PutRun(domain.Run{
+		ID: "run-wf-b", WorkflowID: wfB.ID, WorkflowSnapshot: wfB, Status: "succeeded",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"}, CreatedAt: now.Add(-5 * time.Minute), UpdatedAt: now.Add(-5 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	findingA := domain.EvoFinding{
+		ID: "evf-wf-a", ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
+		AssetName: env.agent.Name, Status: domain.EvoFindingProposed, ProposalID: "evp-wf-a",
+		WorkflowIDs: []string{env.wf.ID}, SampleRunIDs: []string{"run-wf-a"},
+		CreatedAt: now.Add(-9 * time.Minute), UpdatedAt: now.Add(-9 * time.Minute),
+	}
+	if err := env.store.PutEvoFinding(findingA); err != nil {
+		t.Fatal(err)
+	}
+	candBody := env.agent.Prompt + "\n仅针对 A 的修改"
+	propA := domain.EvoProposal{
+		ID: "evp-wf-a", ProjectID: "evo-p", FindingID: findingA.ID,
+		AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, AssetName: env.agent.Name,
+		Title: "SOP A 专属优化", BaseContent: env.agent.Prompt, BaseHash: domain.ContentHash(env.agent.Prompt),
+		CandidateContent: candBody, Status: domain.EvoProposalCanary,
+		Canary: &domain.EvoCanary{Percent: 50, MinRuns: 5, Status: domain.EvoCanaryRunning, StartedAt: now.Add(-20 * time.Minute)},
+	}
+	if err := env.store.PutEvoProposal(propA); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.PutRunAssetPins([]domain.RunAssetPin{
+		{RunID: "run-wf-a", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, Version: 2, Hash: domain.ContentHash(candBody), CreatedAt: now.Add(-10 * time.Minute)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// wfB must remain in monitor stage with 0 gray rounds (no leak from wfA).
+	rec := httptest.NewRecorder()
+	env.router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/evolution/sops/"+wfB.ID+"?projectId=evo-p", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("wfB detail status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var detailB domain.EvoSOPDetail
+	if err := json.Unmarshal(rec.Body.Bytes(), &detailB); err != nil {
+		t.Fatal(err)
+	}
+	if detailB.Stage != domain.EvoSOPStageMonitor || len(detailB.GrayRounds) != 0 || detailB.ActiveProposal != nil {
+		t.Fatalf("shared-agent SOP B must not inherit SOP A canary/stage: stage=%s gray=%d active=%+v", detailB.Stage, len(detailB.GrayRounds), detailB.ActiveProposal)
+	}
+}
+
+func TestEvolutionSOPDetectionSkipsDisabledWorkflowsHeadOfLine(t *testing.T) {
+	env := newEvoTestEnv(t)
+	now := time.Now().UTC()
+
+	disabledWF := domain.WorkflowDefinition{
+		ID: "wf-disabled", Name: "未启用检测 SOP", ProjectID: "evo-p", SandboxProfileID: repo.TestNativeSandboxID,
+		Nodes: []domain.WorkflowNode{{ID: "code", Name: "开发", Type: "agent", AgentID: env.agent.ID, ExecutorID: "mock", MaxAttempts: 1}},
+	}
+	if err := env.store.PutWorkflow(disabledWF); err != nil {
+		t.Fatal(err)
+	}
+	// Enable ONLY env.wf.
+	if err := env.store.PutEvoSOPPolicy(domain.EvoSOPPolicy{
+		WorkflowID: env.wf.ID, ProjectID: "evo-p", Enabled: true, BatchSize: 5, UpdatedBy: env.user.ID, UpdatedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Seed 10 older runs for the disabled SOP so they would fill a naive top-N query.
+	for i := 0; i < 10; i++ {
+		if err := env.store.PutRun(domain.Run{
+			ID: "disabled-run-" + string(rune('a'+i)), WorkflowID: disabledWF.ID, WorkflowSnapshot: disabledWF,
+			Status: "succeeded", ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"},
+			CreatedAt: now.Add(time.Duration(-30+i) * time.Minute), UpdatedAt: now.Add(time.Duration(-30+i) * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enabledRun := env.seedRun(t, "enabled-run-1", "succeeded", "succeeded", "")
+
+	var seen []string
+	env.h.sweepSOPDetections(context.Background(), func(_ context.Context, _ string, _ domain.SOPDetectionConfig, target domain.Run) (domain.RunEvalResult, error) {
+		seen = append(seen, target.ID)
+		return domain.RunEvalResult{Passed: true, Score: 90}, nil
+	})
+	if len(seen) != 1 || seen[0] != enabledRun.ID {
+		t.Fatalf("expected only enabled SOP run %s to be scanned without head-of-line blocking, got %v", enabledRun.ID, seen)
 	}
 }

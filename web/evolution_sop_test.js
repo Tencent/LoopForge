@@ -190,7 +190,21 @@ const { createDOM } = require('./hui_fake_dom');
   assert.match(chatTrendHTML, /v3 · Chatbot/);
   assert.match(chatTrendHTML, /Chatbot 修改/);
   assert.match(chatTrendHTML, /版本与回滚 · v2/, 'detail header must expose version & rollback entry');
-  assert.match(chatTrendHTML, /回滚到 v1/, 'historical version table must expose direct rollback button');
+  assert.match(chatTrendHTML, /回滚「开发工程师」到 v1/, 'historical version table must label rollback with asset name');
+
+  // Read-only asset must NOT expose direct rollback button.
+  const readOnlyDetail = { ...chatbotDetail, assets: [{ kind: 'agent', id: 'coder', name: '开发工程师', currentVersion: 2, versionCount: 2, readOnly: true }] };
+  const roTrendHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'versions', metric: 'score', detail: readOnlyDetail });
+  assert.doesNotMatch(roTrendHTML, /data-evo-rollback=/, 'read-only asset must not render direct rollback button');
+
+  // Unpassed gray round must disable publish button (P2-5).
+  const runningGrayDetail = {
+    ...detailPayload,
+    activeProposal: { ...detailPayload.activeProposal, canary: { percent: 50, minRuns: 5, status: 'running', control: { runs: 2 }, canary: { runs: 2 } } },
+  };
+  const runningGrayHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'versions', metric: 'score', detail: runningGrayDetail });
+  assert.match(runningGrayHTML, /data-evo-sop-publish="evp-gray"[^>]*disabled/, 'unpassed gray round must disable publish button');
+
   const chatChangeHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'change', scope: 'versions', metric: 'score', diffMode: 'split', detail: chatbotDetail });
   assert.match(chatChangeHTML, /Chatbot 修复后的新指令/);
   assert.match(chatChangeHTML, /evo-sop-split-diff/);
@@ -240,14 +254,18 @@ const { createDOM } = require('./hui_fake_dom');
   assert.equal(w.$('[data-evo-sop-pref-open="wf-bug"]').disabled, false, 'preference button must re-enable after policy save');
   assert.equal(w.$('[data-evo-sop-toggle="wf-bug"]').disabled, false, 'switch must re-enable after policy save');
 
-  // 5. SOP workbench hides legacy settings button, diagnose button, and legacy settings view entirely.
+  // 5. SOP workbench hides diagnose button, keeps settings accessible for L0-L3/samples, and shows legacy detection only if already enabled (P2-8).
   evo.tab = 'assets';
+  evo.overview.sopDetection = { enabled: false, model: '' };
   dom.run('evoRender()');
-  assert.equal(w.$('#evoPageHead [data-evo-tab="assets"]').hidden, true, 'settings button must be hidden in SOP workbench');
+  assert.equal(w.$('#evoPageHead [data-evo-tab="assets"]').hidden, false, 'settings button must stay accessible for L0-L3 and samples');
   assert.equal(w.$('#evoDiagnose').hidden, true, 'diagnose button must be hidden in SOP workbench');
-  assert.equal(w.$('#evoSOPDetection'), null, 'must not render legacy global SOP detection card');
-  assert.equal(w.$('.evo-settings-title'), null, 'must not render legacy evolution settings page');
-  assert.equal(evo.tab, 'issues', 'legacy settings tab must redirect back to SOP workbench');
+  assert.equal(w.$('#evoSOPDetection'), null, 'must hide legacy global SOP detection card when disabled');
+  assert.ok(w.$('.evo-settings-title'), 'settings page must remain accessible');
+
+  evo.overview.sopDetection = { enabled: true, model: 'claude-sonnet-4' };
+  dom.run('evoRender()');
+  assert.ok(w.$('#evoSOPDetection'), 'must allow turning off already-enabled legacy project SOP detection');
 
   console.log('evolution sop: clean home/detail, fixed switch scope, side-by-side diff, close icon, and standalone model picker passed');
 })().catch(error => {

@@ -143,7 +143,7 @@ function evoSOPHomeHTML() {
         <div class="evo-sop-toolbar-right">
           <label class="evo-home-search">
             ${evoReviewIcon('search')}
-            <input class="kb-input" type="search" data-evo-sop-search aria-label="搜索 SOP" placeholder="搜索 SOP 名称或说明" value="${escapeHTML(evoSOPState.q)}">
+            <input class="kb-input" type="search" data-evo-sop-search data-evo-key="sop-search" aria-label="搜索 SOP" placeholder="搜索 SOP 名称或说明" value="${escapeHTML(evoSOPState.q)}">
           </label>
         </div>
       </div>
@@ -216,8 +216,20 @@ function evoSOPRowHTML(s) {
 function evoSOPUpdateList() {
   const host = $('#evoSopListHost');
   if (!host) return;
-  host.innerHTML = evoSOPListHTML(evo.overview?.sops || []);
-  $$('[data-evo-sop-filter]').forEach(btn => btn.setAttribute('aria-pressed', String(btn.dataset.evoSopFilter === evoSOPState.filter)));
+  const sops = evo.overview?.sops || [];
+  const counts = {
+    all: sops.length,
+    monitor: sops.filter(s => s.stage === 'monitor').length,
+    optimize: sops.filter(s => s.stage === 'optimize').length,
+    gray: sops.filter(s => s.stage === 'gray').length,
+  };
+  host.innerHTML = evoSOPListHTML(sops);
+  $$('[data-evo-sop-filter]').forEach(btn => {
+    const key = btn.dataset.evoSopFilter;
+    btn.setAttribute('aria-pressed', String(key === evoSOPState.filter));
+    const badge = btn.querySelector('span');
+    if (badge && Object.prototype.hasOwnProperty.call(counts, key)) badge.textContent = String(counts[key]);
+  });
   window.AgentFlowHarnessIcons?.hydrate(host);
 }
 
@@ -659,7 +671,7 @@ function evoSOPCalloutHTML(d) {
       </div>
       <div class="evo-sop-callout-actions">
         <button type="button" class="kb-btn quiet small" data-evo-sop-stop-gray="${escapeHTML(p.id)}">停止灰度</button>
-        <button type="button" class="kb-btn primary small" data-evo-sop-publish="${escapeHTML(p.id)}" data-next-ver="${escapeHTML(nextVer)}" data-ready="${ready ? '1' : '0'}">发布 ${escapeHTML(nextVer)}</button>
+        <button type="button" class="kb-btn primary small" data-evo-sop-publish="${escapeHTML(p.id)}" data-next-ver="${escapeHTML(nextVer)}" data-ready="${ready ? '1' : '0'}"${ready ? '' : ' disabled title="灰度尚未达到通过条件（每组需满足最低运行数且判定通过）"'}>发布 ${escapeHTML(nextVer)}</button>
       </div>
     </div>`;
   }
@@ -795,6 +807,7 @@ function evoSOPSourceBadge(source) {
 function evoSOPVersionsTableHTML(versions, assets = []) {
   if (!versions.length) return '<div class="kb-empty">暂无历史版本数据</div>';
   const primaryAsset = assets[0] || null;
+  const assetByKey = Object.fromEntries((assets || []).map(a => [`${a.kind}:${a.id}`, a]));
   const hasActions = !!primaryAsset || versions.some(v => v.rollbackVersion > 0 && v.assetKind && v.assetId);
   const rows = [...versions].reverse().map(v => {
     const m = v.metrics || {};
@@ -802,10 +815,13 @@ function evoSOPVersionsTableHTML(versions, assets = []) {
     let actionCell = '';
     if (hasActions) {
       let actionHTML = '<span class="evo-muted">—</span>';
-      if (!v.current && v.rollbackVersion > 0 && v.assetKind && v.assetId) {
-        actionHTML = `<button type="button" class="kb-btn quiet small" data-evo-rollback="${v.rollbackVersion}" data-kind="${escapeHTML(v.assetKind)}" data-id="${escapeHTML(v.assetId)}" title="将「${escapeHTML(v.assetName || v.assetId)}」回滚到 v${v.rollbackVersion}">回滚到 v${v.rollbackVersion}</button>`;
+      const targetAsset = v.assetKind && v.assetId ? assetByKey[`${v.assetKind}:${v.assetId}`] : null;
+      const canDirectRollback = !v.current && v.rollbackVersion > 0 && v.assetKind && v.assetId && !targetAsset?.readOnly;
+      if (canDirectRollback) {
+        const assetLabel = v.assetName || targetAsset?.name || v.assetId;
+        actionHTML = `<button type="button" class="kb-btn quiet small" data-evo-rollback="${v.rollbackVersion}" data-kind="${escapeHTML(v.assetKind)}" data-id="${escapeHTML(v.assetId)}" title="将「${escapeHTML(assetLabel)}」回滚到 v${v.rollbackVersion}">回滚「${escapeHTML(assetLabel)}」到 v${v.rollbackVersion}</button>`;
       } else if (primaryAsset) {
-        actionHTML = `<button type="button" class="kb-btn quiet small" data-evo-asset="${escapeHTML(primaryAsset.kind)}" data-id="${escapeHTML(primaryAsset.id)}">${v.current ? '版本历史' : '选择版本回滚'}</button>`;
+        actionHTML = `<button type="button" class="kb-btn quiet small" data-evo-asset="${escapeHTML(primaryAsset.kind)}" data-id="${escapeHTML(primaryAsset.id)}">${v.current || primaryAsset.readOnly ? '版本历史' : '选择版本回滚'}</button>`;
       }
       actionCell = `<td class="num">${actionHTML}</td>`;
     }
@@ -1233,10 +1249,8 @@ async function evoSOPStopGray(proposalId, btn) {
 
 async function evoSOPPublishGray(proposalId, nextVer, ready, btn) {
   const view = evoSOPState.view;
-  if (!view || !proposalId) return;
-  const msg = ready
-    ? `确认将候选方案全量发布为 ${nextVer}？发布后所有新运行将使用新版，并开启下一轮统计周期。`
-    : `当前灰度样本尚未达到建议下限，确定仍要全量发布为 ${nextVer} 并开启下一轮统计？`;
+  if (!view || !proposalId || !ready) return;
+  const msg = `确认将候选方案全量发布为 ${nextVer}？发布后所有新运行将使用新版，并开启下一轮统计周期。`;
   if (!await afConfirm({ title: `发布 ${nextVer}`, message: msg, confirmText: `确认发布 ${nextVer}` })) return;
   if (btn) btn.disabled = true;
   try {
