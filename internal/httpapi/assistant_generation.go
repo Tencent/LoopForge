@@ -661,6 +661,7 @@ func (h *assistantHandlers) commitTurnTranscript(g domain.AssistantGeneration, s
 	if session.Shared {
 		return h.repo.CommitAssistantTranscript(g.UserID, g.ID, session)
 	}
+	session.TitleEdited = false
 	return saveAssistantConversation(h.repo, g.UserID, session)
 }
 

@@ -195,6 +195,8 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 			if len(pending) > 0 {
 				next := pending[0]
 				next.ExecutionTargetLocked = true
+				// A pending turn can carry a title read before the user renamed it.
+				next.TitleEdited = false
 				old := decodeAssistantSession(session)
 				if next.IssueID != old.IssueID {
 					return fmt.Errorf("关联需求已更新，请重新发送")

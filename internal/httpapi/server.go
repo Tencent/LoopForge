@@ -379,6 +379,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/sessions/:id/read", asst.markSessionRead)
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
+	g.PUT("/api/assistant/sessions/:id/title", asst.renameSession)
 	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
 	g.PUT("/api/assistant/sessions/:id/project-credentials", asst.sessionProjectCredentials)
 	g.PUT("/api/assistant/sessions/:id/mode", asst.sessionMode)

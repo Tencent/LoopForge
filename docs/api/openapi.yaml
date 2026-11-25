@@ -422,6 +422,39 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/assistant/sessions/{id}/title:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    put:
+      tags: [Assistant]
+      operationId: renameAssistantSession
+      summary: Rename a conversation, including during generation
+      description: Available to the owner of a private conversation and authorized members of a project conversation. Shared flow-run conversations keep their assigned titles.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: {type: string, minLength: 1, maxLength: 128, description: Leading and trailing whitespace is trimmed}
+      responses:
+        "200":
+          description: Saved title
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [title, titleEdited]
+                properties:
+                  title: {type: string}
+                  titleEdited: {type: boolean, enum: [true]}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: The conversation's project binding changed}
   /api/assistant/sessions/{id}/sandbox:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}

@@ -39,6 +39,8 @@ func (r *AssistantRepo) PutAssistantSessionIfUnchanged(userID int64, next, expec
 		base.DB = tx
 		scoped.deps = &base
 		next.UpdatedAt = time.Time{}
+		// A rename keeps updated_at; keep the title stored now.
+		next.TitleEdited = false
 		return scoped.putAssistantSession(userID, next)
 	})
 }
