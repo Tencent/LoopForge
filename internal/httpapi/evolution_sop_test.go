@@ -288,3 +288,43 @@ func TestEvolutionSOPAutoBatchOptimizationTriggersAtBatchSize(t *testing.T) {
 		t.Fatalf("expected no duplicate auto-trigger, got %d proposals", len(again))
 	}
 }
+
+func TestEvolutionSOPDetectionRunsForEnabledPolicyWithoutGlobalSwitch(t *testing.T) {
+	env := newEvoTestEnv(t)
+	now := time.Now().UTC()
+
+	// Do NOT enable legacy project-level SOPDetection; only enable per-SOP policy with standalone model.
+	if err := env.store.PutEvoSOPPolicy(domain.EvoSOPPolicy{
+		WorkflowID:  env.wf.ID,
+		ProjectID:   "evo-p",
+		Enabled:     true,
+		Preferences: []string{domain.EvoPrefTokens},
+		BatchSize:   5,
+		Model:       "codex:gpt-5",
+		UpdatedBy:   env.user.ID,
+		UpdatedAt:   now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run := env.seedRun(t, "sop-policy-detect", "succeeded", "succeeded", "")
+
+	var seenModel string
+	var seenRuns []string
+	evaluate := func(_ context.Context, projectID string, cfg domain.SOPDetectionConfig, target domain.Run) (domain.RunEvalResult, error) {
+		if projectID != "evo-p" {
+			t.Fatalf("unexpected projectID %q", projectID)
+		}
+		seenModel = cfg.Model
+		seenRuns = append(seenRuns, target.ID)
+		return domain.RunEvalResult{Passed: true, Score: 92}, nil
+	}
+	env.h.sweepSOPDetections(context.Background(), evaluate)
+	env.h.sweepSOPDetections(context.Background(), evaluate)
+
+	if len(seenRuns) != 1 || seenRuns[0] != run.ID {
+		t.Fatalf("expected run %s to be scanned once, got %v", run.ID, seenRuns)
+	}
+	if seenModel != "codex:gpt-5" {
+		t.Fatalf("expected SOP policy model codex:gpt-5, got %q", seenModel)
+	}
+}

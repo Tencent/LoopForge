@@ -101,6 +101,7 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 		log.Printf("SOP detection projects: %v", err)
 		return
 	}
+	scannedProjects := map[string]bool{}
 	for _, project := range projects {
 		if ctx.Err() != nil {
 			return
@@ -108,6 +109,7 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 		if project.Config.EnabledAt.IsZero() {
 			continue
 		}
+		scannedProjects[project.ID] = true
 		ids, err := h.repo.PendingSOPDetections(project.ID, project.Config.EnabledAt, time.Now().UTC().Add(-sopDetectionLease), 2)
 		if err != nil {
 			log.Printf("SOP detection queue %s: %v", project.ID, err)
@@ -119,6 +121,60 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 			}
 			if err := h.detectSOPRun(ctx, project, id, evaluate); err != nil {
 				log.Printf("SOP detection run %s: %v", id, err)
+			}
+		}
+	}
+
+	// Also auto-detect runs for individually enabled SOP policies without requiring
+	// the legacy project-level SOP detection toggle.
+	staleBefore := time.Now().UTC().Add(-sopDetectionLease)
+	since := time.Now().UTC().AddDate(0, 0, -evoDefaultWindowDays)
+	policiesByProject := map[string]map[string]domain.EvoSOPPolicy{}
+	for _, policy := range h.repo.AllEnabledEvoSOPPolicies() {
+		if scannedProjects[policy.ProjectID] {
+			continue
+		}
+		if policiesByProject[policy.ProjectID] == nil {
+			policiesByProject[policy.ProjectID] = map[string]domain.EvoSOPPolicy{}
+		}
+		policiesByProject[policy.ProjectID][policy.WorkflowID] = policy
+	}
+	for projectID, wfPolicies := range policiesByProject {
+		if ctx.Err() != nil {
+			return
+		}
+		ids, err := h.repo.PendingSOPDetections(projectID, since, staleBefore, 4)
+		if err != nil {
+			continue
+		}
+		for _, id := range ids {
+			if ctx.Err() != nil {
+				return
+			}
+			run, ok := h.repo.RunState(id)
+			if !ok || strings.TrimSpace(run.WorkflowID) == "" {
+				continue
+			}
+			policy, enabled := wfPolicies[run.WorkflowID]
+			if !enabled || !policy.Enabled {
+				continue
+			}
+			user, ok := h.resolveSOPActorUser(policy)
+			if !ok {
+				continue
+			}
+			model := strings.TrimSpace(policy.Model)
+			if model == "" {
+				if proj, ok := h.repo.Project(projectID); ok && proj.SOPDetection != nil {
+					model = strings.TrimSpace(proj.SOPDetection.Model)
+				}
+			}
+			if model == "" {
+				model = assistantDefaultModel
+			}
+			cfg := domain.SOPDetectionConfig{Enabled: true, Model: model, EnabledAt: since, ConfiguredBy: user.ID}
+			if err := h.detectSOPRunWithConfig(ctx, projectID, cfg, run, evaluate); err != nil {
+				log.Printf("SOP policy detection run %s: %v", id, err)
 			}
 		}
 	}
@@ -134,15 +190,27 @@ func (h *evolutionHandlers) detectSOPRun(ctx context.Context, project repo.SOPDe
 		(run.Status != "succeeded" && run.Status != "failed") || h.runProject(run) != project.ID {
 		return nil
 	}
+	cfg := project.Config
 	if strings.TrimSpace(run.WorkflowID) != "" {
-		if policy := h.repo.EvoSOPPolicy(project.ID, run.WorkflowID); !policy.Enabled {
+		policy := h.repo.EvoSOPPolicy(project.ID, run.WorkflowID)
+		if !policy.Enabled {
 			return nil
 		}
+		if strings.TrimSpace(policy.Model) != "" {
+			cfg.Model = strings.TrimSpace(policy.Model)
+		}
 	}
-	cfg := project.Config
+	return h.detectSOPRunWithConfig(ctx, project.ID, cfg, run, evaluate)
+}
+
+func (h *evolutionHandlers) detectSOPRunWithConfig(ctx context.Context, projectID string, cfg domain.SOPDetectionConfig, run domain.Run, evaluate sopTraceEvaluator) error {
+	if run.IsWorkspace() || run.HistoricalGroup() || run.ExecutionContext.IsEvolutionReplay() ||
+		(run.Status != "succeeded" && run.Status != "failed") || h.runProject(run) != projectID {
+		return nil
+	}
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	rec := domain.RunEvalRecord{
-		ID: repo.SOPDetectionEvalID(runID), RunID: runID, SOPDetection: true,
+		ID: repo.SOPDetectionEvalID(run.ID), RunID: run.ID, SOPDetection: true,
 		Status: domain.RunEvalRunning, Model: cfg.Model, CreatedBy: cfg.ConfiguredBy, CreatedAt: now,
 	}
 	claimed, err := h.repo.ClaimSOPDetection(rec, now.Add(-sopDetectionLease))
@@ -151,7 +219,7 @@ func (h *evolutionHandlers) detectSOPRun(ctx context.Context, project repo.SOPDe
 	}
 	scanCtx, cancel := context.WithTimeout(ctx, sopDetectionTimeout)
 	defer cancel()
-	rec.Result, err = evaluate(scanCtx, project.ID, cfg, run)
+	rec.Result, err = evaluate(scanCtx, projectID, cfg, run)
 	if ctx.Err() != nil {
 		// The claim expires so a new instance can resume after shutdown.
 		return nil
@@ -162,7 +230,7 @@ func (h *evolutionHandlers) detectSOPRun(ctx context.Context, project repo.SOPDe
 	if err == nil && !rec.Passed {
 		// Publish before settling the claim so interrupted work is retried.
 		// A failed publication leaves an expiring claim and can be reconciled.
-		if err := h.publishSOPDetection(project.ID, run, rec); err != nil {
+		if err := h.publishSOPDetection(projectID, run, rec); err != nil {
 			return err
 		}
 	}

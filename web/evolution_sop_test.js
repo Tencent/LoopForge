@@ -12,6 +12,12 @@ const { createDOM } = require('./hui_fake_dom');
   w.relativeTime = () => '刚刚';
   w.toast = () => {};
   w.kbBadge = (text, tone) => `<span class="hui-badge" data-tone="${tone || ''}">${text}</span>`;
+  w.kbCaption = text => `<p class="kb-caption">${text}</p>`;
+  w.kbPanel = (head, body) => `<section class="kb-panel">${head}${body}</section>`;
+  w.kbPanelTitle = (title, meta) => `<h3>${title}${meta ? ` <span>${meta}</span>` : ''}</h3>`;
+  w.kbText = (t, d) => `<div><strong>${t}</strong><p>${d || ''}</p></div>`;
+  w.kbValue = v => `<span>${v}</span>`;
+  w.kbRow = (l, r) => `<div class="kb-row">${l}${r || ''}</div>`;
   w.kbDrawerIsOpen = () => false;
   w.kbDrawerClose = () => {};
   w.afConfirm = async () => true;
@@ -207,6 +213,11 @@ const { createDOM } = require('./hui_fake_dom');
   assert.equal(calls[0].body.model, 'claude-code:sonnet-4');
   assert.equal(w.$('[data-evo-sop-pref-open="wf-bug"]').disabled, false, 'preference button must re-enable after policy save');
   assert.equal(w.$('[data-evo-sop-toggle="wf-bug"]').disabled, false, 'switch must re-enable after policy save');
+
+  // 5. Evolution Settings page hides legacy global SOP detection block when SOP workbench is active.
+  evo.tab = 'assets';
+  dom.run('evoRender()');
+  assert.equal(w.$('#evoSOPDetection'), null, 'settings page must not render redundant global SOP detection card');
 
   console.log('evolution sop: clean home/detail, fixed switch scope, side-by-side diff, close icon, and standalone model picker passed');
 })().catch(error => {

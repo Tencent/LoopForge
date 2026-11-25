@@ -663,7 +663,7 @@ type EvoOverview struct {
 	Recent      []EvoProposal    `json:"recent"`
 	Health      []EvoAssetHealth `json:"health"`
 	Policies    []EvoPolicy      `json:"policies"`
-	SOPs        []EvoSOPSummary  `json:"sops,omitempty"`
+	SOPs        []EvoSOPSummary  `json:"sops"`
 	WindowDays  int              `json:"windowDays"`
 	GeneratedAt time.Time        `json:"generatedAt"`
 	AutoEnabled bool             `json:"autoEnabled"`

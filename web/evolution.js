@@ -174,7 +174,7 @@ async function evoRefresh(){
 
 function evoSchedulePoll(){
   clearTimeout(evo.poll);
-  const detect=evo.overview?.sopDetection?.enabled&&!evo.modal&&!['assets','samples'].includes(evo.tab);
+  const detect=(evo.overview?.sopDetection?.enabled||(evo.overview?.sops||[]).some(s=>s.enabled))&&!evo.modal&&!['assets','samples'].includes(evo.tab);
   if(!evoActive()||!((evo.overview?.validating||[]).length||(evo.overview?.trial||[]).length||detect))return;
   evo.poll=setTimeout(async()=>{
     if(!evoActive()||document.hidden)return evoSchedulePoll();
@@ -260,8 +260,9 @@ function evoRender(){
   const focused=document.activeElement?.closest?.('#evolutionBody')?document.activeElement.dataset.evoKey:'';
   if(['assets','samples'].includes(evo.tab)){
     const tabs=[['assets','角色与规则'],['samples','固定验证样本']];
-    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ RSI工作台</button><h2 class="evo-settings-title">进化设置</h2>${evoSOPDetectionHTML()}<div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
-      evoBindSOPDetection(root.querySelector('#evoSOPDetection'));
+    const showLegacyDetection=!Array.isArray(evo.overview?.sops);
+    root.innerHTML=`<button type="button" class="evo-back" data-evo-list-back>‹ RSI工作台</button><h2 class="evo-settings-title">进化设置</h2>${showLegacyDetection?evoSOPDetectionHTML():''}<div class="evo-tabs" role="tablist" aria-label="进化设置">${tabs.map(([k,t])=>`<button type="button" role="tab" id="evoTab-${k}" data-evo-tab="${k}" data-evo-key="tab:${k}" aria-selected="${evo.tab===k}" tabindex="${evo.tab===k?0:-1}" aria-controls="evoPane" class="${evo.tab===k?'active':''}">${t}</button>`).join('')}</div><div id="evoPane" role="tabpanel" aria-labelledby="evoTab-${evo.tab}">${evo.tab==='assets'?evoAssetsHTML():evoSamplesHTML()}</div>`;
+    if(showLegacyDetection)evoBindSOPDetection(root.querySelector('#evoSOPDetection'));
   }else root.innerHTML=evoUnifiedListHTML();
   evoHomeSyncChecking();
   window.AgentFlowHarnessIcons?.hydrate(root);
