@@ -26,6 +26,8 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   app.router.get('/api/workflows', app.evaluate('structuredClone(state.data.workflows)'));
   app.router.get('/api/agents', app.evaluate('structuredClone(state.data.agents)'));
   app.router.get('/api/runs/run-x/artifacts/art-1', '# Report\\n\\n```js\\nconsole.log("ok")\\n```');
+  app.router.get('/api/runs/run-x/artifacts/art-zip', 'PK\u0003\u0004\u0000\u0000# not markdown');
+  app.router.get('/api/runs/run-x/artifacts/art-ndjson', '{"id":1}\n');
   app.router.get('/api/runs/child-1', {
     id: 'child-1', status: 'waiting', workflowId: 'child-flow',
     workflowSnapshot: { id: 'child-flow', name: 'Child Flow', nodes: [{ id: 'approve', name: 'Approve' }] },
@@ -144,7 +146,9 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   app.evaluate(`
     state.activeRun={...state.activeRun,status:'failed',artifacts:[
       {id:'art-1',nodeId:'b',name:'report.md',path:'out/report.md',attempt:2,size:1200,sha256:'abcdef',mediaType:'text/markdown'},
-      {id:'art-bin',nodeId:'b',name:'model',path:'out/model.bin',attempt:2,size:20971520,sha256:'fedcba',mediaType:'application/octet-stream'}]};
+      {id:'art-bin',nodeId:'b',name:'model',path:'out/model.bin',attempt:2,size:20971520,sha256:'fedcba',mediaType:'application/octet-stream'},
+      {id:'art-zip',nodeId:'b',name:'pkg',path:'out/pkg.zip',attempt:2,size:2048,sha256:'aa',mediaType:'text/markdown'},
+      {id:'art-ndjson',nodeId:'b',name:'rows',path:'out/rows.ndjson',attempt:2,size:9,sha256:'bb',mediaType:'application/x-ndjson'}]};
     state.selectedRun='run-x';state.currentUser.codeBuddyApiKeyConfigured=true;
     const host=document.querySelector('#runDetail');host.dataset.runId='run-x';
     host.innerHTML='<div data-run-pane="eval"></div>';
@@ -200,6 +204,14 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.match(app.document.querySelector('#artifactPreview').textContent, /不在页面内预览/);
   artifactModal.querySelector('[data-download-artifact]').click();
   assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-bin', 'model.bin']);
+  artifactModal.close();
+  await app.evaluate(`previewArtifact(state.activeRun,'art-zip')`);
+  assert.match(app.document.querySelector('#artifactPreview').textContent, /不在页面内预览/);
+  artifactModal.querySelector('[data-download-artifact]').click();
+  assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-zip', 'pkg.zip']);
+  artifactModal.close();
+  await app.evaluate(`previewArtifact(state.activeRun,'art-ndjson')`);
+  assert.match(app.document.querySelector('#artifactPreview .artifact-content').textContent, /"id":1/);
   app.window.HTMLAnchorElement.prototype.click = clickAnchor;
   artifactModal.close();
   app.evaluate(`toast('Outside artifact preview')`);

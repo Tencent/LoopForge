@@ -244,6 +244,23 @@ describe("content and panels", () => {
     globalThis.fetch = originalFetch;
   });
 
+  test("offers binary content declared as Markdown for download", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({ ok: true, text: async () => "PK\u0003\u0004\u0000\u0000garbage" }));
+    render(
+      <ArtifactPreview artifact={{
+        id: "zip",
+        name: "pkg.zip",
+        mimeType: "text/markdown",
+        url: "/pkg.zip",
+        size: 2048,
+      }} />,
+    );
+    expect(await screen.findByText("此类型文件可通过右上角下载查看。")).toBeInTheDocument();
+    expect(screen.queryByText(/garbage/)).not.toBeInTheDocument();
+    globalThis.fetch = originalFetch;
+  });
+
   test("previews an attached HTML file in the script-only sandbox", async () => {
     const user = userEvent.setup();
     const originalFetch = globalThis.fetch;

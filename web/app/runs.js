@@ -1598,12 +1598,13 @@ function openArtifactPreview({title,icon,details,url,action,download=false,loadi
   }else modal.querySelector('.artifact-close').focus();
   return artifactPreviewRequest.signal;
 }
-/** 页面内预览会整份读入并渲染正文，因此只预览不超过 5 MiB 的文本产物；二进制内容当作文本渲染会卡住页面。 */
+/** 页面内预览会整份读入并渲染正文，超过 5 MiB 的产物只提供下载。 */
 const ARTIFACT_PREVIEW_MAX_BYTES=5*1024*1024;
-function artifactPreviewable(artifact){
-  if((artifact?.size||0)>ARTIFACT_PREVIEW_MAX_BYTES)return false;
-  const type=String(artifact?.mediaType||'').split(';')[0].trim().toLowerCase();
-  return !type||type.startsWith('text/')||/^application\/(json|xml|yaml|x-yaml|javascript|toml|x-sh)$/.test(type)||/\+(json|xml|yaml)$/.test(type);
+/** 未声明类型的产物会登记为 Markdown，因此按正文判断二进制：含 NUL，或开头有大量无法解码的字符。 */
+function artifactLooksBinary(content){
+  if(content.includes('\u0000'))return true;
+  const head=content.slice(0,65536);
+  return (head.match(/\uFFFD/g)||[]).length>head.length*0.1;
 }
 function artifactDownloadName(artifact){
   return String(artifact?.path||'').split('/').pop()||artifact?.name||'artifact.txt';
@@ -1627,7 +1628,7 @@ async function previewArtifact(run,artifactId,opener){
     url,action:'在新窗口打开 ↗',loading:'正在加载交付物…',opener,
   });
   try{
-    if(!artifactPreviewable(artifact)){
+    const renderDownloadOnly=()=>{
       const sizeKB=Math.max(1,Math.ceil((artifact.size||0)/1024));
       const size=sizeKB>=1024?`${(sizeKB/1024).toFixed(1)} MB`:`${sizeKB} KB`;
       host.innerHTML=`
@@ -1644,12 +1645,13 @@ async function previewArtifact(run,artifactId,opener){
         </div>
         <div class="empty-properties"><b>此文件不在页面内预览</b><p>文件较大或为二进制内容，请下载后查看。</p></div>`;
       host.querySelector('[data-download-artifact]').onclick=()=>downloadArtifactFile(url,artifact);
-      return;
-    }
+    };
+    if((artifact.size||0)>ARTIFACT_PREVIEW_MAX_BYTES){renderDownloadOnly();return}
     const res=await fetch(url,{signal});
     if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const content=await res.text();
     if(signal.aborted)return;
+    if(artifactLooksBinary(content)){renderDownloadOnly();return}
     const isMd=isMarkdownArtifact(artifact, content);
     $('#artifactPreviewHeading .artifact-preview-icon').textContent=isMd?'MD':'{}';
     let viewMode=isMd?'preview':'source';
