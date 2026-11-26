@@ -44,7 +44,7 @@ func (r *RunsRepo) WithWorkspaceEditor(runID string, userID int64, fn func(domai
 }
 
 // WithMainBotWorkspace lets Main Bot edit a live conversation workspace as is;
-// a borrowed SOP workspace must be stopped first (workbench_workspace_sop).
+// a borrowed SOP workspace must be stopped first (runs_pause / runs_cancel).
 func (r *RunsRepo) WithMainBotWorkspace(runID string, userID int64, fn func(domain.Run) error) error {
 	return r.withWorkspaceWriter(runID, userID, true, fn)
 }
@@ -79,6 +79,10 @@ func (r *RunsRepo) ReleaseWorkspaceEditor(runID string, userID int64, beforeRele
 			if err := close(runFromRow(row)); err != nil {
 				return err
 			}
+		}
+		// Only clearing a legacy editor lease changes the persisted run.
+		if row.WorkspaceEditorID == 0 && row.WorkspaceEditUntil == nil {
+			return nil
 		}
 		return tx.Model(&runRow{}).Where("id = ?", runID).Updates(map[string]any{
 			"workspace_editor_id": 0, "workspace_edit_until": nil, "revision": gorm.Expr("revision + 1"),

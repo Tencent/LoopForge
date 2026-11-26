@@ -18,8 +18,10 @@ import (
 const (
 	assistantSessionJanitorDelay = time.Minute
 	assistantSessionJanitorEvery = 24 * time.Hour
-	// scheduledSessionRetention keeps a few days of a scheduled task's history;
-	// the latest run of every task is always kept, even when it is older.
+	// scheduledSessionRetention keeps a few days of history for scheduled
+	// conversations whose job no longer limits them by count: legacy rows
+	// without a task id, and leftovers of deleted or fixed-mode jobs. The
+	// latest run of every task is always kept, even when it is older.
 	scheduledSessionRetention = 3 * 24 * time.Hour
 )
 
@@ -56,10 +58,14 @@ func (h *assistantHandlers) startSessionJanitor(ctx context.Context) {
 	}()
 }
 
-// pruneScheduledAssistantSessions keeps the newest conversation of every
-// tracked scheduled task and drops its older runs once they pass the retention
-// window. Legacy rows without a task id follow the plain retention rule and are
-// grouped by owner, project and title only to keep their ordering stable.
+// pruneScheduledAssistantSessions trims scheduled conversations. A job that
+// opens a conversation per execution keeps its SessionKeepLimit newest ones
+// (all of them when unlimited), whatever their age. Other groups keep the
+// newest conversation of every tracked task and drop older runs once they
+// pass the retention window; legacy rows without a task id follow the plain
+// retention rule and are grouped by owner, project and title only to keep
+// their ordering stable. Archived and pinned conversations are never removed
+// and do not count toward a limit.
 func (h *assistantHandlers) pruneScheduledAssistantSessions(now time.Time) int {
 	if h == nil || h.repo == nil {
 		return 0
@@ -74,28 +80,73 @@ func (h *assistantHandlers) pruneScheduledAssistantSessions(now time.Time) int {
 		groups[key] = append(groups[key], item)
 	}
 	removed := 0
+	pinned := map[string]bool{}
+	jobs := map[string]domain.ScheduleJob{}
+	for _, job := range h.repo.ScheduleJobs() {
+		jobs[job.ID] = job
+		if job.UsesFixedSession() && job.FixedSessionID != "" {
+			pinned[job.FixedSessionID] = true
+		}
+	}
 	for _, group := range groups {
-		sort.Slice(group, func(i, j int) bool { return group[i].UpdatedAt.After(group[j].UpdatedAt) })
-		// Tracked tasks keep their latest result even when it is older than the
-		// window; pre-marker rows have no task to compare with, so they follow
-		// the plain retention rule and disappear once they are old enough.
-		tracked := strings.TrimSpace(group[0].TaskID) != ""
-		for i, item := range group {
-			if tracked && i == 0 {
+		taskID := strings.TrimSpace(group[0].TaskID)
+		job, known := jobs[taskID]
+		byCount := known && job.SkipDispatch && !job.UsesFixedSession()
+		removed += h.pruneScheduledGroup(group, pinned, taskID != "", byCount, job.SessionKeepLimit(), now)
+	}
+	return removed
+}
+
+// pruneScheduledTaskSessions applies the job's count limit right after one of
+// its executions, so a frequent job never piles up conversations until the
+// next daily janitor run.
+func (h *assistantHandlers) pruneScheduledTaskSessions(job domain.ScheduleJob) int {
+	if h == nil || h.repo == nil || job.UsesFixedSession() {
+		return 0
+	}
+	keep := job.SessionKeepLimit()
+	if keep <= 0 {
+		return 0
+	}
+	group := h.repo.ListAssistantSessionsByTask(domain.AssistantSourceScheduled, job.ID)
+	if len(group) <= keep {
+		return 0
+	}
+	return h.pruneScheduledGroup(group, map[string]bool{}, true, true, keep, time.Now().UTC())
+}
+
+// pruneScheduledGroup removes the conversations of one group past its limit:
+// with byCount, all but the keep newest (none when keep is 0, meaning no
+// limit); otherwise those older than scheduledSessionRetention, sparing the
+// newest of a tracked task.
+func (h *assistantHandlers) pruneScheduledGroup(group []domain.AssistantSession, pinned map[string]bool, tracked, byCount bool, keep int, now time.Time) int {
+	if byCount && keep <= 0 {
+		return 0
+	}
+	sort.SliceStable(group, func(i, j int) bool { return group[i].UpdatedAt.After(group[j].UpdatedAt) })
+	removed, kept := 0, 0
+	for i, item := range group {
+		if item.Archived || pinned[item.ID] {
+			continue
+		}
+		if byCount {
+			if kept < keep {
+				kept++
 				continue
 			}
-			if item.Archived {
+		} else {
+			if tracked && i == 0 {
 				continue
 			}
 			if item.UpdatedAt.IsZero() || now.Sub(item.UpdatedAt) < scheduledSessionRetention {
 				continue
 			}
-			if err := h.deleteConversation(item.UserID, item.ID); err != nil {
-				log.Printf("assistant session cleanup id=%s: %v", item.ID, err)
-				continue
-			}
-			removed++
 		}
+		if err := h.deleteConversation(item.UserID, item.ID); err != nil {
+			log.Printf("assistant session cleanup id=%s: %v", item.ID, err)
+			continue
+		}
+		removed++
 	}
 	return removed
 }

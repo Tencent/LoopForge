@@ -47,8 +47,8 @@ func TestNativePromptsAreToolFirst(t *testing.T) {
 	if !strings.Contains(assistantSystemPromptText(), "submit_assistant_reply") {
 		t.Fatal("native assistant prompt must require submit_assistant_reply")
 	}
-	if prompt := assistantSystemPromptText(); !strings.Contains(prompt, "mode=direct") || !strings.Contains(prompt, "targetBranch") {
-		t.Fatalf("native assistant prompt must teach mode=direct for shared branches:\n%s", prompt)
+	if prompt := assistantSystemPromptText(); !strings.Contains(prompt, "自动把它登记到需求") || strings.Contains(prompt, "workbench_delivery_register") || !strings.Contains(prompt, "只在用户明确要求时做") || strings.Contains(prompt, "workbench_github_") || strings.Contains(prompt, "submit_mr") {
+		t.Fatalf("native assistant prompt must teach own-git delivery with explicit consent for shared branches:\n%s", prompt)
 	}
 	if !strings.Contains(clarifySystemPrompt("i", "m", "f"), "submit_clarification") {
 		t.Fatal("native clarify prompt must require submit_clarification")

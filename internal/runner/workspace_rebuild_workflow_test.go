@@ -39,7 +39,7 @@ func TestRunnerRebuildCheckboxPreservesNormalSOPScriptOrder(t *testing.T) {
 	if err := store.SetDefaultRunner(42, runner.ID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	workflow := domain.WorkflowDefinition{ID: "rebuild-checkbox-normal-order", Name: "normal order", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	workflow := domain.WorkflowDefinition{ID: "rebuild-checkbox-normal-order", Name: "normal order", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "one", Name: "One", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, Script: "printf '1\\n' >> normal-order", MaxAttempts: 1},
 		{ID: "two", Name: "Two", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, Script: "test \"$(cat normal-order)\" = 1 || exit 7; printf '2\\n' >> normal-order", MaxAttempts: 1},
 		{ID: "check", Name: "Check", Type: "script", ScriptLanguage: "shell", Script: "test \"$(cat normal-order)\" = \"$(printf '1\\n2')\" || exit 8; printf graph-ok", MaxAttempts: 1},

@@ -64,19 +64,7 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "project not found"})
 		return
 	}
-	ids := make([]string, 0, len(req.RepositoryIDs)+1)
-	seen := map[string]bool{}
-	for _, id := range req.RepositoryIDs {
-		id = strings.TrimSpace(id)
-		if id == "" || seen[id] {
-			continue
-		}
-		seen[id] = true
-		ids = append(ids, id)
-	}
-	if id := strings.TrimSpace(req.RepositoryID); id != "" && !seen[id] {
-		ids = append([]string{id}, ids...)
-	}
+	ids := tapdImportRepositoryIDs(req.RepositoryID, req.RepositoryIDs)
 	if len(ids) == 0 {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "请至少选择一个代码仓库"})
 		return
@@ -109,17 +97,7 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 		return
 	}
 	h.bindRequirementPlaybook(&issue)
-	if req.BaseBranch != nil || req.RepositoryBranches != nil || issue.RepositoryID != probe.RepositoryID {
-		issue.BaseBranch = probe.BaseBranch
-	}
-	issue.RepositoryIDs = probe.RepositoryIDs
-	issue.RepositoryID = probe.RepositoryID
-	if req.RepositoryBranches != nil || req.BaseBranch != nil {
-		issue.RepositoryBranches = probe.RepositoryBranches
-	} else {
-		h.inheritIssueRepositoryBranches(&issue, previous)
-		h.normalizeLegacyIssueBaseBranch(&issue)
-	}
+	h.applyTAPDImportRepositories(&issue, previous, probe, req.BaseBranch != nil || req.RepositoryBranches != nil)
 	if err := h.bindIssueRepositories(&issue); err != nil {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -131,6 +109,43 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 	}
 	stored, _ := h.repo.Issue(issue.ID)
 	c.JSON(http.StatusOK, stored)
+}
+
+// tapdImportRepositoryIDs trims and deduplicates the requested repositories,
+// keeping their order. The legacy single repository goes first when it is not
+// already listed.
+func tapdImportRepositoryIDs(primary string, ids []string) []string {
+	out := make([]string, 0, len(ids)+1)
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if id := strings.TrimSpace(primary); id != "" && !seen[id] {
+		out = append([]string{id}, out...)
+	}
+	return out
+}
+
+// applyTAPDImportRepositories writes the validated repository selection back
+// onto the imported issue. Explicit branches from the request win; otherwise
+// branches are inherited from the previously stored issue.
+func (h issuesHandlers) applyTAPDImportRepositories(issue *domain.Issue, previous, probe domain.Issue, explicitBranches bool) {
+	if explicitBranches || issue.RepositoryID != probe.RepositoryID {
+		issue.BaseBranch = probe.BaseBranch
+	}
+	issue.RepositoryIDs = probe.RepositoryIDs
+	issue.RepositoryID = probe.RepositoryID
+	if explicitBranches {
+		issue.RepositoryBranches = probe.RepositoryBranches
+	} else {
+		h.inheritIssueRepositoryBranches(issue, previous)
+		h.normalizeLegacyIssueBaseBranch(issue)
+	}
 }
 
 func (h issuesHandlers) issues(c *gin.Context) {
@@ -193,13 +208,12 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		return
 	}
 	if r.Method == http.MethodPut || r.Method == http.MethodPost {
-		var req struct {
-			domain.Issue
-			SyncTarget string  `json:"syncTarget"`
-			TapdID     *string `json:"tapdId"`
-			BaseBranch *string `json:"baseBranch"`
+		var req issueWriteRequest
+		files, ok := decodeIssueWrite(c, &req)
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
 		}
-		if !decode(c, &req) {
+		if !ok {
 			return
 		}
 		v := req.Issue
@@ -227,6 +241,10 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			}
 			v = mergeIssueEdit(v, existing)
 		} else if !h.requireProjectWriter(c, v.ProjectID) {
+			return
+		}
+		if len(files) > 0 && (v.ID != "" || (req.SyncTarget != "" && !strings.EqualFold(req.SyncTarget, "local"))) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "图片只能随新需求一起保存到平台"})
 			return
 		}
 		// Clients such as the AI assistant echo a fetched issue back. Resending
@@ -294,6 +312,8 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		if found {
 			keepExistingTrackerBinding(&v, existing)
 		} else {
+			// Only the server records audit entries for a newly created issue.
+			v.Operations = nil
 			keepExistingTrackerBinding(&v, domain.Issue{})
 		}
 		if !found && !repo.IssueBoundToTracker(v) {
@@ -335,7 +355,17 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		} else if detail := issueChangeDetail(existing, v); detail != "" {
 			h.recordIssueOperation(c, &v, "update", detail)
 		}
-		if err := h.repo.PutIssue(v); err != nil {
+		var err error
+		if len(files) > 0 {
+			images, ok := readIssueImages(c, files)
+			if !ok {
+				return
+			}
+			err = h.repo.CreateIssueWithImages(v, images)
+		} else {
+			err = h.repo.PutIssue(v)
+		}
+		if err != nil {
 			respond(c, err)
 			return
 		}
@@ -373,6 +403,9 @@ func mergeIssueEdit(v, existing domain.Issue) domain.Issue {
 	}
 	if v.Kind == "" {
 		v.Kind = existing.Kind
+	}
+	if strings.TrimSpace(v.SOPMode) == "" {
+		v.SOPMode = existing.SOPMode
 	}
 	if v.AssigneeID == "" {
 		v.AssigneeID = existing.AssigneeID
@@ -425,10 +458,12 @@ type issueRoute struct {
 
 var issueRoutes = map[string]issueRoute{
 	"/api/issues/:id":                     {handle: issuesHandlers.issueDetail, methods: []string{http.MethodGet, http.MethodDelete}},
+	"/api/issues/:id/images/:imageId":     {handle: issuesHandlers.issueImage, methods: []string{http.MethodGet}},
 	"/api/issues/:id/comments":            {handle: issuesHandlers.addIssueComment, methods: []string{http.MethodPost}},
 	"/api/issues/:id/runs":                {handle: issuesHandlers.issueRuns, methods: []string{http.MethodGet}},
 	"/api/issues/:id/clarification":       {handle: issuesHandlers.submitIssueClarification, methods: []string{http.MethodPost}},
 	"/api/issues/:id/chat-clarify":        {handle: issuesHandlers.chatClarifyIssue, methods: []string{http.MethodGet, http.MethodPost}},
+	"/api/issues/:id/clarify-models":      {handle: issuesHandlers.clarifyModels, methods: []string{http.MethodGet}},
 	"/api/issues/:id/chat-clarify/cancel": {handle: issuesHandlers.cancelChatClarifyIssue, methods: []string{http.MethodPost}},
 	"/api/issues/:id/reopen":              {handle: issuesHandlers.reopenIssue, methods: []string{http.MethodPost}},
 	"/api/issues/:id/close":               {handle: issuesHandlers.closeIssue, methods: []string{http.MethodPost}},
@@ -459,6 +494,29 @@ func (h issuesHandlers) issue(c *gin.Context) {
 	route.handle(h, c, issue)
 }
 
+// Use the account that will execute the clarification. This catalog is only
+// available to callers allowed to start the clarification.
+func (h issuesHandlers) clarifyModels(c *gin.Context, issue domain.Issue) {
+	if !h.requireProjectWriter(c, issue.ProjectID) {
+		return
+	}
+	user, err := h.repo.ResponsibleUser(issue)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+	catalog := personalCodeBuddyCatalog(ctx, user)
+	catalog.Engines = assistantEngineOptions(user, false)
+	if user.AssistantDefaults != (domain.AssistantDefaults{}) {
+		catalog.Preferences = &user.AssistantDefaults
+	}
+	models, _ := assistantEngineModels(ctx, user, nil)
+	catalog.Models = append(selectableCodeBuddyModels(catalog.Models), models...)
+	c.Header("Cache-Control", "private, no-store")
+	c.JSON(http.StatusOK, catalog)
+}
+
 func actorLabel(user *auth.User) (string, int64) {
 	if user == nil {
 		return "", 0
@@ -475,13 +533,20 @@ func actorLabel(user *auth.User) (string, int64) {
 	}
 }
 
+// recordIssueOperation appends one audit entry. Actor is always the platform
+// account whose permissions were used; a call made for a chat turn also
+// records the IM sender that asked for it (see botChatActor).
 func (h issuesHandlers) recordIssueOperation(c *gin.Context, issue *domain.Issue, action, detail string) {
 	if issue == nil {
 		return
 	}
 	user, _ := h.requestUser(c.Request, true)
 	actor, id := actorLabel(user)
-	issue.AppendOperation(domain.IssueOperation{Actor: actor, ActorUserID: id, Action: action, Detail: detail})
+	op := domain.IssueOperation{Actor: actor, ActorUserID: id, Action: action, Detail: detail}
+	if chat, ok := botChatActorFrom(c.Request.Context()); ok {
+		op.ActorChannel, op.ActorSender, op.ActorSenderName = chat.Channel, chat.SenderID, chat.SenderName
+	}
+	issue.AppendOperation(op)
 }
 
 func (h issuesHandlers) appendStoredOperation(c *gin.Context, issueID, action, detail string) (domain.Issue, error) {
@@ -776,7 +841,7 @@ func normalizeSOPBindings(store *repo.Store, projectID string, in []domain.Issue
 }
 
 func (h issuesHandlers) bindRequirementPlaybook(issue *domain.Issue) {
-	if issue == nil || !domain.IsRequirementWorkItem(*issue) {
+	if issue == nil || !domain.IsRequirementWorkItem(*issue) || issue.WithoutSOP() {
 		return
 	}
 	project, ok := h.repo.Project(issue.ProjectID)

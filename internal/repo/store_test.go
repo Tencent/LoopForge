@@ -64,7 +64,7 @@ func TestPutWorkflowKeepsExistingProjectID(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "gslb-fix", Name: "Fix", ProjectID: "gslb", SandboxProfileID: "local"}); err != nil {
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "gslb-fix", Name: "Fix", ProjectID: "gslb", SandboxProfileID: "test-native"}); err != nil {
 		t.Fatal(err)
 	}
 	stored, _ := s.Workflow("gslb-fix")
@@ -85,7 +85,7 @@ func TestCommandNodeNormalizesToShellScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "legacy-command", Name: "Legacy", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "run", Name: "Run", Type: "command", Command: "printf ok"}}}
+	wf := domain.WorkflowDefinition{ID: "legacy-command", Name: "Legacy", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "run", Name: "Run", Type: "command", Command: "printf ok"}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -114,8 +114,11 @@ func TestSeedPopulatesDefaultsForAnEmptyStore(t *testing.T) {
 		t.Fatalf("defaults missing: executors=%d sandboxes=%d rules=%d agents=%d",
 			len(s.Executors()), len(s.Sandboxes()), len(s.Rules()), len(s.Agents()))
 	}
-	if _, ok := s.Sandbox("local"); !ok {
-		t.Fatal("expected seeded local sandbox")
+	if sandbox, ok := s.Sandbox(TestNativeSandboxID); !ok || sandbox.Driver != domain.SandboxDriverNative || !sandbox.Shared {
+		t.Fatalf("expected seeded shared native test sandbox, got %+v", sandbox)
+	}
+	if _, ok := s.Sandbox("local"); ok {
+		t.Fatal("an unbound local sandbox must not be seeded")
 	}
 	if sandbox, ok := s.Sandbox("skillhub-native"); !ok || sandbox.Driver != domain.SandboxDriverNative {
 		t.Fatalf("expected seeded native skillhub sandbox, got %+v", sandbox)
@@ -123,25 +126,15 @@ func TestSeedPopulatesDefaultsForAnEmptyStore(t *testing.T) {
 	if _, ok := s.Sandbox("container"); ok {
 		t.Fatal("legacy container sandbox must not be seeded")
 	}
-	dockerfile, ok := s.Dockerfile(GenericBackendDockerfileID)
-	if !ok || strings.TrimSpace(dockerfile.Content) == "" || !dockerfile.Shared {
-		t.Fatalf("expected platform generic-backend dockerfile, got %+v ok=%v", dockerfile, ok)
-	}
 	box, ok := s.Sandbox(GenericDockerSandboxID)
-	if !ok || box.Driver != "docker" || box.DockerfileID != GenericBackendDockerfileID || !box.Shared {
-		t.Fatalf("expected platform generic-docker sandbox, got %+v ok=%v", box, ok)
+	if !ok || box.Driver != "docker" || box.Dockerfile == nil || strings.TrimSpace(box.Dockerfile.Content) == "" || !box.Shared {
+		t.Fatalf("expected platform generic-docker sandbox with its Dockerfile, got %+v ok=%v", box, ok)
 	}
 	if len(s.Projects()) != 1 {
 		t.Fatalf("expected exactly the default project, got %d", len(s.Projects()))
 	}
 	if s.SyncConfig().GongfengMCPURL == "" {
 		t.Fatal("default sync config was not seeded")
-	}
-	if n := len(s.Environments()); n != 0 {
-		t.Fatalf("environments must come from the catalog, not code; seeded %d", n)
-	}
-	if n := len(s.Dockerfiles()); n != 1 {
-		t.Fatalf("only the platform generic-backend dockerfile is ensured, got %d", n)
 	}
 }
 

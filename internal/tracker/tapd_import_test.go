@@ -51,6 +51,7 @@ func TestImportTAPDStoryFromTitleAndLink(t *testing.T) {
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
 	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp"}}}
 	const link = "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001554"
+	const canonical = "https://www.tapd.cn/tapd_fe/10000000/story/detail/1010000000100001554"
 	issue, err := svc.ImportTAPDStory(store, "dp", "【DP】用户复制的标题\n"+link, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -58,11 +59,11 @@ func TestImportTAPDStoryFromTitleAndLink(t *testing.T) {
 	if issue.Title != "TAPD 中的最新标题" {
 		t.Fatalf("title should come from TAPD, got %q", issue.Title)
 	}
-	if issue.ExternalRef == nil || issue.ExternalRef.ExternalURL != link {
+	if issue.ExternalRef == nil || issue.ExternalRef.ExternalURL != canonical {
 		t.Fatalf("external reference should contain only the canonical URL, got %+v", issue.ExternalRef)
 	}
 	stored, ok := store.Issue(issue.ID)
-	if !ok || stored.ExternalRef == nil || stored.ExternalRef.ExternalURL != link {
+	if !ok || stored.ExternalRef == nil || stored.ExternalRef.ExternalURL != canonical {
 		t.Fatalf("stored issue has invalid external reference: %+v", stored)
 	}
 }

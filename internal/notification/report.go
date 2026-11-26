@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	ErrReportCredentials = errors.New("本次 SOP 执行身份未配置 CodeBuddy 凭据")
-	ErrReportModel       = errors.New("所选 CodeBuddy 模型不可用")
-	ErrReportCLI         = errors.New("CodeBuddy CLI 调用失败，请检查 API 服务环境和日志")
+	ErrReportCredentials = errors.New("本次 SOP 执行身份未配置所选 CLI 的凭据")
+	ErrReportModel       = errors.New("所选 CLI 模型不可用")
+	ErrReportCLI         = errors.New("模型 CLI 调用失败，请检查 API 服务环境和日志")
 	ErrReportFormat      = errors.New("AI 未通过 submit_notification_report 提交有效报告")
 )
 

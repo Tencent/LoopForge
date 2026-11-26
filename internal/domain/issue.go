@@ -24,8 +24,12 @@ type Issue struct {
 	// SOPBindings is an optional per-issue override of the chosen playbook.
 	// Nil means inherit that playbook's steps. AssigneeUserID on the issue
 	// stays the overall owner / TAPD 跟进人.
-	SOPBindings  []IssueSOPBinding `json:"sopBindings,omitempty"`
-	RepositoryID string            `json:"repositoryId,omitempty"`
+	SOPBindings []IssueSOPBinding `json:"sopBindings,omitempty"`
+	// SOPMode "none" delivers the requirement without an SOP (clarified and
+	// changed in conversations): no SOP is bound by default and scheduled SOPs
+	// never claim it. Empty on writes keeps the stored mode; "sop" clears it.
+	SOPMode      string `json:"sopMode,omitempty"`
+	RepositoryID string `json:"repositoryId,omitempty"`
 	// RepositoryIDs lists every repository the issue touches. RepositoryID
 	// stays the legacy single-repository field (kept in sync with the first
 	// entry for display and external sync).
@@ -92,8 +96,18 @@ type IssueOperation struct {
 	At          time.Time `json:"at"`
 	Actor       string    `json:"actor,omitempty"`
 	ActorUserID int64     `json:"actorUserId,omitempty"`
-	Action      string    `json:"action"`
-	Detail      string    `json:"detail,omitempty"`
+	// ActorChannel and ActorSender name the IM identity that asked for the
+	// action when it came from a chat Bot: the channel kind (wecom, feishu,
+	// dingtalk) and the sender ID in that channel. ActorSenderName snapshots
+	// the display name known for that sender at the time of the action, when
+	// the channel reports one. Actor stays the platform account the sender is
+	// bound to and the one whose permissions were used. All three are empty
+	// for actions taken on the platform itself.
+	ActorChannel    string `json:"actorChannel,omitempty"`
+	ActorSender     string `json:"actorSender,omitempty"`
+	ActorSenderName string `json:"actorSenderName,omitempty"`
+	Action          string `json:"action"`
+	Detail          string `json:"detail,omitempty"`
 }
 
 // AppendOperation records an action and keeps the newest 200 entries.
@@ -320,6 +334,16 @@ func (i Issue) IdentityBlock() string {
 
 func (i Issue) HasIdentityBlock(text string) bool {
 	return strings.Contains(text, issueIdentityMarker)
+}
+
+const (
+	IssueSOPNone = "none"
+	IssueSOPUse  = "sop"
+)
+
+// WithoutSOP reports whether the requirement opted out of SOP delivery.
+func (i Issue) WithoutSOP() bool {
+	return strings.EqualFold(strings.TrimSpace(i.SOPMode), IssueSOPNone)
 }
 
 func (i Issue) ExecutionBlockedReason() string {

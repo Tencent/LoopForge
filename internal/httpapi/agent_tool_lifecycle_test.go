@@ -82,7 +82,8 @@ func TestAssistantAndScheduledTaskKeepToolsPastFiveMinutes(t *testing.T) {
 				if session == nil {
 					t.Fatal("turn has no gateway bound to its execution context")
 				}
-				agentToolSessions.purgeExpired(time.Now().Add(24 * time.Hour))
+				// Go past the former five-minute TTL within the default scheduled deadline.
+				agentToolSessions.purgeExpired(time.Now().Add(10 * time.Minute))
 				if _, ok := agentToolSessions.get(session.Token); !ok || ctx.Err() != nil {
 					t.Fatal("long-running generation lost its tools")
 				}

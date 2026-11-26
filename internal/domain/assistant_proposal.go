@@ -9,4 +9,7 @@ const (
 	// AssistantProposalExpired means nobody answered a blocking proposal in
 	// time and Main Bot went on to do the work itself.
 	AssistantProposalExpired = "expired"
+	// AssistantDraftRejected means the independent AI reviewer or fast-path
+	// policy rejected a write in "帮我批准" mode without asking a person.
+	AssistantDraftRejected = "rejected"
 )

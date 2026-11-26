@@ -91,22 +91,11 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return fail(err)
 	}
-	activated, err := prepareSandboxEnvironment(workspace, profile, resources.Environment)
-	if err != nil {
-		return fail(err)
-	}
-	profile.Environment = overlayEnvironment(profile.Environment, activated.Overlay)
-	profile, resources.Dockerfile = isolateLocalDriver(profile, resources.Dockerfile)
 	sandbox, err := createDriverSandbox(ctx, "sandbox", id, workspace, profile, requirements, resources.Dockerfile)
 	if err != nil {
 		return fail(err)
 	}
-	managed := &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}
-	if err := runEnvironmentInstall(ctx, managed, activated); err != nil {
-		_ = managed.Close(ctx)
-		return nil, err
-	}
-	return managed, nil
+	return &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}, nil
 }
 
 // DestroyRun deletes the host workspace for a finished SOP run: the persistent
@@ -323,6 +312,15 @@ type managedSandbox struct {
 	credentialsMu sync.RWMutex
 }
 
+// Unwrap returns the underlying driver sandbox so wrappers remain transparent
+// to runtime helpers such as browser provisioning and conversation CLI setup.
+func (s *managedSandbox) Unwrap() Sandbox {
+	if s == nil {
+		return nil
+	}
+	return s.Sandbox
+}
+
 func (s *managedSandbox) Driver() string {
 	if value, ok := s.Sandbox.(interface{ Driver() string }); ok {
 		return value.Driver()
@@ -397,6 +395,18 @@ func (s *managedSandbox) SetCredentials(credentials RunCredentials) {
 	s.credentials = credentials
 }
 
+// CredentialSnapshot returns the current credential snapshot. Read-only use:
+// preparation code validating a node's declared credentials up front.
+func (s *managedSandbox) CredentialSnapshot() RunCredentials {
+	s.credentialsMu.RLock()
+	defer s.credentialsMu.RUnlock()
+	return s.credentials
+}
+
+// sandboxCredentialSnapshot lets runtime preparation code read a sandbox's
+// credentials without widening the public Sandbox interface.
+type sandboxCredentialSnapshot interface{ CredentialSnapshot() RunCredentials }
+
 func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
 	select {
 	case s.slots <- struct{}{}:
@@ -407,34 +417,30 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	s.credentialsMu.RLock()
 	credentials := s.credentials
 	s.credentialsMu.RUnlock()
-	// Binding writes the credential helpers into the workspace; parallel
-	// branches then run their commands concurrently.
+	command, closeGit, err := prepareRunGitBinding(ctx, s.Sandbox, command, credentials)
+	if err != nil {
+		return "", err
+	}
+	defer closeGit()
+	if credentials.GitHTTPCredentials != nil {
+		credentials.GitHTTPHosts = runGitHosts(credentials)
+	}
+	// Binding refreshes workspace config and prepares Runner helpers before
+	// parallel branches execute their commands.
 	s.execMu.Lock()
-	bound, err := bindCommand(s.Sandbox, s.workspace, command, credentials)
+	bound, err := bindCommand(ctx, s.Sandbox, s.workspace, command, credentials)
 	s.execMu.Unlock()
 	if err != nil {
 		return "", err
 	}
-	cleanup, err := bindCommandGitSSH(s.Sandbox, s.workspace, bound, credentials)
+	cleanup, err := bindCommandGitSSH(ctx, s.Sandbox, s.workspace, bound, credentials)
 	if err != nil {
 		return "", err
 	}
 	defer cleanup()
-	return s.Sandbox.Exec(ctx, bound, sink)
-}
-
-// overlayEnvironment layers an activated environment's overlay under env,
-// except PATH: the overlay's PATH wins so its tools stay first on the path.
-// An empty overlay returns env unchanged.
-func overlayEnvironment(env, overlay map[string]string) map[string]string {
-	if len(overlay) == 0 {
-		return env
-	}
-	merged := mergeEnvironmentMaps(overlay, env)
-	if path := overlay["PATH"]; path != "" {
-		merged["PATH"] = path
-	}
-	return merged
+	defer scrubRunGitCredentials(ctx, s.Sandbox, s.workspace, bound, credentials)
+	out, err := s.Sandbox.Exec(ctx, bound, runGitEventSink(sink, credentials))
+	return redactRunGitSecrets(out, credentials), err
 }
 
 // createDriverSandbox builds the sandbox for profile.Driver. kind only names

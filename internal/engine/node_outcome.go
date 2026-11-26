@@ -1,13 +1,17 @@
 package engine
 
 import (
+	"errors"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
-	"errors"
-	"fmt"
-	"strings"
-	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 func (e *Engine) waitApproval(runID string, node domain.WorkflowNode, msg string) {
@@ -48,13 +52,14 @@ func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attem
 }
 
 func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, generation int, err error, allowReject bool) {
-	shouldReject := false
+	var rejectFrom NodeExpectation
 	configurationFailure := errors.Is(err, ErrWorkspaceControlConfiguration)
-	e.updateRun(runID, func(r *domain.Run) {
+	storeFailure := func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
 			return
 		}
+		previousStatus := nr.Status
 		nr.Error = err.Error()
 		nr.FinishedAt = time.Now().UTC()
 		reworkBudget := node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount >= max(1, node.MaxReworks)
@@ -79,21 +84,67 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 			nr.Status = "failed"
 			e.event(r, node.ID, "node.failed", err.Error())
 		}
-		shouldReject = !configurationFailure && allowReject && nr.Status == "failed" && node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount < max(1, node.MaxReworks)
-	})
-	if shouldReject {
-		_ = e.Reject(runID, domain.RejectRequest{NodeID: node.ID, TargetID: node.RejectTo, Reason: "节点失败自动打回：" + err.Error()})
+		if !configurationFailure && allowReject && nr.Status == "failed" && node.RejectTo != "" &&
+			r.Nodes[node.RejectTo] != nil && !reworkBudget {
+			rejectFrom = NodeExpectation{NodeID: node.ID, Status: previousStatus, Attempt: nr.Attempt, ReworkCount: nr.ReworkCount}
+		}
+	}
+	// Every attempt reloads the run and checks the lease, generation and attempt.
+	writeFailure := func() error {
+		rejectFrom = NodeExpectation{}
+		return e.updateRunErr(runID, storeFailure)
+	}
+	writeErr := repo.RetryDeadlock(writeFailure)
+	if runWriteLockErrorCode(writeErr) == mysqlLockWaitTimeout {
+		// PutRun rolls back the transaction on a lock wait timeout.
+		writeErr = repo.RetryDeadlock(writeFailure)
+	}
+	if errors.Is(writeErr, repo.ErrRunLeaseLost) || errors.Is(writeErr, repo.ErrRunLeaseHeld) {
+		// Another worker owns the run now; it decides what happens next.
+		return
+	}
+	// Any other write failure keeps the auto-reject: Reject reloads the run
+	// and resets this node with its upstream, so the run still moves on
+	// instead of leaving a running node that nobody executes.
+	if rejectFrom.NodeID != "" {
+		if writeErr == nil {
+			rejectFrom.Status = "failed"
+		}
+		req := domain.RejectRequest{NodeID: node.ID, TargetID: node.RejectTo, Reason: "节点失败自动打回：" + err.Error()}
+		if rejectErr := e.Reject(runID, req, rejectFrom); rejectErr != nil {
+			log.Printf("automatically reject run %s node %s: %v", runID, node.ID, rejectErr)
+		}
 	}
 }
 
+const (
+	mysqlLockWaitTimeout = 1205
+	mysqlDeadlock        = 1213
+)
+
+func runWriteLockErrorCode(err error) uint16 {
+	var sqlErr *mysql.MySQLError
+	if errors.As(err, &sqlErr) {
+		return sqlErr.Number
+	}
+	return 0
+}
+
+var errNodeArtifactCommit = errors.New("保存节点终态和产物失败")
+
 func shouldRetryFailedAttempt(node domain.WorkflowNode, attempt int, err error) bool {
-	if errors.Is(err, ErrWorkspaceControlConfiguration) {
+	// A failed artifact write follows a completed execution, which may have side effects.
+	if errors.Is(err, ErrWorkspaceControlConfiguration) || errors.Is(err, errSOPArtifactWrite) || errors.Is(err, errNodeArtifactCommit) || isArtifactHandoffFailure(err) {
 		return false
 	}
 	if err != nil && (isMaxTurnsErr(err) || strings.Contains(err.Error(), "verification ") || runtime.IsCwdMountFailure(err)) {
 		return false
 	}
 	return attempt < max(1, node.MaxAttempts)
+}
+
+func isArtifactHandoffFailure(err error) bool {
+	return errors.Is(err, errArtifactTransfer) || errors.Is(err, errOutputTooLarge) || errors.Is(err, errLegacyOutputTooLarge)
 }
 
 // gateReworkReject reports whether this failure is the node's explicit
@@ -339,33 +390,13 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 			e.event(r, "", "run.finish_ignored", "失败节点已被打回，忽略过期的失败收尾")
 			return
 		}
-		if status == "failed" {
-			for _, nr := range r.Nodes {
-				if nr != nil && (nr.Status == "running" || nr.Status == "waiting_approval" || nr.Status == "pending_input") {
-					ignored = true
-					e.event(r, "", "run.finish_ignored", "仍有活动节点，忽略过期的失败收尾")
-					return
-				}
-			}
+		if status == "failed" && hasActiveNode(*r) {
+			ignored = true
+			e.event(r, "", "run.finish_ignored", "仍有活动节点，忽略过期的失败收尾")
+			return
 		}
-		// 运行被取消或失败时，把仍停留在"执行中"的节点收敛为已取消。
-		// 否则一旦执行协程卡死（如子进程无超时阻塞），节点会残留在 running，
-		// 使后续重试的 resumeNodeID 既选不到失败/取消节点、也选不到就绪节点，
-		// 最终报 "retry node not found"。
 		if status == "cancelled" || status == "failed" {
-			for nodeID, nr := range r.Nodes {
-				if nr == nil || nr.Status != "running" {
-					continue
-				}
-				nr.Status = "cancelled"
-				if nr.FinishedAt.IsZero() {
-					nr.FinishedAt = time.Now().UTC()
-				}
-				if strings.TrimSpace(nr.Activity) == "" {
-					nr.Activity = "运行终止时仍在执行，已收敛为已取消"
-				}
-				e.event(r, nodeID, "node.cancelled", "运行终止，节点由执行中收敛为已取消")
-			}
+			e.cancelRunningNodes(r)
 		}
 		r.Status = status
 		e.event(r, "", "run."+status, msg)
@@ -392,5 +423,36 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 			}
 		}
 		e.cleanupRunWorkspace(id)
+	}
+}
+
+// hasActiveNode reports whether any node is still executing or waiting on a
+// person, which makes a late failure settlement stale.
+func hasActiveNode(r domain.Run) bool {
+	for _, nr := range r.Nodes {
+		if nr != nil && (nr.Status == "running" || nr.Status == "waiting_approval" || nr.Status == "pending_input") {
+			return true
+		}
+	}
+	return false
+}
+
+// cancelRunningNodes 在运行被取消或失败时，把仍停留在"执行中"的节点收敛为已取消。
+// 否则一旦执行协程卡死（如子进程无超时阻塞），节点会残留在 running，
+// 使后续重试的 resumeNodeID 既选不到失败/取消节点、也选不到就绪节点，
+// 最终报 "retry node not found"。
+func (e *Engine) cancelRunningNodes(r *domain.Run) {
+	for nodeID, nr := range r.Nodes {
+		if nr == nil || nr.Status != "running" {
+			continue
+		}
+		nr.Status = "cancelled"
+		if nr.FinishedAt.IsZero() {
+			nr.FinishedAt = time.Now().UTC()
+		}
+		if strings.TrimSpace(nr.Activity) == "" {
+			nr.Activity = "运行终止时仍在执行，已收敛为已取消"
+		}
+		e.event(r, nodeID, "node.cancelled", "运行终止，节点由执行中收敛为已取消")
 	}
 }

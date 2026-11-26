@@ -9,6 +9,9 @@ const OBS_THEME_PRESETS={
 };
 const OBS_THEME_VARS={c1:'--c1',c2:'--c2',c3:'--c3',c4:'--c4',text:'--text',muted:'--muted',muted2:'--muted-2',line:'--line',lineStrong:'--line-strong',panel:'--panel',panel2:'--panel-2',panel3:'--panel-3',red:'--red',green:'--green',amber:'--amber'};
 const OBS_WEEKDAYS=['周一','周二','周三','周四','周五','周六','周日'];
+function obsWeekdayLabels(){
+  return typeof lfT==='function'?lfT(OBS_WEEKDAYS,['Mon','Tue','Wed','Thu','Fri','Sat','Sun']):OBS_WEEKDAYS;
+}
 let obsEChartsPromise=null;
 // 加载失败只在下一次整页挂载（重渲染/再次进入统计页）时重试，同一次渲染内的多张图共用失败结果。
 let obsEChartsFailed=false;
@@ -204,9 +207,9 @@ function obsHeatOption(cells,metric,opts){
   const hours=Array.from({length:24},(_,h)=>String(h));
   return obsChartBase(o,{
     grid:{left:6,right:6,top:4,bottom:4,containLabel:true},
-    tooltip:{...obsTooltipBase(t),trigger:'item',formatter:p=>{const [h,d]=p.value;return obsTooltipRows(`${OBS_WEEKDAYS[d]} ${String(h).padStart(2,'0')}:00`,[['运行',String(p.data.runs)+' 次'],['Token',o.fmtTokens(p.data.tokens)]])}},
+    tooltip:{...obsTooltipBase(t),trigger:'item',formatter:p=>{const [h,d]=p.value;return obsTooltipRows(`${obsWeekdayLabels()[d]} ${String(h).padStart(2,'0')}:00`,[['运行',String(p.data.runs)+' 次'],['Token',o.fmtTokens(p.data.tokens)]])}},
     xAxis:{type:'category',data:hours,splitArea:{show:false},axisLine:{show:false},axisTick:{show:false},axisLabel:{color:t.muted2,fontSize:10,interval:5}},
-    yAxis:{type:'category',data:OBS_WEEKDAYS,inverse:true,axisLine:{show:false},axisTick:{show:false},axisLabel:{color:t.muted2,fontSize:10}},
+    yAxis:{type:'category',data:obsWeekdayLabels(),inverse:true,axisLine:{show:false},axisTick:{show:false},axisLabel:{color:t.muted2,fontSize:10}},
     visualMap:{show:false,min:0,max:Math.max(1,max),inRange:{color:[t.panel2,t.c1]}},
     series:[{type:'heatmap',data,itemStyle:{borderColor:t.panel,borderWidth:2,borderRadius:3},emphasis:{itemStyle:{borderColor:t.text,borderWidth:1}},
       animationDuration:o.reduced?0:500,animationDelay:o.reduced?0:(idx=>(idx%24)*8+Math.floor(idx/24)*24)}],
@@ -221,6 +224,7 @@ function obsFunnelStats(stages){
     if(!i){s.conv=null;return}
     const prev=list[i-1].value;
     s.conv=prev?s.value*100/prev:null;
+    s.drop=s.conv==null?null:Math.max(0,100-s.conv);
     if(prev&&s.value/prev<worstRatio&&s.value<prev){worstRatio=s.value/prev;worst=i}
   });
   list.forEach((s,i)=>{s.worst=i===worst;s.lost=i?Math.max(0,list[i-1].value-s.value):0});
@@ -238,7 +242,7 @@ function obsFunnelOption(stages,opts){
     xAxis:{type:'value',max,show:false},
     yAxis:{type:'category',inverse:true,data:list.map(s=>s.name),axisLine:{show:false},axisTick:{show:false},axisLabel:{color:t.muted,fontSize:12,formatter:(v,i)=>i===active?`{a|${v}}`:v,rich:{a:{color:t.text,fontWeight:600,fontSize:12}}}},
     series:[{type:'bar',barWidth:18,showBackground:true,backgroundStyle:{color:t.panel2,borderRadius:4},itemStyle:{borderRadius:4},
-      label:{show:true,position:'right',distance:8,formatter:p=>{const s=list[p.dataIndex];const conv=s.conv==null?'':`  {${s.worst?'w':'c'}|↓ ${Math.round(s.conv)}%${s.worst?' · 最大流失':''}}`;return `{v|${s.value}}${conv}`},rich:{v:{color:t.text,fontWeight:600,fontSize:14},c:{color:t.muted2,fontSize:10.5},w:{color:t.red,fontSize:10.5,fontWeight:500}}},
+      label:{show:true,position:'right',distance:8,formatter:p=>{const s=list[p.dataIndex];const conv=s.conv==null?'':`  {${s.worst?'w':'c'}|↓ ${Math.round(s.drop)}%${s.worst?' · 最大流失':''}}`;return `{v|${s.value}}${conv}`},rich:{v:{color:t.text,fontWeight:600,fontSize:14},c:{color:t.muted2,fontSize:10.5},w:{color:t.red,fontSize:10.5,fontWeight:500}}},
       data:list.map((s,i)=>({value:s.value,itemStyle:{color:i===list.length-1||i===active?t.c1:t.c2}})),
       animationDelay:obsBarDelay(o,90)}],
   });

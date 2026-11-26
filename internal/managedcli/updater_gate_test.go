@@ -18,11 +18,12 @@ func TestReleaseGate(t *testing.T) {
 		{"same version", "codex", "2.0.0", "2.0.0", old, "unchanged", ""},
 		{"downgrade", "codex", "2.0.0", "1.9.0", old, "skipped", "automatic downgrade refused"},
 		{"rolled back", "codex", "2.0.0", "3.0.0", old, "skipped", "this release was rolled back; waiting for a newer release"},
-		{"rejected only for its provider", "claude", "2.0.0", "3.0.0", old, "", ""},
-		{"observation window", "codex", "2.0.0", "2.1.0", now.Add(-time.Hour), "skipped", "release is still in the observation window"},
-		{"eligible upgrade", "codex", "2.0.0", "2.1.0", old, "", ""},
-		{"first install", "codex", "", "2.1.0", old, "", ""},
-		{"first install in observation window", "codex", "", "2.1.0", now, "skipped", "release is still in the observation window"},
+		{"intermediate release after rollback", "codex", "2.0.0", "2.1.0", old, "skipped", "waiting for a release newer than the rolled-back version"},
+		{"rejected only for its provider", "claude-code", "2.0.0", "3.0.0", old, "", ""},
+		{"observation window", "codex", "2.0.0", "3.1.0", now.Add(-time.Hour), "skipped", "release is still in the observation window"},
+		{"eligible upgrade", "codex", "2.0.0", "3.1.0", old, "", ""},
+		{"first install", "claude-code", "", "2.1.0", old, "", ""},
+		{"first install in observation window", "claude-code", "", "2.1.0", now, "skipped", "release is still in the observation window"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status, message := m.releaseGate(state, tc.provider, tc.from, release{Version: tc.version, Published: tc.published})

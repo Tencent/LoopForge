@@ -16,9 +16,17 @@
   font-size:9px;font-weight:800;color:#fff;letter-spacing:0;overflow:hidden;
 }
 .ai-model-icon img{width:18px;height:18px;display:block;object-fit:contain;background:transparent}
-.ai-model-icon[data-family=claude],.ai-model-icon[data-family=gpt],.ai-model-icon[data-family=gemini],.ai-model-icon[data-family=deepseek],.ai-model-icon[data-family=minimax],.ai-model-icon[data-family=mimo]{background:#fff}
+.ai-model-icon:is(
+  [data-family=claude],[data-family=codebuddy],[data-family=cursor],[data-family=deepseek],
+  [data-family=doubao],[data-family=gemini],[data-family=gpt],[data-family=grok],
+  [data-family=mimo],[data-family=minimax],[data-family=moonshot],[data-family=muse],
+  [data-family=qianfan],[data-family=qwen]
+){background:#fff}
 .ai-model-icon[data-family=glm]{background:#3859FF}
-.ai-model-icon[data-family=kimi]{background:#111827}
+.ai-model-icon[data-family=kimi]{background:transparent}
+.ai-model-icon[data-family=kimi] img+img{display:none}
+[data-theme=dark] .ai-model-icon[data-family=kimi] img:first-child{display:none}
+[data-theme=dark] .ai-model-icon[data-family=kimi] img+img{display:block}
 .ai-model-icon[data-family=hunyuan]{background:#0F766E}
 .ai-model-icon[data-family=echo],.ai-model-icon[data-family=other]{background:#64748b}
 .ai-model-menu{
@@ -33,6 +41,9 @@
 }
 .ai-model-option{padding:8px 10px;gap:8px}
 .ai-model-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feature-model-picker{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:6px;min-width:0}
+.feature-model-picker .select{width:100%;min-width:0}
+@media(max-width:420px){.feature-model-picker{grid-template-columns:minmax(0,1fr)}}
 .ai-model-credits{flex-shrink:0;color:var(--muted-2);font-size:11px;font-variant-numeric:tabular-nums;font-weight:500}
 .ai-model-credits:empty{display:none!important}
 .ai-model-option.is-active{background:var(--blue-soft);color:var(--blue)}

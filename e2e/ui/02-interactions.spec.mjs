@@ -11,17 +11,15 @@ test.afterAll(cleanup);
 test('requirement composer: create, find and dispatch a requirement from its drawer', async ({ page }) => {
   const errors = watchErrors(page);
   const title = `E2E UI 需求 ${cfg.runTag}-${Date.now() % 100000}`;
+  const description = '自动化 UI 测试创建，会被关闭。'.repeat(10);
   // A requirement needs a runnable SOP; a fresh database has none in the e2e project.
   const wf = await createWorkflow('ui-requirement', [script('only', 'echo UI_REQUIREMENT')]);
   await page.goto('/#/issues');
   await expect(page.locator('#issuesView')).toBeVisible();
   await page.locator('#newIssue').click();
   await expect(page.locator('#requirementModal')).toHaveClass(/open/);
-  await page.locator('#chatInput').fill(`${title}\n\n自动化 UI 测试创建，会被关闭。`);
-  await page.locator('#reqSkip').click();
-  await expect(page.locator('#reqStepConfirm')).toBeVisible();
-  await expect(page.locator('#reqCreate')).toBeVisible();
-  await expect(page.locator('#reqTitle')).toHaveValue(title);
+  await page.locator('#chatInput').fill(`${title}\n\n${description}`);
+  await expect(page.locator('#reqCreate')).toBeEnabled();
   await page.getByRole('button', { name: 'SOP 流程', exact: true }).click();
   await page.getByRole('listbox', { name: 'SOP 流程', exact: true })
     .getByRole('option', { name: /E2E ui-requirement/ }).click();
@@ -35,6 +33,7 @@ test('requirement composer: create, find and dispatch a requirement from its dra
   track(`issue ${issue.id}`, () => post(`/api/issues/${issue.id}/close`, {}, { expect: [200, 404, 409] }));
   expect(issue.source || 'local').toBe('local');
   expect(issue.workflowId).toBe(wf);
+  expect(issue.title).toBe(title);
   await expect(page.locator('#requirementModal')).not.toHaveClass(/open/);
 
   // Creation opens the drawer automatically. Close it, then exercise the
@@ -67,26 +66,40 @@ test('requirement composer: create, find and dispatch a requirement from its dra
   const run = await waitRun(runId, r => r.status === 'succeeded', { label: 'requirement SOP succeeds' });
   expect(run.workflowId).toBe(wf);
   expect(run.nodes.only.status).toBe('succeeded');
+  await page.goto(`/?projectId=${encodeURIComponent(cfg.projectId)}#/runs/${encodeURIComponent(runId)}`);
+  const runHeader = page.locator('.run-header-main');
+  await expect(runHeader.getByRole('heading', { level: 2 })).toHaveText(title);
+  await expect(runHeader.locator('.run-header-copy')).toHaveText(description);
+  await runHeader.getByText('展开全文', { exact: true }).click();
+  await expect(runHeader.getByText('收起全文', { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
-test('requirement composer: AI analysis answers', async ({ page }) => {
-  test.skip(!cfg.model, 'AGENTFLOW_E2E_MODEL=0');
-  test.setTimeout(420_000);
+test('requirement composer: create and clarify opens the chat with the requirement @-mentioned', async ({ page }) => {
   const errors = watchErrors(page);
+  const title = `E2E UI 对话澄清 ${cfg.runTag}-${Date.now() % 100000}`;
   await openView(page, 'issues');
   await page.locator('#newIssue').click();
-  await page.locator('#chatInput').fill('自动化测试：给运行记录列表增加按 SOP 名称筛选的能力。这只是测试，请只做分析，不需要读代码。');
-  await page.locator('#reqNext').click();
-  await expect(page.locator('#reqStepClarify')).toBeVisible();
-  await expect(page.locator('#chatStop')).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('#chatStop')).toBeHidden({ timeout: 400_000 });
-  await expect.poll(async () => (await page.locator('#reqClarifyPanel').innerText()).trim().length).toBeGreaterThan(20);
-  await expect(page.locator('#reqClarifyPanel .req-q-card, #reqClarifyPanel .req-ready-card, #reqClarifyPanel .req-supplement').first()).toBeVisible();
-  // Close without creating anything.
-  await page.locator('#requirementModal .requirement-close').first().click();
-  const confirm = page.locator('#confirmModal.open #confirmOkBtn');
-  if (await confirm.isVisible().catch(() => false)) await confirm.click();
+  await page.locator('#chatInput').fill(`${title}\n\n自动化 UI 测试创建，会被关闭。`);
+  await page.locator('[data-req-delivery="none"]').click();
+  await expect(page.locator('#reqWorkflowField')).toBeHidden();
+  const [created] = await Promise.all([
+    page.waitForResponse(r => new URL(r.url()).pathname === '/api/issues' && r.request().method() === 'POST'),
+    page.locator('#reqCreateChat').click(),
+  ]);
+  expect(created.ok()).toBe(true);
+  const issue = await created.json();
+  track(`issue ${issue.id}`, () => post(`/api/issues/${issue.id}/close`, {}, { expect: [200, 404, 409] }));
+  expect(issue.title).toBe(title);
+  expect(issue.sopMode).toBe('none');
+  expect(issue.workflowId || '').toBe('');
+  expect(issue.automationState).toBe('ignored');
+  await expect(page.locator('#requirementModal')).not.toHaveClass(/open/);
+  await expect(page).toHaveURL(/#\/collaboration/);
+  const chat = page.frameLocator('#chatNextFrame');
+  const input = chat.locator('textarea').first();
+  await expect(input).toHaveValue(new RegExp(`^@${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `), { timeout: 30_000 });
+  await expect(chat.getByText(title).first()).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -104,8 +117,28 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   const errors = watchErrors(page);
   await page.goto(`/#/runs/${encodeURIComponent(id)}`);
   const approve = page.locator('[data-approve="gate"]').first();
-  await page.locator('[data-run-node="gate"]').click();
+  const gate = page.locator('[data-run-node="gate"]');
+  await gate.click();
   await expect(approve).toBeVisible();
+  await expect(page.locator('.graph-legend')).toContainText('待确认');
+  await expect(gate).toContainText('待确认');
+  await expect(page.locator('.node-inspector-status')).toContainText('待确认');
+  const preview = page.locator('.approval-callout').getByRole('button', { name: 'result', exact: true });
+  await preview.click();
+  const dialog = page.getByRole('dialog', { name: 'result' });
+  await expect(dialog.getByRole('button', { name: '关闭', exact: true })).toBeFocused();
+  await expect(page.locator('#artifactPreview')).toContainText('UI E2E');
+  await page.context().grantPermissions(['clipboard-write']);
+  await dialog.getByRole('button', { name: /复制内容/ }).click();
+  const feedback = dialog.getByRole('status').filter({ hasText: '产物内容已复制到剪贴板' });
+  await expect(feedback).toBeVisible();
+  await expect.poll(() => feedback.evaluate(el => {
+    const rect = el.getBoundingClientRect();
+    return el.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+  })).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(preview).toBeFocused();
 
   for (const tab of ['trace', 'logs', 'workspace', 'eval', 'overview']) {
     await page.locator(`[data-run-tab="${tab}"]`).click();
@@ -129,7 +162,9 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
 
 test('approvals queue: approve a waiting run with context from the sidebar', async ({ page }) => {
   const wf = await createWorkflow('ui-approval-queue', [
-    script('prep', 'echo QUEUE_PREP'),
+    script('prep', 'mkdir -p out && echo "# Review fixture" > out/review.md', {
+      artifactOutputs: [{ name: 'review', path: 'out/review.md', mediaType: 'text/markdown', required: true }],
+    }),
     approval('gate', 'prep'),
     script('finish', 'echo QUEUE_FINISH'),
   ]);
@@ -148,6 +183,29 @@ test('approvals queue: approve a waiting run with context from the sidebar', asy
   });
   await expect(card).toBeVisible();
   await expect(card).toContainText('E2E ui-approval-queue');
+  const preview = card.getByRole('button', { name: 'review', exact: true });
+  await preview.click();
+  const dialog = page.getByRole('dialog', { name: 'review' });
+  const close = dialog.getByRole('button', { name: '关闭', exact: true });
+  const newWindow = dialog.getByRole('link', { name: /在新窗口打开/ });
+  await expect(close).toBeFocused();
+  await expect(page.locator('#artifactPreview')).toContainText('Review fixture');
+  const [linkBox, closeBox] = await Promise.all([newWindow.boundingBox(), close.boundingBox()]);
+  expect(linkBox.x + linkBox.width).toBeLessThanOrEqual(closeBox.x);
+  await newWindow.click({ trial: true });
+  await page.keyboard.press('Shift+Tab');
+  await expect(newWindow).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(dialog.getByRole('button', { name: /下载文件/ })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(newWindow).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(preview).toBeFocused();
+  await preview.click();
+  await close.click();
+  await expect(dialog).toBeHidden();
+  await expect(preview).toBeFocused();
   const context = `Queue approval ${cfg.runTag}`;
   await card.locator('[data-human-context]').fill(context);
   const [response] = await Promise.all([
@@ -180,6 +238,41 @@ test('SOP designer: rename a node and save a new revision', async ({ page }) => 
   const after = await get(`/api/workflows/${wf}`);
   expect(after.revision).toBeGreaterThan(before.revision);
   expect(errors).toEqual([]);
+});
+
+test('SOP designer: all nodes stay in view when the AI assistant closes', async ({ page }) => {
+  const wf = await createWorkflow('ui-designer-fit', [90, 425, 780].map((x, i) =>
+    script(`step-${i+1}`, 'echo E2E', { position: { x, y: 200 } })));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#/flow/${encodeURIComponent(wf)}`);
+  const palette = page.locator('#flowPalette');
+  const assistant = page.locator('#aiOrchestrator');
+  const nodes = page.locator('#nodes .flow-node');
+  await expect(nodes).toHaveCount(3);
+  const paletteWidth = () => palette.evaluate(el => Math.round(el.getBoundingClientRect().width));
+  const nodesFit = () => nodes.evaluateAll(items => {
+    const canvas = document.getElementById('canvas').getBoundingClientRect();
+    const drawer = document.getElementById('aiOrchestrator');
+    const right = drawer.hidden ? canvas.right : drawer.getBoundingClientRect().left;
+    return items.every(node => {
+      const rect = node.getBoundingClientRect();
+      return rect.left >= canvas.left && rect.right <= right &&
+        rect.top >= canvas.top && rect.bottom <= canvas.bottom;
+    });
+  });
+  for (const reducedMotion of ['no-preference', 'reduce']) {
+    await page.emulateMedia({ reducedMotion });
+    await expect.poll(paletteWidth).toBe(256);
+    await expect.poll(nodesFit).toBe(true);
+    await page.locator('#openAIOrchestrator').click();
+    await expect(assistant).toBeVisible();
+    await expect.poll(paletteWidth).toBe(48);
+    await expect.poll(nodesFit).toBe(true);
+    await page.locator('#closeAIOrchestrator').click();
+    await expect(assistant).toBeHidden();
+    await expect.poll(paletteWidth).toBe(256);
+    await expect.poll(nodesFit).toBe(true);
+  }
 });
 
 test('SOP designer: drag the failure outlet onto an upstream step to route rework', async ({ page }) => {

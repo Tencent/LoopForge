@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +12,8 @@ import (
 )
 
 const maxSOPNesting = 6
+
+var errSOPArtifactWrite = errors.New("保存子 SOP 产物失败")
 
 func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, attempt, generation int) {
 	fail := func(err error) {
@@ -38,6 +42,14 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 	if _, found := e.repo.Workflow(childID); !found {
 		fail(fmt.Errorf("SOP 流程 %q 不存在", childID))
 		return
+	}
+	// An SOP node does not acquire a sandbox itself. Restore the checkout
+	// before its child can start in it.
+	if !parent.WorkspaceCleanedAt.IsZero() {
+		if err := e.restoreCheckpointForExecution(ctx, parent, nil); err != nil {
+			fail(err)
+			return
+		}
 	}
 	var child domain.Run
 	if nr := parent.Nodes[node.ID]; nr != nil && nr.ChildRunID != "" {
@@ -74,7 +86,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		exec.WorkspaceRunID = workspaceRunID(parent)
 		exec.RunID = ""
 		exec.TraceID = parent.ExecutionContext.TraceID
-		started, err := e.StartWithRepositoriesContext(childID, childInput, parent.RepositoryContexts(), exec)
+		started, err := e.StartWithRepositories(ctx, childID, childInput, parent.RepositoryContexts(), exec)
 		if err != nil {
 			fail(fmt.Errorf("启动子 SOP：%w", err))
 			return
@@ -93,6 +105,12 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 			Attributes: map[string]any{"childRunId": child.ID, "sopWorkflowId": childID},
 		})
 	} else {
+		if nr := parent.Nodes[node.ID]; nr != nil && nr.Activity == resumePausedChildActivity && child.Status == "waiting" && child.PauseRequested {
+			if err := e.ResumePausedContext(ctx, child.ID, nr.Feedback); err != nil {
+				fail(fmt.Errorf("继续子 SOP %s：%w", child.ID, err))
+				return
+			}
+		}
 		e.updateRun(runID, func(r *domain.Run) {
 			if nr := r.Nodes[node.ID]; nr != nil {
 				nr.Activity = "正在执行子 SOP " + childID
@@ -118,14 +136,14 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		fail(err)
 		return
 	}
-	e.updateRun(runID, func(r *domain.Run) {
+	applied := false
+	err = e.updateRunErr(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, true) {
 			return
 		}
-		if nr != nil {
-			nr.ChildRunID = finished.ID
-		}
+		applied = true
+		nr.ChildRunID = finished.ID
 		r.Artifacts = append(r.Artifacts, imported...)
 		nr.Output = fmt.Sprintf("子 SOP %s 已完成，交接 %d 个产物", childID, len(imported))
 		nr.Error = ""
@@ -133,6 +151,15 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		nr.FinishedAt = time.Now().UTC()
 		e.event(r, node.ID, "node.succeeded", node.Name+" 已完成")
 	})
+	if !applied {
+		return
+	}
+	if err != nil {
+		if ctx.Err() == nil {
+			e.nodeFailedAt(runID, node, attempt, generation, fmt.Errorf("%w：%w", errSOPArtifactWrite, err), false)
+		}
+		return
+	}
 	for _, artifact := range imported {
 		e.observe(runID, node.ID, domain.TelemetryEvent{
 			Category: "artifact", Name: "artifact.published", Phase: "finish",
@@ -225,15 +252,19 @@ func (e *Engine) waitChildRun(ctx context.Context, parentID, childID string) (do
 			}
 			return domain.Run{}, ctx.Err()
 		case <-ticker.C:
-			if parent, ok := e.repo.RunState(parentID); ok && (parent.CancelRequested || parent.Status == "cancelled") {
+			if parent, ok := e.repo.RunProgress(parentID); ok && (parent.CancelRequested || parent.Status == "cancelled") {
 				_ = e.Cancel(childID)
 				return domain.Run{}, fmt.Errorf("父流程已取消")
 			}
-			child, ok := e.repo.RunState(childID)
+			// Poll without artifact bodies; the handoff reads them once.
+			child, ok := e.repo.RunProgress(childID)
 			if !ok {
 				return domain.Run{}, fmt.Errorf("子 SOP 运行消失")
 			}
 			if domain.TerminalRunStatus(child.Status) {
+				if child, ok = e.repo.RunState(childID); !ok {
+					return domain.Run{}, fmt.Errorf("读取子 SOP %s 的产物失败", childID)
+				}
 				return child, nil
 			}
 		}
@@ -275,7 +306,10 @@ func importChildArtifacts(parentID string, node domain.WorkflowNode, attempt int
 	for _, name := range order {
 		art := latest[name]
 		have[name] = true
-		art.ID = fmt.Sprintf("art-%s-%s-%d", parentID, name, now.UnixNano())
+		// Keep the key stable for this handoff and within run_artifacts.id's 64 characters.
+		key := fmt.Sprintf("%q/%q/%d/%q/%q", parentID, node.ID, attempt, child.ID, name)
+		sum := sha256.Sum256([]byte(key))
+		art.ID = fmt.Sprintf("art-%x", sum[:20])
 		art.RunID = parentID
 		art.NodeID = node.ID
 		art.Attempt = attempt

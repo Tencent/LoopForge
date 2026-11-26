@@ -185,10 +185,12 @@ func delegationContext(req *assistantRequest, prefs domain.AssistantPreferences,
 	if mode == AssistantApprovalAuto || !hasSOP {
 		return b.String()
 	}
-	b.WriteString("## 交给 SOP 前先征得同意\n")
 	if mode == AssistantApprovalAssisted {
-		b.WriteString("当前是帮我批准：你自己决定走 SOP 时也直接调用写入工具，由独立 AI 审查这件事是否该走 SOP，通过才执行；未通过转成草稿时，按下面的规则带上 proposal 交给用户确认。\n")
+		b.WriteString("## 交给 SOP 的审批方式\n")
+		b.WriteString("当前是帮我批准：你自己决定走 SOP 时直接调用写入工具（需求还没建时用绑定 SOP 的 issues_save，已存在时用 issues_dispatch），由独立 AI 审查这件事是否该走 SOP 并直接裁决，无需提交草稿卡片；若被拒绝，按拒绝原因调整或直接自己处理。\n")
+		return b.String()
 	}
+	b.WriteString("## 交给 SOP 前先征得同意\n")
 	b.WriteString(assistantProposalRules)
 	history := proposalHistory(req.Messages)
 	if history.Muted {
@@ -237,7 +239,7 @@ const (
 // for, outside full access, and rejects proposals the conversation no longer
 // accepts, before submit_assistant_reply ends the turn.
 func (h *assistantHandlers) vetProposalDrafts(session *AgentToolSession, reply *assistantReply) error {
-	if session.ExecMode.AutoWrite && !session.ExecMode.ReviewWrites {
+	if session.ExecMode.AutoWrite {
 		return nil
 	}
 	var messages []assistantMessage
@@ -374,7 +376,7 @@ func (h *assistantHandlers) decideProposal(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "未知的处理方式"})
 		return
 	}
-	if job, ok := h.repo.AssistantGeneration(ownerID, id); ok && job.Status == "running" {
+	if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {
 		c.JSON(409, gin.H{"error": "请等待回复结束后再处理建议"})
 		return
 	}
@@ -412,6 +414,8 @@ func (h *assistantHandlers) decideProposal(c *gin.Context) {
 	next := existing
 	next.Messages = append([]assistantMessage(nil), existing.Messages...)
 	next.Messages[body.MessageIndex].Content = jsonObject(content)
+	// Recording a decision never renames; keep a title saved since the read.
+	next.TitleEdited = false
 	var saveErr error
 	if shared {
 		saveErr = h.repo.PutSharedAssistantReceipt(ownerID, next, existing)

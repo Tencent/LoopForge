@@ -249,7 +249,6 @@ func (h *roomsHandlers) dispatchRoomIssue(c *gin.Context, room domain.ChatRoom, 
 		}
 		workflowNames[i] = wf.Name
 	}
-	firstWorkflowID, firstWorkflowName := workflowIDs[0], workflowNames[0]
 	userID, author := h.roomActor(c)
 	if id := strings.TrimSpace(req.IssueID); id != "" {
 		existing, found := h.repo.Issue(id)
@@ -268,19 +267,12 @@ func (h *roomsHandlers) dispatchRoomIssue(c *gin.Context, room domain.ChatRoom, 
 		Priority:    "medium",
 		Kind:        "issue",
 		Source:      "local",
-		WorkflowID:  firstWorkflowID,
+		WorkflowID:  workflowIDs[0],
 	}
 	if userID > 0 {
 		issue.AssigneeUserID = userID
 	}
-	_, _, targetName := roomTarget(firstWorkflowID, firstWorkflowName, "", "")
-	if len(workflowIDs) > 1 {
-		quoted := make([]string, len(workflowNames))
-		for i, name := range workflowNames {
-			quoted[i] = "「" + fallbackName(name, workflowIDs[i]) + "」"
-		}
-		targetName = "SOP" + strings.Join(quoted, "、")
-	}
+	_, _, targetName := roomDispatchTarget(workflowIDs, workflowNames)
 	issue.AppendOperation(domain.IssueOperation{
 		Actor: author, ActorUserID: userID, Action: "create",
 		Detail: "从协作群「" + room.Name + "」建单，派给" + targetName,
@@ -296,14 +288,7 @@ func (h *roomsHandlers) dispatchRoomIssue(c *gin.Context, room domain.ChatRoom, 
 // dispatchToIssue starts each workflow on stored and records one dispatch
 // message per lane on the room timeline.
 func (h *roomsHandlers) dispatchToIssue(c *gin.Context, room domain.ChatRoom, stored domain.Issue, description string, workflowIDs, workflowNames []string, userID int64, author string) (roomIssueResult, bool) {
-	targetType, targetID, targetName := roomTarget(workflowIDs[0], workflowNames[0], "", "")
-	if len(workflowIDs) > 1 {
-		quoted := make([]string, len(workflowNames))
-		for i, name := range workflowNames {
-			quoted[i] = "「" + fallbackName(name, workflowIDs[i]) + "」"
-		}
-		targetType, targetName = "multi", "SOP"+strings.Join(quoted, "、")
-	}
+	targetType, targetID, targetName := roomDispatchTarget(workflowIDs, workflowNames)
 	result := roomIssueResult{Issue: stored}
 	base := domain.ChatMessage{
 		RoomID: room.ID, UserID: userID, Author: author, Kind: domain.ChatKindDispatch,
@@ -355,6 +340,21 @@ func (h *roomsHandlers) dispatchToIssue(c *gin.Context, room domain.ChatRoom, st
 	result.Message = messages[0]
 	result.Messages = messages
 	return result, true
+}
+
+// roomDispatchTarget describes the SOPs a room dispatches to. A single SOP
+// reuses roomTarget; several SOPs become a "multi" target keyed by the first
+// SOP and named after every SOP in dispatch order.
+func roomDispatchTarget(workflowIDs, workflowNames []string) (typ, id, name string) {
+	typ, id, name = roomTarget(workflowIDs[0], workflowNames[0], "", "")
+	if len(workflowIDs) > 1 {
+		quoted := make([]string, len(workflowNames))
+		for i, workflowName := range workflowNames {
+			quoted[i] = "「" + fallbackName(workflowName, workflowIDs[i]) + "」"
+		}
+		typ, name = "multi", "SOP"+strings.Join(quoted, "、")
+	}
+	return typ, id, name
 }
 
 func roomTarget(workflowID, workflowName, agentID, agentName string) (typ, id, name string) {

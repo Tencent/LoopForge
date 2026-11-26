@@ -49,7 +49,7 @@ async function openIssueDetail(id,tab){
       try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true})}catch(e){}
       if(deletionTask?.issueId!==issueId)deletionTask=null;
     }
-    state.issueDetailData={issue,comments,run,task,requirement,deletionTask};
+    state.issueDetailData={issue,comments,run,task,requirement,deletionTask,images:detail.images||[]};
     const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsConfirm=clarificationNeedsConfirm(issue);
     state.issueDetailTab=tab||(issueClarifying(issueId)||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
     $$('#issueDetailTabs .drawer-tab').forEach(b=>b.classList.toggle('active',b.dataset.dtab===state.issueDetailTab));
@@ -178,6 +178,10 @@ function renderIssueDetailTab(){
   host.querySelectorAll('[data-edit-issue]').forEach(b=>b.onclick=()=>{closeIssueDrawer();openIssue(issue)});
   host.querySelectorAll('[data-dispatch-issue]').forEach(b=>b.onclick=()=>triggerIssue(b.dataset.dispatchIssue,b.dataset.workflow));
   host.querySelectorAll('[data-retrigger-issue]').forEach(b=>b.onclick=()=>retriggerIssue(b.dataset.retriggerIssue,b.dataset.workflow));
+  host.querySelectorAll('[data-chat-issue]').forEach(b=>b.onclick=()=>openIssueInChatById(b.dataset.chatIssue));
+  const noSOPWorkflow=()=>host.querySelector('[data-no-sop-workflow]')?.value||'';
+  host.querySelectorAll('[data-no-sop-bind]').forEach(b=>b.onclick=()=>addIssueSOP(b.dataset.noSopBind,noSOPWorkflow()));
+  host.querySelectorAll('[data-no-sop-run]').forEach(b=>b.onclick=()=>triggerIssue(b.dataset.noSopRun,noSOPWorkflow()));
   host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode((b.dataset.run&&(state.data.runs||[]).find(r=>r.id===b.dataset.run))||data.run,b.dataset.rerunFromHere));
   host.querySelectorAll('[data-toggle-sop-row]').forEach(el=>el.onclick=e=>{
     if(e.target.closest('button,a,select,input,.user-combobox'))return;
@@ -219,7 +223,7 @@ function renderIssueDetailTab(){
       if(!wasSelected)b.classList.add('selected');
     }
   });
-  host.querySelectorAll('[data-clarify-model]').forEach(bindClarifyModelPicker);
+  host.querySelectorAll('[data-clarify-model]').forEach(picker=>bindClarifyModelPicker(picker,issue));
   bindWaitingActions(host);
   if(state.issueDetailTab==='clarify'&&issueClarifying(issue.id))restoreIssueClarifyThinking(issue.id);
   if(clarifyDraft)restoreIssueClarifyDraft(host,clarifyDraft);
@@ -267,8 +271,8 @@ function openIssueClarification(autoStart=false,restart=false){
   }
   renderIssueDetailTab();
   if(autoStart&&issue.clarification.status==='analyzing')attachIssueClarifyStream(issue.id);
-  else if(autoStart&&clarifyKickoffPending(issue))setTimeout(()=>sendIssueClarification(CLARIFY_AUTO_PROMPTS[0]),0);
-  else if(restart)setTimeout(()=>sendIssueClarification(CLARIFY_AUTO_PROMPTS[1]),0);
+  else if(autoStart&&clarifyKickoffPending(issue))void sendIssueClarification(CLARIFY_AUTO_PROMPTS[0]);
+  else if(restart)void sendIssueClarification(CLARIFY_AUTO_PROMPTS[1]);
 }
 function collectIssueClarifyReply(){
   const parts=[];
@@ -285,7 +289,6 @@ function collectIssueClarifyReply(){
 }
 function retryIssueClarifyTurn(){
   const issue=state.issueDetailData?.issue;if(!issue)return;
-  if(issue.clarification)issue.clarification.lastError='';
   const last=(issue.clarification?.history||[]).filter(h=>h.role==='user').pop();
   sendIssueClarification(last?.content||CLARIFY_AUTO_PROMPTS[0]);
 }
@@ -405,6 +408,12 @@ async function sendIssueClarification(initialMessage=''){
     attachIssueClarifyStream(issueId);
     return;
   }
+  const picker=$('#issueDetailBody [data-clarify-model]');
+  await picker?.modelPickerReady;
+  if(state.issueDetailData?.issue?.id!==issueId||issueClarifyJobs.get(issueId)?.attached)return;
+  if(picker&&!picker.isConnected&&(!initialMessage||!state.drawerOpen||state.issueDetailTab!=='clarify'))return;
+  const model=picker?.querySelector('[data-feature-model]')?.value||undefined;
+  if(!model&&!initialMessage)return toast('暂无可选模型，请检查个人配置中的执行器');
   const msg=initialMessage||collectIssueClarifyReply();
   if(!msg)return toast('请先选择或填写答案');
   const c=issue.clarification||(issue.clarification={});
@@ -421,7 +430,7 @@ async function sendIssueClarification(initialMessage=''){
   renderIssueDetailTab();
   renderIssues();
   try{
-    const resp=await fetch(`/api/issues/${encodeURIComponent(issueId)}/chat-clarify`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({message:msg,history,model:selectedClarifyModel()}),signal:abort.signal});
+    const resp=await fetch(`/api/issues/${encodeURIComponent(issueId)}/chat-clarify`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({message:msg,history,model}),signal:abort.signal});
     if(!resp.ok){let em=`HTTP ${resp.status}`;try{const d=await resp.json();em=d.error||em}catch{}throw new Error(em)}
     const data=(resp.headers.get('Content-Type')||'').includes('text/event-stream')?await consumeIssueClarifyStream(resp,issueId):await resp.json();
     await applyIssueClarifyDone(issueId,data);
@@ -538,8 +547,16 @@ function overviewPane(issue,data){
   const ch=convo?conversationHeadState(issue):null;
   const banner=ch?`<div class="issue-outcome conv-outcome ${escapeHTML(ch.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(ch.label)}</b><p>${escapeHTML(ch.hint||'')}</p><div class="issue-outcome-actions">${actions}</div></div>`
     :`<div class="issue-outcome ${out.key}"><b>${escapeHTML(out.title)}</b><p>${escapeHTML(out.body)}</p><div class="issue-outcome-actions">${actions}</div></div>`;
-  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',convo?'无 · 对话里直接改代码':escapeHTML(workflow?.name||'未关联'))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
-  return `<div class="detail-section">${banner}${facts}${issue.description?`<div class="detail-desc" style="margin-top:12px">${escapeHTML(issue.description)}</div>`:''}${clarificationOverviewCard(issue)}</div>`;
+  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 SOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
+  const description=issue.description?`<div class="markdown-body">${renderRequirementMarkdown(issue.description)}</div>`:'';
+  const images=(data.images||[]).map(image=>{
+    const url=`/api/issues/${encodeURIComponent(issue.id)}/images/${encodeURIComponent(image.id)}`;
+    const name=escapeHTML(image.name||'需求图片');
+    return `<li><a href="${url}" target="_blank" rel="noopener noreferrer"><img src="${url}" alt="${name}" loading="lazy"></a></li>`;
+  }).join('');
+  const gallery=images?`<ul class="issue-description-images" aria-label="需求图片">${images}</ul>`:'';
+  const content=description||gallery?`<div class="detail-desc issue-description">${description}${gallery}</div>`:'';
+  return `<div class="detail-section">${banner}${facts}${content}${clarificationOverviewCard(issue)}</div>`;
 }
 function clarifyHistoryHTML(c){
   const rows=[];
@@ -761,8 +778,17 @@ function deliveryPane(issue,data){
   if(!conversationWorkspaceIssue(issue,data.run))return sopDeliveryPane(issue,data);
   return `<div class="detail-section"><h3>代码仓库与分支<span class="sub">对话工作区检出的仓库</span></h3>${conversationRepoCards(issue,data)}</div><div class="detail-section"><h3>交付方式<span class="sub">在对话工作区里直接改代码，没有 SOP 运行</span></h3><div class="issue-outcome-actions">${conversationSessionButton(issue,data)||'<span class="muted">没有关联的会话</span>'}</div></div>`;
 }
+function noSOPPaneHTML(issue){
+  const opts=runnableWorkflowOptions();
+  const blocked=issueExecutionBlocked(issue);
+  const picker=opts.length
+    ?`<div class="no-sop-switch"><select class="select" data-no-sop-workflow aria-label="选择 SOP">${opts.map(w=>`<option value="${escapeHTML(w.id)}">${escapeHTML(w.name)}</option>`).join('')}</select><button class="button ghost small" data-no-sop-bind="${escapeHTML(issue.id)}">只绑定</button>${blocked?'':`<button class="button ghost small" data-no-sop-run="${escapeHTML(issue.id)}">绑定并触发</button>`}</div>`
+    :'<p class="muted">当前项目还没有可运行的 SOP。</p>';
+  return `<div class="detail-section"><div class="issue-outcome conv-outcome"><span class="conv-outcome-kicker">不使用 SOP</span><b>这条需求不走 SOP</b><p>在对话里澄清需求、直接改代码；定时任务不会自动认领它。</p><div class="issue-outcome-actions"><button class="button primary small" data-chat-issue="${escapeHTML(issue.id)}">去对话处理</button></div></div></div><div class="detail-section"><h3>改为按 SOP 交付<span class="sub">绑定后这条需求按 SOP 跟进，也会参与定时触发</span></h3>${picker}</div>`;
+}
 function sopPane(issue,data){
   if(conversationWorkspaceIssue(issue,data.run))return conversationDeliveryHTML(issue,data);
+  if(issueWithoutSOP(issue))return noSOPPaneHTML(issue);
   const snap=data.requirement||{};
   const lanes=snap.lanes||clientIssueLanes(issue);
   const overall=snap.overall||{};
@@ -906,29 +932,40 @@ function activityEventLabel(type){
 function issueOperationLabel(action){
   return {create:'创建需求',update:'编辑需求',close:'关闭需求',reopen:'重新打开',dispatch:'触发 SOP'}[action]||action||'操作';
 }
+// 聊天 Bot 发起的操作：actor 仍是执行所用的平台账号，这里补出是哪个 IM 用户发起的。
+// 渠道报了显示名就用名字，没报（企业微信、飞书只给 ID）就用 ID，后面的平台账号本身带真名。
+function issueOperationOrigin(op){
+  const sender=(op?.actorSender||'').trim();
+  if(!sender)return '';
+  const channel={wecom:'企业微信',feishu:'飞书',dingtalk:'钉钉'}[op.actorChannel]||op.actorChannel||'聊天';
+  const named=(op.actorSenderName||'').trim();
+  return `${channel} ${named?`${named}（${sender}）`:sender}`;
+}
 function issueOperationEntries(issue){
   const stored=(issue?.operations||[]).map(op=>({
     t:new Date(op.at).getTime(),
     action:op.action||'',
     actor:op.actor||'',
+    origin:issueOperationOrigin(op),
     label:issueOperationLabel(op.action),
     detail:op.detail||''
   })).filter(op=>!Number.isNaN(op.t));
   const inferred=[];
   if(issue?.createdAt&&!stored.some(op=>op.action==='create')){
-    inferred.push({t:new Date(issue.createdAt).getTime(),action:'create',actor:'',label:'创建需求',detail:'按创建时间补记'});
+    inferred.push({t:new Date(issue.createdAt).getTime(),action:'create',actor:'',origin:'',label:'创建需求',detail:'按创建时间补记'});
   }
   if(issueManuallyClosed(issue)&&issue.deliveryUpdatedAt&&!stored.some(op=>op.action==='close')){
-    inferred.push({t:new Date(issue.deliveryUpdatedAt).getTime(),action:'close',actor:'',label:'关闭需求',detail:'手动关闭'});
+    inferred.push({t:new Date(issue.deliveryUpdatedAt).getTime(),action:'close',actor:'',origin:'',label:'关闭需求',detail:'手动关闭'});
   }
   return stored.concat(inferred).filter(op=>!Number.isNaN(op.t)).sort((a,b)=>b.t-a.t);
 }
 function operationsPane(issue){
   const rows=issueOperationEntries(issue).map(e=>{
-    const detail=[e.actor,e.detail].filter(Boolean).join(' · ');
+    const who=e.origin?(e.actor?`${e.origin}（平台账号 ${e.actor}）`:e.origin):e.actor;
+    const detail=[who,e.detail].filter(Boolean).join(' · ');
     return `<div class="activity-row"><time>${formatActivityTime(e.t)}</time><b>${escapeHTML(e.label)}</b><p>${escapeHTML(detail||'—')}</p></div>`;
   }).join('');
-  return `<div class="detail-section"><h3>操作日志<span class="sub">关闭、重新打开、编辑和触发都会记在这里</span></h3>${rows?`<div class="activity-list">${rows}</div>`:'<div class="detail-empty compact">还没有操作记录</div>'}</div>`;
+  return `<div class="detail-section"><h3>操作日志<span class="sub">关闭、重新打开、编辑和触发都会记在这里；聊天发起的操作会标明 IM 用户</span></h3>${rows?`<div class="activity-list">${rows}</div>`:'<div class="detail-empty compact">还没有操作记录</div>'}</div>`;
 }
 function activityPane(issue,data){
   const comments=data.comments||[],task=data.task,run=data.run;

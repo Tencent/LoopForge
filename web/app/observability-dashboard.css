@@ -1,0 +1,72 @@
+/* Compact panels extend the existing Harness statistics filters and cards.
+ * MIT attribution: harness-ui-LICENSE.txt. */
+#observabilityView .obs-summary-layout{display:flex;flex-direction:column;gap:14px}
+#observabilityView #obsLiveState.is-error{color:var(--hui-error);background:color-mix(in srgb,var(--hui-error) 10%,var(--hui-surface))}
+#observabilityView #obsLiveState.is-error i{background:var(--hui-error);animation:none}
+#observabilityView .obs-summary-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+#observabilityView .obs-summary-overview{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:24px}
+:is(#observabilityView,#obsExpand) .obs-summary-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;padding:8px 0}
+:is(#observabilityView,#obsExpand) .obs-summary-values.is-vibe{grid-template-columns:repeat(4,minmax(0,1fr))}
+:is(#observabilityView,#obsExpand) .obs-summary-values .obs-kpi{gap:9px;padding-top:4px;padding-bottom:4px}
+#observabilityView .obs-summary-layout .obs-chart[data-empty]{height:92px!important}
+:is(#observabilityView,#obsExpand) .obs-summary-cost{gap:10px}
+:is(#observabilityView,#obsExpand) .obs-summary-cost .obs-card-head{align-items:center;flex-wrap:wrap}
+:is(#observabilityView,#obsExpand) .obs-summary-cost .obs-card-tools{flex:1;min-width:min(100%,300px)}
+:is(#observabilityView,#obsExpand) .obs-summary-cost h3{margin:0;color:var(--hui-text);font-size:13.5px;font-weight:650}
+:is(#observabilityView,#obsExpand) .obs-summary-cost .obs-summary-values{flex:1;max-width:520px;margin-left:auto;grid-template-columns:repeat(2,minmax(0,1fr))}
+:is(#observabilityView,#obsExpand) .obs-summary-cost .obs-kpi-value .num{font-size:21px}
+:is(#observabilityView,#obsExpand) .obs-token-tabs{display:flex;max-width:100%;overflow-x:auto}
+:is(#observabilityView,#obsExpand) .obs-token-table{max-height:260px;overflow:auto}
+:is(#observabilityView,#obsExpand) .obs-token-table td{overflow-wrap:anywhere}
+#observabilityView .obs-summary-pair [data-obs-card="human"] .obs-card-head{flex-wrap:wrap}
+#observabilityView .obs-summary-pair [data-obs-card="human"] .obs-card-tools{margin-left:auto}
+#observabilityView [data-obs-card="human"] .obs-card-tools,
+#obsExpand [data-obs-card="human"] .obs-card-tools{flex-wrap:wrap}
+#observabilityView .obs-human-controls,
+#obsExpand .obs-human-controls{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+#observabilityView .obs-human-controls select,
+#obsExpand .obs-human-controls select{width:180px;max-width:100%;height:32px}
+#observabilityView .obs-human-legend,
+#obsExpand .obs-human-legend{display:flex;align-items:center;flex-wrap:wrap;gap:14px;padding:4px 0;color:var(--hui-muted);font-size:12px}
+#observabilityView .obs-human-legend>span,
+#obsExpand .obs-human-legend>span{display:inline-flex;align-items:center;gap:5px}
+#observabilityView .obs-human-legend i,
+#obsExpand .obs-human-legend i{width:7px;height:7px;border-radius:2px;background:var(--hui-accent)}
+#observabilityView .obs-human-legend i.blue,
+#obsExpand .obs-human-legend i.blue{background:var(--hui-info)}
+#observabilityView .obs-human-legend i.amber,
+#obsExpand .obs-human-legend i.amber{background:var(--hui-warn)}
+@media(max-width:1100px){
+  #observabilityView .obs-summary-pair{grid-template-columns:minmax(0,1fr)}
+  #observabilityView .obs-summary-overview{grid-template-columns:minmax(0,1fr);gap:10px}
+}
+@media(max-width:650px){
+  #observabilityView .obs-summary-values.is-vibe{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:18px}
+  #observabilityView .obs-summary-values.is-vibe .obs-kpi:nth-child(3){border-left:0;padding-left:0}
+  #observabilityView .obs-summary-cost .obs-card-head{width:100%;align-items:stretch}
+  #observabilityView .obs-summary-cost .obs-card-tools{width:100%;justify-content:flex-start}
+  #observabilityView .obs-summary-cost .obs-summary-values{width:100%;margin:0}
+  #observabilityView .obs-summary-cost .obs-kpi-value .num{font-size:18px;overflow-wrap:anywhere}
+  #observabilityView .obs-scopeline .obs-chip{max-width:100%;height:auto;min-height:24px;padding:4px 8px;white-space:normal;line-height:1.4}
+  #observabilityView .obs-human-controls{justify-content:flex-start;width:100%}
+  #observabilityView [data-obs-card="human"] .obs-card-head{align-items:flex-start;flex-wrap:wrap}
+  #observabilityView [data-obs-card="human"] .obs-card-tools{min-width:0;max-width:100%}
+  #observabilityView .obs-human-controls select{width:100%}
+}
+@media(prefers-reduced-motion:reduce){
+  #observabilityView .obs-summary-layout *,
+  #obsExpand [data-obs-card="human"] *{animation:none!important;transition:none!important}
+}
+
+#obsExpand .obs-summary-cost .obs-kpi{display:flex;flex-direction:column;min-width:0;padding:4px 14px}
+#obsExpand .obs-summary-cost .obs-kpi:first-child{padding-left:0}
+#obsExpand .obs-summary-cost .obs-kpi+.obs-kpi{border-left:1px solid var(--hui-border)}
+#obsExpand .obs-summary-cost .obs-kpi-label{color:var(--hui-muted);font-size:12px}
+#obsExpand .obs-summary-cost .obs-kpi-value .num{color:var(--hui-text);font-weight:650;font-variant-numeric:tabular-nums}
+:is(#observabilityView,#obsExpand) :is(.obs-human-controls,.obs-sop-values,.obs-vibe-legend)[hidden]{display:none!important}
+:is(#observabilityView,#obsExpand) .obs-human-controls{justify-content:flex-start}
+#obsExpand .obs-sop-values .obs-kpi{display:flex;flex-direction:column;min-width:0;padding:4px 14px}
+#obsExpand .obs-sop-values .obs-kpi:first-child{padding-left:0}
+#obsExpand .obs-sop-values .obs-kpi+.obs-kpi{border-left:1px solid var(--hui-border)}
+#obsExpand .obs-sop-values .obs-kpi-label{color:var(--hui-muted);font-size:12px}
+#obsExpand .obs-sop-values .obs-kpi-value .num{color:var(--hui-text);font-size:24px;font-weight:650}

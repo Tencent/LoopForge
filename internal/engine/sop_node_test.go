@@ -20,24 +20,78 @@ func TestSOPNodeRunsChildAndHandsOffArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	run := startSOPArtifactHandoff(t, s)
+	waitFor(t, s, run.ID, "succeeded")
+	finished, _ := s.Run(run.ID)
+	if finished.Nodes["prd-sop"].Status != "succeeded" || strings.TrimSpace(finished.Nodes["prd-sop"].ChildRunID) == "" {
+		t.Fatalf("sop node=%#v", finished.Nodes["prd-sop"])
+	}
+	if finished.Nodes["use"].Status != "succeeded" {
+		t.Fatalf("downstream node=%#v", finished.Nodes["use"])
+	}
+	for _, art := range finished.Artifacts {
+		if art.NodeID == "prd-sop" && art.Name == "test-branch-merge" && strings.Contains(art.Content, "ready") {
+			if len(art.ID) > 64 {
+				t.Fatalf("imported artifact ID exceeds run_artifacts.id width: %q", art.ID)
+			}
+			return
+		}
+	}
+	t.Fatalf("parent did not inherit child artifact: %+v", finished.Artifacts)
+}
+
+func TestSOPNodeArtifactWriteFailureKeepsSuccessfulChild(t *testing.T) {
+	t.Parallel()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.DB.Exec("CREATE TRIGGER reject_import BEFORE INSERT ON run_artifacts " +
+		"WHEN NEW.node_id = 'prd-sop' BEGIN SELECT RAISE(ABORT, 'artifact write rejected'); END").Error; err != nil {
+		t.Fatal(err)
+	}
+	run := startSOPArtifactHandoff(t, s)
+	finished := waitRun(t, s, run.ID, 5*time.Second, func(r domain.Run) bool { return r.Status == "failed" })
+	node := finished.Nodes["prd-sop"]
+	if node.Status != "failed" || node.Attempt != 1 || !strings.Contains(node.Error, "artifact write rejected") {
+		t.Fatalf("sop node did not report the first attempt's write error: %#v", node)
+	}
+	child, ok := s.RunState(node.ChildRunID)
+	if !ok || child.Status != "succeeded" || childRunsOf(s, run.ID) != 1 {
+		t.Fatalf("parent did not retain its only successful child: %q (%s)", node.ChildRunID, child.Status)
+	}
+	page, err := s.QueryRunTelemetry(run.ID, "prd-sop", "", 0, 0, false, false, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range page.Events {
+		if event.Name == "artifact.published" {
+			t.Fatalf("rolled back artifact was reported as published: %+v", event)
+		}
+	}
+}
+
+func startSOPArtifactHandoff(t *testing.T, s *repo.Store) domain.Run {
+	t.Helper()
 	child := domain.WorkflowDefinition{
-		ID: "child-prd", Name: "Child PRD", SandboxProfileID: "local",
+		ID: "child-prd", Name: "Child PRD", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{
 			ID: "write", Name: "Write", Type: "script", ScriptLanguage: "shell",
 			Script: "printf '# PRD\\nready\\n' > prd.md", MaxAttempts: 1,
-			ArtifactOutputs: []domain.ArtifactContract{{Name: "prd", Path: "prd.md", Required: true}},
+			ArtifactOutputs: []domain.ArtifactContract{{Name: "test-branch-merge", Path: "prd.md", Required: true}},
 		}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "req-flow", Name: "Requirement flow", SandboxProfileID: "local",
+		ID: "req-flow", Name: "Requirement flow", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{
-				ID: "prd-sop", Name: "产品 SOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1,
-				ArtifactOutputs: []domain.ArtifactContract{{Name: "prd", Path: "prd.md", Required: true}},
+				ID: "prd-sop", Name: "产品 SOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 2,
+				ArtifactOutputs: []domain.ArtifactContract{{Name: "test-branch-merge", Path: "prd.md", Required: true}},
 			},
 			{
 				ID: "use", Name: "Use", Type: "script", ScriptLanguage: "shell",
-				Script: "test -f .agentflow/inputs/prd-sop/prd.md", MaxAttempts: 1,
+				Script: "test -f .agentflow/inputs/prd-sop/test-branch-merge.md", MaxAttempts: 1,
 			},
 		},
 		Edges: []domain.WorkflowEdge{{ID: "e1", Source: "prd-sop", Target: "use", When: "success"}},
@@ -53,23 +107,7 @@ func TestSOPNodeRunsChildAndHandsOffArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, s, run.ID, "succeeded")
-	finished, _ := s.Run(run.ID)
-	if finished.Nodes["prd-sop"].Status != "succeeded" || strings.TrimSpace(finished.Nodes["prd-sop"].ChildRunID) == "" {
-		t.Fatalf("sop node=%#v", finished.Nodes["prd-sop"])
-	}
-	if finished.Nodes["use"].Status != "succeeded" {
-		t.Fatalf("downstream node=%#v", finished.Nodes["use"])
-	}
-	found := false
-	for _, art := range finished.Artifacts {
-		if art.NodeID == "prd-sop" && art.Name == "prd" && strings.Contains(art.Content, "ready") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("parent did not inherit child artifact: %+v", finished.Artifacts)
-	}
+	return run
 }
 
 // 子 SOP 成功不能把整条需求标成已交付；父流程失败时需求仍要能重试。
@@ -85,11 +123,11 @@ func TestSOPChildSuccessDoesNotDeliverParentIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 	child := domain.WorkflowDefinition{
-		ID: "child-ok", Name: "Child", SandboxProfileID: "local",
+		ID: "child-ok", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "ok", Name: "OK", Type: "script", ScriptLanguage: "shell", Script: "true", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "parent-fails", Name: "Parent", SandboxProfileID: "local",
+		ID: "parent-fails", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 			{ID: "boom", Name: "Boom", Type: "script", ScriptLanguage: "shell", Script: "exit 1", MaxAttempts: 1},
@@ -128,11 +166,11 @@ func TestSOPNodeReattachesChildAfterDrain(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: "slow-child", Name: "Slow child", SandboxProfileID: "local",
+		ID: "slow-child", Name: "Slow child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 3}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "parent-drain", Name: "Parent", SandboxProfileID: "local",
+		ID: "parent-drain", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 3}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{child, parent} {
@@ -219,11 +257,11 @@ func TestSOPNodePauseCascadesAndReusesFinishedChild(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: "pause-child", Name: "Child", SandboxProfileID: "local",
+		ID: "pause-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "pause-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "pause-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{child, parent} {
@@ -281,15 +319,15 @@ func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	oldChild := domain.WorkflowDefinition{
-		ID: "old-child", Name: "Old", SandboxProfileID: "local",
+		ID: "old-child", Name: "Old", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	newChild := domain.WorkflowDefinition{
-		ID: "new-child", Name: "New", SandboxProfileID: "local",
+		ID: "new-child", Name: "New", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "ok", Name: "OK", Type: "command", Command: "true", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "repoint-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "repoint-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: oldChild.ID, MaxAttempts: 1}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{oldChild, newChild, parent} {
@@ -366,11 +404,11 @@ func pauseParentThen(t *testing.T, cancelInstead bool) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: "resume-child", Name: "Child", SandboxProfileID: "local",
+		ID: "resume-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "resume-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "resume-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{child, parent} {
@@ -427,11 +465,11 @@ func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "ok")
 	child := domain.WorkflowDefinition{
-		ID: "flaky-child", Name: "Child", SandboxProfileID: "local",
+		ID: "flaky-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "check", Name: "Check", Type: "command", Command: "test -e " + marker, MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "flaky-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "flaky-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 			{ID: "after", Name: "After", Type: "command", Command: "true", MaxAttempts: 1},
@@ -474,11 +512,11 @@ func startPausedParentWithChild(t *testing.T, s *repo.Store, e *Engine, prefix s
 	t.Helper()
 	marker = filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: prefix + "-child", Name: "Child", SandboxProfileID: "local",
+		ID: prefix + "-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: prefix + "-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: prefix + "-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1}},
 	}
 	if before {
@@ -565,11 +603,11 @@ func TestSOPChildPassResumesFailedParent(t *testing.T) {
 	}
 	defer s.Close()
 	child := domain.WorkflowDefinition{
-		ID: "pass-child", Name: "Child", SandboxProfileID: "local",
+		ID: "pass-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "check", Name: "Check", Type: "command", Command: "false", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "pass-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "pass-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 			{ID: "after", Name: "After", Type: "command", Command: "true", MaxAttempts: 1},
@@ -606,7 +644,7 @@ func TestSOPNodeRejectsSelfReference(t *testing.T) {
 	}
 	defer s.Close()
 	wf := domain.WorkflowDefinition{
-		ID: "loop", Name: "Loop", SandboxProfileID: "local",
+		ID: "loop", Name: "Loop", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "self", Name: "Self", Type: "sop", SOPWorkflowID: "loop", MaxAttempts: 1}},
 	}
 	if err := s.PutWorkflow(wf); err != nil {

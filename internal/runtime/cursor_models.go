@@ -83,6 +83,7 @@ var cursorModels = []CursorModel{
 	{ID: "gpt-5.2-fast", Name: "GPT-5.2 Fast", Default: "medium", Variants: map[string]string{"low": "gpt-5.2-low-fast", "medium": "gpt-5.2-fast", "high": "gpt-5.2-high-fast", "xhigh": "gpt-5.2-xhigh-fast"}},
 	{ID: "gpt-5.1", Name: "GPT-5.1", Default: "medium", Variants: map[string]string{"low": "gpt-5.1-low", "medium": "gpt-5.1", "high": "gpt-5.1-high"}},
 	{ID: "gpt-5-mini", Name: "GPT-5 Mini", Default: "", Variants: map[string]string{"": "gpt-5-mini"}},
+	{ID: "gemini-4-neon", Name: "Gemini 4 Neon", Default: "medium", Variants: map[string]string{"low": "gemini-4-neon-low", "medium": "gemini-4-neon-medium", "high": "gemini-4-neon-high", "xhigh": "gemini-4-neon-xhigh"}},
 	{ID: "gemini-4-carbon", Name: "Gemini 4 Carbon", Default: "medium", Variants: map[string]string{"low": "gemini-4-carbon-low", "medium": "gemini-4-carbon-medium", "high": "gemini-4-carbon-high"}},
 	{ID: "gemini-4-hydrogen", Name: "Gemini 4 Hydrogen", Default: "medium", Variants: map[string]string{"low": "gemini-4-hydrogen-low", "medium": "gemini-4-hydrogen-medium", "high": "gemini-4-hydrogen-high", "xhigh": "gemini-4-hydrogen-xhigh"}},
 	{ID: "gemini-4-argon", Name: "Gemini 4 Argon", Default: "medium", Variants: map[string]string{"low": "gemini-4-argon-low", "medium": "gemini-4-argon-medium", "high": "gemini-4-argon-high"}},

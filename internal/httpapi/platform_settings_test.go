@@ -240,6 +240,9 @@ func stubCLIModelDiscovery(t *testing.T) {
 	t.Helper()
 	old := discoverCLIModels
 	discoverCLIModels = func(context.Context, string, string) []string { return nil }
+	cliModelMu.Lock()
+	cliModelCache = map[string]cliModelEntry{}
+	cliModelMu.Unlock()
 	t.Cleanup(func() {
 		discoverCLIModels = old
 		cliModelMu.Lock()

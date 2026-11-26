@@ -18,12 +18,17 @@ func (r *AnalyticsRepo) analyticsActivity(filter domain.AnalyticsFilter, issues 
 		return nil
 	}
 	points := map[string]*domain.AnalyticsActivityPoint{}
+	activeMembers := map[int64]bool{}
 	add := func(at time.Time, count func(*domain.AnalyticsActivity)) {
 		if !analyticsActivityInWindow(at, filter) {
 			return
 		}
 		count(&out.Activity)
-		key := analyticsTrendBucket(at.UTC(), filter.Grain)
+		bucketAt := at.UTC()
+		if filter.Scope == "dashboard" {
+			bucketAt = at.In(analyticsWeekHourLocation(filter.TimeZone))
+		}
+		key := analyticsTrendBucket(bucketAt, filter.Grain)
 		if points[key] == nil {
 			points[key] = &domain.AnalyticsActivityPoint{Date: key}
 		}
@@ -148,6 +153,11 @@ func (r *AnalyticsRepo) analyticsActivity(filter domain.AnalyticsFilter, issues 
 				a.CollaborativeSessions++
 			}
 		})
+		if out.Dashboard != nil && analyticsActivityInWindow(session.CreatedAt, filter) {
+			for id := range participants {
+				activeMembers[id] = true
+			}
+		}
 		usageIDs = append(usageIDs, session.ID)
 		usageSessions[session.ID] = session
 		collaborative[session.ID] = len(participants) >= 2
@@ -182,6 +192,9 @@ func (r *AnalyticsRepo) analyticsActivity(filter domain.AnalyticsFilter, issues 
 		out.ActivityTrend = append(out.ActivityTrend, *point)
 	}
 	sort.Slice(out.ActivityTrend, func(i, j int) bool { return out.ActivityTrend[i].Date < out.ActivityTrend[j].Date })
+	if out.Dashboard != nil {
+		out.Dashboard.ActiveMembers = len(activeMembers)
+	}
 	return nil
 }
 

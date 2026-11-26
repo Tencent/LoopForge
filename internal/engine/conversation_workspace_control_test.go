@@ -16,7 +16,7 @@ import (
 
 func controlLeaseRun(t *testing.T, e *Engine, id string, saved bool) string {
 	t.Helper()
-	run := domain.Run{ID: id, Status: "failed", Generation: 1, ExecutionContext: domain.TelemetryContext{ProjectID: "p"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "control-lease", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "step", Type: "script", Script: "true", MaxAttempts: 1}}}, Nodes: map[string]*domain.NodeRun{"step": {NodeID: "step", Status: "failed", Attempt: 1}}}
+	run := domain.Run{ID: id, Status: "failed", Generation: 1, ExecutionContext: domain.TelemetryContext{ProjectID: "p"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "control-lease", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "step", Type: "script", Script: "true", MaxAttempts: 1}}}, Nodes: map[string]*domain.NodeRun{"step": {NodeID: "step", Status: "failed", Attempt: 1}}}
 	if err := e.repo.PutRun(run); err != nil {
 		t.Fatal(err)
 	}

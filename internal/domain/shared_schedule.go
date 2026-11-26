@@ -19,20 +19,40 @@ type ScheduleParameter struct {
 
 // SharedScheduleVersion is an immutable, credential-free published definition.
 type SharedScheduleVersion struct {
-	ID                string              `json:"id"`
-	Version           int                 `json:"version"`
-	SourceProjectID   string              `json:"sourceProjectId"`
-	SourceProjectName string              `json:"sourceProjectName"`
-	SourceJobID       string              `json:"sourceJobId"`
-	Name              string              `json:"name"`
-	Description       string              `json:"description"`
-	Prompt            string              `json:"prompt"`
-	Model             string              `json:"model"`
-	Cron              string              `json:"cron"`
-	IntervalSec       int                 `json:"intervalSec"`
-	Parameters        []ScheduleParameter `json:"parameters"`
-	ChangeNote        string              `json:"changeNote"`
-	CreatedAt         time.Time           `json:"createdAt"`
+	ID                string                `json:"id"`
+	Version           int                   `json:"version"`
+	SourceProjectID   string                `json:"sourceProjectId"`
+	SourceProjectName string                `json:"sourceProjectName"`
+	SourceJobID       string                `json:"sourceJobId"`
+	Name              string                `json:"name"`
+	Description       string                `json:"description"`
+	Prompt            string                `json:"prompt"`
+	References        []AssistantReference  `json:"references,omitempty"`
+	Assets            []SharedScheduleAsset `json:"assets,omitempty"`
+	Model             string                `json:"model"`
+	Cron              string                `json:"cron"`
+	IntervalSec       int                   `json:"intervalSec"`
+	Parameters        []ScheduleParameter   `json:"parameters"`
+	ChangeNote        string                `json:"changeNote"`
+	CreatedAt         time.Time             `json:"createdAt"`
+}
+
+// SharedScheduleAsset pins the ownership of one direct schedule reference.
+// Nested dependencies remain governed by the referenced asset's own
+// permission and resolution logic.
+type SharedScheduleAsset struct {
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId,omitempty"`
+}
+
+func (v SharedScheduleVersion) HasAsset(typ, id string) bool {
+	for _, asset := range v.Assets {
+		if asset.Type == typ && asset.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 var scheduleParameterName = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,31}$`)

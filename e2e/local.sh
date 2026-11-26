@@ -7,11 +7,14 @@
 #   ./local.sh all                 API, then UI
 #
 # It starts its own MySQL container and platform process, seeds a user with an
-# API token, the sandboxes the suite expects and a local bare Git repository
-# for the repository-bound scenarios, and removes all of it afterwards.
+# API token and a local bare Git repository for the repository-bound
+# scenarios, and removes all of it afterwards.
 #
 # Optional environment:
-#   AGENTFLOW_E2E_CODEBUDDY_API_KEY  enables the real-model scenarios
+#   AGENTFLOW_E2E_EXECUTOR           CLI executor ID (default codebuddy)
+#   AGENTFLOW_E2E_CLI_KEY            enables real-model scenarios for that CLI
+#   AGENTFLOW_E2E_CLI_BASE_URL       optional custom model gateway
+#   AGENTFLOW_E2E_CODEBUDDY_API_KEY  legacy CodeBuddy credential input
 #   AGENTFLOW_E2E_CODEBUDDY_INTERNET CodeBuddy network environment (default
 #                                    empty: the international site)
 #   AGENTFLOW_E2E_LOCAL_PORT         platform port (default 18090)
@@ -19,8 +22,8 @@
 #   AGENTFLOW_E2E_LOCAL_MYSQL_CONTAINER MySQL container name (default
 #                                    agentflow-e2e-local-mysql); set it when
 #                                    several checkouts run the suite at once
-#   AGENTFLOW_E2E_MODEL_SANDBOX      sandbox for model scenarios (default local:
-#                                    the seeded Docker image has no CodeBuddy CLI)
+#   AGENTFLOW_E2E_MODEL_SANDBOX      sandbox for model scenarios (default
+#                                    e2e-native, which uses the host's CLIs)
 #   AGENTFLOW_E2E_KEEP=1             keep the platform, database and files; the
 #                                    exports needed to rerun single files against
 #                                    it are written to $WORK/env (mode 600)
@@ -73,7 +76,11 @@ echo "== platform on $BASE"
 HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 # AGENTFLOW_LOCAL_LOGIN_USER enables the loopback-only acceptance login, so the
 # session-only endpoints (personal API tokens, logout) can be exercised.
+# Chat Bot secrets are sealed with AGENTFLOW_CREDENTIAL_KEYS; without a key
+# saving a Bot answers 503 credential_key_missing.
 AGENTFLOW_SESSION_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n') \
+AGENTFLOW_CREDENTIAL_KEYS="e2e:$(head -c 32 /dev/urandom | base64 | tr -d '\n')" \
+AGENTFLOW_PROJECT_CREDENTIAL_KEY="$(head -c 32 /dev/urandom | base64 | tr -d '\n')" \
 AGENTFLOW_AUTH_REQUIRED=true \
 AGENTFLOW_LOCAL_LOGIN_USER=e2e-local \
 AGENTFLOW_RUNNER_BINARY="$WORK/agentflow-runner" \
@@ -109,11 +116,38 @@ INSERT INTO api_tokens (id, user_id, name, prefix, token_hash, expires_at, creat
   VALUES ('tok-e2e-local', 900001, 'e2e-local', '${TOKEN:0:12}', '$HASH', DATE_ADD(NOW(3), INTERVAL 1 DAY), NOW(3)),
          ('tok-e2e-local-b', 900002, 'e2e-local-b', '${TOKEN_B:0:12}', '$HASH_B', DATE_ADD(NOW(3), INTERVAL 1 DAY), NOW(3));
 SQL
-if [ -n "${AGENTFLOW_E2E_CODEBUDDY_API_KEY:-}" ]; then
-  # Passed through stdin so the key never shows up in a process listing.
-  printf "INSERT INTO user_configs (user_id, codebuddy_api_key, codebuddy_internet_environment, created_at, updated_at) VALUES (900001, '%s', '%s', NOW(3), NOW(3));\n" \
-    "${AGENTFLOW_E2E_CODEBUDDY_API_KEY//\'/}" "${AGENTFLOW_E2E_CODEBUDDY_INTERNET:-}" | mysql_exec || exit 1
+export AGENTFLOW_E2E_EXECUTOR=${AGENTFLOW_E2E_EXECUTOR:-codebuddy}
+if [ -n "${AGENTFLOW_E2E_CLI_KEY:-}" ] || { [ "$AGENTFLOW_E2E_EXECUTOR" = codebuddy ] && [ -n "${AGENTFLOW_E2E_CODEBUDDY_API_KEY:-}" ]; }; then
+  # Seed disposable credentials over stdin. Hex literals preserve the exact
+  # key and URL without passing either to the MySQL client as an argument.
+  if ! python3 - <<'PY_CLI' | mysql_exec >/dev/null 2>&1
+import json
+import os
+
+executor = os.environ["AGENTFLOW_E2E_EXECUTOR"]
+key = os.environ.get("AGENTFLOW_E2E_CLI_KEY", "") or os.environ.get("AGENTFLOW_E2E_CODEBUDDY_API_KEY", "")
+base = os.environ.get("AGENTFLOW_E2E_CLI_BASE_URL", "")
+if executor == "codebuddy":
+    fields = {"codebuddy_api_key": key, "codebuddy_internet_environment": os.environ.get("AGENTFLOW_E2E_CODEBUDDY_INTERNET", "")}
+elif executor in ("codex", "claude"):
+    prefix = "codex" if executor == "codex" else "claude_code"
+    fields = {prefix + "_api_key": key, prefix + "_base_url": base}
+elif executor in ("opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode"):
+    fields = {"agent_cli_credentials": json.dumps({executor: {"apiKey": key, "baseUrl": base}})}
+else:
+    raise SystemExit("Unsupported model executor")
+columns = ", ".join(fields)
+values = ", ".join("X'" + value.encode().hex() + "'" for value in fields.values())
+print(f"INSERT INTO user_configs (user_id, {columns}, created_at, updated_at) VALUES (900001, {values}, NOW(3), NOW(3));")
+PY_CLI
+  then
+    echo "Seeding the selected CLI credential failed." >&2
+    exit 1
+  fi
+else
+  export AGENTFLOW_E2E_MODEL=0
 fi
+unset AGENTFLOW_E2E_CODEBUDDY_API_KEY AGENTFLOW_E2E_CLI_KEY
 
 api() {
   local code
@@ -122,9 +156,6 @@ api() {
   case "$code" in 2??) ;; *) echo "seed $1 $2 failed ($code): $(cat "$WORK/seed.out" 2>/dev/null)"; exit 1 ;; esac
 }
 api POST /api/projects '{"id":"e2e-auto","key":"E2E","name":"E2E 自动化测试（勿用）","color":"#8b5cf6","ownerId":900001}'
-api PUT /api/dockerfiles '{"id":"generic-backend","name":"generic backend","projectId":"e2e-auto","content":"FROM python:3.12-slim\nRUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*\n"}'
-api PUT /api/sandboxes '{"id":"generic-docker","name":"Generic Docker","projectId":"e2e-auto","driver":"docker","dockerfileId":"generic-backend","readOnlyRootFS":false}'
-api PUT /api/sandboxes '{"id":"local","name":"Local","projectId":"e2e-auto","driver":"local"}'
 
 REPO="$WORK/repo"
 mkdir -p "$REPO/src" && git -C "$REPO/src" init -q -b main &&
@@ -135,14 +166,12 @@ mkdir -p "$REPO/src" && git -C "$REPO/src" init -q -b main &&
 
 export AGENTFLOW_E2E_BASE=$BASE AGENTFLOW_E2E_TOKEN=$TOKEN AGENTFLOW_E2E_TOKEN_B=$TOKEN_B
 export AGENTFLOW_E2E_REPO_CLONE_URL="$REPO/remote.git" AGENTFLOW_E2E_REPO_BRANCH=main
-export AGENTFLOW_E2E_MODEL_SANDBOX=${AGENTFLOW_E2E_MODEL_SANDBOX:-local}
+export AGENTFLOW_E2E_MODEL_SANDBOX=${AGENTFLOW_E2E_MODEL_SANDBOX:-e2e-native}
 # A fresh database has no data-rich project to tour; tour the e2e project.
 export AGENTFLOW_E2E_VIEW_PROJECT=${AGENTFLOW_E2E_VIEW_PROJECT:-e2e-auto}
-[ -n "${AGENTFLOW_E2E_CODEBUDDY_API_KEY:-}" ] || export AGENTFLOW_E2E_MODEL=0
-unset AGENTFLOW_E2E_CODEBUDDY_API_KEY
 if [ "${AGENTFLOW_E2E_KEEP:-0}" = 1 ]; then
-  (umask 077 && printf 'export AGENTFLOW_E2E_BASE=%q AGENTFLOW_E2E_TOKEN=%q AGENTFLOW_E2E_TOKEN_B=%q AGENTFLOW_E2E_REPO_CLONE_URL=%q AGENTFLOW_E2E_REPO_BRANCH=main AGENTFLOW_E2E_MODEL_SANDBOX=%q AGENTFLOW_E2E_MODEL=%q AGENTFLOW_E2E_VIEW_PROJECT=%q\n' \
-    "$BASE" "$TOKEN" "$TOKEN_B" "$AGENTFLOW_E2E_REPO_CLONE_URL" "$AGENTFLOW_E2E_MODEL_SANDBOX" "${AGENTFLOW_E2E_MODEL:-1}" "$AGENTFLOW_E2E_VIEW_PROJECT" >"$WORK/env")
+  (umask 077 && printf 'export AGENTFLOW_E2E_BASE=%q AGENTFLOW_E2E_TOKEN=%q AGENTFLOW_E2E_TOKEN_B=%q AGENTFLOW_E2E_REPO_CLONE_URL=%q AGENTFLOW_E2E_REPO_BRANCH=main AGENTFLOW_E2E_MODEL_SANDBOX=%q AGENTFLOW_E2E_MODEL=%q AGENTFLOW_E2E_VIEW_PROJECT=%q AGENTFLOW_E2E_EXECUTOR=%q AGENTFLOW_E2E_MODEL_ID=%q\n' \
+    "$BASE" "$TOKEN" "$TOKEN_B" "$AGENTFLOW_E2E_REPO_CLONE_URL" "$AGENTFLOW_E2E_MODEL_SANDBOX" "${AGENTFLOW_E2E_MODEL:-1}" "$AGENTFLOW_E2E_VIEW_PROJECT" "$AGENTFLOW_E2E_EXECUTOR" "${AGENTFLOW_E2E_MODEL_ID:-}" >"$WORK/env")
 fi
 
 status=0

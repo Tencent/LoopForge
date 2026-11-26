@@ -1,8 +1,11 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +23,30 @@ import (
 const (
 	RunnerStatusOnline  = "online"
 	RunnerStatusOffline = "offline"
+
+	RunnerSelectionModeAuto     = "auto"
+	RunnerSelectionModePlatform = "platform"
+	PlatformRunnerName          = "平台执行机器（云端）"
 )
+
+// DefaultRunnerRunLimit is the initial SOP run limit for each execution machine.
+const DefaultRunnerRunLimit = 10
+
+type RunnerLoad struct {
+	OccupiedRuns int `json:"occupiedRuns"`
+	RunningRuns  int `json:"runningRuns"`
+	QueuedRuns   int `json:"queuedRuns"`
+}
+
+type PlatformRunnerStatus struct {
+	Name            string      `json:"name"`
+	Status          string      `json:"status"`
+	RunLimit        int         `json:"runLimit"`
+	CanEditLimit    bool        `json:"canEditLimit"`
+	CloudPool       bool        `json:"cloudPool"`
+	CloudPoolOnline int         `json:"cloudPoolOnline"`
+	Load            *RunnerLoad `json:"load"`
+}
 
 // RunnerTask states. LEASED sits between QUEUED and RUNNING so a claim that
 // never starts is still recoverable through lease expiry.
@@ -81,8 +107,28 @@ const RunnerVersionConversationWorkspace = "0.8.0"
 // queued CLI or block a following turn behind a previous background save.
 const RunnerVersionConversationCLI = "0.10.1"
 
+// RunnerVersionCLISettings adds chat account login, CLI tests, model discovery
+// and updates from the machine card.
+const RunnerVersionCLISettings = "0.10.2"
+
+func (r Runner) SupportsCLISettings() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCLISettings)
+}
+
 func (r Runner) SupportsConversationCLI() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
+}
+
+// SupportsNativeSandbox checks the isolation driver against the Runner's OS
+// and its reported ability to start a native sandbox.
+func (r Runner) SupportsNativeSandbox(driver string) bool {
+	if !r.NativeSandboxAvailable {
+		return false
+	}
+	os := strings.ToLower(strings.TrimSpace(r.OS))
+	resolved, err := ResolveSandboxDriver(driver, os)
+	return err == nil && (resolved == SandboxDriverSeatbelt && os == "darwin" ||
+		resolved == SandboxDriverBwrap && os == "linux")
 }
 
 func (r Runner) SupportsConversationWorkspace() bool {
@@ -122,6 +168,97 @@ func (r Runner) SupportsGitSSH() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionGitSSH)
 }
 
+// RunnerVersionGitHTTP is the first runner whose workspace helper answers
+// Git credential and gh/glab requests through the session gateway.
+const RunnerVersionGitHTTP = "0.11.0"
+
+func (r Runner) SupportsGitHTTP() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitHTTP)
+}
+
+// RunnerVersionGitSSHKnownHosts is the first runner to accept platform SSH pins.
+const RunnerVersionGitSSHKnownHosts = "0.11.1"
+
+// Older runners would ignore the custom endpoint and use the official one.
+const RunnerVersionCodeBuddyBaseURL = "0.11.2"
+
+func (r Runner) SupportsCodeBuddyBaseURL() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCodeBuddyBaseURL)
+}
+
+// RunnerVersionRepositoryCache is the first runner that reuses a host cache
+// when checking out repositories for a native workspace. Older runners clone fully.
+const RunnerVersionRepositoryCache = "0.12.0"
+
+// RunnerVersionGitPlainHTTP is the first runner that can supply credentials
+// for an authorized plaintext Git instance.
+const RunnerVersionGitPlainHTTP = "0.12.4"
+
+func (r Runner) SupportsGitPlainHTTP() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitPlainHTTP)
+}
+
+const RunnerGitPlainHTTPUpgradeMessage = "Git HTTP 仓库需要 Runner " + RunnerVersionGitPlainHTTP + " 或更新版本，请先升级执行机器"
+
+// RunnerVersionPrivilegedSandbox is the first runner that applies the Docker
+// privilege setting in a frozen sandbox profile.
+const RunnerVersionPrivilegedSandbox = "0.12.5"
+
+func (r Runner) ValidatePrivilegedSandboxVersion(profile SandboxProfile) error {
+	if profile.Privileged && !versionAtLeast(r.RunnerVersion, RunnerVersionPrivilegedSandbox) {
+		return fmt.Errorf("特权 Docker 沙箱需要 Runner %s 或更新版本，请先升级执行机器", RunnerVersionPrivilegedSandbox)
+	}
+	return nil
+}
+
+const RunnerVersionDockerSandboxLimits = "0.12.6"
+
+const RunnerDockerSandboxLimitsUpgradeMessage = "配置了 CPU 或内存上限的 Docker 沙箱需要 Runner " + RunnerVersionDockerSandboxLimits + " 或更新版本，请先升级执行机器"
+
+const RunnerDockerSandboxLimitsHeader = "X-AgentFlow-Docker-Sandbox-Limits"
+
+func (r Runner) SupportsDockerSandboxLimits() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionDockerSandboxLimits)
+}
+
+// FilterGitHTTPCredentials limits a credential snapshot to the transports the
+// runner supports. The caller's map may also be used by local execution.
+func (r Runner) FilterGitHTTPCredentials(credentials map[string]GitHTTPExecutionCredential) map[string]GitHTTPExecutionCredential {
+	if r.SupportsGitPlainHTTP() {
+		return credentials
+	}
+	filtered := maps.Clone(credentials)
+	maps.DeleteFunc(filtered, func(scope string, _ GitHTTPExecutionCredential) bool {
+		return strings.HasPrefix(scope, "http://")
+	})
+	return filtered
+}
+
+// RunnerVersionProjectCredentials adds in-memory project environment values
+// to authenticated SOP task claims and conversation process starts.
+const RunnerVersionProjectCredentials = "0.12.1"
+
+func (r Runner) SupportsProjectCredentials() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionProjectCredentials)
+}
+
+// RunnerVersionArtifactTransfer introduced task-scoped streaming for SOP files.
+const RunnerVersionArtifactTransfer = "0.13.0"
+
+const RunnerResultReportError = "执行结果回传失败"
+
+func (r Runner) SupportsArtifactTransfer() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionArtifactTransfer)
+}
+
+// RunnerVersionConversationSOPWorkspace discovers nested conversation checkouts
+// and prepares them inside the SOP sandbox while preserving local work.
+const RunnerVersionConversationSOPWorkspace = "0.12.3"
+
+func (r Runner) SupportsConversationSOPWorkspace() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationSOPWorkspace)
+}
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
@@ -144,6 +281,9 @@ type Runner struct {
 	RunnerVersion  string   `json:"runnerVersion"`
 	Labels         []string `json:"labels,omitempty"`
 	MaxConcurrency int      `json:"maxConcurrency"`
+	// NativeSandboxAvailable is reported by the daemon. Older Runners leave it
+	// false so the platform does not choose native automatically for them.
+	NativeSandboxAvailable bool `json:"nativeSandboxAvailable"`
 	// RunLimit caps concurrently admitted top-level SOP runs on a personal
 	// machine, counted like the project limit. 0 means unlimited.
 	RunLimit   int             `json:"runLimit"`
@@ -152,11 +292,15 @@ type Runner struct {
 	LastSeenAt *time.Time      `json:"lastSeenAt,omitempty"`
 	// OwnerUserID is the user who bound this machine via bind-cli.sh; the
 	// personal 执行器 page lists machines by owner.
-	OwnerUserID      int64      `json:"ownerUserId,omitempty"`
-	SessionTokenHash string     `json:"-"`
-	SessionExpiresAt *time.Time `json:"-"`
-	CreatedAt        time.Time  `json:"createdAt"`
-	UpdatedAt        time.Time  `json:"updatedAt"`
+	OwnerUserID int64 `json:"ownerUserId,omitempty"`
+	// SharedProjectIDs holds the projects granted use of this machine by its owner.
+	SharedProjectIDs []string `json:"sharedProjectIds,omitempty"`
+	// LoginModels contains the machine owner's saved account-login catalogs by CLI.
+	LoginModels      map[string][]CLIModel `json:"loginModels,omitempty"`
+	SessionTokenHash string                `json:"-"`
+	SessionExpiresAt *time.Time            `json:"-"`
+	CreatedAt        time.Time             `json:"createdAt"`
+	UpdatedAt        time.Time             `json:"updatedAt"`
 }
 
 // PublicRunner strips credential material before returning runner data to
@@ -173,6 +317,10 @@ func PublicRunners(items []Runner) []Runner {
 		out[i] = PublicRunner(r)
 	}
 	return out
+}
+
+func (r Runner) SharedWithProject(projectID string) bool {
+	return r.OwnerUserID > 0 && projectID != "" && slices.Contains(r.SharedProjectIDs, projectID)
 }
 
 // SupportsExistingWorkBranch guards strict checkout and synchronization;
@@ -269,11 +417,10 @@ func (r Runner) SupportsProvider(provider string) bool {
 }
 
 // RuntimeAuthMode returns the configured credential source for a provider.
-// CodeBuddy and the extra agent CLIs have no reusable local-login flow, so
-// they always use the responsible user's personal credential. Codex and
-// Claude Code default to local login.
+// CLIs with reusable account authentication default to local login. Other
+// CLIs always use the responsible user's personal credential.
 func (r Runner) RuntimeAuthMode(provider string) string {
-	if IsAgentCLIKind(provider) {
+	if IsAgentCLIKind(provider) && !SupportsRunnerLogin(provider) {
 		return RuntimeAuthPersonal
 	}
 	provider = strings.TrimSpace(provider)
@@ -294,13 +441,41 @@ func (r Runner) RuntimeAuthMode(provider string) string {
 	return RuntimeAuthLocal
 }
 
+// RuntimeAuthModeForUser keeps a user-bound machine's account login with its owner.
+func (r Runner) RuntimeAuthModeForUser(provider string, userID int64) string {
+	if r.OwnerUserID > 0 && r.OwnerUserID != userID && SupportsRunnerLogin(provider) {
+		return RuntimeAuthPersonal
+	}
+	return r.RuntimeAuthMode(provider)
+}
+
+func SupportsRunnerLogin(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "codex", "claude-code", "agy":
+		return true
+	default:
+		return false
+	}
+}
+
 const (
-	RuntimeStatusOnline   = "online"
-	RuntimeStatusOffline  = "offline"
-	RuntimeStatusDisabled = "disabled"
-	RuntimeAuthLocal      = "local"
-	RuntimeAuthPersonal   = "personal"
+	RuntimeStatusOnline            = "online"
+	RuntimeStatusOffline           = "offline"
+	RuntimeStatusDisabled          = "disabled"
+	RuntimeAuthLocal               = "local"
+	RuntimeAuthPersonal            = "personal"
+	RuntimeCapabilityManagedUpdate = "managed_update"
+	RuntimeCapabilityNativeUpdate  = "native_update"
 )
+
+func (rt RunnerRuntime) SupportsCLIUpdate() bool {
+	for _, capability := range rt.Capabilities {
+		if capability == RuntimeCapabilityManagedUpdate || capability == RuntimeCapabilityNativeUpdate {
+			return true
+		}
+	}
+	return false
+}
 
 // RunnerRuntime is one discovered Agent CLI on the runner machine. Credentials
 // for the CLI stay on that machine; the control plane only learns the binary
@@ -341,6 +516,12 @@ type RunnerTask struct {
 	RunID      string            `json:"runId,omitempty"`
 	NodeID     string            `json:"nodeId,omitempty"`
 	Invocation *RunnerInvocation `json:"invocation,omitempty"`
+	// GitSSHKnownHosts is attached on authenticated claim and is never queued.
+	GitSSHKnownHosts     *GitSSHKnownHosts `json:"gitSshKnownHosts,omitempty"`
+	ProjectCredentialIDs []string          `json:"projectCredentialIds,omitempty"`
+	// ProjectCredentialEnv is filled after an authenticated claim. It is not
+	// part of the persisted runner task payload.
+	ProjectCredentialEnv map[string]string `json:"projectCredentialEnv,omitempty"`
 	// Sandbox is the workflow sandbox definition resolved by the control
 	// plane. The runner creates it locally so Docker/seatbelt/bwrap isolation
 	// lives on the same machine that executes the Agent CLI.
@@ -380,9 +561,10 @@ type RunnerTask struct {
 // RunnerSandboxRequirements freezes the union needed by every run node, so
 // interactive terminals and script/agent tasks use the same sandbox identity.
 type RunnerSandboxRequirements struct {
-	CLIStates   []RunnerCLIStateRequirement `json:"cliStates,omitempty"`
-	PrivateHome bool                        `json:"privateHome,omitempty"`
-	BunFS       bool                        `json:"bunFS,omitempty"`
+	CLIStates        []RunnerCLIStateRequirement `json:"cliStates,omitempty"`
+	PrivateHome      bool                        `json:"privateHome,omitempty"`
+	BunFS            bool                        `json:"bunFS,omitempty"`
+	RunnerLoginRelay bool                        `json:"runnerLoginRelay,omitempty"`
 }
 type RunnerCLIStateRequirement struct {
 	Directory string   `json:"directory"`
@@ -393,12 +575,48 @@ type RunnerSandboxSpec struct {
 	Requirements *RunnerSandboxRequirements `json:"requirements,omitempty"`
 	Profile      SandboxProfile             `json:"profile"`
 	Dockerfile   *DockerfileDefinition      `json:"dockerfile,omitempty"`
-	Environment  *EnvironmentDefinition     `json:"environment,omitempty"`
+}
+
+// UnmarshalJSON carries ordinary variables forward from frozen environment
+// assets on historical runs and queued tasks. Asset installation paths no
+// longer exist, and inline values retain their precedence.
+func (s *RunnerSandboxSpec) UnmarshalJSON(raw []byte) error {
+	type frozenSpec RunnerSandboxSpec
+	var payload struct {
+		frozenSpec
+		Environment struct {
+			ID        string            `json:"id"`
+			Variables map[string]string `json:"variables"`
+		} `json:"environment"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return err
+	}
+	*s = RunnerSandboxSpec(payload.frozenSpec)
+	driver := strings.TrimSpace(s.Profile.Driver)
+	if !ConversationSandboxDriver(driver) || driver == SandboxDriverDocker || strings.TrimSpace(payload.Environment.ID) == "" {
+		return nil
+	}
+	for key, value := range payload.Environment.Variables {
+		if key == "PATH" || strings.Contains(value, "$PREFIX") || strings.Contains(value, "${PREFIX}") ||
+			strings.Contains(value, "$AGENTFLOW_ENVIRONMENT_ROOT") || strings.Contains(value, "${AGENTFLOW_ENVIRONMENT_ROOT}") {
+			continue
+		}
+		if _, exists := s.Profile.Environment[key]; exists {
+			continue
+		}
+		if s.Profile.Environment == nil {
+			s.Profile.Environment = make(map[string]string)
+		}
+		s.Profile.Environment[key] = value
+	}
+	return nil
 }
 
 // PublicRunnerTask strips task-scoped credentials from management responses.
 // The authenticated claiming runner receives the original task payload.
 func PublicRunnerTask(task RunnerTask) RunnerTask {
+	task.GitSSHKnownHosts = nil
 	if task.PreviewArchive != nil {
 		copySpec := *task.PreviewArchive
 		copySpec.UploadToken = ""
@@ -409,6 +627,7 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	}
 	copyInvocation := *task.Invocation
 	copyInvocation.CodeBuddyAPIKey = ""
+	copyInvocation.CodeBuddyBaseURL = ""
 	copyInvocation.CodeBuddyInternetEnvironment = ""
 	copyInvocation.CodexAPIKey = ""
 	copyInvocation.CodexBaseURL = ""
@@ -420,6 +639,8 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.AgentCLIModels = nil
 	copyInvocation.GitSSHUserID = 0
 	copyInvocation.GitSSHKeys = nil
+	copyInvocation.GitHTTPUserID = 0
+	copyInvocation.GitHTTPCredentials = nil
 	if copyInvocation.Repository != nil {
 		copyRepository := publicRunnerRepository(*copyInvocation.Repository)
 		copyInvocation.Repository = &copyRepository
@@ -472,11 +693,13 @@ type RunnerInvocation struct {
 	// move a missing output file found elsewhere in the workspace into
 	// place, as the control plane does for its own sandboxes.
 	ReportOutputs                bool     `json:"reportOutputs,omitempty"`
+	ArtifactTransfer             bool     `json:"artifactTransfer,omitempty"`
 	OutputFiles                  []string `json:"outputFiles,omitempty"`
 	RecoverOutputs               bool     `json:"recoverOutputs,omitempty"`
 	HumanContext                 string   `json:"humanContext,omitempty"`
 	CredentialSource             string   `json:"credentialSource,omitempty"`
 	CodeBuddyAPIKey              string   `json:"codebuddyApiKey,omitempty"`
+	CodeBuddyBaseURL             string   `json:"codebuddyBaseUrl,omitempty"`
 	CodeBuddyInternetEnvironment string   `json:"codebuddyInternetEnvironment,omitempty"`
 	CodexAPIKey                  string   `json:"codexApiKey,omitempty"`
 	CodexBaseURL                 string   `json:"codexBaseUrl,omitempty"`
@@ -505,6 +728,13 @@ type RunnerInvocation struct {
 	// authenticated claim or on the outbound workspace control connection.
 	GitSSHUserID int64             `json:"gitSshUserId,omitempty"`
 	GitSSHKeys   map[string]string `json:"gitSshKeys,omitempty"` // clone URL to private key
+	// Only the responsible user id is queued; HTTPS secrets are hydrated on
+	// authenticated claim/control dispatch and never persisted in the task.
+	GitHTTPUserID      int64                                 `json:"gitHttpUserId,omitempty"`
+	GitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"gitHttpCredentials,omitempty"`
+	// The first SOP Agent may recover a failed automatic checkout. The runner
+	// validates the frozen repository and branch before reporting success.
+	RepositoryPreparationFallback bool `json:"repositoryPreparationFallback,omitempty"`
 	// Repositories lists every repository the run touches (multi-repository
 	// support). Each entry checks out into its Dir under the task workspace.
 	Repositories []RunnerRepository `json:"repositories,omitempty"`
@@ -527,8 +757,11 @@ type RunnerRepository struct {
 	// CreateNewWorkBranch creates WorkBranch from the base ref and fails when a
 	// same-named remote head already exists.
 	CreateNewWorkBranch bool `json:"createNewWorkBranch,omitempty"`
-	// Dir is the workspace-relative checkout directory (empty is only kept
-	// for persisted legacy runs that already checked out at the workspace root).
+	// PreserveCheckout starts a generated SOP branch at the existing local
+	// HEAD when the checkout was supplied by a conversation.
+	PreserveCheckout bool `json:"preserveCheckout,omitempty"`
+	// Dir is the workspace-relative checkout directory. Empty selects the
+	// workspace root for an existing checkout.
 	Dir string `json:"dir,omitempty"`
 	// SyncWorkBranch is the control plane's decision that WorkBranch may
 	// receive intermediate node commits (it is not a shared base/integration
@@ -565,8 +798,11 @@ func (inv *RunnerInvocation) GitSSHRemotes() []string {
 
 // RunnerInputFile is one file written into the task workspace before a run.
 type RunnerInputFile struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path       string `json:"path"`
+	Content    string `json:"content,omitempty"`
+	ArtifactID string `json:"artifactId,omitempty"`
+	SHA256     string `json:"sha256,omitempty"`
+	Restore    bool   `json:"restore,omitempty"`
 }
 
 // RunnerTaskOutputs is what a runner reports about the task workspace after
@@ -574,8 +810,10 @@ type RunnerInputFile struct {
 type RunnerTaskOutputs struct {
 	// Files maps a workspace-relative OutputFiles path to its content. Missing
 	// files and non-regular files are absent; oversized ones are in TooLarge.
-	Files    map[string]string `json:"files,omitempty"`
-	TooLarge []string          `json:"tooLarge,omitempty"`
+	Files      map[string]string       `json:"files,omitempty"`
+	TooLarge   []string                `json:"tooLarge,omitempty"`
+	FileBlobs  map[string]ArtifactBlob `json:"fileBlobs,omitempty"`
+	FileErrors map[string]string       `json:"fileErrors,omitempty"`
 	// Patches maps a repository checkout dir ("" is the workspace root) to
 	// its repository-patch inventory. Unchanged checkouts are absent.
 	Patches map[string]string `json:"patches,omitempty"`
