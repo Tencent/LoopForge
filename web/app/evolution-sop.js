@@ -846,7 +846,7 @@ function evoSOPGrayTableHTML(rounds, expandedId) {
   if (!rounds.length) {
     return '<div class="kb-empty">暂无灰度轮次数据。优化完成后点击「开始灰度」，系统将在此持续记录旧版与候选版的对比数据。</div>';
   }
-  const statusLabel = { running: ['灰度中', 'warn'], passed: ['通过待发布', 'ok'], published: ['已发布', 'ok'], failed: ['未通过', 'err'], aborted: ['已终止', ''] };
+  const statusLabel = { running: ['灰度中', 'warn'], passed: ['通过待发布', 'ok'], published: ['已发布', 'ok'], failed: ['未通过', 'err'], aborted: ['已终止', ''], rolled_back: ['已回滚', ''] };
   const pair = (a, b, fmt) => `${escapeHTML(fmt(a))} → <b>${escapeHTML(fmt(b))}</b>`;
   const rows = [...rounds].reverse().map(r => {
     const [stLabel, stTone] = statusLabel[r.status] || [r.status || '灰度', ''];

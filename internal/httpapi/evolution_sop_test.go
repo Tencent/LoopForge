@@ -736,3 +736,66 @@ func TestEvolutionSOPRollbackHashFallbackPreservesPreRollbackRuns(t *testing.T) 
 		t.Fatalf("P2-9: pre-rollback runs must stay on v1 and not bleed into v3 rollback row: v0=%+v v1=%+v", detail.Versions[0], detail.Versions[1])
 	}
 }
+
+// A rolled-back proposal keeps Canary.Status="promoted" (the gray run finished
+// and went wide before the rollback), so the gray-round table used to print a
+// raw English "promoted" for a round that had in fact been rolled back.
+func TestEvolutionSOPGrayRoundShowsRolledBack(t *testing.T) {
+	env := newEvoTestEnv(t)
+	now := time.Now().UTC()
+
+	wf := env.wf
+	wf.Version = 2
+	if err := env.store.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	v1Prompt := env.agent.Prompt
+	v2Prompt := env.agent.Prompt + "\n修改稿 v2"
+	for _, r := range []domain.Run{
+		{ID: "rb-ctrl", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded",
+			ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"},
+			CreatedAt:        now.Add(-3 * time.Hour), UpdatedAt: now.Add(-3 * time.Hour),
+			Usage: domain.TokenUsage{TotalTokens: 50000}, ToolCalls: 9,
+			Nodes: map[string]*domain.NodeRun{"code": {NodeID: "code", Status: "succeeded", Attempt: 1}}},
+		{ID: "rb-cand", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded",
+			ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"},
+			CreatedAt:        now.Add(-2 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour),
+			Usage: domain.TokenUsage{TotalTokens: 44000}, ToolCalls: 7,
+			Nodes: map[string]*domain.NodeRun{"code": {NodeID: "code", Status: "succeeded", Attempt: 1}}},
+	} {
+		if err := env.store.PutRun(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := env.store.PutRunAssetPins([]domain.RunAssetPin{
+		{RunID: "rb-ctrl", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, Version: 2, Hash: domain.ContentHash(v1Prompt), CreatedAt: now.Add(-3 * time.Hour)},
+		{RunID: "rb-cand", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, Version: 3, Hash: domain.ContentHash(v2Prompt), CreatedAt: now.Add(-2 * time.Hour)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.PutEvoProposal(domain.EvoProposal{
+		ID: "evp-rb", ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
+		AssetName: env.agent.Name, Title: "回滚的灰度", BaseContent: v1Prompt, BaseHash: domain.ContentHash(v1Prompt), BaseVersion: 2,
+		CandidateContent: v2Prompt, Status: domain.EvoProposalRolledBack,
+		Canary: &domain.EvoCanary{
+			Percent: 50, MinRuns: 5, Status: domain.EvoCanaryPromoted,
+			StartedAt: now.Add(-4 * time.Hour), EndedAt: now.Add(-1 * time.Hour),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	detail, ok := env.h.buildSOPDetail("evo-p", wf.ID, 14)
+	if !ok {
+		t.Fatal("expected SOP detail")
+	}
+	if len(detail.GrayRounds) != 1 {
+		t.Fatalf("expected 1 gray round, got %+v", detail.GrayRounds)
+	}
+	if got := detail.GrayRounds[0].Status; got != domain.EvoProposalRolledBack {
+		t.Fatalf("a rolled-back round must report %q, got %q (raw canary status leaked)", domain.EvoProposalRolledBack, got)
+	}
+	if detail.GrayRounds[0].Published {
+		t.Fatal("a rolled-back round must not be published")
+	}
+}

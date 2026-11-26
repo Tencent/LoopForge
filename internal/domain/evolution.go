@@ -591,7 +591,7 @@ type EvoSOPGrayRound struct {
 	ProposalID  string               `json:"proposalId"`
 	BaseVersion string               `json:"baseVersion"`
 	Target      string               `json:"target"`
-	Status      string               `json:"status"` // running, passed, failed, published
+	Status      string               `json:"status"` // running, passed, failed, published, rolled_back
 	Published   bool                 `json:"published,omitempty"`
 	Percent     int                  `json:"percent,omitempty"`
 	MinRuns     int                  `json:"minRuns,omitempty"`
