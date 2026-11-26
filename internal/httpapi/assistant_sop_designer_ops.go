@@ -291,6 +291,10 @@ func fillSOPDesignerIdentity(body map[string]json.RawMessage, canvas json.RawMes
 		return nil, false
 	}
 	changed := false
+	if _, ok := body["autoSelectSandbox"]; !ok && len(base["autoSelectSandbox"]) > 0 {
+		body["autoSelectSandbox"] = base["autoSelectSandbox"]
+		changed = true
+	}
 	for _, key := range []string{"id", "projectId", "sandboxProfileId"} {
 		var current string
 		if raw, ok := body[key]; ok && json.Unmarshal(raw, &current) == nil && strings.TrimSpace(current) != "" {

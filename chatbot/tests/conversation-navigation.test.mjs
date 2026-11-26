@@ -183,7 +183,35 @@ test("internal resume prompts render as acknowledgements only with a matching sa
     "",
   );
 });
-test("answered SOP proposals render as short acknowledgements", async () => {
+test("answered LOOP proposals render as short acknowledgements", async () => {
+  const { confirmationCaption, isProposalTimeout } = await import("../src/api.js");
+  const reply = (draft) => ({
+    role: "assistant",
+    content: JSON.stringify({ message: "", drafts: [draft] }),
+  });
+  const dispatch = {
+    tool: "issues_dispatch",
+    path: { id: "i1" },
+    proposal: { reason: "整件需求走 LOOP", timing: "start" },
+  };
+  const declined = { role: "user", content: "不走 LOOP，这件事由你直接完成。" };
+  assert.equal(
+    confirmationCaption(declined, reply({ ...dispatch, decision: "declined" })),
+    "不走 LOOP，让 AI 助手自己做",
+  );
+  assert.equal(confirmationCaption(declined, reply(dispatch)), "");
+  const expired = {
+    role: "user",
+    trigger: "proposal_timeout",
+    content: "LOOP 建议超时未确认，这件事由你直接完成。",
+  };
+  const timedOut = reply({ ...dispatch, decision: "expired" });
+  assert.equal(confirmationCaption(expired, timedOut), "");
+  assert.equal(isProposalTimeout(expired, timedOut), true);
+  assert.equal(isProposalTimeout({ ...expired, trigger: "" }, timedOut), false);
+  assert.equal(isProposalTimeout(expired, reply(dispatch)), false);
+});
+test("proposal receipts saved before the LOOP rename keep their short form", async () => {
   const { confirmationCaption, isProposalTimeout } = await import("../src/api.js");
   const reply = (draft) => ({
     role: "assistant",
@@ -197,7 +225,7 @@ test("answered SOP proposals render as short acknowledgements", async () => {
   const declined = { role: "user", content: "不走 SOP，这件事由你直接完成。" };
   assert.equal(
     confirmationCaption(declined, reply({ ...dispatch, decision: "declined" })),
-    "不走 SOP，让 AI 助手自己做",
+    "不走 LOOP，让 AI 助手自己做",
   );
   assert.equal(confirmationCaption(declined, reply(dispatch)), "");
   const expired = {
@@ -208,8 +236,12 @@ test("answered SOP proposals render as short acknowledgements", async () => {
   const timedOut = reply({ ...dispatch, decision: "expired" });
   assert.equal(confirmationCaption(expired, timedOut), "");
   assert.equal(isProposalTimeout(expired, timedOut), true);
-  assert.equal(isProposalTimeout({ ...expired, trigger: "" }, timedOut), false);
   assert.equal(isProposalTimeout(expired, reply(dispatch)), false);
+  // Ordinary user text that only resembles a receipt stays visible.
+  assert.equal(
+    confirmationCaption({ role: "user", content: "不走 SOP，这件事由你直接完成" }, reply({ ...dispatch, decision: "declined" })),
+    "",
+  );
 });
 test("a project created from another project's chat links to the new project", () => {
   const draft = {

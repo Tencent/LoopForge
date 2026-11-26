@@ -169,7 +169,7 @@ func TestClarifyCardButtonsAndPermissions(t *testing.T) {
 	}
 	// The maintainer saves: queued in the group under the card, card locked.
 	ack, err = svc.accept(context.Background(), bot, cardClick("ou_maint", ClarifyActionSaveStart, sess.ID, post.ID, "c4"))
-	if err != nil || !ack.Accepted || ack.Card == nil || len(ack.Card.Actions) != 0 || !strings.Contains(ack.Card.Status, "用户maint 已选择「保存并启动 SOP」") {
+	if err != nil || !ack.Accepted || ack.Card == nil || len(ack.Card.Actions) != 0 || !strings.Contains(ack.Card.Status, "用户maint 已选择「保存并启动 LOOP」") {
 		t.Fatalf("maintainer save = %+v %v", ack, err)
 	}
 	item, _ := store.BotInteraction(ack.InteractionID)

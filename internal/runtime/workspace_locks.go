@@ -10,7 +10,7 @@ import (
 	"sync"
 )
 
-// Parallel SOP branches materialize and execute in one shared checkout. The
+// Parallel LOOP branches materialize and execute in one shared checkout. The
 // helpers here keep the few workspace-wide control writes from interleaving;
 // per-Agent directories are serialized by the engine (one invocation per
 // Agent and checkout), so only state shared across Agents needs care.

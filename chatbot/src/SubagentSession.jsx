@@ -33,7 +33,7 @@ function processSteps(step) {
   );
 }
 
-// SubagentSession shows one subagent like an SOP node: what Main Bot asked,
+// SubagentSession shows one subagent like a LOOP node: what Main Bot asked,
 // the model it ran on, how it worked and what it reported, once per dispatch
 // when it was resumed, plus its collected deliverables and what it published.
 export function SubagentSession({ agent, live = false, artifacts = [], onOpenArtifact }) {

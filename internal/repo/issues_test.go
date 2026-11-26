@@ -83,7 +83,7 @@ func TestPutIssueUsesProjectDefaultRequirementWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// New requirement (tapd) uses the project's configured default SOP.
+	// New requirement (tapd) uses the project's configured default LOOP.
 	if err := s.PutIssue(domain.Issue{ID: "req-1", ProjectID: "igtm", Source: "tapd", Title: "story"}); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestPutIssueUsesProjectDefaultRequirementWorkflow(t *testing.T) {
 		t.Fatalf("requirement should use project default %q, got %+v", projectSOP, req)
 	}
 
-	// Local requirement (no source) also uses the project default SOP.
+	// Local requirement (no source) also uses the project default LOOP.
 	if err := s.PutIssue(domain.Issue{ID: "req-2", ProjectID: "igtm", Title: "local requirement"}); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestPutIssueUsesProjectDefaultRequirementWorkflow(t *testing.T) {
 	}
 
 	// Defects (gongfeng) stay on the production repair loop unless the project
-	// has its own {projectId}-issue-fix SOP.
+	// has its own {projectId}-issue-fix LOOP.
 	if err := s.PutIssue(domain.Issue{ID: "bug-1", ProjectID: "igtm", Source: "gongfeng", Title: "bug"}); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestPutIssueUsesProjectDefaultRequirementWorkflow(t *testing.T) {
 		t.Fatalf("explicit workflow was overwritten: %+v", req)
 	}
 
-	// Project without a configured SOP falls back to the production default.
+	// Project without a configured LOOP falls back to the production default.
 	if err := s.PutProject(domain.Project{ID: "bare", Key: "BARE", Name: "bare"}); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestPutIssueUsesProjectDefaultRequirementWorkflow(t *testing.T) {
 	}
 }
 
-// 新项目默认 SOP 是内置通用模板（LoopForge 后端交付）时，同步/新建的需求与
+// 新项目默认 LOOP 是内置通用模板（LoopForge 后端交付）时，同步/新建的需求与
 // 工蜂缺陷都默认使用它，保证开箱即用。
 func TestPutIssueBindsGenericProjectDefaultForAllIssues(t *testing.T) {
 	s, err := OpenTest()
@@ -164,7 +164,7 @@ func TestPutIssueBindsGenericProjectDefaultForAllIssues(t *testing.T) {
 	if bug, _ := s.Issue("bug-np"); bug.WorkflowID != GenericBackendDeliveryWorkflowID || bug.Kind != "issue" {
 		t.Fatalf("gongfeng issue should use generic project default, got %+v", bug)
 	}
-	// 项目专属缺陷 SOP 仍然优先于项目通用默认。
+	// 项目专属缺陷 LOOP 仍然优先于项目通用默认。
 	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "newproj-issue-fix", Name: "Newproj fix", SandboxProfileID: "test-native"}); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestPutIssueBindsGenericProjectDefaultForAllIssues(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bug, _ := s.Issue("bug-np-2"); bug.WorkflowID != "newproj-issue-fix" {
-		t.Fatalf("project issue-fix SOP should win, got %+v", bug)
+		t.Fatalf("project issue-fix LOOP should win, got %+v", bug)
 	}
 }
 

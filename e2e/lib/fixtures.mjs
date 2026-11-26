@@ -25,7 +25,7 @@ export function chain(nodes) {
   return nodes.slice(1).map((n, i) => ({ id: `e${i}`, source: nodes[i].id, target: n.id, when: 'success' }));
 }
 
-// createWorkflow saves and publishes a project SOP and registers its deletion.
+// createWorkflow saves and publishes a project LOOP and registers its deletion.
 export async function createWorkflow(label, nodes, extra = {}) {
   const id = uid(label);
   track(`workflow ${id}`, () => del(`/api/workflows/${id}`));
@@ -123,7 +123,7 @@ export async function assertCodeStaysLocal(run, files) {
 }
 
 // childSOPHandoffScenario: a repository-bound parent writes a file, a child
-// SOP must see it and write another, and the parent must see the child's
+// LOOP must see it and write another, and the parent must see the child's
 // file. Nodes never commit or push; code travels through the shared checkout
 // only. `nodes` overrides the child/parent writers (e.g. real Agent nodes).
 export async function childSOPHandoffScenario({ label = 'handoff', extra = {}, childNodes, timeoutMs = 600_000, waitRun } = {}) {
@@ -138,7 +138,7 @@ export async function childSOPHandoffScenario({ label = 'handoff', extra = {}, c
     repoScript('p2', 'test "$(cat child.txt)" = child && echo PARENT_SAW_CHILD'),
     approval('hold', ''),
   ], extra);
-  const runId = await dispatchWithRepository(parent, repositoryId, `${label} 子 SOP 交接`);
+  const runId = await dispatchWithRepository(parent, repositoryId, `${label} 子 LOOP 交接`);
   const waiting = await waitRun(runId, r => r.nodes?.hold?.status === 'waiting_approval', { label: 'parent at the final gate', timeoutMs });
   const childRun = await get(`/api/runs/${waiting.nodes.sub.childRunId}`);
   assert.equal(childRun.status, 'succeeded', `child run ${childRun.id}`);

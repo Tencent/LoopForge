@@ -146,7 +146,7 @@ func TestProjectConversationsAreSharedWithMembers(t *testing.T) {
 	var branch domain.AssistantSession
 	json.Unmarshal(w.Body.Bytes(), &branch)
 	if branch.Shared || branch.UserID != b.ID || branch.ProjectID != "workbench" || len(branch.ID) > 0 && branch.ID[:4] == "sop-" {
-		t.Fatalf("project branch became an SOP branch: %+v", branch)
+		t.Fatalf("project branch became a LOOP branch: %+v", branch)
 	}
 	if code := edit(b, 2); code != 200 {
 		t.Fatalf("member cannot edit own turn: %d", code)

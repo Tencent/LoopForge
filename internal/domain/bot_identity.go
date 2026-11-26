@@ -2,6 +2,9 @@ package domain
 
 import "time"
 
+// BotSenderNameMaxRunes matches the sender_name column on bindings and interactions.
+const BotSenderNameMaxRunes = 191
+
 // BotUserBinding is scoped to the external Bot ID; do not assume user IDs
 // obtained from different enterprises or Bot namespaces are interchangeable.
 type BotUserBinding struct {
@@ -20,6 +23,12 @@ type BotUserBinding struct {
 	GuideCount       int        `json:"-" gorm:"not null;default:0"`
 	LastLinkAt       *time.Time `json:"-"`
 	SenderID         string     `json:"senderId" gorm:"size:191"`
+	// SenderName is the display name the channel reported for SenderID, kept
+	// so audit trails and member pickers can show a person instead of an
+	// opaque ID. It is only set for channels whose events carry a name
+	// (DingTalk); WeCom and Feishu bot callbacks carry the ID alone, and
+	// those senders are named by the platform account they are bound to.
+	SenderName string `json:"senderName,omitempty" gorm:"size:191"`
 	// TargetVerifiedAt records a successful trial proactive send to this
 	// sender (Feishu/DingTalk notification target). Cleared on revocation.
 	TargetVerifiedAt *time.Time `json:"targetVerifiedAt,omitempty"`
@@ -62,7 +71,7 @@ type BotPendingDraft struct {
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
 	ExecutedAt    *time.Time `json:"executedAt,omitempty"`
-	// SOP is the SOP choice offered on the chat card when the draft
+	// SOP is the LOOP choice offered on the chat card when the draft
 	// creates exactly one requirement (nil otherwise); Choice is what the
 	// requester picked there: a workflow ID, BotDraftDefaultSOP, or empty
 	// when nothing was picked.
@@ -73,10 +82,10 @@ type BotPendingDraft struct {
 	RepoChoice string `json:"-"`
 }
 
-// BotDraftDefaultSOP is the card choice "project default SOP".
+// BotDraftDefaultSOP is the card choice "project default LOOP".
 const BotDraftDefaultSOP = "__default__"
 
-// BotDraftSOP is the SOP selection of a new requirement in a draft.
+// BotDraftSOP is the LOOP selection of a new requirement in a draft.
 type BotDraftSOP struct {
 	Index       int                 `json:"index"`
 	WorkflowID  string              `json:"workflowId,omitempty"` // named by the model
@@ -119,7 +128,7 @@ func (d BotPendingDraft) SelectedRepository() string {
 	return BotDraftDefaultSOP
 }
 
-// BotDraftSOPOption is one selectable SOP.
+// BotDraftSOPOption is one selectable LOOP.
 type BotDraftSOPOption struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -141,7 +150,7 @@ func (s *BotDraftSOP) Allows(id string) bool {
 	return false
 }
 
-// Selected is the effective card selection: the pick, else the SOP the
+// Selected is the effective card selection: the pick, else the LOOP the
 // model named, else the project default.
 func (d BotPendingDraft) Selected() string {
 	switch {

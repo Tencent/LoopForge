@@ -3,6 +3,7 @@ package repo
 import (
 	"agentflow/internal/domain"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -20,8 +21,9 @@ import (
 var ErrNotificationTargetUnverified = errors.New("接收成员未绑定或未完成试发验证")
 
 // BotPushTargets lists the bound senders of a Feishu/DingTalk configuration
-// as notification targets. Name shows the platform account; VerifiedAt is
-// the last successful trial send.
+// as notification targets. Name shows the platform account plus the sender:
+// the display name the channel reported for it when known, otherwise a masked
+// ID. VerifiedAt is the last successful trial send.
 func (r *NotificationsRepo) BotPushTargets(bot domain.NotificationBot) ([]domain.BotChat, error) {
 	var rows []domain.BotUserBinding
 	if err := r.DB.Where("bot_id = ? AND config_id = ? AND user_id > 0", bot.IdentityScope(), bot.ID).Order("updated_at DESC").Limit(500).Find(&rows).Error; err != nil {
@@ -30,6 +32,9 @@ func (r *NotificationsRepo) BotPushTargets(bot domain.NotificationBot) ([]domain
 	out := make([]domain.BotChat, 0, len(rows))
 	for _, row := range rows {
 		name := MaskBotSender(row.SenderID)
+		if reported := strings.TrimSpace(row.SenderName); reported != "" {
+			name = reported
+		}
 		if user, ok := r.users.User(row.UserID); ok {
 			label := user.ChineseName
 			if label == "" {

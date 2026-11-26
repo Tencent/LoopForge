@@ -38,7 +38,7 @@ func TestResolveCodeBuddyAPIKeyFromUserOnly(t *testing.T) {
 	}
 }
 
-// A user without a key of their own runs SOPs on the sponsor's key, marked
+// A user without a key of their own runs LOOPs on the sponsor's key, marked
 // sponsored so the engine pins the sponsored model.
 func TestResolveCodeBuddyCredentialFallsBackToSponsor(t *testing.T) {
 	s, err := repo.OpenTest()

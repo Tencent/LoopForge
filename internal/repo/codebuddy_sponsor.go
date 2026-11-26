@@ -14,7 +14,7 @@ import (
 
 // Users who have not configured their own CodeBuddy API Key use the shared
 // key a platform administrator configured under 平台管理, limited to the
-// models the administrator allowed. It covers chat conversations and SOP
+// models the administrator allowed. It covers chat conversations and LOOP
 // runs, so a new user can start working before configuring anything;
 // scheduled prompts, reports, bots and run evaluation keep requiring the
 // user's own key.

@@ -37,7 +37,7 @@ func TestQueuedSOPDoesNotStartAndCancelDoesNotOccupy(t *testing.T) {
 		t.Fatalf("run=%+v active=%d", r, e.ActiveRunCount())
 	}
 	if r.Nodes["work"].Status != "pending" || r.SandboxID != "" {
-		t.Fatal("queued SOP started")
+		t.Fatal("queued LOOP started")
 	}
 	if len(r.Events) != 1 || r.Events[0].Type != "run.queued" {
 		t.Fatalf("events=%+v", r.Events)

@@ -5,10 +5,32 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestNoteBotSenderNameUpdatesLegacyBinding(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	bot, sender := "bot", "staff-1"
+	row := domain.BotUserBinding{ID: botIdentityID(bot, sender), BotID: bot, SenderID: sender, UserID: 42}
+	if err := s.DB.Omit("SenderName").Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	name := strings.Repeat("张", domain.BotSenderNameMaxRunes)
+	if err := s.NoteBotSenderName(bot, sender, name); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := s.BotUserBinding(bot, sender)
+	if err != nil || binding.SenderName != name {
+		t.Fatalf("legacy binding name = %q, error = %v", binding.SenderName, err)
+	}
+}
 
 func TestBotBindingRequiresBothIdentitiesAndRejectsReplay(t *testing.T) {
 	s, err := OpenTest()

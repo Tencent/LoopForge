@@ -520,7 +520,7 @@ func cachedCursorModels(apiKey string) ([]assistantDiscoveredModel, bool) {
 
 // saveCursorCatalog keeps the user's freshly listed Cursor models, folded
 // families with their effort→ID mapping included, in their Cursor
-// credential. Effort checks and the --model of chat turns and SOP nodes
+// credential. Effort checks and the --model of chat turns and LOOP nodes
 // resolve from that saved list, so a family keeps working on every instance
 // and after a restart, and each user resolves against their own CLI's list.
 func (h *assistantHandlers) saveCursorCatalog(user domain.User) {

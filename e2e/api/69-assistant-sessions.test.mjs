@@ -6,7 +6,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { api, get, put, post, del, list, track, cleanup, ensureProject, tokenOwner, tokenBSkip, asB, withProjectMember } from '../lib/api.mjs';
-import { cfg } from '../lib/env.mjs';
+import { cfg, uid } from '../lib/env.mjs';
 
 const P = cfg.projectId;
 const S = '/api/assistant/sessions';
@@ -24,6 +24,24 @@ async function saveSession(id, body, opts) {
   track(`assistant session ${id}`, () => del(`${S}/${id}`, { expect: [200, 404] }));
   return saved;
 }
+
+test('selecting a conversation sandbox keeps the transcript and rejects an unknown reply', async () => {
+  const sandboxId = uid('session-sandbox');
+  await put('/api/sandboxes', { id: sandboxId, name: 'E2E conversation sandbox', projectId: P, driver: 'native' });
+  track(`sandbox ${sandboxId}`, () => del(`/api/sandboxes/${sandboxId}`));
+  const id = newId('sandbox');
+  const messages = [{ role: 'user', content: 'Keep this turn when selecting the runtime.' }];
+  await saveSession(id, { title: 'E2E runtime choice', projectId: P, messages });
+  const path = `${S}/${id}`;
+
+  const chosen = await put(`${path}/sandbox`, { sandboxProfileId: sandboxId });
+  assert.equal(chosen.sandboxProfileId, sandboxId);
+  assert.equal(chosen.messages[0].content, messages[0].content);
+  await post(`${path}/read`, { generationId: 'unrecorded-reply' }, { expect: 404 });
+  const restored = await put(`${path}/sandbox`, { sandboxProfileId: '' });
+  assert.ok(!restored.sandboxProfileId);
+  assert.equal(restored.messages[0].content, messages[0].content);
+});
 
 test('save a project conversation; user turns are stamped with the caller', async () => {
   const id = newId('main');
@@ -107,10 +125,30 @@ test('archive flags the conversation and can be undone', async () => {
 });
 
 test('generation endpoints answer for an idle conversation', async () => {
-  await api('GET', `${S}/${session.id}/generation`, undefined, { expect: 404 });
-  await api('POST', `${S}/${session.id}/generation/cancel`, {}, { expect: [404, 409] });
+  const path = `${S}/${session.id}`;
+  await get(`${path}/generation`, { expect: 404 });
+  await post(`${path}/generation/cancel`, {}, { expect: [404, 409] });
+  const steer = await post(`${path}/generation/steer`, { content: 'This should require a running turn' }, { expect: 409 });
+  assert.match(steer.error, /没有进行中的回复/);
+  const diagnostics = await get(`${path}/generations/${newId('missing-generation')}/diagnostics`, { expect: 404 });
+  assert.match(diagnostics.error, /没有可用的诊断记录/);
+  assert.deepEqual((await get(path)).messages, session.messages);
   // No native CLI approvals are pending without a generation.
-  assert.deepEqual(list(await get(`${S}/${session.id}/native-approvals`)), []);
+  assert.deepEqual(list(await get(`${path}/native-approvals`)), []);
+});
+
+test('workspace sandbox selection persists and can return to the project default', async () => {
+  const path = `${S}/${session.id}`;
+  const selected = await put(`${path}/sandbox`, { sandboxProfileId: cfg.sandbox });
+  assert.equal(selected.sandboxProfileId, cfg.sandbox);
+  await put(`${path}/sandbox`, { sandboxProfileId: newId('missing-sandbox') }, { expect: 400 });
+  const stored = await get(path);
+  assert.equal(stored.sandboxProfileId, cfg.sandbox);
+  assert.deepEqual(stored.messages, session.messages);
+  const reset = await put(`${path}/sandbox`, { sandboxProfileId: '' });
+  assert.equal(reset.sandboxProfileId ?? '', '');
+  session = await get(path);
+  assert.equal(session.sandboxProfileId ?? '', '');
 });
 
 test('runtime mode: platform is accepted, workspace needs an open workspace, unknown is refused', async () => {

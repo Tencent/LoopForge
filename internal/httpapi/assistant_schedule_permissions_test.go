@@ -40,7 +40,7 @@ func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
 	})
 	h.generate = func(ctx context.Context, prompt string, actor domain.User) (string, error) {
 		if !strings.Contains(prompt, "agentflow__runs_wait") {
-			t.Error("scheduled prompt must use the supported SOP wait tool")
+			t.Error("scheduled prompt must use the supported LOOP wait tool")
 		}
 		text, err := h.callAssistantPlatform(ctx, actor, "workbench", assistantMCPCall{Tool: "issues_dispatch", Path: map[string]any{"id": "scheduled-dispatch"}})
 		if err != nil {
@@ -62,11 +62,11 @@ func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
 			return "", err
 		}
 		if result.RunID != runID || result.Status != "waiting" || result.Terminal || result.TimedOut {
-			t.Errorf("SOP approval should end the wait: %+v", result)
+			t.Errorf("LOOP approval should end the wait: %+v", result)
 		}
-		return "SOP 等待人工审批", nil
+		return "LOOP 等待人工审批", nil
 	}
-	if _, err := h.prepareScheduleJob(domain.ScheduleJob{ID: "ai-dispatch", ProjectID: "workbench", OwnerUserID: user.ID, Name: "Dispatch", AssistantPrompt: "启动需求的 SOP", SkipDispatch: true}); err != nil {
+	if _, err := h.prepareScheduleJob(domain.ScheduleJob{ID: "ai-dispatch", ProjectID: "workbench", OwnerUserID: user.ID, Name: "Dispatch", AssistantPrompt: "启动需求的 LOOP", SkipDispatch: true}); err != nil {
 		t.Fatal(err)
 	}
 }

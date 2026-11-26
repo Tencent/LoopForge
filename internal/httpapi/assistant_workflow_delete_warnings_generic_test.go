@@ -9,7 +9,7 @@ import (
 )
 
 // A generic template must be flagged as undeletable, and runs / issues bound
-// to a different SOP must not leak into its counts.
+// to a different LOOP must not leak into its counts.
 func TestWorkflowDeleteWarningsGenericTemplateAndOtherWorkflowsIgnored(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
@@ -34,8 +34,8 @@ func TestWorkflowDeleteWarningsGenericTemplateAndOtherWorkflowsIgnored(t *testin
 		t.Fatalf("generic template warnings = %#v", warnings)
 	}
 
-	// Active runs and open issues on another SOP do not count against gen-wf
-	// or a plain unused SOP.
+	// Active runs and open issues on another LOOP do not count against gen-wf
+	// or a plain unused LOOP.
 	for _, run := range []domain.Run{
 		{ID: "r-other", WorkflowID: "other", Status: "running", Nodes: map[string]*domain.NodeRun{}},
 		{ID: "r-gen", WorkflowID: "gen-wf", Status: "waiting", Nodes: map[string]*domain.NodeRun{}},
@@ -57,7 +57,7 @@ func TestWorkflowDeleteWarningsGenericTemplateAndOtherWorkflowsIgnored(t *testin
 	}
 	for _, w := range warnings {
 		if strings.Contains(w, "Issue") {
-			t.Fatalf("issue bound to another SOP leaked into gen-wf warnings: %#v", warnings)
+			t.Fatalf("issue bound to another LOOP leaked into gen-wf warnings: %#v", warnings)
 		}
 	}
 

@@ -30,15 +30,41 @@ type ProviderError struct {
 func (e *ProviderError) Error() string {
 	return fmt.Sprintf("企业微信错误 %d：%s", e.Code, e.Message)
 }
+
+// failure maps a WeCom error code to what the administrator has to do about
+// it. 850002 and 850003 are the same layer - the Bot's per-capability
+// authorization - in its two states: never granted, and expired. Retrying
+// neither of them helps, so the text says who has to grant what and where.
 func failure(code int) *ProviderError {
 	message := "请求失败，请检查机器人授权或稍后重试"
 	switch code {
+	case 850002:
+		message = "机器人还没有被授权「消息」使用权限。请机器人创建者在企业微信「工作台 → 智能机器人 → 对应机器人 → 授权管理」里授权，部分企业需要管理员审批"
 	case 850003:
 		message = "消息使用权限已过期，请机器人创建者重新授权"
+	case 851009:
+		message = "能力授权已提交，正在等待企业管理员审批"
 	case 853004:
 		message = "机器人凭据或访问令牌失效，请重新验证"
+	case 853006:
+		message = "当前企业主体未开通该能力，无法通过授权解决，请改用其他渠道或联系企业微信支持"
 	}
-	return &ProviderError{Code: code, Message: message}
+	err := &ProviderError{Code: code, Message: message}
+	if err.awaitingAuthorization() {
+		err.Message += "。权限恢复后，已有待授权通知请到「机器人 → 记录 → 发送记录」点击「重试」"
+	}
+	return err
+}
+
+// awaitingAuthorization reports whether a failure is the Bot's capability
+// authorization rather than a transient fault, so the configuration is shown
+// as waiting for an authorization instead of a generic error.
+func (e *ProviderError) awaitingAuthorization() bool {
+	switch e.Code {
+	case 850002, 850003, 851009, 853004:
+		return true
+	}
+	return false
 }
 
 // CLIProvider keeps service discovery and message encoding inside the official CLI.

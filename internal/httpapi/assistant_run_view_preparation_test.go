@@ -46,11 +46,11 @@ func TestAssistantRunProblemsReportWorkspacePreparationFailures(t *testing.T) {
 		t.Fatalf("stage failures = %+v", got)
 	}
 
-	// SOP runs already report through their failed node; the same events must
+	// LOOP runs already report through their failed node; the same events must
 	// not add a second copy.
 	sop := both
 	sop.Kind = ""
 	if got := assistantRunProblems(sop, "", 300); len(got) != 0 {
-		t.Fatalf("SOP run reported preparation events: %+v", got)
+		t.Fatalf("LOOP run reported preparation events: %+v", got)
 	}
 }

@@ -672,7 +672,7 @@ func (h *notificationHandlers) preview(c *gin.Context) {
 	project, _ := h.repo.Project(req.ProjectID)
 	values := map[string]string{"project": project.Name, "workflow": "需求交付流程", "node": "实现功能", "status": "节点已完成", "issue.title": "登录校验优化", "issue.id": "示例需求", "task.name": "每日进度汇总", "input": "优化登录校验并完成验证", "error": "示例错误（仅失败时可用）"}
 	if req.Binding.Scope == "run" {
-		values["status"] = "SOP 已完成"
+		values["status"] = "LOOP 已完成"
 		values["node"] = "全部节点"
 	}
 	if req.SourceType == "schedule_job" || req.SourceType == "assistant_task" {
@@ -687,7 +687,7 @@ func (h *notificationHandlers) preview(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	link := strings.TrimRight(h.service.PublicURL, "/") + "/#/runs/example"
+	link := h.service.PublicAddress() + "/#/runs/example"
 	content = strings.ReplaceAll(content, domain.NotificationURLMarker, link)
 	c.JSON(200, gin.H{"content": content, "contentSource": source, "note": "示例预览，不发送消息；AI 内容在实际执行时生成"})
 }

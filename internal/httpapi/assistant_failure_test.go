@@ -129,6 +129,25 @@ func TestAssistantClaudeRecoversReplyFromEmptySuccessfulResult(t *testing.T) {
 	}
 }
 
+func TestAssistantWorkspaceCodeBuddyKeepsParentReplyAfterChildResult(t *testing.T) {
+	reply, _, err := runAssistantCLI(t.Context(), assistantCLIRequest{
+		Executor: "codebuddy", Prompt: "test", SessionRoot: t.TempDir(),
+		Workspace: true, Native: true, RemoteBinary: true,
+		Execute: func(_ context.Context, _ string, _ runtime.CommandSpec, _ runtime.RunCredentials, sink runtime.EventSink) (string, error) {
+			for _, line := range []string{
+				`{"type":"result","result":"parent reply"}`,
+				`{"type":"result","parent_tool_use_id":"child","result":"child result","is_error":true}`,
+			} {
+				sink(domain.TelemetryEvent{Name: "process.stdout", Message: line})
+			}
+			return "", nil
+		},
+	}, domain.User{ID: 1, CodeBuddyAPIKey: "test"}, nil)
+	if err != nil || reply != "parent reply" {
+		t.Fatalf("got reply = %q, error = %v", reply, err)
+	}
+}
+
 func TestAssistantGenerationFailurePreservesCancellationAndDeadline(t *testing.T) {
 	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
 		_, err := decodeAssistantCLIResult("", false, cause, []string{"process stopped"})

@@ -1,7 +1,7 @@
 package domain
 
 // AnalyticsDashboard is the compact, read-only dashboard. Run quality and
-// interventions describe top-level internal SOPs; delivery uses the first
+// interventions describe top-level internal LOOPs; delivery uses the first
 // observed merge to a repository's default branch, independently of run dates.
 type AnalyticsDashboard struct {
 	Coding      AnalyticsCodingOutcome  `json:"coding"`

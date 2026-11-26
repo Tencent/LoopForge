@@ -32,7 +32,7 @@ func anchorVerdictGrep(cmd string) string {
 }
 
 // bindGitDiffQuietExcludes keeps analyze-style cleanliness gates from failing
-// when the node writes its declared SOP deliverable over a leftover tracked
+// when the node writes its declared LOOP deliverable over a leftover tracked
 // copy (e.g. fix-plan.md committed by a previous run onto the integration branch).
 func bindGitDiffQuietExcludes(cmd string, artifacts []domain.ArtifactContract) string {
 	fields := strings.Fields(strings.TrimSpace(cmd))

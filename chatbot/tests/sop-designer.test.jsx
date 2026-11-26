@@ -27,7 +27,7 @@ describe("sop-designer helpers", () => {
     expect(isDesignerSurface("?projectId=p")).toBe(false);
   });
 
-  test("pick the newest conversation of the SOP", () => {
+  test("pick the newest conversation of the LOOP", () => {
     const rows = [
       { id: "old", projectId: "p1", workflowId: "w", updatedAt: "2026-11-01T00:00:00Z" },
       { id: "other-project", projectId: "p2", workflowId: "w", updatedAt: "2026-11-09T00:00:00Z" },
@@ -285,5 +285,24 @@ describe("SopDesigner", () => {
     const request = send.mock.calls[0][1];
     expect(request.model).toBe("codex:gpt");
     expect(request.sessionId).not.toBe("chat-old");
+  });
+
+  test("the composer drops a CLI after its credential is removed even if its models remain", async () => {
+    localStorage.setItem("agentflow.orchestratorModel", "codex:gpt");
+    render(<SopDesigner search="?surface=sop-designer&projectId=p1&workflowId=sop-a" canvas={canvas} />);
+    const cli = await screen.findByRole("button", { name: "CLI" });
+    await waitFor(() => expect(cli.textContent).toContain("Codex"));
+    const original = read.getMockImplementation();
+    read.mockImplementation(async (path) => {
+      const data = await original(path);
+      if (path !== "/api/assistant/models") return data;
+      return { ...data, engines: data.engines.map((item) => item.id === "codex" ? { ...item, configured: false } : item) };
+    });
+    reply({ type: "agentflow-credentials-changed" });
+    const refreshed = await screen.findByRole("button", { name: "CLI" });
+    await waitFor(() => expect(refreshed.textContent).toContain("CodeBuddy"));
+    fireEvent.click(refreshed);
+    expect(await screen.findByRole("menuitemradio", { name: "CodeBuddy" })).toBeTruthy();
+    expect(screen.queryByRole("menuitemradio", { name: "Codex" })).toBeNull();
   });
 });

@@ -75,6 +75,21 @@ test('markdown renderer covers tables, alerts, quotes, lists, tasks, rules, link
   assert.equal(app.evaluate(`isMarkdownArtifact({},'# inferred')`), true);
 });
 
+test('inline code and snake_case identifiers survive markdown emphasis rules', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const html = app.evaluate(`renderMarkdown('调用 \`TodoStore.complete(todo_id)\` 后 _强调_ 生效，**加粗** 和 __下划线加粗__ 也生效。')`);
+  const host = app.document.createElement('div');
+  host.innerHTML = html;
+  assert.equal(host.querySelector('code').textContent, 'TodoStore.complete(todo_id)');
+  assert.equal(host.querySelectorAll('em').length, 1);
+  assert.equal(host.querySelector('em').textContent, '强调');
+  assert.equal(host.querySelectorAll('strong').length, 2);
+  // A bare identifier must not turn the text between two underscores italic.
+  assert.equal(app.evaluate(`parseInlineMarkdown('todo_id 和 test_complete_unknown_id')`), 'todo_id 和 test_complete_unknown_id');
+  assert.equal(app.evaluate(`parseInlineMarkdown('`+"`a_b`"+` 与 \`c_d\`')`), '<code>a_b</code> 与 <code>c_d</code>');
+});
+
 test('global confirm, prompt, alert, toast, and code editor controls resolve through real handlers', async (t) => {
   const app = await loadApp();
   t.after(app.close);

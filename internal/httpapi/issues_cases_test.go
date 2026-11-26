@@ -273,16 +273,16 @@ func TestIssuesMoreRepositoryWorkflowHelpers(t *testing.T) {
 	}
 
 	if _, err := h.normalizeIssueSOPBindings(projectID, []domain.IssueSOPBinding{{WorkflowID: "missing"}}); err == nil {
-		t.Fatal("missing SOP accepted")
+		t.Fatal("missing LOOP accepted")
 	}
 	if _, err := h.normalizeIssueSOPBindings(projectID, []domain.IssueSOPBinding{{WorkflowID: workflow, AssigneeUserID: 999999}}); err == nil {
 		t.Fatal("missing assignee accepted")
 	}
 	if _, err := h.normalizeIssueSOPBindings(otherID, []domain.IssueSOPBinding{{WorkflowID: workflow}}); err == nil {
-		t.Fatal("foreign SOP accepted")
+		t.Fatal("foreign LOOP accepted")
 	}
 	if bindings, err := h.normalizeIssueSOPBindings(projectID, []domain.IssueSOPBinding{{WorkflowID: workflow}}); err != nil || len(bindings) != 1 {
-		t.Fatalf("valid SOP binding: %+v %v", bindings, err)
+		t.Fatalf("valid LOOP binding: %+v %v", bindings, err)
 	}
 	if _, err := h.createIssueOnTracker(domain.Issue{}, "gongfeng"); err == nil {
 		t.Fatal("gongfeng issue without repository accepted")

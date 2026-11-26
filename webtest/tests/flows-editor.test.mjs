@@ -50,7 +50,7 @@ test('flow editor handles artifact/list editors and saves workflow changes', asy
   t.after(app.close);
   app.evaluate(`switchView('flow');state.workflow={id:'save-flow',projectId:'project-1',name:'Save me',
     status:'draft',version:1,revision:0,sandboxProfileId:'sandbox-1',nodes:[
-      {id:'sub',name:'Sub SOP',type:'sop',sopWorkflowId:'flow-1',position:{x:10,y:10},
+      {id:'sub',name:'Sub LOOP',type:'sop',sopWorkflowId:'flow-1',position:{x:10,y:10},
        artifactOutputs:[{name:'report',path:'report.md',mediaType:'text/markdown',required:true}]}
     ],edges:[]};state.selectedNode='sub';state.workflowDirty=true;renderAll();renderProperties()`);
   const name = app.document.querySelector('#properties [data-ak="name"]');
@@ -71,14 +71,17 @@ test('flow editor handles artifact/list editors and saves workflow changes', asy
 test('flow preview properties persist the CLI, model and SPA fallback', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.get('/api/executor-models', {
+  const catalog = {
     codebuddy: {models:[{id:'deepseek-v4.1-flash',name:'DeepSeek Flash'}]},
-    codex: {models:[{id:'preview-model',name:'Preview model'},{id:'preview-other',name:'Other model'}]},
+    codex: {configured:true,models:[{id:'preview-model',name:'Preview model'},{id:'preview-other',name:'Other model'}]},
     claude: {models:[]},
-  });
+  };
+  app.router.get('/api/executor-models', catalog);
   app.evaluate(`state.data.executors=[{id:'codebuddy',name:'CodeBuddy'},{id:'codex',name:'Codex'}];switchView('flow');addNode('preview',{at:{x:200,y:100}});renderProperties()`);
   await app.evaluate('loadExecutorModelCatalogs()');
   const executor = app.document.querySelector('#previewNodeExecutor');
+  assert.deepEqual([...executor.options].map(option => option.value), ['', 'codex']);
+  assert.equal(app.document.querySelector('#previewNodeExecutorStatus').hidden, true);
   assert.equal(executor.value, '');
   assert.equal(app.evaluate('state.workflow.preview.executorId'), '');
   assert.equal(app.document.querySelector('#previewNodeModel').disabled, true);
@@ -97,9 +100,31 @@ test('flow preview properties persist the CLI, model and SPA fallback', async (t
   assert.equal(app.evaluate(`state.workflow.preview.executorId`), 'codex');
   assert.equal(app.evaluate(`state.workflow.nodes.find(n=>isPreviewBuildNode(n.id)).executorId`), 'codex');
   assert.equal(model.value, 'preview-other');
+
+  app.router.get('/api/executor-models', {...catalog, codex: {...catalog.codex, configured:false}});
+  app.evaluate('renderProperties()');
+  await app.evaluate('loadExecutorModelCatalogs()');
+  const savedExecutor = app.document.querySelector('#previewNodeExecutor');
+  const savedModel = app.document.querySelector('#previewNodeModel');
+  assert.deepEqual([...savedExecutor.options].map(option => [option.value, option.disabled]), [['', false], ['codex', true]]);
+  assert.equal(savedExecutor.value, 'codex');
+  assert.equal(savedModel.value, 'preview-other');
+  assert.equal(savedModel.disabled, true);
+  const status = app.document.querySelector('#previewNodeExecutorStatus');
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '无可用执行器');
+
+  savedExecutor.value = '';
+  savedExecutor.dispatchEvent(new app.window.Event('change'));
+  app.evaluate('renderProperties()');
+  await app.evaluate('loadExecutorModelCatalogs()');
+  const inherited = app.document.querySelector('#previewNodeExecutor');
+  assert.equal(inherited.disabled, true);
+  assert.equal(inherited.selectedOptions[0].text, '无可用执行器');
+  assert.equal(app.evaluate('state.workflow.preview.executorId'), '');
 });
 
-test('SOP wizard creates a workflow and publish/delete actions send expected requests', async (t) => {
+test('LOOP wizard creates a workflow and publish/delete actions send expected requests', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`afConfirm=async()=>true;openSOPWizard()`);

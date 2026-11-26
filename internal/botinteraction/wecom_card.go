@@ -9,8 +9,8 @@ import (
 // WeCom versions of the write-confirmation and clarification cards. WeCom
 // template cards cannot mix drop-downs with several buttons: a card with
 // drop-downs is a multiple_interaction card (at most three drop-downs of
-// at most ten options, one submit button), so the repository, the SOP and
-// what to do ("确认执行 / 确认并启动 SOP / 取消") are three drop-downs sent
+// at most ten options, one submit button), so the repository, the LOOP and
+// what to do ("确认执行 / 确认并启动 LOOP / 取消") are three drop-downs sent
 // together; other cards are button_interaction cards. Clicks arrive as
 // template_card_event callbacks on the long connection: the task ID starts
 // with the draft or clarification session (and, for clarification cards,

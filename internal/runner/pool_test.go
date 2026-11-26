@@ -142,7 +142,7 @@ func TestPoolRunResumesOnOriginalRunnerAfterRestart(t *testing.T) {
 		t.Fatalf("stopped runner presence = %s", stopped.Status)
 	}
 	startPoolRunner(t, s, server.URL, "builtin-b")
-	if err := e.Approve(run.ID, "gate", ""); err != nil {
+	if err := e.Approve(engineControlTestActor(), run.ID, "gate", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, 5*time.Second, "original runner wait", func() bool {
