@@ -1129,7 +1129,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			break
 		}
 		if failedAction != "loop" {
-			e.observe(runID, node.ID, domain.TelemetryEvent{Category: "orchestration", Name: "agent.loop", Phase: "finish", Message: "门禁失败策略为 " + failedAction + "，跳过自修正", Attributes: map[string]any{"iteration": iteration, "onFailure": failedAction, "feedback": err.Error()}})
+			e.observe(runID, node.ID, domain.TelemetryEvent{Category: "orchestration", Name: "agent.loop", Phase: "finish", Message: agentLoopSkipMessage(failedAction), Attributes: map[string]any{"iteration": iteration, "onFailure": failedAction, "feedback": err.Error()}})
 			break
 		}
 		loopFeedback = err.Error()
@@ -1183,7 +1183,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.FinishedAt = output, err.Error(), "waiting_approval", time.Now().UTC()
-				e.event(r, node.ID, "agent.loop.exhausted", "Agent 自修正次数已耗尽，转人工判断："+err.Error())
+				e.event(r, node.ID, "agent.loop.exhausted", agentLoopHumanMessage(lastIteration, maxIterations)+err.Error())
 			})
 			return
 		}
@@ -1399,4 +1399,25 @@ func joinGateCommands(commands []string, artifacts []domain.ArtifactContract) st
 		return bound[0]
 	}
 	return "set -e\n" + strings.Join(bound, "\n")
+}
+
+// agentLoopSkipMessage explains why a failed iteration does not self-correct.
+// Only a gate configured with onFailure=loop retries; any other gate policy is
+// named, and a failure no gate decided (the executor itself failed) says so
+// instead of naming an empty policy.
+func agentLoopSkipMessage(failedAction string) string {
+	if failedAction == "" {
+		return "本轮执行失败（不是门禁未通过），不进入自修正"
+	}
+	return "门禁失败策略为 " + failedAction + "，跳过自修正"
+}
+
+// agentLoopHumanMessage prefixes the hand-off to a person when a looping role
+// stops. It claims the self-correction budget is spent only when every
+// iteration actually ran.
+func agentLoopHumanMessage(iterations, maxIterations int) string {
+	if iterations < maxIterations {
+		return fmt.Sprintf("Agent 第 %d 轮执行失败，未进入自修正，转人工判断：", iterations)
+	}
+	return "Agent 自修正次数已耗尽，转人工判断："
 }
