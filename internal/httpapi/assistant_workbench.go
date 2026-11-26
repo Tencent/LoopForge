@@ -79,8 +79,8 @@ func (h *assistantHandlers) workbenchReference(ref domain.AssistantReference, pr
 			issueData["sopMode"] = domain.IssueSOPNone
 		} else {
 			if wfID := strings.TrimSpace(v.WorkflowID); wfID != "" {
-				issueData["workflowId"] = wfID
-				if wf, exists := h.repo.Workflow(wfID); exists && (wf.Generic && project != "" || allowed(wf.ProjectID, wf.Shared)) {
+				if wf, exists := h.repo.Workflow(wfID); exists && workflowVisibleToProject(wf, project) {
+					issueData["workflowId"] = wf.ID
 					issueData["workflowName"] = wf.Name
 				}
 			}
@@ -1518,6 +1518,11 @@ func runNodeAgentID(r domain.Run, id string) string {
 	return ""
 }
 
+func workflowVisibleToProject(wf domain.WorkflowDefinition, project string) bool {
+	project = strings.TrimSpace(project)
+	return project != "" && (wf.Generic || wf.ProjectID == project || wf.Shared)
+}
+
 func (h *assistantHandlers) issueBoundSOPs(issue domain.Issue) []gin.H {
 	if issue.WithoutSOP() {
 		return nil
@@ -1528,8 +1533,12 @@ func (h *assistantHandlers) issueBoundSOPs(issue domain.Issue) []gin.H {
 	}
 	out := make([]gin.H, 0, len(bindings))
 	for _, b := range bindings {
+		wf, ok := h.repo.Workflow(b.WorkflowID)
+		if ok && !workflowVisibleToProject(wf, issue.ProjectID) {
+			continue
+		}
 		item := gin.H{"workflowId": b.WorkflowID}
-		if wf, ok := h.repo.Workflow(b.WorkflowID); ok && strings.TrimSpace(wf.Name) != "" {
+		if ok && strings.TrimSpace(wf.Name) != "" {
 			item["name"] = strings.TrimSpace(wf.Name)
 		}
 		out = append(out, item)
@@ -1547,7 +1556,11 @@ func (h *assistantHandlers) issueBoundSOPLabels(issue domain.Issue) []string {
 	}
 	out := make([]string, 0, len(bindings))
 	for _, b := range bindings {
-		if wf, ok := h.repo.Workflow(b.WorkflowID); ok && strings.TrimSpace(wf.Name) != "" {
+		wf, ok := h.repo.Workflow(b.WorkflowID)
+		if ok && !workflowVisibleToProject(wf, issue.ProjectID) {
+			continue
+		}
+		if ok && strings.TrimSpace(wf.Name) != "" {
 			out = append(out, fmt.Sprintf("%s（%s）", strings.TrimSpace(wf.Name), b.WorkflowID))
 		} else {
 			out = append(out, b.WorkflowID)
