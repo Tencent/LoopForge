@@ -26,3 +26,4 @@ test-results/
 # Code-OSS has vendored runtime dependencies embedded by Go.
 !web/vscode-web/**/node_modules/
 !web/vscode-web/**
+Thu Nov 26 14:43:03 UTC 2026
