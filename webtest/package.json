@@ -13,5 +13,9 @@
     "istanbul-reports": "3.2.0",
     "jsdom": "26.1.0",
     "v8-to-istanbul": "9.3.0"
+  },
+  "overrides": {
+    "glob": "14.0.2",
+    "minimatch": "11.0.1"
   }
 }
