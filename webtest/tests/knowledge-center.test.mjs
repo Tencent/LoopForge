@@ -353,6 +353,47 @@ test('LightCloud read-only tools and manual review use the selected project and 
   assert.equal(doc.querySelector('[data-kb-act="retract"]'), null);
 });
 
+test('LightCloud project source authorization preserves other projects and refreshes the visible list', async (t) => {
+  const project = 'project-1';
+  const sources = [
+    { id: 'alpha', name: 'Default docs', status: 'ready' },
+    { id: 'beta', name: 'Additional docs', status: 'ready' },
+  ];
+  let settings = {
+    provider: 'lightcloud', enabled: true, url: 'https://kb.example.test/mcp',
+    ready: true, canManage: true, defaultSources: ['alpha'], projectSources: { other: ['beta'] },
+  };
+  const app = await loadApp({ routes: [
+    { method: 'GET', path: '/api/knowledge/settings', body: () => settings },
+    { method: 'PUT', path: '/api/knowledge/settings', body: ({ body }) => settings = { ...settings, ...body } },
+    { method: 'POST', path: '/api/knowledge/check', body: { ok: true, sources } },
+    { method: 'GET', path: '/api/knowledge/sources?projectId=' + project, body: () => {
+      const allowed = settings.projectSources[project] ?? settings.defaultSources;
+      return sources.filter(source => allowed.includes(source.id)).map(source => ({ ...source, allowed: true }));
+    } },
+  ] });
+  t.after(app.close);
+  await app.evaluate("switchView('knowledge')");
+  await settle(8);
+  const doc = app.document;
+  const panel = () => doc.querySelector('#kbTabBody').textContent;
+  const drawer = doc.querySelector('#kbDrawerBody');
+  assert.doesNotMatch(panel(), /Additional docs/);
+  doc.querySelector('#kbProjectSourcesButton').click();
+  await settle(8);
+  assert.equal(drawer.querySelector('[data-kb-source="beta"]').disabled, true);
+  drawer.querySelector('[data-kb-scope="custom"]').click();
+  await settle(8);
+  drawer.querySelector('[data-kb-source="beta"]').click();
+  await settle(8);
+  assert.match(panel(), /Additional docs/);
+  assert.deepEqual(settings.projectSources, { other: ['beta'], [project]: ['alpha', 'beta'] });
+  drawer.querySelector('[data-kb-scope="all"]').click();
+  await settle(8);
+  assert.doesNotMatch(panel(), /Additional docs/);
+  assert.deepEqual(settings.projectSources, { other: ['beta'] });
+});
+
 test('builtin governance refreshes results and opens the pending review for a document', async (t) => {
   const project = 'project-1';
   const source = hostedSource.id;
