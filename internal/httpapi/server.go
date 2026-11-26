@@ -637,6 +637,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/shared-schedule-tasks", api.schedule.sharedScheduleTasks)
 	g.GET("/api/shared-schedule-tasks/:id/versions", api.schedule.sharedScheduleVersions)
 	g.POST("/api/schedule-jobs/:id/publish", api.schedule.publishSharedSchedule)
+	g.GET("/api/schedule-jobs/:id/publish-preview", api.schedule.previewSharedSchedulePublish)
 	g.GET("/api/schedule-jobs", api.schedule.scheduleJobs)
 	g.PUT("/api/schedule-jobs", api.schedule.scheduleJobs)
 	g.POST("/api/schedule-jobs", api.schedule.scheduleJobs)
