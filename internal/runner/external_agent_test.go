@@ -59,9 +59,7 @@ func TestExternalA2ASOP(t *testing.T) {
 				ID: "external-agent-sop", Name: "External Agent LOOP", SandboxProfileID: repo.TestNativeSandboxID,
 				Nodes: []domain.WorkflowNode{
 					{ID: "agent", Name: "Agent", Type: "agent", AgentID: role.ID, MaxAttempts: 1},
-					{ID: "verify", Name: "Read passed artifact", Type: "script", Script: `test "$(cat .agentflow/inputs/agent/result.md)" = '` + expected + "'", MaxAttempts: 1},
 				},
-				Edges: []domain.WorkflowEdge{{ID: "handoff", Source: "agent", Target: "verify", When: "success"}},
 			}
 			if err := store.PutWorkflow(wf); err != nil {
 				t.Fatal(err)
@@ -75,13 +73,16 @@ func TestExternalA2ASOP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			waitFor(t, time.Minute, "external Agent SOP", func() bool {
+			waitFor(t, time.Minute, "external Agent LOOP", func() bool {
 				current, _ := store.Run(run.ID)
 				return current.Status == "succeeded" || current.Status == "failed"
 			})
 			final, _ := store.Run(run.ID)
 			if final.Status != "succeeded" || strings.TrimSpace(final.Nodes["agent"].Output) != expected {
-				t.Fatalf("SOP status %s: Agent error %q, verify error %q", final.Status, final.Nodes["agent"].Error, final.Nodes["verify"].Error)
+				t.Fatalf("LOOP status %s: Agent error %q", final.Status, final.Nodes["agent"].Error)
+			}
+			if len(final.Artifacts) != 1 || final.Artifacts[0].NodeID != "agent" || final.Artifacts[0].Path != "result.md" || strings.TrimSpace(final.Artifacts[0].Content) != expected {
+				t.Fatalf("unexpected A2A result artifact: %+v", final.Artifacts)
 			}
 			for _, task := range store.RunnerTasks() {
 				if task.Action != domain.RunnerTaskActionExternalAgent {

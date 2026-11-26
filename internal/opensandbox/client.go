@@ -194,7 +194,12 @@ func (c *Client) Release(ctx context.Context, workspace, id string) error {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, input, output any) error {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	requestTimeout := 20 * time.Second
+	if method == http.MethodPost {
+		// Docker can pull an image and prepare the container before responding.
+		requestTimeout = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	var body io.Reader
 	if input != nil {
