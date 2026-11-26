@@ -207,6 +207,30 @@ describe("generation diagnostics", () => {
     expect(screen.getByText("tapd__stories_list")).toBeInTheDocument();
     expect(screen.getByText(/执行时间线 · 1 条记录/)).toBeInTheDocument();
   });
+  test("a finished call is not described as a process that never started", async () => {
+    read.mockResolvedValueOnce({
+      ...report,
+      attempts: [
+        {
+          ...report.attempts[0],
+          status: "completed",
+          exitCode: 0,
+          process: { state: "not_started", stdoutLines: 3, stderrLines: 0 },
+        },
+      ],
+    });
+    render(
+      <GenerationDiagnostics
+        sessionId="session-done"
+        generationId="turn-done"
+        failure={failure}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(await screen.findByText("历史调用：已完成")).toBeInTheDocument();
+    expect(screen.getByText(/未记录到进程信息/)).toBeInTheDocument();
+    expect(screen.queryByText(/进程：未启动/)).toBeNull();
+  });
   test("read-only viewers see the failure without detail actions", () => {
     const { container, rerender } = render(
       <GenerationDiagnostics
