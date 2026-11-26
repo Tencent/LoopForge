@@ -164,7 +164,13 @@ func TestGitDiscoveryStopsBeforeParentRepository(t *testing.T) {
 	if _, err := C(ctx, workspace, "init", "-q"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := C(ctx, workspace, "rev-parse", "--show-toplevel"); err != nil || got != workspace {
+	// Git reports the physical path, which on macOS can begin with /private/var
+	// while TempDir returns a path through /var.
+	want, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := C(ctx, workspace, "rev-parse", "--show-toplevel"); err != nil || got != want {
 		t.Fatalf("own checkout unavailable: %s %v", got, err)
 	}
 }
