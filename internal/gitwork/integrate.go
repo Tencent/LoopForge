@@ -51,6 +51,10 @@ func MergeLatestIntegration(ctx context.Context, w, work, integrate, label strin
 	}
 	mergeMsg := labelled("LoopForge: merge latest "+integrate, label)
 	if _, err := C(ctx, w, "merge", "--no-edit", "-m", mergeMsg, "origin/"+integrate); err != nil {
+		// A merge that never started cannot be repaired as a conflict.
+		if _, headErr := C(ctx, w, "rev-parse", "--verify", "MERGE_HEAD"); headErr != nil {
+			return nil, err
+		}
 		conflicts, finishErr := FinishMergeAfterExcludedConflicts(ctx, w, mergeMsg)
 		if finishErr != nil {
 			return nil, finishErr
@@ -94,6 +98,10 @@ func MergeLatestRemoteBranch(ctx context.Context, w, branch string) ([]string, e
 	}
 	mergeMsg := "LoopForge: merge latest " + branch
 	if _, err := C(ctx, w, "merge", "--no-edit", "-m", mergeMsg, "origin/"+branch); err != nil {
+		// A merge that never started cannot be repaired as a conflict.
+		if _, headErr := C(ctx, w, "rev-parse", "--verify", "MERGE_HEAD"); headErr != nil {
+			return nil, err
+		}
 		conflicts, finishErr := FinishMergeAfterExcludedConflicts(ctx, w, mergeMsg)
 		if finishErr != nil {
 			return nil, finishErr
