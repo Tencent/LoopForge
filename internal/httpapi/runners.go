@@ -1322,14 +1322,14 @@ func (h *runnersHandlers) runnerTaskEventsIngest(c *gin.Context) {
 	var input struct {
 		Events []domain.RunnerTaskEvent `json:"events"`
 	}
-	if !decode(c, &input) {
+	if !decodeLimit(c, &input, domain.RunnerTaskEventBodyLimit) {
 		return
 	}
 	if len(input.Events) == 0 {
 		c.JSON(http.StatusOK, map[string]int{"accepted": 0})
 		return
 	}
-	if len(input.Events) > 500 {
+	if len(input.Events) > domain.RunnerTaskEventBatchLimit {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "单批事件数量不能超过 500"})
 		return
 	}

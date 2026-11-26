@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 
@@ -313,7 +314,43 @@ func (c *Client) OpenControl(ctx context.Context) (*websocket.Conn, error) {
 }
 
 func (c *Client) SendEvents(ctx context.Context, taskID string, events []domain.RunnerTaskEvent) error {
-	return c.do(ctx, http.MethodPost, "/runners/tasks/"+taskID+"/events", map[string]any{"events": events}, nil)
+	const envelopeBytes = len(`{"events":[]}`)
+	path := "/runners/tasks/" + taskID + "/events"
+	batch := make([]json.RawMessage, 0, min(len(events), domain.RunnerTaskEventBatchLimit))
+	used := envelopeBytes
+	flush := func() error {
+		err := c.do(ctx, http.MethodPost, path, map[string]any{"events": batch}, nil)
+		batch = batch[:0]
+		used = envelopeBytes
+		return err
+	}
+	for _, event := range events {
+		raw, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		// Include space for a separator, using the encoded size so
+		// control characters and HTML escaping can't exceed the budget.
+		size := len(raw) + 1
+		if envelopeBytes+size > domain.RunnerTaskEventBodyLimit {
+			raw, err = marshalTruncatedRunnerEvent(event)
+			if err != nil {
+				return err
+			}
+			size = len(raw) + 1
+		}
+		if len(batch) == domain.RunnerTaskEventBatchLimit || used+size > domain.RunnerTaskEventBodyLimit {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		batch = append(batch, raw)
+		used += size
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+	return flush()
 }
 
 type CompleteRequest struct {
@@ -354,4 +391,50 @@ func (c *Client) UploadPreview(ctx context.Context, previewID, token string, bod
 
 func (c *Client) CompletePreview(ctx context.Context, previewID string) error {
 	return c.do(ctx, http.MethodPost, "/runners/previews/"+previewID+"/complete", map[string]any{}, nil)
+}
+
+// An oversized record must not permanently block the batcher's retry queue.
+// Keep one bounded record with the original sequence for task/sequence deduplication.
+func marshalTruncatedRunnerEvent(event domain.RunnerTaskEvent) ([]byte, error) {
+	data := truncateRunnerOutput(event.Data)
+	if event.Type == "observation" {
+		// Data is a nested TelemetryEvent, not plain log text. Slicing its JSON
+		// would make the engine silently discard the observation. Replace it
+		// with an explicit warning that the ordinary observation consumer accepts.
+		observation := domain.TelemetryEvent{
+			Timestamp: event.Ts, Category: "process", Name: "process.output_truncated",
+			Phase: "progress", Level: "warning", Message: data,
+			Source: domain.TelemetrySource{Layer: "executor", Adapter: "runner-v1"},
+		}
+		raw, err := json.Marshal(observation)
+		if err != nil {
+			return nil, err
+		}
+		data = string(raw)
+	} else if len(event.Type) > 256 {
+		// Real producers use fixed event kinds. Keep even malformed metadata
+		// from turning a record into an upload that can never succeed.
+		event.Type = "system"
+	}
+	event.Data = data
+	return json.Marshal(event)
+}
+
+func truncateRunnerOutput(data string) string {
+	// This budget leaves ample room for both JSON escaping layers used by
+	// observations, even if every retained byte needs an escape sequence.
+	const retainedBytes = 64 << 10
+	const marker = "\n[runner output truncated]\n"
+	if len(data) <= retainedBytes {
+		return data + marker
+	}
+	head := retainedBytes / 2
+	tail := len(data) - retainedBytes/2
+	for head > 0 && !utf8.RuneStart(data[head]) {
+		head--
+	}
+	for tail < len(data) && !utf8.RuneStart(data[tail]) {
+		tail++
+	}
+	return data[:head] + marker + data[tail:]
 }
