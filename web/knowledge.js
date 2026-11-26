@@ -2,6 +2,12 @@
 // RSI 工作台复用通用面板、徽标和右侧抽屉。
 // 依赖 app.js 的全局 state、api、$、$$、escapeHTML、toast、relativeTime、switchView、showRunDetail、huiIcon、afConfirm。
 const kb={settings:null,externalSources:[],refreshSeq:0,tab:'bases',projectId:null,overview:null,overviewError:'',docs:{source:'',items:[],error:'',loading:false,loaded:false},usage:null,candidates:[],submissions:[],subStatus:'todo',draft:null,togglingAgents:new Set(),search:{query:'',sources:[],result:null,loading:false,error:'',seq:0},governance:null,governanceError:'',feedbackSent:new Set(),drawer:{opener:null,openerKey:'',seq:0},pollTimer:0,rendered:false,pendingCitation:''};
+const kbSettingsUpdates=typeof BroadcastChannel==='function'?new BroadcastChannel('loopforge:knowledge-settings'):null;
+if(kbSettingsUpdates)kbSettingsUpdates.onmessage=()=>{
+  if(!$('#knowledgeView')?.classList.contains('active'))return;
+  kbStopSyncPoll();
+  renderKnowledgeView();
+};
 function kbViewModel(){return kb}
 
 const KB_TOOLS=[
@@ -223,6 +229,7 @@ async function kbRefresh(){
     kb.settings=settings;
     if(changed){
       kb.sharedAdmin=false;kb.tab='bases';kb.subStatus='todo';
+      kbStopSyncPoll();
       kbDrawerClose();
       Object.assign(kb.search,{result:null,error:'',sources:[],loading:false,seq:kb.search.seq+1});
       kb.docs={source:'',items:[],error:'',loading:false,loaded:false};
@@ -374,12 +381,9 @@ function kbOpenSettings(){
         return;
       }
       await api('/api/knowledge/settings',{method:'PUT',body:JSON.stringify(payload)});
+      kbSettingsUpdates?.postMessage(null);
       kbDrawerClose();toast('已保存知识引擎设置','ok');
       await renderKnowledgeView();
-      if(typeof BroadcastChannel==='function'){
-        const updates=new BroadcastChannel('loopforge:knowledge-settings');
-        updates.postMessage(null);updates.close();
-      }
     }catch(err){toast(err.message,'err')}
     finally{check.disabled=false;save.disabled=false}
   }
@@ -582,7 +586,7 @@ function kbBindSourceActions(root){
 }
 
 function kbSyncInProgress(){
-  return kbAllSources().some(s=>['pending','syncing'].includes(s.status)||Number(s.vectorTotal)>0);
+  return !kbExternal()&&kbAllSources().some(s=>['pending','syncing'].includes(s.status)||Number(s.vectorTotal)>0);
 }
 
 function kbStopSyncPoll(){
@@ -597,7 +601,7 @@ function kbEnsureSyncPoll(){
 }
 
 async function kbPollSources(){
-  if(!$('#knowledgeView')?.classList.contains('active'))return;
+  if(kbExternal()||!$('#knowledgeView')?.classList.contains('active'))return;
   const seq=kb.refreshSeq;
   try{
     const overview=await api(`/api/knowledge/bases?projectId=${encodeURIComponent(kbProjectId())}`,{silent:true});
@@ -606,7 +610,13 @@ async function kbPollSources(){
     kbRenderStatus();
     const host=$('#kbSourcesHost');
     if(host&&kb.tab==='bases'){host.innerHTML=kbSourcesPanelHTML(kbCanManageSources());kbBindSourceActions(host)}
-  }catch{}
+  }catch(err){
+    if(seq!==kb.refreshSeq)return;
+    if(err.code==='knowledge_builtin_only'){
+      await renderKnowledgeView();
+      return;
+    }
+  }
   kbEnsureSyncPoll();
 }
 

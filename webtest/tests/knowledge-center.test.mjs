@@ -394,6 +394,28 @@ test('LightCloud project source authorization preserves other projects and refre
   assert.deepEqual(settings.projectSources, { other: ['beta'] });
 });
 
+test('a tab polling Git sync follows an engine change made in another browser', { timeout: 12000 }, async (t) => {
+  let provider = 'builtin';
+  const app = await loadApp({ routes: [
+    { path: '/api/knowledge/settings', body: () => ({ provider, ready: true }) },
+    { path: '/api/knowledge/bases?projectId=project-1', body: () => provider === 'builtin'
+      ? { bases: [{ ...overview.bases[0], sources: [{ ...gitSource, status: 'syncing' }] }] }
+      : { status: 400, body: { code: 'knowledge_builtin_only', error: '此功能仅内置知识引擎可用' } } },
+    { path: '/api/knowledge/sources?projectId=project-1', body: [{ id: 'external', name: 'External docs', allowed: true, status: 'pending' }] },
+  ] });
+  t.after(app.close);
+  await app.evaluate("switchView('knowledge')");
+  await settle(8);
+  const body = () => app.document.querySelector('#kbTabBody').textContent;
+  assert.match(body(), /公开样例/);
+  provider = 'lightcloud';
+  await new Promise(resolve => setTimeout(resolve, 3400));
+  assert.match(body(), /External docs/);
+  assert.equal(app.document.querySelector('#kbTab-docs'), null);
+  const reads = app.router.calls.filter(call => call.path === '/api/knowledge/bases');
+  assert.equal(reads.length, 2, 'only the first stale request reaches the builtin endpoint');
+});
+
 test('builtin governance refreshes results and opens the pending review for a document', async (t) => {
   const project = 'project-1';
   const source = hostedSource.id;

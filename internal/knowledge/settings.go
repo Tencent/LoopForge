@@ -171,7 +171,7 @@ func (s *Service) AgentToolAllowed(name string) bool {
 
 func (s *Service) RequireBuiltin() error {
 	if !s.Builtin() {
-		return apperr.New(apperr.Invalid, "此功能仅内置知识引擎可用，当前使用 LightCloud")
+		return apperr.New(apperr.Invalid, "此功能仅内置知识引擎可用，当前使用 LightCloud").With("code", "knowledge_builtin_only")
 	}
 	return nil
 }
