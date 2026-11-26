@@ -132,6 +132,14 @@ func resolveNativeConversationBinary(provider string) (string, error) {
 			}
 		}
 	}
+	return hostCLIPath(provider, binary)
+}
+
+// hostCLIPath finds an installed CLI on this execution machine: PATH, the
+// official installer's ~/.local/bin, the system bin directories, then the
+// platform's on-demand install directory. Native conversations and native
+// LOOP nodes share it so both run the same executable.
+func hostCLIPath(provider, binary string) (string, error) {
 	path, err := exec.LookPath(binary)
 	if err == nil {
 		return path, nil

@@ -20,6 +20,10 @@ func TestExecutorRunnerPinsManagedNativeCLI(t *testing.T) {
 	}
 	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", root)
 	t.Setenv("AGENTFLOW_PI_BIN", "")
+	// Keep host installations out of the bare-name expectations below.
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", "")
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	publish := func(version string) string {
 		t.Helper()
 		binary := filepath.Join(root, "providers", "pi", version, "pi")
@@ -68,6 +72,60 @@ func TestExecutorRunnerPinsManagedNativeCLI(t *testing.T) {
 	check("docker", "run4", "pi", "pi")
 	check("local", "run5", "/custom/bin/pi", "/custom/bin/pi")
 	check("local", "run6", "pi", override)
+}
+
+// A LOOP node in a native sandbox runs the same agent CLI a native chat
+// would, including one installed on demand, instead of a bare name that
+// fails with "command not found" when PATH lacks it.
+func TestExecutorRunnerFindsHostAgentCLIOutsideManagedRoot(t *testing.T) {
+	cliDir := t.TempDir()
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", cliDir)
+	t.Setenv("AGENTFLOW_PI_BIN", "")
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	runner := NewExecutorRunner()
+	check := func(driver, binary, want string) {
+		t.Helper()
+		sandbox := &capturingSandbox{workspace: t.TempDir(), driver: driver}
+		executor := domain.ExecutorDefinition{Kind: "pi", Binary: binary}
+		if _, err := runner.Run(context.Background(), sandbox, "invocation", executor, domain.AgentDefinition{ID: "agent"}, domain.AgentAssetBundle{}, "hello", InvocationOptions{RunID: "run"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(sandbox.argv) == 0 || sandbox.argv[0] != want {
+			t.Fatalf("%s got %v, want %s", driver, sandbox.argv, want)
+		}
+	}
+	install := func(path string) string {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	// Nothing installed: keep the bare name so the error stays unchanged.
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
+	check("bwrap", "", "pi")
+
+	onDemand := install(filepath.Join(cliDir, "pi", "current", "node_modules", ".bin", "pi"))
+	for _, driver := range []string{"local", "seatbelt", "bwrap"} {
+		check(driver, "", onDemand)
+		check(driver, "pi", onDemand)
+	}
+	// A managed root without this CLI falls back the same way.
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", t.TempDir())
+	check("bwrap", "", onDemand)
+	// Docker sandboxes and explicit executables are left alone.
+	check("docker", "pi", "pi")
+	check("bwrap", "/custom/bin/pi", "/custom/bin/pi")
+	// The installer's ~/.local/bin wins over the on-demand directory, as in chat.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	local := install(filepath.Join(home, ".local", "bin", "pi"))
+	check("bwrap", "", local)
 }
 
 func TestBwrapMountsManagedInstallationUnderPrivateTmp(t *testing.T) {
