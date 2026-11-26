@@ -853,6 +853,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			err = fmt.Errorf("agent %q not found", node.AgentID)
 			break
 		}
+		// Check the actual role we will execute, including changes made after
+		// retry preflight or while the Run was waiting to be scheduled.
+		if expected := wf.RoutingRoleFingerprints[node.ID]; expected != "" && routingRoleFingerprint(agent) != expected {
+			failNode(routingRoleDriftError(node), false)
+			return
+		}
 		ex, errResolve := workflowNodeExecutor(e.repo, wf, node, agent)
 		if errResolve != nil {
 			err = errResolve

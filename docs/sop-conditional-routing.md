@@ -42,3 +42,12 @@ again. Results from an old branch remain in the run history marked stale and
 are excluded from downstream artifact inputs. Changing routes does not undo
 files that a previously executed branch already wrote in a shared workspace.
 Route decisions are recorded as `route.decided` telemetry events.
+
+For Agent nodes that route on a JSON artifact, the Run records the role
+configuration at start and when you explicitly update the workflow snapshot.
+Retries and rework refuse a changed role rather than silently taking a fallback
+branch. This also applies when a role's verification command writes an artifact
+that only the node declares. Restore the original role configuration or start
+a new Run to use the changed role. Runs created before this check was added
+cannot replay an already attempted artifact-routing Agent without a recorded
+role fingerprint.

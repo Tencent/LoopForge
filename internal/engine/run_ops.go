@@ -549,6 +549,24 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	if !explicitNode && !replaySucceeded && (r.Status == "cancelled" || cleaned && !e.hasSavedWorkspaceCheckpoint(runID)) {
 		return fmt.Errorf("run workspace has been cleaned or scheduled for cleanup; this run can no longer be retried")
 	}
+	reset := descendants(r.WorkflowSnapshot, nodeID)
+	reset[nodeID] = true
+	wholeWorkflow := len(reset) >= len(r.WorkflowSnapshot.Nodes)
+	// Revive parallel branches interrupted by cancellation, without treating
+	// them as part of the whole-workflow checkout reset.
+	var revived []string
+	for _, node := range r.WorkflowSnapshot.Nodes {
+		if !reset[node.ID] && r.Nodes[node.ID] != nil && r.Nodes[node.ID].Status == "cancelled" {
+			revived = append(revived, node.Name)
+			reset[node.ID] = true
+			for id := range descendants(r.WorkflowSnapshot, node.ID) {
+				reset[id] = true
+			}
+		}
+	}
+	if err := e.guardRoutingRoleDrift(&r, reset); err != nil {
+		return err
+	}
 	if err := e.validateExecutionReconnect(r, nodeID); err != nil {
 		return err
 	}
@@ -584,9 +602,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 			reason = "从中断处继续"
 		}
 	}
-	reset := descendants(r.WorkflowSnapshot, nodeID)
-	reset[nodeID] = true
-	if e.executes() && !deferRestore && len(reset) >= len(r.WorkflowSnapshot.Nodes) {
+	if e.executes() && !deferRestore && wholeWorkflow {
 		// Replaying the whole SOP against the previous attempt's container
 		// inherits whatever that attempt broke or filled up, and the container
 		// would otherwise survive until the run finally succeeds. Dropping the
@@ -596,26 +612,6 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 			log.Printf("discard run sandbox %s: %v", runID, err)
 		}
 		e.sandboxes.DiscardRunContainer(context.Background(), runID)
-	}
-	// Parallel branches stopped together with this one by a cancel are not
-	// failures of their own: resume them as well, or nothing would schedule
-	// them again and the run would never settle. This happens after the
-	// whole-SOP check above so reviving siblings never discards the checkout.
-	var revived []string
-	for _, node := range r.WorkflowSnapshot.Nodes {
-		if reset[node.ID] {
-			continue
-		}
-		if nr := r.Nodes[node.ID]; nr != nil && nr.Status == "cancelled" {
-			revived = append(revived, node.Name)
-			reset[node.ID] = true
-			for id := range descendants(r.WorkflowSnapshot, node.ID) {
-				reset[id] = true
-			}
-		}
-	}
-	if err := e.guardRoutingRoleDrift(&r, reset); err != nil {
-		return err
 	}
 	overlayLatestNodeBindings(e.repo, &r, reset)
 	for _, node := range r.WorkflowSnapshot.Nodes {
@@ -988,6 +984,7 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 			r.Nodes[node.ID] = &domain.NodeRun{NodeID: node.ID, Status: "pending"}
 		}
 	}
+	latest.RoutingRoleFingerprints = captureRoutingRoleFingerprints(e.repo, latest)
 	r.WorkflowSnapshot = latest
 	message := fmt.Sprintf("已更新为最新 SOP：v%d #%d → v%d #%d（保留当前运行环境）", previousVersion, previousRevision, latest.Version, latest.Revision)
 	e.event(&r, "", "run.workflow_refreshed", message)
@@ -1155,57 +1152,6 @@ func frozenArtifactContractSources(wf domain.WorkflowDefinition) map[string]bool
 		}
 	}
 	return frozen
-}
-
-// guardRoutingRoleDrift refuses a replay that would look for an artifact its
-// role no longer produces.
-//
-// A frozen artifact condition resolves a name against the node contract, but the
-// role behind that node is looked up by id every time the node runs, and roles
-// are edited in place without a version to pin. Renaming the artifact inside the
-// role therefore leaves the frozen edge waiting for a name the agent is no
-// longer asked to write: the condition never matches and the run quietly takes
-// the default branch. Nothing in the snapshot can restore the old role, so the
-// replay is refused instead of silently misrouting.
-func (e *Engine) guardRoutingRoleDrift(r *domain.Run, nodeIDs map[string]bool) error {
-	for _, edge := range r.WorkflowSnapshot.Edges {
-		if edge.Condition == nil || edge.Condition.Type != "artifact" || !nodeIDs[edge.Source] {
-			continue
-		}
-		var node *domain.WorkflowNode
-		for i := range r.WorkflowSnapshot.Nodes {
-			if r.WorkflowSnapshot.Nodes[i].ID == edge.Source {
-				node = &r.WorkflowSnapshot.Nodes[i]
-				break
-			}
-		}
-		if node == nil || node.Type != "agent" || node.AgentID == "" {
-			continue
-		}
-		if _, declared := artifactContractByName(node.ArtifactOutputs, edge.Condition.Artifact); !declared {
-			continue
-		}
-		agent, ok := workflowAgent(e.repo, r.WorkflowSnapshot, node.AgentID)
-		if !ok || len(agent.ArtifactOutputs) == 0 {
-			// No role contracts means the artifact is owned by the node, and the
-			// taskbook tells the agent to write it; nothing can drift here.
-			continue
-		}
-		if _, ok := artifactContractByName(agent.ArtifactOutputs, edge.Condition.Artifact); ok {
-			continue
-		}
-		return fmt.Errorf("节点 %s 的路由依赖产物「%s」，但角色「%s」已不再产出它；请新建 Run，或恢复角色的产物配置后重试", node.ID, edge.Condition.Artifact, agent.Name)
-	}
-	return nil
-}
-
-func artifactContractByName(contracts []domain.ArtifactContract, name string) (domain.ArtifactContract, bool) {
-	for _, contract := range contracts {
-		if contract.Name == name {
-			return contract, true
-		}
-	}
-	return domain.ArtifactContract{}, false
 }
 
 func resumeNodeID(r domain.Run) string {

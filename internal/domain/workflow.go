@@ -203,6 +203,9 @@ type WorkflowDefinition struct {
 	// that inherit the responsible user's executor. An empty entry defers
 	// selection until the role starts on the bound machine.
 	ExecutorDefaults map[string]AssistantDefaults `json:"executorDefaults,omitempty"`
+	// RoutingRoleFingerprints records the role definitions of artifact-routing
+	// nodes when a Run starts or explicitly refreshes its SOP.
+	RoutingRoleFingerprints map[string]string `json:"routingRoleFingerprints,omitempty"`
 }
 
 // UnmarshalJSON migrates the pre-workflow-sandbox shape while the legacy node

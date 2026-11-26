@@ -2,7 +2,9 @@ package engine
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -10,6 +12,63 @@ import (
 	"strings"
 	"time"
 )
+
+// routingRoleFingerprint includes the role's executable definition, not just
+// its declared outputs: verification commands and prompts can write them too.
+// Version and update time alone are not evidence of a content change.
+func routingRoleFingerprint(role domain.AgentDefinition) string {
+	role.Version, role.UpdatedAt = 0, time.Time{}
+	payload, err := json.Marshal(role)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(payload))
+}
+
+func captureRoutingRoleFingerprints(st *repo.Store, wf domain.WorkflowDefinition) map[string]string {
+	sources := frozenArtifactContractSources(wf)
+	if len(sources) == 0 {
+		return nil
+	}
+	fingerprints := map[string]string{}
+	for _, node := range wf.Nodes {
+		if node.Type != "agent" || !sources[node.ID] {
+			continue
+		}
+		if role, ok := workflowAgent(st, wf, node.AgentID); ok {
+			fingerprints[node.ID] = routingRoleFingerprint(role)
+		}
+	}
+	return fingerprints
+}
+
+func routingRoleDriftError(node domain.WorkflowNode) error {
+	return fmt.Errorf("节点「%s」的路由角色配置已变更或不可用；请恢复原角色配置，或新建 Run", node.ID)
+}
+
+func (e *Engine) guardRoutingRoleDrift(r *domain.Run, nodeIDs map[string]bool) error {
+	wf := r.WorkflowSnapshot
+	sources := frozenArtifactContractSources(wf)
+	for _, node := range wf.Nodes {
+		if node.Type != "agent" || !sources[node.ID] || !nodeIDs[node.ID] {
+			continue
+		}
+		expected := wf.RoutingRoleFingerprints[node.ID]
+		if expected == "" {
+			// Don't guess from the role's outputs: a legacy Run has no record
+			// of the role it used. Never rerun a previously attempted router
+			// against an unverifiable definition.
+			if nr := r.Nodes[node.ID]; nr != nil && nr.Attempt > 0 {
+				return fmt.Errorf("节点「%s」没有保存原路由角色的配置，无法安全重跑；请新建 Run", node.ID)
+			}
+			continue
+		}
+		if role, ok := workflowAgent(e.repo, wf, node.AgentID); !ok || routingRoleFingerprint(role) != expected {
+			return routingRoleDriftError(node)
+		}
+	}
+	return nil
+}
 
 func routeLabels(wf domain.WorkflowDefinition, nodeID string) []string {
 	labels := map[string]bool{}
