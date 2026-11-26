@@ -242,6 +242,10 @@ func TestIsSandboxInterrupt(t *testing.T) {
 	if !IsSandboxInterrupt(wrapped) {
 		t.Fatalf("annotated exec-gone should interrupt, got %v", wrapped)
 	}
+	startup := &ConversationWorkspaceSetupError{Cause: fmt.Errorf("%w: %w", errDockerWorkspaceNotReady, wrapped)}
+	if IsSandboxInterrupt(startup) {
+		t.Fatalf("sandbox that never starts must fail without requeuing: %v", startup)
+	}
 }
 
 func TestAnnotateDockerExecErrorKeepsDaemonLine(t *testing.T) {

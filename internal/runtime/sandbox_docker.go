@@ -92,6 +92,8 @@ const (
 	legacyDockerScriptSuffix = "-scripts"
 )
 
+var errDockerWorkspaceNotReady = errors.New("docker workspace not ready")
+
 func removeDockerWorkspaceContainers(ctx context.Context, container string) error {
 	// Older runs can still own a script companion. Reclaim it with the workspace.
 	if err := removeDockerContainer(ctx, container+legacyDockerScriptSuffix); err != nil {
@@ -403,6 +405,11 @@ func IsSandboxInterrupt(err error) bool {
 	}
 	if errors.Is(err, context.Canceled) {
 		return true
+	}
+	// An image that never starts may report the same daemon message as a
+	// running sandbox that disappeared. Only the latter can be resumed.
+	if errors.Is(err, errDockerWorkspaceNotReady) {
+		return false
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "context canceled") ||
@@ -1034,7 +1041,7 @@ func waitDockerWorkspaceReady(ctx context.Context, name string) error {
 			if lastErr == nil {
 				lastErr = fmt.Errorf("unexpected pwd output %q", strings.TrimSpace(string(lastOut)))
 			}
-			return fmt.Errorf("docker workspace not ready: %w: %s", lastErr, strings.TrimSpace(string(lastOut)))
+			return fmt.Errorf("%w: %w: %s", errDockerWorkspaceNotReady, lastErr, strings.TrimSpace(string(lastOut)))
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
