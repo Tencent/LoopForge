@@ -454,6 +454,25 @@ test('sync configuration and issue push persist project-scoped integration setti
 });
 
 
+test('external sync controls are platform-admin only because they sync every project', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const controls = ['#importGitHubIssues', '#syncNowBtn', '#syncAutoEnabledInline', '#syncAutoEnabled', '#syncInterval', '#saveSyncConfig'];
+  const disabled = () => controls.map(id => app.document.querySelector(id).disabled);
+  app.evaluate(`state.authRequired=true;state.data.syncing=false;renderSync()`);
+  assert.deepEqual(disabled(), controls.map(() => false), 'platform admins keep every sync control');
+  app.evaluate(`state.authRequired=false;state.currentUser.isPlatformAdmin=false;state.currentUser.isGuest=true;renderSync()`);
+  assert.deepEqual(disabled(), controls.map(() => false), 'without login the server accepts every caller, so the controls stay usable');
+  assert.equal(app.document.querySelector('#importGitHubIssues').title, '');
+  app.evaluate(`state.authRequired=true;state.currentUser.isGuest=false;renderSync()`);
+  assert.deepEqual(disabled(), controls.map(() => true), 'POST /api/sync/now and PUT /api/sync/config answer 403 for everyone else');
+  assert.match(app.document.querySelector('#importGitHubIssues').title, /只有平台管理员/);
+  assert.match(app.document.querySelector('#syncScopeHint').textContent, /项目 Owner/);
+  app.evaluate(`state.currentUser.isPlatformAdmin=true;state.data.syncing=true;renderSync()`);
+  assert.equal(app.document.querySelector('#importGitHubIssues').disabled, true, 'a running sync still blocks a second one');
+  assert.equal(app.document.querySelector('#syncNowBtn').disabled, true);
+});
+
 test('AI schedule navigation separates existing tasks and preserves editor kind and project scope', async (t) => {
   const app = await loadApp();
   t.after(app.close);
