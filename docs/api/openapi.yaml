@@ -4727,6 +4727,7 @@ components:
       properties:
         id: {type: string}
         name: {type: string}
+        description: {type: string, description: Free-form notes shown in the sandbox catalog; not sent to execution machines}
         toolchain: {type: string, description: Tool and version hints used when an Agent chooses a sandbox}
         projectId: {type: string, description: Owning project (required)}
         shared: {type: boolean, description: Visible to every project}
