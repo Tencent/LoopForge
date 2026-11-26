@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -410,7 +411,8 @@ func (e *Engine) DeleteRun(runID string) error {
 	if e.WorkspaceActive != nil && e.WorkspaceActive(run) || e.conversationGenerationRunning(run) {
 		return fmt.Errorf("工作区仍在使用，请先停止")
 	}
-	if err := e.repo.ClaimWorkspaceDeletion(runID, token, run.Revision, time.Now().UTC()); err != nil {
+	run, err = e.claimSettledWorkspaceDeletion(run, token)
+	if err != nil {
 		return err
 	}
 	// Preserve the terminal outcome on the durable Task before removing the
@@ -437,6 +439,26 @@ func (e *Engine) DeleteRun(runID string) error {
 		e.PromoteQueuedRunsAsync()
 	}
 	return nil
+}
+
+func (e *Engine) claimSettledWorkspaceDeletion(run domain.Run, token string) (domain.Run, error) {
+	// Cancellation may publish the terminal status before the worker's last
+	// metadata write. Read the latest revision under the workspace lease, but
+	// stop if a retry or another action has moved the run past this outcome.
+	previousRevision := -1
+	for attempt := 0; attempt < 3; attempt++ {
+		current, ok := e.repo.RunState(run.ID)
+		if !ok || current.Status != run.Status || current.Generation != run.Generation ||
+			current.HasActiveNode() || current.Revision == previousRevision {
+			break
+		}
+		err := e.repo.ClaimWorkspaceDeletion(run.ID, token, current.Revision, current.Generation, time.Now().UTC())
+		if !errors.Is(err, repo.ErrWorkspaceInUse) {
+			return current, err
+		}
+		previousRevision = current.Revision
+	}
+	return run, repo.ErrWorkspaceInUse
 }
 
 func (e *Engine) settleDeletedRunTasks(run domain.Run) error {

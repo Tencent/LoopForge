@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -89,6 +91,46 @@ func TestDeleteRunRefusesTerminalRunWithUnfinishedNode(t *testing.T) {
 			}
 			if _, ok := st.Run(run.ID); !ok {
 				t.Fatal("run with an unfinished node was deleted")
+			}
+		})
+	}
+}
+
+func TestDeleteCancelledRunWithConcurrentMetadataWrite(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		name := "terminal metadata"
+		if retry {
+			name = "new execution generation"
+		}
+		t.Run(name, func(t *testing.T) {
+			st, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(st.Close)
+			e := New(st, runtime.NewManager(t.TempDir()))
+			const id = "cancelled-run"
+			if err := st.PutRun(domain.Run{ID: id, Status: "cancelled", Generation: 1}); err != nil {
+				t.Fatal(err)
+			}
+			e.WorkspaceActive = func(previous domain.Run) bool {
+				var updateErr error
+				if retry {
+					updateErr = st.TryAcquireRunLease(id, "retry-worker", previous.Generation, time.Minute)
+				} else {
+					updateErr = st.PutRunAtRevision(previous, previous.Revision)
+				}
+				if updateErr != nil {
+					t.Fatal(updateErr)
+				}
+				return false
+			}
+			err = e.DeleteRun(id)
+			if retry && !errors.Is(err, repo.ErrWorkspaceInUse) || !retry && err != nil {
+				t.Fatalf("DeleteRun = %v", err)
+			}
+			if exists := st.RunExists(id); exists != retry {
+				t.Fatalf("run exists = %t, want %t", exists, retry)
 			}
 		})
 	}

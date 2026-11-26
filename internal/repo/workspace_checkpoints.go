@@ -521,13 +521,13 @@ func (r *RunsRepo) TouchWorkspaceUse(runID string, now time.Time) error {
 
 // Explicit deletion uses the same lease and marks the directory unavailable
 // before filesystem removal, preventing retry from reusing it during deletion.
-func (r *RunsRepo) ClaimWorkspaceDeletion(runID, token string, revision int, now time.Time) error {
+func (r *RunsRepo) ClaimWorkspaceDeletion(runID, token string, revision, generation int, now time.Time) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		row, err := r.takeRunForUpdate(tx, runID)
 		if err != nil {
 			return err
 		}
-		if row.Revision != revision || row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
+		if row.Revision != revision || row.Generation != generation || row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
 			return ErrWorkspaceInUse
 		}
 		if row.Kind == domain.RunKindWorkspace {
