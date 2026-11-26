@@ -159,6 +159,34 @@ func TestCodeBuddyModelDiscoveryPerEnvironment(t *testing.T) {
 	}
 }
 
+func TestCodeBuddyModelDiscoveryDuringInstall(t *testing.T) {
+	stubCLIModelDiscovery(t)
+	started, resume, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	calls := 0
+	discoverCLIModels = func(context.Context, string, string) []string {
+		calls++
+		if calls == 1 {
+			close(started)
+			<-resume
+			return nil
+		}
+		return []string{"deepseek-v4.1-flash"}
+	}
+	go func() {
+		defer close(finished)
+		refreshCLIModels(context.Background(), "ioa", "key")
+	}()
+	<-started
+	forgetCLIModels()
+	close(resume)
+	<-finished
+
+	refreshCLIModels(context.Background(), "ioa", "key")
+	if got := cachedCLIModels("ioa", "key"); !slices.Equal(got, []string{"deepseek-v4.1-flash"}) {
+		t.Fatalf("a discovery started before CLI installation kept the catalog empty: %v", got)
+	}
+}
+
 func TestCodeBuddyModelDiscoveryRetriesFailuresSoon(t *testing.T) {
 	stubCLIModelDiscovery(t)
 	available, calls := false, 0
