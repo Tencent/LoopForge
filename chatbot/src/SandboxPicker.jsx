@@ -8,13 +8,13 @@ export function conversationSandboxOptions(sandboxes, project, selected = "") {
     (s) => s.driver === "docker" && (s.projectId === project?.id || s.shared),
   );
   const options = [
-    { value: "", label: "由 Agent 选择" },
+    { value: "", label: "Để Agent chọn" },
     ...available.map((s) => ({ value: s.id, label: s.name || s.id })),
   ];
   if (selected && !available.some((s) => s.id === selected)) {
     options.push({
       value: selected,
-      label: `环境已不可用 · ${selected}`,
+      label: `Môi trường không còn dùng được · ${selected}`,
       disabled: true,
     });
   }
@@ -37,10 +37,10 @@ export default function SandboxPicker({ chat, onCreate }) {
     return (
       <span
         className="sandbox-context sandbox-fixed"
-        title="任务会话使用任务的运行环境。"
+        title="Phiên tác vụ dùng môi trường chạy của tác vụ."
       >
         <HarnessIcon name="lock" size={12} interactive={false} />
-        <span>{chat.workspaceSandbox?.name || "任务运行环境"}</span>
+        <span>{chat.workspaceSandbox?.name || "Môi trường chạy tác vụ"}</span>
       </span>
     );
   }
@@ -58,7 +58,7 @@ export default function SandboxPicker({ chat, onCreate }) {
     .map((o) => ({
       id: o.value,
       label: o.label,
-      description: o.value ? "" : "按要改的代码自动选择，拿不准时用平台通用 Docker",
+      description: o.value ? "" : "Tự chọn theo code cần sửa; nếu không chắc thì dùng Docker dùng chung của nền tảng",
       icon: o.value ? "terminal" : "folder",
     }));
   return (
@@ -67,7 +67,7 @@ export default function SandboxPicker({ chat, onCreate }) {
         ref={trigger}
         type="button"
         className="context-pill sandbox-picker"
-        aria-label={`运行环境：${label}`}
+        aria-label={`Môi trường chạy: ${label}`}
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={disabled}
@@ -79,7 +79,7 @@ export default function SandboxPicker({ chat, onCreate }) {
       </button>
       <SelectMenu
         open={open}
-        label="沙箱"
+        label="Sandbox"
         value={chat.sandboxProfileId || ""}
         options={menuOptions}
         onSelect={(id) => void chat.selectSandbox(id)}
@@ -91,7 +91,7 @@ export default function SandboxPicker({ chat, onCreate }) {
             ? [
                 {
                   id: "new-sandbox",
-                  label: "新增沙箱",
+                  label: "Thêm sandbox",
                   icon: "plus",
                   onSelect: onCreate,
                 },

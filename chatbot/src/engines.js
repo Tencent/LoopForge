@@ -4,16 +4,16 @@ export const defaultEngine = "codebuddy";
 
 // Main Bot can run on any configured agent CLI; CodeBuddy stays the default.
 export const EXECUTORS = [
-  { id: "codebuddy", icon: "sparkles", label: "CodeBuddy", detail: "使用 CodeBuddy 模型与个人 API Key。" },
-  { id: "codex", icon: "terminal", label: "Codex", detail: "使用 Codex CLI 与个人 Codex API Key。" },
-  { id: "claude-code", icon: "brain", label: "Claude Code", detail: "使用 Claude Code CLI 与个人 Claude Code API Key。" },
-  { id: "opencode", icon: "terminal", label: "OpenCode", detail: "使用 OpenCode 与个人 API Key。" },
-  { id: "cursor", icon: "terminal", label: "Cursor", detail: "使用 Cursor CLI 与个人 API Key。" },
-  { id: "agy", icon: "sparkles", label: "Antigravity", detail: "使用 Antigravity 与个人 API Key。" },
-  { id: "kimi", icon: "sparkles", label: "Kimi Code", detail: "使用 Kimi Code 与个人 API Key。" },
-  { id: "pi", icon: "terminal", label: "Pi", detail: "使用 Pi 与个人 API Key。" },
-  { id: "dsh", icon: "terminal", label: "DeepSeek Harness", detail: "使用 DeepSeek Harness 与个人 API Key。" },
-  { id: "zcode", icon: "terminal", label: "ZCode", detail: "使用 ZCode 与个人 API Key。" },
+  { id: "codebuddy", icon: "sparkles", label: "CodeBuddy", detail: "Dùng model CodeBuddy và API Key cá nhân." },
+  { id: "codex", icon: "terminal", label: "Codex", detail: "Dùng Codex CLI và Codex API Key cá nhân." },
+  { id: "claude-code", icon: "brain", label: "Claude Code", detail: "Dùng Claude Code CLI và Claude Code API Key cá nhân." },
+  { id: "opencode", icon: "terminal", label: "OpenCode", detail: "Dùng OpenCode và API Key cá nhân." },
+  { id: "cursor", icon: "terminal", label: "Cursor", detail: "Dùng Cursor CLI và API Key cá nhân." },
+  { id: "agy", icon: "sparkles", label: "Antigravity", detail: "Dùng Antigravity và API Key cá nhân." },
+  { id: "kimi", icon: "sparkles", label: "Kimi Code", detail: "Dùng Kimi Code và API Key cá nhân." },
+  { id: "pi", icon: "terminal", label: "Pi", detail: "Dùng Pi và API Key cá nhân." },
+  { id: "dsh", icon: "terminal", label: "DeepSeek Harness", detail: "Dùng DeepSeek Harness và API Key cá nhân." },
+  { id: "zcode", icon: "terminal", label: "ZCode", detail: "Dùng ZCode và API Key cá nhân." },
 ];
 
 // Bundled logo per CLI; an unknown CLI falls back to its model's brand.
@@ -44,7 +44,7 @@ export const engineModels = (models, engine) =>
 // credentialHint turns it into a "去配置" button.
 export function engineMissingKeyMessage(engine) {
   if (engine.id === defaultEngine) return "请先在个人配置中配置自己的 CodeBuddy API Key";
-  return `请先在个人配置中配置 ${engine.name} API Key 后再使用 ${engine.name} 模型`;
+  return `Hãy cấu hình API Key ${engine.name} trong cài đặt cá nhân trước khi dùng model ${engine.name}`;
 }
 
 const executorLabels = new Map(EXECUTORS.map(({ id, label }) => [id, label]));
@@ -82,7 +82,7 @@ export function conversationEngine(messages, models = [], legacyExecutor = "") {
 }
 
 export function engineDetail(engine, models) {
-  if (!engine.configured) return `未配置 ${engine.name} API Key，选择后去个人配置填写`;
+  if (!engine.configured) return `Chưa cấu hình API Key ${engine.name}; chọn xong hãy điền trong cài đặt cá nhân`;
   const count = engineModels(models, engine.id).length;
-  return count ? `${count} 个可用模型` : "暂无可用模型";
+  return count ? `${count} model khả dụng` : "Chưa có model khả dụng";
 }

@@ -221,7 +221,7 @@ export function inspectionReference(inspection) {
   return {
     type: "element",
     id: `el-${Date.now().toString(36)}-${sequence}`,
-    name: inspection.label || inspection.element?.tag || "元素",
+    name: inspection.label || inspection.element?.tag || "phần tử",
     element: inspection.element,
   };
 }

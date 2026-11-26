@@ -1,14 +1,14 @@
 const levels = {
-  none: { label: "关闭", icon: "sparkles", detail: "不使用额外推理。" },
-  thinking: { label: "开启", icon: "brain", detail: "开启思考模式。" },
-  minimal: { label: "最低", icon: "effort-low", detail: "只做最少推理，优先尽快返回。" },
-  low: { label: "低", icon: "effort-low", detail: "优先响应速度，适合简单问题。" },
-  medium: { label: "中", icon: "effort-medium", detail: "兼顾响应速度与推理深度。" },
-  high: { label: "高", icon: "brain", detail: "更充分地推理，适合复杂问题。" },
-  xhigh: { label: "更高", icon: "search", detail: "投入更多推理时间，适合困难任务。" },
-  max: { label: "最高", icon: "effort-max", detail: "使用模型支持的最高思考强度，耗时可能更长。" },
-  ultra: { label: "极致", icon: "effort-max", detail: "使用极致推理强度，耗时可能更长。" },
-  ultracode: { label: "极致", icon: "effort-max", detail: "使用模型的 ultracode 思考强度，耗时可能更长。" },
+  none: { label: "Tắt", icon: "sparkles", detail: "Không dùng suy luận thêm." },
+  thinking: { label: "Bật", icon: "brain", detail: "Bật chế độ suy nghĩ." },
+  minimal: { label: "Thấp nhất", icon: "effort-low", detail: "Suy luận tối thiểu, ưu tiên trả lời nhanh." },
+  low: { label: "Thấp", icon: "effort-low", detail: "Ưu tiên tốc độ, phù hợp câu hỏi đơn giản." },
+  medium: { label: "Trung bình", icon: "effort-medium", detail: "Cân bằng tốc độ và độ sâu suy luận." },
+  high: { label: "Cao", icon: "brain", detail: "Suy luận kỹ hơn, phù hợp bài toán phức tạp." },
+  xhigh: { label: "Cao hơn", icon: "search", detail: "Dành nhiều thời gian suy luận hơn, phù hợp việc khó." },
+  max: { label: "Cao nhất", icon: "effort-max", detail: "Dùng cường độ suy nghĩ cao nhất mà model hỗ trợ; có thể mất nhiều thời gian hơn." },
+  ultra: { label: "Cực đại", icon: "effort-max", detail: "Dùng cường độ suy luận cực đại; có thể mất nhiều thời gian hơn." },
+  ultracode: { label: "Cực đại", icon: "effort-max", detail: "Dùng cường độ suy nghĩ ultracode của model; có thể mất nhiều thời gian hơn." },
 };
 
 export function modelEffort(model, value) {
@@ -21,7 +21,7 @@ export function knownEffort(value) {
 
 export function effortOptions(model) {
   return [
-    { id: "", label: "默认", icon: "sparkles", detail: "使用当前模型的默认思考强度。" },
+    { id: "", label: "Mặc định", icon: "sparkles", detail: "Dùng cường độ suy nghĩ mặc định của model hiện tại." },
     ...(model?.efforts || []).filter(knownEffort).map((id) => ({ id, ...levels[id] })),
   ];
 }

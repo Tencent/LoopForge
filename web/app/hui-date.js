@@ -9,8 +9,8 @@
   const doc = typeof document !== 'undefined' ? document : null;
   const supported = !!(doc && typeof doc.createElement === 'function' && typeof MutationObserver === 'function');
   const instances = new WeakMap();
-  const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
-  const PLACEHOLDER = '选择日期';
+  const WEEKDAYS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+  const PLACEHOLDER = 'Chọn ngày';
   let serial = 0;
 
   const pad = n => String(n).padStart(2, '0');
@@ -98,14 +98,14 @@
     const panel = el('div', 'hui-date-panel');
     panel.id = id + 'Panel';
     panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-label', '选择日期');
+    panel.setAttribute('aria-label', 'Chọn ngày');
     panel.inert = true;
     const head = el('div', 'hui-date-head');
-    const prev = button('hui-date-nav', null, '上个月');
+    const prev = button('hui-date-nav', null, 'Tháng trước');
     prev.appendChild(icon('chevron-left'));
     const title = el('b', 'hui-date-title');
     title.setAttribute('aria-live', 'polite');
-    const next = button('hui-date-nav', null, '下个月');
+    const next = button('hui-date-nav', null, 'Tháng sau');
     next.appendChild(icon('chevron-right'));
     head.appendChild(prev);
     head.appendChild(title);
@@ -113,8 +113,8 @@
     const grid = el('div', 'hui-date-grid');
     grid.setAttribute('role', 'grid');
     const foot = el('div', 'hui-date-foot');
-    const clear = button('hui-date-action', '清除');
-    const todayButton = button('hui-date-action', '今天');
+    const clear = button('hui-date-action', 'Xóa');
+    const todayButton = button('hui-date-action', 'Hôm nay');
     foot.appendChild(clear);
     foot.appendChild(todayButton);
     panel.appendChild(head);
@@ -171,7 +171,7 @@
       const now = today();
       const y = view.getFullYear();
       const m = view.getMonth();
-      title.textContent = y + ' 年 ' + (m + 1) + ' 月';
+      title.textContent = 'Thg ' + (m + 1) + ' ' + y;
       const { min, max } = bounds();
       prev.disabled = !!min && new Date(y, m, 0) < min;
       next.disabled = !!max && new Date(y, m + 1, 1) > max;

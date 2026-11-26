@@ -146,7 +146,7 @@ function sopRunCardBody(w,m,liveCount){
 }
 function projectSOPCard(w,m={},liveCount=0){
   const recent=formatTimestamp(m.lastRunAt);
-  const meta=`${w.owner||'未分配负责人'} · v${w.version||1} · ${recent?`最近 ${recent}`:'尚未运行'}`;
+  const meta=`${w.owner||'Chưa gán người phụ trách'} · v${w.version||1} · ${recent?`Gần nhất ${recent}`:'Chưa chạy'}`;
   return `<article class="sop-card" data-sop="${escapeHTML(w.id)}" tabindex="0" role="button" aria-label="打开流程设计器：${escapeHTML(w.name)}">${sopRunCardBody(w,m,liveCount)}<div class="sop-card-foot"><span class="sop-card-meta" title="${escapeHTML(meta)}">${escapeHTML(meta)}</span>${sopCardPrimary('data-open-sop',w.id,'打开')}${sopCardMoreButton(w)}</div></article>`;
 }
 function sharedSOPCard(w,m={},liveCount=0){

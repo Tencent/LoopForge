@@ -1,17 +1,17 @@
-// 访问密钥：访问密钥 的创建、撤销，以及创建后复制 MCP 接入提示词。
+// Khóa truy cập: tạo, thu hồi, và sao chép prompt kết nối MCP sau khi tạo.
 function accessMcpClientSpec(client,base,token){
   const json=JSON.stringify({mcpServers:{agentflow:{type:'streamable-http',url:`${base}/mcp`,headers:{Authorization:`Bearer ${token}`}}}},null,2);
   const specs={
-    cursor:{label:'Cursor',location:'~/.cursor/mcp.json',codeTitle:'mcp.json',code:json,verify:'在 Cursor 设置的 MCP 列表中确认 agentflow 已连接'},
-    claude:{label:'Claude Code',location:'Claude CLI（用户级配置写入 ~/.claude.json）',codeTitle:'Shell',code:`claude mcp add --transport http --scope user agentflow ${base}/mcp \\\n  --header "Authorization: Bearer ${token}"`,verify:'claude mcp get agentflow && claude mcp list'},
-    codebuddy:{label:'CodeBuddy',location:'~/.codebuddy/mcp.json',codeTitle:'mcp.json',code:json,verify:'在 CodeBuddy 的 MCP 管理页确认 agentflow 已连接'},
+    cursor:{label:'Cursor',location:'~/.cursor/mcp.json',codeTitle:'mcp.json',code:json,verify:'Trong danh sách MCP của phần cài đặt Cursor, hãy xác nhận agentflow đã được kết nối'},
+    claude:{label:'Claude Code',location:'Claude CLI (ghi cấu hình cấp người dùng vào ~/.claude.json)',codeTitle:'Shell',code:`claude mcp add --transport http --scope user agentflow ${base}/mcp \\\n  --header "Authorization: Bearer ${token}"`,verify:'claude mcp get agentflow && claude mcp list'},
+    codebuddy:{label:'CodeBuddy',location:'~/.codebuddy/mcp.json',codeTitle:'mcp.json',code:json,verify:'Trong trang quản lý MCP của CodeBuddy, hãy xác nhận agentflow đã được kết nối'},
     codex:{label:'Codex',location:'~/.codex/config.toml',codeTitle:'config.toml',code:`[mcp_servers.agentflow]\nurl = "${base}/mcp"\nhttp_headers = { Authorization = "Bearer ${token}" }`,verify:'codex mcp list'}
   };
   return specs[client]||specs.cursor;
 }
 function accessMcpAgentPrompt(spec,base,token){
   if(!token||token==='<YOUR_PERSONAL_TOKEN>')return '';
-  return `按照这个流程安装、初始化并验证好 LoopForge MCP：\n\n1. 使用 curl 下载 安装流程文件, 禁止使用 fetch：${base}/mcp-setup.txt\n2. 两个占位符替换为：\n   API_TOKEN = ${token}\n   ENDPOINT = ${base}/mcp`;
+  return `Hãy cài đặt, khởi tạo và kiểm tra LoopForge MCP theo quy trình này:\n\n1. Dùng curl để tải tệp quy trình cài đặt, không dùng fetch: ${base}/mcp-setup.txt\n2. Thay hai placeholder bằng:\n   API_TOKEN = ${token}\n   ENDPOINT = ${base}/mcp`;
 }
 // 对外展示的固定接入地址：优先使用部署下发的 APP_DOMAIN，避免硬编码固定域名。
 function getPublicBaseURL(){
@@ -66,13 +66,13 @@ function gotoCredential(name,sshRemote){
 }
 // Personal credential fields and the errors they cause. Keep the rules in
 // sync with chatbot/src/credentials.js.
-const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token',gitSshKey:'Git SSH 密钥',gitHttpCredentials:'Git 访问令牌'};
+const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token',gitSshKey:'Khóa Git SSH',gitHttpCredentials:'Git access token'};
 const CREDENTIAL_RULES=[
   ['codexApiKey',/Codex[^。\n]{0,16}API Key/i],
   ['claudeCodeApiKey',/Claude Code[^。\n]{0,16}API Key/i],
   ['codeBuddyApiKey',/CodeBuddy[^。\n]{0,20}(API Key|Key|凭据)|拒绝了你的 API Key/i],
   ['gitSshKey',/Git SSH (?:密钥|私钥)/i],
-  ['gitToken',/Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]/i],
+  ['gitToken',/Git Token|Gongfeng[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]/i],
 ];
 function credentialHint(text){
   const message=String(text||'');
@@ -83,17 +83,17 @@ function credentialHint(text){
 function credentialActionHTML(text){
   const hint=credentialHint(text);
   if(!hint)return '';
-  return `<div class="credential-action"><button type="button" class="button ghost small" data-goto-credential="${hint.field}">去配置 ${escapeHTML(hint.label)} →</button>${hint.owner?'<small>需由责任人本人在个人配置中配置</small>':''}</div>`;
+  return `<div class="credential-action"><button type="button" class="button ghost small" data-goto-credential="${hint.field}">Đi cấu hình ${escapeHTML(hint.label)} →</button>${hint.owner?'<small>Người phụ trách phải tự cấu hình trong cài đặt cá nhân</small>':''}</div>`;
 }
 document.addEventListener('click',e=>{
   const button=e.target.closest?.('[data-goto-credential]');
   if(button)gotoCredential(button.dataset.gotoCredential);
 });
-// renderAll() repaints every page, so only the active 访问密钥 page may fetch
+// renderAll() repaints every page, so only the active Khóa truy cập page may fetch
 // the token list; Bearer sessions get 401 there and would poison the state.
 function renderGuide(openCreate=false){if($('#accessBody')&&accessViewActive())renderAccessTokens(openCreate)}
 // loadAccessTokens always settles accessTokensStatus, and only repaints when the
-// user is still on 访问密钥, so a slow or failing request can never leave the
+// user is still on Khóa truy cập, so a slow or failing request can never leave the
 // loading placeholder on top of another page.
 async function loadAccessTokens(){
   state.accessTokensStatus='loading';state.accessTokensError='';
@@ -102,21 +102,21 @@ async function loadAccessTokens(){
     state.accessTokens=Array.isArray(list)?list:[];
     state.accessTokensStatus='ready';
   }catch(e){
-    state.accessTokens=[];state.accessTokensStatus='error';state.accessTokensError=e.message||'加载失败';
+    state.accessTokens=[];state.accessTokensStatus='error';state.accessTokensError=e.message||'Không tải được';
   }
   if(accessViewActive())renderAccessTokens();
 }
 function renderAccessTokens(openCreate=false){
   const body=$('#accessBody'),user=state.currentUser,isGuest=!user||user.isGuest,tokens=Array.isArray(state.accessTokens)?state.accessTokens:[];
   if(isGuest){
-    body.innerHTML=`<div class="access-card access-tokens"><div class="token-empty"><b>请先登录</b><p>访问密钥必须绑定到登录用户。</p><button type="button" class="button primary" data-access-login>登录后申请</button></div></div>`;
+    body.innerHTML=`<div class="access-card access-tokens"><div class="token-empty"><b>Hãy đăng nhập trước</b><p>Khóa truy cập phải gắn với người dùng đã đăng nhập.</p><button type="button" class="button primary" data-access-login>Đăng nhập rồi tạo khóa</button></div></div>`;
     body.querySelector('[data-access-login]').onclick=()=>{if(state.loginUrl)location.href=state.loginUrl};
     return;
   }
   if(state.accessTokensStatus==='idle'){loadAccessTokens()}
-  if(state.accessTokensStatus==='loading'){body.innerHTML='<div class="access-card access-tokens"><div class="token-empty">正在加载访问密钥…</div></div>';return}
+  if(state.accessTokensStatus==='loading'){body.innerHTML='<div class="access-card access-tokens"><div class="token-empty">Đang tải khóa truy cập…</div></div>';return}
   if(state.accessTokensStatus==='error'){
-    body.innerHTML=`<div class="access-card access-tokens"><div class="token-empty"><b>访问密钥列表加载失败</b><p>${escapeHTML(state.accessTokensError)}</p><div style="display:flex;gap:8px;justify-content:center"><button type="button" class="button primary small" data-retry-tokens>重试</button><button type="button" class="button ghost small" data-access-login>重新登录</button></div></div></div>`;
+    body.innerHTML=`<div class="access-card access-tokens"><div class="token-empty"><b>Không tải được danh sách khóa truy cập</b><p>${escapeHTML(state.accessTokensError)}</p><div style="display:flex;gap:8px;justify-content:center"><button type="button" class="button primary small" data-retry-tokens>Thử lại</button><button type="button" class="button ghost small" data-access-login>Đăng nhập lại</button></div></div></div>`;
     body.querySelector('[data-retry-tokens]').onclick=()=>{state.accessTokensStatus='idle';renderAccessTokens()};
     body.querySelector('[data-access-login]').onclick=()=>{if(state.loginUrl)location.href=state.loginUrl};
     return;
@@ -125,12 +125,12 @@ function renderAccessTokens(openCreate=false){
   const revealedSpec=state.revealedToken?accessMcpClientSpec(state.accessClient,base,state.revealedToken):null;
   const revealedPrompt=revealedSpec?accessMcpAgentPrompt(revealedSpec,base,state.revealedToken):'';
   const revealClients=state.revealedToken?[['cursor','Cursor'],['claude','Claude Code'],['codebuddy','CodeBuddy'],['codex','Codex']].map(([id,label])=>`<button type="button" class="${state.accessClient===id?'active':''}" data-revealed-client="${id}">${label}</button>`).join(''):'';
-  const reveal=state.revealedToken?`<div class="token-reveal"><b>访问密钥已创建，可直接复制完整配置提示词</b><p>先选择客户端；复制内容会自动带上本次访问密钥和 Endpoint，无需再次替换占位符。平台只保存哈希，关闭后无法再次查看明文。</p><div class="access-clients token-client-picker">${revealClients}</div><div class="token-reveal-line"><code>${escapeHTML(state.revealedToken)}</code><button type="button" class="button primary small" data-copy-revealed-prompt="${encodeURIComponent(revealedPrompt)}">⧉ 复制 ${escapeHTML(revealedSpec.label)} 配置提示词</button><button type="button" class="button ghost small" data-copy-revealed>仅复制密钥</button><button type="button" class="button ghost small" data-close-revealed>已保存</button></div></div>`:'';
-  const rows=tokens.length?tokens.map(t=>{const revoked=!!t.revokedAt,expired=t.expiresAt&&new Date(t.expiresAt)<new Date();return `<div class="token-row ${revoked||expired?'revoked':''}"><div class="token-row-main"><b>${escapeHTML(t.name)}</b><code>${escapeHTML(t.prefix)}••••••••</code></div><div class="token-meta">创建 ${relativeTime(t.createdAt)} · ${t.lastUsedAt?`最近使用 ${relativeTime(t.lastUsedAt)}`:'尚未使用'} · ${revoked?'已撤销':expired?'已过期':`有效至 ${new Date(t.expiresAt).toLocaleDateString()}`}</div>${!revoked&&!expired?`<button type="button" class="button danger-outline small" data-revoke-token="${escapeHTML(t.id)}">撤销</button>`:''}</div>`}).join(''):'<div class="token-empty">还没有访问密钥，创建后即可接入 REST API 和 MCP。</div>';
+  const reveal=state.revealedToken?`<div class="token-reveal"><b>Đã tạo khóa truy cập, bạn có thể sao chép luôn toàn bộ prompt cấu hình</b><p>Hãy chọn client trước; nội dung sao chép sẽ tự kèm khóa truy cập lần này và Endpoint, không cần thay placeholder nữa. Nền tảng chỉ lưu hash, đóng xong sẽ không xem lại được bản rõ.</p><div class="access-clients token-client-picker">${revealClients}</div><div class="token-reveal-line"><code>${escapeHTML(state.revealedToken)}</code><button type="button" class="button primary small" data-copy-revealed-prompt="${encodeURIComponent(revealedPrompt)}">⧉ Sao chép prompt cấu hình ${escapeHTML(revealedSpec.label)}</button><button type="button" class="button ghost small" data-copy-revealed>Chỉ sao chép khóa</button><button type="button" class="button ghost small" data-close-revealed>Đã lưu</button></div></div>`:'';
+  const rows=tokens.length?tokens.map(t=>{const revoked=!!t.revokedAt,expired=t.expiresAt&&new Date(t.expiresAt)<new Date();return `<div class="token-row ${revoked||expired?'revoked':''}"><div class="token-row-main"><b>${escapeHTML(t.name)}</b><code>${escapeHTML(t.prefix)}••••••••</code></div><div class="token-meta">Tạo ${relativeTime(t.createdAt)} · ${t.lastUsedAt?`Dùng gần nhất ${relativeTime(t.lastUsedAt)}`:'Chưa dùng'} · ${revoked?'Đã thu hồi':expired?'Đã hết hạn':`Hết hạn ${new Date(t.expiresAt).toLocaleDateString()}`}</div>${!revoked&&!expired?`<button type="button" class="button danger-outline small" data-revoke-token="${escapeHTML(t.id)}">Thu hồi</button>`:''}</div>`}).join(''):'<div class="token-empty">Chưa có khóa truy cập; sau khi tạo có thể kết nối REST API và MCP.</div>';
   const activeCount=tokens.filter(t=>!t.revokedAt&&(!t.expiresAt||new Date(t.expiresAt)>new Date())).length;
-  body.innerHTML=`<div class="access-card access-tokens">${reveal}<form id="accessTokenForm" class="token-create-form"><label>密钥名称<input class="input" name="name" required maxlength="128" placeholder="例如：我的 Cursor"></label><label>有效期<select class="select" name="expiresInDays"><option value="30">30 天</option><option value="90" selected>90 天</option><option value="180">180 天</option><option value="365">365 天</option></select></label><button type="submit" class="button primary">创建访问密钥</button></form><div class="access-card-title"><i>K</i>我的访问密钥 <span style="margin-left:auto;color:var(--muted-2);font-size:10.5px">${activeCount} 个可用</span></div><div class="token-list">${rows}</div></div>`;
-  body.querySelector('[data-copy-revealed]')?.addEventListener('click',()=>copyText(state.revealedToken,'访问密钥已复制'));
-  body.querySelector('[data-copy-revealed-prompt]')?.addEventListener('click',b=>copyText(decodeURIComponent(b.currentTarget.dataset.copyRevealedPrompt),`${revealedSpec.label} 配置提示词已复制`));
+  body.innerHTML=`<div class="access-card access-tokens">${reveal}<form id="accessTokenForm" class="token-create-form"><label>Tên khóa<input class="input" name="name" required maxlength="128" placeholder="Ví dụ: Cursor của tôi"></label><label>Thời hạn<select class="select" name="expiresInDays"><option value="30">30 ngày</option><option value="90" selected>90 ngày</option><option value="180">180 ngày</option><option value="365">365 ngày</option></select></label><button type="submit" class="button primary">Tạo khóa truy cập</button></form><div class="access-card-title"><i>K</i>Khóa truy cập của tôi <span style="margin-left:auto;color:var(--muted-2);font-size:10.5px">${activeCount} còn hiệu lực</span></div><div class="token-list">${rows}</div></div>`;
+  body.querySelector('[data-copy-revealed]')?.addEventListener('click',()=>copyText(state.revealedToken,'Đã sao chép khóa truy cập'));
+  body.querySelector('[data-copy-revealed-prompt]')?.addEventListener('click',b=>copyText(decodeURIComponent(b.currentTarget.dataset.copyRevealedPrompt),`Đã sao chép prompt cấu hình ${revealedSpec.label}`));
   body.querySelectorAll('[data-revealed-client]').forEach(b=>b.onclick=()=>{state.accessClient=b.dataset.revealedClient;renderAccessTokens()});
   body.querySelector('[data-close-revealed]')?.addEventListener('click',()=>{state.revealedToken='';renderAccessTokens()});
   body.querySelector('#accessTokenForm')?.addEventListener('submit',createPersonalToken);
@@ -138,22 +138,22 @@ function renderAccessTokens(openCreate=false){
 }
 async function createPersonalToken(e){
   e.preventDefault();const form=e.currentTarget;
-  try{const result=await api('/api/auth/tokens',{method:'POST',body:JSON.stringify({name:form.elements.name.value.trim(),expiresInDays:Number(form.elements.expiresInDays.value)})});state.revealedToken=result.token;await loadAccessTokens();toast('访问密钥已创建，请立即复制','ok')}catch(err){toast(err.message,'err')}
+  try{const result=await api('/api/auth/tokens',{method:'POST',body:JSON.stringify({name:form.elements.name.value.trim(),expiresInDays:Number(form.elements.expiresInDays.value)})});state.revealedToken=result.token;await loadAccessTokens();toast('Đã tạo khóa truy cập, hãy sao chép ngay','ok')}catch(err){toast(err.message,'err')}
 }
 async function revokePersonalToken(id){
-  if(!(await afConfirm({title:'撤销访问密钥',message:'撤销后，正在使用这个访问密钥的 API 和 MCP 客户端会立即失效。确定撤销？',danger:true,confirmText:'确定撤销'})))return;
-  try{await api(`/api/auth/tokens/${encodeURIComponent(id)}`,{method:'DELETE'});await loadAccessTokens();toast('访问密钥已撤销','ok')}catch(err){toast(err.message,'err')}
+  if(!(await afConfirm({title:'Thu hồi khóa truy cập',message:'Sau khi thu hồi, các client API và MCP đang dùng khóa này sẽ hết hiệu lực ngay. Bạn chắc chắn muốn thu hồi?',danger:true,confirmText:'Xác nhận thu hồi'})))return;
+  try{await api(`/api/auth/tokens/${encodeURIComponent(id)}`,{method:'DELETE'});await loadAccessTokens();toast('Đã thu hồi khóa truy cập','ok')}catch(err){toast(err.message,'err')}
 }
 
 
 let commandMatches=[],commandSelectedIndex=0;
 function commandCatalog(){
-  const pages=[['collaboration','AI 工作台','和 AI 对话，派发与跟进任务'],['issues','需求列表','查看进度，触发或重试'],['approvals','待我确认','批准或退回卡住的需求'],['observability','统计','用量分析 · Token 与质量'],['settings','个人配置','账号、模型与执行凭据'],['projects','项目配置','项目、成员和仓库'],['bots','通道管理','企业微信单聊或群聊通知通道'],['sops','流程模板','Issue 修复与需求开发'],['runs','运行记录','查看节点日志和产物'],['aiSchedules','定时任务','提示词任务、SOP 触发与共享任务'],['agents','角色定义','管理角色和能力资产'],['mcp','能力资产 · MCP','添加项目级或个人 MCP'],['rules','能力资产 · 规则','当前项目的行为与执行约束'],['skills','能力资产 · 技能','当前项目的技能和附加文件'],['runners','执行机器','用自己的电脑或 CVM 跑任务'],['dockerfiles','环境资产 · Dockerfile','管理项目容器构建定义'],['environments','环境资产 · 安装脚本','管理隔离环境的工具安装脚本'],['sandboxes','环境资产 · 沙箱','管理项目运行隔离策略'],['guide','访问密钥','创建和撤销访问密钥']].map(([view,title,meta])=>({kind:'页面',title,meta,action:()=>switchView(view)}));
-  const issues=(state.data.issues||[]).map(i=>({kind:'需求',title:i.title,meta:`${i.priority||'—'} · ${issueStatusLabel(i.status)}`,action:()=>openIssueDetail(i.id)}));
-  const runs=sopRuns(state.data.runs).map(r=>({kind:'运行',title:runIssueTitle(r),meta:`${runDisplayStatus(r)} · ${r.workflowSnapshot?.name||r.workflowId}`,action:()=>openRunFromId(r.id)}));
-  const sops=catalogWorkflows().map(w=>({kind:'SOP',title:w.name,meta:`${w.status==='published'?'已发布':'草稿'} · ${w.nodes?.length||0} 个节点`,action:()=>{state.workflow=clone(w);state.selectedNode=null;switchView('flow')}}));
+  const pages=[['collaboration','Bàn làm việc AI','Trò chuyện với AI, giao việc và theo dõi tác vụ'],['issues','Danh sách yêu cầu','Xem tiến độ, kích hoạt hoặc thử lại'],['approvals','Chờ tôi xác nhận','Phê duyệt hoặc trả lại các yêu cầu bị kẹt'],['observability','Mức dùng','Phân tích mức dùng · Token và chất lượng'],['settings','Cài đặt cá nhân','Tài khoản, model và thông tin xác thực thực thi'],['projects','Cấu hình dự án','Dự án, thành viên và repository'],['bots','Quản lý kênh','Kênh thông báo WeCom chat đơn hoặc nhóm'],['sops','Mẫu quy trình','Sửa Issue và phát triển yêu cầu'],['runs','Nhật ký chạy','Xem nhật ký bước và sản phẩm'],['aiSchedules','Tác vụ hẹn giờ','Tác vụ prompt, kích hoạt SOP và tác vụ dùng chung'],['agents','Định nghĩa vai trò','Quản lý vai trò và tài sản năng lực'],['mcp','Tài sản năng lực · MCP','Thêm MCP cấp dự án hoặc cá nhân'],['rules','Tài sản năng lực · Quy tắc','Ràng buộc hành vi và thực thi của dự án hiện tại'],['skills','Tài sản năng lực · Kỹ năng','Kỹ năng và tệp đính kèm của dự án hiện tại'],['runners','Máy thực thi','Chạy tác vụ trên máy của bạn hoặc CVM'],['dockerfiles','Tài sản môi trường · Dockerfile','Quản lý định nghĩa build container của dự án'],['environments','Tài sản môi trường · Script cài đặt','Quản lý script cài công cụ cho môi trường tách biệt'],['sandboxes','Tài sản môi trường · Sandbox','Quản lý chính sách tách môi trường chạy của dự án'],['guide','Khóa truy cập','Tạo và thu hồi khóa truy cập']].map(([view,title,meta])=>({kind:'Trang',title,meta,action:()=>switchView(view)}));
+  const issues=(state.data.issues||[]).map(i=>({kind:'Yêu cầu',title:i.title,meta:`${i.priority||'—'} · ${issueStatusLabel(i.status)}`,action:()=>openIssueDetail(i.id)}));
+  const runs=sopRuns(state.data.runs).map(r=>({kind:'Lần chạy',title:runIssueTitle(r),meta:`${runDisplayStatus(r)} · ${r.workflowSnapshot?.name||r.workflowId}`,action:()=>openRunFromId(r.id)}));
+  const sops=catalogWorkflows().map(w=>({kind:'SOP',title:w.name,meta:`${w.status==='published'?'Đã xuất bản':'Bản nháp'} · ${w.nodes?.length||0} bước`,action:()=>{state.workflow=clone(w);state.selectedNode=null;switchView('flow')}}));
   const agents=(state.data.agents||[]).map(a=>({kind:'Agent',title:a.name,meta:a.description||a.id,action:()=>{switchView('agents');openAgentWizard(a)}}));
-  const actions=[{kind:'操作',title:'新建 SOP',meta:'创建流程草稿',action:openSOPWizard}];
+  const actions=[{kind:'Thao tác',title:'Tạo SOP mới',meta:'Tạo bản nháp quy trình',action:openSOPWizard}];
   return [...actions,...pages,...issues,...runs,...sops,...agents];
 }
 function openCommandPalette(){const host=$('#commandPalette');host.hidden=false;$('#commandSearch').value='';renderCommandResults();requestAnimationFrame(()=>$('#commandSearch').focus())}
@@ -175,6 +175,6 @@ function renderCommandResults(){
   commandSelectedIndex=0;
   $('#commandResults').innerHTML=commandMatches.length
     ?commandMatches.map((x,i)=>`<button data-command-index="${i}" class="${i===0?'selected':''}"><span class="command-kind">${escapeHTML(x.kind)}</span><span><b>${escapeHTML(x.title)}</b><small>${escapeHTML(x.meta||'')}</small></span><em>↵</em></button>`).join('')
-    :`<div class="command-empty"><b>没有匹配结果</b><span>换一个标题、编号或页面名称试试</span></div>`;
+    :`<div class="command-empty"><b>Không có kết quả khớp</b><span>Hãy thử đổi tiêu đề, mã hoặc tên trang</span></div>`;
 }
 function executeCommand(index){const item=commandMatches[index];if(!item)return;closeCommandPalette();item.action()}

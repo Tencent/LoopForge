@@ -316,11 +316,11 @@ function flowNodeHTML(n,run,ro){
   const m=nodeMeta(n),kind=m.kind,status=run?.nodes?.[n.id]?.status||'';
   const agent=kind==='agent'?workflowAgent(n.agentId):null;
   const tile=agent?escapeHTML(flowPalette.initial(agent.name)):flowPalette.icon(FLOW_NODE_TYPES[kind].icon,16);
-  const title=state.renamingNode===n.id?`<input class="fd-rename" value="${escapeHTML(n.name)}" maxlength="120" aria-label="重命名步骤">`:escapeHTML(n.name);
+  const lfT=window.lfTranslate||(s=>s); const title=state.renamingNode===n.id?`<input class="fd-rename" value="${escapeHTML(n.name)}" maxlength="120" aria-label="重命名步骤">`:escapeHTML(lfT(n.name));
   const cls=['flow-node','fd-node','t-'+kind,state.selectedNode===n.id?'sel':'',state.connectFrom===n.id?'connecting':'',status?'s-'+status:'',kind==='preview'?'preview-build':''].filter(Boolean).join(' ');
   const tags=m.tags.map(t=>`<span class="fd-tag${t.warn?' warn':''}${t.mono?' mono':''}" title="${escapeHTML(t.text)}">${escapeHTML(t.text)}</span>`).join('');
   const outs=`<div class="fd-out ok">成功<span class="fd-port out" data-outlet="success" title="拖到下一步"></span></div>`+(kind==='preview'?'':`<div class="fd-out rj">失败打回<span class="fd-port out" data-outlet="reject" title="拖到失败时要打回的步骤"></span></div>`);
-  return `<div class="${cls}" data-id="${escapeHTML(n.id)}" style="left:${n.position.x}px;top:${n.position.y}px;--tint:${flowNodeTint(n)}"><span class="fd-port in" title="连到这里"></span><div class="fd-nh"><span class="fd-tile">${tile}</span><div class="fd-nt"><div class="node-title">${title}</div><div class="node-subtitle">${escapeHTML(m.subtitle)}</div></div>${status?`<span class="fd-status s-${escapeHTML(status)}">${statusText(status)||escapeHTML(status)}</span>`:''}${ro?'':`<button type="button" class="fd-more" data-node-menu aria-label="更多操作">${flowPalette.icon('more')}</button>`}</div><div class="fd-nbody">${tags}</div><div class="fd-outs">${outs}</div></div>`;
+  return `<div class="${cls}" data-id="${escapeHTML(n.id)}" style="left:${n.position.x}px;top:${n.position.y}px;--tint:${flowNodeTint(n)}"><span class="fd-port in" title="连到这里"></span><div class="fd-nh"><span class="fd-tile">${tile}</span><div class="fd-nt"><div class="node-title">${title}</div><div class="node-subtitle">${escapeHTML((window.lfTranslate||(s=>s))(m.subtitle))}</div></div>${status?`<span class="fd-status s-${escapeHTML(status)}">${statusText(status)||escapeHTML(status)}</span>`:''}${ro?'':`<button type="button" class="fd-more" data-node-menu aria-label="更多操作">${flowPalette.icon('more')}</button>`}</div><div class="fd-nbody">${tags}</div><div class="fd-outs">${outs}</div></div>`;
 }
 function renderCanvas(){
   const nodes=$('#nodes');if(!nodes)return;

@@ -154,16 +154,16 @@ const AF_CONFIRM_MODAL_HTML=`<div id="confirmModal" class="modal">
   <div class="modal-card confirm-modal-card" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
     <div class="confirm-modal-header">
       <div class="confirm-icon-wrap" id="confirmIconWrap"><span id="confirmIcon"></span></div>
-      <div class="confirm-header-text"><h3 id="confirmTitle">确认操作</h3><p id="confirmMessage"></p></div>
+      <div class="confirm-header-text"><h3 id="confirmTitle">Xác nhận thao tác</h3><p id="confirmMessage"></p></div>
     </div>
     <div id="confirmPromptWrap" class="confirm-prompt-wrap" hidden>
-      <label id="confirmPromptLabel">请输入信息</label>
+      <label id="confirmPromptLabel">Nhập thông tin</label>
       <input type="text" id="confirmPromptInput" class="input" autocomplete="off">
       <textarea id="confirmPromptMultiline" class="input" rows="6" maxlength="65536" hidden></textarea>
     </div>
     <div class="confirm-modal-footer">
-      <button type="button" class="button ghost" id="confirmCancelBtn">取消</button>
-      <button type="button" class="button primary" id="confirmOkBtn">确定</button>
+      <button type="button" class="button ghost" id="confirmCancelBtn">Hủy</button>
+      <button type="button" class="button primary" id="confirmOkBtn">Xác nhận</button>
     </div>
   </div>
 </div>`;
@@ -274,12 +274,12 @@ function afConfirm(options){
   const opt=typeof options==='string'?{message:options}:(options||{});
   return afOpenDialog(()=>{
     const danger=!!opt.danger;
-    $('#confirmTitle').textContent=opt.title||(danger?'危险操作确认':'操作确认');
-    $('#confirmMessage').textContent=opt.message||'确定要继续吗？';
+    $('#confirmTitle').textContent=opt.title||(danger?'Xác nhận thao tác nguy hiểm':'Xác nhận thao tác');
+    $('#confirmMessage').textContent=opt.message||'Bạn chắc chắn muốn tiếp tục?';
     const okBtn=$('#confirmOkBtn');
-    okBtn.textContent=opt.confirmText||(danger?'确定执行':'确定');
+    okBtn.textContent=opt.confirmText||(danger?'Xác nhận thực hiện':'Xác nhận');
     okBtn.className=`button ${danger?'danger-btn':'primary'}`;
-    $('#confirmCancelBtn').textContent=opt.cancelText||'取消';
+    $('#confirmCancelBtn').textContent=opt.cancelText||'Hủy';
     if(danger)setConfirmIcon('danger','trash');
     else if(opt.info)setConfirmIcon('info','info');
     else setConfirmIcon('warn','warning');
@@ -290,7 +290,7 @@ function afConfirm(options){
 function afPrompt(options, defaultVal=''){
   const opt=typeof options==='string'?{message:options, defaultValue:defaultVal}:(options||{});
   return afOpenDialog(()=>{
-    const title=opt.title||'请输入内容';
+    const title=opt.title||'Nhập nội dung';
     $('#confirmTitle').textContent=title;
     $('#confirmMessage').textContent=opt.message||'';
     const single=$('#confirmPromptInput'),multi=$('#confirmPromptMultiline');
@@ -304,9 +304,9 @@ function afPrompt(options, defaultVal=''){
     promptInput.value=opt.defaultValue||'';
     promptInput.placeholder=opt.placeholder||'';
     const okBtn=$('#confirmOkBtn');
-    okBtn.textContent=opt.confirmText||'确定';
+    okBtn.textContent=opt.confirmText||'Xác nhận';
     okBtn.className=`button ${opt.danger?'danger-btn':'primary'}`;
-    $('#confirmCancelBtn').textContent=opt.cancelText||'取消';
+    $('#confirmCancelBtn').textContent=opt.cancelText||'Hủy';
     setConfirmIcon(opt.danger?'danger':'info','edit');
     return {focus:promptInput,select:true,value:isOk=>isOk?promptInput.value:null};
   });
@@ -315,10 +315,10 @@ function afPrompt(options, defaultVal=''){
 function afAlert(options){
   const opt=typeof options==='string'?{message:options}:(options||{});
   return afOpenDialog(()=>{
-    $('#confirmTitle').textContent=opt.title||'提示';
+    $('#confirmTitle').textContent=opt.title||'Thông báo';
     $('#confirmMessage').textContent=opt.message||'';
     const okBtn=$('#confirmOkBtn');
-    okBtn.textContent='我知道了';
+    okBtn.textContent='Đã hiểu';
     okBtn.className='button primary';
     $('#confirmCancelBtn').hidden=true;
     if(opt.type==='err')setConfirmIcon('danger','alert');
@@ -1041,7 +1041,7 @@ function bind(){
   };
   $$('.canvas-view-toggle [data-flow-view]').forEach(btn=>btn.onclick=()=>setFlowView(btn.dataset.flowView));
   const refreshRunnersBtn=$('#refreshRunners');if(refreshRunnersBtn)refreshRunnersBtn.onclick=()=>refreshRunners();
-  $('#langToggle').onclick=()=>window.lfSetLang(window.lfLang()==='en'?'zh':'en');
+  $('#langToggle').onclick=()=>(window.lfCycleLang||window.lfSetLang)();
   $('#themeToggle').onclick=toggleTheme;renderThemeToggle();
   const profileWrap = $('#userProfileWrap');
   const userBadge = $('#userBadge');
@@ -1726,7 +1726,7 @@ function setSettingsSidebarExpanded(expanded){
   document.body.classList.toggle('sidebar-open',open&&matchMedia('(max-width:1000px)').matches);
   const settingsEntry=$('#railSettingsEntry');
   if(settingsEntry){
-    const label=managing?'返回首页':'设置';
+    const label=managing?'Về trang chủ':'Cài đặt';
     settingsEntry.setAttribute('aria-expanded',String(open));
     settingsEntry.setAttribute('aria-pressed',String(managing));
     settingsEntry.setAttribute('aria-label',label);
@@ -1736,13 +1736,13 @@ function setSettingsSidebarExpanded(expanded){
   const toggle=$('#settingsSidebarToggle');
   if(toggle){
     toggle.setAttribute('aria-expanded',String(open));
-    toggle.setAttribute('aria-label',open?'收起设置导航':'展开设置导航');
-    toggle.title=open?'收起设置导航':'展开设置导航';
+    toggle.setAttribute('aria-label',open?'Thu gọn điều hướng cài đặt':'Mở rộng điều hướng cài đặt');
+    toggle.title=open?'Thu gọn điều hướng cài đặt':'Mở rộng điều hướng cài đặt';
   }
   const mobileToggle=$('.collab-rail-toggle');
   if(mobileToggle){
     mobileToggle.setAttribute('aria-expanded',String(open));
-    mobileToggle.setAttribute('aria-label',open?'收起导航':'展开导航');
+    mobileToggle.setAttribute('aria-label',open?'Thu gọn điều hướng':'Mở rộng điều hướng');
   }
   const sidebar=$('#settingsSidebar');
   if(!open&&sidebar?.contains(document.activeElement)){
@@ -1769,7 +1769,7 @@ function setPlatformRailExpanded(expanded){
   document.body.classList.toggle('platform-rail-expanded',expanded);
   const button=$('#railSidebarToggle');
   if(!button)return;
-  const label=expanded?'只显示图标':'展开导航';
+  const label=expanded?'Chỉ hiện biểu tượng':'Mở rộng điều hướng';
   button.disabled=false;
   button.removeAttribute('aria-disabled');
   button.removeAttribute('title');
@@ -1781,7 +1781,7 @@ function setPlatformRailExpanded(expanded){
   const text=button.querySelector('.rail-label');
   if(text)text.textContent=label;
 }
-function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',dockerfiles:'环境资产',environments:'环境资产',sandboxes:'环境资产',observability:'统计',projects:'项目配置',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥'}}
+function viewTitles(){return {management:'Cài đặt',collaboration:'Bàn làm việc AI',issues:'Danh sách yêu cầu',aiSchedules:'Tác vụ hẹn giờ',bots:'Quản lý kênh',assistant:'Trợ lý AI',runs:'Nhật ký chạy',approvals:'Chờ tôi xác nhận',sops:'Mẫu quy trình',flow:'Thiết kế quy trình',agents:'Định nghĩa vai trò',mcp:'Tài sản năng lực',rules:'Tài sản năng lực',skills:'Tài sản năng lực',dockerfiles:'Tài sản môi trường',environments:'Tài sản môi trường',sandboxes:'Tài sản môi trường',observability:'Mức dùng',projects:'Cấu hình dự án',platform:'Quản trị nền tảng',runners:'Máy thực thi',settings:'Cài đặt cá nhân',access:'Khóa truy cập',guide:'Khóa truy cập'}}
 // 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产、环境资产的类型 Tab，
 // 从流程模板打开的流程设计）按 data-nav-match 高亮它们所属的入口。
 function settingsNavMatches(btn,name){return btn.dataset.view===name||String(btn.dataset.navMatch||'').split(/\s+/).includes(name)}

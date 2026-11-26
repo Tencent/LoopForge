@@ -1808,7 +1808,7 @@ export default function QuickAccessWizard({
                   data-direction={direction}
                 >
                   <div className="qa-kicker">
-                    第 {activeStepIndex + 1} 步，共 {wizardStepCount} 步
+                    {`第 ${activeStepIndex + 1} 步，共 ${wizardStepCount} 步`}
                   </div>
                   <h3 ref={headingRef} tabIndex={-1} className="qa-title">
                     {activeStep.title}

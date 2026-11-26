@@ -24,7 +24,7 @@ export default function HarnessSelect({
   ariaLabel,
   className = "",
   searchable,
-  placeholder = "请选择",
+  placeholder = "Hãy chọn",
 }) {
   const trigger = useRef(null);
   const panel = useRef(null);
@@ -163,8 +163,8 @@ export default function HarnessSelect({
                   <input
                     ref={search}
                     type="search"
-                    aria-label="搜索选项"
-                    placeholder="搜索…"
+                    aria-label="Tìm tùy chọn"
+                    placeholder="Tìm…"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                   />
@@ -192,7 +192,7 @@ export default function HarnessSelect({
                     </button>
                   );
                 })}
-                {!visible.length ? <div className="harness-select-empty">没有匹配的选项</div> : null}
+                {!visible.length ? <div className="harness-select-empty">Không có tùy chọn khớp</div> : null}
               </div>
             </div>,
             document.body,

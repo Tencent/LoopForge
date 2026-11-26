@@ -20,22 +20,22 @@ export default function QueuedMessages({
   // While a steer is in flight the reply is briefly not running; the other
   // rows still belong to the interrupted turn.
   const interrupting = busy || !!steering;
-  const steerLabel = interrupting ? "引导" : "发送";
-  const steerTitle = interrupting ? "打断当前回复，立即发送这条" : "立即发送这条";
+  const steerLabel = interrupting ? "Dẫn dắt" : "Gửi";
+  const steerTitle = interrupting ? "Cắt câu trả lời hiện tại và gửi ngay tin này" : "Gửi ngay tin này";
   return (
     <section
       className={`queued-messages${held ? " is-held" : ""}`}
-      aria-label="排队中的消息"
+      aria-label="Tin nhắn đang xếp hàng"
     >
       {held && items.length > 0 && !readOnly ? (
         <div className="queued-messages-note" role="status">
-          <span>已暂停自动发送</span>
+          <span>Đã tạm dừng gửi tự động</span>
           <button
             type="button"
             className="queued-messages-resume"
             onClick={onResume}
           >
-            {busy ? "结束后继续发送" : "继续发送"}
+            {busy ? "Xong rồi gửi tiếp" : "Gửi tiếp"}
           </button>
         </div>
       ) : null}
@@ -50,9 +50,9 @@ export default function QueuedMessages({
               aria-hidden="true"
             />
             <span className="queued-message-text" title={steering.text}>
-              {steering.text || "图片与文件"}
+              {steering.text || "Ảnh và tệp"}
             </span>
-            <span className="queued-message-state">正在引导</span>
+            <span className="queued-message-state">Đang dẫn dắt</span>
           </li>
         ) : null}
         {items.map((item) => {
@@ -68,7 +68,7 @@ export default function QueuedMessages({
                 aria-hidden="true"
               />
               <span className="queued-message-text" title={item.text}>
-                {item.text || "图片与文件"}
+                {item.text || "Ảnh và tệp"}
               </span>
               {extra ? (
                 <span className="queued-message-extra">
@@ -89,14 +89,14 @@ export default function QueuedMessages({
                     <span>{steerLabel}</span>
                   </button>
                   <IconButton
-                    label="编辑消息"
+                    label="Sửa tin nhắn"
                     className="queued-message-action"
                     onClick={() => onEdit?.(item)}
                   >
                     <HarnessIcon name="edit" size={14} />
                   </IconButton>
                   <IconButton
-                    label="删除"
+                    label="Xóa"
                     className="queued-message-action"
                     onClick={() => onRemove?.(item.id)}
                   >

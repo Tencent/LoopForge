@@ -1,4 +1,4 @@
-document.getElementById('loginLang').onclick = () => window.lfSetLang(window.lfLang() === 'en' ? 'zh' : 'en');
+document.getElementById('loginLang').onclick = () => (window.lfCycleLang || window.lfSetLang)();
 document.getElementById('loginTheme').onclick = () => {
   const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
   document.documentElement.dataset.theme = next;

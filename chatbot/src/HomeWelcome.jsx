@@ -2,7 +2,7 @@ import React, { useId } from "react";
 import HomeLogo from "./HomeLogo";
 import "./home-welcome.css";
 
-const subtitle = "把想法，变成下一步。";
+const subtitle = "Biến ý tưởng thành bước tiếp theo.";
 
 function TitleSweep() {
   const identity = useId().replaceAll(":", "");

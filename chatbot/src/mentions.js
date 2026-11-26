@@ -1,10 +1,10 @@
 export const referenceTypes = [
-  { type: "agent", label: "角色", hint: "派给角色去做" },
-  { type: "skill", label: "技能", hint: "用这个技能来做" },
-  { type: "issue", label: "需求", hint: "查找需求与验收条件" },
-  { type: "sop", label: "SOP", hint: "引用工作流程" },
-  { type: "run", label: "运行", hint: "查看任务执行情况" },
-  { type: "repository", label: "仓库", hint: "添加代码仓库上下文" },
+  { type: "agent", label: "Vai trò", hint: "Giao cho vai trò thực hiện" },
+  { type: "skill", label: "Skill", hint: "Dùng skill này để làm" },
+  { type: "issue", label: "Yêu cầu", hint: "Tìm yêu cầu và điều kiện nghiệm thu" },
+  { type: "sop", label: "SOP", hint: "Trích dẫn quy trình làm việc" },
+  { type: "run", label: "Lần chạy", hint: "Xem tình trạng thực thi tác vụ" },
+  { type: "repository", label: "Repository", hint: "Thêm ngữ cảnh repository" },
 ];
 export function mentionAt(text, caret, references = []) {
   const before = text.slice(0, caret);

@@ -134,7 +134,7 @@ export default function SessionContextMenu({
       id="session-context-menu"
       className="session-context-menu"
       role="menu"
-      aria-label="会话操作"
+      aria-label="Thao tác phiên"
       data-visible={visible}
       style={position}
       onContextMenu={(event) => {

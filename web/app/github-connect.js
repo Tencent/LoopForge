@@ -1,5 +1,5 @@
 function githubConnectHTML(){
-  return '<div class="github-connect" data-github-connect><p class="github-connect-intro">在 GitHub 确认授权后，即可选择你的仓库。无需复制令牌。</p><button type="button" class="credential-btn primary" data-github-start disabled>连接 GitHub</button><div class="github-connect-status" role="status" aria-live="polite" data-github-status>正在检查授权服务…</div></div>';
+  return '<div class="github-connect" data-github-connect><p class="github-connect-intro">Sau khi xác nhận ủy quyền trên GitHub, bạn có thể chọn repository. Không cần sao chép token.</p><button type="button" class="credential-btn primary" data-github-start disabled>Kết nối GitHub</button><div class="github-connect-status" role="status" aria-live="polite" data-github-status>Đang kiểm tra dịch vụ ủy quyền…</div></div>';
 }
 
 async function hydrateGitHubConnections(root=document){
@@ -12,11 +12,11 @@ async function hydrateGitHubConnections(root=document){
       host.dataset.enabled=String(!!capability.enabled);
       const button=host.querySelector('[data-github-start]'),status=host.querySelector('[data-github-status]');
       button.hidden=!capability.enabled;button.disabled=!capability.enabled;
-      button.textContent='连接 GitHub';
-      status.textContent=capability.enabled?'授权仅用于当前账号，可随时撤销。':'此实例已停用 GitHub 授权，可使用「访问令牌」连接仓库。';
+      button.textContent='Kết nối GitHub';
+      status.textContent=capability.enabled?'Ủy quyền chỉ dùng cho tài khoản hiện tại và có thể thu hồi bất cứ lúc nào.':'Phiên bản này đã tắt ủy quyền GitHub; bạn có thể dùng「Access token」để kết nối repository.';
     }
   }catch(error){
-    for(const host of hosts){host.querySelector('[data-github-status]').textContent='暂时无法检查授权服务，请稍后重试。';const button=host.querySelector('[data-github-start]');button.hidden=false;button.disabled=false;button.textContent='重新检查';host.dataset.enabled='false'}
+    for(const host of hosts){host.querySelector('[data-github-status]').textContent='Tạm thời không kiểm tra được dịch vụ ủy quyền, hãy thử lại sau.';const button=host.querySelector('[data-github-start]');button.hidden=false;button.disabled=false;button.textContent='Kiểm tra lại';host.dataset.enabled='false'}
   }
 }
 
@@ -53,7 +53,7 @@ async function startGitHubConnect(host){
   const poll=async()=>{
     if(!active)return;
     if(!host.isConnected||Number(state.currentUser?.id)!==actor){finish();return}
-    if(Date.now()>=deadline){fail(new Error('授权已过期，请重新连接'));return}
+    if(Date.now()>=deadline){fail(new Error('Ủy quyền đã hết hạn, hãy kết nối lại'));return}
     try{
       const result=await api('/api/auth/github/poll',{method:'POST',body:JSON.stringify({flowId:flow.flowId})});
       if(!active)return;
@@ -62,33 +62,33 @@ async function startGitHubConnect(host){
         if(typeof storeCredentialUser==='function')storeCredentialUser(result.user);
         if(typeof notifyCredentialsChanged==='function')notifyCredentialsChanged();
         state.gitTokenVerify=null;
-        status.textContent=`已连接 GitHub · ${result.login}`;
+        status.textContent=`Đã kết nối GitHub · ${result.login}`;
         finish();
         host.dispatchEvent(new CustomEvent('github-connected',{bubbles:true}));
         if(typeof credentialWizard!=='undefined'&&credentialWizard?.kind==='gitToken')closeCredentialWizard(true);
         if(document.querySelector('#credentialPanel')&&typeof renderCredentialPanel==='function')renderCredentialPanel();
-        toast(`GitHub 授权已保存 · ${result.login}`,'ok');
+        toast(`Đã lưu ủy quyền GitHub · ${result.login}`,'ok');
         return;
       }
       timer=setTimeout(poll,Math.max(5,result.interval||5)*1000);
     }catch(error){fail(error)}
   };
   try{
-    status.textContent='正在获取 GitHub 授权码…';
+    status.textContent='Đang lấy mã ủy quyền GitHub…';
     flow=await api('/api/auth/github/device',{method:'POST',body:'{}'});
     if(!host.isConnected||Number(state.currentUser?.id)!==actor){finish();return}
     deadline=Date.now()+flow.expiresIn*1000;
     status.replaceChildren();
-    const instruction=document.createElement('p');instruction.textContent='复制授权码，然后在 GitHub 确认：';
+    const instruction=document.createElement('p');instruction.textContent='Sao chép mã ủy quyền, rồi xác nhận trên GitHub:';
     const code=document.createElement('strong');code.className='github-device-code';code.textContent=flow.userCode;instruction.append(code);
-    const copy=document.createElement('button');copy.type='button';copy.className='button ghost small';copy.textContent='复制授权码';
+    const copy=document.createElement('button');copy.type='button';copy.className='button ghost small';copy.textContent='Sao chép mã ủy quyền';
     const copyCode=async trigger=>{
-      if(await copyGitHubDeviceCode(flow.userCode,trigger)){copy.textContent='已复制';return}
-      selectGitHubDeviceCode(code);copy.textContent='已选中，按 Ctrl/⌘+C 复制';
+      if(await copyGitHubDeviceCode(flow.userCode,trigger)){copy.textContent='Đã sao chép';return}
+      selectGitHubDeviceCode(code);copy.textContent='Đã chọn, nhấn Ctrl/⌘+C để sao chép';
     };
     copy.onclick=()=>copyCode(copy);
-    const link=document.createElement('a');link.href='https://github.com/login/device';link.target='_blank';link.rel='noopener noreferrer';link.className='button primary small';link.textContent='复制并前往 GitHub 授权';link.onclick=()=>{void copyCode(link)};
-    const cancel=document.createElement('button');cancel.type='button';cancel.className='button ghost small';cancel.textContent='取消';cancel.onclick=()=>{finish();status.replaceChildren()};
+    const link=document.createElement('a');link.href='https://github.com/login/device';link.target='_blank';link.rel='noopener noreferrer';link.className='button primary small';link.textContent='Sao chép và mở trang ủy quyền GitHub';link.onclick=()=>{void copyCode(link)};
+    const cancel=document.createElement('button');cancel.type='button';cancel.className='button ghost small';cancel.textContent='Hủy';cancel.onclick=()=>{finish();status.replaceChildren()};
     status.append(instruction,copy,link,cancel);
     timer=setTimeout(poll,Math.max(5,flow.interval)*1000);
   }catch(error){fail(error)}
@@ -97,17 +97,17 @@ async function startGitHubConnect(host){
 function mountGitHubRepoPicker(host,onSelect){
   if(!host)return;
   const connected=!!userById(state.currentUser?.id)?.gitHubCredentialConfigured;
-  host.innerHTML=(connected?'':githubConnectHTML())+`<button type="button" class="button ghost small" data-github-load${connected?'':' hidden'}>选择我的 GitHub 仓库</button><p data-github-repo-hint${connected?' hidden':''}>连接后可选择自己的仓库；公开仓库也可直接填写地址。访问令牌可在个人配置中设置。</p><div data-github-repo-list></div>`;
+  host.innerHTML=(connected?'':githubConnectHTML())+`<button type="button" class="button ghost small" data-github-load${connected?'':' hidden'}>Chọn repository GitHub của tôi</button><p data-github-repo-hint${connected?' hidden':''}>Sau khi kết nối, bạn có thể chọn repository của mình; repository công khai cũng có thể điền trực tiếp địa chỉ. Access token có thể đặt trong cài đặt cá nhân.</p><div data-github-repo-list></div>`;
   hydrateGitHubConnections(host);
   const load=host.querySelector('[data-github-load]'),list=host.querySelector('[data-github-repo-list]');
   let repositories=[],page=1,busy=false;
   const paint=hasMore=>{
-    list.innerHTML='<label class="pa-field"><span>搜索已加载的仓库</span><input class="pa-input" type="search" data-github-search placeholder="仓库名 / 组织名"></label><label class="pa-field"><span>选择仓库</span><select class="pa-input" data-github-repo aria-label="我的 GitHub 仓库"><option value="">请选择仓库</option></select></label><p data-github-repo-empty hidden>未找到仓库，可手动填写地址；组织仓库可能需要管理员批准授权。</p>'+(hasMore?'<button type="button" class="button ghost small" data-github-more>加载更多仓库</button>':'');
+    list.innerHTML='<label class="pa-field"><span>Tìm trong các repository đã tải</span><input class="pa-input" type="search" data-github-search placeholder="Tên repository / tổ chức"></label><label class="pa-field"><span>Chọn repository</span><select class="pa-input" data-github-repo aria-label="Repository GitHub của tôi"><option value="">Hãy chọn repository</option></select></label><p data-github-repo-empty hidden>Không tìm thấy repository, bạn có thể điền địa chỉ thủ công; repository của tổ chức có thể cần quản trị viên phê duyệt ủy quyền.</p>'+(hasMore?'<button type="button" class="button ghost small" data-github-more>Tải thêm repository</button>':'');
     const select=list.querySelector('[data-github-repo]'),search=list.querySelector('[data-github-search]'),empty=list.querySelector('[data-github-repo-empty]');
     const filter=()=>{
-      select.replaceChildren(new Option('请选择仓库',''));
+      select.replaceChildren(new Option('Hãy chọn repository',''));
       const visible=repositories.filter(repo=>repo.full_name.toLowerCase().includes(search.value.toLowerCase()));
-      for(const repository of visible){const option=document.createElement('option');option.value=repository.full_name;option.textContent=repository.full_name+(repository.private?' · 私有':'');select.append(option)}
+      for(const repository of visible){const option=document.createElement('option');option.value=repository.full_name;option.textContent=repository.full_name+(repository.private?' · Riêng tư':'');select.append(option)}
       empty.hidden=visible.length>0;
     };
     search.oninput=filter;

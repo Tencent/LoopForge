@@ -1,4 +1,4 @@
-const GIT_HTTP_PLATFORMS = [['github', 'GitHub / GitHub Enterprise'], ['gitlab', 'GitLab'], ['other', '其他平台']];
+const GIT_HTTP_PLATFORMS = [['github', 'GitHub / GitHub Enterprise'], ['gitlab', 'GitLab'], ['other', 'Nền tảng khác']];
 
 // Mirrors gitwork.HTTPSHostScope closely enough to prefill the form; the server
 // remains the authority on what a host scope is.
@@ -31,31 +31,31 @@ function openGitHTTPCredentials() {
   dialog.setAttribute('aria-labelledby', 'gitHTTPCredentialTitle');
   dialog.innerHTML = `
     <header class="git-ssh-dialog-head">
-      <h2 id="gitHTTPCredentialTitle">Git 访问令牌（按主机）</h2>
-      <button type="button" class="credential-btn ghost icon" data-http-cred-close aria-label="关闭">${credentialGlyph('close', 16)}</button>
+      <h2 id="gitHTTPCredentialTitle">Git access token (theo máy chủ)</h2>
+      <button type="button" class="credential-btn ghost icon" data-http-cred-close aria-label="Đóng">${credentialGlyph('close', 16)}</button>
     </header>
-    <p class="git-ssh-description">每个 HTTPS 主机配置一个个人访问令牌。平台与工作区访问该主机时，使用本轮责任人或发言人的凭据。</p>
-    <p class="git-ssh-status" role="status">正在读取凭据…</p>
+    <p class="git-ssh-description">Mỗi máy chủ HTTPS dùng một personal access token. Khi nền tảng và workspace truy cập máy chủ đó, hệ thống dùng thông tin xác thực của người phụ trách hoặc người đang nói trong lượt này.</p>
+    <p class="git-ssh-status" role="status">Đang đọc thông tin xác thực…</p>
     <div class="git-ssh-key-list"></div>
-    <button type="button" class="credential-btn primary" data-http-cred-add disabled>添加令牌</button>
+    <button type="button" class="credential-btn primary" data-http-cred-add disabled>Thêm token</button>
     <form class="git-ssh-key-form" hidden>
       <h3></h3>
-      ${credentialFieldHTML({label:'HTTPS 主机', name:'host', type:'text', placeholder:'github.com 或 gitlab.example.org:8443', hint:'只填主机名，可附带端口；令牌只提供给这台主机。'})}
+      ${credentialFieldHTML({label:'Máy chủ HTTPS', name:'host', type:'text', placeholder:'github.com hoặc gitlab.example.org:8443', hint:'Chỉ điền tên máy chủ, có thể kèm cổng; token chỉ dùng cho máy chủ này.'})}
       <label class="credential-field">
-        <span>平台</span>
+        <span>Nền tảng</span>
         <div class="credential-input is-plain">
-          <select name="platform" class="git-http-select" aria-label="平台" aria-describedby="gitHTTPCredentialPlatformHint">
+          <select name="platform" class="git-http-select" aria-label="Nền tảng" aria-describedby="gitHTTPCredentialPlatformHint">
             ${GIT_HTTP_PLATFORMS.map(([value, label]) => `<option value="${value}">${escapeHTML(label)}</option>`).join('')}
           </select>
         </div>
-        <small id="gitHTTPCredentialPlatformHint">GitHub 和 GitLab 支持 gh / glab 认证和 PR/MR 合并状态同步。其他平台也可由 Agent 创建 PR/MR，合并状态请到托管平台查看。</small>
+        <small id="gitHTTPCredentialPlatformHint">GitHub và GitLab hỗ trợ xác thực gh / glab và đồng bộ trạng thái merge PR/MR. Các nền tảng khác vẫn có thể để Agent tạo PR/MR; hãy xem trạng thái merge trên nền tảng lưu trữ.</small>
       </label>
-      ${credentialFieldHTML({label:'名称', name:'name', type:'text', placeholder:'例如 公司 GitLab', hint:null})}
-      ${credentialFieldHTML({label:'Git 认证用户名', name:'username', type:'text', placeholder:'x-access-token', hint:'按托管平台要求填写；这是 HTTPS 认证用户名，不是提交作者名，通常无法从 Token 推导。'})}
-      ${credentialFieldHTML({label:'个人访问令牌', name:'token', placeholder:'粘贴个人访问令牌', hint:'保存后不再显示；编辑时留空保留现有令牌。'})}
+      ${credentialFieldHTML({label:'Tên', name:'name', type:'text', placeholder:'Ví dụ GitLab công ty', hint:null})}
+      ${credentialFieldHTML({label:'Tên người dùng xác thực Git', name:'username', type:'text', placeholder:'x-access-token', hint:'Điền theo yêu cầu của nền tảng lưu trữ; đây là tên người dùng xác thực HTTPS, không phải tên tác giả commit, thường không suy ra được từ Token.'})}
+      ${credentialFieldHTML({label:'Personal access token', name:'token', placeholder:'Dán personal access token', hint:'Sau khi lưu sẽ không hiện lại; khi sửa hãy để trống nếu muốn giữ token hiện tại.'})}
       <footer class="git-ssh-form-actions">
-        <button type="button" class="credential-btn secondary" data-http-cred-cancel>取消</button>
-        <button type="submit" class="credential-btn primary">保存令牌</button>
+        <button type="button" class="credential-btn secondary" data-http-cred-cancel>Hủy</button>
+        <button type="submit" class="credential-btn primary">Lưu token</button>
       </footer>
     </form>`;
 
@@ -79,19 +79,19 @@ function openGitHTTPCredentials() {
 
   function credentialSummary(cred) {
     const platformLabel = (GIT_HTTP_PLATFORMS.find(([value]) => value === cred.platform) || [, cred.platform])[1];
-    const tags = [platformLabel, cred.managed ? '平台托管' : ''].filter(Boolean);
+    const tags = [platformLabel, cred.managed ? 'Nền tảng lưu trữ' : ''].filter(Boolean);
     return `<div class="git-ssh-key-summary"><b>${escapeHTML(cred.name)}</b><small><code>${escapeHTML(cred.host)}</code> · ${tags.map(escapeHTML).join(' · ')}</small></div>`;
   }
 
   function renderList() {
     list.innerHTML = creds.map(cred => {
       const id = escapeHTML(cred.id);
-      const verify = cred.platform !== 'other' || cred.managed ? `<button type="button" class="credential-btn ghost" data-http-cred-verify="${id}">校验令牌</button>` : '';
+      const verify = cred.platform !== 'other' || cred.managed ? `<button type="button" class="credential-btn ghost" data-http-cred-verify="${id}">Kiểm tra token</button>` : '';
       const actions = cred.managed
         ? verify
         : deleting === cred.id
-          ? `<span>删除这条令牌？</span><button type="button" class="credential-btn ghost" data-http-cred-keep>取消</button><button type="button" class="credential-btn danger-solid" data-http-cred-remove="${id}">确认删除</button>`
-          : `${verify}<button type="button" class="credential-btn ghost" data-http-cred-edit="${id}">编辑</button><button type="button" class="credential-btn ghost" data-http-cred-delete="${id}">删除</button>`;
+          ? `<span>Xóa token này?</span><button type="button" class="credential-btn ghost" data-http-cred-keep>Hủy</button><button type="button" class="credential-btn danger-solid" data-http-cred-remove="${id}">Xác nhận xóa</button>`
+          : `${verify}<button type="button" class="credential-btn ghost" data-http-cred-edit="${id}">Sửa</button><button type="button" class="credential-btn ghost" data-http-cred-delete="${id}">Xóa</button>`;
       return `<div class="git-ssh-key-row">${credentialSummary(cred)}${actions}</div>`;
     }).join('');
   }
@@ -103,7 +103,7 @@ function openGitHTTPCredentials() {
     form.reset();
     form.hidden = false;
     add.hidden = true;
-    form.querySelector('h3').textContent = cred ? '编辑令牌' : '添加令牌';
+    form.querySelector('h3').textContent = cred ? 'Sửa token' : 'Thêm token';
     host.value = cred?.host || '';
     host.readOnly = !!cred;
     platform.value = cred?.platform || 'github';
@@ -111,7 +111,7 @@ function openGitHTTPCredentials() {
     username.value = cred?.username || '';
     username.placeholder = gitHTTPDefaultUsername(platform.value);
     token.required = !cred;
-    token.placeholder = cred ? '留空保留现有令牌' : '粘贴个人访问令牌';
+    token.placeholder = cred ? 'Để trống để giữ token hiện tại' : 'Dán personal access token';
     (cred ? name : host).focus();
   }
 
@@ -132,7 +132,7 @@ function openGitHTTPCredentials() {
   async function request(method, body, id) {
     if (busy) return;
     setBusy(true);
-    setStatus(method === 'PUT' ? '正在保存…' : '正在删除…');
+    setStatus(method === 'PUT' ? 'Đang lưu…' : 'Đang xóa…');
     try {
       creds = await api(id ? `${endpoint}/${encodeURIComponent(id)}` : endpoint, {
         method, silent:true, ...(body ? {body:JSON.stringify(body)} : {}),
@@ -143,7 +143,7 @@ function openGitHTTPCredentials() {
       deleting = '';
       renderList();
       if (method === 'PUT') closeForm();
-      setStatus(method === 'PUT' ? '令牌已保存' : '令牌已删除');
+      setStatus(method === 'PUT' ? 'Đã lưu token' : 'Đã xóa token');
     } catch (error) {
       setStatus(error.message, true);
     } finally {
@@ -154,11 +154,11 @@ function openGitHTTPCredentials() {
   async function verify(id) {
     if (busy) return;
     setBusy(true);
-    setStatus('正在校验…');
+    setStatus('Đang kiểm tra…');
     try {
       const result = await api(`${endpoint}/${encodeURIComponent(id)}/verify`, {method:'POST', silent:true});
-      if (result?.valid) setStatus(result.login ? `令牌有效，账号 ${result.login}` : '令牌有效');
-      else setStatus(result?.error || '令牌校验未通过', true);
+      if (result?.valid) setStatus(result.login ? `Token còn hiệu lực, tài khoản ${result.login}` : 'Token còn hiệu lực');
+      else setStatus(result?.error || 'Token không vượt qua kiểm tra', true);
     } catch (error) {
       setStatus(error.message, true);
     } finally {
@@ -218,7 +218,7 @@ function openGitHTTPCredentials() {
     if (!dialog.open) return;
     creds = Array.isArray(items) ? items : [];
     add.disabled = false;
-    setStatus(creds.length ? '' : '还没有配置 Git 访问令牌');
+    setStatus(creds.length ? '' : 'Chưa cấu hình Git access token');
     renderList();
   }).catch(error => setStatus(error.message, true));
 }
