@@ -116,6 +116,7 @@ export default function ChangesPanel({ changes }) {
   const inflight = useRef(new Set());
   const files = changes?.files || NO_FILES;
   const selected = files.find((file) => file.path === selectedPath) || null;
+  const cached = selected && Object.hasOwn(patches, selected.path);
   const loadFile = changes?.loadFile;
   // The run records its own branches; the workspace payload only carries names.
   const repository = changes?.repositories?.[0] || null;
@@ -125,7 +126,7 @@ export default function ChangesPanel({ changes }) {
   }, [selectedPath, selected]);
 
   useEffect(() => {
-    if (!selected || selected.patch || patches[selected.path]) return;
+    if (!selected || selected.patch || cached) return;
     if (inflight.current.has(selected.path)) return;
     if (!loadFile) return;
     inflight.current.add(selected.path);
@@ -140,7 +141,7 @@ export default function ChangesPanel({ changes }) {
         inflight.current.delete(selected.path);
         setLoadingPath("");
       });
-  }, [selected, patches, loadFile]);
+  }, [selected, cached, loadFile]);
 
   const status = changes?.status || "idle";
   const toolbar = (
@@ -163,7 +164,7 @@ export default function ChangesPanel({ changes }) {
   );
 
   if (selected) {
-    const patch = selected.patch || patches[selected.path] || null;
+    const patch = selected.patch || (cached ? patches[selected.path] : null);
     const rows = diffRows(patch);
     const shown = rows.length > MAX_LINES ? rows.slice(0, MAX_LINES) : rows;
     return (

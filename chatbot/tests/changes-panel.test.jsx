@@ -83,6 +83,16 @@ test("loads untracked file content on demand", async () => {
   expect(changes.loadFile).toHaveBeenCalledTimes(1);
 });
 
+test("an unavailable text diff completes the request without a fetch loop", async () => {
+  const loadFile = vi.fn()
+    .mockResolvedValueOnce(null)
+    .mockImplementation(() => new Promise(() => {}));
+  render(<ChangesPanel changes={readyChanges({ loadFile })} />);
+  fireEvent.click(screen.getByText("new.js"));
+  await screen.findByText("这个文件没有可展示的文本改动（可能是二进制文件或内容过大）。");
+  expect(loadFile).toHaveBeenCalledTimes(1);
+});
+
 test("shows the empty state and the workspace reason", () => {
   const { rerender } = render(
     <ChangesPanel changes={readyChanges({ files: [], additions: 0, deletions: 0 })} />,
