@@ -533,4 +533,6 @@ Object.assign(window.LF_I18N_EN, {
   "对话处理": "Handled in chat",
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
+  "没有符合搜索条件的工作项": "No work items match your search",
+  "请尝试其他关键词，或清空搜索查看当前筛选下的工作项。": "Try other keywords, or clear the search to see the work items in the current filter.",
 });
