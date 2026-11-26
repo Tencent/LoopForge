@@ -694,6 +694,12 @@ func dockerImageExists(ctx context.Context, image string) bool {
 	return exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() == nil
 }
 
+// DockerImageNeedsBuild reports whether a missing image will be built by BindWorkspace.
+// A configured isolated runtime image is inspected and must already be on the daemon.
+func DockerImageNeedsBuild(ctx context.Context, dockerfile domain.DockerfileDefinition) bool {
+	return isolatedRuntimeImage(dockerfile) == "" && !DockerImageCached(ctx, dockerfile)
+}
+
 // DockerImageCached reports whether this Dockerfile already has a local cache
 // tag. Used by the engine to tell first-run users that a long image build is
 // about to start, instead of looking like the node never began.
