@@ -122,6 +122,34 @@ func TestExecuteProcessAndSandboxCancellation(t *testing.T) {
 	}
 }
 
+func TestExecuteCodeBuddySOPStopsAtDrainDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
+	defer cancel()
+	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}, client: NewClient(server.URL)}
+	executor := domain.ExecutorDefinition{Kind: "codebuddy", Binary: "codebuddy", Protocol: "stream-json"}
+	agent := domain.AgentDefinition{ID: "test", Name: "Test"}
+	prepared, err := flowruntime.NewExecutorRunner().PrepareRemote(t.TempDir(), flowruntime.RemoteInvocation{
+		InvocationID: "test", Executor: executor, Agent: agent, Prompt: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := domain.RunnerTask{ID: "codebuddy-drain", Invocation: &domain.RunnerInvocation{Executor: executor}}
+	command := prepared.Command
+	command.Argv = []string{"sh", "-c", `
+IFS= read -r prompt || exit 1
+printf '%s\n' '{"type":"result","result":"parent done"}'
+if IFS= read -r extra; then exit 1; fi
+exec sleep 60
+`}
+	result := d.executeHostCommand(ctx, task, command)
+	if result.status != domain.RunnerTaskSuccess || result.result != "parent done" || ctx.Err() != nil {
+		t.Fatalf("Runner did not preserve the parent result after stopping the process: %+v, context=%v", result, ctx.Err())
+	}
+}
+
 func TestEventBatcherRequeuesFailedFlush(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "fail", http.StatusInternalServerError) }))
 	defer server.Close()
@@ -332,6 +360,12 @@ func TestExecuteRunCleanupSafeAndUnsafe(t *testing.T) {
 	target := filepath.Join(root, "runs", "run")
 	_ = os.MkdirAll(target, 0o755)
 	_ = os.WriteFile(filepath.Join(target, "file"), []byte("x"), 0o600)
+	// A Go module cache leaves read-only directories in the workspace.
+	readOnly := filepath.Join(target, "pkg", "mod")
+	_ = os.MkdirAll(readOnly, 0o755)
+	_ = os.WriteFile(filepath.Join(readOnly, "go.mod"), []byte("module fixture\n"), 0o444)
+	_ = os.Chmod(readOnly, 0o555)
+	_ = os.Chmod(filepath.Dir(readOnly), 0o555)
 	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: root}, client: NewClient(server.URL), runSandboxes: map[string]*runSandbox{}}
 	result := d.executeRunCleanup(context.Background(), domain.RunnerTask{ID: "cleanup", RunID: "run", Workspace: "runs/run"})
 	if result.status != domain.RunnerTaskSuccess {

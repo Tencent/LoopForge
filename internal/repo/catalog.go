@@ -166,14 +166,21 @@ func (r *CatalogRepo) DeleteSkill(id string) error {
 }
 
 func (r *CatalogRepo) MCPServers() []domain.MCPServerDefinition {
-	return payloadList[domain.MCPServerDefinition](r.DB, "mcp_servers", "")
+	servers := payloadList[domain.MCPServerDefinition](r.DB, "mcp_servers", "")
+	for i := range servers {
+		servers[i].Scope = strings.TrimSpace(servers[i].Scope)
+	}
+	return servers
 }
 
 func (r *CatalogRepo) MCPServer(id string) (domain.MCPServerDefinition, bool) {
-	return payloadOne[domain.MCPServerDefinition](r.DB, "mcp_servers", id)
+	server, found := payloadOne[domain.MCPServerDefinition](r.DB, "mcp_servers", id)
+	server.Scope = strings.TrimSpace(server.Scope)
+	return server, found
 }
 
 func (r *CatalogRepo) PutMCPServer(v domain.MCPServerDefinition) error {
+	v.Scope = strings.TrimSpace(v.Scope)
 	// Uploaded contents and their manifest are owned by the mcp_files API.
 	// Definition-only updates (including JSON import) must not orphan existing
 	// rows merely because fileRefs was omitted by an older client.
@@ -185,10 +192,90 @@ func (r *CatalogRepo) PutMCPServer(v domain.MCPServerDefinition) error {
 	if err := domain.ValidateMCPServer(v); err != nil {
 		return err
 	}
+	row := mcpDefinitionRow(&v)
+	return upsert(r.DB, "mcp_servers", map[string]any{"id": row.ID, "name": row.Name, "payload": row.Payload, "updated_at": row.Updated})
+}
+
+func mcpDefinitionRow(v *domain.MCPServerDefinition) mcpServerRow {
 	v.UpdatedAt = time.Now().UTC()
-	return upsert(r.DB, "mcp_servers", map[string]any{
-		"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt),
+	return mcpServerRow{ID: v.ID, Name: v.Name, Payload: mustJSON(*v), Updated: timePtr(v.UpdatedAt)}
+}
+
+var ErrMCPServerChanged = errors.New("MCP 已被创建或更改，请刷新后重试")
+
+// MCPServerChange carries the stored definition used to authorize the write.
+// An empty Previous means the ID must be unused.
+type MCPServerChange struct {
+	Definition domain.MCPServerDefinition
+	Previous   domain.MCPServerDefinition
+}
+
+// SaveMCPServers checks the authorized scope and owner under the write lock.
+// An import either saves every definition or leaves the catalog untouched.
+func (r *CatalogRepo) SaveMCPServers(changes ...MCPServerChange) ([]domain.MCPServerDefinition, error) {
+	saved := make([]domain.MCPServerDefinition, 0, len(changes))
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		for _, change := range changes {
+			v, err := r.saveMCPServer(tx, change)
+			if err != nil {
+				return err
+			}
+			saved = append(saved, v)
+		}
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return saved, nil
+}
+
+func (r *CatalogRepo) saveMCPServer(tx *gorm.DB, change MCPServerChange) (domain.MCPServerDefinition, error) {
+	v := change.Definition
+	v.Scope = strings.TrimSpace(v.Scope)
+	var row mcpServerRow
+	err := r.locking(tx).Where("id = ?", v.ID).Take(&row).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		if change.Previous.ID != "" {
+			return v, ErrMCPServerChanged
+		}
+	case err != nil:
+		return v, err
+	default:
+		var current domain.MCPServerDefinition
+		if err := json.Unmarshal(row.Payload, &current); err != nil {
+			return v, err
+		}
+		current.Scope = strings.TrimSpace(current.Scope)
+		previous := change.Previous
+		if previous.ID == "" || current.Scope != previous.Scope || current.ProjectID != previous.ProjectID ||
+			current.OwnerUserID != previous.OwnerUserID || current.MarketID != previous.MarketID {
+			return v, ErrMCPServerChanged
+		}
+		v.ID = row.ID
+		if v.Scope == current.Scope && v.ProjectID == current.ProjectID && v.OwnerUserID == current.OwnerUserID {
+			domain.RestoreMaskedMCPSecrets(&v, current)
+		}
+		if v.FileRefs == nil {
+			v.FileRefs = current.FileRefs
+		}
+	}
+	if err := domain.ValidateMCPServer(v); err != nil {
+		return v, err
+	}
+	newRow := mcpDefinitionRow(&v)
+	if row.ID != "" {
+		err = tx.Model(&mcpServerRow{}).Where("id = ?", row.ID).Updates(map[string]any{
+			"name": newRow.Name, "payload": newRow.Payload, "updated_at": newRow.Updated,
+		}).Error
+	} else {
+		err = tx.Create(&newRow).Error
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		err = ErrMCPServerChanged
+	}
+	return v, err
 }
 
 func (r *CatalogRepo) DeleteMCPServer(id string) error {
@@ -404,9 +491,9 @@ func (r *CatalogRepo) DeleteSandbox(id string) error {
 
 // ---------- Workflows ----------
 
-// Workflows lists project SOPs plus stored generic templates. A leftover
+// Workflows lists project LOOPs plus stored generic templates. A leftover
 // workflows-table row occupying a generic id is filtered out so the template
-// stays authoritative. Generic templates always sort after the stored SOPs
+// stays authoritative. Generic templates always sort after the stored LOOPs
 // (master semantics: the stored list is sorted by UpdatedAt, generics are
 // appended).
 func (r *CatalogRepo) Workflows() []domain.WorkflowDefinition {
@@ -428,7 +515,7 @@ func (r *CatalogRepo) Workflows() []domain.WorkflowDefinition {
 	return append(out, generic...)
 }
 
-// Workflow resolves a custom SOP or a generic_templates row. Generic ids stay
+// Workflow resolves a custom LOOP or a generic_templates row. Generic ids stay
 // reserved so a leftover workflows-table collision cannot shadow the template.
 func (r *CatalogRepo) Workflow(id string) (domain.WorkflowDefinition, bool) {
 	if wf, ok := r.GenericWorkflowByID(id); ok {
@@ -518,8 +605,10 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 		return err
 	}
 	v = normalizeWorkflowDefinition(v)
-	if _, ok := r.Sandbox(v.SandboxProfileID); !ok {
-		return fmt.Errorf("sandbox profile %q not found", v.SandboxProfileID)
+	if !v.AutoSelectSandbox {
+		if _, ok := r.Sandbox(v.SandboxProfileID); !ok {
+			return fmt.Errorf("sandbox profile %q not found", v.SandboxProfileID)
+		}
 	}
 	now := time.Now().UTC()
 	old, ok := r.storedWorkflow(v.ID)
@@ -566,7 +655,7 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 	})
 }
 
-// DeleteWorkflow removes a SOP definition. Historical runs keep their own
+// DeleteWorkflow removes a LOOP definition. Historical runs keep their own
 // WorkflowSnapshot, so already-finished runs stay fully readable afterwards.
 func (r *CatalogRepo) DeleteWorkflow(id string) error {
 	if _, ok := r.storedWorkflow(id); !ok {
@@ -576,6 +665,30 @@ func (r *CatalogRepo) DeleteWorkflow(id string) error {
 }
 
 // ---------- Repositories ----------
+
+// NormalizeRepositoryWorkBranchNaming resolves the repository's CLI and stores
+// a raw model ID, so a model qualifier cannot select a different CLI at runtime.
+func NormalizeRepositoryWorkBranchNaming(naming domain.WorkBranchNaming) (domain.WorkBranchNaming, error) {
+	if naming.Mode != domain.WorkBranchNamingAI || strings.TrimSpace(naming.ExecutorID) == "" {
+		return naming.Normalize()
+	}
+	executor, ok := BuiltInExecutor(naming.ExecutorID)
+	if !ok {
+		return domain.WorkBranchNaming{}, fmt.Errorf("AI 分支命名不支持执行器 %q", naming.ExecutorID)
+	}
+	prefix, model, qualified := strings.Cut(strings.TrimSpace(naming.Model), ":")
+	if modelExecutor, known := BuiltInExecutorForKind(prefix); qualified && known {
+		if modelExecutor.Kind != executor.Kind {
+			return domain.WorkBranchNaming{}, fmt.Errorf("模型 ID 与所选 CLI 不匹配")
+		}
+		next, _, nested := strings.Cut(strings.TrimSpace(model), ":")
+		if _, known := BuiltInExecutorForKind(next); nested && known {
+			return domain.WorkBranchNaming{}, fmt.Errorf("请填写模型的原始 ID")
+		}
+		naming.Model = model
+	}
+	return naming.Normalize()
+}
 
 func (r *CatalogRepo) Repositories() []domain.Repository {
 	out := payloadList[domain.Repository](r.DB, "repositories", "")
@@ -840,6 +953,10 @@ func (r *CatalogRepo) RestoreWorkflowRevision(id string) (domain.WorkflowDefinit
 		return domain.WorkflowDefinition{}, fmt.Errorf("workflow %s not found", wf.ID)
 	}
 	wf.Revision = current.Revision
+	// Version numbers the published releases. The restored content is a new
+	// draft on top of the latest release, so publishing it must not reuse a
+	// version number that already names different content.
+	wf.Version = max(wf.Version, current.Version)
 	return wf, r.PutWorkflow(wf)
 }
 
@@ -858,14 +975,14 @@ func (r *CatalogRepo) RestoreAgentRevision(id string) (domain.AgentDefinition, e
 	return agent, r.PutAgent(agent)
 }
 
-// ---------- Production SOP ids ----------
+// ---------- Production LOOP ids ----------
 
 const (
 	issueFixWorkflowID    = "issue-fix-production"
 	requirementWorkflowID = "requirement-development-production"
 )
 
-// DefaultWorkflowID returns the production SOP to bind when an issue has none.
+// DefaultWorkflowID returns the production LOOP to bind when an issue has none.
 // Gongfeng issues use the repair loop; TAPD / local requirements use delivery.
 func DefaultWorkflowID(source, kind string) string {
 	if source == "gongfeng" || kind == "issue" {
@@ -880,7 +997,7 @@ func isRequirement(source, kind string) bool {
 	return source != "gongfeng" && kind != "issue"
 }
 
-// bindDefaultWorkflow assigns the SOP an issue should run when it has none yet.
+// bindDefaultWorkflow assigns the LOOP an issue should run when it has none yet.
 func bindDefaultWorkflow(v *domain.Issue, projectWorkflowID, projectIssueWorkflowID string) {
 	if v.Source == "gongfeng" && v.Kind == "" {
 		v.Kind = "issue"
@@ -898,8 +1015,8 @@ func bindDefaultWorkflow(v *domain.Issue, projectWorkflowID, projectIssueWorkflo
 		return
 	} else if wf := strings.TrimSpace(projectWorkflowID); wf != "" && isGenericWorkflowID(wf) {
 		// Projects defaulting to a built-in generic template (e.g. the
-		// LoopForge backend delivery SOP a new project starts with) run their
-		// synced Gongfeng issues on it too; projects bound to a production SOP
+		// LoopForge backend delivery LOOP a new project starts with) run their
+		// synced Gongfeng issues on it too; projects bound to a production LOOP
 		// keep the production default below.
 		v.WorkflowID = wf
 		return
@@ -918,7 +1035,7 @@ func isGenericWorkflowID(id string) bool {
 	}
 }
 
-// ProjectIssueWorkflowID is the conventional per-project defect SOP id.
+// ProjectIssueWorkflowID is the conventional per-project defect LOOP id.
 func ProjectIssueWorkflowID(projectID string) string {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
@@ -936,6 +1053,7 @@ func normalizeSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfil
 	// other one instead of failing the save.
 	if profile.Driver != domain.SandboxDriverDocker {
 		profile.Dockerfile = nil
+		profile.Privileged = false
 	}
 	switch profile.Driver {
 	case domain.SandboxDriverLocal, domain.SandboxDriverNative, domain.SandboxDriverSeatbelt, domain.SandboxDriverBwrap:
@@ -946,7 +1064,9 @@ func normalizeSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfil
 }
 
 func normalizeWorkflowDefinition(workflow domain.WorkflowDefinition) domain.WorkflowDefinition {
-	if strings.TrimSpace(workflow.SandboxProfileID) == "" {
+	if workflow.AutoSelectSandbox {
+		workflow.SandboxProfileID = ""
+	} else if strings.TrimSpace(workflow.SandboxProfileID) == "" {
 		workflow.SandboxProfileID = DefaultSandboxProfileID
 	}
 	for index := range workflow.Nodes {

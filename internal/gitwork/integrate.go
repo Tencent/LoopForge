@@ -17,7 +17,7 @@ func EnsureIdentity(ctx context.Context, workspace string) {
 }
 
 // MergeLatestIntegration commits pending work on the work branch, then merges
-// origin/<integrate> into it with SOP deliverables dropped from the result.
+// origin/<integrate> into it with LOOP deliverables dropped from the result.
 // It returns the files that still conflict; the merge is then left in
 // progress so a repair agent can resolve it in the same checkout, and the
 // next call completes it.
@@ -41,7 +41,7 @@ func MergeLatestIntegration(ctx context.Context, w, work, integrate, label strin
 	if s, _ := C(ctx, w, "status", "--porcelain"); strings.TrimSpace(s) != "" {
 		_, _ = C(ctx, w, "add", "-A")
 		DropSOPDeliverablesFromIndex(ctx, w)
-		if err := CommitStaged(ctx, w, labelled("LoopForge: save scheduled SOP work", label)); err != nil {
+		if err := CommitStaged(ctx, w, labelled("LoopForge: save scheduled LOOP work", label)); err != nil {
 			return nil, err
 		}
 	}
@@ -64,10 +64,10 @@ func MergeLatestIntegration(ctx context.Context, w, work, integrate, label strin
 		if leftover := UnmergedFiles(ctx, w); len(leftover) > 0 {
 			return leftover, nil
 		}
-		// Only SOP-report conflicts: merge was completed by FinishMergeAfterExcludedConflicts.
+		// Only LOOP-report conflicts: merge was completed by FinishMergeAfterExcludedConflicts.
 	}
 	DropSOPDeliverablesFromIndex(ctx, w)
-	if err := CommitStaged(ctx, w, labelled("LoopForge: drop SOP deliverables", label)); err != nil {
+	if err := CommitStaged(ctx, w, labelled("LoopForge: drop LOOP deliverables", label)); err != nil {
 		return nil, err
 	}
 	return nil, nil
@@ -107,12 +107,12 @@ func MergeLatestRemoteBranch(ctx context.Context, w, branch string) ([]string, e
 		if _, mergeErr := C(ctx, w, "rev-parse", "--verify", "MERGE_HEAD"); mergeErr == nil {
 			return UnmergedFiles(ctx, w), nil
 		}
-		// Only SOP-report conflicts were auto-resolved.
+		// Only LOOP-report conflicts were auto-resolved.
 	}
 	return nil, nil
 }
 
-// ResolveExcludedMergeConflicts drops unmerged SOP deliverables (reports the
+// ResolveExcludedMergeConflicts drops unmerged LOOP deliverables (reports the
 // engine never wants on a baseline) and returns any remaining real conflicts.
 func ResolveExcludedMergeConflicts(ctx context.Context, w string) []string {
 	for _, path := range UnmergedFiles(ctx, w) {
@@ -124,7 +124,7 @@ func ResolveExcludedMergeConflicts(ctx context.Context, w string) []string {
 }
 
 // FinishMergeAfterExcludedConflicts completes an in-progress merge whose only
-// conflicts were SOP deliverables, or returns the real conflicts.
+// conflicts were LOOP deliverables, or returns the real conflicts.
 func FinishMergeAfterExcludedConflicts(ctx context.Context, w, msg string) ([]string, error) {
 	if remaining := ResolveExcludedMergeConflicts(ctx, w); len(remaining) > 0 {
 		return remaining, nil
@@ -151,7 +151,7 @@ func UnmergedFiles(ctx context.Context, w string) []string {
 	return files
 }
 
-// DropSOPDeliverablesFromIndex unstages SOP report files so they never reach
+// DropSOPDeliverablesFromIndex unstages LOOP report files so they never reach
 // a baseline commit.
 func DropSOPDeliverablesFromIndex(ctx context.Context, w string) {
 	names := make([]string, 0, len(PatchExcludeBasenames))

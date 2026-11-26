@@ -2,8 +2,8 @@ package repo
 
 import "agentflow/internal/domain"
 
-// LatestIssueSOPRun returns the newest top-level SOP run of an issue; role
-// group records and conversation workspaces are not SOP runs.
+// LatestIssueSOPRun returns the newest top-level LOOP run of an issue; role
+// group records and conversation workspaces are not LOOP runs.
 func (r *RunsRepo) LatestIssueSOPRun(issueID string) (domain.Run, bool) {
 	expr := r.sqlExecutionContextJSONText("issueId")
 	ids := []string{}

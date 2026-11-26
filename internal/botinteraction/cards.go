@@ -211,7 +211,7 @@ func notificationCard(run domain.Run, item domain.NotificationDelivery, actions 
 	rows := []map[string]string{
 		{"keyname": "需求", "value": cardText(issue, 26)},
 		{"keyname": "节点", "value": cardText(item.SourceName, 26)},
-		{"keyname": "SOP", "value": cardText(run.WorkflowSnapshot.Name, 26)},
+		{"keyname": "LOOP", "value": cardText(run.WorkflowSnapshot.Name, 26)},
 	}
 	for _, action := range actions {
 		if action["key"] == "reject" {
@@ -252,7 +252,7 @@ func cardReason(run domain.Run, item domain.NotificationDelivery, content string
 	if strings.TrimSpace(reason) == "" {
 		for _, line := range strings.Split(content, "\n") {
 			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "需求：") || strings.HasPrefix(line, "SOP：") || strings.HasPrefix(line, "节点：") || strings.HasPrefix(line, "查看详情：") {
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "需求：") || strings.HasPrefix(line, "LOOP：") || strings.HasPrefix(line, "SOP：") || strings.HasPrefix(line, "节点：") || strings.HasPrefix(line, "查看详情：") {
 				continue
 			}
 			reason = line
@@ -296,7 +296,7 @@ func notificationCardDetails(run domain.Run, item domain.NotificationDelivery, c
 	if len([]rune(reason)) <= 76 && len([]rune(required)) <= 28 && len(findings) == 0 {
 		return ""
 	}
-	text := "### " + notificationCardIssue(content) + "\n节点：" + item.SourceName + "\nSOP：" + run.WorkflowSnapshot.Name + "\n\n**原因**\n" + reason
+	text := "### " + notificationCardIssue(content) + "\n节点：" + item.SourceName + "\nLOOP：" + run.WorkflowSnapshot.Name + "\n\n**原因**\n" + reason
 	if required != "" {
 		text += "\n\n**需要处理**\n" + required
 	}

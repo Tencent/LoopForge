@@ -44,7 +44,7 @@ func (e *Engine) workspaceBlocked(r domain.Run) bool {
 	if host == e.workspaceHost || e.repo.WorkspaceHostAlive(host) {
 		return true
 	}
-	return e.defaultExecutionRunner(r) != ""
+	return e.defaultExecutionRunner(r) != "" && (r.WorkspaceCleanedAt.IsZero() || !e.hasSavedWorkspaceCheckpoint(r.ID))
 }
 
 // workspaceLost reports a foreign bind to a host that is gone while the
@@ -52,7 +52,13 @@ func (e *Engine) workspaceBlocked(r domain.Run) bool {
 // those changes went with the host: continuing elsewhere would silently drop
 // them. Runs without a repository may still be taken over.
 func (e *Engine) workspaceLost(r domain.Run) bool {
-	return e.foreignWorkspaceBind(r) && !e.workspaceBlocked(r) && hasCodeWorkspace(r)
+	return e.foreignWorkspaceBind(r) && !e.workspaceBlocked(r) && hasCodeWorkspace(r) &&
+		(r.WorkspaceCleanedAt.IsZero() || !e.hasSavedWorkspaceCheckpoint(r.ID))
+}
+
+func (e *Engine) hasSavedWorkspaceCheckpoint(runID string) bool {
+	meta, ok := e.repo.WorkspaceCheckpoint(runID)
+	return ok && meta.SavedAt != nil && meta.Error == ""
 }
 
 func (e *Engine) workspaceLostMessage(r domain.Run) string {
@@ -114,13 +120,8 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 	var resumed []string
 	// Promotion is per bucket; a failing bucket still returns the others and
 	// must not stop interrupted-run recovery below.
-	promoted, err := e.repo.PromoteQueuedRuns()
-	if err != nil {
-		log.Printf("promote queued runs: %v", err)
-	}
-	for _, id := range promoted {
-		e.publish(id)
-	}
+	e.promoteQueuedRuns()
+	// This scan repeats every few seconds; artifact bodies are not needed here.
 	for _, listed := range e.repo.Runs() {
 		if listed.IsWorkspace() || listed.HistoricalGroup() {
 			continue
@@ -129,7 +130,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 		// request that raced with the last worker write must therefore be claimed
 		// and settled by the recovery loop instead of waiting forever.
 		if listed.Status == "waiting" && !listed.CancelRequested && alignRunWaitingApproval(listed) {
-			r, ok := e.repo.RunState(listed.ID)
+			r, ok := e.repo.RunProgress(listed.ID)
 			if !ok || r.Status != "waiting" || r.CancelRequested || !alignRunWaitingApproval(r) {
 				continue
 			}
@@ -149,7 +150,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 			continue
 		}
 		if listed.Status == "waiting" && listed.CancelRequested {
-			r, ok := e.repo.RunState(listed.ID)
+			r, ok := e.repo.RunProgress(listed.ID)
 			if !ok || r.Status != "waiting" || !r.CancelRequested {
 				continue
 			}
@@ -166,7 +167,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 			continue
 		}
 		if listed.Status == "running" {
-			fresh, ok := e.repo.RunState(listed.ID)
+			fresh, ok := e.repo.RunProgress(listed.ID)
 			if !ok || fresh.Status != "running" {
 				continue
 			}
@@ -181,7 +182,7 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 		if listed.Status != "running" {
 			continue
 		}
-		r, ok := e.repo.RunState(listed.ID)
+		r, ok := e.repo.RunProgress(listed.ID)
 		if !ok || r.Status != "running" {
 			continue
 		}

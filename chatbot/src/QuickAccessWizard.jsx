@@ -41,7 +41,7 @@ const STEPS = [
   },
   {
     id: "workflow",
-    title: "默认角色与 SOP",
+    title: "默认角色与 LOOP",
     desc: "使用平台默认角色与通用交付流程",
   },
   {
@@ -666,7 +666,7 @@ async function provisionFallbackProjectSOP(projectId, workflowId, owner) {
     "/api/workflows",
     {
       id: workflowId,
-      name: "后端交付 SOP",
+      name: "后端交付 LOOP",
       projectId,
       owner,
       status: "draft",
@@ -767,7 +767,7 @@ export default function QuickAccessWizard({
       : [
           {
             id: DEFAULT_SOP_ID,
-            name: "通用后端交付 SOP",
+            name: "通用后端交付 LOOP",
             description:
               "从需求定型、方案设计、代码实现、独立评审、测试验证到发起 MR 的标准交付链路。",
             generic: true,
@@ -839,8 +839,8 @@ export default function QuickAccessWizard({
           ? "平台默认模板"
           : projectMode === "existing" &&
               workflow.projectId === currentProject?.id
-            ? "本项目已有 SOP（直接复用）"
-            : "共享 SOP";
+            ? "本项目已有 LOOP（直接复用）"
+            : "共享 LOOP";
         return {
           value: workflow.id,
           label: workflow.name,
@@ -1002,7 +1002,7 @@ export default function QuickAccessWizard({
 
   useEffect(() => {
     if (!open || !selectedWorkflowId) return undefined;
-    // Only platform templates have template roles; a project SOP would 404.
+    // Only platform templates have template roles; a project LOOP would 404.
     const known = (workflows || []).find((w) => w.id === selectedWorkflowId);
     if (known && !known.generic) {
       setTemplateAgents([]);
@@ -1059,7 +1059,7 @@ export default function QuickAccessWizard({
     else setSelectedWorkflowId(DEFAULT_SOP_ID);
   }, [open, projectMode, currentProject?.id]);
 
-  // A new project starts from the platform template; the SOP picked for the
+  // A new project starts from the platform template; the LOOP picked for the
   // previously selected project belongs to that project and is not offered.
   useEffect(() => {
     if (open && projectMode === "create") setSelectedWorkflowId(DEFAULT_SOP_ID);
@@ -1210,7 +1210,7 @@ export default function QuickAccessWizard({
     setError("");
     try {
       let targetProject = currentProject;
-      // Save the SOP the page shows; a stale id hidden by the current
+      // Save the LOOP the page shows; a stale id hidden by the current
       // filter must never be bound to the project.
       const sopId = activeWorkflow?.id || DEFAULT_SOP_ID;
       if (projectMode === "create") {
@@ -1298,7 +1298,7 @@ export default function QuickAccessWizard({
               item.projectId === targetProject.id &&
               ((item.tags || []).includes(`generic-source:${sopId}`) ||
                 item.id === `${sopId}-${targetProject.id}` ||
-                item.name === (activeWorkflow?.name || "通用后端交付 SOP")),
+                item.name === (activeWorkflow?.name || "通用后端交付 LOOP")),
           );
         if (existingProjectSop) {
           provisionedWorkflow = existingProjectSop;
@@ -1315,7 +1315,7 @@ export default function QuickAccessWizard({
                 `/api/workflows/${encodeURIComponent(sopId)}/clone`,
                 {
                   id: cloneId,
-                  name: (activeWorkflow?.name || "通用后端交付 SOP").replace(
+                  name: (activeWorkflow?.name || "通用后端交付 LOOP").replace(
                     /^通用/,
                     "",
                   ),
@@ -1417,7 +1417,7 @@ export default function QuickAccessWizard({
               <HarnessIcon name="sparkles" size={20} />
             </div>
             <h2 id="qa-wizard-title">快速接入</h2>
-            <p>提供最低限度的鉴权与仓库，直接使用默认角色和 SOP。</p>
+            <p>提供最低限度的鉴权与仓库，直接使用默认角色和 LOOP。</p>
           </div>
           <ol className="qa-steps">
             {STEPS.map((item, index) => {
@@ -1503,7 +1503,7 @@ export default function QuickAccessWizard({
                     </h3>
                     <p className="qa-lede qa-success-item" style={{ "--i": 1 }}>
                       已关联默认角色与「
-                      {completedSummary?.workflow?.name || "通用后端交付 SOP"}
+                      {completedSummary?.workflow?.name || "通用后端交付 LOOP"}
                       」，现在可以直接在工作台对话或派发需求。
                     </p>
                   </div>
@@ -1530,7 +1530,7 @@ export default function QuickAccessWizard({
                           </span>
                           <span>
                             {completedSummary?.workflow?.name ||
-                              "通用后端交付 SOP"}
+                              "通用后端交付 LOOP"}
                           </span>
                           <small>已绑定</small>
                         </li>
@@ -1616,9 +1616,9 @@ export default function QuickAccessWizard({
                         <HarnessIcon name="workflow" size={16} />
                       </span>
                       <span className="qa-action-copy">
-                        <strong>查看或修改 SOP</strong>
+                        <strong>查看或修改 LOOP</strong>
                         <small>
-                          在流程模板里查看默认 SOP，或复制到项目自由调整
+                          在流程模板里查看默认 LOOP，或复制到项目自由调整
                         </small>
                       </span>
                       <HarnessIcon
@@ -2005,12 +2005,12 @@ export default function QuickAccessWizard({
                   {activeStep.id === "workflow" ? (
                     <div className="qa-pane">
                       <div className="qa-field">
-                        <span className="qa-label">默认交付 SOP</span>
+                        <span className="qa-label">默认交付 LOOP</span>
                         <HarnessSelect
                           value={activeWorkflow?.id || DEFAULT_SOP_ID}
                           options={sopSelectOptions}
                           onChange={setSelectedWorkflowId}
-                          ariaLabel="默认交付 SOP"
+                          ariaLabel="默认交付 LOOP"
                         />
                       </div>
 
@@ -2051,7 +2051,7 @@ export default function QuickAccessWizard({
                           <div
                             key="stages"
                             className="qa-flow-track qa-stagger"
-                            aria-label="SOP 阶段预览"
+                            aria-label="LOOP 阶段预览"
                           >
                             <div
                               className="qa-flow-node is-edge"
@@ -2144,11 +2144,11 @@ export default function QuickAccessWizard({
                             </dd>
                           </div>
                           <div>
-                            <dt>默认 SOP</dt>
+                            <dt>默认 LOOP</dt>
                             <dd>
                               <span className="qa-dot is-ok" />
                               <span>
-                                {activeWorkflow?.name || "通用后端交付 SOP"}（
+                                {activeWorkflow?.name || "通用后端交付 LOOP"}（
                                 {roles.length} 个默认角色）
                               </span>
                             </dd>

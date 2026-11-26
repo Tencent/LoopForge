@@ -13,7 +13,7 @@ import (
 	"agentflow/internal/domain"
 )
 
-// A child SOP runs in its parent's checkout. Its tasks and the parent's
+// A child LOOP runs in its parent's checkout. Its tasks and the parent's
 // preparation/restore/snapshot must share one fence.
 func TestWorkspaceGateIsKeyedByWorkspaceOwner(t *testing.T) {
 	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,84 @@ import (
 	"agentflow/internal/runtime"
 	"github.com/gin-gonic/gin"
 )
+
+func TestQueuedActivationLeavesWorkspaceArchivedUntilAdmission(t *testing.T) {
+	for _, action := range []string{"retry", "resume"} {
+		t.Run(action, func(t *testing.T) {
+			a, owner, _, _, _ := sharedWorkbenchFixture(t)
+			en := engine.New(a.repo, runtime.NewManager(t.TempDir()))
+			en.ConfigureExecution("activation-api", "activation-host", time.Minute, false)
+			a.deps.engine = en
+			h := &runsHandlers{deps: a.deps}
+			run, _ := a.repo.RunState("shared-run")
+			run.ExecutionContext.ExecutionMode = domain.ExecutionModeCloud
+			run.Status = "failed"
+			run.WorkflowSnapshot.Nodes = []domain.WorkflowNode{{ID: "work", Type: "script", Script: "true", MaxAttempts: 1}}
+			run.Nodes = map[string]*domain.NodeRun{"work": {NodeID: "work", Status: "failed", Attempt: 1}}
+			if action == "resume" {
+				run.Status = "waiting"
+				run.Nodes["work"].Status = "waiting_approval"
+				run.Nodes["work"].Activity = "已由用户暂停，继续后脚本将从头执行"
+				if err := a.repo.DB.Table("runs").Where("id = ?", run.ID).Update("pause_requested", true).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			run.WorkspaceCleanedAt = time.Now().UTC()
+			if err := a.repo.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			token, err := en.BeginConversationWorkspaceUse(run.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := a.repo.FinishWorkspaceUse(run.ID, token, time.Now().UTC(), runtime.EmptyWorkspaceCheckpoint(), ""); err != nil {
+				t.Fatal(err)
+			}
+			if released, err := a.repo.ReleaseCleanedRunAdmission(run.ID, ""); err != nil || !released {
+				t.Fatalf("release archived run: %v, %v", released, err)
+			}
+			for i := range repo.ProjectRunLimit {
+				if err := a.repo.PutRun(domain.Run{ID: fmt.Sprintf("slot-%d", i), Status: "running", ExecutionContext: domain.TelemetryContext{ProjectID: run.ExecutionContext.ProjectID}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			router := gin.New()
+			router.POST("/api/runs/:id/"+action, h.run)
+			router.POST("/api/runs/:id/workspace/restore", h.workspaceRestore)
+			post := func(path string) *httptest.ResponseRecorder {
+				c, response := workbenchContext(owner, "POST", "/api/runs/shared-run/"+path, bytes.NewBufferString(`{}`))
+				c.Request.Header.Set("Prefer", "respond-async")
+				router.ServeHTTP(response, c.Request)
+				return response
+			}
+			if response := post(action); response.Code != http.StatusOK {
+				t.Fatalf("%s response = %d %s", action, response.Code, response.Body)
+			}
+			if got, _ := a.repo.RunState(run.ID); got.Status != "queued" || got.WorkspaceCleanedAt.IsZero() {
+				t.Fatalf("activation did not queue with the archive intact: %s, %v", got.Status, got.WorkspaceCleanedAt)
+			}
+			if _, err := os.Stat(en.RunWorkspace(run.ID)); !os.IsNotExist(err) {
+				t.Fatalf("activation opened a queued workspace: %v", err)
+			}
+			if response := post("workspace/restore"); response.Code != http.StatusOK && response.Code != http.StatusAccepted {
+				t.Fatalf("explicit restore response = %d %s", response.Code, response.Body)
+			}
+			for deadline := time.Now().Add(5 * time.Second); ; {
+				state, err := en.WorkspaceRestoreStatus(run.ID)
+				if err != nil || state.Status == "failed" || time.Now().After(deadline) {
+					t.Fatalf("explicit restore did not finish: %+v, %v", state, err)
+				}
+				if state.Status == "ready" {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if got, _ := a.repo.RunState(run.ID); got.Status != "queued" || !got.WorkspaceCleanedAt.IsZero() {
+				t.Fatalf("explicit restore should open the queued workspace: %s, %v", got.Status, got.WorkspaceCleanedAt)
+			}
+		})
+	}
+}
 
 func TestRetryAsyncRestoreSurvivesDisconnectAndReusesBackgroundOperation(t *testing.T) {
 	a, owner, _, outsider, _ := sharedWorkbenchFixture(t)
@@ -340,7 +419,7 @@ func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 			if rec := request(owner, http.MethodPost, "/restore"); rec.Code != http.StatusConflict || !bytes.Contains(rec.Body.Bytes(), []byte(repo.ErrWorkspaceInUse.Error())) {
-				t.Fatalf("running SOP restore = %d: %s", rec.Code, rec.Body)
+				t.Fatalf("running LOOP restore = %d: %s", rec.Code, rec.Body)
 			}
 			sop.Status = "succeeded"
 			if err := a.repo.PutRun(sop); err != nil {
@@ -348,19 +427,19 @@ func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
 			}
 			rec := request(owner, http.MethodPost, "/restore")
 			if rec.Code != http.StatusOK && (mode != "async" || rec.Code != http.StatusAccepted) {
-				t.Fatalf("SOP restore = %d: %s", rec.Code, rec.Body)
+				t.Fatalf("LOOP restore = %d: %s", rec.Code, rec.Body)
 			}
 			for deadline := time.Now().Add(5 * time.Second); ; {
 				status := request(owner, http.MethodGet, "/restore")
 				var state domain.WorkspaceRestoreStatus
 				if err := json.Unmarshal(status.Body.Bytes(), &state); err != nil || status.Code != http.StatusOK {
-					t.Fatalf("SOP restore status = %d: %s", status.Code, status.Body)
+					t.Fatalf("LOOP restore status = %d: %s", status.Code, status.Body)
 				}
 				if state.Status == "ready" {
 					break
 				}
 				if state.Status != "restoring" || time.Now().After(deadline) {
-					t.Fatalf("SOP restore did not finish: %s", status.Body)
+					t.Fatalf("LOOP restore did not finish: %s", status.Body)
 				}
 				time.Sleep(10 * time.Millisecond)
 			}
@@ -373,7 +452,7 @@ func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
 				t.Fatal("the owning workspace still has a cleanup mark")
 			}
 			if _, err := os.Stat(manager.RunWorkspace(sop.ID)); !os.IsNotExist(err) {
-				t.Fatalf("restore created a separate SOP workspace: %v", err)
+				t.Fatalf("restore created a separate LOOP workspace: %v", err)
 			}
 		})
 	}
@@ -426,7 +505,7 @@ func TestSOPWorkspaceActivityTouchesConversationOwner(t *testing.T) {
 		t.Fatal("activity did not update the conversation workspace")
 	}
 	if _, ok := a.repo.WorkspaceCheckpoint(sop.ID); ok {
-		t.Fatal("activity created a checkpoint for the borrowing SOP")
+		t.Fatal("activity created a checkpoint for the borrowing LOOP")
 	}
 	workspace.WorkspaceCleanedAt = time.Now().UTC()
 	if err := a.repo.PutRun(workspace); err != nil {
@@ -487,7 +566,7 @@ func TestSharedRunnerWorkspaceRestoreRequiresConnectedRunner(t *testing.T) {
 		return response
 	}
 	connect := func(result domain.RunnerWorkspaceResponse) *runnerControlConn {
-		conn := hub.register(runner, nil, false)
+		conn := hub.register(runner, nil, false, false)
 		done := make(chan struct{})
 		go func() {
 			defer close(done)

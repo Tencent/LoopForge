@@ -83,7 +83,14 @@ func (h *agentToolGateway) ServeHTTP(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, agentToolRPCResponse{JSONRPC: "2.0", Error: &agentToolRPCError{Code: -32700, Message: "parse error", Data: err.Error()}})
 		return
 	}
-	response := h.handleRPC(withAgentToolToken(c.Request.Context(), token), session, request)
+	ctx := withAgentToolToken(c.Request.Context(), token)
+	if request.Method == "tools/call" && request.ID != nil && mcpserver.AcceptsEventStream(c.Request) {
+		mcpserver.WriteToolResponse(c.Writer, c.Request, request.ID, func() (json.RawMessage, error) {
+			return json.Marshal(h.handleRPC(ctx, session, request))
+		})
+		return
+	}
+	response := h.handleRPC(ctx, session, request)
 	if response == nil {
 		c.Status(http.StatusAccepted)
 		return
@@ -160,7 +167,7 @@ func agentToolProtocolVersion(params json.RawMessage) string {
 func agentToolInstructions(mode AgentToolMode) string {
 	switch mode {
 	case AgentToolReport:
-		return "只能基于提供的资料汇总本次 SOP，完成后调用 submit_notification_report。普通文本不算提交。"
+		return "只能基于提供的资料汇总本次 LOOP，完成后调用 submit_notification_report。普通文本不算提交。"
 	case AgentToolClarify:
 		return "只读查询 LoopForge 及当前项目已安装的外部 MCP。本轮结束时调用 submit_clarification。"
 	case AgentToolAssistant:
@@ -374,7 +381,7 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 		}
 		if len(reply.Drafts) == 0 {
 			// This tool ends the model process. Accepting a progress message here
-			// used to kill sibling read calls before a requested SOP was prepared.
+			// used to kill sibling read calls before a requested LOOP was prepared.
 			return mcpToolTextResult("未提交草稿，本轮继续。submit_assistant_reply 仅用于提交待确认写入草稿；进度说明请用普通文本并继续执行工具查询。请完成用户请求或说明具体阻塞原因后，以自然语言结束；不要提交占位回复。", true), nil
 		}
 		if err := session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &reply}); err != nil {
@@ -423,6 +430,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		if session.ctx != nil {
 			if origin, ok := botStartOriginFrom(session.ctx); ok {
 				ctx = withBotStartOrigin(ctx, origin)
+			}
+			if actor, ok := botChatActorFrom(session.ctx); ok {
+				ctx = withBotChatActor(ctx, actor.Channel, actor.SenderID, actor.SenderName)
 			}
 		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}

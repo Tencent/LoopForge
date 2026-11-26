@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -43,8 +44,12 @@ func TestReportedOutputsValidateRepositoryScopedContracts(t *testing.T) {
 
 	reported.reset()
 	reported.absorb(&domain.RunnerTaskOutputs{TooLarge: []string{"svc-a/notes.md"}, Files: map[string]string{"svc-b/notes.md": "B"}})
-	if err := validateArtifactOutputs(reported, run, node); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	if err := validateArtifactOutputs(reported, run, node); !errors.Is(err, errLegacyOutputTooLarge) {
 		t.Fatalf("oversized output not reported as such: %v", err)
+	}
+	reported.transfer = true
+	if err := validateArtifactOutputs(reported, run, node); !errors.Is(err, errOutputTooLarge) {
+		t.Fatalf("streamed oversized output not reported as such: %v", err)
 	}
 }
 

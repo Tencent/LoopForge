@@ -18,24 +18,24 @@ import (
 func SandboxCheckouts(ctx context.Context, sandbox Sandbox) ([]gitwork.Checkout, error) {
 	ctx = WithSandboxGit(ctx, sandbox, RunCredentials{})
 	if _, err := gitwork.Run(ctx, sandbox.Workspace(), "--version"); err != nil {
-		return nil, fmt.Errorf("check Git in the SOP sandbox: %w", err)
+		return nil, fmt.Errorf("check Git in the LOOP sandbox: %w", err)
 	}
 	return gitwork.CheckoutsIncludingNested(ctx, sandbox.Workspace()), ctx.Err()
 }
 
-// WithSandboxGit routes Git workspace preparation through the selected SOP
+// WithSandboxGit routes Git workspace preparation through the selected LOOP
 // sandbox. Resolve guest paths relative to the checkout owner's workspace.
 func WithSandboxGit(ctx context.Context, sandbox Sandbox, credentials RunCredentials) context.Context {
 	return gitwork.WithWorkspaceExecutor(ctx, func(ctx context.Context, dir string, git gitwork.WorkspaceCommand) (string, error) {
 		// Automated checkout uses Git authentication scoped to the remote.
 		ctx = context.WithValue(ctx, projectCredentialEnvKey{}, nil)
 		if sandbox == nil {
-			return "", fmt.Errorf("shared checkout preparation requires the SOP sandbox")
+			return "", fmt.Errorf("shared checkout preparation requires the LOOP sandbox")
 		}
 		workspace := sandbox.Workspace()
 		rel, err := filepath.Rel(workspace, dir)
 		if err != nil || !filepath.IsLocal(rel) {
-			return "", fmt.Errorf("Git directory is outside the SOP workspace")
+			return "", fmt.Errorf("Git directory is outside the LOOP workspace")
 		}
 		guestDir := dir
 		docker := sandboxDriver(sandbox) == domain.SandboxDriverDocker

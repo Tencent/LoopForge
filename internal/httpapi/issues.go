@@ -208,13 +208,12 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		return
 	}
 	if r.Method == http.MethodPut || r.Method == http.MethodPost {
-		var req struct {
-			domain.Issue
-			SyncTarget string  `json:"syncTarget"`
-			TapdID     *string `json:"tapdId"`
-			BaseBranch *string `json:"baseBranch"`
+		var req issueWriteRequest
+		files, ok := decodeIssueWrite(c, &req)
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
 		}
-		if !decode(c, &req) {
+		if !ok {
 			return
 		}
 		v := req.Issue
@@ -242,6 +241,10 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			}
 			v = mergeIssueEdit(v, existing)
 		} else if !h.requireProjectWriter(c, v.ProjectID) {
+			return
+		}
+		if len(files) > 0 && (v.ID != "" || (req.SyncTarget != "" && !strings.EqualFold(req.SyncTarget, "local"))) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "图片只能随新需求一起保存到平台"})
 			return
 		}
 		// Clients such as the AI assistant echo a fetched issue back. Resending
@@ -305,10 +308,12 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			return
 		}
 		// Clarification is optional: saving a ticket never scores it or starts
-		// a round. Binding SOP or repositories must not invent a status.
+		// a round. Binding LOOP or repositories must not invent a status.
 		if found {
 			keepExistingTrackerBinding(&v, existing)
 		} else {
+			// Only the server records audit entries for a newly created issue.
+			v.Operations = nil
 			keepExistingTrackerBinding(&v, domain.Issue{})
 		}
 		if !found && !repo.IssueBoundToTracker(v) {
@@ -350,7 +355,17 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		} else if detail := issueChangeDetail(existing, v); detail != "" {
 			h.recordIssueOperation(c, &v, "update", detail)
 		}
-		if err := h.repo.PutIssue(v); err != nil {
+		var err error
+		if len(files) > 0 {
+			images, ok := readIssueImages(c, files)
+			if !ok {
+				return
+			}
+			err = h.repo.CreateIssueWithImages(v, images)
+		} else {
+			err = h.repo.PutIssue(v)
+		}
+		if err != nil {
 			respond(c, err)
 			return
 		}
@@ -443,6 +458,7 @@ type issueRoute struct {
 
 var issueRoutes = map[string]issueRoute{
 	"/api/issues/:id":                     {handle: issuesHandlers.issueDetail, methods: []string{http.MethodGet, http.MethodDelete}},
+	"/api/issues/:id/images/:imageId":     {handle: issuesHandlers.issueImage, methods: []string{http.MethodGet}},
 	"/api/issues/:id/comments":            {handle: issuesHandlers.addIssueComment, methods: []string{http.MethodPost}},
 	"/api/issues/:id/runs":                {handle: issuesHandlers.issueRuns, methods: []string{http.MethodGet}},
 	"/api/issues/:id/clarification":       {handle: issuesHandlers.submitIssueClarification, methods: []string{http.MethodPost}},
@@ -517,13 +533,20 @@ func actorLabel(user *auth.User) (string, int64) {
 	}
 }
 
+// recordIssueOperation appends one audit entry. Actor is always the platform
+// account whose permissions were used; a call made for a chat turn also
+// records the IM sender that asked for it (see botChatActor).
 func (h issuesHandlers) recordIssueOperation(c *gin.Context, issue *domain.Issue, action, detail string) {
 	if issue == nil {
 		return
 	}
 	user, _ := h.requestUser(c.Request, true)
 	actor, id := actorLabel(user)
-	issue.AppendOperation(domain.IssueOperation{Actor: actor, ActorUserID: id, Action: action, Detail: detail})
+	op := domain.IssueOperation{Actor: actor, ActorUserID: id, Action: action, Detail: detail}
+	if chat, ok := botChatActorFrom(c.Request.Context()); ok {
+		op.ActorChannel, op.ActorSender, op.ActorSenderName = chat.Channel, chat.SenderID, chat.SenderName
+	}
+	issue.AppendOperation(op)
 }
 
 func (h issuesHandlers) appendStoredOperation(c *gin.Context, issueID, action, detail string) (domain.Issue, error) {
@@ -580,7 +603,7 @@ func issueChangeDetail(before, after domain.Issue) string {
 		parts = append(parts, "责任人")
 	}
 	if before.WorkflowID != after.WorkflowID && after.WorkflowID != "" {
-		parts = append(parts, "关联 SOP")
+		parts = append(parts, "关联 LOOP")
 	}
 	if before.TapdID != after.TapdID {
 		if after.TapdID == "" {
@@ -802,7 +825,7 @@ func normalizeSOPBindings(store *repo.Store, projectID string, in []domain.Issue
 	bindings := domain.NormalizeSOPBindings(in)
 	for i, binding := range bindings {
 		if !knownWorkflow(store, binding.WorkflowID) {
-			return nil, fmt.Errorf("SOP %s 不存在", binding.WorkflowID)
+			return nil, fmt.Errorf("LOOP %s 不存在", binding.WorkflowID)
 		}
 		if binding.AssigneeUserID > 0 {
 			if _, ok := store.User(binding.AssigneeUserID); !ok {
@@ -810,7 +833,7 @@ func normalizeSOPBindings(store *repo.Store, projectID string, in []domain.Issue
 			}
 		}
 		if wf, ok := store.Workflow(binding.WorkflowID); ok && strings.TrimSpace(wf.ProjectID) != "" && wf.ProjectID != projectID && !wf.Shared && !wf.Generic {
-			return nil, fmt.Errorf("SOP %s 不属于当前项目", binding.WorkflowID)
+			return nil, fmt.Errorf("LOOP %s 不属于当前项目", binding.WorkflowID)
 		}
 		bindings[i] = binding
 	}

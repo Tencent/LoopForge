@@ -92,6 +92,6 @@ func TestSOPCatalogMarksFailures(t *testing.T) {
 	section = section[strings.Index(section, `<section id="sopsView"`):]
 	section = section[:strings.Index(section, "</section>")]
 	if got := strings.Count(section, `class="button primary"`); got != 1 || !strings.Contains(section, `id="newSOP" class="button primary"`) {
-		t.Fatalf("新建 SOP must be the only solid primary button on the SOP page, got %d", got)
+		t.Fatalf("新建 LOOP must be the only solid primary button on the LOOP page, got %d", got)
 	}
 }

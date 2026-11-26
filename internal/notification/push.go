@@ -191,7 +191,7 @@ func (s *Service) processPush(ctx context.Context, item *domain.NotificationDeli
 }
 
 // checkDeliveryTarget checks the receiver of a delivery before each send.
-// SOP notifications go to the configured, trial-verified member. Messages
+// LOOP notifications go to the configured, trial-verified member. Messages
 // back to the chat a run was started from need no trial send: a private
 // origin must still be a bound sender with access to the project; a group
 // origin needs the confirmed enterprise.
@@ -246,9 +246,9 @@ func plainNotificationText(content string) string {
 
 // runURL is the run page on the platform, or empty without a public URL.
 func (s *Service) runURL(runID string) string {
-	base, err := url.Parse(s.PublicURL)
-	if runID == "" || err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
+	address := s.PublicAddress()
+	if runID == "" || !domain.UsablePublicURL(address) {
 		return ""
 	}
-	return strings.TrimRight(s.PublicURL, "/") + "/#/runs/" + url.PathEscape(runID)
+	return address + "/#/runs/" + url.PathEscape(runID)
 }

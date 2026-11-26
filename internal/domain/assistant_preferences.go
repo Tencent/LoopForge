@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -11,6 +12,23 @@ type AssistantDefaults struct {
 	Model    string `json:"model,omitempty"`
 	Effort   string `json:"effort,omitempty"`
 	Approval string `json:"approval,omitempty"`
+}
+
+// ValidateCLIModelID checks the literal model identifier accepted by CLI settings.
+func ValidateCLIModelID(id string) error {
+	const maxCLIModelIDLen = 128
+	if id == "" {
+		return fmt.Errorf("模型 ID 不能为空")
+	}
+	if len(id) > maxCLIModelIDLen {
+		return fmt.Errorf("模型 ID 长度不能超过 %d 个字符", maxCLIModelIDLen)
+	}
+	for _, r := range id {
+		if r <= ' ' || r == 0x7f || r == '"' || r == '\'' || r == '`' || r == '\\' {
+			return fmt.Errorf("模型 ID %q 不能包含空格、引号、反斜杠或控制字符", id)
+		}
+	}
+	return nil
 }
 
 // AssistantPreferencesInstructionsMax caps the user's own rules for Main Bot.
@@ -35,7 +53,7 @@ type ApprovalReviewAPIConfig struct {
 }
 
 // AssistantPreferences is how one user wants Main Bot to work: whether it
-// hands work to roles and SOPs more readily (off by default), extra rules
+// hands work to roles and LOOPs more readily (off by default), extra rules
 // added to every turn, and optional "帮我批准" review model settings.
 // SteerOnSend interrupts a running reply when sending a message; the default
 // queues it until the reply finishes. WorkspaceDriver is the sandbox driver

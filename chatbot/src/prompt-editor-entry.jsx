@@ -62,7 +62,7 @@ function PromptEditor({ value, onChange, onError }) {
       </div>
       <p id="schedule-prompt-hint" className="schedule-field-hint">
         到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动
-        SOP、操作工作区及浏览器。
+        LOOP、操作工作区及浏览器。
       </p>
     </div>
   );

@@ -19,17 +19,59 @@ func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
 	}
 	defer s.Close()
 	dockerfile := &domain.SandboxDockerfile{Content: "FROM alpine:3.20\n"}
-	profile := domain.SandboxProfile{ID: "runner-docker", Name: "Runner Docker", Driver: "docker", Dockerfile: dockerfile, Environment: map[string]string{"E2E": "1"}}
+	profile := domain.SandboxProfile{ID: "runner-docker", Name: "Runner Docker", ProjectID: "platform", Driver: "docker", Privileged: true, Dockerfile: dockerfile, Environment: map[string]string{"E2E": "1"}}
 	if err := s.PutSandbox(profile); err != nil {
 		t.Fatal(err)
 	}
 	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
-	spec, err := e.runnerSandboxSpec(domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: profile.ID}})
+	runner := domain.Runner{ID: "runner", RunnerVersion: domain.RunnerVersionGitPlainHTTP}
+	if err := s.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ExecutionContext: domain.TelemetryContext{
+			ProjectID: profile.ProjectID, ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID, ExecutionPinned: true,
+		},
+		WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: profile.ID},
+	}
+	if _, err := e.runnerSandboxSpec(run); err == nil || !strings.Contains(err.Error(), domain.RunnerVersionPrivilegedSandbox) {
+		t.Fatalf("old Runner must reject privileged sandbox and ask for upgrade: %v", err)
+	}
+	if _, err := e.StartConversationWorkspace("Use a privileged workspace", run.ExecutionContext, profile.ID); err == nil || !strings.Contains(err.Error(), domain.RunnerVersionPrivilegedSandbox) {
+		t.Fatalf("starting a privileged workspace on an old Runner must ask for upgrade: %v", err)
+	}
+	runner.RunnerVersion = domain.RunnerVersionPrivilegedSandbox
+	if err := s.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := e.runnerSandboxSpec(run)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec == nil || spec.Profile.Driver != "docker" || spec.Profile.Environment["E2E"] != "1" || spec.Dockerfile == nil || spec.Dockerfile.Content != dockerfile.Content || spec.Dockerfile.ID != profile.ID || spec.Profile.DockerfileID != profile.ID || spec.Profile.Dockerfile != nil {
+	if spec == nil || spec.Profile.Driver != "docker" || !spec.Profile.Privileged || spec.Profile.Environment["E2E"] != "1" || spec.Dockerfile == nil || spec.Dockerfile.Content != dockerfile.Content || spec.Dockerfile.ID != profile.ID || spec.Profile.DockerfileID != profile.ID || spec.Profile.Dockerfile != nil {
 		t.Fatalf("runner sandbox spec = %+v", spec)
+	}
+
+	profile.CPUMillicores, profile.MemoryMiB = 750, 1536
+	if err := s.PutSandbox(profile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.runnerSandboxSpec(run); err == nil || err.Error() != domain.RunnerDockerSandboxLimitsUpgradeMessage {
+		t.Fatalf("Runner with privileged support alone must reject resource limits: %v", err)
+	}
+	if _, err := e.StartConversationWorkspace("Use a capped workspace", run.ExecutionContext, profile.ID); err == nil || err.Error() != domain.RunnerDockerSandboxLimitsUpgradeMessage {
+		t.Fatalf("starting a capped workspace needs a Runner upgrade: %v", err)
+	}
+	runner.RunnerVersion = domain.RunnerVersionDockerSandboxLimits
+	if err := s.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	spec, err = e.runnerSandboxSpec(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !spec.Profile.Privileged || spec.Profile.CPUMillicores != 750 || spec.Profile.MemoryMiB != 1536 {
+		t.Fatalf("runner sandbox spec lost Docker settings: %+v", spec.Profile)
 	}
 }
 
@@ -44,7 +86,10 @@ func TestRunnerSandboxSpecUsesFrozenSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	frozen := &domain.RunnerSandboxSpec{
-		Profile:    domain.SandboxProfile{ID: "docker", Name: "original", Driver: "docker", DockerfileID: "image", Environment: map[string]string{"SNAPSHOT": "yes"}},
+		Profile: domain.SandboxProfile{
+			ID: "docker", Name: "original", Driver: "docker", DockerfileID: "image",
+			Environment: map[string]string{"SNAPSHOT": "yes"}, CPUMillicores: 750, MemoryMiB: 1536,
+		},
 		Dockerfile: &domain.DockerfileDefinition{ID: "image", Name: "original", Content: "FROM alpine:3.20\n"},
 	}
 	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
@@ -54,6 +99,9 @@ func TestRunnerSandboxSpecUsesFrozenSnapshot(t *testing.T) {
 	}
 	if spec == nil || spec.Profile.Driver != "docker" || spec.Profile.Environment["SNAPSHOT"] != "yes" || spec.Dockerfile == nil || spec.Dockerfile.Content != "FROM alpine:3.20\n" {
 		t.Fatalf("runner sandbox did not use frozen snapshot: %+v", spec)
+	}
+	if spec.Profile.CPUMillicores != 750 || spec.Profile.MemoryMiB != 1536 {
+		t.Fatalf("runner sandbox lost frozen limits: %+v", spec.Profile)
 	}
 }
 

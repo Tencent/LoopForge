@@ -17,7 +17,7 @@ import (
 )
 
 // roleSubagent is a mentioned role with the rules and skills it is bound to,
-// resolved for the conversation's project the way an SOP node resolves them.
+// resolved for the conversation's project the way a LOOP node resolves them.
 type roleSubagent struct {
 	Role       domain.AgentDefinition
 	Rules      []domain.RuleDefinition
@@ -101,7 +101,7 @@ func renderRoleAgentFile(item roleSubagent, workspace bool) string {
 
 // subagentChatNotes tells a role subagent what Main Bot's system prompt tells
 // Main Bot, which a subagent does not receive: where the code is, and that a
-// chat dispatch is not an SOP node.
+// chat dispatch is not a LOOP node.
 // subagentBlockedTools are Main Bot's alone: submitting the reply ends the
 // whole turn, and opening a workspace switches the one Main Bot is bound to.
 var subagentBlockedTools = []string{
@@ -111,8 +111,8 @@ var subagentBlockedTools = []string{
 
 const subagentChatNotes = `## 在对话里工作
 
-- 这是对话里的派发，不是 SOP 节点：以 Main Bot 交给你的任务为准。角色定义里要求的交付物文件照常写到工作区根目录下对应的路径（如 archive.md），你结束后平台会自动收集并展示给用户，不用再附加；只有 Main Bot 的任务明确说不要写文件时才不写。产物校验脚本、门禁命令和 {{…}} 输入输出是 SOP 节点才有的，对话里不适用。
-- 当前是平台模式，CLI 在会话绑定机器的缓存目录内运行，不能在这里搜索或修改项目代码。需要读写代码或跑命令时请向 Main Bot 汇报，让它先打开工作区并交接模式，再派发编程任务。你不能打开或切换工作区（workbench_workspace_open 对你不可用），也不能切换运行模式。SOP 执行中的文件只能由 Main Bot 查看。
+- 这是对话里的派发，不是 LOOP 节点：以 Main Bot 交给你的任务为准。角色定义里要求的交付物文件照常写到工作区根目录下对应的路径（如 archive.md），你结束后平台会自动收集并展示给用户，不用再附加；只有 Main Bot 的任务明确说不要写文件时才不写。产物校验脚本、门禁命令和 {{…}} 输入输出是 LOOP 节点才有的，对话里不适用。
+- 当前是平台模式，CLI 在会话绑定机器的缓存目录内运行，不能在这里搜索或修改项目代码。需要读写代码或跑命令时请向 Main Bot 汇报，让它先打开工作区并交接模式，再派发编程任务。你不能打开或切换工作区（workbench_workspace_open 对你不可用），也不能切换运行模式。LOOP 执行中的文件只能由 Main Bot 查看。
 - 写操作被拒绝、提示需要用户确认或放入 drafts 时，不要自己提交回复或草稿：在汇报里写明要做的操作和完整参数，由 Main Bot 交给用户确认。
 
 `
@@ -152,7 +152,7 @@ func roleAgentIDs(messages []domain.AssistantMessage) map[string]string {
 	return out
 }
 
-// subagentRules renders rules like an SOP node's agent-system.md, highest
+// subagentRules renders rules like a LOOP node's agent-system.md, highest
 // priority first.
 func subagentRules(rules []domain.RuleDefinition) string {
 	if len(rules) == 0 {
@@ -289,7 +289,7 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 
 type roleDeliverableKey struct{}
 
-// collectRoleDeliverables does for a finished role dispatch what an SOP node
+// collectRoleDeliverables does for a finished role dispatch what a LOOP node
 // does after it runs: the files the role's artifactOutputs name are read
 // from the conversation workspace and attached to this turn's reply. Each
 // one becomes a step under the dispatch, so the subagent's 产物 tab lists it;

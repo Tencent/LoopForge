@@ -17,7 +17,10 @@ const (
 	// New channels accept private text up to this many characters.
 	channelTextLimit = 8000
 
-	noticeTenantPending = "机器人正在完成企业确认，请稍后重发消息。"
+	// The first message of an unlocked configuration only discovers the
+	// candidate enterprise; it is not processed. Say what unblocks it, so the
+	// sender is not left waiting for a retry that cannot succeed.
+	noticeTenantPending = "机器人正在完成企业确认：请 Bot 管理员在平台「项目 → 机器人」打开本 Bot，到第②步「企业确认」点击“确认企业”，然后重发消息。"
 	noticeUnsupported   = "目前只支持文字消息，请发送文字。"
 	noticeTooLong       = "消息超过 8000 字，请精简后重新发送。"
 )
@@ -44,6 +47,7 @@ func interactionFromEvent(bot domain.NotificationBot, ev InboundEvent) (domain.B
 		BotID:           bot.ID,
 		ProjectID:       bot.ProjectID,
 		SenderID:        ev.SenderID,
+		SenderName:      ev.SenderName,
 		RequestID:       ev.Route.RequestID,
 		Content:         ev.Text,
 		Quote:           ev.Quote,
@@ -167,7 +171,7 @@ func (s *Service) repliesToNodeQuestion(bot domain.NotificationBot, ev InboundEv
 // Write-confirmation cards (draft_*): only the requester may use them. The
 // click is queued in the conversation the request came from, so a group
 // request is answered in the group and a private one privately, threaded
-// under the card. A SOP pick is stored right away.
+// under the card. A LOOP pick is stored right away.
 //
 // The answer carries the updated card: after a click the buttons are
 // replaced by a status line, so the user sees it was taken and cannot
@@ -259,7 +263,7 @@ func pushCardActionLabel(key string) string {
 	return key
 }
 
-// acceptDraftAction handles the buttons and the SOP selection of a write
+// acceptDraftAction handles the buttons and the LOOP selection of a write
 // confirmation card.
 func (s *Service) acceptDraftAction(bot domain.NotificationBot, item domain.BotInteraction, ev InboundEvent) (InboundAck, error) {
 	now := time.Now().UTC()
@@ -274,7 +278,7 @@ func (s *Service) acceptDraftAction(bot domain.NotificationBot, item domain.BotI
 		return InboundAck{Ignored: "draft_settled", Toast: draftStatusLine(draft), Card: s.draftCardByID(draft)}, nil
 	}
 	if len(ev.Selections) > 0 {
-		// A WeCom card submits the repository and the SOP with the
+		// A WeCom card submits the repository and the LOOP with the
 		// operation: store them first, with the same checks as a pick.
 		if pick, ok := ev.Selections[DraftActionRepo]; ok && pick != "" && pick != draft.SelectedRepository() {
 			if draft, err = s.Store.SetBotPendingDraftRepository(draft.ID, bot.ID, ev.SenderID, pick, now); err != nil {
@@ -283,19 +287,19 @@ func (s *Service) acceptDraftAction(bot domain.NotificationBot, item domain.BotI
 		}
 		if pick, ok := ev.Selections[DraftActionSOP]; ok && pick != "" && pick != draft.Selected() {
 			if draft, err = s.Store.SetBotPendingDraftChoice(draft.ID, bot.ID, ev.SenderID, pick, now); err != nil {
-				return InboundAck{Ignored: "sop_refused", Toast: "所选 SOP 不可用，请重新发起"}, nil
+				return InboundAck{Ignored: "sop_refused", Toast: "所选 LOOP 不可用，请重新发起"}, nil
 			}
 		}
 	}
 	if ev.Action == DraftActionSOP {
 		picked, err := s.Store.SetBotPendingDraftChoice(draft.ID, bot.ID, ev.SenderID, strings.TrimSpace(ev.Option), now)
 		if errors.Is(err, repo.ErrBotDraftNotPending) {
-			return InboundAck{Ignored: "sop_refused", Toast: "这个 SOP 不可选", Card: s.draftCardByID(draft)}, nil
+			return InboundAck{Ignored: "sop_refused", Toast: "这个 LOOP 不可选", Card: s.draftCardByID(draft)}, nil
 		}
 		if err != nil {
 			return InboundAck{}, err
 		}
-		return InboundAck{Toast: "已选择 SOP", Card: s.draftCardByID(picked)}, nil
+		return InboundAck{Toast: "已选择 LOOP", Card: s.draftCardByID(picked)}, nil
 	}
 	if ev.Action == DraftActionRepo {
 		picked, err := s.Store.SetBotPendingDraftRepository(draft.ID, bot.ID, ev.SenderID, strings.TrimSpace(ev.Option), now)
@@ -333,7 +337,7 @@ func (s *Service) acceptDraftAction(bot domain.NotificationBot, item domain.BotI
 	if err != nil {
 		return InboundAck{}, err
 	}
-	status := map[string]string{DraftActionConfirm: "已提交「确认执行」，正在执行，结果会回复在会话里", DraftActionConfirmStart: "已提交「确认并启动 SOP」，正在执行，结果会回复在会话里", DraftActionCancel: "已取消，没有执行"}[ev.Action]
+	status := map[string]string{DraftActionConfirm: "已提交「确认执行」，正在执行，结果会回复在会话里", DraftActionConfirmStart: "已提交「确认并启动 LOOP」，正在执行，结果会回复在会话里", DraftActionCancel: "已取消，没有执行"}[ev.Action]
 	card := s.draftCardByID(draft)
 	card.Done(status)
 	return InboundAck{Accepted: inserted, InteractionID: item.ID, Toast: "已收到", Card: card}, nil

@@ -343,6 +343,16 @@
 #assetsView .sandbox-setup .asset-field-label { display: flex; align-items: center; gap: 6px; margin: 18px 0 6px; }
 #assetsView .sandbox-setup > .asset-field-label:first-child { margin-top: 0; }
 #assetsView .sandbox-setup .asset-field-label label { cursor: pointer; }
+#assetsView .sandbox-advanced { margin-top: 14px; border-top: 1px solid var(--hui-border-soft); }
+#assetsView .sandbox-advanced > summary {
+  padding: 12px 0;
+  color: var(--hui-text);
+  font: 500 13px/1.4 var(--hui-sans);
+  cursor: pointer;
+}
+#assetsView .sandbox-advanced > summary:focus-visible { outline: 2px solid var(--hui-focus-ring); outline-offset: 2px; }
+#assetsView .sandbox-resource-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; }
+#assetsView .sandbox-setup .sandbox-resource-fields .asset-field-label { margin-top: 0; }
 #assetsView .sandbox-setup .asset-editor.is-env { min-height: 96px; }
 #assetsView .sandbox-setup .field-help { display: inline-grid; place-items: center; box-sizing: border-box; width: 15px; height: 15px; padding: 0; border: 1px solid var(--hui-border-strong); border-radius: 50%; background: transparent; color: var(--hui-tertiary); font: 600 10px/1 var(--hui-sans); cursor: help; transition: border-color .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow); }
 #assetsView .sandbox-setup .field-help:is(:hover, :focus-visible) { border-color: var(--hui-accent); color: var(--hui-accent); outline: 0; }

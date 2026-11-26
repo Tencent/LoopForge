@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
+	"sync/atomic"
 	"unicode/utf8"
 )
 
@@ -69,7 +69,7 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 			return "", err
 		}
 	}
-	command, err := provider.Prepare(providerInvocation{Executor: ex, Compiled: compiled, Prompt: prompt, PromptFile: promptRel, Driver: driver, Options: options})
+	command, err := provider.Prepare(providerInvocation{Executor: ex, Compiled: compiled, Prompt: prompt, PromptFile: promptRel, Driver: driver, Options: options, SOP: true})
 	if err != nil {
 		return "", err
 	}
@@ -92,28 +92,29 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 	}
 	command = WithCommandEnvironment(command, hookExecutionEnvironment(options.Repositories))
 	adapter := provider.Protocol(ex, sink)
+	command, closeInput, err := adapter.openSOPInput(command)
+	if err != nil {
+		return "", err
+	}
+	defer closeInput()
 	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stopObservation := provider.StartObservation(execCtx, compiled, sink)
 	defer stopObservation()
 	stopHookObservation := startHookObservation(execCtx, compiled, sink)
 	defer stopHookObservation()
+	var stoppedAfterDrain atomic.Bool
 	go func() {
-		select {
-		case <-adapter.Completed():
-			// Some CLI hook processes stay alive after the protocol has emitted its
-			// terminal result. Give stdout a short drain window, then stop the process.
-			timer := time.NewTimer(2500 * time.Millisecond)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-				cancel()
-			case <-execCtx.Done():
-			}
-		case <-execCtx.Done():
+		if waitForProcessTerminalDrain(execCtx, adapter.Completed(), nil) {
+			stoppedAfterDrain.Store(true)
+			cancel()
 		}
 	}()
 	raw, err := sb.Exec(execCtx, command, adapter.Handle)
+	adapter.finishCodeBuddyStream()
+	if adapter.codeBuddyStream != nil && stoppedAfterDrain.Load() && ctx.Err() == nil {
+		err = nil
+	}
 	output := strings.TrimSpace(adapter.VisibleOutput())
 	if adapter.Failed() {
 		if isMaxTurnsBudget(adapter.Result(), raw, err) {
@@ -217,7 +218,7 @@ func (r *ExecutorRunner) PrepareRemote(workspace string, inv RemoteInvocation) (
 			return nil, err
 		}
 	}
-	command, err := provider.Prepare(providerInvocation{Executor: inv.Executor, Compiled: compiled, Prompt: inv.Prompt, PromptFile: promptRel, Driver: driver, Options: inv.Options})
+	command, err := provider.Prepare(providerInvocation{Executor: inv.Executor, Compiled: compiled, Prompt: inv.Prompt, PromptFile: promptRel, Driver: driver, Options: inv.Options, SOP: true})
 	if err != nil {
 		return nil, err
 	}

@@ -252,7 +252,7 @@ func testSOPReusesRunnerConversationCheckout(t *testing.T, docker bool) {
 	sopSandbox := repo.TestNativeSandboxID
 	if docker {
 		sopSandbox = "runner-conversation-sop-docker"
-		if err := st.PutSandbox(domain.SandboxProfile{ID: sopSandbox, Name: "SOP Docker", ProjectID: projectID,
+		if err := st.PutSandbox(domain.SandboxProfile{ID: sopSandbox, Name: "LOOP Docker", ProjectID: projectID,
 			Driver: domain.SandboxDriverDocker, Dockerfile: &domain.SandboxDockerfile{
 				Content: "FROM golang:1.26.11-bookworm\nCOPY --chmod=0755 git /usr/local/bin/git\n",
 				Files: map[string]string{"git": `#!/bin/sh
@@ -319,15 +319,15 @@ printf done > sop-result.txt`,
 	if docker {
 		timeout = time.Minute
 	}
-	waitFor(t, timeout, "SOP in the conversation checkout", func() bool {
+	waitFor(t, timeout, "LOOP in the conversation checkout", func() bool {
 		finished, _ = st.RunState(run.ID)
 		return domain.TerminalRunStatus(finished.Status)
 	})
 	if finished.Status != "succeeded" || finished.Repository.WorkspaceDir != checkout {
-		t.Fatalf("SOP %s in %q: %+v", finished.Status, finished.Repository.WorkspaceDir, finished.Nodes["verify"])
+		t.Fatalf("LOOP %s in %q: %+v", finished.Status, finished.Repository.WorkspaceDir, finished.Nodes["verify"])
 	}
 	if got := runGitT(t, dir, "rev-parse", "HEAD"); got != head {
-		t.Fatalf("SOP did not start at the conversation HEAD: %s, want %s", got, head)
+		t.Fatalf("LOOP did not start at the conversation HEAD: %s, want %s", got, head)
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, "sop-result.txt")); err != nil || string(data) != "done" {
 		t.Fatalf("output in the conversation checkout = %q, %v", data, err)
@@ -336,7 +336,7 @@ printf done > sop-result.txt`,
 		log, err := os.ReadFile(filepath.Join(root, ".agentflow", "sop-git.log"))
 		if err != nil || !strings.Contains(string(log), "config --local --no-includes --get-regexp") ||
 			!strings.Contains(string(log), "checkout --quiet -b "+finished.Repository.WorkBranch) {
-			t.Fatalf("SOP sandbox did not discover and switch the shared checkout: %s (%v)", log, err)
+			t.Fatalf("LOOP sandbox did not discover and switch the shared checkout: %s (%v)", log, err)
 		}
 	}
 }
@@ -1008,7 +1008,7 @@ func TestRunnerPauseWaitsForRemoteStopAndRestartsScriptInSameWorkspace(t *testin
 		return statErr == nil
 	})
 	pauseStarted := time.Now()
-	if err := e.Pause(run.ID); err != nil {
+	if err := e.Pause(engineControlTestActor(), run.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, 10*time.Second, "remote process stopped", func() bool {
@@ -1019,7 +1019,7 @@ func TestRunnerPauseWaitsForRemoteStopAndRestartsScriptInSameWorkspace(t *testin
 	if elapsed := time.Since(pauseStarted); elapsed >= 5*time.Second {
 		t.Fatalf("websocket pause took %s; expected server push before HTTP fallback", elapsed)
 	}
-	if err := e.ResumePaused(run.ID, "this must not reach a script"); err != nil {
+	if err := e.ResumePaused(engineControlTestActor(), run.ID, "this must not reach a script"); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, 15*time.Second, "resumed remote run", func() bool {

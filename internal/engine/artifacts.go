@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -22,7 +23,7 @@ const maxArtifactBytes = 1 << 20
 // clock tick.
 var artifactSeq atomic.Uint64
 
-func materializeInputs(workspace string, wf domain.WorkflowDefinition, node domain.WorkflowNode, run domain.Run) (string, error) {
+func materializeInputs(workspace string, wf domain.WorkflowDefinition, node domain.WorkflowNode, run domain.Run, open ...func(string) (io.ReadCloser, error)) (string, error) {
 	sources := map[string]bool{}
 	for _, edge := range wf.Edges {
 		if edge.Target == node.ID {
@@ -53,33 +54,9 @@ func materializeInputs(workspace string, wf domain.WorkflowDefinition, node doma
 			fmt.Fprintf(&manifest, "## %s / repository-patch (%s)\n\nNo full diff is stored. The run workspace is the source of truth.\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, summary)
 			continue
 		}
-		nodeSegment := safePathSegment(nodeControlKey(run, artifact.NodeID))
-		controlSegments := []string{"inputs", nodeSegment}
-		if artifact.RepositoryDir != "" {
-			controlSegments = append(controlSegments, safePathSegment(artifact.RepositoryDir))
-		}
-		inputDir, err := runtime.EnsureControlDirectory(workspace, controlSegments...)
-		if err != nil {
-			return "", err
-		}
-		fileName := safePathSegment(artifact.Name) + extensionFor(artifact.MediaType)
 		rel := artifactInputRelPath(run, artifact)
-		target := filepath.Join(inputDir, fileName)
-		if info, err := os.Lstat(target); err == nil {
-			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-				return "", fmt.Errorf("artifact input path is not a regular file: %s", target)
-			}
-			if err := os.Chmod(target, 0o600); err != nil {
-				return "", err
-			}
-		} else if err != nil && !os.IsNotExist(err) {
-			return "", err
-		}
-		if err := os.WriteFile(target, []byte(artifact.Content), 0o600); err != nil {
-			return "", err
-		}
-		if err := os.Chmod(target, 0o444); err != nil {
-			return "", err
+		if err := materializeOneInput(workspace, rel, artifact, open); err != nil {
+			return "", fmt.Errorf("写入交接输入 %s：%w", rel, err)
 		}
 		writeInputManifestEntry(&manifest, artifact, rel)
 	}
@@ -89,6 +66,38 @@ func materializeInputs(workspace string, wf domain.WorkflowDefinition, node doma
 	}
 	manifest.WriteString(handoffManifest)
 	return strings.TrimSpace(manifest.String()), nil
+}
+
+func materializeOneInput(workspace, rel string, artifact domain.Artifact, open []func(string) (io.ReadCloser, error)) error {
+	if len(open) == 0 {
+		return runtime.WriteArtifactInput(workspace, rel, "", strings.NewReader(artifact.Content))
+	}
+	body, err := open[0](artifact.ID)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	return runtime.WriteArtifactInput(workspace, rel, artifact.SHA256, body)
+}
+
+// Patches and legacy handoff transcripts are inspected as text. All ordinary
+// deliverables can be opened directly by the workspace that consumes them.
+func (e *Engine) loadHandoffText(run *domain.Run, wf domain.WorkflowDefinition, nodeID string) {
+	direct := make(map[string]bool)
+	for _, edge := range wf.Edges {
+		if edge.Target == nodeID {
+			direct[edge.Source] = true
+		}
+	}
+	for i, artifact := range run.Artifacts {
+		handoff := run.WorkflowSnapshot.GroupSOPHandoff != nil && artifact.NodeID == groupSOPHandoffNode
+		if !handoff && !(artifact.Name == "repository-patch" && direct[artifact.NodeID]) {
+			continue
+		}
+		if stored, ok := e.repo.Artifact(run.ID, artifact.ID); ok {
+			run.Artifacts[i].Content = stored.Content
+		}
+	}
 }
 
 // artifactInputRelPath is where an upstream artifact is mounted for the
@@ -103,7 +112,7 @@ func artifactInputRelPath(run domain.Run, artifact domain.Artifact) string {
 }
 
 func writeInputManifestEntry(manifest *strings.Builder, artifact domain.Artifact, rel string) {
-	fmt.Fprintf(manifest, "## %s / %s\n\n- path: `%s`\n- sha256: `%s`\n- bytes: %d\n\nRead this file; the body is not inlined in the prompt.\n\n", artifact.NodeID, artifact.Name, rel, artifact.SHA256, len(artifact.Content))
+	fmt.Fprintf(manifest, "## %s / %s\n\n- path: `%s`\n- sha256: `%s`\n- bytes: %d\n\nRead this file; the body is not inlined in the prompt.\n\n", artifact.NodeID, artifact.Name, rel, artifact.SHA256, max(artifact.Size, int64(len(artifact.Content))))
 }
 
 // recoverMisplacedArtifacts copies required deliverables into the sandbox when
@@ -135,7 +144,7 @@ func recoverMisplacedArtifacts(workspace, hostLocalPath string, node domain.Work
 				continue
 			}
 			info, err := os.Stat(src)
-			if err != nil || info.IsDir() || info.Size() > maxArtifactBytes {
+			if err != nil || !info.Mode().IsRegular() || info.Size() > domain.MaxSOPArtifactBytes {
 				continue
 			}
 			data, err := os.ReadFile(src)
@@ -203,7 +212,7 @@ func removeUntrackedHostLeak(host, path string) {
 }
 
 func (e *Engine) freezeAvailableArtifacts(runID string, node domain.WorkflowNode, workspace string, reported *reportedOutputs, output string) {
-	current, ok := e.repo.RunState(runID)
+	current, ok := e.repo.RunProgress(runID)
 	if !ok {
 		return
 	}
@@ -222,9 +231,11 @@ func (e *Engine) freezeAvailableArtifacts(runID string, node domain.WorkflowNode
 	if err != nil || len(artifacts) == 0 {
 		return
 	}
-	e.updateRun(runID, func(r *domain.Run) {
+	if !e.updateRunAt(runID, false, func(r *domain.Run) {
 		r.Artifacts = append(r.Artifacts, artifacts...)
-	})
+	}) {
+		return
+	}
 	for _, artifact := range artifacts {
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "mediaType": artifact.MediaType, "size": artifact.Size, "sha256": artifact.SHA256}})
 	}
@@ -252,16 +263,11 @@ func validateArtifactOutputs(outputs nodeOutputs, run domain.Run, node domain.Wo
 			if contract.Name == "" || !ok {
 				return fmt.Errorf("invalid artifact %q path %q", contract.Name, contract.Path)
 			}
-			if _, err := outputs.readFile(rel); err != nil {
-				switch {
-				case errors.Is(err, fs.ErrNotExist) && !contract.Required:
-					continue
-				case errors.Is(err, errOutputNotRegular):
-					return fmt.Errorf("%s (%s) is not a regular file", contract.Name, rc.WorkspaceDir)
-				case errors.Is(err, errOutputTooLarge):
-					return fmt.Errorf("%s exceeds %d bytes", contract.Name, maxArtifactBytes)
-				}
-				return fmt.Errorf("%s (%s): %w", contract.Name, rc.WorkspaceDir, err)
+			if !contract.Required {
+				continue
+			}
+			if err := checkArtifactOutput(outputs, rel); err != nil {
+				return fmt.Errorf("%s (%s): %w", contract.Name, rel, err)
 			}
 		}
 	}
@@ -276,7 +282,12 @@ func collectArtifactsBestEffort(workspace string, run domain.Run, node domain.Wo
 	return collectArtifactsMode(workspaceOutputs(workspace), run, node, output, true)
 }
 
-func collectArtifactsMode(outputs nodeOutputs, run domain.Run, node domain.WorkflowNode, output string, bestEffort bool) ([]domain.Artifact, error) {
+func collectArtifactsMode(outputs nodeOutputs, run domain.Run, node domain.WorkflowNode, output string, bestEffort bool, warnings ...func(string)) ([]domain.Artifact, error) {
+	warn := func(message string) {
+		if len(warnings) != 0 {
+			warnings[0](message)
+		}
+	}
 	attempt := 0
 	if nr := run.Nodes[node.ID]; nr != nil {
 		attempt = nr.Attempt
@@ -302,28 +313,26 @@ func collectArtifactsMode(outputs nodeOutputs, run domain.Run, node domain.Workf
 				}
 				return nil, fmt.Errorf("invalid artifact %q path %q", contract.Name, contract.Path)
 			}
-			clean := filepath.Clean(contract.Path)
-			content, err := outputs.readFile(rel)
-			if err != nil {
-				if bestEffort || errors.Is(err, fs.ErrNotExist) && !contract.Required {
-					continue
-				}
-				if errors.Is(err, errOutputTooLarge) {
-					return nil, fmt.Errorf("%s exceeds %d bytes", contract.Name, maxArtifactBytes)
-				}
-				return nil, fmt.Errorf("%s (%s): %w", contract.Name, rc.WorkspaceDir, err)
-			}
-			if len(content) > maxArtifactBytes {
-				if bestEffort {
-					continue
-				}
-				return nil, fmt.Errorf("%s exceeds %d bytes", contract.Name, maxArtifactBytes)
-			}
 			mediaType := contract.MediaType
 			if mediaType == "" {
 				mediaType = "text/markdown"
 			}
-			artifact := newArtifact(run.ID, node.ID, attempt, contract.Name, clean, mediaType, content)
+			artifact := newArtifact(run.ID, node.ID, attempt, contract.Name, filepath.Clean(contract.Path), mediaType, nil)
+			content, blob, err := collectOutputFile(outputs, rel, artifact.ID)
+			if err != nil {
+				if bestEffort || !contract.Required {
+					if !bestEffort && !errors.Is(err, fs.ErrNotExist) {
+						warn(fmt.Sprintf("跳过可选产物 %s（%s）：%s", contract.Name, rel, err))
+					}
+					continue
+				}
+				return nil, fmt.Errorf("%s (%s): %w", contract.Name, rel, err)
+			}
+			if blob.ID != "" {
+				artifact.BlobID, artifact.Size, artifact.SHA256 = blob.ID, blob.Size, blob.SHA256
+			} else {
+				setArtifactBody(&artifact, content)
+			}
 			artifact.RepositoryDir = rc.WorkspaceDir
 			out = append(out, artifact)
 		}
@@ -337,9 +346,7 @@ func collectArtifactsMode(outputs nodeOutputs, run domain.Run, node domain.Workf
 	for _, rc := range patchTargets {
 		patch, err := outputs.repositoryPatch(rc.WorkspaceDir)
 		if err != nil {
-			if !bestEffort {
-				return nil, err
-			}
+			warn(fmt.Sprintf("跳过仓库变更清单 %s：%s", rc.WorkspaceDir, err))
 			continue
 		}
 		if len(patch) == 0 {
@@ -360,6 +367,29 @@ func collectArtifactsMode(outputs nodeOutputs, run domain.Run, node domain.Workf
 		out = append(out, newArtifact(run.ID, node.ID, attempt, "result", "result.md", "text/markdown", []byte(output)))
 	}
 	return out, nil
+}
+
+func reportedArtifactBlob(outputs nodeOutputs, rel string) (domain.ArtifactBlob, bool) {
+	if reported, ok := outputs.(*reportedOutputs); ok {
+		return reported.artifactBlob(rel)
+	}
+	return domain.ArtifactBlob{}, false
+}
+
+func requiredNodeArtifacts(node domain.WorkflowNode, artifacts []domain.Artifact) []domain.Artifact {
+	required := make(map[string]bool)
+	for _, contract := range node.ArtifactOutputs {
+		if contract.Required {
+			required[contract.Name] = true
+		}
+	}
+	var out []domain.Artifact
+	for _, artifact := range artifacts {
+		if required[artifact.Name] {
+			out = append(out, artifact)
+		}
+	}
+	return out
 }
 
 func latestInputArtifacts(artifacts []domain.Artifact, direct, prior map[string]bool) []domain.Artifact {
@@ -409,9 +439,16 @@ func artifactPromptBody(artifact domain.Artifact) string {
 }
 
 func newArtifact(runID, nodeID string, attempt int, name, path, mediaType string, content []byte) domain.Artifact {
-	sum := sha256.Sum256(content)
 	now := time.Now().UTC()
-	return domain.Artifact{ID: fmt.Sprintf("artifact-%d-%d", now.UnixNano(), artifactSeq.Add(1)), RunID: runID, NodeID: nodeID, Attempt: attempt, Name: name, Path: path, MediaType: mediaType, Size: int64(len(content)), SHA256: fmt.Sprintf("%x", sum), Content: string(content), CreatedAt: now}
+	art := domain.Artifact{ID: fmt.Sprintf("artifact-%d-%d", now.UnixNano(), artifactSeq.Add(1)), RunID: runID, NodeID: nodeID, Attempt: attempt, Name: name, Path: path, MediaType: mediaType, CreatedAt: now}
+	setArtifactBody(&art, content)
+	return art
+}
+
+func setArtifactBody(art *domain.Artifact, content []byte) {
+	art.Size = int64(len(content))
+	art.SHA256 = fmt.Sprintf("%x", sha256.Sum256(content))
+	art.Content = string(content)
 }
 
 func appendArtifact(run *domain.Run, nodeID string, attempt int, name, path, mediaType string, content []byte) {

@@ -697,8 +697,8 @@ describe("App", () => {
     expect(screen.getByLabelText("选择项目")).toHaveClass("is-unset");
     await user.click(screen.getByText("接入测试环境"));
     expect(screen.getByRole("textbox").value).toMatch(/^带我一步步接入测试环境/);
-    await user.click(screen.getByText("选用 SOP 与角色"));
-    expect(screen.getByRole("textbox").value).toMatch(/产品、前端、后端交付 SOP/);
+    await user.click(screen.getByText("选用 LOOP 与角色"));
+    expect(screen.getByRole("textbox").value).toMatch(/产品、前端、后端交付 LOOP/);
   });
 
   test("questions and replies show when they were sent, and the header switches project", async () => {
@@ -795,11 +795,21 @@ describe("App", () => {
     expect(chat.edit).toHaveBeenCalled();
 
     await user.click(screen.getByLabelText("重命名会话"));
-    const rename = screen.getByRole("dialog").querySelector("input");
+    const renameDialog = screen.getByRole("dialog", { name: "重命名会话" });
+    const rename = within(renameDialog).getByRole("textbox", { name: "会话名称" });
     await user.clear(rename);
     await user.type(rename, "新会话名");
+    let failRename;
+    chat.rename.mockReturnValueOnce(new Promise((_, reject) => { failRename = reject; }));
+    await user.keyboard("{Enter}");
+    expect(within(renameDialog).getByRole("button", { name: "保存中…" })).toBeDisabled();
+    expect(chat.rename).toHaveBeenCalledTimes(1);
+    await act(async () => failRename(new Error("保存会话名称失败")));
+    expect(within(renameDialog).getByRole("alert")).toHaveTextContent("保存会话名称失败");
+    expect(rename).toHaveValue("新会话名");
     chat.rename.mockResolvedValueOnce(true);
-    await user.click(screen.getByText("保存"));
+    await user.click(within(renameDialog).getByRole("button", { name: "保存" }));
+    expect(renameDialog).not.toBeInTheDocument();
 
     const showSidebar = screen.queryByLabelText("显示会话侧边栏");
     if (showSidebar) await user.click(showSidebar);
@@ -847,7 +857,7 @@ describe("App", () => {
             role: "assistant",
             content: JSON.stringify({
               message: "生成了产物",
-              drafts: [{ tool: "workflows_save", body: { name: "交付 SOP", projectId: "p1" } }],
+              drafts: [{ tool: "workflows_save", body: { name: "交付 LOOP", projectId: "p1" } }],
             }),
             attachments: [{ id: "img1", name: "result.png", mimeType: "image/png" }],
             createdAt: new Date().toISOString(),
@@ -992,16 +1002,18 @@ describe("App", () => {
       activeId: "readonly",
       session: {
         id: "readonly", title: "共享会话", projectId: "p2", readOnly: true,
-        shared: true, messages: [{ role: "assistant", content: "只读内容", createdAt: new Date().toISOString() }],
+        messages: [{ role: "assistant", content: "只读内容", createdAt: new Date().toISOString() }],
       },
       projectId: "p2",
       readOnly: true,
     });
     view.rerender(<App />);
     expect(document.querySelector(".readonly-notice")?.textContent).toContain("只能查看这个会话");
+    expect(screen.queryByLabelText("重命名会话")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "共享会话" })).toBeDisabled();
 
     Object.assign(chat, {
-      session: { ...chat.session, readOnly: false },
+      session: { ...chat.session, readOnly: false, shared: true },
       readOnly: false,
       generation: { id: "g2", status: "failed", error: "中断原因" },
       live: {
@@ -1013,6 +1025,8 @@ describe("App", () => {
     });
     view.rerender(<App />);
     expect(screen.getByText("中断原因")).toBeInTheDocument();
+    expect(screen.queryByLabelText("重命名会话")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "共享会话" })).toBeDisabled();
     Object.assign(chat, previous);
   });
 

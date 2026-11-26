@@ -29,9 +29,9 @@ func (e *Engine) sopConversationWorkspace(ec domain.TelemetryContext) (domain.Ru
 	return owner, nil
 }
 
-// The SOP's persisted running status keeps new conversation turns out of the
+// The LOOP's persisted running status keeps new conversation turns out of the
 // checkout. Wait for the previous turn's lease before restoring or running
-// nodes. This includes a parent whose first node launches a child SOP.
+// nodes. This includes a parent whose first node launches a child LOOP.
 func (e *Engine) prepareBorrowedConversationWorkspace(ctx context.Context, run domain.Run) error {
 	id := workspaceRunID(run)
 	notified := false
@@ -148,7 +148,7 @@ func (e *Engine) bindConversationCheckouts(ctx context.Context, run, owner domai
 			}
 			if path.IsAbs(dir) || dir == ".." || strings.HasPrefix(dir, "../") ||
 				dir != strings.TrimSpace(dir) || strings.ContainsAny(dir, "\r\n\t\\") {
-				return fmt.Errorf("已检出仓库 %s 的目录不能用于 SOP，请整理路径后重试", repository.Name)
+				return fmt.Errorf("已检出仓库 %s 的目录不能用于 LOOP，请整理路径后重试", repository.Name)
 			}
 			if dir == "." {
 				dir = ""
@@ -160,7 +160,7 @@ func (e *Engine) bindConversationCheckouts(ctx context.Context, run, owner domai
 			matches = append(matches, dir)
 		}
 		if len(matches) > 1 {
-			return fmt.Errorf("工作区中有多份 %s 检出，请保留要交给 SOP 的检出后重试", repository.Name)
+			return fmt.Errorf("工作区中有多份 %s 检出，请保留要交给 LOOP 的检出后重试", repository.Name)
 		}
 		if len(matches) == 1 {
 			repositories[i].WorkspaceDir = matches[0]

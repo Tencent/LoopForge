@@ -6,7 +6,7 @@
 
 ## 通过 MCP 连接 LoopForge
 
-可以通过 CodeBuddy 访问运行中的 LoopForge 实例内的项目、SOP 和运行记录。需要自建实例时，参阅[部署指南](../deployment.md)。
+可以通过 CodeBuddy 访问运行中的 LoopForge 实例内的项目、LOOP 和运行记录。需要自建实例时，参阅[部署指南](../deployment.md)。
 
 1. 登录 LoopForge，打开「接入方式」，创建个人访问密钥并选择 **CodeBuddy**，获取 MCP 接入指引。
 2. 在 CodeBuddy 中应用用户级配置，在 MCP 管理页确认 `agentflow` 已连接，再让 CodeBuddy 列出可访问的 LoopForge 项目以验证接入。

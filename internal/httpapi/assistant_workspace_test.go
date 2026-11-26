@@ -65,7 +65,7 @@ func TestMainBotLegacyArtifactRepairExplainsPartialRebuild(t *testing.T) {
 	}
 	state, _ := a.repo.RunState(r.ID)
 	if state.Status != "waiting" || !state.PauseRequested {
-		t.Fatal("repair restarted SOP")
+		t.Fatal("repair restarted LOOP")
 	}
 }
 
