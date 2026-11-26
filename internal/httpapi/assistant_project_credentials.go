@@ -9,17 +9,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (h *assistantHandlers) authorizeSessionProjectCredentials(c *gin.Context, session domain.AssistantSession, userID int64) bool {
-	use, _ := h.projectCredentialAccess(c.Request, session.ProjectID, userID)
-	if (len(session.ProjectCredentialIDs) > 0 && !use) || session.Shared || session.RunID != "" || session.Source == domain.AssistantSourceSOPDesigner {
-		c.JSON(http.StatusForbidden, gin.H{"error": "仅有权限的普通项目会话可以绑定项目凭据"})
-		return false
-	}
-	return true
+func sessionSupportsProjectCredentials(session domain.AssistantSession) bool {
+	return !session.Shared && session.RunID == "" && session.Source != domain.AssistantSourceSOPDesigner
 }
 
 func (h *assistantHandlers) validateSessionProjectCredentials(c *gin.Context, session domain.AssistantSession, userID int64) bool {
-	if !h.authorizeSessionProjectCredentials(c, session, userID) {
+	use, _ := h.projectCredentialAccess(c.Request, session.ProjectID, userID)
+	if !sessionSupportsProjectCredentials(session) || (len(session.ProjectCredentialIDs) > 0 && !use) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "仅有权限的普通项目会话可以绑定项目凭据"})
 		return false
 	}
 	if _, err := h.repo.ProjectCredentialVariableNames(c.Request.Context(), session.ProjectID, session.ProjectCredentialIDs); err != nil {
@@ -30,8 +27,12 @@ func (h *assistantHandlers) validateSessionProjectCredentials(c *gin.Context, se
 }
 
 func (h *assistantHandlers) sessionProjectCredentialContext(c *gin.Context, session domain.AssistantSession, userID int64) (string, map[string]domain.AssistantProjectCredentialObservation, bool) {
-	if !h.authorizeSessionProjectCredentials(c, session, userID) {
+	if !sessionSupportsProjectCredentials(session) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "当前会话不能使用项目凭据"})
 		return "", nil, false
+	}
+	if use, _ := h.projectCredentialAccess(c.Request, session.ProjectID, userID); !use {
+		return "\n本轮无权使用已绑定的项目凭据。继续处理用户请求，仅在任务确实需要凭据时说明。\n", nil, true
 	}
 	items, err := h.repo.AvailableProjectCredentialMetadata(c.Request.Context(), session.ProjectID, session.ProjectCredentialIDs)
 	if err != nil {

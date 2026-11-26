@@ -152,15 +152,18 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			if len(s.projectCredentialIDs) > 0 {
 				project, ok := h.repo.Project(s.ProjectID)
-				use, _ := domain.ProjectCredentialAccess(project, s.UserID, h.repo.IsPlatformAdmin(s.User.LoginName))
-				if !ok || !use || project.ID != s.ProjectID || run.ExecutionContext.ProjectID != s.ProjectID {
+				platformAdmin := h.repo.IsPlatformAdmin(s.User.LoginName)
+				if !ok || project.ID != s.ProjectID || run.ExecutionContext.ProjectID != s.ProjectID ||
+					!workbenchProjectAllowsUser(project, s.UserID, platformAdmin) {
 					return "", fmt.Errorf("无权在该工作区使用项目凭据")
 				}
-				projectCredentialEnv, err = h.repo.ResolveAvailableProjectCredentialEnv(ctx, project.ID, s.projectCredentialIDs)
-				if err != nil {
-					return "", err
+				if use, _ := domain.ProjectCredentialAccess(project, s.UserID, platformAdmin); use {
+					projectCredentialEnv, err = h.repo.ResolveAvailableProjectCredentialEnv(ctx, project.ID, s.projectCredentialIDs)
+					if err != nil {
+						return "", err
+					}
+					s.recordProjectCredentialValues(projectCredentialEnv)
 				}
-				s.recordProjectCredentialValues(projectCredentialEnv)
 			}
 			if s.ExecutionRunnerID == "" {
 				var reason string
