@@ -218,7 +218,7 @@ func TestWorkspaceTerminalDockerRealPTY(t *testing.T) {
 	defer exec.Command("docker", "rm", "-f", name).Run()
 	sb := &dockerSandbox{id: name, name: name, workspace: workspace, started: true}
 	if output, err := sb.Exec(ctx, CommandSpec{Argv: []string{"sh", "-c", "printf sandbox-only > /tmp/terminal-env-marker"}}, nil); err != nil {
-		t.Fatalf("SOP command: %s %v", output, err)
+		t.Fatalf("LOOP command: %s %v", output, err)
 	}
 	before, err := SandboxEnvironmentIdentity(ctx, sb)
 	if err != nil {
@@ -263,7 +263,7 @@ printf ready > /tmp/preparation-marker`}}}
 	if data, _ := os.ReadFile(filepath.Join(workspace, "terminal-result")); string(data) != "sandbox-only" {
 		result, readErr := pool.HandleSandbox(ctx, nil, "docker:1", domain.WorkspaceTerminalRequest{Operation: "read", ID: opened.ID}, nil)
 		inside, _ := exec.CommandContext(ctx, "docker", "exec", name, "sh", "-c", "pwd; ls -la /workspace; cat /workspace/terminal-result; cat /workspace/terminal-home; ls /tmp/terminal-env-marker").CombinedOutput()
-		t.Fatalf("terminal did not share SOP container runtime state: %q PTY=%q exited=%v read=%v inside=%q hostdir=%q", data, result.Data, result.Exited, readErr, inside, workspace)
+		t.Fatalf("terminal did not share LOOP container runtime state: %q PTY=%q exited=%v read=%v inside=%q hostdir=%q", data, result.Data, result.Exited, readErr, inside, workspace)
 	}
 	if data, _ := os.ReadFile(filepath.Join(workspace, "terminal-home")); !strings.HasPrefix(string(data), "/workspace/.agentflow/private-home/terminal-") {
 		t.Fatalf("wrong container HOME: %q", data)

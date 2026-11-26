@@ -212,7 +212,7 @@ func (r *CatalogRepo) publishGenericWorkflow(id string) (domain.WorkflowDefiniti
 	return template.Workflow, nil
 }
 
-// GenericTemplates returns every stored generic SOP.
+// GenericTemplates returns every stored generic LOOP.
 func (r *CatalogRepo) GenericTemplates() []GenericTemplate {
 	var rows []genericTemplateRow
 	if err := r.DB.Order("id ASC").Find(&rows).Error; err != nil {
@@ -270,7 +270,7 @@ func (r *CatalogRepo) AgentShadowsTemplateOutside(agent domain.AgentDefinition, 
 	return inTemplate
 }
 
-// WorkflowNamesUsingAgent lists the SOPs whose nodes resolve to this stored
+// WorkflowNamesUsingAgent lists the LOOPs whose nodes resolve to this stored
 // role at run time.
 func (r *CatalogRepo) WorkflowNamesUsingAgent(agent domain.AgentDefinition) []string {
 	var names []string

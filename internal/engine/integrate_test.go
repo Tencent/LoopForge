@@ -75,7 +75,7 @@ func TestScheduledIntegrationSerializesAndReturnsConflictToWorkBranch(t *testing
 		t.Fatalf("second integration conflicts=%v err=%v", conflicts, err)
 	}
 	if testGit(t, second, "branch", "--show-current") != "work-two" {
-		t.Fatal("conflict was not retained on the SOP work branch")
+		t.Fatal("conflict was not retained on the LOOP work branch")
 	}
 	if err := os.WriteFile(filepath.Join(second, "app.txt"), []byte("first\nsecond\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -133,13 +133,13 @@ func TestMergeLatestIntegrationAutoResolvesSOPDeliverableConflicts(t *testing.T)
 	repo := domain.RepositoryContext{WorkBranch: "feature/fix-issue-31", IntegrateBranch: "agentflow/integration"}
 	conflicts, err := mergeLatestIntegration(ctx, work, repo, "issue #31")
 	if err != nil || len(conflicts) != 0 {
-		t.Fatalf("SOP report conflicts should auto-resolve: conflicts=%v err=%v", conflicts, err)
+		t.Fatalf("LOOP report conflicts should auto-resolve: conflicts=%v err=%v", conflicts, err)
 	}
 	if tracked := testGit(t, work, "ls-files", "--", "fix-plan.md"); tracked != "" {
-		t.Fatalf("SOP report still tracked after integrate merge: %q", tracked)
+		t.Fatalf("LOOP report still tracked after integrate merge: %q", tracked)
 	}
 	if !strings.Contains(testGit(t, work, "show", "HEAD:app.go"), "func Fix") {
-		t.Fatal("business change was lost while resolving SOP conflicts")
+		t.Fatal("business change was lost while resolving LOOP conflicts")
 	}
 }
 
@@ -574,12 +574,12 @@ func TestMergeLatestIntegrationDropsSOPReports(t *testing.T) {
 	}
 	tracked := testGit(t, work, "ls-files", "--", "fix-plan.md")
 	if tracked != "" {
-		t.Fatalf("SOP report still tracked: %q", tracked)
+		t.Fatalf("LOOP report still tracked: %q", tracked)
 	}
 	if _, err := os.Stat(filepath.Join(work, "fix-plan.md")); err != nil {
-		t.Fatalf("working copy of SOP report should remain: %v", err)
+		t.Fatalf("working copy of LOOP report should remain: %v", err)
 	}
-	if !strings.Contains(testGit(t, work, "log", "-1", "--pretty=%s"), "drop SOP deliverables") {
+	if !strings.Contains(testGit(t, work, "log", "-1", "--pretty=%s"), "drop LOOP deliverables") {
 		t.Fatalf("expected drop commit, got %s", testGit(t, work, "log", "-1", "--pretty=%s"))
 	}
 }

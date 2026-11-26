@@ -49,7 +49,7 @@ ctx.state.obsTrendGrain='all';
 ctx.state.analytics={activity:{sessions:3,collaborativeSessions:2,requirements:4,sopRuns:5},activityTrend:[{date:'2026-10-08',sessions:2,collaborativeSessions:1,requirements:1,sopRuns:0}]};
 assert.equal(ctx.obsActivityView().sessions,3);
 assert.match(ctx.obsActivityKpis(),/66\.7%/);
-assert.match(ctx.obsActivityKpis(),/需求 SOP/);
+assert.match(ctx.obsActivityKpis(),/需求 LOOP/);
 ctx.state.obsTrendGrain='day';ctx.state.obsPeriodKey='2026-10-08';
 assert.equal(ctx.obsActivityView().sessions,2);
 assert.match(ctx.obsActivityKpis(),/50\.0%/);

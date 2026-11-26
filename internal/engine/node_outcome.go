@@ -177,7 +177,7 @@ func isMaxTurnsErr(err error) bool {
 	return strings.Contains(msg, "max turns") || strings.Contains(msg, "executor reached max turns")
 }
 
-var errGongfengIssueClosed = fmt.Errorf("工蜂 Issue 已关闭，不能触发 SOP")
+var errGongfengIssueClosed = fmt.Errorf("工蜂 Issue 已关闭，不能触发 LOOP")
 
 func forbidClosedGongfengIssue(st *repo.Store, r domain.Run) error {
 	id := strings.TrimSpace(r.ExecutionContext.IssueID)
@@ -224,7 +224,7 @@ func mergeArtifactContracts(agentContracts, nodeContracts []domain.ArtifactContr
 			key = strings.TrimSpace(contract.Path)
 		}
 		if i, exists := index[key]; exists {
-			merged[i] = contract // the SOP node may refine an Agent-owned contract
+			merged[i] = contract // the LOOP node may refine an Agent-owned contract
 			continue
 		}
 		index[key] = len(merged)
@@ -411,7 +411,7 @@ func (e *Engine) finishAtReason(id string, generation int, status, msg string, r
 		}
 		r.Status = status
 		e.event(r, "", "run."+status, msg)
-		// A child SOP shares the parent's issue; only the top-level run delivers it.
+		// A child LOOP shares the parent's issue; only the top-level run delivers it.
 		if status == "succeeded" && r.ExecutionContext.IssueID != "" && r.ExecutionContext.ParentRunID == "" {
 			snapshot := *r
 			delivered, deliveredAt = &snapshot, time.Now().UTC()

@@ -96,12 +96,12 @@ func verifyTarget(t *testing.T, svc *Service, bot domain.NotificationBot) domain
 }
 
 // putPushRun records the given events: gate.waiting and node.failed are node
-// reminders, run.succeeded is the SOP-level completion notification.
+// reminders, run.succeeded is the LOOP-level completion notification.
 func putPushRun(t *testing.T, svc *Service, bot domain.NotificationBot, events ...string) domain.Run {
 	t.Helper()
 	run := domain.Run{ID: "r", ExecutionContext: domain.TelemetryContext{ProjectID: "p"}, Status: "waiting", Nodes: map[string]*domain.NodeRun{}}
 	run.WorkflowSnapshot.Name = "交付"
-	run.WorkflowSnapshot.Notifications = []domain.NotificationBinding{{BotID: bot.ID, Scope: "run", Events: []string{"succeeded", "failed", "waiting"}, Template: "### {{status}}\nSOP：**{{workflow}}**\n[查看详情]({{url}})"}}
+	run.WorkflowSnapshot.Notifications = []domain.NotificationBinding{{BotID: bot.ID, Scope: "run", Events: []string{"succeeded", "failed", "waiting"}, Template: "### {{status}}\nLOOP：**{{workflow}}**\n[查看详情]({{url}})"}}
 	for i, ev := range events {
 		id := string(rune('a' + i))
 		nodeID := id
@@ -412,7 +412,7 @@ func TestSwitchNotificationTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	fromChat := domain.NotificationDelivery{ID: "from-chat", ProjectID: bot.ProjectID, BotID: bot.ID, EventType: "succeeded", SourceType: "run", SourceID: "r", Origin: domain.NotificationOriginChat, TargetID: "origin-group", TargetType: "group", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+	fromChat := domain.NotificationDelivery{ID: "from-chat", ProjectID: bot.ProjectID, BotID: bot.ID, EventType: "succeeded", SourceType: "run", SourceID: "r", Origin: domain.NotificationOriginChat, TargetID: "origin-group", TargetType: "group", Content: "### LOOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
 	if err := svc.Store.CreateNotificationDelivery(fromChat); err != nil {
 		t.Fatal(err)
 	}
@@ -441,9 +441,9 @@ func TestSwitchNotificationTarget(t *testing.T) {
 }
 
 func TestPlainNotificationText(t *testing.T) {
-	in := "### SOP 已完成\n> **交付** 已完成\n<font color=\"info\">成功</font>\n[查看详情](https://platform.example/#/runs/r)（请处理）"
+	in := "### LOOP 已完成\n> **交付** 已完成\n<font color=\"info\">成功</font>\n[查看详情](https://platform.example/#/runs/r)（请处理）"
 	got := plainNotificationText(in)
-	want := "SOP 已完成\n交付 已完成\n成功\n查看详情：\nhttps://platform.example/#/runs/r\n（请处理）"
+	want := "LOOP 已完成\n交付 已完成\n成功\n查看详情：\nhttps://platform.example/#/runs/r\n（请处理）"
 	if got != want {
 		t.Fatalf("plain = %q", got)
 	}

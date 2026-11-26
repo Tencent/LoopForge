@@ -28,19 +28,19 @@ Runner 需要 0.10.1 或以上版本，该版本支持取消后台导出并释�
 
 登录状态仅在该执行机器上使用。每次运行把登录文件复制进隔离的 CLI HOME，结束后删除；CLI 刷新 token 后，Runner 在源内容未改变时保存回原来源。当前格式与账号字段比较属于本地检查，不能证明整套 token 的服务端归属；完整的写回归属验证另行加固。设置页在 CLI 行的「更多」菜单提供「测试」，按当前认证方式在该机器上发送一次短模型请求。
 
-SOP 的 native 和 Docker 沙箱也使用所选 Runner 的认证设置。每次 CLI 调用都在节点的独立 HOME 中使用临时登录文件，结束后清理该文件，会话可在同一节点续接。
+LOOP 的 native 和 Docker 沙箱也使用所选 Runner 的认证设置。每次 CLI 调用都在节点的独立 HOME 中使用临时登录文件，结束后清理该文件，会话可在同一节点续接。
 
 Runner 0.10.2 起，机器卡片可检查并手动安装平台提供的 Runner 构建。更新在机器空闲时应用。自行安装的 CLI 如提供非交互更新命令，可以在 CLI 菜单中直接执行更新。托管安装使用托管更新。如果 CLI 无法自更新，界面会提示按原安装方式更新。
 
 CLI 菜单中的「模型列表」与个人配置共用当前用户的模型目录。可以获取、筛选、添加、重命名和排序模型。保存后，AI 对话和角色编辑器使用该目录。API Key 模式通过个人配置里的 Key 与服务地址获取模型，留空地址时使用 CLI 的官方服务。Codex、Claude Code 和 Antigravity 的账号登录模式从所选机器查询。
 
-Antigravity 的账号登录读取运行 Runner 的系统账号已有的凭据库或远程会话认证文件。对话工作区和 SOP 的 native、Docker 沙箱使用私有 HOME 中的认证副本，由官方 CLI 自动刷新，结束时保存回原来源并清理副本。Docker 镜像需要安装官方 agy CLI。共享对话中，只有机器所有者发言时使用该登录。实测版本为 agy 1.5.10。
+Antigravity 的账号登录读取运行 Runner 的系统账号已有的凭据库或远程会话认证文件。对话工作区和 LOOP 的 native、Docker 沙箱使用私有 HOME 中的认证副本，由官方 CLI 自动刷新，结束时保存回原来源并清理副本。Docker 镜像需要安装官方 agy CLI。共享对话中，只有机器所有者发言时使用该登录。实测版本为 agy 1.5.10。
 
 其他 CLI 使用个人配置中保存的 API Key。Antigravity 也可切换为 API Key，读取个人配置里的 Gemini API Key，用量按 Gemini API 单独计费。详见 [Antigravity CLI 认证](https://antigravity.google/docs/install?tab=cli)和 [Gemini API 计费](https://ai.google.dev/gemini-api/docs/billing)。
 
 ZCode 可通过 GLM Coding Plan 的 API Key 和套餐专用端点使用订阅额度。Start Plan 的额度需要登录 ZCode 账号，无法通过 API Key 使用。详见 [ZCode 模型配置](https://zcode.z.ai/cn/docs/configuration)。
 
-原生会话的工具回调在执行机器上中继。宿主进程使用 Docker host gateway；通过 docker.sock 管理工作区的容器进程自动识别自身容器网络，工作区加入相同网络并访问该地址。自定义路由可通过 `AGENTFLOW_CONVERSATION_RELAY_HOST` 和 `AGENTFLOW_CONVERSATION_DOCKER_NETWORK` 显式指定工作区能访问的执行进程地址与 Docker 网络。会话目录会以相同路径挂进工作区，而 docker.sock 背后的 Docker 守护进程按自己所在主机解析挂载源，因此容器内的平台进程须把 `AGENTFLOW_CONVERSATION_DIR` 设在与宿主机同路径挂载的目录中；`compose.yaml` 将其设为 `${LOOPFORGE_DATA_DIR}/conversations`。Runner 不读该变量，原生会话目录固定在其工作区根目录的 `.conversations` 下，容器内运行 Runner 时须同路径挂载该工作区目录。未设置时会话目录位于 `AGENTFLOW_ASSISTANT_SESSION_DIR` 下，该目录在命名卷里时打开工作区会报 `mkdirat ... read-only file system`。附件等按用户保存的助手数据仍在 `AGENTFLOW_ASSISTANT_SESSION_DIR`，不挂进工作区。Docker 工作区直接在主容器中运行 SOP 脚本和 CLI。历史容器存在指令遮蔽挂载时，工作区下次取得执行权后会重建容器并保留工作区文件。标记为重建时运行的准备脚本随后在新容器补跑。
+原生会话的工具回调在执行机器上中继。宿主进程使用 Docker host gateway；通过 docker.sock 管理工作区的容器进程自动识别自身容器网络，工作区加入相同网络并访问该地址。自定义路由可通过 `AGENTFLOW_CONVERSATION_RELAY_HOST` 和 `AGENTFLOW_CONVERSATION_DOCKER_NETWORK` 显式指定工作区能访问的执行进程地址与 Docker 网络。会话目录会以相同路径挂进工作区，而 docker.sock 背后的 Docker 守护进程按自己所在主机解析挂载源，因此容器内的平台进程须把 `AGENTFLOW_CONVERSATION_DIR` 设在与宿主机同路径挂载的目录中；`compose.yaml` 将其设为 `${LOOPFORGE_DATA_DIR}/conversations`。Runner 不读该变量，原生会话目录固定在其工作区根目录的 `.conversations` 下，容器内运行 Runner 时须同路径挂载该工作区目录。未设置时会话目录位于 `AGENTFLOW_ASSISTANT_SESSION_DIR` 下，该目录在命名卷里时打开工作区会报 `mkdirat ... read-only file system`。附件等按用户保存的助手数据仍在 `AGENTFLOW_ASSISTANT_SESSION_DIR`，不挂进工作区。Docker 工作区直接在主容器中运行 LOOP 脚本和 CLI。历史容器存在指令遮蔽挂载时，工作区下次取得执行权后会重建容器并保留工作区文件。标记为重建时运行的准备脚本随后在新容器补跑。
 
 模式交接时，交接工具要求模型只回复一句「好的。」再结束旧阶段，交接之后的展示由平台隐藏；不要求“不输出任何内容”，否则模型可能只产出推理、没有正文的回合，该回合写入原生日志后，续接时会被模型服务拒绝（如 `the conversation must end with a user message`）。交接工具成功后，旧阶段即使未输出 `type=result` 或异常退出，也继续完成交接。续接原生会话时，如果原生日志缺失，或模型服务在本阶段产生任何输出或工具调用之前就拒绝了续接（400/422、会话结构无效、无结果退出），平台用完整对话上下文新建一次原生会话重试；已有输出或工具调用的中断，以及鉴权、限流、额度、网络、执行机器不可用等原因，仍续接原会话或直接报错，不重复执行副作用。
 

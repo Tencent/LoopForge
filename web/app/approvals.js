@@ -38,7 +38,7 @@ function approvalWaitReason(run,nodeId){
   let up=edges.filter(e=>e.target===nodeId&&e.source).map(e=>name(e.source));
   let down=edges.filter(e=>e.source===nodeId&&e.target).map(e=>name(e.target));
   if(!edges.length){up=index>0?[name(nodes[index-1].id)]:[];down=index+1<nodes.length?[name(nodes[index+1].id)]:[]}
-  const sop=String(wf.name||'').trim()?`SOP「${String(wf.name).trim()}」`:'该 SOP';
+  const sop=String(wf.name||'').trim()?`LOOP「${String(wf.name).trim()}」`:'该 LOOP';
   let text=`${sop}在这一步设置了人工门禁`;
   text+=up.length?`：${up.join('、')}已完成，需要有权限的成员检查结果后确认`:'，需要有权限的成员确认';
   text+=down.length?`，确认后继续${down.join('、')}`:'，确认后运行结束';
@@ -123,8 +123,56 @@ function humanGateSectionsHTML(nr,run,node){
   }
   return sections.join('')+approvalArtifactLinksHTML(run,node);
 }
+// The server rejects write actions from readers; hide the controls so a
+// viewer does not have to click through a 403 to find out. Mirrors
+// runWriteGuard/projectMemberWrites: the run's project is its execution
+// context project, else its requirement's project; runs without a project,
+// projects this client cannot see, and projects with neither an owner nor
+// members are writable by any signed-in user.
+function runWriteProjectId(run){
+  const ctx=run?.executionContext||{};
+  const own=String(ctx.projectId||'').trim();
+  if(own)return own;
+  const issue=ctx.issueId?(state.data?.issues||[]).find(i=>i.id===ctx.issueId):null;
+  return String(issue?.projectId||'').trim();
+}
+function runDecisionBlock(run){
+  if(!state.authRequired)return '';
+  const user=state.currentUser;
+  if(!user)return '';
+  if(user.isGuest)return 'guest';
+  if(user.isPlatformAdmin)return '';
+  const projectId=runWriteProjectId(run);
+  if(!projectId)return '';
+  const project=(state.data?.projects||[]).find(p=>p.id===projectId);
+  if(!project||(!Number(project.ownerId)&&!(project.members||[]).length))return '';
+  const uid=Number(user.id);
+  if(uid>0&&Number(project.ownerId)===uid)return '';
+  const member=(project.members||[]).find(m=>Number(m.userId)===uid);
+  if(!member)return 'outsider';
+  return String(member.role||'').trim().toLowerCase()==='viewer'?'viewer':'';
+}
+function canDecideRun(run){return !runDecisionBlock(run)}
+function runReadOnlyHTML(run){
+  const text={guest:'登录后才能审批或取消这次运行。',outsider:'你不是该项目的成员，不能审批或取消这次运行。',viewer:'你是该项目的只读成员，不能审批或取消这次运行。'}[runDecisionBlock(run)]||'';
+  return `<div class="human-decision"><div class="human-gate-brief"><div class="callout-section"><strong class="callout-label">只读</strong><p class="callout-text">${text}</p></div></div></div>`;
+}
+// Waiting starts when the gate asked a human, not when the run started.
+function waitingSince(run,nodeId){
+  const events=(run?.events||[]).filter(e=>e.type==='gate.waiting'&&(!nodeId||e.nodeId===nodeId));
+  if(events.length)return events[events.length-1].timestamp;
+  return run?.nodes?.[nodeId]?.startedAt||run?.updatedAt||run?.createdAt||'';
+}
+function waitingForText(run,nodeId){
+  const since=waitingSince(run,nodeId),seconds=since?Math.max(0,Math.floor((Date.now()-new Date(since))/1000)):0;
+  if(seconds<60)return '刚刚进入等待';
+  if(seconds<3600)return `已等待 ${Math.floor(seconds/60)} 分钟`;
+  if(seconds<86400)return `已等待 ${Math.floor(seconds/3600)} 小时`;
+  return `已等待 ${Math.floor(seconds/86400)} 天`;
+}
 function humanDecisionPanelHTML(runId,nodeId,nr,node,nodes,run=cachedRun(runId)){
   if(run?.status==='queued')return '';
+  if(!canDecideRun(run))return runReadOnlyHTML(run);
   const field=isScriptWorkflowNode(node)?'':humanContextFieldHTML();
   return `<div class="human-decision" data-human-context-root><div class="human-gate-brief">${humanGateSectionsHTML(nr,run,node)}</div>${field}<div class="ap-buttons">${waitingActionButtons(runId,nodeId,nr,node,nodes)}</div></div>`;
 }
@@ -269,7 +317,7 @@ function refreshRunSOPButtonHTML(run){
     (Number(latest.version||0)===Number(current.version||0)&&Number(latest.revision||0)===Number(current.revision||0));
   if(same)return '';
   const version=`v${latest.version||1} #${latest.revision||0}`;
-  return `<button class="button ghost small" data-refresh-run-sop="${escapeHTML(run.id)}">更新为最新 SOP（${escapeHTML(version)}）</button>`;
+  return `<button class="button ghost small" data-refresh-run-sop="${escapeHTML(run.id)}">更新为最新 LOOP（${escapeHTML(version)}）</button>`;
 }
 function pausedRunPanelHTML(run){
   const paused=pausedWorkflowNodes(run);
@@ -279,7 +327,7 @@ function pausedRunPanelHTML(run){
   const restored=restoredSOPResumeNode(run);
   const idlePause=!paused.length&&!restored;
   const detail=restored
-    ? `将从「${escapeHTML(restored.name||restored.id)}」重新启动 SOP，保留已完成的上游结果。已有文件和平台变更不会回退，后续节点将重新检查当前工作区。`
+    ? `将从「${escapeHTML(restored.name||restored.id)}」重新启动 LOOP，保留已完成的上游结果。已有文件和平台变更不会回退，后续节点将重新检查当前工作区。`
     : idlePause
     ? '当前没有被打断的步骤。继续后会接着执行尚未完成的节点；如果流程已经走完，运行会正常结束。'
     : agentPaused
@@ -311,7 +359,7 @@ async function retryWaitingNode(runId,nodeId,fromEl){
   const context=readHumanContext(fromEl);
   try{await requestRunActivation(runId,'retry',withHumanContext({nodeId,reason,context}));const run=await syncRunControlState(runId);toast(runControlToast(run,'已确认重试本节点'),'ok');renderApprovals(true);if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}
 }
-async function declineRetry(runId,nodeId){if(queuedRunActionBlocked(runId))return;if(!await afConfirm({title:'放弃重试确认',message:'确定不重试？本节点将失败，整条 SOP 停止。',confirmText:'确认不重试',isDanger:true}))return;try{await api(`/api/runs/${runId}/decline-retry`,{method:'POST',body:JSON.stringify({nodeId})});toast('已选择不重试，节点失败','ok');renderApprovals(true);if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}}
+async function declineRetry(runId,nodeId){if(queuedRunActionBlocked(runId))return;if(!await afConfirm({title:'放弃重试确认',message:'确定不重试？本节点将失败，整条 LOOP 停止。',confirmText:'确认不重试',isDanger:true}))return;try{await api(`/api/runs/${runId}/decline-retry`,{method:'POST',body:JSON.stringify({nodeId})});toast('已选择不重试，节点失败','ok');renderApprovals(true);if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}}
 async function pauseRun(runId){
   if(queuedRunActionBlocked(runId))return;
   if(!await afConfirm({title:'暂停运行确认',message:'确定暂停当前运行？正在执行的节点会安全中断，工作区会保留，稍后可补充信息后继续。',confirmText:'确认暂停'}))return;
@@ -360,9 +408,9 @@ async function refreshRunSOP(runId){
   let current;
   try{current=await api(`/api/runs/${encodeURIComponent(runId)}`,{silent:true})}catch(e){return toast(e.message,'err')}
   const latest=(state.data.workflows||[]).find(w=>w.id===current?.workflowId);
-  if(!latest)return toast('未找到最新 SOP','err');
-  if(Number(latest.version||0)===Number(current.workflowSnapshot?.version||0)&&Number(latest.revision||0)===Number(current.workflowSnapshot?.revision||0))return toast('当前运行已使用最新 SOP');
-  if(!await afConfirm({title:'更新 SOP 确认',message:'确定把当前运行更新为最新 SOP？已完成的同名节点和产物会保留，新节点会加入待执行；当前运行环境保持不变。',confirmText:'确认更新'}))return;
+  if(!latest)return toast('未找到最新 LOOP','err');
+  if(Number(latest.version||0)===Number(current.workflowSnapshot?.version||0)&&Number(latest.revision||0)===Number(current.workflowSnapshot?.revision||0))return toast('当前运行已使用最新 LOOP');
+  if(!await afConfirm({title:'更新 LOOP 确认',message:'确定把当前运行更新为最新 LOOP？已完成的同名节点和产物会保留，新节点会加入待执行；当前运行环境保持不变。',confirmText:'确认更新'}))return;
   try{
     await api(`/api/runs/${encodeURIComponent(runId)}/refresh-sop`,{method:'POST'});
     const [run]=await Promise.all([api(`/api/runs/${encodeURIComponent(runId)}`),refreshIssues(),refreshRuns(true)]);
@@ -373,7 +421,7 @@ async function refreshRunSOP(runId){
     }
     if($('#approvalsView')?.classList.contains('active'))await renderApprovals(true);
     if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop');
-    toast('已更新为最新 SOP','ok');
+    toast('已更新为最新 LOOP','ok');
   }catch(e){toast(e.message,'err')}
 }
 function bindWaitingActions(root){
@@ -390,7 +438,7 @@ function bindWaitingActions(root){
 function approvalItems(){
   const waiting=scopedRuns((state.data.runs||[]).filter(r=>{
     if(r.status!=='waiting')return false;
-    // Workspaces and retired groups never request SOP approval.
+    // Workspaces and retired groups never request LOOP approval.
     if(r.kind==='workspace'||r.workflowSnapshot?.collaborationMode==='group')return false;
     // 基线对齐不再等人确认：不进「待我确认」，由引擎自动合入。
     return r.workflowId!=='scheduled-baseline-align'&&r.workflowSnapshot?.id!=='scheduled-baseline-align';
@@ -405,10 +453,10 @@ function approvalItems(){
 async function preloadApprovalBadge(){try{const runs=await api('/api/runs',{silent:true});if(Array.isArray(runs)){state.data.runs=runs;updateApprovalBadge()}}catch{}}
 async function cancelRunFlow(runId){
   if(!await afConfirm({title:'取消流程确认',message:'确定取消该流程？取消后将不再出现在待我确认列表，对应需求可重新派发。',confirmText:'确认取消',isDanger:true}))return;
-  try{await api(`/api/runs/${encodeURIComponent(runId)}/cancel`,{method:'POST'});toast('流程已取消','ok');renderApprovals(true)}catch(e){toast(e.message,'err')}
+  try{await api(`/api/runs/${encodeURIComponent(runId)}/cancel`,{method:'POST'});toast('流程已取消','ok');await renderApprovals()}catch(e){toast(e.message,'err')}
 }
 async function approveRun(runId,nodeId,fromEl){if(queuedRunActionBlocked(runId))return;try{await api(`/api/runs/${runId}/approve`,{method:'POST',body:JSON.stringify(withHumanContext({nodeId,context:readHumanContext(fromEl)}))});toast('已批准，流程继续','ok');await renderApprovals();if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}}
-async function rejectRun(runId,nodeId,fromEl){if(queuedRunActionBlocked(runId))return;const target=String(fromEl?.dataset?.target||'').trim(),targetName=String(fromEl?.dataset?.targetName||target).trim();if(!target)return toast('当前节点没有配置上游返工目标','err');const reason=await afPrompt({title:`退回上游「${targetName}」重做`,message:`将重置「${targetName}」及其全部下游节点。请输入返工原因：`,defaultValue:'验证未通过，请上游修复后重新提交'});if(reason===null||reason===undefined)return;try{await api(`/api/runs/${runId}/reject`,{method:'POST',body:JSON.stringify(withHumanContext({nodeId,targetId:target,reason,context:readHumanContext(fromEl)}))});toast(`已退回「${targetName}」，开始重跑后续流程`,'ok');renderApprovals(true);if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}}
+async function rejectRun(runId,nodeId,fromEl){if(queuedRunActionBlocked(runId))return;const target=String(fromEl?.dataset?.target||'').trim(),targetName=String(fromEl?.dataset?.targetName||target).trim();if(!target)return toast('当前节点没有配置上游返工目标','err');const reason=await afPrompt({title:`退回上游「${targetName}」重做`,message:`将重置「${targetName}」及其全部下游节点。请输入返工原因：`,defaultValue:'验证未通过，请上游修复后重新提交'});if(reason===null||reason===undefined)return;try{await api(`/api/runs/${runId}/reject`,{method:'POST',body:JSON.stringify(withHumanContext({nodeId,targetId:target,reason,context:readHumanContext(fromEl)}))});toast(`已退回「${targetName}」，开始重跑后续流程`,'ok');await renderApprovals();if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}}
 function approvalStatusBadgeHTML(paused){
   const [tone,icon,label]=paused?['neutral','pause','已暂停']:['warn','pending-review','待确认'];
   return `<span class="hui-badge" data-tone="${tone}" data-stage-icon="${icon}">${huiIcon(icon)}<span class="hui-badge-label">${label}</span></span>`;
@@ -528,9 +576,9 @@ function approvalCardHTML(r){
   const keyHTML=issue&&!alignRun?`<code class="ap-key">${escapeHTML(key)}</code>`:`<span class="ap-key">${escapeHTML(key)}</span>`;
   const sep='<span class="ap-sep" aria-hidden="true">·</span>';
   const sideButton=issue?`<button class="button ghost small" data-open-issue="${escapeHTML(issue.id)}">打开需求</button>`:`<button class="button ghost small" data-open-logs="${escapeHTML(r.id)}">${alignRun?'查看对齐详情':'排查日志'}</button>`;
-  const more=`<div class="ap-more"><button type="button" class="ap-more-toggle" data-ap-more title="更多操作" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">${huiIcon('more-horizontal')}</button><div class="ap-more-menu" role="menu" hidden><button type="button" class="ap-menu-item danger" role="menuitem" data-cancel-run="${escapeHTML(r.id)}">${huiIcon('close')}<span>取消流程</span></button></div></div>`;
-  const decision=r.pauseRequested?pausedRunPanelHTML(r):humanDecisionPanelHTML(r.id,nodeId,r.nodes?.[nodeId],node,r.workflowSnapshot?.nodes||[],r);
-  return `<div class="ap-card${approvalSelectable(r)&&approvalSelection().has(approvalKey(r.id,waitingNodeId(r)))?' is-selected':''}"><div class="ap-card-head">${approvalSelectBoxHTML(r)}<div class="ap-main"><div class="ap-head"><b>${escapeHTML(title)}</b>${approvalStatusBadgeHTML(r.pauseRequested)}</div><div class="ap-meta">${keyHTML}${sep}${r.pauseRequested?'暂停于':'卡在'}「${escapeHTML(node?.name||nodeId||'确认')}」${sep}已等待 ${relativeTime(r.createdAt)}</div></div><div class="ap-side">${sideButton}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}${more}</div></div>${decision?`<div class="ap-body">${decision}</div>`:''}</div>`;
+  const more=canDecideRun(r)?`<div class="ap-more"><button type="button" class="ap-more-toggle" data-ap-more title="更多操作" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">${huiIcon('more-horizontal')}</button><div class="ap-more-menu" role="menu" hidden><button type="button" class="ap-menu-item danger" role="menuitem" data-cancel-run="${escapeHTML(r.id)}">${huiIcon('close')}<span>取消流程</span></button></div></div>`:'';
+  const decision=r.pauseRequested?(canDecideRun(r)?pausedRunPanelHTML(r):humanDecisionPanelHTML(r.id,nodeId,r.nodes?.[nodeId],node,r.workflowSnapshot?.nodes||[],r)):humanDecisionPanelHTML(r.id,nodeId,r.nodes?.[nodeId],node,r.workflowSnapshot?.nodes||[],r);
+  return `<div class="ap-card${approvalSelectable(r)&&approvalSelection().has(approvalKey(r.id,waitingNodeId(r)))?' is-selected':''}"><div class="ap-card-head">${approvalSelectBoxHTML(r)}<div class="ap-main"><div class="ap-head"><b>${escapeHTML(title)}</b>${approvalStatusBadgeHTML(r.pauseRequested)}</div><div class="ap-meta">${keyHTML}${sep}${r.pauseRequested?'暂停于':'卡在'}「${escapeHTML(node?.name||nodeId||'确认')}」${sep}${waitingForText(r,nodeId)}</div></div><div class="ap-side">${sideButton}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}${more}</div></div>${decision?`<div class="ap-body">${decision}</div>`:''}</div>`;
 }
 function closeApprovalMoreMenus(except){
   document.querySelectorAll('#approvalsView .ap-more.is-open').forEach(more=>{

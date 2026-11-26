@@ -13,7 +13,7 @@ import (
 
 const maxSOPNesting = 6
 
-var errSOPArtifactWrite = errors.New("保存子 SOP 产物失败")
+var errSOPArtifactWrite = errors.New("保存子 LOOP 产物失败")
 
 func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, attempt, generation int) {
 	fail := func(err error) {
@@ -32,7 +32,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 	}
 	childID := strings.TrimSpace(node.SOPWorkflowID)
 	if childID == "" {
-		fail(fmt.Errorf("SOP 节点未选择要跑的流程"))
+		fail(fmt.Errorf("LOOP 节点未选择要跑的流程"))
 		return
 	}
 	if err := e.guardSOPCycle(parent, childID); err != nil {
@@ -40,10 +40,10 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		return
 	}
 	if _, found := e.repo.Workflow(childID); !found {
-		fail(fmt.Errorf("SOP 流程 %q 不存在", childID))
+		fail(fmt.Errorf("LOOP 流程 %q 不存在", childID))
 		return
 	}
-	// An SOP node does not acquire a sandbox itself. Restore the checkout
+	// A LOOP node does not acquire a sandbox itself. Restore the checkout
 	// before its child can start in it.
 	if !parent.WorkspaceCleanedAt.IsZero() {
 		if err := e.restoreCheckpointForExecution(ctx, parent, nil); err != nil {
@@ -55,20 +55,20 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 	if nr := parent.Nodes[node.ID]; nr != nil && nr.ChildRunID != "" {
 		// A deploy, pause or lease takeover interrupted the parent while its
 		// child kept going (or finished); keep following that child, including
-		// its outcome, instead of starting the SOP over. Reset paths that want a
+		// its outcome, instead of starting the LOOP over. Reset paths that want a
 		// fresh child clear ChildRunID.
 		if prev, ok := e.repo.RunState(nr.ChildRunID); ok {
 			if prev.WorkflowID == childID {
 				child = prev
 			} else if isLiveStatus(prev.Status) {
-				// The node was re-pointed to another SOP (RefreshRunSOP); the old
+				// The node was re-pointed to another LOOP (RefreshRunSOP); the old
 				// child's work does not belong to this node any more.
 				_ = e.Cancel(prev.ID)
 			}
 		}
 	}
 	if child.ID == "" {
-		// A pool run binds its execution machine at its first non-SOP node.
+		// A pool run binds its execution machine at its first non-LOOP node.
 		// Bind it now so the child inherits the machine holding the shared
 		// checkout instead of picking its own.
 		bound, err := e.bindPoolRunner(ctx, parent, node.ID)
@@ -88,37 +88,37 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		exec.TraceID = parent.ExecutionContext.TraceID
 		started, err := e.StartWithRepositories(ctx, childID, childInput, parent.RepositoryContexts(), exec)
 		if err != nil {
-			fail(fmt.Errorf("启动子 SOP：%w", err))
+			fail(fmt.Errorf("启动子 LOOP：%w", err))
 			return
 		}
 		child = started
 		e.updateRun(runID, func(r *domain.Run) {
 			if nr := r.Nodes[node.ID]; nr != nil {
 				nr.ChildRunID = child.ID
-				nr.Activity = "正在执行子 SOP " + childID
+				nr.Activity = "正在执行子 LOOP " + childID
 			}
 			e.event(r, node.ID, "sop.started", node.Name+" 启动子流程 "+childID)
 		})
 		e.observe(runID, node.ID, domain.TelemetryEvent{
 			Category: "orchestration", Name: "sop.child.started", Phase: "start",
-			Message:    "子 SOP 已启动",
+			Message:    "子 LOOP 已启动",
 			Attributes: map[string]any{"childRunId": child.ID, "sopWorkflowId": childID},
 		})
 	} else {
-		if nr := parent.Nodes[node.ID]; nr != nil && nr.Activity == resumePausedChildActivity && child.Status == "waiting" && child.PauseRequested {
+		if nr := parent.Nodes[node.ID]; nr != nil && isResumePausedChildActivity(nr.Activity) && child.Status == "waiting" && child.PauseRequested {
 			if err := e.ResumePausedContext(ctx, child.ID, nr.Feedback); err != nil {
-				fail(fmt.Errorf("继续子 SOP %s：%w", child.ID, err))
+				fail(fmt.Errorf("继续子 LOOP %s：%w", child.ID, err))
 				return
 			}
 		}
 		e.updateRun(runID, func(r *domain.Run) {
 			if nr := r.Nodes[node.ID]; nr != nil {
-				nr.Activity = "正在执行子 SOP " + childID
+				nr.Activity = "正在执行子 LOOP " + childID
 			}
 		})
 		e.observe(runID, node.ID, domain.TelemetryEvent{
 			Category: "orchestration", Name: "sop.child.reattached", Phase: "start",
-			Message:    "重新接上仍在运行的子 SOP",
+			Message:    "重新接上仍在运行的子 LOOP",
 			Attributes: map[string]any{"childRunId": child.ID, "sopWorkflowId": childID},
 		})
 	}
@@ -128,7 +128,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		return
 	}
 	if finished.Status != "succeeded" {
-		fail(fmt.Errorf("子 SOP %s %s", childID, finished.Status))
+		fail(fmt.Errorf("子 LOOP %s %s", childID, finished.Status))
 		return
 	}
 	imported, err := importChildArtifacts(parent.ID, node, attempt, finished)
@@ -145,7 +145,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		applied = true
 		nr.ChildRunID = finished.ID
 		r.Artifacts = append(r.Artifacts, imported...)
-		nr.Output = fmt.Sprintf("子 SOP %s 已完成，交接 %d 个产物", childID, len(imported))
+		nr.Output = fmt.Sprintf("子 LOOP %s 已完成，交接 %d 个产物", childID, len(imported))
 		nr.Error = ""
 		nr.Status = "succeeded"
 		nr.FinishedAt = time.Now().UTC()
@@ -177,16 +177,16 @@ func (e *Engine) guardSOPCycle(parent domain.Run, childWorkflowID string) error 
 		wfID := strings.TrimSpace(current.WorkflowID)
 		if wfID != "" {
 			if wfID == childWorkflowID {
-				return fmt.Errorf("SOP 节点不能循环引用流程 %q", childWorkflowID)
+				return fmt.Errorf("LOOP 节点不能循环引用流程 %q", childWorkflowID)
 			}
 			if seen[wfID] {
-				return fmt.Errorf("SOP 嵌套链出现循环")
+				return fmt.Errorf("LOOP 嵌套链出现循环")
 			}
 			seen[wfID] = true
 		}
 		depth++
 		if depth >= maxSOPNesting {
-			return fmt.Errorf("SOP 嵌套超过 %d 层", maxSOPNesting)
+			return fmt.Errorf("LOOP 嵌套超过 %d 层", maxSOPNesting)
 		}
 		parentID := strings.TrimSpace(current.ExecutionContext.ParentRunID)
 		if parentID == "" {
@@ -216,7 +216,7 @@ func sopChildInput(parent domain.Run, node domain.WorkflowNode) string {
 		names = append(names, art.Name)
 	}
 	if len(node.ArtifactOutputs) > 0 {
-		input += "\n\nThis SOP node will publish these artifacts to the next parent step: " + joinArtifactNames(node.ArtifactOutputs)
+		input += "\n\nThis LOOP node will publish these artifacts to the next parent step: " + joinArtifactNames(node.ArtifactOutputs)
 	}
 	if len(names) == 0 {
 		return input
@@ -225,7 +225,7 @@ func sopChildInput(parent domain.Run, node domain.WorkflowNode) string {
 	for _, name := range names {
 		input += "\n- " + name
 	}
-	input += "\nContinue from those deliverables; do not redo the previous SOP."
+	input += "\nContinue from those deliverables; do not redo the previous LOOP."
 	return input
 }
 
@@ -259,11 +259,11 @@ func (e *Engine) waitChildRun(ctx context.Context, parentID, childID string) (do
 			// Poll without artifact bodies; the handoff reads them once.
 			child, ok := e.repo.RunProgress(childID)
 			if !ok {
-				return domain.Run{}, fmt.Errorf("子 SOP 运行消失")
+				return domain.Run{}, fmt.Errorf("子 LOOP 运行消失")
 			}
 			if domain.TerminalRunStatus(child.Status) {
 				if child, ok = e.repo.RunState(childID); !ok {
-					return domain.Run{}, fmt.Errorf("读取子 SOP %s 的产物失败", childID)
+					return domain.Run{}, fmt.Errorf("读取子 LOOP %s 的产物失败", childID)
 				}
 				return child, nil
 			}
@@ -318,7 +318,7 @@ func importChildArtifacts(parentID string, node domain.WorkflowNode, attempt int
 	}
 	for name := range want {
 		if !have[name] {
-			return nil, fmt.Errorf("子 SOP 没有交出产物 %q", name)
+			return nil, fmt.Errorf("子 LOOP 没有交出产物 %q", name)
 		}
 	}
 	return imported, nil

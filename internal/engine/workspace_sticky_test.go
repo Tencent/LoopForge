@@ -13,7 +13,7 @@ import (
 
 // A run bound to a workspace root this instance does not serve must never be
 // resumed elsewhere: a fresh clone only contains committed work, so uncommitted
-// upstream artifacts (e.g. SOP e2e scripts) would silently vanish from the
+// upstream artifacts (e.g. LOOP e2e scripts) would silently vanish from the
 // delivered MR (issue: e2e-issue-29.sh lost across two instances).
 func TestResumeInterruptedRunsSkipsForeignWorkspaceBind(t *testing.T) {
 	t.Parallel()

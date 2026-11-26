@@ -107,7 +107,7 @@ html[data-theme="dark"] #flowView{
   #flowView .fd-vsep{display:none}
 }
 
-/* SOP switcher popover */
+/* LOOP switcher popover */
 #flowView .fd-pop{position:absolute;z-index:60;left:12px;top:calc(100% - 4px);width:360px;max-width:calc(100% - 24px);display:flex;flex-direction:column;border:1px solid var(--fd-line);border-radius:12px;background:var(--fd-surface);box-shadow:var(--fd-shadow-lg);overflow:hidden;white-space:normal;animation:fdPop .14s var(--fd-ease)}
 @keyframes fdPop{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
 #flowView .fd-pop .fd-search{flex:none;margin:10px 10px 4px}

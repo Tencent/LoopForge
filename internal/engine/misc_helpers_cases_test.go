@@ -26,7 +26,7 @@ func TestIntegrationLabelsRepairAndPatchInventoryBranches(t *testing.T) {
 		t.Fatal("issue-only label")
 	}
 	branch := domain.Run{Repository: domain.RepositoryContext{WorkBranch: "feature/x"}}
-	if integrationCommitLabel(branch) != "feature/x" || integrationCommitLabel(domain.Run{}) != "scheduled SOP work" {
+	if integrationCommitLabel(branch) != "feature/x" || integrationCommitLabel(domain.Run{}) != "scheduled LOOP work" {
 		t.Fatal("fallback labels")
 	}
 	if title := integrateMRTitle(run, domain.RepositoryContext{AlignOnly: true, DefaultBranch: "main"}, "work", "integration"); !strings.Contains(title, "main") {

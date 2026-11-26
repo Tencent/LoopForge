@@ -164,7 +164,7 @@ const RULES = [
 
 // credentialHint recognizes errors caused by a missing or rejected personal
 // credential. owner is true when the message says the credential belongs to
-// the responsible user (SOP runs use their credentials, not the viewer's).
+// the responsible user (LOOP runs use their credentials, not the viewer's).
 export function credentialHint(text) {
   const message = String(text || "");
   if (!message) return null;

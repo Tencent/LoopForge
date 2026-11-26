@@ -165,7 +165,7 @@ func TestRunnerRefillsArchivedFilesWithoutOverwritingEdits(t *testing.T) {
 	}
 	req.RunStatus = "running"
 	if result = d.readRunnerWorkspace(context.Background(), req); result.Status != 409 {
-		t.Fatal("active SOP accepted", result)
+		t.Fatal("active LOOP accepted", result)
 	}
 	req.RunStatus = "waiting"
 	result = d.readRunnerWorkspace(context.Background(), req)

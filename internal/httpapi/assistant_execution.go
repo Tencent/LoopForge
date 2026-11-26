@@ -154,7 +154,7 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 			return
 		}
 		if !run.IsWorkspace() && !sopStopped(run) {
-			c.JSON(409, gin.H{"error": "请先暂停或接管 SOP，再进入工作区模式"})
+			c.JSON(409, gin.H{"error": "请先暂停或接管 LOOP，再进入工作区模式"})
 			return
 		}
 		if h.engine == nil {

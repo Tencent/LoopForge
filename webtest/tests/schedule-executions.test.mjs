@@ -145,7 +145,7 @@ test('execution dashboard lists history with metrics, filters and copyable trace
   rows[1].querySelector('[data-copy-trace]').click();
   const fromExec = app.evaluate('window.__copied.at(-1)');
   assert.equal(fromExec.split('\n')[1], `Trace ID: ${OK_TRACE}`);
-  assert.match(fromExec, /类型: SOP 触发/);
+  assert.match(fromExec, /类型: LOOP 触发/);
   assert.match(fromExec, /触发方式: 手动运行/);
   assert.match(fromExec, /状态: 成功/);
   assert.match(fromExec, /耗时: 1 分 30 秒/);

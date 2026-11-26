@@ -1,5 +1,5 @@
 // 平台 MCP 目录（/api/mcp-market）不再作为独立「市场」页展示，但它仍是
-// 通用模板角色的可选 MCP、市场 ID/别名映射和 SOP 依赖预检的数据来源，
+// 通用模板角色的可选 MCP、市场 ID/别名映射和 LOOP 依赖预检的数据来源，
 // 所以启动后和进入相关页面时都要保证加载过一次；失败时允许下次重试。
 let mcpMarketCatalogRequest=null;
 function ensureMCPMarketCatalog(){

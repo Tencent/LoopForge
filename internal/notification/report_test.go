@@ -79,7 +79,7 @@ func TestIndependentReportFailureUsesStandardMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, _ := svc.Store.NotificationDeliveries(bot.ProjectID)
-	if len(items) != 1 || items[0].ReportState != "fallback" || items[0].ReportError == "" || provider.sent != 1 || !strings.Contains(provider.content, "SOP") || strings.Contains(provider.content, "节点输出") {
+	if len(items) != 1 || items[0].ReportState != "fallback" || items[0].ReportError == "" || provider.sent != 1 || !strings.Contains(provider.content, "LOOP") || strings.Contains(provider.content, "节点输出") {
 		t.Fatalf("%+v %s", items, provider.content)
 	}
 }

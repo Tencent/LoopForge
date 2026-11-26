@@ -169,7 +169,7 @@ describe("personal execution machine selection", () => {
     expect(result.current.defaultRunnerId).toBe("shared");
   });
 
-  test("hides SOP-only machines and uses the chat default for an incompatible draft", async () => {
+  test("hides LOOP-only machines and uses the chat default for an incompatible draft", async () => {
     const oldRunner = { id: "old", canUseInProject: true, supportsConversation: false };
     const chatRunner = { id: "chat", canUseInProject: true, supportsConversation: true };
     apiMock.mockImplementation(async (path) =>

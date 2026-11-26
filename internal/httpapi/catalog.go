@@ -347,6 +347,12 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 		if decode(c, &v) && v.ID != "" {
 			v.ID, v.ProjectID = strings.TrimSpace(v.ID), strings.TrimSpace(v.ProjectID)
 			if existing, ok := h.repo.Agent(v.ID); ok {
+				// A role without a project is platform-wide: every project can
+				// use it, so only administrators may change it, as for rules
+				// and skills (assetWriteGuard).
+				if strings.TrimSpace(existing.ProjectID) == "" && !h.requirePlatformAdmin(c) {
+					return
+				}
 				if v.ProjectID == "" {
 					v.ProjectID = strings.TrimSpace(existing.ProjectID)
 				}
@@ -354,6 +360,9 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 					c.JSON(http.StatusConflict, map[string]string{"error": "角色标识已被其他项目使用"})
 					return
 				}
+			} else if err := domain.ValidateResourceID(v.ID); err != nil {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "角色" + err.Error()})
+				return
 			}
 			if v.ProjectID == "" {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": "角色需要 projectId"})
@@ -389,6 +398,16 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			c.JSON(200, stored)
 		}
 	}
+}
+
+// requireAgentWriter allows changes to a stored role. Project roles follow
+// project write access; platform-wide roles (no project) are shared by every
+// project and are limited to platform administrators.
+func (h *catalogHandlers) requireAgentWriter(c *gin.Context, agent domain.AgentDefinition) bool {
+	if strings.TrimSpace(agent.ProjectID) == "" {
+		return h.requirePlatformAdmin(c)
+	}
+	return h.requireProjectWriter(c, agent.ProjectID)
 }
 
 func validateCatalogAgentExecutor(agent *domain.AgentDefinition) error {
@@ -432,7 +451,7 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 		c.JSON(404, map[string]string{"error": "agent not found"})
 		return
 	}
-	if c.Request.Method != http.MethodGet && c.FullPath() != "/api/agents/:id/clone" && !h.requireProjectWriter(c, current.ProjectID) {
+	if c.Request.Method != http.MethodGet && c.FullPath() != "/api/agents/:id/clone" && !h.requireAgentWriter(c, current) {
 		return
 	}
 	switch c.FullPath() {
@@ -499,14 +518,22 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 			c.JSON(400, map[string]string{"error": "id and name are required"})
 			return
 		}
+		if _, exists := h.repo.Agent(req.ID); !exists {
+			if err := domain.ValidateResourceID(req.ID); err != nil {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "角色" + err.Error()})
+				return
+			}
+		}
 		v := current
 		targetProject := strings.TrimSpace(req.ProjectID)
 		if _, ok := h.repo.Project(targetProject); !ok {
 			c.JSON(http.StatusNotFound, map[string]string{"error": "project not found"})
 			return
 		}
-		taken, _ := h.repo.Agent(req.ID)
-		if !h.requireProjectWriter(c, targetProject, taken.ProjectID) {
+		if !h.requireProjectWriter(c, targetProject) {
+			return
+		}
+		if taken, exists := h.repo.Agent(req.ID); exists && !h.requireAgentWriter(c, taken) {
 			return
 		}
 		userID := int64(0)
@@ -632,7 +659,7 @@ func (h *catalogHandlers) cloneAgentMCPServers(ids []string, projectID string, u
 }
 
 // normalizeGlobalRule keeps workflow bindings only while the rule is global.
-// Each id must be a SOP this project can run: its own, a shared SOP, or a
+// Each id must be a LOOP this project can run: its own, a shared LOOP, or a
 // generic template. Turning the switch off drops the bindings.
 func normalizeGlobalRule(st *repo.Store, v *domain.RuleDefinition) error {
 	if v == nil {
@@ -654,10 +681,10 @@ func normalizeGlobalRule(st *repo.Store, v *domain.RuleDefinition) error {
 		}
 		wf, ok := st.Workflow(id)
 		if !ok {
-			return fmt.Errorf("SOP %q 不存在", id)
+			return fmt.Errorf("LOOP %q 不存在", id)
 		}
 		if !wf.Generic && wf.ProjectID != v.ProjectID && !wf.Shared {
-			return fmt.Errorf("SOP %q 不属于当前项目", id)
+			return fmt.Errorf("LOOP %q 不属于当前项目", id)
 		}
 		seen[id] = struct{}{}
 		ids = append(ids, id)
@@ -901,7 +928,7 @@ func (h *catalogHandlers) sandboxes(c *gin.Context) {
 				return
 			}
 			if !v.Shared && (reserved || exists && existing.Shared && h.sharedWorkflowUsesSandbox(v.ID)) {
-				c.JSON(http.StatusConflict, map[string]string{"error": "该沙箱仍被共享 SOP 引用，不能取消共享"})
+				c.JSON(http.StatusConflict, map[string]string{"error": "该沙箱仍被共享 LOOP 引用，不能取消共享"})
 				return
 			}
 			respond(c, h.repo.PutSandbox(v))
@@ -1008,7 +1035,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				return
 			}
 			if previous, exists := h.repo.Workflow(v.ID); exists && previous.Shared && !v.Shared && h.sharedScheduleReferences("sop", v.ID) {
-				c.JSON(http.StatusConflict, map[string]string{"error": "该 SOP 仍被共享任务引用，不能取消共享"})
+				c.JSON(http.StatusConflict, map[string]string{"error": "该 LOOP 仍被共享任务引用，不能取消共享"})
 				return
 			}
 
@@ -1072,7 +1099,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 			}
 			// A payload that already carries a revision is an update. PutWorkflow
 			// treats a missing row as a create, which would resurrect a deleted
-			// SOP from a stale editor tab (and, with no projectId left on the
+			// LOOP from a stale editor tab (and, with no projectId left on the
 			// payload, list it in the shared catalog). Brand-new templates are
 			// saved with revision 0. Internal callers may still seed a row with
 			// a revision; only this client save is rejected.
@@ -1110,7 +1137,7 @@ func (h *catalogHandlers) requireWorkflowSandbox(c *gin.Context, wf domain.Workf
 	return profile, true
 }
 
-// respondWorkflowSaveError 统一 SOP 保存失败响应：版本冲突回 409，其余交给 respond。
+// respondWorkflowSaveError 统一 LOOP 保存失败响应：版本冲突回 409，其余交给 respond。
 func respondWorkflowSaveError(c *gin.Context, err error) {
 	if strings.Contains(err.Error(), "revision conflict") {
 		c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
@@ -1148,7 +1175,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		}
 		for _, run := range h.repo.Runs() {
 			if run.WorkflowID == id && (run.Status == "running" || run.Status == "waiting") {
-				c.JSON(409, map[string]string{"error": "该 SOP 还有进行中的运行，请先终止后再删除"})
+				c.JSON(409, map[string]string{"error": "该 LOOP 还有进行中的运行，请先终止后再删除"})
 				return
 			}
 		}
@@ -1159,7 +1186,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			}
 		}
 		if len(boundIssues) > 0 {
-			c.JSON(409, map[string]string{"error": fmt.Sprintf("该 SOP 仍被 %d 个未关闭的 Issue 绑定（%s），请先改绑", len(boundIssues), strings.Join(boundIssues, ", "))})
+			c.JSON(409, map[string]string{"error": fmt.Sprintf("该 LOOP 仍被 %d 个未关闭的 Issue 绑定（%s），请先改绑", len(boundIssues), strings.Join(boundIssues, ", "))})
 			return
 		}
 		if err := h.repo.DeleteWorkflow(id); err != nil {
@@ -1194,7 +1221,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			return
 		}
 		if v.Shared && !restored.Shared && h.sharedScheduleReferences("sop", id) {
-			c.JSON(http.StatusConflict, map[string]string{"error": "该 SOP 仍被共享任务引用，不能取消共享"})
+			c.JSON(http.StatusConflict, map[string]string{"error": "该 LOOP 仍被共享任务引用，不能取消共享"})
 			return
 		}
 		stored, err := h.repo.RestoreWorkflowRevision(c.Param("rev"))
@@ -1298,7 +1325,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			return
 		}
 		// A generic template id is reserved: no clone, whether its source is a
-		// regular SOP or the template itself, may occupy it, otherwise the
+		// regular LOOP or the template itself, may occupy it, otherwise the
 		// store row would shadow the built-in catalog entry.
 		if _, taken := h.repo.GenericTemplateByWorkflow(req.ID); taken {
 			c.JSON(http.StatusConflict, map[string]string{"error": "该 ID 与平台通用模板冲突，请换一个 ID"})
@@ -1361,7 +1388,7 @@ func (h *catalogHandlers) validateWorkflowProjectCredentials(c *gin.Context, wf 
 	user, ok := h.requestUser(c.Request, true)
 	use, _ := h.projectCredentialAccess(c.Request, wf.ProjectID, user.ID)
 	if !ok || !use {
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权在该 SOP 中绑定项目凭据"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权在该 LOOP 中绑定项目凭据"})
 		return false
 	}
 	if _, err := h.repo.ProjectCredentialVariableNames(c.Request.Context(), wf.ProjectID, wf.ProjectCredentialIDs); err != nil {
