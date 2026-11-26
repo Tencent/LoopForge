@@ -843,7 +843,7 @@ global.state = {data: {executors: [
 global.window = {AgentFlowExecutorModels: Object.fromEntries(
   state.data.executors.slice(1, -1).map(({id}) => [id, {configured: true}])
 )};
-eval(code.slice(code.indexOf('function executorOptions('), code.indexOf('function selectAgent(')));
+eval(code.slice(code.indexOf('const managedAgentExecutors='), code.indexOf('function selectAgent(')));
 for (const id of ['opencode', 'cursor', 'agy', 'kimi', 'pi', 'dsh', 'zcode']) {
   assert.ok(executorOptions(id).includes('value="' + id + '" selected'), id);
 }

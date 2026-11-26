@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,6 +69,7 @@ const (
 const (
 	RunnerTaskDesiredCancel        = "cancel"
 	RunnerTaskActionCleanupRun     = "cleanup_run"
+	RunnerTaskActionExternalAgent  = "external_agent"
 	RunnerTaskActionArchivePreview = "archive_preview"
 	RunnerTaskActionPullWorkBranch = "pull_work_branch"
 	RunnerTaskActionPushWorkBranch = "push_work_branch"
@@ -290,6 +293,17 @@ const RunnerVersionExistingWorkBranch = "0.7.0"
 // Older daemons ignore CreateNewWorkBranch and would quietly check the existing
 // branch out instead.
 const RunnerVersionCreateNewWorkBranch = "0.9.1"
+
+const openSandboxRunnerPrefix = "osrunner-"
+
+func OpenSandboxRunnerID(workspaceRunID string) string {
+	id := sha256.Sum256([]byte(workspaceRunID))
+	return openSandboxRunnerPrefix + hex.EncodeToString(id[:16])
+}
+
+func IsOpenSandboxRunner(id string) bool {
+	return strings.HasPrefix(id, openSandboxRunnerPrefix)
+}
 
 type Runner struct {
 	ID             string   `json:"id"`

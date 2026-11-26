@@ -191,6 +191,9 @@ func main() {
 		// of pool projects: they wait for, or move to, a pool runner.
 		Required: strings.EqualFold(strings.TrimSpace(os.Getenv("AGENTFLOW_LOCAL_EXECUTION")), "false"),
 	})
+	if err := configureOptionalExecution(e); err != nil {
+		log.Fatal(err)
+	}
 	attachPreviewStore(e, s)
 	log.Printf("engine instance=%s role=%s execute_runs=%t run_lease_ttl=%s", instanceID, role, executeRuns, leaseTTL)
 	claimCtx, stopClaim := context.WithCancel(context.Background())

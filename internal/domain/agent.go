@@ -84,16 +84,17 @@ type AgentDefinition struct {
 	// KnowledgeBase binds the reserved read-only agentflow-knowledge MCP and
 	// the built-in knowledge usage rule. Upstream credentials stay on the
 	// platform; the role only receives a short-lived project-scoped token.
-	KnowledgeBase   bool                     `json:"knowledgeBase,omitempty"`
-	Hooks           []AgentHook              `json:"hooks,omitempty"`
-	ExecutorID      string                   `json:"executorId,omitempty"`
-	Model           string                   `json:"model,omitempty"`
-	Effort          string                   `json:"effort,omitempty"`
-	Loop            AgentLoopPolicy          `json:"loop"`
-	Interventions   []HumanInterventionPoint `json:"interventions,omitempty"`
-	ArtifactOutputs []ArtifactContract       `json:"artifactOutputs,omitempty"`
-	Verification    []VerificationGate       `json:"verification"`
-	UpdatedAt       time.Time                `json:"updatedAt"`
+	KnowledgeBase       bool                     `json:"knowledgeBase,omitempty"`
+	Hooks               []AgentHook              `json:"hooks,omitempty"`
+	ExecutorID          string                   `json:"executorId,omitempty"`
+	ExternalAgentTarget string                   `json:"externalAgentTarget,omitempty"` // a2a: runner (default) or remote
+	Model               string                   `json:"model,omitempty"`
+	Effort              string                   `json:"effort,omitempty"`
+	Loop                AgentLoopPolicy          `json:"loop"`
+	Interventions       []HumanInterventionPoint `json:"interventions,omitempty"`
+	ArtifactOutputs     []ArtifactContract       `json:"artifactOutputs,omitempty"`
+	Verification        []VerificationGate       `json:"verification"`
+	UpdatedAt           time.Time                `json:"updatedAt"`
 }
 
 // AgentHook is a role-scoped lifecycle script. The runtime compiles the common
@@ -132,6 +133,40 @@ type HumanInterventionPoint struct {
 	Stage        string `json:"stage"` // before_execution, after_execution, before_publish, on_failure
 	Required     bool   `json:"required"`
 	Instructions string `json:"instructions,omitempty"`
+}
+
+const (
+	WMAExecutorID       = "wma"
+	A2AExecutorID       = "a2a"
+	ExternalAgentRunner = "runner"
+	ExternalAgentRemote = "remote"
+)
+
+func IsManagedAgentExecutor(provider string) bool {
+	return provider == WMAExecutorID || provider == A2AExecutorID
+}
+
+func UsesPersonalAgentRunner(provider, target string) bool {
+	return provider == A2AExecutorID && target != ExternalAgentRemote
+}
+
+func (a AgentDefinition) ValidateManagedExecutor(provider string) error {
+	target := a.ExternalAgentTarget
+	if target != "" && (provider != A2AExecutorID || (target != ExternalAgentRunner && target != ExternalAgentRemote)) {
+		return errors.New("externalAgentTarget 仅适用于 A2A 角色，可选 runner 或 remote")
+	}
+	if !IsManagedAgentExecutor(provider) {
+		return nil
+	}
+	if len(a.ArtifactOutputs) > 0 || len(a.Verification) > 0 || len(a.Interventions) > 0 || a.Loop.Enabled {
+		return errors.New("托管 Agent 角色仅支持文本结果。工作区产物、门禁和自修正需要 CLI")
+	}
+	if len(a.Rules) > 0 || len(a.Skills) > 0 || len(a.MCPServers) > 0 || len(a.Hooks) > 0 ||
+		a.PlatformMCP || a.KnowledgeBase ||
+		strings.TrimSpace(a.Model) != "" || strings.TrimSpace(a.Effort) != "" {
+		return errors.New("请在托管 Agent 的服务端配置模型、角色资产和工具")
+	}
+	return nil
 }
 
 type ExecutorDefinition struct {

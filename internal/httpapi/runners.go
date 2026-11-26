@@ -19,6 +19,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/opensandbox"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
@@ -794,7 +795,14 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 			provided = raw
 		}
 	}
-	owner, authorized := h.resolveRunnerRegistrant(c.Request)
+	var owner int64
+	var managedID string
+	var authorized bool
+	if strings.HasPrefix(provided, opensandbox.BootstrapPrefix) {
+		managedID, authorized = h.engine.OpenSandboxRegistrant(provided)
+	} else {
+		owner, authorized = h.resolveRunnerRegistrant(c.Request)
+	}
 	if !authorized {
 		// No credential at all and no shared bootstrap token configured:
 		// registration is closed. A presented-but-invalid credential (for
@@ -826,7 +834,17 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	if input.MaxConcurrency < 1 {
+	requestedID := strings.TrimSpace(input.RunnerID)
+	if (managedID != "" && requestedID != "" && requestedID != managedID) ||
+		(managedID == "" && domain.IsOpenSandboxRunner(requestedID)) {
+		c.JSON(http.StatusForbidden, map[string]string{"error": "runner identity is reserved for its OpenSandbox workspace"})
+		return
+	}
+	if managedID != "" {
+		requestedID = managedID
+		input.MaxConcurrency = 1
+		input.Labels = nil
+	} else if input.MaxConcurrency < 1 {
 		input.MaxConcurrency = 1
 	}
 	if input.MaxConcurrency > 32 {
@@ -848,12 +866,14 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 		OwnerUserID:            owner,
 		LastSeenAt:             &now,
 	}
-	existing, found := h.repo.Runner(strings.TrimSpace(input.RunnerID))
+	existing, found := h.repo.Runner(requestedID)
 	renew := found && existing.OwnerUserID == owner
 	if renew {
 		runner.ID = existing.ID
 		runner.CreatedAt = existing.CreatedAt
 		runner.Runtimes = normalizeRunnerRuntimes(input.Runtimes, existing.Runtimes)
+	} else if managedID != "" {
+		runner.ID = managedID
 	} else {
 		runner.ID = "runner-" + randomID()
 	}
@@ -966,6 +986,10 @@ func (h *runnersHandlers) runnerTasksCollection(c *gin.Context) {
 		if !decode(c, &input) {
 			return
 		}
+		if domain.IsOpenSandboxRunner(strings.TrimSpace(input.RunnerID)) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "OpenSandbox Runner is reserved for its workspace"})
+			return
+		}
 		input.Provider = strings.TrimSpace(input.Provider)
 		if input.Provider == "" {
 			c.JSON(http.StatusBadRequest, map[string]string{"error": "provider 不能为空"})
@@ -1069,7 +1093,9 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			case profile.HasResourceLimits() && !input.SupportsDockerSandboxLimits:
 				err = errors.New(domain.RunnerDockerSandboxLimitsUpgradeMessage)
 			case task.RunID != "" && task.Action == "":
-				err = domain.ValidateFrozenSandbox(profile)
+				if profile.Driver != domain.SandboxDriverLocal || !domain.IsOpenSandboxRunner(runner.ID) || task.RunnerID != runner.ID {
+					err = domain.ValidateFrozenSandbox(profile)
+				}
 				if err == nil {
 					task.ProjectCredentialEnv, err = h.runnerTaskProjectCredentialEnv(c.Request.Context(), task, runner)
 				}
@@ -1214,6 +1240,9 @@ func resolveRunnerTaskSandbox(task domain.RunnerTask, runnerOS string) domain.Ru
 // leased by. An untargeted, unleased task is visible to every runner because
 // any of them may claim it.
 func runnerMaySeeTask(runner domain.Runner, task domain.RunnerTask) bool {
+	if domain.IsOpenSandboxRunner(runner.ID) && task.RunnerID != runner.ID {
+		return false
+	}
 	if task.LeaseOwner != "" {
 		return task.LeaseOwner == runner.ID
 	}

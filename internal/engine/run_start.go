@@ -153,7 +153,14 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 	}
 	var workspaceSandboxID string
 	var parent domain.Run
-	if executionContext.ParentRunID != "" {
+	if executionContext.ParentRunID == "" {
+		executionContext.ExecutionProviderID = ""
+		executionContext.ExecutionResourceID = ""
+		executionContext.ExecutionResourcePending = false
+		if executionContext.ExecutionPool == domain.ExecutionPoolOpenSandbox {
+			executionContext.ExecutionPool = ""
+		}
+	} else {
 		var ok bool
 		parent, ok = e.repo.RunState(executionContext.ParentRunID)
 		if !ok {
@@ -162,11 +169,12 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 		if wf.AutoSelectSandbox {
 			workspaceSandboxID = parent.WorkflowSnapshot.SandboxProfileID
 		}
-		if target := parent.ExecutionContext; target.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		if target := parent.ExecutionContext; target.ExecutionPool == domain.ExecutionPoolProjectAuto || isOpenSandboxRun(parent) {
 			executionContext.ExecutionPool = target.ExecutionPool
 			executionContext.ExecutionMode = target.ExecutionMode
 			executionContext.ExecutionRunnerID = target.ExecutionRunnerID
 			executionContext.RunnerWorkspaceLayout = target.RunnerWorkspaceLayout
+			executionContext.ExecutionProviderID = target.ExecutionProviderID
 		}
 	}
 	if !workspace && executionContext.ParentRunID == "" && executionContext.WorkspaceRunID != "" {
@@ -206,6 +214,8 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 	switch {
 	case workspace:
 		profile, err = e.repo.ConversationSandbox(executionContext.ProjectID, wf.SandboxProfileID)
+	case isOpenSandboxRun(parent) && wf.AutoSelectSandbox:
+		profile, _, err = e.workspaceSandboxProfile(parent)
 	case autoAssign:
 		candidates, profile, sandboxSelection, err = e.prepareAutoAssign(ctx, wf, executionContext, repositories, input)
 	case wf.AutoSelectSandbox:
@@ -218,6 +228,23 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 	}
 	if err != nil {
 		return domain.Run{}, err
+	}
+	if backend := e.openSandboxProjects[executionContext.ProjectID]; backend != "" &&
+		executionContext.ParentRunID == "" && !executionContext.ExecutionPinned && !workspace &&
+		!autoAssign && !wf.AutoSelectSandbox && !executionContext.IsEvolutionReplay() &&
+		(executionContext.ExecutionRunnerID == "" || executionContext.ExecutionPool == domain.ExecutionModeCloud) &&
+		openSandboxSupportsProfile(profile) {
+		executionContext.ExecutionPool = domain.ExecutionPoolOpenSandbox
+		executionContext.ExecutionProviderID = backend
+		executionContext.ExecutionRunnerID = ""
+		executionContext.ExecutionMode = domain.ExecutionModeRunner
+		executionContext.RunnerWorkspaceLayout = domain.RunnerWorkspaceLayoutShared
+	}
+	if executionContext.ExecutionPool == domain.ExecutionPoolOpenSandbox && !openSandboxSupportsProfile(profile) {
+		return domain.Run{}, fmt.Errorf("OpenSandbox 工作区需要使用 native 沙箱配置")
+	}
+	if domain.IsOpenSandboxRunner(executionContext.ExecutionRunnerID) && executionContext.ExecutionPool != domain.ExecutionPoolOpenSandbox {
+		return domain.Run{}, fmt.Errorf("OpenSandbox Runner 仅供关联工作区使用")
 	}
 	sandbox, err := resolveSandbox(profile)
 	if err != nil {
@@ -257,6 +284,9 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("run-%d", now.UnixNano())
+	if executionContext.ParentRunID == "" && executionContext.ExecutionPool == domain.ExecutionPoolOpenSandbox {
+		executionContext.ExecutionRunnerID = domain.OpenSandboxRunnerID(id)
+	}
 	var firstRepository domain.RepositoryContext
 	if len(repositories) > 0 {
 		firstRepository = repositories[0]

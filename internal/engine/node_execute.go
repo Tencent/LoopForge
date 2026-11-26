@@ -441,6 +441,15 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		return
 	}
 	current, _ := e.repo.RunProgress(runID)
+	if node.Type != "script" && node.Type != "command" {
+		if agent, ok := workflowAgent(e.repo, wf, node.AgentID); ok {
+			provider := managedAgentProvider(node, agent)
+			if provider != "" {
+				failNode(e.executeManagedAgentNode(ctx, wf, current, node, agent, provider, executionGeneration, executionAttempt), nodeRejects(node))
+				return
+			}
+		}
+	}
 	current, err := e.bindPoolRunner(ctx, current, node.ID)
 	if err != nil {
 		failNode(err, false)

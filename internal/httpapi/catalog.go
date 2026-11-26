@@ -422,6 +422,9 @@ func validateCatalogAgentExecutor(agent *domain.AgentDefinition) error {
 	agent.ExecutorID = strings.TrimSpace(agent.ExecutorID)
 	agent.Model = strings.TrimSpace(agent.Model)
 	agent.Effort = strings.TrimSpace(agent.Effort)
+	if err := agent.ValidateManagedExecutor(agent.ExecutorID); err != nil {
+		return err
+	}
 	if agent.ExecutorID == "" {
 		if (agent.Model == "" || agent.Model == "default") && agent.Effort == "" {
 			agent.Model = ""

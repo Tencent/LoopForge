@@ -86,7 +86,7 @@ func (e *Engine) ExecutorCredentials(userID int64, projectID string) func(kind s
 }
 
 func sopRunnerAuthMode(ec domain.TelemetryContext, runner domain.Runner, provider string) string {
-	if ec.ExecutionPool == domain.ExecutionPoolProjectAuto && runner.OwnerUserID == 0 {
+	if (ec.ExecutionPool == domain.ExecutionPoolProjectAuto || ec.ExecutionPool == domain.ExecutionPoolOpenSandbox) && runner.OwnerUserID == 0 {
 		return domain.RuntimeAuthPersonal
 	}
 	// A conversation allocated to a platform runner keeps using the
@@ -236,7 +236,7 @@ func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.Teleme
 	defaults := access.defaults()
 	selected := make(map[string]domain.AssistantDefaults)
 	requirements := make([]SOPExecutorRequirement, 0)
-	seen := make(map[string]bool)
+	seen := make(map[string]int)
 	for _, node := range wf.Nodes {
 		if node.Type != "agent" {
 			continue
@@ -263,10 +263,20 @@ func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.Teleme
 				return nil, nil, err
 			}
 		}
-		if preflight && !seen[ex.Kind] {
-			seen[ex.Kind] = true
+		if preflight {
+			configured := ex.Kind != "" && access.configured(ex.Kind)
+			if domain.UsesPersonalAgentRunner(ex.Kind, role.ExternalAgentTarget) {
+				configured = e.personalAgentRunner(ec)
+			} else if domain.IsManagedAgentExecutor(ex.Kind) {
+				configured = e.managedAgentClient(ex.Kind, ec) != nil
+			}
+			if i, exists := seen[ex.Kind]; exists {
+				requirements[i].Configured = requirements[i].Configured && configured
+				continue
+			}
+			seen[ex.Kind] = len(requirements)
 			requirements = append(requirements, SOPExecutorRequirement{
-				Kind: ex.Kind, Name: ex.Name, Configured: ex.Kind != "" && access.configured(ex.Kind),
+				Kind: ex.Kind, Name: ex.Name, Configured: configured,
 			})
 		}
 	}

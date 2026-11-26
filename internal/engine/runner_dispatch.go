@@ -179,6 +179,11 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 		return nil, err
 	}
 	spec := resolvedSandboxSnapshot(profile, resources)
+	if isOpenSandboxRun(run) && runnerID == domain.OpenSandboxRunnerID(workspaceRunID(run)) {
+		// The assigned container is the isolation boundary. Only its dedicated
+		// Runner receives the process-level driver with the profile environment.
+		spec.Profile.Driver = domain.SandboxDriverLocal
+	}
 	var codexLoginRelay bool
 	if profile.Driver == domain.SandboxDriverDocker && runnerID != "" {
 		runner, ok := e.repo.Runner(runnerID)
@@ -573,9 +578,22 @@ func (e *Engine) defaultExecutionRunner(run domain.Run) string {
 // same validation to cover a disconnect between this check and execution.
 func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error {
 	runnerID := e.defaultExecutionRunner(run)
-	if runnerID == "" || isPoolRun(run) {
+	if runnerID == "" || isPoolRun(run) || isOpenSandboxRun(run) {
 		// A pool run is rebound to another pool runner when its node starts.
 		return nil
+	}
+	frozen := run.WorkflowSnapshot
+	for _, node := range frozen.Nodes {
+		if node.ID != nodeID {
+			continue
+		}
+		if agent, ok := workflowAgent(e.repo, frozen, node.AgentID); ok {
+			ex, err := workflowNodeExecutor(e.repo, frozen, node, agent)
+			if err == nil && domain.IsManagedAgentExecutor(ex.Kind) && !domain.UsesPersonalAgentRunner(ex.Kind, agent.ExternalAgentTarget) {
+				return nil
+			}
+		}
+		break
 	}
 	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
 		if err := e.validateAutoAssignBinding(run); err != nil {
@@ -621,6 +639,9 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 // explicit deletion also calls it for failed/cancelled runs. The deterministic
 // task ID makes those paths idempotent without resetting active/completed work.
 func (e *Engine) queueRunnerRunCleanup(run domain.Run) error {
+	if isOpenSandboxRun(run) && !sharesWorkspace(run) {
+		return e.releaseOpenSandbox(run)
+	}
 	runnerID := e.defaultExecutionRunner(run)
 	if runnerID == "" {
 		return nil

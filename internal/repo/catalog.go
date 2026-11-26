@@ -392,6 +392,13 @@ func BuiltInExecutors() []domain.ExecutorDefinition {
 }
 
 func BuiltInExecutor(id string) (domain.ExecutorDefinition, bool) {
+	// Managed Agents use the role API and have no local CLI binary.
+	switch strings.TrimSpace(id) {
+	case domain.WMAExecutorID:
+		return domain.ExecutorDefinition{ID: domain.WMAExecutorID, Name: "WorkBuddy Managed Agent", Kind: domain.WMAExecutorID, Protocol: "acp"}, true
+	case domain.A2AExecutorID:
+		return domain.ExecutorDefinition{ID: domain.A2AExecutorID, Name: "External A2A Agent", Kind: domain.A2AExecutorID, Protocol: "json-rpc"}, true
+	}
 	for _, executor := range BuiltInExecutors() {
 		if executor.ID == strings.TrimSpace(id) {
 			return executor, true

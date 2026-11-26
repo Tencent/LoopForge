@@ -622,8 +622,16 @@ func (r *RunnersRepo) RunnerTaskAvailable(runnerID string, providers []string) (
 		return false, nil
 	}
 	var rows []runnerTaskRow
-	err := r.DB.Select("id").Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed).Limit(1).Find(&rows).Error
+	err := queuedTasksForRunner(r.DB.Select("id"), runnerID, allowed).Limit(1).Find(&rows).Error
 	return len(rows) > 0, err
+}
+
+func queuedTasksForRunner(db *gorm.DB, runnerID string, providers []string) *gorm.DB {
+	query := db.Where("status = ? AND provider IN ?", domain.RunnerTaskQueued, providers)
+	if domain.IsOpenSandboxRunner(runnerID) {
+		return query.Where("runner_id = ?", runnerID)
+	}
+	return query.Where("(runner_id = '' OR runner_id = ?)", runnerID)
 }
 
 // ClaimRunnerTask atomically leases the oldest queued task whose provider is
@@ -651,8 +659,7 @@ func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now t
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var rows []runnerTaskRow
 		// Select only what the lease update needs; see RunnerTasks.
-		if err := r.locking(tx).Select("id", "attempt").
-			Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed).
+		if err := queuedTasksForRunner(r.locking(tx).Select("id", "attempt"), runnerID, allowed).
 			Order("created_at").Limit(1).
 			Find(&rows).Error; err != nil {
 			return err

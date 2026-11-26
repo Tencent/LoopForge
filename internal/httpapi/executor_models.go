@@ -241,6 +241,11 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 	hasCredential := engine.ExecutorCredentials(h.repo, user.ID, projectID)
 	if h.engine != nil {
 		hasCredential = h.engine.ExecutorCredentials(user.ID, projectID)
+		for _, provider := range []string{domain.WMAExecutorID, domain.A2AExecutorID} {
+			if h.engine.ManagedAgentAvailable(projectID, user.ID, provider) {
+				catalogs[provider] = executorModelCatalog{Configured: true}
+			}
+		}
 	}
 	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
 		id := engine

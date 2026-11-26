@@ -1,0 +1,217 @@
+package engine
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"agentflow/internal/domain"
+	"agentflow/internal/opensandbox"
+	"agentflow/internal/repo"
+)
+
+const openSandboxStartupTimeout = 2 * time.Minute
+
+const DefaultOpenSandboxBackend = "default"
+
+// ConfigureOpenSandbox installs a lifecycle backend before accepting runs.
+// Each project resolves to one backend, which is frozen on the root run.
+func (e *Engine) ConfigureOpenSandbox(backend string, client *opensandbox.Client, projects []string) error {
+	if backend == "" || backend != strings.TrimSpace(backend) || client == nil || len(projects) == 0 {
+		return errors.New("OpenSandbox backend requires an ID, lifecycle client and explicit project IDs")
+	}
+	if e.openSandboxBackends[backend] != nil {
+		return fmt.Errorf("duplicate OpenSandbox backend %q", backend)
+	}
+	seen := make(map[string]bool, len(projects))
+	for _, project := range projects {
+		if project == "" || project == "*" || project != strings.TrimSpace(project) {
+			return errors.New("OpenSandbox requires explicit project IDs")
+		}
+		if e.openSandboxProjects[project] != "" || seen[project] {
+			return fmt.Errorf("project %q has multiple OpenSandbox bindings", project)
+		}
+		seen[project] = true
+	}
+	if e.openSandboxBackends == nil {
+		e.openSandboxBackends = make(map[string]*opensandbox.Client)
+		e.openSandboxProjects = make(map[string]string)
+	}
+	e.openSandboxBackends[backend] = client
+	for project := range seen {
+		e.openSandboxProjects[project] = backend
+	}
+	return nil
+}
+
+func (e *Engine) openSandboxForRun(run domain.Run) *opensandbox.Client {
+	backend := run.ExecutionContext.ExecutionProviderID
+	if backend == "" {
+		backend = DefaultOpenSandboxBackend
+	}
+	return e.openSandboxBackends[backend]
+}
+
+func isOpenSandboxRun(run domain.Run) bool {
+	return run.ExecutionContext.ExecutionPool == domain.ExecutionPoolOpenSandbox
+}
+
+func openSandboxSupportsProfile(profile domain.SandboxProfile) bool {
+	return profile.Driver == domain.SandboxDriverNative && !profile.Privileged && !profile.ReadOnlyRootFS && !profile.HasResourceLimits()
+}
+
+// OpenSandboxRegistrant validates that an issued bootstrap token is still
+// bound to a live workspace. It cannot register an ordinary or unrelated Runner.
+func (e *Engine) OpenSandboxRegistrant(token string) (string, bool) {
+	id, ok := opensandbox.WorkspaceFromBootstrap(token)
+	if !ok {
+		return "", false
+	}
+	run, ok := e.repo.RunState(id)
+	ec := run.ExecutionContext
+	client := e.openSandboxForRun(run)
+	if !ok || !isLiveStatus(run.Status) || !isOpenSandboxRun(run) || sharesWorkspace(run) ||
+		client == nil || !client.ValidBootstrap(token, id) || (!ec.ExecutionResourcePending && ec.ExecutionResourceID == "") ||
+		ec.ExecutionRunnerID != domain.OpenSandboxRunnerID(id) {
+		return "", false
+	}
+	return ec.ExecutionRunnerID, true
+}
+
+// bindOpenSandboxRunner waits for both the sandbox and its dedicated Runner.
+// Child SOPs inherit the owner's binding and do not provision new resources.
+func (e *Engine) bindOpenSandboxRunner(ctx context.Context, run domain.Run, nodeID string) (domain.Run, error) {
+	ownerID := workspaceRunID(run)
+	unlock := e.lockPoolBinding(ownerID)
+	defer unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, openSandboxStartupTimeout)
+	defer cancel()
+	owner, ok := e.repo.RunState(ownerID)
+	if !ok || !isOpenSandboxRun(owner) || owner.ExecutionContext.ProjectID != run.ExecutionContext.ProjectID ||
+		owner.ExecutionContext.ExecutionProviderID != run.ExecutionContext.ExecutionProviderID {
+		return run, errors.New("OpenSandbox 工作区绑定不存在")
+	}
+	client := e.openSandboxForRun(owner)
+	if client == nil {
+		return run, errors.New("此运行绑定的 OpenSandbox 未配置")
+	}
+	runnerID := domain.OpenSandboxRunnerID(ownerID)
+	if owner.ExecutionContext.ExecutionRunnerID != runnerID || run.ExecutionContext.ExecutionRunnerID != runnerID {
+		return run, errors.New("OpenSandbox Runner 与工作区绑定不符")
+	}
+	externalID := owner.ExecutionContext.ExecutionResourceID
+	if externalID == "" {
+		if sharesWorkspace(run) || !e.ownsRun(owner) {
+			return run, errors.New("等待所属运行分配 OpenSandbox")
+		}
+		var err error
+		externalID, err = e.provisionOpenSandbox(ctx, client, owner, nodeID)
+		if err != nil {
+			return run, err
+		}
+	}
+	for {
+		sandbox, err := client.Inspect(ctx, ownerID, externalID)
+		if errors.Is(err, opensandbox.ErrNotFound) {
+			return run, errors.New("OpenSandbox 已回收，原工作区不可用，请新建运行")
+		}
+		if err != nil {
+			return run, err
+		}
+		switch sandbox.Status.State {
+		case "Running":
+			runner, ok := e.repo.Runner(runnerID)
+			if ok && runner.Status == domain.RunnerStatusOnline && runner.SupportsIntegrate() && runner.SupportsReportedOutputs() {
+				if fresh, ok := e.repo.RunProgress(run.ID); ok {
+					return fresh, e.requireRunnerRepositoryCapabilities(runnerID, fresh.RepositoryContexts())
+				}
+				return run, errors.New("运行已不存在")
+			}
+		case "Failed", "Terminated", "Deleting", "Stopping", "Paused":
+			return run, fmt.Errorf("OpenSandbox 不可执行，状态为 %s", sandbox.Status.State)
+		}
+		select {
+		case <-ctx.Done():
+			return run, fmt.Errorf("等待 OpenSandbox Runner 就绪: %w", ctx.Err())
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (e *Engine) provisionOpenSandbox(ctx context.Context, client *opensandbox.Client, owner domain.Run, nodeID string) (string, error) {
+	sandbox, err := client.Find(ctx, owner.ID)
+	if errors.Is(err, opensandbox.ErrNotFound) {
+		// Persist the create intent before POST. After a response is lost or a
+		// worker restarts, retry only the lookup, which cannot start another Pod.
+		recorded := false
+		updateErr := e.updateRunErr(owner.ID, func(current *domain.Run) {
+			ec := &current.ExecutionContext
+			if e.ownsRun(*current) && isLiveStatus(current.Status) && !ec.ExecutionResourcePending && ec.ExecutionResourceID == "" {
+				ec.ExecutionResourcePending = true
+				recorded = true
+				e.event(current, nodeID, "execution.waiting", "正在创建 OpenSandbox 执行环境")
+			}
+		})
+		if updateErr != nil {
+			return "", updateErr
+		}
+		if !recorded {
+			return "", errors.New("OpenSandbox 创建结果待确认，请检查原申请或新建运行")
+		}
+		sandbox, err = client.Create(ctx, owner.ID)
+	}
+	if err != nil {
+		return "", err
+	}
+	bound := false
+	updateErr := e.updateRunErr(owner.ID, func(current *domain.Run) {
+		ec := &current.ExecutionContext
+		if e.ownsRun(*current) && isLiveStatus(current.Status) && (ec.ExecutionResourceID == "" || ec.ExecutionResourceID == sandbox.ID) {
+			ec.ExecutionResourceID = sandbox.ID
+			ec.ExecutionResourcePending = false
+			bound = true
+			e.event(current, nodeID, "execution.bound", "已绑定 OpenSandbox 执行环境")
+		}
+	})
+	if updateErr != nil {
+		return "", updateErr
+	}
+	if !bound {
+		return "", errors.New("运行租约已变更，无法绑定 OpenSandbox")
+	}
+	return sandbox.ID, nil
+}
+
+func (e *Engine) releaseOpenSandbox(run domain.Run) error {
+	ec := run.ExecutionContext
+	id := ec.ExecutionResourceID
+	if id == "" && !ec.ExecutionResourcePending {
+		return nil
+	}
+	client := e.openSandboxForRun(run)
+	if client == nil {
+		return errors.New("此运行绑定的 OpenSandbox 未配置")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if id == "" {
+		sandbox, err := client.Find(ctx, run.ID)
+		if errors.Is(err, opensandbox.ErrNotFound) {
+			return nil // any create accepted later still expires at the provider TTL
+		}
+		if err != nil {
+			return err
+		}
+		id = sandbox.ID
+	}
+	if err := client.Release(ctx, run.ID, id); err != nil {
+		return err
+	}
+	if err := e.repo.DeregisterRunner(ec.ExecutionRunnerID, time.Now().UTC()); err != nil && !errors.Is(err, repo.ErrRunnerNotFound) {
+		return err
+	}
+	return nil
+}

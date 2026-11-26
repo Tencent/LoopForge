@@ -57,6 +57,12 @@ func main() {
 	cfg.MaxConcurrency = concurrencyFromEnv(cfg.MaxConcurrency)
 	cfg.Labels = parseLabels(*labels)
 
+	var err error
+	cfg.ExternalAgent, err = configuredExternalAgent()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	daemon, err := runner.New(cfg)
 	if err != nil {
 		log.Fatal(err)

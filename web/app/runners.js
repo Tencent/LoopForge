@@ -319,7 +319,9 @@ function renderRunnersView(){
     const isProjectDefault=r.id===projectDefaultId;
     const canSetProjectDefault=projectLoaded&&projectId&&r.canUseInProject&&!isProjectDefault;
     const cliRows=discoveredCLIs.map(rt=>runnerRuntimeHTML(r,rt,shared)).join('');
-    const cliSection=cliRows||'<div class="runner-runtime-empty">未发现支持的 Agent CLI</div>';
+    const localAgent=!shared&&(r.runtimes||[]).some(rt=>rt.provider==='a2a'&&rt.status!=='disabled');
+    const agentRow=localAgent?'<div class="runner-runtime-row"><span class="runner-runtime-name"><b>本机 A2A Agent</b></span><span class="runner-auth-fixed">本机服务</span></div>':'';
+    const cliSection=(cliRows+agentRow)||'<div class="runner-runtime-empty">未发现支持的 Agent CLI</div>';
     const osLabel=runnerOSLabels[r.os]||r.os||'?';
     const defaultBlocker=runnerDefaultBlocker(r);
     const checking=runnerMaintenancePending.has(r.id);

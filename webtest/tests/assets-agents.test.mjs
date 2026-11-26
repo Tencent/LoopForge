@@ -484,3 +484,40 @@ test('platform roles are read-only for project members and can be copied', async
   await settle();
   assert.equal(app.document.querySelector('#agentSave').hidden, false);
 });
+
+test('LOOP role editor saves an external Agent target and preserves CLI model controls', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', {
+    codebuddy: { configured: true, models: [{ id: 'flash' }] },
+    wma: { configured: true },
+    a2a: { configured: true }
+  });
+  app.evaluate("switchView('agents');openAgentWizard()");
+  await settle();
+  const form = app.document.querySelector('#agentForm');
+  const executor = form.elements.executorId;
+  const target = app.document.querySelector('#agentExternalTargetField');
+  const model = app.document.querySelector('#agentExecutionModelField');
+  const choose = (id) => {
+    executor.value = id;
+    executor.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  };
+  choose('codebuddy');
+  assert.equal(model.hidden, false);
+  assert.equal(target.hidden, true);
+  choose('wma');
+  assert.equal(model.hidden, true);
+  assert.equal(target.hidden, true);
+  choose('a2a');
+  assert.equal(target.hidden, false);
+  form.elements.externalAgentTarget.value = 'remote';
+  form.elements.id.value = 'role-remote-agent';
+  form.elements.name.value = 'Remote Agent';
+  app.router.put('/api/agents', (call) => ({ status: 200, body: call.body }));
+  await app.evaluate("persistAgent($('#agentForm'))");
+  const saved = app.router.calls.find((c) => c.path === '/api/agents' && c.method === 'PUT');
+  assert.equal(saved.body.executorId, 'a2a');
+  assert.equal(saved.body.externalAgentTarget, 'remote');
+  assert.equal(saved.body.model, '');
+});

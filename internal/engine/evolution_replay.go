@@ -44,6 +44,9 @@ func (e *Engine) validateEvolutionReplayDefinition(wf domain.WorkflowDefinition,
 		if !ok {
 			return fmt.Errorf("agent %q not found", node.AgentID)
 		}
+		if managedAgentProvider(node, agent) != "" {
+			return fmt.Errorf("进化回放暂不支持角色「%s」调用托管 Agent", agent.ID)
+		}
 		if len(agent.Hooks) > 0 {
 			return fmt.Errorf("进化回放暂不支持角色「%s」的生命周期脚本", agent.ID)
 		}

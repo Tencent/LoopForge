@@ -20,6 +20,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/managedagent"
 	"agentflow/internal/procwatch"
 	"agentflow/internal/runtime"
 )
@@ -84,6 +85,7 @@ type Config struct {
 	// ManagedCLIRoot explicitly opts platform runners into managed CLI coordination.
 	// Empty leaves ordinary user runners unchanged; it is never inferred from PATH.
 	ManagedCLIRoot string
+	ExternalAgent  managedagent.TextAgent
 }
 
 type daemonState struct {
@@ -362,6 +364,9 @@ func (d *Daemon) refreshRuntimes(ctx context.Context) {
 			return
 		}
 	}
+	if d.cfg.ExternalAgent != nil {
+		runtimes = append(runtimes, domain.RunnerRuntime{Provider: domain.A2AExecutorID, Status: domain.RuntimeStatusOnline})
+	}
 	d.mu.Lock()
 	d.runtimes = runtimes
 	d.mu.Unlock()
@@ -577,6 +582,8 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 		result = execResult{status: domain.RunnerTaskFailed, errMsg: "未收到任务绑定的项目凭据"}
 	case managed != nil && managed.err != nil:
 		result = execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("pin managed CLI inventory: %v", managed.err)}
+	case task.Action == domain.RunnerTaskActionExternalAgent:
+		result = d.executeExternalAgent(ctx, task)
 	case task.Action == domain.RunnerTaskActionCleanupRun:
 		result = d.executeRunCleanup(ctx, task)
 	case task.Action == domain.RunnerTaskActionArchivePreview:

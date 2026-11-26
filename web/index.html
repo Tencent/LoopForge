@@ -902,11 +902,12 @@
               <label class="as-field"><span>职责 <small>一句话，列表和流程卡片里展示</small></span><div class="as-count-wrap"><input name="description" maxlength="160" placeholder="读 Issue 和源码，写出根因与修复计划，不改业务代码"><small class="as-count" id="agentDescCount" aria-hidden="true"></small></div></label>
               <div class="as-section-label">运行方式</div>
               <div class="as-grid agent-runtime-grid">
-                <label class="as-field"><span>CLI</span>
+                <label class="as-field"><span>执行器</span>
                   <select name="executorId" class="select" id="agentExecutorSelect" aria-label="CLI" aria-describedby="agentExecutorStatus"></select>
                   <small class="muted" id="agentExecutorStatus" hidden></small>
                 </label>
-                <div class="as-field"><span>模型</span>
+                <label class="as-field" id="agentExternalTargetField" hidden><span>A2A 连接</span><select name="externalAgentTarget" class="select"><option value="runner">个人执行器上的 Agent</option><option value="remote">云端 HTTPS Agent</option></select></label>
+                <div class="as-field" id="agentExecutionModelField"><span>模型</span>
                   <div class="clarify-model-field" id="agentModelPicker" data-clarify-model>
                     <input type="hidden" name="modelChoice">
                     <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
@@ -915,7 +916,7 @@
                     <div class="ai-model-menu" hidden role="listbox"></div>
                   </div>
                 </div>
-                <div class="as-field"><span>思考强度</span>
+                <div class="as-field" id="agentExecutionEffortField"><span>思考强度</span>
                   <div class="clarify-model-field" id="agentEffortPicker" data-clarify-model>
                     <input type="hidden" name="effort" value="">
                     <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
@@ -925,6 +926,7 @@
                   </div>
                 </div>
               </div>
+              <small class="muted" id="agentManagedExecutionHint" hidden>模型和工具配置在 Agent 的服务端，回复会作为节点文本产物。</small>
               <label class="as-field" id="agentModelCustomField" hidden><span>自定义模型 ID <small>使用自定义 Base URL 时，填服务商提供的模型名</small></span><input name="model" placeholder="例如：gpt-5.6-terra"></label>
               <label class="as-switch-row agent-edit-only"><span><b>共享给其他项目</b><small>其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话</small></span><input name="shared" type="checkbox" role="switch"></label>
             </div>

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/managedagent"
+	"agentflow/internal/opensandbox"
 	"agentflow/internal/preview"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
@@ -46,6 +48,10 @@ type Engine struct {
 	executeRuns    bool
 	draining       bool
 	claimKick      chan struct{}
+
+	managedAgents       map[managedAgentBinding]managedagent.TextAgent
+	openSandboxBackends map[string]*opensandbox.Client
+	openSandboxProjects map[string]string
 
 	// MergeIntoBranch creates or reuses a Gongfeng MR from source→target and
 	// merges it (merge commit, source branch kept). Scheduled LOOP uses this

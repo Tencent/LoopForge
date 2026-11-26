@@ -24,6 +24,8 @@ type TelemetrySource struct {
 }
 
 // TelemetryContext correlates all three platform layers plus product context.
+const ExecutionPoolOpenSandbox = "opensandbox"
+
 type TelemetryContext struct {
 	ExecutionPinned bool   `json:"executionPinned,omitempty"`
 	ProjectID       string `json:"projectId,omitempty"`
@@ -38,7 +40,10 @@ type TelemetryContext struct {
 	ExecutionRunnerID string `json:"executionRunnerId,omitempty"`
 	// ExecutionPool records cloud-pool or automatic project assignment.
 	// A project-auto run without an ExecutionMode still awaits assignment.
-	ExecutionPool string `json:"executionPool,omitempty"`
+	ExecutionPool            string `json:"executionPool,omitempty"`
+	ExecutionProviderID      string `json:"executionProviderId,omitempty"`
+	ExecutionResourceID      string `json:"executionResourceId,omitempty"`
+	ExecutionResourcePending bool   `json:"executionResourcePending,omitempty"`
 	// RunnerWorkspaceLayout freezes how a self-hosted runner maps workflow
 	// nodes to disk. Empty is the legacy per-node layout; shared gives every
 	// node in a new Run the same repository and Git index.

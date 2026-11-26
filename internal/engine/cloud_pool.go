@@ -116,7 +116,7 @@ func poolRunnerCapable(runner domain.Runner, label string) bool {
 	// Pool runners receive every user's credentials, so only runners
 	// registered with the platform bootstrap token (no owner) qualify;
 	// a user's own machine cannot join by labelling itself.
-	if runner.OwnerUserID != 0 || !runner.SupportsReportedOutputs() || !runner.SupportsIntegrate() {
+	if runner.OwnerUserID != 0 || domain.IsOpenSandboxRunner(runner.ID) || !runner.SupportsReportedOutputs() || !runner.SupportsIntegrate() {
 		return false
 	}
 	for _, runnerLabel := range runner.Labels {
@@ -199,6 +199,9 @@ func isPoolRun(run domain.Run) bool {
 // machine to return before continuing. Runs on a user's own machine are left
 // alone.
 func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID string) (domain.Run, error) {
+	if isOpenSandboxRun(run) {
+		return e.bindOpenSandboxRunner(ctx, run, nodeID)
+	}
 	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
 		// Even a pool-backed auto assignment has a frozen workspace target.
 		return run, e.validateAutoAssignBinding(run)
