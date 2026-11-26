@@ -1492,7 +1492,7 @@ function runEvalPaneHTML(run){
   }else if(rec?.sopDetection){
     const findings=(rec.result?.findings||[]).map(f=>`<li><b>${escapeHTML(f.message||'')}</b>${f.evidence?`<p>${escapeHTML(f.evidence)}</p>`:''}</li>`).join('');
     const text=rec.status==='failed'?escapeHTML(rec.error||'检测执行失败'):escapeHTML(rec.result?.summary||'');
-    content=`<section class="run-eval-panel"><div class="run-eval-panel-head"><h4>SOP 自动检测</h4></div><p>${text}</p>${findings?`<ul>${findings}</ul>`:''}</section>`;
+    content=`<section class="run-eval-panel"><div class="run-eval-panel-head"><h4>LOOP 自动检测</h4></div><p>${text}</p>${findings?`<ul>${findings}</ul>`:''}</section>`;
   }else if(rec?.status==='failed'){
     content=`<section class="run-eval-panel run-eval-failed" role="alert">
       <div class="run-eval-panel-head"><h4>${runIconSlot('alert',16)} 评测失败</h4></div>
