@@ -348,11 +348,12 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 			return fmt.Errorf("rework limit reached")
 		}
 	}
-	reset := descendants(wf, target)
-	reset[target] = true
-	if err := e.guardRoutingRoleDrift(&r, reset); err != nil {
+	if err := e.guardRoutingRoleDrift(r, target); err != nil {
 		return err
 	}
+	reset := descendants(wf, target)
+	reset[target] = true
+	markLegacyRoutingReplays(&r, reset)
 	overlayLatestNodeBindings(e.repo, &r, reset)
 	var stale []string
 	interrupted := map[string]bool{}
@@ -564,7 +565,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 			}
 		}
 	}
-	if err := e.guardRoutingRoleDrift(&r, reset); err != nil {
+	if err := e.guardRoutingRoleDrift(r, nodeID); err != nil {
 		return err
 	}
 	if err := e.validateExecutionReconnect(r, nodeID); err != nil {
@@ -613,6 +614,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 		}
 		e.sandboxes.DiscardRunContainer(context.Background(), runID)
 	}
+	markLegacyRoutingReplays(&r, reset)
 	overlayLatestNodeBindings(e.repo, &r, reset)
 	for _, node := range r.WorkflowSnapshot.Nodes {
 		if node.ID == nodeID && isScriptNode(node) {

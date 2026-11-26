@@ -179,6 +179,10 @@ type NodeRun struct {
 	StartedAt       time.Time      `json:"startedAt,omitzero"`
 	FinishedAt      time.Time      `json:"finishedAt,omitzero"`
 
+	// LegacyRoutingReplay marks an explicit replay of an already attempted
+	// artifact router whose original role configuration was not recorded.
+	LegacyRoutingReplay bool `json:"legacyRoutingReplay,omitempty"`
+
 	// Stream cursors are message-scoped; pending usage is already included in
 	// Usage until a session result replaces it with authoritative totals.
 	UsageStreamCursors map[string]TokenUsage `json:"usageStreamCursors,omitempty"`

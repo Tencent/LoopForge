@@ -45,9 +45,11 @@ Route decisions are recorded as `route.decided` telemetry events.
 
 For Agent nodes that route on a JSON artifact, the Run records the role
 configuration at start and when you explicitly update the workflow snapshot.
-Retries and rework refuse a changed role rather than silently taking a fallback
-branch. This also applies when a role's verification command writes an artifact
-that only the node declares. Restore the original role configuration or start
-a new Run to use the changed role. Runs created before this check was added
-cannot replay an already attempted artifact-routing Agent without a recorded
-role fingerprint.
+Retries and rework check the role of the replay entry before resetting it.
+Downstream roles are checked only when the new route selects them for execution;
+a change to a role on a skipped branch does not block replay. If the selected
+role changed, restore its original configuration or start a new Run. This also
+covers verification commands that write an artifact declared only on the node.
+A historical Run without a recorded fingerprint can still visit an
+artifact-routing Agent for the first time, but cannot replay an Agent that has
+already run.

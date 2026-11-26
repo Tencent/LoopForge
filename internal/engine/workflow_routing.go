@@ -55,32 +55,52 @@ func captureRoutingRoleFingerprints(st *repo.Store, wf domain.WorkflowDefinition
 	return fingerprints
 }
 
-func routingRoleDriftError(node domain.WorkflowNode) error {
-	return fmt.Errorf("节点「%s」的路由角色配置已变更或不可用；请恢复原角色配置，或新建 Run", node.ID)
+func missingRoutingRoleFingerprint(nodeID string) error {
+	return fmt.Errorf("节点「%s」没有保存原路由角色的配置，无法安全重跑；请新建 Run", nodeID)
 }
 
-func (e *Engine) guardRoutingRoleDrift(r *domain.Run, nodeIDs map[string]bool) error {
+func (e *Engine) checkedRoutingRole(wf domain.WorkflowDefinition, node domain.WorkflowNode, expected string) (domain.AgentDefinition, error) {
+	role, ok := workflowAgent(e.repo, wf, node.AgentID)
+	if !ok || !matchesRoutingRoleFingerprint(role, expected) {
+		return domain.AgentDefinition{}, fmt.Errorf("节点「%s」的路由角色配置已变更或不可用；请恢复原角色配置，或新建 Run", node.ID)
+	}
+	return role, nil
+}
+
+// Check the replay entry synchronously. Resetting descendants does not mean
+// they will run: only the new routing decision establishes that.
+func (e *Engine) guardRoutingRoleDrift(r domain.Run, nodeID string) error {
 	wf := r.WorkflowSnapshot
-	sources := frozenArtifactContractSources(wf)
+	if !frozenArtifactContractSources(wf)[nodeID] {
+		return nil
+	}
 	for _, node := range wf.Nodes {
-		if node.Type != "agent" || !sources[node.ID] || !nodeIDs[node.ID] {
+		if node.ID != nodeID || node.Type != "agent" {
 			continue
 		}
-		expected := wf.RoutingRoleFingerprints[node.ID]
-		if expected == "" {
-			// Don't guess from the role's outputs: a legacy Run has no record
-			// of the role it used. Never rerun a previously attempted router
-			// against an unverifiable definition.
-			if nr := r.Nodes[node.ID]; nr != nil && nr.Attempt > 0 {
-				return fmt.Errorf("节点「%s」没有保存原路由角色的配置，无法安全重跑；请新建 Run", node.ID)
-			}
-			continue
+		if expected := wf.RoutingRoleFingerprints[nodeID]; expected != "" {
+			_, err := e.checkedRoutingRole(wf, node, expected)
+			return err
 		}
-		if role, ok := workflowAgent(e.repo, wf, node.AgentID); !ok || !matchesRoutingRoleFingerprint(role, expected) {
-			return routingRoleDriftError(node)
+		if nr := r.Nodes[nodeID]; nr != nil && nr.Attempt > 0 {
+			return missingRoutingRoleFingerprint(nodeID)
 		}
 	}
 	return nil
+}
+
+// Mark only explicit resets of previously attempted legacy routers. Normal
+// pause recovery and retry within the first execution are not replay requests.
+func markLegacyRoutingReplays(r *domain.Run, reset map[string]bool) {
+	wf := r.WorkflowSnapshot
+	sources := frozenArtifactContractSources(wf)
+	for _, node := range wf.Nodes {
+		if node.Type == "agent" && reset[node.ID] && sources[node.ID] && wf.RoutingRoleFingerprints[node.ID] == "" {
+			if nr := r.Nodes[node.ID]; nr != nil && nr.Attempt > 0 {
+				nr.LegacyRoutingReplay = true
+			}
+		}
+	}
 }
 
 func routeLabels(wf domain.WorkflowDefinition, nodeID string) []string {

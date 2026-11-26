@@ -401,6 +401,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	defer unlock()
 	executionGeneration := currentLease.Generation
 	executionAttempt := 0
+	var checkedRole *domain.AgentDefinition
 	started := false
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
@@ -412,6 +413,28 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			e.event(r, node.ID, "node.failed", nr.Error)
 			return
 		}
+		// The scheduler has selected this node with the new routing decision.
+		// Validate before counting an attempt or preparing its workspace.
+		if node.Type == "agent" {
+			var roleErr error
+			if expected := wf.RoutingRoleFingerprints[node.ID]; expected != "" {
+				role, err := e.checkedRoutingRole(wf, node, expected)
+				roleErr = err
+				if err == nil {
+					checkedRole = &role
+				}
+			} else if nr.LegacyRoutingReplay && frozenArtifactContractSources(wf)[node.ID] {
+				roleErr = missingRoutingRoleFingerprint(node.ID)
+			}
+			if roleErr != nil {
+				// This is a configuration failure before execution, not a failed
+				// attempt eligible for automatic retry or rework.
+				nr.Status, nr.Error, nr.FinishedAt = "failed", roleErr.Error(), time.Now().UTC()
+				e.event(r, node.ID, "node.failed", nr.Error)
+				return
+			}
+		}
+		nr.LegacyRoutingReplay = false
 		started = true
 		r.Status = "running"
 		nr.Status = "running"
@@ -848,16 +871,16 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	default:
 		// LOOP agents submit a terminal decision for routing.
 		requiresSubmit = true
-		agent, found := workflowAgent(e.repo, wf, node.AgentID)
-		if !found {
-			err = fmt.Errorf("agent %q not found", node.AgentID)
-			break
-		}
-		// Check the actual role we will execute, including changes made after
-		// retry preflight or while the Run was waiting to be scheduled.
-		if expected := wf.RoutingRoleFingerprints[node.ID]; expected != "" && !matchesRoutingRoleFingerprint(agent, expected) {
-			failNode(routingRoleDriftError(node), false)
-			return
+		var agent domain.AgentDefinition
+		if checkedRole != nil {
+			agent = *checkedRole
+		} else {
+			var found bool
+			agent, found = workflowAgent(e.repo, wf, node.AgentID)
+			if !found {
+				err = fmt.Errorf("agent %q not found", node.AgentID)
+				break
+			}
 		}
 		ex, errResolve := workflowNodeExecutor(e.repo, wf, node, agent)
 		if errResolve != nil {
@@ -906,7 +929,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 			}
 			invocationID := fmt.Sprintf("%s-%d-%d", nodeControlKey(current, node.ID), attempt, invocationSeq)
-			rendered := renderPromptWithStore(e.repo, wf, effectiveNode, current)
+			rendered := applyPromptPlaceholders(e.repo, wf, effectiveNode, &agent, current)
 			hadCatalog := strings.Contains(rendered, "{{artifacts}}")
 			prompt := strings.ReplaceAll(rendered, "{{artifacts}}", artifactContext)
 			if !hadCatalog && artifactContext != "" {
