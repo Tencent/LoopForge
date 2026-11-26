@@ -1,3 +1,0 @@
-name = "devflow-solo-developer"
-description = "DevFlow solo developer：处理 small 任务的方案、实现、验证和总结。"
-instructions = ".codex/agents/solo-developer.md"

@@ -1,4 +1,0 @@
-name = "devflow-architect"
-description = "DevFlow architect：产出技术方案和执行计划。"
-instructions = ".codex/agents/architect.md"
-

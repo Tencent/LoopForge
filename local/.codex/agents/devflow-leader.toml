@@ -1,4 +1,0 @@
-name = "devflow-leader"
-description = "DevFlow leader：生成最终汇总、整理风险和后续建议。"
-instructions = ".codex/agents/leader.md"
-
