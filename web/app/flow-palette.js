@@ -156,7 +156,11 @@ const flowPalette=(()=>{
     host.innerHTML=switcherGroups().map(g=>{
       const items=g.items.filter(w=>matches(q,w.name||'',w.id||''));
       if(!items.length)return '';
-      return `<div class="fd-pop-gh">${escapeHTML(g.title)}</div>`+items.map(w=>{const s=workflowStatus(w),current=w.id===cur,name=w.name||'未命名 LOOP';return `<button type="button" class="fd-pop-item ${current?'cur':''}" role="option" aria-selected="${current}" data-switch-workflow="${escapeHTML(w.id)}"><span class="fd-sd ${s.cls}"></span><span class="fd-pop-text"><span class="fd-pop-title"><b>${escapeHTML(name)}</b><span class="fd-pop-copy" role="button" tabindex="0" data-copy-sop-name="${escapeHTML(name)}" aria-label="复制 LOOP 名称" title="复制 LOOP 名称">${icon('copy',14,1.7)}</span></span><small>${s.label} · v${w.version||1} · ${(w.nodes||[]).length} 步</small></span>${current?`<span class="fd-ck">${icon('check',15,2.2)}</span>`:''}</button>`}).join('');
+      return `<div class="fd-pop-gh">${escapeHTML(g.title)}</div>`+items.map(w=>{
+        const status=workflowStatus(w),current=w.id===cur,name=w.name||'未命名 LOOP';
+        const meta=[status.label,workflowVersionLabel(w),`${(w.nodes||[]).length} 步`].filter(Boolean).join(' · ');
+        return `<button type="button" class="fd-pop-item ${current?'cur':''}" role="option" aria-selected="${current}" data-switch-workflow="${escapeHTML(w.id)}"><span class="fd-sd ${status.cls}"></span><span class="fd-pop-text"><span class="fd-pop-title"><b>${escapeHTML(name)}</b><span class="fd-pop-copy" role="button" tabindex="0" data-copy-sop-name="${escapeHTML(name)}" aria-label="复制 LOOP 名称" title="复制 LOOP 名称">${icon('copy',14,1.7)}</span></span><small>${escapeHTML(meta)}</small></span>${current?`<span class="fd-ck">${icon('check',15,2.2)}</span>`:''}</button>`;
+      }).join('');
     }).join('')||`<div class="fd-pal-empty">没有匹配的 LOOP</div>`;
   }
   function isSwitcherOpen(){const p=document.getElementById('flowSwitchPop');return !!p&&!p.hidden}
