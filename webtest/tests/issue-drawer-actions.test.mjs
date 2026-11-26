@@ -73,11 +73,11 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
   assert.equal(result.badTime, '—');
 });
 
-test('acceptance gates follow the SOP edges, so a node inserted by a SOP update shows where it runs', async (t) => {
+test('acceptance gates follow the LOOP edges, so a node inserted by a LOOP update shows where it runs', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const result = structuredClone(app.evaluate(`(() => {
-    // SOP v2 inserted "preview" between "test" and "accept"; the editor appended
+    // LOOP v2 inserted "preview" between "test" and "accept"; the editor appended
     // it to the nodes array, and refresh-sop keeps that array order.
     const wf={id:'flow-1',
       nodes:[{id:'design',name:'方案设计',type:'agent'},{id:'test',name:'测试验证',type:'agent'},
@@ -102,14 +102,14 @@ test('acceptance gates follow the SOP edges, so a node inserted by a SOP update 
   assert.deepEqual([...result.cyclic].sort(), ['accept','design','preview','summary','test']);
 });
 
-test('acceptance gate ordering ignores self-loops and edges to deleted nodes, and keeps degenerate SOPs as stored', async (t) => {
+test('acceptance gate ordering ignores self-loops and edges to deleted nodes, and keeps degenerate LOOPs as stored', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const result = structuredClone(app.evaluate(`(() => {
     const ids=wf=>nodesInExecutionOrder(wf).map(n=>n.id);
     const nodes=[{id:'c'},{id:'a'},{id:'b'}];
     return {
-      // A self-loop and an edge from/to a node removed in a later SOP version
+      // A self-loop and an edge from/to a node removed in a later LOOP version
       // must not block the real order a -> b -> c.
       dangling:ids({nodes,edges:[{source:'a',target:'b'},{source:'b',target:'c'},
         {source:'a',target:'a'},{source:'gone',target:'a'},{source:'a',target:'gone'}]}),
@@ -183,4 +183,24 @@ test('drawer actions write back clarification and resync TAPD with API payloads'
   assert.equal(calls.find(c => c.path.endsWith('/clarification')).body.retry, true);
   assert.equal(calls.find(c => c.path.endsWith('/resync-tapd')).path, '/api/issues/issue-1/resync-tapd');
   assert.equal(calls.find(c => c.path.endsWith('/chat-clarify')).body.message, 'Safari is required');
+  assert.equal(calls.find(c => c.path.endsWith('/chat-clarify')).body.model, undefined);
+});
+
+test('another clarification round waits for the responsible account catalog and sends its selected model', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const catalog = Promise.withResolvers();
+  app.router.get('/api/issues/issue-1/clarify-models', () => catalog.promise);
+  app.router.post('/api/issues/issue-1/chat-clarify', { ready: true });
+  app.evaluate(`
+    state.issueDetailData={issue:state.data.issues[0],comments:[],run:null,task:null,requirement:null};
+    state.drawerOpen=true;
+    openIssueClarification(false,true);
+  `);
+  const posted = () => app.router.calls.find(call => call.method==='POST' && call.path.endsWith('/chat-clarify'));
+  await settle(2);
+  assert.equal(posted(), undefined);
+  catalog.resolve({engines:[{id:'codex',name:'Codex',personal:true}],models:[{id:'codex:fixture-model',engine:'codex'}]});
+  await settle(6);
+  assert.equal(posted()?.body.model, 'codex:fixture-model');
 });

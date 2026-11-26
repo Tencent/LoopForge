@@ -33,6 +33,8 @@ func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
 		DeliveryState          string    `gorm:"column:delivery_state"`
 		CreatedAt              time.Time `gorm:"column:created_at"`
 		DeliveryMRURL          string    `gorm:"column:delivery_mr_url"`
+		DeliveryMRState        string    `gorm:"column:delivery_mr_state"`
+		DeliveryMRs            string    `gorm:"column:delivery_mrs"`
 	}
 	var rows []liteRow
 	if err := r.DB.Table("issues").Select(
@@ -42,23 +44,29 @@ func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
 		r.sqlPayloadJSONText("clarification.startedAt")+" AS clarification_started_at",
 		r.sqlPayloadJSONText("deliveryState")+" AS delivery_state",
 		r.sqlPayloadJSONText("deliveryMrUrl")+" AS delivery_mr_url",
+		r.sqlPayloadJSONText("deliveryMrState")+" AS delivery_mr_state",
+		r.sqlPayloadJSONText("deliveryMrs")+" AS delivery_mrs",
 	).Find(&rows).Error; err != nil {
 		return []domain.Issue{}
 	}
 	out := make([]domain.Issue, 0, len(rows))
 	for _, row := range rows {
 		issue := domain.Issue{
-			ID:            row.ID,
-			ProjectID:     row.ProjectID,
-			Title:         row.Title,
-			Status:        row.Status,
-			Kind:          row.Kind,
-			Source:        row.Source,
-			TapdID:        strings.TrimSpace(row.TapdID),
-			WorkflowID:    row.WorkflowID,
-			DeliveryState: strings.TrimSpace(row.DeliveryState),
-			DeliveryMRURL: strings.TrimSpace(row.DeliveryMRURL),
-			CreatedAt:     row.CreatedAt,
+			ID:              row.ID,
+			ProjectID:       row.ProjectID,
+			Title:           row.Title,
+			Status:          row.Status,
+			Kind:            row.Kind,
+			Source:          row.Source,
+			TapdID:          strings.TrimSpace(row.TapdID),
+			WorkflowID:      row.WorkflowID,
+			DeliveryState:   strings.TrimSpace(row.DeliveryState),
+			DeliveryMRURL:   strings.TrimSpace(row.DeliveryMRURL),
+			DeliveryMRState: strings.TrimSpace(row.DeliveryMRState),
+			CreatedAt:       row.CreatedAt,
+		}
+		if row.DeliveryMRs != "" {
+			_ = jsonUnmarshal([]byte(row.DeliveryMRs), &issue.DeliveryMRs)
 		}
 		if started, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(row.ClarificationStartedAt)); err == nil {
 			issue.Clarification.StartedAt = started
@@ -222,10 +230,25 @@ func (r *IssuesRepo) putIssueLocked(v domain.Issue) error {
 }
 
 func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool) error {
+	v, err := r.prepareIssueForSave(v, fromSync, existingOnly)
+	if err != nil {
+		return err
+	}
+	if existingOnly {
+		result := r.DB.Model(&issueRow{}).Where("id = ?", v.ID).Updates(issueValues(v))
+		if result.Error == nil && result.RowsAffected == 0 {
+			return ErrIssueNotFound
+		}
+		return result.Error
+	}
+	return r.writeIssue(v)
+}
+
+func (r *IssuesRepo) prepareIssueForSave(v domain.Issue, fromSync, existingOnly bool) (domain.Issue, error) {
 	now := time.Now().UTC()
 	old, ok := r.Issue(v.ID)
 	if existingOnly && !ok {
-		return ErrIssueNotFound
+		return v, ErrIssueNotFound
 	}
 	preserveStatus := fromSync && ok
 	if ok {
@@ -240,12 +263,20 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 		}
 		if strings.TrimSpace(v.AutomationState) == "" {
 			v.AutomationState = old.AutomationState
+			// sopMode=sop lifts the no-LOOP choice, and with it the "ignored"
+			// that choice set, as binding or running a LOOP from the page does.
+			if old.WithoutSOP() && strings.EqualFold(strings.TrimSpace(v.SOPMode), domain.IssueSOPUse) && v.AutomationState == "ignored" {
+				v.AutomationState = "eligible"
+			}
 		}
 		if len(v.Operations) == 0 && len(old.Operations) > 0 {
 			v.Operations = old.Operations
 		}
 		if strings.TrimSpace(v.ConversationSessionID) == "" {
 			v.ConversationSessionID = old.ConversationSessionID
+		}
+		if strings.TrimSpace(v.SOPMode) == "" {
+			v.SOPMode = old.SOPMode
 		}
 		if !old.Clarification.StartedAt.IsZero() && (v.Clarification.StartedAt.IsZero() || v.Clarification.StartedAt.After(old.Clarification.StartedAt)) {
 			v.Clarification.StartedAt = old.Clarification.StartedAt
@@ -257,7 +288,7 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 			v.Number = 1
 			var maxNumber sql.NullInt64
 			if err := r.DB.Raw(`SELECT MAX(number) FROM issues WHERE project_id=?`, v.ProjectID).Scan(&maxNumber).Error; err != nil {
-				return err
+				return v, err
 			}
 			if maxNumber.Valid {
 				v.Number = int(maxNumber.Int64) + 1
@@ -304,16 +335,16 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 			v.CompletedAt = now
 		}
 	}
-	bindDefaultWorkflow(&v, r.projectWorkflowID(v.ProjectID), r.projectIssueWorkflowID(v.ProjectID))
-	v.UpdatedAt = now
-	if existingOnly {
-		result := r.DB.Model(&issueRow{}).Where("id = ?", v.ID).Updates(issueValues(v))
-		if result.Error == nil && result.RowsAffected == 0 {
-			return ErrIssueNotFound
-		}
-		return result.Error
+	if v.WithoutSOP() {
+		v.SOPMode = domain.IssueSOPNone
+		v.WorkflowID, v.PlaybookID, v.SOPBindings = "", "", nil
+		v.AutomationState = "ignored"
+	} else {
+		v.SOPMode = ""
+		bindDefaultWorkflow(&v, r.projectWorkflowID(v.ProjectID), r.projectIssueWorkflowID(v.ProjectID))
 	}
-	return r.writeIssue(v)
+	v.UpdatedAt = now
+	return v, nil
 }
 
 func (r *IssuesRepo) writeIssue(v domain.Issue) error {
@@ -355,7 +386,15 @@ func (r *IssuesRepo) ResponsibleUser(issue domain.Issue) (domain.User, error) {
 	return user, nil
 }
 
-// projectWorkflowID returns the project's configured default SOP.
+// projectWorkflowID returns the project's configured default LOOP.
+// DefaultIssueWorkflow returns the LOOP a new issue of the project would be
+// bound to when it is saved without one (see bindDefaultWorkflow).
+func (r *IssuesRepo) DefaultIssueWorkflow(projectID, source, kind string) string {
+	v := domain.Issue{ProjectID: projectID, Source: source, Kind: kind}
+	bindDefaultWorkflow(&v, r.projectWorkflowID(projectID), r.projectIssueWorkflowID(projectID))
+	return v.WorkflowID
+}
+
 func (r *IssuesRepo) projectWorkflowID(projectID string) string {
 	if strings.TrimSpace(projectID) == "" {
 		return ""

@@ -6,7 +6,7 @@
   if (embedded) document.body.classList.add('embed');
   const toolbar=document.createElement('header');toolbar.className='vscode-toolbar';
   // Like an AI IDE, the workspace is editable whenever the server allows it,
-  // also while SOP agents run; there is no separate "enable edit" step.
+  // also while LOOP agents run; there is no separate "enable edit" step.
   // The toolbar reads as VS Code chrome (Dark Modern title bar, ghost action
   // buttons). Codicon glyphs only exist after the workbench boots, so the
   // icons are inline SVGs drawn in the same 16px style.
@@ -123,7 +123,7 @@
   window.openVSCodeWindow = openVSCodeWindow;
 
   if (!runId) {
-    showError('缺少 Run ID', '请从 SOP 运行详情打开工作区。');
+    showError('缺少 Run ID', '请从 LOOP 运行详情打开工作区。');
     return;
   }
 
@@ -152,10 +152,11 @@
       workspaceReadOnly = info.readOnly !== false;
       editing = !workspaceReadOnly;
       paintToolbar();
-      // Opening a shell revalidates the environment on the server.
-      refreshEnvironment().then(state => {
-        if (state.status !== 'ready') return prepareEnvironment();
-      }).catch(err => paintEnvironment({ status: 'failed', error: err.message }));
+      if (editing) {
+        refreshEnvironment().then(state => {
+          if (state.status !== 'ready') return prepareEnvironment();
+        }).catch(err => paintEnvironment({ status: 'failed', error: err.message }));
+      }
       // No edit lease to renew; writable whenever the server says so.
       workspaceChanges = Array.isArray(info.changes) ? info.changes : [];
       const names = new Set();
@@ -250,7 +251,7 @@
           }
         },
         windowIndicator: {
-          label: `$(remote) SOP ${runId.slice(-12)}`,
+          label: `$(remote) LOOP ${runId.slice(-12)}`,
           tooltip: workspaceReadOnly ? '任务工作区 · 只读' : '任务工作区 · 可读写及交互式终端',
           command: embedded ? 'agentflow.popout' : undefined
         },

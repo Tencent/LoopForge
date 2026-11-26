@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +34,6 @@ func TestDockerConversationProcessPreservesInteractiveInput(t *testing.T) {
 func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	workspace := t.TempDir()
 	cvRInstallFakeDocker(t, workspace)
-	_ = os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("hidden"), 0o600)
 	dockerfile := domain.DockerfileDefinition{ID: "cvR", Content: "FROM scratch\n", Files: map[string]string{"asset.txt": "asset"}}
 	sbAny, err := createDocker(context.Background(), "cvR-run", workspace,
 		domain.SandboxProfile{Driver: "docker", ReadOnlyRootFS: true, Environment: map[string]string{"A": "1"}},
@@ -44,9 +45,27 @@ func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	if sb.ID() != "cvR-run" || sb.Workspace() != workspace || sb.Driver() != "docker" {
 		t.Fatalf("sandbox=%+v", sb)
 	}
-	out, err := sb.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-lc", "echo ok"}, environment: map[string]string{"B": "2"}}, nil)
+	const extraValue = "test-extra-credential"
+	command, err := bindCommand(t.Context(), sb, workspace, CommandSpec{
+		Argv:               []string{"sh", "-lc", "echo ok"},
+		CredentialBindings: []CredentialBinding{BindExtra},
+		ExtraCredentialEnv: map[string]string{"DEPLOYMENT_VALUE": "registry"},
+		environment:        map[string]string{"B": "2"},
+	}, RunCredentials{Extra: map[string]string{"registry": extraValue}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started string
+	out, err := sb.Exec(context.Background(), command, func(event domain.TelemetryEvent) {
+		if event.Name == "process.started" {
+			started = event.Message
+		}
+	})
 	if err != nil || !strings.Contains(out, "/workspace") {
 		t.Fatalf("exec=%q err=%v", out, err)
+	}
+	if strings.Contains(started, extraValue) || !strings.Contains(started, "DEPLOYMENT_VALUE=<redacted>") || !strings.Contains(started, "B=2") {
+		t.Fatalf("process.started must redact the extra credential and keep ordinary environment variables: %q", started)
 	}
 	if !sb.started || sb.builtImage == "" {
 		t.Fatalf("sandbox did not start: %+v", sb)
@@ -66,16 +85,170 @@ func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxPrivilegedRequiresExecutionMachineSetting(t *testing.T) {
+	const legacyVariable = "AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX"
+	t.Setenv(legacyVariable, "true")
+	profile := domain.SandboxProfile{
+		Driver:      domain.SandboxDriverDocker,
+		Privileged:  true,
+		Environment: map[string]string{legacyVariable: "true"},
+	}
+	resources := SandboxResources{Dockerfile: domain.DockerfileDefinition{Content: "FROM scratch"}}
+	manager := NewManager(t.TempDir())
+	if _, err := manager.AcquireRun(t.Context(), "privileged", profile, SandboxRequirements{}, RunCredentials{}, resources); err == nil || !strings.Contains(err.Error(), "已关闭") {
+		t.Fatalf("platform worker accepted privileged sandbox without the machine setting: %v", err)
+	}
+	workspace := t.TempDir()
+	if _, err := OpenRemoteSandbox(t.Context(), "privileged", workspace, profile, SandboxRequirements{}, resources); err == nil || !strings.Contains(err.Error(), "已关闭") {
+		t.Fatalf("runner accepted privileged sandbox without the machine setting: %v", err)
+	}
+	t.Setenv(legacyVariable, "false")
+	ctx := WithPrivilegedSandboxSetting(t.Context(), func(context.Context) (bool, error) { return true, nil })
+	if _, err := OpenRemoteSandbox(ctx, "privileged", workspace, profile, SandboxRequirements{}, resources); err != nil {
+		t.Fatalf("runner ignored the machine setting: %v", err)
+	}
+}
+
+func TestDockerSandboxHonorsPrivilegedSandboxSettingChanges(t *testing.T) {
+	workspace := t.TempDir()
+	cvRInstallFakeDocker(t, workspace)
+	profile := domain.SandboxProfile{Driver: domain.SandboxDriverDocker, Privileged: true}
+	resources := SandboxResources{Dockerfile: domain.DockerfileDefinition{Content: "FROM scratch"}}
+	enabled := false
+	ctx := WithPrivilegedSandboxSetting(t.Context(), func(context.Context) (bool, error) { return enabled, nil })
+	open := func() (Sandbox, error) {
+		return OpenRemoteSandbox(ctx, "privileged", workspace, profile, SandboxRequirements{}, resources)
+	}
+	if _, err := open(); err == nil || !strings.Contains(err.Error(), "已关闭") {
+		t.Fatalf("Docker sandbox opened with the setting off: %v", err)
+	}
+	enabled = true
+	sb, err := open()
+	if err != nil {
+		t.Fatalf("Docker sandbox did not open with the setting on: %v", err)
+	}
+	defer sb.Close(t.Context())
+	enabled = false
+	if err := sb.(*dockerSandbox).ensureStarted(t.Context()); err == nil || !strings.Contains(err.Error(), "已关闭") {
+		t.Fatalf("new Docker start ignored the newer setting: %v", err)
+	}
+	enabled = true
+	if err := sb.(*dockerSandbox).ensureStarted(t.Context()); err != nil {
+		t.Fatalf("new Docker start rejected the enabled setting: %v", err)
+	}
+	enabled = false
+	if err := sb.(*dockerSandbox).Recreate(t.Context()); err == nil || !strings.Contains(err.Error(), "已关闭") {
+		t.Fatalf("Docker recreation ignored the newer setting: %v", err)
+	}
+}
+
+func TestDockerSandboxReplacesContainerWhenPrivilegeChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		privileged bool
+	}{
+		{name: "enable", privileged: true},
+		{name: "disable", privileged: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			cvRInstallFakeDocker(t, workspace)
+			argsFile := filepath.Join(t.TempDir(), "create-args")
+			t.Setenv("CVR_DOCKER_CREATE_ARGS", argsFile)
+			t.Setenv("CVR_DOCKER_EXISTING_PRIVILEGED", strconv.FormatBool(!tc.privileged))
+			sb := &dockerSandbox{
+				name:              "box",
+				workspace:         workspace,
+				profile:           domain.SandboxProfile{Driver: "docker", Privileged: tc.privileged, ReadOnlyRootFS: true},
+				dockerfile:        domain.DockerfileDefinition{Content: "FROM scratch"},
+				privilegedSetting: func(context.Context) (bool, error) { return true, nil },
+			}
+			if err := sb.BindWorkspace(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatalf("expected docker create when privilege changes: %v", err)
+			}
+			args := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if slices.Contains(args, "--privileged") != tc.privileged ||
+				slices.Contains(args, "--cap-drop=ALL") == tc.privileged ||
+				slices.Contains(args, "no-new-privileges") == tc.privileged ||
+				!slices.Contains(args, "--read-only") {
+				t.Fatalf("unexpected docker create args: %q", args)
+			}
+			if os.Geteuid() != 0 {
+				wantUser := strconv.Itoa(os.Geteuid()) + ":" + strconv.Itoa(os.Getegid())
+				if !strings.Contains(string(data), "\n--user\n"+wantUser+"\n") {
+					t.Fatalf("docker create must map the default image user to %s: %q", wantUser, args)
+				}
+			}
+		})
+	}
+}
+
+func TestDockerSandboxUsesRelayNetworkOnlyWhenRequested(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		privateHome        bool
+		conversation       bool
+		runnerLoginRelay   bool
+		invalidRelayConfig bool
+		wantNetwork        string
+	}{
+		{name: "LOOP with private home", privateHome: true, wantNetwork: "sop-network"},
+		{name: "LOOP ignores invalid conversation settings", privateHome: true, invalidRelayConfig: true, wantNetwork: "sop-network"},
+		{name: "conversation", conversation: true, wantNetwork: "chat-network"},
+		{name: "Codex login relay", runnerLoginRelay: true, wantNetwork: "chat-network"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			cvRInstallFakeDocker(t, workspace)
+			argsFile := filepath.Join(t.TempDir(), "create-args")
+			t.Setenv("CVR_DOCKER_CREATE_ARGS", argsFile)
+			t.Setenv("AGENTFLOW_DOCKER_NETWORK", "sop-network")
+			t.Setenv("AGENTFLOW_CONVERSATION_DOCKER_NETWORK", "chat-network")
+			host := "host.docker.internal"
+			if tc.invalidRelayConfig {
+				host = "invalid/relay"
+			}
+			t.Setenv("AGENTFLOW_CONVERSATION_RELAY_HOST", host)
+			requirements := SandboxRequirements{PrivateHome: tc.privateHome, RunnerLoginRelay: tc.runnerLoginRelay}
+			if tc.conversation {
+				requirements.ConversationRoot = t.TempDir()
+			}
+			ctx := context.Background()
+			sandbox, err := createDocker(ctx, "network-policy", workspace, domain.SandboxProfile{Driver: "docker"}, requirements, domain.DockerfileDefinition{Content: "FROM scratch"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sandbox.Close(ctx)
+			if err := sandbox.(*dockerSandbox).BindWorkspace(ctx); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := string(data)
+			if strings.Count(args, "\n--network\n") != 1 || !strings.Contains(args, "\n--network\n"+tc.wantNetwork+"\n") {
+				t.Fatalf("docker create used the wrong network: %s", args)
+			}
+			usesGateway := strings.Contains(args, "\n--add-host\nhost.docker.internal:host-gateway\n")
+			if usesGateway != (tc.conversation || tc.runnerLoginRelay) {
+				t.Fatalf("docker create host gateway = %v for %s", usesGateway, tc.name)
+			}
+		})
+	}
+}
+
 func TestDockerDiscoveryImagesAndBuildHelpers(t *testing.T) {
 	workspace := t.TempDir()
 	cvRInstallFakeDocker(t, workspace)
 	ctx := context.Background()
-	source, err := dockerWorkspaceBindSource(ctx, "box")
-	if err != nil || source != workspace || !dockerContainerReusable(source, nil, workspace) {
-		t.Fatalf("source=%q err=%v", source, err)
-	}
-	if dockerContainerReusable("", nil, workspace) || dockerBindMatchesWorkspace("", workspace) {
-		t.Fatal("empty bind matched")
+	info, err := inspectDockerWorkspace(ctx, "box")
+	if err != nil || info == nil || info.source != workspace || info.legacyMasks {
+		t.Fatalf("mounts=%+v err=%v", info, err)
 	}
 	found, err := dockerSandboxesUnder(ctx, filepath.Dir(workspace))
 	if err != nil || found["agentflow-cvr"] != filepath.Base(workspace) {
@@ -158,53 +331,13 @@ func TestDockerArgumentAndErrorBranches(t *testing.T) {
 	}
 }
 
-func TestDockerMasksAndManagerPaths(t *testing.T) {
+func TestDockerManagerReclaimsCachedImages(t *testing.T) {
 	workspace := t.TempDir()
 	cvRInstallFakeDocker(t, workspace)
-	_ = os.WriteFile(filepath.Join(workspace, "CLAUDE.md"), []byte("x"), 0o600)
-	sb := &dockerSandbox{name: "box", workspace: workspace}
-	hide, err := sb.currentAgentMasks()
-	if err != nil || !cvRContains(hide, "/workspace/CLAUDE.md") {
-		t.Fatalf("hide=%v err=%v", hide, err)
-	}
-	masks, err := sb.scriptMasks(context.Background())
-	if err != nil || !cvRContains(masks, "/workspace/CLAUDE.md") {
-		t.Fatalf("masks=%v err=%v", masks, err)
-	}
-	if !maskedAgentCommand(CommandSpec{Provider: "codex"}) || maskedAgentCommand(CommandSpec{Provider: "script"}) || !trustedScriptCommand(CommandSpec{Provider: "script"}) {
-		t.Fatal("command classification")
-	}
-	args := dockerScriptCreateArgs("helper", "base", workspace, "image", "owner")
-	if !cvRContains(args, "--cap-add=SYS_ADMIN") {
-		t.Fatalf("script args=%v", args)
-	}
 	m := NewManager(workspace)
 	count, err := m.ReclaimCachedDockerImages(context.Background(), nil)
 	if err != nil || count != 1 {
 		t.Fatalf("manager image reclaim=%d err=%v", count, err)
-	}
-}
-
-func TestDockerScriptContainerAndExecution(t *testing.T) {
-	workspace := t.TempDir()
-	cvRInstallFakeDocker(t, workspace)
-	gate := filepath.Join(t.TempDir(), "gate-{os}-{arch}")
-	gateLinux := strings.ReplaceAll(strings.ReplaceAll(gate, "{os}", "linux"), "{arch}", "amd64")
-	if err := os.WriteFile(gateLinux, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AGENTFLOW_GATE_MCP_BINARY", gate)
-	_ = os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("hidden"), 0o600)
-	sb := &dockerSandbox{name: "box", workspace: workspace, started: true, profile: domain.SandboxProfile{Environment: map[string]string{"A": "1"}}}
-	if err := sb.ensureScriptContainer(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	out, err := sb.execScript(context.Background(), CommandSpec{Provider: "script", Argv: []string{"sh", "-c", "echo ok"}, environment: map[string]string{"B": "2"}}, nil)
-	if err != nil || !strings.Contains(out, "/workspace") {
-		t.Fatalf("exec script=%q err=%v", out, err)
-	}
-	if err := sb.refreshAgentMasks(context.Background()); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -215,8 +348,10 @@ func TestDockerExecRecoversFromUnsafeCWD(t *testing.T) {
 	script := `#!/bin/sh
 workspace="${CVR_DOCKER_WORKSPACE}"
 marker="${CVR_DOCKER_MARKER}"
-if [ "${1-}" = inspect ] && [ "${2-}" = -f ]; then echo "$workspace"; exit 0; fi
-if [ "${1-}" = inspect ]; then exit 0; fi
+if [ "${1-}" = inspect ]; then
+  printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false}\n' "$workspace"
+  exit 0
+fi
 if [ "${1-}" = exec ]; then
   case "$*" in *"cd /workspace && pwd"*) echo /workspace; exit 0;; esac
   if [ ! -e "$marker" ]; then
@@ -254,6 +389,78 @@ func TestDockerExecInvalidatesMissingContainer(t *testing.T) {
 	}
 }
 
+func TestSandboxEnvironmentIdentityRecoversExternallyStoppedOrRemovedContainer(t *testing.T) {
+	bin, state := t.TempDir(), t.TempDir()
+	// A stateful docker stand-in: "status" holds running/exited, "generation"
+	// counts docker create and "starts" counts docker start.
+	script := `#!/bin/sh
+state="${CVR_DOCKER_STATE}"
+status() { cat "$state/status" 2>/dev/null; }
+count() { n=$(cat "$state/$1" 2>/dev/null || echo 0); echo $((n + 1)) > "$state/$1"; }
+case "$*" in
+  "inspect --format {{.State.Running}}|{{.Id}}|{{.State.StartedAt}} box")
+    case "$(status)" in
+      running) echo "true|id-$(cat "$state/generation")|start-$(cat "$state/starts")"; exit 0 ;;
+      exited) echo "false|id-$(cat "$state/generation")|start-$(cat "$state/starts")"; exit 0 ;;
+    esac
+    echo 'Error: No such object: box' >&2; exit 1 ;;
+  "inspect --type container --format "*" box")
+    [ -n "$(status)" ] || { echo 'Error: No such container: box' >&2; exit 1; }
+    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false}\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
+  "start box") [ -n "$(status)" ] || exit 1; echo running > "$state/status"; count starts; exit 0 ;;
+  "create --name box "*) echo exited > "$state/status"; count generation; exit 0 ;;
+  "rm -f box") rm -f "$state/status"; exit 0 ;;
+  "exec box "*) [ "$(status)" = running ] || { echo 'Error response from daemon: container box is not running' >&2; exit 1; }
+    case "$*" in *"cd /workspace && pwd"*) echo /workspace ;; esac; exit 0 ;;
+  "image inspect --format {{.Config.User}} "*) exit 0 ;;
+  "image inspect "*) exit 0 ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CVR_DOCKER_STATE", state)
+	t.Setenv("CVR_DOCKER_WORKSPACE", workspace)
+	for name, value := range map[string]string{"status": "running", "generation": "1", "starts": "1"} {
+		if err := os.WriteFile(filepath.Join(state, name), []byte(value+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+	sb := &dockerSandbox{id: "box", name: "box", workspace: workspace, started: true,
+		dockerfile: domain.DockerfileDefinition{Content: "FROM alpine:3.20\n"}}
+	identity, err := SandboxEnvironmentIdentity(ctx, sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, external := range []string{"stopped", "removed"} {
+		if external == "stopped" {
+			err = os.WriteFile(filepath.Join(state, "status"), []byte("exited\n"), 0o644)
+		} else {
+			err = os.Remove(filepath.Join(state, "status"))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The first call after an external stop/removal recovers; it must not
+		// keep failing on the cached started flag.
+		next, err := SandboxEnvironmentIdentity(ctx, sb)
+		if err != nil || next == identity || !sb.started {
+			t.Fatalf("container %s: identity %q (was %q) started=%v err=%v", external, next, identity, sb.started, err)
+		}
+		if again, err := SandboxEnvironmentIdentity(ctx, sb); err != nil || again != next {
+			t.Fatalf("container %s: identity unstable %q != %q %v", external, again, next, err)
+		}
+		identity = next
+	}
+	if data, err := os.ReadFile(filepath.Join(state, "generation")); err != nil || strings.TrimSpace(string(data)) != "2" {
+		t.Fatalf("removed container was not recreated exactly once: %q %v", data, err)
+	}
+}
+
 func cvRInstallFakeDocker(t *testing.T, workspace string) {
 	t.Helper()
 	bin := t.TempDir()
@@ -261,25 +468,14 @@ func cvRInstallFakeDocker(t *testing.T, workspace string) {
 set -eu
 workspace="${CVR_DOCKER_WORKSPACE}"
 if [ "${1-}" = inspect ] && [ "${2-}" = -f ]; then
-  case "${3-}" in
-    "{{range"*) printf '%s\n' "$workspace" ;;
-    *) printf '/agentflow-cvr\t%s\n' "$workspace" ;;
-  esac
+  printf '/agentflow-cvr\t%s\n' "$workspace"
   exit 0
 fi
-if [ "${1-}" = inspect ] && [ "${2-}" = --format ]; then
-  case "${3-}" in
-    "{{json .}}") echo '{"Id":"base-id","Image":"base-image","State":{"Running":true,"StartedAt":"now"}}'; exit 0 ;;
-    "{{json .Mounts}}") echo '[]'; exit 0 ;;
-    "{{.State.Running}}|{{.Id}}"*) echo 'true|container-id|now'; exit 0 ;;
-    *) echo 'Error: No such container' >&2; exit 1 ;;
-  esac
-fi
-case " $* " in
-  *" --workspace-script-view-version "*) echo agentflow-script-view-v3; exit 0 ;;
-esac
 case "$*" in
-  "image inspect --format {{.Architecture}} "*) echo amd64; exit 0 ;;
+  "inspect --type container --format "*" box")
+    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":%s}\n' "$workspace" "${CVR_DOCKER_EXISTING_PRIVILEGED:-false}"; exit 0 ;;
+  "inspect --type container "*) echo 'Error: No such container' >&2; exit 1 ;;
+  "inspect --format {{.State.Running}}|{{.Id}}|{{.State.StartedAt}} "*) echo 'true|container-id|now'; exit 0 ;;
   "image inspect --format {{.Config.User}} "*) exit 0 ;;
   "image inspect "*) exit 1 ;;
   "images --format {{.Repository}} --filter reference=agentflow-img-*"*) printf 'agentflow-img-a:latest\nagentflow-img-b\nagentflow-img-a\n'; exit 0 ;;
@@ -287,6 +483,9 @@ case "$*" in
   "ps -aq --filter "*) echo id1; exit 0 ;;
   "inspect "*) exit 1 ;;
   "exec "*) echo /workspace; exit 0 ;;
+  "create "*)
+    if [ -n "${CVR_DOCKER_CREATE_ARGS:-}" ]; then printf '%s\n' "$@" > "$CVR_DOCKER_CREATE_ARGS"; fi
+    exit 0 ;;
   *) exit 0 ;;
 esac
 `

@@ -47,8 +47,17 @@ func onceRelease(callbacks ...func()) func() {
 
 const runnerWorkspacePreparationTimeout = 15 * time.Minute
 
+func runnerWorkspacePreparationContext(ctx context.Context, request domain.RunnerWorkspaceRequest) (context.Context, context.CancelFunc) {
+	if request.Operation == domain.RunnerWorkspaceOperationPrepare && request.RunKind == domain.RunKindWorkspace {
+		// The control plane stops preparation with the conversation. The
+		// control connection also cancels this work if it goes away.
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, runnerWorkspacePreparationTimeout)
+}
+
 func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
-	ctx, cancel := context.WithTimeout(ctx, runnerWorkspacePreparationTimeout)
+	ctx, cancel := runnerWorkspacePreparationContext(ctx, request)
 	defer cancel()
 	task, err := d.workspaceSandboxTask(root, request)
 	if err != nil {
@@ -57,8 +66,8 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 	gate := d.requestGate(request)
 	key := requestGateKey(request)
 	if !gate.TryLock() {
-		// Another task of this wave (a parallel SOP branch, a group role, a
-		// child SOP in the shared checkout) holds the read fence. Its exact
+		// Another task of this wave (a parallel LOOP branch, a group role, a
+		// child LOOP in the shared checkout) holds the read fence. Its exact
 		// live environment already carries the stamp this recipe needs; reuse
 		// it instead of rerunning scripts under running members.
 		if gate.TryRLock() {
@@ -79,19 +88,20 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return runnerWorkspaceError(err)
 	}
-	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation, runnerTaskSandboxDriver(task), request.RefreshCleanRepositories); err != nil {
-		return runnerWorkspaceError(fmt.Errorf("prepare workspace repositories: %w", err))
-	}
 	sb, release, err := d.acquireTaskSandbox(ctx, task)
 	if err != nil {
 		return runnerWorkspaceError(err)
 	}
 	defer release()
+	checkoutCtx := taskRepositoryContext(ctx, task, sb, request.PreparationInvocation)
+	if err := checkoutInvocationRepositories(checkoutCtx, root, request.PreparationInvocation, request.RefreshCleanRepositories); err != nil {
+		return runnerWorkspaceError(fmt.Errorf("prepare workspace repositories: %w", err))
+	}
 	execution, err := d.workspaceExecutionSandbox(ctx, sb, request)
 	if err != nil {
 		return runnerWorkspaceError(err)
 	}
-	status, err := runtime.EnsureWorkspacePreparation(ctx, execution, *request.Workflow, request.Repositories, nil)
+	status, err := runtime.EnsureWorkspacePreparation(checkoutCtx, execution, *request.Workflow, request.Repositories, nil)
 	if err != nil {
 		return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
 	}
@@ -105,7 +115,7 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 	if !request.Terminal.ExpiresAt.IsZero() && !request.Terminal.ExpiresAt.After(time.Now()) {
 		return runtime.TerminalResult{}, fmt.Errorf("terminal authorization has expired")
 	}
-	ctx, cancel := context.WithTimeout(ctx, runnerWorkspacePreparationTimeout)
+	ctx, cancel := runnerWorkspacePreparationContext(ctx, request)
 	defer cancel()
 	task, err := d.workspaceSandboxTask(root, request)
 	if err != nil {
@@ -122,22 +132,23 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 	unlock := onceRelease(gate.Unlock)
 	d.workspacePreparing.Store(key, true)
 	defer d.workspacePreparing.Delete(key)
-	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation, runnerTaskSandboxDriver(task)); err != nil {
-		unlock()
-		return runtime.TerminalResult{}, fmt.Errorf("prepare workspace repositories: %w", err)
-	}
 	sb, releaseSandbox, err := d.acquireTaskSandbox(ctx, task)
 	if err != nil {
 		unlock()
 		return runtime.TerminalResult{}, err
 	}
 	release := onceRelease(releaseSandbox, unlock)
+	checkoutCtx := taskRepositoryContext(ctx, task, sb, request.PreparationInvocation)
+	if err := checkoutInvocationRepositories(checkoutCtx, root, request.PreparationInvocation); err != nil {
+		release()
+		return runtime.TerminalResult{}, fmt.Errorf("prepare workspace repositories: %w", err)
+	}
 	execution, err := d.workspaceExecutionSandbox(ctx, sb, request)
 	if err != nil {
 		release()
 		return runtime.TerminalResult{}, err
 	}
-	if _, err = runtime.EnsureWorkspacePreparation(ctx, execution, *request.Workflow, request.Repositories, nil); err != nil {
+	if _, err = runtime.EnsureWorkspacePreparation(checkoutCtx, execution, *request.Workflow, request.Repositories, nil); err != nil {
 		release()
 		return runtime.TerminalResult{}, err
 	}
@@ -148,7 +159,9 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 		gate.RLock()
 		release = onceRelease(releaseSandbox, gate.RUnlock)
 	}
-	result, err := d.workspaceTerminals.HandleSandboxWithGitSSH(ctx, execution, scope, *request.Terminal, release, request.TerminalGitSSHKeys)
+	result, err := d.workspaceTerminals.HandleSandboxWithGit(ctx, execution, scope, *request.Terminal, release, runtime.TerminalGitCredentials{
+		HTTPS: request.TerminalGitHTTPCredentials, SSHKeys: request.TerminalGitSSHKeys,
+	})
 	if err != nil {
 		release()
 	}
@@ -159,10 +172,14 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 // script. The transient wrapper is never closed: the shared base is owned by the
 // run sandbox registry and the acquisition reference held by the caller.
 func (d *Daemon) workspaceExecutionSandbox(ctx context.Context, sb runtime.Sandbox, request domain.RunnerWorkspaceRequest) (runtime.Sandbox, error) {
+	// The workspace preparation gate is held exclusively by the caller.
+	if err := runtime.RefreshWorkspaceGitTools(ctx, sb); err != nil {
+		return nil, err
+	}
 	credentials := runtime.RunCredentials{}
 	inv := request.PreparationInvocation
 	if inv != nil {
-		credentials.GitToken = invocationGitToken(inv)
+		credentials.GitHTTPCredentials = inv.GitHTTPCredentials
 		credentials.GitSSHKeys = inv.GitSSHKeys
 		credentials.GitUserName = inv.GitUserName
 		credentials.GitUserEmail = inv.GitUserEmail
@@ -245,18 +262,19 @@ func (d *Daemon) openBusyGroupTerminal(ctx context.Context, root, scope string, 
 	}
 	credentials := runtime.RunCredentials{}
 	if inv := request.PreparationInvocation; inv != nil {
-		credentials.GitToken = invocationGitToken(inv)
 		credentials.GitUserName = inv.GitUserName
 		credentials.GitUserEmail = inv.GitUserEmail
 	}
-	result, err := d.workspaceTerminals.HandleSandboxWithGitSSH(ctx, runtime.WithSandboxCredentials(sb, credentials), scope, *request.Terminal, release, request.TerminalGitSSHKeys)
+	result, err := d.workspaceTerminals.HandleSandboxWithGit(ctx, runtime.WithSandboxCredentials(sb, credentials), scope, *request.Terminal, release, runtime.TerminalGitCredentials{
+		HTTPS: request.TerminalGitHTTPCredentials, SSHKeys: request.TerminalGitSSHKeys,
+	})
 	if err != nil {
 		release()
 	}
 	return result, err
 }
 
-// A normal SOP script already ran in its graph position. Recording only stamps
+// A normal LOOP script already ran in its graph position. Recording only stamps
 // that exact live environment; it must never create a new one and mark it ready.
 func (d *Daemon) recordRunnerWorkspacePreparation(ctx context.Context, root string, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
 	task, err := d.workspaceSandboxTask(root, request)

@@ -42,10 +42,10 @@ func (r *UsersRepo) SetLocalPassword(userID int64, password string) error {
 
 var ErrLoginTaken = errors.New("login already exists")
 
-func (r *UsersRepo) LocalAccountCount() int64 {
+func (r *UsersRepo) LocalAccountCount() (int64, error) {
 	var n int64
-	r.DB.Model(&localAccountRow{}).Count(&n)
-	return n
+	err := r.DB.Model(&localAccountRow{}).Count(&n).Error
+	return n, err
 }
 
 // PlatformAccount is one user as listed under 平台管理 → 成员账号.

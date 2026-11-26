@@ -115,6 +115,76 @@ describe("personal execution machine selection", () => {
     await waitFor(() => expect(result.current.defaultRunnerId).toBe(""));
   });
 
+  test("replaces the scoped draft selection when switching projects", async () => {
+    const owned = { ...machines[0], ownerUserId: 1, canUseInConversation: true };
+    const shared = { id: "shared", name: "Shared machine", ownerUserId: 2, canUseInProject: true, canUseInConversation: true };
+    const afterSwitch = pending();
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/runners?projectId=one") return [owned, shared];
+      if (path === "/api/runners?projectId=two") return afterSwitch.promise;
+      return { runnerId: "mac" };
+    });
+    const { result, rerender } = renderHook(({ projectId }) =>
+      useExecutionMachines(1, false, false, vi.fn(), bindMock, null, projectId),
+      { initialProps: { projectId: "one" } },
+    );
+    await waitFor(() => expect(result.current.machinesReady).toBe(true));
+    expect(result.current.availableMachines).toEqual([owned, shared]);
+    expect(result.current.defaultRunnerId).toBe(owned.id);
+    await act(async () => expect(await result.current.selectMachine(owned.id)).toBe(true));
+    expect(bindMock).toHaveBeenLastCalledWith(owned.id);
+    await act(() => result.current.selectMachine(shared.id));
+    expect(result.current.defaultRunnerId).toBe(shared.id);
+
+    rerender({ projectId: "two" });
+    expect(result.current.machinesReady).toBe(false);
+    await act(async () => afterSwitch.resolve([owned]));
+    expect(result.current.machinesReady).toBe(true);
+    expect(result.current.machines).toEqual([owned]);
+    expect(result.current.availableMachines).toEqual([owned]);
+    expect(result.current.defaultRunnerId).toBe(owned.id);
+    expect(apiMock).toHaveBeenCalledWith("/api/runners/default?projectId=two&conversation=1");
+  });
+
+  test("uses the personal default when a saved draft loses its shared machine", async () => {
+    const owned = { ...machines[0], ownerUserId: 1, canUseInConversation: true };
+    const shared = { id: "shared", ownerUserId: 2, canUseInProject: true, canUseInConversation: true };
+    let listed = [owned, shared];
+    apiMock.mockImplementation(async (path) =>
+      path === "/api/runners?projectId=one" ? listed : { runnerId: owned.id },
+    );
+    const { result, rerender } = renderHook(({ target }) =>
+      useExecutionMachines(1, false, false, vi.fn(), bindMock, target, "one"),
+      { initialProps: { target: null } },
+    );
+    await waitFor(() => expect(result.current.defaultRunnerId).toBe(owned.id));
+    rerender({ target: { pool: "runner", runnerId: shared.id } });
+    expect(result.current.defaultRunnerId).toBe(shared.id);
+
+    listed = [owned];
+    await act(() => result.current.refreshMachines());
+    expect(result.current.machines).toEqual(listed);
+    expect(result.current.availableMachines).toEqual([owned]);
+    expect(result.current.defaultRunnerId).toBe(owned.id);
+  });
+
+  test("hides LOOP-only machines and uses the chat default for an incompatible draft", async () => {
+    const oldRunner = { id: "old", canUseInProject: true, canUseInConversation: true, supportsConversation: false };
+    const chatRunner = { id: "chat", canUseInProject: true, canUseInConversation: true, supportsConversation: true };
+    apiMock.mockImplementation(async (path) =>
+      path === "/api/runners?projectId=one" ? [oldRunner, chatRunner] : { runnerId: "chat" },
+    );
+    const target = { pool: "runner", runnerId: oldRunner.id };
+    const { result } = renderHook(() =>
+      useExecutionMachines(1, false, false, vi.fn(), bindMock, target, "one"),
+    );
+    await waitFor(() => expect(result.current.defaultRunnerId).toBe("chat"));
+    expect(result.current.availableMachines).toEqual([chatRunner]);
+    expect(apiMock).toHaveBeenCalledWith("/api/runners/default?projectId=one&conversation=1");
+    await act(async () => expect(await result.current.selectMachine(oldRunner.id)).toBe(false));
+    expect(bindMock).not.toHaveBeenCalled();
+  });
+
   test("keeps an explicit cloud choice through refresh, and resets only for a new draft", async () => {
     const { result } = renderHook(() => useExecutionMachines(1, false, false, vi.fn(), bindMock));
     await waitFor(() => expect(result.current.machinesReady).toBe(true));

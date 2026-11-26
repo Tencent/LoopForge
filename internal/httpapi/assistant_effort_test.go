@@ -1,18 +1,24 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"bytes"
 	"encoding/json"
-	"github.com/gin-gonic/gin"
+	"net/http"
 	"strings"
 	"testing"
+
+	"agentflow/internal/domain"
+	"agentflow/internal/repo"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestAssistantEffortReachesNativeCLIAndPersists(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", assistantChatDefaultModel)
 	h, user := workbenchFixture(t)
 	_, calls := nativeCLIRecorder(t)
+	// calls counts conversation turns; keep model discovery off the fake CLI.
+	stubCLIModelDiscovery(t)
 	messages := []assistantMessage{{Role: "user", Content: "回答一个简单问题"}}
 	for _, effort := range []string{"max", "high", ""} {
 		body, _ := json.Marshal(assistantRequest{SessionID: "effort-native", Model: assistantChatDefaultModel, Effort: effort, Messages: messages})
@@ -59,6 +65,58 @@ func TestAssistantEffortSessionPutPreservesAbsentValue(t *testing.T) {
 		if rec.Code != 200 || !ok || saved.Effort != tc.effort {
 			t.Fatal(rec.Code, saved.Effort, rec.Body.String())
 		}
+	}
+}
+
+func TestAssistantEffortSessionRenameAfterCatalogChange(t *testing.T) {
+	const sessionID = "effort-historical"
+	const model = "deepseek-v4.1-flash"
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", model)
+	h, user := workbenchFixture(t)
+	nativeCLIRecorder(t)
+	stubCLIModelDiscovery(t)
+	if err := h.repo.PutAssistantSession(user.ID, domain.AssistantSession{
+		ID: sessionID, Title: "original", Executor: "codebuddy", Model: model, Effort: "low",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defaultOnly := []string{}
+	models := []domain.CLIModel{{ID: model, ReasoningEfforts: &defaultOnly}}
+	user, err := h.repo.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{CodeBuddyModels: &models})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		body   string
+		status int
+		title  string
+	}{
+		{"title only", `{"title":"renamed"}`, http.StatusOK, "renamed"},
+		{"unchanged settings", `{"title":"new title","executor":"codebuddy","model":"deepseek-v4.1-flash","effort":"low"}`, http.StatusOK, "new title"},
+		{"effort change", `{"effort":"high"}`, http.StatusBadRequest, "new title"},
+		{"model change", `{"model":"hy4-preview-ioa"}`, http.StatusBadRequest, "new title"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, rec := workbenchContext(user, http.MethodPut, "/api/assistant/sessions/"+sessionID, bytes.NewBufferString(tc.body))
+			c.Params = gin.Params{{Key: "id", Value: sessionID}}
+			h.session(c)
+			saved, ok := h.repo.AssistantSession(user.ID, sessionID)
+			if rec.Code != tc.status || !ok || saved.Title != tc.title || saved.Model != model || saved.Effort != "low" {
+				t.Fatalf("status %d, session %s %s/%s, body %s", rec.Code, saved.Title, saved.Model, saved.Effort, rec.Body)
+			}
+		})
+	}
+
+	body, _ := json.Marshal(assistantRequest{
+		SessionID: sessionID, Model: model, Effort: "low",
+		Messages: []assistantMessage{{Role: "user", Content: "继续"}},
+	})
+	c, rec := workbenchContext(user, http.MethodPost, "/api/assistant/generations", bytes.NewBuffer(body))
+	h.startGeneration(c)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "仅支持默认思考强度") {
+		t.Fatalf("generation with historical effort returned %d: %s", rec.Code, rec.Body)
 	}
 }
 

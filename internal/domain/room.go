@@ -27,12 +27,12 @@ type ChatRoomView struct {
 }
 
 // ChatMessage is one group-chat turn. Kind "text" is conversation.
-// Kind "dispatch" records an issue created in the room and the SOP it was
+// Kind "dispatch" records an issue created in the room and the LOOP it was
 // handed to. "progress" is a failure or the run's final result; finished
 // steps stay on the dispatch card. "approval" is a step waiting for a person,
 // and "decision" records a member approving or sending it back.
 // TargetType "role" / "both" and AgentID remain on older messages from when
-// a room could assign a role without starting a SOP.
+// a room could assign a role without starting a LOOP.
 type ChatMessage struct {
 	ID            string `json:"id"`
 	RoomID        string `json:"roomId"`
@@ -52,7 +52,7 @@ type ChatMessage struct {
 	RunID         string `json:"runId,omitempty"`
 	DispatchError string `json:"dispatchError,omitempty"`
 	WorkflowName  string `json:"workflowName,omitempty"`
-	// Lane > 0 marks the extra SOPs of a multi-SOP dispatch; the issue card
+	// Lane > 0 marks the extra LOOPs of a multi-LOOP dispatch; the issue card
 	// itself is lane 0.
 	Lane int `json:"lane,omitempty"`
 	// RunFinal is set on a dispatch message once its run reached a terminal

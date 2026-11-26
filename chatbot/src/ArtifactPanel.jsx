@@ -110,7 +110,7 @@ function DefinitionPreview({ artifact }) {
     <section className="definition-preview">
       <div className="definition-summary">
         <span className="artifact-type-label">
-          {artifact.kind === "sop" ? "SOP" : "角色"}
+          {artifact.kind === "sop" ? "LOOP" : "角色"}
         </span>
         <h2>{data.name || artifact.name}</h2>
         <p>{data.description}</p>
@@ -170,7 +170,7 @@ function OperationPreview({ artifact, runs }) {
     <section className="operation-preview">
       {run ? (
         <p>
-          {run.workflowSnapshot?.name || "SOP 运行"}
+          {run.workflowSnapshot?.name || "LOOP 运行"}
           {node ? ` · ${node.name || node.id}` : ""}
         </p>
       ) : null}
@@ -206,6 +206,7 @@ export default function ArtifactPanel({
   const subagents = collectSubagents(
     chat?.session?.messages || [],
     live ? chat?.live?.activity || [] : [],
+    chat?.model || "",
   );
   // A new subagent is keyed by its dispatch until its agent ID arrives, so
   // an opened one is found by either.
@@ -246,7 +247,7 @@ export default function ArtifactPanel({
     }
   });
   // The browser shows a desktop-width page, so it widens the pane like an
-  // opened SOP node and restores the width afterwards.
+  // opened LOOP node and restores the width afterwards.
   const layout = useArtifactPanelLayout(
     root,
     onClose,
@@ -319,7 +320,7 @@ export default function ArtifactPanel({
     matchesArtifact(artifact, "文件"),
   );
   const visibleDefinitions = definitions.filter((artifact) =>
-    matchesArtifact(artifact, "SOP 与角色"),
+    matchesArtifact(artifact, "LOOP 与角色"),
   );
   const visibleOperations = operations.filter((artifact) =>
     matchesArtifact(artifact, "待确认操作"),
@@ -336,7 +337,7 @@ export default function ArtifactPanel({
         item.id,
         item.name,
       ]),
-      "SOP 运行",
+      "LOOP 运行",
     ),
   );
   const visibleSubagents = subagents.filter((agent) =>
@@ -344,6 +345,9 @@ export default function ArtifactPanel({
       subagentName(agent),
       agent.subagent,
       agent.agentId,
+      // Every dispatch's model: a resumed agent may have run on several.
+      ...Object.values(agent.models || {}),
+      agent.model,
       subagentStatus(agent, live).label,
       ...agent.dispatches.map((step) => step.detail),
       "子 Agent",
@@ -385,7 +389,7 @@ export default function ArtifactPanel({
           <strong>{artifact.name}</strong>
           <small>
             {target
-              ? `${artifact.kind === "sop" ? "SOP" : "角色"} · ${artifact.asset?.status === "published" ? "已发布" : "已保存"}`
+              ? `${artifact.kind === "sop" ? "LOOP" : "角色"} · ${artifact.asset?.status === "published" ? "已发布" : "已保存"}`
               : artifact.source}
             {artifact.size
               ? ` · ${artifact.size < 1024 ? `${artifact.size} B` : `${Math.ceil(artifact.size / 1024)} KB`}`
@@ -530,8 +534,8 @@ export default function ArtifactPanel({
             {selectedAgent ? (
               <>
                 <span className="artifact-node-title">{subagentName(selectedAgent)}</span>
-                <small className="node-header-meta" title={[selectedAgent.subagent, selectedAgent.agentId].filter(Boolean).join(" · ")}>
-                  {subagentStatus(selectedAgent, live).label}
+                <small className="node-header-meta" title={[selectedAgent.subagent, selectedAgent.agentId, selectedAgent.model].filter(Boolean).join(" · ")}>
+                  {[subagentStatus(selectedAgent, live).label, selectedAgent.model].filter(Boolean).join(" · ")}
                 </small>
               </>
             ) : null}
@@ -697,13 +701,13 @@ export default function ArtifactPanel({
               ) : null}
               {visibleDefinitions.length ? (
                 <section className="artifact-section">
-                  <h3>SOP 与角色</h3>
+                  <h3>LOOP 与角色</h3>
                   {visibleDefinitions.map(row)}
                 </section>
               ) : null}
               {visibleRuns.length ? (
                 <section className="artifact-section">
-                  <h3>SOP 运行</h3>
+                  <h3>LOOP 运行</h3>
                   {visibleRuns.map((run) => (
                     <button
                       type="button"
@@ -714,7 +718,7 @@ export default function ArtifactPanel({
                           kind: "run",
                           id: run.id,
                           runId: run.id,
-                          name: run.workflowSnapshot?.name || "SOP 运行",
+                          name: run.workflowSnapshot?.name || "LOOP 运行",
                         })
                       }
                     >
@@ -723,7 +727,7 @@ export default function ArtifactPanel({
                       </span>
                       <span className="artifact-file-copy">
                         <strong>
-                          {run.workflowSnapshot?.name || "SOP 运行"}
+                          {run.workflowSnapshot?.name || "LOOP 运行"}
                         </strong>
                         <small>
                           <i
@@ -776,6 +780,7 @@ export default function ArtifactPanel({
                           <small>
                             <i className={`artifact-run-dot status-${{ done: "succeeded", running: "running", failed: "failed" }[status.tone] || "canceled"}`} />
                             {status.label}
+                            {agent.model ? ` · 模型 ${agent.model}` : ""}
                             {count > 1 ? ` · 派发 ${count} 次` : ""}
                             {agent.dispatches.at(-1)?.detail
                               ? ` · ${agent.dispatches.at(-1).detail}`

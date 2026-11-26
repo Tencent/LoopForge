@@ -49,6 +49,21 @@ func TestRunnerWebsocketControlAndWorkspace(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
+	rejected, err := hub.requestWorkspace(t.Context(), runnerID, domain.RunnerWorkspaceRequest{
+		RunID: "cvb-ws-run", Operation: domain.RunnerWorkspaceOperationPrepare,
+		Sandbox: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: domain.SandboxDriverDocker, MemoryMiB: 128}},
+	})
+	if err != nil || rejected.Status != http.StatusConflict || rejected.Error != domain.RunnerDockerSandboxLimitsUpgradeMessage {
+		t.Fatalf("legacy workspace request = %+v, err = %v", rejected, err)
+	}
+	rejected, err = hub.requestWorkspace(t.Context(), runnerID, domain.RunnerWorkspaceRequest{
+		RunID: "cvb-ws-run", Operation: domain.RunnerWorkspaceOperationPrepare,
+		Sandbox: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: domain.SandboxDriverDocker, Privileged: true}},
+	})
+	if err != nil || rejected.Status != http.StatusConflict || rejected.Error != domain.RunnerPrivilegedSandboxUpgradeMessage {
+		t.Fatalf("legacy privileged workspace request = %+v, err = %v", rejected, err)
+	}
+
 	type cvBWorkspaceResult struct {
 		response domain.RunnerWorkspaceResponse
 		err      error
@@ -157,5 +172,5 @@ func TestRunnerControlHubErrorAndBufferBranches(t *testing.T) {
 	hub.sendControl(buffered.runnerID, "task", "cancel")
 	close(buffered.done)
 
-	hub.resolveWorkspace("missing", domain.RunnerWorkspaceResponse{})
+	hub.resolveWorkspace(nil, "missing", domain.RunnerWorkspaceResponse{})
 }

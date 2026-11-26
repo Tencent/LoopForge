@@ -8,11 +8,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/gin-gonic/gin"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func sharedWorkbenchFixture(t *testing.T) (*assistantHandlers, domain.User, domain.User, domain.User, domain.AssistantSession) {
@@ -136,7 +137,7 @@ func TestSharedGenerationUsesOneSlotAndMembersCanCancel(t *testing.T) {
 		}
 	}
 	if _, shared, err := h.conversationScope(func() *gin.Context { c, _ := workbenchContext(b, "GET", "/", bytes.NewBuffer(nil)); return c }(), "private", "shared-run", s.ProjectID, b.ID); err == nil || shared {
-		t.Fatal("private SOP slot accepted")
+		t.Fatal("private LOOP slot accepted")
 	}
 }
 func TestRoleAgentFile(t *testing.T) {
@@ -183,6 +184,10 @@ func TestRoleMentionKeepsMainBotSession(t *testing.T) {
 	bin := filepath.Join(root, "codebuddy")
 	argsFile := filepath.Join(root, "args")
 	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo 2.185.0
+  exit 0
+fi
 for arg in "$@"; do printf '%s\n' "$arg"; done > '` + argsFile + `'
 printf '%s\n' '{"type":"result","result":"已派发实现工程师"}'
 `
@@ -270,10 +275,8 @@ func TestSharedAttachmentAccessRequiresRecordedReference(t *testing.T) {
 	if err := h.prepareWorkbenchContext(c, &req, b); err != nil {
 		t.Fatal(err)
 	}
-	session := &AgentToolSession{UserID: b.ID, ProjectID: s.ProjectID, AttachmentIDs: req.attachmentIDs, AttachmentOwners: req.attachmentOwners}
-	result, err := readWorkbenchAttachmentTool(session, json.RawMessage(`{"id":"`+id+`"}`))
-	if err != nil || result["isError"] != false {
-		t.Fatal("peer cannot read referenced attachment", err)
+	if !req.attachmentIDs[id] || req.attachmentOwners[id] != a.ID {
+		t.Fatalf("peer turn does not carry the referenced attachment: ids=%v owners=%v", req.attachmentIDs, req.attachmentOwners)
 	}
 }
 

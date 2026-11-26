@@ -15,6 +15,28 @@ import (
 	"time"
 )
 
+func TestPersistedAssistantSSEPublishesWorkspaceChangesWithoutThoughts(t *testing.T) {
+	response := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(response)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	g := domain.AssistantGeneration{ID: "persisted-switch", Status: "running", RuntimeMode: domain.AssistantModeWorkspace, WorkspaceRunID: "prior-workspace"}
+	calls := 0
+	streamPersistedAssistantGeneration(c, g, func() (domain.AssistantGeneration, bool) {
+		calls++
+		next := g
+		switch calls {
+		case 1:
+			next.WorkspaceRunID = "next-workspace"
+		default:
+			next.Status = "completed"
+		}
+		return next, true
+	})
+	if body := response.Body.String(); !strings.Contains(body, `"workspaceRunId":"next-workspace"`) {
+		t.Fatalf("workspace switch missing from SSE: %s", body)
+	}
+}
+
 func TestAssistantSSERecoversEvictedTokensAndDisconnectKeepsModelRunning(t *testing.T) {
 	h, user := workbenchFixture(t)
 	ready, next, finish, nextSent := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -114,11 +136,11 @@ func TestAssistantProgressReplyContinuesAndHasBoundedFailure(t *testing.T) {
 			h.generate = func(_ context.Context, _ string, _ domain.User) (string, error) {
 				calls++
 				if stuck || calls == 1 {
-					return "稍等，我先查看项目里的 SOP。", nil
+					return "稍等，我先查看项目里的 LOOP。", nil
 				}
-				return "项目中已有后端研发 SOP，共四个节点。", nil
+				return "项目中已有后端研发 LOOP，共四个节点。", nil
 			}
-			c, rec := workbenchContext(user, "POST", "/api/assistant/chat", bytes.NewBufferString(`{"sessionId":"progress-check","projectId":"workbench","messages":[{"role":"user","content":"查看已有 SOP 并给出结果"}]}`))
+			c, rec := workbenchContext(user, "POST", "/api/assistant/chat", bytes.NewBufferString(`{"sessionId":"progress-check","projectId":"workbench","messages":[{"role":"user","content":"查看已有 LOOP 并给出结果"}]}`))
 			h.chat(c)
 			if stuck {
 				if rec.Code != 502 || calls != 3 {

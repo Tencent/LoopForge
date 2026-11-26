@@ -153,7 +153,9 @@ func TestBrowserViewOperationsWithFakeCDP(t *testing.T) {
 	ctxDone, cancel := context.WithCancel(ctx)
 	cancel()
 	view.waitFrame(ctxDone, 99, 10)
+	view.mu.Lock()
 	view.session = ""
+	view.mu.Unlock()
 	if err := view.pageCall(ctx, "x", nil); err == nil {
 		t.Fatal("page call without session")
 	}
@@ -326,30 +328,6 @@ func TestHandleBrowserOperationErrors(t *testing.T) {
 
 func TestProcessSandboxPathsProfilesAndCommands(t *testing.T) {
 	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("rules"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(workspace, "nested", ".claude"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	paths, err := discoverProjectAgentPaths(workspace)
-	if err != nil || !cvRContains(paths, "AGENTS.md") || !cvRContains(paths, filepath.Join("nested", ".claude")) {
-		t.Fatalf("paths=%v err=%v", paths, err)
-	}
-	if _, err := validateAgentConfigTarget(workspace, "AGENTS.md"); err != nil {
-		t.Fatal(err)
-	}
-	outside := filepath.Join(t.TempDir(), "AGENTS.md")
-	_ = os.WriteFile(outside, []byte("x"), 0o600)
-	if err := os.Symlink(outside, filepath.Join(workspace, "CLAUDE.md")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := validateAgentConfigTarget(workspace, "CLAUDE.md"); err == nil {
-		t.Fatal("outside symlink accepted")
-	}
-	if err := os.Remove(filepath.Join(workspace, "CLAUDE.md")); err != nil {
-		t.Fatal(err)
-	}
 	env := appendEnvironment([]string{"A=1", "A=2", "bad"}, map[string]string{"A": "3", "B": "4"})
 	if strings.Join(env, ",") != "A=3,B=4" {
 		t.Fatalf("env=%v", env)
@@ -366,23 +344,13 @@ func TestProcessSandboxPathsProfilesAndCommands(t *testing.T) {
 	if first, err := agentStateDirectoryRequirements(req); err != nil || first == "" {
 		t.Fatalf("first=%q err=%v", first, err)
 	}
-	profile, err := seatbeltProfileCommand(workspace, req, true)
-	if err != nil || !strings.Contains(profile, "deny file-read") {
+	profile, err := seatbeltProfileCommand(workspace, req)
+	if err != nil || !strings.Contains(profile, "(deny file-write*)") {
 		t.Fatalf("profile=%q err=%v", profile, err)
 	}
-	args, err := bwrapArgsCommand(workspace, req, true)
+	args, err := bwrapArgsCommand(workspace, req)
 	if err != nil || !cvRContains(args, "--tmpfs") || !cvRContains(args, "--ro-bind") {
 		t.Fatalf("args=%v err=%v", args, err)
-	}
-	emptyDir, emptyFile, err := isolationMaskSources(workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info, _ := os.Stat(emptyDir); !info.IsDir() {
-		t.Fatal("empty dir")
-	}
-	if info, _ := os.Stat(emptyFile); !info.Mode().IsRegular() {
-		t.Fatal("empty file")
 	}
 	sb := &processSandbox{id: "id", workspace: workspace, driver: "bwrap", binary: "/bin/echo", profile: domain.SandboxProfile{Environment: map[string]string{"X": "1"}}}
 	if _, err := sb.command(context.Background(), CommandSpec{}, nil); err == nil {

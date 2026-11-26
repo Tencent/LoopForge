@@ -11,7 +11,7 @@ import (
 )
 
 // inflightTracker counts long-lived work that runs inside the API process
-// (assistant generations, clarifications, group follow-ups, SOP handoffs) so a
+// (assistant generations, clarifications, group follow-ups, LOOP handoffs) so a
 // replaced process can finish it before exiting.
 type inflightTracker struct {
 	mu      sync.Mutex
@@ -72,12 +72,13 @@ func (t *inflightTracker) Wait(ctx context.Context) error {
 // Background controls the API process's autonomous work during shutdown or
 // handover: StopClaiming → WaitInflight → Stop.
 type Background struct {
-	recoveryGate   <-chan struct{}
-	scheduler      *schedule.Service
-	runnerControls *runnerControlHub
-	handedOver     atomic.Bool
-	stopOnce       sync.Once
-	claimOnce      sync.Once
+	sopDetectionContext context.Context
+	recoveryGate        <-chan struct{}
+	scheduler           *schedule.Service
+	runnerControls      *runnerControlHub
+	handedOver          atomic.Bool
+	stopOnce            sync.Once
+	claimOnce           sync.Once
 }
 
 // BackgroundOptions tunes startup of a process that may be replacing another.
@@ -88,7 +89,7 @@ type BackgroundOptions struct {
 	RecoveryGate <-chan struct{}
 }
 
-// StopClaiming stops polling for new follow-ups, SOP handoffs and schedule
+// StopClaiming stops polling for new follow-ups, LOOP handoffs and schedule
 // ticks without cancelling work that is already running.
 func (b *Background) StopClaiming() {
 	if b == nil {

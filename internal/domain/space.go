@@ -7,7 +7,7 @@ import (
 )
 
 // A space is a conversation (a ChatRoom, same ID) with the working state the
-// chat needs: members, versioned artifacts, side threads and the SOP runs it
+// chat needs: members, versioned artifacts, side threads and the LOOP runs it
 // dispatched. A conversation may become a requirement when someone links or
 // creates a platform issue for it; progress then lives on that issue and its
 // runs rather than on a second lifecycle.
@@ -57,7 +57,7 @@ const SpaceArtifactBodyLimit = 1 << 20
 
 // SpaceArtifact is a versioned deliverable inside a space. Body holds the
 // source (markdown, HTML prototype, JSON slides); URL points at an external
-// object such as a preview. WorkflowID links a saved SOP draft.
+// object such as a preview. WorkflowID links a saved LOOP draft.
 type SpaceArtifact struct {
 	ID         string    `json:"id"`
 	SpaceID    string    `json:"spaceId"`
@@ -97,7 +97,7 @@ func (a SpaceArtifact) Validate() error {
 	return nil
 }
 
-// SpaceThread groups side discussion or one SOP's process away from the
+// SpaceThread groups side discussion or one LOOP's process away from the
 // main timeline.
 type SpaceThread struct {
 	ID        string    `json:"id"`

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/repo"
 )
 
 func TestClarifyHubLifecycleAndPersistence(t *testing.T) {
@@ -178,7 +177,7 @@ func TestClarifyMCPInstructionsAndOwnership(t *testing.T) {
 	st := cvAStore(t)
 	_ = st.PutUser(domain.User{LoginName: "cva-mcp-owner"})
 	owner, _ := st.UserByLoginName("cva-mcp-owner")
-	if _, err := st.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{GitToken: "git-owner"}); err != nil {
+	if err := st.SaveGitHTTPCredential(owner.ID, "", domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Host: "github.com", Name: "GitHub", Platform: domain.GitPlatformGitHub}, Token: "git-owner"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = st.PutUser(domain.User{LoginName: "cva-mcp-worker"})

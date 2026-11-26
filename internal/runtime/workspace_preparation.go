@@ -92,7 +92,7 @@ func saveWorkspacePreparationStatus(root string, state WorkspacePreparationStatu
 	return os.Rename(file.Name(), filepath.Join(dir, "state.json"))
 }
 
-// WorkspacePreparationWorkflow keeps the original SOP dependency graph when
+// WorkspacePreparationWorkflow keeps the original LOOP dependency graph when
 // free collaboration removes its business scheduling edges.
 func WorkspacePreparationWorkflow(wf domain.WorkflowDefinition) domain.WorkflowDefinition {
 	if wf.CollaborationMode == "group" && wf.SOPCheckpoint != nil {
@@ -178,7 +178,13 @@ func redactPreparationOutput(sb Sandbox, output string) string {
 		managed.credentialsMu.RLock()
 		credentials := managed.credentials
 		managed.credentialsMu.RUnlock()
-		secrets = append(secrets, credentials.GitToken, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey)
+		secrets = append(secrets, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey)
+		for _, credential := range credentials.GitHTTPCredentials {
+			secrets = append(secrets, credential.Token)
+		}
+		for _, secret := range credentials.Extra {
+			secrets = append(secrets, secret)
+		}
 		for _, server := range credentials.MCPServers {
 			for _, value := range server.Headers {
 				secrets = append(secrets, value)
@@ -277,7 +283,7 @@ func preparationCommand(node domain.WorkflowNode, repo *domain.RepositoryContext
 // EnsureWorkspacePreparation replays the explicitly selected, previously
 // completed scripts only when their execution environment was reconstructed.
 // Callers must serialize preparation. Changes to source files do not invalidate
-// these receipts; ordinary SOP script nodes always execute normally in order.
+// these receipts; ordinary LOOP script nodes always execute normally in order.
 func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.WorkflowDefinition, repositories []domain.RepositoryContext, sink EventSink) (state WorkspacePreparationStatus, resultErr error) {
 	wf = WorkspacePreparationWorkflow(wf)
 	nodes, err := preparationNodes(wf)
@@ -289,6 +295,9 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	}
 	epoch, err := SandboxEnvironmentIdentity(ctx, sb)
 	if err != nil {
+		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
+	}
+	if err := RestoreLegacyWorkspaceAgentConfig(ctx, sb.Workspace(), repositories); err != nil {
 		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
 	}
 	old := ReadWorkspacePreparationStatus(sb.Workspace(), sb.ID())
@@ -351,7 +360,25 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 		emit(node, "started", "正在恢复工作区环境："+node.Name)
 		var output string
 		execute := func(repo *domain.RepositoryContext) error {
-			raw, execErr := sb.Exec(ctx, CommandSpec{Argv: []string{"sh", "-lc", preparationCommand(node, repo)}, Provider: "script", CredentialBindings: []CredentialBinding{BindGit, BindMCP}}, nil)
+			spec := CommandSpec{Argv: []string{"sh", "-lc", preparationCommand(node, repo)}, Provider: "script", CredentialBindings: []CredentialBinding{BindGit, BindMCP}}
+			// A rebuilt environment binds exactly what a normal execution
+			// bound: the node's declared credentials are validated up front
+			// (where the sandbox exposes its snapshot) and injected through
+			// the same BindExtra path, so a replay never falls back to the
+			// host process's own variables.
+			if len(node.CredentialEnv) > 0 {
+				if snapshot, ok := sb.(sandboxCredentialSnapshot); ok {
+					var err error
+					spec, err = CommandSpecWithCredentialEnv(spec, node.CredentialEnv, snapshot.CredentialSnapshot())
+					if err != nil {
+						return err
+					}
+				} else {
+					spec.CredentialBindings = append(append([]CredentialBinding(nil), spec.CredentialBindings...), BindExtra)
+					spec.ExtraCredentialEnv = node.CredentialEnv
+				}
+			}
+			raw, execErr := sb.Exec(ctx, spec, nil)
 			output = tailAtRuneBoundary(output+redactPreparationOutput(sb, raw), preparationOutputLimit)
 			return execErr
 		}
@@ -446,7 +473,7 @@ func RecordWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 }
 
 // WorkspacePreparationTrivial reports a recipe with nothing to prepare. A live
-// environment serves it as is, even if no run ever stamped it ready: SOP
+// environment serves it as is, even if no run ever stamped it ready: LOOP
 // nodes skip preparation entirely when their workflow has no such steps.
 func WorkspacePreparationTrivial(wf domain.WorkflowDefinition) bool {
 	nodes, err := preparationNodes(WorkspacePreparationWorkflow(wf))

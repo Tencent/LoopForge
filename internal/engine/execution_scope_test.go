@@ -48,7 +48,7 @@ func TestRepositoryScopedRoleGateAndScriptArtifacts(t *testing.T) {
 		Commands:       []string{`test -s scope.txt && test "$AGENTFLOW_EXECUTION_SCOPE" = repositories`},
 	}})
 	wf := domain.WorkflowDefinition{
-		ID: "repository-scope", Name: "Repository scope", SandboxProfileID: "local",
+		ID: "repository-scope", Name: "Repository scope", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{
 				ID: "prepare", Name: "Prepare", Type: "script", ScriptLanguage: "shell",

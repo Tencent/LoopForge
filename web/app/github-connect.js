@@ -96,7 +96,7 @@ async function startGitHubConnect(host){
 
 function mountGitHubRepoPicker(host,onSelect){
   if(!host)return;
-  const connected=!!userById(state.currentUser?.id)?.gitTokenConfigured;
+  const connected=!!userById(state.currentUser?.id)?.gitHubCredentialConfigured;
   host.innerHTML=(connected?'':githubConnectHTML())+`<button type="button" class="button ghost small" data-github-load${connected?'':' hidden'}>选择我的 GitHub 仓库</button><p data-github-repo-hint${connected?' hidden':''}>连接后可选择自己的仓库；公开仓库也可直接填写地址。访问令牌可在个人配置中设置。</p><div data-github-repo-list></div>`;
   hydrateGitHubConnections(host);
   const load=host.querySelector('[data-github-load]'),list=host.querySelector('[data-github-repo-list]');

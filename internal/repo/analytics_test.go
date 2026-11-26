@@ -44,6 +44,56 @@ func TestAnalyticsScopesRunsAndComputesOperationalMetrics(t *testing.T) {
 	}
 }
 
+func TestAnalyticsWorkflowVersionsExcludePrePublicationRuns(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "trial-sop", Name: "Trial SOP", ProjectID: "alpha", Status: "draft"}); err != nil {
+		t.Fatal(err)
+	}
+	draft, _ := s.Workflow("trial-sop")
+	published, err := s.PublishWorkflow(draft.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := published
+	legacy.PublishedRevision = 0 // Historical published runs did not have the marker.
+	archived := draft
+	archived.Status = "archived"
+	now := time.Now().UTC().Add(-time.Minute)
+	for _, tc := range []struct {
+		id, status string
+		snapshot   domain.WorkflowDefinition
+	}{
+		{"failed-trial", "failed", draft},
+		{"archived-trial", "failed", archived},
+		{"published-v1", "succeeded", published},
+		{"legacy-published-v1", "succeeded", legacy},
+	} {
+		if err := s.PutRun(domain.Run{
+			ID: tc.id, WorkflowID: draft.ID, WorkflowSnapshot: tc.snapshot, Status: tc.status,
+			ExecutionContext: domain.TelemetryContext{ProjectID: draft.ProjectID}, CreatedAt: now, UpdatedAt: now.Add(time.Second),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, scope := range []string{"", "overview"} {
+		got := s.Analytics(domain.AnalyticsFilter{ProjectID: draft.ProjectID, WorkflowID: draft.ID, Scope: scope})
+		if got.Summary.TotalRuns != 4 || got.Summary.FailedRuns != 2 {
+			t.Fatalf("scope %q: trial runs missing from overall summary: %+v", scope, got.Summary)
+		}
+		if len(got.WorkflowVersions) != 1 {
+			t.Fatalf("scope %q: expected one published version: %+v", scope, got.WorkflowVersions)
+		}
+		v1 := got.WorkflowVersions[0]
+		if v1.Version != 1 || v1.Runs != 2 || v1.Succeeded != 2 || v1.Failed != 0 || v1.SuccessRate != 100 {
+			t.Fatalf("scope %q: unexpected v1 metrics: %+v", scope, v1)
+		}
+	}
+}
+
 func TestAnalyticsBuildsLoopDemoMetricsAndTraceChain(t *testing.T) {
 	s, err := OpenTest()
 	if err != nil {

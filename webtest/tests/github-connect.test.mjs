@@ -7,7 +7,7 @@ test('GitHub connection displays a PIN, honors slow polling, and stores the conn
   t.after(app.close);
   app.router.get('/api/auth/github', { enabled: true });
   app.router.post('/api/auth/github/device', { flowId: 'opaque-flow', userCode: 'ABCD-EFGH', expiresIn: 900, interval: 5 });
-  app.router.post('/api/auth/github/poll', { status: 'connected', login: 'my-github-account', user: { id: 1, loginName: 'owner', gitTokenConfigured: true } });
+  app.router.post('/api/auth/github/poll', { status: 'connected', login: 'my-github-account', user: { id: 1, loginName: 'owner', gitHubCredentialConfigured: true } });
   app.evaluate(`
     state.currentUser={id:1,loginName:'owner'};
     const host=document.createElement('div');host.id='github-test';host.innerHTML=githubConnectHTML();document.body.append(host);
@@ -23,7 +23,7 @@ test('GitHub connection displays a PIN, honors slow polling, and stores the conn
   assert.equal(app.window.githubTimers.at(-1).delay, 5000);
   await app.window.githubTimers.at(-1).callback();
   assert.match(host.textContent, /已连接 GitHub · my-github-account/);
-  assert.equal(app.evaluate('userById(1).gitTokenConfigured'), true);
+  assert.equal(app.evaluate('userById(1).gitHubCredentialConfigured'), true);
   assert.equal(host.querySelector('[data-github-start]').disabled, false);
   const call = app.router.calls.find(call => call.path === '/api/auth/github/poll');
   assert.deepEqual(call.body, { flowId: 'opaque-flow' });
@@ -100,7 +100,7 @@ test('GitHub repository picker loads pages, filters names, and fills the actual 
   app.evaluate(`
     state.currentUser={id:1,loginName:'owner'};
     const host=document.createElement('div');host.id='github-picker-test';document.body.append(host);
-    state.data.users=[{id:1,gitTokenConfigured:true}];
+    state.data.users=[{id:1,gitHubCredentialConfigured:true}];
     mountGitHubRepoPicker(host,repository=>{window.githubSelected=repository});
   `);
   const host = app.document.querySelector('#github-picker-test');

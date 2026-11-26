@@ -93,7 +93,7 @@ func TestSOPCatalogWiring(t *testing.T) {
 		t.Fatal("entering #sopsView must reset the card reveal before the metrics refresh")
 	}
 	if !strings.Contains(string(app), "if(name!=='sops'&&typeof hideSOPCardMenu==='function')hideSOPCardMenu();") {
-		t.Fatal("leaving #sopsView must close the SOP card ⋯ menu")
+		t.Fatal("leaving #sopsView must close the LOOP card ⋯ menu")
 	}
 	sops, err := os.ReadFile("app/sops.js")
 	if err != nil {
@@ -106,6 +106,6 @@ func TestSOPCatalogWiring(t *testing.T) {
 		}
 	}
 	if strings.Contains(src, "scope-share") {
-		t.Fatal("SOP cards no longer render the legacy .scope-share buttons")
+		t.Fatal("LOOP cards no longer render the legacy .scope-share buttons")
 	}
 }

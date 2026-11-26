@@ -130,8 +130,9 @@ assert.strictEqual(ctx.skillhubDate(1700000000000), ctx.skillhubDate(1700000000)
 assert.strictEqual(ctx.skillhubSafeURL('javascript:alert(1)'), '');
 assert.strictEqual(ctx.skillhubSubCategoryName({ key: 'agent-workflow', name: '工作流编排' }), '工作流编排', 'subCategories arrive as {key,name}');
 assert.strictEqual(ctx.skillhubSubCategoryName('plain'), 'plain');
-assert.ok(ctx.skillhubFileWarnings([{ path: 'a.bin', size: 2 * 1024 * 1024 }])[0].includes('a.bin'));
-assert.strictEqual(ctx.skillhubFileWarnings([{ path: 'SKILL.md', size: 10 }]).length, 0);
+const maxSkillFileBytes = 10 * 1024 * 1024;
+assert.strictEqual(ctx.skillhubFileWarnings([{ path: 'a.bin', size: maxSkillFileBytes }]).length, 0);
+assert.match(ctx.skillhubFileWarnings([{ path: 'a.bin', size: maxSkillFileBytes + 1 }])[0], /a\.bin 超过平台单文件 10MB/);
 
 // ---------- Third tab only on the skills page ----------
 for (const id of ['#skillhubMarket', '#assetCount', '#assetList', '#assetSearchBox']) els[id] = fakeEl(id);

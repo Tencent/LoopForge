@@ -8,28 +8,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 )
 
-// Issue #228: clarification and run evals run on CodeBuddy only. A model of
-// another CLI ("codex:…") must be refused up front, not silently swapped for
-// the CodeBuddy default.
-func TestClarifyModelEngineError(t *testing.T) {
-	for _, id := range []string{"", "default", "glm-5.1", "public-model"} {
-		if err := clarifyModelEngineError(id); err != nil {
-			t.Fatalf("CodeBuddy model %q refused: %v", id, err)
-		}
-	}
-	for _, id := range []string{"codex:gpt-5.5", "claude-code:sonnet"} {
-		if err := clarifyModelEngineError(id); err != errClarifyNeedsCodeBuddy {
-			t.Fatalf("model %q = %v, want errClarifyNeedsCodeBuddy", id, err)
-		}
-	}
-}
-
-func TestChatClarifyRefusesOtherCLIModel(t *testing.T) {
+func TestChatClarifyRejectsInvalidModel(t *testing.T) {
 	called := false
 	setClarifyExecForTest(func(context.Context, domain.Issue, chatClarifyRequest, func(string, any)) (any, string, map[string]any, error) {
 		called = true
@@ -38,7 +23,7 @@ func TestChatClarifyRefusesOtherCLIModel(t *testing.T) {
 	t.Cleanup(func() { setClarifyExecForTest(nil) })
 
 	_, h := clarifyTestServer(t)
-	body, _ := json.Marshal(map[string]any{"projectId": "platform", "message": "加个徽章", "model": "codex:gpt-5.5"})
+	body, _ := json.Marshal(map[string]any{"projectId": "platform", "message": "加个徽章", "model": "codex:"})
 	req := httptest.NewRequest(http.MethodPost, "/api/chat-clarify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -46,15 +31,15 @@ func TestChatClarifyRefusesOtherCLIModel(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "只支持 CodeBuddy") {
-		t.Fatalf("error does not explain the CodeBuddy limit: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "请选择有效的 CLI 模型") {
+		t.Fatalf("error does not explain invalid model: %s", rec.Body.String())
 	}
 	if called {
-		t.Fatal("clarification started with a Codex model")
+		t.Fatal("clarification started with an invalid model")
 	}
 }
 
-func TestRunEvalRefusesOtherCLIModel(t *testing.T) {
+func TestRunEvalRequiresSelectedCLICredentials(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	if _, err := f.s.UpdateUserCredentials(f.user.ID, repo.UserCredentialUpdate{CodeBuddyAPIKey: "eval-key"}); err != nil {
 		t.Fatal(err)
@@ -65,10 +50,46 @@ func TestRunEvalRefusesOtherCLIModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := cvBRequest(t, f, http.MethodPost, "/api/runs/eval-codex-run/eval", map[string]any{"model": "codex:gpt-5.5"}, true)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "只支持 CodeBuddy") {
-		t.Fatalf("status = %d body = %s, want 400 explaining the CodeBuddy limit", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Codex API Key") {
+		t.Fatalf("status = %d body = %s, want 400 asking for the selected CLI credential", rec.Code, rec.Body.String())
 	}
 	if _, busy := f.s.ActiveRunEval(done.ID); busy {
-		t.Fatal("a Codex model must not start a run eval")
+		t.Fatal("a model without matching credentials must not start an eval")
+	}
+}
+
+func TestRunEvalPreservesSelectedModelInChunkedRequest(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	if _, err := f.s.UpdateUserCredentials(f.user.ID, repo.UserCredentialUpdate{CodexAPIKey: "eval-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{ID: "eval-chunked", Status: "succeeded", WorkflowID: "missing", ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}}
+	if err := f.s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	selected := make(chan string, 1)
+	setRunEvalExecForTest(func(_ context.Context, rec domain.RunEvalRecord, _ domain.Run, user domain.User, _ func(string, any)) (domain.RunEvalResult, error) {
+		if user.ID == f.user.ID && user.CodexAPIKey == "eval-fixture" {
+			selected <- rec.Model
+		}
+		return domain.RunEvalResult{}, nil
+	})
+	t.Cleanup(func() { setRunEvalExecForTest(nil) })
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/eval-chunked/eval", strings.NewReader(`{"model":"codex:private-model"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+	rec := httptest.NewRecorder()
+	f.h.ServeHTTP(rec, authedRequest(t, req, f.user))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case model := <-selected:
+		if model != "codex:private-model" {
+			t.Fatalf("job received the wrong explicit model: %q", model)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("eval job did not receive the requesting account's credential")
 	}
 }

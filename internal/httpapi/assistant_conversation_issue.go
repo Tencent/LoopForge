@@ -3,6 +3,7 @@ package httpapi
 import (
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
@@ -10,31 +11,10 @@ import (
 )
 
 // conversationRequirement is the requirement Main Bot identified in an
-// ordinary conversation that changes code directly, without an SOP.
+// ordinary conversation that changes code directly, without a LOOP.
 type conversationRequirement struct {
 	Title       string
 	Description string
-}
-
-func parseConversationRequirement(args map[string]any) (conversationRequirement, error) {
-	raw, ok := args["requirement"]
-	if !ok || raw == nil {
-		return conversationRequirement{}, nil
-	}
-	obj, ok := raw.(map[string]any)
-	if !ok {
-		return conversationRequirement{}, fmt.Errorf("requirement 必须是包含 title 的对象")
-	}
-	title, _ := obj["title"].(string)
-	description, _ := obj["description"].(string)
-	req := conversationRequirement{Title: strings.TrimSpace(title), Description: strings.TrimSpace(description)}
-	if req.Title == "" || len([]rune(req.Title)) > 200 {
-		return conversationRequirement{}, fmt.Errorf("requirement.title 必填，最多 200 字")
-	}
-	if len([]rune(req.Description)) > 20000 {
-		return conversationRequirement{}, fmt.Errorf("requirement.description 最多 20000 字")
-	}
-	return req, nil
 }
 
 // openConversationIssue returns the requirement in the project that a
@@ -56,7 +36,7 @@ func (h *agentToolGateway) openConversationIssue(projectID, issueID string) (dom
 // and analytics instead of as an anonymous workspace. A workspace keeps the
 // requirement it already has. Otherwise an explicitly identified requirement
 // is created; with preferSession the conversation's own open requirement is
-// reused first. Without a title nothing is created. SOP runs are never
+// reused first. Without a title nothing is created. LOOP runs are never
 // relinked: their requirement is set when they are dispatched.
 func (h *agentToolGateway) linkConversationRequirement(s *AgentToolSession, run domain.Run, req conversationRequirement, preferSession bool) (domain.Issue, bool, error) {
 	if !run.IsWorkspace() || run.ExecutionContext.ProjectID != s.ProjectID {
@@ -144,35 +124,36 @@ func conversationRequirementIssue(s *AgentToolSession, run domain.Run, conv doma
 
 // recordConversationMRs registers the MRs a conversation workspace submitted
 // as the requirement's delivery MRs. MR polling then marks the requirement
-// delivered once they merge, and analytics counts them like SOP deliveries.
-func (h *agentToolGateway) recordConversationMRs(issueID string, results []workspaceMRResult, repos []domain.RepositoryContext) error {
+// delivered once they merge, and analytics counts them like LOOP deliveries.
+func (h *agentToolGateway) recordConversationMRs(issueID string, delivered []deliveredMR, repos []domain.Repository) error {
 	if strings.TrimSpace(issueID) == "" {
 		return nil
 	}
 	mrs := []domain.DeliveryMR{}
-	direct := 0
-	for _, r := range results {
-		project, iid, _, ok := domain.ParseGongfengMR(r.MRURL)
-		if r.MRURL == "" || !ok {
-			if r.Direct {
-				// A direct push to a shared branch delivers work without an MR, so
-				// the requirement still needs review; only the MR list stays empty.
-				direct++
-			}
+	for _, r := range delivered {
+		project, iid, url, ok := domain.ParseDeliveryMRURL(r.URL)
+		if !ok {
 			continue
 		}
-		mr := domain.DeliveryMR{Repository: r.Repository, Project: project, IID: iid, URL: r.MRURL, State: "opened", TargetBranch: r.TargetBranch}
-		for _, rc := range repos {
-			if rc.Name == r.Repository {
-				mr.RepositoryID = rc.RepositoryID
+		mr := domain.DeliveryMR{Repository: r.Repository, Project: project, IID: iid, URL: url, State: "opened", TargetBranch: r.TargetBranch}
+		if repo, ok := repositoryForMRProject(repos, project); ok {
+			mr.RepositoryID = repo.ID
+			if mr.Repository == "" {
+				mr.Repository = repo.Name
 			}
 		}
-		if err := h.repo.EnsureMRDeliveryState(project, iid, r.MRURL, issueID); err != nil {
+		if mr.Repository == "" {
+			mr.Repository = project
+		}
+		if err := h.repo.EnsureMRDeliveryState(project, iid, url, issueID); err != nil {
+			return err
+		}
+		if err := h.repo.SetMRDeliveryRegisteredBy(project, iid, r.RegisteredBy); err != nil {
 			return err
 		}
 		mrs = append(mrs, mr)
 	}
-	if len(mrs) == 0 && direct == 0 {
+	if len(mrs) == 0 {
 		return nil
 	}
 	_, err := h.repo.PatchIssue(issueID, func(issue *domain.Issue) error {
@@ -183,6 +164,14 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, results []works
 			}
 		}
 		issue.SetDeliveryMRs(list)
+		for _, mr := range mrs {
+			if mr.RepositoryID != "" && !slices.Contains(issue.RepositoryIDs, mr.RepositoryID) {
+				issue.RepositoryIDs = append(issue.RepositoryIDs, mr.RepositoryID)
+			}
+		}
+		if issue.RepositoryID == "" && len(issue.RepositoryIDs) > 0 {
+			issue.RepositoryID = issue.RepositoryIDs[0]
+		}
 		if !issue.Completed() && !strings.EqualFold(issue.Status, "in_review") {
 			issue.Status = "in_review"
 		}
@@ -191,10 +180,23 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, results []works
 	return err
 }
 
+// repositoryForMRProject finds the registered repository a PR/MR project key
+// (team/repo, github:owner/repo) belongs to.
+func repositoryForMRProject(repos []domain.Repository, project string) (domain.Repository, bool) {
+	for _, r := range repos {
+		for _, raw := range []string{r.CloneURL, r.WebURL} {
+			if info, ok := domain.ParseRepositoryURL(raw); ok && strings.EqualFold(info.Project, project) {
+				return r, true
+			}
+		}
+	}
+	return domain.Repository{}, false
+}
+
 // attributeConversationUsage runs after a turn is saved. It adds the turn's
 // model usage to the conversation workspace the turn worked in, and links the
 // conversation to that workspace's requirement: a conversation's first turn
-// is saved only when it ends, after its tools created the requirement. SOP
+// is saved only when it ends, after its tools created the requirement. LOOP
 // runs a conversation borrowed keep only their own usage.
 func attributeConversationUsage(d *deps, s *AgentToolSession, model string, usage *domain.TokenUsage) {
 	if s == nil {

@@ -492,7 +492,6 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .drawer{position:fixed;inset:0;z-index:2000;display:none;pointer-events:none}
 /* Dialogs opened from inside the issue drawer must paint above it.
    The drawer is 2000; ordinary modals are 120 and otherwise open behind it. */
-#artifactModal.modal{z-index:3200}
 #confirmModal.modal{z-index:4100}
 .drawer.open{display:block}
 .drawer-backdrop{position:absolute;inset:0;background:rgba(3,7,17,.6);backdrop-filter:blur(2px);pointer-events:auto}
@@ -525,6 +524,11 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .detail-fact span{font-size:9px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.05em}
 .detail-fact b{margin-top:3px;font-size:12px;word-break:break-all}
 .detail-desc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px;font-size:12.5px;line-height:1.7;white-space:pre-wrap;color:var(--muted)}
+.issue-description{margin-top:12px;white-space:normal;overflow:auto}
+.issue-description-images{display:flex;flex-wrap:wrap;gap:10px;list-style:none;margin:0;padding:0}
+.issue-description .markdown-body+.issue-description-images{margin-top:12px}
+.issue-description-images li{max-width:100%}
+.issue-description-images img{display:block;width:auto;height:auto;max-width:100%;max-height:240px;border:1px solid var(--line);border-radius:8px}
 .clarify-dim{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:9px}
 .clarify-dim-head{display:flex;align-items:center;gap:8px;font-size:12px}
 .clarify-dim-head b{font-size:12.5px}
@@ -553,6 +557,8 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .detail-empty.compact{padding:16px;font-size:12px}
 /* 对话需求：阶段卡片 + 按仓库展示「工作分支 → 目标分支」与 MR */
 .conv-outcome .conv-outcome-kicker{display:block;margin-bottom:4px;font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--muted-2)}
+.no-sop-switch{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.no-sop-switch .select{flex:1;min-width:180px;max-width:320px}
 .conv-repos{display:flex;flex-direction:column;gap:10px}
 .conv-repo{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);transition:border-color .15s}
 .conv-repo:hover{border-color:var(--line-strong)}
@@ -890,6 +896,15 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .pa-sw-custom input{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;opacity:0;cursor:pointer}
 .pa-sw-hex{margin-left:4px;color:var(--muted);font-size:12px}
 .pa-member-row{padding:12px 0}
+.pa-rows>.pa-member-row{grid-template-columns:30px 84px minmax(220px,1fr) 28px}
+.pa-join-row{display:grid;grid-template-columns:30px 84px minmax(0,1fr) auto;gap:8px;align-items:center;padding:12px 0}
+.pa-rows>.pa-join-row+.pa-join-row{border-top:1px solid var(--line)}
+.pa-join-m{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pa-join-m b{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-join-m small{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-join-acts{display:flex;gap:6px}
+.pa-join-state{display:inline-flex;align-items:center;gap:6px}
+.pa-join-btn,.pa-join-state{flex:none}
 .pa-rows>.member-row+.member-row{border-top:1px solid var(--line)}
 .pa-rows>.member-row.owner-row{margin:12px 0;padding:10px 8px}
 .pa-rows-empty{padding:20px 0;color:var(--muted-2);font-size:13px;text-align:center}
@@ -938,6 +953,7 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .pa-fs h5{margin:0 0 10px;color:var(--muted-2);font-size:11px;font-weight:600;letter-spacing:.04em}
 .pa-field{display:block}
 .pa-field+.pa-field,.pa-detect+.pa-field{margin-top:12px}
+.pa-repo-branch-naming{margin-top:12px}
 .pa-field-l{display:block;margin-bottom:6px;color:var(--muted);font-size:12px;font-weight:500}
 .pa-field-l i{color:var(--muted-2);font-style:normal;font-weight:400}
 .pa-field-h,.pa-fs-hint{display:block;margin:6px 0 0;color:var(--muted-2);font-size:12px;line-height:1.5}
@@ -1557,10 +1573,15 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .platform-field{display:flex;flex-direction:column;gap:6px;margin:0;font-size:12.5px;color:var(--muted)}
 .platform-field>span,.platform-field-head>span{font-weight:650;color:var(--text)}
 .platform-field-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.platform-ssh-host-form[hidden],.platform-https-host-form[hidden]{display:none}
+.platform-host-manual textarea{resize:vertical;font-family:monospace}
+.platform-host-manual summary{cursor:pointer;color:var(--text);font-size:13px}
+.platform-host-manual .platform-field,.platform-host-manual button{margin-top:12px}
+.platform-ssh-host-info code{overflow-wrap:anywhere}
 .platform-field-head small{color:var(--muted-2);font-size:12px}
 .platform-field-hint{color:var(--muted-2);font-size:12px;line-height:1.5}
-.platform-field input,.platform-field select{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line-strong);border-radius:10px;background:var(--panel);color:var(--text);font-size:13px}
-.platform-field input:focus,.platform-field select:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}
+.platform-field input,.platform-field select,.platform-host-manual textarea{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line-strong);border-radius:10px;background:var(--panel);color:var(--text);font-size:13px}
+.platform-field input:focus,.platform-field select:focus,.platform-host-manual textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}
 .platform-shared-key-link{align-self:flex-start;font-size:12px;color:var(--blue);text-decoration:none}
 .platform-shared-key-link:hover{text-decoration:underline}
 .platform-model-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px 12px;max-height:288px;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg-soft)}
@@ -1747,7 +1768,7 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .clarification-feedback b{color:var(--amber)}
 .requirement-modal-card .modal-actions{padding:14px 26px 20px}
 
-/* ================= Agent / SOP 向导 ================= */
+/* ================= Agent / LOOP 向导 ================= */
 .definition-wizard-card{width:min(900px,94vw);max-height:90vh;overflow:auto;padding:0;border-radius:17px}
 .wizard-head{min-height:96px;padding:20px 26px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);background:linear-gradient(135deg,var(--panel),var(--panel-2))}
 .wizard-head h2{margin:3px 0 4px;font-size:20px}
@@ -2052,6 +2073,8 @@ html[data-theme="dark"] .edge-delete-btn:hover path{stroke:#ffffff !important}
 .issue-modal-card label.toggle-row{display:flex;align-items:center;gap:7px}
 .issue-modal-card .toggle-row input[type="checkbox"]{width:auto;flex:0 0 auto;margin:0;padding:0}
 .issue-modal-card textarea{resize:vertical}
+/* 长表单滚动时，取消/启动 SOP/保存始终固定在弹窗底部可见 */
+.issue-modal-card>.modal-actions{position:sticky;bottom:calc(-1 * var(--sp-6));z-index:4;margin:var(--sp-4) calc(-1 * var(--sp-6)) calc(-1 * var(--sp-6));padding:12px var(--sp-6) var(--sp-6);background:var(--v3-surface,var(--panel));border-top:1px solid var(--line-strong)}
 
 /* ================= 响应式 ================= */
 @media (max-width:1100px){
@@ -2069,7 +2092,7 @@ html[data-theme="dark"] .edge-delete-btn:hover path{stroke:#ffffff !important}
   .ap-card{flex-direction:column}
   .ap-actions{width:100%}
   .runs-layout{grid-template-columns:1fr}
-  .member-row,.dimension-row{grid-template-columns:30px 1fr}
+  .member-row,.dimension-row,.pa-rows>.pa-member-row,.pa-join-row{grid-template-columns:30px 1fr}
   .project-context-bar{flex-wrap:wrap;gap:12px}
   .project-context-metrics{order:3;width:100%;height:auto}
   .project-context-metrics>div,.project-context-metrics>button{flex:1}
@@ -2192,7 +2215,7 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .confirm-icon-wrap.info{background:rgba(91,140,255,.12);border-color:rgba(91,140,255,.28);color:var(--blue)}
 .confirm-header-text{min-width:0;flex:1}
 .confirm-header-text h3{margin:0 0 6px;font-size:16px;font-weight:700;line-height:1.35;color:var(--text)}
-.confirm-header-text p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted);word-break:break-word}
+.confirm-header-text p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted);word-break:break-word;white-space:pre-line}
 .confirm-prompt-wrap{margin-top:16px}
 .confirm-prompt-wrap label{display:block;font-size:11.5px;color:var(--muted-2);margin-bottom:6px;font-weight:600}
 .confirm-prompt-wrap input,.confirm-prompt-wrap select{width:100%;height:38px;padding:0 12px;font-size:13px}
@@ -2234,7 +2257,7 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .obs-card>.pager{margin:10px 0 2px;border:0;background:transparent;padding:8px 0 0}
 
 /* ================= 个人凭证（harness-ui 设计语言） ================= */
-#personalSettingsContent,.credential-scrim,.github-connect,.git-ssh-dialog{
+#personalSettingsContent,.credential-scrim,.github-connect,.git-ssh-dialog,.runner-model-editor{
   --cr-accent:var(--hui-accent);--cr-accent-hover:var(--hui-accent-hover);
   --cr-surface:var(--hui-surface);--cr-canvas:var(--hui-canvas);--cr-elevated:var(--hui-soft);
   --cr-text:var(--hui-text);--cr-text-2:var(--hui-secondary);--cr-muted:var(--hui-muted);--cr-tertiary:var(--hui-tertiary);
@@ -2249,8 +2272,6 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 }
 @supports (transition-timing-function:linear(0,1)){#personalSettingsContent,.credential-scrim{--cr-tab-spring:linear(0,.0669,.213,.3816,.5413,.6774,.7851,.8655,.9224,.9606,.9846,.9987,1.006,1.0089,1.0094,1.0084,1.007,1.0054,1.0039,1.0027,1.0018,1)}}
 #personalSettingsContent{color:var(--cr-text)}
-.credential-enter{animation:credentialEnter .62s var(--cr-flow) both;animation-delay:calc(var(--i,0)*70ms)}
-@keyframes credentialEnter{from{opacity:0;transform:translateY(16px);filter:blur(3px)}to{opacity:1;transform:none;filter:none}}
 @keyframes credentialPop{from{opacity:0;transform:translateY(14px) scale(.97);filter:blur(3px)}to{opacity:1;transform:none;filter:none}}
 /* No blur: the wizard options enter over the modal entrance, where a filter repaint per frame costs frames. */
 @keyframes credentialRise{from{opacity:0;transform:translateY(14px) scale(.97)}}
@@ -2286,65 +2307,104 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .credential-tip:hover::after,.credential-tip:focus-within::after{opacity:1;transform:translate(0,-50%)}
 
 /* account row */
-.credential-account{display:flex;align-items:center;gap:14px;margin-top:4px;padding:18px 0;border-top:1px solid var(--cr-line);border-bottom:1px solid var(--cr-line)}
-.credential-avatar{position:relative;display:grid;place-items:center;flex:none;width:38px;height:38px;overflow:hidden;border:1px solid var(--cr-line);border-radius:50%;background:var(--cr-elevated);color:var(--cr-text-2);font-size:14px;font-weight:500}
+#settingsView .personal-settings{display:grid;grid-template-columns:minmax(0,42rem);justify-content:center}
+#settingsView .personal-settings-return{justify-self:start;margin:0 0 12px -8px}
+#settingsView .personal-settings-return[hidden]{display:none}
+#settingsView .personal-settings-heading{align-items:center;gap:12px 20px;margin-bottom:28px}
+body:has(#settingsView.active) #toastContainer{top:auto;bottom:84px}
+.credential-account{display:flex;align-items:center;gap:8px;min-width:0;max-width:45%;color:var(--hui-secondary)}
+.credential-account[hidden]{display:none}
+.credential-account>div{min-width:0}
+.credential-avatar{position:relative;display:grid;place-items:center;flex:none;width:24px;height:24px;overflow:hidden;border-radius:50%;background:var(--hui-soft);color:var(--hui-secondary);font-size:12px;font-weight:550}
 .credential-avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.credential-account b{display:block;font-size:14px;font-weight:500}
-.credential-account small{display:block;color:var(--cr-muted);font-size:12.5px}
-.credential-account-note{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--cr-muted);font-size:12px;white-space:nowrap}
+.credential-account :is(b,small){display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.credential-account b{font-size:12.5px;font-weight:500}
+.credential-account small{color:var(--hui-secondary);font-size:11.5px}
 
-/* section head, progress, toolbar */
-.credential-panel{margin-top:40px}
-.credential-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px}
-.credential-section-head h2{margin:0;font-size:17px;font-weight:500;letter-spacing:-.015em}
-.credential-section-head p{margin:4px 0 0;color:var(--cr-muted);font-size:13px}
-.credential-progress{display:flex;align-items:center;flex-wrap:wrap;gap:14px;margin-top:22px}
-.credential-segs{display:flex;gap:4px}
-.credential-segs i{width:18px;height:5px;border-radius:99px;background:var(--cr-line-strong);transition:background-color .5s var(--cr-flow),width .5s var(--cr-spring)}
-.credential-segs i.is-on{width:26px;background:var(--cr-accent)}
-.credential-count{color:var(--cr-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
-.credential-count b{color:var(--cr-text);font-weight:500}
-.credential-next,.credential-ready{display:flex;align-items:center;gap:4px;margin-left:auto;color:var(--cr-muted);font-size:12.5px}
-.credential-ready{gap:6px;color:var(--cr-ok)}
-.credential-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:18px 0 14px}
-.credential-filter{position:relative;isolation:isolate;display:inline-flex;padding:3px;border-radius:10px;background:color-mix(in srgb,var(--cr-text) 5%,var(--cr-surface))}
-.credential-filter>button{position:relative;z-index:1;display:inline-flex;align-items:center;gap:6px;height:30px;margin:0;padding:0 12px;border:0;border-radius:7px;background:transparent;color:var(--cr-muted);font:inherit;font-size:13px;cursor:pointer;transition:color .18s}
-.credential-filter>button.active{color:var(--cr-text);font-weight:500}
-.credential-filter>button:hover{color:var(--cr-text)}
-.credential-filter>button span{font-size:11.5px;opacity:.6;font-variant-numeric:tabular-nums}
-.credential-filter>.sliding-tabs-indicator{z-index:0;border:1px solid color-mix(in srgb,var(--cr-text) 3%,transparent);border-radius:7px;background:var(--cr-surface);box-shadow:0 1px 3px #18181b0a,0 2px 5px #18181b06;transition:transform .44s var(--cr-tab-spring),width .44s var(--cr-tab-spring),opacity .2s}
-.credential-filter:not([data-sliding-ready])>button.active{background:var(--cr-surface)}
+/* Personal configuration */
+#personalSettingsContent{container:personal-settings / inline-size}
+.credential-list{display:grid;grid-template-columns:minmax(0,1fr);gap:26px}
+.credential-panel.is-entering .credential-list{animation:credentialPop .44s var(--cr-spring) both}
+.credential-group{min-width:0}
+.credential-group-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-bottom:9px}
+.credential-group-heading{min-width:0;margin:0;color:var(--hui-text);font-size:15px;font-weight:600;line-height:1.4}
+.credential-group-note{margin:0;color:var(--hui-muted);font-size:12px;line-height:1.45}
+.credential-group-body{min-width:0;padding:0 14px;border:1px solid var(--hui-border);border-radius:11px;background:color-mix(in srgb,var(--hui-surface) 98%,var(--hui-text))}
+.credential-add-row,.credential-default-field{position:relative;min-width:0}
+.credential-add-row{display:flex;align-items:center;min-height:44px}
+.credential-add-row .hui-select-trigger,.credential-default-field .hui-select-trigger{height:auto;min-height:34px;padding:0;border:0;background:transparent}
+.credential-add-row .hui-select-trigger{padding-right:22px;color:var(--hui-accent-hover);font-weight:500}
+.credential-add-trigger .hui-select-lead{width:16px;height:16px;margin-inline:9px 11px;color:inherit}
+.credential-add-trigger .hui-select-chevron{position:absolute;right:0}
+.credential-add-row .hui-select-trigger::after,.credential-default-field .hui-select-trigger::after{position:absolute;inset:2px -11px;border-radius:7px;content:""}
+.credential-add-row .hui-select-trigger:enabled:is(:hover,[aria-expanded="true"])::after,
+.credential-default-field .hui-select-trigger:enabled:is(:hover,[aria-expanded="true"])::after{background:color-mix(in srgb,var(--hui-text) 4%,transparent)}
+.credential-add-row .hui-select-trigger:focus-visible,.credential-default-field .hui-select-trigger:focus-visible{outline:0}
+.credential-add-row .hui-select-trigger:focus-visible::after,.credential-default-field .hui-select-trigger:focus-visible::after{outline:2px solid var(--hui-focus-ring)}
+.hui-select-panel:is(.credential-add-panel,.credential-default-panel){min-width:0;padding:5px}
+.credential-default-panel .hui-select-options{max-height:286px}
+.credential-add-panel .hui-select-option{height:38px;padding-inline:8px}
+.credential-add-panel .hui-select-option-brand{box-sizing:border-box;width:24px;height:24px;margin-right:9px;padding:4px;border-radius:6px;background:var(--hui-soft);vertical-align:middle}
+.credential-add-panel .hui-select-option-brand.is-glyph{color:var(--hui-secondary)}
+.credential-add-panel .hui-select-option-meta:empty{display:none}
+html[data-theme="dark"] .credential-add-panel img.hui-select-option-brand.is-monochrome{background:transparent}
+.credential-rows:not(:has(.credential-row)){display:none}
+.credential-rows .credential-row{margin:0;border:0}
+.credential-rows .credential-row+.credential-row,
+.credential-rows .credential-row+[data-credential-git-rows]>.credential-row:first-child,
+.credential-rows:has(.credential-row)+:is(.credential-add-row,.credential-subscription),
+.credential-add-row+.credential-subscription,
+.credential-default-field+.credential-default-field{border-top:1px solid var(--hui-border)}
+.credential-row .credential-row-who b .credential-default-badge{display:inline-flex;margin-left:7px;padding:1px 6px;border-radius:5px;background:var(--hui-accent-soft);color:var(--hui-accent);font-size:11px;font-weight:550}
+.credential-group-body .credential-subscription{margin:0;padding-inline:0;border-radius:0;text-decoration:none}
+.credential-subscription:is(:hover,:focus-visible){background:color-mix(in srgb,var(--hui-text) 4%,transparent)}
+.credential-subscription:hover .credential-row-action{color:var(--hui-accent-hover)}
+.credential-subscription .credential-logo{color:var(--hui-muted)}
+.credential-subscription .credential-row-who small{display:block;line-height:1.45;white-space:normal}
+.credential-default-feedback{margin-left:auto;color:var(--hui-success);font-size:12px;font-weight:500}
+.credential-default-status{margin:0;color:var(--hui-secondary);font-size:13px}
+.credential-default-form fieldset{min-width:0;margin:0;padding:0;border:0}
+.credential-default-field{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,60%);align-items:center;gap:12px;min-height:46px}
+.credential-default-label{display:flex;align-items:center;gap:10px;min-width:0;color:var(--hui-text);font-size:13.5px;font-weight:500;line-height:1.4}
+.credential-default-label svg{flex:none;margin-inline:9px;color:var(--hui-muted)}
+.credential-default-field .hui-select-trigger,.credential-default-select{justify-self:end;min-width:0;max-width:100%;color:var(--hui-secondary);font-size:13px}
+.credential-default-field .hui-select-trigger:is(:hover,[aria-expanded="true"]){color:var(--hui-text)}
+.credential-default-field .hui-select-trigger:disabled::after{content:none}
+.credential-default-field .hui-select-chevron{flex:none}
+.credential-default-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+.credential-default-actions[hidden]{display:none}
+.credential-default-error{margin:8px 0 0;color:var(--hui-error);font-size:12px}
 
-/* group cards (ActivityTimeline) */
-.credential-group{margin-top:12px;border:1px solid var(--cr-line);border-radius:12px;background:var(--cr-surface)}
-.credential-panel.is-entering .credential-group{animation:credentialPop .55s var(--cr-spring) both}
-.credential-panel.is-entering .credential-group+.credential-group{animation-delay:30ms}
-.credential-group-head{display:flex;align-items:center;gap:8px;width:100%;min-height:50px;margin:0;padding:0 16px;border:0;border-radius:12px;background:transparent;color:var(--cr-muted);font:inherit;text-align:left;cursor:pointer;transition:color .16s}
-.credential-group-head:hover{color:var(--cr-text)}
-.credential-group-head strong{color:var(--cr-text);font-size:14px;font-weight:500}
-.credential-group-sub{color:var(--cr-tertiary);font-size:12px}
-.credential-group-meta{margin-left:auto;font-size:12px;font-variant-numeric:tabular-nums;opacity:.7}
-.credential-group-chevron{display:inline-flex;transition:transform .3s var(--cr-fold)}
-.credential-group-head[aria-expanded="false"] .credential-group-chevron{transform:rotate(-90deg)}
-.credential-fold{display:grid;grid-template-rows:1fr;transition:grid-template-rows .34s var(--cr-fold),opacity .24s}
-.credential-fold>div{min-height:0;overflow:hidden}
-.credential-fold.is-closed{grid-template-rows:0fr;opacity:0}
-.credential-rows{margin:0 6px 6px}
-.credential-empty{margin:0;padding:22px 16px 26px;border-top:1px solid var(--cr-line);color:var(--cr-tertiary);font-size:12.5px;text-align:center}
+@container personal-settings (max-width:380px){
+  .credential-list{gap:22px}
+  .credential-group-title:has(.credential-group-note:not([hidden])){display:grid}
+  .credential-group-body{padding-inline:11px}
+  .credential-subscription #credentialSubscriptionAction{display:none}
+  .credential-default-field{grid-template-columns:minmax(88px,auto) minmax(0,1fr);gap:8px}
+  .credential-default-label{gap:6px;font-size:13px}
+  .credential-default-label svg{margin:0}
+  .credential-default-field .hui-select-trigger{gap:5px}
+}
 
 /* rows */
 .credential-row{position:relative;margin:0 10px;border-top:1px solid var(--cr-line)}
 .credential-row.is-filtered{display:none}
-.credential-row-main{position:relative;isolation:isolate;overflow:clip;display:flex;align-items:center;gap:12px;min-height:64px;margin:0 -10px;padding:10px;border-radius:8px;transition:background-color .16s}
+.credential-row-main{position:relative;isolation:isolate;overflow:clip;display:flex;align-items:center;gap:10px;min-height:56px;margin:0 -10px;padding:8px 10px;border-radius:8px;transition:background-color .16s}
 .credential-row-main[role="button"]{cursor:pointer}
-.credential-row.is-open .credential-row-main{background:var(--cr-hover)}
+.credential-row-main[role="button"]:hover,.credential-row.is-open .credential-row-main{background:var(--cr-hover)}
 .credential-logo{display:grid;place-items:center;flex:none;width:34px;height:34px;border:1px solid color-mix(in srgb,var(--cr-line) 70%,transparent);border-radius:9px;background:var(--cr-elevated);transition:transform .4s var(--cr-spring),filter .3s,opacity .3s}
 .credential-logo img{display:block;width:20px;height:20px;object-fit:contain}
 .credential-logo.is-dim{filter:grayscale(1);opacity:.55}
+.credential-row-who .credential-runtime-status{color:var(--hui-warn)}
+.credential-row.is-configured .credential-logo.monochrome{position:relative}
+.credential-row.is-configured .credential-logo.monochrome::after{
+  position:absolute;right:-3px;bottom:-3px;width:8px;height:8px;
+  border:2px solid var(--hui-surface);border-radius:50%;background:var(--hui-success);
+  content:"";
+}
 .credential-logo.is-mini{width:18px;height:18px;border:0;background:none}
 .credential-logo.is-mini img{width:16px;height:16px}
 html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
-.credential-row-main:hover .credential-logo{transform:translateY(-1px) rotate(-3deg)}
 .credential-row-who{flex:1;min-width:0}
 .credential-row-who b{display:block;overflow:hidden;color:var(--cr-text);font-size:13.5px;font-weight:500;white-space:nowrap;text-overflow:ellipsis}
 .credential-row-who b span{margin-left:8px;color:var(--cr-tertiary);font-size:12px;font-weight:400}
@@ -2355,6 +2415,11 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-mono{font-family:var(--cr-mono);font-size:11.5px}
 .credential-row-who .is-ok{color:var(--cr-ok)}.credential-row-who .is-err{color:var(--cr-err)}.credential-row-who .is-info{color:var(--cr-info)}
 .credential-row-end{display:flex;flex:none;align-items:center;gap:6px}
+.credential-row-action,.credential-row-end .credential-row-link{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:0;color:var(--hui-secondary);font-size:12.5px;white-space:nowrap;transition:color .16s}
+.credential-row-main:is(:hover,:focus-visible) .credential-row-action,.credential-row.is-open .credential-row-action,.credential-row-end .credential-row-link:is(:hover,:focus-visible){color:var(--hui-text)}
+.credential-row-end .credential-row-link{position:static;isolation:auto;overflow:visible}
+.credential-row-link::after{position:absolute;inset:0;content:""}
+.credential-row-main:has(.credential-row-link:hover){background:var(--cr-hover)}
 .credential-chevron{display:inline-flex;color:var(--cr-tertiary);transition:transform .3s var(--cr-fold),color .16s}
 .credential-row.is-open .credential-chevron{color:var(--cr-text);transform:rotate(180deg)}
 
@@ -2372,6 +2437,7 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-editor-form{display:grid;gap:14px;max-width:560px;padding-left:14px;border-left:1px solid color-mix(in srgb,var(--cr-line-strong) 80%,transparent)}
 .credential-editor-form.has-catalog{max-width:680px}
 .credential-field{display:grid;gap:6px;margin:0}
+.git-http-dialog .credential-field[hidden]{display:none}
 .credential-field>span{display:flex;align-items:baseline;justify-content:space-between;gap:8px;color:var(--cr-text-2);font-size:12px;font-weight:500}
 .credential-field>span em{color:var(--cr-tertiary);font-size:11.5px;font-style:normal;font-weight:400}
 .credential-field small{color:var(--cr-tertiary);font-size:11.5px;transition:color .2s}
@@ -2406,6 +2472,8 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .git-ssh-missing{margin:8px 0 0;color:var(--hui-error);font-size:12px;line-height:1.6}
 .git-ssh-form-actions{justify-content:flex-end}
 .git-ssh-dialog textarea{padding:8px 11px;border:1px solid var(--hui-border);border-radius:8px;background:var(--hui-surface);color:var(--hui-text);font-size:12px}
+.git-http-warning{margin:0 0 12px}
+.git-http-select{width:100%;min-height:32px;padding:0 8px;border:0;background:transparent;color:var(--hui-text);font:inherit;font-size:13px}
 .credential-input.is-plain input{padding-right:11px}
 .credential-input input::placeholder{color:var(--cr-tertiary)}
 .credential-input input:hover{border-color:var(--cr-line-strong)}
@@ -2435,9 +2503,18 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-note>svg{flex:none;margin-top:3px}
 .credential-note.is-warn{border-color:color-mix(in srgb,#d99a2b 25%,transparent);background:var(--cr-warn-fill);color:var(--cr-warn)}
 .credential-note b{font-weight:600}
+.credential-note.credential-runtime-note{margin-bottom:14px;color:var(--cr-text)}
+.credential-runtime-note b{display:block}
+.credential-runtime-note.is-warn>svg{color:var(--cr-warn)}
+.credential-subscription-note{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;font-size:13px}
+.credential-subscription-note>svg{align-self:start;color:var(--cr-accent)}
+.credential-subscription-note strong{display:block;color:var(--cr-text);font-weight:600}
+.credential-subscription-note p{margin:2px 0 0}
+.credential-subscription-note .button{white-space:nowrap}
 .credential-vline{display:flex;align-items:center;gap:7px;margin:0;color:var(--cr-muted);font-size:12px}
 .credential-vline:empty{display:none}
 .credential-vline.is-err{color:var(--cr-err)}.credential-vline.is-info{color:var(--cr-info)}.credential-vline.is-warn{color:var(--cr-warn)}
+.credential-vline.is-ok{color:var(--hui-success)}
 .credential-vline>svg{flex:none}
 .credential-swap{display:grid}
 .credential-swap>*{grid-area:1/1;transition:opacity .2s,transform .3s var(--cr-fold)}
@@ -2463,6 +2540,15 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-catalog-row:hover{border-color:var(--cr-line)}
 .credential-catalog-row .credential-input input{height:32px;font-size:12.5px}
 .credential-catalog-row .credential-input input.credential-mono{font-size:12px}
+.credential-catalog-effort{grid-column:2/4;min-width:0;padding:0 2px 5px;color:var(--cr-muted);font-size:11.5px}
+.credential-catalog-effort summary{cursor:pointer;line-height:24px}
+.credential-catalog-effort summary span{margin-left:8px;color:var(--cr-tertiary);overflow-wrap:anywhere}
+.credential-catalog-effort-mode{display:flex;align-items:center;gap:10px;margin:4px 0 8px}
+.credential-catalog-effort-mode select{padding:4px 8px;border:1px solid var(--cr-line);border-radius:6px;background:var(--cr-surface);color:var(--cr-text);font:inherit}
+.credential-catalog-effort-levels{display:flex;flex-wrap:wrap;gap:8px 14px;padding-bottom:4px}
+.credential-catalog-effort-levels label{display:flex;align-items:center;gap:5px;cursor:pointer;color:var(--cr-text-2)}
+.credential-catalog-effort-levels input{margin:0;accent-color:var(--cr-accent)}
+.credential-catalog-effort-levels small{flex-basis:100%;color:var(--cr-tertiary);font-size:11px;line-height:1.5}
 .credential-catalog-grip{display:grid;place-items:center;width:24px;height:30px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;color:var(--cr-tertiary);cursor:grab;touch-action:none}
 .credential-catalog-grip:hover{background:var(--cr-hover);color:var(--cr-text)}
 .credential-catalog-grip:focus-visible{outline:2px solid color-mix(in srgb,var(--cr-accent) 65%,transparent);outline-offset:1px;color:var(--cr-text)}
@@ -2529,7 +2615,7 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 #personalSettingsContent code,.credential-scrim code{padding:1px 5px;border-radius:5px;background:var(--cr-elevated);color:var(--cr-text-2);font-family:var(--cr-mono);font-size:11.5px}
 
 /* wizard (ClarificationCard) */
-.credential-scrim{position:fixed;inset:0;z-index:1400;display:grid;place-items:center;padding:20px;pointer-events:none;color:var(--cr-text);font-size:13px;line-height:1.55}
+.credential-scrim{position:fixed;inset:0;z-index:1400;display:grid;grid-template-columns:minmax(0,1fr);place-items:center;padding:20px;pointer-events:none;color:var(--cr-text);font-size:13px;line-height:1.55}
 /* The backdrop appears without a fade: a full-viewport translucent opacity transition drops the dialog's entrance below 50fps under software compositing. */
 .credential-scrim::before{content:"";position:absolute;inset:0;background:color-mix(in srgb,#09090b 32%,transparent);opacity:0}
 html[data-theme="dark"] .credential-scrim::before{background:rgb(0 0 0 / .55)}
@@ -2592,6 +2678,16 @@ html[data-theme="dark"] .credential-scrim::before{background:rgb(0 0 0 / .55)}
 .credential-guide a{margin-left:4px;color:var(--cr-accent);font-weight:500;text-decoration:none;white-space:nowrap}
 .credential-guide a:hover{color:var(--cr-accent-hover)}
 .credential-fields{display:grid;gap:12px}
+.credential-scrim.is-executor-form .credential-dialog-top{justify-content:flex-end}
+.credential-scrim.is-executor-form :is(.credential-dots,[data-wizard-step]){display:none}
+.credential-scrim.is-executor-form .credential-dialog-body{padding-top:0}
+.credential-scrim.is-executor-form .credential-dialog-foot{justify-content:flex-end;gap:8px}
+.credential-direct-heading{display:flex;align-items:center;gap:10px;margin:0 0 18px}
+.credential-direct-heading h3{margin:0;color:var(--cr-text);font-size:17px;font-weight:600}
+.credential-scrim.is-executor-form .credential-fields{min-width:0;margin:0;padding:0;border:0}
+.credential-direct-help{margin-top:13px;color:var(--cr-muted);font-size:12px}
+.credential-direct-help summary{width:fit-content;padding:3px 0;cursor:pointer}
+.credential-direct-help .credential-guide{margin:6px 0 0}
 .credential-summary{width:fit-content;max-width:92%;margin:4px 0 6px auto;padding:12px 16px;border-radius:18px 18px 7px 18px;background:color-mix(in srgb,var(--cr-elevated) 80%,transparent)}
 .credential-summary>div{display:flex;align-items:center;gap:7px;margin-bottom:8px;color:var(--cr-muted);font-size:12px;font-weight:500}
 .credential-summary dl{display:grid;grid-template-columns:auto auto;gap:4px 18px;margin:0;font-size:13px}
@@ -2610,15 +2706,7 @@ html[data-theme="dark"] .credential-scrim::before{background:rgb(0 0 0 / .55)}
 .credential-kbd kbd{padding:1px 5px;border:1px solid var(--cr-line);border-radius:4px;background:var(--cr-canvas);font:inherit}
 
 @media (max-width:720px){
-  .credential-account{flex-wrap:wrap}
-  .credential-account-note{margin-left:52px;white-space:normal}
-  .credential-section-head{flex-direction:column;align-items:flex-start}
-  .credential-next,.credential-ready{width:100%;margin-left:0}
-  .credential-row-main{flex-wrap:wrap}
-  .credential-row-who{flex-basis:calc(100% - 60px)}
-  .credential-row-end{margin-left:46px}
   .credential-editor-inner{padding-left:0}
-  .credential-group-sub{display:none}
   .credential-confirm{flex-wrap:wrap}
   .credential-editor-form.is-detail .credential-kv{grid-template-columns:minmax(0,1fr);row-gap:2px}
   .credential-editor-form.is-detail .credential-kv dd+dt{margin-top:8px}
@@ -2627,7 +2715,7 @@ html[data-theme="dark"] .credential-scrim::before{background:rgb(0 0 0 / .55)}
   .credential-editor-form.is-detail .credential-replace .credential-vline{grid-row:5}
 }
 @media (prefers-reduced-motion:reduce){
-  #personalSettingsContent *,#personalSettingsContent *::before,#personalSettingsContent *::after,.credential-enter,.credential-scrim,.credential-scrim::before,.credential-scrim *,.credential-scrim *::before,.credential-scrim *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;animation-delay:0s!important;transition-duration:.01ms!important;transition-delay:0s!important}
+  #personalSettingsContent *,#personalSettingsContent *::before,#personalSettingsContent *::after,.credential-scrim,.credential-scrim::before,.credential-scrim *,.credential-scrim *::before,.credential-scrim *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;animation-delay:0s!important;transition-duration:.01ms!important;transition-delay:0s!important}
 }
 
 /* ================= 新建项目弹窗向导（对齐 chatbot/src/quick-access-wizard.css） ================= */

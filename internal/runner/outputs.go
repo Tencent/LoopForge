@@ -1,7 +1,10 @@
 package runner
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -17,7 +20,7 @@ import (
 // prepareInvocationWorkspace writes the upstream inputs the control plane
 // resolved for this node and removes a gate result left by an earlier
 // invocation, so the engine never reads a stale terminal decision.
-func prepareInvocationWorkspace(workspace string, inv *domain.RunnerInvocation) error {
+func prepareInvocationWorkspace(workspace string, inv *domain.RunnerInvocation, fetch ...func(domain.RunnerInputFile) error) error {
 	if inv == nil {
 		return nil
 	}
@@ -37,11 +40,43 @@ func prepareInvocationWorkspace(workspace string, inv *domain.RunnerInvocation) 
 		}
 	}
 	for _, input := range inv.Inputs {
+		if input.ArtifactID != "" {
+			if len(fetch) == 0 {
+				return fmt.Errorf("no file transfer available for input %s", input.Path)
+			}
+			if err := fetch[0](input); err != nil {
+				return fmt.Errorf("download input %s: %w", input.Path, err)
+			}
+			continue
+		}
 		if err := writeInputFile(workspace, input); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func writeInputFile(workspace string, input domain.RunnerInputFile) error {
+	return runtime.WriteArtifactInput(workspace, input.Path, "", strings.NewReader(input.Content))
+}
+
+func (d *Daemon) prepareTaskInvocation(ctx context.Context, workspace string, task domain.RunnerTask) error {
+	return prepareInvocationWorkspace(workspace, task.Invocation, func(input domain.RunnerInputFile) error {
+		return retryTaskTransfer(ctx, func() error {
+			if input.Restore {
+				_, err := runtime.RestoreMissingWorkspaceArtifact(workspace, input.Path, input.SHA256, func() (io.ReadCloser, error) {
+					return d.client.openTaskInput(ctx, task.ID, input.Path)
+				})
+				return err
+			}
+			body, err := d.client.openTaskInput(ctx, task.ID, input.Path)
+			if err != nil {
+				return err
+			}
+			defer body.Close()
+			return runtime.WriteArtifactInput(workspace, input.Path, input.SHA256, body)
+		})
+	})
 }
 
 var invocationWorkspaceLocks sync.Map // cleaned absolute workspace -> *sync.Mutex
@@ -57,30 +92,6 @@ func lockInvocationWorkspace(workspace string) func() {
 	return mu.Unlock
 }
 
-func writeInputFile(workspace string, input domain.RunnerInputFile) error {
-	if !domain.SafeWorkspaceRelPath(input.Path) || !strings.HasPrefix(input.Path, ".agentflow/inputs/") {
-		return fmt.Errorf("unsafe input path %q", input.Path)
-	}
-	target := filepath.Join(workspace, filepath.FromSlash(input.Path))
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("create input directory: %w", err)
-	}
-	if info, err := os.Lstat(target); err == nil {
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("input path is not a regular file: %s", input.Path)
-		}
-		if err := os.Chmod(target, 0o600); err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.WriteFile(target, []byte(input.Content), 0o600); err != nil {
-		return fmt.Errorf("write input %s: %w", input.Path, err)
-	}
-	return os.Chmod(target, 0o444)
-}
-
 // collectTaskOutputs reports the requested output files, the
 // repository-patch inventory of every checkout, and workspace facts. It runs
 // after success and failure alike so a failed node keeps its diagnostics.
@@ -90,13 +101,91 @@ func collectTaskOutputs(workspace string, inv *domain.RunnerInvocation) *domain.
 	}
 	out := &domain.RunnerTaskOutputs{}
 	if inv.RecoverOutputs {
-		out.Recovered = recoverOutputFiles(workspace, inv.OutputFiles)
+		limit := int64(maxArtifactUploadBytes)
+		if inv.ArtifactTransfer {
+			limit = domain.MaxSOPArtifactBytes
+		}
+		out.Recovered = recoverOutputFiles(workspace, inv.OutputFiles, limit)
 	}
-	out.Files, out.TooLarge = readOutputFiles(workspace, inv.OutputFiles)
+	paths := inv.OutputFiles
+	if inv.ArtifactTransfer {
+		// Gate control JSON stays in the terminal report.
+		paths = nil
+		if inv.GateResultPath != "" {
+			paths = []string{inv.GateResultPath}
+		}
+	}
+	out.Files, out.TooLarge = readOutputFiles(workspace, paths)
 	out.Patches = collectPatchInventories(workspace, patchInventoryDirs(inv))
 	frontend, evidence := domain.DetectFrontendProject(workspace)
 	out.Facts = &domain.RunnerWorkspaceFacts{Frontend: frontend, FrontendEvidence: evidence}
 	return out
+}
+
+func (d *Daemon) uploadTaskOutputs(ctx context.Context, task domain.RunnerTask, out *domain.RunnerTaskOutputs) {
+	inv := task.Invocation
+	if inv == nil || !inv.ArtifactTransfer || out == nil {
+		return
+	}
+	out.FileBlobs = make(map[string]domain.ArtifactBlob)
+	out.FileErrors = make(map[string]string)
+	root, rootErr := os.OpenRoot(d.taskWorkspace(task))
+	if rootErr == nil {
+		defer root.Close()
+	}
+	for _, rel := range inv.OutputFiles {
+		if rel == inv.GateResultPath || !domain.SafeWorkspaceRelPath(rel) {
+			continue
+		}
+		err := rootErr
+		if err == nil {
+			outBlob, uploadErr := d.uploadOutputFile(ctx, task.ID, root, rel)
+			err = uploadErr
+			if err == nil {
+				out.FileBlobs[rel] = outBlob
+				continue
+			}
+		}
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+		case errors.Is(err, domain.ErrArtifactTooLarge):
+			out.TooLarge = append(out.TooLarge, rel)
+		default:
+			out.FileErrors[rel] = fmt.Sprintf("%.512s", err.Error())
+		}
+	}
+}
+
+func (d *Daemon) uploadOutputFile(ctx context.Context, taskID string, root *os.Root, rel string) (domain.ArtifactBlob, error) {
+	var blob domain.ArtifactBlob
+	info, err := root.Lstat(rel)
+	if err != nil {
+		return blob, err
+	}
+	if !info.Mode().IsRegular() {
+		return blob, errors.New("output is not a regular file")
+	}
+	file, err := root.Open(rel)
+	if err != nil {
+		return blob, err
+	}
+	defer file.Close()
+	info, err = file.Stat()
+	if err != nil {
+		return blob, err
+	}
+	if !info.Mode().IsRegular() {
+		return blob, errors.New("output is not a regular file")
+	}
+	if info.Size() > domain.MaxSOPArtifactBytes {
+		return blob, domain.ErrArtifactTooLarge
+	}
+	err = retryTaskTransfer(ctx, func() error {
+		var err error
+		blob, err = d.client.uploadTaskOutput(ctx, taskID, rel, io.NewSectionReader(file, 0, info.Size()), info.Size())
+		return err
+	})
+	return blob, err
 }
 
 // readOutputFiles reads every safe, regular output file within the upload
@@ -162,7 +251,7 @@ func collectPatchInventories(workspace string, dirs []string) map[string]string 
 
 // recoverOutputFiles moves a missing root-level output into place when the
 // Agent wrote a file with the same name elsewhere in the workspace.
-func recoverOutputFiles(workspace string, outputs []string) []string {
+func recoverOutputFiles(workspace string, outputs []string, limit int64) []string {
 	var recovered []string
 	for _, rel := range outputs {
 		if !domain.SafeWorkspaceRelPath(rel) {
@@ -177,7 +266,7 @@ func recoverOutputFiles(workspace string, outputs []string) []string {
 			continue
 		}
 		info, err := os.Lstat(src)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > maxArtifactUploadBytes {
+		if err != nil || !info.Mode().IsRegular() || info.Size() > limit {
 			continue
 		}
 		data, err := os.ReadFile(src)

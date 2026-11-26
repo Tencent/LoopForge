@@ -185,7 +185,7 @@ MVP 只接受 `kind=static`。
 
 构建属于工作流行为，应由可观测、可重试的 script/agent node 完成。Preview Finalizer 只负责验证和归档声明的目录，不执行模型生成的任意命令。
 
-推荐 SOP：
+推荐 LOOP：
 
 ```text
 实现节点
@@ -445,7 +445,7 @@ Run 详情 Tab：
 
 状态：
 
-- 未配置：不展示 Tab，或显示“该 SOP 未声明前端预览”。
+- 未配置：不展示 Tab，或显示“该 LOOP 未声明前端预览”。
 - `pending/archiving`：显示生成进度和来源路径。
 - `ready`：显示 iframe、独立窗口、刷新和复制预览地址。
 - `failed`：显示脱敏错误，不影响普通交付物查看。

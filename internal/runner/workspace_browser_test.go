@@ -3,11 +3,17 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestHandleRunnerWorkspaceBrowserRejectsMissingBrowser(t *testing.T) {
@@ -49,6 +55,102 @@ func TestHandleRunnerWorkspaceBrowserReportsEnsureFailure(t *testing.T) {
 	}
 	if state.Available || state.Reason != "平台已关闭 Agent 浏览器" {
 		t.Fatalf("ensure failure state=%+v", state)
+	}
+}
+
+func TestDockerBrowserRequestsDoNotWaitForRunnerHelper(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENTFLOW_BROWSER", "always")
+	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(root, "{os}", "{arch}", "agentflow-runner"))
+	// Exercise the Docker browser path without launching a real browser.
+	if err := os.WriteFile(filepath.Join(root, "docker"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+":/usr/bin:/bin")
+
+	const runID = "browser-helper-sync"
+	if err := os.MkdirAll(filepath.Join(root, "runs", runID, "workspace"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	request := domain.RunnerWorkspaceRequest{
+		RunID: runID, WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		Operation: domain.RunnerWorkspaceOperationBrowser, Browser: &domain.BrowserRequest{Ensure: true},
+		Sandbox: &domain.RunnerSandboxSpec{
+			Profile:    domain.SandboxProfile{Driver: domain.SandboxDriverDocker},
+			Dockerfile: &domain.DockerfileDefinition{Content: "FROM fixture"},
+		},
+		Workflow: &domain.WorkflowDefinition{},
+	}
+	upgrader := websocket.Upgrader{}
+	result := make(chan error, 1)
+	probe := func(conn *websocket.Conn) error {
+		if err := conn.SetReadDeadline(time.Now().Add(4 * time.Second)); err != nil {
+			return err
+		}
+		var hello controlMessage
+		if err := conn.ReadJSON(&hello); err != nil {
+			return err
+		}
+		const slots = 8
+		for index := range slots {
+			if err := conn.WriteJSON(controlMessage{
+				Type: "workspace.request", RequestID: fmt.Sprint(index), WorkspaceRequest: &request,
+			}); err != nil {
+				return err
+			}
+		}
+		for range slots {
+			var response controlMessage
+			if err := conn.ReadJSON(&response); err != nil {
+				return fmt.Errorf("browser requests waited for the helper: %w", err)
+			}
+			if response.WorkspaceResponse == nil || response.WorkspaceResponse.Status != http.StatusOK {
+				return fmt.Errorf("unexpected browser response: %+v", response.WorkspaceResponse)
+			}
+		}
+		info := domain.RunnerWorkspaceRequest{RunID: runID, WorkspaceLayout: domain.RunnerWorkspaceLayoutShared, Operation: domain.RunnerWorkspaceOperationInfo}
+		if err := conn.WriteJSON(controlMessage{Type: "workspace.request", RequestID: "info", WorkspaceRequest: &info}); err != nil {
+			return err
+		}
+		var response controlMessage
+		if err := conn.ReadJSON(&response); err != nil {
+			return err
+		}
+		if response.WorkspaceResponse == nil || response.WorkspaceResponse.Status != http.StatusOK {
+			return fmt.Errorf("workspace info did not have a free slot: %+v", response.WorkspaceResponse)
+		}
+		return nil
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := upgrader.Upgrade(w, req, nil)
+		if err != nil {
+			result <- err
+			return
+		}
+		defer conn.Close()
+		result <- probe(conn)
+	}))
+	defer server.Close()
+	d, err := New(Config{ServerURL: server.URL, BootstrapToken: "fixture", DefaultWorkspaceRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model a cold start whose first helper download is still in flight.
+	d.dockerHelperSyncDone = make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d.controlLoop(ctx)
+	}()
+	defer func() { cancel(); <-done }()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("control loop did not complete the browser and workspace requests")
 	}
 }
 
