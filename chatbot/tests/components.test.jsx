@@ -887,4 +887,26 @@ describe("content and panels", () => {
     expect(link.getAttribute("target")).toBe("_blank");
   });
 
+  test("empty artifact drawer explains what is collected and where replies and changes live", () => {
+    render(
+      <div className="chat-shell">
+        <header className="conversation-header" />
+        <main className="conversation-main" />
+        <ArtifactPanel
+          artifacts={[]}
+          runs={[]}
+          selected={null}
+          setSelected={vi.fn()}
+          chat={chat}
+          onClose={vi.fn()}
+          open
+        />
+      </div>,
+    );
+    const empty = screen.getByRole("status");
+    expect(empty).toHaveTextContent("此会话还没有产物");
+    expect(empty).toHaveTextContent("文字回复仍在左侧会话查看");
+    expect(empty).toHaveTextContent("「改动」页签");
+  });
+
 });

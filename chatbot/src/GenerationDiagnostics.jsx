@@ -237,6 +237,10 @@ export default function GenerationDiagnostics({
           {(report.attempts || []).map((attempt, index) => {
             const proc = attempt.process;
             const lastOut = proc?.lastStdoutAt || proc?.lastStderrAt;
+            const hasProcOutput =
+              (proc?.stdoutLines || 0) + (proc?.stderrLines || 0) > 0;
+            const noProcRecord =
+              attempt.status !== "running" && proc?.state === "not_started";
             return (
               <div className="diagnostic-attempt" key={attempt.id}>
                 <div className="diagnostic-attempt-heading">
@@ -246,7 +250,10 @@ export default function GenerationDiagnostics({
                     {attempt.cliVersion ? ` v${attempt.cliVersion.replace(/^v/i, "")}` : ""}
                   </strong>
                   <span>{attempt.model}</span>
-                  <span>{statuses[attempt.status] || attempt.status}</span>
+                  <span>
+                    {attempt.status === "running" ? "" : "历史调用："}
+                    {statuses[attempt.status] || attempt.status}
+                  </span>
                   {attempt.exitCode != null ? (
                     <code>退出码 {attempt.exitCode}</code>
                   ) : null}
@@ -260,10 +267,16 @@ export default function GenerationDiagnostics({
                 </p>
                 {proc ? (
                   <p className="diagnostic-attempt-meta">
-                    进程：{processStates[proc.state] || proc.state}
+                    {attempt.status !== "running" && proc.state === "not_started"
+                      ? hasProcOutput
+                        ? "进程：状态未回写（本次调用已结束）"
+                        : "进程记录：未记录到进程信息（本次调用已结束）"
+                      : `进程：${processStates[proc.state] || proc.state}`}
                     {proc.pid ? ` · PID ${proc.pid}` : ""}
                     {proc.signal ? ` · 信号 ${proc.signal}` : ""}
-                    {` · 输出 ${proc.stdoutLines || 0}/${proc.stderrLines || 0} 行`}
+                    {hasProcOutput || !noProcRecord
+                      ? ` · 输出 ${proc.stdoutLines || 0}/${proc.stderrLines || 0} 行`
+                      : ""}
                     {lastOut ? ` · 最近输出 ${time(lastOut)}` : ""}
                   </p>
                 ) : null}

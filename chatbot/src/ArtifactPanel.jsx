@@ -802,7 +802,7 @@ export default function ArtifactPanel({
               {!matchCount ? (
                 <div className="artifact-panel-empty" role="status">
                   <HarnessIcon name="artifact" size={28} />
-                  <p>{query ? "没有匹配的产物。" : "此会话还没有产物。"}</p>
+                  <p>{query ? "没有匹配的产物。" : "此会话还没有产物。文件、合并请求、SOP 运行、子 Agent 和待确认操作会收集在这里；文字回复仍在左侧会话查看，代码改动见「改动」页签。"}</p>
                 </div>
               ) : null}
             </>

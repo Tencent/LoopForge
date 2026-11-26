@@ -151,6 +151,15 @@ describe("Codex-style activity trace", () => {
     expect(screen.getByText("pwd")).toBeInTheDocument();
   });
 
+  test("history without a recorded process says so up front and is not expandable", () => {
+    const view = render(<ActivityTrace steps={[]} startedAt={start} finishedAt={finish} />);
+    expect(screen.getByText(/已处理 /)).toBeInTheDocument();
+    expect(screen.getByText("无过程记录")).toBeInTheDocument();
+    expect(screen.getByText(/诊断信息/)).toBeInTheDocument();
+    expect(view.container.querySelector("details")).toBeNull();
+    expect(view.container.querySelector(".execution-chevron")).toBeNull();
+  });
+
   test("a round that only thought folds into one line while running", async () => {
     const steps = [
       { id: "th", kind: "thinking", text: "The user picked option A", startedAt: start, finishedAt: finish },
