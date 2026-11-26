@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -632,5 +633,56 @@ func TestRoleDeliverablesAreCollectedWhenTheDispatchEnds(t *testing.T) {
 	}
 	if got := h.collectRoleDeliverables(context.Background(), s, "call-b", "general-purpose", roles); got != nil {
 		t.Fatalf("non-role dispatch collected: %+v", got)
+	}
+}
+
+func TestRoleSubagentNameKeepsNonASCIIIDsDistinct(t *testing.T) {
+	seen := map[string]string{}
+	for _, id := range []string{"产品经理", "后端工程师", "产品经理-dev", "dev", "__"} {
+		name := roleSubagentName(id)
+		if previous, ok := seen[name]; ok {
+			t.Fatalf("roleSubagentName(%q) and roleSubagentName(%q) both = %q", previous, id, name)
+		}
+		seen[name] = id
+		if name != roleSubagentName(id) || strings.IndexFunc(name, func(r rune) bool { return r > unicode.MaxASCII }) >= 0 || strings.Contains(name, "--") || strings.HasSuffix(name, "-") {
+			t.Fatalf("roleSubagentName(%q) = %q, want a stable ASCII name", id, name)
+		}
+	}
+	if got := roleSubagentName("产品经理-dev"); !strings.HasPrefix(got, "role-dev-") {
+		t.Fatalf("mixed id name = %q, want role-dev-<hash>", got)
+	}
+	for id, want := range map[string]string{"dev": "role-dev", "Dev": "role-dev", "fe_archive": "role-fe-archive"} {
+		if got := roleSubagentName(id); got != want {
+			t.Fatalf("ASCII id %q name = %q, want %q", id, got, want)
+		}
+	}
+}
+
+func TestChineseRoleIDsWriteDistinctAgentFiles(t *testing.T) {
+	h, _ := workbenchFixture(t)
+	root := t.TempDir()
+	req := assistantRequest{ProjectID: "workbench", roles: []roleSubagent{
+		{Role: domain.AgentDefinition{ID: "产品经理", Name: "产品经理", Prompt: "p"}},
+		{Role: domain.AgentDefinition{ID: "后端工程师", Name: "后端工程师", Prompt: "p"}},
+	}}
+	if err := h.writeConversationAssets(root, req, nil); err != nil {
+		t.Fatal(err)
+	}
+	agents := filepath.Join(root, "home", ".codebuddy", "agents")
+	entries, err := os.ReadDir(agents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("two Chinese roles wrote %d agent files, want 2", len(entries))
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(agents, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "name: " + strings.TrimSuffix(entry.Name(), ".md") + "\n"; !strings.Contains(string(data), want) {
+			t.Fatalf("%s frontmatter lacks %q", entry.Name(), want)
+		}
 	}
 }

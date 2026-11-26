@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
@@ -48,10 +51,16 @@ func (h *assistantHandlers) resolveRoleSubagent(role domain.AgentDefinition, pro
 	return out
 }
 
-// roleSubagentName is the native subagent type a mentioned role runs as.
+// roleSubagentName is the native subagent type a mentioned role runs as. The
+// slug drops non-ASCII ids ("产品经理" → "", "产品经理-dev" → "dev"), so those
+// get a stable hash suffix; pure ASCII ids keep their names so resume holds.
 func roleSubagentName(id string) string {
 	name := strings.Trim(roleSubagentUnsafe.ReplaceAllString(strings.ToLower(id), "-"), "-")
-	return "role-" + name
+	if name != "" && strings.IndexFunc(id, func(r rune) bool { return r > unicode.MaxASCII }) < 0 {
+		return "role-" + name
+	}
+	sum := sha256.Sum256([]byte(id))
+	return strings.TrimSuffix("role-"+name, "-") + "-" + hex.EncodeToString(sum[:4])
 }
 
 var roleSubagentUnsafe = regexp.MustCompile(`[^a-z0-9]+`)
