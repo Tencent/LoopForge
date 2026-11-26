@@ -27,10 +27,15 @@ func (h *assistantHandlers) validateSessionProjectCredentials(c *gin.Context, se
 	return true
 }
 
-func (h *assistantHandlers) sessionProjectCredentialContext(c *gin.Context, session domain.AssistantSession, userID int64) (string, map[string]domain.AssistantProjectCredentialObservation, bool) {
+type assistantProjectCredentialNotes struct {
+	initial string
+	changes string
+}
+
+func (h *assistantHandlers) sessionProjectCredentialContext(c *gin.Context, session domain.AssistantSession, userID int64) (assistantProjectCredentialNotes, map[string]domain.AssistantProjectCredentialObservation, bool) {
 	if !sessionSupportsProjectCredentials(session) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "当前会话不能使用项目凭据"})
-		return "", nil, false
+		return assistantProjectCredentialNotes{}, nil, false
 	}
 	observedAt := time.Now().UTC()
 	if use, _ := h.projectCredentialAccess(c.Request, session.ProjectID, userID); !use {
@@ -44,20 +49,20 @@ func (h *assistantHandlers) sessionProjectCredentialContext(c *gin.Context, sess
 			observations[id] = previous
 		}
 		if !changed {
-			return "", observations, true
+			return assistantProjectCredentialNotes{}, observations, true
 		}
-		return "\n本轮无权使用已绑定的项目凭据。继续处理用户请求，仅在任务确实需要凭据时说明。\n", observations, true
+		return assistantProjectCredentialNotes{changes: "\n本轮无权使用已绑定的项目凭据。继续处理用户请求，仅在任务确实需要凭据时说明。\n"}, observations, true
 	}
 	items, err := h.repo.AvailableProjectCredentialMetadata(c.Request.Context(), session.ProjectID, session.ProjectCredentialIDs)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return "", nil, false
+		return assistantProjectCredentialNotes{}, nil, false
 	}
-	note, observations := conversationProjectCredentialContext(session, items, observedAt)
-	return note, observations, true
+	notes, observations := conversationProjectCredentialContext(session, items, observedAt)
+	return notes, observations, true
 }
 
-func conversationProjectCredentialContext(session domain.AssistantSession, items []domain.ProjectCredential, observedAt time.Time) (string, map[string]domain.AssistantProjectCredentialObservation) {
+func conversationProjectCredentialContext(session domain.AssistantSession, items []domain.ProjectCredential, observedAt time.Time) (assistantProjectCredentialNotes, map[string]domain.AssistantProjectCredentialObservation) {
 	observations := make(map[string]domain.AssistantProjectCredentialObservation, len(session.ProjectCredentialIDs))
 	var available, updated, unavailable []string
 	changed := false
@@ -90,18 +95,21 @@ func conversationProjectCredentialContext(session domain.AssistantSession, items
 		previous.ObservedAt = observedAt
 		observations[id] = previous
 	}
+	var prompts assistantProjectCredentialNotes
+	var notes []string
+	if len(available) > 0 {
+		slices.Sort(available)
+		line := "项目凭据的环境变量为 " + strings.Join(available, "、") + "。需要时在项目工作区通过进程环境使用，以进程实际环境为准，避免输出值。"
+		prompts.initial = "\n" + line + "\n"
+		notes = append(notes, line)
+	}
 	if !changed {
-		return "", observations
+		return prompts, observations
 	}
 	unavailable = slices.DeleteFunc(unavailable, func(name string) bool { return slices.Contains(available, name) })
-	slices.Sort(available)
 	slices.Sort(updated)
 	slices.Sort(unavailable)
 	unavailable = slices.Compact(unavailable)
-	var notes []string
-	if len(available) > 0 {
-		notes = append(notes, "项目凭据的环境变量为 "+strings.Join(available, "、")+"。需要时在项目工作区通过进程环境使用，以进程实际环境为准，避免输出值。")
-	}
 	if len(updated) > 0 {
 		notes = append(notes, "项目凭据环境变量 "+strings.Join(updated, "、")+" 的配置已更新，请使用当前环境中的值。")
 	}
@@ -114,7 +122,8 @@ func conversationProjectCredentialContext(session domain.AssistantSession, items
 	if len(updated) > 0 || len(unavailable) > 0 || unknownBinding {
 		notes = append(notes, "继续处理用户请求，仅在任务确实需要不可用的凭据时说明。")
 	}
-	return "\n" + strings.Join(notes, "\n") + "\n", observations
+	prompts.changes = "\n" + strings.Join(notes, "\n") + "\n"
+	return prompts, observations
 }
 
 func (h *assistantHandlers) sessionProjectCredentials(c *gin.Context) {

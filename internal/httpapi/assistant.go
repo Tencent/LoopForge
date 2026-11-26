@@ -278,7 +278,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 	}
 	req.workspaceMode = savedConversation.Mode() == domain.AssistantModeWorkspace
-	var projectCredentialNote string
+	var projectCredentialNotes assistantProjectCredentialNotes
 	var projectCredentialIDs []string
 	var projectCredentialObservations map[string]domain.AssistantProjectCredentialObservation
 	if len(savedConversation.ProjectCredentialIDs) > 0 && !req.sopDesigner() {
@@ -287,7 +287,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			return
 		}
 		var ok bool
-		projectCredentialNote, projectCredentialObservations, ok = h.sessionProjectCredentialContext(c, savedConversation, user.ID)
+		projectCredentialNotes, projectCredentialObservations, ok = h.sessionProjectCredentialContext(c, savedConversation, user.ID)
 		if !ok {
 			return
 		}
@@ -606,6 +606,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				}
 				system := assistantSystemPromptForRequest(req, approvalMode)
 				phasePrompt := prompt + conversationAttachmentNote(cliRoot, req, turnEngine)
+				projectCredentialNote := projectCredentialNotes.changes
+				if !resume && projectCredentialNote == "" {
+					projectCredentialNote = projectCredentialNotes.initial
+				}
 				var sentRepositoryHash string
 				if req.workspaceMode {
 					system = assistantWorkspaceSystemPrompt
@@ -734,7 +738,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				if err != nil {
 					return "", err
 				}
-				projectCredentialNote = ""
+				projectCredentialNotes.changes = ""
 				resume = true
 				nativeContinuationReady = true
 				toolSession.mu.Lock()

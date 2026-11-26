@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -205,6 +206,8 @@ func TestConversationContinuesWhenProjectCredentialsChange(t *testing.T) {
 	prompts := make(chan string, 4)
 	var input strings.Builder
 	var inputComplete bool
+	var rejectNextResume atomic.Bool
+	var rejectedResume bool
 	fakeRunnerConnection(t, h.runnerControls, target.RunnerID, func(envelope domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
 		var req runtime.ConversationProcessRequest
 		if err := json.Unmarshal(envelope.Conversation, &req); err != nil {
@@ -218,18 +221,25 @@ func TestConversationContinuesWhenProjectCredentialsChange(t *testing.T) {
 			}
 			input.Reset()
 			inputComplete = false
-			starts <- *req.Command
+			rejectedResume = slices.Contains(req.Command.Argv, "--resume") && rejectNextResume.CompareAndSwap(true, false)
+			if !rejectedResume {
+				starts <- *req.Command
+			}
 		case "write":
 			input.WriteString(req.Data)
 			if req.EOF {
-				prompts <- input.String()
+				if !rejectedResume {
+					prompts <- input.String()
+				}
 				inputComplete = true
 			}
 		case "poll":
 			if inputComplete {
 				result.Done = true
 				result.Sequence = 1
-				result.Events = []domain.TelemetryEvent{{Name: "process.stdout", Message: `{"type":"result","result":"你好。"}`}}
+				if !rejectedResume {
+					result.Events = []domain.TelemetryEvent{{Name: "process.stdout", Message: `{"type":"result","result":"你好。"}`}}
+				}
 			}
 		}
 		payload, _ := json.Marshal(result)
@@ -238,9 +248,13 @@ func TestConversationContinuesWhenProjectCredentialsChange(t *testing.T) {
 	turn := func(t *testing.T, wantEnv map[string]string, wantNote ...string) string {
 		t.Helper()
 		old, _ := h.repo.AssistantSession(user.ID, session.ID)
+		messages := old.Messages
+		if len(messages) == 0 || messages[len(messages)-1].Role != "user" {
+			messages = append(messages, assistantMessage{Role: "user", Content: "你好"})
+		}
 		body, err := json.Marshal(assistantRequest{
 			ProjectID: session.ProjectID, SessionID: session.ID,
-			Messages: append(old.Messages, assistantMessage{Role: "user", Content: "你好"}),
+			Messages: messages,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -276,7 +290,7 @@ func TestConversationContinuesWhenProjectCredentialsChange(t *testing.T) {
 		}
 		saved, _ := h.repo.AssistantSession(user.ID, session.ID)
 		public, _ := json.Marshal(saved)
-		if len(saved.Messages) != len(old.Messages)+2 || bytes.Contains(public, []byte("projectCredentialObservations")) ||
+		if len(saved.Messages) != len(messages)+1 || bytes.Contains(public, []byte("projectCredentialObservations")) ||
 			bytes.Contains(public, []byte("本轮不可用")) || bytes.Contains(public, []byte("fixture-")) {
 			t.Fatal("credential context or values leaked into the transcript or public session")
 		}
@@ -288,9 +302,30 @@ func TestConversationContinuesWhenProjectCredentialsChange(t *testing.T) {
 			t.Error("unchanged credentials were announced again")
 		}
 	}
+	editLastTurn := func(t *testing.T) {
+		t.Helper()
+		old, _ := h.repo.AssistantSession(user.ID, session.ID)
+		if err := h.repo.ReplaceAssistantTurn(old, len(old.Messages)-2, assistantMessage{Role: "user", Content: "你好，编辑后重发"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	initialEnv := map[string]string{"ROTATED_TOKEN": "fixture-original", "DELETED_TOKEN": "fixture-deleted", "DISABLED_TOKEN": "fixture-disabled"}
-	turn(t, initialEnv, "DELETED_TOKEN、DISABLED_TOKEN、ROTATED_TOKEN", "有已绑定的项目凭据本轮不可用", "继续处理用户请求")
+	const initialVars = "DELETED_TOKEN、DISABLED_TOKEN、ROTATED_TOKEN"
+	turn(t, initialEnv, initialVars, "有已绑定的项目凭据本轮不可用", "继续处理用户请求")
 	quietTurn(t, initialEnv)
+	t.Run("fresh CLI after editing a turn", func(t *testing.T) {
+		editLastTurn(t)
+		turn(t, initialEnv, initialVars)
+		quietTurn(t, initialEnv)
+	})
+	t.Run("fresh CLI after a failed resume", func(t *testing.T) {
+		rejectNextResume.Store(true)
+		turn(t, initialEnv, initialVars)
+		if rejectNextResume.Load() {
+			t.Fatal("fixture did not attempt to resume the native session")
+		}
+		quietTurn(t, initialEnv)
+	})
 	save("rotated", "ROTATED_TOKEN", "fixture-replacement", false, false)
 	save("disabled", "DISABLED_TOKEN", "fixture-disabled", false, true)
 	if err := h.repo.DeleteProjectCredential(t.Context(), session.ProjectID, "deleted"); err != nil {
@@ -311,6 +346,8 @@ func TestConversationContinuesWhenProjectCredentialsChange(t *testing.T) {
 				t.Errorf("viewer CLI received a credential variable name %q", name)
 			}
 		}
+		quietTurn(t, nil)
+		editLastTurn(t)
 		quietTurn(t, nil)
 		saved, _ := h.repo.AssistantSession(user.ID, session.ID)
 		if !slices.Equal(saved.ProjectCredentialIDs, session.ProjectCredentialIDs) {
