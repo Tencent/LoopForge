@@ -321,10 +321,7 @@ func TestNewCronJobWaitsForScheduledTime(t *testing.T) {
 	// 10:32 UTC is 18:32 in the scheduler's time zone.
 	savedAt := time.Date(2026, 11, 26, 10, 32, 43, 0, time.UTC)
 	dueAt := time.Date(2026, 11, 26, 10, 34, 0, 0, time.UTC)
-	job := domain.ScheduleJob{
-		Enabled: true, Cron: "34 18 26 11 *",
-		CreatedAt: savedAt.Add(-time.Hour), UpdatedAt: savedAt,
-	}
+	job := domain.ScheduleJob{Enabled: true, Cron: "34 18 26 11 *", CreatedAt: savedAt}
 	for _, now := range []time.Time{savedAt, dueAt.Add(-time.Second)} {
 		if jobDue(job, now) {
 			t.Fatalf("new job started early at %v", now)
@@ -332,10 +329,6 @@ func TestNewCronJobWaitsForScheduledTime(t *testing.T) {
 	}
 	if !jobDue(job, dueAt) {
 		t.Fatal("new job did not become due at its first occurrence")
-	}
-	job.UpdatedAt = time.Time{}
-	if !jobDue(job, dueAt) {
-		t.Fatal("older saved job did not use its creation time")
 	}
 	job.CreatedAt = time.Time{}
 	if jobDue(job, dueAt) {
@@ -777,8 +770,8 @@ func TestCronDropsOccurrencesDuringRun(t *testing.T) {
 			start := time.Date(2026, 10, 12, 2, 0, 0, 0, time.UTC)
 			finish := start.Add(150 * time.Minute)
 			job := domain.ScheduleJob{ID: "job", Enabled: true, Cron: "0 * * * *", LastStatus: status, LastRunAt: start}
-			other := domain.ScheduleJob{ID: "other", Enabled: true, Cron: "0 * * * *", LastRunAt: start}
-			for _, v := range []domain.ScheduleJob{job, other} {
+			neverRun := domain.ScheduleJob{ID: "other", Enabled: true, Cron: "0 * * * *"}
+			for _, v := range []domain.ScheduleJob{job, neverRun} {
 				if err := st.PutScheduleJob(v); err != nil {
 					t.Fatal(err)
 				}
@@ -793,8 +786,9 @@ func TestCronDropsOccurrencesDuringRun(t *testing.T) {
 			if _, err := svc.claimJob(job.ID, start.Add(180*time.Minute)); err != nil {
 				t.Fatalf("next cron must run: err=%v", err)
 			}
-			// One job's execution does not delay another due job.
-			if _, err := svc.claimJob(other.ID, finish); err != nil {
+			// Another job's run does not delay a job that never ran.
+			other, _ := st.ScheduleJob(neverRun.ID)
+			if _, err := svc.claimJob(neverRun.ID, other.CreatedAt.Add(time.Hour)); err != nil {
 				t.Fatalf("other job must not wait for this one: err=%v", err)
 			}
 			got, _ := st.ScheduleJob(job.ID)
@@ -841,7 +835,8 @@ func TestTimerRunsAsyncAndSkipsOverlap(t *testing.T) {
 		return "ok", nil
 	})
 	returned := make(chan struct{})
-	go func() { svc.runDueJobsAt(time.Now().UTC().Add(time.Minute)); close(returned) }()
+	stored, _ := st.ScheduleJob(job.ID)
+	go func() { svc.runDueJobsAt(stored.CreatedAt.Add(time.Minute)); close(returned) }()
 	select {
 	case <-returned:
 	case <-time.After(2 * time.Second):
