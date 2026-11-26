@@ -92,8 +92,13 @@ func assistantProposalTarget(d assistantDraft) string {
 	}
 	var body struct {
 		WorkflowID string `json:"workflowId"`
+		SOPMode    string `json:"sopMode"`
 	}
 	_ = json.Unmarshal(d.Body, &body)
+	// A requirement that opts out of SOP drops its workflowId on save.
+	if (domain.Issue{SOPMode: body.SOPMode}).WithoutSOP() {
+		return ""
+	}
 	return strings.TrimSpace(body.WorkflowID)
 }
 

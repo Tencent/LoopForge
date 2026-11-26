@@ -953,6 +953,10 @@ func (r *CatalogRepo) RestoreWorkflowRevision(id string) (domain.WorkflowDefinit
 		return domain.WorkflowDefinition{}, fmt.Errorf("workflow %s not found", wf.ID)
 	}
 	wf.Revision = current.Revision
+	// Version numbers the published releases. The restored content is a new
+	// draft on top of the latest release, so publishing it must not reuse a
+	// version number that already names different content.
+	wf.Version = max(wf.Version, current.Version)
 	return wf, r.PutWorkflow(wf)
 }
 

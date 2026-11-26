@@ -46,7 +46,13 @@ test('project identity, filtering, payload validation, and project form behavior
       const valid=validateProjectPayload(payload,{creating:true,projects:[],workflows:state.data.workflows});
       const duplicate=validateProjectPayload({...payload,members:[{userId:2},{userId:2}]},
         {creating:true,projects:[],workflows:state.data.workflows});
-      return {payload,valid,duplicate};
+      // The id is a path segment of /api/projects/:id: a slash or an over-long
+      // id would create a project nobody can open or delete.
+      const slash=validateProjectPayload({...payload,id:'wa bad/id?x'},{creating:true,projects:[],workflows:state.data.workflows});
+      const long=validateProjectPayload({...payload,id:'p'.repeat(65)},{creating:true,projects:[],workflows:state.data.workflows});
+      const legacy=validateProjectPayload({...payload,id:'old id'},{creating:false,saved:true,projects:[],workflows:state.data.workflows});
+      const longName=generateProjectIdentity('Alpha '.repeat(20),[],'seed').id;
+      return {payload,valid,duplicate,slash,long,legacy,longName};
     })()
   `);
   assert.equal(payloadResult.payload.name, 'Payments');
@@ -54,6 +60,11 @@ test('project identity, filtering, payload validation, and project form behavior
   assert.equal(payloadResult.payload.members.length, 1);
   assert.equal(payloadResult.valid, null);
   assert.match(payloadResult.duplicate.message, /不能重复/);
+  assert.equal(payloadResult.slash.field, 'id');
+  assert.match(payloadResult.slash.message, /不能包含空格/);
+  assert.match(payloadResult.long.message, /64/);
+  assert.equal(payloadResult.legacy, null);
+  assert.ok(payloadResult.longName.length <= 56 && !payloadResult.longName.endsWith('-'), payloadResult.longName);
 
   app.evaluate(`
     resetProjectAdminDetail();

@@ -136,17 +136,30 @@ func (f *clarifyChatFixture) lastSession(conv string) (domain.BotClarifySession,
 	return f.s.ActiveBotClarifySession(conv)
 }
 
-// posts lists the clarification messages queued in a conversation.
-func (f *clarifyChatFixture) posts(t *testing.T, convID string) []domain.BotInteraction {
+// waitPosts waits for clarification messages queued after the session changes.
+func (f *clarifyChatFixture) waitPosts(t *testing.T, convID string, count int) []domain.BotInteraction {
 	t.Helper()
-	records, _ := f.s.BotInteractionRecords(f.bot.ID)
-	out := []domain.BotInteraction{}
-	for i := len(records) - 1; i >= 0; i-- {
-		if records[i].Action == botinteraction.ActionClarifyPost && records[i].ConversationID == convID {
-			out = append(out, records[i])
+	deadline := time.Now().Add(10 * time.Second)
+	var posts []domain.BotInteraction
+	for {
+		records, err := f.s.BotInteractionRecords(f.bot.ID)
+		if err != nil {
+			t.Fatal(err)
 		}
+		posts = posts[:0]
+		for i := len(records) - 1; i >= 0; i-- {
+			if records[i].Action == botinteraction.ActionClarifyPost && records[i].ConversationID == convID {
+				posts = append(posts, records[i])
+			}
+		}
+		if len(posts) >= count {
+			return posts
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("queued clarification posts = %+v, want at least %d", posts, count)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	return out
 }
 
 // Group clarification on Feishu: questions are posted to the group, numbered
@@ -167,7 +180,7 @@ func TestChatClarificationInAGroup(t *testing.T) {
 	if sess.Round != 1 || len(sess.Questions) != 2 || sess.Questions[1].N != 2 || sess.StarterUserID != 42 {
 		t.Fatalf("session = %+v", sess)
 	}
-	posts := f.posts(t, conv)
+	posts := f.waitPosts(t, conv, 1)
 	if len(posts) != 1 || posts[0].Quote != botinteraction.ClarifyPostQuestions || posts[0].SendRoute != repo.BotSendRoutePushChat || posts[0].SenderID != "ou_owner" {
 		t.Fatalf("posts = %+v", posts)
 	}
@@ -225,7 +238,7 @@ func TestChatClarificationInAGroup(t *testing.T) {
 	if issue.Clarification.Status == domain.ClarificationReady || strings.Contains(issue.Description, "只做手机号") {
 		t.Fatalf("conclusion saved without a click: %+v", issue.Clarification)
 	}
-	posts = f.posts(t, conv)
+	posts = f.waitPosts(t, conv, 2)
 	last := posts[len(posts)-1]
 	if last.Quote != botinteraction.ClarifyPostConclusion || !strings.Contains(last.Content, "保存澄清结果") {
 		t.Fatalf("conclusion post = %+v", last)
@@ -343,7 +356,7 @@ func TestChatClarificationInPrivateChat(t *testing.T) {
 	}
 	conv := start.ConversationID
 	sess := f.waitStatus(t, conv, domain.BotClarifyAsking)
-	posts := f.posts(t, conv)
+	posts := f.waitPosts(t, conv, 1)
 	if len(posts) != 1 || !strings.Contains(posts[0].Content, "直接回复即可") || !strings.Contains(posts[0].Content, "发「下一轮」") || strings.Contains(posts[0].Content, "卡片") {
 		t.Fatalf("dingtalk questions = %+v", posts)
 	}
@@ -355,6 +368,7 @@ func TestChatClarificationInPrivateChat(t *testing.T) {
 	if sess.Round != 2 {
 		t.Fatalf("round = %d", sess.Round)
 	}
+	f.waitPosts(t, conv, 2)
 	if reply, _ := f.say(t, "single", "cid-p2p", "ou_member", "另外老用户也要能登录"); !strings.Contains(reply, "已记录补充说明") {
 		t.Fatalf("general = %q", reply)
 	}
@@ -393,7 +407,7 @@ func TestChatClarificationTimers(t *testing.T) {
 	if sess.Round != 2 {
 		t.Fatalf("idle answers did not start the next round: %+v", sess)
 	}
-	posts := f.posts(t, conv)
+	posts := f.waitPosts(t, conv, 3)
 	notice := false
 	for _, p := range posts {
 		if p.Quote == botinteraction.ClarifyPostNotice && strings.Contains(p.Content, "3 分钟没有新回答") {
@@ -502,7 +516,7 @@ func TestChatClarificationEdgePaths(t *testing.T) {
 	sess := f.waitStatus(t, conv, domain.BotClarifyAsking)
 	// Rule ①: a quote of the question card is an answer; the model only
 	// picks the question.
-	post := f.posts(t, conv)[0]
+	post := f.waitPosts(t, conv, 1)[0]
 	f.s.DB.Model(&domain.BotInteraction{}).Where("id = ?", post.ID).Update("platform_message_id", "om_questions")
 	item := domain.BotInteraction{ID: "msg-quote", BotID: f.bot.ID, SenderID: "ou_member", Content: "要短信", ReplyTo: "om_questions"}
 	f.s.EnqueueBotInteraction(item, "group", "oc_edge")
@@ -533,7 +547,7 @@ func TestChatClarificationEdgePaths(t *testing.T) {
 	if sess.Error == "" || sess.Round != 1 || sess.AnswerCount() != 1 {
 		t.Fatalf("failed round = %+v", sess)
 	}
-	posts := f.posts(t, conv)
+	posts := f.waitPosts(t, conv, 2)
 	if last := posts[len(posts)-1]; last.Quote != botinteraction.ClarifyPostNotice || !strings.Contains(last.Content, "没有完成") {
 		t.Fatalf("failure notice = %+v", last)
 	}
@@ -619,7 +633,7 @@ func TestChatClarificationOnWeCom(t *testing.T) {
 	}
 	conv := start.ConversationID
 	f.waitStatus(t, conv, domain.BotClarifyAsking)
-	post := f.posts(t, conv)[0]
+	post := f.waitPosts(t, conv, 1)[0]
 	if !strings.Contains(post.Content, "点卡片上的「提交回答，进入下一轮」") || post.SendRoute != repo.BotSendRoutePushChat {
 		t.Fatalf("questions = %+v", post)
 	}

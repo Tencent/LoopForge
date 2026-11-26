@@ -177,3 +177,17 @@ test("every write tool's card shows the chat's project only for project resource
     }
   }
 });
+test("a requirement saved without a LOOP says so instead of naming the LOOP it drops", () => {
+  const references = [{ type: "sop", id: "wf", name: "后端交付 LOOP" }];
+  const sopOf = (body) =>
+    operationSummary(
+      {
+        tool: "issues_save",
+        body: { projectId: "p", title: "导出 CSV", ...body },
+      },
+      { references },
+    ).fields.find(([label]) => label === "LOOP")?.[1];
+  assert.equal(sopOf({ sopMode: "none", workflowId: "wf" }), "不使用 LOOP");
+  assert.equal(sopOf({ workflowId: "wf" }), "后端交付 LOOP");
+  assert.equal(sopOf({}), undefined);
+});

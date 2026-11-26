@@ -96,3 +96,20 @@ test('English mode translates the 个人配置 credential panel and the hints th
     'Without a personal CodeBuddy API key you can only use the models a platform admin allowed (glm-5.1, kimi-k2.6). To use other models, set your own CodeBuddy API key in Personal settings first');
   window.close();
 });
+
+test('English mode translates how a requirement that never ran will be handled', async (t) => {
+  const app = await loadApp({ dispatchReady: false });
+  t.after(app.close);
+  const window = await englishPage('<html><body></body></html>');
+  const copy = JSON.parse(app.evaluate(`
+    const pid=state.projectFilter||state.data.projects[0].id;
+    const none={id:'iss-none',projectId:pid,number:61,kind:'requirement',source:'local',status:'backlog',title:'x',sopMode:'none'};
+    const bound={...none,id:'iss-sop',sopMode:'',workflowId:state.data.workflows[0].id};
+    state.data.tasks=[];state.data.runs=[];
+    const outcome=issueOutcome(none),actor=issueActor(none);
+    JSON.stringify([outcome.title,outcome.short,outcome.body,actor.title,actor.sub,
+      issueTriggerLabel(none,{issue:none},false),issueTriggerLabel(bound,{issue:bound},false)]);
+  `));
+  for (const text of copy) assert.doesNotMatch(window.lfTranslate(text), HAN, text);
+  window.close();
+});

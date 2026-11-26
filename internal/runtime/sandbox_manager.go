@@ -84,7 +84,7 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	}
 	workspace := filepath.Join(m.root, dir)
 	if wipe {
-		if err := os.RemoveAll(workspace); err != nil {
+		if err := RemoveWorkspaceTree(workspace); err != nil {
 			return fail(fmt.Errorf("clean sandbox workspace: %w", err))
 		}
 	}
@@ -289,7 +289,7 @@ func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
 		if m.workspaceInUse(name) {
 			continue
 		}
-		if err := os.RemoveAll(dir); err != nil {
+		if err := RemoveWorkspaceTree(dir); err != nil {
 			if first == nil {
 				first = err
 			}
@@ -357,7 +357,7 @@ func (s *managedSandbox) Close(ctx context.Context) error {
 	s.once.Do(func() {
 		err = s.Sandbox.Close(ctx)
 		if s.ephemeral && s.workspace != "" {
-			_ = os.RemoveAll(s.workspace)
+			_ = RemoveWorkspaceTree(s.workspace)
 		}
 		_ = unlockFile(s.lock)
 	})

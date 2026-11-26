@@ -526,6 +526,12 @@ function issueProgressActionsHTML(issue,run,{includeIssueActions=false}={}){
   const groups=[group('流程处理',workflowActions),group('排查记录',logActions),group('需求管理',issueActions)].filter(Boolean);
   return groups.length?`<div class="issue-action-groups">${groups.join('')}</div>`:'';
 }
+// 还没有任务和运行时，不能把它写成「直接运行」（从流程设计器或 API 直接启动的运行）。
+function issueTriggerLabel(issue,data,convo){
+  if(convo)return '对话工作区';
+  if(data.task||data.run)return taskTriggerInfo(data.task).label;
+  return issueWithoutSOP(issue)?'对话处理':'尚未触发';
+}
 function overviewPane(issue,data){
   const project=(state.data.projects||[]).find(p=>p.id===issue.projectId),workflow=(state.data.workflows||[]).find(w=>w.id===(issue.workflowId||project?.workflowId)),repo=(state.data.repositories||[]).find(r=>r.id===(issue.repositoryId||project?.defaultRepositoryId));
   // 对话工作区不是 LOOP 运行：不提供运行、日志和 LOOP 操作入口。
@@ -547,7 +553,7 @@ function overviewPane(issue,data){
   const ch=convo?conversationHeadState(issue):null;
   const banner=ch?`<div class="issue-outcome conv-outcome ${escapeHTML(ch.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(ch.label)}</b><p>${escapeHTML(ch.hint||'')}</p><div class="issue-outcome-actions">${actions}</div></div>`
     :`<div class="issue-outcome ${out.key}"><b>${escapeHTML(out.title)}</b><p>${escapeHTML(out.body)}</p><div class="issue-outcome-actions">${actions}</div></div>`;
-  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 LOOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 LOOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
+  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',escapeHTML(issueTriggerLabel(issue,data,convo)))}${drawerFact('关联 LOOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 LOOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
   const description=issue.description?`<div class="markdown-body">${renderRequirementMarkdown(issue.description)}</div>`:'';
   const images=(data.images||[]).map(image=>{
     const url=`/api/issues/${encodeURIComponent(issue.id)}/images/${encodeURIComponent(image.id)}`;

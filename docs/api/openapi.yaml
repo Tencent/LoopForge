@@ -5184,6 +5184,11 @@ components:
           format: int64
         workflowId:
           type: string
+          description: LOOP to deliver the requirement with; empty binds the project default LOOP. To deliver without any LOOP, set sopMode to none instead.
+        sopMode:
+          type: string
+          enum: ["", none, sop]
+          description: none delivers the requirement without a LOOP (clarified and changed in conversations; scheduled LOOPs never claim it) and clears workflowId. sop removes that opt-out, so workflowId or the project default applies again and scheduled LOOPs may claim it (an automationState sent in the same save still wins). Empty or omitted keeps the stored mode on edits.
         repositoryId:
           type: string
         baseBranch:

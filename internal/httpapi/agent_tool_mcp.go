@@ -83,7 +83,14 @@ func (h *agentToolGateway) ServeHTTP(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, agentToolRPCResponse{JSONRPC: "2.0", Error: &agentToolRPCError{Code: -32700, Message: "parse error", Data: err.Error()}})
 		return
 	}
-	response := h.handleRPC(withAgentToolToken(c.Request.Context(), token), session, request)
+	ctx := withAgentToolToken(c.Request.Context(), token)
+	if request.Method == "tools/call" && request.ID != nil && mcpserver.AcceptsEventStream(c.Request) {
+		mcpserver.WriteToolResponse(c.Writer, c.Request, request.ID, func() (json.RawMessage, error) {
+			return json.Marshal(h.handleRPC(ctx, session, request))
+		})
+		return
+	}
+	response := h.handleRPC(ctx, session, request)
 	if response == nil {
 		c.Status(http.StatusAccepted)
 		return

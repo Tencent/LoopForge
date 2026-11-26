@@ -446,6 +446,10 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	if !e.conversationWorkspaceIdle(run) || e.conversationGenerationRunning(run) {
 		return true, false, nil, nil
 	}
+	cleanupHeld := now.Before(run.WorkspaceCleanupNotBefore)
+	if cleanupHeld && !heldWorkspaceCheckpointNeedsSave(meta, idleSinceBeforeLease, now) {
+		return true, false, nil, nil
+	}
 	token, err := e.repo.BeginWorkspaceCheckpointSave(run.ID, now)
 	if err != nil {
 		return true, false, nil, nil
@@ -487,7 +491,12 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 			return true, false, nil, nil
 		}
 	}
-	if retryDue || released || meta.SavedAt == nil || run.UpdatedAt.After(*meta.SavedAt) || meta.Error != "" || !now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
+	readyToReclaim := !cleanupHeld && (!meta.FollowUp || released || !now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)))
+	needsSave := readyToReclaim || workspaceCheckpointNeedsSave(meta, run.UpdatedAt, now)
+	if cleanupHeld {
+		needsSave = heldWorkspaceCheckpointNeedsSave(meta, idleSince, now)
+	}
+	if needsSave {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		ctx = WithConversationWorkspaceToken(ctx, token, run.ID)
@@ -497,7 +506,7 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 			return true, false, nil, captureErr
 		}
 	}
-	if meta.FollowUp && !released && now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
+	if !readyToReclaim {
 		return true, false, nil, nil
 	}
 	if sopIdleReclaim && !e.conversationWorkspaceIdle(run) {
@@ -509,6 +518,24 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 		release = finish
 	}
 	return true, claimed, release, err
+}
+
+// Preserve the first checkpoint after release or idle expiry, even while
+// reclamation is held. Subsequent sweeps can reuse that checkpoint.
+func heldWorkspaceCheckpointNeedsSave(meta repo.WorkspaceCheckpoint, idleSince, now time.Time) bool {
+	if meta.Released() {
+		if meta.ReleasedAt.After(idleSince) {
+			idleSince = *meta.ReleasedAt
+		}
+	} else if deadline := idleSince.Add(ConversationWorkspaceIdleTTL); !now.Before(deadline) {
+		idleSince = deadline
+	}
+	return workspaceCheckpointNeedsSave(meta, idleSince, now)
+}
+
+func workspaceCheckpointNeedsSave(meta repo.WorkspaceCheckpoint, changedAt, now time.Time) bool {
+	return meta.SavedAt == nil || meta.SHA256 == "" || meta.Error != "" ||
+		changedAt.After(*meta.SavedAt) || meta.SaveRetryAt != nil && !now.Before(*meta.SaveRetryAt)
 }
 
 func idleSOPStatus(run domain.Run) bool {

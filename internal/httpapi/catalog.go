@@ -346,6 +346,12 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 		if decode(c, &v) && v.ID != "" {
 			v.ID, v.ProjectID = strings.TrimSpace(v.ID), strings.TrimSpace(v.ProjectID)
 			if existing, ok := h.repo.Agent(v.ID); ok {
+				// A role without a project is platform-wide: every project can
+				// use it, so only administrators may change it, as for rules
+				// and skills (assetWriteGuard).
+				if strings.TrimSpace(existing.ProjectID) == "" && !h.requirePlatformAdmin(c) {
+					return
+				}
 				if v.ProjectID == "" {
 					v.ProjectID = strings.TrimSpace(existing.ProjectID)
 				}
@@ -353,6 +359,9 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 					c.JSON(http.StatusConflict, map[string]string{"error": "角色标识已被其他项目使用"})
 					return
 				}
+			} else if err := domain.ValidateResourceID(v.ID); err != nil {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "角色" + err.Error()})
+				return
 			}
 			if v.ProjectID == "" {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": "角色需要 projectId"})
@@ -388,6 +397,16 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			c.JSON(200, stored)
 		}
 	}
+}
+
+// requireAgentWriter allows changes to a stored role. Project roles follow
+// project write access; platform-wide roles (no project) are shared by every
+// project and are limited to platform administrators.
+func (h *catalogHandlers) requireAgentWriter(c *gin.Context, agent domain.AgentDefinition) bool {
+	if strings.TrimSpace(agent.ProjectID) == "" {
+		return h.requirePlatformAdmin(c)
+	}
+	return h.requireProjectWriter(c, agent.ProjectID)
 }
 
 func validateCatalogAgentExecutor(agent *domain.AgentDefinition) error {
@@ -431,7 +450,7 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 		c.JSON(404, map[string]string{"error": "agent not found"})
 		return
 	}
-	if c.Request.Method != http.MethodGet && c.FullPath() != "/api/agents/:id/clone" && !h.requireProjectWriter(c, current.ProjectID) {
+	if c.Request.Method != http.MethodGet && c.FullPath() != "/api/agents/:id/clone" && !h.requireAgentWriter(c, current) {
 		return
 	}
 	switch c.FullPath() {
@@ -498,14 +517,22 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 			c.JSON(400, map[string]string{"error": "id and name are required"})
 			return
 		}
+		if _, exists := h.repo.Agent(req.ID); !exists {
+			if err := domain.ValidateResourceID(req.ID); err != nil {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "角色" + err.Error()})
+				return
+			}
+		}
 		v := current
 		targetProject := strings.TrimSpace(req.ProjectID)
 		if _, ok := h.repo.Project(targetProject); !ok {
 			c.JSON(http.StatusNotFound, map[string]string{"error": "project not found"})
 			return
 		}
-		taken, _ := h.repo.Agent(req.ID)
-		if !h.requireProjectWriter(c, targetProject, taken.ProjectID) {
+		if !h.requireProjectWriter(c, targetProject) {
+			return
+		}
+		if taken, exists := h.repo.Agent(req.ID); exists && !h.requireAgentWriter(c, taken) {
 			return
 		}
 		userID := int64(0)
