@@ -690,9 +690,8 @@ func TestEvolutionDismissFindingRefusesWhileImprovementIsInFlight(t *testing.T) 
 	}
 }
 
-// The dimiss guard also covers a released proposal (the finding is archived as
-// resolved) and a queued improvement; both would otherwise report a status the
-// store never writes.
+// The dismiss guard also covers a released proposal: the finding is archived
+// as resolved, so dismissing it would report a status the store never writes.
 func TestEvolutionDismissBlockedReasonForReleased(t *testing.T) {
 	env := newEvoTestEnv(t)
 	finding := domain.EvoFinding{ID: "evf-guard", ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, Status: domain.EvoFindingOpen}
@@ -712,5 +711,38 @@ func TestEvolutionDismissBlockedReasonForReleased(t *testing.T) {
 		AssetID: env.agent.ID, Status: domain.EvoFindingOpen}); reason != "" {
 		t.Fatalf("a finding with nothing in flight must be dismissable, got %q", reason)
 	}
+}
 
+// A finding queued behind another proposal on the same asset keeps its status
+// and close note in the store, so dismissing it must be refused until the
+// queued improvement is removed.
+func TestEvolutionDismissFindingRefusesWhileQueued(t *testing.T) {
+	env := newEvoTestEnv(t)
+	env.seedRun(t, "dismiss-queue-source", "failed", "failed", "缺少单测")
+	env.seedPendingProposal(t, "dismiss-queue-current")
+	f := domain.EvoFinding{ID: "dismiss-queue-finding", ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
+		AssetName: env.agent.Name, Title: "排队的问题", Status: domain.EvoFindingOpen, SampleRunIDs: []string{"dismiss-queue-source"}}
+	if err := env.store.PutEvoFinding(f); err != nil {
+		t.Fatal(err)
+	}
+	queued := requestJSONAuthed[struct {
+		Status  string `json:"status"`
+		QueueID string `json:"queueId"`
+	}](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": f.ID}, http.StatusAccepted)
+	if queued.Status != "queued" || queued.QueueID == "" {
+		t.Fatalf("second finding on a busy asset must be queued: %+v", queued)
+	}
+
+	requestJSONAuthed[map[string]any](t, env.router, env.user, http.MethodPost, "/api/evolution/findings/"+f.ID+"/dismiss",
+		map[string]any{"reason": "误报"}, http.StatusConflict)
+	if stored, _ := env.store.EvoFinding(f.ID); stored.Status != domain.EvoFindingOpen || stored.CloseNote != "" {
+		t.Fatalf("a refused dismiss must not change the queued finding: %+v", stored)
+	}
+
+	requestJSONAuthed[domain.EvoQueueItem](t, env.router, env.user, http.MethodPost, "/api/evolution/queue/"+queued.QueueID+"/reject", nil, http.StatusOK)
+	requestJSONAuthed[domain.EvoFinding](t, env.router, env.user, http.MethodPost, "/api/evolution/findings/"+f.ID+"/dismiss",
+		map[string]any{"reason": "确认误报"}, http.StatusOK)
+	if stored, _ := env.store.EvoFinding(f.ID); stored.Status != domain.EvoFindingDismissed || stored.CloseNote != "确认误报" {
+		t.Fatalf("dismiss after removing the queued improvement = %+v", stored)
+	}
 }
