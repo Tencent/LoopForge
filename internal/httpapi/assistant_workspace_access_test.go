@@ -23,7 +23,7 @@ func workspaceAccessGateway(t *testing.T, h *assistantHandlers) *agentToolGatewa
 	return gateway
 }
 
-// A viewer must not reach an SOP workspace through workspaceRunId: the run's
+// A viewer must not reach a LOOP workspace through workspaceRunId: the run's
 // own workspace edits, terminal, resume and retry already require write access.
 func TestWorkspaceOpenRefusesSOPWorkspaceForViewer(t *testing.T) {
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
@@ -57,7 +57,7 @@ func TestWorkspaceOpenRefusesSOPWorkspaceForViewer(t *testing.T) {
 	c, _ := workbenchContext(viewer, "POST", "/api/assistant/generations", bytes.NewBuffer(nil))
 	req := assistantRequest{ProjectID: "workbench", RunID: sop.ID, Messages: []assistantMessage{{Role: "user", Content: "edit"}}}
 	if err := h.prepareWorkbenchContext(c, &req, viewer); err == nil {
-		t.Fatal("precondition: viewer must be refused in the SOP task conversation")
+		t.Fatal("precondition: viewer must be refused in the LOOP task conversation")
 	}
 
 	if err := h.repo.PutAssistantSession(viewer.ID, domain.AssistantSession{ID: "viewer-chat", ProjectID: "workbench"}); err != nil {
@@ -68,7 +68,7 @@ func TestWorkspaceOpenRefusesSOPWorkspaceForViewer(t *testing.T) {
 	if err == nil {
 		var out map[string]any
 		_ = json.Unmarshal([]byte(raw), &out)
-		t.Fatalf("viewer bound SOP workspace %s: handoff=%v requestedMode=%q", sop.ID, out["handoff"], s.requestedMode())
+		t.Fatalf("viewer bound LOOP workspace %s: handoff=%v requestedMode=%q", sop.ID, out["handoff"], s.requestedMode())
 	}
 	if !strings.Contains(err.Error(), "只读成员") {
 		t.Fatalf("expected a read-only refusal, got %v", err)
@@ -80,7 +80,7 @@ func TestWorkspaceOpenRefusesSOPWorkspaceForViewer(t *testing.T) {
 		t.Fatalf("refusal stored binding %q", stored.WorkspaceRunID)
 	}
 
-	// A shared conversation another member bound to the SOP: a viewer speaking
+	// A shared conversation another member bound to the LOOP: a viewer speaking
 	// there inherits the binding but may not enter it.
 	if err := h.repo.PutAssistantSession(owner.ID, domain.AssistantSession{ID: "shared-sop-chat", ProjectID: "workbench", WorkspaceRunID: sop.ID, RuntimeMode: domain.AssistantModeWorkspace}); err != nil {
 		t.Fatal(err)
@@ -92,21 +92,21 @@ func TestWorkspaceOpenRefusesSOPWorkspaceForViewer(t *testing.T) {
 		t.Fatalf("precondition: the turn loads the shared binding, got %q", inherited.workspaceRunID)
 	}
 	if _, err := gateway.openConversationWorkspace(context.Background(), inherited, map[string]any{}); err == nil || !strings.Contains(err.Error(), "只读成员") {
-		t.Fatalf("viewer entered the inherited SOP workspace: %v", err)
+		t.Fatalf("viewer entered the inherited LOOP workspace: %v", err)
 	}
 	if stored, _ := h.repo.AssistantSession(owner.ID, "shared-sop-chat"); stored.WorkspaceRunID != sop.ID {
 		t.Fatalf("refusal changed the shared binding to %q", stored.WorkspaceRunID)
 	}
 	vc, _ := workbenchContext(viewer, "POST", "/api/assistant/generations", bytes.NewBuffer(nil))
 	if !h.sopWorkspaceReadOnly(vc, conv, "workbench", viewer.ID) {
-		t.Fatal("a viewer turn must start the shared SOP conversation in platform mode")
+		t.Fatal("a viewer turn must start the shared LOOP conversation in platform mode")
 	}
 	oc, _ := workbenchContext(owner, "POST", "/api/assistant/generations", bytes.NewBuffer(nil))
 	if h.sopWorkspaceReadOnly(oc, conv, "workbench", owner.ID) {
-		t.Fatal("the owner keeps workspace mode in the shared SOP conversation")
+		t.Fatal("the owner keeps workspace mode in the shared LOOP conversation")
 	}
 
-	// The owner still binds the same SOP workspace.
+	// The owner still binds the same LOOP workspace.
 	if err := h.repo.PutAssistantSession(owner.ID, domain.AssistantSession{ID: "owner-chat", ProjectID: "workbench"}); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestWorkspaceOpenRefusesSOPWorkspaceForViewer(t *testing.T) {
 	var out map[string]any
 	_ = json.Unmarshal([]byte(raw), &out)
 	if out["handoff"] != true || ownerSession.workspaceRunID != sop.ID {
-		t.Fatalf("owner did not bind SOP workspace: %s", raw)
+		t.Fatalf("owner did not bind LOOP workspace: %s", raw)
 	}
 }
 
@@ -159,7 +159,7 @@ func TestWorkspaceOpenReusedPrepFailureKeepsBinding(t *testing.T) {
 	}
 }
 
-// A legacy SOP run (no frozen execution mode) ran on its owner's default
+// A legacy LOOP run (no frozen execution mode) ran on its owner's default
 // runner, so a cloud conversation may not borrow it.
 func TestWorkspaceOpenLegacySOPUsesEffectiveRunner(t *testing.T) {
 	h, owner, _ := chatSandboxFixture(t)

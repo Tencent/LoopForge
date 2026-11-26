@@ -18,6 +18,51 @@ func newTestRunner(t *testing.T) *Store {
 	return s
 }
 
+func TestRunnerProjectModeOverridesPersonalDefault(t *testing.T) {
+	s := newTestRunner(t)
+	const owner = 1
+	const project = "mode-project"
+	if err := s.PutProject(domain.Project{ID: project, Name: project, OwnerID: owner,
+		Members: []domain.ProjectMember{{UserID: 2, Role: domain.ProjectRoleViewer}}}); err != nil {
+		t.Fatal(err)
+	}
+	runner := domain.Runner{ID: "preferred", OwnerUserID: owner, RunnerVersion: domain.RunnerVersionConversationCLI, Status: domain.RunnerStatusOnline}
+	if err := s.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRunnerSharedProjects(runner.ID, owner, []string{project}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDefaultRunner(owner, runner.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProjectRunnerPreference(2, project, "", domain.RunnerSelectionModeAuto); err != ErrRunnerProjectDenied {
+		t.Fatalf("viewer wrote mode: %v", err)
+	}
+	for _, mode := range []string{domain.RunnerSelectionModeAuto, domain.RunnerSelectionModePlatform} {
+		if err := s.SetProjectRunnerPreference(owner, project, "", mode); err != nil {
+			t.Fatal(err)
+		}
+		for _, defaults := range []RunnerDefaults{s.ResolveRunnerDefaults(owner, project), s.ResolveConversationRunnerDefaults(owner, project)} {
+			if defaults.ProjectRunnerMode != mode || defaults.Runner.ID != "" || defaults.ProjectRunnerID != "" || defaults.PersonalRunnerID != runner.ID {
+				t.Fatalf("%s did not override the personal default: %+v", mode, defaults)
+			}
+		}
+		if err := s.SetProjectDefaultRunner(owner, project, runner.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.ResolveRunnerDefaults(owner, project); got.ProjectRunnerMode != "" || got.ProjectRunnerID != runner.ID {
+			t.Fatalf("single-machine selection did not reset mode: %+v", got)
+		}
+	}
+	if err := s.SetProjectDefaultRunner(owner, project, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ResolveRunnerDefaults(owner, project); got.ProjectRunnerMode != "" || got.ProjectRunnerID != "" || got.Runner.ID != runner.ID {
+		t.Fatalf("clearing should restore the personal fallback: %+v", got)
+	}
+}
+
 func putQueuedTask(t *testing.T, s *Store, id, provider, runnerID string, createdAgo time.Duration) domain.RunnerTask {
 	t.Helper()
 	task := domain.RunnerTask{

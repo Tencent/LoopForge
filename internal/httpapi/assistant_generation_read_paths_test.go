@@ -144,7 +144,7 @@ func TestNativeToolTurnActiveKeepsALocalTurnThroughASlowHeartbeat(t *testing.T) 
 	}
 }
 
-// A background turn on a SOP conversation takes the run's foreground
+// A background turn on a LOOP conversation takes the run's foreground
 // workspace lease and records exactly that lease on its generation, so a
 // reader that later reaps the turn can release it. The recorded lease does
 // not outlive the turn: the next turn starts with none.

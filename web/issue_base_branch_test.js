@@ -58,7 +58,7 @@ const ctx = {
     ctx.renderReqRepositoryPicker();
   },
   projectTAPDReady: () => true,
-  renderIssues: () => {}, openIssueDetail: (id, tab) => opened.push([id, tab || ""]), openIssueInChat: issue => chats.push(issue.id),
+  renderIssues: () => {}, openIssueDetail: (id, tab) => opened.push([id, tab || ""]), openIssueInChat: (issue, opts) => chats.push([issue.id, opts?.intent || ""]),
   toast: message => notices.push(message),
   api: async (url, init) => {
     const body = JSON.parse(init.body);
@@ -145,7 +145,7 @@ assert.equal(elements["#chatInput"].value, "继续开发已有分支");
   await ctx.createIssueFromChat(undefined, "chat");
   assert.equal(requests.length, before + 1, "creating for the chat only creates the issue, it does not dispatch");
   assert.equal(requests.at(-1).url, "/api/issues");
-  assert.deepEqual(chats, ["created"], "creating for the chat opens the issue in the chat");
+  assert.deepEqual(chats, [["created", "clarify"]], "creating for the chat opens the issue in the chat with clarify intent");
   assert.equal(opened.length, 1, "creating for the chat does not open the issue detail");
   assert.equal(ctx.state.reqCreating, "");
 

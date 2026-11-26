@@ -5,9 +5,11 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"agentflow/internal/domain"
 )
 
-// HTTPCredential authenticates exactly one HTTPS host. The map containing it
+// HTTPCredential authenticates exactly one HTTP(S) endpoint. The map containing it
 // belongs to a live execution; it is never written to a checkout or git config.
 type HTTPCredential struct {
 	Username string
@@ -17,7 +19,7 @@ type HTTPCredential struct {
 type httpCredentialsKey struct{}
 type httpRemoteKey struct{}
 
-// WithHTTPCredentials binds the only HTTPS credentials this execution may use.
+// WithHTTPCredentials binds the only HTTP(S) credentials this execution may use.
 // Empty and nil maps deliberately provide no credentials.
 func WithHTTPCredentials(ctx context.Context, credentials map[string]HTTPCredential) context.Context {
 	return context.WithValue(ctx, httpCredentialsKey{}, credentials)
@@ -29,38 +31,48 @@ func WithHTTPRemote(ctx context.Context, remote string) context.Context {
 	return context.WithValue(ctx, httpRemoteKey{}, remote)
 }
 
-func httpCredentialForCommand(ctx context.Context, args []string) (credential HTTPCredential, host, urlHost string) {
+func httpCredentialForCommand(ctx context.Context, args []string) (credential HTTPCredential, endpoint domain.GitHTTPEndpoint, remoteURL *url.URL) {
 	credentials, _ := ctx.Value(httpCredentialsKey{}).(map[string]HTTPCredential)
 	if len(credentials) == 0 {
-		return HTTPCredential{}, "", ""
+		return HTTPCredential{}, domain.GitHTTPEndpoint{}, nil
 	}
 	remote, _ := ctx.Value(httpRemoteKey{}).(string)
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "https://") || strings.HasPrefix(arg, "http://") || IsSSHReference(arg) {
+		lower := strings.ToLower(arg)
+		if strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://") {
 			remote = arg
 			break
 		}
+		// A refspec such as HEAD:refs/heads/topic is also accepted by Git's
+		// loose scp syntax. Use only explicit, managed SSH addresses here.
+		if strings.Contains(arg, "://") && IsSSHReference(arg) {
+			return
+		}
+		if strings.Contains(arg, "@") {
+			if _, err := ParseSSHRemote(arg); err == nil {
+				return
+			}
+		}
 	}
 	u, err := url.Parse(remote)
-	if err != nil || u.Scheme != "https" {
-		return HTTPCredential{}, "", ""
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return HTTPCredential{}, domain.GitHTTPEndpoint{}, nil
 	}
-	host, err = HTTPSHostScope("https://" + u.Host)
+	endpoint, err = domain.ParseGitHTTPEndpoint(u.Scheme + "://" + u.Host)
 	if err != nil {
-		return HTTPCredential{}, "", ""
+		return HTTPCredential{}, domain.GitHTTPEndpoint{}, nil
 	}
-	credential = credentials[host]
+	credential = credentials[endpoint.Scope()]
 	if credential.Username == "" {
 		credential.Username = "x-access-token"
 	}
-	// Git can pass either the URL's original spelling or the normalized IPv6
-	// authority from its HTTP transport to the credential helper.
-	return credential, host, strings.TrimSuffix(strings.ToLower(u.Host), ":443")
+	return credential, endpoint, u
 }
 
 const (
 	gitHTTPHostEnv    = "AGENTFLOW_GIT_HTTP_HOST"
 	gitHTTPURLHostEnv = "AGENTFLOW_GIT_HTTP_URL_HOST"
+	gitHTTPSchemeEnv  = "AGENTFLOW_GIT_HTTP_SCHEME"
 )
 
 // scopedCredentialHelper accepts Git's protocol, rather than returning a
@@ -75,10 +87,16 @@ func scopedCredentialHelper() string {
 				host=*) host=${line#host=} ;;
 			esac
 		done
-		test "$protocol" = https || exit 0
+		test "$protocol" = "$` + gitHTTPSchemeEnv + `" || exit 0
 		host=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
-		case "${host%:443}" in
-			"$` + gitHTTPHostEnv + `"|"$` + gitHTTPURLHostEnv + `")
+		case "$protocol" in
+			http) port=80 ;;
+			https) port=443 ;;
+			*) exit 0 ;;
+		esac
+		urlhost=$` + gitHTTPURLHostEnv + `
+		case "${host%:$port}" in
+			"$` + gitHTTPHostEnv + `"|"${urlhost%:$port}")
 				printf 'username=%s\npassword=%s\n' "$` + gitHTTPUserEnv + `" "$` + gitHTTPPassEnv + `" ;;
 		esac
 	}; f`

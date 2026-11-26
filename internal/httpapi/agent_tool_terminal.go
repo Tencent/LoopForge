@@ -34,7 +34,7 @@ func terminalToolDescriptors(mode AgentToolMode, exec assistantExecMode) []agent
 		schema, _ := json.Marshal(map[string]any{"type": "object", "additionalProperties": false, "required": []string{"body"}, "properties": map[string]any{
 			"title": map[string]any{"type": "string", "maxLength": 200}, "summary": map[string]any{"type": "string", "maxLength": 4000}, "body": map[string]any{"type": "string", "minLength": 1, "maxLength": 20000},
 		}})
-		return []agentToolDescriptor{{Name: submitNotificationReportTool, Description: "提交本次 SOP 的整体成果报告。body 必填，可使用 Markdown；只汇总已提供的资料。校验失败时修正参数重新提交，成功后本轮结束。", InputSchema: schema, Kind: "terminal", Terminal: true, UpstreamName: submitNotificationReportTool}}
+		return []agentToolDescriptor{{Name: submitNotificationReportTool, Description: "提交本次 LOOP 的整体成果报告。body 必填，可使用 Markdown；只汇总已提供的资料。校验失败时修正参数重新提交，成功后本轮结束。", InputSchema: schema, Kind: "terminal", Terminal: true, UpstreamName: submitNotificationReportTool}}
 	case AgentToolClarify:
 		schema, _ := json.Marshal(submitClarificationSchema())
 		return []agentToolDescriptor{{
@@ -105,8 +105,8 @@ func submitClarificationSchema() map[string]any {
 	}
 }
 
-// submitAssistantReplySchema offers SOP proposals only where the user
-// answers them: full access starts a SOP without asking.
+// submitAssistantReplySchema offers LOOP proposals only where the user
+// answers them: full access starts a LOOP without asking.
 func submitAssistantReplySchema(exec assistantExecMode) map[string]any {
 	names := assistantWriteToolNameList()
 	toolSchema := map[string]any{"type": "string", "description": "必填：本草稿要执行的写入工具名称，如 issues_save、issues_dispatch；不要省略，不带 mcp__ 前缀"}

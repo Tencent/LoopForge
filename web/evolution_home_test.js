@@ -1,0 +1,62 @@
+const assert=require('node:assert/strict');
+const path=require('node:path');
+const {createDOM}=require('./hui_fake_dom');
+
+(async()=>{
+  const dom=createDOM(),w=dom.window;
+  w.$=s=>dom.document.querySelector(s);w.$$=s=>[...dom.document.querySelectorAll(s)];
+  w.escapeHTML=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  w.state={projectFilter:'p'};w.relativeTime=()=> '刚刚';w.toast=()=>{};
+  w.kbBadge=(text,tone)=>`<span class="badge ${tone}">${text}</span>`;
+  for(const file of ['evolution.js','app/evolution-simple.js','app/evolution-review.js','app/evolution-story.js','app/evolution-home.js'])dom.load(path.join(__dirname,file));
+  const api=dom.run('({evo,evoHomeHTML,evoDiagnose})');
+  const evo=api.evo;evo.projectId='p';evo.overview={health:[]};evo.findings=[];
+  let html=api.evoHomeHTML();dom.html(html);
+  assert.match(html,/暂无改进记录/);
+  assert.equal(dom.document.querySelector('.evo-home-tabs'),null,'a new project has no meaningless zero-count filters');
+  assert.equal(dom.document.querySelector('.evo-home-columns'),null,'empty state has no empty table header');
+  assert.ok(dom.document.querySelector('[data-evo-home-runs]'));
+  assert.ok(!html.includes('查看历史'),'do not send an empty project to nonexistent history');
+  evo.lastCheck={projectId:'p',runs:0,findings:0};
+  assert.match(api.evoHomeHTML(),/当前项目没有可分析的运行/);
+  evo.lastCheck={projectId:'p',runs:4,findings:0};
+  assert.match(api.evoHomeHTML(),/暂无待处理问题/);
+  assert.match(api.evoHomeHTML(),/上次检查 4 次运行/);
+  evo.lastCheck={projectId:'other',runs:100,findings:20};
+  assert.ok(!api.evoHomeHTML().includes('100 次运行'),'check result must belong to the selected project');
+  evo.lastCheck={projectId:'p',runs:4,findings:1};
+  assert.ok(!api.evoHomeHTML().includes('未发现问题'),'an empty refresh must not overwrite a positive check with no findings');
+
+  const p={id:'proposal',findingId:'finding',assetKind:'agent',assetId:'role',assetName:'日志分析',status:'pending',title:'优先具体失败',summary:{total:3,finished:3,fixed:1,blocked:1,unchanged:1,passed:false},review:{problem:'<img src=x onerror=alert(1)>',changes:[{title:'跳过摘要',before:'选择首条 ERROR',after:'选择具体测试失败',reason:'摘要不能解释失败'}]}};
+  evo.overview={pending:[p],health:[]};
+  html=api.evoHomeHTML();dom.html(html);
+  assert.equal(dom.document.querySelector('img'),null,'model text must remain escaped');
+  assert.equal(dom.document.querySelectorAll('.evo-home-tabs button').length,3);
+  assert.equal(dom.document.querySelectorAll('.evo-home-row').length,1);
+  assert.equal(dom.document.querySelector('.evo-home-summary').textContent,'跳过摘要');
+  assert.equal(dom.document.querySelector('.evo-home-columns').textContent,'问题 / 关联 SOP改动摘要当前阶段更新');
+  assert.doesNotMatch(html,/阻塞 1|成功 3\/3/);
+  evo.overview={recent:[{...p,status:'rejected'}]};
+  evo.list={status:'active',page:0};html=api.evoHomeHTML();
+  assert.match(html,/清除筛选/);
+  evo.list.status='all';assert.match(api.evoHomeHTML(),/data-evo-asset-group/);
+
+  // A check is an explicit write; refresh must not silently run it.
+  dom.html('<section id="evolutionView" class="active"><div id="evoPageHead"><button id="evoDiagnose"><span data-evo-check-label></span></button></div><div id="evoMetrics"></div><div id="evolutionBody"><button data-evo-home-check></button></div></section>');
+  evo.overview={health:[]};evo.findings=[];evo.list={status:'active',page:0};evo.lastCheck=null;
+  let resolve,writes=0;
+  w.api=(url,options={})=>{if(options.method){writes++;return new Promise(r=>resolve=r)}return Promise.resolve(url.includes('/overview')?{health:[]}:[])};
+  const pending=api.evoDiagnose(w.$('#evoDiagnose'));await api.evoDiagnose(w.$('[data-evo-home-check]'));
+  assert.equal(writes,1,'duplicate buttons cannot launch concurrent diagnoses');
+  assert.equal(w.$('[data-evo-home-check]').disabled,true);
+  resolve({runs:4,findings:[]});await pending;
+  assert.equal(evo.lastCheck.runs,4);assert.match(w.$('#evolutionBody').textContent,/暂无待处理问题/);
+  w.api=async()=>{throw new Error('server unavailable')};
+  await api.evoDiagnose(w.$('#evoDiagnose'));
+  assert.match(w.$('.evo-home-check-error').textContent,/检查失败/);
+  assert.equal(evo.lastCheck.runs,4,'a failed check retains the previous successful check');
+  w.api=()=>new Promise(r=>resolve=r);const stale=api.evoDiagnose(w.$('#evoDiagnose'));
+  w.state.projectFilter='other';resolve({runs:99,findings:[]});await stale;
+  assert.equal(evo.lastCheck.runs,4,'late checks cannot populate another project');
+  console.log('evolution home: truthful empty states, scoped checks, grounded changes, blocked results and explicit actions passed');
+})().catch(error=>{console.error(error);process.exitCode=1});

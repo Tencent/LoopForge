@@ -318,8 +318,8 @@ func TestGlobalRuleInjectsIntoEveryNodeOfBoundWorkflow(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	for _, rule := range []domain.RuleDefinition{
 		{ID: "bound", Name: "Bound", ProjectID: "p1", Content: "already on the role", Priority: 10},
-		{ID: "global-sop", Name: "Global SOP", ProjectID: "p1", Content: "applies to every node", Priority: 80, Global: true, WorkflowIDs: []string{"sop-a", " sop-a "}},
-		{ID: "global-other", Name: "Other SOP", ProjectID: "p1", Content: "other", Global: true, WorkflowIDs: []string{"sop-b"}},
+		{ID: "global-sop", Name: "Global LOOP", ProjectID: "p1", Content: "applies to every node", Priority: 80, Global: true, WorkflowIDs: []string{"sop-a", " sop-a "}},
+		{ID: "global-other", Name: "Other LOOP", ProjectID: "p1", Content: "other", Global: true, WorkflowIDs: []string{"sop-b"}},
 		{ID: "plain", Name: "Plain", ProjectID: "p1", Content: "not global", WorkflowIDs: []string{"sop-a"}},
 		{ID: "foreign", Name: "Foreign", ProjectID: "p2", Content: "foreign", Global: true, WorkflowIDs: []string{"sop-a"}},
 		{ID: "shared-global", Name: "Shared global", ProjectID: "p2", Content: "shared", Shared: true, Global: true, WorkflowIDs: []string{"sop-a"}},
@@ -431,7 +431,7 @@ func TestGenericCatalogAssetsIgnoreStoredCrossProjectCollisions(t *testing.T) {
 	}
 	wf, ok := st.GenericWorkflowByID(repo.GenericBackendDeliveryWorkflowID)
 	if !ok {
-		t.Fatal("generic backend SOP missing")
+		t.Fatal("generic backend LOOP missing")
 	}
 	agent, ok := workflowAgent(st, wf, repo.GenericAgentRequirement)
 	if !ok || agent.Name == "Foreign edit" {
@@ -1093,10 +1093,10 @@ func TestStartUsesFreshWorkBranchPerSOP(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = e.Cancel(run.ID) })
 	if run.Repository.WorkBranch == "" || run.Repository.WorkBranch == "feature/old-sop-branch" {
-		t.Fatalf("new SOP reused previous branch: %q", run.Repository.WorkBranch)
+		t.Fatalf("new LOOP reused previous branch: %q", run.Repository.WorkBranch)
 	}
 	if persistentSandboxID(run) != run.ID {
-		t.Fatalf("sandbox should be per SOP run, got %q", persistentSandboxID(run))
+		t.Fatalf("sandbox should be per LOOP run, got %q", persistentSandboxID(run))
 	}
 }
 
@@ -2020,7 +2020,7 @@ func TestGenericRequirementPlaybookIncludesIssueInput(t *testing.T) {
 	}
 	wf, ok := s.GenericWorkflowByID(repo.GenericBackendDeliveryWorkflowID)
 	if !ok {
-		t.Fatal("generic backend SOP missing")
+		t.Fatal("generic backend LOOP missing")
 	}
 	var node domain.WorkflowNode
 	for _, item := range wf.Nodes {
@@ -3229,7 +3229,7 @@ func TestExcludeFromRepositoryPatchDependencies(t *testing.T) {
 		// Terraform / IaC
 		".terraform/providers/registry.terraform.io/hashicorp/aws/5.0.0/terraform-provider-aws",
 		".terragrunt-cache/hash/main.tf",
-		// Internal & SOP reports
+		// Internal & LOOP reports
 		".agentflow/temp.txt",
 		".codebuddy/rules.json",
 		"fix-plan.md",
@@ -3764,7 +3764,7 @@ func TestBindGitDiffQuietExcludesDeliverables(t *testing.T) {
 	arts := []domain.ArtifactContract{{Name: "fix-plan", Path: "fix-plan.md", Required: true}}
 	got := bindVerificationCommand("git diff --quiet", arts)
 	if !strings.Contains(got, ":(exclude)fix-plan.md") || !strings.Contains(got, ":(exclude)checkers-report.md") {
-		t.Fatalf("cleanliness gate must ignore SOP deliverables, got %q", got)
+		t.Fatalf("cleanliness gate must ignore LOOP deliverables, got %q", got)
 	}
 	if !strings.HasPrefix(got, "git diff --quiet -- .") {
 		t.Fatalf("cleanliness gate must keep pathspec separator, got %q", got)
@@ -3968,7 +3968,7 @@ func TestExistingMRBlurbDoesNotReusePreviousSOP(t *testing.T) {
 	}
 	got := existingMRBlurb(s, domain.Run{ID: "run-new", ExecutionContext: domain.TelemetryContext{IssueID: "gf-5"}})
 	if strings.Contains(got, "merge_requests/138") || strings.Contains(got, "必须在此 MR") {
-		t.Fatalf("new SOP still bound to previous MR: %s", got)
+		t.Fatalf("new LOOP still bound to previous MR: %s", got)
 	}
 }
 

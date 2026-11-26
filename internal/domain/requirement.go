@@ -7,7 +7,7 @@ type RequirementNodeStage struct {
 	Name       string `json:"name"`
 	Status     string `json:"status"`
 	DurationMs int64  `json:"durationMs,omitempty"`
-	// ChildRunID and Children describe the child run started by an SOP node.
+	// ChildRunID and Children describe the child run started by a LOOP node.
 	ChildRunID string                 `json:"childRunId,omitempty"`
 	Children   []RequirementNodeStage `json:"children,omitempty"`
 }
@@ -63,7 +63,7 @@ type RequirementSnapshot struct {
 	Lanes   []RequirementLane  `json:"lanes"`
 	Stages  []RequirementStage `json:"stages"`
 	// Conversation is set for a requirement worked on in a conversation
-	// workspace instead of an SOP.
+	// workspace instead of a LOOP.
 	Conversation *RequirementConversation `json:"conversation,omitempty"`
 }
 

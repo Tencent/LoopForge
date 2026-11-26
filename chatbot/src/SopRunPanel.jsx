@@ -322,18 +322,18 @@ export default function SopRunPanel({
   const artifacts = (run.artifacts || []).filter(
     (a) => !nodeId || a.nodeId === nodeId,
   );
-  const title = run.workflowSnapshot?.name || "SOP 运行";
+  const title = run.workflowSnapshot?.name || "LOOP 运行";
   const Container = embedded ? "section" : "aside";
   return (
     <Container
       className={`${embedded ? "sop-run-embedded" : "side-panel"} sop-run-panel ${nodeId ? "node-conversation-view" : ""}`}
-      aria-label="SOP 运行过程"
+      aria-label="LOOP 运行过程"
     >
       {!embedded ? (
         <header className="sop-panel-header">
           <span>
             <GitBranch size={16} />
-            SOP 运行
+            LOOP 运行
           </span>
           <IconButton label="关闭运行侧边栏" onClick={onClose}>
             <X size={16} />

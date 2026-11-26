@@ -69,6 +69,21 @@ func assistantResumeRecoverable(ctx context.Context, err error) bool {
 	return failure.Code == "MISSING_RESULT" || failure.Code == "CLI_EXIT_NONZERO"
 }
 
+const assistantWorkspaceFallbackStatus = "工作区启动失败，已回到平台模式，继续本轮对话。"
+
+const assistantWorkspaceFallbackPrompt = "工作区启动失败。本轮请用平台工具继续处理用户请求，如实说明仍需工作区的步骤。后续轮次有需要时可重新打开工作区。"
+
+// Recovery requires a workspace-specific failure and confirmation that the
+// CLI did not run. A lost runner response cannot provide that confirmation.
+func assistantWorkspaceStartupFailed(ctx context.Context, err error) bool {
+	var workspaceErr *runtime.ConversationWorkspaceSetupError
+	var stateErr *runtime.ConversationStateError
+	return ctx.Err() == nil && errors.Is(err, runtime.ErrConversationNotStarted) &&
+		errors.As(err, &workspaceErr) && !errors.As(err, &stateErr) &&
+		!errors.Is(err, errAssistantExecutionUnavailable) && !errors.Is(err, errAssistantRunnerAccessRevoked) &&
+		!errors.Is(err, errRunnerWorkspaceUnavailable)
+}
+
 // assistantHandoffOutlivesPhaseError reports whether a phase error should be
 // ignored because a mode handoff already succeeded in that phase. The old CLI
 // may end without type=result once it has nothing left to do; failing the

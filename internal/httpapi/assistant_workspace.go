@@ -109,7 +109,7 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 		return "", errAgentToolForbidden
 	}
 	if engine.WorkspaceRunID(run) != run.ID {
-		return "", fmt.Errorf("子 SOP 共享父任务工作区，请从父任务操作")
+		return "", fmt.Errorf("子 LOOP 共享父任务工作区，请从父任务操作")
 	}
 	wasReclaimed := !run.WorkspaceCleanedAt.IsZero()
 	var restoredArtifacts []string
@@ -144,6 +144,8 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(s.User))
 	ctx = context.WithValue(ctx, mainBotWorkspaceKey{}, runID)
 	switch name {
+	case workspacePreviewServiceToolName:
+		return h.callWorkspacePreviewService(ctx, s, run, args)
 	case "workbench_workspace_tree":
 		// Internal only: preparing the workspace on open restores a reclaimed
 		// snapshot and starts the sandbox before the CLI hands over.

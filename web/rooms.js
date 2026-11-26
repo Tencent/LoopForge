@@ -92,7 +92,7 @@ function toggleRoomSOP(id, force) {
   const has = rs.sops.includes(id);
   const want = force === undefined ? !has : force;
   if (want && !has) {
-    if (rs.sops.length >= 5) return toast('一次最多派给 5 条 SOP');
+    if (rs.sops.length >= 5) return toast('一次最多派给 5 条 LOOP');
     rs.sops.push(id);
   }
   if (!want && has) rs.sops = rs.sops.filter(item => item !== id);
@@ -119,18 +119,18 @@ function syncRoomComposer() {
   $('#roomModeChat')?.classList.toggle('on', !issue);
   $('#roomModeIssue')?.classList.toggle('on', issue);
   const input = $('#roomInput');
-  if (input) input.placeholder = issue ? '第一行写 Issue 标题，下面写描述。输入 @ 选择 SOP' : '发消息，输入 @ 提醒同事';
+  if (input) input.placeholder = issue ? '第一行写 Issue 标题，下面写描述。输入 @ 选择 LOOP' : '发消息，输入 @ 提醒同事';
   const picked = roomTargetPicked();
   const dispatch = $('#roomDispatch');
   if (dispatch) {
-    dispatch.textContent = !picked ? '建单并派发' : rs.sops.length > 1 ? `建单并派发 ${rs.sops.length} 条 SOP` : '建单并派发';
-    dispatch.title = picked ? '第一行作为 Issue 标题，其余作为描述' : '先选一条 SOP';
+    dispatch.textContent = !picked ? '建单并派发' : rs.sops.length > 1 ? `建单并派发 ${rs.sops.length} 条 LOOP` : '建单并派发';
+    dispatch.title = picked ? '第一行作为 Issue 标题，其余作为描述' : '先选一条 LOOP';
   }
   const hint = $('#roomTargetHint');
   if (hint) {
     hint.textContent = !picked
-      ? '选择一条或多条 SOP。第一行是标题，回车建单。'
-      : (rs.sops.length > 1 ? `回车将并行派给 ${rs.sops.length} 条 SOP。` : `回车将建单并派给 SOP「${names.get(rs.sops[0])}」。`);
+      ? '选择一条或多条 LOOP。第一行是标题，回车建单。'
+      : (rs.sops.length > 1 ? `回车将并行派给 ${rs.sops.length} 条 LOOP。` : `回车将建单并派给 LOOP「${names.get(rs.sops[0])}」。`);
   }
   $('#roomSend')?.classList.toggle('ready', !!input?.value.trim());
   document.querySelectorAll('[data-room-pick]').forEach(button => {
@@ -174,7 +174,7 @@ function scheduleRoomPoll() {
 function fillRoomTargets() {
   const sop = $('#roomSOP');
   if (!sop) return;
-  sop.innerHTML = '<option value="">添加 SOP…</option>' + roomWorkflowChoices().map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(roomWorkflowLabel(item))}</option>`).join('');
+  sop.innerHTML = '<option value="">添加 LOOP…</option>' + roomWorkflowChoices().map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(roomWorkflowLabel(item))}</option>`).join('');
   syncRoomComposer();
 }
 
@@ -260,7 +260,7 @@ function renderRoomResources(room) {
   const host = $('#roomResources');
   if (!host) return;
   if (!roomProjectId()) {
-    host.innerHTML = '<div class="room-empty"><b>先选择项目</b><p>选好项目后，这里会列出群成员，SOP 可以搜索后派发。</p></div>';
+    host.innerHTML = '<div class="room-empty"><b>先选择项目</b><p>选好项目后，这里会列出群成员，LOOP 可以搜索后派发。</p></div>';
     return;
   }
   const members = room?.members || [];
@@ -269,8 +269,8 @@ function renderRoomResources(room) {
     roomResGroup('成员', members.length, members.length
       ? members.map(m => `<div class="room-res-item static"><span class="room-res-text"><b>${escapeHTML(m.name || ('用户 ' + m.userId))}<span class="room-member-tag">${escapeHTML(roomMemberRoleLabel(m.role))}</span></b></span></div>`).join('')
       : '<div class="room-res-more">这个项目还没有其他成员</div>'),
-    roomResGroup('SOP', workflows.length, workflows.length
-      ? `<input id="roomSOPSearch" class="room-sop-search" type="search" placeholder="搜索要派发的 SOP" value="${escapeHTML(roomState().sopQuery || '')}"><div id="roomSOPList"></div>`
+    roomResGroup('LOOP', workflows.length, workflows.length
+      ? `<input id="roomSOPSearch" class="room-sop-search" type="search" placeholder="搜索要派发的 LOOP" value="${escapeHTML(roomState().sopQuery || '')}"><div id="roomSOPList"></div>`
       : roomNoSOPHint())
   ].join('');
   const search = $('#roomSOPSearch');
@@ -301,7 +301,7 @@ function fillRoomSOPList() {
     : '';
   list.innerHTML = (shown.length
     ? shown.map(w => roomResItem('≡', 'sop', roomWorkflowLabel(w), (w.nodes || []).length ? (w.nodes.length + ' 个节点') : '点选后进入建单', w.id)).join('')
-    : '<div class="room-res-more">没有匹配的 SOP</div>')
+    : '<div class="room-res-more">没有匹配的 LOOP</div>')
     + toggle;
   list.querySelectorAll('[data-room-pick]').forEach(button => {
     button.onclick = () => {
@@ -368,16 +368,20 @@ function roomRunStatusLabel(status) {
   return {running: '运行中', waiting: '等待处理', succeeded: '已完成', failed: '失败', cancelled: '已取消', queued: '排队中'}[status] || status || '排队中';
 }
 
+// Messages saved before the LOOP rename still carry SOP「…」 authors.
+const ROOM_LOOP_AUTHOR = /^(?:LOOP|SOP)「(.*)」$/;
+
 function roomIsSOPAuthor(name) {
-  return /^SOP「.*」$/.test(String(name || ''));
+  return ROOM_LOOP_AUTHOR.test(String(name || ''));
 }
 
 function roomAuthorName(name) {
-  return roomIsSOPAuthor(name) ? String(name).slice(4, -1) : String(name || '');
+  const match = ROOM_LOOP_AUTHOR.exec(String(name || ''));
+  return match ? match[1] : String(name || '');
 }
 
 function roomAvatar(name) {
-  if (roomIsSOPAuthor(name)) return '<span class="room-avatar sop">SOP</span>';
+  if (roomIsSOPAuthor(name)) return '<span class="room-avatar sop">LOOP</span>';
   return `<span class="room-avatar">${escapeHTML(String(name || '?').slice(0, 1))}</span>`;
 }
 
@@ -391,9 +395,9 @@ function roomDispatchHTML(message, author) {
     const pct = total ? Math.round(done * 100 / total) : 0;
     const status = message.runStatus || message.runFinal || 'queued';
     const current = (message.runCurrent || []).length ? '正在：' + message.runCurrent.join('、') : '';
-    run = `<div class="room-run ${escapeHTML(status)}"><div class="room-run-head"><b>${escapeHTML(message.workflowName || 'SOP')}</b><span>${escapeHTML(roomRunStatusLabel(status))}${total ? ` · ${done}/${total} 步` : ''}</span></div><div class="room-run-track"><i style="width:${pct}%"></i></div>${current ? `<small>${escapeHTML(current)}</small>` : ''}</div>`;
+    run = `<div class="room-run ${escapeHTML(status)}"><div class="room-run-head"><b>${escapeHTML(message.workflowName || 'LOOP')}</b><span>${escapeHTML(roomRunStatusLabel(status))}${total ? ` · ${done}/${total} 步` : ''}</span></div><div class="room-run-track"><i style="width:${pct}%"></i></div>${current ? `<small>${escapeHTML(current)}</small>` : ''}</div>`;
   } else if (!message.dispatchError && !message.workflowId) {
-    run = '<small class="room-card-note">当时只指定了角色，没有启动 SOP</small>';
+    run = '<small class="room-card-note">当时只指定了角色，没有启动 LOOP</small>';
   }
   const head = message.lane ? `${author} 并行派发` : `${author} 建了 Issue`;
   const actions = `<div class="room-card-actions"><button type="button" class="button ghost small" data-open-issue="${escapeHTML(message.issueId)}">打开 Issue</button>${message.runId ? `<button type="button" class="button ghost small" data-open-run="${escapeHTML(message.runId)}">查看运行</button>` : ''}</div>`;
@@ -409,11 +413,11 @@ function roomProgressHTML(message, prev) {
   const detail = rest ? `<details><summary>产出摘要</summary><p>${escapeHTML(rest)}</p></details>` : '';
   const final = !message.nodeId;
   // Consecutive steps of one run already sit under its card; repeat the
-  // issue / SOP only when the thread switches to another run or chat.
+  // issue / LOOP only when the thread switches to another run or chat.
   const sameRun = prev && prev.runId && prev.runId === message.runId;
   const sop = roomIsSOPAuthor(message.author);
   const where = sameRun ? '' : [message.issueNumber ? '#' + message.issueNumber : '', sop ? '' : message.workflowName || ''].filter(Boolean).join(' · ');
-  return `<article class="room-progress ${escapeHTML(status)} ${final ? 'final' : ''}">${roomAvatar(message.author)}<div><header><b>${escapeHTML(roomAuthorName(message.author) || 'SOP')}</b>${where ? `<span>${escapeHTML(where)}</span>` : ''}</header><p><i>${icon}</i>${escapeHTML(head)}</p>${detail}</div></article>`;
+  return `<article class="room-progress ${escapeHTML(status)} ${final ? 'final' : ''}">${roomAvatar(message.author)}<div><header><b>${escapeHTML(roomAuthorName(message.author) || 'LOOP')}</b>${where ? `<span>${escapeHTML(where)}</span>` : ''}</header><p><i>${icon}</i>${escapeHTML(head)}</p>${detail}</div></article>`;
 }
 
 function roomApprovalHTML(message) {
@@ -423,7 +427,7 @@ function roomApprovalHTML(message) {
   }
   const actions = `<div class="room-card-actions"><button type="button" class="button primary small" data-decide="approve" ${attrs}>批准</button>${message.canReject ? `<button type="button" class="button ghost small" data-decide="reject" ${attrs}>打回</button>` : ''}<button type="button" class="button ghost small" data-open-run="${escapeHTML(message.runId)}">看运行</button></div>`;
   const where = [message.issueNumber ? '#' + message.issueNumber : '', message.issueTitle || ''].filter(Boolean).join(' ');
-  return `<article class="room-message room-card room-approval ${message.resolved ? 'resolved' : ''}"><header>${escapeHTML(roomAuthorName(message.author) || 'SOP')} · ${escapeHTML(where)}</header><b>${message.resolved ? '✓' : '⏸'} ${escapeHTML(message.nodeName || '')} ${message.resolved ? '审批已处理' : '等待审批'}</b>${message.resolved ? '' : `<p>${escapeHTML(message.body || '')}</p>`}${actions}</article>`;
+  return `<article class="room-message room-card room-approval ${message.resolved ? 'resolved' : ''}"><header>${escapeHTML(roomAuthorName(message.author) || 'LOOP')} · ${escapeHTML(where)}</header><b>${message.resolved ? '✓' : '⏸'} ${escapeHTML(message.nodeName || '')} ${message.resolved ? '审批已处理' : '等待审批'}</b>${message.resolved ? '' : `<p>${escapeHTML(message.body || '')}</p>`}${actions}</article>`;
 }
 
 function roomMessageHTML(message, mine, prev) {
@@ -453,7 +457,7 @@ function roomTextHTML(text) {
 }
 
 function roomNoSOPHint() {
-  return '<div class="room-res-more">当前项目还没有可派发的 SOP。<button type="button" class="room-link" data-room-go-sops>去「SOP 流程」新建或复制一条</button></div>';
+  return '<div class="room-res-more">当前项目还没有可派发的 LOOP。<button type="button" class="room-link" data-room-go-sops>去「LOOP 流程」新建或复制一条</button></div>';
 }
 
 function bindRoomGoSOPs(host) {
@@ -466,12 +470,12 @@ function roomGuideHTML() {
   const noSOP = !roomWorkflowChoices().length;
   return `<div class="room-guide">
     <h2>${escapeHTML(roomGreeting())}</h2>
-    <p class="room-guide-lead">在这里聊天，或者把一条需求派给 SOP。角色写在流程里，不用再选。</p>
+    <p class="room-guide-lead">在这里聊天，或者把一条需求派给 LOOP。角色写在流程里，不用再选。</p>
     <ol>
       <li><b>聊天</b><span>回车发送，Shift+Enter 换行。<code>@</code> 用来提醒同事。</span></li>
-      <li><b>建单</b><span>切到「建单」，选一条或多条 SOP，第一行写标题，回车就派发。</span></li>
+      <li><b>建单</b><span>切到「建单」，选一条或多条 LOOP，第一行写标题，回车就派发。</span></li>
     </ol>
-    <div class="room-guide-actions"><button type="button" class="button ghost small" data-room-try-chat>发一条消息</button><button type="button" class="button primary small" data-room-try-issue>建一张单</button>${noSOP ? '<button type="button" class="button ghost small" data-room-go-sops>当前项目还没有 SOP，去流程模板</button>' : ''}</div>
+    <div class="room-guide-actions"><button type="button" class="button ghost small" data-room-try-chat>发一条消息</button><button type="button" class="button primary small" data-room-try-issue>建一张单</button>${noSOP ? '<button type="button" class="button ghost small" data-room-go-sops>当前项目还没有 LOOP，去流程模板</button>' : ''}</div>
   </div>`;
 }
 
@@ -536,8 +540,8 @@ function renderRoomMention(query) {
   const box = $('#roomMention');
   const ms = roomMentionState();
   if (!box) return;
-  const groups = [['sop', 'SOP · 建单并运行'], ['member', '成员 · 提醒']];
-  let html = ms.targetsOnly ? '<div class="room-mention-title">选这条 Issue 要跑的 SOP</div>' : '';
+  const groups = [['sop', 'LOOP · 建单并运行'], ['member', '成员 · 提醒']];
+  let html = ms.targetsOnly ? '<div class="room-mention-title">选这条 Issue 要跑的 LOOP</div>' : '';
   groups.forEach(([kind, label]) => {
     const rows = ms.items.map((item, index) => ({item, index})).filter(row => row.item.kind === kind);
     if (!rows.length && !(kind === 'sop' && !query && !roomWorkflowChoices().length)) return;
@@ -545,7 +549,7 @@ function renderRoomMention(query) {
     if (!rows.length) html += roomNoSOPHint();
     html += rows.map(({item, index}) => `<button type="button" class="room-mention-item ${index === ms.index ? 'active' : ''}" data-mention="${index}"><span class="room-res-icon ${item.kind === 'member' ? '' : item.kind}">${escapeHTML(item.kind === 'sop' ? '≡' : (item.name || '?').slice(0, 1))}</span><span><b>${escapeHTML(item.name)}</b><small>${escapeHTML(item.sub || '')}</small></span></button>`).join('');
   });
-  if (!ms.items.length && !html.includes('room-mention-group')) html += `<div class="room-mention-empty">没有匹配「${escapeHTML(query)}」的${roomState().mode === 'issue' || ms.targetsOnly ? ' SOP 或成员' : '成员'}</div>`;
+  if (!ms.items.length && !html.includes('room-mention-group')) html += `<div class="room-mention-empty">没有匹配「${escapeHTML(query)}」的${roomState().mode === 'issue' || ms.targetsOnly ? ' LOOP 或成员' : '成员'}</div>`;
   box.innerHTML = html;
   box.hidden = false;
   box.querySelectorAll('[data-mention]').forEach(button => {
@@ -599,7 +603,7 @@ function pickRoomMention(item) {
   closeRoomMention();
   syncRoomComposer();
   input.focus();
-  if (item.kind === 'sop' && !input.value.trim()) toast('已选好 SOP，第一行写 Issue 标题，回车建单');
+  if (item.kind === 'sop' && !input.value.trim()) toast('已选好 LOOP，第一行写 Issue 标题，回车建单');
 }
 
 async function decideRoomStep(action, runId, nodeId, name) {
@@ -688,7 +692,7 @@ async function dispatchRoomIssue() {
   const {title, description} = splitRoomIssueText($('#roomInput')?.value);
   const workflowIds = rs.sops.slice();
   if (!title) return toast('第一行写 Issue 标题');
-  if (!workflowIds.length) return toast('请选择要派发的 SOP');
+  if (!workflowIds.length) return toast('请选择要派发的 LOOP');
   const button = $('#roomDispatch');
   button.disabled = true;
   try {
@@ -707,7 +711,7 @@ async function dispatchRoomIssue() {
     }
     await openRoom(id);
     const started = (result.tasks || []).length;
-    toast(result.dispatchError ? 'Issue 已创建，部分派发未成功：' + result.dispatchError : (started ? `已建单并启动 ${started} 条 SOP，进度会显示在卡片上` : 'Issue 已创建，但没有启动 SOP'));
+    toast(result.dispatchError ? 'Issue 已创建，部分派发未成功：' + result.dispatchError : (started ? `已建单并启动 ${started} 条 LOOP，进度会显示在卡片上` : 'Issue 已创建，但没有启动 LOOP'));
   } catch (error) {
     toast(error.message);
   } finally {

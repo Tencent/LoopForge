@@ -41,7 +41,7 @@ func TestBusinessCompletionToMerge(t *testing.T) {
 		{name: "observed zero is valid", runs: []domain.Run{run("a", 0)}, refs: map[string][]domain.DeliveryMR{"a": {mr(1)}}, events: map[string][]domain.RunEvent{"a": event(10)}, want: []int64{0}},
 		{name: "missing completion is unknown", runs: []domain.Run{run("a", 0)}, refs: map[string][]domain.DeliveryMR{"a": {mr(1)}}, missing: 1},
 		{name: "missing artifact association is unknown", runs: []domain.Run{run("a", 0)}, events: map[string][]domain.RunEvent{"a": event(4)}, missing: 1},
-		{name: "child SOP cannot complete a requirement", runs: []domain.Run{{ID: "child", CreatedAt: base, ExecutionContext: domain.TelemetryContext{ParentRunID: "parent"}}}, refs: map[string][]domain.DeliveryMR{"child": {mr(1)}}, events: map[string][]domain.RunEvent{"child": event(4)}, missing: 1},
+		{name: "child LOOP cannot complete a requirement", runs: []domain.Run{{ID: "child", CreatedAt: base, ExecutionContext: domain.TelemetryContext{ParentRunID: "parent"}}}, refs: map[string][]domain.DeliveryMR{"child": {mr(1)}}, events: map[string][]domain.RunEvent{"child": event(4)}, missing: 1},
 		{name: "outside own merge window has no sample", runs: []domain.Run{run("a", 0)}, refs: map[string][]domain.DeliveryMR{"a": {mr(1)}}, events: map[string][]domain.RunEvent{"a": event(4)}, filter: domain.AnalyticsFilter{From: at(11), To: at(12)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

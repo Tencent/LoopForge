@@ -2,7 +2,7 @@
 
 This evidence uses the real platform built from the animation contribution,
 a dedicated local test installation, a password session and a synthetic shell
-SOP. No model service, production run or organization data is involved.
+LOOP. No model service, production run or organization data is involved.
 
 ## Asset cache upgrade
 
@@ -37,7 +37,7 @@ changes the served URL without editing HTML or recreating the handler.
 
 ## Real-service visual checks
 
-The selected node came from a real running shell SOP. Computed styles and timed
+The selected node came from a real running shell LOOP. Computed styles and timed
 samples confirmed spinner rotation and moving text highlights in both themes.
 Reduced-motion preferences disabled both animations. The inspector was also
 checked at a 390px viewport, and requesting cancellation stopped its animations

@@ -454,6 +454,25 @@ test('sync configuration and issue push persist project-scoped integration setti
 });
 
 
+test('external sync controls are platform-admin only because they sync every project', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const controls = ['#importGitHubIssues', '#syncNowBtn', '#syncAutoEnabledInline', '#syncAutoEnabled', '#syncInterval', '#saveSyncConfig'];
+  const disabled = () => controls.map(id => app.document.querySelector(id).disabled);
+  app.evaluate(`state.authRequired=true;state.data.syncing=false;renderSync()`);
+  assert.deepEqual(disabled(), controls.map(() => false), 'platform admins keep every sync control');
+  app.evaluate(`state.authRequired=false;state.currentUser.isPlatformAdmin=false;state.currentUser.isGuest=true;renderSync()`);
+  assert.deepEqual(disabled(), controls.map(() => false), 'without login the server accepts every caller, so the controls stay usable');
+  assert.equal(app.document.querySelector('#importGitHubIssues').title, '');
+  app.evaluate(`state.authRequired=true;state.currentUser.isGuest=false;renderSync()`);
+  assert.deepEqual(disabled(), controls.map(() => true), 'POST /api/sync/now and PUT /api/sync/config answer 403 for everyone else');
+  assert.match(app.document.querySelector('#importGitHubIssues').title, /只有平台管理员/);
+  assert.match(app.document.querySelector('#syncScopeHint').textContent, /项目 Owner/);
+  app.evaluate(`state.currentUser.isPlatformAdmin=true;state.data.syncing=true;renderSync()`);
+  assert.equal(app.document.querySelector('#importGitHubIssues').disabled, true, 'a running sync still blocks a second one');
+  assert.equal(app.document.querySelector('#syncNowBtn').disabled, true);
+});
+
 test('AI schedule navigation separates existing tasks and preserves editor kind and project scope', async (t) => {
   const app = await loadApp();
   t.after(app.close);
@@ -473,7 +492,7 @@ test('AI schedule navigation separates existing tasks and preserves editor kind 
   assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /Existing AI job/);
   assert.doesNotMatch(app.document.querySelector('#aiScheduleJobList').textContent, /Existing trigger|Other AI job/);
   assert.equal(app.document.querySelector('#scheduleJobCount').textContent, '已启用');
-  assert.equal(app.document.querySelector('#issueHeadingMenu #newScheduleJob'), null, 'SOP 触发 moved out of the issue list menu');
+  assert.equal(app.document.querySelector('#issueHeadingMenu #newScheduleJob'), null, 'LOOP 触发 moved out of the issue list menu');
   app.document.querySelector('#aiScheduleTriggerTab').click();
   await settle(2);
   assert.equal(app.document.querySelector('#aiScheduleTriggerPanel').hidden, false);
@@ -640,23 +659,26 @@ test('late save responses cannot close a newly opened editor',async t=>{
  assert.equal(form.querySelector('[type=submit]').disabled,false);
 });
 
-test('AI schedule model picker includes account login CLI models and keeps a saved CLI model', async (t) => {
+test('AI schedule model picker loads account login CLI models for its project and keeps a saved CLI model', async (t) => {
   const app = await loadApp();
   t.after(app.close);
+  const scheduleCatalogQuery = '?schedule=1&projectId=project-1';
   app.router.get('/api/assistant/models', call => ({
     default: 'default',
     models: [
       { id: 'glm-test', name: 'GLM Test', family: 'glm' },
       { id: 'claude-test', name: 'Claude Test', family: 'claude' },
-      ...(call.search === '?schedule=1' ? [{ id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', family: 'gpt', engine: 'codex' }] : []),
+      { id: 'claude-code:opus', name: 'Saved Opus', engine: 'claude-code' },
+      ...(call.search === scheduleCatalogQuery ? [{ id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', family: 'gpt', engine: 'codex' }] : []),
     ],
     engines: [
       { id: 'codebuddy', name: 'CodeBuddy', configured: true },
-      { id: 'codex', name: 'Codex', configured: call.search === '?schedule=1' },
+      { id: 'codex', name: 'Codex', configured: call.search === scheduleCatalogQuery },
       { id: 'claude-code', name: 'Claude Code', configured: false },
     ],
   }));
   await app.evaluate(`(async () => {
+    state.projectFilter='project-1';
     fillScheduleJobForm({});
     const f=$('#scheduleJobForm');
     f.elements.jobKind.value='assistant';syncScheduleJobKind();
@@ -692,9 +714,10 @@ test('AI schedule model picker includes account login CLI models and keeps a sav
   assert.equal(form.elements.assistantModel.value, 'glm-test');
 
   // A job saved on a CLI this editor has no key for stays on that CLI.
-  app.evaluate(`paintScheduleModel('claude-code:opus')`);
+  app.evaluate(`$('#scheduleJobForm').elements.id.value='saved-task';paintScheduleModel('claude-code:opus')`);
   assert.equal(engine.value, 'claude-code');
-  assert.equal(engine.selectedOptions[0].disabled, false);
+  assert.equal(engine.selectedOptions[0].disabled, true);
+  assert.equal(toggle.disabled, true);
   assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
 
   app.router.get('/api/assistant/models', {

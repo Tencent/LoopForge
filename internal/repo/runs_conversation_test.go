@@ -51,7 +51,7 @@ func checkConversationWorkspaceRunsInAnalytics(t *testing.T, s *Store) {
 	mrProject := prefix + "/web"
 	mrURL := "https://git.example.com/" + mrProject + "/merge_requests/7"
 	for _, issue := range []domain.Issue{
-		{ID: prefix + "-sop", ProjectID: prefix, Title: "SOP 需求", Status: "todo", Kind: "requirement", Source: "local"},
+		{ID: prefix + "-sop", ProjectID: prefix, Title: "LOOP 需求", Status: "todo", Kind: "requirement", Source: "local"},
 		{ID: prefix + "-conv", ProjectID: prefix, Title: "对话需求", Status: "in_review", Kind: "requirement", Source: "local", AutomationState: "ignored", DeliveryMRs: []domain.DeliveryMR{{Project: mrProject, IID: 7, URL: mrURL, State: "opened"}}},
 	} {
 		if err := s.PutIssue(issue); err != nil {
@@ -63,7 +63,7 @@ func checkConversationWorkspaceRunsInAnalytics(t *testing.T, s *Store) {
 		return domain.Run{ID: prefix + "-" + id, Kind: domain.RunKindWorkspace, WorkflowID: domain.ConversationWorkspaceWorkflowID, Status: "waiting", Input: "对话改代码：" + id, CreatedAt: at,
 			WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, Name: "对话工作区"}, ExecutionContext: domain.TelemetryContext{ProjectID: prefix, ResponsibleUserID: 7}, Nodes: map[string]*domain.NodeRun{}}
 	}
-	sop := domain.Run{ID: prefix + "-run", WorkflowID: "wf", Status: "succeeded", CreatedAt: at, WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", Name: "SOP"},
+	sop := domain.Run{ID: prefix + "-run", WorkflowID: "wf", Status: "succeeded", CreatedAt: at, WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", Name: "LOOP"},
 		ExecutionContext: domain.TelemetryContext{ProjectID: prefix, IssueID: prefix + "-sop"}, Usage: domain.TokenUsage{TotalTokens: 1000, InputTokens: 900, OutputTokens: 100},
 		Nodes: map[string]*domain.NodeRun{"dev": {Status: "succeeded", StartedAt: at, FinishedAt: at.Add(time.Minute), Usage: domain.TokenUsage{TotalTokens: 1000, InputTokens: 900, OutputTokens: 100}}}}
 	for _, run := range []domain.Run{sop, workspace("linked"), workspace("review"), workspace("idle")} {
@@ -83,7 +83,7 @@ func checkConversationWorkspaceRunsInAnalytics(t *testing.T, s *Store) {
 		t.Fatalf("empty issue: %v %v", ok, err)
 	}
 	if ok, err := s.LinkConversationRunIssue(sop.ID, prefix+"-conv"); err != nil || ok {
-		t.Fatalf("an SOP run must not be relinked: %v %v", ok, err)
+		t.Fatalf("a LOOP run must not be relinked: %v %v", ok, err)
 	}
 	if ok, err := s.LinkConversationRunIssue(prefix+"-missing", prefix+"-conv"); err != nil || ok {
 		t.Fatalf("missing run: %v %v", ok, err)
@@ -103,7 +103,7 @@ func checkConversationWorkspaceRunsInAnalytics(t *testing.T, s *Store) {
 		t.Fatal(err)
 	}
 	if got, _ := s.RunState(sop.ID); got.Usage.TotalTokens != 1000 {
-		t.Fatalf("SOP usage changed: %+v", got.Usage)
+		t.Fatalf("LOOP usage changed: %+v", got.Usage)
 	}
 	// An engine write from a copy read before the conversation updates keeps them.
 	stale.WorkspaceEditorID = 9
@@ -128,7 +128,7 @@ func checkConversationWorkspaceRunsInAnalytics(t *testing.T, s *Store) {
 	out := s.Analytics(filter)
 	sum := out.Summary
 	if sum.TotalRuns != 1 || sum.SucceededRuns != 1 || sum.WaitingRuns != 0 || sum.QualityRuns != 1 {
-		t.Fatalf("conversation workspaces must not count as SOP runs: %+v", sum)
+		t.Fatalf("conversation workspaces must not count as LOOP runs: %+v", sum)
 	}
 	if sum.ConversationWorkspaces != 3 || sum.ConversationLinkedWorkspaces != 1 || sum.ConversationIssues != 1 || sum.ConversationTokens != 350 || sum.TotalTokens != 1350 || sum.ConversationCostCNY <= 0 {
 		t.Fatalf("conversation totals = workspaces %d linked %d issues %d tokens %d total %d cost %v", sum.ConversationWorkspaces, sum.ConversationLinkedWorkspaces, sum.ConversationIssues, sum.ConversationTokens, sum.TotalTokens, sum.ConversationCostCNY)
@@ -137,13 +137,13 @@ func checkConversationWorkspaceRunsInAnalytics(t *testing.T, s *Store) {
 		t.Fatalf("conversation requirements with MR=%d delivered=%d", sum.ConversationIssuesWithMR, sum.ConversationIssuesDelivered)
 	}
 	if sum.UniqueIssues != 1 {
-		t.Fatalf("SOP requirements must not include conversation ones: %d", sum.UniqueIssues)
+		t.Fatalf("LOOP requirements must not include conversation ones: %d", sum.UniqueIssues)
 	}
 	if out.Demo.AverageTokensPerRun != 1000 {
-		t.Fatalf("per-run average must stay SOP-only: %v", out.Demo.AverageTokensPerRun)
+		t.Fatalf("per-run average must stay LOOP-only: %v", out.Demo.AverageTokensPerRun)
 	}
 	if len(out.RunTraces) != 1 || len(out.Workflows) != 1 || out.Workflows[0].Key != "wf" {
-		t.Fatalf("SOP breakdowns polluted: traces=%d workflows=%+v", len(out.RunTraces), out.Workflows)
+		t.Fatalf("LOOP breakdowns polluted: traces=%d workflows=%+v", len(out.RunTraces), out.Workflows)
 	}
 	trendTokens, trendRuns, trendConversation, trendConversationCost := int64(0), 0, int64(0), 0.0
 	trendIssues, trendConversationIssues, trendWorkspaces := 0, 0, 0
@@ -160,7 +160,7 @@ func checkConversationWorkspaceRunsInAnalytics(t *testing.T, s *Store) {
 		t.Fatalf("trend tokens=%d runs=%d conversation=%d cost=%v", trendTokens, trendRuns, trendConversation, trendConversationCost)
 	}
 	if trendIssues != 1 || trendConversationIssues != 1 || trendWorkspaces != 3 {
-		t.Fatalf("trend SOP issues=%d conversation issues=%d workspaces=%d", trendIssues, trendConversationIssues, trendWorkspaces)
+		t.Fatalf("trend LOOP issues=%d conversation issues=%d workspaces=%d", trendIssues, trendConversationIssues, trendWorkspaces)
 	}
 	if len(out.ProjectUsage) != 1 || out.ProjectUsage[0].Tokens != 1350 || out.ProjectUsage[0].UniqueIssues != 2 || out.ProjectUsage[0].Runs != 1 {
 		t.Fatalf("project usage = %+v", out.ProjectUsage)
@@ -192,7 +192,7 @@ func checkConversationWorkspaceRunsInAnalytics(t *testing.T, s *Store) {
 		t.Fatalf("overview = delivery %d tokens %d runs %d", overview.Delivery.Issues, overview.Summary.ConversationTokens, overview.Summary.TotalRuns)
 	}
 
-	// An SOP run of the same requirement remains its latest delivery run.
+	// A LOOP run of the same requirement remains its latest delivery run.
 	later := sop
 	later.ID, later.CreatedAt = prefix+"-run-conv", at.Add(-time.Minute)
 	later.ExecutionContext.IssueID = prefix + "-conv"

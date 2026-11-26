@@ -470,10 +470,10 @@ func TestSpaceFeaturesLanesCatalogFlowAndUsage(t *testing.T) {
 		}
 	}
 	if rec := cvBRequest(t, f, http.MethodPost, base+"/sops", map[string]any{"inputs": []string{"missing"}}, true); rec.Code != http.StatusBadRequest {
-		t.Fatalf("missing SOP input = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("missing LOOP input = %d: %s", rec.Code, rec.Body.String())
 	}
 	if rec := cvBRequest(t, f, http.MethodPost, base+"/sops", "{", true); rec.Code != http.StatusBadRequest {
-		t.Fatalf("malformed SOP input = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("malformed LOOP input = %d: %s", rec.Code, rec.Body.String())
 	}
 	input, err := f.s.PutSpaceArtifact(domain.SpaceArtifact{ID: "cvb-sop-input", SpaceID: room.ID, Kind: "doc", Title: "Specification",
 		Summary: "summary", Format: "markdown", Body: "# body"}, 0)
@@ -490,7 +490,7 @@ func TestSpaceFeaturesLanesCatalogFlowAndUsage(t *testing.T) {
 	if rec := cvBRequest(t, f, http.MethodPost, base+"/sops", map[string]any{
 		"inputs": []string{input.ID}, "workflowIds": []string{"missing-workflow"},
 	}, true); rec.Code != http.StatusBadRequest {
-		t.Fatalf("SOP with linked input = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("LOOP with linked input = %d: %s", rec.Code, rec.Body.String())
 	}
 	for _, path := range []string{
 		"/api/spaces/missing/lanes", "/api/spaces/missing/lanes/run", "/api/spaces/missing/catalog",
@@ -501,7 +501,7 @@ func TestSpaceFeaturesLanesCatalogFlowAndUsage(t *testing.T) {
 		}
 	}
 	if rec := cvBRequest(t, f, http.MethodPost, "/api/spaces/missing/sops", map[string]any{}, true); rec.Code != http.StatusNotFound {
-		t.Errorf("missing SOP space = %d: %s", rec.Code, rec.Body.String())
+		t.Errorf("missing LOOP space = %d: %s", rec.Code, rec.Body.String())
 	}
 	if rec := cvBRequest(t, f, http.MethodPost, "/api/spaces/missing/flows", map[string]any{}, true); rec.Code != http.StatusNotFound {
 		t.Errorf("missing flow space = %d: %s", rec.Code, rec.Body.String())

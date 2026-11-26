@@ -161,7 +161,7 @@ Task(subagent_name="code-explorer",
    {Step 2.5.1 code-explorer 回收的调研摘要}
 ```
 
-brainstorming skill 的 SOP：
+brainstorming skill 的步骤：
 1. 基于 Main Agent 提供的 code-explorer 调研摘要，精准提问（比无上下文更高质量）
 2. 逐个向用户提问（苏格拉底式，一次一个问题）
 3. 提出 2-3 个方案及 trade-off，给出推荐

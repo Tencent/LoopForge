@@ -115,8 +115,9 @@ function toast(message, type='info', duration=2600){
     legacy.textContent=message;
     legacy.className=`toast show toast-${kind}`;
     clearTimeout(toastTimer);
-    toastTimer=setTimeout(()=>legacy.classList.remove('show'), 2200);
-    return;
+    const hide=()=>{if(legacy.textContent===message)legacy.classList.remove('show')};
+    if(duration>0)toastTimer=setTimeout(hide,2200);
+    return hide;
   }
   if(!container)return;
   const kind=['ok','err','warn','info'].includes(type)?type:'info';
@@ -134,14 +135,18 @@ function toast(message, type='info', duration=2600){
   window.AgentFlowHarnessIcons?.hydrate?.(item);
   let timer=null;
   const remove=()=>{
+    clearTimeout(timer);
     if(item.classList.contains('leaving'))return;
     item.classList.add('leaving');
     setTimeout(()=>{try{item.remove()}catch{}}, 200);
   };
-  timer=setTimeout(remove, duration);
-  item.onmouseenter=()=>clearTimeout(timer);
-  item.onmouseleave=()=>{timer=setTimeout(remove, 1400)};
+  if(duration>0){
+    timer=setTimeout(remove,duration);
+    item.onmouseenter=()=>clearTimeout(timer);
+    item.onmouseleave=()=>{timer=setTimeout(remove,1400)};
+  }
   item.querySelector('.toast-item-close').onclick=remove;
+  return remove;
 }
 
 // Platform dialogs (#confirmModal) replace window.confirm/prompt/alert. Calls
@@ -397,9 +402,11 @@ function highlightJSON(src){
   return html;
 }
 
-function renderMarkdown(md){
+function renderMarkdown(md, options={}){
   if(!md)return '';
   const text=String(md).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const inline=text=>parseInlineMarkdown(text,options.images);
+  const copyButton=options.copyCode===false?'':'<button type="button" class="md-code-copy">复制</button>';
   const lines=text.split('\n');
   const out=[];
   let inCode=false, codeLang='', codeLines=[];
@@ -418,10 +425,10 @@ function renderMarkdown(md){
     const parseRow=(r)=>r.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c=>c.trim());
     const headers=parseRow(tableRows[0]);
     const bodyRows=tableRows.slice(2);
-    const thead=`<thead><tr>${headers.map(h=>`<th>${parseInlineMarkdown(h)}</th>`).join('')}</tr></thead>`;
+    const thead=`<thead><tr>${headers.map(h=>`<th>${inline(h)}</th>`).join('')}</tr></thead>`;
     const tbody=`<tbody>${bodyRows.map(row=>{
       const cells=parseRow(row);
-      return `<tr>${headers.map((_,idx)=>`<td>${parseInlineMarkdown(cells[idx]||'')}</td>`).join('')}</tr>`;
+      return `<tr>${headers.map((_,idx)=>`<td>${inline(cells[idx]||'')}</td>`).join('')}</tr>`;
     }).join('')}</tbody>`;
     out.push(`<table>${thead}${tbody}</table>`);
     inTable=false;tableRows=[];
@@ -434,7 +441,7 @@ function renderMarkdown(md){
       if(inCode){
         const rawCode=codeLines.join('\n');
         const highlighted=highlightCode(rawCode, codeLang);
-        out.push(`<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${escapeHTML(codeLang||'TEXT')}</span><button type="button" class="md-code-copy">复制</button></div><pre><code>${highlighted}</code></pre></div>`);
+        out.push(`<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${escapeHTML(codeLang||'TEXT')}</span>${copyButton}</div><pre><code>${highlighted}</code></pre></div>`);
         inCode=false;codeLang='';codeLines=[];
       } else {
         flushList();
@@ -483,7 +490,7 @@ function renderMarkdown(md){
       }
       const titleIcons={note:'ℹ️ NOTE', tip:'💡 TIP', important:'🟣 IMPORTANT', warning:'⚠️ WARNING', caution:'🛑 CAUTION'};
       const titleText=titleIcons[kind]||kind.toUpperCase();
-      out.push(`<div class="md-alert md-alert-${kind}"><div class="md-alert-title">${titleText}</div><div class="md-alert-content">${renderMarkdown(alertLines.join('\n'))}</div></div>`);
+      out.push(`<div class="md-alert md-alert-${kind}"><div class="md-alert-title">${titleText}</div><div class="md-alert-content">${renderMarkdown(alertLines.join('\n'),options)}</div></div>`);
       continue;
     }
 
@@ -494,7 +501,7 @@ function renderMarkdown(md){
         i++;
         bqLines.push(lines[i].replace(/^>\s?/, ''));
       }
-      out.push(`<blockquote>${renderMarkdown(bqLines.join('\n'))}</blockquote>`);
+      out.push(`<blockquote>${renderMarkdown(bqLines.join('\n'),options)}</blockquote>`);
       continue;
     }
 
@@ -508,7 +515,7 @@ function renderMarkdown(md){
     if(hMatch){
       flushList();
       const level=hMatch[1].length;
-      out.push(`<h${level}>${parseInlineMarkdown(hMatch[2])}</h${level}>`);
+      out.push(`<h${level}>${inline(hMatch[2])}</h${level}>`);
       continue;
     }
 
@@ -519,7 +526,7 @@ function renderMarkdown(md){
         inList=true;listType='ul';
       }
       const checked=taskMatch[1].toLowerCase()==='x';
-      listItems.push(`<li class="task-list-item"><input type="checkbox" class="task-checkbox" disabled ${checked?'checked':''}><span>${parseInlineMarkdown(taskMatch[2])}</span></li>`);
+      listItems.push(`<li class="task-list-item"><input type="checkbox" class="task-checkbox" disabled ${checked?'checked':''}><span>${inline(taskMatch[2])}</span></li>`);
       continue;
     }
 
@@ -529,7 +536,7 @@ function renderMarkdown(md){
         flushList();
         inList=true;listType='ul';
       }
-      listItems.push(`<li>${parseInlineMarkdown(ulMatch[1])}</li>`);
+      listItems.push(`<li>${inline(ulMatch[1])}</li>`);
       continue;
     }
 
@@ -539,12 +546,12 @@ function renderMarkdown(md){
         flushList();
         inList=true;listType='ol';
       }
-      listItems.push(`<li>${parseInlineMarkdown(olMatch[1])}</li>`);
+      listItems.push(`<li>${inline(olMatch[1])}</li>`);
       continue;
     }
 
     flushList();
-    out.push(`<p>${parseInlineMarkdown(line)}</p>`);
+    out.push(`<p>${inline(line)}</p>`);
   }
 
   flushList();
@@ -556,19 +563,41 @@ function renderMarkdown(md){
   return out.join('');
 }
 
-function parseInlineMarkdown(text){
-  let s=escapeHTML(text);
-  s=s.replace(/`([^`]+)`/g, '<code>$1</code>');
+function renderRequirementMarkdown(text){
+  return renderMarkdown(text,{images:true,copyCode:false});
+}
+
+function parseInlineMarkdown(text, allowImages=false){
+  if(allowImages){
+    const parts=[];
+    let offset=0;
+    for(const match of text.matchAll(/`[^`]+`|!\[([^\]]*)\]\(([^()\s]+)\)/g)){
+      const [,alt,src]=match;
+      if(!src)continue;
+      parts.push(parseInlineMarkdown(text.slice(offset,match.index)));
+      const url=safeURL(src);
+      if(url==='#')parts.push(escapeHTML(match[0]));
+      else if(new URL(url).origin===location.origin)parts.push(`<img src="${escapeHTML(url)}" alt="${escapeHTML(alt)}" loading="lazy">`);
+      else parts.push(`<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(alt||src)}</a>`);
+      offset=match.index+match[0].length;
+    }
+    if(parts.length)return parts.join('')+parseInlineMarkdown(text.slice(offset));
+  }
+  // Inline code is literal: hold each span aside so emphasis syntax inside it
+  // (snake_case identifiers such as `todo_id`) is not rewritten.
+  const codeSpans=[];
+  let s=escapeHTML(text).replace(/`([^`]+)`/g,(match,code)=>{codeSpans.push(code);return `\u0000${codeSpans.length-1}\u0000`});
   s=s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  s=s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  // Emphasis underscores must sit on word boundaries; intraword `_` is literal.
+  s=s.replace(/(^|[^A-Za-z0-9_])__([^_\n]+?)__(?![\w])/g, '$1<strong>$2</strong>');
   s=s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  s=s.replace(/_([^_]+)_/g, '<em>$1</em>');
+  s=s.replace(/(^|[^A-Za-z0-9_])_([^_\n]+?)_(?![\w])/g, '$1<em>$2</em>');
   s=s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
   s=s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url)=>{
     const cleanUrl=safeURL(url.trim());
     return `<a href="${escapeHTML(cleanUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   });
-  return s;
+  return s.replace(/\u0000(\d+)\u0000/g,(match,i)=>`<code>${codeSpans[Number(i)]}</code>`);
 }
 
 function isMarkdownArtifact(artifact, content){
@@ -674,6 +703,15 @@ function clarifyQuestionOptions(q){
 }
 function safeURL(value){try{const url=new URL(String(value||''),location.origin);return ['http:','https:'].includes(url.protocol)?url.href:'#'}catch{return '#'}}
 function safeColor(value){return /^#[0-9a-f]{3,8}$/i.test(String(value||''))?value:'#74829a'}
+// Mirrors domain.ValidateResourceID: a project or role id is a path segment of
+// its API, so it must fit the 64-character column and avoid URL delimiters.
+function resourceIdProblem(id){
+  const value=String(id||'');
+  if(!value)return '标识不能为空';
+  if([...value].length>64)return '标识不能超过 64 个字符';
+  if(/[\s\/\\?#%\u0000-\u001f\u007f]/.test(value))return '标识不能包含空格或 / \\ ? # % 字符';
+  return '';
+}
 function uid(prefix){return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`}
 const PRODUCTION_SOPS=new Set(['issue-fix-production','requirement-development-production']);
 function catalogOwned(projectId){return !!state.projectFilter&&projectId===state.projectFilter}
@@ -693,9 +731,12 @@ function agentWizardSubject(){
   if(catalogGeneric(state.workflow))return (state.genericTemplateAgents||[]).find(x=>x.id===state.selectedAgent)||state.agentDraft||{};
   return (state.data.agents||[]).find(x=>x.id===state.selectedAgent)||state.agentDraft||{};
 }
+// Platform roles (no project) are used by every project; like platform rules
+// and skills only administrators may change them. Others copy them first.
+function agentPlatformLocked(a){return !!a?.id&&!a.projectId&&(state.data.agents||[]).some(x=>x.id===a.id)&&!isPlatformAdmin()}
 function agentWizardForeign(a){
   if(catalogGeneric(state.workflow))return !isPlatformAdmin();
-  return catalogForeign(a?.projectId);
+  return catalogForeign(a?.projectId)||agentPlatformLocked(a);
 }
 function genericTemplateMCPOptions(selected){
   const wanted=['github'];
@@ -728,7 +769,7 @@ function genericMCPChecked(id,selected){
 }
 function assetVisible(item){return !item?.projectId||item.projectId===state.projectFilter}
 function catalogWorkflows(){return (state.data?.workflows||[]).filter(w=>!catalogGeneric(w)&&catalogVisible(w.projectId,w.shared))}
-// Runnable options = stored SOPs + platform generic templates (run by reference).
+// Runnable options = stored LOOPs + platform generic templates (run by reference).
 function runnableWorkflowOptions(){return catalogWorkflows().concat((state.data?.workflows||[]).filter(catalogGeneric).map(w=>({...w,name:`通用 · ${w.name}`})))}
 function scopedWorkflows(){
   const all=state.data?.workflows||[];
@@ -798,9 +839,9 @@ function runProjectId(r){
   return '';
 }
 function scopedRuns(runs){const pid=state.projectFilter,list=runs||[];return pid?list.filter(r=>runProjectId(r)===pid):list}
-// Conversation workspaces (Run.kind=workspace) are the chat's sandbox, not SOP
+// Conversation workspaces (Run.kind=workspace) are the chat's sandbox, not LOOP
 // runs: they have no nodes and stay "waiting" until reclaimed. They are reached
-// from the conversation and the requirement, never from SOP run lists or counts.
+// from the conversation and the requirement, never from LOOP run lists or counts.
 function isSOPRun(r){return r?.kind!=='workspace'}
 function sopRuns(runs){return (runs||[]).filter(isSOPRun)}
 function preferredWorkflow(){
@@ -954,6 +995,7 @@ async function boot(){
       return;
     }
     if(name==='flow')applyFlowRoute();
+    if(name==='evolution'&&typeof evoApplyRoute==='function')evoApplyRoute();
     if(name==='agents')applyAgentRoute();
     if(isProjectSharedAsset(name))applyAssetRoute();
     if(name==='projects')applyProjectAdminRoute();
@@ -1018,9 +1060,9 @@ function bind(){
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
   $('#settingsSidebarExpand')?.addEventListener('click',()=>{
     cancelSettingsRouteTransition();
-    setSettingsSidebarExpanded(true);
-    // Wait for the sidebar's descendants to inherit the restored visibility; reduced
-    // motion still runs a near-zero visibility transition, so retry for a few frames.
+    setSettingsSidebarExpanded(true,document.activeElement===document.body);
+    // Focus normally moves before the opener hides. If the toggle cannot take
+    // focus yet, focus falls back to the body; retry for a few frames.
     let frames=0;
     const focusToggle=()=>requestAnimationFrame(()=>{
       if(!settingsSidebarExpanded()||document.activeElement!==document.body)return;
@@ -1028,7 +1070,7 @@ function bind(){
       toggle?.focus({preventScroll:true});
       if(toggle&&document.activeElement!==toggle&&++frames<30)focusToggle();
     });
-    requestAnimationFrame(focusToggle);
+    if(document.activeElement!==$('#settingsSidebarToggle'))focusToggle();
   });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
@@ -1041,7 +1083,7 @@ function bind(){
   $('#workflowSelect').onchange=e=>switchFlowWorkflow(e.target.value);
   $('#workflowName').oninput=e=>{if(!state.workflow)return;state.workflow.name=e.target.value;dirty()};
   $('#workflowOwner').oninput=e=>{if(!state.workflow)return;state.workflow.owner=e.target.value;dirty()};
-  $('#workflowSandbox').onchange=e=>{if(!state.workflow)return;state.workflow.sandboxProfileId=e.target.value;dirty()};
+  $('#workflowSandbox').onchange=e=>{if(!state.workflow)return;setSOPSandboxChoice(state.workflow,e.target.value);dirty()};
   $('#workflowStatus').onchange=e=>{if(!state.workflow)return;state.workflow.status=e.target.value;dirty()};
   $('#workflowTags').oninput=e=>{if(!state.workflow)return;state.workflow.tags=e.target.value.split(',').map(x=>x.trim()).filter(Boolean);dirty()};
   $('#workflowMetricCategory').onchange=e=>{if(!state.workflow)return;state.workflow.metricCategory=e.target.value;dirty()};
@@ -1270,6 +1312,8 @@ function bind(){
   $('#reqWorkflow')&&($('#reqWorkflow').onchange=()=>{renderReqFooter();persistRequirementComposer()});
   $('#reqBaseBranch')?.addEventListener('input',onReqBaseBranchInput);
   $('#chatInput').addEventListener('input',onReqDescriptionInput);
+  $('#chatInput').addEventListener('paste',onReqDescriptionPaste);
+  $('#reqPreviewToggle').onclick=()=>setReqPreview($('#reqMarkdownPreview').hidden);
   window.addEventListener('beforeunload',()=>persistRequirementComposer());
   if($('#sopCreateForm')){$('#sopCreateForm').onsubmit=createSOPFromWizard;$('#sopPrev').onclick=()=>setSOPWizardStep(state.sopWizardStep-1);$('#sopNext').onclick=()=>setSOPWizardStep(state.sopWizardStep+1);$$('[data-wizard-steps="sop"] [data-step-target]').forEach(b=>b.onclick=()=>setSOPWizardStep(Number(b.dataset.stepTarget)));$$('.sop-create-close').forEach(b=>b.onclick=()=>$('#sopCreateModal').classList.remove('open'))}
   $('#newSOP')&&($('#newSOP').onclick=openSOPWizard);
@@ -1382,8 +1426,10 @@ function bind(){
     closeScheduleJobModal();
     state.projectFilter=e.target.value;state.selectedIssue=null;
     if(state.currentView==='aiSchedules')refreshAISchedules();
+    if(state.currentView==='runners')refreshRunners(true);
     localStorage.setItem('agentflow.activeProject',state.projectFilter);
     if($('#botsView')?.classList.contains('active'))loadBots();
+    if(state.currentView==='projectCredentials')loadProjectCredentialsPage();
     resetListPages();
     syncWorkflowToProject();
     renderProjectSwitcher();renderIssues();renderSync();renderProjectAdmin();
@@ -1392,6 +1438,7 @@ function bind(){
     renderObsTabs();
     if($('#dashboardView').classList.contains('active'))renderDashboard();
     if($('#observabilityView').classList.contains('active'))refreshObs();
+    if($('#evolutionView')?.classList.contains('active')&&typeof renderEvolutionView==='function')renderEvolutionView();
     if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
   };
   document.querySelectorAll('[data-scope-for]').forEach(bar=>{
@@ -1533,9 +1580,10 @@ function postPendingChatIssueMention(frame){
   frame.contentWindow?.postMessage({type:'agentflow-chat-mention-issue',...pendingChatIssueMention},location.origin);
   pendingChatIssueMention=null;
 }
-function openIssueInChat(issue){
+function openIssueInChat(issue,opts){
   if(!issue?.id||!issue.projectId)return;
-  pendingChatIssueMention={issueId:issue.id,projectId:issue.projectId};
+  const intent=String(opts?.intent||'').trim();
+  pendingChatIssueMention={issueId:issue.id,projectId:issue.projectId,...(intent?{intent}:{})};
   localStorage.setItem('agentflow.activeProject',issue.projectId);
   const url=new URL(location.href);
   ['chatSession','chatIssue'].forEach(key=>url.searchParams.delete(key));
@@ -1642,7 +1690,7 @@ function mountNativeChat(){
     const mention=pendingChatIssueMention;
     pendingChatIssueMention=null;
     frame.src=mention
-      ?'/chatbot/?projectId='+encodeURIComponent(mention.projectId)+'&mentionIssue='+encodeURIComponent(mention.issueId)
+      ?'/chatbot/?projectId='+encodeURIComponent(mention.projectId)+'&mentionIssue='+encodeURIComponent(mention.issueId)+(mention.intent?'&mentionIntent='+encodeURIComponent(mention.intent):'')
       :'/chatbot/?projectId='+encodeURIComponent(projectId)+(sessionId?'&session='+encodeURIComponent(sessionId):issueId?'&issueId='+encodeURIComponent(issueId):'')+(quickAccess?'&quickAccess=1':'');
   }
   postNativeChatProject(frame);
@@ -1652,7 +1700,7 @@ function settingsSidebarExpanded(){
 }
 let settingsSidebarEntryFrame=0;
 let settingsSidebarWasManaged=false;
-const settingsManagementViews=['settings','assistant','projects','bots','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','sandboxes','guide','platform'];
+const settingsManagementViews=['settings','assistant','projects','bots','projectCredentials','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','sandboxes','evolution','guide','platform'];
 const settingsRouteMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let settingsRouteTransition=null;
 let settingsRouteApplying=false;
@@ -1774,7 +1822,7 @@ settingsRouteMotion.addEventListener('change',()=>{
   if(pending)switchView(pending);
   setSettingsSidebarExpanded(settingsSidebarExpanded());
 });
-function setSettingsSidebarExpanded(expanded){
+function setSettingsSidebarExpanded(expanded,focusToggle=false){
   const managing=document.body.classList.contains('management-mode');
   const open=managing&&expanded;
   const entering=managing&&!settingsSidebarWasManaged;
@@ -1801,7 +1849,7 @@ function setSettingsSidebarExpanded(expanded){
     toggle.title=open?'收起设置导航':'展开设置导航';
   }
   const reopen=$('#settingsSidebarExpand');
-  if(reopen)reopen.hidden=!managing||open;
+  if(reopen&&!open)reopen.hidden=!managing;
   const mobileToggle=$('.collab-rail-toggle');
   if(mobileToggle){
     mobileToggle.setAttribute('aria-expanded',String(open));
@@ -1818,6 +1866,11 @@ function setSettingsSidebarExpanded(expanded){
     if(managing&&!open)sidebar.setAttribute('aria-hidden','true');
     else sidebar.removeAttribute('aria-hidden');
   }
+  if(reopen&&open){
+    // Transfer focus before hiding the expand button.
+    if(focusToggle||document.activeElement===reopen)toggle?.focus({preventScroll:true});
+    reopen.hidden=true;
+  }
   if(animateEntry){
     // Keep the mounted panel at its closed geometry for one layout before reveal.
     settingsSidebarEntryFrame=requestAnimationFrame(()=>{
@@ -1827,7 +1880,7 @@ function setSettingsSidebarExpanded(expanded){
     });
   }
 }
-function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥'}}
+function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',projectCredentials:'凭据管理',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥',evolution:'RSI工作台'}}
 // 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产的类型 Tab，
 // 从流程模板打开的流程设计）按 data-nav-match 高亮它们所属的入口。
 function settingsNavMatches(btn,name){return btn.dataset.view===name||String(btn.dataset.navMatch||'').split(/\s+/).includes(name)}
@@ -1902,7 +1955,7 @@ async function applyAgentRoute(){
     openAgentWizard(agent,routePart(2)==='gov'?3:1,{loaded:true});
   }catch(error){if(agentRouteId()===id)toast(error.message,'err')}
 }
-// Only SOPs visible in the active project can be restored from the URL or localStorage.
+// Only LOOPs visible in the active project can be restored from the URL or localStorage.
 function openableWorkflow(id){return id?catalogWorkflows().find(w=>w.id===id)||null:null}
 function savedWorkflowId(){
   const id=state.workflow?.id||'';
@@ -1949,6 +2002,7 @@ function persistView(name,push=false){
     if(linked)next=runViewHash(linked);
   }
   if(name==='flow')next=flowViewHash();
+  if(name==='evolution'&&routePart(0)==='evolution')next=location.hash;
   if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}${routePart(2)==='gov'?'/gov':''}`;
   if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
   if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
@@ -1979,6 +2033,7 @@ function switchView(name){
   // 手敲 #/platform 或者从别的账号留下的 localStorage 恢复进来，都要挡住。
   if(name==='platform'&&!isPlatformAdmin())name='collaboration';
   const previous=activeViewName();
+  if(previous==='projectCredentials'&&name!=='projectCredentials')closeProjectCredentialsPage();
   if(name!=='settings')cancelCredentialFocus();
   if(previous==='settings'&&name!=='settings'){
     window.HuiPopover?.closeAll?.();
@@ -1997,6 +2052,7 @@ function switchView(name){
   const staying=activeViewName()===name;
   const prevView=state.currentView;
   if(previous==='observability'&&name!=='observability'&&typeof obsDisposeCharts==='function'){obsCollapse?.({silent:true});obsDisposeCharts();obsDisposeSelects?.()}
+  if(previous==='evolution'&&name!=='evolution'&&typeof evoDispose==='function')evoDispose();
   state.currentView=name;
   if(name!=='runs')stopQueuedRunRefresh();
   $$('.nav[data-view]').forEach(n=>n.classList.toggle('active',settingsNavMatches(n,name)));
@@ -2063,6 +2119,7 @@ function switchView(name){
   if(name==='aiSchedules'){renderScheduleJobs();refreshAISchedules()}
   if(name==='bots')loadBots();
   if(name==='assistant')loadAssistantSettings();
+  if(name==='evolution'&&typeof renderEvolutionView==='function')renderEvolutionView();
   if(name==='sops'){if(!staying&&state.data){sopCatalogMotion.reset();renderSOPCatalog()}refreshWorkflowMetrics()}
   if(name==='dashboard')refreshDashboard()
   if(name==='approvals')renderApprovals(false)
@@ -2071,6 +2128,7 @@ function switchView(name){
   if(name==='settings')renderPersonalSettings();
   if(name==='platform')renderPlatformAdminPanel();
   if(name==='projects')renderProjectAdmin();
+  if(name==='projectCredentials')loadProjectCredentialsPage();
   if(assetViews.includes(name)){
     if(staying&&state.assetType===name){if(state.selectedAsset)closeAssetDetail({force:true});else renderAssets()}
     else{

@@ -30,6 +30,7 @@ const (
 	RunnerWorkspaceOperationLog               = "log"
 	RunnerWorkspaceOperationCommit            = "commit"
 	RunnerWorkspaceOperationBrowser           = "browser"
+	RunnerWorkspaceOperationPreviewService    = "preview_service"
 	RunnerWorkspaceOperationCheckouts         = "checkouts"
 	RunnerWorkspaceOperationMaintenance       = "maintenance"
 	RunnerWorkspaceOperationLoginModels       = "login_models"
@@ -40,6 +41,10 @@ const (
 // RunnerSSHKnownHostsWireLimit is the encoded allowance for the optional
 // known_hosts field in a runner task claim.
 const RunnerSSHKnownHostsWireLimit = 1 << 20
+
+// RunnerTaskAssetWireLimit is the claim allowance for one Agent's skill and
+// MCP file payloads at their upload caps; JSON carries the bytes as base64.
+const RunnerTaskAssetWireLimit = (SkillTotalMaxBytes + MCPTotalMaxBytes + 2) / 3 * 4
 
 // RunnerSSHHostKeyProbeHeader advertises host key discovery on the authenticated
 // control connection. Older runners can still receive and use known_hosts pins.
@@ -89,6 +94,7 @@ type RunnerWorkspaceRequest struct {
 	GitSSHKnownHosts      *GitSSHKnownHosts         `json:"gitSshKnownHosts,omitempty"`
 	// TerminalGitHTTPCredentials belongs to TerminalOwner and is sent only on open.
 	TerminalGitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"terminalGitHttpCredentials,omitempty"`
+	PreviewService             *WorkspacePreviewServiceRequest       `json:"previewService,omitempty"`
 	// WorkspaceRunID selects the shared checkout owner; RunID continues to
 	// identify this run's independent sandbox, terminal scope and locks.
 	Browser         *BrowserRequest     `json:"browser,omitempty"`
@@ -151,7 +157,8 @@ type WorkspaceCheckpointTransfer struct {
 // IsCancelableRunnerWorkspaceOperation identifies synchronous requests that
 // hold a workspace fence. Conversation processes have their own stop protocol.
 func IsCancelableRunnerWorkspaceOperation(op string) bool {
-	return IsWorkspaceCheckpointTransferOperation(op) || op == RunnerWorkspaceOperationCheckpoint || op == RunnerWorkspaceOperationPrepare
+	return IsWorkspaceCheckpointTransferOperation(op) || op == RunnerWorkspaceOperationCheckpoint ||
+		op == RunnerWorkspaceOperationPrepare || op == RunnerWorkspaceOperationPreviewService
 }
 
 func IsWorkspaceCheckpointTransferOperation(op string) bool {
@@ -178,9 +185,13 @@ const (
 	// WorkspaceErrorConversationState carries a safe, conversation-relative
 	// preparation error from the execution machine.
 	WorkspaceErrorConversationState = "conversation_state"
+	// Conversation errors distinguish workspace setup from process setup shared
+	// by both runtime modes. Older runners may omit the code.
+	WorkspaceErrorConversationSetup   = "conversation_workspace_setup"
+	WorkspaceErrorConversationProcess = "conversation_process"
 )
 
-// WorkspaceRestoreStatus describes restoration separately from SOP execution.
+// WorkspaceRestoreStatus describes restoration separately from LOOP execution.
 type WorkspaceRestoreStatus struct {
 	Status    string     `json:"status"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`

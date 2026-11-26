@@ -326,7 +326,7 @@ func TestIssueDispatchSecondLaneKeepsDefaultSOP(t *testing.T) {
 	}
 	stored, _ := s.Issue("iss-lanes")
 	if stored.WorkflowID != backend.ID {
-		t.Fatalf("default SOP overwritten: %q", stored.WorkflowID)
+		t.Fatalf("default LOOP overwritten: %q", stored.WorkflowID)
 	}
 	snap := requestJSON[domain.RequirementSnapshot](t, h, http.MethodGet, "/api/issues/iss-lanes/requirement", nil, http.StatusOK)
 	if snap.Overall.RunCount < 2 {
@@ -710,7 +710,7 @@ func TestRepositoryBindingIsValidatedAndFrozenAtDispatch(t *testing.T) {
 	if strings.TrimSpace(run.Repository.WorkspaceDir) == "" {
 		t.Fatalf("single-repository run must assign a first-level WorkspaceDir: %+v", run.Repository)
 	}
-	if !bytes.Contains([]byte(run.Input), []byte("local directory: ./"+run.Repository.WorkspaceDir)) || !bytes.Contains([]byte(run.Input), []byte("SOP deliverables")) || !bytes.Contains([]byte(run.Input), []byte("workspace root")) {
+	if !bytes.Contains([]byte(run.Input), []byte("local directory: ./"+run.Repository.WorkspaceDir)) || !bytes.Contains([]byte(run.Input), []byte("LOOP deliverables")) || !bytes.Contains([]byte(run.Input), []byte("workspace root")) {
 		t.Fatalf("single-repository prompt did not describe subdirectory checkout and run-level deliverables: %q", run.Input)
 	}
 	if bytes.Contains([]byte(run.Input), []byte(source)) || bytes.Contains([]byte(run.Input), []byte("local path:")) {
@@ -887,7 +887,7 @@ func TestPublicRunOmitsLogsAndTelemetry(t *testing.T) {
 }
 
 func TestPublicRunStripsWorkflowScripts(t *testing.T) {
-	run := domain.Run{ID: "run-slim-wf", WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", Name: "SOP", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "修复", Script: "secret script"}}}}
+	run := domain.Run{ID: "run-slim-wf", WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", Name: "LOOP", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "修复", Script: "secret script"}}}}
 	detail := publicRun(run, false)
 	if detail.WorkflowSnapshot.Nodes[0].Script != "" {
 		t.Fatalf("workflow script leaked into public run: %+v", detail.WorkflowSnapshot.Nodes[0])
@@ -1070,13 +1070,13 @@ func TestIssueStatusFromLatestTask(t *testing.T) {
 	}
 	open := domain.Issue{Status: "blocked"}
 	if got := issueStatusFromLatestTask(open, "completed"); got != "in_review" {
-		t.Fatalf("latest succeeded SOP should move blocked issue to in_review, got %q", got)
+		t.Fatalf("latest succeeded LOOP should move blocked issue to in_review, got %q", got)
 	}
 	if got := issueStatusFromLatestTask(domain.Issue{Status: "todo"}, "failed"); got != "blocked" {
-		t.Fatalf("latest failed SOP should block, got %q", got)
+		t.Fatalf("latest failed LOOP should block, got %q", got)
 	}
 	if got := issueStatusFromLatestTask(domain.Issue{Status: "blocked"}, "running"); got != "in_progress" {
-		t.Fatalf("latest running SOP should be in_progress, got %q", got)
+		t.Fatalf("latest running LOOP should be in_progress, got %q", got)
 	}
 	locked := domain.Issue{Status: "done", DeliveryState: "merged", DeliveryMRState: "integrated"}
 	if got := issueStatusFromLatestTask(locked, "cancelled"); got != "done" {
@@ -1218,7 +1218,7 @@ func TestSyncTasksBindsIssueToLatestSOP(t *testing.T) {
 		got[issue.ID] = issue
 	}
 	if gf5 := got["gf-5"]; gf5.LatestTaskID != "task-new" || gf5.Status != "in_review" {
-		t.Fatalf("gf-5 not bound to latest SOP: %+v", gf5)
+		t.Fatalf("gf-5 not bound to latest LOOP: %+v", gf5)
 	}
 	if gf20 := got["gf-20"]; gf20.LatestTaskID != "task-20" || gf20.Status != "in_review" {
 		t.Fatalf("gf-20 still looks unstarted: %+v", gf20)
@@ -1421,7 +1421,7 @@ func TestRequirementDispatchesWithoutClarificationGate(t *testing.T) {
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
-	// Legacy imports still carry gated/needs_user; neither may block the SOP.
+	// Legacy imports still carry gated/needs_user; neither may block the LOOP.
 	if err := s.PutIssue(domain.Issue{ID: "req-gated", ProjectID: "platform", Kind: "requirement", Title: "Build requirement", AssigneeType: "agent", AssigneeID: "developer", WorkflowID: wf.ID, Clarification: domain.ClarificationAssessment{Gated: true, Status: domain.ClarificationNeedsUser}}); err != nil {
 		t.Fatal(err)
 	}
@@ -1563,7 +1563,7 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 		t.Fatalf("platform description missing conclusion: %q", updated.Description)
 	}
 	if len(s.Tasks()) != 0 {
-		t.Fatal("clarification must not start an SOP")
+		t.Fatal("clarification must not start a LOOP")
 	}
 	retried := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{
 		"ready": true, "retry": true,
@@ -1573,7 +1573,7 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 	}
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", map[string]any{}, http.StatusCreated)
 	if task.RunID == "" {
-		t.Fatal("existing issue SOP should still dispatch normally")
+		t.Fatal("existing issue LOOP should still dispatch normally")
 	}
 	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
 }
@@ -1930,11 +1930,11 @@ func TestImportTAPDIssueBindsSelectedWorkflow(t *testing.T) {
 	if err := s.PutProject(project); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "custom-req-sop", Name: "定制需求 SOP", ProjectID: "platform", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "custom-req-sop", Name: "定制需求 LOOP", ProjectID: "platform", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	h := newTAPDImportHandler(t, s, root, `{"data":[{"id":"1010000000100001221","name":"带 SOP 导入","status":"open"}]}`)
+	h := newTAPDImportHandler(t, s, root, `{"data":[{"id":"1010000000100001221","name":"带 LOOP 导入","status":"open"}]}`)
 	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues/import-tapd", map[string]any{
 		"projectId":  "platform",
 		"url":        "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001221",

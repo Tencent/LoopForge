@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"agentflow/internal/credcrypt"
 	"agentflow/internal/domain"
 
 	"gorm.io/driver/mysql"
@@ -112,6 +113,10 @@ type TasksRepo struct {
 // UsersRepo owns users and their saved credentials.
 type UsersRepo struct {
 	*deps
+	gitHTTPHosts *GitHTTPHostTrustRepo
+	// keyring seals Bot credentials; installed by SetCredentialKeyring.
+	keyringMu sync.RWMutex
+	keyring   *credcrypt.Keyring
 }
 
 // TokensRepo owns API tokens.
@@ -134,6 +139,7 @@ type RunsRepo struct {
 	assistant     *AssistantRepo
 	issues        *IssuesRepo
 	catalog       *CatalogRepo
+	runners       *RunnersRepo
 	notifications *NotificationsRepo
 	*BotInteractionsRepo
 }
@@ -141,6 +147,7 @@ type RunsRepo struct {
 // RunnersRepo owns the CLI runner registry, runner tasks and runner events.
 type RunnersRepo struct {
 	*deps
+	projects *ProjectsRepo
 }
 
 // DeliveryRepo owns MR delivery state and the delivery locking that follows.
@@ -170,6 +177,7 @@ type Store struct {
 	*deps
 	*CatalogRepo
 	*ProjectsRepo
+	*ProjectCredentialsRepo
 	*BusinessDomainsRepo
 	*IssuesRepo
 	*TasksRepo
@@ -186,10 +194,13 @@ type Store struct {
 	*RoomsRepo
 	*SpacesRepo
 	*KnowledgeRepo
+	*PlatformSettingsRepo
 	*SSHHostTrustRepo
 	*HTTPSHostTrustRepo
+	*GitHTTPHostTrustRepo
 	*NotificationsRepo
 	*BotInteractionsRepo
+	*EvolutionRepo
 }
 
 // newStore wires the shared deps and every cross-domain pointer. Domains have
@@ -198,8 +209,10 @@ func newStore(db *gorm.DB) *Store {
 	d := &deps{DB: db}
 	s := &Store{deps: d}
 	s.ProjectsRepo = &ProjectsRepo{deps: d}
+	s.ProjectCredentialsRepo = &ProjectCredentialsRepo{deps: d, projects: s.ProjectsRepo}
 	s.BusinessDomainsRepo = &BusinessDomainsRepo{deps: d}
-	s.UsersRepo = &UsersRepo{deps: d}
+	s.GitHTTPHostTrustRepo = &GitHTTPHostTrustRepo{deps: d}
+	s.UsersRepo = &UsersRepo{deps: d, gitHTTPHosts: s.GitHTTPHostTrustRepo}
 	s.BotInteractionsRepo = &BotInteractionsRepo{deps: d}
 	s.TokensRepo = &TokensRepo{deps: d}
 	s.AssistantRepo = &AssistantRepo{deps: d, users: s.UsersRepo}
@@ -209,8 +222,8 @@ func newStore(db *gorm.DB) *Store {
 	s.CatalogRepo = &CatalogRepo{deps: d, projects: s.ProjectsRepo, notifications: s.NotificationsRepo}
 	s.IssuesRepo = &IssuesRepo{deps: d, projects: s.ProjectsRepo, users: s.UsersRepo, tasks: s.TasksRepo}
 	s.NotificationsRepo.issues = s.IssuesRepo
-	s.RunsRepo = &RunsRepo{deps: d, assistant: s.AssistantRepo, issues: s.IssuesRepo, catalog: s.CatalogRepo, notifications: s.NotificationsRepo}
-	s.RunnersRepo = &RunnersRepo{deps: d}
+	s.RunnersRepo = &RunnersRepo{deps: d, projects: s.ProjectsRepo}
+	s.RunsRepo = &RunsRepo{deps: d, assistant: s.AssistantRepo, issues: s.IssuesRepo, catalog: s.CatalogRepo, runners: s.RunnersRepo, notifications: s.NotificationsRepo}
 	s.DeliveryRepo = &DeliveryRepo{deps: d, issues: s.IssuesRepo, tasks: s.TasksRepo, catalog: s.CatalogRepo, runs: s.RunsRepo}
 	s.InsightsRepo = &InsightsRepo{deps: d}
 	s.AnalyticsRepo = &AnalyticsRepo{deps: d, runs: s.RunsRepo, catalog: s.CatalogRepo, delivery: s.DeliveryRepo, issues: s.IssuesRepo, tasks: s.TasksRepo, projects: s.ProjectsRepo, insights: s.InsightsRepo}
@@ -219,6 +232,8 @@ func newStore(db *gorm.DB) *Store {
 	s.RoomsRepo = &RoomsRepo{deps: d}
 	s.SpacesRepo = &SpacesRepo{deps: d}
 	s.KnowledgeRepo = &KnowledgeRepo{deps: d}
+	s.EvolutionRepo = &EvolutionRepo{deps: d, catalog: s.CatalogRepo}
+	s.PlatformSettingsRepo = &PlatformSettingsRepo{deps: d}
 	s.SSHHostTrustRepo = &SSHHostTrustRepo{deps: d}
 	s.HTTPSHostTrustRepo = &HTTPSHostTrustRepo{deps: d}
 	return s
@@ -284,7 +299,7 @@ func (s *Store) StorageInfo() map[string]any {
 	return map[string]any{
 		"driver":   s.DB.Dialector.Name(),
 		"database": true,
-		"note":     "所有状态都在 MySQL：项目、Issue、SOP、运行记录、助手对话和定时任务都直接读写数据库。",
+		"note":     "所有状态都在 MySQL：项目、Issue、LOOP、运行记录、助手对话和定时任务都直接读写数据库。",
 	}
 }
 

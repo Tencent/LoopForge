@@ -19,6 +19,7 @@ const ctx = {
   location: { hash: '' },
   history: { state: null, pushState() {}, replaceState() {}, back() {} },
   escapeHTML: v => String(v ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])),
+  lfT: zh => zh,
   huiIcon: name => `<i data-icon="${name}"></i>`,
   catalogOwned: projectId => !!ctx.state.projectFilter && projectId === ctx.state.projectFilter,
   catalogForeign: projectId => !!projectId && projectId !== ctx.state.projectFilter,
@@ -68,7 +69,7 @@ assert.ok(own.includes('class="asset-card" role="link" tabindex="0" data-asset-i
 assert.ok(own.includes('<span class="asset-status "><i></i>未共享</span>'), own);
 assert.ok(own.includes('编辑<i data-icon="chevron-right">'), own);
 assert.ok(own.includes('data-icon="gate"'), 'rules use the gate icon');
-assert.ok(own.includes('优先级 110') && own.includes('全局 · 2 个 SOP') && own.includes('1 个角色引用'), own);
+assert.ok(own.includes('优先级 110') && own.includes('全局 · 2 个 LOOP') && own.includes('1 个角色引用'), own);
 const shared = ctx.assetCardHTML(ctx.state.data.rules[1]);
 assert.ok(shared.includes('<span class="asset-status is-on"><i></i>已共享</span>'), shared);
 assert.ok(shared.includes('暂无说明') && shared.includes('未被引用'), shared);
@@ -183,6 +184,10 @@ async function save(type, existing, values) {
 
 (async () => {
   const base = { name: 'N', description: 'D' };
+  const sandboxFields = [
+    'cpuCores', 'description', 'dockerfileContent', 'dockerfileFiles', 'driver',
+    'environment', 'id', 'memoryMiB', 'name', 'privileged', 'readOnlyRootFS', 'toolchain',
+  ];
   const cases = [
     ['rules', { id: 'r', projectId: 'p1', shared: true, priority: 100, content: 'x' },
       { id: 'r', ...base, priority: '120', content: '# hi', global: false },
@@ -193,13 +198,25 @@ async function save(type, existing, values) {
       { id: 's', name: 'N', description: 'D', projectId: 'p1', shared: false },
       ['description', 'id', 'name']],
     ['sandboxes', { id: 'x', projectId: 'p1', driver: 'docker', dockerfile: { content: 'FROM old' } },
-      { id: 'x', ...base, driver: 'docker', environment: '{}', dockerfileContent: 'FROM x', dockerfileFiles: '{"a":"b"}', readOnlyRootFS: true },
-      { id: 'x', name: 'N', description: 'D', projectId: 'p1', shared: false, driver: 'docker', environment: {}, dockerfile: { content: 'FROM x', files: { a: 'b' } }, readOnlyRootFS: true },
-      ['description', 'dockerfileContent', 'dockerfileFiles', 'driver', 'environment', 'id', 'name', 'readOnlyRootFS']],
-    ['sandboxes', { id: 'n', projectId: 'p1', driver: 'native' },
-      { id: 'n', ...base, driver: 'native', environment: '{"JAVA_HOME":"/opt/jdk"}', dockerfileContent: 'FROM x', dockerfileFiles: '{}', readOnlyRootFS: true },
-      { id: 'n', name: 'N', description: 'D', projectId: 'p1', shared: false, driver: 'native', environment: { JAVA_HOME: '/opt/jdk' } },
-      ['description', 'dockerfileContent', 'dockerfileFiles', 'driver', 'environment', 'id', 'name', 'readOnlyRootFS']],
+      {
+        id: 'x', ...base, driver: 'docker', toolchain: ' Python 3.12 ', environment: '{}',
+        dockerfileContent: 'FROM x', dockerfileFiles: '{"a":"b"}', readOnlyRootFS: true,
+        privileged: true, cpuCores: '1.25', memoryMiB: '1536',
+      },
+      {
+        id: 'x', ...base, projectId: 'p1', shared: false, driver: 'docker', toolchain: 'Python 3.12',
+        environment: {}, dockerfile: { content: 'FROM x', files: { a: 'b' } }, readOnlyRootFS: true,
+        privileged: true, cpuMillicores: 1250, memoryMiB: 1536,
+      },
+      sandboxFields],
+    ['sandboxes', { id: 'n', projectId: 'p1', driver: 'native', toolchain: 'JDK 21' },
+      {
+        id: 'n', ...base, driver: 'native', toolchain: '', environment: '{"JAVA_HOME":"/opt/jdk"}',
+        dockerfileContent: 'FROM x', dockerfileFiles: '{}', readOnlyRootFS: true,
+        privileged: true, cpuCores: '1.25', memoryMiB: '1536',
+      },
+      { id: 'n', name: 'N', description: 'D', projectId: 'p1', shared: false, driver: 'native', toolchain: '', environment: { JAVA_HOME: '/opt/jdk' } },
+      sandboxFields],
   ];
   for (const [type, existing, values, body, fields] of cases) {
     assert.deepStrictEqual(await save(type, existing, values), body, `${type} save payload`);

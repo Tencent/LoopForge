@@ -167,7 +167,7 @@ func (r *DeliveryRepo) MarkIssueDelivered(issueID, mrURL string, deliveredAt tim
 	return r.markIssueDelivered(issueID, singleDeliveryMR(mrURL), deliveredAt, false)
 }
 
-// MarkIssueDeliveredFromSOP locks a work item after a new SOP run succeeds.
+// MarkIssueDeliveredFromSOP locks a work item after a new LOOP run succeeds.
 // Unlike MarkIssueDelivered, it may lock a human-reopened item again.
 func (r *DeliveryRepo) MarkIssueDeliveredFromSOP(issueID, mrURL string, deliveredAt time.Time) error {
 	return r.MarkIssueDeliveredFromSOPMRs(issueID, singleDeliveryMR(mrURL), deliveredAt)
@@ -258,16 +258,16 @@ func (r *DeliveryRepo) markIssueDelivered(issueID string, mrs []domain.DeliveryM
 // item untouched. deliveredAt must already be resolved (non-zero).
 func issueDeliverySkipped(issue domain.Issue, mrs []domain.DeliveryMR, deliveredAt time.Time, fromSOP bool) bool {
 	// A manually closed issue is an explicit terminal state. Background MR
-	// polling and stale SOP callbacks must not change it.
+	// polling and stale LOOP callbacks must not change it.
 	if issue.ManuallyClosed() {
 		return true
 	}
-	// A human reopen must stay open until a new SOP succeeds. MR poll / reconcile
+	// A human reopen must stay open until a new LOOP succeeds. MR poll / reconcile
 	// uses "now" as checkedAt and would otherwise immediately lock the item again.
 	if strings.EqualFold(issue.DeliveryState, "reopened") && !fromSOP {
 		return true
 	}
-	// Poll / reconcile may see leftover MRs from earlier SOP runs. Those rows
+	// Poll / reconcile may see leftover MRs from earlier LOOP runs. Those rows
 	// stay in mr_delivery_states for analytics, but must not replace the
 	// work item's delivery MRs.
 	if !fromSOP {
@@ -307,7 +307,7 @@ func (r *DeliveryRepo) ReopenDeliveredIssue(issueID string) (domain.Issue, error
 
 // ReconcileMergedMRDeliveries applies terminal delivery state for MR rows that
 // were already merged before this version was deployed. Human-reopened items
-// stay open until a new SOP succeeds.
+// stay open until a new LOOP succeeds.
 func (r *DeliveryRepo) ReconcileMergedMRDeliveries() error {
 	var rows []mrDeliveryStateRow
 	if err := r.DB.Where("state = 'merged' AND issue_id <> '' AND issue_id <> ?", domain.BaselinePromoteIssueID).Find(&rows).Error; err != nil {
@@ -364,7 +364,7 @@ func (r *DeliveryRepo) ReconcileUnlinkedDeliveryMRs() error {
 	return nil
 }
 
-// ReconcileCompletedDeliveries locks issues whose latest SOP already succeeded
+// ReconcileCompletedDeliveries locks issues whose latest LOOP already succeeded
 // but were created before delivery locking shipped.
 func (r *DeliveryRepo) ReconcileCompletedDeliveries() error {
 	for _, issue := range r.issues.Issues() {
@@ -534,7 +534,7 @@ func (r *DeliveryRepo) promoteIntegratedIssues(project string, promoteAt time.Ti
 	return nil
 }
 
-// recoverUnlinkedDeliveryMRs reads the issue's latest succeeded SOP. Branch
+// recoverUnlinkedDeliveryMRs reads the issue's latest succeeded LOOP. Branch
 // lookup already ran at delivery time; this pass only recovers MR URLs quoted
 // in artifacts so a missed link can be attached without reopening the item.
 func (r *DeliveryRepo) recoverUnlinkedDeliveryMRs(issue domain.Issue) []domain.DeliveryMR {
@@ -858,7 +858,7 @@ func requirementPhaseMeasurements(run domain.Run, fallback domain.WorkflowDefini
 			continue
 		}
 		definition := definitions[nodeID]
-		// A composed SOP node encloses its child Run. Counting both would
+		// A composed LOOP node encloses its child Run. Counting both would
 		// duplicate the same wall-clock time in requirement phase totals.
 		if definition.Type == "sop" {
 			continue
@@ -1085,11 +1085,11 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 		acc.item.Tokens += run.Usage.TotalTokens
 		acc.item.CostUSD += run.Usage.CostUSD
 		acc.costKnown = acc.costKnown && usageCostKnown(run.Usage)
-		// A child SOP run lies inside its parent's SOP node: its usage, phases
+		// A child LOOP run lies inside its parent's LOOP node: its usage, phases
 		// and reworks count, but not as another run or another stretch of time.
 		if run.IsWorkspace() {
-			// A conversation workspace has no SOP graph: only its usage and
-			// active period count, never as an SOP run or phase sample.
+			// A conversation workspace has no LOOP graph: only its usage and
+			// active period count, never as a LOOP run or phase sample.
 			if acc.firstRunAt.IsZero() || run.CreatedAt.Before(acc.firstRunAt) {
 				acc.firstRunAt = run.CreatedAt
 			}
@@ -1181,7 +1181,7 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 		acc.item.RunCount = acc.runCount
 		acc.item.FailedRuns = acc.failedRuns
 		acc.item.Reworks = acc.reworks
-		// 执行耗时为该需求全部执行按 SOP 节点求和的累计值；周期耗时为首次执行开始到最后一次执行结束。
+		// 执行耗时为该需求全部执行按 LOOP 节点求和的累计值；周期耗时为首次执行开始到最后一次执行结束。
 		acc.item.ExecutionDurationMs = acc.execDuration
 		if !acc.clarificationStart.IsZero() && !acc.developmentStart.IsZero() && !acc.developmentStart.Before(acc.clarificationStart) {
 			acc.clarificationDuration = acc.developmentStart.Sub(acc.clarificationStart).Milliseconds()

@@ -194,12 +194,12 @@ func TestSharedScheduleDoesNotPinSOPDependencies(t *testing.T) {
 	check(st.PutSandbox(domain.SandboxProfile{ID: "native", Name: "Native", ProjectID: "source", Driver: "native", Environment: map[string]string{"MODE": "test"}}))
 	check(st.PutWorkflow(domain.WorkflowDefinition{ID: "child", Name: "Child", ProjectID: "source", SandboxProfileID: "native", Nodes: []domain.WorkflowNode{{ID: "approve", Type: "approval", Name: "Approve"}}}))
 	check(st.PutWorkflow(domain.WorkflowDefinition{ID: "parent", Name: "Parent", ProjectID: "source", Shared: true, SandboxProfileID: "sandbox", Nodes: []domain.WorkflowNode{{ID: "child", Type: "sop", SOPWorkflowID: "child", Name: "Child"}}}))
-	job := domain.ScheduleJob{ID: "sop-task", Name: "SOP task", ProjectID: "source", SkipDispatch: true, AssistantPrompt: "start", References: []domain.AssistantReference{{Type: "sop", ID: "parent"}}}
+	job := domain.ScheduleJob{ID: "sop-task", Name: "LOOP task", ProjectID: "source", SkipDispatch: true, AssistantPrompt: "start", References: []domain.AssistantReference{{Type: "sop", ID: "parent"}}}
 	check(st.PutScheduleJob(job))
-	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "SOP task", Prompt: "start"}, 0)
+	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "LOOP task", Prompt: "start"}, 0)
 	check(err)
 	if !v.HasAsset("sop", "parent") || v.HasAsset("sop", "child") || v.HasAsset("sandbox", "sandbox") || v.HasAsset("sandbox", "native") {
-		t.Fatalf("version contains nested SOP dependencies: %+v", v.Assets)
+		t.Fatalf("version contains nested LOOP dependencies: %+v", v.Assets)
 	}
 	profile, _ := st.Sandbox("sandbox")
 	profile.ProjectID = "foreign"
@@ -209,7 +209,7 @@ func TestSharedScheduleDoesNotPinSOPDependencies(t *testing.T) {
 		t.Fatalf("nested sandbox change invalidated direct version: %v", err)
 	}
 	if _, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Updated", Prompt: "start"}, 1); err != nil {
-		t.Fatalf("republishing direct SOP failed: %v", err)
+		t.Fatalf("republishing direct LOOP failed: %v", err)
 	}
 	versions, err := st.SharedScheduleVersions(v.ID)
 	if err != nil || len(versions) != 2 {
@@ -329,7 +329,7 @@ func TestSharedSchedulePrivateSOPUsesExistingSharingChecks(t *testing.T) {
 		missingAgent    bool
 	}{
 		{name: "shared sandbox"},
-		{name: "private sandbox", privateSandbox: true, wantError: "共享 SOP 只能使用已共享的沙箱"},
+		{name: "private sandbox", privateSandbox: true, wantError: "共享 LOOP 只能使用已共享的沙箱"},
 		{name: "project notifications", notifications: true, wantError: "通知绑定只能保存在本项目流程中"},
 		{name: "missing bound agent", missingAgent: true, wantError: "不存在"},
 	} {
@@ -348,7 +348,7 @@ func TestSharedSchedulePrivateSOPUsesExistingSharingChecks(t *testing.T) {
 			check(st.PutSkill(domain.SkillDefinition{ID: "first-skill", Name: "Skill", ProjectID: "source"}))
 			profile := domain.SandboxProfile{ID: "sop-sandbox", Name: "Sandbox", ProjectID: "source", Driver: "native", Shared: !tc.privateSandbox}
 			check(st.PutSandbox(profile))
-			wf := domain.WorkflowDefinition{ID: "private-sop", Name: "SOP", ProjectID: "source", SandboxProfileID: profile.ID, Status: "draft", Version: 4, Nodes: []domain.WorkflowNode{{ID: "approve", Name: "Approve", Type: "approval"}}}
+			wf := domain.WorkflowDefinition{ID: "private-sop", Name: "LOOP", ProjectID: "source", SandboxProfileID: profile.ID, Status: "draft", Version: 4, Nodes: []domain.WorkflowNode{{ID: "approve", Name: "Approve", Type: "approval"}}}
 			if tc.missingAgent {
 				wf.Nodes = []domain.WorkflowNode{{ID: "agent", Name: "Missing", Type: "agent", AgentID: "missing"}}
 			}
@@ -383,11 +383,11 @@ func TestSharedSchedulePrivateSOPUsesExistingSharingChecks(t *testing.T) {
 			}
 			check(err)
 			if !after.Shared || !afterSkill.Shared || after.Status != before.Status || after.Version != before.Version || after.Revision != before.Revision+1 || after.PublishedRevision != before.PublishedRevision {
-				t.Fatalf("SOP sharing changed publication semantics: before=%+v after=%+v", before, after)
+				t.Fatalf("LOOP sharing changed publication semantics: before=%+v after=%+v", before, after)
 			}
 			currentProfile, _ := st.Sandbox(profile.ID)
 			if currentProfile.Shared != profile.Shared || len(v.Assets) != 2 || v.HasAsset("sandbox", profile.ID) {
-				t.Fatalf("SOP sharing traversed the sandbox boundary: %+v", v.Assets)
+				t.Fatalf("LOOP sharing traversed the sandbox boundary: %+v", v.Assets)
 			}
 		})
 	}

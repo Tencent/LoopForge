@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,31 @@ type runSandbox struct {
 	lastUsed time.Time
 }
 
+func preparesBorrowedCheckout(inv *domain.RunnerInvocation) bool {
+	return slices.ContainsFunc(invocationRepositories(inv), func(repo domain.RunnerRepository) bool {
+		return repo.PreserveCheckout
+	})
+}
+
+func (d *Daemon) acquireExecutionTaskSandbox(ctx context.Context, task domain.RunnerTask) (runtime.Sandbox, func(), error) {
+	if task.Sandbox != nil {
+		return d.acquireTaskSandbox(ctx, task)
+	}
+	if preparesBorrowedCheckout(task.Invocation) {
+		return nil, nil, fmt.Errorf("shared checkout preparation requires the frozen LOOP sandbox")
+	}
+	return nil, func() {}, nil
+}
+
+func taskRepositoryContext(ctx context.Context, task domain.RunnerTask, sandbox runtime.Sandbox, inv *domain.RunnerInvocation) context.Context {
+	if preparesBorrowedCheckout(inv) {
+		credentials := invocationGitCredentials(inv)
+		credentials.GitSSHKeys = inv.GitSSHKeys
+		return runtime.WithSandboxGit(ctx, sandbox, credentials)
+	}
+	return runtime.WithRepositoryCacheFor(ctx, runnerTaskSandboxDriver(task))
+}
+
 // acquireTaskSandbox returns the sandbox a task executes in and the function
 // to call when the task is done. Tasks of a shared run checkout reuse one
 // sandbox per definition; other tasks get a throwaway one.
@@ -38,6 +64,7 @@ func (d *Daemon) acquireTaskSandbox(ctx context.Context, task domain.RunnerTask)
 	if task.Sandbox == nil {
 		return nil, nil, fmt.Errorf("frozen run sandbox definition is required")
 	}
+	ctx = runtime.WithPrivilegedSandboxSetting(ctx, d.client.privilegedSandboxSetting)
 	requirements, resources := taskSandboxSpec(task)
 	key, id, shared := runSandboxKey(task, requirements, resources)
 	if !shared || d.cfg.DisableRunSandboxReuse {
@@ -134,7 +161,7 @@ func (d *Daemon) closeSharedSandboxes(ctx context.Context, match func(*runSandbo
 }
 
 // runSandboxKey identifies the shared sandbox of a task that runs in a
-// shared checkout (runs/<run>/workspace). A child SOP works in its parent's
+// shared checkout (runs/<run>/workspace). A child LOOP works in its parent's
 // checkout but keeps a sandbox of its own. The id doubles as the container
 // name suffix, so it keeps the runner-owned "rt-" prefix that cleanup_run
 // enumerates.
