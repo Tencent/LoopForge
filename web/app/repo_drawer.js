@@ -85,7 +85,11 @@ function syncRepoBranchNaming(form){
   form.querySelector('[data-work-branch-custom-prefix]').hidden=form.elements.workBranchPrefix.value!=='custom';
   if(isAI){
     const user=state.currentUser?.id;
-    loadExecutorModelCatalogs().then(()=>{
+    const loading=loadExecutorModelCatalogs();
+    // Repaint while the catalog loads so the picker says "checking" instead
+    // of reporting configured CLIs as missing until the request returns.
+    fillRepoBranchExecutors(form,form.elements.workBranchExecutorId.value);
+    loading.then(()=>{
       if(repoDrawerOpen()&&state.currentUser?.id===user&&form.elements.workBranchNamingMode.value==='ai'){
         const manual=form.elements.workBranchModelChoice.value===AGENT_CUSTOM_MODEL;
         const model=repoBranchModel(form);

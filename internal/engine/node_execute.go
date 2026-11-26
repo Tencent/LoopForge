@@ -1183,7 +1183,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.FinishedAt = output, err.Error(), "waiting_approval", time.Now().UTC()
-				e.event(r, node.ID, "agent.loop.exhausted", agentLoopHumanMessage(lastIteration, maxIterations)+err.Error())
+				e.event(r, node.ID, "agent.loop.exhausted", agentLoopHumanMessage(lastIteration, maxIterations, failedAction)+err.Error())
 			})
 			return
 		}
@@ -1414,10 +1414,14 @@ func agentLoopSkipMessage(failedAction string) string {
 
 // agentLoopHumanMessage prefixes the hand-off to a person when a looping role
 // stops. It claims the self-correction budget is spent only when every
-// iteration actually ran.
-func agentLoopHumanMessage(iterations, maxIterations int) string {
-	if iterations < maxIterations {
+// iteration actually ran, and names the gate policy when a gate (rather than
+// the executor) ended the loop early, matching agentLoopSkipMessage.
+func agentLoopHumanMessage(iterations, maxIterations int, failedAction string) string {
+	if iterations >= maxIterations {
+		return "Agent 自修正次数已耗尽，转人工判断："
+	}
+	if failedAction == "" {
 		return fmt.Sprintf("Agent 第 %d 轮执行失败，未进入自修正，转人工判断：", iterations)
 	}
-	return "Agent 自修正次数已耗尽，转人工判断："
+	return fmt.Sprintf("Agent 第 %d 轮门禁未通过（失败策略为 %s），未进入自修正，转人工判断：", iterations, failedAction)
 }
