@@ -171,7 +171,7 @@ func (e *Engine) wakeRunClaimLoop() {
 }
 
 func (e *Engine) publish(runID string) {
-	current, ok := e.repo.RunState(runID)
+	current, ok := e.repo.RunStreamView(runID)
 	if !ok {
 		return
 	}
