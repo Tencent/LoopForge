@@ -426,3 +426,10 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
 ```
 
 定时派发会冻结集成分支上下文，并避免同一需求重复执行。需求是否澄清过不影响派发。Worker signals、实例 lease 和沙箱回收属于内部机制，不是调度公共 API。
+
+
+### 补读已持久化的运行事件
+
+`GET /api/runs/{id}/events?after=0&limit=50` 按写入顺序读取已记录的人工门禁和运行终态事件。返回 `runId`、`events`、`nextAfter` 和 `hasMore`，每条事件含稳定的 `id`、`cursor`、`type`，以及适用的节点 ID 和时间戳。
+
+从 `after=0` 开始，处理完成后保存 `nextAfter` 并在下一次查询时传入。单条处理时也可以保存该事件的 `cursor`。游标仅用于同一个 run。若请求重试或消费者重启，按 run 和事件 ID 去重。事件随 run 一同保留，删除 run 后返回 404。该接口可以用于断线补读，原有 SSE 仍用于实时快照。
