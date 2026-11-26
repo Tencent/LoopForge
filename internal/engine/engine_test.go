@@ -2891,7 +2891,7 @@ func TestOverlayLatestNodeBindingsRefreshesNonRoutingNodeInConditionalWorkflow(t
 	current := domain.WorkflowDefinition{
 		ID: "conditional-overlay-partial", Name: "Conditional overlay", SandboxProfileID: "test-native", Version: 2,
 		Nodes: []domain.WorkflowNode{
-			{ID: "classify", Type: "script", ArtifactOutputs: []domain.ArtifactContract{{Name: "classification-v2", Path: "v2.json"}}},
+			{ID: "classify", Type: "agent", AgentID: "router-v2", NodePrompt: "新的提示词", ArtifactOutputs: []domain.ArtifactContract{{Name: "classification-v2", Path: "v2.json"}}},
 			{ID: "report", Type: "agent", AgentID: "agent-v2", NodePrompt: "新的提示词", ArtifactOutputs: []domain.ArtifactContract{{Name: "report", Path: "report.md"}}},
 		},
 	}
@@ -2901,14 +2901,17 @@ func TestOverlayLatestNodeBindingsRefreshesNonRoutingNodeInConditionalWorkflow(t
 	run := domain.Run{WorkflowID: current.ID, WorkflowSnapshot: domain.WorkflowDefinition{
 		ID: current.ID, Version: 1,
 		Nodes: []domain.WorkflowNode{
-			{ID: "classify", Type: "script", ArtifactOutputs: []domain.ArtifactContract{{Name: "classification", Path: "v1.json"}}},
+			{ID: "classify", Type: "agent", AgentID: "router-v1", NodePrompt: "旧的提示词", ArtifactOutputs: []domain.ArtifactContract{{Name: "classification", Path: "v1.json"}}},
 			{ID: "report", Type: "agent", AgentID: "agent-v1", NodePrompt: "旧的提示词", ArtifactOutputs: []domain.ArtifactContract{{Name: "report", Path: "old.md"}}},
 		},
 		Edges: []domain.WorkflowEdge{{ID: "route", Source: "classify", Target: "report", Condition: &domain.WorkflowCondition{Type: "artifact", Artifact: "classification", Pointer: "/size", Equals: []byte(`"small"`)}}},
 	}}
 	overlayLatestNodeBindings(s, &run, map[string]bool{"classify": true, "report": true})
-	if got := run.WorkflowSnapshot.Nodes[0].ArtifactOutputs[0].Name; got != "classification" {
-		t.Fatalf("routing source lost its frozen contract, got %q", got)
+	// The node an artifact condition resolves by name keeps its whole binding:
+	// a newer role would write the renamed artifact the frozen edge never sees.
+	router := run.WorkflowSnapshot.Nodes[0]
+	if router.AgentID != "router-v1" || router.NodePrompt != "旧的提示词" || router.ArtifactOutputs[0].Name != "classification" {
+		t.Fatalf("routing source binding drifted: agent=%q prompt=%q artifacts=%+v", router.AgentID, router.NodePrompt, router.ArtifactOutputs)
 	}
 	report := run.WorkflowSnapshot.Nodes[1]
 	if report.AgentID != "agent-v2" || report.NodePrompt != "新的提示词" || report.ArtifactOutputs[0].Path != "report.md" {

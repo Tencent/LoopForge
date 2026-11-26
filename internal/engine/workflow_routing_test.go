@@ -741,6 +741,53 @@ func TestConditionalRoutingRefreshRejectsPendingRouteWithoutFrozenConditions(t *
 	}
 }
 
+// A required manual role gate parks the node after an Agent pass, so the saved
+// decision is pass rather than human. Approving it still rebuilds the route
+// from the saved value, which means the same guard has to cover this path.
+func TestConditionalRoutingRefreshRejectsConditionsAddedToManualRoleGate(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	putGateTestAgent(t, s, "gated-router", []domain.VerificationGate{{ID: "human", Name: "人工确认", Mode: "manual", Required: true}})
+	wf := routingWorkflow("refresh-manual-gate")
+	wf.Edges = []domain.WorkflowEdge{{ID: "route-small", Source: "classify", Target: "small"}}
+	wf.Nodes[0] = domain.WorkflowNode{ID: "classify", Name: "classify", Type: "agent", AgentID: "gated-router", ExecutorID: "mock", MaxAttempts: 1}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r, err := e.Start(wf.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "waiting")
+	parked, ok := s.RunState(r.ID)
+	if !ok {
+		t.Fatal("run disappeared")
+	}
+	classify := parked.Nodes["classify"]
+	if classify.Status != "waiting_approval" || classify.GateResult == nil || classify.GateResult.Decision != "pass" {
+		t.Fatalf("manual role gate should park a passed node: status=%q gate=%+v", classify.Status, classify.GateResult)
+	}
+	latest, ok := s.Workflow(wf.ID)
+	if !ok {
+		t.Fatal("workflow disappeared")
+	}
+	latest.Version++
+	latest.Edges = []domain.WorkflowEdge{
+		{ID: "small-edge", Source: "classify", Target: "small", Condition: &domain.WorkflowCondition{Type: "route", Values: []string{"small"}}},
+		{ID: "large-edge", Source: "classify", Target: "large", Condition: &domain.WorkflowCondition{Type: "route", Values: []string{"large"}}},
+	}
+	if err := s.PutWorkflow(latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RefreshRunSOP(r.ID); err == nil || !strings.Contains(err.Error(), "classify") || !strings.Contains(err.Error(), "条件分支") {
+		t.Fatalf("expected refresh to be refused while a manual role gate waits, got %v", err)
+	}
+}
+
 // A gate that never produced a route becomes un-approvable if the refreshed
 // graph starts asking it for one, so the refresh has to be refused up front.
 func TestConditionalRoutingRefreshRejectsConditionsAddedToWaitingGate(t *testing.T) {
