@@ -77,6 +77,20 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 		}
 		interactive = acp.assistantInteractiveInput
 		command.Stdin, translate = acp, acp.translate
+	} else if kind == runtime.AgentCLIQoder && command.Stdin != nil {
+		// qodercli composes its prompt from a piped stdin once it reaches EOF,
+		// so replay the staged text and let the relay close the stream.
+		prompt, err := io.ReadAll(command.Stdin)
+		if err != nil {
+			input.Close()
+			return assistantCLIInvocation{}, err
+		}
+		reader, writer := io.Pipe()
+		go func() {
+			_, _ = writer.Write(prompt)
+			_ = writer.Close()
+		}()
+		command.Stdin = reader
 	} else if kind == runtime.AgentCLIAntigravity && command.Stdin != nil {
 		// The NDJSON session ends on EOF. Keep it open until its first result.
 		frame, err := io.ReadAll(command.Stdin)

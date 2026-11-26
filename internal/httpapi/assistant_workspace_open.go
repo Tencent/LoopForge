@@ -17,6 +17,8 @@ import (
 	"agentflow/internal/runtime"
 )
 
+const qoderWorkspaceUnavailable = "Qoder 暂不支持在对话工作区中读写文件或执行命令，请切换执行器或使用 SOP。"
+
 // A conversation workspace is an environment, not a checkout: Main Bot picks
 // the sandbox profile (or workspaceRunId to bind a same-project SOP run or an
 // earlier workspace of this conversation on the same execution machine). Empty
@@ -221,6 +223,9 @@ func parseWorkspaceOpenChoice(args map[string]any) (workspaceOpenChoice, error) 
 // and hands the CLI over to it. A task conversation enters its task's
 // workspace once the SOP has stopped.
 func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *AgentToolSession, args map[string]any) (string, error) {
+	if s.Executor == runtime.AgentCLIQoder {
+		return "", fmt.Errorf("%s", qoderWorkspaceUnavailable)
+	}
 	if s.workspaceStartFailed.Load() {
 		return "", errors.New(assistantWorkspaceFallbackPrompt)
 	}

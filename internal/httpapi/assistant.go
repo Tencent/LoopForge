@@ -302,6 +302,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			req.workspaceMode = false
 		}
 	}
+	if req.workspaceMode && req.Executor == runtime.AgentCLIQoder {
+		c.JSON(400, gin.H{"error": qoderWorkspaceUnavailable})
+		return
+	}
 	sourceRoot := h.resolvedSourceRoot()
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
@@ -345,6 +349,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	} else {
 		toolSession = sess
+		sess.Executor = req.Executor
 		sess.approvalReviewer = reviewer
 		sess.RunID = req.RunID
 		sess.ChatSessionID = req.SessionID

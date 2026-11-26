@@ -60,6 +60,7 @@ type AgentToolSession struct {
 	runnerLogin       bool
 	transient         bool
 	RuntimeMode       string
+	Executor          string
 	Notify            func(string, any)
 	Token             string
 	UserID            int64

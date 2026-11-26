@@ -172,8 +172,10 @@ function RunAlert({
   const ownerName =
     owner?.chineseName || owner?.name || owner?.loginName || "运行责任人";
   const flag = hint ? `${hint.field}Configured` : "";
-  const configured =
-    mine && hint && !!(users.find((u) => u.id === user?.id) || user)?.[flag];
+  const credentialUser = users.find((u) => u.id === user?.id) || user;
+  const configured = mine && hint && (hint.field === "agentCli.qoder"
+    ? !!credentialUser?.agentCliCredentials?.qoder?.apiKeyConfigured
+    : !!credentialUser?.[flag]);
   // The engine says 未配置 when the token was absent at failure time; a token
   // present now was then added afterwards and a retry is all that is left.
   const fixedSince = configured && /未配置/.test(item.reason);

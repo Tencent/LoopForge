@@ -102,6 +102,12 @@ var builtinExecutorModels = func() map[string][]builtinExecutorModel {
 			{"glm-5.3", "GLM-5.3", lowHighMax},
 			{"glm-5.3-flash", "GLM-5.3 Flash", lowHighMax},
 		},
+		runtime.AgentCLIQoder: {
+			{"auto", "Auto", domain.ExecutorEffortLevels[runtime.AgentCLIQoder]},
+			{"ultimate", "Ultimate", domain.ExecutorEffortLevels[runtime.AgentCLIQoder]},
+			{"performance", "Performance", domain.ExecutorEffortLevels[runtime.AgentCLIQoder]},
+			{"efficient", "Efficient", domain.ExecutorEffortLevels[runtime.AgentCLIQoder]},
+		},
 	}
 }()
 
@@ -179,6 +185,7 @@ func executorModelCatalogs(kimiBaseURL string, codebuddy assistantModelCatalog) 
 		"pi":    {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["pi"])},
 		"dsh":   {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["dsh"])},
 		"zcode": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["zcode"])},
+		"qoder": {Efforts: effortOptions(domain.ExecutorEffortLevels[runtime.AgentCLIQoder])},
 	}
 	for engine, catalog := range catalogs {
 		modelEngine := engine

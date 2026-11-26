@@ -36,7 +36,7 @@ https://github.com/user-attachments/assets/8af401d9-1aae-427c-b4bc-455c12d17beb
 
 **LoopForge** is a self-hosted workspace where your team ships software with coding agents. Describe what you need to **Main Bot** in chat: it opens a Docker sandbox, checks out your repositories, delegates to project roles, and opens the PR. When a way of working proves itself, save it as an **SOP** (a standard workflow of agents, scripts and human gates) so the next requirement is delivered the same way, with review and approval built in.
 
-Coding-agent CLIs do the work: CodeBuddy, Codex, Claude Code, OpenCode, Cursor CLI, Antigravity, Kimi Code, Pi, DeepSeek Harness and ZCode. LoopForge adds the roles, sandboxes, checkpoints and history around them, all on your own infrastructure under the MIT license.
+Coding-agent CLIs do the work: CodeBuddy, Codex, Claude Code, OpenCode, Cursor CLI, Antigravity, Kimi Code, Pi, DeepSeek Harness, ZCode and Qoder CLI. LoopForge adds the roles, sandboxes, checkpoints and history around them, all on your own infrastructure under the MIT license.
 
 ## Two ways to work
 
@@ -66,7 +66,7 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 - **Separated roles.** Planning, implementation, review and testing each get their own prompt, executor, model, rules, Skills and MCP tools. A role works as an SOP node or as a subagent in chat.
 - **Human on the loop.** Agents run on their own while you supervise. Pause, steer or take over anytime, and approval gates stop the run where a human must decide: approve, or send the work back to a chosen step.
 - **Observable and resumable.** Node status, tool traces, logs and artifacts in one place. Pause, retry a failed step, or rerun from any node.
-- **Your stack, your servers.** Ten coding-agent CLIs as executors, from CodeBuddy, Codex and Claude Code to OpenCode, Cursor CLI and more. GitHub, Skills and MCP as tools. Docker sandboxes or your own machine as the runtime.
+- **Your stack, your servers.** Eleven coding-agent CLIs as executors, from CodeBuddy, Codex and Claude Code to OpenCode, Cursor CLI and more. GitHub, Skills and MCP as tools. Docker sandboxes or your own machine as the runtime.
 
 ## Quick start
 
@@ -122,11 +122,12 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
   | **Claude Code** | Personal key; a connected execution machine can use its local login | Installed from npm on first use, then cached |
   | **OpenCode · Kimi Code · Pi** | Personal key only | Installed from npm on first use, then cached |
   | **DeepSeek Harness** | Personal key only | In the Docker image |
+  | **Qoder CLI** | Personal access token from [Qoder integrations](https://qoder.com/account/integrations); model availability depends on the Qoder account | Pinned version installed from npm on first use, then cached; conversation workspaces are not supported, so use another executor or an SOP to change code |
   | **Cursor CLI** | Personal key only | Provider installer on first chat use; not installed into SOP sandboxes |
   | **Antigravity** | Personal key, or the connected execution machine owner's existing account login | Install the official CLI on the execution machine and in Docker images used for SOP runs |
   | **ZCode** | Personal key only | Not bundled; install it on the service or execution machine PATH |
 
-  The seven agent CLIs after Claude Code keep their model and MCP configuration in a private home directory per run. Antigravity can reuse the execution machine owner's account login in conversation workspaces and native or Docker SOP sandboxes. Its official CLI refreshes the credential copy, and the Runner saves the refreshed login back to its original local store. Gemini API keys use separate API billing. The other agent CLIs use the responsible user's own key and Base URL from personal settings, including on a connected execution machine. First-use installs need npm or provider access; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
+  The eight agent CLIs after Claude Code keep their model and MCP configuration in a private home directory per run. Antigravity can reuse the execution machine owner's account login in conversation workspaces and native or Docker SOP sandboxes. Its official CLI refreshes the credential copy, and the Runner saves the refreshed login back to its original local store. Gemini API keys use separate API billing. The other agent CLIs use the responsible user's own key and Base URL from personal settings, including on a connected execution machine. First-use installs need npm or provider access; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
 - **WeCom notifications.** The image built from this Dockerfile includes `wecom-cli`; published images gain it with the next release. Native installations need to install it separately; see [Deployment](docs/deployment.md#native-development).
 - **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, and new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.
 - **Delivering to a repository.** Choose **Connect GitHub** in personal settings, approve the device code on GitHub and pick your repository (the LoopForge OAuth App is built in; no PAT required, manual PAT entry still works). Set executor credentials (or bind a local execution machine), then either run a project SOP or ask Main Bot to change the code and submit a PR/MR.

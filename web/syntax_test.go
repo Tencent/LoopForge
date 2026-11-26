@@ -503,7 +503,7 @@ const count = (html, needle) => html.split(needle).length - 1;
 // Groups list credentials in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey', 'gitHttpCredentials']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode', 'agentCli.qoder']);
 
 // Existing credentials are rows. The add controls own the available types.
 const html = credentialPanelHTML(user);
@@ -838,14 +838,16 @@ global.state = {data: {executors: [
   {id: 'pi', name: 'Pi'},
   {id: 'dsh', name: 'DeepSeek Harness'},
   {id: 'zcode', name: 'ZCode'},
+  {id: 'qoder', name: 'Qoder CLI'},
   {id: 'mock', name: '演示执行器'}
 ]}};
 global.window = {AgentFlowExecutorModels: Object.fromEntries(
   state.data.executors.slice(1, -1).map(({id}) => [id, {configured: true}])
 )};
 eval(code.slice(code.indexOf('function executorOptions('), code.indexOf('function selectAgent(')));
-for (const id of ['opencode', 'cursor', 'agy', 'kimi', 'pi', 'dsh', 'zcode']) {
+for (const id of ['opencode', 'cursor', 'agy', 'kimi', 'pi', 'dsh', 'zcode', 'qoder']) {
   assert.ok(executorOptions(id).includes('value="' + id + '" selected'), id);
+  assert.ok(!executorOptions(id).includes('历史执行器'), id);
 }
 assert.ok(!executorOptions('codex').includes('value="mock"'));
 assert.ok(!executorOptions('codex').includes('value="codebuddy"'));

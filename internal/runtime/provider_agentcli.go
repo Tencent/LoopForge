@@ -326,6 +326,23 @@ func agentCLICommand(kind string, o AgentCLICommandOptions, input *AgentCLIConve
 			argv = append(argv, "--attach", path)
 		}
 		argv = append(argv, extra...)
+	case AgentCLIQoder:
+		argv = []string{binary, "--output-format", "stream-json", "--permission-mode", "bypass_permissions"}
+		if o.Chat {
+			// Disable every built-in tool; the explicitly configured MCP remains available.
+			argv = append(argv, "--tools", "")
+		}
+		if model != "" {
+			argv = append(argv, "--model", model)
+		}
+		if effort != "" {
+			argv = append(argv, "--reasoning-effort", effort)
+		}
+		if resume != "" {
+			argv = append(argv, "--resume", resume)
+		}
+		// -p is a flag: the query stays a positional argument, or arrives on stdin.
+		argv = append(append(append(argv, extra...), "-p"), promptArgs...)
 	}
 	return CommandSpec{Argv: argv, Stdin: stdin, Provider: kind, AgentCLI: options}, nil
 }
@@ -339,6 +356,9 @@ func agentCLIPromptInput(kind, prompt string, input *AgentCLIConversationInput, 
 	if long {
 		switch kind {
 		case AgentCLIOpenCode, AgentCLIPi, AgentCLIDeepSeek:
+			return nil, strings.NewReader(prompt), nil
+		case AgentCLIQoder:
+			// qodercli reads a piped stdin (no positional query) as its prompt.
 			return nil, strings.NewReader(prompt), nil
 		case AgentCLIAntigravity:
 			if input != nil {

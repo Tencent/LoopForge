@@ -56,7 +56,7 @@ var projectCredentialReservedNames = []string{
 var projectCredentialReservedPrefixes = []string{
 	"AGENTFLOW_", "LOOPFORGE_", "LD_", "DYLD_", "GIT_CONFIG", "GIT_SSH", "GH_", "OTEL_",
 	"AGY_", "ANTHROPIC_", "CLAUDE_", "CODEBUDDY_", "CODEX_", "CURSOR_", "DEEPSEEK_",
-	"GEMINI_", "KIMI_", "OPENAI_", "OPENCODE_", "ZCODE_",
+	"GEMINI_", "KIMI_", "OPENAI_", "OPENCODE_", "QODER_", "QODERCN_", "ZCODE_",
 }
 
 func ValidateProjectCredentialVariable(name string) error {

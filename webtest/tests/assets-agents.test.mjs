@@ -207,6 +207,25 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   assert.equal(app.evaluate(`state.data.agents.some(a=>a.id==='agent-copy')`), false);
 });
 
+test('Qoder can be selected and saved on a role', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', {
+    codebuddy: { models: [] },
+    claude: { models: [] },
+    qoder: { configured: true, models: [{ id: 'auto', name: 'Auto' }], efforts: [] },
+  });
+  app.evaluate(`state.data.executors=[{id:'codebuddy',name:'CodeBuddy'},{id:'qoder',name:'Qoder CLI'}];switchView('agents');renderAgents();openAgentWizard();applyAgentPreset('developer')`);
+  await settle();
+  const form = app.document.querySelector('#agentForm');
+  assert.ok([...form.elements.executorId.options].some(option => option.value === 'qoder' && !option.disabled));
+  form.elements.executorId.value = 'qoder';
+  form.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  assert.equal(app.router.calls.find(call => call.path === '/api/agents' && call.method === 'PUT').body.executorId, 'qoder');
+});
+
 test('role editor refreshes configured CLIs and preserves an unavailable saved executor', async (t) => {
   const app = await loadApp();
   t.after(app.close);
