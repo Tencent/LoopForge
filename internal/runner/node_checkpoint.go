@@ -30,7 +30,8 @@ func (d *Daemon) executeNodeCheckpointCreate(ctx context.Context, task domain.Ru
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
 	}
-	if err := checkoutInvocationRepositories(ctx, workspace, task.Invocation, runnerTaskSandboxDriver(task)); err != nil {
+	checkoutCtx := taskRepositoryContext(ctx, task, nil, task.Invocation)
+	if err := checkoutInvocationRepositories(checkoutCtx, workspace, task.Invocation); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", err)}
 	}
 	var repositories []domain.RepositoryContext

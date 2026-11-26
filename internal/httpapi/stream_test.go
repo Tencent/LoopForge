@@ -25,11 +25,18 @@ func TestRunStreamDeliversLiveSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "live", Name: "Live", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "command", Command: "printf live", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "live", Name: "Live", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "command", Command: "printf live", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := e.Drain(ctx); err != nil {
+			t.Error(err)
+		}
+	})
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +85,7 @@ func TestDeleteRunEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "wf", Name: "WF", SandboxProfileID: "local"}); err != nil {
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "wf", Name: "WF", SandboxProfileID: "test-native"}); err != nil {
 		t.Fatal(err)
 	}
 	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")

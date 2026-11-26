@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -33,9 +34,7 @@ func (s *Service) githubClient(project string) (*githubClient, error) {
 				continue
 			}
 			if p, found := s.projectAuth.Project(repo.ProjectID); found {
-				if u, exists := s.projectAuth.User(p.OwnerID); exists {
-					token = u.GitToken
-				}
+				token = s.githubTokenForUser(p.OwnerID)
 			}
 			break
 		}
@@ -45,6 +44,45 @@ func (s *Service) githubClient(project string) (*githubClient, error) {
 		base = "https://api.github.com"
 	}
 	return &githubClient{base: base, path: path, token: token, http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+}
+
+// githubClientForRun authenticates as the run did: its push token when set,
+// else the Owner of the run's project when that project binds the repository.
+// It also names the identity it chose. Issue imports pass the importing
+// project and no token.
+func (s *Service) githubClientForRun(project, localProjectID, gitToken string) (*githubClient, string, error) {
+	g, err := s.githubClient(project)
+	if err != nil {
+		return nil, "", err
+	}
+	if token := strings.TrimSpace(gitToken); token != "" {
+		g.token = token
+		return g, "本轮责任人的 Git Token", nil
+	}
+	local := strings.TrimSpace(localProjectID)
+	if s.projectAuth == nil || local == "" {
+		return g, "首个绑定该仓库的项目 Owner 的 Git Token", nil
+	}
+	for _, repo := range s.projectAuth.Repositories() {
+		if repo.Provider != "github" || repo.GongfengProjectID != project || repo.ProjectID != local {
+			continue
+		}
+		g.token = ""
+		if p, found := s.projectAuth.Project(local); found {
+			g.token = s.githubTokenForUser(p.OwnerID)
+		}
+		return g, "项目 " + local + " Owner 的 Git Token", nil
+	}
+	return g, "首个绑定该仓库的项目 Owner 的 Git Token", nil
+}
+
+func (s *Service) githubTokenForUser(userID int64) string {
+	if credentials, ok := s.projectAuth.(GitHTTPCredentialStore); ok {
+		if credential, ok := credentials.GitHTTPCredentialForHost(context.Background(), userID, "github.com"); ok {
+			return credential.Token
+		}
+	}
+	return ""
 }
 
 func (g *githubClient) request(method, suffix string, input, output any) error {
@@ -122,12 +160,8 @@ func (p githubPull) mergedAt() time.Time {
 }
 
 func (g *githubClient) findPull(branch, target string) (githubPull, bool, error) {
-	q := url.Values{"state": {"all"}, "head": {strings.Split(g.path, "/")[0] + ":" + branch}, "per_page": {"100"}, "sort": {"updated"}, "direction": {"desc"}}
-	if target != "" {
-		q.Set("base", target)
-	}
-	var list []githubPull
-	if err := g.request("GET", "/pulls?"+q.Encode(), nil, &list); err != nil {
+	list, err := g.listPulls(branch, target)
+	if err != nil {
 		return githubPull{}, false, err
 	}
 	for _, p := range list {
@@ -136,6 +170,33 @@ func (g *githubClient) findPull(branch, target string) (githubPull, bool, error)
 		}
 	}
 	return githubPull{}, false, nil
+}
+
+// listPulls returns the pulls from branch (and into target when set), most
+// recently updated first.
+func (g *githubClient) listPulls(branch, target string) ([]githubPull, error) {
+	q := url.Values{"state": {"all"}, "head": {strings.Split(g.path, "/")[0] + ":" + branch}, "per_page": {"100"}, "sort": {"updated"}, "direction": {"desc"}}
+	if target != "" {
+		q.Set("base", target)
+	}
+	var list []githubPull
+	if err := g.request("GET", "/pulls?"+q.Encode(), nil, &list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func githubPullsInto(pulls []githubPull, project, branch, target string) []domain.DeliveryMR {
+	var out []domain.DeliveryMR
+	for _, p := range pulls {
+		if p.Head.Ref != branch || p.Base.Ref != target {
+			continue
+		}
+		mr := p.delivery(project)
+		mr.HeadSHA = strings.TrimSpace(p.Head.SHA)
+		out = append(out, mr)
+	}
+	return out
 }
 
 func (s *Service) githubFindBranch(project, branch string) (domain.DeliveryMR, bool, error) {
@@ -191,8 +252,13 @@ func (s *Service) githubMergeBranch(project, branch, target, title, description 
 	return p.ref(), nil
 }
 
+// pullGitHubIssues imports into repo.ProjectID as that project's Owner, like
+// Gongfeng imports use the project's own binding. Borrowing the token of
+// whichever project bound the same repository first would import private
+// issues for projects whose Owner has no access, and break the import of
+// projects whose Owner does.
 func (s *Service) pullGitHubIssues(store IssueStoreAdapter, repo domain.Repository) (int, error) {
-	g, err := s.githubClient(repo.GongfengProjectID)
+	g, _, err := s.githubClientForRun(repo.GongfengProjectID, repo.ProjectID, "")
 	if err != nil {
 		return 0, err
 	}

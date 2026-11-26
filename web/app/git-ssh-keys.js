@@ -45,7 +45,7 @@ window.addEventListener('focus', () => {
   refreshGitSSHWarnings();
 });
 
-function openGitSSHKeys(remote = '') {
+function openGitSSHKeys(remote = '', options = {}) {
   const user = state.currentUser;
   if (!user?.id || user.isGuest) return;
 
@@ -68,7 +68,7 @@ function openGitSSHKeys(remote = '') {
       <h2 id="gitSSHKeyTitle">Git SSH 密钥</h2>
       <button type="button" class="credential-btn ghost icon" data-ssh-key-close aria-label="关闭">${credentialGlyph('close', 16)}</button>
     </header>
-    <p class="git-ssh-description">每个 SSH 主机配置一把个人密钥，同一主机的仓库自动共用。</p>
+    <p class="git-ssh-description">每个 SSH 主机配置一把个人密钥，同一主机的仓库自动共用。SSH 密钥只用于 Git 克隆和推送，不能用于创建 PR/MR；创建 PR/MR 需要访问令牌。</p>
     <p class="git-ssh-status" role="status">正在读取密钥…</p>
     <div class="git-ssh-key-list"></div>
     <button type="button" class="credential-btn primary" data-ssh-key-add disabled>添加密钥</button>
@@ -149,7 +149,7 @@ function openGitSSHKeys(remote = '') {
       });
       gitSSHKeyCache = {userId:user.id, keys, pending:null};
       storeCredentialUser({...credentialUser(), id:user.id, gitSshKeyConfigured:keys.length > 0});
-      renderCredentialPanel();
+      renderCredentialGitGroup();
       notifyCredentialsChanged();
       refreshGitSSHWarnings();
       deleting = '';
@@ -192,8 +192,7 @@ function openGitSSHKeys(remote = '') {
   dialog.addEventListener('close', () => {
     form.reset();
     dialog.remove();
-    if (opener?.isConnected) opener.focus({preventScroll:true});
-    else $('#credentialPanel [data-credential-row="gitSshKey"] [data-credential-act="setup"]')?.focus({preventScroll:true});
+    (opener?.isConnected ? opener : $('#credentialPanel [data-credential-add-menu="platform"]'))?.focus({preventScroll:true});
   });
   document.body.append(dialog);
   dialog.showModal();
@@ -207,6 +206,9 @@ function openGitSSHKeys(remote = '') {
     if (repository) {
       const existing = keys.find(key => globalThis.LoopForgeGitSSHHost(key.host) === repository.host);
       openForm(existing || null, repository);
+    } else {
+      const selected = keys.find(key => key.id === options.id);
+      if (selected || options.add) openForm(selected || null, null);
     }
   }).catch(error => setStatus(error.message, true));
 }

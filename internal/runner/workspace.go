@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/runtime"
 )
 
@@ -114,8 +116,26 @@ func (d *Daemon) handleRunnerWorkspaceBrowser(ctx context.Context, request domai
 }
 
 func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
-	if request.Operation == "conversation_process" {
+	d.updateMu.RLock()
+	defer d.updateMu.RUnlock()
+	if d.updateReady.Load() {
+		return domain.RunnerWorkspaceResponse{Status: http.StatusConflict, Error: "Runner 即将重启，请稍后重试"}
+	}
+	ctx = d.withDockerRunnerHelperWait(ctx)
+	ctx = gitwork.WithSSHKnownHosts(ctx, request.GitSSHKnownHosts)
+	if request.Operation == domain.RunnerWorkspaceOperationConversationCLI {
 		return d.conversationProcess(ctx, request)
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationLoginModels {
+		return d.runnerLoginModels(ctx, request.ModelProvider)
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationSSHHostKeyProbe {
+		dialer := &net.Dialer{}
+		key, err := gitwork.ProbeSSHHostPublicKey(ctx, request.SSHHostKeyAddress, dialer.DialContext)
+		if err != nil {
+			return domain.RunnerWorkspaceResponse{Status: http.StatusBadGateway, Error: err.Error()}
+		}
+		return runnerWorkspacePayload(key)
 	}
 	if request.Operation == domain.RunnerWorkspaceOperationBrowser {
 		return d.handleRunnerWorkspaceBrowser(ctx, request)
@@ -163,6 +183,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 				if _, reserved := d.nodeCheckpointReservations.Load(requestGateKey(request)); reserved {
 					return workspaceBusyResponse("workspace is reserved for a node checkpoint")
 				}
+				if hasContent, err := runtime.WorkspaceDirHasContent(root); err == nil && !hasContent {
+					d.closeRunSandboxes(ctx, request.RunID)
+				}
 			}
 		}
 		return d.checkpointTransfers.Handle(ctx, root, request)
@@ -181,6 +204,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		}
 		if _, reserved := d.nodeCheckpointReservations.Load(requestGateKey(request)); reserved {
 			return workspaceBusyResponse("workspace is reserved for a node checkpoint")
+		}
+		if hasContent, err := runtime.WorkspaceDirHasContent(root); err == nil && !hasContent {
+			d.closeRunSandboxes(ctx, request.RunID)
 		}
 		if err := runtime.RestoreWorkspaceCheckpoint(root, request.Checkpoint); err != nil {
 			return runnerWorkspaceError(err)
@@ -283,6 +309,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	if request.Operation == domain.RunnerWorkspaceOperationPreparationStatus {
 		return runnerWorkspacePayload(d.runnerWorkspacePreparationStatus(ctx, root, request))
 	}
+	if request.Operation == domain.RunnerWorkspaceOperationPreviewService {
+		return d.workspacePreviewService(ctx, root, request)
+	}
 
 	liveWorkspace := request.RunKind == domain.RunKindWorkspace && (request.RunStatus == "running" || request.RunStatus == "waiting")
 	// A person editing from the IDE only shares the workspace with running
@@ -326,7 +355,7 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
-		archive, err := runtime.CreateWorkspaceCheckpointFiltered(root, request.DiscardNodeCheckpoints)
+		archive, err := runtime.CreateWorkspaceCheckpointFilteredContext(ctx, root, request.DiscardNodeCheckpoints)
 		if err != nil {
 			return runnerWorkspaceError(err)
 		}
@@ -396,6 +425,24 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			"changes": changes, "repositories": runnerCollectWorkspaceGitRepositories(root, request.Repositories), "warning": warning,
 		}
 		return runnerWorkspacePayload(payload)
+	case domain.RunnerWorkspaceOperationCheckouts:
+		if request.Sandbox != nil {
+			task, err := d.workspaceSandboxTask(root, request)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			sandbox, release, err := d.acquireTaskSandbox(ctx, task)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			defer release()
+			checkouts, err := runtime.SandboxCheckouts(ctx, sandbox)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			return runnerWorkspacePayload(map[string]any{"checkouts": checkouts})
+		}
+		return runnerWorkspacePayload(map[string]any{"checkouts": gitwork.Checkouts(ctx, root)})
 	case domain.RunnerWorkspaceOperationTree:
 		entries, truncated, readErr := runnerReadWorkspaceTree(root, request.Path)
 		if readErr != nil {

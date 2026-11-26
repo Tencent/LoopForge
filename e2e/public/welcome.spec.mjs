@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {signInUnconfigured, appReady, switchProject, chat, openHome, fitsFrame} from './helpers.mjs';
+import {signInUnconfigured, appReady, switchProject, chat, openHome, openExecutorSetup, fitsFrame} from './helpers.mjs';
 
 // Default journeys use an account with no model key, joined to the welcome
 // project. New self-registered accounts join it automatically. The real-model
@@ -37,8 +37,9 @@ for(const variant of [
     // A first conversation is personal until a project is picked.
     await expect(frame.locator('.project-picker')).toHaveClass(/is-unset/);
     const starters=frame.locator('.home-starter');
-    await expect(starters).toHaveCount(4);
-    for(let i=0;i<4;i++){await starters.nth(i).scrollIntoViewIfNeeded();await expect(starters.nth(i)).toBeInViewport()}
+    // The pinned release that first-run installs still has the one-click demo starter.
+    await expect.poll(()=>starters.count()).toBeGreaterThanOrEqual(3);
+    for(let i=0;i<await starters.count();i++){await starters.nth(i).scrollIntoViewIfNeeded();await expect(starters.nth(i)).toBeInViewport()}
     expect(await frame.locator('html').evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.screenshot({path:info.outputPath(`home-${variant.name}.png`)});
@@ -50,39 +51,6 @@ for(const variant of [
     function composer(){return chat(page).locator('.composer-column textarea')}
   });
 }
-
-test('the welcome SOP needs no key, runs a real script and waits for approval in the run view',async({page})=>{
-  test.setTimeout(120_000);
-  const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await signInUnconfigured(page);
-  await openHome(page);
-  await expect(chat(page).locator('.session-list [data-session-id^="local-preview-"]')).toHaveCount(0);
-  let runId='';
-  try{
-    const pending=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/runs');
-    await chat(page).getByRole('button',{name:/一键体验/}).click();
-    const created=await pending;
-    expect(created.ok()).toBe(true);runId=(await created.json()).id;
-    const read=async()=>{const r=await page.request.get(`/api/runs/${runId}`);expect(r.ok()).toBe(true);return r.json()};
-    await expect.poll(async()=>(await read()).status,{timeout:30_000}).toBe('waiting');
-    const run=await read();
-    expect(run.nodes.prepare.status).toBe('succeeded');
-    expect(run.nodes.approve.status).not.toBe('succeeded');
-    expect(run.artifacts.some(a=>a.name==='welcome')).toBe(true);
-    await page.goto(`/#/runs/${encodeURIComponent(runId)}`);
-    await page.locator('[data-run-node="approve"]').click();
-    const approve=page.locator('[data-approve="approve"]').first();
-    await expect(approve).toBeVisible({timeout:15_000});
-    await approve.click();
-    await expect.poll(async()=>(await read()).status,{timeout:30_000}).toBe('succeeded');
-    expect(errors).toEqual([]);
-  }finally{
-    if(runId){
-      await page.request.post(`/api/runs/${runId}/cancel`,{data:{}}).catch(()=>{});
-      await page.request.delete(`/api/runs/${runId}`).catch(()=>{});
-    }
-  }
-});
 
 test('home starters prepare a question or open quick access without calling a model',async({page})=>{
   let generations=0;
@@ -110,14 +78,21 @@ test('sending without a model key is refused before any request, with a way to c
   const frame=chat(page);
   const text='No key yet: this must be refused before any model runs.';
   await input.fill(text);
-  await frame.locator('.send-button').click();
-  const configure=frame.getByRole('button',{name:'去配置 CodeBuddy API Key'});
-  await expect(configure).toBeVisible();
+  const send=frame.locator('.send-button');
+  const notice=frame.locator('.credential-notice');
+  await expect(notice).toBeVisible();
+  const chooser=await notice.getByRole('button',{name:'新增执行器',exact:true}).isVisible();
+  if(chooser)await expect(send).toBeDisabled();
+  else await send.click();
   await expect(input).toHaveValue(text);
   expect(writes).toBe(0);
-  await configure.click();
-  await expect(page).toHaveURL(/#\/settings/);
-  await expect(page.locator('#credentialWizard .credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+  if(chooser){
+    await openExecutorSetup(page);
+  }else{
+    await frame.getByRole('button',{name:'去配置 CodeBuddy API Key',exact:true}).click();
+    await expect(page).toHaveURL(/#\/settings/);
+    await expect(page.locator('#credentialWizard .credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+  }
   await page.keyboard.press('Escape');
 });
 
@@ -192,16 +167,30 @@ for(const variant of [
       const response=await saved;expect(response.ok()).toBe(true);repositoryId=(await response.json()).id;
       await expect.poll(async()=>(await page.request.get(`/api/projects/${projectId}`).then(r=>r.json())).defaultRepositoryId).toBe(repositoryId);
       await expect(modal.locator('#repositoryCredentialHint')).toHaveAttribute('data-configured','false');
-      // The token link leaves the modal for the GitHub token step of the credential wizard.
+      // The token link opens credentials for any HTTPS host.
+      // first-run also runs this journey against the pinned published release.
+      const hostCredentials=await page.evaluate(()=>typeof openGitHTTPCredentials==='function');
       await modal.locator('[data-repository-configure-token]').click();
       await expect(modal).not.toHaveClass(/open/);
-      await expect(page).toHaveURL(/#\/settings/);
-      const wizard=page.locator('#credentialWizard');
-      await expect(wizard.getByRole('tab',{name:'GitHub 授权'})).toHaveAttribute('aria-selected','true');
-      await expect(wizard.locator('input[name="secret"]')).toHaveCount(0);
-      await wizard.getByRole('tab',{name:'访问令牌'}).click();
-      await expect(wizard.locator('.credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
-      await expect(wizard).toContainText('GitHub');
+      if(hostCredentials){
+        const credentials=page.locator('#gitHTTPCredentialDialog');
+        await expect(credentials).toBeVisible();
+        await credentials.locator('[data-http-cred-add]').click();
+        await expect(credentials.locator('input[name="host"]')).toBeFocused();
+        await expect(credentials.locator('input[name="token"]')).toBeVisible();
+        await expect(credentials.locator('[name="exposeToWorkspace"]')).toHaveCount(0);
+        await expect(credentials.locator('#gitHTTPCredentialPlatformHint')).toContainText(variant.lang==='en'?'merge status':'合并状态');
+        const platform=credentials.locator('select[name="platform"]');
+        await platform.click();
+        const options=credentials.getByRole('listbox');
+        await options.getByRole('option',{name:'GitLab',exact:true}).click();
+        await expect(platform).toHaveValue('gitlab');
+        await expect(credentials.locator('input[name="username"]')).toHaveAttribute('placeholder','oauth2');
+        await platform.press('ArrowDown');
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await expect(platform).toHaveValue('other');
+      }else await expect(page.locator('#credentialWizard')).toBeVisible();
       await page.keyboard.press('Escape');
     }finally{
       const restore=await page.request.put('/api/projects',{data:project});expect(restore.ok()).toBe(true);

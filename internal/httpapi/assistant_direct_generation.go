@@ -10,6 +10,10 @@ import (
 // Synchronous shared chat must occupy the same durable slot as /generations.
 // Otherwise a second process can save a pending turn while the first CLI writes
 // the shared transcript. A local file lock additionally fences stale writers.
+//
+// The caller must defer the returned finish right after a successful claim (as
+// chat does): it is the only place the turn leaves assistantDirectGenerations,
+// and a deferred call also runs when the handler panics.
 func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req assistantRequest, ownerID int64, actor domain.User, cancel context.CancelFunc) (domain.AssistantGeneration, *assistantDiagnosticsCollector, func(bool), error) {
 	g := domain.AssistantGeneration{ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ActorID: actor.ID, ActorName: actor.LoginName, ProjectID: req.ProjectID, Status: "running", StartedAt: time.Now().UTC()}
 	pending := assistantConversation{ID: req.SessionID, Shared: true, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, RunID: req.RunID, Messages: req.Messages}
@@ -17,6 +21,7 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 		return g, nil, nil, err
 	}
 	diagnostics := newAssistantDiagnosticsCollector(g)
+	assistantDirectGenerations.Store(g.ID, struct{}{})
 	untrack := inflightTasks.Add()
 	stop, done := make(chan struct{}), make(chan struct{})
 	go func() {
@@ -30,7 +35,7 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				current, ok := h.repo.AssistantGeneration(ownerID, req.SessionID)
+				current, ok := h.repo.PeekAssistantGeneration(ownerID, req.SessionID)
 				if !ok || current.ID != g.ID {
 					diagnostics.terminate("GENERATION_SUPERSEDED", "当前生成记录已被替换或移除", actor)
 					cancel()
@@ -56,13 +61,14 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 	}()
 	return g, diagnostics, func(completed bool) {
 		defer untrack()
+		defer assistantDirectGenerations.Delete(g.ID)
 		close(stop)
 		<-done
 		g.Status = "failed"
 		if completed {
 			g.Status = "completed"
 		} else {
-			current, ok := h.repo.AssistantGeneration(ownerID, req.SessionID)
+			current, ok := h.repo.PeekAssistantGeneration(ownerID, req.SessionID)
 			if ctx.Err() != nil || ok && current.ID == g.ID && current.CancelRequested {
 				g.Status = "cancelled"
 			}

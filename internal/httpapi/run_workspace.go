@@ -34,6 +34,21 @@ func runnerWorkspaceRunID(run domain.Run) string {
 	return run.ID
 }
 
+// workspaceOwner resolves the checkout lifecycle separately from the run whose
+// history is being viewed. A legacy per-node Runner checkout belongs to its own run.
+func (h *runsHandlers) workspaceOwner(run domain.Run) (domain.Run, bool) {
+	id := engine.WorkspaceRunID(run)
+	if id == run.ID || (runnerWorkspaceRunID(run) == run.ID && h.engine.RunExecutionRunner(run) != "") {
+		return run, true
+	}
+	owner, err := h.repo.RunHeader(id)
+	if err != nil || owner.ID == "" || owner.IsPersonalWorkspace() ||
+		owner.ExecutionContext.ProjectID != run.ExecutionContext.ProjectID || engine.WorkspaceRunID(owner) != owner.ID {
+		return domain.Run{}, false
+	}
+	return owner, true
+}
+
 const (
 	workspaceTreeLimit = 50000
 	workspaceFileLimit = 1024 * 1024
@@ -68,6 +83,16 @@ func workspaceRepositoryDetails(run domain.Run) []workspaceRepositoryDetail {
 		})
 	}
 	return details
+}
+
+// workspaceUnavailablePayload builds the shared 「工作区不可用」 view: the panel
+// renders a read-only notice with the reason instead of a change list, so the
+// fields stay in one place instead of being copied per call site.
+func workspaceUnavailablePayload(run domain.Run, reason string) gin.H {
+	return gin.H{
+		"available": false, "readOnly": true, "reason": reason,
+		"runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run),
+	}
 }
 
 // cloneURLWithoutCredentials keeps only what the panel needs to build a 工蜂
@@ -128,55 +153,49 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "run not found"})
 		return
 	}
-	if !run.WorkspaceCleanedAt.IsZero() {
-		reason := "工作区已回收；有保存的快照时可按需恢复，空闲 1 小时后再次回收"
-		if c.FullPath() == "/api/runs/:id/workspace" {
-			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
-			h.workspaceLifecycleInfo(c, run, payload)
-			c.JSON(http.StatusOK, payload)
-			return
+	owner, ok := h.workspaceOwner(run)
+	if !ok {
+		h.respondWorkspaceUnavailable(c, run, owner, http.StatusGone, "共享工作区所属运行已不可用", false)
+		return
+	}
+	runnerID := h.engine.RunExecutionRunner(owner)
+	if !owner.WorkspaceCleanedAt.IsZero() {
+		if runnerID != "" && c.FullPath() == "/api/runs/:id/workspace" {
+			if status, reason := h.probeRunnerWorkspace(c.Request.Context(), owner, runnerID); status != 0 {
+				h.respondWorkspaceUnavailable(c, run, owner, status, reason, false)
+				return
+			}
 		}
-		c.JSON(http.StatusGone, map[string]string{"error": reason})
+		h.respondWorkspaceUnavailable(c, run, owner, http.StatusGone, "工作区已回收；有保存的快照时可按需恢复，空闲 1 小时后再次回收", true)
 		return
 	}
 	if c.FullPath() == "/api/runs/:id/workspace/diff" && (c.Query("node") != "" || c.Query("attempt") != "") {
 		h.nodeCheckpointDiff(c, run)
 		return
 	}
-	if runnerID := h.engine.RunExecutionRunner(run); runnerID != "" {
-		if _, exists := h.repo.Runner(runnerID); !exists {
-			reason := "执行机器 Daemon 已卸载，工作区已随之删除；重新连接执行机器也无法恢复此工作区"
-			if c.FullPath() == "/api/runs/:id/workspace" {
-				payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
-				h.workspaceLifecycleInfo(c, run, payload)
-				c.JSON(http.StatusOK, payload)
-				return
-			}
-			c.JSON(http.StatusGone, map[string]string{"error": reason})
-			return
-		}
-		h.proxyRunnerWorkspace(c, run, runnerID)
+	if runnerID != "" {
+		h.proxyRunnerWorkspace(c, run, owner, runnerID)
 		return
 	}
-	root, reason := h.engine.LocalRunWorkspace(run)
+	// In a child-first SOP, the child may have bound the checkout before the
+	// owner has run a step of its own. Use that binding until the owner has one.
+	workspace := owner
+	if strings.TrimSpace(workspace.WorkspaceRoot) == "" {
+		workspace.WorkspaceHost, workspace.WorkspaceRoot = run.WorkspaceHost, run.WorkspaceRoot
+	}
+	root, reason := h.engine.LocalRunWorkspace(workspace)
 	if reason == "" {
 		if info, err := os.Stat(root); err != nil || !info.IsDir() {
 			reason = "工作区尚未创建或已被清理"
 		}
 	}
 	if reason != "" {
-		if c.FullPath() == "/api/runs/:id/workspace" {
-			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
-			h.workspaceLifecycleInfo(c, run, payload)
-			c.JSON(http.StatusOK, payload)
-			return
-		}
-		c.JSON(http.StatusConflict, map[string]string{"error": reason})
+		h.respondWorkspaceUnavailable(c, run, owner, http.StatusConflict, reason, true)
 		return
 	}
 
 	if c.FullPath() != "/api/runs/:id/workspace" {
-		h.touchWorkspaceBrowse(c, run)
+		h.touchWorkspaceBrowse(c, owner)
 	}
 	switch c.FullPath() {
 	case "/api/runs/:id/workspace":
@@ -186,7 +205,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 			"changes": changes, "repositories": collectWorkspaceGitRepositories(root, run), "warning": warning,
 			"repositoryDetails": workspaceRepositoryDetails(run),
 		}
-		h.workspaceLifecycleInfo(c, run, payload)
+		h.workspaceLifecycleInfo(c, owner, payload, true)
 		c.JSON(http.StatusOK, payload)
 	case "/api/runs/:id/workspace/tree":
 		entries, truncated, err := readWorkspaceTree(root, c.Query("path"))
@@ -269,11 +288,68 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 	}
 }
 
-func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run domain.Run, runnerID string) {
-	if h.runnerControls == nil {
-		c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "远程工作区通道未配置"})
+func (h *runsHandlers) respondWorkspaceUnavailable(c *gin.Context, run, owner domain.Run, status int, reason string, allowRestore bool) {
+	if c.FullPath() != "/api/runs/:id/workspace" {
+		c.JSON(status, gin.H{"error": reason})
 		return
 	}
+	payload := workspaceUnavailablePayload(run, reason)
+	if owner.ID != "" {
+		h.workspaceLifecycleInfo(c, owner, payload, allowRestore)
+	}
+	c.JSON(http.StatusOK, payload)
+}
+
+func (h *runsHandlers) requestRunnerWorkspace(ctx context.Context, runnerID string, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, int, string) {
+	if _, exists := h.repo.Runner(runnerID); !exists {
+		return domain.RunnerWorkspaceResponse{}, http.StatusGone, "执行机器 Daemon 已卸载，工作区已随之删除；重新连接执行机器也无法恢复此工作区"
+	}
+	if h.runnerControls == nil {
+		return domain.RunnerWorkspaceResponse{}, http.StatusServiceUnavailable, "远程工作区通道未配置"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	response, err := h.runnerControls.requestWorkspace(ctx, runnerID, request)
+	if err != nil {
+		reason := "远程执行机器当前离线或工作区通道不可用"
+		if errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errRunnerWorkspaceUnavailable) {
+			reason = "远程工作区读取超时"
+		}
+		return response, http.StatusConflict, reason
+	}
+	return response, 0, ""
+}
+
+func runnerWorkspaceErrorStatus(status int) int {
+	if status < 400 || status > 599 {
+		return http.StatusBadRequest
+	}
+	return status
+}
+
+func (h *runsHandlers) probeRunnerWorkspace(ctx context.Context, owner domain.Run, runnerID string) (int, string) {
+	response, status, reason := h.requestRunnerWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{
+		RunID: owner.ID, RunStatus: owner.Status, WorkspaceLayout: owner.ExecutionContext.RunnerWorkspaceLayout,
+		Operation: domain.RunnerWorkspaceOperationInfo,
+	})
+	if status != 0 {
+		return status, reason
+	}
+	// A missing checkout is expected after reclamation and confirms the Runner
+	// can receive a restore request.
+	if response.Status == http.StatusNotFound && !owner.WorkspaceCleanedAt.IsZero() {
+		return 0, ""
+	}
+	if response.Error != "" {
+		return runnerWorkspaceErrorStatus(response.Status), response.Error
+	}
+	if len(response.Payload) == 0 {
+		return http.StatusBadGateway, "远程执行机器返回了空响应"
+	}
+	return 0, ""
+}
+
+func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run, owner domain.Run, runnerID string) {
 	operation := ""
 	switch c.FullPath() {
 	case "/api/runs/:id/workspace":
@@ -306,30 +382,19 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run domain.Run, runn
 		RunID: runnerWorkspaceRunID(run), RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: operation,
 		Path: path, Query: c.Query("q"), Ref: ref, Repositories: run.RepositoryContexts(),
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
-	defer cancel()
-	response, err := h.runnerControls.requestWorkspace(ctx, runnerID, request)
-	if err != nil {
-		reason := "远程执行机器当前离线或工作区通道不可用"
-		if errors.Is(err, context.DeadlineExceeded) {
-			reason = "远程工作区读取超时"
-		}
-		if operation == domain.RunnerWorkspaceOperationInfo {
-			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
-			h.workspaceLifecycleInfo(c, run, payload)
-			c.JSON(http.StatusOK, payload)
-			return
-		}
-		c.JSON(http.StatusConflict, map[string]string{"error": reason})
+	response, status, reason := h.requestRunnerWorkspace(c.Request.Context(), runnerID, request)
+	if status == http.StatusServiceUnavailable {
+		c.JSON(status, gin.H{"error": reason})
+		return
+	}
+	if status != 0 {
+		h.respondWorkspaceUnavailable(c, run, owner, status, reason, false)
 		return
 	}
 	if response.Error != "" {
-		status := response.Status
-		if status < 400 || status > 599 {
-			status = http.StatusBadRequest
-		}
+		status := runnerWorkspaceErrorStatus(response.Status)
 		if operation == domain.RunnerWorkspaceOperationInfo && status == http.StatusNotFound {
-			c.JSON(http.StatusOK, gin.H{"available": false, "readOnly": true, "reason": response.Error, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)})
+			c.JSON(http.StatusOK, workspaceUnavailablePayload(run, response.Error))
 			return
 		}
 		c.JSON(status, map[string]string{"error": response.Error})
@@ -340,7 +405,7 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run domain.Run, runn
 		return
 	}
 	if operation != domain.RunnerWorkspaceOperationInfo {
-		h.touchWorkspaceBrowse(c, run)
+		h.touchWorkspaceBrowse(c, owner)
 	}
 	if operation == domain.RunnerWorkspaceOperationInfo {
 		var payload map[string]any
@@ -348,7 +413,7 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run domain.Run, runn
 			payload["readOnly"] = !h.workspaceWritable(c, run)
 			payload["pauseRequested"] = run.PauseRequested
 			payload["repositoryDetails"] = workspaceRepositoryDetails(run)
-			h.workspaceLifecycleInfo(c, run, payload)
+			h.workspaceLifecycleInfo(c, owner, payload, true)
 			c.JSON(200, payload)
 			return
 		}
@@ -509,6 +574,14 @@ func readWorkspaceTree(root, raw string) ([]workspaceEntry, bool, error) {
 		entries = append(entries, workspaceEntry{Path: rel, Name: d.Name(), Type: kind, Size: info.Size(), Modified: info.ModTime()})
 		return nil
 	})
+	entries = pruneEmptyWorkspaceDirs(entries)
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	return entries, truncated, err
+}
+
+// pruneEmptyWorkspaceDirs drops directory entries that have no visible file
+// beneath them, filtering entries in place and keeping the original order.
+func pruneEmptyWorkspaceDirs(entries []workspaceEntry) []workspaceEntry {
 	visibleParents := map[string]bool{}
 	for _, entry := range entries {
 		if entry.Type != "file" {
@@ -525,9 +598,7 @@ func readWorkspaceTree(root, raw string) ([]workspaceEntry, bool, error) {
 		}
 		visible = append(visible, entry)
 	}
-	entries = visible
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	return entries, truncated, err
+	return visible
 }
 
 func readWorkspaceFile(root, raw string) (string, int64, error) {

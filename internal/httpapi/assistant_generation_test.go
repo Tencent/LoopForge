@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/gin-gonic/gin"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -124,7 +126,7 @@ func TestGenerationCompletedReplyAndSnapshot(t *testing.T) {
 	h.generate = func(context.Context, string, domain.User) (string, error) {
 		return `{"message":"已分析登录需求","drafts":[]}`, nil
 	}
-	c, rec := workbenchContext(u, "POST", "/api/assistant/generations", bytes.NewBufferString(`{"projectId":"workbench","sessionId":"completed-chat","messages":[{"role":"user","content":"分析登录需求"}]}`))
+	c, rec := workbenchContext(u, "POST", "/api/assistant/generations", bytes.NewBufferString(`{"projectId":"workbench","sessionId":"completed-chat","clientRequestId":"completion-request","messages":[{"role":"user","content":"分析登录需求"}]}`))
 	h.startGeneration(c)
 	if rec.Code != 202 {
 		t.Fatalf("start: %s", rec.Body.String())
@@ -145,7 +147,8 @@ func TestGenerationCompletedReplyAndSnapshot(t *testing.T) {
 			h.generation(c)
 			var snapshot domain.AssistantGeneration
 			json.Unmarshal(rec.Body.Bytes(), &snapshot)
-			if rec.Code != 200 || snapshot.Status != "completed" || len(snapshot.Events) != 0 || len(snapshot.Reply) == 0 {
+			if rec.Code != 200 || snapshot.Status != "completed" || len(snapshot.Events) != 0 ||
+				len(snapshot.Reply) == 0 || snapshot.ClientRequestID != "completion-request" {
 				t.Fatalf("snapshot: %s", rec.Body.String())
 			}
 			break
@@ -157,5 +160,208 @@ func TestGenerationCompletedReplyAndSnapshot(t *testing.T) {
 			t.Fatal("completion timed out")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestAssistantGenerationKeepsAcceptanceAfterNextTurn(t *testing.T) {
+	h, user := workbenchFixture(t)
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		return `{"message":"回复","drafts":[]}`, nil
+	}
+	const sessionID = "receipt-chat"
+	var messages []assistantMessage
+	for _, requestID := range []string{"first-request", "second-request"} {
+		messages = append(messages, assistantMessage{Role: "user", Content: "继续"})
+		body, err := json.Marshal(gin.H{
+			"projectId": "workbench", "sessionId": sessionID,
+			"clientRequestId": requestID, "messages": messages,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, rec := workbenchContext(user, http.MethodPost, "/api/assistant/generations", bytes.NewBuffer(body))
+		h.startGeneration(c)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("start %s: %d %s", requestID, rec.Code, rec.Body)
+		}
+		messages = waitForCompletedGeneration(t, h, user.ID, sessionID).Messages
+	}
+	generation, _ := h.repo.AssistantGeneration(user.ID, sessionID)
+	if generation.ClientRequestID != "second-request" {
+		t.Fatal("latest generation did not replace the first", generation.ClientRequestID)
+	}
+	c, rec := workbenchContext(user, http.MethodGet, "/", bytes.NewBuffer(nil))
+	c.Params = gin.Params{{Key: "id", Value: sessionID}}
+	h.session(c)
+	var session domain.AssistantSession
+	if err := json.Unmarshal(rec.Body.Bytes(), &session); err != nil || rec.Code != http.StatusOK {
+		t.Fatal("could not load acceptance receipts", rec.Code, rec.Body.String(), err)
+	}
+	receipts := session.RecentClientRequestIDs
+	if len(receipts) != 2 || receipts[0] != "first-request" || receipts[1] != "second-request" {
+		t.Fatal("the first send lost its receipt", receipts)
+	}
+}
+
+func TestAssistantComposerModelRefusesCatalogSubstitution(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "available-model")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "available-model")
+	h, user := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		return `{"message":"回复","drafts":[]}`, nil
+	}
+	send := func(id, model string, exact bool, handler func(*gin.Context), refs ...domain.AssistantReference) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(assistantRequest{
+			SessionID: id, ProjectID: "workbench", Model: model, RequireExactModel: exact,
+			Messages: []assistantMessage{{Role: "user", Content: "继续", References: refs}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, rec := workbenchContext(user, http.MethodPost, "/", bytes.NewBuffer(body))
+		handler(c)
+		return rec
+	}
+	const explicitID = "explicit-model"
+	issue := domain.Issue{ID: "model-issue", ProjectID: "workbench", Title: "待讨论需求"}
+	if err := h.repo.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: explicitID, ProjectID: issue.ProjectID}); err != nil {
+		t.Fatal(err)
+	}
+	ref := domain.AssistantReference{Type: "issue", ID: issue.ID, Name: issue.Title, ProjectID: issue.ProjectID}
+	for _, handler := range []func(*gin.Context){h.startGeneration, h.chat} {
+		rec := send(explicitID, "retired-model", true, handler, ref)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "请重新选择模型") {
+			t.Fatal("the explicit model was silently replaced", rec.Code, rec.Body.String())
+		}
+		if saved, _ := h.repo.AssistantSession(user.ID, explicitID); saved.IssueID != "" {
+			t.Fatal("the rejected send changed the conversation's linked issue", saved.IssueID)
+		}
+	}
+	if _, ok := h.repo.AssistantGeneration(user.ID, explicitID); ok {
+		t.Fatal("the unavailable model admitted a generation")
+	}
+	for _, tc := range []struct {
+		id, model string
+		exact     bool
+	}{
+		{id: "legacy-model", model: "retired-model"},
+		{id: "default-alias", model: assistantDefaultModel, exact: true},
+		{id: "listed-model", model: "available-model", exact: true},
+	} {
+		rec := send(tc.id, tc.model, tc.exact, h.startGeneration)
+		if rec.Code != http.StatusAccepted {
+			t.Fatal("could not use the current model", tc.id, rec.Code, rec.Body.String())
+		}
+		if saved := waitForCompletedGeneration(t, h, user.ID, tc.id); saved.Model != "available-model" {
+			t.Fatal("unexpected selected model", tc.id, saved.Model)
+		}
+	}
+
+	const runningID = "running-model"
+	running := domain.AssistantGeneration{ID: "running-turn", SessionID: runningID, UserID: user.ID, Status: "running"}
+	pending := domain.AssistantSession{ID: runningID, ProjectID: "workbench", Model: "available-model",
+		Messages: []assistantMessage{{Role: "user", Content: "第一条"}}}
+	if err := h.repo.BeginAssistantGeneration(running, pending); err != nil {
+		t.Fatal(err)
+	}
+	c, rec := workbenchContext(user, http.MethodPost, "/?generationId="+running.ID, bytes.NewBufferString(
+		`{"content":"请修改方向","model":"retired-model","requireExactModel":true}`))
+	c.Params = gin.Params{{Key: "id", Value: runningID}}
+	h.steerGeneration(c)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "请重新选择模型") {
+		t.Fatal("steering silently changed the requested model", rec.Code, rec.Body.String())
+	}
+	if g, _ := h.repo.PeekAssistantGeneration(user.ID, runningID); g.CancelRequested || g.Steer != nil {
+		t.Fatal("rejected model interrupted the original reply", g)
+	}
+}
+
+func TestStartGenerationAcceptsLargeRequestBody(t *testing.T) {
+	h, u := workbenchFixture(t)
+	h.generate = func(ctx context.Context, _ string, _ domain.User) (string, error) {
+		return "回复", nil
+	}
+	largeActivityText := strings.Repeat("thinking step\n", 200000)
+	largeMessages := []assistantMessage{
+		{Role: "user", Content: "帮我做实验"},
+		{
+			Role:    "assistant",
+			Content: "好的，正在执行实验",
+			Activity: []domain.AssistantActivityEvent{
+				{Kind: "thinking", Text: largeActivityText},
+			},
+		},
+		{Role: "user", Content: "继续推进"},
+	}
+	_ = saveAssistantConversation(h.repo, u.ID, assistantConversation{
+		ID:        "large-session",
+		ProjectID: "workbench",
+		Messages:  largeMessages[:2],
+	})
+	reqBody, err := json.Marshal(assistantRequest{
+		ProjectID: "workbench",
+		SessionID: "large-session",
+		Messages:  largeMessages,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqBody) <= 2<<20 {
+		t.Fatalf("expected payload > 2MB, got %d", len(reqBody))
+	}
+	c, rec := workbenchContext(u, "POST", "/api/assistant/generations", bytes.NewBuffer(reqBody))
+	h.startGeneration(c)
+	if rec.Code != 202 {
+		t.Fatalf("expected 202 Accepted, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSessionUpdateAcceptsLargeRequestBody(t *testing.T) {
+	h, u := workbenchFixture(t)
+	largeActivityText := strings.Repeat("thinking step\n", 200000)
+	largeMessages := []assistantMessage{
+		{Role: "user", Content: "帮我做实验"},
+		{
+			Role:    "assistant",
+			Content: "好的，正在执行实验",
+			Activity: []domain.AssistantActivityEvent{
+				{Kind: "thinking", Text: largeActivityText},
+			},
+		},
+	}
+	_ = saveAssistantConversation(h.repo, u.ID, assistantConversation{
+		ID:        "large-session-put",
+		ProjectID: "workbench",
+		Title:     "原标题",
+		Messages:  largeMessages,
+	})
+	saved, _ := loadAssistantConversation(h.repo, u.ID, "large-session-put")
+	body := struct {
+		assistantConversation
+		Title string `json:"title"`
+	}{
+		assistantConversation: assistantConversation{
+			ID:        "large-session-put",
+			ProjectID: "workbench",
+			Title:     "新标题",
+			Messages:  largeMessages,
+			UpdatedAt: saved.UpdatedAt,
+		},
+		Title: "新标题",
+	}
+	reqBody, _ := json.Marshal(body)
+	if len(reqBody) <= 2<<20 {
+		t.Fatalf("expected payload > 2MB, got %d", len(reqBody))
+	}
+	c, rec := workbenchContext(u, "PUT", "/api/assistant/sessions/large-session-put", bytes.NewBuffer(reqBody))
+	c.Params = gin.Params{{Key: "id", Value: "large-session-put"}}
+	h.session(c)
+	if rec.Code != 200 {
+		t.Fatalf("expected 200 OK, got %d %s", rec.Code, rec.Body.String())
 	}
 }

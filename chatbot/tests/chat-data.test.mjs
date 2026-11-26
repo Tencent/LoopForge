@@ -51,6 +51,8 @@ test("image, chart, code and SOP drafts share one artifact list and remain stabl
 test("project binding allows personal history and preserves established project boundaries", () => {
   assert.equal(projectChange(null, "p1"), "draft");
   assert.equal(projectChange({ projectId: "" }, "p1"), "bind");
+  assert.equal(projectChange({ workspaceRunId: "ws" }, "p1"), "new");
+  assert.equal(projectChange({ ownWorkspaceRunIds: ["ws"] }, "p1"), "new");
   assert.equal(projectChange({ projectId: "p1" }, "p1"), "same");
   assert.equal(projectChange({ projectId: "p1" }, "p2"), "new");
   assert.equal(projectChange({ projectId: "p1" }, ""), "new");

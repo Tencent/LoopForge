@@ -1,9 +1,38 @@
 package domain
 
-import "testing"
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+)
+
+func TestFrozenNativeSandboxCarriesLegacyEnvironmentVariables(t *testing.T) {
+	for _, driver := range []string{"native", "seatbelt", "bwrap", "docker", "local"} {
+		t.Run(driver, func(t *testing.T) {
+			raw := `{
+				"profile":{"driver":"` + driver + `","environment":{"HTTPS_PROXY":"inline"}},
+				"environment":{"id":"tools","variables":{
+					"JAVA_HOME":"/opt/java","HTTPS_PROXY":"legacy","PATH":"old-path",
+					"BIN":"${PREFIX}/bin","LIB":"$AGENTFLOW_ENVIRONMENT_ROOT/lib"
+				},"installScript":"old script"}
+			}`
+			var spec RunnerSandboxSpec
+			if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{"HTTPS_PROXY": "inline"}
+			if driver == "native" || driver == "seatbelt" || driver == "bwrap" {
+				want["JAVA_HOME"] = "/opt/java"
+			}
+			if !reflect.DeepEqual(spec.Profile.Environment, want) {
+				t.Fatalf("environment = %v, want %v", spec.Profile.Environment, want)
+			}
+		})
+	}
+}
 
 func TestRunnerNodeCheckpointVersion(t *testing.T) {
-	for version, want := range map[string]bool{"0.10.0": false, "0.10.1": false, "0.10.2": true} {
+	for version, want := range map[string]bool{"0.10.2": false, RunnerVersionArtifactTransfer: false, RunnerVersionNodeCheckpoints: true} {
 		if got := (Runner{RunnerVersion: version}).SupportsNodeCheckpoints(); got != want {
 			t.Errorf("version %s: got %v, want %v", version, got, want)
 		}
@@ -93,6 +122,13 @@ func TestAgentCLIRuntimeAuthModeIsPersonal(t *testing.T) {
 	if r.RuntimeAuthMode("codebuddy") != RuntimeAuthPersonal {
 		t.Fatal("codebuddy still defaults to personal credentials")
 	}
+	if r.RuntimeAuthMode("agy") != RuntimeAuthLocal {
+		t.Fatal("Antigravity supports local account login")
+	}
+	r.Runtimes = append(r.Runtimes, RunnerRuntime{Provider: "agy", AuthMode: RuntimeAuthPersonal})
+	if r.RuntimeAuthMode("agy") != RuntimeAuthPersonal {
+		t.Fatal("Antigravity API-key preference was ignored")
+	}
 }
 
 func TestRunnerSupportsWorkBranchSync(t *testing.T) {
@@ -110,6 +146,14 @@ func TestRunnerSupportsConversationCLIWithInterruptibleSnapshots(t *testing.T) {
 	for version, want := range map[string]bool{"": false, "dev": false, "0.9.9": false, "0.10.0": false, "0.10.1": true, "v0.10.1": true, "0.11.0": true} {
 		if got := (Runner{RunnerVersion: version}).SupportsConversationCLI(); got != want {
 			t.Errorf("SupportsConversationCLI(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
+func TestRunnerSupportsConversationSOPWorkspaceWithNestedCheckouts(t *testing.T) {
+	for version, want := range map[string]bool{"0.12.2": false, "0.12.3": true, "0.13.0": true} {
+		if got := (Runner{RunnerVersion: version}).SupportsConversationSOPWorkspace(); got != want {
+			t.Errorf("SupportsConversationSOPWorkspace(%q) = %v, want %v", version, got, want)
 		}
 	}
 }

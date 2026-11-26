@@ -14,8 +14,8 @@ import (
 	"agentflow/internal/domain"
 )
 
-// Chromium re-sends the current page when the screencast restarts, so a
-// static page still ends on a sharp frame after a scroll.
+// A static page still ends on a sharp frame after a scroll, whether or not
+// Chromium re-sends it when the screencast restarts.
 func TestBrowserScrollEndsOnASharpFrame(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")
@@ -68,26 +68,16 @@ func TestBrowserScrollEndsOnASharpFrame(t *testing.T) {
 	for width < 700 {
 		seq, width = nextWidth(seq)
 	}
+	scrolled := time.Now()
 	if _, err := HandleBrowser(ctx, runID, domain.BrowserRequest{Operation: "input", Events: []domain.BrowserInputEvent{{Type: "wheel", X: 0.5, Y: 0.5, DeltaY: 100}}}); err != nil {
 		t.Fatal(err)
 	}
-	// A full-width frame already in flight can arrive before the screencast
-	// restarts at the lighter size. Keep reading until a light frame shows up.
-	sawLight := false
+	// Light frames may arrive while the scroll is in motion, and a full-width
+	// frame already in flight can arrive right after the wheel; neither is
+	// guaranteed on a page that does not repaint. Once input settles a
+	// full-width frame arrives although nothing changed.
 	for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); {
-		seq, width = nextWidth(seq)
-		if width <= 400 {
-			sawLight = true
-			break
-		}
-	}
-	if !sawLight {
-		t.Fatalf("no light frame while scrolling (last %dpx)", width)
-	}
-	// More light frames may follow while the scroll animates; once input
-	// settles a full-width frame arrives although nothing changed.
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		if seq, width = nextWidth(seq); width >= 700 {
+		if seq, width = nextWidth(seq); width >= 700 && time.Since(scrolled) >= browserMotionSettle {
 			return
 		}
 	}

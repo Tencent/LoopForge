@@ -61,6 +61,17 @@ const ConversationWorkspaceWorkflowID = "conversation-workspace"
 // IsWorkspace distinguishes an on-demand chat workspace from a scheduled SOP.
 func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
 
+// FailedBeforeAutoAssignment reports whether a project-auto run failed while waiting for a machine.
+func (r Run) FailedBeforeAutoAssignment() bool {
+	return r.Status == "failed" && r.ExecutionContext.ExecutionPool == ExecutionPoolProjectAuto &&
+		r.ExecutionContext.ExecutionMode == ""
+}
+
+// IsPersonalWorkspace identifies a workspace whose access is scoped to its owner.
+func (r Run) IsPersonalWorkspace() bool {
+	return r.IsWorkspace() && r.ExecutionContext.ProjectID == ""
+}
+
 // LiveWorkspace reports a chat workspace that is open for edits. It has no SOP
 // graph to pause, so Main Bot and people in the IDE edit it side by side and
 // rely on expectedSha256 to catch conflicting writes.
@@ -111,6 +122,11 @@ func (r Run) RepositoryContexts() []RepositoryContext {
 		return []RepositoryContext{r.Repository}
 	}
 	return nil
+}
+
+// UsesConversationWorkspace includes a dispatched SOP and its child runs.
+func (r Run) UsesConversationWorkspace() bool {
+	return r.ExecutionContext.ExecutionPinned && r.ExecutionContext.WorkspaceRunID != "" && !r.IsWorkspace()
 }
 
 // UnmarshalJSON lifts the shared sandbox instance from historical node runs.
@@ -164,6 +180,11 @@ type NodeRun struct {
 	RecoveryCheckpoints []NodeCheckpoint `json:"recoveryCheckpoints,omitempty"`
 	RestoreCheckpoint   bool             `json:"restoreCheckpoint,omitempty"`
 	Rewound             bool             `json:"rewound,omitempty"`
+
+	// Stream cursors are message-scoped; pending usage is already included in
+	// Usage until a session result replaces it with authoritative totals.
+	UsageStreamCursors map[string]TokenUsage `json:"usageStreamCursors,omitempty"`
+	UsagePending       map[string]TokenUsage `json:"usagePending,omitempty"`
 }
 
 // NodeCheckpoint identifies one attempt's workspace state. Its private refs
@@ -185,6 +206,17 @@ type NodeRepositoryCheckpoint struct {
 	Head         string `json:"head"`
 	Branch       string `json:"branch,omitempty"`
 	FileCount    int    `json:"fileCount"`
+}
+
+// Question is what the node asks a human to supply: the actionRequired of
+// a "human" decision while the node waits for it. Empty otherwise, also
+// for a paused or turn-exhausted node that still carries an earlier
+// decision.
+func (n *NodeRun) Question() string {
+	if n == nil || n.Status != "waiting_approval" || n.Activity != "等待人工确认" || n.GateResult == nil || n.GateResult.Decision != "human" {
+		return ""
+	}
+	return strings.TrimSpace(n.GateResult.ActionRequired)
 }
 
 // GateResult is the structured terminal decision submitted by an Agent through
@@ -215,6 +247,9 @@ type TokenUsage struct {
 	// CostStatus 区分"成本为 0"与"成本未知"：reported（适配器上报）、estimated（按 token 估算）、
 	// unknown（未识别，展示为"未识别"而不是 ¥0）。空值视为 unknown，旧数据向后兼容。
 	CostStatus string `json:"costStatus,omitempty"`
+	// Marks a platform-priced total so a sum of reported and fallback-priced
+	// invocations is not repriced as though it came from one model call.
+	CostPricingVersion string `json:"costPricingVersion,omitempty"`
 }
 
 type TelemetryEvent struct {
@@ -244,6 +279,11 @@ type TelemetryEvent struct {
 	Error          *ErrorObservation `json:"error,omitempty"`
 }
 
+const (
+	RunEventSandboxSelected = "sandbox.selected"
+	RunEventFailed          = "run.failed"
+)
+
 type RunEvent struct {
 	ID        string    `json:"id"`
 	RunID     string    `json:"runId"`
@@ -267,6 +307,7 @@ type Artifact struct {
 	Size      int64  `json:"size"`
 	SHA256    string `json:"sha256"`
 	Content   string `json:"content"`
+	BlobID    string `json:"-"`
 	// RepositoryDir records which run repository workspace the artifact was
 	// collected from (empty = run workspace root, where SOP deliverables live).
 	RepositoryDir string    `json:"repositoryDir,omitempty"`

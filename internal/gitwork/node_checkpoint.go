@@ -39,7 +39,7 @@ func CreateNodeCheckpoint(ctx context.Context, workspace, id string) (NodeCheckp
 		return checkpoint, fmt.Errorf("resolve checkpoint HEAD")
 	}
 	checkpoint.Head = head
-	branchCmd := command(ctx, workspace, "", nil, []string{"symbolic-ref", "--quiet", "--short", "HEAD"})
+	branchCmd := command(ctx, workspace, nil, []string{"symbolic-ref", "--quiet", "--short", "HEAD"})
 	branchOutput, err := branchCmd.Output()
 	if err != nil {
 		var exit *exec.ExitError
@@ -90,7 +90,7 @@ func CreateNodeCheckpoint(ctx context.Context, workspace, id string) (NodeCheckp
 	}
 	if tracked != "" {
 		for _, flag := range []string{"--no-skip-worktree", "--no-assume-unchanged"} {
-			cmd := command(ctx, workspace, "", nil, []string{"update-index", flag, "-z", "--stdin"})
+			cmd := command(ctx, workspace, nil, []string{"update-index", flag, "-z", "--stdin"})
 			cmd.Env = WithEnvValue(cmd.Env, "GIT_INDEX_FILE", tempIndex)
 			cmd.Stdin = strings.NewReader(tracked)
 			if output, err := cmd.CombinedOutput(); err != nil {
@@ -139,7 +139,7 @@ func copyCheckpointIndex(path string, source io.Reader) error {
 }
 
 func checkpointGit(ctx context.Context, workspace, index string, args ...string) (string, error) {
-	cmd := command(ctx, workspace, "", nil, args)
+	cmd := command(ctx, workspace, nil, args)
 	if index != "" {
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_INDEX_FILE", index)
 	}
@@ -162,7 +162,7 @@ func DiffNodeCheckpoints(ctx context.Context, workspace, from, to string, limit 
 			return "", false, fmt.Errorf("checkpoint %s not found", ref)
 		}
 	}
-	cmd := command(ctx, workspace, "", nil, []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color", from, to, "--"})
+	cmd := command(ctx, workspace, nil, []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color", from, to, "--"})
 	output := &checkpointLimitWriter{limit: limit}
 	var stderr bytes.Buffer
 	cmd.Stdout = output
@@ -182,7 +182,7 @@ func NodeCheckpointChangedFiles(ctx context.Context, workspace, from, to string)
 			return nil, fmt.Errorf("checkpoint %s not found", ref)
 		}
 	}
-	cmd := command(ctx, workspace, "", nil, []string{"diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", from, to, "--"})
+	cmd := command(ctx, workspace, nil, []string{"diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", from, to, "--"})
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("list checkpoint changes: %w", err)
@@ -242,7 +242,7 @@ func ValidateNodeCheckpointRestore(ctx context.Context, workspace string, checkp
 	if !ok || parent != checkpoint.Head {
 		return fmt.Errorf("checkpoint HEAD does not match its parent")
 	}
-	branchCmd := command(ctx, workspace, "", nil, []string{"symbolic-ref", "--quiet", "--short", "HEAD"})
+	branchCmd := command(ctx, workspace, nil, []string{"symbolic-ref", "--quiet", "--short", "HEAD"})
 	out, err := branchCmd.Output()
 	if err != nil {
 		var exit *exec.ExitError

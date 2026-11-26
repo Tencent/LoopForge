@@ -113,8 +113,7 @@ func (e *Engine) createNodeCheckpoint(ctx context.Context, run domain.Run, nodeI
 		}
 		invocation := &domain.RunnerInvocation{RunID: run.ID, NodeID: nodeID}
 		credentials := sb.credentialSnapshot()
-		bindRunnerRepositories(invocation, run, credentials.GitToken, credentials.GitUserName, credentials.GitUserEmail)
-		invocation.GitSSHKeys = credentials.GitSSHKeys
+		bindRunnerRepositories(invocation, run, credentials.GitUserName, credentials.GitUserEmail)
 		task := domain.RunnerTask{
 			ID:       fmt.Sprintf("rt-%d-%s-node-checkpoint", time.Now().UnixNano(), safeRunnerPath(nodeID)),
 			RunnerID: runnerID, Provider: "terminal", Action: domain.RunnerTaskActionNodeCheckpointCreate,

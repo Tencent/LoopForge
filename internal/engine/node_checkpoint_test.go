@@ -48,7 +48,7 @@ func TestStartNodeCheckpointsProjectAndChildPolicy(t *testing.T) {
 	defer store.Close()
 	e := New(store, runtime.NewManager(t.TempDir()))
 	e.ConfigureExecution("control", "control", time.Minute, false)
-	wf := domain.WorkflowDefinition{ID: "checkpoint-policy", Name: "Checkpoint policy", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "script", ScriptLanguage: "shell", Script: "true"}}}
+	wf := domain.WorkflowDefinition{ID: "checkpoint-policy", Name: "Checkpoint policy", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "script", ScriptLanguage: "shell", Script: "true"}}}
 	if err := store.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}

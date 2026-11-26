@@ -14,7 +14,13 @@ import (
 func (h *assistantHandlers) freshPhasePrompt(req assistantRequest, sourceRoot string, switches int) string {
 	prompt := h.turnPrompt(req, sourceRoot, false)
 	if switches > 0 {
+		// The fresh session has no record of the switch it continues from.
 		prompt += "\n本轮之前的阶段已执行过操作。先核对工作区实际文件与状态，避免重复执行。"
+		if req.workspaceMode {
+			prompt += "本轮已经进入工作区模式，你现在就在工作区里：直接用原生文件与命令工具继续，不要再调用 workbench_workspace_open 或 workbench_platform_mode，除非任务确实需要换运行环境或回到平台管理。"
+		} else {
+			prompt += "本轮已经切回平台模式：直接用平台工具继续，不要为重做上一阶段的操作再切换模式。"
+		}
 	}
 	return prompt
 }
@@ -29,7 +35,7 @@ var assistantResumeRejectedRe = regexp.MustCompile(`(?i)(must end with a user me
 // with none of these executed nothing and can safely start over.
 func assistantPhaseProgress(ev assistantStreamEvent) bool {
 	switch ev.Kind {
-	case "tool", "toolDone", "toolEnd", "text", "answer", "agentText", "draftStart", "draftDelta", "thinking", "thinkingStart":
+	case "tool", "toolDone", "toolEnd", "text", "answer", "agentText", "agentModel", "draftStart", "draftDelta", "thinking", "thinkingStart":
 		return true
 	}
 	return false
@@ -61,6 +67,21 @@ func assistantResumeRecoverable(ctx context.Context, err error) bool {
 		return assistantFailureGeneric(failure.Code)
 	}
 	return failure.Code == "MISSING_RESULT" || failure.Code == "CLI_EXIT_NONZERO"
+}
+
+const assistantWorkspaceFallbackStatus = "工作区启动失败，已回到平台模式，继续本轮对话。"
+
+const assistantWorkspaceFallbackPrompt = "工作区启动失败。本轮请用平台工具继续处理用户请求，如实说明仍需工作区的步骤。后续轮次有需要时可重新打开工作区。"
+
+// Recovery requires a workspace-specific failure and confirmation that the
+// CLI did not run. A lost runner response cannot provide that confirmation.
+func assistantWorkspaceStartupFailed(ctx context.Context, err error) bool {
+	var workspaceErr *runtime.ConversationWorkspaceSetupError
+	var stateErr *runtime.ConversationStateError
+	return ctx.Err() == nil && errors.Is(err, runtime.ErrConversationNotStarted) &&
+		errors.As(err, &workspaceErr) && !errors.As(err, &stateErr) &&
+		!errors.Is(err, errAssistantExecutionUnavailable) && !errors.Is(err, errAssistantRunnerAccessRevoked) &&
+		!errors.Is(err, errRunnerWorkspaceUnavailable)
 }
 
 // assistantHandoffOutlivesPhaseError reports whether a phase error should be

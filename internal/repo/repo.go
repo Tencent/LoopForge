@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"agentflow/internal/credcrypt"
 	"agentflow/internal/domain"
 
 	"gorm.io/driver/mysql"
@@ -77,7 +78,7 @@ func (d *deps) locking(q *gorm.DB) *gorm.DB {
 }
 
 // CatalogRepo owns the reusable definitions: agents, rules, skills, MCP
-// servers, executors, dockerfiles, environments, sandboxes, workflows,
+// servers, executors, sandboxes (with their Dockerfile or install), workflows,
 // repositories, sync config, schedule jobs and definition revisions.
 type CatalogRepo struct {
 	*deps
@@ -112,6 +113,10 @@ type TasksRepo struct {
 // UsersRepo owns users and their saved credentials.
 type UsersRepo struct {
 	*deps
+	gitHTTPHosts *GitHTTPHostTrustRepo
+	// keyring seals Bot credentials; installed by SetCredentialKeyring.
+	keyringMu sync.RWMutex
+	keyring   *credcrypt.Keyring
 }
 
 // TokensRepo owns API tokens.
@@ -134,6 +139,7 @@ type RunsRepo struct {
 	assistant     *AssistantRepo
 	issues        *IssuesRepo
 	catalog       *CatalogRepo
+	runners       *RunnersRepo
 	notifications *NotificationsRepo
 	*BotInteractionsRepo
 }
@@ -141,6 +147,7 @@ type RunsRepo struct {
 // RunnersRepo owns the CLI runner registry, runner tasks and runner events.
 type RunnersRepo struct {
 	*deps
+	projects *ProjectsRepo
 }
 
 // DeliveryRepo owns MR delivery state and the delivery locking that follows.
@@ -170,6 +177,7 @@ type Store struct {
 	*deps
 	*CatalogRepo
 	*ProjectsRepo
+	*ProjectCredentialsRepo
 	*BusinessDomainsRepo
 	*IssuesRepo
 	*TasksRepo
@@ -186,7 +194,10 @@ type Store struct {
 	*RoomsRepo
 	*SpacesRepo
 	*KnowledgeRepo
-	*FeedbackRepo
+	*PlatformSettingsRepo
+	*SSHHostTrustRepo
+	*HTTPSHostTrustRepo
+	*GitHTTPHostTrustRepo
 	*NotificationsRepo
 	*BotInteractionsRepo
 }
@@ -197,8 +208,10 @@ func newStore(db *gorm.DB) *Store {
 	d := &deps{DB: db}
 	s := &Store{deps: d}
 	s.ProjectsRepo = &ProjectsRepo{deps: d}
+	s.ProjectCredentialsRepo = &ProjectCredentialsRepo{deps: d, projects: s.ProjectsRepo}
 	s.BusinessDomainsRepo = &BusinessDomainsRepo{deps: d}
-	s.UsersRepo = &UsersRepo{deps: d}
+	s.GitHTTPHostTrustRepo = &GitHTTPHostTrustRepo{deps: d}
+	s.UsersRepo = &UsersRepo{deps: d, gitHTTPHosts: s.GitHTTPHostTrustRepo}
 	s.BotInteractionsRepo = &BotInteractionsRepo{deps: d}
 	s.TokensRepo = &TokensRepo{deps: d}
 	s.AssistantRepo = &AssistantRepo{deps: d, users: s.UsersRepo}
@@ -208,8 +221,8 @@ func newStore(db *gorm.DB) *Store {
 	s.CatalogRepo = &CatalogRepo{deps: d, projects: s.ProjectsRepo, notifications: s.NotificationsRepo}
 	s.IssuesRepo = &IssuesRepo{deps: d, projects: s.ProjectsRepo, users: s.UsersRepo, tasks: s.TasksRepo}
 	s.NotificationsRepo.issues = s.IssuesRepo
-	s.RunsRepo = &RunsRepo{deps: d, assistant: s.AssistantRepo, issues: s.IssuesRepo, catalog: s.CatalogRepo, notifications: s.NotificationsRepo}
-	s.RunnersRepo = &RunnersRepo{deps: d}
+	s.RunnersRepo = &RunnersRepo{deps: d, projects: s.ProjectsRepo}
+	s.RunsRepo = &RunsRepo{deps: d, assistant: s.AssistantRepo, issues: s.IssuesRepo, catalog: s.CatalogRepo, runners: s.RunnersRepo, notifications: s.NotificationsRepo}
 	s.DeliveryRepo = &DeliveryRepo{deps: d, issues: s.IssuesRepo, tasks: s.TasksRepo, catalog: s.CatalogRepo, runs: s.RunsRepo}
 	s.InsightsRepo = &InsightsRepo{deps: d}
 	s.AnalyticsRepo = &AnalyticsRepo{deps: d, runs: s.RunsRepo, catalog: s.CatalogRepo, delivery: s.DeliveryRepo, issues: s.IssuesRepo, tasks: s.TasksRepo, projects: s.ProjectsRepo, insights: s.InsightsRepo}
@@ -218,7 +231,9 @@ func newStore(db *gorm.DB) *Store {
 	s.RoomsRepo = &RoomsRepo{deps: d}
 	s.SpacesRepo = &SpacesRepo{deps: d}
 	s.KnowledgeRepo = &KnowledgeRepo{deps: d}
-	s.FeedbackRepo = &FeedbackRepo{deps: d}
+	s.PlatformSettingsRepo = &PlatformSettingsRepo{deps: d}
+	s.SSHHostTrustRepo = &SSHHostTrustRepo{deps: d}
+	s.HTTPSHostTrustRepo = &HTTPSHostTrustRepo{deps: d}
 	return s
 }
 

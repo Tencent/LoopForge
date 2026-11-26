@@ -41,6 +41,12 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 		} else if exists {
 			v.NodeCheckpointsDisabled = existing.NodeCheckpointsDisabled
 		}
+		if !exists {
+			if err := domain.ValidateResourceID(v.ID); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "项目" + err.Error()})
+				return
+			}
+		}
 		if v.BusinessDomainID != "" && (!exists || v.BusinessDomainID != existing.BusinessDomainID) {
 			c.JSON(400, gin.H{"error": "请通过业务域归属接口调整项目归属"})
 			return
@@ -81,9 +87,6 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			if v.OwnerID == 0 {
 				v.OwnerID = existing.OwnerID
 			}
-			if v.Members == nil {
-				v.Members = existing.Members
-			}
 			if v.SOPBindings == nil {
 				v.SOPBindings = existing.SOPBindings
 			}
@@ -108,7 +111,13 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			}
 		}
 		seenMembers := map[int64]bool{}
-		for _, member := range v.Members {
+		for i, member := range v.Members {
+			role, ok := domain.NormalizeProjectMemberRole(member.Role)
+			if !ok {
+				c.JSON(400, map[string]string{"error": "project member role must be maintainer, member or viewer"})
+				return
+			}
+			v.Members[i].Role = role
 			if member.UserID <= 0 || seenMembers[member.UserID] {
 				c.JSON(400, map[string]string{"error": "project members must reference unique existing users"})
 				return
@@ -153,6 +162,10 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			v.RunEval = existing.RunEval
 		} else if !v.RunEval.IsZero() {
 			v.RunEval = domain.EffectiveRunEvalPolicy(v.RunEval)
+		}
+		if exists && v.Members != nil && v.MembersVersion == "" {
+			c.JSON(http.StatusConflict, gin.H{"error": "更新成员名单需要 membersVersion，请刷新项目后重试"})
+			return
 		}
 		if err := h.repo.PutProject(v); err != nil {
 			respond(c, err)

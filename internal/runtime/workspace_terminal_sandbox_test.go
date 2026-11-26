@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,17 +27,19 @@ func TestWorkspaceTerminalSandboxUsesOverlayAndPrivateCredentials(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(bin, "env-tool"), []byte("#!/bin/sh\nprintf '%s' \"$SOP_ENV_MARKER\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	sb := &managedSandbox{Sandbox: &localSandbox{workspace: workspace, environment: map[string]string{"PATH": bin + ":" + os.Getenv("PATH"), "SOP_ENV_MARKER": "same-environment"}}, workspace: workspace, credentials: RunCredentials{GitToken: "run-owned-token", CodeBuddy: CodeBuddyCredential{APIKey: "not-for-terminal"}}}
+	sb := &managedSandbox{Sandbox: &localSandbox{workspace: workspace, environment: map[string]string{"PATH": bin + ":" + os.Getenv("PATH"), "SOP_ENV_MARKER": "same-environment"}}, workspace: workspace, credentials: RunCredentials{GitHTTPCredentials: testHTTPSCredentials("run-owned-token"), CodeBuddy: CodeBuddyCredential{APIKey: "not-for-terminal"}}}
 	var released atomic.Int32
 	var pool TerminalPool
 	ctx, cancel := context.WithCancel(context.Background())
-	opened, err := pool.HandleSandbox(ctx, sb, "run:1", domain.WorkspaceTerminalRequest{Operation: "open"}, func() { released.Add(1) })
+	defer cancel()
+	const ownerToken = "terminal-owner-fixture"
+	opened, err := pool.HandleSandboxWithGit(ctx, sb, "run:1", domain.WorkspaceTerminalRequest{Operation: "open"}, func() { released.Add(1) }, TerminalGitCredentials{HTTPS: testHTTPSCredentials(ownerToken)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pool.CloseScope("run:1")
 	cancel() // HTTP lifetime must not kill a terminal returned to the browser.
-	input := "env-tool > tool-result; printf '%s|%s|%s|%s' \"$AGENTFLOW_DATABASE_URL\" \"$AGENTFLOW_TEST_SECRET\" \"$OPENAI_API_KEY\" \"$CODEBUDDY_API_KEY\" > leaked; printf '%s' \"$AGENTFLOW_GIT_TOKEN\" > git-token\n"
+	input := `env-tool > tool-result; printf '%s|%s|%s|%s' "$AGENTFLOW_DATABASE_URL" "$AGENTFLOW_TEST_SECRET" "$OPENAI_API_KEY" "$CODEBUDDY_API_KEY" > leaked; printf 'protocol=https\nhost=github.com\n\n' | git credential fill | python3 -c 'import sys,hashlib; c=dict(l.strip().split("=",1)for l in sys.stdin if "="in l);print(hashlib.sha256(c["password"].encode()).hexdigest())' > git-token` + "\n"
 	if _, err := pool.HandleSandbox(context.Background(), nil, "run:1", domain.WorkspaceTerminalRequest{Operation: "input", ID: opened.ID, Data: input}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +47,7 @@ func TestWorkspaceTerminalSandboxUsesOverlayAndPrivateCredentials(t *testing.T) 
 	for time.Now().Before(deadline) {
 		body, _ := os.ReadFile(filepath.Join(workspace, "tool-result"))
 		token, _ := os.ReadFile(filepath.Join(workspace, "git-token"))
-		if string(body) == "same-environment" && string(token) == "run-owned-token" {
+		if string(body) == "same-environment" && strings.TrimSpace(string(token)) == fmt.Sprintf("%x", sha256.Sum256([]byte(ownerToken))) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -55,13 +58,33 @@ func TestWorkspaceTerminalSandboxUsesOverlayAndPrivateCredentials(t *testing.T) 
 	if body, _ := os.ReadFile(filepath.Join(workspace, "leaked")); string(body) != "|||" {
 		t.Fatalf("host/model environment leaked: %q", body)
 	}
-	if body, _ := os.ReadFile(filepath.Join(workspace, "git-token")); string(body) != "run-owned-token" {
-		t.Fatalf("explicit run Git binding missing: %q", body)
+	if body, _ := os.ReadFile(filepath.Join(workspace, "git-token")); strings.TrimSpace(string(body)) != fmt.Sprintf("%x", sha256.Sum256([]byte(ownerToken))) {
+		t.Fatal("terminal's explicit Git binding was not used")
 	}
 	pool.CloseScope("run:1")
 	pool.CloseScope("run:1")
 	if got := released.Load(); got != 1 {
 		t.Fatalf("release called %d times", got)
+	}
+}
+
+func TestWorkspaceTerminalWithoutCredentialsDoesNotBindSandboxGit(t *testing.T) {
+	workspace := t.TempDir()
+	sb := &managedSandbox{
+		Sandbox:     &localSandbox{workspace: workspace},
+		workspace:   workspace,
+		credentials: RunCredentials{GitHTTPCredentials: testHTTPSCredentials("run-owner-fixture")},
+	}
+	cmd, home, err := sandboxTerminalCommand(context.Background(), sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removeTerminalHome(home)
+	for _, env := range cmd.Env {
+		key, value, _ := strings.Cut(env, "=")
+		if (key == SessionGatewayEnv || key == GitHostsEnv) && value != "" {
+			t.Fatal("terminal inherited the run's Git binding")
+		}
 	}
 }
 
@@ -187,14 +210,12 @@ func TestWorkspaceTerminalDockerRealPTY(t *testing.T) {
 		t.Fatal(workspaceErr)
 	}
 	defer os.RemoveAll(workspace)
-	defer os.RemoveAll(dockerIsolationMaskRoot(workspace))
 	name := fmt.Sprintf("agentflow-terminal-qa-%d", time.Now().UnixNano())
 	create := exec.CommandContext(ctx, "docker", "run", "--pull=never", "--rm", "-d", "--name", name, "-v", workspace+":/workspace", "alpine:3.20", "sh", "-c", "sleep 60")
 	if output, err := create.CombinedOutput(); err != nil {
 		t.Fatalf("create isolated container: %s %v", output, err)
 	}
 	defer exec.Command("docker", "rm", "-f", name).Run()
-	defer exec.Command("docker", "rm", "-f", dockerScriptContainerName(name)).Run()
 	sb := &dockerSandbox{id: name, name: name, workspace: workspace, started: true}
 	if output, err := sb.Exec(ctx, CommandSpec{Argv: []string{"sh", "-c", "printf sandbox-only > /tmp/terminal-env-marker"}}, nil); err != nil {
 		t.Fatalf("SOP command: %s %v", output, err)

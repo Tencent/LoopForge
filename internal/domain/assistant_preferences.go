@@ -1,16 +1,110 @@
 package domain
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// AssistantDefaults applies to new selections made with the user's own credentials.
+type AssistantDefaults struct {
+	Executor string `json:"executor,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
+	Approval string `json:"approval,omitempty"`
+}
+
+// ValidateCLIModelID checks the literal model identifier accepted by CLI settings.
+func ValidateCLIModelID(id string) error {
+	const maxCLIModelIDLen = 128
+	if id == "" {
+		return fmt.Errorf("模型 ID 不能为空")
+	}
+	if len(id) > maxCLIModelIDLen {
+		return fmt.Errorf("模型 ID 长度不能超过 %d 个字符", maxCLIModelIDLen)
+	}
+	for _, r := range id {
+		if r <= ' ' || r == 0x7f || r == '"' || r == '\'' || r == '`' || r == '\\' {
+			return fmt.Errorf("模型 ID %q 不能包含空格、引号、反斜杠或控制字符", id)
+		}
+	}
+	return nil
+}
 
 // AssistantPreferencesInstructionsMax caps the user's own rules for Main Bot.
 const AssistantPreferencesInstructionsMax = 4000
 
+// Approval review modes for "帮我批准".
+const (
+	ApprovalReviewModeFollow = "follow"
+	ApprovalReviewModeCLI    = "cli"
+	ApprovalReviewModeAPI    = "api"
+)
+
+// ApprovalReviewAPIConfig stores an optional standalone HTTP API configuration
+// used solely for "帮我批准" AI review without requiring a configured CLI.
+type ApprovalReviewAPIConfig struct {
+	Protocol         string `json:"protocol,omitempty"`
+	BaseURL          string `json:"baseUrl,omitempty"`
+	Model            string `json:"model,omitempty"`
+	APIKey           string `json:"apiKey,omitempty"`
+	APIKeyConfigured bool   `json:"apiKeyConfigured,omitempty"`
+	APIKeyClear      bool   `json:"apiKeyClear,omitempty"`
+}
+
 // AssistantPreferences is how one user wants Main Bot to work: whether it
-// hands work to roles and SOPs more readily (off by default), and extra
-// rules added to every turn.
+// hands work to roles and SOPs more readily (off by default), extra rules
+// added to every turn, and optional "帮我批准" review model settings.
+// SteerOnSend interrupts a running reply when sending a message; the default
+// queues it until the reply finishes. WorkspaceDriver is the sandbox driver
+// Main Bot prefers for conversation workspaces it opens. An empty value leaves
+// the choice to the agent.
 type AssistantPreferences struct {
-	ProactiveRoles bool      `json:"proactiveRoles"`
-	ProactiveSOPs  bool      `json:"proactiveSops"`
-	Instructions   string    `json:"instructions"`
-	UpdatedAt      time.Time `json:"updatedAt,omitempty"`
+	ProactiveRoles      bool                     `json:"proactiveRoles"`
+	ProactiveSOPs       bool                     `json:"proactiveSops"`
+	SteerOnSend         bool                     `json:"steerOnSend"`
+	WorkspaceDriver     string                   `json:"workspaceDriver"`
+	Instructions        string                   `json:"instructions"`
+	ApprovalReviewMode  string                   `json:"approvalReviewMode,omitempty"`
+	ApprovalReviewModel string                   `json:"approvalReviewModel,omitempty"`
+	ApprovalReviewAPI   *ApprovalReviewAPIConfig `json:"approvalReviewApi,omitempty"`
+	UpdatedAt           time.Time                `json:"updatedAt,omitempty"`
+}
+
+// EffectiveApprovalReviewMode returns the normalized review mode, preserving
+// backward compatibility when ApprovalReviewModel was saved without a mode.
+func (p AssistantPreferences) EffectiveApprovalReviewMode() string {
+	switch strings.TrimSpace(p.ApprovalReviewMode) {
+	case ApprovalReviewModeFollow, ApprovalReviewModeCLI, ApprovalReviewModeAPI:
+		return strings.TrimSpace(p.ApprovalReviewMode)
+	}
+	if strings.TrimSpace(p.ApprovalReviewModel) != "" {
+		return ApprovalReviewModeCLI
+	}
+	return ApprovalReviewModeFollow
+}
+
+// Sanitized returns a copy safe to send in API responses: the raw custom
+// review API key is stripped and replaced with APIKeyConfigured.
+func (p AssistantPreferences) Sanitized() AssistantPreferences {
+	out := p
+	out.ApprovalReviewMode = p.EffectiveApprovalReviewMode()
+	if p.ApprovalReviewAPI != nil {
+		cp := *p.ApprovalReviewAPI
+		cp.APIKeyConfigured = strings.TrimSpace(cp.APIKey) != "" || cp.APIKeyConfigured
+		cp.APIKey = ""
+		cp.APIKeyClear = false
+		out.ApprovalReviewAPI = &cp
+	}
+	return out
+}
+
+// ValidAssistantWorkspaceDriver accepts the drivers a conversation workspace
+// can prefer, and empty for no preference.
+func ValidAssistantWorkspaceDriver(driver string) bool {
+	switch driver {
+	case "", SandboxDriverDocker, SandboxDriverNative:
+		return true
+	}
+	return false
 }

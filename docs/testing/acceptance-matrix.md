@@ -34,7 +34,7 @@ Which automated cases protect each user-facing capability, and what they need. "
 | Requirement spaces: CRUD, timeline, threads, artifacts, and members | `e2e/api/60-spaces.test.mjs` | — |
 | Task groups and multi-role collaboration | `internal/httpapi/rooms_test.go`, `internal/repo/group_run_view_test.go`, `internal/runtime/workspace_preparation_test.go`, `webtest/tests/collaboration-groups.test.mjs` | No model |
 | Group SOP handoff artifact inheritance | `internal/engine/state_helpers_cases_test.go`, `internal/engine/ops_validation_cases_test.go` | Engine `GroupSOPHandoff` only. `migrations/015_sop_handoff_jobs.sql` creates `sop_handoff_jobs` and `migrations/017_bot_sop_controls.sql` alters it, but no Go service reads or writes that table, so the job table is outside automatic coverage |
-| Script views isolated from agent instructions | `internal/runtime/sandbox_script_test.go`, `internal/scriptview/` | Linux/Docker cases as supported by the host |
+| Scripts and agents share the sandbox with repository instructions visible | `internal/runtime/sandbox_script_test.go` | Run Docker cases with `AGENTFLOW_DOCKER_SCRIPT_SMOKE=1` and local `alpine:3.20` |
 | Data persists across container recreation | `e2e/container-persistence.mjs` via `scripts/test-container.sh` | Docker |
 | Rooms, scheduled dispatch, platform MCP tools, credential flags never leaking | `e2e/api/50-platform.test.mjs` | — |
 | Project integrations: notification bots, insight sources, business domains, and WeCom identity bindings | `e2e/api/62-integrations.test.mjs` | No outbound WeCom or insight call |

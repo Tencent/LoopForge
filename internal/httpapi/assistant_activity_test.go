@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"agentflow/internal/repo"
 )
 
 func TestAssistantActivityKeepsCommandsAndUpdatesPartialTools(t *testing.T) {
@@ -47,6 +49,82 @@ func TestAssistantActivityPreservesVisibleStreamWithoutModelPromptOrSecrets(t *t
 	prompt := assistantPromptMessages(original)
 	if len(prompt[0].Activity) != 0 || len(original[0].Activity) == 0 {
 		t.Fatal("metadata leaked into prompt or original was mutated")
+	}
+}
+
+func TestAssistantClaudeCodeReplyKeepsIndentationAcrossDeltas(t *testing.T) {
+	const code = "    first()\n    second()"
+	const complete = `{"type":"assistant","message":{"id":"msg_code","content":[{"type":"text","text":"    first()\n    second()"}]}}`
+	const empty = `{"type":"assistant","message":{"id":"msg_code","content":[{"type":"text","text":""}]}}`
+	const result = `{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","result":""}`
+	for _, tc := range []struct {
+		name      string
+		deltas    []string
+		streaming bool
+	}{
+		{name: "single-delta", deltas: []string{code}, streaming: true},
+		{name: "split-indentation", deltas: []string{"    ", code[4:]}, streaming: true},
+		{name: "non-streaming"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, user := workbenchFixture(t)
+			if _, err := h.repo.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{ClaudeCodeAPIKey: "test-claude-key"}); err != nil {
+				t.Fatal(err)
+			}
+			var output strings.Builder
+			output.WriteString("#!/bin/sh\ncat <<'JSON'\n")
+			for _, delta := range tc.deltas {
+				payload, err := json.Marshal(delta)
+				if err != nil {
+					t.Fatal(err)
+				}
+				output.WriteString(`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":`)
+				output.Write(payload)
+				output.WriteString("}}}\n")
+			}
+			output.WriteString(strings.Join([]string{complete, empty, result, "JSON", ""}, "\n"))
+			bin := filepath.Join(t.TempDir(), "claude")
+			if err := os.WriteFile(bin, []byte(output.String()), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("AGENTFLOW_CLAUDE_BIN", bin)
+			body, err := json.Marshal(assistantRequest{
+				SessionID: "claude-" + tc.name, ProjectID: "workbench",
+				Executor: "claude-code", Model: "claude-opus-4-8",
+				Messages: []assistantMessage{{Role: "user", Content: "Return the example as indented code."}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, rec := workbenchContext(user, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
+			if tc.streaming {
+				c.Request.Header.Set("Accept", "text/event-stream")
+			}
+			h.chat(c)
+			session, ok := h.repo.AssistantSession(user.ID, "claude-"+tc.name)
+			if rec.Code != 200 || !ok || len(session.Messages) != 2 {
+				t.Fatalf("chat did not save the reply: status=%d messages=%d body=%s", rec.Code, len(session.Messages), rec.Body)
+			}
+			saved := session.Messages[1]
+			var reply assistantReply
+			if err := json.Unmarshal([]byte(saved.Content), &reply); err != nil {
+				t.Fatal(err)
+			}
+			if reply.Message != code {
+				t.Errorf("saved reply = %q, want %q", reply.Message, code)
+			}
+			if tc.streaming {
+				var paragraphs []string
+				for _, event := range saved.Activity {
+					if event.Kind == "text" {
+						paragraphs = append(paragraphs, event.Text)
+					}
+				}
+				if len(paragraphs) != 1 || paragraphs[0] != code {
+					t.Errorf("saved text activity = %q, want [%q]", paragraphs, code)
+				}
+			}
+		})
 	}
 }
 

@@ -150,18 +150,19 @@ func TestPreparationFailureIncludesBoundedOutputTailAndPreservesExitError(t *tes
 
 func TestPreparationFailureOutputRedactsCredentialsBeforeTruncation(t *testing.T) {
 	sb := &managedSandbox{Sandbox: &localSandbox{environment: map[string]string{"DB_PASSWORD": "db-secret-value"}}, credentials: RunCredentials{
-		GitToken: "owned-secret",
+		GitHTTPCredentials: testHTTPSCredentials("owned-secret"),
+		Extra:              map[string]string{"gateway": "deployment-probe-value"},
 		MCPServers: []domain.MCPServerDefinition{{
 			Headers:     map[string]string{"Authorization": "Bearer header-owned-secret"},
 			Environment: map[string]string{"API_TOKEN": "mcp-owned-secret", "ENABLED": "1"},
 		}},
 	}}
-	raw := "\x1b[31mfailed\x1b[0m: owned-secret header-owned-secret mcp-owned-secret db-secret-value\n" +
+	raw := "\x1b[31mfailed\x1b[0m: owned-secret deployment-probe-value header-owned-secret mcp-owned-secret db-secret-value\n" +
 		`{"password":"json-password", "API_KEY":"json-api-key"}` + "\n" +
 		"AGENTFLOW_CONTROL_TOKEN=control-value Authorization: Bearer auth-value\n" +
 		"https://private:url-password@example.test/repo\nexit status 1\n"
 	redacted := redactPreparationOutput(sb, raw)
-	for _, secret := range []string{"owned-secret", "header-owned-secret", "mcp-owned-secret", "header-[redacted]", "mcp-[redacted]", "db-secret-value", "json-password", "json-api-key", "control-value", "auth-value", "url-password", "\x1b"} {
+	for _, secret := range []string{"owned-secret", "deployment-probe-value", "header-owned-secret", "mcp-owned-secret", "header-[redacted]", "mcp-[redacted]", "db-secret-value", "json-password", "json-api-key", "control-value", "auth-value", "url-password", "\x1b"} {
 		if strings.Contains(redacted, secret) {
 			t.Fatalf("failure output exposed %q: %s", secret, redacted)
 		}
@@ -362,5 +363,77 @@ func TestPreparationScopedReadNeverFallsBackToLegacyOrUnsafeScopePath(t *testing
 		if entry.IsDir() && len(entry.Name()) != 64 {
 			t.Fatalf("scope not safely hashed: %q", entry.Name())
 		}
+	}
+}
+
+// TestPreparationReplayBindsDeclaredCredentialEnv covers the rebuild path for
+// node CredentialEnv: a replayed script must see the rebuilt environment's
+// responsible-user credential and never the host process's own variable, and a
+// missing declared credential must fail the preparation up front.
+func TestPreparationReplayBindsDeclaredCredentialEnv(t *testing.T) {
+	credentialWorkflow := func(script string) domain.WorkflowDefinition {
+		return domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{
+			ID: "env", Name: "带凭证的环境脚本", Type: "script", RunOnWorkspaceRebuild: true,
+			Script: script, CredentialEnv: map[string]string{"MY_TOOL_TOKEN": "gateway"},
+		}}}
+	}
+	ctx := context.Background()
+
+	firstRoot := t.TempDir()
+	sb := &managedSandbox{
+		Sandbox:    &localSandbox{id: "prep-cred", workspace: firstRoot},
+		slots:      make(chan struct{}, 1),
+		workspace:  firstRoot,
+		credentials: RunCredentials{Extra: map[string]string{"gateway": "user-first"}},
+	}
+	wf := credentialWorkflow("mkdir -p .agentflow/prep; printf '%s' \"$MY_TOOL_TOKEN\" > .agentflow/prep/token")
+	if _, err := EnsureWorkspacePreparation(ctx, sb, wf, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(filepath.Join(sb.Workspace(), ".agentflow", "prep", "token"))
+	if err != nil || string(first) != "user-first" {
+		t.Fatalf("first run token = %q (err %v), want user-first", first, err)
+	}
+
+	archive, err := CreateWorkspaceCheckpoint(sb.Workspace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "restored")
+	if err = RestoreWorkspaceCheckpoint(root, archive); err != nil {
+		t.Fatal(err)
+	}
+	// The host process carries its own MY_TOOL_TOKEN; the replay must neither
+	// leak it into the script nor let it stand in for the user credential.
+	t.Setenv("MY_TOOL_TOKEN", "host-owned-value")
+	restored := &managedSandbox{
+		Sandbox:    &localSandbox{id: "restored", workspace: root},
+		slots:      make(chan struct{}, 1),
+		workspace:  root,
+		credentials: RunCredentials{Extra: map[string]string{"gateway": "user-second"}},
+	}
+	if _, err = EnsureWorkspacePreparation(ctx, restored, wf, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(filepath.Join(root, ".agentflow", "prep", "token"))
+	if err != nil || string(second) != "user-second" {
+		t.Fatalf("replay token = %q (err %v), want user-second", second, err)
+	}
+
+	// A rebuilt environment whose user has not saved the declared credential
+	// fails the preparation with the kind named instead of replaying with an
+	// empty or host-owned variable.
+	missingRoot := filepath.Join(t.TempDir(), "missing")
+	if err := os.MkdirAll(missingRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	missing := &managedSandbox{
+		Sandbox:    &localSandbox{id: "missing", workspace: missingRoot},
+		slots:      make(chan struct{}, 1),
+		workspace:  missingRoot,
+		credentials: RunCredentials{},
+	}
+	if _, err = EnsureWorkspacePreparation(ctx, missing, wf, nil, nil); err == nil || !strings.Contains(err.Error(), "gateway") {
+		t.Fatalf("missing credential error = %v, want failure naming gateway", err)
 	}
 }

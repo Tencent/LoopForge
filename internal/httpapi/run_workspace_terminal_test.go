@@ -3,6 +3,7 @@ package httpapi
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"bytes"
 	"context"
@@ -22,6 +23,7 @@ func TestWorkspaceTerminalRequiresProjectMembership(t *testing.T) {
 	r, _ := h.repo.RunState("shared-run")
 	r.PauseRequested = true
 	r.ExecutionContext.NodeCheckpointsEnabled = true
+	r.WorkflowSnapshot.SandboxProfileID = repo.TestNativeSandboxID
 	if err := h.repo.PutRun(r); err != nil {
 		t.Fatal(err)
 	}
