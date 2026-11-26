@@ -136,6 +136,7 @@ test('skip reasons keep route labels verbatim while naming upstream nodes', asyn
         ambiguousJoin: skipReasonText({skipReason:joinedReason},joinedGraph,join),
         ambiguousRoute: skipReasonText({skipReason:ambiguousRoute},joinedGraph,join),
         ambiguousQuotedArtifact: skipReasonText({skipReason:quotedArtifact},quotedGraph,join),
+        overlappingMarkers: skipReasonText({skipReason:quotedArtifact.replace('x 未匹配条件 true','x 未匹配条件 未匹配条件 true')},quotedGraph,join),
         uniqueJoin: skipReasonText({skipReason:joinedReason},{...joinedGraph,edges:joinedGraph.edges.slice(0,2)},join),
         uniqueNested: skipReasonText({skipReason:'a 已跳过（b 路由 [small] 未选择此分支）'},
           {...nestedGraph,edges:[...nestedGraph.edges,{source:'a 已跳过（b',target:'join'}]},join),
@@ -155,6 +156,7 @@ test('skip reasons keep route labels verbatim while naming upstream nodes', asyn
   assert.equal(texts.ambiguousJoin, 'a 已跳过；b 已跳过');
   assert.equal(texts.ambiguousRoute, 'a 路由 [small] 未选择此分支；b 路由 [large] 未选择此分支');
   assert.equal(texts.ambiguousQuotedArtifact, 'a 的产物 p 字段 /x 未匹配条件 "x 未匹配条件 true；b 路由 [y"；c 路由 [z] 未选择此分支');
+  assert.equal(texts.overlappingMarkers, 'a 的产物 p 字段 /x 未匹配条件 "x 未匹配条件 未匹配条件 true；b 路由 [y"；c 路由 [z] 未选择此分支');
   assert.equal(texts.uniqueJoin, '上游First 已跳过；Second 已跳过，因此跳过 Join');
   assert.equal(texts.uniqueNested, texts.graphNested);
   assert.equal(texts.punctuationId, '上游Build Check 已跳过，因此跳过 Join');

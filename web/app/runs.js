@@ -558,7 +558,7 @@ function skipReasonText(nr,wf,node){
       // marker that would terminate a different, equally valid interpretation.
       const marker=' 未匹配条件 ';
       const value=/(?:"(?:\\.|[^"\\])*"|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=；|）|$)/y;
-      for(let i=rest.indexOf(marker);i!==-1;i=rest.indexOf(marker,i+marker.length)){
+      for(let i=rest.indexOf(marker);i!==-1;i=rest.indexOf(marker,i+1)){
         value.lastIndex=i+marker.length;
         if(value.test(rest))yield rest.slice(0,value.lastIndex);
       }
