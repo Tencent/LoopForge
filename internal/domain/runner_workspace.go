@@ -42,6 +42,10 @@ const (
 // known_hosts field in a runner task claim.
 const RunnerSSHKnownHostsWireLimit = 1 << 20
 
+// RunnerTaskAssetWireLimit is the claim allowance for one Agent's skill and
+// MCP file payloads at their upload caps; JSON carries the bytes as base64.
+const RunnerTaskAssetWireLimit = (SkillTotalMaxBytes + MCPTotalMaxBytes + 2) / 3 * 4
+
 // RunnerSSHHostKeyProbeHeader advertises host key discovery on the authenticated
 // control connection. Older runners can still receive and use known_hosts pins.
 const RunnerSSHHostKeyProbeHeader = "X-AgentFlow-SSH-Host-Key-Probe"
@@ -187,7 +191,7 @@ const (
 	WorkspaceErrorConversationProcess = "conversation_process"
 )
 
-// WorkspaceRestoreStatus describes restoration separately from SOP execution.
+// WorkspaceRestoreStatus describes restoration separately from LOOP execution.
 type WorkspaceRestoreStatus struct {
 	Status    string     `json:"status"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`

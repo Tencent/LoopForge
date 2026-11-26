@@ -176,15 +176,14 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   const app = await loadApp();
   t.after(app.close);
   app.router.get('/api/executor-models', {
-    codebuddy: { models: [{ id: 'cb-model', name: 'CB model' }] },
+    codebuddy: { configured: true, models: [{ id: 'cb-model', name: 'CB model' }] },
     codex: { models: [] }, claude: { models: [] },
   });
   app.evaluate(`afConfirm=async()=>true;afPrompt=async({defaultValue}={})=>defaultValue||'Developer copy'`);
-  app.evaluate(`switchView('agents');renderAgents();openAgentWizard()`);
+  app.evaluate(`switchView('agents');renderAgents();state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}];openAgentWizard()`);
   await settle();
   app.evaluate(`applyAgentPreset('developer')`);
   const form = app.document.querySelector('#agentForm');
-  form.elements.executorId.append(new app.window.Option('CodeBuddy', 'codebuddy'));
   form.elements.executorId.value = 'codebuddy';
   form.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   assert.equal(form.elements.name.value, '研发工程师');
@@ -208,15 +207,15 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   assert.equal(app.evaluate(`state.data.agents.some(a=>a.id==='agent-copy')`), false);
 });
 
-test('role model picker reloads the editor catalog and preserves a CLI change while loading', async (t) => {
+test('role editor refreshes configured CLIs and preserves an unavailable saved executor', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   let complete;
   const delayed = new Promise(resolve => { complete = resolve; });
-  const catalog = (models) => ({
-    codebuddy: { models: [], efforts: [] },
+  const catalog = (models, configured = true) => ({
+    codebuddy: { configured: false, models: [{ id: 'builtin' }], efforts: [] },
     claude: { models: [], efforts: [] },
-    codex: { customModel: true, models, efforts: [] },
+    codex: { configured, customModel: true, models, efforts: [] },
   });
   app.router.get('/api/executor-models', () => delayed);
   app.evaluate(`
@@ -226,10 +225,19 @@ test('role model picker reloads the editor catalog and preserves a CLI change wh
     openAgentWizard();
   `);
   const f = app.document.querySelector('#agentForm');
-  f.elements.executorId.value = 'codex';
-  f.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  const executor = f.elements.executorId;
+  const status = app.document.querySelector('#agentExecutorStatus');
+  const options = () => [...executor.options].map(option => [option.value, option.disabled]);
+  assert.equal(executor.disabled, true);
+  assert.deepEqual(options(), [['', false]]);
+  assert.equal(executor.selectedOptions[0].text, '检查配置中…');
+  assert.equal(status.hidden, true);
   complete(catalog([{ id: 'private/second', name: 'Second' }, { id: 'private/first', name: 'First' }]));
   await settle();
+  assert.deepEqual(options(), [['', false], ['codex', false]]);
+  assert.equal(status.hidden, true);
+  f.elements.executorId.value = 'codex';
+  f.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   const menu = () => [...app.document.querySelectorAll('#agentModelPicker [role=option]')];
   assert.deepEqual(menu().map(row => row.dataset.id), ['private/second', 'private/first', '__custom__']);
   assert.equal(menu()[0].querySelector('.ai-model-name').textContent, 'Second');
@@ -244,20 +252,46 @@ test('role model picker reloads the editor catalog and preserves a CLI change wh
 
   let refresh;
   app.router.get('/api/executor-models', () => new Promise(resolve => { refresh = resolve; }));
-  app.evaluate(`openAgentWizard()`);
-  f.elements.executorId.value = 'codex';
-  f.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
-  menu().find(row => row.dataset.id === 'private/second').click();
+  app.evaluate(`
+    const savedRole={...state.data.agents.find(role=>role.id==='agent-1'),prompt:'Review',executorId:'codex',model:'private/second',effort:'high'};
+    state.data.agents=[savedRole];openAgentWizard(savedRole)
+  `);
   await settle();
-  refresh(catalog([{ id: 'private/new', name: 'New model' }]));
+  assert.deepEqual(options(), [['', false], ['codex', true]]);
+  refresh(catalog([{ id: 'private/second', name: 'Second' }], false));
   await settle();
+  assert.deepEqual(options(), [['', false], ['codex', true]]);
+  assert.match(executor.selectedOptions[0].text, /未配置/);
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '无可用执行器');
+  assert.equal(app.document.querySelector('#agentModelPicker [data-model-toggle]').disabled, true);
   assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'private/second');
+  app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
+  await app.evaluate(`$('#agentForm').elements.name.value='Renamed';persistAgent($('#agentForm'))`);
+  const saved = app.router.calls.find(call => call.path === '/api/agents' && call.method === 'PUT').body;
+  assert.equal(saved.name, 'Renamed');
+  assert.equal(saved.executorId, 'codex');
+  assert.equal(saved.model, 'private/second');
+  assert.equal(saved.effort, 'high');
+
+  app.router.get('/api/executor-models', catalog([{ id: 'private/second' }], false));
+  app.evaluate(`state.data.assistantDefaults={executor:'codex',model:'private/second'};openAgentWizard()`);
+  await settle();
+  assert.deepEqual(options(), [['', false]]);
+  assert.equal(executor.value, '');
+  assert.equal(executor.disabled, true);
+  assert.equal(executor.selectedOptions[0].text, '无可用执行器');
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '运行时跟随责任人默认执行器');
+  assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), '');
+  app.evaluate(`applyAgentPreset('developer');setAgentCreateStep(3)`);
+  assert.match(app.document.querySelector('#agentCreateReview').textContent, /跟随责任人默认执行器/);
 });
 
 test('a new role saves the first model from the refreshed catalog', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  const catalog = id => ({ codebuddy: { models: [{ id }] }, codex: { models: [] }, claude: { models: [] } });
+  const catalog = id => ({ codebuddy: { configured: true, models: [{ id }] }, codex: { models: [] }, claude: { models: [] } });
   app.router.get('/api/executor-models', catalog('retired-model'));
   app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
   app.evaluate(`
@@ -291,7 +325,7 @@ test('new roles can use the personal default or follow the responsible user', as
   t.after(app.close);
   app.router.get('/api/executor-models', {
     codebuddy: {models: []}, claude: {models: []},
-    codex: {models: [{id: 'preferred-role-model', name: 'Preferred role model'}]},
+    codex: {configured: true, models: [{id: 'preferred-role-model', name: 'Preferred role model'}]},
   });
   app.router.put('/api/agents', call => ({status: 200, body: call.body}));
   app.evaluate(`
@@ -320,7 +354,7 @@ test('role effort picker follows each model and resets an unsupported level on m
   const xhigh = { value:'xhigh', label:'超高 xhigh' };
   app.router.get('/api/executor-models', {
     codebuddy:{models:[],efforts:[]}, claude:{models:[],efforts:[]},
-    codex:{customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[xhigh]}, {id:'plain',name:'Plain',efforts:[]}],efforts:[{value:'low',label:'低 low'},xhigh]},
+    codex:{configured:true,customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[xhigh]}, {id:'plain',name:'Plain',efforts:[]}],efforts:[{value:'low',label:'低 low'},xhigh]},
   });
   app.evaluate(`
     state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}, {id:'codex',name:'Codex'}];
@@ -346,7 +380,7 @@ test('a personal catalog does not rewrite an existing role effort during a name 
     openAgentWizard({id:'agent-1',name:'Developer',prompt:'Review',executorId:'codex',model:'reasoner',effort:'xhigh'});
   `);
   await settle();
-  loaded({codex:{customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[]}],efforts:[]}});
+  loaded({codex:{configured:true,customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[]}],efforts:[]}});
   await settle();
   const picker = app.document.querySelector('#agentEffortPicker');
   assert.deepEqual([...picker.querySelectorAll('[role=option]')].map(item=>item.dataset.id), ['']);
@@ -358,4 +392,95 @@ test('a personal catalog does not rewrite an existing role effort during a name 
   const saved = app.router.calls.find(call=>call.path==='/api/agents'&&call.method==='PUT').body;
   assert.equal(saved.name, 'Renamed');
   assert.equal(saved.effort, 'xhigh');
+});
+
+test('role editor checks executors against the current project default machine', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', (call) => ({
+    codebuddy: { configured: false, models: [] },
+    codex: { configured: call.search === '?projectId=project-1', models: [{ id: 'gpt-project' }], efforts: [] },
+    claude: { configured: false, models: [] },
+  }));
+  app.evaluate(`state.data.executors=[{id:'codebuddy',name:'CodeBuddy'},{id:'codex',name:'Codex'}]`);
+  app.evaluate(`state.projectFilter='project-1';switchView('agents');renderAgents();openAgentWizard()`);
+  await settle(3);
+  const requests = () => app.router.calls.filter((c) => c.path === '/api/executor-models').map((c) => c.search);
+  assert.deepEqual(requests(), ['?projectId=project-1']);
+  const options = () => [...app.document.querySelector('#agentForm').elements.executorId.options].map((o) => o.value);
+  assert.ok(options().includes('codex'), `project options: ${options()}`);
+
+  app.evaluate(`closeAgentWizard();state.projectFilter='';openAgentWizard()`);
+  await settle(3);
+  assert.deepEqual(requests(), ['?projectId=project-1', '']);
+  assert.equal(options().includes('codex'), false, 'the personal scope must not reuse the project catalog');
+});
+
+test('adding an artifact keeps unsaved loop and review settings of the role', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', { codebuddy: { configured: true, models: [{ id: 'cb-model', name: 'CB model' }] } });
+  app.evaluate(`switchView('agents')`);
+  await settle();
+  app.evaluate(`
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}];
+    const role={id:'role-gov',name:'Gov',projectId:state.projectFilter,prompt:'Fix it',executorId:'codebuddy',model:'cb-model',
+      loop:{enabled:false,maxIterations:3,exitCondition:'all_gates_pass',onExhausted:'fail'},artifactOutputs:[],verification:[]};
+    state.data.agents=[role];openAgentWizard(role);
+  `);
+  await settle();
+  const form = app.document.querySelector('#agentForm');
+  const set = (name, value) => {
+    const el = form.elements[name];
+    if (el.type === 'checkbox') el.checked = value; else el.value = value;
+    el.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+    el.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  };
+  set('loopEnabled', true);
+  set('loopMaxIterations', '2');
+  set('loopOnExhausted', 'human');
+  set('loopFeedbackPrompt', 'only fix {{feedback}}');
+  set('interventionAfter', true);
+  app.document.querySelector('#agentAddArtifact').click();
+  await settle();
+  // The panel was re-rendered; the switches still show what was chosen.
+  assert.equal(form.elements.loopEnabled.checked, true);
+  assert.equal(form.elements.loopMaxIterations.value, '2');
+  assert.equal(form.elements.loopOnExhausted.value, 'human');
+  assert.equal(form.elements.loopFeedbackPrompt.value, 'only fix {{feedback}}');
+  assert.equal(form.elements.interventionAfter.checked, true);
+  form.querySelector('[data-artifact-row="0"] [data-ak="path"]').value = 'plan.md';
+  form.querySelector('[data-artifact-row="0"] [data-ak="path"]').dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  app.router.put('/api/agents', (call) => ({ status: 200, body: call.body }));
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  const saved = app.router.calls.find((c) => c.path === '/api/agents' && c.method === 'PUT').body;
+  assert.equal(saved.loop.enabled, true);
+  assert.equal(saved.loop.maxIterations, 2);
+  assert.equal(saved.loop.onExhausted, 'human');
+  assert.equal(saved.loop.feedbackPrompt, 'only fix {{feedback}}');
+  assert.ok(saved.interventions.some((x) => x.stage === 'after_execution'));
+  assert.equal(saved.artifactOutputs[0].path, 'plan.md');
+});
+
+test('platform roles are read-only for project members and can be copied', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', { codebuddy: { configured: true, models: [{ id: 'cb-model', name: 'CB model' }] } });
+  app.evaluate(`switchView('agents')`);
+  await settle();
+  app.evaluate(`
+    state.currentUser={...(state.currentUser||{}),id:7,loginName:'member',isPlatformAdmin:false};
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}];
+    const role={id:'platform-role',name:'Platform',projectId:'',prompt:'shared',executorId:'codebuddy',model:'cb-model'};
+    state.data.agents=[role];openAgentWizard(role);
+  `);
+  await settle();
+  assert.equal(app.document.querySelector('#agentSave').hidden, true);
+  assert.equal(app.document.querySelector('#agentClone').hidden, false);
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  assert.equal(app.router.calls.some((c) => c.path === '/api/agents' && c.method === 'PUT'), false);
+  assert.equal(app.evaluate(`state.data.agents[0].projectId`), '');
+  app.evaluate(`state.currentUser.isPlatformAdmin=true;openAgentWizard(state.data.agents[0])`);
+  await settle();
+  assert.equal(app.document.querySelector('#agentSave').hidden, false);
 });

@@ -13,16 +13,16 @@ import (
 // the requirement. The browser saves the empty conversation first, so the
 // turn links the mentioned issue to it while starting; that link must not be
 // mistaken for a concurrent rebinding and reject the turn. The link does not
-// depend on how the requirement is delivered, so every SOP choice of the
+// depend on how the requirement is delivered, so every LOOP choice of the
 // new-requirement dialog is covered.
 func TestFirstTurnMentioningAnIssueLinksItAndStarts(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		issue domain.Issue
 	}{
-		{"bound SOP", domain.Issue{WorkflowID: "generic-backend-delivery"}},
-		{"SOP chosen later", domain.Issue{}},
-		{"no SOP", domain.Issue{SOPMode: domain.IssueSOPNone}},
+		{"bound LOOP", domain.Issue{WorkflowID: "generic-backend-delivery"}},
+		{"LOOP chosen later", domain.Issue{}},
+		{"no LOOP", domain.Issue{SOPMode: domain.IssueSOPNone}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, u := workbenchFixture(t)

@@ -42,7 +42,7 @@ async function main() {
   Object.assign(metrics, {projectQuery: () => '', renderSOPCatalog: () => {}, toast: m => { throw new Error(m); }});
   vm.runInContext(source('refreshWorkflowMetrics'), metrics);
   await metrics.refreshWorkflowMetrics();
-  assert.equal(metrics.badge.hidden, false, 'SOP metrics refresh also refreshes the badge');
+  assert.equal(metrics.badge.hidden, false, 'LOOP metrics refresh also refreshes the badge');
   assert.equal(metrics.badge.textContent, 1);
 }
 main().catch(err => { console.error(err); process.exit(1); });

@@ -1,3 +1,5 @@
+const SKILL_FILE_MAX_BYTES=10*1024*1024;
+
 function assetScopeKey(type){return ({rules:'ruleScope',skills:'skillScope',sandboxes:'sandboxScope'})[type]||'ruleScope'}
 function isProjectSharedAsset(type){return ['rules','skills','sandboxes'].includes(type)}
 function assetPageCopy(type=state.assetType){
@@ -23,7 +25,7 @@ function assetStatusHTML(a){
 }
 function assetMetaHTML(a){
   const item=(icon,text)=>`<span>${huiIcon(icon)}${escapeHTML(text)}</span>`;const meta=[];
-  if(state.assetType==='rules'){meta.push(item('priority-bolt',`优先级 ${a.priority||0}`));if(a.global){const bound=(a.workflowIds||[]).length;meta.push(item('globe',bound?`全局 · ${bound} 个 SOP`:'全局'))}}
+  if(state.assetType==='rules'){meta.push(item('priority-bolt',`优先级 ${a.priority||0}`));if(a.global){const bound=(a.workflowIds||[]).length;meta.push(item('globe',bound?`全局 · ${bound} 个 LOOP`:'全局'))}}
   if(state.assetType==='skills'){
     meta.push(item('doc',`${Object.keys(a.files||{}).length+(a.fileRefs||[]).length} 个文件`));
     const src=assetSkillSource(a);
@@ -255,7 +257,7 @@ async function toggleAssetShare(id){
     toast(saved.shared?(state.assetType==='skills'?'已共享，所有对话和定时任务会自动装入':'已共享，其他项目可绑定'):'已取消共享');
   }catch(e){toast(e.message)}
 }
-function assetEmptyHint(){return ({rules:'规则是写给 Agent 的行为约束，例如编码规范、禁止事项。建好后在「角色定义」里绑定到角色。',skills:'技能是 Agent 可按需加载的说明和附加文件，例如某个框架的操作手册。建好后在「角色定义」里绑定到角色。',sandboxes:'沙箱决定 SOP 节点和对话工作区在什么隔离环境里执行：docker 沙箱自带 Dockerfile，native 沙箱使用执行机器上已安装的工具。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。'})[state.assetType]||''}
+function assetEmptyHint(){return ({rules:'规则是写给 Agent 的行为约束，例如编码规范、禁止事项。建好后在「角色定义」里绑定到角色。',skills:'技能是 Agent 可按需加载的说明和附加文件，例如某个框架的操作手册。建好后在「角色定义」里绑定到角色。',sandboxes:'沙箱决定 LOOP 节点和对话工作区在什么隔离环境里执行：docker 沙箱自带 Dockerfile，native 沙箱使用执行机器上已安装的工具。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。'})[state.assetType]||''}
 function assetKindLabel(){return ({rules:'规则',skills:'技能',sandboxes:'沙箱'})[state.assetType]||'资产'}
 function assetRefKindLabel(){return ({rules:'角色',skills:'角色',sandboxes:'流程'})[state.assetType]||'引用'}
 function assetReferenceNames(a){
@@ -290,11 +292,11 @@ async function deleteAsset(id){
   }catch(e){toast(e.message||'删除失败')}
 }
 function assetKind(){return assetKindLabel()}
-function ruleGlobalFields(a){const on=!!a.global;return `<div class="rule-global-block"><label class="rule-global-row"><span><b>作为全局规则</b><small>开启后选择要生效的 SOP。该 SOP 的每个节点执行时都会带上这条规则。</small></span><input name="global" type="checkbox" class="rule-global-input" role="switch" ${on?'checked':''}></label><div id="ruleSOPPickerWrap" class="rule-global-sops" ${on?'':'hidden'}><label>应用到 SOP</label><div id="ruleSOPPicker" class="repo-picker"></div><div class="json-help">从下拉框添加，点击标签移除。选中的 SOP 在运行时，其全部节点都会注入本规则。</div></div></div>`}
+function ruleGlobalFields(a){const on=!!a.global;return `<div class="rule-global-block"><label class="rule-global-row"><span><b>作为全局规则</b><small>开启后选择要生效的 LOOP。该 LOOP 的每个节点执行时都会带上这条规则。</small></span><input name="global" type="checkbox" class="rule-global-input" role="switch" ${on?'checked':''}></label><div id="ruleSOPPickerWrap" class="rule-global-sops" ${on?'':'hidden'}><label>应用到 LOOP</label><div id="ruleSOPPicker" class="repo-picker"></div><div class="json-help">从下拉框添加，点击标签移除。选中的 LOOP 在运行时，其全部节点都会注入本规则。</div></div></div>`}
 function ruleSOPChoices(){return runnableWorkflowOptions()}
 function selectedRuleWorkflowIds(){try{const ids=JSON.parse($('#ruleSOPPicker')?.dataset.ids||'[]');return Array.isArray(ids)?ids:[]}catch{return []}}
 function setRuleWorkflowIds(ids){const host=$('#ruleSOPPicker');if(!host)return;const known=new Set(ruleSOPChoices().map(w=>w.id));host.dataset.ids=JSON.stringify([...new Set((ids||[]).map(id=>String(id||'').trim()).filter(id=>id&&known.has(id)))]);renderRuleSOPPicker();markAssetDirty()}
-function renderRuleSOPPicker(){const host=$('#ruleSOPPicker');if(!host)return;const sops=ruleSOPChoices();const selected=selectedRuleWorkflowIds();const chosen=new Set(selected);const leftover=sops.filter(w=>!chosen.has(w.id));const tags=selected.map(id=>{const sop=sops.find(w=>w.id===id);const name=sop?.name||id;const nodes=sop?.nodes?.length||0;const label=nodes?`${name} · ${nodes} 个节点`:name;return `<button type="button" class="repo-picker-tag" data-remove-rule-sop="${escapeHTML(id)}" title="点击移除">${escapeHTML(label)}<span aria-hidden="true">×</span></button>`}).join('');const options=leftover.map(w=>`<option value="${escapeHTML(w.id)}">${escapeHTML(w.name)}${w.nodes?.length?` · ${w.nodes.length} 个节点`:''}</option>`).join('');const placeholder=!sops.length?'暂无可选 SOP':(!leftover.length?'已全部选择':'＋ 添加 SOP…');host.innerHTML=`<div class="repo-picker-field">${tags}<select class="repo-picker-select"${leftover.length?'':' disabled'}><option value="">${placeholder}</option>${options}</select></div>`;host.querySelectorAll('[data-remove-rule-sop]').forEach(b=>b.onclick=()=>setRuleWorkflowIds(selected.filter(id=>id!==b.dataset.removeRuleSop)));const sel=host.querySelector('select');if(sel)sel.onchange=()=>{if(!sel.value)return;setRuleWorkflowIds([...selected,sel.value])}}
+function renderRuleSOPPicker(){const host=$('#ruleSOPPicker');if(!host)return;const sops=ruleSOPChoices();const selected=selectedRuleWorkflowIds();const chosen=new Set(selected);const leftover=sops.filter(w=>!chosen.has(w.id));const tags=selected.map(id=>{const sop=sops.find(w=>w.id===id);const name=sop?.name||id;const nodes=sop?.nodes?.length||0;const label=nodes?`${name} · ${nodes} 个节点`:name;return `<button type="button" class="repo-picker-tag" data-remove-rule-sop="${escapeHTML(id)}" title="点击移除">${escapeHTML(label)}<span aria-hidden="true">×</span></button>`}).join('');const options=leftover.map(w=>`<option value="${escapeHTML(w.id)}">${escapeHTML(w.name)}${w.nodes?.length?` · ${w.nodes.length} 个节点`:''}</option>`).join('');const placeholder=!sops.length?'暂无可选 LOOP':(!leftover.length?'已全部选择':'＋ 添加 LOOP…');host.innerHTML=`<div class="repo-picker-field">${tags}<select class="repo-picker-select"${leftover.length?'':' disabled'}><option value="">${placeholder}</option>${options}</select></div>`;host.querySelectorAll('[data-remove-rule-sop]').forEach(b=>b.onclick=()=>setRuleWorkflowIds(selected.filter(id=>id!==b.dataset.removeRuleSop)));const sel=host.querySelector('select');if(sel)sel.onchange=()=>{if(!sel.value)return;setRuleWorkflowIds([...selected,sel.value])}}
 function bindRuleGlobalPicker(a){const host=$('#ruleSOPPicker');if(!host)return;const known=new Set(ruleSOPChoices().map(w=>w.id));host.dataset.ids=JSON.stringify((Array.isArray(a.workflowIds)?a.workflowIds:[]).filter(id=>known.has(id)));const toggle=document.querySelector('#assetForm [name="global"]');const wrap=$('#ruleSOPPickerWrap');const sync=()=>{if(wrap)wrap.hidden=!(toggle&&toggle.checked)};if(toggle)toggle.onchange=sync;sync();renderRuleSOPPicker()}
 // seatbelt / bwrap are the per-OS forms of native; rows saved before the merge still carry them.
 // Rows saved as local before it was removed read as native.
@@ -377,7 +379,7 @@ function assetMainPanesHTML(a,{creating,readonly}){
     </div>
     <div id="skillUploadStatus" class="skill-upload-status">${state.skillUploadStatus||''}</div>
     ${skillFileRowsHTML(a)}
-    ${locked?'':`<div class="json-help">每次上传都是<b>完全替换</b>：文件夹 / zip 替换为整批文件；单独上传 SKILL.md 会先弹出确认，然后该技能<b>只保留这一份 SKILL.md</b>。单文件 ≤1MB，最多 500 个，单技能 ≤64MB。<b>zip 自动解包并保留可执行位</b>；markdown / 代码 / 图片可直接预览。</div>`}
+    ${locked?'':`<div class="json-help">每次上传都是<b>完全替换</b>：文件夹 / zip 替换为整批文件；单独上传 SKILL.md 会先弹出确认，然后该技能<b>只保留这一份 SKILL.md</b>。单文件 ≤10MB，最多 500 个，单技能 ≤64MB。<b>zip 自动解包并保留可执行位</b>；markdown / 代码 / 图片可直接预览。</div>`}
   </div>`);
   }
   if(state.assetType==='sandboxes')return pane('setup',sandboxSetupHTML(a));
@@ -641,7 +643,7 @@ async function uploadSkillMd(input){
   const file=files[0];
   const lower=(file.name||'').toLowerCase();
   if(!lower.endsWith('.md')&&!lower.endsWith('.markdown'))return toast('请选择 SKILL.md 或 .md 文件');
-  if(file.size>1024*1024)return toast('SKILL.md 超过 1MB 限制','err');
+  if(file.size>SKILL_FILE_MAX_BYTES)return toast('SKILL.md 超过 10MB 限制','err');
   const id=state.selectedAsset;
   if(!id||id==='__new__')return toast('先保存技能，再上传文件');
   if(skillWriteBlocked())return toast('共享资产只读');

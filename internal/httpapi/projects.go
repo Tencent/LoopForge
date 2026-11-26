@@ -35,6 +35,12 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 		}
 		v := body.Project
 		existing, exists := h.repo.Project(v.ID)
+		if !exists {
+			if err := domain.ValidateResourceID(v.ID); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "项目" + err.Error()})
+				return
+			}
+		}
 		if v.BusinessDomainID != "" && (!exists || v.BusinessDomainID != existing.BusinessDomainID) {
 			c.JSON(400, gin.H{"error": "请通过业务域归属接口调整项目归属"})
 			return
@@ -87,7 +93,7 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			return
 		}
 		// A brand-new project starts with the built-in LoopForge backend
-		// delivery SOP when none was picked, so synced and newly created
+		// delivery LOOP when none was picked, so synced and newly created
 		// requirements run out of the box (see repo.bindDefaultWorkflow).
 		if isNew && strings.TrimSpace(v.WorkflowID) == "" {
 			v.WorkflowID = repo.GenericBackendDeliveryWorkflowID

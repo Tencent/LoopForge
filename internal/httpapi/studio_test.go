@@ -98,6 +98,46 @@ func TestStudioStylesheetChangesInvalidateURLWithoutEditingIndex(t *testing.T) {
 	}
 }
 
+func TestStudioChatbotCacheControl(t *testing.T) {
+	const immutable = "public, max-age=31536000, immutable"
+	static := fstest.MapFS{
+		"native-chat/index.html":                         {Data: []byte(`<script src="/chatbot/assets/main-CiKeIPH5.js"></script>`)},
+		"native-chat/preview.html":                       {Data: []byte("Preview")},
+		"native-chat/prompt-editor.js":                   {Data: []byte("Prompt editor")},
+		"native-chat/assets/main-CiKeIPH5.js":            {Data: []byte("Main module")},
+		"native-chat/assets/ReferenceInput-DP7mt_8J.css": {Data: []byte(".reference-input {}")},
+		"native-chat/assets/logo-XY0-1_qA.svg":           {Data: []byte("<svg/>")},
+		"native-chat/assets/stable.js":                   {Data: []byte("Stable module")},
+	}
+	h := studioFileServer(static)
+	for _, tt := range []struct {
+		path  string
+		cache string
+	}{
+		{"/chatbot/", "no-store"},
+		{"/chatbot/preview.html", "no-store"},
+		{"/chatbot/prompt-editor.js", "no-store"},
+		{"/chatbot/assets/stable.js?v=manual", "no-store"},
+		{"/chatbot/assets/main-CiKeIPH5.js", immutable},
+		{"/chatbot/assets/ReferenceInput-DP7mt_8J.css", immutable},
+		{"/chatbot/assets/logo-XY0-1_qA.svg", immutable},
+	} {
+		t.Run(tt.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if got := rec.Header().Get("Cache-Control"); rec.Code != http.StatusOK || got != tt.cache {
+				t.Fatalf("GET %s: status=%d cache=%q, want status=200 cache=%q", tt.path, rec.Code, got, tt.cache)
+			}
+		})
+	}
+
+	missing := httptest.NewRecorder()
+	h.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/chatbot/assets/missing-AbCd1234.js", nil))
+	if cache := missing.Header().Get("Cache-Control"); missing.Code != http.StatusNotFound || cache != "no-store" {
+		t.Fatalf("missing asset: status=%d cache=%q, want status=404 cache=no-store", missing.Code, cache)
+	}
+}
+
 func TestStudioVscodePageStampsAssetsWithContentHash(t *testing.T) {
 	static, err := fs.Sub(webassets.Files, ".")
 	if err != nil {

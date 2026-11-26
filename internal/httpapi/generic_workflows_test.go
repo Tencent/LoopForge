@@ -348,11 +348,11 @@ func TestGenericTemplateCloneCreatesProjectRolesAndRemapsNodes(t *testing.T) {
 
 // No clone may occupy a generic template id: the store row would shadow the
 // built-in template in the detail endpoint. This covers both a regular source
-// SOP and the template itself.
+// LOOP and the template itself.
 func TestGenericTemplateIDCannotBeTakenByAnyClone(t *testing.T) {
 	h, s := newGenericTemplateServer(t)
 	requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
-		ID: "regular-sop", Name: "普通 SOP", SandboxProfileID: "test-native", ProjectID: "alpha", Nodes: []domain.WorkflowNode{}, Edges: []domain.WorkflowEdge{},
+		ID: "regular-sop", Name: "普通 LOOP", SandboxProfileID: "test-native", ProjectID: "alpha", Nodes: []domain.WorkflowNode{}, Edges: []domain.WorkflowEdge{},
 	}, http.StatusOK)
 	requestJSON[map[string]string](t, h, http.MethodPost,
 		"/api/workflows/regular-sop/clone",
@@ -380,7 +380,7 @@ func TestGenericTemplateIDCannotBeTakenByAnyClone(t *testing.T) {
 func TestGenericTemplateSurvivesLegacyCollidingRow(t *testing.T) {
 	h, s := newGenericTemplateServer(t)
 	legacy := domain.WorkflowDefinition{
-		ID: repo.GenericBackendDeliveryWorkflowID, Name: "历史同 ID SOP", SandboxProfileID: "test-native",
+		ID: repo.GenericBackendDeliveryWorkflowID, Name: "历史同 ID LOOP", SandboxProfileID: "test-native",
 		ProjectID: "alpha", Status: "draft", Version: 1, Nodes: []domain.WorkflowNode{}, Edges: []domain.WorkflowEdge{},
 	}
 	if err := s.PutWorkflow(legacy); err != nil {
@@ -455,7 +455,7 @@ func TestGenericTemplateRunsDirectlyByReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := domain.WorkflowDefinition{
-		ID: repo.GenericBackendDeliveryWorkflowID, Name: "历史同 ID SOP", SandboxProfileID: "test-native",
+		ID: repo.GenericBackendDeliveryWorkflowID, Name: "历史同 ID LOOP", SandboxProfileID: "test-native",
 		ProjectID: "alpha", Status: "draft", Version: 1, Nodes: []domain.WorkflowNode{}, Edges: []domain.WorkflowEdge{},
 	}
 	if err := s.PutWorkflow(legacy); err != nil {
@@ -597,14 +597,14 @@ func TestGenericTemplateReadoptKeepsLocalMCPBinding(t *testing.T) {
 }
 
 // A failed workflow persist keeps the cloned assets on purpose: a concurrent
-// adoption may already reference them, so deleting would break a healthy SOP.
+// adoption may already reference them, so deleting would break a healthy LOOP.
 // They are pre-created assets — the retry reuses them idempotently.
 func TestGenericTemplateAdoptFailureKeepsAssetsForRetry(t *testing.T) {
 	h, s := newGenericTemplateServer(t)
 	// A colliding row with a higher revision makes PutWorkflow fail with a
 	// revision conflict after the assets were already cloned.
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
-		ID: "conflicting-id", Name: "已有 SOP", SandboxProfileID: "test-native", ProjectID: "alpha", Revision: 5,
+		ID: "conflicting-id", Name: "已有 LOOP", SandboxProfileID: "test-native", ProjectID: "alpha", Revision: 5,
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -10,7 +10,7 @@ import (
 	"agentflow/internal/domain"
 )
 
-// The checkbox changes reconstruction, not normal SOP scheduling: each marked
+// The checkbox changes reconstruction, not normal LOOP scheduling: each marked
 // script must still be dispatched once in its original graph position.
 func TestRunnerRebuildCheckboxPreservesNormalSOPScriptOrder(t *testing.T) {
 	server, store, engine := newDaemonTestServer(t)
@@ -51,7 +51,7 @@ func TestRunnerRebuildCheckboxPreservesNormalSOPScriptOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 20*time.Second, "normal SOP order", func() bool {
+	waitFor(t, 20*time.Second, "normal LOOP order", func() bool {
 		current, ok := store.Run(run.ID)
 		return ok && (current.Status == "succeeded" || current.Status == "failed")
 	})

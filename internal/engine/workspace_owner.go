@@ -9,7 +9,7 @@ import (
 // The workspace of a run lives only on the host (or execution machine) that
 // checked it out. Nodes do not push intermediate commits: the remote work
 // branch receives code only from delivery steps (MR, integration). A child
-// SOP works in the checkout of the run that started its SOP chain.
+// LOOP works in the checkout of the run that started its LOOP chain.
 
 // workspaceRunID returns the run whose workspace r executes in.
 func workspaceRunID(r domain.Run) string {
@@ -19,14 +19,14 @@ func workspaceRunID(r domain.Run) string {
 	return r.ID
 }
 
-// sharesWorkspace reports whether r is a child SOP working in another run's
+// sharesWorkspace reports whether r is a child LOOP working in another run's
 // checkout.
 func sharesWorkspace(r domain.Run) bool {
 	return workspaceRunID(r) != r.ID
 }
 
 // nodeControlKey names a node's own control paths in the checkout (gate
-// results, materialized inputs, runtime invocation directories). A child SOP
+// results, materialized inputs, runtime invocation directories). A child LOOP
 // runs in its parent's checkout, concurrently with the parent's other
 // branches, and its workflow may reuse the parent's node IDs; its keys carry
 // the child run so neither side clears or reads the other's files.
@@ -37,7 +37,7 @@ func nodeControlKey(r domain.Run, nodeID string) string {
 	return r.ID + "--" + nodeID
 }
 
-// workspaceBind returns the (host, root) holding r's workspace. A child SOP
+// workspaceBind returns the (host, root) holding r's workspace. A child LOOP
 // follows the run that owns the checkout once that run has bound one.
 func (e *Engine) workspaceBind(r domain.Run) (string, string) {
 	if sharesWorkspace(r) {

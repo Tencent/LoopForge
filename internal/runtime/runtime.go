@@ -72,7 +72,7 @@ type RunCredentials struct {
 	// to its platform. It holds no tokens; the helper asks for them per host.
 	GitHTTPHosts map[string]string `json:",omitempty"`
 	// GitHTTPCredentials travels only on authenticated execution dispatches.
-	// SOP commands fetch a matching, exposed credential from an ephemeral relay.
+	// LOOP commands fetch a matching, exposed credential from an ephemeral relay.
 	GitHTTPCredentials map[string]domain.GitHTTPExecutionCredential `json:",omitempty"`
 	GitUserName        string
 	GitUserEmail       string
@@ -138,6 +138,9 @@ type CommandSpec struct {
 	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string
+	// codeBuddySOPInput is the first frame of a CodeBuddy SOP's stdin stream.
+	// The protocol observer opens and owns the pipe on the executing machine.
+	codeBuddySOPInput []byte
 	// observeOutput receives raw bytes before process telemetry splits lines.
 	observeOutput func(stream string, data []byte)
 	// privateBinds are host directories bwrap binds into this one process

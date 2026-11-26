@@ -23,10 +23,30 @@ import (
 const (
 	RunnerStatusOnline  = "online"
 	RunnerStatusOffline = "offline"
+
+	RunnerSelectionModeAuto     = "auto"
+	RunnerSelectionModePlatform = "platform"
+	PlatformRunnerName          = "平台执行机器（云端）"
 )
 
-// DefaultRunnerRunLimit is the initial SOP run limit for a newly bound machine.
+// DefaultRunnerRunLimit is the initial LOOP run limit for each execution machine.
 const DefaultRunnerRunLimit = 10
+
+type RunnerLoad struct {
+	OccupiedRuns int `json:"occupiedRuns"`
+	RunningRuns  int `json:"runningRuns"`
+	QueuedRuns   int `json:"queuedRuns"`
+}
+
+type PlatformRunnerStatus struct {
+	Name            string      `json:"name"`
+	Status          string      `json:"status"`
+	RunLimit        int         `json:"runLimit"`
+	CanEditLimit    bool        `json:"canEditLimit"`
+	CloudPool       bool        `json:"cloudPool"`
+	CloudPoolOnline int         `json:"cloudPoolOnline"`
+	Load            *RunnerLoad `json:"load"`
+}
 
 // RunnerTask states. LEASED sits between QUEUED and RUNNING so a claim that
 // never starts is still recoverable through lease expiry.
@@ -215,15 +235,24 @@ func (r Runner) FilterGitHTTPCredentials(credentials map[string]GitHTTPExecution
 }
 
 // RunnerVersionProjectCredentials adds in-memory project environment values
-// to authenticated SOP task claims and conversation process starts.
+// to authenticated LOOP task claims and conversation process starts.
 const RunnerVersionProjectCredentials = "0.12.1"
 
 func (r Runner) SupportsProjectCredentials() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionProjectCredentials)
 }
 
+// RunnerVersionArtifactTransfer introduced task-scoped streaming for SOP files.
+const RunnerVersionArtifactTransfer = "0.13.0"
+
+const RunnerResultReportError = "执行结果回传失败"
+
+func (r Runner) SupportsArtifactTransfer() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionArtifactTransfer)
+}
+
 // RunnerVersionConversationSOPWorkspace discovers nested conversation checkouts
-// and prepares them inside the SOP sandbox while preserving local work.
+// and prepares them inside the LOOP sandbox while preserving local work.
 const RunnerVersionConversationSOPWorkspace = "0.12.3"
 
 func (r Runner) SupportsConversationSOPWorkspace() bool {
@@ -255,7 +284,7 @@ type Runner struct {
 	// NativeSandboxAvailable is reported by the daemon. Older Runners leave it
 	// false so the platform does not choose native automatically for them.
 	NativeSandboxAvailable bool `json:"nativeSandboxAvailable"`
-	// RunLimit caps concurrently admitted top-level SOP runs on a personal
+	// RunLimit caps concurrently admitted top-level LOOP runs on a personal
 	// machine, counted like the project limit. 0 means unlimited.
 	RunLimit   int             `json:"runLimit"`
 	Status     string          `json:"status"`
@@ -664,6 +693,7 @@ type RunnerInvocation struct {
 	// move a missing output file found elsewhere in the workspace into
 	// place, as the control plane does for its own sandboxes.
 	ReportOutputs                bool     `json:"reportOutputs,omitempty"`
+	ArtifactTransfer             bool     `json:"artifactTransfer,omitempty"`
 	OutputFiles                  []string `json:"outputFiles,omitempty"`
 	RecoverOutputs               bool     `json:"recoverOutputs,omitempty"`
 	HumanContext                 string   `json:"humanContext,omitempty"`
@@ -702,7 +732,7 @@ type RunnerInvocation struct {
 	// authenticated claim/control dispatch and never persisted in the task.
 	GitHTTPUserID      int64                                 `json:"gitHttpUserId,omitempty"`
 	GitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"gitHttpCredentials,omitempty"`
-	// The first SOP Agent may recover a failed automatic checkout. The runner
+	// The first LOOP Agent may recover a failed automatic checkout. The runner
 	// validates the frozen repository and branch before reporting success.
 	RepositoryPreparationFallback bool `json:"repositoryPreparationFallback,omitempty"`
 	// Repositories lists every repository the run touches (multi-repository
@@ -727,7 +757,7 @@ type RunnerRepository struct {
 	// CreateNewWorkBranch creates WorkBranch from the base ref and fails when a
 	// same-named remote head already exists.
 	CreateNewWorkBranch bool `json:"createNewWorkBranch,omitempty"`
-	// PreserveCheckout starts a generated SOP branch at the existing local
+	// PreserveCheckout starts a generated LOOP branch at the existing local
 	// HEAD when the checkout was supplied by a conversation.
 	PreserveCheckout bool `json:"preserveCheckout,omitempty"`
 	// Dir is the workspace-relative checkout directory. Empty selects the
@@ -768,8 +798,11 @@ func (inv *RunnerInvocation) GitSSHRemotes() []string {
 
 // RunnerInputFile is one file written into the task workspace before a run.
 type RunnerInputFile struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path       string `json:"path"`
+	Content    string `json:"content,omitempty"`
+	ArtifactID string `json:"artifactId,omitempty"`
+	SHA256     string `json:"sha256,omitempty"`
+	Restore    bool   `json:"restore,omitempty"`
 }
 
 // RunnerTaskOutputs is what a runner reports about the task workspace after
@@ -777,8 +810,10 @@ type RunnerInputFile struct {
 type RunnerTaskOutputs struct {
 	// Files maps a workspace-relative OutputFiles path to its content. Missing
 	// files and non-regular files are absent; oversized ones are in TooLarge.
-	Files    map[string]string `json:"files,omitempty"`
-	TooLarge []string          `json:"tooLarge,omitempty"`
+	Files      map[string]string       `json:"files,omitempty"`
+	TooLarge   []string                `json:"tooLarge,omitempty"`
+	FileBlobs  map[string]ArtifactBlob `json:"fileBlobs,omitempty"`
+	FileErrors map[string]string       `json:"fileErrors,omitempty"`
 	// Patches maps a repository checkout dir ("" is the workspace root) to
 	// its repository-patch inventory. Unchanged checkouts are absent.
 	Patches map[string]string `json:"patches,omitempty"`

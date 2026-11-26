@@ -11,9 +11,9 @@ The supported access model is explicit: signed-in users can read project data ac
 ## Final source and deployment review
 
 - Independently checked all **1,718 recorded source blob hashes** against the recorded master. After the hosted-CI compatibility fixes, the candidate has 1,464 unchanged upstream files, 180 reviewed adaptations and 74 recorded exclusions, plus 60 audited public additions in the platform export scope. Private deployment files outside the export scope remain excluded. No private Git history is imported.
-- The runtime includes durable group-to-SOP handoff and executes SOP scripts directly in Docker workspaces. The Docker tests cover non-root execution and reopening previously masked workspaces. MySQL concurrent claims and lease recovery were explicitly exercised.
+- The runtime includes durable group-to-LOOP handoff and executes LOOP scripts directly in Docker workspaces. The Docker tests cover non-root execution and reopening previously masked workspaces. MySQL concurrent claims and lease recovery were explicitly exercised.
 - The preview had still been running an older executable after the source sync. Rebuilt the service and runner/gate helpers, restarted the preview, and compared its key JavaScript assets byte-for-byte with the current source. The handoff acceptance case now exercises the current endpoint behavior.
-- Fixed a remaining viewer permission gap in group creation, role dispatch, SOP control and handoff retry, and blocked run-bound assistant execution for read-only members. Tests cover denial for viewers/non-members and continued access for owners; viewer reads remain available. This generic permission fix should be ported back to internal upstream.
+- Fixed a remaining viewer permission gap in group creation, role dispatch, LOOP control and handoff retry, and blocked run-bound assistant execution for read-only members. Tests cover denial for viewers/non-members and continued access for owners; viewer reads remain available. This generic permission fix should be ported back to internal upstream.
 - Updated the source audit record and the checker: `--source` now verifies the actual source blobs as well as the remote commit label. No unrelated source hashes were reset.
 
 ## Publication checks
@@ -33,7 +33,7 @@ The supported access model is explicit: signed-in users can read project data ac
 
 - External knowledge retrieval/write-back, enterprise notifications and paid Codex/Claude services lack live credentials. Their protocol/adapter tests do not count as live service verification.
 - Real model results use the supplied CodeBuddy environment. The four-role Python delivery case checks actual tests, artifacts, approval and code hashes; it does not guarantee success for arbitrary tasks.
-- The earlier 47-minute run used the frontend SOP template on a Python test repository and required explicit human clarification/acceptance. It demonstrates orchestration and recovery, not verification of every frontend framework or fully autonomous delivery. No PR was created by that run.
+- The earlier 47-minute run used the frontend LOOP template on a Python test repository and required explicit human clarification/acceptance. It demonstrates orchestration and recovery, not verification of every frontend framework or fully autonomous delivery. No PR was created by that run.
 - Linux container/native acceptance is the primary deployed environment checked here. Cross-compilation of macOS/arm64 helpers is not runtime testing on every supported host.
 - GitHub-hosted CI must validate the submitted PR. A package, image, tag or GitHub Release is not published by this review.
 
@@ -46,4 +46,4 @@ An additional full-suite run exposed a preview-test race: the preview becomes re
 ### Existing pull requests
 
 - [PR #46](https://github.com/Tencent/LoopForge/pull/46) was closed as superseded by [PR #48](https://github.com/Tencent/LoopForge/pull/48). The replacement uses the audited master export, public adapters, MIT packaging and the existing workflow under `local/`; closure does not imply its commits were merged.
-- [PR #47](https://github.com/Tencent/LoopForge/pull/47) was closed after the owner explicitly retired its separate workspace redesign and room-crew proposal. Only its language/theme mechanism is reused. Closure records that product decision; it does not claim parity with its room mentions, quoted replies, crew planning or crew-to-draft-SOP features, and those features need no follow-up port.
+- [PR #47](https://github.com/Tencent/LoopForge/pull/47) was closed after the owner explicitly retired its separate workspace redesign and room-crew proposal. Only its language/theme mechanism is reused. Closure records that product decision; it does not claim parity with its room mentions, quoted replies, crew planning or crew-to-draft-LOOP features, and those features need no follow-up port.

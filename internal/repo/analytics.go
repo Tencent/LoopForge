@@ -105,7 +105,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	var issueList []domain.Issue
 	var runList []domain.Run
 	if overview {
-		// 概览用轻量需求列 + 当前 SOP 目录，避免拉全量 payload / 每条 Run 的冻结快照。
+		// 概览用轻量需求列 + 当前 LOOP 目录，避免拉全量 payload / 每条 Run 的冻结快照。
 		_ = parallel(
 			func() error { r, _ := r.runs.RunSummariesFor(filter, ""); runList = r; return nil },
 			func() error { issueList = r.issues.IssueAnalyticsViews(); return nil },
@@ -147,9 +147,8 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	for _, issue := range issueList {
 		issuesByID[issue.ID] = issue
 	}
-	// RunSummaries intentionally omits workflow snapshots on MySQL list paths.
-	// Full scans need the frozen name/version/category/node bindings; overview
-	// uses the live workflow catalog instead so the page does not hydrate every snapshot.
+	// Run summaries carry only lightweight snapshot metadata. Full scans load
+	// the frozen category and node bindings for the matching runs as well.
 	if r.DB != nil && !overview {
 		runIDs := make([]string, 0, len(runList))
 		for _, run := range runList {
@@ -273,7 +272,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 			out.Summary.ReworkedRuns++
 		}
 		duration, complete := analyticsRunDuration(run, now)
-		// 执行耗时为 SOP 节点耗时之和，不含审批/排队/恢复等待。
+		// 执行耗时为 LOOP 节点耗时之和，不含审批/排队/恢复等待。
 		execDuration := runExecutionDuration(run)
 		execKnown := !isExternal || external.execution.ExecutionDurationMs != nil
 		if isExternal {
@@ -374,7 +373,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 			acc.nodeTypes = analyticsNodeTypes(workflow.Nodes)
 		}
 		if !isExternal {
-			accumulateVersion(versions, run.WorkflowID, workflowName, workflow.Version, workflowDefs[run.WorkflowID].Version, run, duration, complete, execDuration)
+			accumulateVersion(versions, run.WorkflowID, workflowName, workflowDefs[run.WorkflowID].Version, run, duration, complete, execDuration)
 			accumulateBreakdown(categories, category, "", run, reworks, duration, complete, execDuration)
 			if acc := categories[category]; acc != nil && issueID != "" {
 				if acc.issueIDs == nil {
@@ -602,7 +601,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		out.Summary.IssueP50ExecutionDurationMs = percentile(execValues, 50)
 		out.Summary.IssueP95ExecutionDurationMs = percentile(execValues, 95)
 	}
-	// 轻量维度（SOP、模型、失败原因、用户每日用量）在概览态同样输出，
+	// 轻量维度（LOOP、模型、失败原因、用户每日用量）在概览态同样输出，
 	// Agent/CLI 与交付明细仍只在完整扫描时计算。
 	out.Workflows = finalizeBreakdowns(workflows)
 	out.Categories = finalizeBreakdowns(categories)
@@ -963,7 +962,7 @@ func usageCostKnown(usage domain.TokenUsage) bool {
 	return usage.CostUSD > 0
 }
 
-// analyticsWorkflowCategory 取 SOP 的受控统计标签，优先使用 Run 冻结的快照。
+// analyticsWorkflowCategory 取 LOOP 的受控统计标签，优先使用 Run 冻结的快照。
 func analyticsWorkflowCategory(snapshot domain.WorkflowDefinition, fallback domain.WorkflowDefinition) string {
 	if category := strings.TrimSpace(snapshot.MetricCategory); category != "" {
 		return category
@@ -1081,7 +1080,7 @@ func accumulateBreakdown(values map[string]*analyticsAccumulator, key, name stri
 }
 
 // accumulateBreakdownUsage 把单次执行的用量累加到维度累加器：Token/成本总量、
-// 成本未识别计数与 Token 四分项。dimension 维度（SOP、节点、模型等）共用。
+// 成本未识别计数与 Token 四分项。dimension 维度（LOOP、节点、模型等）共用。
 func accumulateBreakdownUsage(value *analyticsAccumulator, usage domain.TokenUsage) {
 	if !usageCostKnown(usage) {
 		value.item.CostUnknownRuns++
@@ -1153,9 +1152,14 @@ func accumulateNode(values map[string]*analyticsAccumulator, key, name string, n
 	}
 }
 
-// accumulateVersion 按 SOP 版本聚合，用于版本对比（样本不足时前端标注）。
-func accumulateVersion(values map[string]*analyticsVersionAccumulator, workflowID, workflowName string, snapshotVersion int, fallbackVersion int, run domain.Run, duration int64, complete bool, execDuration int64) {
-	version := snapshotVersion
+// accumulateVersion 按 LOOP 版本聚合，用于版本对比（样本不足时前端标注）。
+func accumulateVersion(values map[string]*analyticsVersionAccumulator, workflowID, workflowName string, fallbackVersion int, run domain.Run, duration int64, complete bool, execDuration int64) {
+	snapshot := run.WorkflowSnapshot
+	// Trial runs before the first release may have the same number as the release.
+	if snapshot.PublishedRevision == 0 && (snapshot.Status == "draft" || snapshot.Status == "archived") {
+		return
+	}
+	version := snapshot.Version
 	if version <= 0 {
 		version = fallbackVersion
 	}
@@ -1476,8 +1480,8 @@ func executorName(values map[string]domain.ExecutorDefinition, id string) string
 
 // accumulateConversationRun counts a conversation workspace: its model usage
 // joins the token and cost totals, trend, user, project and requirement-source
-// breakdowns, while run counts, statuses, durations and the SOP requirement
-// counts stay SOP-only. Its requirements are counted apart, per trend bucket in
+// breakdowns, while run counts, statuses, durations and the LOOP requirement
+// counts stay LOOP-only. Its requirements are counted apart, per trend bucket in
 // trendIssues.
 func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[string]struct{}, trends map[string]*domain.AnalyticsTrendPoint, trendIssues map[string]map[string]struct{}, users map[string]*analyticsUserAccumulator, projects map[string]*analyticsProjectAccumulator, sources map[string]*analyticsAccumulator, run domain.Run, issue domain.Issue, grain string) {
 	usage := run.Usage

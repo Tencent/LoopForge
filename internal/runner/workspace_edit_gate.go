@@ -13,7 +13,7 @@ import (
 // start using this run's workspace until the actual file operation has ended.
 //
 // The key is the run that owns the workspace directory, not the requesting
-// run: a child SOP executes in its parent's checkout, so its tasks must fence
+// run: a child LOOP executes in its parent's checkout, so its tasks must fence
 // the parent's preparation, restore and snapshot (and vice versa).
 func (d *Daemon) workspaceGate(key string) *sync.RWMutex {
 	gate, _ := d.workspaceGates.LoadOrStore(key, &sync.RWMutex{})

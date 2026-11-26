@@ -139,7 +139,7 @@ func TestCompletedConversationSavesBeforeReclamationEvenWhenNotArchived(t *testi
 	e.reconcileTerminalWorkspaceCleanup()
 	got, _ := s.RunState(r.ID)
 	if got.WorkspaceCleanedAt.IsZero() {
-		t.Fatal("completed SOP workspace was not reclaimed")
+		t.Fatal("completed LOOP workspace was not reclaimed")
 	}
 	kept := false
 	for _, id := range e.liveSandboxRunIDs() {

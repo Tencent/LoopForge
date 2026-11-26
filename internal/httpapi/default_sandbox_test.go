@@ -93,11 +93,11 @@ func TestDefaultSandboxWithoutCatalogRowsSupportsSOPCreation(t *testing.T) {
 		t.Fatalf("project cannot select the default: %d %s", listed.Code, listed.Body.String())
 	}
 	created := cvBRequest(t, f, http.MethodPut, "/api/workflows", map[string]any{
-		"id": "builtin-default-sop", "name": "Blank SOP", "projectId": projectID,
+		"id": "builtin-default-sop", "name": "Blank LOOP", "projectId": projectID,
 		"status": "draft", "sandboxProfileId": repo.GenericDockerSandboxID, "nodes": []any{}, "edges": []any{},
 	}, true)
 	if created.Code != http.StatusOK {
-		t.Fatalf("blank SOP creation failed: %d %s", created.Code, created.Body.String())
+		t.Fatalf("blank LOOP creation failed: %d %s", created.Code, created.Body.String())
 	}
 	var count int64
 	if err := f.s.DB.Table("sandboxes").Count(&count).Error; err != nil || count != 0 {

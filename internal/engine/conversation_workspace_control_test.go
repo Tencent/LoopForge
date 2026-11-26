@@ -172,12 +172,12 @@ func TestResumeChildSOPDoesNotReuseParentWorkspaceLease(t *testing.T) {
 	// Even an accidentally matching token cannot cross the parent run boundary.
 	ctx = WithConversationWorkspaceToken(ctx, token, parent.ID)
 	err := e.ResumePausedContext(ctx, parent.ID, "")
-	if err == nil || !strings.Contains(err.Error(), "继续子 SOP child") || !errors.Is(err, context.DeadlineExceeded) {
+	if err == nil || !strings.Contains(err.Error(), "继续子 LOOP child") || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("child accepted parent's workspace lease: %v", err)
 	}
 	child, _ = e.repo.RunState(child.ID)
 	if child.Status != "waiting" || !child.PauseRequested {
-		t.Fatal("child SOP resumed despite another active workspace owner")
+		t.Fatal("child LOOP resumed despite another active workspace owner")
 	}
 }
 

@@ -3,6 +3,7 @@ package runtime
 import (
 	"agentflow/internal/domain"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -15,6 +16,26 @@ import (
 const processWaitDelay = time.Second
 
 var errProcessNotStarted = errors.New("process was not started")
+
+func waitForProcessTerminalDrain(ctx context.Context, terminal, finished <-chan struct{}) bool {
+	select {
+	case <-terminal:
+	case <-ctx.Done():
+		return false
+	case <-finished:
+		return false
+	}
+	timer := time.NewTimer(ConversationTerminalResultDrain)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-finished:
+		return false
+	}
+}
 
 // runCommand streams process telemetry, coordinating the Claude login callback
 // and redacting bound credential environment values from process.started.

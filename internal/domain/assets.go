@@ -137,6 +137,7 @@ type DockerfileDefinition struct {
 type SandboxProfile struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
+	Description    string            `json:"description,omitempty"`
 	Toolchain      string            `json:"toolchain,omitempty"`
 	ProjectID      string            `json:"projectId,omitempty"`
 	Shared         bool              `json:"shared,omitempty"`
@@ -219,6 +220,9 @@ func ValidateSandboxAssets(v SandboxProfile) error {
 // profile drops the embedded copy.
 func RunnerSandbox(profile SandboxProfile) *RunnerSandboxSpec {
 	spec := &RunnerSandboxSpec{Profile: profile}
+	// The description is catalog copy only; keeping it out of the runner spec
+	// keeps the run snapshot and preparation fingerprints execution-only.
+	spec.Profile.Description = ""
 	spec.Profile.Dockerfile = nil
 	if d := profile.Dockerfile; d != nil && strings.TrimSpace(d.Content) != "" {
 		spec.Profile.DockerfileID = profile.ID
@@ -305,13 +309,13 @@ func ValidateManagedFiles(files map[string]string) error {
 
 // Binary skill upload limits, enforced by the HTTP API.
 const (
-	// SkillFileMaxBytes caps one uploaded skill file (1MB).
-	SkillFileMaxBytes int64 = 1 << 20
+	// SkillFileMaxBytes caps one uploaded skill file (10 MiB).
+	SkillFileMaxBytes int64 = 10 << 20
 	// SkillMaxFileCount caps the number of files per skill (text + binary).
 	SkillMaxFileCount = 500
 	// SkillTotalMaxBytes caps the combined size of all files per skill (64MB).
 	SkillTotalMaxBytes int64 = 64 << 20
-	MCPFileMaxBytes          = SkillFileMaxBytes
+	MCPFileMaxBytes    int64 = 1 << 20
 	MCPMaxFileCount          = SkillMaxFileCount
 	MCPTotalMaxBytes         = SkillTotalMaxBytes
 )
@@ -332,7 +336,7 @@ func ValidateSkillFileRefs(refs []SkillFileRef) error {
 			return err
 		}
 		if ref.Size < 0 || ref.Size > SkillFileMaxBytes {
-			return fmt.Errorf("skill file %s exceeds the 1MB limit", ref.Path)
+			return fmt.Errorf("skill file %s exceeds the %dMB limit", ref.Path, SkillFileMaxBytes>>20)
 		}
 	}
 	return nil

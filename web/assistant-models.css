@@ -1,4 +1,4 @@
-/* Shared model selectors used by SOP, role, Bot and schedule settings. */
+/* Shared model selectors used by LOOP, role, Bot and schedule settings. */
 .ai-model-toggle{
   display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;
   height:28px;padding:0 6px;border:0;border-radius:8px;

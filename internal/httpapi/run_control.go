@@ -37,9 +37,9 @@ func (h *runsHandlers) runControlPayload(run domain.Run) gin.H {
 	switch {
 	case run.IsWorkspace():
 		mode = "workspace"
-		reason = "对话工作区按需使用，不执行 SOP 节点"
+		reason = "对话工作区按需使用，不执行 LOOP 节点"
 	case run.HistoricalGroup():
-		reason = "历史角色协作记录，没有可继续的 SOP 节点"
+		reason = "历史角色协作记录，没有可继续的 LOOP 节点"
 	default:
 		for _, n := range run.Nodes {
 			if n != nil && n.Status == "waiting_approval" {
@@ -50,7 +50,7 @@ func (h *runsHandlers) runControlPayload(run domain.Run) gin.H {
 		}
 		if run.PauseRequested {
 			actions = append(actions, "runs_resume")
-			reason = "SOP 已暂停"
+			reason = "LOOP 已暂停"
 		}
 	}
 	return gin.H{"runId": run.ID, "projectId": run.ExecutionContext.ProjectID, "mode": mode, "status": run.Status, "pauseRequested": run.PauseRequested, "waitingReason": reason, "allowedActions": actions, "acceptance": run.WorkflowSnapshot.GroupCompletion, "notice": "节点执行完成不等于测试通过或用户验收；以实际记录为准"}
@@ -63,6 +63,6 @@ func (h *runsHandlers) rejectNonSOPControl(c *gin.Context, id string) bool {
 	if _, ok := h.projectRunUser(c, run.ExecutionContext.ProjectID); !ok {
 		return true
 	}
-	c.JSON(409, gin.H{"code": "NON_SOP_RUN", "error": "该记录不执行 SOP 节点，请使用普通对话工作区或新建 SOP 运行", "control": h.runControlPayload(run)})
+	c.JSON(409, gin.H{"code": "NON_SOP_RUN", "error": "该记录不执行 LOOP 节点，请使用普通对话工作区或新建 LOOP 运行", "control": h.runControlPayload(run)})
 	return true
 }

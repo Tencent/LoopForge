@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -164,7 +165,7 @@ func (h *assistantHandlers) archiveSession(c *gin.Context) {
 		return
 	}
 	if _, ok := h.repo.SharedAssistantSession(c.Param("id")); ok {
-		c.JSON(403, gin.H{"error": "共享 SOP 会话不能个人归档"})
+		c.JSON(403, gin.H{"error": "共享 LOOP 会话不能个人归档"})
 		return
 	}
 	var body struct {
@@ -182,6 +183,54 @@ func (h *assistantHandlers) archiveSession(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"ok": true})
+}
+
+func (h *assistantHandlers) renameSession(c *gin.Context) {
+	current, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(401, gin.H{"error": "请先登录"})
+		return
+	}
+	session, found := h.repo.AssistantSessionMetadata(c.Param("id"))
+	if !found || (!session.Shared && !repo.ProjectSharedAssistantSession(session) && session.UserID != current.ID) {
+		c.JSON(404, gin.H{"error": repo.ErrAssistantSessionNotFound.Error()})
+		return
+	}
+	if !h.workbenchProjectAllowed(c, session.ProjectID, current.ID) {
+		c.JSON(403, gin.H{"error": "无权修改此会话"})
+		return
+	}
+	if session.Shared {
+		c.JSON(403, gin.H{"error": repo.ErrAssistantSessionTitleLocked.Error()})
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	if title == "" {
+		c.JSON(400, gin.H{"error": "请输入会话名称"})
+		return
+	}
+	if utf8.RuneCountInString(title) > 128 {
+		c.JSON(400, gin.H{"error": "会话名称最多 128 个字符"})
+		return
+	}
+	switch err := h.repo.SetAssistantSessionTitle(session.UserID, session.ID, session.ProjectID, title); {
+	case errors.Is(err, repo.ErrAssistantSessionNotFound):
+		c.JSON(404, gin.H{"error": err.Error()})
+	case errors.Is(err, repo.ErrAssistantSessionTitleLocked):
+		c.JSON(403, gin.H{"error": err.Error()})
+	case errors.Is(err, repo.ErrAssistantSessionProjectChanged):
+		c.JSON(409, gin.H{"error": err.Error()})
+	case err != nil:
+		c.JSON(500, gin.H{"error": "保存会话名称失败"})
+	default:
+		c.JSON(200, gin.H{"title": title, "titleEdited": true})
+	}
 }
 
 // markSessionRead records the reply the reader has seen in a conversation, so
@@ -266,7 +315,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if !item.Shared && !readOnly {
 			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
 				if materializeWorkspaceImages(ownerID, &item) {
-					if err := saveAssistantConversation(h.repo, ownerID, item); err == nil {
+					updated := item
+					updated.TitleEdited = false
+					if err := saveAssistantConversation(h.repo, ownerID, updated); err == nil {
 						if stored, err := loadAssistantConversation(h.repo, ownerID, id); err == nil {
 							item = stored
 						}
@@ -341,6 +392,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		conv.Effort = existing.Effort
 		if body.Effort != nil {
 			conv.Effort = *body.Effort
+		}
+		if existing.ID != "" {
+			conv.TitleEdited = false
 		}
 		if existing.ID != "" && conv.Title != "" && conv.Title != existing.Title {
 			// A client that still has the first-prompt title must not undo the
@@ -453,7 +507,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if shared {
 			_, project := h.repo.ProjectAssistantSession(id)
 			if !project {
-				c.JSON(403, gin.H{"error": "共享 SOP 会话随运行保留，不能个人删除"})
+				c.JSON(403, gin.H{"error": "共享 LOOP 会话随运行保留，不能个人删除"})
 				return
 			}
 		}

@@ -547,8 +547,8 @@ func mcpToolTextResult(text string, isError bool) map[string]any {
 	}
 }
 
-// sopDesignerCatalog is the SOP designer's whole tool set: the read-only
-// platform tools it needs to look up roles and SOPs, the schema reader and the
+// sopDesignerCatalog is the LOOP designer's whole tool set: the read-only
+// platform tools it needs to look up roles and LOOPs, the schema reader and the
 // terminal reply tool. External MCPs, workspace and browser tools are left
 // out, so a designer turn can only end in a workflows_save draft.
 func sopDesignerCatalog(session *AgentToolSession) []agentToolDescriptor {
