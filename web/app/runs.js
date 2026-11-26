@@ -549,17 +549,33 @@ function skipReasonText(nr,wf,node){
   // Match the upstream id before looking for delimiters: ids and diagnostic
   // details can contain the same punctuation used to join or nest reasons.
   const suffix=/^(?: 已跳过（| 已跳过(?=；|）|$)| 已命中其他条件，未选择默认分支(?=；|）|$)| 路由 \[[\s\S]*?\] 未选择此分支(?=；|）|$)| 的产物 [\s\S]*? 未匹配条件 (?:"(?:\\.|[^"\\])*"|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=；|）|$))/;
-  let text='', offset=0;
+  const parents=Array.isArray(wf?.edges)?new Map():null;
+  for(const {source,target} of wf?.edges||[]){
+    if(!parents.has(target))parents.set(target,new Set());
+    parents.get(target).add(source);
+  }
+  // A nested reason can only name a parent of the node it explains. An
+  // unrelated node's id must not win just because it matches a longer prefix.
+  const targets=[node?.id];
+  let text='', offset=0, afterReason=false;
   while(offset<raw.length){
     const rest=raw.slice(offset);
-    if(rest[0]==='；'||rest[0]==='）'){text+=rest[0];offset++;continue}
+    if(afterReason&&(rest[0]==='；'||rest[0]==='）')){
+      if(rest[0]==='）'&&targets.length>1)targets.pop();
+      text+=rest[0];offset++;
+      afterReason=rest[0]==='）';
+      continue;
+    }
+    const target=targets[targets.length-1];
     let matched=false;
     for(const {id,name} of upstream){
-      if(!rest.startsWith(id))continue;
+      if((parents&&target&&!parents.get(target)?.has(id))||!rest.startsWith(id))continue;
       const detail=rest.slice(id.length).match(suffix);
       if(!detail)continue;
       text+=(name||id)+detail[0];
       offset+=id.length+detail[0].length;
+      afterReason=detail[0]!==' 已跳过（';
+      if(!afterReason)targets.push(id);
       matched=true;break;
     }
     if(!matched){text+=rest;break}
