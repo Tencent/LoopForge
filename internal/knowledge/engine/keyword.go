@@ -31,6 +31,8 @@ type Hit struct {
 	EndLine   int
 	Text      string
 	Score     float64
+
+	intentCoverage float64 // Weighted coverage of the query's technical phrases.
 }
 
 // KeywordIndex 是引擎内部的检索替换点。生产默认接 MySQL ngram 适配器，

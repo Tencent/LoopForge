@@ -15,8 +15,8 @@ import (
 //     语义意图强，抬高向量通道权重并压低词法分数加成，让向量的语义排序能被
 //     混合结果采纳；精确词/短语/标识符查询保持两路均衡，保护关键词强项。
 //
-// 融合只消费 Hit 的公共字段（出处与行号）作为身份，不要求关键词适配器暴露
-// 块 ID，因此替换关键词适配器实现不影响本层。
+// 融合以出处与行号标识命中。关键词适配器可以提供短语覆盖证据，无需共享
+// 内部的块 ID。
 
 const (
 	// hybridRRFK 是 reciprocal rank fusion 的平滑常数。
@@ -217,11 +217,12 @@ func FuseWithWeights(kwHits, vecHits []Hit, limit int, w FusionWeights) []Hit {
 		headRatio = vectorHeadRatioNoKeyword
 	}
 	vectorGate := assessVectorRelevance(vecHits, headRatio)
-	// 两路都没有明显头部时恢复默认的小词法分数权重。只在问句/口语权重把
-	// LexScore 压低到 0 附近时生效；非问句本来就带这个权重，不改变行为。
-	if !vectorGate.strong && len(kwHits) >= 2 &&
-		kwHits[0].Score < keywordHeadRatio*kwHits[1].Score &&
-		w.LexScore < defaultLexScoreWeight {
+	// 向量头部不明确时，用词法分数打破弱名次信号。关键词首选有足够的
+	// 短语覆盖时，即使分差刚越过头部阈值也保留该证据。缺少短语证据的
+	// 关键词强首选仍可被向量纠错，例如查询有错别字时。
+	if w.LexScore < defaultLexScoreWeight && !vectorGate.strong && len(kwHits) > 0 &&
+		(kwHits[0].intentCoverage >= relevanceStrongCoverage ||
+			len(kwHits) > 1 && kwHits[0].Score < keywordHeadRatio*kwHits[1].Score) {
 		w.LexScore = defaultLexScoreWeight
 	}
 

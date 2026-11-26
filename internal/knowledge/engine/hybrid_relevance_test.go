@@ -1,7 +1,10 @@
 package engine
 
 import (
+	"context"
 	"testing"
+
+	"agentflow/internal/domain"
 )
 
 // 走查 P1-1：关键词判空时，向量通道即使返回 50 个邻居，只要分数分布没有
@@ -125,6 +128,36 @@ func TestFuseWeakBothChannelsProtectsKeywordHeadScore(t *testing.T) {
 	got := Fuse("数据库连接串的环境变量叫什么", kw, vec, 10)
 	if len(got) == 0 || got[0].Path != "deployment.md" {
 		t.Fatalf("两路都不确定时应由关键词分数把部署文档排在首位: %+v", paths(got))
+	}
+}
+
+func TestFuseProtectsMatchedTechnicalIntentFromWeakVectorRanks(t *testing.T) {
+	query := "数据库连接串的环境变量叫什么"
+	index := NewMySQLKeywordIndex(&fakeFulltextQuerier{matches: []domain.KnowledgeChunkMatch{
+		chunkMatch("deployment.md", "Deployment", "", "Use SERVICE_DATABASE_DSN to connect to the database."),
+		chunkMatch("overview.md", "资源分类", "", "项目的数据库资源按类型分组，由环境管理员统一审批。"),
+		chunkMatch("logging.md", "日志设置", "", "日志采样的环境变量默认由运维统一维护。"),
+		chunkMatch("proxy.md", "代理配置", "", "修改环境变量前，请检查代理容器已经停止。"),
+	}})
+	kw, err := index.Search(context.Background(), query, []string{"s"}, SearchOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vec := []Hit{
+		pureVectorHit("overview.md", 0.56),
+		pureVectorHit("other/a.md", 0.55),
+		pureVectorHit("other/b.md", 0.54),
+		pureVectorHit("other/c.md", 0.53),
+		pureVectorHit("other/d.md", 0.52),
+		pureVectorHit("other/e.md", 0.51),
+		pureVectorHit("other/f.md", 0.50),
+		pureVectorHit("other/g.md", 0.49),
+		pureVectorHit("other/h.md", 0.48),
+		pureVectorHit("other/i.md", 0.47),
+	}
+	got := Fuse(query, kw, vec, 10)
+	if len(got) == 0 || got[0].Path != "deployment.md" {
+		t.Fatalf("expected deployment settings first, got %v", paths(got))
 	}
 }
 

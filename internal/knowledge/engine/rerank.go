@@ -158,6 +158,7 @@ func rerank(query string, nl, exact []domain.KnowledgeChunkMatch, strongIDs []st
 	for _, c := range ordered[:limit] {
 		hit := c.hit
 		hit.Score = c.score
+		hit.intentCoverage = c.intentCoverage
 		out = append(out, hit)
 	}
 	return out
