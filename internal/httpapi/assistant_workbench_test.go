@@ -440,3 +440,263 @@ func TestResolveMentionedKnowledgeRefsForAgentAndSOP(t *testing.T) {
 		t.Fatalf("expected sop workbenchReference to expose roleKnowledgeBase, got err=%v block=%s", err, sopBlock)
 	}
 }
+
+func TestResolveMentionedKnowledgeRefsForIssueBoundSOP(t *testing.T) {
+	h, u := workbenchFixture(t)
+	svc := knowledge.NewService(h.repo, randomID)
+	h.deps.knowledgeSvc = svc
+	h.deps.knowledgeExec = knowledge.NewExecutor(svc)
+
+	conn, err := svc.CreateConnector(context.Background(), u.ID, knowledge.ConnectorInput{
+		Type: domain.ConnectorTypeWeKnora, Name: "IssueKB", Enabled: new(true),
+		Endpoint: "https://issue-kb.invalid", Secret: domain.KnowledgeConnectorSecret{Token: "tok-issue"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutAgent(domain.AgentDefinition{
+		ID: "agent-issue-kb", Name: "知识库验收员", ProjectID: "workbench",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
+		ID: "wf-issue-bound", Name: "知识库验收sop", ProjectID: "workbench", SandboxProfileID: "local",
+		Nodes: []domain.WorkflowNode{
+			{
+				ID: "n1", Name: "验收节点", Type: "agent", AgentID: "agent-issue-kb",
+				KnowledgeRefs: []domain.KnowledgeRef{{ConnectorID: conn.ID, Mode: "all"}},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, issue := range []domain.Issue{
+		{ID: "issue-bound", ProjectID: "workbench", Title: "上线检查清单", Status: "backlog", WorkflowID: "wf-issue-bound"},
+		{ID: "issue-unbound", ProjectID: "workbench", Title: "未绑定SOP的需求", Status: "backlog"},
+		{ID: "issue-foreign", ProjectID: "other-project", Title: "外项目需求", Status: "backlog", WorkflowID: "wf-issue-bound"},
+	} {
+		if err := h.repo.PutIssue(issue); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sess := assistantConversation{ID: "sess-issue", ProjectID: "workbench"}
+	if err := h.repo.PutAssistantSession(u.ID, sess); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. @需求 with a bound SOP mounts the SOP node's knowledge refs.
+	refs, changed := h.resolveMentionedKnowledgeRefs(u.ID, "workbench", sess, []assistantMessage{
+		{Role: "user", Content: "@上线检查清单", References: []domain.AssistantReference{{Type: "issue", ID: "issue-bound"}}},
+	})
+	if !changed || len(refs) != 1 || refs[0].ConnectorID != conn.ID || refs[0].Mode != "all" {
+		t.Fatalf("expected @issue to mount bound SOP knowledge ref, got changed=%v refs=%+v", changed, refs)
+	}
+
+	// 2. @需求 without WorkflowID and foreign-project @需求 mount nothing.
+	for _, id := range []string{"issue-unbound", "issue-foreign"} {
+		refs, changed := h.resolveMentionedKnowledgeRefs(u.ID, "workbench", sess, []assistantMessage{
+			{Role: "user", Content: "@需求", References: []domain.AssistantReference{{Type: "issue", ID: id}}},
+		})
+		if changed || len(refs) != 0 {
+			t.Fatalf("expected %s not to mount knowledge refs, got changed=%v refs=%+v", id, changed, refs)
+		}
+	}
+
+	// 3. workbenchReference exposes the bound SOP id/name on issue references.
+	_, issueBlock, err := h.workbenchReference(domain.AssistantReference{Type: "issue", ID: "issue-bound"}, "workbench")
+	if err != nil || !strings.Contains(issueBlock, `"workflowId":"wf-issue-bound"`) || !strings.Contains(issueBlock, `"workflowName":"知识库验收sop"`) {
+		t.Fatalf("expected issue workbenchReference to expose workflowId/workflowName, got err=%v block=%s", err, issueBlock)
+	}
+
+	// 4. prepareWorkbenchContext injects issues_dispatch + knowledge guidance for @需求 bound SOP.
+	c, _ := workbenchContext(u, "POST", "/", bytes.NewBuffer(nil))
+	req := assistantRequest{
+		ProjectID: "workbench",
+		Messages: []assistantMessage{{
+			Role:       "user",
+			Content:    "@上线检查清单 有什么需要注意的地方",
+			References: []domain.AssistantReference{{Type: "issue", ID: "issue-bound"}},
+		}},
+	}
+	if err := h.prepareWorkbenchContext(c, &req, u); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"用户本轮 @ 的需求已绑定 SOP", "wf-issue-bound", "issues_dispatch", "严禁在当前对话内直接代跑 SOP"} {
+		if !strings.Contains(req.contextText, want) {
+			t.Fatalf("expected contextText to contain %q, got:\n%s", want, req.contextText)
+		}
+	}
+
+	// 5. When the same SOP is also directly @-mentioned, the issue guidance is deduplicated.
+	dupReq := assistantRequest{
+		ProjectID: "workbench",
+		Messages: []assistantMessage{{
+			Role:    "user",
+			Content: "@上线检查清单 @知识库验收sop",
+			References: []domain.AssistantReference{
+				{Type: "issue", ID: "issue-bound"},
+				{Type: "sop", ID: "wf-issue-bound"},
+			},
+		}},
+	}
+	if err := h.prepareWorkbenchContext(c, &dupReq, u); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dupReq.contextText, "用户本轮 @ 了 SOP") || strings.Contains(dupReq.contextText, "用户本轮 @ 的需求已绑定 SOP") {
+		t.Fatalf("expected deduplicated SOP guidance, got:\n%s", dupReq.contextText)
+	}
+}
+
+func TestIssueBoundSOPVisibilityAndGuidanceEdges(t *testing.T) {
+	h, u := workbenchFixture(t)
+	svc := knowledge.NewService(h.repo, randomID)
+	h.deps.knowledgeSvc = svc
+	h.deps.knowledgeExec = knowledge.NewExecutor(svc)
+
+	connA, err := svc.CreateConnector(context.Background(), u.ID, knowledge.ConnectorInput{
+		Type: domain.ConnectorTypeWeKnora, Name: "EdgeKB1", Enabled: new(true),
+		Endpoint: "https://edge-kb1.invalid", Secret: domain.KnowledgeConnectorSecret{Token: "tok-edge1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connB, err := svc.CreateConnector(context.Background(), u.ID, knowledge.ConnectorInput{
+		Type: domain.ConnectorTypeWeKnora, Name: "EdgeKB2", Enabled: new(true),
+		Endpoint: "https://edge-kb2.invalid", Secret: domain.KnowledgeConnectorSecret{Token: "tok-edge2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ag := range []domain.AgentDefinition{
+		{ID: "agent-edge-plain", Name: "普通验收员", ProjectID: "workbench"},
+		{ID: "agent-edge-toggle", Name: "全量验收员", ProjectID: "workbench", KnowledgeBase: true},
+	} {
+		if err := h.repo.PutAgent(ag); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
+		ID: "wf-edge-visible", Name: "可见sop", ProjectID: "workbench", SandboxProfileID: "local",
+		Nodes: []domain.WorkflowNode{{
+			ID: "n1", Name: "验收", Type: "agent", AgentID: "agent-edge-plain",
+			KnowledgeRefs: []domain.KnowledgeRef{{ConnectorID: connA.ID, Mode: "all"}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
+		ID: "wf-edge-foreign-private", Name: "外项目私有sop", ProjectID: "other-project", SandboxProfileID: "local",
+		Nodes: []domain.WorkflowNode{{
+			ID: "n1", Name: "验收", Type: "agent", AgentID: "agent-edge-plain",
+			KnowledgeRefs: []domain.KnowledgeRef{{ConnectorID: connA.ID, Mode: "all"}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
+		ID: "wf-edge-role-toggle", Name: "角色全量sop", ProjectID: "workbench", SandboxProfileID: "local",
+		Nodes: []domain.WorkflowNode{{ID: "n1", Name: "验收", Type: "agent", AgentID: "agent-edge-toggle"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, issue := range []domain.Issue{
+		{ID: "issue-edge-foreign-sop", ProjectID: "workbench", Title: "绑定外项目私有SOP", Status: "backlog", WorkflowID: "wf-edge-foreign-private"},
+		{ID: "issue-edge-a", ProjectID: "workbench", Title: "需求A", Status: "backlog", WorkflowID: "wf-edge-visible"},
+		{ID: "issue-edge-b", ProjectID: "workbench", Title: "需求B", Status: "backlog", WorkflowID: "wf-edge-visible"},
+		{ID: "issue-edge-toggle", ProjectID: "workbench", Title: "角色全量需求", Status: "backlog", WorkflowID: "wf-edge-role-toggle"},
+	} {
+		if err := h.repo.PutIssue(issue); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sess := assistantConversation{ID: "sess-edge", ProjectID: "workbench"}
+	if err := h.repo.PutAssistantSession(u.ID, sess); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := workbenchContext(u, "POST", "/", bytes.NewBuffer(nil))
+
+	// 1. Issue bound to a foreign private SOP: no mount, no workflow metadata, no guidance.
+	refs, changed := h.resolveMentionedKnowledgeRefs(u.ID, "workbench", sess, []assistantMessage{
+		{Role: "user", Content: "@绑定外项目私有SOP", References: []domain.AssistantReference{{Type: "issue", ID: "issue-edge-foreign-sop"}}},
+	})
+	if changed || len(refs) != 0 {
+		t.Fatalf("foreign private SOP must not mount, got changed=%v refs=%+v", changed, refs)
+	}
+	_, block, err := h.workbenchReference(domain.AssistantReference{Type: "issue", ID: "issue-edge-foreign-sop"}, "workbench")
+	if err != nil || strings.Contains(block, "workflowId") {
+		t.Fatalf("foreign private SOP metadata must not leak, got err=%v block=%s", err, block)
+	}
+	foreignReq := assistantRequest{
+		ProjectID: "workbench",
+		Messages:  []assistantMessage{{Role: "user", Content: "@绑定外项目私有SOP", References: []domain.AssistantReference{{Type: "issue", ID: "issue-edge-foreign-sop"}}}},
+	}
+	if err := h.prepareWorkbenchContext(c, &foreignReq, u); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(foreignReq.contextText, "用户本轮 @ 的需求已绑定 SOP") {
+		t.Fatalf("foreign private SOP must not inject guidance:\n%s", foreignReq.contextText)
+	}
+
+	// 2. Two issues bound to the same SOP: guidance lists the SOP exactly once.
+	dupReq := assistantRequest{
+		ProjectID: "workbench",
+		Messages: []assistantMessage{{Role: "user", Content: "@需求A @需求B", References: []domain.AssistantReference{
+			{Type: "issue", ID: "issue-edge-a"}, {Type: "issue", ID: "issue-edge-b"},
+		}}},
+	}
+	if err := h.prepareWorkbenchContext(c, &dupReq, u); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dupReq.contextText, "用户本轮 @ 的需求已绑定 SOP") || strings.Count(dupReq.contextText, "(id=wf-edge-visible)") != 1 {
+		t.Fatalf("same-SOP issues must dedupe guidance, got:\n%s", dupReq.contextText)
+	}
+
+	// 3. Run conversation: issue guidance is not injected.
+	if err := h.repo.PutRun(domain.Run{
+		ID: "run-edge", WorkflowID: "wf-edge-visible", Status: "running",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "workbench", IssueID: "issue-edge-a"},
+		Nodes:            map[string]*domain.NodeRun{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runReq := assistantRequest{
+		ProjectID: "workbench",
+		RunID:     "run-edge",
+		Messages:  []assistantMessage{{Role: "user", Content: "@需求A 进度如何", References: []domain.AssistantReference{{Type: "issue", ID: "issue-edge-a"}}}},
+	}
+	if err := h.prepareWorkbenchContext(c, &runReq, u); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(runReq.contextText, "用户本轮 @ 的需求已绑定 SOP") {
+		t.Fatalf("run conversation must not inject issue guidance:\n%s", runReq.contextText)
+	}
+
+	// 4. Issue whose SOP node role has KnowledgeBase=true mounts all enabled owner connectors.
+	refsToggle, changedToggle := h.resolveMentionedKnowledgeRefs(u.ID, "workbench", sess, []assistantMessage{
+		{Role: "user", Content: "@角色全量需求", References: []domain.AssistantReference{{Type: "issue", ID: "issue-edge-toggle"}}},
+	})
+	if !changedToggle || len(refsToggle) != 2 {
+		t.Fatalf("expected role-toggle issue to mount 2 connectors, got changed=%v refs=%+v", changedToggle, refsToggle)
+	}
+	got := map[string]bool{}
+	for _, ref := range refsToggle {
+		if ref.Mode != "all" {
+			t.Fatalf("expected mode=all, got %+v", ref)
+		}
+		got[ref.ConnectorID] = true
+	}
+	if !got[connA.ID] || !got[connB.ID] {
+		t.Fatalf("expected both owner connectors mounted, got %+v", refsToggle)
+	}
+
+	// 5. Personal conversation (projectId=""): no issue guidance, matching the mount rule.
+	personalReq := assistantRequest{
+		Messages: []assistantMessage{{Role: "user", Content: "@需求A", References: []domain.AssistantReference{{Type: "issue", ID: "issue-edge-a"}}}},
+	}
+	if err := h.prepareWorkbenchContext(c, &personalReq, u); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(personalReq.contextText, "用户本轮 @ 的需求已绑定 SOP") {
+		t.Fatalf("personal conversation must not inject issue guidance:\n%s", personalReq.contextText)
+	}
+}

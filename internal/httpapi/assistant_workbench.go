@@ -69,7 +69,14 @@ func (h *assistantHandlers) workbenchReference(ref domain.AssistantReference, pr
 			break
 		}
 		ref.Name = v.Title
-		data = gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID}
+		issueData := gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID}
+		if v.WorkflowID != "" {
+			if wf, exists := h.repo.Workflow(v.WorkflowID); exists && (wf.Generic && project != "" || allowed(wf.ProjectID, wf.Shared)) {
+				issueData["workflowId"] = wf.ID
+				issueData["workflowName"] = wf.Name
+			}
+		}
+		data = issueData
 	case "sop":
 		v, ok := h.repo.Workflow(ref.ID)
 		if !ok || !(v.Generic && project != "" || allowed(v.ProjectID, v.Shared)) {
@@ -245,6 +252,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 	var mentioned []domain.AgentDefinition
 	var mentionedSkills []domain.SkillDefinition
 	var mentionedSOPs []domain.WorkflowDefinition
+	var issueSOPs []domain.WorkflowDefinition
 	addSkill := func(skill domain.SkillDefinition) {
 		for _, known := range req.skills {
 			if known.ID == skill.ID {
@@ -328,6 +336,13 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 					mentionedSOPs = append(mentionedSOPs, wf)
 				}
 			}
+			if ref.Type == "issue" && req.ProjectID != "" {
+				if issue, ok := h.repo.Issue(ref.ID); ok && issue.ProjectID == req.ProjectID && issue.WorkflowID != "" {
+					if wf, ok := h.repo.Workflow(issue.WorkflowID); ok && (wf.Generic || wf.ProjectID == req.ProjectID || wf.Shared) {
+						issueSOPs = append(issueSOPs, wf)
+					}
+				}
+			}
 		}
 		for j, a := range m.Attachments {
 			attachmentOwner := user.ID
@@ -399,6 +414,23 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 		}
 		context.WriteString("用户本轮 @ 了 SOP：" + sops.String() + "若用户要求执行或触发该 SOP，必须通过 runs_start（或对已有需求调用 issues_dispatch；非完全权限模式先用 workbench_tool_schema 查参数后放入 submit_assistant_reply 的 drafts）发起真实 SOP 运行，严禁在当前对话内直接代跑 SOP（门禁与产物契约仅在 SOP 运行时装配与强制校验）。若用户只是询问、修改该 SOP 定义，或希望结合该 SOP / 角色关联的知识库做内容概述、方案评估与判断，当前用户名下已匹配的个人知识库工具已自动挂载到本对话，可先调用知识库检索/读取工具查阅真实文档后再给出判断。\n")
 	}
+	if req.RunID == "" && len(issueSOPs) > 0 {
+		seenSOP := make(map[string]bool, len(mentionedSOPs)+len(issueSOPs))
+		for _, m := range mentionedSOPs {
+			seenSOP[m.ID] = true
+		}
+		var sops strings.Builder
+		for _, wf := range issueSOPs {
+			if seenSOP[wf.ID] {
+				continue
+			}
+			seenSOP[wf.ID] = true
+			sops.WriteString("「" + wf.Name + "」(id=" + wf.ID + ")；")
+		}
+		if sops.Len() > 0 {
+			context.WriteString("用户本轮 @ 的需求已绑定 SOP：" + sops.String() + "若用户要求执行、派发或推进该需求，必须通过 issues_dispatch（非完全权限模式先用 workbench_tool_schema 查参数后放入 submit_assistant_reply 的 drafts）发起真实 SOP 运行，严禁在当前对话内直接代跑 SOP（门禁与产物契约仅在 SOP 运行时装配与强制校验）。若用户只是围绕该需求提问、讨论，或希望结合关联知识库做概述与判断，该 SOP 节点/角色关联的个人知识库工具已自动挂载到本对话，先调用知识库检索/读取工具查阅真实文档后再回答。\n")
+		}
+	}
 	if req.RunID == "" {
 		if note := h.linkMentionedIssue(req, user); note != "" {
 			context.WriteString(note + "\n")
@@ -416,9 +448,10 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 }
 
 // resolveMentionedKnowledgeRefs merges existing session KnowledgeRefs with any
-// personal knowledge bases referenced via @角色 (agent.KnowledgeBase) or @SOP
-// (node.KnowledgeRefs + node role agent.KnowledgeBase) in the current turn's
-// user message, following the A-Union precedence rule:
+// personal knowledge bases referenced via @角色 (agent.KnowledgeBase), @SOP
+// (node.KnowledgeRefs + node role agent.KnowledgeBase) or @需求 (issue.WorkflowID
+// expanded to its bound SOP) in the current turn's user message, following the
+// A-Union precedence rule:
 //   1) Session saved.KnowledgeRefs take highest priority per ConnectorID.
 //   2) @SOP node.KnowledgeRefs owned by userID come next (across multiple nodes in
 //      the same SOP, mode="all" wins over "allowlist", and multiple "allowlist"
@@ -502,6 +535,21 @@ func (h *assistantHandlers) resolveMentionedKnowledgeRefs(userID int64, projectI
 	}
 
 	roleToggle := false
+	addSOPKnowledge := func(wf domain.WorkflowDefinition) {
+		for _, node := range wf.Nodes {
+			if node.Type != "agent" {
+				continue
+			}
+			for _, nref := range node.KnowledgeRefs {
+				addSOPNodeRef(nref)
+			}
+			if node.AgentID != "" {
+				if ag, ok := h.repo.Agent(node.AgentID); ok && ag.KnowledgeBase {
+					roleToggle = true
+				}
+			}
+		}
+	}
 	for _, ref := range lastRefs {
 		switch ref.Type {
 		case "agent":
@@ -517,19 +565,17 @@ func (h *assistantHandlers) resolveMentionedKnowledgeRefs(userID int64, projectI
 			if !ok || !(wf.Generic || allowed(wf.ProjectID, wf.Shared)) {
 				continue
 			}
-			for _, node := range wf.Nodes {
-				if node.Type != "agent" {
-					continue
-				}
-				for _, nref := range node.KnowledgeRefs {
-					addSOPNodeRef(nref)
-				}
-				if node.AgentID != "" {
-					if ag, ok := h.repo.Agent(node.AgentID); ok && ag.KnowledgeBase {
-						roleToggle = true
-					}
-				}
+			addSOPKnowledge(wf)
+		case "issue":
+			issue, ok := h.repo.Issue(ref.ID)
+			if !ok || projectID == "" || issue.ProjectID != projectID || issue.WorkflowID == "" {
+				continue
 			}
+			wf, ok := h.repo.Workflow(issue.WorkflowID)
+			if !ok || !(wf.Generic || allowed(wf.ProjectID, wf.Shared)) {
+				continue
+			}
+			addSOPKnowledge(wf)
 		}
 	}
 	if len(sopNodeOrder) == 0 && !roleToggle {
