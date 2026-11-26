@@ -48,7 +48,8 @@ func (s *Service) githubClient(project string) (*githubClient, error) {
 
 // githubClientForRun authenticates as the run did: its push token when set,
 // else the Owner of the run's project when that project binds the repository.
-// It also names the identity it chose.
+// It also names the identity it chose. Issue imports pass the importing
+// project and no token.
 func (s *Service) githubClientForRun(project, localProjectID, gitToken string) (*githubClient, string, error) {
 	g, err := s.githubClient(project)
 	if err != nil {
@@ -251,8 +252,13 @@ func (s *Service) githubMergeBranch(project, branch, target, title, description 
 	return p.ref(), nil
 }
 
+// pullGitHubIssues imports into repo.ProjectID as that project's Owner, like
+// Gongfeng imports use the project's own binding. Borrowing the token of
+// whichever project bound the same repository first would import private
+// issues for projects whose Owner has no access, and break the import of
+// projects whose Owner does.
 func (s *Service) pullGitHubIssues(store IssueStoreAdapter, repo domain.Repository) (int, error) {
-	g, err := s.githubClient(repo.GongfengProjectID)
+	g, _, err := s.githubClientForRun(repo.GongfengProjectID, repo.ProjectID, "")
 	if err != nil {
 		return 0, err
 	}

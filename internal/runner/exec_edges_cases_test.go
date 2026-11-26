@@ -360,6 +360,12 @@ func TestExecuteRunCleanupSafeAndUnsafe(t *testing.T) {
 	target := filepath.Join(root, "runs", "run")
 	_ = os.MkdirAll(target, 0o755)
 	_ = os.WriteFile(filepath.Join(target, "file"), []byte("x"), 0o600)
+	// A Go module cache leaves read-only directories in the workspace.
+	readOnly := filepath.Join(target, "pkg", "mod")
+	_ = os.MkdirAll(readOnly, 0o755)
+	_ = os.WriteFile(filepath.Join(readOnly, "go.mod"), []byte("module fixture\n"), 0o444)
+	_ = os.Chmod(readOnly, 0o555)
+	_ = os.Chmod(filepath.Dir(readOnly), 0o555)
 	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: root}, client: NewClient(server.URL), runSandboxes: map[string]*runSandbox{}}
 	result := d.executeRunCleanup(context.Background(), domain.RunnerTask{ID: "cleanup", RunID: "run", Workspace: "runs/run"})
 	if result.status != domain.RunnerTaskSuccess {

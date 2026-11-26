@@ -731,7 +731,7 @@ func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) 
 	if err := ctx.Err(); err != nil {
 		return execResult{status: domain.RunnerTaskCanceled, errMsg: err.Error()}
 	}
-	if err := os.RemoveAll(target); err != nil {
+	if err := runtime.RemoveWorkspaceTree(target); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("remove runner workspace: %v", err)}
 	}
 	_ = d.client.SendEvents(ctx, task.ID, []domain.RunnerTaskEvent{{Seq: 1, Type: "system", Data: "run sandbox and workspace removed", Ts: time.Now().UTC()}})

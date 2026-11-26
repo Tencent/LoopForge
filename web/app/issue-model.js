@@ -307,6 +307,7 @@ function issueActor(i){
   if(task&&['queued','dispatched','running'].includes(task.status))return{kind:'active',title:'正在启动',sub:task.status==='queued'?'排队中':'调度中'};
   if(issueRunHealth(i)==='attention')return{kind:'attention',title:'需要介入',sub:issueCurrentStage(i).hint||'运行失败或已中断'};
   if(bound)return{kind:'bound',title:bound.name,sub:'已绑定 Agent'};
+  if(issueWithoutSOP(i))return{kind:'idle',title:'尚未开始',sub:'在对话里澄清和改代码'};
   return{kind:'idle',title:'尚未执行',sub:'触发后由 SOP 节点 Agent 接手'};
 }
 function issueOutcome(i){
@@ -324,6 +325,7 @@ function issueOutcome(i){
   if(stage.key==='waiting')return{key:'waiting',short:'待确认',title:'等待确认',body:`「${stage.label}」需要批准后才会继续。`};
   if(health==='active')return{key:'active',short:'进行中',title:'进行中',body:`当前在「${stage.label}」。`};
   if(health==='closed')return{key:'closed',short:'已完成',title:'已完成',body:'全部节点已通过。结果不对可以重新触发整条，或点某个节点从那里重跑。'};
+  if(issueWithoutSOP(i))return{key:'idle',short:'未开始',title:'尚未开始',body:'这条需求不使用 SOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。'};
   return{key:'idle',short:'未开始',title:'尚未执行',body:'触发后会按 SOP 执行。未绑定仓库时会先确认绑定。'};
 }
 function issueIdForRun(runId){

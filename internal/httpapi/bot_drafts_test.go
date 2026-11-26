@@ -476,6 +476,48 @@ func TestBotDraftDefaultSOPOption(t *testing.T) {
 	t.Fatal("requirement not created")
 }
 
+// A requirement the model saves without an SOP offers no SOP to pick or to
+// start on the confirm page, and confirming it keeps it out of SOP delivery
+// instead of binding the project default.
+func TestBotDraftRequirementWithoutSOP(t *testing.T) {
+	s, h, bot, _, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
+	member, _ := s.User(43)
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published"}); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := s.Project("p")
+	project.WorkflowID = "wf-dev"
+	s.PutProject(project)
+	body, _ := json.Marshal(map[string]any{"projectId": "p", "title": "对话里改的需求", "sopMode": "none"})
+	drafts := []assistantDraft{{Tool: "issues_save", Body: body}}
+	if issues := h.botDraftNewIssues(bot.ProjectID, drafts); len(issues) != 0 {
+		t.Fatalf("SOP choices offered for a requirement without SOP: %+v", issues)
+	}
+	if line := botDraftSummaryLineFor(drafts[0], "", "不使用 SOP"); !strings.Contains(line, "不使用 SOP") {
+		t.Fatalf("summary = %q", line)
+	}
+	raw, _ := json.Marshal(drafts)
+	draft, err := s.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: "b-feishu", ProjectID: "p", UserID: 43, SenderID: "new-wecom-user", Summary: "1. 保存需求：对话里改的需求（SOP：不使用 SOP）", Drafts: string(raw)}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+draft.ID, false); view["newIssues"] != nil {
+		t.Fatalf("confirm page offers SOP choices: %v", view["newIssues"])
+	}
+	if code, out := draftChoice(t, h, member, draft.ID, `{}`); code != 200 || out["status"] != repo.BotDraftExecuted {
+		t.Fatalf("confirm = %d %v", code, out)
+	}
+	for _, issue := range s.Issues() {
+		if issue.Title == "对话里改的需求" {
+			if !issue.WithoutSOP() || issue.WorkflowID != "" || issue.AutomationState != "ignored" {
+				t.Fatalf("issue = mode %q workflow %q automation %q", issue.SOPMode, issue.WorkflowID, issue.AutomationState)
+			}
+			return
+		}
+	}
+	t.Fatal("requirement not created")
+}
+
 // The SOP picked on the chat card is offered from the project's SOPs, used
 // by the card's confirm button and preselected on the platform page.
 func TestFeishuDraftCardUsesPickedSOP(t *testing.T) {

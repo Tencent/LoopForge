@@ -337,6 +337,14 @@ func (h *runsHandlers) applyOneRecommendation(run domain.Run, projectID string, 
 		if err := runeval.ApplyRecommendation(rec, nil, &agent); err != nil {
 			return rec, err
 		}
+		// Applying a recommendation edits the role, so it is a new version, the
+		// same as saving the role from its editor. Without the bump the previous
+		// revision and this one share a version number and cannot be told apart.
+		if agent.Version < 1 {
+			agent.Version = 1
+		} else {
+			agent.Version++
+		}
 		if err := h.repo.PutAgent(agent); err != nil {
 			return rec, err
 		}
@@ -387,7 +395,9 @@ func (h *runsHandlers) ensureProjectAgent(run domain.Run, projectID, agentID str
 	if !ok {
 		return domain.AgentDefinition{}, fmt.Errorf("角色 %q 不存在", agentID)
 	}
-	if !agent.Shared && (agent.ProjectID == "" || agent.ProjectID == projectID) {
+	// A platform role (no project) is used by every project, so a project's
+	// evaluation edits a project copy, as for shared roles.
+	if !agent.Shared && agent.ProjectID == projectID {
 		return agent, nil
 	}
 	cloneID := runeval.CloneID(agent.ID, firstNonEmpty(projectID, "copy"))
