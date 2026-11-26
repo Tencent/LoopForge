@@ -237,6 +237,10 @@ test('empty project SOP catalog names the project default instead of claiming no
   `);
   assert.match(text(), /默认使用「Backend Delivery」（通用模板）/);
   assert.match(text(), /还没有自建或复制的 LOOP/);
+  assert.doesNotMatch(text(), /仅新需求适用/);
+  app.evaluate(`state.data.workflows[0].name = '<img src=x onerror=1>'; renderSOPCatalog();`);
+  assert.equal(app.document.querySelector('#sopCatalog .sop-empty img'), null);
+  assert.match(text(), /<img src=x onerror=1>/);
   app.evaluate(`state.data.projects[0].workflowId = ''; renderSOPCatalog();`);
   assert.match(text(), /当前项目还没有自建或复制的 LOOP/);
   assert.doesNotMatch(text(), /默认使用/);

@@ -495,7 +495,7 @@ function projectOwnEmptyText(){
   const def=id&&(state.data?.workflows||[]).find(w=>w.id===id);
   if(!def)return base;
   const source=def.generic?'通用模板':def.projectId?(def.projectId===project.id?'本项目':'团队共享'):'内置';
-  return `当前项目默认使用「${def.name||def.id}」（${source}），仅新需求适用；本项目还没有自建或复制的 LOOP。可切换到对应范围查看，或复制后修改。`;
+  return `当前项目默认使用「${escapeHTML(def.name||def.id)}」（${source}）；本项目还没有自建或复制的 LOOP。可切换到对应范围查看，或复制后修改。`;
 }
 function renderSOPCatalog(){
   renderCatalogScopes();
