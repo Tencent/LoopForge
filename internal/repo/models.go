@@ -810,6 +810,7 @@ func allModels() []any {
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
+		evoPolicyRow{}, evoFindingRow{}, evoProposalRow{}, evoAssetGateRow{}, evoQueueRow{}, evoReplayRow{}, assetVersionRow{}, runAssetPinRow{}, evoSignalRow{}, evoSampleRow{}, evoSOPPolicyRow{},
 		platformSettingsRow{},
 		PlatformGitSSHHost{}, PlatformGitHTTPSHost{}, PlatformGitHTTPHost{},
 	}

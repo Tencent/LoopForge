@@ -134,7 +134,10 @@ function renderFlowHeader(){
   const meta=$('#workflowMeta');
   if(meta){
     if(!wf)meta.innerHTML='<span>还没有打开流程</span>';
-    else{const p=flowStatusPill(wf);meta.innerHTML=`<span class="fd-pill ${p.cls}"><span class="dot"></span>${p.label}</span><span>v${escapeHTML(wf.version||1)}</span><span class="fd-dotsep"></span><span class="v-step">${(wf.nodes||[]).length} 步</span><span class="fd-dotsep v-step-sep"></span>`}
+    else{
+      const p=flowStatusPill(wf),version=workflowVersionLabel(wf);
+      meta.innerHTML=`<span class="fd-pill ${p.cls}"><span class="dot"></span>${p.label}</span>${version?`<span>${escapeHTML(version)}</span><span class="fd-dotsep"></span>`:''}<span class="v-step">${(wf.nodes||[]).length} 步</span><span class="fd-dotsep v-step-sep"></span>`;
+    }
   }
   const chip=$('#sandboxChip');
   if(chip){
@@ -143,6 +146,7 @@ function renderFlowHeader(){
     if(label)label.textContent=wf?.autoSelectSandbox?sopAutoSandboxLabel():sb?.name||wf?.sandboxProfileId||'未设置沙箱';
   }
   const ro=flowReadOnly(wf),pending=!!(wf&&state.workflowDirty&&!ro);
+  const arrangeButton=$('#canvasArrange');if(arrangeButton)arrangeButton.disabled=ro||!wf?.nodes?.length;
   const save=$('#saveWorkflow');
   if(save){
     save.disabled=!pending;save.classList.toggle('dirty',pending);
@@ -182,7 +186,7 @@ function renderWorkflowMeta(){
   const sandboxSelect=$('#workflowSandbox');
   sandboxSelect.innerHTML=sopSandboxOptionsHTML(sopSandboxOptions());
   sandboxSelect.value=sopSandboxValue(wf);
-  const pill=$('#flowSettingsPill');if(pill)pill.textContent=catalogGeneric(wf)?(isPlatformAdmin()?'通用模板 · 可编辑':'通用模板'):`${wf.status==='published'?'已发布':'草稿'} · v${wf.version} · ${wf.nodes.length} 步`;
+  const pill=$('#flowSettingsPill');if(pill)pill.textContent=catalogGeneric(wf)?(isPlatformAdmin()?'通用模板 · 可编辑':'通用模板'):[wf.status==='published'?'已发布':'草稿',workflowVersionLabel(wf),`${wf.nodes.length} 步`].filter(Boolean).join(' · ');
   renderFlowHeader();
   if(typeof flowPalette!=='undefined')flowPalette.render();
 }

@@ -441,7 +441,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if existing.ID != "" {
 			conv.ProjectCredentialIDs = existing.ProjectCredentialIDs
 		} else if len(conv.ProjectCredentialIDs) > 0 {
-			if _, ok := h.sessionProjectCredentialNames(c, conv, current.ID); !ok {
+			if !h.validateSessionProjectCredentials(c, conv, current.ID) {
 				return
 			}
 		}

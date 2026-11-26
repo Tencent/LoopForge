@@ -406,6 +406,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		v.Shared = old.Shared
 		// Environment preferences are changed only by the dedicated, locked setter.
 		v.SandboxProfileID = old.SandboxProfileID
+		v.ProjectCredentialObservations = mergeAssistantCredentialObservations(old, v)
 		v.ProjectCredentialIDs = old.ProjectCredentialIDs
 		if v.WorkspaceRunID == "" {
 			v.WorkspaceRunID = old.WorkspaceRunID
@@ -473,7 +474,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		"model":      strings.TrimSpace(v.Model),
 		"source":     strings.TrimSpace(v.Source),
 		"task_id":    strings.TrimSpace(v.TaskID),
-		"payload":    mustJSON(v),
+		"payload":    encodeAssistantSession(v),
 		"created_at": timePtr(v.CreatedAt),
 		"updated_at": timePtr(v.UpdatedAt),
 	})
@@ -487,7 +488,7 @@ func (r *AssistantRepo) SetAssistantSessionArchived(userID int64, id string, arc
 		}
 		item := decodeAssistantSession(row)
 		item.Archived = archived
-		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", mustJSON(item)).Error
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", encodeAssistantSession(item)).Error
 	})
 }
 
@@ -538,7 +539,7 @@ func (r *AssistantRepo) updateAssistantSessionWorkspace(userID int64, id, projec
 			return fmt.Errorf("任务会话直接使用任务工作区")
 		}
 		update(&item)
-		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", mustJSON(item)).Error
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", encodeAssistantSession(item)).Error
 	})
 }
 
@@ -733,9 +734,20 @@ func (r *AssistantRepo) taskByID(id string) (domain.AssistantTask, bool) {
 	return decodeAssistantTask(row), true
 }
 
+type assistantSessionPayload struct {
+	domain.AssistantSession
+	CredentialObservations map[string]domain.AssistantProjectCredentialObservation `json:"projectCredentialObservations,omitempty"`
+}
+
+func encodeAssistantSession(item domain.AssistantSession) []byte {
+	return mustJSON(assistantSessionPayload{AssistantSession: item, CredentialObservations: item.ProjectCredentialObservations})
+}
+
 func decodeAssistantSession(row assistantSessionRow) domain.AssistantSession {
-	var item domain.AssistantSession
-	_ = json.Unmarshal(row.Payload, &item)
+	var payload assistantSessionPayload
+	_ = json.Unmarshal(row.Payload, &payload)
+	item := payload.AssistantSession
+	item.ProjectCredentialObservations = payload.CredentialObservations
 	var summary struct {
 		MessageCount int `json:"executionMessageCount"`
 	}

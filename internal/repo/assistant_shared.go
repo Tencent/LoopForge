@@ -86,7 +86,7 @@ func (r *AssistantRepo) EnsureRunNodeAssistantSession(root domain.AssistantSessi
 func (r *AssistantRepo) createSharedAssistantSession(item domain.AssistantSession) (domain.AssistantSession, error) {
 	row := assistantSessionRow{
 		ID: item.ID, UserID: item.UserID, ProjectID: item.ProjectID, Title: item.Title,
-		Source: item.Source, TaskID: item.TaskID, Payload: mustJSON(item), Created: &item.CreatedAt, Updated: &item.UpdatedAt,
+		Source: item.Source, TaskID: item.TaskID, Payload: encodeAssistantSession(item), Created: &item.CreatedAt, Updated: &item.UpdatedAt,
 	}
 	if err := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return item, err
@@ -291,6 +291,6 @@ func (r *AssistantRepo) ReplaceAssistantTurn(source domain.AssistantSession, ind
 			return fmt.Errorf("无法读取更新后的会话")
 		}
 		saved.HistoryRevision++
-		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", saved.ID, saved.UserID).Update("payload", mustJSON(saved)).Error
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", saved.ID, saved.UserID).Update("payload", encodeAssistantSession(saved)).Error
 	})
 }
