@@ -92,3 +92,19 @@ test("changed citations add the freshness note after the link", () => {
   assert.equal(children[0].type, "link");
   assert.equal(children[1].value, "（原文已变更）");
 });
+
+test("markdown links targeting a canonical citation open the cited document", () => {
+  const citation = "docs@4:guides/a.md#L10-L13";
+  const label = [{ type: "text", value: "原文" }];
+  const tree = { type: "root", children: [{
+    type: "paragraph",
+    children: [{ type: "link", url: citation, children: label }],
+  }] };
+
+  remarkKnowledgeCitations()(tree);
+
+  const link = tree.children[0].children[0];
+  assert.equal(link.url, citationHref(citation));
+  assert.equal(link.data.hProperties["data-kb-citation"], citation);
+  assert.deepEqual(link.children, label);
+});

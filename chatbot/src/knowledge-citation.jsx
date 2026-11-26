@@ -125,11 +125,13 @@ function transformNode(node, info) {
       next.push(...splitText(child.value || "", info));
       continue;
     }
-    if (child.type === "inlineCode") {
-      const citations = findCitations(child.value);
-      if (citations.length === 1 && citations[0] === child.value.trim()) {
-        next.push(citationLink(child.value.trim(), info));
-        const note = suffix(info[child.value.trim()]?.status);
+    if (child.type === "inlineCode" || child.type === "link") {
+      const reference = child.type === "link" ? child.url : child.value.trim();
+      if (reference && findCitations(reference)[0] === reference) {
+        const link = citationLink(reference, info);
+        if (child.type === "link") link.children = child.children;
+        next.push(link);
+        const note = suffix(info[reference]?.status);
         if (note) next.push({ type: "text", value: note });
         continue;
       }
@@ -140,8 +142,8 @@ function transformNode(node, info) {
   node.children = next;
 }
 
-// A small remark plugin (no extra dependency) so citations inside inline code
-// and plain text both become links before Markdown renders them.
+// Turn canonical citations in text, inline code and link targets into links
+// that the knowledge center can open.
 export function remarkKnowledgeCitations(options = {}) {
   const info = options.info || {};
   return (tree) => transformNode(tree, info);
