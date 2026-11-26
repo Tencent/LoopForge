@@ -350,6 +350,9 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 	}
 	reset := descendants(wf, target)
 	reset[target] = true
+	if err := e.guardRoutingRoleDrift(&r, reset); err != nil {
+		return err
+	}
 	overlayLatestNodeBindings(e.repo, &r, reset)
 	var stale []string
 	interrupted := map[string]bool{}
@@ -610,6 +613,9 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 				reset[id] = true
 			}
 		}
+	}
+	if err := e.guardRoutingRoleDrift(&r, reset); err != nil {
+		return err
 	}
 	overlayLatestNodeBindings(e.repo, &r, reset)
 	for _, node := range r.WorkflowSnapshot.Nodes {
@@ -1139,7 +1145,8 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 }
 
 // frozenArtifactContractSources lists the nodes whose artifact contracts an
-// edge condition resolves by name at run time.
+// edge condition resolves by name at run time. Their whole binding is frozen so
+// the contract cannot drift away from the role that produces it.
 func frozenArtifactContractSources(wf domain.WorkflowDefinition) map[string]bool {
 	frozen := map[string]bool{}
 	for _, edge := range wf.Edges {
@@ -1148,6 +1155,57 @@ func frozenArtifactContractSources(wf domain.WorkflowDefinition) map[string]bool
 		}
 	}
 	return frozen
+}
+
+// guardRoutingRoleDrift refuses a replay that would look for an artifact its
+// role no longer produces.
+//
+// A frozen artifact condition resolves a name against the node contract, but the
+// role behind that node is looked up by id every time the node runs, and roles
+// are edited in place without a version to pin. Renaming the artifact inside the
+// role therefore leaves the frozen edge waiting for a name the agent is no
+// longer asked to write: the condition never matches and the run quietly takes
+// the default branch. Nothing in the snapshot can restore the old role, so the
+// replay is refused instead of silently misrouting.
+func (e *Engine) guardRoutingRoleDrift(r *domain.Run, nodeIDs map[string]bool) error {
+	for _, edge := range r.WorkflowSnapshot.Edges {
+		if edge.Condition == nil || edge.Condition.Type != "artifact" || !nodeIDs[edge.Source] {
+			continue
+		}
+		var node *domain.WorkflowNode
+		for i := range r.WorkflowSnapshot.Nodes {
+			if r.WorkflowSnapshot.Nodes[i].ID == edge.Source {
+				node = &r.WorkflowSnapshot.Nodes[i]
+				break
+			}
+		}
+		if node == nil || node.Type != "agent" || node.AgentID == "" {
+			continue
+		}
+		if _, declared := artifactContractByName(node.ArtifactOutputs, edge.Condition.Artifact); !declared {
+			continue
+		}
+		agent, ok := workflowAgent(e.repo, r.WorkflowSnapshot, node.AgentID)
+		if !ok || len(agent.ArtifactOutputs) == 0 {
+			// No role contracts means the artifact is owned by the node, and the
+			// taskbook tells the agent to write it; nothing can drift here.
+			continue
+		}
+		if _, ok := artifactContractByName(agent.ArtifactOutputs, edge.Condition.Artifact); ok {
+			continue
+		}
+		return fmt.Errorf("节点 %s 的路由依赖产物「%s」，但角色「%s」已不再产出它；请新建 Run，或恢复角色的产物配置后重试", node.ID, edge.Condition.Artifact, agent.Name)
+	}
+	return nil
+}
+
+func artifactContractByName(contracts []domain.ArtifactContract, name string) (domain.ArtifactContract, bool) {
+	for _, contract := range contracts {
+		if contract.Name == name {
+			return contract, true
+		}
+	}
+	return domain.ArtifactContract{}, false
 }
 
 func resumeNodeID(r domain.Run) string {

@@ -1070,3 +1070,83 @@ func TestConditionalRoutingHumanRouteIsClearedOnUpstreamReject(t *testing.T) {
 		t.Fatalf("rerun did not recalculate route: small=%+v large=%+v", got.Nodes["small"], got.Nodes["large"])
 	}
 }
+
+// The frozen graph resolves an artifact by name, but the role behind the node is
+// looked up by id at run time and roles are edited in place. Renaming the
+// artifact inside the role would leave the frozen edge waiting for a name the
+// agent never writes, and the run would quietly take the default branch.
+func TestConditionalRoutingRetryRefusesRoleArtifactRename(t *testing.T) {
+	artifactRoutingWorkflow := func(t *testing.T, s *repo.Store) domain.WorkflowDefinition {
+		t.Helper()
+		wf := routingWorkflow("retry-role-drift")
+		wf.Nodes[0] = domain.WorkflowNode{
+			ID: "classify", Name: "classify", Type: "agent", AgentID: "classifier", ExecutorID: "mock", MaxAttempts: 1,
+			ArtifactOutputs: []domain.ArtifactContract{{Name: "classification", Path: "classification.json"}},
+		}
+		wf.Edges = []domain.WorkflowEdge{
+			{ID: "small-edge", Source: "classify", Target: "small", Condition: &domain.WorkflowCondition{Type: "artifact", Artifact: "classification", Pointer: "/size", Equals: []byte(`"small"`)}},
+			{ID: "large-edge", Source: "classify", Target: "large", Condition: &domain.WorkflowCondition{Type: "artifact", Artifact: "classification", Pointer: "/size", Equals: []byte(`"large"`)}},
+			{ID: "implement-edge", Source: "large", Target: "implement"},
+			{ID: "join-small", Source: "small", Target: "delivery"},
+			{ID: "join-large", Source: "implement", Target: "delivery"},
+		}
+		if err := s.PutWorkflow(wf); err != nil {
+			t.Fatal(err)
+		}
+		return wf
+	}
+	failedRun := func(t *testing.T, s *repo.Store, wf domain.WorkflowDefinition) domain.Run {
+		t.Helper()
+		r := domain.Run{ID: wf.ID + "-run", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "failed", Nodes: map[string]*domain.NodeRun{}}
+		for _, node := range wf.Nodes {
+			r.Nodes[node.ID] = &domain.NodeRun{NodeID: node.ID, Status: "pending"}
+		}
+		r.Nodes["classify"] = &domain.NodeRun{NodeID: "classify", Status: "failed", Error: "boom", Attempt: 1}
+		if err := s.PutRun(r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	t.Run("renamed artifact is refused", func(t *testing.T) {
+		s, err := repo.OpenTest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		wf := artifactRoutingWorkflow(t, s)
+		if err := s.PutAgent(domain.AgentDefinition{ID: "classifier", Name: "分类器", ExecutorID: "mock",
+			ArtifactOutputs: []domain.ArtifactContract{{Name: "classification", Path: "classification.json"}}}); err != nil {
+			t.Fatal(err)
+		}
+		r := failedRun(t, s, wf)
+		// In-place edit: same role id, renamed artifact.
+		if err := s.PutAgent(domain.AgentDefinition{ID: "classifier", Name: "分类器", ExecutorID: "mock",
+			ArtifactOutputs: []domain.ArtifactContract{{Name: "classification-v2", Path: "classification-v2.json"}}}); err != nil {
+			t.Fatal(err)
+		}
+		e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+		err = e.Retry(r.ID, "classify", "重新跑", "")
+		if err == nil || !strings.Contains(err.Error(), "classification") || !strings.Contains(err.Error(), "分类器") {
+			t.Fatalf("expected retry to be refused after the role renamed its artifact, got %v", err)
+		}
+	})
+
+	t.Run("unchanged artifact keeps retrying", func(t *testing.T) {
+		s, err := repo.OpenTest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		wf := artifactRoutingWorkflow(t, s)
+		if err := s.PutAgent(domain.AgentDefinition{ID: "classifier", Name: "分类器", ExecutorID: "mock",
+			ArtifactOutputs: []domain.ArtifactContract{{Name: "classification", Path: "classification.json"}}}); err != nil {
+			t.Fatal(err)
+		}
+		r := failedRun(t, s, wf)
+		e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+		if err := e.Retry(r.ID, "classify", "重新跑", ""); err != nil {
+			t.Fatalf("retry should be allowed while the role still declares the artifact: %v", err)
+		}
+	})
+}
