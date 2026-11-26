@@ -22,7 +22,7 @@ func (e *Engine) RunWorkspace(runID string) string {
 }
 
 // WorkspaceRunID returns the run whose workspace directory run works in; a
-// child SOP shares the checkout of the run that started its SOP chain.
+// child LOOP shares the checkout of the run that started its LOOP chain.
 func WorkspaceRunID(run domain.Run) string {
 	return workspaceRunID(run)
 }
@@ -211,7 +211,7 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 		}
 		released, err := e.repo.ReleaseIdleBorrowedSOPAdmission(run.ID, run.Revision, now)
 		if err != nil {
-			log.Printf("release borrowed SOP admission %s: %v", run.ID, err)
+			log.Printf("release borrowed LOOP admission %s: %v", run.ID, err)
 		} else if released {
 			e.publish(run.ID)
 			e.wakeRunClaimLoop()
@@ -361,7 +361,7 @@ func (e *Engine) SupersedeIssueRuns(issueID, keepRunID string) {
 		if !ok || e.foreignWorkspaceBind(run) {
 			continue
 		}
-		// Another SOP of the same issue does not replace this run; it may still be retried.
+		// Another LOOP of the same issue does not replace this run; it may still be retried.
 		if keptFound && run.WorkflowID != kept.WorkflowID {
 			continue
 		}
@@ -399,7 +399,7 @@ func (e *Engine) DeleteRun(runID string) error {
 			return err
 		}
 		if inUse {
-			return fmt.Errorf("工作区仍有关联的 SOP 运行：%w", repo.ErrWorkspaceInUse)
+			return fmt.Errorf("工作区仍有关联的 LOOP 运行：%w", repo.ErrWorkspaceInUse)
 		}
 	}
 	token, err := e.beginWorkspaceUseAfterCleanup(context.Background(), runID)

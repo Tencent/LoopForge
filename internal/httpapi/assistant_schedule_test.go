@@ -91,7 +91,7 @@ func TestScheduledAssistantRecoveredDraftDoesNotDispatchRun(t *testing.T) {
 	h.generate = func(context.Context, string, domain.User) (string, error) {
 		return `{"message":"启动并等待","drafts":[{"tool":"runs_start","body":{"workflowId":"wf"}}]}`, nil
 	}
-	task := assistantTask{ProjectID: "workbench", Name: "Wait for SOP", Prompt: "启动 SOP 并等待终态"}
+	task := assistantTask{ProjectID: "workbench", Name: "Wait for LOOP", Prompt: "启动 LOOP 并等待终态"}
 	err := h.executeAssistantTask(context.Background(), user, &task)
 	if err == nil || !strings.Contains(err.Error(), "agentflow__runs_start") || task.LastStatus != "error" {
 		t.Fatalf("scheduled draft fallback: status=%q err=%v", task.LastStatus, err)
@@ -139,7 +139,7 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 					t.Fatalf("unexpected scheduled gateway mode: %+v", mode)
 				}
 				if strings.Contains(prompt, "不要调用 issues_dispatch") || strings.Contains(prompt, "不要写进 AI 定时任务") {
-					t.Fatal("scheduled prompts must allow SOP execution")
+					t.Fatal("scheduled prompts must allow LOOP execution")
 				}
 				if _, err := h.callAssistantPlatform(ctx, u, "platform", assistantMCPCall{
 					Tool: "issues_save", Body: map[string]any{"id": "scheduled-issue", "automationState": "ignored"},

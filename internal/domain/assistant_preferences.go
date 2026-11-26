@@ -53,7 +53,7 @@ type ApprovalReviewAPIConfig struct {
 }
 
 // AssistantPreferences is how one user wants Main Bot to work: whether it
-// hands work to roles and SOPs more readily (off by default), extra rules
+// hands work to roles and LOOPs more readily (off by default), extra rules
 // added to every turn, and optional "帮我批准" review model settings.
 // SteerOnSend interrupts a running reply when sending a message; the default
 // queues it until the reply finishes. WorkspaceDriver is the sandbox driver

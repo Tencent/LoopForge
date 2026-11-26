@@ -1,4 +1,4 @@
-// Keep restoration and SOP execution distinct. Only the final control response
+// Keep restoration and LOOP execution distinct. Only the final control response
 // means the run has restarted; a 202 means the background restore is underway.
 const runActivationRequests=new Map();
 

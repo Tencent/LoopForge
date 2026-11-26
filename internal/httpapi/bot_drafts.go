@@ -28,7 +28,7 @@ import (
 // drafts through the same preflight and execution as the web assistant.
 
 var (
-	botDraftResources = map[string]string{"issues": "需求", "workflows": "SOP", "agents": "角色", "projects": "项目", "rules": "规则", "skills": "技能", "schedule_jobs": "定时任务", "runs": "运行", "assistant_tasks": "AI 助手任务", "sandboxes": "沙箱", "dockerfiles": "Dockerfile", "environments": "环境安装脚本", "business_domains": "业务领域", "repositories": "仓库"}
+	botDraftResources = map[string]string{"issues": "需求", "workflows": "LOOP", "agents": "角色", "projects": "项目", "rules": "规则", "skills": "技能", "schedule_jobs": "定时任务", "runs": "运行", "assistant_tasks": "AI 助手任务", "sandboxes": "沙箱", "dockerfiles": "Dockerfile", "environments": "环境安装脚本", "business_domains": "业务领域", "repositories": "仓库"}
 	botDraftVerbs     = map[string]string{"save": "保存", "delete": "删除", "dispatch": "派发", "start": "启动", "cancel": "取消", "reject": "退回", "run": "运行", "restore": "恢复", "pass": "通过", "retry": "重试", "pause": "暂停", "resume": "继续", "reopen": "重新打开", "publish": "发布", "clone": "复制"}
 )
 
@@ -79,7 +79,7 @@ func botDraftCreatedIssue(d assistantDraft) string {
 	return strings.TrimSpace(created.ID)
 }
 
-// startBotDraftIssue dispatches the SOP of a requirement the draft created
+// startBotDraftIssue dispatches the LOOP of a requirement the draft created
 // and returns the run.
 func (h *assistantHandlers) startBotDraftIssue(ctx context.Context, user domain.User, projectID string, d assistantDraft) (string, error) {
 	id := botDraftCreatedIssue(d)
@@ -89,7 +89,7 @@ func (h *assistantHandlers) startBotDraftIssue(ctx context.Context, user domain.
 	return h.dispatchBotIssue(ctx, user, projectID, id)
 }
 
-// dispatchBotIssue starts the SOP of a requirement as user and returns the
+// dispatchBotIssue starts the LOOP of a requirement as user and returns the
 // run ID (empty when the answer names none).
 func (h *assistantHandlers) dispatchBotIssue(ctx context.Context, user domain.User, projectID, issueID string) (string, error) {
 	result, err := h.dispatchAssistantMCPCall(withAssistantExecMode(ctx, assistantExecMode{AutoWrite: true}), user, projectID, assistantMCPCall{Server: "agentflow", Tool: "issues_dispatch", Arguments: map[string]any{"path": map[string]any{"id": issueID}, "body": map[string]any{}}})
@@ -148,12 +148,12 @@ func botDraftSummaryLine(d assistantDraft) string {
 	return botDraftSummaryLineSOP(d, "")
 }
 
-// botDraftSummaryLineSOP adds the SOP a new requirement will be bound to.
+// botDraftSummaryLineSOP adds the LOOP a new requirement will be bound to.
 func botDraftSummaryLineSOP(d assistantDraft, sop string) string {
 	return botDraftSummaryLineFor(d, "", sop)
 }
 
-// botDraftSummaryLineFor adds the repository and the SOP of a new
+// botDraftSummaryLineFor adds the repository and the LOOP of a new
 // requirement.
 func botDraftSummaryLineFor(d assistantDraft, repository, sop string) string {
 	line := botDraftSummaryText(d)
@@ -161,7 +161,7 @@ func botDraftSummaryLineFor(d assistantDraft, repository, sop string) string {
 		line += "（仓库：" + repository + "）"
 	}
 	if sop != "" {
-		line += "（SOP：" + sop + "）"
+		line += "（LOOP：" + sop + "）"
 	}
 	return line
 }
@@ -214,7 +214,7 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 			repository = h.botDraftRepositoryLabel(bot.ProjectID, botDraftIssueRepository(d))
 			newIssues++
 		} else if h.botDraftNewIssue(d) && botDraftWithoutSOP(d) {
-			sop = "不使用 SOP"
+			sop = "不使用 LOOP"
 			repository = h.botDraftRepositoryLabel(bot.ProjectID, botDraftIssueRepository(d))
 		}
 		line := fmt.Sprintf("%d. %s", i+1, botDraftSummaryLineFor(d, repository, sop))
@@ -226,7 +226,7 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 	summary := strings.Join(lines, "\n")
 	pending := domain.BotPendingDraft{ConfigID: bot.ID, IdentityScope: bot.IdentityScope(), SenderID: item.SenderID, ProjectID: bot.ProjectID, UserID: user.ID, InteractionID: item.ID, Summary: summary, Drafts: string(raw)}
 	if issues := h.botDraftNewIssues(bot.ProjectID, drafts); len(issues) == 1 {
-		// One new requirement: the chat card offers its SOP as a selection.
+		// One new requirement: the chat card offers its LOOP as a selection.
 		sop := &domain.BotDraftSOP{Index: issues[0].Index, WorkflowID: issues[0].WorkflowID, DefaultName: issues[0].DefaultWorkflowName, RepositoryID: issues[0].RepositoryID, DefaultRepositoryName: issues[0].DefaultRepositoryName}
 		for _, r := range h.botDraftRepositories(bot.ProjectID) {
 			if len(sop.Repositories) == botDraftCardSOPLimit {
@@ -249,7 +249,7 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 	link := base + "/bot-approve.html#draft=" + saved.ID
 	head := "\n\n以下操作需要你在平台确认后才会执行（" + fmt.Sprint(int(repo.BotDraftTTL.Minutes())) + " 分钟内有效）：\n" + summary
 	if newIssues > 0 {
-		head += "\n确认页可以更换仓库和 SOP，并选择创建后立即启动。"
+		head += "\n确认页可以更换仓库和 LOOP，并选择创建后立即启动。"
 	}
 	if bot.ChannelKind() != domain.BotChannelWeCom {
 		// Feishu and DingTalk replies are plain text: the URL stands on
@@ -259,11 +259,11 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 	return head + "\n[在平台确认这些操作](" + link + ")"
 }
 
-// botDraftCardSOPLimit caps the SOPs listed in a chat card selection; the
+// botDraftCardSOPLimit caps the LOOPs listed in a chat card selection; the
 // platform page lists all of them.
 const botDraftCardSOPLimit = 60
 
-// botDraftCardChoices turns the repository and SOP picked on the chat card
+// botDraftCardChoices turns the repository and LOOP picked on the chat card
 // into the confirmation choices; nil when nothing was picked there. What
 // was not picked keeps the model's choice (or the project default).
 func botDraftCardChoices(d domain.BotPendingDraft, start bool) []botDraftChoice {
@@ -287,7 +287,7 @@ type botDraftView struct {
 	Operations  []string `json:"operations"`
 	Results     []string `json:"results,omitempty"`
 	// NewIssues are the requirements this draft creates; the user picks
-	// their SOP and whether to start it right after creation.
+	// their LOOP and whether to start it right after creation.
 	NewIssues []botDraftIssue    `json:"newIssues,omitempty"`
 	Workflows []botDraftWorkflow `json:"workflows,omitempty"`
 	// Repositories are the project's repositories a new requirement may
@@ -298,7 +298,7 @@ type botDraftView struct {
 type botDraftIssue struct {
 	Index int    `json:"index"`
 	Title string `json:"title"`
-	// WorkflowID is the SOP the model named; empty means the project
+	// WorkflowID is the LOOP the model named; empty means the project
 	// default, which is DefaultWorkflowID / DefaultWorkflowName.
 	WorkflowID          string `json:"workflowId"`
 	DefaultWorkflowID   string `json:"defaultWorkflowId"`
@@ -316,8 +316,8 @@ type botDraftWorkflow struct {
 	Name string `json:"name"`
 }
 
-// botDraftChoice is the user's SOP choice for one new requirement; an empty
-// workflowId selects the project default SOP.
+// botDraftChoice is the user's LOOP choice for one new requirement; an empty
+// workflowId selects the project default LOOP.
 type botDraftChoice struct {
 	Index      int    `json:"index"`
 	WorkflowID string `json:"workflowId"`
@@ -327,7 +327,7 @@ type botDraftChoice struct {
 	Start        bool    `json:"start"`
 }
 
-// botDraftIssueWorkflow reports the SOP a draft creating a new requirement
+// botDraftIssueWorkflow reports the LOOP a draft creating a new requirement
 // binds to: the workflowId the model set, else the project default. Drafts
 // that update an existing issue are not new requirements.
 func (h *assistantHandlers) botDraftIssueWorkflow(projectID string, d assistantDraft) (string, bool) {
@@ -339,7 +339,7 @@ func (h *assistantHandlers) botDraftIssueWorkflow(projectID string, d assistantD
 }
 
 // botDraftWithoutSOP reports whether the draft saves a requirement that opts
-// out of SOP delivery (sopMode none).
+// out of LOOP delivery (sopMode none).
 func botDraftWithoutSOP(d assistantDraft) bool {
 	if strings.TrimSpace(d.Tool) != "issues_save" {
 		return false
@@ -371,9 +371,9 @@ func (h *assistantHandlers) botDraftNewIssue(d assistantDraft) bool {
 	return true
 }
 
-// botDraftIssueSOP returns the SOP the model named for a new requirement
+// botDraftIssueSOP returns the LOOP the model named for a new requirement
 // (empty when none) and the project default it would otherwise get. A
-// requirement without an SOP has none to choose or to start, so ok is false.
+// requirement without a LOOP has none to choose or to start, so ok is false.
 func (h *assistantHandlers) botDraftIssueSOP(projectID string, d assistantDraft) (string, string, bool) {
 	if !h.botDraftNewIssue(d) || botDraftWithoutSOP(d) {
 		return "", "", false
@@ -396,9 +396,9 @@ func (h *assistantHandlers) botWorkflowName(id string) string {
 	return id
 }
 
-// botDraftWorkflows lists the SOPs a requirement of the project may be bound
-// to, like the requirement form on the platform: the project's own SOPs,
-// shared SOPs and the platform generic templates (archived ones excluded),
+// botDraftWorkflows lists the LOOPs a requirement of the project may be bound
+// to, like the requirement form on the platform: the project's own LOOPs,
+// shared LOOPs and the platform generic templates (archived ones excluded),
 // plus the current choices. The project default is offered separately.
 func (h *assistantHandlers) botDraftWorkflows(projectID string, include ...string) []botDraftWorkflow {
 	seen := map[string]bool{}
@@ -545,7 +545,7 @@ func (h *assistantHandlers) botDraftView(d domain.BotPendingDraft) botDraftView 
 		var drafts []assistantDraft
 		if json.Unmarshal([]byte(d.Drafts), &drafts) == nil {
 			view.NewIssues = h.botDraftNewIssues(d.ProjectID, drafts)
-			// Start from the SOP already picked on the chat card.
+			// Start from the LOOP already picked on the chat card.
 			for _, choice := range botDraftCardChoices(d, false) {
 				for i := range view.NewIssues {
 					if view.NewIssues[i].Index == choice.Index {
@@ -623,8 +623,8 @@ func (h *assistantHandlers) botDraft(c *gin.Context) {
 }
 
 // executeBotDraft re-checks and runs a pending draft for user (the platform
-// page and the Feishu confirmation card share it). choices set the SOP of
-// new requirements; startAll, when set, starts every new requirement's SOP.
+// page and the Feishu confirmation card share it). choices set the LOOP of
+// new requirements; startAll, when set, starts every new requirement's LOOP.
 // A failed re-check cancels the draft and returns the reason in invalid.
 func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.User, draft domain.BotPendingDraft, choices []botDraftChoice, startAll *bool) (domain.BotPendingDraft, string, error) {
 	id := draft.ID
@@ -668,7 +668,7 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 	for i := range drafts {
 		drafts[i].Saved, drafts[i].Auto, drafts[i].SaveError = false, false, ""
 	}
-	// Apply the SOP choices of new requirements. Only SOPs offered on the
+	// Apply the LOOP choices of new requirements. Only LOOPs offered on the
 	// page are accepted; the frozen draft itself is unchanged.
 	start := map[int]bool{}
 	sops := map[int]string{}
@@ -702,14 +702,14 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 			}
 			wf := strings.TrimSpace(choice.WorkflowID)
 			if wf == "" {
-				// The project default: drop any SOP the model named so the
+				// The project default: drop any LOOP the model named so the
 				// platform binds the requirement the usual way.
 				wf = defaults[choice.Index]
 				if wf != current {
 					drafts[choice.Index].Body = setDraftBodyField(drafts[choice.Index].Body, "workflowId", nil)
 				}
 			} else if !allowed[wf] {
-				return finish(repo.BotDraftFailed, "所选 SOP 不可用于当前项目，没有执行")
+				return finish(repo.BotDraftFailed, "所选 LOOP 不可用于当前项目，没有执行")
 			} else if wf != current {
 				drafts[choice.Index].Body = setDraftBodyField(drafts[choice.Index].Body, "workflowId", wf)
 			}

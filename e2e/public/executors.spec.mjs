@@ -115,7 +115,7 @@ test('executor selection has independent models, credentials and a persistent ch
   }
 });
 
-test('SOP readiness checks each role executor rather than always requiring CodeBuddy',async({page})=>{
+test('LOOP readiness checks each role executor rather than always requiring CodeBuddy',async({page})=>{
   await signInUnconfigured(page);
   const {user}=await page.request.get('/api/auth/current').then(r=>r.json());
   expect(!!user.codexApiKeyConfigured).toBe(false);

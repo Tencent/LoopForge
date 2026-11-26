@@ -234,7 +234,7 @@ func TestBusinessExecutionDuration(t *testing.T) {
 	}{
 		{"parallel attempts", []domain.Run{run("a", 10, 30), run("b", 20, 40)}, spans(run("a", 10, 30), run("b", 20, 40)), 30, true},
 		{"retries with a wait", []domain.Run{child}, map[string][]domain.RunEvent{"child": childEvents}, 5, true},
-		{"nested SOP wait excluded", []domain.Run{parent, child}, map[string][]domain.RunEvent{"child": childEvents}, 5, true},
+		{"nested LOOP wait excluded", []domain.Run{parent, child}, map[string][]domain.RunEvent{"child": childEvents}, 5, true},
 		{"clip to completion", []domain.Run{run("a", 1430, 1450)}, spans(run("a", 1430, 1450)), 10, true},
 		{"observed zero", []domain.Run{run("zero", 10, 10)}, spans(run("zero", 10, 10)), 0, true},
 		{"legacy node rows only", []domain.Run{run("legacy", 10, 1000)}, nil, 0, false},

@@ -26,7 +26,7 @@ type dispatchRequest struct {
 
 type botStartOriginKey struct{}
 
-// withBotStartOrigin marks the SOP starts made with ctx as requested in an
+// withBotStartOrigin marks the LOOP starts made with ctx as requested in an
 // IM conversation.
 func withBotStartOrigin(ctx context.Context, origin domain.BotChatOrigin) context.Context {
 	return context.WithValue(ctx, botStartOriginKey{}, origin)
@@ -72,10 +72,10 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	scheduled := strings.TrimSpace(req.ScheduleJobID) != ""
 	if issue.WithoutSOP() {
 		if scheduled {
-			return domain.Task{}, HTTPError{http.StatusConflict, "该需求不使用 SOP"}
+			return domain.Task{}, HTTPError{http.StatusConflict, "该需求不使用 LOOP"}
 		}
 		if strings.TrimSpace(req.WorkflowID) == "" {
-			return domain.Task{}, HTTPError{http.StatusBadRequest, "该需求不使用 SOP，请先选择要运行的 SOP"}
+			return domain.Task{}, HTTPError{http.StatusBadRequest, "该需求不使用 LOOP，请先选择要运行的 LOOP"}
 		}
 	}
 	project, _ := d.repo.Project(issue.ProjectID)
@@ -100,7 +100,7 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		workflowID = project.WorkflowID
 	}
 	if workflowID == "" {
-		return domain.Task{}, HTTPError{http.StatusBadRequest, "issue requires a workflow (bind to SOP first)"}
+		return domain.Task{}, HTTPError{http.StatusBadRequest, "issue requires a workflow (bind to LOOP first)"}
 	}
 	if issue.SOPBindings != nil {
 		if binding, ok := domain.ResolveSOPBinding(issue, project, workflowID); ok && binding.AssigneeUserID > 0 {
@@ -110,15 +110,15 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		}
 	}
 	hasSameSOP := d.repo.IssueHasTaskForWorkflow(issue.ID, workflowID)
-	// A schedule only picks up untouched issues; another SOP lane is a human decision.
+	// A schedule only picks up untouched issues; another LOOP lane is a human decision.
 	if scheduled && d.repo.IssueHasTask(issue.ID) {
-		return domain.Task{}, HTTPError{http.StatusConflict, "该需求已经跑过 SOP"}
+		return domain.Task{}, HTTPError{http.StatusConflict, "该需求已经跑过 LOOP"}
 	}
 	if !scheduled && !req.Rerun && hasSameSOP {
-		return domain.Task{}, HTTPError{http.StatusConflict, "该需求的这条 SOP 已经跑过，如需重新执行请明确选择重新运行"}
+		return domain.Task{}, HTTPError{http.StatusConflict, "该需求的这条 LOOP 已经跑过，如需重新执行请明确选择重新运行"}
 	}
 	if req.Rerun && !hasSameSOP {
-		return domain.Task{}, HTTPError{http.StatusBadRequest, "该需求尚未运行这条 SOP，不能使用重新运行"}
+		return domain.Task{}, HTTPError{http.StatusBadRequest, "该需求尚未运行这条 LOOP，不能使用重新运行"}
 	}
 	repositoryIDs := issue.EffectiveRepositoryIDs()
 	if len(repositoryIDs) == 0 {
@@ -169,7 +169,7 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	if len(repositories) > 0 && req.WorkspaceRunID == "" {
 		if len(repositories) == 1 {
-			input += "\n\nRepository context (frozen): the repository is checked out in a first-level subdirectory; SOP deliverables stay at the workspace root"
+			input += "\n\nRepository context (frozen): the repository is checked out in a first-level subdirectory; LOOP deliverables stay at the workspace root"
 		} else {
 			input += "\n\nRepository context (frozen, multi-repository): every repository below is checked out side by side; treat them as equals"
 		}
@@ -182,10 +182,10 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 				input += " (the platform prepares the work branch from this baseline. Target the baseline when opening the MR.)"
 			}
 			if scheduled && strings.TrimSpace(rc.IntegrateBranch) != "" {
-				input += fmt.Sprintf("\n  - scheduled integration branch: %s\n  - configured main branch: %s\n  - before this SOP starts, AgentFlow merges the configured main branch into the integration baseline (never the other way); the workspace is checked out from that baseline. After the SOP, only the work branch is merged back to the integration baseline. Humans merge the baseline into the configured main branch.", rc.IntegrateBranch, rc.DefaultBranch)
+				input += fmt.Sprintf("\n  - scheduled integration branch: %s\n  - configured main branch: %s\n  - before this LOOP starts, AgentFlow merges the configured main branch into the integration baseline (never the other way); the workspace is checked out from that baseline. After the LOOP, only the work branch is merged back to the integration baseline. Humans merge the baseline into the configured main branch.", rc.IntegrateBranch, rc.DefaultBranch)
 			}
 		}
-		input += "\n- SOP deliverables (fix-plan.md and other reports not tied to one repository) go to the workspace root, never inside a repository directory\n- do not write to any host absolute path"
+		input += "\n- LOOP deliverables (fix-plan.md and other reports not tied to one repository) go to the workspace root, never inside a repository directory\n- do not write to any host absolute path"
 	}
 	input = appendSOPHandoff(issue, project, workflowID, input)
 	taskID, dispatchMode := primaryTaskID(issue.ID, workflowID), "primary"
@@ -217,9 +217,9 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	if !created {
 		if scheduled {
-			return domain.Task{}, HTTPError{http.StatusConflict, "该需求的这条 SOP 已经跑过"}
+			return domain.Task{}, HTTPError{http.StatusConflict, "该需求的这条 LOOP 已经跑过"}
 		}
-		return domain.Task{}, HTTPError{http.StatusConflict, "该需求的这条 SOP 正在创建或已经完成首次执行，请选择重新运行"}
+		return domain.Task{}, HTTPError{http.StatusConflict, "该需求的这条 LOOP 正在创建或已经完成首次执行，请选择重新运行"}
 	}
 	issue.LatestTaskID = stored.ID
 	issue.Status = "in_progress"
@@ -267,8 +267,8 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 			log.Printf("bot chat origin of run %s not recorded: %v", run.ID, err)
 		}
 	}
-	// Bind only after the run actually starts. A second lane keeps the SOP
-	// that already ran; a stored list of several SOPs is left unchanged.
+	// Bind only after the run actually starts. A second lane keeps the LOOP
+	// that already ran; a stored list of several LOOPs is left unchanged.
 	// A failed start returns above and does not reach this write.
 	if issue.WithoutSOP() {
 		issue.SOPMode, issue.AutomationState = domain.IssueSOPUse, "eligible"
@@ -334,13 +334,13 @@ func appendSOPHandoff(issue domain.Issue, project domain.Project, workflowID, in
 	if len(prev) == 0 {
 		return input
 	}
-	input += "\n\nHandoff from previous SOP steps on this requirement:"
+	input += "\n\nHandoff from previous LOOP steps on this requirement:"
 	for _, binding := range prev {
 		input += "\n- " + binding.WorkflowID
 		if len(current.Handoff) > 0 {
 			input += " → expected artifacts: " + strings.Join(current.Handoff, ", ")
 		}
 	}
-	input += "\nContinue from those deliverables; do not redo the previous SOP."
+	input += "\nContinue from those deliverables; do not redo the previous LOOP."
 	return input
 }

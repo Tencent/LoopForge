@@ -19,7 +19,7 @@ func TestAssistantProgressSubmissionCannotEndToolExecution(t *testing.T) {
 	for _, mode := range []assistantExecMode{{}, {AutoWrite: true, ConfirmDangerous: true}, {AutoWrite: true}} {
 		cancelled := false
 		session := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", User: user, UserID: user.ID, ExecMode: mode, Final: make(chan AgentTerminalResult, 1), CancelModel: func() { cancelled = true }}
-		result, err := gateway.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"稍等，我先看看项目里有哪些可用 SOP。","drafts":[]}`))
+		result, err := gateway.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"稍等，我先看看项目里有哪些可用 LOOP。","drafts":[]}`))
 		if err != nil || result["isError"] != true || session.finished() || cancelled {
 			t.Fatalf("progress reply terminated execution: result=%v err=%v cancelled=%v", result, err, cancelled)
 		}
@@ -35,7 +35,7 @@ func TestAssistantProgressSubmissionCannotEndToolExecution(t *testing.T) {
 		if _, err := gateway.callTool(context.Background(), session, json.RawMessage(`{"name":"workbench_tool_schema","arguments":{"name":"issues_dispatch"}}`)); err != nil {
 			t.Fatalf("cannot continue querying after rejected progress: %v", err)
 		}
-		result, err = gateway.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"已核对需求，确认后派发。","drafts":[{"tool":"issues_dispatch","path":{"id":"workbench-issue"},"proposal":{"reason":"整件需求走 SOP","timing":"start"}}]}`))
+		result, err = gateway.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"已核对需求，确认后派发。","drafts":[{"tool":"issues_dispatch","path":{"id":"workbench-issue"},"proposal":{"reason":"整件需求走 LOOP","timing":"start"}}]}`))
 		if err != nil || result["isError"] == true || !session.finished() || !cancelled {
 			t.Fatalf("valid draft did not finish: result=%v err=%v", result, err)
 		}

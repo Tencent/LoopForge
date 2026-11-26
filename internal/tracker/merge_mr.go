@@ -12,7 +12,7 @@ import (
 )
 
 // ErrNoOpenMR reports that no open MR exists for the requested source branch.
-// Callers treat it as a normal outcome (the SOP may deliver without an MR).
+// Callers treat it as a normal outcome (the LOOP may deliver without an MR).
 var ErrNoOpenMR = errors.New("no open MR for source branch")
 
 // MergeSourceBranchMR merges the first open Gongfeng MR whose source branch is
@@ -60,7 +60,7 @@ func (s *Service) EnsureAndMergeBranchMR(project, sourceBranch, targetBranch, ti
 		}
 		createDesc := strings.TrimSpace(description)
 		if createDesc == "" {
-			createDesc = fmt.Sprintf("定时 SOP 将 `%s` 合入 `%s`。", src, tgt)
+			createDesc = fmt.Sprintf("定时 LOOP 将 `%s` 合入 `%s`。", src, tgt)
 		}
 		_, createErr := client.Clone(30*time.Second).CallTool("create_merge_request", map[string]any{
 			"project_id":    project,

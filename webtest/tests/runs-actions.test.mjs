@@ -254,7 +254,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.equal(app.evaluate(`state.activeRun.status`), 'succeeded');
   app.evaluate(`
     const parent={id:'parent-1',status:'waiting',workflowId:'flow-parent',
-      workflowSnapshot:{id:'flow-parent',name:'Parent',nodes:[{id:'sub',name:'Nested SOP'}],edges:[]},
+      workflowSnapshot:{id:'flow-parent',name:'Parent',nodes:[{id:'sub',name:'Nested LOOP'}],edges:[]},
       nodes:{sub:{status:'running',childRunId:'child-1'}}};
     state.activeRun=parent;state.selectedRun='parent-1';state.data.runs=[parent];
     state.childRuns={'child-1':{run:{id:'child-1',status:'waiting',workflowId:'child-flow',
@@ -270,7 +270,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   `);
   const child = structuredClone(app.evaluate(`window.__child`));
   assert.equal(child.focus.node.id, 'approve');
-  assert.match(child.graph.text, /子 SOP/);
+  assert.match(child.graph.text, /子 LOOP/);
   assert.match(child.panel, /Child Flow/);
   assert.match(child.callout, /人工审批/);
   assert.deepEqual(child.ids, ['child-1']);

@@ -98,7 +98,7 @@ func appendEffortArgs(argv []string, effort string) []string {
 }
 
 // maxArgvPromptBytes stays under Linux MAX_ARG_STRLEN (~128KiB per argument).
-// Ordinary node task books stay on argv so existing SOP behavior is unchanged.
+// Ordinary node task books stay on argv so existing LOOP behavior is unchanged.
 const maxArgvPromptBytes = 96 << 10
 
 // PromptFitsArgv reports whether a prompt leaves headroom under the platform's

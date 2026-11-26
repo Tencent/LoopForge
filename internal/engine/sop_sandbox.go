@@ -90,7 +90,7 @@ func (e *Engine) selectSOPSandboxForTargets(ctx context.Context, wf domain.Workf
 	choices := e.repo.ConversationSandboxes(ec.ProjectID)
 	choices = slices.DeleteFunc(choices, func(profile domain.SandboxProfile) bool { return !supported(profile) })
 	if len(choices) == 0 {
-		return domain.SandboxProfile{}, "", fmt.Errorf("当前项目和执行机器没有可用的 SOP 沙箱")
+		return domain.SandboxProfile{}, "", fmt.Errorf("当前项目和执行机器没有可用的 LOOP 沙箱")
 	}
 	rank := func(profile domain.SandboxProfile) int {
 		switch {
@@ -144,7 +144,7 @@ func (e *Engine) selectSOPSandboxForTargets(ctx context.Context, wf domain.Workf
 		}
 		return profile, source + " " + profile.ID, nil
 	}
-	return domain.SandboxProfile{}, "", fmt.Errorf("当前项目和执行机器没有可用的 SOP 沙箱")
+	return domain.SandboxProfile{}, "", fmt.Errorf("当前项目和执行机器没有可用的 LOOP 沙箱")
 }
 
 func sopNativeRunnerSupports(runner domain.Runner, driver string, wf domain.WorkflowDefinition, repositories []domain.RepositoryContext) bool {

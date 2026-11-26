@@ -16,8 +16,8 @@ function obsSummaryCard(){
   const stats=obsSummaryStats(),attempts=Number(stats?.succeededRuns||0)+Number(stats?.failedRuns||0);
   const metrics=obsSummaryValues([
     ['delivered',lfT('已交付需求','Delivered issues'),stats?String(stats.delivered):'—'],
-    ['sop-success',lfT('SOP 成功率','SOP success rate'),attempts?Math.round(Number(stats.succeededRuns||0)*100/attempts)+'%':'—'],
-    ['human-rate',lfT('SOP 人工介入率','SOP intervention rate'),stats?.sopRuns?Math.round(Number(stats.humanRuns||0)*100/stats.sopRuns)+'%':'—'],
+    ['sop-success',lfT('LOOP 成功率','LOOP success rate'),attempts?Math.round(Number(stats.succeededRuns||0)*100/attempts)+'%':'—'],
+    ['human-rate',lfT('LOOP 人工介入率','LOOP intervention rate'),stats?.sopRuns?Math.round(Number(stats.humanRuns||0)*100/stats.sopRuns)+'%':'—'],
   ]);
   const points=obsTrendWindow(state.analytics?.dashboard?.trend||[]),spec=obsDashboardSpec('delivery',points);
   spec.empty=!points.some(p=>p.sopDelivered||p.vibeDelivered);spec.emptyText=lfT('暂无交付','No deliveries');
@@ -88,7 +88,7 @@ function obsSummaryCostCard(){
   return obsCard('cost',lfT('用量与费用','Usage & cost'),'',values,`<div class="obs-token-tabs">${tabs}</div>${obsChartSlot('dashboard-tokens',obsTokenSpec(),240)}`,{klass:'obs-summary-cost',expand:true});
 }
 function obsDashboardSeries(kind,points,metric){
-  const defs=kind==='delivery'?[[lfT('SOP 交付','SOP deliveries'),'sopDelivered'],[lfT('Vibe Coding 交付','Vibe Coding deliveries'),'vibeDelivered']]:kind==='vibe'?[[lfT('会话','Sessions'),'sessions'],[lfT('协作会话','Collaborative sessions'),'collaborativeSessions']]:[[lfT('审批 / 放行','Approved / passed'),'approvals'],[lfT('驳回','Rejected'),'rejections'],[lfT('重试 / 拒绝续跑','Retry / declined'),'retries']];
+  const defs=kind==='delivery'?[[lfT('LOOP 交付','LOOP deliveries'),'sopDelivered'],[lfT('Vibe Coding 交付','Vibe Coding deliveries'),'vibeDelivered']]:kind==='vibe'?[[lfT('会话','Sessions'),'sessions'],[lfT('协作会话','Collaborative sessions'),'collaborativeSessions']]:[[lfT('审批 / 放行','Approved / passed'),'approvals'],[lfT('驳回','Rejected'),'rejections'],[lfT('重试 / 拒绝续跑','Retry / declined'),'retries']];
   return defs.map(([name,key])=>({name,key,values:points.map(p=>kind==='human'&&metric!=='count'?(p.sopRuns?Number(p[key]||0)*100/p.sopRuns:0):Number(p[key]||0))}));
 }
 function obsDashboardPalette(theme){
@@ -120,7 +120,7 @@ function obsDashboardFallback(kind,points){
   const slot=document.querySelector('[data-obs-chart="dashboard-'+kind+'"]'),w=slot?.clientWidth||480,h=220,l=34,r=12,t=20,b=28,pw=w-l-r,ph=h-t-b;
   const series=obsDashboardSeries(kind,points,state.obsDashboardMetric),line=kind==='vibe',colors=['var(--hui-accent)','var(--hui-info)','var(--hui-warn)'];
   const peak=Math.max(1,...points.map((_,i)=>line?Math.max(...series.map(s=>s.values[i])):series.reduce((n,s)=>n+s.values[i],0))),max=Math.ceil(peak/4)*4,x=i=>l+(i+.5)*pw/Math.max(1,points.length),y=v=>t+ph*(1-v/max);
-  let html=`<svg width="${w}" height="${h}" role="img" aria-label="${obsEsc(kind==='delivery'?lfT('交付趋势','Delivery trend'):kind==='vibe'?'Vibe Coding':lfT('SOP 人工介入趋势','SOP intervention trend'))}">`;
+  let html=`<svg width="${w}" height="${h}" role="img" aria-label="${obsEsc(kind==='delivery'?lfT('交付趋势','Delivery trend'):kind==='vibe'?'Vibe Coding':lfT('LOOP 人工介入趋势','LOOP intervention trend'))}">`;
   for(let i=0;i<=4;i++){const value=max*i/4;html+=`<line x1="${l}" y1="${y(value)}" x2="${w-r}" y2="${y(value)}" stroke="var(--hui-border)"/><text x="${l-7}" y="${y(value)+4}" text-anchor="end">${value}</text>`}
   points.forEach((p,i)=>{if(i===0||i===points.length-1||i===Math.floor(points.length/2))html+=`<text x="${x(i)}" y="${h-5}" text-anchor="middle">${obsEsc(obsTrendLabel(p))}</text>`});
   if(line)series.forEach((s,g)=>{html+=`<polyline points="${s.values.map((v,i)=>x(i)+','+y(v)).join(' ')}" fill="none" stroke="${colors[g]}" stroke-width="2" ${g?'stroke-dasharray="5 3"':''}/>`});
@@ -152,13 +152,13 @@ function obsHumanTrendCard(){
     ['normalized',lfT('每百次运行','Per 100 runs')],['count',lfT('介入次数','Decisions')],
   ],state.obsDashboardMetric||'normalized',true);
   const performance=obsSOPView()==='performance',tabs=obsSeg('data-obs-sop-view',[['human',lfT('人工介入','Interventions')],['performance',lfT('执行效率','Performance')]],obsSOPView(),true);
-  return obsCard('human',performance?lfT('SOP 执行效率','SOP performance'):lfT('SOP 人工介入点趋势','SOP intervention trend'),'',tabs,`<div class="obs-human-controls"${performance?' hidden':''}>${node}${metric}</div><div class="obs-sop-values"${performance?'':' hidden'}>${performance?obsSOPValues():''}</div>${obsChartSlot('dashboard-human',obsSOPSpec(),196)}<div class="obs-sop-legend">${obsSOPLegend()}</div>`,{expand:true});
+  return obsCard('human',performance?lfT('LOOP 执行效率','LOOP performance'):lfT('LOOP 人工介入点趋势','LOOP intervention trend'),'',tabs,`<div class="obs-human-controls"${performance?' hidden':''}>${node}${metric}</div><div class="obs-sop-values"${performance?'':' hidden'}>${performance?obsSOPValues():''}</div>${obsChartSlot('dashboard-human',obsSOPSpec(),196)}<div class="obs-sop-legend">${obsSOPLegend()}</div>`,{expand:true});
 }
 function obsSOPView(){return state.obsSOPView==='performance'?'performance':'human'}
 function obsSOPValues(){
   const stats=obsSummaryStats(),p=stats?.performance||{},ok=Number(p.toolCallsSucceeded||0),bad=Number(p.toolCallsFailed||0);
   return obsSummaryValues([
-    ['sop-runs',lfT('SOP 运行','SOP runs'),stats?String(stats.sopRuns||0):'—',stats?lfT(`成功 ${stats.succeededRuns||0} / 失败 ${stats.failedRuns||0}`,`${stats.succeededRuns||0} succeeded / ${stats.failedRuns||0} failed`):''],
+    ['sop-runs',lfT('LOOP 运行','LOOP runs'),stats?String(stats.sopRuns||0):'—',stats?lfT(`成功 ${stats.succeededRuns||0} / 失败 ${stats.failedRuns||0}`,`${stats.succeededRuns||0} succeeded / ${stats.failedRuns||0} failed`):''],
     ['sop-duration',lfT('平均执行耗时','Mean execution time'),p.measuredRuns?duration(p.averageExecutionDurationMs):'—',p.measuredRuns?`P95 ${duration(p.p95ExecutionDurationMs)}`:''],
     ['tool-success',lfT('工具成功率','Tool success rate'),ok+bad?Math.round(ok*100/(ok+bad))+'%':'—',ok+bad?lfT(`成功 ${ok} / 失败 ${bad}`,`${ok} succeeded / ${bad} failed`):''],
   ]);
@@ -184,7 +184,7 @@ function obsSOPSpec(){
     const points=obsTrendWindow(state.analytics?.dashboard?.trend||[]);
     return {empty:!points.some(p=>p.performance?.measuredRuns),emptyText:lfT('暂无执行耗时记录','No execution timings'),option:(theme,reduced)=>obsPerformanceOption(points,{theme:obsDashboardPalette(theme),reduced}),fallback:()=>obsPerformanceFallback(points)};
   }
-  const points=obsHumanPoints(),spec=obsDashboardSpec('human',points);spec.empty=!points.some(p=>p.sopRuns);spec.emptyText=lfT('暂无 SOP 运行','No SOP runs');return spec;
+  const points=obsHumanPoints(),spec=obsDashboardSpec('human',points);spec.empty=!points.some(p=>p.sopRuns);spec.emptyText=lfT('暂无 LOOP 运行','No LOOP runs');return spec;
 }
 function obsPerformanceFallback(points){
   return `<div class="obs-token-table"><table class="obs-table"><thead><tr><th>${lfT('日期','Date')}</th><th>${lfT('平均执行','Mean')}</th><th>P95</th></tr></thead><tbody>${points.map(p=>`<tr><td>${escapeHTML(p.date)}</td><td>${p.performance?.measuredRuns?duration(p.performance.averageExecutionDurationMs):'—'}</td><td>${p.performance?.measuredRuns?duration(p.performance.p95ExecutionDurationMs):'—'}</td></tr>`).join('')}</tbody></table></div>`;
@@ -215,7 +215,7 @@ function obsBindHumanTrendActions(root){
     card.querySelectorAll('[data-obs-sop-view]').forEach(button=>{button.setAttribute('aria-pressed',String(button.dataset.obsSopView===obsSOPView()));button.onclick=()=>{
       state.obsSOPView=button.dataset.obsSopView;const performance=obsSOPView()==='performance';
       card.querySelectorAll('[data-obs-sop-view]').forEach(b=>{const active=b.dataset.obsSopView===obsSOPView();b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active))});
-      card.querySelector('h3').textContent=performance?lfT('SOP 执行效率','SOP performance'):lfT('SOP 人工介入点趋势','SOP intervention trend');
+      card.querySelector('h3').textContent=performance?lfT('LOOP 执行效率','LOOP performance'):lfT('LOOP 人工介入点趋势','LOOP intervention trend');
       card.querySelector('.obs-human-controls').hidden=performance;
       const values=card.querySelector('.obs-sop-values');values.hidden=!performance;values.innerHTML=performance?obsSOPValues():'';
       card.querySelector('.obs-sop-legend').innerHTML=obsSOPLegend();obsUpdateHumanTrend(card);

@@ -528,7 +528,7 @@ func (r *RunsRepo) checkParentAdmission(tx *gorm.DB, run *domain.Run) error {
 			return fmt.Errorf("parent run unavailable: %w", err)
 		}
 		if parent.Status == "succeeded" || parent.Status == "queued" || parent.WorkspaceCleaned != nil || parent.AdmissionState == "unstarted" || parent.AdmissionState == "released" {
-			return fmt.Errorf("请从顶层 SOP 重新运行，父流程尚未获得运行名额")
+			return fmt.Errorf("请从顶层 LOOP 重新运行，父流程尚未获得运行名额")
 		}
 		if parentID == run.ExecutionContext.ParentRunID && run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
 			run.ConcurrencyExempt = parent.QuotaExempt != nil && *parent.QuotaExempt

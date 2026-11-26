@@ -1,5 +1,5 @@
 // Requirement lifecycle: create, list/filter/paginate, edit, comment,
-// clarification, SOP binding, dispatch into a real run, close and reopen, and
+// clarification, LOOP binding, dispatch into a real run, close and reopen, and
 // deleting a local requirement and its settled execution history.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -107,7 +107,7 @@ test('unsupported sub-resource methods answer 404, unknown issue 404', async () 
   await api('DELETE', '/api/issues/issue-does-not-exist', undefined, { expect: 404 });
 });
 
-test('requirement view and SOP binding round-trip', async () => {
+test('requirement view and LOOP binding round-trip', async () => {
   const requirement = await get(`/api/issues/${issue.id}/requirement`);
   assert.ok(requirement);
   const sops = await get(`/api/issues/${issue.id}/sops`);
@@ -168,7 +168,7 @@ test('deleting a separate draft issue returns 204 and removes it',async()=>{
  await api('GET',`/api/issues/${draft.id}`,undefined,{expect:404});
 });
 
-// waitingIssue dispatches a fresh requirement onto a SOP that stops at a human gate.
+// waitingIssue dispatches a fresh requirement onto a LOOP that stops at a human gate.
 async function waitingIssue(label) {
   const gated = await createWorkflow(label, [script('prep', 'echo prep'), approval('gate', 'prep')]);
   const created = await post('/api/issues', { projectId: P, title: `E2E 删除需求 ${cfg.runTag}`, description: 'e2e 删除用例', workflowId: gated });

@@ -47,7 +47,7 @@ func ClarifyAction(key string) bool {
 
 // ClarifyActionLabel names a clarification action for status lines.
 func ClarifyActionLabel(key string) string {
-	return map[string]string{ClarifyActionNext: "提交回答，进入下一轮", ClarifyActionEnd: "结束澄清", ClarifyActionSave: "保存澄清结果", ClarifyActionSaveStart: "保存并启动 SOP", ClarifyActionYes: "是", ClarifyActionNo: "不是"}[key]
+	return map[string]string{ClarifyActionNext: "提交回答，进入下一轮", ClarifyActionEnd: "结束澄清", ClarifyActionSave: "保存澄清结果", ClarifyActionSaveStart: "保存并启动 LOOP", ClarifyActionYes: "是", ClarifyActionNo: "不是"}[key]
 }
 
 // clarifyPostCard turns a clarify_post message into its card: the first
@@ -62,7 +62,7 @@ func clarifyPostCard(item domain.BotInteraction, text string) *PushCard {
 	case ClarifyPostConclusion:
 		card.Tag = "澄清结论"
 		card.Required = "需求负责人、发起人或项目维护者可以保存；同一份结论只保存一次"
-		card.Actions = []PushCardAction{{Key: ClarifyActionSave, Text: "保存澄清结果", Ref: item.ID}, {Key: ClarifyActionSaveStart, Text: "保存并启动 SOP", Ref: item.ID}, {Key: ClarifyActionEnd, Text: "结束澄清", Danger: true, Ref: item.ID}}
+		card.Actions = []PushCardAction{{Key: ClarifyActionSave, Text: "保存澄清结果", Ref: item.ID}, {Key: ClarifyActionSaveStart, Text: "保存并启动 LOOP", Ref: item.ID}, {Key: ClarifyActionEnd, Text: "结束澄清", Danger: true, Ref: item.ID}}
 	default:
 		return nil
 	}

@@ -168,7 +168,7 @@ test('recommendations preview the actual change and show the server writeback ou
   assert.equal(row('append').querySelector('[data-apply-eval]'), null);
 });
 
-test('recommendations whose targetId names a node show the SOP or role the server writes', async (t) => {
+test('recommendations whose targetId names a node show the LOOP or role the server writes', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const report = {
@@ -186,12 +186,12 @@ test('recommendations whose targetId names a node show the SOP or role the serve
   const pane = mount(app);
   await app.evaluate(`loadRunEval('${run.id}')`);
   const row = (id) => pane.querySelector(`[data-eval-recommendation="${id}"]`);
-  assert.match(row('retry').querySelector('.run-eval-target').textContent, /SOP\s*交付流程/);
+  assert.match(row('retry').querySelector('.run-eval-target').textContent, /LOOP\s*交付流程/);
   assert.match(row('prompt').querySelector('.run-eval-target').textContent, /角色\s*审查角色/);
 
   app.evaluate(`window.afConfirm = async (options) => { window.lastEvalConfirmation = options; return true; }`);
   await row('retry').querySelector('[data-apply-eval]').onclick();
-  assert.match(app.window.lastEvalConfirmation.message, /SOP · 交付流程/);
+  assert.match(app.window.lastEvalConfirmation.message, /LOOP · 交付流程/);
 });
 
 test('a rejected start follows the evaluation that is already running', async (t) => {

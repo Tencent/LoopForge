@@ -93,7 +93,7 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			return
 		}
 		// A brand-new project starts with the built-in LoopForge backend
-		// delivery SOP when none was picked, so synced and newly created
+		// delivery LOOP when none was picked, so synced and newly created
 		// requirements run out of the box (see repo.bindDefaultWorkflow).
 		if isNew && strings.TrimSpace(v.WorkflowID) == "" {
 			v.WorkflowID = repo.GenericBackendDeliveryWorkflowID

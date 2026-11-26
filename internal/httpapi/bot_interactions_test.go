@@ -269,10 +269,10 @@ func TestBotAcceptsNaturalAnswerWithoutTerminalCall(t *testing.T) {
 	calls := 0
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		calls++
-		return "项目当前有 2 个运行中的 SOP，均在实现节点。", nil
+		return "项目当前有 2 个运行中的 LOOP，均在实现节点。", nil
 	}
 	reply, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "bot-session", ChatType: "single"}, nil, domain.BotInteraction{SenderID: "new-wecom-user", Content: "项目状态"})
-	if err != nil || calls != 1 || !strings.Contains(reply, "2 个运行中的 SOP") {
+	if err != nil || calls != 1 || !strings.Contains(reply, "2 个运行中的 LOOP") {
 		t.Fatal(reply, err, calls)
 	}
 }

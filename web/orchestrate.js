@@ -1,4 +1,4 @@
-// SOP designer's AI orchestrator. The conversation runs in the chatbot's
+// LOOP designer's AI orchestrator. The conversation runs in the chatbot's
 // sop-designer surface (/chatbot/?surface=sop-designer), embedded in the
 // canvas side panel; this file owns the canvas: it hands the chat the graph
 // to edit and replays the streamed draft as nodes and wires on the canvas.
@@ -164,7 +164,7 @@ function shellForAIWorkflow(raw) {
   const existing = (state.data?.workflows || []).find(item => item.id && item.id === raw.id);
   const shell = existing ? clone(existing) : {
     id: raw.id || uid('sop'),
-    name: raw.name || 'AI 编排 SOP',
+    name: raw.name || 'AI 编排 LOOP',
     version: 1,
     revision: 0,
     status: 'draft',
@@ -205,7 +205,7 @@ function postToAIOrchestrator(type, payload = {}) {
   if (target) target.postMessage({type, ...payload}, location.origin);
 }
 
-// Load the chat on first open; afterwards only tell it which SOP is shown.
+// Load the chat on first open; afterwards only tell it which LOOP is shown.
 function syncAIOrchestratorFrame() {
   const frame = aiOrchestratorFrame();
   if (!frame || $('#aiOrchestrator')?.hidden !== false) return;
@@ -730,8 +730,8 @@ function aiDraftObject(raw) {
   try { return JSON.parse(raw); } catch { return null; }
 }
 
-// The turn's reply arrived. An edit keeps the SOP's id; a body with another
-// id is a new SOP and replaces the canvas only after the user agrees.
+// The turn's reply arrived. An edit keeps the LOOP's id; a body with another
+// id is a new LOOP and replaces the canvas only after the user agrees.
 async function finishAIOrchestration(raw) {
   const build = aiBuild;
   if (!isCurrentAIBuild(build)) {
@@ -748,7 +748,7 @@ async function finishAIOrchestration(raw) {
     return playWorkflowOnCanvas(body, {confirmed: false});
   }
   const ok = await completeAIBuild(build, body);
-  if (!ok && build.token === aiBuildToken) setAIBuildStatus(build.mode === 'edit' ? '这轮没有改动画布，当前流程还在' : '这轮没有生成可放置的 SOP，可以换个说法再试');
+  if (!ok && build.token === aiBuildToken) setAIBuildStatus(build.mode === 'edit' ? '这轮没有改动画布，当前流程还在' : '这轮没有生成可放置的 LOOP，可以换个说法再试');
   return ok;
 }
 

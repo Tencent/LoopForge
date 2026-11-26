@@ -132,6 +132,10 @@ func (h *assistantHandlers) runCLIInstall(engine string, job *cliInstallJob) {
 	if err != nil {
 		log.Printf("assistant CLI install %s: %v", engine, err)
 	} else {
+		if engine == assistantEngineCodeBuddy {
+			// Discovery before the install cached an empty catalog.
+			forgetCLIModels()
+		}
 		h.noteCLIInstalled(engine)
 	}
 	job.err = err

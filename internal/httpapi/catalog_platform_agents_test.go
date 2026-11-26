@@ -14,7 +14,7 @@ import (
 	"agentflow/internal/runtime"
 )
 
-// A role without a project is platform-wide: every project's SOPs can use it.
+// A role without a project is platform-wide: every project's LOOPs can use it.
 // Like platform rules and skills, only administrators may change it; project
 // writers must copy it into their project first.
 func TestPlatformAgentWritesRequirePlatformAdmin(t *testing.T) {

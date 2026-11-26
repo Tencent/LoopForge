@@ -132,7 +132,7 @@ func TestAutomaticSOPSandboxFallbackAndFrozenRefresh(t *testing.T) {
 	e.SelectSOPSandbox = func(_ context.Context, selection SOPSandboxSelection) string {
 		calls++
 		// The execution process is API-only, so it cannot probe native
-		// isolation on the worker that will execute the SOP.
+		// isolation on the worker that will execute the LOOP.
 		if len(selection.Candidates) != 2 || selection.DefaultSandboxID != profile.ID ||
 			slices.ContainsFunc(selection.Candidates, func(c SOPSandboxCandidate) bool { return c.ID == foreign.ID }) {
 			t.Fatalf("unexpected candidates: %+v", selection)

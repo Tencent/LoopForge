@@ -34,7 +34,7 @@ func Checkouts(ctx context.Context, root string) []Checkout {
 }
 
 // CheckoutsIncludingNested also scans below each checkout. A conversation can
-// clone an independent repository inside an existing checkout for an SOP.
+// clone an independent repository inside an existing checkout for a LOOP.
 func CheckoutsIncludingNested(ctx context.Context, root string) []Checkout {
 	return checkouts(ctx, root, true)
 }
@@ -107,7 +107,7 @@ func SameCheckoutOrigin(origin, remote string) bool {
 	return origin != "" && origin == remote
 }
 
-// ExistingSOPCheckout checks an occupied checkout target before SOP checkout
+// ExistingSOPCheckout checks an occupied checkout target before LOOP checkout
 // is allowed to modify it. An unrelated repository or a nonempty directory
 // is left intact.
 func ExistingSOPCheckout(ctx context.Context, dir, remote string) (bool, error) {

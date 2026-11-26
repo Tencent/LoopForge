@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { branchCompareUrl, githubRepoPath, gongfengProjectPath } from "../src/changes.js";
 import { isConversationWorkspaceRun } from "../src/runs.js";
 
-// 自由协作 runs and chat workspaces are not SOPs; listing them showed
+// 自由协作 runs and chat workspaces are not LOOPs; listing them showed
 // "等待审批 · 0/0 节点", including for a conversation that is such a run.
 test("conversation workspaces are not listed as runs", () => {
   assert.equal(isConversationWorkspaceRun({ id: "run-1", workflowId: "free-collaboration" }), true);
@@ -11,7 +11,7 @@ test("conversation workspaces are not listed as runs", () => {
   assert.equal(isConversationWorkspaceRun({ id: "run-3", kind: "workspace" }), true);
 });
 
-test("SOP runs stay listed", () => {
+test("LOOP runs stay listed", () => {
   assert.equal(isConversationWorkspaceRun({ id: "run-3", workflowId: "generic-backend-delivery" }), false);
   assert.equal(isConversationWorkspaceRun(null), false);
 });

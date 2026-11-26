@@ -172,7 +172,7 @@ test('toWorld converts client points through pan and zoom', () => {
   assert.deepEqual(json('flowViewport.toWorld(150,100)'), { x: 100, y: 100 });
 });
 
-test('the SOP switcher groups own, shared and generic workflows and keeps an unsaved draft', () => {
+test('the LOOP switcher groups own, shared and generic workflows and keeps an unsaved draft', () => {
   const workflows = [
     { id: 'own', name: '本项目流程', projectId: 'p1', nodes: [] },
     { id: 'shared', name: '共享流程', projectId: 'p2', nodes: [] },
@@ -186,7 +186,7 @@ test('the SOP switcher groups own, shared and generic workflows and keeps an uns
 
 test('the node library search filters roles and built-in items and shows an empty state', () => {
   const item = text => fakeEl({ textContent: text });
-  const control = [item('脚本 Shell / Python 命令'), item('子 SOP 跑完另一条流程再继续'), item('预览构建 构建静态站点并归档')];
+  const control = [item('脚本 Shell / Python 命令'), item('子 LOOP 跑完另一条流程再继续'), item('预览构建 构建静态站点并归档')];
   const collab = [item('人工门禁 停下等待人工确认')];
   const groups = [
     fakeEl({ dataset: { palGroup: 'role' } }),
@@ -228,7 +228,7 @@ test('the node library search filters roles and built-in items and shows an empt
   assert.deepEqual([...control, ...collab].map(i => i.hidden), [false, false, false, false]);
 });
 
-test('the SOP switcher query filters by name or id and reports no match', () => {
+test('the LOOP switcher query filters by name or id and reports no match', () => {
   const workflows = [
     { id: 'wf-build', name: '构建发布', projectId: 'p1', nodes: [] },
     { id: 'wf-review', name: '代码评审', projectId: 'p2', nodes: [] },
@@ -251,7 +251,7 @@ test('the SOP switcher query filters by name or id and reports no match', () => 
   q.value = 'zzz';
   run('flowPalette.renderSwitcher()');
   assert.deepEqual(ids(), []);
-  assert.match(list.innerHTML, /没有匹配的 SOP/);
+  assert.match(list.innerHTML, /没有匹配的 LOOP/);
 });
 
 test('flowHistory.current changes on every later edit so a stale toast undo is refused', () => {
@@ -274,7 +274,7 @@ test('crowded legacy rows are widened so nodes stop overlapping; normal layouts 
   assert.deepEqual(ctx.state.workflow.nodes.map(n => n.position.x), [80, 360, 640]);
   assert.equal(ctx.state.workflow.nodes[1].position.y, 200);
   assert.equal(run('spreadCrowdedNodes(state.workflow)'), false, 'idempotent');
-  assert.equal(ctx.state.workflowDirty, undefined, 'a display fix does not mark the SOP unsaved');
+  assert.equal(ctx.state.workflowDirty, undefined, 'a display fix does not mark the LOOP unsaved');
 
   ctx.state.workflow = { ...graph(), nodes: row(180) };
   assert.equal(run('spreadCrowdedNodes(state.workflow)'), true);
