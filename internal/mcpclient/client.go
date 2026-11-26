@@ -378,8 +378,8 @@ func (c *Client) readSSE(body io.Reader) ([]byte, error) {
 			}
 			continue
 		}
-		if strings.HasPrefix(line, "data: ") {
-			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+		if value, ok := strings.CutPrefix(line, "data:"); ok {
+			dataLines = append(dataLines, strings.TrimPrefix(value, " "))
 		}
 	}
 	if len(dataLines) > 0 {
