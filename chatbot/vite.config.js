@@ -8,6 +8,10 @@ export default defineConfig({
   css: { postcss: { plugins: [scopeChatCSS()] } },
   build: {
     outDir: "../web/native-chat", emptyOutDir: true,
+    // The platform shell links one /chatbot/assets/workbench.css. Splitting the
+    // static CSS graph into workbench.css + workbench2.css would drop the
+    // second half for the unified workbench and leave the chat unstyled.
+    cssCodeSplit: false,
     rollupOptions: {
       input: {
         main: new URL("./index.html", import.meta.url).pathname,
