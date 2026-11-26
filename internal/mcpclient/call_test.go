@@ -1,13 +1,16 @@
 package mcpclient
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeMCP answers initialize/notifications itself and delegates tools/call
@@ -66,6 +69,34 @@ func TestCallToolJoinsTextBlocksAndInitializesOnce(t *testing.T) {
 	}
 	if fake.auth.Load() != "Bearer tok" {
 		t.Fatalf("headers should be forwarded, got %v", fake.auth.Load())
+	}
+}
+
+func TestCallToolContextCancelsInitialize(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var initialized atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request rpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		if request.Method != "initialize" {
+			t.Errorf("unexpected request after cancellation: %s", request.Method)
+		}
+		initialized.Store(true)
+		cancel()
+		// Leave initialize in flight so the cancellation has to interrupt it.
+		select {
+		case <-r.Context().Done():
+		case <-time.After(time.Second):
+			t.Error("upstream initialize did not receive cancellation")
+		}
+	}))
+	defer server.Close()
+	_, err := New(server.URL, nil).CallToolContext(ctx, "create", nil)
+	if !initialized.Load() || !errors.Is(err, context.Canceled) {
+		t.Fatalf("initialize did not honor cancellation: %v", err)
 	}
 }
 

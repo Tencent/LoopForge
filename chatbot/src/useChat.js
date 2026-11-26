@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   write,
@@ -15,42 +15,72 @@ import { credentialHint } from "./credentials.js";
 import { cliFailureSettles } from "./cli-install.jsx";
 import { useExecutionMachines } from "./useExecutionMachines.js";
 import { executionLocked } from "./execution-target.js";
-import { modelEffort } from "./effort.js";
-import { conversationEngine, engineModels } from "./engines.js";
+import { knownEffort, modelEffort } from "./effort.js";
+import { EXECUTORS, concreteModel, conversationEngine, engineModels, engineOfModel, personalEngineConfigured } from "./engines.js";
+import { readComposerPreference, useComposerOptions, writeComposerPreference } from "./composer-preferences.js";
 import {
   enqueue,
   holdQueue,
   nextQueued,
+  queuedApproval,
   queuedMessage,
   readQueues,
   removeQueued,
   restoreQueued,
   writeQueues,
 } from "./message-queue.js";
-// Main Bot can run on any configured agent CLI; CodeBuddy stays the default.
-export const EXECUTORS = [
-  { id: "codebuddy", icon: "sparkles", label: "CodeBuddy", detail: "使用 CodeBuddy 模型与个人 API Key。" },
-  { id: "codex", icon: "terminal", label: "Codex", detail: "使用 Codex CLI 与个人 Codex API Key。" },
-  { id: "claude-code", icon: "brain", label: "Claude Code", detail: "使用 Claude Code CLI 与个人 Claude Code API Key。" },
-  { id: "opencode", icon: "terminal", label: "OpenCode", detail: "使用 OpenCode 与个人 API Key。" },
-  { id: "cursor", icon: "terminal", label: "Cursor", detail: "使用 Cursor CLI 与个人 API Key。" },
-  { id: "agy", icon: "sparkles", label: "Antigravity", detail: "使用 Antigravity 与个人 API Key。" },
-  { id: "kimi", icon: "sparkles", label: "Kimi Code", detail: "使用 Kimi Code 与个人 API Key。" },
-  { id: "pi", icon: "terminal", label: "Pi", detail: "使用 Pi 与个人 API Key。" },
-  { id: "dsh", icon: "terminal", label: "DeepSeek Harness", detail: "使用 DeepSeek Harness 与个人 API Key。" },
-  { id: "zcode", icon: "terminal", label: "ZCode", detail: "使用 ZCode 与个人 API Key。" },
-];
-const EXECUTOR_KEY = "loopforge.assistant.executor";
 function knownExecutor(id) {
   if (id === "claude") return "claude-code";
   return EXECUTORS.some((item) => item.id === id) ? id : "codebuddy";
 }
 function storedExecutor() {
-  try {
-    return knownExecutor(localStorage.getItem(EXECUTOR_KEY));
-  } catch {
-    return "codebuddy";
+  return knownExecutor(readComposerPreference("executor"));
+}
+
+// A CLI's fallback list uses bare model IDs, while the personal catalog
+// prefixes them with the CLI. Both spellings share the same preference.
+function unprefixedModel(executor, model) {
+  const prefix = executor + ":";
+  return model?.startsWith(prefix) ? model.slice(prefix.length) : model;
+}
+
+function findExecutorModel(list, executor, model) {
+  const id = unprefixedModel(executor, model);
+  if (!id) return undefined;
+  return list.find((item) => unprefixedModel(executor, item.id) === id) ??
+    list.find((item) => item.efforts?.some((level) => item.effortModelIds?.[level] === id));
+}
+
+function effortPreference(executor, model) {
+  return `effort.${executor}.${unprefixedModel(executor, model)}`;
+}
+
+const runnerLoginExecutors = ["codex", "claude-code", "agy"];
+
+function usesRunnerLogin(machine, executor) {
+  return runnerLoginExecutors.includes(executor) &&
+    machine?.runtimes?.some((runtime) => runtime.provider === executor && runtime.authMode !== "personal");
+}
+
+function runnerModelEntries(models, executor) {
+  return (models || []).filter((model) => concreteModel(model, executor)).map((model) => ({
+    id: `${executor}:${model.id}`,
+    engine: executor,
+    name: model.name || model.id,
+    efforts: model.reasoningEfforts ?? model.discoveredReasoningEfforts,
+    effortModelIds: model.efforts,
+  }));
+}
+
+// Use the first requested preference that is available for this executor.
+function preferredModel(list, executor, ...preferences) {
+  const available = list.filter((model) => !model.disabled && !model.unavailable);
+  for (const id of preferences) {
+    if (!concreteModel({ id }, executor)) continue;
+    const listed = findExecutorModel(available, executor, id);
+    if (listed) return id;
   }
+  return available[0]?.id || "";
 }
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
@@ -72,22 +102,36 @@ const PROJECT_LIST_TOOLS = new Set([
 ]);
 const initialProject =
   new URLSearchParams(location.search).get("projectId") || "";
+
+class ComposerModelError extends Error {}
+
+function withSessionTitle(session, source) {
+  const { title, displayTitle, titleEdited, titleGenerated } = source;
+  if (session.title === title && session.displayTitle === displayTitle &&
+      session.titleEdited === titleEdited && session.titleGenerated === titleGenerated) return session;
+  return { ...session, title, displayTitle, titleEdited, titleGenerated };
+}
+
 export function useChat() {
   const stopRequestRef = useRef(null);
-  const [user, setUser] = useState(null),
+  const accountDefaultsRef = useRef(null);
+  const draftExecutorPicked = useRef(false);
+  const userRead = useRef(0);
+  const [identity, setIdentity] = useState(null),
     [projects, setProjects] = useState([]),
     [sandboxes, setSandboxes] = useState([]),
     [draftKnowledgeRefs,setDraftKnowledgeRefs]=useState([]),
     [sandboxProfileId, setSandboxProfileId] = useState(""),
     [sandboxBusy, setSandboxBusy] = useState(false),
-    [workspaceSandbox, setWorkspaceSandbox] = useState(null),
-    [workspaceExecution, setWorkspaceExecution] = useState(null),
-    [workspaceExecutionError, setWorkspaceExecutionError] = useState(""),
+    [loadedWorkspace, setLoadedWorkspace] = useState(null),
     [users, setUsers] = useState([]),
     [draftIssueId, setDraftIssueId] = useState(
       new URLSearchParams(location.search).get("issueId") || "",
     ),
     [models, setModels] = useState([]),
+    [catalogEngines, setCatalogEngines] = useState([]),
+    [accountDefaults, setAccountDefaults] = useState(null),
+    [modelCatalogRefresh, requestModelCatalogRefresh] = useState(0),
     [sessions, setSessions] = useState([]),
     [session, setSession] = useState(null),
     [activeId, setActiveId] = useState(
@@ -97,10 +141,9 @@ export function useChat() {
     // the header reveals that conversation's title once it has loaded.
     [revealId, setRevealId] = useState(activeId),
     [projectId, setProjectId] = useState(initialProject),
-    [model, setModel] = useState(""),
-    [effort, setEffort] = useState(""),
+    [selection, setSelection] = useState(() => ({ executor: storedExecutor(), model: null, effort: null })),
+    [codeBuddyDefault, setCodeBuddyDefault] = useState({ id: "default", name: "默认" }),
     [sponsoredModels, setSponsoredModels] = useState([]),
-    [executor, setExecutorState] = useState(storedExecutor),
     [providerCatalogs, setProviderCatalogs] = useState({}),
     [generation, setGeneration] = useState(null),
     [stopRequest, setStopRequest] = useState(null),
@@ -108,14 +151,29 @@ export function useChat() {
     [error, setError] = useState(""),
     [ready, setReady] = useState(false),
     [submitting, setSubmitting] = useState(false),
+    [steerOnSend, setSteerOnSend] = useState(false),
     // Messages sent while a reply runs, per conversation (see message-queue.js).
     [queues, setQueues] = useState(readQueues),
     // The generation whose final transcript has been loaded. A queued message
     // waits for it, so it is sent after the finished (or unfinished) reply.
     [settledId, setSettledId] = useState(null),
+    // The conversation whose reply status has been fetched since it was
+    // opened. Until then a reply may still be running there, so queued
+    // messages must not go out (they would be rejected and get lost).
+    [generationKnown, setGenerationKnownState] = useState(null),
     // A queued message sent with "send now": it interrupts the running reply
     // and stays on screen until the server's follow-up turn has started.
     [steering, setSteering] = useState(null);
+  // The users endpoint returns a complete snapshot. Credentials omitted
+  // after deletion must not survive in the authenticated user's profile.
+  const user = useMemo(() => identity && { ...identity, ...users.find(row => row.id === identity.id) }, [identity, users]);
+  const generationKnownRef = useRef(null);
+  const generationRevision = useRef(0);
+  const setGenerationKnown = useCallback((id) => {
+    generationKnownRef.current = id;
+    setGenerationKnownState(id);
+  }, []);
+  const { readOptions, saveOptions } = useComposerOptions(user?.isGuest ? "guest" : user?.id);
   const executionMachines = useExecutionMachines(
     user?.isGuest ? null : user?.id,
     submitting || generation?.status === "running",
@@ -123,34 +181,48 @@ export function useChat() {
     setError,
     bindExecutionMachine,
     session?.executionTarget,
+    projectId,
   );
   const currentId = useRef(activeId),
     sessionRef = useRef(session),
     projectRef = useRef(projectId),
     globalProject = useRef(initialProject),
     submittingRef = useRef(false),
+    savingDraft = useRef(null),
+    catalogRequests = useRef(new Map()),
     sandboxBusyRef = useRef(false),
     applyingRef = useRef(new Set()),
     dispatchingRef = useRef(false),
     steeringRef = useRef(null),
-    selectRef = useRef(null),
-    defaultModel = useRef("");
+    selectRef = useRef(null);
   currentId.current = activeId;
   sessionRef.current = session;
   projectRef.current = projectId;
+  const renamedTitles = useRef(new Map());
+  const mergeRenamedTitle = useCallback((stored, titlesAtRequest) => {
+    const renamed = renamedTitles.current.get(stored?.id);
+    return renamed && renamed !== titlesAtRequest.get(stored.id)
+      ? withSessionTitle(stored, renamed)
+      : stored;
+  }, []);
+  const readSession = useCallback(async (id) => {
+    const titlesAtRequest = renamedTitles.current;
+    return mergeRenamedTitle(await api(sessionPath(id)), titlesAtRequest);
+  }, [mergeRenamedTitle]);
   const refreshSessions = useCallback(async () => {
-    const rows = await api("/api/assistant/sessions");
-    setSessions(rows || []);
-    const current = sessionRef.current;
-    const row = (rows || []).find((item) => item.id === current?.id);
-    if (row?.title && current && !current.titleEdited && row.title !== current.title) {
+    const titlesAtRequest = renamedTitles.current;
+    const rows = (await api("/api/assistant/sessions") || [])
+      .map((row) => mergeRenamedTitle(row, titlesAtRequest));
+    setSessions(rows);
+    const row = rows.find((item) => item.id === currentId.current);
+    if (row?.title) {
       setSession((prev) =>
-        prev && prev.id === row.id && !prev.titleEdited
-          ? { ...prev, title: row.title, titleGenerated: !!row.titleGenerated }
+        prev?.id === row.id && (!prev.titleEdited || row.titleEdited)
+          ? withSessionTitle(prev, row)
           : prev,
       );
     }
-  }, []);
+  }, [mergeRenamedTitle]);
   const changeURL = useCallback((id) => {
     const url = new URL(location.href);
     url.searchParams.delete("issueId");
@@ -175,32 +247,95 @@ export function useChat() {
     (id) => {
       if (id === currentId.current && sessionRef.current?.id === id) return;
       setError("");
+      generationRevision.current++;
       setGeneration(null);
+      setGenerationKnown(null);
+      setSettledId(null);
       setLive({ answer: "", thinking: "", tools: [] });
+      sessionRef.current = null;
       setSession(null);
       executionMachines.resetMachine();
-      // A new conversation starts on the platform default, not on whatever
-      // model the previously opened conversation used.
-      if (!id) {
-        const preferred = storedExecutor();
-        setExecutorState(preferred);
-        const next = engineModels(models, preferred);
-        if (preferred === "codebuddy") setModel(defaultModel.current || next[0]?.id || "");
-        else setModel(next[0]?.id || "default");
-      }
-      setEffort("");
-      setSandboxProfileId(""); setDraftKnowledgeRefs([]);
+      draftExecutorPicked.current = false;
+      setSelection((options) => ({ executor: id ? options.executor : accountDefaultsRef.current?.executor || storedExecutor(), model: null, effort: null }));
+      setSandboxProfileId("");
+      setDraftKnowledgeRefs([]);
       currentId.current = id;
       setActiveId(id);
       if (id) setRevealId(id);
       changeURL(id);
     },
-    [changeURL, models, executionMachines.resetMachine],
+    [changeURL, executionMachines.resetMachine, setGenerationKnown],
   );
   const newChat = useCallback(() => {
     setDraftIssueId("");
     open(null);
   }, [open]);
+  function restoreConversationModel(stored, { running = false, preserveChoice = false } = {}) {
+    const picked = readOptions(`model.${stored.id}`);
+    const recordedExecutor = knownExecutor(stored.executor || engineOfModel(stored.model, models));
+    const locked = conversationEngine(stored.messages, models, recordedExecutor) ||
+      (running ? recordedExecutor : "");
+    const engine = knownExecutor(locked || picked.executor || recordedExecutor);
+    const selection = picked.executor === engine ? picked : stored;
+    const choice = { executor: engine, model: selection.model || null, effort: selection.effort ?? "" };
+    setSelection((current) => {
+      if (!preserveChoice || (locked && current.executor !== engine) ||
+          (current.executor === engine && picked.executor !== engine)) return choice;
+      return current;
+    });
+    return choice;
+  }
+  function receiveSession(stored, running = false) {
+    if (!stored || currentId.current !== stored.id) return;
+    const opening = sessionRef.current?.id !== stored.id;
+    restoreConversationModel(stored, { running, preserveChoice: !opening });
+    if (opening) {
+      changeURL(stored.id);
+      setProjectId(stored.projectId || "");
+      syncProject(stored.projectId || "");
+    }
+    sessionRef.current = stored;
+    setSession(stored);
+  }
+  const applyModelCatalog = useCallback((catalog) => {
+    accountDefaultsRef.current = catalog.preferences || null;
+    setAccountDefaults(accountDefaultsRef.current);
+    setModels(catalog.models || []);
+    setCatalogEngines(catalog.engines || []);
+    setCodeBuddyDefault({ id: catalog.default || "default", name: "默认", efforts: catalog.defaultEfforts });
+    setSponsoredModels(sponsoredModelList(catalog));
+  }, []);
+  useEffect(() => {
+    if (!user?.id || user.isGuest) {
+      setSteerOnSend(false);
+      return;
+    }
+    let current = true, revision = 0;
+    const refresh = () => {
+      const requested = ++revision;
+      return api("/api/assistant/preferences")
+        .then((prefs) => {
+          if (current && requested === revision) setSteerOnSend(!!prefs?.steerOnSend);
+        })
+        .catch(() => {});
+    };
+    const onMessage = (event) => {
+      if (event.source === window.parent && event.origin === location.origin &&
+          event.data?.type === "agentflow-assistant-preferences-changed")
+        void refresh();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    void refresh();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("message", onMessage);
+    return () => {
+      current = false;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("message", onMessage);
+    };
+  }, [user?.id, user?.isGuest]);
   useEffect(() => {
     let current = true,
       timer,
@@ -215,14 +350,12 @@ export function useChat() {
           api("/api/sandboxes"),
         ]);
         if (!current) return;
-        setUser({ ...auth.user, ...users.find((u) => u.id === auth.user.id) });
+        setIdentity(auth.user);
         setUsers(users || []);
         setProjects(projectRows || []);
         setSandboxes(sandboxRows || []);
-        setModels(catalog.models || []);
-        defaultModel.current = catalog.default || "";
-        setSponsoredModels(sponsoredModelList(catalog));
-        setModel(catalog.default);
+        applyModelCatalog(catalog);
+        if (catalog.cursorModelsPending) requestModelCatalogRefresh((revision) => revision + 1);
         await refreshSessions();
         if (!current) return;
         const recovered = connectionError;
@@ -241,7 +374,7 @@ export function useChat() {
       current = false;
       clearTimeout(timer);
     };
-  }, [refreshSessions]);
+  }, [applyModelCatalog, refreshSessions]);
   useEffect(() => {
     if (!ready || !activeId) return;
     // send/edit already supplied this session. Reloading it here can return an
@@ -252,22 +385,13 @@ export function useChat() {
       connectionError = "";
     async function load() {
       try {
-        const stored = await api(sessionPath(activeId));
-        if (!current || currentId.current !== activeId) return;
-        setSession(stored);
-        changeURL(stored.id);
-        // A conversation stays on the CLI that answered it. Replies saved before
-        // model prefixes keep that CLI on the session executor.
-        const locked = conversationEngine(stored.messages, models, stored.executor);
-        setExecutorState(knownExecutor(locked || stored.executor));
-        setModel(stored.model || defaultModel.current || models[0]?.id || "");
-        setEffort(stored.effort || "");
-        setProjectId(stored.projectId || "");
-        syncProject(stored.projectId || "");
+        const stored = await readSession(activeId);
+        if (!current || currentId.current !== activeId || sessionRef.current?.id === activeId) return;
+        receiveSession(stored);
         const recovered = connectionError;
         setError((old) => (old === recovered ? "" : old));
       } catch (e) {
-        if (!current) return;
+        if (!current || currentId.current !== activeId || sessionRef.current?.id === activeId) return;
         const retry = !e.status || e.status >= 500;
         connectionError = retry ? "连接暂时中断，正在重连…" : e.message;
         setError(connectionError);
@@ -279,7 +403,7 @@ export function useChat() {
       current = false;
       clearTimeout(timer);
     };
-  }, [activeId, ready, syncProject]);
+  }, [activeId, ready, readSession, syncProject]);
   useEffect(() => {
     if (!ready) return;
     const timer = setInterval(
@@ -295,18 +419,18 @@ export function useChat() {
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
-        const stored = await api(sessionPath(session.id));
+        const stored = await readSession(session.id);
         if (cancelled || currentId.current !== session.id || !stored?.title) return;
-        if (stored.title === sessionRef.current?.title && !stored.titleGenerated) return;
+        if (stored.title === sessionRef.current?.title && !stored.titleGenerated && !stored.titleEdited) return;
         setSession((prev) =>
           prev && prev.id === stored.id && !prev.titleEdited
-            ? { ...prev, title: stored.title, titleGenerated: !!stored.titleGenerated }
+            ? withSessionTitle(prev, stored)
             : prev,
         );
         setSessions((rows) =>
           (rows || []).map((item) =>
             item.id === stored.id
-              ? { ...item, title: stored.title, titleGenerated: !!stored.titleGenerated }
+              ? withSessionTitle(item, stored)
               : item,
           ),
         );
@@ -320,7 +444,7 @@ export function useChat() {
       clearInterval(timer);
       clearTimeout(stop);
     };
-  }, [ready, session?.id, session?.title, session?.titleEdited, session?.titleGenerated, titlePrompt]);
+  }, [readSession, ready, session?.id, session?.title, session?.titleEdited, session?.titleGenerated, titlePrompt]);
   useEffect(() => {
     if (!ready || !activeId) return;
     let cancelled = false,
@@ -331,29 +455,42 @@ export function useChat() {
       loaded = null,
       connectionError = "";
     let accumulated = { answer: "", thinking: "", tools: [] };
-    const consume = async (g) => {
-      if (cancelled) return;
+    const isCurrent = (revision) =>
+      !cancelled && currentId.current === activeId && generationRevision.current === revision;
+    const schedulePoll = (delay) => {
+      if (cancelled || currentId.current !== activeId) return;
+      clearTimeout(timer);
+      timer = setTimeout(poll, delay);
+    };
+    const consume = async (g, revision) => {
+      if (!isCurrent(revision)) return;
       if (connectionError) {
         const recovered = connectionError;
         connectionError = "";
         setError((current) => (current === recovered ? "" : current));
       }
+      const running = g.status === "running";
+      const needsTranscript = running ? genId !== g.id : loaded !== g.id;
+      if (needsTranscript) {
+        // Pause sends until the transcript and CLI for this turn are loaded.
+        // A new turn can come from steering or from another member.
+        setGenerationKnown(null);
+        if (!running) {
+          source?.close();
+          source = null;
+        }
+        const stored = await readSession(activeId);
+        if (!isCurrent(revision)) return;
+        receiveSession(stored, running);
+        if (!running) {
+          loaded = g.id;
+          setSettledId(g.id);
+        }
+      }
       if (genId !== g.id) {
-        const previous = genId;
         genId = g.id;
         cursor = 0;
         accumulated = { answer: "", thinking: "", tools: [] };
-        // Steering starts a new generation. The interrupted paragraphs are
-        // already saved; load them before the new turn replaces the live view.
-        if (previous) {
-          try {
-            const stored = await api(sessionPath(activeId));
-            if (cancelled) return;
-            setSession(stored);
-          } catch {
-            // The next poll retries. The live turn can still proceed.
-          }
-        }
       }
       if (g.stream) {
         accumulated = restoreStream(g.stream);
@@ -366,65 +503,87 @@ export function useChat() {
       accumulated = mergeEvents(accumulated, events);
       setLive(accumulated);
       setGeneration(g);
-      if (g.status !== "running") setStopRequest((old) => old?.generationId === g.id ? null : old);
-      if (g.status === "running" && ["platform", "workspace"].includes(g.runtimeMode)) {
-        setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
+      setGenerationKnown(activeId);
+      if (!running) setStopRequest((old) => old?.generationId === g.id ? null : old);
+      if (running && ["platform", "workspace"].includes(g.runtimeMode)) {
+        setSession((stored) => {
+          if (stored?.id !== activeId) return stored;
+          const workspaceRunId = g.workspaceRunId || stored.workspaceRunId;
+          if (stored.runtimeMode === g.runtimeMode && workspaceRunId === stored.workspaceRunId) return stored;
+          return { ...stored, runtimeMode: g.runtimeMode, workspaceRunId };
+        });
       }
-      if (g.status !== "running" && loaded !== g.id) {
-        source?.close();
-        source = null;
-        const stored = await api(sessionPath(activeId));
-        if (cancelled) return;
-        loaded = g.id;
-        setSession(stored);
-        setSettledId(g.id);
+      if (!running && needsTranscript) {
         await refreshSessions();
-        if (g.error && !["canceled", "cancelled"].includes(g.status))
+        if (isCurrent(revision) && g.error && !["canceled", "cancelled"].includes(g.status))
           setError(g.error);
       }
     };
-    const connect = () => {
+    const connect = (revision) => {
       if (source || cancelled || typeof EventSource === "undefined")
         return false;
       source = new EventSource(`${sessionPath(activeId)}/generation?stream=1`);
-      source.addEventListener("generation", (e) => {
+      const stream = source;
+      const close = () => {
+        if (source !== stream) return;
+        stream.close();
+        source = null;
+      };
+      let updates = Promise.resolve();
+      stream.addEventListener("generation", (e) => {
         const g = JSON.parse(e.data);
-        void consume(g)
-          .then(() => {
-            if (!cancelled && g.status !== "running")
-              timer = setTimeout(poll, 2000);
+        updates = updates
+          .then(async () => {
+            if (cancelled || source !== stream) return;
+            await consume(g, revision);
+            if (!isCurrent(revision)) {
+              close();
+              schedulePoll(200);
+            } else if (g.status !== "running") schedulePoll(2000);
           })
           .catch((error) => {
-            if (!cancelled) setError(error.message);
+            if (cancelled || (source && source !== stream)) return;
+            close();
+            if (isCurrent(revision)) setError(error.message);
+            schedulePoll(2000);
           });
       });
-      source.onerror = () => {
-        source?.close();
-        source = null;
-        if (!cancelled) timer = setTimeout(poll, 500);
+      stream.onerror = () => {
+        stream.close();
+        void updates.then(() => {
+          if (cancelled || source !== stream) return;
+          close();
+          schedulePoll(500);
+        });
       };
       return true;
     };
     const poll = async () => {
+      let generationFound = false;
+      const revision = generationRevision.current;
       try {
         if (submittingRef.current) {
-          timer = setTimeout(poll, 500);
+          schedulePoll(500);
           return;
         }
         const g = await api(
           `${sessionPath(activeId)}/generation?after=${cursor}`,
         );
-        if (cancelled) return;
-        await consume(g);
-        if (g.status === "running" && connect()) return;
-        timer = setTimeout(poll, g.status === "running" ? 200 : 2000);
+        if (!isCurrent(revision)) return schedulePoll(200);
+        generationFound = true;
+        await consume(g, revision);
+        if (!isCurrent(revision)) return schedulePoll(200);
+        if (g.status === "running" && connect(revision)) return;
+        schedulePoll(g.status === "running" ? 200 : 2000);
       } catch (e) {
-        if (cancelled) return;
-        if (e.status !== 404) {
+        if (!isCurrent(revision)) return schedulePoll(200);
+        // No reply was ever started here: nothing can be running.
+        if (e.status === 404 && !generationFound) setGenerationKnown(activeId);
+        else {
           connectionError = e.status ? e.message : "连接暂时中断，正在重连…";
           setError(connectionError);
         }
-        timer = setTimeout(poll, 2000);
+        schedulePoll(2000);
       }
     };
     void poll();
@@ -433,7 +592,7 @@ export function useChat() {
       clearTimeout(timer);
       source?.close();
     };
-  }, [activeId, ready, refreshSessions]);
+  }, [activeId, readSession, ready, refreshSessions, setGenerationKnown]);
   const selectProject = useCallback(
     async (id, { external = false } = {}) => {
       const current = sessionRef.current;
@@ -447,7 +606,11 @@ export function useChat() {
         try {
           const saved = await write(
             sessionPath(current.id),
-            { ...current, projectId: id },
+            // Another device may have renamed the session since this one read it.
+            {
+              ...current, projectId: id,
+              title: undefined, titleEdited: undefined, titleGenerated: undefined,
+            },
             "PUT",
           );
           setSession(saved);
@@ -523,104 +686,299 @@ export function useChat() {
         );
     return () => window.removeEventListener("message", listener);
   }, [ready]);
-  const codeBuddy = executor === "codebuddy";
-  const listedForEngine = engineModels(models, executor);
-  const executorModels = listedForEngine.length || codeBuddy
-    ? (codeBuddy ? models.filter((m) => !m.engine || m.engine === "codebuddy") : listedForEngine)
-    : providerCatalogs[executor]?.models || [];
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
   const sponsoredModel = sponsoredModels[0] || "";
-  const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
-  const sharedModelFor = (id) => (sponsoredModels.includes(id) ? id : sponsoredModel);
-  const activeModel = sponsored ? sharedModelFor(model) : model;
-  const activeEffort = modelEffort(executorModels.find((m) => m.id === activeModel), effort);
-  useEffect(() => {
-    if (codeBuddy || listedForEngine.length || providerCatalogs[executor]) return;
-    let current = true;
-    api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`)
+  function composerRunnerId(conversation) {
+    if (!executionLocked(conversation)) return executionMachines.defaultRunnerId;
+    return conversation.executionTarget?.pool === "runner" ? conversation.executionTarget.runnerId : "";
+  }
+  const runnerId = composerRunnerId(session);
+  const runner = executionMachines.machines.find(machine => machine.id === runnerId && machine.ownerUserId === user?.id);
+  const checkServerCLI = executionMachines.machinesReady && !runnerId &&
+    !(session?.executionTarget?.pool === "cloud" && session.executionTarget.runnerId) &&
+    !session?.runId && session?.runtimeMode !== "workspace";
+  const availableExecutors = EXECUTORS.flatMap(item => {
+    if (usesRunnerLogin(runner, item.id)) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
+    const option = catalogEngines.find(engine => engine.id === item.id);
+    const configured = option?.configured ?? personalEngineConfigured(user, item.id);
+    if (!configured && !(item.id === "codebuddy" && sponsoredModel)) return [];
+    return [checkServerCLI && option?.serverMissing
+      ? { ...item, detail: "平台服务器未安装 CLI" }
+      : item];
+  });
+  // Drafts can use any available executor. A recorded conversation keeps its
+  // executor even if its authentication changes.
+  const availableExecutor = id => availableExecutors.find(item => item.id === id);
+  const preferred = !activeId && !draftExecutorPicked.current && availableExecutor(accountDefaults?.executor);
+  const keepSessionExecutor = activeId && (session?.id !== activeId || submitting ||
+    generation?.status === "running" || conversationEngine(session?.messages, models, session?.executor) ||
+    (session?.executionTarget?.pool === "runner" && !executionMachines.machinesReady));
+  const executor = keepSessionExecutor || !user || user.isGuest ? selection.executor :
+    (preferred || availableExecutor(selection.executor) || availableExecutors[0])?.id || "";
+  const missingServerCLI = checkServerCLI
+    ? catalogEngines.find(item => item.id === executor && item.serverMissing)
+    : undefined;
+  const { model, effort } = executor === selection.executor ? selection : { model: null, effort: null };
+  function resolveComposerModel(
+    { executor, model, effort }, conversation, draft,
+    catalogs = providerCatalogs, machines = executionMachines.machines,
+  ) {
+    const personalMachineId = composerRunnerId(conversation);
+    const personalMachine = machines.find(
+      (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
+    );
+    const useLogin = usesRunnerLogin(personalMachine, executor);
+    const agyAccountKey = useLogin && executor === "agy"
+      ? `agy-account:${user.id}:${personalMachine.id}` : "";
+    const providerCatalog = catalogs[agyAccountKey || executor];
+    const codeBuddy = executor === "codebuddy";
+    const runnerCatalog = useLogin && executor !== "agy";
+    const listed = runnerCatalog
+      ? runnerModelEntries(personalMachine.loginModels?.[executor], executor)
+      : engineModels(models, executor);
+    const usesProviderCatalog = !!executor && !codeBuddy && (!!agyAccountKey || !listed.length);
+    const catalogToLoad = usesProviderCatalog && !providerCatalog ? agyAccountKey || executor : "";
+    const executorModels = usesProviderCatalog
+      ? (providerCatalog?.models || []).filter((model) => concreteModel(model, executor))
+      : listed;
+    const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
+    const listedModel = findExecutorModel(executorModels, executor, model);
+    const concrete = concreteModel({ id: model }, executor);
+    const changedDraftRunner = conversation?.executionTarget?.pool === "runner" &&
+      conversation.executionTarget.runnerId !== personalMachineId;
+    const keepConversationModel = conversation &&
+      (executionLocked(conversation) || (!runnerCatalog && !changedDraftRunner));
+    const hasSelectedModel = concrete && !listedModel?.disabled && !listedModel?.unavailable &&
+      (keepConversationModel || !executorModels.length || listedModel);
+    const inheritsDefault = !!conversation && !concrete;
+    const saved = (draft || inheritsDefault) && !sponsored && accountDefaults?.executor === executor ? accountDefaults : null;
+    const savedModel = saved ? findExecutorModel(executorModels, executor, saved.model) : null;
+    const selectedModel = hasSelectedModel ? model : preferredModel(
+      executorModels, executor,
+      savedModel?.id,
+      inheritsDefault ? (codeBuddy ? codeBuddyDefault.id : providerCatalog?.default) : null,
+      draft && !saved ? readComposerPreference(`model.${executor}`) : null,
+    );
+    const availableModel = sponsored && !sponsoredModels.includes(selectedModel) ? sponsoredModel : selectedModel;
+    const catalogEntry = findExecutorModel(executorModels, executor, availableModel);
+    const activeModel = catalogEntry?.id ?? availableModel;
+    const requestedModelId = unprefixedModel(executor, availableModel);
+    const unavailableAgyVariant = agyAccountKey && providerCatalog && !catalogEntry &&
+      /-(?:low|medium|high|xhigh|max)$/.test(requestedModelId || "");
+    // Older sessions and preferences stored the ID of the selected effort variant.
+    const legacyEffort = requestedModelId !== unprefixedModel(executor, activeModel)
+      ? catalogEntry?.efforts?.find((level) => catalogEntry.effortModelIds?.[level] === requestedModelId)
+      : undefined;
+    // null follows the browser preference, while "" is the CLI's default level.
+    const preferredEffort = (!inheritsDefault && (model === null || hasSelectedModel) ? effort : null) ??
+      (savedModel?.id === availableModel && saved ? saved.effort ?? "" :
+        draft ? readComposerPreference(effortPreference(executor, availableModel)) : null);
+    // Custom models can remain usable without a picker entry. Keep their
+    // saved effort visible and let the server validate it on send.
+    const historical = conversation && activeModel && !unavailableAgyVariant && availableModel === selectedModel;
+    const activeModelEntry = catalogEntry ?? (historical
+      ? { id: activeModel, efforts: [knownEffort(preferredEffort)] }
+      : undefined);
+    const activeEffort = modelEffort(activeModelEntry, preferredEffort || legacyEffort);
+    return {
+      personalMachineId, agyAccountKey, catalogToLoad, codeBuddy, executorModels,
+      sponsored, activeModelEntry, activeModel, activeEffort, unavailableAgyVariant,
+    };
+  }
+  const composerModel = resolveComposerModel({ executor, model, effort }, session, !activeId);
+  const {
+    personalMachineId, agyAccountKey, catalogToLoad, codeBuddy, executorModels,
+    sponsored, activeModelEntry, activeModel, activeEffort,
+  } = composerModel;
+  const loadProviderCatalog = useCallback((key, executor, runnerId) => {
+    const existing = catalogRequests.current.get(key);
+    if (existing) return existing;
+    const request = runnerId
+      ? write(`/api/runners/${encodeURIComponent(runnerId)}/models/probe`, { provider: executor, useSaved: true })
+      : api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`);
+    const loading = request
       .then((catalog) => {
-        if (!current) return;
-        setProviderCatalogs((old) => ({ ...old, [executor]: catalog }));
-        setModel((old) => (catalog.models || []).some((m) => m.id === old) ? old : catalog.default || "default");
+        if (catalogRequests.current.get(key) !== loading)
+          throw new ComposerModelError("模型目录已更新，请重新发送。");
+        if (catalog.error) throw new Error(catalog.error);
+        const result = runnerId ? { models: runnerModelEntries(catalog.models, executor) } : catalog;
+        setProviderCatalogs((old) => ({ ...old, [key]: result }));
+        return result;
       })
-      .catch((e) => current && setError(e.message));
+      .catch((error) => {
+        if (catalogRequests.current.get(key) === loading) catalogRequests.current.delete(key);
+        throw error;
+      });
+    catalogRequests.current.set(key, loading);
+    return loading;
+  }, []);
+  useEffect(() => {
+    if (!catalogToLoad) return;
+    let current = true;
+    void loadProviderCatalog(catalogToLoad, executor, agyAccountKey ? personalMachineId : "")
+      .catch((e) => { if (current) setError(e.message); });
     return () => {
       current = false;
     };
-  }, [codeBuddy, executor, listedForEngine.length, providerCatalogs]);
-  const chooseExecutor = useCallback(
-    (id) => {
-      if (id === "claude") id = "claude-code";
-      if (!EXECUTORS.some((item) => item.id === id) || id === executor) return;
-      const locked = conversationEngine(sessionRef.current?.messages, models, sessionRef.current?.executor);
-      try {
-        localStorage.setItem(EXECUTOR_KEY, id);
-      } catch {}
-      setEffort("");
-      const next = engineModels(models, id);
-      const catalog = id === "codebuddy" ? { default: defaultModel.current } : providerCatalogs[id];
-      setExecutorState(id);
-      setModel(next[0]?.id || catalog?.default || (id === "codebuddy" ? defaultModel.current : "default"));
-      if (locked && locked !== id) open(null);
-    },
-    [executor, models, open, providerCatalogs],
-  );
-  const chooseModel = useCallback(
-    (id) => {
-      if (sponsored && !sponsoredModels.includes(id)) {
-        setError(sponsoredModelMessage(sponsoredModels));
-        return false;
+  }, [agyAccountKey, catalogToLoad, executor, personalMachineId, providerCatalogs, loadProviderCatalog]);
+
+  function composerModelError(resolved) {
+    if (resolved.unavailableAgyVariant) return "当前模型已不在该执行机器的账号目录，请重新选择模型。";
+    if (!resolved.activeModel) return "当前 CLI 暂无可用模型，请在个人配置中获取或添加模型。";
+    return "";
+  }
+  async function modelForRequest(selection, conversation, resolved) {
+    const visibleModel = resolved.activeModel;
+    const visibleEffort = resolved.activeEffort;
+    let machines = executionMachines.machines;
+    if (runnerLoginExecutors.includes(selection.executor) && resolved.personalMachineId && !executionMachines.machinesReady) {
+      const rows = await api("/api/runners?mine=1");
+      machines = Array.isArray(rows) ? rows : [];
+      resolved = resolveComposerModel(selection, conversation, false, providerCatalogs, machines);
+    }
+    const key = resolved.catalogToLoad;
+    if (key) {
+      const runnerId = resolved.agyAccountKey ? resolved.personalMachineId : "";
+      const catalog = await loadProviderCatalog(key, selection.executor, runnerId);
+      resolved = resolveComposerModel(selection, conversation, false, { ...providerCatalogs, [key]: catalog }, machines);
+    }
+    if (visibleModel) {
+      const catalogModel = findExecutorModel(resolved.executorModels, selection.executor, visibleModel);
+      if (unprefixedModel(selection.executor, catalogModel?.id ?? visibleModel) !==
+          unprefixedModel(selection.executor, resolved.activeModel) ||
+          (visibleEffort && visibleEffort !== resolved.activeEffort)) {
+        throw new ComposerModelError("当前执行环境不支持所选的模型或思考强度，请重新选择。");
       }
-      setModel(id);
-      setEffort((value) => modelEffort(executorModels.find((m) => m.id === id), value));
-      return true;
-    },
-    [sponsored, sponsoredModels, executorModels],
-  );
-  // Credential flags are omitted when false, so drop the old ones before
-  // merging; otherwise a cleared key would still look configured.
-  const refreshUser = useCallback(
-    () =>
-      api("/api/users")
-        .then((rows) => {
-          setUsers(rows || []);
-          let fresh = null;
-          setUser((old) => {
-            fresh = old && (rows || []).find((u) => u.id === old.id);
-            if (!fresh) return old;
-            const base = Object.fromEntries(
-              Object.entries(old).filter(([k]) => !k.endsWith("Configured")),
-            );
-            return { ...base, ...fresh };
-          });
-          // Drop a "please configure X" error once X is configured.
-          setError((old) => {
-            const hint = credentialHint(old);
-            return hint && fresh?.[`${hint.field}Configured`] ? "" : old;
-          });
-        })
-        .catch(() => {}),
-    [],
-  );
+    }
+    const error = composerModelError(resolved);
+    if (error) throw new ComposerModelError(error);
+    return { model: resolved.activeModel, effort: resolved.activeEffort };
+  }
+  function sessionLoading() {
+    return !!currentId.current && sessionRef.current?.id !== currentId.current;
+  }
+  function replyStatePending() {
+    const id = currentId.current;
+    if (!id) return false;
+    return generationKnown !== id || generationKnownRef.current !== id ||
+      (!!generation && generation.status !== "running" && settledId !== generation.id);
+  }
+
+  function chooseExecutor(id) {
+    if (id === "claude") id = "claude-code";
+    if (sessionLoading() || replyStatePending() || submittingRef.current || generation?.status === "running" ||
+        !availableExecutor(id) || id === executor) return;
+    const current = sessionRef.current;
+    const locked = conversationEngine(current?.messages, models, current?.executor);
+    writeComposerPreference("executor", id);
+    if (locked && locked !== id) open(null);
+    else if (current?.id === activeId) saveOptions(`model.${activeId}`, { executor: id });
+    draftExecutorPicked.current = true;
+    setSelection({ executor: id, model: null, effort: null });
+  }
+
+  function isDraftVisible(draft) {
+    return draft && !currentId.current && projectRef.current === draft.projectId &&
+      (!draft.isActive || draft.isActive());
+  }
+
+  function rememberModelChoice(id, level) {
+    writeComposerPreference("executor", executor);
+    writeComposerPreference(`model.${executor}`, id);
+    writeComposerPreference(effortPreference(executor, id), level);
+    const choice = { executor, model: id, effort: level };
+    const draft = savingDraft.current;
+    if (sessionRef.current?.id === activeId) saveOptions(`model.${activeId}`, choice);
+    else if (isDraftVisible(draft) && draft.issueId === draftIssueId)
+      draft.choice = choice;
+  }
+
+  function chooseModel(id) {
+    if (sessionLoading() || replyStatePending()) return false;
+    if (sponsored && !sponsoredModels.includes(id)) {
+      setError(sponsoredModelMessage(sponsoredModels));
+      return false;
+    }
+    const entry = executorModels.find((item) => item.id === id);
+    if (!entry || entry.disabled || entry.unavailable) return false;
+    const savedLevel = readComposerPreference(effortPreference(executor, id));
+    const level = id === activeModel ? activeEffort : modelEffort(entry, savedLevel ?? activeEffort);
+    setSelection({ executor, model: id, effort: level });
+    rememberModelChoice(id, level);
+    return true;
+  }
+
+  function chooseEffort(value) {
+    if (sessionLoading() || replyStatePending()) return;
+    const level = modelEffort(activeModelEntry, value);
+    setSelection({ executor, model: activeModelEntry ? activeModel : model, effort: level });
+    if (activeModelEntry) {
+      rememberModelChoice(activeModel, level);
+    }
+  }
+  const refreshUser = useCallback(async () => {
+    const read = ++userRead.current;
+    try {
+      const rows = await api("/api/users");
+      if (read !== userRead.current) return;
+      setUsers(rows || []);
+      const fresh = rows?.find(row => row.id === identity?.id);
+      // Drop a "please configure X" error once X is configured.
+      setError(old => {
+        const hint = credentialHint(old);
+        return hint && fresh?.[`${hint.field}Configured`] ? "" : old;
+      });
+    } catch {}
+  }, [identity?.id]);
+  const refreshCredentials = useCallback(() => {
+    catalogRequests.current.clear();
+    setProviderCatalogs({});
+    requestModelCatalogRefresh((revision) => revision + 1);
+  }, []);
   useEffect(() => {
-    if (!ready) return;
     const onMessage = (e) => {
       if (
         e.source === window.parent &&
         e.origin === location.origin &&
         e.data?.type === "agentflow-credentials-changed"
-      )
-        void refreshUser();
+      ) {
+        refreshCredentials();
+      }
     };
+    const onFocus = () => requestModelCatalogRefresh(revision => revision + 1);
     window.addEventListener("message", onMessage);
-    if (missingKey) window.addEventListener("focus", refreshUser);
+    if (ready && !user?.isGuest) window.addEventListener("focus", onFocus);
     return () => {
       window.removeEventListener("message", onMessage);
-      window.removeEventListener("focus", refreshUser);
+      window.removeEventListener("focus", onFocus);
     };
-  }, [ready, missingKey, refreshUser]);
+  }, [ready, user?.isGuest, refreshCredentials]);
+  useEffect(() => {
+    if (!ready || !modelCatalogRefresh) return;
+    void refreshUser();
+    const request = new AbortController();
+    // Cursor discovery can run for up to 30 seconds in the background.
+    const deadline = Date.now() + 40000;
+    let timer;
+    async function refreshModels() {
+      try {
+        const catalog = await api("/api/assistant/models", { signal: request.signal });
+        if (request.signal.aborted) return;
+        applyModelCatalog(catalog);
+        if (!catalog.cursorModelsPending) return;
+      } catch (error) {
+        if (error.status >= 400 && error.status < 500) return;
+      }
+      if (!request.signal.aborted && Date.now() < deadline) timer = setTimeout(refreshModels, 1500);
+    }
+    void refreshModels();
+    return () => {
+      request.abort();
+      clearTimeout(timer);
+    };
+  }, [ready, modelCatalogRefresh, refreshUser, applyModelCatalog]);
   useEffect(() => writeQueues(queues), [queues]);
   useEffect(() => {
     const s = steeringRef.current;
@@ -636,6 +994,8 @@ export function useChat() {
     if (generation?.id !== s.generationId || generation.status === "running") return;
     if (settledId !== s.generationId) return;
     if (!generation.steer) {
+      // The POST can still reject the message after the reply finishes.
+      if (s.pending) return;
       // The reply ended before the message was taken: send it next instead.
       done();
       setQueues((old) => restoreQueued(old, s.sessionId, s.item, false));
@@ -653,8 +1013,7 @@ export function useChat() {
     if (!next || dispatchingRef.current || submittingRef.current) return;
     if (steeringRef.current) return;
     if (generation?.status === "running" || sessionRef.current?.id !== id) return;
-    // Wait until the ended turn's transcript (with its reply) is loaded.
-    if (generation && settledId !== generation.id) return;
+    if (replyStatePending()) return;
     dispatchingRef.current = true;
     setQueues((old) => removeQueued(old, id, next.id));
     void send({ ...next, fromQueue: true })
@@ -681,7 +1040,7 @@ export function useChat() {
   async function sendNow(itemId) {
     const id = currentId.current;
     const item = id ? queues[id]?.items.find((m) => m.id === itemId) : null;
-    if (!item || steeringRef.current || dispatchingRef.current) return false;
+    if (!item || replyStatePending() || steeringRef.current || dispatchingRef.current) return false;
     if (generation?.status !== "running" || !generation.id) {
       if (submittingRef.current) return false;
       dispatchingRef.current = true;
@@ -697,30 +1056,42 @@ export function useChat() {
         dispatchingRef.current = false;
       }
     }
+    return steerMessage(id, item);
+  }
+  async function steerMessage(id, item) {
     const from = generation.id;
-    steeringRef.current = { sessionId: id, generationId: from, item };
+    const conversation = sessionRef.current;
+    const request = { sessionId: id, generationId: from, item, pending: true };
+    steeringRef.current = request;
     setSteering({ sessionId: id, item });
     setQueues((old) => removeQueued(old, id, item.id));
     setError("");
     try {
+      const chosen = await modelForRequest({ executor, model, effort }, conversation, composerModel);
       await write(
         `${sessionPath(id)}/generation/steer?generationId=${encodeURIComponent(from)}`,
         {
           content: item.text || "请阅读本轮附件并回答。",
           attachments: item.attachments || [],
           references: item.references || [],
-          model: activeModel,
-          effort: activeEffort,
-          approvalMode: item.approvalMode || "confirm",
+          requireExactModel: true,
+          ...chosen,
+          ...queuedApproval(item, user?.id, conversation?.projectId || ""),
         },
       );
+      request.pending = false;
+      if (steeringRef.current === request) setSteering({ sessionId: id, item });
       return true;
     } catch (e) {
-      steeringRef.current = null;
-      setSteering(null);
-      // If the reply just ended, the message simply goes out next.
-      setQueues((old) => restoreQueued(old, id, item, false));
-      if (!/没有进行中|已经结束|已结束/.test(e.message || "")) setError(e.message);
+      if (steeringRef.current === request) {
+        steeringRef.current = null;
+        setSteering(null);
+      }
+      const turnEnded = e.status === 409 &&
+        /^(当前没有进行中的回复|这一轮已经结束，请重新发送|生成已结束或不存在)$/.test(e.message);
+      const held = e instanceof ComposerModelError || (!turnEnded && e.status >= 400 && e.status < 500);
+      setQueues((old) => restoreQueued(old, id, item, held));
+      if (!turnEnded && currentId.current === id) setError(e.message);
       return false;
     }
   }
@@ -729,29 +1100,49 @@ export function useChat() {
     attachments = [],
     references = [],
     approvalMode = "confirm",
+    approvalUserId,
+    approvalProjectId,
+    onSessionCreated,
+    isDraftActive,
     messagesOverride = null,
     fromQueue = false,
   }) {
     if (!text.trim() && !attachments.length) return false;
-    if (currentId.current && sessionRef.current?.id !== currentId.current) {
+    if (sessionLoading() || replyStatePending()) {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }
+    if (!executor || missingServerCLI) return false;
+    const currentProjectId = sessionRef.current?.projectId || "";
+    const approval = fromQueue
+      ? queuedApproval({ approvalMode, approvalUserId, approvalProjectId }, user?.id, currentProjectId)
+      : { approvalMode, approvalUserId: user?.id };
     if (
       submittingRef.current ||
       generation?.status === "running" ||
       steeringRef.current?.sessionId === currentId.current
     ) {
-      // Like Codex, a message sent during a reply waits its turn instead of
-      // stopping the reply. Internal follow-ups (confirmed drafts) never queue.
+      const modelError = composerModelError(composerModel);
+      if (modelError) {
+        setError(modelError);
+        return false;
+      }
+      // Internal follow-ups (confirmed drafts) never queue or interrupt.
       if (messagesOverride || fromQueue || !currentId.current) {
         setError("当前回复仍在生成，请稍后再试。");
         return false;
       }
       const id = currentId.current;
-      setQueues((old) =>
-        enqueue(old, id, queuedMessage({ text, attachments, references, approvalMode })),
-      );
+      const item = queuedMessage({ text, attachments, references, ...approval, approvalProjectId: currentProjectId });
+      if (steerOnSend && generation?.status === "running" && generation.id &&
+          !submittingRef.current && !steeringRef.current && !dispatchingRef.current &&
+          !stopRequestRef.current) {
+        // Failed steering restores the message to the queue, so the composer
+        // can clear without losing it. Further sends wait for this handoff.
+        await steerMessage(id, item);
+        return true;
+      }
+      setQueues((old) => enqueue(old, id, item));
       setError("");
       return true;
     }
@@ -761,56 +1152,67 @@ export function useChat() {
       setError(executionMachines.machineError || "执行机器仍在加载，请稍后发送。");
       return false;
     }
-    // Without a key (and no sponsored model) the server rejects every message.
-    // Say so before creating an empty conversation that would swallow the
-    // typed question. Re-check first in case the key was saved elsewhere since
-    // this page loaded.
-    if (
-      codeBuddy &&
-      !sponsoredModel &&
-      users.find((u) => u.id === user?.id)?.codeBuddyApiKeyConfigured ===
-        undefined &&
-      user &&
-      !user.isGuest
-    ) {
-      const rows = await api("/api/users").catch(() => null);
-      if (rows) setUsers(rows);
-      const fresh = rows?.find((u) => u.id === user.id);
-      if (fresh && !fresh.codeBuddyApiKeyConfigured) {
-        setError("请先在个人配置中配置自己的 CodeBuddy API Key");
-        return false;
-      }
-    }
+    // Claim the send and its target before a credential check can yield.
+    let s = sessionRef.current?.id === currentId.current ? sessionRef.current : null;
+    const draft = s ? null : {
+      projectId: projectRef.current, issueId: draftIssueId, isActive: isDraftActive, choice: null,
+    };
+    savingDraft.current = draft;
+    const viewingTarget = () => s ? currentId.current === s.id : isDraftVisible(draft);
+    generationRevision.current++;
     submittingRef.current = true;
     setSubmitting(true);
     setError("");
-    let s = sessionRef.current;
     const previousGeneration = generation?.id;
+    let clientRequestId;
     setGeneration(null);
     try {
+      // Recheck credentials before creating the session in case the user
+      // configured a key elsewhere after this tab loaded.
+      const account = users.find((u) => u.id === user?.id) ?? user;
+      if (codeBuddy && user && !user.isGuest && !sponsoredModel && !account?.codeBuddyApiKeyConfigured) {
+        const read = userRead.current;
+        const rows = await api("/api/users").catch(() => null);
+        if (rows && read === userRead.current) setUsers(rows);
+        const fresh = rows?.find((u) => u.id === user.id) ?? account;
+        if (!fresh?.codeBuddyApiKeyConfigured) {
+          if (viewingTarget()) setError("请先在个人配置中配置自己的 CodeBuddy API Key");
+          return false;
+        }
+        requestModelCatalogRefresh((revision) => revision + 1);
+        if (!composerModel.activeModel) {
+          if (viewingTarget()) setError("CodeBuddy 凭证已更新，正在刷新模型列表，请稍后重试。");
+          return false;
+        }
+      }
+      const chosen = await modelForRequest({ executor, model, effort }, s, composerModel);
       if (!s) {
         const id = newId();
         s = await write(
           sessionPath(id),
           {
             id,
-            projectId: projectRef.current,
-            issueId: draftIssueId,
-            knowledgeRefs:draftKnowledgeRefs,
+            projectId: draft.projectId,
+            issueId: draft.issueId,
+            knowledgeRefs: draftKnowledgeRefs,
             sandboxProfileId,
             executionTarget: {pool: executionMachines.defaultRunnerId ? "runner" : "cloud", runnerId: executionMachines.defaultRunnerId || ""},
-            model: activeModel,
-            effort: activeEffort,
+            ...chosen,
             executor,
             title: text.trim().slice(0, 36) || "图片与文件",
+            approvalUserId: approval.approvalUserId,
             messages: [],
           },
           "PUT",
         );
-        setSession(s);
-        currentId.current = id;
-        setActiveId(id);
-        changeURL(id);
+        onSessionCreated?.(s);
+        if (draft.choice) saveOptions(`model.${s.id}`, draft.choice);
+        if (isDraftVisible(draft)) {
+          setSelection(draft.choice ?? { executor, ...chosen });
+          currentId.current = s.id;
+          setActiveId(s.id);
+          changeURL(s.id);
+        }
       }
       const content = text.trim() || "请阅读本轮附件并回答。";
       const pending = {
@@ -824,29 +1226,34 @@ export function useChat() {
         ...(references.length ? { references } : {}),
       };
       const messages = [...(messagesOverride || s.messages || []), pending];
-      setSession({
-        ...s,
-        messages,
-        participants:
-          user &&
-          !confirmationCaption(pending, messages.at(-2)) &&
-          !s.participants?.some((p) => p.id === user.id)
-            ? [...(s.participants || []), { id: user.id, name: user.loginName }]
-            : s.participants,
-      });
-      setLive({ answer: "", thinking: "", tools: [] });
+      if (viewingTarget()) {
+        setSession({
+          ...s,
+          messages,
+          participants:
+            user &&
+            !confirmationCaption(pending, messages.at(-2)) &&
+            !s.participants?.some((p) => p.id === user.id)
+              ? [...(s.participants || []), { id: user.id, name: user.loginName }]
+              : s.participants,
+        });
+        setLive({ answer: "", thinking: "", tools: [] });
+      }
       const executionTarget = executionLocked(s) ? s.executionTarget : {
         pool: executionMachines.defaultRunnerId ? "runner" : "cloud",
         runnerId: executionMachines.defaultRunnerId || "",
       };
+      clientRequestId = newId();
+      if (currentId.current === s.id) setGenerationKnown(null);
       const g = await write("/api/assistant/generations", {
+        clientRequestId,
+        requireExactModel: true,
         sessionId: s.id,
         projectId: s.projectId || "",
         runId: s.runId || "",
         executor,
-        model: activeModel,
-        effort: activeEffort,
-        approvalMode,
+        ...chosen,
+        ...approval,
         executionTarget,
         messages,
       });
@@ -854,26 +1261,32 @@ export function useChat() {
         setSession((old) => old?.id === s.id ? { ...old, executionTargetLocked: true,
           executionTarget: g.executionTarget || executionTarget } : old);
         setGeneration(g);
+        setGenerationKnown(s.id);
       }
-      await refreshSessions();
+      await refreshSessions().catch(() => {});
       return true;
     } catch (e) {
-      if (s) {
+      if (clientRequestId) {
+        const mayHaveReachedServer = !e.status || e.status >= 500;
+        const g = await api(`${sessionPath(s.id)}/generation`).catch(() => null);
+        if (g && g.id !== previousGeneration && currentId.current === s.id) {
+          setGeneration(g);
+          setGenerationKnown(null);
+        }
+        // The generation itself can acknowledge the send even when loading
+        // the transcript fails. The session keeps receipts for earlier turns.
+        if (mayHaveReachedServer && g?.clientRequestId === clientRequestId) return true;
         try {
-          const [stored, g] = await Promise.all([
-            api(sessionPath(s.id)),
-            api(`${sessionPath(s.id)}/generation`).catch(() => null),
-          ]);
-          if (currentId.current === s.id) setSession(stored);
-          if (g?.id !== previousGeneration && g?.status === "running") {
-            setGeneration(g);
-            return true;
-          }
+          const stored = await readSession(s.id);
+          receiveSession(stored, g?.status === "running");
+          if (g?.status === "running" && currentId.current === s.id) setGenerationKnown(s.id);
+          if (mayHaveReachedServer && stored?.recentClientRequestIds?.includes(clientRequestId)) return true;
         } catch {}
       }
-      setError(e.message);
+      if (viewingTarget()) setError(e.message);
       return false;
     } finally {
+      if (savingDraft.current === draft) savingDraft.current = null;
       submittingRef.current = false;
       setSubmitting(false);
     }
@@ -899,16 +1312,12 @@ export function useChat() {
     }
   }
   async function rename(id, title) {
-    try {
-      const stored = await api(sessionPath(id));
-      const saved = await write(sessionPath(id), { ...stored, title }, "PUT");
-      if (id === currentId.current) setSession(saved);
-      await refreshSessions();
-      return true;
-    } catch (e) {
-      setError(e.message);
-      return false;
-    }
+    const saved = await write(`${sessionPath(id)}/title`, { title }, "PUT");
+    // Requests started before this rename can still return an older title.
+    renamedTitles.current = new Map(renamedTitles.current).set(id, saved);
+    setSession((current) => current?.id === id ? withSessionTitle(current, saved) : current);
+    setSessions((rows) => rows.map((row) => row.id === id ? withSessionTitle(row, saved) : row));
+    return true;
   }
   async function archive(id, archived) {
     try {
@@ -922,6 +1331,7 @@ export function useChat() {
   async function remove(id) {
     try {
       await api(sessionPath(id), { method: "DELETE" });
+      saveOptions(`model.${id}`, null);
       if (id === currentId.current) newChat();
       await refreshSessions();
     } catch (e) {
@@ -936,8 +1346,7 @@ export function useChat() {
       );
       open(stored.id);
       setSession(stored);
-      setModel(stored.model || defaultModel.current);
-      setEffort(stored.effort || "");
+      restoreConversationModel(stored);
       await refreshSessions();
       return stored;
     } catch (e) {
@@ -945,30 +1354,38 @@ export function useChat() {
       return null;
     }
   }
-  async function regenerate(stored) {
+  // An edit to a shared branch can return its main conversation. Resolve
+  // the generation from that session even before React renders it.
+  async function regenerate(stored, approvalMode = "confirm") {
     try {
+      generationRevision.current++;
       submittingRef.current = true;
       setSubmitting(true);
       open(stored.id);
       setSession(stored);
-      const chosen = sponsored ? sharedModelFor(stored.model || model) : stored.model || model;
-      setModel(chosen);
-      setEffort(stored.effort || "");
+      const selection = restoreConversationModel(stored);
+      const resolved = resolveComposerModel(selection, stored, false);
+      const chosen = await modelForRequest(selection, stored, resolved);
+      if (currentId.current === stored.id) setGenerationKnown(null);
       const g = await write("/api/assistant/generations", {
         sessionId: stored.id,
+        requireExactModel: true,
         projectId: stored.projectId || "",
         runId: stored.runId || "",
-        executor,
-        model: chosen,
-        effort: codeBuddy ? modelEffort(models.find((m) => m.id === chosen), stored.effort || "") : "",
+        executor: selection.executor,
+        ...chosen,
         messages: stored.messages,
-        approvalMode: "confirm",
+        approvalMode: ["confirm", "assisted", "auto"].includes(approvalMode) ? approvalMode : "confirm",
+        approvalUserId: user?.id,
       });
-      setGeneration(g);
+      if (currentId.current === stored.id) {
+        setGeneration(g);
+        setGenerationKnown(stored.id);
+      }
       await refreshSessions();
       return true;
     } catch (e) {
-      setError(e.message);
+      if (currentId.current === stored.id) setError(e.message);
       return false;
     } finally {
       submittingRef.current = false;
@@ -982,10 +1399,10 @@ export function useChat() {
     applyingRef.current.add(key);
     let executed = false;
     try {
-      let stored = await api(sessionPath(id));
+      let stored = await readSession(id);
       let reply = JSON.parse(stored.messages[messageIndex].content);
       let draft = reply.drafts[draftIndex];
-      if (draft.saved || draft.inherited) return null;
+      if (draft.saved || draft.inherited || draft.decision === "rejected") return null;
       if (generation?.status === "running")
         throw Error("请等待回复结束后再确认操作。");
       if (draft.proposal && !draft.decision) {
@@ -1000,7 +1417,7 @@ export function useChat() {
             })
           ).session;
         } catch (error) {
-          void api(sessionPath(id))
+          void readSession(id)
             .then((latest) => currentId.current === id && setSession(latest))
             .catch(() => {});
           throw error;
@@ -1018,7 +1435,7 @@ export function useChat() {
         if (error.draftChanged && currentId.current === id) setSession(stored);
         throw error;
       }
-      // The session header lets a confirmed SOP continue in this
+      // The session header lets a confirmed LOOP continue in this
       // conversation's workspace.
       const result = await api("/mcp", {
         method: "POST",
@@ -1061,7 +1478,9 @@ export function useChat() {
           );
       }
       stored.messages[messageIndex].content = JSON.stringify(reply);
-      const saved = await write(sessionPath(id), stored, "PUT");
+      const saved = await write(sessionPath(id), {
+        ...stored, title: undefined, titleEdited: undefined, titleGenerated: undefined,
+      }, "PUT");
       if (currentId.current === id) {
         setSession(saved);
         // Confirmation resumes the original goal, while subsequent writes still
@@ -1173,22 +1592,30 @@ export function useChat() {
     } catch (e) { setError(e.message); return false; }
     finally { sandboxBusyRef.current = false; setSandboxBusy(false); }
   }
+  const workspaceRunId = session?.workspaceRunId || session?.runId;
   useEffect(() => {
+    if (!workspaceRunId) return;
     let current = true;
-    setWorkspaceSandbox(null);
-    setWorkspaceExecution(null);
-    setWorkspaceExecutionError("");
-    const id = session?.workspaceRunId || session?.runId;
-    if (id) void api(`/api/runs/${encodeURIComponent(id)}`).then((run) => {
-      if (current) {
-        setWorkspaceSandbox(run.workflowSnapshot?.sandboxSnapshot?.profile || { id: run.workflowSnapshot?.sandboxProfileId });
-        setWorkspaceExecution(run.executionContext || {});
-      }
+    void api(`/api/runs/${encodeURIComponent(workspaceRunId)}`).then((run) => {
+      if (!current) return;
+      setLoadedWorkspace({
+        id: workspaceRunId,
+        workflow: run.workflowSnapshot,
+        execution: run.executionContext || {},
+      });
     }).catch(() => {
-      if (current) setWorkspaceExecutionError("无法加载工作区执行机器");
+      if (current) setLoadedWorkspace({ id: workspaceRunId, error: "无法加载工作区执行机器" });
     });
     return () => { current = false; };
-  }, [session?.workspaceRunId, session?.runId]);
+  }, [workspaceRunId]);
+  const workspace = loadedWorkspace?.id === workspaceRunId ? loadedWorkspace : null;
+  const sandboxSnapshot = workspace?.workflow?.sandboxSnapshot?.profile;
+  const workspaceSandboxId = sandboxSnapshot?.id || workspace?.workflow?.sandboxProfileId;
+  const workspaceSandbox = workspaceSandboxId && (
+    sandboxSnapshot
+      ? { ...sandboxSnapshot, id: workspaceSandboxId }
+      : sandboxes.find((row) => row.id === workspaceSandboxId) || { id: workspaceSandboxId }
+  );
   async function refresh() {
     await executionMachines.refreshMachines();
     const sandboxRows = await api("/api/sandboxes").catch(() => null);
@@ -1196,7 +1623,7 @@ export function useChat() {
     const projectRows = await api("/api/projects").catch(() => null);
     if (Array.isArray(projectRows)) setProjects(projectRows);
     if (activeId) {
-      const stored = await api(sessionPath(activeId));
+      const stored = await readSession(activeId);
       if (currentId.current === activeId) setSession(stored);
     }
     await refreshSessions();
@@ -1231,7 +1658,8 @@ export function useChat() {
   }, []);
   return {
     user,
-    refreshUser,
+    defaultApproval: accountDefaults?.approval,
+    refreshCredentials,
     users,
     issueId: session?.issueId || (!activeId ? draftIssueId : ""),
     linkIssue,
@@ -1240,9 +1668,9 @@ export function useChat() {
     sandboxProfileId: activeId ? session?.sandboxProfileId || "" : sandboxProfileId,
     sandboxLocked: !!session?.runId,
     sandboxBusy,
-    workspaceSandbox,
-    workspaceExecution,
-    workspaceExecutionError,
+    workspaceSandbox: workspaceSandbox || null,
+    workspaceExecution: workspace?.execution || null,
+    workspaceExecutionError: workspace?.error || "",
     ...executionMachines,
     selectSandbox,
     knowledgeRefs:activeId ? session?.knowledgeRefs || [] : draftKnowledgeRefs,
@@ -1255,7 +1683,8 @@ export function useChat() {
     },
     models: executorModels,
     executor,
-    executors: EXECUTORS,
+    executors: user ? availableExecutors : [],
+    missingServerCLI,
     setExecutor: chooseExecutor,
     sessions,
     session,
@@ -1263,8 +1692,9 @@ export function useChat() {
     revealId,
     projectId,
     model: activeModel,
+    modelDetails: activeModelEntry,
     effort: activeEffort,
-    setEffort,
+    setEffort: chooseEffort,
     sponsored,
     sponsoredModel,
     sponsoredModels,
@@ -1272,6 +1702,7 @@ export function useChat() {
     live,
     error,
     ready,
+    replyStatePending: replyStatePending(),
     submitting,
     busy: submitting || generation?.status === "running",
     stopping: generation?.status === "running" && (generation.cancelRequested ||

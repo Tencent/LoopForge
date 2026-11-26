@@ -96,7 +96,7 @@
     drawerSessionSeq: 0,
   };
 
-  let kbDrawerA11yBound = false;
+  let kbConnDrawerA11yBound = false;
 
   function defaultConnectorTypes() {
     return [
@@ -363,15 +363,15 @@
     return out;
   }
 
-  function kbDrawerFocusables(drawer) {
+  function kbConnDrawerFocusables(drawer) {
     return drawer.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
   }
 
   function closeKBDrawer() {
     kbState.drawerSessionSeq += 1;
     kbState.drawerEditingConn = null;
-    const drawer = document.getElementById('kbDrawer');
-    const scrim = document.getElementById('kbDrawerScrim');
+    const drawer = document.getElementById('kbConnDrawer');
+    const scrim = document.getElementById('kbConnDrawerScrim');
     if (!drawer) return;
     drawer.classList.remove('open');
     drawer.hidden = true;
@@ -391,8 +391,8 @@
   }
 
   function openKBDrawer(title, bodyHTML, footHTML) {
-    const drawer = document.getElementById('kbDrawer');
-    const scrim = document.getElementById('kbDrawerScrim');
+    const drawer = document.getElementById('kbConnDrawer');
+    const scrim = document.getElementById('kbConnDrawerScrim');
     if (!drawer) return;
     const active = document.activeElement;
     if (active && active !== document.body && !drawer.contains(active)) {
@@ -400,8 +400,8 @@
     }
     drawer.innerHTML = `
       <div class="kb-drawer-head">
-        <h3 id="kbDrawerTitleHeading">${kbEsc(title)}</h3>
-        <button type="button" class="kb-btn" id="kbDrawerCloseBtn" data-kb-drawer-close>关闭</button>
+        <h3 id="kbConnDrawerTitleHeading">${kbEsc(title)}</h3>
+        <button type="button" class="kb-btn" id="kbConnDrawerCloseBtn" data-kb-drawer-close>关闭</button>
       </div>
       <div class="kb-drawer-body">${bodyHTML}</div>
       ${footHTML ? `<div class="kb-drawer-foot">${footHTML}</div>` : ''}
@@ -418,22 +418,22 @@
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal);
     else reveal();
     drawer.querySelectorAll('[data-kb-drawer-close]').forEach(el => el.addEventListener('click', closeKBDrawer));
-    const first = kbDrawerFocusables(drawer)[0];
+    const first = kbConnDrawerFocusables(drawer)[0];
     if (first && typeof first.focus === 'function') first.focus();
   }
 
   function initKBDrawerA11y() {
-    if (kbDrawerA11yBound) return;
-    kbDrawerA11yBound = true;
+    if (kbConnDrawerA11yBound) return;
+    kbConnDrawerA11yBound = true;
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
-      const drawer = document.getElementById('kbDrawer');
+      const drawer = document.getElementById('kbConnDrawer');
       if (drawer && !drawer.hidden) {
         e.preventDefault();
         closeKBDrawer();
       }
     });
-    const scrim = document.getElementById('kbDrawerScrim');
+    const scrim = document.getElementById('kbConnDrawerScrim');
     if (scrim) scrim.addEventListener('click', closeKBDrawer);
   }
 
@@ -718,18 +718,18 @@
           <span>清除已保存的密钥（勾选后将移除原加密凭据）</span>
         </label>
       ` : ''}
-      <div id="kbDrawerFeedback" role="status" aria-live="polite"></div>
+      <div id="kbConnDrawerFeedback" role="status" aria-live="polite"></div>
     `;
     const footHTML = `
-      <button type="button" class="kb-btn" id="kbDrawerCheckBtn">测试连接</button>
+      <button type="button" class="kb-btn" id="kbConnDrawerCheckBtn">测试连接</button>
       <span class="kb-drawer-spacer"></span>
       <button type="button" class="kb-btn" data-kb-drawer-close>取消</button>
-      <button type="button" class="kb-btn primary" id="kbDrawerSaveBtn">保存</button>
+      <button type="button" class="kb-btn primary" id="kbConnDrawerSaveBtn">保存</button>
     `;
 
     openKBDrawer(activeEditingConn ? '编辑连接器' : (vendorMeta ? `接入 ${vendorMeta.name}` : '添加连接器'), bodyHTML, footHTML);
 
-    const drawer = document.getElementById('kbDrawer');
+    const drawer = document.getElementById('kbConnDrawer');
     if (!drawer) return;
 
     const isStaleDrawer = () => kbState.drawerSessionSeq !== drawerSeq || drawer.hidden;
@@ -757,14 +757,14 @@
         if (host) {
           host.innerHTML = renderDynamicFieldsHTML(nextMeta, null);
         }
-        const fb = drawer.querySelector('#kbDrawerFeedback');
+        const fb = drawer.querySelector('#kbConnDrawerFeedback');
         if (fb) fb.innerHTML = '';
       });
     }
 
-    const feedbackEl = drawer.querySelector('#kbDrawerFeedback');
-    const checkBtn = drawer.querySelector('#kbDrawerCheckBtn');
-    const saveBtn = drawer.querySelector('#kbDrawerSaveBtn');
+    const feedbackEl = drawer.querySelector('#kbConnDrawerFeedback');
+    const checkBtn = drawer.querySelector('#kbConnDrawerCheckBtn');
+    const saveBtn = drawer.querySelector('#kbConnDrawerSaveBtn');
 
     if (checkBtn) {
       checkBtn.addEventListener('click', async () => {

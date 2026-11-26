@@ -27,7 +27,7 @@ LoopForge 采用**用户级知识库连接器（Knowledge Connector）**架构�
 | **执行器与证据回填** | `internal/knowledge/executor.go`、`tool_adapter.go`、`evidence.go` | `ExecuteReferenceToolWithHistory`、`BuildCatalogXML`（`<bound_knowledge_bases>` L0 目录）、四级证据回填链 `enrichReadEvidences`。 |
 | **Engine & Runtime** | `internal/engine/assets.go`、`node_execute.go`、`internal/runtime/platform_mcp.go` | 角色级 `KnowledgeBase` 开关与 SOP 节点级 `KnowledgeRefs` 解析，签发 `afkb1.` 短期只读代理令牌，节点完成后执行 `MarkKnowledgeReadCited` 与 `UsageCounter.MarkCited` 落库。 |
 | **HTTP API** | `internal/httpapi/knowledge.go`、`knowledge_oauth.go`、`knowledge_proxy.go`、`agent_tool_mcp.go` | `/api/knowledge/*` 连接器与用量接口、OAuth 授权与回调（含 `knowledge_oauth_state` Cookie 防 CSRF）、`/runners/knowledge/mcp` 严格只读 MCP 代理、对话助手写工具人工审批门控。 |
-| **Repo & Migrations** | `internal/repo/knowledge.go`、`knowledge_usage.go`、`migrations/034~036_*.sql` | `knowledge_connectors`、`knowledge_connector_usage_counts`、`knowledge_document_usage_counts`、`knowledge_usage_events` 持久化。 |
+| **Repo & Migrations** | `internal/repo/knowledge.go`、`knowledge_usage.go`、`migrations/047~049_*.sql` | `knowledge_connectors`、`knowledge_connector_usage_counts`、`knowledge_document_usage_counts`、`knowledge_usage_events` 持久化。 |
 | **Web & Chatbot** | `web/app/knowledge.js`、`web/app/knowledge-refs.js`、`chatbot/src/KnowledgeSources.jsx` | 原生控制台「我的知识库」管理页、知识范围选择器弹窗、对话引用角标 `[N]` 与折叠来源面板。 |
 
 ---

@@ -46,7 +46,7 @@ func TestMiscScheduleRemainingHelpersAndHTTP(t *testing.T) {
 	cvBGiveCodeBuddyKey(t, &f)
 	if err := f.s.PutWorkflow(domain.WorkflowDefinition{
 		ID: "cvb-misc-wf", Name: "misc workflow", ProjectID: "platform",
-		Status: "published", Version: 1, SandboxProfileID: "local",
+		Status: "published", Version: 1, SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "approve", Name: "approve", Type: "approval", MaxAttempts: 1}},
 	}); err != nil {
 		t.Fatal(err)
@@ -260,7 +260,7 @@ func TestMiscProjectPlaybooksPermissionsAndAssignments(t *testing.T) {
 	}
 	if err := f.s.PutWorkflow(domain.WorkflowDefinition{
 		ID: "cvb-playbook-wf", Name: "playbook", ProjectID: "platform",
-		Status: "published", Version: 1, SandboxProfileID: "local",
+		Status: "published", Version: 1, SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "approve", Name: "approve", Type: "approval", MaxAttempts: 1}},
 	}); err != nil {
 		t.Fatal(err)
@@ -408,7 +408,7 @@ func TestMiscRoomAuthorizationRosterAndSuccessHTTP(t *testing.T) {
 	}
 	if err := f.s.PutWorkflow(domain.WorkflowDefinition{
 		ID: "cvb-room-wf", Name: "room workflow", ProjectID: project.ID,
-		Status: "published", Version: 1, SandboxProfileID: "local",
+		Status: "published", Version: 1, SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "approve", Name: "approve", Type: "approval", MaxAttempts: 1}},
 	}); err != nil {
 		t.Fatal(err)

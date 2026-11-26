@@ -1,13 +1,17 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestNormalizeAssistantApprovalMode(t *testing.T) {
@@ -22,6 +26,39 @@ func TestNormalizeAssistantApprovalMode(t *testing.T) {
 		if got := normalizeAssistantApprovalMode(tc.in); got != tc.want {
 			t.Fatalf("normalizeAssistantApprovalMode(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestAssistantRejectsApprovalFromAnotherAccount(t *testing.T) {
+	h, first := workbenchFixture(t)
+	if err := h.repo.PutUser(domain.User{LoginName: "different-account", CodeBuddyAPIKey: "test-only"}); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := h.repo.UserByLoginName("different-account")
+	for _, route := range []struct {
+		method, path string
+		handler      gin.HandlerFunc
+	}{
+		{http.MethodPut, "/api/assistant/sessions/stale-tab", h.session},
+		{http.MethodPost, "/api/assistant/generations", h.startGeneration},
+		{http.MethodPost, "/api/assistant/sessions/stale-tab/generation/steer", h.steerGeneration},
+		{http.MethodPost, "/api/assistant/chat", h.chat},
+	} {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			raw, _ := json.Marshal(map[string]any{
+				"sessionId": "stale-tab", "approvalMode": "auto", "approvalUserId": first.ID,
+				"content": "Continue", "messages": []assistantMessage{{Role: "user", Content: "Continue"}},
+			})
+			c, rec := workbenchContext(current, route.method, route.path, bytes.NewBuffer(raw))
+			c.Params = gin.Params{{Key: "id", Value: "stale-tab"}}
+			route.handler(c)
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "登录账号已变更") {
+				t.Fatalf("stale approval under a new account: %d %s", rec.Code, rec.Body)
+			}
+		})
+	}
+	if _, ok := h.repo.AssistantSession(current.ID, "stale-tab"); ok {
+		t.Fatal("the stale tab created a session for the newly authenticated account")
 	}
 }
 
@@ -130,10 +167,10 @@ func TestResolveAssistantDraftsByApprovalMode(t *testing.T) {
 	})
 	out := h.resolveAssistantDrafts(ctx, domain.User{}, "p", drafts, AssistantApprovalAssisted)
 	if len(out) != 2 {
-		t.Fatalf("assisted mode should keep both drafts: %#v", out)
+		t.Fatalf("assisted mode should resolve both drafts: %#v", out)
 	}
-	if out[0].Auto || !out[1].Auto {
-		t.Fatalf("assisted mode should auto-apply only low-risk drafts: %#v", out)
+	if !out[0].Auto || out[0].Saved || out[0].Decision != domain.AssistantDraftRejected || !out[1].Auto {
+		t.Fatalf("assisted mode must reject denied drafts without human approval and auto-apply approved ones: %#v", out)
 	}
 	out = h.resolveAssistantDrafts(context.Background(), domain.User{}, "p", drafts, AssistantApprovalAuto)
 	for _, draft := range out {
@@ -141,8 +178,8 @@ func TestResolveAssistantDraftsByApprovalMode(t *testing.T) {
 			t.Fatalf("auto mode should auto-apply all drafts: %#v", out)
 		}
 	}
-	if out := h.resolveAssistantDrafts(context.Background(), domain.User{}, "p", []assistantDraft{{Tool: "agents_delete", Path: map[string]any{"id": "ghost"}}}, AssistantApprovalAssisted); len(out) != 1 || out[0].Auto {
-		t.Fatalf("assisted mode must confirm drafts with dependency warnings: %#v", out)
+	if out := h.resolveAssistantDrafts(context.Background(), domain.User{}, "p", []assistantDraft{{Tool: "agents_delete", Path: map[string]any{"id": "ghost"}}}, AssistantApprovalAssisted); len(out) != 1 || !out[0].Auto || out[0].Saved || out[0].Decision != domain.AssistantDraftRejected {
+		t.Fatalf("assisted mode must reject drafts with dependency warnings without human approval: %#v", out)
 	}
 }
 
@@ -232,8 +269,8 @@ func TestAssistantSystemPromptForMode(t *testing.T) {
 		t.Fatal("confirm prompt must block direct write tools")
 	}
 	assisted := assistantSystemPromptForMode(AssistantApprovalAssisted)
-	if !strings.Contains(assisted, "独立审查模型") || !strings.Contains(assisted, "放入 drafts") {
-		t.Fatal("assisted prompt must review actions and keep denied writes for confirmation")
+	if !strings.Contains(assisted, "独立审查模型") || !strings.Contains(assisted, "无需人工审批卡片") || !strings.Contains(assisted, "不要把写入放进 drafts") {
+		t.Fatal("assisted prompt must make AI final decision without human drafts")
 	}
 	if strings.Contains(assisted, "不要直接调用平台写入工具") {
 		t.Fatal("assisted prompt must allow direct write calls for saves")

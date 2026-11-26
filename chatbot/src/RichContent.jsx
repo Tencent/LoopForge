@@ -48,8 +48,6 @@ import "./artifact-preview.css";
 const Check = (props) => <HarnessIcon name="check" {...props} />;
 const Copy = (props) => <HarnessIcon name="copy" {...props} />;
 const Download = (props) => <HarnessIcon name="download" {...props} />;
-const Expand = (props) => <HarnessIcon name="preview-expand" {...props} />;
-const Image = (props) => <HarnessIcon name="image" {...props} />;
 const ImageOff = (props) => <HarnessIcon name="image-off" {...props} />;
 const Refresh = (props) => <HarnessIcon name="refresh" {...props} />;
 const Spinner = (props) => <HarnessIcon name="spinner" {...props} />;
@@ -427,9 +425,10 @@ const markdownComponents = {
     </div>
   ),
 };
+const emptyAssets = [];
 export function RichContent({
   message,
-  assets = [],
+  assets = emptyAssets,
   projectId = "",
   knowledgeReads = [],
   knowledgeSummary: precomputedSummary = null,
@@ -501,23 +500,27 @@ export function RichContent({
       onCitationClick,
     ],
   );
+  const markdown = useMemo(
+    () => (
+      <Markdown
+        remarkPlugins={plugins}
+        components={markdownComponents}
+        urlTransform={markdownURL}
+      >
+        {displayText}
+      </Markdown>
+    ),
+    [plugins, displayText],
+  );
   return (
     <MarkdownAssets.Provider value={contextValue}>
-      <div className="markdown">
-        <Markdown
-          remarkPlugins={plugins}
-          components={markdownComponents}
-          urlTransform={markdownURL}
-        >
-          {displayText}
-        </Markdown>
-      </div>
+      <div className="markdown">{markdown}</div>
     </MarkdownAssets.Provider>
   );
 }
 
-// Full-window viewer shared by chat images, artifact previews and SOP node
-// files. Double-click an image (or its expand icon) to open; Esc closes.
+// Full-window viewer shared by chat images, artifact previews and LOOP node
+// files. Double-click an image to open; Esc closes.
 export function ImageLightbox({ src, alt, onClose }) {
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
@@ -607,15 +610,18 @@ export function Attachment({ attachment, sessionId, onOpen }) {
       <button
         type="button"
         className={image ? "message-image" : "attachment-chip"}
+        // The card shows no caption, so the hover title names the file.
         title={
           image
-            ? failed
-              ? "单击在产物栏打开"
-              : "单击在产物栏打开，双击查看大图"
+            ? `${attachment.name}\n${failed ? "单击在产物栏打开" : "单击查看大图"}`
             : undefined
         }
         onClick={(e) => {
           if (continuesRetry(e)) return;
+          if (image && !failed) {
+            setZoom(true);
+            return;
+          }
           onOpen({
             ...attachment,
             url,
@@ -623,13 +629,6 @@ export function Attachment({ attachment, sessionId, onOpen }) {
             source: "会话附件",
           });
         }}
-        onDoubleClick={
-          image && !failed
-            ? (e) => {
-                if (!continuesRetry(e)) setZoom(true);
-              }
-            : undefined
-        }
       >
         {image ? (
           <span
@@ -678,24 +677,6 @@ export function Attachment({ attachment, sessionId, onOpen }) {
             <span>{attachment.name}</span>
           </>
         )}
-        {image ? (
-          <span className="image-caption">
-            <Image size={14} />
-            <span className="image-caption-name">{attachment.name}</span>
-            <span
-              className="image-zoom"
-              aria-hidden="true"
-              data-disabled={failed || undefined}
-              onClick={(e) => {
-                if (failed) return;
-                e.stopPropagation();
-                setZoom(true);
-              }}
-            >
-              <Expand size={14} />
-            </span>
-          </span>
-        ) : null}
       </button>
       {zoom ? (
         <ImageLightbox
@@ -706,6 +687,15 @@ export function Attachment({ attachment, sessionId, onOpen }) {
       ) : null}
     </>
   );
+}
+// Larger files are offered for download instead of being read into the page.
+const PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
+// Deliverables without a declared type are stored as Markdown, so the body
+// decides: NUL bytes or a mostly undecodable start mean binary content.
+function looksBinary(content) {
+  if (content.includes("\u0000")) return true;
+  const head = content.slice(0, 65536);
+  return (head.match(/\uFFFD/g) || []).length > head.length * 0.1;
 }
 export function ArtifactPreview({ artifact, knowledgeReads = [], attempt }) {
   const [text, setText] = useState("");
@@ -726,6 +716,8 @@ export function ArtifactPreview({ artifact, knowledgeReads = [], attempt }) {
   const readable =
     !artifact?.mimeType ||
     /^(text\/|application\/(json|javascript|xml))/.test(artifact.mimeType);
+  const oversized =
+    Boolean(artifact?.url) && (artifact?.size || 0) > PREVIEW_MAX_BYTES;
   // An attached HTML file (e.g. a demo from the workspace) previews in the same
   // script-only sandbox as an html code block.
   const kind =
@@ -758,7 +750,7 @@ export function ArtifactPreview({ artifact, knowledgeReads = [], attempt }) {
         current = false;
       };
     }
-    if (artifact?.url && readable)
+    if (artifact?.url && readable && !oversized)
       fetch(artifact.url)
         .then((r) => {
           if (!r.ok) throw Error("文件读取失败");
@@ -773,10 +765,12 @@ export function ArtifactPreview({ artifact, knowledgeReads = [], attempt }) {
     return () => {
       current = false;
     };
-  }, [artifact?.id, artifact?.url, artifact?.localDataUrl, readable]);
+  }, [artifact?.id, artifact?.url, artifact?.localDataUrl, readable, oversized]);
   if (!artifact) return null;
   const source = artifact.url ? text : (artifact.content ?? text);
-  const hasSource = typeof source === "string" && source.length > 0 && !error;
+  const binary = Boolean(artifact.url) && looksBinary(text);
+  const hasSource =
+    typeof source === "string" && source.length > 0 && !error && !binary;
   const isMarkdown =
     artifact.mimeType?.startsWith("text/markdown") ||
     ["markdown", "md"].includes(artifact.language?.toLowerCase()) ||
@@ -895,6 +889,10 @@ export function ArtifactPreview({ artifact, knowledgeReads = [], attempt }) {
             src={artifact.url}
             alt={artifact.name}
           />
+        ) : oversized ? (
+          <p className="muted">文件较大，不在页面内预览，可通过右上角下载查看。</p>
+        ) : binary ? (
+          <p className="muted">此类型文件可通过右上角下载查看。</p>
         ) : mode === "source" && canPreview ? (
           <pre className="artifact-source">
             <code>{source}</code>

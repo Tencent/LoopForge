@@ -10,11 +10,18 @@ test('revision history diffs and restores workflows and imports MCP JSON', async
     createdAt: '2026-10-20T10:00:00Z',
     payload: JSON.stringify({ ...app.evaluate(`structuredClone(state.workflow)`), name: 'Previous flow' }),
   };
-  app.router.get(`/api/workflows/${app.evaluate(`state.workflow.id`)}/revisions`, [revision]);
+  const draft = { ...revision, id: 'rev-draft', name: 'Previous flow', summary: 'Previous flow v4 #1', version: 4, revision: 1,
+    payload: { name: 'Previous flow', status: 'draft', version: 4 } };
+  const archived = { ...draft, id: 'rev-archived', payload: { ...draft.payload, status: 'archived' } };
+  app.router.get(`/api/workflows/${app.evaluate(`state.workflow.id`)}/revisions`, [revision, archived, draft]);
   app.router.post(new RegExp('/api/workflows/.+/revisions/rev-1/restore'), {
     ...app.evaluate(`structuredClone(state.workflow)`), name: 'Previous flow',
   });
   await app.evaluate(`openRevisionHistory('workflow',state.workflow.id,state.workflow.name)`);
+  assert.match(app.document.querySelector('[data-rev="rev-draft"]').textContent, /草稿 · #1/);
+  assert.doesNotMatch(app.document.querySelector('[data-rev="rev-draft"]').textContent, /v4/);
+  assert.match(app.document.querySelector('[data-rev="rev-archived"]').textContent, /已归档 · #1/);
+  assert.doesNotMatch(app.document.querySelector('[data-rev="rev-archived"]').textContent, /草稿|v4/);
   app.document.querySelector('[data-rev="rev-1"]').click();
   assert.match(app.document.querySelector('#revisionDiff').textContent, /Previous flow/);
   const restore = app.evaluate(`restoreSelectedRevision()`);

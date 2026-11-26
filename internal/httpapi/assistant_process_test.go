@@ -221,7 +221,7 @@ func TestConversationStopBeforeRemoteStartReplyConfirmsExit(t *testing.T) {
 	h.runnerControls = hub
 	conn := testRunnerConn(runnerID)
 	registerTestConn(hub, conn)
-	s := &AgentToolSession{ChatOwnerID: user.ID, ChatSessionID: "lost-start", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
+	s := &AgentToolSession{UserID: user.ID, ChatOwnerID: user.ID, ChatSessionID: "lost-start", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
 	execute := h.conversationExecutor(s, t.TempDir())
 	remoteRoot := t.TempDir()
 	pool := &runtime.ConversationProcessPool{}
@@ -268,7 +268,7 @@ func TestConversationStopBeforeRemoteStartReplyConfirmsExit(t *testing.T) {
 			continue
 		}
 		payload, _ := json.Marshal(result)
-		hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
+		hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
 	}
 }
 
@@ -288,7 +288,7 @@ func TestConversationStopGivesUpWhenRunnerStaysOffline(t *testing.T) {
 	h.runnerControls = hub
 	conn := testRunnerConn(runnerID)
 	registerTestConn(hub, conn)
-	s := &AgentToolSession{ChatOwnerID: user.ID, ChatSessionID: "offline-stop", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
+	s := &AgentToolSession{UserID: user.ID, ChatOwnerID: user.ID, ChatSessionID: "offline-stop", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
 	execute := h.conversationExecutor(s, t.TempDir())
 	remoteRoot := t.TempDir()
 	pool := &runtime.ConversationProcessPool{}
@@ -318,7 +318,7 @@ func TestConversationStopGivesUpWhenRunnerStaysOffline(t *testing.T) {
 				defer pool.Handle(context.Background(), remoteRoot, "", nil, runtime.ConversationProcessRequest{Operation: "stop", ID: result.ID}, nil)
 			}
 			payload, _ := json.Marshal(result)
-			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
+			hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
 			if req.Operation == "start" {
 				runner.Status = domain.RunnerStatusOffline
 				if err := h.repo.PutRunner(runner); err != nil {
@@ -349,7 +349,7 @@ func TestConversationProcessRetriesBusyRunner(t *testing.T) {
 	h.runnerControls = hub
 	conn := testRunnerConn(runnerID)
 	registerTestConn(hub, conn)
-	s := &AgentToolSession{ChatOwnerID: user.ID, ChatSessionID: "busy", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
+	s := &AgentToolSession{UserID: user.ID, ChatOwnerID: user.ID, ChatSessionID: "busy", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
 	execute := h.conversationExecutor(s, t.TempDir())
 	remoteRoot := t.TempDir()
 	pool := &runtime.ConversationProcessPool{}
@@ -369,7 +369,7 @@ func TestConversationProcessRetriesBusyRunner(t *testing.T) {
 			}
 			if req.Operation == "poll" && busy < 3 {
 				busy++
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 429, Error: "too many workspace requests"})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Status: 429, Error: "too many workspace requests"})
 				continue
 			}
 			if req.Command != nil {
@@ -380,7 +380,7 @@ func TestConversationProcessRetriesBusyRunner(t *testing.T) {
 				t.Fatal(err)
 			}
 			payload, _ := json.Marshal(result)
-			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
+			hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
 		case err := <-done:
 			if err != nil || busy != 3 {
 				t.Fatalf("busy runner failed the turn: busy=%d err=%v", busy, err)
@@ -389,5 +389,121 @@ func TestConversationProcessRetriesBusyRunner(t *testing.T) {
 		case <-deadline:
 			t.Fatal("busy runner never recovered")
 		}
+	}
+}
+
+func TestConversationDispatchAllowsUnsharedRunnerOnlyForOwnersChat(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	h.runnerControls = quietRunnerHub()
+	runner := domain.Runner{ID: "owner-runner", OwnerUserID: owner.ID,
+		Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionCLISettings}
+	if err := h.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name         string
+		ctx          context.Context
+		requireShare bool
+		want         error
+	}{
+		{name: "chat", ctx: ctx},
+		{name: "scheduled", ctx: withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, "task"), want: errAssistantRunnerAccessRevoked},
+		{name: "LOOP helper", ctx: ctx, requireShare: true, want: errAssistantRunnerAccessRevoked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &AgentToolSession{UserID: owner.ID, ProjectID: "workbench", ExecutionRunnerID: runner.ID, requireRunnerShare: tc.requireShare}
+			if got, err := h.conversationRunner(tc.ctx, session, true); !errors.Is(err, tc.want) || (err == nil && got.ID != runner.ID) {
+				t.Fatalf("got runner %q and error %v, want error %v", got.ID, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestConversationDispatchRechecksRunnerShareBeforeStarting(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	project, _ := h.repo.Project("workbench")
+	actorID := owner.ID + 1
+	project.Members = []domain.ProjectMember{{UserID: actorID, Role: "member"}}
+	if err := h.repo.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
+	runnerID := "shared-dispatch"
+	if err := h.repo.PutRunner(domain.Runner{ID: runnerID, OwnerUserID: owner.ID,
+		Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionConversationCLI}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.SetRunnerSharedProjects(runnerID, owner.ID, []string{project.ID}); err != nil {
+		t.Fatal(err)
+	}
+	hub := quietRunnerHub()
+	h.runnerControls = hub
+	conn := testRunnerConn(runnerID)
+	registerTestConn(hub, conn)
+	session := &AgentToolSession{ChatOwnerID: owner.ID, ChatSessionID: "shared-dispatch",
+		UserID: actorID, ProjectID: project.ID, ExecutionRunnerID: runnerID}
+	root := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.conversationExecutor(session, root)(ctx, "", runtime.CommandSpec{
+			Argv: []string{"codebuddy"}, Provider: "codebuddy",
+		}, runtime.RunCredentials{}, nil)
+		done <- err
+	}()
+	revoked := false
+	for {
+		select {
+		case message := <-conn.send:
+			var req runtime.ConversationProcessRequest
+			if err := json.Unmarshal(message.WorkspaceRequest.Conversation, &req); err != nil {
+				t.Fatal(err)
+			}
+			if revoked {
+				t.Fatalf("dispatched %q after revocation", req.Operation)
+			}
+			if req.Operation == "resetAssets" {
+				if err := h.repo.SetRunnerSharedProjects(runnerID, owner.ID, nil); err != nil {
+					t.Fatal(err)
+				}
+				revoked = true
+			}
+			payload, _ := json.Marshal(runtime.ConversationProcessResult{Root: root})
+			hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
+		case err := <-done:
+			if !revoked || !errors.Is(err, runtime.ErrConversationNotStarted) || !strings.Contains(err.Error(), "会话绑定的执行机器") {
+				t.Fatalf("revoked = %t, dispatch error = %v", revoked, err)
+			}
+			return
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+}
+
+// This input represents one JSON line containing an attachment path and base64 data.
+func TestConversationImageInputChunkPreservesRemotePathAndUTF8(t *testing.T) {
+	const root = "/loopforge/source/session"
+	for name, part := range map[string]string{"path": root, "UTF8": "图"} {
+		t.Run(name, func(t *testing.T) {
+			input := strings.Repeat("x", maxConversationInputChunk-1) + part + strings.Repeat("z", maxConversationInputChunk)
+			first := conversationInputChunkLen(input, root)
+			if first != maxConversationInputChunk-1 {
+				t.Fatalf("first write would split %s: offset %d", name, first)
+			}
+		})
+	}
+}
+
+func TestConversationInputChunkPreservesEncodedWorkspacePath(t *testing.T) {
+	root := `/session "quote"\path`
+	encodedRoot := runtime.ConversationStdinPath(root, "codex")
+	encodedWorkspace := runtime.ConversationStdinPath(filepath.Join(root, "ws"), "codex")
+	// The chunk boundary falls in the /ws suffix, after the root itself.
+	start := maxConversationInputChunk - len(encodedRoot) - 1
+	input := strings.Repeat("x", start) + encodedWorkspace + "tail"
+	if got := conversationInputChunkLen(input, encodedWorkspace, encodedRoot); got != start {
+		t.Fatalf("first write would split the encoded workspace path: %d", got)
 	}
 }

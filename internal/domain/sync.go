@@ -26,7 +26,7 @@ type SyncConfig struct {
 const DefaultIntegrateBranch = "agentflow/integration"
 
 // NormalizeIntegrateBranch trims the configured integrate branch. Empty means
-// the repository does not use an integration baseline: scheduled SOPs skip
+// the repository does not use an integration baseline: scheduled LOOPs skip
 // default→integrate align and post-run merge into a shared branch.
 func NormalizeIntegrateBranch(name string) string {
 	return strings.TrimSpace(name)
@@ -79,31 +79,53 @@ type ScheduleJob struct {
 	// IssueStatuses limits trigger jobs to these local issue statuses.
 	// Empty means backlog + todo. AI jobs leave this unused.
 	IssueStatuses []string `json:"issueStatuses,omitempty"`
-	// MaxDispatch caps successful SOP dispatches per execution. Zero defaults to 10.
+	// MaxDispatch caps successful LOOP dispatches per execution. Zero defaults to 10.
 	MaxDispatch     int    `json:"maxDispatch,omitempty"`
 	IntervalSec     int    `json:"intervalSec"`
 	Cron            string `json:"cron,omitempty"`
 	AssistantPrompt string `json:"assistantPrompt,omitempty"`
-	AssistantModel  string `json:"assistantModel,omitempty"`
-	OwnerUserID     int64  `json:"ownerUserId,omitempty"`
-	// RunAsUserID is server-managed: the user whose keys run an AI job, set to
-	// whoever last saved it. Zero (jobs saved before the binding, or without a
-	// signed-in user) runs it with the project owner's keys. RunAsName is for
-	// display.
-	RunAsUserID          int64                `json:"runAsUserId,omitempty"`
-	RunAsName            string               `json:"runAsName,omitempty"`
-	LastRunAt            time.Time            `json:"lastRunAt,omitempty"`
-	LastStatus           string               `json:"lastStatus,omitempty"` // running, success, failed, waiting
-	LastError            string               `json:"lastError,omitempty"`
-	LastPulled           int                  `json:"lastPulled,omitempty"`
-	LastDispatched       int                  `json:"lastDispatched,omitempty"`
-	LastAssistantMessage string               `json:"lastAssistantMessage,omitempty"`
-	Blockers             []ScheduleJobBlocker `json:"blockers,omitempty"`
-	CreatedAt            time.Time            `json:"createdAt"`
-	UpdatedAt            time.Time            `json:"updatedAt"`
+	// References are project assets selected for an AI scheduled task. The
+	// executor resolves them at run time so edits to the referenced assets are
+	// reflected on the next run.
+	References     []AssistantReference `json:"references,omitempty"`
+	AssistantModel string               `json:"assistantModel,omitempty"`
+	// TimeoutMinutes bounds one AI execution, including tool calls and LOOP waits.
+	// Zero uses the default for jobs saved before this field existed.
+	TimeoutMinutes int `json:"timeoutMinutes,omitempty"`
+	// SessionMode picks the Studio conversation an AI job runs in: empty opens
+	// a new conversation for every execution; "fixed" keeps continuing
+	// FixedSessionID.
+	SessionMode string `json:"sessionMode,omitempty"`
+	// SessionKeep is how many of its newest conversations an AI job that
+	// opens a new one per execution keeps: 10, 50 or 100, or -1 for no
+	// limit. Zero (jobs saved before the setting) means the default, 50.
+	// Ignored in fixed mode.
+	SessionKeep int `json:"sessionKeep,omitempty"`
+	// FixedSessionID is server-managed: the pinned conversation, set by the
+	// first fixed-mode execution and cleared when the mode leaves "fixed".
+	FixedSessionID string `json:"fixedSessionId,omitempty"`
+	OwnerUserID    int64  `json:"ownerUserId,omitempty"`
+	// RunAsUserID is server-managed: the user whose credentials run an AI job,
+	// set to whoever last saved it. Zero keeps the legacy project-owner
+	// selection. RunAsName is for display.
+	RunAsUserID          int64     `json:"runAsUserId,omitempty"`
+	RunAsName            string    `json:"runAsName,omitempty"`
+	LastRunAt            time.Time `json:"lastRunAt,omitempty"`
+	LastStatus           string    `json:"lastStatus,omitempty"` // running, success, failed, waiting
+	LastError            string    `json:"lastError,omitempty"`
+	LastPulled           int       `json:"lastPulled,omitempty"`
+	LastDispatched       int       `json:"lastDispatched,omitempty"`
+	LastAssistantMessage string    `json:"lastAssistantMessage,omitempty"`
+	// LastTraceID identifies the latest execution (ScheduleJobExecution.TraceID).
+	LastTraceID string `json:"lastTraceId,omitempty"`
+	// LastSessionID is the Studio conversation of the latest AI execution.
+	LastSessionID string               `json:"lastSessionId,omitempty"`
+	Blockers      []ScheduleJobBlocker `json:"blockers,omitempty"`
+	CreatedAt     time.Time            `json:"createdAt"`
+	UpdatedAt     time.Time            `json:"updatedAt"`
 }
 
-// ResolveWorkflow picks the SOP for a scheduled dispatch: the issue's bound
+// ResolveWorkflow picks the LOOP for a scheduled dispatch: the issue's bound
 // workflow when UseIssueWorkflow is set and present, otherwise the job default.
 func (j ScheduleJob) ResolveWorkflow(issue Issue) string {
 	if j.UseIssueWorkflow {
@@ -114,7 +136,7 @@ func (j ScheduleJob) ResolveWorkflow(issue Issue) string {
 	return strings.TrimSpace(j.WorkflowID)
 }
 
-// DispatchesSOP is true for trigger jobs that scan issues and start SOP runs.
+// DispatchesSOP is true for trigger jobs that scan issues and start LOOP runs.
 // AI scheduled jobs set SkipDispatch and never dispatch.
 func (j ScheduleJob) DispatchesSOP() bool {
 	return !j.SkipDispatch && strings.TrimSpace(j.WorkflowID) != ""

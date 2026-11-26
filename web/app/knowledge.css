@@ -205,16 +205,16 @@
   color: var(--hui-secondary);
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-muted {
+:is(#knowledgeView, #kbConnDrawer) .kb-muted {
   color: var(--hui-secondary);
   font-size: 12.5px;
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-req {
+:is(#knowledgeView, #kbConnDrawer) .kb-req {
   color: var(--hui-error);
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-field {
+:is(#knowledgeView, #kbConnDrawer) .kb-field {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -223,19 +223,19 @@
   font-size: 13px;
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-field > label {
+:is(#knowledgeView, #kbConnDrawer) .kb-field > label {
   display: block;
   font-weight: 500;
   color: var(--hui-text);
   text-align: left;
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-field small {
+:is(#knowledgeView, #kbConnDrawer) .kb-field small {
   color: var(--hui-secondary);
   font-size: 12px;
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-input {
+:is(#knowledgeView, #kbConnDrawer) .kb-input {
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
@@ -243,7 +243,7 @@
   font-size: 13px;
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-kv-input {
+:is(#knowledgeView, #kbConnDrawer) .kb-kv-input {
   min-height: 76px;
   resize: vertical;
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
@@ -251,56 +251,56 @@
   line-height: 1.5;
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-check-banner {
+:is(#knowledgeView, #kbConnDrawer) .kb-check-banner {
   padding: 9px 12px;
   border-radius: 8px;
   font-size: 12.5px;
   border: 1px solid var(--hui-border);
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-check-banner.ok {
+:is(#knowledgeView, #kbConnDrawer) .kb-check-banner.ok {
   border-color: color-mix(in srgb, var(--hui-success) 35%, var(--hui-border));
   background: color-mix(in srgb, var(--hui-success) 7%, var(--hui-surface));
   color: var(--hui-text);
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-check-banner.err {
+:is(#knowledgeView, #kbConnDrawer) .kb-check-banner.err {
   border-color: color-mix(in srgb, var(--hui-error) 35%, var(--hui-border));
   background: color-mix(in srgb, var(--hui-error) 7%, var(--hui-surface));
   color: var(--hui-error);
 }
 
-:is(#knowledgeView, #kbDrawer) :is(.kb-btn, .hui-badge) {
+:is(#knowledgeView, #kbConnDrawer) :is(.kb-btn, .hui-badge) {
   white-space: nowrap;
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-btn.xs {
+:is(#knowledgeView, #kbConnDrawer) .kb-btn.xs {
   flex-shrink: 0;
   height: 28px;
   padding: 0 10px;
   font-size: 12px;
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-btn.danger-outline {
+:is(#knowledgeView, #kbConnDrawer) .kb-btn.danger-outline {
   border-color: color-mix(in srgb, var(--hui-error) 35%, var(--hui-border));
   background: var(--hui-surface);
   color: var(--hui-error);
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-btn.danger-outline:hover:not(:disabled) {
+:is(#knowledgeView, #kbConnDrawer) .kb-btn.danger-outline:hover:not(:disabled) {
   border-color: var(--hui-error);
   background: color-mix(in srgb, var(--hui-error) 6%, var(--hui-surface));
   color: var(--hui-error);
 }
 
-:is(#knowledgeView, #kbDrawer) .kb-row-actions {
+:is(#knowledgeView, #kbConnDrawer) .kb-row-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
 
-#kbDrawer {
+#kbConnDrawer {
   position: fixed;
   top: 0;
   right: 0;
@@ -316,32 +316,32 @@
   transition: transform .22s var(--hui-ease-flow);
 }
 
-#kbDrawer.open {
+#kbConnDrawer.open {
   transform: translateX(0);
 }
 
-#kbDrawer[hidden] {
+#kbConnDrawer[hidden] {
   display: none;
 }
 
-.kb-drawer-scrim {
+.kb-conn-drawer-scrim {
   position: fixed;
   inset: 0;
   z-index: 1199;
   background: var(--hui-scrim);
 }
 
-.kb-drawer-scrim[hidden] {
+.kb-conn-drawer-scrim[hidden] {
   display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #kbDrawer {
+  #kbConnDrawer {
     transition: none;
   }
 }
 
-#kbDrawer .kb-drawer-head {
+#kbConnDrawer .kb-drawer-head {
   padding: 16px 20px;
   border-bottom: 1px solid var(--hui-border);
   display: flex;
@@ -350,12 +350,12 @@
   gap: 12px;
 }
 
-#kbDrawer .kb-drawer-head h3 {
+#kbConnDrawer .kb-drawer-head h3 {
   margin: 0;
   font-size: 16px;
 }
 
-#kbDrawer .kb-drawer-body {
+#kbConnDrawer .kb-drawer-body {
   padding: 18px 20px;
   overflow: auto;
   flex: 1;
@@ -364,20 +364,20 @@
   gap: 14px;
 }
 
-#kbDrawer .kb-dynamic-fields {
+#kbConnDrawer .kb-dynamic-fields {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-#kbDrawer .kb-drawer-row {
+#kbConnDrawer .kb-drawer-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 150px;
   gap: 12px;
   align-items: end;
 }
 
-#kbDrawer .kb-check-inline {
+#kbConnDrawer .kb-check-inline {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -386,7 +386,7 @@
   cursor: pointer;
 }
 
-#kbDrawer .kb-drawer-foot {
+#kbConnDrawer .kb-drawer-foot {
   padding: 14px 20px;
   border-top: 1px solid var(--hui-border);
   display: flex;
@@ -394,7 +394,7 @@
   gap: 8px;
 }
 
-#kbDrawer .kb-drawer-spacer {
+#kbConnDrawer .kb-drawer-spacer {
   flex: 1;
 }
 
@@ -530,7 +530,7 @@
   color: var(--hui-accent);
 }
 
-#kbDrawer .kb-vendor-guide {
+#kbConnDrawer .kb-vendor-guide {
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--hui-info, var(--hui-accent)) 28%, var(--hui-border));
@@ -540,7 +540,7 @@
   color: var(--hui-text);
 }
 
-#kbDrawer .kb-vendor-guide strong {
+#kbConnDrawer .kb-vendor-guide strong {
   display: block;
   margin-bottom: 4px;
 }
@@ -586,7 +586,7 @@
   flex-wrap: wrap;
 }
 
-#kbDrawer .kb-oauth-card {
+#kbConnDrawer .kb-oauth-card {
   border: 1px solid var(--hui-border);
   border-radius: 10px;
   padding: 12px 14px;
@@ -594,7 +594,7 @@
   gap: 10px;
 }
 
-#kbDrawer .kb-oauth-card-head {
+#kbConnDrawer .kb-oauth-card-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -602,30 +602,30 @@
   flex-wrap: wrap;
 }
 
-#kbDrawer .kb-oauth-card-title {
+#kbConnDrawer .kb-oauth-card-title {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-#kbDrawer .kb-oauth-card-title > label {
+#kbConnDrawer .kb-oauth-card-title > label {
   font-weight: 600;
   color: var(--hui-text);
 }
 
-#kbDrawer .kb-oauth-status-line {
+#kbConnDrawer .kb-oauth-status-line {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
 
-#kbDrawer .kb-oauth-exp {
+#kbConnDrawer .kb-oauth-exp {
   font-size: 11.5px;
   color: var(--hui-secondary);
 }
 
-#kbDrawer .kb-oauth-segments {
+#kbConnDrawer .kb-oauth-segments {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
@@ -635,7 +635,7 @@
   background: var(--hui-surface);
 }
 
-#kbDrawer .kb-oauth-seg {
+#kbConnDrawer .kb-oauth-seg {
   appearance: none;
   border: 1px solid transparent;
   border-radius: 7px;
@@ -650,42 +650,42 @@
   transition: background-color .15s var(--hui-ease-out), border-color .15s var(--hui-ease-out), color .15s var(--hui-ease-out);
 }
 
-#kbDrawer .kb-oauth-seg:hover {
+#kbConnDrawer .kb-oauth-seg:hover {
   background: var(--hui-surface-subtle, rgba(15, 23, 42, .03));
   color: var(--hui-text);
 }
 
-#kbDrawer .kb-oauth-seg.active {
+#kbConnDrawer .kb-oauth-seg.active {
   background: var(--hui-accent-soft);
   border-color: color-mix(in srgb, var(--hui-accent) 32%, var(--hui-border));
   color: var(--hui-text);
 }
 
-#kbDrawer .kb-oauth-seg-title {
+#kbConnDrawer .kb-oauth-seg-title {
   font-size: 12px;
   font-weight: 600;
   color: inherit;
 }
 
-#kbDrawer .kb-oauth-seg-sub {
+#kbConnDrawer .kb-oauth-seg-sub {
   font-size: 11px;
   color: var(--hui-secondary);
 }
 
-#kbDrawer .kb-oauth-pane {
+#kbConnDrawer .kb-oauth-pane {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-#kbDrawer .kb-oauth-pane[hidden],
-#kbDrawer .kb-oauth-actions[hidden],
-#kbDrawer .kb-field[hidden],
-#kbDrawer .kb-check-banner[hidden] {
+#kbConnDrawer .kb-oauth-pane[hidden],
+#kbConnDrawer .kb-oauth-actions[hidden],
+#kbConnDrawer .kb-field[hidden],
+#kbConnDrawer .kb-check-banner[hidden] {
   display: none;
 }
 
-#kbDrawer .kb-oauth-hint-box {
+#kbConnDrawer .kb-oauth-hint-box {
   padding: 9px 11px;
   border-radius: 8px;
   border: 1px solid var(--hui-border);
@@ -694,29 +694,29 @@
   color: var(--hui-text);
 }
 
-#kbDrawer .kb-oauth-hint-box p {
+#kbConnDrawer .kb-oauth-hint-box p {
   margin: 4px 0 0;
 }
 
-#kbDrawer .kb-oauth-copy-row {
+#kbConnDrawer .kb-oauth-copy-row {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-#kbDrawer .kb-mono-input {
+#kbConnDrawer .kb-mono-input {
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   font-size: 12px;
 }
 
-#kbDrawer .kb-oauth-advanced {
+#kbConnDrawer .kb-oauth-advanced {
   border: 1px solid var(--hui-border);
   border-radius: 8px;
   padding: 8px 10px;
   background: var(--hui-surface);
 }
 
-#kbDrawer .kb-oauth-advanced > summary {
+#kbConnDrawer .kb-oauth-advanced > summary {
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
@@ -724,18 +724,18 @@
   user-select: none;
 }
 
-#kbDrawer .kb-oauth-advanced[open] > summary {
+#kbConnDrawer .kb-oauth-advanced[open] > summary {
   margin-bottom: 10px;
   color: var(--hui-text);
 }
 
-#kbDrawer .kb-oauth-advanced-grid {
+#kbConnDrawer .kb-oauth-advanced-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-#kbDrawer .kb-oauth-actions {
+#kbConnDrawer .kb-oauth-actions {
   display: flex;
   align-items: center;
   gap: 10px;

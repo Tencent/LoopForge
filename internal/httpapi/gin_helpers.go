@@ -167,21 +167,41 @@ func securityHeaders() gin.HandlerFunc {
 
 type gzipWriter struct {
 	gin.ResponseWriter
-	gz *gzip.Writer
+	gz    *gzip.Writer
+	plain bool
+}
+
+// body returns where the response body goes. The compressor starts with the
+// first byte: a handler can still drop "Content-Encoding: gzip" before that,
+// as http.FileServer does for its error pages since Go 1.23, and those bodies
+// must then be sent as they are, or clients receive gzip bytes they cannot read.
+func (w *gzipWriter) body() io.Writer {
+	if w.gz == nil && !w.plain {
+		if strings.EqualFold(w.Header().Get("Content-Encoding"), "gzip") {
+			w.gz = gzip.NewWriter(w.ResponseWriter)
+		} else {
+			w.plain = true
+		}
+	}
+	if w.plain {
+		return w.ResponseWriter
+	}
+	w.Header().Del("Content-Length")
+	return w.gz
 }
 
 func (w *gzipWriter) Write(p []byte) (int, error) {
-	w.Header().Del("Content-Length")
-	return w.gz.Write(p)
+	return w.body().Write(p)
 }
 
 func (w *gzipWriter) WriteString(s string) (int, error) {
-	w.Header().Del("Content-Length")
-	return w.gz.Write([]byte(s))
+	return w.body().Write([]byte(s))
 }
 
 func (w *gzipWriter) Flush() {
-	_ = w.gz.Flush()
+	if w.gz != nil {
+		_ = w.gz.Flush()
+	}
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -197,6 +217,15 @@ func knowledgeStreamPath(path string) bool {
 	return strings.HasSuffix(path, "/preview") || strings.HasSuffix(path, "/download")
 }
 
+// close ends a compressed body. A response that wrote nothing still gets an
+// empty gzip stream to match its Content-Encoding header.
+func (w *gzipWriter) close() {
+	w.body()
+	if w.gz != nil {
+		_ = w.gz.Close()
+	}
+}
+
 func gzipMaybe() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodHead || strings.EqualFold(c.GetHeader("Upgrade"), "websocket") || !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
@@ -207,11 +236,11 @@ func gzipMaybe() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		gz := gzip.NewWriter(c.Writer)
-		defer gz.Close()
 		c.Header("Content-Encoding", "gzip")
 		c.Header("Vary", "Accept-Encoding")
-		c.Writer = &gzipWriter{ResponseWriter: c.Writer, gz: gz}
+		writer := &gzipWriter{ResponseWriter: c.Writer}
+		defer writer.close()
+		c.Writer = writer
 		c.Next()
 	}
 }

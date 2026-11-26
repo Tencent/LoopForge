@@ -11,6 +11,7 @@ const (
 	ExecutionScopeRepositories = "repositories"
 
 	RunnerWorkspaceLayoutShared = "shared"
+	ExecutionPoolProjectAuto    = "project-auto"
 )
 
 // TelemetrySource identifies the layer that produced an observation and the
@@ -38,8 +39,8 @@ type TelemetryContext struct {
 	// user's later default-runner changes.
 	ExecutionMode     string `json:"executionMode,omitempty"` // cloud, runner
 	ExecutionRunnerID string `json:"executionRunnerId,omitempty"`
-	// ExecutionPool is "cloud" when ExecutionRunnerID was picked from the
-	// platform runner pool rather than the user's default machine.
+	// ExecutionPool records cloud-pool or automatic project assignment.
+	// A project-auto run without an ExecutionMode still awaits assignment.
 	ExecutionPool string `json:"executionPool,omitempty"`
 	// RunnerWorkspaceLayout freezes how a self-hosted runner maps workflow
 	// nodes to disk. Empty is the legacy per-node layout; shared gives every
@@ -48,12 +49,18 @@ type TelemetryContext struct {
 	IssueNumber           int    `json:"issueNumber,omitempty"`
 	TaskID                string `json:"taskId,omitempty"`
 	ScheduleJobID         string `json:"scheduleJobId,omitempty"`
-	RunID                 string `json:"runId"`
-	ParentRunID           string `json:"parentRunId,omitempty"`
-	ParentNodeID          string `json:"parentNodeId,omitempty"`
-	// WorkspaceRunID names the run that owns the workspace a child SOP works
-	// in: the top-level run of its SOP chain. Empty means the run owns its
-	// own workspace.
+	SharedScheduleID      string `json:"sharedScheduleId,omitempty"`
+	SharedScheduleVersion int    `json:"sharedScheduleVersion,omitempty"`
+	// BotOriginID is the chat origin (bot_chat_origins) a top-level run was
+	// started from, stored with the run so that its first events already
+	// go back to that chat.
+	BotOriginID  string `json:"botOriginId,omitempty"`
+	RunID        string `json:"runId"`
+	ParentRunID  string `json:"parentRunId,omitempty"`
+	ParentNodeID string `json:"parentNodeId,omitempty"`
+	// WorkspaceRunID names the run that owns the checkout, either a
+	// conversation workspace or the root LOOP in a nested run. Empty means
+	// this run owns its workspace.
 	WorkspaceRunID  string `json:"workspaceRunId,omitempty"`
 	WorkflowID      string `json:"workflowId,omitempty"`
 	WorkflowVersion int    `json:"workflowVersion,omitempty"`
@@ -68,6 +75,16 @@ type TelemetryContext struct {
 	TraceID         string `json:"traceId"`
 	SpanID          string `json:"spanId,omitempty"`
 	ParentSpanID    string `json:"parentSpanId,omitempty"`
+	// Purpose marks non-business runs. RunPurposeEvolutionReplay runs
+	// validate an asset candidate: they never deliver issues, send
+	// notifications, use platform MCP writes or count in analytics. Child
+	// SOP runs inherit it with the rest of the context.
+	Purpose string `json:"purpose,omitempty"`
+	// EvolutionReplayID names the replay whose asset overrides this run uses.
+	EvolutionReplayID string `json:"evolutionReplayId,omitempty"`
+	// EvolutionCanaryIDs name the proposals in a trial whose candidate this
+	// business run uses instead of the live body (assigned at run start).
+	EvolutionCanaryIDs []string `json:"evolutionCanaryIds,omitempty"`
 }
 
 type MetricPoint struct {

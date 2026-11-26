@@ -26,7 +26,7 @@ func seedIntegrationBranch(t *testing.T, remote, branch, path, content string) {
 	runGitT(t, clone, "push", "-q", "origin", branch)
 }
 
-// 定时 SOP 跑在执行机器上时，合入集成分支要在执行机器的工作区里做，推上去的才是真正的改动。
+// 定时 LOOP 跑在执行机器上时，合入集成分支要在执行机器的工作区里做，推上去的才是真正的改动。
 func TestRunnerModeScheduledRunIntegratesOnRunner(t *testing.T) {
 	server, s, e := newDaemonTestServer(t)
 	remote := bareRemoteWithBaseline(t)
@@ -36,7 +36,7 @@ func TestRunnerModeScheduledRunIntegratesOnRunner(t *testing.T) {
 		t.Fatalf("runner version %q does not integrate", runner.RunnerVersion)
 	}
 	wf := domain.WorkflowDefinition{
-		ID: "runner-integrate", Name: "Runner integrate", SandboxProfileID: "local",
+		ID: "runner-integrate", Name: "Runner integrate", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "implement", Name: "实现", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf 'fixed\\n' > feature.txt && printf 'report\\n' > fix-report.md", MaxAttempts: 1},
 		},
@@ -63,7 +63,7 @@ func TestRunnerModeScheduledRunIntegratesOnRunner(t *testing.T) {
 		}
 	}
 	if strings.Contains(files, "fix-report.md") {
-		t.Fatalf("SOP report reached the integration branch: %s", files)
+		t.Fatalf("LOOP report reached the integration branch: %s", files)
 	}
 	work := runGitT(t, remote, "rev-parse", "refs/heads/fix/issue-1")
 	if integration := runGitT(t, remote, "rev-parse", "refs/heads/integration"); integration != work {

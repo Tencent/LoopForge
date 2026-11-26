@@ -11,7 +11,7 @@ test('project wizard creates a project, binds a repository, skips optional steps
   app.evaluate(`
     state.currentUser={id:1,loginName:'owner',chineseName:'Owner'};
     state.data.users=[state.currentUser,{id:2,loginName:'member',chineseName:'Member'}];
-    state.data.workflows.push({id:'generic-backend-delivery',name:'通用后端交付 SOP',generic:true});
+    state.data.workflows.push({id:'generic-backend-delivery',name:'通用后端交付 LOOP',generic:true});
     state.data.mcpServers=[{id:'tapd',marketId:'70'}];
     openProjectWizard();
   `);
@@ -68,7 +68,7 @@ test('wizard validates names and repository URLs with actionable errors', async 
   assert.match(app.document.querySelector('#projectWizard [role="alert"]').textContent, /项目名称不能为空/);
   app.evaluate(`projectWizard.step='repos';projectWizard.projectId='project-1';renderProjectWizard()`);
   await app.evaluate(`projectWizardAddRepo()`);
-  assert.match(app.document.querySelector('#projectWizard [role="alert"]').textContent, /请先粘贴 GitHub 链接或 Git SSH 地址/);
+  assert.match(app.document.querySelector('#projectWizard [role="alert"]').textContent, /请先粘贴 Git 仓库地址/);
 });
 
 test('without a TAPD integration the wizard goes from members straight to done', async (t) => {
@@ -79,7 +79,7 @@ test('without a TAPD integration the wizard goes from members straight to done',
   app.evaluate(`
     state.currentUser={id:1,loginName:'owner',chineseName:'Owner'};
     state.data.users=[state.currentUser];
-    state.data.workflows.push({id:'generic-backend-delivery',name:'通用后端交付 SOP',generic:true});
+    state.data.workflows.push({id:'generic-backend-delivery',name:'通用后端交付 LOOP',generic:true});
     state.data.mcpServers=[];
     state.data.syncConfig={};
     openProjectWizard();

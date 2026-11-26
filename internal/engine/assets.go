@@ -76,7 +76,7 @@ func knowledgeSkippedWarning(agent domain.AgentDefinition, assets domain.AgentAs
 	return "角色开启了知识库，但当前执行人未配置已启用的个人知识库连接器（" + domain.KnowledgeMCPServerID + "）"
 }
 
-// RoleAssets resolves a role's assets outside any SOP run, for a chat
+// RoleAssets resolves a role's assets outside any LOOP run, for a chat
 // subagent: no workflow is bound, so workflow-global rules are not added.
 func (e *Engine) RoleAssets(agent domain.AgentDefinition, projectID string, userID int64) domain.AgentAssetBundle {
 	return e.resolveAssets(agent, projectID, "", userID)
@@ -308,7 +308,7 @@ func roleMCPServerVisible(server domain.MCPServerDefinition, projectID string, u
 }
 
 // appendWorkflowGlobalRules injects project rules that were marked global and
-// bound to this SOP. Every agent node of the workflow receives them, even when
+// bound to this LOOP. Every agent node of the workflow receives them, even when
 // the node's role does not list the rule. Script and approval nodes do not
 // resolve an agent asset bundle, so they are unchanged.
 func (e *Engine) appendWorkflowGlobalRules(bundle *domain.AgentAssetBundle, projectID, workflowID string) {
@@ -351,9 +351,28 @@ func workflowAgent(st *repo.Store, wf domain.WorkflowDefinition, id string) (dom
 	if domain.IsPreviewBuildAgent(id) {
 		return domain.PreviewBuildAgent(wf.Preview), true
 	}
+	if wf.Generic {
+		if template, ok := st.GenericTemplateByWorkflow(wf.ID); ok {
+			for _, role := range template.Agents {
+				if role.ID == id {
+					return role, true
+				}
+			}
+		}
+	}
 	if agent, ok := st.Agent(id); ok {
 		if st.AgentShadowsTemplateOutside(agent, wf.ProjectID) {
 			return st.GenericAgentByID(id)
+		}
+		if wf.ID == BaselineAlignWorkflowID && id == BaselineAlignAgentID {
+			for _, node := range wf.Nodes {
+				if node.Type == "agent" && node.AgentID == id && node.ExecutorID != "" {
+					if agent.ExecutorID != node.ExecutorID {
+						agent.ExecutorID, agent.Model, agent.Effort = node.ExecutorID, "", ""
+					}
+					break
+				}
+			}
 		}
 		return agent, true
 	}

@@ -69,6 +69,11 @@ func (r *CatalogRepo) PublishSharedSchedule(jobID, projectID string, v domain.Sh
 		if !job.SkipDispatch || job.SharedTaskID != "" || job.ProjectID != projectID {
 			return fmt.Errorf("只能从当前项目的独立 AI 定时任务发布共享版本")
 		}
+		// Read the direct references from the same transaction as the locked
+		// source job, never from publish JSON. Nested dependencies remain owned
+		// by the referenced asset's existing resolver.
+		catalog := *r
+		catalog.deps = &deps{DB: tx}
 		sum := sha256.Sum256([]byte(projectID + "\x00" + jobID))
 		id := "shared-" + hex.EncodeToString(sum[:16])
 		var latest sharedScheduleVersionRow
@@ -78,6 +83,28 @@ func (r *CatalogRepo) PublishSharedSchedule(jobID, projectID string, v domain.Sh
 		}
 		if baseVersion != latest.Version {
 			return ErrSharedScheduleVersionConflict
+		}
+		refs, err := catalog.directScheduleReferences(job.References)
+		if err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			if err := catalog.shareScheduleReference(ref, projectID); err != nil {
+				return err
+			}
+		}
+		assets, err := catalog.sharedScheduleAssets(job.References)
+		if err != nil {
+			return err
+		}
+		v.Assets = assets
+		v.References = make([]domain.AssistantReference, 0, len(assets))
+		for _, asset := range assets {
+			ref, shared, ok := catalog.sharedScheduleReference(domain.AssistantReference{Type: asset.Type, ID: asset.ID})
+			if !ok || !shared || ref.ProjectID != asset.ProjectID {
+				return fmt.Errorf("%w：%s/%s 的权限或归属已变更", ErrSharedScheduleReferences, asset.Type, asset.ID)
+			}
+			v.References = append(v.References, ref)
 		}
 		v.ID, v.Version, v.SourceJobID, v.SourceProjectID = id, latest.Version+1, jobID, projectID
 		v.CreatedAt = time.Now().UTC()

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -69,11 +70,22 @@ func (h *assistantHandlers) workbenchReference(ref domain.AssistantReference, pr
 			break
 		}
 		ref.Name = v.Title
-		issueData := gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID}
-		if v.WorkflowID != "" {
-			if wf, exists := h.repo.Workflow(v.WorkflowID); exists && (wf.Generic && project != "" || allowed(wf.ProjectID, wf.Shared)) {
-				issueData["workflowId"] = wf.ID
-				issueData["workflowName"] = wf.Name
+		issueData := gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID,
+			"repositoryId": v.RepositoryID, "repositoryIds": v.RepositoryIDs}
+		if branch := strings.TrimSpace(v.BaseBranch); branch != "" {
+			issueData["baseBranch"] = branch
+		}
+		if v.WithoutSOP() {
+			issueData["sopMode"] = domain.IssueSOPNone
+		} else {
+			if wfID := strings.TrimSpace(v.WorkflowID); wfID != "" {
+				issueData["workflowId"] = wfID
+				if wf, exists := h.repo.Workflow(wfID); exists && (wf.Generic && project != "" || allowed(wf.ProjectID, wf.Shared)) {
+					issueData["workflowName"] = wf.Name
+				}
+			}
+			if bound := h.issueBoundSOPs(v); len(bound) > 0 {
+				issueData["boundSops"] = bound
 			}
 		}
 		data = issueData
@@ -173,7 +185,7 @@ func (h *assistantHandlers) accessibleWorkbenchReference(c *gin.Context, userID 
 		return ref, "", fmt.Errorf("无权访问引用对象")
 	}
 	// A project conversation only sees its own project's objects plus shared
-	// roles and SOPs; a personal conversation keeps cross-project references.
+	// roles and LOOPs; a personal conversation keeps cross-project references.
 	if currentProject != "" && !shared && project != currentProject {
 		return ref, "", errForeignReference
 	}
@@ -195,18 +207,35 @@ func (h *assistantHandlers) accessibleWorkbenchReference(c *gin.Context, userID 
 	return canonical, data, err
 }
 
-var errForeignReference = fmt.Errorf("只能引用当前项目的需求、角色、技能、SOP、仓库和运行；其他项目的对象请到对应项目的对话里引用")
+var errForeignReference = fmt.Errorf("只能引用当前项目的需求、角色、技能、LOOP、仓库和运行；其他项目的对象请到对应项目的对话里引用")
 
 var errNotProjectMember = fmt.Errorf("你还不是这个项目的成员，不能在项目里对话。可以把项目切换为「个人对话」直接聊，或请项目 Owner 把你加入项目")
 
-func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
-	if !h.workbenchProjectAllowed(c, req.ProjectID, user.ID) {
+func (h *assistantHandlers) authorizeWorkbenchTurn(c *gin.Context, req *assistantRequest, userID int64) error {
+	if !h.workbenchProjectAllowed(c, req.ProjectID, userID) {
 		return errNotProjectMember
 	}
 	if req.SessionID != "" {
-		if old, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && old.ProjectID != req.ProjectID {
+		if old, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, userID), req.SessionID); ok && old.ProjectID != req.ProjectID {
 			return fmt.Errorf("会话属于其他项目，请新建会话")
 		}
+	}
+	return nil
+}
+
+func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
+	if err := h.authorizeWorkbenchTurn(c, req, user.ID); err != nil {
+		return err
+	}
+	return h.buildWorkbenchContext(c, req, user)
+}
+
+func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
+	if req.sopDesigner() {
+		return h.prepareSOPDesignerContext(c, req, user)
+	}
+	if err := h.validateScheduledAssets(c.Request.Context(), req.ProjectID); err != nil {
+		return err
 	}
 	// Existing personal attachments remain usable when an unassigned conversation
 	// is explicitly bound to an authorized project. Never infer another user's files.
@@ -247,7 +276,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 		if !h.projectWriterAllowed(c, domain.RunProjectID(r, ""), user.ID) {
 			return fmt.Errorf("只读成员不能在任务会话中执行 Agent 或修改工作区")
 		}
-		context.WriteString("当前 SOP 运行：" + text + "\nSOP 推进沿用既有暂停、审批、拒绝和重试接口。工作区工具用于停止后的修改与验证。\n")
+		context.WriteString("当前 LOOP 运行：" + text + "\nLOOP 推进沿用既有暂停、审批、拒绝和重试接口。工作区工具用于停止后的修改与验证。\n")
 	}
 	var mentioned []domain.AgentDefinition
 	var mentionedSkills []domain.SkillDefinition
@@ -310,7 +339,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 			if req.RunID != "" {
 				r, ok := h.repo.RunState(req.RunID)
 				if !ok || !h.taskReferenceAllowed(r, ref.Type, ref.ID) {
-					return fmt.Errorf("只能引用当前任务的角色、需求、SOP 和仓库")
+					return fmt.Errorf("只能引用当前任务的角色、需求、LOOP 和仓库")
 				}
 			}
 			canonical, text, err := h.accessibleWorkbenchReference(c, user.ID, ref, req.ProjectID)
@@ -440,7 +469,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 		}
 	}
 	if req.RunID != "" {
-		context.WriteString("你是 Main Bot。先核对当前任务运行状态；SOP 执行中只读查看，停止后才能接管工作区。需要编程时先调用 workbench_workspace_open；handoff=true 时只回复一句「好的。」并结束本阶段，不向用户解释交接等内部机制，让平台自动续接 CLI，handoff=false 时先用 runs_pause 或 runs_cancel 停下 SOP，之后使用原生文件、补丁和命令工具修改并验证。工作区不可用时如实说明，不要假装修改成功。\n")
+		context.WriteString("你是 Main Bot。先核对当前任务运行状态；LOOP 执行中只读查看，停止后才能接管工作区。需要编程时先调用 workbench_workspace_open；handoff=true 时只回复一句「好的。」并结束本阶段，不向用户解释交接等内部机制，让平台自动续接 CLI，handoff=false 时先用 runs_pause 或 runs_cancel 停下 LOOP，之后使用原生文件、补丁和命令工具修改并验证。工作区不可用时如实说明，不要假装修改成功。\n")
 		context.WriteString("当前任务有一个真实 Chromium（Agent 浏览器），用户在任务面板实时看到并可接管，阶段 Agent 也用同一个浏览器：workbench_browser_navigate 打开网页，workbench_browser_snapshot 读取页面文本和带 ref 的可交互元素，workbench_browser_click/type/press 操作，workbench_browser_screenshot 查看画面，workbench_browser_tabs 管理标签页。用户让你打开或操作网页时直接使用它们，不要声称没有浏览器，也不要用 curl 抓取代替；页面被用户改动时以最新快照为准。\n")
 	}
 	req.contextText = beijingTimestamps(context.String())
@@ -644,7 +673,7 @@ func (h *assistantHandlers) workbenchReferences(c *gin.Context) {
 	var task *domain.Run
 	if runID := strings.TrimSpace(c.Query("runId")); runID != "" {
 		r, exists := h.repo.RunState(runID)
-		if !exists || r.ExecutionContext.ProjectID != project || !h.workbenchProjectAllowed(c, r.ExecutionContext.ProjectID, u.ID) {
+		if !exists || r.IsPersonalWorkspace() || r.ExecutionContext.ProjectID != project || !h.workbenchProjectAllowed(c, r.ExecutionContext.ProjectID, u.ID) {
 			c.JSON(403, gin.H{"error": "无权访问任务"})
 			return
 		}
@@ -1279,6 +1308,30 @@ func openWorkbenchAttachment(userID int64, id string) (workbenchAttachmentRecord
 	return record, file, err
 }
 
+// removeWorkbenchAttachment deletes the file and metadata of one attachment
+// from the owner's attachment directory and reports whether anything was
+// removed. Only well-formed ids are accepted and removal goes through
+// os.Root, so nothing outside that directory is touched.
+func removeWorkbenchAttachment(userID int64, id string) bool {
+	if userID <= 0 || !validWorkbenchAttachmentID(id) {
+		return false
+	}
+	root, err := os.OpenRoot(workbenchAttachmentDir(userID))
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	removed := false
+	for _, name := range []string{id + ".bin", id + ".json"} {
+		if err := root.Remove(name); err == nil {
+			removed = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("remove attachment %s of user %d: %v", name, userID, err)
+		}
+	}
+	return removed
+}
+
 func (h *assistantHandlers) uploadAttachment(c *gin.Context) {
 	u, ok := h.requestUser(c.Request, true)
 	if !ok {
@@ -1465,58 +1518,106 @@ func runNodeAgentID(r domain.Run, id string) string {
 	return ""
 }
 
+func (h *assistantHandlers) issueBoundSOPs(issue domain.Issue) []gin.H {
+	if issue.WithoutSOP() {
+		return nil
+	}
+	bindings := issue.EffectiveSOPBindings()
+	if len(bindings) == 0 {
+		return nil
+	}
+	out := make([]gin.H, 0, len(bindings))
+	for _, b := range bindings {
+		item := gin.H{"workflowId": b.WorkflowID}
+		if wf, ok := h.repo.Workflow(b.WorkflowID); ok && strings.TrimSpace(wf.Name) != "" {
+			item["name"] = strings.TrimSpace(wf.Name)
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func (h *assistantHandlers) issueBoundSOPLabels(issue domain.Issue) []string {
+	if issue.WithoutSOP() {
+		return nil
+	}
+	bindings := issue.EffectiveSOPBindings()
+	if len(bindings) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(bindings))
+	for _, b := range bindings {
+		if wf, ok := h.repo.Workflow(b.WorkflowID); ok && strings.TrimSpace(wf.Name) != "" {
+			out = append(out, fmt.Sprintf("%s（%s）", strings.TrimSpace(wf.Name), b.WorkflowID))
+		} else {
+			out = append(out, b.WorkflowID)
+		}
+	}
+	return out
+}
+
 // workspaceTurnContext tells Main Bot which workspace the conversation is
 // bound to, which environments it used before, and what the requirements in
 // play already delivered, so it resumes the right work instead of following @
 // mentions mechanically.
 func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user domain.User) string {
 	session, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID)
-	if !ok || session.Shared || session.RunID != "" {
+	if ok && (session.Shared || session.RunID != "") {
 		return ""
 	}
 	var b strings.Builder
-	current, bound := h.repo.RunState(session.WorkspaceRunID)
-	bound = bound && conversationMayBind(session, current, req.ProjectID)
-	if bound {
-		fmt.Fprintf(&b, "本对话当前绑定的工作区：%s。", describeConversationWorkspace(current))
-		if !current.IsWorkspace() {
-			b.WriteString(borrowedSOPNotice(current))
+	if ok {
+		current, bound := h.repo.RunState(session.WorkspaceRunID)
+		bound = bound && conversationMayBind(session, current, req.ProjectID)
+		if bound {
+			fmt.Fprintf(&b, "本对话当前绑定的工作区：%s。", describeConversationWorkspace(current))
+			if !current.IsWorkspace() {
+				b.WriteString(borrowedSOPNotice(current))
+			} else if req.ProjectID != "" {
+				b.WriteString("从这里派发 LOOP 会复用该工作区。如果本轮仍在使用它，派发后先结束回复，LOOP 会在工作区释放后开始。")
+			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
-	}
-	others := []string{}
-	for _, id := range ownWorkspaceRunIDs(session) {
-		if run, ok := h.repo.RunState(id); ok && id != session.WorkspaceRunID && run.IsWorkspace() && conversationMayBind(session, run, req.ProjectID) {
-			others = append(others, "- "+describeConversationWorkspace(run))
+		others := []string{}
+		for _, id := range ownWorkspaceRunIDs(session) {
+			if run, ok := h.repo.RunState(id); ok && id != session.WorkspaceRunID && run.IsWorkspace() && conversationMayBind(session, run, req.ProjectID) {
+				others = append(others, "- "+describeConversationWorkspace(run))
+			}
 		}
-	}
-	if len(others) > 0 {
-		b.WriteString("本对话之前在其他运行环境开过的工作区（传它的 sandboxProfileId 切回，文件和已克隆的仓库都在）：\n" + strings.Join(others, "\n") + "\n")
+		if len(others) > 0 {
+			b.WriteString("本对话之前在其他运行环境开过的工作区（传它的 sandboxProfileId 或 workspaceRunId 切回，文件和已克隆的仓库都在）：\n" + strings.Join(others, "\n") + "\n")
+		}
 	}
 	issues := []string{}
 	for _, issue := range turnIssues(h.deps, req.ProjectID, session.IssueID, lastMessageReferences(req.Messages)) {
 		line := fmt.Sprintf("- 需求 %s「%s」", issue.ID, truncateRunes(issue.Title, 60))
 		if run, ok := issueSOPRun(h.deps, req.ProjectID, issue.ID); ok {
-			line += fmt.Sprintf("：跑过 SOP，最近一次运行 %s（%s）", run.ID, run.Status)
+			line += fmt.Sprintf("：跑过 LOOP，最近一次运行 %s（%s）", run.ID, run.Status)
 			if branches := sopWorkBranches(run); branches != "" {
 				line += "，工作分支 " + branches
 			}
 		} else {
-			line += "：没跑过 SOP"
+			line += "：没跑过 LOOP"
+		}
+		if issue.WithoutSOP() {
+			line += "；交付方式：不使用 LOOP（在对话里澄清并直接改代码）"
+		} else if labels := h.issueBoundSOPLabels(issue); len(labels) > 0 {
+			line += "；已绑定 LOOP：" + strings.Join(labels, " → ")
 		}
 		issues = append(issues, line)
 	}
 	if len(issues) > 0 {
 		b.WriteString("本条消息 @ 的需求和本会话关联的主需求：\n" + strings.Join(issues, "\n") + "\n")
+		b.WriteString("如果需求已绑定 LOOP，说明用户已选定按该 LOOP 交付，不要再反问用户「直接改代码还是走 LOOP」或要求重新选择交付方式；用户只 @ 需求或要求澄清/分析需求时，直接结合需求描述（需要核对代码现状时可先打开工作区查看）指出模糊点、边界条件或验收标准来澄清，若需求已足够清晰则直接给出评估，并说明可先更新需求（issues_save）或准备就绪后按已绑定的 LOOP 派发（issues_dispatch）。如果需求标记为不使用 LOOP，默认围绕澄清和在对话工作区直接实现协作，不要主动建议改走 LOOP。\n")
 	}
 	if b.Len() == 0 {
 		return ""
 	}
-	b.WriteString("按用户这条消息实际要处理的事决定（@ 只是线索）：只在要看或改代码、跑命令时才进入工作区；工作区按运行环境区分，当前环境合适就直接用，需要别的语言或工具链再传 sandboxProfileId 切换。要接着某个需求 SOP 的改动，进入工作区后自己 git clone 仓库并 checkout 它的工作分支。")
+	b.WriteString("按用户这条消息实际要处理的事决定（@ 只是线索）：只在要看或改代码、跑命令时才进入工作区；工作区按运行环境区分，当前环境合适就直接用，需要别的语言或工具链再传 sandboxProfileId 切换。创建文件和运行命令可直接在工作区完成。需要已有仓库时在工作区内自行 git clone 和切换分支。要直接恢复并接着某次 LOOP 运行的现场继续干活（保留未推送修改和产物，或改完后回 LOOP 重跑测试节点/继续执行），打开工作区时传入该 LOOP 的 workspaceRunId（与当前对话在同一执行机器时直接复用原工作区，已回收时自动恢复快照；不在同一执行机器时如实告知用户需要在哪台执行机器下新建对话）。")
 	return b.String()
 }
 
-// sopWorkBranches lists the work branches an SOP run pushed, as repo:branch.
+// sopWorkBranches lists the work branches a LOOP run pushed, as repo:branch.
 func sopWorkBranches(run domain.Run) string {
 	out := []string{}
 	for _, rc := range run.RepositoryContexts() {
@@ -1529,7 +1630,7 @@ func sopWorkBranches(run domain.Run) string {
 
 func describeConversationWorkspace(run domain.Run) string {
 	if !run.IsWorkspace() {
-		return fmt.Sprintf("需求 %s 的 SOP 运行 %s（%s）", run.ExecutionContext.IssueID, run.ID, run.Status)
+		return fmt.Sprintf("需求 %s 的 LOOP 运行 %s（%s）", run.ExecutionContext.IssueID, run.ID, run.Status)
 	}
 	state := "在线"
 	if !run.WorkspaceCleanedAt.IsZero() {
@@ -1548,7 +1649,7 @@ func describeConversationWorkspace(run domain.Run) string {
 
 // linkMentionedIssue links an ordinary project conversation without a
 // linked issue to an issue the current message mentions, preferring the one
-// with the newest SOP run, so later turns that mention no issue still offer it.
+// with the newest LOOP run, so later turns that mention no issue still offer it.
 // It returns the note for Main Bot, or "" when nothing changed.
 func (h *assistantHandlers) linkMentionedIssue(req *assistantRequest, user domain.User) string {
 	if len(req.Messages) == 0 {
@@ -1556,7 +1657,9 @@ func (h *assistantHandlers) linkMentionedIssue(req *assistantRequest, user domai
 	}
 	ownerID := assistantStorageOwner(h.repo, req.SessionID, user.ID)
 	session, ok := h.repo.AssistantSession(ownerID, req.SessionID)
-	if !ok || session.Shared || session.RunID != "" || session.IssueID != "" {
+	// Scheduled references belong to each execution and must not become a
+	// persistent issue binding when a fixed session is reused.
+	if !ok || session.Shared || session.Source == domain.AssistantSourceScheduled || session.RunID != "" || session.IssueID != "" {
 		return ""
 	}
 	issueID := ""
@@ -1579,5 +1682,6 @@ func (h *assistantHandlers) linkMentionedIssue(req *assistantRequest, user domai
 	if !linked {
 		return ""
 	}
+	req.linkedIssueID = issueID
 	return "需求 " + issueID + " 已设为本会话的关联主需求。"
 }

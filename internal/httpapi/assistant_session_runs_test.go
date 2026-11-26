@@ -13,7 +13,7 @@ import (
 
 func TestRunSessionDisplayTitleSaysWhatTheRunDoes(t *testing.T) {
 	started := time.Date(2026, 10, 22, 9, 36, 0, 0, time.UTC)
-	backend := repo.SidebarRunMeta{WorkflowName: "通用后端交付 SOP（LoopForge）", CreatedAt: started}
+	backend := repo.SidebarRunMeta{WorkflowName: "通用后端交付 LOOP（LoopForge）", CreatedAt: started}
 	withInput := backend
 	withInput.Input = "\n## **在 agent-test 仓库**根目录的 README.md   末尾追加一行\n\n不要改其他文件"
 	cases := []struct {
@@ -27,9 +27,9 @@ func TestRunSessionDisplayTitleSaysWhatTheRunDoes(t *testing.T) {
 		{"multi-line requirement title", backend, repo.SidebarIssue{Number: 1, Title: "【显式分支验收】test-branch\r\n只在 agent-test 仓库"}, "#1 【显式分支验收】test-branch"},
 		{"task text", withInput, repo.SidebarIssue{}, "在 agent-test 仓库根目录的 README.md 末尾追加一行"},
 		{"long task text", repo.SidebarRunMeta{Input: strings.Repeat("改", 70)}, repo.SidebarIssue{}, strings.Repeat("改", runHeadlineRunes) + "…"},
-		{"nothing but the SOP", backend, repo.SidebarIssue{}, "通用后端交付 · 10月22日 17:36"},
+		{"nothing but the LOOP", backend, repo.SidebarIssue{}, "通用后端交付 · 10月22日 17:36"},
 		{"no start time", repo.SidebarRunMeta{WorkflowName: "MCP测试"}, repo.SidebarIssue{}, "MCP测试"},
-		{"no name at all", repo.SidebarRunMeta{}, repo.SidebarIssue{}, "SOP 运行"},
+		{"no name at all", repo.SidebarRunMeta{}, repo.SidebarIssue{}, "LOOP 运行"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,15 +41,15 @@ func TestRunSessionDisplayTitleSaysWhatTheRunDoes(t *testing.T) {
 	}
 }
 
-// One requirement sent through two SOPs, or twice through the same one, must
+// One requirement sent through two LOOPs, or twice through the same one, must
 // not produce identical rows.
 func TestRunSessionTitlesStayDistinct(t *testing.T) {
 	first := time.Date(2026, 11, 3, 2, 5, 0, 0, time.UTC)
 	metas := map[string]repo.SidebarRunMeta{
-		"run-product":  {WorkflowName: "通用产品交付 SOP（LoopForge）", CreatedAt: first},
-		"run-backend":  {WorkflowName: "通用后端交付 SOP（LoopForge）", CreatedAt: first.Add(time.Hour)},
-		"run-backend2": {WorkflowName: "通用后端交付 SOP（LoopForge）", CreatedAt: first.Add(2 * time.Hour)},
-		"run-other":    {WorkflowName: "通用后端交付 SOP（LoopForge）"},
+		"run-product":  {WorkflowName: "通用产品交付 LOOP（LoopForge）", CreatedAt: first},
+		"run-backend":  {WorkflowName: "通用后端交付 LOOP（LoopForge）", CreatedAt: first.Add(time.Hour)},
+		"run-backend2": {WorkflowName: "通用后端交付 LOOP（LoopForge）", CreatedAt: first.Add(2 * time.Hour)},
+		"run-other":    {WorkflowName: "通用后端交付 LOOP（LoopForge）"},
 	}
 	view := func(runID, title string, edited bool) runSessionView {
 		return runSessionView{assistantConversation: domain.AssistantSession{RunID: runID, TitleEdited: edited}, DisplayTitle: title}
@@ -77,12 +77,12 @@ func TestRunSessionTitlesStayDistinct(t *testing.T) {
 		t.Fatalf("titles:\n got %q\nwant %q", got, want)
 	}
 
-	// Test runs of one SOP started within the same minute show the second.
+	// Test runs of one LOOP started within the same minute show the second.
 	gate := time.Date(2026, 10, 13, 2, 15, 7, 0, time.UTC)
 	metas = map[string]repo.SidebarRunMeta{
-		"run-g1": {WorkflowName: "AI 门禁测试 SOP", CreatedAt: gate},
-		"run-g2": {WorkflowName: "AI 门禁测试 SOP", CreatedAt: gate.Add(31 * time.Second)},
-		"run-g3": {WorkflowName: "AI 门禁测试 SOP", CreatedAt: gate.Add(time.Hour)},
+		"run-g1": {WorkflowName: "AI 门禁测试 LOOP", CreatedAt: gate},
+		"run-g2": {WorkflowName: "AI 门禁测试 LOOP", CreatedAt: gate.Add(31 * time.Second)},
+		"run-g3": {WorkflowName: "AI 门禁测试 LOOP", CreatedAt: gate.Add(time.Hour)},
 	}
 	views = []runSessionView{
 		view("run-g1", runSessionDisplayTitle(metas["run-g1"], repo.SidebarIssue{}), false),
@@ -102,11 +102,12 @@ func TestRunSessionTitlesStayDistinct(t *testing.T) {
 
 func TestShortWorkflowNameDropsPlatformSuffix(t *testing.T) {
 	for name, want := range map[string]string{
-		"通用后端交付 SOP（LoopForge）":  "通用后端交付",
-		"通用前端交付 SOP (LoopForge)": "通用前端交付",
-		"产品交付 SOP":               "产品交付",
-		"SOP":                    "SOP",
-		"":                       "",
+		"通用后端交付 LOOP（LoopForge）":  "通用后端交付",
+		"通用前端交付 LOOP (LoopForge)": "通用前端交付",
+		"产品交付 LOOP":               "产品交付",
+		"产品交付 SOP (LoopForge)":    "产品交付",
+		"LOOP":                    "LOOP",
+		"":                        "",
 	} {
 		if got := shortWorkflowName(name); got != want {
 			t.Fatalf("shortWorkflowName(%q)=%q want %q", name, got, want)
@@ -135,18 +136,18 @@ func TestAssistantSessionListDecoratesRunSessions(t *testing.T) {
 	t.Cleanup(func() { h.repo.DB.Exec("DELETE FROM issues WHERE id=?", issue.ID) })
 
 	empty := domain.Run{ID: prefix + "run-empty", Status: "waiting",
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: "generic-backend-delivery", Name: "通用后端交付 SOP（LoopForge）"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: "generic-backend-delivery", Name: "通用后端交付 LOOP（LoopForge）"},
 		ExecutionContext: domain.TelemetryContext{ProjectID: prefix, IssueID: issue.ID, IssueNumber: 7, ResponsibleUserID: 555}}
 	putSessionListRun(t, h, empty)
-	putSessionListConversation(t, h, owner.ID, domain.AssistantSession{ID: repo.RunAssistantSessionID(empty.ID), RunID: empty.ID, ProjectID: prefix, Shared: true, Title: "通用后端交付 SOP（LoopForge）", UserID: owner.ID})
+	putSessionListConversation(t, h, owner.ID, domain.AssistantSession{ID: repo.RunAssistantSessionID(empty.ID), RunID: empty.ID, ProjectID: prefix, Shared: true, Title: "通用后端交付 LOOP（LoopForge）", UserID: owner.ID})
 
 	used := domain.Run{ID: prefix + "run-used", Status: "running", WorkflowID: "generic-backend-delivery",
 		Input:            "在 agent-test 仓库根目录的 README.md 末尾追加一行\n不要改其他文件",
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: "generic-backend-delivery", Name: "通用后端交付 SOP（LoopForge）"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: "generic-backend-delivery", Name: "通用后端交付 LOOP（LoopForge）"},
 		ExecutionContext: domain.TelemetryContext{ProjectID: prefix}}
 
 	// Retired 自由协作 runs never finish and have no nodes: named by their
-	// task, with no SOP name and no 待处理 chip.
+	// task, with no LOOP name and no 待处理 chip.
 	free := domain.Run{ID: prefix + "run-free", Status: "waiting", WorkflowID: domain.FreeCollaborationWorkflowID,
 		Input:            "修一下登录页的样式",
 		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.FreeCollaborationWorkflowID, Name: "自由协作"},
@@ -163,7 +164,7 @@ func TestAssistantSessionListDecoratesRunSessions(t *testing.T) {
 	putSessionListConversation(t, h, owner.ID, domain.AssistantSession{ID: repo.RunAssistantSessionID(used.ID), RunID: used.ID, ProjectID: prefix, Shared: true, Title: "自由协作", UserID: owner.ID,
 		Messages: []domain.AssistantMessage{{Role: "assistant", Content: "已收到"}}})
 
-	// Neither a requirement nor a task text: the SOP and its start time, read
+	// Neither a requirement nor a task text: the LOOP and its start time, read
 	// back from the run row.
 	bare := domain.Run{ID: prefix + "run-bare", Status: "succeeded",
 		CreatedAt:        time.Date(2026, 10, 14, 7, 11, 0, 0, time.UTC),
@@ -173,7 +174,7 @@ func TestAssistantSessionListDecoratesRunSessions(t *testing.T) {
 	putSessionListConversation(t, h, owner.ID, domain.AssistantSession{ID: repo.RunAssistantSessionID(bare.ID), RunID: bare.ID, ProjectID: prefix, Shared: true, Title: "模拟90s流程", UserID: owner.ID})
 
 	renamed := domain.Run{ID: prefix + "run-renamed", Status: "succeeded",
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: "generic-backend-delivery", Name: "通用后端交付 SOP（LoopForge）"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: "generic-backend-delivery", Name: "通用后端交付 LOOP（LoopForge）"},
 		ExecutionContext: domain.TelemetryContext{ProjectID: prefix}}
 	putSessionListRun(t, h, renamed)
 	putSessionListConversation(t, h, owner.ID, domain.AssistantSession{ID: repo.RunAssistantSessionID(renamed.ID), RunID: renamed.ID, ProjectID: prefix, Shared: true, Title: "我的交付", TitleEdited: true, UserID: owner.ID})
@@ -229,7 +230,7 @@ func TestAssistantSessionListDecoratesRunSessions(t *testing.T) {
 	}
 
 	if got := byID[repo.RunAssistantSessionID(free.ID)]; got.title != "修一下登录页的样式" || got.status != "" || got.label != "" || got.sop != "" {
-		t.Fatalf("free collaboration decorated as a SOP: %+v", got)
+		t.Fatalf("free collaboration decorated as a LOOP: %+v", got)
 	}
 	if got := byID[repo.RunAssistantSessionID(freeBare.ID)]; got.title != "" || got.status != "" || got.sop != "" {
 		t.Fatalf("free collaboration without a task must keep its own title: %+v", got)
@@ -241,7 +242,7 @@ func TestAssistantSessionListDecoratesRunSessions(t *testing.T) {
 	}
 
 	if got := byID[repo.RunAssistantSessionID(bare.ID)].title; got != "模拟90s流程 · 10月14日 15:11" {
-		t.Fatalf("SOP-only run title=%q", got)
+		t.Fatalf("LOOP-only run title=%q", got)
 	}
 
 	renamedRun := byID[repo.RunAssistantSessionID(renamed.ID)]

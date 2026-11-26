@@ -17,7 +17,7 @@
 
 ## 2. 数据契约
 
-### 2.1 数据库表（`migrations/034~036`）
+### 2.1 数据库表（`migrations/047~049`）
 - **`knowledge_connectors`**：存储用户连接器定义、加密凭据（`secret_ciphertext`）、OAuth 状态（`oauth_token_ciphertext`）、来源范围（`source_scope_json`）与允许工具列表（`allowed_tools_json`）。
 - **`knowledge_connector_usage_counts` / `knowledge_document_usage_counts`**：按 `(owner_user_id, connector_id[, document_id])` 聚合检索调用次数、命中次数与最终被回答/产物引用的次数（`cited_count`）。
 - **`knowledge_usage_events`**：记录近期检索与读取审计明细（含场景 `chat`/`sop`、工具名、查询词、命中文档与引用状态）。

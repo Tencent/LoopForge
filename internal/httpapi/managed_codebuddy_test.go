@@ -12,6 +12,7 @@ import (
 func TestResolveCodeBuddyManagedInventory(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", root)
+	t.Setenv("AGENTFLOW_MANAGED_CLIS", "")
 	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", "")
 	// A working host CLI must not hide a missing/corrupt managed installation.
 	host := t.TempDir()
@@ -22,6 +23,10 @@ func TestResolveCodeBuddyManagedInventory(t *testing.T) {
 	t.Setenv("PATH", host)
 	if _, err := resolveCodeBuddyBin(); err == nil || !strings.Contains(err.Error(), "尚未安装") {
 		t.Fatal("missing inventory fell back to host", err)
+	}
+	t.Setenv("AGENTFLOW_MANAGED_CLIS", "pi")
+	if got, err := resolveCodeBuddyBin(); err != nil || got != legacy {
+		t.Fatal("excluded provider did not fall back to host", got, err)
 	}
 	writeCurrent := func(version string) string {
 		t.Helper()
@@ -44,8 +49,9 @@ func TestResolveCodeBuddyManagedInventory(t *testing.T) {
 	}
 	first := writeCurrent("2.164.0")
 	if got, err := resolveCodeBuddyBin(); err != nil || got != first {
-		t.Fatal(got, err)
+		t.Fatal("excluding the provider hid its existing managed install", got, err)
 	}
+	t.Setenv("AGENTFLOW_MANAGED_CLIS", "")
 	second := writeCurrent("2.165.0")
 	if got, err := resolveCodeBuddyBin(); err != nil || got != second {
 		t.Fatal("next call did not pick new version", got, err)

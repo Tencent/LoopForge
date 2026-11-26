@@ -58,7 +58,7 @@ func TestPassFailedScriptContinuesDownstreamHTTP(t *testing.T) {
 	s := openPassTestStore(t)
 	suffix := time.Now().UTC().UnixNano()
 	wfID := fmt.Sprintf("pass-http-%d", suffix)
-	wf := domain.WorkflowDefinition{ID: wfID, Name: "pass http", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: wfID, Name: "pass http", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "hard", Name: "hard", Type: "script", ScriptLanguage: "shell", Script: "exit 1", OnFailure: "fail", MaxAttempts: 1},
 		{ID: "next", Name: "next", Type: "script", ScriptLanguage: "shell", Script: "printf 'ok\\n'", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "hard", Target: "next", When: "success"}}}

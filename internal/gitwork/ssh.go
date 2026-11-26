@@ -1,7 +1,6 @@
 package gitwork
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -64,48 +63,6 @@ github.com,[ssh.github.com]:443 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAy
 github.com,[ssh.github.com]:443 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
 `
 
-func sshHostKeys(remotes []SSHRemote) ([]byte, error) {
-	content := []byte(builtinKnownHosts)
-	if path := strings.TrimSpace(os.Getenv(SSHKnownHostsEnv)); path != "" {
-		configured, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("无法读取 %s 指定的主机密钥文件", SSHKnownHostsEnv)
-		}
-		// Configured entries come first so an @revoked line still applies.
-		content = append(append(configured, '\n'), content...)
-	}
-	allowed := make(map[string]bool, len(remotes))
-	for _, remote := range remotes {
-		allowed[knownhosts.Normalize(net.JoinHostPort(remote.Host, remote.Port))] = false
-	}
-	var pinned bytes.Buffer
-	for _, line := range bytes.Split(content, []byte("\n")) {
-		marker, hosts, key, _, _, err := ssh.ParseKnownHosts(line)
-		if err != nil || (marker != "" && marker != "revoked" && marker != "cert-authority") {
-			continue
-		}
-		for _, host := range hosts {
-			host = strings.ToLower(host)
-			if _, ok := allowed[host]; !ok {
-				continue
-			}
-			if marker != "" {
-				fmt.Fprintf(&pinned, "@%s ", marker)
-			}
-			fmt.Fprintf(&pinned, "%s %s", host, ssh.MarshalAuthorizedKey(key))
-			if marker != "revoked" {
-				allowed[host] = true
-			}
-		}
-	}
-	for _, remote := range remotes {
-		if endpoint := knownhosts.Normalize(net.JoinHostPort(remote.Host, remote.Port)); !allowed[endpoint] {
-			return nil, fmt.Errorf("SSH 主机 %s 未获信任：平台只内置了 github.com 的公钥，其他主机请管理员在 %s 中添加并核对该主机和端口的公钥", endpoint, SSHKnownHostsEnv)
-		}
-	}
-	return pinned.Bytes(), nil
-}
-
 // sshBinding ties one repository remote to its host alias and private key.
 type sshBinding struct {
 	remote SSHRemote
@@ -155,7 +112,7 @@ func bindSSHRemotes(environment map[string]string, keys map[string]string) ([]ss
 // Aliases bind each repository to its selected host key.
 // The filesystem contains a socket and public data only. clientRoot is the
 // mount path corresponding to root for a client in a container.
-func StartSSH(environment map[string]string, keys map[string]string, root, clientRoot string) (func(), error) {
+func StartSSH(ctx context.Context, environment map[string]string, keys map[string]string, root, clientRoot string) (func(), error) {
 	if len(keys) == 0 {
 		return func() {}, nil
 	}
@@ -163,14 +120,14 @@ func StartSSH(environment map[string]string, keys map[string]string, root, clien
 	if err != nil {
 		return nil, err
 	}
-	return startSSHSession(environment, bindings, remotes, root, clientRoot)
+	return startSSHSession(ctx, environment, bindings, remotes, root, clientRoot)
 }
 
 // StartSSHHosts gives every SSH remote on the given hosts the matching key,
 // without knowing the repositories in advance: an agent that clones
 // git@github.com:org/repo.git itself gets the requester's github.com key.
 // keys maps "host:port" endpoints (as stored per user) to private keys.
-func StartSSHHosts(environment map[string]string, keys map[string]string, root, clientRoot string) (func(), error) {
+func StartSSHHosts(ctx context.Context, environment map[string]string, keys map[string]string, root, clientRoot string) (func(), error) {
 	endpoints := make([]string, 0, len(keys))
 	for endpoint, key := range keys {
 		if strings.TrimSpace(key) != "" {
@@ -193,17 +150,17 @@ func StartSSHHosts(environment map[string]string, keys map[string]string, root, 
 		bindings = append(bindings, sshBinding{remote: remote, alias: fmt.Sprintf("lf-%x", sum[:16]), key: keys[endpoint], match: remote.Host})
 		remotes = append(remotes, remote)
 	}
-	return startSSHSession(environment, bindings, remotes, root, clientRoot)
+	return startSSHSession(ctx, environment, bindings, remotes, root, clientRoot)
 }
 
-func startSSHSession(environment map[string]string, bindings []sshBinding, remotes []SSHRemote, root, clientRoot string) (func(), error) {
+func startSSHSession(ctx context.Context, environment map[string]string, bindings []sshBinding, remotes []SSHRemote, root, clientRoot string) (func(), error) {
 	environment["GIT_SSH_VARIANT"] = "ssh"
 	if len(bindings) == 0 {
 		// Keep terminals usable for editing without using a host identity.
 		environment["GIT_SSH_COMMAND"] = `sh -c 'echo "未配置 Git SSH 密钥，请在个人配置中添加" >&2; exit 1' --`
 		return func() {}, nil
 	}
-	pinned, err := sshHostKeys(remotes)
+	pinned, err := sshHostKeys(ctx, remotes)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +331,7 @@ func sshCommandEnvironment(ctx context.Context, args []string) (map[string]strin
 				return nil, nil, fmt.Errorf("%s: %w", remote, ErrSSHKeyRequired)
 			}
 			env := make(map[string]string)
-			cleanup, err := StartSSH(env, map[string]string{remote: keys[remote]}, "", "")
+			cleanup, err := StartSSH(ctx, env, map[string]string{remote: keys[remote]}, "", "")
 			return env, cleanup, err
 		}
 	}

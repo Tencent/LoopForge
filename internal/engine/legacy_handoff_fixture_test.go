@@ -42,7 +42,7 @@ func buildSOPHandoffArtifacts(runID, handoffID, summary string, transcript []byt
 	for _, artifact := range artifacts {
 		total += len(artifact.Content)
 		if len(artifact.Content) > maxArtifactBytes || total > runtime.WorkspaceCheckpointMaxBytes {
-			return nil, fmt.Errorf("完整交接归档超过工作区传输上限；原记录已保留，未截断或切回 SOP")
+			return nil, fmt.Errorf("完整交接归档超过工作区传输上限；原记录已保留，未截断或切回 LOOP")
 		}
 	}
 	return artifacts, nil

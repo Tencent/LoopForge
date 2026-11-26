@@ -17,6 +17,31 @@ test("a finished reply does not claim that a task is finished or infer approval 
   assert.equal(sessionReplyStatus({ id: "three" }).state, "idle");
 });
 
+test("a reply paused for an external write waits instead of spinning", () => {
+  const row = { id: "current", generationStatus: "running" };
+  const waiting = sessionReplyStatus(row, {
+    generation: { sessionId: "current", status: "running" },
+    busy: true,
+    approvalCount: 1,
+  });
+  assert.equal(waiting.state, "waiting_approval");
+  assert.equal(waiting.label, "待审批");
+  // 静态时钟图标，且没有 busy，头部与侧栏都不会继续转圈。
+  assert.equal(waiting.icon, "pending-approval");
+  assert.equal(waiting.busy, undefined);
+  // 没有待审批项时仍是运行态；本轮结束后不残留待审批。
+  assert.equal(sessionReplyStatus(row, { busy: true, approvalCount: 0 }).state, "running");
+  assert.equal(
+    sessionReplyStatus(row, { generation: { sessionId: "current", status: "failed" }, approvalCount: 2 }).state,
+    "failed",
+  );
+  // 未知状态不被推断成待审批。
+  assert.equal(
+    sessionReplyStatus({ id: "x", generationStatus: "future-provider-state" }, { approvalCount: 3 }).state,
+    "idle",
+  );
+});
+
 test("a manually stopped reply leaves no stop mark in the session list", () => {
   const stopped = sessionReplyStatus({ id: "stopped", generationStatus: "cancelled" });
   assert.equal(stopped.state, "cancelled");
@@ -33,7 +58,7 @@ test("the initial browser-local conversations contain finished messages rather t
   assert.ok(rows.every((row) => row.model === "model-original" && row.userId === 7));
 });
 
-test("a run conversation only carries a chip while the SOP needs a person", () => {
+test("a run conversation only carries a chip while the LOOP needs a person", () => {
   assert.equal(runSessionState({ id: "chat", runId: "run-1" }), null);
   assert.equal(runSessionState({ id: "sop-1", runId: "run-1", shared: true, runStatus: "succeeded" }), null);
   assert.deepEqual(
@@ -47,8 +72,8 @@ test("a run conversation only carries a chip while the SOP needs a person", () =
   );
 });
 
-test("hover text names a run conversation's SOP and run state, a chat's reply state", () => {
-  const run = { id: "sop-1", runId: "run-1", shared: true, displayTitle: "#24 登录改版", title: "通用后端交付 SOP", sopName: "通用后端交付", runStatusLabel: "已完成" };
+test("hover text names a run conversation's LOOP and run state, a chat's reply state", () => {
+  const run = { id: "sop-1", runId: "run-1", shared: true, displayTitle: "#24 登录改版", title: "通用后端交付 LOOP", sopName: "通用后端交付", runStatusLabel: "已完成" };
   assert.equal(
     sessionTooltip(run, { projectName: "AgentFlow", replyLabel: "当前没有生成中的回复" }),
     "#24 登录改版 · AgentFlow · 通用后端交付 · 已完成",
@@ -56,7 +81,7 @@ test("hover text names a run conversation's SOP and run state, a chat's reply st
   assert.equal(sessionTooltip({ ...run, runStatusLabel: "" }, { replyLabel: "正在回复" }), "#24 登录改版 · 通用后端交付 · 正在回复");
   assert.equal(sessionTooltip({ id: "c", title: "普通会话", sopName: "x" }, { replyLabel: "回复完成" }), "普通会话 · 回复完成");
   assert.equal(sessionTooltip({ id: "n" }), "新对话");
-  // A title already led by the SOP does not repeat it.
+  // A title already led by the LOOP does not repeat it.
   assert.equal(
     sessionTooltip({ ...run, displayTitle: "模拟90s流程 · 10月13日 11:23", sopName: "模拟90s流程" }),
     "模拟90s流程 · 10月13日 11:23 · 已完成",

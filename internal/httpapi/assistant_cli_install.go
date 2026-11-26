@@ -55,7 +55,7 @@ func (h *assistantHandlers) cliInstallStatus(c *gin.Context) {
 
 func (h *assistantHandlers) answerCLIInstall(c *gin.Context, raw string, start bool) {
 	engine := assistantInstallEngine(raw)
-	if !runtime.OnDemandInstallable(engine) {
+	if !runtime.OnDemandInstallable(engine) && (start || engine != runtime.AgentCLIZCode) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "这个 CLI 不能从对话里安装"})
 		return
 	}
@@ -132,6 +132,10 @@ func (h *assistantHandlers) runCLIInstall(engine string, job *cliInstallJob) {
 	if err != nil {
 		log.Printf("assistant CLI install %s: %v", engine, err)
 	} else {
+		if engine == assistantEngineCodeBuddy {
+			// Discovery before the install cached an empty catalog.
+			forgetCLIModels()
+		}
 		h.noteCLIInstalled(engine)
 	}
 	job.err = err

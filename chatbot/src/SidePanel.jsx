@@ -60,7 +60,7 @@ export function DraftCard({
     [uncertain, setUncertain] = useState(false),
     [error, setError] = useState("");
   const draft = artifact.draft;
-  const declined = ["declined", "muted", "expired"].includes(draft.decision);
+  const declined = ["declined", "muted", "expired", "rejected"].includes(draft.decision);
   const answerable =
     !!draft.proposal &&
     !draft.inherited &&
@@ -165,7 +165,9 @@ export function DraftCard({
                 ? "未采纳，本会话不再建议"
                 : draft.decision === "expired"
                   ? "已超时"
-                  : "未采纳"
+                  : draft.decision === "rejected"
+                    ? "AI 已拒绝"
+                    : "未采纳"
               : draft.saved
               ? "已执行"
               : draft.resolved
@@ -184,7 +186,7 @@ export function DraftCard({
           <p className="proposal-reason">
             {draft.proposal.timing !== "start"
               ? "可选的后续工作"
-              : "建议整件事走 SOP"}
+              : "建议整件事走 LOOP"}
             ：{draft.proposal.reason}
           </p>
         ) : null}
@@ -318,7 +320,7 @@ export function DraftCard({
           ) : busy ? (
             "执行中…"
           ) : draft.proposal ? (
-            draft.tool === "issues_save" ? "建需求并走 SOP" : "走 SOP"
+            draft.tool === "issues_save" ? "建需求并走 LOOP" : "走 LOOP"
           ) : (
             `确认${summary.title}`
           )}
@@ -500,7 +502,7 @@ export default function SidePanel({
     }
   }
   return (
-    <aside className="side-panel" aria-label="产物与 SOP">
+    <aside className="side-panel" aria-label="产物与 LOOP">
       <header className="panel-tabs">
         <SlidingTabs aria-label="右侧面板">
           <button
@@ -526,7 +528,7 @@ export default function SidePanel({
             }}
           >
             <GitBranch size={14} />
-            SOP
+            LOOP
           </button>
         </SlidingTabs>
         <IconButton label="关闭侧边栏" onClick={onClose}>
@@ -566,7 +568,7 @@ export default function SidePanel({
                 <File size={28} />
                 <h3>产物会显示在这里</h3>
                 <p>
-                  对话中的图片、文件、图表、代码和 SOP
+                  对话中的图片、文件、图表、代码和 LOOP
                   草稿会自动汇集，点击即可查看。
                 </p>
               </div>
@@ -603,8 +605,8 @@ export default function SidePanel({
         ) : (
           <>
             <div className="panel-heading">
-              <h2>SOP</h2>
-              <IconButton label="刷新 SOP 与运行" onClick={() => void load()}>
+              <h2>LOOP</h2>
+              <IconButton label="刷新 LOOP 与运行" onClick={() => void load()}>
                 <RefreshCw size={16} />
               </IconButton>
             </div>
@@ -650,19 +652,19 @@ export default function SidePanel({
                     id: "workflow-" + workflowId,
                     name:
                       workflows.find((w) => w.id === workflowId)?.name ||
-                      "SOP 定义",
+                      "LOOP 定义",
                     kind: "sop",
                     content: JSON.stringify(
                       workflows.find((w) => w.id === workflowId),
                       null,
                       2,
                     ),
-                    source: "项目 SOP",
+                    source: "项目 LOOP",
                   })
                 }
               >
                 <ChevronRight size={14} />
-                查看 SOP 定义
+                查看 LOOP 定义
               </button>
             ) : null}
             <div className="button-row">
@@ -671,7 +673,7 @@ export default function SidePanel({
                 className="quiet-button"
                 onClick={() => action("clone")}
               >
-                创建 SOP
+                创建 LOOP
               </button>
               <button
                 disabled={busy}
@@ -679,7 +681,7 @@ export default function SidePanel({
                 onClick={() => action("dispatch")}
               >
                 <Play size={13} />
-                {busy ? "处理中…" : "派发 SOP"}
+                {busy ? "处理中…" : "派发 LOOP"}
               </button>
             </div>
             {error ? (
@@ -705,7 +707,7 @@ export default function SidePanel({
                 ))}
               {!artifacts.some((a) => a.kind === "sop") ? (
                 <p className="muted">
-                  在聊天中描述要创建或派发的 SOP，草稿将在这里等待确认。
+                  在聊天中描述要创建或派发的 LOOP，草稿将在这里等待确认。
                 </p>
               ) : null}
             </section>
@@ -754,7 +756,7 @@ export default function SidePanel({
                         ...a,
                         mimeType: a.mediaType,
                         kind: a.mediaType === "image/svg+xml" ? "svg" : "code",
-                        source: "SOP 运行产物",
+                        source: "LOOP 运行产物",
                         url: `/api/runs/${encodeURIComponent(openRun.id)}/artifacts/${encodeURIComponent(a.id)}`,
                       })
                     }

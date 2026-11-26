@@ -16,8 +16,8 @@ func TestPrepareClarifyWorkspaceRequiresGitToken(t *testing.T) {
 	t.Parallel()
 	_, err := PrepareClarifyWorkspace(context.Background(), t.TempDir(), domain.Repository{
 		ID: "repo", CloneURL: "https://git.example.com/a/b.git",
-	}, "")
-	if err == nil || !strings.Contains(err.Error(), "需求责任人未配置 Git Token") {
+	}, testRunCredentials(""))
+	if err == nil || !strings.Contains(err.Error(), "clone clarify workspace") {
 		t.Fatalf("empty token error = %v", err)
 	}
 }
@@ -29,14 +29,17 @@ func TestResolveGitTokenUsesResponsibleUserOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.PutUser(domain.User{ID: 22, LoginName: "responsible", GitToken: "tok_user"}); err != nil {
+	if err := s.PutUser(domain.User{ID: 22, LoginName: "responsible"}); err != nil {
 		t.Fatal(err)
 	}
-	got := resolveGitToken(s, 22)
+	if err := s.SaveGitHTTPCredential(22, "", domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Host: "github.com", Name: "GitHub", Platform: domain.GitPlatformGitHub}, Token: "tok_user"}); err != nil {
+		t.Fatal(err)
+	}
+	got := resolveGitHubToken(s, 22)
 	if got != "tok_user" {
 		t.Fatalf("resolveGitToken = %q, want tok_user", got)
 	}
-	if got := resolveGitToken(s, 999); got != "" {
+	if got := resolveGitHubToken(s, 999); got != "" {
 		t.Fatalf("missing user must not fall back to host env, got %q", got)
 	}
 }
@@ -71,7 +74,7 @@ func TestProjectAndRepositoryTokensAreIgnored(t *testing.T) {
 	if err := s.PutRepository(repo); err != nil {
 		t.Fatal(err)
 	}
-	if got := resolveGitToken(s, 1); got != "" {
+	if got := resolveGitHubToken(s, 1); got != "" {
 		t.Fatalf("project/repository/env tokens must be ignored, got %q", got)
 	}
 }

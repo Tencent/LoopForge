@@ -8,11 +8,9 @@ before(ensureProject);
 after(cleanup);
 
 test('Docker sandbox: real container, shared state, environment and artifact handoff', {skip:process.env.AGENTFLOW_E2E_DOCKER!=='1',timeout:600_000},async()=>{
-  const dockerfile=uid('docker-file'),sandbox=uid('docker-sandbox');
-  track('Dockerfile',()=>del(`/api/dockerfiles?id=${dockerfile}`));
+  const sandbox=uid('docker-sandbox');
   track('Docker sandbox',()=>del(`/api/sandboxes?id=${sandbox}`));
-  await put('/api/dockerfiles',{id:dockerfile,projectId:cfg.projectId,name:'E2E Docker execution',content:'FROM node:22-bookworm-slim\nWORKDIR /workspace\n'});
-  await put('/api/sandboxes',{id:sandbox,projectId:cfg.projectId,name:'E2E container',driver:'docker',dockerfileId:dockerfile,environment:{E2E_SANDBOX_VALUE:'actual-container'}});
+  await put('/api/sandboxes',{id:sandbox,projectId:cfg.projectId,name:'E2E container',driver:'docker',dockerfile:{content:'FROM node:22-bookworm-slim\nWORKDIR /workspace\n'},environment:{E2E_SANDBOX_VALUE:'actual-container'}});
   const wf=await createWorkflow('docker-run',[
     script('build',`test -f /.dockerenv && test "$E2E_SANDBOX_VALUE" = actual-container
 node -e "require('fs').writeFileSync('report.txt','docker-runtime-ok\\n')"

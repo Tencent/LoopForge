@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -73,25 +75,22 @@ func TestCheckpointEntryHeaderRejectsSpecialFiles(t *testing.T) {
 	}
 }
 
-func TestCopyCheckpointFileCopiesDeclaredSize(t *testing.T) {
+func TestWorkspaceCheckpointRejectsFileTruncatedDuringCopy(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("payload"), 0o644); err != nil {
+	file := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(file, []byte("payload"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	base, err := os.OpenRoot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer base.Close()
-	var out bytes.Buffer
-	if err = copyCheckpointFile(base, &out, "a.txt", 7); err != nil || out.String() != "payload" {
-		t.Fatalf("copy = %q, %v", out.String(), err)
-	}
-	if err = copyCheckpointFile(base, &out, "missing.txt", 1); err == nil {
-		t.Fatal("expected error for missing file")
-	}
-	out.Reset()
-	if err = copyCheckpointFile(base, &out, "a.txt", 100); err == nil {
-		t.Fatal("expected short-file error when declared size exceeds content")
+	var archive bytes.Buffer
+	destination := checkpointTestWriter(func(p []byte) (int, error) {
+		if archive.Len() == 0 {
+			if err := os.Truncate(file, 1); err != nil {
+				return 0, err
+			}
+		}
+		return archive.Write(p)
+	})
+	if err := CreateWorkspaceCheckpointTo(root, destination); !errors.Is(err, io.EOF) {
+		t.Fatalf("expected short-file error when declared size exceeds content, got %v", err)
 	}
 }

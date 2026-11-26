@@ -1,17 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
 test('token management renders client specs, revealed prompts, and credential hints', async (t) => {
   const app = await loadApp();
   t.after(app.close);
+  app.router.get('/api/users/1/git-http-credentials', [{id:'github',host:'github.com'}]);
+  app.router.delete('/api/users/1/git-http-credentials/github', []);
   app.router.put('/api/users/1/credentials', {
     id: 1, loginName: 'alice', chineseName: 'Alice', isGuest: false,
-    gitTokenConfigured: true, codeBuddyApiKeyConfigured: true,
+    gitHubCredentialConfigured: true, codeBuddyApiKeyConfigured: true,
   });
   app.router.get('/api/users', [{
     id: 1, loginName: 'alice', chineseName: 'Alice', isGuest: false,
-    gitTokenConfigured: true, gitTokenOAuth: true, codeBuddyApiKeyConfigured: true,
+    gitHubCredentialConfigured: true, gitTokenOAuth: true, codeBuddyApiKeyConfigured: true,
   }]);
   app.router.post('/api/users/1/git-token/verify', {
     valid: false, missing: ['write_repository'],
@@ -29,7 +32,10 @@ test('token management renders client specs, revealed prompts, and credential hi
   assert.match(body.textContent, /我的访问密钥/);
   assert.doesNotMatch(body.textContent, /Token/);
   assert.match(body.textContent, /Claude Code/);
-  assert.match(body.textContent, /复制 Claude Code 配置提示词/);
+  assert.match(body.textContent, /连接 LoopForge 平台 MCP/);
+  assert.match(body.querySelector('[data-copy-revealed-prompt]').textContent, /复制 MCP 接入提示词/);
+  assert.equal(body.querySelector('[data-revealed-client="claude"]').checked, true);
+  assert.match(body.querySelector('#token-paste-hint').textContent, /粘贴到你自己的 Claude Code 对话中并发送/);
   assert.equal(body.querySelector('[data-access-tab]'), null, '访问密钥 has no MCP/能力/API tabs');
   const spec = app.evaluate(`accessMcpClientSpec('codex','http://example.test','abc')`);
   assert.match(spec.code, /mcp_servers\.agentflow/);
@@ -40,25 +46,23 @@ test('token management renders client specs, revealed prompts, and credential hi
 
   body.querySelector('[data-revealed-client="codex"]').click();
   assert.equal(app.evaluate(`state.accessClient`), 'codex');
-  assert.match(body.textContent, /复制 Codex 配置提示词/);
+  assert.match(body.querySelector('#token-paste-hint').textContent, /粘贴到你自己的 Codex 对话中并发送/);
 
   const credential = app.evaluate(`({
     pat:credentialSecretError(credentialKind('codexApiKey'),'any-key'),
     url:credentialExtraError(credentialKind('codexApiKey'),'ftp://bad'),
     save:credentialSavePayload(credentialKind('codeBuddyApiKey'),{secret:' ck_x ',extra:'ioa'}),
     clear:credentialClearPayload(credentialKind('codexApiKey')),
-    next:credentialNextKind({gitTokenConfigured:true}).key,
     badge:credentialBadgeHTML('err')
   })`);
   assert.equal(credential.pat, '');
   assert.match(credential.url, /http/);
   assert.equal(credential.save.codeBuddyApiKey, 'ck_x');
   assert.equal(credential.clear.codexApiKeyClear, true);
-  assert.equal(credential.next, 'codeBuddyApiKey');
   assert.match(credential.badge, /有错误/);
 
   app.evaluate(`
-    state.data.users=[{...state.currentUser,id:1,gitTokenConfigured:true,codeBuddyApiKeyConfigured:true}];
+    state.data.users=[{...state.currentUser,id:1,gitHubCredentialConfigured:true,codeBuddyApiKeyConfigured:true}];
     state.currentUser=state.data.users[0];
     renderPersonalSettings();
   `);
@@ -91,7 +95,7 @@ test('token management renders client specs, revealed prompts, and credential hi
   gitRow.querySelector('[data-credential-act="delete"]').click();
   gitRow.querySelector('[data-credential-act="confirm-delete"]').click();
   await settle(6);
-  assert.ok(app.router.calls.some(c => c.path === '/api/users/1/credentials' && c.body.gitTokenClear));
+  assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/users/1/git-http-credentials/github'));
   await app.evaluate(`refreshGongfengGrant()`);
   assert.equal(app.evaluate(`state.data.users[0].gitTokenOAuth`), true);
 
@@ -111,18 +115,17 @@ test('token management renders client specs, revealed prompts, and credential hi
 
   app.evaluate(`
     state.currentUser={id:1,loginName:'alice',chineseName:'Alice',isGuest:false};
-    state.data.users=[{...state.currentUser,gitTokenConfigured:true,codeBuddyApiKeyConfigured:false}];
+    state.data.users=[{...state.currentUser,gitHubCredentialConfigured:true,codeBuddyApiKeyConfigured:false}];
     renderPersonalSettings();openCredentialWizard('codexApiKey');
   `);
   await settle(3);
+  app.router.put('/api/users/1/credentials', { id: 1, codexApiKeyConfigured: true });
   const wizardSecret = app.document.querySelector('#credentialWizard input[name="secret"]');
   wizardSecret.value = 'sk-valid';
   wizardSecret.dispatchEvent(new app.window.Event('input', { bubbles: true }));
   wizardSecret.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  await settle(2);
-  assert.match(app.document.querySelector('#credentialWizard').textContent, /确认并保存/);
-  app.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  await settle(2);
+  await settle(6);
+  assert.ok(app.router.calls.some(call => call.method === 'PUT' && call.path === '/api/users/1/credentials'));
   assert.equal(app.evaluate(`credentialWizard===null`), true);
 
   app.router.post('/api/auth/logout', { ok: true });
@@ -154,10 +157,21 @@ test('personal token UI creates and revokes tokens through the API', async (t) =
   assert.deepEqual(create.body, { name: 'Automation', expiresInDays: 180 });
   assert.equal(app.evaluate(`state.revealedToken`), 'af_secret');
   app.evaluate(`renderAccessTokens()`);
-  assert.match(app.document.querySelector('#accessBody').textContent, /af_secret/);
+  const details = app.document.querySelector('.token-key-info');
+  assert.equal(details.open, false);
+  details.querySelector('summary').click();
+  assert.equal(details.open, true);
+  assert.equal(details.querySelector('code').textContent, 'af_secret');
   assert.ok(app.document.querySelector('#accessBody [data-copy-revealed-prompt]'), 'the one-time reveal offers the client prompt');
+  const createMore = app.document.querySelector('.token-create-more');
+  assert.equal(createMore.open, false);
+  createMore.querySelector('summary').click();
+  assert.equal(createMore.open, true);
+  assert.ok(createMore.contains(app.document.querySelector('#accessTokenForm')));
 
-  app.evaluate(`renderAccessTokens()`);
+  app.document.querySelector('[data-close-revealed]').click();
+  assert.equal(app.evaluate('state.revealedToken'), '');
+  assert.equal(app.document.querySelector('.token-reveal'), null);
   app.document.querySelector('[data-revoke-token="token-1"]').click();
   await settle(2);
   app.document.querySelector('#confirmOkBtn').click();
@@ -193,9 +207,12 @@ test('token-bearing access base never downgrades a secure deployment', async (t)
   assert.equal(base('ftp://studio.example', 'http:'), 'http://page.example');
 });
 
-test('access snippets copied from an https studio use https endpoints', async (t) => {
+test('each MCP setup button copies the selected client, HTTPS endpoint and new key', async (t) => {
   const app = await loadApp({ origin: 'https://studio.example' });
   t.after(app.close);
+  Object.defineProperty(app.window, 'isSecureContext', { value: true });
+  let copied;
+  app.window.navigator.clipboard.writeText = async value => { copied = value; };
   app.router.post('/api/auth/tokens', { token: 'af_live_secret' });
   app.router.get('/api/auth/tokens', []);
   app.evaluate(`
@@ -210,15 +227,35 @@ test('access snippets copied from an https studio use https endpoints', async (t
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(8);
   assert.equal(app.evaluate(`state.revealedToken`), 'af_live_secret');
-  for (const client of ['cursor', 'claude', 'codebuddy', 'codex']) {
-    app.evaluate(`state.accessClient='${client}';renderAccessTokens()`);
-    const button = app.document.querySelector('#accessBody [data-copy-revealed-prompt]');
-    assert.ok(button, `${client} reveal offers the client prompt`);
-    const prompt = decodeURIComponent(button.dataset.copyRevealedPrompt);
-    assert.match(prompt, /af_live_secret/);
-    assert.match(prompt, /ENDPOINT = https:\/\/studio\.example\/mcp/);
-    assert.match(prompt, /https:\/\/studio\.example\/mcp-setup\.txt/);
-    assert.doesNotMatch(prompt + app.evaluate(`accessMcpClientSpec('${client}',getPublicBaseURL(),'t').code`), /http:\/\/studio\.example/, `${client} snippet downgraded the endpoint`);
+  for (const choice of app.document.querySelectorAll('[data-revealed-client]')) {
+    choice.click();
+    assert.equal(choice.checked, true);
+    app.document.querySelector('[data-copy-revealed-prompt]').click();
+    assert.ok(copied.includes(choice.closest('label').textContent.trim()), 'the prompt identifies the selected client');
+    assert.match(copied, /API_TOKEN = af_live_secret/);
+    assert.match(copied, /ENDPOINT = https:\/\/studio\.example\/mcp/);
+    assert.match(copied, /https:\/\/studio\.example\/mcp-setup\.txt/);
+    assert.match(copied, /tools\/list/);
+    assert.doesNotMatch(copied + app.evaluate(`accessMcpClientSpec('${choice.value}',getPublicBaseURL(),'t').code`), /http:\/\/studio\.example/);
+  }
+  app.document.querySelector('.token-key-info summary').click();
+  app.document.querySelector('[data-copy-revealed]').click();
+  assert.equal(copied, 'af_live_secret');
+});
+
+test('Cursor and CodeBuddy setup snippets use URL-based remote server configs', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const guide = await readFile(new URL('../../web/mcp-setup.txt', import.meta.url), 'utf8');
+  const expected = { mcpServers: { agentflow: {
+    url: 'https://studio.example/mcp', headers: { Authorization: 'Bearer <API_TOKEN>' },
+  } } };
+  for (const client of ['cursor', 'codebuddy']) {
+    const spec = app.evaluate(`accessMcpClientSpec('${client}','https://studio.example','<API_TOKEN>')`);
+    assert.deepEqual(JSON.parse(spec.code), expected);
+    const section = guide.split(`### ${spec.label}\n`)[1].split('\n### ')[0];
+    const json = section.match(/```json\n([\s\S]*?)\n```/)[1];
+    assert.deepEqual(JSON.parse(json.replace('<ENDPOINT>', expected.mcpServers.agentflow.url)), expected);
   }
 });
 

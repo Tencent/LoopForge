@@ -1,6 +1,6 @@
-// Real SOP executions in the deployment's sandbox using script nodes (no model
+// Real LOOP executions in the deployment's sandbox using script nodes (no model
 // cost): approval with rework, workspace browsing, artifacts, logs, telemetry,
-// SSE, retry, manual pass, pause/resume, decline, cancel, child SOPs, delete
+// SSE, retry, manual pass, pause/resume, decline, cancel, child LOOPs, delete
 // and run timing.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,6 +46,11 @@ test('approval gate: reject reworks upstream in the same workspace, approve comp
     await get(`/api/runs/${id}/workspace`);
   });
 
+  await test.test('run control lists the approval actions while waiting', async () => {
+    const control = await get(`/api/runs/${id}/control`);
+    assert.match(JSON.stringify(control), /runs_approve/);
+  });
+
   await test.test('wrong node cannot be approved', async () => {
     await api('POST', `/api/runs/${id}/approve`, { nodeId: 'prep' }, { expect: [400, 409, 500] });
   });
@@ -83,6 +88,22 @@ test('approval gate: reject reworks upstream in the same workspace, approve comp
   assert.equal(summary?.status, 'succeeded');
 });
 
+test('evaluation waits for the run to finish and leaves no partial history', async () => {
+  const workflow = await createWorkflow('eval-approval', [script('prepare', 'echo ready'), approval('gate', 'prepare')]);
+  const { id } = await startRun(workflow);
+  await waitRun(id, run => nodeStatus(run, 'gate') === 'waiting_approval');
+
+  const path = `/api/runs/${id}`;
+  await post(`${path}/eval`, {}, { expect: 409 });
+  assert.deepEqual(await get(`${path}/eval`), { runId: id, status: '' });
+  assert.deepEqual(await get(`${path}/evals`), []);
+  await get(`${path}/eval/stream`, { expect: 404 });
+  await post(`${path}/eval/apply`, { recommendationIds: ['missing'] }, { expect: 404 });
+
+  await post(`${path}/approve`, { nodeId: 'gate' });
+  await waitRun(id, run => run.status === 'succeeded');
+});
+
 test('failed script: retry from the node succeeds on the second attempt', {
   todo: 'POST /api/runs/:id/retry tears the failed attempt\'s sandbox down inside the request (docker rm -f of the agentflow-run-*-scripts sidecar, up to dockerTeardownTimeout=60s); under nested Docker that rm hangs, so the call outlives the 60s client timeout',
 }, async () => {
@@ -109,6 +130,8 @@ test('failed script: manual pass skips it and continues downstream', async () =>
   await api('POST', `/api/runs/${id}/pass`, { nodeId: 'after' }, { expect: [400, 409, 500] });
   await post(`/api/runs/${id}/pass`, { nodeId: 'broken', context: 'e2e 人工通过' });
   const run = await waitRun(id, r => r.status === 'succeeded', { label: 'succeeded after pass' });
+  const completed = await get(`/api/runs/${id}/wait?timeoutSec=25`);
+  assert.deepEqual(completed, { runId: id, projectId: cfg.projectId, status: 'succeeded', terminal: true, timedOut: false });
   assert.equal(nodeOf(run, 'broken').attempt, 1, 'pass must not re-execute the node');
   assert.match(await logsText(id), /AFTER_PASS/);
 });
@@ -153,7 +176,7 @@ test('cancel stops a running script and the run can then be deleted', async () =
   await api('DELETE', `/api/runs/${id}`, undefined, { expect: [400, 404] });
 });
 
-test('SOP node runs a child SOP and continues the parent after it', async () => {
+test('LOOP node runs a child LOOP and continues the parent after it', async () => {
   const child = await createWorkflow('child', [script('c1', 'echo CHILD_RAN > child.txt && echo CHILD_DONE')]);
   const parent = await createWorkflow('parent', [
     script('p1', 'echo PARENT_START'),
@@ -169,8 +192,8 @@ test('SOP node runs a child SOP and continues the parent after it', async () => 
   assert.match(await logsText(id), /PARENT_DONE/);
 });
 
-// 子 SOP 和父流程共用一个检出目录：代码改动双向可见，节点不提交、不推送工作分支。
-test('repository-bound child SOP hands code back through the shared checkout', { skip: repoSkip, timeout: 700_000 }, async () => {
+// 子 LOOP 和父流程共用一个检出目录：代码改动双向可见，节点不提交、不推送工作分支。
+test('repository-bound child LOOP hands code back through the shared checkout', { skip: repoSkip, timeout: 700_000 }, async () => {
   const { run } = await childSOPHandoffScenario({ label: 'repo-sop', waitRun });
   const logs = await logsText(run.id);
   assert.match(logs, /PARENT_SAW_CHILD/);
@@ -258,9 +281,15 @@ test('starting a run validates its input', async () => {
   // A fresh database (local.sh) has no built-in templates to try this with.
   const template = await api('GET', '/api/workflows/generic-backend-delivery', undefined, { expect: [200, 404], raw: true });
   if (!project.defaultRepositoryId && template.status === 200 && template.data?.generic) {
+    const requirements = await get(`/api/workflows/generic-backend-delivery/executor-requirements?projectId=${encodeURIComponent(cfg.projectId)}`);
+    assert.ok(Array.isArray(requirements));
     const run = await startRun('generic-backend-delivery', 'Check repository-free admission');
     assert.deepEqual(run.repositories || [], []);
-    await post(`/api/runs/${run.id}/cancel`, {});
+    const cancel = await api('POST', `/api/runs/${run.id}/cancel`, {}, { expect: [200, 400], raw: true });
+    if (cancel.status === 400) {
+      assert.equal(cancel.data?.error, 'run is not active');
+      assert.match((await get(`/api/runs/${run.id}`)).status, /^(failed|succeeded|cancelled)$/);
+    }
   }
 });
 

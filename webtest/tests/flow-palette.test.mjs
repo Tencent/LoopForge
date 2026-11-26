@@ -91,7 +91,7 @@ test('flow palette collapses, adds nodes by click, keyboard and drag-and-drop', 
   await settle(4);
 });
 
-test('SOP switcher lists, filters, switches and opens the template wizard', async (t) => {
+test('LOOP switcher lists, filters, switches and opens the template wizard', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   editableFlow(app);
@@ -109,7 +109,7 @@ test('SOP switcher lists, filters, switches and opens the template wizard', asyn
   const q = doc.getElementById('flowSwitchQ');
   q.value = 'zz-no-such-sop';
   q.dispatchEvent(new app.window.Event('input', { bubbles: true }));
-  assert.match(doc.getElementById('flowSwitchList').textContent, /没有匹配的 SOP/);
+  assert.match(doc.getElementById('flowSwitchList').textContent, /没有匹配的 LOOP/);
   q.value = '';
   q.dispatchEvent(new app.window.Event('input', { bubbles: true }));
   q.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));

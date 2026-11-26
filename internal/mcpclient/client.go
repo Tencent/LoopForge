@@ -440,6 +440,9 @@ func (c *Client) ensureInit(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	if c.init {
 		c.mu.Unlock()
@@ -450,6 +453,9 @@ func (c *Client) ensureInit(ctx context.Context) error {
 	c.initMu.Lock()
 	defer c.initMu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	if c.init {
 		c.mu.Unlock()
@@ -501,6 +507,9 @@ func (c *Client) ensureInit(ctx context.Context) error {
 		statusCode := resp.StatusCode
 		resp.Body.Close()
 		if readErr != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			break
 		}
 		var rpcResp rpcResponse
@@ -533,6 +542,9 @@ func (c *Client) ensureInit(ctx context.Context) error {
 		if notifResp, err := c.http.Do(notifHTTP); err == nil {
 			notifResp.Body.Close()
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return nil
 }

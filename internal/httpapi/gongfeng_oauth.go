@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/config"
 	"agentflow/internal/gongfeng"
 
 	"github.com/gin-gonic/gin"
@@ -35,13 +36,13 @@ type gongfengOAuthState struct {
 // gongfengOAuthStatus tells the settings page whether to offer "用工蜂授权".
 // Without a configured Gongfeng application the link only leads to an error.
 func (h *authHandlers) gongfengOAuthStatus(c *gin.Context) {
-	c.JSON(http.StatusOK, map[string]bool{"enabled": gongfeng.ConfigFromEnv().Enabled()})
+	c.JSON(http.StatusOK, gin.H{"enabled": gongfeng.ConfigFromEnv().Enabled(), "host": config.GongfengHost()})
 }
 
 func (h *authHandlers) gongfengOAuthStart(c *gin.Context) {
 	cfg := gongfeng.ConfigFromEnv()
 	if !cfg.Enabled() {
-		gongfengOAuthPage(c, http.StatusServiceUnavailable, "工蜂授权还没配好", "服务没有配置工蜂应用的 Client ID、Secret 和回调地址。")
+		gongfengOAuthPage(c, http.StatusServiceUnavailable, "工蜂授权还没配好", "请由管理员配置工蜂主机、OAuth 应用和回调地址。")
 		return
 	}
 	user, ok := h.requestUser(c.Request, false)

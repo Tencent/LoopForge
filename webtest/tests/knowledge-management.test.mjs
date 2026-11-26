@@ -171,16 +171,16 @@ test('高扩展动态表单：新增第 3 方插件类型 feishu_wiki 时无需�
   document.querySelector('#kbField-space_id').value = 'space-9527';
   document.querySelector('#kbField-token').value = 'secret-feishu-tok';
 
-  document.querySelector('#kbDrawerCheckBtn').click();
+  document.querySelector('#kbConnDrawerCheckBtn').click();
   await settle(8);
   const checkCall = lastCall(app, 'POST', '/api/knowledge/connectors/check');
   assert.ok(checkCall);
   assert.equal(checkCall.body.type, 'feishu_wiki');
   assert.equal(checkCall.body.config.extra.space_id, 'space-9527');
   assert.equal(checkCall.body.secret.token, 'secret-feishu-tok');
-  assert.ok(document.querySelector('#kbDrawerFeedback').textContent.includes('连接正常'));
+  assert.ok(document.querySelector('#kbConnDrawerFeedback').textContent.includes('连接正常'));
 
-  document.querySelector('#kbDrawerSaveBtn').click();
+  document.querySelector('#kbConnDrawerSaveBtn').click();
   await settle(10);
 
   const createCall = lastCall(app, 'POST', '/api/knowledge/connectors');
@@ -247,7 +247,7 @@ test('连接器列表、编辑不清空旧密钥、启停、探测、查看子�
   document.querySelector('[data-kb-edit="mcp-1"]').click();
   await settle(4);
   document.querySelector('#kbConnName').value = '个人研发库 v2';
-  document.querySelector('#kbDrawerSaveBtn').click();
+  document.querySelector('#kbConnDrawerSaveBtn').click();
   await settle(8);
 
   const putEdit = lastCall(app, 'PUT', '/api/knowledge/connectors/mcp-1');
@@ -439,14 +439,14 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
   document.querySelector('[data-kb-vendor-setup="obsidian"]').click();
   await settle(6);
 
-  const drawer = document.querySelector('#kbDrawer');
+  const drawer = document.querySelector('#kbConnDrawer');
   assert.equal(drawer.querySelector('#kbOAuthCard'), null, '前端应完全隐藏 OAuth 授权卡片');
   assert.equal(drawer.querySelector('#kbConnType').value, 'obsidian');
   assert.equal(drawer.querySelector('#kbField-endpoint').value, 'https://127.0.0.1:27124');
   assert.equal(drawer.querySelector('#kbField-tlsInsecureSkipVerify').value, 'true');
 
   drawer.querySelector('#kbField-token').value = 'obs-api-key-123';
-  drawer.querySelector('#kbDrawerSaveBtn').click();
+  drawer.querySelector('#kbConnDrawerSaveBtn').click();
   await settle(12);
 
   const obsPayload = savedPayloads.at(-1);
@@ -471,7 +471,7 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
 
   drawer.querySelector('#kbField-appId').value = 'cli_a5829100';
   drawer.querySelector('#kbField-token').value = 'feishu-secret-456';
-  drawer.querySelector('#kbDrawerSaveBtn').click();
+  drawer.querySelector('#kbConnDrawerSaveBtn').click();
   await settle(12);
 
   const feishuPayload = savedPayloads.at(-1);
@@ -493,7 +493,7 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
   assert.ok(drawer.querySelector('#kbField-token'), 'WeKnora 抽屉应渲染 API Key 输入框');
 
   drawer.querySelector('#kbField-token').value = 'wk-api-key-789';
-  drawer.querySelector('#kbDrawerSaveBtn').click();
+  drawer.querySelector('#kbConnDrawerSaveBtn').click();
   await settle(12);
 
   const wkPayload = savedPayloads.at(-1);

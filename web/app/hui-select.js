@@ -52,7 +52,8 @@
     const above = rect.top - 12;
     const height = Math.min(panel.scrollHeight || 320, opts.maxHeight ?? 360);
     const down = below >= height || below >= above;
-    const left = Math.min(Math.max(8, rect.left), Math.max(8, viewportW - width - 8));
+    const anchorLeft = opts.align === 'end' ? rect.right - width : rect.left;
+    const left = Math.min(Math.max(8, anchorLeft), Math.max(8, viewportW - width - 8));
     panel.style.width = width + 'px';
     panel.style.left = Math.round(left) + 'px';
     panel.style.maxHeight = Math.max(120, Math.floor(down ? below : above)) + 'px';
@@ -201,7 +202,19 @@
         button.disabled = !!(option.disabled || group?.disabled);
         button.huiIndex = i;
         button.searchText = optionSearch(option);
-        button.appendChild(el('span', 'hui-select-option-label', option.text));
+        const label = el('span', 'hui-select-option-label', option.text);
+        const brand = option.getAttribute('data-brand');
+        if (brand && /^[-a-z0-9]+\.(svg|png)$/.test(brand)) {
+          const logo = el('img', 'hui-select-option-brand');
+          logo.src = '/images/credentials/' + brand;
+          logo.alt = '';
+          if (option.hasAttribute('data-brand-monochrome')) logo.classList.add('is-monochrome');
+          label.prepend(logo);
+        } else {
+          const glyph = option.getAttribute('data-option-icon');
+          if (glyph) label.prepend(icon(glyph, 'hui-select-option-brand is-glyph'));
+        }
+        button.appendChild(label);
         const meta = el('span', 'hui-select-option-meta', optionMeta(option));
         if (i === index) meta.appendChild(icon('check', 'hui-select-check'));
         button.appendChild(meta);
@@ -227,7 +240,9 @@
     function attach() {
       if (detachTimer) clearTimeout(detachTimer);
       detachTimer = 0;
-      if (panel.parentNode !== doc.body) doc.body.appendChild(panel);
+      // A native modal makes everything outside its dialog inert.
+      const container = anchor.closest?.('dialog[open]') || doc.body;
+      if (panel.parentNode !== container) container.appendChild(panel);
     }
     // `via` is 'touch' when opened by a tap: the search box is not focused
     // then, so the on-screen keyboard stays down.
@@ -244,7 +259,7 @@
       panel.classList.add('is-open');
       anchor.setAttribute('aria-expanded', 'true');
       anchor.setAttribute('aria-controls', panel.id);
-      place(anchor, panel);
+      place(anchor, panel, {align: select.getAttribute('data-align'), minWidth: Number(select.getAttribute('data-min-width')) || undefined});
       if (mode === 'inline') {
         watcher = new MutationObserver(() => {
           if (select.disabled || !connected(select)) close(false);
@@ -252,8 +267,19 @@
         });
         watcher.observe(select, { childList: true, subtree: true, attributes: true, characterData: true });
       }
-      if (!searchBar.hidden && via !== 'touch') search.focus();
-      else focusOption();
+      if (searchBar.hidden || via === 'touch') {
+        focusOption();
+      } else {
+        search.focus({ preventScroll: true });
+        // Keep a saved value visible in a long list while leaving search ready to type.
+        if (select.getAttribute('data-reveal-selected') !== null) {
+          const selected = buttons.find(button => button.huiIndex === selectedIndex());
+          if (selected) {
+            list.scrollTop += selected.getBoundingClientRect().top - list.getBoundingClientRect().top
+              - (list.clientHeight - selected.offsetHeight) / 2;
+          }
+        }
+      }
     }
     function close(focusAnchor) {
       if (!open) return;
@@ -266,7 +292,7 @@
       anchor.setAttribute('aria-expanded', 'false');
       if (focusAnchor) anchor.focus();
       if (mode === 'inline') {
-        // Keep the panel for its exit transition, then drop it from <body>.
+        // Keep the panel for its exit transition, then detach it.
         detachTimer = setTimeout(() => { if (!open) panel.remove(); }, 240);
       }
     }
@@ -389,7 +415,8 @@
 
     trigger.addEventListener('click', event => {
       event.stopPropagation?.();
-      if (selector.isOpen()) selector.close(true); else selector.show();
+      if (selector.isOpen()) selector.close(true);
+      else selector.show(event.pointerType === 'touch' ? 'touch' : undefined);
     });
     trigger.addEventListener('keydown', event => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

@@ -39,7 +39,7 @@ function openRunPage(runId) {
 const prefersReducedMotion = () =>
   !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
-// RunAlerts surfaces failed and waiting SOP nodes of this conversation in the
+// RunAlerts surfaces failed and waiting LOOP nodes of this conversation in the
 // message stream, so nobody has to open the node panel to learn that a run is
 // stuck, why, and what fixes it.
 export default function RunAlerts({
@@ -226,7 +226,7 @@ function RunAlert({
             <span className="run-alert-tag">{tag}</span>
           </div>
           <span className="run-alert-meta">
-            {run.workflowSnapshot?.name || "SOP 运行"} · <code>{run.id}</code>
+            {run.workflowSnapshot?.name || "LOOP 运行"} · <code>{run.id}</code>
           </span>
         </div>
         <IconButton
