@@ -551,9 +551,18 @@ function skipReasonText(nr,wf,node){
   function* details(rest){
     const fixed=rest.match(/^(?: 已跳过（| 已跳过(?=；|）|$)| 已命中其他条件，未选择默认分支(?=；|）|$))/)?.[0];
     if(fixed){yield fixed;return}
-    const end=rest.startsWith(' 路由 [')?/\] 未选择此分支(?=；|）|$)/g:
-      rest.startsWith(' 的产物 ')?/ 未匹配条件 (?:"(?:\\.|[^"\\])*"|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=；|）|$)/g:null;
-    if(end)for(const match of rest.matchAll(end))yield rest.slice(0,match.index+match[0].length);
+    if(rest.startsWith(' 路由 [')){
+      for(const match of rest.matchAll(/\] 未选择此分支(?=；|）|$)/g))yield rest.slice(0,match.index+match[0].length);
+    }else if(rest.startsWith(' 的产物 ')){
+      // Scan marker positions independently: one quoted value can contain a
+      // marker that would terminate a different, equally valid interpretation.
+      const marker=' 未匹配条件 ';
+      const value=/(?:"(?:\\.|[^"\\])*"|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=；|）|$)/y;
+      for(let i=rest.indexOf(marker);i!==-1;i=rest.indexOf(marker,i+marker.length)){
+        value.lastIndex=i+marker.length;
+        if(value.test(rest))yield rest.slice(0,value.lastIndex);
+      }
+    }
   }
   const parents=Array.isArray(wf?.edges)?new Map():null;
   for(const {source,target} of wf?.edges||[]){

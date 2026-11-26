@@ -122,6 +122,9 @@ test('skip reasons keep route labels verbatim while naming upstream nodes', asyn
       const ambiguousRoute='a 路由 [small] 未选择此分支；b 路由 [large] 未选择此分支';
       const joinedGraph={nodes:[...nestedGraph.nodes,{id:'a 已跳过；b',name:'Combined'}],
         edges:[{source:'a',target:'join'},{source:'b',target:'join'},{source:'a 已跳过；b',target:'join'}]};
+      const quotedArtifact='a 的产物 p 字段 /x 未匹配条件 "x 未匹配条件 true；b 路由 [y"；c 路由 [z] 未选择此分支';
+      const quotedGraph={nodes:[...joinedGraph.nodes,{id:'c',name:'Third'}],
+        edges:['a','b','c'].map(source=>({source,target:'join'}))};
       const join={id:'join',name:'Join'};
       return {
         route: skipReasonText({skipReason:'classify 路由 [small] 未选择此分支'},wf,{name:'Large branch'}),
@@ -132,6 +135,7 @@ test('skip reasons keep route labels verbatim while naming upstream nodes', asyn
         graphNested: skipReasonText({skipReason:'a 已跳过（b 路由 [small] 未选择此分支）'},nestedGraph,join),
         ambiguousJoin: skipReasonText({skipReason:joinedReason},joinedGraph,join),
         ambiguousRoute: skipReasonText({skipReason:ambiguousRoute},joinedGraph,join),
+        ambiguousQuotedArtifact: skipReasonText({skipReason:quotedArtifact},quotedGraph,join),
         uniqueJoin: skipReasonText({skipReason:joinedReason},{...joinedGraph,edges:joinedGraph.edges.slice(0,2)},join),
         uniqueNested: skipReasonText({skipReason:'a 已跳过（b 路由 [small] 未选择此分支）'},
           {...nestedGraph,edges:[...nestedGraph.edges,{source:'a 已跳过（b',target:'join'}]},join),
@@ -150,6 +154,7 @@ test('skip reasons keep route labels verbatim while naming upstream nodes', asyn
   assert.equal(texts.graphNested, '上游First 已跳过（Second 路由 [small] 未选择此分支），因此跳过 Join');
   assert.equal(texts.ambiguousJoin, 'a 已跳过；b 已跳过');
   assert.equal(texts.ambiguousRoute, 'a 路由 [small] 未选择此分支；b 路由 [large] 未选择此分支');
+  assert.equal(texts.ambiguousQuotedArtifact, 'a 的产物 p 字段 /x 未匹配条件 "x 未匹配条件 true；b 路由 [y"；c 路由 [z] 未选择此分支');
   assert.equal(texts.uniqueJoin, '上游First 已跳过；Second 已跳过，因此跳过 Join');
   assert.equal(texts.uniqueNested, texts.graphNested);
   assert.equal(texts.punctuationId, '上游Build Check 已跳过，因此跳过 Join');
