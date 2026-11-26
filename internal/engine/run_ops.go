@@ -920,6 +920,12 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	// reaches this state either through an Agent human decision or through a
 	// required manual role gate after pass, and both rebuild the decision the
 	// same way, so neither outcome is filtered out here.
+	//
+	// `waiting_approval` also records an operator pause, which is a different
+	// thing: resuming that node re-executes it from scratch, so it produces a
+	// fresh route against whatever graph is frozen by then and has no stale
+	// intent to protect. Skipping those nodes keeps a paused routing script
+	// refreshable after a SOP update instead of forcing a new run.
 	conditionalSources := map[string]bool{}
 	for _, edge := range r.WorkflowSnapshot.Edges {
 		if edge.Condition != nil {
@@ -934,7 +940,7 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	}
 	for _, node := range r.WorkflowSnapshot.Nodes {
 		nr := r.Nodes[node.ID]
-		if nr == nil || nr.Status != "waiting_approval" || nr.RouteDecision != nil {
+		if nr == nil || nr.Status != "waiting_approval" || nr.RouteDecision != nil || isUserPausedNode(nr) {
 			continue
 		}
 		var pending domain.RouteValues

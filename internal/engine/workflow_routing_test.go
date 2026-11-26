@@ -696,6 +696,87 @@ func TestConditionalRoutingRefreshAllowsPendingGateOnNonRoutingNode(t *testing.T
 	}
 }
 
+// An operator pause reuses waiting_approval without a gate result. Resuming
+// re-executes the script from scratch, so the route is recomputed against the
+// graph frozen at that moment and there is no stale intent to protect.
+// Publishing a new SOP must therefore keep refreshing a paused routing script
+// instead of telling the operator to start a new run.
+func TestConditionalRoutingRefreshAllowsUserPausedRoutingScript(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wf := routingWorkflow("refresh-user-paused")
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r := domain.Run{ID: "refresh-user-paused-run", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "waiting", PauseRequested: true, Nodes: map[string]*domain.NodeRun{}}
+	for _, node := range wf.Nodes {
+		r.Nodes[node.ID] = &domain.NodeRun{NodeID: node.ID, Status: "pending"}
+	}
+	// nodeCancelled leaves exactly this shape: waiting_approval, a pause
+	// activity, and no GateResult.
+	r.Nodes["classify"] = &domain.NodeRun{
+		NodeID: "classify", Status: "waiting_approval", Activity: "已由用户暂停，继续后脚本将从头执行",
+	}
+	if err := s.PutRun(r); err != nil {
+		t.Fatal(err)
+	}
+	latest, ok := s.Workflow(wf.ID)
+	if !ok {
+		t.Fatal("workflow disappeared")
+	}
+	latest.Version++
+	// Only the script body changes; the conditional edges stay put on both
+	// sides, which is the case the guard used to refuse.
+	latest.Nodes[0].Script = `printf '{"route":"large"}' > "$LOOPFORGE_ROUTE_FILE"`
+	latest.Nodes = append(latest.Nodes, domain.WorkflowNode{ID: "extra", Type: "script", Script: "echo extra", MaxAttempts: 1})
+	latest.Edges = append(latest.Edges, domain.WorkflowEdge{ID: "extra-edge", Source: "delivery", Target: "extra"})
+	if err := s.PutWorkflow(latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RefreshRunSOP(r.ID); err != nil {
+		t.Fatalf("refresh should be allowed for a user-paused routing node, got %v", err)
+	}
+	updated, ok := s.RunState(r.ID)
+	if !ok {
+		t.Fatal("run disappeared")
+	}
+	if updated.WorkflowSnapshot.Version != latest.Version {
+		t.Fatalf("refresh kept version %d, want %d", updated.WorkflowSnapshot.Version, latest.Version)
+	}
+	nodes := map[string]domain.WorkflowNode{}
+	for _, node := range updated.WorkflowSnapshot.Nodes {
+		nodes[node.ID] = node
+	}
+	if _, found := nodes["extra"]; !found {
+		t.Fatalf("refresh kept the old node set: %+v", updated.WorkflowSnapshot.Nodes)
+	}
+	if !strings.Contains(nodes["classify"].Script, "large") {
+		t.Fatalf("refresh kept the old script: %q", nodes["classify"].Script)
+	}
+	if updated.Nodes["extra"] == nil || updated.Nodes["extra"].Status != "pending" {
+		t.Fatalf("new node should start pending: %+v", updated.Nodes["extra"])
+	}
+	edges := map[string]domain.WorkflowEdge{}
+	for _, edge := range updated.WorkflowSnapshot.Edges {
+		edges[edge.ID] = edge
+	}
+	if _, found := edges["extra-edge"]; !found {
+		t.Fatalf("refresh kept the old edge set: %+v", updated.WorkflowSnapshot.Edges)
+	}
+	for _, id := range []string{"small-edge", "large-edge"} {
+		if edges[id].Condition == nil {
+			t.Fatalf("conditional edge %s missing after refresh: %+v", id, updated.WorkflowSnapshot.Edges)
+		}
+	}
+	if got := updated.Nodes["classify"]; got == nil || got.Status != "waiting_approval" || got.GateResult != nil || got.RouteDecision != nil {
+		t.Fatalf("paused node changed across refresh: %+v", got)
+	}
+}
+
 // A pending route value was produced against a graph with no routing at all.
 // Handing it a new graph that does ask for a decision would let that value pick
 // a branch, so the refresh has to be refused even though the frozen graph has
