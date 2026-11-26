@@ -156,7 +156,7 @@ func (r *KnowledgeContentRepo) KnowledgeDocumentPage(sourceID, afterPath string,
 }
 
 // KnowledgeDocumentMetas 按来源批量读取检索后处理需要的治理元数据，不返回
-// 正文。为兼容 051 之前写入的历史行，元数据列为空时再读一次正文并解析；
+// 正文。为兼容 054 之前写入的历史行，元数据列为空时再读一次正文并解析；
 // 这是读时兜底，不修改数据，下一次覆盖写入会把元数据落到列上。
 func (r *KnowledgeContentRepo) KnowledgeDocumentMetas(sourceIDs []string) []domain.KnowledgeDocumentMeta {
 	out := make([]domain.KnowledgeDocumentMeta, 0)
@@ -375,8 +375,8 @@ type chunkMatchRow struct {
 // FulltextChunks 是默认的关键词检索：对 (title, heading, text) 的 ngram
 // 全文索引跑 NATURAL LANGUAGE MODE，只查 sourceIDs 里的来源，按相关度降序，
 // 条数默认 10、上限 50。空查询或空来源集合直接返回空，不查库。查询词与
-// 来源 id 都走绑定参数，不拼进 SQL。全文索引由 044 脚本补建，gorm 的增量
-// DDL 建不出带 ngram 解析器的索引，因此缺索引的环境须先执行 044。
+// 来源 id 都走绑定参数，不拼进 SQL。全文索引由 047 脚本补建，gorm 的增量
+// DDL 建不出带 ngram 解析器的索引，因此缺索引的环境须先执行 047。
 func (r *KnowledgeContentRepo) FulltextChunks(ctx context.Context, query string, sourceIDs []string, limit int) ([]domain.KnowledgeChunkMatch, error) {
 	return r.fulltextChunks(ctx, query, sourceIDs, limit, false)
 }
@@ -446,7 +446,7 @@ func knowledgeDocumentFromRow(row knowledgeDocumentRow) domain.KnowledgeDocument
 		Owner: row.Owner, Status: row.DocStatus, FrontmatterUpdated: row.FrontmatterUpdated,
 	}
 	if out.Owner == "" && out.Status == "" && out.FrontmatterUpdated == nil {
-		// 051 之前写入的历史行没有元数据列；读时从正文解析，不写回。
+		// 054 之前写入的历史行没有元数据列；读时从正文解析，不写回。
 		meta, _ := frontmatter.Parse([]byte(row.Body))
 		out.Owner, out.Status, out.FrontmatterUpdated = meta.Owner, meta.Status, meta.Updated
 	}

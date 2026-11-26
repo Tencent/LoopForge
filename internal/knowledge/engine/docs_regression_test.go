@@ -180,7 +180,7 @@ func TestMySQLKeywordIndexLoopForgeDocsQuestions(t *testing.T) {
 	t.Setenv("AGENTFLOW_KNOWLEDGE_MYSQL_DSN", "")
 	s, cleanup := openDocsRegressionStore(t, dsn)
 	defer cleanup()
-	script, err := os.ReadFile("../../../migrations/044_builtin_knowledge.sql")
+	script, err := os.ReadFile("../../../migrations/047_builtin_knowledge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

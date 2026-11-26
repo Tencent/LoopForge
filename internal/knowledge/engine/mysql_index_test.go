@@ -43,7 +43,7 @@ func TestMySQLKeywordIndexAndHostedWrite(t *testing.T) {
 	defer s.Close()
 
 	// 044 脚本补建带 ngram 解析器的全文索引；gorm 的增量 DDL 建不出它。
-	script, err := os.ReadFile("../../../migrations/044_builtin_knowledge.sql")
+	script, err := os.ReadFile("../../../migrations/047_builtin_knowledge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestMySQLKeywordIndexIdentifierChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	script, err := os.ReadFile("../../../migrations/044_builtin_knowledge.sql")
+	script, err := os.ReadFile("../../../migrations/047_builtin_knowledge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

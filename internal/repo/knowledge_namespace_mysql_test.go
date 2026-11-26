@@ -50,7 +50,7 @@ func TestKnowledgeNamespaceMigrationRepeatable(t *testing.T) {
 	if err := store.PutKnowledgeSubmission(domain.KnowledgeSubmission{ID: "namespace-review", ProjectID: "namespace-project", Source: oldSource, Path: "private.md", Content: "Draft", Status: domain.KnowledgeSubmissionPending}); err != nil {
 		t.Fatal(err)
 	}
-	script, err := os.ReadFile("../../migrations/055_knowledge_source_namespace.sql")
+	script, err := os.ReadFile("../../migrations/058_knowledge_source_namespace.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestKnowledgeNamespaceMigrationRepeatable(t *testing.T) {
 	for attempt := 0; attempt < 2; attempt++ {
 		for _, stmt := range splitSQLStatements(string(script)) {
 			if _, err := conn.ExecContext(context.Background(), stmt); err != nil {
-				t.Fatalf("055 attempt %d: %v\n%s", attempt, err, stmt)
+				t.Fatalf("058 attempt %d: %v\n%s", attempt, err, stmt)
 			}
 		}
 		doc, ok := store.KnowledgeDocument(newSource, "private.md")

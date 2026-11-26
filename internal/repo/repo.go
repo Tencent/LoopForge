@@ -201,6 +201,7 @@ type Store struct {
 	*GitHTTPHostTrustRepo
 	*NotificationsRepo
 	*BotInteractionsRepo
+	*EvolutionRepo
 }
 
 // newStore wires the shared deps and every cross-domain pointer. Domains have
@@ -234,6 +235,7 @@ func newStore(db, contentDB *gorm.DB, contentSeparate bool) *Store {
 	s.SpacesRepo = &SpacesRepo{deps: d}
 	s.KnowledgeContentRepo = &KnowledgeContentRepo{db: contentDB, separate: contentSeparate}
 	s.KnowledgeRepo = &KnowledgeRepo{deps: d, content: s.KnowledgeContentRepo}
+	s.EvolutionRepo = &EvolutionRepo{deps: d, catalog: s.CatalogRepo}
 
 	s.PlatformSettingsRepo = &PlatformSettingsRepo{deps: d}
 	s.SSHHostTrustRepo = &SSHHostTrustRepo{deps: d}

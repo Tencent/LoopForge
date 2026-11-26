@@ -279,17 +279,20 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 	}
 	req.workspaceMode = savedConversation.Mode() == domain.AssistantModeWorkspace
-	var projectCredentialNote string
+	var projectCredentialNotes assistantProjectCredentialNotes
+	var projectCredentialIDs []string
+	var projectCredentialObservations map[string]domain.AssistantProjectCredentialObservation
 	if len(savedConversation.ProjectCredentialIDs) > 0 && !req.sopDesigner() {
 		if savedConversation.ProjectID != req.ProjectID {
 			c.JSON(403, gin.H{"error": "会话项目与凭据项目不一致"})
 			return
 		}
-		names, ok := h.sessionProjectCredentialNames(c, savedConversation, user.ID)
+		var ok bool
+		projectCredentialNotes, projectCredentialObservations, ok = h.sessionProjectCredentialContext(c, savedConversation, user.ID)
 		if !ok {
 			return
 		}
-		projectCredentialNote = "\n项目凭据的环境变量为 " + strings.Join(names, "、") + "。需要时在项目工作区通过进程环境使用，避免输出值。\n"
+		projectCredentialIDs = savedConversation.ProjectCredentialIDs
 	}
 	if req.workspaceMode && req.RunID == "" && h.sopWorkspaceReadOnly(c, savedConversation, req.ProjectID, user.ID) {
 		// Another member left this shared conversation working in a LOOP
@@ -355,9 +358,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.ExecutionRunnerID = savedConversation.Execution().RunnerID
 		sess.runnerLogin = runnerLogin
 		sess.RuntimeMode = savedConversation.Mode()
-		if projectCredentialNote != "" {
-			sess.projectCredentialIDs = savedConversation.ProjectCredentialIDs
-		}
+		sess.projectCredentialIDs = projectCredentialIDs
 		if sess.RuntimeMode == domain.AssistantModeWorkspace && !req.workspaceMode {
 			sess.RuntimeMode = domain.AssistantModePlatform
 		}
@@ -615,6 +616,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				}
 				system = strings.Replace(system, knowledge.UsageRule().Content, knowledgeRule, 1)
 				phasePrompt := prompt + conversationAttachmentNote(cliRoot, req, turnEngine)
+				projectCredentialNote := projectCredentialNotes.changes
+				if !resume && projectCredentialNote == "" {
+					projectCredentialNote = projectCredentialNotes.initial
+				}
 				var sentRepositoryHash string
 				if req.workspaceMode {
 					system = assistantWorkspaceSystemPrompt
@@ -743,6 +748,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				if err != nil {
 					return "", err
 				}
+				projectCredentialNotes.changes = ""
 				resume = true
 				nativeContinuationReady = true
 				toolSession.mu.Lock()
@@ -931,6 +937,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 			stored = append(stored, assistantMessage{Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images, GenerationID: assistantControlScopeFrom(modelCtx).GenerationID})
 			conversation := assistantConversation{Shared: shared, ID: req.SessionID, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: stored}
+			conversation.ProjectCredentialIDs = projectCredentialIDs
+			conversation.ProjectCredentialObservations = projectCredentialObservations
 			if req.sopDesigner() {
 				conversation.Source, conversation.WorkflowID = domain.AssistantSourceSOPDesigner, req.WorkflowID
 			}

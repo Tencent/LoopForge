@@ -30,7 +30,7 @@ func hostedSourceIDForTest(baseID string) string {
 }
 
 // TestKnowledgeMigrationsOnSeparateContentDatabase 覆盖审查报告 P1-4/P2-5：
-// 044–056 每份脚本连续执行两次都不报错；控制段只落主库、内容段只落内容库；
+// 047–059 每份脚本连续执行两次都不报错；控制段只落主库、内容段只落内容库；
 // ngram 全文索引、路径 utf8mb4_bin、可空 submission_id 与升级前 payload 正文
 // 搬迁都生效。未配置 AGENTFLOW_TEST_MYSQL_DSN 时跳过。
 func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
@@ -73,14 +73,14 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := before.CheckKnowledgeSchema(); err == nil {
-		t.Fatal("a database without 055 must fail the startup schema check")
+		t.Fatal("a database without 058 must fail the startup schema check")
 	}
 	legacy := `{"id":"kbs-legacy","projectId":"p1","title":"旧待审","source":"kb-hosted-p1","path":"docs/legacy.md","content":"LEGACY-BODY-SECRET","status":"pending"}`
 	if err := before.DB.Exec("INSERT INTO knowledge_submissions (id, project_id, status, payload, created_at, updated_at) VALUES (?, ?, ?, CAST(? AS JSON), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))",
 		"kbs-legacy", "p1", domain.KnowledgeSubmissionPending, legacy).Error; err != nil {
 		t.Fatal(err)
 	}
-	// Pre-055 data: a hosted source named kb-hosted-<project>, its content, and
+	// Pre-058 data: a hosted source named kb-hosted-<project>, its content, and
 	// a retracted fence. A stale fence under the target ID must be merged.
 	oldSource, newSource := "kb-hosted-p1", hostedSourceIDForTest("kb-p1")
 	if err := before.PutKnowledgeBase(domain.KnowledgeBase{ID: "kb-p1", ProjectID: "p1", Name: "旧项目库", Layer: "project"}); err != nil {
@@ -102,7 +102,7 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 
 	files := knowledgeMigrationFiles(t)
 	if len(files) == 0 {
-		t.Fatal("migrations/044+ not found")
+		t.Fatal("migrations/047+ not found")
 	}
 	for run := 1; run <= 2; run++ {
 		for _, file := range files {
@@ -118,7 +118,7 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 		}
 	}
 
-	// 055 renames hosted source IDs on both planes and moves fences with them.
+	// 058 renames hosted source IDs on both planes and moves fences with them.
 	var migratedSource string
 	if err := queryRow(t, controlDSN, "SELECT id FROM knowledge_sources WHERE base_id = 'kb-p1' AND kind = 'hosted'", &migratedSource); err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 		t.Fatalf("迁移后控制面 payload 仍含正文：%s", payload)
 	}
 
-	// ngram 全文索引必须由 044 内容段建出来，gorm 建不出解析器。
+	// ngram 全文索引必须由 047 内容段建出来，gorm 建不出解析器。
 	var indexType string
 	if err := queryRow(t, contentDSN, "SELECT INDEX_TYPE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_chunks' AND INDEX_NAME = 'ft_knowledge_chunks_text'", &indexType); err != nil {
 		t.Fatal(err)
@@ -238,7 +238,7 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 		}
 	}
 
-	// 048 对 permission IS NULL 也要归一为 read（老库可能存在可空列）。
+	// 051 对 permission IS NULL 也要归一为 read（老库可能存在可空列）。
 	if _, err := execOn(t, controlDSN, "ALTER TABLE project_knowledge_bindings MODIFY permission VARCHAR(32) NULL"); err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 	if _, err := execOn(t, controlDSN, "INSERT INTO project_knowledge_bindings (project_id, base_id, permission) VALUES ('p-null', 'kb-null-base', NULL)"); err != nil {
 		t.Fatal(err)
 	}
-	if err := execMigrationFile(t, controlDSN, "../../migrations/048_shared_knowledge.sql"); err != nil {
+	if err := execMigrationFile(t, controlDSN, "../../migrations/051_shared_knowledge.sql"); err != nil {
 		t.Fatal(err)
 	}
 	var permission string
@@ -256,7 +256,7 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	if permission != "read" {
-		t.Fatalf("048 未归一 NULL permission：%q", permission)
+		t.Fatalf("051 未归一 NULL permission：%q", permission)
 	}
 
 	// 真实独立内容库 DSN：写入正文、检索命中，再验证控制面只留元数据。
@@ -266,7 +266,7 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 	}
 	defer store.Close()
 	if err := store.CheckKnowledgeSchema(); err != nil {
-		t.Fatalf("startup schema check after 055: %v", err)
+		t.Fatalf("startup schema check after 058: %v", err)
 	}
 	src := "src-separate"
 	if err := store.PutKnowledgeSource(domain.KnowledgeSource{ID: src, BaseID: "kb-separate", Kind: "hosted", Status: "ready"}); err != nil {
@@ -320,19 +320,19 @@ func knowledgeMigrationFiles(t *testing.T) []string {
 	// Upstream 026_assistant_session_reads.sql and 027_cli_model_catalog.sql are
 	// published optional manual DDL and must not be part of the knowledge sweep.
 	names := []string{
-		"044_builtin_knowledge.sql",
-		"045_knowledge_activity.sql",
-		"046_knowledge_vector.sql",
-		"047_knowledge_git_credentials.sql",
-		"048_shared_knowledge.sql",
-		"049_knowledge_writeback.sql",
-		"050_knowledge_sediment.sql",
-		"051_knowledge_governance.sql",
-		"052_knowledge_citation.sql",
-		"053_knowledge_concurrency.sql",
-		"054_knowledge_schema_cleanup.sql",
-		"055_knowledge_source_namespace.sql",
-		"056_knowledge_governance_noise.sql",
+		"047_builtin_knowledge.sql",
+		"048_knowledge_activity.sql",
+		"049_knowledge_vector.sql",
+		"050_knowledge_git_credentials.sql",
+		"051_shared_knowledge.sql",
+		"052_knowledge_writeback.sql",
+		"053_knowledge_sediment.sql",
+		"054_knowledge_governance.sql",
+		"055_knowledge_citation.sql",
+		"056_knowledge_concurrency.sql",
+		"057_knowledge_schema_cleanup.sql",
+		"058_knowledge_source_namespace.sql",
+		"059_knowledge_governance_noise.sql",
 	}
 	out := make([]string, 0, len(names))
 	for _, name := range names {

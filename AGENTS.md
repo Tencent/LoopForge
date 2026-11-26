@@ -26,6 +26,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 | `AnalyticsRepo` | 只读运营分析视图 |
 | `PreviewsRepo` | run previews |
 | `EngineInstancesRepo` | engine instances |
+| `EvolutionRepo` | 资产进化：evo policies/findings/proposals/replays/signals/samples、asset versions、run asset pins |
 | `KnowledgeRepo` | 知识库（含沉淀发布模式与敏感规则）、来源、项目绑定、同步任务、审核队列、检索调用记录、Git 写回记录（分支/合并请求）、撤回墓碑、反馈、知识缺口、健康检查结果。主库 |
 | `KnowledgeContentRepo` | 文档正文、托管修订、索引块、审核正文 staging。独立的 gorm 连接，由 `newStore` 注入，不写入 `deps`；默认与主库同一个连接池 |
 
@@ -78,7 +79,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
    `previewsHandlers`、`streamHandlers`、`runnersHandlers`、
    `scheduleHandlers`、`tokenHandlers`、`syncHandlers`、
    `assistantHandlers`、`mcpHandlers`、
-   `marketHandlers`…），在 `server.go` 的 `Server` 中以指针装配。
+   `marketHandlers`、`evolutionHandlers`…），在 `server.go` 的 `Server` 中以指针装配。
 2. **新领域必须新建自己的 handler struct**，不要把方法挂到现有领域 handler
    或 `Server` 上。
 3. 同一领域的多个文件允许（`run_eval.go`/`run_workspace.go` 属

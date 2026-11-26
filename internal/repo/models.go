@@ -1120,6 +1120,7 @@ func controlModels() []any {
 		knowledgeSettingsRow{}, knowledgeSubmissionRow{}, knowledgeOperationLeaseRow{},
 		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeCitationRow{}, knowledgeWritebackRow{}, knowledgeTombstoneRow{},
 		knowledgeFeedbackRow{}, knowledgeGapRow{}, knowledgeGovernanceIssueRow{}, knowledgeGovernanceScanRow{},
+		evoPolicyRow{}, evoFindingRow{}, evoProposalRow{}, evoAssetGateRow{}, evoQueueRow{}, evoReplayRow{}, assetVersionRow{}, runAssetPinRow{}, evoSignalRow{}, evoSampleRow{}, evoSOPPolicyRow{},
 
 		platformSettingsRow{},
 		PlatformGitSSHHost{}, PlatformGitHTTPSHost{}, PlatformGitHTTPHost{},

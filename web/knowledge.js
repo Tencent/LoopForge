@@ -1,4 +1,5 @@
-// 知识中心：本项目的托管知识库、来源、文档、试搜与读原文；角色与审核标签保留。
+// 知识中心：同一页面显示内置或 LightCloud 的来源、试搜、角色和审核。
+// RSI 工作台复用通用面板、徽标和右侧抽屉。
 // 依赖 app.js 的全局 state、api、$、$$、escapeHTML、toast、relativeTime、switchView、showRunDetail、huiIcon、afConfirm。
 const kb={settings:null,externalSources:[],refreshSeq:0,tab:'bases',projectId:null,overview:null,overviewError:'',docs:{source:'',items:[],error:'',loading:false,loaded:false},usage:null,candidates:[],submissions:[],subStatus:'todo',draft:null,togglingAgents:new Set(),search:{query:'',sources:[],result:null,loading:false,error:'',seq:0},governance:null,governanceError:'',feedbackSent:new Set(),drawer:{opener:null,openerKey:'',seq:0},pollTimer:0,rendered:false,pendingCitation:''};
 function kbViewModel(){return kb}
@@ -28,7 +29,7 @@ function kbWriteInfoHTML(d){
   if(!parts.length&&!note&&!err&&!st)return '';
   return `<div class="kb-write-info">${st?kbBadge(escapeHTML(st[0]),st[1]):''}${parts.join(' · ')}${note}${err}</div>`;
 }
-const KB_SOURCE_STATUS={ready:['就绪','ok'],pending:['待同步','warn'],syncing:['同步中','warn'],error:['异常','err'],failed:['异常','err'],'':['未同步','warn']};
+const KB_SOURCE_STATUS={indexing:['索引中','warn'],ready:['就绪','ok'],pending:['待同步','warn'],syncing:['同步中','warn'],error:['异常','err'],failed:['异常','err'],'':['未同步','warn']};
 const KB_SYNC_STAGE={pulling:'拉取中',comparing:'比对中',indexing:'建索引中'};
 function kbSyncStageLabel(stage){return KB_SYNC_STAGE[stage]||''}
 const KB_DOC_STATUS={draft:['草稿',''],verified:['已验证','ok'],deprecated:['已废弃','warn'],archived:['已归档','']};
@@ -65,7 +66,7 @@ function kbRow(main,side='',opt={}){
 function kbPanel(head,body,opt={}){return `<section class="kb-panel"${opt.label?` aria-label="${escapeHTML(opt.label)}"`:''}${opt.attrs?` ${opt.attrs}`:''}><div class="kb-panel-head${opt.headCls?` ${opt.headCls}`:''}">${head}</div>${body}</section>`}
 function kbPanelTitle(title,meta=''){return `<h3>${title}</h3>${meta?`<span class="kb-panel-meta">${meta}</span>`:''}`}
 // tone 取 ok|warn|err，空值为中性灰。
-const KB_BADGE_TONES={ok:'success',warn:'warn',err:'error'};
+const KB_BADGE_TONES={ok:'success',warn:'warn',err:'error',info:'info'};
 function kbBadge(label,tone='',title=''){return `<span class="hui-badge" data-size="sm" data-tone="${KB_BADGE_TONES[tone]||'neutral'}"${title?` title="${escapeHTML(title)}"`:''}><span class="hui-badge-label">${label}</span></span>`}
 function kbText(title,desc=''){return `<div class="kb-row-title">${title}</div>${desc?`<div class="kb-row-desc">${desc}</div>`:''}`}
 function kbValue(html,cls='',title=''){return `<span class="kb-row-value${cls?` ${cls}`:''}"${title?` title="${escapeHTML(title)}"`:''}>${html}</span>`}
@@ -231,7 +232,7 @@ async function kbRefresh(){
   const pid=encodeURIComponent(kbProjectId());
   const external=kbExternal();
   const [overview,usage,subs,cands,bindings,governance]=await Promise.all([
-    api(`/api/knowledge/${external?'sources':'bases'}?projectId=${pid}`,{silent:true}).catch(err=>({error:err.message})),
+    external&&!kb.settings.ready?[]:api(`/api/knowledge/${external?'sources':'bases'}?projectId=${pid}`,{silent:true}).catch(err=>({error:err.message})),
     api(`/api/knowledge/usage?projectId=${pid}`,{silent:true}).catch(()=>null),
     api(`/api/knowledge/submissions?projectId=${pid}`,{silent:true}).catch(()=>[]),
     api(`/api/knowledge/candidates?projectId=${pid}`,{silent:true}).catch(()=>[]),
@@ -239,7 +240,11 @@ async function kbRefresh(){
     external?null:api(`/api/knowledge/governance?projectId=${pid}`,{silent:true}).catch(err=>({error:err.message})),
   ]);
   if(seq!==kb.refreshSeq)return;
-  kb.externalSources=external&&Array.isArray(overview)?overview.filter(src=>src.allowed).map(src=>({...src,docCount:src.doc_count})):[];
+  const sources=external&&Array.isArray(overview)?overview.filter(src=>src.allowed).map(src=>({...src,docCount:src.doc_count})):[];
+  if(external&&kb.externalSources.map(src=>src.id).join('\n')!==sources.map(src=>src.id).join('\n')){
+    Object.assign(kb.search,{result:null,error:'',sources:[],loading:false,seq:kb.search.seq+1});
+  }
+  kb.externalSources=sources;
   kb.bindings=Array.isArray(bindings)?bindings:[];kb.bindingsError=bindings?.error||'';
   kb.overview=overview;kb.overviewError=overview?.error||'';
   kb.usage=usage;kb.submissions=subs||[];kb.candidates=cands||[];
@@ -286,6 +291,12 @@ function kbRenderStatus(){
     host.innerHTML=kbMetricsHTML();
     host.querySelectorAll('[data-kb-go]').forEach(b=>b.onclick=()=>kbGoTab(b.dataset.kbGo));
     if(go)host.querySelector(`[data-kb-go="${go}"]`)?.focus({preventScroll:true});
+  }
+  const link=$('#kbConsoleLink');
+  if(link){
+    const url=kbExternal()?kbSafeHref(String(kb.settings?.url||'').replace(/\/mcp\/?$/,'/')):'';
+    link.hidden=!url;
+    if(url)link.href=url;else link.removeAttribute('href');
   }
 }
 
@@ -377,12 +388,76 @@ function kbOpenSettings(){
   save.onclick=()=>act(false);
 }
 
+async function kbOpenProjectSources(){
+  const pid=kbProjectId();
+  if(!pid||!kbExternal()||!kb.settings?.canManage)return;
+  const seq=kbDrawerOpen('项目来源授权',escapeHTML(kbProjectName()),'<div class="kb-empty">正在读取 LightCloud 来源…</div>');
+  const active=()=>seq===kb.drawer.seq&&pid===kbProjectId()&&kbExternal();
+  try{
+    const result=await api('/api/knowledge/check',{method:'POST',body:JSON.stringify({provider:'lightcloud'}),silent:true});
+    if(!result.ok)throw new Error(result.error||'无法读取 LightCloud 来源');
+    if(!active())return;
+    const list=result.sources||[];
+    const host=$('#kbDrawerBody');
+    function render(){
+      if(!list.length){host.innerHTML='<div class="kb-empty">LightCloud 没有返回任何来源</div>';return}
+      const {defaultSources=[],projectSources={}}=kb.settings;
+      const own=Object.hasOwn(projectSources,pid);
+      const allowed=new Set(own?projectSources[pid]:defaultSources);
+      const seg=kbSeg([['all','跟随平台'],['custom','自定义']],own?'custom':'all','kb-scope',{label:'来源范围'});
+      const rows=list.map(src=>{
+        const [label,tone]=KB_SOURCE_STATUS[src.status]||[src.status||'未就绪','warn'];
+        const on=!allowed.size||allowed.has(src.id);
+        return kbRow(kbText(escapeHTML(src.name||src.id),escapeHTML(src.id)),kbBadge(escapeHTML(label),tone)+kbValue(`${Number(src.doc_count)||0} 篇`)+kbSwitch(on,src.name||src.id,{disabled:!own,attrs:`data-kb-source="${escapeHTML(src.id)}"`}));
+      }).join('');
+      host.innerHTML=kbPanel(seg,rows,{label:'来源范围'});
+      host.querySelector('[data-kb-scope="all"]').onclick=()=>{if(own)persist(null)};
+      host.querySelector('[data-kb-scope="custom"]').onclick=()=>{
+        if(own)return;
+        const sources=allowed.size?[...allowed]:list.filter(src=>src.status==='ready').map(src=>src.id);
+        if(!sources.length){toast('暂无就绪的来源可以授权');return}
+        persist(sources);
+      };
+      host.querySelectorAll('[data-kb-source]').forEach(sw=>sw.onclick=()=>{
+        const next=new Set(allowed);
+        if(next.has(sw.dataset.kbSource))next.delete(sw.dataset.kbSource);else next.add(sw.dataset.kbSource);
+        if(!next.size){toast('至少保留一个来源');return}
+        persist([...next]);
+      });
+    }
+    async function persist(sources){
+      host.querySelectorAll('button').forEach(btn=>btn.disabled=true);
+      try{
+        const current=await api('/api/knowledge/settings',{silent:true});
+        if(!active())return;
+        if(current.provider!=='lightcloud')throw new Error('知识引擎已切换，请刷新页面');
+        const projectSources={...current.projectSources};
+        if(sources===null)delete projectSources[pid];else projectSources[pid]=sources;
+        await api('/api/knowledge/settings',{method:'PUT',body:JSON.stringify({provider:current.provider,enabled:current.enabled,url:current.url,writeEnabled:current.writeEnabled,defaultSources:current.defaultSources||[],projectSources})});
+        await kbRefresh();
+        if(state.currentView==='knowledge')kbRender();
+        toast('项目授权范围已更新','ok');
+      }catch(err){toast(err.message,'err')}
+      finally{if(active())render()}
+    }
+    render();
+  }catch(err){
+    if(active())$('#kbDrawerBody').innerHTML=`<div class="kb-empty">${escapeHTML(err.message)}</div>`;
+  }
+}
+
 // ---------- 知识库与来源 ----------
 function kbRenderBases(body){
   if(kbExternal()){
     const sources=kbAllSources();
-    const list=sources.map(src=>kbRow(kbText(escapeHTML(src.name||src.id),escapeHTML(src.id)),kbValue(`${Number(src.docCount)||0} 篇文档`))).join('');
-    body.innerHTML=kbPanel(kbPanelTitle('LightCloud 来源'),list||`<div class="kb-empty">${escapeHTML(kb.overviewError||'当前项目没有可用来源')}</div>`,{label:'LightCloud 来源'});
+    const list=sources.map(src=>{
+      const [label,tone]=KB_SOURCE_STATUS[src.status]||[src.status||'未就绪','warn'];
+      return kbRow(kbText(escapeHTML(src.name||src.id),escapeHTML(src.id)),kbBadge(escapeHTML(label),tone)+kbValue(`${Number(src.docCount)||0} 篇文档`));
+    }).join('');
+    const manage=kb.settings?.canManage&&kb.settings.ready&&kbProjectId()?'<button type="button" id="kbProjectSourcesButton" class="kb-btn small">项目来源授权</button>':'';
+    body.innerHTML=kbPanel(kbPanelTitle('LightCloud 来源')+manage,list||`<div class="kb-empty">${escapeHTML(kb.overviewError||(kb.settings?.ready?'当前项目没有可用来源':'启用 LightCloud 后可查看项目来源'))}</div>`,{label:'LightCloud 来源'});
+    const button=$('#kbProjectSourcesButton');
+    if(button)button.onclick=kbOpenProjectSources;
     return;
   }
   const bases=kbBases();

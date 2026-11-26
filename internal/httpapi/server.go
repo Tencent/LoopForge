@@ -100,6 +100,7 @@ type Server struct {
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
 	know            *knowledgeHandlers // knowledge.go / knowledge_proxy.go
+	evolution       *evolutionHandlers // evolution.go / evolution_jobs.go
 }
 
 func New(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string) *gin.Engine {
@@ -121,7 +122,7 @@ func (b *Background) gate() <-chan struct{} {
 // caller's shutdown context. The returned stop function cancels and joins them.
 // Cancelling ctx stops claiming; running work is only cancelled by Stop.
 func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, opts BackgroundOptions) (*gin.Engine, *Background) {
-	bg := &Background{recoveryGate: opts.RecoveryGate}
+	bg := &Background{recoveryGate: opts.RecoveryGate, sopDetectionContext: ctx}
 	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
 		h.startSessionJanitor(ctx)
 		h.startAttachmentSweeper(ctx)
@@ -191,6 +192,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
 		know:            &knowledgeHandlers{deps: d, svc: kbSvc},
+		evolution:       newEvolutionHandlers(d),
 	}
 	// 建项目与打开知识中心共用同一个 knowledge.Service 实例，幂等保证托管库。
 	api.projects.knowSvc = api.know.svc
@@ -212,6 +214,10 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// deps 由所有领域共享，schedule 服务就绪后回填一次即全局可见。
 	d.schedule = sched
 	api.runners.startRunnerSweeper()
+	runAfterGate(bg.gate(), api.evolution.startReplayMonitor)
+	if bg != nil && bg.sopDetectionContext != nil {
+		go api.evolution.monitorSOPDetection(bg.sopDetectionContext, bg.gate())
+	}
 	runAfterGate(bg.gate(), stream.recoverClarifyJobs)
 	g := gin.New()
 	g.HandleMethodNotAllowed = true
@@ -558,6 +564,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/analytics", api.runs.analytics)
 	g.GET("/api/observability/spec", api.observabilitySpec)
 	g.POST("/api/otel/*path", api.otel)
+
+	// --- asset evolution（进化中心）---
+	registerEvolutionRoutes(g, api.evolution)
 
 	// --- knowledge base ---
 	g.GET("/api/knowledge/settings", api.know.settings)

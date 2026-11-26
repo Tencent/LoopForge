@@ -28,7 +28,7 @@ func TestHybridRelevanceOnLiveVector(t *testing.T) {
 	s, cleanupDB := openDocsRegressionStore(t, dsn)
 	defer cleanupDB()
 
-	script, err := os.ReadFile("../../../migrations/044_builtin_knowledge.sql")
+	script, err := os.ReadFile("../../../migrations/047_builtin_knowledge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

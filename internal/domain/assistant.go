@@ -235,6 +235,24 @@ type AssistantSession struct {
 	UpdatedAt          time.Time          `json:"updatedAt"`
 
 	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
+	// ProjectCredentialObservations are server-owned and contain metadata only.
+	ProjectCredentialObservations map[string]AssistantProjectCredentialObservation `json:"-"`
+}
+
+type AssistantProjectCredentialStatus string
+
+const (
+	// Legacy observations were only saved for available credentials.
+	AssistantProjectCredentialAvailable    AssistantProjectCredentialStatus = ""
+	AssistantProjectCredentialUnavailable  AssistantProjectCredentialStatus = "unavailable"
+	AssistantProjectCredentialAccessDenied AssistantProjectCredentialStatus = "access-denied"
+)
+
+type AssistantProjectCredentialObservation struct {
+	Variables  []string                         `json:"variables,omitempty"`
+	UpdatedAt  time.Time                        `json:"updatedAt,omitzero"`
+	Status     AssistantProjectCredentialStatus `json:"status,omitempty"`
+	ObservedAt time.Time                        `json:"observedAt,omitzero"`
 }
 
 type AssistantTask struct {
