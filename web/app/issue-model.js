@@ -146,7 +146,7 @@ function materializePlaybook(draft){
   if(bindings.length)draft.workflowId=bindings[0].workflowId;
   return bindings;
 }
-// 不使用 SOP 的需求在对话里澄清和改代码；选一个 SOP 触发后服务端会清掉这个标记。
+// 不使用 LOOP 的需求在对话里澄清和改代码；选一个 LOOP 触发后服务端会清掉这个标记。
 function issueWithoutSOP(issue){
   return String(issue?.sopMode||'').trim().toLowerCase()==='none';
 }
@@ -225,9 +225,9 @@ function collapseSingleSOPLane(bindings, by, runs, out){
   return [latest];
 }
 function issueSOPLabel(issue){
-  // 对话需求没有 SOP；工作区记录清理后也不回落到建单时记下的默认 SOP。
+  // 对话需求没有 LOOP；工作区记录清理后也不回落到建单时记下的默认 LOOP。
   if(conversationWorkspaceIssue(issue))return '对话工作区';
-  if(issueWithoutSOP(issue))return '不使用 SOP';
+  if(issueWithoutSOP(issue))return '不使用 LOOP';
   const lanes=clientIssueLanes(issue).filter(l=>!l.orphan);
   if(lanes.length===1){
     const name=String(lanes[0].workflowName||lanes[0].label||'').trim();
@@ -308,25 +308,25 @@ function issueActor(i){
   if(issueRunHealth(i)==='attention')return{kind:'attention',title:'需要介入',sub:issueCurrentStage(i).hint||'运行失败或已中断'};
   if(bound)return{kind:'bound',title:bound.name,sub:'已绑定 Agent'};
   if(issueWithoutSOP(i))return{kind:'idle',title:'尚未开始',sub:'在对话里澄清和改代码'};
-  return{kind:'idle',title:'尚未执行',sub:'触发后由 SOP 节点 Agent 接手'};
+  return{kind:'idle',title:'尚未执行',sub:'触发后由 LOOP 节点 Agent 接手'};
 }
 function issueOutcome(i){
   const health=issueRunHealth(i),stage=issueCurrentStage(i);
   if(issueManuallyClosed(i))return{key:'closed',short:'已关闭',title:'需求已关闭',body:'该需求已在 LoopForge 中手动关闭。如需继续修改或执行，请先重新打开。'};
   if(issueTrackerClosed(i)&&!issueMergedDelivery(i))return{key:'closed',short:'已关闭',title:gongfengIssueClosed(i)?'工蜂已关闭':'外部工作项已关闭',body:'请先在外部系统重新打开工作项，等待状态同步后再执行。'};
-  if(deliveryLocked(i)){const label=deliveryLockedLabel(i);const short=label==='MR 已合入'?'已合入':label==='已合入基线'?'已合入基线':label==='关闭'?'关闭':'已交付';return{key:'closed',short,title:label,body:label==='MR 已合入'?'关联 MR 已合入默认分支。如需继续修改，请用重新触发再开一条 SOP。':label==='已合入基线'?'关联 MR 已合入集成分支，尚未进默认分支。如需继续修改，请用重新触发再开一条 SOP。':label==='关闭'?'需求已关闭。如需继续修改或执行，请用重新触发再开一条 SOP。':'SOP 已全部通过。如需继续修改，请用重新触发再开一条 SOP。'};}
-  if((i.status||'')==='done')return{key:'closed',short:stage.label==='交付闭环'?'已交付':'已完成',title:stage.label==='交付闭环'?'交付闭环':'需求已完成',body:stage.label==='交付闭环'?'SOP 已全部通过。如需继续修改，请先重新打开后再触发新的 SOP。':'需求已完成。'};
+  if(deliveryLocked(i)){const label=deliveryLockedLabel(i);const short=label==='MR 已合入'?'已合入':label==='已合入基线'?'已合入基线':label==='关闭'?'关闭':'已交付';return{key:'closed',short,title:label,body:label==='MR 已合入'?'关联 MR 已合入默认分支。如需继续修改，请用重新触发再开一条 LOOP。':label==='已合入基线'?'关联 MR 已合入集成分支，尚未进默认分支。如需继续修改，请用重新触发再开一条 LOOP。':label==='关闭'?'需求已关闭。如需继续修改或执行，请用重新触发再开一条 LOOP。':'LOOP 已全部通过。如需继续修改，请用重新触发再开一条 LOOP。'};}
+  if((i.status||'')==='done')return{key:'closed',short:stage.label==='交付闭环'?'已交付':'已完成',title:stage.label==='交付闭环'?'交付闭环':'需求已完成',body:stage.label==='交付闭环'?'LOOP 已全部通过。如需继续修改，请先重新打开后再触发新的 LOOP。':'需求已完成。'};
   if(clarificationNeedsConfirm(i)){
-    return{key:'confirm',short:'待确认',title:'请确认澄清结论并写回原单',body:'结论已追加到平台说明。确认写回原单（追加评论）后，即可开始触发需求执行 SOP。'};
+    return{key:'confirm',short:'待确认',title:'请确认澄清结论并写回原单',body:'结论已追加到平台说明。确认写回原单（追加评论）后，即可开始触发需求执行 LOOP。'};
   }
   if(conversationWorkspaceIssue(i)){const c=conversationIssueStage(i);return{key:c.ended?'idle':c.key==='closed'?'closed':'active',short:c.short,title:`对话交付 · ${c.label}`,body:c.hint};}
-  if(latestIssueRun(i)?.status==='cancelled')return{key:'attention',short:'已取消',title:'运行已取消',body:'这次运行已结束且工作区已清理，不能接着原记录重试。可以重新触发整条 SOP。'};
+  if(latestIssueRun(i)?.status==='cancelled')return{key:'attention',short:'已取消',title:'运行已取消',body:'这次运行已结束且工作区已清理，不能接着原记录重试。可以重新触发整条 LOOP。'};
   if(health==='attention')return{key:'attention',short:'失败',title:'运行失败',body:`停在「${stage.label}」。可从失败节点重试，或整条重新触发。`};
   if(stage.key==='waiting')return{key:'waiting',short:'待确认',title:'等待确认',body:`「${stage.label}」需要批准后才会继续。`};
   if(health==='active')return{key:'active',short:'进行中',title:'进行中',body:`当前在「${stage.label}」。`};
   if(health==='closed')return{key:'closed',short:'已完成',title:'已完成',body:'全部节点已通过。结果不对可以重新触发整条，或点某个节点从那里重跑。'};
-  if(issueWithoutSOP(i))return{key:'idle',short:'未开始',title:'尚未开始',body:'这条需求不使用 SOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。'};
-  return{key:'idle',short:'未开始',title:'尚未执行',body:'触发后会按 SOP 执行。未绑定仓库时会先确认绑定。'};
+  if(issueWithoutSOP(i))return{key:'idle',short:'未开始',title:'尚未开始',body:'这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。'};
+  return{key:'idle',short:'未开始',title:'尚未执行',body:'触发后会按 LOOP 执行。未绑定仓库时会先确认绑定。'};
 }
 function issueIdForRun(runId){
   const run=(state.data.runs||[]).find(r=>r.id===runId)||(state.activeRun?.id===runId?state.activeRun:null);
@@ -391,7 +391,7 @@ function issueMergedDelivery(i){
   const label=deliveryLockedLabel(i);
   return label==='MR 已合入'||label==='已合入基线';
 }
-// 对话里直接改代码的需求：只在对话工作区里做，没有派发过 SOP。对话工作区没有节点，
+// 对话里直接改代码的需求：只在对话工作区里做，没有派发过 LOOP。对话工作区没有节点，
 // 状态按 MR 交付推进；会话删除后工作区记录可能已经不在，所以也认需求上记的来源会话。
 function conversationWorkspaceIssue(i,run=issueExecution(i).run){
   if(!i||latestIssueTask(i))return false;
@@ -413,7 +413,7 @@ function conversationIssueStage(i){
   if(status==='in_review')return{key:'active',label:'已直推 · 待验收',short:'待验收',width:60,hint:'改动已直接推送到共享分支，没有 MR，验收后可关闭需求'};
   return{key:'active',label:'对话开发中',short:'开发中',width:15,hint:'在对话工作区里直接改代码，提交 MR 后进入待合入'};
 }
-// 对话需求没有 SOP 节点，进度列按交付阶段显示文字；合入或关闭后沿用原来的显示。
+// 对话需求没有 LOOP 节点，进度列按交付阶段显示文字；合入或关闭后沿用原来的显示。
 // MR 没合入就关闭（ended）不算交付完成，进度条置灰而不是绿色。
 function conversationIssueProgress(i,run){
   if(issueManuallyClosed(i)||issueTrackerClosed(i)||deliveryLocked(i)||!conversationWorkspaceIssue(i,run))return null;
@@ -429,11 +429,11 @@ function issueConversationURL(issue,session){
   return url.href;
 }
 function deliveryBlockReason(i){
-  if(issueManuallyClosed(i))return'工作项已关闭，请先重新打开工作项再触发 SOP';
+  if(issueManuallyClosed(i))return'工作项已关闭，请先重新打开工作项再触发 LOOP';
   if(!deliveryLocked(i))return'';
   const label=deliveryLockedLabel(i);
-  if(label==='已关闭'||label==='关闭')return'工作项已关闭，请先重新打开工作项再触发 SOP';
-  return label==='交付闭环'?'工作项已交付闭环，请先重新打开后再触发 SOP':`${label}，请先重新打开工作项再触发 SOP`;
+  if(label==='已关闭'||label==='关闭')return'工作项已关闭，请先重新打开工作项再触发 LOOP';
+  return label==='交付闭环'?'工作项已交付闭环，请先重新打开后再触发 LOOP':`${label}，请先重新打开工作项再触发 LOOP`;
 }
 function issueExecutionBlocked(i){
   if(issueTrackerClosed(i)&&!issueManuallyClosed(i))return'外部工作项已关闭，请先在外部系统重新打开';
@@ -441,7 +441,7 @@ function issueExecutionBlocked(i){
   if(blocked)return blocked;
   return'';
 }
-function closedTrackerHint(issue){const label=issue?.source==='gongfeng'?'工蜂':'外部工作项';return `<span class="muted" title="${label}已关闭，不能触发 SOP">${label}已关闭，不能触发</span>`}
+function closedTrackerHint(issue){const label=issue?.source==='gongfeng'?'工蜂':'外部工作项';return `<span class="muted" title="${label}已关闭，不能触发 LOOP">${label}已关闭，不能触发</span>`}
 function deliveredHint(issue){const label=deliveryLockedLabel(issue);return `<span class="muted" title="${escapeHTML(label)}，请在详情中重新打开后才可触发">${escapeHTML(label)}</span>`}
 function reopenDeliveredButton(issue,{cls='button primary small'}={}){if(issueTrackerClosed(issue)||(!issueManuallyClosed(issue)&&!deliveryLocked(issue)))return'';return `<button type="button" class="${cls}" data-reopen-issue="${escapeHTML(issue.id)}">重新打开</button>`}
 function canRetriggerIssue(issue,run){
@@ -455,10 +455,10 @@ function canRetriggerIssue(issue,run){
 function retriggerButton(issue,run,{ghost=false,cls}={}){
   if(!canRetriggerIssue(issue,run))return'';
   const klass=cls||(ghost?'button ghost small':'button primary small');
-  return `<button type="button" class="${klass}" data-retrigger-issue="${escapeHTML(issue.id)}" title="整条 SOP 从头再开一条新运行，旧记录保留">重新触发</button>`;
+  return `<button type="button" class="${klass}" data-retrigger-issue="${escapeHTML(issue.id)}" title="整条 LOOP 从头再开一条新运行，旧记录保留">重新触发</button>`;
 }
 function triggerSOPButton(issue,{ghost=false,cls='button primary small',text='触发'}={}){
-  if(issueWithoutSOP(issue))return `<button class="${ghost?'button ghost small':cls}" data-chat-issue="${escapeHTML(issue.id)}" title="这条需求不使用 SOP">去对话处理</button>`;
+  if(issueWithoutSOP(issue))return `<button class="${ghost?'button ghost small':cls}" data-chat-issue="${escapeHTML(issue.id)}" title="这条需求不使用 LOOP">去对话处理</button>`;
   if(issueExecutionBlocked(issue))return issueTrackerClosed(issue)&&!issueManuallyClosed(issue)?closedTrackerHint(issue):deliveredHint(issue);
   if(clarificationNeedsConfirm(issue))return `<button class="${ghost?'button ghost small':cls}" data-start-clarify title="请先确认澄清结论并写回原单">去确认结论</button>`;
   return `<button class="${ghost?'button ghost small':cls}" data-dispatch-issue="${escapeHTML(issue.id)}">${text}</button>`;
@@ -478,8 +478,8 @@ function issueActionButtons(i){
   }
   if(health==='active'||health==='attention')return `<button type="button" class="issue-act" data-view-run="${escapeHTML(run?.id||'')}">查看</button>${more}`;
   if(health==='closed')return `${run?`<button type="button" class="issue-act" data-view-run="${escapeHTML(run.id)}">查看</button>`:''}${more}`;
-  if(issueWithoutSOP(i))return `<button type="button" class="issue-act primary" data-chat-issue="${escapeHTML(i.id)}" title="这条需求不使用 SOP，在对话里澄清和改代码">去对话</button>${more}`;
-  return `<button type="button" class="issue-act primary" data-trigger-issue="${escapeHTML(i.id)}" title="${i.workflowId?'整条 SOP 从头执行':'尚未绑定 SOP，触发时会先确认绑定'}">触发</button>${more}`;
+  if(issueWithoutSOP(i))return `<button type="button" class="issue-act primary" data-chat-issue="${escapeHTML(i.id)}" title="这条需求不使用 LOOP，在对话里澄清和改代码">去对话</button>${more}`;
+  return `<button type="button" class="issue-act primary" data-trigger-issue="${escapeHTML(i.id)}" title="${i.workflowId?'整条 LOOP 从头执行':'尚未绑定 LOOP，触发时会先确认绑定'}">触发</button>${more}`;
 }
 function setIssueRunFilter(value,toggle=true){
   const next=toggle&&state.issueRunFilter===value?'':(value||'');
@@ -618,10 +618,10 @@ function issueLaneStage(i){
   const active=lanes.find(l=>l.status==='active');
   if(active)return{key:'active',label:`${active.label}进行中`,hint:`${active.label}正在执行`};
   if(lanes.every(l=>l.status==='succeeded'||l.status==='closed'))return{key:'closed',label:'交付闭环',hint:'已跑过的泳道均已通过'};
-  return{key:'active',label:lanes.map(l=>l.label).join(' / '),hint:'多条 SOP 并行'};
+  return{key:'active',label:lanes.map(l=>l.label).join(' / '),hint:'多条 LOOP 并行'};
 }
-// Nested SOP approval must surface on the requirement banner too: the top run
-// only shows its SOP node as "running", the waiting_approval lives in the
+// Nested LOOP approval must surface on the requirement banner too: the top run
+// only shows its LOOP node as "running", the waiting_approval lives in the
 // child run, which the server snapshot already reports (overall.status).
 function issueNestedWaitingStage(i){
   const snap=state.issueDetailData?.requirement;
@@ -643,9 +643,9 @@ function issueNestedWaitingStage(i){
 }
 function issueCurrentStage(i){
   const {task,run,workflow}=issueExecution(i);
-  if(issueManuallyClosed(i))return{key:'closed',label:'已关闭',hint:'需求已手动关闭，重新打开后才可再次触发 SOP'};
+  if(issueManuallyClosed(i))return{key:'closed',label:'已关闭',hint:'需求已手动关闭，重新打开后才可再次触发 LOOP'};
   if(issueTrackerClosed(i)&&!issueMergedDelivery(i))return{key:'closed',label:gongfengIssueClosed(i)?'工蜂已关闭':'已关闭',hint:'外部工作项已关闭'};
-  if(deliveryLocked(i))return{key:'closed',label:deliveryLockedLabel(i),hint:'重新打开后才可再次触发 SOP'};
+  if(deliveryLocked(i))return{key:'closed',label:deliveryLockedLabel(i),hint:'重新打开后才可再次触发 LOOP'};
   if(conversationWorkspaceIssue(i,run))return conversationIssueStage(i);
   if(!run){
     if(issueClarifying(i.id))return{key:'active',label:'澄清分析中',hint:'关闭网页也不会中断，完成后可回来查看'};
@@ -657,15 +657,15 @@ function issueCurrentStage(i){
     }
     if((i.status||'')==='done')return{key:'closed',label:'已完成',hint:'需求已完成'};
     // Questions are waiting for answers. Informational only: it neither
-    // counts as 需要介入 nor blocks triggering the SOP.
+    // counts as 需要介入 nor blocks triggering the LOOP.
     if(i.clarification?.status==='in_progress'&&(i.clarification.questions||[]).length){
-      return{key:'clarifying',label:'待澄清',hint:'澄清问题等待回答，不影响直接触发 SOP'};
+      return{key:'clarifying',label:'待澄清',hint:'澄清问题等待回答，不影响直接触发 LOOP'};
     }
     if(i.kind==='requirement'){
       const ready=i.clarification?.status==='ready';
       const multi=issueLaneStage(i);
       if(multi)return multi;
-      return{key:'not_started',label:ready?'澄清已完成':'等待执行',hint:ready?'可以进入研发 SOP':'尚未创建运行'};
+      return{key:'not_started',label:ready?'澄清已完成':'等待执行',hint:ready?'可以进入研发 LOOP':'尚未创建运行'};
     }
     return{key:'not_started',label:'等待执行',hint:'尚未创建运行'};
   }
@@ -685,7 +685,7 @@ function issueCurrentStage(i){
     const [id,node]=current,name=byID.get(id)?.name||id;
     if(node.status==='failed')return{key:'attention',label:`失败 · ${name}`,hint:String(node.error||'门禁失败').slice(0,120)};
     if(node.status==='waiting_approval')return{key:'waiting',label:name,hint:'等待人工判断'};
-    if(node.status==='cancelled')return{key:'attention',label:`已取消 · ${name}`,hint:'可重新触发整条 SOP，不能接着这次运行重试'};
+    if(node.status==='cancelled')return{key:'attention',label:`已取消 · ${name}`,hint:'可重新触发整条 LOOP，不能接着这次运行重试'};
     if(node.status==='running'||node.status==='pending_input'){
       const hint=ghost?'运行状态已失效，但节点仍在执行，建议取消':String(node.activity||'Agent 正在执行');
       return{key:'active',label:name,hint};
@@ -693,6 +693,6 @@ function issueCurrentStage(i){
     return{key:'active',label:name,hint:'Agent 正在执行'};
   }
   if(run.status==='failed')return{key:'attention',label:'运行失败',hint:'打开查看失败原因'};
-  if(run.status==='cancelled')return{key:'attention',label:'运行已取消',hint:'可重新触发整条 SOP，不能接着这次运行重试'};
+  if(run.status==='cancelled')return{key:'attention',label:'运行已取消',hint:'可重新触发整条 LOOP，不能接着这次运行重试'};
   const last=[...entries].reverse().find(([,n])=>n.status==='succeeded');return{key:'not_started',label:last?(byID.get(last[0])?.name||last[0]):'等待调度',hint:last?'等待下一节点':'尚未开始'}
 }

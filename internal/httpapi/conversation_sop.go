@@ -59,7 +59,7 @@ func dispatchConversationWorkspace(d *deps, r *http.Request, userID int64, proje
 }
 
 // linkDispatchingConversation links the conversation an issue was dispatched
-// from to that issue, so later turns offer Main Bot the issue's SOP workspace.
+// from to that issue, so later turns offer Main Bot the issue's LOOP workspace.
 func linkDispatchingConversation(d *deps, r *http.Request, userID int64, issue domain.Issue) {
 	session, ok := requestConversation(d, r, userID, issue.ProjectID)
 	if !ok || session.IssueID != "" {
@@ -70,7 +70,7 @@ func linkDispatchingConversation(d *deps, r *http.Request, userID int64, issue d
 	}
 }
 
-// borrowableSOPRun reports whether a top-level SOP run of projectID can lend
+// borrowableSOPRun reports whether a top-level LOOP run of projectID can lend
 // its workspace to an ordinary conversation.
 func borrowableSOPRun(run domain.Run, projectID string) bool {
 	return projectID != "" && run.ID != "" && !run.IsWorkspace() && !run.HistoricalGroup() && run.ExecutionContext.ParentRunID == "" && run.ExecutionContext.ProjectID == projectID
@@ -87,7 +87,7 @@ func ownWorkspaceRunIDs(conv domain.AssistantSession) []string {
 }
 
 // conversationMayBind reports whether conv may work in run: a workspace it
-// opened that is still usable, or a top-level SOP run of its project.
+// opened that is still usable, or a top-level LOOP run of its project.
 func conversationMayBind(conv domain.AssistantSession, run domain.Run, projectID string) bool {
 	if run.IsPersonalWorkspace() && (conv.ProjectID != "" || conv.Shared || conv.RunID != "" || conv.UserID <= 0 || conv.UserID != run.ExecutionContext.ResponsibleUserID) {
 		return false
@@ -99,7 +99,7 @@ func conversationMayBind(conv domain.AssistantSession, run domain.Run, projectID
 	return borrowableSOPRun(run, projectID)
 }
 
-// sopWorkspaceReadOnly reports whether conv is bound to an SOP run whose
+// sopWorkspaceReadOnly reports whether conv is bound to a LOOP run whose
 // workspace the speaker may not write: the turn then stays in platform mode.
 func (d deps) sopWorkspaceReadOnly(c *gin.Context, conv domain.AssistantSession, projectID string, userID int64) bool {
 	run, ok := d.repo.RunState(conv.WorkspaceRunID)
@@ -147,7 +147,7 @@ func turnIssues(d *deps, projectID, linkedIssueID string, refs []domain.Assistan
 	return issues
 }
 
-// issueSOPRun returns the newest SOP run of an issue that can lend its
+// issueSOPRun returns the newest LOOP run of an issue that can lend its
 // workspace to a conversation of projectID.
 func issueSOPRun(d *deps, projectID, issueID string) (domain.Run, bool) {
 	run, ok := d.repo.LatestIssueSOPRun(issueID)

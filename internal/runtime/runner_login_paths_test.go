@@ -124,7 +124,7 @@ func TestManagedLoginRuntimePaths(t *testing.T) {
 						}
 						defer sb.Close(context.Background())
 						if docker, ok := sb.(*dockerSandbox); ok {
-							// SOP workspace preparation may start the container before the CLI has a login lease.
+							// LOOP workspace preparation may start the container before the CLI has a login lease.
 							if err := docker.BindWorkspace(ctx); err != nil {
 								t.Fatal(err)
 							}

@@ -133,7 +133,7 @@ func TestRunJobOnlyDispatchesEligibleUnprocessedIssues(t *testing.T) {
 		{ID: "done", ProjectID: "platform", Source: "gongfeng", Status: "done", Title: "done"},
 		{ID: "ignored", ProjectID: "platform", Source: "gongfeng", Status: "todo", Title: "ignored", AutomationState: "ignored"},
 		{ID: "manual", ProjectID: "platform", Source: "gongfeng", Status: "todo", Title: "manual"},
-		{ID: "other-sop", ProjectID: "platform", Source: "gongfeng", Status: "in_progress", Title: "ran another SOP"},
+		{ID: "other-sop", ProjectID: "platform", Source: "gongfeng", Status: "in_progress", Title: "ran another LOOP"},
 	} {
 		if err := st.PutIssue(issue); err != nil {
 			t.Fatal(err)
@@ -142,7 +142,7 @@ func TestRunJobOnlyDispatchesEligibleUnprocessedIssues(t *testing.T) {
 	if err := st.PutTask(domain.Task{ID: "manual-task", IssueID: "manual", RunID: "manual-run", Status: "completed"}); err != nil {
 		t.Fatal(err)
 	}
-	// 需求已经人工跑过另一条 SOP，定时任务不能再给它追加这条 SOP。
+	// 需求已经人工跑过另一条 LOOP，定时任务不能再给它追加这条 LOOP。
 	if err := st.PutTask(domain.Task{ID: "other-task", IssueID: "other-sop", WorkflowID: "another-sop", RunID: "other-run", Status: "failed"}); err != nil {
 		t.Fatal(err)
 	}

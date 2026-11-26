@@ -666,13 +666,13 @@ func TestNewProjectDefaultsToGenericBackendDeliverySOP(t *testing.T) {
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	created := requestJSON[domain.Project](t, h, http.MethodPost, "/api/projects", domain.Project{ID: "fresh", Key: "FRESH", Name: "Fresh"}, http.StatusOK)
 	if created.WorkflowID != repo.GenericBackendDeliveryWorkflowID {
-		t.Fatalf("new project should default to the LoopForge SOP, got %q", created.WorkflowID)
+		t.Fatalf("new project should default to the LoopForge LOOP, got %q", created.WorkflowID)
 	}
 	assertProjectHasDefaultTrackerMCPs(t, s, "fresh")
-	// 显式指定或修改 SOP 不被覆盖。
+	// 显式指定或修改 LOOP 不被覆盖。
 	updated := requestJSON[domain.Project](t, h, http.MethodPut, "/api/projects", domain.Project{ID: "fresh", Name: "Fresh 2", WorkflowID: "custom-sop"}, http.StatusOK)
 	if updated.WorkflowID != "custom-sop" {
-		t.Fatalf("explicit SOP must be kept, got %q", updated.WorkflowID)
+		t.Fatalf("explicit LOOP must be kept, got %q", updated.WorkflowID)
 	}
 }
 
@@ -782,7 +782,7 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
-		ID: "alpha-sop", Name: "Alpha SOP", ProjectID: "alpha", SandboxProfileID: "test-native",
+		ID: "alpha-sop", Name: "Alpha LOOP", ProjectID: "alpha", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "dev", Name: "实现", Type: "agent", AgentID: "developer"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -807,14 +807,14 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 		Global: true, WorkflowIDs: []string{"missing-sop"},
 	}, http.StatusBadRequest)
 	if missing["error"] == "" {
-		t.Fatal("expected missing SOP error")
+		t.Fatal("expected missing LOOP error")
 	}
 	foreign := requestJSON[map[string]string](t, h, http.MethodPut, "/api/rules", domain.RuleDefinition{
 		ID: "alpha-global", Name: "全局约束", ProjectID: "alpha", Content: "所有节点都要遵守",
 		Global: true, WorkflowIDs: []string{"beta-private"},
 	}, http.StatusBadRequest)
 	if foreign["error"] == "" {
-		t.Fatal("expected foreign SOP error")
+		t.Fatal("expected foreign LOOP error")
 	}
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/rules", domain.RuleDefinition{
 		ID: "alpha-global", Name: "全局约束", ProjectID: "alpha", Content: "所有节点都要遵守",
@@ -822,7 +822,7 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 	}, http.StatusOK)
 	cleared, _ := s.Rule("alpha-global")
 	if cleared.Global || len(cleared.WorkflowIDs) != 0 {
-		t.Fatalf("turning the switch off must drop SOP bindings: %#v", cleared)
+		t.Fatalf("turning the switch off must drop LOOP bindings: %#v", cleared)
 	}
 }
 

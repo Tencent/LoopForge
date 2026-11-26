@@ -9,10 +9,10 @@ import (
 	"agentflow/internal/repo"
 )
 
-// runSessionView decorates a shared SOP run conversation with what the history
+// runSessionView decorates a shared LOOP run conversation with what the history
 // list needs to tell it apart: the requirement it serves, its run status and
-// whether it already holds a discussion. The stored title is only the SOP name,
-// so without this every run of one SOP looked identical and untouched runs
+// whether it already holds a discussion. The stored title is only the LOOP name,
+// so without this every run of one LOOP looked identical and untouched runs
 // looked ownerless.
 type runSessionView struct {
 	assistantConversation
@@ -27,7 +27,7 @@ type runSessionView struct {
 }
 
 // rootRunConversation reports whether the session is the shared conversation of
-// a SOP run (branches keep their own "分支 · …" titles).
+// a LOOP run (branches keep their own "分支 · …" titles).
 func rootRunConversation(item domain.AssistantSession) bool {
 	return item.Shared && strings.TrimSpace(item.RunID) != "" && !strings.HasPrefix(item.ID, "sop-branch-")
 }
@@ -67,7 +67,7 @@ func decorateRunSessions(st *repo.Store, items []assistantConversation) []runSes
 
 // disambiguateRunTitles keeps derived names apart when several runs share one,
 // for example a requirement sent through the product and then the backend
-// SOP: the SOP name is added first, then the start time, and runs started in
+// LOOP: the LOOP name is added first, then the start time, and runs started in
 // the same minute finally show the second.
 func disambiguateRunTitles(views []runSessionView, metas map[string]repo.SidebarRunMeta) {
 	derived := func(v runSessionView) bool { return v.DisplayTitle != "" && !v.TitleEdited && !v.TitleGenerated }
@@ -132,9 +132,9 @@ func decorateRunSessionView(st *repo.Store, item assistantConversation) runSessi
 }
 
 func applyRunSessionMeta(view *runSessionView, meta repo.SidebarRunMeta, issue repo.SidebarIssue, messageCount int, counted bool) {
-	// A retired 自由协作 run or a chat workspace is a conversation, not a SOP:
+	// A retired 自由协作 run or a chat workspace is a conversation, not a LOOP:
 	// it has no nodes and stays "waiting" for good, so neither a 待处理 chip
-	// nor a SOP name would mean anything. Only its task names the row.
+	// nor a LOOP name would mean anything. Only its task names the row.
 	if sopRun(meta) {
 		view.RunStatus = meta.Status
 		view.RunStatusLabel = runSessionStatusLabel(meta.Status)
@@ -145,7 +145,7 @@ func applyRunSessionMeta(view *runSessionView, meta repo.SidebarRunMeta, issue r
 	if counted {
 		view.MessageCount = &messageCount
 	}
-	// A member rename or a generated summary wins over the derived SOP name.
+	// A member rename or a generated summary wins over the derived LOOP name.
 	if !view.TitleEdited && !view.TitleGenerated {
 		if sopRun(meta) {
 			view.DisplayTitle = runSessionDisplayTitle(meta, issue)
@@ -170,8 +170,8 @@ func sopRun(meta repo.SidebarRunMeta) bool {
 }
 
 // runSessionDisplayTitle names a run conversation after what it does, so the
-// history reads as a list of tasks rather than repeated SOP names: the
-// requirement it serves, else the task text it was started with, else the SOP
+// history reads as a list of tasks rather than repeated LOOP names: the
+// requirement it serves, else the task text it was started with, else the LOOP
 // and when it started.
 func runSessionDisplayTitle(meta repo.SidebarRunMeta, issue repo.SidebarIssue) string {
 	if title := runTaskTitle(meta, issue); title != "" {
@@ -179,7 +179,7 @@ func runSessionDisplayTitle(meta repo.SidebarRunMeta, issue repo.SidebarIssue) s
 	}
 	sop := shortWorkflowName(meta.WorkflowName)
 	if sop == "" {
-		sop = "SOP 运行"
+		sop = "LOOP 运行"
 	}
 	if started := runStartedLabel(meta.CreatedAt); started != "" {
 		return sop + " · " + started
@@ -231,7 +231,11 @@ func shortWorkflowName(name string) string {
 	for _, suffix := range []string{"（LoopForge）", "(LoopForge)"} {
 		name = strings.TrimSpace(strings.TrimSuffix(name, suffix))
 	}
-	name = strings.TrimSpace(strings.TrimSuffix(name, " SOP"))
+	for _, suffix := range []string{" LOOP", " SOP"} {
+		if trimmed, ok := strings.CutSuffix(name, suffix); ok {
+			return strings.TrimSpace(trimmed)
+		}
+	}
 	return name
 }
 

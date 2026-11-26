@@ -263,8 +263,8 @@ func (r *IssuesRepo) prepareIssueForSave(v domain.Issue, fromSync, existingOnly 
 		}
 		if strings.TrimSpace(v.AutomationState) == "" {
 			v.AutomationState = old.AutomationState
-			// sopMode=sop lifts the no-SOP choice, and with it the "ignored"
-			// that choice set, as binding or running an SOP from the page does.
+			// sopMode=sop lifts the no-LOOP choice, and with it the "ignored"
+			// that choice set, as binding or running a LOOP from the page does.
 			if old.WithoutSOP() && strings.EqualFold(strings.TrimSpace(v.SOPMode), domain.IssueSOPUse) && v.AutomationState == "ignored" {
 				v.AutomationState = "eligible"
 			}
@@ -386,8 +386,8 @@ func (r *IssuesRepo) ResponsibleUser(issue domain.Issue) (domain.User, error) {
 	return user, nil
 }
 
-// projectWorkflowID returns the project's configured default SOP.
-// DefaultIssueWorkflow returns the SOP a new issue of the project would be
+// projectWorkflowID returns the project's configured default LOOP.
+// DefaultIssueWorkflow returns the LOOP a new issue of the project would be
 // bound to when it is saved without one (see bindDefaultWorkflow).
 func (r *IssuesRepo) DefaultIssueWorkflow(projectID, source, kind string) string {
 	v := domain.Issue{ProjectID: projectID, Source: source, Kind: kind}

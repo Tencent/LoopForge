@@ -9,7 +9,7 @@ const project = {id:"pay",key:"PAY",name:"Payments",workflowId:"deleted-sop",mem
 const ctx = {
   projectCacheRevisions:new Map(),
   state:{projectFilter:"pay",projectDraft:null,data:{projects:[project],repositories:[],workflows:[
-    {id:"new-sop",name:"New SOP",projectId:"pay"},
+    {id:"new-sop",name:"New LOOP",projectId:"pay"},
     {id:"foreign",name:"Foreign",projectId:"other"},
     {id:"generic-backend-delivery",name:"Backend",generic:true},
   ]}},
@@ -51,5 +51,5 @@ for(const p of [
   assert.equal(requests.length,1,notices.join("; "));
   assert.equal(requests[0].body.workflowId,"new-sop","saving must replace the old project default");
   assert.equal(ctx.state.data.projects[0].workflowId,"new-sop");
-  console.log("project default SOP passed");
+  console.log("project default LOOP passed");
 })().catch(err=>{console.error(err);process.exitCode=1;});

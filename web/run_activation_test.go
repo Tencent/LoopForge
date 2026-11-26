@@ -229,7 +229,7 @@ eval(fs.readFileSync('app/run-activation.js','utf8')+'\n'+fs.readFileSync('app/r
  const borrowed=workspaceTab.onclick();
  await new Promise(setImmediate);
  assert.deepEqual(calls,[[workspacePath,'GET'],[restorePath,'POST']],
-   'opening the borrowed workspace must refresh its status and restore even when the SOP itself was not reclaimed');
+   'opening the borrowed workspace must refresh its status and restore even when the LOOP itself was not reclaimed');
  info={available:true};
  restoreStatus={status:'ready'};
  timers.shift()();

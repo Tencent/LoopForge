@@ -13,7 +13,7 @@ func TestWorkflowRevisionDiffAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "rev-sop", Name: "Rev SOP", Status: "draft", Description: "first"}
+	wf := domain.WorkflowDefinition{ID: "rev-sop", Name: "Rev LOOP", Status: "draft", Description: "first"}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}

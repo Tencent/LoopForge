@@ -28,13 +28,13 @@ for(const variant of [
     await expect(options.filter({hasText:'技能'})).toHaveCount(1);
     await page.screenshot({path:info.outputPath(`references-${variant.name}.png`)});
     const loading=page.waitForResponse(r=>{const u=new URL(r.url());return u.pathname==='/api/assistant/references'&&u.searchParams.get('type')==='sop'&&!u.searchParams.get('q')});
-    await options.filter({hasText:'SOP'}).first().click();
+    await options.filter({hasText:'LOOP'}).first().click();
     const loaded=await loading;expect(loaded.ok()).toBe(true);
     const data=await loaded.json(),items=Array.isArray(data)?data:data.items;
     expect(items.length).toBeGreaterThan(0);
     await expect(options.first().locator('strong')).toHaveText(items[0].name||items[0].id);
     await expect.poll(()=>fitsFrame(picker)).toBe(true);
-    // Search a real SOP and select it; the test does not run the referenced SOP.
+    // Search a real LOOP and select it; the test does not run the referenced LOOP.
     const name=items[0].name||items[0].id;
     const searched=page.waitForResponse(r=>{const u=new URL(r.url());return u.pathname==='/api/assistant/references'&&u.searchParams.get('q')===name});
     await picker.locator('input[aria-label="搜索引用对象"]').fill(name);

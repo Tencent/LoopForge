@@ -13,7 +13,7 @@
 <text x="70" y="200" fill="#ededf0" font-size="40" font-weight="650" letter-spacing="-.8">从想法，到合入的代码。</text>
 <rect x="70" y="218" width="64" height="4" rx="2" fill="url(#ink)"/>
 <text x="70" y="262" fill="#b1b1ba" font-size="19">在沙箱对话工作区里与编码 Agent 协作，</text>
-<text x="70" y="291" fill="#b1b1ba" font-size="19">用 SOP 固化交付流程，关键节点由人把关。</text>
+<text x="70" y="291" fill="#b1b1ba" font-size="19">用 LOOP 固化交付流程，关键节点由人把关。</text>
 <rect x="70" y="320" width="68" height="30" rx="15" fill="#141417" stroke="#26262b"/>
 <text x="84" y="340" fill="#b1b1ba" font-size="13.5" font-weight="500">自托管</text>
 <rect x="148.5" y="320" width="55" height="30" rx="15" fill="#141417" stroke="#26262b"/>
@@ -29,7 +29,7 @@
 <text x="949" y="109" fill="#ededf0" font-size="14">修复登录用例偶发失败，并提一个 PR</text>
 <g transform="translate(720 140) scale(.27) translate(-12 -12)"><path d="M53 72 C53 59 63 52.5 73 52.5 C83 52.5 93 59 93 72 C93 85 83 91.5 73 91.5 C63 91.5 53 85 53 72 C53 66.667 53 61.333 53 56 C53 50.667 53 45.333 53 40 C53 27 44.5 20.5 36 20.5 C27.5 20.5 19 27 19 40" stroke="url(#mark)" stroke-width="9" stroke-linecap="round" fill="none"/></g>
 <text x="750" y="157" fill="#ededf0" font-size="13.5" font-weight="600">Main Bot</text>
-<text x="821" y="157" fill="#b1b1ba" font-size="13.5">已在 Docker 沙箱中启动缺陷修复 SOP</text>
+<text x="821" y="157" fill="#b1b1ba" font-size="13.5">已在 Docker 沙箱中启动缺陷修复 LOOP</text>
 <rect x="750" y="172" width="448" height="128" rx="12" fill="#1c1c21" stroke="#1f1f24"/>
 <path d="M801.0 210H868.0" stroke="#34d399" stroke-opacity=".55" stroke-width="2"/>
 <path d="M894.0 210H961.0" stroke="#34d399" stroke-opacity=".55" stroke-width="2"/>
@@ -56,7 +56,7 @@
 <path d="M1065.3 276.2l2.2 2.2 4.4-4.6" fill="none" stroke="#34d399" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="1080" y="280.5" fill="#34d399" font-size="12.5" font-weight="600">PR #128 · 可合入</text>
 <rect x="720" y="312" width="480" height="40" rx="12" fill="#141417" stroke="#26262b"/>
-<text x="738" y="337" fill="#6e6e78" font-size="13.5">输入需求，@ 角色、SOP 或仓库…</text>
+<text x="738" y="337" fill="#6e6e78" font-size="13.5">输入需求，@ 角色、LOOP 或仓库…</text>
 <circle cx="1178" cy="332" r="13" fill="#a08aff"/>
 <path d="M1178 338v-12m-4.5 4.5 4.5-4.5 4.5 4.5" fill="none" stroke="#141417" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </g></svg>

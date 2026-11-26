@@ -1,7 +1,7 @@
 async function startRun(){
   const button=$('#confirmRun');
   const workflowId=$('#runWorkflowChoice').value||state.workflow?.id,projectId=currentProject()?.id||'';
-  if(!workflowId)return toast('暂无可运行 SOP');
+  if(!workflowId)return toast('暂无可运行 LOOP');
   if(button.getAttribute('aria-busy')==='true')return;
   button.disabled=true;
   button.setAttribute('aria-busy','true');
@@ -312,7 +312,7 @@ function renderRunFilterCounts(base){
   });
 }
 function renderRuns(){
-  renderRunOverview();const workflows=catalogWorkflows();$('#runWorkflowFilter').innerHTML='<option value="">全部 SOP</option>'+workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${state.runWorkflowFilter===w.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
+  renderRunOverview();const workflows=catalogWorkflows();$('#runWorkflowFilter').innerHTML='<option value="">全部 LOOP</option>'+workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${state.runWorkflowFilter===w.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
   let base=sortRunsDescending(scopedRuns(sopRuns(state.data.runs)));
   if(state.runWorkflowFilter)base=base.filter(r=>r.workflowId===state.runWorkflowFilter);
   if(state.runQuery)base=base.filter(r=>{const ctx=runContext(r);return `${r.id} ${r.input} ${r.workflowSnapshot?.name||''} ${ctx.issue?.title||''}`.toLowerCase().includes(state.runQuery)});
@@ -418,7 +418,7 @@ async function syncRunControlState(runId){
   return run;
 }
 function runDisplayStatus(r){return (r?.pauseRequested||r?.status==='paused')?'已暂停':r?.kind==='workspace'?'对话工作区':runStatus(r?.status)}
-// Only SOP waiting states require confirmation; workspaces and retired groups do not.
+// Only LOOP waiting states require confirmation; workspaces and retired groups do not.
 function runAwaitsConfirmation(r){return r?.kind!=='workspace'&&!runIsGroupMode(r)&&r?.status==='waiting'&&!r?.pauseRequested}
 function runDisplayStatusClass(r){return (r?.pauseRequested||r?.status==='paused')?'paused':(r?.status||'')}
 function formatTokens(n){n=Number(n||0);if(n>=1000000)return `${(n/1000000).toFixed(n<10000000?1:0)}M`;return n>999?`${(n/1000).toFixed(n>9999?0:1)}k`:String(n)}
@@ -838,7 +838,7 @@ async function resolvePreviewSessionURL(rawUrl){
 function previewPaneHTML(run){
   const pv=state.runPreview;
   if(!runPreviewDeclared(run)&&!(pv&&pv.runId===run.id&&pv.info)){
-    return `<div class="workspace-unavailable"><span>◇</span><b>该 SOP 未开启前端预览</b><p>在流程编辑页左侧「流程步骤」面板添加「预览」节点并连线到需要构建的位置，运行时自动构建静态站点并归档。</p></div>`;
+    return `<div class="workspace-unavailable"><span>◇</span><b>该 LOOP 未开启前端预览</b><p>在流程编辑页左侧「流程步骤」面板添加「预览」节点并连线到需要构建的位置，运行时自动构建静态站点并归档。</p></div>`;
   }
   if(!pv||pv.runId!==run.id||pv.loading)return '<div class="workspace-loading"><span class="workspace-spinner"></span><b>正在读取前端预览</b><p>确认交付物是否已经归档…</p></div>';
   if(pv.error)return `<div class="workspace-unavailable"><span>!</span><b>预览加载失败</b><p>${escapeHTML(pv.error)}</p><button class="button ghost small" data-preview-refresh>重试</button></div>`;
@@ -1126,7 +1126,7 @@ function runPageTarget(r,nodeId){
 function childRunState(id){return state.childRuns?.[id]?.run||null}
 /** 子流程控制标记变化也要刷新父节点，及时停止或恢复活动动效。 */
 function childRunSignature(run){return `${run?.status}:${Boolean(run?.pauseRequested)}:${Boolean(run?.cancelRequested)}|${Object.entries(run?.nodes||{}).map(([k,v])=>`${k}:${v?.status}`).sort().join(',')}`}
-// Where the child SOP needs attention: a pending human decision first, then a failure, then the running node.
+// Where the child LOOP needs attention: a pending human decision first, then a failure, then the running node.
 function childRunFocus(child){
   if(!child)return null;
   const nodes=child.workflowSnapshot?.nodes||[];
@@ -1140,7 +1140,7 @@ function graphNodeView(r,nodeId){
   const focus=x.childRunId&&x.status==='running'?childRunFocus(childRunState(x.childRunId)):null;
   if(focus?.node){
     if(focus.status!=='running')view.cls=focus.status;
-    view.text=`子 SOP ${statusText(focus.status)} · ${focus.node.name||focus.node.id}`;
+    view.text=`子 LOOP ${statusText(focus.status)} · ${focus.node.name||focus.node.id}`;
   }
   return view;
 }
@@ -1206,10 +1206,10 @@ function childSOPPanelHTML(r,nodeId){
   const x=r?.nodes?.[nodeId];
   if(!x?.childRunId)return '';
   const child=childRunState(x.childRunId);
-  const open=`<button type="button" class="button ghost small" data-open-child-run="${escapeHTML(x.childRunId)}">打开子 SOP 运行</button>`;
-  if(!child)return `<div class="child-sop-panel"><div class="child-sop-head"><b>子 SOP 运行</b>${open}</div><p class="muted">正在加载子 SOP 状态…</p></div>`;
+  const open=`<button type="button" class="button ghost small" data-open-child-run="${escapeHTML(x.childRunId)}">打开子 LOOP 运行</button>`;
+  if(!child)return `<div class="child-sop-panel"><div class="child-sop-head"><b>子 LOOP 运行</b>${open}</div><p class="muted">正在加载子 LOOP 状态…</p></div>`;
   const rows=(child.workflowSnapshot?.nodes||[]).map(n=>{const c=child.nodes?.[n.id]||{};return `<div class="child-sop-row"><span>${escapeHTML(n.name||n.id)}</span><span class="status ${escapeHTML(c.status||'pending')}">${statusText(c.status)||'待执行'}</span>${c.status==='failed'&&c.error?`<small>${escapeHTML(String(c.error).slice(0,200))}</small>`:''}</div>`}).join('');
-  return `<div class="child-sop-panel"><div class="child-sop-head"><b>子 SOP：${escapeHTML(child.workflowSnapshot?.name||child.workflowId||'')}</b><span class="status ${runDisplayStatusClass(child)}">${runDisplayStatus(child)}</span>${open}</div>${rows}</div>`;
+  return `<div class="child-sop-panel"><div class="child-sop-head"><b>子 LOOP：${escapeHTML(child.workflowSnapshot?.name||child.workflowId||'')}</b><span class="status ${runDisplayStatusClass(child)}">${runDisplayStatus(child)}</span>${open}</div>${rows}</div>`;
 }
 function childSOPCalloutHTML(r){
   const out=[];
@@ -1218,16 +1218,16 @@ function childSOPCalloutHTML(r){
     if(x.status!=='running'&&!(x.status==='failed'&&r.status==='failed'))continue;
     const child=childRunState(x.childRunId);
     if(!child){
-      if(x.status==='failed'){const parentName=(r.workflowSnapshot?.nodes||[]).find(n=>n.id===nodeId)?.name||nodeId;out.push(`<div class="child-sop-callout failed"><div><b>「${escapeHTML(parentName)}」里的子 SOP 失败了</b><p>在子 SOP 运行里重试或手动通过后，父流程会继续。</p></div><button type="button" class="button primary small" data-open-child-run="${escapeHTML(x.childRunId)}">查看子 SOP 运行</button></div>`);}
+      if(x.status==='failed'){const parentName=(r.workflowSnapshot?.nodes||[]).find(n=>n.id===nodeId)?.name||nodeId;out.push(`<div class="child-sop-callout failed"><div><b>「${escapeHTML(parentName)}」里的子 LOOP 失败了</b><p>在子 LOOP 运行里重试或手动通过后，父流程会继续。</p></div><button type="button" class="button primary small" data-open-child-run="${escapeHTML(x.childRunId)}">查看子 LOOP 运行</button></div>`);}
       continue;
     }
     const focus=childRunFocus(child);
     if(!focus?.node||!['waiting_approval','failed'].includes(focus.status))continue;
     const parentName=(r.workflowSnapshot?.nodes||[]).find(n=>n.id===nodeId)?.name||nodeId,childName=child.workflowSnapshot?.name||child.workflowId||'';
     const nodeName=focus.node.name||focus.node.id,err=child.nodes?.[focus.node.id]?.error||'';
-    const title=focus.status==='waiting_approval'?`「${parentName}」里的子 SOP 在等人工审批`:`「${parentName}」里的子 SOP 失败了`;
-    const detail=focus.status==='waiting_approval'?`子 SOP「${childName}」的节点「${nodeName}」需要人工判断，审批在子 SOP 运行里处理，处理完父流程会自动继续。`:`子 SOP「${childName}」在节点「${nodeName}」失败${err?`：${String(err).slice(0,200)}`:''}。在子 SOP 运行里重试或手动通过后，父流程会继续。`;
-    out.push(`<div class="child-sop-callout ${focus.status}"><div><b>${escapeHTML(title)}</b><p>${escapeHTML(detail)}</p></div><button type="button" class="button primary small" data-open-child-run="${escapeHTML(x.childRunId)}">${focus.status==='waiting_approval'?'去审批':'查看子 SOP 运行'}</button></div>`);
+    const title=focus.status==='waiting_approval'?`「${parentName}」里的子 LOOP 在等人工审批`:`「${parentName}」里的子 LOOP 失败了`;
+    const detail=focus.status==='waiting_approval'?`子 LOOP「${childName}」的节点「${nodeName}」需要人工判断，审批在子 LOOP 运行里处理，处理完父流程会自动继续。`:`子 LOOP「${childName}」在节点「${nodeName}」失败${err?`：${String(err).slice(0,200)}`:''}。在子 LOOP 运行里重试或手动通过后，父流程会继续。`;
+    out.push(`<div class="child-sop-callout ${focus.status}"><div><b>${escapeHTML(title)}</b><p>${escapeHTML(detail)}</p></div><button type="button" class="button primary small" data-open-child-run="${escapeHTML(x.childRunId)}">${focus.status==='waiting_approval'?'去审批':'查看子 LOOP 运行'}</button></div>`);
   }
   return out.join('');
 }
@@ -1255,11 +1255,11 @@ function runProgressCellHTML(r,wf,progress,graphNodes){
     return `<div class="run-progress-cell"><span>执行进度</span><b>${progress.done} / ${progress.total} 节点已结束</b><div class="run-progress large"><i style="width:${progress.pct}%"></i></div><small class="run-progress-pct">${progress.pct}% 已完成</small></div>`;
   }
   const live=(wf.nodes||[]).filter(n=>n.requestId).length;
-  return `<div class="run-progress-cell"><span>协作模式</span><b>历史协作记录</b><small class="run-progress-pct">SOP 主干已冷冻 · ${graphNodes.length} 步可展开 · 群内任务 ${live} 个</small></div>`;
+  return `<div class="run-progress-cell"><span>协作模式</span><b>历史协作记录</b><small class="run-progress-pct">LOOP 主干已冷冻 · ${graphNodes.length} 步可展开 · 群内任务 ${live} 个</small></div>`;
 }
 function runModeChipHTML(r,wf){if(r?.kind==='workspace')return '<span class="run-meta-chip">对话工作区</span>';
-  if(runIsGroupMode(r))return `<span class="run-meta-chip">历史协作记录</span><span class="run-meta-chip">冷冻 SOP v${wf.sopCheckpoint?.workflow?.version||wf.version||1}</span>`;
-  return `<span class="run-meta-chip">SOP v${wf.version||1}</span>`;
+  if(runIsGroupMode(r))return `<span class="run-meta-chip">历史协作记录</span><span class="run-meta-chip">冷冻 LOOP v${wf.sopCheckpoint?.workflow?.version||wf.version||1}</span>`;
+  return `<span class="run-meta-chip">LOOP v${wf.version||1}</span>`;
 }
 
 function bindRunDetailTabs(run,host){
@@ -1322,7 +1322,7 @@ function renderRunDetail(r){
     if(child!==workspacePane)child.remove();
   }
   workspacePane.hidden=runDetailTab!=='workspace';
-  workspacePane.insertAdjacentHTML('beforebegin',`<header class="run-detail-header"><div class="run-detail-topbar"><button class="button ghost small run-back-inline" data-run-back>← 返回运行列表</button><div class="run-breadcrumb"><span>${issueRef}</span><i>›</i><span>${escapeHTML(wf.name)}</span></div>${r.executionContext?.parentRunId?`<button class="button ghost small" data-open-parent-run="${escapeHTML(r.executionContext.parentRunId)}">↑ 返回父 SOP 运行</button>`:''}<div class="run-header-actions">${issueId?`<button class="button primary small" data-open-issue="${escapeHTML(issueId)}">打开需求</button>`:''}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}<button class="button ghost small" data-open-flow>查看流程定义</button>${['queued','running','waiting'].includes(r.status)?'<button class="button danger-outline small" data-cancel-run>取消运行</button>':'<button class="button danger-outline small" data-delete-run>删除记录</button>'}</div></div><div class="run-header-main"><div><h2>${escapeHTML(runTitle)}</h2>${runHeaderDescription(runDescription,ctx.issue?.title,descriptionExpanded)}</div><div class="run-status-wrap">${workspaceRestoreButtonHTML()}<span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span>${r.status==='failed'&&!gongfengIssueClosed(ctx.issue)?'<button class="button primary small" data-resume-run>↻ 重试运行</button>':''}${canManuallyPassFailedNode(r)&&!gongfengIssueClosed(ctx.issue)?`<button class="button ghost small" data-pass-node="${escapeHTML(r.id)}" data-node="${escapeHTML(failedNodeId(r))}">手动通过</button>`:''}</div></div><div class="run-header-meta"><span class="run-meta-chip run-id-chip" title="${escapeHTML(r.id)}">Run <code>${escapeHTML(r.id.slice(-12))}</code><button type="button" class="run-id-copy" data-copy-run title="复制完整 Run ID" aria-label="复制 Run ID"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5H5.5"/></svg></button></span>${runModeChipHTML(r,wf)}${runExecutionChipHTML(r)}<span class="run-meta-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>启动于 ${new Date(r.createdAt).toLocaleString()}</span><span class="run-meta-chip" title="${escapeHTML(runTimingTitle(r))}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>执行 ${runElapsed(r)}${runWallNote(r)}</span></div></header><div class="run-section-label"><b>执行详情</b><div class="run-section-label-actions"><button class="button ghost small" data-export-logs title="下载本次运行全部节点的 Worker 日志">导出全部日志</button><div class="run-tabs" role="tablist">${runTabs.map(t=>{const[k,label]=t.split(':');return `<button class="run-tab ${runDetailTab===k?'active':''}" data-run-tab="${k}">${label}</button>`}).join('')}</div></div></div><div class="run-pane" data-run-pane="overview" ${runDetailTab==='overview'?'':'hidden'}><section class="run-context-grid">${runProgressCellHTML(r,wf,progress,graphNodes)}<div data-run-usage>${liveUsageHTML(r)}</div><div><span>交付物</span><b>${(r.artifacts||[]).length} 个不可变快照</b><small>按节点和尝试次数保留版本</small></div></section></section>${alignPanelHTML}${runIsGroupMode(r)?`<details class="run-sop-snapshot"><summary><div><b>已冷冻 SOP 快照</b><span>历史协作 · ${graphNodes.length} 个节点可展开审计</span></div></summary>`:''}<section class="run-graph-section"><div class="section-heading"><div><h3>节点执行拓扑</h3><span>点击节点查看该节点的输出、产物和执行事件</span></div><div class="graph-legend"><span><i class="succeeded"></i>完成</span><span><i class="running"></i>运行中</span><span><i class="waiting_approval"></i>待确认</span><span><i></i>未开始</span></div></div><div class="run-graph">${graphNodes.map((n,index)=>{const gv=graphNodeView(r,n.id),meta=nodeMeta(n),arts=(r.artifacts||[]).filter(a=>a.nodeId===n.id).length;return `${index?'<span class="graph-arrow">→</span>':''}<button class="graph-node ${gv.cls} ${state.selectedRunNode===n.id?'selected':''}" data-run-node="${escapeHTML(n.id)}"><span class="node-icon ${meta.kind}">${runNodeIcon(meta.kind)}</span><div><b>${escapeHTML(n.name)}</b><small>${escapeHTML(gv.text)}</small></div>${arts?`<em>${arts} 产物</em>`:''}</button>`}).join('')}</div></section><div class="node-drilldown"><section class="node-inspector"><div class="section-heading"><div class="node-inspector-title"><h3>${escapeHTML(selected?.name||'节点详情')}</h3><span class="node-activity-inline${inspectorRunning?' is-running':''}" ${nr.activity?'':'hidden'}>当前活动：<b>${escapeHTML(nr.activity||'')}</b></span><span class="node-inspector-model">${escapeHTML(nr.provider||'未分配')}${nr.model?` · ${escapeHTML(nr.model)}`:''}</span></div><span class="status node-inspector-status ${nr.status||'pending'}${inspectorRunning?' is-running':''}">${statusText(nr.status)||'待执行'}</span></div><div class="node-facts"><div><span>执行次数</span><b>${nr.attempt||0}</b></div><div><span>返工</span><b>${nr.reworkCount||0}</b></div><div><span>Token</span><b>${formatTokens(nr.usage?.totalTokens)}</b></div><div><span>工具调用</span><b>${nr.toolCalls||0}</b></div></div>${childSOPPanelHTML(r,selected?.id)}${gateResultCardHTML(nr)}${canRerunFromHere(r,selected?.id)?`<div class="node-rerun-row"><button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(selected.id)}">从这里重跑</button><small>保留上游结果，从本节点及下游重跑</small></div>`:''}${nr.output?`<div class="node-output"><div><b>节点输出</b><button data-copy-output>复制</button></div><pre>${escapeHTML(displayNodeOutput(nr.output))}</pre></div>`:'<div class="node-output empty"><b>节点输出</b><p>节点完成后，结构化输出会显示在这里。</p></div>'}<div class="runtime-details"><span>Sandbox <code>${escapeHTML(nr.sandboxId||'—')}</code></span><span>Session <code>${escapeHTML(nr.sessionId||'—')}</code></span></div></section><section class="node-artifacts"><div class="section-heading"><div><h3>节点交付物</h3><span>${nodeArtifacts.length} 个版本</span></div></div><div class="node-artifact-list">${nodeArtifacts.map(a=>`<button class="node-artifact-card" data-artifact="${escapeHTML(a.id)}"><span class="artifact-file-icon">${a.mediaType==='application/json'?'{}':'MD'}</span><div class="node-artifact-info"><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB · ${(a.sha256||'').slice(0,10)}</small></div><i>预览 ›</i></button>`).join('')||'<div class="empty-inline"><span>◇</span><p>此节点还没有登记交付物</p></div>'}</div></section></div>${runIsGroupMode(r)?'</details>':''}</div><div class="run-pane" data-run-pane="trace" ${runDetailTab==='trace'?'':'hidden'}><section class="trace-section"><div class="section-heading"><div><h3>${telemetrySectionTitle(telAdapter)}</h3><span>${telPage?`${telemetry.length} 条已加载`:'加载最近 100 条'}</span></div><div class="trace-heading-actions">${telemetrySourceTabs(telAdapter,'data-tel-adapter')}${telPage?.hasMore?`<button class="button ghost small" data-tel-more>加载更早的 100 条</button>`:''}</div></div><div class="telemetry-feed">${telPage?([...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`):'<div class="empty-inline"><p>正在加载轨迹…</p></div>'}</div></section></div><div class="run-pane" data-run-pane="logs" ${runDetailTab==='logs'?'':'hidden'}><section class="worker-log-section"><div class="section-heading"><div><h3>Worker 日志</h3><span>${logPage?`${visibleWorkerLogs(logPage.items).length} 条调用`:(logBusy?'正在接收…':'实时加载最近调用')}</span></div><div class="worker-log-heading-actions">${logPage?.hasMore?`<button class="button ghost small" data-logs-more>加载更早的 100 条</button>`:''}</div></div><div class="worker-log-feed">${logPage?(visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>'):'<div class="empty-inline"><p>正在加载 Worker 实时日志…</p></div>'}</div></section></div>`);
+  workspacePane.insertAdjacentHTML('beforebegin',`<header class="run-detail-header"><div class="run-detail-topbar"><button class="button ghost small run-back-inline" data-run-back>← 返回运行列表</button><div class="run-breadcrumb"><span>${issueRef}</span><i>›</i><span>${escapeHTML(wf.name)}</span></div>${r.executionContext?.parentRunId?`<button class="button ghost small" data-open-parent-run="${escapeHTML(r.executionContext.parentRunId)}">↑ 返回父 LOOP 运行</button>`:''}<div class="run-header-actions">${issueId?`<button class="button primary small" data-open-issue="${escapeHTML(issueId)}">打开需求</button>`:''}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}<button class="button ghost small" data-open-flow>查看流程定义</button>${['queued','running','waiting'].includes(r.status)?'<button class="button danger-outline small" data-cancel-run>取消运行</button>':'<button class="button danger-outline small" data-delete-run>删除记录</button>'}</div></div><div class="run-header-main"><div><h2>${escapeHTML(runTitle)}</h2>${runHeaderDescription(runDescription,ctx.issue?.title,descriptionExpanded)}</div><div class="run-status-wrap">${workspaceRestoreButtonHTML()}<span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span>${r.status==='failed'&&!gongfengIssueClosed(ctx.issue)?'<button class="button primary small" data-resume-run>↻ 重试运行</button>':''}${canManuallyPassFailedNode(r)&&!gongfengIssueClosed(ctx.issue)?`<button class="button ghost small" data-pass-node="${escapeHTML(r.id)}" data-node="${escapeHTML(failedNodeId(r))}">手动通过</button>`:''}</div></div><div class="run-header-meta"><span class="run-meta-chip run-id-chip" title="${escapeHTML(r.id)}">Run <code>${escapeHTML(r.id.slice(-12))}</code><button type="button" class="run-id-copy" data-copy-run title="复制完整 Run ID" aria-label="复制 Run ID"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5H5.5"/></svg></button></span>${runModeChipHTML(r,wf)}${runExecutionChipHTML(r)}<span class="run-meta-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>启动于 ${new Date(r.createdAt).toLocaleString()}</span><span class="run-meta-chip" title="${escapeHTML(runTimingTitle(r))}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>执行 ${runElapsed(r)}${runWallNote(r)}</span></div></header><div class="run-section-label"><b>执行详情</b><div class="run-section-label-actions"><button class="button ghost small" data-export-logs title="下载本次运行全部节点的 Worker 日志">导出全部日志</button><div class="run-tabs" role="tablist">${runTabs.map(t=>{const[k,label]=t.split(':');return `<button class="run-tab ${runDetailTab===k?'active':''}" data-run-tab="${k}">${label}</button>`}).join('')}</div></div></div><div class="run-pane" data-run-pane="overview" ${runDetailTab==='overview'?'':'hidden'}><section class="run-context-grid">${runProgressCellHTML(r,wf,progress,graphNodes)}<div data-run-usage>${liveUsageHTML(r)}</div><div><span>交付物</span><b>${(r.artifacts||[]).length} 个不可变快照</b><small>按节点和尝试次数保留版本</small></div></section></section>${alignPanelHTML}${runIsGroupMode(r)?`<details class="run-sop-snapshot"><summary><div><b>已冷冻 LOOP 快照</b><span>历史协作 · ${graphNodes.length} 个节点可展开审计</span></div></summary>`:''}<section class="run-graph-section"><div class="section-heading"><div><h3>节点执行拓扑</h3><span>点击节点查看该节点的输出、产物和执行事件</span></div><div class="graph-legend"><span><i class="succeeded"></i>完成</span><span><i class="running"></i>运行中</span><span><i class="waiting_approval"></i>待确认</span><span><i></i>未开始</span></div></div><div class="run-graph">${graphNodes.map((n,index)=>{const gv=graphNodeView(r,n.id),meta=nodeMeta(n),arts=(r.artifacts||[]).filter(a=>a.nodeId===n.id).length;return `${index?'<span class="graph-arrow">→</span>':''}<button class="graph-node ${gv.cls} ${state.selectedRunNode===n.id?'selected':''}" data-run-node="${escapeHTML(n.id)}"><span class="node-icon ${meta.kind}">${runNodeIcon(meta.kind)}</span><div><b>${escapeHTML(n.name)}</b><small>${escapeHTML(gv.text)}</small></div>${arts?`<em>${arts} 产物</em>`:''}</button>`}).join('')}</div></section><div class="node-drilldown"><section class="node-inspector"><div class="section-heading"><div class="node-inspector-title"><h3>${escapeHTML(selected?.name||'节点详情')}</h3><span class="node-activity-inline${inspectorRunning?' is-running':''}" ${nr.activity?'':'hidden'}>当前活动：<b>${escapeHTML(nr.activity||'')}</b></span><span class="node-inspector-model">${escapeHTML(nr.provider||'未分配')}${nr.model?` · ${escapeHTML(nr.model)}`:''}</span></div><span class="status node-inspector-status ${nr.status||'pending'}${inspectorRunning?' is-running':''}">${statusText(nr.status)||'待执行'}</span></div><div class="node-facts"><div><span>执行次数</span><b>${nr.attempt||0}</b></div><div><span>返工</span><b>${nr.reworkCount||0}</b></div><div><span>Token</span><b>${formatTokens(nr.usage?.totalTokens)}</b></div><div><span>工具调用</span><b>${nr.toolCalls||0}</b></div></div>${childSOPPanelHTML(r,selected?.id)}${gateResultCardHTML(nr)}${canRerunFromHere(r,selected?.id)?`<div class="node-rerun-row"><button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(selected.id)}">从这里重跑</button><small>保留上游结果，从本节点及下游重跑</small></div>`:''}${nr.output?`<div class="node-output"><div><b>节点输出</b><button data-copy-output>复制</button></div><pre>${escapeHTML(displayNodeOutput(nr.output))}</pre></div>`:'<div class="node-output empty"><b>节点输出</b><p>节点完成后，结构化输出会显示在这里。</p></div>'}<div class="runtime-details"><span>Sandbox <code>${escapeHTML(nr.sandboxId||'—')}</code></span><span>Session <code>${escapeHTML(nr.sessionId||'—')}</code></span></div></section><section class="node-artifacts"><div class="section-heading"><div><h3>节点交付物</h3><span>${nodeArtifacts.length} 个版本</span></div></div><div class="node-artifact-list">${nodeArtifacts.map(a=>`<button class="node-artifact-card" data-artifact="${escapeHTML(a.id)}"><span class="artifact-file-icon">${a.mediaType==='application/json'?'{}':'MD'}</span><div class="node-artifact-info"><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB · ${(a.sha256||'').slice(0,10)}</small></div><i>预览 ›</i></button>`).join('')||'<div class="empty-inline"><span>◇</span><p>此节点还没有登记交付物</p></div>'}</div></section></div>${runIsGroupMode(r)?'</details>':''}</div><div class="run-pane" data-run-pane="trace" ${runDetailTab==='trace'?'':'hidden'}><section class="trace-section"><div class="section-heading"><div><h3>${telemetrySectionTitle(telAdapter)}</h3><span>${telPage?`${telemetry.length} 条已加载`:'加载最近 100 条'}</span></div><div class="trace-heading-actions">${telemetrySourceTabs(telAdapter,'data-tel-adapter')}${telPage?.hasMore?`<button class="button ghost small" data-tel-more>加载更早的 100 条</button>`:''}</div></div><div class="telemetry-feed">${telPage?([...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`):'<div class="empty-inline"><p>正在加载轨迹…</p></div>'}</div></section></div><div class="run-pane" data-run-pane="logs" ${runDetailTab==='logs'?'':'hidden'}><section class="worker-log-section"><div class="section-heading"><div><h3>Worker 日志</h3><span>${logPage?`${visibleWorkerLogs(logPage.items).length} 条调用`:(logBusy?'正在接收…':'实时加载最近调用')}</span></div><div class="worker-log-heading-actions">${logPage?.hasMore?`<button class="button ghost small" data-logs-more>加载更早的 100 条</button>`:''}</div></div><div class="worker-log-feed">${logPage?(visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>'):'<div class="empty-inline"><p>正在加载 Worker 实时日志…</p></div>'}</div></section></div>`);
   workspacePane.insertAdjacentHTML('afterend',`${previewEnabled?`<div class="run-pane" data-run-pane="preview" ${runDetailTab==='preview'?'':'hidden'}>${previewPaneHTML(r)}</div>`:''}<div class="run-pane" data-run-pane="eval" ${runDetailTab==='eval'?'':'hidden'}>${runEvalPaneHTML(r)}</div>`);
   if(keepPreview){const fresh=host.querySelector('iframe[data-preview-frame]');if(fresh)fresh.replaceWith(existingPreviewFrame);}
   const headerActions=host.querySelector('.run-header-actions');if(r.status==='running'&&headerActions)headerActions.querySelector('[data-cancel-run]')?.insertAdjacentHTML('beforebegin','<button class="button ghost small" data-pause-run>暂停运行</button>');
@@ -1352,7 +1352,7 @@ function renderRunDetail(r){
     host.querySelector('.node-inspector .approval-callout')?.remove();
   }
   const childCallout=r.status==='queued'?'':childSOPCalloutHTML(r);if(childCallout)host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend',childCallout);
-  if(pg.child){const note=`<p class="child-sop-trace-note">这是 SOP 节点，下面显示的是子 SOP 运行 <code>${escapeHTML(pg.runId.slice(-12))}</code> 全部节点的内容。</p>`;host.querySelectorAll('.trace-section>.section-heading,.worker-log-section>.section-heading').forEach(h=>h.insertAdjacentHTML('afterend',note))}
+  if(pg.child){const note=`<p class="child-sop-trace-note">这是 LOOP 节点，下面显示的是子 LOOP 运行 <code>${escapeHTML(pg.runId.slice(-12))}</code> 全部节点的内容。</p>`;host.querySelectorAll('.trace-section>.section-heading,.worker-log-section>.section-heading').forEach(h=>h.insertAdjacentHTML('afterend',note))}
   const runMeta=host.querySelector('.run-header-meta');
   const sandbox=runSandboxDetails(r);
   if(runMeta)runMeta.insertAdjacentHTML('beforeend',`${taskTriggerBadge(ctx.task)}<span class="run-meta-chip" data-run-sandbox title="${escapeHTML(sandbox.title)}">Sandbox <code>${escapeHTML(sandbox.id)}</code></span>`);
@@ -1470,7 +1470,7 @@ function runEvalPaneHTML(run){
   const running=submitting||rec?.status==='running';
   const label=rec?.status==='succeeded'?'重新评测':rec?.status==='failed'?'重试评测':'启动智能评测';
   const toolbar=`<header class="run-eval-toolbar">
-    <h3>SOP 运行评测</h3>
+    <h3>LOOP 运行评测</h3>
     <div class="run-eval-controls">
       ${running?'':`<div class="feature-model-picker run-eval-picker" id="runEvalModelPicker">${window.AgentFlowAssistantModels?.featurePickerHTML()||''}</div>`}
       <button type="button" class="button primary" data-start-run-eval ${!terminal||running||runEvalApplying.has(run.id)?'disabled':''}>${running?'评测中…':label}</button>
@@ -1626,7 +1626,7 @@ function runEvalRecommendation(run,rec,item){
   const catalog=rec.facts?.editableCatalog;
   const node=run.workflowSnapshot?.nodes?.find(node=>node.id===item.nodeId);
   const sourceId=type==='agent'?node?.agentId:type==='workflow'?run.workflowId||run.workflowSnapshot?.id:'';
-  // Match the server: a targetId that names no SOP or role falls back to the run's own.
+  // Match the server: a targetId that names no LOOP or role falls back to the run's own.
   const known=id=>type==='agent'?Boolean(state.data.agents?.some(agent=>agent.id===id)||catalog?.agents?.some(agent=>agent.id===id)):
     Boolean(state.data.workflows?.some(workflow=>workflow.id===id)||run.workflowSnapshot?.id===id);
   const requestedId=item.targetId?.trim()||'';
@@ -1635,7 +1635,7 @@ function runEvalRecommendation(run,rec,item){
   const target=type==='agent'?state.data.agents?.find(agent=>agent.id===targetId)||catalog?.agents?.find(agent=>agent.id===targetId):
     state.data.workflows?.find(workflow=>workflow.id===targetId)||workflow;
   const name=target?.name||(type==='workflow'&&rec.facts?.workflowId===targetId?rec.facts.workflowName:'')||targetId;
-  const scope=type==='agent'?'角色':'SOP';
+  const scope=type==='agent'?'角色':'LOOP';
   const projectId=run.executionContext?.projectId||rec.facts?.projectId||'';
   const usesCopy=Boolean((type==='agent'?target?.shared:target?.generic)||(target?.projectId&&target.projectId!==projectId));
   const change=runEvalChange(item,action);
@@ -1678,7 +1678,7 @@ function runEvalRecHTML(run,rec,item,index){
           </div>`:''}
         </div>
       </details>`:''}
-      ${info.applied&&info.type&&info.targetId?`<button type="button" class="button ghost small" data-open-eval-target="${info.type}" data-open-eval-id="${escapeHTML(info.targetId)}">${info.type==='agent'?'打开角色':'打开 SOP'}${runIconSlot('arrow-right',13)}</button>`:''}
+      ${info.applied&&info.type&&info.targetId?`<button type="button" class="button ghost small" data-open-eval-target="${info.type}" data-open-eval-id="${escapeHTML(info.targetId)}">${info.type==='agent'?'打开角色':'打开 LOOP'}${runIconSlot('arrow-right',13)}</button>`:''}
     </div>
   </li>`;
 }
@@ -1746,7 +1746,7 @@ async function loadRunEval(runId,background=false){
 }
 
 async function startRunEval(run){
-  if(!['succeeded','failed','cancelled'].includes(run.status))return toast('请等 SOP 跑完后再评测');
+  if(!['succeeded','failed','cancelled'].includes(run.status))return toast('请等 LOOP 跑完后再评测');
   let picker=$('#runEvalModelPicker');
   await picker?.modelPickerReady;
   if(picker&&!picker.isConnected&&runEvalIsCurrent(run.id)){
@@ -1901,7 +1901,7 @@ function openRunEvalTarget(target,id){
     return;
   }
   const workflow=(state.data.workflows||[]).find(workflow=>workflow.id===id);
-  if(!workflow)return toast('暂时无法打开回写后的 SOP，请刷新后再试。','err');
+  if(!workflow)return toast('暂时无法打开回写后的 LOOP，请刷新后再试。','err');
   state.workflow=clone(workflow);
   state.selectedNode=null;
   switchView('flow');
@@ -2116,7 +2116,7 @@ function queuedRunCalloutHTML(r){
   let queue='平台所有项目共用名额，默认 10 条，平台管理员可调整。';
   if(ec.executionPool==='project-auto'&&!ec.executionMode)queue='系统会选择兼容且有空余名额的执行机器。';
   else if(r.concurrencyExempt)queue='此机器的所有共享项目共用本机名额。';
-  return `<div class="approval-callout queued-run-callout"><b>排队中，获得运行名额后自动启动</b><p>${queue}失败、暂停、待确认的 SOP 空闲 1 小时后归档并释放名额。排队期间可以取消运行。</p></div>`;
+  return `<div class="approval-callout queued-run-callout"><b>排队中，获得运行名额后自动启动</b><p>${queue}失败、暂停、待确认的 LOOP 空闲 1 小时后归档并释放名额。排队期间可以取消运行。</p></div>`;
 }
 async function deleteRun(id){
   if(!id)return;
@@ -2127,7 +2127,7 @@ async function deleteRun(id){
     toast('运行记录已删除');
     if(state.selectedRun===id){state.selectedRun=null;state.activeRun=null;showRunList()}
     // Deleting a Run also changes the execution state of its Task/Issue.  Pull
-    // all three collections so the issue list and an open SOP pane cannot keep
+    // all three collections so the issue list and an open LOOP pane cannot keep
     // rendering the deleted run as “正在启动中”.
     await Promise.all([refreshRuns(),refreshIssues()]);
   }catch(e){toast(e.message,'err')}

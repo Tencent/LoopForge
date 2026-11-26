@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-var ErrIssueBusy = errors.New("需求正在澄清或执行 SOP，请先停止后再删除")
+var ErrIssueBusy = errors.New("需求正在澄清或执行 LOOP，请先停止后再删除")
 var ErrIssueSucceeded = errors.New("需求已有成功运行记录，不允许删除")
 var ErrIssueForceRequired = errors.New("需求已有执行记录或已完成，请确认强制删除")
 var ErrIssueNotFound = errors.New("issue not found")

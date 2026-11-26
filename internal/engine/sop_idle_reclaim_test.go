@@ -145,7 +145,7 @@ func TestSOPIdleReclaimReleasesSlotsAtOneHour(t *testing.T) {
 				t.Fatalf("a fresh run was reclaimed: admission=%q, cleaned=%v", got.AdmissionState, got.WorkspaceCleanedAt)
 			}
 			if promoted, err := s.PromoteQueuedRuns(); err != nil || len(promoted) != 0 {
-				t.Fatalf("fresh SOP stopped holding its slot: %v, %v", promoted, err)
+				t.Fatalf("fresh LOOP stopped holding its slot: %v, %v", promoted, err)
 			}
 			run = setSOPIdleTime(t, s, run, time.Now().UTC().Add(-ConversationWorkspaceIdleTTL))
 			e.reconcileTerminalWorkspaceCleanup()
@@ -410,7 +410,7 @@ func TestSOPIdleReclaimBorrowedAdmissionLetsOwnerReclaim(t *testing.T) {
 	}
 	assertSOPRestoredAndSucceeded(t, s, run.ID)
 	if got, _ := s.RunState(owner.ID); !got.WorkspaceCleanedAt.IsZero() {
-		t.Fatal("SOP did not restore the conversation checkout before execution")
+		t.Fatal("LOOP did not restore the conversation checkout before execution")
 	}
 }
 
@@ -469,7 +469,7 @@ func TestSOPIdleReclaimControlsRestoreWhenAdmitted(t *testing.T) {
 				}
 				freeSlot()
 				if resumed := e.ResumeInterruptedRuns(); !slices.Contains(resumed, run.ID) {
-					t.Fatalf("worker did not start promoted SOP: %v", resumed)
+					t.Fatalf("worker did not start promoted LOOP: %v", resumed)
 				}
 			}
 			assertSOPRestoredAndSucceeded(t, s, run.ID)
@@ -641,7 +641,7 @@ func TestSOPIdleReclaimPromotedRunnerRestoresBeforeDispatch(t *testing.T) {
 			})
 			freeSlot()
 			if resumed := worker.ResumeInterruptedRuns(); !slices.Contains(resumed, run.ID) {
-				t.Fatalf("worker did not start promoted Runner SOP: %v", resumed)
+				t.Fatalf("worker did not start promoted Runner LOOP: %v", resumed)
 			}
 			assertSOPRestoredAndSucceeded(t, s, run.ID)
 		})
@@ -695,10 +695,25 @@ func TestSOPIdleReclaimRestoresOnAReplacementCloudWorker(t *testing.T) {
 	}
 	freeSlot()
 	if resumed := workerB.ResumeInterruptedRuns(); !slices.Contains(resumed, run.ID) {
-		t.Fatalf("replacement worker did not start promoted SOP: %v", resumed)
+		t.Fatalf("replacement worker did not start promoted LOOP: %v", resumed)
 	}
 	got := assertSOPRestoredAndSucceeded(t, s, run.ID)
 	if got.WorkspaceHost != workerB.workspaceHost || got.WorkspaceRoot != workerB.sandboxes.Root() {
 		t.Fatalf("restored workspace binding = %s:%s", got.WorkspaceHost, got.WorkspaceRoot)
+	}
+}
+
+// A parent paused before the LOOP rename stored the old marker. It must still
+// resume its child once admitted again.
+func TestResumePausedChildActivityAcceptsLegacyMarker(t *testing.T) {
+	for activity, want := range map[string]bool{
+		resumePausedChildActivity: true,
+		"等待继续子 SOP":               true,
+		"等待继续":                    false,
+		"":                        false,
+	} {
+		if got := isResumePausedChildActivity(activity); got != want {
+			t.Fatalf("isResumePausedChildActivity(%q) = %v, want %v", activity, got, want)
+		}
 	}
 }

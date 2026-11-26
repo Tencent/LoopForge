@@ -148,7 +148,7 @@ func refreshOfficialCodeBuddyModels(ctx context.Context, user domain.User) {
 }
 
 // assistantKnownCatalog validates settings that are not tied to one user's
-// environment, such as SOP roles and notification bots.
+// environment, such as LOOP roles and notification bots.
 func assistantKnownCatalog() assistantModelCatalog {
 	catalog := assistantFixedCatalog()
 	seen := map[string]bool{}

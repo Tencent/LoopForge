@@ -492,7 +492,7 @@ test('AI schedule navigation separates existing tasks and preserves editor kind 
   assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /Existing AI job/);
   assert.doesNotMatch(app.document.querySelector('#aiScheduleJobList').textContent, /Existing trigger|Other AI job/);
   assert.equal(app.document.querySelector('#scheduleJobCount').textContent, '已启用');
-  assert.equal(app.document.querySelector('#issueHeadingMenu #newScheduleJob'), null, 'SOP 触发 moved out of the issue list menu');
+  assert.equal(app.document.querySelector('#issueHeadingMenu #newScheduleJob'), null, 'LOOP 触发 moved out of the issue list menu');
   app.document.querySelector('#aiScheduleTriggerTab').click();
   await settle(2);
   assert.equal(app.document.querySelector('#aiScheduleTriggerPanel').hidden, false);

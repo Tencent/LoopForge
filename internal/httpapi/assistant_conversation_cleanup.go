@@ -34,10 +34,10 @@ func (h *assistantHandlers) deleteConversation(userID int64, id string) error {
 //     have no nodes and are not listed anywhere.
 //   - not handed in: its workspaces are deleted like before, and when this
 //     conversation created the requirement and it was never dispatched to an
-//     SOP the requirement is deleted as well.
+//     LOOP the requirement is deleted as well.
 //
 // Requirements created elsewhere (TAPD, the requirement list, a dispatched
-// SOP) are never deleted here.
+// LOOP) are never deleted here.
 func (h *assistantHandlers) settleDeletedConversation(conv domain.AssistantSession) {
 	workspaces := map[string][]string{}
 	issues := []string{}
@@ -89,7 +89,7 @@ func conversationIssueDelivered(issue domain.Issue) bool {
 }
 
 // deleteConversationIssue deletes a requirement a deleted conversation
-// created and never handed in. A requirement that was dispatched to an SOP
+// created and never handed in. A requirement that was dispatched to a LOOP
 // has become a regular one and stays, as does one another conversation's
 // workspace is still working on.
 func (h *assistantHandlers) deleteConversationIssue(issue domain.Issue) {

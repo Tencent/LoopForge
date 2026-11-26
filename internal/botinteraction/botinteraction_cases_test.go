@@ -26,7 +26,7 @@ func TestNotificationCardRendering(t *testing.T) {
 	}
 	item := domain.NotificationDelivery{ID: "d", NodeID: "review", SourceName: "Review", EventType: "waiting"}
 	actions := []map[string]any{{"text": "通过", "key": "approve", "style": 1}, {"text": "重试", "key": "retry", "style": 4}, {"text": "退回", "key": "reject", "style": 4}}
-	card := notificationCard(run, item, actions, "需求：Issue\nSOP：Workflow")
+	card := notificationCard(run, item, actions, "需求：Issue\nLOOP：Workflow")
 	if card["action_menu"] != nil {
 		t.Fatal("unexpected action menu")
 	}

@@ -20,7 +20,7 @@ func TestNestedSOPWorkspaceReviewAndRestore(t *testing.T) {
 		defer cancel()
 		_ = f.e.Drain(ctx)
 	})
-	project := domain.Project{ID: "sop-workspace-review", Name: "SOP workspace review", OwnerID: f.user.ID}
+	project := domain.Project{ID: "sop-workspace-review", Name: "LOOP workspace review", OwnerID: f.user.ID}
 	if err := f.s.PutProject(project); err != nil {
 		t.Fatal(err)
 	}

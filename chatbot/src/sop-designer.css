@@ -1,4 +1,4 @@
-/* SOP designer surface: the AI orchestrator inside the SOP canvas side panel.
+/* LOOP designer surface: the AI orchestrator inside the LOOP canvas side panel.
    Messages, activity, pickers and the composer reuse the workbench styles;
    this file only lays them out for the narrow panel. */
 .sop-designer {

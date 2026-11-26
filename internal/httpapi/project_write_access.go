@@ -14,7 +14,7 @@ import (
 )
 
 // requireProjectWriter limits changes to a project's requirements, roles and
-// SOPs to platform administrators, the project owner and non-viewer members.
+// LOOPs to platform administrators, the project owner and non-viewer members.
 // Projects with neither an owner nor members are shared. Authenticated
 // requests without a user identity (service tokens) are allowed.
 func (d deps) requireProjectWriter(c *gin.Context, projectIDs ...string) bool {

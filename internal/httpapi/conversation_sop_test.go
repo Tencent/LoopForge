@@ -20,16 +20,16 @@ func TestConversationSOPDispatchUsesBoundWorkspace(t *testing.T) {
 	}{
 		{"confirmed issue dispatch", "/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"issues_dispatch","arguments":{"path":{"id":"handoff-issue"}}}}`, false, true, false},
 		{"automatic issue dispatch", "/api/issues/handoff-issue/dispatch", `{}`, true, true, false},
-		{"direct SOP start", "/api/runs", `{"projectId":"workbench","workflowId":"handoff-sop"}`, false, true, false},
+		{"direct LOOP start", "/api/runs", `{"projectId":"workbench","workflowId":"handoff-sop"}`, false, true, false},
 		{"ordinary issue dispatch", "/api/issues/handoff-issue/dispatch", `{}`, false, false, false},
-		{"revoked SOP start", "/api/runs", `{"projectId":"workbench","workflowId":"handoff-sop"}`, false, true, true},
+		{"revoked LOOP start", "/api/runs", `{"projectId":"workbench","workflowId":"handoff-sop"}`, false, true, true},
 		{"revoked issue dispatch", "/api/issues/handoff-issue/dispatch", `{}`, false, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, user, _ := chatSandboxFixture(t)
 			h.engine.ConfigureExecution("api", "api", 30*time.Second, false)
 			wf := domain.WorkflowDefinition{
-				ID: "handoff-sop", Name: "SOP", ProjectID: "workbench", SandboxProfileID: repo.TestNativeSandboxID,
+				ID: "handoff-sop", Name: "LOOP", ProjectID: "workbench", SandboxProfileID: repo.TestNativeSandboxID,
 				Nodes: []domain.WorkflowNode{{ID: "check", Name: "Check", Type: "command", Command: "true"}},
 			}
 			if err := h.repo.PutWorkflow(wf); err != nil {
@@ -99,7 +99,7 @@ func TestConversationSOPDispatchUsesBoundWorkspace(t *testing.T) {
 				return
 			}
 			if sop.ID == "" {
-				t.Fatal("SOP was not started")
+				t.Fatal("LOOP was not started")
 			}
 			if !tc.share {
 				if sop.ExecutionContext.WorkspaceRunID != "" || h.engine.RunExecutionRunner(sop) != "" {
@@ -108,16 +108,16 @@ func TestConversationSOPDispatchUsesBoundWorkspace(t *testing.T) {
 				return
 			}
 			if sop.ExecutionContext.WorkspaceRunID != owner.ID || h.engine.RunExecutionRunner(sop) != runner.ID {
-				t.Fatalf("SOP did not use workspace %s on %s: %+v", owner.ID, runner.ID, sop.ExecutionContext)
+				t.Fatalf("LOOP did not use workspace %s on %s: %+v", owner.ID, runner.ID, sop.ExecutionContext)
 			}
 			if sop.WorkflowSnapshot.SandboxProfileID != wf.SandboxProfileID {
-				t.Fatalf("SOP sandbox was replaced by %s", sop.WorkflowSnapshot.SandboxProfileID)
+				t.Fatalf("LOOP sandbox was replaced by %s", sop.WorkflowSnapshot.SandboxProfileID)
 			}
 			if err := h.deleteConversation(user.ID, sessionID); err != nil {
 				t.Fatal(err)
 			}
 			if !h.repo.RunExists(owner.ID) {
-				t.Fatal("conversation deletion removed a workspace still used by its SOP")
+				t.Fatal("conversation deletion removed a workspace still used by its LOOP")
 			}
 		})
 	}
