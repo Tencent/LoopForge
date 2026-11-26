@@ -35,7 +35,7 @@ func TestInitializeFallbackAndStructuredContent(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0", "id": req.ID,
-				"result":  map[string]any{"protocolVersion": "2024-11-05"},
+				"result": map[string]any{"protocolVersion": "2024-11-05"},
 			})
 		case "notifications/initialized":
 			_ = json.NewEncoder(w).Encode(map[string]any{})
@@ -51,7 +51,7 @@ func TestInitializeFallbackAndStructuredContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, nil)
+	c := New(srv.URL, nil).WithTransport(srv.Client().Transport)
 	text, structured, err := c.CallToolStructuredContext(context.Background(), "get_content", map[string]any{"file_id": "d-1"})
 	if err != nil {
 		t.Fatalf("CallToolStructuredContext: %v", err)

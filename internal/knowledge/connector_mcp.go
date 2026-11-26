@@ -209,9 +209,14 @@ var (
 	mcpToolsCache     = map[string]mcpToolsCacheEntry{}
 	mcpToolsInflight  = map[string]*mcpToolsFlight{}
 	mcpSemaphoresMu   sync.Mutex
-	mcpSemaphores     = map[string]chan struct{}{}
+	mcpSemaphores     = map[string]*mcpSemaphoreEntry{}
 	mcpRetryBaseDelay = 500 * time.Millisecond
 )
+
+type mcpSemaphoreEntry struct {
+	sem  chan struct{}
+	refs int
+}
 
 type mcpToolsCacheEntry struct {
 	tools     []mcpclient.Tool
@@ -275,17 +280,29 @@ func acquireConnectorSlot(ctx context.Context, ownerUserID int64, connectorID st
 	}
 	key := fmt.Sprintf("u:%d|%s|%d", ownerUserID, connectorID, maxConcur)
 	mcpSemaphoresMu.Lock()
-	sem, ok := mcpSemaphores[key]
-	if !ok {
-		sem = make(chan struct{}, maxConcur)
-		mcpSemaphores[key] = sem
+	entry, ok := mcpSemaphores[key]
+	if !ok || cap(entry.sem) != maxConcur {
+		entry = &mcpSemaphoreEntry{sem: make(chan struct{}, maxConcur)}
+		mcpSemaphores[key] = entry
 	}
+	entry.refs++
 	mcpSemaphoresMu.Unlock()
-
+	release := func(acquired bool) {
+		if acquired {
+			<-entry.sem
+		}
+		mcpSemaphoresMu.Lock()
+		entry.refs--
+		if entry.refs == 0 && mcpSemaphores[key] == entry {
+			delete(mcpSemaphores, key)
+		}
+		mcpSemaphoresMu.Unlock()
+	}
 	select {
-	case sem <- struct{}{}:
-		return func() { <-sem }, nil
+	case entry.sem <- struct{}{}:
+		return func() { release(true) }, nil
 	case <-ctx.Done():
+		release(false)
 		return nil, ctx.Err()
 	}
 }

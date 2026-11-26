@@ -346,7 +346,7 @@ func TestMCPClientPreservesInputSchema(t *testing.T) {
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
 	}))
 	t.Cleanup(srv.Close)
-	tools, err := mcpclient.New(srv.URL, nil).ListTools()
+	tools, err := mcpclient.New(srv.URL, nil).WithTransport(srv.Client().Transport).ListTools()
 	if err != nil || len(tools) != 1 {
 		t.Fatalf("list: %v %+v", err, tools)
 	}

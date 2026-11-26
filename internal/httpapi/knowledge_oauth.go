@@ -36,6 +36,10 @@ func (h *knowledgeHandlers) oauthPresets(c *gin.Context) {
 
 const knowledgeOAuthBrowserCookie = "loopforge_kb_oauth_nonce"
 
+func knowledgeOAuthBrowserCookieName(nonce string) string {
+	return knowledgeOAuthBrowserCookie + "_" + nonce
+}
+
 // 路由: POST /api/knowledge/oauth/:type/authorize
 func (h *knowledgeHandlers) oauthAuthorize(c *gin.Context) {
 	uid, ok := h.ownerUserID(c)
@@ -59,7 +63,7 @@ func (h *knowledgeHandlers) oauthAuthorize(c *gin.Context) {
 	if parsed, err := url.Parse(authorizeURL); err == nil {
 		if nonce, err := knowledge.VerifyOAuthStateNonce(parsed.Query().Get("state")); err == nil && nonce != "" {
 			http.SetCookie(c.Writer, &http.Cookie{
-				Name:     knowledgeOAuthBrowserCookie,
+				Name:     knowledgeOAuthBrowserCookieName(nonce),
 				Value:    nonce,
 				Path:     "/api/knowledge/oauth",
 				MaxAge:   600,
@@ -86,10 +90,11 @@ func (h *knowledgeHandlers) oauthCallback(c *gin.Context) {
 		}
 	}
 	state := strings.TrimSpace(c.Query("state"))
-	cookieNonce, cookieErr := c.Cookie(knowledgeOAuthBrowserCookie)
 	nonce, stateErr := knowledge.VerifyOAuthStateNonce(state)
+	cookieName := knowledgeOAuthBrowserCookieName(nonce)
+	cookieNonce, cookieErr := c.Cookie(cookieName)
 	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     knowledgeOAuthBrowserCookie,
+		Name:     cookieName,
 		Value:    "",
 		Path:     "/api/knowledge/oauth",
 		MaxAge:   -1,

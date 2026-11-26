@@ -87,6 +87,7 @@ func New(url string, headers map[string]string) *Client {
 		url:  normalizeEndpointURL(url),
 		hdrs: headers,
 		http: &http.Client{
+			Transport:     newGuardedTransport(),
 			Timeout:       60 * time.Second,
 			CheckRedirect: checkSameOriginRedirect,
 		},

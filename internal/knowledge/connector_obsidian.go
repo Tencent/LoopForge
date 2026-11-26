@@ -342,7 +342,20 @@ func (c *obsidianConnector) listVaultDir(ctx context.Context, relDir string) ([]
 	if err := c.doJSON(ctx, http.MethodGet, endpoint, "", &resp); err != nil {
 		return nil, err
 	}
-	return resp.Files, nil
+	files := make([]string, 0, len(resp.Files))
+	for _, entry := range resp.Files {
+		visible := strings.TrimSpace(entry) != ""
+		for _, segment := range strings.Split(strings.TrimSuffix(entry, "/"), "/") {
+			if strings.HasPrefix(segment, ".") {
+				visible = false
+				break
+			}
+		}
+		if visible {
+			files = append(files, entry)
+		}
+	}
+	return files, nil
 }
 
 func (c *obsidianConnector) execListDocs(ctx context.Context, kbID, keyword string, page, pageSize int, scope SourceScope) (CallResult, error) {

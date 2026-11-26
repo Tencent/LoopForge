@@ -220,14 +220,47 @@ func TestKnowledgeOAuthCallbackLocationIsCodeOnly(t *testing.T) {
 	if state == "" {
 		t.Fatal("authorize url misses state")
 	}
+	nonce, err := knowledge.VerifyOAuthStateNonce(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookieName := knowledgeOAuthBrowserCookieName(nonce)
 	var nonceCookie *http.Cookie
 	for _, ck := range rec.Result().Cookies() {
-		if ck.Name == "loopforge_kb_oauth_nonce" {
+		if ck.Name == cookieName {
 			nonceCookie = ck
 		}
 	}
 	if nonceCookie == nil || nonceCookie.Value == "" {
 		t.Fatal("authorize response misses browser binding cookie")
+	}
+
+	// A second authorization in the same browser must not overwrite the first.
+	rec = doJSON(t, handler, http.MethodPost, "/api/knowledge/oauth/mcp/authorize", `{"connectorId":"`+created.ID+`"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second authorize = %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &authResp); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = url.Parse(authResp.AuthorizeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state2 := parsed.Query().Get("state")
+	nonce2, err := knowledge.VerifyOAuthStateNonce(state2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookieName2 := knowledgeOAuthBrowserCookieName(nonce2)
+	var nonceCookie2 *http.Cookie
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == cookieName2 {
+			nonceCookie2 = ck
+		}
+	}
+	if nonceCookie2 == nil || nonceCookie2.Value == "" || cookieName2 == cookieName {
+		t.Fatal("parallel authorizations did not get independent browser cookies")
 	}
 
 	callbackPath := "/api/knowledge/oauth/mcp/callback?state=" + url.QueryEscape(state) + "&code=code-echo-123"
@@ -249,6 +282,20 @@ func TestKnowledgeOAuthCallbackLocationIsCodeOnly(t *testing.T) {
 	location := rec.Header().Get("Location")
 	if location != "/knowledge-oauth-done.html?status=error&code=oauth_failed" {
 		t.Fatalf("callback location = %q", location)
+	}
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == cookieName2 {
+			t.Fatal("first callback cleared the second authorization cookie")
+		}
+	}
+
+	callbackPath2 := "/api/knowledge/oauth/mcp/callback?state=" + url.QueryEscape(state2) + "&code=code-echo-456"
+	rec = httptest.NewRecorder()
+	callbackReq = httptest.NewRequest(http.MethodGet, callbackPath2, nil)
+	callbackReq.AddCookie(nonceCookie2)
+	handler.ServeHTTP(rec, callbackReq)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/knowledge-oauth-done.html?status=error&code=oauth_failed" {
+		t.Fatalf("second callback = %d: %s", rec.Code, rec.Body.String())
 	}
 
 	fake.mu.Lock()

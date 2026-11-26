@@ -1119,7 +1119,14 @@ func TestOAuthCallbackRejectsChangedConnectorEndpoint(t *testing.T) {
 	}
 	state := authorizeState(t, authorizeURL)
 
-	if _, err := svc.UpdateConnector(ctx, uid, connector.ID, ConnectorInput{Endpoint: srv.URL + "/mcp-b"}); err != nil {
+	beforeEdit, _ := store.GetKnowledgeConnector(uid, connector.ID)
+	editSecret, err := OpenSecret(uid, beforeEdit.ID, beforeEdit.SecretEnc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Re-entering the same secret is required when changing the endpoint; the
+	// callback must still reject the edit through its authorization fingerprint.
+	if _, err := svc.UpdateConnector(ctx, uid, connector.ID, ConnectorInput{Endpoint: srv.URL + "/mcp-b", Secret: editSecret}); err != nil {
 		t.Fatalf("endpoint change: %v", err)
 	}
 
@@ -1891,7 +1898,7 @@ func TestOAuthStartDoesNotRebaseRegistrationOntoChangedEndpoint(t *testing.T) {
 	}()
 	<-provider.started
 
-	if _, err := svc.UpdateConnector(ctx, uid, connector.ID, ConnectorInput{Endpoint: srv.URL + "/mcp?changed=1"}); err != nil {
+	if _, err := svc.UpdateConnector(ctx, uid, connector.ID, ConnectorInput{Endpoint: srv.URL + "/mcp?changed=1", ClearSecret: true}); err != nil {
 		t.Fatalf("endpoint change during DCR: %v", err)
 	}
 	close(provider.release)

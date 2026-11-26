@@ -213,6 +213,7 @@ func TestSiYuanConnectorAuthScopeAndEvidence(t *testing.T) {
 
 func TestObsidianConnectorSelfSignedTLSAuthAndScope(t *testing.T) {
 	const apiKey = "obsidian-key-xyz"
+	var hiddenReadCalls atomic.Int32
 
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
@@ -232,12 +233,12 @@ func TestObsidianConnectorSelfSignedTLSAuthAndScope(t *testing.T) {
 		case "/vault/":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"files": []string{"Projects/", "Diary/", "README.md"},
+				"files": []string{"Projects/", "Diary/", "README.md", ".obsidian/", ".git/", ".private.md"},
 			})
 		case "/vault/Projects/":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"files": []string{"arch.md"},
+				"files": []string{"arch.md", ".hidden.md", "nested/.secret.md"},
 			})
 		case "/vault/Projects/arch.md":
 			w.Header().Set("Content-Type", "application/vnd.olrapi.note+json")
@@ -245,6 +246,10 @@ func TestObsidianConnectorSelfSignedTLSAuthAndScope(t *testing.T) {
 				"content": "# Architecture\n\nLocal REST API read-only vault.",
 				"tags":    []string{"design"},
 			})
+		case "/vault/.obsidian/secret.md", "/vault/Projects/.hidden.md", "/vault/Projects/nested/.secret.md":
+			hiddenReadCalls.Add(1)
+			w.Header().Set("Content-Type", "application/vnd.olrapi.note+json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"content": "hidden credentials"})
 		case "/search/simple/":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode([]map[string]any{
@@ -257,6 +262,16 @@ func TestObsidianConnectorSelfSignedTLSAuthAndScope(t *testing.T) {
 					"filename": "Diary/secret.md",
 					"score":    0.99,
 					"matches":  []map[string]any{{"context": "Private diary entry"}},
+				},
+				{
+					"filename": "Projects/.hidden.md",
+					"score":    0.98,
+					"matches":  []map[string]any{{"context": "hidden credentials"}},
+				},
+				{
+					"filename": ".obsidian/secret.md",
+					"score":    0.97,
+					"matches":  []map[string]any{{"context": "plugin credentials"}},
 				},
 			})
 		default:
@@ -322,9 +337,18 @@ func TestObsidianConnectorSelfSignedTLSAuthAndScope(t *testing.T) {
 		Sources:     []string{"Projects"},
 	}
 
+	_, listText, err := exec.ExecuteReferenceTool(ctx, 1, ref, WeKnoraToolListDocuments, map[string]any{"knowledge_base_id": "Projects"}, "")
+	if err != nil || !strings.Contains(listText, "Projects/arch.md") {
+		t.Fatalf("unexpected obsidian document list: err=%v text=%s", err, listText)
+	}
 	_, searchText, err := exec.ExecuteReferenceTool(ctx, 1, ref, WeKnoraToolSearchKnowledge, map[string]any{"query": "vault"}, "")
 	if err != nil || !strings.Contains(searchText, "Projects/arch.md") || strings.Contains(searchText, "Diary/secret.md") {
 		t.Fatalf("unexpected obsidian search result: err=%v text=%s", err, searchText)
+	}
+	for _, hidden := range []string{".obsidian/secret.md", "Projects/.hidden.md", "Projects/nested/.secret.md"} {
+		if strings.Contains(listText, hidden) || strings.Contains(searchText, hidden) {
+			t.Fatalf("hidden path %q leaked through list/search: list=%s search=%s", hidden, listText, searchText)
+		}
 	}
 
 	readRec, readText, err := exec.ExecuteReferenceTool(ctx, 1, ref, WeKnoraToolReadDocument, map[string]any{"knowledge_id": "Projects/arch.md"}, "")
@@ -335,6 +359,16 @@ func TestObsidianConnectorSelfSignedTLSAuthAndScope(t *testing.T) {
 	_, _, err = exec.ExecuteReferenceTool(ctx, 1, ref, WeKnoraToolReadDocument, map[string]any{"knowledge_id": "Diary/secret.md"}, "")
 	if !isAppErrKind(err, apperr.Forbidden) {
 		t.Fatalf("expected Forbidden for Diary/secret.md, got %v", err)
+	}
+	allRef := domain.KnowledgeRef{ConnectorID: created.ID, Mode: "all"}
+	for _, hidden := range []string{".obsidian/secret.md", "Projects/.hidden.md", "Projects/nested/.secret.md"} {
+		_, _, err = exec.ExecuteReferenceTool(ctx, 1, allRef, WeKnoraToolReadDocument, map[string]any{"knowledge_id": hidden}, "")
+		if !isAppErrKind(err, apperr.Invalid) {
+			t.Fatalf("expected Invalid for hidden path %q, got %v", hidden, err)
+		}
+	}
+	if got := hiddenReadCalls.Load(); got != 0 {
+		t.Fatalf("hidden document reads reached upstream %d times", got)
 	}
 }
 

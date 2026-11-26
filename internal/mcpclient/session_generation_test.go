@@ -91,7 +91,7 @@ func TestMCPClientConcurrent404ReinitializesOnce(t *testing.T) {
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 
-	client := New(srv.URL, nil)
+	client := New(srv.URL, nil).WithTransport(srv.Client().Transport)
 	if _, err := client.ListTools(); err != nil {
 		t.Fatalf("warmup: %v", err)
 	}

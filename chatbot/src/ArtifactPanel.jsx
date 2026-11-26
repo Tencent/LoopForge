@@ -666,16 +666,12 @@ export default function ArtifactPanel({
                   knowledgeReads={
                     selected.knowledgeReads ||
                     (selected.nodeId
-                      ? (
-                          (selected.runId &&
-                            runs?.find(
-                              (r) =>
-                                r.id === selected.runId &&
-                                r.nodes?.[selected.nodeId]?.knowledgeReads?.length,
-                            )) ||
-                          runs?.find(
-                            (r) => r.nodes?.[selected.nodeId]?.knowledgeReads?.length,
-                          )
+                      ? // Never borrow another run's reads for the same node.
+                        (selected.runId
+                          ? runs?.find((r) => r.id === selected.runId)
+                          : runs?.find(
+                              (r) => r.nodes?.[selected.nodeId]?.knowledgeReads?.length,
+                            )
                         )?.nodes?.[selected.nodeId]?.knowledgeReads || []
                       : [])
                   }
