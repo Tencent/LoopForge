@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -414,7 +415,7 @@ func (e *Engine) DeleteRun(runID string) error {
 	if e.WorkspaceActive != nil && e.WorkspaceActive(run) || e.conversationGenerationRunning(run) {
 		return fmt.Errorf("工作区仍在使用，请先停止")
 	}
-	if err := e.repo.ClaimWorkspaceDeletion(runID, token, run.Revision, time.Now().UTC()); err != nil {
+	if err := e.claimWorkspaceDeletion(runID, token); err != nil {
 		return err
 	}
 	// Preserve the terminal outcome on the durable Task before removing the
@@ -443,6 +444,27 @@ func (e *Engine) DeleteRun(runID string) error {
 		e.PromoteQueuedRunsAsync()
 	}
 	return nil
+}
+
+// claimWorkspaceDeletion fences the claim with the run revision read under
+// the workspace-use lease. The engine may still be settling a terminal run in
+// the background (admission release, checkpoint handoff), which bumps the
+// revision, so a moved revision is retried briefly instead of reported busy.
+func (e *Engine) claimWorkspaceDeletion(runID, token string) error {
+	for attempt := 0; ; attempt++ {
+		current, ok := e.repo.RunState(runID)
+		if !ok {
+			return fmt.Errorf("run not found")
+		}
+		err := e.repo.ClaimWorkspaceDeletion(runID, token, current.Revision, time.Now().UTC())
+		if err == nil || !errors.Is(err, repo.ErrWorkspaceInUse) || attempt >= 20 {
+			return err
+		}
+		if latest, ok := e.repo.RunState(runID); !ok || latest.Revision == current.Revision {
+			return err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func (e *Engine) settleDeletedRunTasks(run domain.Run) error {
