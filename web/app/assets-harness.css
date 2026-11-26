@@ -351,7 +351,7 @@
 #assetsView .sandbox-card-head p { margin: 3px 0 0; color: var(--hui-tertiary); font-size: 12px; line-height: 1.5; }
 #assetsView .sandbox-env-grid { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; align-items: start; }
 #assetsView .sandbox-field { min-width: 0; }
-#assetsView .sandbox-field + .sandbox-field { margin-top: 16px; }
+#assetsView .sandbox-card > .sandbox-field + .sandbox-field { margin-top: 16px; }
 #assetsView .sandbox-setup .asset-field-label { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
 #assetsView .sandbox-setup .asset-field-label label { cursor: pointer; }
 #assetsView .sandbox-native-callout { display: flex; align-items: flex-start; gap: 12px; }
