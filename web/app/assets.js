@@ -572,9 +572,12 @@ async function uploadSkillFiles(input){
   const finishOk=data=>{
     const i=(state.data.skills||[]).findIndex(x=>x.id===id);
     if(i>=0)state.data.skills[i]=data;else state.data.skills.push(data);
-    setSkillUploadStatus(`<div class="skill-upload-ok">✓ 已替换为 ${files.length} 个文件 · ${totalLabel}（${new Date().toLocaleTimeString()}）</div>`);
+    const storedFiles=data.fileRefs||[];
+    const storedSize=storedFiles.reduce((sum,file)=>sum+file.size,0);
+    const message=`已替换为 ${storedFiles.length} 个文件`;
+    setSkillUploadStatus(`<div class="skill-upload-ok">✓ ${message} · ${fmtBytes(storedSize)}（${new Date().toLocaleTimeString()}）</div>`);
     renderAssets();renderProperties();
-    toast(`已替换为 ${files.length} 个文件`,'ok');
+    toast(message,'ok');
   };
   const showFail=err=>{
     setSkillUploadStatus(`<div class="skill-upload-err">✕ ${escapeHTML(err.message)}。现有文件未改动。</div>`);
