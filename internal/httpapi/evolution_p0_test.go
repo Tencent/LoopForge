@@ -325,3 +325,94 @@ func TestEvolutionP0CanaryGoalGate(t *testing.T) {
 		t.Fatalf("expected lower-token canary to pass, got %s", st)
 	}
 }
+
+func TestEvolutionP0BudgetPrecheckSleepAndWake(t *testing.T) {
+	env := newEvoTestEnv(t)
+	now := time.Now().UTC()
+
+	// 1. Validate budget API rejects monthly < daily and persists valid limits.
+	requestJSONAuthed[map[string]any](t, env.router, env.user, http.MethodPut, "/api/evolution/budget?projectId=evo-p",
+		map[string]any{"dailyTokenLimit": 200000, "monthlyTokenLimit": 100000}, http.StatusBadRequest)
+
+	savedBudget := requestJSONAuthed[domain.EvoBudgetStatus](t, env.router, env.user, http.MethodPut, "/api/evolution/budget?projectId=evo-p",
+		map[string]any{"dailyTokenLimit": 100000, "monthlyTokenLimit": 500000}, http.StatusOK)
+	if savedBudget.DailyTokenLimit != 100000 || savedBudget.MonthlyTokenLimit != 500000 || savedBudget.Exceeded {
+		t.Fatalf("unexpected saved budget: %+v", savedBudget)
+	}
+
+	// Seed a replay run today consuming 120k tokens -> exceeds 100k daily limit!
+	replayRun := domain.Run{
+		ID: "ev-replay-spend", WorkflowID: env.wf.ID, WorkflowSnapshot: env.wf, Status: "succeeded",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p", Purpose: domain.RunPurposeEvolutionReplay},
+		Usage:            domain.TokenUsage{TotalTokens: 120000},
+		Nodes:            map[string]*domain.NodeRun{"code": {NodeID: "code", Status: "succeeded"}},
+		CreatedAt:        now.Add(-5 * time.Minute), UpdatedAt: now.Add(-4 * time.Minute),
+	}
+	if err := env.store.PutRun(replayRun); err != nil {
+		t.Fatal(err)
+	}
+
+	// Overview reports budget exceeded.
+	ov := requestJSONAuthed[domain.EvoOverview](t, env.router, env.user, http.MethodGet, "/api/evolution/overview?projectId=evo-p", nil, http.StatusOK)
+	if !ov.Budget.Exceeded || !ov.Budget.DailyExceeded || ov.Budget.DailyUsedTokens < 120000 {
+		t.Fatalf("expected overview to report daily budget exceeded: %+v", ov.Budget)
+	}
+
+	// Configure enabled SOP policy with 3 completed runs (batchSize=3).
+	pol := domain.EvoSOPPolicy{
+		ProjectID: "evo-p", WorkflowID: env.wf.ID, Enabled: true,
+		Preferences: []string{domain.EvoPrefTokens}, BatchSize: 3, UpdatedBy: env.user.ID,
+	}
+	if err := env.store.PutEvoSOPPolicy(pol); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := env.store.PutRun(domain.Run{
+			ID: "budget-biz-" + string(rune('a'+i)), WorkflowID: env.wf.ID, WorkflowSnapshot: env.wf, Status: "succeeded",
+			ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"},
+			Usage:            domain.TokenUsage{TotalTokens: 50000},
+			Nodes:            map[string]*domain.NodeRun{"code": {NodeID: "code", Status: "succeeded"}},
+			CreatedAt:        now.Add(-10 * time.Minute), UpdatedAt: now.Add(-9 * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Auto-batch pre-check must skip triggering while daily budget is exceeded!
+	env.h.sweepSOPBatches(now)
+	if props := env.store.EvoProposals("evo-p", 20); len(props) != 0 {
+		t.Fatalf("budget-exceeded auto-batch must not create proposals, got %d", len(props))
+	}
+
+	// 2. Test 3 consecutive no-gain outcomes put SOP into sleeping state, then wake endpoint reopens it.
+	for i := 0; i < 3; i++ {
+		env.h.recordSOPProposalOutcome(domain.EvoProposal{
+			ID: "p-nogain-" + string(rune('a'+i)), ProjectID: "evo-p", WorkflowID: env.wf.ID,
+		}, false, "回放未达标", now)
+	}
+	slept := env.store.EvoSOPPolicy("evo-p", env.wf.ID)
+	if slept.ConsecutiveNoGain != 3 || slept.SleepStage != 1 || !evolution.IsSOPPolicySleeping(slept, now) {
+		t.Fatalf("expected SOP sleeping after 3 no-gains, got %+v", slept)
+	}
+
+	// SOP summary must report stage == "sleeping".
+	sops := requestJSONAuthed[[]domain.EvoSOPSummary](t, env.router, env.user, http.MethodGet, "/api/evolution/sops?projectId=evo-p", nil, http.StatusOK)
+	if len(sops) != 1 || sops[0].Stage != domain.EvoSOPStageSleeping || sops[0].ConsecutiveNoGain != 3 {
+		t.Fatalf("expected sleeping stage in SOP list, got %+v", sops)
+	}
+
+	// Increase budget so only sleep is tested; auto-batch must still skip while sleeping.
+	requestJSONAuthed[domain.EvoBudgetStatus](t, env.router, env.user, http.MethodPut, "/api/evolution/budget?projectId=evo-p",
+		map[string]any{"dailyTokenLimit": 1000000, "monthlyTokenLimit": 5000000}, http.StatusOK)
+	env.h.sweepSOPBatches(now)
+	if props := env.store.EvoProposals("evo-p", 20); len(props) != 0 {
+		t.Fatalf("sleeping SOP must not auto-trigger, got %d proposals", len(props))
+	}
+
+	// User wakes the sleeping SOP via POST /wake.
+	woken := requestJSONAuthed[domain.EvoSOPPolicy](t, env.router, env.user, http.MethodPost, "/api/evolution/sops/"+env.wf.ID+"/wake",
+		map[string]any{"projectId": "evo-p"}, http.StatusOK)
+	if woken.ConsecutiveNoGain != 0 || woken.SleepStage != 0 || !woken.SleepingUntil.IsZero() || !woken.Enabled {
+		t.Fatalf("expected wake endpoint to reset sleep state, got %+v", woken)
+	}
+}

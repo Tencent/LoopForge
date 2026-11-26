@@ -48,3 +48,21 @@ func (r *ProjectsRepo) PutSOPDetection(projectID string, setting domain.SOPDetec
 		return tx.Model(&projectRow{}).Where("id = ?", projectID).Update("payload", mustJSON(project)).Error
 	})
 }
+
+func (r *ProjectsRepo) PutEvolutionBudget(projectID string, budget domain.EvoBudgetConfig) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row projectRow
+		if err := r.locking(tx).Where("id = ?", projectID).Take(&row).Error; err != nil {
+			return err
+		}
+		var project domain.Project
+		if err := jsonUnmarshal(row.Payload, &project); err != nil {
+			return err
+		}
+		if project.ArchivedAt != nil {
+			return gorm.ErrRecordNotFound
+		}
+		project.EvolutionBudget = &budget
+		return tx.Model(&projectRow{}).Where("id = ?", projectID).Update("payload", mustJSON(project)).Error
+	})
+}

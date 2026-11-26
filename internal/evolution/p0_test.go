@@ -229,3 +229,45 @@ func TestJudgeCanaryWithPreferencesGoalGate(t *testing.T) {
 		t.Fatalf("expected running canary verdict with live P1 progress, got status=%s verdict=%q", status, verdict)
 	}
 }
+
+func TestSOPSleepBackoffProgressionAndWake(t *testing.T) {
+	now := time.Date(2026, 11, 27, 8, 0, 0, 0, time.UTC)
+	pol := domain.DefaultEvoSOPPolicy("p1", "wf1")
+	pol.Enabled = true
+
+	// 1st and 2nd no-gain attempts do not trigger sleep.
+	pol = ApplySOPProposalOutcome(pol, false, "未达标1", now)
+	if pol.ConsecutiveNoGain != 1 || IsSOPPolicySleeping(pol, now) {
+		t.Fatalf("1st failure should not sleep: %+v", pol)
+	}
+	pol = ApplySOPProposalOutcome(pol, false, "未达标2", now)
+	if pol.ConsecutiveNoGain != 2 || IsSOPPolicySleeping(pol, now) {
+		t.Fatalf("2nd failure should not sleep: %+v", pol)
+	}
+
+	// 3rd -> 1d, 4th -> 3d, 5th -> 7d, 6th -> 14d, 7th -> capped at 14d.
+	expectedDays := []int{1, 3, 7, 14, 14}
+	for i, wantDays := range expectedDays {
+		stepTime := now.Add(time.Duration(i) * 30 * 24 * time.Hour)
+		pol = ApplySOPProposalOutcome(pol, false, "无收益", stepTime)
+		if !IsSOPPolicySleeping(pol, stepTime) {
+			t.Fatalf("step %d expected sleeping: %+v", i, pol)
+		}
+		gotDays := int(pol.SleepingUntil.Sub(stepTime) / (24 * time.Hour))
+		if gotDays != wantDays {
+			t.Fatalf("step %d sleep days = %d, want %d", i, gotDays, wantDays)
+		}
+	}
+
+	// User wake resets backoff completely.
+	woken := WakeSOPPolicy(pol)
+	if !woken.Enabled || woken.ConsecutiveNoGain != 0 || woken.SleepStage != 0 || !woken.SleepingUntil.IsZero() || woken.SleepReason != "" {
+		t.Fatalf("WakeSOPPolicy did not clear backoff: %+v", woken)
+	}
+
+	// Gained release also resets backoff completely.
+	released := ApplySOPProposalOutcome(pol, true, "", now)
+	if released.ConsecutiveNoGain != 0 || released.SleepStage != 0 || !released.SleepingUntil.IsZero() {
+		t.Fatalf("gained outcome did not clear backoff: %+v", released)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -51,9 +52,46 @@ func (e *Engine) validateEvolutionReplayDefinition(wf domain.WorkflowDefinition,
 			if strings.EqualFold(gate.Mode, domain.VerificationModeMR) {
 				return fmt.Errorf("进化回放暂不支持角色「%s」的 MR 验证", agent.ID)
 			}
+			if isCommandVerificationGate(gate) && !e.workflowSandboxNetworkIsolated(wf) {
+				return fmt.Errorf("进化回放仅允许在网络隔离的 Docker 沙箱（networkDisabled 或 AGENTFLOW_DOCKER_NETWORK=none）中执行角色「%s」的命令验收门禁", agent.ID)
+			}
 		}
 	}
 	return nil
+}
+
+func isCommandVerificationGate(gate domain.VerificationGate) bool {
+	mode := strings.ToLower(strings.TrimSpace(gate.Mode))
+	if mode == "command" {
+		return true
+	}
+	if mode == "" {
+		for _, cmd := range gate.Commands {
+			if strings.TrimSpace(cmd) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *Engine) workflowSandboxNetworkIsolated(wf domain.WorkflowDefinition) bool {
+	defaultNet := os.Getenv("AGENTFLOW_DOCKER_NETWORK")
+	if wf.SandboxSnapshot != nil {
+		return wf.SandboxSnapshot.Profile.IsNetworkIsolated(defaultNet)
+	}
+	id := strings.TrimSpace(wf.SandboxProfileID)
+	if id == "" {
+		id = repo.DefaultSandboxProfileID
+	}
+	if e == nil || e.repo == nil {
+		return false
+	}
+	profile, ok := e.repo.Sandbox(id)
+	if !ok {
+		return false
+	}
+	return profile.IsNetworkIsolated(defaultNet)
 }
 
 // Evolution replay runs execute a historical input with candidate asset

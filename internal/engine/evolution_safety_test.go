@@ -79,21 +79,71 @@ func TestEvolutionReplayRejectsExternalWorkflows(t *testing.T) {
 	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: wf.ID}); err != nil {
 		t.Fatal(err)
 	}
-	// Local command verification gates without bound repos or external credentials are allowed in replay.
+	// Command verification gates are ONLY allowed in replay when the workflow runs
+	// in a non-privileged, network-isolated Docker sandbox (networkDisabled or AGENTFLOW_DOCKER_NETWORK=none).
 	cmdAgent := agent
 	cmdAgent.ID = "replay-safe-cmd"
 	cmdAgent.Verification = []domain.VerificationGate{{ID: "command", Mode: "command", Commands: []string{"exit 0"}, ExecutionScope: "run"}}
-	cmdWF := wf
-	cmdWF.ID = "replay-safety-cmd"
-	cmdWF.Nodes = []domain.WorkflowNode{{ID: "work", Type: "agent", AgentID: cmdAgent.ID}}
 	if err := st.PutAgent(cmdAgent); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutWorkflow(cmdWF); err != nil {
+	// 1. Native sandbox must reject command gate in replay.
+	cmdNativeWF := wf
+	cmdNativeWF.ID = "replay-cmd-native"
+	cmdNativeWF.Nodes = []domain.WorkflowNode{{ID: "work", Type: "agent", AgentID: cmdAgent.ID}}
+	if err := st.PutWorkflow(cmdNativeWF); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdWF.ID}); err != nil {
-		t.Fatalf("expected local command verification gate to be allowed in replay, got: %v", err)
+	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdNativeWF.ID}); err == nil || !strings.Contains(err.Error(), "网络隔离") {
+		t.Fatalf("expected command gate on native sandbox to be rejected, got: %v", err)
+	}
+	// 2. Ordinary Docker sandbox (network enabled) must reject command gate in replay.
+	dockerFile := &domain.SandboxDockerfile{Content: "FROM alpine:3.20\n"}
+	openDocker := domain.SandboxProfile{ID: "docker-open", Name: "Open Docker", Driver: domain.SandboxDriverDocker, Dockerfile: dockerFile}
+	if err := st.PutSandbox(openDocker); err != nil {
+		t.Fatal(err)
+	}
+	cmdOpenDockerWF := cmdNativeWF
+	cmdOpenDockerWF.ID = "replay-cmd-docker-open"
+	cmdOpenDockerWF.SandboxProfileID = openDocker.ID
+	if err := st.PutWorkflow(cmdOpenDockerWF); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdOpenDockerWF.ID}); err == nil || !strings.Contains(err.Error(), "网络隔离") {
+		t.Fatalf("expected command gate on non-isolated docker sandbox to be rejected, got: %v", err)
+	}
+	// 3. Privileged Docker sandbox must reject even with NetworkDisabled=true.
+	privDocker := domain.SandboxProfile{ID: "docker-priv", Name: "Priv Docker", Driver: domain.SandboxDriverDocker, Privileged: true, NetworkDisabled: true, Dockerfile: dockerFile}
+	if err := st.PutSandbox(privDocker); err != nil {
+		t.Fatal(err)
+	}
+	cmdPrivWF := cmdNativeWF
+	cmdPrivWF.ID = "replay-cmd-docker-priv"
+	cmdPrivWF.SandboxProfileID = privDocker.ID
+	if err := st.PutWorkflow(cmdPrivWF); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdPrivWF.ID}); err == nil || !strings.Contains(err.Error(), "网络隔离") {
+		t.Fatalf("expected command gate on privileged docker sandbox to be rejected, got: %v", err)
+	}
+	// 4. Non-privileged Docker sandbox with NetworkDisabled=true allows command gate in replay.
+	isolatedDocker := domain.SandboxProfile{ID: "docker-isolated", Name: "Isolated Docker", Driver: domain.SandboxDriverDocker, NetworkDisabled: true, Dockerfile: dockerFile}
+	if err := st.PutSandbox(isolatedDocker); err != nil {
+		t.Fatal(err)
+	}
+	cmdIsolatedWF := cmdNativeWF
+	cmdIsolatedWF.ID = "replay-cmd-docker-isolated"
+	cmdIsolatedWF.SandboxProfileID = isolatedDocker.ID
+	if err := st.PutWorkflow(cmdIsolatedWF); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdIsolatedWF.ID}); err != nil {
+		t.Fatalf("expected command gate on network-isolated docker sandbox to be allowed, got: %v", err)
+	}
+	// 5. Deployment-level AGENTFLOW_DOCKER_NETWORK=none also qualifies non-privileged Docker sandboxes.
+	t.Setenv("AGENTFLOW_DOCKER_NETWORK", "none")
+	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdOpenDockerWF.ID}); err != nil {
+		t.Fatalf("expected AGENTFLOW_DOCKER_NETWORK=none to allow command gate in docker replay, got: %v", err)
 	}
 }
 

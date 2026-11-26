@@ -131,7 +131,9 @@ func (h *evolutionHandlers) failProposal(p domain.EvoProposal, msg string) {
 	}
 	if err := h.repo.PutEvoProposal(p); err != nil {
 		log.Printf("evolution proposal %s fail persist: %v", p.ID, err)
+		return
 	}
+	h.recordSOPProposalOutcome(p, false, msg, time.Now().UTC())
 }
 
 func (h *evolutionHandlers) runProposalJob(p domain.EvoProposal, finding domain.EvoFinding, user domain.User) {
@@ -400,7 +402,7 @@ func (h *evolutionHandlers) resolveRefineActor(p domain.EvoProposal) (domain.Use
 		if !isAdmin && !h.projectMemberWrites(p.ProjectID, user.ID) {
 			return domain.User{}, false
 		}
-		resolvedUser, _, credOK := h.applySOPModelCredentials(context.Background(), user, p.Model, wf)
+		resolvedUser, _, credOK := h.applySOPModelCredentials(context.Background(), user, p.Model, wf, evoAutoAllowSharedKey())
 		if !credOK {
 			return domain.User{}, false
 		}
@@ -907,7 +909,10 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 			p.RefineRound < evolution.MaxRefineRounds &&
 			assetOK && domain.ContentHash(asset.Content) == p.BaseHash &&
 			strings.TrimSpace(p.FindingID) != "" {
-			if actor, ok := h.resolveRefineActor(p); ok {
+			if budget := h.projectBudgetStatus(p.ProjectID, now); budget.Exceeded {
+				p.Status = domain.EvoProposalFailed
+				p.Error = summary.Verdict + "（" + budget.Reason + "，已跳过自动反思修正）"
+			} else if actor, ok := h.resolveRefineActor(p); ok {
 				p.RefineHistory = append(p.RefineHistory, domain.EvoRefineAttempt{
 					Round:            p.RefineRound + 1,
 					Title:            p.Title,
@@ -943,6 +948,9 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 			replaysCopy := append([]domain.EvoReplay(nil), replays...)
 			go h.refineProposalJob(p, replaysCopy, refineActor)
 			return p
+		}
+		if p.Status == domain.EvoProposalFailed {
+			h.recordSOPProposalOutcome(p, false, p.Error, now)
 		}
 		if p.Status == domain.EvoProposalPending && assetOK && h.autoEvolution(asset) {
 			if started, err := h.startCanary(p, asset, 0, 0, 0, "L3 自动开始试用", true); err == nil {
@@ -980,5 +988,9 @@ func (h *evolutionHandlers) releaseProposal(p domain.EvoProposal, asset evoAsset
 	if p.Status == domain.EvoProposalCanary && (p.Canary == nil || p.Canary.Status != domain.EvoCanaryPassed) {
 		return p, evoConflict("灰度尚未通过，不能发布")
 	}
-	return h.repo.ReleaseEvoProposal(p, userID, note, force, evolution.DefaultWatchMinRuns)
+	released, err := h.repo.ReleaseEvoProposal(p, userID, note, force, evolution.DefaultWatchMinRuns)
+	if err == nil {
+		h.recordSOPProposalOutcome(released, true, "", time.Now().UTC())
+	}
+	return released, err
 }

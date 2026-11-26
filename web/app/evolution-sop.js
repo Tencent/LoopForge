@@ -18,6 +18,7 @@ const EVO_SOP_STAGES = {
   monitor: ['监测中', ''],
   optimize: ['优化中', 'warn'],
   gray: ['灰度中', 'ok'],
+  sleeping: ['休眠中', 'warn'],
 };
 const EVO_SOP_METRICS = [
   { key: 'score', label: 'SOP 评分', higherBetter: true, format: v => v == null ? '—' : `${Math.round(v)}`, unit: '分' },
@@ -117,6 +118,131 @@ function evoSOPIsEnabledView() {
 
 // ---------- 首页（SOP 维度） ----------
 
+function evoSOPBudgetButtonHTML() {
+  const b = evo.overview?.budget || {};
+  const hasLimit = (Number(b.dailyTokenLimit) || 0) > 0 || (Number(b.monthlyTokenLimit) || 0) > 0;
+  let label = 'Token 预算';
+  if (b.exceeded) {
+    label = '预算已达上限';
+  } else if (b.dailyTokenLimit > 0) {
+    label = `日预算 ${evoSOPFormatTokens(b.dailyUsedTokens)}/${evoSOPFormatTokens(b.dailyTokenLimit)}`;
+  } else if (b.monthlyTokenLimit > 0) {
+    label = `月预算 ${evoSOPFormatTokens(b.monthlyUsedTokens)}/${evoSOPFormatTokens(b.monthlyTokenLimit)}`;
+  }
+  const title = hasLimit
+    ? `今日 ${evoSOPFormatTokens(b.dailyUsedTokens)} / ${b.dailyTokenLimit > 0 ? evoSOPFormatTokens(b.dailyTokenLimit) : '不限'}；本月 ${evoSOPFormatTokens(b.monthlyUsedTokens)} / ${b.monthlyTokenLimit > 0 ? evoSOPFormatTokens(b.monthlyTokenLimit) : '不限'}`
+    : '设置项目每日和每月 RSI Token 预算（自动触发前预检）';
+  return `<button type="button" class="kb-btn ${b.exceeded ? 'warn' : 'quiet'} small" data-evo-budget-open title="${escapeHTML(title)}">${escapeHTML(label)}</button>`;
+}
+
+function evoSOPBudgetBannerHTML() {
+  const b = evo.overview?.budget;
+  if (!b?.exceeded) return '';
+  return `<div class="evo-sop-callout is-warn" role="status">
+    <div><strong>已暂停后台自动进化</strong><p>${escapeHTML(b.reason || '项目 RSI Token 预算已用尽')}，可调高预算或等待下个周期自动恢复。</p></div>
+    <div class="evo-sop-callout-actions"><button type="button" class="kb-btn small" data-evo-budget-open>调整预算</button></div>
+  </div>`;
+}
+
+function evoSOPBudgetDialogHTML() {
+  return `<dialog id="evoBudgetDialog" class="evo-sop-dialog" aria-labelledby="evoBudgetTitle">
+    <form method="dialog" id="evoBudgetForm" class="evo-sop-dialog-card">
+      <header class="evo-sop-dialog-head">
+        <div class="evo-sop-dialog-title-wrap">
+          <h2 id="evoBudgetTitle">项目 RSI Token 预算</h2>
+          <p>自动批次优化、自动轨迹检测与自动反思修正触发前均会预检预算；填 0 表示不限制。</p>
+        </div>
+        <button type="button" class="evo-sop-dialog-close" data-evo-budget-close aria-label="关闭弹窗">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+      <div class="evo-sop-batch-editor">
+        <label for="evoBudgetDaily">每日 Token 上限</label>
+        <div class="evo-sop-batch-custom-row">
+          <input id="evoBudgetDaily" type="number" class="kb-input" min="0" step="10000" value="0" aria-label="每日 Token 上限">
+          <span id="evoBudgetDailyUsed">今日已用 0</span>
+        </div>
+      </div>
+      <div class="evo-sop-batch-editor">
+        <label for="evoBudgetMonthly">每月 Token 上限</label>
+        <div class="evo-sop-batch-custom-row">
+          <input id="evoBudgetMonthly" type="number" class="kb-input" min="0" step="100000" value="0" aria-label="每月 Token 上限">
+          <span id="evoBudgetMonthlyUsed">本月已用 0</span>
+        </div>
+      </div>
+      <footer class="evo-sop-dialog-foot">
+        <button type="button" class="kb-btn quiet" data-evo-budget-close>取消</button>
+        <button type="submit" class="kb-btn primary" id="evoBudgetSave">保存预算</button>
+      </footer>
+    </form>
+  </dialog>`;
+}
+
+function evoSOPOpenBudgetDialog() {
+  const dlg = $('#evoBudgetDialog');
+  if (!dlg) return;
+  const b = evo.overview?.budget || {};
+  $('#evoBudgetDaily').value = String(Number(b.dailyTokenLimit) || 0);
+  $('#evoBudgetMonthly').value = String(Number(b.monthlyTokenLimit) || 0);
+  $('#evoBudgetDailyUsed').textContent = `今日已用 ${evoSOPFormatTokens(b.dailyUsedTokens) === '—' ? '0' : evoSOPFormatTokens(b.dailyUsedTokens)}`;
+  $('#evoBudgetMonthlyUsed').textContent = `本月已用 ${evoSOPFormatTokens(b.monthlyUsedTokens) === '—' ? '0' : evoSOPFormatTokens(b.monthlyUsedTokens)}`;
+  if (typeof dlg.showModal === 'function') dlg.showModal();
+  else dlg.setAttribute('open', '');
+}
+
+async function evoSOPSaveBudget(daily, monthly, btn) {
+  const pid = evoProjectId();
+  if (!pid) return null;
+  if (btn) btn.disabled = true;
+  try {
+    const saved = await api(`/api/evolution/budget?projectId=${encodeURIComponent(pid)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ projectId: pid, dailyTokenLimit: daily, monthlyTokenLimit: monthly }),
+    });
+    if (evo.overview && pid === evoProjectId()) {
+      evo.overview.budget = saved;
+      evoRender();
+    }
+    toast('项目 RSI 预算已更新', 'ok');
+    return saved;
+  } catch (err) {
+    toast(err.message, 'err');
+    return null;
+  } finally {
+    if (btn?.isConnected) btn.disabled = false;
+  }
+}
+
+async function evoSOPWake(workflowId, btn) {
+  const pid = evoProjectId();
+  if (!pid || !workflowId || evoSOPState.busyIds.has(workflowId)) return null;
+  evoSOPState.busyIds.add(workflowId);
+  if (btn) btn.disabled = true;
+  try {
+    const saved = await api(`/api/evolution/sops/${encodeURIComponent(workflowId)}/wake`, {
+      method: 'POST',
+      body: JSON.stringify({ projectId: pid }),
+    });
+    evoSOPState.busyIds.delete(workflowId);
+    if (pid === evoProjectId()) {
+      if (evoSOPState.view?.workflowId === workflowId) {
+        await evoSOPLoadDetail(evoSOPState.view);
+      } else if (typeof evoLoad === 'function') {
+        await evoLoad(pid);
+      }
+    }
+    toast('已重新开启自动进化并重置休眠计数', 'ok');
+    return saved;
+  } catch (err) {
+    evoSOPState.busyIds.delete(workflowId);
+    toast(err.message, 'err');
+    return null;
+  } finally {
+    evoSOPState.busyIds.delete(workflowId);
+    if (btn?.isConnected) btn.disabled = false;
+  }
+}
+
 function evoSOPHomeHTML() {
   const sops = evo.overview?.sops || [];
   const counts = {
@@ -124,6 +250,7 @@ function evoSOPHomeHTML() {
     monitor: sops.filter(s => s.stage === 'monitor').length,
     optimize: sops.filter(s => s.stage === 'optimize').length,
     gray: sops.filter(s => s.stage === 'gray').length,
+    sleeping: sops.filter(s => s.stage === 'sleeping').length,
   };
 
   const filters = [
@@ -131,16 +258,19 @@ function evoSOPHomeHTML() {
     ['monitor', '监测中', counts.monitor],
     ['optimize', '优化中', counts.optimize],
     ['gray', '灰度中', counts.gray],
+    ['sleeping', '休眠中', counts.sleeping],
   ];
 
   return `<div class="evo-sop-home">
     ${evoHomeStatusHTML()}
+    ${evoSOPBudgetBannerHTML()}
     <section class="evo-sop-panel" aria-label="SOP 进化列表">
       <div class="evo-sop-toolbar">
         <div class="evo-sop-filters" role="group" aria-label="按 SOP 状态筛选">
           ${filters.map(([k, label, n]) => `<button type="button" class="evo-sop-filter-btn" data-evo-sop-filter="${k}" aria-pressed="${evoSOPState.filter === k}">${label}<span>${n}</span></button>`).join('')}
         </div>
         <div class="evo-sop-toolbar-right">
+          ${evoSOPBudgetButtonHTML()}
           <label class="evo-home-search">
             ${evoReviewIcon('search')}
             <input class="kb-input" type="search" data-evo-sop-search data-evo-key="sop-search" aria-label="搜索 SOP" placeholder="搜索 SOP 名称或说明" value="${escapeHTML(evoSOPState.q)}">
@@ -150,6 +280,7 @@ function evoSOPHomeHTML() {
       <div id="evoSopListHost">${evoSOPListHTML(sops)}</div>
     </section>
     ${evoSOPPrefDialogHTML()}
+    ${evoSOPBudgetDialogHTML()}
   </div>`;
 }
 
@@ -222,6 +353,7 @@ function evoSOPUpdateList() {
     monitor: sops.filter(s => s.stage === 'monitor').length,
     optimize: sops.filter(s => s.stage === 'optimize').length,
     gray: sops.filter(s => s.stage === 'gray').length,
+    sleeping: sops.filter(s => s.stage === 'sleeping').length,
   };
   host.innerHTML = evoSOPListHTML(sops);
   $$('[data-evo-sop-filter]').forEach(btn => {
@@ -588,7 +720,10 @@ function evoSOPDetailHTML(view) {
     const verSuffix = primaryAsset.currentVersion ? ` · v${primaryAsset.currentVersion}` : '';
     headActions.push(`<button type="button" class="kb-btn quiet small" data-evo-asset="${escapeHTML(primaryAsset.kind)}" data-id="${escapeHTML(primaryAsset.id)}" title="查看历史版本对比并一键回滚到指定版本">版本与回滚${escapeHTML(verSuffix)}</button>`);
   }
-  if (d.stage === 'monitor' && d.enabled) {
+  if (d.stage === 'sleeping' && d.enabled) {
+    headActions.push(`<button type="button" class="kb-btn primary small" data-evo-sop-wake="${escapeHTML(d.workflowId)}"${busy}>重新开启自动进化</button>`);
+  }
+  if ((d.stage === 'monitor' || d.stage === 'sleeping') && d.enabled) {
     headActions.push(`<button type="button" class="kb-btn small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${busy}>立即发起优化</button>`);
   }
   if (active?.id) {
@@ -683,6 +818,16 @@ function evoSOPCalloutHTML(d) {
       <div class="evo-sop-callout-actions">
         <button type="button" class="kb-btn quiet small" data-evo-sop-stop-gray="${escapeHTML(p.id)}">停止灰度</button>
         <button type="button" class="kb-btn primary small" data-evo-sop-publish="${escapeHTML(p.id)}" data-next-ver="${escapeHTML(nextVer)}" data-ready="${ready ? '1' : '0'}"${ready ? '' : ' disabled title="灰度尚未达到通过条件（每组需满足最低运行数且判定通过）"'}>发布 ${escapeHTML(nextVer)}</button>
+      </div>
+    </div>`;
+  }
+  if (d.stage === 'sleeping') {
+    const until = d.sleepingUntil ? new Date(d.sleepingUntil).toLocaleString() : '';
+    const detail = d.sleepReason || `连续 ${Number(d.consecutiveNoGain) || 3} 次优化未产生有效收益，已自动休眠。`;
+    return `<div class="evo-sop-callout is-warn" role="status">
+      <div><strong>自动进化休眠中${until ? `（预计 ${escapeHTML(until)} 自动恢复）` : ''}</strong><p>${escapeHTML(detail)}</p></div>
+      <div class="evo-sop-callout-actions">
+        <button type="button" class="kb-btn primary small" data-evo-sop-wake="${escapeHTML(d.workflowId)}">重新开启自动进化</button>
       </div>
     </div>`;
   }
@@ -1432,6 +1577,20 @@ document.addEventListener('click', e => {
     evoSOPTriggerOptimize(optBtn.dataset.evoSopOptimize, optBtn);
     return;
   }
+  const wakeBtn = e.target.closest('[data-evo-sop-wake]');
+  if (wakeBtn) {
+    evoSOPWake(wakeBtn.dataset.evoSopWake, wakeBtn);
+    return;
+  }
+  if (e.target.closest('[data-evo-budget-open]')) {
+    evoSOPOpenBudgetDialog();
+    return;
+  }
+  if (e.target.closest('[data-evo-budget-close]')) {
+    const dlg = $('#evoBudgetDialog');
+    if (dlg) { if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open'); }
+    return;
+  }
 });
 
 document.addEventListener('input', e => {
@@ -1497,6 +1656,17 @@ document.addEventListener('dragend', () => {
 });
 
 document.addEventListener('submit', async e => {
+  if (e.target?.id === 'evoBudgetForm') {
+    e.preventDefault();
+    const daily = Math.max(0, Math.round(Number($('#evoBudgetDaily')?.value) || 0));
+    const monthly = Math.max(0, Math.round(Number($('#evoBudgetMonthly')?.value) || 0));
+    const saved = await evoSOPSaveBudget(daily, monthly, $('#evoBudgetSave'));
+    if (saved) {
+      const dlg = $('#evoBudgetDialog');
+      if (dlg) { if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open'); }
+    }
+    return;
+  }
   if (e.target?.id !== 'evoSopPrefForm') return;
   e.preventDefault();
   const target = evoSOPState.prefTarget;

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +17,149 @@ import (
 )
 
 const evoSOPBatchSweepGap = 30 * time.Second
+
+// evoAutoAllowSharedKey controls whether automated background evolution jobs
+// may fall back to the platform shared CodeBuddy Key. Defaults to false so
+// unattended jobs never silently consume shared platform quota.
+func evoAutoAllowSharedKey() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("AGENTFLOW_EVOLUTION_AUTO_ALLOW_SHARED_KEY")), "true")
+}
+
+func (h *evolutionHandlers) putBudget(c *gin.Context) {
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	var req struct {
+		ProjectID         string `json:"projectId"`
+		DailyTokenLimit   int64  `json:"dailyTokenLimit"`
+		MonthlyTokenLimit int64  `json:"monthlyTokenLimit"`
+	}
+	if !decode(c, &req) {
+		return
+	}
+	if projectID == "" {
+		projectID = strings.TrimSpace(req.ProjectID)
+	}
+	if !h.requireProjectReader(c, projectID) || !h.requireProjectWriter(c, projectID) {
+		return
+	}
+	if req.DailyTokenLimit < 0 || req.MonthlyTokenLimit < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token 预算不能为负数"})
+		return
+	}
+	if req.DailyTokenLimit > 0 && req.MonthlyTokenLimit > 0 && req.MonthlyTokenLimit < req.DailyTokenLimit {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "每月 Token 预算不能小于每日 Token 预算"})
+		return
+	}
+	now := time.Now().UTC()
+	cfg := domain.EvoBudgetConfig{
+		DailyTokenLimit:   req.DailyTokenLimit,
+		MonthlyTokenLimit: req.MonthlyTokenLimit,
+		UpdatedBy:         h.currentUserID(c),
+		UpdatedAt:         now,
+	}
+	if err := h.repo.PutEvolutionBudget(projectID, cfg); err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, h.projectBudgetStatus(projectID, now))
+}
+
+func (h *evolutionHandlers) projectBudgetStatus(projectID string, now time.Time) domain.EvoBudgetStatus {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	var status domain.EvoBudgetStatus
+	if project, ok := h.repo.Project(projectID); ok && project.EvolutionBudget != nil {
+		status.DailyTokenLimit = max(0, project.EvolutionBudget.DailyTokenLimit)
+		status.MonthlyTokenLimit = max(0, project.EvolutionBudget.MonthlyTokenLimit)
+	}
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if used, err := h.repo.EvolutionReplayTokensSince(projectID, dayStart); err == nil {
+		status.DailyUsedTokens = used
+	}
+	if used, err := h.repo.EvolutionReplayTokensSince(projectID, monthStart); err == nil {
+		status.MonthlyUsedTokens = used
+	}
+	if status.DailyTokenLimit > 0 && status.DailyUsedTokens >= status.DailyTokenLimit {
+		status.DailyExceeded = true
+		status.Exceeded = true
+		status.Reason = fmt.Sprintf("项目今日 RSI Token 预算已用尽（%d / %d）", status.DailyUsedTokens, status.DailyTokenLimit)
+	}
+	if status.MonthlyTokenLimit > 0 && status.MonthlyUsedTokens >= status.MonthlyTokenLimit {
+		status.MonthlyExceeded = true
+		status.Exceeded = true
+		if status.Reason == "" {
+			status.Reason = fmt.Sprintf("项目本月 RSI Token 预算已用尽（%d / %d）", status.MonthlyUsedTokens, status.MonthlyTokenLimit)
+		}
+	}
+	return status
+}
+
+func (h *evolutionHandlers) wakeSOP(c *gin.Context) {
+	workflowID := strings.TrimSpace(c.Param("workflowId"))
+	var req struct {
+		ProjectID string `json:"projectId"`
+	}
+	if !decodeOptional(c, &req) {
+		return
+	}
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
+	if req.ProjectID == "" {
+		req.ProjectID = strings.TrimSpace(c.Query("projectId"))
+	}
+	if !h.requireProjectReader(c, req.ProjectID) || !h.requireProjectWriter(c, req.ProjectID) {
+		return
+	}
+	if workflowID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 workflowId"})
+		return
+	}
+	wf, exists := h.resolveSOPWorkflow(req.ProjectID, workflowID, nil)
+	if !exists {
+		runs := h.loadWindowRuns(req.ProjectID, evoDefaultWindowDays, evoSOPWindowLimit)
+		wf, exists = h.resolveSOPWorkflow(req.ProjectID, workflowID, runs)
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "SOP 不存在或不属于当前项目"})
+		return
+	}
+	cur := evolution.WakeSOPPolicy(h.repo.EvoSOPPolicy(req.ProjectID, wf.ID))
+	cur.ProjectID = req.ProjectID
+	cur.WorkflowID = wf.ID
+	cur.Preferences = evolution.NormalizeSOPPreferences(cur.Preferences)
+	cur.BatchSize = evolution.NormalizeSOPBatchSize(cur.BatchSize)
+	cur.UpdatedBy = h.currentUserID(c)
+	cur.UpdatedAt = time.Now().UTC()
+	if err := h.repo.PutEvoSOPPolicy(cur); err != nil {
+		respond(c, err)
+		return
+	}
+	saved := h.repo.EvoSOPPolicy(req.ProjectID, wf.ID)
+	if saved.Enabled {
+		go h.checkSOPBatchAutoTrigger(saved)
+	}
+	c.JSON(http.StatusOK, saved)
+}
+
+func (h *evolutionHandlers) recordSOPProposalOutcome(p domain.EvoProposal, gained bool, reason string, now time.Time) {
+	wfID := strings.TrimSpace(p.WorkflowID)
+	if wfID == "" && strings.TrimSpace(p.FindingID) != "" {
+		if f, ok := h.repo.EvoFinding(p.FindingID); ok && len(f.WorkflowIDs) > 0 {
+			wfID = strings.TrimSpace(f.WorkflowIDs[0])
+		}
+	}
+	if wfID == "" || strings.TrimSpace(p.ProjectID) == "" {
+		return
+	}
+	pol, stored := h.repo.EvoSOPPolicyStored(p.ProjectID, wfID)
+	if !stored {
+		return
+	}
+	updated := evolution.ApplySOPProposalOutcome(pol, gained, reason, now)
+	if err := h.repo.PutEvoSOPPolicy(updated); err != nil {
+		log.Printf("evolution sop outcome %s/%s persist: %v", p.ProjectID, wfID, err)
+	}
+}
 
 type assistantEditSourceContextKey struct{}
 
@@ -63,6 +207,7 @@ func (h *evolutionHandlers) putSOPPolicy(c *gin.Context) {
 	var req struct {
 		ProjectID   string   `json:"projectId"`
 		Enabled     *bool    `json:"enabled"`
+		Wake        bool     `json:"wake"`
 		Preferences []string `json:"preferences"`
 		BatchSize   *int     `json:"batchSize"`
 		Model       *string  `json:"model"`
@@ -93,7 +238,13 @@ func (h *evolutionHandlers) putSOPPolicy(c *gin.Context) {
 	cur := h.repo.EvoSOPPolicy(req.ProjectID, wf.ID)
 	cur.ProjectID = req.ProjectID
 	cur.WorkflowID = wf.ID
+	if req.Wake {
+		cur = evolution.WakeSOPPolicy(cur)
+	}
 	if req.Enabled != nil {
+		if *req.Enabled && evolution.IsSOPPolicySleeping(cur, time.Now().UTC()) {
+			cur = evolution.WakeSOPPolicy(cur)
+		}
 		cur.Enabled = *req.Enabled
 	}
 	if req.Preferences != nil {
@@ -194,7 +345,7 @@ func (h *evolutionHandlers) optimizeSOP(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号不可用"})
 		return
 	}
-	p, queued, created, err := h.startSOPOptimization(c.Request.Context(), req.ProjectID, workflowID, req.Model, user)
+	p, queued, created, err := h.startSOPOptimization(c.Request.Context(), req.ProjectID, workflowID, req.Model, user, false)
 	if err != nil {
 		respondEvoError(c, err)
 		return
@@ -264,6 +415,14 @@ func (h *evolutionHandlers) checkSOPBatchAutoTriggerWithRuns(policy domain.EvoSO
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	if evolution.IsSOPPolicySleeping(policy, now) {
+		log.Printf("evolution sop auto-batch %s/%s sleeping until %s (%s)", policy.ProjectID, policy.WorkflowID, policy.SleepingUntil.Format(time.RFC3339), policy.SleepReason)
+		return
+	}
+	if budget := h.projectBudgetStatus(policy.ProjectID, now); budget.Exceeded {
+		log.Printf("evolution sop auto-batch %s/%s skipped: %s", policy.ProjectID, policy.WorkflowID, budget.Reason)
+		return
+	}
 	policy.BatchSize = evolution.NormalizeSOPBatchSize(policy.BatchSize)
 	wf, ok := h.resolveSOPWorkflow(policy.ProjectID, policy.WorkflowID, runs)
 	if !ok {
@@ -302,7 +461,7 @@ func (h *evolutionHandlers) checkSOPBatchAutoTriggerWithRuns(policy domain.EvoSO
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, _, created, err := h.startSOPOptimization(ctx, policy.ProjectID, wf.ID, resolvedModel, user); err != nil {
+	if _, _, created, err := h.startSOPOptimization(ctx, policy.ProjectID, wf.ID, resolvedModel, user, true); err != nil {
 		log.Printf("evolution sop auto-batch %s/%s: %v", policy.ProjectID, wf.ID, err)
 	} else if created {
 		log.Printf("evolution sop auto-batch triggered optimization for %s/%s (%d/%d runs)", policy.ProjectID, wf.ID, pending, policy.BatchSize)
@@ -334,7 +493,7 @@ func (h *evolutionHandlers) workflowPreferredModel(wf domain.WorkflowDefinition)
 	return ""
 }
 
-func (h *evolutionHandlers) applySOPModelCredentials(ctx context.Context, user domain.User, requestedModel string, wf domain.WorkflowDefinition) (domain.User, string, bool) {
+func (h *evolutionHandlers) applySOPModelCredentials(ctx context.Context, user domain.User, requestedModel string, wf domain.WorkflowDefinition, allowSharedKey bool) (domain.User, string, bool) {
 	model := strings.TrimSpace(requestedModel)
 	if model == "" {
 		model = h.workflowPreferredModel(wf)
@@ -353,21 +512,23 @@ func (h *evolutionHandlers) applySOPModelCredentials(ctx context.Context, user d
 		catalog := assistantModelsForRequest(ctx, user, model)
 		return user, assistantAllowedModel(model, catalog), true
 	}
-	// Fall back to platform shared CodeBuddy key when the policy owner has no personal CLI credentials.
-	if key, found := h.repo.SharedCodeBuddyKey(); found && strings.TrimSpace(key.APIKey) != "" && len(key.Models) > 0 {
-		if key.SponsorID == 0 || key.SponsorID != user.ID {
-			sharedUser := user
-			sharedUser.CodeBuddyAPIKey = key.APIKey
-			sharedUser.CodeBuddyBaseURL = ""
-			sharedUser.CodeBuddyInternetEnvironment = key.InternetEnvironment
-			sharedUser.CodeBuddyModels = nil
-			chosen := ""
-			if m, ok := key.Model(model); ok && m != "" {
-				chosen = m
-			} else if len(key.Models) > 0 {
-				chosen = key.Models[0]
+	// Automated background jobs must not consume the platform shared key by default.
+	if allowSharedKey {
+		if key, found := h.repo.SharedCodeBuddyKey(); found && strings.TrimSpace(key.APIKey) != "" && len(key.Models) > 0 {
+			if key.SponsorID == 0 || key.SponsorID != user.ID {
+				sharedUser := user
+				sharedUser.CodeBuddyAPIKey = key.APIKey
+				sharedUser.CodeBuddyBaseURL = ""
+				sharedUser.CodeBuddyInternetEnvironment = key.InternetEnvironment
+				sharedUser.CodeBuddyModels = nil
+				chosen := ""
+				if m, ok := key.Model(model); ok && m != "" {
+					chosen = m
+				} else if len(key.Models) > 0 {
+					chosen = key.Models[0]
+				}
+				return sharedUser, chosen, true
 			}
-			return sharedUser, chosen, true
 		}
 	}
 	return user, "", false
@@ -376,7 +537,8 @@ func (h *evolutionHandlers) applySOPModelCredentials(ctx context.Context, user d
 // resolveSOPActorUser strictly authorizes automated SOP jobs using ONLY the
 // user who explicitly enabled the SOP policy (policy.UpdatedBy) and confirms
 // they still hold project write permission. It never borrows keys from viewers,
-// other members, or platform administrators.
+// other members, or platform administrators, and defaults to disallowing the
+// platform shared CodeBuddy key unless explicitly opted in.
 func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy, wf domain.WorkflowDefinition) (domain.User, string, bool) {
 	if policy.UpdatedBy <= 0 {
 		return domain.User{}, "", false
@@ -395,18 +557,33 @@ func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy, wf d
 			reqModel = strings.TrimSpace(proj.SOPDetection.Model)
 		}
 	}
-	return h.applySOPModelCredentials(context.Background(), user, reqModel, wf)
+	return h.applySOPModelCredentials(context.Background(), user, reqModel, wf, evoAutoAllowSharedKey())
 }
 
-func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID, workflowID, requestedModel string, user domain.User) (domain.EvoProposal, *domain.EvoQueueItem, bool, error) {
+func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID, workflowID, requestedModel string, user domain.User, isAuto bool) (domain.EvoProposal, *domain.EvoQueueItem, bool, error) {
 	runs := h.loadWindowRuns(projectID, evoDefaultWindowDays, evoSOPWindowLimit)
 	wf, ok := h.resolveSOPWorkflow(projectID, workflowID, runs)
 	if !ok {
 		return domain.EvoProposal{}, nil, false, &evoError{status: http.StatusNotFound, msg: "SOP 不存在"}
 	}
+	now := time.Now().UTC()
 	policy := h.repo.EvoSOPPolicy(projectID, workflowID)
 	if !policy.Enabled {
 		return domain.EvoProposal{}, nil, false, evoConflict("该 SOP 已关闭自动进化，请先开启进化开关")
+	}
+	if isAuto {
+		if evolution.IsSOPPolicySleeping(policy, now) {
+			return domain.EvoProposal{}, nil, false, evoConflict(firstNonEmpty(policy.SleepReason, "该 SOP 处于休眠状态"))
+		}
+		if budget := h.projectBudgetStatus(projectID, now); budget.Exceeded {
+			return domain.EvoProposal{}, nil, false, evoConflict(budget.Reason)
+		}
+	} else if evolution.IsSOPPolicySleeping(policy, now) {
+		// Explicit manual optimization wakes a sleeping SOP and resets backoff.
+		policy = evolution.WakeSOPPolicy(policy)
+		policy.UpdatedBy = user.ID
+		policy.UpdatedAt = now
+		_ = h.repo.PutEvoSOPPolicy(policy)
 	}
 	policy.Preferences = evolution.NormalizeSOPPreferences(policy.Preferences)
 	policy.BatchSize = evolution.NormalizeSOPBatchSize(policy.BatchSize)
@@ -420,8 +597,12 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 			model = strings.TrimSpace(project.SOPDetection.Model)
 		}
 	}
-	resolvedUser, resolvedModel, credOK := h.applySOPModelCredentials(ctx, user, model, wf)
+	allowSharedKey := !isAuto || evoAutoAllowSharedKey()
+	resolvedUser, resolvedModel, credOK := h.applySOPModelCredentials(ctx, user, model, wf, allowSharedKey)
 	if !credOK {
+		if isAuto {
+			return domain.EvoProposal{}, nil, false, &evoError{status: http.StatusBadRequest, msg: "自动进化任务默认不使用平台共享 Key，请为策略配置人配置个人 AI 模型凭据"}
+		}
 		return domain.EvoProposal{}, nil, false, &evoError{status: http.StatusBadRequest, msg: "请先在个人配置中配置可用的 AI 模型凭据（CodeBuddy / Codex / Claude 等）"}
 	}
 	user = resolvedUser
@@ -672,6 +853,7 @@ func (h *evolutionHandlers) buildSOPSummaries(projectID string, days int) []doma
 		domain.EvoSOPStageGray:     0,
 		domain.EvoSOPStageOptimize: 1,
 		domain.EvoSOPStageMonitor:  2,
+		domain.EvoSOPStageSleeping: 3,
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		ri, rj := stageRank[out[i].Stage], stageRank[out[j].Stage]
@@ -942,6 +1124,10 @@ func (h *evolutionHandlers) computeSOPSummary(
 	sopProposals := h.filterSOPProposals(wf.ID, assetKeys, allFindings, sopFindings, allProposals, len(sopRuns) > 0)
 
 	stage, active, last := evolution.DetermineSOPStage(sopProposals)
+	sleeping := evolution.IsSOPPolicySleeping(policy, time.Now().UTC())
+	if stage == domain.EvoSOPStageMonitor && sleeping {
+		stage = domain.EvoSOPStageSleeping
+	}
 
 	batchSlice := sopRuns
 	if len(batchSlice) > policy.BatchSize {
@@ -972,7 +1158,9 @@ func (h *evolutionHandlers) computeSOPSummary(
 	}
 
 	lastNote := evolution.LastRunSummaryNote(lastRun, sopSignals, lastDetection)
-	if stage == domain.EvoSOPStageMonitor && last != nil && last.Status == domain.EvoProposalFailed {
+	if stage == domain.EvoSOPStageSleeping {
+		lastNote = fmt.Sprintf("休眠中（连续 %d 次无收益，预计 %s 恢复）", max(policy.ConsecutiveNoGain, evolution.SOPNoGainSleepThreshold), policy.SleepingUntil.UTC().Format("01-02 15:04 UTC"))
+	} else if stage == domain.EvoSOPStageMonitor && last != nil && last.Status == domain.EvoProposalFailed {
 		if lastRun == nil || !lastRun.CreatedAt.After(last.UpdatedAt) {
 			reason := strings.TrimSpace(last.Error)
 			if reason == "" {
@@ -981,35 +1169,41 @@ func (h *evolutionHandlers) computeSOPSummary(
 			lastNote = "上次优化失败 · " + domain.TrimEvoText(reason, 56)
 		}
 	}
-	if latestEdit := h.latestSOPExternalEdit(assetKeys); latestEdit != nil {
-		if lastRun == nil || latestEdit.CreatedAt.After(lastRun.CreatedAt) {
-			src := "手动修改"
-			if latestEdit.Source == domain.EvoVersionChatbot {
-				src = "Chatbot 已调整"
+	if stage != domain.EvoSOPStageSleeping {
+		if latestEdit := h.latestSOPExternalEdit(assetKeys); latestEdit != nil {
+			if lastRun == nil || latestEdit.CreatedAt.After(lastRun.CreatedAt) {
+				src := "手动修改"
+				if latestEdit.Source == domain.EvoVersionChatbot {
+					src = "Chatbot 已调整"
+				}
+				name := latestEdit.AssetName
+				if name == "" {
+					name = latestEdit.AssetID
+				}
+				lastNote = fmt.Sprintf("%s「%s」 · 等待新运行验证", src, name)
 			}
-			name := latestEdit.AssetName
-			if name == "" {
-				name = latestEdit.AssetID
-			}
-			lastNote = fmt.Sprintf("%s「%s」 · 等待新运行验证", src, name)
 		}
 	}
 
 	summary := domain.EvoSOPSummary{
-		WorkflowID:       wf.ID,
-		WorkflowName:     wf.Name,
-		Description:      wf.Description,
-		CurrentVersion:   evolution.FormatSOPVersion(wf.Version),
-		Enabled:          policy.Enabled,
-		Preferences:      policy.Preferences,
-		BatchSize:        policy.BatchSize,
-		Model:            model,
-		Stage:            stage,
-		PendingRuns:      pendingRuns,
-		LastRunNote:      lastNote,
-		LatestMetrics:    latestMetrics,
-		ActiveProposalID: activeID,
-		OpenFindings:     openFindings,
+		WorkflowID:        wf.ID,
+		WorkflowName:      wf.Name,
+		Description:       wf.Description,
+		CurrentVersion:    evolution.FormatSOPVersion(wf.Version),
+		Enabled:           policy.Enabled,
+		Preferences:       policy.Preferences,
+		BatchSize:         policy.BatchSize,
+		Model:             model,
+		Stage:             stage,
+		PendingRuns:       pendingRuns,
+		ConsecutiveNoGain: policy.ConsecutiveNoGain,
+		SleepStage:        policy.SleepStage,
+		SleepingUntil:     policy.SleepingUntil,
+		SleepReason:       policy.SleepReason,
+		LastRunNote:       lastNote,
+		LatestMetrics:     latestMetrics,
+		ActiveProposalID:  activeID,
+		OpenFindings:      openFindings,
 	}
 	if summary.WorkflowName == "" {
 		summary.WorkflowName = wf.ID

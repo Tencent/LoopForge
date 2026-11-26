@@ -934,7 +934,9 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 		}
 	}
 	network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK"))
-	if s.requirements.ConversationRoot != "" || s.requirements.RunnerLoginRelay {
+	if s.profile.NetworkDisabled {
+		network = "none"
+	} else if s.requirements.ConversationRoot != "" || s.requirements.RunnerLoginRelay {
 		_, relayNetwork, err := conversationDockerAccess(ctx)
 		if err != nil {
 			return err

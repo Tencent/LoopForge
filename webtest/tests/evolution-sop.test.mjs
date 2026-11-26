@@ -375,9 +375,18 @@ test('SOP workbench detail: canvas trend, versions rollback labels, gray publish
   await settle(5);
   assert.ok(app.router.calls.some(c => c.method === 'POST' && c.path === '/api/evolution/proposals/evp-opt/approve' && c.body?.mode === 'canary'));
 
-  // Verify drafting, validating, reflect-refine rounds, pending-unpassed, monitor-failed, monitor-ready, monitor-waiting, paused, and empty data callouts
+  // Verify drafting, validating, reflect-refine rounds, sleeping + wake, pending-unpassed, monitor-failed, monitor-ready, monitor-waiting, paused, and empty data callouts
+  app.router.post('/api/evolution/sops/wf-bug/wake', () => ({ workflowId: 'wf-bug', enabled: true, consecutiveNoGain: 0, sleepStage: 0 }));
+  app.router.put('/api/evolution/budget', ({ body }) => ({
+    dailyTokenLimit: body.dailyTokenLimit,
+    monthlyTokenLimit: body.monthlyTokenLimit,
+    dailyUsedTokens: 12000,
+    monthlyUsedTokens: 45000,
+    exceeded: false,
+  }));
   const variants = [
     { enabled: false, stage: 'monitor', activeProposal: null },
+    { stage: 'sleeping', activeProposal: null, consecutiveNoGain: 3, sleepStage: 1, sleepingUntil: '2026-11-28T00:00:00Z', sleepReason: '连续 3 次优化未产生有效收益，已自动休眠 1 天' },
     { stage: 'optimize', activeProposal: { id: 'p-d', status: 'drafting', title: '生成中' } },
     { stage: 'optimize', activeProposal: { id: 'p-dr', status: 'drafting', title: '反思修正中', refineRound: 1, refineHistory: [{ round: 1, verdict: 'P1 省 Token 未达标' }] } },
     { stage: 'optimize', activeProposal: { id: 'p-v', status: 'validating', title: '回放中', summary: { finished: 1, total: 3 } } },
@@ -392,6 +401,12 @@ test('SOP workbench detail: canvas trend, versions rollback labels, gray publish
     app.router.get('/api/evolution/sops/wf-bug?projectId=project-1', makeDetail(v));
     await app.evaluate('evoSOPLoadDetail(evoSOPState.view)');
     await settle(3);
+    if (v.stage === 'sleeping') {
+      assert.match($('#evoSopDetailPage').textContent, /自动进化休眠中/);
+      $('[data-evo-sop-wake="wf-bug"]').click();
+      await settle(4);
+      assert.ok(app.router.calls.some(c => c.method === 'POST' && c.path === '/api/evolution/sops/wf-bug/wake'));
+    }
   }
   // Empty chart message & empty tables
   assert.equal($('#evoSopTrendCanvas').hidden, true);
@@ -421,8 +436,14 @@ test('SOP workbench detail: canvas trend, versions rollback labels, gray publish
   await settle(4);
   assert.ok($('#evoSopDetailTitle'));
 
-  // Back to list
+  // Back to list and test project budget dialog save
   $('[data-evo-sop-back]').click();
   await settle(4);
   assert.equal($('#evoSopDetailPage'), null);
+  $('[data-evo-budget-open]').click();
+  $('#evoBudgetDaily').value = '100000';
+  $('#evoBudgetMonthly').value = '500000';
+  $('#evoBudgetForm').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  assert.ok(app.router.calls.some(c => c.method === 'PUT' && c.path === '/api/evolution/budget' && c.body?.dailyTokenLimit === 100000));
 });

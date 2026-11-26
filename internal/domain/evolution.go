@@ -523,11 +523,33 @@ type EvoSOPDetectionSetting struct {
 	Model   string `json:"model,omitempty"`
 }
 
+// EvoBudgetConfig configures per-project daily and monthly RSI token budgets.
+// Zero means unlimited for that period.
+type EvoBudgetConfig struct {
+	DailyTokenLimit   int64     `json:"dailyTokenLimit,omitempty"`
+	MonthlyTokenLimit int64     `json:"monthlyTokenLimit,omitempty"`
+	UpdatedBy         int64     `json:"updatedBy,omitempty"`
+	UpdatedAt         time.Time `json:"updatedAt,omitempty"`
+}
+
+// EvoBudgetStatus reports current daily/monthly RSI token usage against limits.
+type EvoBudgetStatus struct {
+	DailyTokenLimit   int64  `json:"dailyTokenLimit"`
+	MonthlyTokenLimit int64  `json:"monthlyTokenLimit"`
+	DailyUsedTokens   int64  `json:"dailyUsedTokens"`
+	MonthlyUsedTokens int64  `json:"monthlyUsedTokens"`
+	DailyExceeded     bool   `json:"dailyExceeded,omitempty"`
+	MonthlyExceeded   bool   `json:"monthlyExceeded,omitempty"`
+	Exceeded          bool   `json:"exceeded,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+}
+
 // SOP evolution stages shown on the SOP-centric RSI workbench.
 const (
 	EvoSOPStageMonitor  = "monitor"
 	EvoSOPStageOptimize = "optimize"
 	EvoSOPStageGray     = "gray"
+	EvoSOPStageSleeping = "sleeping"
 )
 
 // SOP optimization preference keys.
@@ -541,14 +563,18 @@ const (
 // EvoSOPPolicy configures per-SOP evolution switch, multi-select preferences,
 // and batch trigger size (default 10 runs, adjustable per SOP).
 type EvoSOPPolicy struct {
-	WorkflowID  string    `json:"workflowId"`
-	ProjectID   string    `json:"projectId"`
-	Enabled     bool      `json:"enabled"`
-	Preferences []string  `json:"preferences"`
-	BatchSize   int       `json:"batchSize"`
-	Model       string    `json:"model,omitempty"`
-	UpdatedBy   int64     `json:"updatedBy,omitempty"`
-	UpdatedAt   time.Time `json:"updatedAt,omitempty"`
+	WorkflowID        string    `json:"workflowId"`
+	ProjectID         string    `json:"projectId"`
+	Enabled           bool      `json:"enabled"`
+	Preferences       []string  `json:"preferences"`
+	BatchSize         int       `json:"batchSize"`
+	Model             string    `json:"model,omitempty"`
+	ConsecutiveNoGain int       `json:"consecutiveNoGain,omitempty"`
+	SleepStage        int       `json:"sleepStage,omitempty"`
+	SleepingUntil     time.Time `json:"sleepingUntil,omitempty"`
+	SleepReason       string    `json:"sleepReason,omitempty"`
+	UpdatedBy         int64     `json:"updatedBy,omitempty"`
+	UpdatedAt         time.Time `json:"updatedAt,omitempty"`
 }
 
 func DefaultEvoSOPPolicy(projectID, workflowID string) EvoSOPPolicy {
@@ -654,9 +680,13 @@ type EvoSOPSummary struct {
 	Preferences      []string      `json:"preferences"`
 	BatchSize        int           `json:"batchSize"`
 	Model            string        `json:"model,omitempty"`
-	Stage            string        `json:"stage"` // monitor | optimize | gray
-	PendingRuns      int           `json:"pendingRuns"`
-	LastRunNote      string        `json:"lastRunNote,omitempty"`
+	Stage             string        `json:"stage"` // monitor | optimize | gray | sleeping
+	PendingRuns       int           `json:"pendingRuns"`
+	ConsecutiveNoGain int           `json:"consecutiveNoGain,omitempty"`
+	SleepStage        int           `json:"sleepStage,omitempty"`
+	SleepingUntil     time.Time     `json:"sleepingUntil,omitempty"`
+	SleepReason       string        `json:"sleepReason,omitempty"`
+	LastRunNote       string        `json:"lastRunNote,omitempty"`
 	LatestMetrics    EvoSOPMetrics `json:"latestMetrics"`
 	ActiveProposalID string        `json:"activeProposalId,omitempty"`
 	OpenFindings     int           `json:"openFindings,omitempty"`
@@ -693,6 +723,7 @@ type EvoSOPDetail struct {
 // EvoOverview is the 进化中心 dashboard payload.
 type EvoOverview struct {
 	SOPDetection EvoSOPDetectionSetting `json:"sopDetection"`
+	Budget       EvoBudgetStatus        `json:"budget"`
 	ProjectID    string                 `json:"projectId"`
 	Findings     []EvoFinding           `json:"findings"`
 	Validating   []EvoProposal          `json:"validating"`

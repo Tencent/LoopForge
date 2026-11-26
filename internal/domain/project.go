@@ -27,8 +27,9 @@ type Project struct {
 	Members             []ProjectMember   `json:"members,omitempty"`
 	// MembersVersion is an opaque snapshot token for replacing the member list.
 	MembersVersion string              `json:"membersVersion,omitempty"`
-	RunEval        RunEvalPolicy       `json:"runEval,omitempty"`
-	SOPDetection   *SOPDetectionConfig `json:"sopDetection,omitempty"`
+	RunEval         RunEvalPolicy       `json:"runEval,omitempty"`
+	SOPDetection    *SOPDetectionConfig `json:"sopDetection,omitempty"`
+	EvolutionBudget *EvoBudgetConfig    `json:"evolutionBudget,omitempty"`
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`

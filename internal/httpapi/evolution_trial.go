@@ -170,6 +170,9 @@ func (h *evolutionHandlers) endCanary(p domain.EvoProposal, now time.Time, canar
 		log.Printf("evolution trial %s persist: %v", p.ID, err)
 		return
 	}
+	if canaryStatus == domain.EvoCanaryFailed {
+		h.recordSOPProposalOutcome(p, false, verdict, now)
+	}
 }
 
 func (h *evolutionHandlers) sweepCanary(p domain.EvoProposal, now time.Time) domain.EvoProposal {

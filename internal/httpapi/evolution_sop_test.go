@@ -425,9 +425,15 @@ func TestEvolutionSOPAutoBatchOptInSharedKeyAndViewerIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Automated SOP jobs must NOT fall back to platform shared key by default.
+	if _, _, ok := env.h.resolveSOPActorUser(ownerPolicy, env.wf); ok {
+		t.Fatal("resolveSOPActorUser must reject platform shared key by default for automated jobs")
+	}
+	// Explicit opt-in via env allows shared key resolution for automated SOP jobs.
+	t.Setenv("AGENTFLOW_EVOLUTION_AUTO_ALLOW_SHARED_KEY", "true")
 	actor, model, ok := env.h.resolveSOPActorUser(ownerPolicy, env.wf)
 	if !ok || actor.CodeBuddyAPIKey != "ck_shared_test_key" || model != "claude-sonnet-5" {
-		t.Fatalf("expected shared key resolution for policy owner, got ok=%v key=%q model=%q", ok, actor.CodeBuddyAPIKey, model)
+		t.Fatalf("expected shared key resolution when explicitly opted in, got ok=%v key=%q model=%q", ok, actor.CodeBuddyAPIKey, model)
 	}
 
 	// P1-3: GET /api/evolution/overview must be strictly read-only and never create proposals.
