@@ -115,12 +115,15 @@ test('skip reasons keep route labels verbatim while naming upstream nodes', asyn
       const wf={nodes:[{id:'classify',name:'Classify'},{id:'small',name:'Small branch'},{id:'large',name:'Large branch'},
         {id:'classification',name:'Another node'},{id:'size',name:'Size node'}]};
       const numeric={nodes:[{id:'0',name:'零点节点'},{id:'small',name:'Small branch'}]};
+      const punctuation={nodes:[...numeric.nodes,{id:'build；check',name:'Build Check'}]};
       return {
         route: skipReasonText({skipReason:'classify 路由 [small] 未选择此分支'},wf,{name:'Large branch'}),
         artifact: skipReasonText({skipReason:'classify 的产物 classification 字段 /size 未匹配条件 "small"'},wf,{name:'Large branch'}),
         plain: skipReasonText({skipReason:'classify 已跳过'},wf,{name:'Large branch'}),
         nested: skipReasonText({skipReason:'small 已跳过（classify 的产物 classification 字段 /size 未匹配条件 "small；large"）；large 已命中其他条件，未选择默认分支'},wf,{name:'Join'}),
         numeric: skipReasonText({skipReason:'0 路由 [small] 未选择此分支'},numeric,{name:'Small branch'}),
+        punctuationId: skipReasonText({skipReason:'build；check 已跳过'},punctuation,{name:'Join'}),
+        punctuationPointer: skipReasonText({skipReason:'build；check 的产物 classification 字段 /field；0 已跳过 未匹配条件 true；0 已跳过'},punctuation,{name:'Join'}),
       };
     })()
   `);
@@ -131,4 +134,6 @@ test('skip reasons keep route labels verbatim while naming upstream nodes', asyn
   assert.equal(texts.nested, '上游Small branch 已跳过（Classify 的产物 classification 字段 /size 未匹配条件 "small；large"）；Large branch 已命中其他条件，未选择默认分支，因此跳过 Join');
   // A numeric node id must not corrupt the protected route label.
   assert.equal(texts.numeric, '上游零点节点 路由 [small] 未选择此分支，因此跳过 Small branch');
+  assert.equal(texts.punctuationId, '上游Build Check 已跳过，因此跳过 Join');
+  assert.equal(texts.punctuationPointer, '上游Build Check 的产物 classification 字段 /field；0 已跳过 未匹配条件 true；零点节点 已跳过，因此跳过 Join');
 });

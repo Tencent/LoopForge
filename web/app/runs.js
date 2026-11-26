@@ -545,22 +545,25 @@ function liveUsageHTML(r){
 }
 function skipReasonText(nr,wf,node){
   const raw=String(nr?.skipReason||'上游分支未被选中');
-  const names=new Map((wf?.nodes||[]).map(n=>[n.id,n.name||n.id]));
-  // Each engine reason starts with its upstream id. Replace only that prefix
-  // (including joined/nested reasons), not the artifact name, pointer or value.
-  const clauses=raw.split(/("(?:\\.|[^"\\])*"|\[[^\]]*\]|；| 已跳过（)/);
-  const text=clauses.map((clause,index)=>{
-    if(index%2)return clause;
-    const previous=clauses[index-1];
-    if(index&&previous!=='；'&&previous!==' 已跳过（')return clause;
-    // The delimiter for a nested reason also contains the parent's suffix.
-    const suffix=clauses[index+1]===' 已跳过（'?' 已跳过':'';
-    let id='';
-    for(const candidate of names.keys()){
-      if(candidate.length>id.length&&[' 路由 ',' 的产物 ',' 已命中其他条件',' 已跳过'].some(marker=>(clause+suffix).startsWith(candidate+marker)))id=candidate;
+  const upstream=[...(wf?.nodes||[])].filter(n=>n.id).sort((a,b)=>b.id.length-a.id.length);
+  // Match the upstream id before looking for delimiters: ids and diagnostic
+  // details can contain the same punctuation used to join or nest reasons.
+  const suffix=/^(?: 已跳过（| 已跳过(?=；|）|$)| 已命中其他条件，未选择默认分支(?=；|）|$)| 路由 \[[\s\S]*?\] 未选择此分支(?=；|）|$)| 的产物 [\s\S]*? 未匹配条件 (?:"(?:\\.|[^"\\])*"|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=；|）|$))/;
+  let text='', offset=0;
+  while(offset<raw.length){
+    const rest=raw.slice(offset);
+    if(rest[0]==='；'||rest[0]==='）'){text+=rest[0];offset++;continue}
+    let matched=false;
+    for(const {id,name} of upstream){
+      if(!rest.startsWith(id))continue;
+      const detail=rest.slice(id.length).match(suffix);
+      if(!detail)continue;
+      text+=(name||id)+detail[0];
+      offset+=id.length+detail[0].length;
+      matched=true;break;
     }
-    return id?names.get(id)+clause.slice(id.length):clause;
-  }).join('');
+    if(!matched){text+=rest;break}
+  }
   const current=node?.name||'';
   return current&&text!==raw?`上游${text}，因此跳过 ${current}`:text;
 }

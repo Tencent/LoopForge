@@ -1,13 +1,14 @@
 package engine
 
 import (
-	"agentflow/internal/domain"
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
@@ -257,6 +258,41 @@ func TestConditionalRoutingArtifactEndToEnd(t *testing.T) {
 					}
 				}
 				t.Fatal("routing JSON was not persisted as a blob")
+			}
+		})
+	}
+}
+
+func TestRoutingBlobReadFailureDoesNotRetryNode(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	wf := routingWorkflow("blob-read-error")
+	node := wf.Nodes[0]
+	node.DefaultTarget = "large"
+	node.MaxAttempts = 2
+	wf.Edges[0].Condition = &domain.WorkflowCondition{Type: "artifact", Artifact: "classification", Pointer: "/size", Equals: json.RawMessage(`"small"`)}
+	wf.Edges[1].Condition = nil
+	ctx := context.Background()
+	const runID = "routing-blob-error-run"
+	blob, err := s.SaveArtifactBlob(ctx, runID, "truncated-json", strings.NewReader(`{"size":"small"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Exec("DELETE FROM run_artifact_blob_chunks WHERE run_id = ? AND blob_id = ?", runID, blob.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, blobID := range []string{"missing-json", blob.ID} {
+		t.Run(blobID, func(t *testing.T) {
+			decision, err := e.decideNodeRoute(ctx, runID, wf, node, nil, []domain.Artifact{{Name: "classification", BlobID: blobID}})
+			if decision != nil || !errors.Is(err, errArtifactTransfer) {
+				t.Fatalf("expected a transfer failure and no fallback route, got decision=%+v err=%v", decision, err)
+			}
+			if shouldRetryFailedAttempt(node, 1, err) {
+				t.Fatal("reading an archived routing artifact must not rerun the completed node")
 			}
 		})
 	}

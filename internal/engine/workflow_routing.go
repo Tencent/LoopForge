@@ -171,12 +171,12 @@ func (e *Engine) decideNodeRoute(ctx context.Context, runID string, wf domain.Wo
 		if artifact.BlobID != "" && artifact.Content == "" {
 			_, body, err := e.repo.OpenArtifactBlob(ctx, runID, artifact.BlobID)
 			if err != nil {
-				return nil, fmt.Errorf("读取路由产物 %s: %w", artifact.Name, err)
+				return nil, fmt.Errorf("%w：读取路由产物 %s: %w", errArtifactTransfer, artifact.Name, err)
 			}
 			content, err := readWorkspaceOutput(body)
 			_ = body.Close()
 			if err != nil {
-				return nil, fmt.Errorf("读取路由产物 %s: %w", artifact.Name, err)
+				return nil, fmt.Errorf("%w：读取路由产物 %s: %w", errArtifactTransfer, artifact.Name, err)
 			}
 			artifact.Content = string(content)
 		}
