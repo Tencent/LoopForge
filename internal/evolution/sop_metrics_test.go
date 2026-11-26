@@ -221,11 +221,17 @@ func TestComputeRunHeuristicScoreContinuousDistinction(t *testing.T) {
 	midHigh := ComputeRunHeuristicScore(mk("succeeded", 160_000, 4, 70, 0))
 	midLow := ComputeRunHeuristicScore(mk("succeeded", 140_000, 3, 45, 0))
 	lean := ComputeRunHeuristicScore(mk("succeeded", 35_000, 2, 15, 0))
-	reworked := ComputeRunHeuristicScore(mk("succeeded", 140_000, 3, 45, 1))
-	failed := ComputeRunHeuristicScore(mk("failed", 120_000, 3, 45, 0))
+	reworkedHeavy := ComputeRunHeuristicScore(mk("succeeded", 400_000, 30, 300, 2))
+	reworked := ComputeRunHeuristicScore(mk("succeeded", 80_000, 6, 40, 1))
+	failedFast := ComputeRunHeuristicScore(mk("failed", 5_000, 1, 10, 0))
+	failedZero := ComputeRunHeuristicScore(mk("failed", 0, 0, 0, 0))
 
-	if !(failed < reworked && reworked < heavy && heavy < midHigh && midHigh < midLow && midLow < lean && lean <= 100) {
-		t.Fatalf("expected strictly ordered continuous scores, got failed=%d reworked=%d heavy=%d midHigh=%d midLow=%d lean=%d",
-			failed, reworked, heavy, midHigh, midLow, lean)
+	// P2-10: Early/zero-usage failures must NEVER outscore any succeeded (even heavy reworked) run.
+	if failedFast > 20 || failedZero > 20 {
+		t.Fatalf("expected failed runs to stay <=20, got failedFast=%d failedZero=%d", failedFast, failedZero)
+	}
+	if !(failedFast < reworkedHeavy && failedZero < reworkedHeavy && reworkedHeavy < reworked && reworked < heavy && heavy < midHigh && midHigh < midLow && midLow < lean && lean <= 100) {
+		t.Fatalf("expected strictly ordered continuous scores, got failedZero=%d failedFast=%d reworkedHeavy=%d reworked=%d heavy=%d midHigh=%d midLow=%d lean=%d",
+			failedZero, failedFast, reworkedHeavy, reworked, heavy, midHigh, midLow, lean)
 	}
 }

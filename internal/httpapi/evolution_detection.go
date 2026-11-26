@@ -110,7 +110,13 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 			continue
 		}
 		scannedProjects[project.ID] = true
-		ids, err := h.repo.PendingSOPDetections(project.ID, project.Config.EnabledAt, time.Now().UTC().Add(-sopDetectionLease), 2)
+		var disabledWFIDs []string
+		for wfID, pol := range h.repo.EvoSOPPolicies(project.ID) {
+			if !pol.Enabled && strings.TrimSpace(wfID) != "" {
+				disabledWFIDs = append(disabledWFIDs, wfID)
+			}
+		}
+		ids, err := h.repo.PendingSOPDetectionsExcludingWorkflows(project.ID, disabledWFIDs, project.Config.EnabledAt, time.Now().UTC().Add(-sopDetectionLease), 2)
 		if err != nil {
 			log.Printf("SOP detection queue %s: %v", project.ID, err)
 			continue

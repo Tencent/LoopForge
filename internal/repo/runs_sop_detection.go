@@ -19,10 +19,18 @@ func SOPDetectionEvalID(runID string) string {
 }
 
 func (r *RunsRepo) PendingSOPDetections(projectID string, since, staleBefore time.Time, limit int) ([]string, error) {
-	return r.PendingSOPDetectionsForWorkflows(projectID, nil, since, staleBefore, limit)
+	return r.pendingSOPDetections(projectID, nil, nil, since, staleBefore, limit)
 }
 
 func (r *RunsRepo) PendingSOPDetectionsForWorkflows(projectID string, workflowIDs []string, since, staleBefore time.Time, limit int) ([]string, error) {
+	return r.pendingSOPDetections(projectID, workflowIDs, nil, since, staleBefore, limit)
+}
+
+func (r *RunsRepo) PendingSOPDetectionsExcludingWorkflows(projectID string, excludeWorkflowIDs []string, since, staleBefore time.Time, limit int) ([]string, error) {
+	return r.pendingSOPDetections(projectID, nil, excludeWorkflowIDs, since, staleBefore, limit)
+}
+
+func (r *RunsRepo) pendingSOPDetections(projectID string, includeWorkflowIDs, excludeWorkflowIDs []string, since, staleBefore time.Time, limit int) ([]string, error) {
 	project := r.sqlExecutionContextJSONText("projectId")
 	issue := r.sqlExecutionContextJSONText("issueId")
 	purpose := r.sqlExecutionContextJSONText("purpose")
@@ -39,8 +47,11 @@ func (r *RunsRepo) PendingSOPDetectionsForWorkflows(projectID string, workflowID
 		Where("COALESCE("+purpose+", '') <> ?", domain.RunPurposeEvolutionReplay).
 		Where("("+project+" = ? OR (COALESCE("+project+", '') = '' AND EXISTS (SELECT 1 FROM issues WHERE issues.id = "+issue+" AND issues.project_id = ?)))", projectID, projectID).
 		Where("(checks.id IS NULL OR (checks.status = ? AND checks.created_at < ?))", domain.RunEvalRunning, staleBefore)
-	if len(workflowIDs) > 0 {
-		q = q.Where("runs.workflow_id IN ?", workflowIDs)
+	if len(includeWorkflowIDs) > 0 {
+		q = q.Where("runs.workflow_id IN ?", includeWorkflowIDs)
+	}
+	if len(excludeWorkflowIDs) > 0 {
+		q = q.Where("runs.workflow_id NOT IN ?", excludeWorkflowIDs)
 	}
 	err := q.Order("runs.created_at, runs.id").Limit(limit).Pluck("runs.id", &ids).Error
 	return ids, err

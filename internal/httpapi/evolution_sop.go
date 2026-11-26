@@ -119,9 +119,26 @@ func (h *evolutionHandlers) putSOPPolicy(c *gin.Context) {
 				}
 				if current, loggedIn := h.requestUser(c.Request, true); loggedIn {
 					if user, ok := h.repo.User(current.ID); ok {
-						if resolved, err := resolveFeatureModel(user, norm); err == nil && resolved != "" {
+						resolved, err := resolveFeatureModel(user, norm)
+						catalog := assistantModelsForRequest(c.Request.Context(), user, norm)
+						inCatalog := func(id string) bool {
+							if assistantCatalogLists(catalog, id) {
+								return true
+							}
+							if key, found := h.repo.SharedCodeBuddyKey(); found && strings.TrimSpace(key.APIKey) != "" {
+								if m, ok := key.Model(id); ok && m != "" {
+									return true
+								}
+							}
+							return false
+						}
+						if err == nil && resolved != "" {
+							if len(catalog.Models) > 0 && !inCatalog(resolved) && !inCatalog(norm) {
+								c.JSON(http.StatusBadRequest, gin.H{"error": "所选模型不在当前可用模型列表中，请重新选择"})
+								return
+							}
 							model = resolved
-						} else if catalog := assistantModelsForRequest(c.Request.Context(), user, norm); assistantCatalogLists(catalog, norm) {
+						} else if inCatalog(norm) {
 							model = norm
 						} else {
 							c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -691,18 +708,10 @@ func (h *evolutionHandlers) buildSOPDetail(projectID, workflowID string, days in
 		primary := assets[0]
 		assetVers := h.repo.AssetVersions(primary.Kind, primary.ID)
 		runPinVer := map[string]int{}
-		hashToVer := map[string]int{}
-		for _, av := range assetVers {
-			if hashToVer[av.Hash] == 0 {
-				hashToVer[av.Hash] = av.Version
-			}
-		}
 		for _, r := range ctx.sopRuns {
 			for _, pin := range h.repo.RunAssetPins(r.ID) {
 				if pin.AssetKind == primary.Kind && pin.AssetID == primary.ID {
-					if pin.Version > 0 {
-						runPinVer[r.ID] = pin.Version
-					} else if v := hashToVer[pin.Hash]; v > 0 {
+					if v := resolvePinAssetVersion(pin, r.CreatedAt, assetVers); v > 0 {
 						runPinVer[r.ID] = v
 					}
 					break
@@ -1348,4 +1357,37 @@ func (h *evolutionHandlers) latestSOPExternalEdit(assetKeys map[string]bool) *do
 		}
 	}
 	return best
+}
+
+// resolvePinAssetVersion maps a run's asset pin to its exact asset version.
+// When the pin only carries a hash (pin.Version == 0), it picks the latest
+// version with that hash whose CreatedAt is not after the run's CreatedAt
+// (falling back to the earliest version with that hash), so historical runs
+// are never misattributed to a later rollback version that shares the same hash.
+func resolvePinAssetVersion(pin domain.RunAssetPin, runAt time.Time, assetVersDesc []domain.AssetVersion) int {
+	if pin.Version > 0 {
+		return pin.Version
+	}
+	if strings.TrimSpace(pin.Hash) == "" || len(assetVersDesc) == 0 {
+		return 0
+	}
+	asc := append([]domain.AssetVersion(nil), assetVersDesc...)
+	sort.SliceStable(asc, func(i, j int) bool { return asc[i].Version < asc[j].Version })
+	earliest := 0
+	matched := 0
+	for _, av := range asc {
+		if av.Hash != pin.Hash {
+			continue
+		}
+		if earliest == 0 {
+			earliest = av.Version
+		}
+		if runAt.IsZero() || av.CreatedAt.IsZero() || !av.CreatedAt.After(runAt) {
+			matched = av.Version
+		}
+	}
+	if matched > 0 {
+		return matched
+	}
+	return earliest
 }

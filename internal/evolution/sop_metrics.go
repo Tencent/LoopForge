@@ -271,28 +271,23 @@ func FormatSOPVersion(v int) string {
 }
 
 // ComputeRunHeuristicScore produces a transparent, continuous 0-100 score for a
-// terminal run when no RunEvalRecord exists:
-//   - Outcome & reliability (65):
-//   - Outcome (40): clean=40, reworked=24, failed=6
-//   - Step efficiency (15): minus 5 per rework/retry
-//   - Tool reliability (10): minus 3 per failed tool call
-//   - Continuous efficiency (35): smooth rational decay (max / (1 + (v / half)^1.2))
-//   - Token economy (15): half-point 120k tokens (unknown -> 10.5)
-//   - Tool economy (10): half-point 10 tool calls (0 -> 10.0)
-//   - Duration economy (10): half-point 60s execution time (unknown -> 7.0)
+// terminal run when no RunEvalRecord exists, guaranteeing failed < reworked < clean:
+//   - Failed runs (8-18): base 8 + 0.4*(step + tool reliability), 0 efficiency bonus
+//     so an early crash with low/zero token & tool usage never outscores a succeeded run.
+//   - Reworked succeeded runs (28-69): base 28 + step efficiency (0-10) +
+//     tool reliability (0-10) + 0.6 * continuous efficiency (0-21).
+//   - Clean succeeded runs (55-100): base 40 + step efficiency (15) +
+//     tool reliability (0-10) + 1.0 * continuous efficiency (0-35).
+//   - Continuous efficiency (35): smooth rational decay max / (1 + (v / half)^1.2)
+//     - Token economy (15): half-point 120k tokens (unknown -> neutral 7.5)
+//     - Tool economy (10): half-point 10 tool calls (0/unknown -> neutral 5.0)
+//     - Duration economy (10): half-point 60s execution time (unknown -> neutral 5.0)
 func ComputeRunHeuristicScore(run domain.Run) int {
 	return int(math.Round(computeRunHeuristicScoreFloat(run)))
 }
 
 func computeRunHeuristicScoreFloat(run domain.Run) float64 {
 	rs := RunScore(run)
-	score := 6.0
-	switch rs {
-	case 2:
-		score = 40.0
-	case 1:
-		score = 24.0
-	}
 
 	repeats := 0
 	for _, nr := range run.Nodes {
@@ -300,7 +295,7 @@ func computeRunHeuristicScoreFloat(run domain.Run) float64 {
 			repeats += nr.ReworkCount + max(0, nr.Attempt-1)
 		}
 	}
-	score += float64(max(0, 15-repeats*5))
+	stepPts := float64(max(0, 15-repeats*5))
 
 	toolFails := 0
 	for _, ev := range run.Telemetry {
@@ -308,24 +303,37 @@ func computeRunHeuristicScoreFloat(run domain.Run) float64 {
 			toolFails++
 		}
 	}
-	score += float64(max(0, 10-toolFails*3))
+	toolRelPts := float64(max(0, 10-toolFails*3))
 
-	if tokens := RunTokens(run); tokens <= 0 {
-		score += 10.5
-	} else {
-		score += smoothDecayScore(15.0, float64(tokens), 120_000.0)
+	var effPts float64
+	if rs > 0 {
+		if tokens := RunTokens(run); tokens <= 0 {
+			effPts += 7.5
+		} else {
+			effPts += smoothDecayScore(15.0, float64(tokens), 120_000.0)
+		}
+
+		if tools := RunToolCalls(run); tools <= 0 {
+			effPts += 5.0
+		} else {
+			effPts += smoothDecayScore(10.0, float64(tools), 10.0)
+		}
+
+		if durMs := RunDurationMs(run); durMs <= 0 {
+			effPts += 5.0
+		} else {
+			effPts += smoothDecayScore(10.0, float64(durMs)/1000.0, 60.0)
+		}
 	}
 
-	if tools := RunToolCalls(run); tools <= 0 {
-		score += 10.0
-	} else {
-		score += smoothDecayScore(10.0, float64(tools), 10.0)
-	}
-
-	if durMs := RunDurationMs(run); durMs <= 0 {
-		score += 7.0
-	} else {
-		score += smoothDecayScore(10.0, float64(durMs)/1000.0, 60.0)
+	var score float64
+	switch rs {
+	case 2:
+		score = 40.0 + stepPts + toolRelPts + effPts
+	case 1:
+		score = 28.0 + stepPts + toolRelPts + 0.6*effPts
+	default:
+		score = 8.0 + 0.4*(stepPts+toolRelPts)
 	}
 
 	if score < 0 {

@@ -618,3 +618,121 @@ func TestEvolutionSOPDetectionSkipsDisabledWorkflowsHeadOfLine(t *testing.T) {
 		t.Fatalf("expected only enabled SOP run %s to be scanned without head-of-line blocking, got %v", enabledRun.ID, seen)
 	}
 }
+
+func TestEvolutionProjectLevelSOPDetectionSkipsExplicitlyDisabledSOP(t *testing.T) {
+	env := newEvoTestEnv(t)
+	now := time.Now().UTC()
+
+	disabledWF := domain.WorkflowDefinition{
+		ID: "wf-proj-disabled", Name: "显式关闭 SOP", ProjectID: "evo-p", SandboxProfileID: repo.TestNativeSandboxID,
+		Nodes: []domain.WorkflowNode{{ID: "code", Name: "开发", Type: "agent", AgentID: env.agent.ID, ExecutorID: "mock", MaxAttempts: 1}},
+	}
+	if err := env.store.PutWorkflow(disabledWF); err != nil {
+		t.Fatal(err)
+	}
+	// Enable legacy project-level SOP detection.
+	if err := env.store.PutSOPDetection("evo-p", domain.SOPDetectionConfig{
+		Enabled:      true,
+		Model:        "codebuddy:claude-sonnet-5",
+		EnabledAt:    now.Add(-time.Hour),
+		ConfiguredBy: env.user.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Explicitly disable disabledWF in evo_sop_policies, enable env.wf.
+	if err := env.store.PutEvoSOPPolicy(domain.EvoSOPPolicy{
+		WorkflowID: disabledWF.ID, ProjectID: "evo-p", Enabled: false, BatchSize: 5, UpdatedBy: env.user.ID, UpdatedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.PutEvoSOPPolicy(domain.EvoSOPPolicy{
+		WorkflowID: env.wf.ID, ProjectID: "evo-p", Enabled: true, BatchSize: 5, UpdatedBy: env.user.ID, UpdatedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Seed 4 older runs for disabledWF (more than project-level limit=2) before enabledRun.
+	for i := 0; i < 4; i++ {
+		if err := env.store.PutRun(domain.Run{
+			ID: "proj-disabled-" + string(rune('a'+i)), WorkflowID: disabledWF.ID, WorkflowSnapshot: disabledWF,
+			Status: "succeeded", ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"},
+			CreatedAt: now.Add(time.Duration(-20+i) * time.Minute), UpdatedAt: now.Add(time.Duration(-20+i) * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enabledRun := env.seedRun(t, "proj-enabled-1", "succeeded", "succeeded", "")
+
+	var seen []string
+	env.h.sweepSOPDetections(context.Background(), func(_ context.Context, _ string, _ domain.SOPDetectionConfig, target domain.Run) (domain.RunEvalResult, error) {
+		seen = append(seen, target.ID)
+		return domain.RunEvalResult{Passed: true, Score: 92}, nil
+	})
+	if len(seen) != 1 || seen[0] != enabledRun.ID {
+		t.Fatalf("P2-7: project-level detection must skip disabled SOPs without head-of-line blocking, got %v", seen)
+	}
+}
+
+func TestEvolutionSOPRollbackHashFallbackPreservesPreRollbackRuns(t *testing.T) {
+	env := newEvoTestEnv(t)
+	now := time.Now().UTC()
+
+	wf := env.wf
+	wf.Version = 2
+	if err := env.store.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	v1Prompt := env.agent.Prompt
+	v2Prompt := env.agent.Prompt + "\n修改稿 v2"
+	v1Hash := domain.ContentHash(v1Prompt)
+	v2Hash := domain.ContentHash(v2Prompt)
+
+	// Record v1 (baseline), v2 (manual), v3 (rollback to v1 -> shares v1Hash!).
+	if _, err := env.store.AppendAssetVersion(domain.AssetVersion{
+		AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, Version: 1,
+		Content: v1Prompt, Hash: v1Hash, Source: domain.EvoVersionBaseline, CreatedAt: now.Add(-3 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.store.AppendAssetVersion(domain.AssetVersion{
+		AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, Version: 2,
+		Content: v2Prompt, Hash: v2Hash, Source: domain.EvoVersionManual, CreatedAt: now.Add(-2 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.store.AppendAssetVersion(domain.AssetVersion{
+		AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, Version: 3,
+		Content: v1Prompt, Hash: v1Hash, Source: domain.EvoVersionRollback, Note: "回滚到 v1", CreatedAt: now.Add(-10 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two runs on v1 BEFORE rollback, pinned with Version=0 and Hash=v1Hash (legacy pin format).
+	for i, id := range []string{"pre-rb-1", "pre-rb-2"} {
+		at := now.Add(time.Duration(-150+i*10) * time.Minute)
+		if err := env.store.PutRun(domain.Run{
+			ID: id, WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded",
+			ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"}, CreatedAt: at, UpdatedAt: at,
+			Usage: domain.TokenUsage{TotalTokens: 60000}, ToolCalls: 6,
+			Nodes: map[string]*domain.NodeRun{"code": {NodeID: "code", Status: "succeeded", Attempt: 1}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := env.store.PutRunAssetPins([]domain.RunAssetPin{{
+			RunID: id, AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, Version: 0, Hash: v1Hash, CreatedAt: at,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Zero runs after v3 rollback -> v1 must have 2 runs and current v3 rollback row must have 0 runs.
+	detail, ok := env.h.buildSOPDetail("evo-p", wf.ID, 14)
+	if !ok {
+		t.Fatal("expected SOP detail")
+	}
+	if len(detail.Versions) != 2 {
+		t.Fatalf("expected 2 version points (v1 with 2 runs + current v3 rollback with 0 runs), got %d: %+v", len(detail.Versions), detail.Versions)
+	}
+	if detail.Versions[0].Metrics.Runs != 2 || detail.Versions[1].Metrics.Runs != 0 || !detail.Versions[1].Current || detail.Versions[1].Source != domain.EvoVersionRollback {
+		t.Fatalf("P2-9: pre-rollback runs must stay on v1 and not bleed into v3 rollback row: v0=%+v v1=%+v", detail.Versions[0], detail.Versions[1])
+	}
+}

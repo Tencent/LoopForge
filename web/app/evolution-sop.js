@@ -667,7 +667,7 @@ function evoSOPCalloutHTML(d) {
     return `<div class="evo-sop-callout is-gray" role="status">
       <div>
         <strong>正在灰度验证（${c.percent || 50}% 流量 · 候选 ${escapeHTML(nextVer)}）</strong>
-        <p>对照组 ${ctrlRuns} 次 · 候选组 ${candRuns} 次（目标每组 ≥${c.minRuns || 5} 次）${c.verdict ? ` · ${escapeHTML(c.verdict)}` : ''}。点击发布后生效并开启下一轮统计。</p>
+        <p>对照组 ${ctrlRuns} 次 · 候选组 ${candRuns} 次（目标每组 ≥${c.minRuns || 5} 次）${c.verdict ? ` · ${escapeHTML(c.verdict)}` : ''}。${ready ? '点击发布后生效并开启下一轮统计。' : '达到通过条件后可全量发布并开启下一轮统计。'}</p>
       </div>
       <div class="evo-sop-callout-actions">
         <button type="button" class="kb-btn quiet small" data-evo-sop-stop-gray="${escapeHTML(p.id)}">停止灰度</button>
@@ -789,7 +789,7 @@ function evoSOPTrendTabHTML(view, d) {
     <details class="evo-sop-method">
       <summary>指标与 SOP 评分是怎么算出来的？</summary>
       <ul>
-        <li><b>SOP 评分（0–100）</b>：当运行存在自动评测结果（RunEval）时，直接取该批次评测均分；暂无评测时按连续公式加权：结果与稳定性占 65 分（一次成功 40 分、无返工重试 15 分、工具无报错 10 分），资源效率占 35 分（Token 消耗 15 分、工具调用 10 分、执行耗时 10 分，按平滑曲线连续计分，避免同档位同分）。</li>
+        <li><b>SOP 评分（0–100）</b>：当运行存在自动评测结果（RunEval）时，直接取该批次评测均分；暂无评测时按连续公式加权：一次成功运行为结果稳定性 65 分（成功 40 + 无返工 15 + 工具无报错 10）+ 连续效率 35 分（Token 15 + 工具 10 + 耗时 10，平滑曲线计分）；返工成功按 0.6 倍计入效率分；失败运行不计效率加分（8–18 分），确保「失败 &lt; 返工成功 &lt; 一次成功」。</li>
         <li><b>核心指标口径</b>：所有统计仅包含非回放的终态业务运行；每个正式版本取该版本最近一轮（最多 N 次）运行的均值，灰度数据则按同一时间窗内的旧版对照组与候选版分流运行分别汇总。</li>
       </ul>
     </details>
