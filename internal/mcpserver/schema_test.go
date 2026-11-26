@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"agentflow/internal/application"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -56,4 +57,36 @@ func TestPublicRepositoryToolSupportsGitHub(t *testing.T) {
 		return
 	}
 	t.Fatal("repositories_save is missing")
+}
+
+// A requirement can opt out of SOP delivery only through sopMode, so the
+// issues_save contract must offer it; otherwise agents cannot create one.
+func TestIssueSaveContractOffersSOPMode(t *testing.T) {
+	var save application.Operation
+	for _, op := range application.PublicOperations() {
+		if op.Name == "issues_save" {
+			save = op
+		}
+	}
+	body := contractObject(contractObject(ToolInputSchema(save)["properties"])["body"])
+	found := false
+	for _, part := range body["allOf"].([]any) {
+		if mode, ok := contractObject(contractObject(part)["properties"])["sopMode"]; ok {
+			found = true
+			if !strings.Contains(fmt.Sprint(contractObject(mode)["enum"]), "none") {
+				t.Fatalf("sopMode enum = %v", contractObject(mode)["enum"])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("issues_save body lacks sopMode: %v", body)
+	}
+	for _, mode := range []string{"none", "sop", ""} {
+		if err := ValidateToolInput(save, map[string]any{"body": map[string]any{"projectId": "p", "title": "t", "sopMode": mode}}); err != nil {
+			t.Fatalf("sopMode %q rejected: %v", mode, err)
+		}
+	}
+	if err := ValidateToolInput(save, map[string]any{"body": map[string]any{"projectId": "p", "title": "t", "sopMode": "off"}}); err == nil {
+		t.Fatal("undocumented sopMode accepted")
+	}
 }

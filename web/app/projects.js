@@ -73,7 +73,8 @@ function generateProjectIdentity(name,projects=[],seed=''){
   const keys=new Set((projects||[]).map(p=>String(p?.key||'').toUpperCase()));
   let id,key;
   if(alpha.length){
-    id=words.join('-').toLowerCase();
+    // Leave room under the 64-character id column for a -N suffix.
+    id=words.join('-').toLowerCase().slice(0,56).replace(/-+$/,'');
     key=(alpha.length>1?alpha.map(w=>w[0]).join(''):alpha[0].length<=6?alpha[0]:alpha[0].slice(0,3)).toUpperCase().slice(0,6);
   }else{
     const s=String(seed||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,4)||Math.random().toString(36).slice(2,6);
@@ -684,6 +685,7 @@ function validateProjectPayload(value,{creating,projects=[],workflows=[],saved}=
   if(!value.name)return {field:'name',message:'项目名称不能为空'};
   if(!value.id)return {field:'id',message:'项目标识不能为空'};
   if(!value.key)return {field:'key',message:'项目 Key 不能为空'};
+  if(creating){const problem=resourceIdProblem(value.id);if(problem)return {field:'id',message:'项目'+problem};}
   if(creating&&(value.id.toLowerCase()==='new'||projects.some(p=>String(p.id).toLowerCase()===value.id.toLowerCase())))return {field:'id',message:`项目标识「${value.id}」已被占用，请换一个`};
   if(!creating&&!saved)return {field:'',message:'项目不存在或无权访问'};
   if(!value.workflowId||!workflows.some(w=>w.id===value.workflowId))return {field:'workflowId',message:'请选择有效的默认 SOP'};

@@ -86,7 +86,7 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	}
 	workspace := filepath.Join(m.root, dir)
 	if wipe {
-		if err := os.RemoveAll(workspace); err != nil {
+		if err := RemoveWorkspaceTree(workspace); err != nil {
 			return fail(fmt.Errorf("clean sandbox workspace: %w", err))
 		}
 	}
@@ -275,7 +275,7 @@ func (m *Manager) ReclaimExcept(keepRunIDs func() ([]string, error)) (int, error
 	keep := sandboxKeepNames(protected)
 	return m.removeMatching(root, entries, func(name string) bool {
 		return !sandboxNameProtected(keep, name)
-	}, os.RemoveAll)
+	}, RemoveWorkspaceTree)
 }
 
 func sandboxKeepNames(runIDs []string) map[string]struct{} {
@@ -366,7 +366,7 @@ func removeReclaimedSandbox(path string) error {
 		}
 		return err
 	}
-	return os.RemoveAll(retired)
+	return RemoveWorkspaceTree(retired)
 }
 
 type managedSandbox struct {
@@ -426,7 +426,7 @@ func (s *managedSandbox) Close(ctx context.Context) error {
 	s.once.Do(func() {
 		err = s.Sandbox.Close(ctx)
 		if s.ephemeral && s.workspace != "" {
-			_ = os.RemoveAll(s.workspace)
+			_ = RemoveWorkspaceTree(s.workspace)
 		}
 		_ = unlockFile(s.lock)
 	})
