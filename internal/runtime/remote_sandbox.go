@@ -24,20 +24,7 @@ func OpenRemoteSandbox(ctx context.Context, id, workspace string, profile domain
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return nil, err
 	}
-	activated, err := prepareSandboxEnvironment(workspace, profile, resources.Environment)
-	if err != nil {
-		return nil, err
-	}
-	profile.Environment = overlayEnvironment(profile.Environment, activated.Overlay)
-	sandbox, err := createDriverSandbox(ctx, "runner sandbox", id, workspace, profile, requirements, resources.Dockerfile)
-	if err != nil {
-		return nil, err
-	}
-	if err := runEnvironmentInstall(ctx, sandbox, activated); err != nil {
-		_ = sandbox.Close(ctx)
-		return nil, err
-	}
-	return sandbox, nil
+	return createDriverSandbox(ctx, "runner sandbox", id, workspace, profile, requirements, resources.Dockerfile)
 }
 
 // WithCommandEnvironment adds task-scoped environment values to a prepared
@@ -45,7 +32,7 @@ func OpenRemoteSandbox(ctx context.Context, id, workspace string, profile domain
 func WithCommandEnvironment(command CommandSpec, values map[string]string) CommandSpec {
 	bound := command
 	bound.environment = mergeEnvironmentMaps(command.environment, values)
-	return bound
+	return bindRunnerLoginLease(bound)
 }
 
 // CommandEnvironment returns a copy of the closed task-scoped environment for

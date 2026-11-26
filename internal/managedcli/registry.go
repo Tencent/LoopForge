@@ -20,7 +20,8 @@ type release struct {
 	Dist       struct {
 		Integrity string `json:"integrity"`
 	} `json:"dist"`
-	Published time.Time `json:"-"`
+	Artifact  *vendorArtifact `json:"-"`
+	Published time.Time       `json:"-"`
 }
 
 type packageMetadata struct {
@@ -32,15 +33,18 @@ type packageMetadata struct {
 
 func (m *Manager) candidate(ctx context.Context, provider string) (release, error) {
 	spec := providerSpecs[provider]
+	if spec.Package == "" {
+		return m.vendorCandidate(ctx, provider)
+	}
 	metadata, err := m.fetchPackageMetadata(ctx, spec.Package)
 	if err != nil {
 		return release{}, err
 	}
 	version := metadata.Tags["latest"]
-	if metadata.Name != spec.Package || !releaseVersion.MatchString(version) {
-		return release{}, errors.New("registry did not provide the expected package and a stable release version")
+	if metadata.Name != spec.Package || !validProviderVersion(provider, version) {
+		return release{}, errors.New("registry did not provide the expected package and a supported release version")
 	}
-	if mature := matureVersion(metadata, version, m.Now().Add(-observationWindow)); mature != "" {
+	if mature := matureVersion(provider, metadata, version, m.Now().Add(-observationWindow)); mature != "" {
 		version = mature
 	}
 	candidate, ok := metadata.Versions[version]
@@ -93,18 +97,21 @@ func (m *Manager) fetchPackageMetadata(ctx context.Context, pkg string) (package
 	return metadata, nil
 }
 
-// matureVersion returns the newest stable, non-deprecated release no newer
-// than upper that was published before cutoff, or "" when none qualifies.
+// matureVersion returns the newest supported, non-deprecated release no
+// newer than upper that was published before cutoff.
 //
 // Fast-moving CLIs may publish several times a day. Merely rejecting an
 // immature latest tag would then postpone updates forever. Selecting the
-// newest mature stable release, bounded by the official latest tag, keeps
-// updates flowing while versions published only to another channel cannot
-// leak in.
-func matureVersion(metadata packageMetadata, upper string, cutoff time.Time) string {
+// newest mature release, bounded by the official latest tag, keeps updates
+// flowing. DSH release candidates are eligible only while latest is an RC.
+func matureVersion(provider string, metadata packageMetadata, upper string, cutoff time.Time) string {
 	mature := ""
+	allowRC := strings.Contains(upper, "-rc.")
 	for v, entry := range metadata.Versions {
-		if !releaseVersion.MatchString(v) || compareVersions(v, upper) > 0 || entry.Deprecated != "" {
+		if !allowRC && strings.Contains(v, "-rc.") {
+			continue
+		}
+		if !validProviderVersion(provider, v) || compareVersions(v, upper) > 0 || entry.Deprecated != "" {
 			continue
 		}
 		var published time.Time
@@ -127,17 +134,29 @@ func validIntegrity(value string) bool {
 }
 
 func compareVersions(a, b string) int {
-	left, right := strings.Split(a, "."), strings.Split(b, ".")
+	aCore, aRC, _ := strings.Cut(a, "-rc.")
+	bCore, bRC, _ := strings.Cut(b, "-rc.")
+	left, right := strings.Split(aCore, "."), strings.Split(bCore, ".")
 	for i := 0; i < 3; i++ {
-		if len(left[i]) < len(right[i]) {
-			return -1
-		}
-		if len(left[i]) > len(right[i]) {
-			return 1
-		}
-		if cmp := strings.Compare(left[i], right[i]); cmp != 0 {
+		if cmp := compareVersionNumber(left[i], right[i]); cmp != 0 {
 			return cmp
 		}
 	}
-	return 0
+	switch {
+	case aRC == bRC:
+		return 0
+	case aRC == "":
+		return 1
+	case bRC == "":
+		return -1
+	default:
+		return compareVersionNumber(aRC, bRC)
+	}
+}
+
+func compareVersionNumber(a, b string) int {
+	if len(a) != len(b) {
+		return len(a) - len(b)
+	}
+	return strings.Compare(a, b)
 }

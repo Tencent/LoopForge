@@ -8,7 +8,7 @@ import (
 var genericDockerEpoch = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // genericBackendDockerfileContent is the platform default image for the
-// LoopForge backend delivery SOP: Node (agent CLIs) + Go + git. It follows
+// LoopForge backend delivery LOOP: Node (agent CLIs) + Go + git. It follows
 // the SkillHub backend image that already runs on the production CVM.
 const genericBackendDockerfileContent = `FROM node:22-bookworm-slim
 
@@ -74,27 +74,15 @@ WORKDIR /workspace
 CMD ["sh", "-lc", "trap : TERM INT; sleep infinity & wait"]
 `
 
-// GenericBackendDockerfile is the catalog row for the platform default image.
-func GenericBackendDockerfile() domain.DockerfileDefinition {
-	return domain.DockerfileDefinition{
-		ID:          GenericBackendDockerfileID,
-		Name:        "通用后端运行镜像",
-		ProjectID:   "platform",
-		Shared:      true,
-		Description: "通用后端交付 SOP 的默认镜像：git、Node agent CLI 与 Go 工具链。",
-		Content:     genericBackendDockerfileContent,
-		UpdatedAt:   genericDockerEpoch,
-	}
-}
-
-// GenericDockerSandbox is the shared docker profile bound by the generic SOP.
+// GenericDockerSandbox is the shared docker profile bound by the generic LOOP.
 func GenericDockerSandbox() domain.SandboxProfile {
 	return domain.SandboxProfile{
-		ID:           GenericDockerSandboxID,
-		Name:         "通用后端容器沙箱",
-		ProjectID:    "platform",
-		Shared:       true,
-		Driver:       "docker",
-		DockerfileID: GenericBackendDockerfileID,
+		ID:         GenericDockerSandboxID,
+		Name:       "通用后端容器沙箱",
+		Toolchain:  "Node.js 22、npm、Go 1.22、Python 3、Git、GCC",
+		ProjectID:  "platform",
+		Shared:     true,
+		Driver:     "docker",
+		Dockerfile: &domain.SandboxDockerfile{Content: genericBackendDockerfileContent},
 	}
 }

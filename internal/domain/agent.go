@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// ExecutorEffortLevels lists the reasoning-effort levels each built-in CLI
-// accepts on its command line. An empty level keeps the CLI default.
+// ExecutorEffortLevels lists the reasoning-effort values each built-in CLI
+// can apply. An empty level uses the CLI default.
 var ExecutorEffortLevels = map[string][]string{
 	"claude-code": {"low", "medium", "high", "xhigh", "max", "ultracode"},
 	"codebuddy":   {"low", "medium", "high", "xhigh", "max", "ultracode"},
@@ -16,7 +16,10 @@ var ExecutorEffortLevels = map[string][]string{
 	"opencode":    {"low", "medium", "high"},
 	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
 	"agy":         {"low", "medium", "high", "xhigh", "max"},
+	"kimi":        {"none", "thinking", "low", "high", "max"},
 	"pi":          {"minimal", "low", "medium", "high", "xhigh", "max"},
+	"dsh":         {"none", "low", "high", "max"},
+	"zcode":       {"low", "high", "max"},
 }
 
 // AgentCLIExecutorKinds are the agent CLIs beyond CodeBuddy / Codex / Claude
@@ -109,7 +112,7 @@ type AgentHook struct {
 	ExecutionScope string `json:"executionScope,omitempty"`
 }
 
-// AgentLoopPolicy belongs to the reusable Agent role rather than an SOP node.
+// AgentLoopPolicy belongs to the reusable Agent role rather than a LOOP node.
 // A node may still cap attempts, while this policy controls self-correction
 // inside one Agent invocation and one sandbox workspace.
 type AgentLoopPolicy struct {

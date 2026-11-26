@@ -13,19 +13,6 @@ import (
 	"agentflow/internal/repo"
 )
 
-func TestClarifyAllowedModelFallsBackToCatalog(t *testing.T) {
-	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "public-model")
-	if got := clarifyAllowedModel(""); got != clarifyDefaultModel {
-		t.Fatalf("empty model = %q", got)
-	}
-	if got := clarifyAllowedModel("not-a-model"); got != clarifyDefaultModel {
-		t.Fatalf("unknown model = %q", got)
-	}
-	if got := clarifyAllowedModel("public-model"); got != "public-model" {
-		t.Fatalf("listed model = %q", got)
-	}
-}
-
 func TestClarifyCommandKeepsReadGrepGlob(t *testing.T) {
 	command, err := prepareClarifyCommand("codebuddy", clarifyDefaultModel, "prompt", "clarify-test", "af1", false)
 	if err != nil {

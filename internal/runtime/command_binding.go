@@ -1,10 +1,13 @@
 package runtime
 
 import (
+	"agentflow/internal/domain"
 	"agentflow/internal/observability"
+	"context"
 	"fmt"
-	"net/url"
+	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -29,7 +32,7 @@ func upsertEnv(env []string, key, value string) []string {
 	return out
 }
 
-func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (CommandSpec, error) {
+func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (CommandSpec, error) {
 	if command.bindingsPrepared {
 		return command, nil
 	}
@@ -41,10 +44,28 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	// Known host credentials are cleared for every child by default. A provider
 	// receives them only by explicitly requesting a controlled binding.
 	bound.environment["CODEBUDDY_API_KEY"] = ""
+	bound.environment["CODEBUDDY_BASE_URL"] = ""
 	bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = ""
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
 	bound.environment["GH_TOKEN"] = ""
 	bound.environment["GITHUB_TOKEN"] = ""
+	bound.environment[workspaceGitBinsEnv] = ""
+	for _, key := range workspaceGitSecretEnvironment {
+		bound.environment[key] = ""
+	}
+	gitBinding := false
+	for _, binding := range command.CredentialBindings {
+		if binding == BindGit || binding == BindGitWorkspace {
+			gitBinding = true
+		}
+	}
+	if !gitBinding {
+		bound.environment["GIT_CONFIG_COUNT"] = "1"
+		bound.environment["GIT_CONFIG_KEY_0"] = "credential.helper"
+		bound.environment["GIT_CONFIG_VALUE_0"] = ""
+		bound.environment["GIT_CONFIG_GLOBAL"] = os.DevNull
+		bound.environment["GIT_CONFIG_SYSTEM"] = os.DevNull
+	}
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		bound.environment[key] = ""
 	}
@@ -87,20 +108,24 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	for _, binding := range command.CredentialBindings {
 		switch binding {
 		case BindCodeBuddy:
-			// Empty values are intentional: a responsible user without credentials must
-			// not inherit either variable from the AgentFlow host process.
+			// Clearing an endpoint restores CodeBuddy's official address for this edition.
 			bound.environment["CODEBUDDY_API_KEY"] = strings.TrimSpace(credentials.CodeBuddy.APIKey)
 			if bound.environment["CODEBUDDY_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 CodeBuddy API Key，请在个人配置中配置")
 			}
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
-		case BindGit:
-			if err := bindGitEnvironment(sandbox, workspace, bound.environment, credentials.GitToken); err != nil {
+			bound.environment["CODEBUDDY_BASE_URL"] = strings.TrimSpace(credentials.CodeBuddy.BaseURL)
+		case BindGit, BindGitWorkspace:
+			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err
 			}
-		case BindGitWorkspace:
-			if err := bindWorkspaceGitEnvironment(sandbox, workspace, bound.environment, credentials); err != nil {
-				return CommandSpec{}, err
+			// A direct native command can resolve its executable before the
+			// bound PATH takes effect. Launch the same Git shim as a shell would.
+			if len(bound.Argv) > 0 && bound.Argv[0] == "git" && sandboxDriver(sandbox) != "docker" {
+				httpBin, _, _ := strings.Cut(bound.environment[workspaceGitBinsEnv], string(os.PathListSeparator))
+				if filepath.Base(httpBin) == workspaceGitHTTPBin {
+					bound.Argv = append([]string{filepath.Join(httpBin, "git")}, bound.Argv[1:]...)
+				}
 			}
 		case BindExtra:
 			// Missing credentials export as empty strings on purpose: a child
@@ -111,7 +136,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 				bound.credentialEnvKeys = append(bound.credentialEnvKeys, envName)
 			}
 		case BindMCP:
-			if err := bindMCPCallEnvironment(sandbox, workspace, bound.environment, credentials.MCPServers); err != nil {
+			if err := bindMCPCallEnvironment(ctx, sandbox, workspace, bound.environment, credentials.MCPServers); err != nil {
 				return CommandSpec{}, err
 			}
 			bound.Argv = BindMCPCallArgv(sandbox, bound.Argv)
@@ -130,11 +155,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			if bound.environment["ANTHROPIC_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人配置中配置")
 			}
-			baseURL := strings.TrimSpace(credentials.ClaudeCode.BaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.anthropic.com"
-			}
-			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
+			BindClaudeCodeEndpoint(bound.environment, credentials.ClaudeCode.BaseURL)
 		case BindAgentCLI:
 			var home AgentCLIHome
 			homeEnv := bound.environment["HOME"]
@@ -165,27 +186,37 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	if command.HookOutput != "" {
 		bound.environment["AGENTFLOW_HOOK_OUTPUT"] = command.HookOutput
 	}
-	bindTelemetryEnvironment(bound.environment, command.Telemetry)
+	bindTelemetryEnvironment(bound.environment, command.Telemetry, command.Provider)
 	return bound, nil
 }
 
 // bindTelemetryEnvironment points the child CLI's OpenTelemetry exporter at
 // the AgentFlow collector and tags its spans with the run and node. A nil
 // telemetry leaves env untouched.
-func bindTelemetryEnvironment(env map[string]string, telemetry *InvocationOptions) {
+func bindTelemetryEnvironment(env map[string]string, telemetry *InvocationOptions, provider string) {
 	if telemetry == nil {
 		return
 	}
 	runID, nodeID := telemetry.RunID, telemetry.NodeID
 	env["AGENTFLOW_RUN_ID"] = runID
 	env["AGENTFLOW_NODE_ID"] = nodeID
-	env["CODEBUDDY_CODE_ENABLE_TELEMETRY"] = "1"
-	env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+	switch provider {
+	case "codebuddy":
+		env["CODEBUDDY_CODE_ENABLE_TELEMETRY"] = "1"
+	case "claude-code":
+		env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+	}
 	env["OTEL_TRACES_EXPORTER"] = "otlp"
 	env["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
 	env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = observability.CollectorTracesURL()
 	env["OTEL_LOG_TOOL_DETAILS"] = "1"
-	env["OTEL_RESOURCE_ATTRIBUTES"] = fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s,service.name=agentflow-codebuddy", runID, nodeID)
+	attributes := fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s", runID, nodeID)
+	if provider == "" {
+		attributes += ",service.name=agentflow"
+	} else {
+		attributes += fmt.Sprintf(",agentflow.executor_kind=%s,service.name=agentflow-%s", provider, provider)
+	}
+	env["OTEL_RESOURCE_ATTRIBUTES"] = attributes
 }
 
 // CodexUserProviderArgv inserts a dedicated "agentflow_user" model provider
@@ -281,101 +312,123 @@ func privateHomePaths(sandbox Sandbox, workspace string, command CommandSpec) (h
 	return host, host
 }
 
-// GitEnvironment is the git environment a child process needs to reach
-// private remotes with token without the token touching any git config.
-func GitEnvironment(sandbox Sandbox, workspace, token string) (map[string]string, error) {
-	environment := map[string]string{}
-	if err := bindGitEnvironment(sandbox, workspace, environment, token); err != nil {
-		return nil, err
-	}
-	return environment, nil
-}
-
-func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, token string) error {
+// bindWorkspaceGitEnvironment installs the standard host-scoped helper.
+// It requests credentials through a live relay rather than writing tokens.
+func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
 	environment["GIT_TERMINAL_PROMPT"] = "0"
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return nil
-	}
-	user := "private"
-	if strings.HasPrefix(strings.ToLower(token), "oauth2:") {
-		if stripped := strings.TrimSpace(token[len("oauth2:"):]); stripped != "" {
-			user = "oauth2"
-			token = stripped
-		}
-	} else if strings.HasPrefix(strings.ToLower(token), "private:") {
-		if stripped := strings.TrimSpace(token[len("private:"):]); stripped != "" {
-			token = stripped
-		}
-	}
-	prefixes := []string{"git@git.example.com:", "ssh://git@git.example.com/", "https://git.example.com/", "http://git.example.com/"}
-	authed := "https://" + url.UserPassword(user, token).String() + "@git.example.com/"
-	environment["GIT_CONFIG_COUNT"] = strconv.Itoa(len(prefixes))
-	for index, prefix := range prefixes {
-		environment[fmt.Sprintf("GIT_CONFIG_KEY_%d", index)] = "url." + authed + ".insteadof"
-		environment[fmt.Sprintf("GIT_CONFIG_VALUE_%d", index)] = prefix
-	}
-	// Verification/command nodes keep the host HOME, so ~/.gitconfig insteadOf
-	// rewrites git@ to https://git.example.com/ without credentials. insteadOf does
-	// not chain; GIT_ASKPASS answers the resulting username/password prompt.
-	askpassHost := filepath.Join(workspace, ".agentflow", "runtime", "git-askpass")
-	if err := writeGitAskPass(workspace, askpassHost); err != nil {
-		return err
-	}
-	askpass := askpassHost
-	if sandboxDriver(sandbox) == "docker" {
-		askpass = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "runtime", "git-askpass"))
-	}
-	environment["AGENTFLOW_GIT_TOKEN"] = token
-	environment["AGENTFLOW_GIT_USER"] = user
-	environment["GIT_ASKPASS"] = askpass
-	environment["SSH_ASKPASS"] = askpass
-	return nil
-}
-
-// bindWorkspaceGitEnvironment configures git for an agent that clones and
-// pushes on its own. Unlike bindGitEnvironment it rewrites no remote: the
-// helper answers HTTPS prompts for github.com only, so the token is never sent
-// to another host the agent happens to contact.
-func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
-	environment["GIT_TERMINAL_PROMPT"] = "0"
-	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
+	runtimeHost, err := EnsureControlDirectory(workspace, "runtime")
+	if err != nil {
 		return fmt.Errorf("create git runtime dir: %w", err)
+	}
+	runtimeHost, err = filepath.Abs(runtimeHost)
+	if err != nil {
+		return fmt.Errorf("resolve git runtime dir: %w", err)
+	}
+	runtimePath := func(rel string) string {
+		if sandboxDriver(sandbox) == "docker" {
+			return mcpCallGuestPath(rel)
+		}
+		return filepath.Join(runtimeHost, filepath.FromSlash(rel))
 	}
 	// The requester's identity is the lowest-precedence (system) default, so
 	// the agent can still set its own with git config --global or --local.
 	if identity := workspaceGitIdentity(credentials.GitUserName, credentials.GitUserEmail); identity != "" {
-		systemHost := filepath.Join(workspace, ".agentflow", "runtime", "gitconfig-system")
-		if err := writeManagedFile(workspace, systemHost, []byte(identity), 0o600); err != nil {
+		if err := writeManagedFile(workspace, filepath.Join(runtimeHost, "gitconfig-system"), []byte(identity), 0o600); err != nil {
 			return fmt.Errorf("write git identity: %w", err)
 		}
-		system := systemHost
-		if sandboxDriver(sandbox) == "docker" {
-			system = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "runtime", "gitconfig-system"))
+		environment["GIT_CONFIG_SYSTEM"] = runtimePath("gitconfig-system")
+		environment["GIT_CONFIG_NOSYSTEM"] = "0"
+	}
+	// gh and glab keep logins of a previous speaker in their config
+	// directories; each turn starts with empty ones.
+	for key, dir := range map[string]string{"GH_CONFIG_DIR": "gh-config", "GLAB_CONFIG_DIR": "glab-config"} {
+		if _, err := resetControlDirectory(workspace, "runtime", dir); err != nil {
+			return fmt.Errorf("reset %s: %w", dir, err)
 		}
-		environment["GIT_CONFIG_SYSTEM"] = system
+		environment[key] = runtimePath(dir)
 	}
-	token := strings.TrimSpace(credentials.GitToken)
-	if token == "" {
+	gateway := strings.TrimSpace(environment[SessionGatewayEnv])
+	hosts := workspaceGitHosts(credentials.GitHTTPHosts)
+	environment[GitHostsEnv] = hosts
+	environment["GIT_CONFIG_COUNT"] = "1"
+	environment["GIT_CONFIG_KEY_0"] = "credential.helper"
+	environment["GIT_CONFIG_VALUE_0"] = ""
+	environment[workspaceGitBinsEnv] = ""
+	if gateway == "" || hosts == "" {
+		delete(environment, SessionGatewayEnv)
+		environment[GitHostsEnv] = ""
 		return nil
 	}
-	// oauth2: / private: mark a non-GitHub grant; it is never offered.
-	if lower := strings.ToLower(token); strings.HasPrefix(lower, "oauth2:") || strings.HasPrefix(lower, "private:") {
-		return nil
+	hasPlainHTTP := strings.Contains(","+hosts, ",http://")
+	tools, httpBin, err := prepareWorkspaceGitTools(ctx, sandbox, workspace, hasPlainHTTP)
+	if err != nil {
+		return fmt.Errorf("prepare Runner Git helpers: %w", err)
 	}
-	askpassHost := filepath.Join(workspace, ".agentflow", "runtime", "git-askpass-hosts")
-	if err := writeManagedFile(workspace, askpassHost, []byte(workspaceGitAskPassScript), 0o700); err != nil {
-		return fmt.Errorf("write git askpass: %w", err)
+	bin := filepath.Join(tools, "bin")
+	helper := filepath.Join(bin, "agentflow-helper")
+	// The empty helper entry drops every helper configured before it (system,
+	// global, repository), so a stored credential never answers instead.
+	environment["GIT_CONFIG_KEY_0"] = "credential.helper"
+	environment["GIT_CONFIG_VALUE_0"] = ""
+	environment["GIT_CONFIG_KEY_1"] = "credential.helper"
+	environment["GIT_CONFIG_VALUE_1"] = "!" + shellSingleQuote(helper) + " git-credential"
+	environment["GIT_CONFIG_COUNT"] = "2"
+	bins := bin
+	if hasPlainHTTP {
+		environment[workspaceGitHTTPOriginEnv] = ""
+		environment[workspaceGitHTTPSystemGitEnv] = ""
 	}
-	askpass := askpassHost
-	if sandboxDriver(sandbox) == "docker" {
-		askpass = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "runtime", "git-askpass-hosts"))
+	if httpBin != "" {
+		bins = httpBin + string(os.PathListSeparator) + bins
 	}
-	environment["AGENTFLOW_GIT_TOKEN"] = token
-	environment["AGENTFLOW_GIT_USER"] = "x-access-token"
-	environment["GIT_ASKPASS"] = askpass
-	environment["GH_TOKEN"] = token
+	environment[workspaceGitBinsEnv] = bins
+	if sandboxDriver(sandbox) != "docker" {
+		// Login shells can reset PATH before the agent calls Git.
+		if httpBin != "" {
+			environment["GIT_EXEC_PATH"] = filepath.Join(tools, workspaceGitDistribution, "exec")
+		}
+		base := environment["PATH"]
+		if base == "" {
+			base = sandboxBasePath(sandbox)
+		}
+		environment["PATH"] = bins + string(os.PathListSeparator) + base
+	}
 	return nil
+}
+
+// workspaceGitHosts renders host→platform as the sorted "host=platform" list
+// of GitHostsEnv, skipping anything that is not a canonical Git endpoint.
+func workspaceGitHosts(hosts map[string]string) string {
+	pairs := make([]string, 0, len(hosts))
+	for host, platform := range hosts {
+		endpoint, err := domain.ParseGitHTTPEndpoint(host)
+		if err != nil || endpoint.Scope() != host {
+			continue
+		}
+		var ok bool
+		if platform, ok = domain.NormalizeGitPlatform(platform); !ok {
+			platform = domain.GitPlatformOther
+		}
+		pairs = append(pairs, host+"="+platform)
+	}
+	sort.Strings(pairs)
+	return strings.Join(pairs, ",")
+}
+
+// sandboxBasePath is the PATH a process in sandbox starts with: the profile's
+// (which carries an activated environment's tools) or the host's.
+func sandboxBasePath(sandbox Sandbox) string {
+	switch sb := unwrapSandbox(sandbox).(type) {
+	case *processSandbox:
+		if path := sb.profile.Environment["PATH"]; path != "" {
+			return path
+		}
+	case *localSandbox:
+		if path := sb.environment["PATH"]; path != "" {
+			return path
+		}
+	}
+	return os.Getenv("PATH")
 }
 
 func workspaceGitIdentity(name, email string) string {
@@ -394,27 +447,6 @@ func workspaceGitIdentity(name, email string) string {
 	}
 	return b.String()
 }
-
-// workspaceGitAskPassScript answers git's HTTPS prompts ("Password for
-// 'https://user@host/path': ") for exactly https://github.com; any other host,
-// including look-alikes such as github.com.example or github.com@example,
-// gets no credential.
-const workspaceGitAskPassScript = `#!/bin/sh
-url=${1#*\'}
-url=${url%\'*}
-case "$url" in
-  https://*) ;;
-  *) exit 1 ;;
-esac
-host=${url#https://}
-host=${host%%/*}
-host=${host##*@}
-[ "$host" = github.com ] || exit 1
-case "$1" in
-  *[Uu]sername*) printf '%s\n' "${AGENTFLOW_GIT_USER:-x-access-token}" ;;
-  *) printf '%s\n' "${AGENTFLOW_GIT_TOKEN-}" ;;
-esac
-`
 
 const gitAskPassScript = `#!/bin/sh
 case "$1" in

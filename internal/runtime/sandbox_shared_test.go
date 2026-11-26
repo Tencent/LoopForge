@@ -9,7 +9,7 @@ import (
 	"agentflow/internal/domain"
 )
 
-// 子 SOP 的沙箱用自己的锁，但工作目录是父流程的；父流程正持有工作区时子流程也能打开，删除子流程也不会删掉父流程目录。
+// 子 LOOP 的沙箱用自己的锁，但工作目录是父流程的；父流程正持有工作区时子流程也能打开，删除子流程也不会删掉父流程目录。
 func TestAcquireRunInSharesWorkspaceWithOwnLock(t *testing.T) {
 	root := t.TempDir()
 	m := NewManager(root)

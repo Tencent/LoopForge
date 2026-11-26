@@ -58,10 +58,21 @@ type Run struct {
 const RunKindWorkspace = "workspace"
 const ConversationWorkspaceWorkflowID = "conversation-workspace"
 
-// IsWorkspace distinguishes an on-demand chat workspace from a scheduled SOP.
+// IsWorkspace distinguishes an on-demand chat workspace from a scheduled LOOP.
 func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
 
-// LiveWorkspace reports a chat workspace that is open for edits. It has no SOP
+// FailedBeforeAutoAssignment reports whether a project-auto run failed while waiting for a machine.
+func (r Run) FailedBeforeAutoAssignment() bool {
+	return r.Status == "failed" && r.ExecutionContext.ExecutionPool == ExecutionPoolProjectAuto &&
+		r.ExecutionContext.ExecutionMode == ""
+}
+
+// IsPersonalWorkspace identifies a workspace whose access is scoped to its owner.
+func (r Run) IsPersonalWorkspace() bool {
+	return r.IsWorkspace() && r.ExecutionContext.ProjectID == ""
+}
+
+// LiveWorkspace reports a chat workspace that is open for edits. It has no LOOP
 // graph to pause, so Main Bot and people in the IDE edit it side by side and
 // rely on expectedSha256 to catch conflicting writes.
 func (r Run) LiveWorkspace() bool {
@@ -69,7 +80,7 @@ func (r Run) LiveWorkspace() bool {
 }
 
 // HumanEditable reports whether people may edit the workspace in the IDE. Like
-// an AI IDE they edit at any time, also while SOP agents run: nothing pauses,
+// an AI IDE they edit at any time, also while LOOP agents run: nothing pauses,
 // expectedSha256 catches conflicting writes and agents re-read what changed.
 func (r Run) HumanEditable() bool {
 	if !r.WorkspaceCleanedAt.IsZero() {
@@ -84,7 +95,7 @@ func (r Run) HumanEditable() bool {
 	return false
 }
 
-// HistoricalGroup is a record of the retired role groups. It has no SOP graph
+// HistoricalGroup is a record of the retired role groups. It has no LOOP graph
 // that could be resumed or retried.
 func (r Run) HistoricalGroup() bool {
 	return !r.IsWorkspace() && r.WorkflowSnapshot.CollaborationMode == "group"
@@ -111,6 +122,11 @@ func (r Run) RepositoryContexts() []RepositoryContext {
 		return []RepositoryContext{r.Repository}
 	}
 	return nil
+}
+
+// UsesConversationWorkspace includes a dispatched LOOP and its child runs.
+func (r Run) UsesConversationWorkspace() bool {
+	return r.ExecutionContext.ExecutionPinned && r.ExecutionContext.WorkspaceRunID != "" && !r.IsWorkspace()
 }
 
 // UnmarshalJSON lifts the shared sandbox instance from historical node runs.
@@ -160,6 +176,22 @@ type NodeRun struct {
 	ChildRunID      string      `json:"childRunId,omitempty"`
 	StartedAt       time.Time   `json:"startedAt,omitzero"`
 	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
+
+	// Stream cursors are message-scoped; pending usage is already included in
+	// Usage until a session result replaces it with authoritative totals.
+	UsageStreamCursors map[string]TokenUsage `json:"usageStreamCursors,omitempty"`
+	UsagePending       map[string]TokenUsage `json:"usagePending,omitempty"`
+}
+
+// Question is what the node asks a human to supply: the actionRequired of
+// a "human" decision while the node waits for it. Empty otherwise, also
+// for a paused or turn-exhausted node that still carries an earlier
+// decision.
+func (n *NodeRun) Question() string {
+	if n == nil || n.Status != "waiting_approval" || n.Activity != "等待人工确认" || n.GateResult == nil || n.GateResult.Decision != "human" {
+		return ""
+	}
+	return strings.TrimSpace(n.GateResult.ActionRequired)
 }
 
 // GateResult is the structured terminal decision submitted by an Agent through
@@ -190,6 +222,9 @@ type TokenUsage struct {
 	// CostStatus 区分"成本为 0"与"成本未知"：reported（适配器上报）、estimated（按 token 估算）、
 	// unknown（未识别，展示为"未识别"而不是 ¥0）。空值视为 unknown，旧数据向后兼容。
 	CostStatus string `json:"costStatus,omitempty"`
+	// Marks a platform-priced total so a sum of reported and fallback-priced
+	// invocations is not repriced as though it came from one model call.
+	CostPricingVersion string `json:"costPricingVersion,omitempty"`
 }
 
 type TelemetryEvent struct {
@@ -219,6 +254,11 @@ type TelemetryEvent struct {
 	Error          *ErrorObservation `json:"error,omitempty"`
 }
 
+const (
+	RunEventSandboxSelected = "sandbox.selected"
+	RunEventFailed          = "run.failed"
+)
+
 type RunEvent struct {
 	ID        string    `json:"id"`
 	RunID     string    `json:"runId"`
@@ -241,8 +281,9 @@ type Artifact struct {
 	Size      int64  `json:"size"`
 	SHA256    string `json:"sha256"`
 	Content   string `json:"content"`
+	BlobID    string `json:"-"`
 	// RepositoryDir records which run repository workspace the artifact was
-	// collected from (empty = run workspace root, where SOP deliverables live).
+	// collected from (empty = run workspace root, where LOOP deliverables live).
 	RepositoryDir string    `json:"repositoryDir,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
 }

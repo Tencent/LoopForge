@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	stdsync "sync"
@@ -109,7 +111,11 @@ type chatClarifyRequest struct {
 	Model              string            `json:"model,omitempty"`
 	SessionID          string            `json:"sessionId,omitempty"`
 	JobID              string            `json:"jobId,omitempty"`
-	History            []struct {
+	// ActorUserID runs the analysis as this account (model, Git and MCP
+	// access) instead of the requirement's responsible person. Set only by
+	// the server, for chat clarification.
+	ActorUserID int64 `json:"-"`
+	History     []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"history"`
@@ -188,10 +194,9 @@ func statDir(path string) bool {
 }
 
 // resolveCodeBuddyBin locates the codebuddy executable. It first honors an
-// explicit override (AGENTFLOW_CODEBUDDY_BIN), then the managed inventory if
-// configured (read-only), otherwise consults PATH, and finally
-// probes well-known install locations. The service PATH may not include the
-// user's ~/.local/bin, so relying on PATH alone is not enough.
+// explicit override (AGENTFLOW_CODEBUDDY_BIN), then the managed inventory.
+// When CodeBuddy is not managed, it checks PATH and well-known install
+// locations because the service PATH may omit the user's ~/.local/bin.
 func resolveCodeBuddyBin() (string, error) {
 	if override := strings.TrimSpace(os.Getenv("AGENTFLOW_CODEBUDDY_BIN")); override != "" {
 		if fileExecutable(override) {
@@ -206,7 +211,13 @@ func resolveCodeBuddyBin() (string, error) {
 		if binary, ok := inventory.BinaryFor("codebuddy"); ok {
 			return binary, nil
 		}
-		return "", fmt.Errorf("托管 CodeBuddy 尚未安装，请检查 worker 的 CLI 安装状态")
+		providers, err := managedcli.EnabledProviders()
+		if err != nil {
+			return "", fmt.Errorf("读取托管 CLI 配置失败: %w", err)
+		}
+		if slices.Contains(providers, "codebuddy") {
+			return "", fmt.Errorf("托管 CodeBuddy 尚未安装，请检查 worker 的 CLI 安装状态")
+		}
 	}
 	if p, err := exec.LookPath("codebuddy"); err == nil {
 		return p, nil
@@ -215,10 +226,9 @@ func resolveCodeBuddyBin() (string, error) {
 	if strings.TrimSpace(home) == "" {
 		home = "/root"
 	}
-	candidates := []string{
-		filepath.Join(home, ".local", "bin", "codebuddy"),
-		"/usr/local/bin/codebuddy",
-		"/usr/bin/codebuddy",
+	candidates := []string{filepath.Join(home, ".local", "bin", "codebuddy")}
+	for _, dir := range assistantCLIGlobalDirs {
+		candidates = append(candidates, filepath.Join(dir, "codebuddy"))
 	}
 	for _, c := range candidates {
 		if fileExecutable(c) {
@@ -317,6 +327,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 		if key == "" {
 			return "", false, gitwork.ErrSSHKeyRequired.Error()
 		}
+		ctx = gitwork.WithSSHKnownHostsLookup(ctx, h.repo.PlatformSSHKnownHosts)
 		ctx = gitwork.WithSSHKeys(ctx, keys)
 		// A private SSH checkout is never shared across users, changed
 		// repository bindings, or a removed or replaced key.
@@ -337,11 +348,11 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 		return cacheDir, true, ""
 	}
 
-	token := engine.ResolveClarifyGitToken(h.repo, responsibleUserID)
+	credentials := engine.ResolveClarifyGitCredentials(h.repo, responsibleUserID)
 	prepCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
-	if _, err := engine.PrepareClarifyWorkspaceAtBranch(prepCtx, cacheDir, repo, baseBranch, token); err != nil {
+	if _, err := engine.PrepareClarifyWorkspaceAtBranch(prepCtx, cacheDir, repo, baseBranch, credentials); err != nil {
 		if hadCheckout && baseBranch == "" && !ssh {
 			// Degrade to the previous (possibly stale) checkout.
 			return cacheDir, true, ""
@@ -374,7 +385,7 @@ func clarifyRepositorySource(repository domain.Repository, selectedBaseBranch st
 }
 
 func (h *streamHandlers) runChatClarify(c *gin.Context, issue domain.Issue, request chatClarifyRequest) {
-	if err := clarifyModelEngineError(request.Model); err != nil {
+	if _, err := normalizeFeatureModel(request.Model); err != nil {
 		c.JSON(400, map[string]string{"error": err.Error()})
 		return
 	}
@@ -404,14 +415,44 @@ func clarifyAssistantRounds(history []struct {
 	return n
 }
 
+// clarifyUser is the account a clarification analysis runs as.
+func (h *streamHandlers) clarifyUser(issue domain.Issue, request chatClarifyRequest) (domain.User, error) {
+	if request.ActorUserID == 0 {
+		return h.repo.ResponsibleUser(issue)
+	}
+	user, ok := h.repo.User(request.ActorUserID)
+	if !ok || user.ID == 0 {
+		return domain.User{}, errors.New("发起澄清的平台账号不可用")
+	}
+	return user, nil
+}
+
 func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue, request chatClarifyRequest, emit func(event string, payload any)) (any, string, map[string]any, error) {
 	if emit == nil {
 		emit = func(string, any) {}
 	}
 	emit("thought", map[string]string{"kind": "status", "text": "正在准备分析…"})
-	responsible, responsibleErr := h.repo.ResponsibleUser(issue)
+	responsible, responsibleErr := h.clarifyUser(issue, request)
 	if responsibleErr != nil {
 		return nil, "", nil, responsibleErr
+	}
+	modelID, err := resolveFeatureModel(responsible, request.Model)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	cli, model := assistantModelEngine(modelID)
+	useCodeBuddy := cli == assistantEngineCodeBuddy
+	var bin, invocationRoot string
+	if useCodeBuddy {
+		bin, err = resolveCodeBuddyBin()
+	} else {
+		invocationRoot, err = os.MkdirTemp("", "agentflow-clarify-")
+	}
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if invocationRoot != "" {
+		defer os.RemoveAll(invocationRoot)
 	}
 	extras := clarifyRequestTexts(request)
 	hydrateClarifyIssueFromText(&issue, extras...)
@@ -423,20 +464,16 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 	modelCtx, cancelModel := context.WithCancel(ctx)
 	defer cancelModel()
-	var toolSession *AgentToolSession
-	var toolFiles agentToolFiles
 	if err := ensureClarifySessionDirs(responsible.ID); err != nil {
 		return nil, "", nil, err
 	}
-	sess, files, err := h.openClarifyToolSession(modelCtx, responsible, issue, cancelModel)
+	toolSession, toolFiles, err := h.openClarifyToolSession(modelCtx, responsible, issue, cancelModel)
 	if err != nil {
 		logAgentToolEvent("session-fallback", "mode=clarify", "err="+truncateRunes(err.Error(), 160))
 		return nil, "", nil, err
 	}
-	toolSession = sess
-	toolFiles = files
-	defer sess.Close()
-	defer files.Cleanup()
+	defer toolSession.Close()
+	defer toolFiles.Cleanup()
 	intro := fmt.Sprintf("你是研发工作项分析师，正在澄清一张已有的%s。这是多轮澄清：结合「对话」里已经问过和回答过的内容继续，不要重复已问过的问题。", workItemType)
 	mcpStep := "2. 若下文列出了可用 MCP 工具：必须先用这些工具读取外部原单及其评论；正文或评论里的文档链接在对应工具可用时也要同步读取。不要声称看不到评论或文档。"
 	if strings.TrimSpace(issue.ID) == "" {
@@ -446,6 +483,9 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		}
 	}
 	systemPrompt := clarifySystemPrompt(intro, mcpStep, focus)
+	if !useCodeBuddy {
+		systemPrompt = strings.Replace(systemPrompt, "用 Read/Grep/Glob 读取当前工作目录代码", "用 clarify_list_files 和 clarify_read_file 阅读本轮可用的仓库代码", 1)
+	}
 	var prompt strings.Builder
 	prompt.WriteString(systemPrompt)
 	prompt.WriteString("\n\n## 需求\n标题：")
@@ -475,10 +515,6 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 	prompt.WriteString(clarifyRoundBudgetHint(clarifyAssistantRounds(request.History)))
 	prompt.WriteString("\n请基于以上对话继续澄清，只围绕「## 需求」本身，完成后调用 submit_clarification。")
-	cbPath, cbErr := resolveCodeBuddyBin()
-	if cbErr != nil {
-		return nil, "", nil, cbErr
-	}
 	workDir := ""
 	repoInfo := map[string]any{"analyzed": false, "reason": "该 Issue 未绑定代码仓库"}
 	// Resolve the analysis repository list: repositoryIds (multi-repository
@@ -549,6 +585,11 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	if sessionID == "" {
 		sessionID = strings.TrimSpace(issue.Clarification.SessionID)
 	}
+	// Other CLIs reconstruct each user turn from the supplied transcript.
+	// Only retries within this request reuse their temporary native session.
+	if !useCodeBuddy {
+		sessionID = ""
+	}
 	resume := sessionID != ""
 	if resume && !canResumeClarifySession(homeDir, sessionID, issue.Clarification.SessionUserID, responsible.ID) {
 		emit("thought", map[string]string{"kind": "status", "text": "分析环境已变化，正在结合已有回答重新分析…"})
@@ -558,14 +599,25 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		sessionID = newAssistantSessionID()
 		resume = false
 	}
-	if err := ensureClarifySessionDirs(responsible.ID); err != nil {
-		return nil, "", nil, err
-	}
 	wsKey := strings.TrimSpace(issue.ID)
 	if wsKey == "" {
 		wsKey = "draft-" + sessionID
 	}
-	if len(analyzedRepos) == 1 {
+	if !useCodeBuddy {
+		paths := make(map[string]string, len(analyzedRepos))
+		for _, analysis := range analyzedRepos {
+			analysis.dirName = domain.NormalizeRepositoryDirName(domain.RepositoryContext{Name: analysis.name, RepositoryID: analysis.id})
+			name := analysis.dirName
+			for i := 2; paths[name] != ""; i++ {
+				name = fmt.Sprintf("%s-%d", analysis.dirName, i)
+			}
+			paths[name] = analysis.dir
+			analysis.dirName = name
+		}
+		toolSession.mu.Lock()
+		toolSession.clarifyRepos = paths
+		toolSession.mu.Unlock()
+	} else if len(analyzedRepos) == 1 {
 		workDir = analyzedRepos[0].dir
 	} else if len(analyzedRepos) > 1 {
 		// Multi-repository clarify: copy every analyzed repository into a
@@ -600,25 +652,29 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	// 1) 换成隔离的空工作目录，物理上杜绝读到垃圾；
 	// 2) 在提示词里明确告知无代码可用，禁止声称已读代码，结论需注明未基于代码分析。
 	if len(analyzedRepos) == 0 {
-		if dir, mkErr := ensureClarifyWorkspace(responsible.ID, wsKey+"-empty"); mkErr == nil {
-			workDir = dir
-		} else {
-			workDir = homeDir
+		if useCodeBuddy {
+			if dir, mkErr := ensureClarifyWorkspace(responsible.ID, wsKey+"-empty"); mkErr == nil {
+				workDir = dir
+			} else {
+				workDir = homeDir
+			}
 		}
 		reason, _ := repoInfo["reason"].(string)
-		prompt.WriteString("\n\n## 重要限制\n本次未能读取代码仓库（原因：" + reason + "）。不要使用 Read/Grep/Glob，也不要假设或声称已阅读任何代码；请仅基于需求描述与对话历史进行澄清，并在 summary 开头注明「未基于代码分析」。")
+		prompt.WriteString("\n\n## 重要限制\n本次未能读取代码仓库（原因：" + reason + "）。不要调用代码读取工具，也不要假设或声称已阅读任何代码；请仅基于需求描述与对话历史进行澄清，并在 summary 开头注明「未基于代码分析」。")
 	}
 	// Multi-repository analysis: every selected repository is checked out as a
 	// real sibling directory in the analysis workspace; the prompt lists each
 	// directory plus the repos that could not be prepared.
 	if len(analyzedRepos) > 1 {
 		var b strings.Builder
-		b.WriteString("\n\n## 多仓库分析\n本次需求涉及多个仓库，均已检出供分析（每个仓库一个独立目录，工作目录为其上级）：")
+		b.WriteString("\n\n## 多仓库分析\n以下仓库已检出供分析：")
 		for _, a := range analyzedRepos {
 			if a.dirName != "" {
-				fmt.Fprintf(&b, "\n- %s: 目录 ./%s", a.name, a.dirName)
-			} else {
-				fmt.Fprintf(&b, "\n- %s: 目录 %s", a.name, a.dir)
+				if useCodeBuddy {
+					fmt.Fprintf(&b, "\n- %s: 目录 ./%s", a.name, a.dirName)
+				} else {
+					fmt.Fprintf(&b, "\n- %s: repository=%s", a.name, a.dirName)
+				}
 			}
 		}
 		b.WriteString("\n只澄清本需求实际要改动的仓库；summary 分别说明涉及的每个仓库各自需要什么，不涉及的仓库不必展开。")
@@ -637,15 +693,20 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		a := analyzedRepos[0]
 		prompt.WriteString(fmt.Sprintf("\n\n## 多仓库范围\n本次需求还涉及其他仓库，但仅 %s 成功检出（当前工作目录），其余未能分析，请勿声称已阅读其代码。summary 需说明本需求涉及的其他仓库各自需要什么。", a.name))
 	}
+	if !useCodeBuddy && len(analyzedRepos) > 0 {
+		prompt.WriteString("\n用 clarify_list_files 获取可分析的仓库名及文件，再用 clarify_read_file 阅读相关代码。")
+	}
 	if mcpHint := h.clarifyMCPInstructionsFor(issue, responsible, len(request.History) > 0, extras...); mcpHint != "" {
 		prompt.WriteString(mcpHint)
 	}
 	userMsg := prompt.String()
 	clarifyID := fmt.Sprintf("clarify-%d", time.Now().UnixNano())
-	modelID := clarifyAllowedModel(request.Model)
-	credentials := runtime.RunCredentials{
-		CodeBuddy: runtime.CodeBuddyCredential{APIKey: strings.TrimSpace(responsible.CodeBuddyAPIKey), InternetEnvironment: strings.TrimSpace(responsible.CodeBuddyInternetEnvironment)},
-		GitToken:  strings.TrimSpace(h.repo.GitCredential(ctx, responsible.ID)),
+	var credentials runtime.RunCredentials
+	if useCodeBuddy {
+		credentials = runtime.RunCredentials{
+			CodeBuddy:          runtime.CodeBuddyUserCredential(responsible),
+			GitHTTPCredentials: h.repo.GitHTTPCredentialSecrets(ctx, responsible.ID),
+		}
 	}
 	turnPrompt := userMsg
 	if resume {
@@ -667,11 +728,27 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	emit("open", map[string]any{"repository": repoInfo, "model": modelID, "sessionId": sessionID})
 	emit("thought", map[string]string{"kind": "status", "text": "正在分析需求…"})
 	turnOpts := clarifyTurnOpts{Native: true, MCPConfig: toolFiles.MCPConfig, Settings: toolFiles.Settings}
+	runTurn := func(prompt string, resume bool) (string, string, error) {
+		if useCodeBuddy {
+			_, raw, captured, err := h.runClarifyTurn(modelCtx, workDir, bin, model, prompt, clarifyID, sessionID, homeDir, resume, credentials, emit, turnOpts)
+			return raw, captured, err
+		}
+		return runAssistantCLI(modelCtx, assistantCLIRequest{
+			Prompt: prompt, SystemPrompt: systemPrompt, Model: modelID, UserID: responsible.ID,
+			SessionRoot: invocationRoot, SessionID: sessionID, Resume: resume, Native: true, MCPConfig: toolFiles.MCPConfig,
+		}, responsible, func(event assistantStreamEvent) {
+			if event.Kind == "tool" && event.Tool != "" {
+				emit("thought", map[string]string{"kind": "tool", "tool": event.Tool, "text": "正在调用 " + event.Tool})
+			} else if event.Kind == "thinking" && event.Text != "" {
+				emit("thought", map[string]string{"kind": "thinking", "text": redactAssistantSecrets(event.Text, responsible)})
+			}
+		})
+	}
 	jsonRetries := 0
 	var recoveredParsed any
 	var recoveredRaw string
-	for follow := 0; ; follow++ {
-		_, turnRaw, captured, err := h.runClarifyTurn(modelCtx, workDir, cbPath, modelID, turnPrompt, clarifyID, sessionID, homeDir, resume, credentials, emit, turnOpts)
+	for {
+		turnRaw, captured, err := runTurn(turnPrompt, resume)
 		if captured != "" {
 			sessionID = captured
 			repoInfo["sessionId"] = sessionID
@@ -684,7 +761,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 			if turnPrompt != userMsg && !strings.Contains(sessionContext, turnPrompt) {
 				fallbackPrompt = sessionContext + "\n" + turnPrompt
 			}
-			_, turnRaw, captured, err = h.runClarifyTurn(modelCtx, workDir, cbPath, modelID, fallbackPrompt, clarifyID, sessionID, homeDir, false, credentials, emit, turnOpts)
+			turnRaw, captured, err = runTurn(fallbackPrompt, false)
 			resume = false
 			if captured != "" {
 				sessionID = captured

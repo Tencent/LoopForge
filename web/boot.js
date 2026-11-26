@@ -9,4 +9,10 @@ window.lfT = window.lfT || ((zh) => zh);
   } catch (_) { /* Restricted storage still permits the default interface. */ }
   root.dataset.lang = lang;
   root.lang = lang === 'en' ? 'en' : 'zh-CN';
+  try {
+    if (sessionStorage.getItem('loopforge.lang.motion') === 'in') {
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) sessionStorage.removeItem('loopforge.lang.motion');
+      else root.classList.add('lang-enter');
+    }
+  } catch (_) { /* Enter animation is optional when storage is blocked. */ }
 })();

@@ -13,6 +13,7 @@ import (
 )
 
 func TestGongfengOAuthSurvivesLoginAndRefreshes(t *testing.T) {
+	t.Setenv("AGENTFLOW_GONGFENG_HOST", "git.review.test")
 	st, err := OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +35,7 @@ func TestGongfengOAuthSurvivesLoginAndRefreshes(t *testing.T) {
 		t.Fatalf("oauth grant did not survive login refresh: %+v", stored)
 	}
 	public := domain.PublicUser(stored)
-	if !public.GitTokenOAuth || !public.GitTokenConfigured || public.GitToken != "" || public.GongfengRefreshToken != "" {
+	if !public.GitTokenOAuth || public.GitHubCredentialConfigured || public.GitToken != "" || public.GongfengRefreshToken != "" {
 		t.Fatalf("public user = %+v", public)
 	}
 
@@ -46,7 +47,7 @@ func TestGongfengOAuthSurvivesLoginAndRefreshes(t *testing.T) {
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_SECRET", "sec")
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_REDIRECT_URI", "http://127.0.0.1/cb")
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_TOKEN_URL", srv.URL)
-	if got := st.GitCredential(context.Background(), user.ID); got != "oauth2:access-new" {
+	if got := st.managedGitCredential(context.Background(), user.ID); got != "oauth2:access-new" {
 		t.Fatalf("refreshed token = %q", got)
 	}
 	stored, _ = st.User(user.ID)
@@ -54,16 +55,18 @@ func TestGongfengOAuthSurvivesLoginAndRefreshes(t *testing.T) {
 		t.Fatalf("saved refresh = %+v", stored)
 	}
 
-	if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{GitToken: "pasted-pat"}); err != nil {
+	if err := st.SaveGitHTTPCredential(user.ID, "", domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Host: managedGitHost(), Name: "Personal", Platform: domain.GitPlatformGitLab}, Token: "pasted-pat"}); err != nil {
 		t.Fatal(err)
 	}
+	credential, ok := st.GitHTTPCredentialForHost(context.Background(), user.ID, managedGitHost())
+	if !ok || credential.Token != "pasted-pat" {
+		t.Fatal("the personal host credential must be selected")
+	}
 	stored, _ = st.User(user.ID)
-	if stored.GitToken != "pasted-pat" || stored.GongfengRefreshToken != "" || !stored.GongfengTokenExpiresAt.IsZero() {
-		t.Fatalf("paste should replace oauth grant: %+v", stored)
+	if stored.GitToken != "access-new" || stored.GongfengRefreshToken != "refresh-new" {
+		t.Fatal("saving a host token must not mutate the internal OAuth grant")
 	}
-	if got := st.GitCredential(context.Background(), user.ID); got != "pasted-pat" {
-		t.Fatalf("pat = %q", got)
-	}
+
 }
 
 // A Gongfeng token endpoint that never answers must not wedge every git
@@ -109,7 +112,7 @@ func TestGongfengRefreshGivesUpOnHangingEndpoint(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			got[i] = st.GitCredential(context.Background(), user.ID)
+			got[i] = st.managedGitCredential(context.Background(), user.ID)
 		}(i)
 	}
 	wg.Wait()

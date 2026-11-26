@@ -6,7 +6,7 @@ import (
 )
 
 // Reprice a copy for analytics; raw adapter amounts and persisted Run/Node rows
-// remain intact. A missing node/model/token split makes coverage incomplete.
+// remain intact. Missing model/token splits make fallback estimates incomplete.
 func analyticsPricedRun(run domain.Run) domain.Run {
 	if run.IsWorkspace() {
 		// Conversation workspaces have no nodes; AddConversationRunUsage
@@ -16,12 +16,16 @@ func analyticsPricedRun(run domain.Run) domain.Run {
 	nodes := make(map[string]*domain.NodeRun, len(run.Nodes))
 	var input, output, read, write, total int64
 	var cost float64
-	known := true
+	known, reported := true, true
 	for id, original := range run.Nodes {
 		if original == nil {
 			continue
 		}
 		node := *original
+		// Existing CodeBuddy rows also carry its hardcoded USD-zero placeholder.
+		if node.Provider == "codebuddy" && node.Usage.CostStatus == "reported" && node.Usage.CostUSD == 0 {
+			node.Usage.CostStatus = ""
+		}
 		model := strings.ToLower(strings.TrimSpace(node.Model))
 		inclusive := node.Provider == "codex" || node.Provider == "openai" || strings.HasPrefix(model, "gpt-")
 		node.Usage = domain.AnalyticsPricedUsage(node.Model, node.Usage, inclusive)
@@ -33,8 +37,17 @@ func analyticsPricedRun(run domain.Run) domain.Run {
 		total += node.Usage.TotalTokens
 		cost += node.Usage.CostUSD
 		known = known && usageCostKnown(node.Usage)
+		reported = reported && node.Usage.CostStatus == "reported"
 	}
 	u := run.Usage
+	if len(nodes) == 0 {
+		// A run-level bill remains usable without per-node attribution.
+		// Missing attribution prevents estimation, not recognition of a bill.
+		if priced := domain.AnalyticsPricedUsage("", u, false); priced.CostStatus == "reported" {
+			run.Nodes, run.Usage = nodes, priced
+			return run
+		}
+	}
 	if input != u.InputTokens || output != u.OutputTokens || read != u.CacheReadTokens || write != u.CacheWriteTokens || total != u.TotalTokens {
 		known = false
 	}
@@ -43,8 +56,12 @@ func analyticsPricedRun(run domain.Run) domain.Run {
 	}
 	run.Nodes = nodes
 	run.Usage.CostUSD, run.Usage.CostStatus = cost, "unknown"
+	run.Usage.CostPricingVersion = domain.AnalyticsPricingVersion
 	if known {
 		run.Usage.CostStatus = "estimated"
+		if reported && len(nodes) > 0 {
+			run.Usage.CostStatus = "reported"
+		}
 	}
 	return run
 }

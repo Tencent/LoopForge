@@ -29,7 +29,7 @@ const (
 // daily. It only ever tombstones rows that already carry source=scheduled:
 // rows written before the source column existed are marked by
 // migrations/021_assistant_session_sources.sql, applied manually by the
-// operator, because production never migrates data on boot. SOP conversations
+// operator, because production never migrates data on boot. LOOP conversations
 // are deliberately left alone.
 func (h *assistantHandlers) startSessionJanitor(ctx context.Context) {
 	if h == nil || h.repo == nil || ctx == nil {

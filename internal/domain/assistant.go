@@ -8,10 +8,14 @@ import (
 const (
 	// AssistantSourceChat is an ordinary conversation.
 	AssistantSourceChat = "chat"
-	// AssistantSourceSOP is a shared conversation owned by a SOP run.
+	// AssistantSourceSOP is a shared conversation owned by a LOOP run.
 	AssistantSourceSOP = "sop"
 	// AssistantSourceScheduled is a conversation produced by a scheduled task.
 	AssistantSourceScheduled = "scheduled"
+	// AssistantSourceSOPDesigner is a private conversation of the LOOP
+	// designer's AI orchestrator. It belongs to one LOOP canvas and stays out
+	// of the workbench conversation list.
+	AssistantSourceSOPDesigner = "sop-designer"
 )
 
 // AssistantActivityEvent contains only the user-visible execution stream, not
@@ -41,7 +45,7 @@ type AssistantActivityEvent struct {
 	// it actually ran on, which also resolves aliases such as "lite".
 	Model string `json:"model,omitempty"`
 	// Input is the task an Agent dispatch hands the subagent and Output the
-	// report it returns; the side panel shows them like an SOP node session.
+	// report it returns; the side panel shows them like a LOOP node session.
 	Input  string `json:"input,omitempty"`
 	Output string `json:"output,omitempty"`
 }
@@ -90,6 +94,17 @@ type AssistantReference struct {
 	// preview (Type "element"); it is the user's own context, not an object
 	// the platform looks up.
 	Element *AssistantPageElement `json:"element,omitempty"`
+}
+
+// CloneAssistantReferences returns an independent copy for persisted task
+// payloads and message construction.
+func CloneAssistantReferences(refs []AssistantReference) []AssistantReference {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]AssistantReference, len(refs))
+	copy(out, refs)
+	return out
 }
 
 // AssistantPageElement is a page element picked in the native preview.
@@ -167,12 +182,15 @@ type AssistantSession struct {
 	ExecutionTarget       *AssistantExecutionTarget `json:"executionTarget,omitempty"`
 	ExecutionTargetLocked bool                      `json:"executionTargetLocked"`
 	RuntimeMode           string                    `json:"runtimeMode,omitempty"`
-	// Source separates ordinary chats, SOP run conversations and scheduled
+	// Source separates ordinary chats, LOOP run conversations and scheduled
 	// task runs. Legacy rows leave it empty and are inferred when read.
 	// TaskID is the scheduled job or assistant task that produced the session,
 	// so repeated runs of one task keep a single conversation.
+	// WorkflowID is the LOOP a designer conversation (source sop-designer)
+	// edits; the canvas lists its conversations by this id.
 	Source              string                 `json:"source,omitempty"`
 	TaskID              string                 `json:"taskId,omitempty"`
+	WorkflowID          string                 `json:"workflowId,omitempty"`
 	IssueID             string                 `json:"issueId,omitempty"`
 	Participants        []AssistantParticipant `json:"participants"`
 	ParticipantsVersion int                    `json:"participantsVersion,omitempty"`
@@ -186,6 +204,8 @@ type AssistantSession struct {
 	Shared           bool   `json:"shared,omitempty"`
 	GenerationStatus string `json:"generationStatus,omitempty"`
 	GenerationID     string `json:"generationId,omitempty"`
+	// RecentClientRequestIDs confirms admitted sends after another turn starts.
+	RecentClientRequestIDs []string `json:"recentClientRequestIds,omitempty"`
 	// Unread marks, for the listing reader, a reply that completed after they
 	// last opened the conversation. Listing only; never stored.
 	Unread      bool   `json:"unread,omitempty"`
@@ -203,7 +223,7 @@ type AssistantSession struct {
 	Executor       string `json:"executor,omitempty"`
 	RunID          string `json:"runId,omitempty"`
 	// WorkspaceRunID is the one workspace Main Bot has bound to an ordinary
-	// conversation: one the conversation opened, or the SOP run of an issue.
+	// conversation: one the conversation opened, or the LOOP run of an issue.
 	// Unlike RunID it does not make the session a shared run conversation.
 	WorkspaceRunID string `json:"workspaceRunId,omitempty"`
 	// OwnWorkspaceRunIDs are the workspaces the conversation opened itself; it
@@ -213,6 +233,8 @@ type AssistantSession struct {
 	Messages           []AssistantMessage `json:"messages,omitempty"`
 	CreatedAt          time.Time          `json:"createdAt,omitempty"`
 	UpdatedAt          time.Time          `json:"updatedAt"`
+
+	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
 }
 
 type AssistantTask struct {
@@ -223,6 +245,7 @@ type AssistantTask struct {
 	UserID               int64                 `json:"userId,omitempty"`
 	Name                 string                `json:"name"`
 	Prompt               string                `json:"prompt"`
+	References           []AssistantReference  `json:"references,omitempty"`
 	Model                string                `json:"model,omitempty"`
 	ProjectID            string                `json:"projectId,omitempty"`
 	SessionID            string                `json:"sessionId,omitempty"`

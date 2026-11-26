@@ -62,44 +62,54 @@ func (p *TerminalPool) Handle(root, scope string, req domain.WorkspaceTerminalRe
 }
 
 // HandleSandbox opens a PTY through the same driver and environment overlay as
-// the SOP sandbox. ctx covers opening/driver preparation only; after a successful
+// the LOOP sandbox. ctx covers opening/driver preparation only; after a successful
 // open the pool's expiry/close owns the shell lifetime, not an HTTP request.
 // A successful open transfers release to the pool (called exactly once on close).
 // On a failed open release is NOT called; the caller still owns that cleanup.
 // Non-open operations do not need a sandbox and ignore release.
 func (p *TerminalPool) HandleSandbox(ctx context.Context, sandbox Sandbox, scope string, req domain.WorkspaceTerminalRequest, release func()) (TerminalResult, error) {
-	return p.HandleSandboxWithGitSSH(ctx, sandbox, scope, req, release, nil)
+	return p.HandleSandboxWithGit(ctx, sandbox, scope, req, release, TerminalGitCredentials{})
 }
 
-// HandleSandboxWithGitSSH gives the terminal its caller's SSH identity when the
-// sandbox can keep it private to this terminal (see BindTerminalGitSSH). The
-// pool owns the agent for the same lifetime as the terminal, including expiry.
-func (p *TerminalPool) HandleSandboxWithGitSSH(ctx context.Context, sandbox Sandbox, scope string, req domain.WorkspaceTerminalRequest, release func(), keys map[string]string) (TerminalResult, error) {
+// TerminalGitCredentials contains only the credentials of the terminal's caller.
+type TerminalGitCredentials struct {
+	HTTPS   map[string]domain.GitHTTPExecutionCredential
+	SSHKeys map[string]string
+}
+
+// HandleSandboxWithGit binds the caller's Git credentials for the terminal's lifetime.
+func (p *TerminalPool) HandleSandboxWithGit(ctx context.Context, sandbox Sandbox, scope string, req domain.WorkspaceTerminalRequest, release func(), credentials TerminalGitCredentials) (TerminalResult, error) {
 	if req.Operation != "open" {
 		return p.handle(scope, req, nil, nil)
 	}
 	if _, err := terminalTTL(req); err != nil {
 		return TerminalResult{}, err
 	}
+	releaseTerminal := func() {}
+	if s, ok := unwrapSandbox(sandbox).(*dockerSandbox); ok {
+		releaseTerminal = s.reserveTerminal()
+	}
 	stopSSH := func() {}
 	var bind func(*CommandSpec) error
-	if len(keys) > 0 && sandbox != nil {
+	if len(credentials.SSHKeys) > 0 && sandbox != nil {
 		bind = func(command *CommandSpec) error {
-			stop, err := BindTerminalGitSSH(sandbox, command, keys)
+			stop, err := BindTerminalGitSSH(ctx, sandbox, command, credentials.SSHKeys)
 			if err == nil {
 				stopSSH = stop
 			}
 			return err
 		}
 	}
-	cmd, home, err := sandboxTerminalCommandWithBinding(ctx, sandbox, bind)
+	cmd, home, err := sandboxTerminalCommandWithBinding(ctx, sandbox, credentials.HTTPS, bind)
 	if err != nil {
 		stopSSH()
+		releaseTerminal()
 		return TerminalResult{}, err
 	}
 	ownedRelease := func() {
 		stopSSH()
 		sandboxTerminalCleanup(sandbox, home)
+		releaseTerminal()
 		if release != nil {
 			release()
 		}
@@ -109,6 +119,7 @@ func (p *TerminalPool) HandleSandboxWithGitSSH(ctx context.Context, sandbox Sand
 		stopSSH()
 		sandboxTerminalCleanup(sandbox, home)
 		_ = removeTerminalHome(home)
+		releaseTerminal()
 	}
 	return result, err
 }

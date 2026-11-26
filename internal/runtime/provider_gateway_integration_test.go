@@ -93,7 +93,7 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 			}
 			workspace := t.TempDir()
 			ex := domain.ExecutorDefinition{Binary: bin, Args: args, Kind: kind, Model: "gateway-test-model"}
-			// Use the same preparation and closed credential binding as real SOP nodes.
+			// Use the same preparation and closed credential binding as real LOOP nodes.
 			compiled := compiledConfig{AgentRoot: ".agentflow/test"}
 			if err := os.MkdirAll(workspace+"/.agentflow/test", 0700); err != nil {
 				t.Fatal(err)
@@ -107,7 +107,7 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 			}
 			creds := RunCredentials{Codex: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL + "/v1"}, ClaudeCode: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL}}
 			sb := &localSandbox{workspace: workspace}
-			bound, err := bindCommand(sb, workspace, command, creds)
+			bound, err := bindCommand(t.Context(), sb, workspace, command, creds)
 			if err != nil {
 				t.Fatal(err)
 			}

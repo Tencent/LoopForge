@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,7 +18,8 @@ type mcpHandlers struct {
 }
 
 func (h *mcpHandlers) mcpServers(c *gin.Context) {
-	if c.Request.Method == http.MethodGet {
+	switch c.Request.Method {
+	case http.MethodGet:
 		items := h.repo.MCPServers()
 		if current, ok := h.requestUser(c.Request, true); ok {
 			items = visibleMCPServersForUser(items, current.ID)
@@ -24,60 +27,76 @@ func (h *mcpHandlers) mcpServers(c *gin.Context) {
 			items = visibleMCPServersForUser(items, 0)
 		}
 		c.JSON(200, domain.PublicMCPServers(items))
-		return
-	}
-	if c.Request.Method == http.MethodDelete {
+	case http.MethodDelete:
 		id := strings.TrimSpace(c.Query("id"))
 		server, ok := h.repo.MCPServer(id)
 		if !ok {
 			c.JSON(http.StatusNotFound, map[string]string{"error": "MCP 不存在"})
 			return
 		}
-		if server.Scope == "personal" {
-			current, authenticated := h.requestUser(c.Request, true)
-			if !authenticated || current.ID != server.OwnerUserID {
-				c.JSON(http.StatusForbidden, map[string]string{"error": "不能移除其他用户的个人 MCP"})
-				return
-			}
+		if !h.allowMCPServerWrite(c, server) {
+			return
 		}
 		respond(c, h.repo.DeleteMCPServer(id))
-		return
-	}
-	if c.Request.Method == http.MethodPut {
+	case http.MethodPut:
 		var v domain.MCPServerDefinition
-		if decode(c, &v) && v.ID != "" {
-			existing, ok := h.repo.MCPServer(v.ID)
-			domain.RestoreMaskedMCPSecrets(&v, existing)
-			if ok {
-				if existing.MarketID != "" {
-					c.JSON(http.StatusBadRequest, map[string]string{"error": "市场 MCP 不能直接修改，请移除后重新添加"})
-					return
-				}
-				if existing.Scope == "personal" {
-					current, authenticated := h.requestUser(c.Request, true)
-					if !authenticated || current.ID != existing.OwnerUserID {
-						c.JSON(http.StatusForbidden, map[string]string{"error": "不能修改其他用户的个人 MCP"})
-						return
-					}
-				}
-				v.Scope, v.ProjectID, v.OwnerUserID = existing.Scope, existing.ProjectID, existing.OwnerUserID
-				v.MarketID, v.IconURL = "", ""
-				// File contents are managed by the multipart endpoints. Ordinary
-				// definition edits must not erase their manifest.
-				if v.FileRefs == nil {
-					v.FileRefs = existing.FileRefs
-				}
-			}
-			if err := h.repo.PutMCPServer(v); err != nil {
-				respond(c, err)
+		if !decode(c, &v) {
+			return
+		}
+		existing, found := h.repo.MCPServer(v.ID)
+		if found {
+			if !h.allowMCPServerWrite(c, existing) {
 				return
 			}
-			h.configureSync(h.repo.SyncConfig())
-			saved, _ := h.repo.MCPServer(v.ID)
-			c.JSON(http.StatusOK, domain.PublicMCPServer(saved))
+			if existing.MarketID != "" {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "市场 MCP 不能直接修改，请移除后重新添加"})
+				return
+			}
+			v.Scope, v.ProjectID, v.OwnerUserID = existing.Scope, existing.ProjectID, existing.OwnerUserID
+			v.MarketID, v.IconURL = "", ""
+		} else if !h.authorizeMCPDestination(c, &v) {
+			return
 		}
+		saved, err := h.repo.SaveMCPServers(repo.MCPServerChange{Definition: v, Previous: existing})
+		if err != nil {
+			respondMCPWriteError(c, err)
+			return
+		}
+		h.configureSync(h.repo.SyncConfig())
+		c.JSON(http.StatusOK, domain.PublicMCPServer(saved[0]))
 	}
 }
+
+// allowMCPServerWrite checks the scope of a stored definition.
+func (d deps) allowMCPServerWrite(c *gin.Context, server domain.MCPServerDefinition) bool {
+	if server.Scope == "personal" {
+		user, ok := d.requestUser(c.Request, true)
+		if ok && user.ID > 0 && user.ID == server.OwnerUserID {
+			return true
+		}
+		c.JSON(http.StatusForbidden, gin.H{"error": "不能修改其他用户的个人 MCP"})
+		return false
+	}
+	if project := strings.TrimSpace(server.ProjectID); project != "" {
+		return d.requireProjectWriter(c, project)
+	}
+	return d.requirePlatformAdmin(c)
+}
+
+func (h *mcpHandlers) authorizeMCPDestination(c *gin.Context, server *domain.MCPServerDefinition) bool {
+	server.Scope = strings.TrimSpace(server.Scope)
+	if server.Scope != "personal" {
+		return h.allowMCPServerWrite(c, *server)
+	}
+	user, ok := h.requestUser(c.Request, true)
+	if !ok || user.ID <= 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "添加个人 MCP 前请先登录"})
+		return false
+	}
+	server.OwnerUserID = user.ID
+	return true
+}
+
 func (h *mcpHandlers) mcpImport(c *gin.Context) {
 	var raw json.RawMessage
 	if !decode(c, &raw) {
@@ -88,31 +107,41 @@ func (h *mcpHandlers) mcpImport(c *gin.Context) {
 		c.JSON(400, map[string]string{"error": err.Error()})
 		return
 	}
-	for _, item := range imported {
-		target := strings.TrimSpace(item.ProjectID)
-		if !h.allowStoredAsset(c, "mcp-servers", strings.TrimSpace(item.ID)) {
-			return
-		}
-		if target == "" && item.Scope != "personal" {
-			if !h.requirePlatformAdmin(c) {
+	changes := make([]repo.MCPServerChange, 0, len(imported))
+	for i, item := range imported {
+		item.Scope = strings.TrimSpace(item.Scope)
+		existing, found := h.repo.MCPServer(item.ID)
+		if found {
+			if !h.allowMCPServerWrite(c, existing) {
 				return
 			}
-		} else if !h.requireProjectWriter(c, target) {
+			if (existing.Scope == "personal") != (item.Scope == "personal") {
+				c.JSON(http.StatusConflict, gin.H{"error": "不能通过导入更改个人 MCP 的范围"})
+				return
+			}
+		}
+		if !h.authorizeMCPDestination(c, &item) {
 			return
 		}
-	}
-	saved := make([]domain.MCPServerDefinition, 0, len(imported))
-	for i, item := range imported {
 		if err := domain.ValidateMCPServer(item); err != nil {
 			c.JSON(400, map[string]string{"error": fmt.Sprintf("第 %d 项无效: %v", i+1, err)})
 			return
 		}
-		if err := h.repo.PutMCPServer(item); err != nil {
-			respond(c, err)
-			return
-		}
-		saved = append(saved, item)
+		changes = append(changes, repo.MCPServerChange{Definition: item, Previous: existing})
+	}
+	saved, err := h.repo.SaveMCPServers(changes...)
+	if err != nil {
+		respondMCPWriteError(c, err)
+		return
 	}
 	h.configureSync(h.repo.SyncConfig())
 	c.JSON(200, map[string]any{"imported": len(saved), "servers": domain.PublicMCPServers(saved)})
+}
+
+func respondMCPWriteError(c *gin.Context, err error) {
+	if errors.Is(err, repo.ErrMCPServerChanged) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	respond(c, err)
 }

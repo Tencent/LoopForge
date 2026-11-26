@@ -243,7 +243,7 @@ export default function GenerationDiagnostics({
                   <strong>
                     调用 {attempt.id?.split("/").at(-1) || index + 1} ·{" "}
                     {attempt.engine}
-                    {attempt.cliVersion ? ` v${attempt.cliVersion}` : ""}
+                    {attempt.cliVersion ? ` v${attempt.cliVersion.replace(/^v/i, "")}` : ""}
                   </strong>
                   <span>{attempt.model}</span>
                   <span>{statuses[attempt.status] || attempt.status}</span>

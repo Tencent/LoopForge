@@ -49,7 +49,7 @@ async function openIssueDetail(id,tab){
       try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true})}catch(e){}
       if(deletionTask?.issueId!==issueId)deletionTask=null;
     }
-    state.issueDetailData={issue,comments,run,task,requirement,deletionTask};
+    state.issueDetailData={issue,comments,run,task,requirement,deletionTask,images:detail.images||[]};
     const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsConfirm=clarificationNeedsConfirm(issue);
     state.issueDetailTab=tab||(issueClarifying(issueId)||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
     $$('#issueDetailTabs .drawer-tab').forEach(b=>b.classList.toggle('active',b.dataset.dtab===state.issueDetailTab));
@@ -223,7 +223,7 @@ function renderIssueDetailTab(){
       if(!wasSelected)b.classList.add('selected');
     }
   });
-  host.querySelectorAll('[data-clarify-model]').forEach(bindClarifyModelPicker);
+  host.querySelectorAll('[data-clarify-model]').forEach(picker=>bindClarifyModelPicker(picker,issue));
   bindWaitingActions(host);
   if(state.issueDetailTab==='clarify'&&issueClarifying(issue.id))restoreIssueClarifyThinking(issue.id);
   if(clarifyDraft)restoreIssueClarifyDraft(host,clarifyDraft);
@@ -242,7 +242,7 @@ function clarificationOverviewCard(issue){
     return `<div class="clarify-overview ${cls}"><span>${failed||pending?'!':'✓'}</span><div><b>${title}</b><small>${escapeHTML((c.summary||'').slice(0,120))}${c.summary&&c.summary.length>120?'…':''}</small></div><button class="button ghost small" data-start-clarify>查看</button></div>`;
   }
   if(c.status==='in_progress'){
-    return `<div class="clarify-overview"><span>…</span><div><b>澄清尚未完成</b><small>继续回答关键问题，进度已经保存；不影响直接触发 SOP</small></div><button class="button ghost small" data-start-clarify>继续</button></div>`;
+    return `<div class="clarify-overview"><span>…</span><div><b>澄清尚未完成</b><small>继续回答关键问题，进度已经保存；不影响直接触发 LOOP</small></div><button class="button ghost small" data-start-clarify>继续</button></div>`;
   }
   return `<div class="clarify-overview"><span>?</span><div><b>描述不够清楚？</b><small>结合原单和代码问清关键细节</small></div><button class="button ghost small" data-start-clarify>帮我问清楚</button></div>`;
 }
@@ -271,8 +271,8 @@ function openIssueClarification(autoStart=false,restart=false){
   }
   renderIssueDetailTab();
   if(autoStart&&issue.clarification.status==='analyzing')attachIssueClarifyStream(issue.id);
-  else if(autoStart&&clarifyKickoffPending(issue))setTimeout(()=>sendIssueClarification(CLARIFY_AUTO_PROMPTS[0]),0);
-  else if(restart)setTimeout(()=>sendIssueClarification(CLARIFY_AUTO_PROMPTS[1]),0);
+  else if(autoStart&&clarifyKickoffPending(issue))void sendIssueClarification(CLARIFY_AUTO_PROMPTS[0]);
+  else if(restart)void sendIssueClarification(CLARIFY_AUTO_PROMPTS[1]);
 }
 function collectIssueClarifyReply(){
   const parts=[];
@@ -289,7 +289,6 @@ function collectIssueClarifyReply(){
 }
 function retryIssueClarifyTurn(){
   const issue=state.issueDetailData?.issue;if(!issue)return;
-  if(issue.clarification)issue.clarification.lastError='';
   const last=(issue.clarification?.history||[]).filter(h=>h.role==='user').pop();
   sendIssueClarification(last?.content||CLARIFY_AUTO_PROMPTS[0]);
 }
@@ -409,6 +408,12 @@ async function sendIssueClarification(initialMessage=''){
     attachIssueClarifyStream(issueId);
     return;
   }
+  const picker=$('#issueDetailBody [data-clarify-model]');
+  await picker?.modelPickerReady;
+  if(state.issueDetailData?.issue?.id!==issueId||issueClarifyJobs.get(issueId)?.attached)return;
+  if(picker&&!picker.isConnected&&(!initialMessage||!state.drawerOpen||state.issueDetailTab!=='clarify'))return;
+  const model=picker?.querySelector('[data-feature-model]')?.value||undefined;
+  if(!model&&!initialMessage)return toast('暂无可选模型，请检查个人配置中的执行器');
   const msg=initialMessage||collectIssueClarifyReply();
   if(!msg)return toast('请先选择或填写答案');
   const c=issue.clarification||(issue.clarification={});
@@ -425,7 +430,7 @@ async function sendIssueClarification(initialMessage=''){
   renderIssueDetailTab();
   renderIssues();
   try{
-    const resp=await fetch(`/api/issues/${encodeURIComponent(issueId)}/chat-clarify`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({message:msg,history,model:selectedClarifyModel()}),signal:abort.signal});
+    const resp=await fetch(`/api/issues/${encodeURIComponent(issueId)}/chat-clarify`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({message:msg,history,model}),signal:abort.signal});
     if(!resp.ok){let em=`HTTP ${resp.status}`;try{const d=await resp.json();em=d.error||em}catch{}throw new Error(em)}
     const data=(resp.headers.get('Content-Type')||'').includes('text/event-stream')?await consumeIssueClarifyStream(resp,issueId):await resp.json();
     await applyIssueClarifyDone(issueId,data);
@@ -458,7 +463,7 @@ async function closeIssueById(issueId){
   const issue=(state.data.issues||[]).find(i=>i.id===issueId);
   if(!issue)return toast('未找到需求单');
   if(issueManuallyClosed(issue)||issueTrackerClosed(issue))return toast('该需求单已处于关闭状态');
-  if(!issueCanClose(issue))return toast('需求正在澄清或执行 SOP，请先停止后再关闭','err');
+  if(!issueCanClose(issue))return toast('需求正在澄清或执行 LOOP，请先停止后再关闭','err');
   const ok=await afConfirm({
     title:'手动关闭需求',
     message:`确定手动关闭需求「${issue.title||issue.id}」？关闭后可在状态里筛「已关闭」。`,
@@ -504,7 +509,7 @@ function issueProgressActionsHTML(issue,run,{includeIssueActions=false}={}){
     if(!gongfengIssueClosed(issue)&&!run.pauseRequested)workflowActions.push(refreshRunSOPButtonHTML(run));
     if(!issueExecutionBlocked(issue)){
       if(canManuallyPassFailedNode(run))workflowActions.push(`<button class="button ghost small" data-pass-node="${runId}" data-node="${escapeHTML(failedNodeId(run))}">手动通过失败脚本</button>`);
-      if(run.status==='failed')workflowActions.push(triggerSOPButton(issue,{ghost:true,text:'整条 SOP 从头触发'}));
+      if(run.status==='failed')workflowActions.push(triggerSOPButton(issue,{ghost:true,text:'整条 LOOP 从头触发'}));
     }
     logActions.push(`<button class="button ghost small" data-open-logs="${runId}">查看运行与日志</button>`);
     logActions.push(`<button class="button ghost small" data-export-logs="${runId}">导出全部 Worker 日志</button>`);
@@ -521,9 +526,15 @@ function issueProgressActionsHTML(issue,run,{includeIssueActions=false}={}){
   const groups=[group('流程处理',workflowActions),group('排查记录',logActions),group('需求管理',issueActions)].filter(Boolean);
   return groups.length?`<div class="issue-action-groups">${groups.join('')}</div>`:'';
 }
+// 还没有任务和运行时，不能把它写成「直接运行」（从流程设计器或 API 直接启动的运行）。
+function issueTriggerLabel(issue,data,convo){
+  if(convo)return '对话工作区';
+  if(data.task||data.run)return taskTriggerInfo(data.task).label;
+  return issueWithoutSOP(issue)?'对话处理':'尚未触发';
+}
 function overviewPane(issue,data){
   const project=(state.data.projects||[]).find(p=>p.id===issue.projectId),workflow=(state.data.workflows||[]).find(w=>w.id===(issue.workflowId||project?.workflowId)),repo=(state.data.repositories||[]).find(r=>r.id===(issue.repositoryId||project?.defaultRepositoryId));
-  // 对话工作区不是 SOP 运行：不提供运行、日志和 SOP 操作入口。
+  // 对话工作区不是 LOOP 运行：不提供运行、日志和 LOOP 操作入口。
   const convo=conversationWorkspaceIssue(issue,data.run);
   const run=convo?null:data.run,out=issueOutcome(issue),stage=issueCurrentStage(issue),task=data.task;
   const waitingId=run&&waitingNodeId(run);
@@ -542,8 +553,16 @@ function overviewPane(issue,data){
   const ch=convo?conversationHeadState(issue):null;
   const banner=ch?`<div class="issue-outcome conv-outcome ${escapeHTML(ch.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(ch.label)}</b><p>${escapeHTML(ch.hint||'')}</p><div class="issue-outcome-actions">${actions}</div></div>`
     :`<div class="issue-outcome ${out.key}"><b>${escapeHTML(out.title)}</b><p>${escapeHTML(out.body)}</p><div class="issue-outcome-actions">${actions}</div></div>`;
-  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 SOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
-  return `<div class="detail-section">${banner}${facts}${issue.description?`<div class="detail-desc" style="margin-top:12px">${escapeHTML(issue.description)}</div>`:''}${clarificationOverviewCard(issue)}</div>`;
+  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',escapeHTML(issueTriggerLabel(issue,data,convo)))}${drawerFact('关联 LOOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 LOOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
+  const description=issue.description?`<div class="markdown-body">${renderRequirementMarkdown(issue.description)}</div>`:'';
+  const images=(data.images||[]).map(image=>{
+    const url=`/api/issues/${encodeURIComponent(issue.id)}/images/${encodeURIComponent(image.id)}`;
+    const name=escapeHTML(image.name||'需求图片');
+    return `<li><a href="${url}" target="_blank" rel="noopener noreferrer"><img src="${url}" alt="${name}" loading="lazy"></a></li>`;
+  }).join('');
+  const gallery=images?`<ul class="issue-description-images" aria-label="需求图片">${images}</ul>`:'';
+  const content=description||gallery?`<div class="detail-desc issue-description">${description}${gallery}</div>`:'';
+  return `<div class="detail-section">${banner}${facts}${content}${clarificationOverviewCard(issue)}</div>`;
 }
 function clarifyHistoryHTML(c){
   const rows=[];
@@ -570,12 +589,12 @@ function clarifyPane(issue,project){
     const retry=c.writeBackStatus==='failed'?`<button class="button primary small" data-retry-clarify>重试写回原单</button>`:'';
     const confirm=pending?`<button class="button primary small" data-retry-clarify title="确认写回原单（追加评论）之后，即可开始触发需求">确认写回原单（追加评论）</button>`:'';
     const external=issue.externalRef?.externalUrl?`<a class="button ghost small" href="${escapeHTML(safeURL(issue.externalRef.externalUrl))}" target="_blank" rel="noopener noreferrer">打开原单 ↗</a>`:'';
-    const trigger=!pending&&!issueExecutionBlocked(issue)?`<button class="button primary small" data-dispatch-issue="${escapeHTML(issue.id)}" title="按澄清结论触发 SOP">触发需求</button>`:'';
+    const trigger=!pending&&!issueExecutionBlocked(issue)?`<button class="button primary small" data-dispatch-issue="${escapeHTML(issue.id)}" title="按澄清结论触发 LOOP">触发需求</button>`:'';
     const blockedHint=!pending&&issueExecutionBlocked(issue)?(issueTrackerClosed(issue)&&!issueManuallyClosed(issue)?closedTrackerHint(issue):deliveredHint(issue)):'';
-    const stepGuide=pending?`<div class="clarify-next-step-callout"><div class="clarify-step-badge active"><span class="step-num">1</span><span>确认写回原单（追加评论）</span></div><span class="clarify-step-arrow">➔</span><div class="clarify-step-badge"><span class="step-num">2</span><span>触发需求执行 SOP</span></div></div>`:'';
+    const stepGuide=pending?`<div class="clarify-next-step-callout"><div class="clarify-step-badge active"><span class="step-num">1</span><span>确认写回原单（追加评论）</span></div><span class="clarify-step-arrow">➔</span><div class="clarify-step-badge"><span class="step-num">2</span><span>触发需求执行 LOOP</span></div></div>`:'';
     const head=pending
-      ?`<div class="clarify-ready-head"><span class="clarify-check warn">!</span><div><b>请确认澄清结论并写回原单</b><small>结论已追加到平台说明。确认写回原单（追加评论）后，即可开始触发需求执行 SOP（不会修改原单描述）</small></div></div>${stepGuide}`
-      :`<div class="clarify-ready-head"><span class="clarify-check">✓</span><div><b>澄清已完成${c.writeBackStatus==='succeeded'?` · 已写回 ${source} 评论`:''}</b><small class="${c.writeBackStatus==='failed'?'danger':''}">${escapeHTML(writeBack||'结论已保存到平台说明')}，可直接触发需求执行 SOP</small></div></div>`;
+      ?`<div class="clarify-ready-head"><span class="clarify-check warn">!</span><div><b>请确认澄清结论并写回原单</b><small>结论已追加到平台说明。确认写回原单（追加评论）后，即可开始触发需求执行 LOOP（不会修改原单描述）</small></div></div>${stepGuide}`
+      :`<div class="clarify-ready-head"><span class="clarify-check">✓</span><div><b>澄清已完成${c.writeBackStatus==='succeeded'?` · 已写回 ${source} 评论`:''}</b><small class="${c.writeBackStatus==='failed'?'danger':''}">${escapeHTML(writeBack||'结论已保存到平台说明')}，可直接触发需求执行 LOOP</small></div></div>`;
     const actionTip=pending
       ?`<div class="clarify-action-hint">确认写回原单（追加评论）后，即可开始触发需求</div>`
       :(trigger?`<div class="clarify-action-hint ok">可直接点击「触发需求」开始执行</div>`:'');
@@ -587,14 +606,14 @@ function clarifyPane(issue,project){
   const questionHTML=analyzing?'':clarifyQuestionCardsHTML(questions,saved);
   const submittedHTML=analyzing?clarifySubmittedHTML(saved?.reply):'';
   if(c.status!=='in_progress'&&!analyzing){
-    const intro=`<div class="clarify-orb">?</div><h3>描述不够清楚？一起问明白</h3><p>可选步骤。分析师只围绕这张单本身，结合本项目代码问清阻塞开工的细节；不澄清也可以直接触发 SOP。</p>`;
+    const intro=`<div class="clarify-orb">?</div><h3>描述不够清楚？一起问明白</h3><p>可选步骤。分析师只围绕这张单本身，结合本项目代码问清阻塞开工的细节；不澄清也可以直接触发 LOOP。</p>`;
     return `<div class="clarify-workspace clarify-empty">${intro}<div class="clarify-start-row">${clarifyModelPickerHTML(false)}<button class="button primary" data-start-clarify>开始澄清</button></div></div>`;
   }
   const lastError=(!analyzing&&c.lastError)?`<div class="clarify-error req-clarify-retry"><span>${escapeHTML(c.lastError)}</span><button type="button" class="button primary small" data-retry-clarify-turn>重新分析</button></div>`:'';
   const rounds=(c.history||[]).filter(m=>m.role==='assistant').length;
   // Own text node so the sentence matches an English entry; a trailing count does not.
   const roundNote=(!analyzing&&!c.lastError)?`已澄清 ${rounds||0} 轮。`:'';
-  const nextHint=analyzing?'正在后台分析，关闭详情不会中断':(c.lastError?'上次分析未完成，可重新分析':'回答后点「继续澄清」。分析师确认够用后会给出结论；也可以随时直接触发 SOP。');
+  const nextHint=analyzing?'正在后台分析，关闭详情不会中断':(c.lastError?'上次分析未完成，可重新分析':'回答后点「继续澄清」。分析师确认够用后会给出结论；也可以随时直接触发 LOOP。');
   const composerInput=analyzing?'':`<textarea id="issueClarifyInput" rows="3" placeholder="${questions.length?'点选上面的答案，或补充说明':'补充你认为重要的信息'}">${escapeHTML(saved?.extra||'')}</textarea>`;
   return `<div class="clarify-workspace"><div class="clarify-intro"><span>AI</span><div><b>${analyzing?'正在分析这张':'继续完善这张'}${issue.source==='gongfeng'?' Issue':'需求'}</b><small>${analyzing?'关闭详情不会中断，再打开可继续看过程':'每轮只问最关键的 1–3 个问题，只围绕这张单本身'}</small></div>${clarifyModelPickerHTML(analyzing)}</div>${clarifyVisibleSummary(c.summary)?`<div class="clarify-summary compact">${escapeHTML(clarifyVisibleSummary(c.summary))}</div>`:''}${clarifyHistoryHTML(c)}${submittedHTML}${questionHTML}${lastError}<div id="issueClarifyThinking" class="req-thinking-stream" hidden></div><div class="issue-clarify-composer">${composerInput}<div><span id="issueClarifyHint">${nextHint}${roundNote?` <span>${roundNote}</span>`:''}</span><span><button class="button ghost small" data-stop-clarify ${analyzing?'':'hidden'}>停止</button> <button class="button primary small" data-continue-clarify${analyzing?' disabled':''}>${analyzing?'分析中…':(c.lastError?'重新分析':'继续澄清')}</button></span></div></div></div>`;
 }
@@ -753,25 +772,25 @@ function conversationHeadState(issue){
   const c=conversationIssueStage(issue);
   return{tone:c.ended?'':c.key,label:c.label,hint:c.hint};
 }
-// 对话里直接改代码的需求没有 SOP 节点，执行进展展示对话交付：阶段、会话入口、各仓库的分支与 MR。
+// 对话里直接改代码的需求没有 LOOP 节点，执行进展展示对话交付：阶段、会话入口、各仓库的分支与 MR。
 function conversationDeliveryHTML(issue,data){
   const head0=conversationHeadState(issue);
   const actions=[conversationSessionButton(issue,data),reopenDeliveredButton(issue,{cls:'button ghost small'})].join('');
   const head=`<div class="issue-outcome conv-outcome ${escapeHTML(head0.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(head0.label)}</b><p>${escapeHTML(head0.hint||'')}</p>${actions?`<div class="issue-outcome-actions">${actions}</div>`:''}</div>`;
-  return `<div class="detail-section">${head}</div><div class="detail-section"><h3>代码交付<span class="sub">对话工作区直接改代码，没有 SOP 运行</span></h3>${conversationRepoCards(issue,data)}</div>`;
+  return `<div class="detail-section">${head}</div><div class="detail-section"><h3>代码交付<span class="sub">对话工作区直接改代码，没有 LOOP 运行</span></h3>${conversationRepoCards(issue,data)}</div>`;
 }
 // 对话需求的代码交付：与执行进展同一套仓库卡片，交付方式指向会话，不链到没有节点的工作区运行。
 function deliveryPane(issue,data){
   if(!conversationWorkspaceIssue(issue,data.run))return sopDeliveryPane(issue,data);
-  return `<div class="detail-section"><h3>代码仓库与分支<span class="sub">对话工作区检出的仓库</span></h3>${conversationRepoCards(issue,data)}</div><div class="detail-section"><h3>交付方式<span class="sub">在对话工作区里直接改代码，没有 SOP 运行</span></h3><div class="issue-outcome-actions">${conversationSessionButton(issue,data)||'<span class="muted">没有关联的会话</span>'}</div></div>`;
+  return `<div class="detail-section"><h3>代码仓库与分支<span class="sub">对话工作区检出的仓库</span></h3>${conversationRepoCards(issue,data)}</div><div class="detail-section"><h3>交付方式<span class="sub">在对话工作区里直接改代码，没有 LOOP 运行</span></h3><div class="issue-outcome-actions">${conversationSessionButton(issue,data)||'<span class="muted">没有关联的会话</span>'}</div></div>`;
 }
 function noSOPPaneHTML(issue){
   const opts=runnableWorkflowOptions();
   const blocked=issueExecutionBlocked(issue);
   const picker=opts.length
-    ?`<div class="no-sop-switch"><select class="select" data-no-sop-workflow aria-label="选择 SOP">${opts.map(w=>`<option value="${escapeHTML(w.id)}">${escapeHTML(w.name)}</option>`).join('')}</select><button class="button ghost small" data-no-sop-bind="${escapeHTML(issue.id)}">只绑定</button>${blocked?'':`<button class="button ghost small" data-no-sop-run="${escapeHTML(issue.id)}">绑定并触发</button>`}</div>`
-    :'<p class="muted">当前项目还没有可运行的 SOP。</p>';
-  return `<div class="detail-section"><div class="issue-outcome conv-outcome"><span class="conv-outcome-kicker">不使用 SOP</span><b>这条需求不走 SOP</b><p>在对话里澄清需求、直接改代码；定时任务不会自动认领它。</p><div class="issue-outcome-actions"><button class="button primary small" data-chat-issue="${escapeHTML(issue.id)}">去对话处理</button></div></div></div><div class="detail-section"><h3>改为按 SOP 交付<span class="sub">绑定后这条需求按 SOP 跟进，也会参与定时触发</span></h3>${picker}</div>`;
+    ?`<div class="no-sop-switch"><select class="select" data-no-sop-workflow aria-label="选择 LOOP">${opts.map(w=>`<option value="${escapeHTML(w.id)}">${escapeHTML(w.name)}</option>`).join('')}</select><button class="button ghost small" data-no-sop-bind="${escapeHTML(issue.id)}">只绑定</button>${blocked?'':`<button class="button ghost small" data-no-sop-run="${escapeHTML(issue.id)}">绑定并触发</button>`}</div>`
+    :'<p class="muted">当前项目还没有可运行的 LOOP。</p>';
+  return `<div class="detail-section"><div class="issue-outcome conv-outcome"><span class="conv-outcome-kicker">不使用 LOOP</span><b>这条需求不走 LOOP</b><p>在对话里澄清需求、直接改代码；定时任务不会自动认领它。</p><div class="issue-outcome-actions"><button class="button primary small" data-chat-issue="${escapeHTML(issue.id)}">去对话处理</button></div></div></div><div class="detail-section"><h3>改为按 LOOP 交付<span class="sub">绑定后这条需求按 LOOP 跟进，也会参与定时触发</span></h3>${picker}</div>`;
 }
 function sopPane(issue,data){
   if(conversationWorkspaceIssue(issue,data.run))return conversationDeliveryHTML(issue,data);
@@ -800,7 +819,7 @@ function sopPane(issue,data){
     const wf=(state.data.workflows||[]).find(w=>w.id===lane.workflowId);
     const laneRun=lane.latestRunId?(state.data.runs||[]).find(r=>r.id===lane.latestRunId):null;
     const open=openId===lane.workflowId;
-    const stageRows=(stages,depth)=>(stages||[]).map(n=>`<div class="node-progress-row${depth?' is-child-stage':''}"${depth?` style="padding-left:${depth*20}px"`:''}><span class="node-name">${depth?'└ ':''}${escapeHTML(n.name||n.nodeId)}</span><div class="node-progress-track"><i style="width:${n.status==='succeeded'||n.status==='failed'?100:n.status==='running'||n.status==='waiting_approval'?55:0}%;background:${n.status==='succeeded'?'#34d399':n.status==='failed'?'#f87171':n.status==='waiting_approval'?'#fbbf24':n.status==='running'?'#5b8cff':'#64748b'}"></i></div><span class="status ${n.status}" style="flex-shrink:0">${statusText(n.status)||'未开始'}</span>${n.childRunId?`<button type="button" class="button ghost small" data-open-run="${escapeHTML(n.childRunId)}" title="查看这个子 SOP 的运行">查看</button>`:''}${!depth&&!issueManuallyClosed(issue)&&!issueTrackerClosed(issue)&&canRerunFromHere(laneRun,n.nodeId)?`<button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(n.nodeId)}" data-run="${escapeHTML(lane.latestRunId)}">从这里重跑</button>`:''}</div>${stageRows(n.children,depth+1)}`).join('');
+    const stageRows=(stages,depth)=>(stages||[]).map(n=>`<div class="node-progress-row${depth?' is-child-stage':''}"${depth?` style="padding-left:${depth*20}px"`:''}><span class="node-name">${depth?'└ ':''}${escapeHTML(n.name||n.nodeId)}</span><div class="node-progress-track"><i style="width:${n.status==='succeeded'||n.status==='failed'?100:n.status==='running'||n.status==='waiting_approval'?55:0}%;background:${n.status==='succeeded'?'#34d399':n.status==='failed'?'#f87171':n.status==='waiting_approval'?'#fbbf24':n.status==='running'?'#5b8cff':'#64748b'}"></i></div><span class="status ${n.status}" style="flex-shrink:0">${statusText(n.status)||'未开始'}</span>${n.childRunId?`<button type="button" class="button ghost small" data-open-run="${escapeHTML(n.childRunId)}" title="查看这个子 LOOP 的运行">查看</button>`:''}${!depth&&!issueManuallyClosed(issue)&&!issueTrackerClosed(issue)&&canRerunFromHere(laneRun,n.nodeId)?`<button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(n.nodeId)}" data-run="${escapeHTML(lane.latestRunId)}">从这里重跑</button>`:''}</div>${stageRows(n.children,depth+1)}`).join('');
     const nodeRows=stageRows(plannedSOPNodes(lane,wf),0);
     const singleSOP=effectiveIssueSOPBindings(issue).length<=1;
     const actionWorkflow=singleSOP&&String(issue.workflowId||'').trim()?issue.workflowId:lane.workflowId;
@@ -812,10 +831,10 @@ function sopPane(issue,data){
     return `<article class="req-lane-card req-sop-row ${escapeHTML(lane.status||'')} ${open?'is-open':''}" data-toggle-sop-row="${escapeHTML(lane.workflowId||'')}">
       <div class="req-sop-main">
         <span class="req-sop-idx">${idx+1}</span>
-        <div class="req-sop-meta"><b>${escapeHTML(lane.label||lane.workflowName||wf?.name||'SOP')}</b><small>${escapeHTML(sopLaneLabel(lane.lane))} · ${escapeHTML(laneStatusLabel(lane.status))} · ${escapeHTML(ownerName)} · ${escapeHTML(hint)}</small></div>
+        <div class="req-sop-meta"><b>${escapeHTML(lane.label||lane.workflowName||wf?.name||'LOOP')}</b><small>${escapeHTML(sopLaneLabel(lane.lane))} · ${escapeHTML(laneStatusLabel(lane.status))} · ${escapeHTML(ownerName)} · ${escapeHTML(hint)}</small></div>
         <div class="req-sop-acts">${trigger}${lane.latestRunId?`<button class="button ghost small" data-open-run="${escapeHTML(lane.latestRunId)}">查看</button>`:''}</div>
       </div>
-      ${open?`<div class="req-sop-detail">${nodeRows||`<div class="detail-empty">${lane.started?'暂无节点':'这条 SOP 还没有节点'}</div>`}</div>`:''}
+      ${open?`<div class="req-sop-detail">${nodeRows||`<div class="detail-empty">${lane.started?'暂无节点':'这条 LOOP 还没有节点'}</div>`}</div>`:''}
     </article>`;
   }).join('');
   const orphanHtml=orphans.length?`<div class="req-orphan">${orphans.map(lane=>`<div class="req-orphan-row"><span>还跑过 ${escapeHTML(lane.label||lane.workflowName||lane.workflowId)} · ${escapeHTML(laneStatusLabel(lane.status))}</span>${lane.latestRunId?`<button class="button ghost small" data-open-run="${escapeHTML(lane.latestRunId)}">查看</button>`:''}</div>`).join('')}</div>`:'';
@@ -826,8 +845,8 @@ function sopPane(issue,data){
 }
 function artifactsPane(data){
   const run=data.run;
-  if((!run||!run.artifacts?.length)&&data.issue&&conversationWorkspaceIssue(data.issue,run))return '<div class="detail-empty">对话需求在会话里直接改代码，不产出 SOP 节点产物。<br>改动见「代码交付」，过程见会话记录。</div>';
-  if(!run||!run.artifacts?.length)return '<div class="detail-empty">该需求尚未产生交付物。执行 SOP 后，节点按产物契约冻结不可变快照。</div>';
+  if((!run||!run.artifacts?.length)&&data.issue&&conversationWorkspaceIssue(data.issue,run))return '<div class="detail-empty">对话需求在会话里直接改代码，不产出 LOOP 节点产物。<br>改动见「代码交付」，过程见会话记录。</div>';
+  if(!run||!run.artifacts?.length)return '<div class="detail-empty">该需求尚未产生交付物。执行 LOOP 后，节点按产物契约冻结不可变快照。</div>';
   const grouped={};run.artifacts.forEach(a=>{(grouped[a.nodeId]=grouped[a.nodeId]||[]).push(a)});
   const wf=run.workflowSnapshot;
   const html=Object.entries(grouped).map(([nodeId,list])=>`<div class="detail-section"><h3>${escapeHTML(wf?.nodes?.find(n=>n.id===nodeId)?.name||nodeId)}<span class="sub">${list.length} 份快照</span></h3><div class="artifact-grid" style="padding:0">${list.map(a=>`<div class="artifact-card" data-artifact="${escapeHTML(a.id)}"><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB</small><code>${escapeHTML((a.sha256||'').slice(0,10))}…</code></div>`).join('')}</div></div>`).join('');
@@ -852,7 +871,7 @@ function deliveryRepoFacts(issue,repos){
     return multi?`<div class="delivery-repo"><div class="delivery-repo-name">${escapeHTML(r.name)}</div>${grid}</div>`:grid;
   }).join('');
 }
-// SOP 需求的代码交付。
+// LOOP 需求的代码交付。
 function sopDeliveryPane(issue,data){
   const run=data.run,repos=deliveryRepositories(issue,run),frozen=run?.repositories?.length?run.repositories:(run?.repository?.name?[run.repository]:[]);
   const repoFacts=deliveryRepoFacts(issue,repos);
@@ -861,10 +880,10 @@ function sopDeliveryPane(issue,data){
   const runFacts=`<div class="detail-grid">${drawerFact('Run ID',run?run.id.slice(-14):'—')}${drawerFact('Task ID',data.task?data.task.id.slice(-10):'—')}${drawerFact('触发方式',escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('状态',run?`<span class="status ${runDisplayStatusClass(run)}">${runDisplayStatus(run)}</span>`:'—')}${drawerFact('执行仓库',escapeHTML(frozen.map(r=>r.name).filter(Boolean).join('、')||'—'))}${drawerFact('冻结目标主分支',escapeHTML(frozenBranches.join('、')||'—'))}${drawerFact('Trace ID',ctx?.traceId?ctx.traceId.slice(-14):'—')}</div>`;
   return `<div class="detail-section"><h3>代码仓库与分支${repos.length>1?`<span class="sub">${repos.length} 个仓库</span>`:''}</h3>${repoFacts}</div><div class="detail-section"><h3>交付运行上下文<span class="sub">发起时冻结的仓库与 Trace 关联</span></h3>${run?runFacts+'<div style="margin-top:10px"><button class="button ghost small" data-open-run="'+escapeHTML(run.id)+'">查看运行详情与产物 →</button></div>':'<div class="detail-empty">尚未发起交付运行</div>'}</div>${run?.input?`<div class="detail-section"><h3>任务输入</h3><div class="detail-desc">${escapeHTML(run.input)}</div></div>`:''}`;
 }
-// Execution order of a SOP's nodes, same rule as orderNodesByEdges in
+// Execution order of a LOOP's nodes, same rule as orderNodesByEdges in
 // internal/repo/requirement.go: stable topological sort over the edges, array
 // order breaks ties, cycles fall back to array order. The editor appends a node
-// added in a later SOP version to the end of the array, so without this a gate
+// added in a later LOOP version to the end of the array, so without this a gate
 // inserted mid-flow is listed after the last node.
 function nodesInExecutionOrder(wf){
   const nodes=wf?.nodes||[],edges=wf?.edges||[];
@@ -888,7 +907,7 @@ function acceptancePane(issue,data){
   const run=data.run;
   if(conversationWorkspaceIssue(issue,run)){
     const mrs=deliveryMRButtons(issue);
-    return `<div class="detail-section"><h3>验收方式<span class="sub">对话需求没有 SOP 验收门禁</span></h3><div class="detail-desc">${mrs?'在 MR 里评审，合入默认分支后需求自动完成。':String(issue.status||'').toLowerCase()==='in_review'?'改动已直推到共享分支，确认没问题后关闭需求即完成验收。':'在对话里提交 MR 后，评审合入即完成验收。'}</div>${mrs?`<div class="issue-outcome-actions">${mrs}</div>`:''}</div>`;
+    return `<div class="detail-section"><h3>验收方式<span class="sub">对话需求没有 LOOP 验收门禁</span></h3><div class="detail-desc">${mrs?'在 MR 里评审，合入默认分支后需求自动完成。':String(issue.status||'').toLowerCase()==='in_review'?'改动已直推到共享分支，确认没问题后关闭需求即完成验收。':'在对话里提交 MR 后，评审合入即完成验收。'}</div>${mrs?`<div class="issue-outcome-actions">${mrs}</div>`:''}</div>`;
   }
   if(!run)return '<div class="detail-empty">尚未执行，暂无验收信息。</div>';
   const wf=run.workflowSnapshot||(state.data.workflows||[]).find(w=>w.id===run.workflowId);
@@ -917,31 +936,42 @@ function activityEventLabel(type){
   }[type]||String(type||'').replace(/^node\./,'节点 · ').replace(/^run\./,'运行 · '));
 }
 function issueOperationLabel(action){
-  return {create:'创建需求',update:'编辑需求',close:'关闭需求',reopen:'重新打开',dispatch:'触发 SOP'}[action]||action||'操作';
+  return {create:'创建需求',update:'编辑需求',close:'关闭需求',reopen:'重新打开',dispatch:'触发 LOOP'}[action]||action||'操作';
+}
+// 聊天 Bot 发起的操作：actor 仍是执行所用的平台账号，这里补出是哪个 IM 用户发起的。
+// 渠道报了显示名就用名字，没报（企业微信、飞书只给 ID）就用 ID，后面的平台账号本身带真名。
+function issueOperationOrigin(op){
+  const sender=(op?.actorSender||'').trim();
+  if(!sender)return '';
+  const channel={wecom:'企业微信',feishu:'飞书',dingtalk:'钉钉'}[op.actorChannel]||op.actorChannel||'聊天';
+  const named=(op.actorSenderName||'').trim();
+  return `${channel} ${named?`${named}（${sender}）`:sender}`;
 }
 function issueOperationEntries(issue){
   const stored=(issue?.operations||[]).map(op=>({
     t:new Date(op.at).getTime(),
     action:op.action||'',
     actor:op.actor||'',
+    origin:issueOperationOrigin(op),
     label:issueOperationLabel(op.action),
     detail:op.detail||''
   })).filter(op=>!Number.isNaN(op.t));
   const inferred=[];
   if(issue?.createdAt&&!stored.some(op=>op.action==='create')){
-    inferred.push({t:new Date(issue.createdAt).getTime(),action:'create',actor:'',label:'创建需求',detail:'按创建时间补记'});
+    inferred.push({t:new Date(issue.createdAt).getTime(),action:'create',actor:'',origin:'',label:'创建需求',detail:'按创建时间补记'});
   }
   if(issueManuallyClosed(issue)&&issue.deliveryUpdatedAt&&!stored.some(op=>op.action==='close')){
-    inferred.push({t:new Date(issue.deliveryUpdatedAt).getTime(),action:'close',actor:'',label:'关闭需求',detail:'手动关闭'});
+    inferred.push({t:new Date(issue.deliveryUpdatedAt).getTime(),action:'close',actor:'',origin:'',label:'关闭需求',detail:'手动关闭'});
   }
   return stored.concat(inferred).filter(op=>!Number.isNaN(op.t)).sort((a,b)=>b.t-a.t);
 }
 function operationsPane(issue){
   const rows=issueOperationEntries(issue).map(e=>{
-    const detail=[e.actor,e.detail].filter(Boolean).join(' · ');
+    const who=e.origin?(e.actor?`${e.origin}（平台账号 ${e.actor}）`:e.origin):e.actor;
+    const detail=[who,e.detail].filter(Boolean).join(' · ');
     return `<div class="activity-row"><time>${formatActivityTime(e.t)}</time><b>${escapeHTML(e.label)}</b><p>${escapeHTML(detail||'—')}</p></div>`;
   }).join('');
-  return `<div class="detail-section"><h3>操作日志<span class="sub">关闭、重新打开、编辑和触发都会记在这里</span></h3>${rows?`<div class="activity-list">${rows}</div>`:'<div class="detail-empty compact">还没有操作记录</div>'}</div>`;
+  return `<div class="detail-section"><h3>操作日志<span class="sub">关闭、重新打开、编辑和触发都会记在这里；聊天发起的操作会标明 IM 用户</span></h3>${rows?`<div class="activity-list">${rows}</div>`:'<div class="detail-empty compact">还没有操作记录</div>'}</div>`;
 }
 function activityPane(issue,data){
   const comments=data.comments||[],task=data.task,run=data.run;
@@ -957,7 +987,7 @@ function activityPane(issue,data){
     const detail=e.detail.length>180?e.detail.slice(0,180)+'…':e.detail;
     return `<div class="activity-row${fail?' fail':''}"><time>${formatActivityTime(e.t)}</time><b>${escapeHTML(e.label)}</b><p title="${escapeHTML(e.detail)}">${escapeHTML(detail)}</p></div>`;
   }).join('');
-  const empty=conversationWorkspaceIssue(issue,run)?'对话需求没有 SOP 任务，执行过程见会话记录':'尚未创建执行任务';
+  const empty=conversationWorkspaceIssue(issue,run)?'对话需求没有 LOOP 任务，执行过程见会话记录':'尚未创建执行任务';
   return `<div class="detail-section"><h3>讨论与评论</h3>${commentHtml}</div><div class="detail-section"><h3>任务与运行轨迹</h3>${rows?`<div class="activity-list">${rows}</div>`:`<div class="detail-empty compact">${empty}</div>`}</div>`;
 }
 
