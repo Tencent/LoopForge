@@ -170,7 +170,8 @@ func (h *evolutionHandlers) runProposalJob(p domain.EvoProposal, finding domain.
 	evidence := []evolution.Evidence{}
 	for _, plan := range plans {
 		if plan.Group == domain.EvoGroupDiagnosis {
-			evidence = append(evidence, evolution.BuildEvidence(plan.Run, finding))
+			tools, _ := h.repo.SOPDetectionTools(plan.Run.ID, 120)
+			evidence = append(evidence, evolution.BuildEvidenceWithTools(plan.Run, finding, tools))
 		}
 	}
 	if len(evidence) == 0 {
@@ -318,20 +319,302 @@ func (h *evolutionHandlers) assetNodeIDs(run domain.Run, asset evoAsset) map[str
 	return out
 }
 
-// experienceLines are released proposals of the same kind in the project:
-// the experience library the improver may learn from.
+// experienceLines combine released positive lessons with recent failed/rejected
+// negative lessons of the same asset kind so the improver reuses proven edits
+// and avoids repeating unsuccessful ideas.
 func (h *evolutionHandlers) experienceLines(p domain.EvoProposal) []string {
 	lines := []string{}
 	for _, prior := range h.repo.EvoProposals(p.ProjectID, 30, domain.EvoProposalReleased) {
 		if prior.AssetKind != p.AssetKind || prior.ID == p.ID {
 			continue
 		}
-		lines = append(lines, prior.Title+"："+domain.TrimEvoText(prior.Rationale, 200))
-		if len(lines) >= 5 {
+		lines = append(lines, "[有效经验] "+prior.Title+"："+domain.TrimEvoText(prior.Rationale, 180))
+		if len(lines) >= 4 {
 			break
 		}
 	}
+	negCount := 0
+	addNegative := func(prior domain.EvoProposal) bool {
+		reason := firstNonEmpty(prior.DecisionNote, prior.Summary.Verdict, prior.Error)
+		if strings.TrimSpace(reason) == "" || strings.TrimSpace(prior.Title) == "" || strings.HasPrefix(prior.Title, "提案生成失败") {
+			return false
+		}
+		body := prior.Title
+		if r := strings.TrimSpace(prior.Rationale); r != "" {
+			body += "（" + domain.TrimEvoText(r, 90) + "）"
+		}
+		lines = append(lines, "[避免重复失败] "+body+" -> 未通过/被打回原因："+domain.TrimEvoText(reason, 120))
+		negCount++
+		return negCount >= 3
+	}
+	negatives := h.repo.EvoProposals(p.ProjectID, 30, domain.EvoProposalFailed, domain.EvoProposalRejected)
+	seenNeg := map[string]bool{}
+	for _, prior := range negatives {
+		if prior.ID == p.ID || prior.AssetKind != p.AssetKind || prior.AssetID != p.AssetID {
+			continue
+		}
+		seenNeg[prior.ID] = true
+		if addNegative(prior) {
+			return lines
+		}
+	}
+	for _, prior := range negatives {
+		if prior.ID == p.ID || seenNeg[prior.ID] || prior.AssetKind != p.AssetKind {
+			continue
+		}
+		if addNegative(prior) {
+			return lines
+		}
+	}
 	return lines
+}
+
+// proposalPreferences returns the proposal's active SOP optimization priority
+// chain when it originates from an SOP policy, or nil for non-SOP proposals.
+func (h *evolutionHandlers) proposalPreferences(p domain.EvoProposal) []string {
+	if len(p.Preferences) > 0 {
+		return evolution.NormalizeSOPPreferences(p.Preferences)
+	}
+	if strings.TrimSpace(p.WorkflowID) != "" {
+		pol := h.repo.EvoSOPPolicy(p.ProjectID, p.WorkflowID)
+		return evolution.NormalizeSOPPreferences(pol.Preferences)
+	}
+	return nil
+}
+
+// resolveRefineActor re-authorizes the original initiator (or SOP policy owner)
+// and resolves model credentials before launching an automatic reflection round.
+func (h *evolutionHandlers) resolveRefineActor(p domain.EvoProposal) (domain.User, bool) {
+	var wf domain.WorkflowDefinition
+	if strings.TrimSpace(p.WorkflowID) != "" {
+		if loaded, ok := h.repo.Workflow(p.WorkflowID); ok {
+			wf = loaded
+		}
+	}
+	if p.CreatedBy > 0 {
+		user, ok := h.repo.User(p.CreatedBy)
+		if !ok {
+			return domain.User{}, false
+		}
+		isAdmin := strings.TrimSpace(user.LoginName) != "" && h.repo.IsPlatformAdmin(strings.TrimSpace(user.LoginName))
+		if !isAdmin && !h.projectMemberWrites(p.ProjectID, user.ID) {
+			return domain.User{}, false
+		}
+		resolvedUser, _, credOK := h.applySOPModelCredentials(context.Background(), user, p.Model, wf)
+		if !credOK {
+			return domain.User{}, false
+		}
+		return resolvedUser, true
+	}
+	if strings.TrimSpace(p.WorkflowID) != "" {
+		pol := h.repo.EvoSOPPolicy(p.ProjectID, p.WorkflowID)
+		if u, _, ok := h.resolveSOPActorUser(pol, wf); ok {
+			return u, true
+		}
+	}
+	return domain.User{}, false
+}
+
+// refineProposalJob runs one bounded reflection-and-refinement iteration after
+// a proposal fails replay validation: it feeds the previous draft, verdict,
+// diagnosis-only replay tool traces, and aggregate hidden-set stats back to the
+// improver, then re-validates on the exact same replay sample plans.
+func (h *evolutionHandlers) refineProposalJob(p domain.EvoProposal, prevReplays []domain.EvoReplay, user domain.User) {
+	ctx, cancel := context.WithTimeout(context.Background(), evoProposalJobTimeout)
+	defer cancel()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("evolution proposal %s refine panic: %v", p.ID, r)
+			h.failProposal(p, fmt.Sprintf("反思修正任务异常：%v", r))
+		}
+	}()
+	select {
+	case h.jobs <- struct{}{}:
+		defer func() { <-h.jobs }()
+	case <-ctx.Done():
+		h.failProposal(p, "反思修正排队超时")
+		return
+	}
+	current, exists := h.repo.EvoProposal(p.ID)
+	if !exists || current.Status != domain.EvoProposalDrafting {
+		return
+	}
+	p = current
+	asset, ok := h.loadAsset(p.AssetKind, p.AssetID)
+	if !ok {
+		h.failProposal(p, "资产已删除")
+		return
+	}
+	if domain.ContentHash(asset.Content) != p.BaseHash {
+		h.failProposal(p, "反思修正期间资产被修改过，请重新生成")
+		return
+	}
+	finding, ok := h.repo.EvoFinding(p.FindingID)
+	if !ok {
+		h.failProposal(p, "原始诊断问题不存在，无法继续反思修正")
+		return
+	}
+
+	plans := make([]evolution.SamplePlan, 0, len(prevReplays))
+	critiques := make([]evolution.ReplayCritique, 0, len(prevReplays))
+	diagEvidence := make([]evolution.Evidence, 0, len(prevReplays))
+	hiddenTotal, hiddenRegressed, hiddenFixed := 0, 0, 0
+	var hiddenBeforeTok, hiddenAfterTok int64
+	hiddenTokCount := 0
+
+	for _, r := range prevReplays {
+		src, loaded := h.repo.RunState(r.SourceRunID)
+		if loaded {
+			if err := h.engine.ValidateEvolutionReplay(src); err == nil {
+				plans = append(plans, evolution.SamplePlan{Group: r.Group, Run: src})
+			}
+		}
+		if r.Group != domain.EvoGroupDiagnosis {
+			if r.Outcome != domain.EvoOutcomeBlocked {
+				hiddenTotal++
+				switch r.Outcome {
+				case domain.EvoOutcomeRegressed:
+					hiddenRegressed++
+				case domain.EvoOutcomeFixed:
+					hiddenFixed++
+				}
+				if r.SourceMeasurements != nil && r.SourceMeasurements.Tokens != nil && *r.SourceMeasurements.Tokens > 0 &&
+					r.ReplayMeasurements != nil && r.ReplayMeasurements.Tokens != nil && *r.ReplayMeasurements.Tokens > 0 {
+					hiddenBeforeTok += *r.SourceMeasurements.Tokens
+					hiddenAfterTok += *r.ReplayMeasurements.Tokens
+					hiddenTokCount++
+				}
+			}
+			continue
+		}
+		diagEvidence = append(diagEvidence, evolution.Evidence{RunID: r.SourceRunID})
+		c := evolution.ReplayCritique{
+			SourceRunID:  r.SourceRunID,
+			ReplayRunID:  r.RunID,
+			SourceStatus: r.SourceStatus,
+			ReplayStatus: r.Status,
+			Outcome:      r.Outcome,
+			Error:        domain.TrimEvoText(r.Error, 400),
+		}
+		if r.SourceMeasurements != nil {
+			if r.SourceMeasurements.Tokens != nil {
+				c.SourceTokens = *r.SourceMeasurements.Tokens
+			}
+			if r.SourceMeasurements.ToolCalls != nil {
+				c.SourceTools = *r.SourceMeasurements.ToolCalls
+			}
+			if r.SourceMeasurements.ExecutionMs != nil {
+				c.SourceDurSec = float64(*r.SourceMeasurements.ExecutionMs) / 1000.0
+			}
+		}
+		if r.ReplayMeasurements != nil {
+			if r.ReplayMeasurements.Tokens != nil {
+				c.ReplayTokens = *r.ReplayMeasurements.Tokens
+			}
+			if r.ReplayMeasurements.ToolCalls != nil {
+				c.ReplayTools = *r.ReplayMeasurements.ToolCalls
+			}
+			if r.ReplayMeasurements.ExecutionMs != nil {
+				c.ReplayDurSec = float64(*r.ReplayMeasurements.ExecutionMs) / 1000.0
+			}
+		}
+		if r.RunID != "" {
+			nodeID := ""
+			for _, sig := range finding.Signals {
+				if sig.RunID == r.SourceRunID && sig.NodeID != "" {
+					nodeID = sig.NodeID
+					break
+				}
+			}
+			tools, _ := h.repo.SOPDetectionTools(r.RunID, 120)
+			if len(tools) == 0 {
+				if replayRun, ok := h.repo.RunState(r.RunID); ok {
+					tools = replayRun.Telemetry
+					if c.Error == "" && nodeID != "" && replayRun.Nodes[nodeID] != nil {
+						c.Error = domain.TrimEvoText(replayRun.Nodes[nodeID].Error, 400)
+					}
+				}
+			}
+			c.ToolTrace = evolution.BuildToolTraceSummary(tools, nodeID)
+		}
+		critiques = append(critiques, c)
+	}
+	if len(plans) == 0 {
+		h.failProposal(p, "反思修正缺少可回放样本")
+		return
+	}
+
+	hiddenNote := ""
+	if hiddenTotal > 0 {
+		hiddenNote = fmt.Sprintf("隐藏留出/回归集共 %d 条：修好 %d，回归 %d", hiddenTotal, hiddenFixed, hiddenRegressed)
+		if hiddenTokCount > 0 && hiddenBeforeTok > 0 {
+			deltaPct := (float64(hiddenAfterTok-hiddenBeforeTok) / float64(hiddenBeforeTok)) * 100.0
+			hiddenNote += fmt.Sprintf("，平均 Token 变化 %+.1f%%", deltaPct)
+		}
+		hiddenNote += "。"
+	}
+
+	prevCandidate := p.CandidateContent
+	prevVerdict := ""
+	if n := len(p.RefineHistory); n > 0 {
+		prevVerdict = p.RefineHistory[n-1].Verdict
+	}
+	system, prompt := evolution.BuildRefinePrompt(
+		asset.Kind, asset.Name, asset.Content, prevCandidate,
+		finding, h.proposalPreferences(p), prevVerdict,
+		critiques, hiddenNote, h.experienceLines(p),
+	)
+	raw, err := currentEvoImprove()(ctx, p, system, prompt, user)
+	if err != nil {
+		h.failProposal(p, "反思修正调用失败："+err.Error())
+		return
+	}
+	candidate, err := evolution.ParseCandidate(raw)
+	if err != nil {
+		h.failProposal(p, "反思修正输出无效："+err.Error())
+		return
+	}
+	if err := evolution.StaticCheck(asset.Content, candidate.Content); err != nil {
+		h.failProposal(p, "反思修正静态检查未通过："+err.Error())
+		return
+	}
+	if strings.TrimSpace(candidate.Content) == strings.TrimSpace(prevCandidate) {
+		h.failProposal(p, "反思修正未能产出与上轮不同的候选正文："+prevVerdict)
+		return
+	}
+	if latest, ok := h.loadAsset(p.AssetKind, p.AssetID); !ok || domain.ContentHash(latest.Content) != p.BaseHash {
+		h.failProposal(p, "反思修正期间资产被修改过，请重新生成")
+		return
+	}
+	if current, ok := h.repo.EvoProposal(p.ID); ok {
+		if current.Status != domain.EvoProposalDrafting {
+			return
+		}
+		p = current
+	}
+	if err := h.repo.DeleteEvoReplays(p.ID); err != nil {
+		h.failProposal(p, "清理上轮回放记录失败："+err.Error())
+		return
+	}
+	p.Title, p.Rationale, p.CandidateContent = candidate.Title, candidate.Rationale, candidate.Content
+	p.Review = evolution.CandidateReview(candidate, p.BaseContent, diagEvidence)
+	p.Summary = domain.EvoReplaySummary{}
+	p.ExpectedReplays = len(plans)
+	p.Status = domain.EvoProposalValidating
+	if err := h.repo.PutEvoProposal(p); err != nil {
+		h.failProposal(p, err.Error())
+		return
+	}
+	overrides := domain.EvoAssetOverride{}
+	if asset.Kind == domain.EvoAssetAgent {
+		overrides.AgentPrompts = map[string]string{asset.ID: candidate.Content}
+	} else {
+		overrides.RuleContents = map[string]string{asset.ID: candidate.Content}
+	}
+	for _, plan := range plans {
+		h.startReplay(p, plan, asset, overrides, user)
+	}
+	h.sweepProposal(p, time.Now().UTC())
 }
 
 func (h *evolutionHandlers) startReplay(p domain.EvoProposal, plan evolution.SamplePlan, asset evoAsset, overrides domain.EvoAssetOverride, user domain.User) {
@@ -611,13 +894,39 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 			}
 		}
 	}
-	summary := evolution.Summarize(replays)
+	summary := evolution.SummarizeWithPreferences(replays, h.proposalPreferences(p))
 	changed := summary != p.Summary
 	p.Summary = summary
+	launchRefine := false
+	var refineActor domain.User
 	if summary.Total == 0 || summary.Finished == summary.Total {
 		changed = true
 		if summary.Passed {
 			p.Status = domain.EvoProposalPending
+		} else if summary.Total > summary.Blocked &&
+			p.RefineRound < evolution.MaxRefineRounds &&
+			assetOK && domain.ContentHash(asset.Content) == p.BaseHash &&
+			strings.TrimSpace(p.FindingID) != "" {
+			if actor, ok := h.resolveRefineActor(p); ok {
+				p.RefineHistory = append(p.RefineHistory, domain.EvoRefineAttempt{
+					Round:            p.RefineRound + 1,
+					Title:            p.Title,
+					Rationale:        p.Rationale,
+					Verdict:          summary.Verdict,
+					CandidateContent: p.CandidateContent,
+					Summary:          summary,
+					FinishedAt:       now,
+				})
+				p.RefineRound++
+				p.Status = domain.EvoProposalDrafting
+				p.Summary = domain.EvoReplaySummary{}
+				p.Error = ""
+				launchRefine = true
+				refineActor = actor
+			} else {
+				p.Status = domain.EvoProposalFailed
+				p.Error = summary.Verdict
+			}
 		} else {
 			p.Status = domain.EvoProposalFailed
 			p.Error = summary.Verdict
@@ -630,6 +939,11 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 			return stored
 		}
 		p, _ = h.repo.EvoProposal(p.ID)
+		if launchRefine {
+			replaysCopy := append([]domain.EvoReplay(nil), replays...)
+			go h.refineProposalJob(p, replaysCopy, refineActor)
+			return p
+		}
 		if p.Status == domain.EvoProposalPending && assetOK && h.autoEvolution(asset) {
 			if started, err := h.startCanary(p, asset, 0, 0, 0, "L3 自动开始试用", true); err == nil {
 				started.Replays = replays

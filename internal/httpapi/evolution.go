@@ -24,12 +24,19 @@ type evolutionHandlers struct {
 	findingsM sync.Mutex
 	healthM   sync.Mutex
 	health    map[string]evoHealthCache
-	// trial / watch sweep throttle and per-run score cache
+	// trial / watch sweep throttle and per-run score+metrics cache
 	trialM      sync.Mutex
 	trialAt     time.Time
-	trialScores map[string]int
-	sopBatchM  sync.Mutex
-	sopBatchAt time.Time
+	trialScores map[string]evoTrialRunSample
+	sopBatchM   sync.Mutex
+	sopBatchAt  time.Time
+}
+
+type evoTrialRunSample struct {
+	score  int
+	tokens int64
+	tools  int
+	durMs  int64
 }
 
 type evoHealthCache struct {
@@ -48,7 +55,7 @@ const (
 )
 
 func newEvolutionHandlers(d *deps) *evolutionHandlers {
-	return &evolutionHandlers{deps: d, jobs: make(chan struct{}, evoMaxConcurrentJobs), health: map[string]evoHealthCache{}, trialScores: map[string]int{}}
+	return &evolutionHandlers{deps: d, jobs: make(chan struct{}, evoMaxConcurrentJobs), health: map[string]evoHealthCache{}, trialScores: map[string]evoTrialRunSample{}}
 }
 
 func registerEvolutionRoutes(g *gin.Engine, h *evolutionHandlers) {

@@ -375,13 +375,16 @@ test('SOP workbench detail: canvas trend, versions rollback labels, gray publish
   await settle(5);
   assert.ok(app.router.calls.some(c => c.method === 'POST' && c.path === '/api/evolution/proposals/evp-opt/approve' && c.body?.mode === 'canary'));
 
-  // Verify drafting, validating, pending-unpassed, monitor-failed, monitor-ready, monitor-waiting, paused, and empty data callouts
+  // Verify drafting, validating, reflect-refine rounds, pending-unpassed, monitor-failed, monitor-ready, monitor-waiting, paused, and empty data callouts
   const variants = [
     { enabled: false, stage: 'monitor', activeProposal: null },
     { stage: 'optimize', activeProposal: { id: 'p-d', status: 'drafting', title: '生成中' } },
+    { stage: 'optimize', activeProposal: { id: 'p-dr', status: 'drafting', title: '反思修正中', refineRound: 1, refineHistory: [{ round: 1, verdict: 'P1 省 Token 未达标' }] } },
     { stage: 'optimize', activeProposal: { id: 'p-v', status: 'validating', title: '回放中', summary: { finished: 1, total: 3 } } },
+    { stage: 'optimize', activeProposal: { id: 'p-vr', status: 'validating', title: '二次回放', refineRound: 1, summary: { finished: 2, total: 3 } } },
+    { stage: 'optimize', activeProposal: { id: 'p-pr', status: 'pending', title: '反思通过', refineRound: 1, candidateContent: 'better', summary: { passed: true, verdict: '通过（P1 省 Token 达标）' } } },
     { stage: 'optimize', activeProposal: { id: 'p-u', status: 'pending', summary: { passed: false } } },
-    { stage: 'monitor', activeProposal: null, lastProposal: { id: 'p-f', status: 'failed', error: '模型不可用' } },
+    { stage: 'monitor', activeProposal: null, lastProposal: { id: 'p-f', status: 'failed', error: '模型不可用', refineRound: 1 } },
     { stage: 'monitor', activeProposal: null, lastProposal: null, pendingRuns: 10, batchSize: 10 },
     { stage: 'monitor', activeProposal: null, lastProposal: null, pendingRuns: 2, batchSize: 10, latestMetrics: { runs: 12 }, versions: [], grayRounds: [], changeFiles: [], recentEdits: [], problems: [] },
   ];

@@ -265,16 +265,34 @@ func (o EvoAssetOverride) Empty() bool {
 }
 
 // EvoReplaySummary is the verdict over all replays of one proposal.
+// Keep all fields comparable value types so proposal change detection works by value.
 type EvoReplaySummary struct {
-	Total     int    `json:"total"`
-	Finished  int    `json:"finished"`
-	Fixed     int    `json:"fixed"`
-	Regressed int    `json:"regressed"`
-	Unchanged int    `json:"unchanged"`
-	Changed   int    `json:"changed"`
-	Blocked   int    `json:"blocked"`
-	Passed    bool   `json:"passed"`
-	Verdict   string `json:"verdict,omitempty"`
+	Total        int     `json:"total"`
+	Finished     int     `json:"finished"`
+	Fixed        int     `json:"fixed"`
+	Regressed    int     `json:"regressed"`
+	Unchanged    int     `json:"unchanged"`
+	Changed      int     `json:"changed"`
+	Blocked      int     `json:"blocked"`
+	Passed       bool    `json:"passed"`
+	Verdict      string  `json:"verdict,omitempty"`
+	GoalMetric   string  `json:"goalMetric,omitempty"`
+	GoalBefore   float64 `json:"goalBefore,omitempty"`
+	GoalAfter    float64 `json:"goalAfter,omitempty"`
+	GoalDeltaPct float64 `json:"goalDeltaPct,omitempty"`
+	GoalMet      bool    `json:"goalMet,omitempty"`
+}
+
+// EvoRefineAttempt records one completed reflection-and-refinement iteration
+// when the previous candidate did not pass replay validation.
+type EvoRefineAttempt struct {
+	Round            int              `json:"round"`
+	Title            string           `json:"title,omitempty"`
+	Rationale        string           `json:"rationale,omitempty"`
+	Verdict          string           `json:"verdict,omitempty"`
+	CandidateContent string           `json:"candidateContent,omitempty"`
+	Summary          EvoReplaySummary `json:"summary"`
+	FinishedAt       time.Time        `json:"finishedAt,omitempty"`
 }
 
 // EvoChangeReview explains a proposal without replacing its original diff or
@@ -298,10 +316,14 @@ type EvoProposal struct {
 	ID               string           `json:"id"`
 	ProjectID        string           `json:"projectId"`
 	FindingID        string           `json:"findingId,omitempty"`
-	AssetKind        string           `json:"assetKind"`
-	AssetID          string           `json:"assetId"`
-	AssetName        string           `json:"assetName,omitempty"`
-	Title            string           `json:"title"`
+	AssetKind        string             `json:"assetKind"`
+	AssetID          string             `json:"assetId"`
+	AssetName        string             `json:"assetName,omitempty"`
+	WorkflowID       string             `json:"workflowId,omitempty"`
+	Preferences      []string           `json:"preferences,omitempty"`
+	RefineRound      int                `json:"refineRound,omitempty"`
+	RefineHistory    []EvoRefineAttempt `json:"refineHistory,omitempty"`
+	Title            string             `json:"title"`
 	Rationale        string           `json:"rationale,omitempty"`
 	Review           *EvoChangeReview `json:"review,omitempty"`
 	BaseContent      string           `json:"baseContent"`
@@ -373,11 +395,14 @@ func (p EvoProposal) TrialActive() bool {
 // clean (succeeded without rework), reworked (succeeded after being sent
 // back) or failed.
 type EvoArmStats struct {
-	Runs     int     `json:"runs"`
-	Clean    int     `json:"clean"`
-	Reworked int     `json:"reworked"`
-	Failed   int     `json:"failed"`
-	Rate     float64 `json:"rate"` // clean / runs
+	Runs        int     `json:"runs"`
+	Clean       int     `json:"clean"`
+	Reworked    int     `json:"reworked"`
+	Failed      int     `json:"failed"`
+	Rate        float64 `json:"rate"` // clean / runs
+	AvgTokens   int64   `json:"avgTokens,omitempty"`
+	AvgTools    float64 `json:"avgTools,omitempty"`
+	AvgDuration float64 `json:"avgDuration,omitempty"` // seconds
 }
 
 // Trial (canary) status.

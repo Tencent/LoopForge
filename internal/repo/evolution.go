@@ -743,6 +743,15 @@ func (r *EvolutionRepo) EvoReplay(id string) (domain.EvoReplay, bool) {
 	return v, true
 }
 
+// DeleteEvoReplays removes existing replay rows for a proposal before starting
+// a fresh reflection-and-refinement validation round.
+func (r *EvolutionRepo) DeleteEvoReplays(proposalID string) error {
+	if strings.TrimSpace(proposalID) == "" {
+		return nil
+	}
+	return r.DB.Where("proposal_id = ?", proposalID).Delete(&evoReplayRow{}).Error
+}
+
 // EvoReplayOverrides is the engine's lookup for a replay run's candidate.
 func (r *EvolutionRepo) EvoReplayOverrides(id string) (domain.EvoAssetOverride, bool) {
 	if strings.TrimSpace(id) == "" {

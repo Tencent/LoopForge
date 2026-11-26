@@ -88,47 +88,61 @@ func (h *evolutionHandlers) sweepTrials(now time.Time) {
 	}
 }
 
-// trialScore grades one business run for the asset; terminal results are
-// cached because a finished run never changes.
+// trialScore returns only the clean/rework/fail score of one business run.
 func (h *evolutionHandlers) trialScore(projectID, runID string, asset evoAsset) (int, bool) {
+	sample, ok := h.trialSample(projectID, runID, asset)
+	return sample.score, ok
+}
+
+// trialSample grades one business run for the asset and captures its efficiency
+// metrics; terminal results are cached because a finished run never changes.
+func (h *evolutionHandlers) trialSample(projectID, runID string, asset evoAsset) (evoTrialRunSample, bool) {
 	key := projectID + ":" + asset.Kind + ":" + asset.ID + ":" + runID
 	h.trialM.Lock()
-	score, cached := h.trialScores[key]
+	sample, cached := h.trialScores[key]
 	h.trialM.Unlock()
 	if cached {
-		return score, score >= 0
+		return sample, sample.score >= 0
 	}
 	run, ok := h.repo.RunState(runID)
 	if !ok {
-		return 0, false
+		return evoTrialRunSample{}, false
 	}
 	if run.ExecutionContext.IsEvolutionReplay() || h.runProject(run) != projectID {
-		h.cacheTrialScore(key, -1)
-		return 0, false
+		h.cacheTrialSample(key, evoTrialRunSample{score: -1})
+		return evoTrialRunSample{}, false
 	}
-	score, ok = evolution.AssetRunScore(run, h.assetNodeIDs(run, asset))
+	score, ok := evolution.AssetRunScore(run, h.assetNodeIDs(run, asset))
+	out := evoTrialRunSample{
+		score:  score,
+		tokens: evolution.RunTokens(run),
+		tools:  evolution.RunToolCalls(run),
+		durMs:  evolution.RunDurationMs(run),
+	}
 	if domain.TerminalRunStatus(run.Status) {
 		if !ok {
-			h.cacheTrialScore(key, -1)
+			h.cacheTrialSample(key, evoTrialRunSample{score: -1})
 		} else {
-			h.cacheTrialScore(key, score)
+			h.cacheTrialSample(key, out)
 		}
 	}
-	return score, ok
+	return out, ok
 }
 
-func (h *evolutionHandlers) cacheTrialScore(key string, score int) {
+func (h *evolutionHandlers) cacheTrialSample(key string, sample evoTrialRunSample) {
 	h.trialM.Lock()
 	defer h.trialM.Unlock()
 	if len(h.trialScores) >= evoTrialScoreCacheMax {
-		h.trialScores = map[string]int{}
+		h.trialScores = map[string]evoTrialRunSample{}
 	}
-	h.trialScores[key] = score
+	h.trialScores[key] = sample
 }
 
-// armStats scores the pinned runs whose start body has the given hash.
+// armStats scores the pinned runs whose start body has the given hash and
+// aggregates their average token, tool-call, and duration metrics.
 func (h *evolutionHandlers) armStats(projectID string, pins []domain.RunAssetPin, hash string, asset evoAsset, limit int) domain.EvoArmStats {
 	stats := domain.EvoArmStats{}
+	var acc evolution.ArmMetricAcc
 	for _, pin := range pins {
 		if pin.Hash != hash {
 			continue
@@ -136,10 +150,12 @@ func (h *evolutionHandlers) armStats(projectID string, pins []domain.RunAssetPin
 		if limit > 0 && stats.Runs >= limit {
 			break
 		}
-		if score, ok := h.trialScore(projectID, pin.RunID, asset); ok {
-			evolution.AddScore(&stats, score)
+		if sample, ok := h.trialSample(projectID, pin.RunID, asset); ok {
+			evolution.AddScore(&stats, sample.score)
+			acc.Add(sample.tokens, sample.tools, sample.durMs)
 		}
 	}
+	acc.Apply(&stats)
 	return stats
 }
 
@@ -174,7 +190,7 @@ func (h *evolutionHandlers) sweepCanary(p domain.EvoProposal, now time.Time) dom
 	p.Canary.Canary = h.armStats(p.ProjectID, pins, domain.ContentHash(p.CandidateContent), asset, 0)
 	p.Canary.Control = h.armStats(p.ProjectID, pins, p.BaseHash, asset, 0)
 	p.Canary.ProbWorse = evolution.ProbWorse(p.Canary.Canary, p.Canary.Control)
-	status, verdict := evolution.JudgeCanary(*p.Canary)
+	status, verdict := evolution.JudgeCanaryWithPreferences(*p.Canary, h.proposalPreferences(p))
 	p.Canary.Verdict = verdict
 	if status == domain.EvoCanaryFailed {
 		h.endCanary(p, now, domain.EvoCanaryFailed, verdict)

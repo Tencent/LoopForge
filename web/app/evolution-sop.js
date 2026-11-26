@@ -631,13 +631,23 @@ function evoSOPCalloutHTML(d) {
   }
   const p = d.activeProposal;
   if (d.stage === 'optimize' && p) {
+    const refineRound = Number(p.refineRound) || 0;
+    const lastAttempt = Array.isArray(p.refineHistory) && p.refineHistory.length ? p.refineHistory[p.refineHistory.length - 1] : null;
     if (p.status === 'drafting' || p.status === 'validating') {
       const s = p.summary || {};
-      const detail = p.status === 'drafting'
-        ? '正在结合本轮问题与优化偏好生成修改稿，完成后将自动回放历史样本验证。'
-        : `正在回放历史运行验证修改稿（已完成 ${s.finished || 0}/${s.total || 0} 条）。`;
+      const roundLabel = refineRound > 0 ? `第 ${refineRound + 1} 轮反思修正` : '正在优化中';
+      let detail = '';
+      if (p.status === 'drafting') {
+        detail = refineRound > 0
+          ? `上轮回放未通过（${lastAttempt?.verdict || '未达标'}），正在结合工具轨迹与失败原因自动生成修正稿并重新回放。`
+          : '正在结合本轮问题、工具热点轨迹与优化偏好生成修改稿，完成后将自动回放历史样本验证。';
+      } else {
+        detail = refineRound > 0
+          ? `正在对第 ${refineRound + 1} 轮反思修正稿回放验证（已完成 ${s.finished || 0}/${s.total || 0} 条）。`
+          : `正在回放历史运行验证修改稿（已完成 ${s.finished || 0}/${s.total || 0} 条）。`;
+      }
       return `<div class="evo-sop-callout is-info" role="status">
-        <div><strong>正在优化中 · ${escapeHTML(p.title || '生成修改稿')}</strong><p>${escapeHTML(detail)}</p></div>
+        <div><strong>${roundLabel} · ${escapeHTML(p.title || '生成修改稿')}</strong><p>${escapeHTML(detail)}</p></div>
         <div class="evo-sop-callout-actions">
           <button type="button" class="kb-btn small" data-evo-proposal="${escapeHTML(p.id)}">查看验证进展</button>
         </div>
@@ -645,8 +655,9 @@ function evoSOPCalloutHTML(d) {
     }
     if (p.status === 'pending') {
       const passed = !!p.summary?.passed && !!p.candidateContent;
+      const iterNote = refineRound > 0 ? `（经 ${refineRound + 1} 轮反思迭代达标）` : '';
       const msg = passed
-        ? `已完成回放验证（${p.summary.verdict || `修复 ${p.summary.fixed || 0} 条，无退化`}）。开启灰度后将以 50% 流量对比新旧版本，发布后再进入下一轮统计。`
+        ? `已完成回放验证${iterNote}（${p.summary.verdict || `修复 ${p.summary.fixed || 0} 条，无退化`}）。开启灰度后将以 50% 流量对比新旧版本，发布后再进入下一轮统计。`
         : `回放结果尚需人工核对（${p.summary?.verdict || '未达自动通过条件'}），建议先查看修改与样本细节。`;
       return `<div class="evo-sop-callout ${passed ? 'is-ready' : 'is-warn'}" role="status">
         <div><strong>${passed ? '优化完成，是否开始灰度？' : '优化稿待核对'}</strong><p>${escapeHTML(msg)}</p></div>
@@ -678,7 +689,8 @@ function evoSOPCalloutHTML(d) {
   if (d.stage === 'monitor') {
     const last = d.lastProposal;
     if (last?.status === 'failed') {
-      const reason = last.error || last.summary?.verdict || '优化生成或回放未通过';
+      const refineSuffix = (Number(last.refineRound) || 0) > 0 ? `（已自动反思修正 ${Number(last.refineRound)} 轮仍未达标）` : '';
+      const reason = (last.error || last.summary?.verdict || '优化生成或回放未通过') + refineSuffix;
       return `<div class="evo-sop-callout is-warn" role="status">
         <div><strong>上次优化未通过</strong><p>${escapeHTML(reason)}</p></div>
         <div class="evo-sop-callout-actions">
