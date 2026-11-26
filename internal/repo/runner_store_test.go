@@ -2,11 +2,91 @@ package repo
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
 )
+
+func TestRunnerTaskRunGenerationFencesCallbacksAndLateDispatch(t *testing.T) {
+	s := newTestRunner(t)
+	run := domain.Run{ID: "runner-generation", Status: "running"}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TryAcquireRunLease(run.ID, "worker-a", 0, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	owned, _ := s.RunState(run.ID)
+	task := domain.RunnerTask{ID: "task-generation", RunnerID: "runner", Provider: "terminal", RunID: run.ID, RunGeneration: owned.Generation}
+	if err := s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	claim, ok, err := s.ClaimRunnerTask("runner", []string{"terminal"}, now, time.Minute, true)
+	if err != nil || !ok {
+		t.Fatalf("claim: %v, found=%v", err, ok)
+	}
+	if err := s.ReleaseRunLease(run.ID, "worker-a", owned.Generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TryAcquireRunLease(run.ID, "worker-b", owned.Generation, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RenewRunnerTaskLease(task.ID, "runner", time.Minute, now, claim.Attempt); !errors.Is(err, ErrRunnerTaskLeaseLost) {
+		t.Fatalf("stale renew = %v", err)
+	}
+	if _, err := s.AppendLeasedRunnerTaskEvents(task.ID, "runner", claim.Attempt, now, []domain.RunnerTaskEvent{{Seq: 1, Type: "stdout"}}); !errors.Is(err, ErrRunnerTaskLeaseLost) {
+		t.Fatalf("stale event = %v", err)
+	}
+	if err := s.CompleteRunnerTask(task.ID, "runner", domain.RunnerTaskSuccess, nil, "stale", "", nil, nil, now, claim.Attempt); !errors.Is(err, ErrRunnerTaskLeaseLost) {
+		t.Fatalf("stale completion = %v", err)
+	}
+	if _, err := s.LeasedRunnerTaskControl(task.ID, "runner", claim.Attempt, now); !errors.Is(err, ErrRunnerTaskLeaseLost) {
+		t.Fatalf("stale control = %v", err)
+	}
+	if err := s.CancelRunnerTask(task.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteRunnerTask(task.ID, "runner", domain.RunnerTaskCanceled, nil, "stale output", "", map[string]string{"stale": "content"}, nil, now, claim.Attempt); err != nil {
+		t.Fatalf("stale cancellation acknowledgement: %v", err)
+	}
+	finished, _ := s.RunnerTask(task.ID)
+	if finished.Status != domain.RunnerTaskCanceled || finished.Result != "" || len(finished.Artifacts) != 0 {
+		t.Fatalf("stale cancellation retained outputs: %+v", finished)
+	}
+	task.ID = "late-dispatch"
+	if err := s.PutRunnerTask(task); !errors.Is(err, ErrRunnerTaskLeaseLost) {
+		t.Fatalf("stale dispatch = %v", err)
+	}
+}
+
+func TestRunnerClaimSkipsTaskFromExpiredRunLease(t *testing.T) {
+	s := newTestRunner(t)
+	run := domain.Run{ID: "expired-run", Status: "running"}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TryAcquireRunLease(run.ID, "worker", 0, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	owned, _ := s.RunState(run.ID)
+	task := domain.RunnerTask{ID: "expired-task", RunnerID: "runner", Provider: "terminal", RunID: run.ID, RunGeneration: owned.Generation}
+	if err := s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseRunLease(run.ID, "worker", owned.Generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.ClaimRunnerTask("runner", []string{"terminal"}, time.Now().UTC(), time.Minute, true); err != nil || ok {
+		t.Fatalf("stale claim: found=%v err=%v", ok, err)
+	}
+	stored, _ := s.RunnerTask(task.ID)
+	if stored.Status != domain.RunnerTaskCanceled {
+		t.Fatalf("stale task status = %s", stored.Status)
+	}
+}
 
 func newTestRunner(t *testing.T) *Store {
 	t.Helper()
@@ -265,6 +345,100 @@ func TestRunnerTaskLeaseLifecycle(t *testing.T) {
 	// Completing twice is rejected.
 	if err := s.CompleteRunnerTask(task.ID, "runner-a", domain.RunnerTaskFailed, nil, "", "", nil, nil, now); err != ErrRunnerTaskLeaseLost {
 		t.Fatalf("double complete err = %v", err)
+	}
+}
+
+func TestRunnerTaskAttemptFencesReclaimedLease(t *testing.T) {
+	s := newTestRunner(t)
+	task := putQueuedTask(t, s, "rt-reclaimed", "codex", "runner-a", 0)
+	task.MaxAttempts = 2
+	if err := s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	first, ok, err := s.ClaimRunnerTask("runner-a", []string{"codex"}, now, time.Second)
+	if err != nil || !ok {
+		t.Fatalf("first claim: %v", err)
+	}
+	later := now.Add(2 * time.Second)
+	if err := s.CompleteRunnerTask(task.ID, "runner-a", domain.RunnerTaskSuccess, nil, "expired", "", nil, nil, later, first.Attempt); err != ErrRunnerTaskLeaseLost {
+		t.Fatalf("expired lease accepted: %v", err)
+	}
+	if _, err := s.ExpireRunnerTasks(later); err != nil {
+		t.Fatal(err)
+	}
+	second, ok, err := s.ClaimRunnerTask("runner-a", []string{"codex"}, later, time.Minute)
+	if err != nil || !ok || second.Attempt != first.Attempt+1 {
+		t.Fatalf("second claim: %+v %v", second, err)
+	}
+	for _, attempt := range []int{0, first.Attempt} {
+		if err := s.StartRunnerTask(task.ID, "runner-a", later, attempt); err != ErrRunnerTaskLeaseLost {
+			t.Fatalf("stale start attempt %d: %v", attempt, err)
+		}
+		if _, err := s.RenewRunnerTaskLease(task.ID, "runner-a", time.Minute, later, attempt); err != ErrRunnerTaskLeaseLost {
+			t.Fatalf("stale renew attempt %d: %v", attempt, err)
+		}
+		if _, err := s.AppendLeasedRunnerTaskEvents(task.ID, "runner-a", attempt, later, []domain.RunnerTaskEvent{{Seq: 1}}); err != ErrRunnerTaskLeaseLost {
+			t.Fatalf("stale event attempt %d: %v", attempt, err)
+		}
+		if err := s.CompleteRunnerTask(task.ID, "runner-a", domain.RunnerTaskSuccess, nil, "stale", "", nil, nil, later, attempt); err != ErrRunnerTaskLeaseLost {
+			t.Fatalf("stale completion attempt %d: %v", attempt, err)
+		}
+	}
+	if err := s.StartRunnerTask(task.ID, "runner-a", later, second.Attempt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendLeasedRunnerTaskEvents(task.ID, "runner-a", second.Attempt, later, []domain.RunnerTaskEvent{{Seq: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteRunnerTask(task.ID, "runner-a", domain.RunnerTaskSuccess, nil, "current", "", nil, nil, later, second.Attempt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSingletonRunnerTaskKeepsFenceAcrossLifecycles(t *testing.T) {
+	s := newTestRunner(t)
+	task := domain.RunnerTask{ID: "cleanup", Provider: "terminal", RunnerID: "runner-a", MaxAttempts: 3}
+	if queued, err := s.QueueSingletonRunnerTask(task); err != nil || !queued {
+		t.Fatalf("queue: %v %v", queued, err)
+	}
+	if queued, err := s.QueueSingletonRunnerTask(task); err != nil || queued {
+		t.Fatalf("duplicate queue: %v %v", queued, err)
+	}
+	now := time.Now().UTC()
+	first, ok, err := s.ClaimRunnerTask("runner-a", []string{"terminal"}, now, time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := s.CompleteRunnerTask(task.ID, "runner-a", domain.RunnerTaskSuccess, nil, "", "", nil, nil, now, first.Attempt); err != nil {
+		t.Fatal(err)
+	}
+	if queued, err := s.QueueSingletonRunnerTask(task); err != nil || !queued {
+		t.Fatalf("requeue: %v %v", queued, err)
+	}
+	second, ok, err := s.ClaimRunnerTask("runner-a", []string{"terminal"}, now, time.Minute)
+	if err != nil || !ok || second.Attempt != first.Attempt+1 || second.MaxAttempts != first.Attempt+3 {
+		t.Fatalf("new lifecycle: %+v %v", second, err)
+	}
+	if err := s.CompleteRunnerTask(task.ID, "runner-a", domain.RunnerTaskSuccess, nil, "stale", "", nil, nil, now, first.Attempt); err != ErrRunnerTaskLeaseLost {
+		t.Fatalf("old lifecycle completed new task: %v", err)
+	}
+}
+
+func TestLegacyRunnerCannotClaimReusedTask(t *testing.T) {
+	s := newTestRunner(t)
+	task := domain.RunnerTask{ID: "cleanup-reused", Provider: "terminal", RunnerID: "runner-a", Status: domain.RunnerTaskQueued, Attempt: 1, MaxAttempts: 3}
+	if err := s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if available, err := s.RunnerTaskAvailable("runner-a", []string{"terminal"}, false); err != nil || available {
+		t.Fatalf("legacy preflight: available=%v err=%v", available, err)
+	}
+	if _, claimed, err := s.ClaimRunnerTask("runner-a", []string{"terminal"}, time.Now().UTC(), time.Minute, false); err != nil || claimed {
+		t.Fatalf("legacy claim: claimed=%v err=%v", claimed, err)
+	}
+	if _, claimed, err := s.ClaimRunnerTask("runner-a", []string{"terminal"}, time.Now().UTC(), time.Minute, true); err != nil || !claimed {
+		t.Fatalf("fenced claim: claimed=%v err=%v", claimed, err)
 	}
 }
 

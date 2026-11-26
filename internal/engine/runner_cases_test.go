@@ -48,12 +48,12 @@ func TestRunnerCallbacksPathsBindingsAndReconnect(t *testing.T) {
 	if dispatched != "codex" {
 		t.Fatal(dispatched)
 	}
-	e.SetRunnerControlNotify(func(runnerID, taskID, state string) { controlled = runnerID + taskID + state })
-	e.notifyRunnerControl("", "task", "cancel")
+	e.SetRunnerControlNotify(func(runnerID, taskID, state string, attempt int) { controlled = runnerID + taskID + state })
+	e.notifyRunnerControl("", "task", "cancel", 1)
 	if controlled != "" {
 		t.Fatal("empty runner notified")
 	}
-	e.notifyRunnerControl("runner", "task", "cancel")
+	e.notifyRunnerControl("runner", "task", "cancel", 1)
 	if controlled != "runnertaskcancel" {
 		t.Fatal(controlled)
 	}

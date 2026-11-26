@@ -52,6 +52,7 @@ type runnerControlMessage struct {
 	Type               string                              `json:"type"`
 	TaskID             string                              `json:"taskId,omitempty"`
 	DesiredState       string                              `json:"desiredState,omitempty"`
+	Attempt            int                                 `json:"attempt,omitempty"`
 	ActiveTaskIDs      []string                            `json:"activeTaskIds,omitempty"`
 	RequestID          string                              `json:"requestId,omitempty"`
 	WorkspaceRequest   *domain.RunnerWorkspaceRequest      `json:"workspaceRequest,omitempty"`
@@ -553,7 +554,7 @@ func readRunnerWorkspaceRelayStream(decoder *json.Decoder, observe func(domain.W
 	}
 }
 
-func (h *runnerControlHub) sendControl(runnerID, taskID, desiredState string) {
+func (h *runnerControlHub) sendControl(runnerID, taskID, desiredState string, attempt int) {
 	if runnerID == "" || taskID == "" || desiredState == "" {
 		return
 	}
@@ -563,7 +564,7 @@ func (h *runnerControlHub) sendControl(runnerID, taskID, desiredState string) {
 	if c == nil {
 		return
 	}
-	msg := runnerControlMessage{Type: "task.control", TaskID: taskID, DesiredState: desiredState}
+	msg := runnerControlMessage{Type: "task.control", TaskID: taskID, DesiredState: desiredState, Attempt: attempt}
 	select {
 	case c.send <- msg:
 		return
@@ -724,7 +725,7 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 				continue
 			}
 			if task.DesiredState == domain.RunnerTaskDesiredCancel {
-				h.runnerControls.sendControl(runner.ID, task.ID, task.DesiredState)
+				h.runnerControls.sendControl(runner.ID, task.ID, task.DesiredState, task.Attempt)
 			}
 		}
 	}

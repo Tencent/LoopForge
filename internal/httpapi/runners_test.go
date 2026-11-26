@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -479,9 +480,10 @@ func TestRunnerObservationUploadIsIdempotent(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	leaseUntil := time.Now().UTC().Add(time.Minute)
 	task := domain.RunnerTask{
 		ID: "rt-observation", RunnerID: runnerID, Provider: "codex", Status: domain.RunnerTaskRunning,
-		LeaseOwner: runnerID, RunID: runID, NodeID: "work", MaxAttempts: 1,
+		LeaseOwner: runnerID, LeaseUntil: &leaseUntil, Attempt: 1, RunID: runID, NodeID: "work", MaxAttempts: 1,
 	}
 	if err := s.PutRunnerTask(task); err != nil {
 		t.Fatal(err)
@@ -506,6 +508,55 @@ func TestRunnerObservationUploadIsIdempotent(t *testing.T) {
 	stored := s.RunnerTaskEvents(task.ID)
 	if len(stored) != 1 || stored[0].Seq != 1 || stored[0].Type != "observation" {
 		t.Fatalf("stored runner events = %+v, want one idempotent observation", stored)
+	}
+}
+
+func TestRunnerReclaimedTaskRejectsOldAttemptOverHTTP(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	e := engine.New(s, runtime.NewManager(t.TempDir()))
+	h := New(s, e, tracker.NewService(), "", "")
+	runnerID, session := registerTestRunner(t, h)
+	task := domain.RunnerTask{ID: "reclaimed-http", RunnerID: runnerID, Provider: "mock", Status: domain.RunnerTaskQueued, MaxAttempts: 2}
+	if err := s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	first, ok, err := s.ClaimRunnerTask(runnerID, []string{"mock"}, now, time.Second)
+	if err != nil || !ok {
+		t.Fatalf("first claim: %v", err)
+	}
+	if _, err := s.ExpireRunnerTasks(now.Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	second, ok, err := s.ClaimRunnerTask(runnerID, []string{"mock"}, time.Now().UTC(), time.Minute)
+	if err != nil || !ok || second.Attempt != first.Attempt+1 {
+		t.Fatalf("second claim: %+v %v", second, err)
+	}
+	base := "/runners/tasks/" + task.ID
+	for _, header := range []string{"", strconv.Itoa(first.Attempt)} {
+		auth := map[string]string{"Authorization": "Bearer " + session, "X-Runner-Task-Attempt": header}
+		for _, tc := range []struct {
+			method, path string
+			body         any
+		}{
+			{http.MethodPost, base + "/start", nil},
+			{http.MethodPost, base + "/lease/renew", nil},
+			{http.MethodGet, base + "/control", nil},
+			{http.MethodPost, base + "/events", map[string]any{"events": []any{map[string]any{"seq": 1}}}},
+			{http.MethodPost, base + "/complete", map[string]any{"status": "success"}},
+		} {
+			if rec := requestWithHeaders(t, h, tc.method, tc.path, tc.body, auth); rec.Code != http.StatusConflict {
+				t.Fatalf("attempt %q %s: %d %s", header, tc.path, rec.Code, rec.Body.String())
+			}
+		}
+	}
+	current := map[string]string{"Authorization": "Bearer " + session, "X-Runner-Task-Attempt": strconv.Itoa(second.Attempt)}
+	if rec := requestWithHeaders(t, h, http.MethodPost, base+"/complete", map[string]any{"status": "success"}, current); rec.Code != http.StatusOK {
+		t.Fatalf("current attempt: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

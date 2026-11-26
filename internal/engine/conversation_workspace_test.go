@@ -138,7 +138,7 @@ func TestConversationWorkspaceReclaimsOriginalAndRestoresThenExpiresAfterOneHour
 	}
 	meta, _ = e.repo.WorkspaceCheckpoint(id)
 	r, _ = e.repo.RunState(id)
-	e = New(e.repo, e.sandboxes) // a restarted engine uses the persisted deadline
+	e = NewWithExecutionManager(e.repo, e.sandboxes) // a restarted engine uses the persisted deadline
 	e.cleanupWorkspace(r, meta.LastUsedAt.Add(time.Hour))
 	r, _ = e.repo.RunState(id)
 	if r.WorkspaceCleanedAt.IsZero() {
@@ -171,7 +171,11 @@ func TestConversationWorkspacePreservesOnSaveFailureAndWhileActive(t *testing.T)
 		t.Fatal("unsaved files reclaimed or error lost")
 	}
 	protected := false
-	for _, runID := range e.liveSandboxRunIDs() {
+	live, err := e.liveSandboxRunIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, runID := range live {
 		protected = protected || runID == id
 	}
 	if !protected {

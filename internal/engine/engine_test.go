@@ -595,6 +595,13 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := e.Drain(ctx); err != nil {
+			t.Errorf("drain test engine: %v", err)
+		}
+	})
 	run, err := e.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{}, domain.TelemetryContext{ProjectID: "dns", ResponsibleUserID: 9})
 	if err != nil {
 		t.Fatal(err)

@@ -1,5 +1,18 @@
 # Deployment
 
+## Execution environment migration (Issue #117)
+
+The first migration keeps the existing `-role all`, API/Worker split, and CLI
+Runner protocol. The local environment adapter still delegates to
+`runtime.Manager`, so existing installations retain their behavior. Runner
+tasks carry the Run generation, which fences task callbacks against scheduler
+lease changes. This scheduler fence is distinct from a resource lease.
+
+The independent sandbox manager is experimental and is not ready for deployment.
+Resource leases do not yet fence every workspace operation, cleanup and result
+submission. Runner startup rejects `AGENTFLOW_SANDBOX_MANAGER_URL` until these
+paths and their recovery semantics are complete. Keep the variable unset.
+
 ## Native development
 
 `bash scripts/dev.sh` explicitly configures local secrets, starts only this checkout's MySQL service, builds the platform, provisions the `admin` account, installs the missing observability generated columns through an explicit script, applies `migrations/seed/*.sql`, and starts the server on port 8090. Existing catalog definitions are preserved by `INSERT IGNORE`. Keep `.env`, `.local/` and database volumes outside version control.
@@ -241,6 +254,10 @@ Use `-admin` only when granting platform administration. Running the command aga
 The upstream process roles remain `-role api`, `-role worker` and `-role all`. API and worker instances must share the MySQL database and configuration appropriate to their deployment. Set `AGENTFLOW_CONTROL_TOKEN`, `AGENTFLOW_CONTROL_URL` and `AGENTFLOW_WORKER_URL` when separating control and execution. Set `AGENTFLOW_PLATFORM_MCP_URL` to the actual platform URL reachable from execution containers.
 
 Personal runners are connected from the execution-machine page with a short-lived binding code. The installer is served at `/runners/install.sh`. `AGENTFLOW_RUNNER_BINARY` can point to binaries with `{os}` and `{arch}` substitutions. Container images bundle Linux/macOS amd64/arm64 runner and gate binaries. Native source installations can build on demand with Go.
+
+Runner task leases use a claim attempt to reject reports and control messages from an earlier claim. Upgrade the API and connected runners together when enabling this protocol. The new API still accepts a legacy runner's first claim, but it will not assign a reclaimed or reused task to a runner that does not advertise attempt fencing: such a task stays queued until a compatible runner is connected. If tasks remain queued after a disconnect or a repeated cleanup, update the execution machine's runner. A new runner can connect to an older API, but that API does not enforce attempt fencing; delayed reports cannot be protected until the API is upgraded. When an older API omits the attempt from a WebSocket control message, the new runner relies on task control polling and lease renewal instead.
+
+New SOP execution tasks also carry the Run's scheduler generation. Dispatch and task callbacks require that generation and its scheduler lease to remain current; a cancelled stale task may acknowledge termination without submitting results. Existing tasks without this field remain compatible and use the task lease alone. For full protection across an upgrade, drain or cancel in-flight tasks created by older workers before restarting them. This scheduler fence is not a separate resource lease: workspace operations and cleanup retain their existing lifecycle and should not be treated as remotely fenced by this field.
 
 SOP deliverables support up to 20 MiB per file. Runner 0.13.0 and later transfer
 declared files separately from the task completion report, so several files

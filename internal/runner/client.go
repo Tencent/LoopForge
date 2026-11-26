@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if attempt, ok := ctx.Value(taskAttemptContextKey{}).(int); ok && attempt > 0 {
+		req.Header.Set("X-Runner-Task-Attempt", strconv.Itoa(attempt))
 	}
 	if session := c.sessionToken(); session != "" {
 		req.Header.Set("Authorization", "Bearer "+session)
@@ -208,6 +212,7 @@ type ClaimRequest struct {
 	Capacity                    int      `json:"capacity"`
 	Preflight                   bool     `json:"preflight,omitempty"`
 	NoWait                      bool     `json:"noWait,omitempty"`
+	AttemptFencing              bool     `json:"attemptFencing,omitempty"`
 	SupportsGitSSHKnownHosts    bool     `json:"supportsGitSshKnownHosts,omitempty"`
 	SupportsDockerSandboxLimits bool     `json:"supportsDockerSandboxLimits,omitempty"`
 }
@@ -216,6 +221,7 @@ type ClaimRequest struct {
 // and return a leased task, which the daemon can still execute.
 func (c *Client) WaitForTask(ctx context.Context, req ClaimRequest) (bool, *domain.RunnerTask, error) {
 	req.Preflight = true
+	req.AttemptFencing = true
 	req.SupportsGitSSHKnownHosts = true
 	req.SupportsDockerSandboxLimits = true
 	var out struct {
@@ -235,6 +241,7 @@ func (c *Client) WaitForTask(ctx context.Context, req ClaimRequest) (bool, *doma
 // is reported as (nil, false, nil); the caller simply polls again. The
 // context deadline must exceed the server long-poll timeout.
 func (c *Client) Claim(ctx context.Context, req ClaimRequest) (*domain.RunnerTask, bool, error) {
+	req.AttemptFencing = true
 	req.SupportsGitSSHKnownHosts = true
 	req.SupportsDockerSandboxLimits = true
 	var out struct {
@@ -313,6 +320,22 @@ func (c *Client) OpenControl(ctx context.Context) (*websocket.Conn, error) {
 }
 
 func (c *Client) SendEvents(ctx context.Context, taskID string, events []domain.RunnerTaskEvent) error {
+	// Each claim has its own sequence range, so retried tasks do not collide
+	// with the events already stored for a previous attempt.
+	if attempt, ok := ctx.Value(taskAttemptContextKey{}).(int); ok && attempt > 1 {
+		if int64(attempt) > 1<<31 {
+			return fmt.Errorf("runner task attempt out of range")
+		}
+		shifted := make([]domain.RunnerTaskEvent, len(events))
+		copy(shifted, events)
+		for i := range shifted {
+			if shifted[i].Seq < 1 || shifted[i].Seq >= 1<<32 {
+				return fmt.Errorf("runner event sequence out of range")
+			}
+			shifted[i].Seq += int64(attempt-1) << 32
+		}
+		events = shifted
+	}
 	return c.do(ctx, http.MethodPost, "/runners/tasks/"+taskID+"/events", map[string]any{"events": events}, nil)
 }
 

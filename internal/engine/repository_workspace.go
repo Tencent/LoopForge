@@ -57,8 +57,18 @@ func repositoryWorkspaceDirs(workspace string, repositories []domain.RepositoryC
 
 // prepareRepositories checks out every run repository into its WorkspaceDir
 // (a first-level sub-directory of the run workspace).
+// prepareRepositories checks out every run repository into its WorkspaceDir
+// (a first-level sub-directory of the run workspace). preserveCheckout keeps an
+// existing SOP checkout (shared workspace) instead of cloning it again.
 func prepareRepositories(ctx context.Context, workspace string, repositories []domain.RepositoryContext, preserveCheckout ...bool) error {
-	prepare := prepareRepository
+	return prepareRepositoriesWithLiveCheck(ctx, workspace, repositories, liveDockerSandbox, preserveCheckout...)
+}
+
+func prepareRepositoriesWithLiveCheck(ctx context.Context, workspace string, repositories []domain.RepositoryContext, liveCheck func(string) bool, preserveCheckout ...bool) error {
+	if liveCheck == nil {
+		liveCheck = liveDockerSandbox
+	}
+	prepare := prepareRepositoryWithLiveCheck
 	if len(preserveCheckout) > 0 && preserveCheckout[0] {
 		if !gitwork.HasWorkspaceExecutor(ctx) {
 			return fmt.Errorf("shared checkout preparation requires the SOP sandbox")
@@ -68,9 +78,12 @@ func prepareRepositories(ctx context.Context, workspace string, repositories []d
 	if err := runtime.RestoreLegacyWorkspaceAgentConfig(ctx, workspace, repositories); err != nil {
 		return err
 	}
+	if len(repositories) == 0 {
+		return nil
+	}
 	for _, rc := range repositories {
 		dir := repositoryWorkspacePath(workspace, rc)
-		if err := prepare(ctx, dir, rc); err != nil {
+		if err := prepare(ctx, dir, rc, liveCheck); err != nil {
 			return fmt.Errorf("repository %s: %w", rc.Name, err)
 		}
 	}
@@ -84,7 +97,7 @@ func repositoryCheckoutRemote(repository domain.RepositoryContext) string {
 	return strings.TrimSpace(repository.LocalPath)
 }
 
-func prepareSharedRepository(ctx context.Context, dir string, repository domain.RepositoryContext) error {
+func prepareSharedRepository(ctx context.Context, dir string, repository domain.RepositoryContext, liveCheck func(string) bool) error {
 	existing, err := gitwork.ExistingSOPCheckout(ctx, dir, repositoryCheckoutRemote(repository))
 	if err != nil {
 		return err
@@ -95,7 +108,7 @@ func prepareSharedRepository(ctx context.Context, dir string, repository domain.
 		}
 	}
 	if !existing || repository.RequireExistingWorkBranch {
-		return prepareRepository(ctx, dir, repository)
+		return prepareRepositoryWithLiveCheck(ctx, dir, repository, liveCheck)
 	}
 	ctx = withRepositoryGit(ctx, repository)
 	if err := applyWorkspaceGitAuth(ctx, dir); err != nil {
@@ -141,6 +154,10 @@ func existingDevelopmentBranch(repository domain.RepositoryContext) bool {
 }
 
 func prepareRepository(ctx context.Context, workspace string, repository domain.RepositoryContext) error {
+	return prepareRepositoryWithLiveCheck(ctx, workspace, repository, liveDockerSandbox)
+}
+
+func prepareRepositoryWithLiveCheck(ctx context.Context, workspace string, repository domain.RepositoryContext, liveCheck func(string) bool) error {
 	if repository.RepositoryID == "" {
 		return nil
 	}
@@ -223,7 +240,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	// Docker bind-mounts this directory. Replacing it (RemoveAll + MkdirAll)
 	// changes the inode; runc then rejects `docker exec -w /workspace`.
 	reset := resetCloneDestination
-	if liveDockerSandbox(workspace) {
+	if liveCheck != nil && liveCheck(workspace) {
 		reset = func(string) error { return nil }
 	}
 	if err := reset(workspace); err != nil {

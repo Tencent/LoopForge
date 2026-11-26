@@ -2,6 +2,7 @@ package engine
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/executionenv"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
@@ -228,7 +229,8 @@ func TestWorkspacePreparationRefreshesIdleLegacyDocker(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	e, st := cvEEngine(t)
-	e.sandboxes = runtime.NewManager(root)
+	adapter := executionenv.NewRuntimeAdapter(runtime.NewManager(root))
+	e.sandboxes, e.executionBackend = adapter, adapter
 	snapshot := &domain.RunnerSandboxSpec{
 		Profile:    domain.SandboxProfile{Driver: domain.SandboxDriverDocker},
 		Dockerfile: &domain.DockerfileDefinition{Content: runtime.IsolatedDockerfile},
@@ -343,9 +345,9 @@ func TestWorkspacePreparationActiveGroupReusesWithoutMutatingSource(t *testing.T
 	if _, err := e.EnsureWorkspaceReady(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
-	e.runEnvMu.Lock()
-	env := e.runEnvs[id]
-	e.runEnvMu.Unlock()
+	e.environments.mu.Lock()
+	env := e.environments.envs[id]
+	e.environments.mu.Unlock()
 	env.activeExecutions.Store(1)
 	if err := os.WriteFile(filepath.Join(env.Workspace(), "source-in-progress"), []byte("in progress"), 0600); err != nil {
 		t.Fatal(err)
@@ -376,9 +378,9 @@ func TestWorkspacePreparationStatusAfterHandleLossDoesNotClaimReady(t *testing.T
 	if err != nil || state.Status != "unprepared" {
 		t.Fatal(state, err)
 	}
-	e.runEnvMu.Lock()
-	reopened := e.runEnvs[id]
-	e.runEnvMu.Unlock()
+	e.environments.mu.Lock()
+	reopened := e.environments.envs[id]
+	e.environments.mu.Unlock()
 	if reopened != nil {
 		t.Fatal("status created a sandbox")
 	}

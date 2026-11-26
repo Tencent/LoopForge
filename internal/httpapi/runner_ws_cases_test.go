@@ -159,10 +159,10 @@ func TestRunnerControlHubErrorAndBufferBranches(t *testing.T) {
 	buffered := &runnerControlConn{runnerID: "buffered", send: make(chan runnerControlMessage, 1), done: make(chan struct{})}
 	buffered.send <- runnerControlMessage{Type: "full"}
 	hub.conns[buffered.runnerID] = buffered
-	hub.sendControl("", "task", "cancel")
-	hub.sendControl(buffered.runnerID, "", "cancel")
-	hub.sendControl("missing", "task", "cancel")
-	hub.sendControl(buffered.runnerID, "task", "cancel")
+	hub.sendControl("", "task", "cancel", 1)
+	hub.sendControl(buffered.runnerID, "", "cancel", 1)
+	hub.sendControl("missing", "task", "cancel", 1)
+	hub.sendControl(buffered.runnerID, "task", "cancel", 1)
 	close(buffered.done)
 
 	hub.resolveWorkspace(nil, "missing", domain.RunnerWorkspaceResponse{})

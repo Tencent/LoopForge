@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -42,7 +43,15 @@ func newGenericTemplateServer(t *testing.T) (http.Handler, *repo.Store) {
 	}
 	installTestTrackerMCPs(t, s, "alpha")
 	installTestTrackerMCPs(t, s, "beta")
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	eng := engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := eng.Drain(ctx); err != nil {
+			t.Errorf("drain test engine: %v", err)
+		}
+	})
+	h := New(s, eng, tracker.NewService(), "", "")
 	return h, s
 }
 

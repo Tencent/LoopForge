@@ -36,6 +36,7 @@ const (
 type eventBatcher struct {
 	mu       sync.Mutex
 	taskID   string
+	attempt  int
 	client   *Client
 	seq      int64
 	size     int
@@ -83,7 +84,7 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 	defer renewTicker.Stop()
 	controlTicker := time.NewTicker(controlFallbackInterval)
 	defer controlTicker.Stop()
-	controlCh := d.taskControl(task.ID)
+	controlCh := d.taskControl(task.ID, task.Attempt)
 	flushTicker := time.NewTicker(eventFlushInterval)
 	defer flushTicker.Stop()
 	canceled := false
@@ -135,6 +136,10 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 			controlCtx, controlCancel := context.WithTimeout(ctx, 5*time.Second)
 			resp, controlErr := d.client.TaskControl(controlCtx, task.ID)
 			controlCancel()
+			if errors.Is(controlErr, ErrTaskLeaseLost) || errors.Is(controlErr, ErrUnauthorized) {
+				canceled = true
+				cancel()
+			}
 			if controlErr == nil && resp != nil && strings.EqualFold(resp.DesiredState, domain.RunnerTaskDesiredCancel) && !canceled {
 				canceled = true
 				batcher.addLine("system", "cancel requested by platform")
@@ -158,7 +163,7 @@ func tailString(value string, limit int) string {
 }
 
 func newEventBatcher(task domain.RunnerTask, client *Client) *eventBatcher {
-	b := &eventBatcher{taskID: task.ID, client: client}
+	b := &eventBatcher{taskID: task.ID, attempt: task.Attempt, client: client}
 	if task.Invocation != nil {
 		b.observer = flowruntime.NewProtocolObserver(task.Invocation.Executor, b.addObservation)
 	}
@@ -231,6 +236,7 @@ func (b *eventBatcher) flush(ctx context.Context) {
 	if len(pending) == 0 {
 		return
 	}
+	ctx = context.WithValue(ctx, taskAttemptContextKey{}, b.attempt)
 	if err := b.client.SendEvents(ctx, b.taskID, pending); err != nil {
 		// Re-queue for the next batch; seq keys make the retry idempotent.
 		b.mu.Lock()
@@ -368,7 +374,7 @@ func (d *Daemon) executeHostCommand(ctx context.Context, task domain.RunnerTask,
 	defer renewTicker.Stop()
 	controlTicker := time.NewTicker(controlFallbackInterval)
 	defer controlTicker.Stop()
-	controlCh := d.taskControl(task.ID)
+	controlCh := d.taskControl(task.ID, task.Attempt)
 	flushTicker := time.NewTicker(eventFlushInterval)
 	defer flushTicker.Stop()
 
@@ -444,6 +450,10 @@ func (d *Daemon) executeHostCommand(ctx context.Context, task domain.RunnerTask,
 			controlCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			resp, controlErr := d.client.TaskControl(controlCtx, task.ID)
 			cancel()
+			if errors.Is(controlErr, ErrTaskLeaseLost) && !canceled {
+				canceled = true
+				terminateProcessGroup(cmd, processDone)
+			}
 			if controlErr == ErrUnauthorized {
 				return execResult{status: domain.RunnerTaskFailed, errMsg: "runner session rejected"}
 			}

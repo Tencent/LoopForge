@@ -35,6 +35,7 @@ type controlMessage struct {
 	Type               string                              `json:"type"`
 	TaskID             string                              `json:"taskId,omitempty"`
 	DesiredState       string                              `json:"desiredState,omitempty"`
+	Attempt            int                                 `json:"attempt,omitempty"`
 	ActiveTaskIDs      []string                            `json:"activeTaskIds,omitempty"`
 	RequestID          string                              `json:"requestId,omitempty"`
 	WorkspaceRequest   *domain.RunnerWorkspaceRequest      `json:"workspaceRequest,omitempty"`
@@ -151,7 +152,12 @@ func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) e
 			continue
 		}
 		if message.Type == "task.control" {
-			d.signalTaskControl(message.TaskID, message.DesiredState)
+			if message.Attempt == 0 {
+				// Older servers cannot distinguish claims; polling the durable
+				// task state remains the authority for an active new runner.
+				continue
+			}
+			d.signalTaskControl(message.TaskID, message.DesiredState, message.Attempt)
 			continue
 		}
 		if message.Type == "workspace.request" && message.WorkspaceRequest != nil {
@@ -220,36 +226,39 @@ func waitContext(ctx context.Context, duration time.Duration) bool {
 	}
 }
 
-func (d *Daemon) registerTaskControl(taskID string) chan string {
+func (d *Daemon) registerTaskControl(taskID string, attempt ...int) chan string {
 	d.controlMu.Lock()
 	defer d.controlMu.Unlock()
+	key := taskControlKey(taskID, attempt...)
 	ch := make(chan string, 1)
-	d.controls[taskID] = ch
-	if desiredState := d.pendingControls[taskID]; desiredState != "" {
+	d.controls[key] = ch
+	if desiredState := d.pendingControls[key]; desiredState != "" {
 		ch <- desiredState
-		delete(d.pendingControls, taskID)
+		delete(d.pendingControls, key)
 	}
 	return ch
 }
 
-func (d *Daemon) unregisterTaskControl(taskID string) {
+func (d *Daemon) unregisterTaskControl(taskID string, attempt ...int) {
 	d.controlMu.Lock()
-	delete(d.controls, taskID)
-	delete(d.pendingControls, taskID)
+	key := taskControlKey(taskID, attempt...)
+	delete(d.controls, key)
+	delete(d.pendingControls, key)
 	d.controlMu.Unlock()
 }
 
-func (d *Daemon) taskControl(taskID string) <-chan string {
+func (d *Daemon) taskControl(taskID string, attempt ...int) <-chan string {
 	d.controlMu.RLock()
 	defer d.controlMu.RUnlock()
-	return d.controls[taskID]
+	return d.controls[taskControlKey(taskID, attempt...)]
 }
 
-func (d *Daemon) signalTaskControl(taskID, desiredState string) {
+func (d *Daemon) signalTaskControl(taskID, desiredState string, attempt ...int) {
 	d.controlMu.Lock()
-	ch := d.controls[taskID]
+	key := taskControlKey(taskID, attempt...)
+	ch := d.controls[key]
 	if ch == nil {
-		d.pendingControls[taskID] = desiredState
+		d.pendingControls[key] = desiredState
 		d.controlMu.Unlock()
 		return
 	}
@@ -260,12 +269,25 @@ func (d *Daemon) signalTaskControl(taskID, desiredState string) {
 	}
 }
 
+type taskControlID struct {
+	taskID  string
+	attempt int
+}
+
+func taskControlKey(taskID string, attempt ...int) taskControlID {
+	key := taskControlID{taskID: taskID}
+	if len(attempt) != 0 {
+		key.attempt = attempt[0]
+	}
+	return key
+}
+
 func (d *Daemon) activeTaskIDs() []string {
 	d.controlMu.RLock()
 	defer d.controlMu.RUnlock()
 	ids := make([]string, 0, len(d.controls))
-	for id := range d.controls {
-		ids = append(ids, id)
+	for key := range d.controls {
+		ids = append(ids, key.taskID)
 	}
 	return ids
 }

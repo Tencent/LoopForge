@@ -107,6 +107,30 @@ func TestClientEndpointsAndErrors(t *testing.T) {
 	}
 }
 
+func TestClientTaskAttemptAndEventSequences(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Runner-Task-Attempt"); got != "2" {
+			t.Errorf("attempt header = %q", got)
+		}
+		var payload struct {
+			Events []domain.RunnerTaskEvent `json:"events"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || len(payload.Events) != 1 || payload.Events[0].Seq != (1<<32)+1 {
+			t.Errorf("event payload = %+v, %v", payload, err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	ctx := context.WithValue(context.Background(), taskAttemptContextKey{}, 2)
+	events := []domain.RunnerTaskEvent{{Seq: 1}}
+	if err := NewClient(server.URL).SendEvents(ctx, "task", events); err != nil {
+		t.Fatal(err)
+	}
+	if events[0].Seq != 1 {
+		t.Fatal("send modified caller's retry buffer")
+	}
+}
+
 func TestClientPreviewUpload(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Preview-Upload-Token") != "upload" || r.Header.Get("Authorization") != "Bearer session" {

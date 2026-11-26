@@ -98,7 +98,7 @@ func TestRunEnvironmentMethodsOutputsAndResources(t *testing.T) {
 
 func TestLocalWorkspaceCheckpointHandlerOperations(t *testing.T) {
 	e, st := cvEEngine(t)
-	e.sandboxes = runtime.NewManager(t.TempDir())
+	e.setLocalSandboxManager(runtime.NewManager(t.TempDir()))
 	e.controlToken = "secret"
 	run := domain.Run{ID: "local-control", Status: "failed", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "test-native"}, Nodes: map[string]*domain.NodeRun{}}
 	if err := st.PutRun(run); err != nil {
@@ -145,7 +145,7 @@ func TestLocalWorkspaceCheckpointHandlerOperations(t *testing.T) {
 
 func TestWorkspaceCleanupDeleteAndFacts(t *testing.T) {
 	e, st := cvEEngine(t)
-	e.sandboxes = runtime.NewManager(t.TempDir())
+	e.setLocalSandboxManager(runtime.NewManager(t.TempDir()))
 	if e.RunWorkspace("missing") == "" {
 		t.Fatal("workspace path missing")
 	}

@@ -25,11 +25,51 @@ const runSandboxIdleTTL = 30 * time.Minute
 // sandbox definition, like the persistent per-run container of the cloud
 // path. cleanup_run, the idle reaper or daemon shutdown closes it.
 type runSandbox struct {
-	runID    string
-	mu       sync.Mutex
-	sandbox  runtime.Sandbox
-	active   int
-	lastUsed time.Time
+	runID            string
+	mu               sync.Mutex
+	sandbox          runtime.Sandbox
+	active           int
+	lastUsed         time.Time
+	environmentLease *environmentLease
+}
+
+// acquireTaskEnvironmentLease shares one durable lease with the cached Run
+// sandbox. Individual tasks must not release a lease that another task still
+// uses; the shared entry owns that lease until the sandbox is closed.
+func (d *Daemon) acquireTaskEnvironmentLease(ctx context.Context, task domain.RunnerTask) (*environmentLease, bool, error) {
+	requirements, resources := taskSandboxSpec(task)
+	key, _, shared := runSandboxKey(task, requirements, resources)
+	if !shared || d.cfg.DisableRunSandboxReuse || task.Action == domain.RunnerTaskActionCleanupRun {
+		lease, err := d.acquireEnvironmentLease(ctx, task)
+		return lease, true, err
+	}
+	d.runSandboxMu.Lock()
+	if d.runSandboxes == nil {
+		d.runSandboxes = map[string]*runSandbox{}
+	}
+	entry := d.runSandboxes[key]
+	if entry == nil {
+		entry = &runSandbox{runID: task.RunID}
+		d.runSandboxes[key] = entry
+	}
+	lease := entry.environmentLease
+	d.runSandboxMu.Unlock()
+	if lease != nil {
+		return lease, false, nil
+	}
+	lease, err := d.acquireEnvironmentLease(ctx, task)
+	if err != nil {
+		return nil, false, err
+	}
+	d.runSandboxMu.Lock()
+	if entry.environmentLease == nil {
+		entry.environmentLease = lease
+	} else {
+		lease.release()
+		lease = entry.environmentLease
+	}
+	d.runSandboxMu.Unlock()
+	return lease, false, nil
 }
 
 func preparesBorrowedCheckout(inv *domain.RunnerInvocation) bool {
@@ -67,11 +107,30 @@ func (d *Daemon) acquireTaskSandbox(ctx context.Context, task domain.RunnerTask)
 	requirements, resources := taskSandboxSpec(task)
 	key, id, shared := runSandboxKey(task, requirements, resources)
 	if !shared || d.cfg.DisableRunSandboxReuse {
-		sandbox, err := runtime.OpenRemoteSandbox(ctx, task.ID, d.taskWorkspace(task), task.Sandbox.Profile, requirements, resources)
+		environmentLease := environmentLeaseFromContext(ctx)
+		ownLease := false
+		var err error
+		if environmentLease == nil {
+			environmentLease, err = d.acquireEnvironmentLease(ctx, task)
+			ownLease = environmentLease != nil
+		}
 		if err != nil {
 			return nil, nil, err
 		}
-		return sandbox, func() { _ = sandbox.Close(context.Background()) }, nil
+		releaseLease := func() {
+			if ownLease && environmentLease != nil {
+				environmentLease.release()
+			}
+		}
+		sandbox, err := runtime.OpenRemoteSandbox(ctx, task.ID, d.taskWorkspace(task), task.Sandbox.Profile, requirements, resources)
+		if err != nil {
+			releaseLease()
+			return nil, nil, err
+		}
+		if environmentLease != nil {
+			sandbox = &leaseSandbox{Sandbox: sandbox, lease: environmentLease}
+		}
+		return sandbox, func() { _ = sandbox.Close(context.Background()); releaseLease() }, nil
 	}
 	d.runSandboxMu.Lock()
 	if d.runSandboxes == nil {
@@ -96,12 +155,32 @@ func (d *Daemon) acquireTaskSandbox(ctx context.Context, task domain.RunnerTask)
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	if entry.sandbox == nil {
-		sandbox, err := runtime.OpenRemoteSandbox(ctx, id, d.taskWorkspace(task), task.Sandbox.Profile, requirements, resources)
+		environmentLease := environmentLeaseFromContext(ctx)
+		var err error
+		if environmentLease == nil {
+			environmentLease, err = d.acquireEnvironmentLease(ctx, task)
+		}
 		if err != nil {
 			release()
 			return nil, nil, err
 		}
+		sandbox, err := runtime.OpenRemoteSandbox(ctx, id, d.taskWorkspace(task), task.Sandbox.Profile, requirements, resources)
+		if err != nil {
+			release()
+			if environmentLease != nil {
+				environmentLease.release()
+			}
+			return nil, nil, err
+		}
 		entry.sandbox = sandbox
+		if environmentLease != nil {
+			entry.sandbox = &leaseSandbox{Sandbox: sandbox, lease: environmentLease}
+			entry.environmentLease = environmentLease
+		}
+	}
+	lease := environmentLeaseFromContext(ctx)
+	if lease != nil {
+		return &leaseSandbox{Sandbox: entry.sandbox, lease: lease}, release, nil
 	}
 	return entry.sandbox, release, nil
 }
@@ -154,6 +233,10 @@ func (d *Daemon) closeSharedSandboxes(ctx context.Context, match func(*runSandbo
 		if entry.sandbox != nil {
 			_ = entry.sandbox.Close(ctx)
 			entry.sandbox = nil
+		}
+		if entry.environmentLease != nil {
+			entry.environmentLease.release()
+			entry.environmentLease = nil
 		}
 		entry.mu.Unlock()
 	}

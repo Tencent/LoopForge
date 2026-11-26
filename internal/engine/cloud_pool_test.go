@@ -71,7 +71,7 @@ func TestBindPoolRunnerDiscardsLocalSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	sandbox := &recordingSandbox{workspace: e.sandboxes.RunWorkspace(run.ID)}
-	e.runEnvs[run.ID] = &runEnvironment{sandbox: sandbox}
+	e.environments.envs[run.ID] = &runEnvironment{sandbox: sandbox}
 
 	bound, err := e.bindPoolRunner(context.Background(), run, "fix")
 	if err != nil {
@@ -114,6 +114,9 @@ func TestBindPoolRunnerWaitsForOriginalWorkspace(t *testing.T) {
 				},
 			}
 			if shared {
+				if err := s.PutRun(domain.Run{ID: "parent", Status: "running", Nodes: map[string]*domain.NodeRun{}}); err != nil {
+					t.Fatal(err)
+				}
 				run.ExecutionContext.WorkspaceRunID = "parent"
 				run.Repository = domain.RepositoryContext{}
 				delete(run.Nodes, "implement")
@@ -122,7 +125,7 @@ func TestBindPoolRunnerWaitsForOriginalWorkspace(t *testing.T) {
 				t.Fatal(err)
 			}
 			sandbox := &recordingSandbox{workspace: e.sandboxes.RunWorkspace(run.ID)}
-			e.runEnvs[run.ID] = &runEnvironment{sandbox: sandbox}
+			e.environments.envs[run.ID] = &runEnvironment{sandbox: sandbox}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			type result struct {
@@ -169,6 +172,9 @@ func TestBindPoolRunnerWaitsForOriginalWorkspace(t *testing.T) {
 func TestBindPoolRunnerWaitCanBeCanceled(t *testing.T) {
 	t.Parallel()
 	e, s := retryEngine(t)
+	if err := s.PutRun(domain.Run{ID: "parent", Status: "running", Nodes: map[string]*domain.NodeRun{}}); err != nil {
+		t.Fatal(err)
+	}
 	run := domain.Run{
 		ID: "cancel-wait", Status: "running",
 		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionPool: domain.ExecutionModeCloud, ExecutionRunnerID: "offline", WorkspaceRunID: "parent"},

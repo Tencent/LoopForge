@@ -44,18 +44,18 @@ func (e *Engine) notifyRunnerDispatch(provider string) {
 // SetRunnerControlNotify wires the low-latency runner WebSocket control path.
 // A missing/disconnected listener is harmless because desired_state is durable
 // and is also returned by lease renewal.
-func (e *Engine) SetRunnerControlNotify(fn func(runnerID, taskID, desiredState string)) {
+func (e *Engine) SetRunnerControlNotify(fn func(runnerID, taskID, desiredState string, attempt int)) {
 	e.mu.Lock()
 	e.runnerControlNotify = fn
 	e.mu.Unlock()
 }
 
-func (e *Engine) notifyRunnerControl(runnerID, taskID, desiredState string) {
+func (e *Engine) notifyRunnerControl(runnerID, taskID, desiredState string, attempt int) {
 	e.mu.Lock()
 	fn := e.runnerControlNotify
 	e.mu.Unlock()
 	if fn != nil && strings.TrimSpace(runnerID) != "" {
-		fn(runnerID, taskID, desiredState)
+		fn(runnerID, taskID, desiredState, attempt)
 	}
 }
 
@@ -67,7 +67,7 @@ func (e *Engine) cancelRunnerTasksForRun(runID string) error {
 	for _, id := range ids {
 		e.NotifyRunnerTaskChanged(id)
 		if task, ok := e.repo.RunnerTask(id); ok {
-			e.notifyRunnerControl(task.LeaseOwner, id, task.DesiredState)
+			e.notifyRunnerControl(task.LeaseOwner, id, task.DesiredState, task.Attempt)
 		}
 	}
 	return nil
@@ -291,16 +291,17 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	}
 	invocation.MCPCallServers = e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID).MCPServers
 	task := domain.RunnerTask{
-		ID:          fmt.Sprintf("rt-%d-%s", time.Now().UnixNano(), safeRunnerPath(node.ID)),
-		RunnerID:    runnerID,
-		Provider:    ex.Kind,
-		Prompt:      prompt,
-		Workspace:   workspace,
-		Status:      domain.RunnerTaskQueued,
-		MaxAttempts: 1, // engine-level retry/loop owns re-invocation policy
-		RunID:       run.ID,
-		NodeID:      node.ID,
-		Invocation:  invocation,
+		ID:            fmt.Sprintf("rt-%d-%s", time.Now().UnixNano(), safeRunnerPath(node.ID)),
+		RunnerID:      runnerID,
+		Provider:      ex.Kind,
+		Prompt:        prompt,
+		Workspace:     workspace,
+		Status:        domain.RunnerTaskQueued,
+		MaxAttempts:   1, // engine-level retry/loop owns re-invocation policy
+		RunID:         run.ID,
+		RunGeneration: run.Generation,
+		NodeID:        node.ID,
+		Invocation:    invocation,
 	}
 	sandboxSpec, err := e.runnerSandboxSpec(run)
 	if err != nil {
@@ -466,16 +467,17 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 		invocation.RecoverOutputs = strings.TrimSpace(artifactDirectory) == ""
 	}
 	task := domain.RunnerTask{
-		ID:          fmt.Sprintf("rt-%d-%s-script", time.Now().UnixNano(), safeRunnerPath(nodeID)),
-		RunnerID:    runnerID,
-		Provider:    "terminal",
-		Command:     command,
-		Workspace:   workspace,
-		Status:      domain.RunnerTaskQueued,
-		MaxAttempts: 1,
-		RunID:       run.ID,
-		NodeID:      nodeID,
-		Invocation:  invocation,
+		ID:            fmt.Sprintf("rt-%d-%s-script", time.Now().UnixNano(), safeRunnerPath(nodeID)),
+		RunnerID:      runnerID,
+		Provider:      "terminal",
+		Command:       command,
+		Workspace:     workspace,
+		Status:        domain.RunnerTaskQueued,
+		MaxAttempts:   1,
+		RunID:         run.ID,
+		RunGeneration: run.Generation,
+		NodeID:        nodeID,
+		Invocation:    invocation,
 	}
 	var err error
 	task.Sandbox, err = e.runnerSandboxSpec(run)
@@ -616,12 +618,6 @@ func (e *Engine) queueRunnerRunCleanup(run domain.Run) error {
 		return nil
 	}
 	taskID := "rt-cleanup-" + safeRunnerPath(run.ID)
-	if existing, ok := e.repo.RunnerTask(taskID); ok {
-		switch existing.Status {
-		case domain.RunnerTaskQueued, domain.RunnerTaskLeased, domain.RunnerTaskRunning:
-			return nil
-		}
-	}
 	if _, ok := e.repo.Runner(runnerID); !ok {
 		// Explicit runner uninstall removes every runner workspace before it
 		// deregisters the machine. There is no endpoint left to claim a cleanup
@@ -639,10 +635,13 @@ func (e *Engine) queueRunnerRunCleanup(run domain.Run) error {
 		RunID:       run.ID,
 		Sandbox:     run.WorkflowSnapshot.SandboxSnapshot,
 	}
-	if err := e.repo.PutRunnerTask(task); err != nil {
+	queued, err := e.repo.QueueSingletonRunnerTask(task)
+	if err != nil {
 		return err
 	}
-	e.notifyRunnerDispatch("terminal")
+	if queued {
+		e.notifyRunnerDispatch("terminal")
+	}
 	return nil
 }
 
@@ -652,14 +651,6 @@ func (e *Engine) queueRunnerPreviewArchive(run domain.Run, spec domain.RunnerPre
 		return fmt.Errorf("preview archive requires the original runner")
 	}
 	taskID := "rt-preview-archive-" + safeRunnerPath(run.ID)
-	if existing, ok := e.repo.RunnerTask(taskID); ok {
-		switch existing.Status {
-		case domain.RunnerTaskQueued, domain.RunnerTaskLeased, domain.RunnerTaskRunning:
-			return nil
-		}
-		// A finished archive is replaced when the build node succeeds again.
-		// The new task carries a fresh upload token for the new bundle.
-	}
 	if _, ok := e.repo.Runner(runnerID); !ok {
 		return fmt.Errorf("preview archive runner %s is unavailable", runnerID)
 	}
@@ -674,10 +665,13 @@ func (e *Engine) queueRunnerPreviewArchive(run domain.Run, spec domain.RunnerPre
 		RunID:          run.ID,
 		PreviewArchive: &spec,
 	}
-	if err := e.repo.PutRunnerTask(task); err != nil {
+	queued, err := e.repo.QueueSingletonRunnerTask(task)
+	if err != nil {
 		return err
 	}
-	e.notifyRunnerDispatch("terminal")
+	if queued {
+		e.notifyRunnerDispatch("terminal")
+	}
 	return nil
 }
 
@@ -685,7 +679,7 @@ func (e *Engine) queueRunnerPreviewArchive(run domain.Run, spec domain.RunnerPre
 // bound runner machine inside the node's task workspace. The invocation
 // carries the same repository git token as a script task: a gate such as
 // `git push` otherwise starts with prompts disabled and no credentials.
-func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nodeID, workspace, command string, gateSink runtime.EventSink) (string, error) {
+func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nodeID, workspace, command string, gateSink runtime.EventSink, generation ...int) (string, error) {
 	task := domain.RunnerTask{
 		ID:          fmt.Sprintf("rt-%d-gate", time.Now().UnixNano()),
 		RunnerID:    runnerID,
@@ -696,6 +690,9 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 		MaxAttempts: 1,
 		RunID:       runID,
 		NodeID:      nodeID,
+	}
+	if len(generation) > 0 {
+		task.RunGeneration = generation[0]
 	}
 	if run, ok := e.repo.RunState(runID); ok {
 		var err error

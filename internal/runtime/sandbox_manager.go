@@ -3,13 +3,18 @@ package runtime
 import (
 	"agentflow/internal/domain"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
 	"sync"
 )
+
+// ErrSandboxInUse tells callers that cleanup was deferred, not completed.
+var ErrSandboxInUse = errors.New("sandbox is in use")
 
 type Manager struct {
 	root  string
@@ -39,6 +44,36 @@ func (m *Manager) RunWorkspace(runID string) string {
 		return ""
 	}
 	return filepath.Join(m.root, safeID(runID))
+}
+
+// RunWorkspaceExists reports whether the local workspace has materialized.
+// Inspection failures are returned to the caller so a workspace cannot be
+// mistaken for a missing checkout when its state is unknown.
+func (m *Manager) RunWorkspaceExists(runID string) (bool, error) {
+	workspace := m.RunWorkspace(runID)
+	if workspace == "" {
+		return false, fmt.Errorf("workspace root is not configured")
+	}
+	_, err := os.Stat(workspace)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect run workspace: %w", err)
+	}
+	return true, nil
+}
+
+// LiveDockerSandbox reports whether a Docker sandbox currently binds the
+// workspace. The check belongs to the host environment manager so workflow
+// orchestration does not need to invoke Docker directly.
+func (m *Manager) LiveDockerSandbox(workspace string) bool {
+	workspace = filepath.Clean(workspace)
+	if workspace == "" || workspace == "." {
+		return false
+	}
+	name := "agentflow-" + filepath.Base(workspace)
+	return exec.Command("docker", "inspect", name).Run() == nil
 }
 
 func (m *Manager) Create(ctx context.Context, runID, nodeID string, profile domain.SandboxProfile) (Sandbox, error) {
@@ -75,7 +110,15 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	if err != nil {
 		return nil, fmt.Errorf("sandbox lock: %w", err)
 	}
+	// Ephemeral sandboxes wipe their directory on open and close, so they must
+	// exclude all other users for their entire lifetime.
+	workspaceLock, err := m.acquireWorkspaceUse(ctx, dir, wipe || ephemeral)
+	if err != nil {
+		_ = unlockFile(lock)
+		return nil, fmt.Errorf("workspace lock: %w", err)
+	}
 	fail := func(err error) (Sandbox, error) {
+		_ = unlockFile(workspaceLock)
 		_ = unlockFile(lock)
 		return nil, err
 	}
@@ -95,7 +138,7 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	if err != nil {
 		return fail(err)
 	}
-	return &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}, nil
+	return &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, workspaceLock: workspaceLock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}, nil
 }
 
 // DestroyRun deletes the host workspace for a finished SOP run: the persistent
@@ -109,13 +152,29 @@ func (m *Manager) DestroyRun(runID string) error {
 	if id == "" {
 		return nil
 	}
+	lock, acquired, err := m.tryAcquireLock(id)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return ErrSandboxInUse
+	}
+	defer unlockFile(lock)
+	workspaceLock, acquired, err := m.tryAcquireWorkspaceDeletion(id)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return ErrSandboxInUse
+	}
+	defer unlockFile(workspaceLock)
 	// Removing the directory alone leaves the container running against a bind
 	// that no longer exists. Docker reports such a container as active, so no
 	// prune can reclaim its writable layer afterwards.
 	removeDockerSandbox(context.Background(), dockerContainerName(id), tempDockerImageName(id))
-	_, err := m.removeMatching(func(name string) bool {
+	_, err = m.removeMatching(func(name string) bool {
 		return name == id || strings.HasPrefix(name, id+"-") || name == "persist-"+id || strings.HasPrefix(name, "persist-"+id+"-")
-	})
+	}, true, id)
 	return err
 }
 
@@ -127,6 +186,11 @@ func (m *Manager) DiscardRunContainer(ctx context.Context, runID string) {
 		return
 	}
 	if id := safeID(runID); id != "" {
+		lock, acquired, err := m.tryAcquireLock(id)
+		if err != nil || !acquired {
+			return
+		}
+		defer unlockFile(lock)
 		removeDockerSandbox(ctx, dockerContainerName(id), tempDockerImageName(id))
 	}
 }
@@ -187,10 +251,16 @@ func (m *Manager) ReclaimDockerSandboxes(ctx context.Context, liveRunIDs []strin
 		// The flock is held for as long as a sandbox is open, including by
 		// another process on this host. Reclaiming then would docker rm a
 		// container with an agent running inside it.
-		if m.workspaceInUse(workspace) {
+		id := strings.TrimPrefix(container, dockerSandboxPrefix)
+		lock, acquired, err := m.tryAcquireLock(id)
+		if err != nil {
+			return removed, err
+		}
+		if !acquired {
 			continue
 		}
 		removeDockerSandbox(ctx, container, tempDockerImageName(workspace))
+		_ = unlockFile(lock)
 		removed++
 	}
 	return removed, nil
@@ -254,10 +324,10 @@ func (m *Manager) ReclaimExcept(liveRunIDs []string) (int, error) {
 			}
 		}
 		return true
-	})
+	}, false)
 }
 
-func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
+func (m *Manager) removeMatching(match func(name string) bool, reportBusy bool, alreadyLocked ...string) (int, error) {
 	root, err := filepath.Abs(m.root)
 	if err != nil {
 		return 0, err
@@ -286,12 +356,48 @@ func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
 		}
 		// A live Exec has this directory as cwd. Removing it makes Node throw
 		// "ENOENT: no such file or directory, uv_cwd" instead of a Git error.
-		if m.workspaceInUse(name) {
-			continue
+		var lock *os.File
+		if len(alreadyLocked) == 0 || name != alreadyLocked[0] {
+			var acquired bool
+			lock, acquired, err = m.tryAcquireLock(name)
+			if err != nil {
+				if first == nil {
+					first = err
+				}
+				continue
+			}
+			if !acquired {
+				if reportBusy && first == nil {
+					first = ErrSandboxInUse
+				}
+				continue
+			}
 		}
-		if err := RemoveWorkspaceTree(dir); err != nil {
+		var workspaceLock *os.File
+		if len(alreadyLocked) == 0 || name != alreadyLocked[0] {
+			var acquired bool
+			var lockErr error
+			workspaceLock, acquired, lockErr = m.tryAcquireWorkspaceDeletion(name)
+			if lockErr != nil || !acquired {
+				if lock != nil {
+					_ = unlockFile(lock)
+				}
+				if lockErr != nil && first == nil {
+					first = lockErr
+				} else if !acquired && reportBusy && first == nil {
+					first = ErrSandboxInUse
+				}
+				continue
+			}
+		}
+		removeErr := RemoveWorkspaceTree(dir)
+		_ = unlockFile(workspaceLock)
+		if lock != nil {
+			_ = unlockFile(lock)
+		}
+		if removeErr != nil {
 			if first == nil {
-				first = err
+				first = removeErr
 			}
 			continue
 		}
@@ -305,6 +411,7 @@ type managedSandbox struct {
 	once          sync.Once
 	slots         chan struct{}
 	lock          *os.File
+	workspaceLock *os.File
 	ephemeral     bool
 	workspace     string
 	credentials   RunCredentials
@@ -357,9 +464,12 @@ func (s *managedSandbox) Close(ctx context.Context) error {
 	s.once.Do(func() {
 		err = s.Sandbox.Close(ctx)
 		if s.ephemeral && s.workspace != "" {
-			_ = RemoveWorkspaceTree(s.workspace)
+			if removeErr := RemoveWorkspaceTree(s.workspace); err == nil {
+				err = removeErr
+			}
 		}
 		_ = unlockFile(s.lock)
+		_ = unlockFile(s.workspaceLock)
 	})
 	return err
 }
@@ -369,6 +479,7 @@ func (s *managedSandbox) Close(ctx context.Context) error {
 func (s *managedSandbox) Detach() error {
 	s.once.Do(func() {
 		_ = unlockFile(s.lock)
+		_ = unlockFile(s.workspaceLock)
 	})
 	return nil
 }

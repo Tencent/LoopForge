@@ -459,9 +459,9 @@ func TestIntegrateScheduledRunDoesNotTouchDefaultBranch(t *testing.T) {
 		}
 		return "!12", nil
 	}
-	e.runEnvMu.Lock()
-	e.runEnvs[run.ID] = &runEnvironment{sandbox: stubWorkspaceSandbox{workspace: work}}
-	e.runEnvMu.Unlock()
+	e.environments.mu.Lock()
+	e.environments.envs[run.ID] = &runEnvironment{sandbox: stubWorkspaceSandbox{workspace: work}}
+	e.environments.mu.Unlock()
 	rework, err := e.integrateScheduledRun(run.ID)
 	if err != nil || rework {
 		t.Fatalf("rework=%v err=%v", rework, err)
@@ -613,9 +613,9 @@ func TestIntegrateScheduledRunUsesMRAndKeepsIntegrateUntouched(t *testing.T) {
 		gotProject, gotSrc, gotTgt, gotTitle = projectID, sourceBranch, targetBranch, title
 		return "!12", nil
 	}
-	e.runEnvMu.Lock()
-	e.runEnvs[run.ID] = &runEnvironment{sandbox: stubWorkspaceSandbox{workspace: work}}
-	e.runEnvMu.Unlock()
+	e.environments.mu.Lock()
+	e.environments.envs[run.ID] = &runEnvironment{sandbox: stubWorkspaceSandbox{workspace: work}}
+	e.environments.mu.Unlock()
 	rework, err := e.integrateScheduledRun(run.ID)
 	if err != nil || rework {
 		t.Fatalf("rework=%v err=%v", rework, err)
@@ -795,9 +795,9 @@ func TestIntegrateScheduledRunMultiRepository(t *testing.T) {
 		calls = append(calls, mergeCall{projectID, sourceBranch, targetBranch})
 		return "!9", nil
 	}
-	e.runEnvMu.Lock()
-	e.runEnvs[run.ID] = &runEnvironment{sandbox: stubWorkspaceSandbox{workspace: workspace}}
-	e.runEnvMu.Unlock()
+	e.environments.mu.Lock()
+	e.environments.envs[run.ID] = &runEnvironment{sandbox: stubWorkspaceSandbox{workspace: workspace}}
+	e.environments.mu.Unlock()
 	rework, err := e.integrateScheduledRun(run.ID)
 	if err != nil || rework {
 		t.Fatalf("rework=%v err=%v", rework, err)

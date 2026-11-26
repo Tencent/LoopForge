@@ -94,6 +94,15 @@ func (e *Engine) StartWithRepositories(ctx context.Context, workflowID, input st
 // startWorkflowDefinition also accepts a run-only conversation workspace definition.
 // It never writes a template to the catalog.
 func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
+	return e.startWorkflowDefinitionGuarded(ctx, wf, input, repositories, executionContext, workspace, nil)
+}
+
+type childStartGuard struct {
+	parentID, nodeID    string
+	generation, attempt int
+}
+
+func (e *Engine) startWorkflowDefinitionGuarded(ctx context.Context, wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool, guard *childStartGuard) (domain.Run, error) {
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	if executionContext.ParentRunID == "" || !executionContext.ExecutionPinned || executionContext.WorkspaceRunID == "" {
@@ -295,8 +304,10 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	// leased so another process cannot start a second execute() on the same run.
 	if autoAssign {
 		err = e.submitAutoAssignRun(r, candidates)
-	} else {
+	} else if guard == nil {
 		err = e.repo.PutRun(r)
+	} else {
+		err = e.repo.PutChildRun(r, guard.parentID, guard.nodeID, instanceID, guard.generation, guard.attempt)
 	}
 	if err != nil {
 		return domain.Run{}, err

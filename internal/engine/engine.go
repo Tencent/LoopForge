@@ -11,41 +11,42 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/executionenv"
 	"agentflow/internal/preview"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
 
 type Engine struct {
-	repo               *repo.Store
-	sandboxes          *runtime.Manager
+	repo *repo.Store
+	// sandboxes is the execution-environment capability. It deliberately
+	// contains no concrete runtime.Manager so SOP orchestration can use a
+	// remote manager implementation in a later deployment phase.
+	sandboxes          executionenv.Manager
+	executionBackend   executionenv.LocalBackend
 	runner             *runtime.ExecutorRunner
 	mu                 sync.Mutex
 	stateMu            sync.Mutex
 	running            map[string]context.CancelFunc
-	runEnvMu           sync.Mutex
-	runEnvs            map[string]*runEnvironment
+	environments       *environmentRegistry
 	workspaceTerminals runtime.TerminalPool
 
 	checkpointTransfers runtime.CheckpointTransfers
 	conversationSaves   sync.Map // background save token -> context.CancelFunc
-	// workspaceFacts are the latest facts an execution machine reported
-	// per run, read where the engine used to inspect its own workspace copy.
-	workspaceFacts map[string]domain.RunnerWorkspaceFacts
-	cloudPool      CloudRunnerPool
-	execLocks      keyedLocks
-	nodeExecMu     sync.Mutex
-	nodeExecs      map[string]map[string]nodeExecution
-	subMu          sync.Mutex
-	subs           map[string]map[chan domain.Run]struct{}
-	runnerTaskMu   sync.Mutex
-	runnerTaskSubs map[string]map[chan struct{}]struct{}
-	instanceID     string
-	workspaceHost  string
-	leaseTTL       time.Duration
-	executeRuns    bool
-	draining       bool
-	claimKick      chan struct{}
+	cloudPool           CloudRunnerPool
+	execLocks           keyedLocks
+	nodeExecMu          sync.Mutex
+	nodeExecs           map[string]map[string]nodeExecution
+	subMu               sync.Mutex
+	subs                map[string]map[chan domain.Run]struct{}
+	runnerTaskMu        sync.Mutex
+	runnerTaskSubs      map[string]map[chan struct{}]struct{}
+	instanceID          string
+	workspaceHost       string
+	leaseTTL            time.Duration
+	executeRuns         bool
+	draining            bool
+	claimKick           chan struct{}
 
 	// MergeIntoBranch creates or reuses a Gongfeng MR from source→target and
 	// merges it (merge commit, source branch kept). Scheduled SOP uses this
@@ -68,7 +69,7 @@ type Engine struct {
 	runnerDispatchNotify func(provider string)
 	// runnerControlNotify pushes durable task control changes to a connected
 	// execution machine. The database desired_state remains authoritative.
-	runnerControlNotify func(runnerID, taskID, desiredState string)
+	runnerControlNotify func(runnerID, taskID, desiredState string, attempt int)
 	// runControlNotify wakes the owning worker after pause/cancel flags are
 	// written. Nil means this process looks up engine_instances (and optional
 	// fallbackWorkerURL) and POSTs the interrupt itself.
@@ -101,10 +102,28 @@ type Engine struct {
 
 var ErrExecutionDisabled = errors.New("run execution is disabled on this instance")
 
-func New(s *repo.Store, sm *runtime.Manager) *Engine {
+// New keeps the existing local runtime constructor for callers.
+func New(s *repo.Store, manager *runtime.Manager) *Engine {
+	return NewWithExecutionManager(s, executionenv.NewRuntimeAdapter(manager))
+}
+
+// NewWithExecutionManager installs the host environment adapter explicitly.
+// Remote execution still uses the Runner task and workspace protocols.
+func NewWithExecutionManager(s *repo.Store, adapter executionenv.Manager) *Engine {
 	host, _ := os.Hostname()
-	e := &Engine{repo: s, sandboxes: sm, runner: runtime.NewExecutorRunner(), running: map[string]context.CancelFunc{}, runEnvs: map[string]*runEnvironment{}, workspaceFacts: map[string]domain.RunnerWorkspaceFacts{}, subs: map[string]map[chan domain.Run]struct{}{}, runnerTaskSubs: map[string]map[chan struct{}]struct{}{}, instanceID: fmt.Sprintf("%s-%d", host, os.Getpid()), workspaceHost: host, leaseTTL: 30 * time.Second, executeRuns: true, claimKick: make(chan struct{}, 1), obsKick: make(chan struct{}, 1)}
+	if adapter == nil {
+		adapter = executionenv.NewRuntimeAdapter(nil)
+	}
+	e := &Engine{repo: s, sandboxes: adapter, executionBackend: adapter, runner: runtime.NewExecutorRunner(), running: map[string]context.CancelFunc{}, environments: newEnvironmentRegistry(), subs: map[string]map[chan domain.Run]struct{}{}, runnerTaskSubs: map[string]map[chan struct{}]struct{}{}, instanceID: fmt.Sprintf("%s-%d", host, os.Getpid()), workspaceHost: host, leaseTTL: 30 * time.Second, executeRuns: true, claimKick: make(chan struct{}, 1), obsKick: make(chan struct{}, 1)}
 	return e
+}
+
+// setLocalSandboxManager installs both the legacy host operations and the
+// execution adapter while those host operations are being migrated.
+func (e *Engine) setLocalSandboxManager(sm *runtime.Manager) {
+	adapter := executionenv.NewRuntimeAdapter(sm)
+	e.sandboxes = adapter
+	e.executionBackend = adapter
 }
 
 // StartMaintenance starts the process-lifetime background work owned by the

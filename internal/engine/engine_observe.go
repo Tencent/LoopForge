@@ -13,6 +13,8 @@ import (
 type pendingObservation struct {
 	runID, nodeID string
 	event         domain.TelemetryEvent
+	generation    int
+	attempt       int
 }
 
 const (
@@ -21,11 +23,15 @@ const (
 )
 
 func (e *Engine) enqueueObservation(runID, nodeID string, observation domain.TelemetryEvent) {
+	e.enqueueObservationAt(runID, nodeID, observation, 0, 0)
+}
+
+func (e *Engine) enqueueObservationAt(runID, nodeID string, observation domain.TelemetryEvent, generation, attempt int) {
 	if e == nil {
 		return
 	}
 	e.obsMu.Lock()
-	e.obsPending = append(e.obsPending, pendingObservation{runID: runID, nodeID: nodeID, event: observation})
+	e.obsPending = append(e.obsPending, pendingObservation{runID: runID, nodeID: nodeID, event: observation, generation: generation, attempt: attempt})
 	n := len(e.obsPending)
 	e.obsMu.Unlock()
 	if n >= observationFlushKickSize {

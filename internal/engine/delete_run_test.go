@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +49,7 @@ func TestDeleteFailedRunDestroysLocalWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	sandbox := &deleteTrackingSandbox{workspace: workspace}
-	e.runEnvs[run.ID] = &runEnvironment{sandbox: sandbox}
+	e.environments.envs[run.ID] = &runEnvironment{sandbox: sandbox}
 
 	if err := e.DeleteRun(run.ID); err != nil {
 		t.Fatal(err)
@@ -56,7 +57,7 @@ func TestDeleteFailedRunDestroysLocalWorkspace(t *testing.T) {
 	if !sandbox.closed {
 		t.Fatal("run sandbox was not closed")
 	}
-	if _, ok := e.runEnvs[run.ID]; ok {
+	if _, ok := e.environments.envs[run.ID]; ok {
 		t.Fatal("run environment remains registered after delete")
 	}
 	if _, ok := st.Run(run.ID); ok {
@@ -64,6 +65,107 @@ func TestDeleteFailedRunDestroysLocalWorkspace(t *testing.T) {
 	}
 	if _, err := os.Stat(workspace); !os.IsNotExist(err) {
 		t.Fatalf("workspace still exists after delete: %v", err)
+	}
+}
+
+func TestDeleteRunRetainsRecordWhileAnotherProcessOwnsSandbox(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	root := t.TempDir()
+	manager := runtime.NewManager(root)
+	e := New(st, manager)
+	run := domain.Run{ID: "busy-delete", Status: "failed"}
+	if err := st.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	sandbox, err := manager.AcquireRun(context.Background(), run.ID, domain.SandboxProfile{Driver: "local"}, runtime.SandboxRequirements{}, runtime.RunCredentials{}, runtime.SandboxResources{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DeleteRun(run.ID); !errors.Is(err, runtime.ErrSandboxInUse) {
+		t.Fatalf("delete while sandbox busy: %v", err)
+	}
+	if _, ok := st.Run(run.ID); !ok {
+		t.Fatal("deleted run while workspace was still in use")
+	}
+	if err := sandbox.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DeleteRun(run.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeleteRunDefersForeignOrAPIEnvironmentCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		apiOnly bool
+		foreign bool
+	}{
+		{name: "api", apiOnly: true},
+		{name: "foreign worker", foreign: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(st.Close)
+			e := New(st, runtime.NewManager(t.TempDir()))
+			e.executeRuns = !tc.apiOnly
+			backend := &recordingExecutionBackend{}
+			e.executionBackend = backend
+			run := domain.Run{ID: "delete-deferred", Status: "failed"}
+			if tc.foreign {
+				run.WorkspaceHost, run.WorkspaceRoot = "other-worker", "/other-root"
+			}
+			if err := st.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.DeleteRun(run.ID); err != nil {
+				t.Fatal(err)
+			}
+			if len(backend.destroyed) != 0 {
+				t.Fatalf("destroyed on wrong host: %v", backend.destroyed)
+			}
+			if _, ok := st.Run(run.ID); ok {
+				t.Fatal("run was not deleted")
+			}
+		})
+	}
+}
+
+func TestWorkerReclaimsWorkspaceAfterAPIDeletesRun(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	root := t.TempDir()
+	api := New(st, runtime.NewManager(root))
+	api.ConfigureExecution("api", "host", 0, false)
+	worker := New(st, runtime.NewManager(root))
+	worker.ConfigureExecution("worker", "host", 0, true)
+	run := domain.Run{ID: "deleted-on-api", Status: "failed"}
+	if err := st.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	workspace := worker.RunWorkspace(run.ID)
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.DeleteRun(run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("API removed workspace before worker sweep: %v", err)
+	}
+	worker.reclaimSandboxes()
+	if _, err := os.Stat(workspace); !os.IsNotExist(err) {
+		t.Fatalf("worker did not reclaim deleted run workspace: %v", err)
 	}
 }
 
@@ -161,7 +263,7 @@ func TestFailedTransitionsKeepRunEnvironmentUntouched(t *testing.T) {
 				t.Fatal(err)
 			}
 			sandbox := &deleteTrackingSandbox{workspace: t.TempDir()}
-			e.runEnvs[tc.run.ID] = &runEnvironment{sandbox: sandbox}
+			e.environments.envs[tc.run.ID] = &runEnvironment{sandbox: sandbox}
 
 			if err := tc.fail(e); err != nil {
 				t.Fatal(err)
@@ -173,7 +275,7 @@ func TestFailedTransitionsKeepRunEnvironmentUntouched(t *testing.T) {
 			if sandbox.closed {
 				t.Fatal("failed transition closed the run sandbox")
 			}
-			if _, ok := e.runEnvs[tc.run.ID]; !ok {
+			if _, ok := e.environments.envs[tc.run.ID]; !ok {
 				t.Fatal("failed transition released the run environment")
 			}
 			if !failed.WorkspaceCleanedAt.IsZero() {

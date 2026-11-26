@@ -285,6 +285,12 @@ func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(runID, token string, revision
 				return err
 			}
 		}
+		// A workspace can be shared by child SOPs: a child that still holds the
+		// checkout (failed included, so it can be retried) keeps the owner alive.
+		inUse, err := r.sharedWorkspaceInUse(tx, runID)
+		if err != nil || inUse {
+			return err
+		}
 		var checkpoint WorkspaceCheckpoint
 		if err = tx.Omit("archive").Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, now).Take(&checkpoint).Error; err != nil {
 			return err
@@ -538,6 +544,13 @@ func (r *RunsRepo) ClaimWorkspaceDeletion(runID, token string, revision int, now
 			if inUse {
 				return fmt.Errorf("工作区仍有关联的 SOP 运行：%w", ErrWorkspaceInUse)
 			}
+		}
+		inUse, err := r.sharedWorkspaceInUse(tx, runID)
+		if err != nil {
+			return err
+		}
+		if inUse {
+			return ErrWorkspaceInUse
 		}
 		var count int64
 		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, now).Count(&count).Error; err != nil {

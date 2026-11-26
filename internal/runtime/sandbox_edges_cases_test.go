@@ -16,6 +16,30 @@ type cvRManagedInner struct {
 	bound     int
 }
 
+func TestRunWorkspaceExists(t *testing.T) {
+	root := t.TempDir()
+	manager := NewManager(root)
+	if exists, err := manager.RunWorkspaceExists("run"); err != nil || exists {
+		t.Fatalf("missing workspace: exists=%v err=%v", exists, err)
+	}
+	if err := os.Mkdir(manager.RunWorkspace("run"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := manager.RunWorkspaceExists("run"); err != nil || !exists {
+		t.Fatalf("existing workspace: exists=%v err=%v", exists, err)
+	}
+	if _, err := NewManager("").RunWorkspaceExists("run"); err == nil {
+		t.Fatal("unconfigured root must be reported")
+	}
+	file := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewManager(file).RunWorkspaceExists("run"); err == nil {
+		t.Fatal("workspace inspection failure must be reported")
+	}
+}
+
 func (s *cvRManagedInner) ID() string                  { return "inner" }
 func (s *cvRManagedInner) Workspace() string           { return s.workspace }
 func (s *cvRManagedInner) Close(context.Context) error { return nil }

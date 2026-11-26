@@ -43,8 +43,8 @@ type Daemon struct {
 	running              int32
 	registerMu           sync.Mutex
 	controlMu            sync.RWMutex
-	controls             map[string]chan string
-	pendingControls      map[string]string
+	controls             map[taskControlID]chan string
+	pendingControls      map[taskControlID]string
 	wsOnline             atomic.Bool
 	updateMu             sync.RWMutex
 	updateReady          atomic.Bool
@@ -84,6 +84,10 @@ type Config struct {
 	// ManagedCLIRoot explicitly opts platform runners into managed CLI coordination.
 	// Empty leaves ordinary user runners unchanged; it is never inferred from PATH.
 	ManagedCLIRoot string
+	// EnvironmentManagerURL enables the independent sandbox manager lease
+	// protocol. Empty keeps single-machine deployments fully local.
+	EnvironmentManagerURL   string
+	EnvironmentManagerToken string
 }
 
 type daemonState struct {
@@ -101,6 +105,9 @@ func DefaultStatePath() (string, error) {
 }
 
 func New(cfg Config) (*Daemon, error) {
+	if strings.TrimSpace(cfg.EnvironmentManagerURL) != "" {
+		return nil, errors.New("independent sandbox manager is not ready: workspace and cleanup lease fencing is incomplete")
+	}
 	cfg.ManagedCLIRoot = strings.TrimSpace(cfg.ManagedCLIRoot)
 	cfg.ServerURL = trimTrailingSlash(cfg.ServerURL)
 	if cfg.ServerURL == "" {
@@ -140,7 +147,7 @@ func New(cfg Config) (*Daemon, error) {
 		log.Printf("repository cache disabled: %v", err)
 	}
 	return &Daemon{cfg: cfg, client: NewClient(cfg.ServerURL), executor: runtime.NewExecutorRunner(),
-		controls: map[string]chan string{}, pendingControls: map[string]string{}, heartbeatWake: make(chan struct{}, 1)}, nil
+		controls: map[taskControlID]chan string{}, pendingControls: map[taskControlID]string{}, heartbeatWake: make(chan struct{}, 1)}, nil
 }
 
 func trimTrailingSlash(s string) string {
@@ -553,6 +560,29 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	ctx, stopLease := d.keepTaskLease(ctx, task, leaseRenewInterval)
 	defer stopLease()
 	ctx = runtime.WithProjectCredentialEnv(ctx, task.ProjectCredentialEnv)
+	var environmentLeaseErr error
+	var taskEnvironmentLease *environmentLease
+	taskOwnsEnvironmentLease := false
+	if strings.TrimSpace(d.cfg.EnvironmentManagerURL) != "" {
+		taskEnvironmentLease, taskOwnsEnvironmentLease, environmentLeaseErr = d.acquireTaskEnvironmentLease(ctx, task)
+		if environmentLeaseErr == nil && taskEnvironmentLease != nil {
+			leaseCtx, cancelLease := context.WithCancel(ctx)
+			ctx = withEnvironmentLease(leaseCtx, taskEnvironmentLease)
+			defer func() {
+				cancelLease()
+				if taskOwnsEnvironmentLease {
+					taskEnvironmentLease.release()
+				}
+			}()
+			go func() {
+				select {
+				case <-taskEnvironmentLease.done:
+					cancelLease()
+				case <-leaseCtx.Done():
+				}
+			}()
+		}
+	}
 	ctx = d.withDockerRunnerHelperWait(ctx)
 	ctx = gitwork.WithSSHKnownHosts(ctx, task.GitSSHKnownHosts)
 	// The read fence ends before the completion report: once the control plane
@@ -561,18 +591,25 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	releaseGate := func() {}
 	if task.RunID != "" {
 		gate := d.workspaceGate(d.taskGateKey(task))
-		gate.RLock()
-		releaseGate = onceRelease(gate.RUnlock)
+		if task.Action == domain.RunnerTaskActionCleanupRun {
+			gate.Lock()
+			releaseGate = onceRelease(gate.Unlock)
+		} else {
+			gate.RLock()
+			releaseGate = onceRelease(gate.RUnlock)
+		}
 	}
 	defer releaseGate()
-	d.registerTaskControl(task.ID)
-	defer d.unregisterTaskControl(task.ID)
+	d.registerTaskControl(task.ID, task.Attempt)
+	defer d.unregisterTaskControl(task.ID, task.Attempt)
 	log.Printf("task %s claimed (provider=%s attempt=%d)", task.ID, task.Provider, task.Attempt)
 
 	var result execResult
 	var artifacts map[string]string
 	managed := d.managedTaskState(task.ID)
 	switch {
+	case environmentLeaseErr != nil:
+		result = execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("acquire execution environment lease: %v", environmentLeaseErr)}
 	case len(task.ProjectCredentialIDs) > 0 && len(task.ProjectCredentialEnv) == 0:
 		result = execResult{status: domain.RunnerTaskFailed, errMsg: "未收到任务绑定的项目凭据"}
 	case managed != nil && managed.err != nil:
@@ -620,7 +657,15 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 
 	d.uploadTaskOutputs(ctx, task, result.outputs)
 	releaseGate()
-	completeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if taskEnvironmentLease != nil {
+		if err := taskEnvironmentLease.contextErr(ctx); err != nil {
+			result.status = domain.RunnerTaskCanceled
+			result.errMsg = fmt.Sprintf("execution environment lease lost before completion: %v", err)
+			result.result = ""
+			artifacts = nil
+		}
+	}
+	completeCtx, cancel := context.WithTimeout(context.WithValue(context.Background(), taskAttemptContextKey{}, task.Attempt), 30*time.Second)
 	defer cancel()
 	req := CompleteRequest{Status: result.status, Result: result.result, Error: result.errMsg, Artifacts: artifacts, Outputs: result.outputs}
 	if result.status == domain.RunnerTaskFailed || result.status == domain.RunnerTaskSuccess {
@@ -658,6 +703,9 @@ func (d *Daemon) reportTaskCompletion(ctx context.Context, taskID string, req Co
 }
 
 func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) execResult {
+	if err := ctx.Err(); err != nil {
+		return execResult{status: domain.RunnerTaskCanceled, errMsg: err.Error()}
+	}
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("start cleanup: %v", err)}
 	}
@@ -679,6 +727,9 @@ func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) 
 		if err := cleanupDockerWorkspace(ctx, target); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("cleanup docker sandbox: %v", err)}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return execResult{status: domain.RunnerTaskCanceled, errMsg: err.Error()}
 	}
 	if err := runtime.RemoveWorkspaceTree(target); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("remove runner workspace: %v", err)}

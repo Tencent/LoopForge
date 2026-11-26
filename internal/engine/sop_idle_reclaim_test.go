@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/executionenv"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
@@ -213,7 +214,7 @@ func TestSOPIdleReclaimTouchAndDescendantActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertHeld()
-	holder, err := e.sandboxes.AcquireRunIn(context.Background(), run.ID, run.ID, domain.SandboxProfile{}, runtime.SandboxRequirements{}, runtime.RunCredentials{}, runtime.SandboxResources{})
+	holder, err := e.executionBackend.Acquire(context.Background(), executionenv.AcquireRequest{Identity: executionenv.Identity{EnvironmentID: run.ID, WorkspaceID: run.ID}, Profile: domain.SandboxProfile{}, Requirements: runtime.SandboxRequirements{}, Credentials: runtime.RunCredentials{}, Resources: runtime.SandboxResources{}})
 	if err != nil {
 		t.Fatal(err)
 	}

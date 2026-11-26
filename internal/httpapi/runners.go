@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -1032,6 +1033,7 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		Capacity                    int      `json:"capacity"`
 		Preflight                   bool     `json:"preflight"`
 		NoWait                      bool     `json:"noWait"`
+		AttemptFencing              bool     `json:"attemptFencing"`
 		SupportsGitSSHKnownHosts    bool     `json:"supportsGitSshKnownHosts"`
 		SupportsDockerSandboxLimits bool     `json:"supportsDockerSandboxLimits"`
 	}
@@ -1047,11 +1049,11 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 	}
 	claimOrSignal := func() (domain.RunnerTask, bool, error) {
 		if input.Preflight {
-			available, err := h.repo.RunnerTaskAvailable(runner.ID, input.AvailableRuntimes)
+			available, err := h.repo.RunnerTaskAvailable(runner.ID, input.AvailableRuntimes, input.AttemptFencing)
 			return domain.RunnerTask{}, available, err
 		}
 		for {
-			task, claimed, err := h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, time.Now().UTC(), runnerTaskLeaseTTL)
+			task, claimed, err := h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, time.Now().UTC(), runnerTaskLeaseTTL, input.AttemptFencing)
 			if err != nil || !claimed || task.Sandbox == nil {
 				return task, claimed, err
 			}
@@ -1070,7 +1072,7 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			}
 			if err != nil {
 				// Finish the task before sending an unusable sandbox to the runner.
-				if finishErr := h.repo.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskFailed, nil, "", err.Error(), nil, nil, time.Now().UTC()); finishErr != nil {
+				if finishErr := h.repo.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskFailed, nil, "", err.Error(), nil, nil, time.Now().UTC(), task.Attempt); finishErr != nil {
 					return domain.RunnerTask{}, false, finishErr
 				}
 				if ctxErr := c.Request.Context().Err(); ctxErr != nil {
@@ -1266,7 +1268,11 @@ func (h *runnersHandlers) runnerTaskStart(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.repo.StartRunnerTask(c.Param("id"), runner.ID, time.Now().UTC()); err != nil {
+	attempt, ok := runnerTaskAttempt(c)
+	if !ok {
+		return
+	}
+	if err := h.repo.StartRunnerTask(c.Param("id"), runner.ID, time.Now().UTC(), attempt); err != nil {
 		if err == repo.ErrRunnerTaskLeaseLost {
 			c.JSON(http.StatusConflict, map[string]string{"error": "task lease lost"})
 			return
@@ -1286,7 +1292,11 @@ func (h *runnersHandlers) runnerTaskLeaseRenew(c *gin.Context) {
 	if !ok {
 		return
 	}
-	desired, err := h.repo.RenewRunnerTaskLease(c.Param("id"), runner.ID, runnerTaskLeaseTTL, time.Now().UTC())
+	attempt, ok := runnerTaskAttempt(c)
+	if !ok {
+		return
+	}
+	desired, err := h.repo.RenewRunnerTaskLease(c.Param("id"), runner.ID, runnerTaskLeaseTTL, time.Now().UTC(), attempt)
 	if err != nil {
 		if err == repo.ErrRunnerTaskLeaseLost {
 			c.JSON(http.StatusConflict, map[string]string{"error": "task lease lost"})
@@ -1308,25 +1318,18 @@ func (h *runnersHandlers) runnerTaskEventsIngest(c *gin.Context) {
 		return
 	}
 	taskID := c.Param("id")
-	task, exists := h.repo.RunnerTask(taskID)
-	if !exists {
+	if _, exists := h.repo.RunnerTask(taskID); !exists {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	// Events are accepted from the lease owner; retries after a lease loss
-	// are idempotent through (task_id, seq) anyway.
-	if task.LeaseOwner != runner.ID || (task.Status != domain.RunnerTaskLeased && task.Status != domain.RunnerTaskRunning) {
-		c.JSON(http.StatusConflict, map[string]string{"error": "task lease lost"})
+	attempt, ok := runnerTaskAttempt(c)
+	if !ok {
 		return
 	}
 	var input struct {
 		Events []domain.RunnerTaskEvent `json:"events"`
 	}
 	if !decode(c, &input) {
-		return
-	}
-	if len(input.Events) == 0 {
-		c.JSON(http.StatusOK, map[string]int{"accepted": 0})
 		return
 	}
 	if len(input.Events) > 500 {
@@ -1341,8 +1344,12 @@ func (h *runnersHandlers) runnerTaskEventsIngest(c *gin.Context) {
 			input.Events[i].Ts = time.Now().UTC()
 		}
 	}
-	accepted, err := h.repo.AppendRunnerTaskEvents(taskID, input.Events)
+	accepted, err := h.repo.AppendLeasedRunnerTaskEvents(taskID, runner.ID, attempt, time.Now().UTC(), input.Events)
 	if err != nil {
+		if err == repo.ErrRunnerTaskLeaseLost {
+			c.JSON(http.StatusConflict, map[string]string{"error": "task lease lost"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -1355,6 +1362,10 @@ func (h *runnersHandlers) runnerTaskEventsIngest(c *gin.Context) {
 //	g.POST("/runners/tasks/:id/complete", h.runnerTaskComplete)
 func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 	runner, ok := h.runnerSessionAuth(c)
+	if !ok {
+		return
+	}
+	attempt, ok := runnerTaskAttempt(c)
 	if !ok {
 		return
 	}
@@ -1390,7 +1401,7 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 	if input.Outputs != nil && (len(input.Outputs.FileBlobs) != 0 || len(input.Outputs.FileErrors) != 0) && !h.validateRunnerOutputTransfer(c, runner.ID, input.Outputs) {
 		return
 	}
-	if err := h.repo.CompleteRunnerTask(c.Param("id"), runner.ID, input.Status, input.ExitCode, input.Result, input.Error, input.Artifacts, input.Outputs, time.Now().UTC()); err != nil {
+	if err := h.repo.CompleteRunnerTask(c.Param("id"), runner.ID, input.Status, input.ExitCode, input.Result, input.Error, input.Artifacts, input.Outputs, time.Now().UTC(), attempt); err != nil {
 		if err == repo.ErrRunnerTaskLeaseLost {
 			c.JSON(http.StatusConflict, map[string]string{"error": "task lease lost"})
 			return
@@ -1405,6 +1416,21 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 	c.JSON(http.StatusOK, map[string]bool{"ok": true})
 }
 
+// Missing attempt identifies a legacy runner; it is accepted only for the
+// first claim. New runners send the claim attempt on every task request.
+func runnerTaskAttempt(c *gin.Context) (int, bool) {
+	value := c.GetHeader("X-Runner-Task-Attempt")
+	if value == "" {
+		return 0, true
+	}
+	attempt, err := strconv.Atoi(value)
+	if err != nil || attempt < 1 || int64(attempt) > 1<<31 {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid task attempt"})
+		return 0, false
+	}
+	return attempt, true
+}
+
 // runnerTaskControl lets the runner poll the desired state while running.
 // 路由: g.GET("/api/runners/tasks/:id/control", h.runnerTaskControl)
 //
@@ -1414,12 +1440,16 @@ func (h *runnersHandlers) runnerTaskControl(c *gin.Context) {
 	if !ok {
 		return
 	}
-	task, exists := h.repo.RunnerTaskControl(c.Param("id"))
-	if !exists {
+	attempt, ok := runnerTaskAttempt(c)
+	if !ok {
+		return
+	}
+	if _, exists := h.repo.RunnerTaskControl(c.Param("id")); !exists {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	if task.LeaseOwner != runner.ID {
+	task, err := h.repo.LeasedRunnerTaskControl(c.Param("id"), runner.ID, attempt, time.Now().UTC())
+	if err != nil {
 		c.JSON(http.StatusConflict, map[string]string{"error": "task lease lost"})
 		return
 	}

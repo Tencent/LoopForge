@@ -513,9 +513,10 @@ type RunnerTask struct {
 	UpdatedAt    time.Time  `json:"updatedAt"`
 	// RunID/NodeID link a task to a workflow execution. Runner events for a
 	// linked task are bridged into the run timeline (adapter runner-v1).
-	RunID      string            `json:"runId,omitempty"`
-	NodeID     string            `json:"nodeId,omitempty"`
-	Invocation *RunnerInvocation `json:"invocation,omitempty"`
+	RunID         string            `json:"runId,omitempty"`
+	NodeID        string            `json:"nodeId,omitempty"`
+	RunGeneration int               `json:"runGeneration,omitempty"`
+	Invocation    *RunnerInvocation `json:"invocation,omitempty"`
 	// GitSSHKnownHosts is attached on authenticated claim and is never queued.
 	GitSSHKnownHosts     *GitSSHKnownHosts `json:"gitSshKnownHosts,omitempty"`
 	ProjectCredentialIDs []string          `json:"projectCredentialIds,omitempty"`

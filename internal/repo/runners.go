@@ -34,6 +34,7 @@ type runnerTaskPayload struct {
 	CompletedAt       *runnerTaskTime                  `json:"completedAt,omitempty"`
 	RunID             string                           `json:"runId,omitempty"`
 	NodeID            string                           `json:"nodeId,omitempty"`
+	RunGeneration     int                              `json:"runGeneration,omitempty"`
 	Invocation        *domain.RunnerInvocation         `json:"invocation,omitempty"`
 	Sandbox           *domain.RunnerSandboxSpec        `json:"sandbox,omitempty"`
 	Command           string                           `json:"command,omitempty"`
@@ -120,6 +121,7 @@ func runnerTaskFromRow(row runnerTaskRow) domain.RunnerTask {
 		t.CompletedAt = p.CompletedAt.toTime()
 		t.RunID = p.RunID
 		t.NodeID = p.NodeID
+		t.RunGeneration = p.RunGeneration
 		t.ProjectCredentialIDs = p.ProjectCredentialIDs
 		t.Invocation = p.Invocation
 		t.Sandbox = p.Sandbox
@@ -144,7 +146,7 @@ func runnerTaskPayloadBytes(v domain.RunnerTask) []byte {
 	return mustJSON(runnerTaskPayload{
 		Prompt: v.Prompt, Workspace: v.Workspace, Args: v.Args, ExitCode: v.ExitCode,
 		Result: v.Result, Error: v.Error, StartedAt: newRunnerTaskTime(v.StartedAt),
-		CompletedAt: newRunnerTaskTime(v.CompletedAt), RunID: v.RunID, NodeID: v.NodeID,
+		CompletedAt: newRunnerTaskTime(v.CompletedAt), RunID: v.RunID, NodeID: v.NodeID, RunGeneration: v.RunGeneration,
 		Invocation: v.Invocation, Sandbox: v.Sandbox, Command: v.Command, Action: v.Action,
 		PreviewArchive: v.PreviewArchive, WorkBranchMessage: v.WorkBranchMessage, Artifacts: v.Artifacts,
 		Outputs: v.Outputs, IntegrationLabel: v.IntegrationLabel,
@@ -561,7 +563,103 @@ func (r *RunnersRepo) PutRunnerTask(v domain.RunnerTask) error {
 		v.MaxAttempts = 1
 	}
 	v.UpdatedAt = now
-	return upsert(r.DB, "runner_tasks", runnerTaskRowValues(v))
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := r.checkRunnerTaskRunLease(tx, v, now); err != nil {
+			return err
+		}
+		return upsert(tx, "runner_tasks", runnerTaskRowValues(v))
+	})
+}
+
+// checkRunnerTaskRunLease fences SOP work against the run's scheduler lease.
+// Tasks without a generation are legacy or independently owned operations
+// (cleanup, preview and conversation workspace actions).
+func (r *RunnersRepo) checkRunnerTaskRunLease(tx *gorm.DB, task domain.RunnerTask, now time.Time) error {
+	if task.RunGeneration == 0 {
+		return nil
+	}
+	if task.RunGeneration < 0 || strings.TrimSpace(task.RunID) == "" {
+		return ErrRunnerTaskLeaseLost
+	}
+	var run runRow
+	if err := r.locking(tx).Select("id", "status", "owner_instance_id", "lease_until", "execution_generation").Where("id = ?", task.RunID).Take(&run).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrRunnerTaskLeaseLost
+		}
+		return err
+	}
+	if run.Generation != task.RunGeneration || run.OwnerInstanceID == "" || run.LeaseUntil == nil || !run.LeaseUntil.After(now) || run.Status != "running" {
+		return ErrRunnerTaskLeaseLost
+	}
+	return nil
+}
+
+// acknowledgeCanceledStaleTask accepts only a cancellation acknowledgement
+// from the current task claimant. It never accepts output from the stale Run.
+func (r *RunnersRepo) acknowledgeCanceledStaleTask(tx *gorm.DB, id, runnerID string, now time.Time, attempt ...int) (bool, error) {
+	var row runnerTaskRow
+	if err := r.locking(tx).Where("id = ? AND lease_owner = ? AND desired_state = ? AND status IN ?", id, runnerID, domain.RunnerTaskDesiredCancel, []string{domain.RunnerTaskLeased, domain.RunnerTaskRunning}).Take(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	claim := 0
+	if len(attempt) > 0 {
+		claim = attempt[0]
+	}
+	if row.LeaseUntil == nil || !row.LeaseUntil.After(now) || claim == 0 && row.Attempt != 1 || claim != 0 && row.Attempt != claim {
+		return false, nil
+	}
+	task := runnerTaskFromRow(row)
+	task.Status, task.Error, task.Result = domain.RunnerTaskCanceled, "run execution lease lost", ""
+	task.Artifacts, task.Outputs, task.ExitCode = nil, nil, nil
+	task.LeaseOwner, task.LeaseUntil, task.CompletedAt, task.UpdatedAt = "", nil, &now, now
+	scrubRunnerTaskCredentials(&task)
+	return true, tx.Model(&runnerTaskRow{}).Where("id = ?", id).Updates(runnerTaskRowValues(task)).Error
+}
+
+// QueueSingletonRunnerTask inserts a deterministic task or replaces a settled
+// one atomically. Keeping the attempt counter prevents a late request from a
+// previous use of the same ID being mistaken for the new claim.
+func (r *RunnersRepo) QueueSingletonRunnerTask(v domain.RunnerTask) (bool, error) {
+	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Provider) == "" {
+		return false, fmt.Errorf("runner task id and provider are required")
+	}
+	now := time.Now().UTC()
+	v.Status = domain.RunnerTaskQueued
+	if v.MaxAttempts < 1 {
+		v.MaxAttempts = 1
+	}
+	v.CreatedAt, v.UpdatedAt = now, now
+	queued := false
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		inserted, err := insertIgnore(tx, "runner_tasks", runnerTaskRowValues(v))
+		if err != nil {
+			return err
+		}
+		if inserted {
+			queued = true
+			return nil
+		}
+		var row runnerTaskRow
+		if err := r.locking(tx).Where("id = ?", v.ID).Take(&row).Error; err != nil {
+			return err
+		}
+		if row.Status == domain.RunnerTaskQueued || row.Status == domain.RunnerTaskLeased || row.Status == domain.RunnerTaskRunning {
+			return nil
+		}
+		v.Attempt = row.Attempt
+		// MaxAttempts counts claims in this new lifecycle, while attempt is a
+		// monotonic fencing number across all uses of the task ID.
+		v.MaxAttempts += row.Attempt
+		if err := tx.Model(&runnerTaskRow{}).Where("id = ?", v.ID).Updates(runnerTaskRowValues(v)).Error; err != nil {
+			return err
+		}
+		queued = true
+		return nil
+	})
+	return queued, err
 }
 
 func (r *RunnersRepo) RunnerTask(id string) (domain.RunnerTask, bool) {
@@ -576,10 +674,25 @@ func (r *RunnersRepo) RunnerTask(id string) (domain.RunnerTask, bool) {
 // Prompt, invocation, results and artifact bodies are not needed by this API.
 func (r *RunnersRepo) RunnerTaskControl(id string) (domain.RunnerTask, bool) {
 	var row runnerTaskRow
-	if err := r.DB.Select("id", "desired_state", "status", "lease_owner").Where("id = ?", id).Take(&row).Error; err != nil {
+	if err := r.DB.Select("id", "desired_state", "status", "lease_owner", "lease_until", "attempt").Where("id = ?", id).Take(&row).Error; err != nil {
 		return domain.RunnerTask{}, false
 	}
-	return domain.RunnerTask{ID: row.ID, DesiredState: row.DesiredState, Status: row.Status, LeaseOwner: row.LeaseOwner}, true
+	return domain.RunnerTask{ID: row.ID, DesiredState: row.DesiredState, Status: row.Status, LeaseOwner: row.LeaseOwner, LeaseUntil: row.LeaseUntil, Attempt: row.Attempt}, true
+}
+
+// LeasedRunnerTaskControl verifies both the task lease and its associated Run
+// generation. A stale task must stop even if its own lease has not expired.
+func (r *RunnersRepo) LeasedRunnerTaskControl(id, runnerID string, attempt int, now time.Time) (domain.RunnerTask, error) {
+	var task domain.RunnerTask
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID, now, attempt)
+		if !ok {
+			return ErrRunnerTaskLeaseLost
+		}
+		task = runnerTaskFromRow(row)
+		return nil
+	})
+	return task, err
 }
 
 func (r *RunnersRepo) RunnerTasks() []domain.RunnerTask {
@@ -607,7 +720,7 @@ func (r *RunnersRepo) RunnerTasks() []domain.RunnerTask {
 }
 
 // RunnerTaskAvailable checks for eligible queued work without taking a lease.
-func (r *RunnersRepo) RunnerTaskAvailable(runnerID string, providers []string) (bool, error) {
+func (r *RunnersRepo) RunnerTaskAvailable(runnerID string, providers []string, fenced ...bool) (bool, error) {
 	if strings.TrimSpace(runnerID) == "" || len(providers) == 0 {
 		return false, nil
 	}
@@ -621,7 +734,11 @@ func (r *RunnersRepo) RunnerTaskAvailable(runnerID string, providers []string) (
 		return false, nil
 	}
 	var rows []runnerTaskRow
-	err := r.DB.Select("id").Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed).Limit(1).Find(&rows).Error
+	query := r.DB.Select("id").Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed)
+	if len(fenced) > 0 && !fenced[0] {
+		query = query.Where("attempt = 0")
+	}
+	err := query.Limit(1).Find(&rows).Error
 	return len(rows) > 0, err
 }
 
@@ -629,7 +746,7 @@ func (r *RunnersRepo) RunnerTaskAvailable(runnerID string, providers []string) (
 // in the runner's available list and whose runner targeting (if any) matches.
 // The transactional claim guarantees exactly one winner even when several
 // runners wake up at the same time.
-func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now time.Time, leaseTTL time.Duration) (domain.RunnerTask, bool, error) {
+func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now time.Time, leaseTTL time.Duration, fenced ...bool) (domain.RunnerTask, bool, error) {
 	if strings.TrimSpace(runnerID) == "" {
 		return domain.RunnerTask{}, false, fmt.Errorf("runner id is required")
 	}
@@ -649,15 +766,28 @@ func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now t
 	var found bool
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var rows []runnerTaskRow
-		// Select only what the lease update needs; see RunnerTasks.
-		if err := r.locking(tx).Select("id", "attempt").
-			Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed).
-			Order("created_at").Limit(1).
+		// Select only what the lease update and the Run fence need; see RunnerTasks.
+		query := r.locking(tx).Select("id", "attempt", "payload").
+			Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed)
+		if len(fenced) > 0 && !fenced[0] {
+			query = query.Where("attempt = 0")
+		}
+		if err := query.Order("created_at").Limit(1).
 			Find(&rows).Error; err != nil {
 			return err
 		}
 		if len(rows) == 0 {
 			return nil
+		}
+		if err := r.checkRunnerTaskRunLease(tx, runnerTaskFromRow(rows[0]), now); err != nil {
+			if !errors.Is(err, ErrRunnerTaskLeaseLost) {
+				return err
+			}
+			task := runnerTaskFromRow(rows[0])
+			task.Status, task.Error, task.UpdatedAt = domain.RunnerTaskCanceled, "run execution lease lost", now
+			task.CompletedAt = &now
+			scrubRunnerTaskCredentials(&task)
+			return tx.Model(&runnerTaskRow{}).Where("id = ? AND status = ?", task.ID, domain.RunnerTaskQueued).Updates(runnerTaskRowValues(task)).Error
 		}
 		taskID := rows[0].ID
 		res := tx.Model(&runnerTaskRow{}).
@@ -688,9 +818,9 @@ func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now t
 }
 
 // StartRunnerTask moves a leased task into running.
-func (r *RunnersRepo) StartRunnerTask(id, runnerID string, now time.Time) error {
+func (r *RunnersRepo) StartRunnerTask(id, runnerID string, now time.Time, attempt ...int) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID)
+		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID, now, attempt...)
 		if !ok {
 			return ErrRunnerTaskLeaseLost
 		}
@@ -708,11 +838,23 @@ func (r *RunnersRepo) StartRunnerTask(id, runnerID string, now time.Time) error 
 }
 
 // takeRunnerTaskForLease loads a task that must currently be leased by runnerID.
-func (r *RunnersRepo) takeRunnerTaskForLease(tx *gorm.DB, id, runnerID string) (runnerTaskRow, bool) {
+func (r *RunnersRepo) takeRunnerTaskForLease(tx *gorm.DB, id, runnerID string, now time.Time, attempt ...int) (runnerTaskRow, bool) {
 	var row runnerTaskRow
 	if err := r.locking(tx).
 		Where("id = ? AND lease_owner = ? AND status IN ?", id, runnerID, []string{domain.RunnerTaskLeased, domain.RunnerTaskRunning}).
 		Take(&row).Error; err != nil {
+		return runnerTaskRow{}, false
+	}
+	claim := 0
+	if len(attempt) != 0 {
+		claim = attempt[0]
+	}
+	// Legacy callers can report only their first claim. Lease expiration must
+	// be checked even when no attempt argument is supplied.
+	if row.LeaseUntil == nil || !row.LeaseUntil.After(now) || (claim == 0 && row.Attempt != 1) || (claim != 0 && row.Attempt != claim) {
+		return runnerTaskRow{}, false
+	}
+	if err := r.checkRunnerTaskRunLease(tx, runnerTaskFromRow(row), now); err != nil {
 		return runnerTaskRow{}, false
 	}
 	return row, true
@@ -720,10 +862,10 @@ func (r *RunnersRepo) takeRunnerTaskForLease(tx *gorm.DB, id, runnerID string) (
 
 // RenewRunnerTaskLease extends the lease and returns the desired state so a
 // cancel can travel on the same response without extra polling.
-func (r *RunnersRepo) RenewRunnerTaskLease(id, runnerID string, ttl time.Duration, now time.Time) (string, error) {
+func (r *RunnersRepo) RenewRunnerTaskLease(id, runnerID string, ttl time.Duration, now time.Time, attempt ...int) (string, error) {
 	var desired string
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
-		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID)
+		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID, now, attempt...)
 		if !ok {
 			return ErrRunnerTaskLeaseLost
 		}
@@ -741,13 +883,19 @@ func (r *RunnersRepo) RenewRunnerTaskLease(id, runnerID string, ttl time.Duratio
 // CompleteRunnerTask finalizes a task. Only the lease owner may complete it.
 // artifacts (legacy, by contract name) and outputs carry what the runner
 // reported about its workspace; either may be nil.
-func (r *RunnersRepo) CompleteRunnerTask(id, runnerID, status string, exitCode *int, result, errMsg string, artifacts map[string]string, outputs *domain.RunnerTaskOutputs, now time.Time) error {
+func (r *RunnersRepo) CompleteRunnerTask(id, runnerID, status string, exitCode *int, result, errMsg string, artifacts map[string]string, outputs *domain.RunnerTaskOutputs, now time.Time, attempt ...int) error {
 	if status != domain.RunnerTaskSuccess && status != domain.RunnerTaskFailed && status != domain.RunnerTaskCanceled {
 		return fmt.Errorf("invalid final task status %q", status)
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID)
+		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID, now, attempt...)
 		if !ok {
+			if status == domain.RunnerTaskCanceled {
+				acknowledged, err := r.acknowledgeCanceledStaleTask(tx, id, runnerID, now, attempt...)
+				if err != nil || acknowledged {
+					return err
+				}
+			}
 			return ErrRunnerTaskLeaseLost
 		}
 		task := runnerTaskFromRow(row)
@@ -876,21 +1024,42 @@ func (r *RunnersRepo) AppendRunnerTaskEvents(taskID string, events []domain.Runn
 	}
 	accepted := 0
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
-		accepted = 0
-		for _, ev := range events {
-			inserted, err := insertIgnore(tx, "runner_task_events", map[string]any{
-				"task_id": taskID, "seq": ev.Seq, "type": ev.Type, "data": ev.Data, "ts": timePtr(ev.Ts),
-			})
-			if err != nil {
-				return err
-			}
-			if inserted {
-				accepted++
-			}
-		}
-		return nil
+		var err error
+		accepted, err = appendRunnerTaskEvents(tx, taskID, events)
+		return err
 	})
 	return accepted, err
+}
+
+// AppendLeasedRunnerTaskEvents validates ownership and writes events in the
+// same transaction, so a reclaimed task cannot accept an old attempt's output.
+func (r *RunnersRepo) AppendLeasedRunnerTaskEvents(taskID, runnerID string, attempt int, now time.Time, events []domain.RunnerTaskEvent) (int, error) {
+	accepted := 0
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		if _, ok := r.takeRunnerTaskForLease(tx, taskID, runnerID, now, attempt); !ok {
+			return ErrRunnerTaskLeaseLost
+		}
+		var err error
+		accepted, err = appendRunnerTaskEvents(tx, taskID, events)
+		return err
+	})
+	return accepted, err
+}
+
+func appendRunnerTaskEvents(tx *gorm.DB, taskID string, events []domain.RunnerTaskEvent) (int, error) {
+	accepted := 0
+	for _, ev := range events {
+		inserted, err := insertIgnore(tx, "runner_task_events", map[string]any{
+			"task_id": taskID, "seq": ev.Seq, "type": ev.Type, "data": ev.Data, "ts": timePtr(ev.Ts),
+		})
+		if err != nil {
+			return 0, err
+		}
+		if inserted {
+			accepted++
+		}
+	}
+	return accepted, nil
 }
 
 func (r *RunnersRepo) RunnerTaskEvents(taskID string) []domain.RunnerTaskEvent {

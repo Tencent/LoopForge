@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,78 @@ import (
 
 	"agentflow/internal/domain"
 )
+
+func TestExpiredCleanupCannotRemoveBusyWorkspace(t *testing.T) {
+	var expired atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if filepath.Base(r.URL.Path) == "renew" {
+			expired.Store(true)
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":"task lease lost"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	workspace := filepath.Join(root, "runs", "run-1")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d, err := New(Config{ServerURL: server.URL, BootstrapToken: "local-test", StatePath: filepath.Join(t.TempDir(), "state.json"), DefaultWorkspaceRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := d.workspaceGate("run-1")
+	gate.RLock()
+	done := make(chan struct{})
+	go func() {
+		d.executeTask(context.Background(), domain.RunnerTask{ID: "cleanup", RunID: "run-1", Workspace: "runs/run-1", Attempt: 1, Action: domain.RunnerTaskActionCleanupRun})
+		close(done)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for !expired.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !expired.Load() {
+		t.Fatal("cleanup did not lose lease")
+	}
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("cleanup removed an actively used workspace: %v", err)
+	}
+	gate.RUnlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not stop after losing lease")
+	}
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("expired cleanup removed workspace: %v", err)
+	}
+}
+
+func TestTaskControlRejectsDifferentAttempt(t *testing.T) {
+	d := &Daemon{controls: map[taskControlID]chan string{}, pendingControls: map[taskControlID]string{}}
+	taskID := "2:task with space"
+	current := d.registerTaskControl(taskID, 2)
+	defer d.unregisterTaskControl(taskID, 2)
+	d.signalTaskControl(taskID, domain.RunnerTaskDesiredCancel, 1)
+	select {
+	case <-current:
+		t.Fatal("old attempt cancelled current execution")
+	default:
+	}
+	d.signalTaskControl(taskID, domain.RunnerTaskDesiredCancel, 2)
+	select {
+	case <-current:
+	default:
+		t.Fatal("current control was not delivered")
+	}
+	ids := d.activeTaskIDs()
+	if len(ids) != 1 || ids[0] != taskID {
+		t.Fatalf("active task IDs: %v", ids)
+	}
+}
 
 func TestClaimedTaskRenewsWhileWaitingForWorkspace(t *testing.T) {
 	renewed := make(chan struct{}, 1)

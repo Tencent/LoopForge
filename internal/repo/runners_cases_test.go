@@ -147,7 +147,7 @@ func TestRunnerTaskLeaseEventsExpiryCancellationAndDeregister(t *testing.T) {
 	if _, ok, err := s.ClaimRunnerTask(runner.ID, nil, now, time.Minute); err != nil || ok {
 		t.Fatalf("providerless claim ok=%v err=%v", ok, err)
 	}
-	claimed, ok, err := s.ClaimRunnerTask(runner.ID, []string{"codex"}, now, -time.Second)
+	claimed, ok, err := s.ClaimRunnerTask(runner.ID, []string{"codex"}, now, time.Minute)
 	if err != nil || !ok || claimed.Status != domain.RunnerTaskLeased || claimed.Attempt != 1 {
 		t.Fatalf("claimed=%+v ok=%v err=%v", claimed, ok, err)
 	}

@@ -11,6 +11,7 @@ import (
 )
 
 type taskLeaseContextKey struct{}
+type taskAttemptContextKey struct{}
 
 func taskLeaseManaged(ctx context.Context) bool {
 	managed, _ := ctx.Value(taskLeaseContextKey{}).(bool)
@@ -21,6 +22,7 @@ func taskLeaseManaged(ctx context.Context) bool {
 // StartTask and artifact collection after the process exits. Its independent
 // goroutine is not delayed by output uploads or sandbox setup.
 func (d *Daemon) keepTaskLease(parent context.Context, task domain.RunnerTask, interval time.Duration) (context.Context, func()) {
+	parent = context.WithValue(parent, taskAttemptContextKey{}, task.Attempt)
 	ctx, cancel := context.WithCancel(context.WithValue(parent, taskLeaseContextKey{}, true))
 	done := make(chan struct{})
 	go func() {
