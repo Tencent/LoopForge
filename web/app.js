@@ -1401,6 +1401,7 @@ function bind(){
     if($('#dashboardView').classList.contains('active'))renderDashboard();
     if($('#observabilityView').classList.contains('active'))refreshObs();
     if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
+    if(state.currentView==='knowledge')renderKnowledgeView();
   };
   document.querySelectorAll('[data-scope-for]').forEach(bar=>{
     bar.querySelectorAll('[data-scope]').forEach(btn=>btn.onclick=()=>{

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { loadApp, settle, chooseOption, WEB_ROOT } from '../lib/load-app.mjs';
+import { loadApp, settle, chooseOption, sampleBootstrap, WEB_ROOT } from '../lib/load-app.mjs';
 
 const commit = 'abcdef1234567890abcdef1234567890abcdef12';
 const hostedSource = {
@@ -44,6 +44,49 @@ const docReply = (call) => {
     lines: [{ number: 1, text: text.split('\n')[0] }, { number: 2, text: text.split('\n')[1] }],
   };
 };
+
+test('switching projects in the knowledge center replaces the old scope and closes its drawer', async (t) => {
+  const bootstrap = sampleBootstrap();
+  bootstrap.projects.push({ id: 'project-2', name: 'Second project' });
+  const newSource = { ...hostedSource, id: 'kb-hosted-project-2', baseId: 'kb-project-2' };
+  let releaseOldDocuments;
+  const oldDocuments = new Promise((resolve) => { releaseOldDocuments = resolve; });
+  t.after(() => releaseOldDocuments([]));
+  const app = await loadApp({ hash: '#/knowledge', routes: [
+    { path: '/api/bootstrap', body: bootstrap },
+    { path: '/api/knowledge/bases?projectId=project-1', body: overview },
+    { path: '/api/knowledge/bases?projectId=project-2', body: {
+      bases: [{ id: newSource.baseId, layer: 'project', name: 'Second knowledge base', sources: [newSource] }],
+    } },
+    { path: '/api/knowledge/bases/documents?projectId=project-1&source=kb-hosted-project-1', body: () => oldDocuments },
+    { path: '/api/knowledge/bases/documents?projectId=project-2&source=kb-hosted-project-2', body: [
+      { path: 'second.md', title: 'Second document' },
+    ] },
+  ] });
+  t.after(app.close);
+  await settle();
+
+  const doc = app.document;
+  doc.querySelector('#kbTab-docs').click();
+  await settle();
+  doc.querySelector('#kbNewDoc').click();
+  assert.equal(doc.querySelector('#kbDrawer').getAttribute('aria-hidden'), 'false');
+
+  chooseOption(doc.querySelector('#projectSwitcher'), 'project-2');
+  await settle();
+  assert.equal(doc.querySelector('#kbDrawer').getAttribute('aria-hidden'), 'true');
+  const sources = doc.querySelector('#kbDocsSource');
+  assert.deepEqual([...sources.options].map((option) => option.value), [newSource.id]);
+  assert.match(doc.querySelector('.kb-scope').textContent, /Second project/);
+
+  releaseOldDocuments(hostedDocs);
+  await settle();
+  assert.match(doc.querySelector('#kbDocsList').textContent, /Second document/);
+  assert.doesNotMatch(doc.querySelector('#kbDocsList').textContent, /guides\/new\.md/);
+
+  doc.querySelector('#kbNewDoc').click();
+  assert.equal(doc.querySelector('#kbDrawerSub').textContent, newSource.id);
+});
 
 test('knowledge center lists source names, browses Git docs, links citations, and validates input', async (t) => {
   const app = await loadApp({ routes: [

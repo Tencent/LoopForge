@@ -193,7 +193,10 @@ async function renderKnowledgeView(){
   kb.rendered=false;
   if(kb.projectId!==null&&kb.projectId!==kbProjectId()){
     kbDrawerClose();
-    Object.assign(kb.search,{result:null,error:'',sources:[]});
+    kbStopSyncPoll();
+    Object.assign(kb.search,{result:null,error:'',sources:[],loading:false,seq:kb.search.seq+1});
+    kb.overview=null;kb.overviewError='';kb.externalSources=[];
+    kb.usage=null;kb.submissions=[];kb.candidates=[];kb.bindings=[];kb.bindingsError='';
     kb.governance=null;kb.governanceError='';kb.feedbackSent=new Set();
     kb.docs={source:'',items:[],error:'',loading:false,loaded:false};
     kb.pendingCitation='';
@@ -520,9 +523,10 @@ function kbEnsureSyncPoll(){
 
 async function kbPollSources(){
   if(!$('#knowledgeView')?.classList.contains('active'))return;
+  const seq=kb.refreshSeq;
   try{
     const overview=await api(`/api/knowledge/bases?projectId=${encodeURIComponent(kbProjectId())}`,{silent:true});
-    if(overview?.error)return;
+    if(seq!==kb.refreshSeq||overview?.error)return;
     kb.overview=overview;kb.overviewError='';
     kbRenderStatus();
     const host=$('#kbSourcesHost');
@@ -661,14 +665,19 @@ function kbBindDocs(){
 }
 
 async function kbLoadDocs(source){
-  const sid=source||kb.docs.source;
+  const docs=kb.docs;
+  const sid=source||docs.source;
   if(!sid)return;
-  kb.docs.source=sid;kb.docs.loading=true;kb.docs.error='';kbUpdateDocs();
+  docs.source=sid;docs.loading=true;docs.error='';kbUpdateDocs();
   try{
-    kb.docs.items=await api(`/api/knowledge/bases/documents?projectId=${encodeURIComponent(kbProjectId())}&source=${encodeURIComponent(sid)}`,{silent:true});
-    kb.docs.loaded=true;
-  }catch(err){kb.docs.items=[];kb.docs.error=err.message}
-  kb.docs.loading=false;
+    const items=await api(`/api/knowledge/bases/documents?projectId=${encodeURIComponent(kbProjectId())}&source=${encodeURIComponent(sid)}`,{silent:true});
+    if(docs!==kb.docs||sid!==docs.source)return;
+    docs.items=items;docs.loaded=true;
+  }catch(err){
+    if(docs!==kb.docs||sid!==docs.source)return;
+    docs.items=[];docs.error=err.message;
+  }
+  docs.loading=false;
   kbUpdateDocs();
 }
 
