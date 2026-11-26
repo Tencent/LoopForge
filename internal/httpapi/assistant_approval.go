@@ -183,7 +183,7 @@ func injectAssistantDraftProjectID(tool string, body json.RawMessage, projectID 
 
 // workflowDraftNodeWarnings 检查 workflows_save 草稿的节点完整性：
 // agent 节点必须绑定已存在的角色，script 节点必须有脚本。缺失绑定的
-// SOP 保存后无法执行，应在用户确认前暴露而不是等运行时失败。
+// LOOP 保存后无法执行，应在用户确认前暴露而不是等运行时失败。
 func (h *assistantHandlers) workflowDraftNodeWarnings(d assistantDraft) []string {
 	if len(d.Body) == 0 {
 		return nil
@@ -328,12 +328,12 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 	}
 }
 
-// workflowDeleteWarnings 汇总删除 SOP 前的冲突：通用模板不可删、仍有进行中的
+// workflowDeleteWarnings 汇总删除 LOOP 前的冲突：通用模板不可删、仍有进行中的
 // 运行、仍被未关闭的 Issue 绑定。
 func (h *assistantHandlers) workflowDeleteWarnings(id string) []string {
 	workflow, ok := h.repo.Workflow(id)
 	if !ok {
-		return []string{fmt.Sprintf("SOP %s 不存在，执行将失败", id)}
+		return []string{fmt.Sprintf("LOOP %s 不存在，执行将失败", id)}
 	}
 	out := []string{}
 	if workflow.Generic {
@@ -346,7 +346,7 @@ func (h *assistantHandlers) workflowDeleteWarnings(id string) []string {
 		}
 	}
 	if running > 0 {
-		out = append(out, fmt.Sprintf("该 SOP 还有 %d 个进行中的运行，请先终止后再删除", running))
+		out = append(out, fmt.Sprintf("该 LOOP 还有 %d 个进行中的运行，请先终止后再删除", running))
 	}
 	var boundIssues []string
 	for _, issue := range h.repo.Issues() {
@@ -355,7 +355,7 @@ func (h *assistantHandlers) workflowDeleteWarnings(id string) []string {
 		}
 	}
 	if len(boundIssues) > 0 {
-		out = append(out, fmt.Sprintf("该 SOP 仍被 %d 个未关闭的 Issue 绑定（%s），请先改绑", len(boundIssues), strings.Join(boundIssues, "、")))
+		out = append(out, fmt.Sprintf("该 LOOP 仍被 %d 个未关闭的 Issue 绑定（%s），请先改绑", len(boundIssues), strings.Join(boundIssues, "、")))
 	}
 	return out
 }

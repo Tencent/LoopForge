@@ -38,7 +38,7 @@ function approvalWaitReason(run,nodeId){
   let up=edges.filter(e=>e.target===nodeId&&e.source).map(e=>name(e.source));
   let down=edges.filter(e=>e.source===nodeId&&e.target).map(e=>name(e.target));
   if(!edges.length){up=index>0?[name(nodes[index-1].id)]:[];down=index+1<nodes.length?[name(nodes[index+1].id)]:[]}
-  const sop=String(wf.name||'').trim()?`SOP「${String(wf.name).trim()}」`:'该 SOP';
+  const sop=String(wf.name||'').trim()?`LOOP「${String(wf.name).trim()}」`:'该 LOOP';
   let text=`${sop}在这一步设置了人工门禁`;
   text+=up.length?`：${up.join('、')}已完成，需要有权限的成员检查结果后确认`:'，需要有权限的成员确认';
   text+=down.length?`，确认后继续${down.join('、')}`:'，确认后运行结束';
@@ -305,7 +305,7 @@ function refreshRunSOPButtonHTML(run){
     (Number(latest.version||0)===Number(current.version||0)&&Number(latest.revision||0)===Number(current.revision||0));
   if(same)return '';
   const version=`v${latest.version||1} #${latest.revision||0}`;
-  return `<button class="button ghost small" data-refresh-run-sop="${escapeHTML(run.id)}">更新为最新 SOP（${escapeHTML(version)}）</button>`;
+  return `<button class="button ghost small" data-refresh-run-sop="${escapeHTML(run.id)}">更新为最新 LOOP（${escapeHTML(version)}）</button>`;
 }
 function pausedRunPanelHTML(run){
   const paused=pausedWorkflowNodes(run);
@@ -315,7 +315,7 @@ function pausedRunPanelHTML(run){
   const restored=restoredSOPResumeNode(run);
   const idlePause=!paused.length&&!restored;
   const detail=restored
-    ? `将从「${escapeHTML(restored.name||restored.id)}」重新启动 SOP，保留已完成的上游结果。已有文件和平台变更不会回退，后续节点将重新检查当前工作区。`
+    ? `将从「${escapeHTML(restored.name||restored.id)}」重新启动 LOOP，保留已完成的上游结果。已有文件和平台变更不会回退，后续节点将重新检查当前工作区。`
     : idlePause
     ? '当前没有被打断的步骤。继续后会接着执行尚未完成的节点；如果流程已经走完，运行会正常结束。'
     : agentPaused
@@ -347,7 +347,7 @@ async function retryWaitingNode(runId,nodeId,fromEl){
   const context=readHumanContext(fromEl);
   try{await requestRunActivation(runId,'retry',withHumanContext({nodeId,reason,context}));const run=await syncRunControlState(runId);toast(runControlToast(run,'已确认重试本节点'),'ok');renderApprovals(true);if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}
 }
-async function declineRetry(runId,nodeId){if(queuedRunActionBlocked(runId))return;if(!await afConfirm({title:'放弃重试确认',message:'确定不重试？本节点将失败，整条 SOP 停止。',confirmText:'确认不重试',isDanger:true}))return;try{await api(`/api/runs/${runId}/decline-retry`,{method:'POST',body:JSON.stringify({nodeId})});toast('已选择不重试，节点失败','ok');renderApprovals(true);if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}}
+async function declineRetry(runId,nodeId){if(queuedRunActionBlocked(runId))return;if(!await afConfirm({title:'放弃重试确认',message:'确定不重试？本节点将失败，整条 LOOP 停止。',confirmText:'确认不重试',isDanger:true}))return;try{await api(`/api/runs/${runId}/decline-retry`,{method:'POST',body:JSON.stringify({nodeId})});toast('已选择不重试，节点失败','ok');renderApprovals(true);if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}}
 async function pauseRun(runId){
   if(queuedRunActionBlocked(runId))return;
   if(!await afConfirm({title:'暂停运行确认',message:'确定暂停当前运行？正在执行的节点会安全中断，工作区会保留，稍后可补充信息后继续。',confirmText:'确认暂停'}))return;
@@ -396,9 +396,9 @@ async function refreshRunSOP(runId){
   let current;
   try{current=await api(`/api/runs/${encodeURIComponent(runId)}`,{silent:true})}catch(e){return toast(e.message,'err')}
   const latest=(state.data.workflows||[]).find(w=>w.id===current?.workflowId);
-  if(!latest)return toast('未找到最新 SOP','err');
-  if(Number(latest.version||0)===Number(current.workflowSnapshot?.version||0)&&Number(latest.revision||0)===Number(current.workflowSnapshot?.revision||0))return toast('当前运行已使用最新 SOP');
-  if(!await afConfirm({title:'更新 SOP 确认',message:'确定把当前运行更新为最新 SOP？已完成的同名节点和产物会保留，新节点会加入待执行；当前运行环境保持不变。',confirmText:'确认更新'}))return;
+  if(!latest)return toast('未找到最新 LOOP','err');
+  if(Number(latest.version||0)===Number(current.workflowSnapshot?.version||0)&&Number(latest.revision||0)===Number(current.workflowSnapshot?.revision||0))return toast('当前运行已使用最新 LOOP');
+  if(!await afConfirm({title:'更新 LOOP 确认',message:'确定把当前运行更新为最新 LOOP？已完成的同名节点和产物会保留，新节点会加入待执行；当前运行环境保持不变。',confirmText:'确认更新'}))return;
   try{
     await api(`/api/runs/${encodeURIComponent(runId)}/refresh-sop`,{method:'POST'});
     const [run]=await Promise.all([api(`/api/runs/${encodeURIComponent(runId)}`),refreshIssues(),refreshRuns(true)]);
@@ -409,7 +409,7 @@ async function refreshRunSOP(runId){
     }
     if($('#approvalsView')?.classList.contains('active'))await renderApprovals(true);
     if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop');
-    toast('已更新为最新 SOP','ok');
+    toast('已更新为最新 LOOP','ok');
   }catch(e){toast(e.message,'err')}
 }
 function bindWaitingActions(root){
@@ -426,7 +426,7 @@ function bindWaitingActions(root){
 function approvalItems(){
   const waiting=scopedRuns((state.data.runs||[]).filter(r=>{
     if(r.status!=='waiting')return false;
-    // Workspaces and retired groups never request SOP approval.
+    // Workspaces and retired groups never request LOOP approval.
     if(r.kind==='workspace'||r.workflowSnapshot?.collaborationMode==='group')return false;
     // 基线对齐不再等人确认：不进「待我确认」，由引擎自动合入。
     return r.workflowId!=='scheduled-baseline-align'&&r.workflowSnapshot?.id!=='scheduled-baseline-align';

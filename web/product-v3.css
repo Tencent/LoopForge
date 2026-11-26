@@ -40,7 +40,7 @@ html[data-theme="dark"]{
 .worker-log-line time{color:#8fa0b8}
 .worker-log-line b{color:#a8b6ca}
 
-/* SOP and Agent libraries */
+/* LOOP and Agent libraries */
 .sop-catalog,.definition-card-grid{gap:14px}.sop-card,.definition-card{padding:18px;border-color:var(--v3-line);box-shadow:none;transition:.17s ease}.sop-card:before,.definition-card:before{display:none}.sop-card:hover,.definition-card:hover{transform:translateY(-3px);border-color:var(--v3-line-2);box-shadow:var(--v3-shadow)}.sop-card h3,.definition-card h3{color:var(--v3-ink);font-size:16px;letter-spacing:-.02em}.sop-card p,.definition-card p{color:var(--v3-ink-2);line-height:1.55}.sop-kpis,.definition-card-assets,.sop-runtime{background:var(--v3-soft);border:0;border-radius:10px}.sop-status,.definition-version,.health-dot-card+b{font-weight:650}.recent-runs button{background:transparent;border-color:var(--v3-line)}
 
 /* Flow studio */

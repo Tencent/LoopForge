@@ -2,8 +2,9 @@
 # Bring the Compose database up to what this release reads but gorm
 # AutoMigrate cannot create: the generated columns from migration 001, the
 # INSERT IGNORE starter catalog, the 「发起 MR」 node of the built-in code delivery
-# SOPs from migration 033, the MR roles' Git credential instructions from
-# migration 038. The installer and `./start.sh pull` replay these steps
+# LOOPs from migration 033, the MR roles' Git credential instructions from
+# migration 038, and the built-in LOOP terminology from migration 043.
+# The installer and `./start.sh pull` replay these steps
 # after the platform is healthy.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -17,4 +18,5 @@ fi
 cat migrations/seed/*.sql \
   migrations/033_generic_sop_mr_node.sql \
   migrations/038_generic_sop_host_credentials.sql \
+  migrations/043_loop_terminology.sql \
   | docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge'

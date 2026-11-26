@@ -45,7 +45,7 @@ describe("dispatched subagents", () => {
     ]);
   });
 
-  test("the artifacts list has a 子 Agent section that opens like an SOP node", async () => {
+  test("the artifacts list has a 子 Agent section that opens like a LOOP node", async () => {
     const messages = [
       { role: "user", content: "补单测" },
       {
@@ -74,7 +74,7 @@ describe("dispatched subagents", () => {
     expect(screen.getByRole("heading", { name: "子 Agent" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /测试工程师/ }));
     view.rerender(panel());
-    // Like an SOP node: the task it was given, then its report, once.
+    // Like a LOOP node: the task it was given, then its report, once.
     expect(screen.getByRole("tab", { name: /会话过程/ })).toBeTruthy();
     expect(screen.getByLabelText("收到的任务").textContent).toContain("给 a.go 补单测");
     expect(screen.getAllByText("用例都通过了")).toHaveLength(1);

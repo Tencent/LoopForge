@@ -95,7 +95,7 @@ func TestMarkAndReopenDeliveredIssue(t *testing.T) {
 	}
 	lockedAgain, _ := s.Issue(issue.ID)
 	if !lockedAgain.DeliveryLocked() {
-		t.Fatalf("new SOP success should lock a reopened issue: %+v", lockedAgain)
+		t.Fatalf("new LOOP success should lock a reopened issue: %+v", lockedAgain)
 	}
 }
 
@@ -146,7 +146,7 @@ func TestReconcileCompletedDeliveries(t *testing.T) {
 	}
 	locked, _ := s.Issue(issue.ID)
 	if !locked.DeliveryLocked() {
-		t.Fatalf("expected succeeded SOP to lock issue: %+v", locked)
+		t.Fatalf("expected succeeded LOOP to lock issue: %+v", locked)
 	}
 }
 

@@ -137,7 +137,7 @@ func TestSharedGenerationUsesOneSlotAndMembersCanCancel(t *testing.T) {
 		}
 	}
 	if _, shared, err := h.conversationScope(func() *gin.Context { c, _ := workbenchContext(b, "GET", "/", bytes.NewBuffer(nil)); return c }(), "private", "shared-run", s.ProjectID, b.ID); err == nil || shared {
-		t.Fatal("private SOP slot accepted")
+		t.Fatal("private LOOP slot accepted")
 	}
 }
 func TestRoleAgentFile(t *testing.T) {

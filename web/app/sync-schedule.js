@@ -322,7 +322,7 @@ function syncScheduleJobKind(){
   const assistant=kind==='assistant';
   f.elements.timeoutMinutes.disabled=!assistant;
   $('#scheduleModalTitle').textContent=assistant?'AI 定时任务':'触发配置';
-  $('#scheduleModalHint').textContent=assistant?'按计划以保存人的身份和完全权限执行提示词，可调用 SOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
+  $('#scheduleModalHint').textContent=assistant?'按计划以保存人的身份和完全权限执行提示词，可调用 LOOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 LOOP 的需求，通过基线门禁后派发 LOOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
   $('#scheduleModal').querySelector('.schedule-head').hidden=assistant;
   $('#scheduleJobList').hidden=assistant||!projectTriggerJob();
   f.querySelector('[type="submit"]').textContent=assistant?'保存 AI 定时任务':'保存触发配置';
@@ -382,7 +382,7 @@ function fillScheduleJobForm(job={}){
   const sops=runnableWorkflowOptions();
   const preferred=job.workflowId||defaultSOPForIssue({source:'tapd',projectId:state.projectFilter})||'';
   const chosen=sops.some(w=>w.id===preferred)?preferred:(sops[0]&&sops[0].id)||'';
-  f.elements.workflowId.innerHTML=(sops.length?'':`<option value="">请选择默认 SOP</option>`)+sops.map(w=>`<option value="${escapeHTML(w.id)}"${w.id===chosen?' selected':''}>${escapeHTML(w.name)}</option>`).join('');
+  f.elements.workflowId.innerHTML=(sops.length?'':`<option value="">请选择默认 LOOP</option>`)+sops.map(w=>`<option value="${escapeHTML(w.id)}"${w.id===chosen?' selected':''}>${escapeHTML(w.name)}</option>`).join('');
   f.elements.workflowId.value=chosen;
   syncScheduleJobTiming();
   syncScheduleJobKind();
@@ -510,7 +510,7 @@ function renderScheduleJobs(){
   if(count){count.textContent=!dispatch.length?'未配置':scheduleJobRunning(dispatch[0])?'运行中':dispatch[0].enabled?'已启用':'未启用';count.classList.toggle('is-running',dispatch.some(scheduleJobRunning))}
   const disabled='本实例不执行定时任务；任务可在主实例自动运行。';
   $('#scheduleRuntimeHint').textContent=canRun?'每个项目使用一份触发配置，修改后保存即可生效。立即运行在服务端执行，关闭页面不会中断。':disabled;
-  const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。':disabled;
+  const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 LOOP 的需求，通过基线门禁后派发 LOOP。每个项目使用一份触发配置。':disabled;
   $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'任务以最后保存人的身份和完全权限执行。关闭页面后，任务会继续运行。':disabled;
   $('#aiScheduleProjectName').textContent=currentProject()?.name||'当前项目';
   $('#aiScheduleCount').textContent=`${assistant.length} 个任务`;
@@ -520,7 +520,7 @@ function renderScheduleJobs(){
   $('#scheduleJobList').hidden=$('#scheduleJobForm').elements.jobKind.value==='assistant'||!dispatch.length;
   renderScheduleJobList($('#scheduleJobList'),dispatch,'dispatch',canRun);
   renderScheduleJobList(triggerList,dispatch,'dispatch',canRun);
-  if(triggerList&&!dispatch.length)triggerList.innerHTML=`<div class="sync-empty">${state.projectFilter?'当前项目还没有触发配置，点击「配置触发」设置自动派发。':'请先在顶栏选择项目，再配置 SOP 触发。'}</div>`;
+  if(triggerList&&!dispatch.length)triggerList.innerHTML=`<div class="sync-empty">${state.projectFilter?'当前项目还没有触发配置，点击「配置触发」设置自动派发。':'请先在顶栏选择项目，再配置 LOOP 触发。'}</div>`;
   renderScheduleJobList($('#aiScheduleJobList'),assistant,'assistant',canRun);
   renderAISchedulePanels();
   startScheduleJobPoll();
@@ -705,7 +705,7 @@ async function saveScheduleJob(e){
   if(assistant&&payload.references.length>12)return toast('AI 定时任务最多引用 12 个项目资产');
   if(assistant&&!payload.assistantPrompt&&!payload.sharedTaskId)return toast('请填写 AI 定时任务的提示词');
   if(assistant&&!f.elements.timeoutMinutes.validity.valid)return toast('执行超时必须为 1–240 分钟');
-  if(!assistant&&!payload.workflowId)return toast('请选择默认 SOP');
+  if(!assistant&&!payload.workflowId)return toast('请选择默认 LOOP');
   if(!assistant&&!payload.issueStatuses.length)return toast('请至少选择一个触发状态');
   if(!assistant&&payload.maxDispatch!==undefined&&(!Number.isInteger(payload.maxDispatch)||payload.maxDispatch<1||payload.maxDispatch>10))return toast('单次最多触发需求数必须为 1–10，或留空使用默认值 10');
   if(cron&&!payload.cron)return toast('请填写 Cron 表达式');

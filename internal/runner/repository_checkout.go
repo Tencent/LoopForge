@@ -22,7 +22,7 @@ func checkoutRepositoryForPreparation(ctx context.Context, workspace string, rep
 	}
 	if repository.PreserveCheckout {
 		if !gitwork.HasWorkspaceExecutor(ctx) {
-			return fmt.Errorf("shared checkout preparation requires the SOP sandbox")
+			return fmt.Errorf("shared checkout preparation requires the LOOP sandbox")
 		}
 		existing, err := gitwork.ExistingSOPCheckout(ctx, workspace, repository.CloneURL)
 		if err != nil {

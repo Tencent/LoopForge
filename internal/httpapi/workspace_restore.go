@@ -71,7 +71,7 @@ func (h *runsHandlers) prepareRunActivationWorkspace(c *gin.Context, id string) 
 }
 
 // Async callers poll the durable restore separately, then repeat their control
-// decision once ready. A 202 acknowledges restoration, never SOP execution.
+// decision once ready. A 202 acknowledges restoration, never LOOP execution.
 func (h *runsHandlers) prepareWorkspaceRestore(c *gin.Context, id string) bool {
 	if !strings.Contains(c.GetHeader("Prefer"), "respond-async") {
 		if err := h.engine.RestoreConversationWorkspaceIfNeeded(c.Request.Context(), id); err != nil {

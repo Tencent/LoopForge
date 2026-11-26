@@ -8,7 +8,7 @@ import (
 var genericDockerEpoch = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // genericBackendDockerfileContent is the platform default image for the
-// LoopForge backend delivery SOP: Node (agent CLIs) + Go + git. It follows
+// LoopForge backend delivery LOOP: Node (agent CLIs) + Go + git. It follows
 // the SkillHub backend image that already runs on the production CVM.
 const genericBackendDockerfileContent = `FROM node:22-bookworm-slim
 
@@ -74,7 +74,7 @@ WORKDIR /workspace
 CMD ["sh", "-lc", "trap : TERM INT; sleep infinity & wait"]
 `
 
-// GenericDockerSandbox is the shared docker profile bound by the generic SOP.
+// GenericDockerSandbox is the shared docker profile bound by the generic LOOP.
 func GenericDockerSandbox() domain.SandboxProfile {
 	return domain.SandboxProfile{
 		ID:         GenericDockerSandboxID,

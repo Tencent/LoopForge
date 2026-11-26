@@ -160,8 +160,8 @@ func TestDockerSandboxUsesRelayNetworkOnlyWhenRequested(t *testing.T) {
 		invalidRelayConfig bool
 		wantNetwork        string
 	}{
-		{name: "SOP with private home", privateHome: true, wantNetwork: "sop-network"},
-		{name: "SOP ignores invalid conversation settings", privateHome: true, invalidRelayConfig: true, wantNetwork: "sop-network"},
+		{name: "LOOP with private home", privateHome: true, wantNetwork: "sop-network"},
+		{name: "LOOP ignores invalid conversation settings", privateHome: true, invalidRelayConfig: true, wantNetwork: "sop-network"},
 		{name: "conversation", conversation: true, wantNetwork: "chat-network"},
 		{name: "Codex login relay", runnerLoginRelay: true, wantNetwork: "chat-network"},
 	} {

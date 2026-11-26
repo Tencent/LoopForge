@@ -226,7 +226,7 @@ func TestDockerScriptWithGitCredentialOnImageWithoutGit(t *testing.T) {
 	t.Setenv("AGENTFLOW_CONVERSATION_RELAY_HOST", host)
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
-	// Stage the packaged Git outside PATH so the SOP can install it without
+	// Stage the packaged Git outside PATH so the LOOP can install it without
 	// network access. Leave its standard Git helpers and libraries in place.
 	dockerfile := domain.DockerfileDefinition{Content: "FROM " + gitHelperDockerTestImage + "\n" +
 		"RUN mkdir /opt/git-fixture && mv /usr/bin/git /opt/git-fixture/git\n"}
@@ -303,7 +303,7 @@ exec git ls-remote -- "$1"
 	for _, user := range []string{"alice", "bob"} {
 		bound := WithSandboxCredentials(sandbox, credentialsFor(user, origin))
 		if out, err := bound.Exec(ctx, fetch(user), nil); err != nil || !strings.Contains(out, "refs/heads/main") {
-			t.Fatalf("%s could not install Git and authenticate in the same SOP: %q, %v", user, out, err)
+			t.Fatalf("%s could not install Git and authenticate in the same LOOP: %q, %v", user, out, err)
 		}
 	}
 	for _, creds := range []RunCredentials{{}, credentialsFor("alice", "http://"+net.JoinHostPort(host, "1"))} {

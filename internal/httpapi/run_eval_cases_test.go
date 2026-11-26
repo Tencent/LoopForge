@@ -383,7 +383,7 @@ func TestRunEvalLiveStreamAndPersistenceErrors(t *testing.T) {
 	}
 	h := &runsHandlers{deps: &deps{repo: f.s}, evalJobs: newRunEvalHub()}
 	job := &runEvalJob{runID: run.ID, evalID: "eval", subs: map[chan runEvalJobEvent]struct{}{}, done: make(chan struct{})}
-	emitRunEvalStage(job.publish, "collecting", "正在整理本次 SOP 轨迹")
+	emitRunEvalStage(job.publish, "collecting", "正在整理本次 LOOP 轨迹")
 	h.evalJobs.jobs[run.ID] = job
 	router := gin.New()
 	router.GET("/api/runs/:id/eval/stream", h.streamRunEval)

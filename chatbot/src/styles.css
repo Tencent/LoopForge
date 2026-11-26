@@ -3004,7 +3004,7 @@ a.project-entry {
   border-radius: 3px;
 }
 
-/* Conversation files open on demand; only a linked SOP occupies the right rail. */
+/* Conversation files open on demand; only a linked LOOP occupies the right rail. */
 .artifact-panel-header {
   height: 51px;
   min-height: 51px;
@@ -3771,7 +3771,7 @@ a.draft-title {
 .project-picker {
   max-width: 100%;
 }
-/* The project decides where requirements, repositories and SOPs live, so the
+/* The project decides where requirements, repositories and LOOPs live, so the
    picker reads as a choice rather than a breadcrumb. */
 .project-picker span {
   min-width: 0;

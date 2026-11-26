@@ -91,9 +91,9 @@ func TestRoomDispatchTarget(t *testing.T) {
 		ids, names         []string
 		typ, id, targetStr string
 	}{
-		{"single", []string{"wf-1"}, []string{"Build"}, "sop", "wf-1", "SOP「Build」"},
-		{"single without name", []string{"wf-1"}, []string{""}, "sop", "wf-1", "SOP「wf-1」"},
-		{"multi", []string{"wf-1", "wf-2", "wf-3"}, []string{"Build", "", "Ship"}, "multi", "wf-1", "SOP「Build」、「wf-2」、「Ship」"},
+		{"single", []string{"wf-1"}, []string{"Build"}, "sop", "wf-1", "LOOP「Build」"},
+		{"single without name", []string{"wf-1"}, []string{""}, "sop", "wf-1", "LOOP「wf-1」"},
+		{"multi", []string{"wf-1", "wf-2", "wf-3"}, []string{"Build", "", "Ship"}, "multi", "wf-1", "LOOP「Build」、「wf-2」、「Ship」"},
 	} {
 		typ, id, name := roomDispatchTarget(tc.ids, tc.names)
 		if typ != tc.typ || id != tc.id || name != tc.targetStr {

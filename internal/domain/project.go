@@ -396,7 +396,7 @@ func NormalizeRepositoryDirName(rc RepositoryContext) string {
 
 // AssignRepositoryDirs fills WorkspaceDir so every bound repository is
 // checked out into a unique first-level sub-directory of the run workspace.
-// SOP deliverables such as fix-plan.md stay at the run root and never enter
+// LOOP deliverables such as fix-plan.md stay at the run root and never enter
 // a git checkout.
 func AssignRepositoryDirs(repositories []RepositoryContext) {
 	used := map[string]bool{}

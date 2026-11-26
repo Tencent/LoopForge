@@ -204,7 +204,7 @@ func (r *RunnersRepo) resolveRunnerDefaults(userID int64, projectID string, conv
 		if conversation && !runner.SupportsConversationCLI() {
 			return defaults
 		}
-		// A personal SOP can still use a legacy ownerless default.
+		// A personal LOOP can still use a legacy ownerless default.
 		if (!conversation && projectID == "" && runner.OwnerUserID == 0) || r.CanUseRunner(runner, projectID, userID) {
 			defaults.Runner = runner
 		}

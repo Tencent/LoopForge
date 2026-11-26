@@ -8,7 +8,7 @@
     { id: 'assisted', name: '帮我批准', desc: 'AI 独立审查并直接放行或拒绝，无需人工确认' },
     { id: 'auto', name: '完全访问', desc: '在你的权限内直接执行' },
   ];
-  const KIND = { doc: '文档', prototype: '页面', api: '接口', diff: '变更', report: '报告', ppt: '幻灯片', browser: '浏览器', file: '文件', sop: 'SOP' };
+  const KIND = { doc: '文档', prototype: '页面', api: '接口', diff: '变更', report: '报告', ppt: '幻灯片', browser: '浏览器', file: '文件', sop: 'LOOP' };
   const STATUS = { backlog: '待规划', todo: '待处理', in_progress: '进行中', in_review: '评审中', blocked: '受阻', done: '已完成', closed: '已关闭', cancelled: '已取消' };
   const LANE = { queued: '排队', running: '执行中', waiting: '待确认', done: '已完成', failed: '失败' };
   const NODE = { pending: '待开始', queued: '排队', running: '执行中', waiting_approval: '待确认', succeeded: '已完成', done: '已完成', failed: '失败', skipped: '跳过', cancelled: '已取消' };
@@ -162,8 +162,8 @@
       <label class="sb-search">${icon('search')}<input data-search placeholder="搜索会话" value="${esc(S.query)}"></label>
       <nav class="sb-list">${groups.map(([name, items]) => `<section><h6>${name}</h6>${items.map(s => {
         const active = s.id === S.activeId ? ' active' : '';
-        const meta = [s.requirement && ('#' + s.requirement.number + ' ' + statusLabel(s.requirement.status)), s.lanes.length ? s.lanes.length + ' 条 SOP' : '', S.projects.length > 1 ? s.project : ''].filter(Boolean).join(' · ');
-        const side = s.live ? '<span class="live" title="SOP 执行中"></span>' : `<time>${esc(s.draft ? '' : timeLabel(s.updatedAt))}</time>`;
+        const meta = [s.requirement && ('#' + s.requirement.number + ' ' + statusLabel(s.requirement.status)), s.lanes.length ? s.lanes.length + ' 条 LOOP' : '', S.projects.length > 1 ? s.project : ''].filter(Boolean).join(' · ');
+        const side = s.live ? '<span class="live" title="LOOP 执行中"></span>' : `<time>${esc(s.draft ? '' : timeLabel(s.updatedAt))}</time>`;
         return `<button type="button" class="sb-item${active}" data-space="${esc(s.id)}"><span class="sb-glyph ${s.requirement ? 'req tone-' + tone(s.requirement.status) : 'chat'}"></span><span class="sb-item-main"><span class="sb-item-title">${esc(s.title)}</span>${meta ? `<span class="sb-item-meta">${esc(meta)}</span>` : ''}</span><span class="sb-item-side">${side}</span></button>`;
       }).join('')}</section>`).join('') || '<p class="sb-empty">没有匹配的会话</p>'}</nav>
       <div class="sb-foot"><button class="sb-link" data-act="classic" type="button" title="之前在 AI 助手里的会话和任务对话">${icon('history')}旧版会话<small>之前的对话</small></button></div>`;
@@ -184,7 +184,7 @@
       ${req ? `<button class="req-chip tone-${tone(req.status)}" data-issue="${esc(req.id)}" type="button"><b>#${esc(req.number)}</b><span>${esc(req.title)}</span><em>${esc(statusLabel(req.status))}</em></button>` : ''}
       <div class="sh-right">
         ${!req && s.messages.length ? `<button class="ghost-btn" data-act="requirement" type="button">建需求</button>` : ''}
-        ${s.draft ? '' : `<button class="ghost-btn" data-act="sop" type="button">跑 SOP</button>`}
+        ${s.draft ? '' : `<button class="ghost-btn" data-act="sop" type="button">跑 LOOP</button>`}
         ${s.lanes && s.lanes.length ? `<button class="ghost-btn" data-act="progress" type="button">进度</button>` : ''}
         ${s.draft ? '' : `<button class="icon-btn${S.panel ? ' on' : ''}" data-act="panel-toggle" type="button" title="产物和进度">${icon('right')}</button>`}
       </div>`;
@@ -203,7 +203,7 @@
     if (S.error) { slots.timeline.innerHTML = `<div class="empty-main"><h2>无法连接 LoopForge 后端</h2><p class="muted">${esc(S.error)}</p></div>`; return; }
     if (!s) { slots.timeline.innerHTML = '<div class="empty-main"><h2>还没有可访问的项目</h2></div>'; return; }
     if (!s.messages.length) {
-      const prompts = ['帮我做一个能在侧边栏打开的页面 demo', '做一页产品介绍 PPT', '跑一个 SOP，并在旁边看进度', '先帮我把这件事理清楚'];
+      const prompts = ['帮我做一个能在侧边栏打开的页面 demo', '做一页产品介绍 PPT', '跑一个 LOOP，并在旁边看进度', '先帮我把这件事理清楚'];
       slots.timeline.innerHTML = `<div class="timeline-inner"><div class="cx-welcome"><h2>${s.draft ? '要做什么？' : '这个会话还没有消息'}</h2><p>直接说。页面、图片和 PPT 会在旁边打开，不会只给你一个云端路径。</p><div class="wl-prompts">${prompts.map((p, i) => `<button type="button" data-prompt="${i}"><span>${esc(p)}</span></button>`).join('')}</div></div></div>`;
       return;
     }
@@ -263,7 +263,7 @@
   function renderMessage(m) {
     if (m.kind === 'milestone') return `<div class="cx-quiet">${esc(m.body || '')} · ${esc(timeLabel(m.at))}</div>`;
     if (m.kind === 'decision' || m.kind === 'note') return `<div class="cx-quiet">${esc(person(m.author).name)}：${esc(m.body)} · ${esc(timeLabel(m.at))}</div>`;
-    if (m.kind === 'dispatch' || m.kind === 'sop') return `<div class="msg-card"><button class="cx-card" type="button" data-lane="${esc(m.runId || '')}"><b>${esc(m.workflowName || 'SOP')}</b><small>查看进度</small></button></div>`;
+    if (m.kind === 'dispatch' || m.kind === 'sop') return `<div class="msg-card"><button class="cx-card" type="button" data-lane="${esc(m.runId || '')}"><b>${esc(m.workflowName || 'LOOP')}</b><small>查看进度</small></button></div>`;
     if (m.kind === 'approval') return `<div class="msg-card"><div class="cx-card${m.resolved ? '' : ' pending'}"><b>${esc(m.nodeName || '待确认')}</b><p>${esc(m.body || '')}</p>${m.resolved ? '<small>已处理</small>' : `<div class="card-actions"><button class="btn btn-primary sm" type="button" data-decide="approve" data-run="${esc(m.runId)}" data-node="${esc(m.nodeId)}">批准</button><button class="btn sm" type="button" data-decide="reject" data-run="${esc(m.runId)}" data-node="${esc(m.nodeId)}">打回</button></div>`}</div></div>`;
     if (m.kind === 'artifact' && m.artifactId) {
       const a = artOf(m.artifactId) || { id: m.artifactId, title: m.body || '产物', kind: 'file' };
@@ -303,19 +303,19 @@
       body = a ? artifactPreview(a) : '<p class="muted">产物不存在</p>';
     } else if (view.type === 'lane') {
       const lane = s.lanes.find(l => l.runId === view.id || l.id === view.id);
-      body = lane ? lanePreview(lane) : '<p class="muted">没有这条 SOP</p>';
+      body = lane ? lanePreview(lane) : '<p class="muted">没有这条 LOOP</p>';
     } else {
       const req = s.requirement;
       body = `
         ${req ? `<button class="req-block tone-${tone(req.status)}" type="button" data-issue="${esc(req.id)}"><b>#${esc(req.number)} ${esc(req.title)}</b><em>${esc(statusLabel(req.status))}</em></button>` : `<p class="muted small">还没有关联需求。</p><button class="btn sm" data-act="requirement" type="button">建需求</button>`}
-        <h5>SOP <span class="grow"></span></h5>
-        ${s.lanes.length ? s.lanes.map(l => `<button class="lane-row" type="button" data-lane="${esc(l.runId || l.id)}"><div class="lr-head"><b>${esc(l.name)}</b><span class="muted">${esc(LANE[l.status] || l.status)}</span></div></button>`).join('') : '<p class="muted small">还没有跑 SOP。</p><button class="btn sm" data-act="sop" type="button">跑一个 SOP</button>'}
+        <h5>LOOP <span class="grow"></span></h5>
+        ${s.lanes.length ? s.lanes.map(l => `<button class="lane-row" type="button" data-lane="${esc(l.runId || l.id)}"><div class="lr-head"><b>${esc(l.name)}</b><span class="muted">${esc(LANE[l.status] || l.status)}</span></div></button>`).join('') : '<p class="muted small">还没有跑 LOOP。</p><button class="btn sm" data-act="sop" type="button">跑一个 LOOP</button>'}
         <h5>产物</h5>
         ${s.artifacts.length ? s.artifacts.map(a => `<button class="artifact-row" type="button" data-artifact="${esc(a.id)}"><b>${esc(a.title)}</b><small class="muted">${esc(a.kind)} · v${a.version}</small></button>`).join('') : '<p class="muted small">还没有产物。</p>'}
         <h5>成员</h5>
         <ul class="member-list">${s.members.map(id => `<li>${esc(person(id).name)}</li>`).join('')}</ul>`;
     }
-    const title = view.type === 'overview' ? '产物和进度' : view.type === 'lane' ? 'SOP 进度' : '预览';
+    const title = view.type === 'overview' ? '产物和进度' : view.type === 'lane' ? 'LOOP 进度' : '预览';
     slots.panel.innerHTML = `<div class="panel-head"><b>${title}</b><span class="grow"></span>${view.type !== 'overview' ? '<button class="icon-btn" type="button" data-act="panel-home" title="返回">←</button>' : ''}<button class="icon-btn" type="button" data-act="panel-toggle" title="关闭">×</button></div><div class="panel-body">${body}</div>`;
   }
 
@@ -370,7 +370,7 @@
     if (!d) { slots.dialog.innerHTML = ''; return; }
     const s = space();
     if (d.type === 'requirement') {
-      slots.dialog.innerHTML = modal('建需求', '写清楚要做什么，之后跑的 SOP 都挂在这个需求下', `
+      slots.dialog.innerHTML = modal('建需求', '写清楚要做什么，之后跑的 LOOP 都挂在这个需求下', `
         <label class="field">标题<input data-field="title" value="${esc(s?.title === '新会话' ? '' : s?.title || '')}"></label>
         <label class="field">描述<textarea data-field="description" rows="5">${esc(s?.summary || '')}</textarea></label>
         <label class="field">优先级<select data-field="priority"><option value="medium">中</option><option value="high">高</option><option value="urgent">紧急</option><option value="low">低</option></select></label>
@@ -384,12 +384,12 @@
         box.innerHTML = (r.roster || []).filter(u => !have.has(pid(u.userId))).map(u => `<button class="btn block" type="button" data-invite="${u.userId}">${esc(u.name)}</button>`).join('') || '<p class="muted">没有可邀请的人</p>';
       }).catch(err => { const box = slots.dialog.querySelector('[data-roster]'); if (box) box.textContent = err.message; });
     } else if (d.type === 'sop') {
-      slots.dialog.innerHTML = modal('跑 SOP', '选择已发布的流程', `<div data-catalog>正在读取…</div><div class="modal-foot"><button class="btn" type="button" data-act="close">取消</button><button class="btn btn-primary" type="button" data-act="save-sop">启动</button></div>`);
+      slots.dialog.innerHTML = modal('跑 LOOP', '选择已发布的流程', `<div data-catalog>正在读取…</div><div class="modal-foot"><button class="btn" type="button" data-act="close">取消</button><button class="btn btn-primary" type="button" data-act="save-sop">启动</button></div>`);
       req('/api/spaces/' + s.id + '/catalog').then(c => {
         S.catalog = c;
         const box = slots.dialog.querySelector('[data-catalog]');
         if (!box) return;
-        box.innerHTML = (c.workflows || []).map(w => `<label class="check-row"><input type="checkbox" value="${esc(w.id)}"> <b>${esc(w.name)}</b> <small class="muted">${w.nodes || 0} 个步骤</small></label>`).join('') || '<p class="muted">这个项目还没有 SOP</p>';
+        box.innerHTML = (c.workflows || []).map(w => `<label class="check-row"><input type="checkbox" value="${esc(w.id)}"> <b>${esc(w.name)}</b> <small class="muted">${w.nodes || 0} 个步骤</small></label>`).join('') || '<p class="muted">这个项目还没有 LOOP</p>';
       }).catch(err => { const box = slots.dialog.querySelector('[data-catalog]'); if (box) box.textContent = err.message; });
     } else if (d.type === 'artifact') {
       slots.dialog.innerHTML = modal('新建产物', '', `
@@ -497,7 +497,7 @@
     if (!s || (!body && !S.files.length) || S.uploading) return;
     if (!opts?.steered && !s.draft && s.messages.some(m => m.aiStatus === 'running')) { await steer(body); return; }
     if (body.startsWith('/建需求')) { S.dialog = { type: 'requirement' }; paintDialog(); return; }
-    if (body.startsWith('/跑') || body === '/sop') { if (s.draft) await promote(s, '跑 SOP'); S.dialog = { type: 'sop' }; paintDialog(); return; }
+    if (body.startsWith('/跑') || body === '/loop' || body === '/sop') { if (s.draft) await promote(s, '跑 LOOP'); S.dialog = { type: 'sop' }; paintDialog(); return; }
     const toAi = opts?.toAi ?? (S.toAi || /@AI/i.test(body));
     slots.composer.querySelector('textarea').value = '';
     S.text = '';
@@ -664,9 +664,9 @@
     if (!t || !host.contains(t)) return;
     if (t.dataset.space) { S.panelView = { type: 'overview' }; openSpace(t.dataset.space).catch(err => toast(err.message)); return; }
     if (t.dataset.prompt !== undefined) {
-      const text = ['帮我做一个能在侧边栏打开的页面 demo', '做一页产品介绍 PPT', '跑一个 SOP，并在旁边看进度', '先帮我把这件事理清楚'][Number(t.dataset.prompt)];
+      const text = ['帮我做一个能在侧边栏打开的页面 demo', '做一页产品介绍 PPT', '跑一个 LOOP，并在旁边看进度', '先帮我把这件事理清楚'][Number(t.dataset.prompt)];
       if (!text) return;
-      if (t.dataset.prompt === '2') { const s = space(); const run = async () => { if (s?.draft) await promote(s, '跑 SOP'); S.dialog = { type: 'sop' }; paintDialog(); }; run().catch(err => toast(err.message)); return; }
+      if (t.dataset.prompt === '2') { const s = space(); const run = async () => { if (s?.draft) await promote(s, '跑 LOOP'); S.dialog = { type: 'sop' }; paintDialog(); }; run().catch(err => toast(err.message)); return; }
       S.toAi = true; submit(text); return;
     }
     if (t.dataset.mode) { S.approvalMode = t.dataset.mode; localStorage.setItem(MODE_KEY, S.approvalMode); closeMenus(); paintComposerChrome(); return; }
@@ -689,7 +689,7 @@
     else if (act === 'panel-toggle') { S.panel = !S.panel; paint(); }
     else if (act === 'requirement') { S.dialog = { type: 'requirement' }; paintDialog(); }
     else if (act === 'invite') { S.dialog = { type: 'invite' }; paintDialog(); }
-    else if (act === 'sop') { const s = space(); const run = async () => { if (s?.draft) await promote(s, '跑 SOP'); S.dialog = { type: 'sop' }; paintDialog(); }; run().catch(err => toast(err.message)); }
+    else if (act === 'sop') { const s = space(); const run = async () => { if (s?.draft) await promote(s, '跑 LOOP'); S.dialog = { type: 'sop' }; paintDialog(); }; run().catch(err => toast(err.message)); }
     else if (act === 'close') { S.dialog = null; paintDialog(); }
     else if (act === 'file') slots.composer.querySelector('.wb-file').click();
     else if (act === 'mention') { const ta = slots.composer.querySelector('textarea'); ta.value += (ta.value && !ta.value.endsWith(' ') ? ' ' : '') + '@'; ta.focus(); S.text = ta.value; }
@@ -715,7 +715,7 @@
   }
   async function saveSop() {
     const ids = [...slots.dialog.querySelectorAll('input:checked')].map(el => el.value);
-    if (!ids.length) return toast('先选一个 SOP');
+    if (!ids.length) return toast('先选一个 LOOP');
     try {
       const r = await send('POST', '/api/spaces/' + space().id + '/sops', { workflowIds: ids, inputs: [] });
       S.dialog = null;

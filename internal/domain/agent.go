@@ -112,7 +112,7 @@ type AgentHook struct {
 	ExecutionScope string `json:"executionScope,omitempty"`
 }
 
-// AgentLoopPolicy belongs to the reusable Agent role rather than an SOP node.
+// AgentLoopPolicy belongs to the reusable Agent role rather than a LOOP node.
 // A node may still cap attempts, while this policy controls self-correction
 // inside one Agent invocation and one sandbox workspace.
 type AgentLoopPolicy struct {

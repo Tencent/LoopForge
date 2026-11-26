@@ -15,16 +15,16 @@
   const results=d.results?.length?`<p>执行结果</p><ol>${d.results.map(r=>`<li class="${/^已(完成|启动)/.test(r)?'ok':'error'}">${escape(r)}</li>`).join('')}</ol>`:'';
   const notice=d.notice?`<p class="error">${escape(d.notice)}</p>`:d.reason?`<p class="${d.status==='needs_review'?'error':''}">${escape(d.reason)}</p>`:'';
   if(d.status==='pending'){
-   // New requirements: pick the SOP and whether to start it right away.
+   // New requirements: pick the LOOP and whether to start it right away.
    // The first option is the project default (empty value), like the
    // requirement form on the platform.
-   const options=i=>`<option value="" ${i.workflowId?'':'selected'}>项目默认 SOP（${escape(i.defaultWorkflowName||'按来源默认')}）</option>`+(d.workflows||[]).map(w=>`<option value="${escape(w.id)}" ${w.id===i.workflowId?'selected':''}>${escape(w.name)}</option>`).join('');
+   const options=i=>`<option value="" ${i.workflowId?'':'selected'}>项目默认 LOOP（${escape(i.defaultWorkflowName||'按来源默认')}）</option>`+(d.workflows||[]).map(w=>`<option value="${escape(w.id)}" ${w.id===i.workflowId?'selected':''}>${escape(w.name)}</option>`).join('');
    // The repository: the project default first (empty value), then the
    // project's repositories. Shown when the project has any.
    const repos=d.repositories||[];
    const repoOptions=i=>`<option value="" ${i.repositoryId?'':'selected'}>${i.defaultRepositoryName?`项目默认仓库（${escape(i.defaultRepositoryName)}）`:'不绑定仓库（项目未设默认仓库）'}</option>`+repos.map(r=>`<option value="${escape(r.id)}" ${r.id===i.repositoryId?'selected':''}>${escape(r.name)}</option>`).join('');
    const repoField=i=>repos.length?`<label>仓库<br><select class="repo">${repoOptions(i)}</select></label>`:'';
-   const sops=(d.newIssues||[]).length?`<p>新需求使用的${repos.length?'仓库和 ':''}SOP</p>${d.newIssues.map(i=>`<div class="sop" data-index="${i.index}"><strong>${escape(i.title)}</strong>${repoField(i)}<label>SOP<br><select class="wf">${options(i)}</select></label><label><input type="checkbox"> 创建后立即启动这个 SOP</label></div>`).join('')}`:'';
+   const sops=(d.newIssues||[]).length?`<p>新需求使用的${repos.length?'仓库和 ':''}LOOP</p>${d.newIssues.map(i=>`<div class="sop" data-index="${i.index}"><strong>${escape(i.title)}</strong>${repoField(i)}<label>LOOP<br><select class="wf">${options(i)}</select></label><label><input type="checkbox"> 创建后立即启动这个 LOOP</label></div>`).join('')}`:'';
    content.innerHTML=`${meta(d)}<p>Bot 将使用你的平台账号和项目权限执行以下操作：</p>${ops}${sops}${notice}<p><button id="confirm">确认执行</button> <button class="secondary" id="cancel">取消</button></p><small>每个确认链接只能执行一次；重复点击不会重复执行。</small>`;
    const choice=el=>{const c={index:Number(el.dataset.index),workflowId:el.querySelector('select.wf').value,start:el.querySelector('input[type=checkbox]').checked};const repo=el.querySelector('select.repo');if(repo)c.repositoryId=repo.value;return c;};
    document.getElementById('confirm').onclick=()=>act('confirm',{choices:[...content.querySelectorAll('.sop')].map(choice)});

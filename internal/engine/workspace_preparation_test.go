@@ -142,7 +142,7 @@ func TestWorkspacePreparationNormalOrderAndFlaggedRetryAlwaysExecutes(t *testing
 		return strings.Count(string(raw), "run\n")
 	}
 	if count("env") != 1 || count("index") != 1 {
-		t.Fatal("initial SOP scripts ran more than once")
+		t.Fatal("initial LOOP scripts ran more than once")
 	}
 	if err = e.Retry(run.ID, "index", "normal retry", ""); err != nil {
 		t.Fatal(err)

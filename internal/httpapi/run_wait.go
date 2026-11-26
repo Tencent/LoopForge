@@ -51,7 +51,7 @@ func (h *runsHandlers) waitRun(c *gin.Context) {
 		return
 	}
 	if run.IsWorkspace() {
-		c.JSON(http.StatusConflict, gin.H{"error": "only SOP runs can be waited on"})
+		c.JSON(http.StatusConflict, gin.H{"error": "only LOOP runs can be waited on"})
 		return
 	}
 

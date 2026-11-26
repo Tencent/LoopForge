@@ -10,8 +10,8 @@ import (
 
 func TestWithSOPBindingCopiesBindingFieldsOnly(t *testing.T) {
 	lane := domain.RequirementLane{
-		BindingID: "old", Lane: "backend", Label: "后端 SOP", WorkflowID: "wf-run",
-		WorkflowName: "后端 SOP", LatestRunID: "run-1", Status: "running", Started: true,
+		BindingID: "old", Lane: "backend", Label: "后端 LOOP", WorkflowID: "wf-run",
+		WorkflowName: "后端 LOOP", LatestRunID: "run-1", Status: "running", Started: true,
 		RunCount: 2, Tokens: 42, AssigneeUserID: 1, Order: 9, DependsOn: []string{"x"},
 		Handoff: []string{"y"}, Orphan: true,
 		Stages: []domain.RequirementNodeStage{{NodeID: "code"}},
@@ -39,8 +39,8 @@ func TestWithSOPBindingCopiesBindingFieldsOnly(t *testing.T) {
 
 func TestBuildRequirementLanesAppliesBindingToStartedLane(t *testing.T) {
 	now := time.Now().UTC()
-	design := domain.WorkflowDefinition{ID: "wf-design", Name: "设计 SOP", SOPLane: "design"}
-	backend := domain.WorkflowDefinition{ID: "wf-backend", Name: "后端 SOP", SOPLane: "backend", Nodes: []domain.WorkflowNode{{ID: "code", Name: "实现"}}}
+	design := domain.WorkflowDefinition{ID: "wf-design", Name: "设计 LOOP", SOPLane: "design"}
+	backend := domain.WorkflowDefinition{ID: "wf-backend", Name: "后端 LOOP", SOPLane: "backend", Nodes: []domain.WorkflowNode{{ID: "code", Name: "实现"}}}
 	issue := domain.Issue{
 		ID: "iss-started", Kind: "requirement",
 		SOPBindings: []domain.IssueSOPBinding{
@@ -74,8 +74,8 @@ func TestBuildRequirementLanesAppliesBindingToStartedLane(t *testing.T) {
 
 func TestBuildRequirementLanesSingleBindingRemapsStartedRun(t *testing.T) {
 	now := time.Now().UTC()
-	bound := domain.WorkflowDefinition{ID: "wf-bound", Name: "绑定 SOP"}
-	frozen := domain.WorkflowDefinition{ID: "wf-frozen", Name: "冻结 SOP", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "修复"}}}
+	bound := domain.WorkflowDefinition{ID: "wf-bound", Name: "绑定 LOOP"}
+	frozen := domain.WorkflowDefinition{ID: "wf-frozen", Name: "冻结 LOOP", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "修复"}}}
 	issue := domain.Issue{
 		ID: "iss-remap", Kind: "issue",
 		SOPBindings: []domain.IssueSOPBinding{

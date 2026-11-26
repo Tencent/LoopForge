@@ -50,8 +50,8 @@ func containsString(items []string, want string) bool {
 	return false
 }
 
-// The SOP canvas runs its own conversation: a designer prompt with the canvas,
-// roles and referenced SOPs injected by the server, a transcript of only what
+// The LOOP canvas runs its own conversation: a designer prompt with the canvas,
+// roles and referenced LOOPs injected by the server, a transcript of only what
 // the user typed, and a session that stays out of the workbench history.
 func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", assistantChatDefaultModel)
@@ -77,7 +77,7 @@ func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 	if !strings.Contains(system, "AI 编排助手") || strings.Contains(system, "workbench_workspace_open") {
 		t.Fatalf("designer turn did not use its own system prompt: %s", system)
 	}
-	for _, want := range []string{"workbench-dev：开发工程师", `"id":"sop-a"`, "参考的已有 SOP「参考流程」", "加一个评审节点"} {
+	for _, want := range []string{"workbench-dev：开发工程师", `"id":"sop-a"`, "参考的已有 LOOP「参考流程」", "加一个评审节点"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("designer prompt lacks %q:\n%s", want, prompt)
 		}
@@ -118,7 +118,7 @@ func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 		t.Fatal("designer conversation leaked into the workbench history")
 	}
 	if !containsString(listedSessionIDs(t, h, user, "?surface=sop-designer&workflowId=sop-a"), "designer-chat") {
-		t.Fatal("designer conversation is not listed for its SOP")
+		t.Fatal("designer conversation is not listed for its LOOP")
 	}
 	second := saved
 	second.ID, second.ProjectID = "designer-second", "second"
@@ -132,7 +132,7 @@ func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 		}
 	}
 	if containsString(listedSessionIDs(t, h, user, "?surface=sop-designer&workflowId=sop-b"), "designer-chat") {
-		t.Fatal("designer conversation listed for another SOP")
+		t.Fatal("designer conversation listed for another LOOP")
 	}
 	code, _ = sopDesignerTurn(t, h, user, assistantRequest{ProjectID: "workbench", SessionID: "designer-chat", Model: assistantChatDefaultModel, Messages: append(saved.Messages, assistantMessage{Role: "user", Content: "改代码"})})
 	if code != 409 {
@@ -192,7 +192,7 @@ func TestSOPDesignerCatalogIsReadOnlyAndDraftOnly(t *testing.T) {
 	result, err := gw.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"建需求","drafts":[{"tool":"issues_save","body":{"projectId":"workbench","title":"x"}}]}`))
 	encoded, _ := json.Marshal(result)
 	if err != nil || result["isError"] != true || session.finished() || !strings.Contains(string(encoded), "只能提交 workflows_save") {
-		t.Fatalf("designer accepted a non-SOP draft: %v %v", result, err)
+		t.Fatalf("designer accepted a non-LOOP draft: %v %v", result, err)
 	}
 	result, err = gw.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"已搭好","drafts":[{"tool":"workflows_save","body":{"id":"workbench-delivery","projectId":"workbench","sandboxProfileId":"test-native","name":"交付","nodes":[],"edges":[]}}]}`))
 	if err != nil || result["isError"] == true || !session.finished() {
@@ -213,7 +213,7 @@ func TestSOPDesignerDraftNormalization(t *testing.T) {
 	}
 	fresh := sopDesignerDrafts(assistantRequest{Surface: assistantSurfaceSOPDesigner, WorkflowID: "sop-new"}, []assistantDraft{{Tool: "workflows_save", Body: json.RawMessage(`{"name":"新流程"}`)}})
 	if strings.Contains(string(fresh[0].Body), "sop-new") {
-		t.Fatal("an empty canvas pinned the draft to a SOP id")
+		t.Fatal("an empty canvas pinned the draft to a LOOP id")
 	}
 }
 
@@ -399,7 +399,7 @@ func TestSOPDesignerOmittedScriptIsRestored(t *testing.T) {
 	}
 }
 
-// The roles offered to the model and the draft warnings follow the rule a SOP
+// The roles offered to the model and the draft warnings follow the rule a LOOP
 // save enforces, so the model never picks a role the save then rejects.
 func TestSOPDesignerRolesMatchTheSaveRule(t *testing.T) {
 	h, _ := workbenchFixture(t)

@@ -491,7 +491,7 @@ export function activityFace(step) {
   if (platform) {
     const [, type, action] = platform;
     const noun = {
-      workflows: "SOP",
+      workflows: "LOOP",
       agents: "角色",
       issues: "需求",
       runs: "运行",
@@ -534,7 +534,7 @@ export function activityFace(step) {
   if (/search|grep|glob|find/.test(name))
     return { kind: "search", busy: "正在搜索", done: "已搜索" };
   if (/workflow|sop/.test(name))
-    return { kind: "workflow", busy: "正在处理 SOP", done: "已处理 SOP" };
+    return { kind: "workflow", busy: "正在处理 LOOP", done: "已处理 LOOP" };
   if (/list|tree/.test(name))
     return { kind: "search", busy: "正在查看", done: "已查看" };
   return {
