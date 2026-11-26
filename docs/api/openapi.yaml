@@ -2596,6 +2596,9 @@ paths:
     get:
       tags: [Workflows]
       operationId: listWorkflows
+      parameters:
+        - { name: projectId, in: query, schema: { type: string }, description: "That project's SOPs plus generic templates" }
+        - { name: q, in: query, schema: { type: string }, description: "Match id, name, or description" }
       responses:
         "200":
           $ref: "#/components/responses/WorkflowList"

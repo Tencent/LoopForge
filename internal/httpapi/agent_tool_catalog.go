@@ -377,7 +377,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 			schema, _ := json.Marshal(platformToolInputSchema(op))
 			out = append(out, agentToolDescriptor{
 				Name:         ns,
-				Description:  op.Description + " (" + op.Method + " " + op.Path + ")",
+				Description:  op.Description + " (" + op.Method + " " + op.Path + ")" + platformToolArgumentHint(op),
 				InputSchema:  schema,
 				Kind:         "agentflow",
 				UpstreamName: name,
@@ -404,7 +404,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 			}
 			out = append(out, agentToolDescriptor{
 				Name:         ns,
-				Description:  writePolicy + op.Description + " (" + op.Method + " " + op.Path + ")",
+				Description:  writePolicy + op.Description + " (" + op.Method + " " + op.Path + ")" + platformToolArgumentHint(op),
 				InputSchema:  schema,
 				Kind:         "agentflow",
 				UpstreamName: name,
@@ -480,6 +480,45 @@ func defaultToolSchema(raw json.RawMessage) json.RawMessage {
 
 func platformToolInputSchema(op application.Operation) map[string]any {
 	return mcpserver.ToolInputSchema(op)
+}
+
+// platformToolArgumentHint names the wrapper object each argument has to go in.
+// The schema accepts only path/query/body at the top level, but operation
+// descriptions say things like "Query: projectId", which models take as a
+// top-level field and get "unknown field" on the first call (issue #1084).
+func platformToolArgumentHint(op application.Operation) string {
+	properties, _ := mcpserver.ToolInputSchema(op)["properties"].(map[string]any)
+	wrappers := make([]string, 0, 3)
+	example := ""
+	for _, name := range []string{"path", "query", "body"} {
+		wrapper, _ := properties[name].(map[string]any)
+		if !wrapperHasArguments(name, wrapper) {
+			continue
+		}
+		wrappers = append(wrappers, name)
+		if example == "" {
+			example = name
+		}
+	}
+	if len(wrappers) == 0 {
+		return ""
+	}
+	return " Arguments go inside " + strings.Join(wrappers, "/") + ", for example {\"" + example + "\": {...}}."
+}
+
+// wrapperHasArguments reports whether a path/query/body wrapper can carry a
+// field. ToolInputSchema always emits a query object, even an empty one, so its
+// presence says nothing; body is emitted only when the contract has a body, and
+// it is a JSON Schema rather than a properties map (issue #1084).
+func wrapperHasArguments(name string, wrapper map[string]any) bool {
+	if wrapper == nil {
+		return false
+	}
+	if name == "body" {
+		return true
+	}
+	fields, _ := wrapper["properties"].(map[string]any)
+	return len(fields) > 0
 }
 
 func lookupAgentTool(catalog []agentToolDescriptor, name string) (agentToolDescriptor, bool) {
