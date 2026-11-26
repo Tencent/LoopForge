@@ -89,14 +89,14 @@ func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID strin
 		return nil, err
 	}
 	remap := make(map[string]string, len(template.Agents))
-	for _, source := range template.Agents {
+	cloneAgent := func(source domain.AgentDefinition) error {
 		// Projects that did not get the plain template id (a sibling project
 		// owns it) hold a deterministic <id>-<project> clone instead; reuse it
 		// so re-adopting the template never duplicates the roles.
 		if existing, found := findGenericProjectClone(source.ID, projectID, h.repo.Agent, func(a domain.AgentDefinition) string { return a.ProjectID }); found {
 			h.upgradeGenericTemplateAgent(&existing, source, projectID, now)
 			remap[source.ID] = existing.ID
-			continue
+			return nil
 		}
 		agent := source
 		agent.ID = h.availableGenericAgentID(source.ID, projectID)
@@ -108,9 +108,39 @@ func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID strin
 		agent.Rules = remapAssetIDs(agent.Rules, ruleRemap)
 		agent.Skills = remapAssetIDs(agent.Skills, skillRemap)
 		if err := h.repo.PutAgent(agent); err != nil {
-			return nil, err
+			return err
 		}
 		remap[source.ID] = agent.ID
+		return nil
+	}
+	for _, source := range template.Agents {
+		if err := cloneAgent(source); err != nil {
+			return nil, err
+		}
+	}
+	// A stored template can drift out of sync with its own workflow: a node may
+	// reference an agent that the bundled Agents list no longer carries (a
+	// migration that rewrites the list by index, then appends an MR node only to
+	// the workflow, produces exactly this). Without a remap entry the node keeps
+	// its source id and ends up bound to whichever foreign project owns that
+	// role. Resolve every agent node from the workflow and derive a project role
+	// for any id the Agents list did not cover.
+	for _, node := range template.Workflow.Nodes {
+		if node.Type != "agent" || node.AgentID == "" {
+			continue
+		}
+		if _, covered := remap[node.AgentID]; covered {
+			continue
+		}
+		source, found := h.repo.Agent(node.AgentID)
+		if !found {
+			// No stored definition to clone from; leave the node untouched
+			// rather than inventing a role with no prompt or bindings.
+			continue
+		}
+		if err := cloneAgent(source); err != nil {
+			return nil, err
+		}
 	}
 	return remap, nil
 }
