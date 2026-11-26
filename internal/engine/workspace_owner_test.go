@@ -45,7 +45,7 @@ func TestSOPChildWorksInParentWorkspace(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	root := sandboxRoot(t)
+	root := t.TempDir()
 	e := New(s, flowruntime.NewManagerWithLimit(root, 2))
 	run, err := e.Start(parent.ID, "x")
 	if err != nil {
@@ -226,7 +226,7 @@ func TestBindPoolRunnerRefusesSwitchAfterCodeChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	e := New(s, flowruntime.NewManager(sandboxRoot(t)))
+	e := New(s, flowruntime.NewManager(t.TempDir()))
 	e.ConfigureCloudRunnerPool(CloudRunnerPool{Label: "pool=cloud", Projects: []string{"*"}})
 	for _, r := range []domain.Runner{
 		{ID: "gone", Name: "pool-a", Status: domain.RunnerStatusOffline, RunnerVersion: "0.4.0", Labels: []string{"pool=cloud"}},

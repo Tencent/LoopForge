@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func TestSharedScheduleUsesNormalProjectAssetResolution(t *testing.T) {
 	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Shared", Prompt: "inspect"}, 0)
 	check(err)
 	check(st.ValidateSharedScheduleAssets(v))
-	e := New(st, runtime.NewManager(sandboxRoot(t)))
+	e := New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	bundle := e.RoleAssets(role, "target", 1)
 	if len(bundle.Rules) != 1 || len(bundle.Skills) != 1 || len(bundle.MCPServers) != 1 || bundle.MCPServers[0].ID != "target-tool" {
 		t.Fatalf("wrong project-scoped bundle: %+v", bundle)
@@ -68,7 +69,7 @@ func TestSharedScheduleNestedSOPUsesImmediateParentBinding(t *testing.T) {
 	check(st.PutScheduleJob(job))
 	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Nested", Prompt: "start"}, 0)
 	check(err)
-	e := New(st, runtime.NewManager(sandboxRoot(t)))
+	e := New(st, runtime.NewManager(t.TempDir()))
 	// The control-plane start path persists real snapshots without launching
 	// background executions, so each admission can be checked independently.
 	e.ConfigureExecution("test", "test", time.Second, false)
@@ -136,7 +137,7 @@ func TestSharedScheduleRejectsPrivateNestedSOPSandboxResources(t *testing.T) {
 	check(st.PutScheduleJob(job))
 	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Private nested", Prompt: "start"}, 0)
 	check(err)
-	e := New(st, runtime.NewManager(sandboxRoot(t)))
+	e := New(st, runtime.NewManager(t.TempDir()))
 	e.ConfigureExecution("test", "test", time.Second, false)
 	exec := domain.TelemetryContext{ProjectID: "target", ResponsibleUserID: 42, SharedScheduleID: v.ID, SharedScheduleVersion: v.Version}
 	parent, err := e.StartWithRepositoriesContext("shared-parent", "inspect", nil, exec)
@@ -179,7 +180,7 @@ func TestSharedScheduleRejectsPrivateNestedSOP(t *testing.T) {
 	check(st.PutScheduleJob(job))
 	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Private child", Prompt: "start"}, 0)
 	check(err)
-	e := New(st, runtime.NewManager(sandboxRoot(t)))
+	e := New(st, runtime.NewManager(t.TempDir()))
 	e.ConfigureExecution("test", "test", time.Second, false)
 	exec := domain.TelemetryContext{ProjectID: "target", ResponsibleUserID: 42, SharedScheduleID: v.ID, SharedScheduleVersion: v.Version}
 	parent, err := e.StartWithRepositoriesContext("shared-parent-for-private-child", "inspect", nil, exec)
@@ -251,7 +252,7 @@ func TestSharedScheduleRejectsPrivateNestedDependencies(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			e := New(st, runtime.NewManager(sandboxRoot(t)))
+			e := New(st, runtime.NewManager(t.TempDir()))
 			e.ConfigureExecution("test", "test", time.Second, false)
 			exec := domain.TelemetryContext{ProjectID: "target", ResponsibleUserID: 42, SharedScheduleID: version.ID, SharedScheduleVersion: version.Version}
 			parentRun, err := e.StartWithRepositoriesContext(parent.ID, "inspect", nil, exec)

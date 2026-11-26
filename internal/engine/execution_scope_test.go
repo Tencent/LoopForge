@@ -76,7 +76,7 @@ func TestRepositoryScopedRoleGateAndScriptArtifacts(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	run, err := e.StartWithRepositoriesContext(wf.ID, "", repositories, domain.TelemetryContext{})
 	if err != nil {
 		t.Fatal(err)

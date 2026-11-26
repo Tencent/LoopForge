@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -35,7 +36,7 @@ func TestAssistantUnlimitedTurnsLive(t *testing.T) {
 		t.Fatal("private iOA test credential unavailable")
 	}
 	h, actor, _, session := sharedNativeMySQLFixture(t, []string{credential.Key, credential.Key})
-	api := New(h.repo, engine.New(h.repo, runtime.NewManager(sandboxRoot(t))), nil, "", "")
+	api := New(h.repo, engine.New(h.repo, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), nil, "", "")
 	server := httptest.NewServer(api)
 	t.Cleanup(server.Close)
 	previous := config.Current()

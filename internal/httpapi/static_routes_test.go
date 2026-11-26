@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,12 +18,13 @@ import (
 // engine: the stamped index renders with an explicit 200 even though gin's
 // NoRoute preset is 404, and missing assets still return a real 404.
 func TestStaticRoutes(t *testing.T) {
+	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
 	for _, tc := range []struct {
 		path     string
 		wantCT   string

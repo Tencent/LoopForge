@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func TestSharedSchedulePinsDirectReferencesAndKeepsNestedBindingsScoped(t *testi
 	check(st.PutScheduleJob(job))
 	v, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Shared", Prompt: "inspect"}, 0)
 	check(err)
-	h.engine = engine.New(st, runtime.NewManager(sandboxRoot(t)))
+	h.engine = engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	h.api = New(st, h.engine, tracker.NewService(), "", "")
 	newRequest := func(refs []domain.AssistantReference) assistantRequest {
 		return assistantRequest{ProjectID: "target", Messages: []assistantMessage{{Role: "user", Content: "inspect", References: refs}}}

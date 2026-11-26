@@ -10,8 +10,6 @@ import (
 	"io"
 	"time"
 
-	"agentflow/internal/domain"
-
 	"gorm.io/gorm"
 )
 
@@ -29,21 +27,10 @@ type workspaceCheckpointChunk struct {
 
 func (workspaceCheckpointChunk) TableName() string { return "run_workspace_checkpoint_chunks" }
 
-// Keep new archive payloads off the lease row, where a metadata update can
-// copy an unchanged inline BLOB into MySQL's binary log. Stage bounded rows
-// and publish the manifest by lease CAS. The reader still accepts inline
-// checkpoints from older releases.
+// Stage bounded rows, then publish the manifest by lease CAS. A failed save
+// cannot replace the previous archive. Crashed staging rows expire on the next
+// save; deleting a run also deletes all its chunks.
 func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.Time, source io.Reader) error {
-	return r.saveWorkspaceCheckpointStream(runID, token, now, source, nil)
-}
-
-// SaveBoundWorkspaceCheckpointStream publishes bytes from the captured
-// checkout only while its workspace binding is still current.
-func (r *RunsRepo) SaveBoundWorkspaceCheckpointStream(run domain.Run, token string, now time.Time, source io.Reader) error {
-	return r.saveWorkspaceCheckpointStream(run.ID, token, now, source, &run)
-}
-
-func (r *RunsRepo) saveWorkspaceCheckpointStream(runID, token string, now time.Time, source io.Reader, bound *domain.Run) error {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return err
@@ -96,12 +83,8 @@ func (r *RunsRepo) saveWorkspaceCheckpointStream(runID, token string, now time.T
 		return fmt.Errorf("empty workspace checkpoint")
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		current, err := r.takeRunForUpdate(tx, runID)
-		if err != nil {
+		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
 			return err
-		}
-		if bound != nil && (current.WorkspaceHost != bound.WorkspaceHost || current.WorkspaceRoot != bound.WorkspaceRoot) {
-			return ErrWorkspaceCheckpointStale
 		}
 		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, time.Now().UTC()).Updates(map[string]any{
 			"archive": nil, "archive_id": id, "archive_bytes": size, "archive_chunks": count,
@@ -116,8 +99,7 @@ func (r *RunsRepo) saveWorkspaceCheckpointStream(runID, token string, now time.T
 		if err := tx.Where("run_id = ? AND archive_id <> ?", runID, id).Delete(&workspaceCheckpointChunk{}).Error; err != nil {
 			return err
 		}
-		// The database can commit even if its reply is lost. Leave these
-		// chunks for the next save to remove if they are no longer referenced.
+		// A lost commit reply does not prove that the manifest was rolled back.
 		commitMayHavePublished = true
 		return nil
 	})

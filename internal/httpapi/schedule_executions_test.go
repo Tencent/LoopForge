@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func TestAssistantLooksUpScheduleExecutionByTrace(t *testing.T) {
 	if !slices.Contains(agentflowAssistantReadToolNames(), "schedule_job_executions_list") {
 		t.Fatal("execution lookup is not offered to the assistant")
 	}
-	api := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	h := &assistantHandlers{deps: &deps{repo: st}, api: api}
 	lookup := func(projectID string) []domain.ScheduleJobExecution {
 		t.Helper()
@@ -99,7 +100,7 @@ func TestScheduleJobExecutionsFollowJobAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 
 	all := requestJSONAuthed[[]domain.ScheduleJobExecution](t, server, viewer, http.MethodGet, "/api/schedule-job-executions?projectId=exec-proj", nil, http.StatusOK)
 	if len(all) != 2 || all[0].TraceID != "t-bad" {
@@ -181,7 +182,7 @@ func TestScheduleJobExecutionsMarkCleanedUpConversations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	// Started after the server, so startup recovery leaves it running.
 	if err := st.PutScheduleJobExecution(domain.ScheduleJobExecution{JobID: "gone-job", ProjectID: "gone-proj", TraceID: "t-running", Status: "running", SessionID: "chat-starting", StartedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)

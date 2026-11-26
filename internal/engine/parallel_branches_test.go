@@ -1,7 +1,7 @@
 package engine
 
 import (
-	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,15 +20,7 @@ func parallelTestEngine(t *testing.T, wf domain.WorkflowDefinition) (*Engine, *r
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := e.Drain(ctx); err != nil {
-			t.Errorf("drain test engine: %v", err)
-		}
-	})
-	return e, s
+	return New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), s
 }
 
 func scriptNode(id, script string) domain.WorkflowNode {

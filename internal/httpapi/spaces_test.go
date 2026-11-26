@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ import (
 
 func TestConversationLifecycle(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "space-test-session-secret")
+	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +36,7 @@ func TestConversationLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
 	owner, _ := s.User(1)
 
@@ -230,7 +232,7 @@ func TestConversationRequirementIsExplicit(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	owner, _ := s.User(1)
 	issuesBefore := len(s.Issues())
 
@@ -279,12 +281,13 @@ func TestConversationRequirementIsExplicit(t *testing.T) {
 func TestConversationMessageAttachments(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "space-test-session-secret")
 	t.Setenv("AGENTFLOW_ASSISTANT_SESSION_DIR", t.TempDir())
+	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
 	owner, _ := s.User(1)
 	space := requestJSONAuthed[spaceView](t, h, owner, http.MethodPost, "/api/spaces", map[string]any{"projectId": "platform", "title": "截图讨论"}, http.StatusCreated)
 	base := "/api/spaces/" + space.ID

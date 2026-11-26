@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	stdsync "sync"
 	"testing"
@@ -99,7 +100,7 @@ func newKnowledgeTestServer(t *testing.T) (*repo.Store, http.Handler, *fakeKB, d
 	if err := s.PutKnowledgeSettings(settings); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	handler := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	return s, handler, kb, settings
 }
 

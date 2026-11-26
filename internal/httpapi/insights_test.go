@@ -39,7 +39,7 @@ func TestInsightIngressPermissionsAndValidation(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "ingest-project", Name: "Ingest", OwnerID: owner.ID, Members: []domain.ProjectMember{{UserID: member.ID, Role: "member"}}}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	input := map[string]any{"projectId": "ingest-project", "name": "CI", "userMappings": map[string]int64{"alice": member.ID}}
 	for _, user := range []domain.User{member, outsider} {
 		requestJSONAuthed[map[string]any](t, h, user, "POST", "/api/insights/v1/sources", input, 403)
@@ -125,7 +125,7 @@ func TestInsightIngressPermissionsAndValidation(t *testing.T) {
 	tooBig := map[string]any{"id": strings.Repeat("x", (1<<20)+1)}
 	send(h, result.Token, insightIngestPath, tooBig, 413)
 	// Dedicated Bearer ingress also works behind Basic Auth without weakening other endpoints.
-	guarded := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "preview", "password")
+	guarded := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "preview", "password")
 	send(guarded, result.Token, insightIngestPath, v, 200)
 	send(guarded, result.Token, "/api/insights/v1/sources", input, 401)
 	got := requestJSONAuthed[domain.AnalyticsSnapshot](t, h, owner, "GET", "/api/analytics?projectId=ingest-project&origin=external", nil, 200)

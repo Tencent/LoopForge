@@ -17,14 +17,11 @@ import (
 )
 
 type WorkspaceCheckpoint struct {
-	ArchiveID     string     `gorm:"size:64" json:"-"`
-	ArchiveBytes  int64      `json:"-"`
-	ArchiveChunks int        `json:"-"`
-	SaveFailures  int        `json:"-"`
-	SaveRetryAt   *time.Time `json:"nextSaveAttemptAt,omitempty"`
-	// CleanupRetryAt is the next time to retry reclaim or check an
-	// unconfirmed claim. A restored workspace starts a new cleanup lifecycle.
-	CleanupRetryAt *time.Time `json:"-"`
+	ArchiveID      string     `gorm:"size:64" json:"-"`
+	ArchiveBytes   int64      `json:"-"`
+	ArchiveChunks  int        `json:"-"`
+	SaveFailures   int        `json:"-"`
+	SaveRetryAt    *time.Time `json:"nextSaveAttemptAt,omitempty"`
 	RunID          string     `gorm:"primaryKey;size:64" json:"-"`
 	Archive        []byte     `gorm:"type:mediumblob" json:"-"`
 	SHA256         string     `gorm:"size:64" json:"-"`
@@ -55,21 +52,13 @@ func (c WorkspaceCheckpoint) Released() bool {
 	return c.ReleasedAt != nil && !c.LastUsedAt.After(*c.ReleasedAt)
 }
 
-func (c WorkspaceCheckpoint) CleanupDeferred(now time.Time) bool {
-	return c.CleanupRetryAt != nil && now.Before(*c.CleanupRetryAt)
-}
-
 var ErrWorkspaceInUse = errors.New("工作区正在使用或保存，请稍后重试")
 var ErrWorkspaceCheckpointBackoff = errors.New("workspace checkpoint save is backing off")
-var ErrWorkspaceCheckpointStale = errors.New("workspace binding changed during checkpoint capture")
 
 const workspaceBackgroundSavePrefix = "save:"
 
 // workspaceUseTerm is how long a workspace lease lasts from its last renewal.
 const workspaceUseTerm = 15 * time.Minute
-
-// A failed deletion must not re-export the checkout on every maintenance pass.
-const workspaceCleanupRetryDelay = 10 * time.Minute
 
 func (r *RunsRepo) WorkspaceCheckpoint(runID string) (WorkspaceCheckpoint, bool) {
 	var item WorkspaceCheckpoint
@@ -143,11 +132,6 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 		run, err := r.takeRunForUpdate(tx, runID)
 		if err != nil {
 			return err
-		}
-		// A maintenance sweep can still have a pre-cleanup run in memory.
-		// It must not save from a checkout that another sweep already removed.
-		if !touch && !restoring && run.WorkspaceCleaned != nil {
-			return ErrWorkspaceInUse
 		}
 		if run.Kind == domain.RunKindWorkspace && !sopPreparation {
 			busy, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, runID, []string{"running"}))
@@ -286,13 +270,12 @@ func (r *RunsRepo) finishWorkspaceUse(runID, token string, now, attemptedAt time
 	})
 }
 
-// ClearWorkspaceCheckpointSaveError records successful verification of an
-// existing archive. Preserve its save time and fence the update by lease and
-// checksum so a retry cannot clear a newer owner's error.
-func (r *RunsRepo) ClearWorkspaceCheckpointSaveError(runID, token, sha string, now time.Time) error {
+// ClearVerifiedWorkspaceCheckpointError preserves the published archive and
+// its save time. A retry must still own the lease for the verified archive.
+func (r *RunsRepo) ClearVerifiedWorkspaceCheckpointError(runID, token, sha string, now time.Time) error {
 	result := r.DB.Model(&WorkspaceCheckpoint{}).
-		Where("run_id = ? AND lease_token = ? AND lease_until > ? AND sha256 = ? AND saved_at IS NOT NULL", runID, token, now, sha).
-		Updates(map[string]any{"error": "", "save_failures": 0, "save_retry_at": nil})
+		Where("run_id = ? AND lease_token = ? AND lease_until > ? AND sha256 = ?", runID, token, now, sha).
+		Updates(map[string]any{"error": "", "save_retry_at": nil, "save_failures": 0})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -302,16 +285,14 @@ func (r *RunsRepo) ClearWorkspaceCheckpointSaveError(runID, token, sha string, n
 	return nil
 }
 
-func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(expected domain.Run, token string, now time.Time) (bool, error) {
-	runID := expected.ID
+func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(runID, token string, revision int, now time.Time) (bool, error) {
 	claimed := false
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		row, err := r.takeRunForUpdate(tx, runID)
 		if err != nil {
 			return err
 		}
-		if row.Revision != expected.Revision || row.WorkspaceHost != expected.WorkspaceHost || row.WorkspaceRoot != expected.WorkspaceRoot ||
-			row.Status == "running" || row.Status == "queued" || row.WorkspaceCleaned != nil || row.CleanupNotBefore != nil && now.Before(*row.CleanupNotBefore) {
+		if row.Revision != revision || row.Status == "running" || row.Status == "queued" || row.WorkspaceCleaned != nil || row.CleanupNotBefore != nil && now.Before(*row.CleanupNotBefore) {
 			return nil
 		}
 		if row.Kind == domain.RunKindWorkspace {
@@ -326,9 +307,6 @@ func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(expected domain.Run, token st
 		}
 		if checkpoint.SavedAt == nil || checkpoint.SHA256 == "" || checkpoint.Error != "" {
 			return fmt.Errorf("工作区未成功保存，暂缓回收")
-		}
-		if checkpoint.CleanupDeferred(now) {
-			return nil
 		}
 		if row.Kind != domain.RunKindWorkspace && (row.Status == "failed" || row.Status == "waiting") {
 			run := runFromRow(row)
@@ -348,105 +326,11 @@ func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(expected domain.Run, token st
 				return err
 			}
 		}
-		result := tx.Model(&runRow{}).Where("id = ? AND revision = ?", runID, expected.Revision).Updates(map[string]any{"workspace_cleaned_at": now, "sandbox_id": ""})
-		if result.Error != nil || result.RowsAffected != 1 {
-			return result.Error
-		}
-		// Set the next allowed attempt before deleting. A failed remote cleanup
-		// or a restarted coordinator cannot immediately redo the checkpoint.
-		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ?", runID).Update("cleanup_retry_at", now.Add(workspaceCleanupRetryDelay)).Error; err != nil {
-			return err
-		}
-		claimed = true
-		return nil
+		result := tx.Model(&runRow{}).Where("id = ? AND revision = ?", runID, revision).Updates(map[string]any{"workspace_cleaned_at": now, "sandbox_id": ""})
+		claimed = result.RowsAffected == 1
+		return result.Error
 	}, r.admissionTxOptions()...)
 	return claimed, err
-}
-
-type WorkspaceCleanupObservation int
-
-const (
-	WorkspaceCleanupUnknown WorkspaceCleanupObservation = iota
-	WorkspaceCleanupPresent
-	WorkspaceCleanupAbsent
-)
-
-func (r *RunsRepo) ConfirmCheckpointWorkspaceReclaimed(runID, token string, now time.Time) error {
-	return r.DB.Model(&WorkspaceCheckpoint{}).
-		Where("run_id = ? AND lease_token = ? AND lease_until > ? AND cleanup_retry_at IS NOT NULL", runID, token, now).
-		Update("cleanup_retry_at", nil).Error
-}
-
-// ResetCheckpointWorkspaceCleanup only reopens the claim that encountered the
-// failure. A restore may have taken over while the reclaimer was still running.
-func (r *RunsRepo) ResetCheckpointWorkspaceCleanup(runID, token string, now time.Time) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
-			return err
-		}
-		var count int64
-		if err := tx.Model(&WorkspaceCheckpoint{}).
-			Where("run_id = ? AND lease_token = ? AND lease_until > ? AND cleanup_retry_at IS NOT NULL", runID, token, now).Count(&count).Error; err != nil {
-			return err
-		}
-		if count != 1 {
-			return ErrWorkspaceInUse
-		}
-		return tx.Model(&runRow{}).Where("id = ?", runID).Update("workspace_cleaned_at", nil).Error
-	})
-}
-
-func (r *RunsRepo) ResetInterruptedRunnerCleanup(expected domain.Run, now time.Time) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		run, err := r.takeRunForUpdate(tx, expected.ID)
-		if err != nil {
-			return err
-		}
-		if !sameWorkspaceCleanup(run, expected) {
-			return nil
-		}
-		var active int64
-		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_until >= ?", expected.ID, now).Count(&active).Error; err != nil || active != 0 {
-			return err
-		}
-		return tx.Model(&runRow{}).Where("id = ?", expected.ID).Update("workspace_cleaned_at", nil).Error
-	})
-}
-
-func sameWorkspaceCleanup(run runRow, expected domain.Run) bool {
-	return run.WorkspaceCleaned != nil && run.WorkspaceCleaned.Equal(expected.WorkspaceCleanedAt) && run.Revision == expected.Revision &&
-		run.WorkspaceHost == expected.WorkspaceHost && run.WorkspaceRoot == expected.WorkspaceRoot
-}
-
-// ResolveCheckpointWorkspaceCleanup applies a root observation to the pending
-// claim it was made for. A new binding, lease or retry supersedes the result.
-func (r *RunsRepo) ResolveCheckpointWorkspaceCleanup(expected domain.Run, retryAt, now time.Time, observed WorkspaceCleanupObservation) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		run, err := r.takeRunForUpdate(tx, expected.ID)
-		if err != nil {
-			return err
-		}
-		if !sameWorkspaceCleanup(run, expected) {
-			return nil
-		}
-		var checkpoint WorkspaceCheckpoint
-		if err := tx.Omit("archive").Where("run_id = ?", expected.ID).Take(&checkpoint).Error; err != nil {
-			return err
-		}
-		if checkpoint.CleanupRetryAt == nil || !checkpoint.CleanupRetryAt.Equal(retryAt) || checkpoint.CleanupDeferred(now) ||
-			checkpoint.LeaseUntil != nil && !now.After(*checkpoint.LeaseUntil) {
-			return nil
-		}
-		switch observed {
-		case WorkspaceCleanupPresent:
-			// The next sweep must capture the surviving checkout before reclaim.
-			return tx.Model(&runRow{}).Where("id = ?", expected.ID).Update("workspace_cleaned_at", nil).Error
-		case WorkspaceCleanupAbsent:
-			return tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ?", expected.ID).Update("cleanup_retry_at", nil).Error
-		default:
-			return tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ?", expected.ID).Update("cleanup_retry_at", now.Add(workspaceCleanupRetryDelay)).Error
-		}
-	})
 }
 
 func sopWorkspaceIdleAt(run domain.Run, checkpoint WorkspaceCheckpoint, now time.Time) bool {
@@ -509,10 +393,6 @@ func (r *RunsRepo) RestoreCheckpointWorkspaceBinding(runID, token, host, root st
 		// earlier failed or interrupted restore.
 		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND restore_status = ?", runID, token, "failed").
 			Updates(map[string]any{"restore_status": "ready", "restore_error": ""}).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND cleanup_retry_at IS NOT NULL", runID, token).
-			Update("cleanup_retry_at", nil).Error; err != nil {
 			return err
 		}
 		return tx.Model(&runRow{}).Where("id = ?", runID).Updates(map[string]any{

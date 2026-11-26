@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
 	if err := s.PutSandbox(profile); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	runner := domain.Runner{ID: "runner", RunnerVersion: domain.RunnerVersionGitPlainHTTP}
 	if err := s.PutRunner(runner); err != nil {
 		t.Fatal(err)
@@ -91,7 +92,7 @@ func TestRunnerSandboxSpecUsesFrozenSnapshot(t *testing.T) {
 		},
 		Dockerfile: &domain.DockerfileDefinition{ID: "image", Name: "original", Content: "FROM alpine:3.20\n"},
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	spec, err := e.runnerSandboxSpec(domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "docker", SandboxSnapshot: frozen}})
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +111,7 @@ func TestRunnerSandboxSpecRequestsRelayForDockerCodexAccountLogin(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer s.Close()
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(t.TempDir()))
 	for _, tc := range []struct {
 		name, driver, provider, authMode string
 		wantRelay                        bool
@@ -164,7 +165,7 @@ func TestDefaultExecutionRunnerUsesFrozenTarget(t *testing.T) {
 	if err := s.SetDefaultRunner(42, "runner-new", time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	run := domain.Run{ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 42, ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "runner-original"}}
 	if got := e.defaultExecutionRunner(run); got != "runner-original" {
 		t.Fatalf("runner target drifted to current default: %q", got)
@@ -182,7 +183,7 @@ func TestResumePausedWaitsForActiveRunnerTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	run := domain.Run{ID: "run-paused-remote", WorkflowID: "wf", Status: "waiting", PauseRequested: true, Nodes: map[string]*domain.NodeRun{
 		"work": {NodeID: "work", Status: "waiting_approval", Activity: "已由用户暂停，等待补充信息"},
 	}}
@@ -273,7 +274,7 @@ func TestRetryFailsBeforeMutationWhenFrozenRunnerIsOffline(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	e.ConfigureExecution("", "", 0, false)
 	err = e.Retry(run.ID, "work", "retry", "")
 	if err == nil || !strings.Contains(err.Error(), "无法重连原执行环境") || !strings.Contains(err.Error(), "当前离线") {

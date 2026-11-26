@@ -10,34 +10,6 @@ import (
 
 const sandboxLockDir = ".locks"
 
-// TryLockWorkspaceCheckpoint serializes recovery and reclamation across
-// processes sharing a workspace root. A nil release means the workspace is busy.
-func (m *Manager) TryLockWorkspaceCheckpoint(runID string) (release func(), err error) {
-	if m == nil || m.root == "" {
-		return nil, os.ErrNotExist
-	}
-	root := filepath.Join(m.root, sandboxLockDir)
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return nil, err
-	}
-	return tryLockSandboxFile(filepath.Join(root, safeID(runID)+".checkpoint.lock"))
-}
-
-func tryLockSandboxFile(path string) (func(), error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = file.Close()
-		if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return func() { _ = unlockFile(file) }, nil
-}
-
 func (m *Manager) lockPath(id string) string {
 	return filepath.Join(m.root, sandboxLockDir, safeID(id)+".lock")
 }

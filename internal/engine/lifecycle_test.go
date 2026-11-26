@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -164,6 +165,7 @@ func TestCancelWaitingRunWithoutScheduler(t *testing.T) {
 
 func TestFinishStopsScheduler(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +177,7 @@ func TestFinishStopsScheduler(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -254,6 +256,7 @@ func TestResumePausedScriptIgnoresSubmittedContext(t *testing.T) {
 
 func TestPassPausedScriptContinuesDownstream(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +269,7 @@ func TestPassPausedScriptContinuesDownstream(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	now := time.Now().UTC()
 	run := domain.Run{
 		ID: "run-pass-paused-script", WorkflowID: wf.ID, WorkflowSnapshot: wf,
@@ -322,7 +325,7 @@ func TestPassRejectsPausedAgentNode(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(t.TempDir()))
 	if err := e.Pass(run.ID, "agent", ""); err == nil || !strings.Contains(err.Error(), "script") {
 		t.Fatalf("Pass error = %v, want script-only", err)
 	}

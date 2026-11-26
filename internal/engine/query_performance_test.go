@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func TestSubscriptionSkipsUnchangedRunPayloads(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	updates, cancel, err := e.Subscribe("poll-query")
 	if err != nil {
 		t.Fatal(err)

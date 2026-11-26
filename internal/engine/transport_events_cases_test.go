@@ -292,7 +292,7 @@ func TestRepositoryWorkspaceLocalAndGitBranches(t *testing.T) {
 
 func TestLocalWorkspaceCheckpointMoreBranches(t *testing.T) {
 	e, st := cvEEngine(t)
-	e.sandboxes = runtime.NewManager(sandboxRoot(t))
+	e.sandboxes = runtime.NewManager(t.TempDir())
 	e.controlToken = "local-token"
 	run := domain.Run{
 		ID: "local-checkpoint-more", Status: "failed",

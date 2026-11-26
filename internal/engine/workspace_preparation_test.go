@@ -126,7 +126,7 @@ func TestWorkspacePreparationNormalOrderAndFlaggedRetryAlwaysExecutes(t *testing
 	if err = st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, runtime.NewManager(sandboxRoot(t)))
+	e := New(st, runtime.NewManager(t.TempDir()))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func TestWorkspacePreparationDoesNotAdvanceFutureScriptPastBusinessNode(t *testi
 	if err = st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, runtime.NewManager(sandboxRoot(t)))
+	e := New(st, runtime.NewManager(t.TempDir()))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -395,7 +395,7 @@ func TestWorkspacePreparationRecordFailureDoesNotRetrySuccessfulBusinessScript(t
 	if err = st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, runtime.NewManager(sandboxRoot(t)))
+	e := New(st, runtime.NewManager(t.TempDir()))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)

@@ -170,7 +170,7 @@ func TestRunStreamBoundsHistory(t *testing.T) {
 	}
 }
 
-func TestSandboxSweepKeepRunIDsSkipsChildTables(t *testing.T) {
+func TestLiveSandboxRunIDsSkipsChildTables(t *testing.T) {
 	s := queryTestStore(t)
 	prefix := fmt.Sprintf("sandbox-ids-%d-", time.Now().UnixNano())
 	keep := domain.Run{ID: prefix + "failed", Status: "failed", Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "failed", Output: strings.Repeat("x", 1024)}}}
@@ -184,10 +184,7 @@ func TestSandboxSweepKeepRunIDsSkipsChildTables(t *testing.T) {
 	t.Cleanup(func() { _ = s.DeleteRun(keep.ID); _ = s.DeleteRun(drop.ID) })
 	recorder := &queryRecorder{Interface: logger.Default}
 	s.DB.Logger = recorder
-	ids, err := s.SandboxSweepKeepRunIDs()
-	if err != nil {
-		t.Fatal(err)
-	}
+	ids := s.LiveSandboxRunIDs()
 	foundKeep, foundDrop := false, false
 	for _, id := range ids {
 		if id == keep.ID {
@@ -197,7 +194,7 @@ func TestSandboxSweepKeepRunIDsSkipsChildTables(t *testing.T) {
 			foundDrop = true
 		}
 	}
-	if !foundKeep || !foundDrop {
+	if !foundKeep || foundDrop {
 		t.Fatalf("ids=%v", ids)
 	}
 	for _, q := range recorder.queries {

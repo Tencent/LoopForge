@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func TestPutAgentValidatesEffortLevel(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "gslb", Key: "GSLB", Name: "GSLB"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	saved := requestJSON[domain.AgentDefinition](t, h, http.MethodPut, "/api/agents", domain.AgentDefinition{
 		ID: "effort-role", Name: "Effort", Version: 1, ProjectID: "gslb", ExecutorID: "codex", Effort: "xhigh",
 	}, http.StatusOK)
@@ -48,7 +49,7 @@ func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	// The catalog is a public, non-sensitive list served without login.
 	catalogs := requestEmptyJSON[map[string]executorModelCatalog](t, h, http.MethodGet, "/api/executor-models", http.StatusOK)
 	cb, ok := catalogs["codebuddy"]
@@ -116,7 +117,7 @@ func TestEnvironmentAssetsAreFilteredByProjectAndSharedScope(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	items := requestEmptyJSON[[]domain.SandboxProfile](t, h, http.MethodGet, "/api/sandboxes?projectId=alpha", http.StatusOK)
 	visible := map[string]bool{}
 	for _, item := range items {
@@ -151,7 +152,7 @@ func TestWorkflowAgentsAreFilteredAndValidatedByProject(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	agents := requestEmptyJSON[[]domain.AgentDefinition](t, h, http.MethodGet, "/api/agents?projectId=alpha", http.StatusOK)
 	visible := map[string]bool{}
 	for _, agent := range agents {
@@ -198,7 +199,7 @@ func TestSandboxDescriptionRoundTrips(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "alpha", Key: "ALPHA", Name: "Alpha"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{
 		"id": "alpha-native", "name": "Alpha native", "description": "前端构建用，含 Node 22", "projectId": "alpha", "driver": "native",
 	}, http.StatusOK)
@@ -235,7 +236,7 @@ func TestSharedWorkflowRequiresSharedSandbox(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "alpha", Key: "ALPHA", Name: "Alpha"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", domain.SandboxProfile{
 		ID: "alpha-process", Name: "Alpha process", ProjectID: "alpha", Driver: "bwrap",
 	}, http.StatusOK)
@@ -296,7 +297,7 @@ func TestAgentCloneStampsProjectAndKeepsBody(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	copied := requestJSON[domain.AgentDefinition](t, h, http.MethodPost, "/api/agents/src-role/clone", map[string]any{
 		"id": "dst-role", "name": "Copy", "projectId": "gslb",
 	}, http.StatusCreated)
@@ -330,7 +331,7 @@ func TestAgentDeleteRequiresUnusedAndUnshared(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	saved := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
 		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "agent", AgentID: "referenced-role"}},
@@ -397,7 +398,7 @@ func TestCatalogAssetDeleteRequiresUnusedAndUnshared(t *testing.T) {
 		ID: "asset-user", Name: "Asset user", ProjectID: "alpha", Version: 1,
 		Rules: []string{"used-rule"}, Skills: []string{"used-skill"},
 	}))
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
 		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", SandboxProfileID: "used-box",
 		Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "agent", AgentID: "asset-user"}},
@@ -467,7 +468,7 @@ func TestSharingAgentCascadesToOwnedRulesAndSkills(t *testing.T) {
 	if err := s.PutSkill(domain.SkillDefinition{ID: "owned-skill", Name: "Owned skill", ProjectID: "gslb"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	requestJSON[domain.AgentDefinition](t, h, http.MethodPut, "/api/agents", domain.AgentDefinition{
 		ID: "shared-role", Name: "Shared", Version: 1, ProjectID: "gslb", Shared: true,
 		Rules: []string{"owned-rule"}, Skills: []string{"owned-skill"}, ExecutorID: "codebuddy",
@@ -488,7 +489,7 @@ func TestPutAgentRejectsCommandGateWithoutExecutionScope(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "gslb", Key: "GSLB", Name: "GSLB"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	errBody := requestJSON[map[string]string](t, h, http.MethodPut, "/api/agents", domain.AgentDefinition{
 		ID: "scoped-role", Name: "Scoped", Version: 1, ProjectID: "gslb", ExecutorID: "codebuddy",
 		Verification: []domain.VerificationGate{{ID: "plan", Name: "plan", Mode: "command", Commands: []string{`test -f fix-plan.md`}}},
@@ -557,7 +558,7 @@ func TestRunListFallsBackToIssueProject(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	listed := requestJSON[[]domain.Run](t, h, http.MethodGet, "/api/runs?projectId=gslb", nil, http.StatusOK)
 	if len(listed) != 1 || listed[0].ID != "legacy-run" {
 		t.Fatalf("gslb run list = %+v", listed)
@@ -583,7 +584,7 @@ func TestBootstrapAgentsKeepProjectScope(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	boot := requestEmptyJSON[map[string]any](t, h, http.MethodGet, "/api/bootstrap", http.StatusOK)
 	raw, _ := boot["agents"].([]any)
 	var found map[string]any
@@ -623,7 +624,7 @@ func TestProjectDefaultRepositoryMustAlreadyExist(t *testing.T) {
 	if err := s.PutRepository(domain.Repository{ID: "other-repo", ProjectID: "other", Name: "other", GongfengProjectID: "other/repo"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 
 	missing := requestJSON[map[string]string](t, h, http.MethodPost, "/api/projects", domain.Project{
 		ID: "onboard", Key: "ONB", Name: "Onboard", DefaultRepositoryID: "onboard-repo",
@@ -662,7 +663,7 @@ func TestNewProjectDefaultsToGenericBackendDeliverySOP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	created := requestJSON[domain.Project](t, h, http.MethodPost, "/api/projects", domain.Project{ID: "fresh", Key: "FRESH", Name: "Fresh"}, http.StatusOK)
 	if created.WorkflowID != repo.GenericBackendDeliveryWorkflowID {
 		t.Fatalf("new project should default to the LoopForge SOP, got %q", created.WorkflowID)
@@ -681,7 +682,7 @@ func TestRepositoryOneLinkSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	requestJSON[domain.Project](t, h, http.MethodPost, "/api/projects", domain.Project{ID: "linkproj", Key: "LINK", Name: "Link"}, http.StatusOK)
 
 	// 只粘贴一个工蜂链接：自动补项目路径、仓库名、URL，主分支默认 master。
@@ -792,7 +793,7 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/rules", domain.RuleDefinition{
 		ID: "alpha-global", Name: "全局约束", ProjectID: "alpha", Content: "所有节点都要遵守", Priority: 50,
 		Global: true, WorkflowIDs: []string{" alpha-sop ", "alpha-sop", ""},

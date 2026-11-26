@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -17,6 +18,7 @@ import (
 // dispatch onto an existing issue must stay an "sop" target.
 func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "room-test-session-secret")
+	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +35,7 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
 	owner, _ := s.User(1)
 	room := requestJSONAuthed[domain.ChatRoomView](t, h, owner, http.MethodPost, "/api/rooms", map[string]any{

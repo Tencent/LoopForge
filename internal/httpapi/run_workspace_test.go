@@ -173,7 +173,7 @@ func TestRunWorkspaceReportsCleanedWorkspace(t *testing.T) {
 	if err := store.PutRun(domain.Run{ID: "run-cleaned", Status: "succeeded", WorkspaceCleanedAt: time.Now().UTC(), Nodes: map[string]*domain.NodeRun{}}); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(store, engine.New(store, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	handler := New(store, engine.New(store, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	info := requestEmptyJSON[struct {
 		Available bool   `json:"available"`
 		Reason    string `json:"reason"`
@@ -201,7 +201,7 @@ func TestRunWorkspaceReportsRemoteRunnerBoundary(t *testing.T) {
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(store, engine.New(store, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	handler := New(store, engine.New(store, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	info := requestEmptyJSON[struct {
 		Available bool   `json:"available"`
 		Reason    string `json:"reason"`

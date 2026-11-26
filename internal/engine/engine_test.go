@@ -487,7 +487,7 @@ func TestShellAndPythonScriptNodesExecuteInOrder(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 1))
+	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -536,7 +536,7 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 1))
+	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
 	run, err := e.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{}, domain.TelemetryContext{ProjectID: "dns", ResponsibleUserID: 9})
 	if err != nil {
 		t.Fatal(err)
@@ -594,7 +594,7 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManagerWithLimit(sandboxRoot(t), 1))
+	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
 	run, err := e.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{}, domain.TelemetryContext{ProjectID: "dns", ResponsibleUserID: 9})
 	if err != nil {
 		t.Fatal(err)
@@ -1082,7 +1082,7 @@ func TestStartUsesFreshWorkBranchPerSOP(t *testing.T) {
 	if err := s.PutRun(domain.Run{ID: "old", Status: "failed", ExecutionContext: domain.TelemetryContext{IssueID: "gf-5", IssueNumber: 5}, Repository: domain.RepositoryContext{RepositoryID: "skillhub", WorkBranch: "feature/old-sop-branch"}, Nodes: map[string]*domain.NodeRun{}, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(t.TempDir()))
 	wf := domain.WorkflowDefinition{ID: "branch-test", Name: "Branch test", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
@@ -1102,12 +1102,13 @@ func TestStartUsesFreshWorkBranchPerSOP(t *testing.T) {
 
 func TestFinishSucceededDeletesPersistentSandboxImmediately(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	m := runtime.NewManager(sandboxRoot(t))
+	m := runtime.NewManager(filepath.Join(dir, "workspaces"))
 	e := New(s, m)
 	runID := "run-sandbox-reclaim"
 	if err := s.PutRun(domain.Run{ID: runID, Status: "running", Nodes: map[string]*domain.NodeRun{}}); err != nil {
@@ -1136,12 +1137,13 @@ func TestFinishSucceededDeletesPersistentSandboxImmediately(t *testing.T) {
 
 func TestFinishFailedKeepsPersistentSandbox(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	m := runtime.NewManager(sandboxRoot(t))
+	m := runtime.NewManager(filepath.Join(dir, "workspaces"))
 	e := New(s, m)
 	runID := "run-keep-on-fail"
 	if err := s.PutRun(domain.Run{ID: runID, Status: "running", Nodes: map[string]*domain.NodeRun{}}); err != nil {
@@ -1392,13 +1394,14 @@ func TestPrepareRepositoryWithTokenKeepsCleanOrigin(t *testing.T) {
 
 func TestRunWaitsForGateAndCompletes(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
 	putTestDeliveryWorkflow(t, s)
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start("delivery", "build a small feature")
 	if err != nil {
 		t.Fatal(err)
@@ -1416,6 +1419,7 @@ func TestRunWaitsForGateAndCompletes(t *testing.T) {
 
 func TestHumanGateFailureWaitsForApprove(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1429,7 +1433,7 @@ func TestHumanGateFailureWaitsForApprove(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1447,6 +1451,7 @@ func TestHumanGateFailureWaitsForApprove(t *testing.T) {
 
 func TestSubmitReworkWithoutRejectToDegradesToFail(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1462,7 +1467,7 @@ func TestSubmitReworkWithoutRejectToDegradesToFail(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1483,7 +1488,12 @@ func TestSubmitReworkWithoutRejectToDegradesToFail(t *testing.T) {
 
 func TestSubmitReworkRejectsUpstreamInsteadOfRetrying(t *testing.T) {
 	t.Parallel()
-	e, s := newRecoveryEngine(t)
+	dir := t.TempDir()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
 	// Attempt 1 submits rework; if the node (wrongly) retries locally, attempt
 	// 2 would pass and the upstream node would never be reworked.
 	if err := s.PutAgent(domain.AgentDefinition{ID: "rework-upstream-agent", Name: "rework-upstream-agent", ExecutorID: "mock", Prompt: "[[mock:gate=rework,pass]]"}); err != nil {
@@ -1496,6 +1506,7 @@ func TestSubmitReworkRejectsUpstreamInsteadOfRetrying(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1519,6 +1530,7 @@ func TestSubmitReworkRejectsUpstreamInsteadOfRetrying(t *testing.T) {
 
 func TestSubmitReworkBudgetExhaustedWaitsForHuman(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1537,7 +1549,7 @@ func TestSubmitReworkBudgetExhaustedWaitsForHuman(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1563,6 +1575,7 @@ func TestSubmitReworkBudgetExhaustedWaitsForHuman(t *testing.T) {
 
 func TestSubmitTerminalDecisionSkipsGatesTelemetry(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1583,7 +1596,7 @@ func TestSubmitTerminalDecisionSkipsGatesTelemetry(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1612,6 +1625,7 @@ func TestSubmitTerminalDecisionSkipsGatesTelemetry(t *testing.T) {
 
 func TestSubmitGateResumesSessionWhenResultIsMissing(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1627,7 +1641,7 @@ func TestSubmitGateResumesSessionWhenResultIsMissing(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1655,6 +1669,7 @@ func TestSubmitGateResumesSessionWhenResultIsMissing(t *testing.T) {
 
 func TestLostCLISessionRestartsInsteadOfWaiting(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1672,7 +1687,7 @@ func TestLostCLISessionRestartsInsteadOfWaiting(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1698,6 +1713,7 @@ func TestLostCLISessionRestartsInsteadOfWaiting(t *testing.T) {
 
 func TestHumanGateFailureRetryRerunsNode(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1710,7 +1726,7 @@ func TestHumanGateFailureRetryRerunsNode(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1728,6 +1744,7 @@ func TestHumanGateFailureRetryRerunsNode(t *testing.T) {
 
 func TestCancelMarksActiveNodeCancelled(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1739,7 +1756,7 @@ func TestCancelMarksActiveNodeCancelled(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1769,6 +1786,7 @@ func TestCancelMarksActiveNodeCancelled(t *testing.T) {
 
 func TestRetryCancelledRunFromNodeAfterImmediateCleanup(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1781,7 +1799,7 @@ func TestRetryCancelledRunFromNodeAfterImmediateCleanup(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1818,6 +1836,7 @@ func TestRetryCancelledRunFromNodeAfterImmediateCleanup(t *testing.T) {
 
 func TestRetrySucceededRunFromNodeAfterCleanup(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1830,7 +1849,7 @@ func TestRetrySucceededRunFromNodeAfterCleanup(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1858,6 +1877,7 @@ func TestRetrySucceededRunFromNodeAfterCleanup(t *testing.T) {
 
 func TestRetryLegacySucceededRunAfterMainBotMissingSnapshot(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1870,7 +1890,7 @@ func TestRetryLegacySucceededRunAfterMainBotMissingSnapshot(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1916,13 +1936,14 @@ func TestRetryLegacySucceededRunAfterMainBotMissingSnapshot(t *testing.T) {
 
 func TestRejectResetsTargetAndDescendants(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
 	putTestDeliveryWorkflow(t, s)
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start("delivery", "first pass")
 	if err != nil {
 		t.Fatal(err)
@@ -2045,6 +2066,7 @@ func TestCompileTaskPromptFillsDeliverablesFromNodeContracts(t *testing.T) {
 
 func TestParallelNodesDoNotOverwriteEachOther(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2063,7 +2085,7 @@ func TestParallelNodesDoNotOverwriteEachOther(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start("parallel", "parallel work")
 	if err != nil {
 		t.Fatal(err)
@@ -2135,6 +2157,7 @@ func TestRolePromptCompilesTaskbook(t *testing.T) {
 
 func TestNodeFailureAutomaticallyRejectsToConfiguredTarget(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2147,7 +2170,7 @@ func TestNodeFailureAutomaticallyRejectsToConfiguredTarget(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2170,6 +2193,7 @@ func TestNodeFailureAutomaticallyRejectsToConfiguredTarget(t *testing.T) {
 
 func TestPassFailedScriptContinuesDownstream(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2182,7 +2206,7 @@ func TestPassFailedScriptContinuesDownstream(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2214,6 +2238,7 @@ func TestPassFailedScriptContinuesDownstream(t *testing.T) {
 
 func TestPassAfterReworkLimitReached(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2230,7 +2255,7 @@ func TestPassAfterReworkLimitReached(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2269,7 +2294,7 @@ func TestPassRejectsAgentNode(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(t.TempDir()))
 	if err := e.Pass(run.ID, "agent", "补充信息"); err == nil || !strings.Contains(err.Error(), "script") {
 		t.Fatalf("Pass error = %v, want script-only", err)
 	}
@@ -2288,7 +2313,7 @@ func TestPassRejectsActiveRun(t *testing.T) {
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(t.TempDir()))
 	if err := e.Pass(run.ID, "gate", ""); err == nil || !strings.Contains(err.Error(), "still active") {
 		t.Fatalf("Pass error = %v, want still active", err)
 	}
@@ -2296,6 +2321,7 @@ func TestPassRejectsActiveRun(t *testing.T) {
 
 func TestArtifactsAreVersionedAndMaterializedForDownstreamNode(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2311,7 +2337,7 @@ func TestArtifactsAreVersionedAndMaterializedForDownstreamNode(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2351,7 +2377,7 @@ func TestRepositoryPatchIsFrozenAndAppliedToDownstreamSandbox(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.StartWithContext(wf.ID, "", domain.RepositoryContext{RepositoryID: "repo", Name: "repo", LocalPath: source, BaseBranch: "main"})
 	if err != nil {
 		t.Fatal(err)
@@ -2396,7 +2422,7 @@ func TestSingleRepositoryKeepsDeliverablesAtRunRoot(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.StartWithContext(wf.ID, "", domain.RepositoryContext{RepositoryID: "repo", Name: "repo", LocalPath: source, BaseBranch: "main"})
 	if err != nil {
 		t.Fatal(err)
@@ -2440,6 +2466,7 @@ func TestSingleRepositoryKeepsDeliverablesAtRunRoot(t *testing.T) {
 
 func TestAutomaticGatesAndArtifactsCompleteBeforeManualApproval(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2459,7 +2486,7 @@ func TestAutomaticGatesAndArtifactsCompleteBeforeManualApproval(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2514,7 +2541,7 @@ func TestArtifactContractIsValidatedBeforeAutomaticGate(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2540,6 +2567,7 @@ func TestArtifactContractIsValidatedBeforeAutomaticGate(t *testing.T) {
 // one script before executing.
 func TestVerificationGateRunsMultiLineCommandsAsOneScript(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2563,7 +2591,7 @@ func TestVerificationGateRunsMultiLineCommandsAsOneScript(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2579,6 +2607,7 @@ func TestVerificationGateRunsMultiLineCommandsAsOneScript(t *testing.T) {
 
 func TestRunUsesFrozenWorkflowSnapshotDuringConcurrentEdits(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2591,7 +2620,7 @@ func TestRunUsesFrozenWorkflowSnapshotDuringConcurrentEdits(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -3765,7 +3794,7 @@ func TestRecordHumanContextPersistsForRetryAndPrompt(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -3810,6 +3839,7 @@ func TestRecordHumanContextPersistsForRetryAndPrompt(t *testing.T) {
 
 func TestApproveWithHumanContextReachesDownstream(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -3823,7 +3853,7 @@ func TestApproveWithHumanContextReachesDownstream(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -3944,6 +3974,7 @@ func TestExistingMRBlurbDoesNotReusePreviousSOP(t *testing.T) {
 
 func TestAlignOnlyApprovalDoesNotWait(t *testing.T) {
 	t.Parallel()
+	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -3956,7 +3987,7 @@ func TestAlignOnlyApprovalDoesNotWait(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
 	r, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)

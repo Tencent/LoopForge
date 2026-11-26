@@ -46,6 +46,7 @@ func requestWithHeaders(t *testing.T, h http.Handler, method, path string, body 
 
 func newRunnerTestServer(t *testing.T) http.Handler {
 	t.Helper()
+	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +55,7 @@ func newRunnerTestServer(t *testing.T) http.Handler {
 	if err := s.PutUser(domain.User{ID: 42, LoginName: "alice", ChineseName: "爱丽丝"}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	return New(s, e, tracker.NewService(), "", "")
 }
 
@@ -461,12 +462,13 @@ func TestRunnerTaskCancelPropagatesThroughLease(t *testing.T) {
 }
 
 func TestRunnerObservationUploadIsIdempotent(t *testing.T) {
+	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
 	runnerID, session := registerTestRunner(t, h)
 	auth := map[string]string{"Authorization": "Bearer " + session}
@@ -695,7 +697,7 @@ func TestRunnerTaskClaimFindsTaskInsertedByAnotherProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
 	_, session := registerTestRunner(t, h)
 	auth := map[string]string{"Authorization": "Bearer " + session}
@@ -790,12 +792,13 @@ func TestRunnerMachinePlaneNeedsNoUserIdentityButKeepsRunnerAuth(t *testing.T) {
 	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(dir, "agentflow-runner-{os}-{arch}"))
 	t.Setenv("AGENTFLOW_GATE_MCP_BINARY", filepath.Join(dir, "agentflow-gate-mcp-{os}-{arch}"))
 
+	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "preview", "secret")
 
 	for _, path := range []string{"/runners/install.sh", "/runners/health", "/runners/agentflow-runner?os=linux&arch=amd64", "/runners/agentflow-gate-mcp?os=linux&arch=amd64"} {
@@ -860,7 +863,7 @@ func TestRunnerTaskManagementRequiresAdminAndOwnership(t *testing.T) {
 	if err := s.PutAPIToken(domain.APIToken{ID: "tok-alice", UserID: 42, Name: "t", Prefix: "af_test", TokenHash: hex.EncodeToString(sum[:])}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	alice := map[string]string{"Authorization": "Bearer " + raw}
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodGet, "/api/runners/tasks"},

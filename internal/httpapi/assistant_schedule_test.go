@@ -121,7 +121,7 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 			if err := st.PutIssue(domain.Issue{ID: "scheduled-issue", ProjectID: "platform", Title: "keep", Source: "tapd", Status: "backlog"}); err != nil {
 				t.Fatal(err)
 			}
-			api := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+			api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 			h := &assistantHandlers{deps: &deps{repo: st}, api: api}
 			called := false
 			h.generate = func(ctx context.Context, prompt string, u domain.User) (string, error) {

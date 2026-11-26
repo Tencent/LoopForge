@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -249,7 +250,7 @@ func TestOwnKeyKeepsFreeModelChoice(t *testing.T) {
 // work on the shared model before they configure a key.
 func TestBootstrapAdvertisesSponsoredModel(t *testing.T) {
 	st, _ := sponsorFixture(t)
-	h := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	t.Setenv(assistantSponsorLoginEnv, "sponsor")
 	boot := requestEmptyJSON[map[string]any](t, h, http.MethodGet, "/api/bootstrap", http.StatusOK)
 	if boot["sponsoredModel"] != assistantSponsoredModel {

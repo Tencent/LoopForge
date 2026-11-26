@@ -58,7 +58,6 @@ func (e *Engine) EndConversationWorkspaceUseAsync(ctx context.Context, id, token
 				}
 			}
 		}()
-		retryDelay := 100 * time.Millisecond
 		for {
 			err = e.saveConversationWorkspaceAfterUse(saveCtx, id, saveToken)
 			meta, exists := e.repo.WorkspaceCheckpoint(id)
@@ -67,22 +66,12 @@ func (e *Engine) EndConversationWorkspaceUseAsync(ctx context.Context, id, token
 				break
 			}
 			if errors.Is(err, repo.ErrWorkspaceInUse) && saveCtx.Err() == nil {
-				// Retry within the existing save deadline. If our lease expired
-				// during capture, renew it only if its token still matches.
-				var renewErr error
-				if now := time.Now().UTC(); meta.LeaseUntil == nil || !now.Before(*meta.LeaseUntil) {
-					renewErr = e.repo.RenewWorkspaceUse(id, saveToken, now)
+				// A preceding export may still be releasing its runner gate.
+				select {
+				case <-saveCtx.Done():
+				case <-time.After(100 * time.Millisecond):
 				}
-				if renewErr == nil {
-					select {
-					case <-saveCtx.Done():
-					case <-time.After(retryDelay):
-						retryDelay = min(2*retryDelay, 500*time.Millisecond)
-						continue
-					}
-				} else {
-					err = errors.Join(err, renewErr)
-				}
+				continue
 			}
 			message := ""
 			if err != nil {

@@ -543,7 +543,7 @@ func TestSharedNativeSessionLive(t *testing.T) {
 		t.Fatal("two test keys required")
 	}
 	h, a, b, session := sharedNativeMySQLFixture(t, keys)
-	api := New(h.repo, engine.New(h.repo, runtime.NewManager(sandboxRoot(t))), nil, "", "")
+	api := New(h.repo, engine.New(h.repo, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), nil, "", "")
 	server := httptest.NewServer(api)
 	t.Cleanup(server.Close)
 	previous := config.Current()

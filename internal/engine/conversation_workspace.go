@@ -320,11 +320,6 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 		}
 		return e.repo.RestoreCheckpointWorkspaceBinding(id, token, host, root, time.Now().UTC())
 	}
-	release, err := e.tryLockCheckpointWorkspace(id)
-	if err != nil {
-		return err
-	}
-	defer release()
 	root := e.sandboxes.RunWorkspace(id)
 	if info, statErr := os.Lstat(root); statErr == nil && info.IsDir() && !e.foreignWorkspaceBind(run) {
 		hasContent, contentErr := runtime.WorkspaceDirHasContent(root)
@@ -366,16 +361,12 @@ var ErrConversationWorkspaceLost = errors.New("原工作区实例已下线，未
 // sandbox root is kept if it has user files. Publish the new binding only
 // after the recovered checkout is ready so a failed restore can be retried.
 func (e *Engine) rebindOfflineConversationWorkspace(ctx context.Context, id, token string, run domain.Run) error {
-	release, err := e.tryLockCheckpointWorkspace(id)
-	if err != nil {
-		return err
-	}
-	defer release()
 	_, boundRoot := e.workspaceBind(run)
 	local := e.sandboxes.RunWorkspace(id)
 	sameRoot := boundRoot == e.sandboxes.Root()
 	hasCheckout := false
 	if sameRoot {
+		var err error
 		hasCheckout, err = runtime.WorkspaceDirHasContent(local)
 		if err != nil {
 			return err
@@ -417,20 +408,20 @@ func (e *Engine) noteConversationWorkspaceRebound(id, message string) {
 
 // claimIdleConversationWorkspace returns managed=true even on save failure, so
 // legacy immediate cleanup can never delete files that were not persisted.
-func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (managed bool, lease string, release func(), err error) {
+func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (managed, claimed bool, release func(), err error) {
 	if sharesWorkspace(run) {
-		return false, "", nil, nil
+		return false, false, nil, nil
 	}
 	sopIdleReclaim := idleSOPStatus(run)
 	if !run.IsWorkspace() && (run.Status == "failed" || run.Status == "waiting") && !sopIdleReclaim {
-		return true, "", nil, nil
+		return true, false, nil, nil
 	}
 	meta, exists := e.repo.WorkspaceCheckpoint(run.ID)
 	if !exists && !run.IsWorkspace() && !sopIdleReclaim && run.Status != "succeeded" && run.Status != "cancelled" {
-		return false, "", nil, nil
+		return false, false, nil, nil
 	}
 	if !run.WorkspaceCleanedAt.IsZero() {
-		return false, "", nil, nil
+		return false, false, nil, nil
 	}
 	// Recent edits and save backoff take precedence over a maintenance lease.
 	idleSinceBeforeLease := run.UpdatedAt
@@ -439,45 +430,31 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	}
 	if sopIdleReclaim && (idleSinceBeforeLease.IsZero() || now.Before(idleSinceBeforeLease.Add(ConversationWorkspaceIdleTTL)) || now.Before(run.WorkspaceCleanupNotBefore)) ||
 		meta.SaveRetryAt != nil && now.Before(*meta.SaveRetryAt) {
-		return true, "", nil, nil
+		return true, false, nil, nil
 	}
 	released := exists && meta.Released()
 	retryDue := meta.SaveRetryAt != nil
 	if exists && meta.FollowUp && !retryDue && !released && now.Before(idleSinceBeforeLease.Add(ConversationWorkspaceIdleTTL)) {
-		return true, "", nil, nil
+		return true, false, nil, nil
 	}
 	if run.IsWorkspace() {
 		busy, err := e.repo.HasWorkspaceSOPRuns(run.ID, "running", "queued", "waiting")
 		if err != nil || busy {
-			return true, "", nil, err
+			return true, false, nil, err
 		}
 	}
 	if !e.conversationWorkspaceIdle(run) || e.conversationGenerationRunning(run) {
-		return true, "", nil, nil
+		return true, false, nil, nil
 	}
-	// A cleanup hold alone is not a reason to take a lease or rearchive.
 	cleanupHeld := now.Before(run.WorkspaceCleanupNotBefore)
-	if (cleanupHeld || meta.CleanupDeferred(now)) && !heldWorkspaceCheckpointNeedsSave(meta, idleSinceBeforeLease, now) {
-		return true, "", nil, nil
+	if cleanupHeld && !heldWorkspaceCheckpointNeedsSave(meta, idleSinceBeforeLease, now) {
+		return true, false, nil, nil
 	}
 	token, err := e.repo.BeginWorkspaceCheckpointSave(run.ID, now)
 	if err != nil {
-		return true, "", nil, nil
+		return true, false, nil, nil
 	}
 	meta, _ = e.repo.WorkspaceCheckpoint(run.ID)
-	// The sweep may have loaded the run before another instance restored or
-	// rebound it. Recheck the current owner before reading checkout files.
-	current, ok := e.repo.RunState(run.ID)
-	if !ok || current.Revision != run.Revision || !current.WorkspaceCleanedAt.IsZero() ||
-		current.WorkspaceHost != run.WorkspaceHost || current.WorkspaceRoot != run.WorkspaceRoot ||
-		!e.conversationWorkspaceIdle(current) || e.conversationGenerationRunning(current) {
-		_ = e.repo.FinishWorkspaceCheckpointSave(run.ID, token, meta.LastUsedAt, now, "")
-		return true, "", nil, nil
-	}
-	run = current
-	released = meta.Released()
-	cleanupHeld = now.Before(run.WorkspaceCleanupNotBefore)
-	cleanupHeld = cleanupHeld || meta.CleanupDeferred(now)
 	idleSince := meta.LastUsedAt
 	if run.UpdatedAt.After(idleSince) {
 		idleSince = run.UpdatedAt
@@ -490,7 +467,7 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	if run.IsWorkspace() && !meta.FollowUp {
 		if err := e.repo.MarkWorkspaceFollowUp(run.ID, token, idleSince); err != nil {
 			_ = e.repo.FinishWorkspaceCheckpointSave(run.ID, token, idleSince, now, err.Error())
-			return true, "", nil, err
+			return true, false, nil, err
 		}
 		meta.FollowUp = true
 	}
@@ -502,7 +479,6 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 		}
 		_ = e.repo.FinishWorkspaceCheckpointSave(run.ID, token, idleSince, attemptedAt, saveError)
 	}
-	claimed := false
 	defer func() {
 		if !claimed {
 			finish()
@@ -512,11 +488,9 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 		current, err := e.repo.RunWithNodes(run.ID)
 		if err != nil || current.ID == "" || current.Revision != run.Revision || !current.WorkspaceCleanedAt.IsZero() ||
 			now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) || !e.conversationWorkspaceIdle(current) {
-			return true, "", nil, nil
+			return true, false, nil, nil
 		}
 	}
-	// Capture once immediately before reclaiming to include edits made
-	// outside platform activity tracking, including during a cleanup hold.
 	readyToReclaim := !cleanupHeld && (!meta.FollowUp || released || !now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)))
 	needsSave := readyToReclaim || workspaceCheckpointNeedsSave(meta, run.UpdatedAt, now)
 	if cleanupHeld {
@@ -527,31 +501,27 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 		defer cancel()
 		ctx = WithConversationWorkspaceToken(ctx, token, run.ID)
 		var previous *repo.WorkspaceCheckpoint
-		if !cleanupHeld && meta.CleanupRetryAt != nil && meta.SavedAt != nil && meta.SHA256 != "" {
+		if readyToReclaim && meta.SavedAt != nil && meta.SHA256 != "" {
 			previous = &meta
 		}
 		captureErr := e.saveConversationWorkspace(ctx, run, token, previous)
 		if captureErr != nil {
-			if errors.Is(captureErr, repo.ErrWorkspaceCheckpointStale) {
-				return true, "", nil, nil
-			}
 			saveError = captureErr.Error()
-			return true, "", nil, captureErr
+			return true, false, nil, captureErr
 		}
 	}
 	if !readyToReclaim {
-		return true, "", nil, nil
+		return true, false, nil, nil
 	}
 	if sopIdleReclaim && !e.conversationWorkspaceIdle(run) {
-		return true, "", nil, nil
+		return true, false, nil, nil
 	}
-	// Revision, binding and node checks serialize the deletion claim against
-	// a rebind, SOP or group dispatch.
-	claimed, err = e.repo.ClaimCheckpointWorkspaceCleanup(run, token, now)
+	// Revision and node checks serialize the deletion claim against SOP or group dispatch.
+	claimed, err = e.repo.ClaimCheckpointWorkspaceCleanup(run.ID, token, run.Revision, now)
 	if claimed {
-		return true, token, finish, err
+		release = finish
 	}
-	return true, "", nil, err
+	return true, claimed, release, err
 }
 
 // Preserve the first checkpoint after release or idle expiry, even while

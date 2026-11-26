@@ -19,7 +19,7 @@ func TestSharedChildWorkspaceControlPreservesOwnerAndSnapshotProtection(t *testi
 		t.Fatal(err)
 	}
 	defer s.Close()
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(t.TempDir()))
 	e.ConfigureControl(ControlConfig{Token: "test-control-token"})
 	if err = s.PutRunner(domain.Runner{ID: "runner", RunnerVersion: domain.RunnerVersionWorkspaceOwnerPreparation, Status: domain.RunnerStatusOnline}); err != nil {
 		t.Fatal(err)

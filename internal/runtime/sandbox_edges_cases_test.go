@@ -109,7 +109,7 @@ func TestAgentStateMountsAndDockerManagerReclaim(t *testing.T) {
 	if err != nil || len(idle) != 1 {
 		t.Fatalf("idle=%v err=%v", idle, err)
 	}
-	removed, err := m.ReclaimDockerSandboxes(context.Background(), func() ([]string, error) { return nil, nil })
+	removed, err := m.ReclaimDockerSandboxes(context.Background(), nil)
 	if err != nil || removed != 1 {
 		t.Fatalf("removed=%d err=%v", removed, err)
 	}

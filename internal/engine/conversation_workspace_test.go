@@ -171,11 +171,7 @@ func TestConversationWorkspacePreservesOnSaveFailureAndWhileActive(t *testing.T)
 		t.Fatal("unsaved files reclaimed or error lost")
 	}
 	protected := false
-	live, err := e.repo.SandboxSweepKeepRunIDs()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, runID := range live {
+	for _, runID := range e.liveSandboxRunIDs() {
 		protected = protected || runID == id
 	}
 	if !protected {
@@ -268,7 +264,7 @@ func TestConversationWorkspaceSplitWorkerSavesReclaimsAndRestoresOnOwner(t *test
 	if err := worker.repo.HeartbeatEngineInstance(repo.EngineInstance{InstanceID: "checkpoint-worker", Role: "worker", WorkspaceHost: worker.workspaceHost, ControlURL: server.URL}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	controller := New(worker.repo, runtime.NewManager(sandboxRoot(t)))
+	controller := New(worker.repo, runtime.NewManager(t.TempDir()))
 	controller.workspaceHost = "checkpoint-controller"
 	controller.controlToken = worker.controlToken
 	controller.reconcileTerminalWorkspaceCleanup()
@@ -551,9 +547,9 @@ func TestConversationWorkspaceRetriesFailedSaveBeforeIdleReclamation(t *testing.
 		t.Fatal("no retry scheduled")
 	}
 	run, _ := e.repo.RunState(id)
-	managed, lease, _, err := e.claimIdleConversationWorkspace(run, meta.SaveRetryAt.Add(time.Second))
-	if err != nil || !managed || lease != "" {
-		t.Fatalf("retry/reclaim result: %v %v %v", managed, lease != "", err)
+	managed, claimed, _, err := e.claimIdleConversationWorkspace(run, meta.SaveRetryAt.Add(time.Second))
+	if err != nil || !managed || claimed {
+		t.Fatalf("retry/reclaim result: %v %v %v", managed, claimed, err)
 	}
 	meta, _ = e.repo.WorkspaceCheckpoint(id)
 	if meta.SavedAt == nil || meta.Error != "" || meta.LeaseToken != "" {

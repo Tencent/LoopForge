@@ -44,7 +44,7 @@ func TestStreamRunLargeDeltasCancellationAndMissing(t *testing.T) {
 	if err := st.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(st, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	h := &streamHandlers{deps: &deps{repo: st, engine: e}}
 	router := gin.New()
 	router.GET("/runs/:id", h.streamRun)
@@ -94,7 +94,7 @@ func TestStreamRunHeartbeat(t *testing.T) {
 	if err := st.PutRun(domain.Run{ID: "cvb-heartbeat", WorkflowID: "generic-code", Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(st, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	h := &streamHandlers{deps: &deps{repo: st, engine: e}}
 	router := gin.New()
 	router.GET("/runs/:id", h.streamRun)

@@ -27,7 +27,7 @@ func TestQueuedSOPDoesNotStartAndCancelDoesNotOccupy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(t.TempDir()))
 	e.ConfigureExecution("queue-worker", "queue-host", time.Minute, true)
 	r, err := e.StartWithRepositoriesContext(wf.ID, "", nil, domain.TelemetryContext{ProjectID: "p"})
 	if err != nil {
@@ -70,7 +70,7 @@ func TestQueuedSOPAutomaticallyStartsAfterSuccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(t.TempDir()))
 	e.ConfigureExecution("queue-worker", "queue-host", time.Minute, true)
 	r, err := e.StartWithRepositoriesContext(wf.ID, "", nil, domain.TelemetryContext{ProjectID: "p"})
 	if err != nil || r.Status != "queued" {

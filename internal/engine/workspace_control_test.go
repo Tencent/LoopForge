@@ -19,7 +19,7 @@ func TestWorkspaceControlWorkerForwardsThroughInternalAPI(t *testing.T) {
 	t.Parallel()
 	// Worker has no Runner WebSocket hub; the API owns the outbound connection.
 	worker, st := newRecoveryEngine(t)
-	api := New(st, runtime.NewManager(sandboxRoot(t)))
+	api := New(st, runtime.NewManager(t.TempDir()))
 	api.ConfigureControl(ControlConfig{Token: "shared-control"})
 	run := domain.Run{ID: "control-run", Status: "running", ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "runner", RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared}, WorkflowSnapshot: preparationWorkflow(), Nodes: map[string]*domain.NodeRun{"env": {NodeID: "env", Status: "succeeded"}, "index": {NodeID: "index", Status: "succeeded"}, "work": {NodeID: "work", Status: "running"}}}
 	if err := st.PutRunner(domain.Runner{ID: "runner", RunnerVersion: domain.RunnerVersionWorkspacePreparation}); err != nil {

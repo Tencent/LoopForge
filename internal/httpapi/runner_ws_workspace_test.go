@@ -193,7 +193,7 @@ func relayTestEngine(t *testing.T) *engine.Engine {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	return engine.New(s, runtime.NewManager(sandboxRoot(t)))
+	return engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 }
 
 func TestRunnerWorkspaceRelayEndpointRequiresServiceToken(t *testing.T) {

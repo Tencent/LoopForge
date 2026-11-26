@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -34,7 +35,7 @@ func cvBNewHTTPFixture(t *testing.T) cvBHTTPFixture {
 	if !ok {
 		t.Fatal("OpenTest user 1 missing")
 	}
-	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	return cvBHTTPFixture{h: New(s, e, tracker.NewService(), "", ""), s: s, e: e, user: user}
 }
 

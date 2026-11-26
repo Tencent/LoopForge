@@ -504,7 +504,7 @@ func TestLiveCLIAssistedEndToEnd(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: "e2e-p", Name: "E2E Project", OwnerID: user.ID}); err != nil {
 		t.Fatal(err)
 	}
-	en := engine.New(st, runtime.NewManager(sandboxRoot(t)))
+	en := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	apiRouter := New(st, en, nil, "", "")
 	srv := httptest.NewServer(apiRouter)
 	t.Cleanup(srv.Close)

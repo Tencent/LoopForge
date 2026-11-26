@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -51,7 +52,7 @@ func TestSharedScheduleSubscriptionUsesPinnedVersionAndTargetOwner(t *testing.T)
 	if err := st.PutScheduleJob(source); err != nil {
 		t.Fatal(err)
 	}
-	server := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	publish := map[string]any{"baseVersion": 0, "name": "共享巡检", "prompt": "old: {{params.days}} days", "parameters": []domain.ScheduleParameter{{Name: "days", Label: "天数", Type: "integer", Required: true, Default: "3"}}}
 	requestJSONAuthed[map[string]any](t, server, owner, http.MethodPost, "/api/schedule-jobs/publish-source/publish", publish, 403)
 	requestJSONAuthed[map[string]any](t, server, sourceOwner, http.MethodPost, "/api/schedule-jobs/publish-source/publish", map[string]any{"baseVersion": -1}, 400)

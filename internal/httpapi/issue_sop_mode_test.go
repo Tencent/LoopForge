@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -23,7 +24,7 @@ func TestRequirementWithoutSOP(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: "sop-mode", Name: "SOP mode", OwnerID: 1, WorkflowID: "sop-mode-flow"}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(st, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	h := New(st, e, tracker.NewService(), "", "")
 
 	bound := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
@@ -93,7 +94,7 @@ func TestRequirementBackToSOPRejoinsScheduledClaims(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: "sop-back", Name: "SOP back", OwnerID: 1, WorkflowID: "sop-back-flow"}); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(st, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	h := New(st, e, tracker.NewService(), "", "")
 
 	none := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{

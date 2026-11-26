@@ -67,7 +67,7 @@ exec /usr/bin/git "$@"
 			t.Fatal(err)
 		}
 	}
-	manager := runtime.NewManager(sandboxRoot(t))
+	manager := runtime.NewManager(t.TempDir())
 	en := New(st, manager)
 	if docker {
 		defer func() {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestCapabilitiesAndMCPShareAuthenticatedHTTPServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	handler := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "user", "pass")
+	handler := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "user", "pass")
 
 	for _, path := range []string{"/api/capabilities", "/mcp"} {
 		method, body := http.MethodGet, ""
@@ -54,7 +55,7 @@ func TestCapabilitiesDescribeBothMCPTransports(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	handler := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	handler := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	req := httptest.NewRequest(http.MethodGet, "/api/capabilities", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -79,7 +80,7 @@ func TestOpenAPIContractIsServedFromBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	handler := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	handler := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	req := httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -106,7 +107,7 @@ func TestSingleProjectRepositoryAndTaskAPI(t *testing.T) {
 	if err := s.PutTask(domain.Task{ID: "t1", IssueID: "i1", Status: "queued"}); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	handler := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	for _, path := range []string{"/api/projects/p1", "/api/repositories/r1", "/api/tasks/t1"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
@@ -136,7 +137,7 @@ func TestAgentRevisionCanBeReadByID(t *testing.T) {
 	if len(revisions) == 0 {
 		t.Fatal("expected an Agent revision")
 	}
-	handler := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	handler := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	req := httptest.NewRequest(http.MethodGet, "/api/agents/agent-1/revisions/"+revisions[0].ID, nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

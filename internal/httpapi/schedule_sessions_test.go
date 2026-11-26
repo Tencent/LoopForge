@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -136,7 +137,7 @@ func TestScheduleJobSaveKeepsSessionModeServerManaged(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: "mode-proj", Name: "Mode", OwnerID: owner.ID}); err != nil {
 		t.Fatal(err)
 	}
-	server := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	job := domain.ScheduleJob{ID: "mode-job", ProjectID: "mode-proj", Name: "巡检", SkipDispatch: true, AssistantPrompt: "p", IntervalSec: 3600, SessionMode: "fixed", FixedSessionID: "forged", LastSessionID: "forged"}
 	saved := requestJSONAuthed[domain.ScheduleJob](t, server, owner, http.MethodPut, "/api/schedule-jobs", job, http.StatusOK)
 	if saved.SessionMode != domain.ScheduleSessionFixed || saved.FixedSessionID != "" || saved.LastSessionID != "" {
@@ -228,7 +229,7 @@ func TestScheduleJobSaveValidatesSessionKeep(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: "keep-proj", Name: "Keep", OwnerID: owner.ID}); err != nil {
 		t.Fatal(err)
 	}
-	server := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	body := func(keep int) map[string]any {
 		return map[string]any{"id": "keep-job", "projectId": "keep-proj", "name": "巡检", "skipDispatch": true, "assistantPrompt": "p", "intervalSec": 3600, "sessionKeep": keep}
 	}

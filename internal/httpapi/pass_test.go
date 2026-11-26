@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,7 @@ func waitRunStatus(t *testing.T, s *repo.Store, runID, want string) domain.Run {
 }
 
 func TestPassFailedScriptContinuesDownstreamHTTP(t *testing.T) {
+	root := t.TempDir()
 	s := openPassTestStore(t)
 	suffix := time.Now().UTC().UnixNano()
 	wfID := fmt.Sprintf("pass-http-%d", suffix)
@@ -63,7 +65,7 @@ func TestPassFailedScriptContinuesDownstreamHTTP(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(s, runtime.NewManager(sandboxRoot(t)))
+	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
 	run, err := e.Start(wf.ID, "")
 	if err != nil {

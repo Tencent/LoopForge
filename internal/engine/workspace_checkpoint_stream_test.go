@@ -114,7 +114,7 @@ func TestConversationWorkspaceChunkedWorkerTransportRoundTrip(t *testing.T) {
 	if err := worker.repo.HeartbeatEngineInstance(repo.EngineInstance{InstanceID: worker.workspaceHost, Role: "worker", WorkspaceHost: worker.workspaceHost, ControlURL: server.URL}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	controller := New(worker.repo, runtime.NewManager(sandboxRoot(t)))
+	controller := New(worker.repo, runtime.NewManager(t.TempDir()))
 	controller.workspaceHost = "checkpoint-controller"
 	controller.controlToken = worker.controlToken
 	controller.reconcileTerminalWorkspaceCleanup()

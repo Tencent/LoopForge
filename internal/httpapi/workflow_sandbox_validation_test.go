@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -22,7 +23,7 @@ func TestWorkflowSaveRequiresExistingSandboxProfile(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "alpha", Key: "ALPHA", Name: "Alpha"}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 
 	missingID := requestJSON[map[string]string](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
 		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha",

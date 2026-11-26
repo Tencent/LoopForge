@@ -18,7 +18,7 @@ func TestCloudPoolPicksOnlyPlatformRunnersForListedProjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(t.TempDir()))
 	runners := []domain.Runner{
 		{ID: "user-labelled", OwnerUserID: 7, Status: domain.RunnerStatusOnline, RunnerVersion: "0.4.0", Labels: []string{"pool=cloud"}},
 		{ID: "old-builtin", Status: domain.RunnerStatusOnline, RunnerVersion: "0.3.0", Labels: []string{"pool=cloud"}},
@@ -57,7 +57,7 @@ func TestBindPoolRunnerDiscardsLocalSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(t.TempDir()))
 	e.ConfigureCloudRunnerPool(CloudRunnerPool{Label: "pool=cloud", Projects: []string{"*"}, Required: true})
 	if err := s.PutRunner(domain.Runner{ID: "builtin", Status: domain.RunnerStatusOnline, RunnerVersion: "0.4.0", Labels: []string{"pool=cloud"}}); err != nil {
 		t.Fatal(err)

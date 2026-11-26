@@ -145,7 +145,7 @@ func TestWorkspaceCleanupHelpersAndDeleteValidation(t *testing.T) {
 	cancel()
 	e.sandboxSweep(ctx)
 
-	local := New(st, runtime.NewManager(sandboxRoot(t)))
+	local := New(st, runtime.NewManager(t.TempDir()))
 	cleanup := domain.Run{ID: "cleanup-local-more", Status: "succeeded", Nodes: map[string]*domain.NodeRun{}}
 	if err := st.PutRun(cleanup); err != nil {
 		t.Fatal(err)

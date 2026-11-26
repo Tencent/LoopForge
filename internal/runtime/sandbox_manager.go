@@ -3,8 +3,6 @@ package runtime
 import (
 	"agentflow/internal/domain"
 	"context"
-	"crypto/rand"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -115,13 +113,9 @@ func (m *Manager) DestroyRun(runID string) error {
 	// that no longer exists. Docker reports such a container as active, so no
 	// prune can reclaim its writable layer afterwards.
 	removeDockerSandbox(context.Background(), dockerContainerName(id), tempDockerImageName(id))
-	root, entries, err := m.sandboxEntries()
-	if err != nil {
-		return err
-	}
-	_, err = m.removeMatching(root, entries, func(name string) bool {
+	_, err := m.removeMatching(func(name string) bool {
 		return name == id || strings.HasPrefix(name, id+"-") || name == "persist-"+id || strings.HasPrefix(name, "persist-"+id+"-")
-	}, removeReclaimedSandbox)
+	})
 	return err
 }
 
@@ -176,11 +170,11 @@ func (m *Manager) RunsWithIdleDockerSandbox(ctx context.Context, runIDs []string
 }
 
 // ReclaimDockerSandboxes removes sandbox containers left behind by runs that no
-// longer need them. It reads the candidates from Docker instead of from an
+// longer own a workspace. It reads the live set from Docker instead of from an
 // in-process map, which is the only way to reach containers inherited from an
 // earlier process: a deploy restart drops every sandbox handle while the
 // containers keep running.
-func (m *Manager) ReclaimDockerSandboxes(ctx context.Context, keepRunIDs func() ([]string, error)) (int, error) {
+func (m *Manager) ReclaimDockerSandboxes(ctx context.Context, liveRunIDs []string) (int, error) {
 	if m == nil || strings.TrimSpace(m.root) == "" {
 		return 0, nil
 	}
@@ -188,43 +182,18 @@ func (m *Manager) ReclaimDockerSandboxes(ctx context.Context, keepRunIDs func() 
 	if err != nil || len(found) == 0 {
 		return 0, err
 	}
-	protected, err := keepRunIDs()
-	if err != nil {
-		return 0, fmt.Errorf("load sandbox owners: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Join(m.root, sandboxLockDir), 0700); err != nil {
-		return 0, err
-	}
 	var removed int
-	var firstErr error
-	for container, workspace := range staleSandboxContainers(found, protected) {
-		deleted, err := m.reclaimDockerSandbox(ctx, container, workspace)
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-		if deleted {
-			removed++
-		}
-	}
-	return removed, firstErr
-}
-
-func (m *Manager) reclaimDockerSandbox(ctx context.Context, container, workspace string) (bool, error) {
-	// Hold the sandbox's execution flock through teardown, including for a
-	// child container whose lock and workspace have different names.
-	lockNames := []string{strings.TrimPrefix(container, dockerSandboxPrefix), workspace}
-	for i, name := range lockNames {
-		if i > 0 && m.lockPath(name) == m.lockPath(lockNames[0]) {
+	for container, workspace := range staleSandboxContainers(found, liveRunIDs) {
+		// The flock is held for as long as a sandbox is open, including by
+		// another process on this host. Reclaiming then would docker rm a
+		// container with an agent running inside it.
+		if m.workspaceInUse(workspace) {
 			continue
 		}
-		release, err := tryLockSandboxFile(m.lockPath(name))
-		if err != nil || release == nil {
-			return false, err
-		}
-		defer release()
+		removeDockerSandbox(ctx, container, tempDockerImageName(workspace))
+		removed++
 	}
-	removeDockerSandbox(ctx, container, tempDockerImageName(workspace))
-	return true, nil
+	return removed, nil
 }
 
 // ReclaimCachedDockerImages drops content-hashed images that no catalog
@@ -246,41 +215,31 @@ func (m *Manager) ReclaimCachedDockerImages(ctx context.Context, dockerfiles []d
 
 // staleSandboxContainers narrows container -> workspace pairs to those whose
 // workspace no longer belongs to a run that is allowed to keep one.
-func staleSandboxContainers(found map[string]string, protectedRunIDs []string) map[string]string {
-	keep := sandboxKeepNames(protectedRunIDs)
+func staleSandboxContainers(found map[string]string, liveRunIDs []string) map[string]string {
+	keep := make(map[string]struct{}, len(liveRunIDs)*2)
+	for _, runID := range liveRunIDs {
+		if id := safeID(runID); id != "" {
+			keep[id] = struct{}{}
+			keep["persist-"+id] = struct{}{}
+		}
+	}
 	stale := map[string]string{}
 	for container, workspace := range found {
-		if !sandboxNameProtected(keep, workspace) {
+		if _, live := keep[workspace]; !live {
 			stale[container] = workspace
 		}
 	}
 	return stale
 }
 
-// ReclaimExcept lists candidates before reading their owners. A run registered
-// while the sweep is starting is either included in that read or its new
-// workspace is outside this sweep's candidates.
-func (m *Manager) ReclaimExcept(keepRunIDs func() ([]string, error)) (int, error) {
+// ReclaimExcept deletes workspaces that do not belong to the given live run IDs.
+// Waiting/running checkouts are kept so an approval or resume can continue.
+func (m *Manager) ReclaimExcept(liveRunIDs []string) (int, error) {
 	if m == nil || strings.TrimSpace(m.root) == "" {
 		return 0, nil
 	}
-	root, entries, err := m.sandboxEntries()
-	if err != nil || len(entries) == 0 {
-		return 0, err
-	}
-	protected, err := keepRunIDs()
-	if err != nil {
-		return 0, fmt.Errorf("load sandbox owners: %w", err)
-	}
-	keep := sandboxKeepNames(protected)
-	return m.removeMatching(root, entries, func(name string) bool {
-		return !sandboxNameProtected(keep, name)
-	}, RemoveWorkspaceTree)
-}
-
-func sandboxKeepNames(runIDs []string) map[string]struct{} {
-	keep := make(map[string]struct{}, len(runIDs)*2)
-	for _, runID := range runIDs {
+	keep := make(map[string]struct{}, len(liveRunIDs)*2)
+	for _, runID := range liveRunIDs {
 		id := safeID(runID)
 		if id == "" {
 			continue
@@ -288,41 +247,34 @@ func sandboxKeepNames(runIDs []string) map[string]struct{} {
 		keep[id] = struct{}{}
 		keep["persist-"+id] = struct{}{}
 	}
-	return keep
+	return m.removeMatching(func(name string) bool {
+		for prefix := range keep {
+			if name == prefix || strings.HasPrefix(name, prefix+"-") {
+				return false
+			}
+		}
+		return true
+	})
 }
 
-func sandboxNameProtected(keep map[string]struct{}, name string) bool {
-	// Per-node sandboxes retain the run name followed by a dash and the node.
-	for {
-		if _, ok := keep[name]; ok {
-			return true
-		}
-		end := strings.LastIndexByte(name, '-')
-		if end < 0 {
-			return false
-		}
-		name = name[:end]
-	}
-}
-
-func (m *Manager) sandboxEntries() (string, []os.DirEntry, error) {
+func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
 	root, err := filepath.Abs(m.root)
 	if err != nil {
-		return "", nil, err
+		return 0, err
 	}
 	entries, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return root, nil, nil
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
 	}
-	return root, entries, err
-}
-
-func (m *Manager) removeMatching(root string, entries []os.DirEntry, match func(name string) bool, remove func(string) error) (int, error) {
 	var first error
 	var removed int
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") && !isReclaimedSandboxName(name) {
+		detached := strings.HasPrefix(name, reclaimedWorkspacePrefix)
+		if name == sandboxLockDir || strings.HasPrefix(name, ".") && !detached {
 			continue
 		}
 		if !match(name) {
@@ -335,8 +287,12 @@ func (m *Manager) removeMatching(root string, entries []os.DirEntry, match func(
 		}
 		// A live Exec has this directory as cwd. Removing it makes Node throw
 		// "ENOENT: no such file or directory, uv_cwd" instead of a Git error.
-		if m.workspaceInUse(name) {
+		if !detached && m.workspaceInUse(name) {
 			continue
+		}
+		remove := reclaimWorkspaceTree
+		if detached {
+			remove = RemoveWorkspaceTree
 		}
 		if err := remove(dir); err != nil {
 			if first == nil {
@@ -347,26 +303,6 @@ func (m *Manager) removeMatching(root string, entries []os.DirEntry, match func(
 		removed++
 	}
 	return removed, first
-}
-
-const reclaimedSandboxPrefix = ".loopforge-reclaimed-"
-
-func isReclaimedSandboxName(name string) bool {
-	random, ok := strings.CutPrefix(name, reclaimedSandboxPrefix)
-	return ok && len(random) >= 26 && strings.Trim(random, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567") == ""
-}
-
-func removeReclaimedSandbox(path string) error {
-	// Move the complete checkout away before deleting files. If removal is
-	// interrupted, restore sees a missing root and can use the saved archive.
-	retired := filepath.Join(filepath.Dir(path), reclaimedSandboxPrefix+rand.Text())
-	if err := os.Rename(path, retired); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	return RemoveWorkspaceTree(retired)
 }
 
 type managedSandbox struct {

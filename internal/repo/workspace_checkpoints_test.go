@@ -37,10 +37,10 @@ func TestClaimCheckpointWorkspaceCleanupRequiresIdleHourForSOP(t *testing.T) {
 			if err := s.SaveWorkspaceCheckpoint(row.ID, token, now, []byte("snapshot")); err != nil {
 				t.Fatal(err)
 			}
-			if claimed, err := s.ClaimCheckpointWorkspaceCleanup(domain.Run{ID: row.ID, Revision: row.Revision}, token, now.Add(-time.Second)); err != nil || claimed {
+			if claimed, err := s.ClaimCheckpointWorkspaceCleanup(row.ID, token, row.Revision, now.Add(-time.Second)); err != nil || claimed {
 				t.Fatalf("claim before hour = %v, %v", claimed, err)
 			}
-			if claimed, err := s.ClaimCheckpointWorkspaceCleanup(domain.Run{ID: row.ID, Revision: row.Revision}, token, now); err != nil || !claimed {
+			if claimed, err := s.ClaimCheckpointWorkspaceCleanup(row.ID, token, row.Revision, now); err != nil || !claimed {
 				t.Fatalf("claim at hour = %v, %v", claimed, err)
 			}
 		})
@@ -196,7 +196,7 @@ func TestWorkspaceCheckpointLeaseCASAndDurableIdleDeadline(t *testing.T) {
 	if err = s.RenewWorkspaceUse(r.ID, "wrong", now); err != ErrWorkspaceInUse {
 		t.Fatal("foreign token renewed")
 	}
-	if claimed, _ := s.ClaimCheckpointWorkspaceCleanup(r, token, now); claimed {
+	if claimed, _ := s.ClaimCheckpointWorkspaceCleanup(r.ID, token, r.Revision, now); claimed {
 		t.Fatal("unsaved files reclaimed")
 	}
 	if err = s.MarkWorkspaceFollowUp(r.ID, token, now); err != nil {
@@ -214,21 +214,19 @@ func TestWorkspaceCheckpointLeaseCASAndDurableIdleDeadline(t *testing.T) {
 	if !after.LastUsedAt.Equal(before.LastUsedAt) {
 		t.Fatal("maintenance changed idle deadline")
 	}
-	stale := r
-	stale.Revision++
-	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(stale, token, now.Add(time.Minute)); err != nil || claimed {
+	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(r.ID, token, r.Revision+1, now.Add(time.Minute)); err != nil || claimed {
 		t.Fatal("stale revision reclaimed", err)
 	}
 	if err = s.SaveWorkspaceCheckpoint(r.ID, token, now, []byte{}); err == nil {
 		t.Fatal("empty snapshot accepted")
 	}
-	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(r, token, now.Add(time.Minute)); err != nil || claimed {
+	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(r.ID, token, r.Revision, now.Add(time.Minute)); err != nil || claimed {
 		t.Fatal("recent activity reclaimed", err)
 	}
 	if err = s.RenewWorkspaceUse(r.ID, token, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(r, token, now.Add(time.Hour)); err != nil || !claimed {
+	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(r.ID, token, r.Revision, now.Add(time.Hour)); err != nil || !claimed {
 		t.Fatal("saved idle files not reclaimed", err)
 	}
 	if err = s.RestoreCheckpointWorkspaceBinding(r.ID, token, "host", "root", now.Add(time.Minute)); err != nil {

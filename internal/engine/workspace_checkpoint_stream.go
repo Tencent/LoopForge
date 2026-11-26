@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,22 +24,23 @@ func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, 
 		return err
 	}
 	defer func() { file.Close(); os.Remove(file.Name()) }()
-	// After failed reclamation, compare the current bytes with the saved copy
-	// so another attempt at deletion does not publish an identical archive.
-	destination := io.Writer(file)
-	var digest hash.Hash
+	digest := sha256.New()
+	var destination io.Writer = file
 	if previous != nil {
-		digest = sha256.New()
 		destination = io.MultiWriter(file, digest)
 	}
-	remote := e.defaultExecutionRunner(run) != "" || e.foreignWorkspaceBind(run)
-	if remote {
+	runner := e.defaultExecutionRunner(run) != ""
+	if runner || e.foreignWorkspaceBind(run) {
 		if err = e.downloadConversationCheckpoint(ctx, run, destination); err != nil {
-			// A lost reclaim reply can leave the directory already gone.
-			// Only a root-level probe confirms that an export's ENOENT is safe.
-			if previous != nil && errors.Is(err, os.ErrNotExist) && e.remoteCheckpointRootMissing(ctx, run) {
-				return e.verifyReusableWorkspaceCheckpoint(ctx, run.ID, token, previous)
+			if previous != nil && !runner && errors.Is(err, os.ErrNotExist) && e.workerWorkspaceMissing(ctx, run, token) {
+				return e.reuseWorkspaceCheckpoint(ctx, run.ID, token, previous)
 			}
+			return err
+		}
+		if _, err = file.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		if err = runtime.ValidateWorkspaceCheckpointFrom(workspaceCheckpointContextReader{ctx, file}); err != nil {
 			return err
 		}
 	} else {
@@ -48,70 +49,62 @@ func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, 
 			return fmt.Errorf("%s", reason)
 		}
 		err = runtime.CreateWorkspaceCheckpointToContext(ctx, root, workspaceCheckpointContextWriter{ctx, destination})
-		if errors.Is(err, os.ErrNotExist) {
-			if _, statErr := os.Lstat(root); !errors.Is(statErr, os.ErrNotExist) {
+		if os.IsNotExist(err) {
+			// A missing file inside an existing checkout does not make an
+			// empty archive safe to use in its place.
+			if _, statErr := os.Lstat(root); !os.IsNotExist(statErr) {
 				return err
 			}
 			if previous != nil {
-				return e.verifyReusableWorkspaceCheckpoint(ctx, run.ID, token, previous)
+				return e.reuseWorkspaceCheckpoint(ctx, run.ID, token, previous)
 			}
-			checkpoint, exists := e.repo.WorkspaceCheckpoint(run.ID)
-			if run.WorkspaceHost != "" || !exists || checkpoint.SavedAt != nil {
+			if run.WorkspaceHost != "" {
 				return err
 			}
-			// A workspace that never materialized needs an empty first archive.
-			// A missing file inside a live checkout is an incomplete capture.
+			if meta, _ := e.repo.WorkspaceCheckpoint(run.ID); idleSOPStatus(run) && meta.SavedAt != nil {
+				return err
+			}
 			if err = file.Truncate(0); err != nil {
 				return err
 			}
 			if _, err = file.Seek(0, io.SeekStart); err != nil {
 				return err
 			}
-			_, err = file.Write(runtime.EmptyWorkspaceCheckpoint())
+			digest.Reset()
+			_, err = destination.Write(runtime.EmptyWorkspaceCheckpoint())
 		}
 		if err != nil {
 			return err
 		}
 	}
-	if previous != nil && hex.EncodeToString(digest.Sum(nil)) == previous.SHA256 && e.verifyReusableWorkspaceCheckpoint(ctx, run.ID, token, previous) == nil {
-		// The preceding cleanup already validated this archive. If stored
-		// bytes are damaged, fall through and publish the new valid copy.
+	// A reclaim retry still captures late edits, but a byte-for-byte match
+	// does not need to write the already stored checkpoint again.
+	if previous != nil && hex.EncodeToString(digest.Sum(nil)) == previous.SHA256 && e.reuseWorkspaceCheckpoint(ctx, run.ID, token, previous) == nil {
 		return nil
 	}
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	if remote {
-		if err = runtime.ValidateWorkspaceCheckpointFrom(workspaceCheckpointContextReader{ctx, file}); err != nil {
-			return err
-		}
-		if _, err = file.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-	}
-	return e.repo.SaveBoundWorkspaceCheckpointStream(run, token, time.Now().UTC(), workspaceCheckpointContextReader{ctx, file})
+	return e.repo.SaveWorkspaceCheckpointStream(run.ID, token, time.Now().UTC(), workspaceCheckpointContextReader{ctx, file})
 }
 
-func (e *Engine) remoteCheckpointRootMissing(ctx context.Context, run domain.Run) bool {
-	result, err := e.probeRemoteCheckpointRoot(ctx, run)
-	return err == nil && result.Code == domain.WorkspaceErrorMissing
-}
-
-func (e *Engine) probeRemoteCheckpointRoot(ctx context.Context, run domain.Run) (domain.RunnerWorkspaceResponse, error) {
-	return e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{
-		RunID: run.ID, RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout,
-		Operation: domain.RunnerWorkspaceOperationCheckpointStatus,
-	})
-}
-
-func (e *Engine) verifyReusableWorkspaceCheckpoint(ctx context.Context, id, token string, previous *repo.WorkspaceCheckpoint) error {
-	if err := e.verifyStoredCheckpoint(ctx, id); err != nil {
+func (e *Engine) reuseWorkspaceCheckpoint(ctx context.Context, runID, token string, previous *repo.WorkspaceCheckpoint) error {
+	if err := e.verifyStoredCheckpoint(ctx, runID); err != nil {
 		return err
 	}
 	if previous.Error != "" || previous.SaveRetryAt != nil || previous.SaveFailures != 0 {
-		return e.repo.ClearWorkspaceCheckpointSaveError(id, token, previous.SHA256, time.Now().UTC())
+		return e.repo.ClearVerifiedWorkspaceCheckpointError(runID, token, previous.SHA256, time.Now().UTC())
 	}
 	return nil
+}
+
+func (e *Engine) workerWorkspaceMissing(ctx context.Context, run domain.Run, token string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	status, err := e.requestWorkspaceCheckpoint(probeCtx, run, domain.RunnerWorkspaceRequest{
+		RunID: run.ID, Operation: domain.RunnerWorkspaceOperationCheckpointStatus, CheckpointLease: token,
+	})
+	return err == nil && status.Status == http.StatusNotFound && status.Code == domain.WorkspaceErrorMissing
 }
 
 func (e *Engine) closeCheckpointTransfer(ctx context.Context, run domain.Run, id string) {
@@ -246,7 +239,7 @@ func (e *Engine) downloadConversationCheckpoint(ctx context.Context, run domain.
 // without exporting the entire checkout. Only a confirmed missing directory
 // permits an upload; busy/offline owners must never trigger another restore.
 func (e *Engine) restoreOrReuseRemoteConversationCheckpoint(ctx context.Context, run domain.Run) error {
-	probe, err := e.probeRemoteCheckpointRoot(ctx, run)
+	probe, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationCheckpointStatus})
 	if err != nil {
 		return err
 	}

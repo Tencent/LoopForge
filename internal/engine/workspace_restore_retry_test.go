@@ -44,7 +44,7 @@ func remoteWorkspaceRestoreFixture(t *testing.T, backend string) (*Engine, *Engi
 			t.Error(err)
 		}
 	})
-	worker := New(store, runtime.NewManager(sandboxRoot(t)))
+	worker := New(store, runtime.NewManager(t.TempDir()))
 	worker.ConfigureExecution("restore-worker-"+id, "restore-worker-"+id, time.Minute, false)
 	worker.controlToken = "restore-retry-control"
 	t.Cleanup(worker.checkpointTransfers.Close)
@@ -83,7 +83,7 @@ func remoteWorkspaceRestoreFixture(t *testing.T, backend string) (*Engine, *Engi
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	controller := New(store, runtime.NewManager(sandboxRoot(t)))
+	controller := New(store, runtime.NewManager(t.TempDir()))
 	controller.ConfigureExecution("restore-api-"+id, "restore-api-"+id, time.Minute, false)
 	controller.controlToken = worker.controlToken
 	return worker, controller, id

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -40,7 +41,7 @@ func TestIssueBaseBranchCreateEditAndDefault(t *testing.T) {
 	if err := st.PutRepository(repository); err != nil {
 		t.Fatal(err)
 	}
-	h := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	created := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
 		"projectId": "platform", "title": "继续已有开发", "repositoryId": repository.ID, "baseBranch": " feature/continue-work ",
 	}, http.StatusOK)
@@ -195,7 +196,7 @@ func TestDispatchCustomBaseBranchSkipsScheduledIntegration(t *testing.T) {
 	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "branch-flow", Name: "Branch flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}
-	eng := engine.New(st, runtime.NewManager(sandboxRoot(t)))
+	eng := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	d := &deps{repo: st, engine: eng, sync: tracker.NewService()}
 	for _, scheduled := range []bool{false, true} {
 		id := "custom-manual"
@@ -248,7 +249,7 @@ func TestIssueRepositoryChangeInvalidatesClarifySession(t *testing.T) {
 	if err := st.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
-	h := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	updated := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{"id": issue.ID, "repositoryId": "new-repo"}, http.StatusOK)
 	if updated.BaseBranch != issue.BaseBranch || updated.Clarification.SessionID != "" || updated.Clarification.SessionUserID != 0 || updated.Clarification.Summary != "保留回答" {
 		t.Fatalf("repository changes must invalidate the old code session: %+v", updated)
@@ -274,7 +275,7 @@ func TestImportTAPDRejectsInvalidLinksBeforeMCP(t *testing.T) {
 	if err := st.PutSyncConfig(domain.SyncConfig{TAPDMCPURL: gateway.URL}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	for _, tc := range []struct{ text, errorPart string }{
 		{"只有标题，没有链接", "无法识别"},
 		{"https://example.test/tapd_fe/10000000/story/detail/1010000000100001332", "www.tapd.cn"},
@@ -305,7 +306,7 @@ func TestDispatchEmptyBaseBranchUsesCurrentConfiguredMainBranch(t *testing.T) {
 	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "configured-main-flow", Name: "Main branch flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}
-	eng := engine.New(st, runtime.NewManager(sandboxRoot(t)))
+	eng := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	h := New(st, eng, tracker.NewService(), "", "")
 	issue := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
 		"projectId": "platform", "title": "沿用项目仓库主分支", "kind": "issue", "repositoryId": repository.ID, "baseBranch": "", "workflowId": "configured-main-flow",
@@ -338,7 +339,7 @@ func TestIssueRejectsExplicitSharedWorkBranchesAndNormalizesLegacyEdits(t *testi
 	if err := st.PutRepository(repository); err != nil {
 		t.Fatal(err)
 	}
-	h := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	for _, branch := range []string{repository.DefaultBranch, repository.IntegrateBranch, "master", "main"} {
 		response := requestJSON[map[string]string](t, h, http.MethodPost, "/api/issues", map[string]any{
 			"projectId": "platform", "title": "不可直接处理共享分支", "repositoryId": repository.ID, "baseBranch": branch,
@@ -375,7 +376,7 @@ func TestDispatchLegacyDefaultBranchCreatesNewWorkBranchWithoutChangingRecord(t 
 	if err := st.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
-	eng := engine.New(st, runtime.NewManager(sandboxRoot(t)))
+	eng := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	task, err := dispatchIssue(&deps{repo: st, engine: eng, sync: tracker.NewService()}, dispatchRequest{IssueID: issue.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -400,7 +401,7 @@ func TestIssueSaveEchoingLegacySharedBranchNormalizes(t *testing.T) {
 	if err := st.PutRepository(repository); err != nil {
 		t.Fatal(err)
 	}
-	h := New(st, engine.New(st, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	for _, legacyBranch := range []string{"develop", "master"} {
 		legacy := domain.Issue{ID: "echo-legacy-" + legacyBranch, ProjectID: "platform", Title: "旧记录", RepositoryID: repository.ID, BaseBranch: legacyBranch}
 		if err := st.PutIssue(legacy); err != nil {

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ func TestAwaitRunnerTaskBridgesDurableEventsFromAnotherProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	e := New(s, flowruntime.NewManager(sandboxRoot(t)))
+	e := New(s, flowruntime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	e.ConfigureExecution("worker-1", "worker-host", 30*time.Second, true)
 	now := time.Now().UTC()
 	run := domain.Run{

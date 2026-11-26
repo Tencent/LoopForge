@@ -1,11 +1,34 @@
 package runtime
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
+	"path/filepath"
 )
+
+const reclaimedWorkspacePrefix = ".workspace-reclaim-"
+
+// Detach the entire checkout before deleting files. A failed recursive
+// deletion must never leave half a checkout at the path used for checkpoints.
+func reclaimWorkspaceTree(path string) error {
+	reclaimed := filepath.Join(filepath.Dir(path), reclaimedWorkspacePrefix+rand.Text())
+	if err := os.Rename(path, reclaimed); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if err := RemoveWorkspaceTree(reclaimed); err != nil {
+		// The checkout is already detached. A later sandbox sweep can remove
+		// what's left without touching a workspace restored at the old path.
+		log.Printf("remove detached workspace %s: %v", reclaimed, err)
+	}
+	return nil
+}
 
 // RemoveWorkspaceTree removes a workspace directory, including directories
 // without owner write or search permission. Tools such as the Go module cache

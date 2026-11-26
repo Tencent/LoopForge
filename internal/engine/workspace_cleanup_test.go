@@ -3,8 +3,6 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,7 +18,7 @@ func TestSucceededRunnerWorkspaceQueuesImmediateDurableCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	engine := New(store, runtime.NewManager(sandboxRoot(t)))
+	engine := New(store, runtime.NewManager(t.TempDir()))
 	runner := domain.Runner{ID: "runner-cleanup", Name: "cleanup runner", Status: domain.RunnerStatusOffline}
 	if err := store.PutRunner(runner); err != nil {
 		t.Fatal(err)
@@ -57,7 +55,7 @@ func TestRetryCancelsQueuedRunnerCleanupAndAllowsLaterCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	e := New(store, runtime.NewManager(sandboxRoot(t)))
+	e := New(store, runtime.NewManager(t.TempDir()))
 	e.executeRuns = false
 	runner := domain.Runner{ID: "runner-replay", Name: "replay runner", Status: domain.RunnerStatusOnline, Runtimes: []domain.RunnerRuntime{{Provider: "terminal", Status: domain.RuntimeStatusOnline}}}
 	if err := store.PutRunner(runner); err != nil {
@@ -106,53 +104,6 @@ func TestRetryCancelsQueuedRunnerCleanupAndAllowsLaterCleanup(t *testing.T) {
 	}
 }
 
-func TestInterruptedRunnerCleanupPreservesNewerClaim(t *testing.T) {
-	t.Parallel()
-	e, store := newRecoveryEngine(t)
-	now := time.Now().UTC()
-	runner := domain.Runner{ID: "runner-interrupted-cleanup", Status: domain.RunnerStatusOffline}
-	if err := store.PutRunner(runner); err != nil {
-		t.Fatal(err)
-	}
-	run := domain.Run{ID: "runner-cleanup-claim", Status: "succeeded", WorkspaceCleanedAt: now.Add(-time.Hour),
-		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID}}
-	if err := store.PutRun(run); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.PutRunnerTask(domain.RunnerTask{ID: "rt-cleanup-" + run.ID, RunnerID: runner.ID, Provider: "terminal",
-		Action: domain.RunnerTaskActionCleanupRun, Status: domain.RunnerTaskFailed, RunID: run.ID}); err != nil {
-		t.Fatal(err)
-	}
-	stale, _ := store.RunState(run.ID)
-	if err := store.DB.Table("runs").Where("id = ?", run.ID).Updates(map[string]any{
-		"revision": stale.Revision + 1, "workspace_cleaned_at": now,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	e.cleanupWorkspace(stale, now)
-	current, _ := store.RunState(run.ID)
-	if !current.WorkspaceCleanedAt.Equal(now) {
-		t.Fatalf("previous cleanup changed the current claim: %v", current.WorkspaceCleanedAt)
-	}
-	token, err := store.BeginWorkspaceUse(run.ID, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.cleanupWorkspace(current, now)
-	current, _ = store.RunState(run.ID)
-	if !current.WorkspaceCleanedAt.Equal(now) {
-		t.Fatalf("cleanup changed the claim while workspace use was active: %v", current.WorkspaceCleanedAt)
-	}
-	if err := store.FinishWorkspaceUse(run.ID, token, now, nil, ""); err != nil {
-		t.Fatal(err)
-	}
-	e.cleanupWorkspace(current, now)
-	current, _ = store.RunState(run.ID)
-	if !current.WorkspaceCleanedAt.IsZero() {
-		t.Fatal("interrupted current cleanup was not reopened for retry")
-	}
-}
-
 func TestFailedWorkspaceIsNeverCleanedAutomatically(t *testing.T) {
 	t.Parallel()
 	store, err := repo.OpenTest()
@@ -160,7 +111,7 @@ func TestFailedWorkspaceIsNeverCleanedAutomatically(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	engine := New(store, runtime.NewManager(sandboxRoot(t)))
+	engine := New(store, runtime.NewManager(t.TempDir()))
 	run := domain.Run{ID: "failed-cleanup", Status: "failed", Nodes: map[string]*domain.NodeRun{}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
@@ -190,8 +141,14 @@ func TestCompletedConversationSavesBeforeReclamationEvenWhenNotArchived(t *testi
 	if got.WorkspaceCleanedAt.IsZero() {
 		t.Fatal("completed SOP workspace was not reclaimed")
 	}
-	if _, err := os.Stat(e.RunWorkspace(r.ID)); !os.IsNotExist(err) {
-		t.Fatalf("claimed checkout remained on disk: %v", err)
+	kept := false
+	for _, id := range e.liveSandboxRunIDs() {
+		if id == r.ID {
+			kept = true
+		}
+	}
+	if kept {
+		t.Fatal("reclaimed workspace was retained by background sweep")
 	}
 	if _, err = s.WorkspaceCheckpointArchive(r.ID); err != nil {
 		t.Fatal("reclaimed without durable snapshot", err)
@@ -203,191 +160,5 @@ func TestCompletedConversationSavesBeforeReclamationEvenWhenNotArchived(t *testi
 	got, _ = s.RunState(r.ID)
 	if got.WorkspaceCleanedAt.IsZero() {
 		t.Fatal("archived workspace was never reclaimed")
-	}
-}
-
-func TestCommittedCleanupClaimReclaimsCheckoutAfterRestart(t *testing.T) {
-	t.Parallel()
-	store, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(store.Close)
-	root := sandboxRoot(t)
-	run := domain.Run{ID: "crash-window-run", Status: "succeeded", Nodes: map[string]*domain.NodeRun{}}
-	if err := store.PutRun(run); err != nil {
-		t.Fatal(err)
-	}
-	crashed := New(store, runtime.NewManager(root))
-	checkout := crashed.RunWorkspace(run.ID)
-	orphan := crashed.RunWorkspace("unregistered-orphan")
-	for _, dir := range []string{checkout, orphan} {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "big.bin"), make([]byte, 1<<20), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// The claim commits, then the process stops before DestroyRun.
-	if claimed, err := store.ClaimRunWorkspaceCleanup(run.ID, time.Now().UTC()); err != nil || !claimed {
-		t.Fatalf("claim cleanup: %v %v", claimed, err)
-	}
-
-	restarted := New(store, runtime.NewManager(root))
-	for range 3 {
-		restarted.reconcileTerminalWorkspaceCleanup()
-		restarted.reclaimSandboxes()
-	}
-	if _, err := os.Stat(checkout); !os.IsNotExist(err) {
-		t.Fatalf("checkout_exists=%v after restart sweeps", err == nil)
-	}
-	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
-		t.Fatalf("unregistered orphan remained: %v", err)
-	}
-}
-
-// A run that moved to another host or root leaves its old checkout behind on
-// the former host. Once the run is cleaned, that copy must be reclaimed there
-// too, while the usual lifecycle checks still keep it when it may be in use.
-func TestReboundRunReclaimsStaleCheckoutOnFormerHost(t *testing.T) {
-	t.Parallel()
-	now := time.Now().UTC()
-	future, past := now.Add(time.Hour), now.Add(-time.Hour)
-	for _, scenario := range []struct {
-		name       string
-		status     string
-		cleaned    bool
-		host       string
-		sameRoot   bool
-		checkpoint *repo.WorkspaceCheckpoint
-		removed    bool
-	}{
-		{name: "other host and root", status: "succeeded", cleaned: true, host: "host-b", removed: true},
-		{name: "other host same root", status: "succeeded", cleaned: true, host: "host-b", sameRoot: true, removed: true},
-		{name: "same host other root", status: "cancelled", cleaned: true, host: "host-a", removed: true},
-		{name: "not cleaned yet", status: "succeeded", host: "host-b"},
-		{name: "rebound run running again", status: "running", cleaned: true, host: "host-b"},
-		{name: "restore lease on bound host", status: "succeeded", cleaned: true, host: "host-b",
-			checkpoint: &repo.WorkspaceCheckpoint{SavedAt: &past, SHA256: "saved", LeaseToken: "restore", LeaseUntil: &future, RestoreStatus: "restoring"}},
-		{name: "pending cleanup retry", status: "succeeded", cleaned: true, host: "host-b",
-			checkpoint: &repo.WorkspaceCheckpoint{SavedAt: &past, SHA256: "saved", CleanupRetryAt: &future}},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			t.Parallel()
-			store, err := repo.OpenTest()
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(store.Close)
-			rootA := t.TempDir()
-			e := New(store, runtime.NewManager(rootA))
-			e.ConfigureExecution("inst-a", "host-a", time.Minute, false)
-			boundRoot := t.TempDir()
-			if scenario.sameRoot {
-				boundRoot = rootA
-			}
-			run := domain.Run{ID: "rebound-run", Status: scenario.status, WorkspaceHost: scenario.host, WorkspaceRoot: boundRoot, Nodes: map[string]*domain.NodeRun{}}
-			if scenario.cleaned {
-				run.WorkspaceCleanedAt = past
-			}
-			if err := store.PutRun(run); err != nil {
-				t.Fatal(err)
-			}
-			if !e.foreignWorkspaceBind(run) {
-				t.Fatal("test run is not bound elsewhere")
-			}
-			if scenario.checkpoint != nil {
-				row := *scenario.checkpoint
-				row.RunID, row.LastUsedAt = run.ID, past
-				if err := store.DB.Create(&row).Error; err != nil {
-					t.Fatal(err)
-				}
-			}
-			stale := e.RunWorkspace(run.ID)
-			if err := os.MkdirAll(stale, 0700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(stale, "big.bin"), make([]byte, 1<<20), 0600); err != nil {
-				t.Fatal(err)
-			}
-			for range 3 {
-				e.reconcileTerminalWorkspaceCleanup()
-				e.reclaimSandboxes()
-			}
-			_, err = os.Stat(stale)
-			if removed := os.IsNotExist(err); removed != scenario.removed {
-				t.Fatalf("stale checkout removed=%v, want %v (%v)", removed, scenario.removed, err)
-			}
-			got, _ := store.RunState(run.ID)
-			if got.WorkspaceHost != scenario.host || got.WorkspaceRoot != boundRoot {
-				t.Fatalf("binding changed to %s:%s", got.WorkspaceHost, got.WorkspaceRoot)
-			}
-		})
-	}
-}
-
-func TestCleanedWorkspaceLeftoverKeepsCheckpointLifecycle(t *testing.T) {
-	t.Parallel()
-	now := time.Now().UTC()
-	future, past := now.Add(time.Hour), now.Add(-time.Hour)
-	for _, scenario := range []struct {
-		name       string
-		status     string
-		cleaned    bool
-		checkpoint *repo.WorkspaceCheckpoint
-		lock       bool
-		removed    bool
-	}{
-		{name: "legacy claim without retry", status: "succeeded", cleaned: true, removed: true,
-			checkpoint: &repo.WorkspaceCheckpoint{SavedAt: &past, SHA256: "saved", LeaseToken: "old", LeaseUntil: &past}},
-		{name: "uncleaned failed run", status: "failed"},
-		{name: "cleaned run executing again", status: "running", cleaned: true},
-		{name: "pending cleanup retry", status: "succeeded", cleaned: true,
-			checkpoint: &repo.WorkspaceCheckpoint{SavedAt: &past, SHA256: "saved", CleanupRetryAt: &future}},
-		{name: "active restore lease", status: "succeeded", cleaned: true,
-			checkpoint: &repo.WorkspaceCheckpoint{SavedAt: &past, SHA256: "saved", LeaseToken: "restore", LeaseUntil: &future, RestoreStatus: "restoring"}},
-		{name: "restore holding checkpoint lock", status: "succeeded", cleaned: true, lock: true},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			t.Parallel()
-			store, err := repo.OpenTest()
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(store.Close)
-			e := New(store, runtime.NewManager(sandboxRoot(t)))
-			run := domain.Run{ID: "leftover-run", Status: scenario.status, Nodes: map[string]*domain.NodeRun{}}
-			if scenario.cleaned {
-				run.WorkspaceCleanedAt = past
-			}
-			if err := store.PutRun(run); err != nil {
-				t.Fatal(err)
-			}
-			if scenario.checkpoint != nil {
-				row := *scenario.checkpoint
-				row.RunID, row.LastUsedAt = run.ID, past
-				if err := store.DB.Create(&row).Error; err != nil {
-					t.Fatal(err)
-				}
-			}
-			checkout := e.RunWorkspace(run.ID)
-			if err := os.MkdirAll(checkout, 0700); err != nil {
-				t.Fatal(err)
-			}
-			if scenario.lock {
-				release, err := e.tryLockCheckpointWorkspace(run.ID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer release()
-			}
-			e.reconcileTerminalWorkspaceCleanup()
-			e.reclaimSandboxes()
-			_, err = os.Stat(checkout)
-			if removed := os.IsNotExist(err); removed != scenario.removed {
-				t.Fatalf("checkout removed=%v, want %v (%v)", removed, scenario.removed, err)
-			}
-		})
 	}
 }

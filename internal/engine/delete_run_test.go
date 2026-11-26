@@ -34,7 +34,7 @@ func TestDeleteFailedRunDestroysLocalWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	root := sandboxRoot(t)
+	root := t.TempDir()
 	e := New(st, runtime.NewManager(root))
 	run := domain.Run{ID: "failed-local", Status: "failed"}
 	if err := st.PutRun(run); err != nil {
@@ -76,7 +76,7 @@ func TestDeleteRunRefusesTerminalRunWithUnfinishedNode(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(st.Close)
-			e := New(st, runtime.NewManager(sandboxRoot(t)))
+			e := New(st, runtime.NewManager(t.TempDir()))
 			run := domain.Run{ID: "failed-with-" + nodeStatus, Status: "failed", Nodes: map[string]*domain.NodeRun{
 				"done": {Status: "succeeded"},
 				"busy": {Status: nodeStatus},
@@ -117,7 +117,7 @@ func TestDeleteRunPreservesTerminalTaskOutcome(t *testing.T) {
 			if err := st.PutTask(domain.Task{ID: run.ExecutionContext.TaskID, IssueID: "issue", RunID: run.ID, Status: "running"}); err != nil {
 				t.Fatal(err)
 			}
-			e := New(st, runtime.NewManager(sandboxRoot(t)))
+			e := New(st, runtime.NewManager(t.TempDir()))
 			if err := e.DeleteRun(run.ID); err != nil {
 				t.Fatal(err)
 			}
@@ -156,7 +156,7 @@ func TestFailedTransitionsKeepRunEnvironmentUntouched(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer st.Close()
-			e := New(st, runtime.NewManager(sandboxRoot(t)))
+			e := New(st, runtime.NewManager(t.TempDir()))
 			if err := st.PutRun(tc.run); err != nil {
 				t.Fatal(err)
 			}
@@ -190,7 +190,7 @@ func TestDeleteFailedRunnerRunQueuesRemoteCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	e := New(st, runtime.NewManager(sandboxRoot(t)))
+	e := New(st, runtime.NewManager(t.TempDir()))
 	runner := domain.Runner{ID: "runner-delete", Name: "delete runner", Status: domain.RunnerStatusOffline}
 	if err := st.PutRunner(runner); err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestDeleteRunAfterExecutionRunnerWasUninstalled(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	e := New(st, runtime.NewManager(sandboxRoot(t)))
+	e := New(st, runtime.NewManager(t.TempDir()))
 	run := domain.Run{
 		ID:     "missing-runner",
 		Status: "failed",

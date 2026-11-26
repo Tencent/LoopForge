@@ -79,7 +79,7 @@ func TestGateExecutionScopeIsExplicit(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	run, err := e.StartWithContext(wf.ID, "", domain.RepositoryContext{RepositoryID: "source", Name: "source", LocalPath: source, BaseBranch: "master"})
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestRunScopedGitGateDoesNotEnterCheckout(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(sandboxRoot(t)))
+	e := New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	run, err := e.StartWithContext(wf.ID, "", domain.RepositoryContext{RepositoryID: "source", Name: "source", LocalPath: source, BaseBranch: "master"})
 	if err != nil {
 		t.Fatal(err)

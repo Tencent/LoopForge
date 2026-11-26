@@ -36,7 +36,7 @@ func TestPushConversationWorkspaceCommitsAndPushesWorkBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	e := New(st, runtime.NewManager(sandboxRoot(t)))
+	e := New(st, runtime.NewManager(filepath.Join(root, "workspaces")))
 	run := domain.Run{
 		ID:               "run-direct-push",
 		Status:           "waiting",
