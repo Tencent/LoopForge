@@ -488,6 +488,15 @@ async function adoptGenericTemplate(){
   }catch(e){toast(e.message||'复制通用模板失败')}
   finally{button.disabled=false;button.textContent='复制到本项目'}
 }
+function projectOwnEmptyText(){
+  const base='当前项目还没有自建或复制的 LOOP。可以新建，或从共享模板 / 通用模板复制一份。';
+  const project=(state.data?.projects||[]).find(p=>p.id===state.projectFilter);
+  const id=project?.workflowId;
+  const def=id&&(state.data?.workflows||[]).find(w=>w.id===id);
+  if(!def)return base;
+  const source=def.generic?'通用模板':def.projectId?(def.projectId===project.id?'本项目':'团队共享'):'内置';
+  return `当前项目默认使用「${escapeHTML(def.name||def.id)}」（${source}）；本项目还没有自建或复制的 LOOP。可切换到对应范围查看，或复制后修改。`;
+}
 function renderSOPCatalog(){
   renderCatalogScopes();
   let workflows=scopedWorkflows();
@@ -500,7 +509,7 @@ function renderSOPCatalog(){
   if(filter!=='all')workflows=workflows.filter(w=>metricHealth(metrics.get(w.id), live.filter(r=>r.workflowId===w.id).length).key===filter);
   workflows.sort((a,b)=>{const x=metrics.get(a.id)||{},y=metrics.get(b.id)||{};if(sort==='runs')return (y.totalRuns||0)-(x.totalRuns||0);if(sort==='closure')return (y.closureRate||0)-(x.closureRate||0);if(sort==='failures')return (y.failedRuns||0)-(x.failedRuns||0);return new Date(y.lastRunAt||0)-new Date(x.lastRunAt||0)});
   $('#sopStats').innerHTML=`<span class="issue-stat">${workflows.length} LOOPs</span><span class="issue-stat">${workflows.filter(w=>w.status==='published').length} 已发布</span><span class="issue-stat">${new Set(workflows.map(w=>w.owner).filter(Boolean)).size} 负责人</span>`;
-  const empty=state.sopScope==='generic'?'通用模板暂时不可用。它们由平台维护、与项目无关，所有项目都能复制使用。':state.sopScope==='shared'?'还没有共享给当前项目的 LOOP。把本项目模板设为共享后，其他项目会在这里看到。':'当前项目还没有 LOOP。可以新建，或从共享模板 / 通用模板复制一份。';
+  const empty=state.sopScope==='generic'?'通用模板暂时不可用。它们由平台维护、与项目无关，所有项目都能复制使用。':state.sopScope==='shared'?'还没有共享给当前项目的 LOOP。把本项目模板设为共享后，其他项目会在这里看到。':projectOwnEmptyText();
   const emptyText=filter!=='all'&&scopedWorkflows().length?'当前筛选下没有 LOOP。可以切换健康状态查看全部。':empty;
   const sopCatalog=$('#sopCatalog');
   bindSOPCatalogEvents(sopCatalog);

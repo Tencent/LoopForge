@@ -222,3 +222,26 @@ test('HuiSelect supports trigger mode, inline mode, search filter, keyboard navi
   genMore?.click();
   await settle(4);
 });
+
+test('empty project SOP catalog names the project default instead of claiming no SOP', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const text = () => app.document.querySelector('#sopCatalog .sop-empty')?.textContent || '';
+  app.evaluate(`
+    state.currentUser = { id: 1, loginName: 'owner', isPlatformAdmin: true };
+    state.sopScope = 'project';
+    state.projectFilter = 'pay';
+    state.data.projects = [{ id: 'pay', name: 'Pay', workflowId: 'gen-wf' }];
+    state.data.workflows = [{ id: 'gen-wf', name: 'Backend Delivery', generic: true, status: 'published', version: 1, nodes: [] }];
+    renderSOPCatalog();
+  `);
+  assert.match(text(), /默认使用「Backend Delivery」（通用模板）/);
+  assert.match(text(), /还没有自建或复制的 LOOP/);
+  assert.doesNotMatch(text(), /仅新需求适用/);
+  app.evaluate(`state.data.workflows[0].name = '<img src=x onerror=1>'; renderSOPCatalog();`);
+  assert.equal(app.document.querySelector('#sopCatalog .sop-empty img'), null);
+  assert.match(text(), /<img src=x onerror=1>/);
+  app.evaluate(`state.data.projects[0].workflowId = ''; renderSOPCatalog();`);
+  assert.match(text(), /当前项目还没有自建或复制的 LOOP/);
+  assert.doesNotMatch(text(), /默认使用/);
+});

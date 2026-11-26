@@ -60,7 +60,7 @@ func loadLiveConfig(t *testing.T) map[string]liveCLIConfig {
 }
 
 func redactLive(text string) string {
-	for _, prefix := range []string{"sk-", "crsr_", "ck_", "AQ."} {
+	for _, prefix := range []string{"sk-", "crsr_", "grok_", "ck_", "AQ."} {
 		for {
 			i := strings.Index(text, prefix)
 			if i < 0 {
