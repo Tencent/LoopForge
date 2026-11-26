@@ -799,6 +799,10 @@ function renderAgentGovernance(a){
     <section class="as-section-block"><div class="as-section-head"><b>产物通过后的门禁命令</b><small>必需产物先校验；通过后才按顺序执行这些命令</small></div><div id="agentGatePanel"></div></section>
     <section class="as-section-block"><div class="as-section-head"><b>要不要人看一眼</b><small>打开后，运行会停在「待我确认」</small></div><div class="as-toggle-grid"><label class="as-switch-row"><span><b>做完后先复核</b><small>Agent 写完结论，人批准再往下走</small></span><input name="interventionAfter" type="checkbox" ${after?'checked':''} role="switch"></label><label class="as-switch-row"><span><b>交文件前先确认</b><small>磁盘产物落盘前停一下</small></span><input name="interventionPublish" type="checkbox" ${publish?'checked':''} role="switch"></label></div></section>
   </div>`;
+  // Adding or removing an artifact or gate re-renders this panel from the
+  // draft, so keep the loop and review switches in the draft as they change.
+  const keep=()=>syncAgentGovernanceDraft(host,d);
+  host.querySelectorAll('[name="loopEnabled"],[name="loopMaxIterations"],[name="loopOnExhausted"],[name="loopFeedbackPrompt"],[name="interventionAfter"],[name="interventionPublish"]').forEach(el=>{el.addEventListener('input',keep);el.addEventListener('change',keep)});
   renderAgentArtifactEditors(d);
   renderAgentGateEditors(d);
   host.querySelectorAll('input,select,textarea').forEach(el=>{
@@ -806,6 +810,15 @@ function renderAgentGovernance(a){
     el.oninput=e=>{if(typeof prevInput==='function')prevInput.call(el,e);renderAgentSummary()};
     el.onchange=e=>{if(typeof prevChange==='function')prevChange.call(el,e);renderAgentSummary()};
   });
+}
+function syncAgentGovernanceDraft(host,d){
+  const field=name=>host.querySelector(`[name="${name}"]`);
+  const max=Number(field('loopMaxIterations')?.value);
+  d.loop={...(d.loop||{}),enabled:!!field('loopEnabled')?.checked,maxIterations:max>0?max:(d.loop?.maxIterations||3),onExhausted:field('loopOnExhausted')?.value==='human'?'human':'fail',feedbackPrompt:field('loopFeedbackPrompt')?.value||''};
+  const others=(d.interventions||[]).filter(x=>x.stage!=='after_execution'&&x.stage!=='before_publish');
+  if(field('interventionAfter')?.checked)others.push({id:'human-review',name:'人工结果复核',stage:'after_execution',required:true});
+  if(field('interventionPublish')?.checked)others.push({id:'publish-approval',name:'产物发布确认',stage:'before_publish',required:true});
+  d.interventions=others;
 }
 function renderAgentArtifactEditors(d){
   const host=$('#agentArtifactPanel');if(!host)return;

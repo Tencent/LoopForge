@@ -35,6 +35,12 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 		}
 		v := body.Project
 		existing, exists := h.repo.Project(v.ID)
+		if !exists {
+			if err := domain.ValidateResourceID(v.ID); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "项目" + err.Error()})
+				return
+			}
+		}
 		if v.BusinessDomainID != "" && (!exists || v.BusinessDomainID != existing.BusinessDomainID) {
 			c.JSON(400, gin.H{"error": "请通过业务域归属接口调整项目归属"})
 			return

@@ -213,6 +213,9 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 			}
 			repository = h.botDraftRepositoryLabel(bot.ProjectID, botDraftIssueRepository(d))
 			newIssues++
+		} else if h.botDraftNewIssue(d) && botDraftWithoutSOP(d) {
+			sop = "不使用 SOP"
+			repository = h.botDraftRepositoryLabel(bot.ProjectID, botDraftIssueRepository(d))
 		}
 		line := fmt.Sprintf("%d. %s", i+1, botDraftSummaryLineFor(d, repository, sop))
 		if len(d.Warnings) > 0 {
@@ -335,21 +338,48 @@ func (h *assistantHandlers) botDraftIssueWorkflow(projectID string, d assistantD
 	return def, ok
 }
 
-// botDraftIssueSOP returns the SOP the model named for a new requirement
-// (empty when none) and the project default it would otherwise get.
-func (h *assistantHandlers) botDraftIssueSOP(projectID string, d assistantDraft) (string, string, bool) {
+// botDraftWithoutSOP reports whether the draft saves a requirement that opts
+// out of SOP delivery (sopMode none).
+func botDraftWithoutSOP(d assistantDraft) bool {
 	if strings.TrimSpace(d.Tool) != "issues_save" {
-		return "", "", false
+		return false
+	}
+	var body struct {
+		SOPMode string `json:"sopMode"`
+	}
+	if len(d.Body) > 0 && json.Unmarshal(d.Body, &body) != nil {
+		return false
+	}
+	return (domain.Issue{SOPMode: body.SOPMode}).WithoutSOP()
+}
+
+// botDraftNewIssue reports whether the draft creates a requirement; drafts
+// that update an existing issue are not new requirements.
+func (h *assistantHandlers) botDraftNewIssue(d assistantDraft) bool {
+	if strings.TrimSpace(d.Tool) != "issues_save" {
+		return false
 	}
 	var body map[string]any
 	if len(d.Body) > 0 && json.Unmarshal(d.Body, &body) != nil {
-		return "", "", false
+		return false
 	}
 	if id, _ := body["id"].(string); strings.TrimSpace(id) != "" {
 		if _, exists := h.repo.Issue(strings.TrimSpace(id)); exists {
-			return "", "", false
+			return false
 		}
 	}
+	return true
+}
+
+// botDraftIssueSOP returns the SOP the model named for a new requirement
+// (empty when none) and the project default it would otherwise get. A
+// requirement without an SOP has none to choose or to start, so ok is false.
+func (h *assistantHandlers) botDraftIssueSOP(projectID string, d assistantDraft) (string, string, bool) {
+	if !h.botDraftNewIssue(d) || botDraftWithoutSOP(d) {
+		return "", "", false
+	}
+	var body map[string]any
+	_ = json.Unmarshal(d.Body, &body)
 	source, _ := body["source"].(string)
 	kind, _ := body["kind"].(string)
 	explicit, _ := body["workflowId"].(string)

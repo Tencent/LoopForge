@@ -102,7 +102,7 @@ test('main document mounts chat, preserves drafts, and shares theme and routing'
     await option.locator('strong').getByText('平台验收 · 脚本与审批',{exact:true}).waitFor();
     await option.click();
     assert.match(await composer.inputValue(), /@平台验收 · 脚本与审批 /);
-    await page.locator('#chatRoot .composer-attachment-file').getByText('平台验收 · 脚本与审批',{exact:true}).waitFor();
+    await page.locator('#chatRoot .composer-attachment-file > span').filter({hasText:/^平台验收 · 脚本与审批$/}).waitFor();
     await page.getByRole('button',{name:'移除引用 平台验收 · 脚本与审批'}).click();
     assert.doesNotMatch(await composer.inputValue(), /平台验收/);
     assert.deepEqual(errors,[]);

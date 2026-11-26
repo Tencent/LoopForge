@@ -77,3 +77,58 @@ func TestRequirementWithoutSOP(t *testing.T) {
 		t.Fatalf("binding an SOP must switch the requirement to SOP delivery: %+v", rebound)
 	}
 }
+
+// sopMode=sop is how issues_save lifts a no-SOP choice (see the Issue schema in
+// docs/api/openapi.yaml): the requirement gets the project SOP back and
+// scheduled SOPs may claim it again, as when an SOP is bound or run from the
+// page. A requirement that was ignored on its own keeps that choice.
+func TestRequirementBackToSOPRejoinsScheduledClaims(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "sop-back-flow", Name: "SOP back", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutProject(domain.Project{ID: "sop-back", Name: "SOP back", OwnerID: 1, WorkflowID: "sop-back-flow"}); err != nil {
+		t.Fatal(err)
+	}
+	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	h := New(st, e, tracker.NewService(), "", "")
+
+	none := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
+		"projectId": "sop-back", "title": "先不走 SOP", "kind": "requirement", "sopMode": "none",
+	}, http.StatusOK)
+	back := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
+		"id": none.ID, "projectId": "sop-back", "title": "先不走 SOP", "sopMode": "sop",
+	}, http.StatusOK)
+	if back.SOPMode != "" || back.WorkflowID != "sop-back-flow" || back.AutomationState != "eligible" {
+		t.Fatalf("sopMode=sop must restore SOP delivery and scheduled claims: %+v", back)
+	}
+	d := &deps{repo: st, engine: e}
+	task, err := dispatchIssue(d, dispatchRequest{IssueID: none.ID, ScheduleJobID: "job-back"})
+	if err != nil {
+		t.Fatalf("a scheduled SOP must claim the requirement again: %v", err)
+	}
+	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+
+	ignored := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
+		"projectId": "sop-back", "title": "手动忽略", "kind": "requirement", "automationState": "ignored",
+	}, http.StatusOK)
+	kept := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
+		"id": ignored.ID, "projectId": "sop-back", "title": "手动忽略", "sopMode": "sop",
+	}, http.StatusOK)
+	if kept.AutomationState != "ignored" || kept.WorkflowID != "sop-back-flow" {
+		t.Fatalf("an SOP requirement ignored on its own must stay ignored: %+v", kept)
+	}
+	explicit := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
+		"projectId": "sop-back", "title": "回到 SOP 但仍忽略", "kind": "requirement", "sopMode": "none",
+	}, http.StatusOK)
+	stay := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
+		"id": explicit.ID, "projectId": "sop-back", "title": "回到 SOP 但仍忽略", "sopMode": "sop", "automationState": "ignored",
+	}, http.StatusOK)
+	if stay.AutomationState != "ignored" || stay.WorkflowID != "sop-back-flow" {
+		t.Fatalf("an explicit automationState must win: %+v", stay)
+	}
+}
