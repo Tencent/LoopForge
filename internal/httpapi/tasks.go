@@ -80,7 +80,7 @@ func (h *tasksHandlers) syncTasks() {
 		if !ok {
 			// A settled run may be deleted after cancellation while its task is
 			// still marked running.  Leaving that dangling relation untouched
-			// makes the issue look permanently active and the SOP pane wait for a
+			// makes the issue look permanently active and the LOOP pane wait for a
 			// run that can never appear.  A non-empty missing RunID is terminal;
 			// converge active task states so the issue can be dispatched again.
 			if strings.TrimSpace(task.RunID) != "" && (task.Status == "queued" || task.Status == "dispatched" || task.Status == "running") {

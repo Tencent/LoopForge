@@ -53,6 +53,13 @@ func TestAutomaticSOPSandboxUsesCompatibleCloudRunner(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	const privilegedID = "privileged-docker"
+	if err := store.PutSandbox(domain.SandboxProfile{
+		ID: privilegedID, Name: "Privileged Docker", ProjectID: "platform", Driver: domain.SandboxDriverDocker,
+		Privileged: true, Dockerfile: &domain.SandboxDockerfile{Content: "FROM alpine"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	wf := domain.WorkflowDefinition{ProjectID: "platform", AutoSelectSandbox: true}
 	repositories := []domain.RepositoryContext{{Provider: domain.RepositoryProviderSSH}}
 	for _, tc := range []struct {
@@ -69,6 +76,9 @@ func TestAutomaticSOPSandboxUsesCompatibleCloudRunner(t *testing.T) {
 			called := false
 			e.SelectSOPSandbox = func(_ context.Context, selection SOPSandboxSelection) string {
 				called = true
+				if slices.ContainsFunc(selection.Candidates, func(c SOPSandboxCandidate) bool { return c.ID == privilegedID }) {
+					t.Fatalf("privileged sandbox offered for automatic selection: %+v", selection.Candidates)
+				}
 				offersNative := slices.ContainsFunc(selection.Candidates, func(c SOPSandboxCandidate) bool { return c.ID == repo.TestNativeSandboxID })
 				if offersNative == tc.pinned {
 					t.Fatalf("unexpected candidates: %+v", selection.Candidates)
@@ -122,7 +132,7 @@ func TestAutomaticSOPSandboxFallbackAndFrozenRefresh(t *testing.T) {
 	e.SelectSOPSandbox = func(_ context.Context, selection SOPSandboxSelection) string {
 		calls++
 		// The execution process is API-only, so it cannot probe native
-		// isolation on the worker that will execute the SOP.
+		// isolation on the worker that will execute the LOOP.
 		if len(selection.Candidates) != 2 || selection.DefaultSandboxID != profile.ID ||
 			slices.ContainsFunc(selection.Candidates, func(c SOPSandboxCandidate) bool { return c.ID == foreign.ID }) {
 			t.Fatalf("unexpected candidates: %+v", selection)

@@ -79,7 +79,7 @@ func (r *TasksRepo) deleteIssueTasks(tx *gorm.DB, issueID string) error {
 	return tx.Where("issue_id = ?", issueID).Delete(&taskRow{}).Error
 }
 
-// IssueHasTasks reports whether the issue was ever dispatched: every SOP
+// IssueHasTasks reports whether the issue was ever dispatched: every LOOP
 // dispatch reserves a Task first, and nothing else creates one.
 func (r *TasksRepo) IssueHasTasks(issueID string) (bool, error) {
 	var n int64

@@ -8,7 +8,7 @@ import (
 func (r *CatalogRepo) validateWorkflowNotifications(w domain.WorkflowDefinition) error {
 	runBots := map[string]bool{}
 	if len(w.Notifications) > 1 {
-		return fmt.Errorf("每个 SOP 只配置一个通知 Bot")
+		return fmt.Errorf("每个 LOOP 只配置一个通知 Bot")
 	}
 	if len(w.Notifications) > 0 {
 		if w.ProjectID == "" || w.Shared || w.Generic {
@@ -19,7 +19,7 @@ func (r *CatalogRepo) validateWorkflowNotifications(w domain.WorkflowDefinition)
 		}
 		for _, b := range w.Notifications {
 			if b.Scope != "run" || len(b.Events) != 1 || b.Events[0] != "succeeded" {
-				return fmt.Errorf("SOP 通知只支持整个 SOP 完成")
+				return fmt.Errorf("LOOP 通知只支持整个 LOOP 完成")
 			}
 			runBots[b.BotID] = true
 		}

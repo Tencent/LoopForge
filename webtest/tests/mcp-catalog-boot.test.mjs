@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
 // The MCP market page is gone, but its catalog still drives generic-template
-// role MCP options, market-ID/alias mapping and the SOP dependency precheck.
+// role MCP options, market-ID/alias mapping and the LOOP dependency precheck.
 // These tests never assign state.mcpMarket by hand: the catalog must arrive
 // through the real boot path.
 const catalog = {
@@ -38,7 +38,7 @@ test('generic-template role options keep GitHub when the catalog request fails',
   assert.equal(app.evaluate('state.mcpMarket.length'), 3, 'a failed load is retried');
 });
 
-test('SOP precheck recognises market MCPs whose market ID does not name the service', async (t) => {
+test('LOOP precheck recognises market MCPs whose market ID does not name the service', async (t) => {
   const app = await loadApp({ routes: [{ path: '/api/mcp-market', body: catalog }] });
   t.after(app.close);
   await settle(6);

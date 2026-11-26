@@ -86,7 +86,7 @@ func (r *CatalogRepo) shareScheduleReference(ref domain.AssistantReference, proj
 }
 
 // Resolve direct references through the same catalog records used by chat.
-// Template-internal roles and skills are resolved by the SOP engine, not here.
+// Template-internal roles and skills are resolved by the LOOP engine, not here.
 func (r *CatalogRepo) sharedScheduleReference(ref domain.AssistantReference) (domain.AssistantReference, bool, bool) {
 	ref = domain.AssistantReference{Type: strings.TrimSpace(ref.Type), ID: strings.TrimSpace(ref.ID)}
 	switch ref.Type {

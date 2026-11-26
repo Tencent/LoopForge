@@ -109,10 +109,14 @@ func (e *Engine) eligiblePoolRunners(label string) []domain.Runner {
 }
 
 func poolRunnerEligible(runner domain.Runner, label string) bool {
+	return runner.Status == domain.RunnerStatusOnline && poolRunnerCapable(runner, label)
+}
+
+func poolRunnerCapable(runner domain.Runner, label string) bool {
 	// Pool runners receive every user's credentials, so only runners
 	// registered with the platform bootstrap token (no owner) qualify;
 	// a user's own machine cannot join by labelling itself.
-	if runner.OwnerUserID != 0 || runner.Status != domain.RunnerStatusOnline || !runner.SupportsReportedOutputs() || !runner.SupportsIntegrate() {
+	if runner.OwnerUserID != 0 || !runner.SupportsReportedOutputs() || !runner.SupportsIntegrate() {
 		return false
 	}
 	for _, runnerLabel := range runner.Labels {
@@ -140,6 +144,31 @@ func (e *Engine) cloudPoolRequired(projectID string) bool {
 	pool := e.cloudPool
 	e.mu.Unlock()
 	return pool.Required && pool.serves(projectID)
+}
+
+func (e *Engine) cloudPoolHasEligibleRunner(projectID string) bool {
+	e.mu.Lock()
+	pool := e.cloudPool
+	e.mu.Unlock()
+	return pool.serves(projectID) && len(e.eligiblePoolRunners(pool.Label)) > 0
+}
+
+func (e *Engine) localPlatformOnline() bool {
+	if e.executes() {
+		return true
+	}
+	e.mu.Lock()
+	draining := e.draining
+	fallback := strings.TrimSpace(e.fallbackWorkerURL)
+	e.mu.Unlock()
+	if draining {
+		return false
+	}
+	return fallback != "" || e.repo.HasLiveWorker()
+}
+
+func (e *Engine) PlatformRunnerOnline(projectID string) bool {
+	return (e.localPlatformOnline() && !e.cloudPoolRequired(projectID)) || e.cloudPoolHasEligibleRunner(projectID)
 }
 
 // CloudPoolStatus reports whether the cloud runner pool is configured and
@@ -170,6 +199,10 @@ func isPoolRun(run domain.Run) bool {
 // machine to return before continuing. Runs on a user's own machine are left
 // alone.
 func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID string) (domain.Run, error) {
+	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		// Even a pool-backed auto assignment has a frozen workspace target.
+		return run, e.validateAutoAssignBinding(run)
+	}
 	if run.ExecutionContext.ExecutionPinned {
 		if id := run.ExecutionContext.ExecutionRunnerID; id != "" {
 			if r, ok := e.repo.Runner(id); !ok || r.Status != domain.RunnerStatusOnline {
@@ -182,7 +215,7 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 	// others re-read the run and follow it.
 	release := e.lockPoolBinding(run.ID)
 	defer release()
-	if fresh, ok := e.repo.RunState(run.ID); ok {
+	if fresh, ok := e.repo.RunProgress(run.ID); ok {
 		run = fresh
 	}
 	ec := run.ExecutionContext
@@ -260,7 +293,7 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 		}
 		e.event(c, nodeID, "execution.bound", msg)
 	})
-	bound, ok := e.repo.RunState(run.ID)
+	bound, ok := e.repo.RunProgress(run.ID)
 	if !ok {
 		return run, errors.New("run not found")
 	}
@@ -293,7 +326,7 @@ func (e *Engine) waitForBoundPoolRunner(ctx context.Context, run domain.Run, nod
 			e.updateRun(run.ID, func(c *domain.Run) {
 				e.event(c, nodeID, "execution.resumed", fmt.Sprintf("执行机器 %s 已恢复在线，继续使用原工作区", name))
 			})
-			current, ok := e.repo.RunState(run.ID)
+			current, ok := e.repo.RunProgress(run.ID)
 			if !ok {
 				return run, errors.New("run not found")
 			}

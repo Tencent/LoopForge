@@ -35,9 +35,9 @@ paths:
     get:
       tags: [Runs]
       operationId: waitForRun
-      summary: Wait for an SOP result or human action
+      summary: Wait for a LOOP result or human action
       description: |
-        Reads the current status of one SOP. Returns as soon as it is succeeded,
+        Reads the current status of one LOOP. Returns as soon as it is succeeded,
         failed, cancelled, waiting or paused. If the wait window expires first,
         the current status is returned with timedOut=true.
       parameters:
@@ -47,7 +47,7 @@ paths:
           schema: {type: integer, minimum: 0, maximum: 25, default: 25}
       responses:
         "200":
-          description: Latest SOP status
+          description: Latest LOOP status
           content:
             application/json:
               schema:
@@ -76,7 +76,7 @@ paths:
       tags: [Runs]
       operationId: getRunControl
       summary: Read run mode and valid next actions
-      description: Requires project membership. Separates execution progress, verification results and explicit delivery acceptance. Returns mode (sop or workspace), status, waitingReason, allowedActions and acceptance evidence. Workspaces and historical role-group records allow no SOP actions.
+      description: Requires project membership. Separates execution progress, verification results and explicit delivery acceptance. Returns mode (sop or workspace), status, waitingReason, allowedActions and acceptance evidence. Workspaces and historical role-group records allow no LOOP actions.
       responses:
         "200":
           description: Current control state
@@ -134,7 +134,7 @@ paths:
                   enum: [sop-designer]
                   description: |
                     Entry that sends the turn; omit for the workbench.
-                    `sop-designer` is the SOP canvas's AI orchestrator: it
+                    `sop-designer` is the LOOP canvas's AI orchestrator: it
                     needs `projectId`, always runs in confirm mode, offers
                     only read-only platform tools and accepts one
                     `workflows_save` draft per turn. Its conversation is
@@ -145,7 +145,7 @@ paths:
                     `{"operations":[…]}` (add_node, update_node, remove_node,
                     add_edge, remove_edge, update_workflow); the server
                     applies them to `canvas` and returns the full workflow.
-                workflowId: {type: string, description: "SOP the canvas edits (sop-designer only)"}
+                workflowId: {type: string, description: "LOOP the canvas edits (sop-designer only)"}
                 canvas:
                   type: object
                   additionalProperties: true
@@ -154,7 +154,7 @@ paths:
                   type: array
                   maxItems: 2
                   items: {type: string}
-                  description: "Existing SOPs the user named, injected as data (sop-designer only)"
+                  description: "Existing LOOPs the user named, injected as data (sop-designer only)"
                 messages:
                   type: array
                   minItems: 1
@@ -276,19 +276,19 @@ paths:
     get:
       tags: [Assistant]
       operationId: listAssistantSessions
-      summary: List personal conversations and authorized shared SOP discussions
-      description: Conversations persist in MySQL `assistant_sessions`. Personal conversations belong to the caller; shared SOP conversations belong to a run and require project access. SOP designer conversations are listed only with `surface=sop-designer`.
+      summary: List personal conversations and authorized shared LOOP discussions
+      description: Conversations persist in MySQL `assistant_sessions`. Personal conversations belong to the caller; shared LOOP conversations belong to a run and require project access. LOOP designer conversations are listed only with `surface=sop-designer`.
       parameters:
         - name: surface
           in: query
           required: false
           schema: {type: string, enum: [sop-designer]}
-          description: "`sop-designer` lists only the caller's SOP designer conversations instead of the workbench history"
+          description: "`sop-designer` lists only the caller's LOOP designer conversations instead of the workbench history"
         - name: workflowId
           in: query
           required: false
           schema: {type: string}
-          description: With `surface=sop-designer`, only the conversations of this SOP
+          description: With `surface=sop-designer`, only the conversations of this LOOP
       responses:
         "200":
           description: Recent conversations without message bodies
@@ -351,7 +351,7 @@ paths:
     get:
       tags: [Assistant]
       operationId: getRunConversation
-      summary: Open the shared conversation for one SOP run
+      summary: Open the shared conversation for one LOOP run
       description: Requires project access. Every authorized member receives the same session, including user authorId/authorName and role speakerAgentId/speakerName. First open preserves existing run discussions. Model/tool calls use the caller's own credentials.
       responses:
         "200":
@@ -422,6 +422,39 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/assistant/sessions/{id}/title:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    put:
+      tags: [Assistant]
+      operationId: renameAssistantSession
+      summary: Rename a conversation, including during generation
+      description: Available to the owner of a private conversation and authorized members of a project conversation. Shared flow-run conversations keep their assigned titles.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: {type: string, minLength: 1, maxLength: 128, description: Leading and trailing whitespace is trimmed}
+      responses:
+        "200":
+          description: Saved title
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [title, titleEdited]
+                properties:
+                  title: {type: string}
+                  titleEdited: {type: boolean, enum: [true]}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: The conversation's project binding changed}
   /api/assistant/sessions/{id}/sandbox:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
@@ -449,7 +482,7 @@ paths:
       tags: [Assistant]
       operationId: forkAssistantSession
       summary: Edit a user message and create a conversation branch
-      description: Preserves the original conversation and all previously executed changes. Shared SOP branches remain visible to project members. Inherited drafts are read-only history. Stop an active generation before branching.
+      description: Preserves the original conversation and all previously executed changes. Shared LOOP branches remain visible to project members. Inherited drafts are read-only history. Stop an active generation before branching.
       parameters:
         - name: id
           in: path
@@ -491,7 +524,7 @@ paths:
       description: |
         These tasks make the Studio assistant run a user-written prompt on an
         interval, scoped to one Studio project. They persist in MySQL
-        `assistant_tasks` and are not TAPD/Gongfeng SOP schedule jobs. Each run
+        `assistant_tasks` and are not TAPD/Gongfeng LOOP schedule jobs. Each run
         starts a fresh session on the selected CLI.
         During execution the server may invoke that project's HTTP MCP servers
         (for example TAPD) on the model's `mcpCalls`.
@@ -879,7 +912,7 @@ paths:
       summary: Share a CodeBuddy API Key with users who have none
       description: >-
         Platform administrators only; browser requests must be same-origin. Users without their own key
-        chat and run SOPs on this key, limited to models (the first is the default). It replaces the
+        chat and run LOOPs on this key, limited to models (the first is the default). It replaces the
         AGENTFLOW_ASSISTANT_SPONSOR_LOGIN account while configured.
       requestBody:
         required: true
@@ -1703,7 +1736,7 @@ paths:
                   type: object
                   additionalProperties: {type: string}
                   description: Existing work branches keyed by bound repository ID; overrides baseBranch. Empty or unlisted branches create new work branches from each repository's configured main branch. Omitted preserves selections for retained repositories on reimport; an empty object clears all selections.
-                workflowId: {type: string, description: SOP to bind on import; omitted uses the project default requirement workflow}
+                workflowId: {type: string, description: LOOP to bind on import; omitted uses the project default requirement workflow}
                 repositoryId: {type: string, description: Primary repository; at least one of repositoryId or repositoryIds is required}
                 repositoryIds:
                   type: array
@@ -1771,7 +1804,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Issue has successful execution history or is clarifying or executing a SOP
+          description: Issue has successful execution history or is clarifying or executing a LOOP
   /api/issues/{issueId}/comments:
     parameters:
       - $ref: "#/components/parameters/IssueId"
@@ -1884,7 +1917,7 @@ paths:
     post:
       tags: [Issues]
       operationId: saveIssueClarification
-      description: Persists one work item's multi-turn clarification. When ready, appends the summary to its linked Gongfeng Issue or TAPD story as a comment without starting its SOP.
+      description: Persists one work item's multi-turn clarification. When ready, appends the summary to its linked Gongfeng Issue or TAPD story as a comment without starting its LOOP.
       requestBody:
         required: true
         content:
@@ -2506,7 +2539,12 @@ paths:
     get:
       tags: [Assets]
       operationId: listExecutorModels
-      description: Returns, per built-in CLI, the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs.
+      description: Returns, per built-in CLI, the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs. `configured` reports whether a LOOP run can use the CLI for the caller, and `personal` whether the caller saved their own key for it.
+      parameters:
+        - name: projectId
+          in: query
+          schema: {type: string}
+          description: Resolve `configured` against the execution machine a LOOP in this project uses, which is the caller's project default before the personal default. Omit it for personal LOOPs.
       responses:
         "200":
           description: Model catalog keyed by CLI id
@@ -2535,6 +2573,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [Assets]
       operationId: deleteSandbox
@@ -2690,7 +2730,7 @@ paths:
                   description: Use this fixed sandbox in the copy.
                 autoSelectSandbox:
                   type: boolean
-                  description: Choose a sandbox at runtime. With neither option supplied, inherit the source SOP setting.
+                  description: Choose a sandbox at runtime. With neither option supplied, inherit the source LOOP setting.
       responses:
         "201":
           $ref: "#/components/responses/Workflow"
@@ -2982,7 +3022,7 @@ paths:
     get:
       tags: [Runs]
       operationId: getRunWorkspaceRestoreStatus
-      summary: Inspect background workspace restoration independently of SOP execution
+      summary: Inspect background workspace restoration independently of LOOP execution
       responses:
         "200":
           description: Restore status (idle, restoring, ready or failed), optional startedAt and error
@@ -3861,7 +3901,7 @@ paths:
   /api/bot-drafts/{id}/confirm:
     post:
       summary: Confirm and execute a Bot write draft
-      description: Re-checks the Bot (enabled, chat on, confirm mode), the sender binding, project permission, expiry and the frozen parameters, then moves the draft from `pending` to `executing` once. Any other state returns the current draft without executing. `choices` set the SOP of new requirements (only SOPs listed in the draft's `workflows`) and whether to start it after creation; results report `已启动` or `未启动`.
+      description: Re-checks the Bot (enabled, chat on, confirm mode), the sender binding, project permission, expiry and the frozen parameters, then moves the draft from `pending` to `executing` once. Any other state returns the current draft without executing. `choices` set the LOOP of new requirements (only LOOPs listed in the draft's `workflows`) and whether to start it after creation; results report `已启动` or `未启动`.
       operationId: confirmBotDraft
       parameters:
         - {name: id, in: path, required: true, schema: {type: string}}
@@ -4679,7 +4719,7 @@ components:
       required: [id, name, projectId, driver]
       additionalProperties: true
       description: >-
-        Execution environment for SOP runs and conversation workspaces; the built-in shared
+        Execution environment for LOOP runs and conversation workspaces; the built-in shared
         generic-docker profile is the default. driver=native runs on whichever execution machine,
         cloud runner or platform host executes the work, with that machine's own toolchains; its
         repositories are shared clones of that machine's repository cache. A stored local profile
@@ -4687,6 +4727,7 @@ components:
       properties:
         id: {type: string}
         name: {type: string}
+        description: {type: string, description: Free-form notes shown in the sandbox catalog; not sent to execution machines}
         toolchain: {type: string, description: Tool and version hints used when an Agent chooses a sandbox}
         projectId: {type: string, description: Owning project (required)}
         shared: {type: boolean, description: Visible to every project}
@@ -4699,6 +4740,9 @@ components:
             content: {type: string, description: Dockerfile text}
             files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
         readOnlyRootFS: {type: boolean, description: "driver=docker only"}
+        privileged: {type: boolean, default: false, description: "Docker only. Requests privileged workspace containers on an execution host that allows them."}
+        cpuMillicores: {type: integer, format: int64, minimum: 0, maximum: 9223372036854, description: "Docker CPU limit in millicores. 1000 is one CPU, 0 or omitted inherits machine settings, and the minimum configured limit is 10."}
+        memoryMiB: {type: integer, format: int64, minimum: 0, maximum: 8796093022207, description: "Docker memory limit in MiB. 0 or omitted inherits machine settings, and the minimum configured limit is 6."}
         environment: {type: object, additionalProperties: {type: string}, description: Variables added to every command; a native sandbox keeps the execution machine's PATH unless this sets one}
     APIToken:
       type: object
@@ -4804,7 +4848,7 @@ components:
         estimatedCompletionIssues: {type: integer, description: 'Included historical items whose time is inferred from their latest successful top-level Run'}
         cycleSamples: {type: integer}
         averageCycleDurationMs: {type: integer, format: int64, description: Completion elapsed time including waits; averaged over cycleSamples}
-        executionSamples: {type: integer, description: Completed items with node execution events for every related attempt and child SOP}
+        executionSamples: {type: integer, description: Completed items with node execution events for every related attempt and child LOOP}
         averageExecutionDurationMs: {type: integer, format: int64, description: Union of actual node execution intervals per item; excludes waits and double counting of parallel or nested execution; averaged over executionSamples}
         p50CycleDurationMs: {type: integer, format: int64, deprecated: true}
         p95CycleDurationMs: {type: integer, format: int64, deprecated: true, description: 'Nearest-rank percentile over individual work items, never an average of project percentiles'}
@@ -5030,6 +5074,8 @@ components:
           type: string
         integrateBranch:
           type: string
+        workBranchNaming:
+          $ref: "#/components/schemas/WorkBranchNaming"
         createdAt:
           type: string
           format: date-time
@@ -5038,6 +5084,30 @@ components:
           type: string
           format: date-time
           readOnly: true
+    WorkBranchNaming:
+      type: object
+      description: Naming settings for newly created SOP work branches. Repositories without settings use the feature/ prefix.
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [prefix, ai]
+        prefix:
+          type: string
+          description: Literal prefix in prefix mode. An empty or omitted prefix within this mode produces a name without a prefix.
+          example: feat/
+        executorId:
+          type: string
+          description: Built-in CLI executor ID. Required in AI mode.
+          example: codebuddy
+        model:
+          type: string
+          description: Concrete model ID. Required in AI mode.
+          example: hy4std
+        prompt:
+          type: string
+          maxLength: 2000
+          description: Optional repository naming instructions for AI mode.
     IssueListPage:
       type: object
       required: [items, total, offset, limit, hasMore]
@@ -5115,6 +5185,11 @@ components:
           format: int64
         workflowId:
           type: string
+          description: LOOP to deliver the requirement with; empty binds the project default LOOP. To deliver without any LOOP, set sopMode to none instead.
+        sopMode:
+          type: string
+          enum: ["", none, sop]
+          description: none delivers the requirement without a LOOP (clarified and changed in conversations; scheduled LOOPs never claim it) and clears workflowId. sop removes that opt-out, so workflowId or the project default applies again and scheduled LOOPs may claim it (an automationState sent in the same save still wins). Empty or omitted keeps the stored mode on edits.
         repositoryId:
           type: string
         baseBranch:
@@ -5181,7 +5256,7 @@ components:
           readOnly: true
     ClarificationAssessment:
       type: object
-      description: Optional AI clarification state. It carries no score and never gates SOP dispatch.
+      description: Optional AI clarification state. It carries no score and never gates LOOP dispatch.
       properties:
         summary:
           type: string
@@ -5392,7 +5467,7 @@ components:
       required: [id, name, nodes, edges]
       additionalProperties: true
       properties:
-        notifications: {type: array, maxItems: 1, items: {$ref: "#/components/schemas/NotificationBinding"}, description: Single SOP Bot; all nodes automatically notify waiting/failed and SOP completion. Template and AI instruction customize completion only}
+        notifications: {type: array, maxItems: 1, items: {$ref: "#/components/schemas/NotificationBinding"}, description: Single LOOP Bot; all nodes automatically notify waiting/failed and LOOP completion. Template and AI instruction customize completion only}
         id:
           type: string
         name:
@@ -5430,7 +5505,7 @@ components:
         requirements:
           type: array
           description: >-
-            External capabilities the SOP needs at run time (for example a GitHub token or a
+            External capabilities the LOOP needs at run time (for example a GitHub token or a
             project-scoped GitHub MCP). Studio renders them as a preflight checklist so users learn
             about the dependency before the first run.
           items:
@@ -5478,7 +5553,7 @@ components:
         template: {type: string, maxLength: 12000, description: Free Markdown with business/output/AI variables}
         waitingPolicy: {type: string, enum: [actionable, event], description: Waiting reminders cancel if resolved before sending by default; event records are sent even after resolution.}
         contentMode: {type: string, enum: [template, ai]}
-        aiInstruction: {type: string, maxLength: 4000, description: Writing instructions for the independent SOP report or the existing scheduled task model call}
+        aiInstruction: {type: string, maxLength: 4000, description: Writing instructions for the independent LOOP report or the existing scheduled task model call}
     WorkflowNode:
       type: object
       required: [id, name, type]
@@ -5560,7 +5635,7 @@ components:
         kind:
           type: string
           readOnly: true
-          description: workspace identifies an idle conversation workspace; absent for SOP runs and historical role-group records.
+          description: workspace identifies an idle conversation workspace; absent for LOOP runs and historical role-group records.
         workflowSnapshot:
           $ref: "#/components/schemas/WorkflowDefinition"
         status:
@@ -5937,10 +6012,10 @@ components:
           description: Required for trigger jobs. Ignored when skipDispatch is true.
         useIssueWorkflow:
           type: boolean
-          description: When true, prefer the issue's bound SOP and fall back to workflowId.
+          description: When true, prefer the issue's bound LOOP and fall back to workflowId.
         skipDispatch:
           type: boolean
-          description: "When true, this is an AI scheduled job: run assistantPrompt only. When false, this is a trigger job that scans issues and dispatches SOP. The two kinds are exclusive."
+          description: "When true, this is an AI scheduled job: run assistantPrompt only. When false, this is a trigger job that scans issues and dispatches LOOP. The two kinds are exclusive."
         intervalSec:
           type: integer
           minimum: 0
@@ -5959,7 +6034,7 @@ components:
           minimum: 0
           maximum: 240
           default: 30
-          description: AI jobs only. Minutes allowed for each execution, including tool calls and waits. Omitted or 0 uses 30. Expiry stops the AI turn and records a failed execution. Dispatched SOPs continue independently.
+          description: AI jobs only. Minutes allowed for each execution, including tool calls and waits. Omitted or 0 uses 30. Expiry stops the AI turn and records a failed execution. Dispatched LOOPs continue independently.
         ownerUserId:
           type: integer
           format: int64
@@ -6077,7 +6152,7 @@ components:
           description: Model used by this execution's AI generation.
         usage:
           $ref: "#/components/schemas/TokenUsage"
-          description: Optional usage for this execution including retries and usage before failure, excluding prior turns and downstream SOPs. Absence means unreported.
+          description: Optional usage for this execution including retries and usage before failure, excluding prior turns and downstream LOOPs. Absence means unreported.
         costCny:
           type: number
           format: double

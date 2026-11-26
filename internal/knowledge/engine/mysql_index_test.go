@@ -42,14 +42,14 @@ func TestMySQLKeywordIndexAndHostedWrite(t *testing.T) {
 	}
 	defer s.Close()
 
-	// 043 脚本补建带 ngram 解析器的全文索引；gorm 的增量 DDL 建不出它。
-	script, err := os.ReadFile("../../../migrations/043_builtin_knowledge.sql")
+	// 044 脚本补建带 ngram 解析器的全文索引；gorm 的增量 DDL 建不出它。
+	script, err := os.ReadFile("../../../migrations/044_builtin_knowledge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, stmt := range s5SplitSQL(string(script)) {
 		if err := s.DB.Exec(stmt).Error; err != nil && !s5IsDuplicateSchemaError(err) {
-			t.Fatalf("执行 043 失败：%v\nSQL: %s", err, stmt)
+			t.Fatalf("执行 044 失败：%v\nSQL: %s", err, stmt)
 		}
 	}
 
@@ -228,13 +228,13 @@ func TestMySQLKeywordIndexIdentifierChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	script, err := os.ReadFile("../../../migrations/043_builtin_knowledge.sql")
+	script, err := os.ReadFile("../../../migrations/044_builtin_knowledge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, stmt := range s5SplitSQL(string(script)) {
 		if err := s.DB.Exec(stmt).Error; err != nil && !s5IsDuplicateSchemaError(err) {
-			t.Fatalf("执行 043 失败：%v\nSQL: %s", err, stmt)
+			t.Fatalf("执行 044 失败：%v\nSQL: %s", err, stmt)
 		}
 	}
 

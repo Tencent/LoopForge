@@ -112,7 +112,7 @@ type npmPackageJSON struct {
 
 // DetectFrontendProject reports whether workspace looks like a frontend (or
 // already-built static site). Non-frontend repos should skip preview instead
-// of inventing a page or failing the SOP.
+// of inventing a page or failing the LOOP.
 func DetectFrontendProject(root string) (bool, string) {
 	root = strings.TrimSpace(root)
 	if root == "" {

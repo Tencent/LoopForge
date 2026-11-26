@@ -168,7 +168,7 @@ func wecomEvent(bot domain.NotificationBot, f Frame) (InboundEvent, bool) {
 		}
 		if action == DraftActionSubmit {
 			// A confirmation card with drop-downs: the operation is a
-			// selection, the others are the repository and the SOP.
+			// selection, the others are the repository and the LOOP.
 			selections = wecomCardSelections(incoming.Event.TemplateCardEvent.SelectedItems.SelectedItem)
 			action = selections[draftOpKey]
 			delete(selections, draftOpKey)

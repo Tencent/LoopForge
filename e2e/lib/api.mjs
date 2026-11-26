@@ -125,7 +125,7 @@ export async function ensureProject() {
   return project;
 }
 
-// ensureSandbox provisions the default SOP sandbox in the e2e project: a
+// ensureSandbox provisions the default LOOP sandbox in the e2e project: a
 // native sandbox, so scripts run on the deployment host without an image
 // build (bubblewrap on Linux, sandbox-exec on macOS). A sandbox chosen with
 // AGENTFLOW_E2E_SANDBOX must already exist.

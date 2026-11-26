@@ -531,7 +531,7 @@ func TestConversationWorkspaceIDEEditsWithoutPausing(t *testing.T) {
 	}
 }
 
-// Like an AI IDE, people edit a running SOP's workspace without pausing it.
+// Like an AI IDE, people edit a running LOOP's workspace without pausing it.
 func TestRunningSOPWorkspaceEditableWithoutPausing(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	run := domain.Run{ID: "cvb-sop-live", Status: "running", ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Nodes: map[string]*domain.NodeRun{"build": {Status: "running"}}}
@@ -551,7 +551,7 @@ func TestRunningSOPWorkspaceEditableWithoutPausing(t *testing.T) {
 		t.Fatalf("stale write = %d: %s", rec.Code, rec.Body.String())
 	}
 	if got, _ := f.s.RunState(run.ID); got.PauseRequested || got.Status != "running" {
-		t.Fatalf("editing paused the SOP: status=%s pause=%v", got.Status, got.PauseRequested)
+		t.Fatalf("editing paused the LOOP: status=%s pause=%v", got.Status, got.PauseRequested)
 	}
 	queued := run
 	queued.ID, queued.Status, queued.Nodes = "cvb-sop-queued", "queued", map[string]*domain.NodeRun{}

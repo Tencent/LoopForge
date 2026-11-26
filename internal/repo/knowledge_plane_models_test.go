@@ -8,7 +8,7 @@ import (
 )
 
 // 主库与内容库的增量 DDL 必须按面拆分：主库不能建内容表，内容库也不能漏掉
-// staging；needsUTF8MB4 要覆盖 048/049/051 新增的三张控制面表。
+// staging；needsUTF8MB4 要覆盖 049/050/052 新增的三张控制面表。
 func TestKnowledgeModelListsSplitByPlane(t *testing.T) {
 	content := map[reflect.Type]bool{
 		reflect.TypeOf(knowledgeContentFenceRow{}):      true,
@@ -51,10 +51,10 @@ func TestKnowledgeModelListsSplitByPlane(t *testing.T) {
 	}
 }
 
-// 043/050/053 同时含控制段与内容段；053 必须带 staging、二进制路径 collation
+// 044/051/054 同时含控制段与内容段；054 必须带 staging、二进制路径 collation
 // 和写回可空键。脚本由 knowledge-schema.sh 按标记分库执行。
 func TestKnowledgeMigrationScriptsSplitPlanes(t *testing.T) {
-	for _, name := range []string{"043_builtin_knowledge.sql", "050_knowledge_governance.sql", "052_knowledge_concurrency.sql", "053_knowledge_schema_cleanup.sql"} {
+	for _, name := range []string{"044_builtin_knowledge.sql", "051_knowledge_governance.sql", "053_knowledge_concurrency.sql", "054_knowledge_schema_cleanup.sql"} {
 		raw, err := os.ReadFile("../../migrations/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -64,13 +64,13 @@ func TestKnowledgeMigrationScriptsSplitPlanes(t *testing.T) {
 			t.Fatalf("%s 缺少控制面/内容面标记", name)
 		}
 	}
-	raw, err := os.ReadFile("../../migrations/053_knowledge_schema_cleanup.sql")
+	raw, err := os.ReadFile("../../migrations/054_knowledge_schema_cleanup.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"knowledge_submission_contents", "utf8mb4_bin", "submission_id = NULL", "knowledge_control_schema"} {
 		if !strings.Contains(string(raw), want) {
-			t.Fatalf("053 缺少 %q", want)
+			t.Fatalf("054 缺少 %q", want)
 		}
 	}
 }

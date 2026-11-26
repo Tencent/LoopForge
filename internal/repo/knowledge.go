@@ -724,10 +724,10 @@ func (r *KnowledgeRepo) KnowledgePublicationValid(id string, version uint64) boo
 }
 
 // KnowledgeSchemaVersion is the data-migration generation required by this
-// binary. 054 renames legacy hosted source IDs and inserts version 54 only
-// after both planes have been migrated. 055 adds governance noise-control
-// columns and inserts version 55.
-const KnowledgeSchemaVersion = 55
+// binary. 055 renames legacy hosted source IDs and inserts version 55 only
+// after both planes have been migrated. 056 adds governance noise-control
+// columns and inserts version 56.
+const KnowledgeSchemaVersion = 56
 
 var ErrKnowledgeSchemaOutdated = errors.New("knowledge schema is not upgraded")
 
@@ -763,5 +763,5 @@ func (r *KnowledgeRepo) CheckKnowledgeSchema() error {
 	if version >= KnowledgeSchemaVersion {
 		return nil
 	}
-	return fmt.Errorf("%w: 当前版本 %d，需要 %d。升级前先停止所有 API/worker 实例（不只是本机 Compose 平台），执行 bash scripts/knowledge-schema.sh apply 完成 052–055 迁移，再启动服务", ErrKnowledgeSchemaOutdated, version, KnowledgeSchemaVersion)
+	return fmt.Errorf("%w: 当前版本 %d，需要 %d。升级前先停止所有 API/worker 实例（不只是本机 Compose 平台），执行 bash scripts/knowledge-schema.sh apply 完成 053–056 迁移，再启动服务", ErrKnowledgeSchemaOutdated, version, KnowledgeSchemaVersion)
 }

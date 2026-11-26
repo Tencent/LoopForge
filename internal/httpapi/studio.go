@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	htmlpkg "html"
 	"io/fs"
@@ -15,6 +16,9 @@ import (
 var studioReleaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 
 var studioAssetRef = regexp.MustCompile(`((?:href|src)=")(/[^"]+\.(?:js|css))(\?v=[^"]*)?(")`)
+
+// Vite emits content-hashed files in assets/ using eight-character URL-safe hashes.
+var studioHashedChatAsset = regexp.MustCompile(`^assets/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$`)
 
 func stampStudioIndex(static fs.FS, raw []byte) []byte {
 	html := string(raw)
@@ -100,12 +104,24 @@ func injectBuildCommit(html string) string {
 }
 
 func studioFileServer(static fs.FS) http.Handler {
+	const chatPath = "/chatbot/"
 	files := http.FileServer(http.FS(static))
 	native, _ := fs.Sub(static, "native-chat")
-	nativeFiles := http.StripPrefix("/chatbot/", http.FileServer(http.FS(native)))
+	nativeFiles := http.StripPrefix(chatPath, http.FileServer(http.FS(native)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/chatbot/") {
+		if name, ok := strings.CutPrefix(r.URL.Path, chatPath); ok {
 			w.Header().Set("Cache-Control", "no-store")
+			if studioHashedChatAsset.MatchString(name) {
+				info, err := fs.Stat(native, name)
+				if errors.Is(err, fs.ErrNotExist) {
+					// FileServer removes Cache-Control from its error responses.
+					http.NotFound(w, r)
+					return
+				}
+				if err == nil && info.Mode().IsRegular() {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
+			}
 			nativeFiles.ServeHTTP(w, r)
 			return
 		}

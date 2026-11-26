@@ -18,7 +18,7 @@ import (
 )
 
 func testCard() *PushCard {
-	return &PushCard{DeliveryID: "d-1", Title: "登录优化", Tag: "待人工确认", Reason: "请确认 **方案**", Rows: [][2]string{{"节点", "评审"}, {"SOP", "研发交付"}}, Actions: []PushCardAction{{Key: "approve", Text: "通过并继续"}, {Key: "reject", Text: "返工", Danger: true}}, DetailsURL: "https://platform.example/#/runs/r"}
+	return &PushCard{DeliveryID: "d-1", Title: "登录优化", Tag: "待人工确认", Reason: "请确认 **方案**", Rows: [][2]string{{"节点", "评审"}, {"LOOP", "研发交付"}}, Actions: []PushCardAction{{Key: "approve", Text: "通过并继续"}, {Key: "reject", Text: "返工", Danger: true}}, DetailsURL: "https://platform.example/#/runs/r"}
 }
 
 func TestFeishuPushSendsActionCard(t *testing.T) {
@@ -258,11 +258,11 @@ func TestDraftCardForReplyWithPendingDraft(t *testing.T) {
 	}
 	defer store.Close()
 	svc := New(store)
-	item := domain.BotInteraction{ID: "turn-1", Reply: "我会创建这个需求。\n\n以下操作需要你在平台确认后才会执行（30 分钟内有效）：\n1. 保存需求：登录优化（SOP：研发交付）\n在平台确认这些操作：\nhttps://p.example/bot-approve.html#draft=x"}
+	item := domain.BotInteraction{ID: "turn-1", Reply: "我会创建这个需求。\n\n以下操作需要你在平台确认后才会执行（30 分钟内有效）：\n1. 保存需求：登录优化（LOOP：研发交付）\n在平台确认这些操作：\nhttps://p.example/bot-approve.html#draft=x"}
 	if svc.DraftCardFor(item, "https://p.example") != nil {
 		t.Fatal("card without a draft")
 	}
-	d, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: "c", UserID: 7, InteractionID: "turn-1", Summary: "1. 保存需求：登录优化（SOP：研发交付）", Drafts: "[]"}, time.Now().UTC())
+	d, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: "c", UserID: 7, InteractionID: "turn-1", Summary: "1. 保存需求：登录优化（LOOP：研发交付）", Drafts: "[]"}, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestFeishuReplySendsCardWhenGiven(t *testing.T) {
 }
 
 // The write-confirmation card of a draft creating one requirement carries a
-// SOP drop-down; the requester's pick is stored and shown, others are
+// LOOP drop-down; the requester's pick is stored and shown, others are
 // refused, and a click replaces the buttons with a status and is answered
 // in the conversation the request came from (a group here).
 func TestDraftCardSOPSelectionAndGroupClick(t *testing.T) {
@@ -347,13 +347,13 @@ func TestDraftCardSOPSelectionAndGroupClick(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	sop := &domain.BotDraftSOP{Index: 0, DefaultName: "研发交付", Workflows: []domain.BotDraftSOPOption{{ID: "wf-dev", Name: "研发交付"}, {ID: "wf-fix", Name: "缺陷修复"}}}
-	draft, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: bot.ID, SenderID: "ou_req", UserID: 7, InteractionID: origin.ID, Summary: "1. 保存需求：登录优化（SOP：项目默认 · 研发交付）", Drafts: "[]", SOP: sop}, now)
+	draft, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: bot.ID, SenderID: "ou_req", UserID: 7, InteractionID: origin.ID, Summary: "1. 保存需求：登录优化（LOOP：项目默认 · 研发交付）", Drafts: "[]", SOP: sop}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	svc := New(store)
 	card := svc.draftCardByID(draft)
-	if len(card.Selects) != 1 || card.Selects[0].Label != "SOP" || card.Selects[0].Initial != domain.BotDraftDefaultSOP || len(card.Selects[0].Options) != 3 || card.Rows[0][1] != "1. 保存需求：登录优化" {
+	if len(card.Selects) != 1 || card.Selects[0].Label != "LOOP" || card.Selects[0].Initial != domain.BotDraftDefaultSOP || len(card.Selects[0].Options) != 3 || card.Rows[0][1] != "1. 保存需求：登录优化" {
 		t.Fatalf("card = %+v selects %+v", card, card.Selects)
 	}
 	raw := string(feishuCardJSON(card))
@@ -368,7 +368,7 @@ func TestDraftCardSOPSelectionAndGroupClick(t *testing.T) {
 	if err != nil || ack.Accepted || !strings.Contains(ack.Toast, "只有发起人") {
 		t.Fatalf("other = %+v %v", ack, err)
 	}
-	// An unknown SOP is refused, a listed one is stored.
+	// An unknown LOOP is refused, a listed one is stored.
 	if ack, _ := svc.accept(context.Background(), bot, event("ou_req", DraftActionSOP, "wf-foreign", "e2")); !strings.Contains(ack.Toast, "不可选") {
 		t.Fatalf("foreign = %+v", ack)
 	}
@@ -382,7 +382,7 @@ func TestDraftCardSOPSelectionAndGroupClick(t *testing.T) {
 	// Confirm: queued in the group conversation, threaded under the card,
 	// and the answer card has no buttons left.
 	ack, err = svc.accept(context.Background(), bot, event("ou_req", DraftActionConfirmStart, "", "e4"))
-	if err != nil || !ack.Accepted || ack.Card == nil || len(ack.Card.Actions) != 0 || len(ack.Card.Selects) != 0 || !strings.Contains(ack.Card.Status, "确认并启动 SOP") {
+	if err != nil || !ack.Accepted || ack.Card == nil || len(ack.Card.Actions) != 0 || len(ack.Card.Selects) != 0 || !strings.Contains(ack.Card.Status, "确认并启动 LOOP") {
 		t.Fatalf("confirm = %+v %v", ack, err)
 	}
 	item, _ := store.BotInteraction(ack.InteractionID)
@@ -400,7 +400,7 @@ func TestDraftCardSOPSelectionAndGroupClick(t *testing.T) {
 }
 
 // A draft creating one requirement in a project with repositories shows a
-// repository drop-down before the SOP; only the requester can pick, only
+// repository drop-down before the LOOP; only the requester can pick, only
 // offered repositories are accepted.
 func TestDraftCardRepositorySelection(t *testing.T) {
 	store, err := repo.OpenTest()
@@ -416,7 +416,7 @@ func TestDraftCardRepositorySelection(t *testing.T) {
 	store.EnqueueBotInteraction(origin, "single", "oc_p2p")
 	now := time.Now().UTC()
 	sop := &domain.BotDraftSOP{DefaultName: "研发交付", DefaultRepositoryName: "lf-loop-sandbox", Repositories: []domain.BotDraftSOPOption{{ID: "repo-main", Name: "lf-loop-sandbox"}, {ID: "repo-web", Name: "web-console"}}}
-	draft, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: bot.ID, SenderID: "ou_req", UserID: 7, InteractionID: origin.ID, Summary: "1. 保存需求：登录优化（仓库：项目默认 · lf-loop-sandbox）（SOP：项目默认 · 研发交付）", Drafts: "[]", SOP: sop}, now)
+	draft, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: bot.ID, SenderID: "ou_req", UserID: 7, InteractionID: origin.ID, Summary: "1. 保存需求：登录优化（仓库：项目默认 · lf-loop-sandbox）（LOOP：项目默认 · 研发交付）", Drafts: "[]", SOP: sop}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,5 +574,24 @@ func TestFeishuGroupReplyToNodeQuestionPassesWithoutMention(t *testing.T) {
 	}
 	if ack := reply("om_late", "om_question"); ack.Accepted || ack.Ignored != "group_not_mentioned" {
 		t.Fatalf("answered question = %+v", ack)
+	}
+}
+
+// A draft summary written before the rename notes the LOOP as （SOP：…）; its
+// card still strips the note and offers confirm-and-start.
+func TestDraftCardAcceptsLOOPAndLegacySOPNote(t *testing.T) {
+	for _, label := range []string{"LOOP", "SOP"} {
+		draft := domain.BotPendingDraft{ID: "d", Status: repo.BotDraftPending, Summary: "1. 保存需求：登录优化（仓库：main）（" + label + "：研发交付）", SOP: &domain.BotDraftSOP{DefaultName: "研发交付"}}
+		card := draftCard(draft, "", "")
+		if len(card.Rows) != 1 || card.Rows[0][1] != "1. 保存需求：登录优化" {
+			t.Fatalf("%s rows = %v", label, card.Rows)
+		}
+		keys := []string{}
+		for _, a := range card.Actions {
+			keys = append(keys, a.Key)
+		}
+		if strings.Join(keys, ",") != "draft_confirm,draft_confirm_start,draft_cancel" {
+			t.Fatalf("%s actions = %v", label, keys)
+		}
 	}
 }

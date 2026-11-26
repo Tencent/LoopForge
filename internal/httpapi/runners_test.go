@@ -532,7 +532,7 @@ func TestRunnerSessionRequiredForTaskAPI(t *testing.T) {
 	}
 }
 
-func TestRunnerClaimRejectsQueuedFrozenLocalSandbox(t *testing.T) {
+func TestRunnerClaimRejectsQueuedUnsupportedSandboxes(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -540,10 +540,14 @@ func TestRunnerClaimRejectsQueuedFrozenLocalSandbox(t *testing.T) {
 	t.Cleanup(st.Close)
 	h := New(st, engine.New(st, runtime.NewManager(t.TempDir())), tracker.NewService(), "", "")
 	runnerID, session := registerTestRunner(t, h)
-	for i, driver := range []string{domain.SandboxDriverLocal, domain.SandboxDriverNative} {
+	for i, profile := range []domain.SandboxProfile{
+		{ID: "old-local", Driver: domain.SandboxDriverLocal},
+		{ID: "privileged", Driver: domain.SandboxDriverDocker, Privileged: true},
+		{ID: "native", Driver: domain.SandboxDriverNative},
+	} {
 		task := domain.RunnerTask{
-			ID: driver, RunID: "run-" + driver, RunnerID: runnerID, Provider: "mock", Command: "true",
-			Sandbox:   &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: driver, Driver: driver}},
+			ID: profile.ID, RunID: "run-" + profile.ID, RunnerID: runnerID, Provider: "mock", Command: "true",
+			Sandbox:   &domain.RunnerSandboxSpec{Profile: profile},
 			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Second),
 		}
 		if err := st.PutRunnerTask(task); err != nil {
@@ -559,8 +563,50 @@ func TestRunnerClaimRejectsQueuedFrozenLocalSandbox(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &response) != nil || response.Task.ID != domain.SandboxDriverNative {
 		t.Fatalf("claim returned %d: %s", rec.Code, rec.Body.String())
 	}
-	if old, _ := st.RunnerTask(domain.SandboxDriverLocal); old.Status != domain.RunnerTaskFailed || !strings.Contains(old.Error, "已移除的 local") {
+	if old, _ := st.RunnerTask("old-local"); old.Status != domain.RunnerTaskFailed || !strings.Contains(old.Error, "已移除的 local") {
 		t.Fatalf("legacy task status = %q, error = %q", old.Status, old.Error)
+	}
+	if task, _ := st.RunnerTask("privileged"); task.Status != domain.RunnerTaskFailed || !strings.Contains(task.Error, domain.RunnerVersionPrivilegedSandbox) {
+		t.Fatalf("privileged task status = %q, error = %q", task.Status, task.Error)
+	}
+}
+
+func TestRunnerClaimRequiresDockerSandboxLimitSupport(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	runnerID, session := registerTestRunner(t, f.h)
+	task := domain.RunnerTask{
+		ID: "limited-task", RunID: "limited-run", RunnerID: runnerID, Provider: "mock", Command: "true",
+		Sandbox: &domain.RunnerSandboxSpec{
+			Profile: domain.SandboxProfile{Driver: domain.SandboxDriverDocker, CPUMillicores: 500, MemoryMiB: 256},
+		},
+	}
+	claim := func(supportsLimits bool) *httptest.ResponseRecorder {
+		return requestWithHeaders(t, f.h, http.MethodPost, "/api/runners/tasks/claim", map[string]any{
+			"availableRuntimes": []string{"mock"}, "noWait": true, "supportsDockerSandboxLimits": supportsLimits,
+		}, map[string]string{"Authorization": "Bearer " + session})
+	}
+	if err := f.s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if rec := claim(false); rec.Code != http.StatusNoContent {
+		t.Fatalf("legacy claim: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	if rejected, _ := f.s.RunnerTask(task.ID); rejected.Status != domain.RunnerTaskFailed || rejected.Error != domain.RunnerDockerSandboxLimitsUpgradeMessage {
+		t.Fatalf("legacy task status = %q, error = %q", rejected.Status, rejected.Error)
+	}
+	// A compatible Runner may claim before its first post-upgrade heartbeat.
+	task.ID = "supported-limited-task"
+	if err := f.s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Task domain.RunnerTask `json:"task"`
+	}
+	if rec := claim(true); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &response) != nil {
+		t.Fatalf("updated claim: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+	if sandbox := response.Task.Sandbox; sandbox == nil || sandbox.Profile.CPUMillicores != 500 || sandbox.Profile.MemoryMiB != 256 {
+		t.Fatalf("claimed sandbox lost resource limits: %+v", sandbox)
 	}
 }
 

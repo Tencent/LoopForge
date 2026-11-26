@@ -196,10 +196,10 @@ func TestWorkspaceOpenBindsSOPChildAndPreservesAcrossConversationDelete(t *testi
 		t.Fatal("task conversation must reject switching to another workspaceRunId")
 	}
 
-	// Opening child SOP resolves to sopDone, restores reclaimed checkpoint to disk, and hands off.
+	// Opening child LOOP resolves to sopDone, restores reclaimed checkpoint to disk, and hands off.
 	raw, err := gateway.openConversationWorkspace(context.Background(), s, map[string]any{"workspaceRunId": sopChild.ID})
 	if err != nil {
-		t.Fatalf("open child SOP failed: %v", err)
+		t.Fatalf("open child LOOP failed: %v", err)
 	}
 	var opened struct {
 		RunID   string `json:"runId"`
@@ -212,16 +212,16 @@ func TestWorkspaceOpenBindsSOPChildAndPreservesAcrossConversationDelete(t *testi
 		t.Fatalf("decode open: %v (%s)", err, raw)
 	}
 	if opened.RunID != sopDone.ID || opened.SOPID != sopDone.ID || opened.IssueID != "iss-1" || !opened.Handoff {
-		t.Fatalf("unexpected SOP bind response: %+v", opened)
+		t.Fatalf("unexpected LOOP bind response: %+v", opened)
 	}
 	if strings.Contains(opened.Notice, "空目录") {
-		t.Fatalf("borrowed SOP must not claim empty dir: %s", opened.Notice)
+		t.Fatalf("borrowed LOOP must not claim empty dir: %s", opened.Notice)
 	}
 	if data, err := os.ReadFile(filepath.Join(root, sopDone.ID, "carried.txt")); err != nil || string(data) != "from-sop-parent\n" {
 		t.Fatalf("restored file = %q err=%v", data, err)
 	}
 	if stored, _ := h.repo.AssistantSession(owner.ID, "chat-opt1"); stored.WorkspaceRunID != sopDone.ID || len(stored.OwnWorkspaceRunIDs) != 0 {
-		t.Fatalf("borrowed SOP must not enter OwnWorkspaceRunIDs: %+v", stored)
+		t.Fatalf("borrowed LOOP must not enter OwnWorkspaceRunIDs: %+v", stored)
 	}
 
 	// Switching to a sandbox creates an own workspace, leaving sopDone borrowed history out of OwnWorkspaceRunIDs.
@@ -239,10 +239,10 @@ func TestWorkspaceOpenBindsSOPChildAndPreservesAcrossConversationDelete(t *testi
 	}
 	t.Cleanup(func() { waitWorkspaceCheckpointSettled(t, h.repo, ownOpened.RunID) })
 
-	// Switching to a running SOP returns handoff=false and clears any pending workspace handoff.
+	// Switching to a running LOOP returns handoff=false and clears any pending workspace handoff.
 	raw, err = gateway.openConversationWorkspace(context.Background(), s, map[string]any{"workspaceRunId": sopRunning.ID})
 	if err != nil {
-		t.Fatalf("open running SOP failed: %v", err)
+		t.Fatalf("open running LOOP failed: %v", err)
 	}
 	var runningOpened struct {
 		RunID   string `json:"runId"`
@@ -250,10 +250,10 @@ func TestWorkspaceOpenBindsSOPChildAndPreservesAcrossConversationDelete(t *testi
 		Notice  string `json:"notice"`
 	}
 	if err := json.Unmarshal([]byte(raw), &runningOpened); err != nil || runningOpened.RunID != sopRunning.ID || runningOpened.Handoff || s.requestedMode() != "" {
-		t.Fatalf("running SOP must stay read-only without handoff: %s mode=%q (%v)", raw, s.requestedMode(), err)
+		t.Fatalf("running LOOP must stay read-only without handoff: %s mode=%q (%v)", raw, s.requestedMode(), err)
 	}
 
-	// Once the running SOP is paused, re-opening it hands off into workspace mode on the same SOP workspace.
+	// Once the running LOOP is paused, re-opening it hands off into workspace mode on the same LOOP workspace.
 	if _, err := h.repo.RequestRunPause(sopRunning.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -265,13 +265,13 @@ func TestWorkspaceOpenBindsSOPChildAndPreservesAcrossConversationDelete(t *testi
 	}
 	raw, err = gateway.openConversationWorkspace(context.Background(), s, map[string]any{})
 	if err != nil {
-		t.Fatalf("re-open paused SOP failed: %v", err)
+		t.Fatalf("re-open paused LOOP failed: %v", err)
 	}
 	if err := json.Unmarshal([]byte(raw), &runningOpened); err != nil || runningOpened.RunID != sopRunning.ID || !runningOpened.Handoff || s.requestedMode() != domain.AssistantModeWorkspace {
-		t.Fatalf("paused SOP must hand off to workspace mode: %s mode=%q (%v)", raw, s.requestedMode(), err)
+		t.Fatalf("paused LOOP must hand off to workspace mode: %s mode=%q (%v)", raw, s.requestedMode(), err)
 	}
 	if !strings.Contains(runningOpened.Notice, "runs_resume") {
-		t.Fatalf("paused SOP notice must explain runs_resume: %s", runningOpened.Notice)
+		t.Fatalf("paused LOOP notice must explain runs_resume: %s", runningOpened.Notice)
 	}
 
 	// Switch back to own workspace via workspaceRunId, close turn, and delete conversation:
@@ -294,7 +294,7 @@ func TestWorkspaceOpenBindsSOPChildAndPreservesAcrossConversationDelete(t *testi
 		t.Fatalf("deleted conversation kept its own workspace %s", ownOpened.RunID)
 	}
 	if _, ok := h.repo.RunState(sopDone.ID); !ok {
-		t.Fatalf("deleting conversation deleted borrowed SOP %s", sopDone.ID)
+		t.Fatalf("deleting conversation deleted borrowed LOOP %s", sopDone.ID)
 	}
 }
 
@@ -373,13 +373,13 @@ func TestWorkspaceOpenBorrowedSOPMachineMismatchAndFailureRollback(t *testing.T)
 		t.Fatalf("expected sandbox driver refusal, got: %v", err)
 	}
 
-	// Failed preparation on target SOP rolls session binding back to previous own workspace.
+	// Failed preparation on target LOOP rolls session binding back to previous own workspace.
 	own, err := gateway.bindConversationWorkspace(context.Background(), sCloud, workspaceOpenChoice{SandboxID: "business"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := gateway.openConversationWorkspace(context.Background(), sCloud, map[string]any{"workspaceRunId": sopCleanedNoArchive.ID}); err == nil {
-		t.Fatal("expected error for cleaned SOP with no archive or disk dir")
+		t.Fatal("expected error for cleaned LOOP with no archive or disk dir")
 	}
 	if sCloud.workspaceRunID != own.Run.ID {
 		t.Fatalf("session workspaceRunID not rolled back: got %q want %q", sCloud.workspaceRunID, own.Run.ID)
@@ -390,8 +390,8 @@ func TestWorkspaceOpenBorrowedSOPMachineMismatchAndFailureRollback(t *testing.T)
 }
 
 // End-to-end verification of:
-// SOP finishes & reclaims -> ordinary chat continues in SOP via workspaceRunId,
-// modifies files & closes turn (and even gets reclaimed again) -> SOP RetryContext
+// LOOP finishes & reclaims -> ordinary chat continues in LOOP via workspaceRunId,
+// modifies files & closes turn (and even gets reclaimed again) -> LOOP RetryContext
 // from the downstream "test" node sees the exact edits made during the chat.
 func TestBorrowedSOPWorkspaceEditsSurviveReclaimAndNodeRetry(t *testing.T) {
 	h, owner, _ := chatSandboxFixture(t)
@@ -451,9 +451,9 @@ func TestBorrowedSOPWorkspaceEditsSurviveReclaimAndNodeRetry(t *testing.T) {
 		workspaceTurn: turn,
 	}
 
-	// 1. Open SOP workspace in ordinary conversation; reclaimed checkpoint restores automatically.
+	// 1. Open LOOP workspace in ordinary conversation; reclaimed checkpoint restores automatically.
 	if _, err := gateway.openConversationWorkspace(context.Background(), s, map[string]any{"workspaceRunId": sop.ID}); err != nil {
-		t.Fatalf("open SOP workspace failed: %v", err)
+		t.Fatalf("open LOOP workspace failed: %v", err)
 	}
 	wsDir := en.RunWorkspace(sop.ID)
 	if body, err := os.ReadFile(filepath.Join(wsDir, "app.txt")); err != nil || string(body) != "v1-from-sop" {
@@ -486,13 +486,13 @@ func TestBorrowedSOPWorkspaceEditsSurviveReclaimAndNodeRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 4. Retry SOP from the downstream "test" node.
+	// 4. Retry LOOP from the downstream "test" node.
 	if err := en.RetryContext(context.Background(), sop.ID, "test", "验证对话微调后的结果", ""); err != nil {
 		t.Fatalf("RetryContext on test node failed: %v", err)
 	}
 	afterRetry, _ := h.repo.RunState(sop.ID)
 	if !afterRetry.WorkspaceCleanedAt.IsZero() {
-		t.Fatal("retried SOP workspace was not marked restored")
+		t.Fatal("retried LOOP workspace was not marked restored")
 	}
 	if afterRetry.Nodes["impl"].Status != "succeeded" || afterRetry.Nodes["test"].Status != "pending" {
 		t.Fatalf("unexpected node states after retry from test: impl=%+v test=%+v", afterRetry.Nodes["impl"], afterRetry.Nodes["test"])
@@ -595,7 +595,7 @@ func TestWorkspaceOpenSameRunnerBorrowedSOPRestores(t *testing.T) {
 
 	raw, err := gateway.openConversationWorkspace(context.Background(), s, map[string]any{"workspaceRunId": sop.ID})
 	if err != nil {
-		t.Fatalf("open same-runner SOP failed: %v", err)
+		t.Fatalf("open same-runner LOOP failed: %v", err)
 	}
 	if !restored.Load() || !strings.Contains(raw, "service.go") || !strings.Contains(raw, `"handoff":true`) {
 		t.Fatalf("expected restored runner tree and handoff: restored=%v raw=%s", restored.Load(), raw)

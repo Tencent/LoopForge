@@ -460,7 +460,7 @@ func (s *Service) tombstoneGate(store SedimentStore, projectID, fingerprint stri
 
 func signalLabels(signals []string) string {
 	labels := map[string]string{
-		domain.KnowledgeSignalRunSucceeded:   "SOP 运行成功",
+		domain.KnowledgeSignalRunSucceeded:   "LOOP 运行成功",
 		domain.KnowledgeSignalMRMerged:       "合并请求已合并",
 		domain.KnowledgeSignalIssueCompleted: "需求已完成",
 		domain.KnowledgeSignalGateApproved:   "人工关卡通过",

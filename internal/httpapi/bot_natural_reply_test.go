@@ -15,7 +15,7 @@ import (
 // failure text). The cases below pin what is now accepted and what still
 // goes through the terminal retry, for read-only and legacy auto Bots alike.
 func TestBotNaturalAnswerAcceptanceMatrix(t *testing.T) {
-	const answer = "项目当前有 2 个运行中的 SOP，均在实现节点。"
+	const answer = "项目当前有 2 个运行中的 LOOP，均在实现节点。"
 	draftJSON := `{"message":"将创建需求","drafts":[{"type":"issues_save","payload":{"title":"x"}}]}`
 	cases := []struct {
 		name      string

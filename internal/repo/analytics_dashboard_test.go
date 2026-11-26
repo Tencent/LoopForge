@@ -87,7 +87,7 @@ func TestAnalyticsDashboardCohorts(t *testing.T) {
 		t.Fatal("compact dashboard must not return raw run, MR or per-member indexes")
 	}
 	if d.SOPRuns != 2 || d.SucceededRuns != 1 || d.FailedRuns != 1 || d.HumanRuns != 1 || d.P95ExecutionDurationMs != 180000 {
-		t.Fatalf("SOP cohort: %+v", d)
+		t.Fatalf("LOOP cohort: %+v", d)
 	}
 	if d.DeliveredIssues != 4 || d.SOPDeliveredIssues != 3 || d.VibeDeliveredIssues != 1 {
 		t.Fatalf("merge deduplication / routes: %+v", d)
@@ -99,7 +99,7 @@ func TestAnalyticsDashboardCohorts(t *testing.T) {
 		t.Fatalf("time zone: %+v / %+v", d.Trend, got.ActivityTrend)
 	}
 	if p := d.Trend[0]; p.SOPRuns != 2 || p.SucceededRuns != 1 || p.FailedRuns != 1 || p.HumanRuns != 1 {
-		t.Fatalf("period quality and intervention rates must exclude child SOPs and deduplicate decisions: %+v", p)
+		t.Fatalf("period quality and intervention rates must exclude child LOOPs and deduplicate decisions: %+v", p)
 	}
 	if len(d.HumanTrend) != 1 || d.HumanTrend[0].Approvals != 4 || d.HumanTrend[0].Rejections != 2 || d.HumanTrend[0].Retries != 4 {
 		t.Fatalf("human events: %+v", d.HumanTrend)

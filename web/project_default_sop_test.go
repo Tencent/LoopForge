@@ -11,6 +11,6 @@ func TestProjectDefaultSOP(t *testing.T) {
 		t.Skip("node not installed")
 	}
 	if out, err := exec.Command(node, "project_default_sop_test.js", appBundlePath(t)).CombinedOutput(); err != nil {
-		t.Fatalf("project default SOP: %v\n%s", err, out)
+		t.Fatalf("project default LOOP: %v\n%s", err, out)
 	}
 }

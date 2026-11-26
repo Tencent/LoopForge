@@ -141,7 +141,7 @@ test('HuiDate opens calendar, navigates months and keyboard grid, selects today/
   app.window.HuiDate.destroy(input);
 });
 
-test('HuiSelect supports trigger mode, inline mode, search filter, keyboard navigation, and SOP catalog interactions', async (t) => {
+test('HuiSelect supports trigger mode, inline mode, search filter, keyboard navigation, and LOOP catalog interactions', async (t) => {
   const app = await loadApp();
   t.after(app.close);
 
@@ -195,7 +195,7 @@ test('HuiSelect supports trigger mode, inline mode, search filter, keyboard navi
   app.window.HuiSelect.closeAll();
   app.window.HuiSelect.destroy(select);
 
-  // SOP catalog card menu, actions, and motion helpers
+  // LOOP catalog card menu, actions, and motion helpers
   app.evaluate(`
     state.currentUser = { id: 1, loginName: 'owner', isPlatformAdmin: true };
     state.sopScope = 'project';
@@ -212,10 +212,10 @@ test('HuiSelect supports trigger mode, inline mode, search filter, keyboard navi
   }
   app.evaluate(`
     state.sopScope = 'shared';
-    state.data.workflows.push({ id: 'shared-wf', name: 'Shared SOP', projectId: 'other-proj', shared: true, status: 'published', version: 1, nodes: [] });
+    state.data.workflows.push({ id: 'shared-wf', name: 'Shared LOOP', projectId: 'other-proj', shared: true, status: 'published', version: 1, nodes: [] });
     renderSOPCatalog();
     state.sopScope = 'generic';
-    state.data.workflows.push({ id: 'gen-wf', name: 'Generic SOP', generic: true, status: 'published', version: 1, nodes: [{ id: 'n1', type: 'agent' }] });
+    state.data.workflows.push({ id: 'gen-wf', name: 'Generic LOOP', generic: true, status: 'published', version: 1, nodes: [{ id: 'n1', type: 'agent' }] });
     renderSOPCatalog();
   `);
   const genMore = app.document.querySelector('[data-sop-menu="gen-wf"]');

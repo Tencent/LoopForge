@@ -11,7 +11,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
     result: { dimensions: { control: 82 }, summary: 'Solid run',
       findings: [{ severity: 'warn', dimension: 'control', message: 'One retry', nodeId: 'b', evidence: 'attempt 2' }],
       recommendations: [{ id: 'rec-1', title: 'Tune node', rationale: 'Reduce retries',
-        target: 'workflow', action: 'workflow.update_node', nodeId: 'b', set: { retries: 1 } }] }
+        target: 'workflow', action: 'workflow.update_node', nodeId: 'b', set: { maxAttempts: 2 } }] }
   };
   app.router.get('/api/runs/run-x/eval', evaluation);
   app.router.post('/api/runs/run-x/eval', { ...evaluation, status: 'running' });
@@ -26,6 +26,8 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   app.router.get('/api/workflows', app.evaluate('structuredClone(state.data.workflows)'));
   app.router.get('/api/agents', app.evaluate('structuredClone(state.data.agents)'));
   app.router.get('/api/runs/run-x/artifacts/art-1', '# Report\\n\\n```js\\nconsole.log("ok")\\n```');
+  app.router.get('/api/runs/run-x/artifacts/art-zip', 'PK\u0003\u0004\u0000\u0000# not markdown');
+  app.router.get('/api/runs/run-x/artifacts/art-ndjson', '{"id":1}\n');
   app.router.get('/api/runs/child-1', {
     id: 'child-1', status: 'waiting', workflowId: 'child-flow',
     workflowSnapshot: { id: 'child-flow', name: 'Child Flow', nodes: [{ id: 'approve', name: 'Approve' }] },
@@ -107,8 +109,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
       urls:[vscodeWorkbenchURL('run x',{embed:true}),vscodeWindowName('run x!'),
         previewCandidateHttpsURL('http://example.com:80/path')],
       clean:[runWorkspaceWasCleaned({workspaceCleanedAt:'1970-01-01'}),runWorkspaceWasCleaned({workspaceCleanedAt:'2026-01-01'})],
-      page:[runPageTarget(run,'a'),runDisplayStatus({...run,status:'paused'}),runAwaitsConfirmation({...run,status:'waiting'})],
-      evalApply:[runEvalApplyable({action:'workflow.update_node'}),runEvalApplyable({action:'noop'})]
+      page:[runPageTarget(run,'a'),runDisplayStatus({...run,status:'paused'}),runAwaitsConfirmation({...run,status:'waiting'})]
     };
   })()`));
   assert.equal(result.mergedStatus, 'running');
@@ -140,10 +141,13 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.equal(result.page[0].runId, 'run-x');
   assert.equal(result.page[1], '已暂停');
   assert.equal(result.page[2], true);
-  assert.deepEqual(result.evalApply, [true,false]);
   app.evaluate(`
     state.activeRun={...state.activeRun,status:'failed',artifacts:[
-      {id:'art-1',nodeId:'b',name:'report.md',path:'report.md',attempt:2,size:1200,sha256:'abcdef',mediaType:'text/markdown'}]};
+      {id:'art-1',nodeId:'b',name:'report.md',path:'out/report.md',attempt:2,size:1200,sha256:'abcdef',mediaType:'text/markdown'},
+      {id:'art-bin',nodeId:'b',name:'model',path:'out/model.bin',attempt:2,size:20971520,sha256:'fedcba',mediaType:'application/octet-stream'},
+      {id:'art-image',nodeId:'b',name:'chart',path:'out/chart.png',attempt:2,size:1048576,sha256:'ab',mediaType:'image/png'},
+      {id:'art-zip',nodeId:'b',name:'pkg',path:'out/pkg.zip',attempt:2,size:2048,sha256:'aa',mediaType:'text/markdown'},
+      {id:'art-ndjson',nodeId:'b',name:'rows',path:'out/rows.ndjson',attempt:2,size:9,sha256:'bb',mediaType:'application/x-ndjson'}]};
     state.selectedRun='run-x';state.currentUser.codeBuddyApiKeyConfigured=true;
     const host=document.querySelector('#runDetail');host.dataset.runId='run-x';
     host.innerHTML='<div data-run-pane="eval"></div>';
@@ -182,8 +186,40 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   }
   app.document.querySelector('#artifactPreview [data-mode="source"]')?.click();
   assert.match(app.document.querySelector('#artifactPreview .artifact-content').textContent, /console\.log/);
+  const downloads = [];
+  const clickAnchor = app.window.HTMLAnchorElement.prototype.click;
+  app.window.HTMLAnchorElement.prototype.click = function () { downloads.push([this.getAttribute('href'), this.download]); };
+  const download = artifactModal.querySelector('[data-download-artifact]');
+  assert.equal(download.tagName, 'BUTTON');
+  download.click();
+  assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-1', 'report.md']);
   artifactModal.close();
   assert.equal(artifactModal.querySelector('.toast-item'), null);
+  const artifactCalls = () => app.router.calls.filter(c => c.path.includes('/artifacts/')).length;
+  const callsBefore = artifactCalls();
+  await app.evaluate(`previewArtifact(state.activeRun,'art-bin')`);
+  assert.equal(artifactModal.open, true);
+  assert.equal(artifactCalls(), callsBefore, 'an oversized artifact is not read into the page');
+  assert.match(app.document.querySelector('#artifactPreview').textContent, /不在页面内预览/);
+  assert.match(app.document.querySelector('#artifactPreview').textContent, /超过 5 MiB/);
+  artifactModal.querySelector('[data-download-artifact]').click();
+  assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-bin', 'model.bin']);
+  artifactModal.close();
+  await app.evaluate(`previewArtifact(state.activeRun,'art-image')`);
+  assert.equal(artifactCalls(), callsBefore, 'a declared binary artifact is not read into the page');
+  artifactModal.querySelector('[data-download-artifact]').click();
+  assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-image', 'chart.png']);
+  artifactModal.close();
+  await app.evaluate(`previewArtifact(state.activeRun,'art-zip')`);
+  assert.match(app.document.querySelector('#artifactPreview').textContent, /不在页面内预览/);
+  assert.match(app.document.querySelector('#artifactPreview').textContent, /无法按文本显示/);
+  artifactModal.querySelector('[data-download-artifact]').click();
+  assert.deepEqual(downloads.at(-1), ['/api/runs/run-x/artifacts/art-zip', 'pkg.zip']);
+  artifactModal.close();
+  await app.evaluate(`previewArtifact(state.activeRun,'art-ndjson')`);
+  assert.match(app.document.querySelector('#artifactPreview .artifact-content').textContent, /"id":1/);
+  app.window.HTMLAnchorElement.prototype.click = clickAnchor;
+  artifactModal.close();
   app.evaluate(`toast('Outside artifact preview')`);
   assert.match(app.document.querySelector('#toastContainer').textContent, /Outside artifact preview/);
   app.evaluate(`
@@ -218,7 +254,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.equal(app.evaluate(`state.activeRun.status`), 'succeeded');
   app.evaluate(`
     const parent={id:'parent-1',status:'waiting',workflowId:'flow-parent',
-      workflowSnapshot:{id:'flow-parent',name:'Parent',nodes:[{id:'sub',name:'Nested SOP'}],edges:[]},
+      workflowSnapshot:{id:'flow-parent',name:'Parent',nodes:[{id:'sub',name:'Nested LOOP'}],edges:[]},
       nodes:{sub:{status:'running',childRunId:'child-1'}}};
     state.activeRun=parent;state.selectedRun='parent-1';state.data.runs=[parent];
     state.childRuns={'child-1':{run:{id:'child-1',status:'waiting',workflowId:'child-flow',
@@ -234,7 +270,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   `);
   const child = structuredClone(app.evaluate(`window.__child`));
   assert.equal(child.focus.node.id, 'approve');
-  assert.match(child.graph.text, /子 SOP/);
+  assert.match(child.graph.text, /子 LOOP/);
   assert.match(child.panel, /Child Flow/);
   assert.match(child.callout, /人工审批/);
   assert.deepEqual(child.ids, ['child-1']);
@@ -269,7 +305,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   }`);
   await submittingEvaluation;
   assert.equal(app.router.calls.find(c => c.method === 'POST' && c.path === '/api/runs/run-x/eval')?.body.model, 'codex:model-x');
-  app.evaluate(`state.runEvalStream?.close();state.runEvalStream=null;state.runEvalBusy=false`);
+  app.evaluate(`stopRunEvalStream()`);
   app.evaluate(`
     state.data.runs=[{id:'run-select',status:'succeeded',workflowId:'flow-1',createdAt:'2026-02-01',nodes:{}}];
     selectRun('run-select');

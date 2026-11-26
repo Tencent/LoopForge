@@ -1,4 +1,4 @@
--- 044: Agent 知识库工具调用记录（控制面，KnowledgeRepo）。
+-- 045: Agent 知识库工具调用记录（控制面，KnowledgeRepo）。
 --
 -- 知识中心的「Agent 最近的检索」在进程重启后仍要能读到角色/会话、工具、
 -- 查询、命中数、成功与否、时间和运行 ID。记录由 KnowledgeRepo 写入主库，

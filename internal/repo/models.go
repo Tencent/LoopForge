@@ -432,7 +432,8 @@ type runArtifactRow struct {
 	SizeBytes     int64      `gorm:"column:size_bytes"`
 	SHA256        string     `gorm:"column:sha256;size:64"`
 	RepositoryDir string     `gorm:"column:repository_dir;size:128"`
-	Content       string     `gorm:"column:content;type:text"`
+	Content       string     `gorm:"column:content;type:mediumtext"`
+	BlobID        string     `gorm:"column:blob_id;size:64"`
 	Created       *time.Time `gorm:"column:created_at"`
 }
 
@@ -597,9 +598,19 @@ type userProjectRunnerPrefRow struct {
 	UserID          int64  `gorm:"column:user_id;primaryKey;autoIncrement:false"`
 	ProjectID       string `gorm:"column:project_id;primaryKey;size:64"`
 	DefaultRunnerID string `gorm:"column:default_runner_id;not null;size:64;index:idx_user_project_runner_prefs_runner"`
+	SelectionMode   string `gorm:"column:selection_mode;not null;default:'';size:32"`
 }
 
 func (userProjectRunnerPrefRow) TableName() string { return "user_project_runner_prefs" }
+
+type platformRunnerSettingsRow struct {
+	ID        int64      `gorm:"column:id;primaryKey;autoIncrement:false"`
+	RunLimit  int        `gorm:"column:run_limit;not null"`
+	UpdatedBy int64      `gorm:"column:updated_by;not null;default:0"`
+	Updated   *time.Time `gorm:"column:updated_at"`
+}
+
+func (platformRunnerSettingsRow) TableName() string { return "platform_runner_settings" }
 
 // assistantPreferenceRow: a missing row means switches are off, messages queue
 // and the agent picks conversation workspace sandboxes itself.
@@ -757,7 +768,7 @@ type knowledgeContentFenceRow struct {
 
 func (knowledgeContentFenceRow) TableName() string { return "knowledge_content_fences" }
 
-// 内置知识引擎的 schema 基线以 migrations/043+ 的 SQL 为准。下面的 gorm tag
+// 内置知识引擎的 schema 基线以 migrations/044+ 的 SQL 为准。下面的 gorm tag
 // 只保证缺表时服务能启动；AutoMigrate 不会改已有列的类型、collation 或默认值，
 // 安装/升级脚本必须先按序执行迁移（见 docs/deployment.md）。
 
@@ -801,7 +812,7 @@ type knowledgeSubmissionRow struct {
 
 func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions" }
 
-// 内置知识引擎控制面（主库，KnowledgeRepo）。向量配置列由 045 脚本补建；
+// 内置知识引擎控制面（主库，KnowledgeRepo）。向量配置列由 046 脚本补建；
 // gorm 的增量 DDL 建得出普通列，这里注册后新装也能带全列。
 type knowledgeBaseRow struct {
 	ID                  string     `gorm:"column:id;primaryKey;size:64"`
@@ -1097,11 +1108,11 @@ func controlModels() []any {
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
 		sandboxRow{},
 		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
-		issueRow{}, issueCommentRow{}, taskRow{},
-		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
+		issueRow{}, issueCommentRow{}, issueImageRow{}, taskRow{},
+		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runArtifactBlobRow{}, runArtifactBlobChunk{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
 		mrDeliveryStateRow{}, definitionRevisionRow{},
-		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{}, userProjectRunnerPrefRow{},
+		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{}, userProjectRunnerPrefRow{}, platformRunnerSettingsRow{},
 		assistantSessionRow{}, assistantTaskRow{}, assistantGenerationRow{}, assistantSessionReadRow{}, assistantPreferenceRow{}, assistantDiagnosticsRow{},
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},

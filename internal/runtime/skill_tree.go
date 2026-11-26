@@ -16,7 +16,7 @@ func SkillName(id string) string {
 }
 
 // WriteSkillTree replaces dir with one directory per skill holding SKILL.md
-// and its text and binary files, the same layout an SOP node receives. A CLI
+// and its text and binary files, the same layout a LOOP node receives. A CLI
 // that scans dir as its skills directory can then invoke them natively.
 // binary maps a skill ID to its skill_files contents. It returns the names of
 // the written skills; a later skill whose name repeats an earlier one is

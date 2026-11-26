@@ -7,6 +7,7 @@ import pty
 import select
 import shlex
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -36,7 +37,19 @@ class InstallerTests(unittest.TestCase):
         for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh', 'install-schema-extensions.sh', 'knowledge-schema.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
-        for source in sorted((ROOT / 'migrations').glob('[0-9][0-9][0-9]_*.sql')):
+        for name in (
+            '001_run_obs_generated_columns.sql',
+            '033_generic_sop_mr_node.sql',
+            '038_generic_sop_host_credentials.sql',
+            '041_native_sandbox_inline_assets.sql',
+            '043_loop_terminology.sql',
+        ):
+            (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
+        artifact_migration = '042_run_artifacts_content_mediumtext.sql'
+        shutil.copyfile(ROOT / 'migrations' / artifact_migration, self.root / 'migrations' / artifact_migration)
+        knowledge_baseline = '002_knowledge_base.sql'
+        shutil.copyfile(ROOT / 'migrations' / knowledge_baseline, self.root / 'migrations' / knowledge_baseline)
+        for source in sorted((ROOT / 'migrations').glob('0[45][0-9]_*knowledge*.sql')):
             shutil.copyfile(source, self.root / 'migrations' / source.name)
         (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
         (self.root / 'mock').mkdir()
@@ -156,14 +169,14 @@ exec "$@"
         self.assertEqual((self.root / '.env').read_text(), secrets)
         self.assertEqual((self.root / '.env').stat().st_mode & 0o777, 0o600)
 
-    def test_install_applies_baseline_before_052(self):
+    def test_install_applies_baseline_before_053(self):
         self.assert_success(self.install())
         log = (self.root / 'mysql.log').read_text()
         baseline = log.find('CREATE TABLE IF NOT EXISTS knowledge_submissions')
         concurrency = log.find('ALTER TABLE knowledge_submissions ADD COLUMN version')
         self.assertGreaterEqual(baseline, 0, log)
         self.assertGreaterEqual(concurrency, 0, log)
-        self.assertLess(baseline, concurrency, '002 baseline must run before 052')
+        self.assertLess(baseline, concurrency, '002 baseline must run before 053')
         # The runner has an explicit knowledge-migration list, so upstream
         # optional manual DDL is never swept into an install/upgrade.
         self.assertNotIn('assistant_session_reads', log)
@@ -594,13 +607,27 @@ esac
         self.assertIn('ALTER TABLE run_logs', sql)
         self.assertIn('INSERT IGNORE', sql)
         self.assertNotIn('DROP TABLE IF EXISTS dockerfiles', sql)
-        # The 「发起 MR」 node of the code delivery SOPs is replayed too, instead
+        # The 「发起 MR」 node of the code delivery LOOPs is replayed too, instead
         # of waiting for an operator to run migration 033 by hand.
         self.assertIn('JSON_ARRAY_APPEND', sql)
         self.assertIn('git credential fill', sql)
         self.assertLess(sql.index('JSON_ARRAY_APPEND'), sql.index('SET @new_mr_auth'))
+        self.assertLess(sql.index('SET @new_mr_auth'), sql.index('-- Align shipped template names'))
         # Recreated containers come first; the old volume then gets the columns.
         self.assertLess(log.index('up -d --no-build --wait --wait-timeout 180 --pull never'), log.rindex('exec -T mysql'))
+
+    def test_live_install_fixture_copies_every_replayed_migration(self):
+        # test-install-live.sh runs install.sh from a trimmed copy of the repo,
+        # so each migration the installer replays has to be in its copy list.
+        replayed = set()
+        for name in ('install-schema-extensions.sh', 'install-observability-schema.sh'):
+            replayed.update(re.findall(r'migrations/(\d{3}_[\w-]+\.sql)', (ROOT / 'scripts' / name).read_text()))
+        self.assertIn('043_loop_terminology.sql', replayed)
+        live = (ROOT / 'scripts/test-install-live.sh').read_text()
+        copy = re.search(r'^\s*cp (migrations/\d{3}_.*?)"\$fixture/migrations/"', live, re.M | re.S)
+        self.assertIsNotNone(copy, 'test-install-live.sh no longer copies migrations into the fixture')
+        copied = set(re.findall(r'migrations/(\d{3}_[\w-]+\.sql)', copy.group(1)))
+        self.assertEqual(replayed - copied, set())
 
     def test_start_pull_migrates_legacy_sandboxes_before_startup(self):
         result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='2')
@@ -1011,7 +1038,7 @@ class KnowledgeSchemaScriptTests(unittest.TestCase):
     """Exercise the real migration files and knowledge-schema.sh segmentation.
 
     No MySQL server is needed: a fake mysql client records every statement and
-    returns canned catalog answers. This catches baseline ordering, the 054
+    returns canned catalog answers. This catches baseline ordering, the 055
     control/content/control split, mapping import into a separate content
     database, fence migration and DSN-driven seeding without Docker.
     """
@@ -1075,9 +1102,9 @@ esac
         version = log.find('ALTER TABLE knowledge_submissions ADD COLUMN version')
         self.assertGreaterEqual(baseline, 0, log)
         self.assertGreaterEqual(version, 0, log)
-        self.assertLess(baseline, version, '002 baseline must run before 052')
+        self.assertLess(baseline, version, '002 baseline must run before 053')
 
-        # 054 content work goes to the content DSN, not the control DSN.
+        # 055 content work goes to the content DSN, not the control DSN.
         fences = log.find('knowledge_content_fences')
         docs = log.find('knowledge_documents d JOIN knowledge_id_migration_039')
         self.assertGreaterEqual(fences, 0, log)
@@ -1096,8 +1123,8 @@ esac
     def test_apply_runs_only_explicit_knowledge_migrations(self):
         result = self.run_schema('apply')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('Applying 043_builtin_knowledge.sql', result.stdout)
-        self.assertIn('Applying 055_knowledge_governance_noise.sql', result.stdout)
+        self.assertIn('Applying 044_builtin_knowledge.sql', result.stdout)
+        self.assertIn('Applying 056_knowledge_governance_noise.sql', result.stdout)
         self.assertNotIn('026_assistant_session_reads.sql', result.stdout)
         self.assertNotIn('027_cli_model_catalog.sql', result.stdout)
         log = self.log.read_text()

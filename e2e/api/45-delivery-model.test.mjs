@@ -8,7 +8,7 @@ import {createAgent,createWorkflow,agentNode,script,approval,startRun} from '../
 before(ensureProject);
 after(cleanup);
 
-test('real delivery SOP plans, fixes code, reviews, tests, waits for approval and delivers',{skip:!cfg.model,timeout:900_000},async()=>{
+test('real delivery LOOP plans, fixes code, reviews, tests, waits for approval and delivers',{skip:!cfg.model,timeout:900_000},async()=>{
   const common='这是隔离项目内的真实自动化验收。只处理当前工作目录的测试任务，不访问网络、不安装依赖、不执行 Git、不修改测试文件。';
   const plan=await createAgent('delivery-plan',common+' 阅读 mathutil.py 和 test_mathutil.py，写 plan.md，简要说明 clamp 的目标与实现计划。不修改代码。');
   const implement=await createAgent('delivery-implement',common+' 阅读 plan.md，修复 mathutil.py 的 clamp，使已有测试通过。执行 python3 -m unittest test_mathutil。写 implementation.md 记录实际改动和测试。');

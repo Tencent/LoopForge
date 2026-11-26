@@ -1,16 +1,16 @@
--- 045: 知识库向量检索配置（阶段二提前）。
+-- 046: 知识库向量检索配置（阶段二提前）。
 --
 -- 只给控制面 knowledge_bases 增加 4 个列，全部在主库执行。向量本身不落
 -- MySQL（Qdrant 是缓存，可从正文/索引块重建），所以不新增内容表。
 --
 -- 向量按知识库开启：vector_enabled 默认 0，且平台未配置 Qdrant/embedding
--- 时引擎完全不调用向量通道，行为与 043 的纯关键词检索一致（只有 MySQL
+-- 时引擎完全不调用向量通道，行为与 044 的纯关键词检索一致（只有 MySQL
 -- 也能用）。embedding_model / embedding_dim / qdrant_collection 是「索引
 -- 契约」快照：换模型必须换 collection 并全量重建，避免不同模型向量混用。
 --
 -- 可重复执行：MySQL 的 ALTER TABLE ... ADD COLUMN 没有 IF NOT EXISTS，因此
 -- 逐列查 information_schema.COLUMNS，缺列才用动态 SQL 补；已存在执行 DO 0。
--- 与 043 补全文索引用的是同一种写法。
+-- 与 044 补全文索引用的是同一种写法。
 
 SET @kb_db := DATABASE();
 

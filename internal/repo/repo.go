@@ -139,6 +139,7 @@ type RunsRepo struct {
 	assistant     *AssistantRepo
 	issues        *IssuesRepo
 	catalog       *CatalogRepo
+	runners       *RunnersRepo
 	notifications *NotificationsRepo
 	*BotInteractionsRepo
 }
@@ -222,8 +223,8 @@ func newStore(db, contentDB *gorm.DB, contentSeparate bool) *Store {
 	s.CatalogRepo = &CatalogRepo{deps: d, projects: s.ProjectsRepo, notifications: s.NotificationsRepo}
 	s.IssuesRepo = &IssuesRepo{deps: d, projects: s.ProjectsRepo, users: s.UsersRepo, tasks: s.TasksRepo}
 	s.NotificationsRepo.issues = s.IssuesRepo
-	s.RunsRepo = &RunsRepo{deps: d, assistant: s.AssistantRepo, issues: s.IssuesRepo, catalog: s.CatalogRepo, notifications: s.NotificationsRepo}
 	s.RunnersRepo = &RunnersRepo{deps: d, projects: s.ProjectsRepo}
+	s.RunsRepo = &RunsRepo{deps: d, assistant: s.AssistantRepo, issues: s.IssuesRepo, catalog: s.CatalogRepo, runners: s.RunnersRepo, notifications: s.NotificationsRepo}
 	s.DeliveryRepo = &DeliveryRepo{deps: d, issues: s.IssuesRepo, tasks: s.TasksRepo, catalog: s.CatalogRepo, runs: s.RunsRepo}
 	s.InsightsRepo = &InsightsRepo{deps: d}
 	s.AnalyticsRepo = &AnalyticsRepo{deps: d, runs: s.RunsRepo, catalog: s.CatalogRepo, delivery: s.DeliveryRepo, issues: s.IssuesRepo, tasks: s.TasksRepo, projects: s.ProjectsRepo, insights: s.InsightsRepo}
@@ -361,7 +362,7 @@ func (s *Store) StorageInfo() map[string]any {
 	return map[string]any{
 		"driver":   s.DB.Dialector.Name(),
 		"database": true,
-		"note":     "所有状态都在 MySQL：项目、Issue、SOP、运行记录、助手对话和定时任务都直接读写数据库。",
+		"note":     "所有状态都在 MySQL：项目、Issue、LOOP、运行记录、助手对话和定时任务都直接读写数据库。",
 	}
 }
 

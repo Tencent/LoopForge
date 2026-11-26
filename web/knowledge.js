@@ -13,7 +13,7 @@ const KB_TOOLS=[
 ];
 const KB_SUB_STATUS={pending:['待审核','warn'],published:['已写回','ok'],rejected:['已驳回',''],retracted:['已撤回','']};
 const KB_SEDIMENT_MODE={review:'人工审核',auto:'门禁全过自动发布'};
-const KB_SIGNAL_LABEL={run_succeeded:'SOP 运行成功',mr_merged:'合并请求已合并',issue_completed:'需求完成',gate_approved:'人工关卡通过'};
+const KB_SIGNAL_LABEL={run_succeeded:'LOOP 运行成功',mr_merged:'合并请求已合并',issue_completed:'需求完成',gate_approved:'人工关卡通过'};
 const KB_WRITE_STATUS={pending:['写回中','warn'],branch_pushed:['已推分支','warn'],mr_open:['合并请求待合并','warn'],merged:['已合并','ok'],closed:['合并请求已关闭',''],failed:['写回失败','err']};
 function kbWriteStatus(d){return KB_WRITE_STATUS[d?.mrStatus]||null}
 function kbSafeHref(url){const u=String(url||'');return /^https?:\/\//i.test(u)?u:''}

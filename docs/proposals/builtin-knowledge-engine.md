@@ -94,7 +94,7 @@
 
 `Service` 按设置选择引擎。进程启动时注入内置 `Upstream`，LightCloud 使用 `NewClient`。`SearchResult`、`Document`、`Source`、`WriteResult` 这些类型留在 `knowledge` 包，因为它们就是工具的 JSON 契约。
 
-**授权语义要改。** 现在 `ScopeSources` 把空的允许列表当成「不限制」。切片里空列表表示该项目没有绑定任何知识库，检索结果为空，读原文返回拒绝。允许列表来自「项目绑定的知识库下面的来源」，不再来自 `KnowledgeSettings.ProjectSources`。请求里点名了未绑定来源，仍然拒绝。SOP 代理和 Main Bot 走同一套收窄，不能各写一份。
+**授权语义要改。** 现在 `ScopeSources` 把空的允许列表当成「不限制」。切片里空列表表示该项目没有绑定任何知识库，检索结果为空，读原文返回拒绝。允许列表来自「项目绑定的知识库下面的来源」，不再来自 `KnowledgeSettings.ProjectSources`。请求里点名了未绑定来源，仍然拒绝。LOOP 代理和 Main Bot 走同一套收窄，不能各写一份。
 
 **`Fetch` 的 `commit` 入参。** 移植源的工具接受完整 commit，并从 Git 读该版本。LoopForge 现有 `Upstream.Fetch` 没有 commit 参数，代理今天是把参数原样转发出去。切片保持工具入参（`source`、`path`、`start_line`、`end_line`、可选 `commit`），但 `commit` 只做核对：空或等于当前已索引版本就返回正文；其他值返回明确错误「当前只提供已索引版本」，不读 Git。历史版本怎么读见第 8 节，切片不要提前做。
 
@@ -120,7 +120,7 @@
 
 | 通道 | 切片里的改法 |
 | --- | --- |
-| SOP 角色 | 机制不变：`internal/engine/assets.go` 在角色 `KnowledgeBase` 为真时注入保留 MCP 和使用规范。代理 `internal/httpapi/knowledge_proxy.go` 改为调用 `Service`，不再 `NewClient` |
+| LOOP 角色 | 机制不变：`internal/engine/assets.go` 在角色 `KnowledgeBase` 为真时注入保留 MCP 和使用规范。代理 `internal/httpapi/knowledge_proxy.go` 改为调用 `Service`，不再 `NewClient` |
 | Main Bot | `internal/httpapi/agent_tool_catalog.go` 的 `buildCatalog` 在 `AgentToolAssistant` 下追加只读知识库工具，种类用单独的 `knowledge`，不要塞进 `agentflow` 白名单。`internal/httpapi/agent_tool_mcp.go` 的 `dispatch` 增加分支，进程内调用 `Service`，按 `session.ProjectID` 收窄。不发 HTTP |
 
 Main Bot 不看角色上的知识库开关。会话有项目就能用；没有项目就不要把工具放进目录。澄清模式和定时任务不挂。使用规范复用 `knowledge.UsageRule()` 的正文，追加到 `internal/httpapi/assistant.go` 的 `assistantNativeSystemPrompt`，不要另写一套政策。
@@ -144,7 +144,7 @@ internal/knowledge/engine/gitsync/  同步缓存
 
 ## 4. 表、迁移与 Repo
 
-上游已发布 `migrations/026_assistant_session_reads.sql` 与 `027_cli_model_catalog.sql`，这两个文件名和内容都是已发布契约，不改名、不改内容。本分支的知识迁移从 `043_builtin_knowledge.sql` 起顺延；`016`、`018`、`024` 各有两个文件，不要复用这些编号，也不要改历史脚本。
+上游已发布 `migrations/026_assistant_session_reads.sql` 与 `027_cli_model_catalog.sql`，这两个文件名和内容都是已发布契约，不改名、不改内容。本分支的知识迁移从 `044_builtin_knowledge.sql` 起顺延；`016`、`018`、`024` 各有两个文件，不要复用这些编号，也不要改历史脚本。
 
 脚本分成两段，段内都不含跨库外键或跨库事务。同一 MySQL 时整份执行。配置了独立内容库时，第一段在主库执行，第二段在内容库执行。
 
@@ -158,7 +158,7 @@ internal/knowledge/engine/gitsync/  同步缓存
 | `knowledge_sources` | `id` 主键；`base_id` 普通字符串，不建外键；`kind` 为 `hosted` 或 `git`；`name`；`git_url`；`branch`；`path_prefix`（只索引此前缀下的 `.md`）；`head_commit`；`head_revision`（托管库的当前修订号）；`status`；`index_status`；`doc_count`；`last_error`；`last_synced_at`；`lease_owner`；`lease_until` |
 | `project_knowledge_bindings` | 主键 `(project_id, base_id)`；`permission` 切片只写 `submit`。无外键 |
 | `knowledge_sync_jobs` | 自增主键；`source_id`；`kind`；`status`；起止 commit；变更与删除计数；日志；起止时间 |
-| `knowledge_writebacks` | `048`。`id` 主键；`submission_id` 唯一；`source_id`；`path`；`branch`；`commit`；`mr_url`；`mr_provider`；`mr_iid`；`mr_state`；`status`；中文提示与错误；`attempts`；`checked_at`；时间戳 |
+| `knowledge_writebacks` | `049`。`id` 主键；`submission_id` 唯一；`source_id`；`path`；`branch`；`commit`；`mr_url`；`mr_provider`；`mr_iid`；`mr_state`；`status`；中文提示与错误；`attempts`；`checked_at`；时间戳 |
 | `knowledge_submissions` | 已有表，切片不改列。发布到托管来源时走 `WriteDocument`；发布到 Git 来源走 `WriteGitDocument`，分支与合并请求另存 `knowledge_writebacks` |
 | `knowledge_settings` | 沿用 002 表保存 `provider`、连接地址、开关和项目来源。Token 单列存放，接口只返回是否已配置。 |
 
@@ -183,7 +183,7 @@ ALTER TABLE knowledge_chunks
   ADD FULLTEXT INDEX ft_knowledge_chunks_text (title, heading, text) WITH PARSER ngram;
 ```
 
-`autoMigrateIncremental` 只会补缺失的表和列，补不出 ngram 解析器。模型要注册进 `allModels()`，这样缺表的环境能启动；体验和测试仍必须执行 `043`，否则检索没有全文索引。新表加入 `needsUTF8MB4Table`，SQL 使用 `utf8mb4` / `utf8mb4_unicode_ci`。
+`autoMigrateIncremental` 只会补缺失的表和列，补不出 ngram 解析器。模型要注册进 `allModels()`，这样缺表的环境能启动；体验和测试仍必须执行 `044`，否则检索没有全文索引。新表加入 `needsUTF8MB4Table`，SQL 使用 `utf8mb4` / `utf8mb4_unicode_ci`。
 
 内容行只用 `source_id` 字符串指向控制面。删除来源时由 `Service` 按顺序删内容、再删控制面记录，不做数据库级联。
 
@@ -204,11 +204,11 @@ ALTER TABLE knowledge_chunks
 
 体验闭环是：建项目，知识库里有内容，知识中心能管理，Agent 和 Main Bot 都能检索并读到同一份原文。
 
-- 第 4 节的表、两个 Repo、`043` 脚本。
+- 第 4 节的表、两个 Repo、`044` 脚本。
 - 托管库：建项目自动出现；知识中心能新建和覆盖一篇 Markdown；检索能命中；读原文的行号与正文一致；出处里的版本是修订号。
 - 一个 Git 来源：登记公开地址、分支和路径前缀，同步进 MySQL，检索和读原文不再碰工作副本。同步状态和错误在知识中心可见。
 - `Upstream` 五个方法的切片行为，以及代理令牌改用会话密钥。
-- SOP：角色打开知识库开关后，工具仍走 `/runners/knowledge/mcp`，后面是内置引擎。
+- LOOP：角色打开知识库开关后，工具仍走 `/runners/knowledge/mcp`，后面是内置引擎。
 - Main Bot：目录里有这五个只读工具（另含只写反馈的 `kb_report_issue`），调用按当前项目收窄。
 - 内置模式直接检查本机引擎。LightCloud 模式可由管理员测试已保存或待保存的连接。
 - 知识中心界面从「连接配置」改成「本项目的知识库、来源、新建文档、同步、试搜、读原文」。审核标签留着，不作为体验主路径。
@@ -224,8 +224,8 @@ ALTER TABLE knowledge_chunks
 - 私有 Git 的服务端凭据已在阶段一补全，见第 9 节。
 - 外部仓库的提交、推送与合并请求：已实现，见第 10 节。
 - 审核队列的自动入队、门禁、指纹和墓碑。
-- 调用记录持久化：已实现。控制面表 `knowledge_activity`（`044`）按项目保留最近
-  200 条，`/api/knowledge/usage` 的 `activity` 从库读取；SOP 代理与 Main Bot 两条
+- 调用记录持久化：已实现。控制面表 `knowledge_activity`（`045`）按项目保留最近
+  200 条，`/api/knowledge/usage` 的 `activity` 从库读取；LOOP 代理与 Main Bot 两条
   通道都记录，写入失败不影响工具调用。
 - 历史 commit 的原文。见第 8 节。
 
@@ -244,7 +244,7 @@ bash scripts/dev.sh
 实现完成前，MySQL 健康之后还要手动执行一次：
 
 ```bash
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/043_builtin_knowledge.sql
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/044_builtin_knowledge.sql
 ```
 
 切片的安装任务把这一行加进 `scripts/dev.sh`，放在现有 observability 脚本之后、种子 SQL 之前。这是安装脚本在调用，不是 `repo.Open` 在跑迁移。
@@ -257,7 +257,7 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 
 然后执行上面同一条 MySQL 导入。端口看 `.env` 里的 `AGENTFLOW_HTTP_PORT`，默认 8090。`./start.sh dev` 会把 `COMPOSE_FILE` 记进 `.env`，之后的 `docker compose` 才会带上 `compose.dev.yaml`。
 
-`compose.yaml` 的 MySQL `command` 在现有字符集参数后加上 `--ngram_token_size=2`。改的是服务器启动参数，默认值本来就是 2，不会重建已有业务表。全文索引仍然要靠 `043` 创建。
+`compose.yaml` 的 MySQL `command` 在现有字符集参数后加上 `--ngram_token_size=2`。改的是服务器启动参数，默认值本来就是 2，不会重建已有业务表。全文索引仍然要靠 `044` 创建。
 
 账号：`scripts/dev.sh` 会创建 `admin`，密码在 `.local/admin-password`。容器方式按 `docs/deployment.md`，用浏览器里的第一个账号。
 
@@ -267,11 +267,11 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 
 验收看行为，不看内部类型：
 
-1. `bash scripts/dev.sh` 或 `./start.sh dev` 之后，执行 `043`（脚本已代劳则不必再执行），浏览器能打开知识中心，内置模式显示托管界面，管理员可以在「引擎设置」里切到 LightCloud。
+1. `bash scripts/dev.sh` 或 `./start.sh dev` 之后，执行 `044`（脚本已代劳则不必再执行），浏览器能打开知识中心，内置模式显示托管界面，管理员可以在「引擎设置」里切到 LightCloud。
 2. 新建一个项目。知识中心显示一个空的项目知识库，来源种类是托管。再打开安装时已有的欢迎项目，也会看到它的托管库，且重复打开不会多出第二个。
 3. 在新建项目的托管库写一篇含独特词的 Markdown。试搜这个词，打开原文，行号和正文与刚写入的内容一致，出处里的版本是修订号而不是 Git commit。覆盖该文档后再读，修订号增加，检索仍只看到新正文。
 4. 把样例仓库按 5.4 的地址登记为 Git 来源并同步。成功后篇数大于 0。检索一个 `docs/` 里稳定存在的词（例如部署文档中的 `AGENTFLOW_MYSQL_DSN`），打开原文，与 GitHub 上 `main` 分支该文件的对应行一致。同步过程中停掉平台再启动，工作副本目录删掉后再次同步仍能检索，说明副本不是事实源。
-5. 项目 A 的试搜和读原文不能看到项目 B 的托管文档。SOP 角色只在知识库开关打开时拿到工具；关掉开关则运行资产里没有 `agentflow-knowledge`。Main Bot 在项目 A 的会话里能检索到第 3 步的独特词，在项目 B 的会话里不能。
+5. 项目 A 的试搜和读原文不能看到项目 B 的托管文档。LOOP 角色只在知识库开关打开时拿到工具；关掉开关则运行资产里没有 `agentflow-knowledge`。Main Bot 在项目 A 的会话里能检索到第 3 步的独特词，在项目 B 的会话里不能。
 6. 写工具对 Agent 不可见。代理令牌在 `AGENTFLOW_SESSION_SECRET` 更换后失效。
 7. `go test ./internal/knowledge/... ./internal/httpapi/ -count=1` 通过。全文检索用例在未设置 `AGENTFLOW_TEST_MYSQL_DSN` 时跳过；`make test-mysql` 会跑到它们。默认测试用假的关键词适配器覆盖授权和读原文，不要求开发机器常驻 MySQL。
 
@@ -281,7 +281,7 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 
 | 编号 | 目标 | 依赖 | 可否并行 | 源与目标文件 | 测试 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | 控制面与内容面的表、模型和 Repo；`Open` 能接可选的内容库 DSN；`Close` 不重复关闭 | 无 | 否，后续都用这些类型 | 新 `migrations/043_builtin_knowledge.sql`。改 `internal/domain/knowledge.go`、`internal/repo/models.go`、`internal/repo/automigrate.go`、`internal/repo/knowledge.go`、`internal/repo/repo.go`。新 `internal/repo/knowledge_content.go` | Repo 测试：创建库、绑定、写正文与修订、删除来源时没有外键可依赖；相同 DSN 与空 DSN 走同一个连接池。全文索引是否存在用 `043` 之后的 MySQL 测试断言 |
+| S1 | 控制面与内容面的表、模型和 Repo；`Open` 能接可选的内容库 DSN；`Close` 不重复关闭 | 无 | 否，后续都用这些类型 | 新 `migrations/044_builtin_knowledge.sql`。改 `internal/domain/knowledge.go`、`internal/repo/models.go`、`internal/repo/automigrate.go`、`internal/repo/knowledge.go`、`internal/repo/repo.go`。新 `internal/repo/knowledge_content.go` | Repo 测试：创建库、绑定、写正文与修订、删除来源时没有外键可依赖；相同 DSN 与空 DSN 走同一个连接池。全文索引是否存在用 `044` 之后的 MySQL 测试断言 |
 | S2 | 分块与 frontmatter 校验 | 无 | 可与 S1、S3、S4 并行 | 移植 `internal/chunk/chunk.go`、`internal/index/frontmatter.go` 到 `internal/knowledge/engine/chunk` 与 `frontmatter` | 原测试改写后行为不变：标题、行号、非法 frontmatter 被拒绝 |
 | S3 | 内存倒排作为未接线的适配器 | 无 | 可与 S1、S2、S4 并行 | 移植 `internal/lex/lex.go` | 原 `lex_test.go`。不要求检索接口调用它 |
 | S4 | Git 同步缓存 | 无 | 可与 S1–S3 并行 | 移植 `internal/gitsync/gitsync.go` 中的克隆、拉取、列举 Markdown、工作副本内读文件。不移植 `gitsync_auth_test.go` 对应的包装器参数 | 用临时本地 Git 仓库改写 `gitsync_test.go` 里与同步缓存有关的用例。断言路径逃逸失败。不访问网络，不出现内部主机名 |
@@ -291,7 +291,7 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 | S8 | 知识中心的管理接口和界面 | S5；同步按钮依赖 S6 | 托管文档部分可与 S6 并行 | `internal/httpapi/knowledge.go` 与新的 `knowledge_bases.go`。`web/knowledge.js`、`web/knowledge.css`。改 `design.md` 知识中心一节 | HTTP 测试覆盖创建文档、试搜、读原文、拒绝其他项目。浏览器侧至少断言页面不再提交 `url` / `token` |
 | S9 | 建项目与打开知识中心时幂等创建托管库 | S5 | 可与 S6–S8 并行 | `internal/httpapi/projects.go` 注入 `knowledge.Service`。知识中心读取接口调用同一个保证函数 | 并发创建同一个项目不会有两个托管库。欢迎项目在第一次打开知识中心后恰好有一个 |
 | S10 | Main Bot 工具与提示词 | S7 | 在 S7 之后 | `internal/httpapi/agent_tool_catalog.go`、`agent_tool_mcp.go`、`assistant.go` | 目录在助手模式包含五个只读工具（另含 `kb_report_issue`），澄清模式和定时任务不包含。调用使用会话项目。系统提示包含使用规范里的工具名，且没有写工具 |
-| S11 | 让第 5.3 节的命令成立 | S1 | 可与 S5 之后的任务并行 | `compose.yaml` 的 `ngram_token_size`；`scripts/dev.sh` 执行 `043` | 安装测试若会检查 compose 命令，补上这个参数仍能启动 MySQL。不新增第二套启动方式 |
+| S11 | 让第 5.3 节的命令成立 | S1 | 可与 S5 之后的任务并行 | `compose.yaml` 的 `ngram_token_size`；`scripts/dev.sh` 执行 `044` | 安装测试若会检查 compose 命令，补上这个参数仍能启动 MySQL。不新增第二套启动方式 |
 
 S2、S3、S4 在 S1 进行时就可以由不同的人同时做。S5 是关键路径。S6、S7、S8 的托管部分、S9、S11 在 S5 之后可以并行。S10 最后做。
 
@@ -314,7 +314,7 @@ S2、S3、S4 在 S1 进行时就可以由不同的人同时做。S5 是关键路
 
 ## 9. 私有 Git 来源凭据（阶段一补全）
 
-登记来源支持 HTTPS 用户名与令牌、SSH 部署密钥，SSH 可用 `ssh://git@host/path` 或 `git@host:path`。凭据独立于用户、项目仓库凭据。既有 UsersRepo、项目仓库与通知机器人凭据没有通用加密工具，因此来源凭据新增 AES-256-GCM 加密存储，写入控制面 `knowledge_sources.credential_ciphertext`，迁移为可重复执行的 `046_knowledge_git_credentials.sql`。
+登记来源支持 HTTPS 用户名与令牌、SSH 部署密钥，SSH 可用 `ssh://git@host/path` 或 `git@host:path`。凭据独立于用户、项目仓库凭据。既有 UsersRepo、项目仓库与通知机器人凭据没有通用加密工具，因此来源凭据新增 AES-256-GCM 加密存储，写入控制面 `knowledge_sources.credential_ciphertext`，迁移为可重复执行的 `047_knowledge_git_credentials.sql`。
 
 加密密钥从服务的 `AGENTFLOW_SESSION_SECRET`（兼容 `SESSION_SECRET`）按独立用途派生，source ID 作为认证附加数据。多实例使用相同服务密钥，备份数据库时保留该密钥。更换密钥后需重新配置来源凭据。凭据保存 `canWrite` 标记，默认为 false，本次同步只使用读取操作。
 
@@ -336,11 +336,11 @@ Git stderr 只用于分类，日志、错误响应与同步记录均保存分类
 - `PUT /api/knowledge/bases/bindings`：项目 Owner、`maintainer` 或平台管理员提交 `projectId`、`baseId`、`enabled`；绑定权限固定为 `read`，取消加载不删除内容。
 - 管理端已有 `/api/knowledge/bases` 及来源、文档接口在空 `projectId` 时只允许平台管理员，操作范围限公共库；带项目时只能维护该项目自身知识库。
 
-知识中心、SOP 代理与 Main Bot 每次调用均实时计算「本项目库 + 已绑定公共库」。其他项目库即便被错误绑定也不可见；无项目的 Agent 不获得公共库读取权限。公共库的项目绑定只授予读取，不允许项目侧修改正文、来源、凭据或同步状态，审核发布也按库归属验证写权限。
+知识中心、LOOP 代理与 Main Bot 每次调用均实时计算「本项目库 + 已绑定公共库」。其他项目库即便被错误绑定也不可见；无项目的 Agent 不获得公共库读取权限。公共库的项目绑定只授予读取，不允许项目侧修改正文、来源、凭据或同步状态，审核发布也按库归属验证写权限。
 
 结果、原文与工具来源元数据通过 `base_id`、`base_name`、`layer` 标明知识库与层级，版本出处字符串保持不变。Service 在检索器返回后按分数降序，以各组最高分为固定锚点将相差不超过 5% 的结果归为一组，组内稳定地将项目层排在公共层之前；关键词与后续混合检索共用此策略。明显更相关的公共结果不被较弱项目结果越过。
 
-控制面沿用已有表，手动执行可重复的 `047_shared_knowledge.sql` 将历史公共绑定权限归一为 `read`；无需内容面迁移。检索、原文、来源的权限回归覆盖 HTTP 管理 API 与两条 Agent 通道；排序用实际 Service/Engine 接口验证，浏览器验证管理员建库、项目加载与只读浏览。
+控制面沿用已有表，手动执行可重复的 `048_shared_knowledge.sql` 将历史公共绑定权限归一为 `read`；无需内容面迁移。检索、原文、来源的权限回归覆盖 HTTP 管理 API 与两条 Agent 通道；排序用实际 Service/Engine 接口验证，浏览器验证管理员建库、项目加载与只读浏览。
 
 ## 10. Git 来源写回（阶段一补全 1f-4）
 
@@ -356,12 +356,12 @@ Git stderr 只用于分类，日志、错误响应与同步记录均保存分类
 
 安全边界：凭据只通过临时 askpass / 私钥文件传给 Git 子进程，并走白名单环境；`.git/config` 只保存无凭据地址。Git stderr 和托管平台响应正文都不进入日志、错误或 API 响应，只保留分类后的中文。合并请求接口禁用重定向、限制响应大小，并对只推送分支的平台给出明确说明。
 
-迁移：`migrations/048_knowledge_writeback.sql` 可重复执行，只建控制面表，不含跨库外键。内容面的增量写入由 `KnowledgeContentRepo.ApplyGitKnowledge` 完成。
+迁移：`migrations/049_knowledge_writeback.sql` 可重复执行，只建控制面表，不含跨库外键。内容面的增量写入由 `KnowledgeContentRepo.ApplyGitKnowledge` 完成。
 
 ## 11. 自动沉淀（阶段三）
 
 实现落在 `internal/knowledge/sediment.go` 与 `internal/knowledge/engine` 的
-`RetractDocument`，迁移是 `migrations/049_knowledge_sediment.sql`（可重复
+`RetractDocument`，迁移是 `migrations/050_knowledge_sediment.sql`（可重复
 执行，只动控制面）。后台循环在 worker 角色启动，扫描最近的 `knowledge.md`
 运行产物；同一个产物用一个内容无关的稳定 ID 入队，重复扫描只落一行。
 
@@ -408,7 +408,7 @@ Git stderr 只用于分类，日志、错误响应与同步记录均保存分类
 检索器不感知生命周期。`Service` 收到检索结果后按来源/路径回查元数据：归档
 文档从结果中移除，废弃文档分数乘以 0.25 后重新稳定排序，并在命中 JSON 里
 带 `doc_status` 供界面显示。该后处理在 `Service.Search` 与
-`TrialSearch` 两个入口共用，SOP 代理和 Main Bot 走同一条路径。
+`TrialSearch` 两个入口共用，LOOP 代理和 Main Bot 走同一条路径。
 
 ### 12.2 健康检查
 
@@ -436,13 +436,13 @@ worker 角色启动后立即扫描一次，之后每 24 小时扫描全部知识
 出现时间。同一用户或同一会话在 10 分钟内重复同一查询不增加计数。管理者
 可以把一条标为忽略或已处理：原记录保留，面板按状态隐藏。只有检索成功且
 原始命中为 0 时记录，检索错误、空查询和没有可查来源不记录。知识中心试搜、
-SOP 代理和 Main Bot 的检索都经过 `Service.Search` 或 `TrialSearch`，因此不会漏记。
+LOOP 代理和 Main Bot 的检索都经过 `Service.Search` 或 `TrialSearch`，因此不会漏记。
 
 ### 12.4 Agent 工具与处置入口
 
 知识库工具面在五个只读工具之外增加 `kb_report_issue`，参数是
 `source`、`path`、`issue`。它只写反馈，不修改正文，也不出现在写回路径上；
-SOP 代理与 Main Bot 目录共用同一份工具定义和授权收窄。
+LOOP 代理与 Main Bot 目录共用同一份工具定义和授权收窄。
 
 治理面板对问题文档提供「发起更新」和「下线」。两者只创建 pending 审核
 条目：更新带入当前正文供审核人编辑，发布走已有托管写入或 Git 写回分支；
@@ -452,7 +452,7 @@ SOP 代理与 Main Bot 目录共用同一份工具定义和授权收窄。
 
 ### 12.5 迁移与未做项
 
-`migrations/050_knowledge_governance.sql` 可重复执行：控制面建四张表，内容
+`migrations/051_knowledge_governance.sql` 可重复执行：控制面建四张表，内容
 面用 information_schema 判断后补三列。历史文档没有元数据列时由内容 Repo
 读取正文兜底解析，下一次覆盖写入落列。
 
@@ -460,13 +460,13 @@ SOP 代理与 Main Bot 目录共用同一份工具定义和授权收窄。
 检索、读取和精确匹配；有正文但窗口内没有引用的文档算从未命中。没有引用表时
 面板不用 0 冒充统计结果。
 
-## 13. 授权审查修复与 054 迁移
+## 13. 授权审查修复与 055 迁移
 
 项目知识管理接口显式检查当前用户：Owner、成员（含 viewer）和平台管理员可读；
 写操作排除 viewer 和非成员。审核列表按用户可读项目过滤，详情与写操作再次检查
 条目所属项目；公共库的空项目管理范围只允许平台管理员。服务层另按来源的实际
 知识库归属检查写入、治理处置和撤回执行，项目加载公共库只授予读取与问题反馈。
-SOP 代理和 Main Bot 继续使用令牌/会话里的项目，工具参数不能切换项目。
+LOOP 代理和 Main Bot 继续使用令牌/会话里的项目，工具参数不能切换项目。
 
 新来源 ID 使用 `hosted:<baseID>` 或 `git:<baseID>\0<url>\0<branch>\0<prefix>`
 作 SHA-256 种子，保留前 128 位并加类型前缀，项目与公共库共用规则。
@@ -475,7 +475,7 @@ SOP 代理和 Main Bot 继续使用令牌/会话里的项目，工具参数不�
 已有 Git 来源 ID 不改名：ID 是加密凭据的 AES-GCM 附加认证数据；重复登记只在
 已核实归属的库内，按完整 Git 配置复用原 ID，不能把其他库的来源认领过来。
 
-已有托管来源在升级前手动执行 `054_knowledge_source_namespace.sql`，覆盖正文、
+已有托管来源在升级前手动执行 `055_knowledge_source_namespace.sql`，覆盖正文、
 修订、索引块、审核 payload 和控制面引用；异常超长项目的基座引用也同时改名。
 执行期间停止 API 和 worker，成功后重启。该脚本可重复执行，并保留
 `knowledge_id_migration_039` 映射以便中断后恢复；内容先更新、控制面后更新。
@@ -503,7 +503,7 @@ MR API 与 Git 共用公网地址校验；HTTP 连接直接拨已校验 IP，保
 
 同一个 `/runners/knowledge/mcp` 在每次调用时选定引擎和项目范围。LightCloud
 向 Agent 开放 `kb_search`、`kb_fetch`、`kb_list_sources` 和 `kb_get_source`。
-提交审核时记录引擎，发布只写入原引擎。052 标记上游的已有审核记录，053 将其正文
+提交审核时记录引擎，发布只写入原引擎。053 标记上游的已有审核记录，054 将其正文
 移入内容库。切换时暂停内置 Git 同步、向量维护、治理和自动沉淀，切回后继续。
 
 PR #1104 使用相同的 `KnowledgeSettings.Provider`、`lightcloud` 和

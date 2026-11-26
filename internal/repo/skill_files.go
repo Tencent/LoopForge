@@ -156,7 +156,7 @@ func writeSkillFileRow(tx *gorm.DB, skillID string, file SkillFileInput, now tim
 		return err
 	}
 	if int64(len(file.Content)) > domain.SkillFileMaxBytes {
-		return fmt.Errorf("skill 文件 %s 超过 1MB 限制", file.Path)
+		return fmt.Errorf("skill 文件 %s 超过 %dMB 限制", file.Path, domain.SkillFileMaxBytes>>20)
 	}
 	sum := sha256.Sum256(file.Content)
 	return upsert(tx, "skill_files", map[string]any{

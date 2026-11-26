@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,6 +77,63 @@ func waitForMCPApprovalCount(t *testing.T, store *repo.Store, s *AgentToolSessio
 	}
 	t.Fatalf("expected %d pending MCP approvals", count)
 	return nil
+}
+
+func TestExternalMCPApprovalOpensHTTPStreamWhileWaiting(t *testing.T) {
+	h, owner, speaker, _, conv := sharedWorkbenchFixture(t)
+	s, calls := mcpApprovalSession(t, h.repo, owner.ID, speaker, conv.ID, conv.ProjectID, "", domain.AssistantModePlatform)
+	gateway := &agentToolGateway{deps: h.deps}
+	router := gin.New()
+	router.POST("/mcp/:token", gateway.ServeHTTP)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/mcp/"+s.Token, strings.NewReader(mcpApprovalWriteRequest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	transport := &http.Transport{ResponseHeaderTimeout: 3 * time.Second}
+	defer transport.CloseIdleConnections()
+	resp, err := (&http.Client{Transport: transport}).Do(req)
+	if err != nil {
+		t.Fatalf("response headers must arrive before the decision: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("expected SSE while waiting, got %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	item := waitForMCPApprovalCount(t, h.repo, s, 1)[0]
+	select {
+	case <-calls:
+		t.Fatal("upstream called before decision")
+	default:
+	}
+	c, decision := workbenchContext(speaker, http.MethodPost, "/", bytes.NewBufferString(`{"decision":"allow"}`))
+	c.Params = gin.Params{{Key: "id", Value: conv.ID}, {Key: "approvalId", Value: item.ID}}
+	h.nativeApprovals(c)
+	if decision.Code != http.StatusOK {
+		t.Fatalf("approval decision failed: %d %s", decision.Code, decision.Body)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(body, []byte(": awaiting tool result\n\n")) {
+		t.Fatalf("missing approval heartbeat: %s", body)
+	}
+	var result agentToolRPCResponse
+	_, payload, found := strings.Cut(string(body), "data: ")
+	if !found || json.Unmarshal([]byte(payload), &result) != nil || result.ID != float64(1) ||
+		result.Error != nil || !strings.Contains(payload, "upstream success") {
+		t.Fatalf("missing final tool response: %s", body)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected one upstream write, got %d", len(calls))
+	}
+	waitForMCPApprovalCount(t, h.repo, s, 0)
 }
 
 func TestExternalMCPWriteWaitsForSpeaker(t *testing.T) {

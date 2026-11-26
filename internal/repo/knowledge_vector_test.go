@@ -6,7 +6,7 @@ import (
 	"agentflow/internal/domain"
 )
 
-// TestKnowledgeBaseVectorConfig 覆盖 045 新增列：索引契约随知识库行持久化，
+// TestKnowledgeBaseVectorConfig 覆盖 046 新增列：索引契约随知识库行持久化，
 // 启用/停用只更新向量列而不动其它字段。
 func TestKnowledgeBaseVectorConfig(t *testing.T) {
 	s := builtinStore(t)

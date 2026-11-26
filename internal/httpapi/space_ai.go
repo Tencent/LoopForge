@@ -124,7 +124,7 @@ func (h *spacesHandlers) askAI(c *gin.Context, room domain.ChatRoom, space domai
 }
 
 // aiPrompt gives the assistant the conversation as context: it sees the
-// same requirement, artifacts, SOPs and recent discussion the members see.
+// same requirement, artifacts, LOOPs and recent discussion the members see.
 func (h *spacesHandlers) aiPrompt(room domain.ChatRoom, space domain.RequirementSpace, msg domain.ChatMessage) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "你是会话「%s」里的 AI 协作者。回答要具体、简洁，用中文；不确定就直说。\n", room.Name)
@@ -168,7 +168,7 @@ func (h *spacesHandlers) aiPrompt(room domain.ChatRoom, space domain.Requirement
 		}
 	}
 	if lanes := h.lanes(room, space); len(lanes) > 0 {
-		b.WriteString("\nSOP：\n")
+		b.WriteString("\nLOOP：\n")
 		for _, l := range lanes {
 			fmt.Fprintf(&b, "- %s：%s", l.WorkflowName, laneStatusText(l.Status))
 			for _, n := range l.Nodes {

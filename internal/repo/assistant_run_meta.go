@@ -10,7 +10,7 @@ import (
 )
 
 // SidebarRunMeta is the cheap run header the conversation history needs to
-// name and label a shared SOP run session. Decorating the whole list from
+// name and label a shared LOOP run session. Decorating the whole list from
 // batched reads keeps the history endpoint's query count flat: per-session
 // RunState lookups once made long histories slow and transferred node graphs
 // the sidebar never shows.
@@ -90,7 +90,7 @@ func (r *RunsRepo) SidebarRunMetas(ids []string) map[string]SidebarRunMeta {
 	return out
 }
 
-// SidebarIssue is the requirement identity shown next to a SOP run.
+// SidebarIssue is the requirement identity shown next to a LOOP run.
 type SidebarIssue struct {
 	Number int
 	Title  string
@@ -123,7 +123,7 @@ func (r *IssuesRepo) IssueSidebarIdentities(ids []string) map[string]SidebarIssu
 }
 
 // AssistantSessionMessageCounts reports persisted message counts so the history
-// list can tell an unused SOP run conversation from one that already holds a
+// list can tell an unused LOOP run conversation from one that already holds a
 // discussion, without transferring transcripts. The list projection strips
 // messages, so the count has to come from the stored payload.
 func (r *AssistantRepo) AssistantSessionMessageCounts(ids []string) map[string]int {

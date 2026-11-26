@@ -75,7 +75,7 @@ func knowledgeSkippedWarning(agent domain.AgentDefinition, assets domain.AgentAs
 	return "角色开启了项目知识库，但未注入 " + domain.KnowledgeMCPServerID + "：未配置会话密钥"
 }
 
-// RoleAssets resolves a role's assets outside any SOP run, for a chat
+// RoleAssets resolves a role's assets outside any LOOP run, for a chat
 // subagent: no workflow is bound, so workflow-global rules are not added.
 func (e *Engine) RoleAssets(agent domain.AgentDefinition, projectID string, userID int64) domain.AgentAssetBundle {
 	return e.resolveAssets(agent, projectID, "", userID)
@@ -171,7 +171,7 @@ func roleMCPServerVisible(server domain.MCPServerDefinition, projectID string, u
 }
 
 // appendWorkflowGlobalRules injects project rules that were marked global and
-// bound to this SOP. Every agent node of the workflow receives them, even when
+// bound to this LOOP. Every agent node of the workflow receives them, even when
 // the node's role does not list the rule. Script and approval nodes do not
 // resolve an agent asset bundle, so they are unchanged.
 func (e *Engine) appendWorkflowGlobalRules(bundle *domain.AgentAssetBundle, projectID, workflowID string) {

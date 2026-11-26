@@ -109,7 +109,7 @@ test('late personal results cannot overwrite project metrics or a newly selected
   assert.match(app.evaluate('buildObsReportHTML()'),/bob/);
 });
 
-test('coding outcomes and SOP performance remain in existing cards and follow owner and period filters', async t => {
+test('coding outcomes and LOOP performance remain in existing cards and follow owner and period filters', async t => {
   const app=await loadApp();t.after(app.close);prepare(app);
   app.router.get(/^\/api\/analytics\?/,call=>snapshot(call.url.searchParams.get('userId')||''));
   await app.evaluate('refreshObs()');

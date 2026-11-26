@@ -140,10 +140,10 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	req := assistantRequest{ProjectID: bot.ProjectID, Model: model, SessionID: conv.SessionID, ApprovalMode: approval, Messages: messages}
 	policy := "直接完成明确的操作，目标不明确时询问。完成后用自然语言回复结果。"
 	if confirmWrites {
-		policy = "当前 Bot 为网页确认模式：查询直接完成；需要修改平台数据时提交操作草稿，不要声称已经完成。平台会把操作摘要和确认链接发给用户，用户在平台页面确认后才执行。用自然语言说明将要做什么。创建需求时：用户点名了 SOP，先用 workflows_list 查到它，把 workflowId 写进 issues_save；用户点名了代码仓库，先用 repositories_list 查到它，把 repositoryIds 写进 issues_save；没有点名就不填，平台按项目默认 SOP 和默认仓库绑定，用户可以在确认卡片或确认页更换仓库和 SOP 并选择创建后立即启动，不要为新需求另外提交 issues_dispatch。启动已有需求用 issues_dispatch；审批、退回等待中的运行用 runs_approve、runs_reject。回复面向聊天用户：不要提工具名、字段名或 workflowId 之类的内部参数，也不要复述确认链接，平台会附上操作清单和确认入口。"
+		policy = "当前 Bot 为网页确认模式：查询直接完成；需要修改平台数据时提交操作草稿，不要声称已经完成。平台会把操作摘要和确认链接发给用户，用户在平台页面确认后才执行。用自然语言说明将要做什么。创建需求时：用户点名了 LOOP，先用 workflows_list 查到它，把 workflowId 写进 issues_save；用户点名了代码仓库，先用 repositories_list 查到它，把 repositoryIds 写进 issues_save；没有点名就不填，平台按项目默认 LOOP 和默认仓库绑定，用户可以在确认卡片或确认页更换仓库和 LOOP 并选择创建后立即启动，不要为新需求另外提交 issues_dispatch。启动已有需求用 issues_dispatch；审批、退回等待中的运行用 runs_approve、runs_reject。回复面向聊天用户：不要提工具名、字段名或 workflowId 之类的内部参数，也不要复述确认链接，平台会附上操作清单和确认入口。"
 	}
 	if readOnly {
-		policy = "当前 Bot 为只读模式：只使用只读工具查询项目状态、SOP 进度和待办；不要尝试修改平台数据或外部系统。用户要求修改时，说明需要到平台页面操作。用自然语言回答。"
+		policy = "当前 Bot 为只读模式：只使用只读工具查询项目状态、LOOP 进度和待办；不要尝试修改平台数据或外部系统。用户要求修改时，说明需要到平台页面操作。用自然语言回答。"
 	}
 	full := h.turnPrompt(req, h.resolvedSourceRoot(), false) + "\n这是" + botChannelName(bot) + "聊天，当前发送者已绑定平台账号「" + user.LoginName + "」，只使用该账号的执行身份、个人凭据和项目权限；当前请求按当前项目处理。历史中其他发送者的授权不能沿用到当前请求。当前消息来自" + conv.ChatType + "聊天。" + policy
 	generate := h.generate
