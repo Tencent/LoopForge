@@ -14,22 +14,23 @@ import (
 func TestAnalyticsScheduleExecutionAttribution(t *testing.T) {
 	wf := domain.WorkflowDefinition{ID: "sop", Name: "Scheduled SOP", Nodes: []domain.WorkflowNode{{ID: "build", Name: "Build"}}}
 	now := time.Now().UTC().Add(-time.Minute)
-	ended := func(status string) map[string]*domain.NodeRun {
-		return map[string]*domain.NodeRun{"build": {NodeID: "build", Status: status, StartedAt: now, FinishedAt: now.Add(time.Second)}}
+	ended := func(status string, cost float64) map[string]*domain.NodeRun {
+		return map[string]*domain.NodeRun{"build": {NodeID: "build", Status: status, Model: "priced-model", StartedAt: now, FinishedAt: now.Add(time.Second),
+			Usage: domain.TokenUsage{TotalTokens: 10, CostUSD: cost, CostStatus: "reported"}}}
 	}
 	runs := []domain.Run{
 		{ID: "sched-1", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded",
 			ExecutionContext: domain.TelemetryContext{ProjectID: "alpha", ScheduleJobID: "job-a", ScheduleExecutionID: "sjx-a1"},
-			Nodes:            ended("succeeded"), Usage: domain.TokenUsage{TotalTokens: 30, CostUSD: 0.03}, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+			Nodes:            ended("succeeded", 0.03), Usage: domain.TokenUsage{TotalTokens: 30, CostUSD: 0.03, CostStatus: "reported"}, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
 		{ID: "sched-2", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded",
 			ExecutionContext: domain.TelemetryContext{ProjectID: "alpha", ScheduleJobID: "job-a", ScheduleExecutionID: "sjx-a2"},
-			Nodes:            ended("succeeded"), Usage: domain.TokenUsage{TotalTokens: 20, CostUSD: 0.02}, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+			Nodes:            ended("succeeded", 0.02), Usage: domain.TokenUsage{TotalTokens: 20, CostUSD: 0.02, CostStatus: "reported"}, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
 		{ID: "sched-other", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "failed",
 			ExecutionContext: domain.TelemetryContext{ProjectID: "alpha", ScheduleJobID: "job-b", ScheduleExecutionID: "sjx-b1"},
-			Nodes:            ended("failed"), Usage: domain.TokenUsage{TotalTokens: 10, CostUSD: 0.01}, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+			Nodes:            ended("failed", 0.01), Usage: domain.TokenUsage{TotalTokens: 10, CostUSD: 0.01, CostStatus: "reported"}, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
 		{ID: "manual", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded",
 			ExecutionContext: domain.TelemetryContext{ProjectID: "alpha"},
-			Nodes:            ended("succeeded"), Usage: domain.TokenUsage{TotalTokens: 100, CostUSD: 0.10}, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+			Nodes:            ended("succeeded", 0.10), Usage: domain.TokenUsage{TotalTokens: 100, CostUSD: 0.10, CostStatus: "reported"}, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
 	}
 
 	s, err := OpenTest()
@@ -45,8 +46,8 @@ func TestAnalyticsScheduleExecutionAttribution(t *testing.T) {
 	for _, trace := range out.RunTraces {
 		byID[trace.RunID] = trace
 	}
-	for id, want := range map[string]struct{ job string }{
-		"sched-1": {job: "job-a"}, "sched-2": {job: "job-a"}, "sched-other": {job: "job-b"},
+	for id, want := range map[string]struct{ job, exec string }{
+		"sched-1": {job: "job-a", exec: "sjx-a1"}, "sched-2": {job: "job-a", exec: "sjx-a2"}, "sched-other": {job: "job-b", exec: "sjx-b1"},
 	} {
 		trace, ok := byID[id]
 		if !ok {
@@ -55,9 +56,8 @@ func TestAnalyticsScheduleExecutionAttribution(t *testing.T) {
 		if trace.ScheduleJobID != want.job {
 			t.Errorf("%s scheduleJobId = %q, want %q", id, trace.ScheduleJobID, want.job)
 		}
-		// The exact execution differs per occurrence; just require it present.
-		if trace.ScheduleExecutionID == "" {
-			t.Errorf("%s lost scheduleExecutionId", id)
+		if trace.ScheduleExecutionID != want.exec {
+			t.Errorf("%s scheduleExecutionId = %q, want %q", id, trace.ScheduleExecutionID, want.exec)
 		}
 	}
 	if got := byID["manual"].ScheduleJobID; got != "" {
@@ -82,6 +82,13 @@ func TestAnalyticsScheduleExecutionAttribution(t *testing.T) {
 	if b := byJob["job-b"]; b.Runs != 1 || b.Tokens != 10 || b.Failed != 1 {
 		t.Errorf("job-b breakdown = %+v, want runs=1 tokens=10 failed=1", b)
 	}
+	// Cost breakdowns must keep the same CNY/USD convention as other slices:
+	// applyAnalyticsCNY converts every breakdown's CostUSD, including ScheduleJobs.
+	for _, job := range out.ScheduleJobs {
+		if job.CostUSD > 0 && job.CostCNY <= 0 {
+			t.Errorf("schedule job %s has costUsd=%v but costCny=0: CNY conversion missing", job.Key, job.CostUSD)
+		}
+	}
 
 	// The dedicated breakdown must not change overall totals: all four runs
 	// (including the manual one) are still counted exactly once.
@@ -91,7 +98,7 @@ func TestAnalyticsScheduleExecutionAttribution(t *testing.T) {
 
 	// Legacy records without any execution context stay out of the breakdown.
 	legacy := []domain.Run{{ID: "legacy", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded",
-		ExecutionContext: domain.TelemetryContext{ProjectID: "alpha"}, Nodes: ended("succeeded"), CreatedAt: now, UpdatedAt: now.Add(time.Second)}}
+		ExecutionContext: domain.TelemetryContext{ProjectID: "alpha"}, Nodes: ended("succeeded", 0.05), CreatedAt: now, UpdatedAt: now.Add(time.Second)}}
 	outLegacy := s.AnalyticsRepo.analyticsWithRuns(filter, legacy)
 	if len(outLegacy.ScheduleJobs) != 0 {
 		t.Errorf("legacy runs produced a schedule breakdown: %+v", outLegacy.ScheduleJobs)
