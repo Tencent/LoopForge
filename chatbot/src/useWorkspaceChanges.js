@@ -9,6 +9,7 @@ import {
 } from "./changes";
 
 const IDLE = {
+  runId: "",
   status: "idle",
   reason: "",
   warning: "",
@@ -38,7 +39,9 @@ export function useWorkspaceChanges(runId, { active = false, interval = 6000 } =
     }
     let current = true;
     setState((previous) =>
-      previous.status === "ready" ? previous : { ...IDLE, status: "loading" },
+      previous.runId === runId && previous.status === "ready"
+        ? previous
+        : { ...IDLE, runId, status: "loading" },
     );
     Promise.all([
       api(workspacePath(runId)),
@@ -49,6 +52,7 @@ export function useWorkspaceChanges(runId, { active = false, interval = 6000 } =
         if (info?.available === false) {
           setState({
             ...IDLE,
+            runId,
             status: "unavailable",
             reason: info.reason || "工作区不可用",
             // A reclaimed workspace is the usual state once the work is
@@ -62,6 +66,7 @@ export function useWorkspaceChanges(runId, { active = false, interval = 6000 } =
           parseUnifiedDiff(patch?.diff || ""),
         );
         setState({
+          runId,
           status: "ready",
           reason: "",
           warning: info?.warning || "",
@@ -75,7 +80,7 @@ export function useWorkspaceChanges(runId, { active = false, interval = 6000 } =
       })
       .catch((error) => {
         if (current)
-          setState({ ...IDLE, status: "error", reason: error.message });
+          setState({ ...IDLE, runId, status: "error", reason: error.message });
       });
     return () => {
       current = false;
@@ -108,5 +113,8 @@ export function useWorkspaceChanges(runId, { active = false, interval = 6000 } =
     return null;
   }, []);
 
-  return { ...state, refresh, loadFile };
+  const visible = state.runId === runId ? state : runId
+    ? { ...IDLE, runId, status: "loading" }
+    : IDLE;
+  return { ...visible, refresh, loadFile };
 }
