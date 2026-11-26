@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import vm from 'node:vm';
 import { JSDOM } from 'jsdom';
-import { loadApp, WEB_ROOT } from '../lib/load-app.mjs';
+import { loadApp, sampleBootstrap, WEB_ROOT } from '../lib/load-app.mjs';
 
 const HAN = /[\u3400-\u9fff]/;
 const ATTRS = ['placeholder', 'title', 'aria-label', 'data-tip', 'data-tooltip'];
@@ -86,6 +86,7 @@ test('English mode translates how a requirement that never ran will be handled',
   t.after(app.close);
   const window = await englishPage('<html><body></body></html>');
   const copy = JSON.parse(app.evaluate(`
+    state.data=${JSON.stringify(sampleBootstrap())};
     const pid=state.projectFilter||state.data.projects[0].id;
     const none={id:'iss-none',projectId:pid,number:61,kind:'requirement',source:'local',status:'backlog',title:'x',sopMode:'none'};
     const bound={...none,id:'iss-sop',sopMode:'',workflowId:state.data.workflows[0].id};
