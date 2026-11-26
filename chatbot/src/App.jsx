@@ -85,7 +85,6 @@ import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
 import SandboxPicker from "./SandboxPicker";
-import ProjectCredentialPicker from "./ProjectCredentialPicker";
 import ExecutionMachinePicker from "./ExecutionMachinePicker";
 import { shouldRevealTitle, titleRevealTiming } from "./title-reveal.js";
 import {
@@ -702,13 +701,13 @@ export default function App() {
   // new conversation with the requirement already @-mentioned. It waits for
   // the new conversation's draft to load so the draft does not overwrite it.
   useEffect(() => {
-    const receive = ({ issueId, projectId }) => {
+    const receive = ({ issueId, projectId, intent }) => {
       issueId = String(issueId || "");
       projectId = String(projectId || "");
       if (!issueId || !projectId) return;
       chat.startProjectDraft(projectId);
       setIssueDraft({ issueId, projectId });
-      setIssueMention({ issueId, projectId });
+      setIssueMention({ issueId, projectId, ...(intent ? { intent } : {}) });
     };
     const resume = () => setQuickAccessOpen(true);
     if (platform()) {
@@ -723,7 +722,7 @@ export default function App() {
         return;
       }
       if (event.data?.type !== "agentflow-chat-mention-issue") return;
-      receive({ issueId: event.data.issueId, projectId: event.data.projectId });
+      receive(event.data);
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
@@ -1460,7 +1459,6 @@ export default function App() {
                 </div>
               ) : null}
               {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
-              <ProjectCredentialPicker chat={chat} />
               <Participants session={chat.session} users={chat.users} />
             </>
           ) : null}
@@ -2025,7 +2023,6 @@ export default function App() {
                   </div>
                   {showEnvironmentPicker && chat.projectId ? <ChevronRightSmall /> : null}
                   {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
-                  <ProjectCredentialPicker chat={chat} />
                 </div>
                 ) : null}
                 <QueuedMessages

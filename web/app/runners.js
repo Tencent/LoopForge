@@ -213,6 +213,17 @@ function renderRunnersView(){
   const projectDefaultId=projectLoaded?state.projectDefaultRunnerId||'':'';
   const defaultId=projectLoaded?state.defaultRunnerId||'':'';
   $('#runnerCount').textContent=String(runners.length);
+  const dispatchBar=$('#runnerDispatchBar');
+  if(dispatchBar)dispatchBar.classList.toggle('is-auto',projectMode==='auto');
+  const dispatchLabel=$('#runnerDispatchLabel');
+  if(dispatchLabel)dispatchLabel.textContent=projectId?'本项目执行调度':'当前执行调度';
+  const dispatchHint=$('#runnerDispatchHint');
+  if(dispatchHint){
+    dispatchHint.hidden=!canSetMode;
+    dispatchHint.textContent=!canSetMode?'':projectMode==='auto'
+      ?'已开启自动分配：新建顶层 LOOP 将在「平台机器」和兼容的「可用机器」间自动调度。'
+      :'开启「自动分配」后，新建顶层 LOOP 将在「平台机器」和兼容的「可用机器」间自动调度；也可在下方指定单台机器为项目默认。';
+  }
   const autoAssign=$('#runnerAutoAssign');
   if(autoAssign){
     const active=projectMode==='auto';
@@ -221,6 +232,7 @@ function renderRunnersView(){
     autoAssign.classList.toggle('ghost',!active);
     autoAssign.setAttribute('aria-pressed',String(active));
     autoAssign.textContent=active?'已开启自动分配':'自动分配';
+    autoAssign.title='自动分配涵盖平台机器与兼容的可用机器';
     autoAssign.onclick=()=>setDefaultRunner('',projectId,active?'':'auto');
   }
   const poolStatus=$('#runnerPoolStatus');

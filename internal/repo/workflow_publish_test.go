@@ -54,13 +54,59 @@ func TestMySQLConcurrentWorkflowPublish(t *testing.T) {
 				defer wg.Done()
 				<-start
 				published, err := publish(id)
-				if err != nil || published.Version != 2 || published.PublishedRevision != published.Revision {
+				if err != nil || published.Version != 1 || published.PublishedRevision != published.Revision {
 					t.Errorf("concurrent publish %s: version=%d revision=%d marker=%d err=%v", id, published.Version, published.Revision, published.PublishedRevision, err)
 				}
 			}()
 		}
 		close(start)
 		wg.Wait()
+	}
+}
+
+func TestWorkflowFirstPublishUsesVersionOne(t *testing.T) {
+	for _, generic := range []bool{false, true} {
+		t.Run(map[bool]string{false: "project", true: "generic"}[generic], func(t *testing.T) {
+			s := testStoreWithGenericTemplates(t)
+			draft := domain.WorkflowDefinition{ID: "first-publish", Name: "First publish", Status: "draft", Version: 1, Revision: 1}
+			save := s.PutWorkflow
+			publish := s.PublishWorkflow
+			if generic {
+				if err := s.PutGenericTemplate(GenericTemplate{Workflow: draft}); err != nil {
+					t.Fatal(err)
+				}
+				save = func(v domain.WorkflowDefinition) error { _, err := s.UpdateGenericWorkflow(v); return err }
+				publish = s.PublishGenericWorkflow
+			} else if err := save(draft); err != nil {
+				t.Fatal(err)
+			}
+			draft, _ = s.Workflow(draft.ID)
+			draft.Description = "Saved before publishing"
+			if err := save(draft); err != nil {
+				t.Fatal(err)
+			}
+			draft, _ = s.Workflow(draft.ID)
+			if draft.Status != "draft" || draft.Version != 1 || draft.PublishedRevision != 0 {
+				t.Fatalf("saved draft = %+v", draft)
+			}
+			first, err := publish(draft.ID)
+			if err != nil || first.Status != "published" || first.Version != 1 || first.PublishedRevision != first.Revision || first.Revision <= draft.Revision {
+				t.Fatalf("first publication = %+v, %v", first, err)
+			}
+			again, err := publish(draft.ID)
+			if err != nil || again.Version != first.Version || again.Revision != first.Revision {
+				t.Fatalf("repeated publication = %+v, %v", again, err)
+			}
+			first.Status = "draft"
+			first.Description = "Saved after publishing v1"
+			if err := save(first); err != nil {
+				t.Fatal(err)
+			}
+			second, err := publish(draft.ID)
+			if err != nil || second.Version != 2 || second.PublishedRevision != second.Revision {
+				t.Fatalf("second publication = %+v, %v", second, err)
+			}
+		})
 	}
 }
 

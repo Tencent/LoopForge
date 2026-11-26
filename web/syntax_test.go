@@ -1104,7 +1104,7 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 	for _, want := range []string{
 		`function renderReqFooter(`, `function renderReqRepoChip(`, `persistRequirementComposer`, `agentflow.requirementComposer`, `未配置`, `if(modal.id==='requirementModal')return`,
 		`assigneeUserId:Number(state.currentUser?.id)||0`, `fillReqWorkflow`, `selectedReqWorkflowId`, `可在详情里触发 LOOP`,
-		`createIssueFromChat(undefined,'chat')`, `if(toChat)openIssueInChat(issue)`, `function openIssueInChat(`, `platformNotify('mentionIssue'`,
+		`createIssueFromChat(undefined,'chat')`, `if(toChat)openIssueInChat(issue,{intent:'clarify'})`, `function openIssueInChat(`, `platformNotify('mentionIssue'`,
 	} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("requirement composer behavior is missing %q", want)

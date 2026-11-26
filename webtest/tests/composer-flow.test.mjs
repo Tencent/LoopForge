@@ -146,7 +146,7 @@ test('创建并去对话澄清 creates the issue and opens a new chat with the r
   assert.equal(app.evaluate(`localStorage.getItem('agentflow.activeProject')`), 'project-1');
 
   // The mounted chat receives the handoff through the in-document interface.
-  assert.deepEqual(mentions[0], { issueId: 'issue-chat', projectId: 'project-1' });
+  assert.deepEqual(mentions[0], { issueId: 'issue-chat', projectId: 'project-1', intent: 'clarify' });
   assert.equal($('#chatNextFrame'), null);
   const root = $('#chatRoot');
   app.evaluate(`switchView('issues');openIssueInChat({id:'issue-next',projectId:'project-1'})`);

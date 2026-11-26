@@ -3,6 +3,7 @@ package repo
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -25,8 +26,33 @@ func (r *AssistantRepo) SetAssistantSessionProjectCredentials(userID int64, id, 
 			return ErrProjectCredentialUnavailable
 		}
 		s.ProjectCredentialIDs = ids
+		for id := range s.ProjectCredentialObservations {
+			if !slices.Contains(ids, id) {
+				delete(s.ProjectCredentialObservations, id)
+			}
+		}
 		return nil
 	})
+}
+
+func mergeAssistantCredentialObservations(stored, incoming domain.AssistantSession) map[string]domain.AssistantProjectCredentialObservation {
+	observations := stored.ProjectCredentialObservations
+	if stored.ProjectID != incoming.ProjectID || !slices.Equal(stored.ProjectCredentialIDs, incoming.ProjectCredentialIDs) {
+		return observations
+	}
+	// Transcript saves can arrive out of order. Keep only observations for
+	// the bound credentials and prefer the most recent check, including loss of access.
+	for _, id := range stored.ProjectCredentialIDs {
+		state, ok := incoming.ProjectCredentialObservations[id]
+		if !ok || !state.ObservedAt.After(observations[id].ObservedAt) {
+			continue
+		}
+		if observations == nil {
+			observations = make(map[string]domain.AssistantProjectCredentialObservation, len(stored.ProjectCredentialIDs))
+		}
+		observations[id] = state
+	}
+	return observations
 }
 
 func (r *AssistantRepo) updateAssistantWorkspaceSettings(userID int64, id string, update func(*domain.AssistantSession) error) error {
@@ -50,6 +76,6 @@ func (r *AssistantRepo) updateAssistantWorkspaceSettings(userID int64, id string
 		if err := update(&s); err != nil {
 			return err
 		}
-		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", mustJSON(s)).Error
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", encodeAssistantSession(s)).Error
 	})
 }

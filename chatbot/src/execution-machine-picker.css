@@ -47,13 +47,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  cursor: pointer;
-}
-.machine-sandbox:hover {
-  color: var(--text);
-}
-.machine-sandbox-detail {
-  overflow-wrap: anywhere;
+  cursor: default;
 }
 .machine-context .machine-picker:hover,
 .machine-context .machine-picker[aria-expanded="true"] {
@@ -64,8 +58,7 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-.machine-picker:focus-visible,
-.machine-sandbox:focus-visible {
+.machine-picker:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }

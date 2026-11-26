@@ -139,6 +139,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 		ctx = context.Background()
 	}
 	ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(user))
+	ctx = context.WithValue(ctx, assistantEditSourceContextKey{}, domain.EvoVersionChatbot)
 	input := assistantToolInput(call)
 	if op.Name == "runs_start" && projectID != "" {
 		if body, ok := input.Body.(map[string]any); ok {

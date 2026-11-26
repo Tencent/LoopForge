@@ -1569,15 +1569,16 @@ function returnToQuickAccess(){
   if(history.state?.quickAccessExecutorReturn){history.back();return}
   switchView('collaboration');
 }
-function openIssueInChat(issue){
+function openIssueInChat(issue,opts){
   if(!issue?.id||!issue.projectId)return;
+  const intent=String(opts?.intent||'').trim();
   localStorage.setItem('agentflow.activeProject',issue.projectId);
   const url=new URL(location.href);
   ['chatSession','chatIssue'].forEach(key=>url.searchParams.delete(key));
   history.replaceState({},'',url.pathname+url.search+'#/collaboration');
   // The mention goes first: it moves the chat to the requirement's project,
   // so the project context emitted by switchView no longer rebinds anything.
-  platformNotify('mentionIssue',{issueId:issue.id,projectId:issue.projectId});
+  platformNotify('mentionIssue',{issueId:issue.id,projectId:issue.projectId,...(intent?{intent}:{})});
   switchView('collaboration');
 }
 function refreshCredentialUser(){
