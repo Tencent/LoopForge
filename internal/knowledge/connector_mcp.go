@@ -300,7 +300,8 @@ func acquireConnectorSlot(ctx context.Context, ownerUserID int64, connectorID st
 	}
 	select {
 	case entry.sem <- struct{}{}:
-		return func() { release(true) }, nil
+		var once sync.Once
+		return func() { once.Do(func() { release(true) }) }, nil
 	case <-ctx.Done():
 		release(false)
 		return nil, ctx.Err()

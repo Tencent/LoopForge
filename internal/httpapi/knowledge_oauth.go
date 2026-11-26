@@ -91,6 +91,10 @@ func (h *knowledgeHandlers) oauthCallback(c *gin.Context) {
 	}
 	state := strings.TrimSpace(c.Query("state"))
 	nonce, stateErr := knowledge.VerifyOAuthStateNonce(state)
+	if stateErr != nil || strings.TrimSpace(nonce) == "" {
+		c.Redirect(http.StatusSeeOther, "/knowledge-oauth-done.html?status=error&code="+knowledge.OAuthCallbackCodeStateInvalid)
+		return
+	}
 	cookieName := knowledgeOAuthBrowserCookieName(nonce)
 	cookieNonce, cookieErr := c.Cookie(cookieName)
 	http.SetCookie(c.Writer, &http.Cookie{
@@ -99,9 +103,10 @@ func (h *knowledgeHandlers) oauthCallback(c *gin.Context) {
 		Path:     "/api/knowledge/oauth",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   c.Request.TLS != nil || strings.HasPrefix(strings.ToLower(knowledgePublicBaseURL(c)), "https://"),
 		SameSite: http.SameSiteLaxMode,
 	})
-	if cookieErr != nil || stateErr != nil || strings.TrimSpace(cookieNonce) == "" || cookieNonce != nonce {
+	if cookieErr != nil || strings.TrimSpace(cookieNonce) == "" || cookieNonce != nonce {
 		c.Redirect(http.StatusSeeOther, "/knowledge-oauth-done.html?status=error&code="+knowledge.OAuthCallbackCodeStateInvalid)
 		return
 	}

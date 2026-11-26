@@ -238,7 +238,7 @@ func TestObsidianConnectorSelfSignedTLSAuthAndScope(t *testing.T) {
 		case "/vault/Projects/":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"files": []string{"arch.md", ".hidden.md", "nested/.secret.md"},
+				"files": []string{"arch.md", ".hidden.md", " .padded-hidden.md", "nested/.secret.md"},
 			})
 		case "/vault/Projects/arch.md":
 			w.Header().Set("Content-Type", "application/vnd.olrapi.note+json")
@@ -345,7 +345,7 @@ func TestObsidianConnectorSelfSignedTLSAuthAndScope(t *testing.T) {
 	if err != nil || !strings.Contains(searchText, "Projects/arch.md") || strings.Contains(searchText, "Diary/secret.md") {
 		t.Fatalf("unexpected obsidian search result: err=%v text=%s", err, searchText)
 	}
-	for _, hidden := range []string{".obsidian/secret.md", "Projects/.hidden.md", "Projects/nested/.secret.md"} {
+	for _, hidden := range []string{".obsidian/secret.md", "Projects/.hidden.md", "Projects/.padded-hidden.md", "Projects/nested/.secret.md"} {
 		if strings.Contains(listText, hidden) || strings.Contains(searchText, hidden) {
 			t.Fatalf("hidden path %q leaked through list/search: list=%s search=%s", hidden, listText, searchText)
 		}

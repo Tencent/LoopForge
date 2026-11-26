@@ -344,15 +344,16 @@ func (c *obsidianConnector) listVaultDir(ctx context.Context, relDir string) ([]
 	}
 	files := make([]string, 0, len(resp.Files))
 	for _, entry := range resp.Files {
-		visible := strings.TrimSpace(entry) != ""
-		for _, segment := range strings.Split(strings.TrimSuffix(entry, "/"), "/") {
+		trimmed := strings.TrimSpace(entry)
+		visible := trimmed != ""
+		for _, segment := range strings.Split(strings.TrimSuffix(trimmed, "/"), "/") {
 			if strings.HasPrefix(segment, ".") {
 				visible = false
 				break
 			}
 		}
 		if visible {
-			files = append(files, entry)
+			files = append(files, trimmed)
 		}
 	}
 	return files, nil

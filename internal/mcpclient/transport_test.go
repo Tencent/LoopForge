@@ -148,3 +148,41 @@ func TestNewGuardedTransportHasNoProxy(t *testing.T) {
 		t.Fatalf("default guarded transport accepted metadata address")
 	}
 }
+
+func TestGuardedDialFallsBackAcrossAllowedAddressesSkippingBlocked(t *testing.T) {
+	var dialed []string
+	dial := guardedDialContext(
+		fakeLookup("dual.example.com", []string{"fd00::1", "169.254.169.254", "93.184.216.34"}),
+		func(_ context.Context, network, address string) (net.Conn, error) {
+			dialed = append(dialed, network+" "+address)
+			if address == "[fd00::1]:443" {
+				return nil, errors.New("network is unreachable")
+			}
+			return nil, nil
+		},
+	)
+	if _, err := dial(context.Background(), "tcp", "dual.example.com:443"); err != nil {
+		t.Fatalf("expected fallback to second allowed IP, got %v", err)
+	}
+	if len(dialed) != 2 || dialed[0] != "tcp [fd00::1]:443" || dialed[1] != "tcp 93.184.216.34:443" {
+		t.Fatalf("dialed %v, want fallback skipping blocked IP", dialed)
+	}
+}
+
+func TestGuardedDialReturnsDialErrorWhenAllAllowedFail(t *testing.T) {
+	var dialed []string
+	dial := guardedDialContext(
+		fakeLookup("down.example.com", []string{"169.254.169.254", "93.184.216.34"}),
+		func(_ context.Context, network, address string) (net.Conn, error) {
+			dialed = append(dialed, network+" "+address)
+			return nil, errors.New("connection refused")
+		},
+	)
+	_, err := dial(context.Background(), "tcp", "down.example.com:443")
+	if err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("expected dial error, got %v", err)
+	}
+	if len(dialed) != 1 || dialed[0] != "tcp 93.184.216.34:443" {
+		t.Fatalf("dialed %v", dialed)
+	}
+}

@@ -163,3 +163,45 @@ func TestMCPConnectorSlotConcurrentRelease(t *testing.T) {
 		t.Fatalf("concurrent releases leaked semaphore: entry=%p map size=%d baseline=%d", entry, size, baseline)
 	}
 }
+
+func TestMCPConnectorSlotReleaseIsIdempotent(t *testing.T) {
+	key := mcpSemaphoreTestKey(930, "slot-idempotent", 2)
+	_, _, baseline := mcpSemaphoreTestState(key)
+
+	release1, err := acquireConnectorSlot(context.Background(), 930, "slot-idempotent", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release2, err := acquireConnectorSlot(context.Background(), 930, "slot-idempotent", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Calling release1 multiple times (including concurrently) must neither block
+	// nor steal slot 2 or underflow refs.
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			release1()
+		}()
+	}
+	wg.Wait()
+
+	entry, refs, _ := mcpSemaphoreTestState(key)
+	if entry == nil || refs != 1 || len(entry.sem) != 1 {
+		t.Fatalf("after idempotent release1: entry=%p refs=%d semLen=%d, want non-nil refs=1 semLen=1", entry, refs, func() int {
+			if entry == nil {
+				return -1
+			}
+			return len(entry.sem)
+		}())
+	}
+
+	release2()
+	release2()
+	if entry, _, size := mcpSemaphoreTestState(key); entry != nil || size != baseline {
+		t.Fatalf("after release2: entry=%p map size=%d baseline=%d", entry, size, baseline)
+	}
+}

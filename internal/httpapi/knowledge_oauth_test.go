@@ -329,3 +329,23 @@ func TestKnowledgeOAuthErrorCodeMapping(t *testing.T) {
 		}
 	}
 }
+
+func TestKnowledgeOAuthInvalidStateDoesNotEmitEmptyCookie(t *testing.T) {
+	_, handler, _, _ := newKnowledgeTestServer(t)
+	for _, target := range []string{
+		"/api/knowledge/oauth/mcp/callback",
+		"/api/knowledge/oauth/mcp/callback?state=tampered.sig&code=abc",
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("%s: status = %d, want 303", target, rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); loc != "/knowledge-oauth-done.html?status=error&code=state_invalid" {
+			t.Fatalf("%s: location = %q", target, loc)
+		}
+		if cookies := rec.Result().Cookies(); len(cookies) != 0 {
+			t.Fatalf("%s: unexpected Set-Cookie headers %+v", target, cookies)
+		}
+	}
+}

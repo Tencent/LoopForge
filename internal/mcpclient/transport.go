@@ -60,11 +60,22 @@ func guardedDialContext(
 		if err != nil {
 			return nil, fmt.Errorf("mcp address cannot be resolved: %w", err)
 		}
+		var lastErr error
 		for _, candidate := range ips {
 			if isBlockedDialIP(candidate.IP) {
 				continue
 			}
-			return dial(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+			conn, dialErr := dial(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+			if dialErr == nil {
+				return conn, nil
+			}
+			lastErr = dialErr
+			if ctx.Err() != nil {
+				return nil, lastErr
+			}
+		}
+		if lastErr != nil {
+			return nil, lastErr
 		}
 		return nil, fmt.Errorf("mcp address is not allowed")
 	}
