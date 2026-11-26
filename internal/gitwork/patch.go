@@ -139,18 +139,18 @@ func PatchInventory(workspace string) ([]byte, error) {
 	if err := StageUntracked(workspace); err != nil {
 		return nil, err
 	}
-	nameStatus, err := diffAgainstBaseline(workspace, sha, "--name-status")
+	nameStatus, err := diffAgainstBaseline(workspace, sha, "--name-status", "-z")
 	if err != nil {
 		return nil, err
 	}
-	numstat, err := diffAgainstBaseline(workspace, sha, "--numstat")
+	numstat, err := diffAgainstBaseline(workspace, sha, "--numstat", "-z")
 	if err != nil {
 		return nil, err
 	}
 	if len(bytes.TrimSpace(nameStatus)) == 0 && len(bytes.TrimSpace(numstat)) == 0 {
 		return nil, nil
 	}
-	summary := []byte(RenderPatchInventory(ParseNameStatusNumstat(nameStatus, numstat)))
+	summary := []byte(RenderPatchInventory(summarizePatch(parseNulNameStatus(nameStatus), parseNulNumstat(numstat))))
 	if len(bytes.TrimSpace(summary)) == 0 {
 		return nil, nil
 	}
@@ -277,34 +277,100 @@ func RenderPatchInventory(files []PatchFileSummary) string {
 // ParseNameStatusNumstat merges `git diff --name-status` and
 // `git diff --numstat` output into one summary per path, sorted by path.
 func ParseNameStatusNumstat(nameStatus, numstat []byte) []PatchFileSummary {
-	files := map[string]*PatchFileSummary{}
-	for _, line := range strings.Split(string(nameStatus), "\n") {
-		path, status, from, ok := parseNameStatusLine(line)
-		if !ok {
-			continue
-		}
-		if f := patchSummaryFor(files, path); f != nil {
-			f.Status = status
-			f.RenameFrom = from
-		}
-	}
+	stats := make([]patchStat, 0)
 	for _, line := range strings.Split(string(numstat), "\n") {
 		path, added, deleted, binary, ok := parseNumstatLine(line)
-		if !ok {
+		if ok {
+			stats = append(stats, patchStat{UnquoteLsFilesPath(path), added, deleted, binary})
+		}
+	}
+	var names []patchName
+	for _, line := range strings.Split(string(nameStatus), "\n") {
+		path, status, from, ok := parseNameStatusLine(line)
+		if ok {
+			names = append(names, patchName{UnquoteLsFilesPath(path), status, from})
+		}
+	}
+	return summarizePatch(names, stats)
+}
+
+type patchStat struct {
+	path           string
+	added, deleted int
+	binary         bool
+}
+
+// NUL output has a separate old and new path for renames and copies.
+// The human-readable output abbreviates these to e.g. dir/{old => new}.go.
+func parseNulNumstat(data []byte) []patchStat {
+	var stats []patchStat
+	records := strings.Split(string(data), "\x00")
+	for i := 0; i < len(records); i++ {
+		fields := strings.SplitN(records[i], "\t", 3)
+		if len(fields) != 3 {
 			continue
 		}
-		f := patchSummaryFor(files, path)
+		path := fields[2]
+		if path == "" {
+			if i+2 >= len(records) {
+				break
+			}
+			path = records[i+2]
+			i += 2
+		}
+		added, _ := strconv.Atoi(fields[0])
+		deleted, _ := strconv.Atoi(fields[1])
+		stats = append(stats, patchStat{path, added, deleted, fields[0] == "-" || fields[1] == "-"})
+	}
+	return stats
+}
+
+type patchName struct {
+	path, status, from string
+}
+
+func parseNulNameStatus(data []byte) []patchName {
+	var names []patchName
+	records := strings.Split(string(data), "\x00")
+	for i := 0; i+1 < len(records); i++ {
+		if records[i] == "" {
+			break
+		}
+		entry := patchName{status: records[i][:1], path: records[i+1]}
+		i++
+		if entry.status == "R" || entry.status == "C" {
+			if i+1 >= len(records) {
+				break
+			}
+			entry.from, entry.path = filepath.ToSlash(entry.path), records[i+1]
+			i++
+		}
+		names = append(names, entry)
+	}
+	return names
+}
+
+func summarizePatch(names []patchName, stats []patchStat) []PatchFileSummary {
+	files := map[string]*PatchFileSummary{}
+	for _, name := range names {
+		if f := patchSummaryFor(files, name.path); f != nil {
+			f.Status = name.status
+			f.RenameFrom = name.from
+		}
+	}
+	for _, stat := range stats {
+		f := patchSummaryFor(files, stat.path)
 		if f == nil {
 			continue
 		}
-		if binary {
+		if stat.binary {
 			f.Binary = true
 			if f.Status == "M" {
 				f.Status = "B"
 			}
 			continue
 		}
-		f.Added, f.Deleted = added, deleted
+		f.Added, f.Deleted = stat.added, stat.deleted
 	}
 	out := make([]PatchFileSummary, 0, len(files))
 	for _, f := range files {
@@ -317,7 +383,7 @@ func ParseNameStatusNumstat(nameStatus, numstat []byte) []PatchFileSummary {
 // patchSummaryFor returns the summary for the normalized path, creating a
 // modified ("M") entry on first sight; it returns nil for an empty path.
 func patchSummaryFor(files map[string]*PatchFileSummary, rawPath string) *PatchFileSummary {
-	path := filepath.ToSlash(UnquoteLsFilesPath(rawPath))
+	path := filepath.ToSlash(rawPath)
 	if path == "" {
 		return nil
 	}

@@ -240,3 +240,29 @@ func TestMergeLatestHappyPaths(t *testing.T) {
 		t.Fatalf("conflict merge = %#v, %v", conflicts, err)
 	}
 }
+
+func TestPatchInventoryCountsRenamedFileOnce(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) { cvSRunGit(t, append([]string{"-C", dir}, args...)...) }
+	git("init", "-q")
+	git("config", "user.name", "LoopForge Test")
+	git("config", "user.email", "loopforge@example.test")
+	git("config", "diff.renames", "true")
+	before := strings.Repeat("same line\n", 20)
+	if err := os.WriteFile(filepath.Join(dir, "old.go"), []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "--", "old.go")
+	git("commit", "-qm", "baseline")
+	if err := RecordBaseline(dir, ""); err != nil {
+		t.Fatal(err)
+	}
+	git("mv", "old.go", "new.go")
+	if err := os.WriteFile(filepath.Join(dir, "new.go"), []byte(before+"one addition\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := PatchInventory(dir)
+	if err != nil || !strings.Contains(string(inventory), "files 1  +1/-0") || !strings.Contains(string(inventory), "R\told.go -> new.go\t+1/-0") {
+		t.Fatalf("inventory = %q, error = %v", inventory, err)
+	}
+}
