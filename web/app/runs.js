@@ -321,7 +321,7 @@ function renderRuns(){
   $('#runListCount')&&($('#runListCount').textContent=`${runs.length} 条`);const list=$('#runList');
   const focusedRow=document.activeElement?.closest?.('#runList .run-card'),focusedPart=focusedRow&&['.run-view-btn','.run-del-btn'].find(s=>document.activeElement.matches(s));
   const pagedRuns=paginateList('runs', runs);
-  list.innerHTML=pagedRuns.items.map(r=>runRowHTML(r,workflows)).join('')||`<div class="run-list-empty">${runIconSlot('search',17,'run-glyph')}<b>没有匹配的运行</b><p>换个关键词，或到需求列表查看对应需求的执行结果。</p></div>`;
+  list.innerHTML=pagedRuns.items.map(r=>runRowHTML(r,workflows)).join('')||(base.length||state.runQuery||state.runWorkflowFilter?`<div class="run-list-empty">${runIconSlot('search',17,'run-glyph')}<b>没有匹配的运行</b><p>换个关键词或筛选条件，或到需求列表查看对应需求的执行结果。</p></div>`:`<div class="run-list-empty">${runIconSlot('search',17,'run-glyph')}<b>尚无运行</b><p>到需求列表启动一条需求后，运行记录会出现在这里。</p></div>`);
   const pager=$('#runPager');
   pager.innerHTML=`<span class="run-total">共 ${runs.length} 条</span>${pagerHTML('runs', pagedRuns)}`;
   hydrateRunIcons($('#runsView'));

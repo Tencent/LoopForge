@@ -546,3 +546,8 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
+Object.assign(window.LF_I18N_EN, {
+  "换个关键词或筛选条件，或到需求列表查看对应需求的执行结果。": "Try another keyword or filter, or open the requirement list to see its runs.",
+  "尚无运行": "No runs yet",
+  "到需求列表启动一条需求后，运行记录会出现在这里。": "Start a requirement from the requirement list and its runs will appear here.",
+});

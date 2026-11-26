@@ -456,3 +456,19 @@ test('child pause and cancellation polling refreshes motion without parent strea
     }
   }
 });
+
+test('run list empty state distinguishes no runs from no matches', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const out = JSON.parse(app.evaluate(`
+    state.data.runs=[];state.runFilter='all';state.runQuery='';state.runWorkflowFilter='';renderRuns();
+    const none=document.querySelector('#runList .run-list-empty').textContent;
+    state.runQuery='zzz';renderRuns();
+    const searched=document.querySelector('#runList .run-list-empty').textContent;
+    state.runQuery='';
+    JSON.stringify({none,searched})
+  `));
+  assert.match(out.none, /尚无运行/);
+  assert.doesNotMatch(out.none, /关键词/);
+  assert.match(out.searched, /没有匹配的运行/);
+});
