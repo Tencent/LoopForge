@@ -252,15 +252,19 @@ func (e *Engine) waitChildRun(ctx context.Context, parentID, childID string) (do
 			}
 			return domain.Run{}, ctx.Err()
 		case <-ticker.C:
-			if parent, ok := e.repo.RunState(parentID); ok && (parent.CancelRequested || parent.Status == "cancelled") {
+			if parent, ok := e.repo.RunProgress(parentID); ok && (parent.CancelRequested || parent.Status == "cancelled") {
 				_ = e.Cancel(childID)
 				return domain.Run{}, fmt.Errorf("父流程已取消")
 			}
-			child, ok := e.repo.RunState(childID)
+			// Poll without artifact bodies; the handoff reads them once.
+			child, ok := e.repo.RunProgress(childID)
 			if !ok {
 				return domain.Run{}, fmt.Errorf("子 SOP 运行消失")
 			}
 			if domain.TerminalRunStatus(child.Status) {
+				if child, ok = e.repo.RunState(childID); !ok {
+					return domain.Run{}, fmt.Errorf("读取子 SOP %s 的产物失败", childID)
+				}
 				return child, nil
 			}
 		}

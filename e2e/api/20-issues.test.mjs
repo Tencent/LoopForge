@@ -77,6 +77,9 @@ test('creates a Markdown requirement and serves its attached image to authentica
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('content-type'), 'image/png');
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+
+  const catalog = await get(`/api/issues/${created.id}/clarify-models`);
+  assert.ok(Array.isArray(catalog.engines) && catalog.engines.length > 0);
 });
 
 test('edit keeps identity and records an operation', async () => {
