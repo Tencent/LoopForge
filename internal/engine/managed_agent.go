@@ -13,6 +13,11 @@ import (
 	"agentflow/internal/runtime"
 )
 
+// errManagedTurnUnknown marks a managed Agent attempt whose prompt was already
+// sent before the engine lost track of it. Retrying would send the same turn
+// again, so the node fails and waits for an explicit retry.
+var errManagedTurnUnknown = errors.New("托管 Agent 上一次发送结果未知")
+
 type managedAgentBinding struct {
 	provider string
 	project  string
@@ -102,16 +107,24 @@ func (e *Engine) executeManagedAgentNode(ctx context.Context, wf domain.Workflow
 	dispatch := false
 	if err := e.updateRunErr(run.ID, func(current *domain.Run) {
 		nr := current.Nodes[node.ID]
-		if shouldCommitNodeOutcome(*current, nr, generation, attempt, false) && nr.ManagedPromptAttempt != attempt {
+		if !shouldCommitNodeOutcome(*current, nr, generation, attempt, false) {
+			return
+		}
+		if nr.ManagedPromptAttempt != attempt {
 			nr.ManagedPromptAttempt = attempt
 			nr.Provider = provider
 			dispatch = true
+			return
 		}
+		// The fenced attempt cannot be resumed. Drop the "waiting to resume"
+		// marker so an explicit retry starts a new attempt instead of
+		// continuing this one and hitting the fence again.
+		nr.Activity = "托管 Agent 上一次发送结果未知，确认后可重试"
 	}); err != nil {
 		return err
 	}
 	if !dispatch {
-		return fmt.Errorf("%s 节点本次执行已发起或终止，请确认原执行结果后重试", provider)
+		return fmt.Errorf("%w：%s 节点本次执行已发起或终止，请确认原执行结果后重试", errManagedTurnUnknown, provider)
 	}
 	if err := ctx.Err(); err != nil {
 		return err

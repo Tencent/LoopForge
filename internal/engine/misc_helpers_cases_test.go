@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -259,6 +260,9 @@ func TestNodeOutcomeDecisionAndTransitionBranches(t *testing.T) {
 	}
 	if shouldRetryFailedAttempt(domain.WorkflowNode{MaxAttempts: 3}, 1, errors.New("verification failed")) {
 		t.Fatal("verification failure retried")
+	}
+	if shouldRetryFailedAttempt(domain.WorkflowNode{MaxAttempts: 3}, 1, fmt.Errorf("%w：a2a 节点本次执行已发起或终止", errManagedTurnUnknown)) {
+		t.Fatal("a managed Agent turn with an unknown outcome must not be sent again automatically")
 	}
 	if !shouldRetryFailedAttempt(domain.WorkflowNode{MaxAttempts: 3}, 1, errors.New("ordinary")) {
 		t.Fatal("ordinary failure not retried")

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,5 +81,45 @@ func TestA2ATaskCancellation(t *testing.T) {
 	case <-cancelled:
 	default:
 		t.Fatal("the remote task was not cancelled")
+	}
+}
+
+func TestA2ATurnTimeoutIsNamedAndCancelsTheTask(t *testing.T) {
+	previous := turnTimeout
+	turnTimeout = 1500 * time.Millisecond
+	t.Cleanup(func() { turnTimeout = previous })
+	cancelled := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		if request.Method == "tasks/cancel" {
+			cancelled <- struct{}{}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{
+			"kind": "task", "id": "slow-task", "status": map[string]string{"state": "working"},
+		}})
+	}))
+	defer server.Close()
+	agent, err := NewA2A(A2AConfig{Endpoint: server.URL, Loopback: true}, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = agent.Run(context.Background(), "slow", nil)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "A2A Agent 未在 1.5s 内完成本轮") {
+		t.Fatalf("Run() error = %v", err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed-out task was not cancelled")
+	}
+
+	// A caller cancellation (run cancelled) keeps the plain context error.
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	if _, err := agent.Run(ctx, "slow", nil); !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "未在") {
+		t.Fatalf("cancelled Run() error = %v", err)
 	}
 }

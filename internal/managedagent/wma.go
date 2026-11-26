@@ -81,9 +81,14 @@ func NewWMA(config Config, client *http.Client) (*WMA, error) {
 
 // Run prompts a dedicated pre-provisioned WMA session. The same session accepts
 // only one active prompt. A turn with an unknown outcome is never replayed here.
-func (w *WMA) Run(ctx context.Context, prompt string, onText func(string)) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+func (w *WMA) Run(parent context.Context, prompt string, onText func(string)) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, turnTimeout)
 	defer cancel()
+	output, err := w.run(ctx, prompt, onText)
+	return output, turnTimeoutError("WMA", ctx, parent, err)
+}
+
+func (w *WMA) run(ctx context.Context, prompt string, onText func(string)) (string, error) {
 	select {
 	case w.gate <- struct{}{}:
 		defer func() { <-w.gate }()

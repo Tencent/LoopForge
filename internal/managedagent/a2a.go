@@ -81,12 +81,19 @@ type a2aResult struct {
 	History []a2aMessage `json:"history"`
 }
 
-func (a *A2A) Run(ctx context.Context, prompt string, onText func(string)) (string, error) {
+// Run sends one text turn. A task still running after turnTimeout is
+// cancelled on the Agent and reported as a turn timeout.
+func (a *A2A) Run(parent context.Context, prompt string, onText func(string)) (string, error) {
+	ctx, stop := context.WithTimeout(parent, turnTimeout)
+	defer stop()
+	output, err := a.run(ctx, prompt, onText)
+	return output, turnTimeoutError("A2A", ctx, parent, err)
+}
+
+func (a *A2A) run(ctx context.Context, prompt string, onText func(string)) (string, error) {
 	if len(prompt) > maxACPText {
 		return "", errors.New("A2A prompt exceeds 1 MiB")
 	}
-	ctx, stop := context.WithTimeout(ctx, 5*time.Minute)
-	defer stop()
 	var result a2aResult
 	err := a.rpc(ctx, "message/send", map[string]any{
 		"message": a2aMessage{
