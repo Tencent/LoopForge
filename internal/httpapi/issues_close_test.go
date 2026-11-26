@@ -126,6 +126,37 @@ func TestCloseAndFilterIssues(t *testing.T) {
 	}
 }
 
+func TestClosedIssueCanBeEditedAndClarifiedBeforeReopening(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	issue := requestJSONAuthed[domain.Issue](t, f.h, f.user, http.MethodPost, "/api/issues", map[string]string{
+		"projectId": "platform", "title": "Draft requirement",
+	}, http.StatusOK)
+	path := "/api/issues/" + issue.ID
+	requestJSONAuthed[domain.Issue](t, f.h, f.user, http.MethodPost, path+"/close", nil, http.StatusOK)
+
+	// Older editors send an empty status when saving a closed issue.
+	edit := map[string]string{"id": issue.ID, "title": "Updated requirement", "status": ""}
+	edited := requestJSONAuthed[domain.Issue](t, f.h, f.user, http.MethodPut, "/api/issues", edit, http.StatusOK)
+	if edited.Title != edit["title"] || edited.Status != "closed" || edited.CloseSource != "manual" || edited.AutomationState != "ignored" {
+		t.Fatalf("content edit changed the closure state: %+v", edited)
+	}
+
+	clarified := requestJSONAuthed[domain.Issue](t, f.h, f.user, http.MethodPost, path+"/clarification", map[string]any{
+		"summary": "验收标准已确认", "ready": true,
+	}, http.StatusOK)
+	if clarified.Clarification.Status != domain.ClarificationReady || clarified.Status != "closed" || clarified.CloseSource != "manual" {
+		t.Fatalf("clarification did not complete on the closed issue: %+v", clarified)
+	}
+	blocked := requestJSONAuthed[map[string]string](t, f.h, f.user, http.MethodPost, path+"/dispatch", nil, http.StatusConflict)
+	if reason := clarified.ExecutionBlockedReason(); reason == "" || blocked["error"] != reason {
+		t.Fatalf("dispatch rejection = %q, want closure reason %q", blocked["error"], reason)
+	}
+	reopened := requestJSONAuthed[domain.Issue](t, f.h, f.user, http.MethodPost, path+"/reopen", nil, http.StatusOK)
+	if reopened.Status != "todo" || reopened.ExecutionBlockedReason() != "" || len(f.s.Tasks()) != 0 {
+		t.Fatalf("reopening should enable dispatch without starting it: %+v", reopened)
+	}
+}
+
 func TestCloseIssueRejectsActiveWork(t *testing.T) {
 	for _, status := range []string{"running", "waiting", "queued", "analyzing", "failed", "cancelled", "succeeded"} {
 		t.Run(status, func(t *testing.T) {

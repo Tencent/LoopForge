@@ -379,6 +379,11 @@ func (h issuesHandlers) issues(c *gin.Context) {
 // The editor payload does not round-trip the audit log, so the server copy
 // of Operations always wins.
 func mergeIssueEdit(v, existing domain.Issue) domain.Issue {
+	// Older editors submit an empty status when they have no option for "closed".
+	if v.Status == "" && existing.Status == "closed" {
+		v.Status = existing.Status
+		v.CloseSource = existing.CloseSource
+	}
 	if v.ProjectID == "" {
 		v.ProjectID = existing.ProjectID
 	}

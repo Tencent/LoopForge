@@ -204,3 +204,79 @@ test('another clarification round waits for the responsible account catalog and 
   await settle(6);
   assert.equal(posted()?.body.model, 'codex:fixture-model');
 });
+
+test('a manually closed requirement can be edited and clarified without reopening it', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const issue = { ...app.evaluate('structuredClone(state.data.issues[0])'), kind: 'requirement',
+    source: 'local', status: 'closed', closeSource: 'manual', automationState: 'ignored' };
+  const detailPath = '/api/issues/issue-1';
+  app.router.get(detailPath, { issue, comments: [] });
+  app.router.get(detailPath + '/requirement', {});
+  app.router.put('/api/issues', ({ body }) => body);
+  app.router.post(detailPath + '/chat-clarify', { ready: true,
+    issue: { ...issue, clarification: { status: 'ready', summary: '验收条件明确', writeBackStatus: 'skipped' } } });
+  app.evaluate(`state.data.issues=[${JSON.stringify(issue)}]; state.data.tasks=[]; state.data.runs=[]`);
+  await app.evaluate("openIssueDetail('issue-1','overview')");
+  const drawer = app.document.querySelector('#issueDetailBody');
+  assert.match(drawer.querySelector('.issue-outcome p').textContent, /仍可编辑和澄清需求。启动 LOOP 前，请先重新打开需求/);
+  assert.ok(drawer.querySelector('[data-reopen-issue]'));
+  assert.equal(drawer.querySelector('[data-dispatch-issue]'), null);
+  drawer.querySelector('[data-edit-issue]').click();
+  const form = app.document.querySelector('#issueForm');
+  assert.equal(form.elements.status.value, 'closed');
+  assert.equal(form.elements.status.disabled, true);
+  form.elements.title.value = 'Revised title';
+  form.requestSubmit();
+  await settle();
+  const edit = app.router.calls.find(call => call.method === 'PUT' && call.path === '/api/issues');
+  assert.ok(edit);
+  assert.equal(edit.body.title, 'Revised title');
+  assert.equal(edit.body.status, 'closed');
+  assert.equal(edit.body.closeSource, 'manual');
+
+  await app.evaluate("openIssueDetail('issue-1','overview')");
+  drawer.querySelector('[data-start-clarify]').click();
+  await settle(6);
+  assert.ok(app.router.calls.some(call => call.method === 'POST' && call.path === detailPath + '/chat-clarify'));
+  assert.match(drawer.textContent, /验收条件明确/);
+  assert.match(drawer.textContent, /请先重新打开/);
+  assert.ok(drawer.querySelector('[data-reclarify]'));
+  assert.equal(drawer.querySelector('[data-dispatch-issue]'), null);
+  assert.ok(!app.router.calls.some(call => /\/(?:dispatch|reopen)$/.test(call.path)));
+
+  app.evaluate('openIssue()');
+  assert.equal(form.elements.status.value, 'backlog');
+  assert.equal(form.elements.status.disabled, false);
+});
+
+test('closed clarification shows valid next steps while waiting for answers or external write-back', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const render = (status, clarification) => app.evaluate(`(() => {
+    const issue={...state.data.issues[0],kind:'requirement',source:'tapd',status:${JSON.stringify(status)},
+      closeSource:${JSON.stringify(status === 'closed' ? 'manual' : '')},externalRef:{externalId:'T-1'},
+      clarification:${JSON.stringify(clarification)}};
+    return clarificationOverviewCard(issue)+clarifyPane(issue,state.data.projects[0]);
+  })()`);
+  const pending = { status: 'ready', summary: '验收条件明确', writeBackStatus: 'pending' };
+  for (const clarification of [{}, { status: 'in_progress' }, pending]) {
+    const html = render('closed', clarification);
+    assert.doesNotMatch(html, /直接触发|即可开始触发|触发需求执行 LOOP|data-dispatch-issue/);
+  }
+  assert.match(render('closed', pending), /data-retry-clarify/);
+  assert.match(render('todo', pending), /触发需求执行 LOOP/);
+  assert.match(render('todo', { ...pending, writeBackStatus: 'succeeded' }), /data-dispatch-issue/);
+
+  const issue = { ...app.evaluate('structuredClone(state.data.issues[0])'), source: 'tapd', status: 'closed',
+    closeSource: 'manual', externalRef: { externalId: 'T-1' }, clarification: pending };
+  app.router.post('/api/issues/issue-1/clarification', { ...issue,
+    clarification: { ...pending, writeBackStatus: 'succeeded' } });
+  app.evaluate(`state.issueDetailData={issue:${JSON.stringify(issue)},comments:[]};
+    state.issueDetailTab='clarify'; state.drawerOpen=true; renderIssueDetailTab()`);
+  app.document.querySelector('#issueDetailBody [data-retry-clarify]').click();
+  await settle();
+  const feedback = app.document.querySelector('#toastContainer').textContent;
+  assert.match(feedback, /已写回原单/);
+  assert.doesNotMatch(feedback, /可以触发/);
+});

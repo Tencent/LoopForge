@@ -115,7 +115,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 }
 ```
 
-`projectId`、`title` 必填且项目必须存在。`status` 默认 `backlog`，`priority` 默认 `medium`；未指定仓库时继承项目默认仓库，指定仓库必须属于项目。单仓库可通过 `baseBranch` 继续已有功能分支；留空则从配置主分支新建工作分支。
+`projectId`、`title` 必填且项目必须存在。`status` 默认 `backlog`。编辑已关闭需求时，省略或留空 `status` 会保留关闭状态及关闭来源。`priority` 默认 `medium`；未指定仓库时继承项目默认仓库，指定仓库必须属于项目。单仓库可通过 `baseBranch` 继续已有功能分支；留空则从配置主分支新建工作分支。
 
 多仓库用 `repositoryBranches` 按仓库 ID 分别指定已有功能分支，例如 `{"repositoryIds":["api","web"],"repositoryBranches":{"api":"feature/api","web":"feature/web"}}`。该映射优先于 `baseBranch`；未指定或留空的仓库从各自配置的主分支新建工作分支。继续已有分支时，MR 仍以该仓库配置的主分支为目标。映射中的仓库必须已绑定，且不能直接在主分支或集成分支上开发。更新或重新导入 TAPD 时省略映射会保留仍绑定仓库的分支，显式 `{}` 清空全部选择；修改任一仓库分支会重置代码澄清会话并保留业务回答。
 

@@ -544,5 +544,10 @@ Object.assign(window.LF_I18N_EN, {
 Object.assign(window.LF_I18N_EN, {
   "对话处理": "Handled in chat",
   "在对话里澄清和改代码": "Clarify and change code in chat",
+  "仍可编辑和澄清需求。": "You can still edit and clarify this requirement.",
+  "仍可编辑和澄清需求。启动 LOOP 前，请先重新打开需求。": "You can still edit and clarify this requirement. Reopen it before starting a LOOP.",
+  "可结合项目代码继续澄清这条需求。": "You can continue clarifying this requirement using the project code.",
+  "回答后点「继续澄清」。": "After answering, click Continue clarifying.",
+  "结论已保存到平台说明。确认后会作为评论写回原单。": "The conclusion is saved in the requirement description. Confirm to post it as a comment on the original issue.",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
