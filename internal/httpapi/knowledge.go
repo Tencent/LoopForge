@@ -19,6 +19,7 @@ type knowledgeHandlers struct {
 	*deps
 	svc      *knowledge.Service
 	exec     *knowledge.Executor
+	legacy   *knowledge.LegacyService // TODO(knowledge-legacy-compat): remove after legacy KB sunset
 	activity *knowledgeActivityLog
 }
 

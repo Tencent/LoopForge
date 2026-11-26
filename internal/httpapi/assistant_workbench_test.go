@@ -257,7 +257,7 @@ func TestStripLocalMediaPathsKeepsTheSentence(t *testing.T) {
 func TestWorkbenchMentionedSOPInjectsDispatchGuidanceOnlyOutsideRun(t *testing.T) {
 	h, u := workbenchFixture(t)
 	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
-		ID: "wf-kb-audit", Name: "知识库验收 SOP", ProjectID: "workbench", SandboxProfileID: "local",
+		ID: "wf-kb-audit", Name: "知识库验收 SOP", ProjectID: "workbench", SandboxProfileID: repo.DefaultSandboxProfileID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestResolveMentionedKnowledgeRefsForAgentAndSOP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
-		ID: "wf-kb-union", Name: "知识库巡检 SOP", ProjectID: "workbench", SandboxProfileID: "local",
+		ID: "wf-kb-union", Name: "知识库巡检 SOP", ProjectID: "workbench", SandboxProfileID: repo.DefaultSandboxProfileID,
 		Nodes: []domain.WorkflowNode{
 			{
 				ID: "n1", Name: "架构节点", Type: "agent", AgentID: "agent-kb",
@@ -460,7 +460,7 @@ func TestResolveMentionedKnowledgeRefsForIssueBoundSOP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
-		ID: "wf-issue-bound", Name: "知识库验收sop", ProjectID: "workbench", SandboxProfileID: "local",
+		ID: "wf-issue-bound", Name: "知识库验收sop", ProjectID: "workbench", SandboxProfileID: repo.DefaultSandboxProfileID,
 		Nodes: []domain.WorkflowNode{
 			{
 				ID: "n1", Name: "验收节点", Type: "agent", AgentID: "agent-issue-kb",
@@ -576,7 +576,7 @@ func TestIssueBoundSOPVisibilityAndGuidanceEdges(t *testing.T) {
 		}
 	}
 	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
-		ID: "wf-edge-visible", Name: "可见sop", ProjectID: "workbench", SandboxProfileID: "local",
+		ID: "wf-edge-visible", Name: "可见sop", ProjectID: "workbench", SandboxProfileID: repo.DefaultSandboxProfileID,
 		Nodes: []domain.WorkflowNode{{
 			ID: "n1", Name: "验收", Type: "agent", AgentID: "agent-edge-plain",
 			KnowledgeRefs: []domain.KnowledgeRef{{ConnectorID: connA.ID, Mode: "all"}},
@@ -585,7 +585,7 @@ func TestIssueBoundSOPVisibilityAndGuidanceEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
-		ID: "wf-edge-foreign-private", Name: "外项目私有sop", ProjectID: "other-project", SandboxProfileID: "local",
+		ID: "wf-edge-foreign-private", Name: "外项目私有sop", ProjectID: "other-project", SandboxProfileID: repo.DefaultSandboxProfileID,
 		Nodes: []domain.WorkflowNode{{
 			ID: "n1", Name: "验收", Type: "agent", AgentID: "agent-edge-plain",
 			KnowledgeRefs: []domain.KnowledgeRef{{ConnectorID: connA.ID, Mode: "all"}},
@@ -594,7 +594,7 @@ func TestIssueBoundSOPVisibilityAndGuidanceEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{
-		ID: "wf-edge-role-toggle", Name: "角色全量sop", ProjectID: "workbench", SandboxProfileID: "local",
+		ID: "wf-edge-role-toggle", Name: "角色全量sop", ProjectID: "workbench", SandboxProfileID: repo.DefaultSandboxProfileID,
 		Nodes: []domain.WorkflowNode{{ID: "n1", Name: "验收", Type: "agent", AgentID: "agent-edge-toggle"}},
 	}); err != nil {
 		t.Fatal(err)

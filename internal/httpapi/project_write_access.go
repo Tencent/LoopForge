@@ -153,6 +153,10 @@ func (d deps) assetOwner(kind, id string) (project string, global bool, found bo
 	case "schedule-jobs":
 		v, ok := d.repo.ScheduleJob(id)
 		return v.ProjectID, false, ok
+	// TODO(knowledge-legacy-compat): remove with legacy /api/knowledge/submissions routes.
+	case "knowledge":
+		v, ok := d.repo.KnowledgeSubmission(id)
+		return v.ProjectID, false, ok
 	}
 	return "", false, false
 }
@@ -201,6 +205,16 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 		return d.requireProjectWriter(c, strings.TrimSpace(body.ProjectID))
 	case "/api/schedule-jobs/:id", "/api/schedule-jobs/:id/run":
 		project, _, _ := d.assetOwner("schedule-jobs", c.Param("id"))
+		return d.requireProjectWriter(c, project)
+	// TODO(knowledge-legacy-compat): remove with legacy /api/knowledge/submissions routes.
+	case "/api/knowledge/submissions":
+		var body struct {
+			ProjectID string `json:"projectId"`
+		}
+		peekJSON(c, &body)
+		return d.requireProjectWriter(c, strings.TrimSpace(body.ProjectID))
+	case "/api/knowledge/submissions/:id", "/api/knowledge/submissions/:id/publish", "/api/knowledge/submissions/:id/reject":
+		project, _, _ := d.assetOwner("knowledge", c.Param("id"))
 		return d.requireProjectWriter(c, project)
 	case "/api/skills/:id/files", "/api/skills/:id/files/*path":
 		return d.allowStoredAsset(c, "skills", c.Param("id"))

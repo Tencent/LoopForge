@@ -859,6 +859,30 @@ type knowledgeUsageEventRow struct {
 
 func (knowledgeUsageEventRow) TableName() string { return "knowledge_usage_events" }
 
+// TODO(knowledge-legacy-compat): 保留历史表 knowledge_settings / knowledge_submissions
+// 的 ORM 映射，供旧版平台知识库与沉淀审核队列兼容路由使用；下线旧路由后一并移除。
+type knowledgeSettingsRow struct {
+	ID      string     `gorm:"column:id;primaryKey;size:64"`
+	Payload []byte     `gorm:"column:payload;type:json"`
+	Token   *string    `gorm:"column:token;type:text"`
+	Updated *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeSettingsRow) TableName() string { return "knowledge_settings" }
+
+type knowledgeSubmissionRow struct {
+	ID         string     `gorm:"column:id;primaryKey;size:64"`
+	ProjectID  string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64"`
+	RunID      string     `gorm:"column:run_id;index:idx_knowledge_submissions_run;size:64"`
+	ArtifactID string     `gorm:"column:artifact_id;index:idx_knowledge_submissions_artifact;size:64"`
+	Status     string     `gorm:"column:status;index:idx_knowledge_submissions_status;size:32"`
+	Payload    []byte     `gorm:"column:payload;type:json"`
+	Created    *time.Time `gorm:"column:created_at"`
+	Updated    *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions" }
+
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, botNativeSessionRow{}, botPendingDraftRow{}, botChatOriginRow{}, botClarifySessionRow{}, domain.NotificationDelivery{},
@@ -877,6 +901,8 @@ func allModels() []any {
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
+		knowledgeSettingsRow{},
+		knowledgeSubmissionRow{},
 		knowledgeConnectorRow{},
 		knowledgeConnectorUsageRow{},
 		knowledgeDocumentUsageRow{},

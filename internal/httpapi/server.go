@@ -190,7 +190,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		know:            &knowledgeHandlers{deps: d, svc: knowledgeSvc, exec: knowledgeExec, activity: &knowledgeActivityLog{}},
+		know:            &knowledgeHandlers{deps: d, svc: knowledgeSvc, exec: knowledgeExec, legacy: knowledge.NewLegacyService(s, randomID), activity: &knowledgeActivityLog{}},
 		evolution:       newEvolutionHandlers(d),
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
@@ -585,6 +585,24 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/knowledge/oauth/:type/authorize", api.know.oauthAuthorize)
 	g.GET("/api/knowledge/oauth/callback", api.know.oauthCallback)
 	g.GET("/api/knowledge/oauth/:type/callback", api.know.oauthCallback)
+
+	// --- legacy platform knowledge compatibility ---
+	// TODO(knowledge-legacy-compat): 保留旧版平台级知识库与沉淀审核队列路由以兼容历史
+	// 调用方与上游 E2E 用例；待外部调用方及 E2E 全部迁移至个人知识连接器后移除。
+	g.GET("/api/knowledge/settings", api.know.legacySettings)
+	g.PUT("/api/knowledge/settings", api.know.legacySettings)
+	g.POST("/api/knowledge/check", api.know.legacyCheck)
+	g.GET("/api/knowledge/sources", api.know.legacySources)
+	g.POST("/api/knowledge/search", api.know.legacySearch)
+	g.GET("/api/knowledge/document", api.know.legacyDocument)
+	g.GET("/api/knowledge/candidates", api.know.legacyCandidates)
+	g.GET("/api/knowledge/submissions", api.know.legacySubmissions)
+	g.POST("/api/knowledge/submissions", api.know.legacySubmissions)
+	g.GET("/api/knowledge/submissions/:id", api.know.legacySubmission)
+	g.PUT("/api/knowledge/submissions/:id", api.know.legacySubmission)
+	g.DELETE("/api/knowledge/submissions/:id", api.know.legacySubmission)
+	g.POST("/api/knowledge/submissions/:id/publish", api.know.legacyPublish)
+	g.POST("/api/knowledge/submissions/:id/reject", api.know.legacyReject)
 
 	// --- runs ---
 	g.GET("/api/runs", api.runs.runs)

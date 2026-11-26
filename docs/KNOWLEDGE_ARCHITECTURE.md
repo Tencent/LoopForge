@@ -38,3 +38,23 @@ LoopForge 采用**用户级知识库连接器（Knowledge Connector）**架构�
 2. **多租户严格隔离**：所有连接器、MCP 客户端缓存、工具缓存、并发信号量与用量统计均以 `owner_user_id` 隔离；绑定了个人知识库的会话对其他项目成员及非成员均不共享个人连接器上下文。
 3. **SSRF 与重定向防护**：所有连接器与 `mcpclient` 均通过统一 SSRF 防护拨号器校验解析后的目标 IP（拦截链路本地/云元数据 `169.254.0.0/16`、阿里云元数据/CGNAT `100.64.0.0/10` 等），并限制跨源重定向以防凭据泄漏。
 4. **SOP 代理严格只读**：`POST /runners/knowledge/mcp` 仅暴露只读工具并校验活跃的 `RunID + NodeID + Attempt`；在 AI 工作台对话中，MCP 写工具默认拦截并触发人工审批。
+
+---
+
+## 4. 旧版平台知识库向后兼容层（Deprecated / TODO）
+
+> **TODO(`knowledge-legacy-compat`)**：为避免破坏既有调用方与上游 E2E 套件，当前仓库仍以独立兼容层保留旧版平台级单知识库（lightcloud kb）与沉淀审核队列接口。所有新接入与新功能一律基于第 1～3 节的**用户级知识库连接器**实现，禁止在兼容层继续叠加新特性。
+
+- **保留的兼容路由（14 条）**：
+  - `GET/PUT /api/knowledge/settings`、`POST /api/knowledge/check`
+  - `GET /api/knowledge/sources`、`POST /api/knowledge/search`、`GET /api/knowledge/document`
+  - `GET /api/knowledge/candidates`
+  - `GET/POST /api/knowledge/submissions`、`GET/PUT/DELETE /api/knowledge/submissions/:id`、`POST /api/knowledge/submissions/:id/{publish,reject}`
+- **隔离的源码与数据表**：
+  - 源码：`internal/domain/knowledge_legacy.go`、`internal/repo/knowledge_legacy.go`、`internal/repo/run_knowledge.go`、`internal/knowledge/legacy_compat.go`、`internal/httpapi/knowledge_legacy.go`（均带 `TODO(knowledge-legacy-compat)` 标记），以及 `internal/httpapi/server.go` / `project_write_access.go` 中的兼容注册与写权限守卫。
+  - 数据表：`migrations/002_knowledge_base.sql` 中的 `knowledge_settings` 与 `knowledge_submissions`（`migrations/047_knowledge_connectors.sql` 已明确保留未删表）。
+- **下线清理 TODO 清单**：
+  - [ ] 将 `e2e/lib/api.mjs` 的 `tokenOwner()` 与 `e2e/api/64-auth-permissions.test.mjs` 的 token 探针迁移到专门的认证/连接器接口，不再借用 `POST /api/knowledge/submissions`。
+  - [ ] 确认无线上调用方与历史沉淀审核队列依赖，并将 `internal/httpapi/assistant_personal_workspace_test.go` 与 `e2e/api/{00-smoke,50-platform,90-route-sweep}.test.mjs` 中的旧路由断言迁移/退场。
+  - [ ] 移除 `web/index.html` 中遗留的 `/knowledge.js` 引入与旧 `web/knowledge.js`。
+  - [ ] 整体删除上述 `*_legacy*.go` / `run_knowledge.go` 兼容代码与对应路由注册，并按需规划历史表归档。

@@ -44,7 +44,22 @@ type KnowledgeRef struct {
 
 ---
 
-## 4. 验收测试命令
+## 4. 旧版平台知识库兼容契约与下线 TODO
+
+> **TODO(`knowledge-legacy-compat`)**：以下旧版平台级知识库与沉淀审核队列端点处于 **Deprecated（仅向后兼容维护）** 状态，禁止新增依赖，待迁移完成后按清单下线。
+
+- **兼容端点范围**：`/api/knowledge/{settings,check,sources,search,document,candidates,submissions}`（实现隔离于 `internal/{domain,repo,knowledge,httpapi}/*legacy*.go` 与 `internal/repo/run_knowledge.go`）。
+- **兼容行为边界**：
+  - 未配置旧平台知识库时，`GET /api/knowledge/sources` 与 `POST /api/knowledge/submissions/:id/publish` 返回 `503 Service Unavailable` 且错误信息包含 `知识库`；`POST /api/knowledge/check` 返回 `200`（`ok: false`）。
+  - 个人工作区运行产物严禁进入 `GET /api/knowledge/candidates`，且 `POST /api/knowledge/submissions` 提交个人工作区产物返回 `403 Forbidden`。
+  - `GET /api/knowledge/usage` 已统一由新版个人连接器用量接口承接，不再维护旧版按角色统计的兼容实现。
+- **退场 TODO**：
+  - [ ] 为 API Token 提供独立的身份探针或将上游 `e2e/lib/api.mjs` 迁移离 `POST /api/knowledge/submissions`。
+  - [ ] 确认无存量调用后移除全部 `TODO(knowledge-legacy-compat)` 标记文件、路由与 `web/knowledge.js` 死代码。
+
+---
+
+## 5. 验收测试命令
 
 ```bash
 go vet ./internal/mcpclient ./internal/knowledge ./internal/httpapi ./internal/engine ./internal/repo ./web
