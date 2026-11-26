@@ -53,8 +53,10 @@ for(const variant of [
     await page.keyboard.press('Escape');
     await expect(picker).toBeHidden();
     await expect(input).toBeFocused();
-    // Removing the reference chip also removes its text.
-    await frame.getByRole('button',{name:`移除引用 ${name}`}).click();
+    // Removing the reference chip also removes its text. The platform translates
+    // the chat UI in English, but never the reference's own name.
+    const remove=variant.lang==='en'?`Remove reference ${name}`:`移除引用 ${name}`;
+    await frame.getByRole('button',{name:remove}).click();
     await expect(frame.locator('.composer-attachments')).toHaveCount(0);
     expect(errors).toEqual([]);
   });

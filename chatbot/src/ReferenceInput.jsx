@@ -114,40 +114,56 @@ export default forwardRef(function ReferenceInput(
       />
       {showReferenceChips && references.length ? (
         <div className="composer-attachments">
-          {references.map((asset) => (
-            <span
-              key={asset.type + asset.id}
-              className={`composer-attachment-file${asset.type === "element" ? " is-element" : ""}`}
-              title={asset.type === "element" ? elementTitle(asset) : undefined}
-            >
-              {asset.type === "element" ? (
-                <HarnessIcon name="crosshair" size={13} />
-              ) : (
-                "@"
-              )}
-              <span data-i18n-skip>{asset.name || asset.id}</span>
-              {!referencesReadOnly ? (
-                <button
-                  type="button"
-                  aria-label={`移除引用 ${asset.name || asset.id}`}
-                  onClick={() => {
-                    onChange({
-                      text: textareaProps.readOnly
-                        ? text
-                        : text.replace(`@${asset.name || asset.id} `, ""),
-                      references: references.filter(
-                        (item) =>
-                          item.id !== asset.id || item.type !== asset.type,
-                      ),
-                    });
-                    onMentionChange(null);
-                  }}
-                >
-                  <HarnessIcon name="close" size={13} />
-                </button>
-              ) : null}
-            </span>
-          ))}
+          {references.map((asset) => {
+            const chipID = `${asset.type}-${asset.id}`;
+            return (
+              <span
+                key={asset.type + asset.id}
+                className={`composer-attachment-file${asset.type === "element" ? " is-element" : ""}`}
+                title={asset.type === "element" ? elementTitle(asset) : undefined}
+              >
+                {asset.type === "element" ? (
+                  <HarnessIcon name="crosshair" size={13} />
+                ) : (
+                  "@"
+                )}
+                <span data-i18n-skip>{asset.name || asset.id}</span>
+                {!referencesReadOnly ? (
+                  <button
+                    type="button"
+                    // The platform translates the chat UI but must keep the
+                    // reference's own name, so the prefix and the name stay
+                    // separate nodes instead of one translated aria-label.
+                    aria-labelledby={`remove-${chipID} name-${chipID}`}
+                    onClick={() => {
+                      onChange({
+                        text: textareaProps.readOnly
+                          ? text
+                          : text.replace(`@${asset.name || asset.id} `, ""),
+                        references: references.filter(
+                          (item) =>
+                            item.id !== asset.id || item.type !== asset.type,
+                        ),
+                      });
+                      onMentionChange(null);
+                    }}
+                  >
+                    <span id={`remove-${chipID}`} className="sr-only">
+                      移除引用
+                    </span>
+                    <span
+                      id={`name-${chipID}`}
+                      className="sr-only"
+                      data-i18n-skip
+                    >
+                      {asset.name || asset.id}
+                    </span>
+                    <HarnessIcon name="close" size={13} />
+                  </button>
+                ) : null}
+              </span>
+            );
+          })}
         </div>
       ) : null}
       <textarea
