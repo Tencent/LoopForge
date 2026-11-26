@@ -25,9 +25,9 @@ func TestResolveNodeAssetsInjectsUserConnectorCatalogAndEnforcesOwnerIsolation(t
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/api/v1/knowledge-bases":
-			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"kb-vpc","name":"VPC DNS","knowledge_count":1}]}`))
-		case strings.HasPrefix(r.URL.Path, "/api/v1/knowledge-bases/kb-vpc/knowledge"):
-			_, _ = w.Write([]byte(`{"success":true,"total":1,"data":[{"id":"doc-1","knowledge_base_id":"kb-vpc","title":"vpcdns-test","file_name":"vpcdns-test.md"}]}`))
+			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"kb-docs","name":"Docs KB","knowledge_count":1}]}`))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/knowledge-bases/kb-docs/knowledge"):
+			_, _ = w.Write([]byte(`{"success":true,"total":1,"data":[{"id":"doc-1","knowledge_base_id":"kb-docs","title":"guide-test","file_name":"guide-test.md"}]}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -55,7 +55,7 @@ func TestResolveNodeAssetsInjectsUserConnectorCatalogAndEnforcesOwnerIsolation(t
 		KnowledgeRefs: []domain.KnowledgeRef{{ConnectorID: connU1.ID, Mode: "all"}},
 	}
 
-	// 1. User 1 runs the SOP: connU1 is bound and L0 catalog probes vpcdns-test.md.
+	// 1. User 1 runs the SOP: connU1 is bound and L0 catalog probes guide-test.md.
 	runU1 := domain.Run{
 		ID:               "run-u1",
 		ExecutionContext: domain.TelemetryContext{ProjectID: "default", ResponsibleUserID: 1},
@@ -73,7 +73,7 @@ func TestResolveNodeAssetsInjectsUserConnectorCatalogAndEnforcesOwnerIsolation(t
 			break
 		}
 	}
-	for _, want := range []string{domain.SOPKnowledgeLookupInstruction, "vpcdns-test.md", "mcp__" + wantServerID + "__search_knowledge"} {
+	for _, want := range []string{domain.SOPKnowledgeLookupInstruction, "guide-test.md", "mcp__" + wantServerID + "__search_knowledge"} {
 		if !strings.Contains(ruleContent, want) {
 			t.Fatalf("expected rule content containing %q, got:\n%s", want, ruleContent)
 		}
@@ -91,7 +91,7 @@ func TestResolveNodeAssetsInjectsUserConnectorCatalogAndEnforcesOwnerIsolation(t
 	}
 
 	// 3. User 2 overrides refs at Run launch with their own connector: connU2 IS injected.
-	override := []domain.KnowledgeRef{{ConnectorID: connU2.ID, Mode: "allowlist", Sources: []string{"kb-vpc"}}}
+	override := []domain.KnowledgeRef{{ConnectorID: connU2.ID, Mode: "allowlist", Sources: []string{"kb-docs"}}}
 	runU2.ExecutionContext.KnowledgeRefs = &override
 	bundle2Override := eng.resolveNodeAssets(context.Background(), agent, runU2, "wf-1", node)
 	if len(bundle2Override.MCPServers) != 1 || bundle2Override.MCPServers[0].ID != domain.KnowledgeMCPServerID+"-"+connU2.ID {

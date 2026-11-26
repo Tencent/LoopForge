@@ -177,15 +177,15 @@ func TestWeKnoraConnectorReadOnlyScopeAndEvidence(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge-bases":
-			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"kb-1","name":"loopforge-knowledge","knowledge_count":2},{"id":"kb-2","name":"vpcdns","knowledge_count":1}]}`))
+			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"kb-1","name":"loopforge-knowledge","knowledge_count":2},{"id":"kb-2","name":"team-docs","knowledge_count":1}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/knowledge-bases/kb-2/hybrid-search":
-			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"c-1","content":"wangxm","knowledge_id":"doc-2","chunk_index":0,"knowledge_title":"我是谁","knowledge_filename":"我是谁.md","score":0.92}]}`))
+			_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"c-1","content":"demo-user","knowledge_id":"doc-2","chunk_index":0,"knowledge_title":"我是谁","knowledge_filename":"我是谁.md","score":0.92}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge/doc-1":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"id":"doc-1","knowledge_base_id":"kb-1","title":"我是谁","file_name":"我是谁.md"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge/doc-2":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"id":"doc-2","knowledge_base_id":"kb-2","title":"我是谁","file_name":"我是谁.md"}}`))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/chunks/doc-2"):
-			_, _ = w.Write([]byte(`{"success":true,"total":1,"data":[{"id":"c-1","content":"wangxm","chunk_index":0}]}`))
+			_, _ = w.Write([]byte(`{"success":true,"total":1,"data":[{"id":"c-1","content":"demo-user","chunk_index":0}]}`))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/knowledge-bases/kb-2/knowledge"):
 			_, _ = w.Write([]byte(`{"success":true,"total":1,"data":[{"id":"doc-2","knowledge_base_id":"kb-2","title":"我是谁","file_name":"我是谁.md"}]}`))
 		default:
@@ -251,10 +251,10 @@ func TestWeKnoraConnectorReadOnlyScopeAndEvidence(t *testing.T) {
 		t.Fatalf("unexpected read result: %+v", read)
 	}
 	ev := read.Evidences[0]
-	if ev.SourceName != "vpcdns" || ev.FileName != "我是谁.md" || ev.Locator != "#chunk-0" || ev.ConnectionID != conn.ID {
+	if ev.SourceName != "team-docs" || ev.FileName != "我是谁.md" || ev.Locator != "#chunk-0" || ev.ConnectionID != conn.ID {
 		t.Fatalf("unexpected evidence metadata: %+v", ev)
 	}
-	if !strings.Contains(text, "知识库「vpcdns」 / 我是谁.md (#chunk-0)") || !strings.Contains(text, "[[knowledge:"+ev.ID+"]]") {
+	if !strings.Contains(text, "知识库「team-docs」 / 我是谁.md (#chunk-0)") || !strings.Contains(text, "[[knowledge:"+ev.ID+"]]") {
 		t.Fatalf("unexpected citation suffix: %s", text)
 	}
 
