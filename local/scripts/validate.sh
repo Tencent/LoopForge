@@ -4,12 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Keep ripgrep inputs relative to ROOT_DIR so slash-containing globs match.
 echo "[1/6] Checking forbidden public content"
 if rg --hidden -n \
   -e 'Tencent/multi-agents-dev-workflow-open-source' \
   -g '!.git/**' \
   -g '!scripts/validate.sh' \
-  "$ROOT_DIR"; then
+  .; then
   echo "Legacy public repository name found; use Tencent/LoopForge." >&2
   exit 1
 fi
@@ -18,7 +19,7 @@ if rg --hidden -n -i \
   -e '(ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{20,})' \
   -g '!.git/**' \
   -g '!scripts/validate.sh' \
-  "$ROOT_DIR"; then
+  .; then
   echo "Credential-like content found." >&2
   exit 1
 fi
@@ -34,7 +35,7 @@ if rg --hidden -n -i \
   -g '!.git/**' \
   -g '!.venv/**' \
   -g '!node_modules/**' \
-  "$ROOT_DIR/tools/tcmcp"; then
+  tools/tcmcp; then
   echo "Internal or credential-like content found under tools/tcmcp." >&2
   exit 1
 fi
