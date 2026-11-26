@@ -191,3 +191,26 @@ test('rerun-from-node dialog returns the selected node and human context', async
   await app.evaluate(`reopenDeliveredIssueSilent('issue-1')`);
   assert.equal(app.router.calls.find(c => c.path.endsWith('/reopen')).method, 'POST');
 });
+
+test('issue list empty state tells search misses apart from an empty project', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const out = JSON.parse(await app.evaluate(`(() => {
+    state.data.issues=[{id:'a',projectId:'project-1',number:1,title:'Login',status:'todo',priority:'low'}];
+    state.projectFilter='project-1';state.issueView='list';
+    state.sourceFilter='';state.issueStatusFilter='';state.issueAssigneeFilter='';state.issueRunFilter='';
+    const text=()=>document.querySelector('#issueBoard').textContent;
+    state.issueQuery='zzz-no-match';renderIssues();const searched=text();
+    state.issueStatusFilter='done';renderIssues();const both=text();
+    state.issueQuery='';renderIssues();const filtered=text();
+    state.issueStatusFilter='';state.data.issues=[];renderIssues();const none=text();
+    return JSON.stringify({searched,both,filtered,none});
+  })()`));
+  assert.match(out.searched, /未找到与当前关键词匹配的需求/);
+  assert.match(out.searched, /清除搜索/);
+  assert.doesNotMatch(out.searched, /GitHub 同步/);
+  assert.match(out.both, /调整筛选条件/);
+  assert.match(out.filtered, /没有符合当前筛选条件的需求/);
+  assert.doesNotMatch(out.filtered, /GitHub 同步/);
+  assert.match(out.none, /从 GitHub 同步/);
+});
