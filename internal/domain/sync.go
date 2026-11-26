@@ -26,7 +26,7 @@ type SyncConfig struct {
 const DefaultIntegrateBranch = "agentflow/integration"
 
 // NormalizeIntegrateBranch trims the configured integrate branch. Empty means
-// the repository does not use an integration baseline: scheduled SOPs skip
+// the repository does not use an integration baseline: scheduled LOOPs skip
 // default→integrate align and post-run merge into a shared branch.
 func NormalizeIntegrateBranch(name string) string {
 	return strings.TrimSpace(name)
@@ -79,7 +79,7 @@ type ScheduleJob struct {
 	// IssueStatuses limits trigger jobs to these local issue statuses.
 	// Empty means backlog + todo. AI jobs leave this unused.
 	IssueStatuses []string `json:"issueStatuses,omitempty"`
-	// MaxDispatch caps successful SOP dispatches per execution. Zero defaults to 10.
+	// MaxDispatch caps successful LOOP dispatches per execution. Zero defaults to 10.
 	MaxDispatch     int    `json:"maxDispatch,omitempty"`
 	IntervalSec     int    `json:"intervalSec"`
 	Cron            string `json:"cron,omitempty"`
@@ -89,7 +89,7 @@ type ScheduleJob struct {
 	// reflected on the next run.
 	References     []AssistantReference `json:"references,omitempty"`
 	AssistantModel string               `json:"assistantModel,omitempty"`
-	// TimeoutMinutes bounds one AI execution, including tool calls and SOP waits.
+	// TimeoutMinutes bounds one AI execution, including tool calls and LOOP waits.
 	// Zero uses the default for jobs saved before this field existed.
 	TimeoutMinutes int `json:"timeoutMinutes,omitempty"`
 	// SessionMode picks the Studio conversation an AI job runs in: empty opens
@@ -125,7 +125,7 @@ type ScheduleJob struct {
 	UpdatedAt     time.Time            `json:"updatedAt"`
 }
 
-// ResolveWorkflow picks the SOP for a scheduled dispatch: the issue's bound
+// ResolveWorkflow picks the LOOP for a scheduled dispatch: the issue's bound
 // workflow when UseIssueWorkflow is set and present, otherwise the job default.
 func (j ScheduleJob) ResolveWorkflow(issue Issue) string {
 	if j.UseIssueWorkflow {
@@ -136,7 +136,7 @@ func (j ScheduleJob) ResolveWorkflow(issue Issue) string {
 	return strings.TrimSpace(j.WorkflowID)
 }
 
-// DispatchesSOP is true for trigger jobs that scan issues and start SOP runs.
+// DispatchesSOP is true for trigger jobs that scan issues and start LOOP runs.
 // AI scheduled jobs set SkipDispatch and never dispatch.
 func (j ScheduleJob) DispatchesSOP() bool {
 	return !j.SkipDispatch && strings.TrimSpace(j.WorkflowID) != ""

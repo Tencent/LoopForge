@@ -1895,7 +1895,7 @@ func applyExistingIssue(dst *domain.Issue, existing domain.Issue) {
 	}
 	if len(existing.RepositoryIDs) > 0 {
 		// Remote trackers are single-repository; keep the local multi-repo
-		// binding intact so scheduled SOPs keep touching every repository.
+		// binding intact so scheduled LOOPs keep touching every repository.
 		dst.RepositoryIDs = append([]string(nil), existing.RepositoryIDs...)
 		if dst.RepositoryID == "" {
 			dst.RepositoryID = existing.RepositoryIDs[0]

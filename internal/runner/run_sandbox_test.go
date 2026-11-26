@@ -88,7 +88,7 @@ func TestSharedRunTasksReuseOneSandboxUntilCleanup(t *testing.T) {
 	}
 }
 
-// 子 SOP 在父流程的检出目录里跑，但沙箱是自己的，按子流程回收。
+// 子 LOOP 在父流程的检出目录里跑，但沙箱是自己的，按子流程回收。
 func TestChildRunSandboxInParentCheckout(t *testing.T) {
 	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}}
 	spec := &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "p", Driver: "local"}}

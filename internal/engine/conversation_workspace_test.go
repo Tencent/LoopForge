@@ -93,7 +93,7 @@ func TestConversationWorkspaceReclaimsOriginalAndRestoresThenExpiresAfterOneHour
 	e.reconcileTerminalWorkspaceCleanup()
 	r, _ := e.repo.RunState(id)
 	if r.WorkspaceCleanedAt.IsZero() {
-		t.Fatal("original successful SOP not reclaimed")
+		t.Fatal("original successful LOOP not reclaimed")
 	}
 	if _, err := os.Stat(e.RunWorkspace(id)); !os.IsNotExist(err) {
 		t.Fatal("workspace not removed")
@@ -119,7 +119,7 @@ func TestConversationWorkspaceReclaimsOriginalAndRestoresThenExpiresAfterOneHour
 	meta, _ := e.repo.WorkspaceCheckpoint(id)
 	r, _ = e.repo.RunState(id)
 	if r.Status != "succeeded" {
-		t.Fatal("restore changed SOP outcome")
+		t.Fatal("restore changed LOOP outcome")
 	}
 	e.cleanupWorkspace(r, meta.LastUsedAt.Add(59*time.Minute))
 	r, _ = e.repo.RunState(id)
@@ -376,7 +376,7 @@ func TestReleasedConversationWorkspaceSkipsIdleHourUntilUsedAgain(t *testing.T) 
 	}
 }
 
-// Merge compatibility: child SOPs now use their parent's checkout. Only the
+// Merge compatibility: child LOOPs now use their parent's checkout. Only the
 // owning run may checkpoint/restore it; child completion must leave it intact.
 func TestChildWorkspaceCheckpointBelongsToParent(t *testing.T) {
 	t.Parallel()

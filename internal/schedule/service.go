@@ -68,7 +68,7 @@ type Service struct {
 	startedAt      time.Time
 	running        map[string]bool
 	lastFinishedAt map[string]time.Time
-	// dispatchMu serializes issue scanning and SOP dispatch across jobs so two
+	// dispatchMu serializes issue scanning and LOOP dispatch across jobs so two
 	// trigger jobs cannot both claim the same issue; AI prompts run outside it.
 	dispatchMu sync.Mutex
 }

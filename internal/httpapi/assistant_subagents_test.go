@@ -471,7 +471,7 @@ func TestStreamFilterKeepsCompletedAgentCall(t *testing.T) {
 }
 
 // A subagent never sees Main Bot's system prompt, so its own file says where
-// the code is and that the task outranks the role's SOP-node conventions.
+// the code is and that the task outranks the role's LOOP-node conventions.
 func TestRoleAgentFileExplainsChatWork(t *testing.T) {
 	file := roleAgentFile(roleSubagent{Role: domain.AgentDefinition{ID: "fe", Name: "前端", Prompt: "产出 brief.md 到 {{output}}"}})
 	for _, want := range []string{"以 Main Bot 交给你的任务为准", "当前是平台模式", "先打开工作区并交接模式", "产出 brief.md 到 （运行时提供）"} {
@@ -567,7 +567,7 @@ func TestWorkspaceStaysWhileADispatchRuns(t *testing.T) {
 	}
 }
 
-// A finished role dispatch is collected like an SOP node: the files its
+// A finished role dispatch is collected like a LOOP node: the files its
 // artifactOutputs name are attached to the reply, past the per-turn cap, and
 // a required one that is missing becomes a failed step under the dispatch.
 func TestRoleDeliverablesAreCollectedWhenTheDispatchEnds(t *testing.T) {

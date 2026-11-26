@@ -1,5 +1,5 @@
 // Studio catalog lifecycles: rules, skills (+files), MCP servers (+files),
-// Sandboxes (a Dockerfile for docker, environment variables for native), agents (+revisions/clone) and SOPs
+// Sandboxes (a Dockerfile for docker, environment variables for native), agents (+revisions/clone) and LOOPs
 // (+publish/revisions/clone/template adoption). Every object lives in the
 // dedicated e2e project and is deleted afterwards.
 import { test, before, after } from 'node:test';
@@ -150,11 +150,11 @@ test('referenced rule cannot be deleted while an agent uses it', async () => {
   await api('DELETE', `/api/rules?id=${ids.rule}`, undefined, { expect: 409 });
 });
 
-test('SOP CRUD, validation, publish, revisions, restore and clone', async () => {
+test('LOOP CRUD, validation, publish, revisions, restore and clone', async () => {
   const id = ids.workflow = uid('sop');
   track(`workflow ${id}`, () => del(`/api/workflows/${id}`));
   const def = {
-    id, name: 'E2E SOP（目录用例）', projectId: P, description: 'e2e', status: 'draft', revision: 0,
+    id, name: 'E2E LOOP（目录用例）', projectId: P, description: 'e2e', status: 'draft', revision: 0,
     sandboxProfileId: cfg.sandbox,
     nodes: [
       { id: 'a', name: '脚本', type: 'script', scriptLanguage: 'shell', script: 'echo a', maxAttempts: 1, maxReworks: 0, position: { x: 0, y: 0 } },
@@ -168,7 +168,7 @@ test('SOP CRUD, validation, publish, revisions, restore and clone', async () => 
   await api('PUT', '/api/workflows', { ...def, id: uid('sop-bad'), sandboxProfileId: '' }, { expect: 400 });
   await api('PUT', '/api/workflows', { ...def, id: uid('sop-bad'), sandboxProfileId: 'e2e-no-such-sandbox' }, { expect: 400 });
   await api('PUT', '/api/workflows', { ...def, id: uid('sop-bad'), nodes: [{ ...def.nodes[0], metricStage: 'bogus' }], edges: [] }, { expect: 400 });
-  // Saving on a revision that does not exist yet must not resurrect a deleted SOP.
+  // Saving on a revision that does not exist yet must not resurrect a deleted LOOP.
   await api('PUT', '/api/workflows', { ...def, id: uid('sop-ghost'), revision: 3 }, { expect: 409 });
 
   const edited = await put('/api/workflows', { ...saved, description: 'edited' });
@@ -187,7 +187,7 @@ test('SOP CRUD, validation, publish, revisions, restore and clone', async () => 
 
   const cloneId = uid('sop-clone');
   track(`workflow ${cloneId}`, () => del(`/api/workflows/${cloneId}`));
-  const clone = await post(`/api/workflows/${id}/clone`, { id: cloneId, name: 'E2E SOP 副本', projectId: P });
+  const clone = await post(`/api/workflows/${id}/clone`, { id: cloneId, name: 'E2E LOOP 副本', projectId: P });
   assert.equal(clone.id ?? cloneId, cloneId);
   // Cloning onto a built-in template's id must conflict. A fresh database
   // (local.sh) has no templates, and the clone would then create that id.
@@ -198,7 +198,7 @@ test('SOP CRUD, validation, publish, revisions, restore and clone', async () => 
 
 test('generic templates are read-only and can be adopted into a project', async t => {
   const templates = list(await get('/api/workflows')).filter(w => w.generic);
-  if (!templates.length) return t.skip('no generic SOP templates (fresh database)');
+  if (!templates.length) return t.skip('no generic LOOP templates (fresh database)');
   const template = templates.find(t => t.id === 'generic-frontend-delivery') || templates[0];
   await api('DELETE', `/api/workflows/${template.id}`, undefined, { expect: 409 });
   const roles = await get(`/api/workflows/${template.id}/agents`);
@@ -224,7 +224,7 @@ test('generic templates are read-only and can be adopted into a project', async 
   assert.ok(list(await get(`/api/workflows/${template.id}/agents`)).length > 0, 'template lost its roles');
 });
 
-test('SOP with active references cannot be deleted; deleting a missing SOP is 404', async () => {
+test('LOOP with active references cannot be deleted; deleting a missing LOOP is 404', async () => {
   await api('DELETE', '/api/workflows/e2e-auto-does-not-exist', undefined, { expect: 404 });
 });
 

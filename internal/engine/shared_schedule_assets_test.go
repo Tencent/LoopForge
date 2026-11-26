@@ -42,7 +42,7 @@ func TestSharedScheduleUsesNormalProjectAssetResolution(t *testing.T) {
 	check(st.PutRule(domain.RuleDefinition{ID: "target-policy", Name: "Target policy", ProjectID: "target", Content: "target policy", Global: true, WorkflowIDs: []string{"sop"}}))
 	e.appendWorkflowGlobalRules(&bundle, "target", "sop")
 	if len(bundle.Rules) != 2 || bundle.Rules[1].ID != "target-policy" {
-		t.Fatalf("missing target SOP policy: %+v", bundle.Rules)
+		t.Fatalf("missing target LOOP policy: %+v", bundle.Rules)
 	}
 }
 
@@ -186,8 +186,8 @@ func TestSharedScheduleRejectsPrivateNestedSOP(t *testing.T) {
 	parent, err := e.StartWithRepositoriesContext("shared-parent-for-private-child", "inspect", nil, exec)
 	check(err)
 	exec.ParentRunID, exec.ParentNodeID = parent.ID, "child"
-	if _, err := e.StartWithRepositoriesContext("private-child", "inspect", nil, exec); err == nil || !strings.Contains(err.Error(), "SOP") {
-		t.Fatalf("private nested SOP was admitted: %v", err)
+	if _, err := e.StartWithRepositoriesContext("private-child", "inspect", nil, exec); err == nil || !strings.Contains(err.Error(), "LOOP") {
+		t.Fatalf("private nested LOOP was admitted: %v", err)
 	}
 	if runs := st.Runs(); len(runs) != 1 {
 		t.Fatalf("rejected child created a run: %d runs", len(runs))

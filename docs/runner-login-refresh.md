@@ -1,6 +1,6 @@
 # Runner 本机登录与自动续期
 
-对话工作区与 SOP 的 native、Docker 沙箱共用同一套登录准备逻辑。
+对话工作区与 LOOP 的 native、Docker 沙箱共用同一套登录准备逻辑。
 API Key 模式沿用个人设置，不经过本机 OAuth 刷新管理器。
 
 ## Codex / Claude Code
@@ -15,10 +15,10 @@ cleanup 都不会把这些文件写回宿主机。
   同一旧句柄的重试复用原响应，不会再次刷新上游。
 - **Claude Code**：通过 stream-json 的 `oauth_token_refresh` 控制通道回调 Runner，
   stdin 返回 access token。任务 credential 文件不含 refresh token；临近过期的宿主凭证在启动前续期。
-  单次 SOP 收到最终结果后关闭输入；对话保留原有可继续发送消息的输入通道。
+  单次 LOOP 收到最终结果后关闭输入；对话保留原有可继续发送消息的输入通道。
 
-普通 Docker SOP 使用 `AGENTFLOW_DOCKER_NETWORK` 指定的网络。对话工作区和包含 Codex 账号登录节点的
-Docker SOP 使用中继网络配置连接执行机器上的回调。SOP 的准备脚本、终端和执行节点共享同一个容器。
+普通 Docker LOOP 使用 `AGENTFLOW_DOCKER_NETWORK` 指定的网络。对话工作区和包含 Codex 账号登录节点的
+Docker LOOP 使用中继网络配置连接执行机器上的回调。LOOP 的准备脚本、终端和执行节点共享同一个容器。
 
 Claude Code 的回调在 **2.1.326** 的官方客户端中实测可用，但属于受入口限制的内部协议，
 并不是公开稳定的 SDK 类型契约。当前绑定 `local-agent` 入口，内置安装版本为 2.1.326。
@@ -27,7 +27,7 @@ Claude Code 的回调在 **2.1.326** 的官方客户端中实测可用，但属�
 
 ## 并发、持久化与账户切换
 
-同一凭证来源使用进程内锁与跨进程文件锁。两个 SOP 同时刷新时，第一个完成上游交换，
+同一凭证来源使用进程内锁与跨进程文件锁。两个 LOOP 同时刷新时，第一个完成上游交换，
 后续请求复用宿主已经更新的凭证。已接入同一管理器的宿主进程也遵守这把锁。
 
 刷新前记录交换状态，收到响应后先将完整新凭证保存到私有 journal，再原子替换宿主文件并同步磁盘。
@@ -73,7 +73,7 @@ LOOPFORGE_PROBE_CODEX_BIN=/absolute/path/to/codex \
 LOOPFORGE_PROBE_CLAUDE_BIN=/absolute/path/to/claude \
 go test ./internal/runtime -run 'TestManagedLoginOfficial' -race -count=1
 
-# 实际 native + Docker，对话和 SOP；使用 Python CLI 夹具与虚构 token
+# 实际 native + Docker，对话和 LOOP；使用 Python CLI 夹具与虚构 token
 # 需要预先提供 python:3.13-alpine，macOS 的工作区放在 Docker 已共享的用户缓存目录
 LOOPFORGE_PROBE_AUTH_SANDBOXES=1 \
 go test ./internal/runtime -run TestManagedLoginRuntimePaths -race -count=1

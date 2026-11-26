@@ -38,7 +38,7 @@ type PushCard struct {
 	Rows         [][2]string
 	Actions      []PushCardAction
 	DetailsURL   string
-	// Selects are optional drop-downs (the repository and the SOP of a
+	// Selects are optional drop-downs (the repository and the LOOP of a
 	// new requirement).
 	Selects []*PushCardSelect
 	// Status, when set, marks the card as handled: it is shown instead of
@@ -92,7 +92,7 @@ const (
 	DraftActionConfirm      = "draft_confirm"
 	DraftActionConfirmStart = "draft_confirm_start"
 	DraftActionCancel       = "draft_cancel"
-	// DraftActionSOP picks the SOP of the draft's new requirement.
+	// DraftActionSOP picks the LOOP of the draft's new requirement.
 	DraftActionSOP = "draft_sop"
 	// DraftActionRepo picks the repository of the draft's new requirement.
 	DraftActionRepo = "draft_repo"
@@ -126,7 +126,7 @@ func (s *Service) PushCardFor(item domain.NotificationDelivery, content, details
 		title = run.WorkflowSnapshot.Name
 	}
 	card := &PushCard{DeliveryID: item.ID, Title: cardText(title, 60), Tag: map[string]string{"waiting": "待人工确认", "failed": "执行失败"}[item.EventType], Reason: cardText(reason, 300), Required: cardText(required, 120), DetailsURL: detailsURL}
-	card.Rows = [][2]string{{"需求", cardText(issue, 60)}, {"节点", cardText(item.SourceName, 60)}, {"SOP", cardText(run.WorkflowSnapshot.Name, 60)}}
+	card.Rows = [][2]string{{"需求", cardText(issue, 60)}, {"节点", cardText(item.SourceName, 60)}, {"LOOP", cardText(run.WorkflowSnapshot.Name, 60)}}
 	if question := run.Nodes[item.NodeID].Question(); question != "" && item.EventType == "waiting" {
 		card.Tag, card.Required, card.RequiredLabel = "需要补充信息", cardText(question, 300), "问题"
 		if bot, err := s.Store.NotificationBot(item.BotID); err == nil {
@@ -435,11 +435,11 @@ func (s *Service) draftCardByID(draft domain.BotPendingDraft) *PushCard {
 	return draftCard(draft, reply, s.publicURL())
 }
 
-// draftChoiceSuffix is the repository and SOP note of a new requirement in
+// draftChoiceSuffix is the repository and LOOP note of a new requirement in
 // the summary; on the card they are chosen in the drop-downs instead.
-var draftChoiceSuffix = regexp.MustCompile(`(（仓库：[^）]*）)?（SOP：[^）]*）$`)
+var draftChoiceSuffix = regexp.MustCompile(`(（仓库：[^）]*）)?（(?:LOOP|SOP)：[^）]*）$`)
 
-// draftCard is the model's explanation, the frozen operations, an SOP
+// draftCard is the model's explanation, the frozen operations, a LOOP
 // selection when the draft creates one requirement, confirm /
 // confirm-and-start / cancel buttons and a link to the confirmation page.
 func draftCard(draft domain.BotPendingDraft, reply, publicURL string) *PushCard {
@@ -454,7 +454,7 @@ func draftCard(draft domain.BotPendingDraft, reply, publicURL string) *PushCard 
 			continue
 		}
 		if draft.SOP != nil && i == draft.SOP.Index {
-			// The SOP is chosen in the selection below.
+			// The LOOP is chosen in the selection below.
 			op = draftChoiceSuffix.ReplaceAllString(op, "")
 		}
 		card.Rows = append(card.Rows, [2]string{"操作", op})
@@ -472,8 +472,8 @@ func draftCard(draft domain.BotPendingDraft, reply, publicURL string) *PushCard 
 			}
 			card.Selects = append(card.Selects, repo)
 		}
-		sel := &PushCardSelect{Key: DraftActionSOP, Label: "SOP", Initial: draft.Selected(), Placeholder: "选择 SOP"}
-		sel.Options = append(sel.Options, PushCardOption{Value: domain.BotDraftDefaultSOP, Text: "项目默认 SOP（" + draft.SOP.DefaultName + "）"})
+		sel := &PushCardSelect{Key: DraftActionSOP, Label: "LOOP", Initial: draft.Selected(), Placeholder: "选择 LOOP"}
+		sel.Options = append(sel.Options, PushCardOption{Value: domain.BotDraftDefaultSOP, Text: "项目默认 LOOP（" + draft.SOP.DefaultName + "）"})
 		for _, wf := range draft.SOP.Workflows {
 			sel.Options = append(sel.Options, PushCardOption{Value: wf.ID, Text: wf.Name})
 		}
@@ -481,8 +481,8 @@ func draftCard(draft domain.BotPendingDraft, reply, publicURL string) *PushCard 
 	}
 	card.Required = fmt.Sprintf("%d 分钟内有效，只有发起人可以确认；每份操作只执行一次", int(repo.BotDraftTTL.Minutes()))
 	card.Actions = []PushCardAction{{Key: DraftActionConfirm, Text: "确认执行"}}
-	if strings.Contains(draft.Summary, "（SOP：") {
-		card.Actions = append(card.Actions, PushCardAction{Key: DraftActionConfirmStart, Text: "确认并启动 SOP"})
+	if strings.Contains(draft.Summary, "（LOOP：") || strings.Contains(draft.Summary, "（SOP：") {
+		card.Actions = append(card.Actions, PushCardAction{Key: DraftActionConfirmStart, Text: "确认并启动 LOOP"})
 	}
 	card.Actions = append(card.Actions, PushCardAction{Key: DraftActionCancel, Text: "取消", Danger: true})
 	if base := strings.TrimRight(publicURL, "/"); base != "" {

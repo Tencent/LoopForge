@@ -46,7 +46,7 @@ func (m *Manager) Create(ctx context.Context, runID, nodeID string, profile doma
 	return m.open(ctx, id, id, profile, true, true, SandboxRequirements{}, RunCredentials{}, SandboxResources{})
 }
 
-// AcquirePersistent reuses a run/issue workspace across SOP nodes. An existing
+// AcquirePersistent reuses a run/issue workspace across LOOP nodes. An existing
 // git checkout is kept so later nodes continue the same branch.
 func (m *Manager) AcquirePersistent(ctx context.Context, persistID string, profile domain.SandboxProfile) (Sandbox, error) {
 	id := "persist-" + safeID(persistID)
@@ -61,7 +61,7 @@ func (m *Manager) AcquireRun(ctx context.Context, runID string, profile domain.S
 }
 
 // AcquireRunIn opens the sandbox of runID on the workspace of workspaceRunID.
-// A child SOP keeps its own sandbox (lock, container, environment install)
+// A child LOOP keeps its own sandbox (lock, container, environment install)
 // but works in the checkout of the run that owns the workspace.
 func (m *Manager) AcquireRunIn(ctx context.Context, runID, workspaceRunID string, profile domain.SandboxProfile, requirements SandboxRequirements, credentials RunCredentials, resources SandboxResources) (Sandbox, error) {
 	if strings.TrimSpace(workspaceRunID) == "" {
@@ -98,7 +98,7 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	return &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}, nil
 }
 
-// DestroyRun deletes the host workspace for a finished SOP run: the persistent
+// DestroyRun deletes the host workspace for a finished LOOP run: the persistent
 // git checkout and any per-node directories. Artifacts must already be in the
 // store before calling this.
 func (m *Manager) DestroyRun(runID string) error {
@@ -151,7 +151,7 @@ func (m *Manager) RunsWithIdleDockerSandbox(ctx context.Context, runIDs []string
 		if id == "" {
 			continue
 		}
-		// A child SOP's container is named after the child but binds the
+		// A child LOOP's container is named after the child but binds the
 		// workspace of the run owning the checkout; its lock is the child's.
 		if _, ok := found[dockerContainerName(id)]; ok {
 			if !m.workspaceInUse(id) {

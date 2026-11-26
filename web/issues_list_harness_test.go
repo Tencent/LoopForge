@@ -46,7 +46,7 @@ func TestIssueHeadingMenuKeepsLegacyControls(t *testing.T) {
 	}
 
 	if strings.Contains(menu, `id="newScheduleJob"`) {
-		t.Fatal("SOP trigger configuration lives in 定时任务 › SOP 触发, not the issue list menu")
+		t.Fatal("LOOP trigger configuration lives in 定时任务 › LOOP 触发, not the issue list menu")
 	}
 	if got := strings.Count(page, `id="importTAPDIssue"`); got != 1 {
 		t.Fatalf("the TAPD import must exist once, as the hidden legacy menu item; got %d", got)

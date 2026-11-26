@@ -44,7 +44,7 @@ await sweep('run', runs, async run => {
   await api('DELETE', `/api/runs/${run.id}`, undefined, { expect: [200, 204, 400, 404, 409] });
 });
 
-// Open issues keep their SOP binding and block the workflow delete.
+// Open issues keep their LOOP binding and block the workflow delete.
 const openIssues = list(await get(`/api/issues?projectId=${encodeURIComponent(cfg.projectId)}&limit=500`))
   .filter(issue => issue.status !== 'closed' && ours(issue));
 await sweep('issue (close)', openIssues, issue => post(`/api/issues/${issue.id}/close`, {}, { expect: [200, 404, 409] }));

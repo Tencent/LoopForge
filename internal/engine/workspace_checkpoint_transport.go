@@ -315,7 +315,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 }
 
 // ownsWorkspaceCheckpointLease verifies an explicit workspace checkpoint lease
-// for operations on a waiting SOP whose checkout is still hot.
+// for operations on a waiting LOOP whose checkout is still hot.
 func (e *Engine) ownsWorkspaceCheckpointLease(run domain.Run, request domain.RunnerWorkspaceRequest) bool {
 	if request.CheckpointLease == "" {
 		return false

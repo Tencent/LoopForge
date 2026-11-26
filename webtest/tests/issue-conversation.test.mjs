@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp } from '../lib/load-app.mjs';
 
-// A requirement worked on only in a conversation workspace has no SOP nodes:
+// A requirement worked on only in a conversation workspace has no LOOP nodes:
 // its stage follows the MR it handed in, and 查看 opens the requirement
 // instead of the empty run page.
 test('conversation requirements follow their MR and open the requirement drawer', async (t) => {
@@ -63,7 +63,7 @@ test('conversation requirements follow their MR and open the requirement drawer'
   // A deleted conversation ends its workspace: that is not a failure.
   assert.equal(out.ended.stage, 'MR 待合入');
   assert.equal(out.ended.failed, false);
-  // Once dispatched to an SOP the requirement follows its SOP run.
+  // Once dispatched to a LOOP the requirement follows its LOOP run.
   assert.equal(out.withSOP, false);
   // The source conversation still marks it after the workspace record is gone.
   assert.equal(out.gone.stage, 'MR 待合入');
@@ -128,11 +128,11 @@ test('conversation requirement drawer shows MR, branches and the conversation', 
     'https://git.example.com/g/api/-/compare/main...feature/chat%202',
   ]);
   assert.match(out.push, /已直推 · 待验收/);
-  // The SOP-only tabs explain where a conversation requirement keeps that information.
-  assert.match(out.artifacts, /不产出 SOP 节点产物/);
+  // The LOOP-only tabs explain where a conversation requirement keeps that information.
+  assert.match(out.artifacts, /不产出 LOOP 节点产物/);
   assert.match(out.acceptance, /在 MR 里评审，合入默认分支后需求自动完成/);
   assert.doesNotMatch(out.acceptance, /尚未执行/);
-  assert.match(out.activity, /对话需求没有 SOP 任务/);
+  assert.match(out.activity, /对话需求没有 LOOP 任务/);
   const url = new URL(out.link);
   assert.equal(url.searchParams.get('chatSession'), 'chat-1');
   assert.equal(url.hash, '#/collaboration');
@@ -141,7 +141,7 @@ test('conversation requirement drawer shows MR, branches and the conversation', 
   assert.ok(out.overviewChat);
   assert.match(out.overview, /对话工作区/);
   assert.equal(out.deliveryRunLinks, 0);
-  assert.match(out.delivery, /没有 SOP 运行/);
+  assert.match(out.delivery, /没有 LOOP 运行/);
   assert.match(out.deleted, /对话已删除/);
   assert.equal(out.deletedLink, false);
   // Without the snapshot the branches come from the run list.
@@ -184,16 +184,16 @@ test('conversation repo cards link GitHub branches, PRs and diffs', async (t) =>
   assert.equal(out.unsubmitted, '已直推');
 });
 
-// A requirement created without an SOP has never run: the drawer and list must
-// not say it "runs by SOP" or was started directly, and a requirement with an
-// SOP that never ran is not reported as a direct run either.
+// A requirement created without a LOOP has never run: the drawer and list must
+// not say it "runs by LOOP" or was started directly, and a requirement with a
+// LOOP that never ran is not reported as a direct run either.
 test('requirements that never ran describe how they will be handled', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const out = JSON.parse(app.evaluate(`
     const pid=state.projectFilter||state.data.projects[0].id;
-    const none={id:'iss-none',projectId:pid,number:61,kind:'requirement',source:'local',status:'backlog',title:'不走 SOP',sopMode:'none'};
-    const bound={...none,id:'iss-sop',number:62,title:'走 SOP',sopMode:'',workflowId:state.data.workflows[0].id};
+    const none={id:'iss-none',projectId:pid,number:61,kind:'requirement',source:'local',status:'backlog',title:'不走 LOOP',sopMode:'none'};
+    const bound={...none,id:'iss-sop',number:62,title:'走 LOOP',sopMode:'',workflowId:state.data.workflows[0].id};
     state.data.issues=[none,bound];state.data.tasks=[];state.data.runs=[];
     const html=(s)=>{const d=document.createElement('div');d.innerHTML=s;return d};
     const fact=(el,label)=>[...el.querySelectorAll('.detail-grid > *')].find(x=>x.textContent.includes(label))?.textContent||'';
@@ -209,13 +209,13 @@ test('requirements that never ran describe how they will be handled', async (t) 
       ranTrigger:fact(ranView,'触发方式')
     });
   `));
-  assert.doesNotMatch(out.noneOutcome.body, /按 SOP 执行/);
-  assert.match(out.noneOutcome.body, /不使用 SOP/);
-  assert.doesNotMatch(out.noneActor.sub, /SOP 节点/);
-  assert.doesNotMatch(out.noneBanner, /按 SOP 执行/);
+  assert.doesNotMatch(out.noneOutcome.body, /按 LOOP 执行/);
+  assert.match(out.noneOutcome.body, /不使用 LOOP/);
+  assert.doesNotMatch(out.noneActor.sub, /LOOP 节点/);
+  assert.doesNotMatch(out.noneBanner, /按 LOOP 执行/);
   assert.doesNotMatch(out.noneTrigger, /直接运行/);
   assert.match(out.noneTrigger, /对话处理/);
-  assert.match(out.boundOutcome.body, /按 SOP 执行/);
+  assert.match(out.boundOutcome.body, /按 LOOP 执行/);
   assert.match(out.boundTrigger, /尚未触发/);
   assert.match(out.ranTrigger, /手动触发/);
 });

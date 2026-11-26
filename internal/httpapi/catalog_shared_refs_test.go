@@ -57,7 +57,7 @@ func TestSharedScheduleDirectReferenceUnshareAndRestoreGuards(t *testing.T) {
 	check(f.s.PutAgent(agent))
 	agent.Shared = true
 	check(f.s.PutAgent(agent))
-	workflow := domain.WorkflowDefinition{ID: "direct-sop", Name: "SOP", ProjectID: "direct-refs", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
+	workflow := domain.WorkflowDefinition{ID: "direct-sop", Name: "LOOP", ProjectID: "direct-refs", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
 	check(f.s.PutWorkflow(workflow))
 	workflow, _ = f.s.Workflow(workflow.ID)
 	workflow.Shared = true

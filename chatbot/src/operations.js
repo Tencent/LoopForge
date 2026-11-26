@@ -92,19 +92,19 @@ export function operationSummary(
   const existingProject =
     draft.tool === "projects_save" && projects.some((p) => p.id === target);
   // Mirrors saveProject: a new project without a workflowId is bound to the
-  // generic backend SOP, so the card says so instead of showing nothing.
-  // A requirement that opts out of SOP drops its workflowId on save.
+  // generic backend LOOP, so the card says so instead of showing nothing.
+  // A requirement that opts out of LOOP drops its workflowId on save.
   const withoutSOP =
     draft.tool === "issues_save" &&
     String(body.sopMode ?? "")
       .trim()
       .toLowerCase() === "none";
   const sop = withoutSOP
-    ? "不使用 SOP"
+    ? "不使用 LOOP"
     : body.workflowId
       ? named("sop", body.workflowId)
       : draft.tool === "projects_save" && !existingProject
-        ? `${references.find((r) => r.type === "sop" && r.id === DEFAULT_PROJECT_WORKFLOW)?.name || "通用后端交付 SOP"}（默认）`
+        ? `${references.find((r) => r.type === "sop" && r.id === DEFAULT_PROJECT_WORKFLOW)?.name || "通用后端交付 LOOP"}（默认）`
         : "";
   const fields = [
     [
@@ -120,7 +120,7 @@ export function operationSummary(
         .map((id) => named("repository", id))
         .join("、"),
     ],
-    ["SOP", sop],
+    ["LOOP", sop],
     ["节点", body.nodeId],
     ["说明", body.description || body.reason],
   ].filter(
@@ -130,10 +130,10 @@ export function operationSummary(
     {
       issues_import_tapd:
         "从 TAPD 导入需求并关联所选仓库，导入后继续当前对话。",
-      issues_dispatch: "为这条需求派发 SOP，创建新的运行。",
-      runs_start: "启动一次新的 SOP 运行。",
+      issues_dispatch: "为这条需求派发 LOOP，创建新的运行。",
+      runs_start: "启动一次新的 LOOP 运行。",
       runs_approve: "批准此节点，流程将继续执行后续节点。",
-      runs_reject: "退回此节点，流程将按 SOP 的退回路径继续。",
+      runs_reject: "退回此节点，流程将按 LOOP 的退回路径继续。",
       issues_clarification_save: "保存澄清结果，并回写需求的外部来源。",
       projects_save: existingProject
         ? "修改这个项目的设置。"

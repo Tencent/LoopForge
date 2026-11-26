@@ -11,7 +11,7 @@ import (
 func BuildPrompt(policy domain.RunEvalPolicy, facts domain.RunEvalFacts) (system, user string) {
 	policy = domain.EffectiveRunEvalPolicy(policy)
 	var b strings.Builder
-	b.WriteString("你是 AgentFlow 的 SOP Run 评测员。根据提供的结构化 facts 和压缩 trace digest，按平台规则给这次 run 打分，并给出可落地的改进建议。\n")
+	b.WriteString("你是 AgentFlow 的 LOOP Run 评测员。根据提供的结构化 facts 和压缩 trace digest，按平台规则给这次 run 打分，并给出可落地的改进建议。\n")
 	b.WriteString("只输出一个 JSON 对象，不要 Markdown。字段：\n")
 	b.WriteString(`{"dimensions":{`)
 	for i, dim := range policy.Dimensions {
@@ -30,13 +30,13 @@ func BuildPrompt(policy domain.RunEvalPolicy, facts domain.RunEvalFacts) (system
 	b.WriteString("- 调整节点策略：target=workflow、action=update_node、nodeId、set，set 中只放要更新的 maxAttempts/maxReworks/onFailure/retryStrategy。\n")
 	b.WriteString("- 追加角色任务说明：target=agent、action=append_task_prompt、text，text 填写实际要追加的完整正文。\n")
 	b.WriteString("- 修改角色门禁：target=agent、action=upsert_gate、gate，gate 包含 id/name/mode/required 及适用的 stage/commands/executionScope/onFailure。移除门禁用 action=remove_gate 并给出 gate.id。\n")
-	b.WriteString("- 不要整份重写 SOP 或角色，不要改边或删节点。\n")
+	b.WriteString("- 不要整份重写 LOOP 或角色，不要改边或删节点。\n")
 	b.WriteString("评分维度：\n")
 	for _, dim := range policy.Dimensions {
 		b.WriteString(fmt.Sprintf("- %s（%s，权重 %d）：%s\n", dim.ID, dim.Name, dim.Weight, dim.Question))
 	}
 	raw, _ := json.Marshal(facts)
-	return b.String(), "评测这次 SOP run。facts=" + string(raw)
+	return b.String(), "评测这次 LOOP run。facts=" + string(raw)
 }
 
 func ParseModelResult(raw string, policy domain.RunEvalPolicy) (domain.RunEvalResult, error) {

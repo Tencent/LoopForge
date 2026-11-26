@@ -2,7 +2,7 @@
 // (chatbot/src/QuickAccessWizard.jsx). Step 1 creates the project; later steps edit the saved project
 // and can be skipped. Progress lives only in memory.
 const PROJECT_WIZARD_STEPS=[
-  {id:'basic',title:'基本信息',desc:'名称与默认 SOP'},
+  {id:'basic',title:'基本信息',desc:'名称与默认 LOOP'},
   {id:'repos',title:'代码仓库',desc:'绑定 Git 仓库'},
   {id:'members',title:'项目成员',desc:'Owner 与协作成员'},
   {id:'tapd',title:'TAPD 集成',desc:'可选，导入 TAPD 需求'},
@@ -256,7 +256,7 @@ function projectWizardBasicHTML(w){
     +pwField('项目说明',`<textarea class="pw-input" id="pwDescription" name="description" rows="3" placeholder="可选，这个项目负责什么？Agent 会把它作为上下文。">${escapeHTML(d.description||'')}</textarea>`,{for:'pwDescription'}));
   const owner=Number(state.currentUser?.id)?'':pwField('项目 Owner',userCombobox('ownerId',d.ownerId,'请选择项目 Owner'),{required:true,hint:'项目的默认责任人，创建后可在项目成员中调整。'});
   const defaults=pwCard('默认设置','新建需求时自动带上的流程',pwPill('已预选','ok'),
-    `${pwField('默认 SOP',pwSelect(projectDefaultSOPField(d)),{required:true})}${owner}`);
+    `${pwField('默认 LOOP',pwSelect(projectDefaultSOPField(d)),{required:true})}${owner}`);
   return projectWizardHeadHTML(w,'基本信息','只需填写项目名称即可创建，其余都有默认值。')+`<div class="pw-pane">${identity}${defaults}</div>`;
 }
 function projectWizardRepoHint(url){
@@ -273,7 +273,7 @@ function projectWizardReposHTML(w){
     +pwField('Git 仓库地址',`<input class="pw-input pw-mono" id="pwRepoUrl" name="repoUrl" value="${escapeHTML(w.repo.url)}" placeholder="https://github.com/owner/repo" spellcheck="false" autocomplete="off">`,{for:'pwRepoUrl',hint:projectWizardRepoHint(w.repo.url),hintAttrs:' data-pw-repo-hint'})
     +`<div class="pw-row2">${pwField('主分支',`<input class="pw-input pw-mono" id="pwRepoBranch" name="repoBranch" value="${escapeHTML(w.repo.branch)}" placeholder="main" spellcheck="false">`,{for:'pwRepoBranch'})}${pwField('集成分支',`<input class="pw-input pw-mono" id="pwRepoIntegrate" name="repoIntegrate" value="${escapeHTML(w.repo.integrate)}" placeholder="可选" spellcheck="false">`,{for:'pwRepoIntegrate'})}</div>`
     +`<div><button type="button" class="pw-btn pw-btn-outline pw-btn-sm" data-pw-action="add-repo"${w.saving?' disabled':''}>＋ 添加仓库</button></div>`;
-  return projectWizardHeadHTML(w,'代码仓库','Agent 执行 SOP 时会克隆这些仓库并在工作分支上提交。第一个仓库会自动设为默认。')
+  return projectWizardHeadHTML(w,'代码仓库','Agent 执行 LOOP 时会克隆这些仓库并在工作分支上提交。第一个仓库会自动设为默认。')
     +`<div class="pw-pane"><p class="pw-note is-ok">✓ 项目「${escapeHTML(project.name||'')}」已创建。仓库添加后立即生效，也可以先跳过。</p>${pwCard('绑定代码仓库','粘贴仓库地址，自动识别名称',pwPill(repos.length?`已绑定 ${repos.length} 个`:'未绑定',repos.length?'ok':''),body)}</div>`;
 }
 function projectWizardPeoplePill(d){const count=projectPeopleIds(d).length;return pwPill(`${count} 位`,count>1?'ok':'',' data-pw-people-pill')}
@@ -295,7 +295,7 @@ function projectWizardSummary(project,repos){
   const sop=projectWorkflowName(p.workflowId)||p.workflowId||'';
   return [
     {key:'project',ok:true,label:'项目',value:`${escapeHTML(p.name||'')} · <code>${escapeHTML(p.id||'')}</code> · <code>${escapeHTML(p.key||'')}</code>`},
-    {key:'sop',ok:!!sop,label:'默认 SOP',value:sop?escapeHTML(sop):'未配置'},
+    {key:'sop',ok:!!sop,label:'默认 LOOP',value:sop?escapeHTML(sop):'未配置'},
     {key:'repos',ok:repos.length>0,label:'代码仓库',value:repos.length?`${repos.length} 个，默认 ${escapeHTML(def?.name||def?.gongfengProjectId||'未设置')}`:'未配置，可稍后在项目设置补充'},
     {key:'members',ok:others>0,label:'项目成员',value:others?`${others+1} 位（含 Owner）`:'仅 Owner，可稍后邀请成员'},
     {key:'tapd',ok:!!p.tapdWorkspaceId,label:'TAPD',value:p.tapdWorkspaceId?`Workspace <code>${escapeHTML(p.tapdWorkspaceId)}</code>${p.tapdIterationId?` · Iteration <code>${escapeHTML(p.tapdIterationId)}</code>`:''}`:'未配置，可稍后在项目设置补充'},
@@ -304,7 +304,7 @@ function projectWizardSummary(project,repos){
 function projectWizardDoneHTML(){
   const project=projectWizardProject()||{},items=projectWizardSummary(project,projectWizardRepos());
   const list=items.map(i=>`<li class="${i.ok?'is-ok':'is-warn'}" data-pw-summary="${i.key}">${pwIcon(i.ok?'check':'warn',13,i.ok?2.6:2.2)}<span><b>${i.label}</b> · ${i.value}</span></li>`).join('');
-  return `<div class="pw-success-mark">${pwIcon('check',24,2.4)}</div><h3 class="pw-title" id="projectWizardTitle" tabindex="-1">项目「${escapeHTML(project.name||'')}」已创建</h3><p class="pw-lede">默认 SOP 已就绪，现在就可以开始第一条需求。跳过的配置随时可以在项目设置里补充。</p>
+  return `<div class="pw-success-mark">${pwIcon('check',24,2.4)}</div><h3 class="pw-title" id="projectWizardTitle" tabindex="-1">项目「${escapeHTML(project.name||'')}」已创建</h3><p class="pw-lede">默认 LOOP 已就绪，现在就可以开始第一条需求。跳过的配置随时可以在项目设置里补充。</p>
     <section class="pw-summary"><div class="pw-summary-title">已生效配置</div><ul class="pw-status-list">${list}</ul></section>
     <div class="pw-actions"><button type="button" class="pw-action is-primary" data-pw-action="start"><span class="pw-action-icon">${pwIcon('play',16)}</span><span><strong>开始第一条需求</strong><small>切换到该项目，去需求列表新建或导入需求</small></span>${pwIcon('next',14,2.2)}</button><button type="button" class="pw-action" data-pw-action="settings"><span class="pw-action-icon">${pwIcon('gear',16,1.9)}</span><span><strong>进入项目设置</strong><small>修改基本信息，补充仓库、成员和 TAPD</small></span>${pwIcon('next',14,2.2)}</button></div>`;
 }

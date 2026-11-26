@@ -85,7 +85,7 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 		return
 	}
 	if !domain.TerminalRunStatus(run.Status) {
-		c.JSON(http.StatusConflict, map[string]string{"error": "请等 SOP 跑完后再评测"})
+		c.JSON(http.StatusConflict, map[string]string{"error": "请等 LOOP 跑完后再评测"})
 		return
 	}
 	current, loggedIn := h.requestUser(c.Request, true)
@@ -363,7 +363,7 @@ func (h *runsHandlers) ensureProjectWorkflow(run domain.Run, projectID, workflow
 		}
 	}
 	if !ok {
-		return domain.WorkflowDefinition{}, fmt.Errorf("SOP %q 不存在", workflowID)
+		return domain.WorkflowDefinition{}, fmt.Errorf("LOOP %q 不存在", workflowID)
 	}
 	if strings.TrimSpace(wf.Name) == "" {
 		wf.Name = firstNonEmpty(wf.ID, "workflow")
@@ -478,7 +478,7 @@ func (h *runsHandlers) runEvalJob(ctx context.Context, job *runEvalJob, rec doma
 		job.publish("error", map[string]string{"error": "评测排队超时"})
 		return
 	}
-	emitRunEvalStage(emit, "collecting", "正在整理本次 SOP 轨迹")
+	emitRunEvalStage(emit, "collecting", "正在整理本次 LOOP 轨迹")
 	exec := currentRunEvalExec()
 	if exec == nil {
 		exec = h.executeRunEval

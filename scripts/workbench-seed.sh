@@ -102,11 +102,11 @@ def sop(wid, name, lane, steps, description=None):
         wf["revision"], wf["version"] = old.get("revision", 0), old.get("version", 1)
     call("PUT", "/api/workflows", wf)
 
-sop("wb-fe-sop", "前端研发 SOP", "frontend", [("fe-plan", "前端方案", "agent", "wb-fe-architect"), ("fe-review", "方案评审", "approval", ""),
+sop("wb-fe-sop", "前端研发 LOOP", "frontend", [("fe-plan", "前端方案", "agent", "wb-fe-architect"), ("fe-review", "方案评审", "approval", ""),
     ("fe-dev", "页面实现", "agent", "wb-fe-dev"), ("fe-test", "自动化测试", "script", "")])
-sop("wb-be-sop", "后端研发 SOP", "backend", [("be-api", "接口设计", "agent", "wb-be-architect"), ("be-review", "接口评审", "approval", ""),
+sop("wb-be-sop", "后端研发 LOOP", "backend", [("be-api", "接口设计", "agent", "wb-be-architect"), ("be-review", "接口评审", "approval", ""),
     ("be-dev", "接口实现", "agent", "wb-be-dev"), ("be-test", "接口测试", "script", "")])
-sop("wb-real-analysis", "需求分析 SOP（真实 AI）", "product", [("ra-analyze", "需求分析", "agent", "wb-analyst"), ("ra-review", "确认分析", "approval", "")],
+sop("wb-real-analysis", "需求分析 LOOP（真实 AI）", "product", [("ra-analyze", "需求分析", "agent", "wb-analyst"), ("ra-review", "确认分析", "approval", "")],
     "用你在设置里配置的 CodeBuddy Key 真实执行：AI 产出需求分析 → 人工确认。不需要代码仓库，适合自测。")
 
 title = "积分商城 · 兑换流程改版"

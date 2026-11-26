@@ -841,7 +841,7 @@ func (s *Server) bootstrap(c *gin.Context) {
 		"storage":      s.repo.StorageInfo(),
 		"capabilities": map[string]bool{"docker": runtime.DockerReady()},
 		// Set when users without their own CodeBuddy API Key can still chat
-		// and run SOPs on the platform's shared key, limited to these models
+		// and run LOOPs on the platform's shared key, limited to these models
 		// (sponsoredModel is the default).
 		"sponsoredModel":    sponsoredModel,
 		"sponsoredModels":   sharedModels,

@@ -11,7 +11,7 @@ import (
 )
 
 // conversationRequirement is the requirement Main Bot identified in an
-// ordinary conversation that changes code directly, without an SOP.
+// ordinary conversation that changes code directly, without a LOOP.
 type conversationRequirement struct {
 	Title       string
 	Description string
@@ -36,7 +36,7 @@ func (h *agentToolGateway) openConversationIssue(projectID, issueID string) (dom
 // and analytics instead of as an anonymous workspace. A workspace keeps the
 // requirement it already has. Otherwise an explicitly identified requirement
 // is created; with preferSession the conversation's own open requirement is
-// reused first. Without a title nothing is created. SOP runs are never
+// reused first. Without a title nothing is created. LOOP runs are never
 // relinked: their requirement is set when they are dispatched.
 func (h *agentToolGateway) linkConversationRequirement(s *AgentToolSession, run domain.Run, req conversationRequirement, preferSession bool) (domain.Issue, bool, error) {
 	if !run.IsWorkspace() || run.ExecutionContext.ProjectID != s.ProjectID {
@@ -124,7 +124,7 @@ func conversationRequirementIssue(s *AgentToolSession, run domain.Run, conv doma
 
 // recordConversationMRs registers the MRs a conversation workspace submitted
 // as the requirement's delivery MRs. MR polling then marks the requirement
-// delivered once they merge, and analytics counts them like SOP deliveries.
+// delivered once they merge, and analytics counts them like LOOP deliveries.
 func (h *agentToolGateway) recordConversationMRs(issueID string, delivered []deliveredMR, repos []domain.Repository) error {
 	if strings.TrimSpace(issueID) == "" {
 		return nil
@@ -196,7 +196,7 @@ func repositoryForMRProject(repos []domain.Repository, project string) (domain.R
 // attributeConversationUsage runs after a turn is saved. It adds the turn's
 // model usage to the conversation workspace the turn worked in, and links the
 // conversation to that workspace's requirement: a conversation's first turn
-// is saved only when it ends, after its tools created the requirement. SOP
+// is saved only when it ends, after its tools created the requirement. LOOP
 // runs a conversation borrowed keep only their own usage.
 func attributeConversationUsage(d *deps, s *AgentToolSession, model string, usage *domain.TokenUsage) {
 	if s == nil {
