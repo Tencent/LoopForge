@@ -175,7 +175,7 @@ function renderIssueDetailTab(){
   host.innerHTML=panes[state.issueDetailTab]||'<div class="detail-empty">暂无内容</div>';
   if(state.issueDetailTab==='conversations')void renderIssueConversations(issue,host);
   renderedIssueClarifyKey=clarifyKey;
-  host.querySelectorAll('[data-edit-issue]').forEach(b=>b.onclick=()=>{closeIssueDrawer();openIssue(issue)});
+  host.querySelectorAll('[data-edit-issue]').forEach(b=>b.onclick=()=>{const tab=state.issueDetailTab;closeIssueDrawer();openIssue(issue,tab)});
   host.querySelectorAll('[data-dispatch-issue]').forEach(b=>b.onclick=()=>triggerIssue(b.dataset.dispatchIssue,b.dataset.workflow));
   host.querySelectorAll('[data-retrigger-issue]').forEach(b=>b.onclick=()=>retriggerIssue(b.dataset.retriggerIssue,b.dataset.workflow));
   host.querySelectorAll('[data-chat-issue]').forEach(b=>b.onclick=()=>openIssueInChatById(b.dataset.chatIssue));
