@@ -192,6 +192,12 @@ func jobDue(job domain.ScheduleJob, now time.Time) bool {
 	if !job.Enabled {
 		return false
 	}
+	if job.LastRunAt.IsZero() && job.UpdatedAt.After(job.CreatedAt) {
+		// A job that has never run starts its clock when last saved, so
+		// re-enabling or reconfiguring it does not fire a missed occurrence.
+		// The explicit Run now action bypasses jobDue.
+		job.CreatedAt = job.UpdatedAt
+	}
 	if job.LastStatus == "running" {
 		return false
 	}

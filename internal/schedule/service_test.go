@@ -336,6 +336,30 @@ func TestNewCronJobWaitsForScheduledTime(t *testing.T) {
 	}
 }
 
+func TestReenabledJobWaitsFromLastSave(t *testing.T) {
+	savedAt := time.Date(2026, 11, 26, 10, 32, 43, 0, time.UTC)
+	createdAt := savedAt.Add(-3 * time.Hour)
+	hourly := domain.ScheduleJob{Enabled: true, Cron: "0 * * * *", CreatedAt: createdAt, UpdatedAt: savedAt}
+	if jobDue(hourly, savedAt) {
+		t.Fatal("re-enabled Cron job fired an occurrence missed before it was saved")
+	}
+	if !jobDue(hourly, time.Date(2026, 11, 26, 11, 0, 0, 0, time.UTC)) {
+		t.Fatal("re-enabled Cron job did not run at its next occurrence")
+	}
+	interval := domain.ScheduleJob{Enabled: true, IntervalSec: 3600, CreatedAt: createdAt, UpdatedAt: savedAt}
+	if jobDue(interval, savedAt.Add(30*time.Minute)) {
+		t.Fatal("re-enabled interval job ran before one interval after saving")
+	}
+	if !jobDue(interval, savedAt.Add(time.Hour)) {
+		t.Fatal("re-enabled interval job did not run one interval after saving")
+	}
+	ran := hourly
+	ran.LastRunAt = createdAt
+	if !jobDue(ran, savedAt) {
+		t.Fatal("a job that already ran must keep following its last run")
+	}
+}
+
 func TestMatchingIssuesUsesCurrentProject(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
