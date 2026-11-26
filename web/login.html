@@ -7,6 +7,7 @@
   <script src="/boot-theme.js?v=20261031boot1"></script>
   <link rel="icon" href="/favicon.ico">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/app/sliding-tabs.css">
   <link rel="stylesheet" href="/preferences.css">
   <script src="/boot.js"></script>
   <script src="/i18n-en.js"></script>
@@ -28,12 +29,16 @@
       <button id="loginSubmit" class="button primary" type="submit">登录</button>
     </form>
     <p class="login-help" id="loginSwitch" hidden><span id="switchText">还没有账号？</span> <button type="button" id="switchMode" class="login-link">注册</button></p>
-    <p class="login-help" id="loginContact">请联系部署管理员创建账号。</p>
+    <p class="login-help" id="loginContact" hidden>请联系部署管理员创建账号。</p>
     <div class="login-preferences">
-      <button id="loginLang" type="button" data-i18n-skip>中 / EN</button>
+      <div id="loginLang" class="lang-switch" role="radiogroup" aria-label="中文 / English" data-i18n-skip>
+        <button type="button" role="radio" data-lang-value="zh" aria-checked="true">中</button>
+        <button type="button" role="radio" data-lang-value="en" aria-checked="false">EN</button>
+      </div>
       <button id="loginTheme" type="button">切换主题</button>
       <a href="https://github.com/Tencent/LoopForge">GitHub ↗</a>
     </div>
   </main>
+  <script src="/app/sliding-tabs.js?v=20261121lang1"></script>
 </body>
 </html>

@@ -47,6 +47,7 @@ func TestGitIdentityAndStageUntracked(t *testing.T) {
 }
 
 func TestGitAuthAndPatchHelpers(t *testing.T) {
+	t.Setenv("AGENTFLOW_GONGFENG_HOST", "git.review.test")
 	for _, tc := range []struct {
 		raw, user, token string
 	}{

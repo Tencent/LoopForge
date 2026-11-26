@@ -19,6 +19,7 @@ import (
 // issue trackers (Gongfeng issues + TAPD stories).
 type Service struct {
 	githubAPIBase         string // Tests inject an HTTP server; production uses api.github.com.
+	gitHostAPIBase        string // Tests inject an HTTP server for every Git HTTP credential host.
 	cfg                   *syncConfigHolder
 	gongfeng              *MCPClient
 	tapd                  *MCPClient
@@ -66,6 +67,7 @@ type IssueStoreAdapter interface {
 	Projects() []domain.Project
 	Project(id string) (domain.Project, bool)
 	PutIssue(v domain.Issue) error
+	PutIssueWithCopiedImages(v domain.Issue, previousID string) error
 	PutSyncedIssue(v domain.Issue) error
 	DeleteIssue(id string) error
 	PutSyncConfig(cfg domain.SyncConfig) error
@@ -89,8 +91,7 @@ func NewService() *Service {
 }
 
 // Configure updates the sync config and recreates MCP clients.
-// Prefer catalog HTTP MCP Headers (the same assets Agent steps use). Fall back
-// to AGENTFLOW_MCP_TOKEN, then ~/.codebuddy/mcp.json OAuth.
+// Prefer the catalog MCP headers, then the deployment's AGENTFLOW_MCP_TOKEN.
 func (s *Service) Configure(cfg domain.SyncConfig) {
 	s.ConfigureWithCatalog(cfg, nil)
 }
@@ -98,8 +99,8 @@ func (s *Service) Configure(cfg domain.SyncConfig) {
 // ConfigureWithCatalog binds Gongfeng/TAPD clients from catalog MCP assets.
 func (s *Service) ConfigureWithCatalog(cfg domain.SyncConfig, servers []domain.MCPServerDefinition) {
 	s.cfg.Set(cfg)
-	gf := bindTrackerMCP("gongfeng", cfg, servers, s.authToken, LoadAuthFromCodeBuddy("gongfeng"))
-	tapd := bindTrackerMCP("tapd", cfg, servers, s.authToken, LoadAuthFromCodeBuddy("tapd"))
+	gf := bindTrackerMCP("gongfeng", cfg, servers, s.authToken)
+	tapd := bindTrackerMCP("tapd", cfg, servers, s.authToken)
 	s.gfSource, s.tapdSource = gf.Source, tapd.Source
 	if gf.URL != "" {
 		s.gongfeng = NewMCPClient(gf.URL, gf.Headers)
@@ -599,16 +600,14 @@ func (s *Service) CreateGongfengIssue(store IssueStoreAdapter, issue domain.Issu
 		ExternalType:  "issue",
 		SyncedAt:      time.Now().UTC(),
 	}
+	previousID := issue.ID
 	if gi.IID > 0 {
 		issue.Number = gi.IID
-		stableID := fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
-		oldID := issue.ID
-		issue.ID = stableID
-		if oldID != "" && oldID != stableID && !strings.HasPrefix(oldID, "gf-") {
-			_ = store.DeleteIssue(oldID)
-		}
+		issue.ID = fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
 	}
-	_ = store.PutIssue(issue)
+	if err := saveCreatedTrackerIssue(store, issue, previousID, "gf-"); err != nil {
+		return issue, err
+	}
 
 	s.addLog(domain.SyncLog{
 		ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "push", Source: "gongfeng",
@@ -618,6 +617,17 @@ func (s *Service) CreateGongfengIssue(store IssueStoreAdapter, issue domain.Issu
 		StartedAt: started, FinishedAt: time.Now().UTC(),
 	})
 	return issue, nil
+}
+
+func saveCreatedTrackerIssue(store IssueStoreAdapter, issue domain.Issue, previousID, trackerPrefix string) error {
+	if previousID == "" || previousID == issue.ID || strings.HasPrefix(previousID, trackerPrefix) {
+		return store.PutIssue(issue)
+	}
+	if err := store.PutIssueWithCopiedImages(issue, previousID); err != nil {
+		return err
+	}
+	_ = store.DeleteIssue(previousID)
+	return nil
 }
 
 // WriteBackClarification appends a clarification summary to the linked external
@@ -1186,7 +1196,7 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 		ExternalRef: &domain.ExternalRef{
 			Source:        "tapd",
 			ExternalID:    st.ID,
-			ExternalURL:   fmt.Sprintf("https://tapd.example.com/tapd_fe/%s/%s/detail/%s", workspaceID, externalType, st.ID),
+			ExternalURL:   tapdWorkItemURL(workspaceID, externalType, st.ID),
 			ExternalState: st.Status,
 			ExternalType:  externalType,
 			SyncedAt:      time.Now().UTC(),
@@ -1347,21 +1357,19 @@ func (s *Service) CreateTAPDStory(store IssueStoreAdapter, issue domain.Issue) (
 	issue.ExternalRef = &domain.ExternalRef{
 		Source:        "tapd",
 		ExternalID:    st.ID,
-		ExternalURL:   fmt.Sprintf("https://tapd.example.com/tapd_fe/%s/story/detail/%s", workspaceID, st.ID),
+		ExternalURL:   tapdWorkItemURL(workspaceID, "story", st.ID),
 		ExternalState: st.Status,
 		ExternalType:  "story",
 		SyncedAt:      time.Now().UTC(),
 		Imported:      true,
 	}
+	previousID := issue.ID
 	if st.ID != "" {
-		stableID := fmt.Sprintf("tapd-%s", st.ID)
-		oldID := issue.ID
-		issue.ID = stableID
-		if oldID != "" && oldID != stableID && !strings.HasPrefix(oldID, "tapd-") {
-			_ = store.DeleteIssue(oldID)
-		}
+		issue.ID = fmt.Sprintf("tapd-%s", st.ID)
 	}
-	_ = store.PutIssue(issue)
+	if err := saveCreatedTrackerIssue(store, issue, previousID, "tapd-"); err != nil {
+		return issue, err
+	}
 
 	s.addLog(domain.SyncLog{
 		ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "push", Source: "tapd",
@@ -1887,7 +1895,7 @@ func applyExistingIssue(dst *domain.Issue, existing domain.Issue) {
 	}
 	if len(existing.RepositoryIDs) > 0 {
 		// Remote trackers are single-repository; keep the local multi-repo
-		// binding intact so scheduled SOPs keep touching every repository.
+		// binding intact so scheduled LOOPs keep touching every repository.
 		dst.RepositoryIDs = append([]string(nil), existing.RepositoryIDs...)
 		if dst.RepositoryID == "" {
 			dst.RepositoryID = existing.RepositoryIDs[0]

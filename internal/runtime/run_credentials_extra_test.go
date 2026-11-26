@@ -50,7 +50,7 @@ func TestBindExtraCredentialEnv(t *testing.T) {
 	}
 	credentials := RunCredentials{Extra: map[string]string{"gateway": "tok-1"}}
 
-	bound, err := bindCommand(sb, sb.workspace, command, credentials)
+	bound, err := bindCommand(t.Context(), sb, sb.workspace, command, credentials)
 	if err != nil {
 		t.Fatalf("bindCommand: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestBindExtraCredentialEnv(t *testing.T) {
 	// Without the binding the mapping is inert.
 	plain := command
 	plain.CredentialBindings = nil
-	bound, err = bindCommand(sb, sb.workspace, plain, credentials)
+	bound, err = bindCommand(t.Context(), sb, sb.workspace, plain, credentials)
 	if err != nil {
 		t.Fatalf("bindCommand without binding: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestBindExtraMarksCredentialEnvKeysForRedaction(t *testing.T) {
 		CredentialBindings: []CredentialBinding{BindExtra},
 		ExtraCredentialEnv: map[string]string{"AWS_SECRET_ACCESS_KEY": "gateway"},
 	}
-	bound, err := bindCommand(sb, sb.workspace, command, RunCredentials{Extra: map[string]string{"gateway": "tok-1"}})
+	bound, err := bindCommand(t.Context(), sb, sb.workspace, command, RunCredentials{Extra: map[string]string{"gateway": "tok-1"}})
 	if err != nil {
 		t.Fatalf("bindCommand: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestConversationPathBindsExtraCredentialEnv(t *testing.T) {
 		CredentialBindings: wire.Bindings,
 		ExtraCredentialEnv: wire.ExtraCredentialEnv,
 	}
-	bound, err := bindCommand(sb, sb.workspace, rebuilt, wire.Credentials)
+	bound, err := bindCommand(t.Context(), sb, sb.workspace, rebuilt, wire.Credentials)
 	if err != nil {
 		t.Fatalf("bindCommand: %v", err)
 	}
@@ -161,5 +161,49 @@ func TestConversationPathBindsExtraCredentialEnv(t *testing.T) {
 	}
 	if got := bound.environment["MY_ABSENT_TOKEN"]; got != "" {
 		t.Errorf("MY_ABSENT_TOKEN: got %q, want empty (host value must be cleared)", got)
+	}
+}
+
+func TestCommandSpecWithCredentialEnvNoopWithoutDeclaration(t *testing.T) {
+	spec := CommandSpec{Argv: []string{"sh", "-c", "exit 0"}, CredentialBindings: []CredentialBinding{BindGit}}
+	out, err := CommandSpecWithCredentialEnv(spec, nil, RunCredentials{})
+	if err != nil {
+		t.Fatalf("CommandSpecWithCredentialEnv: %v", err)
+	}
+	if len(out.CredentialBindings) != 1 || out.CredentialBindings[0] != BindGit {
+		t.Fatalf("bindings changed without declaration: %v", out.CredentialBindings)
+	}
+	if out.ExtraCredentialEnv != nil {
+		t.Fatalf("ExtraCredentialEnv set without declaration: %v", out.ExtraCredentialEnv)
+	}
+}
+
+func TestCommandSpecWithCredentialEnvAppendsBinding(t *testing.T) {
+	spec := CommandSpec{Argv: []string{"sh", "-c", "exit 0"}, CredentialBindings: []CredentialBinding{BindGit, BindMCP}}
+	env := map[string]string{"BG_USER_TOKEN": "knotToken"}
+	out, err := CommandSpecWithCredentialEnv(spec, env, RunCredentials{Extra: map[string]string{"knotToken": "tok-1"}})
+	if err != nil {
+		t.Fatalf("CommandSpecWithCredentialEnv: %v", err)
+	}
+	if len(out.CredentialBindings) != 3 || out.CredentialBindings[2] != BindExtra {
+		t.Fatalf("BindExtra not appended: %v", out.CredentialBindings)
+	}
+	if out.ExtraCredentialEnv["BG_USER_TOKEN"] != "knotToken" {
+		t.Fatalf("ExtraCredentialEnv not mapped: %v", out.ExtraCredentialEnv)
+	}
+	if len(spec.CredentialBindings) != 2 {
+		t.Fatal("input spec bindings mutated")
+	}
+}
+
+func TestCommandSpecWithCredentialEnvFailsOnMissingCredential(t *testing.T) {
+	spec := CommandSpec{Argv: []string{"sh", "-c", "exit 0"}}
+	env := map[string]string{"BG_USER_TOKEN": "knotToken"}
+	_, err := CommandSpecWithCredentialEnv(spec, env, RunCredentials{})
+	if err == nil {
+		t.Fatal("missing declared credential must fail")
+	}
+	if !strings.Contains(err.Error(), "knotToken") {
+		t.Fatalf("error must name the credential kind: %v", err)
 	}
 }

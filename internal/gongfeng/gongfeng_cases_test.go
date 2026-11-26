@@ -79,8 +79,16 @@ func TestGongfengConfigHelpers(t *testing.T) {
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_ID", " id ")
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_SECRET", " secret ")
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_REDIRECT_URI", " cb ")
+	t.Setenv("AGENTFLOW_GONGFENG_HOST", "")
+	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_AUTHORIZE_URL", "")
+	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_TOKEN_URL", "")
+	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_API_BASE", "")
+	if cfg := ConfigFromEnv(); cfg.Enabled() || cfg.APIBase != "" {
+		t.Fatalf("unexpected endpoints without a configured host: %#v", cfg)
+	}
+	t.Setenv("AGENTFLOW_GONGFENG_HOST", "git.review.test")
 	cfg := ConfigFromEnv()
-	if !cfg.Enabled() || cfg.ClientID != "id" {
+	if !cfg.Enabled() || cfg.ClientID != "id" || cfg.APIBase != "https://git.review.test/api/v3" {
 		t.Fatalf("config = %#v", cfg)
 	}
 	if _, err := AuthorizeURL(Config{}, "x"); err == nil {

@@ -144,7 +144,7 @@ func TestPruneScheduledSessionsKeepsLatestAndLeavesSOPAlone(t *testing.T) {
 	put("legacy-new", domain.AssistantSourceScheduled, "", "定时 · 旧任务", now.Add(-4*24*time.Hour), false, "")
 	put("legacy-old", domain.AssistantSourceScheduled, "", "定时 · 旧任务", now.Add(-5*24*time.Hour), false, "")
 	put("chat-old", domain.AssistantSourceChat, "", "普通对话", now.Add(-10*24*time.Hour), false, "")
-	put("sop-old", domain.AssistantSourceSOP, "", "SOP", now.Add(-10*24*time.Hour), true, "run-1")
+	put("sop-old", domain.AssistantSourceSOP, "", "LOOP", now.Add(-10*24*time.Hour), true, "run-1")
 
 	h := &assistantHandlers{deps: &deps{repo: st}}
 	if removed := h.pruneScheduledAssistantSessions(now); removed != 3 {

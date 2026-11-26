@@ -95,6 +95,14 @@ body.management-mode .platform-sidebar > .settings-navigation-header {
   color: var(--text);
 }
 
+.settings-navigation-reopen[hidden] {
+  display: none;
+}
+
+.settings-navigation-reopen {
+  flex-shrink: 0;
+}
+
 .platform-sidebar nav {
   /* Cancel the card's right padding so the thumb sits on the panel edge. */
   margin-right: -14px;
@@ -246,10 +254,7 @@ body.management-mode .platform-sidebar {
   width: var(--sidebar-w) !important;
   clip-path: inset(0 0 0 0 round 16px);
   opacity: 1;
-  visibility: visible;
-  transition:
-    clip-path var(--settings-sidebar-duration) var(--settings-sidebar-ease),
-    visibility 0s;
+  transition: clip-path var(--settings-sidebar-duration) var(--settings-sidebar-ease);
 }
 
 body.management-mode .shell-main {
@@ -263,9 +268,7 @@ body.management-mode .app-shell::before {
 
 body.management-mode:is(.settings-sidebar-hidden, .settings-sidebar-entering) .platform-sidebar {
   clip-path: inset(0 100% 0 0 round 16px);
-  visibility: hidden;
   pointer-events: none;
-  transition-delay: 0s, var(--settings-sidebar-duration);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -327,4 +330,13 @@ body.management-mode:is(.settings-sidebar-hidden, .settings-sidebar-entering) .p
     justify-content: flex-start !important;
     gap: 10px !important;
   }
+}
+
+.upp-build {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  color: var(--hui-secondary);
+  font-size: 12px;
 }

@@ -115,7 +115,7 @@ func TestMCPMarketFileAndBotIdentityErrors(t *testing.T) {
 
 	_ = st.PutUser(domain.User{LoginName: "bot-user"})
 	user, _ := st.UserByLoginName("bot-user")
-	ident := &botIdentityHandlers{deps: &deps{repo: st}, publicURL: "https://example.com"}
+	ident := &botIdentityHandlers{deps: &deps{repo: st}, publicURL: staticPublicURL("https://example.com")}
 	if botIdentityCommand("@bot /bind abc") != "/bind abc" {
 		t.Fatal("bot command")
 	}
@@ -149,8 +149,8 @@ func TestMCPMarketFileAndBotIdentityErrors(t *testing.T) {
 	if ok, msg, err := ident.message(domain.NotificationBot{BotID: "b"}, domain.BotInteraction{SenderID: "s", Content: "hello"}); !ok || err != nil || !strings.Contains(msg, "关联") {
 		t.Fatalf("unbound message=%v %q %v", ok, msg, err)
 	}
-	ident.publicURL = "bad"
-	if ok, msg, _ := ident.message(domain.NotificationBot{BotID: "b"}, domain.BotInteraction{SenderID: "s2", Content: "hello"}); !ok || !strings.Contains(msg, "尚未配置") {
+	ident.publicURL = staticPublicURL("bad")
+	if ok, msg, _ := ident.message(domain.NotificationBot{BotID: "b"}, domain.BotInteraction{SenderID: "s2", Content: "hello"}); !ok || !strings.Contains(msg, "外部访问地址") {
 		t.Fatalf("bad public URL=%v %q", ok, msg)
 	}
 }

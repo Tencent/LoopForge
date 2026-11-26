@@ -140,7 +140,11 @@ export function collectArtifacts(session) {
         draft,
         messageIndex,
         draftIndex: index,
-        source: draft.saved ? "已执行" : "待确认",
+        source: draft.saved
+          ? "已执行"
+          : draft.decision === "rejected"
+            ? "AI 已拒绝"
+            : "待确认",
       });
     }
     // PR/MR links the agent opened with its own git only appear in the reply
@@ -148,7 +152,7 @@ export function collectArtifacts(session) {
     // links.
     const reviewLinks = [
       [/https:\/\/github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/pull\/(\d+)/g, "#", "PR"],
-      [/https?:\/\/git\.example\.com\/([A-Za-z0-9._\-\/]+?)(?:\/-)?\/merge_requests\/(\d+)/g, "!", "MR"],
+      [/https?:\/\/[A-Za-z0-9.-]+(?::\d+)?\/([A-Za-z0-9._\-\/]+?)(?:\/-)?\/merge_requests\/(\d+)/g, "!", "MR"],
     ];
     for (const [pattern, marker, label] of reviewLinks)
       for (const match of (reply.message || "").matchAll(pattern)) {
@@ -231,7 +235,9 @@ export function projectChange(current, nextProjectId) {
   return !current.projectId &&
     nextProjectId &&
     !current.shared &&
-    !current.runId
+    !current.runId &&
+    !current.workspaceRunId &&
+    !current.ownWorkspaceRunIds?.length
     ? "bind"
     : "new";
 }
@@ -391,15 +397,22 @@ export function restoreStream(snapshot) {
 // model-resume instruction as something the user typed. Validate the preceding
 // saved receipt; ordinary user text must never be hidden by a prefix match.
 // Mirrors assistantProposalDeclinedText and assistantProposalExpiredText.
-const PROPOSAL_DECLINED = "不走 SOP，这件事由你直接完成。";
-const PROPOSAL_EXPIRED = "SOP 建议超时未确认，这件事由你直接完成。";
+// Conversations saved before the LOOP rename still hold the SOP wording.
+const PROPOSAL_DECLINED = [
+  "不走 LOOP，这件事由你直接完成。",
+  "不走 SOP，这件事由你直接完成。",
+];
+const PROPOSAL_EXPIRED = [
+  "LOOP 建议超时未确认，这件事由你直接完成。",
+  "SOP 建议超时未确认，这件事由你直接完成。",
+];
 // The card already says it timed out, so the turn that hands the work back
 // is not shown.
 export function isProposalTimeout(message, previous) {
   return (
     message?.role === "user" &&
     message.trigger === "proposal_timeout" &&
-    message.content === PROPOSAL_EXPIRED &&
+    PROPOSAL_EXPIRED.includes(message.content) &&
     previous?.role === "assistant" &&
     (parseReply(previous).drafts || []).some(
       (d) => d.proposal && d.decision === "expired",
@@ -409,11 +422,11 @@ export function isProposalTimeout(message, previous) {
 
 export function confirmationCaption(message, previous) {
   if (message?.role !== "user" || previous?.role !== "assistant") return "";
-  if (message.content === PROPOSAL_DECLINED)
+  if (PROPOSAL_DECLINED.includes(message.content))
     return (parseReply(previous).drafts || []).some(
       (d) => d.proposal && ["declined", "muted"].includes(d.decision),
     )
-      ? "不走 SOP，让 AI 助手自己做"
+      ? "不走 LOOP，让 AI 助手自己做"
       : "";
   const match =
     /^已确认并执行 ([a-z_]+)。请核对这条草稿的保存回执，继续完成原始请求；不要重复刚才的写入，下一项需要确认时提交草稿，全部完成时总结实际结果。$/.exec(

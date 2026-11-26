@@ -55,8 +55,11 @@ test('flow node metadata, properties, artifact editors, menus, and edge deletion
     state.selectedNode='agent-node';renderCanvas();renderProperties();
   `);
   const menuButton = app.document.querySelector('[data-id="agent-node"] [data-node-menu]');
+  app.evaluate('setAIOrchestratorOpen(true)');
   menuButton?.click();
   app.document.querySelector('#flowNodeMenu [data-a="edit"]')?.click();
+  assert.equal(app.document.querySelector('#aiOrchestrator').hidden, true);
+  assert.equal(app.document.querySelector('#openBoundAgent').getAttribute('href'), '#/agents/agent-1');
   app.evaluate(`
     nodeMeta(state.workflow.nodes[0]);nodeMeta(state.workflow.nodes[1]);nodeMeta(state.workflow.nodes[2]);
     artifactRowsHTML(state.workflow.nodes[0]);

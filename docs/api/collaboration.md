@@ -6,7 +6,7 @@
 
 ### `GET /api/projects`
 
-返回 `Project[]`，`200`。项目含 `id`、`key`、`name`、`description`、`color`、`workflowId`、`defaultRepositoryId`、`members`、`clarification`、TAPD 配置及时间戳。响应永不返回 `gitToken`、`codeBuddyApiKey` 明文，只以 `gitTokenConfigured`、`codeBuddyApiKeyConfigured` 表示是否已配置。
+返回 `Project[]`，`200`。项目含 `id`、`key`、`name`、`description`、`color`、`workflowId`、`defaultRepositoryId`、`members`、`clarification`、TAPD 配置及时间戳。Git 凭据按用户和主机保存在个人配置中，不属于项目。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" "$AGENTFLOW_URL/api/projects"
@@ -27,8 +27,6 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" "$AGENTFLOW_URL/api/projects"
   "key":"PLATFORM",
   "defaultRepositoryId":"repo-platform",
   "workflowId":"wf-dev",
-  "gitToken":"new-token",
-  "gitTokenClear":false,
   "codeBuddyApiKey":"",
   "codeBuddyApiKeyClear":false,
   "codeBuddyInternetEnvironmentClear":false,
@@ -51,7 +49,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 
 ### `GET /api/repositories`
 
-返回脱敏的 `Repository[]`，`200`；`gitToken` 被清空，以 `gitTokenConfigured` 表示状态。
+返回 `Repository[]`，`200`。仓库不保存 Git 凭据。
 
 ### `GET /api/repositories/{id}`
 
@@ -59,7 +57,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 
 ### `POST|PUT /api/repositories`
 
-新建或按 `id` 更新。`projectId`、`name`、`gongfengProjectId` 必填；`provider` 默认且只能是 `gongfeng`；`defaultBranch` 默认 `main`；`id` 为空时服务生成。更新时空 token 保留旧值，`gitTokenClear=true` 清除。成功 `200` 返回脱敏后的仓库；校验失败 `400`。
+新建或按 `id` 更新。`projectId` 必填，可用 `repoUrl` 粘贴仓库地址。平台识别 GitHub 和部署适配器；其他 HTTPS 地址使用 `https`，显式 SSH 地址使用 `ssh`，不转换传输协议。`name` 可从地址推断，`defaultBranch` 默认 `main`，`id` 为空时服务生成。凭据通过 `/api/users/{id}/git-http-credentials` 或 `/api/users/{id}/git-ssh-keys` 管理。HTTPS 使用标准 Git credential helper；SSH 密钥可克隆和推送，创建 PR/MR 仍需要托管平台的访问令牌，由 Agent 节点完成。成功 `200` 返回仓库；校验失败 `400`。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
@@ -67,6 +65,11 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
   -d '{"projectId":"platform","name":"agentflow","gongfengProjectId":"10001","cloneUrl":"https://example/repo.git","defaultBranch":"main"}' \
   "$AGENTFLOW_URL/api/repositories"
 ```
+
+可用 `workBranchNaming` 设置 SOP 自动新建工作分支的命名方式。更新时省略该字段会保留已保存的配置，新仓库缺省使用 `feature/`。
+
+- `{"mode":"prefix","prefix":"feat/"}` 为原有分支名主体加上指定前缀。`prefix` 留空时直接使用分支名主体。
+- `{"mode":"ai","executorId":"codebuddy","model":"hy4std","prompt":"用小写英文概括改动，带上需求编号"}` 使用指定的 CLI 和模型生成完整分支名。`executorId` 和 `model` 必填，`prompt` 可留空。调用使用 SOP 责任人的凭据或已授权执行机器的登录。平台能访问远端仓库时，会在遇到同名分支后按原命名要求重新生成。节点重试沿用已保存的分支名。
 
 ### `DELETE /api/repositories?id={id}`
 
@@ -81,8 +84,8 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 - `priority`、`kind`（`requirement|issue`）、`assigneeType`、`assigneeId`
 - `workflowId`、`repositoryId`、`repositoryIds`、`baseBranch`、`repositoryBranches`、`latestTaskId`
 - `source`（`local|gongfeng|tapd`）、`externalRef`
-- `clarification`：`summary`、`status`（`analyzing|in_progress|ready`；历史数据可能是 `needs_user`）、`history`、`questions`、写回字段。澄清是可选步骤，不打分、不自动开始，也不阻止派发 SOP。
-- 交付字段 `deliveryState`、`deliveryMrUrl`、`deliveryMrState`、`deliveryMrs`、`deliveryUpdatedAt`。`deliveryMrs` 每个仓库一项（`repositoryId`、`repository`、`project`、`iid`、`url`、`state`、`targetBranch`），由 SOP 成功时按仓库工作分支向工蜂查询 MR 得出，查不到才回退到 MR 类产物里同项目的链接；`deliveryMrUrl` 为第一项，`deliveryMrState` 为聚合状态（全部合入默认分支才是 `merged`）。
+- `clarification`：`summary`、`status`（`analyzing|in_progress|ready`；历史数据可能是 `needs_user`）、`history`、`questions`、写回字段。澄清是可选步骤，不打分、不自动开始，也不阻止派发 LOOP。
+- 交付字段 `deliveryState`、`deliveryMrUrl`、`deliveryMrState`、`deliveryMrs`、`deliveryUpdatedAt`。`deliveryMrs` 每个仓库一项（`repositoryId`、`repository`、`project`、`iid`、`url`、`state`、`targetBranch`），由 LOOP 成功时按仓库工作分支向工蜂查询 MR 得出，查不到才回退到 MR 类产物里同项目的链接；`deliveryMrUrl` 为第一项，`deliveryMrState` 为聚合状态（全部合入默认分支才是 `merged`）。
 
 ### `GET /api/issues`
 
@@ -199,7 +202,7 @@ curl -N -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
 
 ### `POST /api/issues/{issueId}/dispatch`
 
-启动绑定的 SOP。请求体可省略；可选：
+启动绑定的 LOOP。请求体可省略；可选：
 
 ```json
 {"rerun":false}
@@ -219,7 +222,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
   "$AGENTFLOW_URL/api/issues/issue-1/dispatch"
 ```
 
-这是长任务的“启动”接口，只等待 run 创建，不等待 SOP 完成。后续使用 `/api/runs/{runId}/stream` 或轮询 run。
+这是长任务的“启动”接口，只等待 run 创建，不等待 LOOP 完成。后续使用 `/api/runs/{runId}/stream` 或轮询 run。
 
 ### `POST /api/issues/{issueId}/reopen`
 

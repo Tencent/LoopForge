@@ -9,7 +9,7 @@ func SeedTestGenericTemplates(s *Store) error {
 	if s == nil {
 		return nil
 	}
-	for _, template := range []GenericTemplate{testBackendGenericTemplate(), testNamedGenericTemplate(GenericProductDeliveryWorkflowID, "通用产品交付 SOP", GenericAgentProductPRD), testNamedGenericTemplate(GenericFrontendDeliveryWorkflowID, "通用前端交付 SOP", GenericAgentFrontendShape)} {
+	for _, template := range []GenericTemplate{testBackendGenericTemplate(), testNamedGenericTemplate(GenericProductDeliveryWorkflowID, "通用产品交付 LOOP", GenericAgentProductPRD), testNamedGenericTemplate(GenericFrontendDeliveryWorkflowID, "通用前端交付 LOOP", GenericAgentFrontendShape)} {
 		if err := s.PutGenericTemplate(template); err != nil {
 			return err
 		}
@@ -83,9 +83,9 @@ func testBackendGenericTemplate() GenericTemplate {
 	}
 	return GenericTemplate{
 		Workflow: domain.WorkflowDefinition{
-			ID: GenericBackendDeliveryWorkflowID, Name: "通用后端交付 SOP（LoopForge）",
+			ID: GenericBackendDeliveryWorkflowID, Name: "通用后端交付 LOOP（LoopForge）",
 			Version: 1, Revision: 1, Status: "published", Owner: "平台",
-			Description:      "测试用通用后端 SOP",
+			Description:      "测试用通用后端 LOOP",
 			SandboxProfileID: GenericDockerSandboxID, Generic: true,
 			Requirements: []domain.WorkflowRequirement{
 				{Key: RequirementGongfengGitToken, NodeID: "mr", Label: "工蜂 Git Token", Hint: "push 需要 Git Token", Setup: "settings"},

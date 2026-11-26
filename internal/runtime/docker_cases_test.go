@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -43,9 +45,27 @@ func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	if sb.ID() != "cvR-run" || sb.Workspace() != workspace || sb.Driver() != "docker" {
 		t.Fatalf("sandbox=%+v", sb)
 	}
-	out, err := sb.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-lc", "echo ok"}, environment: map[string]string{"B": "2"}}, nil)
+	const extraValue = "test-extra-credential"
+	command, err := bindCommand(t.Context(), sb, workspace, CommandSpec{
+		Argv:               []string{"sh", "-lc", "echo ok"},
+		CredentialBindings: []CredentialBinding{BindExtra},
+		ExtraCredentialEnv: map[string]string{"DEPLOYMENT_VALUE": "registry"},
+		environment:        map[string]string{"B": "2"},
+	}, RunCredentials{Extra: map[string]string{"registry": extraValue}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started string
+	out, err := sb.Exec(context.Background(), command, func(event domain.TelemetryEvent) {
+		if event.Name == "process.started" {
+			started = event.Message
+		}
+	})
 	if err != nil || !strings.Contains(out, "/workspace") {
 		t.Fatalf("exec=%q err=%v", out, err)
+	}
+	if strings.Contains(started, extraValue) || !strings.Contains(started, "DEPLOYMENT_VALUE=<redacted>") || !strings.Contains(started, "B=2") {
+		t.Fatalf("process.started must redact the extra credential and keep ordinary environment variables: %q", started)
 	}
 	if !sb.started || sb.builtImage == "" {
 		t.Fatalf("sandbox did not start: %+v", sb)
@@ -65,11 +85,132 @@ func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxPrivilegedRequiresExecutionHostOptIn(t *testing.T) {
+	t.Setenv(privilegedDockerSandboxEnv, "")
+	profile := domain.SandboxProfile{
+		Driver:      domain.SandboxDriverDocker,
+		Privileged:  true,
+		Environment: map[string]string{privilegedDockerSandboxEnv: "true"},
+	}
+	resources := SandboxResources{Dockerfile: domain.DockerfileDefinition{Content: "FROM scratch"}}
+	manager := NewManager(t.TempDir())
+	if _, err := manager.AcquireRun(t.Context(), "privileged", profile, SandboxRequirements{}, RunCredentials{}, resources); err == nil || !strings.Contains(err.Error(), privilegedDockerSandboxEnv) {
+		t.Fatalf("platform worker accepted privileged sandbox without host opt-in: %v", err)
+	}
+	workspace := t.TempDir()
+	if _, err := OpenRemoteSandbox(t.Context(), "privileged", workspace, profile, SandboxRequirements{}, resources); err == nil || !strings.Contains(err.Error(), privilegedDockerSandboxEnv) {
+		t.Fatalf("runner accepted privileged sandbox without host opt-in: %v", err)
+	}
+	t.Setenv(privilegedDockerSandboxEnv, "true")
+	if _, err := OpenRemoteSandbox(t.Context(), "privileged", workspace, profile, SandboxRequirements{}, resources); err != nil {
+		t.Fatalf("runner rejected host opt-in: %v", err)
+	}
+}
+
+func TestDockerSandboxReplacesContainerWhenPrivilegeChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		privileged bool
+	}{
+		{name: "enable", privileged: true},
+		{name: "disable", privileged: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			cvRInstallFakeDocker(t, workspace)
+			argsFile := filepath.Join(t.TempDir(), "create-args")
+			t.Setenv("CVR_DOCKER_CREATE_ARGS", argsFile)
+			t.Setenv("CVR_DOCKER_EXISTING_PRIVILEGED", strconv.FormatBool(!tc.privileged))
+			sb := &dockerSandbox{
+				name:       "box",
+				workspace:  workspace,
+				profile:    domain.SandboxProfile{Driver: "docker", Privileged: tc.privileged, ReadOnlyRootFS: true},
+				dockerfile: domain.DockerfileDefinition{Content: "FROM scratch"},
+			}
+			if err := sb.BindWorkspace(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatalf("expected docker create when privilege changes: %v", err)
+			}
+			args := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if slices.Contains(args, "--privileged") != tc.privileged ||
+				slices.Contains(args, "--cap-drop=ALL") == tc.privileged ||
+				slices.Contains(args, "no-new-privileges") == tc.privileged ||
+				!slices.Contains(args, "--read-only") {
+				t.Fatalf("unexpected docker create args: %q", args)
+			}
+			if os.Geteuid() != 0 {
+				wantUser := strconv.Itoa(os.Geteuid()) + ":" + strconv.Itoa(os.Getegid())
+				if !strings.Contains(string(data), "\n--user\n"+wantUser+"\n") {
+					t.Fatalf("docker create must map the default image user to %s: %q", wantUser, args)
+				}
+			}
+		})
+	}
+}
+
+func TestDockerSandboxUsesRelayNetworkOnlyWhenRequested(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		privateHome        bool
+		conversation       bool
+		runnerLoginRelay   bool
+		invalidRelayConfig bool
+		wantNetwork        string
+	}{
+		{name: "LOOP with private home", privateHome: true, wantNetwork: "sop-network"},
+		{name: "LOOP ignores invalid conversation settings", privateHome: true, invalidRelayConfig: true, wantNetwork: "sop-network"},
+		{name: "conversation", conversation: true, wantNetwork: "chat-network"},
+		{name: "Codex login relay", runnerLoginRelay: true, wantNetwork: "chat-network"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			cvRInstallFakeDocker(t, workspace)
+			argsFile := filepath.Join(t.TempDir(), "create-args")
+			t.Setenv("CVR_DOCKER_CREATE_ARGS", argsFile)
+			t.Setenv("AGENTFLOW_DOCKER_NETWORK", "sop-network")
+			t.Setenv("AGENTFLOW_CONVERSATION_DOCKER_NETWORK", "chat-network")
+			host := "host.docker.internal"
+			if tc.invalidRelayConfig {
+				host = "invalid/relay"
+			}
+			t.Setenv("AGENTFLOW_CONVERSATION_RELAY_HOST", host)
+			requirements := SandboxRequirements{PrivateHome: tc.privateHome, RunnerLoginRelay: tc.runnerLoginRelay}
+			if tc.conversation {
+				requirements.ConversationRoot = t.TempDir()
+			}
+			ctx := context.Background()
+			sandbox, err := createDocker(ctx, "network-policy", workspace, domain.SandboxProfile{Driver: "docker"}, requirements, domain.DockerfileDefinition{Content: "FROM scratch"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sandbox.Close(ctx)
+			if err := sandbox.(*dockerSandbox).BindWorkspace(ctx); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := string(data)
+			if strings.Count(args, "\n--network\n") != 1 || !strings.Contains(args, "\n--network\n"+tc.wantNetwork+"\n") {
+				t.Fatalf("docker create used the wrong network: %s", args)
+			}
+			usesGateway := strings.Contains(args, "\n--add-host\nhost.docker.internal:host-gateway\n")
+			if usesGateway != (tc.conversation || tc.runnerLoginRelay) {
+				t.Fatalf("docker create host gateway = %v for %s", usesGateway, tc.name)
+			}
+		})
+	}
+}
+
 func TestDockerDiscoveryImagesAndBuildHelpers(t *testing.T) {
 	workspace := t.TempDir()
 	cvRInstallFakeDocker(t, workspace)
 	ctx := context.Background()
-	info, err := inspectDockerWorkspaceMounts(ctx, "box")
+	info, err := inspectDockerWorkspace(ctx, "box")
 	if err != nil || info == nil || info.source != workspace || info.legacyMasks {
 		t.Fatalf("mounts=%+v err=%v", info, err)
 	}
@@ -172,7 +313,7 @@ func TestDockerExecRecoversFromUnsafeCWD(t *testing.T) {
 workspace="${CVR_DOCKER_WORKSPACE}"
 marker="${CVR_DOCKER_MARKER}"
 if [ "${1-}" = inspect ]; then
-  printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$workspace"
+  printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false}\n' "$workspace"
   exit 0
 fi
 if [ "${1-}" = exec ]; then
@@ -227,9 +368,9 @@ case "$*" in
       exited) echo "false|id-$(cat "$state/generation")|start-$(cat "$state/starts")"; exit 0 ;;
     esac
     echo 'Error: No such object: box' >&2; exit 1 ;;
-  "inspect --type container --format {{json .Mounts}} box")
+  "inspect --type container --format "*" box")
     [ -n "$(status)" ] || { echo 'Error: No such container: box' >&2; exit 1; }
-    printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
+    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false}\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
   "start box") [ -n "$(status)" ] || exit 1; echo running > "$state/status"; count starts; exit 0 ;;
   "create --name box "*) echo exited > "$state/status"; count generation; exit 0 ;;
   "rm -f box") rm -f "$state/status"; exit 0 ;;
@@ -295,8 +436,8 @@ if [ "${1-}" = inspect ] && [ "${2-}" = -f ]; then
   exit 0
 fi
 case "$*" in
-  "inspect --type container --format {{json .Mounts}} box")
-    printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$workspace"; exit 0 ;;
+  "inspect --type container --format "*" box")
+    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":%s}\n' "$workspace" "${CVR_DOCKER_EXISTING_PRIVILEGED:-false}"; exit 0 ;;
   "inspect --type container "*) echo 'Error: No such container' >&2; exit 1 ;;
   "inspect --format {{.State.Running}}|{{.Id}}|{{.State.StartedAt}} "*) echo 'true|container-id|now'; exit 0 ;;
   "image inspect --format {{.Config.User}} "*) exit 0 ;;
@@ -306,6 +447,9 @@ case "$*" in
   "ps -aq --filter "*) echo id1; exit 0 ;;
   "inspect "*) exit 1 ;;
   "exec "*) echo /workspace; exit 0 ;;
+  "create "*)
+    if [ -n "${CVR_DOCKER_CREATE_ARGS:-}" ]; then printf '%s\n' "$@" > "$CVR_DOCKER_CREATE_ARGS"; fi
+    exit 0 ;;
   *) exit 0 ;;
 esac
 `

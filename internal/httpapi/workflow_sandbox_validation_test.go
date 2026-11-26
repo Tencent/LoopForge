@@ -12,7 +12,7 @@ import (
 	"agentflow/internal/tracker"
 )
 
-// TestWorkflowSaveRequiresExistingSandboxProfile 校验 SOP 保存路径上的沙箱档案检查：
+// TestWorkflowSaveRequiresExistingSandboxProfile 校验 LOOP 保存路径上的沙箱档案检查：
 // 标识缺失与档案不存在都由 requireWorkflowSandbox 统一回 400，且文案保持不变。
 func TestWorkflowSaveRequiresExistingSandboxProfile(t *testing.T) {
 	s, err := repo.OpenTest()

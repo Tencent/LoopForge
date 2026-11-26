@@ -199,6 +199,16 @@ func TestAssistantNativeProviderGateway(t *testing.T) {
 				first := requests == 1
 				callMCP := first || (provider == "codex" && requests == 2)
 				mu.Unlock()
+				if first {
+					field, imageType := "messages", "image"
+					if provider == "codex" {
+						field, imageType = "input", "input_image"
+					}
+					modelInput, _ := json.Marshal(body[field])
+					if !bytes.Contains(modelInput, []byte(`"type":"`+imageType+`"`)) {
+						t.Errorf("first model request did not include the user image as %s", imageType)
+					}
+				}
 				tools, _ := json.Marshal(body["tools"])
 				if provider == "codex" {
 					for _, name := range []string{"view_image", "shell_command", "exec_command", "apply_patch", "spawn_agent", "create_goal"} {
@@ -248,19 +258,20 @@ func TestAssistantNativeProviderGateway(t *testing.T) {
 			}))
 			defer gateway.Close()
 			dir := t.TempDir()
+			imagePath := filepath.Join(dir, "screenshot.png")
+			if err := os.WriteFile(imagePath, conversationTestPNG(t), 0o600); err != nil {
+				t.Fatal(err)
+			}
 			config := filepath.Join(dir, "mcp.json")
 			raw, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"agentflow_session": map[string]string{"type": "http", "url": mcp.URL}}})
 			os.WriteFile(config, raw, 0600)
 			user := domain.User{CodexAPIKey: "fixture-provider-key", CodexBaseURL: gateway.URL + "/v1", ClaudeCodeAPIKey: "fixture-provider-key", ClaudeCodeBaseURL: gateway.URL}
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			var out string
-			var err error
-			if provider == "codex" {
-				out, _, err = runAssistantCLI(ctx, assistantCLIRequest{Executor: provider, Model: "gateway-test-model", Prompt: "Read demo then reply JSON.", MCPConfig: config, Native: true, SessionRoot: dir}, user, nil)
-			} else {
-				out, _, err = runAlternateAssistantCLI(ctx, assistantCLIRequest{Executor: provider, Model: "gateway-test-model", Prompt: "Read demo then reply JSON.", MCPConfig: config}, user, nil)
-			}
+			out, _, err := runAssistantCLI(ctx, assistantCLIRequest{
+				Executor: provider, Model: "gateway-test-model", Prompt: "Read demo then reply JSON.",
+				MCPConfig: config, Native: true, SessionRoot: dir, ImagePaths: []string{imagePath},
+			}, user, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

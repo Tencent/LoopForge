@@ -487,7 +487,8 @@ func installSkillhub(t *testing.T, h http.Handler, body map[string]any) *httptes
 func TestSkillhubInstallSnapshotsLatestAndHistoricalVersions(t *testing.T) {
 	f, s, h := newSkillhubTestServer(t, "")
 	f.publish("team", "pdf-tools", "1.0.0", map[string]string{"pdf-tools/SKILL.md": "# old", "pdf-tools/scripts/a.py": "print(1)"})
-	f.publish("team", "pdf-tools", "1.3.0", map[string]string{"SKILL.md": "# new", "scripts/a.py": "print(2)", "references/api.md": "api"})
+	largeFile := strings.Repeat("x", 2<<20)
+	f.publish("team", "pdf-tools", "1.3.0", map[string]string{"SKILL.md": "# new", "scripts/a.py": "print(2)", "references/api.md": largeFile})
 
 	rec := installSkillhub(t, h, map[string]any{"slug": "pdf-tools", "namespace": "team", "projectId": "platform"})
 	if rec.Code != http.StatusCreated {
@@ -506,6 +507,9 @@ func TestSkillhubInstallSnapshotsLatestAndHistoricalVersions(t *testing.T) {
 	}
 	if content, ok := s.SkillFileContent("pdf-tools", "SKILL.md"); !ok || string(content) != "# new" {
 		t.Fatalf("SKILL.md = %q", content)
+	}
+	if content, ok := s.SkillFileContent("pdf-tools", "references/api.md"); !ok || string(content) != largeFile {
+		t.Fatalf("large file not installed: found %t, %d bytes", ok, len(content))
 	}
 
 	// A historical version, custom id and name, top-level dir stripped.
@@ -557,7 +561,7 @@ func TestSkillhubInstallFailuresLeaveNoSkill(t *testing.T) {
 	big := strings.Repeat("x", int(domain.SkillFileMaxBytes)+1)
 	f.publish("team", "huge", "1.0.0", map[string]string{"SKILL.md": "# huge", "assets/big.txt": big})
 	rec := installSkillhub(t, h, map[string]any{"slug": "huge", "namespace": "team", "projectId": "platform"})
-	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "1MB") {
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "10MB") {
 		t.Fatalf("oversized install %d: %s", rec.Code, rec.Body.String())
 	}
 	if _, ok := s.Skill("huge"); ok || len(s.SkillFileRefs("huge")) != 0 {
@@ -731,7 +735,7 @@ func TestSkillhubSourcedSkillIsReadOnlyAndSourceTamperProof(t *testing.T) {
 }
 
 func TestReadSkillZipBytesMatchesUploadRules(t *testing.T) {
-	files, err := readSkillZipBytes(zipBytes(t, map[string]string{"pkg/SKILL.md": "# a", "__MACOSX/pkg/._SKILL.md": "", "pkg/b/c.txt": "c"}, nil), "pkg.zip", nil)
+	files, err := readSkillZipBytes(zipBytes(t, map[string]string{"pkg/SKILL.md": "# a", "__MACOSX/pkg/._SKILL.md": "", "pkg/b/c.txt": "c"}, nil), "pkg.zip", nil, domain.SkillFileMaxBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -742,7 +746,7 @@ func TestReadSkillZipBytesMatchesUploadRules(t *testing.T) {
 	if !paths["SKILL.md"] || !paths["b/c.txt"] || len(paths) != 2 {
 		t.Fatalf("unexpected paths %v", paths)
 	}
-	if _, err := readSkillZipBytes([]byte("not a zip"), "bad.zip", nil); err == nil || !strings.Contains(err.Error(), "bad.zip") {
+	if _, err := readSkillZipBytes([]byte("not a zip"), "bad.zip", nil, domain.SkillFileMaxBytes); err == nil || !strings.Contains(err.Error(), "bad.zip") {
 		t.Fatalf("invalid zip error = %v", err)
 	}
 }

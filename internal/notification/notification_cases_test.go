@@ -164,7 +164,7 @@ func TestProcessOneStopsRetryingAfterFiveAttempts(t *testing.T) {
 
 func TestGenerateReportMalformedFallback(t *testing.T) {
 	svc := &Service{}
-	item := &domain.NotificationDelivery{ReportRequest: "{", SourceName: "SOP"}
+	item := &domain.NotificationDelivery{ReportRequest: "{", SourceName: "LOOP"}
 	if err := svc.generateReport(context.Background(), item); err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,10 +120,10 @@ func TestArtifactCollectionErrorsAndFreeze(t *testing.T) {
 	}
 
 	node.ArtifactOutputs[0].Path = "huge.md"
-	if err := os.WriteFile(filepath.Join(workspace, "huge.md"), make([]byte, maxArtifactBytes+1), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(workspace, "huge.md"), make([]byte, domain.MaxSOPArtifactBytes+1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collectArtifacts(workspace, run, node, "output"); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	if _, err := collectArtifacts(workspace, run, node, "output"); !errors.Is(err, errOutputTooLarge) {
 		t.Fatalf("large artifact err=%v", err)
 	}
 	if artifacts, err := collectArtifactsBestEffort(workspace, run, node, "output"); err != nil || len(artifacts) != 0 {

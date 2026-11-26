@@ -28,7 +28,7 @@ func TestIssueDispatchCreatesTaskAndRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "issue-test", Name: "Issue test", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "issue-test", Name: "Issue test", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
@@ -85,7 +85,7 @@ func TestDispatchTAPDIssuePutsStoryIdentityInInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "tapd-identity", Name: "TAPD identity", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "tapd-identity", Name: "TAPD identity", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
@@ -220,7 +220,7 @@ func TestIssueDispatchUsesTriggerUserCredentials(t *testing.T) {
 	if err := s.PutUser(operator); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "issue-trigger", Name: "Trigger", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "issue-trigger", Name: "Trigger", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
@@ -263,7 +263,7 @@ func TestExternalIssueDispatchKeepsExplicitWorkflow(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	workflow := domain.WorkflowDefinition{
-		ID: "gongfeng-bwrap-override", Name: "Gongfeng bwrap override", Version: 1, SandboxProfileID: "local",
+		ID: "gongfeng-bwrap-override", Name: "Gongfeng bwrap override", Version: 1, SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}},
 	}
 	if err := s.PutWorkflow(workflow); err != nil {
@@ -301,8 +301,8 @@ func TestIssueDispatchSecondLaneKeepsDefaultSOP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	backend := domain.WorkflowDefinition{ID: "wf-backend-lane", Name: "Backend", SOPLane: "backend", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
-	frontend := domain.WorkflowDefinition{ID: "wf-frontend-lane", Name: "Frontend", SOPLane: "frontend", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	backend := domain.WorkflowDefinition{ID: "wf-backend-lane", Name: "Backend", SOPLane: "backend", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	frontend := domain.WorkflowDefinition{ID: "wf-frontend-lane", Name: "Frontend", SOPLane: "frontend", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(backend); err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestIssueDispatchSecondLaneKeepsDefaultSOP(t *testing.T) {
 	}
 	stored, _ := s.Issue("iss-lanes")
 	if stored.WorkflowID != backend.ID {
-		t.Fatalf("default SOP overwritten: %q", stored.WorkflowID)
+		t.Fatalf("default LOOP overwritten: %q", stored.WorkflowID)
 	}
 	snap := requestJSON[domain.RequirementSnapshot](t, h, http.MethodGet, "/api/issues/iss-lanes/requirement", nil, http.StatusOK)
 	if snap.Overall.RunCount < 2 {
@@ -362,8 +362,8 @@ func TestIssueSOPBindingsRoundTripAndDispatchOwner(t *testing.T) {
 	if err := s.PutUser(operator); err != nil {
 		t.Fatal(err)
 	}
-	design := domain.WorkflowDefinition{ID: "wf-design-bind", Name: "Design", SOPLane: "design", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
-	backend := domain.WorkflowDefinition{ID: "wf-backend-bind", Name: "Backend", SOPLane: "backend", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	design := domain.WorkflowDefinition{ID: "wf-design-bind", Name: "Design", SOPLane: "design", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	backend := domain.WorkflowDefinition{ID: "wf-backend-bind", Name: "Backend", SOPLane: "backend", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(design); err != nil {
 		t.Fatal(err)
 	}
@@ -402,8 +402,8 @@ func TestRequirementInheritsProjectPlaybook(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	product := domain.WorkflowDefinition{ID: "wf-play-product", Name: "Product", SOPLane: "product", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
-	backend := domain.WorkflowDefinition{ID: "wf-play-backend", Name: "Backend", SOPLane: "backend", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	product := domain.WorkflowDefinition{ID: "wf-play-product", Name: "Product", SOPLane: "product", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	backend := domain.WorkflowDefinition{ID: "wf-play-backend", Name: "Backend", SOPLane: "backend", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(product); err != nil {
 		t.Fatal(err)
 	}
@@ -451,9 +451,9 @@ func TestRequirementPicksNamedPlaybook(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	product := domain.WorkflowDefinition{ID: "wf-combo-product", Name: "Product", SOPLane: "product", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
-	frontend := domain.WorkflowDefinition{ID: "wf-combo-frontend", Name: "Frontend", SOPLane: "frontend", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
-	backend := domain.WorkflowDefinition{ID: "wf-combo-backend", Name: "Backend", SOPLane: "backend", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	product := domain.WorkflowDefinition{ID: "wf-combo-product", Name: "Product", SOPLane: "product", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	frontend := domain.WorkflowDefinition{ID: "wf-combo-frontend", Name: "Frontend", SOPLane: "frontend", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	backend := domain.WorkflowDefinition{ID: "wf-combo-backend", Name: "Backend", SOPLane: "backend", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	for _, wf := range []domain.WorkflowDefinition{product, frontend, backend} {
 		if err := s.PutWorkflow(wf); err != nil {
 			t.Fatal(err)
@@ -517,8 +517,8 @@ func TestWorkflowAPIRequiresExistingWorkflowSandboxProfile(t *testing.T) {
 
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/workflows", map[string]any{"id": "missing", "name": "Missing", "nodes": []any{}, "edges": []any{}}, http.StatusBadRequest)
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/workflows", map[string]any{"id": "unknown", "name": "Unknown", "sandboxProfileId": "does-not-exist", "nodes": []any{}, "edges": []any{}}, http.StatusBadRequest)
-	created := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", map[string]any{"id": "valid", "name": "Valid", "sandboxProfileId": "local", "nodes": []any{}, "edges": []any{}}, http.StatusOK)
-	if created.SandboxProfileID != "local" {
+	created := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", map[string]any{"id": "valid", "name": "Valid", "sandboxProfileId": "test-native", "nodes": []any{}, "edges": []any{}}, http.StatusOK)
+	if created.SandboxProfileID != "test-native" {
 		t.Fatalf("sandboxProfileId = %q", created.SandboxProfileID)
 	}
 }
@@ -543,7 +543,7 @@ func TestAssetAPIAcceptsSandboxEnvironmentButExecutorsAreReadOnly(t *testing.T) 
 			t.Fatalf("built-in CLI catalog[%d] = %+v, want %+v", i, executors[i], want[i])
 		}
 	}
-	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "configured", "name": "Configured", "projectId": "platform", "driver": "local", "environment": map[string]string{"TOOL_MODE": "test"}}, http.StatusOK)
+	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "configured", "name": "Configured", "projectId": "platform", "driver": "native", "environment": map[string]string{"TOOL_MODE": "test"}}, http.StatusOK)
 	profile, ok := s.Sandbox("configured")
 	if !ok || profile.Environment["TOOL_MODE"] != "test" {
 		t.Fatalf("sandbox environment was not persisted: %+v", profile)
@@ -570,7 +570,7 @@ func TestAgentAPIOnlyAcceptsBuiltInCLIs(t *testing.T) {
 	}
 }
 
-func TestAssetAPIManagesDockerfilesEnvironmentsAndDockerSandbox(t *testing.T) {
+func TestSandboxAPIStoresItsDockerfileAndInstall(t *testing.T) {
 	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -579,21 +579,31 @@ func TestAssetAPIManagesDockerfilesEnvironmentsAndDockerSandbox(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
 
-	requestJSON[map[string]string](t, h, http.MethodPut, "/api/dockerfiles", map[string]any{"id": "slim", "name": "Slim", "projectId": "platform"}, http.StatusBadRequest)
-	saved := requestJSON[map[string]bool](t, h, http.MethodPut, "/api/dockerfiles", map[string]any{"id": "slim", "name": "Slim", "projectId": "platform", "content": "FROM debian:bookworm-slim"}, http.StatusOK)
-	if !saved["ok"] {
-		t.Fatalf("dockerfile save = %+v", saved)
-	}
-	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/environments", map[string]any{"id": "php8-test", "name": "PHP 8 test", "projectId": "platform", "variables": map[string]string{"PHP_VERSION": "8.3.0"}, "pathEntries": []string{"bin"}, "installScript": "mkdir -p \"$PREFIX/bin\""}, http.StatusOK)
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "container-new", "name": "Container", "projectId": "platform", "driver": "docker"}, http.StatusBadRequest)
-	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "container-new", "name": "Container", "projectId": "platform", "driver": "docker", "dockerfileId": "slim"}, http.StatusOK)
-	profile, ok := s.Sandbox("container-new")
-	if !ok || profile.DockerfileID != "slim" {
-		t.Fatalf("docker sandbox should store dockerfileId: %+v", profile)
+	requestJSON[map[string]string](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "container-new", "name": "Container", "projectId": "platform", "driver": "docker", "dockerfile": map[string]any{"content": " "}}, http.StatusBadRequest)
+	saved := requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "container-new", "name": "Container", "projectId": "platform", "driver": "docker", "dockerfile": map[string]any{"content": "FROM debian:bookworm-slim", "files": map[string]string{"etc/a": "x"}}}, http.StatusOK)
+	if !saved["ok"] {
+		t.Fatalf("sandbox save = %+v", saved)
 	}
+	profile, ok := s.Sandbox("container-new")
+	if !ok || profile.Dockerfile == nil || profile.Dockerfile.Content != "FROM debian:bookworm-slim" || profile.Dockerfile.Files["etc/a"] != "x" {
+		t.Fatalf("docker sandbox should store its Dockerfile: %+v", profile)
+	}
+	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "php8-test", "name": "PHP 8 test", "projectId": "platform", "driver": "native", "environment": map[string]string{"PHP_VERSION": "8.3.0"}}, http.StatusOK)
+	if profile, ok := s.Sandbox("php8-test"); !ok || profile.Environment["PHP_VERSION"] != "8.3.0" {
+		t.Fatalf("native sandbox should store its variables: %+v", profile)
+	}
+	requestJSON[map[string]string](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "local-test", "name": "Local", "projectId": "platform", "driver": "local"}, http.StatusBadRequest)
 	boot := requestJSON[map[string]any](t, h, http.MethodGet, "/api/bootstrap", nil, http.StatusOK)
-	if boot["dockerfiles"] == nil || boot["environments"] == nil {
-		t.Fatalf("bootstrap missing dockerfile/environment catalogs: %+v", boot)
+	if boot["dockerfiles"] != nil || boot["environments"] != nil || boot["sandboxes"] == nil {
+		t.Fatalf("bootstrap lists sandboxes only: %+v", boot)
+	}
+	for _, path := range []string{"/api/dockerfiles", "/api/environments"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s is gone, got %d", path, rec.Code)
+		}
 	}
 }
 
@@ -608,7 +618,7 @@ func TestManualRunKeepsSelectedProjectContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	workflow := domain.WorkflowDefinition{
-		ID: "manual-project-run", Name: "Manual project run", SandboxProfileID: "local",
+		ID: "manual-project-run", Name: "Manual project run", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}},
 	}
 	if err := s.PutWorkflow(workflow); err != nil {
@@ -652,7 +662,7 @@ func TestRepositoryBindingIsValidatedAndFrozenAtDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "repo-flow", Name: "Repo flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "repo-flow", Name: "Repo flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
@@ -682,7 +692,7 @@ func TestRepositoryBindingIsValidatedAndFrozenAtDispatch(t *testing.T) {
 	project, _ := s.Project("platform")
 	project.DefaultRepositoryID = repo.ID
 	savedProject := requestJSON[domain.Project](t, h, http.MethodPut, "/api/projects", project, http.StatusOK)
-	if savedProject.GitToken != "" || savedProject.GitTokenConfigured {
+	if savedProject.GitToken != "" || savedProject.GitHubCredentialConfigured {
 		t.Fatalf("projects must not expose project-level credentials: %+v", savedProject)
 	}
 	issue := domain.Issue{ID: "iss-bound", ProjectID: "platform", Title: "Bound work", AssigneeType: "agent", AssigneeID: "developer", WorkflowID: "repo-flow", RepositoryID: repo.ID, BaseBranch: "release/1.0"}
@@ -700,7 +710,7 @@ func TestRepositoryBindingIsValidatedAndFrozenAtDispatch(t *testing.T) {
 	if strings.TrimSpace(run.Repository.WorkspaceDir) == "" {
 		t.Fatalf("single-repository run must assign a first-level WorkspaceDir: %+v", run.Repository)
 	}
-	if !bytes.Contains([]byte(run.Input), []byte("local directory: ./"+run.Repository.WorkspaceDir)) || !bytes.Contains([]byte(run.Input), []byte("SOP deliverables")) || !bytes.Contains([]byte(run.Input), []byte("workspace root")) {
+	if !bytes.Contains([]byte(run.Input), []byte("local directory: ./"+run.Repository.WorkspaceDir)) || !bytes.Contains([]byte(run.Input), []byte("LOOP deliverables")) || !bytes.Contains([]byte(run.Input), []byte("workspace root")) {
 		t.Fatalf("single-repository prompt did not describe subdirectory checkout and run-level deliverables: %q", run.Input)
 	}
 	if bytes.Contains([]byte(run.Input), []byte(source)) || bytes.Contains([]byte(run.Input), []byte("local path:")) {
@@ -877,7 +887,7 @@ func TestPublicRunOmitsLogsAndTelemetry(t *testing.T) {
 }
 
 func TestPublicRunStripsWorkflowScripts(t *testing.T) {
-	run := domain.Run{ID: "run-slim-wf", WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", Name: "SOP", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "修复", Script: "secret script"}}}}
+	run := domain.Run{ID: "run-slim-wf", WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", Name: "LOOP", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "修复", Script: "secret script"}}}}
 	detail := publicRun(run, false)
 	if detail.WorkflowSnapshot.Nodes[0].Script != "" {
 		t.Fatalf("workflow script leaked into public run: %+v", detail.WorkflowSnapshot.Nodes[0])
@@ -1002,7 +1012,7 @@ func TestStandardWorkerIngressSeparatesRealtimeLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "signal-test", Name: "Signal test", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "signal-test", Name: "Signal test", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -1060,13 +1070,13 @@ func TestIssueStatusFromLatestTask(t *testing.T) {
 	}
 	open := domain.Issue{Status: "blocked"}
 	if got := issueStatusFromLatestTask(open, "completed"); got != "in_review" {
-		t.Fatalf("latest succeeded SOP should move blocked issue to in_review, got %q", got)
+		t.Fatalf("latest succeeded LOOP should move blocked issue to in_review, got %q", got)
 	}
 	if got := issueStatusFromLatestTask(domain.Issue{Status: "todo"}, "failed"); got != "blocked" {
-		t.Fatalf("latest failed SOP should block, got %q", got)
+		t.Fatalf("latest failed LOOP should block, got %q", got)
 	}
 	if got := issueStatusFromLatestTask(domain.Issue{Status: "blocked"}, "running"); got != "in_progress" {
-		t.Fatalf("latest running SOP should be in_progress, got %q", got)
+		t.Fatalf("latest running LOOP should be in_progress, got %q", got)
 	}
 	locked := domain.Issue{Status: "done", DeliveryState: "merged", DeliveryMRState: "integrated"}
 	if got := issueStatusFromLatestTask(locked, "cancelled"); got != "done" {
@@ -1133,7 +1143,7 @@ func TestIssueDispatchReturnsQueuedTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	workflow := domain.WorkflowDefinition{ID: "dispatch-queued", Name: "Queued dispatch", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Type: "approval", MaxAttempts: 1}}}
+	workflow := domain.WorkflowDefinition{ID: "dispatch-queued", Name: "Queued dispatch", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(workflow); err != nil {
 		t.Fatal(err)
 	}
@@ -1208,7 +1218,7 @@ func TestSyncTasksBindsIssueToLatestSOP(t *testing.T) {
 		got[issue.ID] = issue
 	}
 	if gf5 := got["gf-5"]; gf5.LatestTaskID != "task-new" || gf5.Status != "in_review" {
-		t.Fatalf("gf-5 not bound to latest SOP: %+v", gf5)
+		t.Fatalf("gf-5 not bound to latest LOOP: %+v", gf5)
 	}
 	if gf20 := got["gf-20"]; gf20.LatestTaskID != "task-20" || gf20.Status != "in_review" {
 		t.Fatalf("gf-20 still looks unstarted: %+v", gf20)
@@ -1277,7 +1287,7 @@ func TestGongfengClosedIssueRejectsDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "issue-fix-production", Name: "Issue fix", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "issue-fix-production", Name: "Issue fix", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
@@ -1363,7 +1373,7 @@ func TestMergedTAPDDeliveryRequiresExplicitReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	wf := domain.WorkflowDefinition{ID: "requirement-development-production", Name: "Requirement", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "requirement-development-production", Name: "Requirement", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -1405,13 +1415,13 @@ func TestRequirementDispatchesWithoutClarificationGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "requirement-gated", Name: "Requirement gated", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "requirement-gated", Name: "Requirement gated", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
-	// Legacy imports still carry gated/needs_user; neither may block the SOP.
+	// Legacy imports still carry gated/needs_user; neither may block the LOOP.
 	if err := s.PutIssue(domain.Issue{ID: "req-gated", ProjectID: "platform", Kind: "requirement", Title: "Build requirement", AssigneeType: "agent", AssigneeID: "developer", WorkflowID: wf.ID, Clarification: domain.ClarificationAssessment{Gated: true, Status: domain.ClarificationNeedsUser}}); err != nil {
 		t.Fatal(err)
 	}
@@ -1434,7 +1444,7 @@ func TestScheduledDispatchDoesNotRequireClarification(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "req-sched-wf", Name: "Req", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
+	wf := domain.WorkflowDefinition{ID: "req-sched-wf", Name: "Req", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -1460,7 +1470,7 @@ func TestSyncedRequirementCanDispatchWithoutClarification(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "req-sync-wf", Name: "Req", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
+	wf := domain.WorkflowDefinition{ID: "req-sync-wf", Name: "Req", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -1489,7 +1499,7 @@ func TestReadyClarificationCanDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "req-ready-wf", Name: "Req", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
+	wf := domain.WorkflowDefinition{ID: "req-ready-wf", Name: "Req", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -1532,7 +1542,7 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "issue-flow", Name: "Issue flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "issue-flow", Name: "Issue flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -1553,7 +1563,7 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 		t.Fatalf("platform description missing conclusion: %q", updated.Description)
 	}
 	if len(s.Tasks()) != 0 {
-		t.Fatal("clarification must not start an SOP")
+		t.Fatal("clarification must not start a LOOP")
 	}
 	retried := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{
 		"ready": true, "retry": true,
@@ -1563,7 +1573,7 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 	}
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", map[string]any{}, http.StatusCreated)
 	if task.RunID == "" {
-		t.Fatal("existing issue SOP should still dispatch normally")
+		t.Fatal("existing issue LOOP should still dispatch normally")
 	}
 	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
 }
@@ -1575,7 +1585,7 @@ func TestRequirementClarificationFinishesWithoutScore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "req-flow", Name: "Req flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "req-flow", Name: "Req flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -1841,7 +1851,7 @@ func TestIssuesSaveDoesNotGateSyncedTAPDRequirement(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "demodns-issue-fix", Name: "Issue fix", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "Fix", Type: "agent"}}}); err != nil {
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "demodns-issue-fix", Name: "Issue fix", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "Fix", Type: "agent"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutRepository(domain.Repository{ID: "repo-new-demodns", ProjectID: "platform", Name: "dns-console", GongfengProjectID: "example/dns-console", DefaultBranch: "master"}); err != nil {
@@ -1920,11 +1930,11 @@ func TestImportTAPDIssueBindsSelectedWorkflow(t *testing.T) {
 	if err := s.PutProject(project); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "custom-req-sop", Name: "定制需求 SOP", ProjectID: "platform", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "custom-req-sop", Name: "定制需求 LOOP", ProjectID: "platform", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	h := newTAPDImportHandler(t, s, root, `{"data":[{"id":"1010000000100001221","name":"带 SOP 导入","status":"open"}]}`)
+	h := newTAPDImportHandler(t, s, root, `{"data":[{"id":"1010000000100001221","name":"带 LOOP 导入","status":"open"}]}`)
 	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues/import-tapd", map[string]any{
 		"projectId":  "platform",
 		"url":        "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001221",
@@ -2103,7 +2113,10 @@ func TestUserCredentialsAreStoredAndRedacted(t *testing.T) {
 		t.Fatal(err)
 	}
 	alice, _ := s.UserByLoginName("alice")
-	body, _ := json.Marshal(map[string]any{"gitToken": "user_git_secret", "codeBuddyApiKey": "ck_user_secret", "codeBuddyInternetEnvironment": "ioa"})
+	body, _ := json.Marshal(map[string]any{"codeBuddyApiKey": "ck_user_secret", "codeBuddyInternetEnvironment": "ioa"})
+	if err := s.SaveGitHTTPCredential(alice.ID, "", domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Host: "github.com", Platform: domain.GitPlatformGitHub}, Token: "user_git_secret"}); err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/users/%d/credentials", alice.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	token, err := auth.NewClientFromEnv().SignUser(&auth.User{ID: alice.ID, LoginName: alice.LoginName, AuthTime: time.Now().UTC()})
@@ -2120,11 +2133,11 @@ func TestUserCredentialsAreStoredAndRedacted(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &public); err != nil {
 		t.Fatal(err)
 	}
-	if public.GitToken != "" || public.CodeBuddyAPIKey != "" || !public.GitTokenConfigured || !public.CodeBuddyAPIKeyConfigured {
+	if public.GitToken != "" || public.CodeBuddyAPIKey != "" || !public.GitHubCredentialConfigured || !public.CodeBuddyAPIKeyConfigured {
 		t.Fatalf("credential response must be redacted: %+v", public)
 	}
 	stored, ok := s.User(alice.ID)
-	if !ok || stored.GitToken != "user_git_secret" || stored.CodeBuddyAPIKey != "ck_user_secret" || stored.CodeBuddyInternetEnvironment != "ioa" {
+	if !ok || stored.GitToken != "" || stored.CodeBuddyAPIKey != "ck_user_secret" || stored.CodeBuddyInternetEnvironment != "ioa" {
 		t.Fatalf("store must keep user secrets, got %+v", stored)
 	}
 	boot := requestJSON[map[string]any](t, h, http.MethodGet, "/api/bootstrap", nil, http.StatusOK)

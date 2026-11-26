@@ -136,6 +136,7 @@ func TestCodexAppServerTurn(t *testing.T) {
 	if turn.Method != "turn/start" || turn.Params["threadId"] != "019a-thread" || len(input) != 1 || input[0].(map[string]any)["text"] != "暗号是什么？" {
 		t.Fatalf("turn/start: %+v", turn)
 	}
+	inv.translate(`{"id":3,"result":{"turn":{"id":"t1","status":"inProgress"}}}`)
 	// An approval request cannot be answered in chat; it is refused instead of hanging the turn.
 	inv.translate(`{"id":"req-1","method":"item/commandExecution/requestApproval","params":{}}`)
 	if m := readCodexTestRPC(t, stdin); string(m.ID) != `"req-1"` || m.Error == nil {
@@ -162,7 +163,7 @@ func TestCodexAppServerTurn(t *testing.T) {
 		"stream_event:content_block_start", "stream_event:thinking_delta", "stream_event:thinking_delta", "stream_event:content_block_stop", "assistant:thinking",
 		"assistant:tool_use", "user:tool_result",
 		"stream_event:content_block_start", "stream_event:text_delta", "stream_event:text_delta", "stream_event:content_block_stop", "assistant:text",
-		"result",
+		"usage", "result",
 	}
 	if got := codexLineTypes(t, lines); !slices.Equal(got, want) {
 		t.Fatalf("lines:\n got %v\nwant %v", got, want)
@@ -267,6 +268,7 @@ func TestCodexAppServerTurnFailure(t *testing.T) {
 	readCodexTestRPC(t, stdin)
 	inv.translate(`{"id":2,"result":{"thread":{"id":"019a-thread"}}}`)
 	readCodexTestRPC(t, stdin)
+	inv.translate(`{"id":3,"result":{"turn":{"id":"t1","status":"inProgress"}}}`)
 	inv.translate(`{"method":"item/agentMessage/delta","params":{"itemId":"a1","delta":"半"}}`)
 	// A retried error is not final; the turn's own error wins.
 	inv.translate(`{"method":"error","params":{"error":{"message":"reconnecting"},"willRetry":true}}`)

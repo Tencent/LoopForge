@@ -8,7 +8,8 @@ import "./model-picker.css";
 const unavailable = (model) => !!(model.disabled || model.unavailable);
 const menuWidth = 240;
 
-export default function ModelPicker({ models, value, label, open, onOpenChange, onSelect }) {
+export default function ModelPicker({ models, value, label, open: requestedOpen, disabled = false, onOpenChange, onSelect }) {
+  const open = requestedOpen && !disabled;
   const trigger = useRef(null);
   const panel = useRef(null);
   const search = useRef(null);
@@ -161,7 +162,7 @@ export default function ModelPicker({ models, value, label, open, onOpenChange, 
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={presence.mounted ? identity : undefined}
-        disabled={!models.length}
+        disabled={disabled || !models.length}
         onClick={() => onOpenChange(!open)}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {

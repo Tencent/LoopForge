@@ -43,6 +43,8 @@ func TestCursorModelID(t *testing.T) {
 		{"gemini-4-argon", "max", "gemini-4-argon-high"},
 		{"composer-2.5", "high", "composer-2.5"},
 		{"auto", "", "auto"},
+		{"gemini-4-neon", "", "gemini-4-neon-medium"},
+		{"gemini-4-neon", "xhigh", "gemini-4-neon-xhigh"},
 		{"gemini-4-carbon", "", "gemini-4-carbon-medium"},
 		{"gemini-4-carbon", "high", "gemini-4-carbon-high"},
 		{"gemini-4-hydrogen", "xhigh", "gemini-4-hydrogen-xhigh"},
@@ -62,6 +64,9 @@ func TestCursorModelID(t *testing.T) {
 	if got := CursorModelEfforts("kimi-k3", nil); !slices.Equal(got, []string{"low", "high", "max"}) {
 		t.Errorf("kimi-k3 efforts: %v", got)
 	}
+	if got := CursorModelEfforts("gemini-4-neon", nil); !slices.Equal(got, []string{"low", "medium", "high", "xhigh"}) {
+		t.Errorf("Gemini 4 Neon efforts: %v", got)
+	}
 	if got := CursorModelEfforts("composer-2.5", nil); got != nil {
 		t.Errorf("composer efforts: %v", got)
 	}
@@ -75,7 +80,7 @@ func TestCursorModelID(t *testing.T) {
 	if i := slices.Index(argv, "--model"); i < 0 || argv[i+1] != "claude-opus-4-8-thinking-xhigh" {
 		t.Errorf("cursor argv: %q", argv)
 	}
-	// The SOP path: an unknown ID with an effort reaches the CLI unchanged.
+	// The LOOP path: an unknown ID with an effort reaches the CLI unchanged.
 	argv = AgentCLICommand(AgentCLICursor, AgentCLICommandOptions{Model: "grok-5-code", Effort: "high", Prompt: "p"}).Argv
 	if i := slices.Index(argv, "--model"); i < 0 || argv[i+1] != "grok-5-code" {
 		t.Errorf("unknown model argv: %q", argv)

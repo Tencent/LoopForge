@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,11 +44,10 @@ func assertPromptOnStdin(t *testing.T, name string, command runtime.CommandSpec,
 func TestAssistantCodeBuddyOversizedPromptUsesStdin(t *testing.T) {
 	prompt := oversizedAssistantPrompt()
 	cases := map[string]assistantCommandOpts{
-		"platform":  {Bin: "codebuddy", Config: "/tmp/mcp.json", Prompt: prompt, SessionID: "s1", Native: true},
-		"workspace": {Bin: "codebuddy", Config: "/tmp/mcp.json", Prompt: prompt, SessionID: "s1", Native: true, Workspace: true},
-		"resume":    {Bin: "codebuddy", Config: "/tmp/mcp.json", Prompt: prompt, SessionID: "s1", Native: true, Resume: true},
-		"report":    {Bin: "codebuddy", Config: "/tmp/mcp.json", Prompt: prompt, ReportOnly: true},
-		"review":    {Bin: "codebuddy", Config: "/tmp/mcp.json", Prompt: prompt, ReviewOnly: true},
+		"platform": {Bin: "codebuddy", Config: "/tmp/mcp.json", Prompt: prompt, SessionID: "s1", Native: true},
+		"resume":   {Bin: "codebuddy", Config: "/tmp/mcp.json", Prompt: prompt, SessionID: "s1", Native: true, Resume: true},
+		"report":   {Bin: "codebuddy", Config: "/tmp/mcp.json", Prompt: prompt, ReportOnly: true},
+		"review":   {Bin: "codebuddy", Config: "/tmp/mcp.json", Prompt: prompt, ReviewOnly: true},
 	}
 	for name, opts := range cases {
 		command, err := prepareAssistantCommand(opts)
@@ -57,6 +58,43 @@ func TestAssistantCodeBuddyOversizedPromptUsesStdin(t *testing.T) {
 		if !runtime.ConversationCommandFor(command, runtime.RunCredentials{}).Interactive {
 			t.Fatalf("%s: remote conversation must forward stdin", name)
 		}
+	}
+}
+
+func TestAssistantCodeBuddyWorkspaceStreamsPrompt(t *testing.T) {
+	for name, prompt := range map[string]string{"short": "你好\n第二行", "oversized": oversizedAssistantPrompt()} {
+		t.Run(name, func(t *testing.T) {
+			command, err := prepareAssistantCommand(assistantCommandOpts{
+				Bin: "codebuddy", Config: "/tmp/mcp.json", Prompt: prompt, SessionID: "s1", Native: true, Workspace: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, flag := range []string{"--input-format", "--output-format"} {
+				i := slices.Index(command.Argv, flag)
+				if i < 0 || i+1 >= len(command.Argv) || command.Argv[i+1] != "stream-json" {
+					t.Fatalf("%s must be stream-json", flag)
+				}
+			}
+			if slices.Contains(command.Argv, prompt) || command.Argv[len(command.Argv)-1] != "--" ||
+				!runtime.ConversationCommandFor(command, runtime.RunCredentials{}).Interactive {
+				t.Fatal("workspace prompt must be sent as interactive stdin")
+			}
+			var frame struct {
+				Type    string
+				Message struct {
+					Role    string
+					Content []struct{ Type, Text string }
+				}
+			}
+			if err := json.NewDecoder(command.Stdin).Decode(&frame); err != nil {
+				t.Fatal(err)
+			}
+			parts := frame.Message.Content
+			if frame.Type != "user" || frame.Message.Role != "user" || len(parts) != 1 || parts[0].Type != "text" || parts[0].Text != prompt {
+				t.Fatal("stream-json frame did not preserve the workspace prompt")
+			}
+		})
 	}
 }
 

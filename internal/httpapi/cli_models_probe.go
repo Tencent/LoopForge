@@ -25,7 +25,9 @@ type cliModelProbeResult struct {
 	Models []domain.CLIModel `json:"models"`
 	// Source identifies the configured gateway, official provider, Runner or built-in catalog.
 	Source string `json:"source,omitempty"`
-	Error  string `json:"error,omitempty"`
+	// Connected means the provider answered a live model request.
+	Connected bool   `json:"connected,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 const assistantAnthropicAPIBase = "https://api.anthropic.com"
@@ -81,28 +83,33 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 	if req.BaseURL != nil {
 		baseURL = strings.TrimSpace(*req.BaseURL)
 	}
+	configuredBaseURL := baseURL
 	if req.Protocol != nil && runtime.IsAgentCLI(engine) {
 		protocol = runtime.AgentCLIProtocol(engine, *req.Protocol)
 	}
 	c.Header("Cache-Control", "private, no-store")
-	if engine == assistantEngineCodeBuddy {
-		if req.Environment != nil {
-			var ok bool
-			environment, ok = domain.NormalizeCodeBuddyInternetEnvironment(*req.Environment)
-			if !ok {
-				c.JSON(http.StatusBadRequest, cliModelProbeResult{Error: "请选择有效的 CodeBuddy 网络环境"})
-				return
-			}
+	if engine == assistantEngineCodeBuddy && req.Environment != nil {
+		var ok bool
+		environment, ok = domain.NormalizeCodeBuddyInternetEnvironment(*req.Environment)
+		if !ok {
+			c.JSON(http.StatusBadRequest, cliModelProbeResult{Error: "请选择有效的 CodeBuddy 网络环境"})
+			return
 		}
+	}
+	if engine == assistantEngineCodeBuddy && baseURL == "" {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 		defer cancel()
 		var models []domain.CLIModel
 		for _, id := range discoverCLIModels(ctx, environment, apiKey) {
-			if assistantValidEngineModel(id) {
+			if !codeBuddyIsDefaultModel(id) && assistantValidEngineModel(id) {
 				models = append(models, domain.CLIModel{ID: id})
 			}
 		}
 		if len(models) == 0 {
+			if _, err := resolveAssistantEngineBin(engine); errors.Is(err, errAssistantCLIMissing) {
+				c.JSON(http.StatusOK, cliModelProbeResult{Error: err.Error()})
+				return
+			}
 			c.JSON(http.StatusOK, cliModelProbeResult{Error: "CodeBuddy CLI 没有返回模型，请检查 CLI 和个人凭据"})
 			return
 		}
@@ -110,7 +117,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		if apiKey == "" {
 			source = "builtin"
 		}
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: source})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, models, ""), Source: source})
 		return
 	}
 	if engine == runtime.AgentCLICursor {
@@ -118,7 +125,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		return
 	}
 	if baseURL == "" && apiKey == "" {
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(engine)), Source: "builtin"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(assistantEngineBuiltinModels(engine)), ""), Source: "builtin"})
 		return
 	}
 	if apiKey == "" {
@@ -161,13 +168,24 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		return
 	}
 	if len(models) == 0 {
-		c.JSON(http.StatusOK, cliModelProbeResult{Error: "服务没有返回可用模型，可以手动添加模型"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Connected: true, Error: "服务没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(models), Source: source})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(models), configuredBaseURL), Source: source, Connected: true})
 }
 
 func discoverGeminiModels(ctx context.Context, key, baseURL string) ([]assistantDiscoveredModel, error) {
+	client := *http.DefaultClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return discoverGeminiModelsWithClient(ctx, &client, key, baseURL)
+}
+
+func discoverGeminiModelsWithClient(ctx context.Context, client *http.Client, key, baseURL string) ([]assistantDiscoveredModel, error) {
+	if client == nil {
+		c := *http.DefaultClient
+		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &c
+	}
 	baseURL, err := domain.NormalizeGeminiBaseURL(baseURL)
 	if err != nil {
 		return nil, err
@@ -177,13 +195,14 @@ func discoverGeminiModels(ctx context.Context, key, baseURL string) ([]assistant
 		return nil, err
 	}
 	req.Header.Set("x-goog-api-key", key)
-	client := *http.DefaultClient
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("Gemini 模型接口返回重定向 HTTP %d，已拒绝跟随跳转", resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Gemini 模型接口返回 HTTP %d", resp.StatusCode)
 	}
@@ -221,7 +240,7 @@ func (h *usersHandlers) probeCursorModels(c *gin.Context, apiKey string) {
 	defer cancel()
 	models, err := cursorAgentModels(ctx, apiKey)
 	if errors.Is(err, errAssistantCLIMissing) {
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLICursor)), Source: "builtin"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLICursor, cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLICursor)), ""), Source: "builtin"})
 		return
 	}
 	if err != nil {
@@ -232,7 +251,7 @@ func (h *usersHandlers) probeCursorModels(c *gin.Context, apiKey string) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "Cursor CLI 没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: "official"})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLICursor, models, ""), Source: "official"})
 }
 
 var cursorModelLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) - (.+)$`)
@@ -291,7 +310,25 @@ func parseCursorModels(output string) []domain.CLIModel {
 func cliModelsOf(models []assistantDiscoveredModel) []domain.CLIModel {
 	out := make([]domain.CLIModel, 0, len(models))
 	for _, model := range models {
-		out = append(out, domain.CLIModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
+		out = append(out, domain.CLIModel{
+			ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort,
+			ReasoningEfforts: model.ReasoningEfforts, DiscoveredReasoningEfforts: model.DiscoveredReasoningEfforts,
+		})
 	}
 	return out
+}
+
+// Standard model listings often contain only IDs. Supply the CLI's catalog
+// levels when the endpoint omits them, and constrain advertised metadata to
+// levels this CLI can actually pass to its provider.
+func cliModelsWithEfforts(engine string, models []domain.CLIModel, baseURL string) []domain.CLIModel {
+	for i := range models {
+		id := models[i].ID
+		if engine != assistantEngineCodeBuddy {
+			id = engine + ":" + id
+		}
+		levels := append([]string{}, assistantModelEffortsForBaseURL(id, models, baseURL)...)
+		models[i].DiscoveredReasoningEfforts = &levels
+	}
+	return models
 }

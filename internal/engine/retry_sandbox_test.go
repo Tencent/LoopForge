@@ -53,7 +53,7 @@ func retryEngine(t *testing.T) (*Engine, *repo.Store) {
 	return New(store, runtime.NewManager(t.TempDir())), store
 }
 
-// 从入口节点重跑等于整条 SOP 重来，旧容器的可写层里全是上一次的残留，
+// 从入口节点重跑等于整条 LOOP 重来，旧容器的可写层里全是上一次的残留，
 // 而且不主动关掉的话它会一直挂到 run 最终成功为止。
 func TestRetryFromEntryNodeDiscardsSandbox(t *testing.T) {
 	t.Parallel()
@@ -105,7 +105,7 @@ func TestSupersedeIssueRunsDiscardsReplacedSandbox(t *testing.T) {
 	}
 }
 
-// 同一需求触发另一条 SOP，不能把这条 SOP 等着重试的容器回收掉。
+// 同一需求触发另一条 LOOP，不能把这条 LOOP 等着重试的容器回收掉。
 func TestSupersedeIssueRunsKeepsOtherSOPRuns(t *testing.T) {
 	t.Parallel()
 	engine, store := retryEngine(t)
@@ -123,7 +123,7 @@ func TestSupersedeIssueRunsKeepsOtherSOPRuns(t *testing.T) {
 	engine.SupersedeIssueRuns("issue-1", "run-frontend")
 
 	if sandbox.closed {
-		t.Fatal("dispatching another SOP released the failed SOP's retry container")
+		t.Fatal("dispatching another LOOP released the failed LOOP's retry container")
 	}
 }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 image="${1:?Usage: bash scripts/test-runtime-image.sh IMAGE}"
-docker run --rm -i --network none --read-only --tmpfs /tmp:rw,exec,nosuid,size=128m --entrypoint sh "$image" -eu <<'CHECK'
+docker run --rm -i --network none -e LOOPFORGE_EXPECT_CODEBUDDY --read-only --tmpfs /tmp:rw,exec,nosuid,size=128m --entrypoint sh "$image" -eu <<'CHECK'
 export HOME=/tmp/home
 mkdir -p "$HOME"
 cd /tmp
@@ -23,7 +23,12 @@ ssh -V
 unzip -v >/dev/null
 codex --version
 if command -v claude >/dev/null; then printf 'Claude Code must not be bundled; it installs on first use.\n' >&2; exit 1; fi
-codebuddy --version
+case "${LOOPFORGE_EXPECT_CODEBUDDY:-optional}" in
+  1) codebuddy --version ;;
+  0) if command -v codebuddy >/dev/null; then printf 'CodeBuddy should be absent.\n' >&2; exit 1; fi ;;
+  *) if command -v codebuddy >/dev/null; then codebuddy --version; fi ;;
+esac
 dsh --version
+wecom-cli --version
 printf 'Runtime image compatibility checks passed.\n'
 CHECK

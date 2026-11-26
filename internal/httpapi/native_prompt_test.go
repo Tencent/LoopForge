@@ -97,8 +97,8 @@ func TestRecoverNativeAssistantReply(t *testing.T) {
 	if reply, ok := recoverNativeAssistantReply("submit_assistant_reply 用于提交待确认草稿。", ""); !ok || reply.Message == "" {
 		t.Fatal("tool explanations are ordinary answers")
 	}
-	reply, ok := recoverNativeAssistantReply("角色是执行者，SOP 是执行剧本。", "")
-	if !ok || !strings.Contains(reply.Message, "SOP") {
+	reply, ok := recoverNativeAssistantReply("角色是执行者，LOOP 是执行剧本。", "")
+	if !ok || !strings.Contains(reply.Message, "LOOP") {
 		t.Fatalf("recover text: %+v %v", reply, ok)
 	}
 	if _, ok := recoverNativeAssistantReply("submit_assistant_reply 被调用，参数如下：", ""); ok {

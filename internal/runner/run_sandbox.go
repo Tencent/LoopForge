@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,31 @@ type runSandbox struct {
 	sandbox  runtime.Sandbox
 	active   int
 	lastUsed time.Time
+}
+
+func preparesBorrowedCheckout(inv *domain.RunnerInvocation) bool {
+	return slices.ContainsFunc(invocationRepositories(inv), func(repo domain.RunnerRepository) bool {
+		return repo.PreserveCheckout
+	})
+}
+
+func (d *Daemon) acquireExecutionTaskSandbox(ctx context.Context, task domain.RunnerTask) (runtime.Sandbox, func(), error) {
+	if task.Sandbox != nil {
+		return d.acquireTaskSandbox(ctx, task)
+	}
+	if preparesBorrowedCheckout(task.Invocation) {
+		return nil, nil, fmt.Errorf("shared checkout preparation requires the frozen LOOP sandbox")
+	}
+	return nil, func() {}, nil
+}
+
+func taskRepositoryContext(ctx context.Context, task domain.RunnerTask, sandbox runtime.Sandbox, inv *domain.RunnerInvocation) context.Context {
+	if preparesBorrowedCheckout(inv) {
+		credentials := invocationGitCredentials(inv)
+		credentials.GitSSHKeys = inv.GitSSHKeys
+		return runtime.WithSandboxGit(ctx, sandbox, credentials)
+	}
+	return runtime.WithRepositoryCacheFor(ctx, runnerTaskSandboxDriver(task))
 }
 
 // acquireTaskSandbox returns the sandbox a task executes in and the function
@@ -134,7 +160,7 @@ func (d *Daemon) closeSharedSandboxes(ctx context.Context, match func(*runSandbo
 }
 
 // runSandboxKey identifies the shared sandbox of a task that runs in a
-// shared checkout (runs/<run>/workspace). A child SOP works in its parent's
+// shared checkout (runs/<run>/workspace). A child LOOP works in its parent's
 // checkout but keeps a sandbox of its own. The id doubles as the container
 // name suffix, so it keeps the runner-owned "rt-" prefix that cleanup_run
 // enumerates.
@@ -174,23 +200,28 @@ func containerSafe(v string) string {
 }
 
 // taskSandboxSpec is the sandbox a task asks for: the provider's CLI needs
-// plus the Dockerfile and environment it carries.
+// plus the Dockerfile it carries.
 func taskSandboxSpec(task domain.RunnerTask) (runtime.SandboxRequirements, runtime.SandboxResources) {
 	resources := runtime.SandboxResources{}
 	if task.Sandbox.Dockerfile != nil {
 		resources.Dockerfile = *task.Sandbox.Dockerfile
 	}
-	if task.Sandbox.Environment != nil {
-		resources.Environment = *task.Sandbox.Environment
-	}
+	// Tasks queued before RunnerLoginRelay was added still carry their auth mode.
+	codexLoginRelay := task.Invocation != nil && task.Invocation.CredentialSource == domain.RuntimeAuthLocal &&
+		task.Provider == "codex" && strings.TrimSpace(task.Sandbox.Profile.Driver) == domain.SandboxDriverDocker
 	if frozen := task.Sandbox.Requirements; frozen != nil {
-		requirements := runtime.SandboxRequirements{PrivateHome: frozen.PrivateHome, BunFS: frozen.BunFS}
+		requirements := runtime.SandboxRequirements{
+			PrivateHome:      frozen.PrivateHome,
+			BunFS:            frozen.BunFS,
+			RunnerLoginRelay: frozen.RunnerLoginRelay || codexLoginRelay,
+		}
 		for _, state := range frozen.CLIStates {
 			requirements.CLIStates = append(requirements.CLIStates, runtime.CLIStateRequirement{Directory: state.Directory, Files: append([]string(nil), state.Files...)})
 		}
 		return requirements, resources
 	}
 	requirements := runtime.ProviderRequirements(task.Provider)
+	requirements.RunnerLoginRelay = codexLoginRelay
 	if task.Invocation != nil && task.Invocation.CredentialSource != domain.RuntimeAuthPersonal {
 		switch task.Provider {
 		case "codex":
