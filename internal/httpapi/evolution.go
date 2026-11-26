@@ -278,7 +278,7 @@ func (h *evolutionHandlers) dismissBlockedReason(finding domain.EvoFinding) stri
 		}
 	}
 	if evoFindingQueued(h.repo.EvoQueue(finding.ProjectID), finding.ID) {
-		return "该问题已排入后续改进，请先从队列中移除"
+		return "该问题已排入后续改进，请先在改进任务里取消排队"
 	}
 	return ""
 }
