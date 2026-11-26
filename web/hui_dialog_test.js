@@ -43,7 +43,10 @@ assert.doesNotMatch(block, /window\.(confirm|prompt|alert)\b/, 'no native dialog
   assert.strictEqual($('#confirmIconWrap').className, 'confirm-icon-wrap danger');
   assert.strictEqual($('#confirmIcon svg').getAttribute('data-icon'), 'trash', 'Harness icon, not an emoji');
   assert.ok($('#confirmPromptWrap').hidden);
-  assert.strictEqual(document.activeElement, $('#confirmOkBtn'));
+  assert.strictEqual(document.activeElement, $('#confirmCancelBtn'), 'danger confirms focus the safe action');
+  key(card, 'Enter');
+  assert.ok(open(), 'Enter outside the buttons cannot confirm a dangerous action');
+  key($('#confirmCancelBtn'), 'Tab', { shiftKey: true });
 
   key($('#confirmOkBtn'), 'Tab');
   assert.strictEqual(document.activeElement, $('#confirmCancelBtn'), 'Tab wraps inside the dialog');

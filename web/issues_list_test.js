@@ -20,6 +20,12 @@ const ctx = {
 vm.createContext(ctx);
 vm.runInContext(slice('function issueStatusIcon(', 'function issueStatusText('), ctx);
 vm.runInContext(slice('function issueKeyColumnWidth(', 'function issueTagTone('), ctx);
+vm.runInContext(slice('function issueListEmptyState(', 'function renderIssues('), ctx);
+assert.match(ctx.issueListEmptyState('missing', '')[1], /清空搜索/);
+assert.match(ctx.issueListEmptyState('missing', 'attention')[0], /搜索条件/);
+assert.match(ctx.issueListEmptyState('', 'attention')[0], /需要介入/);
+assert.match(ctx.issueListEmptyState('', 'mr')[0], /待处理 MR/);
+assert.match(ctx.issueListEmptyState('', '')[1], /GitHub/);
 
 const tones = [
   [{ key: 'active', label: '编码实现' }, 'info', 'lamp'],
