@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,40 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
+
+func TestConditionalRoutingStartRechecksSelection(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	e := New(s, runtime.NewManager(t.TempDir()))
+	wf := routingWorkflow("recheck-selection")
+	node := domain.WorkflowNode{ID: "large", Type: "agent", AgentID: "missing-role"}
+	wf.Nodes[2] = node
+	wf.RoutingRoleFingerprints = map[string]string{node.ID: "old-fingerprint"}
+	r := domain.Run{ID: "recheck-selection", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "running", Nodes: map[string]*domain.NodeRun{
+		"classify": {NodeID: "classify", Status: "succeeded", RouteDecision: &domain.RouteDecision{EdgeKeyVersion: 1, SelectedEdges: map[string]bool{"id:large-edge": true}}},
+		"large":    {NodeID: "large", Status: "pending"},
+	}}
+	selected := readyNodes(wf, r)
+	if len(selected) != 1 || selected[0].ID != node.ID {
+		t.Fatalf("expected the old scheduler selection to contain Large: %+v", selected)
+	}
+	// Rework has reset the upstream before the queued worker can start.
+	r.Nodes["classify"].Status, r.Nodes["classify"].RouteDecision = "pending", nil
+	if err := s.PutRun(r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.acquireLease(r); err != nil {
+		t.Fatal(err)
+	}
+	e.executeNode(context.Background(), r.ID, wf, selected[0])
+	got, ok := s.RunState(r.ID)
+	if !ok || got.Nodes[node.ID].Status != "pending" || got.Nodes[node.ID].Error != "" || got.Nodes[node.ID].Attempt != 0 {
+		t.Fatalf("stale selection must not start or fail Large: %+v", got.Nodes[node.ID])
+	}
+}
 
 func TestConditionalRoutingReplayChecksOnlySelectedRoles(t *testing.T) {
 	for _, tc := range []struct {
@@ -19,6 +54,7 @@ func TestConditionalRoutingReplayChecksOnlySelectedRoles(t *testing.T) {
 		{name: "retry keeps Small", routes: "small small", status: "succeeded"},
 		{name: "retry now selects Large", routes: "small large", status: "failed", wantError: "路由角色配置已变更"},
 		{name: "reject keeps Small", routes: "small small", status: "waiting", reject: true},
+		{name: "reject now selects Large", routes: "small large", status: "failed", reject: true, wantError: "路由角色配置已变更"},
 		{name: "legacy first visit to Large", routes: "small large", status: "succeeded", legacy: true, wantLargeAttempt: 1},
 		{name: "legacy previously executed Large is skipped", routes: "large small", status: "succeeded", legacy: true, wantLargeAttempt: 1},
 		{name: "legacy previously executed Large is selected", routes: "large large", status: "failed", legacy: true, wantLargeAttempt: 1, wantError: "没有保存原路由角色的配置"},

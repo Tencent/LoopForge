@@ -170,16 +170,21 @@ func routingArtifactsForNode(run domain.Run, nodeID string) []domain.Artifact {
 	return artifacts
 }
 
+func routingArtifactNames(wf domain.WorkflowDefinition, nodeID string) map[string]bool {
+	names := map[string]bool{}
+	for _, edge := range wf.Edges {
+		if edge.Source == nodeID && edge.Condition != nil && edge.Condition.Type == "artifact" {
+			names[edge.Condition.Artifact] = true
+		}
+	}
+	return names
+}
+
 // Route on the contents of the selected artifact contracts, even when the
 // collector has archived their bodies as blobs. Keep the original artifacts
 // untouched so run persistence can retain blob references.
 func (e *Engine) decideNodeRoute(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, route domain.RouteValues, artifacts []domain.Artifact) (*domain.RouteDecision, error) {
-	refs := map[string]bool{}
-	for _, edge := range wf.Edges {
-		if edge.Source == node.ID && edge.Condition != nil && edge.Condition.Type == "artifact" {
-			refs[edge.Condition.Artifact] = true
-		}
-	}
+	refs := routingArtifactNames(wf, node.ID)
 	if len(refs) == 0 {
 		return decideRoute(wf, node, route, nil)
 	}

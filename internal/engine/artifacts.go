@@ -376,8 +376,10 @@ func reportedArtifactBlob(outputs nodeOutputs, rel string) (domain.ArtifactBlob,
 	return domain.ArtifactBlob{}, false
 }
 
-func requiredNodeArtifacts(node domain.WorkflowNode, artifacts []domain.Artifact) []domain.Artifact {
-	required := make(map[string]bool)
+func requiredNodeArtifacts(wf domain.WorkflowDefinition, node domain.WorkflowNode, artifacts []domain.Artifact) []domain.Artifact {
+	// A collected routing artifact is evidence for the decision we commit.
+	// Even an optional contract must be retained once used for routing.
+	required := routingArtifactNames(wf, node.ID)
 	for _, contract := range node.ArtifactOutputs {
 		if contract.Required {
 			required[contract.Name] = true

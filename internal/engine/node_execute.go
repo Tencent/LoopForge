@@ -403,9 +403,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	executionAttempt := 0
 	var checkedRole *domain.AgentDefinition
 	started := false
-	e.updateRun(runID, func(r *domain.Run) {
+	stored := e.updateRunAt(runID, false, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
-		if nr.Status != "pending" {
+		if ctx.Err() != nil || r.Generation != executionGeneration || !e.ownsRun(*r) || nr == nil || nr.Status != "pending" {
+			return
+		}
+		// Selection may have changed while this worker waited for the node lock.
+		if ready, _, _ := nodeReadiness(wf, *r, node); !ready {
 			return
 		}
 		if nr.Error != "" && runtime.IsCwdMountFailure(errors.New(nr.Error)) {
@@ -430,6 +434,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				// This is a configuration failure before execution, not a failed
 				// attempt eligible for automatic retry or rework.
 				nr.Status, nr.Error, nr.FinishedAt = "failed", roleErr.Error(), time.Now().UTC()
+				nr.GateResult = nil
 				e.event(r, node.ID, "node.failed", nr.Error)
 				return
 			}
@@ -448,7 +453,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		nr.SkipReason = ""
 		e.event(r, node.ID, "node.started", node.Name+" 开始执行")
 	})
-	if !started {
+	if !stored || !started {
 		return
 	}
 	ctx, cancelNode := context.WithCancel(ctx)
@@ -1347,7 +1352,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	}
 	commitErr := e.updateRunErr(runID, commit)
 	if commitErr != nil && outcomeNode != nil && ctx.Err() == nil && !errors.Is(commitErr, repo.ErrRunLeaseLost) {
-		required := requiredNodeArtifacts(effectiveNode, artifacts)
+		required := requiredNodeArtifacts(wf, effectiveNode, artifacts)
 		if len(required) < len(artifacts) {
 			cause := commitErr
 			artifacts = required
@@ -1355,7 +1360,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			commitErr = e.updateRunErr(runID, commit)
 			if commitErr == nil && outcomeNode != nil {
 				sink(domain.TelemetryEvent{Category: "artifact", Name: "artifact.optional.skipped", Phase: "finish", Level: "warn",
-					Message: fmt.Sprintf("可选产物归档失败，必需产物和节点终态已保存：%v", cause)})
+					Message: fmt.Sprintf("可选产物归档失败，必需产物、路由依据和节点终态已保存：%v", cause)})
 			}
 		}
 	}

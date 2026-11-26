@@ -263,6 +263,66 @@ func TestConditionalRoutingArtifactEndToEnd(t *testing.T) {
 	}
 }
 
+func TestConditionalRoutingCommitKeepsDecisionEvidence(t *testing.T) {
+	for _, rejected := range []string{"classification", "diagnostic"} {
+		t.Run(rejected, func(t *testing.T) {
+			s, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			if err := s.DB.Exec(`CREATE TRIGGER reject_test_artifact BEFORE INSERT ON run_artifacts
+				WHEN NEW.name = '` + rejected + `' BEGIN SELECT RAISE(ABORT, 'test artifact write rejected'); END`).Error; err != nil {
+				t.Fatal(err)
+			}
+			wf := routingWorkflow("commit-evidence")
+			node := &wf.Nodes[0]
+			node.MaxAttempts = 2
+			node.Script = `printf '{"size":"small"}' > classification.json; printf 'note' > diagnostic.txt`
+			node.DefaultTarget = "large"
+			node.ArtifactOutputs = []domain.ArtifactContract{{Name: "classification", Path: "classification.json"}, {Name: "diagnostic", Path: "diagnostic.txt"}}
+			wf.Edges[0].Condition = &domain.WorkflowCondition{Type: "artifact", Artifact: "classification", Pointer: "/size", Equals: json.RawMessage(`"small"`)}
+			wf.Edges[1].Condition = nil
+			if err := s.PutWorkflow(wf); err != nil {
+				t.Fatal(err)
+			}
+			e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+			r, err := e.Start(wf.ID, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "succeeded"
+			if rejected == "classification" {
+				want = "failed"
+			}
+			waitFor(t, s, r.ID, want)
+			got, ok := s.RunState(r.ID)
+			if !ok {
+				t.Fatal("run disappeared")
+			}
+			source := got.Nodes[node.ID]
+			if source.Attempt != 1 {
+				t.Fatalf("archival must not rerun the script: %+v", source)
+			}
+			if want == "failed" {
+				if !strings.Contains(source.Error, "test artifact write rejected") || source.RouteDecision != nil || got.Nodes["small"].Attempt != 0 || got.Nodes["large"].Attempt != 0 {
+					t.Fatalf("must not commit routing without its evidence: %+v", got.Nodes)
+				}
+				return
+			}
+			if got.Nodes["small"].Status != "succeeded" || got.Nodes["large"].Status != "skipped" {
+				t.Fatalf("an unrelated optional artifact should not block the selected route: %+v", got.Nodes)
+			}
+			for _, a := range got.Artifacts {
+				if a.NodeID == node.ID && a.Name == "classification" && a.Content == `{"size":"small"}` {
+					return
+				}
+			}
+			t.Fatal("decision evidence was dropped on archival retry")
+		})
+	}
+}
+
 func TestRoutingBlobReadFailureDoesNotRetryNode(t *testing.T) {
 	s, err := repo.OpenTest()
 	if err != nil {
