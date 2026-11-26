@@ -540,9 +540,15 @@ func TestRunnerClaimRejectsQueuedUnsupportedSandboxes(t *testing.T) {
 	t.Cleanup(st.Close)
 	h := New(st, engine.New(st, runtime.NewManager(t.TempDir())), tracker.NewService(), "", "")
 	runnerID, session := registerTestRunner(t, h)
+	header := map[string]string{"Authorization": "Bearer " + session}
+	heartbeat := requestWithHeaders(t, h, http.MethodPost, "/runners/heartbeat", map[string]any{"version": domain.RunnerVersionEvolutionReplay}, header)
+	if heartbeat.Code != http.StatusOK {
+		t.Fatalf("heartbeat: %d %s", heartbeat.Code, heartbeat.Body)
+	}
 	for i, profile := range []domain.SandboxProfile{
 		{ID: "old-local", Driver: domain.SandboxDriverLocal},
 		{ID: "privileged", Driver: domain.SandboxDriverDocker, Privileged: true},
+		{ID: "privileged-action", Driver: domain.SandboxDriverDocker, Privileged: true},
 		{ID: "native", Driver: domain.SandboxDriverNative},
 	} {
 		task := domain.RunnerTask{
@@ -550,13 +556,16 @@ func TestRunnerClaimRejectsQueuedUnsupportedSandboxes(t *testing.T) {
 			Sandbox:   &domain.RunnerSandboxSpec{Profile: profile},
 			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Second),
 		}
+		if profile.ID == "privileged-action" {
+			task.Action = domain.RunnerTaskActionIntegrate
+		}
 		if err := st.PutRunnerTask(task); err != nil {
 			t.Fatal(err)
 		}
 	}
 	rec := requestWithHeaders(t, h, http.MethodPost, "/api/runners/tasks/claim", map[string]any{
 		"availableRuntimes": []string{"mock"}, "capacity": 1, "noWait": true,
-	}, map[string]string{"Authorization": "Bearer " + session})
+	}, header)
 	var response struct {
 		Task domain.RunnerTask `json:"task"`
 	}
@@ -566,8 +575,10 @@ func TestRunnerClaimRejectsQueuedUnsupportedSandboxes(t *testing.T) {
 	if old, _ := st.RunnerTask("old-local"); old.Status != domain.RunnerTaskFailed || !strings.Contains(old.Error, "已移除的 local") {
 		t.Fatalf("legacy task status = %q, error = %q", old.Status, old.Error)
 	}
-	if task, _ := st.RunnerTask("privileged"); task.Status != domain.RunnerTaskFailed || !strings.Contains(task.Error, domain.RunnerVersionPrivilegedSandbox) {
-		t.Fatalf("privileged task status = %q, error = %q", task.Status, task.Error)
+	for _, id := range []string{"privileged", "privileged-action"} {
+		if task, _ := st.RunnerTask(id); task.Status != domain.RunnerTaskFailed || task.Error != domain.RunnerPrivilegedSandboxUpgradeMessage {
+			t.Fatalf("%s task status = %q, error = %q", id, task.Status, task.Error)
+		}
 	}
 }
 

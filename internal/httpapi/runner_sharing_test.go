@@ -85,6 +85,7 @@ func TestRunnerProjectModesAndLoadPayload(t *testing.T) {
 				got.PersonalRunnerID != machine.ID || got.ProjectRunnerID != tc.projectDefault || got.ProjectRunnerMode != tc.mode ||
 				got.MinRunnerVersion != domain.RunnerVersionDefaultSelection || !got.CloudPool.Configured || got.CloudPool.Online != 0 ||
 				got.PlatformRunner.RunLimit != 10 || got.PlatformRunner.Name != domain.PlatformRunnerName || got.PlatformRunner.CanEditLimit ||
+				got.PlatformRunner.AllowPrivilegedSandbox ||
 				got.PlatformRunner.Status != domain.RunnerStatusOffline || got.PlatformRunner.Load == nil || got.PlatformRunner.Load.RunningRuns != 1 {
 				t.Fatalf("%s after %q: %d %s", url, tc.mode, rec.Code, rec.Body)
 			}

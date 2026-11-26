@@ -121,9 +121,9 @@ Access to the Docker socket is equivalent to root on the host. Two safeguards fo
 
 ### Privileged Docker sandboxes
 
-Sandbox editors can request privileged mode for an individual Docker profile under **Advanced settings**. The executing worker or Runner rejects that request unless its own process environment sets `AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX=true`. For Compose, set the variable in `.env` and recreate the platform container. For a native worker or a connected Runner, set it in the foreground command environment or service configuration and restart the process.
+Sandbox editors can request privileged mode for an individual Docker profile under **Advanced settings**. In **Settings → Execution machines**, administrators can change **Allow privileged Docker sandboxes** for platform Workers and cloud pool machines. Owners can change it for their own connected Runner. The setting defaults to off. The saved choice applies to subsequent starts immediately, including after an upgrade from a deployment that used a startup variable.
 
-Enable this setting only on Docker hosts where the operator trusts every user who can run work there. Privileged containers can access host devices and may gain control of the Docker host. Connected machines need Runner `0.12.5` or later. Automatic LOOP sandbox selection considers ordinary sandboxes, and a privileged profile can be selected explicitly. A non-root execution service continues to map default-root images to its UID and GID to keep workspace files accessible.
+Enable this setting on machines whose users are trusted to run privileged workloads. Privileged containers can access host devices and may gain control of the Docker host. Privileged sandboxes on connected machines require Runner `0.13.2` or later. Automatic LOOP sandbox selection considers ordinary sandboxes, and a privileged profile can be selected explicitly. A non-root execution service continues to map default-root images to its UID and GID to keep workspace files accessible.
 
 ### Docker sandbox resource limits
 

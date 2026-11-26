@@ -555,6 +555,8 @@ type runnerRow struct {
 	LastSeenAt             *time.Time `gorm:"column:last_seen_at"`
 	Created                *time.Time `gorm:"column:created_at"`
 	Updated                *time.Time `gorm:"column:updated_at"`
+
+	AllowPrivilegedSandbox bool `gorm:"column:allow_privileged_sandbox;default:false"`
 }
 
 func (runnerRow) TableName() string { return "runners" }
@@ -608,6 +610,8 @@ type platformRunnerSettingsRow struct {
 	RunLimit  int        `gorm:"column:run_limit;not null"`
 	UpdatedBy int64      `gorm:"column:updated_by;not null;default:0"`
 	Updated   *time.Time `gorm:"column:updated_at"`
+
+	AllowPrivilegedSandbox bool `gorm:"column:allow_privileged_sandbox;default:false"`
 }
 
 func (platformRunnerSettingsRow) TableName() string { return "platform_runner_settings" }

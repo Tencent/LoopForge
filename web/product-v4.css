@@ -2399,6 +2399,8 @@ html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code
 #confirmModal .runner-model-editor{max-height:min(55dvh,540px);overflow:auto;margin-top:14px}
 #runnersView .runner-card-action{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:auto;padding:14px 0 0;border:0}
 #runnersView .runner-card-spacer{flex:1}
+#runnersView .runner-privileged-sandbox,#runnersView .runner-privileged-sandbox label{display:inline-flex;align-items:center;gap:6px;color:var(--rv-text);font-size:12px}
+#runnersView .runner-privileged-state{color:var(--rv-muted)}
 #runnersView :is(.runner-card-action,.runner-platform-controls) .button{height:28px;padding:0 10px;border-radius:8px;font-size:12px;font-weight:500;box-shadow:none;transition:background-color .16s,color .16s,opacity .16s}
 #runnersView :is(.runner-card-action,.runner-platform-controls) .button.dark{border:1px solid var(--rv-btn-dark);background:var(--rv-btn-dark);color:var(--rv-btn-dark-text)}
 #runnersView :is(.runner-card-action,.runner-platform-controls) .button.dark:hover{opacity:.9}
