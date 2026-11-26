@@ -50,39 +50,65 @@ func TestSteerRejectsSecondRequestForSameGeneration(t *testing.T) {
 	}
 }
 
-func TestSteerKeepsRunningTurnWhenRunnerShareIsRevoked(t *testing.T) {
-	h, user := workbenchFixture(t)
-	runner := domain.Runner{ID: "steer-shared-runner", OwnerUserID: user.ID}
+func TestSteerAfterRunnerShareIsRevoked(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	const projectID = "workbench"
+	member := domain.User{ID: owner.ID + 1, LoginName: "steer-collaborator", CodeBuddyAPIKey: "test-only"}
+	if err := h.repo.PutUser(member); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := h.repo.Project(projectID)
+	project.Members = append(project.Members, domain.ProjectMember{UserID: member.ID, Role: domain.ProjectRoleMember})
+	if err := h.repo.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
+	runner := domain.Runner{ID: "steer-shared-runner", OwnerUserID: owner.ID}
 	if err := h.repo.PutRunner(runner); err != nil {
 		t.Fatal(err)
 	}
-	const projectID, sessionID = "workbench", "steer-shared"
-	if err := h.repo.SetRunnerSharedProjects(runner.ID, user.ID, []string{projectID}); err != nil {
-		t.Fatal(err)
-	}
-	g := domain.AssistantGeneration{
-		ID: "original-turn", SessionID: sessionID, ProjectID: projectID, UserID: user.ID, ActorID: user.ID, Status: "running",
-	}
-	if err := h.repo.BeginAssistantGeneration(g, domain.AssistantSession{
-		ID: sessionID, ProjectID: projectID,
-		ExecutionTarget: &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID},
-		Messages:        []assistantMessage{{Role: "user", Content: "original"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.repo.SetRunnerSharedProjects(runner.ID, user.ID, nil); err != nil {
-		t.Fatal(err)
-	}
-	path := "/api/assistant/sessions/" + sessionID + "/generation/steer"
-	c, rec := workbenchContext(user, "POST", path, bytes.NewBufferString(`{"content":"another turn"}`))
-	c.Params = gin.Params{{Key: "id", Value: sessionID}}
-	h.steerGeneration(c)
-	if rec.Code != 403 || !strings.Contains(rec.Body.String(), "会话绑定的执行机器") {
-		t.Fatalf("revoked runner accepted a steer: %d %s", rec.Code, rec.Body)
-	}
-	current, ok := h.repo.PeekAssistantGeneration(user.ID, sessionID)
-	if !ok || current.CancelRequested || current.Steer != nil || current.Status != "running" {
-		t.Fatalf("denied steer changed the prior generation: %+v", current)
+	for _, tc := range []struct {
+		name, source string
+		actor        domain.User
+		allowed      bool
+	}{
+		{name: "member", actor: member},
+		{name: "scheduled", actor: owner, source: domain.AssistantSourceScheduled},
+		{name: "owner", actor: owner, allowed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := h.repo.SetRunnerSharedProjects(runner.ID, owner.ID, []string{projectID}); err != nil {
+				t.Fatal(err)
+			}
+			sessionID := "steer-shared-" + tc.name
+			g := domain.AssistantGeneration{
+				ID: "original-turn-" + tc.name, SessionID: sessionID, ProjectID: projectID, UserID: tc.actor.ID, ActorID: tc.actor.ID, Status: "running",
+			}
+			if err := h.repo.BeginAssistantGeneration(g, domain.AssistantSession{
+				ID: sessionID, ProjectID: projectID, Source: tc.source,
+				ExecutionTarget: &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID},
+				Messages:        []assistantMessage{{Role: "user", Content: "original"}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.repo.SetRunnerSharedProjects(runner.ID, owner.ID, nil); err != nil {
+				t.Fatal(err)
+			}
+			path := "/api/assistant/sessions/" + sessionID + "/generation/steer"
+			c, rec := workbenchContext(tc.actor, "POST", path, bytes.NewBufferString(`{"content":"another turn"}`))
+			c.Params = gin.Params{{Key: "id", Value: sessionID}}
+			h.steerGeneration(c)
+			if tc.allowed {
+				if rec.Code != 200 {
+					t.Fatalf("owner could not steer a conversation on their machine: %d %s", rec.Code, rec.Body)
+				}
+			} else if rec.Code != 403 || !strings.Contains(rec.Body.String(), "会话绑定的执行机器") {
+				t.Fatalf("revoked runner accepted a steer: %d %s", rec.Code, rec.Body)
+			}
+			current, ok := h.repo.PeekAssistantGeneration(tc.actor.ID, sessionID)
+			if !ok || current.CancelRequested != tc.allowed || (current.Steer != nil) != tc.allowed || current.Status != "running" {
+				t.Fatalf("unexpected generation state after steering: %+v", current)
+			}
+		})
 	}
 }
 
