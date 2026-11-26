@@ -169,6 +169,10 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		h.respondWorkspaceUnavailable(c, run, owner, http.StatusGone, "工作区已回收；有保存的快照时可按需恢复，空闲 1 小时后再次回收", true)
 		return
 	}
+	if c.FullPath() == "/api/runs/:id/workspace/diff" && (c.Query("node") != "" || c.Query("attempt") != "") {
+		h.nodeCheckpointDiff(c, run)
+		return
+	}
 	if runnerID != "" {
 		h.proxyRunnerWorkspace(c, run, owner, runnerID)
 		return
@@ -510,21 +514,7 @@ func resolveWorkspacePath(root, raw string, wantDir bool) (string, string, error
 }
 
 func workspacePathSensitive(rel string) bool {
-	parts := strings.Split(strings.ToLower(filepath.ToSlash(rel)), "/")
-	for i, part := range parts {
-		switch part {
-		case ".git", ".agentflow", ".ssh", ".gnupg", ".netrc", ".npmrc", "id_rsa", "id_ed25519":
-			return true
-		case "private-home", "runtime":
-			if i > 0 && parts[i-1] == ".agentflow" {
-				return true
-			}
-		}
-		if part == ".env" || strings.HasPrefix(part, ".env.") && !strings.HasSuffix(part, ".example") {
-			return true
-		}
-	}
-	return false
+	return runtime.WorkspacePathSensitive(rel)
 }
 
 func workspaceTreeSkipped(rel string, d fs.DirEntry) bool {

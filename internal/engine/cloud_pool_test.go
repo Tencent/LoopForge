@@ -50,6 +50,33 @@ func TestCloudPoolPicksOnlyPlatformRunnersForListedProjects(t *testing.T) {
 	}
 }
 
+func TestCheckpointRunPicksCompatiblePoolRunner(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	e := New(s, runtime.NewManager(t.TempDir()))
+	e.ConfigureCloudRunnerPool(CloudRunnerPool{Label: "pool", Projects: []string{"*"}})
+	old := domain.Runner{ID: "old", Status: domain.RunnerStatusOnline, RunnerVersion: "0.4.0", Labels: []string{"pool"}}
+	if err := s.PutRunner(old); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := e.cloudPoolRunnerForCheckpoints("p", true); ok {
+		t.Fatal("old runner selected for checkpoint run")
+	}
+	if _, ok := e.cloudPoolRunnerForCheckpoints("p", false); !ok {
+		t.Fatal("old runner was excluded for a run without checkpoints")
+	}
+	newRunner := domain.Runner{ID: "new", Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionNodeCheckpoints, Labels: []string{"pool"}}
+	if err := s.PutRunner(newRunner); err != nil {
+		t.Fatal(err)
+	}
+	if picked, ok := e.cloudPoolRunnerForCheckpoints("p", true); !ok || picked.ID != newRunner.ID {
+		t.Fatalf("checkpoint runner = %+v, %v", picked, ok)
+	}
+}
+
 func TestBindPoolRunnerDiscardsLocalSandbox(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()

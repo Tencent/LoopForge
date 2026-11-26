@@ -93,6 +93,9 @@ func autoAssignRunnerCapabilities(runner domain.Runner, wf domain.WorkflowDefini
 	if err := runnerRepositoryCapabilityError(runner, repositories); err != nil {
 		return err
 	}
+	if ec.NodeCheckpointsEnabled && !runner.SupportsNodeCheckpoints() {
+		return fmt.Errorf("节点检查点需要执行机器升级至 %s 或更新版本", domain.RunnerVersionNodeCheckpoints)
+	}
 	if len(wf.ProjectCredentialIDs) > 0 && !runner.SupportsProjectCredentials() {
 		return fmt.Errorf("请升级执行机器以使用项目凭据")
 	}

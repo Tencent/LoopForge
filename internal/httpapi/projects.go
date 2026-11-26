@@ -24,7 +24,8 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 	if r.Method == http.MethodPut || r.Method == http.MethodPost {
 		var body struct {
 			domain.Project
-			TAPDClear bool `json:"tapdClear"`
+			TAPDClear               bool  `json:"tapdClear"`
+			NodeCheckpointsDisabled *bool `json:"nodeCheckpointsDisabled"`
 		}
 		if !decode(c, &body) {
 			return
@@ -35,6 +36,11 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 		}
 		v := body.Project
 		existing, exists := h.repo.Project(v.ID)
+		if body.NodeCheckpointsDisabled != nil {
+			v.NodeCheckpointsDisabled = *body.NodeCheckpointsDisabled
+		} else if exists {
+			v.NodeCheckpointsDisabled = existing.NodeCheckpointsDisabled
+		}
 		if !exists {
 			if err := domain.ValidateResourceID(v.ID); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "项目" + err.Error()})

@@ -42,12 +42,13 @@ type TelemetryContext struct {
 	// RunnerWorkspaceLayout freezes how a self-hosted runner maps workflow
 	// nodes to disk. Empty is the legacy per-node layout; shared gives every
 	// node in a new Run the same repository and Git index.
-	RunnerWorkspaceLayout string `json:"runnerWorkspaceLayout,omitempty"`
-	IssueNumber           int    `json:"issueNumber,omitempty"`
-	TaskID                string `json:"taskId,omitempty"`
-	ScheduleJobID         string `json:"scheduleJobId,omitempty"`
-	SharedScheduleID      string `json:"sharedScheduleId,omitempty"`
-	SharedScheduleVersion int    `json:"sharedScheduleVersion,omitempty"`
+	RunnerWorkspaceLayout  string `json:"runnerWorkspaceLayout,omitempty"`
+	NodeCheckpointsEnabled bool   `json:"nodeCheckpointsEnabled,omitempty"`
+	IssueNumber            int    `json:"issueNumber,omitempty"`
+	TaskID                 string `json:"taskId,omitempty"`
+	ScheduleJobID          string `json:"scheduleJobId,omitempty"`
+	SharedScheduleID       string `json:"sharedScheduleId,omitempty"`
+	SharedScheduleVersion  int    `json:"sharedScheduleVersion,omitempty"`
 	// BotOriginID is the chat origin (bot_chat_origins) a top-level run was
 	// started from, stored with the run so that its first events already
 	// go back to that chat.

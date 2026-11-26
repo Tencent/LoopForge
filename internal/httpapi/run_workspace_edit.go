@@ -30,6 +30,29 @@ func (h *runsHandlers) workspaceEditActor(c *gin.Context) (domain.Run, int64, bo
 	return run, userID, true
 }
 
+func (h *runsHandlers) workspaceCheckpointActor(c *gin.Context) (domain.Run, int64, bool) {
+	run, ok := h.repo.RunState(c.Param("id"))
+	if !ok {
+		c.JSON(404, gin.H{"error": "运行不存在"})
+		return run, 0, false
+	}
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+		return run, 0, false
+	}
+	allowed := mainBotWorkspaceRun(c.Request.Context()) == run.ID || h.workspaceEditAllowed(c.Request, run, user.ID)
+	if ownerID := engine.WorkspaceRunID(run); allowed && ownerID != run.ID {
+		owner, found := h.workspaceOwner(run)
+		allowed = found && h.workspaceEditAllowed(c.Request, owner, user.ID)
+	}
+	if !allowed {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权编辑该任务工作区"})
+		return run, 0, false
+	}
+	return run, user.ID, true
+}
+
 // workspaceOwnerAccess is the permission to operate on the owning run's
 // workspace, including restoring its snapshot. Editing also needs the
 // coordination checks in workspaceEditAccess.
@@ -108,7 +131,7 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 			}
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 			defer cancel()
-			response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{RunID: runnerWorkspaceRunID(locked), RunStatus: locked.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, RunKind: mainBotWorkspaceMode(c, locked), ConcurrentEdit: humanWorkspaceEdit(c, locked), Operation: domain.RunnerWorkspaceOperationWrite, Path: req.Path, Content: req.Content, ExpectedSHA256: req.ExpectedSHA, TerminalOwner: user})
+			response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{RunID: runnerWorkspaceRunID(locked), RunStatus: locked.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, RunKind: mainBotWorkspaceMode(c, locked), ConcurrentEdit: humanWorkspaceEdit(c, locked), NodeCheckpointsEnabled: locked.ExecutionContext.NodeCheckpointsEnabled, Operation: domain.RunnerWorkspaceOperationWrite, Path: req.Path, Content: req.Content, ExpectedSHA256: req.ExpectedSHA, TerminalOwner: user})
 			if err != nil {
 				return fmt.Errorf("执行端写入失败：%w", err)
 			}
@@ -200,6 +223,26 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 		}
 	}
 	var result any
+	// Checkpoint-enabled runs must fence the entire lifetime of a local PTY,
+	// not just its open request. The lease is acquired by withPreparedWorkspace
+	// and transferred to a renewer after a successful open.
+	var terminalLease string
+	terminalLeaseTransferred := false
+	if req.Operation == "open" && run.ExecutionContext.NodeCheckpointsEnabled && runnerID == "" {
+		var leaseErr error
+		terminalLease, leaseErr = h.engine.BeginConversationWorkspaceUse(run.ID)
+		if leaseErr != nil {
+			c.JSON(409, gin.H{"error": leaseErr.Error(), "code": "workspace_busy"})
+			return
+		}
+		defer func() {
+			if !terminalLeaseTransferred {
+				_ = h.repo.FinishWorkspaceUse(run.ID, terminalLease, time.Now().UTC(), nil, "")
+			}
+		}()
+		c.Request = c.Request.WithContext(engine.WithConversationWorkspaceToken(c.Request.Context(), terminalLease, run.ID))
+		trustedRequest.CheckpointLease = terminalLease
+	}
 	launch := func() error {
 		ctx := c.Request.Context()
 		var credentials runtime.TerminalGitCredentials
@@ -214,13 +257,14 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 			ctx = gitwork.WithSSHKnownHostsLookup(ctx, h.repo.PlatformSSHKnownHosts)
 			ctx = gitwork.SnapshotSSHKnownHostsLookup(ctx, credentials.SSHKeys, trustedRequest.TerminalGitSSHKeys, preparationKeys)
 		}
-		return h.withWorkspaceWriter(c, run.ID, user, func(locked domain.Run) error {
+		operate := func(locked domain.Run) error {
 			req.ExpiresAt = locked.WorkspaceEditUntil
 			trustedRequest.RunID = runnerWorkspaceRunID(locked)
 			trustedRequest.RunStatus = locked.Status
 			trustedRequest.WorkspaceLayout = locked.ExecutionContext.RunnerWorkspaceLayout
 			trustedRequest.RunKind = mainBotWorkspaceMode(c, locked)
 			trustedRequest.ConcurrentEdit = humanWorkspaceEdit(c, locked)
+			trustedRequest.NodeCheckpointsEnabled = locked.ExecutionContext.NodeCheckpointsEnabled
 			if runnerID != "" {
 				if h.runnerControls == nil {
 					return fmt.Errorf("执行端未连接")
@@ -244,7 +288,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 				return nil
 			}
 			if remoteHost {
-				response, err := h.engine.ForwardPreparedWorkspaceRequest(c.Request.Context(), locked, trustedRequest)
+				response, err := h.engine.ForwardPreparedWorkspaceRequest(ctx, locked, trustedRequest)
 				if err != nil {
 					return err
 				}
@@ -257,7 +301,25 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 			r, err := h.engine.HandlePreparedWorkspaceTerminal(ctx, run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req, credentials)
 			result = r
 			return err
-		})
+		}
+		if req.Operation != "open" && run.ExecutionContext.NodeCheckpointsEnabled {
+			// An open terminal already owns the workspace fence. Its session is
+			// scoped to this user by the terminal pool; taking a second workspace
+			// lease here would prevent reading or closing that same terminal.
+			var locked domain.Run
+			check := func(current domain.Run) error { locked = current; return nil }
+			var err error
+			if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
+				err = h.repo.WithMainBotWorkspace(run.ID, user, check)
+			} else {
+				err = h.repo.WithWorkspaceEditor(run.ID, user, check)
+			}
+			if err != nil {
+				return err
+			}
+			return operate(locked)
+		}
+		return h.withWorkspaceWriter(c, run.ID, user, operate)
 	}
 	var err error
 	if req.Operation == "open" {
@@ -275,10 +337,31 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 		c.JSON(409, body)
 		return
 	}
+	if terminalLease != "" && runnerID == "" && !remoteHost {
+		terminalLeaseTransferred = true
+		go h.holdCheckpointTerminalLease(run.ID, terminalLease)
+	} else if terminalLease != "" {
+		terminalLeaseTransferred = true // The workspace owner renews and releases it.
+	}
 	if h.engine != nil && req.Operation == "input" && req.Data != "" {
 		h.engine.AppendRunEvent(run.ID, "workspace.changed", "工作区终端收到输入，之前的检查仅供历史参考")
 	}
 	c.JSON(200, result)
+}
+
+func (h *runsHandlers) holdCheckpointTerminalLease(runID, token string) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	defer h.repo.FinishWorkspaceUse(runID, token, time.Now().UTC(), nil, "")
+	for range ticker.C {
+		if !h.terminals.HasRunScope(runID) {
+			return
+		}
+		if err := h.repo.RenewWorkspaceUse(runID, token, time.Now().UTC()); err != nil {
+			h.terminals.CloseRunScope(runID)
+			return
+		}
+	}
 }
 func (h *runsHandlers) closeWorkspaceTerminals(ctx context.Context, run domain.Run, user int64) error {
 	h.terminals.CloseScope(fmt.Sprintf("%s:%d", run.ID, user))
@@ -319,6 +402,27 @@ func (h *runsHandlers) withWorkspaceWriter(c *gin.Context, runID string, user in
 		if _, err := h.engine.PrepareConversationWorkspace(ctx, runID, token); err != nil {
 			return err
 		}
+	}
+	// A remote worker validates the same durable workspace lease before
+	// opening a checkpoint-protected terminal. Do not hold the run-row
+	// transaction over that RPC: SQLite may have only one DB connection and
+	// the remote validation would otherwise wait for its own caller forever.
+	if run, ok := h.repo.RunState(runID); ok && run.ExecutionContext.NodeCheckpointsEnabled && token != "" && h.engine.WorkspaceRemoteHost(run) && h.engine.RunExecutionRunner(run) == "" {
+		var locked domain.Run
+		check := func(current domain.Run) error { locked = current; return nil }
+		var err error
+		if mainBotWorkspaceRun(ctx) == runID {
+			err = h.repo.WithMainBotWorkspace(runID, user, check)
+		} else {
+			err = h.repo.WithWorkspaceEditor(runID, user, check)
+		}
+		if err != nil {
+			return err
+		}
+		if err = h.repo.ValidateWorkspaceUse(runID, token, time.Now().UTC()); err != nil {
+			return err
+		}
+		return fn(locked)
 	}
 	if mainBotWorkspaceRun(ctx) == runID {
 		return h.repo.WithMainBotWorkspace(runID, user, fn)

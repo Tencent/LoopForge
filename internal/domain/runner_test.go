@@ -31,12 +31,21 @@ func TestFrozenNativeSandboxCarriesLegacyEnvironmentVariables(t *testing.T) {
 	}
 }
 
+func TestRunnerNodeCheckpointVersion(t *testing.T) {
+	for version, want := range map[string]bool{"0.10.2": false, RunnerVersionArtifactTransfer: false, RunnerVersionNodeCheckpoints: true} {
+		if got := (Runner{RunnerVersion: version}).SupportsNodeCheckpoints(); got != want {
+			t.Errorf("version %s: got %v, want %v", version, got, want)
+		}
+	}
+}
+
 // TestPublicRunnerTaskScrubsMultiRepositoryTokens verifies that management
 // responses strip GitToken from every repository entry (legacy single field
 // and the multi-repository list) and never mutate the caller's task.
 func TestPublicRunnerTaskScrubsMultiRepositoryTokens(t *testing.T) {
 	task := RunnerTask{
-		ID: "task-1",
+		ID:                  "task-1",
+		NodeCheckpointLease: "private-workspace-lease",
 		Invocation: &RunnerInvocation{
 			CodeBuddyAPIKey: "cb-secret",
 			Repository: &RunnerRepository{
@@ -50,6 +59,9 @@ func TestPublicRunnerTaskScrubsMultiRepositoryTokens(t *testing.T) {
 		},
 	}
 	public := PublicRunnerTask(task)
+	if public.NodeCheckpointLease != "" || task.NodeCheckpointLease == "" {
+		t.Fatal("workspace lease must only be visible to the claiming runner")
+	}
 	inv := public.Invocation
 	if inv.CodeBuddyAPIKey != "" {
 		t.Fatal("CodeBuddyAPIKey must be scrubbed")

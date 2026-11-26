@@ -183,6 +183,14 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 		executionContext.ExecutionPinned = true
 		executionContext.ExecutionPool = ""
 	}
+	if parent.ID != "" {
+		executionContext.NodeCheckpointsEnabled = parent.ExecutionContext.NodeCheckpointsEnabled
+	} else {
+		executionContext.NodeCheckpointsEnabled = !workspace && executionContext.WorkspaceRunID == "" && len(repositories) > 0
+		if project, ok := e.repo.Project(executionContext.ProjectID); ok && project.NodeCheckpointsDisabled {
+			executionContext.NodeCheckpointsEnabled = false
+		}
+	}
 	autoAssign := e.selectSOPExecutionTarget(&executionContext, !workspace)
 	if len(wf.ProjectCredentialIDs) > 0 {
 		if _, err := e.ResolveRunProjectCredentialEnv(context.Background(), domain.Run{WorkflowSnapshot: wf, ExecutionContext: executionContext}); err != nil {
@@ -242,6 +250,12 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 		}
 		if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 			return domain.Run{}, err
+		}
+		if executionContext.NodeCheckpointsEnabled && executionContext.ExecutionRunnerID != "" {
+			runner, ok := e.repo.Runner(executionContext.ExecutionRunnerID)
+			if !ok || !runner.SupportsNodeCheckpoints() {
+				return domain.Run{}, fmt.Errorf("节点检查点需要执行机器升级至 %s 或更新版本", domain.RunnerVersionNodeCheckpoints)
+			}
 		}
 	}
 	now := time.Now().UTC()
@@ -338,7 +352,7 @@ func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryCont
 		executionContext.WorkspaceRunID = ""
 	}
 	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {
-		if runner, ok := e.cloudPoolRunner(executionContext.ProjectID); ok {
+		if runner, ok := e.cloudPoolRunnerForCheckpoints(executionContext.ProjectID, executionContext.NodeCheckpointsEnabled); ok {
 			executionContext.ExecutionRunnerID = runner.ID
 			executionContext.ExecutionPool = domain.ExecutionModeCloud
 		} else if e.cloudPoolRequired(executionContext.ProjectID) {

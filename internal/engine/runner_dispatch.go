@@ -302,6 +302,10 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		NodeID:      node.ID,
 		Invocation:  invocation,
 	}
+	task.NodeCheckpointLease, _ = ctx.Value(nodeCheckpointLeaseKey{}).(string)
+	if task.NodeCheckpointLease != "" {
+		task.NodeCheckpointRunID = workspaceRunID(run)
+	}
 	sandboxSpec, err := e.runnerSandboxSpec(run)
 	if err != nil {
 		return "", err
@@ -476,6 +480,10 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 		RunID:       run.ID,
 		NodeID:      nodeID,
 		Invocation:  invocation,
+	}
+	task.NodeCheckpointLease, _ = ctx.Value(nodeCheckpointLeaseKey{}).(string)
+	if task.NodeCheckpointLease != "" {
+		task.NodeCheckpointRunID = workspaceRunID(run)
 	}
 	var err error
 	task.Sandbox, err = e.runnerSandboxSpec(run)
@@ -697,7 +705,11 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 		RunID:       runID,
 		NodeID:      nodeID,
 	}
+	task.NodeCheckpointLease, _ = ctx.Value(nodeCheckpointLeaseKey{}).(string)
 	if run, ok := e.repo.RunState(runID); ok {
+		if task.NodeCheckpointLease != "" {
+			task.NodeCheckpointRunID = workspaceRunID(run)
+		}
 		var err error
 		task.Sandbox, err = e.runnerSandboxSpec(run)
 		if err != nil {

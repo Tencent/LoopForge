@@ -514,6 +514,25 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	}
 	// Revision and node checks serialize the deletion claim against SOP or group dispatch.
 	claimed, err = e.repo.ClaimCheckpointWorkspaceCleanup(run.ID, token, run.Revision, now)
+	if claimed && run.ExecutionContext.NodeCheckpointsEnabled {
+		// Publish a filtered archive only after the cleanup claim succeeded.
+		// Otherwise a run that remains live could lose its checkpoint refs in
+		// the saved archive even though its checkout was never reclaimed.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx = WithConversationWorkspaceToken(ctx, token, run.ID)
+		ctx = context.WithValue(ctx, discardNodeCheckpointArchiveKey{}, true)
+		captureErr := e.saveConversationWorkspace(ctx, run, token)
+		cancel()
+		if captureErr != nil {
+			saveError = captureErr.Error()
+			resetErr := e.repo.ResetRunWorkspaceCleanup(run.ID)
+			claimed = false
+			if resetErr != nil {
+				return true, false, nil, fmt.Errorf("过滤工作区归档失败：%v；重置回收状态失败：%w", captureErr, resetErr)
+			}
+			return true, false, nil, captureErr
+		}
+	}
 	if claimed {
 		release = finish
 	}
@@ -548,12 +567,16 @@ func (e *Engine) restoreCheckpointBeforeExecution(ctx context.Context, run domai
 		return e.RestoreConversationWorkspaceIfNeeded(ctx, workspaceRunID(run))
 	}
 	checkpoint, _ := e.repo.WorkspaceCheckpoint(run.ID)
+	token := ConversationWorkspaceToken(ctx, run.ID)
+	if token == "" {
+		token, _ = ctx.Value(nodeCheckpointLeaseKey{}).(string)
+	}
 	// A Main Bot turn or IDE heartbeat also creates this metadata row. Old
 	// reclaimed runs may therefore have a lease but no saved archive. Execution
 	// must still be able to prepare repositories and archived upstream inputs;
 	// EnsureConversationWorkspace remains strict for exact history restoration.
 	if checkpoint.SavedAt == nil {
-		if checkpoint.LeaseUntil != nil && checkpoint.LeaseUntil.After(time.Now()) && checkpoint.LeaseToken != ConversationWorkspaceToken(ctx, run.ID) {
+		if checkpoint.LeaseUntil != nil && checkpoint.LeaseUntil.After(time.Now()) && checkpoint.LeaseToken != token {
 			return repo.ErrWorkspaceInUse
 		}
 		if !run.WorkspaceCleanedAt.IsZero() && e.defaultExecutionRunner(run) != "" {
@@ -561,7 +584,6 @@ func (e *Engine) restoreCheckpointBeforeExecution(ctx context.Context, run domai
 		}
 		return nil
 	}
-	token := ConversationWorkspaceToken(ctx, run.ID)
 	owned := token != ""
 	if !owned {
 		var err error

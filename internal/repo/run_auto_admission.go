@@ -317,7 +317,19 @@ func (r *RunsRepo) promoteBucket(key string, plans queuedAutoPlans) ([]string, e
 }
 
 func (r *RunsRepo) promoteQueuedRun(tx *gorm.DB, row runRow, key string, runner *domain.Runner, candidate queuedAutoPlan) (bool, error) {
+	if err := r.lockWorkspaceOwnerForRun(tx, row.ID); err != nil {
+		return false, err
+	}
+	if _, err := r.takeRunForUpdate(tx, row.ID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
 	now := time.Now().UTC()
+	if active, err := nodeRewindActive(tx, row.ID, now); err != nil || active {
+		return false, err
+	}
 	where := tx.Model(&runRow{}).Where("id = ? AND status = ? AND quota_bucket = ?", row.ID, "queued", *row.QuotaBucket)
 	values := map[string]any{
 		"status": "running", "admission_state": "held", "quota_bucket": key, "revision": gorm.Expr("revision + 1"),

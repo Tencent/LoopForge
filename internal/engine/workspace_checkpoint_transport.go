@@ -158,7 +158,8 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	transfer := domain.IsWorkspaceCheckpointTransferOperation(request.Operation)
 	probe := request.Operation == domain.RunnerWorkspaceOperationCheckpointStatus ||
 		request.Operation == domain.RunnerWorkspaceOperationCheckouts && e.defaultExecutionRunner(run) != ""
-	if !probe && !transfer && request.Operation != domain.RunnerWorkspaceOperationPreparationRecord && request.Operation != domain.RunnerWorkspaceOperationPrepare && request.Operation != domain.RunnerWorkspaceOperationPreparationStatus && request.Operation != domain.RunnerWorkspaceOperationTerminal && request.Operation != domain.RunnerWorkspaceOperationCheckpoint && request.Operation != domain.RunnerWorkspaceOperationRestore && request.Operation != domain.RunnerWorkspaceOperationReclaim && request.Operation != domain.RunnerWorkspaceOperationArtifacts {
+	nodeCheckpoint := request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointCreate || request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointRestore || request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointDiff || request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointRelease || request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointReserve
+	if !probe && !transfer && !nodeCheckpoint && request.Operation != domain.RunnerWorkspaceOperationPreparationRecord && request.Operation != domain.RunnerWorkspaceOperationPrepare && request.Operation != domain.RunnerWorkspaceOperationPreparationStatus && request.Operation != domain.RunnerWorkspaceOperationTerminal && request.Operation != domain.RunnerWorkspaceOperationCheckpoint && request.Operation != domain.RunnerWorkspaceOperationRestore && request.Operation != domain.RunnerWorkspaceOperationReclaim && request.Operation != domain.RunnerWorkspaceOperationArtifacts {
 		http.Error(w, "unsupported operation", 400)
 		return
 	}
@@ -172,7 +173,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	restoreDuringExecution := e.ownsExecutionRestoreLease(run, request)
 	idleForCheckpoint := e.conversationWorkspaceIdle(run) &&
 		(run.Status != "waiting" || run.IsWorkspace() || !run.WorkspaceCleanedAt.IsZero() || e.ownsWorkspaceCheckpointLease(run, request))
-	if !probe && !interactive && (sharesWorkspace(run) || !artifactsAllowed && !transferAux && !restoreDuringExecution && !idleForCheckpoint) {
+	if !probe && !interactive && !nodeCheckpoint && (sharesWorkspace(run) || !artifactsAllowed && !transferAux && !restoreDuringExecution && !idleForCheckpoint) {
 		http.Error(w, "workspace in use", 409)
 		return
 	}
@@ -180,6 +181,11 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	request.RunStatus = run.Status
 	request.RunKind = run.Kind
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
+	request.NodeCheckpointsEnabled = run.ExecutionContext.NodeCheckpointsEnabled
+	if nodeCheckpoint {
+		request.WorkspaceRunID = workspaceRunID(run)
+		request.Repositories = run.RepositoryContexts()
+	}
 	if interactive || request.Operation == domain.RunnerWorkspaceOperationCheckouts && run.UsesConversationWorkspace() {
 		var err error
 		request, err = e.preparedWorkspaceRequest(run, request)
@@ -194,7 +200,11 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "runner transport unavailable", 503)
 			return
 		}
-		request.CheckpointLease = ""
+		// Node operations use the same token to fence writes on the Runner.
+		// Other transfers use the lease only for admission at this service.
+		if !nodeCheckpoint {
+			request.CheckpointLease = ""
+		}
 		var err error
 		result, err = e.WorkspaceCheckpointTransport(r.Context(), run, request)
 		if err != nil {
@@ -202,6 +212,61 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 			result.Status = 503
 		}
 
+	} else if nodeCheckpoint {
+		root, reason := e.LocalRunWorkspace(run)
+		if reason != "" {
+			result.Error, result.Status = reason, http.StatusConflict
+		} else {
+			switch request.Operation {
+			case domain.RunnerWorkspaceOperationNodeCheckpointCreate:
+				if err := e.repo.ValidateWorkspaceUse(workspaceRunID(run), request.CheckpointLease, time.Now().UTC()); err != nil {
+					result.Error, result.Status = err.Error(), http.StatusConflict
+					break
+				}
+				checkpoint, err := runtime.CreateNodeWorkspaceCheckpoint(r.Context(), root, run.RepositoryContexts(), request.NodeCheckpointAttempt)
+				if err != nil {
+					result.Error, result.Status = err.Error(), http.StatusConflict
+				} else {
+					result.Payload, _ = json.Marshal(checkpoint)
+				}
+			case domain.RunnerWorkspaceOperationNodeCheckpointRestore:
+				if err := e.repo.ValidateNodeRewind(workspaceRunID(run), request.CheckpointLease, time.Now().UTC()); err != nil {
+					result.Error, result.Status = err.Error(), http.StatusConflict
+				} else if request.NodeCheckpoint == nil || request.NodeCheckpointEnd == nil {
+					result.Error, result.Status = "checkpoint and recovery required", http.StatusBadRequest
+				} else if err := runtime.RestoreNodeWorkspaceCheckpointWithRecovery(r.Context(), root, *request.NodeCheckpoint, *request.NodeCheckpointEnd); err != nil {
+					result.Error, result.Status = err.Error(), http.StatusConflict
+				}
+			case domain.RunnerWorkspaceOperationNodeCheckpointDiff:
+				if request.NodeCheckpoint == nil {
+					result.Error, result.Status = "checkpoint required", http.StatusBadRequest
+					break
+				}
+				if request.NodeCheckpointEnd == nil {
+					diff, truncated, files, err := runtime.DiffNodeWorkspaceCurrent(r.Context(), root, *request.NodeCheckpoint, 1<<20)
+					if err != nil {
+						result.Error, result.Status = err.Error(), http.StatusConflict
+					} else {
+						result.Payload, _ = json.Marshal(map[string]any{"files": files, "diff": diff, "truncated": truncated, "live": true})
+					}
+					break
+				}
+				files, err := runtime.NodeWorkspaceCheckpointChangedFiles(r.Context(), root, *request.NodeCheckpoint, *request.NodeCheckpointEnd)
+				if err == nil {
+					var diff string
+					var truncated bool
+					diff, truncated, err = runtime.DiffNodeWorkspaceCheckpoints(r.Context(), root, *request.NodeCheckpoint, *request.NodeCheckpointEnd, 1<<20)
+					if err == nil {
+						result.Payload, _ = json.Marshal(map[string]any{"files": files, "diff": diff, "truncated": truncated})
+					}
+				}
+				if err != nil {
+					result.Error, result.Status = err.Error(), http.StatusConflict
+				}
+			default:
+				result.Error, result.Status = "unsupported node checkpoint operation", http.StatusBadRequest
+			}
+		}
 	} else if interactive {
 		switch request.Operation {
 		case domain.RunnerWorkspaceOperationPreparationRecord:
@@ -245,15 +310,31 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload = json.RawMessage(`{"ok":true}`)
 				break
 			}
+			if run.ExecutionContext.NodeCheckpointsEnabled && request.Terminal.Operation == "open" {
+				if err := e.repo.ValidateWorkspaceUse(run.ID, request.CheckpointLease, time.Now().UTC()); err != nil {
+					result.Error, result.Status = err.Error(), http.StatusConflict
+					break
+				}
+			}
 			var credentials runtime.TerminalGitCredentials
 			if request.Terminal.Operation == "open" {
 				credentials = e.WorkspaceTerminalGitCredentials(r.Context(), run, request.TerminalOwner)
 			}
 			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run, &e.workspaceTerminals, scope, *request.Terminal, credentials)
+			if err == nil && run.ExecutionContext.NodeCheckpointsEnabled && request.Terminal.Operation == "open" {
+				// The caller may time out while the open is in flight. Check the
+				// transferred lease again before leaving a shell running.
+				if leaseErr := e.repo.ValidateWorkspaceUse(run.ID, request.CheckpointLease, time.Now().UTC()); leaseErr != nil {
+					e.workspaceTerminals.CloseScope(scope)
+					err = leaseErr
+				}
+			}
 			result.Payload, _ = json.Marshal(value)
 			if err != nil {
 				result.Error = err.Error()
 				result.Status = 409
+			} else if run.ExecutionContext.NodeCheckpointsEnabled && request.Terminal.Operation == "open" {
+				go e.holdRemoteTerminalLease(run.ID, request.CheckpointLease)
 			}
 		}
 	} else {
@@ -296,7 +377,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload, _ = json.Marshal(map[string]any{"restoredArtifacts": restored})
 			}
 		} else if request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
-			archive, err := runtime.CreateWorkspaceCheckpointContext(r.Context(), root)
+			archive, err := runtime.CreateWorkspaceCheckpointFilteredContext(r.Context(), root, request.DiscardNodeCheckpoints)
 			if err != nil {
 				result.Error = err.Error()
 			} else {
