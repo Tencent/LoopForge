@@ -56,7 +56,7 @@ type TelemetryContext struct {
 	ParentRunID  string `json:"parentRunId,omitempty"`
 	ParentNodeID string `json:"parentNodeId,omitempty"`
 	// WorkspaceRunID names the run that owns the checkout, either a
-	// conversation workspace or the root SOP in a nested run. Empty means
+	// conversation workspace or the root LOOP in a nested run. Empty means
 	// this run owns its workspace.
 	WorkspaceRunID  string `json:"workspaceRunId,omitempty"`
 	WorkflowID      string `json:"workflowId,omitempty"`

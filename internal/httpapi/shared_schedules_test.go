@@ -136,7 +136,7 @@ func TestSharedScheduleSubscriptionUsesPinnedVersionAndTargetOwner(t *testing.T)
 		return "OK", nil
 	}
 	svc := schedule.New(st, tracker.NewService(), func(domain.ScheduleJob, domain.Issue, string) error {
-		t.Fatal("shared AI task unexpectedly dispatched SOP scan")
+		t.Fatal("shared AI task unexpectedly dispatched LOOP scan")
 		return nil
 	})
 	svc.SetAssistantPrep(h.prepareScheduleJob)

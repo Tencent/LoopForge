@@ -770,11 +770,11 @@ function obsInsights(view,kind){
     }
     const top=[...bag.entries()].sort((x,y)=>Math.abs(y[1])-Math.abs(x[1]))[0];
     const sameDir=top&&Math.sign(top[1])===Math.sign(tokenDelta.delta);
-    items.push({text:`Token 环比 <b>${obsSignedPct(tokenDelta.pct)}</b>${sameDir?`，主要来自 ${escapeHTML(top[0])}（${obsSignedTokens(top[1])}）`:''}`,action:'data-obs-jump="sops"',label:'SOP 明细'});
+    items.push({text:`Token 环比 <b>${obsSignedPct(tokenDelta.pct)}</b>${sameDir?`，主要来自 ${escapeHTML(top[0])}（${obsSignedTokens(top[1])}）`:''}`,action:'data-obs-jump="sops"',label:'LOOP 明细'});
   }else{
     const flows=[...(a.workflows||[])].filter(w=>w.tokens>0).sort((x,y)=>y.tokens-x.tokens);
     const total=flows.reduce((n,w)=>n+w.tokens,0);
-    if(flows.length>=2&&total)items.push({text:`<b>${escapeHTML(flows[0].name||flows[0].key)}</b> 占 Token ${(flows[0].tokens*100/total).toFixed(0)}%，共 ${flows.length} 个 SOP`,action:'data-obs-jump="sops"',label:'SOP 明细'});
+    if(flows.length>=2&&total)items.push({text:`<b>${escapeHTML(flows[0].name||flows[0].key)}</b> 占 Token ${(flows[0].tokens*100/total).toFixed(0)}%，共 ${flows.length} 个 LOOP`,action:'data-obs-jump="sops"',label:'LOOP 明细'});
   }
   const cache=obsCacheStats(view);
   const models=[...(a.models||[])].filter(m=>m.tokens>0).sort((x,y)=>y.tokens-x.tokens);
@@ -1061,7 +1061,7 @@ function obsActivityUsageCard(a,collaborative){
     value:!usage?'—':(!reported&&missing?lfT('未采集','Not recorded'):formatTokens(usage.tokens||0)),
     foot:usage?foot:lfT('暂无用量统计','No usage recorded'),
     tip:[
-      collaborative?'当前至少两位用户实际发言的普通会话所消耗的 Token，包含在会话 Token 中，不要重复相加。':'普通会话中已保存回复的模型用量，按回复时间统计；不含 SOP 执行，分支继承的历史回复不重复计入。',
+      collaborative?'当前至少两位用户实际发言的普通会话所消耗的 Token，包含在会话 Token 中，不要重复相加。':'普通会话中已保存回复的模型用量，按回复时间统计；不含 LOOP 执行，分支继承的历史回复不重复计入。',
       '总量沿用模型上报的 totalTokens，缺少总量时按输入 + 输出计算；缓存读写单独列出。个人范围展示本人创建或参与的会话整体用量。',
       ['已记录回复',String(reported)],['未采集回复',String(missing)],
       ['缓存读',usage?formatTokens(usage.cacheReadTokens||0):'—'],['缓存写',usage?formatTokens(usage.cacheWriteTokens||0):'—'],
@@ -1075,9 +1075,9 @@ function obsActivityKpis(){
   const sessions=a?.sessions||0,collaborative=a?.collaborativeSessions||0;
   const rate=sessions?collaborative*100/sessions:0;
   return obsKpiGroups([obsKpiGroup('Vibe Coding 与协作',[
-    {label:'会话数',value:n('sessions'),foot:'普通对话 · 含已归档会话',tip:['按会话 ID 去重，排除 SOP 自动讨论会话；已删除会话不计入。个人范围包含本人创建或实际参与的会话。']},
-    {label:'创建需求',value:n('requirements'),foot:'按需求 ID 去重',tip:['当前范围内创建的需求，含同步需求，不要求已启动 SOP。个人范围按需求责任人筛选；不推断需求由会话创建。']},
-    {label:'需求 SOP',value:n('sopRuns'),foot:'已发起的 SOP 执行次数',tip:['仅计关联需求的顶层 SOP 运行；重复发起分别计数，排除对话工作区和子运行。个人范围沿用运行责任人口径。']},
+    {label:'会话数',value:n('sessions'),foot:'普通对话 · 含已归档会话',tip:['按会话 ID 去重，排除 LOOP 自动讨论会话；已删除会话不计入。个人范围包含本人创建或实际参与的会话。']},
+    {label:'创建需求',value:n('requirements'),foot:'按需求 ID 去重',tip:['当前范围内创建的需求，含同步需求，不要求已启动 LOOP。个人范围按需求责任人筛选；不推断需求由会话创建。']},
+    {label:'需求 LOOP',value:n('sopRuns'),foot:'已发起的 LOOP 执行次数',tip:['仅计关联需求的顶层 LOOP 运行；重复发起分别计数，排除对话工作区和子运行。个人范围沿用运行责任人口径。']},
     {label:'多人协作会话',value:n('collaborativeSessions'),foot:a?(sessions?`占会话 ${rate.toFixed(1)}%`:'暂无会话'):'暂无统计数据',meter:rate,tip:['同一普通会话中至少两位不同用户实际发送过消息。机器人回复、定时触发、系统回执和项目成员数不算参与人数。协作占比 = 多人协作会话 ÷ 会话数。']},
     obsActivityUsageCard(a,false),obsActivityUsageCard(a,true),
   ],lfT('数量按创建时间，Token 按回复时间','Counts by creation time, tokens by reply time')+' · '+escapeHTML(obsRangeCaption()))]);
@@ -1110,28 +1110,28 @@ function obsUsageKpis(view){
   const deltaTip=prevLabel?[`环比对象：${escapeHTML(prevLabel)}`]:[];
   const convTokens=view.conversationTokens||0,convCost=view.conversationCost||0;
   const convTip=convTokens?[['其中对话改代码',formatTokens(convTokens)]]:[];
-  const usage=obsKpiGroup('投入 · SOP + 对话改代码',[
+  const usage=obsKpiGroup('投入 · LOOP + 对话改代码',[
     {label:lfT(`${rangeName} Token`,`${rangeName} tokens`),value:tokenTotal,delta:dl(d('tokens'),true),spark:spark('tokens'),foot:tokenFoot,tip:[['输入',view.inputTokens!=null?formatTokens(view.inputTokens):'—'],['输出',view.outputTokens!=null?formatTokens(view.outputTokens):'—'],['缓存读',formatTokens(cache.read||0)],['缓存写',formatTokens(cache.write||0)],...convTip,...(view.period?[['累计',formatTokens(summary.totalTokens)]]:[]),...deltaTip]},
     {label:lfT(`${rangeName}成本`,`${rangeName} cost`),value:costLabel(totalCost,view.costKnown),delta:dl(d('cost'),true),spark:spark('cost'),foot:costFoot+cum(` · 累计 ${costLabel(summary.totalCostCny,obsCostKnown(summary))}`),tip:[...(convCost?[['其中对话改代码',costLabel(convCost,view.conversationCostKnown!==false)]]:[]),costTip,...deltaTip]},
     {label:'缓存命中',value:cache.rate==null?'—':cache.rate.toFixed(0),unit:cache.rate==null?'':'%',delta:cache.rate!=null&&cache.prevRate!=null?obsDelta(cache.rate,cache.prevRate,false,'pt'):'',meter:cache.rate==null?0:cache.rate,foot:`${lfT('缓存读','Cache reads')} ${formatTokens(cache.read||0)}`,tip:['缓存命中 = 缓存读 ÷（输入 + 缓存读）。越高越省。']},
   ]);
-  const output=obsKpiGroup('SOP 产出与质量',[
-    {label:lfT(`${rangeName}运行`,`${rangeName} runs`),value:String(total),delta:dl(d('runs')),spark:spark('runs'),foot:`${view.active||0} 进行中${cum(` · 累计 ${summary.totalRuns||0}`)}`,tip:['只统计 SOP 运行，对话工作区不算运行。',['成功',String(succeeded)],['失败',String(failed)],['取消',String(view.cancelled||0)],...deltaTip]},
-    {label:lfT(`${rangeName}需求`,`${rangeName} requirements`),value:String(view.uniqueIssues||0),delta:dl(d('issues')),spark:spark('issues'),foot:`每单 ${view.runsPerIssue!=null?Number(view.runsPerIssue).toFixed(1):'—'} 次${cum(` · 累计 ${summary.uniqueIssues||0}`)}`,tip:['有 SOP 运行的需求，按关联的 Issue / TAPD 单去重；对话改代码的需求见下方「对话改代码」。',...deltaTip]},
+  const output=obsKpiGroup('LOOP 产出与质量',[
+    {label:lfT(`${rangeName}运行`,`${rangeName} runs`),value:String(total),delta:dl(d('runs')),spark:spark('runs'),foot:`${view.active||0} 进行中${cum(` · 累计 ${summary.totalRuns||0}`)}`,tip:['只统计 LOOP 运行，对话工作区不算运行。',['成功',String(succeeded)],['失败',String(failed)],['取消',String(view.cancelled||0)],...deltaTip]},
+    {label:lfT(`${rangeName}需求`,`${rangeName} requirements`),value:String(view.uniqueIssues||0),delta:dl(d('issues')),spark:spark('issues'),foot:`每单 ${view.runsPerIssue!=null?Number(view.runsPerIssue).toFixed(1):'—'} 次${cum(` · 累计 ${summary.uniqueIssues||0}`)}`,tip:['有 LOOP 运行的需求，按关联的 Issue / TAPD 单去重；对话改代码的需求见下方「对话改代码」。',...deltaTip]},
     {label:'成功率',value:total?percent(view.successRate):'—',meter:total?view.successRate:0,foot:successFoot,tip:['成功率 = 成功 ÷（成功 + 失败），不含取消与进行中。']},
     {label:'P95 执行',value:view.p95?duration(view.p95):'—',foot:`平均 ${view.avgExec?duration(view.avgExec):'—'}${view.wait?` · 等待 ${duration(view.wait)}`:''}`,tip:['P95：95% 的执行在这个时间内完成。外部工作流按其上报的执行耗时统计。']},
   ],escapeHTML(rangeName));
   const conv=obsConversationKpis(view,rangeName,totalTokens,totalCost);
   const loop=obsKpiGroup('Loop 自动化',[
-    {label:'平均 Token / Run',value:total?formatTokens(demo.averageTokensPerRun):'—',foot:`SOP ${formatTokens(view.sopTokens??totalTokens)} ÷ ${total} 次运行`},
+    {label:'平均 Token / Run',value:total?formatTokens(demo.averageTokensPerRun):'—',foot:`LOOP ${formatTokens(view.sopTokens??totalTokens)} ÷ ${total} 次运行`},
     {label:'工具调用成功率',value:demo.toolCallsObserved?percent(demo.toolSuccessRate):'—',meter:demo.toolCallsObserved?demo.toolSuccessRate:0,foot:`${demo.toolCallsSucceeded||0} 成功 / ${demo.toolCallsFailed||0} 失败 · 仅统计完成事件`},
     {label:'平均人工干预',value:demo.coveredRuns?Number(demo.averageHumanInterventions||0).toFixed(2):'—',foot:`${demo.humanInterventions||0} 次人工决策 ÷ ${demo.coveredRuns||0} 平台内 runs · 不含暂停/恢复`},
     {label:'自动完成率',value:demo.coveredSucceededRuns?percent(demo.automationRate):'—',meter:demo.coveredSucceededRuns?demo.automationRate:0,foot:`${demo.automatedSucceededRuns||0} 个全自动成功 / ${demo.coveredSucceededRuns||0} 个平台内成功`},
-  ],`<span class="obs-info" tabindex="0">口径<span class="obs-tip" role="tooltip">${view.period?`仅统计 ${escapeHTML(rangeName)} 内的 Run，可点趋势换时段。`:'所有数字均可下钻到 workflow_task_id、run_id、trace_id 和原始事件。'}只统计 SOP 运行，不含对话改代码。自动完成率仅统计有平台事件的执行；外部汇总不推断人工干预。</span></span>`);
+  ],`<span class="obs-info" tabindex="0">口径<span class="obs-tip" role="tooltip">${view.period?`仅统计 ${escapeHTML(rangeName)} 内的 Run，可点趋势换时段。`:'所有数字均可下钻到 workflow_task_id、run_id、trace_id 和原始事件。'}只统计 LOOP 运行，不含对话改代码。自动完成率仅统计有平台事件的执行；外部汇总不推断人工干预。</span></span>`);
   return obsKpiGroups([output,usage])+(conv?obsKpiGroups([conv],'is-loop'):'')+obsKpiGroups([loop],'is-loop');
 }
 // obsConversationKpis groups everything done by changing code directly in a
-// conversation, without an SOP. Empty when there is none.
+// conversation, without a LOOP. Empty when there is none.
 function obsConversationKpis(view,rangeName,totalTokens,totalCost){
   const summary=state.analytics?.summary||{};
   if(!(summary.conversationWorkspaces||summary.conversationIssues||summary.conversationTokens))return '';
@@ -1139,12 +1139,12 @@ function obsConversationKpis(view,rangeName,totalTokens,totalCost){
   const share=(part,whole)=>whole>0?Math.min(100,part*100/whole):0;
   const pct=v=>v>0&&v<1?'不到 1%':Math.round(v)+'%';
   const tokenShare=share(tokens,totalTokens),costShare=share(cost,totalCost);
-  return obsKpiGroup('对话改代码 · 不走 SOP',[
+  return obsKpiGroup('对话改代码 · 不走 LOOP',[
     {label:lfT(`${rangeName}需求`,`${rangeName} requirements`),value:String(view.conversationIssues||0),foot:`${view.period?`累计 ${summary.conversationIssues||0} 个，`:'其中 '}${summary.conversationIssuesWithMr||0} 个已提 PR · ${summary.conversationIssuesDelivered||0} 个已交付`,tip:['在对话里识别出、关联到对话工作区的需求，按需求去重。','只在对话里完成的需求，在「交付」页标为「对话直接交付」，PR 合入默认分支即算已交付。']},
     {label:lfT(`${rangeName} Token`,`${rangeName} tokens`),value:formatTokens(tokens),meter:tokenShare,foot:`占全部 Token ${pct(tokenShare)}`,tip:['已算进上方「投入」的 Token 合计。']},
     {label:lfT(`${rangeName}成本`,`${rangeName} cost`),value:costLabel(cost,view.conversationCostKnown!==false),meter:costShare,foot:`占全部成本 ${pct(costShare)}`,tip:['已算进上方「投入」的成本合计。']},
-    {label:lfT(`${rangeName}工作区`,`${rangeName} workspaces`),value:String(spaces),foot:view.conversationLinked!=null?`${view.conversationLinked} 个已关联需求 · ${Math.max(0,spaces-view.conversationLinked)} 个未关联`:'按创建时间统计',tip:['对话里每打开一个代码工作区计 1 个。工作区不是 SOP 运行，不计入运行数、成功率和耗时。']},
-  ],`<span class="obs-info" tabindex="0">口径<span class="obs-tip" role="tooltip">在对话里直接改代码、不走 SOP 的部分。Token 和成本已算进「投入」合计；工作区和需求不计入「SOP 产出与质量」和「Loop 自动化」。</span></span>`);
+    {label:lfT(`${rangeName}工作区`,`${rangeName} workspaces`),value:String(spaces),foot:view.conversationLinked!=null?`${view.conversationLinked} 个已关联需求 · ${Math.max(0,spaces-view.conversationLinked)} 个未关联`:'按创建时间统计',tip:['对话里每打开一个代码工作区计 1 个。工作区不是 LOOP 运行，不计入运行数、成功率和耗时。']},
+  ],`<span class="obs-info" tabindex="0">口径<span class="obs-tip" role="tooltip">在对话里直接改代码、不走 LOOP 的部分。Token 和成本已算进「投入」合计；工作区和需求不计入「LOOP 产出与质量」和「Loop 自动化」。</span></span>`);
 }
 
 // ---------- 趋势 ----------
@@ -1172,7 +1172,7 @@ function obsTrendCard(){
 }
 
 // ---------- Token 去向 ----------
-const OBS_BREAKDOWN_DIMS=[['sop','SOP'],['model','模型'],['node','节点'],['src','来源'],['origin','执行'],['cat','类型']];
+const OBS_BREAKDOWN_DIMS=[['sop','LOOP'],['model','模型'],['node','节点'],['src','来源'],['origin','执行'],['cat','类型']];
 function obsBreakdownRowsFor(dim){
   const a=state.analytics||{};
   if(dim==='model')return (a.models||[]).map(m=>({key:m.key,name:m.name||m.key,tokens:m.tokens,costCny:m.costCny}));
@@ -1186,7 +1186,7 @@ function obsBreakdownRowsFor(dim){
   }
   return (a.workflows||[]).map(w=>({key:w.key,name:w.name||w.key,tokens:w.tokens,costCny:w.costCny}));
 }
-// Conversation workspaces are not SOP runs, so the SOP-based dimensions miss
+// Conversation workspaces are not LOOP runs, so the LOOP-based dimensions miss
 // them; one slice keeps every ring equal to the Token / cost totals. Sources
 // already carry the usage of conversations that are linked to a requirement.
 function obsBreakdownConversationRow(dim){
@@ -1330,15 +1330,15 @@ function obsUsageDetailGroups(view){
   const traceTable={headers:['TAPD / 需求','workflow_task_id','Run / Trace','状态','耗时','Tokens','成本','工具','人工','错误位置'],rows:obsTraceRows(traces),pageKey:'obs-traces',empty:'暂无运行'};
   const recent={headers:['需求 / 流程','状态','耗时','Tokens','成本'],rows:traces.slice(0,8).map(t=>obsRow([escapeHTML(obsTraceLabel(t)),`<span class="status ${escapeHTML(t.status||'')}">${runStatus(t.status)}</span>`,t.durationMs?duration(t.durationMs):'—',formatTokens(t.tokens),costLabel(t.costCny,t.costKnown)],t.origin==='external'?'':`data-open-run="${escapeHTML(t.runId||'')}"`,'run-row')),empty:'暂无运行'};
   const trendTable={headers:[grainName,'运行','需求','成功','失败','Tokens','输入 / 输出','成本','执行耗时',''],rows:trend.slice().reverse().map(t=>obsRow([escapeHTML(obsTrendLabel(t)),String(t.runs),String(t.issues||0),String(t.succeeded),String(t.failed||0),formatTokens(t.tokens),`${formatTokens(t.inputTokens)} / ${formatTokens(t.outputTokens)}`,costLabel(t.costCny,obsCostKnown(t)),t.executionDurationMs?duration(t.executionDurationMs):'—',`<span class="obs-mini-bar"><i style="width:${Math.round((t.tokens||0)*100/maxTrend)}%"></i></span>`],`data-obs-period="${escapeHTML(t.date||'')}"`,`run-row${t.date===selectedPeriod?' obs-period-active':''}`)),empty:'暂无趋势'};
-  const sopTable={headers:['SOP','运行','成功率','返工率','取消率','Tokens','输入 / 输出','Token 占比','成本','成本占比','均执行'],rows:stats.map(w=>obsRow([`<b>${escapeHTML(w.name)}</b>`,String(w.runs),percent(w.successRate),w.qualityUnknownRuns===w.runs?'—':percent(w.reworkRate),percent(w.cancelRate),formatTokens(w.tokens),`${formatTokens(w.inputTokens)} / ${formatTokens(w.outputTokens)}`,w.tokenSharePct!=null?w.tokenSharePct.toFixed(1)+'%':'—',costLabel(w.costCny,!w.costUnknownRuns),w.costSharePct!=null?w.costSharePct.toFixed(1)+'%':'—',w.averageExecutionDurationMs?duration(w.averageExecutionDurationMs):'—']))};
+  const sopTable={headers:['LOOP','运行','成功率','返工率','取消率','Tokens','输入 / 输出','Token 占比','成本','成本占比','均执行'],rows:stats.map(w=>obsRow([`<b>${escapeHTML(w.name)}</b>`,String(w.runs),percent(w.successRate),w.qualityUnknownRuns===w.runs?'—':percent(w.reworkRate),percent(w.cancelRate),formatTokens(w.tokens),`${formatTokens(w.inputTokens)} / ${formatTokens(w.outputTokens)}`,w.tokenSharePct!=null?w.tokenSharePct.toFixed(1)+'%':'—',costLabel(w.costCny,!w.costUnknownRuns),w.costSharePct!=null?w.costSharePct.toFixed(1)+'%':'—',w.averageExecutionDurationMs?duration(w.averageExecutionDurationMs):'—']))};
   const modelTable={headers:['模型','调用','Tokens','输入 / 输出','Token 占比','成本','成本占比','成功率','均执行'],rows:(a.models||[]).map(m=>obsRow([`<span class="mono">${escapeHTML(m.name||m.key)}</span>`,String(m.runs),formatTokens(m.tokens),`${formatTokens(m.inputTokens)} / ${formatTokens(m.outputTokens)}`,m.tokenSharePct!=null?m.tokenSharePct.toFixed(1)+'%':'—',costLabel(m.costCny,!m.costUnknownRuns),m.costSharePct!=null?m.costSharePct.toFixed(1)+'%':'—',m.qualityUnknownRuns===m.runs?'—':percent(m.successRate),m.averageExecutionDurationMs?duration(m.averageExecutionDurationMs):'—']))};
   const memberTable={title:'成员汇总',sub:'当前项目全部责任人，按 Token 排序',headers:['成员','运行','成功','失败','Tokens','输入 / 输出','成本','执行耗时'],rows:obsUserTotals().map(u=>obsRow([`<b>${escapeHTML(obsUserName(u.userId))}</b>`,String(u.runs),String(u.success||0),String(u.failed||0),formatTokens(u.tokens),`${formatTokens(u.inputTokens)} / ${formatTokens(u.outputTokens)}`,costLabel(u.costCny,u.costKnown),u.executionDurationMs?duration(u.executionDurationMs):'—']))};
   const userTable={title:obsScope()==='project'?'每人每日用量':'',headers:['日期','成员','运行','Tokens','输入 / 输出','成本','执行耗时'],rows:(a.userUsage||[]).map(u=>obsRow([escapeHTML(u.date),`<b>${escapeHTML(obsUserName(u.userId))}</b>`,String(u.runs),formatTokens(u.tokens),`${formatTokens(u.inputTokens)} / ${formatTokens(u.outputTokens)}`,costLabel(u.costCny,u.costKnown),u.executionDurationMs?duration(u.executionDurationMs):'—'])),pageKey:'obs-users'};
-  const srcTable={title:'需求类型分布',sub:'按需求来源聚合，已完成数按需求去重',headers:['来源','关联执行','SOP 成功','已交付需求','Tokens','成本','平均执行'],rows:(a.issueSources||[]).map(s=>obsRow([`<b>${obsSourceLabel(s.key)}</b>`,String(s.runs),String(s.succeeded||0),String(s.completedIssues||0),formatTokens(s.tokens),costLabel(s.costCny,!s.costUnknownRuns),s.averageExecutionDurationMs?duration(s.averageExecutionDurationMs):'—']))};
-  const catTable={title:'编排类型分布',sub:'按 SOP 统计标签归类，完成需求数已按需求去重',headers:['统计标签','执行','成功','完成需求','Tokens','成本'],rows:(a.categories||[]).map(c=>obsRow([`<b>${escapeHTML(obsCategoryLabel(c.key))}</b>`,String(c.runs),String(c.succeeded||0),String(c.completedIssues||0),formatTokens(c.tokens),costLabel(c.costCny,!c.costUnknownRuns)]))};
-  const versionTable={title:'SOP 版本对比',sub:'同一 SOP 不同版本的执行效果；样本 < 5 标注样本不足',headers:['SOP','版本','运行','成功率','均执行耗时','Tokens','成本','提示'],rows:(a.workflowVersions||[]).map(v=>obsRow([`<b>${escapeHTML(v.name||v.workflowId)}</b>`,`<span class="mono">v${v.version}</span>`,String(v.runs),percent(v.successRate),v.averageExecutionDurationMs?duration(v.averageExecutionDurationMs):'—',formatTokens(v.tokens),costLabel(v.costCny,!v.costUnknownRuns),v.insufficientSample?'<span class="muted">样本不足</span>':'—']))};
+  const srcTable={title:'需求类型分布',sub:'按需求来源聚合，已完成数按需求去重',headers:['来源','关联执行','LOOP 成功','已交付需求','Tokens','成本','平均执行'],rows:(a.issueSources||[]).map(s=>obsRow([`<b>${obsSourceLabel(s.key)}</b>`,String(s.runs),String(s.succeeded||0),String(s.completedIssues||0),formatTokens(s.tokens),costLabel(s.costCny,!s.costUnknownRuns),s.averageExecutionDurationMs?duration(s.averageExecutionDurationMs):'—']))};
+  const catTable={title:'编排类型分布',sub:'按 LOOP 统计标签归类，完成需求数已按需求去重',headers:['统计标签','执行','成功','完成需求','Tokens','成本'],rows:(a.categories||[]).map(c=>obsRow([`<b>${escapeHTML(obsCategoryLabel(c.key))}</b>`,String(c.runs),String(c.succeeded||0),String(c.completedIssues||0),formatTokens(c.tokens),costLabel(c.costCny,!c.costUnknownRuns)]))};
+  const versionTable={title:'LOOP 版本对比',sub:'同一 LOOP 不同版本的执行效果；样本 < 5 标注样本不足',headers:['LOOP','版本','运行','成功率','均执行耗时','Tokens','成本','提示'],rows:(a.workflowVersions||[]).map(v=>obsRow([`<b>${escapeHTML(v.name||v.workflowId)}</b>`,`<span class="mono">v${v.version}</span>`,String(v.runs),percent(v.successRate),v.averageExecutionDurationMs?duration(v.averageExecutionDurationMs):'—',formatTokens(v.tokens),costLabel(v.costCny,!v.costUnknownRuns),v.insufficientSample?'<span class="muted">样本不足</span>':'—']))};
   const profileRows=stats.filter(w=>w.nodeCount>0).map(w=>obsRow([`<b>${escapeHTML(w.name)}</b>`,String(w.nodeCount),Object.entries(w.nodeTypes||{}).map(([k,v])=>`${escapeHTML(k)}×${v}`).join('，')||'—',escapeHTML(obsCategoryLabel(w.category)),String(w.runs)]));
-  const profileTable={title:'SOP 编排画像',sub:'节点数、节点类型构成与受控统计标签',headers:['SOP','节点数','节点类型构成','统计标签','使用频次'],rows:profileRows};
+  const profileTable={title:'LOOP 编排画像',sub:'节点数、节点类型构成与受控统计标签',headers:['LOOP','节点数','节点类型构成','统计标签','使用频次'],rows:profileRows};
   const nodeTable={title:'节点质量明细',sub:'按失败节点数排序；重试率 = 重试节点 ÷ 节点执行次数',headers:['节点','执行','成功','失败','返工','重试率','均执行耗时','Tokens','工具调用'],rows:[...nodeStats].sort((x,y)=>(y.failedNodes||0)-(x.failedNodes||0)).map(n=>obsRow([escapeHTML(n.name||n.key),String(n.runs),String(n.succeeded||0),String(n.failedNodes||0),String(n.reworkNodes||0),n.retryRate!=null?percent(n.retryRate):'—',n.averageExecutionDurationMs?duration(n.averageExecutionDurationMs):'—',formatTokens(n.tokens),String(n.toolCalls||0)]))};
   const slowTable={title:'慢节点',sub:'按平均执行耗时排序',headers:['节点','执行','均耗时','P95','成功率','Tokens'],rows:[...nodeStats].filter(n=>n.averageExecutionDurationMs>0).sort((x,y)=>y.averageExecutionDurationMs-x.averageExecutionDurationMs).slice(0,10).map(n=>obsRow([escapeHTML(n.name||n.key),String(n.runs),duration(n.averageExecutionDurationMs),n.p95ExecutionDurationMs?duration(n.p95ExecutionDurationMs):'—',percent(n.successRate),formatTokens(n.tokens)]))};
   const failReasonTable={title:'失败原因',sub:'节点错误归一化后的高频原因',headers:['节点','错误','次数'],rows:(a.failures||[]).map(f=>obsRow([escapeHTML(f.nodeId||'—'),`<span title="${escapeHTML(f.code||'')}">${escapeHTML((f.code||'').slice(0,80))}</span>`,String(f.count)])),empty:'没有失败记录'};
@@ -1351,15 +1351,15 @@ function obsUsageDetailGroups(view){
     ]},
     {group:'用量拆解',items:[
       {key:'trend',title:'趋势明细',sub:`按${grainName}；点一行查看该时段`,tables:[trendTable]},
-      {key:'sops',title:'SOP 一览',sub:'成功率、返工、取消和各流程占了多少 Token / 成本',tables:[sopTable]},
+      {key:'sops',title:'LOOP 一览',sub:'成功率、返工、取消和各流程占了多少 Token / 成本',tables:[sopTable]},
       {key:'models',title:'各模型用量',sub:'每个模型花了多少 Token 和钱',tables:[modelTable]},
       {key:'users',title:obsScope()==='project'?'成员':'每人每日用量',sub:'责任人 × 自然日',tables:obsScope()==='project'?[memberTable,userTable]:[userTable],count:(a.userUsage||[]).length},
-      {key:'dist',title:'类型分布',sub:'需求来源与 SOP 统计标签',tables:[srcTable,catTable]},
+      {key:'dist',title:'类型分布',sub:'需求来源与 LOOP 统计标签',tables:[srcTable,catTable]},
     ]},
     {group:'质量',items:[
       {key:'nodes',title:'节点',sub:'节点质量与慢节点',tables:[nodeTable,slowTable],count:nodeStats.length},
       {key:'fails',title:'失败',sub:'失败原因与最近失败的运行',tables:[failReasonTable,failRunTable],count:(a.failures||[]).length},
-      {key:'versions',title:'SOP 版本',sub:'版本对比与编排画像',tables:profileRows.length?[versionTable,profileTable]:[versionTable],count:(a.workflowVersions||[]).length},
+      {key:'versions',title:'LOOP 版本',sub:'版本对比与编排画像',tables:profileRows.length?[versionTable,profileTable]:[versionTable],count:(a.workflowVersions||[]).length},
     ]},
     cross?{group:'人与项目',items:[cross]}:null,
   ].filter(Boolean);
@@ -1377,7 +1377,7 @@ function obsCrossProjectTable(){
     :`该责任人目前只在当前项目有执行记录，个人与项目切换不会把其他项目加进来。`;
   return {key:'projects',title:'该责任人在各项目',sub:note,tables:[{headers:['项目','运行','需求','Tokens','成本'],rows:rows.map(r=>obsRow([`<b>${escapeHTML(obsProjectName(r.projectId))}</b>${r.projectId===current?'<span class="obs-pill">当前</span>':''}`,String(r.runs||0),String(r.uniqueIssues||0),formatTokens(r.tokens),costLabel(r.costCny,r.costKnown)],'',r.projectId===current?'obs-current-project':''))}]};
 }
-const OBS_DELIVERY_FILTERS=[['all','全部'],['delivered','已交付'],['sop','SOP 成功'],['direct','对话改代码'],['withmr','有 PR'],['mr','PR 已合入'],['baseline','已合入基线'],['github','GitHub'],['local','本地']];
+const OBS_DELIVERY_FILTERS=[['all','全部'],['delivered','已交付'],['sop','LOOP 成功'],['direct','对话改代码'],['withmr','有 PR'],['mr','PR 已合入'],['baseline','已合入基线'],['github','GitHub'],['local','本地']];
 function obsDeliveryMRs(it){
   const list=it.mrs?.length?it.mrs:it.mrUrl?[{url:it.mrUrl,project:it.mrProject,iid:it.mrIid,state:it.mrState}]:[];
   const seen=new Map();
@@ -1399,7 +1399,7 @@ function obsDeliveryMatches(it,filter){
 }
 function obsDeliveryStages(){
   const d=state.analytics?.delivery||{};
-  return [{key:'all',name:'有执行的单',value:d.issues||0},{key:'done',name:d.directIssues?'SOP 成功 / 对话已提 PR':'SOP 成功',value:(d.sopSucceeded||0)+(d.directWithMr||0)},{key:'withmr',name:'有 PR 的单',value:d.withMr||0},{key:'mr',name:'有 PR 合入的单',value:d.issuesWithMergedMr??d.mrMerged??0},{key:'delivered',name:'已交付',value:d.delivered||0}];
+  return [{key:'all',name:'有执行的单',value:d.issues||0},{key:'done',name:d.directIssues?'LOOP 成功 / 对话已提 PR':'LOOP 成功',value:(d.sopSucceeded||0)+(d.directWithMr||0)},{key:'withmr',name:'有 PR 的单',value:d.withMr||0},{key:'mr',name:'有 PR 合入的单',value:d.issuesWithMergedMr??d.mrMerged??0},{key:'delivered',name:'已交付',value:d.delivered||0}];
 }
 function obsSetDeliveryFilter(filter,scroll){
   state.obsDeliveryFilter=filter||'all';
@@ -1418,13 +1418,13 @@ function obsDelivery(){
   const summary=state.analytics?.summary||{};
   const kpis=obsKpiGroups([
     obsKpiGroup('交付结果',[
-      {label:'已交付',value:String(d.delivered||0),meter:d.issues?d.delivered*100/d.issues:0,foot:`SOP 成功或对话直接交付，且已在默认分支 · ${d.issues||0} 个有执行的单${d.directIssues?`（含 ${d.directIssues} 个只在对话里改）`:''}`,tip:['「已合入 / 已交付」只统计默认分支。','对话直接改代码的需求没有 SOP，PR 合入默认分支即算交付。']},
-      {label:'执行过的需求 / Bug',value:`${d.requirementCount||0} / ${d.bugFixCount||0}`,foot:'按 SOP 统计标签归类，需求去重'},
+      {label:'已交付',value:String(d.delivered||0),meter:d.issues?d.delivered*100/d.issues:0,foot:`LOOP 成功或对话直接交付，且已在默认分支 · ${d.issues||0} 个有执行的单${d.directIssues?`（含 ${d.directIssues} 个只在对话里改）`:''}`,tip:['「已合入 / 已交付」只统计默认分支。','对话直接改代码的需求没有 LOOP，PR 合入默认分支即算交付。']},
+      {label:'执行过的需求 / Bug',value:`${d.requirementCount||0} / ${d.bugFixCount||0}`,foot:'按 LOOP 统计标签归类，需求去重'},
       {label:'PR 已合入',value:String(d.mrMerged||0),meter:(d.totalMrs??d.withMr)?d.mrMerged*100/(d.totalMrs??d.withMr):0,foot:`按 PR 计数 · 默认分支；${d.mrIntegrated||0} 个已合入基线`},
       ...(projectScope?[{label:'人均周吞吐',value:summary.weeklyActiveContributors?Number(summary.weeklyThroughputPerUser||0).toFixed(2):'—',foot:`近 7 天 ${summary.weeklyDeliveredIssues||0} 个交付 / ${summary.weeklyActiveContributors||0} 人`}]:[]),
     ]),
     obsKpiGroup('耗时与返工',[
-      {label:'平均执行耗时',value:d.averageExecutionDurationMs?duration(d.averageExecutionDurationMs):'—',foot:`P50 ${d.p50ExecutionDurationMs?duration(d.p50ExecutionDurationMs):'—'} · P95 ${d.p95ExecutionDurationMs?duration(d.p95ExecutionDurationMs):'—'}`,tip:['执行耗时 = 该需求全部执行按 SOP 节点求和。']},
+      {label:'平均执行耗时',value:d.averageExecutionDurationMs?duration(d.averageExecutionDurationMs):'—',foot:`P50 ${d.p50ExecutionDurationMs?duration(d.p50ExecutionDurationMs):'—'} · P95 ${d.p95ExecutionDurationMs?duration(d.p95ExecutionDurationMs):'—'}`,tip:['执行耗时 = 该需求全部执行按 LOOP 节点求和。']},
       {label:'平均端到端耗时',value:d.averageDurationMs?duration(d.averageDurationMs):'—',foot:`累计 ${formatTokens(d.totalTokens||0)} tokens`,tip:['端到端 = 该需求最近一次执行的开始到结束，含等待。']},
       {label:'每需求平均执行次数',value:summary.runsPerIssue!=null?Number(summary.runsPerIssue).toFixed(2):'—',foot:`失败 ${summary.failuresPerIssue!=null?Number(summary.failuresPerIssue).toFixed(2):'—'} 次/需求 · 进行中 ${summary.inProgressIssues||0} 个`},
     ]),
@@ -1476,7 +1476,7 @@ function obsOwnersCard(){
   return obsCard('owners','按负责人','已交付 / 进行中 / 未交付；点一人筛选明细','',`<div class="obs-legend"><span><i style="background:var(--c1)"></i>已交付</span><span><i style="background:var(--c3)"></i>进行中</span><span><i style="background:var(--c4)"></i>未交付</span></div>${chart}${table}`,{expand:true});
 }
 function obsMrLabel(s){return s==='merged'?'<span class="obs-mr merged">已合入</span>':s==='integrated'?'<span class="obs-mr integrated">已合入基线</span>':({opened:'待合入',reopened:'重开',closed:'已关闭',none:'无 PR',unknown:'待查合入'}[s]||s||'—')}
-// A conversation requirement has no SOP status: its state is its MRs'.
+// A conversation requirement has no LOOP status: its state is its MRs'.
 function obsDirectDeliveryText(it){
   if(it.delivered)return '对话直接交付';
   const states=obsDeliveryMRs(it).map(mr=>mr.state);
@@ -1485,7 +1485,7 @@ function obsDirectDeliveryText(it){
   if(states.every(s=>s==='closed'))return '对话 · PR 已关闭';
   return '对话 · PR 待合入';
 }
-function obsDeliveryStatusText(it){return it.directDelivery?obsDirectDeliveryText(it):it.sopSucceeded?'SOP 成功':(runStatus(it.runStatus)||it.runStatus||'—')}
+function obsDeliveryStatusText(it){return it.directDelivery?obsDirectDeliveryText(it):it.sopSucceeded?'LOOP 成功':(runStatus(it.runStatus)||it.runStatus||'—')}
 function obsDeliveryStatusHTML(it){return `<span class="status ${escapeHTML(it.directDelivery?'':(it.runStatus||''))}">${escapeHTML(obsDeliveryStatusText(it))}</span>`}
 function obsDeliveryTableDef(all){
   const items=state.analytics?.deliveries||[];
@@ -1498,7 +1498,7 @@ function obsDeliveryTableDef(all){
     const sop=startedLanes.length?startedLanes.map(l=>`${l.label}${l.status==='succeeded'?'✓':''}`).join(' / '):(it.workflowName||it.workflowId);
     return obsRow([`${obsSourceLabel(it.source)} ${escapeHTML(issue)}`,`<b>${escapeHTML(it.title||it.issueId)}</b>`,escapeHTML(sop),obsDeliveryStatusHTML(it),duration(it.durationMs),it.executionDurationMs?duration(it.executionDurationMs):'—',it.cycleDurationMs?duration(it.cycleDurationMs):'—',it.directDelivery?'对话':`${it.runCount||0} 次`,escapeHTML(obsUserName(it.userId)||'—'),formatTokens(it.tokens),costLabel(it.costCny,it.costKnown),mr,it.delivered?'已交付':'未交付'],`data-edit-issue="${escapeHTML(it.issueId)}"`,'run-row');
   });
-  return {key:'deliveries',title:'需求交付明细',tables:[{headers:['单号','标题','SOP','流程','端到端','执行耗时','周期','执行次数','负责人','Tokens','成本','PR','交付'],rows,pageKey:all?'':'obs-deliveries',empty:'还没有带需求上下文的运行'}],items,filter};
+  return {key:'deliveries',title:'需求交付明细',tables:[{headers:['单号','标题','LOOP','流程','端到端','执行耗时','周期','执行次数','负责人','Tokens','成本','PR','交付'],rows,pageKey:all?'':'obs-deliveries',empty:'还没有带需求上下文的运行'}],items,filter};
 }
 function obsDeliveriesCard(){
   const def=obsDeliveryTableDef();
@@ -1506,7 +1506,7 @@ function obsDeliveriesCard(){
   const userFilter=filter.startsWith('user:')?filter:'';
   const chips=OBS_DELIVERY_FILTERS.map(([id,label])=>`<button type="button" data-obs-delivery="${id}" class="${filter===id?'active':''}">${label}<i>${items.filter(it=>obsDeliveryMatches(it,id)).length} 单</i></button>`).join('')+(userFilter?`<button type="button" class="active" data-obs-delivery="all" title="清除负责人筛选">${escapeHTML(obsUserName(userFilter.slice(5)))} ×</button>`:'');
   const body=`<div class="obs-chips">${chips}</div>${obsDetailTable(def.tables[0],'','')}`;
-  return obsCard('deliveries','需求交付明细','耗时为该需求最近一次执行的端到端时间；执行耗时 = 该需求全部执行按 SOP 节点求和；周期为首次执行到最后一次执行。「已合入 / 已交付」只统计默认分支。',`<button type="button" class="obs-btn" data-obs-export-csv="deliveries">${obsIcon('download')}CSV</button>`,body,{klass:'obs-deliveries'});
+  return obsCard('deliveries','需求交付明细','耗时为该需求最近一次执行的端到端时间；执行耗时 = 该需求全部执行按 LOOP 节点求和；周期为首次执行到最后一次执行。「已合入 / 已交付」只统计默认分支。',`<button type="button" class="obs-btn" data-obs-export-csv="deliveries">${obsIcon('download')}CSV</button>`,body,{klass:'obs-deliveries'});
 }
 function obsPlain(v){return String(v==null?'':v).replace(/<[^>]+>/g,'')}
 function obsReportScope(){
@@ -1561,7 +1561,7 @@ function buildObsReportHTML(){
     ...(activity?[
       ['会话数',activity.sessions||0,'普通对话 · 按创建时间'],
       ['创建需求',activity.requirements||0,'按需求 ID 去重 · 含同步需求'],
-      ['需求 SOP',activity.sopRuns||0,'顶层需求 SOP 执行次数'],
+      ['需求 LOOP',activity.sopRuns||0,'顶层需求 LOOP 执行次数'],
       ['多人协作会话',activity.collaborativeSessions||0,activity.sessions?`占会话 ${(Number(activity.collaborativeSessions||0)*100/activity.sessions).toFixed(1)}% · 至少两位用户发言`:'暂无会话'],
       ...[false,true].map(collaborative=>{const card=obsActivityUsageCard(activity,collaborative);return [card.label,card.value,card.foot]}),
     ]:[]),
@@ -1595,18 +1595,18 @@ th{text-align:left;color:var(--muted);font-size:11px;padding:8px;border-bottom:1
 @media print{body{background:#fff}.wrap{padding:0}.kpis article,.block{break-inside:avoid}}
 @media(max-width:800px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style></head><body><div class="wrap">
-<header><p class="eyebrow">LoopForge</p><h1>用量分析报告</h1><p>效果看成功率和一次通过，投入看 Token、成本和执行耗时。交付看 SOP 是否跑完、PR 是否合入。</p>
+<header><p class="eyebrow">LoopForge</p><h1>用量分析报告</h1><p>效果看成功率和一次通过，投入看 Token、成本和执行耗时。交付看 LOOP 是否跑完、PR 是否合入。</p>
 <div class="meta"><span>项目 ${escapeHTML(scope.project)}</span><span>维度 ${escapeHTML(scope.dim)}</span><span>${obsScope()==='project'?'范围':'责任人'} ${escapeHTML(scope.who)}</span><span>来源 ${escapeHTML(scope.source)}</span><span>生成于 ${escapeHTML(scope.at)}</span></div></header>
 <section class="kpis">${kpis}</section>
-${obsReportTable('SOP 一览',['SOP','运行','成功率','返工率','Tokens','成本','均执行'],wfRows)}
+${obsReportTable('LOOP 一览',['LOOP','运行','成功率','返工率','Tokens','成本','均执行'],wfRows)}
 ${obsReportTable('各模型用量',['模型','调用','Tokens','输入 / 输出','Token 占比','成本'],modelRows)}
 ${obsScope()==='project'?obsReportTable('成员汇总',['成员','运行','成功','失败','Tokens','输入 / 输出','成本'],memberRows):''}
 ${obsReportTable('每人每日用量',['日期','成员','运行','Tokens','输入 / 输出','成本'],userRows)}
-${obsReportTable('需求类型分布',['来源','关联执行','SOP 成功','已交付需求','Tokens','成本'],srcRows)}
-${obsReportTable('SOP 版本对比',['SOP','版本','运行','成功率','Tokens','成本'],versionRows)}
+${obsReportTable('需求类型分布',['来源','关联执行','LOOP 成功','已交付需求','Tokens','成本'],srcRows)}
+${obsReportTable('LOOP 版本对比',['LOOP','版本','运行','成功率','Tokens','成本'],versionRows)}
 ${obsReportTable(obsGrainCaption()+'趋势',['周期','运行','需求','成功','失败','Tokens','成本','执行耗时'],trendRows)}
 ${projectRows?obsReportTable('各项目用量',['项目','运行','需求','Tokens','成本'],projectRows):''}
-${obsReportTable('交付明细',['单号','标题','SOP','流程','责任人','Tokens','成本','PR','交付'],deliveryRows)}
+${obsReportTable('交付明细',['单号','标题','LOOP','流程','责任人','Tokens','成本','PR','交付'],deliveryRows)}
 <footer>由 LoopForge 用量分析导出。日志与 Trace 请在运行记录中查看。</footer>
 </div></body></html>`;
 }

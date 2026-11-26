@@ -21,7 +21,7 @@ func (h *assistantHandlers) runNodeConversation(c *gin.Context) {
 	}
 	run, ok := h.repo.RunState(c.Param("id"))
 	if !ok || run.IsWorkspace() || run.HistoricalGroup() {
-		c.JSON(http.StatusNotFound, gin.H{"error": "SOP 运行不存在"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "LOOP 运行不存在"})
 		return
 	}
 	projectID := run.ExecutionContext.ProjectID
@@ -104,7 +104,7 @@ func nonEmptyNodeName(definition domain.WorkflowNode) string {
 func runNodeConversationHistory(run domain.Run, index int, node *domain.NodeRun) []domain.AssistantMessage {
 	definition := run.WorkflowSnapshot.Nodes[index]
 	var input strings.Builder
-	fmt.Fprintf(&input, "SOP 节点执行记录\n\n%s · %s · 第 %d 次执行\n\n运行：%s", run.WorkflowSnapshot.Name, nonEmptyNodeName(definition), node.Attempt, run.ID)
+	fmt.Fprintf(&input, "LOOP 节点执行记录\n\n%s · %s · 第 %d 次执行\n\n运行：%s", run.WorkflowSnapshot.Name, nonEmptyNodeName(definition), node.Attempt, run.ID)
 	fmt.Fprintf(&input, "\n\n节点状态：%s", node.Status)
 	if run.Input != "" {
 		fmt.Fprintf(&input, "\n\n原始任务\n\n%s", truncateRunes(run.Input, 4000))
@@ -133,7 +133,7 @@ func runNodeConversationHistory(run domain.Run, index int, node *domain.NodeRun)
 	if startedAt.IsZero() {
 		startedAt = run.CreatedAt
 	}
-	history := []domain.AssistantMessage{{Role: "user", Content: truncateRunes(gitwork.Redact(input.String()), 16000), AuthorName: "SOP 运行", CreatedAt: startedAt}}
+	history := []domain.AssistantMessage{{Role: "user", Content: truncateRunes(gitwork.Redact(input.String()), 16000), AuthorName: "LOOP 运行", CreatedAt: startedAt}}
 	var output strings.Builder
 	output.WriteString(node.Output)
 	if node.Error != "" {

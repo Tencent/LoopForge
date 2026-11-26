@@ -136,11 +136,11 @@ func TestAssistantProgressReplyContinuesAndHasBoundedFailure(t *testing.T) {
 			h.generate = func(_ context.Context, _ string, _ domain.User) (string, error) {
 				calls++
 				if stuck || calls == 1 {
-					return "稍等，我先查看项目里的 SOP。", nil
+					return "稍等，我先查看项目里的 LOOP。", nil
 				}
-				return "项目中已有后端研发 SOP，共四个节点。", nil
+				return "项目中已有后端研发 LOOP，共四个节点。", nil
 			}
-			c, rec := workbenchContext(user, "POST", "/api/assistant/chat", bytes.NewBufferString(`{"sessionId":"progress-check","projectId":"workbench","messages":[{"role":"user","content":"查看已有 SOP 并给出结果"}]}`))
+			c, rec := workbenchContext(user, "POST", "/api/assistant/chat", bytes.NewBufferString(`{"sessionId":"progress-check","projectId":"workbench","messages":[{"role":"user","content":"查看已有 LOOP 并给出结果"}]}`))
 			h.chat(c)
 			if stuck {
 				if rec.Code != 502 || calls != 3 {

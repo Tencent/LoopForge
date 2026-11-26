@@ -127,7 +127,7 @@ var (
 const gitTokenFixHint = "请责任人到「个人配置 → Git 访问令牌」为仓库的协议、主机和端口配置令牌，并填写该平台要求的用户名、确认仓库权限，然后重试本节点"
 
 // explainGitAuthFailure says what to fix when git rejects the clone or push.
-// SOP runs use the responsible user's Git Token, which git's own
+// LOOP runs use the responsible user's Git Token, which git's own
 // "could not read Username" never mentions. The raw error stays appended.
 func explainGitAuthFailure(err error, tokenConfigured bool) error {
 	if err == nil {

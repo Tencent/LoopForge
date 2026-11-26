@@ -76,7 +76,7 @@ func (r *AnalyticsRepo) analyticsDashboard(filter domain.AnalyticsFilter, runs [
 			}
 		}
 	}
-	// A child SOP's decisions belong to its top-level cohort, without adding a
+	// A child LOOP's decisions belong to its top-level cohort, without adding a
 	// second run to the denominator. Keep the originating node for drill-down.
 	for _, run := range runs {
 		root := run

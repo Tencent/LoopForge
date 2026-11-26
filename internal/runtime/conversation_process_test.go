@@ -1,9 +1,12 @@
 package runtime
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +16,52 @@ import (
 
 	"agentflow/internal/domain"
 )
+
+func TestConversationRelayKeepsPendingToolCallOpen(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	release := make(chan struct{})
+	const reply = `{"jsonrpc":"2.0","id":12,"result":{"ok":true}}`
+	forward := func(ctx context.Context, _ string, _ json.RawMessage) (json.RawMessage, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-release:
+			return json.RawMessage(reply), nil
+		}
+	}
+	url, stop, err := startConversationRelay(ctx, "test-token", forward, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+"/internal/agent-tools/test-token/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"pending-tool"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	transport := &http.Transport{ResponseHeaderTimeout: 3 * time.Second}
+	defer transport.CloseIdleConnections()
+	resp, err := (&http.Client{Transport: transport}).Do(req)
+	if err != nil {
+		t.Fatalf("relay headers must arrive before tool completion: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("expected SSE while the tool is pending, got %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	reader := bufio.NewReader(resp.Body)
+	line, err := reader.ReadString('\n')
+	if err != nil || line != ": awaiting tool result\n" {
+		t.Fatalf("initial heartbeat = %q, %v", line, err)
+	}
+	close(release)
+	body, err := io.ReadAll(reader)
+	if err != nil || string(body) != "\nevent: message\ndata: "+reply+"\n\n" {
+		t.Fatalf("tool response = %q, %v", body, err)
+	}
+}
 
 func TestConversationStdinRemapsQuotedCodexWorkspace(t *testing.T) {
 	source, root := `/api/state "chat"`, `/runner/state "chat"\one`

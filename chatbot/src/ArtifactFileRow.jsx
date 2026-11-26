@@ -46,7 +46,7 @@ export default function ArtifactFileRow({
         <strong>{artifact.name}</strong>
         <small>
           {target
-            ? `${artifact.kind === "sop" ? "SOP" : "角色"} · ${artifact.asset?.status === "published" ? "已发布" : "已保存"}`
+            ? `${artifact.kind === "sop" ? "LOOP" : "角色"} · ${artifact.asset?.status === "published" ? "已发布" : "已保存"}`
             : artifact.source}
           {artifact.size
             ? ` · ${artifact.size < 1024 ? `${artifact.size} B` : `${Math.ceil(artifact.size / 1024)} KB`}`

@@ -4,7 +4,7 @@ import (
 	"agentflow/internal/domain"
 )
 
-// Personal/workflow/window header queries can omit another actor's child SOP.
+// Personal/workflow/window header queries can omit another actor's child LOOP.
 // Read only descendant identities so root-cohort event counts stay complete,
 // without widening the token/cost rows or loading child outputs and logs.
 func (r *AnalyticsRepo) analyticsDashboardSignalRuns(runs []domain.Run, filter domain.AnalyticsFilter, issues map[string]domain.Issue) ([]domain.Run, error) {
@@ -58,7 +58,7 @@ func analyticsSOPCohortRun(run domain.Run, filter domain.AnalyticsFilter, issue 
 		(!filter.RequirementsOnly || analyticsIsRequirementIssue(issue))
 }
 
-// Child decisions/tool outcomes belong to the selected root SOP even when a
+// Child decisions/tool outcomes belong to the selected root LOOP even when a
 // child has another responsible actor. Their token/cost rows remain separately
 // scoped by the existing execution owner filter.
 func analyticsDashboardSignalIDs(runs []domain.Run, filter domain.AnalyticsFilter, issues map[string]domain.Issue, ids []string) []string {

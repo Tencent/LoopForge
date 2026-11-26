@@ -56,7 +56,7 @@ func roomRunMessages(room domain.ChatRoom, dispatch domain.ChatMessage, run doma
 		if nr == nil {
 			continue
 		}
-		author := "SOP「" + wfName + "」"
+		author := "LOOP「" + wfName + "」"
 		if node.Type == "agent" && strings.TrimSpace(node.AgentID) != "" {
 			if name := agentName(node.AgentID); name != "" {
 				author = name
@@ -85,7 +85,7 @@ func roomRunMessages(room domain.ChatRoom, dispatch domain.ChatMessage, run doma
 		case "waiting_approval":
 			msg.ID = roomProgressID(run.ID, node.ID, "approval", attempt)
 			msg.Kind = domain.ChatKindApproval
-			msg.Author = "SOP「" + wfName + "」"
+			msg.Author = "LOOP「" + wfName + "」"
 			msg.Body = "「" + msg.NodeName + "」等待审批，可以直接在群里批准"
 			if roomRejectTarget(run.WorkflowSnapshot, node.ID) != "" {
 				msg.Body += "或打回"
@@ -100,7 +100,7 @@ func roomRunMessages(room domain.ChatRoom, dispatch domain.ChatMessage, run doma
 		msg := base
 		msg.ID = roomProgressID(run.ID, "", "final", run.Status)
 		msg.Kind = domain.ChatKindProgress
-		msg.Author = "SOP「" + wfName + "」"
+		msg.Author = "LOOP「" + wfName + "」"
 		msg.NodeStatus = run.Status
 		msg.Body = map[string]string{"succeeded": "运行完成", "failed": "运行失败", "cancelled": "运行已取消"}[run.Status]
 		msg.CreatedAt = firstTime(run.UpdatedAt)

@@ -1,12 +1,12 @@
 export const actionNames = {
-  runs_start: "启动 SOP",
+  runs_start: "启动 LOOP",
   runs_approve: "批准节点",
   runs_reject: "退回节点",
   runs_retry: "重试节点",
   runs_cancel: "取消运行",
   runs_pause: "暂停运行",
   runs_resume: "继续运行",
-  issues_dispatch: "派发 SOP",
+  issues_dispatch: "派发 LOOP",
   issues_save: "保存需求",
   issues_import_tapd: "导入 TAPD 需求",
   issues_chat_clarify: "发起 AI 需求澄清",
@@ -14,15 +14,15 @@ export const actionNames = {
   issues_delete: "删除需求",
   issues_comments_add: "添加需求评论",
   issues_reopen: "重新打开需求",
-  workflows_save: "保存 SOP",
-  workflows_clone: "复制 SOP",
-  workflows_publish: "发布 SOP",
+  workflows_save: "保存 LOOP",
+  workflows_clone: "复制 LOOP",
+  workflows_publish: "发布 LOOP",
   agents_save: "保存角色",
   assistant_tasks_save: "保存定时任务",
 };
 const entities = {
   agents: "角色",
-  workflows: "SOP",
+  workflows: "LOOP",
   projects: "项目",
   repositories: "仓库",
   rules: "规则",
@@ -78,7 +78,7 @@ export function definitionTarget(artifact, projectId = "") {
   return {
     id: asset.id,
     href: `/${project ? `?projectId=${encodeURIComponent(project)}` : ""}#/${artifact.kind === "sop" ? "flow" : "agents"}/${encodeURIComponent(asset.id)}`,
-    label: artifact.kind === "sop" ? "打开 SOP 编排" : "打开角色定义",
+    label: artifact.kind === "sop" ? "打开 LOOP 编排" : "打开角色定义",
   };
 }
 

@@ -220,7 +220,7 @@ export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
           className="sop-action-button"
           onClick={() => openRunPage(node.childRunId)}
         >
-          查看子 SOP
+          查看子 LOOP
         </button>
       ) : null}
       {!standalone ? (
@@ -388,13 +388,13 @@ export default function SopRunPanel({
   return (
     <Container
       className={`${embedded ? "sop-run-embedded" : "side-panel"} sop-run-panel ${hasNode ? "node-conversation-view" : ""}`}
-      aria-label="SOP 运行过程"
+      aria-label="LOOP 运行过程"
     >
       {!embedded ? (
         <header className="sop-panel-header">
           <span>
             <GitBranch size={16} />
-            SOP 运行
+            LOOP 运行
           </span>
           <IconButton label="关闭运行侧边栏" onClick={onClose}>
             <X size={16} />
@@ -438,7 +438,7 @@ export default function SopRunPanel({
         ) : (
           <>
             <div className="sop-run-heading">
-              <h2>{run.workflowSnapshot?.name || "SOP 运行"}</h2>
+              <h2>{run.workflowSnapshot?.name || "LOOP 运行"}</h2>
               <div className="sop-run-heading-actions">
                 <span className={`sop-status status-${run.status}`}>
                   {runStatus[run.status] || run.status}
@@ -599,7 +599,7 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
             message={opening}
             messages={[opening]}
             index={0}
-            author={{ name: "SOP 运行" }}
+            author={{ name: "LOOP 运行" }}
             body={
               <>
                 {opening.content}

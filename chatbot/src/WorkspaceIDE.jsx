@@ -1,9 +1,9 @@
 import React, { useEffect } from "react";
 import "./workspace-ide.css";
 
-// The same vscode-web workbench the SOP run record embeds (web/vscode.html),
+// The same vscode-web workbench the LOOP run record embeds (web/vscode.html),
 // pointed at the conversation's workspace run. It only knows the run ID, so a
-// conversation workspace and a borrowed SOP workspace open the same way.
+// conversation workspace and a borrowed LOOP workspace open the same way.
 export function workspaceIDEURL(runId, { embed = false } = {}) {
   const params = new URLSearchParams({ run: runId });
   if (embed) params.set("embed", "1");

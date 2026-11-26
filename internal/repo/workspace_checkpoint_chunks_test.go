@@ -107,6 +107,45 @@ func TestWorkspaceCheckpointChunksAtomicRoundTrip(t *testing.T) {
 	defer s.Close()
 	checkpointChunkTest(t, s)
 }
+
+func TestWorkspaceCheckpointSmallStreamReplacesInlineArchive(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	run := domain.Run{ID: "small-checkpoint", Status: "succeeded", Nodes: map[string]*domain.NodeRun{}}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	token, err := s.BeginWorkspaceUse(run.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte("legacy inline archive")
+	if err := s.SaveWorkspaceCheckpoint(run.ID, token, now, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.WorkspaceCheckpointArchive(run.ID); err != nil || !bytes.Equal(got, legacy) {
+		t.Fatalf("legacy inline archive did not round trip: %q, %v", got, err)
+	}
+	next := []byte("small streamed archive")
+	if err := s.SaveWorkspaceCheckpointStream(run.ID, token, now, bytes.NewReader(next)); err != nil {
+		t.Fatal(err)
+	}
+	var row WorkspaceCheckpoint
+	if err := s.DB.Where("run_id = ?", run.ID).Take(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.ArchiveID == "" || row.ArchiveChunks != 1 || len(row.Archive) != 0 {
+		t.Fatalf("small stream did not replace the inline payload: %+v", row)
+	}
+	if got, err := s.WorkspaceCheckpointArchive(run.ID); err != nil || !bytes.Equal(got, next) {
+		t.Fatalf("small chunked archive did not round trip: %q, %v", got, err)
+	}
+}
+
 func TestMySQLWorkspaceCheckpointChunks(t *testing.T) {
 	dsn := os.Getenv("AGENTFLOW_TEST_MYSQL_DSN")
 	if dsn == "" {
@@ -179,8 +218,11 @@ func checkpointBackoffTest(t *testing.T, s *Store, other *RunsRepo) {
 		t.Fatal(err)
 	}
 	meta, _ = s.WorkspaceCheckpoint(run.ID)
-	if meta.Error != "" || meta.SaveRetryAt != nil || meta.SaveFailures != 0 || meta.ArchiveID != "" {
-		t.Fatal("successful save did not reset backoff")
+	if meta.Error != "" || meta.SaveRetryAt != nil || meta.SaveFailures != 0 {
+		t.Fatalf("successful save did not reset backoff: %+v", meta)
+	}
+	if recovered, err := s.WorkspaceCheckpointArchive(run.ID); err != nil || string(recovered) != "repaired" {
+		t.Fatalf("successful save did not retain the repaired archive: %q, %v", recovered, err)
 	}
 }
 func TestMySQLWorkspaceCheckpointSharedBackoff(t *testing.T) {

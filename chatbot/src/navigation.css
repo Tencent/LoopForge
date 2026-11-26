@@ -646,7 +646,7 @@
   margin-left: 14px;
 }
 
-/* Quiet for finished runs; a chip only when the SOP needs a person. */
+/* Quiet for finished runs; a chip only when the LOOP needs a person. */
 .chat-shell .session-link > .session-run {
   flex: none;
   padding: 0 5px;

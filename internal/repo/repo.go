@@ -297,7 +297,7 @@ func (s *Store) StorageInfo() map[string]any {
 	return map[string]any{
 		"driver":   s.DB.Dialector.Name(),
 		"database": true,
-		"note":     "所有状态都在 MySQL：项目、Issue、SOP、运行记录、助手对话和定时任务都直接读写数据库。",
+		"note":     "所有状态都在 MySQL：项目、Issue、LOOP、运行记录、助手对话和定时任务都直接读写数据库。",
 	}
 }
 

@@ -66,8 +66,8 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 	gate := d.requestGate(request)
 	key := requestGateKey(request)
 	if !gate.TryLock() {
-		// Another task of this wave (a parallel SOP branch, a group role, a
-		// child SOP in the shared checkout) holds the read fence. Its exact
+		// Another task of this wave (a parallel LOOP branch, a group role, a
+		// child LOOP in the shared checkout) holds the read fence. Its exact
 		// live environment already carries the stamp this recipe needs; reuse
 		// it instead of rerunning scripts under running members.
 		if gate.TryRLock() {
@@ -274,7 +274,7 @@ func (d *Daemon) openBusyGroupTerminal(ctx context.Context, root, scope string, 
 	return result, err
 }
 
-// A normal SOP script already ran in its graph position. Recording only stamps
+// A normal LOOP script already ran in its graph position. Recording only stamps
 // that exact live environment; it must never create a new one and mark it ready.
 func (d *Daemon) recordRunnerWorkspacePreparation(ctx context.Context, root string, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
 	task, err := d.workspaceSandboxTask(root, request)

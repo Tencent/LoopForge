@@ -148,7 +148,7 @@ export default function SopRunReview({ search = location.search }) {
           />
         </div>
       ) : run ? (
-        <p className="sop-review-load">此运行没有 SOP 节点。</p>
+        <p className="sop-review-load">此运行没有 LOOP 节点。</p>
       ) : null}
     </main>
   );

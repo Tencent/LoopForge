@@ -13,11 +13,11 @@ import (
 	"agentflow/internal/runtime"
 )
 
-// BaselineAlignWorkflowID is the built-in SOP that resolves default→integrate
-// conflicts before scheduled issue SOPs are dispatched.
+// BaselineAlignWorkflowID is the built-in LOOP that resolves default→integrate
+// conflicts before scheduled issue LOOPs are dispatched.
 const BaselineAlignWorkflowID = "scheduled-baseline-align"
 
-// BaselineAlignAgentID is the platform-shared resolve role for that SOP.
+// BaselineAlignAgentID is the platform-shared resolve role for that LOOP.
 const BaselineAlignAgentID = domain.BaselineAlignAgentID
 
 func configureBaselineAlignCLI(wf domain.WorkflowDefinition) (domain.WorkflowDefinition, error) {
@@ -41,7 +41,7 @@ func configureBaselineAlignCLI(wf domain.WorkflowDefinition) (domain.WorkflowDef
 }
 
 // AlignConflictError means the shared integrate branch and the repository
-// default branch diverged. Scheduled issue SOPs for that repository must wait.
+// default branch diverged. Scheduled issue LOOPs for that repository must wait.
 type AlignConflictError struct {
 	Integrate string
 	Default   string

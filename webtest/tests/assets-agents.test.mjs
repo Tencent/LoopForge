@@ -415,3 +415,72 @@ test('role editor checks executors against the current project default machine',
   assert.deepEqual(requests(), ['?projectId=project-1', '']);
   assert.equal(options().includes('codex'), false, 'the personal scope must not reuse the project catalog');
 });
+
+test('adding an artifact keeps unsaved loop and review settings of the role', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', { codebuddy: { configured: true, models: [{ id: 'cb-model', name: 'CB model' }] } });
+  app.evaluate(`switchView('agents')`);
+  await settle();
+  app.evaluate(`
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}];
+    const role={id:'role-gov',name:'Gov',projectId:state.projectFilter,prompt:'Fix it',executorId:'codebuddy',model:'cb-model',
+      loop:{enabled:false,maxIterations:3,exitCondition:'all_gates_pass',onExhausted:'fail'},artifactOutputs:[],verification:[]};
+    state.data.agents=[role];openAgentWizard(role);
+  `);
+  await settle();
+  const form = app.document.querySelector('#agentForm');
+  const set = (name, value) => {
+    const el = form.elements[name];
+    if (el.type === 'checkbox') el.checked = value; else el.value = value;
+    el.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+    el.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  };
+  set('loopEnabled', true);
+  set('loopMaxIterations', '2');
+  set('loopOnExhausted', 'human');
+  set('loopFeedbackPrompt', 'only fix {{feedback}}');
+  set('interventionAfter', true);
+  app.document.querySelector('#agentAddArtifact').click();
+  await settle();
+  // The panel was re-rendered; the switches still show what was chosen.
+  assert.equal(form.elements.loopEnabled.checked, true);
+  assert.equal(form.elements.loopMaxIterations.value, '2');
+  assert.equal(form.elements.loopOnExhausted.value, 'human');
+  assert.equal(form.elements.loopFeedbackPrompt.value, 'only fix {{feedback}}');
+  assert.equal(form.elements.interventionAfter.checked, true);
+  form.querySelector('[data-artifact-row="0"] [data-ak="path"]').value = 'plan.md';
+  form.querySelector('[data-artifact-row="0"] [data-ak="path"]').dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  app.router.put('/api/agents', (call) => ({ status: 200, body: call.body }));
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  const saved = app.router.calls.find((c) => c.path === '/api/agents' && c.method === 'PUT').body;
+  assert.equal(saved.loop.enabled, true);
+  assert.equal(saved.loop.maxIterations, 2);
+  assert.equal(saved.loop.onExhausted, 'human');
+  assert.equal(saved.loop.feedbackPrompt, 'only fix {{feedback}}');
+  assert.ok(saved.interventions.some((x) => x.stage === 'after_execution'));
+  assert.equal(saved.artifactOutputs[0].path, 'plan.md');
+});
+
+test('platform roles are read-only for project members and can be copied', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', { codebuddy: { configured: true, models: [{ id: 'cb-model', name: 'CB model' }] } });
+  app.evaluate(`switchView('agents')`);
+  await settle();
+  app.evaluate(`
+    state.currentUser={...(state.currentUser||{}),id:7,loginName:'member',isPlatformAdmin:false};
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}];
+    const role={id:'platform-role',name:'Platform',projectId:'',prompt:'shared',executorId:'codebuddy',model:'cb-model'};
+    state.data.agents=[role];openAgentWizard(role);
+  `);
+  await settle();
+  assert.equal(app.document.querySelector('#agentSave').hidden, true);
+  assert.equal(app.document.querySelector('#agentClone').hidden, false);
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  assert.equal(app.router.calls.some((c) => c.path === '/api/agents' && c.method === 'PUT'), false);
+  assert.equal(app.evaluate(`state.data.agents[0].projectId`), '');
+  app.evaluate(`state.currentUser.isPlatformAdmin=true;openAgentWizard(state.data.agents[0])`);
+  await settle();
+  assert.equal(app.document.querySelector('#agentSave').hidden, false);
+});

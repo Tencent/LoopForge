@@ -80,12 +80,12 @@ func TestRequirementPhaseMeasurementsMarksLegacyInference(t *testing.T) {
 func TestRequirementPhaseMeasurementsSkipsComposedSOPNode(t *testing.T) {
 	start := time.Date(2026, 9, 21, 8, 0, 0, 0, time.UTC)
 	run := domain.Run{
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: "parent", Nodes: []domain.WorkflowNode{{ID: "child", Name: "研发 SOP", Type: "sop", MetricStage: "development"}}},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: "parent", Nodes: []domain.WorkflowNode{{ID: "child", Name: "研发 LOOP", Type: "sop", MetricStage: "development"}}},
 		Nodes:            map[string]*domain.NodeRun{"child": {StartedAt: start, FinishedAt: start.Add(time.Hour)}},
 	}
 	measured := requirementPhaseMeasurements(run, domain.WorkflowDefinition{})
 	if measured.development != 0 || measured.samples.Development != 0 || len(measured.evidence) != 0 {
-		t.Fatalf("composed SOP container counted twice: %+v", measured)
+		t.Fatalf("composed LOOP container counted twice: %+v", measured)
 	}
 }
 
@@ -195,7 +195,7 @@ func TestAnalyticsDeliveryFoldsChildSOPRunIntoParent(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	start := time.Now().UTC().Add(-time.Hour)
-	parent := domain.WorkflowDefinition{ID: "parent-sop", Name: "总控", Nodes: []domain.WorkflowNode{{ID: "child", Name: "研发 SOP", Type: "sop", SOPWorkflowID: "child-sop"}}}
+	parent := domain.WorkflowDefinition{ID: "parent-sop", Name: "总控", Nodes: []domain.WorkflowNode{{ID: "child", Name: "研发 LOOP", Type: "sop", SOPWorkflowID: "child-sop"}}}
 	child := domain.WorkflowDefinition{ID: "child-sop", Name: "研发", Nodes: []domain.WorkflowNode{{ID: "build", Name: "Build", MetricStage: "development"}}}
 	if err := s.PutIssue(domain.Issue{ID: "iss", ProjectID: "alpha", Title: "nested"}); err != nil {
 		t.Fatal(err)
@@ -225,7 +225,7 @@ func TestAnalyticsDeliveryFoldsChildSOPRunIntoParent(t *testing.T) {
 	}
 	d := got.Deliveries[0]
 	if d.RunID != "run-parent" || d.WorkflowID != parent.ID || d.RunCount != 1 || d.Tokens != 15 || d.PhaseSamples.Development != 1 {
-		t.Fatalf("a child SOP run must fold into its parent: %+v", d)
+		t.Fatalf("a child LOOP run must fold into its parent: %+v", d)
 	}
 }
 
