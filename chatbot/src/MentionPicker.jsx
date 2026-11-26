@@ -264,23 +264,22 @@ export default forwardRef(function MentionPicker(
         left = Math.max(left, clip.left + 8);
         right = Math.min(right, clip.right - 8);
       }
-      const above = anchor.top - top - 8, below = bottom - anchor.bottom - 8;
+      // A resize can move the caret outside the visible part of the composer.
+      // Measure room from the nearest visible edge in that case.
+      const anchorTop = Math.max(top, Math.min(anchor.top, bottom));
+      const anchorBottom = Math.max(top, Math.min(anchor.bottom, bottom));
+      const above = anchorTop - top - 8, below = bottom - anchorBottom - 8;
       // Keep the picker below the active line whenever it has enough room;
       // only use the upper side when the lower side cannot show a useful list.
       const minRoom = 160;
       const up = below < minRoom && above > below;
       let room = up ? above : below,
-        y = up ? anchor.top - 8 : anchor.bottom + 8;
+        y = up ? anchorTop - 8 : anchorBottom + 8;
       // On short screens the picker overlays the editor rather than escaping
       // its scroll container or shrinking the results to an unusable sliver.
       if (room < minRoom) {
-        const useAbove = above > below;
-        room = Math.max(0, Math.max(above, below));
-        y = useAbove ? bottom : top;
-      }
-      if (room < minRoom) {
         room = Math.max(0, bottom - top);
-        y = above > below ? bottom : top;
+        y = up ? bottom : top;
       }
       const origin = containerRect;
       const width = editorRect?.width || containerRect.width;

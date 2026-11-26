@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const web = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'web', 'app');
-const files = ['flow-history.js', 'flow-viewport.js', 'flow-palette.js', 'flows.js'];
+const files = ['sops.js', 'flow-history.js', 'flow-viewport.js', 'flow-palette.js', 'flows.js'];
 
 const fakeEl = (extra = {}) => ({
   value: '', innerHTML: '', textContent: '', hidden: false, dataset: {},
@@ -230,8 +230,8 @@ test('the node library search filters roles and built-in items and shows an empt
 
 test('the LOOP switcher query filters by name or id and reports no match', () => {
   const workflows = [
-    { id: 'wf-build', name: '构建发布', projectId: 'p1', nodes: [] },
-    { id: 'wf-review', name: '代码评审', projectId: 'p2', nodes: [] },
+    { id: 'wf-build', name: '构建发布', projectId: 'p1', status: 'published', version: 1, nodes: [] },
+    { id: 'wf-review', name: '代码评审', projectId: 'p2', status: 'draft', version: 1, nodes: [] },
     { id: 'tpl', name: '通用发布模板', generic: true, nodes: [] },
   ];
   const q = fakeEl(), list = fakeEl();
@@ -241,6 +241,7 @@ test('the LOOP switcher query filters by name or id and reports no match', () =>
 
   run('flowPalette.renderSwitcher()');
   assert.deepEqual(ids(), ['wf-build', 'wf-review', 'tpl']);
+  assert.match(list.innerHTML, /已发布 · v1 · 0 步/);
   q.value = '发布';
   run('flowPalette.renderSwitcher()');
   assert.deepEqual(ids(), ['wf-build', 'tpl']);
@@ -248,6 +249,7 @@ test('the LOOP switcher query filters by name or id and reports no match', () =>
   q.value = 'WF-REVIEW';
   run('flowPalette.renderSwitcher()');
   assert.deepEqual(ids(), ['wf-review']);
+  assert.doesNotMatch(list.innerHTML, /v1/, 'an unpublished draft has no version label');
   q.value = 'zzz';
   run('flowPalette.renderSwitcher()');
   assert.deepEqual(ids(), []);
