@@ -77,11 +77,11 @@ func TestIdleReclaimableSOPRunsIncludesLegacyTopLevelRuns(t *testing.T) {
 		got[run.ID] = true
 	}
 	if len(got) != 2 || !got["legacy"] || !got["paused"] {
-		t.Fatalf("idle SOPs = %v", got)
+		t.Fatalf("idle LOOPs = %v", got)
 	}
 	cleaned := s.CleanedSOPRunsHoldingAdmission()
 	if len(cleaned) != 1 || cleaned[0].ID != "cleaned" {
-		t.Fatalf("cleaned SOPs holding slots = %+v", cleaned)
+		t.Fatalf("cleaned LOOPs holding slots = %+v", cleaned)
 	}
 }
 
@@ -234,7 +234,7 @@ func TestWorkspaceCheckpointLeaseCASAndDurableIdleDeadline(t *testing.T) {
 	}
 	restored, _ := s.RunState(r.ID)
 	if restored.Status != "succeeded" || !restored.WorkspaceCleanedAt.IsZero() {
-		t.Fatal("restore altered SOP outcome")
+		t.Fatal("restore altered LOOP outcome")
 	}
 	if err = s.FinishWorkspaceUse(r.ID, token, now, nil, ""); err != nil {
 		t.Fatal(err)

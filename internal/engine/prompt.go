@@ -200,7 +200,7 @@ func hostedMRBlurb(st *repo.Store, run domain.Run) string {
 		}
 		return hint
 	}
-	const searchHint = "本轮 SOP 使用独立工作分支。只用当前分支创建或更新本轮 MR，禁止把 commit 推到上一轮 SOP 的分支，也禁止 update 上一轮 MR。"
+	const searchHint = "本轮 LOOP 使用独立工作分支。只用当前分支创建或更新本轮 MR，禁止把 commit 推到上一轮 LOOP 的分支，也禁止 update 上一轮 MR。"
 	clip := func(content string) string {
 		content = strings.TrimSpace(content)
 		if len(content) > 2500 {
@@ -287,7 +287,7 @@ func appendArtifactContract(prompt string, node domain.WorkflowNode, repositorie
 		}
 	}
 	if len(checkouts) > 0 {
-		b.WriteString("\n\n# Workspace layout\n\nWrite code changes in the checkout directories below. Keep SOP deliverables such as `fix-plan.md` at the run workspace root.\n")
+		b.WriteString("\n\n# Workspace layout\n\nWrite code changes in the checkout directories below. Keep LOOP deliverables such as `fix-plan.md` at the run workspace root.\n")
 		for _, rc := range checkouts {
 			name := strings.TrimSpace(rc.Name)
 			if name == "" {

@@ -6,7 +6,7 @@ English | [简体中文](usage.zh-CN.md)
 
 ## Connect to LoopForge with MCP
 
-Use CodeBuddy with a running LoopForge instance to access projects, SOPs, and runs on that instance. If you need an instance, see the [deployment guide](../deployment.md).
+Use CodeBuddy with a running LoopForge instance to access projects, LOOPs, and runs on that instance. If you need an instance, see the [deployment guide](../deployment.md).
 
 1. Sign in to LoopForge and open **Access** (接入方式). Create a personal access token and select **CodeBuddy** for its MCP setup instructions.
 2. Apply the user-level configuration in CodeBuddy and confirm that the `agentflow` server is connected in the MCP settings. Ask CodeBuddy to list your LoopForge projects to verify access.

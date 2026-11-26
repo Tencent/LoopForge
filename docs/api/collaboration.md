@@ -84,8 +84,8 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 - `priority`、`kind`（`requirement|issue`）、`assigneeType`、`assigneeId`
 - `workflowId`、`repositoryId`、`repositoryIds`、`baseBranch`、`repositoryBranches`、`latestTaskId`
 - `source`（`local|gongfeng|tapd`）、`externalRef`
-- `clarification`：`summary`、`status`（`analyzing|in_progress|ready`；历史数据可能是 `needs_user`）、`history`、`questions`、写回字段。澄清是可选步骤，不打分、不自动开始，也不阻止派发 SOP。
-- 交付字段 `deliveryState`、`deliveryMrUrl`、`deliveryMrState`、`deliveryMrs`、`deliveryUpdatedAt`。`deliveryMrs` 每个仓库一项（`repositoryId`、`repository`、`project`、`iid`、`url`、`state`、`targetBranch`），由 SOP 成功时按仓库工作分支向工蜂查询 MR 得出，查不到才回退到 MR 类产物里同项目的链接；`deliveryMrUrl` 为第一项，`deliveryMrState` 为聚合状态（全部合入默认分支才是 `merged`）。
+- `clarification`：`summary`、`status`（`analyzing|in_progress|ready`；历史数据可能是 `needs_user`）、`history`、`questions`、写回字段。澄清是可选步骤，不打分、不自动开始，也不阻止派发 LOOP。
+- 交付字段 `deliveryState`、`deliveryMrUrl`、`deliveryMrState`、`deliveryMrs`、`deliveryUpdatedAt`。`deliveryMrs` 每个仓库一项（`repositoryId`、`repository`、`project`、`iid`、`url`、`state`、`targetBranch`），由 LOOP 成功时按仓库工作分支向工蜂查询 MR 得出，查不到才回退到 MR 类产物里同项目的链接；`deliveryMrUrl` 为第一项，`deliveryMrState` 为聚合状态（全部合入默认分支才是 `merged`）。
 
 ### `GET /api/issues`
 
@@ -202,7 +202,7 @@ curl -N -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
 
 ### `POST /api/issues/{issueId}/dispatch`
 
-启动绑定的 SOP。请求体可省略；可选：
+启动绑定的 LOOP。请求体可省略；可选：
 
 ```json
 {"rerun":false}
@@ -222,7 +222,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
   "$AGENTFLOW_URL/api/issues/issue-1/dispatch"
 ```
 
-这是长任务的“启动”接口，只等待 run 创建，不等待 SOP 完成。后续使用 `/api/runs/{runId}/stream` 或轮询 run。
+这是长任务的“启动”接口，只等待 run 创建，不等待 LOOP 完成。后续使用 `/api/runs/{runId}/stream` 或轮询 run。
 
 ### `POST /api/issues/{issueId}/reopen`
 

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/mcpserver"
 )
 
 // Only a confirmed preparation failure carries this marker. A lost start RPC
@@ -954,6 +955,19 @@ func startConversationRelay(ctx context.Context, token string, forward Conversat
 		if err != nil || len(data) > 4<<20 {
 			http.Error(w, "invalid request", 400)
 			return
+		}
+		if mcpserver.AcceptsEventStream(r) {
+			var request struct {
+				Method string          `json:"method"`
+				ID     json.RawMessage `json:"id"`
+			}
+			if json.Unmarshal(data, &request) == nil && request.Method == "tools/call" &&
+				len(request.ID) > 0 && string(request.ID) != "null" {
+				mcpserver.WriteToolResponse(w, r, request.ID, func() (json.RawMessage, error) {
+					return forward(r.Context(), token, data)
+				})
+				return
+			}
 		}
 		result, err := forward(r.Context(), token, data)
 		if err != nil {

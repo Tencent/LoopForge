@@ -11,13 +11,13 @@ async function submit(app) {
 function openBlank(app, sandboxes) {
   app.evaluate(`state.data.workflows=[];state.data.sandboxes=${JSON.stringify(sandboxes)};openSOPWizard()`);
   const form=app.document.querySelector('#sopCreateForm');
-  form.elements.name.value='Custom SOP';
+  form.elements.name.value='Custom LOOP';
   form.elements.description.value='Keep this draft';
   app.evaluate('setSOPWizardStep(2)');
   return form;
 }
 
-test('blank SOP prefers project isolation over local and shared profiles and saves the selected environment', async t=>{
+test('blank LOOP prefers project isolation over local and shared profiles and saves the selected environment', async t=>{
   const app=await loadApp();t.after(app.close);
   openBlank(app,[
     {id:'local',name:'Local',driver:'local'},
@@ -38,7 +38,7 @@ test('blank SOP prefers project isolation over local and shared profiles and sav
   assert.equal(app.evaluate('state.workflow.sandboxProfileId'),'shared-docker');
 });
 
-test('automatic sandbox selection saves and reopens in the SOP designer', async t=>{
+test('automatic sandbox selection saves and reopens in the LOOP designer', async t=>{
   const app=await loadApp();t.after(app.close);
   openBlank(app,[{id:'project-docker',name:'Project Docker',projectId:'project-1',driver:'docker'}]);
   const select=app.document.querySelector('#sopCreateSandbox');
@@ -61,7 +61,7 @@ test('automatic sandbox selection saves and reopens in the SOP designer', async 
   assert.equal(app.evaluate('!!state.workflow.autoSelectSandbox'),false);
 });
 
-test('manual SOP start shows sandbox selection while admission is pending', async t=>{
+test('manual LOOP start shows sandbox selection while admission is pending', async t=>{
   const app=await loadApp();t.after(app.close);
   app.evaluate(`state.data.workflows[0].autoSelectSandbox=true;openRunModal('flow-1')`);
   const reply=Promise.withResolvers();
@@ -94,18 +94,18 @@ test('issue dispatch shows sandbox selection until admission returns', async t=>
   assert.match(app.document.querySelector('#toastContainer').textContent,/Dispatch failed/);
 });
 
-test('missing sandboxes block submission and refresh keeps the entered SOP fields', async t=>{
+test('missing sandboxes block submission and refresh keeps the entered LOOP fields', async t=>{
   const app=await loadApp();t.after(app.close);
   const form=openBlank(app,[{id:'foreign-private',projectId:'other',name:'Private',driver:'docker'}]);
   assert.equal(app.document.querySelector('#sopFinish').disabled,true);
   assert.match(app.document.querySelector('#sopSandboxHint').textContent,/没有可用.*沙箱/);
   await submit(app);
   assert.equal(app.router.calls.some(c=>c.path==='/api/workflows'&&c.method==='PUT'),false);
-  assert.equal(form.elements.name.value,'Custom SOP');
+  assert.equal(form.elements.name.value,'Custom LOOP');
   assert.equal(app.document.querySelector('#sopCreateModal').classList.contains('open'),true);
   app.router.get('/api/sandboxes',[{id:'installed-docker',name:'Installed Docker',driver:'docker'}]);
   await app.evaluate('refreshSOPSandboxes()');
-  assert.equal(form.elements.name.value,'Custom SOP');
+  assert.equal(form.elements.name.value,'Custom LOOP');
   assert.equal(form.elements.description.value,'Keep this draft');
   assert.equal(app.document.querySelector('#sopCreateSandbox').value,'installed-docker');
   assert.equal(app.document.querySelector('#sopFinish').disabled,false);
@@ -118,7 +118,7 @@ test('template sandbox is preserved and a missing template sandbox requires an e
   const app=await loadApp();t.after(app.close);
   app.evaluate(`state.data.workflows=[{id:'template',name:'Template',status:'published',sandboxProfileId:'template-box',nodes:[],edges:[]}];
     state.data.sandboxes=[{id:'local',name:'Local',driver:'local'},{id:'template-box',name:'Template Box',driver:'native'}];openSOPWizard()`);
-  const form=app.document.querySelector('#sopCreateForm');form.elements.name.value='Copied SOP';
+  const form=app.document.querySelector('#sopCreateForm');form.elements.name.value='Copied LOOP';
   assert.equal(app.document.querySelector('#sopCreateSandbox').value,'template-box');
   app.evaluate(`state.data.sandboxes=[{id:'local',name:'Local',driver:'local'},{id:'another-box',name:'Another Box',driver:'docker'}];setSOPWizardStep(2)`);
   assert.match(app.document.querySelector('#sopSandboxHint').textContent,/模板原有沙箱不可用/);

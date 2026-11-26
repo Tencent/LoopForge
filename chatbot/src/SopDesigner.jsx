@@ -100,7 +100,7 @@ export default function SopDesigner({ search = location.search, canvas = window.
     return () => window.removeEventListener("storage", apply);
   }, []);
 
-  // The canvas tells us which SOP it shows; a different SOP has its own
+  // The canvas tells us which LOOP it shows; a different LOOP has its own
   // conversation.
   useEffect(() => {
     const onMessage = (event) => {

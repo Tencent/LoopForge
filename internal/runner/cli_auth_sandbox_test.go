@@ -250,7 +250,7 @@ func TestRunnerSOPCLIAuthentication(t *testing.T) {
 						t.Fatal(err)
 					}
 					var result domain.Run
-					waitFor(t, 20*time.Second, "SOP completion", func() bool {
+					waitFor(t, 20*time.Second, "LOOP completion", func() bool {
 						result, _ = st.RunState(run.ID)
 						return domain.TerminalRunStatus(result.Status) || result.Status == "waiting"
 					})
@@ -265,13 +265,13 @@ func TestRunnerSOPCLIAuthentication(t *testing.T) {
 								}
 							}
 						}
-						t.Fatalf("SOP %s, node %s, error = %q, output = %q", result.Status, node.Status, node.Error, node.Output)
+						t.Fatalf("LOOP %s, node %s, error = %q, output = %q", result.Status, node.Status, node.Error, node.Output)
 					}
 					home := filepath.Join(workspaceRoot, "runs", run.ID, "workspace", ".agentflow", "private-home")
 					for _, pattern := range []string{"codex-login-*/.codex/auth.json", "claude-code-login-*/.claude/.credentials.json"} {
 						files, err := filepath.Glob(filepath.Join(home, filepath.FromSlash(pattern)))
 						if err != nil || len(files) != 0 {
-							t.Fatalf("SOP retained a temporary login file: %v, %v", files, err)
+							t.Fatalf("LOOP retained a temporary login file: %v, %v", files, err)
 						}
 					}
 				})

@@ -52,7 +52,7 @@ func (e *Engine) StartWithExecutionContext(workflowID, input string, repository 
 // StartWithRepositoriesContext starts a run with one or more repositories.
 // Each repository is checked out into a first-level
 // sub-directory, gets its work branch and, on scheduled runs, its own
-// integration merge and MR. SOP deliverables stay at the run workspace root.
+// integration merge and MR. LOOP deliverables stay at the run workspace root.
 func (e *Engine) StartWithRepositoriesContext(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext) (domain.Run, error) {
 	return e.StartWithRepositories(context.Background(), workflowID, input, repositories, executionContext)
 }
@@ -85,7 +85,7 @@ func (e *Engine) StartWithRepositories(ctx context.Context, workflowID, input st
 			}
 		}
 		if !allowed {
-			return domain.Run{}, fmt.Errorf("SOP 不在共享任务的引用范围内")
+			return domain.Run{}, fmt.Errorf("LOOP 不在共享任务的引用范围内")
 		}
 	}
 	return e.startWorkflowDefinition(ctx, wf, input, repositories, executionContext, false)
@@ -136,7 +136,7 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 			executionContext.ProjectID = wf.ProjectID
 		}
 		if executionContext.ProjectID != wf.ProjectID {
-			return domain.Run{}, apperr.New(apperr.Forbidden, "只能在当前项目运行其私有 SOP")
+			return domain.Run{}, apperr.New(apperr.Forbidden, "只能在当前项目运行其私有 LOOP")
 		}
 	}
 	wf = defaultWorkflowSandboxProfile(wf)
@@ -157,7 +157,7 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 		var ok bool
 		parent, ok = e.repo.RunState(executionContext.ParentRunID)
 		if !ok {
-			return domain.Run{}, fmt.Errorf("父 SOP 运行不存在")
+			return domain.Run{}, fmt.Errorf("父 LOOP 运行不存在")
 		}
 		if wf.AutoSelectSandbox {
 			workspaceSandboxID = parent.WorkflowSnapshot.SandboxProfileID

@@ -72,7 +72,7 @@ type RunCredentials struct {
 	// to its platform. It holds no tokens; the helper asks for them per host.
 	GitHTTPHosts map[string]string `json:",omitempty"`
 	// GitHTTPCredentials travels only on authenticated execution dispatches.
-	// SOP commands fetch a matching, exposed credential from an ephemeral relay.
+	// LOOP commands fetch a matching, exposed credential from an ephemeral relay.
 	GitHTTPCredentials map[string]domain.GitHTTPExecutionCredential `json:",omitempty"`
 	GitUserName        string
 	GitUserEmail       string

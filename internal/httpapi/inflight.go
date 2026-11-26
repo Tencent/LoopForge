@@ -11,7 +11,7 @@ import (
 )
 
 // inflightTracker counts long-lived work that runs inside the API process
-// (assistant generations, clarifications, group follow-ups, SOP handoffs) so a
+// (assistant generations, clarifications, group follow-ups, LOOP handoffs) so a
 // replaced process can finish it before exiting.
 type inflightTracker struct {
 	mu      sync.Mutex
@@ -89,7 +89,7 @@ type BackgroundOptions struct {
 	RecoveryGate <-chan struct{}
 }
 
-// StopClaiming stops polling for new follow-ups, SOP handoffs and schedule
+// StopClaiming stops polling for new follow-ups, LOOP handoffs and schedule
 // ticks without cancelling work that is already running.
 func (b *Background) StopClaiming() {
 	if b == nil {

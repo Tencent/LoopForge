@@ -75,6 +75,6 @@ func TestAnalyticsWeekHourHonorsTimeZoneParam(t *testing.T) {
 	}
 	personal := fetch("&dashboard=1&userId=7")
 	if err := json.Unmarshal(personal["dashboard"], &dashboard); err != nil || dashboard.SOPRuns != 0 {
-		t.Fatalf("personal scope must not include another owner's SOP: %s / %v", personal["dashboard"], err)
+		t.Fatalf("personal scope must not include another owner's LOOP: %s / %v", personal["dashboard"], err)
 	}
 }

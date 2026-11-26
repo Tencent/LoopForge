@@ -79,7 +79,7 @@ func (e *Engine) cancelRunnerTasksForRun(runID string) error {
 // continues from the directory where it originally failed.
 func runnerWorkspaceRel(run domain.Run, nodeID string) string {
 	if run.ExecutionContext.RunnerWorkspaceLayout == domain.RunnerWorkspaceLayoutShared {
-		// A child SOP shares the checkout of the run owning its workspace.
+		// A child LOOP shares the checkout of the run owning its workspace.
 		return filepath.ToSlash(filepath.Join("runs", safeRunnerPath(workspaceRunID(run)), "workspace"))
 	}
 	return filepath.ToSlash(filepath.Join("runs", safeRunnerPath(run.ID), safeRunnerPath(nodeID)))

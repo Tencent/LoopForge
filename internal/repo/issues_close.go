@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var ErrIssueCloseBusy = errors.New("需求正在澄清或执行 SOP，请先停止后再关闭")
+var ErrIssueCloseBusy = errors.New("需求正在澄清或执行 LOOP，请先停止后再关闭")
 
 // CloseIssue belongs to the issue domain and must not close active work.
 func (r *IssuesRepo) CloseIssue(issueID string) (domain.Issue, error) {

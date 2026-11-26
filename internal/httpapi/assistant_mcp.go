@@ -146,7 +146,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 			id, _ := body["projectId"].(string)
 			id = strings.TrimSpace(id)
 			if id != "" && id != projectID && scheduledAssetsFrom(ctx).Version.ID != "" {
-				return "", fmt.Errorf("只能在当前项目启动 SOP")
+				return "", fmt.Errorf("只能在当前项目启动 LOOP")
 			}
 			if id == "" {
 				body["projectId"] = projectID

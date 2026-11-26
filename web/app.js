@@ -583,18 +583,21 @@ function parseInlineMarkdown(text, allowImages=false){
     }
     if(parts.length)return parts.join('')+parseInlineMarkdown(text.slice(offset));
   }
-  let s=escapeHTML(text);
-  s=s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Inline code is literal: hold each span aside so emphasis syntax inside it
+  // (snake_case identifiers such as `todo_id`) is not rewritten.
+  const codeSpans=[];
+  let s=escapeHTML(text).replace(/`([^`]+)`/g,(match,code)=>{codeSpans.push(code);return `\u0000${codeSpans.length-1}\u0000`});
   s=s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  s=s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  // Emphasis underscores must sit on word boundaries; intraword `_` is literal.
+  s=s.replace(/(^|[^A-Za-z0-9_])__([^_\n]+?)__(?![\w])/g, '$1<strong>$2</strong>');
   s=s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  s=s.replace(/_([^_]+)_/g, '<em>$1</em>');
+  s=s.replace(/(^|[^A-Za-z0-9_])_([^_\n]+?)_(?![\w])/g, '$1<em>$2</em>');
   s=s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
   s=s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url)=>{
     const cleanUrl=safeURL(url.trim());
     return `<a href="${escapeHTML(cleanUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   });
-  return s;
+  return s.replace(/\u0000(\d+)\u0000/g,(match,i)=>`<code>${codeSpans[Number(i)]}</code>`);
 }
 
 function isMarkdownArtifact(artifact, content){
@@ -700,6 +703,15 @@ function clarifyQuestionOptions(q){
 }
 function safeURL(value){try{const url=new URL(String(value||''),location.origin);return ['http:','https:'].includes(url.protocol)?url.href:'#'}catch{return '#'}}
 function safeColor(value){return /^#[0-9a-f]{3,8}$/i.test(String(value||''))?value:'#74829a'}
+// Mirrors domain.ValidateResourceID: a project or role id is a path segment of
+// its API, so it must fit the 64-character column and avoid URL delimiters.
+function resourceIdProblem(id){
+  const value=String(id||'');
+  if(!value)return '标识不能为空';
+  if([...value].length>64)return '标识不能超过 64 个字符';
+  if(/[\s\/\\?#%\u0000-\u001f\u007f]/.test(value))return '标识不能包含空格或 / \\ ? # % 字符';
+  return '';
+}
 function uid(prefix){return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`}
 const PRODUCTION_SOPS=new Set(['issue-fix-production','requirement-development-production']);
 function catalogOwned(projectId){return !!state.projectFilter&&projectId===state.projectFilter}
@@ -719,9 +731,12 @@ function agentWizardSubject(){
   if(catalogGeneric(state.workflow))return (state.genericTemplateAgents||[]).find(x=>x.id===state.selectedAgent)||state.agentDraft||{};
   return (state.data.agents||[]).find(x=>x.id===state.selectedAgent)||state.agentDraft||{};
 }
+// Platform roles (no project) are used by every project; like platform rules
+// and skills only administrators may change them. Others copy them first.
+function agentPlatformLocked(a){return !!a?.id&&!a.projectId&&(state.data.agents||[]).some(x=>x.id===a.id)&&!isPlatformAdmin()}
 function agentWizardForeign(a){
   if(catalogGeneric(state.workflow))return !isPlatformAdmin();
-  return catalogForeign(a?.projectId);
+  return catalogForeign(a?.projectId)||agentPlatformLocked(a);
 }
 function genericTemplateMCPOptions(selected){
   const wanted=['github'];
@@ -754,7 +769,7 @@ function genericMCPChecked(id,selected){
 }
 function assetVisible(item){return !item?.projectId||item.projectId===state.projectFilter}
 function catalogWorkflows(){return (state.data?.workflows||[]).filter(w=>!catalogGeneric(w)&&catalogVisible(w.projectId,w.shared))}
-// Runnable options = stored SOPs + platform generic templates (run by reference).
+// Runnable options = stored LOOPs + platform generic templates (run by reference).
 function runnableWorkflowOptions(){return catalogWorkflows().concat((state.data?.workflows||[]).filter(catalogGeneric).map(w=>({...w,name:`通用 · ${w.name}`})))}
 function scopedWorkflows(){
   const all=state.data?.workflows||[];
@@ -824,9 +839,9 @@ function runProjectId(r){
   return '';
 }
 function scopedRuns(runs){const pid=state.projectFilter,list=runs||[];return pid?list.filter(r=>runProjectId(r)===pid):list}
-// Conversation workspaces (Run.kind=workspace) are the chat's sandbox, not SOP
+// Conversation workspaces (Run.kind=workspace) are the chat's sandbox, not LOOP
 // runs: they have no nodes and stay "waiting" until reclaimed. They are reached
-// from the conversation and the requirement, never from SOP run lists or counts.
+// from the conversation and the requirement, never from LOOP run lists or counts.
 function isSOPRun(r){return r?.kind!=='workspace'}
 function sopRuns(runs){return (runs||[]).filter(isSOPRun)}
 function preferredWorkflow(){
@@ -1939,7 +1954,7 @@ async function applyAgentRoute(){
     openAgentWizard(agent,routePart(2)==='gov'?3:1,{loaded:true});
   }catch(error){if(agentRouteId()===id)toast(error.message,'err')}
 }
-// Only SOPs visible in the active project can be restored from the URL or localStorage.
+// Only LOOPs visible in the active project can be restored from the URL or localStorage.
 function openableWorkflow(id){return id?catalogWorkflows().find(w=>w.id===id)||null:null}
 function savedWorkflowId(){
   const id=state.workflow?.id||'';

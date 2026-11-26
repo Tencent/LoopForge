@@ -653,7 +653,7 @@ function activate(context) {
   const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
   const runId = folder && folder.uri.authority ? decodeURIComponent(folder.uri.authority) : '';
   if (!runId) {
-    vscode.window.showErrorMessage('缺少 Run ID，无法打开 SOP 工作区');
+    vscode.window.showErrorMessage('缺少 Run ID，无法打开 LOOP 工作区');
     return;
   }
   registerWorkspaceTerminal(context,runId);

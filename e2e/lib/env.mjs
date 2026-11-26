@@ -24,7 +24,7 @@ function flag(name, fallback) {
 
 const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(2, 14);
 
-// ensureProject provisions this native sandbox for SOP tests.
+// ensureProject provisions this native sandbox for LOOP tests.
 export const defaultSandbox = 'e2e-native';
 
 export const cfg = {

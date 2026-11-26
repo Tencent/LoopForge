@@ -126,7 +126,7 @@ test('an edit keeps the canvas, applies the expanded draft, and a failed turn re
   assert.equal(posted.at(-1).type, 'agentflow-sop-designer-new');
 });
 
-test('the chat learns when the canvas switches to another SOP', async (t) => {
+test('the chat learns when the canvas switches to another LOOP', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`switchView('flow');renderAll()`);
@@ -137,7 +137,7 @@ test('the chat learns when the canvas switches to another SOP', async (t) => {
   assert.equal(context.workflowId, 'other-sop');
   const count = posted.length;
   app.evaluate('renderCanvas()');
-  assert.equal(posted.length, count, 'an unchanged SOP is not announced again');
+  assert.equal(posted.length, count, 'an unchanged LOOP is not announced again');
 });
 
 test('orchestration refreshes project roles and restores the canvas for an unavailable role', async (t) => {

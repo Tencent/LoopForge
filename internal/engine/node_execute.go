@@ -788,7 +788,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return rawOutput, runErr
 		}
 	default:
-		// SOP agents submit a terminal decision for routing.
+		// LOOP agents submit a terminal decision for routing.
 		requiresSubmit = true
 		agent, found := workflowAgent(e.repo, wf, node.AgentID)
 		if !found {
