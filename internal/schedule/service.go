@@ -196,10 +196,19 @@ func jobDue(job domain.ScheduleJob, now time.Time) bool {
 		return false
 	}
 	if cron := strings.TrimSpace(job.Cron); cron != "" {
-		if job.LastRunAt.IsZero() {
-			return true
+		after := job.LastRunAt
+		if after.IsZero() {
+			// A new or reconfigured job that has never run starts its clock
+			// when saved. The explicit Run now action bypasses jobDue.
+			after = job.UpdatedAt
+			if after.IsZero() {
+				after = job.CreatedAt
+			}
+			if after.IsZero() {
+				return false
+			}
 		}
-		next, err := cronexpr.Next(cron, job.LastRunAt)
+		next, err := cronexpr.Next(cron, after)
 		return err == nil && !next.After(now)
 	}
 	interval := time.Duration(job.IntervalSec) * time.Second
