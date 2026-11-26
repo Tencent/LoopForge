@@ -93,11 +93,19 @@ export function operationSummary(
     draft.tool === "projects_save" && projects.some((p) => p.id === target);
   // Mirrors saveProject: a new project without a workflowId is bound to the
   // generic backend SOP, so the card says so instead of showing nothing.
-  const sop = body.workflowId
-    ? named("sop", body.workflowId)
-    : draft.tool === "projects_save" && !existingProject
-      ? `${references.find((r) => r.type === "sop" && r.id === DEFAULT_PROJECT_WORKFLOW)?.name || "通用后端交付 SOP"}（默认）`
-      : "";
+  // A requirement that opts out of SOP drops its workflowId on save.
+  const withoutSOP =
+    draft.tool === "issues_save" &&
+    String(body.sopMode ?? "")
+      .trim()
+      .toLowerCase() === "none";
+  const sop = withoutSOP
+    ? "不使用 SOP"
+    : body.workflowId
+      ? named("sop", body.workflowId)
+      : draft.tool === "projects_save" && !existingProject
+        ? `${references.find((r) => r.type === "sop" && r.id === DEFAULT_PROJECT_WORKFLOW)?.name || "通用后端交付 SOP"}（默认）`
+        : "";
   const fields = [
     [
       "项目",

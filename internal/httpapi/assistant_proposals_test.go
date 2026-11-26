@@ -52,6 +52,12 @@ func TestSOPProposalValidation(t *testing.T) {
 	if target := assistantProposalTarget(create); target != "sop" {
 		t.Fatalf("target=%s", target)
 	}
+	// sopMode none drops the workflowId on save, so the draft hands nothing to
+	// an SOP and a proposal on it would offer a route the save never takes.
+	withoutSOP := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"title":"t","projectId":"workbench","workflowId":"sop","sopMode":"none"}`), Proposal: &assistantProposal{Reason: "x", Timing: "start"}}
+	if err := validateAssistantDraft(&withoutSOP, "workbench"); err != nil || withoutSOP.Proposal != nil || assistantProposalTarget(withoutSOP) != "" {
+		t.Fatalf("a requirement without SOP kept a proposal: %v %+v", err, withoutSOP.Proposal)
+	}
 }
 
 func TestVetProposalDraftsFollowsHistory(t *testing.T) {
