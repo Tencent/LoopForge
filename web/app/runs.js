@@ -545,41 +545,51 @@ function liveUsageHTML(r){
 }
 function skipReasonText(nr,wf,node){
   const raw=String(nr?.skipReason||'上游分支未被选中');
-  const upstream=[...(wf?.nodes||[])].filter(n=>n.id).sort((a,b)=>b.id.length-a.id.length);
-  // Match the upstream id before looking for delimiters: ids and diagnostic
-  // details can contain the same punctuation used to join or nest reasons.
-  const suffix=/^(?: 已跳过（| 已跳过(?=；|）|$)| 已命中其他条件，未选择默认分支(?=；|）|$)| 路由 \[[\s\S]*?\] 未选择此分支(?=；|）|$)| 的产物 [\s\S]*? 未匹配条件 (?:"(?:\\.|[^"\\])*"|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=；|）|$))/;
+  const upstream=(wf?.nodes||[]).filter(n=>n.id);
+  // Match the upstream id before looking for delimiters. Payloads may also
+  // contain a plausible reason ending, so try each ending before rewriting.
+  function* details(rest){
+    const fixed=rest.match(/^(?: 已跳过（| 已跳过(?=；|）|$)| 已命中其他条件，未选择默认分支(?=；|）|$))/)?.[0];
+    if(fixed){yield fixed;return}
+    const end=rest.startsWith(' 路由 [')?/\] 未选择此分支(?=；|）|$)/g:
+      rest.startsWith(' 的产物 ')?/ 未匹配条件 (?:"(?:\\.|[^"\\])*"|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=；|）|$)/g:null;
+    if(end)for(const match of rest.matchAll(end))yield rest.slice(0,match.index+match[0].length);
+  }
   const parents=Array.isArray(wf?.edges)?new Map():null;
   for(const {source,target} of wf?.edges||[]){
     if(!parents.has(target))parents.set(target,new Set());
     parents.get(target).add(source);
   }
-  // A nested reason can only name a parent of the node it explains. An
-  // unrelated node's id must not win just because it matches a longer prefix.
-  const targets=[node?.id];
-  let text='', offset=0, afterReason=false;
-  while(offset<raw.length){
+  // Check complete, graph-consistent interpretations. A longer ID can look
+  // like two joined reasons; rewriting only a unique parse avoids guessing.
+  // Bound the search and preserve the original text if it cannot finish.
+  let remaining=512, matches=0, text='';
+  function parse(offset,targets,formatted,afterReason){
+    if(matches>1||remaining<0)return;
+    if(--remaining<0)return;
+    if(offset===raw.length){
+      if(afterReason&&targets.length===1){matches++;text=formatted}
+      return;
+    }
     const rest=raw.slice(offset);
-    if(afterReason&&(rest[0]==='；'||rest[0]==='）')){
-      if(rest[0]==='）'&&targets.length>1)targets.pop();
-      text+=rest[0];offset++;
-      afterReason=rest[0]==='）';
-      continue;
+    if(afterReason){
+      if(rest[0]==='；')parse(offset+1,targets,formatted+'；',false);
+      if(rest[0]==='）'&&targets.length>1)parse(offset+1,targets.slice(0,-1),formatted+'）',true);
+      return;
     }
     const target=targets[targets.length-1];
-    let matched=false;
     for(const {id,name} of upstream){
+      if(matches>1||remaining<0)return;
       if((parents&&target&&!parents.get(target)?.has(id))||!rest.startsWith(id))continue;
-      const detail=rest.slice(id.length).match(suffix);
-      if(!detail)continue;
-      text+=(name||id)+detail[0];
-      offset+=id.length+detail[0].length;
-      afterReason=detail[0]!==' 已跳过（';
-      if(!afterReason)targets.push(id);
-      matched=true;break;
+      for(const detail of details(rest.slice(id.length))){
+        const nested=detail===' 已跳过（';
+        parse(offset+id.length+detail.length,nested?[...targets,id]:targets,formatted+(name||id)+detail,!nested);
+        if(matches>1||remaining<0)return;
+      }
     }
-    if(!matched){text+=rest;break}
   }
+  parse(0,[node?.id],'',false);
+  if(matches!==1||remaining<0)return raw;
   const current=node?.name||'';
   return current&&text!==raw?`上游${text}，因此跳过 ${current}`:text;
 }
