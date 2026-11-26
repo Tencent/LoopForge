@@ -520,6 +520,55 @@ func (r *BotInteractionsRepo) BotConversations(botID string) ([]domain.BotConver
 	return rows, err
 }
 
+// BotConversationsByBots lists recent IM conversations across the given Bot
+// configuration IDs, newest first.
+func (r *BotInteractionsRepo) BotConversationsByBots(botIDs []string, limit int) ([]domain.BotConversation, error) {
+	if len(botIDs) == 0 {
+		return []domain.BotConversation{}, nil
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows := []domain.BotConversation{}
+	err := r.DB.Where("bot_id IN ?", botIDs).Order("updated_at desc, id desc").Limit(limit).Find(&rows).Error
+	return rows, err
+}
+
+// BotConversationInteractions lists the newest interactions of one IM
+// conversation in chronological order (oldest first).
+func (r *BotInteractionsRepo) BotConversationInteractions(conversationID string, limit int) ([]domain.BotInteraction, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows := []domain.BotInteraction{}
+	if err := r.DB.Where("conversation_id = ?", conversationID).Order("created_at desc, id desc").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i]
+	}
+	return rows, nil
+}
+
+// LatestBotInteractions returns the most recent interaction per conversation
+// ID so the workbench IM sidebar can show previews without N+1 queries.
+func (r *BotInteractionsRepo) LatestBotInteractions(conversationIDs []string) (map[string]domain.BotInteraction, error) {
+	out := make(map[string]domain.BotInteraction, len(conversationIDs))
+	if len(conversationIDs) == 0 {
+		return out, nil
+	}
+	var rows []domain.BotInteraction
+	if err := r.DB.Where("conversation_id IN ?", conversationIDs).Order("created_at desc, id desc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if _, seen := out[row.ConversationID]; !seen {
+			out[row.ConversationID] = row
+		}
+	}
+	return out, nil
+}
+
 func (r *BotInteractionsRepo) BotInteraction(id string) (domain.BotInteraction, error) {
 	var item domain.BotInteraction
 	err := r.DB.First(&item, "id = ?", id).Error

@@ -669,6 +669,21 @@ export function useChat() {
           }).catch(() => {});
         return;
       }
+      if (e.data?.type === "agentflow-chat-open-session") {
+        const sid = typeof e.data.sessionId === "string" ? e.data.sessionId.trim() : "";
+        if (!sid) return;
+        const pid = typeof e.data.projectId === "string" ? e.data.projectId.trim() : "";
+        if (pid) globalProject.current = pid;
+        setRevealId(sid);
+        setActiveId(sid);
+        setError("");
+        void api("/api/assistant/sessions")
+          .then((rows) => {
+            if (Array.isArray(rows)) setSessions(rows);
+          })
+          .catch(() => {});
+        return;
+      }
       if (e.data?.type !== "agentflow-project-context") return;
       const id = e.data.projectId || "";
       if (id === globalProject.current) return;

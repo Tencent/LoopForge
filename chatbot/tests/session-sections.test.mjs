@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+  groupScheduledSessionsByTask,
   previewSessions,
   splitSidebarSections,
+  summarizeSidebarTabBadges,
 } from "../src/session-sections.js";
 
 const NOW = Date.parse("2026-11-02T12:00:00+08:00");
@@ -195,5 +197,71 @@ describe("仅我参与的对话 filter", () => {
 
   test("lists nothing when no reader is signed in", () => {
     expect(split([session("a")], { mineOnly: true }).groups).toHaveLength(0);
+  });
+});
+
+describe("sidebar 3-way split (personal / scheduled / IM)", () => {
+  test("personal bucket excludes scheduled sessions while scheduled bucket isolates them", () => {
+    const items = [
+      session("normal-1", { source: "chat" }),
+      session("sched-1", { source: "scheduled", taskId: "job-1", title: "定时 · 巡检" }),
+      session("legacy-sched", { title: "定时 · 旧巡检" }),
+    ];
+
+    const personal = split(items, { bucket: "personal" });
+    expect(personal.groups.flatMap((g) => g.sessions.map((s) => s.id))).toEqual(["normal-1"]);
+
+    const scheduled = split(items, { bucket: "scheduled" });
+    expect(scheduled.groups.flatMap((g) => g.sessions.map((s) => s.id)).sort()).toEqual([
+      "legacy-sched",
+      "sched-1",
+    ]);
+  });
+
+  test("groups scheduled sessions by taskId and elevates running tasks", () => {
+    const groups = groupScheduledSessionsByTask(
+      [
+        session("s1", { source: "scheduled", taskId: "job-1", title: "定时 · 巡检", updatedAt: minutes(10) }),
+        session("s2", { source: "scheduled", taskId: "job-1", title: "定时 · 巡检", updatedAt: minutes(2) }),
+        session("s3", {
+          source: "scheduled",
+          taskId: "job-2",
+          title: "定时 · 日报",
+          generationStatus: "running",
+          updatedAt: minutes(5),
+        }),
+      ],
+      projects,
+      {
+        jobs: [
+          { id: "job-1", name: "工作日 PR 巡检", projectId: "agentflow", sessionMode: "" },
+          { id: "job-2", name: "构建日报", projectId: "agentflow", sessionMode: "fixed" },
+        ],
+      },
+    );
+
+    expect(groups.map((g) => g.taskId)).toEqual(["job-2", "job-1"]);
+    expect(groups[0].title).toBe("构建日报");
+    expect(groups[0].fixedSession).toBe(true);
+    expect(groups[0].running).toBe(true);
+    expect(groups[1].sessions.map((s) => s.id)).toEqual(["s2", "s1"]);
+  });
+
+  test("summarizes cross-tab indicators for personal, scheduled, and IM buckets", () => {
+    const badges = summarizeSidebarTabBadges(
+      [
+        session("p1", { source: "chat", generationStatus: "completed", unread: true }),
+        session("sc1", { source: "scheduled", taskId: "job-1", generationStatus: "running" }),
+        session("sc2", { source: "scheduled", taskId: "job-2", generationStatus: "failed" }),
+      ],
+      [
+        { id: "im-1", status: "replied" },
+        { id: "im-2", status: "reply_failed" },
+      ],
+    );
+
+    expect(badges.personal.unread).toBe(1);
+    expect(badges.scheduled).toEqual({ total: 2, running: 1, failed: 1, unread: 0 });
+    expect(badges.im).toEqual({ total: 2, attention: 1 });
   });
 });
