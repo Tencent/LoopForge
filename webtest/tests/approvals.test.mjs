@@ -113,10 +113,12 @@ test('skip reasons keep route labels verbatim while naming upstream nodes', asyn
   const texts = app.evaluate(`
     (() => {
       const wf={nodes:[{id:'classify',name:'Classify'},{id:'small',name:'Small branch'},{id:'large',name:'Large branch'}]};
+      const numeric={nodes:[{id:'0',name:'零点节点'},{id:'small',name:'Small branch'}]};
       return {
         route: skipReasonText({skipReason:'classify 路由 [small] 未选择此分支'},wf,{name:'Large branch'}),
         artifact: skipReasonText({skipReason:'classify 的产物 classification 字段 /size 未匹配条件 "small"'},wf,{name:'Large branch'}),
         plain: skipReasonText({skipReason:'classify 已跳过'},wf,{name:'Large branch'}),
+        numeric: skipReasonText({skipReason:'0 路由 [small] 未选择此分支'},numeric,{name:'Small branch'}),
       };
     })()
   `);
@@ -124,4 +126,6 @@ test('skip reasons keep route labels verbatim while naming upstream nodes', asyn
   assert.equal(texts.route, '上游Classify 路由 [small] 未选择此分支，因此跳过 Large branch');
   assert.equal(texts.artifact, '上游Classify 的产物 classification 字段 /size 未匹配条件 "small"，因此跳过 Large branch');
   assert.equal(texts.plain, '上游Classify 已跳过，因此跳过 Large branch');
+  // A numeric node id must not corrupt the protected route label.
+  assert.equal(texts.numeric, '上游零点节点 路由 [small] 未选择此分支，因此跳过 Small branch');
 });
