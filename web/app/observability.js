@@ -131,9 +131,12 @@ function obsStepPeriodKey(key,grain,delta){
   return day.toISOString().slice(0,10);
 }
 function obsTraceEventAt(t){
-  const raw=t?.finishedAt||t?.createdAt;
-  const at=raw?new Date(raw):null;
-  return at&&!Number.isNaN(at.getTime())?at:null;
+  for(const raw of [t?.finishedAt,t?.createdAt]){
+    if(!raw||String(raw).startsWith('0001-01-01T00:00:00'))continue;
+    const at=new Date(raw);
+    if(Number.isFinite(at.getTime()))return at;
+  }
+  return null;
 }
 function obsTraceInRange(t,range){
   if(!range)return true;

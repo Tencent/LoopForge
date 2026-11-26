@@ -36,6 +36,12 @@ ctx.state.analytics={runTraces:[
 ]};
 const scoped=ctx.obsScopedView();
 assert.equal(scoped.total,2);assert.equal(scoped.tokens,120);assert.equal(scoped.succeeded,2);
+const unfinished = {status:'waiting',createdAt:'2026-10-08T01:00:00Z',finishedAt:'0001-01-01T00:00:00Z'};
+const period = {from:new Date('2026-10-08T00:00:00Z'),to:new Date('2026-10-09T00:00:00Z')};
+assert.equal(ctx.obsTraceInRange(unfinished,period),true);
+assert.equal(ctx.obsTraceInRange({...unfinished,finishedAt:'2026-10-09T00:00:00Z'},period),false);
+assert.equal(ctx.obsTraceInRange({...unfinished,finishedAt:'invalid'},period),true);
+assert.equal(ctx.obsTraceInRange({finishedAt:'0001-01-01T00:00:00Z'},period),false);
 assert.equal(scoped.demo.coveredRuns,1);assert.equal(scoped.demo.coveredSucceededRuns,1);
 assert.equal(scoped.demo.automatedSucceededRuns,0);assert.equal(scoped.demo.averageHumanInterventions,1);
 assert.equal(scoped.p95,1000,'unknown external active duration must not become wall-clock duration');
