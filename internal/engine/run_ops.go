@@ -186,7 +186,7 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 				return fmt.Errorf("approval node definition not found")
 			}
 			var err error
-			routeDecision, err = decideRoute(wf, *definition, n.GateResult.Route, routingArtifactsForNode(r, nodeID))
+			routeDecision, err = e.decideNodeRoute(context.Background(), r.ID, wf, *definition, n.GateResult.Route, routingArtifactsForNode(r, nodeID))
 			if err != nil {
 				return err
 			}

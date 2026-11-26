@@ -855,7 +855,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		// Check the actual role we will execute, including changes made after
 		// retry preflight or while the Run was waiting to be scheduled.
-		if expected := wf.RoutingRoleFingerprints[node.ID]; expected != "" && routingRoleFingerprint(agent) != expected {
+		if expected := wf.RoutingRoleFingerprints[node.ID]; expected != "" && !matchesRoutingRoleFingerprint(agent, expected) {
 			failNode(routingRoleDriftError(node), false)
 			return
 		}
@@ -1293,7 +1293,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return
 		}
 	}
-	decision, routeErr := decideRoute(wf, node, route, artifacts)
+	decision, routeErr := e.decideNodeRoute(ctx, runID, wf, node, route, artifacts)
 	if routeErr != nil {
 		failNode(routeErr, false)
 		return

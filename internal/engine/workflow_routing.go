@@ -1,9 +1,8 @@
 package engine
 
 import (
-	"agentflow/internal/domain"
-	"agentflow/internal/repo"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -11,18 +10,32 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 // routingRoleFingerprint includes the role's executable definition, not just
 // its declared outputs: verification commands and prompts can write them too.
 // Version and update time alone are not evidence of a content change.
 func routingRoleFingerprint(role domain.AgentDefinition) string {
+	role.Description = "" // Display-only; the taskbook uses the role name and prompt.
+	return legacyRoutingRoleFingerprint(role)
+}
+
+func legacyRoutingRoleFingerprint(role domain.AgentDefinition) string {
 	role.Version, role.UpdatedAt = 0, time.Time{}
 	payload, err := json.Marshal(role)
 	if err != nil {
 		return ""
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(payload))
+}
+
+// Accept the original fingerprint for snapshots created before descriptions
+// were excluded, provided the stored configuration still matches it exactly.
+func matchesRoutingRoleFingerprint(role domain.AgentDefinition, expected string) bool {
+	return routingRoleFingerprint(role) == expected || legacyRoutingRoleFingerprint(role) == expected
 }
 
 func captureRoutingRoleFingerprints(st *repo.Store, wf domain.WorkflowDefinition) map[string]string {
@@ -63,7 +76,7 @@ func (e *Engine) guardRoutingRoleDrift(r *domain.Run, nodeIDs map[string]bool) e
 			}
 			continue
 		}
-		if role, ok := workflowAgent(e.repo, wf, node.AgentID); !ok || routingRoleFingerprint(role) != expected {
+		if role, ok := workflowAgent(e.repo, wf, node.AgentID); !ok || !matchesRoutingRoleFingerprint(role, expected) {
 			return routingRoleDriftError(node)
 		}
 	}
@@ -135,6 +148,41 @@ func routingArtifactsForNode(run domain.Run, nodeID string) []domain.Artifact {
 		}
 	}
 	return artifacts
+}
+
+// Route on the contents of the selected artifact contracts, even when the
+// collector has archived their bodies as blobs. Keep the original artifacts
+// untouched so run persistence can retain blob references.
+func (e *Engine) decideNodeRoute(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, route domain.RouteValues, artifacts []domain.Artifact) (*domain.RouteDecision, error) {
+	refs := map[string]bool{}
+	for _, edge := range wf.Edges {
+		if edge.Source == node.ID && edge.Condition != nil && edge.Condition.Type == "artifact" {
+			refs[edge.Condition.Artifact] = true
+		}
+	}
+	if len(refs) == 0 {
+		return decideRoute(wf, node, route, nil)
+	}
+	routingArtifacts := make([]domain.Artifact, 0, len(refs))
+	for _, artifact := range artifacts {
+		if !refs[artifact.Name] {
+			continue
+		}
+		if artifact.BlobID != "" && artifact.Content == "" {
+			_, body, err := e.repo.OpenArtifactBlob(ctx, runID, artifact.BlobID)
+			if err != nil {
+				return nil, fmt.Errorf("读取路由产物 %s: %w", artifact.Name, err)
+			}
+			content, err := readWorkspaceOutput(body)
+			_ = body.Close()
+			if err != nil {
+				return nil, fmt.Errorf("读取路由产物 %s: %w", artifact.Name, err)
+			}
+			artifact.Content = string(content)
+		}
+		routingArtifacts = append(routingArtifacts, artifact)
+	}
+	return decideRoute(wf, node, route, routingArtifacts)
 }
 
 func decideRoute(wf domain.WorkflowDefinition, node domain.WorkflowNode, route domain.RouteValues, artifacts []domain.Artifact) (*domain.RouteDecision, error) {

@@ -546,16 +546,20 @@ function liveUsageHTML(r){
 function skipReasonText(nr,wf,node){
   const raw=String(nr?.skipReason||'上游分支未被选中');
   const names=new Map((wf?.nodes||[]).map(n=>[n.id,n.name||n.id]));
-  // Node ids become names for readability, but a route label or a comparison
-  // value inside [...] or "..." may legally reuse a node id. Those spans are
-  // rewritten only by themselves: a placeholder could contain a numeric node id
-  // and be mangled by the loop below, so the text is split around them instead.
-  const segments=raw.split(/(\[[^\]]*\]|"[^"]*")/);
-  const text=segments.map((segment,index)=>{
-    if(index%2)return segment;
-    let part=segment;
-    for(const [id,name] of names)part=part.replaceAll(id,name);
-    return part;
+  // Each engine reason starts with its upstream id. Replace only that prefix
+  // (including joined/nested reasons), not the artifact name, pointer or value.
+  const clauses=raw.split(/("(?:\\.|[^"\\])*"|\[[^\]]*\]|；| 已跳过（)/);
+  const text=clauses.map((clause,index)=>{
+    if(index%2)return clause;
+    const previous=clauses[index-1];
+    if(index&&previous!=='；'&&previous!==' 已跳过（')return clause;
+    // The delimiter for a nested reason also contains the parent's suffix.
+    const suffix=clauses[index+1]===' 已跳过（'?' 已跳过':'';
+    let id='';
+    for(const candidate of names.keys()){
+      if(candidate.length>id.length&&[' 路由 ',' 的产物 ',' 已命中其他条件',' 已跳过'].some(marker=>(clause+suffix).startsWith(candidate+marker)))id=candidate;
+    }
+    return id?names.get(id)+clause.slice(id.length):clause;
   }).join('');
   const current=node?.name||'';
   return current&&text!==raw?`上游${text}，因此跳过 ${current}`:text;
