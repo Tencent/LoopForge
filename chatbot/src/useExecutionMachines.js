@@ -36,7 +36,7 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
       if (request !== revision.current) return;
       const machines = Array.isArray(rows) ? rows : [];
       const availableMachines = machines.filter((row) =>
-        row.supportsConversation !== false && (!projectId || row.canUseInProject),
+        row.supportsConversation !== false && (!projectId || row.canUseInConversation),
       );
       const hasMachine = (id) => availableMachines.some((row) => row.id === id);
       setChosen((current) => current && !hasMachine(current) ? null : current);

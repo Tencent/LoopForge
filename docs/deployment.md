@@ -248,7 +248,7 @@ can be handed off together. Installations with automatic Runner updates
 enabled receive the bundled version after the platform release. Older Runners
 keep their 1 MiB inline upload limit until they update.
 
-The machine owner can use **Settings → Execution machines → Shared projects** to grant access to one or more projects where they are the owner or a member with write access. Members with write access can select a compatible shared machine for a new conversation. **Use in this project** sets a default for that user and project. Each new turn on a shared machine requires a current grant and project write access for both the machine owner and the sender. Removing a grant clears the saved project defaults that pointed to the machine.
+The machine owner can select a compatible personal machine for a personal conversation or for a project conversation where they have write access. They can grant other users access through **Settings → Execution machines → Shared projects** for projects where they have write access. Members with write access can select a compatible machine shared with the project. **Use in this project** sets a default for that user and project. Each new turn on another member's machine requires a current grant and project write access for both the machine owner and the sender. Removing a grant clears the saved project defaults that pointed to the machine.
 
 Docker workspaces on macOS use a Linux Runner executable for Git credentials and MCP calls. The installer chooses the architecture of the installed macOS Runner, including Intel binaries running under Rosetta. For a universal Runner on Apple Silicon it installs the arm64 helpers and adds the amd64 helpers when available. Foreground starts and the command printed by `--no-start` select the native arm64 slice, including from a Rosetta shell. On Intel Macs the installer installs the amd64 helpers. By default, it places the helpers next to the host binary. A Runner-side `AGENTFLOW_RUNNER_BINARY` template with `{os}` selects the installation and runtime path. To install both helpers, use `{arch}` and give each architecture a distinct destination. The installer saves the template for upgrades and includes it in launchd and in the startup command printed by `--no-start`. Helper paths must resolve to files separate from the macOS Runner.
 
@@ -262,7 +262,7 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 ### Upgrading existing project conversations
 
-After upgrading, a project conversation already locked to a personal machine requires a project grant before its next message can run. The machine owner opens **Settings → Execution machines** (设置 → 执行机器), chooses **Shared projects** (共享项目) on the bound machine's card, selects the conversation's project and saves. Sending again then uses the original conversation on the same machine. The grant also lets other project members with write access run on that machine using their own credentials or an applicable platform credential.
+After upgrading, the machine owner can resume a conversation already bound to their machine in a project where they have write access. To let other writable members continue that conversation on the same machine, the owner can grant access to the project under **Shared projects** (共享项目). Those members run with their own credentials or an applicable platform credential.
 
 ## Observability schema
 

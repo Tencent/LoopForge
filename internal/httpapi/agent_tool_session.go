@@ -73,6 +73,7 @@ type AgentToolSession struct {
 	ChatSessionID string
 	ChatOwnerID   int64
 
+	requireRunnerShare      bool
 	projectCredentialIDs    []string
 	projectCredentialValues []string // protected by mu
 
