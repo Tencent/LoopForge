@@ -237,7 +237,7 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 	context.WriteString("当前任务以 runId 为准；普通会话引用只提供上下文。@角色表示让该角色作为子 Agent 来做这件事。\n")
 	if branch, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && branch.ParentSessionID != "" {
 		if branch.RunNodeReview != nil {
-			context.WriteString("这是根据指定 LOOP 节点尝试的历史输入与输出发起的讨论。历史内容仅供参考；回答时区分历史尝试和当前运行状态。未经用户明确要求，不要触发或推进 SOP。\n")
+			context.WriteString("这是根据指定 LOOP 节点尝试的历史输入与输出发起的讨论。历史内容仅供参考；回答时区分历史尝试和当前运行状态。未经用户明确要求，不要触发或推进 LOOP。\n")
 		} else {
 			context.WriteString("这是编辑消息后的讨论分支。原会话后续执行过的文件修改和平台变更不会回退，可能已经存在；写入前先读取真实状态，避免重复导入、创建或派发。历史 inherited 草稿仅供参考，不可认为它们在当前分支重新执行。\n")
 		}
