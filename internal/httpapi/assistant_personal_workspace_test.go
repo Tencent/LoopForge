@@ -29,7 +29,7 @@ func TestPersonalWorkspaceBindingAndReuse(t *testing.T) {
 	if err := h.repo.PutAssistantSession(owner.ID, chat); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.repo.PutSandbox(domain.SandboxProfile{ID: "private-sandbox", Name: "Private", Driver: domain.SandboxDriverDocker, DockerfileID: repo.GenericBackendDockerfileID}); err != nil {
+	if err := h.repo.PutSandbox(domain.SandboxProfile{ID: "private-sandbox", Name: "Private", Driver: domain.SandboxDriverDocker, Dockerfile: repo.GenericDockerSandbox().Dockerfile}); err != nil {
 		t.Fatal(err)
 	}
 	gateway := &agentToolGateway{deps: h.deps}

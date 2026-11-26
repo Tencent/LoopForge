@@ -296,7 +296,7 @@ func TestLocalWorkspaceCheckpointMoreBranches(t *testing.T) {
 	e.controlToken = "local-token"
 	run := domain.Run{
 		ID: "local-checkpoint-more", Status: "failed",
-		WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "prepare", Type: "script", ScriptLanguage: "shell", Script: "true", RunOnWorkspaceRebuild: true}}},
+		WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "prepare", Type: "script", ScriptLanguage: "shell", Script: "true", RunOnWorkspaceRebuild: true}}},
 		Nodes:            map[string]*domain.NodeRun{},
 	}
 	if err := st.PutRun(run); err != nil {
@@ -436,7 +436,7 @@ func TestLocalWorkspaceCheckpointMoreBranches(t *testing.T) {
 		t.Fatalf("unregistered runner preparation=%d body=%s", unregisteredRec.Code, unregisteredRec.Body.String())
 	}
 
-	busy := domain.Run{ID: "local-checkpoint-busy-more", Status: "running", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "local"}, Nodes: map[string]*domain.NodeRun{}}
+	busy := domain.Run{ID: "local-checkpoint-busy-more", Status: "running", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "test-native"}, Nodes: map[string]*domain.NodeRun{}}
 	if err := st.PutRun(busy); err != nil {
 		t.Fatal(err)
 	}

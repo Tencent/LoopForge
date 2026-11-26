@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"agentflow/internal/engine"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +33,7 @@ func (h *runsHandlers) analytics(c *gin.Context) {
 		ProjectID:        c.Query("projectId"),
 		WorkflowID:       c.Query("workflowId"),
 		Scope:            strings.TrimSpace(c.Query("scope")),
+		IncludeDashboard: c.Query("dashboard") == "1",
 		UserID:           strings.TrimSpace(c.Query("userId")),
 		IssueSource:      strings.TrimSpace(c.Query("issueSource")),
 		RequirementsOnly: c.Query("requirementsOnly") == "1",
@@ -131,13 +135,12 @@ func (h *runsHandlers) runs(c *gin.Context) {
 		if !h.requireProjectWriter(c, req.ProjectID, workflowProject) {
 			return
 		}
-		var responsibleUserID int64
+		executionContext := domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: project.OwnerID}
 		if current, ok := h.requestUser(r, true); ok {
-			responsibleUserID = current.ID
-		} else if project.OwnerID > 0 {
-			responsibleUserID = project.OwnerID
+			executionContext.ResponsibleUserID = current.ID
+			executionContext.WorkspaceRunID = dispatchConversationWorkspace(h.deps, r, current.ID, req.ProjectID)
 		}
-		if responsibleUserID == 0 {
+		if executionContext.ResponsibleUserID == 0 {
 			c.JSON(http.StatusConflict, map[string]string{"error": "手动运行需要登录用户或已配置 Owner 的项目"})
 			return
 		}
@@ -151,12 +154,15 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			}
 			repositories = []domain.RepositoryContext{repositoryRunContext(repoDef)}
 		}
-		executionContext := domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: responsibleUserID}
 		if scopedWorkflow {
 			executionContext.SharedScheduleID, executionContext.SharedScheduleVersion = scope.Version.ID, scope.Version.Version
 		}
-		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, executionContext)
+		v, err := h.engine.StartWithRepositories(r.Context(), req.WorkflowID, req.Input, repositories, executionContext)
 		if err != nil {
+			if errors.Is(err, repo.ErrWorkspaceInUse) {
+				respond(c, HTTPError{http.StatusConflict, err.Error()})
+				return
+			}
 			respond(c, err)
 			return
 		}
@@ -259,15 +265,19 @@ func (h *runsHandlers) run(c *gin.Context) {
 		}
 		c.JSON(202, map[string]bool{"accepted": true})
 	case "/api/runs/:id/artifacts/:name":
-		artifact, ok := h.repo.Artifact(id, c.Param("name"))
-		if !ok {
+		artifact, body, err := h.repo.OpenArtifactContent(c.Request.Context(), id, c.Param("name"))
+		if err != nil {
 			c.JSON(404, map[string]string{"error": "artifact not found"})
 			return
 		}
-		c.Header("Content-Type", artifact.MediaType+"; charset=utf-8")
-		c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", artifact.Name+artifactExtension(artifact.MediaType)))
+		defer body.Close()
+		mediaType := artifact.MediaType
+		if strings.HasPrefix(mediaType, "text/") {
+			mediaType += "; charset=utf-8"
+		}
+		c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", artifactFileName(artifact)))
 		c.Header("ETag", `"`+artifact.SHA256+`"`)
-		_, _ = c.Writer.Write([]byte(artifact.Content))
+		c.DataFromReader(http.StatusOK, artifact.Size, mediaType, body, nil)
 	case "/api/runs/:id/approve":
 		var req domain.HumanDecision
 		if decode(c, &req) {
@@ -330,6 +340,15 @@ func (h *runsHandlers) run(c *gin.Context) {
 	default:
 		c.Status(http.StatusNotFound)
 	}
+}
+
+// artifactFileName names a downloaded deliverable after the file it came from,
+// so a binary artifact keeps its extension instead of becoming a .txt file.
+func artifactFileName(artifact domain.Artifact) string {
+	if base := path.Base(artifact.Path); path.Ext(base) != "" && base != "." && base != "/" {
+		return base
+	}
+	return artifact.Name + artifactExtension(artifact.MediaType)
 }
 
 func artifactExtension(mediaType string) string {
@@ -410,13 +429,29 @@ func publicRun(run domain.Run, summary bool) domain.Run {
 	return run
 }
 
-// publicLiveRun is the SSE payload: keep finished-node output and artifact
-// metadata so the inspector can update without a full refetch, but still drop
-// log/telemetry bodies (those arrive as deltas).
+// publicLiveRun keeps finished-node output, artifact metadata and admission
+// decisions in SSE. Logs and telemetry arrive as deltas.
 func publicLiveRun(run domain.Run) domain.Run {
+	// A published snapshot can include the full event history. Read admission
+	// events from it before the detail view's history cap is applied.
+	events := run.Events
 	run = publicRun(run, false)
 	if run.WorkflowSnapshot.CollaborationMode != "group" {
 		run.Events = nil
+		for _, event := range events {
+			if event.Type == domain.RunEventSandboxSelected {
+				run.Events = []domain.RunEvent{event}
+				break
+			}
+		}
+		if run.FailedBeforeAutoAssignment() {
+			for i := len(events) - 1; i >= 0; i-- {
+				if events[i].Type == domain.RunEventFailed {
+					run.Events = append(run.Events, events[i])
+					break
+				}
+			}
+		}
 	}
 	run.Input = clipRunText(run.Input, 500)
 	return run

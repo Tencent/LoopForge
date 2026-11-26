@@ -15,6 +15,28 @@ import (
 	"time"
 )
 
+func TestPersistedAssistantSSEPublishesWorkspaceChangesWithoutThoughts(t *testing.T) {
+	response := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(response)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	g := domain.AssistantGeneration{ID: "persisted-switch", Status: "running", RuntimeMode: domain.AssistantModeWorkspace, WorkspaceRunID: "prior-workspace"}
+	calls := 0
+	streamPersistedAssistantGeneration(c, g, func() (domain.AssistantGeneration, bool) {
+		calls++
+		next := g
+		switch calls {
+		case 1:
+			next.WorkspaceRunID = "next-workspace"
+		default:
+			next.Status = "completed"
+		}
+		return next, true
+	})
+	if body := response.Body.String(); !strings.Contains(body, `"workspaceRunId":"next-workspace"`) {
+		t.Fatalf("workspace switch missing from SSE: %s", body)
+	}
+}
+
 func TestAssistantSSERecoversEvictedTokensAndDisconnectKeepsModelRunning(t *testing.T) {
 	h, user := workbenchFixture(t)
 	ready, next, finish, nextSent := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})

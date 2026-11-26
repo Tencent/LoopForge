@@ -46,6 +46,7 @@ type Engine struct {
 	leaseTTL            time.Duration
 	executeRuns         bool
 	draining            bool
+	claimKick           chan struct{}
 
 	// MergeIntoBranch creates or reuses a Gongfeng MR from source→target and
 	// merges it (merge commit, source branch kept). Scheduled SOP uses this
@@ -94,6 +95,8 @@ type Engine struct {
 
 	WorkspaceActive              func(domain.Run) bool
 	WorkspaceCheckpointTransport func(context.Context, domain.Run, domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error)
+	SelectSOPSandbox             func(context.Context, SOPSandboxSelection) string
+	GenerateSOPWorkBranch        func(context.Context, SOPWorkBranchRequest) (string, error)
 	maintenanceOnce              sync.Once
 }
 
@@ -111,7 +114,7 @@ func NewWithExecutionManager(s *repo.Store, adapter executionenv.Manager) *Engin
 	if adapter == nil {
 		adapter = executionenv.NewRuntimeAdapter(nil)
 	}
-	e := &Engine{repo: s, sandboxes: adapter, executionBackend: adapter, runner: runtime.NewExecutorRunner(), running: map[string]context.CancelFunc{}, environments: newEnvironmentRegistry(), subs: map[string]map[chan domain.Run]struct{}{}, runnerTaskSubs: map[string]map[chan struct{}]struct{}{}, instanceID: fmt.Sprintf("%s-%d", host, os.Getpid()), workspaceHost: host, leaseTTL: 30 * time.Second, executeRuns: true, obsKick: make(chan struct{}, 1)}
+	e := &Engine{repo: s, sandboxes: adapter, executionBackend: adapter, runner: runtime.NewExecutorRunner(), running: map[string]context.CancelFunc{}, environments: newEnvironmentRegistry(), subs: map[string]map[chan domain.Run]struct{}{}, runnerTaskSubs: map[string]map[chan struct{}]struct{}{}, instanceID: fmt.Sprintf("%s-%d", host, os.Getpid()), workspaceHost: host, leaseTTL: 30 * time.Second, executeRuns: true, claimKick: make(chan struct{}, 1), obsKick: make(chan struct{}, 1)}
 	return e
 }
 

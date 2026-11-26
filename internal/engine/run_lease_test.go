@@ -214,7 +214,7 @@ func TestControlPlaneEnqueuesWithoutExecute(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "enqueue-only", Name: "enqueue", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "enqueue-only", Name: "enqueue", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "wait", Name: "wait", Type: "approval", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -245,7 +245,7 @@ func TestControlPlaneCancelRequestsRunningWorker(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "cancel-handoff", Name: "cancel", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "cancel-handoff", Name: "cancel", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "wait", Name: "wait", Type: "command", Command: "sleep 30", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -294,7 +294,7 @@ func TestControlPlaneCancelNotifiesWorkerOverHTTP(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "cancel-fast", Name: "cancel", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "cancel-fast", Name: "cancel", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "wait", Name: "wait", Type: "command", Command: "sleep 30", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -332,7 +332,9 @@ func TestControlPlaneCancelNotifiesWorkerOverHTTP(t *testing.T) {
 	for time.Now().Before(deadline) {
 		got, _ := s.RunState(run.ID)
 		if got.Status == "cancelled" {
-			if elapsed := time.Since(started); elapsed > time.Second {
+			// The bound only has to separate an interrupt from the 10s lease
+			// heartbeat; a loaded test machine needs a few seconds.
+			if elapsed := time.Since(started); elapsed > 3*time.Second {
 				t.Fatalf("cancel took %s, want well under the 10s lease heartbeat", elapsed)
 			}
 			return
@@ -347,7 +349,7 @@ func TestInterruptRequiresDurableControlFlag(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "interrupt-guard", Name: "guard", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "interrupt-guard", Name: "guard", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "wait", Name: "wait", Type: "command", Command: "sleep 30", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -396,7 +398,7 @@ func TestControlPlaneCancelRoutesToOwningWorker(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "cancel-owner", Name: "cancel", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "cancel-owner", Name: "cancel", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "wait", Name: "wait", Type: "command", Command: "sleep 30", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -443,8 +445,8 @@ func TestControlPlaneCancelRoutesToOwningWorker(t *testing.T) {
 	for time.Now().Before(deadline) {
 		got, _ := s.RunState(run.ID)
 		if got.Status == "cancelled" {
-			if elapsed := time.Since(started); elapsed > time.Second {
-				t.Fatalf("cancel took %s", elapsed)
+			if elapsed := time.Since(started); elapsed > 3*time.Second {
+				t.Fatalf("cancel took %s, want well under the 10s lease heartbeat", elapsed)
 			}
 			if hitsA.Load() != 1 {
 				t.Fatalf("owner interrupt hits=%d, want 1", hitsA.Load())
@@ -510,7 +512,7 @@ func TestAPIResumePausedIsClaimedOnlyByBoundWorker(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "pause-sticky", Name: "pause", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "pause-sticky", Name: "pause", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "wait", Name: "wait", Type: "command", Command: "sleep 30", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -566,7 +568,7 @@ func TestAPIRetryIsClaimedOnlyByBoundWorker(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "retry-sticky", Name: "retry", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "retry-sticky", Name: "retry", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "fail", Name: "fail", Type: "command", Command: "false", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -615,7 +617,7 @@ func TestStartInsertsLeasedRunAndBlocksOtherResume(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "lease-start", Name: "lease start", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "lease-start", Name: "lease start", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "wait", Name: "wait", Type: "command", Command: "sleep 30", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -687,7 +689,7 @@ func TestSameInstanceResumeDoesNotStartSecondExecute(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "lease-same", Name: "lease same", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "lease-same", Name: "lease same", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "wait", Name: "wait", Type: "command", Command: "sleep 30", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -854,7 +856,7 @@ func TestDrainParksRunningRunForResume(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
-	wf := domain.WorkflowDefinition{ID: "drain-park", Name: "drain park", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "drain-park", Name: "drain park", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "wait", Name: "wait", Type: "command", Command: "sleep 30", MaxAttempts: 3,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {

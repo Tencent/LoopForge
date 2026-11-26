@@ -381,9 +381,9 @@ func TestPreparationReplayBindsDeclaredCredentialEnv(t *testing.T) {
 
 	firstRoot := t.TempDir()
 	sb := &managedSandbox{
-		Sandbox:    &localSandbox{id: "prep-cred", workspace: firstRoot},
-		slots:      make(chan struct{}, 1),
-		workspace:  firstRoot,
+		Sandbox:     &localSandbox{id: "prep-cred", workspace: firstRoot},
+		slots:       make(chan struct{}, 1),
+		workspace:   firstRoot,
 		credentials: RunCredentials{Extra: map[string]string{"gateway": "user-first"}},
 	}
 	wf := credentialWorkflow("mkdir -p .agentflow/prep; printf '%s' \"$MY_TOOL_TOKEN\" > .agentflow/prep/token")
@@ -407,9 +407,9 @@ func TestPreparationReplayBindsDeclaredCredentialEnv(t *testing.T) {
 	// leak it into the script nor let it stand in for the user credential.
 	t.Setenv("MY_TOOL_TOKEN", "host-owned-value")
 	restored := &managedSandbox{
-		Sandbox:    &localSandbox{id: "restored", workspace: root},
-		slots:      make(chan struct{}, 1),
-		workspace:  root,
+		Sandbox:     &localSandbox{id: "restored", workspace: root},
+		slots:       make(chan struct{}, 1),
+		workspace:   root,
 		credentials: RunCredentials{Extra: map[string]string{"gateway": "user-second"}},
 	}
 	if _, err = EnsureWorkspacePreparation(ctx, restored, wf, nil, nil); err != nil {
@@ -428,9 +428,9 @@ func TestPreparationReplayBindsDeclaredCredentialEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	missing := &managedSandbox{
-		Sandbox:    &localSandbox{id: "missing", workspace: missingRoot},
-		slots:      make(chan struct{}, 1),
-		workspace:  missingRoot,
+		Sandbox:     &localSandbox{id: "missing", workspace: missingRoot},
+		slots:       make(chan struct{}, 1),
+		workspace:   missingRoot,
 		credentials: RunCredentials{},
 	}
 	if _, err = EnsureWorkspacePreparation(ctx, missing, wf, nil, nil); err == nil || !strings.Contains(err.Error(), "gateway") {

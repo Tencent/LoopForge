@@ -29,7 +29,7 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 		{ID: "target-review", Name: "评审"},
 		{ID: "target-ship", Name: "上线"},
 	} {
-		wf.Version, wf.ProjectID, wf.Status, wf.SandboxProfileID = 1, "platform", "published", "local"
+		wf.Version, wf.ProjectID, wf.Status, wf.SandboxProfileID = 1, "platform", "published", "test-native"
 		wf.Nodes = []domain.WorkflowNode{{ID: "approval", Name: "人工确认", Type: "approval", MaxAttempts: 1}}
 		if err := s.PutWorkflow(wf); err != nil {
 			t.Fatal(err)

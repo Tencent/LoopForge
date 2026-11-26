@@ -17,7 +17,7 @@ import (
 const (
 	assistantAcceptanceLogin     = "example-maintainer"
 	assistantAcceptanceProjectID = "assistant-test"
-	assistantAcceptanceSandboxID = "assistant-local"
+	assistantAcceptanceSandboxID = "assistant-native"
 )
 
 // AssistantAcceptanceIdentity is the local copy of a production user's
@@ -172,7 +172,7 @@ func SeedAssistantAcceptance(st *repo.Store, ident AssistantAcceptanceIdentity) 
 		ID:        assistantAcceptanceSandboxID,
 		Name:      "助手验收沙箱",
 		ProjectID: assistantAcceptanceProjectID,
-		Driver:    "local",
+		Driver:    domain.SandboxDriverNative,
 	}); err != nil {
 		return domain.User{}, err
 	}

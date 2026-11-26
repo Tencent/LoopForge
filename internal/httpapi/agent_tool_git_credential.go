@@ -31,7 +31,7 @@ type gitCredentialResult struct {
 	Platform          string `json:"platform,omitempty"`
 }
 
-// gitCredential hands the current speaker's token for exactly one HTTPS host
+// gitCredential hands the current speaker's token for exactly one endpoint
 // to a workspace turn that is still running. It answers empty instead of an
 // error so a helper never blocks Git on a host the platform does not serve.
 func (h *agentToolGateway) gitCredential(ctx context.Context, s *AgentToolSession, raw json.RawMessage) gitCredentialResult {
@@ -50,7 +50,7 @@ func (h *agentToolGateway) gitCredential(ctx context.Context, s *AgentToolSessio
 		caller = "manual"
 	}
 	outcome := "granted"
-	host, err := gitwork.HTTPSHostScope(req.Host)
+	host, valid := gitwork.GitCredentialScope(req.Protocol, req.Host)
 	defer func() {
 		log.Printf("git credential %s: session=%s speaker=%d host=%q caller=%s", outcome, s.ChatSessionID, s.UserID, req.Host, caller)
 	}()
@@ -61,8 +61,11 @@ func (h *agentToolGateway) gitCredential(ctx context.Context, s *AgentToolSessio
 	case !h.nativeToolTurnActive(ctx, s):
 		outcome = "refused (turn not active)"
 		return gitCredentialResult{}
-	case !strings.EqualFold(strings.TrimSpace(req.Protocol), "https") || err != nil:
-		outcome = "refused (not an https host)"
+	case !valid:
+		outcome = "refused (not an HTTP(S) endpoint)"
+		return gitCredentialResult{}
+	case strings.HasPrefix(host, "http://") && caller != "git":
+		outcome = "refused (HTTP credentials are for Git)"
 		return gitCredentialResult{}
 	}
 	cred, ok := h.repo.GitHTTPCredentialForHost(ctx, s.UserID, host)

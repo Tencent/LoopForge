@@ -5,8 +5,11 @@ import (
 	"agentflow/internal/repo"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,7 +37,7 @@ func TestRunEvalCloneAndApplyBranches(t *testing.T) {
 	if _, err := h.ensureProjectAgent(run, "cvb-eval-p", "missing"); err == nil {
 		t.Fatal("missing agent accepted")
 	}
-	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "cvb-shared-wf", Name: "Shared", ProjectID: "elsewhere", Shared: true, SandboxProfileID: "local", Nodes: run.WorkflowSnapshot.Nodes}); err != nil {
+	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "cvb-shared-wf", Name: "Shared", ProjectID: "elsewhere", Shared: true, SandboxProfileID: "test-native", Nodes: run.WorkflowSnapshot.Nodes}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.PutAgent(domain.AgentDefinition{ID: "cvb-eval-agent", Name: "Shared agent", ProjectID: "elsewhere", Shared: true, Version: 2}); err != nil {
@@ -108,6 +111,38 @@ func TestRunEvalJobAndLiveStreamBranches(t *testing.T) {
 	h.runEvalJob(ctx, queued, rec, run, f.user)
 	if saved, _ := f.s.RunEval(rec.ID); saved.Status != domain.RunEvalFailed {
 		t.Fatalf("cancelled queued eval = %+v", saved)
+	}
+}
+
+func TestRunEvalStreamWithoutLocalJobPreservesRecentRunningRecord(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	h := &runsHandlers{deps: &deps{repo: f.s}, evalJobs: newRunEvalHub()}
+	router := gin.New()
+	router.GET("/api/runs/:id/eval/stream", h.streamRunEval)
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name string
+		age  time.Duration
+		want string
+	}{
+		{name: "another replica", age: time.Minute, want: domain.RunEvalRunning},
+		{name: "timed out", age: runEvalTimeout + time.Minute, want: domain.RunEvalFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := "stream-without-local-job-" + tc.want
+			if err := f.s.PutRun(domain.Run{ID: id, Status: "succeeded"}); err != nil {
+				t.Fatal(err)
+			}
+			rec := domain.RunEvalRecord{ID: id + "-eval", RunID: id, Status: domain.RunEvalRunning, CreatedAt: now.Add(-tc.age)}
+			if err := f.s.PutRunEval(rec); err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest("GET", "/api/runs/"+id+"/eval/stream", nil))
+			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"`+tc.want+`"`) {
+				t.Fatalf("stream status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 
@@ -215,7 +250,7 @@ func TestRunEvalLocalEntityReuseBranches(t *testing.T) {
 	if err := f.s.PutProject(domain.Project{ID: projectID, Key: "EVL", Name: "Eval local", OwnerID: f.user.ID}); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "cvb-eval-local-wf", Name: "Local workflow", ProjectID: projectID, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", AgentID: "cvb-eval-local-agent"}}}
+	wf := domain.WorkflowDefinition{ID: "cvb-eval-local-wf", Name: "Local workflow", ProjectID: projectID, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "n", AgentID: "cvb-eval-local-agent"}}}
 	agent := domain.AgentDefinition{ID: "cvb-eval-local-agent", Name: "Local", ProjectID: projectID}
 	if err := f.s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
@@ -328,7 +363,7 @@ func TestRunEvalLiveStreamAndPersistenceErrors(t *testing.T) {
 	}
 	h := &runsHandlers{deps: &deps{repo: f.s}, evalJobs: newRunEvalHub()}
 	job := &runEvalJob{runID: run.ID, evalID: "eval", subs: map[chan runEvalJobEvent]struct{}{}, done: make(chan struct{})}
-	job.publish("thought", map[string]string{"text": "replay"})
+	emitRunEvalStage(job.publish, "collecting", "正在整理本次 SOP 轨迹")
 	h.evalJobs.jobs[run.ID] = job
 	router := gin.New()
 	router.GET("/api/runs/:id/eval/stream", h.streamRunEval)
@@ -353,6 +388,10 @@ func TestRunEvalLiveStreamAndPersistenceErrors(t *testing.T) {
 	case rec := <-done:
 		if rec.Code != http.StatusOK {
 			t.Fatalf("live eval stream = %d: %s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"stage":"collecting"`) || !strings.Contains(body, "event: done") {
+			t.Fatalf("missing eval stage or completion: %s", body)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("live eval stream did not finish")
@@ -406,8 +445,9 @@ func TestRunEvalRecoveryAndApplyConflicts(t *testing.T) {
 	if err := f.s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	active := domain.RunEvalRecord{ID: "cvb-r2-orphan-eval", RunID: run.ID, Status: domain.RunEvalRunning}
-	if err := f.s.PutRunEval(active); err != nil {
+	// A recent running row without a local job may belong to another API replica.
+	remote := domain.RunEvalRecord{ID: "cvb-r2-remote-eval", RunID: run.ID, Status: domain.RunEvalRunning, CreatedAt: time.Now().UTC().Add(-time.Minute)}
+	if err := f.s.PutRunEval(remote); err != nil {
 		t.Fatal(err)
 	}
 	setRunEvalExecForTest(func(context.Context, domain.RunEvalRecord, domain.Run, domain.User, func(string, any)) (domain.RunEvalResult, error) {
@@ -415,6 +455,17 @@ func TestRunEvalRecoveryAndApplyConflicts(t *testing.T) {
 	})
 	t.Cleanup(func() { setRunEvalExecForTest(nil) })
 	rec := cvBRequest(t, f, http.MethodPost, "/api/runs/"+run.ID+"/eval", nil, true)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("eval on another replica = %d: %s", rec.Code, rec.Body.String())
+	}
+	if stored, _ := f.s.RunEval(remote.ID); stored.Status != domain.RunEvalRunning {
+		t.Fatalf("another replica's eval was changed: %+v", stored)
+	}
+	remote.CreatedAt = time.Now().UTC().Add(-runEvalTimeout - time.Minute)
+	if err := f.s.PutRunEval(remote); err != nil {
+		t.Fatal(err)
+	}
+	rec = cvBRequest(t, f, http.MethodPost, "/api/runs/"+run.ID+"/eval", nil, true)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("orphan eval recovery = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -458,4 +509,90 @@ func TestRunEvalRecoveryAndApplyConflicts(t *testing.T) {
 	if (&runsHandlers{}).evalHub() == nil {
 		t.Fatal("lazy eval hub missing")
 	}
+}
+
+func TestRunEvalApplyFallsBackWhenModelTargetIDIsUnknown(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	h := &runsHandlers{deps: &deps{repo: f.s}, evalJobs: newRunEvalHub()}
+	nodes := []domain.WorkflowNode{{ID: "dev", Name: "开发", AgentID: "cvb-target-agent"}}
+	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "cvb-target-wf", Name: "Live", SandboxProfileID: "test-native", Nodes: nodes}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := f.s.Workflow("cvb-target-wf")
+	live := snapshot
+	live.Description = "edited after the run"
+	if err := f.s.PutWorkflow(live); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.PutAgent(domain.AgentDefinition{ID: "cvb-target-agent", Name: "Dev", Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{ID: "cvb-target-run", WorkflowID: "cvb-target-wf", Status: "succeeded", WorkflowSnapshot: snapshot}
+
+	// Models sometimes put the node ID into targetId.
+	got, err := h.applyOneRecommendation(run, "", domain.RunEvalRecommendation{
+		Target: "workflow", Action: "update_node", NodeID: "dev", TargetID: "dev", Set: map[string]any{"maxAttempts": 3},
+	})
+	if err != nil || got.AppliedTargetID != "cvb-target-wf" {
+		t.Fatalf("workflow apply = %+v, %v", got, err)
+	}
+	if wf, _ := f.s.Workflow("cvb-target-wf"); wf.Nodes[0].MaxAttempts != 3 || wf.Description != live.Description {
+		t.Fatalf("live workflow was not updated: %+v", wf)
+	}
+	got, err = h.applyOneRecommendation(run, "", domain.RunEvalRecommendation{
+		Target: "agent", Action: "append_task_prompt", NodeID: "dev", TargetID: "dev", Text: "attach test evidence",
+	})
+	if err != nil || got.AppliedTargetID != "cvb-target-agent" {
+		t.Fatalf("agent apply = %+v, %v", got, err)
+	}
+	if _, err := h.applyOneRecommendation(run, "", domain.RunEvalRecommendation{
+		Target: "agent", Action: "append_task_prompt", TargetID: "missing-agent", Text: "x",
+	}); err == nil || !strings.Contains(err.Error(), "missing-agent") {
+		t.Fatalf("unknown agent without a node fallback: %v", err)
+	}
+}
+
+// Requests that arrive together must not each start a billed evaluation.
+func TestRunEvalConcurrentStartsRunOnce(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "run-eval-session-secret")
+	h, store, user := newRunEvalHarness(t)
+	release := make(chan struct{})
+	setRunEvalExecForTest(func(context.Context, domain.RunEvalRecord, domain.Run, domain.User, func(string, any)) (domain.RunEvalResult, error) {
+		<-release
+		return domain.RunEvalResult{}, errors.New("released")
+	})
+	t.Cleanup(func() { setRunEvalExecForTest(nil) })
+	for round := 0; round < 10; round++ {
+		id := fmt.Sprintf("run-race-%d", round)
+		if err := store.PutRun(domain.Run{ID: id, Status: "succeeded", Nodes: map[string]*domain.NodeRun{}}); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		codes := make([]int, 8)
+		start := make(chan struct{})
+		for i := range codes {
+			req := authedRequest(t, httptest.NewRequest(http.MethodPost, "/api/runs/"+id+"/eval", nil), user)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, req)
+				codes[i] = rec.Code
+			}()
+		}
+		close(start)
+		wg.Wait()
+		counts := map[int]int{}
+		for _, code := range codes {
+			counts[code]++
+		}
+		if counts[http.StatusAccepted] != 1 || counts[http.StatusConflict] != len(codes)-1 {
+			t.Fatalf("round %d: status counts = %v", round, counts)
+		}
+		if evals := store.ListRunEvals(id); len(evals) != 1 {
+			t.Fatalf("round %d: %d evaluations were stored", round, len(evals))
+		}
+	}
+	close(release)
 }

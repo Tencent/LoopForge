@@ -840,11 +840,15 @@ global.state = {data: {executors: [
   {id: 'zcode', name: 'ZCode'},
   {id: 'mock', name: '演示执行器'}
 ]}};
+global.window = {AgentFlowExecutorModels: Object.fromEntries(
+  state.data.executors.slice(1, -1).map(({id}) => [id, {configured: true}])
+)};
 eval(code.slice(code.indexOf('function executorOptions('), code.indexOf('function selectAgent(')));
 for (const id of ['opencode', 'cursor', 'agy', 'kimi', 'pi', 'dsh', 'zcode']) {
   assert.ok(executorOptions(id).includes('value="' + id + '" selected'), id);
 }
 assert.ok(!executorOptions('codex').includes('value="mock"'));
+assert.ok(!executorOptions('codex').includes('value="codebuddy"'));
 const legacy = executorOptions('legacy-codex');
 assert.ok(legacy.includes('历史执行器 legacy-codex'));
 assert.ok(legacy.includes('value="legacy-codex" selected disabled'));
@@ -999,8 +1003,14 @@ assert.equal(cloned.provider, 'ssh');
 assert.equal(cloned.cloneUrl, 'git@git.example.com:example/agent-flow.git');
 assert.equal(web.name, 'agent-flow');
 const http = parseGongfengRepoURL('http://git.example.com/example/agent-flow.git');
+assert.equal(http.provider, 'gongfeng');
 assert.equal(http.project, 'example/agent-flow');
+assert.equal(http.cloneUrl, 'https://git.example.com/example/agent-flow.git');
 assert.equal(http.name, 'agent-flow');
+const plain = parseGongfengRepoURL('git clone http://git.example.com/example/agent-flow.git');
+assert.equal(plain.provider, 'http');
+assert.equal(plain.cloneUrl, 'http://git.example.com/example/agent-flow.git');
+assert.equal(parseGongfengRepoURL(globalThis.LoopForgeGitRepositoryReference(plain)).provider, 'http');
 assert.equal(ssh.name, 'agent-flow');
 const html = require('node:fs').readFileSync('index.html', 'utf8');
 assert.ok(html.includes('集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突'));
@@ -1099,8 +1109,17 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 			t.Fatalf("requirement composer behavior is missing %q", want)
 		}
 	}
+	composerJS, err := os.ReadFile("app/composer.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{`查看完整度详情`, `准入线`, `没有固定轮数`} {
+		if strings.Contains(composer, gone) || strings.Contains(string(composerJS), gone) {
+			t.Fatalf("requirement composer must not keep %q", gone)
+		}
+	}
 	for _, gone := range []string{
-		`查看完整度详情`, `准入线`, `composerAssessmentView`, `invalidateRequirementAnalysis`, `没有固定轮数`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`,
+		`composerAssessmentView`, `invalidateRequirementAnalysis`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`,
 		`function goReqStep(`, `function startReqClarify(`, `function sendChatClarify(`, `function pickReqOption(`, `function submitReqAnswers(`, `function reclarifyRequirement(`, `'/api/chat-clarify'`,
 	} {
 		if strings.Contains(code, gone) {
@@ -1281,7 +1300,7 @@ func TestUsageAnalysisUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(html)
-	for _, want := range []string{`data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量`, `data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付`, `id="exportObsReport"`} {
+	for _, want := range []string{`data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>总览`, `data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付`, `id="exportObsReport"`} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("usage analysis UI missing %q", want)
 		}
@@ -1296,7 +1315,7 @@ func TestUsageAnalysisUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(js)
-	for _, want := range []string{"ensureObsUserFilter", "obsRunMatchesUser", "exportObsReport", "buildObsReportHTML", "userDisplay(user)", "assigneeUserId", "各模型用量", "每人每日用量", "成员汇总", "data-obs-scope", "setObsScope", "需求类型分布", "SOP 版本对比", "节点质量明细", "setObsTrendGrain", "obsTrendChart", "该责任人在各项目", "data-obs-grain", "grain=", "全部", "obsApiGrain", "obsRangeCaption", "obsPeriodPicker", "setObsPeriod", "obsScopedView", "data-obs-period", "不含暂停/恢复", "Loop 指标", "workflow_task_id", "averageTokensPerRun", "toolSuccessRate", "runTraces", "obs-traces", "isPreviewHost", "showDirectRunButton"} {
+	for _, want := range []string{"ensureObsUserFilter", "obsRunMatchesUser", "exportObsReport", "buildObsReportHTML", "userDisplay(user)", "assigneeUserId", "各模型用量", "每人每日用量", "成员汇总", "data-obs-scope", "setObsScope", "需求类型分布", "SOP 版本对比", "节点质量明细", "setObsTrendGrain", "obsTrendChart", "该责任人在各项目", "data-obs-grain", "grain=", "全部", "obsApiGrain", "obsRangeCaption", "obsPeriodPicker", "setObsPeriod", "obsScopedView", "data-obs-period", "不含暂停/恢复", "obsSummaryCard", "workflow_task_id", "averageTokensPerRun", "toolSuccessRate", "runTraces", "obs-traces", "isPreviewHost", "showDirectRunButton"} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("app.js is missing %q", want)
 		}
@@ -1961,10 +1980,15 @@ func TestGenericTemplateEditorUsesBundledRoles(t *testing.T) {
 	if strings.Contains(app, "const foreign=catalogForeign((state.data.agents.find(x=>x.id===state.selectedAgent)||state.agentDraft||{}).projectId)") {
 		t.Fatal("agent wizard still treats a same-id project clone as a foreign generic role")
 	}
-	for _, want := range []string{"renderPlatformAdminPanel", "platformAdminPanel", "谁可以改通用模板"} {
+	for _, want := range []string{"renderPlatformAdminPanel", "platformAdminPanel", "谁可以改通用模板", "platformPublicURLHTML", "loadPlatformPublicURL", "外部访问地址"} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app.js is missing platform admin panel wiring %q", want)
 		}
+	}
+	// The suggested value must come from the admin's own browser, never from a
+	// Host header the platform received: it is pasted into binding links.
+	if !strings.Contains(app, "field.value = location.origin") {
+		t.Fatal("the public address page no longer suggests location.origin")
 	}
 	if strings.Contains(app, `id="platformAdminCard"`) {
 		t.Fatal("platform admin management is still embedded in personal settings")

@@ -654,7 +654,7 @@ func TestDispatchIsSerializedAcrossJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	wf := domain.WorkflowDefinition{ID: "wf", ProjectID: "platform", Name: "wf", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", Name: "n", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "wf", ProjectID: "platform", Name: "wf", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "n", Name: "n", Type: "approval", MaxAttempts: 1}}}
 	if err := st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}

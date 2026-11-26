@@ -27,7 +27,7 @@ func TestSharedChildWorkspaceControlPreservesOwnerAndSnapshotProtection(t *testi
 	if err = s.PutRun(domain.Run{ID: "parent", Status: "running", Nodes: map[string]*domain.NodeRun{}}); err != nil {
 		t.Fatal(err)
 	}
-	child := domain.Run{ID: "child", Status: "running", ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "runner", RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared, WorkspaceRunID: "parent"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "child-flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "prepare", Type: "script", Script: "true", RunOnWorkspaceRebuild: true}}}, Nodes: map[string]*domain.NodeRun{}}
+	child := domain.Run{ID: "child", Status: "running", ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "runner", RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared, WorkspaceRunID: "parent"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "child-flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "prepare", Type: "script", Script: "true", RunOnWorkspaceRebuild: true}}}, Nodes: map[string]*domain.NodeRun{}}
 	if err = s.PutRun(child); err != nil {
 		t.Fatal(err)
 	}

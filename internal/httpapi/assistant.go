@@ -30,15 +30,17 @@ type assistantConversation = domain.AssistantSession
 const assistantRequestBodyLimit = 32 << 20
 
 type assistantDraft struct {
-	Tool      string                   `json:"tool"`
-	Path      map[string]any           `json:"path,omitempty"`
-	Query     map[string]any           `json:"query,omitempty"`
-	Body      json.RawMessage          `json:"body,omitempty"`
-	Saved     bool                     `json:"saved,omitempty"`
-	Auto      bool                     `json:"auto,omitempty"`
-	Warnings  []string                 `json:"warnings,omitempty"`
-	SaveError string                   `json:"saveError,omitempty"`
-	Review    *assistantApprovalReview `json:"review,omitempty"`
+	Tool      string          `json:"tool"`
+	Path      map[string]any  `json:"path,omitempty"`
+	Query     map[string]any  `json:"query,omitempty"`
+	Body      json.RawMessage `json:"body,omitempty"`
+	Saved     bool            `json:"saved,omitempty"`
+	Auto      bool            `json:"auto,omitempty"`
+	Warnings  []string        `json:"warnings,omitempty"`
+	SaveError string          `json:"saveError,omitempty"`
+	// Result is the response body of an executed draft (not persisted).
+	Result string                   `json:"-"`
+	Review *assistantApprovalReview `json:"review,omitempty"`
 	// Proposal marks a draft the assistant offers on its own to hand work to a
 	// SOP; Decision is the server-recorded answer to it.
 	Proposal *assistantProposal `json:"proposal,omitempty"`
@@ -102,6 +104,11 @@ type assistantHandlers struct {
 	generate      func(context.Context, string, domain.User) (string, error)
 	review        func(context.Context, assistantApprovalInput, domain.User, string) (assistantApprovalReview, error)
 	titleSummary  func(context.Context, domain.User, string) (string, error)
+	// clarify runs chat clarification rounds on the platform's
+	// clarification jobs; clarifyClassify replaces the answer classifier
+	// in tests.
+	clarify         *streamHandlers
+	clarifyClassify func(context.Context, domain.User, string) (string, error)
 	// attachmentSweepWake nudges the background sweep after a deletion
 	// queues files; nil when no sweeper runs (tests sweep directly).
 	attachmentSweepWake chan struct{}
@@ -169,20 +176,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	old, exists := h.repo.AssistantSession(ownerID, req.SessionID)
-	if exists {
-		target := old.Execution()
-		if req.ExecutionTarget != nil && *req.ExecutionTarget != target {
-			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换；请新建对话"})
-			return
-		}
-		req.ExecutionTarget = &target
-	} else {
-		target, err := h.newExecutionTarget(stored.ID, req.ProjectID, req.ExecutionTarget)
-		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		req.ExecutionTarget = target
+	if !h.bindTurnExecutionTarget(c, &req, stored.ID, old) {
+		return
 	}
 	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
@@ -283,10 +278,29 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 	}
 	req.workspaceMode = savedConversation.Mode() == domain.AssistantModeWorkspace
+	var projectCredentialNote string
+	if len(savedConversation.ProjectCredentialIDs) > 0 && !req.sopDesigner() {
+		if savedConversation.ProjectID != req.ProjectID {
+			c.JSON(403, gin.H{"error": "会话项目与凭据项目不一致"})
+			return
+		}
+		names, ok := h.sessionProjectCredentialNames(c, savedConversation, user.ID)
+		if !ok {
+			return
+		}
+		projectCredentialNote = "\n项目凭据的环境变量为 " + strings.Join(names, "、") + "。需要时在项目工作区通过进程环境使用，避免输出值。\n"
+	}
 	if req.workspaceMode && req.RunID == "" && h.sopWorkspaceReadOnly(c, savedConversation, req.ProjectID, user.ID) {
 		// Another member left this shared conversation working in an SOP
 		// workspace; a read-only speaker continues in platform mode.
 		req.workspaceMode = false
+	}
+	if req.workspaceMode && req.RunID == "" && savedConversation.WorkspaceRunID != "" {
+		// A dispatched SOP can be working in this checkout while the chat
+		// discusses its progress. Keep the conversation in platform mode then.
+		if running, err := h.repo.HasWorkspaceSOPRuns(savedConversation.WorkspaceRunID, "running"); err == nil && running {
+			req.workspaceMode = false
+		}
 	}
 	sourceRoot := h.resolvedSourceRoot()
 	ctx, cancel := context.WithCancel(c.Request.Context())
@@ -339,6 +353,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.ExecutionRunnerID = savedConversation.Execution().RunnerID
 		sess.runnerLogin = runnerLogin
 		sess.RuntimeMode = savedConversation.Mode()
+		if projectCredentialNote != "" {
+			sess.projectCredentialIDs = savedConversation.ProjectCredentialIDs
+		}
 		if sess.RuntimeMode == domain.AssistantModeWorkspace && !req.workspaceMode {
 			sess.RuntimeMode = domain.AssistantModePlatform
 		}
@@ -387,7 +404,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.AttachmentOwners = req.attachmentOwners
 		toolFiles = files
 		defer sess.Close()
-		defer files.Cleanup()
+		defer func() { toolFiles.Cleanup() }()
 		if req.RunID == "" && h.engine != nil {
 			sess.workspaceTurn = newAssistantWorkspaceTurn(h.engine, cancelModel)
 			if scope := assistantControlScopeFrom(modelCtx); scope.GenerationID != "" {
@@ -428,7 +445,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			emit = sink
 		}
 		forward := emit
-		var secretStream assistantSecretStream
+		secretStream := assistantSecretStream{projectSecrets: toolSession.projectSecrets}
 		publish := func(events []assistantStreamEvent) {
 			for _, event := range events {
 				activity.add(event)
@@ -494,6 +511,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if generate == nil {
 		resume := false
 		var workspaceRepositoryHash string
+		var initialCheckpoint assistantNativeCheckpoint
 		branch := false
 		rewritten := false
 		if saved, err := loadAssistantConversation(h.repo, assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); err == nil {
@@ -522,13 +540,11 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 			defer nativeSession.Close()
 			resume = nativeSession.resume
-			cliSessionID = nativeSession.checkpoint.SessionID
-			workspaceRepositoryHash = nativeSession.checkpoint.WorkspaceRepositoryHash
-			if resume {
-				turn = assistantIncrementalPrompt(req, nativeSession.checkpoint)
-			} else {
-				turn = h.turnPrompt(req, sourceRoot, false)
-			}
+			// begin records the submitted messages. Keep the preceding checkpoint
+			// for rebuilding this turn's input if the first phase cannot start.
+			initialCheckpoint = nativeSession.checkpoint
+			cliSessionID = initialCheckpoint.SessionID
+			workspaceRepositoryHash = initialCheckpoint.WorkspaceRepositoryHash
 			if err = nativeSession.begin(); err != nil {
 				failSetup(err)
 				return
@@ -547,7 +563,25 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				resume = !state.Unstarted
 				workspaceRepositoryHash = state.WorkspaceRepositoryHash
 			}
-			turn = h.turnPrompt(req, sourceRoot, resume)
+		}
+		promptForTurn := func() string {
+			if nativeSession != nil && resume {
+				return assistantIncrementalPrompt(req, initialCheckpoint)
+			}
+			return h.turnPrompt(req, sourceRoot, resume)
+		}
+		turn = promptForTurn()
+		switchMode := func(mode string) error {
+			next, err := h.switchConversationProcessMode(toolSession, cliRoot, mode)
+			if err != nil {
+				return err
+			}
+			toolFiles.Cleanup()
+			toolFiles = next
+			if streaming {
+				emit("runtime_mode", map[string]string{"mode": mode, "workspaceRunId": toolSession.conversationWorkspace()})
+			}
+			return nil
 		}
 		generate = func(ctx context.Context, prompt string, u domain.User) (string, error) {
 			// A mode request completes its CLI phase normally. Waiting for exit
@@ -570,13 +604,13 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					return "", err
 				}
 				system := assistantSystemPromptForRequest(req, approvalMode)
-				prompt += conversationAttachmentNote(cliRoot, req, turnEngine)
+				phasePrompt := prompt + conversationAttachmentNote(cliRoot, req, turnEngine)
 				var sentRepositoryHash string
 				if req.workspaceMode {
 					system = assistantWorkspaceSystemPrompt
 					prefix := assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n"
 					var repositoryPrompt string
-					repositoryPrompt, sentRepositoryHash, err = h.workspaceRepositoryPrompt(toolSession, cliRoot, workspaceRepositoryHash, len(prefix)+len(prompt))
+					repositoryPrompt, sentRepositoryHash, err = h.workspaceRepositoryPrompt(toolSession, cliRoot, workspaceRepositoryHash, len(prefix)+len(phasePrompt))
 					if err != nil {
 						return "", err
 					}
@@ -584,11 +618,16 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 						// The journal's catalogue is uncertain until the phase completes.
 						workspaceRepositoryHash = ""
 					}
-					prompt = prefix + repositoryPrompt + prompt
+					phasePrompt = prefix + repositoryPrompt + projectCredentialNote + phasePrompt
 				} else if !req.sopDesigner() {
-					prompt = assistantPlatformExecutionReminder + "\n" + prompt
+					phasePrompt = assistantPlatformExecutionReminder + "\n" + projectCredentialNote + phasePrompt
 				}
-				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
+				if toolSession.workspaceStartFailed.Load() {
+					phasePrompt += "\n" + assistantWorkspaceFallbackPrompt
+				}
+				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: phasePrompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: func(usage domain.TokenUsage) {
+					turnUsage.add(domain.PriceScheduleExecutionUsage(replyModel, usage))
+				}, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
 				cliReq.ImageInput = conversationHasImageAttachments(req)
 				// Mode handoffs resume a journal which already has the user turn.
 				if switches == 0 || !resume {
@@ -651,6 +690,27 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					assistantDiagnosticsFrom(ctx).platform("cli.handoff_phase_error", "交接已开始，旧阶段异常结束："+err.Error()+"；继续交接", u)
 					err = nil
 				}
+				if req.workspaceMode && !progressed.Load() && assistantWorkspaceStartupFailed(ctx, err) {
+					toolSession.workspaceStartFailed.Store(true)
+					if err := switchMode(domain.AssistantModePlatform); err != nil {
+						return "", fmt.Errorf("回退平台模式失败：%w", err)
+					}
+					assistantDiagnosticsFrom(ctx).platform("cli.workspace_fallback", assistantWorkspaceFallbackStatus, u)
+					toolSession.Notify("thought", assistantStreamEvent{Kind: "status", Text: assistantWorkspaceFallbackStatus})
+					req.workspaceMode = false
+					switch {
+					case !nativeContinuationReady:
+						prompt = promptForTurn()
+					case !resume:
+						prompt = h.freshPhasePrompt(req, sourceRoot, switches)
+					case switches > 0:
+						prompt = "沿用当前原生会话和已有的工具结果，先核对已执行的操作，避免重复执行。"
+					}
+					// Retry this phase with the same input and journal. In particular,
+					// a failed first phase has not sent its image inputs yet.
+					switches--
+					continue
+				}
 				if err != nil && resume && !restarted && !progressed.Load() && assistantResumeRecoverable(ctx, err) {
 					// The native journal is missing or the provider rejected it
 					// before this phase produced anything, so no tool ran. Start
@@ -691,14 +751,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				if ctx.Err() != nil {
 					return "", ctx.Err()
 				}
-				next, err := h.switchConversationProcessMode(toolSession, cliRoot, mode)
-				if err != nil {
+				if err := switchMode(mode); err != nil {
 					return "", err
-				}
-				toolFiles = next
-				defer next.Cleanup()
-				if streaming {
-					emit("runtime_mode", map[string]string{"mode": mode})
 				}
 				prompt = "内部控制信息，不向用户解释或复述：运行环境已切换为「" + mode + "」，当前原生会话及之前的工具结果全部保留。直接使用当前工具继续完成本轮用户请求，先核对已执行操作，避免重复执行。面向用户只说明任务进展和结果，不提交接、进程重启、工具注入或运行模式。"
 				// Each phase may start over once: a journal that a new
@@ -810,6 +864,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			emit("flush", nil)
 		}
 		reply.Message = redactAssistantSecrets(reply.Message, user)
+		reply.Message = maskProjectSecrets(reply.Message, toolSession.projectSecrets())
 		// Join every streamed paragraph before slides and path cleanup, so a
 		// result that only repeats the last paragraph cannot replace them.
 		activityEvents := activity.forUser(user)
@@ -1167,10 +1222,10 @@ const assistantNativeSystemPrompt = `你是 LoopForge 的统一协作助手。�
 const assistantWorkflowDocumentPrompt = `修改已有 SOP 时先用 workflows_get 或 workflows_revision_get 读取完整定义再改。workflows_save 按 id 整图覆盖 nodes 和 edges，未提交的节点会被删除。`
 
 const assistantDraftProtocolPrompt = `写入先形成草稿：不要直接调用平台写入工具。提交草稿前通过 workbench_tool_schema 读取目标工具的准确输入 schema，按 body/path/query 包装参数，不得猜字段或把它们放到错误层级。用户明确要求构建或修改时，先用只读工具读到现有定义，再在结束时调用 mcp__agentflow_session__submit_assistant_reply 提交待确认草稿。用户在界面确认后才会保存。不要用本地 Bash/Write/Edit 操作控制平面目录；代码任务先打开工作区，明确开始交接后结束当前阶段，平台续接到工作区后使用 CLI 原生文件和命令工具操作，不得声称已经保存、发布或运行。
-普通问答、解释和只读查询直接用自然语言回复，不调用 mcp__agentflow_session__submit_assistant_reply。需要待确认写入时必须通过 mcp__agentflow_session__submit_assistant_reply 提交草稿，每轮只提交 1 个草稿（即下一步要执行的一个操作）：先在 message 中给出完整计划与依赖检查结论，再提交第一个草稿，用户确认保存后下一轮继续下一个草稿。构建 SOP（workflows_save）时，每个 agent 类型节点必须绑定当前项目已存在的角色 id（agentId）并填写 prompt，禁止提交未绑定角色的 agent 节点；所需角色还不存在时必须先提交创建角色的草稿，角色确认后再提交 SOP 草稿。提交删除类草稿（角色、规则、技能、沙箱、Dockerfile、环境、SOP 等）前，必须先用只读工具检查引用关系（例如删除角色前检查 workflows 节点是否引用该角色，删除沙箱前检查 SOP 是否绑定该沙箱），存在依赖时不要提交删除草稿，改为在 message 中说明并给出解除引用的方案；删除类草稿必须携带目标资源 id（path.id、query.id 或 body.id 均可），否则无法执行。
+普通问答、解释和只读查询直接用自然语言回复，不调用 mcp__agentflow_session__submit_assistant_reply。需要待确认写入时必须通过 mcp__agentflow_session__submit_assistant_reply 提交草稿，每轮只提交 1 个草稿（即下一步要执行的一个操作）：先在 message 中给出完整计划与依赖检查结论，再提交第一个草稿，用户确认保存后下一轮继续下一个草稿。构建 SOP（workflows_save）时，每个 agent 类型节点必须绑定当前项目已存在的角色 id（agentId）并填写 prompt，禁止提交未绑定角色的 agent 节点；所需角色还不存在时必须先提交创建角色的草稿，角色确认后再提交 SOP 草稿。提交删除类草稿（角色、规则、技能、沙箱、SOP 等）前，必须先用只读工具检查引用关系（例如删除角色前检查 workflows 节点是否引用该角色，删除沙箱前检查 SOP 是否绑定该沙箱），存在依赖时不要提交删除草稿，改为在 message 中说明并给出解除引用的方案；删除类草稿必须携带目标资源 id（path.id、query.id 或 body.id 均可），否则无法执行。
 ` + assistantWorkflowDocumentPrompt
 
-const assistantAutoWriteProtocolPrompt = `当前审批模式为「完全权限」：用户已授权平台写入工具调用即生效。直接按依赖顺序调用平台读写工具完成任务的全部步骤（环境/Dockerfile → 沙箱 → Rules/Skills/MCP → 角色 → SOP → 定时任务），不要把写入放进 drafts，不要请求用户确认，也不要让用户说"继续"：一次性完成全部步骤后，在 message 中按步骤汇总实际执行结果。构建 SOP 时每个 agent 类型节点必须绑定已存在的角色 id 并填写 prompt；所需角色不存在时先创建角色再保存 SOP。删除类操作前必须先用只读工具检查引用关系；平台返回冲突（如仍被引用）时如实说明并调整方案。不要用本地 Bash/Write/Edit 操作控制平面目录；代码任务先打开工作区，明确开始交接后结束当前阶段，平台续接到 Docker 内后使用 CLI 原生文件和命令工具操作。
+const assistantAutoWriteProtocolPrompt = `当前审批模式为「完全权限」：用户已授权平台写入工具调用即生效。直接按依赖顺序调用平台读写工具完成任务的全部步骤（沙箱 → Rules/Skills/MCP → 角色 → SOP → 定时任务），不要把写入放进 drafts，不要请求用户确认，也不要让用户说"继续"：一次性完成全部步骤后，在 message 中按步骤汇总实际执行结果。构建 SOP 时每个 agent 类型节点必须绑定已存在的角色 id 并填写 prompt；所需角色不存在时先创建角色再保存 SOP。删除类操作前必须先用只读工具检查引用关系；平台返回冲突（如仍被引用）时如实说明并调整方案。不要用本地 Bash/Write/Edit 操作控制平面目录；代码任务先打开工作区，明确开始交接后结束当前阶段，平台续接到 Docker 内后使用 CLI 原生文件和命令工具操作。
 ` + assistantWorkflowDocumentPrompt
 
 const assistantAssistedProtocolPrompt = `当前审批模式为「帮我批准」：直接调用平台写入工具，不要把写入放进 drafts，无需人工审批卡片。编程任务先打开工作区，明确开始交接后结束当前阶段，平台续接到工作区后使用 CLI 原生工具。工作区沙箱内的原生文件、补丁和命令直接执行。平台写入，以及 git push、gh pr create、gh api 或 curl 写请求、发布软件包等写入外部系统的命令执行前，平台会经规则快路径或独立审查模型根据本次操作、关键参数和当前用户的对话授权直接给出最终裁决（放行或拒绝），不按工具名一概放行。收到拒绝或审批不可用的提示后，不要绕过审查、不要提交 drafts、不要换工具实现同一副作用或反复重试；请调整方案或在自然语言回复中向用户说明未执行的原因。删除类操作前先用只读工具检查引用关系并携带目标 id。不要用本地 Bash/Write/Edit 操作控制平面目录。` + "\n" + assistantWorkflowDocumentPrompt
@@ -1523,8 +1578,7 @@ type assistantCLIRequest struct {
 	ReviewOnly                                     bool
 	Native                                         bool
 	MCPConfig, Settings                            string
-	// OnUsage receives the usage of this CLI invocation once its result event
-	// reports one; the result event covers only this process, not the session.
+	// OnUsage receives this invocation's usage once, excluding prior session turns.
 	OnUsage func(domain.TokenUsage)
 }
 
@@ -1640,9 +1694,16 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	var stderrTail []string
 	var missingSession, modelStarted, credentialRejected bool
 	var usageCollector assistantCLIUsage
+	if engine == assistantEngineCodeBuddy || engine == assistantEngineClaude {
+		usageCollector.session = newAssistantSessionUsage(root, sessionID, req.Resume, engine)
+	}
 	missingText := "No conversation found with session ID: " + inv.sessionRef
 	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
+		if event.Name == runtime.CodeBuddyBackgroundTimeoutEvent {
+			assistantDiagnosticsFrom(ctx).platform(event.Name, event.Message, user)
+			return
+		}
 		attempt.process(event)
 		if event.Name == "process.stderr" {
 			attempt.stderr(event.Message)
@@ -1702,6 +1763,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		if json.Unmarshal([]byte(line), &result) == nil {
 			switch result.Type {
 			case "result":
+				if engine == assistantEngineCodeBuddy && result.ParentToolUseID != "" {
+					break
+				}
 				final, resultError = result.Result, result.IsError
 				claudeResultText = ""
 				if captureClaudeText && result.ParentToolUseID == "" {
@@ -1738,14 +1802,26 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		}
 	}
 	execute := req.Execute
+	acp, _ := command.Stdin.(*assistantACP)
 	if execute == nil {
 		execute = runtime.ExecuteLocalCommand
+		if acp != nil {
+			// Pass the fd directly so os/exec has no stdin copier waiting
+			// for another frame if the CLI exits before its ACP response.
+			command.Stdin = acp.input
+		}
 		if attempt != nil {
 			defer runtime.ObserveCLIVersion(ctx, nil, engine, bin, attempt.recordCLIVersion)()
 		}
 	}
 	attempt.phase("execution")
-	_, err = execute(ctx, workspace, command, inv.credentials, sink)
+	if acp != nil {
+		_, err = acp.execute(ctx, func(execCtx context.Context) (string, error) {
+			return execute(execCtx, workspace, command, inv.credentials, sink)
+		})
+	} else {
+		_, err = execute(ctx, workspace, command, inv.credentials, sink)
+	}
 	attempt.exited(err)
 	if err == nil {
 		attempt.phase("protocol")
@@ -1833,14 +1909,25 @@ type assistantTurnUsage struct {
 func (t *assistantTurnUsage) add(u domain.TokenUsage) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	first := !assistantUsageReported(t.total)
+	if first {
+		t.total.CostPricingVersion = u.CostPricingVersion
+	} else if t.total.CostPricingVersion != u.CostPricingVersion {
+		t.total.CostPricingVersion = ""
+	}
 	t.total.InputTokens += u.InputTokens
 	t.total.OutputTokens += u.OutputTokens
 	t.total.CacheReadTokens += u.CacheReadTokens
 	t.total.CacheWriteTokens += u.CacheWriteTokens
 	t.total.ReasoningTokens += u.ReasoningTokens
 	t.total.CostUSD += u.CostUSD
-	if u.CostStatus != "" {
+	switch {
+	case first:
 		t.total.CostStatus = u.CostStatus
+	case t.total.CostStatus == "" || t.total.CostStatus == "unknown" || u.CostStatus == "" || u.CostStatus == "unknown":
+		t.total.CostStatus = "unknown"
+	case t.total.CostStatus == "estimated" || u.CostStatus == "estimated":
+		t.total.CostStatus = "estimated"
 	}
 	t.total.TotalTokens += u.TotalTokens
 }
@@ -1910,6 +1997,10 @@ func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, er
 	if sys == "" {
 		sys = assistantSystemPromptText()
 	}
+	workspace := opts.Workspace && !opts.ReviewOnly && !opts.ReportOnly
+	if workspace {
+		sys += "\n\n" + runtime.CodeBuddyBackgroundAgentInstructions
+	}
 	// Use the CLI's unlimited value; omitting the flag retains a finite default.
 	// A turn has no deadline; explicit cancellation still stops execution.
 	args := []string{"-p", "--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", sys, "--output-format", "stream-json", "--include-partial-messages", "--mcp-config", opts.Config}
@@ -1939,7 +2030,7 @@ func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, er
 		command.Argv = replaceArgValue(command.Argv, "--disallowedTools", nativeDisallowedTools+",Read,Grep,Glob,Skill,TodoWrite,AskUserQuestion,EnterPlanMode,ExitPlanMode")
 		command.Argv = replaceArgValue(command.Argv, "--setting-sources", "")
 		command.Argv = appendNativeArgs(command.Argv, "--no-session-persistence")
-	} else if !opts.Workspace {
+	} else if !workspace {
 		command.Argv = applyNativeToolSafety(command.Argv, AgentToolAssistant)
 	} else {
 		command.Argv = replaceArgValue(command.Argv, "--setting-sources", "user")
@@ -1947,9 +2038,9 @@ func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, er
 	}
 	command.CredentialBindings = []runtime.CredentialBinding{runtime.BindCodeBuddy}
 	command.Telemetry = nil
-	if len(opts.ImagePaths) > 0 {
+	if workspace || len(opts.ImagePaths) > 0 {
 		command.Argv = appendNativeArgs(command.Argv, "--verbose")
-		command, err = withAssistantStreamImageInput(command, opts.Prompt, opts.ImagePaths, 0)
+		command, err = withAssistantStreamInput(command, opts.Prompt, opts.ImagePaths, 0)
 		if err != nil {
 			return runtime.CommandSpec{}, err
 		}

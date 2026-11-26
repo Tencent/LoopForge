@@ -34,6 +34,7 @@ const { apiMock, writeMock } = vi.hoisted(() => {
     if (path.endsWith("/fork") || path.endsWith("/edit"))
       return { ...baseSession, id: path.endsWith("/fork") ? "s2" : "s1", messages: [{ role: "user", content: body.content }] };
     if (path.includes("/issue")) return { ...baseSession, issueId: body.issueId };
+    if (path.endsWith("/title")) return { title: body.title, titleEdited: true };
     return { ...baseSession, ...body, id: body?.id || baseSession.id };
   });
   return { apiMock, writeMock };
@@ -300,6 +301,66 @@ describe("conversation hooks", () => {
     }
   });
 
+  test.each([
+    ["codex", "gpt-5.5", false],
+    ["claude-code", "claude-sonnet-4-6", true],
+  ])("uses the selected runner authentication to choose %s models", async (executor, accountID, saved) => {
+    const original = apiMock.getMockImplementation();
+    const gatewayModel = { id: `${executor}:gateway/model`, engine: executor, efforts: ["low"] };
+    const accountModel = { id: accountID, discoveredReasoningEfforts: ["high"] };
+    const localRunner = {
+      id: "login-machine",
+      ownerUserId: 1,
+      runtimes: [{ provider: executor, authMode: "local" }],
+      loginModels: saved ? { [executor]: [accountModel] } : {},
+    };
+    const keyRunner = {
+      id: "key-machine",
+      ownerUserId: 1,
+      runtimes: [{ provider: executor, authMode: "personal" }],
+      loginModels: { [executor]: [accountModel] },
+    };
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/runners?mine=1") return [localRunner, keyRunner];
+      if (path === "/api/assistant/models") {
+        const catalog = await original(path, options);
+        return { ...catalog, engines: [{ id: executor, configured: true }], models: [gatewayModel] };
+      }
+      if (path === `/api/assistant/models?executor=${executor}`)
+        return { models: [{ id: accountID, efforts: ["high"] }] };
+      return original(path, options);
+    });
+    const view = renderHook(useChat);
+    try {
+      const { result } = view;
+      await waitFor(() => expect(result.current).toMatchObject({ ready: true, machinesReady: true }));
+      act(() => result.current.setExecutor(executor));
+      await waitFor(() => expect(result.current.model).toBe(gatewayModel.id));
+      await act(() => result.current.selectMachine(localRunner.id));
+      const accountModelID = saved ? `${executor}:${accountID}` : accountID;
+      await waitFor(() => expect(result.current.models.map(model => model.id)).toEqual([accountModelID]));
+      expect(result.current.modelDetails.efforts).toEqual(["high"]);
+
+      await act(() => result.current.selectMachine(keyRunner.id));
+      expect(result.current.models).toEqual([gatewayModel]);
+      expect(result.current.modelDetails.efforts).toEqual(["low"]);
+      act(() => result.current.setEffort("low"));
+      await act(() => result.current.selectMachine(localRunner.id));
+      act(() => result.current.setEffort("high"));
+      await act(async () => expect(await result.current.send({ text: "使用账号登录" })).toBe(true));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        executor, model: accountModelID, effort: "high",
+        executionTarget: { pool: "runner", runnerId: localRunner.id },
+      }));
+    } finally {
+      view.unmount();
+      apiMock.mockImplementation(original);
+      localStorage.removeItem("loopforge.assistant.executor");
+      localStorage.removeItem(`loopforge.assistant.effort.${executor}.${accountID}`);
+      localStorage.removeItem(`loopforge.assistant.effort.${executor}.gateway/model`);
+    }
+  });
+
   test("restores the conversation's unsent choices even after choosing a stronger model elsewhere", async () => {
     const original = apiMock.getMockImplementation();
     apiMock.mockImplementation(async (path, options) => {
@@ -539,7 +600,7 @@ describe("conversation hooks", () => {
         { id: "mac", name: "Mac", status: "online", ownerUserId: 1,
           runtimes: [{ provider: "agy", authMode: "local" }] },
       ]);
-      if (path === "/api/runners/default") return Promise.resolve({ runnerId: "mac" });
+      if (path === "/api/runners/default?conversation=1") return Promise.resolve({ runnerId: "mac" });
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body) => path === "/api/runners/mac/models/probe"
@@ -639,7 +700,7 @@ describe("conversation hooks", () => {
     let completeProbe;
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/runners?mine=1") return runners;
-      if (path === "/api/runners/default") return { runnerId: "runner-a" };
+      if (path === "/api/runners/default?conversation=1") return { runnerId: "runner-a" };
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body, method) => {
@@ -709,7 +770,7 @@ describe("conversation hooks", () => {
       ? new Promise((resolve) => { completeMachines = () => resolve(runners); })
       : Promise.resolve(runners);
     apiMock.mockImplementation((path, options) => {
-      if (path === "/api/runners?mine=1") return machines;
+      if (path === "/api/runners?mine=1" || path === "/api/runners?projectId=p1") return machines;
       if (path === "/api/assistant/sessions/agy-session") return Promise.resolve(stored);
       return originalAPI(path, options);
     });
@@ -1122,26 +1183,38 @@ describe("conversation hooks", () => {
   });
 
   test("keeps machine choices local and binds the final choice on the first send", async () => {
-    const { result } = renderHook(() => useChat());
-    await waitFor(() => expect(result.current.machinesReady).toBe(true));
-    await act(() => result.current.selectMachine(""));
-    await act(() => result.current.selectMachine("mac"));
-    await act(() => result.current.refreshMachines());
-    expect(result.current.defaultRunnerId).toBe("mac");
-    expect(result.current.session).toBeNull();
-    expect(result.current.activeId).toBeNull();
-    expect(location.search).not.toContain("session=");
-    expect(writeMock).not.toHaveBeenCalled();
-    await act(() => result.current.send({text:"开始"}));
-    expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations",expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"}}));
-    await act(async () => expect(await result.current.selectMachine("")).toBe(false));
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation((path, options) => path === "/api/runners?mine=1"
+      ? Promise.resolve([{ id: "mac", ownerUserId: 1, status: "online" }])
+      : original(path, options));
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.machinesReady).toBe(true));
+      await act(() => result.current.selectMachine(""));
+      await act(() => result.current.selectMachine("mac"));
+      await act(() => result.current.refreshMachines());
+      expect(result.current.defaultRunnerId).toBe("mac");
+      expect(result.current.session).toBeNull();
+      expect(result.current.activeId).toBeNull();
+      expect(location.search).not.toContain("session=");
+      expect(writeMock).not.toHaveBeenCalled();
+      await act(() => result.current.send({text:"开始"}));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations",expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"}}));
+      await act(async () => expect(await result.current.selectMachine("")).toBe(false));
+    } finally {
+      apiMock.mockImplementation(original);
+    }
   });
 
   test("waits for the personal machine default before allowing the first send", async () => {
     const original=apiMock.getMockImplementation();
     let release;
     const delayed=new Promise(resolve=>{release=resolve;});
-    apiMock.mockImplementation((path,opts)=>path==="/api/runners/default"?delayed:original(path,opts));
+    apiMock.mockImplementation((path, opts) => {
+      if (path === "/api/runners/default?conversation=1") return delayed;
+      if (path === "/api/runners?mine=1") return Promise.resolve([{ id: "mac", ownerUserId: 1 }]);
+      return original(path, opts);
+    });
     try {
       const {result}=renderHook(()=>useChat());
       await waitFor(()=>expect(result.current.ready).toBe(true));
@@ -1170,6 +1243,94 @@ describe("conversation hooks", () => {
     await act(() => result.current.remove("s1"));
     await act(() => result.current.linkIssue("ISSUE-1"));
     await act(() => result.current.refresh());
+  });
+
+  test("binding a project leaves a title renamed on another device alone", async () => {
+    const path = "/api/assistant/sessions/s1";
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    const stale = { id: "s1", title: "旧名字", titleGenerated: true, projectId: "", messages: [{ role: "user", content: "问题" }] };
+    apiMock.mockImplementation(async (url, options) => url === path ? structuredClone(stale)
+      : url === "/api/assistant/sessions" ? [stale] : originalAPI(url, options));
+    let bound;
+    writeMock.mockImplementation(async (url, body, method) => {
+      if (url !== path || method !== "PUT") return originalWrite(url, body, method);
+      // What the request carries over the wire.
+      bound = JSON.parse(JSON.stringify(body));
+      return { ...stale, ...bound, title: "另一台设备的新名字", titleEdited: true, titleGenerated: false };
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+      await act(() => result.current.selectProject("p1"));
+      expect(bound).toMatchObject({ id: "s1", projectId: "p1", messages: stale.messages });
+      for (const field of ["title", "titleEdited", "titleGenerated"]) expect(bound).not.toHaveProperty(field);
+      expect(result.current.session).toMatchObject({ title: "另一台设备的新名字", projectId: "p1" });
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
+  test("keeps a running session's new title as earlier reads finish", async () => {
+    const path = "/api/assistant/sessions/s1";
+    const original = apiMock.getMockImplementation();
+    const old = {
+      id: "s1",
+      title: "上次手动设置的名称",
+      titleEdited: true,
+      messages: [{ role: "user", content: "问题" }],
+    };
+    const finished = { ...old, messages: [...old.messages, { role: "assistant", content: "回答" }] };
+    let finishReply = false;
+    let delayList = false;
+    let replyRequested = false;
+    let serverTitle = old.title;
+    let releaseReply, releaseList;
+    const reply = new Promise((resolve) => { releaseReply = resolve; });
+    const list = new Promise((resolve) => { releaseList = resolve; });
+    apiMock.mockImplementation(async (url, options) => {
+      if (url.startsWith(path + "/generation")) return { id: "g1", status: finishReply ? "completed" : "running" };
+      if (url === path) {
+        if (!finishReply) return old;
+        replyRequested = true;
+        return reply;
+      }
+      if (url === "/api/assistant/sessions") return delayList ? list : [{ ...old, title: serverTitle }];
+      return original(url, options);
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current.generation?.status).toBe("running"));
+
+      delayList = true;
+      const refresh = result.current.refreshSessions();
+      finishReply = true;
+      await waitFor(() => expect(replyRequested).toBe(true));
+
+      await act(() => result.current.rename("s1", "新的名称"));
+      expect(writeMock).toHaveBeenCalledWith(path + "/title", { title: "新的名称" }, "PUT");
+      expect(result.current.session).toMatchObject({ title: "新的名称", messages: old.messages });
+      expect(result.current.sessions[0].title).toBe("新的名称");
+
+      await act(async () => {
+        releaseList([old]);
+        await refresh;
+        delayList = false;
+        serverTitle = "新的名称";
+        releaseReply(finished);
+      });
+      expect(result.current.session).toMatchObject({ title: "新的名称", messages: finished.messages });
+      expect(result.current.sessions[0].title).toBe("新的名称");
+    } finally {
+      apiMock.mockImplementation(original);
+      releaseList([]);
+      releaseReply(finished);
+    }
   });
 
   test("opens, edits, regenerates, stops and starts a known session", async () => {
@@ -1387,8 +1548,6 @@ describe("conversation hooks", () => {
   test("surfaces command failures without throwing from chat actions", async () => {
     const { result } = renderHook(() => useChat());
     await waitFor(() => expect(result.current.ready).toBe(true));
-    apiMock.mockRejectedValueOnce(new Error("读取失败"));
-    await act(() => result.current.rename("s1", "失败"));
     writeMock.mockRejectedValueOnce(new Error("保存失败"));
     await act(() => result.current.archive("s1", true));
     apiMock.mockRejectedValueOnce(new Error("删除失败"));
@@ -1419,6 +1578,14 @@ describe("conversation hooks", () => {
       if (path === "/api/users")
         return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }];
       if (path === "/api/assistant/sessions") return [];
+      if (path === "/api/runs/active-workspace") {
+        return {
+          workflowSnapshot: {
+            sandboxProfileId: "mac-tools",
+            sandboxSnapshot: { profile: { id: "mac-tools", driver: "native" } },
+          },
+        };
+      }
       if (path.includes("/generation"))
         return {
           id: "g-stream",
@@ -1436,6 +1603,19 @@ describe("conversation hooks", () => {
     await waitFor(() => expect(result.current.ready).toBe(true));
     act(() => result.current.open("s1"));
     await waitFor(() => expect(sources).toHaveLength(1));
+    expect(result.current.workspaceSandbox).toBeNull();
+    await act(async () => {
+      sources[0].generation({
+        data: JSON.stringify({
+          id: "g-stream",
+          status: "running",
+          runtimeMode: "workspace",
+          workspaceRunId: "active-workspace",
+          events: [],
+        }),
+      });
+    });
+    await waitFor(() => expect(result.current.workspaceSandbox).toEqual({ id: "mac-tools", driver: "native" }));
     await act(async () => {
       sources[0].generation({
         data: JSON.stringify({

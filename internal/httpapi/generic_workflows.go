@@ -21,7 +21,7 @@ func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinitio
 	if _, found := h.repo.Project(projectID); !found {
 		return domain.WorkflowDefinition{}, errors.New("目标项目不存在，请刷新后重新选择")
 	}
-	if template.SandboxProfileID == "" {
+	if !template.AutoSelectSandbox && template.SandboxProfileID == "" {
 		return domain.WorkflowDefinition{}, errors.New("当前项目没有可用沙箱，请先在「沙箱管理」创建或共享一个沙箱")
 	}
 	if err := ensureDefaultProjectMCPs(h.repo, projectID); err != nil {
@@ -165,7 +165,7 @@ func (h *catalogHandlers) cloneGenericTemplateSkills(sources []domain.SkillDefin
 		skill.ProjectID = projectID
 		skill.Shared = false
 		skill.UpdatedAt = now
-		if err := h.repo.PutSkill(skill); err != nil {
+		if err := h.repo.CreateSkill(skill); err != nil {
 			return nil, err
 		}
 		remap[source.ID] = skill.ID

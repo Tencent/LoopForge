@@ -186,7 +186,7 @@
     }
     return models[0]?.id || '';
   }
-  function bindFeaturePicker(host, {model = '', legacyModel = '', readOnly = false, keepSaved = false, onChange, loadCatalog = load} = {}) {
+  function bindFeaturePicker(host, {model = '', legacyModel = '', readOnly = false, keepSaved = false, onChange, loadCatalog = fetchCatalog} = {}) {
     if (!host || host.modelPickerReady) return host?.modelPickerReady;
     const executor = host.querySelector('[data-feature-executor]');
     const models = host.querySelector('[data-feature-model]');
@@ -199,28 +199,26 @@
       let engine = engines.find(item => item.id === savedExecutor);
       if (keepSaved && savedExecutor && !engine) {
         const saved = source.engines?.find(item => item.id === savedExecutor);
-        if (saved) {
-          engine = {...saved, models: []};
-          engines.push(engine);
-        }
+        engine = {id: savedExecutor, name: saved?.name || savedExecutor, models: [], unavailable: true};
+        engines.push(engine);
       }
-      if (engine) selected = qualifiedModel(engine.id, selected);
+      if (engine && !engine.unavailable) selected = qualifiedModel(engine.id, selected);
       if (keepSaved && selected && engine && !engine.models.some(item => item.id === selected)) {
         engine.models.push({id: selected, name: modelMeta(selected).name});
       }
       if (!engine?.models.some(item => item.id === selected)) {
         selected = '';
-        engine = engines.find(item => item.id === source.preferences?.executor && item.models.length) ||
-          engines.find(item => item.models.length) || engines[0];
+        engine = engines.find(item => item.id === source.preferences?.executor && item.models.length && !item.unavailable) ||
+          engines.find(item => item.models.length && !item.unavailable) || engines[0];
       }
       executor.replaceChildren(...engines.map(item => {
-        const option = new Option(item.name, item.id);
-        option.disabled = !item.models.length;
+        const option = new Option(item.unavailable ? `${item.name}（未配置）` : item.name, item.id);
+        option.disabled = item.unavailable || !item.models.length;
         return option;
       }));
       if (!engine) executor.prepend(new Option('暂无可用执行器', ''));
       executor.value = engine?.id || '';
-      executor.disabled = readOnly || !engines.some(item => item.models.length);
+      executor.disabled = readOnly || !engines.some(item => item.models.length && !item.unavailable);
 
       const remembered = new Map();
       const paintModels = (current, value) => {
@@ -229,7 +227,7 @@
         models.replaceChildren(...items.map(item => new Option(item.name || item.id, item.id)));
         if (!items.length) models.append(new Option('暂无可选模型', ''));
         models.value = next;
-        models.disabled = readOnly || !items.length;
+        models.disabled = readOnly || current?.unavailable || !items.length;
       };
       paintModels(engine, selected);
       executor.onchange = () => {
@@ -278,6 +276,7 @@
     featurePickerHTML,
     fetchCatalog,
     load,
+    modelIcon: item => FAMILY_ICON[item?.family || familyOf(item?.id)] || '',
     paint,
     paintItem,
     preferredFeatureModel,

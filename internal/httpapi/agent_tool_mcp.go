@@ -83,7 +83,14 @@ func (h *agentToolGateway) ServeHTTP(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, agentToolRPCResponse{JSONRPC: "2.0", Error: &agentToolRPCError{Code: -32700, Message: "parse error", Data: err.Error()}})
 		return
 	}
-	response := h.handleRPC(withAgentToolToken(c.Request.Context(), token), session, request)
+	ctx := withAgentToolToken(c.Request.Context(), token)
+	if request.Method == "tools/call" && request.ID != nil && mcpserver.AcceptsEventStream(c.Request) {
+		mcpserver.WriteToolResponse(c.Writer, c.Request, request.ID, func() (json.RawMessage, error) {
+			return json.Marshal(h.handleRPC(ctx, session, request))
+		})
+		return
+	}
+	response := h.handleRPC(ctx, session, request)
 	if response == nil {
 		c.Status(http.StatusAccepted)
 		return
@@ -394,6 +401,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		return readClarifySource(session, tool.Name, args)
 	}
 	if tool.Kind == "workspace" {
+		if session.ExecMode.ReadOnly {
+			return "", fmt.Errorf("%w: 只读模式不开放工作区工具 %s", errAgentToolForbidden, tool.Name)
+		}
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}
 	if tool.Kind == "agentflow" {
@@ -416,6 +426,14 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		}
 		if scope := scheduledAssetsFrom(session.ctx); scope.Version.ID != "" {
 			ctx = context.WithValue(ctx, scheduledAssetsKey{}, scope)
+		}
+		if session.ctx != nil {
+			if origin, ok := botStartOriginFrom(session.ctx); ok {
+				ctx = withBotStartOrigin(ctx, origin)
+			}
+			if actor, ok := botChatActorFrom(session.ctx); ok {
+				ctx = withBotChatActor(ctx, actor.Channel, actor.SenderID, actor.SenderName)
+			}
 		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}
 		if session.canOpenConversationWorkspace() {
@@ -478,6 +496,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	}
 	if session.Mode == AgentToolAssistant && mcpCallMayWrite(kind, call) {
 		name := mcpCallName(kind, call)
+		if session.ExecMode.ReadOnly {
+			return "", fmt.Errorf("只读模式拒绝可能写入外部系统的 MCP 调用 %s，请到平台页面操作", name)
+		}
 		if !session.ExecMode.AutoWrite {
 			if err := h.waitForMCPWriteApproval(ctx, session, name, call); err != nil {
 				return "", err

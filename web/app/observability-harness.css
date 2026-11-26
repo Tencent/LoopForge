@@ -320,6 +320,10 @@ html[data-theme="dark"] .obs-source-dialog::backdrop { background: rgba(0, 0, 0,
 @media (max-width: 760px) {
   #observabilityView #obsManageSources { width: 34px; padding: 0; justify-content: center; }
   #observabilityView #obsManageSources > span { display: none; }
+  #observabilityView .obs-card-head { flex-wrap: wrap; }
+  #observabilityView .obs-card-tools { min-width: 0; max-width: 100%; justify-content: flex-start; }
+  #observabilityView .obs-card-tools .obs-seg { max-width: 100%; overflow-x: auto; }
+  #observabilityView .obs-bd { grid-template-columns: minmax(0, 1fr); }
   .obs-source-dialog [data-mapping] { flex-wrap: wrap; }
   .obs-source-dialog .obs-source-pick { flex: 1 1 160px; }
 }

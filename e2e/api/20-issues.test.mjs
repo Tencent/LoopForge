@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { api, get, post, put, list, track, cleanup, ensureProject, waitFor, waitRun } from '../lib/api.mjs';
-import { cfg } from '../lib/env.mjs';
+import { cfg, requireToken } from '../lib/env.mjs';
 import { createWorkflow, script, approval, trackRun } from '../lib/fixtures.mjs';
 
 const P = cfg.projectId;
@@ -51,6 +51,36 @@ test('list supports project filter, search and pagination', async () => {
 });
 
 const detailOf = async id => get(`/api/issues/${id}`);
+
+test('creates a Markdown requirement and serves its attached image to authenticated users', async () => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPQc/8PAAIbAXVXkdKiAAAAAElFTkSuQmCC', 'base64');
+  const description = '## Reproduction\n\nSee the **attached image**.';
+  const form = new FormData();
+  form.set('issue', JSON.stringify({ projectId: P, kind: 'requirement', title: `E2E requirement image ${cfg.runTag}`, description }));
+  form.append('images', new Blob([png], { type: 'image/png' }), 'reproduction.png');
+
+  const created = await post('/api/issues', form);
+  removeLater(created.id);
+  const detail = await detailOf(created.id);
+  assert.equal(detail.issue.description, description);
+  assert.equal(detail.images.length, 1);
+  const [image] = detail.images;
+  assert.ok(image.id);
+  assert.equal(image.name, 'reproduction.png');
+
+  const path = `/api/issues/${created.id}/images/${image.id}`;
+  await get(path, { auth: false, expect: 401 });
+  const response = await fetch(cfg.base + path, {
+    headers: { Authorization: `Bearer ${requireToken()}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+
+  const catalog = await get(`/api/issues/${created.id}/clarify-models`);
+  assert.ok(Array.isArray(catalog.engines) && catalog.engines.length > 0);
+});
 
 test('edit keeps identity and records an operation', async () => {
   const { issue: current } = await detailOf(issue.id);

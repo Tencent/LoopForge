@@ -22,7 +22,10 @@ func TestMain(m *testing.M) {
 	if runtime.RunMCPCallCLI(os.Args[1:]) || runtime.RunGitHelperCLI(os.Args[1:]) {
 		return
 	}
-	os.Exit(m.Run())
+	cleanup := repo.UseSandboxVisibleTempDir()
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 func putGateTestAgent(t *testing.T, s *repo.Store, id string, gates []domain.VerificationGate) {
@@ -453,8 +456,8 @@ func TestProjectSandboxNeverCrossesProjectBoundary(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 	for _, profile := range []domain.SandboxProfile{
-		{ID: "local", Name: "Other local", ProjectID: "other", Driver: "local"},
-		{ID: "mine", Name: "Mine", ProjectID: "project", Driver: "local"},
+		{ID: "local", Name: "Other local", ProjectID: "other", Driver: "native"},
+		{ID: "mine", Name: "Mine", ProjectID: "project", Driver: "native"},
 	} {
 		if err := st.PutSandbox(profile); err != nil {
 			t.Fatal(err)
@@ -474,7 +477,7 @@ func TestShellAndPythonScriptNodesExecuteInOrder(t *testing.T) {
 	}
 	defer s.Close()
 	wf := domain.WorkflowDefinition{
-		ID: "script-languages", Name: "Script languages", SandboxProfileID: "local",
+		ID: "script-languages", Name: "Script languages", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "shell", Name: "Shell", Type: "script", ScriptLanguage: "shell", Script: "printf shell > value.txt", MaxAttempts: 1},
 			{ID: "python", Name: "Python", Type: "script", ScriptLanguage: "python", Script: "from pathlib import Path\nassert Path('value.txt').read_text() == 'shell'\nPath('python.txt').write_text('ok')", MaxAttempts: 1, ArtifactOutputs: []domain.ArtifactContract{{Name: "python", Path: "python.txt", Required: true}}},
@@ -523,7 +526,7 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{
-		ID: "mcp-script", Name: "MCP script", SandboxProfileID: "local", ProjectID: "dns",
+		ID: "mcp-script", Name: "MCP script", SandboxProfileID: "test-native", ProjectID: "dns",
 		Nodes: []domain.WorkflowNode{{
 			ID: "list", Name: "List", Type: "script", ScriptLanguage: "shell",
 			Script: "agentflow mcp list > mcp.json", MaxAttempts: 1,
@@ -576,7 +579,7 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 	}
 	putGateTestAgent(t, s, "mcp-validator", []domain.VerificationGate{{ID: "mcp", Name: "mcp", Mode: "command", Required: true, ExecutionScope: domain.ExecutionScopeRun, Commands: []string{"agentflow mcp list > gate-mcp.json"}}})
 	wf := domain.WorkflowDefinition{
-		ID: "mcp-gate", Name: "MCP gate", SandboxProfileID: "local", ProjectID: "dns",
+		ID: "mcp-gate", Name: "MCP gate", SandboxProfileID: "test-native", ProjectID: "dns",
 		Nodes: []domain.WorkflowNode{
 			{ID: "prep", Name: "Prep", Type: "command", Command: "printf ready > evidence.txt", MaxAttempts: 1},
 			{ID: "validate", Name: "Validate", Type: "agent", AgentID: "mcp-validator", ExecutorID: "mock", MaxAttempts: 1,
@@ -1087,7 +1090,7 @@ func TestStartUsesFreshWorkBranchPerSOP(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := New(s, runtime.NewManager(t.TempDir()))
-	wf := domain.WorkflowDefinition{ID: "branch-test", Name: "Branch test", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "branch-test", Name: "Branch test", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -1430,7 +1433,7 @@ func TestHumanGateFailureWaitsForApprove(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	putGateTestAgent(t, s, "human-gate-agent", []domain.VerificationGate{{ID: "strict", Name: "strict", Mode: "command", Required: true, Commands: []string{"false"}, OnFailure: "human", ExecutionScope: domain.ExecutionScopeRun}})
-	wf := domain.WorkflowDefinition{ID: "human-gate-lab", Name: "human gate lab", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "human-gate-lab", Name: "human gate lab", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "write", Name: "write", Type: "command", Command: "printf 'ok\\n' > out.md", ArtifactOutputs: []domain.ArtifactContract{{Name: "out", Path: "out.md", Required: true}}, MaxAttempts: 1},
 		{ID: "check", Name: "check", Type: "agent", AgentID: "human-gate-agent", ExecutorID: "mock", RejectTo: "write", OnFailure: "human", MaxAttempts: 1, MaxReworks: 3},
 	}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "write", Target: "check", When: "success"}}}
@@ -1465,7 +1468,7 @@ func TestSubmitReworkWithoutRejectToDegradesToFail(t *testing.T) {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{
-		ID: "rework-no-target", Name: "rework no target", SandboxProfileID: "local",
+		ID: "rework-no-target", Name: "rework no target", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "solo", Name: "solo", Type: "agent", AgentID: "rework-no-target-agent", ExecutorID: "mock", MaxAttempts: 1}},
 	}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -1503,7 +1506,7 @@ func TestSubmitReworkRejectsUpstreamInsteadOfRetrying(t *testing.T) {
 	if err := s.PutAgent(domain.AgentDefinition{ID: "rework-upstream-agent", Name: "rework-upstream-agent", ExecutorID: "mock", Prompt: "[[mock:gate=rework,pass]]"}); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "rework-upstream", Name: "rework upstream", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "rework-upstream", Name: "rework upstream", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "repair", Name: "repair", Type: "script", ScriptLanguage: "shell", Script: "true", MaxAttempts: 1},
 		{ID: "review", Name: "review", Type: "agent", AgentID: "rework-upstream-agent", ExecutorID: "mock", MaxAttempts: 3, MaxReworks: 3, RejectTo: "repair"},
 	}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "repair", Target: "review", When: "success"}}}
@@ -1546,7 +1549,7 @@ func TestSubmitReworkBudgetExhaustedWaitsForHuman(t *testing.T) {
 	if err := s.PutAgent(domain.AgentDefinition{ID: "rework-budget-agent", Name: "rework-budget-agent", ExecutorID: "mock", Prompt: "[[mock:gate=rework]]"}); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "rework-budget", Name: "rework budget", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "rework-budget", Name: "rework budget", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "repair", Name: "repair", Type: "script", ScriptLanguage: "shell", Script: "true", MaxAttempts: 1},
 		{ID: "review", Name: "review", Type: "agent", AgentID: "rework-budget-agent", ExecutorID: "mock", MaxAttempts: 3, MaxReworks: 1, RejectTo: "repair"},
 	}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "repair", Target: "review", When: "success"}}}
@@ -1593,7 +1596,7 @@ func TestSubmitTerminalDecisionSkipsGatesTelemetry(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	wf := domain.WorkflowDefinition{ID: "rework-with-gates", Name: "rework with gates", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "rework-with-gates", Name: "rework with gates", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "repair", Name: "repair", Type: "script", ScriptLanguage: "shell", Script: "true", MaxAttempts: 1},
 		{ID: "review", Name: "review", Type: "agent", AgentID: "rework-with-gates-agent", ExecutorID: "mock", MaxAttempts: 1, MaxReworks: 1, RejectTo: "repair"},
 	}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "repair", Target: "review", When: "success"}}}
@@ -1637,7 +1640,7 @@ func TestSubmitGateResumesSessionWhenResultIsMissing(t *testing.T) {
 	t.Cleanup(s.Close)
 	putGateTestAgent(t, s, "submit-gate-agent", nil)
 	wf := domain.WorkflowDefinition{
-		ID: "submit-gate-lab", Name: "submit gate lab", SandboxProfileID: "local",
+		ID: "submit-gate-lab", Name: "submit gate lab", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{
 			ID: "review", Name: "review", Type: "agent", AgentID: "submit-gate-agent", ExecutorID: "mock", MaxAttempts: 1,
 		}},
@@ -1683,7 +1686,7 @@ func TestLostCLISessionRestartsInsteadOfWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{
-		ID: "lost-session-lab", Name: "lost session lab", SandboxProfileID: "local",
+		ID: "lost-session-lab", Name: "lost session lab", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{
 			ID: "fix", Name: "fix", Type: "agent", AgentID: "lost-session-agent", ExecutorID: "mock", MaxAttempts: 1,
 		}},
@@ -1724,7 +1727,7 @@ func TestHumanGateFailureRetryRerunsNode(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	putGateTestAgent(t, s, "human-retry-agent", []domain.VerificationGate{{ID: "strict", Name: "strict", Mode: "command", Required: true, Commands: []string{"false"}, OnFailure: "human", ExecutionScope: domain.ExecutionScopeRun}})
-	wf := domain.WorkflowDefinition{ID: "human-retry-lab", Name: "human retry lab", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "human-retry-lab", Name: "human retry lab", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "check", Name: "check", Type: "agent", AgentID: "human-retry-agent", ExecutorID: "mock", OnFailure: "human", MaxAttempts: 1},
 	}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -1754,7 +1757,7 @@ func TestCancelMarksActiveNodeCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "cancel-active", Name: "cancel active", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "cancel-active", Name: "cancel active", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "wait", Name: "wait", Type: "command", Command: "echo started; sleep 5; echo finished", MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -1796,7 +1799,7 @@ func TestRetryCancelledRunFromNodeAfterImmediateCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "resume-cancelled", Name: "resume cancelled", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "resume-cancelled", Name: "resume cancelled", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "analyze", Name: "analyze", Type: "command", Command: "printf 'plan\\n' > fix-plan.md", ArtifactOutputs: []domain.ArtifactContract{{Name: "plan", Path: "fix-plan.md", Required: true}}, MaxAttempts: 1},
 		{ID: "fix", Name: "fix", Type: "command", Command: "sleep 2; test -f .agentflow/inputs/analyze/plan.md", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "analyze-fix", Source: "analyze", Target: "fix", When: "success"}}}
@@ -1846,7 +1849,7 @@ func TestRetrySucceededRunFromNodeAfterCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "replay-succeeded", Name: "replay succeeded", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "replay-succeeded", Name: "replay succeeded", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "first", Name: "first", Type: "command", Command: "printf one > first.txt", ArtifactOutputs: []domain.ArtifactContract{{Name: "first", Path: "first.txt", Required: true}}, MaxAttempts: 1},
 		{ID: "second", Name: "second", Type: "command", Command: "printf two > second.txt", ArtifactOutputs: []domain.ArtifactContract{{Name: "second", Path: "second.txt", Required: true}}, MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "first-second", Source: "first", Target: "second", When: "success"}}}
@@ -1887,7 +1890,7 @@ func TestRetryLegacySucceededRunAfterMainBotMissingSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "replay-succeeded", Name: "replay succeeded", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "replay-succeeded", Name: "replay succeeded", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "first", Name: "first", Type: "command", Command: "printf one > first.txt", ArtifactOutputs: []domain.ArtifactContract{{Name: "first", Path: "first.txt", MediaType: "text/plain", Required: true}}, MaxAttempts: 1},
 		{ID: "second", Name: "second", Type: "command", Command: "test -s .agentflow/inputs/first/first.txt && printf two > second.txt", ArtifactOutputs: []domain.ArtifactContract{{Name: "second", Path: "second.txt", Required: true}}, MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "first-second", Source: "first", Target: "second", When: "success"}}}
@@ -2115,7 +2118,7 @@ func TestParallelNodesDoNotOverwriteEachOther(t *testing.T) {
 
 func testDeliveryWorkflow() domain.WorkflowDefinition {
 	return domain.WorkflowDefinition{
-		ID: "delivery", Name: "Delivery", SandboxProfileID: "local",
+		ID: "delivery", Name: "Delivery", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "implement", Name: "Implement", Type: "agent", AgentID: "developer", ExecutorID: "mock", MaxAttempts: 2, MaxReworks: 3},
 			{ID: "verify", Name: "Verify", Type: "command", Command: "printf 'verification passed\\n'", RejectTo: "implement", MaxAttempts: 1, MaxReworks: 3},
@@ -2167,7 +2170,7 @@ func TestNodeFailureAutomaticallyRejectsToConfiguredTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "auto-reject", Name: "auto reject", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "auto-reject", Name: "auto reject", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "repair", Name: "repair", Type: "script", ScriptLanguage: "shell", Script: "true", MaxAttempts: 1},
 		{ID: "verify", Name: "verify", Type: "script", ScriptLanguage: "python", Script: "raise SystemExit(1)", MaxAttempts: 1, MaxReworks: 1, OnFailure: "reject", RejectTo: "repair"},
 	}, Edges: []domain.WorkflowEdge{{ID: "next", Source: "repair", Target: "verify", When: "success"}}}
@@ -2203,7 +2206,7 @@ func TestPassFailedScriptContinuesDownstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "pass-fail-stop", Name: "pass fail stop", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "pass-fail-stop", Name: "pass fail stop", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "hard", Name: "hard", Type: "script", ScriptLanguage: "shell", Script: "exit 1", OnFailure: "fail", MaxAttempts: 1},
 		{ID: "next", Name: "next", Type: "script", ScriptLanguage: "shell", Script: "printf 'ok\\n'", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "hard", Target: "next", When: "success"}}}
@@ -2248,7 +2251,7 @@ func TestPassAfterReworkLimitReached(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "pass-rework-limit", Name: "pass rework limit", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "pass-rework-limit", Name: "pass rework limit", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "repair", Name: "repair", Type: "script", ScriptLanguage: "shell", Script: "true", MaxAttempts: 1},
 		{ID: "verify", Name: "verify", Type: "script", ScriptLanguage: "shell", Script: "exit 1", MaxAttempts: 1, MaxReworks: 1, OnFailure: "reject", RejectTo: "repair"},
 		{ID: "done", Name: "done", Type: "script", ScriptLanguage: "shell", Script: "printf 'done\\n'", MaxAttempts: 1},
@@ -2331,7 +2334,7 @@ func TestArtifactsAreVersionedAndMaterializedForDownstreamNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "artifacts", Name: "artifact handoff", Version: 1, SandboxProfileID: "local",
+	wf := domain.WorkflowDefinition{ID: "artifacts", Name: "artifact handoff", Version: 1, SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "produce", Name: "produce", Type: "command", Command: "mkdir -p docs && printf '# Plan\\n\\naccepted\\n' > docs/plan.md", ArtifactOutputs: []domain.ArtifactContract{{Name: "plan", Path: "docs/plan.md", MediaType: "text/markdown", Required: true}}, MaxAttempts: 1},
 			{ID: "consume", Name: "consume", Type: "command", Command: "cat .agentflow/inputs/produce/plan.md", MaxAttempts: 1},
@@ -2374,7 +2377,7 @@ func TestRepositoryPatchIsFrozenAndAppliedToDownstreamSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "repository-handoff", Name: "repository handoff", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "repository-handoff", Name: "repository handoff", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "change", Name: "change", Type: "command", Command: "printf changed > repo/app.txt; printf '{}\\n' > report.json; mkdir -p repo/config; printf 'Bearer secret-token\\n' > repo/config/mcporter.json", ArtifactOutputs: []domain.ArtifactContract{{Name: "report", Path: "report.json", MediaType: "application/json", Required: true}}, MaxAttempts: 1},
 		{ID: "verify", Name: "verify", Type: "command", Command: "test \"$(cat repo/app.txt)\" = changed", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "handoff", Source: "change", Target: "verify", When: "success"}}}
@@ -2420,7 +2423,7 @@ func TestSingleRepositoryKeepsDeliverablesAtRunRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "single-layout", Name: "single layout", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "single-layout", Name: "single layout", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "analyze", Name: "analyze", Type: "command", Command: "printf '# plan\\nroot cause\\n' > fix-plan.md; printf changed\\n > repo/app.txt; test -f fix-plan.md && test ! -f repo/fix-plan.md && test ! -e .git && test -d repo/.git", ArtifactOutputs: []domain.ArtifactContract{{Name: "plan", Path: "fix-plan.md", Required: true}}, MaxAttempts: 1},
 	}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -2480,7 +2483,7 @@ func TestAutomaticGatesAndArtifactsCompleteBeforeManualApproval(t *testing.T) {
 		{ID: "human-first", Name: "Human", Mode: "manual", Required: true},
 		{ID: "automatic-after", Name: "Automatic", Mode: "command", Commands: []string{"test -s evidence.md"}, Required: true, ExecutionScope: domain.ExecutionScopeRun},
 	})
-	wf := domain.WorkflowDefinition{ID: "gated-artifact", Name: "gated artifact", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "gated-artifact", Name: "gated artifact", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "prepare", Name: "prepare", Type: "command", Command: "printf '# Evidence\\n' > evidence.md", MaxAttempts: 1},
 		{ID: "deliver", Name: "deliver", Type: "agent", AgentID: "artifact-validator", ExecutorID: "mock",
 			ArtifactOutputs: []domain.ArtifactContract{{Name: "evidence", Path: "evidence.md", Required: true}},
@@ -2537,7 +2540,7 @@ func TestArtifactContractIsValidatedBeforeAutomaticGate(t *testing.T) {
 	putGateTestAgent(t, s, "missing-artifact-validator", []domain.VerificationGate{{
 		ID: "marker", Name: "marker", Mode: "command", Commands: []string{"touch " + shellSingleQuote(gateMarker)}, Required: true, ExecutionScope: domain.ExecutionScopeRun,
 	}})
-	wf := domain.WorkflowDefinition{ID: "artifact-before-gate", Name: "artifact before gate", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "artifact-before-gate", Name: "artifact before gate", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "deliver", Name: "deliver", Type: "agent", AgentID: "missing-artifact-validator", ExecutorID: "mock",
 		ArtifactOutputs: []domain.ArtifactContract{{Name: "evidence", Path: "evidence.md", Required: true}},
 		MaxAttempts:     1,
@@ -2588,7 +2591,7 @@ func TestVerificationGateRunsMultiLineCommandsAsOneScript(t *testing.T) {
 			"fi",
 		},
 	}})
-	wf := domain.WorkflowDefinition{ID: "multiline-gate", Name: "multiline gate", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "multiline-gate", Name: "multiline gate", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "prepare", Name: "prepare", Type: "command", Command: "printf '# Evidence\\n' > evidence.md", MaxAttempts: 1},
 		{ID: "deliver", Name: "deliver", Type: "agent", AgentID: "multiline-validator", ExecutorID: "mock", ArtifactOutputs: []domain.ArtifactContract{{Name: "evidence", Path: "evidence.md", Required: true}}, MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "prepare-deliver", Source: "prepare", Target: "deliver", When: "success"}}}
@@ -2617,7 +2620,7 @@ func TestRunUsesFrozenWorkflowSnapshotDuringConcurrentEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "snapshot", Name: "Snapshot", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "snapshot", Name: "Snapshot", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "approve", Name: "Approve", Type: "approval", MaxAttempts: 1},
 		{ID: "original", Name: "Original", Type: "command", Command: "printf original", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "next", Source: "approve", Target: "original", When: "success"}}}
@@ -2646,75 +2649,28 @@ func TestRunUsesFrozenWorkflowSnapshotDuringConcurrentEdits(t *testing.T) {
 	}
 }
 
-func TestRetryLegacyRunDefaultsEmptySandboxProfileToLocal(t *testing.T) {
+// Runs frozen before workflows owned a sandbox, and workflows that never chose
+// one, run in the generic Docker sandbox; never directly on a machine.
+func TestEmptySandboxProfileDefaultsToGenericDocker(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "profile-added-later", Name: "Profile added later", Driver: "local"}); err != nil {
-		t.Fatal(err)
-	}
-	wf := domain.WorkflowDefinition{
-		ID: "legacy-sandbox-retry", Name: "Legacy sandbox retry", SandboxProfileID: "profile-added-later",
-		Nodes: []domain.WorkflowNode{{ID: "build", Name: "Build", Type: "command", Command: "printf resumed", MaxAttempts: 1}},
-	}
-	if err := s.PutWorkflow(wf); err != nil {
-		t.Fatal(err)
-	}
-	run := domain.Run{
-		ID: "run-legacy-sandbox-retry", WorkflowID: wf.ID,
-		WorkflowSnapshot: domain.WorkflowDefinition{
-			ID: wf.ID, Name: wf.Name, Nodes: append([]domain.WorkflowNode(nil), wf.Nodes...),
-		},
-		Status: "failed",
-		Nodes: map[string]*domain.NodeRun{
-			"build": {NodeID: "build", Status: "failed", Attempt: 1, Error: "historical failure"},
-		},
-	}
-	if err := s.PutRun(run); err != nil {
-		t.Fatal(err)
-	}
-	if got := workflowForRun(s, run).SandboxProfileID; got != "local" {
-		t.Fatalf("legacy run sandbox profile = %q, want local", got)
-	}
-	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
-	if err := e.Retry(run.ID, "build", "兼容历史运行", ""); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, s, run.ID, "succeeded")
-	current, _ := s.Run(run.ID)
-	if got := current.Nodes["build"].Output; got != "resumed\n" {
-		t.Fatalf("legacy retry output = %q, want resumed", got)
-	}
-}
-
-func TestStartDefaultsEmptySandboxProfileToLocal(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
 	wf := domain.WorkflowDefinition{
-		ID: "default-local-sandbox", Name: "Default local sandbox",
-		Nodes: []domain.WorkflowNode{{ID: "build", Name: "Build", Type: "command", Command: "printf local", MaxAttempts: 1}},
+		ID: "default-sandbox", Name: "Default sandbox",
+		Nodes: []domain.WorkflowNode{{ID: "build", Name: "Build", Type: "command", Command: "printf ok", MaxAttempts: 1}},
 	}
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
-	run, err := e.Start(wf.ID, "")
-	if err != nil {
-		t.Fatal(err)
+	legacy := domain.Run{ID: "run-legacy-sandbox", WorkflowID: wf.ID, WorkflowSnapshot: domain.WorkflowDefinition{ID: wf.ID, Name: wf.Name, Nodes: wf.Nodes}}
+	if got := workflowForRun(s, legacy).SandboxProfileID; got != repo.GenericDockerSandboxID {
+		t.Fatalf("legacy run sandbox profile = %q", got)
 	}
-	waitFor(t, s, run.ID, "succeeded")
-	current, _ := s.Run(run.ID)
-	if current.WorkflowSnapshot.SandboxProfileID != "local" {
-		t.Fatalf("run sandbox profile = %q, want local", current.WorkflowSnapshot.SandboxProfileID)
+	if got := workflowForRun(s, domain.Run{WorkflowID: wf.ID}).SandboxProfileID; got != repo.GenericDockerSandboxID {
+		t.Fatalf("new run sandbox profile = %q", got)
 	}
 }
 
@@ -2853,43 +2809,25 @@ func TestResolveNodeExecutorPrefersAgentModel(t *testing.T) {
 	}
 }
 
-func TestResolveSandboxResourcesRequiresDockerfileForDocker(t *testing.T) {
+func TestResolveSandboxRequiresDockerfileForDocker(t *testing.T) {
 	t.Parallel()
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if _, err := resolveSandboxResources(s, domain.SandboxProfile{ID: "container", Driver: "docker"}); err == nil {
+	if _, err := resolveSandbox(domain.SandboxProfile{ID: "container", Driver: "docker"}); err == nil {
 		t.Fatal("docker profile without dockerfile should fail")
 	}
-	df := domain.DockerfileDefinition{ID: "runtime", Name: "Runtime", Content: "FROM debian:bookworm-slim"}
-	if err := s.PutDockerfile(df); err != nil {
-		t.Fatal(err)
-	}
-	resources, err := resolveSandboxResources(s, domain.SandboxProfile{ID: "container", Driver: "docker", DockerfileID: df.ID})
+	spec, err := resolveSandbox(domain.SandboxProfile{ID: "container", Driver: "docker", Dockerfile: &domain.SandboxDockerfile{Content: "FROM debian:bookworm-slim"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(resources.Dockerfile.Content) == "" || resources.Dockerfile.ID != df.ID {
-		t.Fatalf("expected catalog dockerfile, got %+v", resources.Dockerfile)
+	resources := sandboxResourcesFromSnapshot(spec)
+	if strings.TrimSpace(resources.Dockerfile.Content) == "" || resources.Dockerfile.ID != "container" || spec.Profile.DockerfileID != "container" {
+		t.Fatalf("expected the sandbox's dockerfile, got %+v", spec)
 	}
-	env := domain.EnvironmentDefinition{
-		ID:            "jdk",
-		Name:          "JDK",
-		Variables:     map[string]string{"JAVA_HOME": "${PREFIX}/jdk"},
-		PathEntries:   []string{"bin", "jdk/bin"},
-		InstallScript: "mkdir -p \"$PREFIX/bin\"",
-	}
-	if err := s.PutEnvironment(env); err != nil {
-		t.Fatal(err)
-	}
-	resources, err = resolveSandboxResources(s, domain.SandboxProfile{ID: "mac", Driver: "seatbelt", EnvironmentID: env.ID})
+	spec, err = resolveSandbox(domain.SandboxProfile{ID: "mac", Driver: "seatbelt", Environment: map[string]string{"JAVA_HOME": "/opt/jdk"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resources.Environment.ID != env.ID || resources.Environment.Variables["JAVA_HOME"] == "" || strings.TrimSpace(resources.Environment.InstallScript) == "" {
-		t.Fatalf("expected catalog environment, got %+v", resources.Environment)
+	if spec.Dockerfile != nil || spec.Profile.Environment["JAVA_HOME"] != "/opt/jdk" {
+		t.Fatalf("expected a native sandbox with only its variables, got %+v", spec)
 	}
 }
 
@@ -2901,7 +2839,7 @@ func TestOverlayLatestNodeBindingsRefreshesArtifactContracts(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	current := domain.WorkflowDefinition{
-		ID: "issue-fix-production", Name: "Issue fix", SandboxProfileID: "local", Version: 2,
+		ID: "issue-fix-production", Name: "Issue fix", SandboxProfileID: "test-native", Version: 2,
 		Nodes: []domain.WorkflowNode{{ID: "checkers", Name: "Checkers", Type: "command", ArtifactOutputs: []domain.ArtifactContract{{Name: "strict", Path: "checkers-report.md", Required: true}}}},
 	}
 	if err := s.PutWorkflow(current); err != nil {
@@ -3857,7 +3795,7 @@ func TestRecordHumanContextPersistsForRetryAndPrompt(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	putGateTestAgent(t, s, "human-context-agent", []domain.VerificationGate{{ID: "strict", Name: "strict", Mode: "command", Required: true, Commands: []string{"false"}, OnFailure: "human", ExecutionScope: domain.ExecutionScopeRun}})
-	wf := domain.WorkflowDefinition{ID: "human-context-lab", Name: "human context lab", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "human-context-lab", Name: "human context lab", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "check", Name: "check", Type: "agent", AgentID: "human-context-agent", ExecutorID: "mock", OnFailure: "human", MaxAttempts: 1},
 	}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -3915,7 +3853,7 @@ func TestApproveWithHumanContextReachesDownstream(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	putGateTestAgent(t, s, "human-approve-agent", []domain.VerificationGate{{ID: "strict", Name: "strict", Mode: "command", Required: true, Commands: []string{"false"}, OnFailure: "human", ExecutionScope: domain.ExecutionScopeRun}})
-	wf := domain.WorkflowDefinition{ID: "human-approve-context", Name: "approve context", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "human-approve-context", Name: "approve context", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "gate", Name: "gate", Type: "agent", AgentID: "human-approve-agent", ExecutorID: "mock", OnFailure: "human", MaxAttempts: 1},
 		{ID: "next", Name: "next", Type: "command", Command: "test -f human-context.md && grep -q TestFoo human-context.md", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "gate", Target: "next", When: "success"}}}
@@ -4049,7 +3987,7 @@ func TestAlignOnlyApprovalDoesNotWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: BaselineAlignWorkflowID, Name: "align auto", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: BaselineAlignWorkflowID, Name: "align auto", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "work", Name: "work", Type: "command", Command: "printf aligned\\n", MaxAttempts: 1},
 		{ID: "confirm", Name: "confirm", Type: "approval", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "work", Target: "confirm"}}}

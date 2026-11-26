@@ -52,6 +52,7 @@ func (r *AssistantRepo) commitGenerationTranscript(ownerID int64, generationID s
 		base := *r.deps
 		base.DB = tx
 		scoped.deps = &base
+		next.TitleEdited = false
 		return scoped.putAssistantSession(ownerID, next)
 	})
 }

@@ -90,17 +90,11 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	}
 	responseLimit := int64(8 << 20)
 	if path == runnerTaskClaimPath {
-		responseLimit += domain.RunnerSSHKnownHostsWireLimit
+		responseLimit += domain.RunnerSSHKnownHostsWireLimit + domain.RunnerTaskAssetWireLimit
 	}
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, responseLimit))
 	if resp.StatusCode >= 400 {
-		var detail struct {
-			Error string `json:"error"`
-		}
-		if resp.StatusCode == http.StatusConflict && json.Unmarshal(payload, &detail) == nil && detail.Error == ErrTaskLeaseLost.Error() {
-			return ErrTaskLeaseLost
-		}
-		return fmt.Errorf("%s %s: %s", method, path, strings.TrimSpace(string(payload)))
+		return runnerResponseError(method, path, resp.StatusCode, payload)
 	}
 	if out != nil && len(payload) > 0 {
 		if err := json.Unmarshal(payload, out); err != nil {
@@ -110,17 +104,38 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	return nil
 }
 
+type runnerHTTPError struct {
+	status int
+	detail string
+}
+
+func (e *runnerHTTPError) Error() string { return e.detail }
+
+func runnerResponseError(method, path string, status int, payload []byte) error {
+	if status == http.StatusUnauthorized {
+		return ErrUnauthorized
+	}
+	var detail struct {
+		Error string `json:"error"`
+	}
+	if status == http.StatusConflict && json.Unmarshal(payload, &detail) == nil && detail.Error == ErrTaskLeaseLost.Error() {
+		return ErrTaskLeaseLost
+	}
+	return &runnerHTTPError{status: status, detail: fmt.Sprintf("%s %s (HTTP %d): %s", method, path, status, strings.TrimSpace(string(payload)))}
+}
+
 // ---------- endpoints ----------
 
 type RegisterRequest struct {
-	RunnerID       string                 `json:"runnerId,omitempty"`
-	Name           string                 `json:"name"`
-	OS             string                 `json:"os"`
-	Arch           string                 `json:"arch"`
-	Version        string                 `json:"version"`
-	Labels         []string               `json:"labels,omitempty"`
-	MaxConcurrency int                    `json:"maxConcurrency"`
-	Runtimes       []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	RunnerID               string                 `json:"runnerId,omitempty"`
+	Name                   string                 `json:"name"`
+	OS                     string                 `json:"os"`
+	Arch                   string                 `json:"arch"`
+	Version                string                 `json:"version"`
+	Labels                 []string               `json:"labels,omitempty"`
+	MaxConcurrency         int                    `json:"maxConcurrency"`
+	Runtimes               []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	NativeSandboxAvailable bool                   `json:"nativeSandboxAvailable"`
 }
 
 type RegisterResponse struct {
@@ -161,10 +176,11 @@ func (c *Client) Register(ctx context.Context, bootstrapToken string, req Regist
 }
 
 type HeartbeatRequest struct {
-	Status       string                 `json:"status"`
-	RunningTasks int                    `json:"runningTasks"`
-	Version      string                 `json:"version,omitempty"`
-	Runtimes     []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	Status                 string                 `json:"status"`
+	RunningTasks           int                    `json:"runningTasks"`
+	Version                string                 `json:"version,omitempty"`
+	Runtimes               []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	NativeSandboxAvailable bool                   `json:"nativeSandboxAvailable"`
 }
 
 type HeartbeatResponse struct {
@@ -192,12 +208,13 @@ func (c *Client) Disconnect(ctx context.Context) error {
 }
 
 type ClaimRequest struct {
-	AvailableRuntimes        []string `json:"availableRuntimes"`
-	Capacity                 int      `json:"capacity"`
-	Preflight                bool     `json:"preflight,omitempty"`
-	NoWait                   bool     `json:"noWait,omitempty"`
-	AttemptFencing           bool     `json:"attemptFencing,omitempty"`
-	SupportsGitSSHKnownHosts bool     `json:"supportsGitSshKnownHosts,omitempty"`
+	AvailableRuntimes           []string `json:"availableRuntimes"`
+	Capacity                    int      `json:"capacity"`
+	Preflight                   bool     `json:"preflight,omitempty"`
+	NoWait                      bool     `json:"noWait,omitempty"`
+	AttemptFencing              bool     `json:"attemptFencing,omitempty"`
+	SupportsGitSSHKnownHosts    bool     `json:"supportsGitSshKnownHosts,omitempty"`
+	SupportsDockerSandboxLimits bool     `json:"supportsDockerSandboxLimits,omitempty"`
 }
 
 // WaitForTask long-polls without leasing work. Older servers ignore preflight
@@ -206,6 +223,7 @@ func (c *Client) WaitForTask(ctx context.Context, req ClaimRequest) (bool, *doma
 	req.Preflight = true
 	req.AttemptFencing = true
 	req.SupportsGitSSHKnownHosts = true
+	req.SupportsDockerSandboxLimits = true
 	var out struct {
 		TaskAvailable bool              `json:"taskAvailable"`
 		Task          domain.RunnerTask `json:"task"`
@@ -225,6 +243,7 @@ func (c *Client) WaitForTask(ctx context.Context, req ClaimRequest) (bool, *doma
 func (c *Client) Claim(ctx context.Context, req ClaimRequest) (*domain.RunnerTask, bool, error) {
 	req.AttemptFencing = true
 	req.SupportsGitSSHKnownHosts = true
+	req.SupportsDockerSandboxLimits = true
 	var out struct {
 		Task domain.RunnerTask `json:"task"`
 	}
@@ -281,6 +300,7 @@ func (c *Client) OpenControl(ctx context.Context) (*websocket.Conn, error) {
 	u.Path = strings.TrimRight(u.Path, "/") + "/runners/connect"
 	header := http.Header{}
 	header.Set(domain.RunnerSSHHostKeyProbeHeader, "1")
+	header.Set(domain.RunnerDockerSandboxLimitsHeader, "1")
 	if session := c.sessionToken(); session != "" {
 		header.Set("Authorization", "Bearer "+session)
 	}

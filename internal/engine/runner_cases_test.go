@@ -31,7 +31,7 @@ func cvERunner(t *testing.T, e *Engine, id string, status string, providers ...s
 func cvERunnerRun(id, runnerID string) domain.Run {
 	return domain.Run{
 		ID: id, Status: "failed",
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", SandboxProfileID: "local"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", SandboxProfileID: "test-native"},
 		ExecutionContext: domain.TelemetryContext{
 			ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runnerID,
 			RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared, ResponsibleUserID: 1,

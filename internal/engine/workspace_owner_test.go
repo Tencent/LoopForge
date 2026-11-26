@@ -22,14 +22,14 @@ func TestSOPChildWorksInParentWorkspace(t *testing.T) {
 	}
 	defer s.Close()
 	child := domain.WorkflowDefinition{
-		ID: "child-edit", Name: "Child", SandboxProfileID: "local",
+		ID: "child-edit", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{
 			ID: "edit", Name: "Edit", Type: "script", ScriptLanguage: "shell",
 			Script: "test -f pre.txt && printf child > child.txt", MaxAttempts: 1,
 		}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "parent-edit", Name: "Parent", SandboxProfileID: "local",
+		ID: "parent-edit", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "pre", Name: "Pre", Type: "script", ScriptLanguage: "shell", Script: "printf pre > pre.txt", MaxAttempts: 1},
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
@@ -98,7 +98,7 @@ func TestRetryOnDeadBoundHostIsTakenOverByLiveWorker(t *testing.T) {
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "ready")
-	wf := domain.WorkflowDefinition{ID: "retry-takeover", Name: "retry", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "retry-takeover", Name: "retry", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "work", Name: "work", Type: "command", Command: "test -e " + marker, MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {

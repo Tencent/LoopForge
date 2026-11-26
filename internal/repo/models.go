@@ -71,6 +71,7 @@ type gitHTTPCredentialRow struct {
 	Name     string     `gorm:"size:80;not null"`
 	Platform string     `gorm:"size:16;not null"`
 	Host     string     `gorm:"size:255;not null"`
+	HTTPHost string     `gorm:"size:267;not null;default:''"`
 	Username string     `gorm:"size:128;not null"`
 	Token    string     `gorm:"type:text;not null"`
 	Created  *time.Time `gorm:"column:created_at"`
@@ -114,6 +115,21 @@ type projectMemberRow struct {
 }
 
 func (projectMemberRow) TableName() string { return "project_members" }
+
+type projectJoinRequestRow struct {
+	ID         int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	ProjectID  string     `gorm:"column:project_id;size:64;not null;index:idx_project_join_requests_project"`
+	UserID     int64      `gorm:"column:user_id;not null;index:idx_project_join_requests_user"`
+	Role       string     `gorm:"column:role;size:32;not null"`
+	Reason     string     `gorm:"column:reason;type:text"`
+	Status     string     `gorm:"column:status;size:16;not null"`
+	ReviewerID *int64     `gorm:"column:reviewer_user_id"`
+	Created    *time.Time `gorm:"column:created_at"`
+	Updated    *time.Time `gorm:"column:updated_at"`
+	Reviewed   *time.Time `gorm:"column:reviewed_at"`
+}
+
+func (projectJoinRequestRow) TableName() string { return "project_join_requests" }
 
 type repositoryRow struct {
 	ID        string     `gorm:"column:id;primaryKey;size:64"`
@@ -196,24 +212,6 @@ type executorRow struct {
 }
 
 func (executorRow) TableName() string { return "executors" }
-
-type dockerfileRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Name    string     `gorm:"column:name;size:255"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (dockerfileRow) TableName() string { return "dockerfiles" }
-
-type environmentRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Name    string     `gorm:"column:name;size:255"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (environmentRow) TableName() string { return "environments" }
 
 type sandboxRow struct {
 	ID      string `gorm:"column:id;primaryKey;size:64"`
@@ -434,7 +432,8 @@ type runArtifactRow struct {
 	SizeBytes     int64      `gorm:"column:size_bytes"`
 	SHA256        string     `gorm:"column:sha256;size:64"`
 	RepositoryDir string     `gorm:"column:repository_dir;size:128"`
-	Content       string     `gorm:"column:content;type:text"`
+	Content       string     `gorm:"column:content;type:mediumtext"`
+	BlobID        string     `gorm:"column:blob_id;size:64"`
 	Created       *time.Time `gorm:"column:created_at"`
 }
 
@@ -537,22 +536,25 @@ type definitionRevisionRow struct {
 func (definitionRevisionRow) TableName() string { return "definition_revisions" }
 
 type runnerRow struct {
-	ID               string     `gorm:"column:id;primaryKey;size:64"`
-	Name             string     `gorm:"column:name;size:255"`
-	Status           string     `gorm:"column:status;index:idx_runners_status;size:32"`
-	OS               string     `gorm:"column:os;size:32"`
-	Arch             string     `gorm:"column:arch;size:32"`
-	RunnerVersion    string     `gorm:"column:runner_version;size:64"`
-	Labels           []byte     `gorm:"column:labels;type:json"`
-	MaxConcurrency   int        `gorm:"column:max_concurrency"`
-	RunLimit         *int       `gorm:"column:run_limit"`
-	OwnerUserID      *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
-	SessionTokenHash string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
-	SessionExpiresAt *time.Time `gorm:"column:session_expires_at"`
-	Runtimes         []byte     `gorm:"column:runtimes;type:json"`
-	LastSeenAt       *time.Time `gorm:"column:last_seen_at"`
-	Created          *time.Time `gorm:"column:created_at"`
-	Updated          *time.Time `gorm:"column:updated_at"`
+	ID                     string     `gorm:"column:id;primaryKey;size:64"`
+	Name                   string     `gorm:"column:name;size:255"`
+	Status                 string     `gorm:"column:status;index:idx_runners_status;size:32"`
+	OS                     string     `gorm:"column:os;size:32"`
+	Arch                   string     `gorm:"column:arch;size:32"`
+	RunnerVersion          string     `gorm:"column:runner_version;size:64"`
+	NativeSandboxAvailable bool       `gorm:"column:native_sandbox_available"`
+	Labels                 []byte     `gorm:"column:labels;type:json"`
+	MaxConcurrency         int        `gorm:"column:max_concurrency"`
+	RunLimit               *int       `gorm:"column:run_limit"`
+	OwnerUserID            *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
+	SharedProjectIDs       []byte     `gorm:"column:shared_project_ids;type:json"`
+	LoginModels            []byte     `gorm:"column:login_model_catalogs;type:json"`
+	SessionTokenHash       string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
+	SessionExpiresAt       *time.Time `gorm:"column:session_expires_at"`
+	Runtimes               []byte     `gorm:"column:runtimes;type:json"`
+	LastSeenAt             *time.Time `gorm:"column:last_seen_at"`
+	Created                *time.Time `gorm:"column:created_at"`
+	Updated                *time.Time `gorm:"column:updated_at"`
 }
 
 func (runnerRow) TableName() string { return "runners" }
@@ -592,12 +594,32 @@ type userRunnerPrefRow struct {
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
 
-// assistantPreferenceRow: a missing row means switches are off and messages queue.
+type userProjectRunnerPrefRow struct {
+	UserID          int64  `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	ProjectID       string `gorm:"column:project_id;primaryKey;size:64"`
+	DefaultRunnerID string `gorm:"column:default_runner_id;not null;size:64;index:idx_user_project_runner_prefs_runner"`
+	SelectionMode   string `gorm:"column:selection_mode;not null;default:'';size:32"`
+}
+
+func (userProjectRunnerPrefRow) TableName() string { return "user_project_runner_prefs" }
+
+type platformRunnerSettingsRow struct {
+	ID        int64      `gorm:"column:id;primaryKey;autoIncrement:false"`
+	RunLimit  int        `gorm:"column:run_limit;not null"`
+	UpdatedBy int64      `gorm:"column:updated_by;not null;default:0"`
+	Updated   *time.Time `gorm:"column:updated_at"`
+}
+
+func (platformRunnerSettingsRow) TableName() string { return "platform_runner_settings" }
+
+// assistantPreferenceRow: a missing row means switches are off, messages queue
+// and the agent picks conversation workspace sandboxes itself.
 type assistantPreferenceRow struct {
 	UserID              int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
 	ProactiveRoles      bool       `gorm:"column:proactive_roles;not null;default:false"`
 	ProactiveSOPs       bool       `gorm:"column:proactive_sops;not null;default:false"`
 	SteerOnSend         bool       `gorm:"column:steer_on_send;not null;default:false"`
+	WorkspaceDriver     string     `gorm:"column:workspace_driver;type:varchar(16);not null;default:''"`
 	Instructions        string     `gorm:"column:instructions;type:text"`
 	ApprovalReviewMode  string     `gorm:"column:approval_review_mode;size:32;not null;default:''"`
 	ApprovalReviewModel string     `gorm:"column:approval_review_model;size:160;not null;default:''"`
@@ -746,6 +768,16 @@ type knowledgeSettingsRow struct {
 
 func (knowledgeSettingsRow) TableName() string { return "knowledge_settings" }
 
+// platformSettingsRow is the single row of platform-wide settings a platform
+// administrator maintains on the management page (see domain.PlatformSettings).
+type platformSettingsRow struct {
+	ID      string     `gorm:"column:id;primaryKey;size:64"`
+	Payload []byte     `gorm:"column:payload;type:json"`
+	Updated *time.Time `gorm:"column:updated_at"`
+}
+
+func (platformSettingsRow) TableName() string { return "platform_settings" }
+
 type knowledgeSubmissionRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
 	ProjectID  string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64"`
@@ -761,23 +793,24 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
-	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
+	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, botNativeSessionRow{}, botPendingDraftRow{}, botChatOriginRow{}, botClarifySessionRow{}, domain.NotificationDelivery{},
 		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
-		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
+		projectRow{}, projectMemberRow{}, projectJoinRequestRow{}, projectCredentialRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
-		dockerfileRow{}, environmentRow{}, sandboxRow{},
+		sandboxRow{},
 		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
-		issueRow{}, issueCommentRow{}, taskRow{},
-		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
+		issueRow{}, issueCommentRow{}, issueImageRow{}, taskRow{},
+		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runArtifactBlobRow{}, runArtifactBlobChunk{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
 		mrDeliveryStateRow{}, definitionRevisionRow{},
-		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{},
+		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{}, userProjectRunnerPrefRow{}, platformRunnerSettingsRow{},
 		assistantSessionRow{}, assistantTaskRow{}, assistantGenerationRow{}, assistantSessionReadRow{}, assistantPreferenceRow{}, assistantDiagnosticsRow{},
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
-		PlatformGitSSHHost{}, PlatformGitHTTPSHost{},
+		platformSettingsRow{},
+		PlatformGitSSHHost{}, PlatformGitHTTPSHost{}, PlatformGitHTTPHost{},
 	}
 }

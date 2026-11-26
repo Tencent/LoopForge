@@ -80,6 +80,10 @@ func (r *RunsRepo) ReleaseWorkspaceEditor(runID string, userID int64, beforeRele
 				return err
 			}
 		}
+		// Only clearing a legacy editor lease changes the persisted run.
+		if row.WorkspaceEditorID == 0 && row.WorkspaceEditUntil == nil {
+			return nil
+		}
 		return tx.Model(&runRow{}).Where("id = ?", runID).Updates(map[string]any{
 			"workspace_editor_id": 0, "workspace_edit_until": nil, "revision": gorm.Expr("revision + 1"),
 		}).Error
