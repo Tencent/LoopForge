@@ -2,7 +2,7 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
-## Unreleased
+## 0.4.3 — LOOP orchestration, execution machines and asset evolution
 
 ### Platform
 
@@ -14,6 +14,8 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 - LOOPs dispatched from project conversations can reuse the conversation's Git checkouts, including repositories nested inside another checkout, and keep local commits and edits. Upgrade the platform and its execution machines together. Reusing a conversation checkout on an execution machine requires Runner 0.12.3 or later.
 - Users can choose a preferred sandbox kind in 设置 → AI 助手 → 对话工作区. The preference (`workspaceDriver` in `/api/assistant/preferences`) prioritizes that kind among compatible environments. A task can require another toolchain, and a fixed conversation environment takes precedence. The workbench groups sandboxes by kind, and the header displays the current workspace's sandbox type icon and ID beside the execution machine. Startup AutoMigrate and migration 041 both add the preference column.
 - **Breaking:** a docker sandbox now carries its own Dockerfile, and the 环境资产 page becomes 「沙箱管理」 without type tabs: the sandbox editor holds the Dockerfile and its build-context files for docker, and only environment variables for native. Dockerfiles and install scripts are no longer separate assets. `/api/dockerfiles`, `/api/environments`, the `dockerfiles_*` / `environments_*` assistant and MCP tools and the `dockerfiles` / `environments` bootstrap fields are removed; `PUT /api/sandboxes` takes `dockerfile {content, files}` in place of `dockerfileId`, and rejects `driver: local`. For an existing Compose database, `./start.sh pull` backs up the database and applies `migrations/041_native_sandbox_inline_assets.sql` with the platform stopped when the target image supports inline Dockerfiles and legacy asset tables still exist. For a manual Compose upgrade, use `./start.sh migrate-sandboxes`. Apply the SQL directly for external MySQL. It copies each referenced Dockerfile into its sandbox, turns one that no sandbox used into a sandbox of its own, turns local sandboxes into native ones, copies ordinary variables from referenced environments, drops install scripts and `PATH` from native sandbox variables, and moves LOOPs that used the old default to `generic-docker`, and drops the `dockerfiles` and `environments` tables. Docker images are reused.
+
+- The RSI workbench lets project teams review asset proposals, replay real runs, try changes in a canary, and publish or roll back asset versions (#1314).
 
 ### enterprise IM channels (Feishu and DingTalk chats, proactive notifications, data retention)
 
@@ -39,6 +41,8 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 - **Bot chats accept a plain natural-language answer.** Before, a Bot turn could only end through `submit_assistant_reply`, which refuses replies without drafts, so plain query answers ran the model three times and failed with 助手未提交回复. Now plain text from a successful run is the reply; protocol JSON, progress-only text, empty output and failed runs still go through the terminal retry. Writes still need drafts or the tool gateway. Applies to WeCom and Feishu Bots, not to the web assistant or LOOP nodes.
 - Receiving leases, send windows and retries are judged on the database clock with an epoch per owner, so a replica that lost its lease can no longer overwrite a reply or send it twice. Notification deliveries gain the state `send_unknown`.
 - Upgrading needs a maintenance window: stop every old replica, start the new version once with `AGENTFLOW_BOT_WORKERS_ENABLED=false`, run `migrations/036_enterprise_im_channels.sql` and `migrations/037_bot_binding_ownership.sql`, run `-credential-action reencrypt`, then restart with workers enabled. Bots not backfilled by 036 do not receive messages.
+
+**Upgrading from v0.4.2.** Check out `v0.4.3` and run `./start.sh pull` for a Compose installation. Review the sandbox migration above before upgrading an external MySQL deployment. Follow the [Runner update instructions](docs/conversation-native-cli.md) for remote execution machines.
 
 ## 0.4.2 — Conversation recovery and assisted approvals
 
