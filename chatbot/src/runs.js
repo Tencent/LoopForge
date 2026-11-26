@@ -142,9 +142,16 @@ export function isConversationWorkspaceRun(run) {
   );
 }
 
-export function useConversationRuns(session, refreshKey = 0) {
+export function useConversationRuns(session, refreshKey = 0, extraRunIds = []) {
   const [state, setState] = useState({ sessionId: null, runs: [] });
-  const ids = useMemo(() => conversationRunIDs(session), [session]);
+  const extraKey = (extraRunIds || []).join(",");
+  const ids = useMemo(() => {
+    const merged = new Set(conversationRunIDs(session));
+    for (const id of extraRunIds || []) {
+      if (typeof id === "string" && /^run-[\w-]+$/.test(id)) merged.add(id);
+    }
+    return [...merged];
+  }, [session, extraKey]);
   const key = ids.join(",");
   useEffect(() => {
     let current = true,

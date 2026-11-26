@@ -99,7 +99,7 @@ export function collectArtifacts(session) {
     }
     if (message.role !== "assistant") return;
     for (const asset of message.assets || []) {
-      if (asset.kind === "run") continue;
+      if (asset.kind === "run" || asset.kind === "issue") continue;
       artifacts.push({
         id: `asset-${asset.kind}-${asset.id}`,
         name: asset.name || asset.id,

@@ -233,12 +233,15 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 			kind = "sop"
 		case "runs_start", "issues_dispatch":
 			kind = "run"
+		case "issues_save", "issues_import_tapd":
+			kind = "issue"
 		}
 		if kind != "" {
 			var asset struct {
 				ID     string `json:"id"`
 				RunID  string `json:"runId"`
 				Name   string `json:"name"`
+				Title  string `json:"title"`
 				Status string `json:"status"`
 			}
 			if json.Unmarshal(result.Body, &asset) == nil {
@@ -246,8 +249,12 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 				if kind == "run" && asset.RunID != "" {
 					id = asset.RunID
 				}
+				name := strings.TrimSpace(asset.Name)
+				if name == "" {
+					name = strings.TrimSpace(asset.Title)
+				}
 				if id != "" {
-					observer(domain.AssistantAssetRef{Kind: kind, ID: id, Name: asset.Name, Status: asset.Status, ProjectID: projectID, Tool: op.Name})
+					observer(domain.AssistantAssetRef{Kind: kind, ID: id, Name: name, Status: asset.Status, ProjectID: projectID, Tool: op.Name})
 				}
 			}
 		}

@@ -59,6 +59,8 @@ import { unreadReply, useReadReplies } from "./session-unread.js";
 import ReferenceInput from "./ReferenceInput";
 import Participants, { Avatar, authorFor } from "./Participants";
 import IssueContext from "./IssueContext";
+import IssueDispatchCard from "./IssueDispatchCard";
+import { savedIssueCardsByMessage } from "./issue-dispatch.js";
 import { insertMention } from "./mentions.js";
 import { elementTitle } from "./element-context.js";
 import HarnessIcon from "./HarnessIcon";
@@ -504,7 +506,14 @@ export default function App() {
     activeId: realChat.activeId,
     generation: realChat.generation,
   });
-  const conversationRuns = useConversationRuns(chat.session, runsRefresh);
+  const [dispatchedRuns, setDispatchedRuns] = useState({ sessionId: "", ids: [] });
+  const extraRunIds =
+    dispatchedRuns.sessionId === chat.session?.id ? dispatchedRuns.ids : [];
+  const conversationRuns = useConversationRuns(
+    chat.session,
+    runsRefresh,
+    extraRunIds,
+  );
   // The workspace of this conversation (opened by workbench_workspace_open).
   // Its git state drives the "改动" view of the side panel.
   // Task conversations keep their workspace on the task run; ordinary
@@ -531,6 +540,14 @@ export default function App() {
         reconcileOperation(a, conversationRuns),
       ),
     [chat.session, conversationRuns],
+  );
+  const savedIssuesByMessage = useMemo(
+    () =>
+      savedIssueCardsByMessage(
+        chat.session?.messages,
+        chat.session?.projectId || chat.projectId,
+      ),
+    [chat.session?.messages, chat.session?.projectId, chat.projectId],
   );
   const sidebarArtifacts = artifactList.filter(visibleSidebarArtifact);
   useEffect(() => setRepositorySelections({}), [chat.activeId]);
@@ -1858,6 +1875,47 @@ export default function App() {
                                 onPreview={openArtifact}
                               />
                             ))}
+                          {(savedIssuesByMessage.get(index) || []).map((saved) => (
+                            <IssueDispatchCard
+                              key={`dispatch-${saved.id}`}
+                              issueId={saved.id}
+                              fallbackTitle={saved.title}
+                              projectId={
+                                saved.projectId ||
+                                chat.session?.projectId ||
+                                chat.projectId
+                              }
+                              sessionId={chat.session?.id || ""}
+                              readOnly={chat.readOnly}
+                              local={chat.local}
+                              runId={chat.session?.runId || ""}
+                              refreshKey={runsRefresh}
+                              onDispatched={(task) => {
+                                const runId = task?.runId || "";
+                                const sid = chat.session?.id || "";
+                                if (runId && sid) {
+                                  setDispatchedRuns((old) => ({
+                                    sessionId: sid,
+                                    ids:
+                                      old.sessionId === sid
+                                        ? old.ids.includes(runId)
+                                          ? old.ids
+                                          : [...old.ids, runId]
+                                        : [runId],
+                                  }));
+                                }
+                                setRunsRefresh((n) => n + 1);
+                              }}
+                              onOpenRun={(runId, workflowName) =>
+                                openArtifact({
+                                  kind: "run",
+                                  id: runId,
+                                  runId,
+                                  name: workflowName || "LOOP 运行",
+                                })
+                              }
+                            />
+                          ))}
                         </div>
                         <div className="message-actions">
                           <MessageTime messages={messages} index={index} />

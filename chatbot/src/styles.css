@@ -2276,10 +2276,18 @@ a.project-entry {
 }
 .draft-card > .primary-button,
 .draft-card > .quiet-button,
-.proposal-actions > .quiet-button {
+.proposal-actions > .quiet-button,
+.issue-dispatch-actions > .primary-button,
+.issue-dispatch-actions > .quiet-button {
   min-height: 29px;
   padding: 5px 9px;
   font-size: 11px;
+}
+.issue-dispatch-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .proposal-reason {
   color: var(--muted);
