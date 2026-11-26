@@ -34,7 +34,7 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'scripts').mkdir()
         (self.root / 'migrations/seed').mkdir(parents=True)
-        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh', 'install-schema-extensions.sh'):
+        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh', 'install-schema-extensions.sh', 'knowledge-schema.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
         for name in (
@@ -47,6 +47,10 @@ class InstallerTests(unittest.TestCase):
             (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
         artifact_migration = '042_run_artifacts_content_mediumtext.sql'
         shutil.copyfile(ROOT / 'migrations' / artifact_migration, self.root / 'migrations' / artifact_migration)
+        knowledge_baseline = '002_knowledge_base.sql'
+        shutil.copyfile(ROOT / 'migrations' / knowledge_baseline, self.root / 'migrations' / knowledge_baseline)
+        for source in sorted((ROOT / 'migrations').glob('0[45][0-9]_*knowledge*.sql')):
+            shutil.copyfile(source, self.root / 'migrations' / source.name)
         (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
@@ -77,7 +81,7 @@ if [[ "$*" == *'ps --all --status running --status restarting --status paused --
 fi
 if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
-if [[ "$*" == *'exec -T mysql'* ]]; then
+if [[ "$*" == *'exec -T'* ]]; then
   if [[ "$*" == *'count(*) from users'* ]]; then echo 0; exit 0; fi
   if [[ "$*" == *mysqldump* ]]; then
     printf 'database backup\\n'
@@ -93,6 +97,8 @@ if [[ "$*" == *'exec -T mysql'* ]]; then
   if [[ "$query" == *'DROP TABLE IF EXISTS dockerfiles, environments;'* && "${MOCK_SANDBOX_MIGRATION_FAILURE:-0}" == 1 ]]; then
     exit 1
   fi
+  if [[ "$query" == *'information_schema.STATISTICS'* ]]; then echo FULLTEXT; fi
+  if [[ "$query" == *'SHOW CREATE TABLE knowledge_chunks'* ]]; then echo 'CREATE TABLE `knowledge_chunks` (`text` mediumtext, FULLTEXT KEY `ft_knowledge_chunks_text` (`title`,`heading`,`text`) /*!50100 WITH PARSER `ngram` */)'; fi
 fi
 ''')
         self.executable('id', '#!/usr/bin/env bash\nif [[ "$1" == -u ]]; then echo "${MOCK_USER:-0}"; else /usr/bin/id "$@"; fi\n')
@@ -142,7 +148,9 @@ exec "$@"
         return subprocess.run([shell or self.shell(), 'scripts/install.sh'], cwd=self.root, env=dict(self.environ, **values), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
 
     def pull(self, **values):
-        (self.root / '.env').touch()
+        env = self.root / '.env'
+        if not env.exists():
+            env.write_text('AGENTFLOW_MYSQL_DSN="loopforge:test@tcp(mysql:3306)/loopforge"\n')
         return subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root,
             env=dict(self.environ, **values), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
 
@@ -160,6 +168,19 @@ exec "$@"
         self.assert_success(self.install())
         self.assertEqual((self.root / '.env').read_text(), secrets)
         self.assertEqual((self.root / '.env').stat().st_mode & 0o777, 0o600)
+
+    def test_install_applies_baseline_before_056(self):
+        self.assert_success(self.install())
+        log = (self.root / 'mysql.log').read_text()
+        baseline = log.find('CREATE TABLE IF NOT EXISTS knowledge_submissions')
+        concurrency = log.find('ALTER TABLE knowledge_submissions ADD COLUMN version')
+        self.assertGreaterEqual(baseline, 0, log)
+        self.assertGreaterEqual(concurrency, 0, log)
+        self.assertLess(baseline, concurrency, '002 baseline must run before 056')
+        # The runner has an explicit knowledge-migration list, so upstream
+        # optional manual DDL is never swept into an install/upgrade.
+        self.assertNotIn('assistant_session_reads', log)
+        self.assertNotIn('codex_models', log)
 
     def test_credential_key_generated_once_and_added_to_existing_env(self):
         import base64, re
@@ -206,7 +227,7 @@ exec "$@"
         operations = [line for line in lines if 'compose' in line]
         self.assertTrue(operations)
         self.assertTrue(all(line.startswith('1 ') for line in operations), operations)
-        self.assertTrue(any('exec -T mysql' in line for line in operations))
+        self.assertTrue(any('exec -T' in line for line in operations))
 
     def test_non_root_with_direct_access_never_uses_sudo(self):
         self.assert_success(self.install(MOCK_USER='1000', MOCK_DIRECT='1', MOCK_SUDO_DENIED='1'))
@@ -542,7 +563,7 @@ esac
 
         env = self.root / '.env'
         key_name = 'AGENTFLOW_PROJECT_CREDENTIAL_KEY'
-        legacy = "COMPOSE_PROJECT_NAME=existing\nAGENTFLOW_SESSION_SECRET=existing-session\n"
+        legacy = 'COMPOSE_PROJECT_NAME=existing\nAGENTFLOW_SESSION_SECRET=existing-session\nAGENTFLOW_MYSQL_DSN="loopforge:test@tcp(mysql:3306)/loopforge"\n'
         provided = base64.b64encode(bytes(32)).decode()
         scenarios = (
             ('missing', '', '', None),
@@ -593,7 +614,7 @@ esac
         self.assertLess(sql.index('JSON_ARRAY_APPEND'), sql.index('SET @new_mr_auth'))
         self.assertLess(sql.index('SET @new_mr_auth'), sql.index('-- Align shipped template names'))
         # Recreated containers come first; the old volume then gets the columns.
-        self.assertLess(log.index('up -d --no-build --wait'), log.index('exec -T mysql'))
+        self.assertLess(log.index('up -d --no-build --wait --wait-timeout 180 --pull never'), log.rindex('exec -T mysql'))
 
     def test_live_install_fixture_copies_every_replayed_migration(self):
         # test-install-live.sh runs install.sh from a trimmed copy of the repo,
@@ -640,7 +661,7 @@ esac
                 result = self.pull(MOCK_SANDBOX_CATALOG=target, MOCK_LEGACY_SANDBOX_TABLES=legacy_tables)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 log = (self.root / 'docker.log').read_text()
-                self.assertNotIn('stop platform', log)
+                self.assertLess(log.index('stop platform'), log.index('up -d --no-build --wait --wait-timeout 180 --pull never'))
                 self.assertNotIn('mysqldump', log)
                 sql = (self.root / 'mysql.log').read_text()
                 self.assertEqual('FROM information_schema.tables' in sql, target == 'inline')
@@ -1012,6 +1033,124 @@ class AddressTests(unittest.TestCase):
             urls, note = address.access_addresses('8090', {})
         self.assertEqual(urls, [])
         self.assertIn('published port', note)
+
+class KnowledgeSchemaScriptTests(unittest.TestCase):
+    """Exercise the real migration files and knowledge-schema.sh segmentation.
+
+    No MySQL server is needed: a fake mysql client records every statement and
+    returns canned catalog answers. This catches baseline ordering, the 058
+    control/content/control split, mapping import into a separate content
+    database, fence migration and DSN-driven seeding without Docker.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / 'scripts').mkdir()
+        (self.root / 'migrations/seed').mkdir(parents=True)
+        for name in ('knowledge-schema.sh', 'docker-access.sh'):
+            shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
+        for source in sorted((ROOT / 'migrations').glob('[0-9][0-9][0-9]_*.sql')):
+            shutil.copyfile(source, self.root / 'migrations' / source.name)
+        for source in sorted((ROOT / 'migrations/seed').glob('*.sql')):
+            shutil.copyfile(source, self.root / 'migrations/seed' / source.name)
+        (self.root / 'mock').mkdir()
+        self.executable('mysql', r'''#!/usr/bin/env bash
+db="${@: -1}"
+sql=$(cat)
+{
+  printf '\n@@DB=%s\n' "$db"
+  printf '%s\n' "$sql"
+} >> "$MOCK_SQL_LOG"
+case "$sql" in
+  *"SELECT INDEX_TYPE FROM information_schema.STATISTICS"*) printf 'FULLTEXT\n' ;;
+  *"SHOW CREATE TABLE knowledge_chunks"*) printf 'CREATE TABLE `knowledge_chunks` (`text` mediumtext, FULLTEXT KEY `ft_knowledge_chunks_text` (`title`,`heading`,`text`) /*!50100 WITH PARSER `ngram` */)\n' ;;
+  *"FROM knowledge_id_migration_039"*)
+    printf "CREATE TABLE IF NOT EXISTS knowledge_id_migration_039 (kind VARCHAR(16) NOT NULL, old_id VARCHAR(64) NOT NULL, new_id VARCHAR(64) NOT NULL);\n"
+    printf "INSERT IGNORE INTO knowledge_id_migration_039 (kind, old_id, new_id) VALUES ('source','old-source','new-source');\n" ;;
+  *"information_schema.TABLES"*"engine_instances"*) printf '1\n' ;;
+  *"SELECT COUNT(*) FROM engine_instances"*) printf '%s\n' "${MOCK_LIVE_INSTANCES:-0}" ;;
+  *"knowledge_id_migration_039"*) printf '0\n' ;;
+esac
+''')
+        self.log = self.root / 'mysql.log'
+        self.environ = dict(
+            os.environ,
+            PATH=str(self.root / 'mock') + ':' + os.environ['PATH'],
+            MOCK_SQL_LOG=str(self.log),
+            AGENTFLOW_MYSQL_DSN='loopforge:secret@tcp(control.example:3306)/control_db',
+            AGENTFLOW_KNOWLEDGE_MYSQL_DSN='loopforge:secret@tcp(content.example:3306)/content_db',
+        )
+
+    def executable(self, name, contents):
+        target = self.root / 'mock' / name
+        target.write_text(contents)
+        target.chmod(0o755)
+
+    def run_schema(self, *args):
+        return subprocess.run(
+            ['bash', 'scripts/knowledge-schema.sh', *args, '--native'],
+            cwd=self.root, env=self.environ, text=True, capture_output=True, timeout=30,
+        )
+
+    def test_apply_orders_baseline_and_splits_039(self):
+        result = self.run_schema('apply')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = self.log.read_text()
+        baseline = log.find('CREATE TABLE IF NOT EXISTS knowledge_submissions')
+        version = log.find('ALTER TABLE knowledge_submissions ADD COLUMN version')
+        self.assertGreaterEqual(baseline, 0, log)
+        self.assertGreaterEqual(version, 0, log)
+        self.assertLess(baseline, version, '002 baseline must run before 056')
+
+        # 058 content work goes to the content DSN, not the control DSN.
+        fences = log.find('knowledge_content_fences')
+        docs = log.find('knowledge_documents d JOIN knowledge_id_migration_039')
+        self.assertGreaterEqual(fences, 0, log)
+        self.assertGreaterEqual(docs, 0, log)
+        self.assertGreater(log.rfind('@@DB=content_db', 0, docs), log.rfind('@@DB=control_db', 0, docs), log)
+        self.assertGreater(log.rfind('@@DB=content_db', 0, fences), log.rfind('@@DB=control_db', 0, fences), log)
+        # The mapping is imported into the content database before the content segment.
+        imported = log.find("INSERT IGNORE INTO knowledge_id_migration_039 (kind, old_id, new_id) VALUES ('source','old-source','new-source');")
+        self.assertGreaterEqual(imported, 0, log)
+        self.assertLess(imported, docs, log)
+        # Control references and the version row come after the content segment.
+        control_updates = log.find('UPDATE knowledge_bases s JOIN knowledge_id_migration_039')
+        self.assertGreater(control_updates, fences, log)
+        self.assertGreater(log.find('INSERT INTO knowledge_schema_versions'), control_updates, log)
+
+    def test_apply_runs_only_explicit_knowledge_migrations(self):
+        result = self.run_schema('apply')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Applying 047_builtin_knowledge.sql', result.stdout)
+        self.assertIn('Applying 059_knowledge_governance_noise.sql', result.stdout)
+        self.assertNotIn('026_assistant_session_reads.sql', result.stdout)
+        self.assertNotIn('027_cli_model_catalog.sql', result.stdout)
+        log = self.log.read_text()
+        self.assertNotIn('assistant_session_reads', log)
+        self.assertNotIn('codex_models', log)
+
+    def test_seed_uses_configured_control_database(self):
+        result = self.run_schema('seed')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = self.log.read_text()
+        self.assertIn('@@DB=control_db', log)
+        self.assertIn('INSERT IGNORE INTO', log)
+        self.assertNotIn('@@DB=content_db', log)
+        self.assertNotIn('mysql -u loopforge loopforge', log)
+
+    def test_check_accepts_ngram_index(self):
+        result = self.run_schema('check')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Knowledge full-text index ready', result.stdout)
+
+    def test_apply_aborts_with_live_instances(self):
+        self.environ['MOCK_LIVE_INSTANCES'] = '2'
+        self.environ['LOOPFORGE_MIGRATION_QUIESCE_SECONDS'] = '0'
+        result = self.run_schema('apply')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('仍在线的 API/worker 实例', result.stderr)
 
 
 class ComposeDownloadTests(unittest.TestCase):

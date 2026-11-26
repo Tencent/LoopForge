@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/repo"
 	"errors"
 	"github.com/gin-gonic/gin"
@@ -13,7 +14,10 @@ import (
 	"time"
 )
 
-type projectsHandlers struct{ *deps }
+type projectsHandlers struct {
+	*deps
+	knowSvc *knowledge.Service
+}
 
 func (h *projectsHandlers) projects(c *gin.Context) {
 	r := c.Request
@@ -38,6 +42,10 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 		if !exists {
 			if err := domain.ValidateResourceID(v.ID); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "项目" + err.Error()})
+				return
+			}
+			if _, collision := h.repo.KnowledgeBase(v.ID); collision {
+				c.JSON(409, gin.H{"error": "项目标识与已有知识库标识冲突"})
 				return
 			}
 		}
@@ -166,6 +174,13 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 			return
 		}
 		if isNew {
+			// 新建项目后立即幂等保证一个托管知识库；打开知识中心时再保证一次，
+			// 覆盖安装种子里的既有项目。失败只记日志，不阻断项目创建。
+			if h.knowSvc != nil && h.knowSvc.Builtin() {
+				if _, err := h.knowSvc.EnsureHostedBase(v.ID); err != nil {
+					log.Printf("ensure hosted knowledge base for project %s: %v", v.ID, err)
+				}
+			}
 			if err := ensureDefaultProjectMCPs(h.repo, v.ID); err != nil {
 				log.Printf("ensure default MCPs for project %s: %v", v.ID, err)
 			} else {

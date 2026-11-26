@@ -5,12 +5,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"agentflow/internal/domain"
 )
 
 func TestProxyTokenRoundTripAndRevocation(t *testing.T) {
-	settings := domain.KnowledgeSettings{Enabled: true, URL: "http://kb/mcp", Token: "upstream-a"}
+	settings := "session-a"
 	now := time.Unix(1_800_000_000, 0)
 	token, err := SignProxyToken(settings, ProxyClaims{ProjectID: "p1", UserID: 7, AgentID: "dev"}, now)
 	if err != nil {
@@ -27,7 +25,7 @@ func TestProxyTokenRoundTripAndRevocation(t *testing.T) {
 		t.Fatal("expired token accepted")
 	}
 	rotated := settings
-	rotated.Token = "upstream-b"
+	rotated = "session-b"
 	if _, err := VerifyProxyToken(rotated, token, now); err == nil {
 		t.Fatal("rotating the upstream token must revoke outstanding proxy tokens")
 	}
@@ -35,7 +33,7 @@ func TestProxyTokenRoundTripAndRevocation(t *testing.T) {
 	if _, err := VerifyProxyToken(settings, tampered, now); err == nil {
 		t.Fatal("tampered token accepted")
 	}
-	if _, err := SignProxyToken(domain.KnowledgeSettings{}, ProxyClaims{}, now); err == nil {
+	if _, err := SignProxyToken("", ProxyClaims{}, now); err == nil {
 		t.Fatal("signing without an upstream token must fail")
 	}
 }
@@ -47,7 +45,7 @@ func TestScopeSources(t *testing.T) {
 		want               []string
 		wantErr            bool
 	}{
-		{"unrestricted keeps request", nil, []string{"a"}, []string{"a"}, false},
+		{"unbound rejects request", nil, []string{"a"}, nil, true},
 		{"unrestricted empty stays empty", nil, nil, []string{}, false},
 		{"empty request expands", []string{"a", "b"}, nil, []string{"a", "b"}, false},
 		{"subset accepted", []string{"a", "b"}, []string{" b "}, []string{"b"}, false},
@@ -65,8 +63,8 @@ func TestScopeSources(t *testing.T) {
 }
 
 func TestParseDistilled(t *testing.T) {
-	got := ParseDistilled("---\ntitle: \"帕鲁断联排查\"\nsource: lighthouse-kb\npath: playbooks/palu.md\n---\n\n## 现象\n正文")
-	if got.Title != "帕鲁断联排查" || got.Source != "lighthouse-kb" || got.Path != "playbooks/palu.md" || got.Body != "## 现象\n正文" {
+	got := ParseDistilled("---\ntitle: \"示例断联排查\"\nsource: example-kb\npath: playbooks/example.md\n---\n\n## 现象\n正文")
+	if got.Title != "示例断联排查" || got.Source != "example-kb" || got.Path != "playbooks/example.md" || got.Body != "## 现象\n正文" {
 		t.Fatalf("front matter parse = %#v", got)
 	}
 	plain := ParseDistilled("intro\n# 标题一\nbody")
@@ -77,19 +75,36 @@ func TestParseDistilled(t *testing.T) {
 
 func TestNormalizeDocPath(t *testing.T) {
 	for in, want := range map[string]string{
-		"guides/a.md":         "guides/a.md",
-		"/guides/../b.md":     "b.md",
-		"../../etc/passwd.md": "etc/passwd.md",
-		"排障/帕鲁 断联.md":         "排障/帕鲁-断联.md",
+		"guides/a.md":     "guides/a.md",
+		" guides/a.md ":   "guides/a.md",
+		"guides/示例 文档.md": "guides/示例-文档.md",
 	} {
 		got, ok := NormalizeDocPath(in)
 		if !ok || got != want {
 			t.Fatalf("NormalizeDocPath(%q) = %q, %v; want %q", in, got, ok, want)
 		}
 	}
-	for _, bad := range []string{"", "guides/a.txt", ".."} {
-		if _, ok := NormalizeDocPath(bad); ok {
-			t.Fatalf("NormalizeDocPath(%q) accepted", bad)
+	// 越界路径直接拒绝，不改写后保存。后缀校验保留。
+	for _, bad := range []string{
+		"", "guides/a.txt", "..",
+		"../secret.md", "guides/../secret.md", "guides/..",
+		"/etc/passwd.md", "/guides/a.md",
+		`C:\secret.md`, "C:/secret.md",
+		`guides\a.md`, `..\secret.md`,
+		"guides//a.md", "./guides/a.md", "guides/./a.md",
+		"guides/\x00a.md",
+	} {
+		if got, ok := NormalizeDocPath(bad); ok {
+			t.Fatalf("NormalizeDocPath(%q) 应拒绝，实际放行为 %q", bad, got)
+		}
+	}
+}
+
+func TestUsageRuleExplainsReadOnlyAgentAndPlatformSediment(t *testing.T) {
+	rule := UsageRule()
+	for _, want := range []string{"只读检索本项目知识库", "不要尝试写入", "knowledge.md", "自动加入审核队列"} {
+		if !strings.Contains(rule.Content, want) {
+			t.Fatalf("使用规范应说明只读边界与平台自动沉淀 %q: %q", want, rule.Content)
 		}
 	}
 }

@@ -879,7 +879,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					return "", assetErr
 				}
 			}
-			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
+			assets := e.resolveAssetsForRun(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID, runID)
 			applyReplayAssets(e.repo, &assets, current)
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})

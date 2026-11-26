@@ -18,11 +18,12 @@ import (
 )
 
 func TestKnowledgeHTTPBranches(t *testing.T) {
-	_, h, _, _ := newKnowledgeTestServer(t)
+	_, h := newKnowledgeTestServer(t)
 	for _, tc := range []struct {
 		method, path, body string
 		code               int
 	}{
+		{http.MethodGet, "/api/knowledge/settings", "", 200},
 		{http.MethodPost, "/api/knowledge/check", `{}`, 200},
 		{http.MethodGet, "/api/knowledge/sources?projectId=p1", "", 200},
 		{http.MethodPost, "/api/knowledge/search", `{"query":"x","projectId":"p1"}`, 200},

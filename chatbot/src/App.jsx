@@ -14,6 +14,7 @@ import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
 import MessageHistory from "./MessageHistory";
 import GenerationDiagnostics from "./GenerationDiagnostics";
+import ReplyFeedback from "./ReplyFeedback";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
   activityForReply,
@@ -42,6 +43,7 @@ import {
   ArtifactPreview,
   ImageLightbox,
 } from "./RichContent";
+import { KnowledgeProject } from "./knowledge-citation.jsx";
 import { DraftCard } from "./SidePanel";
 import ArtifactPanel from "./ArtifactPanel";
 import { useWorkspaceChanges } from "./useWorkspaceChanges";
@@ -370,6 +372,28 @@ function RenameSessionDialog({ session, rename, onClose }) {
 export default function App() {
   const realChat = useChat();
   const chat = useLocalConversations(realChat);
+  const knowledgeProject = chat.session?.projectId || "";
+  const [builtinKnowledge, setBuiltinKnowledge] = useState(false);
+  const knowledgeContext = useMemo(() => ({
+    projectId: knowledgeProject,
+    builtin: builtinKnowledge && !chat.local,
+  }), [knowledgeProject, builtinKnowledge, chat.local]);
+  useEffect(() => {
+    if (!knowledgeProject || chat.local) return;
+    let active = true;
+    const refresh = () => api("/api/knowledge/settings").then(settings => {
+      if (active) setBuiltinKnowledge(settings?.provider !== "lightcloud");
+    }).catch(() => {});
+    refresh();
+    const updates = typeof BroadcastChannel === "function" ? new BroadcastChannel("loopforge:knowledge-settings") : null;
+    if (updates) updates.onmessage = refresh;
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      updates?.close();
+      window.removeEventListener("focus", refresh);
+    };
+  }, [knowledgeProject, chat.local]);
   // One poll feeds the cards, the reply status and the tool rows alike.
   const approvals = useNativeApprovals(chat);
   const waitingApproval = Boolean(chat.busy) && approvals.count > 0;
@@ -1299,6 +1323,7 @@ export default function App() {
     );
   };
   return (
+    <KnowledgeProject.Provider value={knowledgeContext}>
     <AgentBrowserLinks.Provider
       value={conversationStarted && workspaceRunId ? openAgentBrowser : null}
     >
@@ -1871,6 +1896,13 @@ export default function App() {
                           />
                           <MessageInfo message={message} sessionExecutor={chat.session?.executor} />
                           {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
+
+                          {builtinKnowledge && <ReplyFeedback
+                            projectId={chat.session?.projectId}
+                            sessionId={chat.activeId}
+                            message={message}
+                            index={index}
+                          />}
                         </div>
                       </>
                     ) : null}
@@ -2567,6 +2599,7 @@ export default function App() {
       />
     </div>
     </AgentBrowserLinks.Provider>
+    </KnowledgeProject.Provider>
   );
 }
 function ChevronRightSmall() {

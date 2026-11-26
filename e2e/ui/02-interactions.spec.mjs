@@ -337,6 +337,19 @@ test('LOOP designer: the agent drawer shows name, role and on-failure in the fir
   expect(errors).toEqual([]);
 });
 
+test('knowledge center: search shows cited hits', async ({ page }) => {
+  const sources = list(await get(`/api/knowledge/sources?projectId=${cfg.projectId}`));
+  test.skip(!sources.some(s => (s.doc_count || 0) > 0), 'no indexed knowledge document');
+  const errors = watchErrors(page);
+  await openView(page, 'knowledge');
+  await page.locator('[data-kb-tab="search"]').first().click();
+  await page.locator('#kbSearchForm input[name="q"]').fill('部署');
+  await page.locator('#kbSearchForm input[name="q"]').press('Enter');
+  await expect(page.locator('.kb-hit').first()).toBeVisible({ timeout: 60_000 });
+  expect(await page.locator('.kb-hit').count()).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
+
 test('LOOP designer: Auto layout stays clickable beside the step drawer', async ({ page }) => {
   const wf = await createWorkflow('ui-arrange-drawer', [script('first', 'echo 1'), script('second', 'echo 2')]);
   await page.setViewportSize({ width: 1060, height: 800 });

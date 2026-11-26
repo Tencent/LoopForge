@@ -37,21 +37,27 @@ func (e *Engine) platformMCPServer() domain.MCPServerDefinition {
 // a fresh project-scoped token. It degrades to a no-op while the knowledge
 // base is not connected, so turning the role toggle on never fails a run.
 func (e *Engine) knowledgeMCPServer(agentID, projectID string, userID int64) (domain.MCPServerDefinition, bool) {
+	return e.knowledgeMCPServerForRun(agentID, projectID, userID, "")
+}
+
+// knowledgeMCPServerForRun is the SOP node path: the run id travels in the
+// signed token so persisted activity can be traced back to the run.
+func (e *Engine) knowledgeMCPServerForRun(agentID, projectID string, userID int64, runID string) (domain.MCPServerDefinition, bool) {
 	if e.repo == nil {
 		return domain.MCPServerDefinition{}, false
 	}
 	e.mu.Lock()
 	base := e.platformMCPBase
 	e.mu.Unlock()
-	settings := e.repo.KnowledgeSettings()
-	if !settings.Ready() {
-		return domain.MCPServerDefinition{}, false
-	}
-	token, err := knowledge.SignProxyToken(settings, knowledge.ProxyClaims{ProjectID: projectID, UserID: userID, AgentID: agentID}, time.Now())
+	token, err := knowledge.SignProxyToken(knowledge.SessionSecret(), knowledge.ProxyClaims{ProjectID: projectID, UserID: userID, AgentID: agentID, RunID: runID}, time.Now())
 	if err != nil {
 		return domain.MCPServerDefinition{}, false
 	}
-	return knowledge.MCPServerDefinition(base, token), true
+	definition := knowledge.MCPServerDefinition(base, token)
+	if e.repo.KnowledgeSettings().EffectiveProvider() == domain.KnowledgeProviderLightCloud {
+		definition.Description = "本项目 LightCloud 知识库：kb_search / kb_fetch / kb_list_sources / kb_get_source"
+	}
+	return definition, true
 }
 
 // knowledgeSkippedWarning explains a knowledge toggle that resolveAssets could
@@ -66,7 +72,7 @@ func knowledgeSkippedWarning(agent domain.AgentDefinition, assets domain.AgentAs
 			return ""
 		}
 	}
-	return "角色开启了团队知识库，但未注入 " + domain.KnowledgeMCPServerID + "：知识中心未启用或未配置知识库地址/Token"
+	return "角色开启了项目知识库，但未注入 " + domain.KnowledgeMCPServerID + "：未配置会话密钥"
 }
 
 // RoleAssets resolves a role's assets outside any LOOP run, for a chat
@@ -76,6 +82,10 @@ func (e *Engine) RoleAssets(agent domain.AgentDefinition, projectID string, user
 }
 
 func (e *Engine) resolveAssets(agent domain.AgentDefinition, projectID, workflowID string, userID int64) domain.AgentAssetBundle {
+	return e.resolveAssetsForRun(agent, projectID, workflowID, userID, "")
+}
+
+func (e *Engine) resolveAssetsForRun(agent domain.AgentDefinition, projectID, workflowID string, userID int64, runID string) domain.AgentAssetBundle {
 	bundle := domain.AgentAssetBundle{}
 	for _, id := range agent.Rules {
 		if v, ok := e.repo.Rule(id); ok {
@@ -134,9 +144,9 @@ func (e *Engine) resolveAssets(agent domain.AgentDefinition, projectID, workflow
 		bundle.MCPServers = append(bundle.MCPServers, e.platformMCPServer())
 	}
 	if agent.KnowledgeBase {
-		if v, ok := e.knowledgeMCPServer(agent.ID, projectID, userID); ok {
+		if v, ok := e.knowledgeMCPServerForRun(agent.ID, projectID, userID, runID); ok {
 			bundle.MCPServers = append(bundle.MCPServers, v)
-			bundle.Rules = append(bundle.Rules, knowledge.UsageRule())
+			bundle.Rules = append(bundle.Rules, knowledge.UsageRuleForProvider(e.repo.KnowledgeSettings().EffectiveProvider()))
 		}
 	}
 	e.appendWorkflowGlobalRules(&bundle, projectID, workflowID)

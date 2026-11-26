@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/knowledge"
@@ -10,18 +12,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// knowledgeHandlers exposes the 知识库 module over HTTP: upstream connection
-// settings, trial search, node usage, the agent-facing read-only proxy
-// (knowledge_proxy.go), and the review queue. Business rules live in
-// knowledge.Service; handlers only do auth, decoding and rendering.
+// knowledgeHandlers exposes the 知识库 module over HTTP: trial search, node
+// usage, the agent-facing read-only proxy (knowledge_proxy.go), the knowledge
+// base management endpoints (knowledge_bases.go), and the review queue.
+// Business rules live in knowledge.Service; handlers only do auth, decoding
+// and rendering.
 type knowledgeHandlers struct {
 	*deps
-	svc      *knowledge.Service
-	activity *knowledgeActivityLog
+	svc *knowledge.Service
 }
 
 func (h *knowledgeHandlers) canManage(r *http.Request) bool {
 	return !authRequired() || h.isPlatformAdmin(r)
+}
+
+func (h *knowledgeHandlers) withGapActor(c *gin.Context) context.Context {
+	ctx := c.Request.Context()
+	actor := knowledge.GapActor{}
+	if user, ok := h.requestUser(c.Request, true); ok && user != nil {
+		actor.UserID = user.ID
+	}
+	return knowledge.WithGapActor(ctx, actor)
 }
 
 func (h *knowledgeHandlers) actor(r *http.Request) string {
@@ -52,28 +63,47 @@ type knowledgeSettingsView struct {
 //
 //	g.PUT("/api/knowledge/settings", h.settings)
 func (h *knowledgeHandlers) settings(c *gin.Context) {
+	canManage := h.canManage(c.Request)
 	current := h.svc.Settings()
 	if c.Request.Method == http.MethodPut {
-		if !h.canManage(c.Request) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以修改知识库接入配置"})
+		if !canManage {
+			c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以修改知识引擎设置"})
 			return
 		}
 		var input knowledge.SettingsInput
 		if !decode(c, &input) {
 			return
 		}
-		saved, err := h.svc.UpdateSettings(input, h.actor(c.Request))
+		var err error
+		current, err = h.svc.UpdateSettings(input, h.actor(c.Request))
 		if err != nil {
 			respond(c, err)
 			return
 		}
-		current = saved
+	}
+	view := current.Public()
+	if !canManage {
+		view = domain.KnowledgeSettings{Provider: view.Provider, Enabled: view.Enabled, WriteEnabled: view.WriteEnabled}
 	}
 	c.JSON(http.StatusOK, knowledgeSettingsView{
-		KnowledgeSettings: current.Public(), Ready: current.Ready(),
-		CanManage: h.canManage(c.Request), ProxyPath: knowledge.ProxyPath,
-		UsageRule: knowledge.UsageRule().Content,
+		KnowledgeSettings: view, Ready: current.Ready(), CanManage: canManage,
+		ProxyPath: knowledge.ProxyPath, UsageRule: knowledge.UsageRuleForProvider(view.Provider).Content,
 	})
+}
+
+func (h *knowledgeHandlers) builtinOnly(c *gin.Context) {
+	if err := h.svc.RequireBuiltin(); err != nil {
+		respond(c, err)
+		c.Abort()
+	}
+}
+
+func (h *knowledgeHandlers) withEngine(handler func(*knowledgeHandlers, *gin.Context)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		request := *h
+		request.svc = h.svc.Snapshot()
+		handler(&request, c)
+	}
 }
 
 // 路由: g.POST("/api/knowledge/check", h.check)
@@ -83,17 +113,26 @@ func (h *knowledgeHandlers) check(c *gin.Context) {
 		return
 	}
 	var input struct {
-		URL   string `json:"url"`
-		Token string `json:"token"`
+		Provider string `json:"provider"`
+		URL      string `json:"url"`
+		Token    string `json:"token"`
 	}
 	if !decodeOptional(c, &input) {
 		return
 	}
-	c.JSON(http.StatusOK, h.svc.Check(c.Request.Context(), input.URL, input.Token))
+	svc := h.svc.Snapshot()
+	if input.Provider == domain.KnowledgeProviderLightCloud || input.URL != "" || input.Token != "" || !svc.Builtin() {
+		c.JSON(http.StatusOK, svc.CheckLightCloud(c.Request.Context(), input.URL, input.Token))
+		return
+	}
+	c.JSON(http.StatusOK, svc.Check(c.Request.Context()))
 }
 
 // 路由: g.GET("/api/knowledge/sources", h.sources)
 func (h *knowledgeHandlers) sources(c *gin.Context) {
+	if !h.requireKnowledgeReader(c, c.Query("projectId")) {
+		return
+	}
 	list, err := h.svc.Sources(c.Request.Context(), c.Query("projectId"))
 	render(c, list, err)
 }
@@ -108,12 +147,18 @@ func (h *knowledgeHandlers) search(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	out, err := h.svc.Search(c.Request.Context(), input.ProjectID, input.Query, input.Sources)
+	if !h.requireKnowledgeReader(c, input.ProjectID) {
+		return
+	}
+	out, err := h.svc.Search(h.withGapActor(c), input.ProjectID, input.Query, input.Sources)
 	render(c, out, err)
 }
 
 // 路由: g.GET("/api/knowledge/document", h.document)
 func (h *knowledgeHandlers) document(c *gin.Context) {
+	if !h.requireKnowledgeReader(c, c.Query("projectId")) {
+		return
+	}
 	start, _ := strconv.Atoi(c.Query("start"))
 	end, _ := strconv.Atoi(c.Query("end"))
 	doc, err := h.svc.Document(c.Request.Context(), c.Query("projectId"), c.Query("source"), c.Query("path"), start, end)
@@ -122,19 +167,19 @@ func (h *knowledgeHandlers) document(c *gin.Context) {
 
 // 路由: g.GET("/api/knowledge/usage", h.usage)
 func (h *knowledgeHandlers) usage(c *gin.Context) {
+	if !h.requireKnowledgeReader(c, c.Query("projectId")) {
+		return
+	}
 	projectID := c.Query("projectId")
 	agents, total := h.svc.Usage(projectID)
-	activity := make([]knowledgeActivity, 0)
-	for _, item := range h.activity.recent() {
-		if projectID == "" || item.ProjectID == projectID {
-			activity = append(activity, item)
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{"agents": agents, "totalAgents": total, "activity": activity})
+	c.JSON(http.StatusOK, gin.H{"agents": agents, "totalAgents": total, "activity": h.svc.Activities(projectID, knowledge.ActivityLimit)})
 }
 
 // 路由: g.GET("/api/knowledge/candidates", h.candidates)
 func (h *knowledgeHandlers) candidates(c *gin.Context) {
+	if !h.requireKnowledgeReader(c, c.Query("projectId")) {
+		return
+	}
 	c.JSON(http.StatusOK, h.svc.Candidates(c.Query("projectId")))
 }
 
@@ -143,11 +188,33 @@ func (h *knowledgeHandlers) candidates(c *gin.Context) {
 //	g.POST("/api/knowledge/submissions", h.submissions)
 func (h *knowledgeHandlers) submissions(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
-		c.JSON(http.StatusOK, h.svc.Submissions(c.Query("projectId"), c.Query("status")))
+		project := strings.TrimSpace(c.Query("projectId"))
+		if project != "" && !h.requireKnowledgeReader(c, project) {
+			return
+		}
+		items := h.svc.Submissions(project, c.Query("status"))
+		visible := make([]domain.KnowledgeSubmission, 0, len(items))
+		for _, item := range items {
+			if h.canReadKnowledgeSubmission(c, item) {
+				visible = append(visible, item)
+			}
+		}
+		c.JSON(http.StatusOK, visible)
 		return
 	}
 	var input knowledge.SubmissionInput
 	if !decode(c, &input) {
+		return
+	}
+	if input.ArtifactID != "" {
+		art, ok := h.repo.Artifact(input.RunID, input.ArtifactID)
+		if ok {
+			if run, ok := h.repo.Run(art.RunID); ok {
+				input.ProjectID = run.ExecutionContext.ProjectID
+			}
+		}
+	}
+	if strings.TrimSpace(input.ProjectID) != "" && !h.requireKnowledgeManager(c, input.ProjectID) {
 		return
 	}
 	item, err := h.svc.Submit(input, h.actor(c.Request))
@@ -160,9 +227,12 @@ func (h *knowledgeHandlers) submissions(c *gin.Context) {
 //	g.DELETE("/api/knowledge/submissions/:id", h.submission)
 func (h *knowledgeHandlers) submission(c *gin.Context) {
 	id := c.Param("id")
+	if !h.requireSubmissionAccess(c, id, c.Request.Method != http.MethodGet) {
+		return
+	}
 	switch c.Request.Method {
 	case http.MethodGet:
-		item, err := h.svc.Submission(id)
+		item, err := h.svc.SubmissionForRead(id)
 		render(c, item, err)
 	case http.MethodDelete:
 		respond(c, h.svc.Delete(id))
@@ -184,12 +254,18 @@ func (h *knowledgeHandlers) submission(c *gin.Context) {
 
 // 路由: g.POST("/api/knowledge/submissions/:id/publish", h.publish)
 func (h *knowledgeHandlers) publish(c *gin.Context) {
+	if !h.requireSubmissionAccess(c, c.Param("id"), true) {
+		return
+	}
 	item, err := h.svc.Publish(c.Request.Context(), c.Param("id"), h.actor(c.Request))
 	render(c, item, err)
 }
 
 // 路由: g.POST("/api/knowledge/submissions/:id/reject", h.reject)
 func (h *knowledgeHandlers) reject(c *gin.Context) {
+	if !h.requireSubmissionAccess(c, c.Param("id"), true) {
+		return
+	}
 	if _, err := h.svc.Submission(c.Param("id")); err != nil {
 		respond(c, err)
 		return
@@ -202,4 +278,30 @@ func (h *knowledgeHandlers) reject(c *gin.Context) {
 	}
 	item, err := h.svc.Reject(c.Param("id"), input.ReviewNote, h.actor(c.Request))
 	render(c, item, err)
+}
+
+func (h *knowledgeHandlers) canReadKnowledgeSubmission(c *gin.Context, item domain.KnowledgeSubmission) bool {
+	if !authRequired() || h.isPlatformAdmin(c.Request) {
+		return true
+	}
+	if strings.TrimSpace(item.ProjectID) != "" {
+		return h.canReadKnowledgeProject(c, item.ProjectID)
+	}
+	return item.CreatedBy != "" && item.CreatedBy == h.actor(c.Request)
+}
+
+func (h *knowledgeHandlers) requireSubmissionAccess(c *gin.Context, id string, write bool) bool {
+	item, err := h.svc.Submission(id)
+	if err != nil {
+		respond(c, err)
+		return false
+	}
+	if write {
+		return h.requireKnowledgeManager(c, item.ProjectID)
+	}
+	if h.canReadKnowledgeSubmission(c, item) {
+		return true
+	}
+	c.JSON(403, gin.H{"error": "无权读取该审核条目"})
+	return false
 }

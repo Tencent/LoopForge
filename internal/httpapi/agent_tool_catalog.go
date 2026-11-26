@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/application"
 	"agentflow/internal/domain"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/mcpclient"
 	"agentflow/internal/mcpserver"
 )
@@ -241,6 +242,12 @@ func agentToolNameAllowed(mode AgentToolMode, kind, tool string) bool {
 	if tool == "" {
 		return false
 	}
+	// Main Bot gets the built-in knowledge tools (read-only retrieval plus issue marking) as direct tools.
+	// Clarify sessions and scheduled tasks never get them; the catalog gate
+	// is mainBotKnowledgeEnabled.
+	if kind == "knowledge" {
+		return mode == AgentToolAssistant && knowledge.IsAgentTool(tool)
+	}
 	// Conversations and scheduled tasks see every tool of the project's MCPs;
 	// a write follows the conversation's approval mode at call time.
 	if (mode == AgentToolScheduled || mode == AgentToolAssistant) && kind != "agentflow" {
@@ -313,7 +320,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	if len(session.catalog) > 0 {
 		out := append([]agentToolDescriptor{}, session.catalog...)
 		session.mu.Unlock()
-		return out
+		return append(out, h.mainBotKnowledgeTools(session)...)
 	}
 	clarifyRepos := len(session.clarifyRepos) > 0
 	session.mu.Unlock()
@@ -427,6 +434,40 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	session.mu.Lock()
 	session.catalog = append([]agentToolDescriptor{}, out...)
 	session.mu.Unlock()
+	return append(out, h.mainBotKnowledgeTools(session)...)
+}
+
+// mainBotKnowledgeEnabled gates the built-in knowledge tools to an
+// interactive Main Bot conversation with a project. Clarify sessions and
+// scheduled tasks reuse other gateway modes and never get them.
+func mainBotKnowledgeEnabled(session *AgentToolSession) bool {
+	return session != nil && session.Mode == AgentToolAssistant && !session.Scheduled && strings.TrimSpace(session.ProjectID) != ""
+}
+
+func (h *agentToolGateway) mainBotKnowledgeTools(session *AgentToolSession) []agentToolDescriptor {
+	if !mainBotKnowledgeEnabled(session) || h.deps == nil || h.kb == nil {
+		return nil
+	}
+	svc := h.kb.Snapshot()
+	if !svc.Settings().Ready() {
+		return nil
+	}
+	definitions := knowledge.AgentToolDefinitions()
+	out := make([]agentToolDescriptor, 0, len(definitions))
+	for _, tool := range definitions {
+		if !svc.AgentToolAllowed(tool.Name) {
+			continue
+		}
+		out = append(out, agentToolDescriptor{
+			Name:         tool.Name,
+			Description:  tool.Description,
+			InputSchema:  defaultToolSchema(tool.InputSchema),
+			OutputSchema: tool.OutputSchema,
+			Annotations:  tool.Annotations,
+			Kind:         "knowledge",
+			UpstreamName: tool.Name,
+		})
+	}
 	return out
 }
 

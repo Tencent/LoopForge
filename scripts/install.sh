@@ -176,7 +176,6 @@ if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
     step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
     docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
   fi
-  docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 else
   step 'Building LoopForge from source (first install takes several minutes; frontend, Go and runtime stages build in parallel)'
   if [[ -z "${LOOPFORGE_COMMIT:-}" ]]; then
@@ -188,9 +187,25 @@ else
   mysql_pull=$!
   docker_access compose --profile platform build platform
   wait "$mysql_pull" || true
-  step 'Starting LoopForge'
-  docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 fi
+# Stop an existing platform before applying schema/data migrations: the old
+# binary must not write a review body into the control payload between 053's
+# copy and strip. A fresh install has no platform container yet.
+docker_access compose --profile platform stop platform >/dev/null || true
+# Start only MySQL first. The platform starts after the knowledge schema and
+# its ngram check, so a fresh install never races an unapplied full-text index
+# (gorm's incremental DDL cannot create it). Base tables for the observability
+# columns and seeds exist only after the platform's incremental DDL runs.
+step 'Starting MySQL'
+docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180 mysql
+step 'Applying the knowledge-engine schema'
+bash scripts/knowledge-schema.sh apply --compose
+bash scripts/knowledge-schema.sh check --compose
+# Knowledge tables and the ngram index now exist; start the platform so its
+# incremental DDL creates the remaining base tables. The observability
+# generated columns and seeds are applied afterwards, as before.
+step 'Starting LoopForge'
+docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 step 'Installing the schema extensions and the starter catalog'
 bash scripts/install-schema-extensions.sh
 

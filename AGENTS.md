@@ -27,6 +27,8 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 | `PreviewsRepo` | run previews |
 | `EngineInstancesRepo` | engine instances |
 | `EvolutionRepo` | 资产进化：evo policies/findings/proposals/replays/signals/samples、asset versions、run asset pins |
+| `KnowledgeRepo` | 知识库（含沉淀发布模式与敏感规则）、来源、项目绑定、同步任务、审核队列、检索调用记录、Git 写回记录（分支/合并请求）、撤回墓碑、反馈、知识缺口、健康检查结果。主库 |
+| `KnowledgeContentRepo` | 文档正文、托管修订、索引块、审核正文 staging。独立的 gorm 连接，由 `newStore` 注入，不写入 `deps`；默认与主库同一个连接池 |
 
 规则：
 
@@ -44,18 +46,29 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 3. 领域 Repo 的共享依赖只有 gorm 句柄（`deps`），不要往 `deps` 加别的。
 4. 写一个文件挂多个领域 receiver 是坏味道；同一领域的方法可分布在多个文件
    （如 `runs.go`/`run_evals.go` 都属 `RunsRepo`），但文件不得为其他领域定义方法。
+5. 内容面（`KnowledgeContentRepo`）禁止外键指向控制面，控制面也不存正文；
+   内容行只用 `source_id` 字符串指向控制面，删除来源由 `Service` 按顺序清理，
+   不做数据库级联。审核队列同理：控制面 `knowledge_submissions.payload` 只
+   留元数据与内容指纹，待审正文写内容面 `knowledge_submission_contents`。
 
 ## 迁移与 seed（migrations/）
 
 1. **代码不做迁移、不做 seed。** `repo.Open()` 只负责连接和 gorm
    AutoMigrate 的增量 DDL（补缺失的表/列/索引）。基线 schema、数据迁移
    （改数据、删行、删列）和 seed 数据一律写成 `migrations/` 下的 SQL
-   脚本。官方 Compose 安装与升级按部署文档执行指定的 SQL。迁移 041 由
-   `./start.sh pull` 在确认目标镜像兼容且数据库仍有旧资产表后、启动新版前执行。
-   其余需要运维处理的迁移按发布说明手动执行。
-2. 每个分支自带自己的迁移脚本，不做任何自动化生成（没有 seedgen 之类的
-   工具）。脚本命名 `NNN_描述.sql`，按序号递增。
-3. 禁止新增 `ensureXxx`/`migrateXxx`/`seedXxx` 之类的启动自愈逻辑写入
+   脚本，由安装/升级脚本（如 `scripts/knowledge-schema.sh`）或运维按序
+   执行；**Go 进程启动不会自动跑**。迁移 041 仍由 `./start.sh pull` 按部署文档
+   检查目标镜像和旧资产表后执行。
+2. **上游已发布的迁移文件名与内容是发布契约，不得改名、改写或重排。**
+   合并上游后，本分支自己的迁移从上游已发布的最大编号之后继续；上游可选的
+   手工 DDL 保持原名原内容，安装脚本也不代跑。知识库 runner
+   `scripts/knowledge-schema.sh` 用显式清单执行 002 与知识库自己的迁移，
+   禁止按编号区间扫描 `migrations/`，避免把上游迁移混入安装/升级。
+3. 每个分支自带自己的迁移脚本，不做任何自动化生成（没有 seedgen 之类的
+   工具）。脚本命名 `NNN_描述.sql`，按序号递增。知识库脚本若同时含控制面
+   与内容面 DDL，用 `-- @plane control` / `-- @plane content` 分段，
+   `scripts/knowledge-schema.sh` 会按 DSN 分别执行到主库与内容库。
+4. 禁止新增 `ensureXxx`/`migrateXxx`/`seedXxx` 之类的启动自愈逻辑写入
    生产路径。测试专用的默认数据只存在于 `internal/repo/opentest.go`
    （`OpenTest`，仅测试调用，生产代码不得引用）。
 

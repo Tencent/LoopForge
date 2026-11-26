@@ -2,7 +2,7 @@
 
 ## Native development
 
-`bash scripts/dev.sh` explicitly configures local secrets, starts only this checkout's MySQL service, builds the platform, provisions the `admin` account, installs the missing observability generated columns through an explicit script, applies `migrations/seed/*.sql`, and starts the server on port 8090. Existing catalog definitions are preserved by `INSERT IGNORE`. Keep `.env`, `.local/` and database volumes outside version control.
+`bash scripts/dev.sh` explicitly configures local secrets, starts only this checkout's MySQL service, builds the platform, provisions the `admin` account, installs the missing observability generated columns through an explicit script, applies the knowledge-engine migrations and their ngram check, applies `migrations/seed/*.sql`, and starts the server on port 8090. Existing catalog definitions are preserved by `INSERT IGNORE`. Keep `.env`, `.local/` and database volumes outside version control.
 
 For a native installation, use Node.js 22+ on the API host and install the CLI you plan to use. Example with Codex:
 
@@ -31,7 +31,7 @@ A conversation workspace on a custom Dockerfile without Node.js, npm or Python 3
 
 Stop the foreground service with Ctrl-C. Start it again with the same command. MySQL data stays in its Compose volume. `docker compose stop mysql` stops the database without deleting it.
 
-Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Apply existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
+Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Run `bash scripts/knowledge-schema.sh apply --native` before starting the service so the knowledge baseline (002), tables and ngram index exist; `repo.Open` only adds missing objects. Apply other existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
 
 ## Choosing an executor
 
@@ -60,6 +60,8 @@ MIRROR=ghcr.nju.edu.cn ./start.sh # force that host instead of the speed test
 ```
 
 The installer checks Docker, Compose, Python 3 and curl. It offers to install missing Python/curl packages using apt, dnf or yum on Linux (Homebrew on macOS), Docker using its official installer, and the missing Linux x86_64/arm64 Compose plugin using the pinned official release with SHA-256 verification. A plugin is installed for the active Docker user, or system-wide when Docker requires sudo. macOS Compose comes from Docker Desktop. Set `LOOPFORGE_YES=1` to accept installation prompts; internet access and package-manager/administrator permissions are still required. The installer generates `.env` with unique secrets, pulls and starts the containers, installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
+
+The installer checks Docker, Compose and Python (and offers to install Docker when it is missing; set `LOOPFORGE_YES=1` to accept without prompting), generates `.env` with unique secrets, pulls the images, starts MySQL, applies the knowledge baseline (002) and the explicit knowledge migrations 047–059 with the ngram index check, starts the platform container, then installs the observability columns and applies `migrations/seed/*.sql` through the configured DSN. It is safe to re-run. `./start.sh pull` performs the same knowledge migration and ngram check before recreating the platform container. Both stop this host's platform first; for multiple API/worker instances see [Upgrading a multi-instance deployment](#upgrading-a-multi-instance-deployment). Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
 
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
@@ -242,7 +244,7 @@ The upstream process roles remain `-role api`, `-role worker` and `-role all`. A
 
 Personal runners are connected from the execution-machine page with a short-lived binding code. The installer is served at `/runners/install.sh`. `AGENTFLOW_RUNNER_BINARY` can point to binaries with `{os}` and `{arch}` substitutions. Container images bundle Linux/macOS amd64/arm64 runner and gate binaries. Native source installations can build on demand with Go.
 
-SOP deliverables support up to 20 MiB per file. Runner 0.13.0 and later transfer
+LOOP artifacts support up to 20 MiB per file. Runner 0.13.0 and later transfer
 declared files separately from the task completion report, so several files
 can be handed off together. Installations with automatic Runner updates
 enabled receive the bundled version after the platform release. Older Runners
@@ -263,6 +265,79 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 ### Upgrading existing project conversations
 
 After upgrading, a project conversation already locked to a personal machine requires a project grant before its next message can run. The machine owner opens **Settings → Execution machines** (设置 → 执行机器), chooses **Shared projects** (共享项目) on the bound machine's card, selects the conversation's project and saves. Sending again then uses the original conversation on the same machine. The grant also lets other project members with write access run on that machine using their own credentials or an applicable platform credential.
+
+## Knowledge engine schema
+
+The platform administrator selects the engine under **Knowledge Center → Engine settings**. An existing installation that has both a LightCloud URL and token retains the `lightcloud` provider and its enabled state, source scopes and review writeback setting. Other installations default to `builtin`. Switching preserves connection settings, built-in data and reviews for both engines. LightCloud exposes the project's authorized search, source list and document reads, plus manual review and optional publishing to the upstream. Built-in source management, public libraries, governance, vector maintenance and Git merge-request writeback are available with the built-in provider.
+
+All installations must apply the knowledge migrations before starting the upgraded binary, including installations using only LightCloud or with no knowledge users.
+
+The built-in knowledge engine has two table groups. The control plane lives in the main database (`AGENTFLOW_MYSQL_DSN`): knowledge bases, sources, bindings, sync jobs, review metadata, writeback records, tombstones, feedback, gaps, governance results, activity and citations. The content plane owns document bodies, hosted revisions, index chunks, the review-body staging table and retraction fences. Set `AGENTFLOW_KNOWLEDGE_MYSQL_DSN` to a separate MySQL database to isolate it; empty reuses the main connection. In Compose, the DSN must be reachable from the platform container (for example `loopforge:PASSWORD@tcp(mysql:3306)/loopforge_content`, after creating that database); the migration helper maps `127.0.0.1:<published MySQL port>` to the Compose MySQL service so the same `.env` also works for native runs. Never place the content tables in the control database when a separate content DSN is configured, and never create foreign keys across the two groups.
+
+`repo.Open` only adds missing tables/columns/indexes. It cannot create a MySQL full-text index with the ngram parser, and it does not run data migrations. Apply the scripts before starting the service:
+
+```bash
+bash scripts/knowledge-schema.sh apply --compose   # container install
+bash scripts/knowledge-schema.sh check --compose
+# Native development or an external MySQL:
+bash scripts/knowledge-schema.sh apply --native
+bash scripts/knowledge-schema.sh check --native
+```
+
+The helper applies the 002 knowledge baseline (needed by 056) and then the explicit knowledge migration list `047`–`059` in order. It never scans numbered migrations by range, so upstream optional manual migrations `026_assistant_session_reads.sql` and `027_cli_model_catalog.sql` keep their published names and are not executed by the helper. It parses both DSNs, runs each control segment against the control database and each content segment against the content database, and is safe to repeat. For 058 it copies the control-plane ID mapping into the content database before the content segment, so a content database on another MySQL server is supported. Upstream optional DDL remains manual, exactly as upstream documents; AutoMigrate also covers its additive schema. The scripts may also be applied by hand in numeric order; `-- @plane control` / `-- @plane content` marks the target group in files with both. When running the 057 content segment by hand against a separate content database, set `@knowledge_control_schema` to the control database first (the helper does this); it defaults to the current database, which is only correct when both planes share one database. For 058, import `knowledge_id_migration_039` into the content database before applying its content segment when the two databases are on different servers; the content segment also copies it automatically when it can see the control schema on the same server.
+
+| Script | Plane | Purpose |
+|---|---|---|
+| `002_knowledge_base.sql` | control | Pre-047 baseline: `knowledge_submissions` (and legacy settings); applied before 047 on every install/upgrade |
+| `047_builtin_knowledge.sql` | control + content | Knowledge bases/sources/bindings/sync jobs; documents/revisions/chunks and the ngram full-text index |
+| `048_knowledge_activity.sql` | control | Agent retrieval call records |
+| `049_knowledge_vector.sql` | control | Per-base vector index contract columns |
+| `050_knowledge_git_credentials.sql` | control | Encrypted Git source credentials |
+| `051_shared_knowledge.sql` | control | Normalize shared-library bindings to read-only (including NULL) |
+| `052_knowledge_writeback.sql` | control | Git branch / merge-request writeback records |
+| `053_knowledge_sediment.sql` | control | Sediment publish mode, rules and tombstones |
+| `054_knowledge_governance.sql` | control + content | Feedback, gaps, governance scans; document frontmatter metadata columns |
+| `055_knowledge_citation.sql` | control | Structured citation records |
+| `056_knowledge_concurrency.sql` | control + content | Legacy review provider, submission version/fingerprint/CAS columns, writeback claims, operation leases; content fences and immutable review-body staging |
+| `057_knowledge_schema_cleanup.sql` | content + control | Review-body staging table, binary path collation, nullable writeback submission ID, legacy payload-body migration |
+| `058_knowledge_source_namespace.sql` | control + content + control | Rename legacy hosted base/source IDs, move content rows and fences to the new IDs, migrate control references, record schema version 58 |
+| `059_knowledge_governance_noise.sql` | control | Per-source metadata-check switch, sync stage, gap status and repeat actor; record schema version 59 |
+
+`056`, `057` and `058` are data migrations, not just DDL. Do not run them while an old API or worker can still write review bodies, sync content or create sources. `058` writes `knowledge_schema_versions(58)`. `059` writes version 59; the new binary refuses to start until that row exists.
+
+Upstream `026_assistant_session_reads.sql` and `027_cli_model_catalog.sql` are published contract: their filenames and contents must not be renamed or edited. They remain optional manual DDL, as upstream documents, and their additive schema is also covered by AutoMigrate.
+
+### Upgrading a multi-instance deployment
+
+The install and update scripts stop only the platform container on the current host. With more than one API/worker instance, all of them share the same MySQL and must be quiesced:
+
+1. Stop every API and worker process (all hosts, all Compose projects, Kubernetes replicas and standalone `-role api`/`-role worker` processes). Do not start the new version yet.
+2. Confirm the control database has no live worker rows:
+   ```sql
+   SELECT instance_id, role, lease_until FROM engine_instances
+   WHERE lease_until > UTC_TIMESTAMP(3);
+   ```
+   The script checks this table before applying 056 and waits up to `LOOPFORGE_MIGRATION_QUIESCE_SECONDS` (default 45s) for a just-stopped worker's lease to expire. If live rows remain it aborts with their IDs. API-only processes do not heartbeat, so the SQL check and the documented stop step still matter.
+3. Run the migration once, from one host:
+   ```bash
+   bash scripts/knowledge-schema.sh apply --compose   # or --native with exported DSNs
+   bash scripts/knowledge-schema.sh check --compose
+   ```
+   For a content database on another server, run the same command with `AGENTFLOW_KNOWLEDGE_MYSQL_DSN` exported; 058's mapping is imported into the content database before its content segment.
+4. Start the new binaries only after the script and ngram check succeed. Starting an older binary after 058 is not supported, and starting the new binary before 059 fails fast with the repair command.
+
+`./start.sh pull` performs steps 2–4 for this host's Compose platform, but it cannot stop remote API/worker instances; stop them first.
+
+`057` moves review bodies that older installations kept in `knowledge_submissions.payload` into the content-plane `knowledge_submission_contents` table, then removes the `content` key from the control payload. The copy works when the control and content databases are on the same MySQL server (including two schemas on that server) and is skipped otherwise. For a content database on another server, export the affected payloads first, import them into `knowledge_submission_contents`, and only then run the control-plane `UPDATE ... JSON_REMOVE(payload, '$.content')` cleanup manually; the exact statement is in the script comments.
+
+Before the API starts, `scripts/knowledge-schema.sh check` verifies that `knowledge_chunks` has the FULLTEXT index `ft_knowledge_chunks_text` using the ngram parser. If it is missing, retrieval fails with `Can't find FULLTEXT index matching the column list`. The check fails with the repair command; it never creates the index from Go code:
+
+```bash
+# Repair a content database that missed 047:
+bash scripts/knowledge-schema.sh apply
+```
+
+For an external MySQL deployment, apply the same order and segments on the control and content databases, then run the check with both DSNs exported. A fresh schema created only by `repo.Open` is not enough for knowledge retrieval.
 
 ## Observability schema
 
@@ -374,6 +449,14 @@ Other dedicated/self-hosted configurations are described in the [official CodeBu
 
 Asset evolution adds optional manual DDL and a separately applied product-template update. Follow the [asset evolution rollout instructions](api/evolution.md#l3-与部署): upgrade all execution instances and Runners together, start with project-private assets and repository-free document workflows, and keep L3 disabled initially. `AGENTFLOW_EVOLUTION_AUTO_ENABLED` defaults to false; a stored L3 policy does not override this deployment switch.
 
-Run `python3 scripts/test-install.py -v` for installer regression tests covering sudo selection, direct Docker access, unattended permission failures, repeated installation, image mode and access URLs. With a locally built platform image, `LOOPFORGE_INSTALL_TEST_IMAGE=your-image bash scripts/test-install-live.sh` verifies real root and UID 65534 installations, non-loopback HTTP access, first-account creation and repeated installation in isolated Compose projects on random ports. This live test requires a Linux root test runner to drop privileges; it removes its own containers and volumes afterwards. To also exercise real sudo inside a disposable UID 1000 installer container, build `scripts/testdata/install-sudo.Dockerfile` with `--build-arg LOOPFORGE_TEST_BASE=your-image`, then pass that test image as `LOOPFORGE_INSTALL_SUDO_TEST_IMAGE`. The production installer itself does not require root.
+Run `python3 scripts/test-install.py -v` for installer regression tests covering sudo selection, direct Docker access, unattended permission failures, repeated installation, image mode and access URLs. It also runs the real `knowledge-schema.sh` against the repository migrations with a recording MySQL client, covering the 002→056 baseline order, 058's control/content/control split, mapping import into a separate content database, fence migration, live-instance refusal and DSN-driven seeding. With a locally built platform image, `LOOPFORGE_INSTALL_TEST_IMAGE=your-image bash scripts/test-install-live.sh` verifies real root and UID 65534 installations, non-loopback HTTP access, first-account creation and repeated installation in isolated Compose projects on random ports, with all migrations including 002 and 047–059 copied into the fixture. This live test requires a Linux root test runner to drop privileges; it removes its own containers and volumes afterwards. To also exercise real sudo inside a disposable UID 1000 installer container, build `scripts/testdata/install-sudo.Dockerfile` with `--build-arg LOOPFORGE_TEST_BASE=your-image`, then pass that test image as `LOOPFORGE_INSTALL_SUDO_TEST_IMAGE`. The production installer itself does not require root.
+
+For a real MySQL upgrade test (old payload body, legacy hosted IDs, retraction fence and an independent content database), set `AGENTFLOW_TEST_MYSQL_DSN` to a disposable server and run:
+
+```bash
+AGENTFLOW_TEST_MYSQL_DSN='root:...@tcp(127.0.0.1:3306)/kb_test' \
+  go test ./internal/repo -run 'TestKnowledgeMigrationsOnSeparateContentDatabase|TestKnowledgeNamespaceMigrationRepeatable' -count=1
+```
+These tests create and drop their own databases; do not point them at production.
 
 From the repository root, run `bash scripts/test-container.sh` after installing `e2e/` dependencies and Chromium. It builds the production image, creates an isolated Compose project and database on ports 8093/33317, provisions test accounts, explicitly applies the observability baseline and public catalog, checks bundled CLIs and cross-platform runner/gate binaries, and runs the public browser suite. Its containers and volumes are removed afterwards. Override `LOOPFORGE_CONTAINER_TEST_PORT` and `LOOPFORGE_CONTAINER_MYSQL_PORT` when those ports are in use. Model calls are disabled for this clean-install check.

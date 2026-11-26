@@ -10,6 +10,7 @@ import {
 } from "./activity";
 import { elapsedSeconds, formatElapsed } from "./api";
 import { RichContent } from "./RichContent";
+import { CitationNotes } from "./knowledge-citation.jsx";
 import { CredentialAction } from "./ui";
 
 const Brain = (props) => <HarnessIcon name="brain" {...props} />;
@@ -176,6 +177,7 @@ function Step({ step, live, interrupted, waitingItems = [] }) {
                       {step.output}
                     </pre>
                   ) : null}
+                  <CitationNotes text={[step.output, step.detail, step.text].filter(Boolean).join("\n")} />
                 </div>
               )}
             </div>

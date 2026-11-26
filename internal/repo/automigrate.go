@@ -8,19 +8,22 @@ import (
 )
 
 // autoMigrateIncremental completes every incremental DDL the running database
-// is missing (columns, tables, indexes) using gorm's Migrator. Unlike a full
-// AutoMigrate — which would also ALTER existing columns to match model
-// defaults (e.g. rewriting JSON columns to longblob) — this only ever ADDS
-// what is absent, so a production schema migrated by the master binary is
+// is missing (columns, tables, indexes) using gorm's Migrator. It takes the
+// model list of one plane so the main database never creates content tables
+// when the content plane lives in a separate MySQL database.
+//
+// Unlike a full AutoMigrate — which would also ALTER existing columns to match
+// model defaults (e.g. rewriting JSON columns to longblob) — this only ever
+// ADDS what is absent, so a production schema migrated by the master binary is
 // left untouched except for genuinely missing objects.
 //
 // The runs.repositories / run_artifacts.repository_dir / runs.pause_requested
 // / runs.human_context / runs.cancel_requested / runs.sandbox_id additions
 // from the master migrations are all covered here, which removes any
 // dependency on schema_migrations marker IDs.
-func autoMigrateIncremental(db *gorm.DB) error {
+func autoMigrateIncremental(db *gorm.DB, models []any) error {
 	m := db.Migrator()
-	for _, model := range allModels() {
+	for _, model := range models {
 		if !m.HasTable(model) {
 			create := m
 			// Bot chat may contain supplementary Unicode (emoji).
@@ -60,7 +63,11 @@ func autoMigrateIncremental(db *gorm.DB) error {
 
 func needsUTF8MB4Table(model any) bool {
 	switch model.(type) {
-	case domain.BotInteraction, botPendingDraftRow, botClarifySessionRow, issueImageRow:
+	case domain.BotInteraction, botPendingDraftRow, botClarifySessionRow, issueImageRow,
+		knowledgeBaseRow, knowledgeSourceRow, knowledgeBindingRow, knowledgeSyncJobRow, knowledgeActivityRow,
+		knowledgeWritebackRow, knowledgeTombstoneRow, knowledgeCitationRow,
+		knowledgeFeedbackRow, knowledgeGapRow, knowledgeGovernanceIssueRow, knowledgeGovernanceScanRow,
+		knowledgeDocumentRow, knowledgeRevisionRow, knowledgeChunkRow, knowledgeSubmissionContentRow, knowledgeContentFenceRow:
 		return true
 	}
 	return false

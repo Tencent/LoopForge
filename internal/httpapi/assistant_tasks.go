@@ -247,6 +247,8 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	ctx = withAssistantExecMode(ctx, assistantExecModeForApproval(AssistantApprovalAuto))
 	mode := assistantExecModeFrom(ctx)
 
+	ctx = withAssistantSessionOrigin(ctx, origin.Source, origin.TaskID)
+
 	task.NotificationResult = ""
 	task.LastStatus = "running"
 	task.LastError = ""

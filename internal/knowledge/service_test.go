@@ -13,24 +13,22 @@ import (
 )
 
 type fakeStore struct {
-	settings    domain.KnowledgeSettings
 	submissions map[string]domain.KnowledgeSubmission
 	artifacts   map[string]domain.Artifact
 	runs        map[string]domain.Run
 	agents      []domain.AgentDefinition
 	workflows   []domain.WorkflowDefinition
 	candidates  []domain.KnowledgeCandidate
+	activities  []domain.KnowledgeActivity
+	docs        map[string][]domain.KnowledgeDocument
+	docsHook    func(source string)
+	sources     []domain.KnowledgeSource
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{submissions: map[string]domain.KnowledgeSubmission{}, artifacts: map[string]domain.Artifact{}, runs: map[string]domain.Run{}}
 }
 
-func (f *fakeStore) KnowledgeSettings() domain.KnowledgeSettings { return f.settings }
-func (f *fakeStore) PutKnowledgeSettings(s domain.KnowledgeSettings) error {
-	f.settings = s
-	return nil
-}
 func (f *fakeStore) KnowledgeSubmissions(projectID, status string, limit int) []domain.KnowledgeSubmission {
 	var out []domain.KnowledgeSubmission
 	for _, item := range f.submissions {
@@ -70,6 +68,11 @@ func (f *fakeStore) Artifact(runID, id string) (domain.Artifact, bool) {
 	art, ok := f.artifacts[id]
 	return art, ok && art.RunID == runID
 }
+func (f *fakeStore) Run(id string) (domain.Run, bool) {
+	run, ok := f.runs[id]
+	return run, ok
+}
+
 func (f *fakeStore) RunHeader(id string) (domain.Run, error) {
 	return f.runs[id], nil
 }
@@ -106,24 +109,23 @@ func (u *fakeUpstream) WriteDocument(_ context.Context, source, path, content st
 }
 
 func newTestService(store *fakeStore, up *fakeUpstream) *Service {
-	svc := NewService(store, func() string { return "id1" })
-	svc.dial = func(s domain.KnowledgeSettings) (Upstream, error) {
-		if strings.TrimSpace(s.URL) == "" || strings.TrimSpace(s.Token) == "" {
-			return nil, ErrNotConfigured
-		}
-		return up, nil
-	}
+	svc := NewService(store, func() string { return "id1" }, up)
 	svc.now = func() time.Time { return time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC) }
 	return svc
 }
 
-func readySettings() domain.KnowledgeSettings {
-	return domain.KnowledgeSettings{
-		Enabled: true, URL: "http://kb/mcp", Token: "tok", WriteEnabled: true,
-		ProjectSources: map[string][]string{"p1": {"docs"}},
+func (f *fakeStore) KnowledgeBindings(project string) []domain.KnowledgeBinding {
+	if project == "p1" {
+		return []domain.KnowledgeBinding{{BaseID: "base"}}
 	}
+	return nil
 }
-
+func (f *fakeStore) KnowledgeSources(base string) []domain.KnowledgeSource {
+	if f.sources != nil {
+		return f.sources
+	}
+	return []domain.KnowledgeSource{{ID: "docs", BaseID: "base"}}
+}
 func wantKind(t *testing.T, err error, kind apperr.Kind) *apperr.Error {
 	t.Helper()
 	ae, ok := apperr.As(err)
@@ -133,68 +135,16 @@ func wantKind(t *testing.T, err error, kind apperr.Kind) *apperr.Error {
 	return ae
 }
 
-func TestUpdateSettingsValidatesAndKeepsToken(t *testing.T) {
-	store := newFakeStore()
-	store.settings = domain.KnowledgeSettings{URL: "http://kb/mcp", Token: "old"}
-	svc := newTestService(store, &fakeUpstream{})
-
-	_, err := svc.UpdateSettings(SettingsInput{URL: "ftp://kb"}, "alice")
-	wantKind(t, err, apperr.Invalid)
-
-	saved, err := svc.UpdateSettings(SettingsInput{Enabled: true, URL: " http://kb/mcp ", DefaultSources: []string{" a ", "a", ""},
-		ProjectSources: map[string][]string{" p1 ": {"b"}, " ": {"x"}}}, "alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if saved.Token != "old" || saved.URL != "http://kb/mcp" || saved.UpdatedBy != "alice" {
-		t.Fatalf("token should be kept, url trimmed: %+v", saved)
-	}
-	if strings.Join(saved.DefaultSources, ",") != "a" || len(saved.ProjectSources) != 1 || saved.ProjectSources["p1"][0] != "b" {
-		t.Fatalf("sources not cleaned: %+v", saved)
-	}
-
-	saved, _ = svc.UpdateSettings(SettingsInput{URL: "http://kb/mcp", Token: "Bearer new"}, "alice")
-	if saved.Token != "new" {
-		t.Fatalf("Bearer prefix should be stripped, got %q", saved.Token)
-	}
-
-	_, err = svc.UpdateSettings(SettingsInput{Enabled: true, URL: "http://kb/mcp", ClearToken: true}, "alice")
-	wantKind(t, err, apperr.Invalid)
-	if store.settings.Token != "new" {
-		t.Fatal("rejected update must not persist")
-	}
-	saved, _ = svc.UpdateSettings(SettingsInput{URL: "http://kb/mcp", ClearToken: true}, "alice")
-	if saved.Token != "" {
-		t.Fatal("ClearToken should drop the saved token")
-	}
-}
-
-func TestCheckUsesOverridesAndReportsFailure(t *testing.T) {
-	store := newFakeStore()
-	up := &fakeUpstream{}
-	svc := newTestService(store, up)
-	if res := svc.Check(context.Background(), "", ""); res.OK || res.Error == "" {
-		t.Fatalf("unconfigured check should fail: %+v", res)
-	}
-	res := svc.Check(context.Background(), "http://kb/mcp", "Bearer t")
-	if !res.OK || res.Sources == nil || len(res.Tools) != 1 {
-		t.Fatalf("override check should succeed with non-nil sources: %+v", res)
-	}
-	up.err = errors.New("boom")
-	if res := svc.Check(context.Background(), "http://kb/mcp", "t"); res.OK || res.Error != "boom" {
-		t.Fatalf("upstream error should surface: %+v", res)
-	}
-}
-
 func TestSearchAndDocumentAreProjectScoped(t *testing.T) {
 	store := newFakeStore()
 	up := &fakeUpstream{}
 	svc := newTestService(store, up)
 
 	_, err := svc.Search(context.Background(), "p1", "q", nil)
-	wantKind(t, err, apperr.Unavailable)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	store.settings = readySettings()
 	_, err = svc.Search(context.Background(), "p1", "  ", nil)
 	wantKind(t, err, apperr.Invalid)
 	_, err = svc.Search(context.Background(), "p1", "q", []string{"secret"})
@@ -218,15 +168,14 @@ func TestSearchAndDocumentAreProjectScoped(t *testing.T) {
 
 func TestSourcesMarksAllowed(t *testing.T) {
 	store := newFakeStore()
-	store.settings = readySettings()
 	svc := newTestService(store, &fakeUpstream{sources: []Source{{ID: "docs"}, {ID: "secret"}}})
 	list, err := svc.Sources(context.Background(), "p1")
-	if err != nil || len(list) != 2 || !list[0].Allowed || list[1].Allowed {
+	if err != nil || len(list) != 1 || !list[0].Allowed {
 		t.Fatalf("allowed flags wrong: %+v %v", list, err)
 	}
 	all, _ := svc.Sources(context.Background(), "other")
-	if !all[1].Allowed {
-		t.Fatal("projects without an entry should see every source")
+	if len(all) != 0 {
+		t.Fatal("unbound projects must see no sources")
 	}
 }
 
@@ -309,6 +258,8 @@ func TestEditResetsReviewState(t *testing.T) {
 	}
 }
 
+// Publishing is gated by the reviewed item's project scope, not by a
+// platform-wide write switch, which applies only to LightCloud.
 func TestPublishGatesAndWrites(t *testing.T) {
 	store := newFakeStore()
 	up := &fakeUpstream{}
@@ -317,20 +268,10 @@ func TestPublishGatesAndWrites(t *testing.T) {
 		item.ID, item.Status = "s", domain.KnowledgeSubmissionPending
 		store.submissions["s"] = item
 	}
-	put(domain.KnowledgeSubmission{ProjectID: "p1", Title: "T", Source: "docs", Path: "a.md", Content: "body"})
-
-	_, err := svc.Publish(context.Background(), "s", "r")
-	wantKind(t, err, apperr.Unavailable)
-
-	store.settings = readySettings()
-	store.settings.WriteEnabled = false
-	_, err = svc.Publish(context.Background(), "s", "r")
-	wantKind(t, err, apperr.Forbidden)
-	store.settings.WriteEnabled = true
-
 	put(domain.KnowledgeSubmission{ProjectID: "p1", Path: "a.md", Content: "body"})
-	_, err = svc.Publish(context.Background(), "s", "r")
+	_, err := svc.Publish(context.Background(), "s", "r")
 	wantKind(t, err, apperr.Invalid)
+
 	put(domain.KnowledgeSubmission{ProjectID: "p1", Source: "secret", Path: "a.md", Content: "body"})
 	_, err = svc.Publish(context.Background(), "s", "r")
 	wantKind(t, err, apperr.Forbidden)
@@ -375,4 +316,35 @@ func TestRejectAndCandidates(t *testing.T) {
 	if err != nil || item.Status != domain.KnowledgeSubmissionRejected || item.ReviewNote != "dup" || item.ReviewedBy != "r" {
 		t.Fatalf("reject: %+v %v", item, err)
 	}
+}
+
+func TestUnboundProjectCannotReadOrSearch(t *testing.T) {
+	up := &fakeUpstream{}
+	svc := newTestService(newFakeStore(), up)
+	out, err := svc.Search(context.Background(), "other", "query", nil)
+	if err != nil || len(out.Result.Results) != 0 || up.searched != nil {
+		t.Fatalf("unbound search: %+v %v", out, err)
+	}
+	_, err = svc.Document(context.Background(), "other", "docs", "a.md", 0, 0)
+	wantKind(t, err, apperr.Forbidden)
+}
+
+func TestFetchRejectsDifferentVersion(t *testing.T) {
+	svc := newTestService(newFakeStore(), &fakeUpstream{})
+	if _, err := svc.DocumentVersion(context.Background(), "p1", "docs", "a.md", "old", 0, 0); err == nil || !strings.Contains(err.Error(), "当前只提供已索引版本") {
+		t.Fatalf("old version: %v", err)
+	}
+	if _, err := svc.DocumentVersion(context.Background(), "p1", "docs", "a.md", "", 0, 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *fakeStore) KnowledgeDocuments(source string) []domain.KnowledgeDocument {
+	if f.docsHook != nil {
+		f.docsHook(source)
+	}
+	if f.docs == nil {
+		return nil
+	}
+	return f.docs[source]
 }

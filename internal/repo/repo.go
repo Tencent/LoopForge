@@ -194,6 +194,7 @@ type Store struct {
 	*RoomsRepo
 	*SpacesRepo
 	*KnowledgeRepo
+	*KnowledgeContentRepo
 	*PlatformSettingsRepo
 	*SSHHostTrustRepo
 	*HTTPSHostTrustRepo
@@ -204,8 +205,9 @@ type Store struct {
 }
 
 // newStore wires the shared deps and every cross-domain pointer. Domains have
-// no cycles, so a single construction pass is enough.
-func newStore(db *gorm.DB) *Store {
+// no cycles, so a single construction pass is enough. contentDB is the handle
+// owned by KnowledgeContentRepo; it defaults to the main pool.
+func newStore(db, contentDB *gorm.DB, contentSeparate bool) *Store {
 	d := &deps{DB: db}
 	s := &Store{deps: d}
 	s.ProjectsRepo = &ProjectsRepo{deps: d}
@@ -231,8 +233,10 @@ func newStore(db *gorm.DB) *Store {
 	s.EngineInstancesRepo = &EngineInstancesRepo{deps: d}
 	s.RoomsRepo = &RoomsRepo{deps: d}
 	s.SpacesRepo = &SpacesRepo{deps: d}
-	s.KnowledgeRepo = &KnowledgeRepo{deps: d}
+	s.KnowledgeContentRepo = &KnowledgeContentRepo{db: contentDB, separate: contentSeparate}
+	s.KnowledgeRepo = &KnowledgeRepo{deps: d, content: s.KnowledgeContentRepo}
 	s.EvolutionRepo = &EvolutionRepo{deps: d, catalog: s.CatalogRepo}
+
 	s.PlatformSettingsRepo = &PlatformSettingsRepo{deps: d}
 	s.SSHHostTrustRepo = &SSHHostTrustRepo{deps: d}
 	s.HTTPSHostTrustRepo = &HTTPSHostTrustRepo{deps: d}
@@ -241,6 +245,9 @@ func newStore(db *gorm.DB) *Store {
 
 // Open connects the store to MySQL, which is where all state lives. An empty
 // DSN is a configuration error, not a reason to invent state somewhere else.
+// The content plane can point at a different MySQL through
+// AGENTFLOW_KNOWLEDGE_MYSQL_DSN; empty or equal to the main DSN reuses the
+// main connection pool.
 func Open(dsn string) (*Store, error) {
 	dsn = strings.TrimSpace(dsn)
 	if dsn == "" {
@@ -249,17 +256,7 @@ func Open(dsn string) (*Store, error) {
 	if dsn == "" {
 		return nil, errors.New("AGENTFLOW_MYSQL_DSN 未配置：MySQL 是唯一数据源，缺少 DSN 时拒绝启动")
 	}
-	if !strings.Contains(dsn, "charset=") {
-		if strings.Contains(dsn, "?") {
-			dsn += "&charset=utf8mb4&collation=utf8mb4_unicode_ci"
-		} else {
-			dsn += "?charset=utf8mb4&collation=utf8mb4_unicode_ci"
-		}
-	}
-	if !strings.Contains(dsn, "parseTime=") {
-		dsn += "&parseTime=true&loc=UTC"
-	}
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{TranslateError: true, Logger: logger.Default.LogMode(logger.Silent)})
+	db, err := gorm.Open(mysql.Open(normalizeMySQLDSN(dsn)), &gorm.Config{TranslateError: true, Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		return nil, fmt.Errorf("mysql open: %w", err)
 	}
@@ -271,27 +268,95 @@ func Open(dsn string) (*Store, error) {
 			return nil, fmt.Errorf("mysql ping: %w", err)
 		}
 	}
-	s := newStore(db)
+	contentDB, contentSeparate, err := knowledgeContentDB(db, dsn, strings.TrimSpace(os.Getenv("AGENTFLOW_KNOWLEDGE_MYSQL_DSN")))
+	if err != nil {
+		if sqlDB, e := db.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+		return nil, err
+	}
+	s := newStore(db, contentDB, contentSeparate)
 	// Incremental DDL only (missing columns/tables/indexes) via gorm's
-	// migrator. Schema baselines, data migrations and seed data are NOT run
-	// from code: they are plain SQL scripts under migrations/, applied
-	// manually by the operator.
-	if err := autoMigrateIncremental(s.DB); err != nil {
+	// migrator, split by plane: control tables on the main handle, content
+	// tables on the content handle (the same handle when the DSN is empty).
+	// Schema baselines, data migrations and seed data are NOT run from code:
+	// they are plain SQL scripts under migrations/, applied by the install /
+	// upgrade scripts before the service starts.
+	if err := autoMigrateIncremental(s.DB, controlModels()); err != nil {
 		s.Close()
-		return nil, fmt.Errorf("auto migrate: %w", err)
+		return nil, fmt.Errorf("auto migrate control plane: %w", err)
+	}
+	if err := autoMigrateIncremental(contentDB, contentModels()); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("auto migrate content plane: %w", err)
 	}
 	return s, nil
 }
 
+// normalizeMySQLDSN applies the charset/parseTime defaults the mysql driver
+// needs. It is idempotent, so two DSNs can be compared after normalization.
+func normalizeMySQLDSN(dsn string) string {
+	dsn = strings.TrimSpace(dsn)
+	if !strings.Contains(dsn, "charset=") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&charset=utf8mb4&collation=utf8mb4_unicode_ci"
+		} else {
+			dsn += "?charset=utf8mb4&collation=utf8mb4_unicode_ci"
+		}
+	}
+	if !strings.Contains(dsn, "parseTime=") {
+		dsn += "&parseTime=true&loc=UTC"
+	}
+	return dsn
+}
+
+// contentPoolIsSeparate reports whether the content plane needs its own
+// connection pool. An empty DSN, or one resolving to the main database, reuses
+// the main pool.
+func contentPoolIsSeparate(mainDSN, contentDSN string) bool {
+	if strings.TrimSpace(contentDSN) == "" {
+		return false
+	}
+	return normalizeMySQLDSN(contentDSN) != normalizeMySQLDSN(mainDSN)
+}
+
+// knowledgeContentDB returns the content-plane handle and whether it is a
+// separate pool that Store.Close must release. Reuse paths never open a socket,
+// which keeps them testable without a live MySQL.
+func knowledgeContentDB(main *gorm.DB, mainDSN, contentDSN string) (*gorm.DB, bool, error) {
+	if !contentPoolIsSeparate(mainDSN, contentDSN) {
+		return main, false, nil
+	}
+	db, err := gorm.Open(mysql.Open(normalizeMySQLDSN(contentDSN)), &gorm.Config{TranslateError: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		return nil, false, fmt.Errorf("knowledge mysql open: %w", err)
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(32)
+		sqlDB.SetMaxIdleConns(8)
+		sqlDB.SetConnMaxLifetime(30 * time.Minute)
+		if err := sqlDB.Ping(); err != nil {
+			_ = sqlDB.Close()
+			return nil, false, fmt.Errorf("knowledge mysql ping: %w", err)
+		}
+	}
+	return db, true, nil
+}
+
 // Close releases the underlying connection pool. The gorm handle is kept so
 // in-flight background goroutines fail gracefully ("sql: database is closed")
-// instead of panicking on a nil handle.
+// instead of panicking on a nil handle. The content plane usually shares the
+// main pool; only a separate pool is closed here, so it is never closed twice.
 func (s *Store) Close() {
-	if s.DB == nil {
-		return
+	if s.DB != nil {
+		if sqlDB, err := s.DB.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
 	}
-	if sqlDB, err := s.DB.DB(); err == nil {
-		_ = sqlDB.Close()
+	if s.KnowledgeContentRepo != nil && s.KnowledgeContentRepo.separate {
+		if sqlDB, err := s.KnowledgeContentRepo.db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
 	}
 }
 

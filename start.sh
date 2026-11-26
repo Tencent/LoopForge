@@ -124,6 +124,12 @@ PY
       compose pull --ignore-buildable --policy always
     fi
     upgrade_sandbox_catalog
+    # Stop the old binary before data migrations so it cannot write a review
+    # body into the control payload after 053 has already moved existing rows.
+    compose stop platform >/dev/null || true
+    compose up -d --no-build --wait --wait-timeout 180 mysql
+    bash scripts/knowledge-schema.sh apply --compose
+    bash scripts/knowledge-schema.sh check --compose
     # Use the images just pulled and inspected, including for mutable tags.
     compose up -d --no-build --wait --wait-timeout 180 --pull never
     # A newer image may read generated columns the old volume never got.
@@ -137,7 +143,11 @@ PY
   logs) compose logs -f "${@:-platform}" ;;
   stop) compose stop "$@" ;;
   down) compose down --remove-orphans ;;
-  restart) compose restart platform ;;
+  restart)
+    compose up -d --no-build --wait --wait-timeout 180 mysql
+    bash scripts/knowledge-schema.sh check --compose
+    compose restart platform
+    ;;
   build)
     echo 'The default start uses the published GHCR image (no local build).' >&2
     echo 'For a source build: ./start.sh dev' >&2

@@ -757,8 +757,25 @@ type spaceThreadRow struct {
 
 func (spaceThreadRow) TableName() string { return "space_threads" }
 
-// knowledgeSettingsRow keeps the upstream token in its own column so the JSON
-// payload can be logged or diffed without leaking the credential.
+// knowledgeContentFenceRow serializes independent content commits without
+// holding the source/control lease row. Document fences survive retraction.
+type knowledgeContentFenceRow struct {
+	Token     int64  `gorm:"column:token;not null;default:0"`
+	SourceID  string `gorm:"column:source_id;primaryKey;size:64"`
+	Path      string `gorm:"column:path;primaryKey;size:512"`
+	Retracted bool   `gorm:"column:retracted"`
+}
+
+func (knowledgeContentFenceRow) TableName() string { return "knowledge_content_fences" }
+
+// 内置知识引擎的 schema 基线以 migrations/044+ 的 SQL 为准。下面的 gorm tag
+// 只保证缺表时服务能启动；AutoMigrate 不会改已有列的类型、collation 或默认值，
+// 安装/升级脚本必须先按序执行迁移（见 docs/deployment.md）。
+
+// knowledgeSubmissionRow 是审核队列的控制面行。Payload 只保存元数据与内容
+// 指纹，待审正文落在内容面的 knowledge_submission_contents；写入路径在
+// KnowledgeRepo.PutKnowledgeSubmission 里拆分，读取时再按 ID 取回正文。
+
 type knowledgeSettingsRow struct {
 	ID      string     `gorm:"column:id;primaryKey;size:64"`
 	Payload []byte     `gorm:"column:payload;type:json"`
@@ -779,20 +796,311 @@ type platformSettingsRow struct {
 func (platformSettingsRow) TableName() string { return "platform_settings" }
 
 type knowledgeSubmissionRow struct {
-	ID         string     `gorm:"column:id;primaryKey;size:64"`
-	ProjectID  string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64"`
-	RunID      string     `gorm:"column:run_id;index:idx_knowledge_submissions_run;size:64"`
-	ArtifactID string     `gorm:"column:artifact_id;index:idx_knowledge_submissions_artifact;size:64"`
-	Status     string     `gorm:"column:status;index:idx_knowledge_submissions_status;size:32"`
-	Payload    []byte     `gorm:"column:payload;type:json"`
-	Created    *time.Time `gorm:"column:created_at"`
-	Updated    *time.Time `gorm:"column:updated_at"`
+	ContentKey   string     `gorm:"column:content_key;size:64;not null;default:''"`
+	PublishUntil *time.Time `gorm:"column:publish_until"`
+	Version      uint64     `gorm:"column:version;not null;default:1"`
+	Fingerprint  *string    `gorm:"column:fingerprint;size:64;uniqueIndex:uq_knowledge_submission_fingerprint,priority:2"`
+	ID           string     `gorm:"column:id;primaryKey;size:64"`
+	ProjectID    string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64;uniqueIndex:uq_knowledge_submission_fingerprint,priority:1"`
+	RunID        string     `gorm:"column:run_id;index:idx_knowledge_submissions_run;size:64"`
+	ArtifactID   string     `gorm:"column:artifact_id;index:idx_knowledge_submissions_artifact;size:64"`
+	Status       string     `gorm:"column:status;index:idx_knowledge_submissions_status;size:32"`
+	Payload      []byte     `gorm:"column:payload;type:json"`
+	Created      *time.Time `gorm:"column:created_at"`
+	Updated      *time.Time `gorm:"column:updated_at"`
 }
 
 func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions" }
 
-// allModels lists every table for the sqlite test schema (AutoMigrate).
-func allModels() []any {
+// 内置知识引擎控制面（主库，KnowledgeRepo）。向量配置列由 046 脚本补建；
+// gorm 的增量 DDL 建得出普通列，这里注册后新装也能带全列。
+type knowledgeBaseRow struct {
+	ID                  string     `gorm:"column:id;primaryKey;size:64"`
+	ProjectID           *string    `gorm:"column:project_id;size:64;index:idx_knowledge_bases_project;uniqueIndex:uq_knowledge_bases_project_layer"`
+	Name                string     `gorm:"column:name;size:255"`
+	Layer               string     `gorm:"column:layer;size:32;uniqueIndex:uq_knowledge_bases_project_layer"`
+	OwnerUserID         int64      `gorm:"column:owner_user_id"`
+	VectorEnabled       bool       `gorm:"column:vector_enabled"`
+	EmbeddingModel      string     `gorm:"column:embedding_model;size:255"`
+	EmbeddingDim        int        `gorm:"column:embedding_dim"`
+	QdrantCollection    string     `gorm:"column:qdrant_collection;size:255"`
+	SedimentPublishMode string     `gorm:"column:sediment_publish_mode;size:16"`
+	SedimentRules       []byte     `gorm:"column:sediment_rules;type:json"`
+	Created             *time.Time `gorm:"column:created_at"`
+	Updated             *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeBaseRow) TableName() string { return "knowledge_bases" }
+
+// knowledgeTombstoneRow 是撤回墓碑（控制面）。主键是项目加内容指纹；不再
+// 保存正文，只保留出处与撤回元数据。
+type knowledgeTombstoneRow struct {
+	ProjectID    string     `gorm:"column:project_id;primaryKey;size:64"`
+	Fingerprint  string     `gorm:"column:fingerprint;primaryKey;size:64"`
+	BaseID       string     `gorm:"column:base_id;size:64"`
+	SourceID     string     `gorm:"column:source_id;size:64"`
+	Path         string     `gorm:"column:path;size:512"`
+	SubmissionID string     `gorm:"column:submission_id;size:64"`
+	Title        string     `gorm:"column:title;size:512"`
+	Reason       string     `gorm:"column:reason;size:255"`
+	CreatedBy    string     `gorm:"column:created_by;size:255"`
+	Created      *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeTombstoneRow) TableName() string { return "knowledge_tombstones" }
+
+type knowledgeSourceRow struct {
+	LeaseVersion         int64      `gorm:"column:lease_version;not null;default:0"`
+	CredentialCiphertext string     `gorm:"column:credential_ciphertext;type:text"`
+	ID                   string     `gorm:"column:id;primaryKey;size:64"`
+	BaseID               string     `gorm:"column:base_id;size:64;index:idx_knowledge_sources_base"`
+	Kind                 string     `gorm:"column:kind;size:32"`
+	Name                 string     `gorm:"column:name;size:255"`
+	GitURL               string     `gorm:"column:git_url;size:1024"`
+	Branch               string     `gorm:"column:branch;size:255"`
+	PathPrefix           string     `gorm:"column:path_prefix;size:512"`
+	HeadCommit           string     `gorm:"column:head_commit;size:128"`
+	HeadRevision         int64      `gorm:"column:head_revision"`
+	Status               string     `gorm:"column:status;size:32;index:idx_knowledge_sources_status"`
+	IndexStatus          string     `gorm:"column:index_status;size:32"`
+	DocCount             int        `gorm:"column:doc_count"`
+	LastError            string     `gorm:"column:last_error;type:text"`
+	LastSyncedAt         *time.Time `gorm:"column:last_synced_at"`
+	LeaseOwner           string     `gorm:"column:lease_owner;size:255"`
+	LeaseUntil           *time.Time `gorm:"column:lease_until"`
+	MetadataChecks       bool       `gorm:"column:metadata_checks;not null;default:1"`
+	SyncStage            string     `gorm:"column:sync_stage;size:32;not null;default:''"`
+}
+
+func (knowledgeSourceRow) TableName() string { return "knowledge_sources" }
+
+type knowledgeBindingRow struct {
+	ProjectID  string `gorm:"column:project_id;primaryKey;size:64"`
+	BaseID     string `gorm:"column:base_id;primaryKey;size:64"`
+	Permission string `gorm:"column:permission;size:32"`
+}
+
+func (knowledgeBindingRow) TableName() string { return "project_knowledge_bindings" }
+
+type knowledgeSyncJobRow struct {
+	ID           int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	SourceID     string     `gorm:"column:source_id;size:64;index:idx_knowledge_sync_jobs_source"`
+	Kind         string     `gorm:"column:kind;size:32"`
+	Status       string     `gorm:"column:status;size:32"`
+	FromCommit   string     `gorm:"column:from_commit;size:128"`
+	ToCommit     string     `gorm:"column:to_commit;size:128"`
+	ChangedCount int        `gorm:"column:changed_count"`
+	DeletedCount int        `gorm:"column:deleted_count"`
+	Log          string     `gorm:"column:log;type:text"`
+	StartedAt    *time.Time `gorm:"column:started_at"`
+	FinishedAt   *time.Time `gorm:"column:finished_at"`
+}
+
+func (knowledgeSyncJobRow) TableName() string { return "knowledge_sync_jobs" }
+
+// knowledgeActivityRow 是 Agent 知识库工具调用记录。只属于控制面，按项目
+// 保留最近若干条；写入在工具调用路径上尽力完成。
+type knowledgeActivityRow struct {
+	ID        int64      `gorm:"column:id;primaryKey;autoIncrement;index:idx_knowledge_activity_project,priority:2"`
+	ProjectID string     `gorm:"column:project_id;size:64;index:idx_knowledge_activity_project,priority:1"`
+	AgentID   string     `gorm:"column:agent_id;size:64"`
+	UserID    int64      `gorm:"column:user_id"`
+	RunID     string     `gorm:"column:run_id;size:64"`
+	SessionID string     `gorm:"column:session_id;size:64"`
+	Tool      string     `gorm:"column:tool;size:64"`
+	Query     string     `gorm:"column:query_text;size:500"`
+	Hits      int        `gorm:"column:hits"`
+	OK        bool       `gorm:"column:ok"`
+	Error     string     `gorm:"column:error_text;size:512"`
+	LatencyMS int64      `gorm:"column:latency_ms"`
+	At        *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeActivityRow) TableName() string { return "knowledge_activity" }
+
+// knowledgeCitationRow 是 Agent 检索或读取时写下的引用。按项目隔离，
+// 只保留统计窗口内、且不超过每项目上限的行。
+type knowledgeCitationRow struct {
+	ID        int64      `gorm:"column:id;primaryKey;autoIncrement;index:idx_knowledge_citation_project,priority:2"`
+	ProjectID string     `gorm:"column:project_id;size:64;index:idx_knowledge_citation_project,priority:1;index:idx_knowledge_citation_doc,priority:1"`
+	AgentID   string     `gorm:"column:agent_id;size:64"`
+	UserID    int64      `gorm:"column:user_id"`
+	RunID     string     `gorm:"column:run_id;size:64"`
+	SessionID string     `gorm:"column:session_id;size:64"`
+	Tool      string     `gorm:"column:tool;size:64"`
+	SourceID  string     `gorm:"column:source_id;size:64;index:idx_knowledge_citation_doc,priority:2"`
+	Path      string     `gorm:"column:path;size:512;index:idx_knowledge_citation_doc,priority:3"`
+	Commit    string     `gorm:"column:commit;size:128"`
+	StartLine int        `gorm:"column:start_line"`
+	EndLine   int        `gorm:"column:end_line"`
+	ChunkID   int64      `gorm:"column:chunk_id"`
+	BaseID    string     `gorm:"column:base_id;size:64"`
+	Layer     string     `gorm:"column:layer;size:32"`
+	At        *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeCitationRow) TableName() string { return "knowledge_citations" }
+
+// knowledgeWritebackRow 记录审核条目发布到 Git 来源的分支与合并请求。
+// 同一审核条目一行；重试沿用同一分支。属于控制面，不存正文。
+type knowledgeWritebackRow struct {
+	ClaimOwner   string     `gorm:"column:claim_owner;size:255;not null;default:''"`
+	ClaimedUntil *time.Time `gorm:"column:claimed_until"`
+	ID           string     `gorm:"column:id;primaryKey;size:64"`
+	// Missing review IDs use NULL, preserving the upstream nullable unique key.
+	SubmissionID *string `gorm:"column:submission_id;size:64;uniqueIndex:uq_knowledge_writebacks_submission"`
+
+	SourceID   string     `gorm:"column:source_id;size:64;index:idx_knowledge_writebacks_source"`
+	ProjectID  string     `gorm:"column:project_id;size:64"`
+	Path       string     `gorm:"column:path;size:512"`
+	Branch     string     `gorm:"column:branch;size:255"`
+	Commit     string     `gorm:"column:commit;size:64"`
+	MRURL      string     `gorm:"column:mr_url;size:1024"`
+	MRProvider string     `gorm:"column:mr_provider;size:32"`
+	MRIID      int        `gorm:"column:mr_iid"`
+	MRState    string     `gorm:"column:mr_state;size:32"`
+	Status     string     `gorm:"column:status;size:32;index:idx_knowledge_writebacks_status,priority:1"`
+	Note       string     `gorm:"column:note;type:text"`
+	Error      string     `gorm:"column:error_text;type:text"`
+	Attempts   int        `gorm:"column:attempts"`
+	CheckedAt  *time.Time `gorm:"column:checked_at;index:idx_knowledge_writebacks_status,priority:2"`
+	Created    *time.Time `gorm:"column:created_at"`
+	Updated    *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeWritebackRow) TableName() string { return "knowledge_writebacks" }
+
+// 内置知识引擎内容面（KnowledgeContentRepo，可能指向独立的 MySQL）。
+type knowledgeDocumentRow struct {
+	SourceID           string     `gorm:"column:source_id;primaryKey;size:64"`
+	Path               string     `gorm:"column:path;primaryKey;size:512"`
+	Title              string     `gorm:"column:title;size:512"`
+	Body               string     `gorm:"column:body;type:mediumtext"`
+	LineCount          int        `gorm:"column:line_count"`
+	SHA256             string     `gorm:"column:sha256;size:64"`
+	Commit             string     `gorm:"column:commit;size:128"`
+	Revision           int64      `gorm:"column:revision"`
+	Owner              string     `gorm:"column:owner;size:255"`
+	DocStatus          string     `gorm:"column:doc_status;size:32"`
+	FrontmatterUpdated *time.Time `gorm:"column:frontmatter_updated_at;type:date"`
+	Updated            *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeDocumentRow) TableName() string { return "knowledge_documents" }
+
+type knowledgeRevisionRow struct {
+	ID       string     `gorm:"column:id;primaryKey;size:64"`
+	SourceID string     `gorm:"column:source_id;size:64;uniqueIndex:uq_knowledge_revisions_path_rev"`
+	Path     string     `gorm:"column:path;size:512;uniqueIndex:uq_knowledge_revisions_path_rev"`
+	Revision int64      `gorm:"column:revision;uniqueIndex:uq_knowledge_revisions_path_rev"`
+	Body     string     `gorm:"column:body;type:mediumtext"`
+	Author   string     `gorm:"column:author;size:255"`
+	Created  *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeRevisionRow) TableName() string { return "knowledge_revisions" }
+
+type knowledgeChunkRow struct {
+	ID        int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	SourceID  string `gorm:"column:source_id;size:64;uniqueIndex:uq_knowledge_chunks_path_idx"`
+	Path      string `gorm:"column:path;size:512;uniqueIndex:uq_knowledge_chunks_path_idx"`
+	Idx       int    `gorm:"column:idx;uniqueIndex:uq_knowledge_chunks_path_idx"`
+	Heading   string `gorm:"column:heading;size:512"`
+	Title     string `gorm:"column:title;size:512"`
+	StartLine int    `gorm:"column:start_line"`
+	EndLine   int    `gorm:"column:end_line"`
+	Commit    string `gorm:"column:commit;size:128"`
+	Revision  int64  `gorm:"column:revision"`
+	Text      string `gorm:"column:text;type:mediumtext"`
+}
+
+func (knowledgeChunkRow) TableName() string { return "knowledge_chunks" }
+
+// knowledgeSubmissionContentRow 是内容面的审核正文 staging 表。控制面的
+// knowledge_submissions.payload 只留元数据与指纹，正文按 submission_id 放
+// 在这里；表在内容库，不建跨库外键。
+type knowledgeSubmissionContentRow struct {
+	VersionKey   string     `gorm:"column:version_key;primaryKey;size:64;not null;default:''"`
+	SubmissionID string     `gorm:"column:submission_id;primaryKey;size:64"`
+	Body         string     `gorm:"column:body;type:mediumtext"`
+	Updated      *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeSubmissionContentRow) TableName() string { return "knowledge_submission_contents" }
+
+// knowledgeFeedbackRow 是知识中心、Main Bot 回答旁和 Agent 标记问题的统一
+// 反馈。属于控制面，不存正文；Path 为空时表示只对回答反馈。
+type knowledgeFeedbackRow struct {
+	ID        string     `gorm:"column:id;primaryKey;size:64"`
+	ProjectID string     `gorm:"column:project_id;size:64;index:idx_knowledge_feedback_project,priority:1"`
+	BaseID    string     `gorm:"column:base_id;size:64"`
+	SourceID  string     `gorm:"column:source_id;size:64"`
+	Path      string     `gorm:"column:path;size:512"`
+	Title     string     `gorm:"column:title;size:512"`
+	Query     string     `gorm:"column:query_text;size:500"`
+	Kind      string     `gorm:"column:kind;size:32"`
+	Note      string     `gorm:"column:note;type:text"`
+	Surface   string     `gorm:"column:surface;size:32"`
+	Actor     string     `gorm:"column:actor;size:255"`
+	UserID    int64      `gorm:"column:user_id"`
+	AgentID   string     `gorm:"column:agent_id;size:64"`
+	RunID     string     `gorm:"column:run_id;size:64"`
+	SessionID string     `gorm:"column:session_id;size:64"`
+	MessageID string     `gorm:"column:message_id;size:64"`
+	Created   *time.Time `gorm:"column:created_at;index:idx_knowledge_feedback_project,priority:2"`
+}
+
+func (knowledgeFeedbackRow) TableName() string { return "knowledge_feedback" }
+
+// knowledgeGapRow 是搜不到结果的查询。项目加归一化查询做主键，重复出现只
+// 增加计数与最近时间，不无限追加行。
+type knowledgeGapRow struct {
+	ProjectID       string     `gorm:"column:project_id;primaryKey;size:64"`
+	Normalized      string     `gorm:"column:normalized_query;primaryKey;size:500"`
+	Query           string     `gorm:"column:query_text;size:500"`
+	OccurrenceCount int        `gorm:"column:occurrence_count"`
+	Status          string     `gorm:"column:status;size:16;not null;default:open"`
+	LastUserID      int64      `gorm:"column:last_user_id"`
+	LastSessionID   string     `gorm:"column:last_session_id;size:64"`
+	FirstSeen       *time.Time `gorm:"column:first_seen"`
+	LastSeen        *time.Time `gorm:"column:last_seen;index:idx_knowledge_gaps_last_seen"`
+}
+
+func (knowledgeGapRow) TableName() string { return "knowledge_gaps" }
+
+// knowledgeGovernanceIssueRow 是健康检查结果。按知识库整批替换；行上不存
+// 正文，只保留定位和中文说明。
+type knowledgeGovernanceIssueRow struct {
+	ID         int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	BaseID     string     `gorm:"column:base_id;size:64;index:idx_knowledge_governance_issues_base,priority:1"`
+	SourceID   string     `gorm:"column:source_id;size:64"`
+	Path       string     `gorm:"column:path;size:512"`
+	Title      string     `gorm:"column:title;size:512"`
+	IssueType  string     `gorm:"column:issue_type;size:32;index:idx_knowledge_governance_issues_base,priority:2"`
+	Line       int        `gorm:"column:line"`
+	Summary    string     `gorm:"column:summary;type:text"`
+	DetectedAt *time.Time `gorm:"column:detected_at"`
+}
+
+func (knowledgeGovernanceIssueRow) TableName() string { return "knowledge_governance_issues" }
+
+// knowledgeGovernanceScanRow 是知识库最近一次扫描的摘要。扫描成功但 0 个
+// 问题时仍保留这一行，面板才能显示“最近检查时间”。
+type knowledgeGovernanceScanRow struct {
+	BaseID     string     `gorm:"column:base_id;primaryKey;size:64"`
+	ScannedAt  *time.Time `gorm:"column:scanned_at"`
+	DocCount   int        `gorm:"column:doc_count"`
+	IssueCount int        `gorm:"column:issue_count"`
+}
+
+func (knowledgeGovernanceScanRow) TableName() string { return "knowledge_governance_scans" }
+
+// controlModels lists the tables that belong to the main (control) database.
+// The content plane is deliberately absent: when AGENTFLOW_KNOWLEDGE_MYSQL_DSN
+// points at another database, the main database must never grow an empty copy
+// of the document tables. autoMigrateIncremental runs this list on s.DB and
+// contentModels() on the content handle (the same handle by default).
+func controlModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, botNativeSessionRow{}, botPendingDraftRow{}, botChatOriginRow{}, botClarifySessionRow{}, domain.NotificationDelivery{},
 		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
@@ -809,9 +1117,29 @@ func allModels() []any {
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
-		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
+		knowledgeSettingsRow{}, knowledgeSubmissionRow{}, knowledgeOperationLeaseRow{},
+		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeCitationRow{}, knowledgeWritebackRow{}, knowledgeTombstoneRow{},
+		knowledgeFeedbackRow{}, knowledgeGapRow{}, knowledgeGovernanceIssueRow{}, knowledgeGovernanceScanRow{},
 		evoPolicyRow{}, evoFindingRow{}, evoProposalRow{}, evoAssetGateRow{}, evoQueueRow{}, evoReplayRow{}, assetVersionRow{}, runAssetPinRow{}, evoSignalRow{}, evoSampleRow{}, evoSOPPolicyRow{},
+
 		platformSettingsRow{},
 		PlatformGitSSHHost{}, PlatformGitHTTPSHost{}, PlatformGitHTTPHost{},
 	}
+}
+
+// contentModels lists the tables owned by KnowledgeContentRepo. They are only
+// created on the content connection: the main database is not allowed to hold
+// document bodies, revisions, chunks, or the review staging table.
+func contentModels() []any {
+	return []any{
+		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
+		knowledgeSubmissionContentRow{}, knowledgeContentFenceRow{},
+	}
+}
+
+// allModels lists every table for the sqlite test schema (AutoMigrate) when
+// both planes share one in-memory database.
+func allModels() []any {
+	models := controlModels()
+	return append(models, contentModels()...)
 }

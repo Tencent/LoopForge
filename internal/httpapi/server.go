@@ -24,6 +24,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/knowledge"
+	kbengine "agentflow/internal/knowledge/engine"
 	"agentflow/internal/mcpserver"
 	"agentflow/internal/notification"
 	"agentflow/internal/observability"
@@ -42,6 +43,7 @@ type deps struct {
 	engine     *engine.Engine
 	sync       *tracker.Service
 	schedule   *schedule.Service
+	kb         *knowledge.Service
 	authClient *auth.Client
 	api        http.Handler
 	// passwordAttempts is this server's brute-force budget (auth_password.go).
@@ -128,7 +130,7 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 	return router, bg
 }
 
-func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
+func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers), knowledgeEngine ...knowledge.Upstream) *gin.Engine {
 	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), passwordAttempts: newPasswordLimiter()}
 	if trustGatewayIdentityHeaders() && strings.TrimSpace(os.Getenv("AGENTFLOW_IDENTITY_HEADER_SECRET")) == "" {
 		log.Printf("warning: AGENTFLOW_TRUST_IDENTITY_HEADERS is on without AGENTFLOW_IDENTITY_HEADER_SECRET; any loopback caller without forwarding headers, including a proxy that passes client headers through, can sign in as any user")
@@ -155,6 +157,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	e.WorkspaceCheckpointTransport = func(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
 		return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
 	}
+	var kb knowledge.Upstream = kbengine.NewEngine(d.repo, d.repo, kbengine.NewMySQLKeywordIndex(d.repo))
+	if len(knowledgeEngine) > 0 {
+		kb = knowledgeEngine[0]
+	}
+	kbSvc := knowledge.NewService(d.repo, randomID, kb)
+	d.kb = kbSvc
 	api := &Server{
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},
@@ -183,9 +191,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
+		know:            &knowledgeHandlers{deps: d, svc: kbSvc},
 		evolution:       newEvolutionHandlers(d),
 	}
+	// 建项目与打开知识中心共用同一个 knowledge.Service 实例，幂等保证托管库。
+	api.projects.knowSvc = api.know.svc
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
 	api.catalog.notifications = api.notifications
 	api.schedule.notifications = api.notifications
@@ -567,13 +577,39 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/knowledge/document", api.know.document)
 	g.GET("/api/knowledge/usage", api.know.usage)
 	g.GET("/api/knowledge/candidates", api.know.candidates)
-	g.GET("/api/knowledge/submissions", api.know.submissions)
-	g.POST("/api/knowledge/submissions", api.know.submissions)
-	g.GET("/api/knowledge/submissions/:id", api.know.submission)
-	g.PUT("/api/knowledge/submissions/:id", api.know.submission)
-	g.DELETE("/api/knowledge/submissions/:id", api.know.submission)
-	g.POST("/api/knowledge/submissions/:id/publish", api.know.publish)
-	g.POST("/api/knowledge/submissions/:id/reject", api.know.reject)
+	g.GET("/api/knowledge/submissions", api.know.withEngine((*knowledgeHandlers).submissions))
+	g.POST("/api/knowledge/submissions", api.know.withEngine((*knowledgeHandlers).submissions))
+	g.GET("/api/knowledge/submissions/:id", api.know.withEngine((*knowledgeHandlers).submission))
+	g.PUT("/api/knowledge/submissions/:id", api.know.withEngine((*knowledgeHandlers).submission))
+	g.DELETE("/api/knowledge/submissions/:id", api.know.withEngine((*knowledgeHandlers).submission))
+	g.POST("/api/knowledge/submissions/:id/publish", api.know.withEngine((*knowledgeHandlers).publish))
+	g.POST("/api/knowledge/submissions/:id/reject", api.know.withEngine((*knowledgeHandlers).reject))
+	g.POST("/api/knowledge/submissions/:id/retract", api.know.builtinOnly, api.know.retractSubmission)
+	// 知识中心管理接口（内置引擎）：知识库/来源、托管文档、Git 来源、同步、试搜、读原文。
+	g.POST("/api/knowledge/bases/shared", api.know.builtinOnly, api.know.sharedBases)
+	g.GET("/api/knowledge/bases/bindings", api.know.builtinOnly, api.know.sharedBindings)
+	g.PUT("/api/knowledge/bases/bindings", api.know.builtinOnly, api.know.sharedBindings)
+	g.GET("/api/knowledge/bases", api.know.builtinOnly, api.know.basesOverview)
+	g.GET("/api/knowledge/bases/documents", api.know.builtinOnly, api.know.basesDocuments)
+	g.POST("/api/knowledge/bases/documents", api.know.builtinOnly, api.know.basesDocuments)
+	g.GET("/api/knowledge/bases/document", api.know.builtinOnly, api.know.basesDocument)
+	g.GET("/api/knowledge/citations", api.know.builtinOnly, api.know.citationUsage)
+	g.POST("/api/knowledge/citations/freshness", api.know.builtinOnly, api.know.citationFreshness)
+	g.POST("/api/knowledge/bases/sources", api.know.builtinOnly, api.know.basesSources)
+	g.PUT("/api/knowledge/bases/sources/credential", api.know.builtinOnly, api.know.basesSourceCredential)
+	g.POST("/api/knowledge/bases/sources/metadata", api.know.builtinOnly, api.know.basesSourceMetadata)
+	g.DELETE("/api/knowledge/bases/sources", api.know.builtinOnly, api.know.basesSourceDelete)
+	g.POST("/api/knowledge/bases/sync", api.know.builtinOnly, api.know.basesSync)
+	g.POST("/api/knowledge/bases/search", api.know.builtinOnly, api.know.basesSearch)
+	g.GET("/api/knowledge/bases/vector", api.know.builtinOnly, api.know.basesVector)
+	g.POST("/api/knowledge/bases/vector", api.know.builtinOnly, api.know.basesVector)
+	g.GET("/api/knowledge/bases/sediment", api.know.builtinOnly, api.know.knowledgeSedimentConfig)
+	g.PUT("/api/knowledge/bases/sediment", api.know.builtinOnly, api.know.knowledgeSedimentConfigUpdate)
+	g.GET("/api/knowledge/governance", api.know.builtinOnly, api.know.governanceOverview)
+	g.POST("/api/knowledge/governance/scan", api.know.builtinOnly, api.know.governanceScan)
+	g.POST("/api/knowledge/governance/gaps", api.know.builtinOnly, api.know.governanceGap)
+	g.POST("/api/knowledge/governance/dispose", api.know.builtinOnly, api.know.governanceDispose)
+	g.POST("/api/knowledge/feedback", api.know.builtinOnly, api.know.knowledgeFeedback)
 
 	// --- runs ---
 	g.GET("/api/runs", api.runs.runs)

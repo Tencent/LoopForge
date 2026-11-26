@@ -236,7 +236,6 @@ func TestResolveAssetsBindsPlatformMCP(t *testing.T) {
 }
 
 func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
-	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -249,10 +248,7 @@ func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
 	if assets := e.resolveAssets(agent, "p1", "", 3); len(assets.MCPServers) != 0 || len(assets.Rules) != 0 {
 		t.Fatalf("knowledge bound before the knowledge base is connected: %#v", assets)
 	}
-	settings := domain.KnowledgeSettings{Enabled: true, URL: "http://kb.local/mcp", Token: "upstream-secret"}
-	if err := st.PutKnowledgeSettings(settings); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "test-session")
 	assets := e.resolveAssets(agent, "p1", "", 3)
 	if len(assets.MCPServers) != 1 || len(assets.Rules) != 1 || assets.Rules[0].ID != domain.KnowledgeUsageRuleID {
 		t.Fatalf("knowledge MCP/rule not bound: %#v", assets)
@@ -265,7 +261,7 @@ func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
 	if strings.Contains(auth, "upstream-secret") {
 		t.Fatal("upstream token leaked into the run asset bundle")
 	}
-	claims, err := knowledge.VerifyProxyToken(settings, strings.TrimPrefix(auth, "Bearer "), time.Now())
+	claims, err := knowledge.VerifyProxyToken(knowledge.SessionSecret(), strings.TrimPrefix(auth, "Bearer "), time.Now())
 	if err != nil || claims.ProjectID != "p1" || claims.UserID != 3 || claims.AgentID != "dev" {
 		t.Fatalf("proxy token claims = %#v, %v", claims, err)
 	}
@@ -280,8 +276,28 @@ func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
 	}
 }
 
+func TestKnowledgeMCPCarriesRunID(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "test-session")
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	e := &Engine{repo: st}
+	e.ConfigurePlatformMCP("http://agentflow.local/", "")
+	assets := e.resolveAssetsForRun(domain.AgentDefinition{ID: "dev", KnowledgeBase: true}, "p1", "", 3, "run-42")
+	if len(assets.MCPServers) != 1 {
+		t.Fatalf("knowledge MCP not bound: %#v", assets.MCPServers)
+	}
+	claims, err := knowledge.VerifyProxyToken(knowledge.SessionSecret(), strings.TrimPrefix(assets.MCPServers[0].Headers["Authorization"], "Bearer "), time.Now())
+	if err != nil || claims.RunID != "run-42" {
+		t.Fatalf("proxy token claims = %#v, %v", claims, err)
+	}
+}
+
 func TestKnowledgeMCPWithoutPlatformBase(t *testing.T) {
-	t.Parallel()
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "")
+	t.Setenv("SESSION_SECRET", "")
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -289,12 +305,10 @@ func TestKnowledgeMCPWithoutPlatformBase(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	e := &Engine{repo: st}
 	agent := domain.AgentDefinition{ID: "dev", KnowledgeBase: true}
-	if warning := knowledgeSkippedWarning(agent, e.resolveAssets(agent, "p1", "", 3)); !strings.Contains(warning, "知识中心未启用") {
+	if warning := knowledgeSkippedWarning(agent, e.resolveAssets(agent, "p1", "", 3)); !strings.Contains(warning, "会话密钥") {
 		t.Fatalf("knowledge not connected should explain itself, got %q", warning)
 	}
-	if err := st.PutKnowledgeSettings(domain.KnowledgeSettings{Enabled: true, URL: "http://kb.local/mcp", Token: "upstream-secret"}); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "test-session")
 	// 独立 worker 未配置平台地址：执行机器仍能改写使用，云端执行丢弃并说明原因。
 	assets := e.resolveAssets(agent, "p1", "", 3)
 	if len(assets.MCPServers) != 1 || assets.MCPServers[0].URL != knowledge.ProxyPath {

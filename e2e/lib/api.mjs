@@ -143,7 +143,8 @@ const owners = new Map();
 export async function tokenOwner(token = cfg.token) {
   if (owners.has(token)) return owners.get(token);
   const probe = await post('/api/knowledge/submissions', { title: 'e2e-auto whoami', content: 'noop' }, { token });
-  await del(`/api/knowledge/submissions/${probe.id}`, { token });
+  // The suite admin owns cleanup of projectless submissions.
+  await del(`/api/knowledge/submissions/${probe.id}`);
   const user = list(await get('/api/users')).find(u => u.loginName === probe.createdBy);
   if (!user) throw new Error(`token owner ${probe.createdBy} not found in /api/users`);
   const admins = list(await get('/api/platform/admins'));

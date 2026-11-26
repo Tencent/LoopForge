@@ -20,6 +20,8 @@ import (
 	"agentflow/internal/credcrypt"
 	"agentflow/internal/engine"
 	"agentflow/internal/httpapi"
+	"agentflow/internal/knowledge"
+	knowledgeengine "agentflow/internal/knowledge/engine"
 	"agentflow/internal/managedcli"
 	"agentflow/internal/notification"
 	"agentflow/internal/preview"
@@ -138,6 +140,10 @@ func main() {
 	if err := runtime.SetRepositoryCacheRoot(root); err != nil {
 		log.Printf("repository cache disabled: %v", err)
 	}
+	knowledgeCacheRoot, err := resolveKnowledgeCacheRoot()
+	if err != nil {
+		log.Fatal(err)
+	}
 	s, err := repo.Open(strings.TrimSpace(*mysqlDSN))
 	if err != nil {
 		log.Fatal(err)
@@ -158,7 +164,15 @@ func main() {
 	} else {
 		log.Printf("bot credential keyring current_kid=%s", keyring.CurrentKID())
 	}
+	// Data migrations are explicit scripts. Refuse to serve on an older schema
+	// so a new binary cannot create a second hosted source before 054 ran.
+	if err := s.CheckKnowledgeSchema(); err != nil {
+		log.Fatal(err)
+	}
 	log.Printf("storage driver=%v database=%v role=%s", s.StorageInfo()["driver"], s.StorageInfo()["database"], role)
+	// 向量运行时按环境变量装配：未配置 Qdrant/embedding 时所有引擎保持纯
+	// 关键词检索，只有 MySQL 也能用。必须在构造任何知识引擎之前调用。
+	knowledgeengine.ConfigureVectorFromEnv(s, s)
 	e := engine.New(s, runtime.NewManagerWithLimit(root, *workerConcurrency))
 	host, _ := os.Hostname()
 	instanceID := strings.TrimSpace(os.Getenv("AGENTFLOW_INSTANCE_ID"))
@@ -272,6 +286,11 @@ func main() {
 	e.StartMaintenance(claimCtx)
 	if executeRuns {
 		e.StartClaimLoop(claimCtx)
+		knowledgeEngine := knowledgeengine.NewEngine(s, s, knowledgeengine.NewMySQLKeywordIndex(s))
+		knowledgeengine.NewSyncWorker(knowledgeEngine, s, s, knowledgeCacheRoot, instanceID).StartSyncLoop(claimCtx, executeRuns)
+		knowledgeSvc := knowledge.NewService(s, knowledge.NewID, knowledgeEngine)
+		knowledgeSvc.StartSedimentLoop(claimCtx)
+		knowledgeSvc.StartGovernanceLoop(claimCtx)
 	}
 	stopCLIUpdates := startManagedCLIUpdates(claimCtx, role, executeRuns)
 	defer stopCLIUpdates()
@@ -429,6 +448,24 @@ func resolveWorkspaceRoot(override string) (string, error) {
 		return "", fmt.Errorf("resolve default sandbox workspace root: user home is empty")
 	}
 	return filepath.Join(home, ".agentflow", "workspace"), nil
+}
+
+// resolveKnowledgeCacheRoot keeps Git working copies outside the sandbox
+// workspace root. The cache is rebuildable, so the default only has to be
+// writable on both a developer machine and the container deployment (HOME is
+// set to the data directory there).
+func resolveKnowledgeCacheRoot() (string, error) {
+	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_KNOWLEDGE_CACHE_DIR")); root != "" {
+		return root, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve default knowledge cache root: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return "", fmt.Errorf("resolve default knowledge cache root: user home is empty")
+	}
+	return filepath.Join(home, ".agentflow", "knowledge-cache"), nil
 }
 
 func attachPreviewStore(e *engine.Engine, s *repo.Store) {

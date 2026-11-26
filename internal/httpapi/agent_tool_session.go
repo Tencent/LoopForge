@@ -65,9 +65,11 @@ type AgentToolSession struct {
 	UserID            int64
 	ProjectID         string
 	Mode              AgentToolMode
-	IssueID           string
-	WorkspaceToken    string
-	RunID             string
+	// Scheduled tasks reuse the gateway without interactive knowledge tools.
+	Scheduled      bool
+	IssueID        string
+	WorkspaceToken string
+	RunID          string
 	// ChatSessionID/ChatOwnerID identify the ordinary conversation this turn
 	// belongs to, so Main Bot can open and bind a temporary workspace there.
 	ChatSessionID string

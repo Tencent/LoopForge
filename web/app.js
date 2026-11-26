@@ -1440,6 +1440,7 @@ function bind(){
     if($('#observabilityView').classList.contains('active'))refreshObs();
     if($('#evolutionView')?.classList.contains('active')&&typeof renderEvolutionView==='function')renderEvolutionView();
     if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
+    if(state.currentView==='knowledge')renderKnowledgeView();
   };
   document.querySelectorAll('[data-scope-for]').forEach(bar=>{
     bar.querySelectorAll('[data-scope]').forEach(btn=>btn.onclick=()=>{
@@ -1669,6 +1670,15 @@ function mountNativeChat(){
         else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
         else switchView(message.view);
       }
+      if(message.type==='agentflow-open-knowledge-citation'&&typeof message.citation==='string'){
+        switchView('knowledge');
+        let tries=0;
+        const openCitation=()=>{
+          if(typeof window.agentflowOpenKnowledgeCitation==='function'){window.agentflowOpenKnowledgeCitation(message.citation);return}
+          if(tries++<20)setTimeout(openCitation,50);
+        };
+        openCitation();
+      }
     });
   }
   if(frame.dataset.src!=='native'){
@@ -1700,7 +1710,7 @@ function settingsSidebarExpanded(){
 }
 let settingsSidebarEntryFrame=0;
 let settingsSidebarWasManaged=false;
-const settingsManagementViews=['settings','assistant','projects','bots','projectCredentials','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','sandboxes','evolution','guide','platform'];
+const settingsManagementViews=['knowledge','settings','assistant','projects','bots','projectCredentials','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','sandboxes','evolution','guide','platform'];
 const settingsRouteMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let settingsRouteTransition=null;
 let settingsRouteApplying=false;
@@ -1880,7 +1890,7 @@ function setSettingsSidebarExpanded(expanded,focusToggle=false){
     });
   }
 }
-function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',projectCredentials:'凭据管理',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥',evolution:'RSI工作台'}}
+function viewTitles(){return {knowledge:'知识中心',management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',projectCredentials:'凭据管理',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥',evolution:'RSI工作台'}}
 // 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产的类型 Tab，
 // 从流程模板打开的流程设计）按 data-nav-match 高亮它们所属的入口。
 function settingsNavMatches(btn,name){return btn.dataset.view===name||String(btn.dataset.navMatch||'').split(/\s+/).includes(name)}
@@ -2126,6 +2136,7 @@ function switchView(name){
   if(name==='observability')refreshObs()
   if(name==='agents'){api('/api/agents',{silent:true}).then(agents=>{state.data.agents=agents;renderAgents()}).catch(e=>toast(e.message));renderAgents();applyAgentRoute()}
   if(name==='settings')renderPersonalSettings();
+  if(name==='knowledge')renderKnowledgeView();
   if(name==='platform')renderPlatformAdminPanel();
   if(name==='projects')renderProjectAdmin();
   if(name==='projectCredentials')loadProjectCredentialsPage();

@@ -13,6 +13,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/mcpserver"
 
 	"github.com/gin-gonic/gin"
@@ -406,6 +407,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		}
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}
+	if tool.Kind == "knowledge" {
+		return h.callMainBotKnowledge(ctx, session, tool, args)
+	}
 	if tool.Kind == "agentflow" {
 		if session.Mode == AgentToolClarify && !agentToolNameAllowed(AgentToolClarify, "agentflow", tool.UpstreamName) {
 			return "", errAgentToolForbidden
@@ -535,6 +539,31 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		return "", err
 	}
 	return redactAgentToolResult(text, session.User), nil
+}
+
+// callMainBotKnowledge runs one built-in knowledge tool in-process. The
+// session project is the only authorization scope; the model cannot widen it
+// by passing another project or an unbound source.
+func (h *agentToolGateway) callMainBotKnowledge(ctx context.Context, session *AgentToolSession, tool agentToolDescriptor, args map[string]any) (string, error) {
+	if !mainBotKnowledgeEnabled(session) {
+		return "", errAgentToolForbidden
+	}
+	name := strings.TrimSpace(tool.UpstreamName)
+	if !knowledge.IsAgentTool(name) {
+		return "", errAgentToolForbidden
+	}
+	if h == nil || h.deps == nil || h.kb == nil {
+		return "", fmt.Errorf("知识库不可用：%w", knowledge.ErrNotConfigured)
+	}
+	caller := knowledge.Caller{
+		ProjectID: session.ProjectID, UserID: session.UserID,
+		RunID: session.RunID, SessionID: session.ChatSessionID,
+	}
+	text, _, err := callKnowledgeTool(ctx, h.kb, caller, name, args)
+	if err != nil {
+		return "", err
+	}
+	return text, nil
 }
 
 func (h *agentToolGateway) serverIDForKind(session *AgentToolSession, kind string) string {

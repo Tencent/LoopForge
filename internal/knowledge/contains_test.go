@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"agentflow/internal/domain"
 	"slices"
 	"testing"
 )
@@ -17,7 +18,8 @@ func TestIsReadOnlyToolTable(t *testing.T) {
 	}
 }
 
-func TestSourceAllowedTable(t *testing.T) {
+func TestLightCloudSourceAllowedTable(t *testing.T) {
+	svc := &Service{settings: &domain.KnowledgeSettings{Provider: domain.KnowledgeProviderLightCloud}}
 	cases := []struct {
 		allowed []string
 		source  string
@@ -35,7 +37,7 @@ func TestSourceAllowedTable(t *testing.T) {
 		{[]string{"a"}, "A", false},
 	}
 	for _, c := range cases {
-		if got := SourceAllowed(c.allowed, c.source); got != c.want {
+		if got := svc.sourceAllowed(cleanList(c.allowed), c.source); got != c.want {
 			t.Errorf("SourceAllowed(%q, %q) = %v, want %v", c.allowed, c.source, got, c.want)
 		}
 	}

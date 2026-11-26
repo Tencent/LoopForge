@@ -546,3 +546,8 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
+
+Object.assign(window.LF_I18N_EN,{
+  "例如：部署文档在哪里 / E_DEMO_42 / 示例知识库 断连": "e.g. Where are the deployment docs / E_DEMO_42 / sample knowledge-base disconnect",
+  "这个项目还没有此类配置，先到「环境资产」里添加": "No such configuration in this project yet. Add one in “Environment assets”"
+});

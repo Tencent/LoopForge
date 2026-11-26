@@ -15,7 +15,8 @@ if ! bash scripts/install-observability-schema.sh; then
   printf '  Run migrations/001_run_obs_generated_columns.sql against the LoopForge database, then retry.\n' >&2
   exit 1
 fi
-cat migrations/seed/*.sql \
+bash scripts/knowledge-schema.sh seed --compose
+cat \
   migrations/033_generic_sop_mr_node.sql \
   migrations/038_generic_sop_host_credentials.sql \
   migrations/043_loop_terminology.sql \

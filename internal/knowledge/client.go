@@ -1,14 +1,9 @@
-// Package knowledge integrates the upstream lightcloud knowledge base (kb)
-// through its Streamable HTTP MCP. The platform holds the upstream token;
-// agents only reach the read-only subset through the platform proxy.
 package knowledge
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -16,74 +11,6 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/mcpclient"
 )
-
-const (
-	ToolSearch      = "kb_search"
-	ToolFetch       = "kb_fetch"
-	ToolListSources = "kb_list_sources"
-	ToolGetSource   = "kb_get_source"
-	ToolWrite       = "kb_write_document"
-)
-
-// ReadOnlyTools is the only upstream surface exposed to agents.
-var ReadOnlyTools = []string{ToolSearch, ToolFetch, ToolListSources, ToolGetSource}
-
-func IsReadOnlyTool(name string) bool {
-	return slices.Contains(ReadOnlyTools, name)
-}
-
-var ErrNotConfigured = errors.New("知识库未接入：请在「知识库 → 接入配置」填写地址和 Token 并启用")
-
-type Source struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-	IndexStatus string `json:"index_status,omitempty"`
-	DocCount    int    `json:"doc_count"`
-}
-
-type SearchHit struct {
-	Source    string  `json:"source"`
-	Commit    string  `json:"commit"`
-	Path      string  `json:"path"`
-	Title     string  `json:"title,omitempty"`
-	Heading   string  `json:"heading,omitempty"`
-	StartLine int     `json:"start_line"`
-	EndLine   int     `json:"end_line"`
-	Snippet   string  `json:"snippet"`
-	Score     float64 `json:"score"`
-	Citation  string  `json:"citation"`
-}
-
-type SearchResult struct {
-	Query         string      `json:"query"`
-	Mode          string      `json:"mode"`
-	Degraded      bool        `json:"degraded"`
-	DegradeReason string      `json:"degrade_reason,omitempty"`
-	Results       []SearchHit `json:"results"`
-}
-
-type Line struct {
-	Number int    `json:"number"`
-	Text   string `json:"text"`
-}
-
-type Document struct {
-	Source    string `json:"source"`
-	Commit    string `json:"commit"`
-	Path      string `json:"path"`
-	StartLine int    `json:"start_line"`
-	EndLine   int    `json:"end_line"`
-	LineCount int    `json:"line_count"`
-	Lines     []Line `json:"lines"`
-	Citation  string `json:"citation"`
-}
-
-type WriteResult struct {
-	Source string `json:"source"`
-	Path   string `json:"path"`
-	Commit string `json:"commit"`
-}
 
 // Client calls the upstream kb MCP with the platform's credentials.
 type Client struct {
@@ -100,7 +27,7 @@ var (
 func NewClient(settings domain.KnowledgeSettings) (*Client, error) {
 	url, token := strings.TrimSpace(settings.URL), strings.TrimSpace(settings.Token)
 	if url == "" || token == "" {
-		return nil, ErrNotConfigured
+		return nil, errLightCloudNotConfigured
 	}
 	key := url + "\x00" + token
 	clientsMu.Lock()
@@ -178,58 +105,13 @@ func (c *Client) callJSON(ctx context.Context, tool string, args map[string]any,
 		return err
 	}
 	if err := json.Unmarshal([]byte(text), out); err != nil {
-		return fmt.Errorf("知识库 %s 返回无法解析：%s", tool, clip(text, 200))
+		return fmt.Errorf("知识库 %s 返回无法解析", tool)
 	}
 	return nil
 }
 
-// ScopeSources intersects the caller's requested sources with the project's
-// allowed list, mirroring the upstream token scope rules: an empty allowed
-// list is unrestricted, an empty request expands to the allowed list, and any
-// explicit source outside the list is rejected.
-func ScopeSources(allowed, requested []string) ([]string, error) {
-	requested = cleanList(requested)
-	allowed = cleanList(allowed)
-	if len(allowed) == 0 {
-		return requested, nil
-	}
-	if len(requested) == 0 {
-		return allowed, nil
-	}
-	for _, s := range requested {
-		if !SourceAllowed(allowed, s) {
-			return nil, fmt.Errorf("知识库来源 %q 不在当前项目的授权范围", s)
-		}
-	}
-	return requested, nil
-}
-
-func SourceAllowed(allowed []string, source string) bool {
-	allowed = cleanList(allowed)
-	if len(allowed) == 0 {
-		return true
-	}
-	return slices.Contains(allowed, strings.TrimSpace(source))
-}
-
-func cleanList(in []string) []string {
-	out := make([]string, 0, len(in))
-	seen := map[string]bool{}
-	for _, v := range in {
-		v = strings.TrimSpace(v)
-		if v == "" || seen[v] {
-			continue
-		}
-		seen[v] = true
-		out = append(out, v)
-	}
-	return out
-}
-
-func clip(s string, n int) string {
-	r := []rune(strings.TrimSpace(s))
-	if len(r) <= n {
-		return string(r)
-	}
-	return string(r[:n]) + "…"
+func (c *Client) GetSource(ctx context.Context, source string) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.callJSON(ctx, ToolGetSource, map[string]any{"source": source}, &out)
+	return out, err
 }

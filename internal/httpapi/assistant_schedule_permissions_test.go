@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -16,9 +17,79 @@ import (
 	"agentflow/internal/config"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
 )
+
+func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
+	h, user := workbenchFixture(t)
+	ctx := context.Background()
+	scheduled, files, err := h.openScheduledToolSession(ctx, user, "workbench", "scheduled-chat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scheduled.Close()
+	defer files.Cleanup()
+	auto := assistantExecModeForApproval(AssistantApprovalAuto)
+	home, homeFiles, err := h.openAssistantToolSession(ctx, user, "workbench", auto, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer home.Close()
+	defer homeFiles.Cleanup()
+	home.ChatSessionID, home.ChatOwnerID = "homepage-chat", user.ID
+	if scheduled.Mode != home.Mode || scheduled.ExecMode != auto || scheduled.ChatOwnerID != user.ID {
+		t.Fatalf("scheduled session does not use homepage full access: %+v", scheduled.ExecMode)
+	}
+	if !scheduled.Scheduled || home.Scheduled {
+		t.Fatal("only the scheduled session must be marked unattended")
+	}
+	h.deps.kb = knowledge.NewService(h.repo, randomID, staticKnowledgeUpstream{})
+	gateway := &agentToolGateway{deps: h.deps}
+	names := func(s *AgentToolSession) []string {
+		var out []string
+		for _, d := range gateway.buildCatalog(ctx, s) {
+			out = append(out, d.Name)
+		}
+		slices.Sort(out)
+		return out
+	}
+	// Scheduled tasks reuse the assistant gateway but must not get the
+	// interactive knowledge base tools; every other tool stays identical.
+	withoutKnowledge := func(names []string) []string {
+		out := make([]string, 0, len(names))
+		for _, name := range names {
+			if !knowledge.IsAgentTool(name) {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	got, want := names(scheduled), names(home)
+	if !reflect.DeepEqual(withoutKnowledge(got), withoutKnowledge(want)) || !reflect.DeepEqual(scheduled.MCPServers, home.MCPServers) {
+		t.Fatalf("scheduled and homepage tools differ:\nscheduled=%v\nhome=%v", got, want)
+	}
+	for _, name := range knowledge.AgentTools {
+		if slices.Contains(got, name) {
+			t.Errorf("scheduled session must not expose knowledge tool %s", name)
+		}
+		if !slices.Contains(want, name) {
+			t.Errorf("homepage session is missing knowledge tool %s", name)
+		}
+	}
+	for _, name := range []string{"agentflow__issues_dispatch", "agentflow__runs_start", "agentflow__runs_retry", "agentflow__workflows_publish", "agentflow__schedule_jobs_save", "agentflow__schedule_jobs_delete", "workbench_workspace_open", "workbench_browser_navigate", "workbench_browser_screenshot"} {
+		if !slices.Contains(got, name) {
+			t.Errorf("full-access scheduled session is missing %s", name)
+		}
+	}
+	for _, name := range []string{"workbench_workspace_command", "workbench_workspace_submit_mr"} {
+		if slices.Contains(got, name) || slices.Contains(want, name) {
+			t.Errorf("platform session exposes %s before workspace handoff", name)
+		}
+	}
+
+}
 
 func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
 	h, user := workbenchFixture(t)
@@ -93,6 +164,15 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 		sessionID := session.ChatSessionID
 		sessionIDs <- sessionID
 		conv, exists := h.repo.AssistantSession(user.ID, sessionID)
+		if !session.Scheduled {
+			t.Error("scheduled execution must retain unattended knowledge-tool policy")
+		}
+		gateway := &agentToolGateway{deps: &deps{repo: h.repo, kb: knowledge.NewService(h.repo, randomID, nil)}}
+		for _, tool := range gateway.buildCatalog(r.Context(), session) {
+			if knowledge.IsAgentTool(tool.Name) {
+				t.Errorf("scheduled execution exposes knowledge tool %s", tool.Name)
+			}
+		}
 		if !exists || conv.Source != domain.AssistantSourceScheduled || session.workspaceTurn == nil || session.ExecMode != assistantExecModeForApproval(AssistantApprovalAuto) {
 			t.Error("scheduled gateway lacks its persisted conversation or full-access workspace lifecycle")
 		}
