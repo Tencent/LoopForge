@@ -185,7 +185,7 @@ test('conversation repo cards link GitHub branches, PRs and diffs', async (t) =>
 });
 
 // A requirement created without a LOOP has never run: the drawer and list must
-// not say it "runs by LOOP" or was started directly, and a requirement with an
+// not say it "runs by LOOP" or was started directly, and a requirement with a
 // LOOP that never ran is not reported as a direct run either.
 test('requirements that never ran describe how they will be handled', async (t) => {
   const app = await loadApp();

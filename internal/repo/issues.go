@@ -263,8 +263,8 @@ func (r *IssuesRepo) prepareIssueForSave(v domain.Issue, fromSync, existingOnly 
 		}
 		if strings.TrimSpace(v.AutomationState) == "" {
 			v.AutomationState = old.AutomationState
-			// sopMode=sop lifts the no-SOP choice, and with it the "ignored"
-			// that choice set, as binding or running an SOP from the page does.
+			// sopMode=sop lifts the no-LOOP choice, and with it the "ignored"
+			// that choice set, as binding or running a LOOP from the page does.
 			if old.WithoutSOP() && strings.EqualFold(strings.TrimSpace(v.SOPMode), domain.IssueSOPUse) && v.AutomationState == "ignored" {
 				v.AutomationState = "eligible"
 			}

@@ -59,7 +59,7 @@ func TestPublicRepositoryToolSupportsGitHub(t *testing.T) {
 	t.Fatal("repositories_save is missing")
 }
 
-// A requirement can opt out of SOP delivery only through sopMode, so the
+// A requirement can opt out of LOOP delivery only through sopMode, so the
 // issues_save contract must offer it; otherwise agents cannot create one.
 func TestIssueSaveContractOffersSOPMode(t *testing.T) {
 	var save application.Operation
