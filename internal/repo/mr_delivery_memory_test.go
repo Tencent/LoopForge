@@ -138,7 +138,12 @@ func TestReconcileCompletedDeliveries(t *testing.T) {
 	if err := s.PutTask(domain.Task{ID: "task-1", IssueID: issue.ID, RunID: "run-1", Status: "completed"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutRun(domain.Run{ID: "run-1", Status: "succeeded", UpdatedAt: time.Now().UTC(), ExecutionContext: domain.TelemetryContext{IssueID: issue.ID}}); err != nil {
+	// A succeeded run that carries an MR link is a completed delivery.
+	if err := s.PutRun(domain.Run{
+		ID: "run-1", Status: "succeeded", UpdatedAt: time.Now().UTC(),
+		ExecutionContext: domain.TelemetryContext{IssueID: issue.ID},
+		Artifacts:        []domain.Artifact{{NodeID: "mr", Name: "mr-body", Content: "https://git.example.com/org/repo/merge_requests/9"}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ReconcileCompletedDeliveries(); err != nil {
@@ -147,6 +152,36 @@ func TestReconcileCompletedDeliveries(t *testing.T) {
 	locked, _ := s.Issue(issue.ID)
 	if !locked.DeliveryLocked() {
 		t.Fatalf("expected succeeded LOOP to lock issue: %+v", locked)
+	}
+}
+
+// A succeeded run without any MR only finished the work; it must not be
+// reported as a merged delivery.
+func TestReconcileCompletedDeliveriesWithoutMR(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	issue := domain.Issue{ID: "tapd-done-no-mr", ProjectID: "platform", Source: "tapd", LatestTaskID: "task-no-mr"}
+	if err := s.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutTask(domain.Task{ID: "task-no-mr", IssueID: issue.ID, RunID: "run-no-mr", Status: "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutRun(domain.Run{ID: "run-no-mr", Status: "succeeded", UpdatedAt: time.Now().UTC(), ExecutionContext: domain.TelemetryContext{IssueID: issue.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReconcileCompletedDeliveries(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Issue(issue.ID)
+	if got.DeliveryLocked() || got.DeliveryState != "" {
+		t.Fatalf("reconcile without MR must not claim a merge: %+v", got)
+	}
+	if got.Status != "done" {
+		t.Fatalf("finished work item should be done, got Status=%q", got.Status)
 	}
 }
 
