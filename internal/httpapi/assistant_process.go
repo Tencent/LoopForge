@@ -207,6 +207,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 					}
 				}
 				callCtx = gitwork.WithSSHKnownHostsLookup(callCtx, h.repo.PlatformSSHKnownHosts)
+				callCtx = runtime.WithPrivilegedSandboxSetting(callCtx, h.repo.PlatformRunnerPrivilegedSandbox)
 				result, err := h.conversationProcesses.Handle(callCtx, root, workspace, request.Sandbox, req, forward, factory)
 				if err != nil && req.Operation == "start" {
 					err = conversationNotStarted(err, false)
