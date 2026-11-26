@@ -1,3 +1,7 @@
+package httpapi
+
+import "testing"
+
 // A duplicated enum value makes strict validators reject the whole tool
 // definition, which takes every confirm-mode draft submission with it. The
 // schema must therefore list each writable tool exactly once, in every
