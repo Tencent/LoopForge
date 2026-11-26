@@ -318,7 +318,8 @@ html[data-theme="dark"] #issuesView .issue-title-cell .issue-title-tag.tone-dang
 #issuesView .issue-priority.high { color: var(--hui-text); }
 #issuesView .issue-priority.low { color: var(--hui-tertiary); }
 
-#issuesView .issue-stage-cell { overflow: hidden; }
+#issuesView .issue-stage-cell { overflow: hidden; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; }
+#issuesView .issue-stage-status { color: var(--hui-muted); font-size: 11.5px; line-height: 1.2; white-space: nowrap; }
 
 /* Progress */
 #issuesView .issue-progress-cell { gap: 6px; color: var(--hui-secondary); font-size: 12.5px; }
