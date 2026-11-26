@@ -201,6 +201,59 @@ test('runner sharing saves multiple projects and offers project defaults for eli
   assert.match(app.document.querySelector('.runner-card').textContent, /个人默认/);
 });
 
+test('execution machine cards control privileged sandboxes and require a compatible Runner', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const platform = {
+    name: '平台执行机器（云端）', status: 'online', canEditLimit: true,
+    allowPrivilegedSandbox: false,
+  };
+  const machines = [
+    { id: 'own', name: 'Owned', ownerUserId: 1, runnerVersion: '0.13.2', allowPrivilegedSandbox: false },
+    { id: 'shared', name: 'Shared', ownerUserId: 2, runnerVersion: '0.13.2', allowPrivilegedSandbox: true },
+    { id: 'old', name: 'Old', ownerUserId: 1, runnerVersion: '0.13.1', allowPrivilegedSandbox: false },
+  ];
+  app.router.get('/api/runners', machines);
+  app.router.get('/api/runners/default', () => ({ platformRunner: platform, minPrivilegedSandboxRunnerVersion: '0.13.2' }));
+  app.router.put('/api/runners/platform/privileged-sandbox', ({ body }) => {
+    platform.allowPrivilegedSandbox = body.allowed;
+    return {};
+  });
+  app.router.put('/api/runners/own/privileged-sandbox', ({ body }) => {
+    machines[0].allowPrivilegedSandbox = body.allowed;
+    return {};
+  });
+  app.evaluate(`
+    state.currentUser={id:1};
+    state.runnerBindCode={code:'fixture',expiresAt:'2099-01-01T00:00:00Z'};
+  `);
+  await app.evaluate('refreshRunners()');
+  const selector = '[data-runner-privileged-sandbox]';
+  const control = (target) => app.document.querySelector(`[data-runner-privileged-sandbox="${target}"]`);
+  const changes = () => app.router.calls.filter(call => call.method === 'PUT' && call.path.endsWith('/privileged-sandbox'));
+  assert.equal(app.document.querySelectorAll(selector).length, 2);
+  assert.equal(control('platform').checked, false);
+  assert.equal(control('own').checked, false);
+  assert.match(app.document.querySelector('#runnersList').children[2].textContent, /需升级 Runner/);
+  control('platform').click();
+  await settle(8);
+  control('own').click();
+  await settle(8);
+  assert.equal(control('own').checked, true);
+  control('own').click();
+  await settle(8);
+  assert.deepEqual(changes().map(call => [call.path, call.body.allowed]), [
+    ['/api/runners/platform/privileged-sandbox', true],
+    ['/api/runners/own/privileged-sandbox', true],
+    ['/api/runners/own/privileged-sandbox', false],
+  ]);
+  assert.equal(control('platform').checked, true);
+  assert.equal(control('own').checked, false);
+  platform.canEditLimit = false;
+  await app.evaluate('refreshRunners()');
+  assert.equal(control('platform'), null);
+});
+
 test('platform runner card and auto assignment respect project and admin permissions', async (t) => {
   const app = await loadApp();
   t.after(app.close);

@@ -24,7 +24,7 @@ func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
-	runner := domain.Runner{ID: "runner", RunnerVersion: domain.RunnerVersionGitPlainHTTP}
+	runner := domain.Runner{ID: "runner", RunnerVersion: domain.RunnerVersionEvolutionReplay}
 	if err := s.PutRunner(runner); err != nil {
 		t.Fatal(err)
 	}
@@ -52,12 +52,17 @@ func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
 		t.Fatalf("runner sandbox spec = %+v", spec)
 	}
 
+	profile.Privileged = false
 	profile.CPUMillicores, profile.MemoryMiB = 750, 1536
 	if err := s.PutSandbox(profile); err != nil {
 		t.Fatal(err)
 	}
+	runner.RunnerVersion = domain.RunnerVersionGitPlainHTTP
+	if err := s.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := e.runnerSandboxSpec(run); err == nil || err.Error() != domain.RunnerDockerSandboxLimitsUpgradeMessage {
-		t.Fatalf("Runner with privileged support alone must reject resource limits: %v", err)
+		t.Fatalf("Runner without Docker limit support must reject resource limits: %v", err)
 	}
 	if _, err := e.StartConversationWorkspace("Use a capped workspace", run.ExecutionContext, profile.ID); err == nil || err.Error() != domain.RunnerDockerSandboxLimitsUpgradeMessage {
 		t.Fatalf("starting a capped workspace needs a Runner upgrade: %v", err)
@@ -70,7 +75,7 @@ func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !spec.Profile.Privileged || spec.Profile.CPUMillicores != 750 || spec.Profile.MemoryMiB != 1536 {
+	if spec.Profile.Privileged || spec.Profile.CPUMillicores != 750 || spec.Profile.MemoryMiB != 1536 {
 		t.Fatalf("runner sandbox spec lost Docker settings: %+v", spec.Profile)
 	}
 }

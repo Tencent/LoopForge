@@ -25,6 +25,10 @@ func (d deps) platformAdminWrite(c *gin.Context) bool {
 		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以执行该操作"})
 		return false
 	}
+	return requireWriteOrigin(c)
+}
+
+func requireWriteOrigin(c *gin.Context) bool {
 	if _, bearer := bearerToken(c.Request); bearer {
 		return true
 	}

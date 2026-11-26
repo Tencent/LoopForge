@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +24,7 @@ type dockerSandbox struct {
 	profile              domain.SandboxProfile
 	requirements         SandboxRequirements
 	dockerfile           domain.DockerfileDefinition
+	privilegedSetting    privilegedSandboxSettingLookup
 	limits               dockerSandboxLimits
 	builtImage           string
 	mu                   sync.Mutex
@@ -620,18 +620,14 @@ func parseDockerSandboxMounts(out, absRoot string) map[string]string {
 	return found
 }
 
-const privilegedDockerSandboxEnv = "AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX"
-
 func createDocker(ctx context.Context, id, workspace string, p domain.SandboxProfile, requirements SandboxRequirements, dockerfile domain.DockerfileDefinition) (Sandbox, error) {
 	if strings.TrimSpace(dockerfile.Content) == "" {
 		return nil, fmt.Errorf("docker sandbox requires a dockerfile")
 	}
+	setting, _ := ctx.Value(privilegedSandboxSettingKey{}).(privilegedSandboxSettingLookup)
 	if p.Privileged {
-		// Only the process on the Docker host can authorize privileged
-		// execution. The profile's environment is for in-sandbox commands.
-		allowed, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv(privilegedDockerSandboxEnv)))
-		if !allowed {
-			return nil, fmt.Errorf("当前执行机器未允许特权 Docker 沙箱，请联系机器管理员设置 %s=true", privilegedDockerSandboxEnv)
+		if err := checkPrivilegedSandbox(ctx, setting); err != nil {
+			return nil, err
 		}
 	}
 	limits, err := readDockerSandboxLimits(p)
@@ -642,7 +638,7 @@ func createDocker(ctx context.Context, id, workspace string, p domain.SandboxPro
 	// after prepareRepository has cloned into this directory. Creating the
 	// container first, then letting git replace the workspace inode, is the
 	// runc 126 "cwd outside mount namespace" failure.
-	return &dockerSandbox{id: id, name: dockerContainerName(id), workspace: workspace, profile: p, requirements: requirements, dockerfile: dockerfile, limits: limits}, nil
+	return &dockerSandbox{id: id, name: dockerContainerName(id), workspace: workspace, profile: p, requirements: requirements, dockerfile: dockerfile, limits: limits, privilegedSetting: setting}, nil
 }
 
 const dockerSandboxPrefix = "agentflow-"
@@ -857,6 +853,11 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 		return nil
 	}
 	name, workspace, p := s.name, s.workspace, s.profile
+	if p.Privileged {
+		if err := checkPrivilegedSandbox(ctx, s.privilegedSetting); err != nil {
+			return err
+		}
+	}
 	gitTools, err := dockerGitToolsDirectory(workspace, name)
 	if err != nil {
 		return err
